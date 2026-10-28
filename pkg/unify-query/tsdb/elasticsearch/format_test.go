@@ -1074,10 +1074,31 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 	timeFormat := function.Second
 
 	for name, c := range map[string]struct {
-		timeField  metadata.TimeField
-		aggregates metadata.Aggregates
-		expected   string
+		timeField    metadata.TimeField
+		aggregates   metadata.Aggregates
+		timeOffset   time.Duration
+		endExclusive bool
+		expected     string
 	}{
+		"切换路由排他上界保留微秒精度": {
+			timeField: metadata.TimeField{
+				Name: "event_time",
+				Type: TimeFieldTypeInt,
+				Unit: function.Microsecond,
+			},
+			timeOffset:   time.Microsecond,
+			endExclusive: true,
+			expected:     `{"query":{"range":{"event_time":{"from":1721024820000001,"include_lower":true,"include_upper":false,"to":1721046420000001}}}}`,
+		},
+		"用户终点包含且保留微秒精度": {
+			timeField: metadata.TimeField{
+				Name: "event_time",
+				Type: TimeFieldTypeInt,
+				Unit: function.Microsecond,
+			},
+			timeOffset: time.Microsecond,
+			expected:   `{"query":{"range":{"event_time":{"from":1721024820000001,"include_lower":true,"include_upper":true,"to":1721046420000001}}}}`,
+		},
 		"second date field": {
 			timeField: metadata.TimeField{
 				Name: "time",
@@ -1251,11 +1272,14 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
 			fact := NewFormatFactory(ctx).
-				WithQuery("value", c.timeField, start, end, timeFormat, 0).
+				WithQuery("value", c.timeField, start.Add(c.timeOffset), end.Add(c.timeOffset), timeFormat, 0).
 				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 
 			ss := elastic.NewSearchSource()
 			rangeQuery, err := fact.RangeQuery()
+			if c.endExclusive {
+				rangeQuery, err = fact.rangeQuery(true)
+			}
 			assert.Nil(t, err)
 			ss.Query(rangeQuery)
 			if len(c.aggregates) > 0 {

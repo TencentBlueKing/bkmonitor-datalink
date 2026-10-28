@@ -12,6 +12,7 @@ package prometheus
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,10 +24,13 @@ import (
 	"github.com/prometheus/prometheus/storage"
 	promRemote "github.com/prometheus/prometheus/storage/remote"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
 var (
@@ -1331,6 +1335,845 @@ NaN @[360000]`,
 			a := res.String()
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, a)
+		})
+	}
+}
+
+// rangeAggregateTestStorage 直接返回存储侧序列，不模拟文档查询和聚合。
+type rangeAggregateTestStorage struct {
+	tsdb.DefaultInstance
+	selectSeries func(*metadata.Query, time.Time, time.Time) storage.SeriesSet
+}
+
+func (s *rangeAggregateTestStorage) QuerySeriesSet(_ context.Context, q *metadata.Query, start, end time.Time) storage.SeriesSet {
+	return s.selectSeries(q, start, end)
+}
+
+func TestSelectRangeAggregate(t *testing.T) {
+	mock.Init()
+	start := time.Unix(1700000000, 0)
+	cut := start.Add(time.Hour)
+	end := cut.Add(time.Hour)
+
+	type storageResponse struct {
+		method       string
+		start, end   time.Time
+		endExclusive bool
+		series       mock.TimeSeriesList
+	}
+	// 路由按秒配置，样本时间戳为毫秒；查询范围仍保留微秒精度。
+	// 无时间分桶时，存储返回的单点是区间聚合结果，不能按该点的虚拟时间戳再裁剪。
+	testCases := map[string]struct {
+		method     string
+		start, end time.Time
+		routes     query.StorageClusterRecords
+		storages   map[string][]storageResponse
+		want       mock.TimeSeriesList
+	}{
+		"切换前仅查询旧存储": {
+			method: "count",
+			start:  start,
+			end:    cut.Add(-time.Microsecond),
+			routes: query.StorageClusterRecords{
+				{StorageID: "旧存储", EnableTime: start.Add(-time.Hour).Unix()},
+				{StorageID: "新存储", EnableTime: cut.Unix()},
+			},
+			storages: map[string][]storageResponse{
+				"旧存储": {
+					{
+						method:       "count",
+						start:        start,
+						end:          cut.Add(-time.Microsecond),
+						endExclusive: false,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 2},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: mock.TimeSeriesList{
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "api"}},
+					Samples: []prompb.Sample{
+						{Timestamp: start.UnixMilli(), Value: 2},
+					},
+				},
+			},
+		},
+		"切换后仅查询新存储": {
+			method: "count",
+			start:  cut,
+			end:    end,
+			routes: query.StorageClusterRecords{
+				{StorageID: "旧存储", EnableTime: start.Add(-time.Hour).Unix()},
+				{StorageID: "新存储", EnableTime: cut.Unix()},
+			},
+			storages: map[string][]storageResponse{
+				"新存储": {
+					{
+						method:       "count",
+						start:        cut,
+						end:          end,
+						endExclusive: false,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: cut.UnixMilli(), Value: 3},
+								},
+							},
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+								Samples: []prompb.Sample{
+									{Timestamp: cut.UnixMilli(), Value: 1},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: mock.TimeSeriesList{
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "api"}},
+					Samples: []prompb.Sample{
+						{Timestamp: cut.UnixMilli(), Value: 3},
+					},
+				},
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+					Samples: []prompb.Sample{
+						{Timestamp: cut.UnixMilli(), Value: 1},
+					},
+				},
+			},
+		},
+		"跨切换点计数保留两侧序列": {
+			method: "count",
+			start:  start,
+			end:    end,
+			routes: query.StorageClusterRecords{
+				{StorageID: "旧存储", EnableTime: start.Add(-time.Hour).Unix()},
+				{StorageID: "新存储", EnableTime: cut.Unix()},
+			},
+			storages: map[string][]storageResponse{
+				"旧存储": {
+					{
+						method:       "count",
+						start:        start,
+						end:          cut,
+						endExclusive: true,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 2},
+								},
+							},
+						},
+					},
+				},
+				"新存储": {
+					{
+						method:       "count",
+						start:        cut,
+						end:          end,
+						endExclusive: false,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 3},
+								},
+							},
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 1},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: mock.TimeSeriesList{
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "api"}},
+					Samples: []prompb.Sample{
+						{Timestamp: start.UnixMilli(), Value: 5},
+					},
+				},
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+					Samples: []prompb.Sample{
+						{Timestamp: start.UnixMilli(), Value: 1},
+					},
+				},
+			},
+		},
+		"跨切换点求和不重复": {
+			method: "sum",
+			start:  start,
+			end:    end,
+			routes: query.StorageClusterRecords{
+				{StorageID: "旧存储", EnableTime: start.Add(-time.Hour).Unix()},
+				{StorageID: "新存储", EnableTime: cut.Unix()},
+			},
+			storages: map[string][]storageResponse{
+				"旧存储": {
+					{
+						method:       "sum",
+						start:        start,
+						end:          cut,
+						endExclusive: true,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 30},
+								},
+							},
+						},
+					},
+				},
+				"新存储": {
+					{
+						method:       "sum",
+						start:        cut,
+						end:          end,
+						endExclusive: false,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 120},
+								},
+							},
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 7},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: mock.TimeSeriesList{
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "api"}},
+					Samples: []prompb.Sample{
+						{Timestamp: start.UnixMilli(), Value: 150},
+					},
+				},
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+					Samples: []prompb.Sample{
+						{Timestamp: start.UnixMilli(), Value: 7},
+					},
+				},
+			},
+		},
+		"跨切换点取最小值": {
+			method: "min",
+			start:  start,
+			end:    end,
+			routes: query.StorageClusterRecords{
+				{StorageID: "旧存储", EnableTime: start.Add(-time.Hour).Unix()},
+				{StorageID: "新存储", EnableTime: cut.Unix()},
+			},
+			storages: map[string][]storageResponse{
+				"旧存储": {
+					{
+						method:       "min",
+						start:        start,
+						end:          cut,
+						endExclusive: true,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 10},
+								},
+							},
+						},
+					},
+				},
+				"新存储": {
+					{
+						method:       "min",
+						start:        cut,
+						end:          end,
+						endExclusive: false,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 30},
+								},
+							},
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 7},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: mock.TimeSeriesList{
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "api"}},
+					Samples: []prompb.Sample{
+						{Timestamp: start.UnixMilli(), Value: 10},
+					},
+				},
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+					Samples: []prompb.Sample{
+						{Timestamp: start.UnixMilli(), Value: 7},
+					},
+				},
+			},
+		},
+		"跨切换点取最大值": {
+			method: "max",
+			start:  start,
+			end:    end,
+			routes: query.StorageClusterRecords{
+				{StorageID: "旧存储", EnableTime: start.Add(-time.Hour).Unix()},
+				{StorageID: "新存储", EnableTime: cut.Unix()},
+			},
+			storages: map[string][]storageResponse{
+				"旧存储": {
+					{
+						method:       "max",
+						start:        start,
+						end:          cut,
+						endExclusive: true,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 20},
+								},
+							},
+						},
+					},
+				},
+				"新存储": {
+					{
+						method:       "max",
+						start:        cut,
+						end:          end,
+						endExclusive: false,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 50},
+								},
+							},
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 7},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: mock.TimeSeriesList{
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "api"}},
+					Samples: []prompb.Sample{
+						{Timestamp: start.UnixMilli(), Value: 50},
+					},
+				},
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+					Samples: []prompb.Sample{
+						{Timestamp: start.UnixMilli(), Value: 7},
+					},
+				},
+			},
+		},
+		"跨切换点按有效值数量加权平均": {
+			method: "avg",
+			start:  start,
+			end:    end,
+			routes: query.StorageClusterRecords{
+				{StorageID: "旧存储", EnableTime: start.Add(-time.Hour).Unix()},
+				{StorageID: "新存储", EnableTime: cut.Unix()},
+			},
+			storages: map[string][]storageResponse{
+				"旧存储": {
+					{
+						method:       "sum",
+						start:        start,
+						end:          cut,
+						endExclusive: true,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 30},
+								},
+							},
+						},
+					},
+					{
+						method:       "count",
+						start:        start,
+						end:          cut,
+						endExclusive: true,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 2},
+								},
+							},
+						},
+					},
+				},
+				"新存储": {
+					{
+						method:       "sum",
+						start:        cut,
+						end:          end,
+						endExclusive: false,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 120},
+								},
+							},
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 7},
+								},
+							},
+						},
+					},
+					{
+						method:       "count",
+						start:        cut,
+						end:          end,
+						endExclusive: false,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 3},
+								},
+							},
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 1},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: mock.TimeSeriesList{
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "api"}},
+					Samples: []prompb.Sample{
+						{Timestamp: start.UnixMilli(), Value: 30},
+					},
+				},
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+					Samples: []prompb.Sample{
+						{Timestamp: start.UnixMilli(), Value: 7},
+					},
+				},
+			},
+		},
+		"跨切换点无分组计数": {
+			method: "count",
+			start:  start,
+			end:    end,
+			routes: query.StorageClusterRecords{
+				{StorageID: "旧存储", EnableTime: start.Add(-time.Hour).Unix()},
+				{StorageID: "新存储", EnableTime: cut.Unix()},
+			},
+			storages: map[string][]storageResponse{
+				"旧存储": {
+					{
+						method:       "count",
+						start:        start,
+						end:          cut,
+						endExclusive: true,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 2},
+								},
+							},
+						},
+					},
+				},
+				"新存储": {
+					{
+						method:       "count",
+						start:        cut,
+						end:          end,
+						endExclusive: false,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 5},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: mock.TimeSeriesList{
+				{
+					Labels: []prompb.Label{},
+					Samples: []prompb.Sample{
+						{Timestamp: start.UnixMilli(), Value: 7},
+					},
+				},
+			},
+		},
+		"跨切换点无分组加权平均": {
+			method: "avg",
+			start:  start,
+			end:    end,
+			routes: query.StorageClusterRecords{
+				{StorageID: "旧存储", EnableTime: start.Add(-time.Hour).Unix()},
+				{StorageID: "新存储", EnableTime: cut.Unix()},
+			},
+			storages: map[string][]storageResponse{
+				"旧存储": {
+					{
+						method:       "sum",
+						start:        start,
+						end:          cut,
+						endExclusive: true,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 30},
+								},
+							},
+						},
+					},
+					{
+						method:       "count",
+						start:        start,
+						end:          cut,
+						endExclusive: true,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 2},
+								},
+							},
+						},
+					},
+				},
+				"新存储": {
+					{
+						method:       "sum",
+						start:        cut,
+						end:          end,
+						endExclusive: false,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 127},
+								},
+							},
+						},
+					},
+					{
+						method:       "count",
+						start:        cut,
+						end:          end,
+						endExclusive: false,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 4},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: mock.TimeSeriesList{
+				{
+					Labels: []prompb.Label{},
+					Samples: []prompb.Sample{
+						{Timestamp: start.UnixMilli(), Value: 157.0 / 6},
+					},
+				},
+			},
+		},
+		"结束时间等于切换点": {
+			method: "count",
+			start:  start,
+			end:    cut,
+			routes: query.StorageClusterRecords{
+				{StorageID: "旧存储", EnableTime: start.Add(-time.Hour).Unix()},
+				{StorageID: "新存储", EnableTime: cut.Unix()},
+			},
+			storages: map[string][]storageResponse{
+				"旧存储": {
+					{
+						method:       "count",
+						start:        start,
+						end:          cut,
+						endExclusive: true,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 2},
+								},
+							},
+						},
+					},
+				},
+				"新存储": {
+					{
+						method:       "count",
+						start:        cut,
+						end:          cut,
+						endExclusive: false,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 1},
+								},
+							},
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+								Samples: []prompb.Sample{
+									{Timestamp: start.UnixMilli(), Value: 1},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: mock.TimeSeriesList{
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "api"}},
+					Samples: []prompb.Sample{
+						{Timestamp: start.UnixMilli(), Value: 3},
+					},
+				},
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+					Samples: []prompb.Sample{
+						{Timestamp: start.UnixMilli(), Value: 1},
+					},
+				},
+			},
+		},
+		"仅查询切换点": {
+			method: "count",
+			start:  cut,
+			end:    cut,
+			routes: query.StorageClusterRecords{
+				{StorageID: "旧存储", EnableTime: start.Add(-time.Hour).Unix()},
+				{StorageID: "新存储", EnableTime: cut.Unix()},
+			},
+			storages: map[string][]storageResponse{
+				"新存储": {
+					{
+						method:       "count",
+						start:        cut,
+						end:          cut,
+						endExclusive: false,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: cut.UnixMilli(), Value: 1},
+								},
+							},
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+								Samples: []prompb.Sample{
+									{Timestamp: cut.UnixMilli(), Value: 1},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: mock.TimeSeriesList{
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "api"}},
+					Samples: []prompb.Sample{
+						{Timestamp: cut.UnixMilli(), Value: 1},
+					},
+				},
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+					Samples: []prompb.Sample{
+						{Timestamp: cut.UnixMilli(), Value: 1},
+					},
+				},
+			},
+		},
+		"切换点前后各一微秒": {
+			method: "sum",
+			start:  cut.Add(-time.Microsecond),
+			end:    cut.Add(time.Microsecond),
+			routes: query.StorageClusterRecords{
+				{StorageID: "旧存储", EnableTime: start.Add(-time.Hour).Unix()},
+				{StorageID: "新存储", EnableTime: cut.Unix()},
+			},
+			storages: map[string][]storageResponse{
+				"旧存储": {
+					{
+						method:       "sum",
+						start:        cut.Add(-time.Microsecond),
+						end:          cut,
+						endExclusive: true,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: cut.Add(-time.Microsecond).UnixMilli(), Value: 20},
+								},
+							},
+						},
+					},
+				},
+				"新存储": {
+					{
+						method:       "sum",
+						start:        cut,
+						end:          cut.Add(time.Microsecond),
+						endExclusive: false,
+						series: mock.TimeSeriesList{
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "api"}},
+								Samples: []prompb.Sample{
+									{Timestamp: cut.Add(-time.Microsecond).UnixMilli(), Value: 70},
+								},
+							},
+							{
+								Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+								Samples: []prompb.Sample{
+									{Timestamp: cut.Add(-time.Microsecond).UnixMilli(), Value: 7},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: mock.TimeSeriesList{
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "api"}},
+					Samples: []prompb.Sample{
+						{Timestamp: cut.Add(-time.Microsecond).UnixMilli(), Value: 90},
+					},
+				},
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+					Samples: []prompb.Sample{
+						{Timestamp: cut.Add(-time.Microsecond).UnixMilli(), Value: 7},
+					},
+				},
+			},
+		},
+	}
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx := metadata.InitHashID(context.Background())
+			metadata.GetQueryParams(ctx).
+				SetTime(c.start, c.start, c.end, time.Minute, "ms", "UTC").
+				SetIsReference(true)
+			router := query.TsDBV2{
+				StorageType:           metadata.ElasticsearchStorageType,
+				StorageClusterRecords: c.routes,
+			}
+			type storageQuery struct {
+				storageID, method string
+				start, end        time.Time
+				endExclusive      bool
+			}
+			var wantQueries, gotQueries []storageQuery
+			for storageID, responses := range c.storages {
+				for _, response := range responses {
+					wantQueries = append(wantQueries, storageQuery{storageID, response.method, response.start, response.end, response.endExclusive})
+				}
+			}
+			var mu sync.Mutex
+			var queries QueryList
+			for _, route := range router.GetStorageIDRangesWithDirectionalOverlap(c.start, c.end, 0, 0) {
+				storageID := route.StorageID
+				backend := &rangeAggregateTestStorage{
+					selectSeries: func(q *metadata.Query, from, to time.Time) storage.SeriesSet {
+						method := q.Aggregates.OuterAggName()
+						mu.Lock()
+						gotQueries = append(gotQueries, storageQuery{q.StorageID, method, from, to, q.RangeEndExclusive})
+						mu.Unlock()
+						assert.True(t, q.IsRangeAggregation)
+						assert.Equal(t, storageID, q.StorageID)
+						for _, response := range c.storages[storageID] {
+							if response.method != method || !response.start.Equal(from) || !response.end.Equal(to) || response.endExclusive != q.RangeEndExclusive {
+								continue
+							}
+							result := &prompb.QueryResult{}
+							for i := range response.series {
+								result.Timeseries = append(result.Timeseries, &response.series[i])
+							}
+							return promRemote.FromQueryResult(true, result)
+						}
+						return storage.ErrSeriesSet(fmt.Errorf("%s 收到未预期的查询：%s [%s,%s] 排他上界=%t", storageID, method, from, to, q.RangeEndExclusive))
+					},
+				}
+				queries = append(queries, &Query{
+					instance: backend,
+					qry: &metadata.Query{
+						StorageID:   storageID,
+						StorageType: metadata.ElasticsearchStorageType,
+						Field:       "value",
+						Aggregates:  metadata.Aggregates{{Name: c.method}},
+					},
+					start:        route.Start,
+					end:          route.End,
+					endInclusive: route.EndInclusive,
+					queryStart:   route.QueryStart,
+					queryEnd:     route.QueryEnd,
+				})
+			}
+			require.True(t, queries.hasRoutedRangeAggregate())
+			querier := NewQuerier(ctx, c.start, c.end, 4, time.Second)
+			actual, err := mock.SeriesSetToTimeSeries(querier.selectRangeAggregate(ctx, queries))
+			require.NoError(t, err)
+			assert.ElementsMatch(t, wantQueries, gotQueries)
+			assert.ElementsMatch(t, c.want, actual)
+			assert.Nil(t, metadata.GetStatus(ctx))
 		})
 	}
 }

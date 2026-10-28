@@ -11,11 +11,14 @@ package prometheus
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jarcoal/httpmock"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/prometheus/model/histogram"
 	"github.com/prometheus/prometheus/model/labels"
@@ -31,6 +34,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 )
 
 var (
@@ -1339,7 +1343,7 @@ NaN @[360000]`,
 	}
 }
 
-// rangeAggregateTestStorage 直接返回存储侧序列，不模拟文档查询和聚合。
+// rangeAggregateTestStorage 通过回调提供存储序列，复用通用存储接口的默认实现。
 type rangeAggregateTestStorage struct {
 	tsdb.DefaultInstance
 	selectSeries func(*metadata.Query, time.Time, time.Time) storage.SeriesSet
@@ -1347,6 +1351,86 @@ type rangeAggregateTestStorage struct {
 
 func (s *rangeAggregateTestStorage) QuerySeriesSet(_ context.Context, q *metadata.Query, start, end time.Time) storage.SeriesSet {
 	return s.selectSeries(q, start, end)
+}
+
+type rangeAggregateTestDocument struct {
+	id        string
+	timestamp time.Time
+	service   string
+	value     float64
+}
+
+// 重叠数据用例使用真实 ES 适配器；存储替身仅执行收到的 range 和按 service 分组的 SUM。
+// 不读取路由配置或预期聚合值，确保裁剪错误会改变参与聚合的文档和最终结果。
+func newRangeAggregateDocumentStorage(t *testing.T, ctx context.Context, address string, documents []rangeAggregateTestDocument, wantIDs []string) *elasticsearch.Instance {
+	t.Helper()
+	indexURL := address + "/cutover"
+	searchURL := indexURL + "/_search"
+	httpmock.RegisterResponder(http.MethodGet, indexURL, httpmock.NewStringResponder(http.StatusOK,
+		`{"cutover":{"mappings":{"properties":{"event_time":{"type":"long"},"service":{"type":"keyword"},"value":{"type":"double"}}}}}`))
+	httpmock.RegisterResponder(http.MethodPost, searchURL, func(request *http.Request) (*http.Response, error) {
+		var body struct {
+			Query struct {
+				Bool struct {
+					Filter struct {
+						Range map[string]struct {
+							From         int64 `json:"from"`
+							To           int64 `json:"to"`
+							IncludeLower bool  `json:"include_lower"`
+							IncludeUpper bool  `json:"include_upper"`
+						} `json:"range"`
+					} `json:"filter"`
+				} `json:"bool"`
+			} `json:"query"`
+			Aggregations json.RawMessage `json:"aggregations"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			return nil, err
+		}
+		bounds, ok := body.Query.Bool.Filter.Range["event_time"]
+		if !ok {
+			return nil, fmt.Errorf("重叠数据查询缺少 event_time 范围")
+		}
+		assert.JSONEq(t, `{"service":{"terms":{"field":"service","size":100,"missing":" "},"aggregations":{"_value":{"sum":{"field":"value"}}}}}`, string(body.Aggregations))
+		var selectedIDs []string
+		sums := make(map[string]float64)
+		counts := make(map[string]int)
+		for _, document := range documents {
+			timestamp := document.timestamp.UnixMicro()
+			if timestamp < bounds.From || timestamp == bounds.From && !bounds.IncludeLower {
+				continue
+			}
+			if timestamp > bounds.To || timestamp == bounds.To && !bounds.IncludeUpper {
+				continue
+			}
+			selectedIDs = append(selectedIDs, document.id)
+			sums[document.service] += document.value
+			counts[document.service]++
+		}
+		assert.ElementsMatch(t, wantIDs, selectedIDs, "%s 实际参与聚合的原始文档", address)
+		buckets := make([]map[string]any, 0, len(sums))
+		for service, sum := range sums {
+			buckets = append(buckets, map[string]any{
+				"key":       service,
+				"doc_count": counts[service],
+				"_value":    map[string]any{"value": sum},
+			})
+		}
+		return httpmock.NewJsonResponse(http.StatusOK, map[string]any{
+			"aggregations": map[string]any{"service": map[string]any{"buckets": buckets}},
+		})
+	})
+	t.Cleanup(func() {
+		httpmock.RegisterResponder(http.MethodGet, indexURL, nil)
+		httpmock.RegisterResponder(http.MethodPost, searchURL, nil)
+	})
+	instance, err := elasticsearch.NewInstance(ctx, &elasticsearch.InstanceOption{
+		Connect: elasticsearch.Connect{Address: address},
+		MaxSize: 100,
+		Timeout: time.Second,
+	})
+	require.NoError(t, err)
+	return instance
 }
 
 func TestSelectRangeAggregate(t *testing.T) {
@@ -1360,6 +1444,9 @@ func TestSelectRangeAggregate(t *testing.T) {
 		start, end   time.Time
 		endExclusive bool
 		series       mock.TimeSeriesList
+		// 重叠数据用例改用原始文档驱动存储响应，并检查实际参与聚合的文档 ID。
+		documents       []rangeAggregateTestDocument
+		wantDocumentIDs []string
 	}
 	// 路由按秒配置，样本时间戳为毫秒；查询范围仍保留微秒精度。
 	// 无时间分桶时，存储返回的单点是区间聚合结果，不能按该点的虚拟时间戳再裁剪。
@@ -1515,7 +1602,7 @@ func TestSelectRangeAggregate(t *testing.T) {
 				},
 			},
 		},
-		"跨切换点求和不重复": {
+		"跨切换点按路由范围合并求和结果": {
 			method: "sum",
 			start:  start,
 			end:    end,
@@ -1574,6 +1661,71 @@ func TestSelectRangeAggregate(t *testing.T) {
 					Labels: []prompb.Label{{Name: "service", Value: "worker"}},
 					Samples: []prompb.Sample{
 						{Timestamp: start.UnixMilli(), Value: 7},
+					},
+				},
+			},
+		},
+		"新旧存储重叠文档按路由裁剪后求和不重复": {
+			method: "sum",
+			start:  start,
+			end:    end,
+			routes: query.StorageClusterRecords{
+				{StorageID: "旧存储", EnableTime: start.Add(-time.Hour).Unix()},
+				{StorageID: "新存储", EnableTime: cut.Unix()},
+			},
+			storages: map[string][]storageResponse{
+				"旧存储": {
+					{
+						method:       "sum",
+						start:        start,
+						end:          cut,
+						endExclusive: true,
+						// 两侧保留相同 ID、时间和值的迁移副本，包含查询范围外的干扰数据。
+						documents: []rangeAggregateTestDocument{
+							{id: "范围前", timestamp: start.Add(-time.Microsecond), service: "api", value: 1000},
+							{id: "起点", timestamp: start, service: "api", value: 10},
+							{id: "切换前", timestamp: cut.Add(-time.Microsecond), service: "api", value: 20},
+							{id: "切换点", timestamp: cut, service: "api", value: 30},
+							{id: "切换后", timestamp: cut.Add(time.Microsecond), service: "api", value: 40},
+							{id: "终点", timestamp: end, service: "api", value: 50},
+							{id: "范围后", timestamp: end.Add(time.Microsecond), service: "api", value: 2000},
+							{id: "后台任务", timestamp: cut, service: "worker", value: 7},
+						},
+						wantDocumentIDs: []string{"起点", "切换前"},
+					},
+				},
+				"新存储": {
+					{
+						method:       "sum",
+						start:        cut,
+						end:          end,
+						endExclusive: false,
+						documents: []rangeAggregateTestDocument{
+							{id: "范围前", timestamp: start.Add(-time.Microsecond), service: "api", value: 1000},
+							{id: "起点", timestamp: start, service: "api", value: 10},
+							{id: "切换前", timestamp: cut.Add(-time.Microsecond), service: "api", value: 20},
+							{id: "切换点", timestamp: cut, service: "api", value: 30},
+							{id: "切换后", timestamp: cut.Add(time.Microsecond), service: "api", value: 40},
+							{id: "终点", timestamp: end, service: "api", value: 50},
+							{id: "范围后", timestamp: end.Add(time.Microsecond), service: "api", value: 2000},
+							{id: "后台任务", timestamp: cut, service: "worker", value: 7},
+						},
+						wantDocumentIDs: []string{"切换点", "切换后", "终点", "后台任务"},
+					},
+				},
+			},
+			want: mock.TimeSeriesList{
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "api"}},
+					Samples: []prompb.Sample{
+						// 旧存储 10+20，新存储 30+40+50；相同文档的另一份副本被路由范围排除。
+						{Timestamp: start.UnixMilli(), Value: 150},
+					},
+				},
+				{
+					Labels: []prompb.Label{{Name: "service", Value: "worker"}},
+					Samples: []prompb.Sample{
+						{Timestamp: start.UnixMilli(), Value: 7}, // 切换点只归新存储，旧存储的副本不参与。
 					},
 				},
 			},
@@ -1926,7 +2078,7 @@ func TestSelectRangeAggregate(t *testing.T) {
 				{
 					Labels: []prompb.Label{},
 					Samples: []prompb.Sample{
-						{Timestamp: start.UnixMilli(), Value: 157.0 / 6},
+						{Timestamp: start.UnixMilli(), Value: 157.0 / 6}, // (旧存储 SUM 30 + 新存储 SUM 127) / (旧存储 COUNT 2 + 新存储 COUNT 4)。
 					},
 				},
 			},
@@ -2129,8 +2281,14 @@ func TestSelectRangeAggregate(t *testing.T) {
 			}
 			var mu sync.Mutex
 			var queries QueryList
-			for _, route := range router.GetStorageIDRangesWithDirectionalOverlap(c.start, c.end, 0, 0) {
+			for routeIndex, route := range router.GetStorageIDRangesWithDirectionalOverlap(c.start, c.end, 0, 0) {
 				storageID := route.StorageID
+				var documentStorage *elasticsearch.Instance
+				responses := c.storages[storageID]
+				if len(responses) == 1 && responses[0].documents != nil {
+					documentStorage = newRangeAggregateDocumentStorage(t, ctx,
+						fmt.Sprintf("http://cutover-%d.example.test", routeIndex), responses[0].documents, responses[0].wantDocumentIDs)
+				}
 				backend := &rangeAggregateTestStorage{
 					selectSeries: func(q *metadata.Query, from, to time.Time) storage.SeriesSet {
 						method := q.Aggregates.OuterAggName()
@@ -2139,6 +2297,10 @@ func TestSelectRangeAggregate(t *testing.T) {
 						mu.Unlock()
 						assert.True(t, q.IsRangeAggregation)
 						assert.Equal(t, storageID, q.StorageID)
+						if documentStorage != nil {
+							// 直接执行实际请求，不按预期边界匹配固定响应，以便裁剪错误反映在结果值上。
+							return documentStorage.QuerySeriesSet(ctx, q, from, to)
+						}
 						for _, response := range c.storages[storageID] {
 							if response.method != method || !response.start.Equal(from) || !response.end.Equal(to) || response.endExclusive != q.RangeEndExclusive {
 								continue
@@ -2152,14 +2314,20 @@ func TestSelectRangeAggregate(t *testing.T) {
 						return storage.ErrSeriesSet(fmt.Errorf("%s 收到未预期的查询：%s [%s,%s] 排他上界=%t", storageID, method, from, to, q.RangeEndExclusive))
 					},
 				}
+				storageQuery := &metadata.Query{
+					StorageID:   storageID,
+					StorageType: metadata.ElasticsearchStorageType,
+					Field:       "value",
+					Aggregates:  metadata.Aggregates{{Name: c.method}},
+				}
+				if documentStorage != nil {
+					storageQuery.DB = "cutover"
+					storageQuery.TimeField = metadata.TimeField{Name: "event_time", Type: elasticsearch.TimeFieldTypeInt, Unit: function.Microsecond}
+					storageQuery.Aggregates[0].Dimensions = []string{"service"}
+				}
 				queries = append(queries, &Query{
-					instance: backend,
-					qry: &metadata.Query{
-						StorageID:   storageID,
-						StorageType: metadata.ElasticsearchStorageType,
-						Field:       "value",
-						Aggregates:  metadata.Aggregates{{Name: c.method}},
-					},
+					instance:     backend,
+					qry:          storageQuery,
 					start:        route.Start,
 					end:          route.End,
 					endInclusive: route.EndInclusive,

@@ -12,6 +12,7 @@ package converter
 import (
 	"fmt"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
@@ -539,8 +540,15 @@ func assertAggregateResult(t testing.TB, expect map[string]float64, totalEvents 
 
 func TestTarsStatAggregate(t *testing.T) {
 	var totalEvents []define.Event
+	var mu sync.Mutex
+	var handled float64
 	gatherFunc := func(events ...define.Event) {
+		mu.Lock()
+		defer mu.Unlock()
 		totalEvents = append(totalEvents, events...)
+		for _, event := range events {
+			handled += cast.ToFloat64(event.Data()["metrics"].(common.MapStr)["rpc_client_handled_total"])
+		}
 	}
 
 	conv := newTarsConverter(&TarsConfig{IsDropOriginal: true, IsDeriveServerView: true})
@@ -550,8 +558,8 @@ func TestTarsStatAggregate(t *testing.T) {
 		conv.Convert(getTarsStatRecord(), gatherFunc)
 	}
 
-	// 等待一段时间，确保所有事件都被处理
-	time.Sleep(500 * time.Millisecond)
+	assert.Eventually(t, func() bool { mu.Lock(); defer mu.Unlock(); return handled == 400000 }, 5*time.Second, 10*time.Millisecond)
+	conv.Clean()
 
 	expect := map[string]float64{
 		"rpc_client_handled_seconds_sum":    100,
@@ -568,8 +576,15 @@ func TestTarsStatAggregate(t *testing.T) {
 
 func TestTarsStatAggregateDropServices(t *testing.T) {
 	var totalEvents []define.Event
+	var mu sync.Mutex
+	var handled float64
 	gatherFunc := func(events ...define.Event) {
+		mu.Lock()
+		defer mu.Unlock()
 		totalEvents = append(totalEvents, events...)
+		for _, event := range events {
+			handled += cast.ToFloat64(event.Data()["metrics"].(common.MapStr)["rpc_server_handled_total"])
+		}
 	}
 
 	conv := newTarsConverter(&TarsConfig{IsDropOriginal: true, IsDeriveServerView: true, DropOriginalServices: []string{"TestApp.HelloGo"}})
@@ -577,8 +592,8 @@ func TestTarsStatAggregateDropServices(t *testing.T) {
 
 	conv.Convert(getTarsStatRecord(), gatherFunc)
 
-	// 等待一段时间，确保所有事件都被处理
-	time.Sleep(500 * time.Millisecond)
+	assert.Eventually(t, func() bool { mu.Lock(); defer mu.Unlock(); return handled == 4 }, 5*time.Second, 10*time.Millisecond)
+	conv.Clean()
 
 	expect := map[string]float64{
 		// 主调转被调，原始数据没有被丢弃。

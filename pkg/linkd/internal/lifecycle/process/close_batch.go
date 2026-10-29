@@ -26,7 +26,7 @@ type closeBatchProjection interface {
 	ProjectBatchNow(context.Context, string, []string) []error
 }
 
-// CloseAlerts 使用独立预算显式执行关闭批次，整个 HTTP 请求仍受十秒截止约束。
+// CloseAlerts 使用独立预算显式执行关闭批次，整个 HTTP 请求受二十秒截止约束。
 // 存储和投影必须提供批量能力，不退回逐条 CloseAlert。结果按输入顺序返回。
 func (s *AlertCloser) CloseAlerts(ctx context.Context, commands []lifecycle.CloseAlertCommand) []lifecycle.CloseAlertOutcome {
 	results := make([]lifecycle.CloseAlertOutcome, len(commands))
@@ -64,25 +64,34 @@ func (s *AlertCloser) CloseAlerts(ctx context.Context, commands []lifecycle.Clos
 	default:
 		return fail(&CloseError{Status: 429, Code: "busy", Message: "close capacity exceeded"})
 	}
-	ctx, cancel := context.WithTimeout(s.resources.context(ctx), 10*time.Second)
+	ctx, cancel := context.WithTimeout(s.resources.context(ctx), 20*time.Second)
 	defer cancel()
 	ctx = store.WithBatchPhaseObserver(ctx, s.metrics.ObserveClosePhase)
 	started := time.Now()
 	defer func() { store.ObserveBatchPhase(ctx, "batch.total", time.Since(started)) }()
+	// 冷启动按此前千条实测约七秒留整估计；后续采用本请求已完成批次的平均墙钟。
+	estimate, spent, completed := 8*time.Second, time.Duration(0), 0
 	for start := 0; start < len(commands); start += max(1, s.batchSize) {
 		end := min(start+max(1, s.batchSize), len(commands))
-		if ctx.Err() != nil {
+		if !closeBatchFitsBudget(ctx, estimate) {
 			for i := start; i < len(commands); i++ {
-				results[i].Err = &CloseError{Status: 504, Code: "not_attempted", Message: "request ended before this alert was attempted; retry the same operation", cause: ctx.Err()}
+				results[i].Err = &CloseError{Status: 504, Code: "not_attempted", Message: "remaining request budget is below estimated batch duration; retry the same operation", cause: ctx.Err()}
 			}
 			break
 		}
+		waveStarted := time.Now()
 		copy(results[start:end], s.closeAlertsWave(ctx, commands[start:end]))
+		spent += time.Since(waveStarted)
+		completed++
+		estimate = spent / time.Duration(completed)
 	}
 	return results
 }
 
 func (s *AlertCloser) closeAlertsWave(ctx context.Context, commands []lifecycle.CloseAlertCommand) []lifecycle.CloseAlertOutcome {
+	notifications := &closeBatchNotifications{}
+	ctx = context.WithValue(ctx, closeBatchNotificationsKey{}, notifications)
+	defer notifications.flush(ctx, s.logger)
 	results := s.closeBatch(ctx, commands)
 	ids, positions := []string{}, []int{}
 	for i := range results {
@@ -283,4 +292,13 @@ func (s *AlertCloser) closeBatch(ctx context.Context, commands []lifecycle.Close
 	}
 	batches.Wait()
 	return results
+}
+
+// closeBatchFitsBudget 在取锁和发送读写前检查预估预算；估计不承诺消除外部存储抖动。
+func closeBatchFitsBudget(ctx context.Context, estimate time.Duration) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	deadline, ok := ctx.Deadline()
+	return !ok || time.Until(deadline) > estimate
 }

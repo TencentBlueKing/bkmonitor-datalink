@@ -194,7 +194,11 @@ func (a *API) Handler() http.Handler {
 			}
 			r = r.WithContext(internaltoken.WithUsername(r.Context(), username))
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		budget := 10 * time.Second
+		if r.Method == http.MethodPost && route == "POST /api/v1/alerts/close" {
+			budget = 20 * time.Second
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), budget)
 		defer cancel()
 		mux.ServeHTTP(w, r.WithContext(ctx))
 	})

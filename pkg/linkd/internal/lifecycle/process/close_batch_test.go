@@ -175,7 +175,7 @@ func TestCloseBatch5000IsIndependentOfSingleCloseSlots(t *testing.T) {
 			t.Fatal(result.Err)
 		}
 	}
-	if repo.reads.Load() != 2 || repo.writes.Load() != 1 || repo.logs.Load() != 10 || cache.batches.Load() != 1 || cache.items.Load() != 5000 || held.Load() != 0 || len(closer.batchSlots) != 0 {
+	if repo.reads.Load() != 2 || repo.writes.Load() != 1 || repo.logs.Load() != 1 || cache.batches.Load() != 1 || cache.items.Load() != 5000 || held.Load() != 0 || len(closer.batchSlots) != 0 {
 		t.Fatal("large close was split by single capacity", repo.reads.Load(), repo.writes.Load(), repo.logs.Load(), cache.batches.Load())
 	}
 	for range cap(closer.slots) {

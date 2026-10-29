@@ -209,7 +209,7 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 		defer func() { runErr = errors.Join(runErr, client.Close()) }()
 	}
 	lockConfig := cfg.Lifecycle.ForSource(cfg.Dispatch.WithDefaults().Deployment, stored.Alert.EventSourceID).SchedulerConfig()
-	// 单次请求最多十秒，lease 至少三十秒；不启动额外续租 goroutine。
+	// 筛选关闭最多二十秒，lease 至少三十秒；不启动额外续租 goroutine。
 	// 与 Worker 共用 tenant/source/fingerprint 锁，避免旧终态缓存覆盖新生命周期。
 	lockConfig.LockTTL = max(lockConfig.LockTTL, 30*time.Second)
 	locker, err := scheduler.NewRedisLocker(client, lockConfig)
@@ -233,7 +233,11 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 		cleanup = shared.cleanup
 	}
 	opts := []lifecycle.ProcessorOption{lifecycle.WithNewAlertSuppressor(&policyruntime.Suppressor{State: policyState, Aggregation: policyState, BatchState: policyState, Observer: metrics, Logger: logger, CleanupRecorder: cleanup}), lifecycle.WithDependencyRegistry(&policyruntime.Shielder{Dependency: policyState, Index: policyState, Hints: policyState, Observer: metrics, Logger: logger})}
-	opts = append(opts, lifecycle.WithAlertChangePublisher(changePublisher(cfg, client, metrics)), lifecycle.WithActiveAlertCache(activeindex.New(client, cfg.Dispatch.WithDefaults().Deployment, release.Spec, metrics)))
+	publisher := changePublisher(cfg, client, metrics)
+	if pending, ok := ctx.Value(closeBatchNotificationsKey{}).(*closeBatchNotifications); ok && publisher != nil {
+		publisher = pending.use(publisher)
+	}
+	opts = append(opts, lifecycle.WithAlertChangePublisher(publisher), lifecycle.WithActiveAlertCache(activeindex.New(client, cfg.Dispatch.WithDefaults().Deployment, release.Spec, metrics)))
 	if configure != nil {
 		opts = append(opts, configure(observed, policyState)...)
 	}

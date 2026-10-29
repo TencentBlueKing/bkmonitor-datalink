@@ -282,8 +282,8 @@ func (p *Processor) CloseAlerts(ctx context.Context, commands []CloseAlertComman
 			}
 		}
 		started = time.Now()
-		for start := 0; start < len(allLogs); start += store.MaxBatchSize {
-			end := min(start+store.MaxBatchSize, len(allLogs))
+		for start := 0; start < len(allLogs); start += store.MaxAlertLogBatchSize {
+			end := min(start+store.MaxAlertLogBatchSize, len(allLogs))
 			items, err := p.repository.AppendAlertLogs(ctx, allLogs[start:end])
 			for j := start; j < end; j++ {
 				itemErr := err

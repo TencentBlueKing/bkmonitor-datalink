@@ -54,11 +54,11 @@ func (r *Repository) AppendAlertLogs(
 	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
-	if len(logs) == 0 || len(logs) > store.MaxBatchSize {
+	if len(logs) == 0 || len(logs) > store.MaxAlertLogBatchSize {
 		return nil, fmt.Errorf(
 			"%w: alert log batch size must be between 1 and %d",
 			store.ErrInvalidArgument,
-			store.MaxBatchSize,
+			store.MaxAlertLogBatchSize,
 		)
 	}
 	results := make([]store.AppendAlertLogItemResult, len(logs))
@@ -78,7 +78,20 @@ func (r *Repository) AppendAlertLogs(
 		if len(indices) == 0 {
 			continue
 		}
-		if err := r.createAlertLogBulkGroup(ctx, prepared, indices, requireAlias, results); err != nil {
+		start, size := 0, 0
+		for end, index := range indices {
+			item := prepared[index]
+			metadata, _ := json.Marshal(map[string]any{"create": map[string]string{"_index": item.writeTarget, "_id": item.documentID}})
+			n := len(metadata) + len(item.body) + 2
+			if end > start && size+n > r.config.MaxRequestBytes {
+				if err := r.createAlertLogBulkGroup(ctx, prepared, indices[start:end], requireAlias, results); err != nil {
+					return nil, err
+				}
+				start, size = end, 0
+			}
+			size += n
+		}
+		if err := r.createAlertLogBulkGroup(ctx, prepared, indices[start:], requireAlias, results); err != nil {
 			return nil, err
 		}
 	}

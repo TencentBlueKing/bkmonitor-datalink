@@ -21,6 +21,8 @@ const (
 	DefaultPageSize = 100
 	MaxPageSize     = 500
 	MaxBatchSize    = 500
+	// MaxAlertLogBatchSize 允许小体积流水按关闭批次提交；各后端仍按请求字节预算切块。
+	MaxAlertLogBatchSize = 5000
 )
 
 // VersionToken 是由具体存储产生、只供单对象 CAS 原样回传的不透明令牌。

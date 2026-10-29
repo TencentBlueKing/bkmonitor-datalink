@@ -63,7 +63,10 @@ func TestFilteredCloseCallsBatchOnceAndKeepsCandidateOrder(t *testing.T) {
 	closer := filteredBatchCloser{closeFunc: func(context.Context, lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
 		t.Error("filtered close fell back to single CloseAlert")
 		return lifecycle.CloseAlertResult{}, nil
-	}, batch: func(_ context.Context, commands []lifecycle.CloseAlertCommand) []lifecycle.CloseAlertOutcome {
+	}, batch: func(ctx context.Context, commands []lifecycle.CloseAlertCommand) []lifecycle.CloseAlertOutcome {
+		if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) < 19*time.Second || time.Until(deadline) > 20*time.Second {
+			t.Fatal("filtered close does not have twenty-second budget", deadline)
+		}
 		calls++
 		if len(commands) != 2 || commands[0].AlertID != "a" || commands[1].AlertID != "b" || commands[0].OperationID != commands[1].OperationID {
 			t.Fatal(commands)

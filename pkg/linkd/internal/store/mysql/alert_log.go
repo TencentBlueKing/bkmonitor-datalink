@@ -43,7 +43,7 @@ func (r *Repository) AppendAlertLogs(ctx context.Context, logs []domain.AlertLog
 	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
-	if len(logs) == 0 || len(logs) > store.MaxBatchSize {
+	if len(logs) == 0 || len(logs) > store.MaxAlertLogBatchSize {
 		return nil, store.ErrInvalidArgument
 	}
 	// 已形成的多行批次直接落库，不再等待自动合批器中的其他调用。

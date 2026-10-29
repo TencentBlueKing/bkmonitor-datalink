@@ -743,11 +743,11 @@ func (r *Repository) AppendAlertLogs(
 	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
-	if len(logs) == 0 || len(logs) > store.MaxBatchSize {
+	if len(logs) == 0 || len(logs) > store.MaxAlertLogBatchSize {
 		return nil, fmt.Errorf(
 			"%w: alert log batch size must be between 1 and %d",
 			store.ErrInvalidArgument,
-			store.MaxBatchSize,
+			store.MaxAlertLogBatchSize,
 		)
 	}
 	results := make([]store.AppendAlertLogItemResult, len(logs))

@@ -28,6 +28,7 @@ func TestLegacyTimeGraphMatchesVMTimePrecision(t *testing.T) {
 		for _, tc := range []struct {
 			name, start, end, step string
 			instant                bool
+			cacheStart, cacheEnd   int64
 		}{
 			{name: "instant seconds", start: "1700000070", instant: true},
 			{name: "instant aligned milliseconds", start: "1700000070000", instant: true},
@@ -40,6 +41,16 @@ func TestLegacyTimeGraphMatchesVMTimePrecision(t *testing.T) {
 			{name: "fractional step retains window", start: "1700000070123", end: "1700000073987", step: "1500ms"},
 			{name: "same wire second", start: "1700000070123", end: "1700000070987", step: "1m"},
 			{name: "day window", start: "1700000070123", end: "1700086470987", step: "1d"},
+			// Expected cached grids from VM AdjustStartEnd; 50 points is inclusive.
+			{name: "bkte default step", start: "1793259612", end: "1793263212", cacheStart: 1793259600, cacheEnd: 1793263200},
+			{name: "bkte explicit 60s", start: "1793259612", end: "1793263212", step: "60s", cacheStart: 1793259600, cacheEnd: 1793263200},
+			{name: "49 points keep offset", start: "1793259612", end: "1793262492", step: "60s"},
+			{name: "50 points align", start: "1793259612", end: "1793262552", step: "60s", cacheStart: 1793259600, cacheEnd: 1793262540},
+			{name: "50 points with tail", start: "1793259612", end: "1793262601", step: "60s", cacheStart: 1793259600, cacheEnd: 1793262540},
+			{name: "cached short step", start: "1793259612", end: "1793260102", step: "10s", cacheStart: 1793259610, cacheEnd: 1793260100},
+			{name: "cached millisecond input", start: "1793259612123", end: "1793263212987", step: "60s", cacheStart: 1793259600, cacheEnd: 1793263200},
+			{name: "aligned cached grid", start: "1793259600", end: "1793263200", step: "60s"},
+			{name: "300s keeps offset", start: "1793259612", end: "1793274312", step: "300s"},
 		} {
 			for _, quality := range []string{"complete", "empty", "partial", "partial empty"} {
 				t.Run(fmt.Sprintf("yolo=%t/%s/%s", yolo, tc.name, quality), func(t *testing.T) {
@@ -57,8 +68,11 @@ func TestLegacyTimeGraphMatchesVMTimePrecision(t *testing.T) {
 					start := time.Unix(oldParams.AlignStart.Unix(), 0)
 					end := time.Unix(oldParams.End.Unix(), 0)
 					wireStep := time.Duration(int64(oldParams.Step.Seconds())) * time.Second
+					if tc.cacheStart != 0 {
+						start, end = time.Unix(tc.cacheStart, 0), time.Unix(tc.cacheEnd, 0)
+					}
 					window := time.Minute
-					if !tc.instant {
+					if !tc.instant && tc.step != "" {
 						window, err = oldQuery.QueryList[0].TimeAggregation.Window.Duration()
 						require.NoError(t, err)
 					}

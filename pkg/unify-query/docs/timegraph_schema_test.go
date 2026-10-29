@@ -78,6 +78,12 @@ func TestTimeGraphSwaggerArtifactsAgree(t *testing.T) {
 func TestTimeGraphSwaggerPublicFieldsAndRoutes(t *testing.T) {
 	document := readSwaggerDocument(t)
 	definitions := schemaObject(t, document["definitions"])
+	for _, name := range []string{"cmdb.RelationMultiResourceResponseData", "cmdb.RelationMultiResourceRangeResponseData"} {
+		properties := schemaObject(t, schemaObject(t, definitions[name])["properties"])
+		for _, field := range []string{"partial", "partial_reason", "truncated", "truncated_reason"} {
+			require.NotContains(t, properties, field, "legacy relation quality belongs in telemetry")
+		}
+	}
 	for _, value := range []any{
 		cmdb.SharedTopologyQuery{},
 		cmdb.RelationMultiResourceResponseData{},

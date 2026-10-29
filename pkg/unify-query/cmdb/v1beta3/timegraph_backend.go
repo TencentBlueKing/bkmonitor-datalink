@@ -523,8 +523,18 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	}
 	// Preserve the original aggregation window independently of the wire step.
 	lookBackDelta = window.String()
-	if _, err := validateRangeBuckets(startMs, endMs, stepMs); err != nil {
+	points, err := validateRangeBuckets(startMs, endMs, stepMs)
+	if err != nil {
 		return timeGraphRangeResult{}, err
+	}
+	// Legacy VM queries allow caching for steps <= 60s. At 50 or more
+	// evaluation points VM rounds the start down to a step boundary while
+	// preserving the point count (promql.AdjustStartEnd). Build every edge on
+	// that same grid before requesting exact timestamps from the backend.
+	if stepDuration <= time.Minute && points >= 50 {
+		startMs -= startMs % stepMs
+		endMs = startMs + int64(points-1)*stepMs
+		startTime, endTime = time.UnixMilli(startMs), time.UnixMilli(endMs)
 	}
 	querier, err := m.getTimeGraphQuerier(ctx, spaceUID)
 	if err != nil {

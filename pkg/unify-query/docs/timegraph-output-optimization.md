@@ -384,19 +384,22 @@ admission remain independent guards. This change does not certify a workload or
 a production resource limit. The HTTP wrapper reuses owned item buffers through
 the existing segment writer, retaining batch byte limits and failure cleanup.
 
-The four legacy relation endpoints expose optional `partial` and
-`partial_reason` on successful items. Known source-info missing routes and
-backend partial retain available matching data and explicit quality. Complete
-items omit both fields. Each batch item has an independent metadata status scope;
-a failed item remains an error. Required relation missing-route errors are
-strict for topology queries. In the legacy relation adapter, a typed missing
-physical route makes that candidate unavailable: later candidates are still
-queried, and available results or an empty result carry
-`partial_reason=relation_no_physical_route:<metric>`. Reasons accumulate within
-one item. Other backend failures retain their existing error behavior;
-cancellation and deadlines stop immediately. A complete empty result does not
-gain a partial flag. Consumers must distinguish an incomplete empty result
-from a complete negative answer when caching or enriching data.
+The legacy instant/range relation endpoints keep their original response fields.
+Partial and truncation quality is recorded in the bounded
+`unify_query_cmdb_relation_quality_total{query_mode,quality,reason}` counter and
+item traces, including empty partial results. Repeated reasons within one item
+count once; different reasons count separately. Detailed metric names stay in
+traces. Each batch item has an independent metadata status scope. Capacity
+limits and other execution failures retain the existing item code/message error
+contract; they are not converted to successful empty results.
+
+Required relation missing-route errors remain strict for new topology/path
+queries. In the legacy adapter, a typed missing physical route makes that
+candidate unavailable: later candidates are still queried, and available or
+empty results retain internal `relation_no_physical_route:<metric>` quality.
+Cancellation and deadlines stop immediately. See [the API contract](api/timegraph.md)
+for telemetry and the VM-compatible range grid. New path/topology response
+quality fields are unchanged.
 
 Legacy `path_resource` is a contiguous resource sequence, including any supplied
 source or target endpoint. `[""]` selects a direct relation; other empty entries

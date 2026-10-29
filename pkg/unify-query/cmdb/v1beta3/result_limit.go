@@ -48,7 +48,7 @@ func (e *ResultLimitError) Error() string {
 	return fmt.Sprintf("result limit exceeded: query returned %d targets, maximum is %d", e.Count, e.Limit)
 }
 
-// TruncationReason 返回稳定的机器可读原因，供 HTTP 层生成截断元数据。
+// TruncationReason 返回稳定的超限原因，供 HTTP 层记录指标和 trace。
 func (e *ResultLimitError) TruncationReason() string {
 	if e == nil {
 		return ""

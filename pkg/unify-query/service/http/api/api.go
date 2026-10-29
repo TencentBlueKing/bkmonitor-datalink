@@ -425,13 +425,10 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 				qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow,
 				qry.PathResource,
 			)
-			if status := metadata.GetStatus(queryCtx); queryErr == nil && status != nil && status.Code == metadata.QueryTsPartial {
-				d.Partial, d.PartialReason = true, status.Message
-			}
+			observeLegacyRelationQuality(queryCtx, querySpan, metric.CMDBRelationQueryModeInstant, queryErr)
 			if queryErr != nil {
 				d.Message = queryErr.Error()
 				d.Code = http.StatusBadRequest
-				d.Truncated, d.TruncatedReason = relationTruncationMetadata(queryErr)
 			}
 
 			if d.TargetList == nil {
@@ -566,13 +563,10 @@ func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
 				qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow,
 				qry.PathResource,
 			)
-			if status := metadata.GetStatus(queryCtx); queryErr == nil && status != nil && status.Code == metadata.QueryTsPartial {
-				d.Partial, d.PartialReason = true, status.Message
-			}
+			observeLegacyRelationQuality(queryCtx, querySpan, metric.CMDBRelationQueryModeRange, queryErr)
 			if queryErr != nil {
 				d.Message = queryErr.Error()
 				d.Code = http.StatusBadRequest
-				d.Truncated, d.TruncatedReason = relationTruncationMetadata(queryErr)
 			}
 
 			if d.TargetList == nil {

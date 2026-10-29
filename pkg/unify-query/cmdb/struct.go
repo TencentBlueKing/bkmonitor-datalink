@@ -274,9 +274,7 @@ type RelationMultiResourceRequest struct {
 
 // RelationMultiResourceResponseData 响应数据
 type RelationMultiResourceResponseData struct {
-	Code          int    `json:"code"`
-	Partial       bool   `json:"partial,omitempty"`
-	PartialReason string `json:"partial_reason,omitempty"`
+	Code int `json:"code"`
 
 	SourceType Resource `json:"source_type"`
 	SourceInfo Matcher  `json:"source_info"`
@@ -286,11 +284,6 @@ type RelationMultiResourceResponseData struct {
 	Path       []string                        `json:"path"`
 	Paths      []RelationMultiResourcePathData `json:"paths,omitempty"`
 	Message    string                          `json:"message"`
-
-	// Truncated 表示响应是否因服务端安全上限而被截断。
-	Truncated bool `json:"truncated,omitempty"`
-	// TruncatedReason 标识触发截断的具体上限，便于调用方区分处理。
-	TruncatedReason string `json:"truncated_reason,omitempty"`
 }
 
 // RelationMultiResourceResponse 请求返回
@@ -331,9 +324,7 @@ type RelationMultiResourceRangeRequest struct {
 
 // RelationMultiResourceRangeResponseData 响应数据
 type RelationMultiResourceRangeResponseData struct {
-	Code          int    `json:"code"`
-	Partial       bool   `json:"partial,omitempty"`
-	PartialReason string `json:"partial_reason,omitempty"`
+	Code int `json:"code"`
 
 	SourceType Resource `json:"source_type"`
 	SourceInfo Matcher  `json:"source_info"`
@@ -343,11 +334,6 @@ type RelationMultiResourceRangeResponseData struct {
 	Path       []string                             `json:"path"`
 	Paths      []RelationMultiResourceRangePathData `json:"paths,omitempty"`
 	Message    string                               `json:"message"`
-
-	// Truncated 表示响应是否因服务端安全上限而被截断。
-	Truncated bool `json:"truncated,omitempty"`
-	// TruncatedReason 标识触发截断的具体上限，便于调用方区分处理。
-	TruncatedReason string `json:"truncated_reason,omitempty"`
 }
 
 // RelationMultiResourceRangeResponse 请求返回

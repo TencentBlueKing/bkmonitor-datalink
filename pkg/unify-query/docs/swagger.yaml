@@ -186,10 +186,6 @@ definitions:
         type: integer
       message:
         type: string
-      partial:
-        type: boolean
-      partial_reason:
-        type: string
       path:
         items:
           type: string
@@ -207,12 +203,6 @@ definitions:
           $ref: '#/definitions/cmdb.MatchersWithTimestamp'
         type: array
       target_type:
-        type: string
-      truncated:
-        description: Truncated 表示响应是否因服务端安全上限而被截断。
-        type: boolean
-      truncated_reason:
-        description: TruncatedReason 标识触发截断的具体上限，便于调用方区分处理。
         type: string
     type: object
   cmdb.RelationMultiResourceRequest:
@@ -279,10 +269,6 @@ definitions:
         type: integer
       message:
         type: string
-      partial:
-        type: boolean
-      partial_reason:
-        type: string
       path:
         items:
           type: string
@@ -300,12 +286,6 @@ definitions:
           $ref: '#/definitions/cmdb.Matcher'
         type: array
       target_type:
-        type: string
-      truncated:
-        description: Truncated 表示响应是否因服务端安全上限而被截断。
-        type: boolean
-      truncated_reason:
-        description: TruncatedReason 标识触发截断的具体上限，便于调用方区分处理。
         type: string
     type: object
   cmdb.RelationPathResourcesRangeRequest:

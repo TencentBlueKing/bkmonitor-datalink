@@ -165,7 +165,7 @@ compact 版本为 `version:1`；timestamps 是整份网格，节点/边按属性
 
 后一个示例来自本地将执行槽/队列设为 1 的验收，不是部署默认配置。
 
-`path_resources` / `path_resources_range` 的必需关系缺物理路由时，同样返回 HTTP 200、对应单项 `code=400`，不会将未执行的查询解释为完整空结果。旧 `multi_resource` / `multi_resource_range` 的 v1beta3 适配仍按兼容合同保留已有结果并标记 partial。
+`path_resources` / `path_resources_range` 的必需关系缺物理路由时，同样返回 HTTP 200、对应单项 `code=400`，不会将未执行的查询解释为完整空结果。旧 `multi_resource` / `multi_resource_range` 的 v1beta3 适配按兼容合同保留已有结果，质量信息只写指标和 trace，不增加响应字段。
 
 新 path 接口自动发现路径时，如果普通模式的搜索深度预算截断了候选，成功项会带 `partial=true`、`partial_reason=path_search_depth_limit`；已有结果和空结果都适用。多目标查询累计全部目标的截断状态和已有质量原因，后续健康项不继承前一项的状态。显式且已完整覆盖的路径、未触及预算的查询、YOLO 完整搜索不因此标记 partial；所有目标均无可查询路径时仍返回单项失败。
 
@@ -181,6 +181,13 @@ compact 版本为 `version:1`；timestamps 是整份网格，节点/边按属性
 ## 兼容与迁移
 
 旧 multi_resource 的 source_info/source_expand_info、target_type、target_info_show、path_resource、target_list/path/paths 合同继续保留。`return_all_paths` 是显式扩展，不开启时保留旧的有效路径选择。新 path_resources 使用 matcher、target_types、path_resources 和 results.path；新 topology 返回每帧节点与诱导关系，不能用旧的目标列表伪装完整图。旧范围目标的分桶/路径选择合同仍用原回归验证，不套用 topology 的精确网格解释。
+
+旧 instant/range 接口及其代理保持原响应结构，不返回 `partial`、`partial_reason`、`truncated`、`truncated_reason`。后端部分返回或候选缺物理路由时保留已有结果；容量超限等执行失败仍使用单项 `code=400` 和 `message`，`target_list` 保持数组。内部质量状态继续用于路径选择和排障。
+
+`unify_query_cmdb_relation_quality_total{query_mode,quality,reason}` 记录每个兼容接口子查询的质量事件，`query_mode` 为 `instant/range`，`quality` 为 `partial/truncated`。同一子查询的同类原因只计一次；多个不同原因各计一次，不能将原因计数相加当作请求数。`reason` 使用固定类别（例如 `backend_partial`、`relation_no_physical_route`、`vm_storage_coverage_mismatch`、`max_targets`），未识别原因归入 `other`。指标不带业务 ID、资源 ID 或物理指标名；完整原因保留在子查询 trace 的 `relation-partial-reason` / `relation-truncated-reason` 中，布尔属性分别为 `relation-partial` / `relation-truncated`。正常项和普通执行失败不增加质量计数。
+
+旧 range 兼容 VM 缓存网格：秒级 wire 步长不超过 60 秒且至少 50 个采样点时，起点向下对齐到步长边界，保留采样点数；短查询与不对齐的长步长查询保留原起点。比如 `start=1793259612,end=1793263212,step=60s` 使用 `1793259600..1793263200`。毫秒/微秒/纳秒时间戳仍先按旧 wire 规则转成整数秒，`1500ms` 仍保留 1500ms 聚合窗口和 1 秒采样步长。新 path/topology 接口继续使用各自的精确网格和质量协议。
+
 
 服务端可先升级，旧消费者继续使用原路径与 DTO；新消费者显式选择新接口与 compact-v1。缺少新接口/格式时保留原功能或清晰报不支持，不能把失败 compact=null 当空成功。保留可选字段及未知字段的向前兼容处理；遇到未知 compact.version 必须明确拒绝，不能猜测位图布局。后续变更同时更新文档、例子和测试。
 

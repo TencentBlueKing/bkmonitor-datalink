@@ -8,6 +8,7 @@ package metric
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -23,6 +24,10 @@ const (
 )
 
 var (
+	cmdbRelationQualityTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "unify_query", Name: "cmdb_relation_quality_total",
+		Help: "legacy relation query quality events, counted once per query and distinct bounded reason",
+	}, []string{"query_mode", "quality", "reason"})
 	cmdbTopologyOperationsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "unify_query", Name: "cmdb_topology_operations_total",
 		Help: "completed topology HTTP requests or individual queries by outcome",
@@ -55,6 +60,27 @@ var (
 		Buckets: []float64{0, 1, 10, 100, 1000, 10000, 100000, 200000, 1000000},
 	}, []string{"stage", "kind"})
 )
+
+// CMDBRelationQualityInc keeps metric names and backend details in traces only.
+func CMDBRelationQualityInc(ctx context.Context, mode, quality, reasons string) {
+	seen := make(map[string]struct{})
+	for _, detail := range strings.Split(reasons, ";") {
+		reason, _, _ := strings.Cut(detail, ":")
+		switch reason {
+		case "backend_partial", "vm_storage_coverage_mismatch", "relation_no_physical_route",
+			"source_info_no_route", "target_info_failed", "path_search_depth_limit",
+			"max_targets", "max_response_bytes", "max_graph_nodes", "max_graph_edges",
+			"max_graph_node_infos", "max_graph_results", "max_shared_topology_points":
+		default:
+			reason = "other"
+		}
+		if _, ok := seen[reason]; ok {
+			continue
+		}
+		seen[reason] = struct{}{}
+		counterInc(ctx, cmdbRelationQualityTotal.WithLabelValues(mode, quality, reason))
+	}
+}
 
 // CMDBTimeGraphErrorResult 使用错误类型分类，错误原文和请求字段不进入指标标签。
 func CMDBTimeGraphErrorResult(err error) string {

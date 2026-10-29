@@ -1839,12 +1839,6 @@ const docTemplate = `{
                 "message": {
                     "type": "string"
                 },
-                "partial": {
-                    "type": "boolean"
-                },
-                "partial_reason": {
-                    "type": "string"
-                },
                 "path": {
                     "type": "array",
                     "items": {
@@ -1870,14 +1864,6 @@ const docTemplate = `{
                     }
                 },
                 "target_type": {
-                    "type": "string"
-                },
-                "truncated": {
-                    "description": "Truncated 表示响应是否因服务端安全上限而被截断。",
-                    "type": "boolean"
-                },
-                "truncated_reason": {
-                    "description": "TruncatedReason 标识触发截断的具体上限，便于调用方区分处理。",
                     "type": "string"
                 }
             }
@@ -1965,12 +1951,6 @@ const docTemplate = `{
                 "message": {
                     "type": "string"
                 },
-                "partial": {
-                    "type": "boolean"
-                },
-                "partial_reason": {
-                    "type": "string"
-                },
                 "path": {
                     "type": "array",
                     "items": {
@@ -1996,14 +1976,6 @@ const docTemplate = `{
                     }
                 },
                 "target_type": {
-                    "type": "string"
-                },
-                "truncated": {
-                    "description": "Truncated 表示响应是否因服务端安全上限而被截断。",
-                    "type": "boolean"
-                },
-                "truncated_reason": {
-                    "description": "TruncatedReason 标识触发截断的具体上限，便于调用方区分处理。",
                     "type": "string"
                 }
             }

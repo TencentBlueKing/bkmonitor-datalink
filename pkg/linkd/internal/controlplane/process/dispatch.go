@@ -262,6 +262,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	}
 	closer := lifecycleprocess.NewAlertCloser(cfg, sources, severity, logger, metrics, closeProjection)
 	api.AlertCloser = closer
+	api.CloseBatchSize = cfg.CloseControlSettings().BatchSize
 	api.KACCloser = closer
 	api.ManualShieldBinder = lifecycleprocess.NewManualShieldBinder(cfg, sources, policies, policyResources, severity, logger, metrics)
 	shieldObservations := policyruntime.NewObservations(queryWindows, metrics)
@@ -274,6 +275,8 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 			return err
 		}
 		defer func() { _ = controlResources.Close() }()
+		controlResources.UseCleanupRecorder(cleanupJournal)
+		closer.UseResources(controlResources)
 		shieldChecks.UseResources(controlResources)
 	}
 	lockConfig := scheduler.DefaultConfig()

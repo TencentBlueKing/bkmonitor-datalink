@@ -11,6 +11,7 @@ package elasticsearchstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -595,6 +596,20 @@ var _ store.AlertStore = (*Repository)(nil)
 
 // GetAlertsCurrent 使用一次 _mget 读取活动/历史位置，按路由优先级选择当前文档。
 func (r *Repository) GetAlertsCurrent(ctx context.Context, tenant string, ids []string) (store.AlertBatch, error) {
+	return r.getAlertsCurrent(ctx, tenant, ids, "")
+}
+
+// GetAlertIdentities 只读取锁作用域和来源发布版本，结果不能作为完整业务快照参与 CAS。
+func (r *Repository) GetAlertIdentities(ctx context.Context, tenant string, ids []string) (store.AlertBatch, error) {
+	return r.getAlertsCurrent(ctx, tenant, ids, "identity")
+}
+
+// GetAlertCloseStates 返回用于条件关闭的状态快照，不读取正文或 Enrich。
+func (r *Repository) GetAlertCloseStates(ctx context.Context, tenant string, ids []string) (store.AlertBatch, error) {
+	return r.getAlertsCurrent(ctx, tenant, ids, "close")
+}
+
+func (r *Repository) getAlertsCurrent(ctx context.Context, tenant string, ids []string, mode string) (store.AlertBatch, error) {
 	docs := []map[string]string{}
 	positions := []string{}
 	for _, id := range ids {
@@ -619,7 +634,14 @@ func (r *Repository) GetAlertsCurrent(ctx context.Context, tenant string, ids []
 	var response struct {
 		Docs []getResponse `json:"docs"`
 	}
-	if err = r.performJSON(ctx, http.MethodPost, "/_mget", url.Values{"realtime": {"true"}}, body, &response); err != nil {
+	query := url.Values{"realtime": {"true"}}
+	switch mode {
+	case "identity":
+		query.Set("_source_includes", "bk_tenant_id,alert_id,event_source_id,event_source_version,fingerprint")
+	case "close":
+		query.Set("_source_includes", "revision,bk_tenant_id,alert_id,event_source_id,event_source_version,fingerprint,severity,dimensions,labels,extra_data.evaluation_family,subject_system,subject_type,subject_id,source_alert_id,shield,merge,policy_change,merge_change,merge_work,admission,policy_tags,status,latest_event_id,last_occurred_at,update_at,trigger_event_id,begin_at,create_at,end_at,end_type,end_reason,end_operation,enrich_status")
+	}
+	if err = r.performJSON(ctx, http.MethodPost, "/_mget", query, body, &response); err != nil {
 		return store.AlertBatch{}, err
 	}
 	selected := map[string]store.StoredAlert{}
@@ -627,7 +649,15 @@ func (r *Repository) GetAlertsCurrent(ctx context.Context, tenant string, ids []
 		if !doc.Found {
 			continue
 		}
-		row, err := decodeAlertHit(doc.hit())
+		var row store.StoredAlert
+		switch mode {
+		case "identity":
+			err = json.Unmarshal(doc.Source, &row.Alert)
+		case "close":
+			row, err = decodeAlertStateHit(doc.hit())
+		default:
+			row, err = decodeAlertHit(doc.hit())
+		}
 		if err != nil {
 			return store.AlertBatch{}, err
 		}

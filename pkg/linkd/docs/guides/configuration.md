@@ -81,6 +81,22 @@ lifecycle:
 
 合并成员使用本进程内存批次池，默认 `control_plane.merge.member_batch_size: 128`、`concurrency: 8`。同组不同批次按空闲名额启动 goroutine 并行执行；`concurrency` 是在途批次数，成员准备/输出仍有独立执行名额。ES 与 MySQL 都显式提交已形成的批次，没有 ES 自动收集等待；ES 保留每项 seq_no/primary_term，MySQL 使用短事务批读版本和 UPDATE JOIN。成功成员独立确认，失败项保留待办重试；完成确认只更新意图字段。快照和引用的物理读写块为 128，Alert 仓储的数量/字节预算仍可能将较大的配置拆块。主流程 MySQL 使用直接快照条件写；其他控制操作保留已有 1ms SQL 合批。
 
+筛选关闭有独立预算，不与单条关闭的四个名额、检索名额或 Lifecycle Worker 共用：
+
+```yaml
+control_plane:
+  close:
+    batch_size: 1000
+    concurrency: 8
+    member_concurrency: 32
+```
+
+`batch_size` 为默认候选数及执行分批大小，允许 1–5000；`concurrency` 为在途筛选关闭请求数；
+`member_concurrency` 限制每个来源子批的准备、前置调用、清理与 Hook 并发，不截短 Bulk。
+接口仍为同步且共享十秒截止，配置不是“保证每批完成”的吞吐承诺。请求和响应继续保留逐项结果。
+2026-10-29 为本地实现，尚未部署；协议层验证 5000 条窄字段 CAS 和 KAC 终态投影均能单次 Bulk 提交，
+真实环境吞吐需以阶段直方图复测。主动关闭终态缓存使用状态投影；发布时控制面及 Lifecycle 使用同一版代码。
+
 主控制面在本进程内存拆批，按并发预算启动 goroutine 并直接汇总结果，不另部署成员 Worker。
 进程重启从持久关系重建未确认阶段，可按新的批次预算重新拆分。
 `read_wait_milliseconds` 同样是派生字段，不接受 YAML 手动配置；Kingeye Admin 生效配置展示上述四项值。
@@ -895,26 +911,27 @@ control_plane:
 
 ## EventSource hooks
 
-输出配置属于每个 EventSource，随 Record/Release 发布。旧 `lifecycle.output` 已移除，加载时拒绝；
-将原 Kafka 参数放到需要输出的每个来源的 `hooks[].config` 中，再按现有导入/API/provider 发布流程生效。
-空列表或省略 `hooks` 不执行输出。以下内容位于单个 EventSource 下，可自由删减或增加具名实例：
+输出配置属于每个 EventSource，随 Record/Release 发布。通用 Kafka Alert V1 已移除；
+残留的 `hooks[].type: kafka` 声明直接忽略，参数、凭据、连接和多余字段不参与校验或执行，
+不占实例名额，不产生 push 流水。无需先删除遗留配置才能加载或发布。
+旧 `lifecycle.output` 不是来源 Hook，仍按其既有的移除规则处理。
+
+当前主要输出使用全局 `plugins.kac`。确需旧 KAC Kafka Hook 时，在单个来源中配置：
 
 ```yaml
 hooks:
-  - name: alert-kafka
-    type: kafka
+  - name: kac-alarm
+    type: kac
     config:
       brokers: [127.0.0.1:9092]
-      topic: linkd-alerts
-      client_id: linkd-alert-output
+      topic: alarm-collect
       max_message_bytes: 1048576
       security:
         protocol: plaintext
-
 ```
 
-实例名在来源内唯一，由 1～64 个字母、数字、下划线或连字符组成，首字符为字母或数字。
-每个来源至多 16 个 hook，未知类型和错误参数在发布前拒绝。
+在用实例名在来源内唯一，由 1～64 个字母、数字、下划线或连字符组成，首字符为字母或数字。
+每个来源至多 16 个在用 Hook；未知类型和在用插件的错误参数仍在发布前拒绝。
 `active-alert-by-strategy` 已从 Hook 中移除；活跃集合、限流与成员变化通知统一使用来源的
 `active_alert_limits`，复用 `storage.redis`。完整格式、built_in_bk 默认 5000、禁用和升级步骤见
 [活跃告警缓存与软限流](active-alert-by-strategy.md)。

@@ -11,8 +11,10 @@ package lifecycle
 
 import (
 	"context"
+	"time"
 
 	"linkd/internal/domain"
+	"linkd/internal/store"
 )
 
 // AlertChangePublisher 只发布轻量通知，发布失败不回滚已经保存的业务事实。
@@ -29,6 +31,8 @@ func (p *Processor) publishChange(ctx context.Context, a domain.Alert, cause Ale
 	if p.publisher == nil {
 		return
 	}
+	started := time.Now()
+	defer func() { store.ObserveBatchPhase(ctx, "member.enqueue", time.Since(started)) }()
 	change := domain.NewAlertChange(a, domain.AlertActionCause{Type: cause.Type, ID: cause.ID}, ready)
 	if err := p.publisher.Publish(ctx, change); err != nil {
 		p.logger.WarnContext(ctx, "alert change enqueue failed", "module", "lifecycle", "operation", "publish_change", "error", err, "event_source_id", a.EventSourceID, "bk_tenant_id", a.BKTenantID, "alert_id", a.AlertID, "cause_id", cause.ID, "error_code", "queue_publish_failed")

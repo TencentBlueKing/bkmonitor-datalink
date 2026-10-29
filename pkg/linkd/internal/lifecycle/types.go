@@ -71,7 +71,7 @@ type Logger interface {
 	WarnContext(ctx context.Context, message string, args ...any)
 }
 
-// RecentAlertCache 保存 Elasticsearch 最近写入的 Alert 快照，只用于跨越搜索 refresh 可见性窗口。
+// RecentAlertCache 保存近期活动快照及主动关闭的终态状态，只用于跨越 ES refresh 可见性窗口。
 // Redis 错误必须返回给 Processor；found=false 只表示对应 key 明确不存在。
 type RecentAlertCache interface {
 	GetCurrent(ctx context.Context, key store.ActiveAlertKey) (stored store.StoredAlert, found bool, err error)
@@ -235,6 +235,12 @@ func (c CloseAlertCommand) Validate() error {
 type CloseAlertResult struct {
 	Alert         domain.Alert
 	AlreadyClosed bool
+}
+
+// CloseAlertOutcome 是批量关闭的单项结果；Err 非 nil 时关闭事实可能已经保存。
+type CloseAlertOutcome struct {
+	CloseAlertResult
+	Err error
 }
 
 // WithClosePreparation 注入主动关闭前置调用；只在活动告警的终态判断后、关闭 CAS 前执行。

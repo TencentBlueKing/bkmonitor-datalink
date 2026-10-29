@@ -20,6 +20,16 @@ type alertBulkWrite struct {
 	current store.StoredAlert
 	next    domain.Alert
 	field   store.AlertChangeField
+	close   bool
+}
+
+// CloseAlertsFromSnapshots 以逐项版本条件只 patch 主动关闭字段，不回写正文或丰富数据。
+func (r *Repository) CloseAlertsFromSnapshots(ctx context.Context, updates []store.AlertSnapshotUpdate) ([]store.AlertUpdateResult, error) {
+	writes := make([]alertBulkWrite, len(updates))
+	for i, u := range updates {
+		writes[i] = alertBulkWrite{current: u.Current, next: u.Replacement, close: true}
+	}
+	return r.writeAlertBulk(ctx, writes)
 }
 
 // CompareAndSetAlertsFromSnapshots 显式提交 Bulk index，每项保留自己的 ES 版本条件。
@@ -48,7 +58,11 @@ func (r *Repository) writeAlertBulk(ctx context.Context, writes []alertBulkWrite
 	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
-	if len(writes) == 0 || len(writes) > store.MaxBatchSize {
+	limit := store.MaxBatchSize
+	if len(writes) > 0 && writes[0].close {
+		limit = store.MaxCloseBatchSize
+	}
+	if len(writes) == 0 || len(writes) > limit {
 		return nil, store.ErrInvalidArgument
 	}
 	results := make([]store.AlertUpdateResult, len(writes))
@@ -78,7 +92,7 @@ func (r *Repository) writeAlertBulk(ctx context.Context, writes []alertBulkWrite
 				continue
 			}
 			action := "index"
-			if writes[i].field != "" {
+			if writes[i].field != "" || writes[i].close {
 				action = "update"
 			}
 			item := response.Items[position][action]
@@ -111,7 +125,20 @@ func (r *Repository) writeAlertBulk(ctx context.Context, writes []alertBulkWrite
 				results[i].Err = fmt.Errorf("%w: %w", store.ErrInvalidTransition, err)
 				continue
 			}
-			source, err = encodeAlertDocument(w.next)
+			if w.close {
+				action = "update"
+				a := w.next
+				// doc 对对象字段递归合并，会留下旧 bindings / pending；按顶层字段整体替换。
+				patch := map[string]any{
+					"revision": a.Revision, "status": a.Status, "shield": a.Shield, "merge": a.Merge,
+					"update_at": a.UpdateAt, "policy_change": a.PolicyChange,
+					"end_at": a.EndAt, "end_type": a.EndType, "end_reason": a.EndReason, "end_operation": a.EndOperation,
+					"shield_main_alert_ids": store.ShieldMainAlertIDs(a), "merge_work": store.HasMergeWork(a),
+				}
+				source, err = json.Marshal(map[string]any{"script": map[string]any{"lang": "painless", "source": "ctx._source.putAll(params.patch)", "params": map[string]any{"patch": patch}}})
+			} else {
+				source, err = encodeAlertDocument(w.next)
+			}
 		} else {
 			action = "update"
 			source, err = json.Marshal(map[string]any{"doc": map[string]any{string(w.field): nil, "merge_work": store.HasMergeWork(w.next)}})

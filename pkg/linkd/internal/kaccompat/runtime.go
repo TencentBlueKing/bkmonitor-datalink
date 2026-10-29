@@ -96,24 +96,7 @@ func (r *Runtime) lane(tenant, alert string) *projectionLane {
 
 // ProjectNow 优先取得所属通道，读取最新事实并同步刷新；等待中的普通批次随后重新读取最新告警。
 func (r *Runtime) ProjectNow(ctx context.Context, tenant, alert string) error {
-	lane := r.lane(tenant, alert)
-	lane.urgent.Add(1)
-	defer lane.urgent.Add(-1)
-	select {
-	case lane.gate <- struct{}{}:
-		defer func() { <-lane.gate }()
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	batch, err := r.alerts.GetAlertsCurrent(ctx, tenant, []string{alert})
-	if err != nil {
-		return err
-	}
-	if len(batch.Alerts) == 0 {
-		return store.ErrNotFound
-	}
-	result := r.writer.WriteBatch(ctx, []domain.Alert{batch.Alerts[0].Alert}, true)
-	return result[0].Err
+	return r.ProjectBatchNow(ctx, tenant, []string{alert})[0]
 }
 
 // Run 复用同一 Consumer 身份恢复上次未完成消息，不维护第二份任务状态。

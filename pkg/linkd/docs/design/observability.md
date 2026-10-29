@@ -103,6 +103,30 @@ Event 内部分段使用 `linkd_lifecycle_event_phase_duration_seconds`，每次
 使用单调时间计时，不依赖业务时钟，也不改变失败、重试和持久化语义。
 该指标与 ES 物理批次指标的采样单位不同，不相加。指标展示由 Kingeye Admin 提供，口径以本节为准。
 
+主动关闭使用 `linkd_close_phase_duration_seconds{linkd_phase="..."}`，通过关闭上下文的
+`BatchPhaseObserver` 接入既有存储诊断；不与 Event 耗时或普通 KAC 队列投影指标混算。
+2026-10-29 本地实现，尚未部署验证：
+
+| 阶段 | 采样口径 |
+| --- | --- |
+| `batch.total` | 整个关闭批次，包含租约释放及同步投影 |
+| `batch.identity_read` / `batch.source_read` / `batch.leases` | 锁前身份批读、来源读取、成员处理器与租约准备 |
+| `batch.locked_read` / `batch.prepare` / `batch.cas` | 每来源批读、准备和 Bulk CAS；版本冲突重试单独采样 |
+| `batch.cache` / `batch.output` / `batch.logs` | 缓存与已有意图补齐、清理及 Hook、流水 Bulk |
+| `batch.release` / `batch.projection` | 所有成员租约释放、一次批量同步投影 |
+| `member.lease_acquire` / `member.lease_release` | 每个 fingerprint 的租约获取与释放，失败也记录 |
+| `member.processor_prepare` / `member.close_preparation` | 来源处理器装配、alarmd 前置调用 |
+| `member.read` / `member.cas` / `member.logs` | 单条关闭及旧待完成意图的读、CAS 和流水；CAS 包含依赖索引更新 |
+| `member.cleanup` / `member.hooks` / `member.enqueue` | 单项终态清理、Hook 及其内嵌变更通知入队 |
+| `storage.merge_requests` / `storage.suppression_cleanups` | 仅实际发生对应控制记录写入时采样，不假定每次关闭都会写入 |
+| `projection.lane_wait` / `projection.read` / `projection.write` | 同步投影通道等待、批读最新事实、包含 refresh 的 Bulk 写入 |
+| `member.total` / `member.projection` | 单条关闭入口总耗时及同步投影 |
+
+`batch.*` 是各批次/来源的墙钟时间，`member.*` 是逐项样本，嵌套阶段不会扣除，不能直接相加。
+例如 `member.hooks` 包含 `member.enqueue`，`batch.projection` 包含 `projection.*`。
+底层 ES 的 `http.*` 与 `es.bulk_took` 也沿关闭上下文进入同一指标，沿用存储实现的采样口径。
+仅实际执行的阶段记录样本，不填零；均值用对应阶段 sum/count，分位数从该阶段的桶计算。
+
 以下指标统一以 `linkd_elasticsearch_write_batch_` 为前缀，
 `linkd_batch_kind=read|write` 区分 `_mget` 与 `_bulk`。跨来源请求不添加租户、Event ID 或来源标签。
 
@@ -171,7 +195,7 @@ RawEventMessage MQ
   -> Redis Mailbox + lifecycle signal
   -> lifecycle attempt
   -> Alert / AlertLog
-  -> EventSource.hooks（Kafka Alert V1 / KAC Alarm / Redis 活跃策略索引）
+  -> EventSource.hooks（按配置启用的旧 KAC Kafka Hook）
 ```
 
 消息生产与消费、Redis Mailbox Signal 之间使用独立 root span 与 Span Link；同进程同步子操作使用 child span。Broker 重投产生新的处理 trace，并通过稳定 `record_id/event_id/alert_id/cause_id` 关联。

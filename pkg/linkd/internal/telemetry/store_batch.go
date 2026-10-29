@@ -11,6 +11,28 @@ import (
 	"linkd/internal/store"
 )
 
+// GetAlertCloseStates 保留关闭状态的窄批读；不支持的后端仍使用完整批读。
+func (r *observedRepository) GetAlertCloseStates(ctx context.Context, tenant string, ids []string) (store.AlertBatch, error) {
+	started := time.Now()
+	if reader, ok := r.next.(store.AlertCloseStateBatchStore); ok {
+		result, err := reader.GetAlertCloseStates(ctx, tenant, ids)
+		r.record(ctx, "alert", "get_close_states", started, err)
+		return result, err
+	}
+	return r.GetAlertsCurrent(ctx, tenant, ids)
+}
+
+// CloseAlertsFromSnapshots 记录只 patch 关闭字段的显式批写，不把它展开成单条请求。
+func (r *observedRepository) CloseAlertsFromSnapshots(ctx context.Context, updates []store.AlertSnapshotUpdate) ([]store.AlertUpdateResult, error) {
+	started := time.Now()
+	if closer, ok := r.next.(store.AlertCloseBatchStore); ok {
+		results, err := closer.CloseAlertsFromSnapshots(ctx, updates)
+		r.record(ctx, "alert", "close_batch", started, batchResultError(results, err))
+		return results, err
+	}
+	return r.next.(store.AlertSnapshotBatchStore).CompareAndSetAlertsFromSnapshots(ctx, updates)
+}
+
 // CompareAndSetAlertsFromSnapshots 计量显式批次调用，单项结果由批量契约原样返回。
 func (r *observedRepository) CompareAndSetAlertsFromSnapshots(ctx context.Context, updates []store.AlertSnapshotUpdate) ([]store.AlertUpdateResult, error) {
 	started := time.Now()

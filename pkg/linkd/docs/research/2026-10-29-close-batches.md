@@ -1,0 +1,69 @@
+# 筛选关闭批量化与字段收敛验证
+
+日期：2026-10-29。源码基线：`4098fd4b4d23e77e1f9b34846aeaa5f24f5cefd7`，加本次本地未提交变更。
+这是源码与本地协议验证；没有在真实测试环境执行批量关闭，也没有部署。最终接口说明见
+[主动关闭 API](../reference/contracts/alert-close.md)，配置见[配置指南](../guides/configuration.md)。
+
+## 问题与证据边界
+
+调用方报告原 `close_filter` 逐条执行，单条约 0.4–1.5 秒；控制面在请求轮次结束时出现 lease 获取
+和同步投影超时。调用方提供的 `stage=projection` 平均值约 84ms。本次没有重新读取该环境日志或指标，
+这些数值仅作为问题输入，不能据此认定投影是唯一瓶颈，也不能直接线性推导策略关闭墙钟时间。
+
+源码确认原候选读取、关闭入口及同步投影均携带完整 Alert；筛选关闭串行共享十秒截止，
+终态清理还会通过 `configuredCleanupRecorder` 为每条打开策略存储并检查 schema。
+现已参考 `merge-batches` 的显式阶段组织关闭：身份批读、fingerprint 租约、锁内批读、Bulk CAS、
+pipeline 缓存、输出与流水批写、租约释放、同步投影。来源配置、连接、Hook 和清理 Journal 复用控制面资源。
+
+## 字段与批次
+
+- 候选查询只返回 `alert_id`；普通完整告警检索仍保持 500 条分页上限。
+- 租约准备只读租户、Alert ID、来源、来源版本和 fingerprint 五个字段。
+- 关闭裁决只读身份、状态、屏蔽/合并意图及清理、无数据联动必需原始事实，不读取正文、标题或 Enrich。
+- Alert CAS 只替换 12 个状态及派生字段，保留每项 `seq_no/primary_term`。对象按顶层整体替换，防止递归
+  合并遗留旧屏蔽 bindings 或合并 pending。未变的业务正文和丰富数据不再回写。
+- 关闭终态只作为 active lookup 的负缓存；状态缓存不携带正文、丰富与扩展数据。来源恢复缓存仍保持完整快照。
+- KAC 已有文档只更新 `status/action/source_alarm_status/close_reason/close_time` 五个字段并 refresh；
+  不存在时才为缺失项读取完整快照创建。
+- 按本次确认移除通用 Kafka V1 Hook，遗留声明及多余参数忽略，不装配客户端、执行 Hook 或生成 push 流水。
+  当前 KAC 插件使用轻量变更通知；仅仍显式启用的旧 `type: kac` Kafka Hook 需要完整输入快照。
+
+筛选关闭使用独立配置 `control_plane.close`：默认 `batch_size=1000`、`concurrency=8`、
+`member_concurrency=32`。请求最多 5000 个候选，ES 和流水继续遵守各自既有字节/数量预算。
+这些名额不与单条关闭、查询或 Lifecycle Worker 共用。接口仍为同步且每请求十秒；超时可能部分生效。
+
+## 可复现的本地结果
+
+| 验证 | 结果 | 不能据此推导 |
+| --- | --- | --- |
+| 5000 条，每条正文 64 KiB 的 Alert CAS | 一次 Bulk，2,950,000 字节；原完整文档回写估算 332,000,000 字节 | 真实 ES 写入耗时、集群吞吐 |
+| 5000 条现存 KAC 文档的终态投影 | 一次 Bulk，915,000 字节，仅 5 个字段，`refresh=true` | 真实 refresh 耗时和整体处置时延 |
+| 5000 条内存关闭用例，成员准备并发为 2 | 两次逻辑批读、一次 CAS、一次缓存批次、10 次 500 条流水 Bulk；单条关闭名额占满仍可完成 | Redis/ES 网络、真实 Hook 和 alarmd 时延 |
+| 部分 CAS、缓存、流水和投影失败后原命令重试 | 逐项返回失败，稳定操作及日志身份保留 | 外部系统恰好一次 |
+| 重叠投影批次和取消 | 固定通道顺序、取消释放已占通道 | 真实多副本负载下公平性 |
+
+运行方式：
+
+```bash
+go test ./internal/store/elasticsearch -run 'TestClose' -count=1 -v
+go test ./internal/kaccompat -run 'TestCloseProjection5000|TestCloseProjectionReads' -count=1 -v
+go test ./internal/lifecycle/process -run TestCloseBatch5000 -count=1 -v
+make check
+```
+
+前两组为实际序列化及传输替身，第三组为内存用例，均不是远端性能验收。
+
+## 同步投影改异步的评估
+
+当前普通变更通知入队失败只记录日志，不阻止业务关闭；普通投影失败后也会确认当前消息，
+没有补偿扫描。因此直接去掉同步等待或忽略投影错误，可能返回成功却永久留下旧 KAC 状态。
+本次保留“同步投影成功才返回成功、失败 502 且原命令可补齐”的现有契约，把逐项投影改成窄字段批量写入。
+异步关闭需要先明确成功究竟代表 Linkd 关闭还是 KAC 投影完成，并选择可恢复的投影失败处理方式；
+这属于后续契约与恢复设计，本次没有增加后台任务、第二份水位或确认记录。
+
+## 后续真实环境验证
+
+发布时控制面与 Lifecycle 使用同版代码，以识别新的关闭终态状态缓存。
+在实际环境按 1000、5000 条分档，观察 `linkd_close_phase_duration_seconds` 的批次与成员阶段、
+每轮成功/失败数、Hook 和无数据回调尾延迟、Redis/ES 连接池等待及 KAC refresh 时间。
+用实际轮次墙钟验证几万条关闭总时长；本地协议体积和内存耗时不能替代该验收。

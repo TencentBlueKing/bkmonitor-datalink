@@ -23,6 +23,7 @@ import (
 	"linkd/internal/runtimeconfig"
 	storeassembly "linkd/internal/store/assembly"
 	mysqlstore "linkd/internal/store/mysql"
+	"linkd/internal/suppressioncleanup"
 	"linkd/internal/telemetry"
 )
 
@@ -41,6 +42,11 @@ type controlHooks struct {
 }
 
 func (r *AlertProcessorResources) sourceRelease(ctx context.Context, sources closeSourceReader, id string, version int64) (eventsource.Release, error) {
+	if releases, ok := ctx.Value(controlReleaseBatchKey{}).(map[controlHookKey]controlReleaseResult); ok {
+		if item, found := releases[controlHookKey{id, version}]; found {
+			return item.release, item.err
+		}
+	}
 	r.mu.Lock()
 	entry := r.hooks[controlHookKey{id, version}]
 	if entry != nil && entry.release.ID != "" {
@@ -61,6 +67,12 @@ type AlertProcessorResources struct {
 	hooks      map[controlHookKey]*controlHooks
 	latest     map[string]controlHookKey
 	closeBatch func()
+	cleanup    suppressioncleanup.Recorder
+}
+
+// UseCleanupRecorder 在控制面启动时复用已就绪的清理 Journal，避免每条终态检查存储 schema。
+func (r *AlertProcessorResources) UseCleanupRecorder(recorder suppressioncleanup.Recorder) {
+	r.cleanup = recorder
 }
 
 // OpenAlertProcessorResources 供已启用 Lifecycle 的控制面启动一次，不迁移存储 schema。

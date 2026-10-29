@@ -7,13 +7,43 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	redis "github.com/redis/go-redis/v9"
 	"linkd/internal/domain"
 	"linkd/internal/store"
+	"linkd/internal/store/storetest"
 )
+
+func TestDirectCloseCacheStoresStateWithoutBodyAndEnrich(t *testing.T) {
+	f := &cachePipelineFixture{fakeRedis: newFakeRedis(), failAt: -1}
+	cache, err := newStore(f, f.transaction, Config{KeyPrefix: "closed", RefreshInterval: 5 * time.Second}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := storetest.Alert("tenant", "alert", "opening", "fp", "warning")
+	a.Content = strings.Repeat("x", 64<<10)
+	at := a.UpdateAt.Add(time.Hour)
+	a.Status, a.EndType, a.EndAt, a.EndReason = domain.AlertStatusClosed, domain.AlertEndTypeUser, &at, "manual"
+	a.EndOperation = &domain.AlertEndOperation{ID: "close", Source: "manual", OperatorKind: domain.OperatorKindUser, OperatorID: "tester"}
+	stored := store.StoredAlert{Alert: a, Version: store.NewVersionToken("version")}
+	for _, err := range cache.PutCurrentSnapshots(t.Context(), []store.StoredAlert{stored}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, raw := range f.values {
+		if len(raw) > 4096 || strings.Contains(string(raw), strings.Repeat("x", 1024)) {
+			t.Fatal("full body retained in terminal cache", len(raw))
+		}
+	}
+	current, found, err := cache.GetCurrent(t.Context(), store.ActiveAlertKey{BKTenantID: "tenant", EventSourceID: a.EventSourceID, Fingerprint: "fp"})
+	if err != nil || !found || current.Alert.Status != domain.AlertStatusClosed || current.Alert.EndOperation.ID != "close" || current.Alert.Content != "" || len(current.Alert.Enrich) != 0 {
+		t.Fatal(current, found, err)
+	}
+}
 
 type cachePipelineFixture struct {
 	*fakeRedis

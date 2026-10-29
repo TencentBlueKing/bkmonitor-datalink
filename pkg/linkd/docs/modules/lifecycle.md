@@ -222,9 +222,9 @@ merge-batches 在内存拆批，按空闲名额启动 goroutine，收齐直接�
 反向引用使用固定身份幂等批写，无写后读回；成员 Alert 与组级关系保持原 CAS，冻结快照保留首次值。
 合并主只经过内置来源自己的 Lifecycle，不再入窗；关系未就绪时仍阻止处置。
 
-Hook 内部角色区分 `state/action`：通用 Kafka 快照与策略索引属于状态输出，现行 KAC 消息属于处置触发。
+Hook 内部角色区分 `state/action`；仍启用的旧 KAC Kafka Hook 属于处置触发，通用 Kafka V1 已移除。
 动作只在本次 `EventPlan.mutations[].action_ready` 为真，或曾放行告警进入终态时发送；定时解除仅调用状态 Hook。
-KAC 投影默认在 Alert 业务写入后同步尝试，失败进入一次后台补偿；动作仍使用独立持久任务及投影确认 Gate。已有可靠动作目标的 Alert 跳过旧 KAC Hook，通用状态输出仍保留。
+KAC 投影默认在 Alert 业务写入后同步尝试，失败进入一次后台补偿；动作仍使用独立持久任务及投影确认 Gate。已有可靠动作目标的 Alert 跳过旧 KAC Hook。
 
 ### 2.4 Enricher 与 FinalHook
 
@@ -266,10 +266,11 @@ FinalHook 在 Alert 真实变化后按当前任务 Release 的 `EventSource.hook
 每个实例接收独立快照，各自产生成功或失败 push AlertLog，实例名参与流水幂等身份和指标。
 单个插件 error、独立超时、panic 或非法结果不阻止后续插件；父上下文取消则停止处理。
 流水仍与本次状态操作一起提交；失败流水写入成功不回滚已经完成的 Alert 状态。
-空列表不输出，同类型允许多个实例；每个来源至多 16 个实例，名称必须唯一。
+空列表不输出，同类型允许多个实例；每个来源至多 16 个在用实例，名称必须唯一。遗留 `type: kafka`
+声明及其参数直接忽略，不占名称和执行名额，不创建客户端或生成 push 流水。
 
 插件客户端归来源任务所有，发布切换排空旧任务后关闭旧客户端，部分装配失败释放已创建客户端。
-Kafka 插件保持 [Kafka Alert V1](../reference/contracts/alert-output.md) 协议及 message ID 不变。
+通用 [Kafka Alert V1 Hook](../reference/contracts/alert-output.md) 已移除。
 KAC 插件把相同 Alert 快照转换为 KAC `alarm_collect_topic` 扁平消息；`event_id` 使用
 `linkd-` 加 AlertID 维持生命周期关联，`alarm_id` 使用 `linkd-` 加稳定 UUID 兼容 KAC URL 路由。
 同一 Alert 快照重试生成相同 `alarm_id`，不同更新时间或 outcome 生成不同记录身份。等级、
@@ -456,10 +457,15 @@ cause 执行 FinalHook，再把 close 与 push AlertLog 一次批量写入。相
 命令不能改写已有终态。
 
 控制面已提供受管理 JWT 保护的 [HTTP 主动关闭入口](../reference/contracts/alert-close.md)，Console 通过
-该入口调用现有用例；当前仍没有 CLI 或 Kafka 直接关闭入口。独立关闭请求最多四个并发、每次十秒，
+该入口调用现有用例；当前仍没有 CLI 或 Kafka 直接关闭入口。独立单条关闭最多四个请求，批量关闭有独立的请求与成员预算；接口均为每次十秒，
 使用当前已发布来源的 Hook 配置；不重新丰富。CAS 成功后缓存失败的重试也会修复近期缓存，再补齐输出和流水。
-启用全局 KAC 插件时，控制面关闭入口还会在同一请求预算内同步推进持久投影并确认搜索可见性及 ACK；
-未确认返回 502，原命令重试可继续补齐。具体保证与失败恢复规则统一见上述 HTTP 契约。
+筛选关闭复用合并成员批次的处理方式：批读身份、fingerprint 租约、锁内批读、Bulk CAS、pipeline 缓存、
+批写流水和批量同步投影；批大小不受单条关闭名额截断。前置调用、终态清理及自定义 Hook 保持既有逐项语义，
+按独立的 `control_plane.close.member_concurrency` 有界并发。控制面复用来源 Hook、连接和终态清理 Journal。
+关闭读取、CAS、缓存及现存 KAC 终态投影只处理所需状态字段；仍启用的旧 KAC Kafka Hook 或首次 KAC 创建才补读完整载荷；遗留通用 kafka 声明不触发补读。
+启用全局 KAC 插件时，控制面关闭入口在同一请求预算内直接批写 KAC 并 refresh；失败返回 502，
+原命令重试可继续补齐。没有持久投影任务或 ACK 水位。具体保证与失败恢复规则统一见上述 HTTP 契约。
+2026-10-29 批量路径为本地实现，尚未部署验证。
 
 ## 8. 恢复与数据安全边界
 

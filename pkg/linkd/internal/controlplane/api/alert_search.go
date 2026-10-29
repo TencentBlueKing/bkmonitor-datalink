@@ -112,7 +112,11 @@ func decodeAlertQuery(w http.ResponseWriter, r *http.Request, maximum int64, tar
 
 func validAlertQuery(q store.AlertSearchRequest) bool {
 	query := bytes.TrimSpace(q.Query)
-	return domain.ValidateIdentityPart("bk_tenant_id", q.TenantID, 64) == nil && len(q.After) <= domain.EntityIDMaxBytes && q.Limit >= 1 && q.Limit <= store.MaxPageSize && (len(query) == 0 || query[0] == '{')
+	limit := store.MaxPageSize
+	if q.IDsOnly {
+		limit = store.MaxCloseBatchSize
+	}
+	return domain.ValidateIdentityPart("bk_tenant_id", q.TenantID, 64) == nil && len(q.After) <= domain.EntityIDMaxBytes && q.Limit >= 1 && q.Limit <= limit && (len(query) == 0 || query[0] == '{')
 }
 
 func (s *AlertSearch) failure(w http.ResponseWriter, ctx context.Context, tenant string, err error) {

@@ -7,6 +7,7 @@ package elasticsearchstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -41,12 +42,17 @@ func (r *Repository) SearchAlerts(ctx context.Context, q store.AlertSearchReques
 	}
 	// 归档期间同一 Alert 可同时存在于 Active 和 History。折叠与排序使用同一字段，
 	// 多取一条判断后续页，不把未折叠的 ES hits.total 当成告警总数。
-	body, err := marshalRequest(map[string]any{
+	request := map[string]any{
 		"size": q.Limit + 1, "track_total_hits": false, "seq_no_primary_term": true,
 		"collapse": map[string]any{"field": "alert_id"},
 		"query":    map[string]any{"bool": map[string]any{"filter": filters}},
 		"sort":     []any{map[string]any{"alert_id": "asc"}},
-	})
+	}
+	if q.IDsOnly {
+		request["_source"] = []string{"alert_id"}
+		request["seq_no_primary_term"] = false
+	}
+	body, err := marshalRequest(request)
 	if err != nil {
 		return store.AlertSearchPage{}, err
 	}
@@ -70,6 +76,16 @@ func (r *Repository) SearchAlerts(ctx context.Context, q store.AlertSearchReques
 		if len(page.Items) == q.Limit {
 			page.Next = page.Items[len(page.Items)-1].AlertID
 			break
+		}
+		if q.IDsOnly {
+			var identity struct {
+				AlertID string `json:"alert_id"`
+			}
+			if err := json.Unmarshal(hit.Source, &identity); err != nil {
+				return store.AlertSearchPage{}, err
+			}
+			page.Items = append(page.Items, domain.Alert{AlertID: identity.AlertID})
+			continue
 		}
 		item, err := decodeAlertHit(hit)
 		if err != nil {

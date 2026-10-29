@@ -31,6 +31,7 @@ import (
 	"linkd/internal/runtimeconfig"
 	"linkd/internal/store"
 	storeassembly "linkd/internal/store/assembly"
+	"linkd/internal/suppressioncleanup"
 	"linkd/internal/telemetry"
 )
 
@@ -60,21 +61,39 @@ type AlertProjectionSynchronizer interface {
 // AlertCloser 为用户或系统关闭装配当前已发布来源的 Hook，复用正式 Lifecycle 的 CAS 和流水逻辑。
 // 最多四个并发请求；重试必须携带相同命令，终态部分成功不等同于未执行。
 type AlertCloser struct {
-	logger     *slog.Logger
-	slots      chan struct{}
-	run        func(context.Context, lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error)
-	read       func(context.Context, string, string) (domain.Alert, error)
-	projection AlertProjectionSynchronizer
+	logger        *slog.Logger
+	metrics       *telemetry.Runtime
+	resources     *AlertProcessorResources
+	slots         chan struct{}
+	batchSlots    chan struct{}
+	batchSize     int
+	concurrency   int
+	sources       closeSourceReader
+	withProcessor func(context.Context, store.StoredAlert, func(*lifecycle.Processor) error) error
+	run           func(context.Context, lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error)
+	read          func(context.Context, string, string) (domain.Alert, error)
+	projection    AlertProjectionSynchronizer
 }
+
+// UseResources 在接收关闭请求前注入控制面的共用连接和来源 Hook。
+func (s *AlertCloser) UseResources(resources *AlertProcessorResources) { s.resources = resources }
 
 // NewAlertCloser 创建控制面专用的有界关闭入口，不启动消费者或修改存储 schema。
 func NewAlertCloser(cfg config.Config, sources closeSourceReader, severity *runtimeconfig.Severity, logger *slog.Logger, metrics *telemetry.Runtime, projection AlertProjectionSynchronizer) *AlertCloser {
-	closer := &AlertCloser{slots: make(chan struct{}, 4), projection: projection, logger: logger}
+	closer := &AlertCloser{slots: make(chan struct{}, 4), projection: projection, logger: logger, metrics: metrics, sources: sources}
+	closeConfig := cfg.CloseControlSettings()
+	closer.batchSlots = make(chan struct{}, closeConfig.Concurrency)
+	closer.batchSize = closeConfig.BatchSize
+	closer.concurrency = closeConfig.MemberConcurrency
 	prepare := newAlarmdClosePreparation(cfg.Resources.Alarmd, logger)
 	configure := func(store.Repository, *redisstate.Store) []lifecycle.ProcessorOption {
 		return []lifecycle.ProcessorOption{lifecycle.WithClosePreparation(prepare)}
 	}
+	closer.withProcessor = func(ctx context.Context, identity store.StoredAlert, run func(*lifecycle.Processor) error) error {
+		return withAlertProcessor(ctx, cfg, sources, severity, logger, metrics, identity.Alert.BKTenantID, identity.Alert.AlertID, configure, run, identity)
+	}
 	closer.run = func(ctx context.Context, command lifecycle.CloseAlertCommand) (result lifecycle.CloseAlertResult, err error) {
+		ctx = closer.resources.context(ctx)
 		err = withAlertProcessor(ctx, cfg, sources, severity, logger, metrics, command.BKTenantID, command.AlertID, configure, func(p *lifecycle.Processor) error {
 			var err error
 			result, err = p.CloseAlert(ctx, command)
@@ -106,7 +125,7 @@ func NewAlertCloser(cfg config.Config, sources closeSourceReader, severity *runt
 
 // withAlertProcessor 为人工关闭、屏蔽检查和合并步骤共用实时读取、租户校验、Hook 与同一租约边界。
 func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSourceReader, severity *runtimeconfig.Severity, logger *slog.Logger, metrics *telemetry.Runtime, tenant, alertID string, configure func(store.Repository, *redisstate.Store) []lifecycle.ProcessorOption, run func(*lifecycle.Processor) error, identity ...store.StoredAlert) (runErr error) {
-
+	started := time.Now()
 	if cfg.Storage == nil || cfg.Lifecycle == nil || cfg.Storage.Redis == nil {
 		return &CloseError{Status: 503, Code: "unavailable", Message: "lifecycle is not configured"}
 	}
@@ -203,7 +222,11 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 		return err
 	}
 	observed := metrics.ObserveRepository(runtime.Repository)
-	opts := []lifecycle.ProcessorOption{lifecycle.WithNewAlertSuppressor(&policyruntime.Suppressor{State: policyState, Aggregation: policyState, Observer: metrics, Logger: logger, CleanupRecorder: configuredCleanupRecorder{storage: *cfg.Storage, deployment: cfg.Dispatch.WithDefaults().Deployment}}), lifecycle.WithDependencyRegistry(&policyruntime.Shielder{Dependency: policyState, Index: policyState, Hints: policyState, Observer: metrics, Logger: logger})}
+	var cleanup suppressioncleanup.Recorder = configuredCleanupRecorder{storage: *cfg.Storage, deployment: cfg.Dispatch.WithDefaults().Deployment}
+	if shared != nil && shared.cleanup != nil {
+		cleanup = shared.cleanup
+	}
+	opts := []lifecycle.ProcessorOption{lifecycle.WithNewAlertSuppressor(&policyruntime.Suppressor{State: policyState, Aggregation: policyState, Observer: metrics, Logger: logger, CleanupRecorder: cleanup}), lifecycle.WithDependencyRegistry(&policyruntime.Shielder{Dependency: policyState, Index: policyState, Hints: policyState, Observer: metrics, Logger: logger})}
 	opts = append(opts, lifecycle.WithAlertChangePublisher(changePublisher(cfg, client, metrics)), lifecycle.WithActiveAlertCache(activeindex.New(client, cfg.Dispatch.WithDefaults().Deployment, release.Spec, metrics)))
 	if configure != nil {
 		opts = append(opts, configure(observed, policyState)...)
@@ -213,6 +236,7 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 		return err
 	}
 	key := mailbox.CorrelationKey(stored.Alert.BKTenantID, stored.Alert.EventSourceID, stored.Alert.Fingerprint)
+	store.ObserveBatchPhase(ctx, "member.processor_prepare", time.Since(started))
 	return withAlertLease(ctx, locker, key, func() error { return run(processor) })
 }
 
@@ -237,40 +261,50 @@ func (s *AlertCloser) CloseAlert(ctx context.Context, command lifecycle.CloseAle
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	ctx = store.WithBatchPhaseObserver(ctx, s.metrics.ObserveClosePhase)
+	started := time.Now()
+	defer func() { store.ObserveBatchPhase(ctx, "member.total", time.Since(started)) }()
 	result, err := s.run(ctx, command)
 	if err == nil {
 		if s.projection != nil {
-			if err := s.projection.ProjectNow(ctx, result.Alert.BKTenantID, result.Alert.AlertID); err != nil {
+			started := time.Now()
+			err := s.projection.ProjectNow(ctx, result.Alert.BKTenantID, result.Alert.AlertID)
+			store.ObserveBatchPhase(ctx, "member.projection", time.Since(started))
+			if err != nil {
 				if s.logger != nil {
 					s.logger.WarnContext(ctx, "synchronous close projection failed", "module", "lifecycle", "operation", "close_projection", "error", err,
 						"bk_tenant_id", command.BKTenantID, "alert_id", command.AlertID, "operation_id", command.OperationID)
 				}
-				return result, &CloseError{Status: 502, Code: "result_uncertain", Message: "alert closed but KAC write failed; retry the same operation"}
+				return result, &CloseError{Status: 502, Code: "result_uncertain", Message: "alert closed but KAC write failed; retry the same operation", cause: err}
 			}
 		}
 		return result, nil
 	}
+	return result, s.closeError(ctx, command, err)
+}
+
+func (s *AlertCloser) closeError(ctx context.Context, command lifecycle.CloseAlertCommand, err error) error {
 	var classified *CloseError
 	if errors.As(err, &classified) {
-		return result, classified
+		return classified
 	}
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, eventsource.ErrNotFound) {
-		return result, &CloseError{Status: 404, Code: "not_found", Message: "alert or source not found"}
+		return &CloseError{Status: 404, Code: "not_found", Message: "alert or source not found", cause: err}
 	}
 	if errors.Is(err, scheduler.ErrLockBusy) {
-		return result, &CloseError{Status: 429, Code: "busy", Message: "alert is being processed; retry the same operation"}
+		return &CloseError{Status: 429, Code: "busy", Message: "alert is being processed; retry the same operation", cause: err}
 	}
 	if errors.Is(err, store.ErrInvalidTransition) {
-		return result, &CloseError{Status: 409, Code: "invalid_transition", Message: "alert state changed; refresh before another operation"}
+		return &CloseError{Status: 409, Code: "invalid_transition", Message: "alert state changed; refresh before another operation", cause: err}
 	}
 	if errors.Is(err, store.ErrVersionConflict) {
-		return result, &CloseError{Status: 409, Code: "version_conflict", Message: "alert version changed; retry the same operation"}
+		return &CloseError{Status: 409, Code: "version_conflict", Message: "alert version changed; retry the same operation", cause: err}
 	}
 	if s.logger != nil {
 		s.logger.WarnContext(ctx, "close alert failed", "module", "lifecycle", "operation", "close_alert", "error", err,
 			"bk_tenant_id", command.BKTenantID, "alert_id", command.AlertID, "operation_id", command.OperationID)
 	}
-	return result, &CloseError{Status: 502, Code: "result_uncertain", Message: "close result uncertain; retry the same operation"}
+	return &CloseError{Status: 502, Code: "result_uncertain", Message: "close result uncertain; retry the same operation", cause: err}
 }
 
 // CloseKACAlert 复用正式关闭命令；KAC 的鉴权边界由 HTTP 入口单独处理。

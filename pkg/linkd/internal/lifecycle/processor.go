@@ -90,6 +90,8 @@ func (p *Processor) compareAndSetAlert(
 	replacement domain.Alert,
 ) (store.StoredAlert, error) {
 	defer p.measureStep(phaseApply, "alert_cas")()
+	started := time.Now()
+	defer func() { store.ObserveBatchPhase(ctx, "member.cas", time.Since(started)) }()
 	var updated store.StoredAlert
 	var err error
 	if repository, ok := p.repository.(store.LifecycleAlertSnapshotStore); ok {
@@ -204,6 +206,8 @@ func (p *Processor) getAlertCurrent(
 // readAlertCurrent 只读业务事实；准备终结告警时不能先重算旧活动状态的依赖资格。
 func (p *Processor) readAlertCurrent(ctx context.Context, bkTenantID, alertID string) (store.StoredAlert, error) {
 	defer p.measureStep(phaseApply, "alert_read")()
+	started := time.Now()
+	defer func() { store.ObserveBatchPhase(ctx, "member.read", time.Since(started)) }()
 	if repository, ok := p.repository.(store.LifecycleAlertStore); ok {
 		return repository.GetAlertCurrent(ctx, bkTenantID, alertID)
 	}
@@ -239,125 +243,45 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 		return CloseAlertResult{}, err
 	}
 	command.EffectiveAt = command.EffectiveAt.Round(0).UTC()
-	operation := command.endOperation()
 	prepared := false
 	for attempt := 0; attempt < maxCASAttempts; attempt++ {
 		stored, err := p.readAlertCurrent(ctx, command.BKTenantID, command.AlertID)
 		if err != nil {
 			return CloseAlertResult{}, err
 		}
-		stored, err = p.finishPendingChanges(ctx, stored)
+		update, already, err := p.prepareAlertClose(ctx, stored, command, &prepared)
 		if err != nil {
 			return CloseAlertResult{}, err
 		}
-		endType := domain.AlertEndTypeUser
-		causeType := AlertChangeCauseUserOperation
-		if command.OperatorKind == domain.OperatorKindSystem {
-			endType = domain.AlertEndTypeSystem
-			causeType = AlertChangeCauseSystemOperation
-		}
-		if stored.Alert.Status.Terminal() {
-			if stored.Alert.Status != domain.AlertStatusClosed || stored.Alert.EndType != endType || stored.Alert.EndReason != command.Reason ||
-				stored.Alert.EndAt == nil || !stored.Alert.EndAt.Equal(command.EffectiveAt) || stored.Alert.EndOperation == nil || *stored.Alert.EndOperation != operation {
-				return CloseAlertResult{}, fmt.Errorf("%w: alert is already terminal", store.ErrInvalidTransition)
+		updated := update.Current
+		if !already {
+			updated, err = p.compareAndSetAlert(ctx, update.Current, update.Replacement)
+			if errors.Is(err, store.ErrVersionConflict) {
+				continue
 			}
-			// 关闭 CAS 可能已成功但索引清理失败；重放只补偿当前终态。
-			if err := p.observeDependencyIndex(ctx, stored.Alert); err != nil {
-				return CloseAlertResult{}, err
-			}
-			// 首次关闭可能在 CAS 成功后写缓存失败；重试必须修复可见性窗口，
-			// 否则旧 active 缓存会持续参与新事件裁决。
-			if err := p.repairClosedAlertCache(ctx, stored); err != nil {
-				return CloseAlertResult{}, fmt.Errorf("repair directly closed alert cache: %w", err)
-			}
-			if err := p.clearSuppression(ctx, stored.Alert); err != nil {
-				return CloseAlertResult{}, err
-			}
-			operationLog, err := operationCloseLog(command, stored.Alert)
 			if err != nil {
 				return CloseAlertResult{}, err
 			}
-			hookLog, err := p.runFinalHooks(
-				ctx,
-				AlertChangeCause{Type: causeType, ID: command.OperationID},
-				stored.Alert,
-				OutcomeAlertClosed,
-			)
-			if err != nil {
-				return CloseAlertResult{}, err
-			}
-			logs := []domain.AlertLog{operationLog}
-			if hookLog != nil {
-				logs = append(logs, hookLog...)
-			}
-			if err := p.appendAlertLogs(ctx, logs); err != nil {
-				return CloseAlertResult{}, err
-			}
-			return CloseAlertResult{Alert: stored.Alert.Clone(), AlreadyClosed: true}, nil
-		}
-		// 外部确认必须先于关闭事实；CAS 冲突只重读本地状态，不再次刷新外部关闭时间。
-		// 已落库的原命令在上方终态分支补输出，不重新执行前置调用。
-		if !prepared && p.closePreparation != nil {
-			if err := p.closePreparation(ctx, stored.Alert.Clone(), operation); err != nil {
-				return CloseAlertResult{}, fmt.Errorf("prepare alert close: %w", err)
-			}
-			prepared = true
-		}
-		replacement := stored.Alert.Clone()
-		replacement.Status = domain.AlertStatusClosed
-		replacement.Shield = domain.AlertShield{}
-		replacement.Merge = replacement.Merge.EndWaiting()
-		replacement.UpdateAt = nextAlertUpdateTime(command.EffectiveAt, stored.Alert.UpdateAt)
-		replacement.PolicyChange = terminalShieldChange(stored.Alert, replacement.UpdateAt, command.OperationID)
-		endAt := command.EffectiveAt
-		replacement.EndAt = &endAt
-		replacement.EndType = endType
-		replacement.EndReason = command.Reason
-		replacement.EndOperation = &operation
-		updated, err := p.compareAndSetAlert(ctx, stored, replacement)
-		if errors.Is(err, store.ErrVersionConflict) {
-			continue
-		}
-		if err != nil {
-			return CloseAlertResult{}, err
 		}
 		updated, err = p.finishPendingChanges(ctx, updated)
 		if err != nil {
 			return CloseAlertResult{}, err
 		}
-		if err := p.recentAlerts.PutCurrent(ctx, updated); err != nil {
-			return CloseAlertResult{}, fmt.Errorf("cache directly closed alert %q: %w", command.AlertID, err)
-		}
-		if err := p.clearSuppression(ctx, updated.Alert); err != nil {
+		if err := p.cacheAlertClose(ctx, updated, already); err != nil {
 			return CloseAlertResult{}, err
 		}
-		operationLog, err := operationCloseLog(command, updated.Alert)
+		logs, err := p.alertCloseOutput(ctx, command, updated)
 		if err != nil {
 			return CloseAlertResult{}, err
-		}
-		hookLog, err := p.runFinalHooks(
-			ctx,
-			AlertChangeCause{Type: causeType, ID: command.OperationID},
-			updated.Alert,
-			OutcomeAlertClosed,
-		)
-		if err != nil {
-			return CloseAlertResult{}, err
-		}
-		logs := []domain.AlertLog{operationLog}
-		if hookLog != nil {
-			logs = append(logs, hookLog...)
 		}
 		if err := p.appendAlertLogs(ctx, logs); err != nil {
 			return CloseAlertResult{}, err
 		}
-		return CloseAlertResult{Alert: updated.Alert.Clone()}, nil
+		return CloseAlertResult{Alert: updated.Alert.Clone(), AlreadyClosed: already}, nil
 	}
 	return CloseAlertResult{}, fmt.Errorf("close alert after %d CAS attempts: %w", maxCASAttempts, store.ErrVersionConflict)
 }
 
-// 重试可能晚于同 fingerprint 的新生命周期，不能用旧 closed 快照掩盖新 active。
-// 调用方与 Event Processor 共用 fingerprint lease，保护检查到写入之间的窗口。
 func (p *Processor) repairClosedAlertCache(ctx context.Context, stored store.StoredAlert) error {
 	key := store.ActiveAlertKey{BKTenantID: stored.Alert.BKTenantID, EventSourceID: stored.Alert.EventSourceID, Fingerprint: stored.Alert.Fingerprint}
 	cached, found, err := p.recentAlerts.GetCurrent(ctx, key)

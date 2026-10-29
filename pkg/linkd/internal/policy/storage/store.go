@@ -31,6 +31,7 @@ import (
 	"linkd/internal/config"
 	"linkd/internal/policy"
 	"linkd/internal/shieldcheck"
+	"linkd/internal/store"
 	es "linkd/internal/store/elasticsearch"
 )
 
@@ -223,6 +224,10 @@ func (s *Store) Get(ctx context.Context, kind, id string) (json.RawMessage, stri
 // 合并记录只等待持久化确认，后续步骤按实时 Get 推进；其 List 允许 ES 刷新延迟，由周期扫描补读。
 // 配置/发布记录仍等待搜索可见，不能让配置消费者把已经发布的策略误判为消失。
 func (s *Store) Put(ctx context.Context, kind, id, expected string, b json.RawMessage) error {
+	if kind == "merge_requests" || kind == "suppression_cleanups" {
+		started := time.Now()
+		defer func() { store.ObserveBatchPhase(ctx, "storage."+kind, time.Since(started)) }()
+	}
 	if e := valid(kind, id); e != nil {
 		return e
 	}

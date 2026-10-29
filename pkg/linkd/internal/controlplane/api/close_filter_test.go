@@ -33,6 +33,50 @@ import (
 
 const filteredCloseBody = `{"bk_tenant_id":"tenant","filter":{"term":{"severity":"warning"}},"operation_id":"batch-operation","operator_id":"operator","reason":"verified","effective_at":"2026-09-23T00:00:00Z","limit":2}`
 
+// 旧边界测试按固定顺序注入逐项结果；生产入口使用独立的批量实现。
+func (f closeFunc) CloseAlerts(ctx context.Context, commands []lifecycle.CloseAlertCommand) []lifecycle.CloseAlertOutcome {
+	results := make([]lifecycle.CloseAlertOutcome, len(commands))
+	for i, command := range commands {
+		if ctx.Err() != nil {
+			results[i].Err = &lifecycleprocess.CloseError{Status: 504, Code: "not_attempted"}
+			continue
+		}
+		results[i].CloseAlertResult, results[i].Err = f(ctx, command)
+	}
+	return results
+}
+
+type filteredBatchCloser struct {
+	closeFunc
+	batch func(context.Context, []lifecycle.CloseAlertCommand) []lifecycle.CloseAlertOutcome
+}
+
+func (c filteredBatchCloser) CloseAlerts(ctx context.Context, commands []lifecycle.CloseAlertCommand) []lifecycle.CloseAlertOutcome {
+	return c.batch(ctx, commands)
+}
+
+func TestFilteredCloseCallsBatchOnceAndKeepsCandidateOrder(t *testing.T) {
+	calls := 0
+	search := alertSearchFunc(func(context.Context, store.AlertSearchRequest) (store.AlertSearchPage, error) {
+		return store.AlertSearchPage{Items: []domain.Alert{{AlertID: "a"}, {AlertID: "b"}}, Next: "b"}, nil
+	})
+	closer := filteredBatchCloser{closeFunc: func(context.Context, lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
+		t.Error("filtered close fell back to single CloseAlert")
+		return lifecycle.CloseAlertResult{}, nil
+	}, batch: func(_ context.Context, commands []lifecycle.CloseAlertCommand) []lifecycle.CloseAlertOutcome {
+		calls++
+		if len(commands) != 2 || commands[0].AlertID != "a" || commands[1].AlertID != "b" || commands[0].OperationID != commands[1].OperationID {
+			t.Fatal(commands)
+		}
+		return []lifecycle.CloseAlertOutcome{{CloseAlertResult: lifecycle.CloseAlertResult{AlreadyClosed: true}}, {Err: &lifecycleprocess.CloseError{Status: 429, Code: "busy"}}}
+	}}
+	w := policyHTTP(t, filteredCloseAPI(t, search, closer, config.AlertSearchConfig{}).Handler(), http.MethodPost, "/api/v1/alerts/close", filteredCloseBody)
+	var result closeAlertsResponse
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &result) != nil || calls != 1 || result.Closed != 1 || result.Failed != 1 || result.Items[0].AlertID != "a" || !result.Items[0].AlreadyClosed || result.Items[1].AlertID != "b" || result.Items[1].Status != 429 || result.Next != "b" {
+		t.Fatal(w.Code, w.Body.String(), calls)
+	}
+}
+
 func filteredCloseAPI(t *testing.T, search AlertSearcher, closer AlertCloser, cfg config.AlertSearchConfig) *API {
 	t.Helper()
 	logger, err := logging.New(logging.DefaultConfig(), io.Discard)
@@ -72,7 +116,7 @@ func TestFilteredCloseReusesLifecycleAndStableOperation(t *testing.T) {
 		}
 		return page, nil
 	})
-	handler := filteredCloseAPI(t, search, processor, config.AlertSearchConfig{}).Handler()
+	handler := filteredCloseAPI(t, search, closeFunc(processor.CloseAlert), config.AlertSearchConfig{}).Handler()
 	for _, replay := range []bool{false, true} {
 		w := policyHTTP(t, handler, http.MethodPost, "/api/v1/alerts/close", filteredCloseBody)
 		var result closeAlertsResponse
@@ -141,7 +185,7 @@ func TestFilteredCloseRejectsInvalidRequestsBeforeSearch(t *testing.T) {
 	handler := filteredCloseAPI(t, search, nil, config.AlertSearchConfig{}).Handler()
 	for _, body := range []string{
 		`{}`, `null`, `{"bk_tenant_id":"tenant","dry_run":true}`, `{"bk_tenant_id":"tenant","filter":null,"dry_run":true}`,
-		`{"bk_tenant_id":"tenant","filter":[],"dry_run":true}`, `{"bk_tenant_id":"tenant","filter":{"match_all":{}},"limit":501,"dry_run":true}`,
+		`{"bk_tenant_id":"tenant","filter":[],"dry_run":true}`, `{"bk_tenant_id":"tenant","filter":{"match_all":{}},"limit":5001,"dry_run":true}`,
 		strings.Replace(filteredCloseBody, `"operation_id":"batch-operation"`, `"operation_id":""`, 1),
 		strings.Replace(filteredCloseBody, `"operator_id":"operator"`, `"operator_id":""`, 1),
 		strings.Replace(filteredCloseBody, `"reason":"verified"`, `"reason":""`, 1),

@@ -257,26 +257,7 @@ func (c *Client) fields(ctx context.Context, a domain.Alert, create bool) (map[s
 	case a.Status == domain.AlertStatusRecovered:
 		mode = "restored"
 	case a.Status == domain.AlertStatusClosed:
-		mode = "system_closed"
-		switch a.EndType {
-		case domain.AlertEndTypeUser:
-			mode = "closed"
-		case domain.AlertEndTypeSource, domain.AlertEndTypeSeverityUpgrade:
-			// 来源等级升级会结束旧告警，同样属于告警源关闭，不能归入系统超时关闭。
-			mode = "source_closed"
-		}
-		// 操作者类别不足以区分自动关闭、自愈和工单，展示状态沿用已冻结的关闭来源。
-		// 无主动命令的来源关闭及历史记录继续使用 EndType 的既有投影。
-		if a.EndOperation != nil {
-			switch a.EndOperation.Source {
-			case "auto_policy":
-				mode = "auto_closed"
-			case "self_heal":
-				mode = "autoexecute_closed"
-			case "work_order":
-				mode = "autoorder_closed"
-			}
-		}
+		mode = closedStatus(a)
 	case a.Shield.Active:
 		mode = "shielded"
 	case a.Merge != nil && a.Merge.Role == "original" && len(a.Merge.RelationIDs) > 0:

@@ -20,11 +20,13 @@ type AlertSearchRequest struct {
 	Query json.RawMessage `json:"query,omitempty"`
 	// After 是上一页最后一条 AlertID；结果固定按 AlertID 升序，不承诺跨页快照。
 	After string `json:"after,omitempty"`
-	// Limit 是当前页最大数量，HTTP 边界默认使用 DefaultPageSize，上限为 MaxPageSize。
+	// Limit 是当前页最大数量；普通检索使用 MaxPageSize，IDsOnly 关闭候选使用 MaxCloseBatchSize。
 	Limit int `json:"limit,omitempty"`
+	// IDsOnly 由关闭用例设置，只返回 AlertID，避免枚举候选时加载正文和丰富数据。
+	IDsOnly bool `json:"-"`
 }
 
-// AlertSearchPage 返回完整的原生告警快照，归档副本按 AlertID 折叠。
+// AlertSearchPage 返回原生告警快照；IDsOnly 时仅填 AlertID，归档副本仍按 AlertID 折叠。
 type AlertSearchPage struct {
 	Items []domain.Alert `json:"items"` // Items 不包含存储 CAS token 或物理索引。
 	Next  string         `json:"next"`  // Next 为空表示此次读取没有更多匹配告警。

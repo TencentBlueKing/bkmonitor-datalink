@@ -11,6 +11,13 @@ import (
 
 type controlSourceBatchKey struct{}
 
+type controlReleaseBatchKey struct{}
+
+type controlReleaseResult struct {
+	release eventsource.Release
+	err     error
+}
+
 type controlSourceResult struct {
 	record eventsource.Record
 	err    error

@@ -177,6 +177,14 @@ func encodeAlertDocument(alert domain.Alert) ([]byte, error) {
 }
 
 func decodeAlertHit(hit searchHit) (store.StoredAlert, error) {
+	return decodeAlertSnapshot(hit, false)
+}
+
+func decodeAlertStateHit(hit searchHit) (store.StoredAlert, error) {
+	return decodeAlertSnapshot(hit, true)
+}
+
+func decodeAlertSnapshot(hit searchHit, stateOnly bool) (store.StoredAlert, error) {
 	var document alertDocument
 	if err := json.Unmarshal(hit.Source, &document); err != nil {
 		return store.StoredAlert{}, err
@@ -193,7 +201,13 @@ func decodeAlertHit(hit searchHit) (store.StoredAlert, error) {
 		!document.MergeWork {
 		document.Revision = 1
 	}
-	normalized, err := document.Normalize()
+	var normalized domain.Alert
+	var err error
+	if stateOnly {
+		normalized, err = document.NormalizeState()
+	} else {
+		normalized, err = document.Normalize()
+	}
 	if err != nil {
 		return store.StoredAlert{}, err
 	}

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"linkd/internal/domain"
+	"linkd/internal/store"
 )
 
 func eventAlertLog(event domain.Event, alert domain.Alert, operation domain.OperationKind,
@@ -71,6 +72,8 @@ func finalHookLog(cause AlertChangeCause, alert domain.Alert, outcome ProcessOut
 // 任一逐项失败都阻止后续 Event CAS；已经成功的 create 由稳定 log_id 在重试时幂等吸收。
 func (p *Processor) appendAlertLogs(ctx context.Context, logs []domain.AlertLog) error {
 	defer p.measureStep(phaseApply, "logs")()
+	started := time.Now()
+	defer func() { store.ObserveBatchPhase(ctx, "member.logs", time.Since(started)) }()
 	if len(logs) == 0 {
 		return nil
 	}

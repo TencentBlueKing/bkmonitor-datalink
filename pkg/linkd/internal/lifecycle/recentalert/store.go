@@ -308,6 +308,8 @@ type document struct {
 	SchemaVersion int          `json:"schema_version"`
 	Alert         domain.Alert `json:"alert"`
 	Version       string       `json:"version"`
+	// StateOnly 的主动关闭终态只用作 active lookup 的负缓存，不向后续 Event 提供丰富快照。
+	StateOnly bool `json:"state_only,omitempty"`
 }
 
 func encode(stored store.StoredAlert) ([]byte, error) {
@@ -327,7 +329,13 @@ func encodeSnapshot(stored store.StoredAlert) ([]byte, error) {
 	if stored.Version.IsZero() {
 		return nil, fmt.Errorf("encode recent alert cache: version must not be empty")
 	}
-	payload, err := json.Marshal(document{SchemaVersion: SchemaVersion, Alert: stored.Alert, Version: stored.Version.String()})
+	stateOnly := stored.Alert.Status == domain.AlertStatusClosed && stored.Alert.EndOperation != nil
+	if stateOnly {
+		// 主动关闭终态不会参与后续 active 快照复用，只保留清理和缓存修复需要的状态。
+		stored.Alert.Content, stored.Alert.Title, stored.Alert.SubjectName = "", "", ""
+		stored.Alert.ExtraData, stored.Alert.Enrich = nil, nil
+	}
+	payload, err := json.Marshal(document{SchemaVersion: SchemaVersion, Alert: stored.Alert, Version: stored.Version.String(), StateOnly: stateOnly})
 	if err != nil {
 		return nil, fmt.Errorf("encode recent alert cache: %w", err)
 	}
@@ -357,7 +365,13 @@ func decode(payload []byte) (store.StoredAlert, error) {
 	if cached.SchemaVersion != SchemaVersion || cached.Version == "" {
 		return store.StoredAlert{}, fmt.Errorf("decode recent alert cache: schema version or storage version is invalid")
 	}
-	alert, err := cached.Alert.Normalize()
+	var alert domain.Alert
+	var err error
+	if cached.StateOnly && cached.Alert.Status == domain.AlertStatusClosed {
+		alert, err = cached.Alert.NormalizeState()
+	} else {
+		alert, err = cached.Alert.Normalize()
+	}
 	if err != nil {
 		return store.StoredAlert{}, fmt.Errorf("decode recent alert cache: %w", err)
 	}

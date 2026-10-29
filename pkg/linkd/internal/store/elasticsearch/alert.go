@@ -600,6 +600,7 @@ func (r *Repository) GetAlertsCurrent(ctx context.Context, tenant string, ids []
 }
 
 // GetAlertIdentities 只读取锁作用域和来源发布版本，结果不能作为完整业务快照参与 CAS。
+// 优先批读写目标，仅为缺失项查询其他位置，避免同一活动文档按不同 alias 重复读取。
 func (r *Repository) GetAlertIdentities(ctx context.Context, tenant string, ids []string) (store.AlertBatch, error) {
 	return r.getAlertsCurrent(ctx, tenant, ids, "identity")
 }
@@ -612,6 +613,7 @@ func (r *Repository) GetAlertCloseStates(ctx context.Context, tenant string, ids
 func (r *Repository) getAlertsCurrent(ctx context.Context, tenant string, ids []string, mode string) (store.AlertBatch, error) {
 	docs := []map[string]string{}
 	positions := []string{}
+	fallback := make(map[string][]string, len(ids))
 	for _, id := range ids {
 		route, err := r.router.AlertRoute(ctx, id)
 		if err != nil {
@@ -623,13 +625,57 @@ func (r *Repository) getAlertsCurrent(ctx context.Context, tenant string, ids []
 				continue
 			}
 			seen[index] = true
+			if mode != "" && index != route.WriteTarget {
+				fallback[id] = append(fallback[id], index)
+				continue
+			}
 			docs = append(docs, map[string]string{"_index": index, "_id": documentID(tenant, id)})
 			positions = append(positions, id)
 		}
 	}
-	body, err := marshalRequest(map[string]any{"docs": docs})
+	selected, err := r.readCurrentAlertDocuments(ctx, tenant, docs, positions, mode)
 	if err != nil {
 		return store.AlertBatch{}, err
+	}
+	// 已在写目标找到的文档不再访问读 alias 或历史桶；缺失项仍沿用原路由优先级。
+	if mode != "" {
+		docs, positions = nil, nil
+		for _, id := range ids {
+			if _, found := selected[id]; found {
+				continue
+			}
+			for _, index := range fallback[id] {
+				docs = append(docs, map[string]string{"_index": index, "_id": documentID(tenant, id)})
+				positions = append(positions, id)
+			}
+		}
+		additional, err := r.readCurrentAlertDocuments(ctx, tenant, docs, positions, mode)
+		if err != nil {
+			return store.AlertBatch{}, err
+		}
+		for id, row := range additional {
+			selected[id] = row
+		}
+	}
+	result := store.AlertBatch{}
+	for _, id := range ids {
+		if row, ok := selected[id]; ok {
+			result.Alerts = append(result.Alerts, row)
+		} else {
+			result.NotFound = append(result.NotFound, id)
+		}
+	}
+	return result, nil
+}
+
+func (r *Repository) readCurrentAlertDocuments(ctx context.Context, tenant string, docs []map[string]string, positions []string, mode string) (map[string]store.StoredAlert, error) {
+	selected := map[string]store.StoredAlert{}
+	if len(docs) == 0 {
+		return selected, nil
+	}
+	body, err := marshalRequest(map[string]any{"docs": docs})
+	if err != nil {
+		return nil, err
 	}
 	var response struct {
 		Docs []getResponse `json:"docs"`
@@ -642,9 +688,8 @@ func (r *Repository) getAlertsCurrent(ctx context.Context, tenant string, ids []
 		query.Set("_source_includes", "revision,bk_tenant_id,alert_id,event_source_id,event_source_version,fingerprint,severity,dimensions,labels,extra_data.evaluation_family,subject_system,subject_type,subject_id,source_alert_id,shield,merge,policy_change,merge_change,merge_work,admission,policy_tags,status,latest_event_id,last_occurred_at,update_at,trigger_event_id,begin_at,create_at,end_at,end_type,end_reason,end_operation,enrich_status")
 	}
 	if err = r.performJSON(ctx, http.MethodPost, "/_mget", query, body, &response); err != nil {
-		return store.AlertBatch{}, err
+		return nil, err
 	}
-	selected := map[string]store.StoredAlert{}
 	for i, doc := range response.Docs {
 		if !doc.Found {
 			continue
@@ -659,23 +704,15 @@ func (r *Repository) getAlertsCurrent(ctx context.Context, tenant string, ids []
 			row, err = decodeAlertHit(doc.hit())
 		}
 		if err != nil {
-			return store.AlertBatch{}, err
+			return nil, err
 		}
 		id := positions[i]
 		if row.Alert.BKTenantID != tenant {
-			return store.AlertBatch{}, store.ErrNotFound
+			return nil, store.ErrNotFound
 		}
 		if _, ok := selected[id]; !ok {
 			selected[id] = row
 		}
 	}
-	result := store.AlertBatch{}
-	for _, id := range ids {
-		if row, ok := selected[id]; ok {
-			result.Alerts = append(result.Alerts, row)
-		} else {
-			result.NotFound = append(result.NotFound, id)
-		}
-	}
-	return result, nil
+	return selected, nil
 }

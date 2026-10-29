@@ -4,7 +4,9 @@
 package elasticsearchstore
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +18,121 @@ import (
 	"linkd/internal/store"
 	"linkd/internal/store/storetest"
 )
+
+type closeReadRouter struct{ *StaticRouter }
+
+func (r closeReadRouter) AlertRoute(context.Context, string) (Route, error) {
+	return Route{WriteTarget: "active-write", ReadTargets: []string{"active-read", "history"}}, nil
+}
+
+func TestCloseReadsOnlyFallbackMissingDocuments(t *testing.T) {
+	for _, mode := range []string{"identity", "close"} {
+		t.Run(mode, func(t *testing.T) {
+			for _, scenario := range []string{"write_hit", "history_and_missing", "fallback_failure", "cancelled", "empty"} {
+				t.Run(scenario, func(t *testing.T) {
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					calls := 0
+					failed := errors.New("fallback unavailable")
+					r, err := New(transportFunc(func(req *http.Request) (*http.Response, error) {
+						calls++
+						var body struct {
+							Docs []map[string]string `json:"docs"`
+						}
+						if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+							t.Fatal(err)
+						}
+						if req.URL.Path != "/_mget" || req.URL.Query().Get("realtime") != "true" {
+							t.Fatal(req.URL)
+						}
+						if calls == 1 {
+							want := 1
+							if scenario != "write_hit" {
+								want = 3
+							}
+							if len(body.Docs) != want {
+								t.Fatalf("write reads=%d, want %d", len(body.Docs), want)
+							}
+							for _, doc := range body.Docs {
+								if doc["_index"] != "active-write" {
+									t.Fatal("eager fallback", doc)
+								}
+							}
+						} else {
+							if len(body.Docs) != 4 {
+								t.Fatal("fallback did not contain only missing IDs", body.Docs)
+							}
+							for _, doc := range body.Docs {
+								if doc["_id"] == documentID("tenant", "active") || doc["_index"] == "active-write" {
+									t.Fatal("duplicate active read", doc)
+								}
+							}
+							if scenario == "fallback_failure" {
+								return nil, failed
+							}
+						}
+						docs := []any{}
+						for _, doc := range body.Docs {
+							id := "active"
+							found := calls == 1 && doc["_id"] == documentID("tenant", id)
+							if calls > 1 {
+								id = "archived"
+								found = doc["_index"] == "history" && doc["_id"] == documentID("tenant", id)
+							}
+							item := map[string]any{"_index": doc["_index"], "_id": doc["_id"], "found": found}
+							if found {
+								a := storetest.Alert("tenant", id, "opening", id, "warning")
+								raw, err := encodeAlertDocument(a)
+								if err != nil {
+									t.Fatal(err)
+								}
+								item["_source"], item["_seq_no"], item["_primary_term"] = json.RawMessage(raw), 7, 2
+							}
+							docs = append(docs, item)
+						}
+						if scenario == "cancelled" {
+							cancel()
+						}
+						return jsonResponse(t, map[string]any{"docs": docs}), nil
+					}), closeReadRouter{mustStaticRouter(t)}, DefaultConfig())
+					if err != nil {
+						t.Fatal(err)
+					}
+					ids := []string{"active", "archived", "missing"}
+					if scenario == "write_hit" {
+						ids = ids[:1]
+					}
+					if scenario == "empty" {
+						ids = nil
+					}
+					result, err := r.getAlertsCurrent(ctx, "tenant", ids, mode)
+					switch scenario {
+					case "fallback_failure":
+						if !errors.Is(err, failed) {
+							t.Fatal(err)
+						}
+					case "cancelled":
+						if !errors.Is(err, context.Canceled) || calls != 1 {
+							t.Fatal(calls, err)
+						}
+					case "empty":
+						if err != nil || calls != 0 || len(result.Alerts) != 0 {
+							t.Fatal(result, calls, err)
+						}
+					case "write_hit":
+						if err != nil || calls != 1 || len(result.Alerts) != 1 || result.Alerts[0].Alert.AlertID != "active" {
+							t.Fatal(result, calls, err)
+						}
+					default:
+						if err != nil || calls != 2 || len(result.Alerts) != 2 || result.Alerts[0].Alert.AlertID != "active" || result.Alerts[1].Alert.AlertID != "archived" || len(result.NotFound) != 1 || result.NotFound[0] != "missing" {
+							t.Fatal(result, calls, err)
+						}
+					}
+				})
+			}
+		})
+	}
+}
 
 func TestCloseCAS5000OnlySendsChangedFields(t *testing.T) {
 	requests, requestBytes := 0, 0

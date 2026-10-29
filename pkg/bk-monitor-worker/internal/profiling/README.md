@@ -19,12 +19,16 @@ taskConfig:
   activeProfiling:
     kafka:
       flushInterval: 8s
+      eventQueueSize: 1000
+      eventBatchSize: 500
     consul:
       pathPrefix: active_profiling/data_id
     window:
       maxDuration: 5m
       delay: 5m
 ```
+
+`eventQueueSize` 是每个 DataID 消费者的内存队列容量，默认 `1000`；`eventBatchSize` 是批量写入条数阈值，默认 `500`。未配置这两项时使用默认值。
 
 DataID 的 Consul key 为：
 

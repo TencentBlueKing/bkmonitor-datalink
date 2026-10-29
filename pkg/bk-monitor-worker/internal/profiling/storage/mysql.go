@@ -213,6 +213,7 @@ func equalNullableInt(left, right *int64) bool {
 var _ core.Store = (*MySQLStore)(nil)
 var _ core.BatchStore = (*MySQLStore)(nil)
 
+// classifyMySQLError maps MySQL errors to profiling error categories while preserving the original error.
 func classifyMySQLError(err error) error {
 	if err == nil {
 		return nil
@@ -222,19 +223,13 @@ func classifyMySQLError(err error) error {
 		return err
 	}
 	sqlState := string(mysqlErr.SQLState[:])
-	if sqlState[:2] == "22" {
+	sqlStateClass := sqlState[:2]
+	if sqlStateClass == "22" {
 		return fmt.Errorf("%w: %w", core.ErrInvalidEvent, err)
 	}
 	switch mysqlErr.Number {
 	case 1048, 1264, 1265, 1292, 1366, 1406, 1452, 3140, 3141, 3819, 4025:
 		return fmt.Errorf("%w: %w", core.ErrInvalidEvent, err)
-	case 1040, 1042, 1043, 1053, 1158, 1159, 1160, 1161, 1184, 1185, 1186, 1187, 1188, 1189,
-		1203, 1205, 1206, 1207, 1213, 2006, 2013, 2055:
-		return err
-	default:
-		if sqlState[:2] == "08" || sqlState == "40001" || sqlState == "41000" {
-			return err
-		}
-		return fmt.Errorf("%w: %w", core.ErrNonRetryable, err)
 	}
+	return err
 }

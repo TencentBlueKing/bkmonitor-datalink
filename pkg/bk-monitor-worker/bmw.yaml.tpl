@@ -121,8 +121,13 @@ worker:
 taskConfig:
   # Active Profiling DataID keys use store.consul.pathPrefix + this path.
   activeProfiling:
+    kafka:
+      flushInterval: 8s
     consul:
       pathPrefix: active_profiling/data_id
+    window:
+      maxDuration: 5m
+      delay: 5m
   # common: 任务通用配置
   common:
     queues:

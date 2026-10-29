@@ -195,6 +195,10 @@ var (
 	ActiveProfilingConsulPathPrefix string
 	// ActiveProfilingEventFlushInterval Kafka event batch flush interval.
 	ActiveProfilingEventFlushInterval time.Duration
+	// ActiveProfilingEventQueueSize Kafka event queue capacity per DataID consumer.
+	ActiveProfilingEventQueueSize int
+	// ActiveProfilingEventBatchSize Number of events persisted in one batch.
+	ActiveProfilingEventBatchSize int
 	// ActiveProfilingWindowMaxDuration 活动采集时长上限；事件配置的采集时长超过该值时会被截断。
 	ActiveProfilingWindowMaxDuration time.Duration
 	// ActiveProfilingWindowDelay 采集窗口结束后的迟到事件宽限时间，超时后仍运行的主机会转为 unknown。
@@ -379,6 +383,12 @@ func initVariables() {
 	)
 	ActiveProfilingEventFlushInterval = GetValue(
 		"taskConfig.activeProfiling.kafka.flushInterval", 8*time.Second, viper.GetDuration,
+	)
+	ActiveProfilingEventQueueSize = GetValue(
+		"taskConfig.activeProfiling.kafka.eventQueueSize", 1000,
+	)
+	ActiveProfilingEventBatchSize = GetValue(
+		"taskConfig.activeProfiling.kafka.eventBatchSize", 500,
 	)
 	// 采集窗口设置控制事件时长上限和迟到事件宽限；两个配置项缺省时均使用 5 分钟。
 	ActiveProfilingWindowMaxDuration = GetValue(

@@ -30,16 +30,16 @@ type KafkaNotifier struct {
 }
 
 type kafkaConfig struct {
-	brokers       []string
-	topic         string
-	groupID       string
-	flushInterval time.Duration
-	saramaConfig  *sarama.Config
+	brokers        []string
+	topic          string
+	groupID        string
+	flushInterval  time.Duration
+	eventQueueSize int
+	eventBatchSize int
+	saramaConfig   *sarama.Config
 }
 
 const (
-	eventQueueSize            = 1000
-	eventBatchSize            = 500
 	eventProcessingRetryDelay = time.Second
 	eventQueueDrainTimeout    = 30 * time.Second
 )
@@ -50,12 +50,20 @@ func NewKafkaNotifier(
 	dataID uint64,
 	info core.KafkaInfo,
 	flushInterval time.Duration,
+	eventQueueSize int,
+	eventBatchSize int,
 ) (*KafkaNotifier, error) {
 	if processor == nil || dataID == 0 || info.Host == "" || info.Topic == "" {
 		return nil, fmt.Errorf("profiling processor, DataID, Kafka brokers and topic are required")
 	}
 	if flushInterval <= 0 {
 		return nil, fmt.Errorf("DataID %d requires a positive Kafka event flush interval", dataID)
+	}
+	if eventQueueSize <= 0 {
+		return nil, fmt.Errorf("DataID %d requires a positive Kafka event queue size", dataID)
+	}
+	if eventBatchSize <= 0 {
+		return nil, fmt.Errorf("DataID %d requires a positive Kafka event batch size", dataID)
 	}
 	if (info.Username == "") != (info.Password == "") {
 		return nil, fmt.Errorf("DataID %d requires both Kafka username and password", dataID)
@@ -86,11 +94,13 @@ func NewKafkaNotifier(
 		processor: processor,
 		dataID:    dataID,
 		config: kafkaConfig{
-			brokers:       brokers,
-			topic:         info.Topic,
-			groupID:       fmt.Sprintf("active-profiling-materializer-%d", dataID),
-			flushInterval: flushInterval,
-			saramaConfig:  saramaConfig,
+			brokers:        brokers,
+			topic:          info.Topic,
+			groupID:        fmt.Sprintf("active-profiling-materializer-%d", dataID),
+			flushInterval:  flushInterval,
+			eventQueueSize: eventQueueSize,
+			eventBatchSize: eventBatchSize,
+			saramaConfig:   saramaConfig,
 		},
 	}, nil
 }
@@ -120,7 +130,7 @@ func (n *KafkaNotifier) Run(ctx context.Context) error {
 
 	consumeCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	messages := make(chan []byte, eventQueueSize)
+	messages := make(chan []byte, n.config.eventQueueSize)
 	workerCtx, cancelWorker := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelWorker()
 	workerDone := make(chan struct{})
@@ -205,7 +215,7 @@ func (n *KafkaNotifier) processMessages(ctx context.Context, messages <-chan []b
 				return
 			}
 			pending = append(pending, message)
-			if len(pending) >= eventBatchSize {
+			if len(pending) >= n.config.eventBatchSize {
 				if err := flush(); err != nil {
 					stop(err)
 					return

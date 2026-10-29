@@ -131,6 +131,7 @@ func (p *activeProfiling) StartByDataID(ctx context.Context, dataID uint64) erro
 func (p *activeProfiling) startDataIDConsumer(ctx context.Context, dataID uint64, info core.DataIDInfo) error {
 	kafkaNotifier, err := notifier.NewKafkaNotifier(
 		p.processor, dataID, info.KafkaInfo, config.ActiveProfilingEventFlushInterval,
+		config.ActiveProfilingEventQueueSize, config.ActiveProfilingEventBatchSize,
 	)
 	if err != nil {
 		return err

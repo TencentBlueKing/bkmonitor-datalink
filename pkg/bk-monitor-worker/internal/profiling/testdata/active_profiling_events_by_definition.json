@@ -1,17 +1,17 @@
 [
   {
     "event_name": "active_profiling_started",
-    "target": "10.0.0.8",
-    "timestamp": 1788310800123,
+    "target": "192.0.2.10",
+    "timestamp": 2208988800123,
     "dimension": {
-      "bk_tenant_id": "system",
-      "bk_biz_id": "2",
-      "task_id": "12",
-      "task_name": "order-api-cpu",
-      "creator": "admin",
-      "bk_host_id": "456",
+      "bk_tenant_id": "tenant-demo",
+      "bk_biz_id": "20001",
+      "task_id": "10001",
+      "task_name": "demo-worker-cpu",
+      "creator": "test-user",
+      "bk_host_id": "900001",
       "schedule_type": "cron",
-      "scheduled_at": "1788310800000",
+      "scheduled_at": "2208988800000",
       "collection_method": "perf",
       "collection_type": "native_cpu",
       "status": "running"
@@ -19,7 +19,7 @@
     "event": {
       "content": {
         "schema_version": 1,
-        "started_at": 1788310800123,
+        "started_at": 2208988800123,
         "config": {
           "schedule": {
             "type": "cron",
@@ -28,11 +28,11 @@
           },
           "target_config": {
             "node_type": "INSTANCE",
-            "nodes": [{ "bk_host_id": 456 }]
+            "nodes": [{ "bk_host_id": 900001 }]
           },
           "process_selector": {
             "type": "pid",
-            "config": { "pids": "2341" }
+            "config": { "pids": "10001" }
           },
           "collector_config": {
             "duration_sec": 30,
@@ -46,36 +46,36 @@
           }
         },
         "target_hosts": [
-          { "bk_host_id": 456, "ip": "10.0.0.8" },
-          { "bk_host_id": 457, "ip": "10.0.0.9" }
+          { "bk_host_id": 900001, "ip": "192.0.2.10" },
+          { "bk_host_id": 900002, "ip": "192.0.2.11" }
         ]
       }
     }
   },
   {
     "event_name": "active_profiling_finished",
-    "target": "10.0.0.8",
-    "timestamp": 1788310831456,
+    "target": "192.0.2.10",
+    "timestamp": 2208988831456,
     "dimension": {
-      "bk_tenant_id": "system",
-      "bk_biz_id": "2",
-      "task_id": "12",
-      "task_name": "order-api-cpu",
-      "creator": "admin",
-      "bk_host_id": "456",
+      "bk_tenant_id": "tenant-demo",
+      "bk_biz_id": "20001",
+      "task_id": "10001",
+      "task_name": "demo-worker-cpu",
+      "creator": "test-user",
+      "bk_host_id": "900001",
       "schedule_type": "cron",
-      "scheduled_at": "1788310800000",
+      "scheduled_at": "2208988800000",
       "collection_method": "perf",
       "collection_type": "native_cpu",
       "status": "succeed",
-      "process_names": "order-api",
-      "process_pids": "2341"
+      "process_names": "demo-worker",
+      "process_pids": "10001"
     },
     "event": {
       "content": {
         "schema_version": 1,
-        "started_at": 1788310800123,
-        "finished_at": 1788310831456,
+        "started_at": 2208988800123,
+        "finished_at": 2208988831456,
         "execution_duration_ms": 31333,
         "config": {
           "schedule": {
@@ -85,11 +85,11 @@
           },
           "target_config": {
             "node_type": "INSTANCE",
-            "nodes": [{ "bk_host_id": 456 }]
+            "nodes": [{ "bk_host_id": 900001 }]
           },
           "process_selector": {
             "type": "pid",
-            "config": { "pids": "2341" }
+            "config": { "pids": "10001" }
           },
           "collector_config": {
             "duration_sec": 30,
@@ -102,28 +102,28 @@
             "min_mem_level": 100
           }
         },
-        "processes": [{ "pid": 2341, "process_name": "order-api" }],
+        "processes": [{ "pid": 10001, "process_name": "demo-worker" }],
         "message": "",
         "target_hosts": [
-          { "bk_host_id": 456, "ip": "10.0.0.8" },
-          { "bk_host_id": 457, "ip": "10.0.0.9" }
+          { "bk_host_id": 900001, "ip": "192.0.2.10" },
+          { "bk_host_id": 900002, "ip": "192.0.2.11" }
         ]
       }
     }
   },
   {
     "event_name": "active_profiling_started",
-    "target": "10.0.0.8",
-    "timestamp": 1788314400567,
+    "target": "192.0.2.10",
+    "timestamp": 2208992400567,
     "dimension": {
-      "bk_tenant_id": "system",
-      "bk_biz_id": "2",
-      "task_id": "30521",
-      "task_name": "order-api-cpu-adhoc",
-      "creator": "admin",
-      "bk_host_id": "456",
+      "bk_tenant_id": "tenant-demo",
+      "bk_biz_id": "20001",
+      "task_id": "10002",
+      "task_name": "demo-worker-cpu-once",
+      "creator": "test-user",
+      "bk_host_id": "900001",
       "schedule_type": "immediate",
-      "scheduled_at": "1788314400000",
+      "scheduled_at": "2208992400000",
       "collection_method": "perf",
       "collection_type": "native_cpu",
       "status": "running"
@@ -131,12 +131,12 @@
     "event": {
       "content": {
         "schema_version": 1,
-        "started_at": 1788314400567,
-        "job": { "job_instance_id": 30001, "step_instance_id": 40001 },
+        "started_at": 2208992400567,
+        "job": { "job_instance_id": 700001, "step_instance_id": 800001 },
         "config": {
           "schedule": {
             "type": "immediate",
-            "execute_at": 1788314400000,
+            "execute_at": 2208992400000,
             "timezone": "Asia/Shanghai"
           },
           "collector_config": {
@@ -151,33 +151,33 @@
           },
           "target_config": {
             "node_type": "INSTANCE",
-            "nodes": [{ "bk_host_id": 456 }]
+            "nodes": [{ "bk_host_id": 900001 }]
           },
           "process_selector": {
             "type": "pid",
-            "config": { "pids": "2341" }
+            "config": { "pids": "10001" }
           }
         },
         "target_hosts": [
-          { "bk_host_id": 456, "ip": "10.0.0.8" },
-          { "bk_host_id": 457, "ip": "10.0.0.9" }
+          { "bk_host_id": 900001, "ip": "192.0.2.10" },
+          { "bk_host_id": 900002, "ip": "192.0.2.11" }
         ]
       }
     }
   },
   {
     "event_name": "active_profiling_finished",
-    "target": "10.0.0.9",
-    "timestamp": 1788314400890,
+    "target": "192.0.2.11",
+    "timestamp": 2208992400890,
     "dimension": {
-      "bk_tenant_id": "system",
-      "bk_biz_id": "2",
-      "task_id": "30521",
-      "task_name": "order-api-cpu-adhoc",
-      "creator": "admin",
-      "bk_host_id": "457",
+      "bk_tenant_id": "tenant-demo",
+      "bk_biz_id": "20001",
+      "task_id": "10002",
+      "task_name": "demo-worker-cpu-once",
+      "creator": "test-user",
+      "bk_host_id": "900002",
       "schedule_type": "immediate",
-      "scheduled_at": "1788314400000",
+      "scheduled_at": "2208992400000",
       "collection_method": "perf",
       "collection_type": "native_cpu",
       "status": "failed"
@@ -185,13 +185,13 @@
     "event": {
       "content": {
         "schema_version": 1,
-        "started_at": 1788314400890,
-        "finished_at": 1788314400890,
+        "started_at": 2208992400890,
+        "finished_at": 2208992400890,
         "execution_duration_ms": 0,
         "config": {
           "schedule": {
             "type": "immediate",
-            "execute_at": 1788314400000,
+            "execute_at": 2208992400000,
             "timezone": "Asia/Shanghai"
           },
           "collector_config": {
@@ -206,18 +206,18 @@
           },
           "target_config": {
             "node_type": "INSTANCE",
-            "nodes": [{ "bk_host_id": 457 }]
+            "nodes": [{ "bk_host_id": 900002 }]
           },
           "process_selector": {
             "type": "pid",
-            "config": { "pids": "2341" }
+            "config": { "pids": "10001" }
           }
         },
         "processes": [],
-        "message": "作业平台返回的下发失败原因",
+        "message": "模拟作业下发失败",
         "target_hosts": [
-          { "bk_host_id": 456, "ip": "10.0.0.8" },
-          { "bk_host_id": 457, "ip": "10.0.0.9" }
+          { "bk_host_id": 900001, "ip": "192.0.2.10" },
+          { "bk_host_id": 900002, "ip": "192.0.2.11" }
         ]
       }
     }

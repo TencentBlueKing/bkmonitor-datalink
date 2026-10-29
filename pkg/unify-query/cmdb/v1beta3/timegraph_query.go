@@ -256,6 +256,11 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	queryStep := step
 	loader.lookBack = lookBack
 
+	// The legacy root-only query has no expression without an Info projection.
+	if timeGraphLegacyCompatibility(ctx) && len(relations) == 0 &&
+		(!timeGraphTargetInfoShow(ctx) || len(tg.nodeBuilder.resourceInfoFields(sourceType)) == 0) {
+		return nil, errors.New("query ts to prom expr error: 表达式配置不能为空")
+	}
 	if len(sourceExpandInfo) > 0 || (topologyGrid == nil && (len(relations) == 0 || timeGraphForceSourceInfo(ctx))) {
 		if tg.shared != nil && len(sourceExpandInfo) > 0 {
 			tg.shared.sourceInfoBits = make(map[uint64]timeBitmap)

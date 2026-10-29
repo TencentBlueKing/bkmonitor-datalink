@@ -45,9 +45,15 @@ func (qualityTestSchema) ListRelationSchemas(string) []v1beta3.RelationSchema {
 	return []v1beta3.RelationSchema{{FromType: "source", ToType: "target", RelationType: "source_to_target", Category: v1beta3.RelationCategoryStatic, IsDirectional: true}}
 }
 
-type qualityTestBackend struct{ cmdb.CMDB }
+type qualityTestBackend struct {
+	cmdb.CMDB
+	rootQuerier v1beta3.TimeGraphQuerier
+}
 
-func (*qualityTestBackend) QueryRelationTimeGraph(ctx context.Context, _, _ string, _, _ time.Time, _ time.Duration, _ cmdb.Resource, _ []cmdb.Resource, _ []cmdb.RelationPath, matcher, _ cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
+func (b *qualityTestBackend) QueryRelationTimeGraph(ctx context.Context, lookback, space string, start, end time.Time, step time.Duration, source cmdb.Resource, targets []cmdb.Resource, paths []cmdb.RelationPath, matcher, expand cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
+	if matcher["id"] == "invalid-root" {
+		return b.rootQuerier.QueryRelationTimeGraph(ctx, lookback, space, start, end, step, source, targets, paths, matcher, expand)
+	}
 	switch matcher["id"] {
 	case "partial":
 		metadata.SetStatus(ctx, metadata.QueryTsPartial, "backend_partial")
@@ -86,7 +92,9 @@ func TestLegacyHTTPQualityUsesMetricsWithoutChangingResponse(t *testing.T) {
 			model, err := v1beta3.GetModel(ctx)
 			require.NoError(t, err)
 			model.SetSchemaProvider(qualityTestSchema{})
-			model.SetTimeGraphResolver(func(context.Context, string) (v1beta3.TimeGraphQuerier, error) { return &qualityTestBackend{}, nil })
+			model.SetTimeGraphResolver(func(context.Context, string) (v1beta3.TimeGraphQuerier, error) {
+				return &qualityTestBackend{rootQuerier: model}, nil
+			})
 			t.Cleanup(func() {
 				model.SetSchemaProvider(v1beta3.GetSchemaProvider())
 				model.SetTimeGraphResolver(func(context.Context, string) (v1beta3.TimeGraphQuerier, error) { return model, nil })
@@ -117,10 +125,14 @@ func TestLegacyHTTPQualityUsesMetricsWithoutChangingResponse(t *testing.T) {
 				return counts
 			}
 			before := qualityCounts()
-			ids := []string{"partial", "complete", "coverage-empty", "empty", "routes-empty", "unknown-empty", "limited", "failed"}
+			ids := []string{"partial", "complete", "coverage-empty", "empty", "routes-empty", "unknown-empty", "limited", "failed", "invalid-root", "complete"}
 			queries := make([]string, 0, len(ids))
 			for _, id := range ids {
-				queries = append(queries, `{`+timeFields+`,"source_type":"source","target_type":"target","source_info":{"id":"`+id+`"}}`)
+				target := "target"
+				if id == "invalid-root" {
+					target = ""
+				}
+				queries = append(queries, `{`+timeFields+`,"source_type":"source","target_type":"`+target+`","source_info":{"id":"`+id+`"}}`)
 			}
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
@@ -144,10 +156,13 @@ func TestLegacyHTTPQualityUsesMetricsWithoutChangingResponse(t *testing.T) {
 				}
 				targets, ok := item["target_list"].([]any)
 				require.True(t, ok, "target_list must be an array, including failures")
-				if i >= 6 {
+				if ids[i] == "limited" || ids[i] == "failed" || ids[i] == "invalid-root" {
 					require.Equal(t, float64(400), item["code"])
 					require.NotEmpty(t, item["message"])
 					require.Empty(t, targets)
+					if ids[i] == "invalid-root" {
+						require.Contains(t, item["message"], "表达式配置不能为空")
+					}
 				} else {
 					require.Equal(t, float64(200), item["code"])
 					require.Empty(t, item["message"])

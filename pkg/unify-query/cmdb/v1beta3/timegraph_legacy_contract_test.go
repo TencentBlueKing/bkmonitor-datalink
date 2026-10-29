@@ -3,6 +3,7 @@ package v1beta3
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
@@ -19,6 +20,111 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	prombackend "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
 )
+
+func TestLegacyTimeGraphRootProjection(t *testing.T) {
+	previous := yoloMode
+	t.Cleanup(func() { yoloMode = previous })
+	for _, yolo := range []bool{false, true} {
+		for _, rangeQuery := range []bool{false, true} {
+			for _, target := range []cmdb.Resource{"", "node"} {
+				for _, tc := range []struct {
+					name         string
+					showInfo     bool
+					noInfoFields bool
+					missingRoute bool
+					empty        bool
+					wantError    bool
+				}{
+					{name: "no projection with data", wantError: true},
+					{name: "no projection without route", missingRoute: true, wantError: true},
+					{name: "projection without info fields", showInfo: true, noInfoFields: true, wantError: true},
+					{name: "projected data", showInfo: true},
+					{name: "projected empty", showInfo: true, empty: true},
+					{name: "projected missing route", showInfo: true, missingRoute: true},
+				} {
+					t.Run(fmt.Sprintf("yolo=%t/range=%t/target=%s/%s", yolo, rangeQuery, target, tc.name), func(t *testing.T) {
+						yoloMode = yolo
+						ctx := initTimeGraphQueryTestEnvironment()
+						provider := publicSourceExpandProvider().(contractSchemaProvider)
+						if tc.noInfoFields {
+							provider.fields["node"] = []string{"node_id"}
+						}
+						model := legacyRegressionModel(provider)
+						routeCalls, queryCalls := 0, 0
+						model.timeGraphQueryReference = func(ctx context.Context, query *structured.QueryTs) (metadata.QueryReference, error) {
+							routeCalls++
+							reference, err := timeGraphTestQueryReference(ctx, query)
+							if tc.missingRoute {
+								return metadata.QueryReference{}, err
+							}
+							return reference, err
+						}
+						model.timeGraphVMQuery = func(_ context.Context, query *structured.QueryTs, _ string, _ bool, start, end time.Time, step time.Duration) (pl.Matrix, error) {
+							queryCalls++
+							require.Equal(t, "node_info_relation", query.QueryList[0].FieldName)
+							if tc.empty || tc.missingRoute {
+								return nil, nil
+							}
+							var times []int64
+							for ts := start; !ts.After(end); ts = ts.Add(step) {
+								times = append(times, ts.UnixMilli())
+							}
+							return contractMatrix(map[string]string{"node_id": "n1", "zone": "east"}, times...), nil
+						}
+						var err error
+						var targets cmdb.Matchers
+						if rangeQuery {
+							var buckets []cmdb.MatchersWithTimestamp
+							_, _, _, _, buckets, err = model.QueryResourceMatcherRange(ctx, "", "space", "60s", "1700000000", "1700000060", target, "node", cmdb.Matcher{"node_id": "n1"}, nil, tc.showInfo, nil)
+							for _, bucket := range buckets {
+								targets = append(targets, bucket.Matchers...)
+							}
+						} else {
+							_, _, _, _, targets, err = model.QueryResourceMatcher(ctx, "", "space", "1700000000", target, "node", cmdb.Matcher{"node_id": "n1"}, nil, tc.showInfo, nil)
+						}
+						if tc.wantError {
+							require.ErrorContains(t, err, "表达式配置不能为空")
+							require.Zero(t, routeCalls, "the old query fails before looking up physical routes")
+							require.Zero(t, queryCalls)
+							require.Nil(t, metadata.GetStatus(ctx), "invalid projections must not report missing routes")
+							// New path APIs intentionally support roots without the legacy projection flag.
+							var paths []cmdb.PathResourcesResult
+							if rangeQuery {
+								paths, err = model.QueryPathResourcesRange(ctx, "", "space", "60s", "1700000000", "1700000060", "node", []cmdb.Resource{"node"}, nil, cmdb.Matcher{"node_id": "n1"})
+							} else {
+								paths, err = model.QueryPathResources(ctx, "", "space", "1700000000", "node", []cmdb.Resource{"node"}, nil, cmdb.Matcher{"node_id": "n1"})
+							}
+							require.NoError(t, err)
+							if tc.missingRoute {
+								require.Empty(t, paths)
+							} else {
+								require.NotEmpty(t, paths)
+							}
+							return
+						}
+						require.NoError(t, err)
+						require.Positive(t, routeCalls)
+						if tc.empty || tc.missingRoute {
+							require.Empty(t, targets)
+						} else {
+							require.NotEmpty(t, targets)
+							for _, target := range targets {
+								require.Equal(t, cmdb.Matcher{"node_id": "n1", "zone": "east"}, target)
+							}
+						}
+						if tc.missingRoute {
+							require.NotNil(t, metadata.GetStatus(ctx))
+							require.Equal(t, metadata.QueryTsPartial, metadata.GetStatus(ctx).Code)
+							require.Contains(t, metadata.GetStatus(ctx).Message, "source_info_no_route")
+						} else {
+							require.Nil(t, metadata.GetStatus(ctx))
+						}
+					})
+				}
+			}
+		}
+	}
+}
 
 func TestLegacyTimeGraphRangeBucketContract(t *testing.T) {
 	const startMS int64 = 1700000070000 // Not aligned to a minute.

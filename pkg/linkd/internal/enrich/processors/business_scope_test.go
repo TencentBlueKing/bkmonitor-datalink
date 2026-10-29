@@ -61,19 +61,22 @@ func TestCatalogDerivedMetricWithoutLegacyFieldTag(t *testing.T) {
 		functions        json.RawMessage
 	}{
 		{name: "identity", expression: "a"},
-		{name: "calculation", expression: "a * 100", wantExpression: "a * 100"},
-		{name: "function", expression: "a", functions: json.RawMessage(`[{"id":"rate"}]`), wantExpression: "a"},
+		{name: "calculation", expression: "a * 100"},
+		{name: "function", expression: "a", functions: json.RawMessage(`[{"id":"rate"}]`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := &metricLocationReader{metadata: models.MetricMetadata{Kind: "derived", ObjectModelCode: "cw-K8s_Container", FieldName: "container_memory_resource_limits_ratio", FieldCNName: "限制内存使用率", Unit: "percent"}}
 			reader.strategy = reader.strategyForTest()
 			reader.strategy.Spec.TableID = ""
+			reader.strategy.FirstExecutionQuery = &models.StrategyQueryConfig{ResultTableID: "k8s", MetricField: "container_memory_rss"}
 			reader.strategy.Spec.FieldName = "stale_name"
 			reader.strategy.Spec.StrategyItem.Expression = tc.expression
 			reader.strategy.Spec.StrategyItem.Functions = tc.functions
 			reader.strategy.Spec.StrategyItem.QueryConfigs = []models.StrategyQueryConfig{{QueryConfigType: "catalog", MetricRefID: 219, MetricField: "stale_name", Alias: "a", AggregatePeriod: 60}}
 			before, _ := json.Marshal(reader.strategy)
-			scope, err := enrich.NewScope(processorBaseTargetAlert(t, domain.DimensionMap{}), enrich.Sources{CWStrategy: reader, Metric: reader})
+			event := processorBaseTargetAlert(t, domain.DimensionMap{})
+			event.EventSourceID = "external"
+			scope, err := enrich.NewScope(event, enrich.Sources{CWStrategy: reader, Metric: reader})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -85,13 +88,8 @@ func TestCatalogDerivedMetricWithoutLegacyFieldTag(t *testing.T) {
 			if err := json.Unmarshal(mustRawObject(t, got.Value), &values); err != nil {
 				t.Fatal(err)
 			}
-			paramsRaw, _ := json.Marshal(values.MetricQueryParams)
-			var params metricQueryParams
-			if err := json.Unmarshal(paramsRaw, &params); err != nil {
-				t.Fatal(err)
-			}
-			if values.MetricName != reader.metadata.FieldName || values.Unit != "percent" || values.ResultTableID != "" || values.MetricUniqueID != "" || params.FieldTag != models.CWStrategyFieldTagDerivedMetric || params.Expression != tc.wantExpression || params.QueryConfigs[0].Metrics[0].Field != reader.metadata.FieldName {
-				t.Fatalf("values=%+v params=%+v", values, params)
+			if values.MetricName != reader.metadata.FieldName || values.Unit != "percent" || values.ResultTableID != "" || values.MetricUniqueID != "k8s.container_memory_rss" {
+				t.Fatalf("values=%+v", values)
 			}
 			after, _ := json.Marshal(reader.strategy)
 			if !reflect.DeepEqual(before, after) {

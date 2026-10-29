@@ -133,7 +133,7 @@ func cwStrategyFromRevision(row strategyRevisionRow, payload strategyRevisionSna
 	return models.CWStrategy{
 		Active: true, Kind: kind, APIVersion: "v1alpha1", UID: entry.Metadata.UID,
 		Name: entry.Metadata.Name, Namespace: entry.Metadata.Namespace, Annotations: entry.Metadata.Annotations,
-		Spec: spec, Status: models.CWStrategyStatus{BKStrategyID: row.StrategyID},
+		Spec: spec, Status: models.CWStrategyStatus{BKStrategyID: row.StrategyID}, FirstExecutionQuery: firstExecutionQuery(payload.Items),
 		BKTenantID: &labels.TenantID, BKBizID: &businessID, SpaceUID: payload.SpaceUID, IsDefault: labels.IsDefault,
 		DefaultStrategyConfigUID: labels.DefaultConfigUID, MonitorTemplateID: &payload.RuntimeConfig.Metadata.Labels.TemplateID,
 		ConfigID: &labels.ConfigID, ObjectModelCode: labels.ObjectModelCode, BKObjectInstID: instanceID,

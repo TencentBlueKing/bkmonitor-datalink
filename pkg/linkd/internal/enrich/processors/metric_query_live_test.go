@@ -17,10 +17,10 @@ import (
 	"linkd/internal/enrich/models"
 )
 
-// TestMetricQueryLiveAlert 显式启用后，用真实告警维度和当前已发布策略在内存中
-// 生成查询参数，再向 KMC 发送只读指标请求。连接与 Cookie 只从 stdin 读取，
+// TestExternalMetricQueryLiveAlert 显式启用后，仅为外部来源在内存中
+// 将丰富后的指标事实组装为 KMC 的只读请求，不使用 metric_query_params。连接与 Cookie 只从 stdin 读取，
 // 不写文件、告警或消息；普通单测不依赖外部服务。
-func TestMetricQueryLiveAlert(t *testing.T) {
+func TestExternalMetricQueryLiveAlert(t *testing.T) {
 	if os.Getenv("LINKD_METRIC_QUERY_LIVE") != "1" {
 		t.Skip("requires explicit test environment and transient stdin credentials")
 	}
@@ -33,6 +33,9 @@ func TestMetricQueryLiveAlert(t *testing.T) {
 	}
 	if err := json.NewDecoder(io.LimitReader(os.Stdin, 1<<20)).Decode(&input); err != nil {
 		t.Fatal("invalid bounded live input")
+	}
+	if input.Event.EventSourceID == "built_in_bk" {
+		t.Fatal("builtin query migration must be validated through the KAC metric endpoint")
 	}
 	if input.Cookie == "" {
 		t.Fatal("transient authentication cookie is required")
@@ -78,17 +81,6 @@ func TestMetricQueryLiveAlert(t *testing.T) {
 		t.Fatal("physical query location missing")
 	}
 	params := map[string]any{}
-	encoded, err := json.Marshal(metric.MetricQueryParams)
-	if err != nil || json.Unmarshal(encoded, &params) != nil {
-		t.Fatal("invalid generated query parameters")
-	}
-	if params["expression"] != "" {
-		t.Fatal("single native metric expression was not simplified")
-	}
-	queries, ok := params["query_configs"].([]any)
-	if !ok || len(queries) != 1 || queries[0].(map[string]any)["table"] != metric.ResultTableID {
-		t.Fatal("generated table references differ")
-	}
 	for key, value := range map[string]any{
 		"model_id": input.Alarm["model_id"], "model_inst_id": input.Alarm["model_inst_id"], "Namespace": input.Alarm["Namespace"],
 		"metric_name": metric.MetricName, "item": metric.DisplayName, "unit": metric.Unit,
@@ -97,7 +89,7 @@ func TestMetricQueryLiveAlert(t *testing.T) {
 	} {
 		params[key] = value
 	}
-	encoded, err = json.Marshal(params)
+	encoded, err := json.Marshal(params)
 	if err != nil {
 		t.Fatal("cannot encode metric request")
 	}

@@ -409,8 +409,8 @@ func assertBaseCollectEnrichment(t *testing.T, payload enrich.Payload) {
 		string(metric["anomaly_begin_time"]) != `"2026-09-01T00:00:00Z"` {
 		t.Fatalf("metric=%#v", metric)
 	}
-	if query, exists := metric["metric_query_params"]; !exists || len(query) == 0 || string(query) == "null" {
-		t.Fatal("builtin compatibility query parameters are missing")
+	if _, exists := metric["metric_query_params"]; exists {
+		t.Fatal("new builtin enrichment must not freeze product query parameters")
 	}
 	source := payload.Processors[4]["source"].Value
 	if string(source["source_id"]) != `"built_in_bk"` || string(source["source_name"]) != `"鲸眼监控"` ||

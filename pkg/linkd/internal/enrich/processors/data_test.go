@@ -120,76 +120,12 @@ func TestDATAFunctionMetricPreservesFunctionsAndDisablesEnumMapping(t *testing.T
 	if values.MetricName != "" {
 		t.Fatalf("metric name=%q", values.MetricName)
 	}
-	params, ok := values.MetricQueryParams.(map[string]any)
-	if !ok {
-		t.Fatalf("params=%#v", values.MetricQueryParams)
-	}
-	if _, ok := params["functions"].([]any); !ok {
-		t.Fatalf("strategy functions=%#v", params["functions"])
-	}
-	queries := params["query_configs"].([]any)
-	query := queries[0].(map[string]any)
-	if _, ok := query["functions"].([]any); !ok {
-		t.Fatalf("query functions=%#v", query["functions"])
-	}
 	var displayContent string
 	if err := json.Unmarshal(payload.Processors[2][rules.DisplayProcessor].Value["content"], &displayContent); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(displayContent, "正常") {
 		t.Fatalf("function content mapped=%q", displayContent)
-	}
-}
-
-// PromQL 查询参数只冻结完整表达式：Kingeye 的 Prometheus 分支不会从维度、
-// 表名或冒号段派生 where、group_by 和 metrics，避免与表达式内的过滤自相矛盾。
-func TestDATAPrometheusProjectionKeepsExpressionOnly(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name, table, field string
-	}{
-		{name: "published location kept", table: "ignored", field: "ignored"},
-		{name: "empty published location"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			query := models.StrategyQueryConfig{DataSourceLabel: rules.DataSourcePrometheus, DataTypeLabel: "time_series", PromQL: "avg_over_time(bkmonitor:node:system_cpu_usage{a=\"b\"}[60s])", ResultTableID: tc.table, MetricField: tc.field, AggregateMethod: "avg"}
-			params := buildMetricQueryParams(models.StrategyItemProjection{BKBizID: 2, QueryConfigs: []models.StrategyQueryConfig{query}}, models.CWStrategy{}, domain.DimensionMap{}, 2)
-			got := params.QueryConfigs[0]
-			if got.Table != tc.table || got.DataSourceLabel != rules.DataSourcePrometheus || got.PromQL != query.PromQL {
-				t.Fatalf("query=%#v", got)
-			}
-			if len(got.Metrics) != 0 || len(got.Where) != 0 || len(got.GroupBy) != 0 {
-				t.Fatalf("promql must not derive metric binding: %#v", got)
-			}
-		})
-	}
-}
-
-func TestDATASpecialQueryTypesUseKACMetricProjection(t *testing.T) {
-	t.Parallel()
-	dimensions := domain.DimensionMap{rules.FieldBKObjID: domain.NewStringScalar("host"), rules.FieldBKInstID: domain.NewStringScalar("101"), rules.FieldEventName: domain.NewStringScalar("deploy"), rules.FieldBKBizID: dataNumber(t, 2)}
-	for _, tc := range []struct {
-		name   string
-		query  models.StrategyQueryConfig
-		field  string
-		table  string
-		filter string
-	}{
-		{name: "custom event", query: models.StrategyQueryConfig{DataSourceLabel: rules.DataSourceCustom, DataTypeLabel: rules.DataTypeEvent, CustomEventName: "deploy", ResultTableID: "custom.table", MetricField: "latency"}, field: rules.MetricFieldIndex, table: "custom.table"},
-		{name: "alert", query: models.StrategyQueryConfig{DataSourceLabel: rules.DataSourceBKMonitor, DataTypeLabel: rules.DataTypeAlert, BKStrategyID: 73, ResultTableID: "monitor.alert", MetricField: "latency"}, field: "73", table: rules.ResultTableAlert},
-		{name: "fta", query: models.StrategyQueryConfig{DataSourceLabel: rules.DataSourceBKFTA, DataTypeLabel: rules.DataTypeAlert, AlertName: "disk_full", ResultTableID: "fta.alert", MetricField: "latency"}, field: "disk_full", table: rules.ResultTableEvent},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			projection := models.StrategyItemProjection{BKBizID: 2, Expression: "A", QueryConfigs: []models.StrategyQueryConfig{tc.query}}
-			params := buildMetricQueryParams(projection, models.CWStrategy{}, dimensions, 2)
-			query := params.QueryConfigs[0]
-			if query.Metrics[0].Field != tc.field || query.Table != tc.table || query.BKBizID != 2 {
-				t.Fatalf("query=%#v", query)
-			}
-			if tc.name == "custom event" && query.FilterDict[rules.FieldEventName] != "deploy" {
-				t.Fatalf("filter=%#v", query.FilterDict)
-			}
-		})
 	}
 }
 
@@ -481,11 +417,9 @@ func TestDataDerivedAndMultiMetricQuerySemantics(t *testing.T) {
 		reader     dataSliceReader
 		wantName   string
 		wantUnique string
-		wantField  string
-		wantTag    models.CWStrategyFieldTag
 	}{
-		{name: "derived", reader: dataSliceReader{model: "cw-MySQL", derived: true}, wantName: "derived_usage", wantUnique: "system.cpu.derived_usage", wantField: "derived_usage", wantTag: models.CWStrategyFieldTagDerivedMetric},
-		{name: "multi", reader: dataSliceReader{model: "cw-MySQL", multi: true}, wantName: "requests", wantUnique: "system.cpu.requests", wantField: "requests"},
+		{name: "derived", reader: dataSliceReader{model: "cw-MySQL", derived: true}, wantName: "derived_usage", wantUnique: "system.cpu.usage"},
+		{name: "multi", reader: dataSliceReader{model: "cw-MySQL", multi: true}, wantName: "requests", wantUnique: "system.cpu.requests"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := tc.reader
@@ -508,26 +442,6 @@ func TestDataDerivedAndMultiMetricQuerySemantics(t *testing.T) {
 			}
 			if values.MetricName != tc.wantName || values.MetricUniqueID != tc.wantUnique {
 				t.Fatalf("metric=%#v", values)
-			}
-			params, ok := values.MetricQueryParams.(map[string]any)
-			if !ok {
-				t.Fatalf("params=%#v", values.MetricQueryParams)
-			}
-			queries := params["query_configs"].([]any)
-			wantQueries := 1
-			if tc.reader.multi {
-				wantQueries = 2
-			}
-			if len(queries) != wantQueries {
-				t.Fatalf("queries=%#v", queries)
-			}
-			if tc.reader.multi {
-				if params["expression"] != "A / B" || queries[0].(map[string]any)["metrics"].([]any)[0].(map[string]any)["field"] != "requests" || queries[1].(map[string]any)["metrics"].([]any)[0].(map[string]any)["field"] != "errors" {
-					t.Fatalf("multi-query expression or members changed: %#v", params)
-				}
-			}
-			if tc.wantTag != "" && params["field_tag"] != string(tc.wantTag) {
-				t.Fatalf("params=%#v", params)
 			}
 		})
 	}
@@ -609,7 +523,7 @@ func (r *dataSliceReader) GetByStrategyID(ctx context.Context, _ models.Strategy
 		second := models.StrategyQueryConfig{Alias: "B", ResultTableID: table, MetricField: "errors", AggregateMethod: "sum"}
 		return models.CWStrategy{BKBizID: &biz, ObjectModelCode: optionalModelCode(r.model), Spec: models.CWStrategySpec{ConfigType: models.CWStrategyConfigTypeData, Name: "多指标", TableID: table, FieldName: "requests", StrategyItem: &models.CWStrategyItem{Expression: "A / B", QueryConfigs: []models.StrategyQueryConfig{query, second}}}}, true, nil
 	}
-	return models.CWStrategy{BKBizID: &biz, ObjectModelCode: optionalModelCode(r.model), Spec: models.CWStrategySpec{ConfigType: models.CWStrategyConfigTypeData, Name: "CPU", TableID: table, FieldName: query.MetricField, FieldTag: derivedTag(r.derived), StrategyItem: &models.CWStrategyItem{Expression: "A", QueryConfigs: []models.StrategyQueryConfig{query}}}}, true, nil
+	return models.CWStrategy{BKBizID: &biz, ObjectModelCode: optionalModelCode(r.model), FirstExecutionQuery: &models.StrategyQueryConfig{ResultTableID: table, MetricField: "usage"}, Spec: models.CWStrategySpec{ConfigType: models.CWStrategyConfigTypeData, Name: "CPU", TableID: table, FieldName: query.MetricField, FieldTag: derivedTag(r.derived), StrategyItem: &models.CWStrategyItem{Expression: "A", QueryConfigs: []models.StrategyQueryConfig{query}}}}, true, nil
 }
 
 func (r *dataSliceReader) FindMetric(ctx context.Context, query models.MetricQuery) (models.MetricMetadata, bool, error) {

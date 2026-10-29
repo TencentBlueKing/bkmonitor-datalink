@@ -85,16 +85,15 @@ type DisplayValues struct {
 
 // MetricValues 定义 metric Processor 的完整输出字段。
 type MetricValues struct {
-	DisplayName       string  `json:"display_name"`
-	MetricName        string  `json:"metric_name"`
-	Unit              string  `json:"unit"`
-	ResultTableID     string  `json:"result_table_id"`
-	MetricUniqueID    string  `json:"metric_unique_id"`
-	AggregateFunc     string  `json:"aggregate_func"`
-	TimeInterval      any     `json:"time_interval"`
-	WhereCondition    string  `json:"where_condition"`
-	MetricQueryParams any     `json:"metric_query_params,omitempty"`
-	AnomalyBeginTime  *string `json:"anomaly_begin_time"`
+	DisplayName      string  `json:"display_name"`
+	MetricName       string  `json:"metric_name"`
+	Unit             string  `json:"unit"`
+	ResultTableID    string  `json:"result_table_id"`
+	MetricUniqueID   string  `json:"metric_unique_id"`
+	AggregateFunc    string  `json:"aggregate_func"`
+	TimeInterval     any     `json:"time_interval"`
+	WhereCondition   string  `json:"where_condition"`
+	AnomalyBeginTime *string `json:"anomaly_begin_time"`
 }
 
 // LogTheme 是 KLC 日志主题的最小租户隔离投影。

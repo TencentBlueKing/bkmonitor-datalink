@@ -88,12 +88,91 @@ func TestConvertMessageMapsAlertAndEnrichToKACAlarm(t *testing.T) {
 	if message.LogThemeID != 0 || message.APMAppID != 0 || message.LogThemeName != "" || message.BCSClusterID != "" {
 		t.Fatalf("extension defaults=%+v", message)
 	}
-	var query map[string]any
-	if err := json.Unmarshal([]byte(message.MetricQueryParams), &query); err != nil || query["expression"] != "A" {
-		t.Fatalf("metric_query_params=%q err=%v", message.MetricQueryParams, err)
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := fields["metric_query_params"]; exists {
+		t.Fatal("historical query parameters leaked into KAC output")
 	}
 	if message.CloseTime != nil || message.CloseReason != nil {
 		t.Fatalf("active close fields=%+v", message)
+	}
+}
+
+func TestCompatibilityMessageOmitsHistoricalMetricQueryParams(t *testing.T) {
+	for _, query := range []string{`{"expression":"A"}`, `"invalid"`, `[]`, `true`, `null`} {
+		t.Run(query, func(t *testing.T) {
+			alert := testAlert()
+			alert.Enrich["processors"] = json.RawMessage(strings.ReplaceAll(
+				string(alert.Enrich["processors"]), `"metric_query_params":{"expression":"A"}`, `"metric_query_params":`+query,
+			))
+			before := alert.Clone()
+			message, err := CompatibilityMessage(alert, kacLevel)
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := mappedPayload(message, alert, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]any
+			if err := json.Unmarshal(encoded, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if _, exists := fields["metric_query_params"]; exists {
+				t.Fatal("historical query parameters leaked into native KAC output")
+			}
+			if !reflect.DeepEqual(alert, before) {
+				t.Fatal("projection modified stored alert")
+			}
+		})
+	}
+}
+
+func TestNewBuiltinWithoutQueryParametersRetainsExecutionReference(t *testing.T) {
+	t.Parallel()
+	alert := testAlert()
+	alert.Enrich["processors"] = json.RawMessage(strings.ReplaceAll(
+		string(alert.Enrich["processors"]), `"metric_query_params":{"expression":"A"},`, "",
+	))
+	alert.Enrich["processors"] = json.RawMessage(strings.ReplaceAll(
+		string(alert.Enrich["processors"]), `"url":"/strategy/7",`, `"strategy_kind":"Strategy","is_default":true,`,
+	))
+	before := alert.Clone()
+	message, err := CompatibilityMessage(alert, kacLevel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.AlarmID != alert.AlertID || message.EventID != alert.TriggerEventID || message.MetricName != "usage" {
+		t.Fatalf("metric fields or alert identity changed: %+v", message)
+	}
+	encoded, err := json.Marshal(message.FieldExtraInfo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var extra struct {
+		StrategyName struct {
+			Context struct {
+				Tenant   string `json:"bk_tenant_id"`
+				ID       int64  `json:"strategy_set_split_record_id"`
+				Revision int64  `json:"strategy_set_split_record_version"`
+			} `json:"strategy_context"`
+		} `json:"strategy_name"`
+	}
+	if err := json.Unmarshal(encoded, &extra); err != nil {
+		t.Fatal(err)
+	}
+	context := extra.StrategyName.Context
+	if context.Tenant != "tenant-1" || context.ID != 123 || context.Revision != 1 {
+		t.Fatalf("execution reference lost: %s", encoded)
+	}
+	if !reflect.DeepEqual(alert, before) {
+		t.Fatal("query migration rewrote the saved alert")
 	}
 }
 
@@ -294,7 +373,7 @@ func TestConvertMessageSupportsNoopAndForwardCompatibleEnrich(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if message.Name != alert.Title || message.Content != alert.Content || message.StrategyID != "" || message.MetricQueryParams != "{}" {
+	if message.Name != alert.Title || message.Content != alert.Content || message.StrategyID != "" {
 		t.Fatalf("fallback message=%+v", message)
 	}
 }

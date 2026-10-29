@@ -179,6 +179,11 @@ func TestKACBaseTargetFixtures(t *testing.T) {
 			}
 			// 历史 fixture 不改写；只把已迁移处理器的注册名还原后比较其业务输出。
 			for _, entry := range payload.Processors {
+				if metric, ok := entry[rules.MetricProcessor]; ok {
+					if _, exists := metric.Value["metric_query_params"]; exists {
+						t.Fatal("new builtin fixture emitted product query parameters")
+					}
+				}
 				if value, ok := entry[rules.MonitorResourceProcessor]; ok {
 					entry[rules.ResourceProcessor] = value
 					delete(entry, rules.MonitorResourceProcessor)
@@ -189,7 +194,26 @@ func TestKACBaseTargetFixtures(t *testing.T) {
 				raw := evaluation.Data["processors"]
 				evaluation.Data["processors"] = json.RawMessage(strings.ReplaceAll(string(raw), `"monitor-resource":`, `"resource":`))
 			}
-			assertJSONEqual(t, fixture.ExpectedData, mustJSON(t, result.Data.Evaluations[0].Data))
+			// 固定历史样本保持原值；本次唯一输出差异是内置参数移交 KAC，
+			// 先独立断言新输出没有该键，再从历史预期中剔除它，其他字段仍逐一比较。
+			var expected map[string]any
+			if err := json.Unmarshal(fixture.ExpectedData, &expected); err != nil {
+				t.Fatal(err)
+			}
+			for _, raw := range expected["processors"].([]any) {
+				if metric, exists := raw.(map[string]any)[rules.MetricProcessor]; exists {
+					envelope := metric.(map[string]any)
+					patches := envelope["patches"].([]any)
+					kept := make([]any, 0, len(patches))
+					for _, patch := range patches {
+						if patch.(map[string]any)["path"] != `$["extra_data"]["metric_query_params"]` {
+							kept = append(kept, patch)
+						}
+					}
+					envelope["patches"] = kept
+				}
+			}
+			assertJSONEqual(t, mustJSON(t, expected), mustJSON(t, result.Data.Evaluations[0].Data))
 		})
 	}
 }

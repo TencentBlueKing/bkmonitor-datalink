@@ -20,7 +20,7 @@ import (
 )
 
 // StrategyQueryConfig 是鲸眼声明式策略中单条 query_config 的类型化读取视图。
-// Raw 保留完整配置，供 metric_query_params 在不回查蓝鲸策略历史的情况下透传扩展字段。
+// Raw 保留发布材料中的原始配置，供执行快照绑定和读取校验使用。
 type StrategyQueryConfig struct {
 	ID              int64             `json:"id"`
 	CustomEventName string            `json:"custom_event_name"`
@@ -132,6 +132,9 @@ type CWStrategy struct {
 	BKObjectInstID           *string
 	// SpaceUID 是不可变发布快照中的查询空间，仅用于无目录 ID 时消歧。
 	SpaceUID string
+	// FirstExecutionQuery 保留同一历史快照 items[0].query_configs[0] 的取数位置。
+	// 仅用于衍生指标的 metric_unique_id，不替换父指标声明；nil 表示缺失或非法。
+	FirstExecutionQuery *StrategyQueryConfig
 }
 
 // StrategyItemProjection 返回 Enrich 使用的声明式策略查询投影。

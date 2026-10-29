@@ -68,6 +68,7 @@ func TestCatalogDerivedMetricWithoutLegacyFieldTag(t *testing.T) {
 			reader := &metricLocationReader{metadata: models.MetricMetadata{Kind: "derived", ObjectModelCode: "cw-K8s_Container", FieldName: "container_memory_resource_limits_ratio", FieldCNName: "限制内存使用率", Unit: "percent"}}
 			reader.strategy = reader.strategyForTest()
 			reader.strategy.Spec.TableID = ""
+			reader.strategy.FirstExecutionQuery = &models.StrategyQueryConfig{ResultTableID: "k8s", MetricField: "container_memory_rss"}
 			reader.strategy.Spec.FieldName = "stale_name"
 			reader.strategy.Spec.StrategyItem.Expression = tc.expression
 			reader.strategy.Spec.StrategyItem.Functions = tc.functions
@@ -90,7 +91,7 @@ func TestCatalogDerivedMetricWithoutLegacyFieldTag(t *testing.T) {
 			if err := json.Unmarshal(paramsRaw, &params); err != nil {
 				t.Fatal(err)
 			}
-			if values.MetricName != reader.metadata.FieldName || values.Unit != "percent" || values.ResultTableID != "" || values.MetricUniqueID != "" || params.FieldTag != models.CWStrategyFieldTagDerivedMetric || params.Expression != tc.wantExpression || params.QueryConfigs[0].Metrics[0].Field != reader.metadata.FieldName {
+			if values.MetricName != reader.metadata.FieldName || values.Unit != "percent" || values.ResultTableID != "" || values.MetricUniqueID != "k8s.container_memory_rss" || params.FieldTag != models.CWStrategyFieldTagDerivedMetric || params.Expression != tc.wantExpression || params.QueryConfigs[0].Metrics[0].Field != reader.metadata.FieldName {
 				t.Fatalf("values=%+v params=%+v", values, params)
 			}
 			after, _ := json.Marshal(reader.strategy)

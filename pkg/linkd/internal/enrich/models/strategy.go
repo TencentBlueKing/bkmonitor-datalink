@@ -132,6 +132,9 @@ type CWStrategy struct {
 	BKObjectInstID           *string
 	// SpaceUID 是不可变发布快照中的查询空间，仅用于无目录 ID 时消歧。
 	SpaceUID string
+	// FirstExecutionQuery 保留同一历史快照 items[0].query_configs[0] 的取数位置。
+	// 仅用于衍生指标的 metric_unique_id，不替换父指标声明；nil 表示缺失或非法。
+	FirstExecutionQuery *StrategyQueryConfig
 }
 
 // StrategyItemProjection 返回 Enrich 使用的声明式策略查询投影。

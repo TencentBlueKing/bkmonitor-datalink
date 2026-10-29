@@ -54,6 +54,8 @@ func TestStrategySpaceLiveEnrich(t *testing.T) {
 	var samples []struct {
 		Event   domain.Event `json:"event"`
 		Opening domain.Alert `json:"opening"`
+		// ExpectedMetricUniqueID 由独立读取的同版本执行快照给出，不从被测结果生成。
+		ExpectedMetricUniqueID *string `json:"expected_metric_unique_id"`
 	}
 	read("samples.json", &samples)
 	var enrichConfig config.EnrichConfig
@@ -222,6 +224,9 @@ func TestStrategySpaceLiveEnrich(t *testing.T) {
 
 		if effective.Title == "" || effective.Title == sample.Event.Title || row.Metric.MetricName != "container_memory_resource_limits_ratio" || row.Metric.Unit != "percent" {
 			t.Errorf("147/v%d title or metric not enriched", identity.Version)
+		}
+		if sample.ExpectedMetricUniqueID != nil && row.Metric.MetricUniqueID != *sample.ExpectedMetricUniqueID {
+			t.Errorf("147/v%d metric_unique_id=%q want=%q", identity.Version, row.Metric.MetricUniqueID, *sample.ExpectedMetricUniqueID)
 		}
 		for _, candidate := range sample.Event.Evaluations {
 			if candidate.Severity != evaluation.Severity {

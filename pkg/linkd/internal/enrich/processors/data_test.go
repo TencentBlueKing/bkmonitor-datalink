@@ -484,7 +484,7 @@ func TestDataDerivedAndMultiMetricQuerySemantics(t *testing.T) {
 		wantField  string
 		wantTag    models.CWStrategyFieldTag
 	}{
-		{name: "derived", reader: dataSliceReader{model: "cw-MySQL", derived: true}, wantName: "derived_usage", wantUnique: "system.cpu.derived_usage", wantField: "derived_usage", wantTag: models.CWStrategyFieldTagDerivedMetric},
+		{name: "derived", reader: dataSliceReader{model: "cw-MySQL", derived: true}, wantName: "derived_usage", wantUnique: "system.cpu.usage", wantField: "derived_usage", wantTag: models.CWStrategyFieldTagDerivedMetric},
 		{name: "multi", reader: dataSliceReader{model: "cw-MySQL", multi: true}, wantName: "requests", wantUnique: "system.cpu.requests", wantField: "requests"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -609,7 +609,7 @@ func (r *dataSliceReader) GetByStrategyID(ctx context.Context, _ models.Strategy
 		second := models.StrategyQueryConfig{Alias: "B", ResultTableID: table, MetricField: "errors", AggregateMethod: "sum"}
 		return models.CWStrategy{BKBizID: &biz, ObjectModelCode: optionalModelCode(r.model), Spec: models.CWStrategySpec{ConfigType: models.CWStrategyConfigTypeData, Name: "多指标", TableID: table, FieldName: "requests", StrategyItem: &models.CWStrategyItem{Expression: "A / B", QueryConfigs: []models.StrategyQueryConfig{query, second}}}}, true, nil
 	}
-	return models.CWStrategy{BKBizID: &biz, ObjectModelCode: optionalModelCode(r.model), Spec: models.CWStrategySpec{ConfigType: models.CWStrategyConfigTypeData, Name: "CPU", TableID: table, FieldName: query.MetricField, FieldTag: derivedTag(r.derived), StrategyItem: &models.CWStrategyItem{Expression: "A", QueryConfigs: []models.StrategyQueryConfig{query}}}}, true, nil
+	return models.CWStrategy{BKBizID: &biz, ObjectModelCode: optionalModelCode(r.model), FirstExecutionQuery: &models.StrategyQueryConfig{ResultTableID: table, MetricField: "usage"}, Spec: models.CWStrategySpec{ConfigType: models.CWStrategyConfigTypeData, Name: "CPU", TableID: table, FieldName: query.MetricField, FieldTag: derivedTag(r.derived), StrategyItem: &models.CWStrategyItem{Expression: "A", QueryConfigs: []models.StrategyQueryConfig{query}}}}, true, nil
 }
 
 func (r *dataSliceReader) FindMetric(ctx context.Context, query models.MetricQuery) (models.MetricMetadata, bool, error) {

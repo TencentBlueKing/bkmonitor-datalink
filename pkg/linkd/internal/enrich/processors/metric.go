@@ -95,11 +95,24 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 	}
 	whereCondition := cleanWhereCondition(queryDimensions)
 	resultTableID, metricField := metricIdentity(query)
+	uniqueID := metricUniqueID(resultTableID, metricField)
+	if strategy.Kind != models.CWStrategyKindCloud && strategy.Spec.FieldTag == models.CWStrategyFieldTagDerivedMetric {
+		if strategy.FirstExecutionQuery == nil {
+			return enrich.ProcessorResult{}, fmt.Errorf("%w: kingeye_strategy items[0].query_configs[0] is missing or invalid", enrich.ErrInvalidDataSourceResponse)
+		}
+		table, field := metricIdentity(*strategy.FirstExecutionQuery)
+		if field == "" {
+			return enrich.ProcessorResult{}, fmt.Errorf("%w: kingeye_strategy first execution query has no identifiable metric field", enrich.ErrInvalidDataSourceResponse)
+		}
+		// 沿用 KAC develop/4.5.16 的首查询身份，包括空表名产生的前导点。
+		// 这是兼容输出，不能据此改写衍生父指标声明或 metric_query_params。
+		uniqueID = table + "." + field
+	}
 	values.DisplayName = displayName
 	values.MetricName = metricName
 	values.Unit = unit
 	values.ResultTableID = resultTableID
-	values.MetricUniqueID = metricUniqueID(resultTableID, metricField)
+	values.MetricUniqueID = uniqueID
 	values.AggregateFunc = aggregateFunc
 	values.TimeInterval = timeInterval
 	values.WhereCondition = whereCondition

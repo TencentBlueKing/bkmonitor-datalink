@@ -282,7 +282,7 @@ func TestSynchronousCloseUsesSameLaneAndLatestState(t *testing.T) {
 	waitSignal(t, finished)
 	mu.Lock()
 	defer mu.Unlock()
-	if len(calls) != 2 || calls[0] || !calls[1] {
-		t.Fatal("close did not synchronously refresh", calls)
+	if len(calls) != 2 || calls[0] || calls[1] {
+		t.Fatal("close did not write without forcing refresh", calls)
 	}
 }

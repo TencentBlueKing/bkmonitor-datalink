@@ -29,7 +29,7 @@ func TestCloseProjection5000PatchesOnlyFiveFields(t *testing.T) {
 	requests, requestBytes := 0, 0
 	client := newClient(config.KACPluginConfig{}, closeTransportFunc(func(req *http.Request) (*http.Response, error) {
 		requests++
-		if req.URL.Path != "/_bulk" || req.URL.Query().Get("refresh") != "true" {
+		if req.URL.Path != "/_bulk" || req.URL.Query().Get("refresh") != "false" {
 			t.Fatal(req.URL)
 		}
 		raw, err := io.ReadAll(req.Body)
@@ -115,7 +115,7 @@ func TestCloseProjectionReadsFullSnapshotOnlyForMissingKACDocument(t *testing.T)
 	failure := errors.New("projection unavailable")
 	writer := compactCloseWriter{writerStub: writerStub{write: func(_ context.Context, alerts []domain.Alert, refresh bool) []WriteResult {
 		creates++
-		if len(alerts) != 1 || alerts[0].AlertID != "missing" || !refresh {
+		if len(alerts) != 1 || alerts[0].AlertID != "missing" || refresh {
 			t.Fatal(alerts, refresh)
 		}
 		return []WriteResult{{}}
@@ -145,8 +145,8 @@ func TestCloseProjection500UsesOneReadAndOneBulkWithItemErrors(t *testing.T) {
 		return testReader(ctx, tenant, ids[:499])
 	}), writerStub{write: func(_ context.Context, alerts []domain.Alert, refresh bool) []WriteResult {
 		writes++
-		if !refresh || len(alerts) != 499 {
-			t.Fatal("not a synchronous bulk", len(alerts), refresh)
+		if refresh || len(alerts) != 499 {
+			t.Fatal("close bulk requested refresh or split per item", len(alerts), refresh)
 		}
 		results := make([]WriteResult, len(alerts))
 		results[1].Err = failed

@@ -58,9 +58,9 @@ rollover 后更新原物理索引，不向当前 write alias 重复创建。
 
 ## 主动关闭
 
-主动关闭保存 Linkd 终态后，使用同一个写入器与通道优先取得执行机会，等待正在执行的普通批次结束，先于尚未开始的普通批次执行。
+主动关闭保存 Linkd 终态后，使用同一个写入器；只对同租户同 Alert ID 的投影串行，互不重叠的关闭批次可以并行。
 关闭状态按 Alert 冻结的 `EndOperation.Source` 区分：`auto_policy` 为 `auto_closed`、`self_heal` 为 `autoexecute_closed`、`work_order` 为 `autoorder_closed`。手动关闭仍为 `closed`，系统关闭仍为 `system_closed`；无主动关闭命令的来源关闭，以及来源等级升级结束旧告警（`EndType=severity_upgrade`），均为 `source_closed`，恢复保持 `restored`。此映射同时用于新建及后续更新；流转日志保留等级升级的具体原因。
-在通道内重新读取最新事实，直接 Bulk `refresh=true`，成功后返回；后续普通批次同样重新读取，避免旧队列消息写回旧状态。
+普通投影在 Alert 身份锁内实时读取；批量关闭复用本次成功关闭返回的不可变终态快照，缺失 KAC 文档才补读完整快照。Bulk 使用 `refresh=false`，写入被接受后返回，不强制搜索刷新；搜索在索引自然刷新后可见。普通动作执行前原有刷新保持不变。
 2026-10-29 本地批量关闭实现通过 `ProjectBatchNow` 按固定通道顺序取得本批涉及的通道，避免批次交叉等待；
 现存目标只批读关闭状态，Bulk 仅更新 `status/action/source_alarm_status/close_reason/close_time` 五个字段，
 不读取或回写 Enrich、正文、等级和既有处置数据。KAC 文档不存在时，仅为缺失项补读完整快照创建；

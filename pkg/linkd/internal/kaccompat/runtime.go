@@ -92,7 +92,7 @@ func (r *Runtime) lane(tenant, alert string) *projectionLane {
 	return &r.lanes[h.Sum64()%uint64(len(r.lanes))]
 }
 
-// ProjectNow 串行当前告警的投影并同步刷新，不阻塞其他身份的关闭批次。
+// ProjectNow 串行当前告警的投影并同步等待写入，不强制刷新，不阻塞其他身份的关闭批次。
 func (r *Runtime) ProjectNow(ctx context.Context, tenant, alert string) error {
 	return r.ProjectBatchNow(ctx, tenant, []string{alert})[0]
 }

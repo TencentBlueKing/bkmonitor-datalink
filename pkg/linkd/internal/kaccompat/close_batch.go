@@ -21,7 +21,7 @@ type closeStateWriter interface {
 	WriteCloseBatch(context.Context, []domain.Alert) []WriteResult
 }
 
-// ProjectBatchNow 按告警身份串行投影，批读最新事实并 Bulk refresh。
+// ProjectBatchNow 按告警身份串行投影，批读最新事实并同步等待 Bulk 写入，不强制刷新。
 func (r *Runtime) ProjectBatchNow(ctx context.Context, tenant string, ids []string) []error {
 	return r.projectBatchNow(ctx, tenant, ids, nil)
 }
@@ -101,7 +101,7 @@ func (r *Runtime) projectBatchNow(ctx context.Context, tenant string, ids []stri
 		if compact {
 			written = compactWriter.WriteCloseBatch(ctx, alerts)
 		} else {
-			written = r.writer.WriteBatch(ctx, alerts, true)
+			written = r.writer.WriteBatch(ctx, alerts, false)
 		}
 		// 只有 KAC 文档尚不存在时才需要完整快照创建；正常关闭不回读 Enrich 或正文。
 		missing, missingPositions := []string{}, []int{}
@@ -125,7 +125,7 @@ func (r *Runtime) projectBatchNow(ctx context.Context, tenant string, ids []stri
 				}
 			}
 			if len(creates) > 0 {
-				created := r.writer.WriteBatch(ctx, creates, true)
+				created := r.writer.WriteBatch(ctx, creates, false)
 				for j, position := range createPositions {
 					written[position] = created[j]
 				}
@@ -140,6 +140,7 @@ func (r *Runtime) projectBatchNow(ctx context.Context, tenant string, ids []stri
 }
 
 // WriteCloseBatch 仅更新现存 KAC 文档的终态字段；不存在项交给调用方按需补读后创建。
+// Bulk 使用 refresh=false，返回只确认写入成功，不承诺搜索立即可见。
 func (c *Client) WriteCloseBatch(ctx context.Context, alerts []domain.Alert) []WriteResult {
 	results := make([]WriteResult, len(alerts))
 	keys := make([]alarmKey, len(alerts))
@@ -165,7 +166,7 @@ func (c *Client) WriteCloseBatch(ctx context.Context, alerts []domain.Alert) []W
 				Index  string `json:"_index"`
 			} `json:"items"`
 		}
-		err := c.requestRaw(ctx, http.MethodPost, "/_bulk", url.Values{"refresh": {"true"}}, raw.Bytes(), "application/x-ndjson", &response)
+		err := c.requestRaw(ctx, http.MethodPost, "/_bulk", url.Values{"refresh": {"false"}}, raw.Bytes(), "application/x-ndjson", &response)
 		for j, i := range positions {
 			if err != nil {
 				results[i].Err = err

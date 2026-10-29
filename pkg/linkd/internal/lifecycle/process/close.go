@@ -53,7 +53,7 @@ type closeSourceReader interface {
 	GetRelease(context.Context, string, int64) (eventsource.Release, error)
 }
 
-// AlertProjectionSynchronizer 确认主动关闭的业务版本已经投影并可搜索；失败不能回滚关闭事实。
+// AlertProjectionSynchronizer 确认主动关闭已经写入 KAC，成功不保证搜索立即可见；失败不能回滚关闭事实。
 type AlertProjectionSynchronizer interface {
 	ProjectNow(context.Context, string, string) error
 }

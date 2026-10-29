@@ -236,7 +236,17 @@ func TestCloseReadsExcludePayloadAtEverySelectionStage(t *testing.T) {
 			}
 			return jsonResponse(t, map[string]any{"hits": map[string]any{"hits": []any{map[string]any{"_source": map[string]string{"alert_id": "alert"}}}}}), nil
 		}
-		includes := req.URL.Query().Get("_source_includes")
+		if req.URL.Query().Get("_source_includes") != "" {
+			t.Fatal("per-document source filter reintroduced", req.URL)
+		}
+		paths := strings.Split(req.URL.Query().Get("filter_path"), ",")
+		fields := []string{}
+		for _, path := range paths {
+			if field, ok := strings.CutPrefix(path, "docs._source."); ok {
+				fields = append(fields, field)
+			}
+		}
+		includes := strings.Join(fields, ",")
 		if includes == "" || strings.Contains(includes, "content") || strings.Contains(includes, ",enrich,") || strings.Contains(includes, "extra_data,") {
 			t.Fatal("full payload requested", includes)
 		}

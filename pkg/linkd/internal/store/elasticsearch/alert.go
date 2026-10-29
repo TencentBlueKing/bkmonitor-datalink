@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"reflect"
 	"strconv"
+	"strings"
 
 	"linkd/internal/domain"
 	"linkd/internal/store"
@@ -686,13 +687,23 @@ func (r *Repository) readCurrentAlertDocuments(ctx context.Context, tenant strin
 		Docs []getResponse `json:"docs"`
 	}
 	query := url.Values{"realtime": {"true"}}
+	fields := ""
 	switch mode {
 	case "identity":
-		query.Set("_source_includes", "bk_tenant_id,alert_id,event_source_id,event_source_version,fingerprint")
+		fields = "bk_tenant_id,alert_id,event_source_id,event_source_version,fingerprint"
 	case "projection":
-		query.Set("_source_includes", "bk_tenant_id,alert_id,status,end_at,end_type,end_reason,end_operation")
+		fields = "bk_tenant_id,alert_id,status,end_at,end_type,end_reason,end_operation"
 	case "close":
-		query.Set("_source_includes", "revision,bk_tenant_id,alert_id,event_source_id,event_source_version,fingerprint,severity,dimensions,labels,extra_data.evaluation_family,subject_system,subject_type,subject_id,source_alert_id,shield,merge,policy_change,merge_change,merge_work,admission,policy_tags,status,latest_event_id,last_occurred_at,update_at,trigger_event_id,begin_at,create_at,end_at,end_type,end_reason,end_operation,enrich_status")
+		fields = "revision,bk_tenant_id,alert_id,event_source_id,event_source_version,fingerprint,severity,dimensions,labels,extra_data.evaluation_family,subject_system,subject_type,subject_id,source_alert_id,shield,merge,policy_change,merge_change,merge_work,admission,policy_tags,status,latest_event_id,last_occurred_at,update_at,trigger_event_id,begin_at,create_at,end_at,end_type,end_reason,end_operation,enrich_status"
+	}
+	if fields != "" {
+		// _mget 的逐文档 source 过滤在大批次中重复构造字段匹配器。
+		// 在响应编码时统一过滤，保持相同窄字段及实时版本，避免这段重复开销。
+		paths := "docs._index,docs._id,docs._seq_no,docs._primary_term,docs.found,docs.error"
+		for _, field := range strings.Split(fields, ",") {
+			paths += ",docs._source." + field
+		}
+		query.Set("filter_path", paths)
 	}
 	if err = r.performJSON(ctx, http.MethodPost, "/_mget", query, body, &response); err != nil {
 		return nil, err

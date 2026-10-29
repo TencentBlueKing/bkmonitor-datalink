@@ -119,6 +119,10 @@ worker:
 
 # ================================ 任务配置  ===================================
 taskConfig:
+  # Active Profiling DataID keys use store.consul.pathPrefix + this path.
+  activeProfiling:
+    consul:
+      pathPrefix: active_profiling/data_id
   # common: 任务通用配置
   common:
     queues:

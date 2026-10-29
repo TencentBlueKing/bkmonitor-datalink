@@ -1,0 +1,85 @@
+[
+  {
+    "event_name": "active_profiling_started",
+    "target": "10.0.0.1",
+    "timestamp": 4102444801000,
+    "dimension": {
+      "bk_tenant_id": "tenant-mock",
+      "bk_biz_id": 2,
+      "bk_host_id": 101,
+      "task_id": 77,
+      "schedule_type": "scheduled",
+      "scheduled_at": 4102444800000,
+      "task_name": "mock-active-profiling",
+      "creator": "local-test",
+      "collection_method": "pid",
+      "collection_type": "cpu",
+      "status": "running"
+    },
+    "content": {
+      "schema_version": 1,
+      "started_at": 4102444801000,
+      "finished_at": 0,
+      "execution_duration_ms": 0,
+      "processes": [],
+      "message": "",
+      "config": {
+        "collector_config": {
+          "duration_sec": 1
+        },
+        "target_config": {
+          "nodes": []
+        },
+        "process_selector": {
+          "host_pids": []
+        }
+      },
+      "target_hosts": [
+        { "bk_host_id": 101, "ip": "10.0.0.1" },
+        { "bk_host_id": 202, "ip": "10.0.0.2" }
+      ]
+    }
+  },
+  {
+    "event_name": "active_profiling_finished",
+    "target": "10.0.0.1",
+    "timestamp": 4102444801500,
+    "dimension": {
+      "bk_tenant_id": "tenant-mock",
+      "bk_biz_id": 2,
+      "bk_host_id": 101,
+      "task_id": 77,
+      "schedule_type": "scheduled",
+      "scheduled_at": 4102444800000,
+      "task_name": "mock-active-profiling",
+      "creator": "local-test",
+      "collection_method": "pid",
+      "collection_type": "cpu",
+      "process_names": "worker",
+      "process_pids": "1001",
+      "status": "succeed"
+    },
+    "content": {
+      "schema_version": 1,
+      "started_at": 4102444801000,
+      "finished_at": 4102444801500,
+      "execution_duration_ms": 500,
+      "processes": [
+        { "pid": 1001, "name": "worker", "cpu": 12.5 }
+      ],
+      "message": "",
+      "config": {
+        "collector_config": {
+          "duration_sec": 1
+        },
+        "target_config": {
+          "nodes": []
+        },
+        "process_selector": {
+          "host_pids": []
+        }
+      },
+      "target_hosts": []
+    }
+  }
+]

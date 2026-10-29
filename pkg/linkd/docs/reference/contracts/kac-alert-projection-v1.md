@@ -91,10 +91,10 @@ Linkd 原始 labels 和 enrich 内部保留 `strategy_id/strategy_version`，该
 
 `field_extra_info` 按展示字段组织，`strategy_name` 是已有“监控策略名称”字段，原本就保存 URL；
 导航迁移在同一字段下增加内部 `strategy_context`，不新增展示字段或 KAC 顶层列。
-所有告警源的 Metric 丰富结果均不再生成查询参数，KAC Hook 沿既有 nil 编码输出 `{}` 占位；
+所有告警源的 Metric 丰富结果均不再生成查询参数，KAC Hook 不再输出 `metric_query_params` 或 `{}` 占位；
 新版 KAC 按准确 Event 关联和执行修订读取不可变历史，在请求内构造查询。
 Linkd 仍保留 `strategy_context`、原始维度和指标事实；不新增事实查询 API。
-外部来源的具体取数由所属插件承接。历史已存 `metric_query_params` 继续现有 JSON object 字符串编码，不清理或回填 Event、Alert、ES 和历史快照。
+外部来源的具体取数由所属插件承接。Linkd 不再读取或编码历史 `metric_query_params`，正式输出、调试和恢复详情均省略该字段；不清理或回填 Event、Alert、ES 和历史快照。
 先部署支持两种输入的 KAC 并验证真实曲线，再部署本次 Linkd 停止所有来源参数生成的配套改动。
 分组和维度过滤由 KAC 按历史声明与原始 Event 的维度交集生成，不补造缺失 `target`；部署前仍须完成当前原生告警/Event 身份承接与无参数真实曲线验收。
 完整边界在 Kingeye `docs/specs/kac-linkd-integration.md` 第 8.6 节维护。

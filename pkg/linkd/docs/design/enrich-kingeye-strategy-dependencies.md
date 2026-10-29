@@ -60,9 +60,9 @@ Scope 为同一 Event 复用读取结果；Strategy、Resource、Display、Metri
 ## 与 KAC 的边界
 
 - 策略 URL 由 KAC 根据冻结的 `strategy_context` 生成，Linkd 不持有域名、产品路由或页面开关。
-- 2026-10-29 调整为所有告警源均不再生成 `metric_query_params`；内置来源由 KAC 按准确 Event 与执行历史组装，外部来源由所属插件承接，历史已有参数保持读取兼容。
+- 2026-10-29 调整为所有告警源均不再生成 `metric_query_params`；内置来源由 KAC 按准确 Event 与执行历史组装，外部来源由所属插件承接，Linkd 不再读取、编码或输出历史已有参数。
 - 不新增 `metric-facts`；KAC 重建入口按执行引用取历史，指标目录仍服务 Linkd 的指标事实丰富，不覆盖既存冻结结果。先完成新版 KAC 与真实曲线验收，再部署此 Linkd 配套改动。
-- 恢复字段使用准确恢复 Event 的有效补丁，透传其已有参数和策略关联，不用 opening 或 current 替换。
+- 恢复字段使用准确恢复 Event 的有效补丁，保留策略关联但省略历史指标查询参数，不用 opening 或 current 替换。
 - APM/K8s/日志场景、文案降级和准确执行历史读取修复保留，历史记录不回填；`bk_cmdb_level` 本轮暂不修改。
 
 ## 验证证据与限制

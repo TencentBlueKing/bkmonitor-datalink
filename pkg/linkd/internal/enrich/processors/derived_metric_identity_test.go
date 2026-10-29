@@ -60,9 +60,6 @@ func TestDerivedMetricUsesFirstExecutionQueryIdentity(t *testing.T) {
 					if values.MetricUniqueID != tc.want || values.MetricName != reader.metadata.FieldName || values.ResultTableID != "" || values.Unit != "percent" || values.DisplayName != "限制内存使用率" {
 						t.Fatalf("metric=%+v want_unique=%s", values, tc.want)
 					}
-					if values.MetricQueryParams != nil {
-						t.Fatal("all derived metrics must leave query construction to consumers")
-					}
 				}
 				after, _ := json.Marshal(reader.strategy)
 				if string(before) != string(after) || !reflect.DeepEqual(original, event) {

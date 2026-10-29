@@ -47,7 +47,7 @@ func TestRecoveryFieldsUsesFrozenEventAndCommittedPatches(t *testing.T) {
 	if fields["name"] != "丰富后的恢复标题" || fields["content"] != "当次恢复正文" || fields["enabled"] != false || fields["action"] != "resolved" || fields["source_name"] != "当时告警源" || fields["source_id"] != "kac-source" || e.Title != "before" {
 		t.Fatalf("wrong fields: %+v", fields)
 	}
-	if fields["metric_query_params"] != `{"expression":"A","query_configs":[{"bk_biz_id":10}]}` {
+	if _, exists := fields["metric_query_params"]; exists {
 		t.Fatalf("metric_query_params = %#v", fields["metric_query_params"])
 	}
 	encoded, err := json.Marshal(fields)

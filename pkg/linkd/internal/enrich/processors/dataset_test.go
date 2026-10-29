@@ -46,9 +46,6 @@ func TestExternalMetricBoundDatasetPreservesFacts(t *testing.T) {
 			if values.MetricName != "usage" || values.DisplayName != "CPU使用率" || values.Unit != "percent" || values.MetricUniqueID != "system.cpu_summary.usage" {
 				t.Fatalf("wrong dataset output: %+v", values)
 			}
-			if values.MetricQueryParams != nil {
-				t.Fatal("dataset queries must be constructed by consumers")
-			}
 			if len(reader.queries) != 1 || reader.queries[0].TableID != "system.cpu_summary" || reader.queries[0].FieldName != "usage" || reader.queries[0].TenantID != event.BKTenantID {
 				t.Fatalf("directory lookup used semantic field: %+v", reader.queries)
 			}

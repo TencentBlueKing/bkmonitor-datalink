@@ -62,9 +62,6 @@ func TestExternalMultiQueryMetricNameKeepsLegacyFirstField(t *testing.T) {
 			if values.MetricName != tc.want || values.DisplayName != "CPU使用率+CPU空闲率" {
 				t.Fatalf("wrong compatibility metric field or display name: %+v", values)
 			}
-			if values.MetricQueryParams != nil {
-				t.Fatal("multi-metric queries must be constructed by consumers")
-			}
 			after, _ := json.Marshal(reader.strategy)
 			if !reflect.DeepEqual(before, after) || !reflect.DeepEqual(original, event) {
 				t.Fatal("source event or strategy mutated")

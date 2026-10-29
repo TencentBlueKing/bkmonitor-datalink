@@ -88,7 +88,7 @@ func TestCatalogDerivedMetricWithoutLegacyFieldTag(t *testing.T) {
 			if err := json.Unmarshal(mustRawObject(t, got.Value), &values); err != nil {
 				t.Fatal(err)
 			}
-			if values.MetricName != reader.metadata.FieldName || values.Unit != "percent" || values.ResultTableID != "" || values.MetricUniqueID != "k8s.container_memory_rss" || values.MetricQueryParams != nil {
+			if values.MetricName != reader.metadata.FieldName || values.Unit != "percent" || values.ResultTableID != "" || values.MetricUniqueID != "k8s.container_memory_rss" {
 				t.Fatalf("values=%+v", values)
 			}
 			after, _ := json.Marshal(reader.strategy)

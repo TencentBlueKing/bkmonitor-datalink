@@ -85,10 +85,6 @@ func convertFieldsWithLevel(input lifecycle.FinalHookInput, resolve func(string)
 	if err != nil {
 		return kingeye.AlarmMessage{}, err
 	}
-	query, err := encodeMetricQueryParams(values.metric.MetricQueryParams)
-	if err != nil {
-		return kingeye.AlarmMessage{}, err
-	}
 	eventIdentity := identityPrefix + input.Alert.AlertID
 	message := kingeye.AlarmMessage{
 		AlarmID: kacAlarmID(input), EventID: eventIdentity,
@@ -110,8 +106,8 @@ func convertFieldsWithLevel(input lifecycle.FinalHookInput, resolve func(string)
 		ResultTableID: values.metric.ResultTableID, TimeInterval: scalarText(values.metric.TimeInterval),
 		AggregateFunc: values.metric.AggregateFunc, WhereCondition: values.metric.WhereCondition,
 		Unit: values.metric.Unit, DataSource: values.strategy.DataSource,
-		FieldExtraInfo:    strategyFieldExtraInfo(input.Alert.BKTenantID, values.strategy),
-		MetricQueryParams: query, DynamicGroupID: nonNilStrings(values.resource.DynamicGroupID), CWLabels: preferredLabels(values.log.CWLabels, values.apm.CWLabels, values.k8s.CWLabels, values.resource.CWLabels),
+		FieldExtraInfo: strategyFieldExtraInfo(input.Alert.BKTenantID, values.strategy),
+		DynamicGroupID: nonNilStrings(values.resource.DynamicGroupID), CWLabels: preferredLabels(values.log.CWLabels, values.apm.CWLabels, values.k8s.CWLabels, values.resource.CWLabels),
 		LogThemeID: scalarInt64(values.log.LogThemeID), LogThemeName: values.log.LogThemeName,
 		LogQueryString: values.log.LogQueryString, LogRelateInfo: values.log.LogRelateInfo,
 		APMAppID: scalarInt64(values.apm.APMAppID), APMAppName: values.apm.APMAppName,
@@ -193,36 +189,6 @@ func decodeProcessorValue(value domain.JSONObject, destination any) error {
 		return err
 	}
 	return nil
-}
-
-func encodeMetricQueryParams(value any) (string, error) {
-	if value == nil {
-		return "{}", nil
-	}
-	if text, ok := value.(string); ok {
-		decoder := json.NewDecoder(bytes.NewBufferString(text))
-		decoder.UseNumber()
-		var object map[string]any
-		if err := decoder.Decode(&object); err != nil {
-			return "", fmt.Errorf("decode KAC metric_query_params: %w", err)
-		}
-		value = object
-	}
-	data, err := json.Marshal(value)
-	if err != nil {
-		return "", fmt.Errorf("encode KAC metric_query_params: %w", err)
-	}
-	var object map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(&object); err != nil {
-		return "", fmt.Errorf("KAC metric_query_params must be an object: %w", err)
-	}
-	normalized, err := json.Marshal(object)
-	if err != nil {
-		return "", fmt.Errorf("normalize KAC metric_query_params: %w", err)
-	}
-	return string(normalized), nil
 }
 
 func kacAction(status domain.AlertStatus, outcome lifecycle.ProcessOutcome) (string, error) {

@@ -168,7 +168,6 @@ KAC `AlarmEvent` ES 模型已声明 `bk_tenant_id`，见
       }
     }
   },
-  "metric_query_params": "{}",
   "dynamic_group_id": [],
   "cw_labels": []
 }
@@ -245,7 +244,7 @@ KAC converter 先调用 `enrich.DecodePayload(Alert.Enrich)`，再按 Processor 
 
 - `succeeded` 和 `partial` 的 `value` 可参与转换；
 - `failed`、`skipped` 提供空值；
-- 重复 Processor 名、字段类型错误或无法解析的 `metric_query_params` 使本次 Hook 失败；
+- 重复 Processor 名或有效字段类型错误使本次 Hook 失败；历史 `metric_query_params` 不再读取或校验；
 - 未配置某个 Processor 时使用表中的核心字段回退；
 - KAC Schema 要求的非空字段在转换后统一校验；
 - converter 只读 Alert 快照，不修改 Alert、Enrich 或共享 map。
@@ -300,7 +299,6 @@ KAC converter 先调用 `enrich.DecodePayload(Alert.Enrich)`，再按 Processor 
 | `time_interval` | `metric.time_interval` | 标量转稳定文本，null 转空字符串 |
 | `where_condition` | `metric.where_condition` | 字符串 |
 | `anomaly_begin_time` | `metric.anomaly_begin_time` | 有值时输出；nil 时输出 JSON null，以匹配现有样例 |
-| `metric_query_params` | `metric.metric_query_params` | 所有来源均不生成参数，nil 使用空占位 `{}`；历史已存参数保持兼容编码，对象规范 JSON 后编码成 JSON 字符串；已经是字符串时先严格解码为 JSON object，再规范编码一次，拒绝非法 JSON 和二次编码 |
 | `meta_info` | `source.meta_info` → `Alert.SourceEventID` | 字符串 |
 
 `bk_service_id` 和 `Namespace` 当前 Enrich 设计没有等价值，首版固定输出空字符串，与已取证旧实现一致
@@ -338,8 +336,7 @@ APM 与 K8s 扩展字段同样按值输出；K8s 的小写 `namespace` 与旧大
    本地运行语义必填项；
 3. `bk_set_id`、`bk_module_id` 的多值表达尚未在 Linkd Enrich 类型中冻结为单值或逗号分隔值，真实
    多集群/多模块样例联调前保持未决；
-4. 历史已存的 `metric_query_params` 在 Linkd 中是结构化 JSON，在 KAC 当前消息中是 JSON 字符串，首版执行一次
-   明确编码，禁止字符串二次编码；
+4. Linkd 的正式输出、调试和恢复详情均省略 `metric_query_params`，不再解码或透传历史参数；
 5. Alert 普通更新保留 opening Event 的 title/content/enrich。KAC 收到的是 Linkd 当前 Alert 快照语义，
    不承诺带上 latest Event 的新文案；
 6. 直接关闭只有 Alert 和 operation cause，依然可以生成 KAC close；`meta_info` 保留 opening source
@@ -651,7 +648,7 @@ python3 scripts/publish_host_alert.py \
 3. KAC 对重复 `alarm_id` 的真实幂等行为；
 4. 同等级 `alert_updated` 应全部发送、按频率合并，还是只发送创建和终态；
 5. `bk_set_id/bk_module_id` 多值采用逗号分隔、数组扩展字段，还是只保留一个确定值；
-6. KAC 对 `metric_query_params` 是否继续要求 JSON 字符串，目标版本能否接受结构化 object；
+6. 新版 KAC 无参数查询及原生 Alert/Event 关联的真实曲线验收（Linkd 已不再输出 `metric_query_params`）；
 7. KAC 接收端能否增加稳定 message ID 去重和“业务完成后提交 offset”的可靠性改造；
 8. 直接关闭、系统关闭和等级升级的 `close_reason` 是否需要 KAC 专用文案映射；
 9. Enrich `failed/partial` 时，哪些字段缺失仍允许发送，哪些来源需要严格阻断；

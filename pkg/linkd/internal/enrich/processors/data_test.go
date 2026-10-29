@@ -120,9 +120,6 @@ func TestDATAFunctionMetricPreservesFunctionsAndDisablesEnumMapping(t *testing.T
 	if values.MetricName != "" {
 		t.Fatalf("metric name=%q", values.MetricName)
 	}
-	if values.MetricQueryParams != nil {
-		t.Fatal("new builtin function queries must be constructed by KAC")
-	}
 	var displayContent string
 	if err := json.Unmarshal(payload.Processors[2][rules.DisplayProcessor].Value["content"], &displayContent); err != nil {
 		t.Fatal(err)
@@ -445,9 +442,6 @@ func TestDataDerivedAndMultiMetricQuerySemantics(t *testing.T) {
 			}
 			if values.MetricName != tc.wantName || values.MetricUniqueID != tc.wantUnique {
 				t.Fatalf("metric=%#v", values)
-			}
-			if values.MetricQueryParams != nil {
-				t.Fatal("new builtin derived and multi queries must be constructed by KAC")
 			}
 		})
 	}

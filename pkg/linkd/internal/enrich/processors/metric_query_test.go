@@ -75,9 +75,6 @@ func TestMetricCatalogQueryLocation(t *testing.T) {
 			if got.Status != domain.EnrichStatusSucceeded || value.ResultTableID != wantTable || value.MetricName != tc.physical || value.MetricUniqueID != wantTable+"."+tc.physical {
 				t.Fatalf("metric=%#v status=%s", value, got.Status)
 			}
-			if value.MetricQueryParams != nil {
-				t.Fatal("new builtin query parameters must be constructed by KAC")
-			}
 			if len(reader.queries) != 1 || reader.queries[0].TenantID != event.BKTenantID || reader.queries[0].MetricID != 1216 {
 				t.Fatalf("catalog reads=%#v", reader.queries)
 			}
@@ -112,7 +109,7 @@ func TestMetricQueryOwnershipPreservesFactsForAllSources(t *testing.T) {
 				t.Fatalf("lost matching facts: %#v", got)
 			}
 			_, emitted := got.Value["metric_query_params"]
-			if values.MetricQueryParams != nil || emitted {
+			if emitted {
 				t.Fatal("all sources must leave metric query construction to consumers")
 			}
 		})

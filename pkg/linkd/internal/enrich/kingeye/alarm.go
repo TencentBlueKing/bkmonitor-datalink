@@ -21,72 +21,71 @@ import (
 // AlarmMessage 是发送给 KAC alarm_collect_topic 的扁平 Alarm JSON。
 // 日志、APM、K8s 和云平台扩展字段无值时不发送，避免 KAC 将占位空值作为告警详情展示。
 type AlarmMessage struct {
-	AlarmID           string         `json:"alarm_id"`
-	SourceID          string         `json:"source_id"`
-	SourceName        string         `json:"source_name"`
-	Item              string         `json:"item"`
-	MetricName        string         `json:"metric_name"`
-	Name              string         `json:"name"`
-	EventID           string         `json:"event_id"`
-	AlarmTime         string         `json:"alarm_time"`
-	Content           string         `json:"content"`
-	Action            string         `json:"action"`
-	Level             string         `json:"level"`
-	Object            string         `json:"object"`
-	BKTenantID        string         `json:"bk_tenant_id"`
-	BKBizID           string         `json:"bk_biz_id"`
-	BKBizName         string         `json:"bk_biz_name"`
-	BKSetID           any            `json:"bk_set_id"`
-	BKSetName         any            `json:"bk_set_name"`
-	BKModuleID        any            `json:"bk_module_id"`
-	BKModuleName      any            `json:"bk_module_name"`
-	BKCloudID         string         `json:"bk_cloud_id"`
-	BKCloudName       string         `json:"bk_cloud_name"`
-	BKObjID           string         `json:"bk_obj_id"`
-	BKInstID          string         `json:"bk_inst_id"`
-	BKServiceID       string         `json:"bk_service_id"`
-	MetaInfo          string         `json:"meta_info"`
-	StrategyID        string         `json:"strategy_id"`
-	StrategyName      string         `json:"strategy_name"`
-	DimensionInfo     string         `json:"dimension_info"`
-	ModelInstID       string         `json:"model_inst_id"`
-	ModelID           string         `json:"model_id"`
-	ModelName         string         `json:"model_name"`
-	AnomalyBeginTime  *string        `json:"anomaly_begin_time"`
-	CloseTime         *string        `json:"close_time,omitempty"`
-	CloseReason       *string        `json:"close_reason,omitempty"`
-	MetricUniqueID    string         `json:"metric_unique_id"`
-	ResultTableID     string         `json:"result_table_id"`
-	Namespace         string         `json:"Namespace"`
-	TimeInterval      string         `json:"time_interval"`
-	AggregateFunc     string         `json:"aggregate_func"`
-	WhereCondition    string         `json:"where_condition"`
-	Unit              string         `json:"unit"`
-	DataSource        string         `json:"data_source"`
-	FieldExtraInfo    map[string]any `json:"field_extra_info"`
-	MetricQueryParams string         `json:"metric_query_params"`
-	DynamicGroupID    []string       `json:"dynamic_group_id"`
-	CWLabels          []string       `json:"cw_labels"`
-	LogThemeID        int64          `json:"log_theme_id,omitempty"`
-	LogThemeName      string         `json:"log_theme_name,omitempty"`
-	LogQueryString    string         `json:"log_query_string,omitempty"`
-	LogRelateInfo     string         `json:"log_relate_info,omitempty"`
-	APMAppID          int64          `json:"apm_app_id,omitempty"`
-	APMAppName        string         `json:"apm_app_name,omitempty"`
-	APMAppAlias       string         `json:"apm_app_alias,omitempty"`
-	APMServiceName    string         `json:"apm_service_name,omitempty"`
-	APMInstanceName   string         `json:"apm_instance_name,omitempty"`
-	APMInterfaceName  string         `json:"apm_interface_name,omitempty"`
-	APMNetPeerName    string         `json:"apm_net_peer_name,omitempty"`
-	BCSClusterID      string         `json:"bcs_cluster_id,omitempty"`
-	ClusterName       string         `json:"cluster_name,omitempty"`
-	K8sNamespace      string         `json:"namespace,omitempty"`
-	Service           string         `json:"service,omitempty"`
-	WorkloadKind      string         `json:"workload_kind,omitempty"`
-	WorkloadName      string         `json:"workload_name,omitempty"`
-	PodName           string         `json:"pod_name,omitempty"`
-	ContainerName     string         `json:"container_name,omitempty"`
-	CloudPlatformID   string         `json:"cloud_plat_id,omitempty"`
+	AlarmID          string         `json:"alarm_id"`
+	SourceID         string         `json:"source_id"`
+	SourceName       string         `json:"source_name"`
+	Item             string         `json:"item"`
+	MetricName       string         `json:"metric_name"`
+	Name             string         `json:"name"`
+	EventID          string         `json:"event_id"`
+	AlarmTime        string         `json:"alarm_time"`
+	Content          string         `json:"content"`
+	Action           string         `json:"action"`
+	Level            string         `json:"level"`
+	Object           string         `json:"object"`
+	BKTenantID       string         `json:"bk_tenant_id"`
+	BKBizID          string         `json:"bk_biz_id"`
+	BKBizName        string         `json:"bk_biz_name"`
+	BKSetID          any            `json:"bk_set_id"`
+	BKSetName        any            `json:"bk_set_name"`
+	BKModuleID       any            `json:"bk_module_id"`
+	BKModuleName     any            `json:"bk_module_name"`
+	BKCloudID        string         `json:"bk_cloud_id"`
+	BKCloudName      string         `json:"bk_cloud_name"`
+	BKObjID          string         `json:"bk_obj_id"`
+	BKInstID         string         `json:"bk_inst_id"`
+	BKServiceID      string         `json:"bk_service_id"`
+	MetaInfo         string         `json:"meta_info"`
+	StrategyID       string         `json:"strategy_id"`
+	StrategyName     string         `json:"strategy_name"`
+	DimensionInfo    string         `json:"dimension_info"`
+	ModelInstID      string         `json:"model_inst_id"`
+	ModelID          string         `json:"model_id"`
+	ModelName        string         `json:"model_name"`
+	AnomalyBeginTime *string        `json:"anomaly_begin_time"`
+	CloseTime        *string        `json:"close_time,omitempty"`
+	CloseReason      *string        `json:"close_reason,omitempty"`
+	MetricUniqueID   string         `json:"metric_unique_id"`
+	ResultTableID    string         `json:"result_table_id"`
+	Namespace        string         `json:"Namespace"`
+	TimeInterval     string         `json:"time_interval"`
+	AggregateFunc    string         `json:"aggregate_func"`
+	WhereCondition   string         `json:"where_condition"`
+	Unit             string         `json:"unit"`
+	DataSource       string         `json:"data_source"`
+	FieldExtraInfo   map[string]any `json:"field_extra_info"`
+	DynamicGroupID   []string       `json:"dynamic_group_id"`
+	CWLabels         []string       `json:"cw_labels"`
+	LogThemeID       int64          `json:"log_theme_id,omitempty"`
+	LogThemeName     string         `json:"log_theme_name,omitempty"`
+	LogQueryString   string         `json:"log_query_string,omitempty"`
+	LogRelateInfo    string         `json:"log_relate_info,omitempty"`
+	APMAppID         int64          `json:"apm_app_id,omitempty"`
+	APMAppName       string         `json:"apm_app_name,omitempty"`
+	APMAppAlias      string         `json:"apm_app_alias,omitempty"`
+	APMServiceName   string         `json:"apm_service_name,omitempty"`
+	APMInstanceName  string         `json:"apm_instance_name,omitempty"`
+	APMInterfaceName string         `json:"apm_interface_name,omitempty"`
+	APMNetPeerName   string         `json:"apm_net_peer_name,omitempty"`
+	BCSClusterID     string         `json:"bcs_cluster_id,omitempty"`
+	ClusterName      string         `json:"cluster_name,omitempty"`
+	K8sNamespace     string         `json:"namespace,omitempty"`
+	Service          string         `json:"service,omitempty"`
+	WorkloadKind     string         `json:"workload_kind,omitempty"`
+	WorkloadName     string         `json:"workload_name,omitempty"`
+	PodName          string         `json:"pod_name,omitempty"`
+	ContainerName    string         `json:"container_name,omitempty"`
+	CloudPlatformID  string         `json:"cloud_plat_id,omitempty"`
 }
 
 var customName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_-]{0,127}$`)
@@ -112,7 +111,7 @@ func ValidateFieldMappings(fields map[string]string) error {
 	return nil
 }
 
-// IsReservedAlarmField 标识正式 KAC 协议字段，避免自定义目录覆盖固定投影。
+// IsReservedAlarmField 标识固定及已移除的 KAC 协议字段，避免自定义目录覆盖或恢复这些字段。
 func IsReservedAlarmField(name string) bool {
 	return reservedAlarmFields[name]
 }
@@ -120,7 +119,8 @@ func IsReservedAlarmField(name string) bool {
 var reservedAlarmFields = func() map[string]bool {
 	reserved := map[string]bool{}
 	// 这些字段由 Lifecycle、投影协议或 KAC 处置维护，不属于来源自定义字段。
-	for _, name := range strings.Fields("status storage_time source_alarm_status tag_info associate_alarm_id associate_count conductor notify_status converge_reason duration strategy strategy_config_uid strategy_config_version source_event_id source_alert_id linkd_alert_id __kac_custom_fields") {
+	// metric_query_params 已停止输出，仍禁止通过自定义目录重新带出历史参数。
+	for _, name := range strings.Fields("status storage_time source_alarm_status tag_info associate_alarm_id associate_count conductor notify_status converge_reason duration strategy strategy_config_uid strategy_config_version source_event_id source_alert_id linkd_alert_id metric_query_params __kac_custom_fields") {
 		reserved[name] = true
 	}
 	typ := reflect.TypeFor[AlarmMessage]()

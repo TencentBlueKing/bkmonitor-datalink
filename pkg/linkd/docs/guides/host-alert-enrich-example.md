@@ -583,7 +583,7 @@ Strategy 输出沿用 Kafka labels 中的策略身份字段名：
 }
 ```
 
-历史已存的 `metric_query_params` 可包含 `query_configs`、`function.time_compare` 和 `bk_biz_id`。所有来源均不再由 Linkd 生成参数；内置告警改由 KAC 按准确 Event 和执行历史组装查询，外部来源由所属插件承接；须先完成新版 KAC 验收再部署此配套改动。
+所有来源均不再由 Linkd 生成、读取或输出 `metric_query_params`；内置告警改由 KAC 按准确 Event 和执行历史组装查询，外部来源由所属插件承接；须先完成新版 KAC 验收再部署此配套改动。
 
 ### 7.5 Source
 

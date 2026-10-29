@@ -79,10 +79,10 @@ KAC Converter/Cleaner 直接构造旧 Alarm 字段。Linkd 将对应业务含义
 2026-10-27 恢复指标参数读侧迁移；2026-10-29 调整为所有告警源均停止生成指标查询参数，部署仍须满足下述验收前提。
 所有告警源的 Metric 丰富结果均不再生成 `metric_query_params`。内置来源由 KAC 根据准确 Event、
 原始维度和策略执行引用组装查询。Linkd 保留指标身份、名称、单位、资源身份和冻结文案等处理侧事实。
-外部来源的具体取数继续由来源插件承接；历史 Event/Alert 的已存参数继续解码和输出，不清理、不回填。
+外部来源的具体取数继续由来源插件承接。Linkd 不再读取、编码或输出历史指标查询参数；不清理、不回填存储中的旧数据。
 
 部署必须先完成 Kingeye MR !15890 的 KAC 兼容支持和真实曲线验收，再部署停止参数生成的 Linkd。
-KAC 占位 `{}` 表示没有已存参数，由新版读侧分流；不新增 `metric-facts` 接口，不改写执行历史。
+KAC 输出省略 `metric_query_params`，由新版读侧组装查询；不新增 `metric-facts` 接口，不改写执行历史。
 KAC 按历史 `agg_dimension` 与原始 Event 实际维度的交集生成分组和过滤，不补造缺失 `target`。
 当前原生 `alarm_id=alert-*`、`event_id=event-*` 的关联承接及无参数真实取数尚未通过验收，不能据代码提交认定已可切换部署。
 策略 URL 仍由 KAC 从 `strategy_context` 组装；APM/K8s/日志专属丰富、文案降级和其他纯展示收敛范围保持既有约定。
@@ -338,7 +338,7 @@ dimension_text
 
 结构化 dimensions 保留场景生成顺序；`dimension_text` 使用副本排序和格式化。当前大部分场景的 content 直接继承 `Event.Content`。
 
-PromQL 的展示维度取自 Event 实际返回的标签及附加维度，不依赖可能为空的 `agg_dimension`，也不补造被表达式聚合掉的标签。规范模型身份条目保持原顺序，其余结果标签按键排序；名称优先取指标元数据，未知或空名称保留原键，展示值仍使用已确认的资源名称转换。`__NO_DATA_DIMENSION__` 控制标记不作为结果标签展示。普通指标继续按声明分组维度选择展示项，所有来源均不再由 Linkd 生成 PromQL 查询参数；历史参数保持原样读取。
+PromQL 的展示维度取自 Event 实际返回的标签及附加维度，不依赖可能为空的 `agg_dimension`，也不补造被表达式聚合掉的标签。规范模型身份条目保持原顺序，其余结果标签按键排序；名称优先取指标元数据，未知或空名称保留原键，展示值仍使用已确认的资源名称转换。`__NO_DATA_DIMENSION__` 控制标记不作为结果标签展示。普通指标继续按声明分组维度选择展示项，所有来源均不再由 Linkd 生成 PromQL 查询参数；历史参数不再读取或输出。
 
 EventSource 的 `enrich.content_mode=bkmonitor_description` 在创建准备阶段及持续触发更新时调用内容构建器，用本次 Event 及其精确策略历史版本生成 `Alert.content`；普通 Processor 的 Result 仍只保存 Status/Data。该模式的 Display 不生成 content 覆盖补丁，不再裁剪日志、拼接对象名或重复转换单位，避免 Event 快照覆盖后续生成的 Alert 内容。`source` 模式维持既有来源文本处理。实现、事实缺口和验收范围集中见[告警内容生成方案](alert-content-generation.md)，后续 Enrich 不覆盖已有核心字段。
 
@@ -355,7 +355,7 @@ metric_unique_id
 aggregate_func
 time_interval
 where_condition
-metric_query_params（所有来源均停止生成，仅保留历史参数读取）
+指标查询参数不属于 Metric 丰富结果，所有来源均不生成或输出
 anomaly_begin_time
 ```
 
@@ -973,7 +973,7 @@ NoData 迁移已完成：
 8. 旧 `object_model_id + obj_model_inst_id`、`cw_object_model_id + cw_object_model_inst_id` 只保留为待迁移输入诊断字段，不恢复 Meta API 或数值主键推断；
 9. 指标目录读取 `value_mapping`，DATA 单指标无函数时对告警内容中的匹配数值追加枚举名称；多指标、函数、衍生指标和无法精确匹配的内容保持原值。
 10. 衍生指标优先按租户和目录 ID 读取定义；没有 ID 的旧声明按 `field_tag=derived_metric` 与定义名反查。Metric 保留衍生类型及实际表达式，catalog 单别名的无函数恒等引用省略外层表达式，不要求衍生定义具有物理表。
-11. 单个监控项包含多条 query 时，Linkd 保留发布材料，不再为任何来源生成取数参数；无函数的普通查询沿用旧 KAC 的首查询字段作为兼容 Metric name，Metric unique ID 仍使用首查询的物理位置。该兼容字段不表示组合结果具有首成员的指标身份或单位；函数场景继续保留空 Metric name，内置组合取数由 KAC 读取准确执行历史，外部来源组合取数由所属插件承接，历史已存参数保持读取兼容。见 [多查询兼容验证](../research/2026-10-21-multi-query-legacy-compatibility.md)。
+11. 单个监控项包含多条 query 时，Linkd 保留发布材料，不再为任何来源生成取数参数；无函数的普通查询沿用旧 KAC 的首查询字段作为兼容 Metric name，Metric unique ID 仍使用首查询的物理位置。该兼容字段不表示组合结果具有首成员的指标身份或单位；函数场景继续保留空 Metric name，内置组合取数由 KAC 读取准确执行历史，外部来源组合取数由所属插件承接，历史已存参数不再读取或输出。见 [多查询兼容验证](../research/2026-10-21-multi-query-legacy-compatibility.md)。
 12. DATA 静态阈值展示优先使用告警等级对应算法的 `algorithmUnit`；`NONE` 表示清除单位；算法未覆盖时使用指标目录单位映射。阈值和当前值支持数值单位追加。
 13. 环比／同比内容按 Kingeye 分支识别可定位数值并进行枚举映射，无数据周期文案保留来源文本；custom event、alert、FTA 查询类型使用对应字段和结果表翻译。
 14. 所有来源均不再生成 PromQL 取数参数；事件级结果表与字段按 `segment:...:metric` 约定从表达式内唯一序列名派生。多序列、只出现在标签匹配器中的指标名和结构残缺表达式不产生单指标身份。

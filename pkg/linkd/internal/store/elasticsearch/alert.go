@@ -610,6 +610,11 @@ func (r *Repository) GetAlertCloseStates(ctx context.Context, tenant string, ids
 	return r.getAlertsCurrent(ctx, tenant, ids, "close")
 }
 
+// GetAlertCloseProjectionStates 只读取同步关闭投影需要的终态事实，返回值不能用于业务裁决或 CAS。
+func (r *Repository) GetAlertCloseProjectionStates(ctx context.Context, tenant string, ids []string) (store.AlertBatch, error) {
+	return r.getAlertsCurrent(ctx, tenant, ids, "projection")
+}
+
 func (r *Repository) getAlertsCurrent(ctx context.Context, tenant string, ids []string, mode string) (store.AlertBatch, error) {
 	docs := []map[string]string{}
 	positions := []string{}
@@ -684,6 +689,8 @@ func (r *Repository) readCurrentAlertDocuments(ctx context.Context, tenant strin
 	switch mode {
 	case "identity":
 		query.Set("_source_includes", "bk_tenant_id,alert_id,event_source_id,event_source_version,fingerprint")
+	case "projection":
+		query.Set("_source_includes", "bk_tenant_id,alert_id,status,end_at,end_type,end_reason,end_operation")
 	case "close":
 		query.Set("_source_includes", "revision,bk_tenant_id,alert_id,event_source_id,event_source_version,fingerprint,severity,dimensions,labels,extra_data.evaluation_family,subject_system,subject_type,subject_id,source_alert_id,shield,merge,policy_change,merge_change,merge_work,admission,policy_tags,status,latest_event_id,last_occurred_at,update_at,trigger_event_id,begin_at,create_at,end_at,end_type,end_reason,end_operation,enrich_status")
 	}
@@ -696,7 +703,7 @@ func (r *Repository) readCurrentAlertDocuments(ctx context.Context, tenant strin
 		}
 		var row store.StoredAlert
 		switch mode {
-		case "identity":
+		case "identity", "projection":
 			err = json.Unmarshal(doc.Source, &row.Alert)
 		case "close":
 			row, err = decodeAlertStateHit(doc.hit())

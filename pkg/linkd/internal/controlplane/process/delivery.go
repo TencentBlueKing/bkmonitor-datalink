@@ -19,6 +19,11 @@ func hasKACDelivery(cfg config.Config) bool { return cfg.Lifecycle != nil && cfg
 type kacAlertReader struct{ store.Repository }
 
 func (r kacAlertReader) GetAlertCloseStates(ctx context.Context, tenant string, ids []string) (store.AlertBatch, error) {
+	if reader, ok := r.Repository.(interface {
+		GetAlertCloseProjectionStates(context.Context, string, []string) (store.AlertBatch, error)
+	}); ok {
+		return reader.GetAlertCloseProjectionStates(ctx, tenant, ids)
+	}
 	if states, ok := r.Repository.(store.AlertCloseStateBatchStore); ok {
 		return states.GetAlertCloseStates(ctx, tenant, ids)
 	}

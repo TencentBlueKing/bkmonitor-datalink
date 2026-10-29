@@ -87,6 +87,21 @@ func (p *Processor) alertCloseOutput(ctx context.Context, command CloseAlertComm
 	return append([]domain.AlertLog{log}, hooks...), err
 }
 
+func (p *Processor) batchAlertCloseOutput(ctx context.Context, command CloseAlertCommand, current store.StoredAlert) ([]domain.AlertLog, error) {
+	log, err := operationCloseLog(command, current.Alert)
+	if err != nil {
+		return nil, err
+	}
+	causeType := AlertChangeCauseUserOperation
+	if command.OperatorKind == domain.OperatorKindSystem {
+		causeType = AlertChangeCauseSystemOperation
+	}
+	started := time.Now()
+	hooks, err := p.executeFinalHooks(ctx, AlertChangeCause{Type: causeType, ID: command.OperationID}, current.Alert, OutcomeAlertClosed, current.Alert.Admission.AdmittedAt != nil)
+	store.ObserveBatchPhase(ctx, "member.hooks", time.Since(started))
+	return append([]domain.AlertLog{log}, hooks...), err
+}
+
 // CloseAlerts 在调用方已经持有全部 fingerprint lease 时显式批读、Bulk CAS、pipeline 缓存和批写流水。
 // 同一批必须属于同一租户及同一来源发布配置；不创建跨告警事务，结果保持输入顺序。
 // 只有需要外部前置确认、清理或 Hook 的步骤按 concurrency 有界执行，不逐条调用 CloseAlert。
@@ -176,16 +191,29 @@ func (p *Processor) CloseAlerts(ctx context.Context, commands []CloseAlertComman
 		// CAS 成功后必须先发布近期缓存，缓存失败的项不能继续 Hook 或流水。
 		fresh, cachePositions := []store.StoredAlert{}, []int{}
 		started = time.Now()
+		observed, observedPositions := []domain.Alert{}, []int{}
+		for _, i := range pending {
+			if results[i].Err == nil && !results[i].AlreadyClosed {
+				observed = append(observed, byID[commands[i].AlertID].Alert)
+				observedPositions = append(observedPositions, i)
+			}
+		}
+		if len(observed) > 0 {
+			p.observeActiveAlerts(ctx, observed)
+			if err := p.observeTerminalDependencyAlerts(ctx, observed); err != nil {
+				for _, i := range observedPositions {
+					results[i].Err = err
+				}
+			}
+		}
+		store.ObserveBatchPhase(ctx, "batch.indexes", time.Since(started))
+		started = time.Now()
 		closeBatchWork(len(pending), concurrency, func(j int) {
 			i := pending[j]
 			if results[i].Err != nil {
 				return
 			}
 			a := byID[commands[i].AlertID]
-			if !results[i].AlreadyClosed {
-				p.observeActiveAlert(ctx, a.Alert)
-				results[i].Err = p.observeDependencyIndex(ctx, a.Alert)
-			}
 			if results[i].Err == nil {
 				// 原有屏蔽/合并意图仍按其领域规则补齐，再输出最终关闭。
 				a, results[i].Err = p.finishPendingChanges(ctx, a)
@@ -216,12 +244,34 @@ func (p *Processor) CloseAlerts(ctx context.Context, commands []CloseAlertComman
 		store.ObserveBatchPhase(ctx, "batch.cache", time.Since(started))
 		logs := make([][]domain.AlertLog, len(pending))
 		started = time.Now()
+		clearing, clearingPositions := []domain.Alert{}, []int{}
+		for j, i := range pending {
+			if results[i].Err == nil {
+				clearing = append(clearing, updates[j].Current.Alert)
+				clearingPositions = append(clearingPositions, i)
+			}
+		}
+		if len(clearing) > 0 {
+			errs := p.clearSuppressions(ctx, clearing)
+			for j, i := range clearingPositions {
+				results[i].Err = errs[j]
+			}
+		}
+		store.ObserveBatchPhase(ctx, "batch.cleanup", time.Since(started))
 		closeBatchWork(len(pending), concurrency, func(j int) {
 			i := pending[j]
 			if results[i].Err == nil {
-				logs[j], results[i].Err = p.alertCloseOutput(ctx, commands[i], updates[j].Current)
+				logs[j], results[i].Err = p.batchAlertCloseOutput(ctx, commands[i], updates[j].Current)
 			}
 		})
+		published, publishedCommands := []domain.Alert{}, []CloseAlertCommand{}
+		for j, i := range pending {
+			if results[i].Err == nil {
+				published = append(published, updates[j].Current.Alert)
+				publishedCommands = append(publishedCommands, commands[i])
+			}
+		}
+		p.publishCloseChanges(ctx, published, publishedCommands)
 		store.ObserveBatchPhase(ctx, "batch.output", time.Since(started))
 		allLogs, owners := []domain.AlertLog{}, []int{}
 		for j, i := range pending {

@@ -38,3 +38,39 @@ func (p *Processor) publishChange(ctx context.Context, a domain.Alert, cause Ale
 		p.logger.WarnContext(ctx, "alert change enqueue failed", "module", "lifecycle", "operation", "publish_change", "error", err, "event_source_id", a.EventSourceID, "bk_tenant_id", a.BKTenantID, "alert_id", a.AlertID, "cause_id", cause.ID, "error_code", "queue_publish_failed")
 	}
 }
+
+func (p *Processor) publishCloseChanges(ctx context.Context, alerts []domain.Alert, commands []CloseAlertCommand) {
+	if p.publisher == nil {
+		return
+	}
+	batch, ok := p.publisher.(interface {
+		PublishBatch(context.Context, []domain.AlertChange) []error
+	})
+	if !ok {
+		for i, a := range alerts {
+			kind := AlertChangeCauseUserOperation
+			if commands[i].OperatorKind == domain.OperatorKindSystem {
+				kind = AlertChangeCauseSystemOperation
+			}
+			p.publishChange(ctx, a, AlertChangeCause{Type: kind, ID: commands[i].OperationID}, a.Admission.AdmittedAt != nil)
+		}
+		return
+	}
+	started := time.Now()
+	defer func() { store.ObserveBatchPhase(ctx, "batch.enqueue", time.Since(started)) }()
+	changes := make([]domain.AlertChange, len(alerts))
+	for i, a := range alerts {
+		kind := AlertChangeCauseUserOperation
+		if commands[i].OperatorKind == domain.OperatorKindSystem {
+			kind = AlertChangeCauseSystemOperation
+		}
+		changes[i] = domain.NewAlertChange(a, domain.AlertActionCause{Type: kind, ID: commands[i].OperationID}, a.Admission.AdmittedAt != nil)
+	}
+	errs := batch.PublishBatch(ctx, changes)
+	for i, err := range errs {
+		if err != nil {
+			a := alerts[i]
+			p.logger.WarnContext(ctx, "alert change enqueue failed", "module", "lifecycle", "operation", "publish_change", "error", err, "event_source_id", a.EventSourceID, "bk_tenant_id", a.BKTenantID, "alert_id", a.AlertID, "cause_id", commands[i].OperationID, "error_code", "queue_publish_failed")
+		}
+	}
+}

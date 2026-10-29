@@ -316,7 +316,9 @@ func (s *Store) ClearAggregationOwner(ctx context.Context, tenant, owner string)
 	return cleanupWindows(raw, err, "aggregation", "")
 }
 
-var clearAggregationScript = redis.NewScript(`
+var clearAggregationScript = redis.NewScript(clearAggregationScriptSource)
+
+const clearAggregationScriptSource = `
 local rt=redis.call('TYPE',KEYS[2]).ok;if rt~='none' and rt~='zset' then return {'state'} end
 local t=redis.call('TYPE',KEYS[1]).ok;if t=='none' then return {'ok'} end;if t~='set' or redis.call('SCARD',KEYS[1])>512 then return {'state'} end
 local ids=redis.call('SMEMBERS',KEYS[1]);local owned={};local removed={'ok'}
@@ -331,4 +333,4 @@ for _,id in ipairs(ids) do
 end
 for _,key in ipairs(owned) do local id=string.sub(key,-64);redis.call('DEL',key,ARGV[3]..id);redis.call('ZREM',KEYS[2],id) end
 redis.call('DEL',KEYS[1]);return removed
-`)
+`

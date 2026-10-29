@@ -283,7 +283,9 @@ func (s *Store) ClearClipIdentity(ctx context.Context, identity Identity, owner 
 	return cleanupWindows(raw, err, "clip", subject)
 }
 
-var clearClipScript = redis.NewScript(`
+var clearClipScript = redis.NewScript(clearClipScriptSource)
+
+const clearClipScriptSource = `
 local rt=redis.call('TYPE',KEYS[2]).ok;if rt~='none' and rt~='zset' then return {'state'} end
 local t=redis.call('TYPE',KEYS[1]).ok;if t=='none' then return {'ok'} end;if t~='set' then return {'state'} end
 if redis.call('SCARD',KEYS[1])>512 then return {'state'} end
@@ -305,4 +307,4 @@ for _,key in ipairs(members) do
 end
 if redis.call('SCARD',KEYS[1])==0 then redis.call('DEL',KEYS[1]) end
 return removed
-`)
+`

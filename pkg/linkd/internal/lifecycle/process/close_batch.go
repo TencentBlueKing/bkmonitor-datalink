@@ -11,8 +11,16 @@ import (
 
 	"linkd/internal/lifecycle"
 	"linkd/internal/lifecycle/mailbox"
+	"linkd/internal/lifecycle/scheduler"
 	"linkd/internal/store"
 )
+
+type closeBatchLeasesHeldKey struct{}
+
+type closeBatchLocker interface {
+	AcquireBatch(context.Context, []string) ([]scheduler.Lease, []error)
+	ReleaseBatch(context.Context, []scheduler.Lease) []error
+}
 
 type closeBatchProjection interface {
 	ProjectBatchNow(context.Context, string, []string) []error
@@ -103,7 +111,6 @@ func (s *AlertCloser) closeAlertsWave(ctx context.Context, commands []lifecycle.
 type closeLeaseGroup struct {
 	identity  store.StoredAlert
 	positions []int
-	processor *lifecycle.Processor
 }
 
 func (s *AlertCloser) closeBatch(ctx context.Context, commands []lifecycle.CloseAlertCommand) []lifecycle.CloseAlertOutcome {
@@ -178,77 +185,99 @@ func (s *AlertCloser) closeBatch(ctx context.Context, commands []lifecycle.Close
 		}
 		groups[key].positions = append(groups[key].positions, i)
 	}
-	ready := make(chan *closeLeaseGroup, len(groups))
-	finished := make(chan struct{})
-	var leases sync.WaitGroup
-	work := make(chan struct{}, max(1, s.concurrency))
+	// 每个来源一个 Redis pipeline；同 fingerprint 的多个 Alert 共用本批租约。
+	type heldBatch struct {
+		locker   closeBatchLocker
+		leases   []scheduler.Lease
+		groups   []*closeLeaseGroup
+		acquired []error
+	}
+	held := []heldBatch{}
+	bySource := map[string][]*closeLeaseGroup{}
+	for _, g := range groups {
+		bySource[g.identity.Alert.EventSourceID] = append(bySource[g.identity.Alert.EventSourceID], g)
+	}
 	started = time.Now()
-	for _, group := range groups {
-		leases.Go(func() {
-			select {
-			case work <- struct{}{}:
-			case <-ctx.Done():
-				for _, i := range group.positions {
-					results[i].Err = ctx.Err()
+	defer func() {
+		at := time.Now()
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		var release sync.WaitGroup
+		for _, b := range held {
+			release.Go(func() {
+				errs := b.locker.ReleaseBatch(releaseCtx, b.leases)
+				for j, g := range b.groups {
+					if b.acquired[j] == nil && errs[j] != nil {
+						for _, i := range g.positions {
+							results[i].Err = errors.Join(results[i].Err, errs[j])
+						}
+					}
 				}
-				ready <- group
-				return
+			})
+		}
+		release.Wait()
+		store.ObserveBatchPhase(ctx, "batch.release", time.Since(at))
+	}()
+	ready := map[controlHookKey]*closeLeaseGroup{}
+	for source, list := range bySource {
+		locker, err := s.batchLocker(source)
+		if err != nil {
+			for _, g := range list {
+				for _, i := range g.positions {
+					results[i].Err = err
+				}
 			}
-			reported := false
-			err := s.withProcessor(ctx, group.identity, func(p *lifecycle.Processor) error {
-				group.processor = p
-				reported = true
-				<-work
-				ready <- group
-				<-finished
+			continue
+		}
+		keys := make([]string, len(list))
+		for j, g := range list {
+			a := g.identity.Alert
+			keys[j] = mailbox.CorrelationKey(a.BKTenantID, a.EventSourceID, a.Fingerprint)
+		}
+		leases, errs := locker.AcquireBatch(ctx, keys)
+		held = append(held, heldBatch{locker, leases, list, errs})
+		for j, g := range list {
+			if errs[j] != nil {
+				for _, i := range g.positions {
+					results[i].Err = errs[j]
+				}
+				continue
+			}
+			a := g.identity.Alert
+			version := a.EventSourceVersion
+			if record := records[a.EventSourceID]; !record.record.Deleted {
+				version = record.record.Published
+			}
+			key := controlHookKey{a.EventSourceID, version}
+			if ready[key] == nil {
+				ready[key] = &closeLeaseGroup{identity: g.identity}
+			}
+			ready[key].positions = append(ready[key].positions, g.positions...)
+		}
+	}
+	store.ObserveBatchPhase(ctx, "batch.leases", time.Since(started))
+	ctx = context.WithValue(ctx, closeBatchLeasesHeldKey{}, true)
+	var batches sync.WaitGroup
+	slots := make(chan struct{}, max(1, s.concurrency))
+	for _, source := range ready {
+		slots <- struct{}{}
+		batches.Go(func() {
+			defer func() { <-slots }()
+			err := s.withProcessor(ctx, source.identity, func(p *lifecycle.Processor) error {
+				batch := make([]lifecycle.CloseAlertCommand, len(source.positions))
+				for j, i := range source.positions {
+					batch[j] = commands[i]
+				}
+				outcomes := p.CloseAlerts(ctx, batch, max(1, s.concurrency))
+				for j, i := range source.positions {
+					results[i] = outcomes[j]
+				}
 				return nil
 			})
 			if err != nil {
-				for _, i := range group.positions {
+				for _, i := range source.positions {
 					results[i].Err = errors.Join(results[i].Err, err)
 				}
-			}
-			if !reported {
-				<-work
-				ready <- group
-			}
-		})
-	}
-	// 后续阶段与 lease 释放通过 finished 同步；释放失败也必须反映到对应成员。
-	defer func() {
-		started := time.Now()
-		close(finished)
-		leases.Wait()
-		store.ObserveBatchPhase(ctx, "batch.release", time.Since(started))
-	}()
-	bySource := map[controlHookKey]*closeLeaseGroup{}
-	for range len(groups) {
-		g := <-ready
-		if g.processor == nil {
-			continue
-		}
-		a := g.identity.Alert
-		version := a.EventSourceVersion
-		if record := records[a.EventSourceID]; !record.record.Deleted {
-			version = record.record.Published
-		}
-		key := controlHookKey{a.EventSourceID, version}
-		if bySource[key] == nil {
-			bySource[key] = &closeLeaseGroup{processor: g.processor}
-		}
-		bySource[key].positions = append(bySource[key].positions, g.positions...)
-	}
-	store.ObserveBatchPhase(ctx, "batch.leases", time.Since(started))
-	var batches sync.WaitGroup
-	for _, source := range bySource {
-		batches.Go(func() {
-			batch := make([]lifecycle.CloseAlertCommand, len(source.positions))
-			for j, i := range source.positions {
-				batch[j] = commands[i]
-			}
-			outcomes := source.processor.CloseAlerts(ctx, batch, max(1, s.concurrency))
-			for j, i := range source.positions {
-				results[i] = outcomes[j]
 			}
 		})
 	}

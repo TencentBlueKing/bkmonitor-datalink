@@ -188,7 +188,9 @@ func (s *Store) ClearDependencyOwner(ctx context.Context, tenant, owner string) 
 	return n, nil
 }
 
-var clearDependencyScript = redis.NewScript(`
+var clearDependencyScript = redis.NewScript(clearDependencyScriptSource)
+
+const clearDependencyScriptSource = `
 local t=redis.call('TYPE',KEYS[1]).ok;if t=='none' then return 0 end;if t~='set' or redis.call('SCARD',KEYS[1])>512 then return -1 end
 local keys=redis.call('SMEMBERS',KEYS[1]);local owned={}
 for _,key in ipairs(keys) do
@@ -201,7 +203,7 @@ for _,key in ipairs(keys) do
 end
 for _,key in ipairs(owned) do redis.call('DEL',key) end
 redis.call('DEL',KEYS[1]);return #owned
-`)
+`
 
 func dependencySignature(m domain.DependencyMain) string {
 	return digest(m.AlertID, m.EventID, m.EventSourceID, m.Fingerprint, m.Severity)

@@ -142,6 +142,28 @@ func (s *Shielder) ObserveDependencyAlert(ctx context.Context, a domain.Alert, l
 	return s.Index.ApplyDependencyCandidates(ctx, u)
 }
 
+// ObserveTerminalDependencyAlerts 批量清除已持久化终态的候选，复用现有 revision 排序脚本。
+func (s *Shielder) ObserveTerminalDependencyAlerts(ctx context.Context, alerts []domain.Alert) error {
+	if s.Index == nil {
+		return nil
+	}
+	updates := make([]redisstate.DependencyCandidateUpdate, len(alerts))
+	for i, a := range alerts {
+		updates[i] = redisstate.DependencyCandidateUpdate{TenantID: a.BKTenantID, ConfigDigest: s.ConfigDigest, AlertID: a.AlertID, Revision: a.Revision, Clear: true}
+	}
+	if batch, ok := s.Index.(interface {
+		ApplyDependencyCandidateBatch(context.Context, []redisstate.DependencyCandidateUpdate) error
+	}); ok {
+		return batch.ApplyDependencyCandidateBatch(ctx, updates)
+	}
+	for _, u := range updates {
+		if err := s.Index.ApplyDependencyCandidates(ctx, u); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // RefreshDependencyIndex 仅后台对尚未就绪的规则回填，活动告警每租户只分页一次。
 // 先实时重读再按 revision 写索引；回填期间的较旧状态不能覆盖生命周期的新状态。
 func (s *Shielder) RefreshDependencyIndex(ctx context.Context, tenant string, at time.Time, level func(string) (string, error)) error {

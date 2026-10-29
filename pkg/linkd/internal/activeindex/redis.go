@@ -51,27 +51,30 @@ func (s *Store) observe(ctx context.Context, operation, outcome string, n int) {
 // ObserveAlert 在已有 fingerprint lease 内观察真实创建/终结，未命中分组时不写任何缓存。
 // Set 自身保证重复增删无副作用；失败由周期修复处理，不回滚持久化事实。
 func (s *Store) ObserveAlert(ctx context.Context, a domain.Alert) error {
-	groups := []group{}
-	row := AlertRow(a)
-	for _, rule := range s.settings.Rules {
-		if g, ok := s.ruleGroup(row, rule); ok {
-			groups = append(groups, g)
-		}
-	}
-	if len(groups) == 0 {
-		return nil
-	}
+	return s.ObserveAlerts(ctx, []domain.Alert{a})
+}
+
+// ObserveAlerts 将来源批次的成员变化放入同一 pipeline，保留每组原有通知语义。
+func (s *Store) ObserveAlerts(ctx context.Context, alerts []domain.Alert) error {
 	call, cancel := context.WithTimeout(ctx, time.Duration(s.settings.TimeoutMilliseconds)*time.Millisecond)
 	defer cancel()
 	pipe := s.client.Pipeline()
-	for _, g := range groups {
-		s.changeMember(call, pipe, g, a.Fingerprint, a.Status == domain.AlertStatusActive)
+	for _, a := range alerts {
+		row := AlertRow(a)
+		for _, rule := range s.settings.Rules {
+			if g, ok := s.ruleGroup(row, rule); ok {
+				s.changeMember(call, pipe, g, a.Fingerprint, a.Status == domain.AlertStatusActive)
+			}
+		}
+	}
+	if pipe.Len() == 0 {
+		return nil
 	}
 	if _, err := pipe.Exec(call); err != nil {
-		s.observe(ctx, "update", "failed", 1)
+		s.observe(ctx, "update", "failed", len(alerts))
 		return fmt.Errorf("update active alert groups: %w", err)
 	}
-	s.observe(ctx, "update", "succeeded", 1)
+	s.observe(ctx, "update", "succeeded", len(alerts))
 	return nil
 }
 

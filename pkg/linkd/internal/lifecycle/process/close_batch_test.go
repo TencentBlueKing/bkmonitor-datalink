@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -52,6 +51,22 @@ type closeBatchProjectionStub struct {
 type closeBatchSources struct {
 	batchSourceReader
 	releases atomic.Int32
+}
+
+type closeBatchTestLocker struct{ held *atomic.Int32 }
+
+func (l closeBatchTestLocker) AcquireBatch(_ context.Context, keys []string) ([]scheduler.Lease, []error) {
+	for range keys {
+		l.held.Add(1)
+	}
+	return make([]scheduler.Lease, len(keys)), make([]error, len(keys))
+}
+
+func (l closeBatchTestLocker) ReleaseBatch(_ context.Context, leases []scheduler.Lease) []error {
+	for range leases {
+		l.held.Add(-1)
+	}
+	return make([]error, len(leases))
 }
 
 // 内存后端的普通 GetAlerts 仍保持 500 条契约；显式关闭的逻辑批读在测试中拼装同等结果。
@@ -108,19 +123,13 @@ func closeBatchFixture(t *testing.T, count int) (*AlertCloser, *explicitMergeRep
 	sources := &closeBatchSources{}
 	sources.version.Store(1)
 	held := &atomic.Int32{}
-	var leases sync.Map
 	batchRepo := &closeMemoryRepository{repo}
 	closer := &AlertCloser{slots: make(chan struct{}, 4), batchSlots: make(chan struct{}, 2), batchSize: 1000, concurrency: 2, sources: sources, resources: &AlertProcessorResources{repository: &storeassembly.Runtime{Repository: batchRepo}}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	closer.batchLocker = func(string) (closeBatchLocker, error) { return closeBatchTestLocker{held}, nil }
 	closer.withProcessor = func(ctx context.Context, identity store.StoredAlert, run func(*lifecycle.Processor) error) error {
 		if _, err := readControlSource(ctx, sources, identity.Alert.EventSourceID); err != nil {
 			return err
 		}
-		if _, loaded := leases.LoadOrStore(identity.Alert.Fingerprint, true); loaded {
-			return scheduler.ErrLockBusy
-		}
-		defer leases.Delete(identity.Alert.Fingerprint)
-		held.Add(1)
-		defer held.Add(-1)
 		p, err := lifecycle.NewProcessor(batchRepo, cache, lifecycle.DeterministicAlertIDGenerator{}, enrich.NoopEnricher{}, nil, config.DefaultSeverityConfig(), lifecycle.SystemClock{}, closer.logger)
 		if err != nil {
 			return err

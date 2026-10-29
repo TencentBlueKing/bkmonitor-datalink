@@ -11,6 +11,19 @@ import (
 	"linkd/internal/store"
 )
 
+// GetAlertCloseProjectionStates 保留 KAC 终态窄读，不在装饰器中扩大为关闭裁决快照。
+func (r *observedRepository) GetAlertCloseProjectionStates(ctx context.Context, tenant string, ids []string) (store.AlertBatch, error) {
+	started := time.Now()
+	if reader, ok := r.next.(interface {
+		GetAlertCloseProjectionStates(context.Context, string, []string) (store.AlertBatch, error)
+	}); ok {
+		result, err := reader.GetAlertCloseProjectionStates(ctx, tenant, ids)
+		r.record(ctx, "alert", "get_close_projection_states", started, err)
+		return result, err
+	}
+	return r.GetAlertCloseStates(ctx, tenant, ids)
+}
+
 // GetAlertCloseStates 保留关闭状态的窄批读；不支持的后端仍使用完整批读。
 func (r *observedRepository) GetAlertCloseStates(ctx context.Context, tenant string, ids []string) (store.AlertBatch, error) {
 	started := time.Now()

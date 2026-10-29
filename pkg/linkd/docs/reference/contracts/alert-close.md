@@ -123,13 +123,15 @@ KAC 收到 close 动作后只执行后续处置，不再次据此生成关闭命
 
 批量入口显式提交整个候选批次，不循环调用单条 `CloseAlert`，处理方式参照合并成员批次：
 
-1. 候选只取 ID；批读租户、Alert ID、来源、来源版本和 fingerprint 五个身份字段，同 fingerprint 只取得一次 lease。每个来源发布记录及所需发布版本每批读取一次。
+1. 候选只取 ID；批读租户、Alert ID、来源、来源版本和 fingerprint 五个身份字段，按来源 pipeline 获取租约，同 fingerprint 只占一次 lease。每个来源发布记录及所需发布版本每批读取一次，Processor 也只按来源发布配置构造一次。
 2. 持有全部已取得的 lease 后，按租户及来源发布配置分组批读关闭所需状态，不读取正文、标题或 Enrich；无数据联动只读取必要原始事实。仅仍启用旧 KAC Kafka Hook 的来源才按需使用完整快照；通用 `type: kafka` 已移除并忽略。
 3. 使用 ES Bulk update 逐项携带版本条件，只替换关闭涉及的 12 个状态及派生字段，不回写正文或丰富数据；只对版本冲突项批量重读和重试，最多沿用既有 CAS 尝试次数。
-4. 对成功项 pipeline 更新近期终态缓存；主动关闭缓存仅保留用于 active lookup 负缓存与修复的状态，不携带正文、Enrich 或扩展数据。随后执行既有清理和 FinalHook，流水按存储批次写入。
-5. 释放 lease 后，对成功项窄批读并 Bulk 同步投影 KAC，仅写 5 个终态字段；KAC 文档不存在时才补读该项完整快照创建。保留逐项错误及 `refresh=true` 的成功语义。
+4. 对成功项批量更新依赖候选、活跃分组和近期终态缓存；主动关闭缓存仅保留状态，不携带正文、Enrich 或扩展数据。依赖主清理、复查提示、抑制计数/聚合主清理及轻量通知均使用 pipeline。清理 Journal 按批读取、Bulk 保存 pending、执行清理后 Bulk 保存 completed，直接使用 Bulk 返回的版本，不逐项重读。流水继续按存储批次写入。
+5. 按来源 pipeline 释放 lease 后，对成功项只读租户、Alert ID、状态、结束时间、结束类型、结束原因和结束操作七个字段，Bulk 同步投影 KAC，仅写 5 个终态字段；KAC 文档不存在时才补读该项完整快照创建。保留逐项错误及 `refresh=true` 的成功语义。
 
 控制面复用存储、Redis、来源 Hook 和终态清理 Journal，不为每条关闭打开连接或检查存储 schema。
+内部网络请求按阶段组织，不以成员并发模拟批处理。既有挂起的屏蔽/合并意图仍按原恢复规则补齐；
+显式启用的旧 KAC Kafka Hook 和无数据关闭回调继续受其现有外部接口约束。
 批大小、批次并发及成员并发分别配置，完全独立于单条关闭、查询和 Lifecycle Worker：
 `control_plane.close.batch_size` 默认 1000（最大 5000）；`concurrency` 默认 8（在途筛选关闭请求）；
 `member_concurrency` 默认 32（每来源子批的成员准备、前置调用、索引清理和 Hook）。

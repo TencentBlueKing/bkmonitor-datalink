@@ -92,11 +92,15 @@ func (p *Processor) runFinalHooks(ctx context.Context, cause AlertChangeCause, a
 }
 
 func (p *Processor) runHooks(ctx context.Context, cause AlertChangeCause, alert domain.Alert, outcome ProcessOutcome, actionReady bool) ([]domain.AlertLog, error) {
-	defer p.measurePhase(phaseHook)()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	p.publishChange(ctx, alert, cause, actionReady)
+	return p.executeFinalHooks(ctx, cause, alert, outcome, actionReady)
+}
+
+func (p *Processor) executeFinalHooks(ctx context.Context, cause AlertChangeCause, alert domain.Alert, outcome ProcessOutcome, actionReady bool) ([]domain.AlertLog, error) {
+	defer p.measurePhase(phaseHook)()
 	logs := make([]domain.AlertLog, 0, len(p.finalHooks))
 	for _, hook := range p.finalHooks {
 		if hook.Purpose == "action" && !actionReady {

@@ -31,6 +31,15 @@ func (p observedChangePublisher) Publish(ctx context.Context, change domain.Aler
 	return err
 }
 
+// PublishBatch 保留批量入队，不因计量而展开为单项请求。
+func (p observedChangePublisher) PublishBatch(ctx context.Context, changes []domain.AlertChange) []error {
+	errs := p.queue.PublishBatch(ctx, changes)
+	for _, err := range errs {
+		p.metrics.KACResult(ctx, "enqueue", err, 0, 1)
+	}
+	return errs
+}
+
 func changePublisher(cfg config.Config, client redis.UniversalClient, metrics *telemetry.Runtime) lifecycle.AlertChangePublisher {
 	if !cfg.Plugins.KACEnabled() {
 		return nil

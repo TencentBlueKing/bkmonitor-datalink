@@ -70,6 +70,7 @@ type AlertCloser struct {
 	concurrency   int
 	sources       closeSourceReader
 	withProcessor func(context.Context, store.StoredAlert, func(*lifecycle.Processor) error) error
+	batchLocker   func(string) (closeBatchLocker, error)
 	run           func(context.Context, lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error)
 	read          func(context.Context, string, string) (domain.Alert, error)
 	projection    AlertProjectionSynchronizer
@@ -85,6 +86,11 @@ func NewAlertCloser(cfg config.Config, sources closeSourceReader, severity *runt
 	closer.batchSlots = make(chan struct{}, closeConfig.Concurrency)
 	closer.batchSize = closeConfig.BatchSize
 	closer.concurrency = closeConfig.MemberConcurrency
+	closer.batchLocker = func(source string) (closeBatchLocker, error) {
+		lockConfig := cfg.Lifecycle.ForSource(cfg.Dispatch.WithDefaults().Deployment, source).SchedulerConfig()
+		lockConfig.LockTTL = max(lockConfig.LockTTL, 30*time.Second)
+		return scheduler.NewRedisLocker(closer.resources.client, lockConfig)
+	}
 	prepare := newAlarmdClosePreparation(cfg.Resources.Alarmd, logger)
 	configure := func(store.Repository, *redisstate.Store) []lifecycle.ProcessorOption {
 		return []lifecycle.ProcessorOption{lifecycle.WithClosePreparation(prepare)}
@@ -226,7 +232,7 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 	if shared != nil && shared.cleanup != nil {
 		cleanup = shared.cleanup
 	}
-	opts := []lifecycle.ProcessorOption{lifecycle.WithNewAlertSuppressor(&policyruntime.Suppressor{State: policyState, Aggregation: policyState, Observer: metrics, Logger: logger, CleanupRecorder: cleanup}), lifecycle.WithDependencyRegistry(&policyruntime.Shielder{Dependency: policyState, Index: policyState, Hints: policyState, Observer: metrics, Logger: logger})}
+	opts := []lifecycle.ProcessorOption{lifecycle.WithNewAlertSuppressor(&policyruntime.Suppressor{State: policyState, Aggregation: policyState, BatchState: policyState, Observer: metrics, Logger: logger, CleanupRecorder: cleanup}), lifecycle.WithDependencyRegistry(&policyruntime.Shielder{Dependency: policyState, Index: policyState, Hints: policyState, Observer: metrics, Logger: logger})}
 	opts = append(opts, lifecycle.WithAlertChangePublisher(changePublisher(cfg, client, metrics)), lifecycle.WithActiveAlertCache(activeindex.New(client, cfg.Dispatch.WithDefaults().Deployment, release.Spec, metrics)))
 	if configure != nil {
 		opts = append(opts, configure(observed, policyState)...)
@@ -237,6 +243,10 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 	}
 	key := mailbox.CorrelationKey(stored.Alert.BKTenantID, stored.Alert.EventSourceID, stored.Alert.Fingerprint)
 	store.ObserveBatchPhase(ctx, "member.processor_prepare", time.Since(started))
+	if ctx.Value(closeBatchLeasesHeldKey{}) == true {
+		// 显式关闭批次已 pipeline 取得全部成员租约，来源处理器只构造一次。
+		return run(processor)
+	}
 	return withAlertLease(ctx, locker, key, func() error { return run(processor) })
 }
 

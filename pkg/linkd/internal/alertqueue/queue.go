@@ -41,3 +41,27 @@ func (p *Publisher) Publish(ctx context.Context, change domain.AlertChange) erro
 	defer cancel()
 	return p.Client.XAdd(call, &redis.XAddArgs{Stream: p.Stream, Values: map[string]any{"body": string(raw)}}).Err()
 }
+
+// PublishBatch 将本批轻量通知放入一次 pipeline，每条消息仍有独立投递结果。
+func (p *Publisher) PublishBatch(ctx context.Context, changes []domain.AlertChange) []error {
+	results := make([]error, len(changes))
+	commands := make([]*redis.StringCmd, len(changes))
+	pipe := p.Client.Pipeline()
+	call, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	for i, c := range changes {
+		raw, err := json.Marshal(c)
+		if err != nil {
+			results[i] = err
+			continue
+		}
+		commands[i] = pipe.XAdd(call, &redis.XAddArgs{Stream: p.Stream, Values: map[string]any{"body": string(raw)}})
+	}
+	_, _ = pipe.Exec(call)
+	for i, c := range commands {
+		if c != nil {
+			results[i] = c.Err()
+		}
+	}
+	return results
+}

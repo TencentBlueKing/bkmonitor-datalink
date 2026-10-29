@@ -243,6 +243,9 @@ func TestCloseReadsExcludePayloadAtEverySelectionStage(t *testing.T) {
 		if calls == 2 && len(strings.Split(includes, ",")) != 5 {
 			t.Fatal("identity read is not narrow", includes)
 		}
+		if calls == 4 && len(strings.Split(includes, ",")) != 7 {
+			t.Fatal("projection is not terminal-only", includes)
+		}
 		selected := map[string]any{}
 		for _, name := range strings.Split(includes, ",") {
 			if value, found := source[name]; found {
@@ -265,5 +268,9 @@ func TestCloseReadsExcludePayloadAtEverySelectionStage(t *testing.T) {
 	states, err := r.GetAlertCloseStates(t.Context(), "tenant", []string{"alert"})
 	if err != nil || len(states.Alerts) != 1 || states.Alerts[0].Version.IsZero() || len(states.Alerts[0].Alert.Enrich) != 0 {
 		t.Fatal(states, err)
+	}
+	projected, err := r.GetAlertCloseProjectionStates(t.Context(), "tenant", []string{"alert"})
+	if err != nil || len(projected.Alerts) != 1 || !projected.Alerts[0].Version.IsZero() || projected.Alerts[0].Alert.Fingerprint != "" {
+		t.Fatal(projected, err)
 	}
 }

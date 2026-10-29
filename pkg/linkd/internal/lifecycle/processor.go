@@ -135,6 +135,20 @@ func (p *Processor) withFrozenSeverity(table SeverityTable, digest string) *Proc
 }
 
 func (p *Processor) observeDependencyIndex(ctx context.Context, alert domain.Alert) error {
+	registry, level := p.dependencyObservation()
+	observer, ok := registry.(interface {
+		ObserveDependencyAlert(context.Context, domain.Alert, func(string) (string, error)) error
+	})
+	if !ok {
+		return nil
+	}
+	if err := observer.ObserveDependencyAlert(ctx, alert, level); err != nil {
+		return processingerror.RetryableError{Err: fmt.Errorf("update dependency candidate index: %w", err)}
+	}
+	return nil
+}
+
+func (p *Processor) dependencyObservation() (DependencyRegistry, func(string) (string, error)) {
 	// 生命周期业务使用冻结配置；已保存 Alert 的共享资格跟随当前配置，避免晚 CAS 写回退役 namespace。
 	registry := p.dependency
 	severity := p.dependencySeverity
@@ -152,18 +166,27 @@ func (p *Processor) observeDependencyIndex(ctx context.Context, alert domain.Ale
 			registry = configured.WithDependencyConfigDigest(digest)
 		}
 	}
-	observer, ok := registry.(interface {
-		ObserveDependencyAlert(context.Context, domain.Alert, func(string) (string, error)) error
-	})
-	if !ok {
-		return nil
-	}
 	var level func(string) (string, error)
 	if mapper, ok := severity.(interface{ KACLevel(string) (string, error) }); ok {
 		level = mapper.KACLevel
 	}
-	if err := observer.ObserveDependencyAlert(ctx, alert, level); err != nil {
-		return processingerror.RetryableError{Err: fmt.Errorf("update dependency candidate index: %w", err)}
+	return registry, level
+}
+
+func (p *Processor) observeTerminalDependencyAlerts(ctx context.Context, alerts []domain.Alert) error {
+	registry, _ := p.dependencyObservation()
+	if batch, ok := registry.(interface {
+		ObserveTerminalDependencyAlerts(context.Context, []domain.Alert) error
+	}); ok {
+		if err := batch.ObserveTerminalDependencyAlerts(ctx, alerts); err != nil {
+			return processingerror.RetryableError{Err: fmt.Errorf("update dependency candidate index: %w", err)}
+		}
+		return nil
+	}
+	for _, a := range alerts {
+		if err := p.observeDependencyIndex(ctx, a); err != nil {
+			return err
+		}
 	}
 	return nil
 }

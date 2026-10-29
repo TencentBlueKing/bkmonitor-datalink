@@ -47,6 +47,10 @@ type policyLogger interface {
 // Suppressor 执行新告警候选的抑制规则；活动 Alert 的绕过边界由 Lifecycle 控制。
 // 所有依赖有超时；普通策略故障记录跳过，控制面传输故障、身份/上下文错误向上传递。
 type Suppressor struct {
+	// BatchState 用于控制面的显式终态批次；单条处理继续使用既有 State/Aggregation。
+	BatchState interface {
+		ClearSuppressionBatch(context.Context, []suppressioncleanup.Cause) ([]suppressioncleanup.Result, []error)
+	}
 	// Observations 聚合匹配耗时及逐策略尽力采样；模拟和只读预览不注入。
 	Observations *Observations
 	// CleanupRecorder 在正式运行中保存独立终态清理记录；测试或只读匹配用例可不注入。

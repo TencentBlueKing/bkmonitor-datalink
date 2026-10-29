@@ -31,3 +31,18 @@ func (p *Processor) observeActiveAlert(ctx context.Context, a domain.Alert) {
 		p.logger.WarnContext(ctx, "active alert cache update failed", "module", "lifecycle", "operation", "active_alert_cache", "error", err, "bk_tenant_id", a.BKTenantID, "event_source_id", a.EventSourceID, "alert_id", a.AlertID, "fingerprint", a.Fingerprint)
 	}
 }
+
+func (p *Processor) observeActiveAlerts(ctx context.Context, alerts []domain.Alert) {
+	if batch, ok := p.activeAlerts.(interface {
+		ObserveAlerts(context.Context, []domain.Alert) error
+	}); ok {
+		if err := batch.ObserveAlerts(ctx, alerts); err != nil && len(alerts) > 0 {
+			a := alerts[0]
+			p.logger.WarnContext(ctx, "active alert cache batch update failed", "module", "lifecycle", "operation", "active_alert_cache", "error", err, "bk_tenant_id", a.BKTenantID, "event_source_id", a.EventSourceID, "members", len(alerts))
+		}
+		return
+	}
+	for _, a := range alerts {
+		p.observeActiveAlert(ctx, a)
+	}
+}

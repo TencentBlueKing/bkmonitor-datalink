@@ -21,9 +21,28 @@ type closeStateWriter interface {
 	WriteCloseBatch(context.Context, []domain.Alert) []WriteResult
 }
 
-// ProjectBatchNow 在涉及的通道内一次批读最新事实并 Bulk refresh，逐项返回写入结果。
-// 按通道固定顺序加锁，避免两个关闭批次交叉等待；普通批次随后重新读取，不能写回旧状态。
+// ProjectBatchNow 按告警身份串行投影，批读最新事实并 Bulk refresh。
 func (r *Runtime) ProjectBatchNow(ctx context.Context, tenant string, ids []string) []error {
+	return r.projectBatchNow(ctx, tenant, ids, nil)
+}
+
+// ProjectClosedBatchNow 使用本次成功关闭返回的终态快照，避免再次读取不可变关闭字段。
+// alerts 必须来自同一租户的成功关闭或同操作重试；KAC 文档缺失时仍实时补读完整快照创建。
+func (r *Runtime) ProjectClosedBatchNow(ctx context.Context, alerts []domain.Alert) []error {
+	if len(alerts) == 0 {
+		return nil
+	}
+	ids := make([]string, len(alerts))
+	for i, a := range alerts {
+		ids[i] = a.AlertID
+	}
+	if _, ok := r.writer.(closeStateWriter); !ok {
+		return r.ProjectBatchNow(ctx, alerts[0].BKTenantID, ids)
+	}
+	return r.projectBatchNow(ctx, alerts[0].BKTenantID, ids, alerts)
+}
+
+func (r *Runtime) projectBatchNow(ctx context.Context, tenant string, ids []string, prepared []domain.Alert) []error {
 	results := make([]error, len(ids))
 	fail := func(err error) []error {
 		for i := range results {
@@ -31,28 +50,17 @@ func (r *Runtime) ProjectBatchNow(ctx context.Context, tenant string, ids []stri
 		}
 		return results
 	}
-	lanes := map[*projectionLane]bool{}
-	for _, id := range ids {
-		lanes[r.lane(tenant, id)] = true
-	}
-	for lane := range lanes {
-		lane.urgent.Add(1)
-		defer lane.urgent.Add(-1)
+	keys := make([]alarmKey, len(ids))
+	for i, id := range ids {
+		keys[i] = alarmKey{tenant, id}
 	}
 	started := time.Now()
-	for i := range r.lanes {
-		lane := &r.lanes[i]
-		if !lanes[lane] {
-			continue
-		}
-		select {
-		case lane.gate <- struct{}{}:
-			defer func() { <-lane.gate }()
-		case <-ctx.Done():
-			return fail(ctx.Err())
-		}
+	unlock, err := r.lockProjectionAlerts(ctx, keys)
+	if err != nil {
+		return fail(err)
 	}
-	store.ObserveBatchPhase(ctx, "projection.lane_wait", time.Since(started))
+	defer unlock()
+	store.ObserveBatchPhase(ctx, "projection.lock_wait", time.Since(started))
 	if len(ids) == 0 {
 		return results
 	}
@@ -64,14 +72,20 @@ func (r *Runtime) ProjectBatchNow(ctx context.Context, tenant string, ids []stri
 	} else {
 		compact = false
 	}
-	current, err := read(ctx, tenant, ids)
-	store.ObserveBatchPhase(ctx, "projection.read", time.Since(started))
-	if err != nil {
-		return fail(err)
-	}
 	byID := map[string]domain.Alert{}
-	for _, a := range current.Alerts {
-		byID[a.Alert.AlertID] = a.Alert
+	if prepared == nil {
+		current, err := read(ctx, tenant, ids)
+		store.ObserveBatchPhase(ctx, "projection.read", time.Since(started))
+		if err != nil {
+			return fail(err)
+		}
+		for _, a := range current.Alerts {
+			byID[a.Alert.AlertID] = a.Alert
+		}
+	} else {
+		for _, a := range prepared {
+			byID[a.AlertID] = a
+		}
 	}
 	alerts, positions := []domain.Alert{}, []int{}
 	for i, id := range ids {

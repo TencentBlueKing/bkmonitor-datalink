@@ -174,47 +174,85 @@ func TestCloseProjection500UsesOneReadAndOneBulkWithItemErrors(t *testing.T) {
 	}
 }
 
-func TestCloseProjectionCancellationReleasesAcquiredLanes(t *testing.T) {
-	r := NewRuntime(config.KACDeliveryConfig{ProjectionConcurrency: 2}, nil, "stream", readerFunc(func(context.Context, string, []string) (store.AlertBatch, error) {
-		t.Error("read while lane unavailable")
-		return store.AlertBatch{}, nil
-	}), writerStub{}, nil, nil, nil)
-	ids := []string{}
-	for n := 0; len(ids) < 2; n++ {
-		id := fmt.Sprintf("alert-%d", n)
-		if r.lane("tenant", id) == &r.lanes[len(ids)] {
-			ids = append(ids, id)
+func TestCloseProjectionCancellationReleasesAcquiredAlertLocks(t *testing.T) {
+	reads := 0
+	r := NewRuntime(config.KACDeliveryConfig{ProjectionConcurrency: 1}, nil, "stream", readerFunc(func(ctx context.Context, tenant string, ids []string) (store.AlertBatch, error) {
+		reads++
+		return testReader(ctx, tenant, ids)
+	}), writerStub{write: func(_ context.Context, alerts []domain.Alert, _ bool) []WriteResult {
+		return make([]WriteResult, len(alerts))
+	}}, nil, nil, nil)
+	release, err := r.lockProjectionAlerts(t.Context(), []alarmKey{{"tenant", "b"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+	defer cancel()
+	for _, err := range r.ProjectBatchNow(ctx, "tenant", []string{"a", "b"}) {
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatal(err)
 		}
 	}
-	r.lanes[1].gate <- struct{}{}
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan []error, 1)
-	go func() { done <- r.ProjectBatchNow(ctx, "tenant", ids) }()
-	deadline := time.After(time.Second)
-	for len(r.lanes[0].gate) == 0 {
-		select {
-		case <-deadline:
-			t.Fatal("batch did not acquire first lane")
-		default:
-			time.Sleep(time.Millisecond)
+	if reads != 0 {
+		t.Fatal("read before acquiring overlapping alert", reads)
+	}
+	release()
+	retry, stop := context.WithTimeout(t.Context(), time.Second)
+	defer stop()
+	for _, err := range r.ProjectBatchNow(retry, "tenant", []string{"a", "b"}) {
+		if err != nil {
+			t.Fatal("cancellation leaked alert lock", err)
 		}
 	}
-	cancel()
-	select {
-	case results := <-done:
-		for _, err := range results {
-			if !errors.Is(err, context.Canceled) {
-				t.Fatal(err)
+}
+
+func TestDisjointCloseProjectionBatchesDoNotWaitForSharedLane(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	r := NewRuntime(config.KACDeliveryConfig{ProjectionConcurrency: 1}, nil, "stream", readerFunc(testReader), writerStub{write: func(ctx context.Context, alerts []domain.Alert, _ bool) []WriteResult {
+		if alerts[0].AlertID == "a" {
+			close(entered)
+			select {
+			case <-release:
+			case <-ctx.Done():
 			}
 		}
-	case <-time.After(time.Second):
-		t.Fatal("batch did not cancel")
-	}
-	<-r.lanes[1].gate
-	for i := range r.lanes {
-		if len(r.lanes[i].gate) != 0 || r.lanes[i].urgent.Load() != 0 {
-			t.Fatal("lane leaked", i)
+		return make([]WriteResult, len(alerts))
+	}}, nil, nil, nil)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	done := make(chan []error, 1)
+	go func() { done <- r.ProjectBatchNow(ctx, "tenant", []string{"a"}) }()
+	defer func() { close(release); <-done }()
+	waitSignal(t, entered)
+	for _, err := range r.ProjectBatchNow(ctx, "tenant", []string{"b"}) {
+		if err != nil {
+			t.Fatal("unrelated alert blocked by batch", err)
 		}
+	}
+}
+
+func TestClosedProjectionUsesImmutableSnapshotsWithoutReadingAgain(t *testing.T) {
+	reader := &compactCloseReader{readerFunc: func(context.Context, string, []string) (store.AlertBatch, error) {
+		t.Fatal("read full existing document")
+		return store.AlertBatch{}, nil
+	}}
+	writes := 0
+	writer := compactCloseWriter{close: func(_ context.Context, alerts []domain.Alert) []WriteResult {
+		writes++
+		if len(alerts) != 2 || alerts[0].Status != domain.AlertStatusClosed {
+			t.Fatal(alerts)
+		}
+		return make([]WriteResult, len(alerts))
+	}}
+	r := NewRuntime(config.KACDeliveryConfig{}, nil, "stream", reader, writer, nil, nil, nil)
+	alerts := []domain.Alert{{BKTenantID: "tenant", AlertID: "a", Status: domain.AlertStatusClosed}, {BKTenantID: "tenant", AlertID: "b", Status: domain.AlertStatusClosed}}
+	for _, err := range r.ProjectClosedBatchNow(t.Context(), alerts) {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if writes != 1 || reader.states != 0 {
+		t.Fatal(writes, reader.states)
 	}
 }
 

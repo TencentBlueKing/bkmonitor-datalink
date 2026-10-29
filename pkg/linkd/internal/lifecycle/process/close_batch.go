@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
 	"linkd/internal/lifecycle/mailbox"
 	"linkd/internal/lifecycle/scheduler"
@@ -103,7 +104,18 @@ func (s *AlertCloser) closeAlertsWave(ctx context.Context, commands []lifecycle.
 	}
 	if len(ids) > 0 && s.projection != nil {
 		started := time.Now()
-		errs := s.projection.(closeBatchProjection).ProjectBatchNow(ctx, commands[0].BKTenantID, ids)
+		var errs []error
+		if projector, ok := s.projection.(interface {
+			ProjectClosedBatchNow(context.Context, []domain.Alert) []error
+		}); ok {
+			snapshots := make([]domain.Alert, len(positions))
+			for j, i := range positions {
+				snapshots[j] = results[i].Alert
+			}
+			errs = projector.ProjectClosedBatchNow(ctx, snapshots)
+		} else {
+			errs = s.projection.(closeBatchProjection).ProjectBatchNow(ctx, commands[0].BKTenantID, ids)
+		}
 		store.ObserveBatchPhase(ctx, "batch.projection", time.Since(started))
 		for j, i := range positions {
 			if errs[j] != nil {

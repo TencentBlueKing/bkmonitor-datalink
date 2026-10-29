@@ -269,14 +269,10 @@ func TestSynchronousCloseUsesSameLaneAndLatestState(t *testing.T) {
 	state = domain.AlertStatusClosed
 	mu.Unlock()
 	go func() { closed <- runtime.ProjectNow(t.Context(), "tenant", "a") }()
-	deadline := time.After(time.Second)
-	for runtime.lanes[0].urgent.Load() == 0 {
-		select {
-		case <-deadline:
-			t.Fatal("close did not enter lane")
-		default:
-			time.Sleep(time.Millisecond)
-		}
+	select {
+	case err := <-closed:
+		t.Fatal("close overtook the in-flight old write", err)
+	case <-time.After(20 * time.Millisecond):
 	}
 	close(release)
 	if err := <-closed; err != nil {

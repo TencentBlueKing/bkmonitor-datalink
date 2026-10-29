@@ -60,9 +60,16 @@ func (l *RedisLocker) ReleaseBatch(ctx context.Context, leases []Lease) []error 
 	}
 	pipe := client.Pipeline()
 	commands := make([]*redis.Cmd, len(leases))
+	script := redis.NewScript(releaseScript)
+	first := true
 	for i, lease := range leases {
 		if lease.key != "" {
-			commands[i] = pipe.Eval(ctx, releaseScript, []string{lease.key}, lease.token)
+			run := script.EvalSha
+			if first {
+				run = script.Eval
+				first = false
+			}
+			commands[i] = run(ctx, pipe, []string{lease.key}, lease.token)
 		}
 	}
 	_, _ = pipe.Exec(ctx)

@@ -110,12 +110,18 @@ func (s *Store) ApplyDependencyCandidates(ctx context.Context, u DependencyCandi
 func (s *Store) ApplyDependencyCandidateBatch(ctx context.Context, updates []DependencyCandidateUpdate) error {
 	pipe := s.client.Pipeline()
 	commands := make([]*redis.Cmd, 0, len(updates))
+	script := redis.NewScript(applyDependencyCandidateScript)
+	// 同一 pipeline 首项加载脚本，后续项复用 Redis 缓存，避免每个成员重复传脚本正文。
 	for _, u := range updates {
 		keys, args, err := s.dependencyCandidateArgs(u)
 		if err != nil {
 			return err
 		}
-		commands = append(commands, pipe.Eval(ctx, applyDependencyCandidateScript, keys, args...))
+		if len(commands) == 0 {
+			commands = append(commands, script.Eval(ctx, pipe, keys, args...))
+		} else {
+			commands = append(commands, script.EvalSha(ctx, pipe, keys, args...))
+		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err

@@ -18,9 +18,13 @@ func (s *Store) ClearDependencyOwnersBatch(ctx context.Context, alerts []domain.
 	pipe := s.client.Pipeline()
 	commands := make([]*redis.Cmd, len(alerts))
 	results := make([]error, len(alerts))
-	// 批次直接发送脚本正文，避免脚本缓存未命中造成逐项回退。
+	// 首项 EVAL 在同一 pipeline 中加载脚本，后续复用缓存，减少批次正文体积。
 	for i, a := range alerts {
-		commands[i] = pipe.Eval(ctx, clearDependencyScriptSource, []string{s.dependencyOwner(a.BKTenantID, a.AlertID)}, s.base(a.BKTenantID)+":dependency:", a.AlertID)
+		run := clearDependencyScript.EvalSha
+		if i == 0 {
+			run = clearDependencyScript.Eval
+		}
+		commands[i] = run(ctx, pipe, []string{s.dependencyOwner(a.BKTenantID, a.AlertID)}, s.base(a.BKTenantID)+":dependency:", a.AlertID)
 	}
 	_, _ = pipe.Exec(ctx)
 	for i, c := range commands {
@@ -65,8 +69,12 @@ func (s *Store) ClearSuppressionBatch(ctx context.Context, causes []suppressionc
 	for i, c := range causes {
 		base := s.base(c.TenantID)
 		subject := digest("identity", c.SourceID, c.Fingerprint)
-		clips[i] = pipe.Eval(ctx, clearClipScriptSource, []string{base + ":clip-index:" + subject, s.suppressionIndex(c.TenantID, "clip")}, base+":clip:"+subject+":", subject, c.AlertID)
-		aggregations[i] = pipe.Eval(ctx, clearAggregationScriptSource, []string{base + ":aggregation-owner:" + digest(c.AlertID), s.suppressionIndex(c.TenantID, "aggregation")}, base+":aggregation:", c.AlertID, base+":aggregation-members:")
+		runClip, runAggregation := clearClipScript.EvalSha, clearAggregationScript.EvalSha
+		if i == 0 {
+			runClip, runAggregation = clearClipScript.Eval, clearAggregationScript.Eval
+		}
+		clips[i] = runClip(ctx, pipe, []string{base + ":clip-index:" + subject, s.suppressionIndex(c.TenantID, "clip")}, base+":clip:"+subject+":", subject, c.AlertID)
+		aggregations[i] = runAggregation(ctx, pipe, []string{base + ":aggregation-owner:" + digest(c.AlertID), s.suppressionIndex(c.TenantID, "aggregation")}, base+":aggregation:", c.AlertID, base+":aggregation-members:")
 	}
 	_, _ = pipe.Exec(ctx)
 	for i, c := range causes {

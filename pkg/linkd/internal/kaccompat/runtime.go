@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	redis "github.com/redis/go-redis/v9"
@@ -55,26 +54,26 @@ type actionJob struct {
 }
 
 type projectionLane struct {
-	items  chan queuedChange
-	gate   chan struct{}
-	urgent atomic.Int64
+	items chan queuedChange
 }
 
 // Runtime 是控制面的常驻队列消费者。停止信号只停止接收和启动新任务，
 // 已开始的 I/O 使用独立超时上下文，等待完成后才退出；未开始消息保留在 Stream 的 PEL 中。
 type Runtime struct {
-	cfg       config.KACDeliveryConfig
-	redis     redis.UniversalClient
-	stream    string
-	alerts    AlertReader
-	writer    Writer
-	sender    ActionSender
-	observer  Observer
-	logger    *slog.Logger
-	lanes     []projectionLane
-	actions   chan actionJob
-	ready     chan actionJob
-	completed chan string
+	cfg             config.KACDeliveryConfig
+	redis           redis.UniversalClient
+	stream          string
+	alerts          AlertReader
+	writer          Writer
+	sender          ActionSender
+	observer        Observer
+	logger          *slog.Logger
+	lanes           []projectionLane
+	actions         chan actionJob
+	ready           chan actionJob
+	completed       chan string
+	projectionMu    sync.Mutex
+	projectionLocks map[string]*projectionAlertLock
 }
 
 // NewRuntime 不启动 goroutine，所有运行资源由 Run 和调用方管理。
@@ -83,7 +82,6 @@ func NewRuntime(cfg config.KACDeliveryConfig, client redis.UniversalClient, stre
 	r := &Runtime{cfg: cfg, redis: client, stream: stream, alerts: alerts, writer: writer, sender: sender, observer: observer, logger: logger, lanes: make([]projectionLane, cfg.ProjectionConcurrency), actions: make(chan actionJob, cfg.ActionBuffer), ready: make(chan actionJob, cfg.ActionConcurrency), completed: make(chan string, cfg.BatchSize*cfg.ProjectionConcurrency*2)}
 	for i := range r.lanes {
 		r.lanes[i].items = make(chan queuedChange, cfg.BatchSize*2)
-		r.lanes[i].gate = make(chan struct{}, 1)
 	}
 	return r
 }
@@ -94,7 +92,7 @@ func (r *Runtime) lane(tenant, alert string) *projectionLane {
 	return &r.lanes[h.Sum64()%uint64(len(r.lanes))]
 }
 
-// ProjectNow 优先取得所属通道，读取最新事实并同步刷新；等待中的普通批次随后重新读取最新告警。
+// ProjectNow 串行当前告警的投影并同步刷新，不阻塞其他身份的关闭批次。
 func (r *Runtime) ProjectNow(ctx context.Context, tenant, alert string) error {
 	return r.ProjectBatchNow(ctx, tenant, []string{alert})[0]
 }
@@ -205,26 +203,22 @@ func (r *Runtime) runLane(stop context.Context, lane *projectionLane) {
 			}
 		}
 		timer.Stop()
-		for lane.urgent.Load() > 0 {
-			select {
-			case <-stop.Done():
-				return
-			case <-time.After(time.Millisecond):
-			}
+		keys := make([]alarmKey, len(entries))
+		for i, entry := range entries {
+			keys[i] = alarmKey{entry.change.BKTenantID, entry.change.AlertID}
 		}
-		select {
-		case lane.gate <- struct{}{}:
-		case <-stop.Done():
+		unlock, err := r.lockProjectionAlerts(stop, keys)
+		if err != nil {
 			return
 		}
 		if stop.Err() != nil {
-			<-lane.gate
+			unlock()
 			return
 		}
 		call, cancel := context.WithTimeout(context.WithoutCancel(stop), 10*time.Second)
 		r.process(call, entries)
 		cancel()
-		<-lane.gate
+		unlock()
 	}
 }
 

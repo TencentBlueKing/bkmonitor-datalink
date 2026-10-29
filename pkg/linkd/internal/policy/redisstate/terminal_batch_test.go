@@ -16,6 +16,7 @@ import (
 
 type terminalPipelineHook struct {
 	pipelines, commands int
+	eval, evalsha       int
 	windows             bool
 	partial             bool
 }
@@ -31,6 +32,12 @@ func (h *terminalPipelineHook) ProcessPipelineHook(redis.ProcessPipelineHook) re
 		h.pipelines++
 		h.commands += len(cmds)
 		for i, c := range cmds {
+			switch c.Name() {
+			case "eval":
+				h.eval++
+			case "evalsha":
+				h.evalsha++
+			}
 			if ctx.Err() != nil {
 				c.SetErr(ctx.Err())
 				continue
@@ -78,6 +85,9 @@ func TestTerminal5000UsesPhasePipelinesAndKeepsUnknownDistinct(t *testing.T) {
 				alerts[i] = domain.Alert{BKTenantID: "tenant", AlertID: id}
 			}
 			results, errs := s.ClearSuppressionBatch(ctx, causes)
+			if h.eval != 2 || h.evalsha != 9998 {
+				t.Fatal("script bodies repeated per member", h.eval, h.evalsha)
+			}
 			if h.pipelines != 1 || h.commands != 10000 {
 				t.Fatal(h.pipelines, h.commands)
 			}

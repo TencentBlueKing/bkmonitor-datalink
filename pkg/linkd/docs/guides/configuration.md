@@ -471,7 +471,7 @@ ES 认证可选 `api_key` 或 `basic_auth`，不能同时配置。
 上述 delivery 六项均支持配置，零值采用所示默认值。普通消息失败记录日志和指标后结束，不创建失败任务；动作缓冲满也按失败结束当前消息。
 普通投影和动作 I/O 有 10 秒超时；停止时等待已开始调用完成，未开始消息保留在 Stream 供下一次单活动控制面恢复。
 HTTP 优雅退出预算 30 秒，Helm terminationGracePeriodSeconds 默认 60 秒。不要在新旧控制面之间重叠运行消费者。
-主动关闭使用同一执行通道优先写入，`refresh=true` 后返回；失败 502 保留 Linkd 终态并支持原命令重试。
+主动关闭与普通投影只对同租户同 Alert ID 串行，互不重叠的关闭批次可以并行，`refresh=true` 后返回；失败 502 保留 Linkd 终态并支持原命令重试。
 旧任务数据不迁移、不自动删除。完整行为见[动作 V3](../reference/contracts/kac-action-delivery-v3.md)。
 
 `resources.kac_delivery`、`event_sources[].kac_targets`、`projection_endpoint` 及 `plugins.kac.internal_token` 均已移除，旧字段明确拒绝。

@@ -180,20 +180,15 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		return
 	}
 	request := new(cmdb.SharedTopologyRequest)
-	if err == nil {
-		_, decodeSpan := trace.NewSpan(ctx, "topology-decode-request")
-		err = json.Unmarshal(body, request)
-		decodeSpan.Set("query-count", len(request.QueryList))
-		decodeSpan.End(&err)
-	}
+	_, decodeSpan := trace.NewSpan(ctx, "topology-decode-request")
+	err = json.Unmarshal(body, request)
+	decodeSpan.Set("query-count", len(request.QueryList))
+	decodeSpan.End(&err)
 	span.Set("request-body-bytes", len(body))
 	if err != nil {
 		handlerErr = err
 		requestResult = metric.CMDBRelationResultRejected
 		reason := topologyInvalidRequestReason
-		if maxRequestBytes > 0 && len(body) > maxRequestBytes {
-			reason = "max_topology_request_bytes"
-		}
 		metric.CMDBTopologyRejectInc(ctx, queryMode, reason)
 		metric.CMDBTopologyPayloadObserve(ctx, "request-body", metric.CMDBRelationResultRejected, len(body))
 		resp.failed(ctx, err)

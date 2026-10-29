@@ -27,7 +27,7 @@ var (
 // Model 是 v1beta3 TimeGraph 关系模型。图拓扑只来自 RelationDefinition 和
 // 关系指标 schema，查询执行委托给基于 TSDB 的 TimeGraph 实现。
 type Model struct {
-	timeGraphResolver func(context.Context, string) (cmdb.CMDB, error)
+	timeGraphResolver func(context.Context, string) (TimeGraphQuerier, error)
 	// timeGraphVMQuery 仅由包内测试设置。它替换 QueryTs 准备和 PromQL 渲染之后
 	// 的最后一次 VM 调用，使公开入口测试无需连接 VM 也能覆盖真实的路径规划和
 	// 查询渲染。
@@ -51,7 +51,7 @@ func GetModel(ctx context.Context) (cmdb.CMDB, error) {
 		if err != nil {
 			return nil, err
 		}
-		model.SetTimeGraphResolver(func(_ context.Context, _ string) (cmdb.CMDB, error) {
+		model.SetTimeGraphResolver(func(_ context.Context, _ string) (TimeGraphQuerier, error) {
 			return model, nil
 		})
 		defaultModel = model
@@ -66,7 +66,7 @@ func NewModel(_ context.Context) (*Model, error) {
 
 // SetTimeGraphResolver 注入 TimeGraph 实现，主要用于测试；生产环境以模型自身
 // 作为 resolver 目标。
-func (m *Model) SetTimeGraphResolver(resolver func(context.Context, string) (cmdb.CMDB, error)) {
+func (m *Model) SetTimeGraphResolver(resolver func(context.Context, string) (TimeGraphQuerier, error)) {
 	m.timeGraphResolver = resolver
 }
 
@@ -446,21 +446,6 @@ func matcherToMap(matcher cmdb.Matcher) map[string]string {
 		result[key] = value
 	}
 	return result
-}
-
-func computeMaxHops(source, target cmdb.Resource, pathResource []cmdb.Resource) int {
-	if len(pathResource) == 0 {
-		return DefaultMaxHops
-	}
-	pathConstraint, directOnly := normalizePathResource(FromCMDBResource(source), FromCMDBResource(target), toResourceTypes(pathResource))
-	if directOnly || len(pathConstraint) == 0 {
-		return DefaultMaxHops
-	}
-	maxHops := DefaultMaxHops + len(pathConstraint) + 1
-	if !yoloMode && maxHops > MaxAllowedHops {
-		return MaxAllowedHops
-	}
-	return maxHops
 }
 
 func resourceTypesToPath(resources []ResourceType) []string {

@@ -8,7 +8,9 @@ package v1beta3
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -81,86 +83,24 @@ func (timeGraphTestSchemaProvider) ListRelationSchemas(string) []RelationSchema 
 	}}
 }
 
-func (m *fakeTimeGraphModel) QueryPathResources(
-	_ context.Context,
-	_ string,
-	_ string,
-	timestamp string,
-	_ cmdb.Resource,
-	_ []cmdb.Resource,
-	paths [][]cmdb.Resource,
-	_ cmdb.Matcher,
+func (m *fakeTimeGraphModel) QueryRelationTimeGraph(
+	_ context.Context, _, _ string, start, end time.Time, step time.Duration,
+	_ cmdb.Resource, _ []cmdb.Resource, paths []cmdb.RelationPath, _, expand cmdb.Matcher,
 ) ([]cmdb.PathResourcesResult, error) {
-	m.instantTs = timestamp
-	m.instantPaths = paths
-	return m.instantResults, nil
-}
-
-func (m *fakeTimeGraphModel) QueryPathResourcesRange(
-	_ context.Context,
-	_ string,
-	_ string,
-	step, start, end string,
-	_ cmdb.Resource,
-	_ []cmdb.Resource,
-	paths [][]cmdb.Resource,
-	_ cmdb.Matcher,
-) ([]cmdb.PathResourcesResult, error) {
-	m.rangeStep = step
-	m.rangeStart = start
-	m.rangeEnd = end
-	m.rangePaths = paths
-	return m.rangeResults, nil
-}
-
-func (m *fakeTimeGraphModel) QueryRelationPathResources(
-	ctx context.Context,
-	lookBackDelta, spaceUID, timestamp string,
-	sourceType cmdb.Resource,
-	targetTypes []cmdb.Resource,
-	paths []cmdb.RelationPath,
-	matcher cmdb.Matcher,
-) ([]cmdb.PathResourcesResult, error) {
-	m.instantPlan = paths
-	m.instantPaths = relationPathsToResources(paths)
-	return m.QueryPathResources(ctx, lookBackDelta, spaceUID, timestamp, sourceType, targetTypes, m.instantPaths, matcher)
-}
-
-func (m *fakeTimeGraphModel) QueryRelationPathResourcesRange(
-	ctx context.Context,
-	lookBackDelta, spaceUID, step, start, end string,
-	sourceType cmdb.Resource,
-	targetTypes []cmdb.Resource,
-	paths []cmdb.RelationPath,
-	matcher cmdb.Matcher,
-) ([]cmdb.PathResourcesResult, error) {
+	if start.Equal(end) {
+		m.instantTs = strconv.FormatInt(end.Unix(), 10)
+		m.instantPlan = paths
+		m.instantPaths = relationPathsToResources(paths)
+		m.sourceExpand = expand
+		return m.instantResults, nil
+	}
+	m.rangeStep = step.String()
+	m.rangeStart = strconv.FormatInt(start.Unix(), 10)
+	m.rangeEnd = strconv.FormatInt(end.Unix(), 10)
 	m.rangePlan = paths
 	m.rangePaths = relationPathsToResources(paths)
-	return m.QueryPathResourcesRange(ctx, lookBackDelta, spaceUID, step, start, end, sourceType, targetTypes, m.rangePaths, matcher)
-}
-
-func (m *fakeTimeGraphModel) queryRelationPathResourcesWithSourceExpand(
-	ctx context.Context,
-	lookBackDelta, spaceUID, timestamp string,
-	sourceType cmdb.Resource,
-	targetTypes []cmdb.Resource,
-	paths []cmdb.RelationPath,
-	matcher, expand cmdb.Matcher,
-) ([]cmdb.PathResourcesResult, error) {
-	m.sourceExpand = expand
-	return m.QueryRelationPathResources(ctx, lookBackDelta, spaceUID, timestamp, sourceType, targetTypes, paths, matcher)
-}
-
-func (m *fakeTimeGraphModel) queryRelationPathResourcesRangeWithSourceExpand(
-	ctx context.Context,
-	lookBackDelta, spaceUID, step, start, end string,
-	sourceType cmdb.Resource,
-	targetTypes []cmdb.Resource,
-	paths []cmdb.RelationPath,
-	matcher, expand cmdb.Matcher,
-) ([]cmdb.PathResourcesResult, error) {
 	m.rangeExpand = expand
-	return m.QueryRelationPathResourcesRange(ctx, lookBackDelta, spaceUID, step, start, end, sourceType, targetTypes, paths, matcher)
+	return m.rangeResults, nil
 }
 
 func relationPathsToResources(paths []cmdb.RelationPath) [][]cmdb.Resource {
@@ -187,7 +127,7 @@ func TestQueryResourceMatcherUsesTimeGraphBackend(t *testing.T) {
 		}},
 	}
 	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
-	model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) {
+	model.SetTimeGraphResolver(func(context.Context, string) (TimeGraphQuerier, error) {
 		return fake, nil
 	})
 
@@ -208,7 +148,7 @@ func TestQueryResourceMatcherUsesTimeGraphBackend(t *testing.T) {
 
 func TestTimeGraphPrimaryDoesNotFallbackToLegacyExecutor(t *testing.T) {
 	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
-	model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) {
+	model.SetTimeGraphResolver(func(context.Context, string) (TimeGraphQuerier, error) {
 		return nil, errors.New("timegraph unavailable")
 	})
 
@@ -241,7 +181,7 @@ func TestQueryResourceMatcherRangeUsesTimeGraphBackendAndNormalizesBuckets(t *te
 		},
 	}
 	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
-	model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) {
+	model.SetTimeGraphResolver(func(context.Context, string) (TimeGraphQuerier, error) {
 		return fake, nil
 	})
 
@@ -305,7 +245,7 @@ func TestBuildTimeGraphRequestInfersLegacySourceAndImplicitTarget(t *testing.T) 
 func TestQueryResourceMatcherPassesSourceExpandInfoToTimeGraph(t *testing.T) {
 	fake := &fakeTimeGraphModel{}
 	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
-	model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) {
+	model.SetTimeGraphResolver(func(context.Context, string) (TimeGraphQuerier, error) {
 		return fake, nil
 	})
 
@@ -363,7 +303,7 @@ func TestQueryResourceMatcherKeepsDistinctCompositePrimaryKeys(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := &fakeTimeGraphModel{instantResults: tc.instant}
 			model := &Model{schemaProvider: provider}
-			model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) {
+			model.SetTimeGraphResolver(func(context.Context, string) (TimeGraphQuerier, error) {
 				return fake, nil
 			})
 
@@ -390,7 +330,7 @@ func TestQueryResourceMatcherRangeDefaultsEmptyStep(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := &fakeTimeGraphModel{}
 			model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
-			model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) {
+			model.SetTimeGraphResolver(func(context.Context, string) (TimeGraphQuerier, error) {
 				return fake, nil
 			})
 
@@ -449,7 +389,7 @@ func TestTimeGraphLegacyQueriesRejectConflictingSourceIdentityBeforeResolvingBac
 		t.Run(name, func(t *testing.T) {
 			model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
 			resolverCalls := 0
-			model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) {
+			model.SetTimeGraphResolver(func(context.Context, string) (TimeGraphQuerier, error) {
 				resolverCalls++
 				return &fakeTimeGraphModel{}, nil
 			})

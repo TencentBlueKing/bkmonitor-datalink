@@ -275,7 +275,7 @@ func TestLegacyFrontierDynamicDirectionAndRepeatedResource(t *testing.T) {
 				path.Steps = append(path.Steps, cmdb.RelationPathStep{ResourceType: "service", RelationType: "calls", Category: string(RelationCategoryDynamic), Direction: string(direction), MetricName: "calls_flow"})
 			}
 			stamp := time.Unix(1700000040, 0)
-			result, err := model.queryRelationTimeGraph(ctx, "24h", "space", stamp, stamp, time.Minute, "service", []cmdb.Resource{"service"}, []cmdb.RelationPath{path}, cmdb.Matcher{"tenant": "x", "id": "a"}, nil)
+			result, err := model.QueryRelationTimeGraph(ctx, "24h", "space", stamp, stamp, time.Minute, "service", []cmdb.Resource{"service"}, []cmdb.RelationPath{path}, cmdb.Matcher{"tenant": "x", "id": "a"}, nil)
 			require.NoError(t, err)
 			require.Equal(t, 2, calls)
 			require.Len(t, result, 1)

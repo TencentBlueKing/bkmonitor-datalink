@@ -162,7 +162,7 @@ func TestLegacyTargetInfoFailureQuality(t *testing.T) {
 				provider.schemas = provider.schemas[:1]
 				provider.fields["middle"] = append(provider.fields["middle"], "zone")
 				m := &Model{schemaProvider: provider, timeGraphQueryReference: timeGraphTestQueryReference}
-				m.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) { return m, nil })
+				m.SetTimeGraphResolver(func(context.Context, string) (TimeGraphQuerier, error) { return m, nil })
 				infoCalls := 0
 				m.timeGraphVMQuery = func(qctx context.Context, q *structured.QueryTs, _ string, _ bool, start, end time.Time, step time.Duration) (pl.Matrix, error) {
 					require.True(t, metadata.IsStrictQueryFailures(qctx))

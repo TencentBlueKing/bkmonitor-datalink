@@ -6,7 +6,6 @@ package v1beta3
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"testing"
 	"time"
 
@@ -153,7 +152,5 @@ func TestLegacyTimeGraphRejectsInvalidWireGrid(t *testing.T) {
 	}
 	timestamp, err := timeGraphQueryTimestamp("")
 	require.NoError(t, err)
-	value, err := strconv.ParseInt(timestamp, 10, 64)
-	require.NoError(t, err)
-	require.InDelta(t, time.Now().Unix(), value, 2)
+	require.InDelta(t, time.Now().Unix(), timestamp.Unix(), 2)
 }

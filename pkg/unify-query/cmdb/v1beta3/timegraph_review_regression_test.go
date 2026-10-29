@@ -22,7 +22,7 @@ import (
 
 func legacyRegressionModel(provider SchemaProvider) *Model {
 	m := &Model{schemaProvider: provider, timeGraphQueryReference: timeGraphTestQueryReference}
-	m.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) { return m, nil })
+	m.SetTimeGraphResolver(func(context.Context, string) (TimeGraphQuerier, error) { return m, nil })
 	return m
 }
 

@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta3"
@@ -42,7 +43,7 @@ func (qualityTestSchema) ListRelationSchemas(string) []v1beta3.RelationSchema {
 
 type qualityTestBackend struct{ cmdb.CMDB }
 
-func (*qualityTestBackend) QueryPathResources(ctx context.Context, _, _, _ string, _ cmdb.Resource, _ []cmdb.Resource, _ [][]cmdb.Resource, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
+func (*qualityTestBackend) QueryRelationTimeGraph(ctx context.Context, _, _ string, _, _ time.Time, _ time.Duration, _ cmdb.Resource, _ []cmdb.Resource, _ []cmdb.RelationPath, matcher, _ cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
 	if strings.HasPrefix(matcher["id"], "partial") {
 		reason := "backend_partial"
 		if strings.Contains(matcher["id"], "coverage") {
@@ -56,10 +57,6 @@ func (*qualityTestBackend) QueryPathResources(ctx context.Context, _, _, _ strin
 	return []cmdb.PathResourcesResult{{Timestamp: 1700000000000, TargetType: "target", Path: []cmdb.PathNode{{ResourceType: "source", Dimensions: matcher}, {ResourceType: "target", Dimensions: cmdb.Matcher{"id": "result"}}}}}, nil
 }
 
-func (b *qualityTestBackend) QueryPathResourcesRange(ctx context.Context, a, biz, _, _, _ string, source cmdb.Resource, targets []cmdb.Resource, paths [][]cmdb.Resource, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
-	return b.QueryPathResources(ctx, a, biz, "", source, targets, paths, matcher)
-}
-
 func TestLegacyHTTPPartialDoesNotContaminateAnotherBatchItem(t *testing.T) {
 	log.InitTestLogger()
 	for _, rangeQuery := range []bool{false, true} {
@@ -70,10 +67,10 @@ func TestLegacyHTTPPartialDoesNotContaminateAnotherBatchItem(t *testing.T) {
 		require.NoError(t, err)
 		model := cmdbModel.(*v1beta3.Model)
 		model.SetSchemaProvider(qualityTestSchema{})
-		model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) { return &qualityTestBackend{}, nil })
+		model.SetTimeGraphResolver(func(context.Context, string) (v1beta3.TimeGraphQuerier, error) { return &qualityTestBackend{}, nil })
 		t.Cleanup(func() {
 			model.SetSchemaProvider(v1beta3.GetSchemaProvider())
-			model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) { return model, nil })
+			model.SetTimeGraphResolver(func(context.Context, string) (v1beta3.TimeGraphQuerier, error) { return model, nil })
 		})
 		timeFields := `"timestamp":1700000000`
 		if rangeQuery {
@@ -116,10 +113,10 @@ func TestLegacyHTTPStorageCoverageQuality(t *testing.T) {
 				require.NoError(t, err)
 				model := backend.(*v1beta3.Model)
 				model.SetSchemaProvider(qualityTestSchema{})
-				model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) { return &qualityTestBackend{}, nil })
+				model.SetTimeGraphResolver(func(context.Context, string) (v1beta3.TimeGraphQuerier, error) { return &qualityTestBackend{}, nil })
 				t.Cleanup(func() {
 					model.SetSchemaProvider(v1beta3.GetSchemaProvider())
-					model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) { return model, nil })
+					model.SetTimeGraphResolver(func(context.Context, string) (v1beta3.TimeGraphQuerier, error) { return model, nil })
 				})
 				timeFields := `"timestamp":1700000000`
 				if rangeQuery {

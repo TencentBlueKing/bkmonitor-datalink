@@ -101,7 +101,7 @@ func TestSourceInfoQualityRetainedByLegacyAndTopology(t *testing.T) {
 		ctx := initTimeGraphQueryTestEnvironment()
 		vm := &publicTimeGraphVM{responses: map[string]pl.Matrix{"node_info_relation": contractMatrix(map[string]string{"node_id": "n1", "zone": "east"}, 1700000000000), "node_to_middle_flow": contractMatrix(map[string]string{"node_id": "n1", "middle_id": "m1"}, 1700000000000)}}
 		model := &Model{schemaProvider: publicSourceExpandProvider(), timeGraphQueryReference: timeGraphTestQueryReference, timeGraphVMQuery: vm.query}
-		model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) { return model, nil })
+		model.SetTimeGraphResolver(func(context.Context, string) (TimeGraphQuerier, error) { return model, nil })
 		if missing {
 			model.timeGraphQueryReference = func(ctx context.Context, q *structured.QueryTs) (metadata.QueryReference, error) {
 				r, err := timeGraphTestQueryReference(ctx, q)
@@ -201,9 +201,6 @@ func TestCompactBudgetsRepresentationAndIntegerSafety(t *testing.T) {
 		require.Len(t, frame.Edges, 1)
 	}
 	b := &topologyOutputBudget{}
-	require.Error(t, b.addRepeated(math.MaxInt64, 2))
-	require.Zero(t, b.bytes)
-	require.Zero(t, b.elements)
 	require.Error(t, b.addCharge(-1, 1))
 	require.Error(t, b.addCharge(1, -1))
 }
@@ -358,7 +355,7 @@ func TestPartialPathFallbackKeepsKnownQualityAndFailedPathsDoNotPublish(t *testi
 			expand = nil
 			matcher = cmdb.Matcher{"node_id": "n1"}
 		}
-		return model.queryRelationTimeGraph(ctx, "", "space", time.Unix(1700000000, 0), time.Unix(1700000000, 0), time.Minute, "node", []cmdb.Resource{"middle"}, resourcePathsToTimeGraphRelationPaths([]resourcePath{path}), matcher, expand)
+		return model.QueryRelationTimeGraph(ctx, "", "space", time.Unix(1700000000, 0), time.Unix(1700000000, 0), time.Minute, "node", []cmdb.Resource{"middle"}, resourcePathsToTimeGraphRelationPaths([]resourcePath{path}), matcher, expand)
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, results)

@@ -220,7 +220,7 @@ func TestLegacyTargetInfoInfluxDeadlineIsFatal(t *testing.T) {
 			provider.schemas = provider.schemas[:1]
 			provider.fields["middle"] = append(provider.fields["middle"], "zone")
 			m := &Model{schemaProvider: provider}
-			m.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) { return m, nil })
+			m.SetTimeGraphResolver(func(context.Context, string) (TimeGraphQuerier, error) { return m, nil })
 			m.timeGraphQueryReference = func(qctx context.Context, q *structured.QueryTs) (metadata.QueryReference, error) {
 				if err := q.ToTime(qctx); err != nil {
 					return nil, err

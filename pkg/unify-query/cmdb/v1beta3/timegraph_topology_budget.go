@@ -300,13 +300,6 @@ func (b *topologyOutputBudget) reserve(want int64) error {
 	return nil
 }
 func (b *topologyOutputBudget) add(size int64) error { return b.addCharge(size, 1) }
-func (b *topologyOutputBudget) addRepeated(size int64, count int) error {
-	if size < 0 || count < 0 || (count > 0 && size > math.MaxInt64/int64(count)) {
-		return fmt.Errorf("overflowing topology DTO charge")
-	}
-	return b.addCharge(size*int64(count), count)
-}
-
 func (b *topologyOutputBudget) addCharge(size int64, count int) error {
 	if size < 0 || count < 0 || size > math.MaxInt64-b.bytes || count > math.MaxInt-b.elements {
 		return fmt.Errorf("overflowing topology DTO charge")

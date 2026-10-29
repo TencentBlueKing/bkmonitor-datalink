@@ -21,12 +21,14 @@ import (
 
 type snapshotRedisClient struct {
 	redis.UniversalClient
-	fields      map[string]map[string]string
-	relationErr error
-	ready       string
+	fields       map[string]map[string]string
+	relationErr  error
+	ready        string
+	hgetAllCalls int
 }
 
 func (client *snapshotRedisClient) HGetAll(ctx context.Context, key string) *redis.StringStringMapCmd {
+	client.hgetAllCalls++
 	if key == RedisKeyPrefix+":"+KindRelationDefinition && client.relationErr != nil {
 		return redis.NewStringStringMapResult(nil, client.relationErr)
 	}
@@ -152,4 +154,48 @@ func TestRedisProviderBackgroundReloadInvalidatesVerifiedVersion(t *testing.T) {
 	require.NoError(t, provider.loadAllEntities())
 	require.ErrorContains(t, provider.EnsureVersion(ctx, "v1"), "incomplete")
 	require.Empty(t, provider.ensuredVersion)
+}
+
+func TestRedisProviderUnchangedReloadKeepsVerifiedVersion(t *testing.T) {
+	ctx := context.Background()
+	for _, mutation := range []string{"unchanged", "new version", "invalid resources", "invalid relations"} {
+		t.Run(mutation, func(t *testing.T) {
+			resourceKey := RedisKeyPrefix + ":" + KindResourceDefinition
+			relationKey := RedisKeyPrefix + ":" + KindRelationDefinition
+			client := &snapshotRedisClient{ready: `{"version":"v1"}`, fields: map[string]map[string]string{
+				resourceKey: {NamespaceAll: `{"service":{"name":"service"}}`},
+				relationKey: {NamespaceAll: `{"calls":{"name":"calls","from_resource":"service","to_resource":"service"}}`},
+			}}
+			provider := &RedisProvider{
+				client: client, config: DefaultRedisProviderConfig(), ctx: ctx,
+				resourceDefinitions: make(map[string]map[string]*ResourceDefinition),
+				relationDefinitions: make(map[string]map[string]*RelationDefinition),
+			}
+			require.NoError(t, provider.EnsureVersion(ctx, "v1"))
+			version := "v1"
+			switch mutation {
+			case "new version":
+				version = "v2"
+				client.ready = `{"version":"v2"}`
+			case "invalid resources":
+				client.fields[resourceKey][NamespaceAll] = `{"service":true}`
+			case "invalid relations":
+				client.fields[relationKey][NamespaceAll] = `{"calls":true}`
+			}
+			require.NoError(t, provider.loadAllEntities())
+			calls := client.hgetAllCalls
+			err := provider.EnsureVersion(ctx, version)
+			switch mutation {
+			case "unchanged":
+				require.NoError(t, err)
+				require.Equal(t, calls, client.hgetAllCalls, "unchanged reconciliation must not cause another full snapshot read")
+			case "new version":
+				require.NoError(t, err)
+				require.Equal(t, calls+2, client.hgetAllCalls)
+			default:
+				require.ErrorContains(t, err, "invalid relation schema snapshot")
+				require.Empty(t, provider.ensuredVersion)
+			}
+		})
+	}
 }

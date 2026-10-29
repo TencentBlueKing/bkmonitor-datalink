@@ -87,7 +87,7 @@ type RedisProvider struct {
 	// Serializes full snapshots and Pub/Sub reloads so an older snapshot cannot
 	// overwrite a newer namespace update.
 	reloadMu sync.Mutex
-	// Protected by mu; any background reload invalidates the request barrier.
+	// Protected by mu; changed or invalid background snapshots invalidate it.
 	ensuredVersion string
 
 	// 订阅回调列表，在数据变更时通知
@@ -241,7 +241,9 @@ func (rp *RedisProvider) loadAllEntitiesLocked(ctx context.Context, strict bool)
 	relationChanges := changedNamespaces(rp.relationDefinitions, relations)
 	rp.resourceDefinitions = resources
 	rp.relationDefinitions = relations
-	rp.ensuredVersion = ""
+	if len(resourceChanges)+len(relationChanges)+len(invalidResources)+len(invalidRelations) > 0 {
+		rp.ensuredVersion = ""
+	}
 	rp.mu.Unlock()
 
 	for _, namespace := range resourceChanges {

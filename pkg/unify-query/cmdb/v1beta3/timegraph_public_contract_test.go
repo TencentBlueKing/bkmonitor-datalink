@@ -677,7 +677,7 @@ func TestTimeGraphPublicSourceExpandAndTargetInfoCases(t *testing.T) {
 			name:             "source_expand_miss_returns_empty_result",
 			sourceExpandInfo: cmdb.Matcher{"zone": "west"},
 			responses: map[string]pl.Matrix{
-				"node_info_relation":   pl.Matrix{},
+				"node_info_relation":   {},
 				"node_to_middle_flow":  contractMatrix(map[string]string{"node_id": "n1", "middle_id": "m1"}, timestampMS),
 				"middle_info_relation": contractMatrix(map[string]string{"middle_id": "m1", "version": "v1"}, timestampMS),
 			},
@@ -724,7 +724,7 @@ func TestTimeGraphPublicSourceExpandAndTargetInfoCases(t *testing.T) {
 			responses: map[string]pl.Matrix{
 				"node_info_relation":   contractMatrix(map[string]string{"node_id": "n1", "zone": "east"}, timestampMS),
 				"node_to_middle_flow":  contractMatrix(map[string]string{"node_id": "n1", "middle_id": "m1"}, timestampMS),
-				"middle_info_relation": pl.Matrix{},
+				"middle_info_relation": {},
 			},
 			wantMatchers: cmdb.Matchers{{"middle_id": "m1"}},
 			wantCalls: []publicTimeGraphQueryWant{
@@ -772,7 +772,7 @@ func TestTimeGraphPublicSourceExpandAndTargetInfoCases(t *testing.T) {
 				timeGraphVMQuery:        vm.query,
 				timeGraphQueryReference: timeGraphTestQueryReference,
 			}
-			model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) { return model, nil })
+			model.SetTimeGraphResolver(func(context.Context, string) (TimeGraphQuerier, error) { return model, nil })
 
 			ctx := initTimeGraphQueryTestEnvironment()
 			source, sourceMatcher, paths, target, matchers, err := model.QueryResourceMatcher(

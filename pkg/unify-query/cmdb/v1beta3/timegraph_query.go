@@ -186,10 +186,6 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	span.Set("source-matcher-count", len(sourceInfo))
 	span.Set("source-expand-matcher-count", len(sourceExpandInfo))
 	span.Set("root-relation-count", len(rootRelations))
-	if err := validateTimeGraphPrecision(start, end, step); err != nil {
-		return nil, err
-	}
-
 	_, configSpan := trace.NewSpan(ctx, "timegraph-build-config")
 	config := m.timeGraphConfig(spaceUID)
 	configSpan.Set("space-uid", spaceUID)
@@ -1041,10 +1037,6 @@ func (m *Model) buildRelationsFromPaths(paths [][]cmdb.Resource) []cmdb.Relation
 	return m.buildRelationsFromRelationPathsForNamespace("", cmdb.RelationPathsFromResourcePaths(paths))
 }
 
-func (m *Model) buildRelationsFromRelationPaths(paths []cmdb.RelationPath) []cmdb.Relation {
-	return m.buildRelationsFromRelationPathsForNamespace("", paths)
-}
-
 func (m *Model) buildRelationsFromRelationPathsForNamespace(namespace string, paths []cmdb.RelationPath) []cmdb.Relation {
 	seen := make(map[timeGraphRelationKey]struct{})
 	relations := make([]cmdb.Relation, 0)
@@ -1301,12 +1293,13 @@ func (m *Model) queryTimeGraph(ctx context.Context, lookBackDelta, spaceUID stri
 		return nil, err
 	}
 	span.Set("resolved-path-count", len(paths))
-	results, err = m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, start, end, step, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
+	results, err = m.QueryRelationTimeGraph(ctx, lookBackDelta, spaceUID, start, end, step, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
 	span.Set("result-count", len(results))
 	return results, err
 }
 
-func (m *Model) queryRelationTimeGraph(ctx context.Context, lookBackDelta, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher, sourceExpandInfo cmdb.Matcher) (results []cmdb.PathResourcesResult, err error) {
+// QueryRelationTimeGraph executes validated, normalized relation query inputs.
+func (m *Model) QueryRelationTimeGraph(ctx context.Context, lookBackDelta, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher, sourceExpandInfo cmdb.Matcher) (results []cmdb.PathResourcesResult, err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-query-relation")
 	defer span.End(&err)
 	span.Set("look-back-delta", lookBackDelta)
@@ -1314,18 +1307,9 @@ func (m *Model) queryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 	span.Set("source-expand-matcher-count", len(sourceExpandInfo))
 	span.Set("target-type-count", len(targetTypes))
 	span.Set("relation-path-count", len(paths))
-	if start.After(end) {
-		return nil, errors.New("start_time must be less than or equal to end_time")
-	}
-	if step <= 0 {
-		return nil, errors.New("step must be greater than 0")
-	}
 	if !start.Equal(end) {
-		points, rangeErr := validateRangeBuckets(start.UnixMilli(), end.UnixMilli(), step.Milliseconds())
-		if rangeErr != nil {
-			return nil, rangeErr
-		}
-		span.Set("range-points", points)
+		distance := uint64(end.UnixMilli()) - uint64(start.UnixMilli())
+		span.Set("range-points", int(distance/uint64(step.Milliseconds()))+1)
 	}
 	var cancel context.CancelFunc
 	ctx, cancel = withTimeGraphQueryContext(ctx)
@@ -1440,7 +1424,11 @@ func (m *Model) queryPathResourcesWithSourceExpand(ctx context.Context, lookBack
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse timestamp")
 	}
-	results, err = m.queryTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(timestampValue), time.UnixMilli(timestampValue), 5*time.Minute, sourceType, targetTypes, pathResources, matcher, sourceExpandInfo)
+	point := time.UnixMilli(timestampValue)
+	if err := validateTimeGraphPrecision(point, point, 5*time.Minute); err != nil {
+		return nil, err
+	}
+	results, err = m.queryTimeGraph(ctx, lookBackDelta, spaceUID, point, point, 5*time.Minute, sourceType, targetTypes, pathResources, matcher, sourceExpandInfo)
 	span.Set("result-count", len(results))
 	return results, err
 }
@@ -1475,7 +1463,11 @@ func (m *Model) queryRelationPathResourcesWithSourceExpand(ctx context.Context, 
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse timestamp")
 	}
-	results, err = m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(timestampValue), time.UnixMilli(timestampValue), 5*time.Minute, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
+	point := time.UnixMilli(timestampValue)
+	if err := validateTimeGraphPrecision(point, point, 5*time.Minute); err != nil {
+		return nil, err
+	}
+	results, err = m.QueryRelationTimeGraph(ctx, lookBackDelta, spaceUID, point, point, 5*time.Minute, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
 	span.Set("result-count", len(results))
 	return results, err
 }
@@ -1521,14 +1513,15 @@ func (m *Model) queryPathResourcesRangeWithSourceExpand(ctx context.Context, loo
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse step")
 	}
-	if stepDuration <= 0 {
-		return nil, errors.New("step must be positive")
+	startTime, endTime := time.UnixMilli(start), time.UnixMilli(end)
+	if err := validateTimeGraphPrecision(startTime, endTime, stepDuration); err != nil {
+		return nil, err
 	}
 	stepMs := stepDuration.Milliseconds()
 	if _, err := validateRangeBuckets(start, end, stepMs); err != nil {
 		return nil, err
 	}
-	results, err = m.queryTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(start), time.UnixMilli(end), stepDuration, sourceType, targetTypes, pathResources, matcher, sourceExpandInfo)
+	results, err = m.queryTimeGraph(ctx, lookBackDelta, spaceUID, startTime, endTime, stepDuration, sourceType, targetTypes, pathResources, matcher, sourceExpandInfo)
 	span.Set("result-count", len(results))
 	return results, err
 }
@@ -1574,14 +1567,15 @@ func (m *Model) queryRelationPathResourcesRangeWithSourceExpand(ctx context.Cont
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse step")
 	}
-	if stepDuration <= 0 {
-		return nil, errors.New("step must be positive")
+	startTime, endTime := time.UnixMilli(start), time.UnixMilli(end)
+	if err := validateTimeGraphPrecision(startTime, endTime, stepDuration); err != nil {
+		return nil, err
 	}
 	stepMs := stepDuration.Milliseconds()
 	if _, err := validateRangeBuckets(start, end, stepMs); err != nil {
 		return nil, err
 	}
-	results, err = m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(start), time.UnixMilli(end), stepDuration, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
+	results, err = m.QueryRelationTimeGraph(ctx, lookBackDelta, spaceUID, startTime, endTime, stepDuration, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
 	span.Set("result-count", len(results))
 	return results, err
 }

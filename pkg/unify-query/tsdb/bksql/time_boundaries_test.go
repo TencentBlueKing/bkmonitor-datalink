@@ -36,11 +36,12 @@ func TestBKSQLSeriesTimeBoundaries(t *testing.T) {
 	start, end := time.UnixMilli(at-59999), time.UnixMilli(at)
 	pattern := regexp.MustCompile("`dtEventTimeStamp` >= ([0-9]+) AND `dtEventTimeStamp` (<=|<) ([0-9]+)")
 	for _, dialect := range []string{"", sql_expr.TSpider, sql_expr.Doris} {
-		for _, mode := range []string{"ordinary", "strict_only", "exact_only", "left_open"} {
+		for _, mode := range []string{"ordinary", "strict_only", "exact_only", "left_open", "ordinary_cutover", "left_open_cutover"} {
 			t.Run(fmt.Sprintf("%s/%s", dialect, mode), func(t *testing.T) {
 				ctx := metadata.InitHashID(context.Background())
 				metadata.SetUser(ctx, &metadata.User{SpaceUID: "boundary"})
-				switch mode {
+				cutover := strings.HasSuffix(mode, "_cutover")
+				switch strings.TrimSuffix(mode, "_cutover") {
 				case "strict_only":
 					ctx = metadata.WithStrictQueryFailures(ctx)
 				case "exact_only":
@@ -77,8 +78,12 @@ func TestBKSQLSeriesTimeBoundaries(t *testing.T) {
 							t.Error(err)
 							return
 						}
+						exclusiveEnd := strings.Contains(params.SQL, fmt.Sprintf("AND `dtEventTimeStamp` < %d", upper))
+						if cutover && !exclusiveEnd {
+							t.Errorf("migration cutover must exclude the old route's endpoint: %s", params.SQL)
+						}
 						for _, point := range []int64{at - 60000, at - 59999, at, at + 1} {
-							if point >= lower && (point < upper || (point == upper && match[2] == "<=")) {
+							if point >= lower && (point < upper || (point == upper && match[2] == "<=" && !exclusiveEnd)) {
 								rows = append(rows, map[string]any{sql_expr.TimeStamp: point, sql_expr.Value: 7, "source_id": "a"})
 							}
 						}
@@ -93,6 +98,7 @@ func TestBKSQLSeriesTimeBoundaries(t *testing.T) {
 				instance, err := NewInstance(ctx, &Options{Address: server.URL, Timeout: time.Second, MaxLimit: 100, Curl: &curl.HttpCurl{}})
 				require.NoError(t, err)
 				query := &metadata.Query{StorageType: metadata.BkSqlStorageType, DB: "boundary", Measurement: dialect, Field: "value", MetricNames: []string{"a"}}
+				query.RangeEndExclusive = cutover
 				set := instance.QuerySeriesSet(ctx, query, start, end)
 				var timestamps []int64
 				for set.Next() {
@@ -108,7 +114,7 @@ func TestBKSQLSeriesTimeBoundaries(t *testing.T) {
 				require.Positive(t, mappingCalls.Load(), "the actual field-map HTTP request must run")
 				require.Equal(t, int32(1), dataCalls.Load(), "the actual series SQL must run")
 				expected := []int64{at - 59999}
-				if mode == "left_open" || dialect == sql_expr.Doris {
+				if !cutover && (mode == "left_open" || dialect == sql_expr.Doris) {
 					expected = append(expected, at)
 				}
 				require.Equal(t, expected, timestamps, "must keep the engine's inclusive bounds only for opted-in queries; future samples stay excluded")

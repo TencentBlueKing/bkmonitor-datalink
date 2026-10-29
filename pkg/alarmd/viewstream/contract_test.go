@@ -434,8 +434,15 @@ func TestTheFingerprintMovesWheneverAProjectionWould(t *testing.T) {
 	if reordered.Fingerprint() != ordered.Fingerprint() {
 		t.Fatal("output contexts in another order changed the fingerprint")
 	}
-	was, _ := ordered.Project("w2")
-	is, _ := reordered.Project("w2")
+	// A projection that failed has no digest, and two of them compare equal.
+	was, err := ordered.Project("w2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	is, err := reordered.Project("w2")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if was.Version.Digest != is.Version.Digest {
 		t.Fatal("output contexts in another order changed the digest; the fingerprint case above proves nothing")
 	}
@@ -470,8 +477,15 @@ func TestTheFingerprintMovesWheneverAProjectionWould(t *testing.T) {
 		before, after := base(), mutated
 		movedProjection := false
 		for _, worker := range []string{"w1", "w2"} {
-			was, _ := before.Project(worker)
-			is, _ := after.Project(worker)
+			// One side failing would read as a moved projection.
+			was, err := before.Project(worker)
+			if err != nil {
+				t.Fatalf("%s: projecting %s before: %v", name, worker, err)
+			}
+			is, err := after.Project(worker)
+			if err != nil {
+				t.Fatalf("%s: projecting %s after: %v", name, worker, err)
+			}
 			if was.Version.Digest != is.Version.Digest {
 				movedProjection = true
 			}

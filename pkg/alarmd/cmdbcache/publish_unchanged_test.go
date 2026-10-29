@@ -19,7 +19,7 @@ import (
 func (client *markerClient) MGet(_ context.Context, keys ...string) *redis.SliceCmd {
 	values := make([]interface{}, len(keys))
 	for index, key := range keys {
-		client.scans = append(client.scans, "GET "+key)
+		client.noteScan("GET " + key)
 		if err, failing := client.failing[key]; failing {
 			return redis.NewSliceResult(nil, err)
 		}
@@ -70,9 +70,9 @@ func newUnchangedHarness(t *testing.T, markers map[string]string) *unchangedHarn
 // the host hash was read.
 func (harness *unchangedHarness) refresh(step time.Duration) (scanned bool, err error) {
 	harness.now = harness.now.Add(step)
-	harness.client.scans = nil
+	harness.client.resetScans()
 	err = harness.store.Refresh(context.Background())
-	for _, read := range harness.client.scans {
+	for _, read := range harness.client.scanned() {
 		if read == unchangedHostKey {
 			scanned = true
 		}

@@ -125,3 +125,84 @@ func TestAnAnswerPastTheCutTakesTheQueryGroupOutAndDropsTheCeiling(t *testing.T)
 		t.Fatalf("the record after an answer past the cut = %+v, want it out and the ceiling dropped", record)
 	}
 }
+
+// reentryRuns are answered run times like one production Query Group's
+// between two of its pool memberships on 2026-10-13: 20.0 to 29.19 s, a 9.19 s
+// spread, under the same 30 s cut.
+var reentryRuns = []time.Duration{24100 * time.Millisecond, 20000 * time.Millisecond, 27300 * time.Millisecond,
+	22800 * time.Millisecond, 29190 * time.Millisecond, 25600 * time.Millisecond, 21400 * time.Millisecond, 26900 * time.Millisecond}
+
+// reenterAfterAnAnswer takes a Query Group in the pool out on an answer clear
+// of the cut by its spread, runs it outside on reentryRuns, then three rounds
+// the backend cuts, and returns the re-entry.
+func reenterAfterAnAnswer(t *testing.T, h *poolProbeHarness) observability.QueryCooldownFacts {
+	t.Helper()
+	h.backend.latency.Store(16808)
+	_, _, event, _ := h.decide(0)
+	if event.Event != "recovered" || event.LastProbe == nil || event.LastProbe.Rule != observability.QueryCooldownRuleUnderCeiling {
+		t.Fatalf("a first entry's probe at 16.8 s against a 30 s cut made %+v, want it out under the ceiling", event)
+	}
+	minute := (h.backend.clock.Load()/1000-h.base)/60 + 1
+	for _, run := range reentryRuns {
+		h.backend.latency.Store(run.Milliseconds())
+		if requests, events := h.round(minute); len(requests) != 1 || !requests[0].answered || len(events) != 0 {
+			t.Fatalf("minute %d, a %s answer outside the pool: %+v sent and %+v made, want one answered query", minute, run, requests, events)
+		}
+		minute++
+	}
+	h.backend.latency.Store((backendCut + time.Second).Milliseconds())
+	for cut := 0; cut < 3; cut++ {
+		requests, events := h.round(minute)
+		minute++
+		if len(requests) != 1 || requests[0].answered {
+			t.Fatalf("cut %d after leaving: %+v sent, want one query the backend cut", cut, requests)
+		}
+		if cut == 2 {
+			if len(events) != 1 || events[0].Event != "reentered" {
+				t.Fatalf("the third cut after leaving on an answer made %+v, want the Query Group re-entered", events)
+			}
+			return events[0]
+		}
+	}
+	return observability.QueryCooldownFacts{}
+}
+
+// A Query Group that left on an answer clear of its cut and came back within
+// the hour has shown that such an answer is not evidence for it. On
+// 2026-10-13 one production Query Group left on a 17.03 s answer whose 9.19 s
+// spread cleared the 30 s cut, and was back in an hour later, the fourth time
+// that day. The same probe on a re-entry now keeps it in and names why, and
+// the record a restart or the next owner reads carries that; an answer past
+// the cut - the backend changed - still takes it out.
+func TestAReenteredQueryGroupLeavesOnlyOnEvidence(t *testing.T) {
+	h := newPoolProbeHarnessWith(t, 0, 10*time.Second)
+	enterPoolOnTheBackendsCut(t, h)
+	reentry := reenterAfterAnAnswer(t, h)
+	if reentry.CeilingMillis != backendCut.Milliseconds() || reentry.RunSpreadMillis != 9190 || reentry.Reentries != 1 || reentry.Cuts != 3 {
+		t.Fatalf("the re-entry = %+v, want the 30 s cut, the 9.19 s spread, one re-entry and its three cuts", reentry)
+	}
+
+	h.backend.latency.Store(17030)
+	_, decider, event, atEnd := h.decide(0)
+	probe := event.LastProbe
+	if probe == nil || !decider.answered || probe.Operation != "normal" || event.Event != "extended" || event.Cuts != 3 ||
+		probe.Rule != observability.QueryCooldownRuleHeldAfterReentry || probe.ElapsedMillis != 17030 ||
+		probe.CeilingMillis != 30000 || probe.RunSpreadMillis != 9190 {
+		t.Fatalf("a re-entered probe at 17.03 s: decided at the end %t, %+v made %+v (probe %+v), want it held after the re-entry", atEnd, decider, event, probe)
+	}
+	if record := h.poolRecord(); record.Until.IsZero() || record.Reentries != 1 || record.ExitReason != "recovered" ||
+		record.LastProbe == nil || record.LastProbe.Rule != observability.QueryCooldownRuleHeldAfterReentry {
+		t.Fatalf("the record after the held probe = %+v, want it in with the re-entry and the rule that held it", record)
+	}
+
+	h.backend.cut.Store(0)
+	h.backend.latency.Store(35000)
+	_, decider, event, _ = h.decide(0)
+	probe = event.LastProbe
+	if probe == nil || !decider.answered || event.Event != "recovered" || probe.Rule != observability.QueryCooldownRuleAboveCeiling {
+		t.Fatalf("a re-entered probe answering at 35 s past the 30 s cut: %+v made %+v (probe %+v), want it out above the ceiling", decider, event, probe)
+	}
+	if record := h.poolRecord(); !record.Until.IsZero() || record.CeilingMillis != 0 {
+		t.Fatalf("the record after the answer past the cut = %+v, want it out and the ceiling dropped", record)
+	}
+}

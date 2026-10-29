@@ -2,6 +2,7 @@ package evaluation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -35,6 +36,9 @@ type Evaluator struct {
 	// cache answers for nothing it would have held.
 	lookups            admission.BusinessLookups
 	observeAttribution func(source string)
+	// observeSnapshot hears each detection snapshot an event carries: its
+	// named outputs' states and whether it was truncated (WithDetectionSnapshots).
+	observeSnapshot func(states []string, result string)
 	// rebuildGuardWindow makes the first record build its own window instead
 	// of taking the guard's. It exists for the tests that hold the two to the
 	// same result, and only they set it: no constructor, option or
@@ -54,21 +58,46 @@ func (e *Evaluator) WithBusinessAttribution(lookups admission.BusinessLookups, o
 	return e
 }
 
+// WithDetectionSnapshots has every detection snapshot an event was to carry
+// heard by observe, once per event built: its named outputs' states, and
+// its result - whole, truncated to its bound, or dropped and the event sent
+// without it (contract.DetectionSnapshotResults). Nil hears nothing.
+func (e *Evaluator) WithDetectionSnapshots(observe func(states []string, result string)) *Evaluator {
+	if e != nil {
+		e.observeSnapshot = observe
+	}
+	return e
+}
+
 // attributeBusiness files a global business Plan's event under the business
 // it is about. It runs where the event is built, once per event, so a
 // threshold event and a no-data event take the same reading of the same
 // configuration.
 func (e *Evaluator) attributeBusiness(event *contract.TriggerEventV1, plan *strategy.CompiledPlan) {
-	if event == nil || !plan.GlobalBusiness() {
+	if event == nil {
 		return
 	}
-	attribution := admission.AttributeBusiness(
-		plan.TargetPlan(), plan.Projection().DimensionFields, event.BusinessID, event.RecordRef.Dimensions, e.lookups.For(event.TenantID),
-	)
+	attribution, global := e.businessAttribution(plan, event.TenantID, event.BusinessID, event.RecordRef.Dimensions)
+	if !global {
+		return
+	}
 	event.AttributedBusinessID = attribution.BusinessID
 	if e.observeAttribution != nil {
 		e.observeAttribution(attribution.Source)
 	}
+}
+
+// businessAttribution is the business a global business Plan's record with
+// these alert dimensions is about (admission.AttributeBusiness), and false
+// for every other Plan: the one reading an event and a no-data end entry
+// both take.
+func (e *Evaluator) businessAttribution(plan *strategy.CompiledPlan, tenantID, businessID string,
+	dimensions map[string]json.RawMessage) (admission.BusinessAttribution, bool) {
+	if !plan.GlobalBusiness() {
+		return admission.BusinessAttribution{}, false
+	}
+	return admission.AttributeBusiness(plan.TargetPlan(), plan.Projection().DimensionFields, businessID, dimensions,
+		e.lookups.For(tenantID)), true
 }
 
 func New(detector *detect.Evaluator, limits Limits) (*Evaluator, error) {
@@ -82,7 +111,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, request execution.EvaluationRe
 	if e == nil || len(request.Inputs) == 0 {
 		return execution.EvaluationResult{}, errors.New("alarmd evaluation: invalid or over-budget request")
 	}
-	plan, err := e.evaluateSeries(ctx, request.Header, request.Inputs, request.State, request.Gaps, request.OpenAlerts)
+	plan, err := e.evaluateSeriesWith(ctx, request.Header, request.Inputs, request.State, request.Gaps, request.OpenAlerts, request.HostOverlay, request.NamedOutputs)
 	if err != nil {
 		return execution.EvaluationResult{}, err
 	}
@@ -92,6 +121,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, request execution.EvaluationRe
 	case execution.PlanDecided:
 	case execution.PlanDecidedDegraded, execution.PlanUnavailable, execution.PlanReadinessGap:
 		result.Result, result.ReasonCode = observability.ResultDegraded, plan.ReasonCode
+		result.ReasonCarried, result.ReasonOrigin = plan.ReasonCarried, plan.ReasonOrigin
 		// A Plan degraded by a Level that ended TERMINAL reports TERMINAL in
 		// the aggregate, whatever its disposition says. That is the contract's
 		// rule and not a second opinion about it: a localized terminal outcome
@@ -140,6 +170,65 @@ type recordResult struct {
 	// other record.
 	gate     trigger.RecoveryGateV2
 	coverage execution.HistoryCoverage
+	// noDataEnds is the record's updates to the no-data end index.
+	noDataEnds []execution.NoDataEndUpdate
+}
+
+// normalWithheld is withheldCode on a NORMAL outcome and None on any other.
+func normalWithheld(kind execution.LevelOutcomeKind, outcome trigger.LevelOutcomeV2, alertOpen func() bool) execution.RecoveryWithheldCode {
+	if kind != execution.LevelOutcomeNormal {
+		return execution.RecoveryWithheldNone
+	}
+	code := withheldCode(outcome)
+	if code == execution.RecoveryWithheldNone || !alertOpen() {
+		// Counted only where a zero holds an alert open: a quiet series that
+		// never triggered meets its windows on every zero too, and counting
+		// it would make the count the population of quiet series.
+		return execution.RecoveryWithheldNone
+	}
+	return code
+}
+
+// seriesAlertOpen answers, once and only when asked, whether the consumer
+// holds an open alert on this record's series: the alert's fingerprint from
+// the Plan's output identity, asked of the open set (judged, where the set
+// can say so). False without an identity or a set: nothing then holds an
+// alert open that this process could know of.
+func seriesAlertOpen(request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView) func() bool {
+	asked, open := false, false
+	return func() bool {
+		if asked {
+			return open
+		}
+		asked = true
+		plan := due.CompiledPlan
+		identity, ref := plan.OutputIdentity(), plan.StrategyRef()
+		if identity == nil || ref.SnapshotRevision <= 0 || request.OpenAlerts == nil {
+			return false
+		}
+		fingerprint, err := contract.MonitorDedupeMD5(ref.StrategyID, due.Identity.BusinessID,
+			alertDimensions(record.Dimensions(), request.HostOverlay), *identity)
+		if err != nil {
+			return false
+		}
+		if judge, ok := request.OpenAlerts.(execution.OpenAlertJudge); ok {
+			held, judged := judge.Holds(due.Identity.TenantID, ref.StrategyID, fingerprint)
+			open = held || !judged && request.OpenAlerts.Contains(due.Identity.TenantID, ref.StrategyID, fingerprint)
+			return open
+		}
+		open = request.OpenAlerts.Contains(due.Identity.TenantID, ref.StrategyID, fingerprint)
+		return open
+	}
+}
+
+// withheldCode is why a Level met its recovery windows and stayed NORMAL
+// (contract.RecoveryWithheldReasons), as its outcome carries it; None for a
+// Level nothing withheld.
+func withheldCode(outcome trigger.LevelOutcomeV2) execution.RecoveryWithheldCode {
+	if outcome.DecisionWindow == nil {
+		return execution.RecoveryWithheldNone
+	}
+	return execution.RecoveryWithheldCodeOf(outcome.DecisionWindow.Recovery.Withheld)
 }
 
 // countRecoveryGate adds one RECOVERY record to the Plan's counts under the
@@ -229,6 +318,10 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 	// that does not converge it leaves that guard in place, and every UNKNOWN
 	// outcome under it must preserve its reason.
 	durableGuardReasons := make(map[uint32]execution.ReasonCode, levels.Len())
+	// durableGuardOrigins is where each of those reasons came from, read from
+	// the same record that supplied the reason: the Level's state, or the gap
+	// marker scope that superseded it. Absent for a guard stamped without one.
+	durableGuardOrigins := make(map[uint32]execution.ReasonOrigin, levels.Len())
 	effective := make([]trigger.LevelEffectiveTimeFact, levels.Len())
 	// Observation only. Summarize is the one place that knows both how much of
 	// the window arrived and how much was asked for, and until now it kept both
@@ -262,6 +355,7 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 			guarded := current.HistoryCompleteness == execution.HistoryGapped || current.HistoryCompleteness == execution.HistoryWarming
 			if guarded && current.GapReasonCode != "" {
 				durableGuardReasons[l.Definition().LevelID] = current.GapReasonCode
+				durableGuardOrigins[l.Definition().LevelID] = current.ReasonOrigin()
 			}
 			// A WARMING or GAPPED Level keeps forcing its completeness onto the
 			// trigger until the loaded history already forms the required full
@@ -273,12 +367,19 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 				completeness = string(current.HistoryCompleteness)
 			}
 		}
-		if guarded, reason, found := gapCompleteness(request.Gaps, due, l.Definition().LevelID); found {
+		readGapOpen := false
+		if guarded, reason, origin, found := gapCompleteness(request.Gaps, due, l.Definition().LevelID); found {
 			completeness = guarded
 			durableGuardReasons[l.Definition().LevelID] = reason
+			durableGuardOrigins[l.Definition().LevelID] = origin
+			readGapOpen = true
 		}
 		held := historyView{HistoryView: h, completeness: completeness}
-		histories[i] = trigger.LevelHistory{LevelID: l.Definition().LevelID, View: held}
+		lastReal := int64(0)
+		if stored, found := levelState(view, l.Definition().LevelID); found {
+			lastReal = stored.LastRealPointTime
+		}
+		histories[i] = trigger.LevelHistory{LevelID: l.Definition().LevelID, View: held, ReadGapOpen: readGapOpen, LastRealPoint: lastReal}
 		// One walk for the counts and the holes: the summary visits every
 		// position and classifies it, and a second walk over a day-long
 		// window would double the dearest read on this path for exactly the
@@ -396,7 +497,8 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 		folded, proposed := execution.RoundGuardReasonForLevel(inputs(), due.Identity, levelID)
 		return string(folded), proposed
 	}
-	tr, err := trigger.EvaluateV2(trigger.EvaluationRequestV2{TenantID: due.Identity.TenantID, BusinessID: due.Identity.BusinessID, Plan: due.CompiledPlan, Record: trigger.DetectionRecord{RecordID: record.RecordID(), SourceTime: record.SourceTime(), ProjectedValues: tvalues, LevelFacts: tfacts}, RecordRef: contract.TriggerRecordRefV1{RecordID: record.RecordID(), SourceTime: record.SourceTime(), DimensionIdentityDigest: string(series), Dimensions: record.Dimensions()}, Observed: contract.TriggerObservedV1{Values: record.Values()}, Histories: histories, EffectiveTimeFacts: effective, EvaluationTime: int64(request.Header.Contract.Slot.EvaluationTime), ExecutionID: request.Header.ExecutionID, Limits: e.limits.Trigger, OpenAlerts: request.OpenAlerts, HoldRecovery: holdRecovery})
+	tr, err := trigger.EvaluateV2(trigger.EvaluationRequestV2{TenantID: due.Identity.TenantID, BusinessID: due.Identity.BusinessID, Plan: due.CompiledPlan, Record: trigger.DetectionRecord{RecordID: record.RecordID(), SourceTime: record.SourceTime(), ProjectedValues: tvalues, LevelFacts: tfacts}, RecordRef: contract.TriggerRecordRefV1{RecordID: record.RecordID(), SourceTime: record.SourceTime(), DimensionIdentityDigest: string(series), Dimensions: alertDimensions(record.Dimensions(), request.HostOverlay)}, Observed: contract.TriggerObservedV1{Values: record.Values()}, Histories: histories, EffectiveTimeFacts: effective, EvaluationTime: int64(request.Header.Contract.Slot.EvaluationTime), DecisionTime: request.Header.DecisionTime, ReadHoldMillis: request.Header.Contract.ReadHoldMillis, ReadEnd: primaryReadEnd(request.Header, due.Identity), SeriesSeenBefore: !fresh, ExecutionID: request.Header.ExecutionID, Limits: e.limits.Trigger, OpenAlerts: request.OpenAlerts, HoldRecovery: holdRecovery, NamedOutputs: request.NamedOutputs,
+		ZeroCountIsNoObservation: zeroCountIsNoObservation(request.Header.Requirements, due.Identity)})
 	if err != nil {
 		return recordResult{}, err
 	}
@@ -420,6 +522,7 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 			}
 		}
 	}
+	alertOpen := seriesAlertOpen(request, due, record)
 	for i, o := range tr.LevelOutcomes {
 		kind := execution.LevelOutcomeKind(o.Result)
 		reason := execution.ReasonCode(observability.ReasonNone)
@@ -427,6 +530,9 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 		// because of that guard alone, this round adding nothing of its own
 		// (unknownOnlyForItsHistory).
 		guardTail := false
+		// carried: the reason is the stored guard's, not anything this
+		// round's inputs said; origin is where that guard came from.
+		carried, origin := false, execution.ReasonOrigin{}
 		if kind == "" {
 			kind = execution.LevelOutcomeUnknown
 			reason = execution.ReasonCode(o.UnavailableReason)
@@ -453,6 +559,7 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 					Record: execution.RecordAnchor{RecordID: record.RecordID(), SourceTime: record.SourceTime()}, Outcome: kind})
 			if guarded, found := durableGuardReasons[o.LevelID]; found && !suppressed && guardStaysActive(o, historyCompleteness[o.LevelID]) {
 				reason, guardTail = guarded, unknownOnlyForItsHistory(o)
+				carried, origin = true, durableGuardOrigins[o.LevelID]
 				// Unless this round has incomplete inputs of its own for the
 				// Level. Then the guard that ends up covering this outcome is
 				// the one this round proposes, carrying the fold of those
@@ -467,6 +574,7 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 					inputs(), due.Identity, o.LevelID,
 				); proposed {
 					reason, guardTail = folded, false
+					carried, origin = false, execution.ReasonOrigin{}
 				}
 			}
 		}
@@ -475,7 +583,8 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 			// business outcome. A record the recovery gate held has RECOVERY
 			// outcomes and no envelope, and says so on each of them.
 			EnvelopeHeld: tr.RecoveryGate.Held && kind == execution.LevelOutcomeRecovery,
-			GuardTail:    guardTail}
+			GuardTail:    guardTail, ReasonCarried: carried,
+			RecoveryWithheld: normalWithheld(kind, o, alertOpen)}.WithReasonOrigin(origin)
 	}
 	// A Level the trigger would advance while its outcome is UNKNOWN records
 	// a business fact into a history the guard has not yet released. The
@@ -513,10 +622,15 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 		}
 	}
 	e.attributeBusiness(tr.TriggerEvent, due.CompiledPlan)
+	if tr.Snapshot != nil && e.observeSnapshot != nil {
+		e.observeSnapshot(tr.Snapshot.States, tr.Snapshot.Result)
+	}
 	events, withoutMessage := keptEvents(tr, execution.RecordAnchor{RecordID: record.RecordID(), SourceTime: record.SourceTime()})
-	result := recordResult{outcomes: outcomes, gate: tr.RecoveryGate, coverage: coverage}
+	result := recordResult{outcomes: outcomes, gate: tr.RecoveryGate, coverage: coverage,
+		noDataEnds: e.noDataEndUpdates(request, due, record, view, tr.LevelOutcomes)}
 	if advance || len(missingInputGuards) > 0 {
-		mutation, err := buildMutation(request, due, record, view, facts, tr.LevelOutcomes, historyCompleteness, durableGuardReasons, missingInputGuards)
+		mutation, err := buildMutation(request, due, record, view, facts, tr.LevelOutcomes, historyCompleteness,
+			durableGuards{reasons: durableGuardReasons, origins: durableGuardOrigins}, missingInputGuards)
 		if err != nil {
 			return recordResult{}, err
 		}
@@ -551,15 +665,21 @@ func appendKept(events []contract.TriggerEventV1, withoutMessage []execution.Eve
 	return append(events, state.Events...), append(withoutMessage, state.WithoutMessage...)
 }
 
-// evaluateSeries evaluates one due Plan and one series. The slice contains one
-// named-input request per compiled Level and must exactly cover the Plan.
-func (e *Evaluator) evaluateSeries(
+// evaluateSeriesWith evaluates one due Plan and one series. The slice
+// contains one named-input request per compiled Level and must exactly cover
+// the Plan. hostOverlay, when the series has one, is what its alert identity
+// reads over its own dimensions (EvaluationRequest.HostOverlay); namedOutputs,
+// when the Plan records named outputs, is where they are recorded
+// (EvaluationRequest.NamedOutputs).
+func (e *Evaluator) evaluateSeriesWith(
 	ctx context.Context,
 	header execution.InternalExecutionHeader,
 	inputs []execution.SeriesEvaluationInputRequest,
 	stateResult execution.StatePreflightResult,
 	gaps execution.GapLoadResult,
 	openAlerts contract.OpenAlertSet,
+	hostOverlay map[string]json.RawMessage,
+	namedOutputs *execution.NamedOutputRecords,
 ) (execution.PlanEvaluationResult, error) {
 	if e == nil || len(inputs) == 0 {
 		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: named inputs are required")
@@ -639,7 +759,8 @@ func (e *Evaluator) evaluateSeries(
 	// The record evaluator judges a Level's inputs by the same bindings the
 	// result contract will, so the series' named inputs travel with the
 	// request rather than only its header.
-	legacy := execution.EvaluationRequest{Header: header, Inputs: inputs, State: stateResult, Gaps: gaps, OpenAlerts: openAlerts}
+	legacy := execution.EvaluationRequest{Header: header, Inputs: inputs, State: stateResult, Gaps: gaps, OpenAlerts: openAlerts,
+		HostOverlay: hostOverlay, NamedOutputs: namedOutputs}
 	result := execution.PlanEvaluationResult{Plan: due.Identity, Disposition: execution.PlanDecided, ReasonCode: observability.ReasonNone}
 	// What the loads decide, before anything is evaluated. A load that failed
 	// or is terminal settles the Plan's disposition on its own; the outcome
@@ -694,6 +815,7 @@ func (e *Evaluator) evaluateSeries(
 		finishSeriesSample(sample, one)
 		result.LevelOutcomes = append(result.LevelOutcomes, one.outcomes...)
 		countRecoveryGate(&result.RecoveryGate, one.gate)
+		result.NoDataEnds = append(result.NoDataEnds, one.noDataEnds...)
 		countOpenAlertGate(&result.OpenAlertGate, one.gate)
 		result.HistoryCoverage.Merge(one.coverage)
 		if one.state != nil {
@@ -741,6 +863,9 @@ func (e *Evaluator) evaluateSeries(
 		for _, outcome := range result.LevelOutcomes {
 			if outcome.Outcome == execution.LevelOutcomeUnknown || outcome.Outcome == execution.LevelOutcomeTerminal {
 				result.Disposition, result.ReasonCode = execution.PlanDecidedDegraded, outcome.ReasonCode
+				// The Plan's reason is this outcome's, and so is whether it
+				// was carried from a stored guard and where that came from.
+				result.ReasonCarried, result.ReasonOrigin = outcome.ReasonCarried, outcome.ReasonOrigin()
 				break
 			}
 		}
@@ -966,6 +1091,25 @@ func guardConvergenceAllowed(view execution.RuntimeStateView, plan *strategy.Com
 	return allowed, window, nil
 }
 
+// zeroCountIsNoObservation says a zero in this plan's records is no
+// observation (trigger.EvaluationRequestV2.ZeroCountIsNoObservation): the
+// plan's primary says so (DataRequirement.ZeroIsNoObservation). A grouped
+// log count's zero is a group whose source had documents and none matched,
+// which is an observation, and recovers as before.
+func zeroCountIsNoObservation(requirements []execution.DataRequirement, plan execution.PlanIdentity) bool {
+	for _, requirement := range requirements {
+		if requirement.Role != execution.InputRolePrimary || !requirement.ZeroIsNoObservation {
+			continue
+		}
+		for _, consumer := range requirement.Consumers {
+			if consumer.Consumer.Plan == plan {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (e *Evaluator) constrainedRecord(request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView) (recordResult, error) {
 	kind := execution.LevelOutcomeUnknown
 	if view.Status == execution.StateDeterministicInvalid {
@@ -1005,6 +1149,107 @@ func (h historyView) summarizeHoles(ctx context.Context, t int64, n uint32, limi
 		ValidPositions: s.ValidPositions, RequiredPositions: s.RequiredPositions,
 		AnomalyCount: s.AnomalyCount, AnomalyDigest: s.AnomalyDigest}, holes
 }
+
+// lastRealPointAfter is a Level's last real point once this record is
+// applied: the record's own source time when its outcome says the value is a
+// real point (trigger.LevelOutcomeV2.RealPoint), the stored one otherwise,
+// and never earlier than the stored one. While a read gap of the Level is
+// open the record counts as a real point whatever its value: a round nobody
+// read may have held one - an event inside the widened range is answered
+// only as the accepted window's record - and a clock run from the point
+// before it would end the alert early. That can only delay an end. Kept
+// only for a Level written to end on no data, which is the one reader;
+// every other Level writes zero, so its state stays the bytes it was.
+func lastRealPointAfter(due execution.DuePlan, gaps execution.GapLoadResult, view execution.RuntimeStateView,
+	record execution.RecordView, outcomes []trigger.LevelOutcomeV2, levelID uint32) int64 {
+	if !endsOnNoData(due.CompiledPlan, levelID) {
+		return 0
+	}
+	stored := int64(0)
+	if level, found := levelState(view, levelID); found {
+		stored = level.LastRealPointTime
+	}
+	_, _, _, gapOpen := gapCompleteness(gaps, due, levelID)
+	for _, outcome := range outcomes {
+		if outcome.LevelID == levelID && (outcome.RealPoint || gapOpen) {
+			return max(stored, record.SourceTime())
+		}
+	}
+	return stored
+}
+
+// noDataEndUpdates is what one record says about the no-data end index: for
+// each Level written to end on no data, whether its alert is open after this
+// round - opened this round, or held by the consumer's set and not recovered
+// now - with the alert's fingerprint, the series' alert dimensions and its
+// last real point. None where the Plan names no alert identity or has no
+// consumer's set to judge by (a Plan that publishes no RECOVERY message), and
+// none for a Level whose last real point is not known: it cannot be timed,
+// and the round that brings a real point writes it. A global business
+// Plan's entry keeps the business the record is attributed to, as its
+// events are (attributeBusiness).
+func (e *Evaluator) noDataEndUpdates(request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView,
+	view execution.RuntimeStateView, outcomes []trigger.LevelOutcomeV2) []execution.NoDataEndUpdate {
+	plan := due.CompiledPlan
+	identity := plan.OutputIdentity()
+	ref := plan.StrategyRef()
+	if identity == nil || ref.SnapshotRevision <= 0 || request.OpenAlerts == nil {
+		return nil
+	}
+	var updates []execution.NoDataEndUpdate
+	var dimensions map[string]json.RawMessage
+	fingerprint, attributed := "", ""
+	for _, outcome := range outcomes {
+		if !endsOnNoData(plan, outcome.LevelID) || (outcome.Result == "" && !outcome.RealPoint) {
+			continue
+		}
+		if fingerprint == "" {
+			dimensions = alertDimensions(record.Dimensions(), request.HostOverlay)
+			computed, err := contract.MonitorDedupeMD5(ref.StrategyID, due.Identity.BusinessID, dimensions, *identity)
+			if err != nil {
+				return nil
+			}
+			fingerprint = computed
+			if attribution, global := e.businessAttribution(plan, due.Identity.TenantID, due.Identity.BusinessID, dimensions); global {
+				attributed = attribution.BusinessID
+			}
+		}
+		last := lastRealPointAfter(due, request.Gaps, view, record, outcomes, outcome.LevelID)
+		if last <= 0 {
+			continue
+		}
+		open, judged := true, true
+		switch outcome.Result {
+		case contract.LevelResultAbnormal:
+		case contract.LevelResultRecovery:
+			open = false
+		default:
+			open, judged = false, false
+			if judge, ok := request.OpenAlerts.(execution.OpenAlertJudge); ok {
+				open, judged = judge.Holds(due.Identity.TenantID, ref.StrategyID, fingerprint)
+			}
+		}
+		updates = append(updates, execution.NoDataEndUpdate{Open: open, Judged: judged, Entry: execution.NoDataEndEntry{
+			Series: execution.SeriesIdentityDigest(record.DimensionIdentityDigest()), LevelID: outcome.LevelID,
+			Fingerprint: fingerprint, Dimensions: dimensions, LastRealPoint: last, AttributedBusinessID: attributed}})
+	}
+	return updates
+}
+
+// endsOnNoData is whether a Plan's Level is written to end its alert on no
+// data (contract.RecoveryMissingDataEvaluateAsZero).
+func endsOnNoData(plan *strategy.CompiledPlan, levelID uint32) bool {
+	if plan == nil {
+		return false
+	}
+	for _, level := range plan.Levels().All() {
+		if level.Definition().LevelID == levelID {
+			return level.Recovery().MissingData == contract.RecoveryMissingDataEvaluateAsZero
+		}
+	}
+	return false
+}
+
 func levelState(v execution.RuntimeStateView, id uint32) (execution.RuntimeLevelStateView, bool) {
 	for _, l := range v.Levels {
 		if l.LevelID == id {
@@ -1013,20 +1258,24 @@ func levelState(v execution.RuntimeStateView, id uint32) (execution.RuntimeLevel
 	}
 	return execution.RuntimeLevelStateView{}, false
 }
-func gapCompleteness(gaps execution.GapLoadResult, due execution.DuePlan, levelID uint32) (string, execution.ReasonCode, bool) {
+
+// gapCompleteness is the completeness a loaded gap marker forces on the
+// Level, the scope's reason and where that reason came from (the Slot that
+// opened the scope).
+func gapCompleteness(gaps execution.GapLoadResult, due execution.DuePlan, levelID uint32) (string, execution.ReasonCode, execution.ReasonOrigin, bool) {
 	gap, ok := gaps.Find(due.GapIdentity())
 	if !ok || gap.Status != execution.GapFound {
-		return "", "", false
+		return "", "", execution.ReasonOrigin{}, false
 	}
 	for _, scope := range gap.Scopes {
 		if !scope.Scope.HasLevel || scope.Scope.LevelID == levelID {
 			if scope.Status == execution.GapStatusGapped {
-				return trigger.HistoryGapped, scope.ReasonCode, true
+				return trigger.HistoryGapped, scope.ReasonCode, scope.ReasonOrigin(), true
 			}
-			return trigger.HistoryWarming, scope.ReasonCode, true
+			return trigger.HistoryWarming, scope.ReasonCode, scope.ReasonOrigin(), true
 		}
 	}
-	return "", "", false
+	return "", "", execution.ReasonOrigin{}, false
 }
 
 // applyProvisional is the window the next record of this Slot reads: what the
@@ -1041,7 +1290,8 @@ func applyProvisional(view execution.RuntimeStateView, mutation execution.StateM
 	view.History = merged
 	view.Levels = make([]execution.RuntimeLevelStateView, len(mutation.Levels))
 	for i, l := range mutation.Levels {
-		view.Levels[i] = execution.RuntimeLevelStateView{LevelID: l.LevelID, LevelStateCompatibility: l.LevelStateCompatibility, HistoryCompleteness: l.HistoryCompleteness, GapReasonCode: l.GapReasonCode, WarmupRequirementRef: l.WarmupRequirementRef, LastProcessedEventTime: l.LastProcessedEventTime}
+		view.Levels[i] = execution.RuntimeLevelStateView{LevelID: l.LevelID, LevelStateCompatibility: l.LevelStateCompatibility, HistoryCompleteness: l.HistoryCompleteness, GapReasonCode: l.GapReasonCode, WarmupRequirementRef: l.WarmupRequirementRef, LastProcessedEventTime: l.LastProcessedEventTime,
+			GapReasonOriginSlot: l.GapReasonOriginSlot, LastRealPointTime: l.LastRealPointTime}
 	}
 	view.SeriesGuard = mutation.SeriesGuard
 	return view, nil
@@ -1115,6 +1365,40 @@ func guardStaysActive(outcome trigger.LevelOutcomeV2, summary execution.HistoryC
 // evaluationBindings is every named input the request binds, across its
 // series requests, which is the set the result contract judges a Level's
 // inputs by; the predicate filters it to one Plan and Level itself.
+// primaryReadEnd is where the current Slot's own read of the Plan's primary
+// input ends, exclusive: the Slot's evaluation time plus the primary
+// requirement's EndOffsetSeconds - the field the query window's end is
+// resolved from, minus the query delay (controlplane buildRequirements). The
+// newest such end when several Levels of the Plan read a primary; zero, which
+// the trigger reads as nothing settled, when the header names none. That
+// cannot happen on the production path: every due Level has exactly one
+// PRIMARY requirement (execution/named_input_request.go, the worker's
+// named-input index), so zero is only a header built without them.
+//
+// The newest end across Levels holds because a Plan's Levels share one
+// primary read today: one query, one window. If Levels ever read different
+// primaries, the end must become per Level.
+func primaryReadEnd(header execution.InternalExecutionHeader, plan execution.PlanIdentity) int64 {
+	evaluationTime := int64(header.Contract.Slot.EvaluationTime)
+	end := int64(0)
+	for _, requirement := range header.Requirements {
+		if requirement.Role != execution.InputRolePrimary {
+			continue
+		}
+		for _, consumer := range requirement.Consumers {
+			if consumer.Consumer.Plan != plan {
+				continue
+			}
+			candidate := evaluationTime + requirement.RelativeWindow.EndOffsetSeconds
+			if !requirement.RelativeWindow.HalfOpen {
+				candidate++
+			}
+			end = max(end, min(candidate, evaluationTime))
+		}
+	}
+	return max(end, 0)
+}
+
 func evaluationBindings(request execution.EvaluationRequest) []execution.NamedInputBinding {
 	var bindings []execution.NamedInputBinding
 	for _, input := range request.Inputs {
@@ -1123,15 +1407,51 @@ func evaluationBindings(request execution.EvaluationRequest) []execution.NamedIn
 	return bindings
 }
 
-func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, facts []detect.LevelFact, outcomes []trigger.LevelOutcomeV2, summaries map[uint32]execution.HistoryCompleteness, durableGuardReasons, missingInputGuards map[uint32]execution.ReasonCode) (execution.StateMutation, error) {
+// durableGuards is the guard each Level is held by before this record: its
+// reason and where that reason came from.
+type durableGuards struct {
+	reasons map[uint32]execution.ReasonCode
+	origins map[uint32]execution.ReasonOrigin
+}
+
+// originFor is the origin a Level written with completeness and reason
+// carries. The origin is written once, when the guard is first stamped:
+//
+//   - a Level that holds no guard has none;
+//   - a guard already up for this reason - the durable guard, from the
+//     Level's state or the gap marker - keeps the origin it has, which is
+//     none for a guard stamped without one; nothing invents one later;
+//   - anything else is this record stamping a guard: this Slot, this reason.
+func (guards durableGuards) originFor(view execution.RuntimeStateView, slot execution.EvaluationTime, levelID uint32,
+	completeness execution.HistoryCompleteness, reason execution.ReasonCode) execution.ReasonOrigin {
+	if completeness != execution.HistoryWarming && completeness != execution.HistoryGapped {
+		return execution.ReasonOrigin{}
+	}
+	if durable, found := guards.reasons[levelID]; found && durable == reason {
+		return guards.origins[levelID]
+	}
+	if current, found := levelState(view, levelID); found && current.GapReasonCode == reason &&
+		(current.HistoryCompleteness == execution.HistoryWarming || current.HistoryCompleteness == execution.HistoryGapped) {
+		return current.ReasonOrigin()
+	}
+	return execution.StampReasonOrigin(slot, reason)
+}
+
+func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, facts []detect.LevelFact, outcomes []trigger.LevelOutcomeV2, summaries map[uint32]execution.HistoryCompleteness, guards durableGuards, missingInputGuards map[uint32]execution.ReasonCode) (execution.StateMutation, error) {
 	refs, err := execution.LevelContractRefsFor(due, view.Levels)
 	if err != nil {
 		return execution.StateMutation{}, err
 	}
+	durableGuardReasons := guards.reasons
+	slot := request.Header.Contract.Slot.EvaluationTime
 	levels := make([]execution.RuntimeLevelStateMutation, len(refs))
+	lastReal := func(levelID uint32) int64 {
+		return lastRealPointAfter(due, request.Gaps, view, record, outcomes, levelID)
+	}
 	for i, r := range refs {
 		if reason, missing := missingInputGuards[r.LevelID]; missing {
-			levels[i] = execution.RuntimeLevelStateMutation{LevelID: r.LevelID, LevelStateCompatibility: r.LevelStateCompatibility, HistoryCompleteness: execution.HistoryGapped, GapReasonCode: reason, WarmupRequirementRef: r.WarmupRequirementRef, LastProcessedEventTime: record.SourceTime()}
+			levels[i] = execution.RuntimeLevelStateMutation{LevelID: r.LevelID, LevelStateCompatibility: r.LevelStateCompatibility, HistoryCompleteness: execution.HistoryGapped, GapReasonCode: reason, WarmupRequirementRef: r.WarmupRequirementRef, LastProcessedEventTime: record.SourceTime(), LastRealPointTime: lastReal(r.LevelID)}.
+				WithReasonOrigin(guards.originFor(view, slot, r.LevelID, execution.HistoryGapped, reason))
 			continue
 		}
 		advances := false
@@ -1143,10 +1463,15 @@ func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, r
 		}
 		if !advances {
 			if current, found := levelState(view, r.LevelID); found {
-				levels[i] = execution.RuntimeLevelStateMutation{LevelID: r.LevelID, LevelStateCompatibility: r.LevelStateCompatibility, HistoryCompleteness: current.HistoryCompleteness, GapReasonCode: current.GapReasonCode, WarmupRequirementRef: r.WarmupRequirementRef, LastProcessedEventTime: current.LastProcessedEventTime}
+				// Carried as it is, origin and all.
+				levels[i] = execution.RuntimeLevelStateMutation{LevelID: r.LevelID, LevelStateCompatibility: r.LevelStateCompatibility, HistoryCompleteness: current.HistoryCompleteness, GapReasonCode: current.GapReasonCode, WarmupRequirementRef: r.WarmupRequirementRef, LastProcessedEventTime: current.LastProcessedEventTime, LastRealPointTime: lastReal(r.LevelID)}
+				if current.HistoryCompleteness == execution.HistoryWarming || current.HistoryCompleteness == execution.HistoryGapped {
+					levels[i] = levels[i].WithReasonOrigin(current.ReasonOrigin())
+				}
 				continue
 			}
-			levels[i] = execution.RuntimeLevelStateMutation{LevelID: r.LevelID, LevelStateCompatibility: r.LevelStateCompatibility, HistoryCompleteness: execution.HistoryWarming, GapReasonCode: execution.ReasonCode(contract.ReasonHistoryWarming), WarmupRequirementRef: r.WarmupRequirementRef}
+			levels[i] = execution.RuntimeLevelStateMutation{LevelID: r.LevelID, LevelStateCompatibility: r.LevelStateCompatibility, HistoryCompleteness: execution.HistoryWarming, GapReasonCode: execution.ReasonCode(contract.ReasonHistoryWarming), WarmupRequirementRef: r.WarmupRequirementRef, LastRealPointTime: lastReal(r.LevelID)}.
+				WithReasonOrigin(execution.StampReasonOrigin(slot, execution.ReasonCode(contract.ReasonHistoryWarming)))
 			continue
 		}
 		completeness := summaries[r.LevelID]
@@ -1177,7 +1502,8 @@ func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, r
 			(completeness == execution.HistoryWarming || completeness == execution.HistoryGapped) {
 			reason = guarded
 		}
-		levels[i] = execution.RuntimeLevelStateMutation{LevelID: r.LevelID, LevelStateCompatibility: r.LevelStateCompatibility, HistoryCompleteness: completeness, GapReasonCode: reason, WarmupRequirementRef: r.WarmupRequirementRef, LastProcessedEventTime: record.SourceTime()}
+		levels[i] = execution.RuntimeLevelStateMutation{LevelID: r.LevelID, LevelStateCompatibility: r.LevelStateCompatibility, HistoryCompleteness: completeness, GapReasonCode: reason, WarmupRequirementRef: r.WarmupRequirementRef, LastProcessedEventTime: record.SourceTime(), LastRealPointTime: lastReal(r.LevelID)}.
+			WithReasonOrigin(guards.originFor(view, slot, r.LevelID, completeness, reason))
 	}
 	advancing := make(map[uint32]bool, len(outcomes))
 	for _, outcome := range outcomes {
@@ -1201,7 +1527,7 @@ func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, r
 		return execution.StateMutation{}, versionErr
 	}
 	// Provisional: only the mutation that survives the series is digested, by
-	// evaluateSeries, once its full affected-record set is known.
+	// evaluateSeriesWith, once its full affected-record set is known.
 	//
 	// One point, not the window. The record this write leaves behind is the
 	// loaded history with this point merged in, bounded by the retention, and
@@ -1322,3 +1648,22 @@ type namedEvaluationError struct {
 func (e *namedEvaluationError) Error() string                  { return e.err.Error() }
 func (e *namedEvaluationError) Unwrap() error                  { return e.err }
 func (e *namedEvaluationError) QueryFailure() (string, string) { return "", e.code }
+
+// alertDimensions are a record's dimensions as the alert identity reads them:
+// the record's own, with the host overlay written over them where there is
+// one, as the platform's fuller rewrites a record placed by its host id
+// before the alert is built from it. The series' identity and its State
+// stay on the record's own dimensions; only the alert reads these.
+func alertDimensions(dimensions map[string]json.RawMessage, overlay map[string]json.RawMessage) map[string]json.RawMessage {
+	if len(overlay) == 0 {
+		return dimensions
+	}
+	merged := make(map[string]json.RawMessage, len(dimensions)+len(overlay))
+	for key, value := range dimensions {
+		merged[key] = value
+	}
+	for key, value := range overlay {
+		merged[key] = value
+	}
+	return merged
+}

@@ -23,7 +23,7 @@ import (
 // matters most at zero is not_configured: on a production worker it is the
 // wiring having come apart, and an absent series would hide exactly that.
 func TestOpenAlertGateCounterStartsAtZeroForEveryOutcomeAndAddsRecords(t *testing.T) {
-	const name = "bkmonitor_alarmd_trigger_open_alert_gate_total"
+	const name = "alarmd_trigger_open_alert_gate_total"
 	r := NewRecorder(BuildInfo{})
 	initial := gatherFamily(t, r, name)
 	if len(initial) != len(observability.OpenAlertGateOutcomes) {
@@ -63,18 +63,18 @@ func TestOpenAlertSetCollectorEmitsEveryWordAndTheAgeOnlyOnceCalibrated(t *testi
 	now := time.Unix(1_700_000_600, 0)
 	r.phaseTwo.openAlertSet.now = func() time.Time { return now }
 
-	if age := gatherFamily(t, r, "bkmonitor_alarmd_open_alert_set_authoritative_age_seconds"); len(age) != 0 {
+	if age := gatherFamily(t, r, "alarmd_open_alert_set_authoritative_age_seconds"); len(age) != 0 {
 		t.Fatalf("age series before any calibration = %v, want none", age)
 	}
 	lookups := map[string]float64{}
-	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_open_alert_set_lookup_total") {
+	for _, m := range gatherFamily(t, r, "alarmd_open_alert_set_lookup_total") {
 		lookups[m.Label[0].GetValue()] = m.GetCounter().GetValue()
 	}
 	if len(lookups) != len(openalerts.Answers) || lookups["self_maintained"] != 4 || lookups["passed_through"] != 0 {
 		t.Fatalf("lookups = %v, want every answer present and self_maintained at 4", lookups)
 	}
 	unavailable := map[string]float64{}
-	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_open_alert_set_unavailable_total") {
+	for _, m := range gatherFamily(t, r, "alarmd_open_alert_set_unavailable_total") {
 		unavailable[m.Label[0].GetValue()] = m.GetCounter().GetValue()
 	}
 	if len(unavailable) != len(openalerts.UnavailableReasons) || unavailable["read_error"] != 2 || unavailable["location_unconfirmed"] != 0 {
@@ -82,7 +82,7 @@ func TestOpenAlertSetCollectorEmitsEveryWordAndTheAgeOnlyOnceCalibrated(t *testi
 	}
 
 	refused := map[string]float64{}
-	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_open_alert_set_notices_refused_total") {
+	for _, m := range gatherFamily(t, r, "alarmd_open_alert_set_notices_refused_total") {
 		refused[m.Label[0].GetValue()] = m.GetCounter().GetValue()
 	}
 	if want := map[string]float64{"oversized": 0, "undecodable": 5, "invalid_key": 0}; !reflect.DeepEqual(refused, want) {
@@ -90,7 +90,7 @@ func TestOpenAlertSetCollectorEmitsEveryWordAndTheAgeOnlyOnceCalibrated(t *testi
 	}
 
 	stats.LoadedAt = now.Add(-90 * time.Second)
-	age := gatherFamily(t, r, "bkmonitor_alarmd_open_alert_set_authoritative_age_seconds")
+	age := gatherFamily(t, r, "alarmd_open_alert_set_authoritative_age_seconds")
 	if len(age) != 1 || age[0].GetGauge().GetValue() != 90 {
 		t.Fatalf("age after a calibration = %v, want one series at 90", age)
 	}

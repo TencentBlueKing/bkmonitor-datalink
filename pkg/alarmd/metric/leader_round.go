@@ -44,11 +44,11 @@ type leaderRoundCollector struct {
 
 func newLeaderRoundCollector() *leaderRoundCollector {
 	return &leaderRoundCollector{
-		rounds: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "leader_rounds_total"),
+		rounds: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "leader_rounds_total"),
 			"Reconcile rounds the control leader ran in this process, by result: completed, or failed in one of "+
 				"its stages. Emitted by a process once it has led a round, both results from then on.",
 			[]string{"result"}, nil),
-		seconds: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "leader_round_stage_seconds_total"),
+		seconds: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "leader_round_stage_seconds_total"),
 			"Seconds the control leader's reconcile rounds in this process spent in each stage, and the whole "+
 				"round under stage=\"total\". A stage's share of the round is its increase over total's; the "+
 				"latest round stage by stage is leader_round on the fleet snapshot. Every stage is emitted "+

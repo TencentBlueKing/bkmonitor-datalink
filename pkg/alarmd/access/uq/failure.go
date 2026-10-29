@@ -1,6 +1,11 @@
 package uq
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+import (
+	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+)
 
 // These errors retain existing error text; only QueryFailure is safe to log.
 // They do not change provider completeness, retry or cancellation behavior.
@@ -41,10 +46,32 @@ type bodyFailureError struct {
 	code     string
 	detail   string
 	timing   *execution.AttemptTiming
+	volume   *observability.QueryVolume
+	request  *execution.RequestFacts
+	// timeoutSource is which branch filed a timeout
+	// (observability.QueryTimeoutSources), copied onto request.
+	timeoutSource string
+	// failedAt is when bodyFailure timed the failure: the end of timing,
+	// and the request's CompletedUnixMilli.
+	failedAt time.Time
 }
 
-func (e *bodyFailureError) Error() string                                { return e.err.Error() }
-func (e *bodyFailureError) Unwrap() error                                { return e.err }
-func (e *bodyFailureError) QueryFailure() (string, string)               { return e.category, e.code }
-func (e *bodyFailureError) QueryFailureDetail() string                   { return e.detail }
-func (e *bodyFailureError) QueryFailureTiming() *execution.AttemptTiming { return e.timing }
+func (e *bodyFailureError) Error() string                                  { return e.err.Error() }
+func (e *bodyFailureError) Unwrap() error                                  { return e.err }
+func (e *bodyFailureError) QueryFailure() (string, string)                 { return e.category, e.code }
+func (e *bodyFailureError) QueryFailureDetail() string                     { return e.detail }
+func (e *bodyFailureError) QueryFailureTiming() *execution.AttemptTiming   { return e.timing }
+func (e *bodyFailureError) QueryFailureVolume() *observability.QueryVolume { return e.volume }
+func (e *bodyFailureError) QueryFailureRequest() *execution.RequestFacts   { return e.request }
+
+// requestFailureError is a query's failure that names nothing of its own,
+// with the request it failed: which deadline was on it and the trace id it
+// was sent with. It changes nothing else about the error it wraps.
+type requestFailureError struct {
+	err     error
+	request *execution.RequestFacts
+}
+
+func (e *requestFailureError) Error() string                                { return e.err.Error() }
+func (e *requestFailureError) Unwrap() error                                { return e.err }
+func (e *requestFailureError) QueryFailureRequest() *execution.RequestFacts { return e.request }

@@ -88,7 +88,7 @@ func retainedReservationSeries(t *testing.T, recorder *metric.Recorder) (float64
 		t.Fatal(err)
 	}
 	for _, family := range families {
-		if family.GetName() != "bkmonitor_alarmd_capacity_reserved" {
+		if family.GetName() != "alarmd_capacity_reserved" {
 			continue
 		}
 		for _, series := range family.GetMetric() {

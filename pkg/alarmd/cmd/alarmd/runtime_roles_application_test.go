@@ -54,7 +54,7 @@ func TestRoleAuthReadinessIsIndependentOfLegacyBusinessReadiness(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			runtime.Start(ctx, app.health)
-			waitPhaseTwoCondition(t, 3*time.Second, "channel auth ready", func() bool {
+			waitPhaseTwoCondition(t, "channel auth ready", func() bool {
 				return app.health.channelReadiness() == observability.HealthReady && (selected == nil || app.HealthSnapshot().Ready)
 			})
 			if selected == nil {
@@ -65,7 +65,7 @@ func TestRoleAuthReadinessIsIndependentOfLegacyBusinessReadiness(t *testing.T) {
 				t.Fatal("ready authentication/store or legacy business was not ready")
 			}
 			unavailable.Store(true)
-			waitPhaseTwoCondition(t, 3*time.Second, "auth dependency failure", func() bool {
+			waitPhaseTwoCondition(t, "auth dependency failure", func() bool {
 				return app.health.channelReadiness() == observability.HealthNotReady && (selected == nil || !app.HealthSnapshot().Ready)
 			})
 			snapshot := app.HealthSnapshot()
@@ -73,7 +73,7 @@ func TestRoleAuthReadinessIsIndependentOfLegacyBusinessReadiness(t *testing.T) {
 				t.Fatalf("channel failure changed the wrong readiness contract: %+v", snapshot)
 			}
 			unavailable.Store(false)
-			waitPhaseTwoCondition(t, 3*time.Second, "auth dependency recovery", func() bool {
+			waitPhaseTwoCondition(t, "auth dependency recovery", func() bool {
 				return app.HealthSnapshot().Ready && app.health.channelReadiness() == observability.HealthReady
 			})
 			if _, found, err := runtime.store.ReadWorker(ctx, cfg.PhaseTwo.Worker.ID); err != nil || found {
@@ -139,7 +139,7 @@ func TestApplicationInstallsChannelWhileBusinessStartupWaits(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatal("business-waiting process lost its legacy /readyz behavior")
 	}
-	waitPhaseTwoCondition(t, 3*time.Second, "early instance", func() bool {
+	waitPhaseTwoCondition(t, "early instance", func() bool {
 		_, found, err := runtime.store.ReadInstance(ctx, cfg.PhaseTwo.Worker.ID)
 		return err == nil && found
 	})

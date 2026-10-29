@@ -30,7 +30,7 @@ func openRoleRuntimeForTest(t *testing.T, cfg config.Config) *phaseTwoRoleRuntim
 			t.Error(err)
 		}
 	})
-	waitPhaseTwoCondition(t, 3*time.Second, "role instance registration", func() bool {
+	waitPhaseTwoCondition(t, "role instance registration", func() bool {
 		instance, found, err := runtime.store.ReadInstance(context.Background(), cfg.PhaseTwo.Worker.ID)
 		return err == nil && found && instance.Incarnation == runtime.Incarnation
 	})

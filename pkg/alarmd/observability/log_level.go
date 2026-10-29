@@ -31,13 +31,14 @@ var warnReasons = makeReasonSet([]ReasonCode{
 	"KAFKA_UNAVAILABLE", "MESSAGE_BUDGET_EXCEEDED", "OUTPUT_ACK_UNKNOWN", "OUTPUT_CLIENT_REJECTED",
 	"OUTPUT_CONVERSION_REJECTED", "OUTPUT_LEASE_EXPIRING", "OWNERSHIP_LEASE_BUSY",
 	"OWNERSHIP_NOT_DESIRED", "OWNERSHIP_STALE_FENCE", "PROGRESS_BEGIN_FAILED",
-	"PROGRESS_BEGIN_REJECTED", "PROVIDER_UNAVAILABLE", "QUERY_PARTIAL", "QUERY_TIMEOUT",
+	"PROGRESS_BEGIN_REJECTED", "PROVIDER_UNAVAILABLE", "QUERY_PARTIAL", "QUERY_TIMEOUT", "QUERY_DELIVERY_TIMEOUT",
 	"QUERY_UNAVAILABLE", "READINESS_BUDGET_INVALID", "RECORD_TOO_LARGE", "REDIS_UNAVAILABLE",
 	"RESOURCE_HARD_STOP", "SCHEDULE_PRUNED", "SCHEDULE_REPAIRED", "SCHEDULE_REOPENED", "SLOT_BUDGET_EXCEEDED", "SLOT_SOURCE_RETRY",
 	"SNAPSHOT_RETENTION_INSUFFICIENT", "SNAPSHOT_RETRY_PENDING", "SNAPSHOT_UNAVAILABLE",
 	"STATE_BUDGET_EXCEEDED", "STATE_CORRUPT", "STATE_LEVEL_CONTRACT_MISMATCH", "STATE_READ_DEADLINE",
 	"STATE_READ_TIMEOUT", "STATE_SCHEMA_UNSUPPORTED", "STATE_STALE_VERSION", "STATE_VERSION_CONFLICT",
-	"STATE_WRITE_RETRYABLE", "TRIGGER_INVARIANT", "VALIDATION_BUDGET_EXCEEDED", "VIEW_NOT_EXECUTABLE",
+	"STATE_WRITE_RETRYABLE", "SUPPLEMENT_KEPT_READ_ABSENT", "TARGET_RESOLUTION_UNAVAILABLE",
+	"TRIGGER_INVARIANT", "VALIDATION_BUDGET_EXCEEDED", "VIEW_NOT_EXECUTABLE",
 	"view_not_executable", "QUERY_PERMIT_DEADLINE", "QUERY_PERMIT_QUEUE_FULL", "QUERY_PERMIT_RECOVERY_OFF",
 	"QUERY_REASON_UNRECORDED",
 	// A Plan's no-data detection that kept skipping until it counted as
@@ -60,15 +61,42 @@ var warnReasons = makeReasonSet([]ReasonCode{
 var infoActivationKinds = map[string]bool{"not_drained": true, "cas_conflict": true}
 
 // warnViewStreamReasons are the view stream's words for a configuration or a
-// defect -- a token, a protocol, a digest, a registry that does not answer.
+// defect -- a token, a protocol, a digest, a registry that does not answer --
+// and for a Worker that found its Leader and could not reach it or send it
+// its Hello (LEADER_UNAVAILABLE, CONNECT_FAILED, DIAL_FAILED,
+// HELLO_SEND_FAILED). Those four were written at WARN as reason_not_reported
+// before they had words, and keep it: a Leader restart that sets every
+// Worker off is bounded by the repeated-line limiter, not by a lower level.
 // Its other words are a session's ordinary life: no leader yet, not the
-// leader, a stream closed, replaced or idle.
+// leader, a stream closed, replaced or idle, and SEND_FAILED, the Leader's
+// own end of a session.
 var warnViewStreamReasons = makeReasonSet([]ReasonCode{
 	"LISTENER_UNPARSABLE", "DELTA_BASE_MISMATCH", "DELTA_DIGEST_MISMATCH", "SNAPSHOT_INVALID",
 	"SNAPSHOT_INCOMPLETE", "VIEW_FOR_ANOTHER_WORKER", "UNKNOWN_WORKER", "BAD_TOKEN", "PROTOCOL_VERSION",
 	"HELLO_EXPECTED", "REGISTRY_UNAVAILABLE", "DISCOVERY_FAILED", "NO_ROUTE", "RECV_FAILED",
 	"LEADER_NO_ENDPOINT", "LEADER_UNREGISTERED",
+	"LEADER_UNAVAILABLE", "CONNECT_FAILED", "DIAL_FAILED", "HELLO_SEND_FAILED",
 })
+
+// warnRunOutcomes are the Runner round outcomes the fleet page files under
+// this deployment or a backend not answering: the source refusing, failing
+// or blocked, and a round that panicked or failed otherwise. The
+// runner_returned line that carries them is not written; the set keeps the
+// log's reading of the word the same as the page's.
+var warnRunOutcomes = makeReasonSet([]ReasonCode{"source_retry", "source_blocked", "source_error", "panic", "other_error"})
+
+// warnCursorRefusals are a store's refusals of a pruned cursor's skip: the
+// cursor stays where nothing can read it and the Query Group evaluates
+// nothing until a later skip goes through. They were written at WARN as
+// reason_not_reported and keep it.
+var warnCursorRefusals = makeReasonSet([]ReasonCode{
+	CursorRefusalProgressMissing, CursorRefusalRangeInFlight, CursorRefusalCursorMoved, CursorRefusalCASConflict,
+})
+
+// warnSlotPathReasons are the Slot path's own words for a Slot attempt held
+// up: a wait inside it that outlasted a settling wait. It was written at
+// WARN as reason_not_reported and keeps it.
+var warnSlotPathReasons = makeReasonSet([]ReasonCode{ReasonSlotWaitSlow})
 
 // warnDecisionReasons are the scheduler decisions that say it could not
 // decide or could not do what it decided; the others are a replay or range
@@ -88,7 +116,7 @@ var warnMaintenanceReasons = makeReasonSet([]ReasonCode{
 // deferred, within its grace, or refused by design.
 var warnAbsentCloseReasons = makeReasonSet([]ReasonCode{
 	"index_unreadable", "evidence_unavailable", "send_failed", "memory_full", "link_unavailable",
-	"link_unhealthy", "snapshot_unusable", "snapshot_empty", "snapshot_stale",
+	"snapshot_unusable", "snapshot_empty", "snapshot_stale",
 })
 
 // ReasonLogLevel is the level a result that is neither a success nor a
@@ -98,6 +126,7 @@ func ReasonLogLevel(reason ReasonCode) slog.Level {
 	case reason == ReasonNone:
 		return slog.LevelInfo
 	case inReasonSet(warnReasons, reason), inReasonSet(warnViewStreamReasons, reason), inReasonSet(warnDecisionReasons, reason),
+		inReasonSet(warnRunOutcomes, reason), inReasonSet(warnCursorRefusals, reason), inReasonSet(warnSlotPathReasons, reason),
 		inReasonSet(warnMaintenanceReasons, reason), inReasonSet(warnAbsentCloseReasons, reason):
 		return slog.LevelWarn
 	case inReasonSet(activationFailureReasonSet, reason):
@@ -151,6 +180,9 @@ func observationLevel(observation Observation) slog.Level {
 	}
 	if failedResult(observation.Result) {
 		return slog.LevelError
+	}
+	if observation.RetryingAfterFailure {
+		return slog.LevelWarn
 	}
 	if observation.HeldBy != nil || observation.AwaitingView {
 		return slog.LevelInfo

@@ -108,6 +108,9 @@ const (
 	closeOutcomeViewNotExecutable    = string(observability.EffectiveCloseViewNotExecutable)
 	closeOutcomeDeletionUnsettled    = string(observability.EffectiveCloseCalendarDeletionUnsettled)
 	closeOutcomeBoundaryActive       = string(observability.EffectiveCloseBoundaryActive)
+	closeOutcomeBusinessUnknown      = string(observability.EffectiveCloseBusinessUnknown)
+	closeOutcomeSourceLastKnown      = string(observability.EffectiveCloseSourceLastKnown)
+	closeOutcomeSourceUnknown        = string(observability.EffectiveCloseSourceUnknown)
 )
 
 // maintenanceGroup is what the loop knows about one owned Query Group from
@@ -143,7 +146,17 @@ type effectiveMaintenance struct {
 	// sourceOf, when set, is where sourceID comes from: the source of the
 	// target the alert link's Console lists for this deployment, read rather
 	// than configured.
-	sourceOf             func(context.Context) (string, error)
+	sourceOf func(context.Context) (string, error)
+	// sourceRetryAt is when the source is read again after a failed read,
+	// sourceBackoff the wait that set it and sourceErr the failure, kept for
+	// the steps that wait it out.
+	sourceRetryAt time.Time
+	sourceBackoff time.Duration
+	sourceErr     error
+	// businesses answers, for a global business Plan, which business each
+	// of its alerts was filed under; nil without the link's Console, where
+	// such a Plan's alerts are not closed.
+	businesses           *openalerts.AlertBusinesses
 	byGroup              map[execution.QueryGroupIdentity][]openalerts.StrategyKey
 	refs                 map[openalerts.StrategyKey]int
 	calibrationRequested map[openalerts.StrategyKey]time.Time
@@ -192,7 +205,13 @@ type maintenanceOutcome struct {
 	FirstAt    time.Time `json:"first_at"`
 	LastAt     time.Time `json:"last_at"`
 	Count      uint64    `json:"count"`
+	// FirstError is the error's text at FirstAt, and Error the latest, with
+	// ErrorSince when that text was first seen: a run whose failure changed
+	// - timeouts, then a 502 - reads as both, each with its own time, so the
+	// first time is never read as the latest error's.
+	FirstError string    `json:"first_error,omitempty"`
 	Error      string    `json:"error,omitempty"`
+	ErrorSince time.Time `json:"error_since"`
 }
 
 // maintenanceReading is the loop's counts and the Query Groups it did not
@@ -243,7 +262,10 @@ func (m *effectiveMaintenance) remember(trace observability.TraceFields, outcome
 	for index := range list {
 		kept := &list[index]
 		if kept.QueryGroup == trace.QueryGroupKey && kept.StrategyID == trace.StrategyID && kept.BusinessID == trace.BusinessID {
-			kept.LastAt, kept.Count, kept.Error = at, kept.Count+1, text
+			if text != kept.Error {
+				kept.Error, kept.ErrorSince = text, at
+			}
+			kept.LastAt, kept.Count = at, kept.Count+1
 			return
 		}
 		if oldest < 0 || kept.LastAt.Before(list[oldest].LastAt) {
@@ -251,7 +273,7 @@ func (m *effectiveMaintenance) remember(trace observability.TraceFields, outcome
 		}
 	}
 	entry := maintenanceOutcome{QueryGroup: trace.QueryGroupKey, StrategyID: trace.StrategyID, BusinessID: trace.BusinessID,
-		FirstAt: at, LastAt: at, Count: 1, Error: text}
+		FirstAt: at, LastAt: at, Count: 1, FirstError: text, Error: text, ErrorSince: at}
 	if len(list) < maintenanceRecentKept {
 		m.recent[outcome] = append(list, entry)
 		return
@@ -316,9 +338,14 @@ func (m *effectiveMaintenance) run(ctx context.Context) {
 // Group's Plans from the store on every tick, whether or not one of them had
 // a schedule: on a deployment where none did, that was a constant read rate
 // against the control store that answered nothing.
+//
+// The step has no deadline of its own, and neither has a group's read or a
+// send: every call in it is bounded by its own client, a Redis command by
+// the configured dial, read and write timeouts and the close write by the
+// producer's (decisionProducerTimeout). A budget over the whole step used to
+// be shared by every owned group's reads and sends, less than one Kafka write
+// may take, so a slow store cut the step at whichever call came last.
 func (m *effectiveMaintenance) step(ctx context.Context) {
-	ctx, cancelStep := context.WithTimeout(ctx, 5*time.Second)
-	defer cancelStep()
 	m.bundle.mu.RLock()
 	owned := make(map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime, len(m.bundle.runners))
 	if !m.bundle.draining && !m.bundle.closed {
@@ -400,11 +427,9 @@ func (m *effectiveMaintenance) step(ctx context.Context) {
 		}
 		qg := stale[(start+n)%len(stale)]
 		m.readCursor = qg
-		round, cancel := context.WithTimeout(ctx, 5*time.Second)
-		err := runners[qg].withMaintenance(round, func(round context.Context, _ func(context.Context) error) error {
+		err := runners[qg].withMaintenance(ctx, func(round context.Context, _ func(context.Context) error) error {
 			return m.readGroup(round, qg, runners[qg])
 		})
-		cancel()
 		if err != nil {
 			// The view not allowing the read yet is a rollout's shape, every
 			// owned Query Group once in a replica's first seconds; the store
@@ -419,6 +444,7 @@ func (m *effectiveMaintenance) step(ctx context.Context) {
 	}
 
 	deletions := m.settleCalendarDeletions(calendarReads(readUnderCurrentLease(m.groups, runners)), now)
+	sourceErr := m.readSource(ctx, groups, runners)
 	for _, qg := range groups {
 		if ctx.Err() != nil {
 			return
@@ -429,9 +455,67 @@ func (m *effectiveMaintenance) step(ctx context.Context) {
 			continue
 		}
 		m.refreshLegacy(ctx, qg, known.legacy)
-		m.closeInactive(ctx, qg, runner, known.closable, deletions)
+		m.closeInactive(ctx, qg, runner, known.closable, deletions, sourceErr)
 	}
 }
+
+// effectiveSourceCoverage is what the read of the closes' source may take:
+// effective time is resolved to the minute (a time range is HH:MM, a Level's
+// step sixty seconds), so a close held back by the read for less than a
+// minute lands in the minute it would have, and past that the next step asks
+// again rather than this one waiting on.
+const effectiveSourceCoverage = time.Minute
+
+// readSource reads, once a step, the source the closes are for, when any
+// group has a Plan it may close: a Console that does not answer is asked
+// once, not once for each owned group in turn.
+//
+// The source is a property of this deployment, used to keep the closes to
+// its own alerts; a Console outage does not change it. So a failed read is
+// stale-if-error: the closes go on with the source last read - by this loop,
+// or else by the open-alert copy's last calibration - under
+// source_last_known, once per step. Only with no source read yet are the
+// closes deferred, under source_unknown, and the error returned is what
+// tells closeInactive to hold them. A failed read is not repeated every
+// step: it waits from one step, doubling, up to effectiveSourceCoverage.
+func (m *effectiveMaintenance) readSource(ctx context.Context, groups []execution.QueryGroupIdentity,
+	runners map[execution.QueryGroupIdentity]maintenanceRunner) error {
+	if m.sourceOf == nil {
+		return nil
+	}
+	wanted := false
+	for _, qg := range groups {
+		if known := m.groups[qg]; known != nil && runners[qg] != nil && len(known.closable) > 0 {
+			wanted = true
+			break
+		}
+	}
+	if !wanted {
+		return nil
+	}
+	if now := m.bundle.dependencies.Now(); !now.Before(m.sourceRetryAt) {
+		source, err := m.sourceOf(ctx)
+		if err == nil {
+			m.sourceID, m.sourceRetryAt, m.sourceBackoff, m.sourceErr = source, time.Time{}, 0, nil
+			return nil
+		}
+		m.sourceBackoff = min(max(2*m.sourceBackoff, effectiveSourceRetryFloor), effectiveSourceCoverage)
+		m.sourceRetryAt, m.sourceErr = now.Add(m.sourceBackoff), err
+	}
+	if m.sourceID == "" {
+		m.sourceID = m.cache.OwnEventSourceID()
+	}
+	if m.sourceID != "" {
+		m.observe(ctx, "", closeOutcomeSourceLastKnown, m.sourceErr, 0)
+		return nil
+	}
+	m.observe(ctx, "", closeOutcomeSourceUnknown, m.sourceErr, 0)
+	return m.sourceErr
+}
+
+// effectiveSourceRetryFloor is the first wait after a failed source read:
+// one step of the loop.
+const effectiveSourceRetryFloor = time.Second
 
 // readUnderCurrentLease is the groups whose Plans were read under the lease
 // their owner holds now. A group whose lease moved holds Plans from before
@@ -642,17 +726,14 @@ func planHasSchedule(plan *strategy.CompiledPlan) bool {
 // when a batch is ready to send, for the owner check before the send and
 // the send itself. A Plan that reads a calendar deleted is not closed until
 // the deletion settles (settleCalendarDeletions).
-func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.QueryGroupIdentity, runner maintenanceRunner, plans []controlplane.MaintenancePlan, deletions calendarDeletions) {
+func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.QueryGroupIdentity, runner maintenanceRunner, plans []controlplane.MaintenancePlan, deletions calendarDeletions, sourceErr error) {
 	if len(plans) == 0 {
 		return
 	}
-	if m.sourceOf != nil {
-		source, err := m.sourceOf(ctx)
-		if err != nil {
-			m.observe(ctx, qg, closeOutcomeUnavailable, err, 0)
-			return
-		}
-		m.sourceID = source
+	if sourceErr != nil {
+		// Counted once for the step by readSource (source_unknown), not
+		// again for each Query Group it holds back.
+		return
 	}
 	at := m.bundle.dependencies.Now()
 	start := m.planCursor[qg]
@@ -703,7 +784,12 @@ func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.Q
 			m.observe(ctx, qg, closeOutcomeIdentityInvalid, err, 0)
 			continue
 		}
+		// A global business Plan's alerts are each filed under the business
+		// they are about, and a close carries its alert's, read from the
+		// alert's record; every other Plan's carry the Plan's business.
+		global := plan.Compiled.GlobalBusiness()
 		batch := make([]linkdoutput.CloseRequest, 0, m.capacity.CloseBatch)
+		unknown := 0
 		for _, alert := range alerts {
 			if alert.EventSourceID != m.sourceID {
 				continue
@@ -712,11 +798,27 @@ func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.Q
 			if _, sent := m.sent[sentKey]; sent {
 				continue
 			}
+			alertBusiness := business
+			if global {
+				if ctx.Err() != nil {
+					break
+				}
+				read, err := m.alertBusiness(ctx, key, alert)
+				if err != nil {
+					unknown++
+					continue
+				}
+				alertBusiness = read
+			}
 			batch = append(batch, linkdoutput.CloseRequest{TenantID: key.TenantID, Fingerprint: alert.Fingerprint, AlertInstanceID: alert.AlertID,
-				StrategyID: strategyID, StrategyRevision: ref.SnapshotRevision, BusinessID: business, OccurredAt: at})
+				StrategyID: strategyID, StrategyRevision: ref.SnapshotRevision, BusinessID: alertBusiness, OccurredAt: at})
 			if len(batch) == remaining {
 				break
 			}
+		}
+		if unknown > 0 {
+			m.observeTrace(ctx, observability.TraceFields{QueryGroupKey: string(qg), StrategyID: plan.Identity.StrategyID},
+				closeOutcomeBusinessUnknown, errors.New("an alert's record names no business for a global business Plan"), unknown)
 		}
 		if len(batch) == 0 {
 			continue
@@ -741,8 +843,6 @@ func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.Q
 // time unreadable at the send, the producer failing.
 func (m *effectiveMaintenance) sendClose(ctx context.Context, qg execution.QueryGroupIdentity, runner maintenanceRunner, plan controlplane.MaintenancePlan, key openalerts.StrategyKey, batch []linkdoutput.CloseRequest) (int, error) {
 	sent := 0
-	round, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	// Counted in flight on the Query Group's lifecycle, as a Slot is: a
 	// handover waits for the send before releasing the lease it is under.
 	lifecycle, owned := m.bundle.enterOwnedWork(qg)
@@ -755,7 +855,7 @@ func (m *effectiveMaintenance) sendClose(ctx context.Context, qg execution.Query
 		return 0, err
 	}
 	defer m.bundle.exitOwnedWork(lifecycle)
-	err := runner.withMaintenance(round, func(round context.Context, check func(context.Context) error) error {
+	err := runner.withMaintenance(ctx, func(round context.Context, check func(context.Context) error) error {
 		// Recheck current ownership and rules immediately before side effects;
 		// never retry an old inactive judgment across an active boundary.
 		if err := check(round); err != nil {
@@ -774,8 +874,10 @@ func (m *effectiveMaintenance) sendClose(ctx context.Context, qg execution.Query
 		case fact.Status() != strategy.EffectiveTimeInactive:
 			return errCloseTimeUnknown
 		}
-		// Sarama's synchronous ACK wait follows the existing producer timeout;
-		// a context deadline cannot cancel a message already handed to Kafka.
+		// Sarama's synchronous ACK wait follows the producer's timeout
+		// (decisionProducerTimeout, 10s: a picked number, on the timeout
+		// audit's follow-up list); a context deadline cannot cancel a
+		// message already handed to Kafka.
 		if err := m.writer.WriteCloseBatch(round, batch); err != nil {
 			return fmt.Errorf("%w: %w", errCloseSend, err)
 		}
@@ -962,6 +1064,16 @@ func (m *effectiveMaintenance) requestCalibration(key openalerts.StrategyKey, at
 // observe writes the line and counts the outcome. count is what the outcome
 // is measured in - alerts for close_acked - and
 // one for the outcomes that are events in their own right.
+// alertBusiness is the business a global business Plan's alert was filed
+// under, from its record. Without the Console there is no record to read and
+// the alert is not closed.
+func (m *effectiveMaintenance) alertBusiness(ctx context.Context, key openalerts.StrategyKey, alert openalerts.Alert) (int64, error) {
+	if m.businesses == nil {
+		return 0, openalerts.ErrAlertBusinessUnknown
+	}
+	return m.businesses.Of(ctx, key.TenantID, alert.EventSourceID, key.StrategyID, alert.AlertID)
+}
+
 func (m *effectiveMaintenance) observe(ctx context.Context, qg execution.QueryGroupIdentity, outcome string, err error, count int) {
 	m.observeTrace(ctx, observability.TraceFields{QueryGroupKey: string(qg)}, outcome, err, count)
 }
@@ -1027,6 +1139,6 @@ func cliMaintenanceOperation(source *maintenanceSource) obchannel.Operation {
 			}
 			return obchannel.Outcome{Value: reading, Complete: reading.Running,
 				Limitations: []string{"Use meta.answered_by to identify this process: each replica maintains the Query Groups it owns, and another replica's outcomes are read by targeting it.",
-					"Counts and outcomes are this process's since it started: first_at is when this process first saw the Query Group under the word, not when the condition began. At most 32 Query Groups are kept per word, the one seen longest ago giving way; each error's text is cut to 256 bytes."}}
+					"Counts and outcomes are this process's since it started: first_at is when this process first saw the Query Group under the word, not when the condition began. first_error is the text at first_at and error the latest, which has been the text since error_since: read a time only with its own text. At most 32 Query Groups are kept per word, the one seen longest ago giving way; each error's text is cut to 256 bytes."}}
 		}}
 }

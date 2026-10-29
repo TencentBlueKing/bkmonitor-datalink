@@ -22,6 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 )
 
@@ -58,7 +59,7 @@ func newRebindFixture(t *testing.T) *rebindFixture {
 		answer(w, r)
 	}))
 	t.Cleanup(console.Close)
-	cfg.PhaseTwo.Linkd.ConsoleURL = console.URL
+	cfg.PhaseTwo.Linkd.ConsoleURL = console.URL + testLinkdAPIRoot
 	cfg.PhaseTwo.Linkd.Username, cfg.PhaseTwo.Linkd.Password = "user", "secret"
 	startup := &fleet.LinkdDiscoveryFacts{Outcome: fleet.LinkdDiscoveryFailed, Attempts: linkdDiscoveryAttempts, Error: "console unreachable"}
 	open := func(connection config.RedisConnectionConfig) (redis.UniversalClient, bool) {
@@ -67,7 +68,7 @@ func newRebindFixture(t *testing.T) *rebindFixture {
 		}
 		return redis.NewClient(&redis.Options{Addr: connection.Address, DB: connection.DB}), true
 	}
-	index, err := newLinkdIndex(cfg, runtimeClient, cfg.RuntimeStoreRedis(), startup, open, time.Now, nil)
+	index, err := newLinkdIndex(cfg, runtimeClient, cfg.RuntimeStoreRedis(), startup, open, nil, time.Now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,14 +86,16 @@ func (f *rebindFixture) target() openalerts.TargetBinding {
 		Address: f.cfg.PlatformCache.TargetGroup.Address, Database: 0, Sources: []string{"source"}}
 }
 
-func waitUntil(t *testing.T, within time.Duration, what string, condition func() bool) {
+// waitUntil waits for condition until the test's deadline. The duration its
+// callers pass is the bound it once had and is not read.
+func waitUntil(t *testing.T, what string, condition func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(within)
+	deadline := testwait.Deadline(t)
 	for !condition() {
 		if time.Now().After(deadline) {
-			t.Fatalf("not within %s: %s", within, what)
+			t.Fatalf("not before the test's deadline: %s", what)
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 }
 
@@ -117,7 +120,7 @@ func TestAProcessThatCouldNotAskAtStartupMovesItsReadsWhenTheConsoleAnswers(t *t
 		t.Fatal("a location the Console did not name was bound")
 	}
 	go func() { _ = cache.Run(ctx) }()
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond) // fixed-wait: nothing must load before the Console answers; 300 ms is many refreshes of the running cache
 	if stats := cache.Stats(); stats.Loaded != 0 || stats.UnavailableReason != openalerts.UnavailableLocationUnconfirmed {
 		t.Fatalf("loaded %d reason %q before the Console answered, want nothing read and the location unconfirmed", stats.Loaded, stats.UnavailableReason)
 	}
@@ -133,7 +136,7 @@ func TestAProcessThatCouldNotAskAtStartupMovesItsReadsWhenTheConsoleAnswers(t *t
 	}
 	go f.index.Location.retry(ctx, f.cfg, discover, 10*time.Millisecond, 20*time.Millisecond)
 
-	waitUntil(t, 10*time.Second, "the copy reads the link's set after the move", func() bool {
+	waitUntil(t, "the copy reads the link's set after the move", func() bool {
 		stats := cache.Stats()
 		return stats.Loaded == 1 && stats.Members == 1 && stats.LocationConfirmed
 	})
@@ -184,17 +187,30 @@ func TestTheRetryStopsWithTheProcess(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	location := &linkdLocationSwitch{discovery: fleet.LinkdDiscoveryFacts{Outcome: fleet.LinkdDiscoveryFailed}, replaced: make(chan struct{})}
 	done := make(chan struct{})
+	// The cancel goes in once the retry has asked again: it is the loop
+	// running, not one that has not started, that has to stop.
+	asked := make(chan struct{}, 1)
 	go func() {
 		location.retry(ctx, linkdLocationConfig(), func(context.Context, openalerts.HTTPReconcilerOptions) (openalerts.TargetBinding, error) {
+			select {
+			case asked <- struct{}{}:
+			default:
+			}
 			return openalerts.TargetBinding{}, errors.New("console unreachable")
 		}, time.Millisecond, time.Millisecond)
 		close(done)
 	}()
-	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-asked:
+	case <-done:
+		t.Fatal("the retry ended before it asked")
+	case <-testwait.Expired(t):
+		t.Fatal("the retry never asked the Console")
+	}
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("the retry did not stop with its context")
 	}
 }
@@ -234,7 +250,7 @@ func TestAMoveOfTheReadsForgetsWhatTheCopyHeld(t *testing.T) {
 	}
 	// The first round finds the link's place and moves there; a later one
 	// confirms it and calibrates the strategy at it.
-	waitUntil(t, 5*time.Second, "the strategy calibrated at the place the Console names", func() bool {
+	waitUntil(t, "the strategy calibrated at the place the Console names", func() bool {
 		cache.RequestCalibration()
 		cache.Refresh(ctx)
 		return cache.Stats().Calibrated == 1
@@ -270,14 +286,14 @@ func TestARetryAfterAReconciliationFoundTheLinkLeavesTheReadsAlone(t *testing.T)
 		defer close(done)
 		f.index.Location.retry(ctx, f.cfg, discover, 300*time.Millisecond, time.Second)
 	}()
-	waitUntil(t, 5*time.Second, "the reconciliation moved the reads and the strategy is calibrated there", func() bool {
+	waitUntil(t, "the reconciliation moved the reads and the strategy is calibrated there", func() bool {
 		cache.RequestCalibration()
 		cache.Refresh(ctx)
 		return cache.Stats().Calibrated == 1
 	})
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("the retry kept running after a reconciliation found the link")
 	}
 	if got := asked.Load(); got != 0 {

@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/tracing"
 	"io"
 	"net/http"
 	"strconv"
@@ -49,12 +50,22 @@ type RangePoint struct {
 // misconfigured scope is indistinguishable from a quiet system -- which is the
 // worse of the two answers to get wrong, because it looks like good news.
 type RangeResult struct {
+	// Points is every series' samples together; Series keeps them apart,
+	// each with the labels the expression grouped it by.
 	Points []RangePoint
+	Series []RangeSeries
 	// Code is the provider's own classification when it returned no series.
 	// Empty means the provider raised nothing.
 	Code    string
 	Message string
 	Partial bool
+}
+
+// RangeSeries is one series of a range answer: its group labels, as the
+// provider names them, and its samples.
+type RangeSeries struct {
+	Labels map[string]string
+	Points []RangePoint
 }
 
 // Unavailable reports whether the provider declined to answer. An empty result
@@ -70,8 +81,10 @@ type promQLRequestBody struct {
 
 type promQLResponseBody struct {
 	Series []struct {
-		Columns []string    `json:"columns"`
-		Values  [][]float64 `json:"values"`
+		GroupKeys   []string    `json:"group_keys"`
+		GroupValues []string    `json:"group_values"`
+		Columns     []string    `json:"columns"`
+		Values      [][]float64 `json:"values"`
 	} `json:"series"`
 	Status *struct {
 		Code    string `json:"code"`
@@ -120,7 +133,7 @@ func (client *Client) Range(ctx context.Context, request RangeRequest) (RangeRes
 	// The page's own request carries no deadline - a reader is waiting and
 	// the handler lets them wait - so the query bounds itself. It is a
 	// ceiling on hanging, not a tuning knob.
-	ctx, cancel := context.WithTimeout(ctx, rangeDeadline)
+	ctx, cancel := context.WithTimeout(ctx, RangeDeadline)
 	defer cancel()
 	httpRequest, err := http.NewRequestWithContext(
 		ctx, http.MethodPost, client.endpoint+"/query/ts/promql", bytes.NewReader(encoded))
@@ -130,25 +143,36 @@ func (client *Client) Range(ctx context.Context, request RangeRequest) (RangeRes
 	httpRequest.Header.Set("Content-Type", "application/json")
 	httpRequest.Header.Set(headerQuerySource, client.querySource)
 	httpRequest.Header.Set(headerSpace, request.SpaceUID)
+	// A page's read is no Slot's: a fresh trace, not sampled.
+	_, traceParent, traceID := tracing.StartQuery(ctx, "uq", 0, 1)
+	httpRequest.Header.Set(headerTraceParent, traceParent)
 	// A connection the server dropped while idle is re-dialed by the
 	// transport, as for an evaluation query (markReplayable).
 	markReplayable(httpRequest)
 
 	response, err := client.httpClient.Do(httpRequest)
 	if err != nil {
-		return RangeResult{}, fmt.Errorf("alarmd access uq: range request: %w", err)
+		// The trace id it was sent with, as a refusal names it, so a timeout
+		// or a cut connection can be found on the provider's side too.
+		return RangeResult{}, fmt.Errorf("alarmd access uq: range request (trace %s): %w", traceID, err)
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return RangeResult{}, fmt.Errorf("alarmd access uq: range query returned %d", response.StatusCode)
+		// The error can reach a log, so it names the status, the refusal's
+		// class and the trace id to find it by on the provider's side; never
+		// the body, which can echo the expression.
+		body, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyRead))
+		rejection := providerRejection(response.StatusCode, body, traceID)
+		return RangeResult{}, fmt.Errorf("alarmd access uq: range query returned %d (%s, trace %s)",
+			response.StatusCode, rejection.Class, rejection.TraceID)
 	}
 	raw, err := io.ReadAll(io.LimitReader(response.Body, client.limits.MaxBodyBytes))
 	if err != nil {
-		return RangeResult{}, fmt.Errorf("alarmd access uq: read range response: %w", err)
+		return RangeResult{}, fmt.Errorf("alarmd access uq: read range response (trace %s): %w", traceID, err)
 	}
 	var decoded promQLResponseBody
 	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return RangeResult{}, fmt.Errorf("alarmd access uq: decode range response: %w", err)
+		return RangeResult{}, fmt.Errorf("alarmd access uq: decode range response (trace %s): %w", traceID, err)
 	}
 
 	result := RangeResult{Partial: decoded.IsPartial}
@@ -161,14 +185,21 @@ func (client *Client) Range(ctx context.Context, request RangeRequest) (RangeRes
 		if timeColumn < 0 || valueColumn < 0 {
 			return RangeResult{}, errors.New("alarmd access uq: range response is missing the time or value column")
 		}
+		kept := RangeSeries{Labels: map[string]string{}, Points: []RangePoint{}}
+		for index, key := range series.GroupKeys {
+			if index < len(series.GroupValues) {
+				kept.Labels[key] = series.GroupValues[index]
+			}
+		}
 		for _, values := range series.Values {
 			if timeColumn >= len(values) || valueColumn >= len(values) {
 				continue
 			}
-			result.Points = append(result.Points, RangePoint{
-				AtUnixMilli: int64(values[timeColumn]), Value: values[valueColumn],
-			})
+			point := RangePoint{AtUnixMilli: int64(values[timeColumn]), Value: values[valueColumn]}
+			result.Points = append(result.Points, point)
+			kept.Points = append(kept.Points, point)
 		}
+		result.Series = append(result.Series, kept)
 	}
 	return result, nil
 }
@@ -186,5 +217,6 @@ func columnIndexes(columns []string) (int, int) {
 	return timeColumn, valueColumn
 }
 
-// rangeDeadline bounds one range query.
-const rangeDeadline = 20 * time.Second
+// RangeDeadline bounds one range query; a reader that runs several side by
+// side (the trends) takes it as one line's share of its time.
+const RangeDeadline = 20 * time.Second

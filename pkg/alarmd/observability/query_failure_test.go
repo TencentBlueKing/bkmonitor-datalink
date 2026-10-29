@@ -180,3 +180,45 @@ func TestValidQueryFailureCodeGrammar(t *testing.T) {
 		t.Fatal("NormalizeQueryFailureCode did not apply the grammar")
 	}
 }
+
+// A refusal's log line names its class and the provider's trace id, never
+// the excerpt: the excerpt can echo the request and is kept only with the
+// Query Group's last failure. A class or trace id outside its grammar is
+// not carried as written.
+func TestARejectionLogsItsClassAndTraceButNeverItsExcerpt(t *testing.T) {
+	var output bytes.Buffer
+	facts := QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_REJECTED", Detail: "http_status=400", HTTPStatus: 400,
+		Rejection: &QueryRejection{Class: "VM_SAMPLE_LIMIT", TraceID: "4bf92f3577b34da6a3ce929d0e0e4736", Excerpt: "excerpt-marker-text"}}
+	newQueryFailureTestObserver(&output).Observe(context.Background(), Observation{
+		Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultDegraded,
+		ReasonCode: "QUERY_REJECTED", QueryFailure: &facts, Trace: TraceFields{QueryGroupKey: "query-group-1"},
+	})
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode: %v; log=%s", err, output.String())
+	}
+	if event["failure_rejection_class"] != "VM_SAMPLE_LIMIT" || event["failure_provider_trace_id"] != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Fatalf("event=%#v", event)
+	}
+	if strings.Contains(output.String(), "excerpt-marker-text") {
+		t.Fatalf("the excerpt reached the log: %s", output.String())
+	}
+	odd := normalizeQueryRejection(&QueryRejection{Class: "not a class", TraceID: "ZZ", Excerpt: strings.Repeat("x", MaxRejectionExcerptBytes+1)})
+	if odd.Class != QueryFailureCodeOther || odd.TraceID != "" || odd.Excerpt != "" {
+		t.Fatalf("out-of-grammar rejection kept as %+v", odd)
+	}
+	// And so it is on the line an observation writes.
+	output.Reset()
+	facts.Rejection = &QueryRejection{Class: "not a class", TraceID: "ZZ-not-hex"}
+	newQueryFailureTestObserver(&output).Observe(context.Background(), Observation{
+		Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultDegraded,
+		ReasonCode: "QUERY_REJECTED", QueryFailure: &facts, Trace: TraceFields{QueryGroupKey: "query-group-1"},
+	})
+	event = map[string]any{}
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode: %v; log=%s", err, output.String())
+	}
+	if _, traced := event["failure_provider_trace_id"]; event["failure_rejection_class"] != QueryFailureCodeOther || traced {
+		t.Fatalf("an out-of-grammar rejection logged as %#v", event)
+	}
+}

@@ -126,6 +126,12 @@ type Aggregate struct {
 	Args []any `json:"args,omitempty"`
 }
 
+// HasTimeBucket 与各存储实际生成的时间分桶保持一致，不能通过 instant 或 step 判断。
+func (a Aggregate) HasTimeBucket(storageType string) bool {
+	return a.Name == "date_histogram" ||
+		(a.Window > 0 && (storageType != ElasticsearchStorageType || !a.Without))
+}
+
 // OffSetInfo Offset的信息存储，供promql查询转换为influxdb查询语句时使用
 type OffSetInfo struct {
 	OffSet  time.Duration
@@ -204,11 +210,13 @@ type Query struct {
 
 	SegmentedEnable bool `json:"segmented_enable,omitempty"` // 是否开启分段查询
 
-	RouteStart        time.Time `json:"-"` // 当前存储路由在本次查询中的生效开始时间，用于计算权重
-	RouteEnd          time.Time `json:"-"` // 当前存储路由在本次查询中的生效结束时间，用于计算权重
-	RouteEndInclusive bool      `json:"-"` // RouteEnd 是否为本次查询终点；内部路由切换点仍保持半开区间
-	RouteQueryStart   time.Time `json:"-"` // 当前存储路由带迁移重叠的查询开始时间
-	RouteQueryEnd     time.Time `json:"-"` // 当前存储路由带迁移重叠的查询结束时间
+	RouteStart         time.Time `json:"-"` // 当前存储路由在本次查询中的生效开始时间，用于计算权重
+	RouteEnd           time.Time `json:"-"` // 当前存储路由在本次查询中的生效结束时间，用于计算权重
+	RouteEndInclusive  bool      `json:"-"` // RouteEnd 是否为本次查询终点；内部路由切换点仍保持半开区间
+	RouteQueryStart    time.Time `json:"-"` // 当前存储路由带迁移重叠的查询开始时间
+	RouteQueryEnd      time.Time `json:"-"` // 当前存储路由带迁移重叠的查询结束时间
+	RangeEndExclusive  bool      `json:"-"` // 区间聚合在内部切换点使用排他上界，避免重复统计
+	IsRangeAggregation bool      `json:"-"` // 按原始路由范围执行的无时间分桶聚合
 
 	// 查询扩展
 	QueryString string `json:"query_string,omitempty"`
@@ -614,7 +622,7 @@ func (qRef QueryReference) GetMaxWindowAndTimezone() (time.Duration, string) {
 	)
 	qRef.Range("", func(q *Query) {
 		for _, a := range q.Aggregates {
-			if a.Window > window {
+			if a.HasTimeBucket(q.StorageType) && a.Window > window {
 				window = a.Window
 				timezone = a.TimeZone
 			}

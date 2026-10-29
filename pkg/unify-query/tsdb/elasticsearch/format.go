@@ -429,12 +429,16 @@ func (f *FormatFactory) FieldType() map[string]string {
 }
 
 func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
+	return f.rangeQuery(false)
+}
+
+func (f *FormatFactory) rangeQuery(endExclusive bool) (elastic.Query, error) {
 	var err error
 
 	fieldName := f.timeField.Name
 	fieldType := f.timeField.Type
 
-	var query elastic.Query
+	var query *elastic.RangeQuery
 	switch fieldType {
 	case TimeFieldTypeInt:
 		// int 类型，直接按照 tableID 配置的单位转换
@@ -449,6 +453,9 @@ func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
 			Format(f.timeFormatToEpoch(f.timeFormat))
 	default:
 		err = fmt.Errorf("time field type is error %s", fieldType)
+	}
+	if query != nil && endExclusive {
+		query.IncludeUpper(false)
 	}
 	return query, err
 }

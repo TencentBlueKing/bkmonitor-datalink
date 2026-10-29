@@ -67,7 +67,7 @@ func (store *chunkStore) AdmitRuntime(_ context.Context, request execution.State
 }
 
 func (store *chunkStore) ApplyRuntime(ctx context.Context, request execution.StateApplyRequest) (execution.StateApplyResult, error) {
-	time.Sleep(store.delay)
+	time.Sleep(store.delay) // fixed-wait: the stub store's apply delay, which the case sets
 	store.stateCalls = append(store.stateCalls, stateIdentities(request.Items))
 	store.horizons = append(store.horizons, request.HorizonSeconds)
 	call := len(store.stateCalls)

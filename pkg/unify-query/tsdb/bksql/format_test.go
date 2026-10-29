@@ -920,6 +920,58 @@ func TestFormatDataToQueryResult_ValueParsing(t *testing.T) {
 		list     []map[string]any
 		expected map[int64]float64
 	}{
+		"区间最小值跳过空值": {
+			query: &metadata.Query{
+				Measurement:        "doris",
+				Field:              "value",
+				IsRangeAggregation: true,
+				Aggregates:         metadata.Aggregates{{Name: "min"}},
+			},
+			list: []map[string]any{
+				{"_timestamp_": int64(1776758700000), "_value_": nil},
+				{"_timestamp_": int64(1776759000000), "_value_": 10.0},
+			},
+			expected: map[int64]float64{1776759000000: 10},
+		},
+		"区间最大值跳过空值": {
+			query: &metadata.Query{
+				Measurement:        "doris",
+				Field:              "value",
+				IsRangeAggregation: true,
+				Aggregates:         metadata.Aggregates{{Name: "max"}},
+			},
+			list: []map[string]any{
+				{"_timestamp_": int64(1776758700000), "_value_": nil},
+				{"_timestamp_": int64(1776759000000), "_value_": 10.0},
+			},
+			expected: map[int64]float64{1776759000000: 10},
+		},
+		"区间平均值跳过空值": {
+			query: &metadata.Query{
+				Measurement:        "doris",
+				Field:              "value",
+				IsRangeAggregation: true,
+				Aggregates:         metadata.Aggregates{{Name: "avg"}},
+			},
+			list: []map[string]any{
+				{"_timestamp_": int64(1776758700000), "_value_": nil},
+				{"_timestamp_": int64(1776759000000), "_value_": 10.0},
+			},
+			expected: map[int64]float64{1776759000000: 10},
+		},
+		"区间求和保留零值贡献": {
+			query: &metadata.Query{
+				Measurement:        "doris",
+				Field:              "value",
+				IsRangeAggregation: true,
+				Aggregates:         metadata.Aggregates{{Name: "sum"}},
+			},
+			list: []map[string]any{
+				{"_timestamp_": int64(1776758700000), "_value_": nil},
+				{"_timestamp_": int64(1776759000000), "_value_": 10.0},
+			},
+			expected: map[int64]float64{1776758700000: 0, 1776759000000: 10},
+		},
 		"first _value_ is nil": {
 			query: baseQuery(),
 			list: []map[string]any{

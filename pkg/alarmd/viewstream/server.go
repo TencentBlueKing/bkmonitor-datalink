@@ -77,8 +77,12 @@ type Stats struct {
 	Counts  Counts
 	Objects ObjectsSummary
 	Ignored Ignored
-	// Lagging lists the Workers that have not installed the current version.
+	// Lagging lists the Workers that have not installed the current version
+	// and are still there.
 	Lagging []LaggingReceiver
+	// Departed lists the Workers that left before installing it: out of the
+	// round's ready set with no stream. They are not in Counts.
+	Departed []LaggingReceiver
 	// NotSwitched lists the Workers that installed the current version but
 	// do not yet execute every one of its Query Groups from it, each with
 	// the count it does (decision-016 batch 4). Empty is every installed
@@ -95,6 +99,8 @@ type Stats struct {
 	// by the chunked snapshot of the same revision.
 	DeltasOversized uint64
 	Refusals        uint64
+	// LookbackPlanSetsSent counts the lookback plan sets sent to Workers.
+	LookbackPlanSetsSent uint64
 	// PublishFailingSince is when the Leader's desired set last failed to
 	// be published with no success since; zero while publishing works.
 	// PublishFailures counts the failures since then, PublishFailureReason
@@ -134,6 +140,7 @@ type publishFailures struct {
 
 type serverCounters struct {
 	publications, publicationsSkipped, snapshotChunks, deltas, emptyDeltas, deltasOversized, refusals uint64
+	lookbackPlanSets                                                                                  uint64
 }
 
 // Server implements pb.ControlServiceServer for the Leader.
@@ -150,17 +157,22 @@ type Server struct {
 	mu        sync.Mutex
 	publisher *Publisher
 	sessions  map[string]*session
-	counters  serverCounters
-	closed    bool
-	failures  publishFailures
+	// ready is the last round's ready set of the term; nil until a round
+	// has published one, and nobody has left before that.
+	ready    map[string]struct{}
+	counters serverCounters
+	closed   bool
+	failures publishFailures
 	// noSessionsSince backs Stats.NoSessionsSince.
 	noSessionsSince time.Time
+	// plans is each Worker's lookback plan set (SetLookbackPlans), nil while
+	// this term has none: a fallback Leader plans nothing and sends nothing.
+	plans *lookbackPlanSets
 
-	// Diagnostics have their own admission slots and handler lock. A slow
-	// evidence reader must not hold the control stream's session lock or queue.
+	// Diagnostics have their own handler lock. A slow evidence reader must not
+	// hold the control stream's session lock or queue.
 	evidenceMu      sync.RWMutex
 	evidenceHandler func(context.Context, *pb.EvidenceRequest) (*pb.EvidenceResult, error)
-	evidenceSlots   chan struct{}
 }
 
 // ServerOptions are the seams a test needs: a clock, and how often the
@@ -189,7 +201,7 @@ func NewServer(admission Admission, observer observability.Observer, options Ser
 		tick = HeartbeatInterval
 	}
 	return &Server{admission: admission, observer: observer, costs: options.Costs, now: now, tick: tick,
-		sessions: map[string]*session{}, evidenceSlots: make(chan struct{}, EvidenceConcurrency)}, nil
+		sessions: map[string]*session{}}, nil
 }
 
 // Lead starts a term: a new publisher, and every open session is woken so
@@ -205,7 +217,7 @@ func (server *Server) Lead(controlEpoch uint64) error {
 	if err != nil {
 		return err
 	}
-	server.publisher = publisher
+	server.publisher, server.ready, server.plans = publisher, nil, nil
 	for _, sess := range server.sessions {
 		sess.poke()
 	}
@@ -216,7 +228,7 @@ func (server *Server) Lead(controlEpoch uint64) error {
 // and nothing is published until Lead is called again.
 func (server *Server) StepDown() {
 	server.mu.Lock()
-	server.publisher = nil
+	server.publisher, server.ready, server.plans = nil, nil, nil
 	sessions := server.sessions
 	server.sessions = map[string]*session{}
 	server.mu.Unlock()
@@ -255,6 +267,16 @@ func (server *Server) Publish(ctx context.Context, desired Desired) (Published, 
 		server.NotePublishFailure(PublishFailureRejected)
 		return Published{}, err
 	}
+	if desired.ReadyKnown {
+		ready := make(map[string]struct{}, len(desired.Ready))
+		for _, worker := range desired.Ready {
+			ready[worker] = struct{}{}
+		}
+		server.mu.Lock()
+		server.ready = ready
+		server.mu.Unlock()
+	}
+	server.settleDeparted(ctx)
 	server.mu.Lock()
 	server.failures.since, server.failures.run, server.failures.reason = time.Time{}, 0, ""
 	if published.Changed {
@@ -318,7 +340,7 @@ func (server *Server) Stats() Stats {
 		Publications: server.counters.publications, PublicationsSkipped: server.counters.publicationsSkipped,
 		SnapshotChunksSent: server.counters.snapshotChunks, DeltasSent: server.counters.deltas,
 		EmptyDeltasSent: server.counters.emptyDeltas, DeltasOversized: server.counters.deltasOversized,
-		Refusals: server.counters.refusals}
+		Refusals: server.counters.refusals, LookbackPlanSetsSent: server.counters.lookbackPlanSets}
 	for _, reason := range PublishFailureReasons {
 		stats.PublishFailuresByReason[reason] = server.failures.byReason[reason]
 	}
@@ -331,6 +353,7 @@ func (server *Server) Stats() Stats {
 		stats.Current, stats.Counts = key, counts
 		stats.Objects, _ = server.publisher.ledger.Objects(key)
 		stats.Lagging = server.publisher.ledger.Lagging("installed")
+		stats.Departed = server.publisher.ledger.Departed()
 		installed := make(map[string]struct{}, len(stats.Lagging))
 		for _, lagging := range stats.Lagging {
 			installed[lagging.WorkerID] = struct{}{}
@@ -425,6 +448,7 @@ func (server *Server) Connect(stream pb.ControlService_ConnectServer) error {
 		previous.refuse(RefusalReplaced)
 	}
 	server.observeSession(ctx, "opened", receiver, "")
+	server.settleDeparted(ctx)
 	// The first turn of the send loop is now, not at the next publication
 	// or idle tick: a Worker that connects between publications gets its
 	// snapshot at once.
@@ -437,7 +461,35 @@ func (server *Server) Connect(stream pb.ControlService_ConnectServer) error {
 	}
 	server.mu.Unlock()
 	server.observeSession(ctx, "closed", receiver, reason)
+	server.settleDeparted(ctx)
 	return nil
+}
+
+// settleDeparted tells the ledger which receivers have left: out of the
+// last ready set and with no stream. Out of the ready set but connected is
+// a Worker that is alive -- warming, degraded -- and stays lagging. Before
+// any ready set nobody has left.
+func (server *Server) settleDeparted(ctx context.Context) {
+	server.mu.Lock()
+	publisher := server.publisher
+	if publisher == nil || server.ready == nil {
+		server.mu.Unlock()
+		return
+	}
+	ready := server.ready
+	connected := make(map[string]struct{}, len(server.sessions))
+	for worker := range server.sessions {
+		connected[worker] = struct{}{}
+	}
+	server.mu.Unlock()
+	recorded := publisher.ledger.SetDeparted(func(worker string) bool {
+		_, isReady := ready[worker]
+		_, isConnected := connected[worker]
+		return !isReady && !isConnected
+	})
+	if recorded.InstalledByAll {
+		server.observeInstalledByAll(ctx, recorded)
+	}
 }
 
 // recordClaimedInstall credits a Worker's Hello with the version it says
@@ -574,6 +626,9 @@ type session struct {
 	wantSnapshot bool
 	lastHeard    time.Time
 	refusal      string
+	// plansSent is the digest of the last lookback plan set sent on this
+	// stream, empty before the first.
+	plansSent string
 }
 
 func (sess *session) poke() {
@@ -707,6 +762,9 @@ func (sess *session) send() string {
 			return RefusalNotLeader
 		}
 		if err := sess.publish(publisher); err != nil {
+			return "SEND_FAILED"
+		}
+		if err := sess.sendLookbackPlans(); err != nil {
 			return "SEND_FAILED"
 		}
 	}

@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 const (
@@ -310,7 +311,7 @@ func (f *fixture) rest(queryGroup execution.QueryGroupIdentity) {
 
 func (f *fixture) waitFor(done func(Stats) bool) Stats {
 	f.t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := testwait.Deadline(f.t)
 	for {
 		stats := f.engine.Stats()
 		if done(stats) {
@@ -319,7 +320,7 @@ func (f *fixture) waitFor(done func(Stats) bool) Stats {
 		if time.Now().After(deadline) {
 			f.t.Fatalf("condition not reached: %+v", stats)
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 }
 
@@ -1090,7 +1091,7 @@ func (w *windowed) run(t *testing.T, engine *Engine, span time.Duration, facts e
 		}
 		w.clock.set(readAt.Add(rungDelay(rung, step)))
 		engine.Step(context.Background())
-		deadline := time.Now().Add(5 * time.Second)
+		deadline := testwait.Deadline(t)
 		for {
 			next, open := pending()
 			if !open || next > rung {
@@ -1099,7 +1100,7 @@ func (w *windowed) run(t *testing.T, engine *Engine, span time.Duration, facts e
 			if time.Now().After(deadline) {
 				t.Fatalf("rung %d did not settle", rung)
 			}
-			time.Sleep(time.Millisecond)
+			time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 		}
 	}
 	engine.mu.Lock()
@@ -1454,12 +1455,12 @@ func punctualRecheckRate(t *testing.T, step time.Duration) (float64, float64) {
 			}
 		}
 		engine.Step(context.Background())
-		deadline := time.Now().Add(5 * time.Second)
+		deadline := testwait.Deadline(t)
 		for !settled() {
 			if time.Now().After(deadline) {
 				t.Fatalf("step %v at %v: rechecks did not settle", step, tick)
 			}
-			time.Sleep(100 * time.Microsecond)
+			time.Sleep(100 * time.Microsecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 		}
 	}
 	rechecksAfter, probesAfter := count()

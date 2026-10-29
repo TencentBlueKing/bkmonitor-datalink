@@ -320,7 +320,7 @@ func (repository *RedisCatalogRepository) observeCutover(ctx context.Context, fa
 	}
 	repository.observe(ctx, observability.Observation{
 		Component: observability.ComponentControlPlane, Stage: observability.StageScheduleCutover,
-		Result: observability.Result(result), Err: err, ScheduleCutover: &observability.ScheduleCutoverFacts{
+		Result: factsTextResult(result), Err: err, ScheduleCutover: &observability.ScheduleCutoverFacts{
 			Result: result, Reason: reason, QueryGroup: facts.group,
 			Timelines: len(facts.timelineBytes), PayloadBytes: facts.payloadBytes,
 			MaxTimelineBytes: largest, TimelineBytes: facts.timelineBytes, SegmentsPruned: facts.pruned,

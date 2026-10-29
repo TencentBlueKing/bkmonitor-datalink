@@ -8,7 +8,9 @@ package targetplan_test
 import (
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/targetplan"
 )
@@ -47,6 +49,38 @@ func TestTheClosedWordsArePinnedByTheirSpelling(t *testing.T) {
 		"index_incomplete", "excluded_absent",
 	); !reflect.DeepEqual(got, want) {
 		t.Fatalf("selector reasons = %v, want %v", got, want)
+	}
+	if got, want := sorted(targetplan.DroppedMemberReasons...), sorted(
+		"member_invalid", "member_unlisted", "member_lost", "model_mismatch", "no_host_id",
+		"host_unindexed", "host_other_tenant", "address_shared",
+	); !reflect.DeepEqual(got, want) {
+		t.Fatalf("dropped member reasons = %v, want %v", got, want)
+	}
+}
+
+// A named id is the source's text written into "<id>:<reason>" names joined
+// by commas on one line: whatever would split a name or end the field
+// becomes "_", a long id keeps its head, and an empty one is "-". The cut
+// can split a multi-byte rune; its bytes become "_", so the line stays
+// valid UTF-8.
+func TestADroppedMembersIDCannotBreakItsName(t *testing.T) {
+	long := strings.Repeat("9", targetplan.MaxDroppedMemberIDBytes+10)
+	for id, want := range map[string]string{
+		"701":                         "701",
+		"a,b:c d=e\"f":                "a_b_c_d_e_f",
+		"":                            "-",
+		long:                          long[:targetplan.MaxDroppedMemberIDBytes],
+		"主机1":                         "______1",
+		strings.Repeat("a", 63) + "主": strings.Repeat("a", 63) + "_",
+	} {
+		named := targetplan.NameDropped(nil, id, targetplan.DroppedMemberLost)
+		if len(named) != 1 || named[0].ID != want || named[0].Reason != targetplan.DroppedMemberLost || !utf8.ValidString(named[0].ID) {
+			t.Fatalf("NameDropped(%q) = %+v, want id %q", id, named, want)
+		}
+	}
+	full := make([]targetplan.DroppedMember, targetplan.MaxNamedDroppedMembers)
+	if named := targetplan.NameDropped(full, "1", targetplan.DroppedMemberLost); len(named) != targetplan.MaxNamedDroppedMembers {
+		t.Fatalf("a full list grew to %d", len(named))
 	}
 }
 

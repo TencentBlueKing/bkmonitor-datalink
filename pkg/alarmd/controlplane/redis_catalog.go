@@ -269,7 +269,7 @@ func (repository *RedisCatalogRepository) RenewCurrentActivationObjects(ctx cont
 	queryGroups, objectBytes := 0, 0
 	defer func() {
 		repository.observe(ctx, observability.Observation{Component: observability.ComponentControlPlane, Stage: observability.StageActiveQGSet,
-			Result: observability.Result(metricResult), ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "renew", Result: metricResult,
+			Result: factsTextResult(metricResult), ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "renew", Result: metricResult,
 				QueryGroups: queryGroups, ObjectBytes: objectBytes, Duration: time.Since(started)}})
 	}()
 	state, err := repository.LoadActivationHead(ctx)

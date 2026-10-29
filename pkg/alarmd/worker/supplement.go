@@ -62,7 +62,11 @@ func (coordinator *SlotExecutionCoordinator) executeSupplement(
 		Contract: request.Contract, Operation: request.Operation, AttemptNo: request.AttemptNo,
 	}, stream)
 	if err != nil {
-		coordinator.observeQueryFailure(ctx, request.Operation, started, "execute", err)
+		// A kept read without the Slot's query is found before any query
+		// is replayed: no query ran, so there is no query line to write.
+		if !errors.Is(err, execution.ErrSupplementKeptReadAbsent) {
+			coordinator.observeQueryFailure(ctx, request.Operation, started, "execute", err)
+		}
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: supplement query: %w", err)
 	}
 	if err := stream.complete(ctx, completion); err != nil {

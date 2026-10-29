@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -74,7 +75,7 @@ var uptimePolicy = fields("is_enabled type timezone start end begin end_time beg
 	"time_ranges": fields("start end begin end_time begin_time", nil),
 	"date_ranges": fields("start end", nil),
 })
-var noDataPolicy = fields("is_enabled continuous level agg_dimension tracking_horizon_seconds", nil)
+var noDataPolicy = fields("is_enabled continuous level agg_dimension tracking_horizon_seconds max_groups no_data_max_groups", nil)
 var algorithmConfigPolicy = func() *policy {
 	p := fields("method threshold operator threshold_decimal value value_field data_unit threshold_unit_prefix ceil floor ceil_interval floor_interval ratio days count window window_size required_anomalies required_normals check_window trigger_count recovery_count threshold_count sensitivity period upper lower abs is_ratio multiplier comparison unit unit_prefix invalid_policy version floor_ratio ceil_ratio shock shock_unit fetch_type", nil)
 	p.fields["precision"] = fields("decimal_places rounding", nil)
@@ -85,8 +86,14 @@ var algorithmConfigPolicy = func() *policy {
 }()
 var algorithmPolicy = fields("type version level unit_prefix", map[string]*policy{"config": algorithmConfigPolicy})
 var triggerPolicy = fields("type version count check_window window_size required_anomalies required_normals", map[string]*policy{"uptime": uptimePolicy, "config": algorithmConfigPolicy})
+
+// recoveryPolicy is a detect's recovery_config: the trigger's keys, which the
+// frozen recovery plan carries, status_setter, which the recovery checker
+// reads beside check_window, and disable_recovery, the owner's switch that
+// turns the level's recovery off.
+var recoveryPolicy = fields("type version count check_window window_size required_anomalies required_normals status_setter disable_recovery", map[string]*policy{"uptime": uptimePolicy, "config": algorithmConfigPolicy})
 var functionPolicy = fields("id method window dimensions without position field", map[string]*policy{"params": namedValues(fields("id value", nil))})
-var sourceQueryPolicy = fields("alert_name index_set_id promql custom_event_name data_source_label data_type_label metric_id metric_field alias values agg_dimension agg_method agg_interval result_table_id time_field query_string data_label unit time_delay offset", map[string]*policy{
+var sourceQueryPolicy = fields("alert_name index_set_id promql custom_event_name data_source_label data_type_label metric_id metric_field alias values agg_dimension agg_method agg_interval result_table_id time_field query_string data_label unit time_delay offset expression_mode", map[string]*policy{
 	"agg_condition": conditionPolicy, "functions": functionPolicy,
 	// A PromQL query's label filter (field -> value or values), read by the
 	// polling compiler as agg_condition is by the others: the same kind of
@@ -104,8 +111,11 @@ var sourcePolicy = fields("id bk_biz_id bk_tenant_id space_uid is_global_strateg
 		"query_configs": sourceQueryPolicy, "algorithms": algorithmPolicy, "functions": functionPolicy,
 		"target":      namedValues(fields("condition key field method type model_id target_type", map[string]*policy{"value": targetValuePolicy, "conditions": conditionPolicy, "hosts": memberPolicy, "nodes": memberPolicy})),
 		"target_plan": targetPolicy, "no_data_config": noDataPolicy,
+		// A multi-PromQL expression's named outputs: which output the legacy
+		// event carries, and each output's name and expression.
+		"query_output_config": fields("response_contract legacy_output_ref", map[string]*policy{"output_list": fields("reference_name expression", nil)}),
 	}),
-	"detects":        fields("level priority connector", map[string]*policy{"trigger_config": triggerPolicy, "recovery_config": triggerPolicy, "effective_time": uptimePolicy}),
+	"detects":        fields("level priority connector", map[string]*policy{"trigger_config": triggerPolicy, "recovery_config": recoveryPolicy, "effective_time": uptimePolicy}),
 	"effective_time": uptimePolicy, "uptime": uptimePolicy, "effective_time_snapshot": effectiveSnapshotPolicy,
 })
 var groupPolicy = fields("model_id model_inst_ids", map[string]*policy{"member_list": memberPolicy})
@@ -283,18 +293,65 @@ func shapeOf(value any, depth int) any {
 }
 
 // credentialFieldName says whether a key is named like what holds a
-// credential. Deliberately wide: a key it catches wrongly loses its shape, a
-// key it misses would show a credential's length.
+// credential. Wide in its words - a key it catches wrongly loses its shape,
+// a key it misses would show a credential's length - but matched on whole
+// segments of the name (split at _ . - and camelCase, an acronym its own
+// segment: SSLCert is SSL and Cert), never inside one: a substring match
+// takes bypass for a password, author for auth and status_setter's
+// neighbours for whatever they happen to contain. A run-together name is
+// caught when it ends in password, passwd, secret, token, auth or pwd
+// (dbpassword, oauth, redispwd); pass, cert and session are not suffixes,
+// since bypass, concert and sessionless are not credentials, so dbpass,
+// sslcert and sessionid are accepted misses.
 func credentialFieldName(key string) bool {
-	lower := strings.ToLower(key)
-	for _, word := range []string{"password", "passwd", "pwd", "pass", "secret", "token", "auth", "cookie", "header", "credential", "cert",
-		"private_key", "privatekey", "api_key", "apikey", "access_key", "accesskey", "signature", "session"} {
-		if strings.Contains(lower, word) {
+	segments := credentialNameSegments(key)
+	for index, word := range segments {
+		if credentialFieldWords[word] || strings.HasSuffix(word, "password") || strings.HasSuffix(word, "passwd") ||
+			strings.HasSuffix(word, "secret") || strings.HasSuffix(word, "token") || strings.HasSuffix(word, "auth") ||
+			strings.HasSuffix(word, "pwd") {
+			return true
+		}
+		if (word == "key" || word == "keys") && index > 0 && credentialKeyQualifiers[segments[index-1]] {
 			return true
 		}
 	}
 	return false
 }
+
+// credentialNameSegments is a key's segments, lower case: a separator goes
+// between a lower-case letter or digit and the capital after it (apiKey), and
+// between an acronym and the word that follows it (SSLCert, XApiKey), and
+// the name splits at every separator.
+func credentialNameSegments(key string) []string {
+	marked := credentialLowerUpper.ReplaceAllString(key, "${1}_${2}")
+	marked = credentialAcronymWord.ReplaceAllString(marked, "${1}_${2}")
+	var segments []string
+	for _, segment := range credentialNameSeparator.Split(marked, -1) {
+		if segment != "" {
+			segments = append(segments, strings.ToLower(segment))
+		}
+	}
+	return segments
+}
+
+var (
+	credentialLowerUpper    = regexp.MustCompile(`([a-z0-9])([A-Z])`)
+	credentialAcronymWord   = regexp.MustCompile(`([A-Z]+)([A-Z][a-z])`)
+	credentialNameSeparator = regexp.MustCompile(`[^A-Za-z0-9]+`)
+)
+
+// credentialFieldWords are the segments that name what holds a credential,
+// wherever they stand in a key: db_passwd, basic_auth, session_id.
+var credentialFieldWords = map[string]bool{"password": true, "passwd": true, "pwd": true, "pass": true, "passphrase": true,
+	"requirepass": true, "masterauth": true, "secret": true, "token": true, "auth": true, "authorization": true, "cookie": true,
+	"header": true, "headers": true, "credential": true, "credentials": true, "cert": true, "certificate": true,
+	"signature": true, "session": true, "apikey": true, "privatekey": true, "accesskey": true}
+
+// credentialKeyQualifiers make the segment after them a credential when it is
+// key: api_key, apiKey, access_key_id, private_key, secret_key. Any other key
+// - a cache key, a routing key, a metric key - is configuration.
+var credentialKeyQualifiers = map[string]bool{"api": true, "access": true, "private": true, "secret": true, "signing": true,
+	"encryption": true, "client": true}
 
 // An allowed key/value-shaped condition or function parameter still does not
 // permit a caller to rename an Authorization header into {id, value}.

@@ -122,7 +122,7 @@ func TestOnRedisTheMarkIsStillReadAfterTheRecoveryBoundary(t *testing.T) {
 		t.Fatalf("before the boundary: evidence = %+v, err = %v, want STATE_APPLIED 1/1", before, err)
 	}
 	// The finalization arrives after the boundary.
-	time.Sleep(time.Until(recoveryUntil) + 500*time.Millisecond)
+	time.Sleep(time.Until(recoveryUntil) + 500*time.Millisecond) // fixed-wait: past the recovery boundary on the real clock Redis expires keys by; the case is that the mark outlives it
 	after, err := store.Read(ctx, slot, plans)
 	if err != nil || after.Kind != execution.EvidenceStateApplied || after.PlansApplied != 1 {
 		t.Fatalf("after the boundary: evidence = %+v, err = %v, want STATE_APPLIED 1/1: this is when the "+

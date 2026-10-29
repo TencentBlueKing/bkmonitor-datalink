@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -76,11 +77,35 @@ func TestTheServiceInstanceIndexIsBuiltFromTheHashFields(t *testing.T) {
 type hashClient struct {
 	redis.Cmdable
 	hashes map[string][]string
-	scans  []string
+	// mu guards scans: a tenant's first read runs on its own goroutine, and
+	// a refresh may run beside it, as production's may.
+	mu    sync.Mutex
+	scans []string
+}
+
+// noteScan records one read, in order.
+func (client *hashClient) noteScan(key string) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	client.scans = append(client.scans, key)
+}
+
+// scanned is the reads so far, in order.
+func (client *hashClient) scanned() []string {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	return append([]string(nil), client.scans...)
+}
+
+// resetScans forgets the reads so far.
+func (client *hashClient) resetScans() {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	client.scans = nil
 }
 
 func (client *hashClient) HScan(_ context.Context, key string, _ uint64, _ string, _ int64) *redis.ScanCmd {
-	client.scans = append(client.scans, key)
+	client.noteScan(key)
 	return redis.NewScanCmdResult(client.hashes[key], 0, nil)
 }
 
@@ -91,7 +116,7 @@ func (client *hashClient) Get(_ context.Context, _ string) *redis.StringCmd {
 // HKeys serves the field names of a hash, which is how the topology cache
 // is read: the node set and nothing else.
 func (client *hashClient) HKeys(_ context.Context, key string) *redis.StringSliceCmd {
-	client.scans = append(client.scans, key)
+	client.noteScan(key)
 	fields := client.hashes[key]
 	names := make([]string, 0, len(fields)/2)
 	for position := 0; position+1 < len(fields); position += 2 {
@@ -120,10 +145,10 @@ func TestLoadReadsHostsAndServiceInstancesIntoOneSnapshot(t *testing.T) {
 	if index.Hosts() != 1 || index.ServiceInstances() != 1 {
 		t.Fatalf("index holds %d hosts and %d instances", index.Hosts(), index.ServiceInstances())
 	}
-	if !reflect.DeepEqual(client.scans, []string{"bk_monitorv3.ce.cache.cmdb.host", "bk_monitorv3.ce.cache.cmdb.service_instance",
+	if !reflect.DeepEqual(client.scanned(), []string{"bk_monitorv3.ce.cache.cmdb.host", "bk_monitorv3.ce.cache.cmdb.service_instance",
 		"bk_monitorv3.ce.cache.cmdb.topo", "bk_monitorv3.ce.cache.cmdb.bcs_cluster_business",
 		"bk_monitorv3.ce.cache.cmdb.bcs_namespace_business", "bk_monitorv3.ce.cache.cmdb.agent_id"}) {
-		t.Fatalf("scanned %v", client.scans)
+		t.Fatalf("scanned %v", client.scanned())
 	}
 	if index.TopologyNodes() != 1 {
 		t.Fatalf("topology nodes = %d, want the one the cache lists", index.TopologyNodes())

@@ -24,7 +24,7 @@ func businessMappingCells(t *testing.T, recorder *metric.Recorder) map[string]fl
 	}
 	cells := map[string]float64{}
 	for _, family := range families {
-		if family.GetName() != "bkmonitor_alarmd_cmdb_index_business_mappings" {
+		if family.GetName() != "alarmd_cmdb_index_business_mappings" {
 			continue
 		}
 		for _, sample := range family.GetMetric() {

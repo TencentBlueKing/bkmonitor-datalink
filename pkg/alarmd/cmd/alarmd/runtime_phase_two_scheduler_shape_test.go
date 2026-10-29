@@ -18,6 +18,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
@@ -32,11 +33,12 @@ func shaperForTest(t *testing.T, clock *atomic.Int64) (*schedulerShaper, *schedu
 	return newSchedulerShaper(flights, cfg, now), flights, cfg
 }
 
-// The shaper sizes the coordinator from what the last minute asked of it:
-// the busiest second of permit requests and of Slots made ready, the measured
-// hold and execution length, the owned groups. The coordinator takes the
-// derived budget, and the capacity reports it with its inputs.
-func TestTheShaperSizesTheBudgetFromTheMeasuredWork(t *testing.T) {
+// The shaper measures what the last minute asked of the coordinator - the
+// busiest second of permit requests and of Slots made ready, the hold and
+// execution length - and sizes the queues from the owned groups. The
+// coordinator takes the shape, whose permits are the memory's share, and the
+// capacity reports it beside the measured work.
+func TestTheShaperSizesTheQueuesAndReportsTheMeasuredWork(t *testing.T) {
 	clock := &atomic.Int64{}
 	clock.Store(time.Unix(3600*100, 0).UnixMilli())
 	shaper, flights, cfg := shaperForTest(t, clock)
@@ -67,11 +69,10 @@ func TestTheShaperSizesTheBudgetFromTheMeasuredWork(t *testing.T) {
 	for _, permit := range held {
 		permit.Release()
 	}
-	startup := shaper.shape()
 	reading := shaper.derive(700)
 	want := config.DeriveSchedulerShape(shaper.ceiling, config.SchedulerDemand{PeakQueriesPerSecond: 12, PeakSlotsPerSecond: 8,
 		Hold: flights.HoldReference(), Execution: reading.Demand.Execution, OwnedQueryGroups: 700,
-		MaxQueuedItemsPerQG: cfg.PhaseTwo.Scheduler.MaxQueuedItemsPerQG}, startup, 0)
+		MaxQueuedItemsPerQG: cfg.PhaseTwo.Scheduler.MaxQueuedItemsPerQG})
 	if !reading.Applied || reading.Shape != want || reading.Demand.PeakQueriesPerSecond != 12 || reading.Demand.PeakSlotsPerSecond != 8 {
 		t.Fatalf("derived %+v from %+v, want %+v applied", reading.Shape, reading.Demand, want)
 	}
@@ -96,11 +97,12 @@ func TestTheShaperSizesTheBudgetFromTheMeasuredWork(t *testing.T) {
 	if !shaper.due() {
 		t.Fatal("no derivation due a minute later")
 	}
-	// A minute with no work halves the budget, no more, and never takes it
-	// below the floor.
-	before := shaper.shape().ProcessQueryPermits
-	if idle := shaper.derive(700); idle.Shape.ProcessQueryPermits != max(before/2, 2) || idle.Demand.PeakQueriesPerSecond != 0 {
-		t.Fatalf("an idle minute after %d permits derived %+v from %+v", before, idle.Shape, idle.Demand)
+	// A minute with no work leaves the permits where the memory put them:
+	// they never followed the demand down to a floor.
+	if idle := shaper.derive(700); idle.Shape.ProcessQueryPermits != cfg.PhaseTwo.Scheduler.ProcessQueryPermits ||
+		idle.Shape.RecoveryQueryPermits != cfg.PhaseTwo.Scheduler.RecoveryQueryPermits || idle.Demand.PeakQueriesPerSecond != 0 {
+		t.Fatalf("an idle minute derived %+v from %+v, want the startup permits %d/%d", idle.Shape, idle.Demand,
+			cfg.PhaseTwo.Scheduler.ProcessQueryPermits, cfg.PhaseTwo.Scheduler.RecoveryQueryPermits)
 	}
 }
 
@@ -172,9 +174,7 @@ func TestAThrottledBudgetStillSeesTheDemandItHolds(t *testing.T) {
 			}
 		}(i)
 	}
-	for flights.PeakNormalRequestsPerSecond() < 50 {
-		time.Sleep(time.Millisecond)
-	}
+	testwait.Until(t, "fifty Normal requests a second at the peak", func() bool { return flights.PeakNormalRequestsPerSecond() >= 50 })
 	// Two run, held 100 ms each, and are released.
 	for i := 0; i < 2; i++ {
 		permit := <-granted

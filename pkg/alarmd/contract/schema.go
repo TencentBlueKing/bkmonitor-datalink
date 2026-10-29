@@ -258,3 +258,7 @@ func walkJSONValue(decoder *json.Decoder) error {
 	}
 	return nil
 }
+
+// CanonicalDecimal reports whether text is a canonical decimal: 0, or digits
+// with no leading zero, and nothing else.
+func CanonicalDecimal(text string) bool { return canonicalDecimalPattern.MatchString(text) }

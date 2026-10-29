@@ -64,24 +64,17 @@ var outputFailureReading = map[string]struct {
 var outputNamedCodes = map[string]bool{contract.ReasonOutputConversionRejected: true, contract.ReasonOutputClientRejected: true,
 	contract.ReasonOutputLeaseExpiring: true}
 
-// outputRejectionCodes are the sink's two refusal words: a failure under one
-// of them is a client refusal by its code alone, which is how a row from a
-// publisher that carried no kind is still read.
-var outputRejectionCodes = map[string]bool{contract.ReasonOutputConversionRejected: true, contract.ReasonOutputClientRejected: true}
-
 // outputFailureOf is the row's output failure when its failure is one and
 // is this round's evidence to read: the reference and its kind - from the
-// row, else client_rejected under a refusal code, else unknown.
+// row, else unknown. A refusal the sink named always carries client_rejected
+// (the coordinator's event_acked line), so a refusal code needs no reading
+// of its own here.
 func outputFailureOf(anomaly Anomaly) (*FailureRef, string, bool) {
 	if anomaly.Failure == nil || anomaly.Failure.Stage != "output" {
 		return nil, "", false
 	}
 	kind := anomaly.Failure.Kind
-	switch {
-	case validOutputFailureKind(kind):
-	case outputRejectionCodes[anomaly.Failure.Code]:
-		kind = observability.OutputFailureClientRejected
-	default:
+	if !validOutputFailureKind(kind) {
 		kind = observability.OutputFailureUnknown
 	}
 	return anomaly.Failure, kind, true

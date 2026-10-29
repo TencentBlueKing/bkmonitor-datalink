@@ -27,7 +27,7 @@ import (
 // mint a series per strategy.
 func TestOutputEventsRejectedAreBoundedByRuleAndStrategy(t *testing.T) {
 	r := NewRecorder(BuildInfo{})
-	const family = "bkmonitor_alarmd_output_events_rejected_total"
+	const family = "alarmd_output_events_rejected_total"
 	if before := gatherFamily(t, r, family); len(before) != len(observability.OutputRejectRules) {
 		t.Fatalf("%d series before any refusal, want one per rule (%d)", len(before), len(observability.OutputRejectRules))
 	}

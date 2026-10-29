@@ -102,7 +102,7 @@ func renewalGateResetSeries(t *testing.T, recorder *metric.Recorder) (float64, b
 		t.Fatal(err)
 	}
 	for _, family := range families {
-		if family.GetName() != "bkmonitor_alarmd_state_renewal_gate_resets_total" {
+		if family.GetName() != "alarmd_state_renewal_gate_resets_total" {
 			continue
 		}
 		for _, series := range family.GetMetric() {

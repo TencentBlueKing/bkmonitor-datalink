@@ -89,9 +89,17 @@ func runNoDataSampleRounds(t *testing.T, due execution.DuePlan, store *state.Exe
 		stream.coordinator.ports.State, stream.coordinator.ports.Evaluator = store, evaluator
 		stream.coordinator.ports.Observer = observability.ObserverFunc(func(context.Context, observability.Observation) {})
 		stream.effective = mustPrepareAlwaysEffectiveTimeFacts(t, stream.header)
-		stream.gaps = execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
-			Identity: execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration}, Status: execution.GapMissing,
-		}}}
+		// The unavailable round writes the Plan's gap marker, and the rounds
+		// after it load it until RequiredFullSlots whole rounds have passed:
+		// what production does, so the evaluator reads the unread round as
+		// a read gap, not a settled quiet minute.
+		gap := execution.GapGuardSnapshot{Identity: execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration}, Status: execution.GapMissing}
+		if required, observed := requiredFullSlots(due.CompiledPlan), uint32(max(index-2, 0)); index > 1 && observed < required {
+			gap.Status, gap.MarkerRevision = execution.GapFound, 1
+			gap.Scopes = []execution.GapScopeState{{Status: execution.GapStatusGapped,
+				ReasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable), RequiredFullSlots: required, ObservedFullSlots: observed}}
+		}
+		stream.gaps = execution.GapLoadResult{Items: []execution.GapGuardSnapshot{gap}}
 		completeness := execution.CompletenessFull
 		if input == "unavailable" {
 			completeness = execution.CompletenessUnavailable
@@ -121,6 +129,10 @@ func runNoDataSampleRounds(t *testing.T, due execution.DuePlan, store *state.Exe
 				mutations = append(mutations, result.Mutation)
 			}
 		}
+		// The unavailable round is a hole, never an absent period: no round
+		// before the fifth reaches three absent in three. Nor is it a quiet
+		// one: its gap marker is open while the windows that hold it are
+		// read, so none of them is settled and none recovers.
 		if index < 4 && len(events) != 0 {
 			t.Fatalf("round %d bridged an unavailable period: %+v", index+1, events)
 		}

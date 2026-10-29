@@ -27,6 +27,13 @@ type Desired struct {
 	// Assignments is every Assignment record the Leader holds, by Query
 	// Group, including draining ones.
 	Assignments map[execution.QueryGroupIdentity]Assignment
+	// Ready is the round's ready set, when ReadyKnown: a receiver outside it
+	// with no stream has left. It is not in any view and not in the
+	// fingerprint, so a change of it alone publishes nothing. A publication
+	// from outside the round leaves ReadyKnown false and the last set
+	// stands.
+	Ready      []string
+	ReadyKnown bool
 }
 
 // Project is the view of one Worker: every Query Group whose Assignment

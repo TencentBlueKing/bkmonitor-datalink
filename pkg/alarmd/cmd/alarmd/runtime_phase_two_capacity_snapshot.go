@@ -71,7 +71,7 @@ func capacitySnapshotSource(
 		seconds += occupancy.LookbackHeldSeconds
 		usage := config.ReadContainerUsage()
 		capacity := &fleet.Capacity{
-			PermitsHeld: held, PermitBudget: occupancy.Budget, PermitSeconds: seconds,
+			PermitsHeld: held, PermitBudget: occupancy.Budget, PermitsPeak: occupancy.PeakHeld, PermitSeconds: seconds,
 			Waiting:        occupancy.Waiting["normal"] + occupancy.Waiting["recovery"],
 			PermitAcquires: occupancy.Acquires, PermitWaits: occupancy.Queued,
 			QueueBudget: facts.Capacity.ReadyQueue + facts.Capacity.RecoveryQueue,
@@ -125,8 +125,9 @@ type observabilityCapacity = observability.RuntimeCapacityFacts
 // client or pool.
 //
 // The design allows diagnostics to share the instance and requires them not to
-// share connections: the control plane pool is sized from the query permit
-// count, and a diagnostic burst taking from it would slow the pipeline these
+// share connections: the control plane pool is sized to the scheduler's
+// active execution ceiling (config.DeriveRedisPoolSize), and a diagnostic
+// burst taking from it would slow the pipeline these
 // records exist to explain. Four connections is enough for a bounded,
 // fire-and-forget writer and one page read at a time.
 func phaseTwoDiagnosticsConnection(connection config.RedisConnectionConfig) config.RedisConnectionConfig {

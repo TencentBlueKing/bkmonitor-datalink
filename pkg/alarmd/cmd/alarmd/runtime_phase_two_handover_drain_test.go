@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
@@ -59,23 +60,23 @@ func TestAReassignedQueryGroupIsReleasedOnlyAfterItsRunningSlotReturns(t *testin
 		if err != nil {
 			t.Fatalf("refreshAndReconcile() error = %v", err)
 		}
-	case <-time.After(signalWaitBound):
+	case <-testwait.Expired(t):
 		t.Fatal("the reconcile that moved the Query Group away waited for its Slot; the control loop must not")
 	}
 	// The move is applied: no further Slot will start for it.
 	if heldRunner(bundle, "query-group-1") != nil {
 		t.Fatal("the moved Query Group is still a current runner")
 	}
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // fixed-wait: the lease must not be released while the Slot runs; 100 ms is many release checks
 	if released := first.releaseCount(); released != 0 {
 		t.Fatalf("lease released %d time(s) while the Slot was still running; want the release after "+
 			"the Slot's commit boundary (02 §6.2 steps 2-3)", released)
 	}
 	letSlotFinish()
 	<-done
-	deadline := time.Now().Add(signalWaitBound)
+	deadline := testwait.Deadline(t)
 	for first.releaseCount() == 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	if released := first.releaseCount(); released != 1 {
 		t.Fatalf("release calls after the Slot returned = %d, want exactly 1", released)
@@ -117,9 +118,9 @@ func TestAReassignedQueryGroupWithNoSlotInFlightIsReleasedAtOnce(t *testing.T) {
 	if err := bundle.refreshAndReconcile(context.Background(), true); err != nil {
 		t.Fatalf("refreshAndReconcile() error = %v", err)
 	}
-	deadline := time.Now().Add(signalWaitBound)
+	deadline := testwait.Deadline(t)
 	for first.releaseCount() == 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	if released := first.releaseCount(); released != 1 {
 		t.Fatalf("release calls = %d, want 1", released)
@@ -134,9 +135,10 @@ func TestAReassignedQueryGroupWithNoSlotInFlightIsReleasedAtOnce(t *testing.T) {
 
 // Design 02 §6.6: on a stop signal the Worker goes DRAINING first, stops
 // creating Slots, and finishes within the drain deadline the execution that
-// has entered its Event/State/Progress boundary. The Slot below needs 300 ms
-// to finish, far inside the shutdown timeout: stopping the Worker lets it
-// finish, and the Worker was already registered DRAINING when it did.
+// has entered its Event/State/Progress boundary. The Slot below runs until
+// the Worker has registered DRAINING and then a short margin, far inside the
+// shutdown timeout: stopping the Worker lets it finish, and the Worker was
+// already registered DRAINING when it did.
 func TestAStopLetsTheSlotInItsCommitBoundaryFinish(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	queryGroup := execution.QueryGroupIdentity("query-group-drain")
@@ -144,6 +146,8 @@ func TestAStopLetsTheSlotInItsCommitBoundaryFinish(t *testing.T) {
 	owner := &fakePhaseTwoOwnership{assigned: []execution.QueryGroupIdentity{queryGroup}}
 	runStarted := make(chan struct{})
 	outcome := make(chan string, 1)
+	drainBegan := make(chan observability.SlotDrainFacts, 1)
+	var began atomic.Pointer[observability.SlotDrainFacts]
 	var drainingBeforeFinish atomic.Bool
 	var once sync.Once
 	owner.runner = &callbackPhaseTwoQueryGroup{run: func(ctx context.Context) (execution.SlotExecutionResult, bool, error) {
@@ -152,18 +156,44 @@ func TestAStopLetsTheSlotInItsCommitBoundaryFinish(t *testing.T) {
 		if !first {
 			return execution.SlotExecutionResult{}, false, nil
 		}
+		// The Slot runs until the Worker has registered DRAINING - the order
+		// the case is about - or a cancel ends it; past the test's deadline it
+		// finishes without, and the case reads that as DRAINING not first.
+		draining := func() bool {
+			states := owner.registrationStates()
+			return len(states) > 0 && states[len(states)-1] == ownership.WorkerDraining
+		}
+		for deadline := testwait.Deadline(t); !draining() && time.Now().Before(deadline); {
+			select {
+			case <-ctx.Done():
+				outcome <- "cancelled"
+				return execution.SlotExecutionResult{}, true, ctx.Err()
+			case <-time.After(time.Millisecond): // fixed-wait: the poll interval of a condition wait bounded by the test deadline
+			}
+		}
+		drainingBeforeFinish.Store(draining())
+		// After DRAINING the stop takes a few in-process steps - the dispatcher
+		// told to stop, its ticks returned - before drainSlots counts the
+		// Slots it waits for; returning inside them reads as a drain with
+		// nothing in flight. The stop says when it has counted them.
 		select {
 		case <-ctx.Done():
-			outcome <- "cancelled"
-			return execution.SlotExecutionResult{}, true, ctx.Err()
-		case <-time.After(300 * time.Millisecond):
-			states := owner.registrationStates()
-			drainingBeforeFinish.Store(len(states) > 0 && states[len(states)-1] == ownership.WorkerDraining)
-			outcome <- "finished"
-			return execution.SlotExecutionResult{Completed: true}, true, nil
+		case facts := <-drainBegan:
+			began.Store(&facts)
+		case <-testwait.Expired(t):
 		}
+		outcome <- "finished"
+		return execution.SlotExecutionResult{Completed: true}, true, nil
 	}}
 	bundle := mustPhaseTwoWorkerBundle(t, cfg, newPhaseTwoApplicationHealth(), control, owner)
+	bundle.dependencies.Observer = observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		if observation.Stage == observability.StageShutdownDrainBegan && observation.SlotDrain != nil {
+			select {
+			case drainBegan <- *observation.SlotDrain:
+			default:
+			}
+		}
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- bundle.Run(ctx) }()
@@ -180,6 +210,10 @@ func TestAStopLetsTheSlotInItsCommitBoundaryFinish(t *testing.T) {
 	}
 	if drain := bundle.shutdownDrain(); drain == nil || drain.Outcome != "finished" || drain.Waited != 1 || drain.Cancelled != 0 {
 		t.Fatalf("shutdown drain = %+v, want finished with 1 waited and none cancelled", drain)
+	}
+	// The stop said, before its wait, that it was waiting on the one Slot.
+	if facts := began.Load(); facts == nil || facts.Site != observability.SlotDrainSiteShutdown || facts.Waited != 1 || facts.Outcome != "" {
+		t.Fatalf("the stop's drain began as %+v, want the shutdown waiting on 1 Slot, seen by the Slot before it returned", facts)
 	}
 }
 
@@ -250,12 +284,11 @@ func TestAStopDoesNotWaitForeverOnASlotThatIgnoresCancellation(t *testing.T) {
 	waitSignal(t, runner.runStarted, "the Slot that ignores cancellation")
 	stopped := time.Now()
 	cancel()
-	bound := 2*cfg.ShutdownTimeout.Duration() + 2*time.Second
 	select {
 	case <-done:
-	case <-time.After(bound + time.Second):
-		t.Fatalf("the stop was still waiting on a Slot that ignores cancellation after %s, want it done within %s",
-			time.Since(stopped), bound)
+	case <-testwait.Expired(t):
+		t.Fatalf("the stop was still waiting on a Slot that ignores cancellation %s after it began, at the test's deadline",
+			time.Since(stopped))
 	}
 	drain := bundle.shutdownDrain()
 	if drain == nil || drain.Outcome != observability.SlotDrainDeadlineUnreturned || drain.Waited != 1 ||

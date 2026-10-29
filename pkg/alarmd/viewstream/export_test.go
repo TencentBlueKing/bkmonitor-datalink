@@ -5,7 +5,10 @@
 
 package viewstream
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // BackoffsForTest samples the reconnect wait for one attempt.
 func BackoffsForTest(client *Client, attempt, samples int) []time.Duration {
@@ -14,4 +17,10 @@ func BackoffsForTest(client *Client, attempt, samples int) []time.Duration {
 		waits = append(waits, client.backoff(attempt))
 	}
 	return waits
+}
+
+// ConnectFailureReasonForTest is the word a stream that did not open is
+// observed with.
+func ConnectFailureReasonForTest(streamCtx context.Context, err error) string {
+	return connectFailureReason(streamCtx, err)
 }

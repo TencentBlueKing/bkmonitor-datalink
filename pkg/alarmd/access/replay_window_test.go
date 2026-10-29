@@ -63,7 +63,7 @@ func TestEveryPeriodLeavesADispatchedReplayTimeToRun(t *testing.T) {
 
 			// A replay, which is the operation that was getting a boundary of
 			// its own.
-			prepared, err := prepare(contractRef, frozen, configured, true)
+			prepared, err := prepare(contractRef, frozen, configured, true, nil)
 			if err != nil {
 				t.Fatalf("prepare(replay) error=%v", err)
 			}

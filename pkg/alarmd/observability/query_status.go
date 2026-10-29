@@ -50,7 +50,10 @@ const (
 	QueryStatusQueryTsPartial        = "QUERY_TS_PARTIAL"
 	QueryStatusStorageTimeout        = "STORAGE_TIMEOUT"
 	QueryStatusStorageError          = "STORAGE_ERROR"
-	QueryStatusOther                 = "OTHER"
+	// QueryStatusOutputError is the status UQ gives a named output it failed
+	// to compute; a failed legacy output's status is the query's.
+	QueryStatusOutputError = "ERROR"
+	QueryStatusOther       = "OTHER"
 )
 
 // What this deployment did with the response the code arrived on.
@@ -72,7 +75,7 @@ func validQueryStatusCode(code string) bool {
 		QueryStatusSpaceIsNotExists, QueryStatusSpaceTableIDNotExists,
 		QueryStatusSpaceTableIDFallback, QueryStatusTableIDProxyNotExists,
 		QueryStatusQueryRawError, QueryStatusQueryRawPartial, QueryStatusQueryTsPartial,
-		QueryStatusStorageTimeout, QueryStatusStorageError, QueryStatusOther:
+		QueryStatusStorageTimeout, QueryStatusStorageError, QueryStatusOutputError, QueryStatusOther:
 		return true
 	}
 	return false

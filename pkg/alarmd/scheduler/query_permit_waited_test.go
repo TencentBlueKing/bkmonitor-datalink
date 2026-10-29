@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 // A permit says whether its query had to wait for it: the downstream's errors
@@ -47,9 +48,7 @@ func TestAPermitSaysWhetherItsQueryWaitedForIt(t *testing.T) {
 		}
 		granted <- permit
 	}()
-	for flights.queryPermitSnapshot().NormalWaiting == 0 {
-		time.Sleep(time.Millisecond)
-	}
+	testwait.Until(t, "a caller queued for a permit", func() bool { return flights.queryPermitSnapshot().NormalWaiting != 0 })
 	held[0].Release()
 	permit := <-granted
 	if permit == nil || !permit.Waited() {

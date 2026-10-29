@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 type ProviderRouteRef string
@@ -114,6 +115,22 @@ func BuildPhysicalQuerySpec(spec PhysicalQuerySpec) (PhysicalQuerySpec, error) {
 	return spec, nil
 }
 
+// LegacyOutputOnly is the physical query asking for its own value alone,
+// under its own digest (QueryPlanFacts.WithoutNamedOutputs): the same
+// request but for the named outputs, so the same series identities and
+// record ids. The spec itself when it asks for none.
+func (spec PhysicalQuerySpec) LegacyOutputOnly() (PhysicalQuerySpec, error) {
+	if spec.PlanFacts.NamedOutputs == nil {
+		return spec, nil
+	}
+	facts, err := spec.PlanFacts.WithoutNamedOutputs()
+	if err != nil {
+		return PhysicalQuerySpec{}, err
+	}
+	spec.PlanFacts, spec.Digest = facts, ""
+	return BuildPhysicalQuerySpec(spec)
+}
+
 type RecoveryPermit struct {
 	PermitID           string
 	Slot               SlotIdentity
@@ -137,6 +154,12 @@ type QueryAttempt struct {
 	// only time a failure (see AttemptTiming); zero leaves it untimed.
 	BudgetStartUnixMilli int64
 	ReadyAtUnixMilli     int64
+
+	// Strategies are the strategy ids of the Plans the query serves, sorted
+	// and unique, for the provider to correlate its own logs with: they ride
+	// on a request header and decide nothing. Empty for a read that serves
+	// no Plan.
+	Strategies []string
 }
 
 func (attempt QueryAttempt) Validate() error {
@@ -188,6 +211,98 @@ type RouteAttemptFact struct {
 	// Timing is when a failed attempt ran against the time it was given;
 	// nil where the attempt did not measure it.
 	Timing *AttemptTiming
+	// Rejection is what the backend said when it refused the query: nil
+	// where the attempt got no non-success answer.
+	Rejection *ProviderRejection `json:",omitempty"`
+	// Request is which deadline governed the attempt's request, which had
+	// expired when it ended, and what the provider answered; nil where no
+	// request was sent. An attempt the provider answered carries it whether
+	// the answer succeeded or not, so a degraded answer (partial, empty, a
+	// failing status) names the request it answered as a failed one does.
+	Request *RequestFacts `json:",omitempty"`
+	// Planned is the physical query's own plan: whose input it was and the
+	// deadlines access planned it under; nil until access annotates a
+	// failed attempt.
+	Planned *PlannedQueryFacts `json:",omitempty"`
+}
+
+// Which context's deadline governed a request, and which context had expired
+// when it failed (RequestFacts).
+const (
+	RequestDeadlineCaller  = "caller"
+	RequestDeadlineAttempt = "attempt"
+	RequestExpiredNone     = "none"
+	RequestExpiredBoth     = "both"
+)
+
+// RequestFacts is a failed request against its own deadline: the effective
+// deadline of the request's context at send (zero when it had none) and how
+// much of it was left just before the request was sent (-1 when there was no
+// deadline), whether the caller's context or the attempt's own deadline set
+// it, which of the two had expired when the request failed (none when
+// neither had: a transport's own timeout), the error as text, sanitized and
+// at most MaxRequestErrorBytes, and the Go types along its chain, at most
+// MaxRequestErrorTypes.
+type RequestFacts struct {
+	DeadlineUnixMilli  int64    `json:"deadline_ms"`
+	DeadlineLeftAtDoMs int64    `json:"deadline_left_at_do_ms"`
+	DeadlineSource     string   `json:"deadline_source"`
+	Expired            string   `json:"expired"`
+	ErrorChain         string   `json:"error_chain,omitempty"`
+	ErrorTypes         []string `json:"error_types,omitempty"`
+	// TraceID is the trace id of the traceparent the request was sent with,
+	// known at the send whether or not an answer came back.
+	TraceID string `json:"trace_id,omitempty"`
+	// AnswerStatus is the HTTP status the provider answered with, 200
+	// included; zero where no answer came back. AnsweredUnixMilli is when
+	// its headers arrived (zero where none did) and CompletedUnixMilli when
+	// the attempt ended: answered in full, or failed. A line is written
+	// after its round's work, so its own time is neither.
+	AnswerStatus       int   `json:"answer_status,omitempty"`
+	AnsweredUnixMilli  int64 `json:"answered_ms,omitempty"`
+	CompletedUnixMilli int64 `json:"completed_ms,omitempty"`
+	// TimeoutSource names which branch filed a timeout
+	// (observability.QueryTimeoutSources); empty for anything else.
+	TimeoutSource string `json:"timeout_source,omitempty"`
+	// Excerpt is the provider's own message from an answer's body,
+	// sanitized and bounded as a refusal's is. It can echo the query, so it
+	// is never serialized and never on a log line; it stays on the replica
+	// with the Query Group's kept refusal.
+	Excerpt string `json:"-"`
+}
+
+// MaxRequestErrorBytes bounds RequestFacts.ErrorChain, and
+// MaxRequestErrorTypes RequestFacts.ErrorTypes.
+const (
+	MaxRequestErrorBytes = 300
+	MaxRequestErrorTypes = 8
+)
+
+// PlannedQueryFacts is a physical query as access planned it: the role and
+// dataset of the input it serves (the primary one when it serves several),
+// its planned deadline, the deadline under the frozen reserve, the earliest
+// completion deadline of its consumers, and whether the live reserve left it
+// no time at its send so the frozen deadline replaced the planned one.
+type PlannedQueryFacts struct {
+	Role                        string `json:"role"`
+	Dataset                     string `json:"dataset"`
+	DeadlineUnixMilli           int64  `json:"deadline_ms"`
+	FrozenDeadlineUnixMilli     int64  `json:"frozen_deadline_ms"`
+	CompletionDeadlineUnixMilli int64  `json:"completion_deadline_ms"`
+	FellBack                    bool   `json:"fell_back"`
+}
+
+// ProviderRejection is a non-success answer as it may be kept: the class
+// the provider's body names (VM_SAMPLE_LIMIT, PROMQL_PARSE, ... or HTTP_<code>),
+// the provider's own trace id when the body carries one, and the start of the
+// body, sanitized - credential values, URLs and addresses replaced and cut
+// short - so an operator can read why without the request it may echo. It is
+// kept with the Query Group's last failure and never written to a log line:
+// a log keeps the class and the trace id only.
+type ProviderRejection struct {
+	Class   string `json:"class"`
+	TraceID string `json:"trace_id,omitempty"`
+	Excerpt string `json:"excerpt,omitempty"`
 }
 
 // AttemptTiming reads a query that did not come back against its budget,
@@ -244,6 +359,14 @@ const (
 	// more often than it aggregates - answered with buckets on a grid other
 	// than its request's.
 	ResponseFailureOffRequestGrid = "off_request_grid"
+	// ResponseFailureNamedOutputContract is a query with named outputs
+	// answered under a response contract other than the one asked for, or
+	// without its legacy output, or naming an output twice.
+	ResponseFailureNamedOutputContract = "named_output_contract"
+	// ResponseFailureNamedOutputDuplicateKey is a query with named outputs
+	// one of whose outputs answered two points at one time and labels,
+	// __name__ aside (contract.ReasonQueryNamedOutputDuplicateKey).
+	ResponseFailureNamedOutputDuplicateKey = "named_output_duplicate_key"
 	// ResponseFailureStatusPrefix precedes the lower-cased UQ status code of a
 	// 200 response whose status field reports a deterministic backend failure
 	// (for example "response=status_space_table_id_field_is_not_exists").
@@ -307,6 +430,7 @@ func BodyRouteDetail(class string) string {
 func ResponseRouteDetail(class string) string {
 	switch class {
 	case ResponseFailureIsPartialMissing, ResponseFailureOffRequestGrid,
+		ResponseFailureNamedOutputContract, ResponseFailureNamedOutputDuplicateKey,
 		ResponseFailureLimitResponseBytes, ResponseFailureLimitSeriesBytes, ResponseFailureLimitTotalSeries, ResponseFailureLimitTotalRecords,
 		ResponseFailureLimitFrameBytes, ResponseFailureLimitFrameSeries, ResponseFailureLimitDictionary,
 		ResponseFailureFormatUnsupported, ResponseFailureFrameInvalid, ResponseFailureSchemaInvalid,
@@ -466,4 +590,26 @@ func (evidence *PartialEvidence) Validate() error {
 		return errors.New("alarmd execution: invalid typed PARTIAL evidence")
 	}
 	return nil
+}
+
+// Observed is request as a line renders it; nil for nil.
+func (request *RequestFacts) Observed() *observability.QueryRequestFacts {
+	if request == nil {
+		return nil
+	}
+	return &observability.QueryRequestFacts{DeadlineUnixMilli: request.DeadlineUnixMilli, DeadlineLeftAtDoMs: request.DeadlineLeftAtDoMs,
+		DeadlineSource: request.DeadlineSource, Expired: request.Expired, ErrorChain: request.ErrorChain,
+		ErrorTypes: append([]string(nil), request.ErrorTypes...), TraceID: request.TraceID,
+		AnswerStatus: request.AnswerStatus, AnsweredUnixMilli: request.AnsweredUnixMilli, CompletedUnixMilli: request.CompletedUnixMilli,
+		TimeoutSource: request.TimeoutSource, Excerpt: request.Excerpt}
+}
+
+// Observed is planned as a line renders it; nil for nil.
+func (planned *PlannedQueryFacts) Observed() *observability.QueryPlannedFacts {
+	if planned == nil {
+		return nil
+	}
+	return &observability.QueryPlannedFacts{Role: planned.Role, Dataset: planned.Dataset, DeadlineUnixMilli: planned.DeadlineUnixMilli,
+		FrozenDeadlineUnixMilli: planned.FrozenDeadlineUnixMilli, CompletionDeadlineUnixMilli: planned.CompletionDeadlineUnixMilli,
+		FellBack: planned.FellBack}
 }

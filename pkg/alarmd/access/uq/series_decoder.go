@@ -23,14 +23,31 @@ type seriesDecoder struct {
 	offGrid                                       bool
 	receivedAt                                    int64
 	decodeStarted                                 time.Time
+	// framed is set on an answer read a frame at a time, which hands on a
+	// frame's series before it reads the next (handOn): only its series are
+	// made canonical side by side. An answer read as one document hands each
+	// on before it reads on, so a series that came is delivered even when
+	// the rest does not. pending is the series accepted and not yet handed
+	// on, oldest first; failed is the first error handing one on met, after
+	// which none is.
+	framed  bool
+	pending []normalizing
+	failed  error
+	// named reads the answer of a query that asked for named outputs; nil
+	// for every other query.
+	named *namedOutputDecoding
 }
 
 func (client *Client) newSeriesDecoder(attempt queryIdentity, sink execution.ProviderSeriesSink, scanned *DiagnosticScan) *seriesDecoder {
 	return &seriesDecoder{client: client, attempt: attempt, sink: sink, scanned: scanned,
-		ref: providerResultRef(attempt), cut: newTermsCutCounter(attempt.Spec), decodeStarted: client.now()}
+		ref: providerResultRef(attempt), cut: newTermsCutCounter(attempt.Spec), decodeStarted: client.now(),
+		named: newNamedOutputDecoding(attempt)}
 }
 
 func (session *seriesDecoder) accept(ctx context.Context, series responseSeries, encodedBytes uint64) error {
+	if session.failed != nil {
+		return session.failed
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -50,7 +67,37 @@ func (session *seriesDecoder) accept(ctx context.Context, series responseSeries,
 		return ErrTotalRecordsExceeded
 	}
 	session.totalRecords += uint64(len(series.Values))
-	batch, nullFields, err := normalizeSeries(session.attempt.Spec, session.ref, series, session.receivedAt)
+	session.pending = append(session.pending, normalizing{series: series, encodedBytes: encodedBytes})
+	if session.framed {
+		return nil
+	}
+	return session.handOn(ctx)
+}
+
+// handOn makes the series accepted canonical - side by side on the workers
+// free (normalizeSideBySide) - and hands them on here, one after another in
+// the order they came, as when each was handed on as it came: the sink sees
+// the same series in the same order, and the delivery digest chains them
+// the same way. The first error one meets ends the answer's deliveries: the
+// series after it are not handed on.
+func (session *seriesDecoder) handOn(ctx context.Context) error {
+	if session.failed != nil || len(session.pending) == 0 {
+		return session.failed
+	}
+	normalizeSideBySide(session.pending, session.attempt.Spec, session.ref, session.receivedAt)
+	for index := range session.pending {
+		if session.failed = session.deliver(ctx, &session.pending[index]); session.failed != nil {
+			break
+		}
+	}
+	clear(session.pending)
+	session.pending = session.pending[:0]
+	return session.failed
+}
+
+// deliver hands one canonical series on.
+func (session *seriesDecoder) deliver(ctx context.Context, job *normalizing) error {
+	batch, err := job.batch, job.err
 	if errors.Is(err, errOffRequestGrid) {
 		session.offGrid = true
 		return nil
@@ -58,16 +105,32 @@ func (session *seriesDecoder) accept(ctx context.Context, series responseSeries,
 	if err != nil {
 		return err
 	}
-	session.nullIdentityFields += nullFields
+	session.nullIdentityFields += job.nullFields
 	if batch.Dataset.Len() == 0 {
 		return nil
 	}
-	batch.Delivery.Bytes = encodedBytes
+	batch.Delivery.Bytes = job.encodedBytes
 	if err := session.sink.ConsumeProviderSeries(ctx, batch); err != nil {
 		return err
 	}
 	session.delivery, err = execution.AccumulateSeriesDelivery(session.delivery, batch.Delivery)
+	if err == nil && session.named != nil {
+		err = session.named.noteDelivered(ctx, job.series, batch.Dataset, session.attempt.Spec.PlanFacts.Normalization.CanonicalValueField)
+	}
 	return err
+}
+
+// settle hands on what an answer that ended early had accepted, as each
+// series was handed on as it came before it ended, and keeps the earlier
+// error: a series accepted before the one that ended the answer failed
+// first.
+func (session *seriesDecoder) settle(ctx context.Context, err *error) {
+	if len(session.pending) == 0 {
+		return
+	}
+	if failed := session.handOn(ctx); failed != nil {
+		*err = failed
+	}
 }
 
 // limitCompletion preserves the existing deterministic response-limit outcome,
@@ -87,7 +150,33 @@ func (session *seriesDecoder) limitCompletion(completion *execution.ProviderComp
 	*err = nil
 }
 
-func (session *seriesDecoder) finish(status *responseStatus, isPartial *bool, resultTableIDs []string) (execution.ProviderCompletion, error) {
+// finish completes the answer, and leaves the provider's own message, when
+// its status carried one, on the attempt for the client to keep with the
+// request it answered (statusExcerpt).
+func (session *seriesDecoder) finish(ctx context.Context, status *responseStatus, isPartial *bool, resultTableIDs []string) (execution.ProviderCompletion, error) {
+	completion, err := session.complete(ctx, status, isPartial, resultTableIDs)
+	if excerpt := statusExcerpt(status); err == nil && excerpt != "" {
+		for index := range completion.RouteFacts.Attempts {
+			completion.RouteFacts.Attempts[index].Request = &execution.RequestFacts{Excerpt: excerpt}
+		}
+	}
+	return completion, err
+}
+
+// statusExcerpt is a body status's message as an operator may read it,
+// sanitized and bounded as a refusal's body is (providerErrorExcerpt); empty
+// for no status or no message.
+func statusExcerpt(status *responseStatus) string {
+	if status == nil || status.Message == "" {
+		return ""
+	}
+	return providerErrorExcerpt([]byte(status.Message))
+}
+
+func (session *seriesDecoder) complete(ctx context.Context, status *responseStatus, isPartial *bool, resultTableIDs []string) (execution.ProviderCompletion, error) {
+	if err := session.handOn(ctx); err != nil {
+		return execution.ProviderCompletion{}, err
+	}
 	client, attempt, ref := session.client, session.attempt, session.ref
 	delivery, nullIdentityFields := session.delivery, session.nullIdentityFields
 	decodeStarted, offGrid, cut := session.decodeStarted, session.offGrid, session.cut

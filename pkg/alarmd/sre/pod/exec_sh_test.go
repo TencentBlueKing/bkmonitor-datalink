@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"k8s.io/client-go/rest"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 // A test binary started as "setsid" is the setsid utility: it makes a new
@@ -258,7 +260,7 @@ func TestTheShellSupervisorsDeadlineSurvivesAClosedOutput(t *testing.T) {
 		t.Fatalf("first record %q %v", line, err)
 	}
 	errPipe.Close()
-	waitGone(t, pidPath, time.Minute)
+	waitGone(t, pidPath)
 }
 
 // A command whose output nobody reads blocks on a full pipe, and the timer
@@ -275,19 +277,19 @@ func TestTheShellSupervisorsDeadlineSurvivesOutputBackpressure(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { stdout.Close(); command.Process.Kill(); command.Wait() }()
-	waitGone(t, pidPath, time.Minute)
+	waitGone(t, pidPath)
 }
 
 // waitGone waits for the pid a command wrote to exist and then to end.
-func waitGone(t *testing.T, pidPath string, guard time.Duration) {
+func waitGone(t *testing.T, pidPath string) {
 	t.Helper()
-	end := time.Now().Add(guard)
+	end := testwait.Deadline(t)
 	pid := 0
 	for pid == 0 && time.Now().Before(end) {
 		if data, err := os.ReadFile(pidPath); err == nil {
 			pid, _ = strconv.Atoi(strings.TrimSpace(string(data)))
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	if pid == 0 {
 		t.Fatal("the command never recorded its pid")
@@ -296,7 +298,7 @@ func waitGone(t *testing.T, pidPath string, guard time.Duration) {
 		if errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
 			return
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	syscall.Kill(pid, syscall.SIGKILL)
 	t.Fatal("the command outlived its deadline")
@@ -619,17 +621,26 @@ func TestAShortProgramIsMatchedOnlyAsTheRuntimeQuotesIt(t *testing.T) {
 // own TERM ends it, whether or not the shell has job control.
 func TestAStoppedTimerLeavesNoSleep(t *testing.T) {
 	runtimeProvider(t)
-	command := exec.Command("/bin/sh", "-c", remoteSupervisor, supervisorName, "N0NCE", "47", "/bin/sh", "-c", "exit 0")
+	// The timer's deadline lies past the wait below, so its sleep goes
+	// within the wait only by the TERM the stopped timer sends it: a leaked
+	// one would still be sleeping when the wait gives up.
+	seconds := strconv.Itoa(int(time.Until(testwait.Deadline(t)).Seconds()) + 47)
+	command := exec.Command("/bin/sh", "-c", remoteSupervisor, supervisorName, "N0NCE", seconds, "/bin/sh", "-c", "exit 0")
 	if out, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("%v %s", err, out)
 	}
-	time.Sleep(200 * time.Millisecond)
-	listing, _ := exec.Command("ps", "-Ao", "args").Output()
-	for _, line := range strings.Split(string(listing), "\n") {
-		if strings.TrimSpace(line) == "sleep 47" {
-			t.Fatal("the stopped timer's sleep is still running")
+	testwait.Until(t, "the stopped timer's sleep ending on its TERM", func() bool {
+		listing, err := exec.Command("ps", "-Ao", "args").Output()
+		if err != nil {
+			t.Fatalf("ps: %v", err)
 		}
-	}
+		for _, line := range strings.Split(string(listing), "\n") {
+			if strings.TrimSpace(line) == "sleep "+seconds {
+				return false
+			}
+		}
+		return true
+	})
 }
 
 // dashOrSkip is the local dash, the /bin/sh of Debian-based images.
@@ -709,5 +720,65 @@ func TestExecUnderDashWithoutSetsidIsShPID(t *testing.T) {
 	result, err := provider.Exec(context.Background(), ExecRequest{Target: target, Argv: []string{"/bin/sh", "-c", "sleep 30"}, TimeoutMS: 300})
 	if err != nil || result.RemoteState != RemoteTimedOut || result.Supervision != SupervisionShPID {
 		t.Fatalf("dash run: %+v %v", result, err)
+	}
+}
+
+// The command runs with Python's output unbuffered, so a command the timer
+// ends has already flushed what it printed; the supervisor reads output as
+// it is written. Before, a timed-out Python script answered with nothing.
+func TestTheCommandRunsWithUnbufferedPythonOutput(t *testing.T) {
+	_, stdout, _ := supervise(t, recordDeadline, "/bin/sh", "-c", `printf '%s' "$PYTHONUNBUFFERED"`)
+	if stdout != "1" {
+		t.Fatalf("PYTHONUNBUFFERED in the command = %q, want 1", stdout)
+	}
+}
+
+// What a command printed before the timer ended it is in its output.
+func TestATimedOutCommandKeepsWhatItPrinted(t *testing.T) {
+	records, stdout, _ := supervise(t, "1", "/bin/sh", "-c", `echo before; sleep 30; echo after`)
+	if !strings.Contains(stdout, "before") || strings.Contains(stdout, "after") || !strings.Contains(strings.Join(records, "\n"), "expired") {
+		t.Fatalf("stdout %q records %v, want the line printed before the timer and an expired record", stdout, records)
+	}
+}
+
+// The command reads the exec's stdin, whichever way it gets its group. A
+// shell without job control gives a background command /dev/null for stdin
+// before any redirection of its own (POSIX), which is the setsid path on a
+// Linux target; the supervisor keeps the stream's stdin on a descriptor of
+// its own and hands that to the command, so a script sent as stdin runs
+// rather than reading nothing and exiting 0.
+func TestTheShellSupervisorHandsTheCommandItsStdin(t *testing.T) {
+	shells := []string{"/bin/sh"}
+	// dash is the /bin/sh of Debian-based images, and the shell that applies
+	// the rule; a host that has it runs the supervisor under it too.
+	if _, err := os.Stat("/bin/dash"); err == nil {
+		shells = append(shells, "/bin/dash")
+	}
+	for _, shell := range shells {
+		for name, path := range map[string]string{"setsid": withSetsid(t), "job control or none": ""} {
+			t.Run(shell+" "+name, func(t *testing.T) {
+				superviseStdin(t, shell, path)
+			})
+		}
+	}
+}
+
+func superviseStdin(t *testing.T, shell, path string) {
+	t.Helper()
+	command := exec.Command(shell, "-c", remoteSupervisor, supervisorName, "N0NCE", "5", "cat")
+	if path != "" {
+		command.Env = append(os.Environ(), "PATH="+path)
+	}
+	command.Stdin = strings.NewReader("stdin-reached\n")
+	var out, errOut strings.Builder
+	command.Stdout, command.Stderr = &out, &errOut
+	if err := command.Run(); err != nil {
+		t.Fatalf("supervisor exited %v; stderr %q", err, errOut.String())
+	}
+	if !strings.HasPrefix(out.String(), "stdin-reached\n") {
+		t.Fatalf("stdout %q, want the command to have read its stdin; stderr %q", out.String(), errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "N0NCE complete 0") {
+		t.Fatalf("records %q", errOut.String())
 	}
 }

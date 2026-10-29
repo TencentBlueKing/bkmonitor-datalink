@@ -147,6 +147,41 @@ func TestTheEventAckedLineCarriesTheSinksOwnRefusal(t *testing.T) {
 	}
 }
 
+// A refusal the sink names is the client's on the event_acked line even when
+// its error states no kind, so a row never carries a refusal code under no
+// kind; a failure that is no refusal and states no kind stays unknown.
+func TestARefusalWithoutAKindIsTheClients(t *testing.T) {
+	observations := make([]observability.Observation, 0, 16)
+	observer := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		observations = append(observations, observation)
+	})
+	ackedKind := func() (string, string) {
+		for index := range observations {
+			if observations[index].Stage == observability.StageEventACKed {
+				return string(observations[index].ReasonCode), observations[index].OutputFailureKind
+			}
+		}
+		t.Fatal("no event_acked observation")
+		return "", ""
+	}
+	for _, reason := range []string{"OUTPUT_CLIENT_REJECTED", "OUTPUT_CONVERSION_REJECTED"} {
+		observations = observations[:0]
+		fixture := buildFixture(t, true, "event_ack", observer, &observations)
+		fixture.ports.eventRejection = &eventRejectionShape{reason: reason, detail: "refused", kindless: true}
+		_, _ = fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+		if code, kind := ackedKind(); code != reason || kind != observability.OutputFailureClientRejected {
+			t.Fatalf("kindless %s: event_acked reason %s kind %q, want %s and client_rejected", reason, code, kind, reason)
+		}
+	}
+	observations = observations[:0]
+	fixture := buildFixture(t, true, "event_ack", observer, &observations)
+	fixture.ports.eventFailureKind = ""
+	_, _ = fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if code, kind := ackedKind(); code != "OUTPUT_ACK_UNKNOWN" || kind != observability.OutputFailureUnknown {
+		t.Fatalf("kindless dependency failure: event_acked reason %s kind %q, want OUTPUT_ACK_UNKNOWN and unknown", code, kind)
+	}
+}
+
 // The event_acked line carries the sink's own count of what the batch
 // became, when the sink gives one: a success whose events all produced no
 // message says zero messages, and a sink that did not count leaves the field

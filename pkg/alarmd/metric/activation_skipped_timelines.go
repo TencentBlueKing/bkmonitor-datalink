@@ -24,7 +24,7 @@ type activationSkippedTimelinesCollector struct {
 
 func newActivationSkippedTimelinesCollector() *activationSkippedTimelinesCollector {
 	return &activationSkippedTimelinesCollector{skipped: prometheus.NewDesc(
-		prometheus.BuildFQName(metricNamespace, metricSubsystem, "activation_timelines_skipped_total"),
+		prometheus.BuildFQName("", metricSubsystem, "activation_timelines_skipped_total"),
 		"Schedule timelines the Control Leader left out when it read the activation's Plan records back from the open "+
 			"Segments, by why: one per Query Group per activation it read. The rest of the activation loads and is "+
 			"cut over as usual. undecodable: the bytes do not decode; the Leader rebuilds that Query Group's records "+

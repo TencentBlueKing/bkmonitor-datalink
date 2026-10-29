@@ -103,10 +103,10 @@ func TestATimelineRevisionStampedOntoARecordReachesTheWorkersView(t *testing.T) 
 	runtime, server, authority := viewPublishRuntime(t, source, &observed)
 	ctx := context.Background()
 	unsaid := ownership.AssignmentRecord{QueryGroup: "qg-a", DesiredWorkerID: "w1", RecordRevision: 5, ContentScope: "obj-a"}
-	runtime.publishView(ctx, authority, map[execution.QueryGroupIdentity]ownership.AssignmentRecord{"qg-a": unsaid}, nil)
+	runtime.publishView(ctx, authority, map[execution.QueryGroupIdentity]ownership.AssignmentRecord{"qg-a": unsaid}, nil, nil, false)
 	stamped := unsaid
 	stamped.TimelineRecordRevision = 9
-	runtime.publishView(ctx, authority, map[execution.QueryGroupIdentity]ownership.AssignmentRecord{"qg-a": stamped}, nil)
+	runtime.publishView(ctx, authority, map[execution.QueryGroupIdentity]ownership.AssignmentRecord{"qg-a": stamped}, nil, nil, false)
 	if len(observed) != 0 {
 		t.Fatalf("observed %+v, want two clean publications", observed)
 	}
@@ -152,7 +152,7 @@ func TestADrainingTimelineThatDoesNotDecodeLeavesOnlyItsQueryGroupUnexecutable(t
 	ctx := context.Background()
 	for name, publish := range map[string]func(*productionPhaseTwoOwnership, ownership.PublicationAuthority){
 		"the round's view": func(runtime *productionPhaseTwoOwnership, authority ownership.PublicationAuthority) {
-			runtime.publishView(ctx, authority, records, nil)
+			runtime.publishView(ctx, authority, records, nil, nil, false)
 		},
 		"the first view of a term": func(runtime *productionPhaseTwoOwnership, _ ownership.PublicationAuthority) {
 			runtime.PublishStoredView(ctx)
@@ -216,7 +216,7 @@ func TestADrainingTimelineThatCannotBeReachedPublishesNothing(t *testing.T) {
 	var observed []observability.Observation
 	runtime, server, authority := viewPublishRuntime(t, source, &observed)
 	ctx := context.Background()
-	runtime.publishView(ctx, authority, records, nil)
+	runtime.publishView(ctx, authority, records, nil, nil, false)
 	before := server.Stats()
 	if before.Revision != 1 || len(observed) != 0 {
 		t.Fatalf("first publication: stats %+v observed %+v", before, observed)
@@ -226,7 +226,7 @@ func TestADrainingTimelineThatCannotBeReachedPublishesNothing(t *testing.T) {
 	moved := changed["qg-a"]
 	moved.RecordRevision++
 	changed["qg-a"] = moved
-	runtime.publishView(ctx, authority, changed, nil)
+	runtime.publishView(ctx, authority, changed, nil, nil, false)
 	after := server.Stats()
 	if after.Revision != before.Revision {
 		t.Errorf("revision %d -> %d: a set was published without a Query Group the store could not answer for", before.Revision, after.Revision)

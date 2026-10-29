@@ -15,6 +15,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/absentalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
@@ -27,6 +28,7 @@ type absentTestControl struct {
 	haveSnaphot bool
 	departed    []controlplane.DepartedStrategy
 	refused     uint64
+	capability  map[string]string
 }
 
 func (control *absentTestControl) ObservedSnapshot() (controlplane.ObservedSnapshot, bool) {
@@ -34,6 +36,9 @@ func (control *absentTestControl) ObservedSnapshot() (controlplane.ObservedSnaps
 }
 func (control *absentTestControl) DepartedStrategies() ([]controlplane.DepartedStrategy, uint64) {
 	return control.departed, control.refused
+}
+func (control *absentTestControl) CapabilityRefused() map[string]string {
+	return control.capability
 }
 
 // absentTestLink is the alert link: a roster in pages, one strategy's
@@ -45,13 +50,26 @@ type absentTestLink struct {
 	failAfter int
 	alerts    []openalerts.Alert
 	alertsErr error
+	// truncated marks the reconcile answer cut (openalerts.Reconciliation.
+	// Truncated): alerts is then the part received.
+	truncated bool
 	records   map[string]openalerts.AlertRecord
 	reads     int
+	// perRound, when set, is how many pages a round has time for: the page
+	// after them fails as the round's deadline would. served counts this
+	// round's pages; the test resets it between rounds.
+	perRound, served int
 }
 
 func (link *absentTestLink) Roster(_ context.Context, cursor string) (openalerts.RosterPage, error) {
 	if link.rosterErr != nil {
 		return openalerts.RosterPage{}, link.rosterErr
+	}
+	if link.perRound > 0 {
+		if link.served >= link.perRound {
+			return openalerts.RosterPage{}, context.DeadlineExceeded
+		}
+		link.served++
 	}
 	index := 0
 	if cursor != "" {
@@ -67,7 +85,7 @@ func (link *absentTestLink) Reconcile(context.Context, openalerts.StrategyKey) (
 	if link.alertsErr != nil {
 		return openalerts.Reconciliation{}, link.alertsErr
 	}
-	return openalerts.Reconciliation{EventSourceID: "native", Alerts: link.alerts}, nil
+	return openalerts.Reconciliation{EventSourceID: "native", Alerts: link.alerts, Truncated: link.truncated}, nil
 }
 
 func (link *absentTestLink) AlertRecord(_ context.Context, _, alertID string) (openalerts.AlertRecord, error) {
@@ -82,6 +100,8 @@ func (link *absentTestLink) AlertRecord(_ context.Context, _, alertID string) (o
 type absentTestWriter struct {
 	batches [][]linkdoutput.CloseRequest
 	err     error
+	// onWrite, when set, runs after a batch is written.
+	onWrite func()
 }
 
 func (w *absentTestWriter) WriteCloseBatch(_ context.Context, requests []linkdoutput.CloseRequest) error {
@@ -89,6 +109,9 @@ func (w *absentTestWriter) WriteCloseBatch(_ context.Context, requests []linkdou
 		return w.err
 	}
 	w.batches = append(w.batches, append([]linkdoutput.CloseRequest(nil), requests...))
+	if w.onWrite != nil {
+		w.onWrite()
+	}
 	return nil
 }
 
@@ -252,6 +275,99 @@ func TestTheAlertsOfAStrategyDeletedBeforeThisProcessSawItAreClosed(t *testing.T
 	}
 }
 
+// A strategy that still exists and that its publication refused for a
+// capability: its alert is closed as no longer detected by alarmd - closed,
+// naming the capability - after the grace under two observations, as an
+// absent strategy's is. The same strategy refused for nothing keeps its
+// alert, and one refused for a round and supported the next starts its
+// grace again when it is refused once more.
+func TestTheAlertsOfAStrategyRefusedForACapabilityAreClosedAsNoLongerDetected(t *testing.T) {
+	listed := func(observation string, at time.Time) controlplane.ObservedSnapshot {
+		snapshot := liveSnapshot(observation, at, 100)
+		snapshot.Strategies = append(snapshot.Strategies, controlplane.DepartedStrategy{TenantID: "system", StrategyID: "10", BusinessID: 2})
+		return snapshot
+	}
+	newRefusedFixture := func(capability map[string]string) *absentTestFixture {
+		fixture := newAbsentFixture(t, []openalerts.Alert{nativeAlert("alert-1", "0123456789abcdef0123456789abcdef")})
+		fixture.control.snapshot = listed("observation-one", fixture.now)
+		fixture.control.capability = capability
+		return fixture
+	}
+	advance := func(fixture *absentTestFixture, observation string) {
+		fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
+		fixture.control.snapshot = listed(observation, fixture.now)
+		for i := range fixture.link.pages {
+			fixture.link.pages[i].Health.LastSuccess = fixture.now.Add(-time.Minute)
+		}
+	}
+	ctx := context.Background()
+
+	refused := newRefusedFixture(map[string]string{"10": "QUERY_SOURCE_RETIRED"})
+	refused.loop.step(ctx)
+	if len(refused.writer.batches) != 0 {
+		t.Fatalf("the first round closed: %+v", refused.writer.batches)
+	}
+	advance(refused, "observation-two")
+	refused.loop.step(ctx)
+	if len(refused.writer.batches) != 1 || len(refused.writer.batches[0]) != 1 {
+		t.Fatalf("the alert of a refused strategy was not closed: %+v (stats %+v)", refused.writer.batches, refused.loop.Stats())
+	}
+	request := refused.writer.batches[0][0]
+	if request.Reason != linkdoutput.CloseReasonUnsupported || request.Detail != "QUERY_SOURCE_RETIRED" || request.StrategyID != 10 {
+		t.Fatalf("close = %+v, want strategy_unsupported naming the capability", request)
+	}
+	event, err := linkdoutput.ConvertClose(request)
+	if err != nil {
+		t.Fatalf("the close is not one the contract accepts: %v", err)
+	}
+	var wire struct {
+		Content     string `json:"content"`
+		Evaluations []struct {
+			Action       string `json:"action"`
+			ActionReason string `json:"action_reason"`
+		} `json:"evaluations"`
+	}
+	if err := json.Unmarshal(event.Payload, &wire); err != nil || len(wire.Evaluations) != 1 ||
+		wire.Evaluations[0].Action != linkdoutput.ActionClosed || wire.Evaluations[0].ActionReason != linkdoutput.CloseReasonUnsupported ||
+		!strings.Contains(wire.Content, "QUERY_SOURCE_RETIRED") {
+		t.Fatalf("event = %s, want closed as strategy_unsupported with the capability in the content", event.Payload)
+	}
+
+	page, ok := refused.loop.Page(ctx, fleet.AbsentCandidateQuery{Limit: 10})
+	if !ok || len(page.Rows) != 1 || page.Rows[0].StrategyID != "10" || page.Rows[0].RefusedFor != "QUERY_SOURCE_RETIRED" {
+		t.Fatalf("absent.list rows = %+v, want strategy 10 naming the capability it was refused for", page.Rows)
+	}
+
+	supported := newRefusedFixture(nil)
+	supported.loop.step(ctx)
+	advance(supported, "observation-two")
+	supported.loop.step(ctx)
+	if len(supported.writer.batches) != 0 {
+		t.Fatalf("a listed strategy refused for nothing was closed: %+v", supported.writer.batches)
+	}
+	// Refused for the deployment's configuration - a change lifts it - the
+	// strategy keeps its alerts, with the refusal named on its object.
+	reversible := newRefusedFixture(map[string]string{"10": "COMPLETION_OFFSET_BELOW_RESERVE"})
+	reversible.loop.step(ctx)
+	advance(reversible, "observation-two")
+	reversible.loop.step(ctx)
+	if len(reversible.writer.batches) != 0 {
+		t.Fatalf("a strategy refused for a reversible configuration was closed: %+v", reversible.writer.batches)
+	}
+
+	flapping := newRefusedFixture(map[string]string{"10": "QUERY_SOURCE_RETIRED"})
+	flapping.loop.step(ctx)
+	advance(flapping, "observation-two")
+	flapping.control.capability = nil
+	flapping.loop.step(ctx)
+	advance(flapping, "observation-three")
+	flapping.control.capability = map[string]string{"10": "QUERY_SOURCE_RETIRED"}
+	flapping.loop.step(ctx)
+	if len(flapping.writer.batches) != 0 {
+		t.Fatalf("a strategy supported in between was closed on its earlier refusal: %+v", flapping.writer.batches)
+	}
+}
+
 // What the catalog remembers is used without asking the link.
 func TestARememberedIdentityIsNotReadAgain(t *testing.T) {
 	fixture := newAbsentFixture(t, []openalerts.Alert{nativeAlert("alert-1", "0123456789abcdef0123456789abcdef")})
@@ -356,20 +472,88 @@ func TestAnUnreachableLinkRefusesTheRoundByName(t *testing.T) {
 	}
 }
 
-// The link's own health, read off the same response as the roster.
-func TestALinkWhoseMaintenanceFailedRefusesTheRound(t *testing.T) {
-	fixture := newAbsentFixture(t, []openalerts.Alert{nativeAlert("alert-1", "0123456789abcdef0123456789abcdef")})
-	fixture.link.pages[0].Health.Error = "discovery_failed"
-	ctx := context.Background()
-	fixture.loop.step(ctx)
-	fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
-	fixture.control.snapshot = liveSnapshot("observation-two", fixture.now, 100)
-	fixture.loop.step(ctx)
-	if len(fixture.writer.batches) != 0 || fixture.loop.Rounds()[absentalerts.RefusalLinkUnhealthy] != 2 {
-		t.Fatalf("an unhealthy link was decided on: %+v", fixture.loop.Rounds())
+// A link that says its own maintenance is failing, never succeeded or is
+// behind still has its roster decided on: absence comes from the snapshot,
+// an old roster can only miss a strategy, and a close for an alert already
+// gone is a no-op on the link. Refusing here once deadlocked a deployment:
+// one strategy's flood of alerts broke the link's maintenance, and the close
+// that would have removed the flood was refused every round. The roster in
+// each case still lists strategy 10, which the snapshot no longer does.
+func TestALinkWhoseMaintenanceIsUnhealthyStillHasItsRosterClosed(t *testing.T) {
+	cases := []struct {
+		name   string
+		health func(*openalerts.LinkHealth, time.Time)
+		word   string
+	}{
+		{"latest discovery failed", func(h *openalerts.LinkHealth, _ time.Time) { h.Error = "discovery_failed" },
+			absentalerts.LinkDiscoveryFailing},
+		{"never succeeded", func(h *openalerts.LinkHealth, _ time.Time) { h.LastSuccess = time.Time{} },
+			absentalerts.LinkDiscoveryNeverSucceeded},
+		{"last success an hour ago", func(h *openalerts.LinkHealth, now time.Time) { h.LastSuccess = now.Add(-time.Hour) },
+			absentalerts.LinkDiscoveryStale},
 	}
-	if fixture.loop.Difference()["link_health_age_seconds"] == 0 {
-		t.Fatal("the refused round did not say how old the link's last success was")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fixture := newAbsentFixture(t, []openalerts.Alert{nativeAlert("alert-1", "0123456789abcdef0123456789abcdef")})
+			ctx := context.Background()
+			// Both rounds read the unhealthy link: the first starts the grace,
+			// the second, past it under a new observation, decides.
+			for round := 0; round < 2; round++ {
+				if round == 1 {
+					fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
+					fixture.control.snapshot = liveSnapshot("observation-two", fixture.now, 100)
+				}
+				for i := range fixture.link.pages {
+					c.health(&fixture.link.pages[i].Health, fixture.now)
+				}
+				health := fixture.link.pages[0].Health
+				if word := absentalerts.LinkHealthWord(health.LastSuccess, health.Error, fixture.now, linkHealthMaxAge); word != c.word {
+					t.Fatalf("round %d does not read the link word the case names: %q, want %q", round, word, c.word)
+				}
+				fixture.loop.step(ctx)
+			}
+			if fixture.loop.Rounds()[absentalerts.RefusalNone] != 2 {
+				t.Fatalf("a round with an unhealthy link did not decide: %+v", fixture.loop.Rounds())
+			}
+			if len(fixture.writer.batches) != 1 || fixture.loop.Stats()[absentalerts.OutcomeCloseSent] != 1 {
+				t.Fatalf("strategy 10's alert was not closed: batches %+v, stats %+v", fixture.writer.batches, fixture.loop.Stats())
+			}
+		})
+	}
+}
+
+// Rows the link listed that name no strategy of this binding are skipped by
+// the reader and counted; the walk they came in still closes what it read.
+func TestInvalidRosterRowsAreCountedAndTheWalkStillCloses(t *testing.T) {
+	fixture := newAbsentFixture(t, []openalerts.Alert{nativeAlert("alert-1", "0123456789abcdef0123456789abcdef")})
+	fixture.link.pages[0].Invalid, fixture.link.pages[1].Invalid = 2, 1
+	fixture.mature(context.Background())
+	if len(fixture.writer.batches) != 1 || fixture.loop.Stats()[absentalerts.OutcomeCloseSent] != 1 {
+		t.Fatalf("strategy 10 was not closed beside invalid rows: %+v", fixture.loop.Stats())
+	}
+	if got := fixture.loop.Difference()["roster_invalid"]; got != 3 {
+		t.Fatalf("roster_invalid = %d, want the 3 rows the walk skipped", got)
+	}
+}
+
+// A strategy whose alerts the link answered cut still has the alerts it
+// listed closed, and says the answer was cut. When none listed is ours, the
+// page does not say the strategy has none of ours: the rest were not read.
+func TestACutAnswerClosesWhatItListsAndSaysItWasCut(t *testing.T) {
+	fixture := newAbsentFixture(t, []openalerts.Alert{nativeAlert("alert-1", "0123456789abcdef0123456789abcdef")})
+	fixture.link.truncated = true
+	fixture.mature(context.Background())
+	stats := fixture.loop.Stats()
+	if len(fixture.writer.batches) != 1 || stats[absentalerts.OutcomeCloseSent] != 1 || stats[absentalerts.OutcomeEvidenceTruncated] != 1 {
+		t.Fatalf("a cut answer did not close what it listed and count the cut: batches %d, stats %+v", len(fixture.writer.batches), stats)
+	}
+
+	foreign := newAbsentFixture(t, []openalerts.Alert{{AlertID: "theirs", EventSourceID: "another-source", Fingerprint: "1123456789abcdef0123456789abcdef"}})
+	foreign.link.truncated = true
+	foreign.mature(context.Background())
+	execution := absentRowOf(t, readAbsentPage(t, foreign.loop, fleet.AbsentCandidateQuery{}), "10").Execution
+	if len(foreign.writer.batches) != 0 || execution == nil || execution.Word != absentalerts.OutcomeEvidenceTruncated {
+		t.Fatalf("a cut answer with nothing of ours listed reads as %+v (batches %d), want evidence_truncated", execution, len(foreign.writer.batches))
 	}
 }
 
@@ -598,5 +782,101 @@ func TestAStrategyWhoseDocumentLostItsTenantKeepsItsAlerts(t *testing.T) {
 	fixture.loop.step(ctx)
 	if len(fixture.writer.batches) != 0 || fixture.loop.Difference()["candidates"] != 0 {
 		t.Fatalf("an existing strategy without a tenant in the snapshot had its alert closed: %+v", fixture.writer.batches)
+	}
+}
+
+// A deleted strategy's alerts are all closed in the round that decides them,
+// in batches, rather than one batch a round: a strategy with thousands of
+// open alerts is not hours of rounds from being closed.
+func TestEveryAlertOfADeletedStrategyIsClosedInOneRound(t *testing.T) {
+	var alerts []openalerts.Alert
+	for i := 0; i < 150; i++ {
+		alerts = append(alerts, nativeAlert("alert-"+itoaAbsent(i), fmt.Sprintf("%032x", i)))
+	}
+	fixture := newAbsentFixture(t, alerts)
+	fixture.link.pages[1].Rows[0].Members = members(len(alerts))
+	fixture.mature(context.Background())
+	sent := 0
+	for _, batch := range fixture.writer.batches {
+		if len(batch) > absentCloseAlertBatch {
+			t.Fatalf("a batch of %d is past the batch size %d", len(batch), absentCloseAlertBatch)
+		}
+		sent += len(batch)
+	}
+	if sent != len(alerts) || fixture.loop.Stats()[absentalerts.OutcomeCloseSent] != uint64(len(alerts)) {
+		t.Fatalf("closed %d of %d alerts in the deciding round (stats %+v)", sent, len(alerts), fixture.loop.Stats())
+	}
+}
+
+// A roster walk longer than one round carries on where it stopped in the
+// next, and the rounds in between decide on the last walk that reached its
+// end: with time for one page a round, the strategy on the second page is
+// still found missing, matures and is closed. Walking from the first page
+// every round, it was never reached.
+func TestARosterWalkLongerThanARoundCarriesOver(t *testing.T) {
+	fixture := newAbsentFixture(t, []openalerts.Alert{nativeAlert("alert-1", "0123456789abcdef0123456789abcdef")})
+	fixture.link.perRound = 1
+	ctx := context.Background()
+	for round, observation := range []string{"observation-one", "observation-two", "observation-three"} {
+		if round > 0 {
+			fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
+		}
+		fixture.control.snapshot = liveSnapshot(observation, fixture.now, 100)
+		for i := range fixture.link.pages {
+			fixture.link.pages[i].Health.LastSuccess = fixture.now.Add(-time.Minute)
+		}
+		fixture.link.served = 0
+		fixture.loop.step(ctx)
+	}
+	if len(fixture.writer.batches) != 1 || fixture.writer.batches[0][0].StrategyID != 10 {
+		t.Fatalf("the strategy on the walk's second page was not closed: %+v %+v", fixture.writer.batches, fixture.loop.Stats())
+	}
+}
+
+// A round cut while it closes leaves the strategies it did not reach first
+// in line: the next round starts at the first close not executed, not past
+// the last one decided, which would go round to the first again and cut
+// there every time.
+func TestARoundCutWhileClosingResumesAtTheFirstCloseNotExecuted(t *testing.T) {
+	fixture := newAbsentFixture(t, []openalerts.Alert{nativeAlert("alert-1", "0123456789abcdef0123456789abcdef")})
+	health := fixture.link.pages[0].Health
+	fixture.link.pages[1] = openalerts.RosterPage{Health: health, Rows: []openalerts.RosterRow{
+		{TenantID: "system", StrategyID: "10", Members: members(1)},
+		{TenantID: "system", StrategyID: "11", Members: members(1)},
+		{TenantID: "system", StrategyID: "12", Members: members(1)}}}
+	for _, id := range []string{"10", "11", "12"} {
+		fixture.control.departed = append(fixture.control.departed, controlplane.DepartedStrategy{TenantID: "system", StrategyID: id, BusinessID: 5, Revision: 9})
+	}
+	fixture.mature(context.Background())
+	fixture.writer.batches = nil
+	var closed []int64
+	for round := 0; round < 3; round++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		fixture.writer.onWrite = cancel
+		fixture.now = fixture.now.Add(absentCloseInterval)
+		fixture.control.snapshot = liveSnapshot("observation-"+itoaAbsent(round+3), fixture.now, 100)
+		for i := range fixture.link.pages {
+			fixture.link.pages[i].Health.LastSuccess = fixture.now.Add(-time.Minute)
+		}
+		fixture.loop.step(ctx)
+		cancel()
+		for _, batch := range fixture.writer.batches[len(closed):] {
+			closed = append(closed, batch[0].StrategyID)
+		}
+	}
+	if len(closed) != 3 || closed[0] == closed[1] || closed[1] == closed[2] || closed[0] == closed[2] {
+		t.Fatalf("rounds cut after one close each closed %v, want each strategy once", closed)
+	}
+}
+
+// The absent-close round follows the source's re-read bound rather than
+// repeating it as a second number: a round no slower than the re-read, and
+// grace plus one round within the close bound.
+func TestTheAbsentCloseRoundFollowsTheSourceReadBound(t *testing.T) {
+	if absentCloseInterval > controlplane.SourceFullReadInterval {
+		t.Fatalf("absent-close round %s is slower than the source re-read %s", absentCloseInterval, controlplane.SourceFullReadInterval)
+	}
+	if absentCloseGrace+absentCloseInterval > absentCloseBound {
+		t.Fatalf("grace %s plus a round %s exceeds the close bound %s", absentCloseGrace, absentCloseInterval, absentCloseBound)
 	}
 }

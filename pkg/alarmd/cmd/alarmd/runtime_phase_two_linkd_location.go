@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 )
 
@@ -52,6 +54,7 @@ func adoptLinkdLocation(ctx context.Context, cfg config.Config, discover discove
 			select {
 			case <-ctx.Done():
 				facts.Outcome, facts.Error = fleet.LinkdDiscoveryFailed, boundedText(ctx.Err().Error())
+				facts.Class = openalerts.ConsoleFailureClass(ctx.Err())
 				return cfg, facts
 			case <-time.After(linkdDiscoveryPause):
 			}
@@ -63,6 +66,7 @@ func adoptLinkdLocation(ctx context.Context, cfg config.Config, discover discove
 	}
 	if err != nil {
 		facts.Outcome, facts.Error = fleet.LinkdDiscoveryFailed, boundedText(err.Error())
+		facts.Class = openalerts.ConsoleFailureClass(err)
 		noteListedTargets(facts, target, err)
 		return cfg, facts
 	}
@@ -165,4 +169,16 @@ func linkdLocation(connection config.RedisConnectionConfig) string {
 		return "sentinel:" + connection.MasterName + " (" + strings.Join(connection.SentinelAddress, ", ") + ")"
 	}
 	return connection.Address
+}
+
+// logLinkdDiscovery writes a failed startup discovery once, with its class:
+// the only line that says the Console URL or its credential is wrong before
+// the rounds start failing one by one. Nothing is written on any other
+// outcome, which the snapshot carries.
+func logLinkdDiscovery(logger *observability.Logger, facts *fleet.LinkdDiscoveryFacts) {
+	if facts == nil || facts.Outcome != fleet.LinkdDiscoveryFailed {
+		return
+	}
+	logger.Warn("linkd_discovery_failed", "failed", 0, 0, slog.String("class", facts.Class),
+		slog.Int("attempts", facts.Attempts), slog.String("error", facts.Error))
 }

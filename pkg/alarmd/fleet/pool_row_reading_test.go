@@ -11,7 +11,9 @@ package fleet
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -426,5 +428,29 @@ func TestAGapSkipAfterSnapshotFailuresStaysAGapSkip(t *testing.T) {
 	p.expiredReplay(120)
 	if span := p.tracker.GapSkips()[p.group]; span.Kind != SkipKindExpiredReplay || span.FirstSlot != 120 || span.Slots != 1 {
 		t.Fatalf("after the expired replay: %+v, want a span of its own from 120", span)
+	}
+}
+
+// A pooled object's row says how many of the failures that hold it were
+// the backend's own cut, as the pool line said: the count that decides
+// whether a re-entry leaves only on evidence. The pool keeps it on a record
+// in the runtime store, which nobody reads in place, so the row is where a
+// reader sees it.
+func TestAPooledRowCarriesItsCuts(t *testing.T) {
+	p := newPoolRows(t)
+	p.tick()
+	p.tracker.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentScheduler, Stage: observability.StageQueryCooldown,
+		Result: observability.ResultDegraded, ReasonCode: "QUERY_UNAVAILABLE", Trace: p.trace(0),
+		QueryCooldown: &observability.QueryCooldownFacts{Event: "reentered", EnteredAt: p.at.at,
+			Until: p.at.at.Add(time.Hour), Source: "probe", Failures: 3, Cuts: 3, Reentries: 1},
+	})
+	row := p.row()
+	if row == nil || row.QueryCooldown == nil || row.QueryCooldown.Cuts != 3 {
+		t.Fatalf("the pooled row = %+v, want its pool facts with three cuts", row)
+	}
+	encoded, err := json.Marshal(row)
+	if err != nil || !strings.Contains(string(encoded), `"cuts":3`) {
+		t.Fatalf("the row on the wire (%v) lacks its cuts:\n%s", err, encoded)
 	}
 }

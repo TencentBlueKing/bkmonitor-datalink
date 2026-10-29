@@ -51,6 +51,9 @@ var queryGroupIdentityFieldOfFact = map[string]string{
 	// GlobalBusiness: a query that skips the space and one scoped to it are
 	// two queries, whatever else they share.
 	"GlobalBusiness": "GlobalBusiness",
+	// NamedOutputs: a query asking for named outputs beside its value is a
+	// different request with a different answer.
+	"NamedOutputs": "NamedOutputs",
 }
 
 // The identity has to read every fact the revision reads. A fact that only

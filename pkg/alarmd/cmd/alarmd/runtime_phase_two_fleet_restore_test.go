@@ -13,11 +13,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"testing"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
@@ -482,3 +484,49 @@ func TestADiagnosisDefersTheProgressTheMemoryLineHasNoRoomFor(t *testing.T) {
 		t.Fatalf("found %v unread %v error %v, want three read and two deferred", found, unread, err)
 	}
 }
+
+// A record the restore read did not get is counted by why -- Redis
+// answering the key with an error, or the read not reaching it -- and a
+// record read and found unusable is not counted there.
+func TestAnUnreadRestoreIsCountedByWhy(t *testing.T) {
+	at := time.Now()
+	answers := map[execution.QueryGroupIdentity]error{
+		"loading":     loadingReply("LOADING Redis is loading the dataset in memory"),
+		"unreachable": &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")},
+		"unusable":    errors.New("decode progress: unexpected end of JSON input"),
+	}
+	loader := loaderFunc(func(identities []execution.ProgressIdentity) ([]execution.ProgressLoadResult, []error, int) {
+		results, errs := make([]execution.ProgressLoadResult, len(identities)), make([]error, len(identities))
+		for index, identity := range identities {
+			errs[index] = answers[identity.QueryGroup]
+			if identity.QueryGroup == "unusable" {
+				results[index] = execution.ProgressLoadResult{Status: execution.ProgressFound}
+				errs[index] = deterministicFact{errs[index]}
+			}
+		}
+		return results, errs, len(identities)
+	})
+	counted := map[string]int{}
+	publisher := fleetPublisher{
+		tracker: fleet.NewTracker(nil, "pod", func() time.Time { return at }),
+		owned: func() []execution.QueryGroupIdentity {
+			return []execution.QueryGroupIdentity{"loading", "unreachable", "unusable"}
+		},
+		now:           func() time.Time { return at },
+		restoreBudget: 3, staleAfter: time.Minute,
+		restore:         progressRestoreSource(loader, func(uint64) bool { return true }),
+		onRestoreUnread: func(reason string) { counted[reason]++ },
+	}
+	publisher.snapshot(context.Background())
+	if counted[metric.FleetRestoreUnreadRedisError] != 1 || counted[metric.FleetRestoreUnreadUnreached] != 1 || len(counted) != 2 {
+		t.Fatalf("counted %v, want one redis_error and one unreached", counted)
+	}
+	if publisher.restoreAttempts["loading"] != 0 || publisher.restoreAttempts["unreachable"] != 0 || publisher.restoreAttempts["unusable"] != 1 {
+		t.Fatalf("attempts %v, want none spent on an unread record and one on the unusable one", publisher.restoreAttempts)
+	}
+}
+
+// deterministicFact is a read error that is a fact about the record.
+type deterministicFact struct{ error }
+
+func (deterministicFact) DeterministicControlFact() {}

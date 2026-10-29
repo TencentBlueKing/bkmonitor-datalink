@@ -32,6 +32,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -64,6 +65,11 @@ type eventSpanCase struct {
 	// native publishes the alert consumer's protocol, on which a RECOVERY
 	// asks the open-alert gate; the compatibility protocol is not gated.
 	native bool
+	// openAlert runs the consumer's protocol with its link Console and, once
+	// round 0 has sent the ABNORMAL, puts that alert in the consumer's open
+	// alert set and waits for each process's copy to read it: a zero's
+	// recovery is counted withheld only where an alert is open.
+	openAlert bool
 	// editAtTakeover widens every Level's recovery window by one while no
 	// process runs: the second process owns other content than the one the
 	// first wrote its record under, on the same Query Group.
@@ -78,7 +84,16 @@ type eventSpanCase struct {
 	// readQueryRanges reads the object's latest asked ranges from the
 	// process's own object detail after the last round.
 	readQueryRanges bool
+	// statusSetter, when set, is every Level's recovery_config.status_setter.
+	statusSetter string
+	// algorithm, when set, is every Level's algorithm type in place of the
+	// threshold, with algorithmConfig as its config: a template-bound count.
+	algorithm       string
+	algorithmConfig any
 }
+
+// eventSpanStrategyID is the strategy the runner writes and publishes.
+const eventSpanStrategyID = "7201"
 
 // eventSpanRounds is what each round of a run did.
 type eventSpanRounds struct {
@@ -86,11 +101,16 @@ type eventSpanRounds struct {
 	quiet map[int]bool
 	// evaluated is the rounds that evaluated a record of the group.
 	evaluated map[int]bool
+	// outcomes is each round's Level outcomes as "KIND" or "KIND:REASON".
+	outcomes map[int][]string
 	// tracker read the run's observations, as the replica's own does.
 	tracker *fleet.Tracker
 	gates   map[int][]observability.OpenAlertGateFact
-	written []contract.TriggerEventV1
-	ranges  [][2]int64
+	// withheld is each round's Level outcomes that met their recovery
+	// windows on a count of zero and stayed NORMAL.
+	withheld map[int]uint64
+	written  []contract.TriggerEventV1
+	ranges   [][2]int64
 	// restored is the second process's row kind before its first round
 	// (readRestored), empty when the object is on no line.
 	restored string
@@ -147,13 +167,21 @@ func runGroupedEventCount(t *testing.T, run eventSpanCase) eventSpanRounds {
 	writeStrategy := func(recoveryWider int) {
 		detects, algorithms := []any{}, []any{}
 		for index, windows := range levels {
+			recovery := map[string]any{"check_window": windows[1] + recoveryWider}
+			if run.statusSetter != "" {
+				recovery["status_setter"] = run.statusSetter
+			}
 			detects = append(detects, map[string]any{"level": index + 1, "priority": 1, "connector": "and",
 				"trigger_config":  map[string]any{"count": 1, "check_window": windows[0]},
-				"recovery_config": map[string]any{"check_window": windows[1] + recoveryWider}})
-			algorithms = append(algorithms, map[string]any{"level": index + 1, "type": "Threshold", "config": threshold})
+				"recovery_config": recovery})
+			algorithm := map[string]any{"level": index + 1, "type": "Threshold", "config": threshold}
+			if run.algorithm != "" {
+				algorithm["type"], algorithm["config"] = run.algorithm, run.algorithmConfig
+			}
+			algorithms = append(algorithms, algorithm)
 		}
 		document["detects"], item["algorithms"] = detects, algorithms
-		if run.native {
+		if run.native || run.openAlert {
 			// The consumer's protocol names the alert by the frozen revision.
 			document["strategy_revision"] = 1 + recoveryWider
 		}
@@ -174,12 +202,17 @@ func runGroupedEventCount(t *testing.T, run eventSpanCase) eventSpanRounds {
 	base := controlledG4Base(t)
 	var clock atomic.Int64
 	clock.Store(base)
+	// The one event is in round 0's accepted period, the minute before base:
+	// round 0 runs at base and its primary window ends there. Fixed before
+	// any request, so every request of a round - the primary and a Level's
+	// previous point alike, in whatever order they come - sees it in the
+	// same bucket.
+	eventBucket := base - period
 	var (
-		mu          sync.Mutex
-		round       int
-		eventBucket int64 // the bucket the one event falls in: round 0's accepted period
-		result      = eventSpanRounds{sent: map[int][]string{}, quiet: map[int]bool{}, evaluated: map[int]bool{},
-			gates: map[int][]observability.OpenAlertGateFact{}}
+		mu     sync.Mutex
+		round  int
+		result = eventSpanRounds{sent: map[int][]string{}, quiet: map[int]bool{}, evaluated: map[int]bool{}, outcomes: map[int][]string{},
+			gates: map[int][]observability.OpenAlertGateFact{}, withheld: map[int]uint64{}}
 	)
 	// The query service as Elasticsearch answers a grouped count: a group
 	// with a document in [start, end) comes back with a point for every
@@ -199,9 +232,6 @@ func runGroupedEventCount(t *testing.T, run eventSpanCase) eventSpanRounds {
 			return nil, err
 		}
 		mu.Lock()
-		if eventBucket == 0 {
-			eventBucket = end - period
-		}
 		result.ranges = append(result.ranges, [2]int64{start, end})
 		event := eventBucket
 		if round < run.oneWindowUntil {
@@ -237,6 +267,52 @@ func runGroupedEventCount(t *testing.T, run eventSpanCase) eventSpanRounds {
 	})}
 
 	sink := &recordingPhaseTwoEventSink{}
+	var console *httptest.Server
+	if run.openAlert {
+		console = httptest.NewServer(lifecycleConsole(address, client))
+		t.Cleanup(console.Close)
+	}
+	published := false
+	// publishOpen puts the ABNORMAL's alert in the consumer's set and says
+	// so on the change channel, as the consumer does on taking it.
+	publishOpen := func() {
+		for _, event := range sink.snapshot() {
+			if event.EventKind != contract.TriggerEventAbnormal {
+				continue
+			}
+			if err := client.SAdd(ctx, lifecycleLinkPrefix+":tenant-a:"+eventSpanStrategyID, event.DedupeMD5).Err(); err != nil {
+				t.Fatal(err)
+			}
+			notice, _ := json.Marshal(map[string]string{"bk_tenant_id": "tenant-a", "strategy_id": eventSpanStrategyID})
+			if err := client.Publish(ctx, lifecycleLinkPrefix+":changes", notice).Err(); err != nil {
+				t.Fatal(err)
+			}
+			published = true
+			return
+		}
+		t.Fatal("round 0 sent no ABNORMAL to put in the consumer's set")
+	}
+	// waitHeld waits until the process's copy holds the published alert. The
+	// copy reads on its own loop, which the bundle's clock paces, so the wait
+	// moves the clock on a second at a time within the round's half period.
+	waitHeld := func(bundle *phaseTwoWorkerBundle, current int) {
+		port, ok := bundle.workerPorts.OpenAlerts.(*openAlertCopyPort)
+		if !ok {
+			t.Fatalf("the open alert port is %T", bundle.workerPorts.OpenAlerts)
+		}
+		for deadline, step := testwait.Deadline(t), int64(1); ; step++ {
+			if stats := port.cache.Stats(); stats.Loaded >= 1 && stats.Members >= 1 {
+				return
+			}
+			if step < period/2 {
+				clock.Store(base + int64(current)*period + 1 + step)
+			}
+			time.Sleep(20 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
+			if time.Now().After(deadline) {
+				t.Fatalf("round %d: the open alert copy has not read the strategy's set by the test's deadline: %+v", current, port.cache.Stats())
+			}
+		}
+	}
 	var observations []observability.Observation
 	result.tracker = fleet.NewTracker(nil, "event-span", func() time.Time { return time.Unix(clock.Load(), 0) })
 	open := func() *phaseTwoWorkerBundle {
@@ -246,8 +322,12 @@ func runGroupedEventCount(t *testing.T, run eventSpanCase) eventSpanRounds {
 		cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(6 * time.Hour)
 		cfg.PhaseTwo.Ownership.ControlLeaderTTL = config.Duration(6 * time.Hour)
 		cfg.PhaseTwo.Ownership.LeaseTTL = config.Duration(6 * time.Hour)
-		if run.native {
+		if run.native || run.openAlert {
 			cfg.PhaseTwo.Output.Protocol = config.OutputProtocolNative
+		}
+		if run.openAlert {
+			cfg.PhaseTwo.Linkd.ConsoleURL = console.URL + testLinkdAPIRoot
+			cfg.PhaseTwo.Linkd.Username, cfg.PhaseTwo.Linkd.Password = "user", "secret"
 		}
 		bundle, err := openProductionPhaseTwoBundleWithDependencies(ctx, cfg, metric.NewRecorder(metric.BuildInfo{}),
 			observability.Discard(observability.ComponentRuntime), newPhaseTwoApplicationHealth(),
@@ -296,6 +376,12 @@ func runGroupedEventCount(t *testing.T, run eventSpanCase) eventSpanRounds {
 		if err := runScheduledOnceSettled(ctx, bundle); err != nil {
 			t.Fatalf("round %d: %v", current, err)
 		}
+		if run.openAlert {
+			if !published {
+				publishOpen()
+			}
+			waitHeld(bundle, current)
+		}
 		mu.Lock()
 		result.sent[current] = decidedEventKinds(observations[seen:])
 		for _, observation := range observations[seen:] {
@@ -304,10 +390,18 @@ func runGroupedEventCount(t *testing.T, run eventSpanCase) eventSpanRounds {
 			}
 			if observation.Stage == observability.StageEvaluationCompleted {
 				result.gates[current] = append(result.gates[current], observation.OpenAlertGates...)
+				for _, fact := range observation.RecoveryWithheld {
+					result.withheld[current] += fact.Levels
+				}
 				for _, level := range observation.LevelOutcomes {
 					if level.Count > 0 {
 						result.evaluated[current] = true
 					}
+					outcome := level.Outcome
+					if level.Reason != "" {
+						outcome += ":" + level.Reason
+					}
+					result.outcomes[current] = append(result.outcomes[current], outcome)
 				}
 			}
 		}
@@ -374,33 +468,37 @@ func diagnosedPlans(t *testing.T, bundle *phaseTwoWorkerBundle, strategyID strin
 	return nil
 }
 
-// A grouped event count recovers on the zeros the query service fills in
-// for a group that had an event inside the range asked, and it can only do
-// so while the event is still inside that range: the query service returns a
-// group only when the range holds one of its events. The trigger reads back
-// N + R - 1 points to recover, so the range asked is N + R periods, the
-// period accepted the newest of them. Here N = 2 and R = 3: the event's round
-// opens the alert, the windows ending on rounds 2, 3 and 4 hold no anomaly,
-// and RECOVERY is decided on round 4 - not before, and not never, as it was
-// while the range was one period and the group vanished on round 1.
+// A grouped event count's zeros do not end its alert. The query service
+// fills in zeros for a group that had an event inside the range asked, and
+// the range is still N + R periods, so the trigger reads what it read
+// before: the windows ending on rounds 2, 3 and 4 hold no anomaly, and on
+// round 4 the R windows are met. But that round's own count is zero - no
+// event, which is no observation - so the Level stays NORMAL, counted as
+// withheld, and nothing is sent. This strategy fires on any event (count >=
+// 1), so no count above zero can ever recover it: its alert ends by -nodata,
+// close, or a person (the recovery spec, section 3.1).
 //
 // Through the production bundle, with a process restart after the event's
 // round: the open alert's history is carried across it on the same store.
 // Past the range - round 5 on - the group is not in the answer at all:
 // nothing is decided for it, an open alert is not closed by inference, and
 // the round's whole, empty primary says quiet.
-func TestAGroupedEventCountRecoversOnTheQueryServicesZeros(t *testing.T) {
-	run := runGroupedEventCount(t, eventSpanCase{takeover: 1, rounds: 7})
+func TestAGroupedEventCountsZerosDoNotEndItsAlert(t *testing.T) {
+	run := runGroupedEventCount(t, eventSpanCase{takeover: 1, rounds: 7, openAlert: true})
 	if !containsKind(run.sent[0], contract.TriggerEventAbnormal) {
 		t.Fatalf("round 0 decided %v, want the event's ABNORMAL", run.sent[0])
 	}
-	for round := 1; round <= 3; round++ {
+	for round := 1; round <= 6; round++ {
 		if containsKind(run.sent[round], contract.TriggerEventRecovery) {
-			t.Fatalf("round %d decided %v: a RECOVERY before the R windows after the trigger window passed", round, run.sent[round])
+			t.Fatalf("round %d decided %v: a RECOVERY on a count of zero", round, run.sent[round])
 		}
-	}
-	if !containsKind(run.sent[4], contract.TriggerEventRecovery) {
-		t.Fatalf("round 4 decided %v, want RECOVERY at t0 + N + R - 1 (all rounds: %v)", run.sent[4], run.sent)
+		if want := uint64(0); round == 4 {
+			if run.withheld[round] != 1 {
+				t.Fatalf("round 4 withheld %d, want 1: the R windows met on a zero (all rounds: %v)", run.withheld[round], run.withheld)
+			}
+		} else if run.withheld[round] != want {
+			t.Fatalf("round %d withheld %d, want none before the windows are met or once the group left (all rounds: %v)", round, run.withheld[round], run.withheld)
+		}
 	}
 	for round := 0; round <= 6; round++ {
 		if want := round >= 5; run.quiet[round] != want {
@@ -417,87 +515,191 @@ func TestAGroupedEventCountRecoversOnTheQueryServicesZeros(t *testing.T) {
 	}
 }
 
+// A template-bound event count - its Level detects with something other
+// than a threshold - reads a quiet group as every count family does: the
+// lead keeps the group in the answer, its zero is detected, and a ring-ratio
+// decrease fires on the first quiet round (0 <= 1 x (100 - floor)%). An
+// inferred zero feeds the trigger like any value; only recovery declines
+// it. Before the lead the group left the answer with its event and nothing
+// was detected that round.
+func TestATemplateBoundEventCountsQuietZeroFeedsItsTrigger(t *testing.T) {
+	run := runGroupedEventCount(t, eventSpanCase{rounds: 3, levels: [][2]int{{1, 1}},
+		algorithm: "SimpleRingRatio", algorithmConfig: map[string]any{"floor": 50, "ceil": nil}})
+	if containsKind(run.sent[0], contract.TriggerEventAbnormal) {
+		t.Fatalf("round 0 decided %v on the event's increase, want nothing: the ceiling is unset", run.sent[0])
+	}
+	if !run.evaluated[1] || !containsKind(run.sent[1], contract.TriggerEventAbnormal) {
+		t.Fatalf("round 1 evaluated %v and decided %v, want the quiet group's zero detected as a decrease (rounds %v)",
+			run.evaluated[1], run.sent[1], run.sent)
+	}
+	// The primary is asked N + R = 2 periods; the ring ratio's previous
+	// point is a query of its own, one period long.
+	widest := int64(0)
+	for _, asked := range run.ranges {
+		widest = max(widest, asked[1]-asked[0])
+	}
+	if widest != 2*60 {
+		t.Fatalf("the widest range asked was %d s, want the primary's N + R = 2 periods (ranges %v)", widest, run.ranges)
+	}
+}
+
+// The same template family's quiet rounds never end its alert at R = 3. A
+// ring-ratio increase (ceil 50) fires on the event itself, round 0 (1
+// against the 0 before it); N = 1 and R = 3, so the recovery windows are met
+// on round 3, while the lead still keeps the group in the primary's answer.
+// Rounds 1 to 3 are evaluated and none sends a RECOVERY; from round 4 the
+// event is out of the range and the group with it.
+//
+// Those rounds are UNKNOWN (QUERY_EMPTY), not NORMAL with the recovery
+// withheld: the ring ratio's previous point is a dependency requirement
+// without the event count's lead, so it answers nothing once the event has
+// left its window, and the Level cannot decide. Python skips the point the
+// same way (no history point, HistoryDataNotExists). Giving dependency
+// requirements the lead is listed for after 0.4.x in the 004 milestone plan
+// ("event counts' template ring ratios: the dependency window has no lead");
+// when it lands these rounds become NORMAL with the recovery withheld, and
+// this case changes with it.
+func TestATemplateBoundEventCountsQuietRoundsNeverRecover(t *testing.T) {
+	run := runGroupedEventCount(t, eventSpanCase{rounds: 6, levels: [][2]int{{1, 3}}, openAlert: true,
+		algorithm: "SimpleRingRatio", algorithmConfig: map[string]any{"floor": nil, "ceil": 50}})
+	if !containsKind(run.sent[0], contract.TriggerEventAbnormal) {
+		t.Fatalf("round 0 decided %v, want the increase's ABNORMAL", run.sent[0])
+	}
+	for round := 1; round < 6; round++ {
+		if containsKind(run.sent[round], contract.TriggerEventRecovery) {
+			t.Fatalf("round %d decided %v: a RECOVERY on a quiet round (rounds %v)", round, run.sent[round], run.sent)
+		}
+		if want := round <= 3; run.evaluated[round] != want {
+			t.Fatalf("round %d evaluated %v, want %v: the group is in the answer through round 3 (rounds %v)",
+				round, run.evaluated[round], want, run.evaluated)
+		}
+		if round <= 3 && !reflect.DeepEqual(run.outcomes[round], []string{"UNKNOWN:QUERY_EMPTY"}) {
+			t.Fatalf("round %d outcomes %v, want UNKNOWN:QUERY_EMPTY: the previous point reads nothing (rounds %v)",
+				round, run.outcomes[round], run.outcomes)
+		}
+	}
+	if kinds := controlledEventKinds(run.written); len(kinds) != 1 || kinds[0] != contract.TriggerEventAbnormal {
+		t.Fatalf("the sink took %v, want the ABNORMAL alone: the alert stays open", kinds)
+	}
+}
+
 // An alert open when this build takes over from one that asked one period
 // at a time. That build lost the group the round after its event, so the
 // rounds between the event and the release left no record: holes in the
-// group's history. The recovery walk steps over a window holding a hole
-// rather than counting it as a miss (trigger evaluator_v2, "A window nobody
-// observed"), so R observed misses take R whole windows after the last hole:
-// with the first round of this build at t0 + j, RECOVERY comes at
-// t0 + j + N + R - 2. The group stays in the answer through t0 + N + R - 1.
+// group's history. Those rounds were read whole - the group was quiet, not
+// unread - so once past the read hold the recovery walk counts their holes
+// as minutes with no anomaly, as Python's recovery check does (trigger
+// evaluator_v2, "A settled window answers with what it holds").
 //
-// So an event in the last round before the release (j = 1) leaves no hole
-// and recovers on round 4 as if the release never happened; an event two
-// rounds before it (j = 2) would need round 5, where the group has already
-// left the range, and the alert stays open with nothing decided for it. That
-// is the release's one-time cost, bounded to the grouped event alerts that
-// opened 2 to N + R - 1 rounds before it; one opened earlier than that was
-// already past recovery under the build before.
-func TestAnEventCountAlertOpenAtTheReleaseRecoversOnlyWithoutAHole(t *testing.T) {
-	t.Run("event in the last round before the release", func(t *testing.T) {
-		run := runGroupedEventCount(t, eventSpanCase{oneWindowUntil: 1, takeover: 1, rounds: 8})
-		if !containsKind(run.sent[0], contract.TriggerEventAbnormal) {
-			t.Fatalf("round 0 decided %v, want the event's ABNORMAL", run.sent[0])
-		}
-		for round := 1; round <= 7; round++ {
-			if got := containsKind(run.sent[round], contract.TriggerEventRecovery); got != (round == 4) {
-				t.Fatalf("round %d RECOVERY %v, want it on round 4 alone (all rounds: %v)", round, got, run.sent)
+// So the R windows are met on round 4, the first round whose R windows all
+// start after the event, whether the event was in the last round before the
+// release (j = 1, no hole) or two rounds before it (j = 2, a hole on round
+// 1), and the group is still in the answer then. Neither recovers: the
+// round's count is zero. Without the hole the window is whole and the round
+// is NORMAL, its recovery withheld; with it the window is not whole, and a
+// round that does not recover on such a window is unavailable, never NORMAL
+// (decision-022), so nothing is withheld either.
+func TestAnEventCountAlertOpenAtTheReleaseMeetsItsWindowsWhetherOrNotItLeftAHole(t *testing.T) {
+	for _, arm := range []struct {
+		name     string
+		until    int
+		withheld bool
+	}{
+		{"event in the last round before the release", 1, true},
+		{"event two rounds before the release", 2, false},
+	} {
+		t.Run(arm.name, func(t *testing.T) {
+			run := runGroupedEventCount(t, eventSpanCase{oneWindowUntil: arm.until, takeover: arm.until, rounds: 8, openAlert: true})
+			if !containsKind(run.sent[0], contract.TriggerEventAbnormal) {
+				t.Fatalf("round 0 decided %v, want the event's ABNORMAL", run.sent[0])
 			}
-		}
-	})
-	t.Run("event two rounds before the release", func(t *testing.T) {
-		run := runGroupedEventCount(t, eventSpanCase{oneWindowUntil: 2, takeover: 2, rounds: 8})
-		if !containsKind(run.sent[0], contract.TriggerEventAbnormal) {
-			t.Fatalf("round 0 decided %v, want the event's ABNORMAL", run.sent[0])
-		}
-		for round := 2; round <= 4; round++ {
-			if !run.evaluated[round] {
-				t.Fatalf("round %d evaluated nothing, want the group back in the answer (rounds %v)", round, run.evaluated)
+			for round := arm.until; round <= 4; round++ {
+				if !run.evaluated[round] {
+					t.Fatalf("round %d evaluated nothing, want the group back in the answer (rounds %v)", round, run.evaluated)
+				}
 			}
-		}
-		for round := 1; round <= 7; round++ {
-			if containsKind(run.sent[round], contract.TriggerEventRecovery) {
-				t.Fatalf("round %d decided %v: the hole on round 1 leaves R whole windows only on round 5, "+
-					"after the event left the range (all rounds: %v)", round, run.sent[round], run.sent)
+			for round := 1; round <= 7; round++ {
+				if containsKind(run.sent[round], contract.TriggerEventRecovery) {
+					t.Fatalf("round %d decided %v: a RECOVERY on a count of zero (all rounds: %v)", round, run.sent[round], run.sent)
+				}
+				if got, want := run.withheld[round] > 0, round == 4 && arm.withheld; got != want {
+					t.Fatalf("round %d withheld %v, want %v (all rounds: %v)", round, got, want, run.withheld)
+				}
+				if round >= 5 && len(run.sent[round]) != 0 {
+					t.Fatalf("round %d decided %v for a group not in the answer, want nothing", round, run.sent[round])
+				}
 			}
-			if round >= 5 && len(run.sent[round]) != 0 {
-				t.Fatalf("round %d decided %v for a group not in the answer, want nothing", round, run.sent[round])
-			}
-		}
-		if kinds := controlledEventKinds(run.written); len(kinds) != 1 || kinds[0] != contract.TriggerEventAbnormal {
-			t.Fatalf("the sink took %v, want the ABNORMAL alone: the alert stays open", kinds)
-		}
-	})
+		})
+	}
 }
 
-// A RECOVERY that is decided and held leaves the consumer's alert open, and
-// the quiet that follows does not close it. On the consumer's protocol a
-// RECOVERY asks the open-alert gate; here a second process takes the Plan
-// over after the event's round, its copy of the consumer's set holds nothing
-// it did not send - no Console is configured, so the copy is untrusted and
-// answers from this process's own record of what it opened - and round 4's
-// RECOVERY is held as no open alert. Past the
-// range the group is not in the answer: nothing is decided, nothing is sent,
-// the alert is not closed by inference, and the rounds read quiet.
-func TestAHeldEventCountRecoveryLeavesTheAlertOpenThroughTheQuiet(t *testing.T) {
-	run := runGroupedEventCount(t, eventSpanCase{takeover: 1, rounds: 8, native: true})
+// On the consumer's protocol, after a second process takes the Plan over,
+// the zeros still decide no RECOVERY, so the open-alert gate is never asked
+// and the consumer's alert stays open: the sink takes the ABNORMAL alone.
+// Past the range the group is not in the answer: nothing is decided, nothing
+// is sent, the alert is not closed by inference, and the rounds read quiet.
+func TestAnEventCountsZerosLeaveTheConsumersAlertOpen(t *testing.T) {
+	run := runGroupedEventCount(t, eventSpanCase{takeover: 1, rounds: 8, native: true, openAlert: true})
 	if !containsKind(run.sent[0], contract.TriggerEventAbnormal) {
 		t.Fatalf("round 0 sent %v, want the event's ABNORMAL", run.sent[0])
 	}
-	held := []observability.OpenAlertGateFact{{Outcome: observability.OpenAlertGateHeldNoOpenAlert, Records: 1}}
-	if !reflect.DeepEqual(run.gates[4], held) {
-		t.Fatalf("round 4's gate answered %+v, want %+v: the RECOVERY decided and held", run.gates[4], held)
+	if run.withheld[4] != 1 {
+		t.Fatalf("round 4 withheld %d, want 1 (all rounds: %v)", run.withheld[4], run.withheld)
 	}
-	for round := 5; round <= 7; round++ {
-		if len(run.sent[round]) != 0 || len(run.gates[round]) != 0 {
-			t.Fatalf("round %d sent %v and asked the gate %+v for a group not in the answer, want neither", round, run.sent[round], run.gates[round])
+	for round := 1; round <= 7; round++ {
+		if len(run.gates[round]) != 0 {
+			t.Fatalf("round %d asked the gate %+v, want no RECOVERY to ask about", round, run.gates[round])
 		}
-		if !run.quiet[round] {
-			t.Fatalf("round %d is not quiet (rounds %v)", round, run.quiet)
+		if round >= 5 && (len(run.sent[round]) != 0 || !run.quiet[round]) {
+			t.Fatalf("round %d sent %v, quiet %v, want nothing sent and quiet for a group not in the answer", round, run.sent[round], run.quiet[round])
 		}
 	}
 	if kinds := controlledEventKinds(run.written); len(kinds) != 1 || kinds[0] != contract.TriggerEventAbnormal {
 		t.Fatalf("the sink took %v, want the ABNORMAL alone: the consumer's alert stays open", kinds)
+	}
+}
+
+// A grouped event count written to end on no data (recovery-nodata), N = 2
+// and R = 3: its zeros are withheld as any event count's are, and the round
+// (R + T + 1) periods after the event - round 6 - ends the alert, resolved,
+// saying no data ended it. To still have the group in the answer then, the
+// range asked reaches back R + T + 1 windows before the accepted one: 7
+// periods, not N + R = 5. The window accepted is the same, so every round
+// both evaluate the group decides what the same strategy without -nodata
+// decides; from round 5 that one's range no longer holds the event and its
+// group is not in the answer, while this one's still is, with its zero.
+func TestAGroupedEventCountWrittenToEndOnNoDataEndsOnItsZeros(t *testing.T) {
+	nodata := runGroupedEventCount(t, eventSpanCase{rounds: 8, native: true, statusSetter: "recovery-nodata"})
+	plain := runGroupedEventCount(t, eventSpanCase{rounds: 8, native: true})
+	if !plain.quiet[5] || nodata.quiet[5] || nodata.withheld[5] != 1 {
+		t.Fatalf("round 5: without -nodata quiet %v, with it quiet %v withheld %d; want the group gone from the one and withheld in the other",
+			plain.quiet[5], nodata.quiet[5], nodata.withheld[5])
+	}
+	for round := 0; round <= 4; round++ {
+		if !reflect.DeepEqual(nodata.sent[round], plain.sent[round]) || nodata.withheld[round] != plain.withheld[round] {
+			t.Fatalf("round %d: -nodata decided %v withheld %d, without %v withheld %d: the trigger read something else",
+				round, nodata.sent[round], nodata.withheld[round], plain.sent[round], plain.withheld[round])
+		}
+	}
+	if containsKind(plain.sent[6], contract.TriggerEventRecovery) {
+		t.Fatalf("without -nodata round 6 decided %v, want nothing", plain.sent[6])
+	}
+	if !containsKind(nodata.sent[6], contract.TriggerEventRecovery) {
+		t.Fatalf("round 6 decided %v, want the RECOVERY no data ended (all rounds: %v)", nodata.sent[6], nodata.sent)
+	}
+	var ended *contract.TriggerEventV1
+	for index := range nodata.written {
+		if nodata.written[index].EventKind == contract.TriggerEventRecovery {
+			ended = &nodata.written[index]
+		}
+	}
+	if ended == nil || ended.LevelResults[0].DecisionWindow.Recovery.EndedBy != contract.RecoveryEndedByNoData {
+		t.Fatalf("the sink took %v, want a RECOVERY ended by no data", controlledEventKinds(nodata.written))
+	}
+	for _, asked := range nodata.ranges {
+		if asked[1]-asked[0] != 7*60 {
+			t.Fatalf("the query service was asked for %d s, want R + T + 2 = 7 periods of 60 s (ranges %v)", asked[1]-asked[0], nodata.ranges)
+		}
 	}
 }
 
@@ -547,13 +749,14 @@ func TestAnEventCountAnsweredOverMaxNRPlusOneDoesNotRecover(t *testing.T) {
 
 // An ungrouped event count is answered with one series of zeros when no event
 // came, so an empty answer is the data path failing, not quiet (design
-// section 4, point 6). Through the fleet's own reading of the run: the rounds
-// after the answers stop are never quiet, and an hour of them is listed as
-// no data.
+// section 4, point 6). The zeros meet the recovery windows on round 4 and do
+// not end the alert: no event is no observation, so the recovery is withheld.
+// Through the fleet's own reading of the run: the rounds after the answers
+// stop are never quiet, and an hour of them is listed as no data.
 func TestAnUngroupedEventCountAnsweredWithNothingIsNoDataNotQuiet(t *testing.T) {
-	run := runGroupedEventCount(t, eventSpanCase{ungrouped: true, emptyFrom: 6, rounds: 68})
-	if !containsKind(run.sent[4], contract.TriggerEventRecovery) {
-		t.Fatalf("round 4 decided %v, want RECOVERY on the zeros of the one series (all rounds: %v)", run.sent[4], run.sent)
+	run := runGroupedEventCount(t, eventSpanCase{ungrouped: true, emptyFrom: 6, rounds: 68, openAlert: true})
+	if containsKind(run.sent[4], contract.TriggerEventRecovery) || run.withheld[4] != 1 {
+		t.Fatalf("round 4 decided %v and withheld %d, want no RECOVERY and the zero's recovery withheld (all rounds: %v)", run.sent[4], run.withheld[4], run.sent)
 	}
 	for round, quiet := range run.quiet {
 		if quiet {
@@ -576,10 +779,10 @@ func TestAnUngroupedEventCountAnsweredWithNothingIsNoDataNotQuiet(t *testing.T) 
 func restoredRowKind(t *testing.T, ctx context.Context, bundle *phaseTwoWorkerBundle) string {
 	t.Helper()
 	settleExecutableView(ctx, bundle, 10*time.Second)
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := testwait.Deadline(t)
 	var owned []execution.QueryGroupIdentity
 	for owned = bundle.ownedQueryGroups(); len(owned) == 0 && time.Now().Before(deadline); owned = bundle.ownedQueryGroups() {
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	if len(owned) != 1 {
 		t.Fatalf("the process that took the Plan over owns %v, want its one object", owned)

@@ -67,7 +67,6 @@ func observeWithheldObjects(
 			Component:      observability.ComponentControlPlane,
 			Stage:          observability.StageSourceWithheld,
 			Result:         observability.ResultSuccess,
-			Direction:      observability.DirectionInternal,
 			Trace:          trace,
 			SourceWithheld: &facts,
 		})
@@ -111,7 +110,6 @@ func observeSuspendedNoDataObjects(
 			Component:      observability.ComponentControlPlane,
 			Stage:          observability.StageNoDataSuspended,
 			Result:         observability.ResultSuccess,
-			Direction:      observability.DirectionInternal,
 			Trace:          observability.TraceFields{StrategyID: line.SourceID, TerminalScope: line.Scope},
 			SourceWithheld: &facts,
 		})

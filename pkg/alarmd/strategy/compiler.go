@@ -60,12 +60,13 @@ func (c *PlanCompiler) BoundaryLocation() *time.Location { return c.boundaryLoca
 
 // compileKeyMemoEntries bounds how many content keys the compiler remembers
 // a cache key for. A replica freezes the Slots of the Query Groups it owns --
-// on a production deployment some seven hundred groups holding about 2,900
-// Plans -- and a publication that changes content brings a second key for
-// each Plan it changes while the first is still being frozen. Twice the Plans
-// with room over is 8,192 entries at about 350 bytes each, under 3 MB. Past it
-// the memory is cleared whole and refilled; a cleared key only derives its
-// cache key from the Plan again, as a request without a content key does.
+// on a production deployment some seven hundred groups holding about 730
+// Plans, while the Leader compiles the deployment's 2,900 -- and a
+// publication that changes content brings a second key for each Plan it
+// changes while the first is still being frozen. Twice the Leader's Plans
+// with room over is 8,192 entries at about 350 bytes each, under 3 MB. Past
+// it the memory is cleared whole and refilled; a cleared key only derives
+// its cache key from the Plan again, as a request without a content key does.
 const compileKeyMemoEntries = 8192
 
 // compileKeyMemo is the cache key each content key was found to have, by
@@ -149,6 +150,19 @@ func (c *PlanCompiler) CacheStats() CacheStats {
 		return CacheStats{}
 	}
 	return c.cache.snapshot()
+}
+
+// ForgetCached drops every compiled result the compiler keeps. The control
+// rounds and a Worker's Slot freezing share the one compiler, so a process
+// that led holds the compiled Plans of every Query Group, of which as a
+// Worker it uses only its own; nothing evicts the rest under a Worker's
+// steady load. A process calls it when its term ends, and refills what its
+// own Slots compile.
+func (c *PlanCompiler) ForgetCached() {
+	if c == nil || c.cache == nil {
+		return
+	}
+	c.cache.clear()
 }
 
 func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileRequest) (CompileResult, error) {
@@ -793,18 +807,28 @@ func compileRecoveryPlan(raw contract.TypedPlanV1) (RecoveryPlan, contract.Typed
 	if err := decodeStrict(raw.Config, &config); err != nil {
 		return RecoveryPlan{}, contract.TypedPlanV1{}, err
 	}
-	if config.Enabled == nil || (*config.Enabled && config.ConsecutiveWindows == 0) {
+	if config.Enabled == nil || (*config.Enabled && config.ConsecutiveWindows == 0) ||
+		config.End != "" && config.End != contract.RecoveryEndClose ||
+		config.MissingData != "" && config.MissingData != contract.RecoveryMissingDataEvaluateAsZero {
 		return RecoveryPlan{}, contract.TypedPlanV1{}, errors.New("invalid recovery plan")
 	}
 	if !*config.Enabled {
-		config.ConsecutiveWindows = 0
+		config.ConsecutiveWindows, config.End, config.MissingData = 0, "", ""
 	}
-	normalized := struct {
+	// The canonical plan is what the Level's trigger fingerprint hashes, and
+	// through it the Level's state compatibility: the recovery's windows,
+	// which decide how much history the Level keeps and reads. How the alert
+	// ends (End) and whether no data ends it (MissingData) change no history,
+	// so they stay out of it: an owner switching recovery to close, or adding
+	// -nodata, keeps the Level's state instead of warming it up again, and a
+	// Plan written to recover hashes the bytes it always has.
+	windows := struct {
 		Enabled            bool   `json:"enabled"`
 		ConsecutiveWindows uint32 `json:"consecutive_windows"`
 	}{Enabled: *config.Enabled, ConsecutiveWindows: config.ConsecutiveWindows}
-	canonical, err := canonicalTypedPlan(raw.Type, raw.Version, normalized)
-	return RecoveryPlan(normalized), canonical, err
+	canonical, err := canonicalTypedPlan(raw.Type, raw.Version, windows)
+	return RecoveryPlan{Enabled: windows.Enabled, ConsecutiveWindows: windows.ConsecutiveWindows, End: config.End,
+		MissingData: config.MissingData}, canonical, err
 }
 
 func canonicalTypedPlan(kind string, version uint32, config any) (contract.TypedPlanV1, error) {

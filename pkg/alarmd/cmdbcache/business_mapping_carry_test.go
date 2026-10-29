@@ -31,9 +31,19 @@ const clusterMappingKey = "bk_monitorv3.ce.cache.cmdb.bcs_cluster_business"
 type mappingClient struct {
 	*hashClient
 	failing map[string]bool
+	// hold, when set, holds every scan until it is closed or the read's
+	// context ends: a read still running.
+	hold chan struct{}
 }
 
 func (client *mappingClient) HScan(ctx context.Context, key string, cursor uint64, match string, count int64) *redis.ScanCmd {
+	if client.hold != nil {
+		select {
+		case <-client.hold:
+		case <-ctx.Done():
+			return redis.NewScanCmdResult(nil, 0, ctx.Err())
+		}
+	}
 	if client.failing[key] {
 		return redis.NewScanCmdResult(nil, 0, errors.New("scan failed"))
 	}

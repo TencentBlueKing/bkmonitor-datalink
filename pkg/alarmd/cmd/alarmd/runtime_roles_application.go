@@ -59,7 +59,24 @@ func (server *roleEvidenceServer) ReadEvidence(ctx context.Context, request *pb.
 	return server.handler(ctx, request)
 }
 
+// oneHotFamiliesNotApplicable is the one-hot families no role this process
+// runs ever sets: span export belongs to the worker, and the control source,
+// the Console and the platform settings copy to a process with control or
+// worker (both open the bundle that binds them). They say off_role here, so
+// every process says one state in each family instead of reading all zero.
+func oneHotFamiliesNotApplicable(cfg config.Config) []string {
+	var families []string
+	if !cfg.HasRole(roles.Worker) {
+		families = append(families, "alarmd_trace_export")
+	}
+	if !cfg.HasRole(roles.Worker) && !cfg.HasRole(roles.Control) {
+		families = append(families, "alarmd_control_source_mode", "alarmd_linkd_console_state", "alarmd_platform_settings_mode")
+	}
+	return families
+}
+
 func openPhaseTwoRoleRuntime(cfg config.Config, recorder *metric.Recorder, facts *observability.RuntimeConfigFacts, logger *observability.Logger) (_ *phaseTwoRoleRuntime, resultErr error) {
+	recorder.SetNotApplicableToRole(oneHotFamiliesNotApplicable(cfg)...)
 	identity, err := newViewStreamIdentity(cfg.HTTP.Listen, viewStreamRoutes(cfg.RuntimeStoreRedis())...)
 	if err != nil {
 		return nil, err

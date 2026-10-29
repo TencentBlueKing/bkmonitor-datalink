@@ -15,12 +15,15 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -32,13 +35,51 @@ const channelVersion = "alarmd-ob/v1"
 // session, execution and management included. The identifier is historical.
 const sessionScope = "deployment_ops_readonly"
 
-const maxResponse = 8 << 20
+// maxResponse is the largest answer the CLI reads: the channel's own
+// ceiling, a 32nd of the deployment's pod memory capped at 256 MiB.
+const maxResponse = 256<<20 + 64<<10
+
+// maxInputBytes is the largest request the CLI sends: the channel's
+// envelope, a whole chart's manifests in one call.
+const maxInputBytes = 16 << 20
+
+// requestBound is the largest request the CLI sends for an operation whose
+// server allows limit bytes: the smaller of the two, so a newer server's
+// larger limit is used, not refused.
+func requestBound(limit int64) int64 {
+	return min(limit, maxInputBytes)
+}
 
 // requestNotSent marks failures that happen before the channel can receive
 // an invocation. All other transport or response failures leave exec unknown.
 type requestNotSent struct{ error }
 
 func notSent(message string) error { return &requestNotSent{errors.New(message)} }
+
+// entryHeader tells the deployment a request came through its own address
+// rather than the entry the session was issued through. The admin forwards
+// a fixed list of headers and this is not on it, so it never arrives through
+// the admin.
+const entryHeader = "X-Alarmd-Entry"
+const entryAlarmd = "alarmd"
+
+// Why a request is handed to the fallback entry: the admin application
+// itself is down, which is all the fallback is for (the user's ruling of
+// 2026-10-19: it shares the admin's domain and covers the admin failing,
+// not the network). admin_unreachable, the admin answered that it could not
+// reach alarmd; gateway, the ingress answered 502 or 503 with no JSON in it,
+// because no admin backend was ready to take the request. A failure to reach
+// the domain at all - no address, refused, no route - is never one: on one
+// origin the fallback fails the same way. Nor is a 504 (the admin's
+// alarmd_timeout): alarmd may have run the call.
+const (
+	fallbackAdminUnreachable = "admin_unreachable"
+	fallbackGateway          = "gateway"
+)
+
+// maxFallbackEntries is how many fallback entries a server may declare: the
+// deployment's own address, one.
+const maxFallbackEntries = 1
 
 // validScope and allowsScope know the one scope. No server a CLI talks to
 // ever issued another: the execution scope an earlier build defined was
@@ -137,10 +178,71 @@ func (a *App) request(p Profile, method, endpoint string, body any) (map[string]
 }
 
 func (a *App) requestTimeout(p Profile, method, endpoint string, body any, timeout time.Duration) (map[string]any, int, error) {
+	return a.requestVia(p, method, endpoint, body, timeout, false)
+}
+
+// requestVia sends the request through the session's entry and, when the
+// admin application behind it is down, through the fallback entry the server
+// declared (Profile.FallbackBaseURLs) on the same origin. The server is the
+// only source of that entry; there is no option that adds to it, and one on
+// another origin is never used. exec is a call that executes something: it
+// never moves by itself, because an admin that lost alarmd mid-call, or an
+// ingress in front of it, answers the same way whether or not alarmd had
+// already started the command; it says where it could go instead, for the
+// operator to re-run with --entry alarmd. meta.client_entry says which
+// entry answered.
+func (a *App) requestVia(p Profile, method, endpoint string, body any, timeout time.Duration, exec bool) (map[string]any, int, error) {
+	moves := func(why string) bool { return why != "" && !exec }
+	result, status, err, why := a.attempt(p, method, endpoint, body, timeout, p.via)
+	entry := map[string]any{"entry": "session", "url": p.PublicBaseURL}
+	if p.via != "" {
+		entry = map[string]any{"entry": p.via, "url": p.PublicBaseURL, "reason": "requested"}
+	}
+	if why != "" && !moves(why) && len(p.FallbackBaseURLs) > 0 {
+		// An executing call that may have reached alarmd is not repeated;
+		// the operator is told where it could go once they have checked.
+		hint := fmt.Sprintf("the session's entry did not reach alarmd (%s) and this call executes something that may already have run, so it was not repeated through the deployment's own entry %s; check sre.receipts and re-run with --entry alarmd if it did not run", why, p.FallbackBaseURLs[0])
+		fmt.Fprintln(a.Err, "Warning: "+hint+".")
+		entry["fallback_available"] = p.FallbackBaseURLs[0]
+		if err != nil {
+			err = fmt.Errorf("%w; %s", err, hint)
+		}
+	}
+	for _, fallback := range p.FallbackBaseURLs {
+		if !moves(why) || !sameOrigin(fallback, p.PublicBaseURL) {
+			break
+		}
+		fmt.Fprintf(a.Err, "Warning: the session's entry did not reach alarmd (%s); calling the deployment's own entry %s.\n", why, fallback)
+		via := p
+		via.PublicBaseURL = fallback
+		entry = map[string]any{"entry": entryAlarmd, "url": fallback, "reason": why}
+		result, status, err, why = a.attempt(via, method, endpoint, body, timeout, entryAlarmd)
+	}
+	if meta := objectField(result, "meta"); meta != nil {
+		meta["client_entry"] = entry
+	}
+	return result, status, err
+}
+
+// attempt is one request through p's entry. why is set when the answer
+// shows the request did not reach alarmd through it (see requestVia).
+func (a *App) attempt(p Profile, method, endpoint string, body any, timeout time.Duration, entry string) (result map[string]any, status int, err error, why string) {
+	result, status, err = a.send(p, method, endpoint, body, timeout, entry)
+	switch {
+	case status == http.StatusBadGateway && err == nil && result["status"] == nil &&
+		stringField(objectField(result, "error"), "code") == "alarmd_unreachable":
+		why = fallbackAdminUnreachable
+	case (status == http.StatusBadGateway || status == http.StatusServiceUnavailable) && result == nil:
+		why = fallbackGateway
+	}
+	return result, status, err, why
+}
+
+func (a *App) send(p Profile, method, endpoint string, body any, timeout time.Duration, entry string) (map[string]any, int, error) {
 	client, u, release, err := a.environmentClient(p)
 	defer release()
 	if err != nil {
-		return nil, 0, &requestNotSent{err}
+		return nil, 0, &requestNotSent{error: err}
 	}
 	client.Timeout = timeout
 	u.Path += endpoint
@@ -161,6 +263,9 @@ func (a *App) requestTimeout(p Profile, method, endpoint string, body any, timeo
 	if p.AccessToken != "" {
 		req.Header.Set("Authorization", "Bearer "+p.AccessToken)
 	}
+	if entry != "" {
+		req.Header.Set(entryHeader, entry)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		// Keep actionable connection causes without exposing a URL, proxy
@@ -170,11 +275,14 @@ func (a *App) requestTimeout(p Profile, method, endpoint string, body any, timeo
 		var authority x509.UnknownAuthorityError
 		var certificate x509.CertificateInvalidError
 		var timeout net.Error
+		var dial *net.OpError
 		switch {
 		case errors.As(err, &dns):
 			return nil, 0, notSent("DNS resolution failed; check the deployment hostname and DNS access")
 		case errors.Is(err, syscall.ECONNREFUSED):
 			return nil, 0, notSent("connection refused; check the deployment address, port and listener")
+		case errors.As(err, &dial) && dial.Op == "dial":
+			return nil, 0, notSent("cannot connect to the deployment entry; check its address and network route")
 		case errors.As(err, &hostname):
 			return nil, 0, notSent("TLS certificate hostname mismatch; check the entry URL or log in with --insecure-tls for this environment")
 		case errors.As(err, &authority):
@@ -220,6 +328,11 @@ func (a *App) requestTimeout(p Profile, method, endpoint string, body any, timeo
 		verification = "disabled_explicitly"
 	}
 	meta["client_transport"] = map[string]any{"scheme": u.Scheme, "encrypted": u.Scheme == "https", "tls_verification": verification}
+	// When to come back, as a refusal said it: the header is not in the
+	// body, and a caller that waits needs it.
+	if seconds, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && seconds >= 0 {
+		meta["client_retry_after_seconds"] = seconds
+	}
 	return result, resp.StatusCode, nil
 }
 
@@ -292,10 +405,47 @@ func validateExchange(m map[string]any, p Profile) (Profile, error) {
 	if !validSecret(out.AccessToken) {
 		return Profile{}, errors.New("server returned an invalid access token")
 	}
+	if out.FallbackBaseURLs, err = fallbackEntries(m["fallback_base_urls"], u); err != nil {
+		return Profile{}, err
+	}
 	out.PublicBaseURL = u
 	out.CACert = p.CACert
 	out.InsecureTLS = p.InsecureTLS
 	return out, nil
+}
+
+// fallbackEntries are the fallback entries a server declares: at most one, a
+// valid entry URL on the session's own origin (scheme, host and port) with
+// another path. Absent is none; anything else refuses the answer, as any
+// other malformed field of it would.
+func fallbackEntries(raw any, primary string) ([]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	list, ok := raw.([]any)
+	if !ok || len(list) > maxFallbackEntries {
+		return nil, errors.New("server returned an invalid fallback entry list")
+	}
+	var out []string
+	for _, item := range list {
+		text, _ := item.(string)
+		u, err := normalizedURL(text)
+		if err != nil || u == primary || !sameOrigin(u, primary) || slices.Contains(out, u) {
+			return nil, errors.New("server returned an invalid fallback entry")
+		}
+		out = append(out, u)
+	}
+	return out, nil
+}
+
+// sameOrigin says two entry URLs share scheme, host and port.
+func sameOrigin(a, b string) bool {
+	left, err := baseURL(a)
+	if err != nil {
+		return false
+	}
+	right, err := baseURL(b)
+	return err == nil && left.Scheme == right.Scheme && left.Host == right.Host
 }
 
 func validateStatus(m map[string]any, p Profile) (string, error) {

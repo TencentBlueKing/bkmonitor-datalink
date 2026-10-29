@@ -51,7 +51,7 @@ alarmd-cli invoke <operation> --env <environment_id> --input '{"field":"value"}'
 alarmd-cli invoke <operation> --env <environment_id> --input @input.json
 ```
 
-登录自动导入授权码中的稳定 `environment_id`、名称和入口；可选 `auth login --env <id>` 用于核对环境。其余远程命令必须显式传 `--env`。`profile use <id>` 仅记录人工偏好，不会给远程命令隐式选择环境。服务端更新操作目录后客户端无需升级；先读 discover 摘要，按需读 describe 中的 schema、limits、parameter_sources 和示例。
+登录自动导入授权码中的稳定 `environment_id`、名称和入口；可选 `auth login --env <id>` 用于核对环境。其余远程命令必须显式传 `--env`。`profile use <id>` 仅记录人工偏好，不会给远程命令隐式选择环境。服务端更新操作目录后客户端无需升级；先读 discover 摘要，按需读 describe 中的 schema、limits、parameter_sources 和示例。部署自带与它同一提交构建的 alarmd-cli，并在 `api/cli/version` 报出版本；发行版 CLI（版本号为 `x.y.z`）在登录和每次 discover 时读一次，与本地版本不同就在 stderr 提示，并给出从这个部署安装匹配版本的命令（`curl -fsSL <入口>/api/cli/install.sh | sh -s -- --server <入口>`）。不自动更新；部署不报版本（旧部署 404、未打包 CLI 的 503）或本地是开发构建时不提示。
 
 每次 invoke 在本进程先 describe 一次，再携带当前 revision 调用一次。没有持久 schema 缓存、完整客户端 schema 校验器或自动重试。`catalog_changed` 说明合同变化，应重新查阅 describe 后决定是否再次调用。`next_call` 只是建议，客户端不会自行执行。
 
@@ -87,7 +87,7 @@ alarmd-cli invoke <operation> --env <environment_id> --input @input.json
 
 调用节奏：
 
-- 一次只发一个调用。服务端的既有取证、SRE 读取和执行使用各自的进程内预算，具体范围以 describe 的 `execution_pool` 与 limits 为准；忙时返回 `request_budget_exceeded`，会话限额返回 `rate_limited`。先核对回执确认请求未执行，再决定重试。
+- 调用可以并行：服务端不限制同时进行的调用数，每个调用只受自己的大小上限与期限约束（以 describe 的 limits 为准）。每会话每分钟 600 次调用的限额只用来拦住不停循环的客户端，超过时返回 `rate_limited`。
 - `catalog_changed`：操作目录在 describe 与 invoke 之间变了，这次调用没有执行。重新 describe 该操作，按新的 schema 核对参数后再 invoke。
 
 ### 3. 读结果
@@ -108,7 +108,13 @@ stdout 是一个 JSON 对象（`--help` 除外），进度和提示写在 stderr
 
 ### 4. 常用排障路径
 
-`diagnose` 和 `accept` 是 CLI 内置的组合命令，直接运行；其余都通过 `invoke <operation>` 调用。下面每条写成"问题 → 调用 → 看哪些字段"。
+`diagnose`、`accept` 和 `snapshot` 是 CLI 内置的组合命令，直接运行；其余都通过 `invoke <operation>` 调用。下面每条写成"问题 → 调用 → 看哪些字段"。
+
+**没有 agent 的环境：先做一份诊断快照**
+
+1. `alarmd-cli snapshot --env <environment_id> [--out <目录>]`：按服务端 `discover` 给出的每会话调用速率，读操作目录、`fleet.get`、全部 `diagnose.environment` 分页、一组固定读取、`fleet.get` 里不正常的副本（逐个读运行配置、指标名单与关键指标族、日志）和不在检测的策略（`strategy.get` 与 `object.get`），写成一个 `alarmd-snapshot-<环境>-<UTC 时刻>.tar.gz` 和旁边的 `.sha256`。计划调用数和时长上限（调用数按速率折成分钟，再加一次调用的最长期限 30 秒）在开始收集前写进 `manifest.json`；超过时长或 512 MiB 的读取记为 `skipped_by_bound`。每会话调用速率由同一登录下的所有调用共用（另开终端跑的命令也算），所以一次读取可能被 `rate_limited` 拒绝；被拒的调用没有执行，快照按应答的 `Retry-After`（没有时等到本机时钟的下一分钟再多 1 秒）等待后重问同一读取，每项最多问 3 次。等待的时间没有调用能用，所以时长上限随每次等待顺延，顺延总量不超过上限本身（manifest 的 `budget_wait_seconds` 记总等待）；放不下的等待不等，该项记为 `refused`（原因 `rate_limited`）。其他拒绝不重问。退出码：0 每项都收到了；3 只在有没收到的项时（`refused`、`timeout`、`skipped_by_bound`、`not_in_catalog`，逐项写在 manifest 里）；应答状态为 `partial` 的读取算收到，按 `partial` 连同原因记进 manifest，不让退出码变成 3；1 什么都没写成。
+2. 快照里保留主机地址、主机名和业务 ID（诊断要用），凭据已脱敏；交给谁就等于给了谁这个环境的这些信息。`manifest.json` 的 `redactions` 不为空，说明服务端漏脱了凭据，按缺陷上报。
+3. agent 读快照用同一套命令，加 `--snapshot <文件>`：`discover`、`describe <operation>`、`invoke <operation> --input …`、`diagnose`。读到的形状与在线相同，`meta.snapshot` 写明文件和收集时刻；快照里没有按这组参数读过的，返回 `not_in_snapshot` 并列出它读过的参数。读快照不连网络，`--env` 可省略；给了而与快照的环境不一致时返回退出码 2 并说出快照是哪个环境的，拿到一份不知来源的快照时可以这样核对。
 
 **Pod / 原生 UQ 取证与运维**
 
@@ -183,6 +189,30 @@ alarmd-cli invoke k8s.logs --env <environment_id> --input '{"pod":"<pod>","previ
 
 读不到时按失败码区分：`k8s_rbac_forbidden`（Role 没建或被关）、`k8s_service_account_not_mounted`、`k8s_apiserver_unreachable`、`k8s_not_found`（含从未写过的 previous 日志）、`k8s_not_in_scope`（不是 alarmd 的 Pod 或容器）等，不会以空列表冒充"没有事件"。所有副本都挂掉时这条路读不到，只能用 kubectl。
 
+## 集群资源的检查与写入（SRE 通道）
+
+SRE 通道有集群管理权限（RBAC 组只读，不给 bind/escalate）。三个操作走同一个服务端 apply 路径，只认 chart 授权的种类（chart 之外的种类答 `not_granted_kind`，Role、ClusterRole 与绑定答 `rbac_not_dry_run` / `rbac_not_writable`，都不发出）：
+
+```sh
+# 部署前检查：每个对象以 dryRun=All 交给 apiserver，准入 webhook、schema、配额、冲突照常检查，什么都不落库
+helm template <release> <chart> -n <ns> -f <values> > render.yaml
+python3 -c 'import json,sys;print(json.dumps({"manifests":open(sys.argv[1]).read(),"namespace":sys.argv[2]}))' render.yaml <ns> > dry.json
+alarmd-cli invoke k8s.dry_run --env <environment_id> --input @dry.json
+# 写入：字段管理者 alarmd-sre；冲突时答 conflict，force=true 接管；结果给出字段差异，Secret 只显示键与指纹
+alarmd-cli invoke k8s.apply --env <environment_id> --input @apply.json
+# 删除：按先前 k8s.list 读到的 uid；kube-system、kube-public、kube-node-lease、default 与 alarmd 所在命名空间不删
+alarmd-cli invoke k8s.delete --env <environment_id> --input '{"api_version":"networking.k8s.io/v1","kind":"Ingress","namespace":"<ns>","name":"<name>","uid":"<uid>"}'
+```
+
+Secret 的值只从本地文件经 `--input @文件` 传入，从不出现在应答、审计与日志里；CLI 到 alarmd 若是明文 HTTP，值会以明文经过集群网络。每次写入都留 `sre_action` 审计。对象带 `meta.helm.sh/release-name` 时应答写明 `helm_release`：下一次 `helm upgrade` 会改回或冲突。
+
+**卸载一个 helm release（如 bk-monitor）**，按顺序：
+
+1. 列出这个 release 拥有的对象：对每个命名空间级种类 `k8s.list {"kind":"<Kind>","label_selector":"app.kubernetes.io/managed-by=Helm","paths":["metadata.annotations"]}`，留下 `meta.helm.sh/release-name` 是它的；集群级的同样列一遍。
+2. 逐个 `k8s.delete`，带读到的 `uid`。先删工作负载（Deployment、StatefulSet、DaemonSet、Job、CronJob），再删 Service、Ingress、ConfigMap、Secret 等。
+3. RBAC 对象（Role、RoleBinding、ClusterRole、ClusterRoleBinding）通道不写，列给人用 kubectl 删。
+4. 最后删 helm 自己的记录：release 命名空间里 `sh.helm.release.v1.<release>.v*` 这些 Secret（`k8s.list {"kind":"Secret","namespace":"<ns>","label_selector":"owner=helm,name=<release>"}`，逐个按 uid 删）。删了以后 `helm list` 里就没有这个 release；在那之前不要删，否则 helm 会把剩下的对象当成孤儿。
+
 ## 会话与环境
 
 ```sh
@@ -217,7 +247,7 @@ HTTPS 默认使用系统信任库。私有 CA 可通过 `auth login --ca-cert /a
 
 凭据位于平台用户配置目录下的 `alarmd-cli/profiles.json`；`ALARMD_CLI_CONFIG_DIR` 可指定独立目录。目录权限 0700、凭据/锁/结果文件 0600。响应在 `results/` 下保留，客户端不自动删除证据。勿把凭据配置目录上传到工单或公开仓库。
 
-固定边界：invoke 网络期限取 describe 的操作期限、admission 期限和传输余量之和，旧服务端为 30 秒；服务端响应最大 8 MiB，超限拒绝解码；输入文件最大 1 MiB，并落实 describe 的请求和 stdin 上限；授权码最大 64 KiB。没有不经服务端校验的任意 endpoint、operation 枚举或业务诊断逻辑。此版本不承诺 Windows。
+固定边界：invoke 网络期限取 describe 的操作期限、admission 期限和传输余量之和，旧服务端为 30 秒；服务端响应最大 256 MiB（服务端自己的上限是所在 Pod 内存的 1/32，16–256 MiB），超限拒绝解码；输入文件最大 16 MiB，并落实 describe 的请求和 stdin 上限；授权码最大 64 KiB。没有不经服务端校验的任意 endpoint、operation 枚举或业务诊断逻辑。此版本不承诺 Windows。
 
 ## 构建与验证
 

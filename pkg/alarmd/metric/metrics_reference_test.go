@@ -99,7 +99,7 @@ func alarmdFamilies(t *testing.T, recorder *Recorder) []describedFamily {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.HasPrefix(name, metricNamespace+"_") {
+		if !strings.HasPrefix(name, metricSubsystem+"_") {
 			continue
 		}
 		family := describedFamily{name: name, help: help}
@@ -259,7 +259,7 @@ func TestTheScrapeCarriesTheShortHelpAndTheCLITheWhole(t *testing.T) {
 // A family gathered without a Help goes through as it came; the registry
 // always gives one, and another gatherer may not.
 func TestAFamilyWithoutHelpGoesThroughTheScrape(t *testing.T) {
-	name := "bkmonitor_alarmd_example_total"
+	name := "alarmd_example_total"
 	gatherer := shortHelpGatherer{short: &sync.Map{}, gatherer: prometheus.GathererFunc(func() ([]*dto.MetricFamily, error) {
 		return []*dto.MetricFamily{{Name: &name}}, nil
 	})}

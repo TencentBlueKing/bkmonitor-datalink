@@ -57,8 +57,10 @@ func TestEachTenantsRecordsArePlacedAgainstItsOwnCMDBKeys(t *testing.T) {
 		[]admission.Filter{admission.NewHostStatusFilter([]string{"备用机"})})
 	record := map[string]json.RawMessage{"bk_host_id": json.RawMessage(`"740002"`)}
 
-	// The first reference reads the tenant's keys: placed there, under its
-	// own business.
+	// The first reference reads the tenant's keys: the Slot primes the
+	// tenant within its deadline, then its records are placed there, under
+	// their own business.
+	chain.PrimeFor(context.Background(), "tenant-a")
 	placed := chain.EnrichFor("tenant-a", record)
 	if !placed.HostResolved || placed.HostBusinessID != "7" {
 		t.Fatalf("a tenant's host read against its keys = %+v, want placed under business 7", placed)
@@ -84,6 +86,7 @@ func TestATenantWhoseFirstReadFailsIsUnavailableUntilARefreshReadsIt(t *testing.
 	chain := admission.NewChain([]admission.Fuller{admission.IdentityFuller{}, NewHostTopologyFuller(stores)},
 		[]admission.Filter{admission.NewHostStatusFilter(nil)})
 	record := map[string]json.RawMessage{"bk_host_id": json.RawMessage(`"740002"`)}
+	chain.PrimeFor(context.Background(), "tenant-a")
 	facts := chain.EnrichFor("tenant-a", record)
 	if !facts.HostFactsUnavailable || facts.HostResolved {
 		t.Fatalf("a tenant whose first read failed = %+v, want facts unavailable", facts)
@@ -129,5 +132,42 @@ func TestATenantsPlansAndLookupsReadItsOwnIndex(t *testing.T) {
 	}
 	if lookup.ForTenant("tenant-b").HostIndexResolved() {
 		t.Fatal("a tenant never loaded answered as resolved")
+	}
+}
+
+// A tenant's first read never holds a caller past its own deadline: For
+// starts it and answers the store as it stands, a caller whose context has
+// ended is let go at once, and the read goes on to land for the next Slot.
+func TestATenantsFirstReadWaitsOnlyWithinTheCallersDeadline(t *testing.T) {
+	stores, client := tenantStoresWith(t)
+	gate := make(chan struct{})
+	stores.client = &mappingClient{hashClient: client, hold: gate}
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	if store := stores.ForWithin(ended, "tenant-a"); store == nil {
+		t.Fatal("a caller whose deadline had passed got no store")
+	} else if _, reason := store.Usable(); reason != "never_loaded" {
+		t.Fatalf("a store whose first read is still running reads %q, want never_loaded", reason)
+	}
+	if _, reason := stores.For("tenant-a").Usable(); reason != "never_loaded" {
+		t.Fatalf("For waited for the read: the store reads %q", reason)
+	}
+	close(gate)
+	if _, reason := stores.ForWithin(context.Background(), "tenant-a").Usable(); reason != "" {
+		t.Fatalf("after the read landed the store reads %q, want usable", reason)
+	}
+}
+
+// A target plan resolving for a tenant nothing has read yet waits, within
+// its caller's context, for that tenant's first read, so the first
+// resolution already sees the tenant's own hosts.
+func TestATenantsFirstResolutionSeesItsOwnHosts(t *testing.T) {
+	stores, _ := tenantStoresWith(t)
+	plan := &contract.TargetPlanV1{SchemaVersion: 1, ModelID: "cw-Host", Rule: contract.TargetPlanRuleModelInstID,
+		Identity: contract.TargetPlanIdentityV1{Dimensions: []string{"bk_host_id"}, HostIdentity: true}, StaticKeys: []string{},
+		StaticMembers: []contract.TargetPlanMemberV1{{ModelID: "cw-Host", ModelInstID: "740002"}}}
+	resolver := NewTargetResolver(nil, stores, time.Now)
+	if got := resolver.ResolveFor(context.Background(), "tenant-a", plan, time.Minute); got.State != targetplan.ResolutionComplete || !got.Contains("740002") {
+		t.Fatalf("a tenant's first resolution = %s, contains 740002 %v; want its own host", got.State, got.Contains("740002"))
 	}
 }

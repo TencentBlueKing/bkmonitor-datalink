@@ -94,15 +94,24 @@ type DiagnosisPart struct {
 
 // DiagnosisRow is one strategy.
 type DiagnosisRow struct {
-	StrategyID string     `json:"strategy_id"`
-	Business   string     `json:"business,omitempty"`
-	Verdict    StateWord  `json:"verdict"`
-	Action     ActionWord `json:"action,omitempty"`
+	StrategyID string `json:"strategy_id"`
+	Business   string `json:"business,omitempty"`
+	// Tenant is the tenant of every Plan of the strategy, the one Linkd is
+	// read under; empty when no Plan is known, or when the strategy ID runs
+	// under more than one tenant and no single one can be named.
+	Tenant  string     `json:"tenant,omitempty"`
+	Verdict StateWord  `json:"verdict"`
+	Action  ActionWord `json:"action,omitempty"`
 	// Reason is the check the words were decided under, the unknown
 	// reason for UNKNOWN, or the deciding row's own reason where it names
 	// one more precisely (cause_reason).
 	Reason string `json:"reason,omitempty"`
-	Check  Check  `json:"check,omitempty"`
+	// ReasonOrigin is whose Reason is: the deciding row's CauseOrigin when
+	// Reason is that row's cause reason (physical, carried, derived or
+	// unknown), and derived for any other reason - a check word or an
+	// UNKNOWN verdict's reason. Present whenever Reason is.
+	ReasonOrigin *CauseOrigin `json:"reason_origin,omitempty"`
+	Check        Check        `json:"check,omitempty"`
 	// Catalog is the strategy's standing in the publication answered from.
 	Catalog        StrategyStandingKind `json:"catalog,omitempty"`
 	DecidingObject string               `json:"deciding_object,omitempty"`
@@ -127,6 +136,11 @@ type DiagnosisRow struct {
 	// thing asked after global strategies reach a deployment. Omitted for
 	// the rest.
 	Global bool `json:"global,omitempty"`
+
+	// deciding is the row the words were decided from, kept for the board's
+	// reason sentence (strategyReasonOf), which reads its facts; not a field
+	// of the answer.
+	deciding *Anomaly
 }
 
 // ProgressFacts is one object's persisted progress, as the runtime reads it.
@@ -193,8 +207,29 @@ func newDiagnosisContext(view *View, replica string, now time.Time) diagnosisCon
 	return ctx
 }
 
-// diagnoseStrategy decides one row.
+// diagnoseStrategy decides one row. A row with a reason always says whose it
+// is: the deciding object's cause origin when the reason is that object's
+// cause reason, derived for every other reason - a check word or an UNKNOWN
+// verdict's reason is this process's own judgement, not a reason any round
+// met or carried - so an absent reason_origin means only an absent reason.
 func diagnoseStrategy(id string, facts StrategyLookupFacts, ctx diagnosisContext) DiagnosisRow {
+	row := diagnoseStrategyRow(id, facts, ctx)
+	settleReasonOrigin(&row)
+	return row
+}
+
+// settleReasonOrigin holds the rule: a reason has an origin, no reason has
+// none.
+func settleReasonOrigin(row *DiagnosisRow) {
+	switch {
+	case row.Reason == "":
+		row.ReasonOrigin = nil
+	case row.ReasonOrigin == nil:
+		row.ReasonOrigin = &CauseOrigin{Origin: CauseOriginDerived}
+	}
+}
+
+func diagnoseStrategyRow(id string, facts StrategyLookupFacts, ctx diagnosisContext) DiagnosisRow {
 	row := DiagnosisRow{StrategyID: id, Plans: []DiagnosisPlan{}}
 	if !facts.Available {
 		row.Verdict, row.Reason = DiagnosisUnknown, UnknownLookupUnavailable
@@ -218,6 +253,7 @@ func diagnoseStrategy(id string, facts StrategyLookupFacts, ctx diagnosisContext
 				Attribution: withheldAttribution(disposition.Disposition, disposition.Reason)})
 		}
 	}
+	row.Tenant = soleTenant(standing.Plans)
 	observed := 0
 	for _, plan := range standing.Plans {
 		entry := DiagnosisPlan{StrategyPlanRef: plan.StrategyPlanRef, Replica: plan.Replica, Existence: plan.Existence}
@@ -285,8 +321,11 @@ func diagnoseStrategy(id string, facts StrategyLookupFacts, ctx diagnosisContext
 	if found {
 		row.Verdict, row.Action, row.Check = bestWords.State, bestWords.Action, bestWords.Check
 		row.Reason, row.DecidingObject = string(bestWords.Check), best.QueryGroup
+		deciding := best
+		row.deciding = &deciding
 		if best.CauseReason != "" {
-			row.Reason = best.CauseReason
+			settleCauseOrigin(&best)
+			row.Reason, row.ReasonOrigin = best.CauseReason, best.CauseOrigin
 		}
 		if !best.LastHealthyAt.IsZero() {
 			last := best.LastHealthyAt
@@ -535,4 +574,21 @@ func ParseDiagnosisCursor(raw string) (DiagnosisCursor, bool) {
 		return DiagnosisCursor{}, false
 	}
 	return DiagnosisCursor{Diagnosis: parts[1], Digest: parts[2], After: parts[3]}, true
+}
+
+// soleTenant is the one tenant every Plan runs under, or empty when there is
+// no Plan or more than one tenant.
+func soleTenant(plans []StrategyPlanStanding) string {
+	tenant := ""
+	for _, plan := range plans {
+		switch {
+		case plan.Tenant == "":
+			return ""
+		case tenant == "":
+			tenant = plan.Tenant
+		case plan.Tenant != tenant:
+			return ""
+		}
+	}
+	return tenant
 }

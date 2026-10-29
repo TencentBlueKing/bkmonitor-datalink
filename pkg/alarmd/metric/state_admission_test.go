@@ -27,7 +27,7 @@ import (
 // the list under the fold, and the family is the cross product and no more.
 func TestStateAdmissionsAreSeriesFromStartupAndCountByResultAndReason(t *testing.T) {
 	r := NewRecorder(BuildInfo{})
-	const family = "bkmonitor_alarmd_state_admission_total"
+	const family = "alarmd_state_admission_total"
 	before := gatherFamily(t, r, family)
 	want := len(observability.StateAdmissionResults) * len(observability.StateAdmissionReasons)
 	if len(before) != want {

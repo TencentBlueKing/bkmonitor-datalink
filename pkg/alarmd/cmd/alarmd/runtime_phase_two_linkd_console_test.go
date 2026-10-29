@@ -43,22 +43,22 @@ func consoleTestServer(t *testing.T, browse http.HandlerFunc) *openalerts.HTTPRe
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/local-api/strategy-index/targets":
+		case "/api/modules/linkd/strategy-index/targets":
 			_ = json.NewEncoder(w).Encode([]openalerts.TargetBinding{consoleTestBinding()})
 			return
-		case "/local-api/strategy-index/browse":
+		case "/api/modules/linkd/strategy-index/browse":
 			browse(w, r)
 			return
 		}
 		// The event source definition is the test's to answer, like browse.
-		if strings.HasPrefix(r.URL.Path, "/local-api/event-sources/") {
+		if strings.HasPrefix(r.URL.Path, "/api/modules/linkd/event-sources/") {
 			browse(w, r)
 			return
 		}
 		http.NotFound(w, r)
 	}))
 	t.Cleanup(server.Close)
-	console, err := openalerts.NewHTTPReconciler(openalerts.HTTPReconcilerOptions{BaseURL: server.URL, Client: server.Client(),
+	console, err := openalerts.NewHTTPReconciler(openalerts.HTTPReconcilerOptions{BaseURL: server.URL + testLinkdAPIRoot, Client: server.Client(),
 		Username: "user", Password: "secret", MaxResponseBytes: 1 << 20,
 		Index: openalerts.IndexLocation{KeyPrefix: "test:active", Address: "192.0.2.10:6379", Database: 3},
 		Now:   func() time.Time { return consoleTestNow }})
@@ -85,7 +85,7 @@ func browsePage(lastSuccess *time.Time, linkError string) http.HandlerFunc {
 }
 
 func readRoster(console *openalerts.HTTPReconciler) {
-	_, _ = console.Roster(context.Background(), "")
+	_, _ = console.Roster(consoleCtx(), "")
 }
 
 // A deployment without a Console carries the reading from the configuration
@@ -97,17 +97,15 @@ func TestADeploymentWithoutAConsoleSaysSoFromTheStart(t *testing.T) {
 		entry.Console.State != fleet.LinkdConsoleNotConfigured || len(entry.Console.Calls) != len(openalerts.ConsoleOps) {
 		t.Fatalf("an unconfigured Console reads as %+v (facts %+v)", entry, entry.Console)
 	}
-	cfg.PhaseTwo.Linkd.ConsoleURL = "http://192.0.2.20:8080"
-	if configured := linkdConsoleEndpoint(cfg); !configured.Configured || configured.Address != "http://192.0.2.20:8080" ||
+	cfg.PhaseTwo.Linkd.ConsoleURL = "http://192.0.2.20:8080/api/modules/linkd"
+	if configured := linkdConsoleEndpoint(cfg); !configured.Configured || configured.Address != "http://192.0.2.20:8080/api/modules/linkd" ||
 		configured.Kind != "http" || configured.Console != nil {
 		t.Fatalf("a configured Console reads as %+v", configured)
 	}
 }
 
 // The readings a configured Console can give, each its own word, and the
-// link's own word decided by the same function and bound the close's
-// link_unhealthy refusal reads -- checked against the close itself on both
-// sides of the bound.
+// link's own word on both sides of the bound.
 func TestAConsoleReadsAsNotCalledUnreadableUnhealthyOrReachable(t *testing.T) {
 	if facts := linkdConsoleFacts(consoleTestServer(t, http.NotFound), consoleTestNow); facts.State != fleet.LinkdConsoleNotCalled {
 		t.Fatalf("a Console never called reads as %+v", facts)
@@ -118,7 +116,7 @@ func TestAConsoleReadsAsNotCalledUnreadableUnhealthyOrReachable(t *testing.T) {
 		facts.Calls[0].LastFailureClass != openalerts.ConsoleFailureStatus {
 		t.Fatalf("a refused roster reads as %+v", facts)
 	}
-	bound := absentCloseMaxLinkHealthAge
+	bound := linkHealthMaxAge
 	atBound, pastBound := consoleTestNow.Add(-bound), consoleTestNow.Add(-bound-time.Second)
 	cases := []struct {
 		name        string
@@ -141,14 +139,6 @@ func TestAConsoleReadsAsNotCalledUnreadableUnhealthyOrReachable(t *testing.T) {
 		}
 		if facts.LinkPending == nil || *facts.LinkPending != 4 || facts.MaxLinkHealthAgeSeconds != int(bound/time.Second) {
 			t.Errorf("%s: the link's reading is not beside its bound: %+v", c.name, facts)
-		}
-		round := absentalerts.Round{LinkRead: true, LinkError: c.linkError, Now: consoleTestNow}
-		if c.lastSuccess != nil {
-			round.LinkLastSuccess = *c.lastSuccess
-		}
-		_, _, refusal := absentalerts.Candidates(round, absentalerts.Bounds{MaxLinkHealthAge: bound})
-		if (refusal == absentalerts.RefusalLinkUnhealthy) != (facts.State == fleet.LinkdConsoleLinkUnhealthy) {
-			t.Errorf("%s: the page says %q and the close's round says %q", c.name, facts.State, refusal)
 		}
 	}
 }
@@ -247,7 +237,7 @@ func TestEachRosterWalkAsksTheLinkHowItKeysOurAlerts(t *testing.T) {
 	link := &keyingLink{absentTestLink: absentTestLink{pages: []openalerts.RosterPage{{}}}, err: errors.New("unreachable")}
 	loop := &absentStrategyClose{link: link}
 	round := &absentalerts.Round{}
-	loop.readRoster(context.Background(), round)
+	loop.readRoster(consoleCtx(), round)
 	if link.asked != 1 || !round.LinkRead {
 		t.Fatalf("asked %d times, roster read %v; want one ask per walk and the walk unaffected by its failure", link.asked, round.LinkRead)
 	}
@@ -273,7 +263,7 @@ func TestTheLinksKeyingReachesTheConsoleFacts(t *testing.T) {
 // publishes.
 func TestTheConsoleFactsCarryTheKeyingOnceRead(t *testing.T) {
 	console := consoleTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/local-api/event-sources/"+consoleTestBinding().EventSourceID {
+		if r.URL.Path != "/api/modules/linkd/event-sources/"+consoleTestBinding().EventSourceID {
 			http.NotFound(w, r)
 			return
 		}
@@ -283,7 +273,7 @@ func TestTheConsoleFactsCarryTheKeyingOnceRead(t *testing.T) {
 	if facts := linkdConsoleFacts(console, consoleTestNow); facts.EventSource != nil {
 		t.Fatalf("keying published before it was read: %+v", facts.EventSource)
 	}
-	if _, err := console.EventSource(context.Background()); err != nil {
+	if _, err := console.EventSource(consoleCtx()); err != nil {
 		t.Fatal(err)
 	}
 	facts := linkdConsoleFacts(console, consoleTestNow)
@@ -304,15 +294,20 @@ func TestTheProcesssConsoleWritesALineWhenItsFailuresStart(t *testing.T) {
 	cfg.PhaseTwo.Linkd.ConsoleURL = address
 	cfg.PhaseTwo.Linkd.Username, cfg.PhaseTwo.Linkd.Password = "user", "secret"
 	var out bytes.Buffer
-	index, err := newLinkdIndex(cfg, nil, cfg.RuntimeStoreRedis(), nil, nil, time.Now, observability.New("worker", &out))
+	index, err := newLinkdIndex(cfg, nil, cfg.RuntimeStoreRedis(), nil, nil, nil, time.Now, observability.New("worker", &out))
 	if err != nil {
 		t.Fatal(err)
 	}
 	key := openalerts.StrategyKey{TenantID: "tenant", StrategyID: "101"}
 	for i := 0; i < 3; i++ {
-		if _, err := index.Console.Reconcile(context.Background(), key); err == nil {
+		if _, err := index.Console.Reconcile(consoleCtx(), key); err == nil {
 			t.Fatal("a closed Console answered")
 		}
+	}
+	// Refused before any answer: counted apart from the Console's latency,
+	// and shown in the facts fleet.get reads.
+	if unanswered := linkdConsoleFacts(index.Console, time.Now()).UnansweredRequests; unanswered != 3 {
+		t.Fatalf("facts show %d unanswered requests, want the 3 refused", unanswered)
 	}
 	lines := strings.Count(out.String(), `"stage":"console_call_failed"`)
 	if lines != 1 || !strings.Contains(out.String(), `"class":"connection_refused"`) || !strings.Contains(out.String(), `"op":"reconcile"`) {
@@ -320,5 +315,40 @@ func TestTheProcesssConsoleWritesALineWhenItsFailuresStart(t *testing.T) {
 	}
 	if host := strings.TrimPrefix(address, "http://"); strings.Contains(out.String(), host) || strings.Contains(out.String(), "secret") {
 		t.Fatalf("the line carries the address or the credentials: %s", out.String())
+	}
+}
+
+// The process's Console chooses the event source by the topic the process
+// writes its events to, and the facts say how: a target the link names after
+// a source that receives nothing resolves to the source reading that topic,
+// with the candidates beside it.
+func TestTheProcesssConsoleChoosesTheSourceByItsOutputTopic(t *testing.T) {
+	cfg := config.Default()
+	topics := map[string]string{"legacy": "legacy_events", "built_in_bk": cfg.Kafka.TriggerEvent.Topic}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/modules/linkd/strategy-index/targets" {
+			target := consoleTestBinding()
+			target.EventSourceID, target.Sources = "legacy", []string{"built_in_bk", "legacy"}
+			_ = json.NewEncoder(w).Encode([]openalerts.TargetBinding{target})
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/api/modules/linkd/event-sources/")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "revision": 2, "published": 2,
+			"spec": map[string]any{"storage": map[string]any{"kafka": map[string]any{"topic": topics[id]}}}})
+	}))
+	defer server.Close()
+	cfg.PhaseTwo.Linkd.ConsoleURL = server.URL + "/api/modules/linkd"
+	cfg.PhaseTwo.Linkd.Username, cfg.PhaseTwo.Linkd.Password = "user", "secret"
+	index, err := newLinkdIndex(cfg, nil, cfg.RuntimeStoreRedis(), nil, nil, nil, time.Now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No Redis is bound here, so the resolution stops at the location; the
+	// source is chosen before that.
+	_, _ = index.Console.Binding(consoleCtx())
+	facts := linkdConsoleFacts(index.Console, consoleTestNow).SourceByTopic
+	if facts == nil || facts.Outcome != openalerts.SourceByTopicResolved || facts.EventSourceID != "built_in_bk" || facts.Listed != "legacy" ||
+		facts.Topic != cfg.Kafka.TriggerEvent.Topic || len(facts.Candidates) != 2 {
+		t.Fatalf("source by topic = %+v", facts)
 	}
 }

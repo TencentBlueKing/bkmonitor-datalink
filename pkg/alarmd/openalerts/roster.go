@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -30,6 +29,13 @@ type RosterPage struct {
 	// complete.
 	Next   string
 	Health LinkHealth
+	// Invalid is how many rows the page listed that name no strategy of this
+	// binding: a tenant or strategy id that is not one, or a key that is not
+	// this prefix's key for them. They are skipped rather than failing the
+	// page: a skipped row is a smaller roster, which costs a close and never
+	// makes one, while failing the page would leave every other strategy on it
+	// unclosed for as long as the row stays.
+	Invalid int
 }
 
 // RosterRow is one strategy the link lists. Members is nil when the link
@@ -117,7 +123,8 @@ func (reader *HTTPReconciler) roster(ctx context.Context, cursor string) (Roster
 	for _, row := range response.Rows {
 		key := StrategyKey{TenantID: row.TenantID, StrategyID: row.StrategyID}
 		if !validStrategyKey(key) || row.Key != b.KeyPrefix+":"+row.TenantID+":"+row.StrategyID {
-			return RosterPage{}, ErrIncomplete
+			page.Invalid++
+			continue
 		}
 		entry := RosterRow{TenantID: row.TenantID, StrategyID: row.StrategyID, Members: row.Members}
 		if row.Pending != nil {
@@ -180,9 +187,8 @@ func (reader *HTTPReconciler) alertRecord(ctx context.Context, tenantID, alertID
 			Labels        map[string]json.RawMessage `json:"labels"`
 		} `json:"payload"`
 	}
-	err := reader.getPath(ctx, "/local-api/alerts/"+url.PathEscape(alertID), url.Values{"bk_tenant_id": {tenantID}}, &response)
-	var status statusError
-	if errors.As(err, &status) && int(status) == http.StatusNotFound {
+	err := reader.getPath(ctx, "/alerts/"+url.PathEscape(alertID), url.Values{"bk_tenant_id": {tenantID}}, &response)
+	if errors.Is(err, errObjectMissing) {
 		return AlertRecord{}, ErrAlertNotFound
 	}
 	if err != nil {

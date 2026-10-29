@@ -23,7 +23,7 @@ import (
 // which is what makes a flat zero a reading rather than an unwritten label.
 func TestNoDataAbsencesAreSeriesFromStartupAndSumEachPlansCounts(t *testing.T) {
 	r := NewRecorder(BuildInfo{})
-	const family = "bkmonitor_alarmd_worker_no_data_absences_total"
+	const family = "alarmd_worker_no_data_absences_total"
 	before := gatherFamily(t, r, family)
 	if len(before) != len(observability.NoDataAbsenceOutcomes) {
 		t.Fatalf("%d series before any round, want every cell (%d) so a horizon that stopped nothing reads as zero",

@@ -48,6 +48,12 @@ func NewLocalStorage(path string) (*LocalStorage, error) {
 	}
 
 	local, err := Open(path)
+	if err != nil {
+		// Do not construct a LocalStorage (and its flush goroutine) when the
+		// underlying database could not be opened; a periodic Flush on a nil
+		// store would panic after the caller has already handled the error.
+		return nil, err
+	}
 
 	storage := &LocalStorage{
 		store: local,
@@ -79,7 +85,7 @@ func NewLocalStorage(path string) (*LocalStorage, error) {
 		}
 	}(ctx)
 
-	return storage, err
+	return storage, nil
 }
 
 // SetFlushInterval : set flush interval

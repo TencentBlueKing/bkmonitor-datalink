@@ -147,6 +147,17 @@ func TestPlanOmitsTheNoDataSectionWhenAbsent(t *testing.T) {
 	if got := string(payload); !strings.Contains(got, `"no_data"`) {
 		t.Fatalf("Plan with no-data detection omits the section: %s", got)
 	}
+	if got := string(payload); strings.Contains(got, `"no_data_recovery_disabled"`) {
+		t.Fatalf("Plan whose item does not disable recovery carries the switch: %s", got)
+	}
+	enabled.NoData.RecoveryDisabled = true
+	payload, err = json.Marshal(enabled)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if got := string(payload); !strings.Contains(got, `"no_data_recovery_disabled":true`) {
+		t.Fatalf("Plan whose item disables recovery omits the switch: %s", got)
+	}
 }
 
 // A frozen Plan's horizon is held to the same ceiling its readers apply: the

@@ -10,12 +10,12 @@
 package state
 
 import (
-	"context"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 func reserveTCPAddress(t *testing.T) string {
@@ -30,24 +30,23 @@ func startRedisServer(t *testing.T, _ string, address string) *redistest.Instanc
 
 func waitRedisReady(t *testing.T, backend *RedisBackend) {
 	t.Helper()
-	// The wait is generous on purpose. Three seconds encoded an assumption about
-	// machine load rather than about redis: under `go test ./...` dozens of
-	// packages start their own server at the same moment, and a window that is
-	// ample on an idle machine is not on a loaded one - which turned a whole-tree
-	// "all green" into a function of load rather than of the code. A healthy
-	// server answers Ping in milliseconds, so a longer budget costs the normal
-	// path nothing; it only matters when the server genuinely cannot start, and
-	// that case is meant to be read from the server's own output.
-	deadline := time.Now().Add(30 * time.Second)
+	// The wait is bounded by the test's deadline, not by a window. Three
+	// seconds encoded an assumption about machine load rather than about redis:
+	// under `go test ./...` dozens of packages start their own server at the
+	// same moment, and a window that is ample on an idle machine is not on a
+	// loaded one - which turned a whole-tree "all green" into a function of load
+	// rather than of the code. A healthy server answers Ping in milliseconds;
+	// one that genuinely cannot start is read from the server's own output.
+	// Each attempt is bounded by the backend's own dial and read timeouts.
+	ctx := testwait.Context(t)
+	deadline := testwait.Deadline(t)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		lastErr = backend.Ping(ctx)
-		cancel()
 		if lastErr == nil {
 			return
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	t.Fatalf("redis-server at %s did not become ready: %v", fmt.Sprint(backend.Address()), lastErr)
 }

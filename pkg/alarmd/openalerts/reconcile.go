@@ -4,6 +4,7 @@
 package openalerts
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,7 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
-// Reconciliation is a complete alert-store observation. Missing and Suppressed
+// Reconciliation is an alert-store observation. Missing and Suppressed
 // are the index differences to preserve across ordinary SET reads.
 type Reconciliation struct {
 	// EventSourceID is the source of the target that answered: this
@@ -30,7 +31,25 @@ type Reconciliation struct {
 	Missing       []string
 	Suppressed    []string
 	Alerts        []Alert
+	// Truncated is an answer the link marked incomplete, or one past this
+	// reader's caps (maxReconcileRows rows, maxReconcileAlerts active
+	// alerts): what is listed is what was received up to the caps, every row
+	// of it checked as a complete answer's is, so each listed alert is a real
+	// active one; what is not listed may still be open. It may add to what is
+	// known and act on what it lists - a close of a listed alert, bounded,
+	// with the rest left for a later round - and never says that anything
+	// unlisted is gone.
+	Truncated bool
 }
+
+// The caps on one reconciliation this reader keeps. An answer over either is
+// cut at a row boundary and marked Truncated rather than refused: refusing
+// it left a strategy with a flood of alerts with no close at all, while the
+// rows received are real and closing them is what shrinks the flood.
+const (
+	maxReconcileRows   = 10000
+	maxReconcileAlerts = 5000
+)
 
 // Severity is optional in older Console responses. Its absence never prevents
 // membership recovery, but cannot be used as a fabricated close severity.
@@ -39,6 +58,19 @@ type Alert struct {
 	EventSourceID string `json:"eventSourceId"`
 	Fingerprint   string `json:"fingerprint"`
 	Severity      string `json:"severity,omitempty"`
+}
+
+// ErrNoDeadline refuses a Console call whose context has no deadline. The
+// client has no timeout of its own -- each call is bounded by its caller,
+// who knows what the call is for -- so a call without one could wait
+// forever; it is refused before any request and is not a Console failure.
+var ErrNoDeadline = errors.New("alarmd openalerts: a Console call needs a context deadline")
+
+func requireDeadline(ctx context.Context) error {
+	if _, bounded := ctx.Deadline(); !bounded {
+		return ErrNoDeadline
+	}
+	return nil
 }
 
 type Reconciler interface {
@@ -78,9 +110,13 @@ type IndexLocation struct {
 }
 
 type HTTPReconcilerOptions struct {
-	BaseURL          string
-	Username         string
-	Password         string
+	BaseURL  string
+	Username string
+	Password string
+	// Token is where the token comes from when there is no Basic pair: the
+	// admin serves the link's API to the bearer of a token it issued and
+	// handed over (linkdtoken). With a Basic pair it is not asked.
+	Token            TokenSource
 	Client           *http.Client
 	Index            IndexLocation
 	MaxResponseBytes int64
@@ -102,6 +138,10 @@ type HTTPReconcilerOptions struct {
 	// lasts, with the operation's failures so far; outside the record's
 	// lock. Nil tells no one.
 	OnFailure func(op, class string, failures uint64)
+	// OutputTopic is the Kafka topic this deployment's events are written
+	// to. The event source they arrive under is the target's candidate
+	// subscribed to it (chooseSource); empty leaves the link's name.
+	OutputTopic string
 }
 
 // HTTPReconciler reads the link's Console. Which target is this deployment's
@@ -121,6 +161,13 @@ type HTTPReconciler struct {
 	keyingTried, factsTried time.Time
 	// calls is what this process has seen of each Console operation.
 	calls consoleCalls
+	// latency is the durations of this client's requests, which bound each
+	// request a caller asks a coverage for (WithRequestCoverage).
+	latency *ConsoleLatency
+	// sourceChoice is how the last resolution chose the event source, and
+	// chosenSource the source the last successful choice found.
+	sourceChoice SourceByTopic
+	chosenSource string
 }
 
 // bindingReuse is how long a resolved target is reused by the roster walk,
@@ -128,10 +175,19 @@ type HTTPReconciler struct {
 // as often as it pages.
 const bindingReuse = time.Minute
 
+// TokenSource is the token a call to the link's API is made with, and where
+// a refusal of it is told (linkdtoken.Store).
+type TokenSource interface {
+	Token(context.Context) (string, error)
+	Rejected(context.Context, string) error
+}
+
 func NewHTTPReconciler(options HTTPReconcilerOptions) (*HTTPReconciler, error) {
 	u, err := url.Parse(options.BaseURL)
+	basic := options.Username != "" && options.Password != ""
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
-		options.Client == nil || options.MaxResponseBytes <= 0 || options.Username == "" || options.Password == "" ||
+		options.Client == nil || options.MaxResponseBytes <= 0 || (!basic && options.Token == nil) ||
+		(options.Username == "") != (options.Password == "") ||
 		!validPrefix(options.Index.KeyPrefix) || options.Index.Address == "" || options.Index.Database < 0 {
 		return nil, errors.New("alarmd openalerts: invalid reconciliation endpoint")
 	}
@@ -139,14 +195,29 @@ func NewHTTPReconciler(options HTTPReconcilerOptions) (*HTTPReconciler, error) {
 	client := *options.Client
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	options.Client = &client
-	return &HTTPReconciler{options: options, confirmed: options.LocationConfirmed}, nil
+	return &HTTPReconciler{options: options, confirmed: options.LocationConfirmed, latency: &ConsoleLatency{}}, nil
 }
+
+// Latency is how long this client's requests have taken, shared by every
+// caller of the client.
+func (reader *HTTPReconciler) Latency() *ConsoleLatency { return reader.latency }
 
 func (reader *HTTPReconciler) get(ctx context.Context, path string, query url.Values, out any) error {
-	return reader.getPath(ctx, "/local-api/strategy-index/"+path, query, out)
+	return reader.getPath(ctx, "/strategy-index/"+path, query, out)
 }
 
+// getPath reads path under the link's API root, which BaseURL names whole:
+// where the operations are served depends on what serves them - the admin
+// module, or a Console of its own - and the deployment says which, not this
+// process. Only the operations' own paths are appended.
 func (reader *HTTPReconciler) getPath(ctx context.Context, path string, query url.Values, out any) error {
+	return reader.getPathAnswering(ctx, path, query, out, false)
+}
+
+// getPathAnswering is getPath; with refusal, an answer other than 200 also
+// carries the link's own words for it (LinkRefusal), for a read an operator
+// asked for and has to see why the link turned down.
+func (reader *HTTPReconciler) getPathAnswering(ctx context.Context, path string, query url.Values, out any, refusal bool) error {
 	u := strings.TrimRight(reader.options.BaseURL, "/") + path
 	if len(query) > 0 {
 		u += "?" + query.Encode()
@@ -155,13 +226,55 @@ func (reader *HTTPReconciler) getPath(ctx context.Context, path string, query ur
 	if err != nil {
 		return errors.New("alarmd openalerts: invalid reconcile request")
 	}
-	req.SetBasicAuth(reader.options.Username, reader.options.Password)
+	token := ""
+	if reader.options.Username != "" {
+		req.SetBasicAuth(reader.options.Username, reader.options.Password)
+	} else {
+		if token, err = reader.options.Token.Token(ctx); err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	// The request itself, once the token is in hand: bounded by its own
+	// deadline when the caller named the coverage its work serves, and timed.
+	// A request that got an HTTP answer (any status) or ran to its deadline
+	// is a sample of the Console's latency; one that failed before either --
+	// refused, unresolved, reset -- is counted apart (ConsoleLatency).
+	requestCtx := ctx
+	if coverage, ok := requestCoverage(ctx); ok {
+		var cancel context.CancelFunc
+		requestCtx, cancel = context.WithTimeout(ctx, reader.latency.Deadline(coverage))
+		defer cancel()
+		req = req.WithContext(requestCtx)
+	}
+	started, answered := time.Now(), false
+	defer func() {
+		switch {
+		case answered || errors.Is(requestCtx.Err(), context.DeadlineExceeded):
+			reader.latency.Observe(time.Since(started))
+		default:
+			reader.latency.NoteUnanswered()
+		}
+	}()
 	response, err := reader.options.Client.Do(req)
 	if err != nil {
 		return transportError(execution.ClassifyTransportFailure(err))
 	}
+	answered = true
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusUnauthorized && token != "" {
+		// The admin no longer accepts this token - its password or signing
+		// key changed: say so, for it to hand over another. A failure to
+		// record it leaves the call failing as it does anyway.
+		_ = reader.options.Token.Rejected(ctx, token)
+	}
 	if response.StatusCode != http.StatusOK {
+		if response.StatusCode == http.StatusNotFound && objectMissing(response.Body) {
+			return errObjectMissing
+		}
+		if refusal {
+			return linkRefusal(response.StatusCode, response.Body)
+		}
 		return statusError(response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, reader.options.MaxResponseBytes+1))
@@ -169,14 +282,60 @@ func (reader *HTTPReconciler) getPath(ctx context.Context, path string, query ur
 		return ErrIncomplete
 	}
 	if json.Unmarshal(data, out) != nil {
+		// The page is told by its body, not its label: a JSON answer
+		// labelled text/html would otherwise be refused as not_api.
+		if trimmed := bytes.TrimSpace(data); len(trimmed) > 0 && trimmed[0] == '<' {
+			return ErrNotAPI
+		}
 		return ErrIncomplete
 	}
 	return nil
 }
 
+// ErrNotAPI is a URL that answered with a page rather than the link's API:
+// a Console's or the admin's web application serves its page at any path it
+// has no route for, so a URL naming the server rather than its API root - the
+// form the Console URL had before it named the root - reaches the page and
+// would otherwise read as a garbled answer.
+var ErrNotAPI = errors.New("alarmd openalerts: the Console URL answered with a web page, not the link's API; " +
+	"it must name the API root (the admin module's .../api/modules/linkd, or a Console's .../local-api)")
+
+// errObjectMissing is the link answering that the object a path names does
+// not exist. Both servers answer a path they have no route for with the same
+// status and error code, so the status alone cannot tell "no such alert" from
+// "no such operation here" - a wrong API root would read as every alert gone.
+// Only the object-missing answer's own message is taken as one; any other 404
+// is a failure, so a changed message costs reads, never closes.
+var errObjectMissing = errors.New("alarmd openalerts: the link has no such object")
+
+// objectMissingMessage is the message both the admin module and a Console
+// give when the object a path names does not exist (their route-missing
+// answers carry the same code and a different message).
+const objectMissingMessage = "对象不存在"
+
+// objectMissing reports whether a 404's body is the link's object-missing
+// answer: {"error": {"code": "not_found", "message": objectMissingMessage}}.
+func objectMissing(body io.Reader) bool {
+	var answer struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	data, err := io.ReadAll(io.LimitReader(body, 4096))
+	if err != nil || json.Unmarshal(data, &answer) != nil {
+		return false
+	}
+	return answer.Error.Code == "not_found" && answer.Error.Message == objectMissingMessage
+}
+
 // Binding is this deployment's target, read from the Console. It is reused
-// for up to bindingReuse; Reconcile always reads it afresh.
+// for up to bindingReuse; so is Reconcile's, which checks it against the
+// target the link answers for and reads it afresh when they differ.
 func (reader *HTTPReconciler) Binding(ctx context.Context) (TargetBinding, error) {
+	if err := requireDeadline(ctx); err != nil {
+		return TargetBinding{}, err
+	}
 	reader.mu.Lock()
 	binding, at := reader.binding, reader.resolvedAt
 	reader.mu.Unlock()
@@ -205,6 +364,7 @@ func (reader *HTTPReconciler) resolve(ctx context.Context) (TargetBinding, error
 	if err != nil {
 		return TargetBinding{}, err
 	}
+	binding = reader.chooseSource(ctx, binding)
 	reader.mu.Lock()
 	index := reader.options.Index
 	reader.mu.Unlock()
@@ -296,42 +456,45 @@ func (reader *HTTPReconciler) reconcile(ctx context.Context, key StrategyKey) (R
 	if !validStrategyKey(key) {
 		return Reconciliation{}, errors.New("alarmd openalerts: invalid strategy identity")
 	}
-	b, err := reader.resolve(ctx)
-	if err != nil {
-		return Reconciliation{}, err
+	// The target is reused as Binding reuses it: reading the target list and
+	// each source before every strategy made one reconciliation three
+	// requests in sequence. The link names the target it answered for, so a
+	// target that moved is still found -- the answer differs, the target is
+	// read afresh (which moves where the sets are read when it must), and the
+	// strategy is asked once more against it.
+	reused := false
+	reader.mu.Lock()
+	b, at := reader.binding, reader.resolvedAt
+	reader.mu.Unlock()
+	if !at.IsZero() && reader.now().Sub(at) < bindingReuse {
+		reused = true
+	} else {
+		var err error
+		if b, err = reader.resolve(ctx); err != nil {
+			return Reconciliation{}, err
+		}
 	}
 	reader.refreshKeying(ctx, b)
-	var response struct {
-		Target     TargetBinding `json:"target"`
-		TenantID   string        `json:"tenantId"`
-		StrategyID string        `json:"strategyId"`
-		Key        string        `json:"key"`
-		Complete   bool          `json:"complete"`
-		Redis      struct {
-			Complete bool `json:"complete"`
-		} `json:"redis"`
-		Alerts struct {
-			Complete bool `json:"complete"`
-		} `json:"alerts"`
-		Rows []struct {
-			Fingerprint string  `json:"fingerprint"`
-			Status      string  `json:"status"`
-			Alerts      []Alert `json:"alerts"`
-		} `json:"rows"`
+	response, truncated, err := reader.askReconcile(ctx, b, key)
+	if err == nil && reused && !sameTarget(b, response.Target) {
+		if b, err = reader.resolve(ctx); err != nil {
+			return Reconciliation{}, err
+		}
+		response, truncated, err = reader.askReconcile(ctx, b, key)
 	}
-	query := url.Values{"event_source_id": {b.EventSourceID}, "hook_name": {b.HookName}, "bk_tenant_id": {key.TenantID}, "strategy_id": {key.StrategyID}}
-	if err := reader.get(ctx, "reconcile", query, &response); err != nil {
+	if err != nil {
 		return Reconciliation{}, err
-	}
-	if !response.Complete || !response.Redis.Complete || !response.Alerts.Complete || response.Rows == nil || len(response.Rows) > 10000 {
-		return Reconciliation{}, ErrIncomplete
 	}
 	if !sameTarget(b, response.Target) || response.TenantID != key.TenantID || response.StrategyID != key.StrategyID || response.Key != b.KeyPrefix+":"+key.TenantID+":"+key.StrategyID {
 		return Reconciliation{}, errors.New("alarmd openalerts: reconciliation identity mismatch")
 	}
-	result := Reconciliation{EventSourceID: b.EventSourceID}
+	result := Reconciliation{EventSourceID: b.EventSourceID, Truncated: truncated}
 	seen := make(map[string]struct{}, len(response.Rows))
-	activeCount := 0
+	// Every row received is checked, kept or not: an answer that contradicts
+	// itself - a repeated fingerprint, an alert of another fingerprint or
+	// source, a status that does not match its alerts - is not one to act
+	// on any part of. Only what is kept is cut, at a row boundary.
+	rows, active, full := 0, 0, false
 	for _, row := range response.Rows {
 		if row.Fingerprint == "" || len(row.Fingerprint) > 4096 || row.Alerts == nil {
 			return Reconciliation{}, ErrIncomplete
@@ -341,8 +504,7 @@ func (reader *HTTPReconciler) reconcile(ctx context.Context, key StrategyKey) (R
 		}
 		seen[row.Fingerprint] = struct{}{}
 		for _, alert := range row.Alerts {
-			activeCount++
-			if activeCount > 5000 || alert.AlertID == "" || alert.Fingerprint != row.Fingerprint || !containsSource(b.Sources, alert.EventSourceID) {
+			if alert.AlertID == "" || alert.Fingerprint != row.Fingerprint || !containsSource(b.Sources, alert.EventSourceID) {
 				return Reconciliation{}, ErrIncomplete
 			}
 		}
@@ -351,21 +513,64 @@ func (reader *HTTPReconciler) reconcile(ctx context.Context, key StrategyKey) (R
 			if len(row.Alerts) == 0 {
 				return Reconciliation{}, ErrIncomplete
 			}
-			result.Members = append(result.Members, row.Fingerprint)
-			result.Alerts = append(result.Alerts, row.Alerts...)
-			if row.Status == "missing_redis" {
-				result.Missing = append(result.Missing, row.Fingerprint)
-			}
 		case "redis_only":
 			if len(row.Alerts) != 0 {
 				return Reconciliation{}, ErrIncomplete
 			}
-			result.Suppressed = append(result.Suppressed, row.Fingerprint)
 		default:
 			return Reconciliation{}, ErrIncomplete
 		}
+		if full || rows == maxReconcileRows || active+len(row.Alerts) > maxReconcileAlerts {
+			full, result.Truncated = true, true
+			continue
+		}
+		rows, active = rows+1, active+len(row.Alerts)
+		if row.Status == "redis_only" {
+			result.Suppressed = append(result.Suppressed, row.Fingerprint)
+			continue
+		}
+		result.Members = append(result.Members, row.Fingerprint)
+		result.Alerts = append(result.Alerts, row.Alerts...)
+		if row.Status == "missing_redis" {
+			result.Missing = append(result.Missing, row.Fingerprint)
+		}
 	}
 	return result, nil
+}
+
+// reconcileResponse is the link's reconciliation of one strategy.
+type reconcileResponse struct {
+	Target     TargetBinding `json:"target"`
+	TenantID   string        `json:"tenantId"`
+	StrategyID string        `json:"strategyId"`
+	Key        string        `json:"key"`
+	Complete   bool          `json:"complete"`
+	Redis      struct {
+		Complete bool `json:"complete"`
+	} `json:"redis"`
+	Alerts struct {
+		Complete bool `json:"complete"`
+	} `json:"alerts"`
+	Rows []struct {
+		Fingerprint string  `json:"fingerprint"`
+		Status      string  `json:"status"`
+		Alerts      []Alert `json:"alerts"`
+	} `json:"rows"`
+}
+
+// askReconcile is one reconcile request for the strategy against b, and
+// whether the link marked its answer incomplete. An answer without rows is
+// refused: there is nothing in it to act on.
+func (reader *HTTPReconciler) askReconcile(ctx context.Context, b TargetBinding, key StrategyKey) (reconcileResponse, bool, error) {
+	var response reconcileResponse
+	query := url.Values{"event_source_id": {b.EventSourceID}, "hook_name": {b.HookName}, "bk_tenant_id": {key.TenantID}, "strategy_id": {key.StrategyID}}
+	if err := reader.get(ctx, "reconcile", query, &response); err != nil {
+		return reconcileResponse{}, false, err
+	}
+	if response.Rows == nil {
+		return reconcileResponse{}, false, ErrIncomplete
+	}
+	return response, !response.Complete || !response.Redis.Complete || !response.Alerts.Complete, nil
 }
 
 // transportError is a Console request that got no answer, named by the
@@ -378,12 +583,16 @@ func (class transportError) Error() string {
 	return "alarmd openalerts: Console request failed (" + string(class) + ")"
 }
 
-// statusError is a Console answer other than 200. It keeps the code so a
-// caller for which one code is an answer rather than a failure - the alert
-// record's 404 - can tell it apart.
+// statusError is a Console answer other than 200 that is not an answer about
+// the object (errObjectMissing). A 404 here is a path the server has no route
+// for, which says the Console URL is not the link's API root, and says so.
 type statusError int
 
 func (code statusError) Error() string {
+	if int(code) == http.StatusNotFound {
+		return "alarmd openalerts: Console HTTP status 404 for an operation's path; the Console URL must name the API root " +
+			"(the admin module's .../api/modules/linkd, or a Console's .../local-api)"
+	}
 	return fmt.Sprintf("alarmd openalerts: Console HTTP status %d", int(code))
 }
 

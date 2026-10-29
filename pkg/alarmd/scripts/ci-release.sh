@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # alarmd 的 CI 发布脚本：原生 Linux amd64/arm64 构建，build → push，finally 里 cleanup。
-# 契约与 pkg/linkd/scripts/ci-release.sh 相同，流水线可以照 linkd 的接。
+# 契约与 linkd 的 pkg/linkd/scripts/ci-release.sh 相同（上游 feat/linkd-dev 1e9617f2；本仓 pkg/linkd 是旧副本），流水线可以照 linkd 的接。
 # 版本来源二选一：按 tag 发布时只给 SOURCE_TAG（pkg/alarmd/v<版本>，镜像 tag 就是 <版本>，
 # 且 HEAD 必须是该 tag 指向的提交）；不按 tag 发布时给 PACKAGE_VERSION。
 # alarmd 没有 chart 子命令：它的 chart 是父 chart 的一个模块，随父 chart 发布，不从本仓打包。
@@ -97,9 +97,13 @@ build)
     daemon=$(docker info --format '{{.OSType}}/{{.Architecture}}')
     case $daemon in linux/x86_64) daemon=linux/amd64 ;; linux/aarch64) daemon=linux/arm64 ;; esac
     [[ $daemon == "linux/$TARGET_ARCH" ]] || fail "需要原生 linux/$TARGET_ARCH 构建机，实际为 $daemon"
+    # alarmd-cli 与 alarmd 同提交、同版本，发行物打进 alarmd 二进制；它在构建上下文之外，按具名上下文带入。
+    cli_source="$(cd "$module/.." && pwd)/alarmd-cli"
+    [[ -f $cli_source/go.mod && ! -L $cli_source ]] || fail "找不到 alarmd-cli 源码：$cli_source"
     login
     ref=$(local_image)
     docker buildx build --load --platform "linux/$TARGET_ARCH" --progress plain \
+        --build-context "alarmd-cli=$cli_source" \
         --build-arg "VERSION=$PACKAGE_VERSION" --build-arg "GIT_COMMIT=$revision" \
         --build-arg "GO_IMAGE=${GO_IMAGE:-golang:1.26.7}" \
         --build-arg "RUNTIME_IMAGE=${RUNTIME_IMAGE:-tencentos/tencentos4-minimal}" \
@@ -113,6 +117,10 @@ build)
     actual=$(docker run --rm --network none "$ref" --version)
     expected="alarmd version=$PACKAGE_VERSION commit=$revision schema_version=$schema"
     [[ $actual == "$expected" ]] || fail "alarmd 版本元数据不匹配：$actual"
+    # 内嵌的 alarmd-cli 发行物必须是本次版本、四个平台齐全，且摘要逐个重算通过。
+    cli_actual=$(docker run --rm --network none "$ref" --check-cli-release) || fail 'alarmd-cli 发行物校验失败'
+    cli_expected="alarmd-cli release version=$PACKAGE_VERSION targets=darwin-arm64,darwin-x64,linux-arm64,linux-x64"
+    [[ $cli_actual == "$cli_expected" ]] || fail "alarmd-cli 发行物不匹配：$cli_actual"
     touch "$state/built"
     printf '::set-output name=revision::%s\n' "$revision"
     ;;

@@ -39,6 +39,9 @@ func TestARecoveryIsNotHeldOnAnotherLevel(t *testing.T) {
 		// primary is the Level the envelope is aggregated to: the lowest
 		// priority among the Levels that said RECOVERY.
 		primary uint32
+		// unsettled puts every window inside the read hold, where a hole
+		// may still fill and a window short of positions cannot answer.
+		unsettled bool
 	}{
 		{
 			name:   "beside a Level whose detect fact is unavailable",
@@ -63,8 +66,9 @@ func TestARecoveryIsNotHeldOnAnotherLevel(t *testing.T) {
 				{LevelID: 1, View: pointHistory{step: 60, points: map[int64]bool{source: false}}},
 				{LevelID: 2, View: pointHistory{step: 60, points: map[int64]bool{source: false}}},
 			},
-			want:    verdict{beside: RecoveryBesideLevelUnavailable, besideLevelID: 1},
-			primary: 2,
+			want:      verdict{beside: RecoveryBesideLevelUnavailable, besideLevelID: 1},
+			primary:   2,
+			unsettled: true,
 		},
 		{
 			name:   "beside a NORMAL Level whose recovery span still triggers",
@@ -109,7 +113,11 @@ func TestARecoveryIsNotHeldOnAnotherLevel(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			plan := compilePlanV2(t, test.levels)
-			result, err := EvaluateV2(requestV2(t, plan, source, test.facts(plan.Levels().Copy()), test.histories, activeFactsV2(t, plan, source)))
+			request := requestV2(t, plan, source, test.facts(plan.Levels().Copy()), test.histories, activeFactsV2(t, plan, source))
+			if test.unsettled {
+				unsettled(&request)
+			}
+			result, err := EvaluateV2(request)
 			if err != nil {
 				t.Fatalf("EvaluateV2() error = %v", err)
 			}

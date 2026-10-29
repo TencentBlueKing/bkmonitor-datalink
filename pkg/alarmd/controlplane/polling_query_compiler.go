@@ -138,12 +138,22 @@ func promQLMatch(raw json.RawMessage) (string, error) {
 		}
 	}
 	visit(fields)
+	// No matcher is no match: "{}" is not a selector, and the provider
+	// refuses the query beside it rather than reading it as no filter.
+	if len(parts) == 0 {
+		return "", nil
+	}
 	return "{" + strings.Join(parts, ",") + "}", nil
 }
 
 func monitorEventField(field string) string {
 	switch field {
 	case "target", "event_name", "event.content", "event.count", "time", "_index":
+		return field
+	}
+	// Already a dimensions field: the platform adds the prefix only to a
+	// field that does not start with it (is_dimensions_field).
+	if strings.HasPrefix(field, "dimensions") {
 		return field
 	}
 	return "dimensions." + field
@@ -209,11 +219,24 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePollingQueryConfig(c legacyQu
 		}
 		if c.DataSourceLabel == "custom" {
 			c.MetricField, c.AggMethod = "_index", "COUNT"
+			// The event name and the recovery filter go into every OR group
+			// of the strategy's conditions, as the platform's extra filters
+			// do; recovery filtering is a dimensions field. With more than
+			// one group they go before each group's own, where the platform
+			// puts them: a group whose conditions all have no value then
+			// keeps its "or" on the filters and still counts the event, as
+			// the platform's query does. A strategy of one group keeps them
+			// after, as they always were, and so its query revision.
+			var filters []legacyCondition
 			if c.CustomEventName != "" {
-				c.AggConditions = append(c.AggConditions, scalarCondition("event_name", "eq", c.CustomEventName))
+				filters = append(filters, scalarCondition("event_name", "eq", c.CustomEventName))
 			}
-			// Constructor-injected recovery filtering is a dimensions field.
-			c.AggConditions = append(c.AggConditions, scalarCondition("dimensions.event_type", "neq", "recovery"))
+			filters = append(filters, scalarCondition("dimensions.event_type", "neq", "recovery"))
+			multiGroup := false
+			for index, condition := range c.AggConditions {
+				multiGroup = multiGroup || (index > 0 && condition.Connector == "or")
+			}
+			c.AggConditions = andIntoEveryGroup(c.AggConditions, multiGroup, filters...)
 		} else {
 			c.MetricField = "event.count"
 			if strings.EqualFold(c.AggMethod, "COUNT") {

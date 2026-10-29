@@ -116,7 +116,7 @@ func TestTheRowPutsEachPlansBoundSeriesBesideItsGuard(t *testing.T) {
 	evaluated := func(strategy string, matched int, slot int64) {
 		tracker.Observe(ctx, observability.Observation{
 			Component: observability.ComponentEvaluation, Stage: observability.StageEvaluationCompleted,
-			Result: observability.ResultSuccess, Direction: observability.DirectionInternal,
+			Result:            observability.ResultSuccess,
 			Trace:             observability.TraceFields{StrategyID: strategy, BusinessID: "2", EvaluationTime: slot},
 			PlanSeriesMatched: &matched,
 		})

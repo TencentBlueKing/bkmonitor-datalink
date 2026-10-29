@@ -17,9 +17,9 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 // A recheck is the formal read again: the same request on the wire, and the
@@ -46,7 +46,7 @@ func TestARecheckIsTheFormalReadAgain(t *testing.T) {
 	if _, err := client.Execute(context.Background(), attempt, formal); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithCancel(testwait.Context(t))
 	defer cancel()
 	again := &collectingSink{}
 	completion, err := client.Recheck(ctx, attempt.Spec, again)
@@ -91,7 +91,7 @@ func TestARecheckRefusesWhatItCannotBound(t *testing.T) {
 	if _, err := client.Recheck(context.Background(), spec, &collectingSink{}); err == nil {
 		t.Fatal("a recheck without a deadline ran")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithCancel(testwait.Context(t))
 	defer cancel()
 	if _, err := client.Recheck(ctx, execution.PhysicalQuerySpec{}, &collectingSink{}); err == nil {
 		t.Fatal("a recheck of no query ran")

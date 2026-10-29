@@ -28,12 +28,12 @@ func TestRoundMemoryReadsTheTrackerAtScrape(t *testing.T) {
 		for _, family := range families {
 			for _, sample := range family.GetMetric() {
 				switch name := family.GetName(); name {
-				case "bkmonitor_alarmd_fleet_round_memory_objects":
+				case "alarmd_fleet_round_memory_objects":
 					values["objects:"+sample.GetLabel()[0].GetValue()] = sample.GetGauge().GetValue()
 					buckets++
-				case "bkmonitor_alarmd_fleet_round_memory_rounds", "bkmonitor_alarmd_fleet_round_memory_bytes",
-					"bkmonitor_alarmd_fleet_round_memory_max_rounds", "bkmonitor_alarmd_fleet_round_memory_window_sized_objects",
-					"bkmonitor_alarmd_fleet_round_memory_line_held_objects":
+				case "alarmd_fleet_round_memory_rounds", "alarmd_fleet_round_memory_bytes",
+					"alarmd_fleet_round_memory_max_rounds", "alarmd_fleet_round_memory_window_sized_objects",
+					"alarmd_fleet_round_memory_line_held_objects":
 					values[name] = sample.GetGauge().GetValue()
 				}
 			}
@@ -59,11 +59,11 @@ func TestRoundMemoryReadsTheTrackerAtScrape(t *testing.T) {
 	values, _ = read(recorder)
 	want := map[string]float64{
 		"objects:le_16": 5, "objects:le_64": 0, "objects:le_256": 0, "objects:le_1440": 2, "objects:gt_1440": 0,
-		"bkmonitor_alarmd_fleet_round_memory_rounds":               900,
-		"bkmonitor_alarmd_fleet_round_memory_bytes":                16384,
-		"bkmonitor_alarmd_fleet_round_memory_max_rounds":           720,
-		"bkmonitor_alarmd_fleet_round_memory_window_sized_objects": 6,
-		"bkmonitor_alarmd_fleet_round_memory_line_held_objects":    3,
+		"alarmd_fleet_round_memory_rounds":               900,
+		"alarmd_fleet_round_memory_bytes":                16384,
+		"alarmd_fleet_round_memory_max_rounds":           720,
+		"alarmd_fleet_round_memory_window_sized_objects": 6,
+		"alarmd_fleet_round_memory_line_held_objects":    3,
 	}
 	for name, value := range want {
 		if values[name] != value {

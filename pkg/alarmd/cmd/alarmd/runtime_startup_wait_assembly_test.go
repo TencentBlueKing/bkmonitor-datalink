@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -103,7 +104,7 @@ func (f *startupWaitFixture) open(ctx context.Context) (*phaseTwoWorkerBundle, e
 
 func (f *startupWaitFixture) waits(t *testing.T, dependency string) float64 {
 	t.Helper()
-	return counterValue(t, f.recorder, "bkmonitor_alarmd_startup_dependency_wait_total", map[string]string{"dependency": dependency})
+	return counterValue(t, f.recorder, "alarmd_startup_dependency_wait_total", map[string]string{"dependency": dependency})
 }
 
 // runningGoroutines reports whether any goroutine is in the named function.
@@ -132,7 +133,7 @@ func TestAssemblyWaitsForARedisThatIsNotUpAndJoinsWhenItAnswers(t *testing.T) {
 		bundle, err := f.open(ctx)
 		done <- opened{bundle, err}
 	}()
-	waitUntil(t, 10*time.Second, "the service Redis is waited on", func() bool { return f.waits(t, "redis_legacy_output") >= 2 })
+	testwait.Until(t, "the service Redis is waited on", func() bool { return f.waits(t, "redis_legacy_output") >= 2 })
 	select {
 	case result := <-done:
 		t.Fatalf("assembly returned while its service Redis was down: %v", result.err)
@@ -153,17 +154,13 @@ func TestAssemblyWaitsForARedisThatIsNotUpAndJoinsWhenItAnswers(t *testing.T) {
 	var result opened
 	select {
 	case result = <-done:
-	case <-time.After(10 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("assembly did not continue after the service Redis answered")
 	}
 	if result.err != nil {
 		t.Fatalf("assembly after the service Redis answered: %v", result.err)
 	}
-	defer func() {
-		shutdownCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
-		defer stop()
-		_ = result.bundle.Shutdown(shutdownCtx)
-	}()
+	defer func() { _ = result.bundle.Shutdown(testwait.Context(t)) }()
 	if err := result.bundle.Start(ctx); err != nil {
 		t.Fatalf("Start after the wait: %v", err)
 	}
@@ -186,7 +183,7 @@ func TestAReplicaStoppedWhileWaitingLeavesNothingRunning(t *testing.T) {
 		_, err := f.open(ctx)
 		done <- err
 	}()
-	waitUntil(t, 10*time.Second, "the service Redis is waited on", func() bool { return f.waits(t, "redis_legacy_output") >= 1 })
+	testwait.Until(t, "the service Redis is waited on", func() bool { return f.waits(t, "redis_legacy_output") >= 1 })
 	if !runningGoroutines("cmd/alarmd.maintainCMDBIndex(") {
 		t.Fatal("setup: the CMDB index maintenance is not running during the wait")
 	}
@@ -196,11 +193,11 @@ func TestAReplicaStoppedWhileWaitingLeavesNothingRunning(t *testing.T) {
 		if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "redis_legacy_output") {
 			t.Fatalf("err = %v, want the cancellation, naming the dependency", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("assembly did not stop with the process")
 	}
-	waitUntil(t, 5*time.Second, "the CMDB index maintenance stops", func() bool { return !runningGoroutines("cmd/alarmd.maintainCMDBIndex(") })
-	waitUntil(t, 5*time.Second, "the runtime store's clients are closed", func() bool {
+	testwait.Until(t, "the CMDB index maintenance stops", func() bool { return !runningGoroutines("cmd/alarmd.maintainCMDBIndex(") })
+	testwait.Until(t, "the runtime store's clients are closed", func() bool {
 		clients, err := f.runtimeClient.ClientList(context.Background()).Result()
 		return err == nil && strings.Count(strings.TrimSpace(clients), "\n") == 0
 	})
@@ -213,8 +210,7 @@ func TestAssemblyEndsOnARedisThatRefuses(t *testing.T) {
 	if err := f.runtimeClient.ConfigSet(context.Background(), "requirepass", "not-the-configured-one").Err(); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := testwait.Context(t)
 	_, err := f.open(ctx)
 	if err == nil || ctx.Err() != nil {
 		t.Fatalf("err = %v, ctx = %v, want a refusal before the deadline", err, ctx.Err())

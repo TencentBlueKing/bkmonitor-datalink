@@ -35,7 +35,7 @@ func (f *frameExecutor) Stream(ctx context.Context, request StreamRequest) (Stre
 			return ctx.Err()
 		}
 		select {
-		case <-time.After(delay):
+		case <-time.After(delay): // fixed-wait: the supervisor's report delay, which the case sets
 			return nil
 		case <-ctx.Done():
 			f.gaveUp = time.Now()

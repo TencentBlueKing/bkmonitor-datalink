@@ -16,13 +16,18 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 type fixtureClient struct {
@@ -41,6 +46,7 @@ type fixtureClient struct {
 	deleted     []string
 	patches     []string
 	writeError  error
+	logsErr     error
 }
 
 func (f *fixtureClient) DeletePod(ctx context.Context, namespace, name, uid string) error {
@@ -95,6 +101,9 @@ func (f *fixtureClient) OpenLogs(ctx context.Context, namespace, name string, op
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.logOptions = options
+	if f.logsErr != nil {
+		return nil, f.logsErr
+	}
 	return io.NopCloser(strings.NewReader(f.logs)), nil
 }
 
@@ -269,6 +278,79 @@ func TestLogsBoundRedactionAndTargetChanged(t *testing.T) {
 	}
 }
 
+// An init container is a target of its own, marked as one, verified against
+// its own status: a stuck init (a gse check that never passes) is read by
+// its logs, the previous run's too, like any container. A name that is in
+// neither list is still refused.
+func TestAnInitContainerIsReadLikeAnyContainer(t *testing.T) {
+	client, _ := fixture()
+	client.pod.Spec.InitContainers = []corev1.Container{{Name: "gse-check", Image: "check:v1"}}
+	client.pod.Status.InitContainerStatuses = []corev1.ContainerStatus{{Name: "gse-check", ContainerID: "containerd://init-cid", ImageID: "sha256:check", RestartCount: 3,
+		State:                corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+		LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Error", ExitCode: 1}}}}
+	client.logs = "waiting for gse socket"
+	provider := mustProvider(t, Options{Client: client})
+	observed, err := provider.Inspect(context.Background(), TargetRequest{Target: Target{Namespace: "tenant", Pod: "web-abc", Container: "gse-check"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !observed.Init || observed.Target.ContainerID != "containerd://init-cid" || observed.Target.ImageID != "sha256:check" || observed.Image != "check:v1" ||
+		observed.RestartCount != 3 || !observed.Running || observed.LastTermination == nil || observed.LastTermination.ExitCode != 1 {
+		t.Fatalf("init observation %+v", observed)
+	}
+	regular, err := provider.Inspect(context.Background(), TargetRequest{Target: Target{Namespace: "tenant", Pod: "web-abc", Container: "web"}})
+	if err != nil || regular.Init {
+		t.Fatalf("regular observation %+v err %v", regular, err)
+	}
+	result, err := provider.Logs(context.Background(), LogsRequest{Target: observed.Target, Previous: true})
+	if err != nil || result.Output != "waiting for gse socket" || result.TargetChanged || client.logOptions.Container != "gse-check" || !client.logOptions.Previous {
+		t.Fatalf("init logs %+v err %v options %+v", result, err, client.logOptions)
+	}
+	if _, err := provider.Inspect(context.Background(), TargetRequest{Target: Target{Namespace: "tenant", Pod: "web-abc", Container: "absent"}}); err == nil {
+		t.Fatal("a container in neither list was accepted")
+	}
+}
+
+// An apiserver refusal is named with its own reason and words, so a reader
+// sees why ("previous terminated container ... not found") instead of a
+// generic failure; credentials in those words are still scrubbed, and an
+// error that is no apiserver status keeps the generic sentence.
+func TestAnApiserverRefusalIsNamedInItsOwnWords(t *testing.T) {
+	client, target := fixture()
+	client.logsErr = apierrors.NewBadRequest(`previous terminated container "web" in pod "web-abc" not found`)
+	provider := mustProvider(t, Options{Client: client})
+	_, err := provider.Logs(context.Background(), LogsRequest{Target: target, Previous: true})
+	requireCode(t, err, CodeAPIError)
+	if !strings.Contains(err.Error(), `BadRequest: previous terminated container "web" in pod "web-abc" not found`) {
+		t.Fatalf("refusal = %v, want the apiserver's reason and words", err)
+	}
+	client.logsErr = apierrors.NewBadRequest(`dial https://user:hunter2@198.51.100.7 refused; access_token=abcdef`)
+	_, err = provider.Logs(context.Background(), LogsRequest{Target: target})
+	if err == nil || strings.Contains(err.Error(), "hunter2") || strings.Contains(err.Error(), "abcdef") {
+		t.Fatalf("refusal = %v, want its credentials scrubbed", err)
+	}
+	client.logsErr = apierrors.NewBadRequest(strings.Repeat("x", 4000))
+	if _, err = provider.Logs(context.Background(), LogsRequest{Target: target}); err == nil || len(err.Error()) > 700 {
+		t.Fatalf("a long refusal came back %d bytes long", len(err.Error()))
+	}
+	// A multibyte message crossing the cut stays valid text.
+	for n := 496; n <= 500; n++ {
+		client.logsErr = apierrors.NewBadRequest(strings.Repeat("a", n) + strings.Repeat("容", 10))
+		if _, err = provider.Logs(context.Background(), LogsRequest{Target: target}); err == nil || !utf8.ValidString(err.Error()) {
+			t.Fatalf("a multibyte refusal cut at %d: %q is not valid UTF-8", n, err)
+		}
+	}
+	// A reason without words is the reason alone.
+	client.logsErr = &apierrors.StatusError{ErrStatus: metav1.Status{Status: metav1.StatusFailure, Reason: metav1.StatusReasonServiceUnavailable}}
+	if _, err = provider.Logs(context.Background(), LogsRequest{Target: target}); err == nil || !strings.HasSuffix(err.Error(), ": ServiceUnavailable") {
+		t.Fatalf("a reason without words = %v", err)
+	}
+	client.logsErr = errors.New("stream reset by peer at 192.0.2.4")
+	if _, err = provider.Logs(context.Background(), LogsRequest{Target: target}); err == nil || err.Error() != "Kubernetes evidence request did not succeed" && !strings.HasSuffix(err.Error(), "Kubernetes evidence request did not succeed") {
+		t.Fatalf("a non-status error = %v, want the generic sentence", err)
+	}
+}
+
 type executorFunc func(context.Context, StreamRequest) (StreamResult, error)
 
 func (f executorFunc) Stream(ctx context.Context, request StreamRequest) (StreamResult, error) {
@@ -370,26 +452,37 @@ func TestTransportFailureUnknownAndNoRetry(t *testing.T) {
 	}
 }
 
+// The provider keeps no count of its own: a call made while another runs
+// runs too, since how many run at once is the channel's admission. Bounds
+// on each request still refuse.
 func TestConcurrentRequestsAndBudgets(t *testing.T) {
 	provider, _, target := runtimeProvider(t)
-	entered := make(chan struct{})
+	var running atomic.Int32
+	both := make(chan struct{})
 	unblock := make(chan struct{})
 	provider.options.Executor = executorFunc(func(ctx context.Context, request StreamRequest) (StreamResult, error) {
-		close(entered)
+		if running.Add(1) == 2 {
+			close(both)
+		}
 		<-unblock
 		return StreamResult{}, errors.New("lost")
 	})
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		provider.Exec(context.Background(), ExecRequest{Target: target, Argv: []string{"true"}})
-	}()
-	<-entered
-	_, err := provider.Exec(context.Background(), ExecRequest{Target: target, Argv: []string{"true"}})
-	requireCode(t, err, CodeBusy)
+	var done sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			_, _ = provider.Exec(context.Background(), ExecRequest{Target: target, Argv: []string{"true"}})
+		}()
+	}
+	select {
+	case <-both:
+	case <-testwait.Expired(t):
+		t.Fatal("a second call was held back by the provider")
+	}
 	close(unblock)
-	<-done
-	for _, request := range []ExecRequest{{Target: target}, {Target: target, Argv: []string{"true"}, Stdin: strings.Repeat("x", 32<<10+1)}, {Target: target, Argv: []string{"true"}, TimeoutMS: 30001}, {Target: target, Argv: []string{"true"}, OutputBytes: 512<<10 + 1}} {
+	done.Wait()
+	for _, request := range []ExecRequest{{Target: target}, {Target: target, Argv: []string{"true"}, Stdin: strings.Repeat("x", MaxStdinBytes+1)}, {Target: target, Argv: []string{"true"}, TimeoutMS: MaxExecTimeout.Milliseconds() + 1}, {Target: target, Argv: []string{"true"}, OutputBytes: DefaultOutputBytes + 1}} {
 		_, err := provider.Exec(context.Background(), request)
 		requireCode(t, err, CodeInvalidRequest)
 	}
@@ -467,7 +560,7 @@ func TestCancellationReturnsUnknownAndRemoteTimerContinues(t *testing.T) {
 	// own 5 s deadline, is still running, and the remote then ends by itself.
 	select {
 	case <-started:
-	case <-time.After(time.Minute):
+	case <-testwait.Expired(t):
 		t.Fatal("remote supervisor did not start")
 	}
 	cancel()
@@ -476,7 +569,7 @@ func TestCancellationReturnsUnknownAndRemoteTimerContinues(t *testing.T) {
 		if result.RemoteState != RemoteUnknown || result.ExitCode != nil || result.EvidenceScope != "post_observation_unavailable" {
 			t.Fatalf("canceled receipt: %+v", result)
 		}
-	case <-time.After(time.Minute):
+	case <-testwait.Expired(t):
 		t.Fatal("cancellation did not return")
 	}
 	select {
@@ -489,7 +582,7 @@ func TestCancellationReturnsUnknownAndRemoteTimerContinues(t *testing.T) {
 		if err != nil {
 			t.Fatalf("independent remote timer failed: %v", err)
 		}
-	case <-time.After(time.Minute):
+	case <-testwait.Expired(t):
 		t.Fatal("remote process outlived its independent deadline")
 	}
 }
@@ -563,6 +656,39 @@ func TestOutputPolicyMasksURLUserinfoUnderAnyScheme(t *testing.T) {
 	}
 }
 
+// A credential header keeps nothing of its credential, however it is
+// written: as a header line, as a curl argument, or as a field. The field
+// rule alone stops at the scheme word and leaves the token after it.
+func TestOutputPolicyMasksAnAuthorizationHeaderWhole(t *testing.T) {
+	for _, line := range []string{
+		"Authorization: Bearer header-credential",
+		"curl -H 'Authorization: Bearer header-credential' http://svc",
+		`{"authorization": "Basic header-credential"}`,
+		"authorization=Bearer header-credential",
+	} {
+		if out, _ := newRedactor(nil).bounded(line, 4096); strings.Contains(out, "header-credential") || !strings.Contains(out, "<redacted>") {
+			t.Fatalf("policy output for %q is %q", line, out)
+		}
+	}
+}
+
+// An execution's audited command line is redacted as one line, so a
+// credential the caller split across arguments is caught as it would be in
+// output; a single argument carrying a credential field is caught too.
+func TestAnAuditedCommandLineIsRedactedAcrossItsArguments(t *testing.T) {
+	client, _ := fixture()
+	provider := mustProvider(t, Options{Client: client})
+	for _, argv := range [][]string{
+		{"curl", "-H", "Authorization:", "Bearer", "argv-credential", "http://svc"},
+		{"curl", "-H", "Authorization:", "Bearer argv-credential", "http://svc"},
+		{"tool", "--password=argv-credential"},
+	} {
+		if line := provider.AuditArgv(argv); strings.Contains(line, "argv-credential") || !strings.Contains(line, "<redacted>") {
+			t.Fatalf("audited %q as %q", argv, line)
+		}
+	}
+}
+
 // A Provider printed into a log line names its settings, never the literal
 // credentials it redacts.
 func TestAFormattedProviderCarriesNoCredential(t *testing.T) {
@@ -570,5 +696,35 @@ func TestAFormattedProviderCarriesNoCredential(t *testing.T) {
 	provider := mustProvider(t, Options{Client: client, LiteralSecrets: []string{"literalcredential"}})
 	if out := fmt.Sprintf("%v %+v", provider, provider); strings.Contains(out, "literalcredential") {
 		t.Fatalf("formatted provider %q", out)
+	}
+}
+
+// A filtered log read scans the stream here and keeps only the lines that
+// pass: holding contains, written by until_time. It says how many it scanned
+// and kept, asks the apiserver for timestamps only to judge until_time and
+// drops them from what it returns, and is not cut to the output bound before
+// filtering. Before, a log read could only take the last 1000 lines.
+func TestAFilteredLogReadKeepsOnlyTheMatchingLines(t *testing.T) {
+	client, target := fixture()
+	client.logs = "2026-10-16T01:00:00Z a match\n2026-10-16T02:00:00Z b match\n2026-10-16T03:00:00Z c other\n2026-10-16T04:00:00Z d match\n"
+	provider := mustProvider(t, Options{Client: client})
+	until := time.Date(2026, 10, 16, 3, 30, 0, 0, time.UTC)
+	result, err := provider.Logs(context.Background(), LogsRequest{Target: target, TailLines: MaxLogLines, Contains: "match", UntilTime: until})
+	if err != nil || result.Output != "a match\nb match\n" || result.ScannedLines != 4 || result.MatchedLines != 2 || result.Truncated {
+		t.Fatalf("filtered read: %+v err=%v", result, err)
+	}
+	if !client.logOptions.Timestamps || client.logOptions.LimitBytes != nil || *client.logOptions.TailLines != MaxLogLines {
+		t.Fatalf("options %+v, want timestamps, no byte limit and the tail asked", client.logOptions)
+	}
+	client.logs = "alpha one\nbeta two\nalpha three\n"
+	result, err = provider.Logs(context.Background(), LogsRequest{Target: target, Contains: "alpha"})
+	if err != nil || result.Output != "alpha one\nalpha three\n" || client.logOptions.Timestamps {
+		t.Fatalf("contains alone: %+v options %+v err=%v", result, client.logOptions, err)
+	}
+	for _, bad := range []LogsRequest{{Target: target, TailLines: MaxLogLines + 1}, {Target: target, SinceSeconds: 60, SinceTime: until},
+		{Target: target, SinceTime: until, UntilTime: until.Add(-time.Hour)}, {Target: target, SinceSeconds: int64(MaxLogWindow/time.Second) + 1}} {
+		if _, err := provider.Logs(context.Background(), bad); errorCode(err) != CodeInvalidRequest {
+			t.Errorf("request %+v: err=%v, want invalid_request", bad, err)
+		}
 	}
 }

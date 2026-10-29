@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 type loginBody struct {
@@ -307,7 +309,11 @@ func TestForgottenAndIdlePairingsDoNotRenew(t *testing.T) {
 	}
 	idle := pairedLogin(t, m)
 	client.PExpire(ctx, pairingKey(m.prefix, idle.RefreshToken), time.Millisecond)
-	time.Sleep(10 * time.Millisecond)
+	testwait.Until(t, "the idle pairing expiring", func() bool {
+		// A failed read is not the key gone.
+		n, err := client.Exists(ctx, pairingKey(m.prefix, idle.RefreshToken)).Result()
+		return err == nil && n == 0
+	})
 	if w := refresh(m, idle.RefreshToken); w.Code != 401 || errorCode(t, w) != "renewal_expired_or_revoked" {
 		t.Fatalf("an idle pairing renewed: %d %s", w.Code, w.Body)
 	}

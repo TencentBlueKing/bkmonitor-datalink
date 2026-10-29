@@ -133,7 +133,11 @@ func wireObject(raw []byte) (map[string]json.RawMessage, error) {
 
 func (client *Client) decodeShared(ctx context.Context, reader io.Reader, attempt queryIdentity, sink execution.ProviderSeriesSink) (completion execution.ProviderCompletion, err error) {
 	session := client.newSeriesDecoder(attempt, sink, nil)
+	// A frame is read whole before its series are handed on, so they may be
+	// made canonical side by side (seriesDecoder.handOn).
+	session.framed = true
 	defer session.limitCompletion(&completion, &err)
+	defer session.settle(ctx, &err)
 	lines := sharedFrameReaders.Get().(*bufio.Reader)
 	lines.Reset(reader)
 	defer sharedFrameReaders.Put(lines)
@@ -260,6 +264,11 @@ func (client *Client) decodeShared(ctx context.Context, reader io.Reader, attemp
 					return completion, err
 				}
 			}
+			// The frame's series are handed on before the next is read: a
+			// series that came is delivered whether or not more come after it.
+			if err := session.handOn(ctx); err != nil {
+				return completion, err
+			}
 		case frame["end"] != nil:
 			footer, err = wireObject(frame["end"])
 			if err != nil {
@@ -295,7 +304,7 @@ func (client *Client) decodeShared(ctx context.Context, reader io.Reader, attemp
 			return completion, protocolError(execution.ResponseFailureFrameInvalid)
 		}
 	}
-	return session.finish(status, partial, tables)
+	return session.finish(ctx, status, partial, tables)
 }
 
 // expandedSeriesBytes counts the consumer DTO without marshalling it. Raw

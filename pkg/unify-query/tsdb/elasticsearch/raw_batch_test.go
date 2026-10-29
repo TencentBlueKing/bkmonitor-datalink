@@ -488,8 +488,8 @@ func TestRawBatchSpanRecordsMemberDiagnosticsWithoutConnectionDetails(t *testing
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(
 			writer,
-			`{"responses":[`+
-				`{"took":932,"timed_out":true,"_shards":{"total":8,"successful":7,"failed":1},`+
+			`{"took":1200,"responses":[`+
+				`{"took":932,"timed_out":true,"_shards":{"total":8,"successful":7,"skipped":3,"failed":1},`+
 				`"hits":{"total":{"value":23,"relation":"eq"},"hits":[]}},`+
 				`{"took":41,"timed_out":false,"status":404,"_shards":{"total":4,"successful":4,"failed":0},`+
 				`"error":{"type":"index_not_found_exception","reason":"must-not-leak"}}]}`,
@@ -523,6 +523,12 @@ func TestRawBatchSpanRecordsMemberDiagnosticsWithoutConnectionDetails(t *testing
 
 	attributes := endedSpanAttrs(t, recorder)
 	renderedAttributes := fmt.Sprint(attributes)
+	batchTook, ok := esSpanAttrInt(attributes, "es_batch_took_millis")
+	require.True(t, ok)
+	assert.EqualValues(t, 1200, batchTook)
+	childShardsSkipped, ok := esSpanAttrIntSlice(attributes, "es_batch_child_shards_skipped")
+	require.True(t, ok)
+	assert.Equal(t, []int64{3, 0}, childShardsSkipped)
 	for _, sentinel := range []string{
 		server.URL,
 		firstIndexSentinel,

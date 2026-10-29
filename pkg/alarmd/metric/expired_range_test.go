@@ -33,7 +33,7 @@ func TestExpiredRangeGatherSeparatesOperationsAndLogicalSlots(t *testing.T) {
 	operations, slots := 0, 0
 	for _, family := range families {
 		switch family.GetName() {
-		case "bkmonitor_alarmd_expired_range_total":
+		case "alarmd_expired_range_total":
 			for _, series := range family.Metric {
 				operations++
 				if len(series.Label) != 1 || series.Label[0].GetName() != "result" {
@@ -45,7 +45,7 @@ func TestExpiredRangeGatherSeparatesOperationsAndLogicalSlots(t *testing.T) {
 					t.Fatalf("operation %s=%v expected=%v", label, series.GetCounter().GetValue(), expected)
 				}
 			}
-		case "bkmonitor_alarmd_expired_slots_finalized_total":
+		case "alarmd_expired_slots_finalized_total":
 			for _, series := range family.Metric {
 				slots++
 				if len(series.Label) != 1 || series.Label[0].GetName() != "reason" {
@@ -56,7 +56,7 @@ func TestExpiredRangeGatherSeparatesOperationsAndLogicalSlots(t *testing.T) {
 					t.Fatalf("logical slots=%v", series)
 				}
 			}
-		case "bkmonitor_alarmd_progress_completed_total":
+		case "alarmd_progress_completed_total":
 			t.Fatal("range fabricated ordinary successful completion")
 		}
 	}

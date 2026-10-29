@@ -447,3 +447,30 @@ func TestADropCarriesThePeriodAndTheReadOffset(t *testing.T) {
 		t.Fatalf("observed %+v, want the 20 min period and an 8 min read offset", sink.observed)
 	}
 }
+
+// A global business Plan files each record under the business it is about,
+// so the close its rejection leads to must carry the alert's business, not
+// the Plan's: the drop says which kind of Plan it came from, and the frozen
+// Plan is where that is read.
+func TestADropSaysWhetherItsPlanIsAGlobalBusinessOne(t *testing.T) {
+	for _, global := range []bool{false, true} {
+		sink := &recordingSink{}
+		output := scopeOutput
+		output.globalBusiness = global
+		adapter, _ := scopeDropAdapter(t, targetChain(), hostPlanContext(true), sink, output)
+		deliverSeries(t, adapter, hostDims("102"))
+		if len(sink.observed) != 1 || sink.observed[0].GlobalBusiness != global {
+			t.Fatalf("global=%v: observed %+v", global, sink.observed)
+		}
+	}
+	identity := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "2002"}
+	plan := evaluationPlanForStrategy("2002")
+	plan.GlobalBusiness = true
+	compiled := compileEvaluationPlan(t, plan)
+	if !buildPlanOutputs([]execution.DuePlan{{Identity: identity, CompiledPlan: compiled}}, nil)[identity].globalBusiness {
+		t.Fatal("a global business Plan's output did not say so")
+	}
+	if buildPlanOutputs([]execution.DuePlan{{Identity: identity, CompiledPlan: compilePlanWithTargetPlan(t, "2002", nil)}}, nil)[identity].globalBusiness {
+		t.Fatal("an ordinary Plan's output said it was a global business one")
+	}
+}

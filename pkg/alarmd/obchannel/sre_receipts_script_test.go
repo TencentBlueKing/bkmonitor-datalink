@@ -20,11 +20,11 @@ import (
 // landed and leaves nothing.
 func TestASREReceiptIsOneScript(t *testing.T) {
 	const key = "test.sre:{env}:receipts"
-	action := SREAction{Op: "pod.delete", RequestID: "newest", At: time.Unix(1_700_000_000, 0).UTC()}
+	action := SREAction{Op: "secret.get", RequestID: "newest", At: time.Unix(1_700_000_000, 0).UTC()}
 	redistest.CheckScriptSite(t, redistest.ScriptSite{
 		// A full list, so the trim has one to cut.
 		Prepare: func(t *testing.T, client *redis.Client) {
-			for i := 0; i < MaxSREReceipts; i++ {
+			for i := 0; i < MaxSREAccessReceipts; i++ {
 				if err := client.LPush(context.Background(), key, `{"op":"older"}`).Err(); err != nil {
 					t.Fatal(err)
 				}
@@ -37,8 +37,8 @@ func TestASREReceiptIsOneScript(t *testing.T) {
 			ctx := context.Background()
 			entries := client.LRange(ctx, key, 0, -1).Val()
 			var newest SREAction
-			if len(entries) != MaxSREReceipts || json.Unmarshal([]byte(entries[0]), &newest) != nil || newest.RequestID != "newest" {
-				t.Fatalf("%d entries, newest %q; want %d with the new one first", len(entries), entries[0], MaxSREReceipts)
+			if len(entries) != MaxSREAccessReceipts || json.Unmarshal([]byte(entries[0]), &newest) != nil || newest.RequestID != "newest" {
+				t.Fatalf("%d entries, newest %q; want %d with the new one first", len(entries), entries[0], MaxSREAccessReceipts)
 			}
 			if ttl := client.TTL(ctx, key).Val(); ttl <= SREReceiptRetention-time.Minute || ttl > SREReceiptRetention {
 				t.Fatalf("ttl %v, want the retention %v", ttl, SREReceiptRetention)

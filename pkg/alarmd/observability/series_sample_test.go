@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 // sampleFixture is a sampler as the process builds it, every buffer
@@ -258,14 +259,14 @@ func TestSeriesSampleDoesNotUseBlockedTargetFlowLogger(t *testing.T) {
 	go func() { flow.Record("runner_decision", v.QueryGroup, TargetFlowFacts{}); close(logged) }()
 	select {
 	case <-w.started:
-	case <-time.After(time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("fixture did not block logger")
 	}
 	sampled := make(chan struct{})
 	go func() { r := s.TryReserve(ctx, c); r.AddLevel(1); r.Commit(); close(sampled) }()
 	select {
 	case <-sampled:
-	case <-time.After(time.Second):
+	case <-testwait.Expired(t):
 		close(w.release)
 		t.Fatal("sample waited on synchronous logger")
 	}

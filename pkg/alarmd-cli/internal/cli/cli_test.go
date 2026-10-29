@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -325,7 +326,7 @@ func TestLateResponsesDoNotReplaceNewLogin(t *testing.T) {
 			close(release)
 			wg.Wait()
 			current, err := store.get(p.EnvironmentID)
-			if err != nil || current != newSession {
+			if err != nil || !reflect.DeepEqual(current, newSession) {
 				t.Fatalf("late %s replaced session B: %+v %v", command, current, err)
 			}
 		})

@@ -66,18 +66,22 @@ func (reader *GroupReader) decode(id string, payload []byte, readAt time.Time) *
 // groupSource is where a store reads its groups and how it reads one: the
 // fork's per-group documents (GroupReader) or the platform's one hash per
 // tenant (PlatformGroupReader). Read hands each id's read to visit, a missing
-// group as an answer and a failed read as the error; decode makes a read
-// payload a snapshot.
+// group as an answer, a key Redis answered with an error as that id's Err,
+// and a failed round trip as the error; decode makes a read payload a
+// snapshot.
 type groupSource interface {
 	Read(ctx context.Context, ids []string, bound int, visit func(id string, read GroupRead)) error
 	decode(id string, payload []byte, readAt time.Time) *GroupSnapshot
 }
 
-// GroupRead is one id's raw read: the payload, or that the key was absent.
-// The payload is the reply's own bytes, valid only while visit runs.
+// GroupRead is one id's raw read: the payload, or that the key was absent,
+// or Err, Redis answering the key with an error (redisbatch.Value.Err),
+// which says nothing about the group. The payload is the reply's own bytes,
+// valid only while visit runs.
 type GroupRead struct {
 	Payload []byte
 	Missing bool
+	Err     error
 }
 
 // Read reads every id a window at a time (redisbatch.Windows) and hands each
@@ -93,11 +97,12 @@ type GroupRead struct {
 // A missing key is not an error, it is an answer. A key Redis answers with
 // an error - LOADING or BUSY, which hold for the whole instance while it
 // restarts or runs a script, or a key of another type - is not: it says
-// nothing about its group, and is never handed over as one. Read stops
-// there and returns the error, wrapping the redisbatch.UnansweredError that
-// says so, as it does for a round trip that failed; a caller keeps what it
-// held for every group, and lets go of what it made of the windows visited
-// before it.
+// nothing about its group, and is handed over as that id's Err, never as a
+// group; the other keys of its window are facts and are read on. One group
+// key of another type does not stop the others being read. A round trip
+// that failed stops the read and is returned; a caller keeps what it held
+// for every group, and lets go of what it made of the windows visited before
+// it.
 func (reader *GroupReader) Read(ctx context.Context, ids []string, bound int, visit func(id string, read GroupRead)) error {
 	keys := make([]string, len(ids))
 	for index, id := range ids {
@@ -106,14 +111,15 @@ func (reader *GroupReader) Read(ctx context.Context, ids []string, bound int, vi
 	windows := redisbatch.NewWindows(reader.client, keys, bound)
 	for read := 0; read < len(keys); {
 		start, values, err := windows.Next(ctx)
-		if err != nil {
+		var unanswered *redisbatch.UnansweredError
+		if err != nil && !errors.As(err, &unanswered) {
 			return fmt.Errorf("alarmd cmdbcache: read dynamic groups: %w", err)
 		}
 		if start != read || len(values) == 0 {
 			return fmt.Errorf("alarmd cmdbcache: read dynamic groups: %d values at %d, want some at %d", len(values), start, read)
 		}
 		for offset, value := range values {
-			visit(ids[start+offset], GroupRead{Payload: value.Raw, Missing: value.Missing})
+			visit(ids[start+offset], GroupRead{Payload: value.Raw, Missing: value.Missing, Err: value.Err})
 		}
 		read += len(values)
 	}
@@ -147,8 +153,10 @@ type GroupSnapshot struct {
 	// says none. An ip_cloud plan reads a group only of its own tenant.
 	TenantID string
 	Members  []GroupMember
-	// Dropped counts the members refused by the plan-independent checks.
-	Dropped int
+	// Dropped counts the members refused by the plan-independent checks,
+	// and DroppedNamed names the first of them (targetplan.NameDropped).
+	Dropped      int
+	DroppedNamed []targetplan.DroppedMember
 
 	mu   sync.Mutex
 	keys map[string]*groupKeys
@@ -157,6 +165,7 @@ type GroupSnapshot struct {
 type groupKeys struct {
 	members map[string]struct{}
 	dropped int
+	named   []targetplan.DroppedMember
 }
 
 // Keys returns the group's member keys under a plan's identity and rule,
@@ -166,10 +175,7 @@ func (snapshot *GroupSnapshot) Keys(plan *contract.TargetPlanV1) (map[string]str
 	if snapshot == nil || plan == nil {
 		return nil, 0
 	}
-	signature := string(plan.Rule) + "\x00" + plan.ModelID + "\x00" + strings.Join(plan.Identity.Dimensions, ",") + "\x00" + plan.Identity.ModelDimension + "\x00" + plan.Identity.ModelValue
-	if plan.Identity.HostIdentity {
-		signature += "\x00host"
-	}
+	signature := groupKeySignature(plan)
 	snapshot.mu.Lock()
 	defer snapshot.mu.Unlock()
 	if cached, found := snapshot.keys[signature]; found {
@@ -179,6 +185,7 @@ func (snapshot *GroupSnapshot) Keys(plan *contract.TargetPlanV1) (map[string]str
 	for _, member := range snapshot.Members {
 		if member.ModelID != plan.ModelID {
 			built.dropped++
+			built.named = targetplan.NameDropped(built.named, member.ModelInstID, targetplan.DroppedModelMismatch)
 			continue
 		}
 		switch {
@@ -189,6 +196,7 @@ func (snapshot *GroupSnapshot) Keys(plan *contract.TargetPlanV1) (map[string]str
 			// writer put no host id on cannot be placed and is dropped.
 			if member.HostID == "" {
 				built.dropped++
+				built.named = targetplan.NameDropped(built.named, member.ModelInstID, targetplan.DroppedNoHostID)
 				continue
 			}
 			built.members[plan.Identity.HostKey(member.HostID)] = struct{}{}
@@ -201,6 +209,36 @@ func (snapshot *GroupSnapshot) Keys(plan *contract.TargetPlanV1) (map[string]str
 	}
 	snapshot.keys[signature] = built
 	return built.members, built.dropped
+}
+
+// groupKeySignature is what a plan's key set is memoised under: the plan
+// fields that decide which members a group yields and under which keys.
+func groupKeySignature(plan *contract.TargetPlanV1) string {
+	signature := string(plan.Rule) + "\x00" + plan.ModelID + "\x00" + strings.Join(plan.Identity.Dimensions, ",") + "\x00" + plan.Identity.ModelDimension + "\x00" + plan.Identity.ModelValue
+	if plan.Identity.HostIdentity {
+		signature += "\x00host"
+	}
+	return signature
+}
+
+// NamedDrops names the first members the group dropped for plan: those the
+// document's checks refused, then those the plan's rule refused, at most
+// targetplan.MaxNamedDroppedMembers.
+func (snapshot *GroupSnapshot) NamedDrops(plan *contract.TargetPlanV1) []targetplan.DroppedMember {
+	if snapshot == nil || plan == nil {
+		return nil
+	}
+	snapshot.Keys(plan)
+	signature := groupKeySignature(plan)
+	snapshot.mu.Lock()
+	defer snapshot.mu.Unlock()
+	named := append([]targetplan.DroppedMember(nil), snapshot.DroppedNamed...)
+	if built := snapshot.keys[signature]; built != nil {
+		for _, member := range built.named {
+			named = targetplan.NameDropped(named, member.ID, member.Reason)
+		}
+	}
+	return named
 }
 
 // decodeGroup reads one group document per the protocol: an object with
@@ -254,11 +292,13 @@ func decodeGroup(id string, payload []byte, readAt time.Time) *GroupSnapshot {
 		}
 		if wire.ModelID != document.ModelID || instance == "" {
 			snapshot.Dropped++
+			snapshot.DroppedNamed = targetplan.NameDropped(snapshot.DroppedNamed, instance, targetplan.DroppedMemberInvalid)
 			continue
 		}
 		if listed != nil {
 			if _, found := listed[instance]; !found {
 				snapshot.Dropped++
+				snapshot.DroppedNamed = targetplan.NameDropped(snapshot.DroppedNamed, instance, targetplan.DroppedMemberUnlisted)
 				continue
 			}
 		}
@@ -268,10 +308,17 @@ func decodeGroup(id string, payload []byte, readAt time.Time) *GroupSnapshot {
 		}
 		snapshot.Members = append(snapshot.Members, GroupMember{ModelID: wire.ModelID, ModelInstID: instance, HostID: host})
 	}
+	lost := make([]string, 0)
 	for instance := range listed {
 		if _, found := carried[instance]; !found {
 			snapshot.Dropped++
+			lost = append(lost, instance)
 		}
+	}
+	// In id order, so the names a round shows do not change with map order.
+	sort.Strings(lost)
+	for _, instance := range lost {
+		snapshot.DroppedNamed = targetplan.NameDropped(snapshot.DroppedNamed, instance, targetplan.DroppedMemberLost)
 	}
 	return snapshot
 }
@@ -320,9 +367,12 @@ type GroupStore struct {
 	lastError     error
 	refreshes     uint64
 	// failingSince is the first refresh that failed since the last one that
-	// read the groups, zero while they read; failureReason why the latest
-	// failed, in closed words (groupFailureReason). A refresh reads every
-	// group or none, so the run is the store's, not a group's.
+	// read every group, zero while they read; failureReason why the latest
+	// failed, in closed words (groupFailureReason). A refresh fails for every
+	// group when its round trip fails, and for a group alone when Redis
+	// answers that group's key with an error; either way the run is the
+	// store's, and which groups it holds past a failed read is each
+	// snapshot's ReadAt against lastFailureAt.
 	failingSince  time.Time
 	failureReason string
 }
@@ -419,10 +469,18 @@ func (store *GroupStore) Group(ctx context.Context, id string, interval time.Dur
 		// A first read that fails, Redis answering the key with an error
 		// included, publishes nothing: the next ask reads it again.
 		var first *GroupSnapshot
+		var answered error
 		if err := store.reader.Read(ctx, []string{id}, store.readBound, func(_ string, read GroupRead) {
+			if read.Err != nil {
+				answered = read.Err
+				return
+			}
 			first = snapshotOf(store.reader, id, read, now)
 		}); err != nil {
 			return GroupLookup{ReadErr: err}
+		}
+		if answered != nil {
+			return GroupLookup{ReadErr: fmt.Errorf("alarmd cmdbcache: read dynamic group %s: %w", id, answered)}
 		}
 		store.mu.Lock()
 		store.snapshots[id] = first
@@ -443,8 +501,11 @@ func snapshotOf(source groupSource, id string, read GroupRead, at time.Time) *Gr
 
 // Refresh re-reads every referenced group. A transport failure keeps every
 // snapshot and is recorded, so the next lookups say they are served past a
-// failed refresh; a missing key replaces the snapshot with an unavailable
-// one - the writer withdrew or never wrote it, and that is an answer. A
+// failed refresh; a key Redis answers with an error keeps that group's
+// snapshot alone, served past the failed read and aging by its own ReadAt
+// until the staleness bound refuses it, while every other group is read; a
+// missing key replaces the snapshot with an unavailable one - the writer
+// withdrew or never wrote it, and that is an answer. A
 // reference nobody has asked for within its horizon is forgotten first,
 // snapshot and all.
 //
@@ -480,12 +541,19 @@ func (store *GroupStore) Refresh(ctx context.Context) error {
 	// read: the refresh holds one window of documents at a time beside the
 	// snapshots it makes, not every referenced group's document.
 	next := make(map[string]*GroupSnapshot, len(ids))
+	var unanswered *redisbatch.UnansweredError
 	readErr := store.reader.Read(ctx, ids, store.readBound, func(id string, read GroupRead) {
+		if read.Err != nil {
+			if unanswered == nil {
+				unanswered = &redisbatch.UnansweredError{First: fmt.Errorf("%s: %w", id, read.Err)}
+			}
+			unanswered.Keys++
+			return
+		}
 		next[id] = snapshotOf(store.reader, id, read, time.Time{})
 	})
-	// A read that failed - at the round trip, or Redis answering a key with
-	// an error - keeps every group's snapshot, served as past a failed
-	// refresh, and the run of failures says since when and why.
+	// A round trip that failed keeps every group's snapshot, served as past
+	// a failed refresh, and the run of failures says since when and why.
 	if readErr != nil {
 		store.mu.Lock()
 		store.lastFailureAt, store.lastError = store.now(), readErr
@@ -503,14 +571,25 @@ func (store *GroupStore) Refresh(ctx context.Context) error {
 		snapshot.ReadAt = at
 	}
 	store.mu.Lock()
+	defer store.mu.Unlock()
 	for _, id := range ids {
 		if current, read := next[id]; read {
 			store.snapshots[id] = current
 		}
 	}
-	store.lastError, store.failingSince, store.failureReason = nil, time.Time{}, ""
 	store.refreshes++
-	store.mu.Unlock()
+	// A group whose key Redis answered with an error keeps the snapshot it
+	// had: dated before this failure, it is served as past a failed read,
+	// and the groups read now, dated at it, are not.
+	if unanswered != nil {
+		store.lastFailureAt, store.lastError = at, unanswered
+		if store.failingSince.IsZero() {
+			store.failingSince = at
+		}
+		store.failureReason = groupFailureReason(unanswered)
+		return unanswered
+	}
+	store.lastError, store.failingSince, store.failureReason = nil, time.Time{}, ""
 	return nil
 }
 
@@ -538,9 +617,13 @@ type GroupHealth struct {
 	Unavailable int
 	// RefreshFailed says the last refresh failed - at the round trip, or
 	// Redis answering a group's key with an error - and the snapshots served
-	// are older than the cadence promises.
+	// past it are older than the cadence promises.
 	RefreshFailed bool
-	Refreshes     uint64
+	// Failing is how many held groups are served past a failed read: every
+	// group when the round trip failed, a group alone when Redis answered
+	// its key with an error and the others were read.
+	Failing   int
+	Refreshes uint64
 	// SyncReads counts the reads made on a Slot path for an id not held:
 	// one per first reference, and none after, is the reading.
 	SyncReads uint64
@@ -562,6 +645,9 @@ func (store *GroupStore) Health() GroupHealth {
 		Refreshes: store.refreshes, SyncReads: store.syncReads,
 		FailingSince: store.failingSince, FailureReason: store.failureReason}
 	for _, snapshot := range store.snapshots {
+		if store.lastFailureAt.After(snapshot.ReadAt) {
+			health.Failing++
+		}
 		if snapshot.Unavailable != "" {
 			health.Unavailable++
 			continue

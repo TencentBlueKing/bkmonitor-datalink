@@ -182,7 +182,7 @@ func TestSlotFreezeFailureScheduleDueLineCarriesClassStageAndCause(t *testing.T)
 	observability.NewLoggingObserver(observability.New("alarmd", &output), policy).Observe(context.Background(), observability.Observation{
 		Component: observability.ComponentScheduler, Stage: observability.StageScheduleDue,
 		Result: observability.ResultRetrying, ReasonCode: observability.ReasonCode(contract.ReasonBlockedExactSetUnavailable),
-		Direction: observability.DirectionInternal, Trace: observability.TraceFields{QueryGroupKey: "query-group-1"}, Err: blocked.Err,
+		Trace: observability.TraceFields{QueryGroupKey: "query-group-1"}, Err: blocked.Err,
 	})
 	var event map[string]any
 	if err := json.Unmarshal(output.Bytes(), &event); err != nil {

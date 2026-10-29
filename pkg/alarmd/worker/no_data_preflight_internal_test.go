@@ -49,6 +49,16 @@ func noDataPreflightPlan(t *testing.T, strategyID string, noData *contract.NoDat
 // strategy reference, for a case that needs a revisioned strategy.
 func noDataPreflightPlanWithRef(t *testing.T, ref contract.StrategyRefV2, noData *contract.NoDataConfigV1) *strategy.CompiledPlan {
 	t.Helper()
+	return noDataPreflightPlanWithIdentity(t, ref, noData, nil)
+}
+
+// noDataPreflightPlanWithIdentity compiles the same test Plan with an output
+// identity, which a Plan has in production: the trigger fingerprints an alert
+// only for a Plan that has one, under a frozen snapshot revision.
+func noDataPreflightPlanWithIdentity(
+	t *testing.T, ref contract.StrategyRefV2, noData *contract.NoDataConfigV1, identity *contract.MonitorOutputIdentity,
+) *strategy.CompiledPlan {
+	t.Helper()
 	strategyID := ref.StrategyID
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{
 		MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 16, MaxAlgorithmsPerLevel: 8, MaxGroupsPerAlgorithm: 16,
@@ -65,7 +75,7 @@ func noDataPreflightPlanWithRef(t *testing.T, ref contract.StrategyRefV2, noData
 		MultiValueAlignment: "SINGLE_VALUE", DataUnit: "percent", MissingValuePolicy: contract.MissingValuePolicyRequired,
 	}
 	plan := contract.EvaluationPlanV2{
-		PlanID: strategyID, StrategyRef: ref, InputProjection: projection, NoData: noData,
+		PlanID: strategyID, StrategyRef: ref, InputProjection: projection, NoData: noData, OutputIdentity: identity,
 		StrategyIR: contract.StrategyIRV2{
 			Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2}, StrategyRef: ref,
 			InputProjection: projection,

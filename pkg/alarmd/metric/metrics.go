@@ -12,6 +12,7 @@ package metric
 import (
 	"regexp"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -19,7 +20,6 @@ import (
 )
 
 const (
-	metricNamespace = "bkmonitor"
 	metricSubsystem = "alarmd"
 	otherLabel      = "_other"
 )
@@ -31,13 +31,22 @@ type BuildInfo struct {
 }
 
 type Recorder struct {
-	registry *prometheus.Registry
+	registry          *prometheus.Registry
+	configUnknownKeys prometheus.Gauge
 	// build is kept beside the build_info series so the same facts can be
 	// published where the page reads them. Until now the running version was
 	// only a metric label: answering "which commit is this deployment on"
 	// meant a PromQL query, and a rollout that left two builds running was
 	// invisible on the page that reads their combined numbers.
-	build             BuildInfo
+	build BuildInfo
+	// heap is the live-heap collector, read by the flow's copy from its last
+	// sample.
+	heap *heapSiteCollector
+	// runtimeRedis is the Redis hook label of the client that serves runtime
+	// state: "runtime" when the process opened its own, the source's label
+	// when the runtime store is the source's connection and shares its
+	// client. The flow's runtime round trips are read under it.
+	runtimeRedis      atomic.Value
 	lifecycleMu       sync.Mutex
 	lifecycleBound    bool
 	healthMu          sync.Mutex
@@ -60,7 +69,6 @@ func NewRecorder(build BuildInfo) *Recorder {
 	registry := prometheus.NewRegistry()
 	buildInfo := prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: metricNamespace,
 			Subsystem: metricSubsystem,
 			Name:      "build_info",
 			Help:      "alarmd build information.",
@@ -68,8 +76,16 @@ func NewRecorder(build BuildInfo) *Recorder {
 		[]string{"version", "commit", "schema_version"},
 	)
 	buildInfo.WithLabelValues(build.Version, build.Commit, build.SchemaVersion).Set(1)
+	configUnknownKeys := prometheus.NewGauge(prometheus.GaugeOpts{
+		Subsystem: metricSubsystem,
+		Name:      "config_unknown_keys",
+		Help: "Keys in the configuration file that no field reads, retired keys and misspellings: ignored, " +
+			"named on stderr at startup, never a reason to refuse to start. Non-zero means the chart renders " +
+			"something this image no longer reads.",
+	})
 	observations := newObservationMetrics()
 	phaseTwo := newPhaseTwoMetrics()
+	heap := newHeapSiteCollector(time.Now)
 
 	collectorsToRegister := []prometheus.Collector{
 		// The legacy Go collector exports memstats but no CPU split, so the
@@ -83,19 +99,31 @@ func NewRecorder(build BuildInfo) *Recorder {
 		)),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		// Where the live heap comes from, by allocating function; see heap_sites.go.
-		newHeapSiteCollector(time.Now),
+		heap,
 		buildInfo,
+		configUnknownKeys,
 	}
 	collectorsToRegister = append(collectorsToRegister, observations.collectors()...)
 	collectorsToRegister = append(collectorsToRegister, phaseTwo.collectors()...)
 	registry.MustRegister(collectorsToRegister...)
 
 	return &Recorder{
-		registry:     registry,
-		build:        build,
-		observations: observations,
-		phaseTwo:     phaseTwo,
+		heap:              heap,
+		registry:          registry,
+		configUnknownKeys: configUnknownKeys,
+		build:             build,
+		observations:      observations,
+		phaseTwo:          phaseTwo,
 	}
+}
+
+// SetConfigUnknownKeys publishes how many keys of the loaded configuration
+// file no field reads.
+func (r *Recorder) SetConfigUnknownKeys(count int) {
+	if r == nil {
+		return
+	}
+	r.configUnknownKeys.Set(float64(count))
 }
 
 // Build is the build this process reports in build_info, for publishing the

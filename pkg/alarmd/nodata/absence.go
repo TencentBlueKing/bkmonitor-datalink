@@ -88,6 +88,18 @@ type AbsenceInput struct {
 	// empty history roster reads as "this item has no groups", and the next
 	// round rebuilds the whole-item absence the horizon just stopped.
 	TrackingExhaustedAt int64
+	// RecoveryDisabled is the item's owner turning automatic recovery off
+	// (contract.NoDataConfigV1.RecoveryDisabled): a group whose data comes
+	// back is remembered as present and gets no verdict, so the NORMAL that
+	// would end its no-data alert is never produced. The closes that are no
+	// recovery keep their NORMAL - a group the roster stopped expecting
+	// (closeDroppedAbsences), one in another business (A6) - as the control
+	// plane's closes do elsewhere.
+	RecoveryDisabled bool
+	// AnswerTruncated is SlotInput.AnswerTruncated: the answer says it is
+	// full and may have been cut at the query service's group cap. Judged as
+	// a round that is not FULL (A1).
+	AnswerTruncated bool
 }
 
 // trackingExpired says whether an absence that began at firstAbsent has run
@@ -136,6 +148,10 @@ type AbsenceFacts struct {
 	// Suppressed counts the groups this round met already stopped, which is
 	// the standing size of what the horizon is holding down.
 	Suppressed uint64
+	// ManualClosed counts the absences this round stopped because a user
+	// closed their alert by hand (decision-024), deleted or marked as the
+	// horizon would. A marked one is in Suppressed from the next round on.
+	ManualClosed uint64
 	// AbsentAges is the absences still tracked and reported this round, by
 	// how long each has been open: since this round only, under an hour,
 	// under a day, a day or more. Counted where Absent is, from the same
@@ -287,14 +303,33 @@ func evaluateAbsence(input AbsenceInput) AbsenceResult {
 		},
 	}
 
-	// A1. Not FULL: every expected group is unavailable, and nothing is
-	// learned - not even about a group that did arrive, because a partial
-	// answer is not evidence about what it left out either. An absence the
-	// roster has stopped expecting is not closed here either: the roster
-	// change is known, but closing is a verdict, and a round that did not look
-	// gives no verdicts. The next FULL round closes it.
-	if input.Completeness != execution.CompletenessFull {
+	// A1. Not FULL, or full by its own account and possibly cut at the query
+	// service's group cap: an answer that may have left groups out is no
+	// evidence about the ones it left out, so every expected group that did
+	// not arrive is unavailable - no absence is raised, kept or aged on it.
+	// A group that did arrive is a different fact: its data is in the answer,
+	// and an answer cannot hold a series that was not sent. So it is judged
+	// present exactly as in a FULL round (judgePresent, and A6 for one in
+	// another business), which is what recovers its absence. Skipping it too
+	// left a strategy whose answer is always cut - one at the group cap, which
+	// is its size and not a blip - with absences that never recover however
+	// much data comes back. An absence the roster has stopped expecting is not
+	// closed here: the roster change is known, but that close is an absence
+	// verdict, and the next FULL round makes it.
+	if input.Completeness != execution.CompletenessFull || input.AnswerTruncated {
+		judgePresent(&result, input)
 		for key := range input.Roster.Groups {
+			if _, present := input.Present[key]; present {
+				if _, foreign := input.OutOfBusiness[key]; foreign && input.Memory[key].SuppressedAt == 0 {
+					// A6 for a group judgePresent has just forgotten: its
+					// recovery is said here, or its alert stays open with
+					// nothing left to close it.
+					result.Verdicts[key] = VerdictNormal
+				}
+				if _, judged := result.Verdicts[key]; judged || heldPresent(input, key) || input.Memory[key].SuppressedAt != 0 {
+					continue
+				}
+			}
 			result.Verdicts[key] = VerdictUnavailable
 			result.Facts.Unavailable++
 		}
@@ -390,7 +425,7 @@ func evaluateAbsence(input AbsenceInput) AbsenceResult {
 		}
 		// A4 and A7. Present groups were judged above, together with the ones
 		// the roster does not expect.
-		if _, judged := result.Verdicts[key]; judged {
+		if _, judged := result.Verdicts[key]; judged || heldPresent(input, key) {
 			continue
 		}
 		entry := result.Memory[key]
@@ -399,6 +434,19 @@ func evaluateAbsence(input AbsenceInput) AbsenceResult {
 			// synthetic anomaly, and the entry is left exactly as it is: a
 			// horizon raised after the fact must not restart what a lower one
 			// stopped, and the only thing that restarts it is data arriving.
+			//
+			// Except that a history roster still forgets it at the horizon. The
+			// horizon never marks a history group - it forgets it - so a marked
+			// one is a manual close (decision-024), and the typical close is of a
+			// group whose data never returns. Kept, it would sit in a memory the
+			// running Plan renews every round; forgotten at the horizon it
+			// leaves exactly as an unmarked absence would, with nothing said.
+			if input.Roster.Source == RosterHistory &&
+				trackingExpired(entry.FirstAbsent, input.EvaluationTime, input.TrackingHorizonSeconds) {
+				result.Facts.Expired++
+				delete(result.Memory, key)
+				continue
+			}
 			result.Facts.Suppressed++
 			continue
 		}
@@ -502,7 +550,7 @@ func closeDroppedAbsences(result *AbsenceResult, input AbsenceInput, wholeItemDe
 		if _, expected := input.Roster.Groups[key]; expected {
 			continue
 		}
-		if _, judged := result.Verdicts[key]; judged {
+		if _, judged := result.Verdicts[key]; judged || heldPresent(input, key) {
 			continue
 		}
 		if entry.SuppressedAt != 0 {
@@ -564,13 +612,33 @@ func judgePresent(result *AbsenceResult, input AbsenceInput) {
 		if key == whole {
 			continue
 		}
-		result.Verdicts[key] = VerdictNormal
+		if !input.RecoveryDisabled {
+			result.Verdicts[key] = VerdictNormal
+		}
 		result.Memory[key] = GroupMemory{LastSeen: input.EvaluationTime}
 	}
 	if len(input.Present) > 0 {
-		result.Verdicts[whole] = VerdictNormal
+		if !input.RecoveryDisabled {
+			result.Verdicts[whole] = VerdictNormal
+		}
 		delete(result.Memory, whole)
 	}
+}
+
+// heldPresent is a group judgePresent found present and left without its
+// verdict because recovery is disabled: present all the same, so neither
+// absent nor dropped. With recovery enabled every such group carries its
+// NORMAL, and this is false.
+func heldPresent(input AbsenceInput, key string) bool {
+	if !input.RecoveryDisabled {
+		return false
+	}
+	if key == WholeItemGroup().Key() {
+		return len(input.Present) > 0
+	}
+	_, present := input.Present[key]
+	_, foreign := input.OutOfBusiness[key]
+	return present && !foreign
 }
 
 func copyGroupMemory(memory map[string]GroupMemory) map[string]GroupMemory {

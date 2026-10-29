@@ -108,6 +108,12 @@ func TestProductionPollingSources(t *testing.T) {
 					value := 200
 					if clock.Load() > base+1 {
 						value = 0
+						// An event count of zero is no event, which does not end
+						// an alert (the recovery spec, section 3.1); a count above
+						// zero under the threshold does.
+						if source.kind == "event" {
+							value = 1
+						}
 					}
 					series := []any{}
 					// Two dynamic series expose loss of PromQL identity even when

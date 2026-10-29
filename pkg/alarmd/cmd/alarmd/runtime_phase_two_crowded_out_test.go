@@ -43,7 +43,7 @@ func TestDispatchCrowdedOutIsCountedAndIsNotASkip(t *testing.T) {
 			len(free.normal)+len(free.delayed), len(owned))
 	}
 	for _, holder := range []string{"active", "queued"} {
-		if got := counterValue(t, control, "bkmonitor_alarmd_dispatch_crowded_out_total",
+		if got := counterValue(t, control, "alarmd_dispatch_crowded_out_total",
 			map[string]string{"by": holder}); got != 0 {
 			t.Fatalf("control dispatch_crowded_out_total{by=%s} = %v, want 0 when nothing is held", holder, got)
 		}
@@ -66,7 +66,7 @@ func TestDispatchCrowdedOutIsCountedAndIsNotASkip(t *testing.T) {
 	}
 
 	for _, holder := range []string{"active", "queued"} {
-		if got := counterValue(t, recorder, "bkmonitor_alarmd_dispatch_crowded_out_total",
+		if got := counterValue(t, recorder, "alarmd_dispatch_crowded_out_total",
 			map[string]string{"by": holder}); got != 1 {
 			t.Fatalf("dispatch_crowded_out_total{by=%s} = %v, want 1", holder, got)
 		}
@@ -76,9 +76,9 @@ func TestDispatchCrowdedOutIsCountedAndIsNotASkip(t *testing.T) {
 	// existing counters. Whatever the three skip reasons read before, they read
 	// after.
 	for _, reason := range []string{"not_due", "backoff", "query_cooldown"} {
-		before := counterValue(t, control, "bkmonitor_alarmd_dispatch_skipped_total",
+		before := counterValue(t, control, "alarmd_dispatch_skipped_total",
 			map[string]string{"reason": reason})
-		after := counterValue(t, recorder, "bkmonitor_alarmd_dispatch_skipped_total",
+		after := counterValue(t, recorder, "alarmd_dispatch_skipped_total",
 			map[string]string{"reason": reason})
 		if before != after {
 			t.Fatalf("dispatch_skipped_total{%s} moved from %v to %v; a crowded-out turn is not a skip "+
@@ -114,7 +114,7 @@ func TestDispatchCrowdedOutNamesWhichHolderTookTheTurn(t *testing.T) {
 			runners, revision := dispatcher.bundle.snapshotScheduledRunners()
 			dispatcher.fillQueues(runners, revision)
 
-			if got := counterValue(t, recorder, "bkmonitor_alarmd_dispatch_crowded_out_total",
+			if got := counterValue(t, recorder, "alarmd_dispatch_crowded_out_total",
 				map[string]string{"by": testCase.holder}); got != 1 {
 				t.Fatalf("dispatch_crowded_out_total{by=%s} = %v, want 1", testCase.holder, got)
 			}
@@ -122,7 +122,7 @@ func TestDispatchCrowdedOutNamesWhichHolderTookTheTurn(t *testing.T) {
 			if testCase.holder == "queued" {
 				other = "active"
 			}
-			if got := counterValue(t, recorder, "bkmonitor_alarmd_dispatch_crowded_out_total",
+			if got := counterValue(t, recorder, "alarmd_dispatch_crowded_out_total",
 				map[string]string{"by": other}); got != 0 {
 				t.Fatalf("dispatch_crowded_out_total{by=%s} = %v, want 0; the holder that did not take "+
 					"the turn must not be credited with it", other, got)

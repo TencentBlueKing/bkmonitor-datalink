@@ -35,6 +35,12 @@ type stubDirectory struct {
 	entered         chan struct{}
 	release         chan struct{}
 	pages           atomic.Int32
+	// resolvable makes ResolveCurrent find the strategy; the first
+	// EffectivePlan then waits on planRelease after saying planEntered.
+	resolvable  bool
+	planEntered chan struct{}
+	planRelease chan struct{}
+	plans       atomic.Int32
 }
 
 func (d *stubDirectory) Available() bool { return d.available }
@@ -48,10 +54,17 @@ func (d *stubDirectory) Page(context.Context, time.Time, string, string, string,
 }
 
 func (d *stubDirectory) ResolveCurrent(context.Context, time.Time, string, string, string, string, ...string) (controlplane.StrategyDirectoryRow, error) {
+	if d.resolvable {
+		return controlplane.StrategyDirectoryRow{}, nil
+	}
 	return controlplane.StrategyDirectoryRow{}, controlplane.ErrSnapshotUnavailable
 }
 
 func (d *stubDirectory) EffectivePlan(context.Context, controlplane.StrategyDirectoryRow) (controlplane.QueryGroupPlanObject, error) {
+	if d.plans.Add(1) == 1 && d.planEntered != nil {
+		d.planEntered <- struct{}{}
+		<-d.planRelease
+	}
 	return controlplane.QueryGroupPlanObject{}, controlplane.ErrCatalogObjectUnavailable
 }
 
@@ -130,9 +143,10 @@ func TestTheStrategyCatalogPagesByCursor(t *testing.T) {
 	}
 }
 
-// One page is built at a time: a second request while one is being built
-// is refused as busy, not queued behind it, and the first is answered.
-func TestOneDirectoryPageIsBuiltAtATime(t *testing.T) {
+// Directory reads are an operator's, a handful next to the business work:
+// a second request while a page is being built is answered too, not refused
+// as busy.
+func TestDirectoryPagesAreBuiltSideBySide(t *testing.T) {
 	directory := &stubDirectory{available: true, snapshot: controlplane.StrategyDirectorySnapshot{Complete: true, Revision: "r"},
 		entered: make(chan struct{}), release: make(chan struct{})}
 	handler := WithStrategyDirectory(http.NotFoundHandler(), directory, nil, nil, "pod-a", time.Now)
@@ -147,17 +161,34 @@ func TestOneDirectoryPageIsBuiltAtATime(t *testing.T) {
 	handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/api/objects?scope=strategies", nil))
 	close(directory.release)
 	<-done
-	if second.Code != http.StatusTooManyRequests || !json.Valid(second.Body.Bytes()) {
-		t.Fatalf("second request = %d %s, want 429 while the first is built", second.Code, second.Body.String())
+	if second.Code != http.StatusOK || first.Code != http.StatusOK {
+		t.Fatalf("first %d, second %d %s; want both answered while the first is built", first.Code, second.Code, second.Body.String())
 	}
-	if first.Code != http.StatusOK {
-		t.Fatalf("first request = %d %s, want its page", first.Code, first.Body.String())
+}
+
+// Configuration reads run side by side too: one decoding a large group
+// does not refuse the next.
+func TestEffectiveConfigReadsRunSideBySide(t *testing.T) {
+	directory := &stubDirectory{available: true, snapshot: controlplane.StrategyDirectorySnapshot{Complete: true, Revision: "r"},
+		resolvable: true, planEntered: make(chan struct{}), planRelease: make(chan struct{})}
+	handler := WithStrategyDirectory(http.NotFoundHandler(), directory, nil, nil, "pod-a", time.Now)
+	path := "/api/objects?scope=strategies&strategy=7&include=effective_config"
+	first := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, path, nil))
+	}()
+	<-directory.planEntered
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, path, nil))
+	close(directory.planRelease)
+	<-done
+	if second.Code == http.StatusTooManyRequests || first.Code == http.StatusTooManyRequests {
+		t.Fatalf("first %d, second %d %s; want neither refused as busy", first.Code, second.Code, second.Body.String())
 	}
-	// The flight is released with the answer.
-	third := httptest.NewRecorder()
-	handler.ServeHTTP(third, httptest.NewRequest(http.MethodGet, "/api/objects?scope=strategies", nil))
-	if third.Code != http.StatusOK {
-		t.Fatalf("a request after the first = %d, want answered", third.Code)
+	if directory.plans.Load() != 2 {
+		t.Fatalf("%d configuration reads ran, want both", directory.plans.Load())
 	}
 }
 

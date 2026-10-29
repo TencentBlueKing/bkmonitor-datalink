@@ -88,10 +88,30 @@ func observationAdmit(line *memoryline.Line, consumer memoryline.Consumer) func(
 	return func(bytes uint64) bool { return line.Admit(consumer, bytes) }
 }
 
-// observationHold is the line's Hold for one consumer: memory one piece of
-// work takes and releases when it is done.
-func observationHold(line *memoryline.Line, consumer memoryline.Consumer) func(bytes uint64) (func(), bool) {
-	return func(bytes uint64) (func(), bool) { return line.Hold(consumer, bytes) }
+// observationObserve is the line's report-only admission for an operator's
+// read: it always goes ahead, and past the line it is counted as over.
+func observationObserve(line *memoryline.Line, consumer memoryline.Consumer) func(bytes uint64) bool {
+	return func(bytes uint64) bool { return line.Observe(consumer, bytes) }
+}
+
+// observationHoldObserved is the line's report-only hold for an operator's
+// page: always held, released when the page is written.
+func observationHoldObserved(line *memoryline.Line, consumer memoryline.Consumer) func(bytes uint64) (func(), bool) {
+	return func(bytes uint64) (func(), bool) { return line.HoldObserved(consumer, bytes), true }
+}
+
+// operatorFleetLoads has a fleet store's reader-asked loads (the objects
+// route, the diagnosis, the strategy standing) counted on the line and never
+// refused.
+func operatorFleetLoads(store *fleet.RedisStore, line *memoryline.Line) {
+	store.AdmitLoads(observationObserve(line, memoryline.ConsumerFleetView))
+	store.HoldLoads(observationHoldObserved(line, memoryline.ConsumerFleetView))
+}
+
+// operatorProgressReads is a diagnosis page's Progress reads on the line:
+// counted, never refused.
+func operatorProgressReads(line *memoryline.Line) func(bytes uint64) bool {
+	return observationObserve(line, memoryline.ConsumerDiagnosisProgress)
 }
 
 // observationCostTopN is how many rows each cost ranking keeps: what the

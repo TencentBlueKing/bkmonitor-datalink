@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
@@ -52,7 +53,7 @@ func TestSourceRecoveryReusesOneRealChannelForNonemptyQueries(t *testing.T) {
 	}
 	source.now = func() time.Time { return now }
 	consumer := &recordingConsumer{}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithCancel(testwait.Context(t))
 	defer cancel()
 	completion, err := source.Execute(ctx, execution.QueryExecutionRequest{Contract: ref, Operation: execution.OperationReplay, AttemptNo: 1}, consumer)
 	if err != nil {

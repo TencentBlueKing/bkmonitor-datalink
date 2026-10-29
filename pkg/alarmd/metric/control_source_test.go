@@ -22,7 +22,7 @@ import (
 func controlSourceRounds(t *testing.T, r *Recorder) map[[2]string]float64 {
 	t.Helper()
 	got := map[[2]string]float64{}
-	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_control_source_refresh_total") {
+	for _, m := range gatherFamily(t, r, "alarmd_control_source_refresh_total") {
 		labels := map[string]string{}
 		for _, label := range m.Label {
 			labels[label.GetName()] = label.GetValue()
@@ -88,41 +88,43 @@ func TestControlSourceCollectorReportsStateAtScrapeTime(t *testing.T) {
 	now := time.Unix(1_700_000_600, 0)
 	r.phaseTwo.controlSource.now = func() time.Time { return now }
 
-	if modes := gatherFamily(t, r, "bkmonitor_alarmd_control_source_mode"); len(modes) != 0 {
+	if modes := gatherFamily(t, r, "alarmd_control_source_mode"); len(modes) != 0 {
 		t.Fatalf("mode series before the first control round = %v, want none", modes)
 	}
 	stats = ControlSourceStats{Known: true, Role: observability.ControlSourceRoleLeader, Mode: observability.ControlSourceModeNeverSucceeded}
 	modes := map[[2]string]float64{}
-	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_control_source_mode") {
+	for _, m := range gatherFamily(t, r, "alarmd_control_source_mode") {
 		labels := map[string]string{}
 		for _, label := range m.Label {
 			labels[label.GetName()] = label.GetValue()
 		}
 		modes[[2]string{labels["role"], labels["mode"]}] = m.GetGauge().GetValue()
 	}
-	want := len(observability.ControlSourceRoles) * len(observability.ControlSourceModes)
+	// The grid and the off_role pair, which is 0 on a process that refreshes.
+	want := len(observability.ControlSourceRoles)*len(observability.ControlSourceModes) + 1
 	ones := 0
 	for _, value := range modes {
 		if value == 1 {
 			ones++
 		}
 	}
-	if len(modes) != want || ones != 1 || modes[[2]string{"leader", "never_succeeded"}] != 1 {
+	offRole, present := modes[[2]string{RoleNotApplicable, RoleNotApplicable}]
+	if len(modes) != want || ones != 1 || modes[[2]string{"leader", "never_succeeded"}] != 1 || !present || offRole != 0 {
 		t.Fatalf("modes = %v, want %d series with 1 on leader/never_succeeded only", modes, want)
 	}
-	if age := gatherFamily(t, r, "bkmonitor_alarmd_control_source_last_success_age_seconds"); len(age) != 0 {
+	if age := gatherFamily(t, r, "alarmd_control_source_last_success_age_seconds"); len(age) != 0 {
 		t.Fatalf("age series with no known success = %v, want none", age)
 	}
 	stats = ControlSourceStats{Known: true, Role: observability.ControlSourceRoleFollower,
 		Mode: observability.ControlSourceModeDegradedLastGood, LastSuccessAt: now.Add(-7 * time.Minute)}
-	age := gatherFamily(t, r, "bkmonitor_alarmd_control_source_last_success_age_seconds")
+	age := gatherFamily(t, r, "alarmd_control_source_last_success_age_seconds")
 	if len(age) != 1 || age[0].GetGauge().GetValue() != 420 {
 		t.Fatalf("age = %v, want one series at 420", age)
 	}
 	// The same scrape a minute later reads a minute more without anything
 	// having happened: the age is a difference at read time.
 	now = now.Add(time.Minute)
-	if age := gatherFamily(t, r, "bkmonitor_alarmd_control_source_last_success_age_seconds"); age[0].GetGauge().GetValue() != 480 {
+	if age := gatherFamily(t, r, "alarmd_control_source_last_success_age_seconds"); age[0].GetGauge().GetValue() != 480 {
 		t.Fatalf("age a minute later = %v, want 480", age[0].GetGauge().GetValue())
 	}
 }

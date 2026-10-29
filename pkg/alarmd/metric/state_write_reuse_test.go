@@ -12,7 +12,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-const stateWriteReuseMetric = "bkmonitor_alarmd_state_write_reuse_total"
+const stateWriteReuseMetric = "alarmd_state_write_reuse_total"
 
 func gatherStateWriteReuse(t *testing.T, observations ...observability.Observation) map[string]float64 {
 	t.Helper()

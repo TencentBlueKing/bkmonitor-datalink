@@ -251,7 +251,7 @@ func (repository *RedisCatalogRepository) ensureObjectCatalog(ctx context.Contex
 	defer func() {
 		facts.Duration = time.Since(started)
 		repository.observe(ctx, observability.Observation{Component: observability.ComponentControlPlane, Stage: observability.StageObjectCatalog,
-			Result: observability.Result(facts.Result), ObjectCatalog: facts})
+			Result: factsTextResult(facts.Result), ObjectCatalog: facts})
 	}()
 	if err := repository.writeObjectCatalog(ctx, catalog, facts); err != nil {
 		return fmt.Errorf("alarmd controlplane: write object catalog: %w", err)
@@ -428,7 +428,7 @@ func (repository *RedisCatalogRepository) renewObjectCatalog(ctx context.Context
 	defer func() {
 		facts.Duration = time.Since(started)
 		repository.observe(ctx, observability.Observation{Component: observability.ComponentControlPlane, Stage: observability.StageObjectCatalog,
-			Result: observability.Result(facts.Result), ObjectCatalog: facts})
+			Result: factsTextResult(facts.Result), ObjectCatalog: facts})
 	}()
 	keys, err := repository.objectCatalogKeys(ctx, revision, facts)
 	if err != nil {

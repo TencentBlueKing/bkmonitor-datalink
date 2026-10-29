@@ -144,12 +144,49 @@ func handleESError(ctx context.Context, url string, err error, res *elastic.Sear
 
 // withBackendStatus 在 err 带有 ES 自己的错误（*elastic.Error）时，把它的状态码作为类型化原因附上，
 // 文本不变；没有时原样返回。凡是把 ES 客户端错误交给上层的地方都经过它。
+//
+// 聚合桶数超限（too_many_buckets_exception）例外：ES 把它报成 503，但它说的是这次查询要的桶太多，
+// 换一个时间范围或聚合粒度才能成功，原样重试只会再超一次。所以不附 ES 的状态码，失败按查询本身的问题（400）
+// 归类，调用方不把它当后端故障去重试。
 func withBackendStatus(err error) error {
 	var esErr *elastic.Error
 	if err == nil || !errors.As(err, &esErr) || esErr == nil {
 		return err
 	}
+	if exceedsBucketLimit(esErr.Details) {
+		return err
+	}
 	return metadata.ErrorWithCauses(err.Error(), err, &metadata.BackendStatusError{Status: esErr.Status})
+}
+
+// bucketLimitErrType 是 ES 在一次聚合要的桶超过 search.max_buckets 时报的错误类型。
+const bucketLimitErrType = "too_many_buckets_exception"
+
+// exceedsBucketLimit 判断 ES 的错误是不是桶数超限：错误本身、caused_by 链上或 root_cause 里任一处是这个类型。
+func exceedsBucketLimit(details *elastic.ErrorDetails) bool {
+	if details == nil {
+		return false
+	}
+	if details.Type == bucketLimitErrType || causedByBucketLimit(details.CausedBy) {
+		return true
+	}
+	for _, cause := range details.RootCause {
+		if exceedsBucketLimit(cause) {
+			return true
+		}
+	}
+	return false
+}
+
+func causedByBucketLimit(cause map[string]interface{}) bool {
+	for depth := 0; cause != nil && depth < 16; depth++ {
+		if kind, _ := cause[TypeField].(string); kind == bucketLimitErrType {
+			return true
+		}
+		next, _ := cause["caused_by"].(map[string]interface{})
+		cause = next
+	}
+	return false
 }
 
 func isTypedNilError(err error) bool {

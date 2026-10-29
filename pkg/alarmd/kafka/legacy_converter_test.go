@@ -44,7 +44,9 @@ func TestLegacyConversionFailureNeverPublishesOrFallsBack(t *testing.T) {
 			producer := &batchAwareSyncProducer{}
 			sink, _ := newTriggerEventSink("native", producer, &fakeCloser{})
 			defer sink.Close()
+			converted := 0
 			converter := legacyConverterFunc(func(context.Context, []contract.TriggerEventV1) ([]LegacyConvertedEvent, error) {
+				converted++
 				item := LegacyConvertedEvent{EventID: event.EventID, Payload: json.RawMessage(`{}`), DedupeMD5: "0260bae09d2ae3f75683bd06a76e9479"}
 				switch failure {
 				case "error":
@@ -60,9 +62,17 @@ func TestLegacyConversionFailureNeverPublishesOrFallsBack(t *testing.T) {
 				}
 				return []LegacyConvertedEvent{item}, nil
 			})
-			sink.ConfigureLegacyOutput(converter, "alarmd_python-events-1", 1024)
+			if err := sink.ConfigureLegacyOutput(converter, "alarmd_python-events-1", 1024); err != nil {
+				t.Fatal(err)
+			}
 			if err := sink.WriteBatch(context.Background(), []contract.TriggerEventV1{triggerEventGolden(t), event}); err == nil {
 				t.Fatal("conversion failure accepted")
+			}
+			// The sink refuses an event before conversion too, one that fails
+			// validation or lacks its legacy context: the refusal above has to
+			// be the converter's for the case to be about a conversion failure.
+			if converted == 0 {
+				t.Fatal("the batch was refused before it reached the converter")
 			}
 			if producer.batchCalls != 0 || producer.singleCalls != 0 {
 				t.Fatal("published before successful conversion")

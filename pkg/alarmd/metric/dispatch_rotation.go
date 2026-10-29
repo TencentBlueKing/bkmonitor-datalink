@@ -53,7 +53,7 @@ type dispatchRotationCollector struct {
 func newDispatchRotationCollector() *dispatchRotationCollector {
 	return &dispatchRotationCollector{
 		rotations: prometheus.NewDesc(
-			prometheus.BuildFQName(metricNamespace, metricSubsystem, "dispatch_rotation_total"),
+			prometheus.BuildFQName("", metricSubsystem, "dispatch_rotation_total"),
 			"Walks over the objects this replica owns, by whether the walk reached all of them. "+
 				"One rotation is one full pass. truncated rising while completed stays flat is a "+
 				"deployment that has stopped covering its objects, which no per-object signal reports: "+
@@ -62,7 +62,7 @@ func newDispatchRotationCollector() *dispatchRotationCollector {
 			[]string{"result"}, nil,
 		),
 		turns: prometheus.NewDesc(
-			prometheus.BuildFQName(metricNamespace, metricSubsystem, "dispatch_walk_total"),
+			prometheus.BuildFQName("", metricSubsystem, "dispatch_walk_total"),
 			"Turns the walk gave to an object, by what came of the turn. offered counts every object "+
 				"the walk reached and is the denominator for the others, which do not sum to it because "+
 				"an object can also be passed over as not due. deferred_queue_full is the ready queue "+

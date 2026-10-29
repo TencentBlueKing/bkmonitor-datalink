@@ -30,6 +30,14 @@ import (
 
 func (m *Manager) epochKey() string    { return m.prefix + "epoch" }
 func (m *Manager) pairingsKey() string { return m.prefix + "pairings" }
+
+// The roster the admin last synced, its members, the pairings issued to an
+// operator (pairing id to operator) and the operators revoked (operator to
+// when): see rosterScript.
+func (m *Manager) rosterKey() string  { return m.prefix + "roster" }
+func (m *Manager) membersKey() string { return m.prefix + "roster:members" }
+func (m *Manager) namedKey() string   { return m.prefix + "named" }
+func (m *Manager) revokedKey() string { return m.prefix + "revoked" }
 func pairingKey(prefix, secret string) string {
 	return prefix + "pairing:" + digest(secret)
 }
@@ -55,11 +63,22 @@ const (
 	CountRevokedAll        = "revoked_all"
 	CountRenewalReplayed   = "renewal_replayed"
 	CountStoreUnavailable  = "store_unavailable"
+
+	CountFrontGrantsIssued       = "front_grants_issued"
+	CountFrontRefusedNotSynced   = "front_grants_refused_roster_not_synced"
+	CountFrontRefusedNotOnRoster = "front_grants_refused_not_on_roster"
+	CountRosterApplied           = "roster_applied"
+	CountRosterUnchanged         = "roster_unchanged"
+	CountRosterRejected          = "roster_rejected"
+	// CountRosterPairingsRevoked counts pairings, not syncs.
+	CountRosterPairingsRevoked = "roster_pairings_revoked"
 )
 
 // Counts is every counter name, in the order a reader lists them.
 var Counts = []string{CountGrantsIssued, CountExchanged, CountExchangeRejected, CountPairingsIssued, CountPairingsRefused,
-	CountRenewed, CountRenewalReplayed, CountRenewalExpired, CountRenewalKeyRotated, CountPairingsForgotten, CountRevokedAll, CountStoreUnavailable}
+	CountRenewed, CountRenewalReplayed, CountRenewalExpired, CountRenewalKeyRotated, CountPairingsForgotten, CountRevokedAll, CountStoreUnavailable,
+	CountFrontGrantsIssued, CountFrontRefusedNotSynced, CountFrontRefusedNotOnRoster, CountRosterApplied, CountRosterUnchanged, CountRosterRejected,
+	CountRosterPairingsRevoked}
 
 type counters struct {
 	mu     sync.Mutex
@@ -67,13 +86,16 @@ type counters struct {
 	last   map[string]time.Time
 }
 
-func (c *counters) add(name string, at time.Time) {
+func (c *counters) addN(name string, n uint64, at time.Time) {
+	if n == 0 {
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.values == nil {
 		c.values, c.last = map[string]uint64{}, map[string]time.Time{}
 	}
-	c.values[name]++
+	c.values[name] += n
 	c.last[name] = at
 }
 
@@ -98,12 +120,19 @@ func (m *Manager) Stats() Stats {
 	return stats
 }
 
-func (m *Manager) count(name string) { m.counts.add(name, m.now()) }
+func (m *Manager) count(name string) { m.countN(name, 1) }
+
+func (m *Manager) countN(name string, n uint64) {
+	m.counts.addN(name, n, m.now())
+	if m.onEvent != nil && n > 0 {
+		m.onEvent(name, n)
+	}
+}
 
 // ActivePairings is how many renewal credentials were used within the idle
 // lifetime, as the store holds them now.
 func (m *Manager) ActivePairings(ctx context.Context) (int64, error) {
-	result, err := m.run(ctx, activeScript, []string{m.pairingsKey()}, PairingIdleLifetime.Milliseconds())
+	result, err := m.run(ctx, activeScript, []string{m.pairingsKey(), m.namedKey()}, PairingIdleLifetime.Milliseconds())
 	if err != nil {
 		return 0, err
 	}
@@ -154,7 +183,7 @@ func (m *Manager) Refresh(ctx context.Context, refreshToken string) (Renewal, er
 	}
 	result, err := m.run(ctx, refreshScript,
 		[]string{pairingKey(m.prefix, refreshToken), pairingKey(m.prefix, next), m.prefix + "session:" + digest(token), m.pairingsKey(), m.epochKey(),
-			m.prefix + "spent:" + digest(refreshToken)},
+			m.prefix + "spent:" + digest(refreshToken), m.revokedKey(), m.namedKey()},
 		m.environmentID, ScopeReadonly, m.adminBinding(), id, SessionLifetime.Milliseconds(), PairingIdleLifetime.Milliseconds(),
 		sealed, RenewalReplayGrace.Milliseconds())
 	if err != nil {
@@ -177,7 +206,9 @@ func (m *Manager) Refresh(ctx context.Context, refreshToken string) (Renewal, er
 		return Renewal{}, err
 	}
 	m.count(CountRenewed)
-	return Renewal{Session: record.session(digest(token), false), AccessToken: token, RefreshToken: next, PairingID: record.PairingID}, nil
+	session := record.session(digest(token), false)
+	session.FallbackBaseURLs = m.fallbackFor(record.PublicBaseURL)
+	return Renewal{Session: session, AccessToken: token, RefreshToken: next, PairingID: record.PairingID}, nil
 }
 
 // Upgrade pairs a live session that has none: one exchanged before this
@@ -195,7 +226,7 @@ func (m *Manager) Upgrade(ctx context.Context, bearer string) (string, string, e
 		return "", "", err
 	}
 	result, err := m.run(ctx, upgradeScript,
-		[]string{m.prefix + "session:" + digest(bearer), pairingKey(m.prefix, refresh), m.pairingsKey(), m.epochKey()},
+		[]string{m.prefix + "session:" + digest(bearer), pairingKey(m.prefix, refresh), m.pairingsKey(), m.epochKey(), m.namedKey(), m.revokedKey()},
 		m.environmentID, ScopeReadonly, id, m.adminBinding(), PairingIdleLifetime.Milliseconds(), MaxPairings)
 	if err != nil {
 		m.count(CountStoreUnavailable)
@@ -224,7 +255,7 @@ func (m *Manager) Forget(ctx context.Context, refreshToken string) error {
 	if !validSecret(refreshToken) {
 		return nil
 	}
-	result, err := m.run(ctx, forgetScript, []string{pairingKey(m.prefix, refreshToken), m.pairingsKey()}, m.environmentID)
+	result, err := m.run(ctx, forgetScript, []string{pairingKey(m.prefix, refreshToken), m.pairingsKey(), m.namedKey()}, m.environmentID)
 	if err != nil {
 		m.count(CountStoreUnavailable)
 		return err
@@ -238,7 +269,7 @@ func (m *Manager) Forget(ctx context.Context, refreshToken string) error {
 // RevokeAll revokes every session and renewal credential of the
 // environment, returning how many pairings were held.
 func (m *Manager) RevokeAll(ctx context.Context) (int64, error) {
-	result, err := m.run(ctx, revokeAllScript, []string{m.epochKey(), m.pairingsKey()})
+	result, err := m.run(ctx, revokeAllScript, []string{m.epochKey(), m.pairingsKey(), m.namedKey()})
 	if err != nil {
 		m.count(CountStoreUnavailable)
 		return 0, err

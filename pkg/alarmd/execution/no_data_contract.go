@@ -105,6 +105,8 @@ func NoDataMemoryReadable(schema NoDataMemorySchema) bool {
 // that reads as already applied while holding something else.
 type PlanNoDataMemoryUpdate struct {
 	Identity PlanNoDataIdentity
+	// GroupLimit is PlanNoDataMutation.GroupLimit, forwarded.
+	GroupLimit uint32
 	// DerivedFrom is which record Loaded and ExpectedMarkerRevision came out
 	// of. See PlanNoDataMutation.DerivedFrom: it decides both whether the
 	// expected revision means anything to the record being written and whether
@@ -239,6 +241,7 @@ func BuildPlanNoDataMutation(update PlanNoDataMemoryUpdate) (PlanNoDataMutation,
 		PresentAsOf:            update.PresentAsOf,
 		TrackingExhaustedAt:    update.TrackingExhaustedAt,
 		GroupCount:             uint32(len(memory)),
+		GroupLimit:             update.GroupLimit,
 	}
 	if mutation.ReplacesWholeRecord() {
 		// Nothing to take a difference against: no record was loaded, so the

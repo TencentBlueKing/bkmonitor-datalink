@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -226,15 +227,15 @@ func TestBoundedRunnerRecoveryWaitDoesNotBlockNormal(t *testing.T) {
 	case <-firstEntered:
 	case err := <-tickDone:
 		t.Fatalf("production tick returned before first UQ: %v", err)
-	case <-time.After(3 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("first owned Query Group did not enter UQ")
 	}
 	select {
 	case <-secondEntered:
-	case <-time.After(3 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("healthy Normal blocked behind recovery while P is available")
 	}
-	limit := time.Now().Add(3 * time.Second)
+	limit := testwait.Deadline(t)
 	for {
 		current := loadPhaseTwoProgress(t, ctx, productionOwnership, normalGroup)
 		if current.NextSlot == execution.EvaluationTime(base+2) {
@@ -243,7 +244,7 @@ func TestBoundedRunnerRecoveryWaitDoesNotBlockNormal(t *testing.T) {
 		if time.Now().After(limit) {
 			t.Fatalf("healthy Normal did not commit before recovery release: %+v", current)
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	t.Logf("normal committed while recovery HTTP remains blocked; active=%d Rwait=%d", active.Load(), lastWaiting.Load())
 	release()

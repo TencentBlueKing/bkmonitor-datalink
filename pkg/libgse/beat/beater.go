@@ -35,6 +35,10 @@ type BKBeat struct {
 	BeaterState BeaterState
 	Finished    bool
 	Done        chan struct{}
+
+	// finishOnce makes the teardown idempotent: the framework shutdown path
+	// and Stop may both try to finish the same beater.
+	finishOnce sync.Once
 }
 
 var commonBKBeat = BKBeat{
@@ -92,13 +96,16 @@ func (bkb *BKBeat) Stop() {
 	if BeaterRunning != commonBKBeat.BeaterState {
 		return
 	}
-	if nil == bkb.Client {
-		return
-	}
-	(*bkb.Client).Close()
-	bkb.Client = nil
-	close(bkb.Done)
-	freeResource()
+	bkb.finishOnce.Do(func() {
+		if bkb.Client != nil {
+			(*bkb.Client).Close()
+			bkb.Client = nil
+		}
+		if bkb.Done != nil {
+			close(bkb.Done)
+		}
+		freeResource()
+	})
 }
 
 // Reload

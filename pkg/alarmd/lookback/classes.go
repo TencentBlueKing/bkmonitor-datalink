@@ -156,6 +156,9 @@ type seriesLateState struct {
 	since time.Time
 	seen  uint64
 	clean int
+	// seeded says a plan started it (plan.go): it ends with the plan unless
+	// a sample here has seen late series since.
+	seeded bool
 }
 
 // classOf is a completed sample's class, and for an unclassified one why.
@@ -197,6 +200,7 @@ func classOf(candidate *sample) (string, string) {
 // noteClassLocked records a completed sample's class on its Query Group.
 func (engine *Engine) noteClassLocked(state *group, candidate *sample, now time.Time) {
 	class, reason := classOf(candidate)
+	state.sampled = true
 	engine.counts.classes[key2(candidate.source, class)]++
 	state.reading.classes[wordIndex(SampleClasses, class)]++
 	engine.recordReadHoldLocked(candidate)
@@ -206,6 +210,9 @@ func (engine *Engine) noteClassLocked(state *group, candidate *sample, now time.
 	} else if class == ClassWindowReadEarly && !wholeWindowArrival(candidate) {
 		engine.recordIgnoredLocked(candidate, IgnoredNoWholeWindowArrival)
 		state.reading.ignored[wordIndex(ReadHoldIgnoredReasons, IgnoredNoWholeWindowArrival)]++
+	}
+	if class == ClassWindowReadEarly {
+		engine.noteReadEarlyLineLocked(state, candidate, ReadEarlyPathSample)
 	}
 	if class == ClassUnclassified {
 		// Not known either way: it is not one of the window's samples.

@@ -19,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
@@ -36,14 +37,14 @@ func waitForHealth(
 	predicate func(observability.HealthSnapshot) bool,
 ) observability.HealthSnapshot {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := testwait.Deadline(t)
 	var last observability.HealthSnapshot
 	for time.Now().Before(deadline) {
 		last = health.HealthSnapshot()
 		if predicate(last) {
 			return last
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	t.Fatalf("timed out waiting for health %s; last=%+v", want, last)
 	return last
@@ -178,7 +179,7 @@ func TestPhaseTwoWorkerBundleRunSurvivesControlDependencyFailuresAndRecovers(t *
 				if err != nil {
 					t.Fatalf("Run(cancel) error = %v", err)
 				}
-			case <-time.After(signalWaitBound):
+			case <-testwait.Expired(t):
 				t.Fatal("Run did not stop after cancellation")
 			}
 
@@ -229,7 +230,7 @@ func TestPhaseTwoWorkerBundleRunStopsOnControlInvariantError(t *testing.T) {
 		if !isPhaseTwoInvariantError(err) || !errors.Is(err, invariant) {
 			t.Fatalf("Run(invariant) error = %v, want the invariant violation", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("Run kept running after a control invariant violation")
 	}
 }
@@ -463,7 +464,7 @@ func newScopeTestBackoffArm(
 				// wake, so this counts generations rather than attempts.
 				arm.generations.Add(1)
 			}
-			time.Sleep(scopeTestWakeCadence)
+			time.Sleep(scopeTestWakeCadence) // fixed-wait: the simulated wake cadence the comparison runs at
 		}
 	}()
 	t.Cleanup(arm.stop)
@@ -492,14 +493,14 @@ func (arm *scopeTestBackoffArm) awaitRounds(
 	want int64,
 ) bool {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := testwait.Deadline(t)
 	for time.Now().Before(deadline) {
 		if executor.calls.Load() >= want {
 			return true
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
-	t.Errorf("%s arm: %s Query Group reached %d executions in 30s, want %d",
+	t.Errorf("%s arm: %s Query Group reached %d executions before the test's deadline, want %d",
 		arm.name, which, executor.calls.Load(), want)
 	return false
 }
@@ -570,7 +571,7 @@ func TestPhaseTwoWorkerBundleExecutionErrorBacksOffForAsLongAsItsDelayHolds(t *t
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("runScheduler(cancel) error = %v, want context canceled", err)
 		}
-	case <-time.After(30 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("dispatcher did not stop after cancellation")
 	}
 }
@@ -633,7 +634,7 @@ func TestPhaseTwoWorkerBundleBackoffSiblingDoesNotCostHealthyQueryGroupItsRounds
 	// throughput number.
 	aloneBefore, besideBefore := alone.healthy.calls.Load(), beside.healthy.calls.Load()
 	aloneGenerationsBefore, besideGenerationsBefore := alone.generations.Load(), beside.generations.Load()
-	time.Sleep(scopeTestComparisonWindow)
+	time.Sleep(scopeTestComparisonWindow) // fixed-wait: the measurement window of the throughput comparison
 	aloneRounds := alone.healthy.calls.Load() - aloneBefore
 	besideRounds := beside.healthy.calls.Load() - besideBefore
 	aloneGenerations := alone.generations.Load() - aloneGenerationsBefore

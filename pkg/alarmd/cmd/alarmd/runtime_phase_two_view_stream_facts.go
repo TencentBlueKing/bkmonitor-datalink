@@ -55,6 +55,11 @@ func viewStreamFacts(stats viewstream.Stats, at time.Time) *fleet.ViewStreamFact
 		facts.Lagging = append(facts.Lagging, fleet.ViewStreamLagging{WorkerID: lagging.WorkerID, Incarnation: lagging.Incarnation,
 			Failure: lagging.Failure, Connected: lagging.Connected})
 	}
+	facts.Departed = make([]fleet.ViewStreamLagging, 0, len(stats.Departed))
+	for _, departed := range stats.Departed {
+		facts.Departed = append(facts.Departed, fleet.ViewStreamLagging{WorkerID: departed.WorkerID, Incarnation: departed.Incarnation,
+			Failure: departed.Failure})
+	}
 	facts.NotSwitched = make([]fleet.ViewStreamLagging, 0, len(stats.NotSwitched))
 	for _, receiver := range stats.NotSwitched {
 		facts.NotSwitched = append(facts.NotSwitched, fleet.ViewStreamLagging{WorkerID: receiver.WorkerID, Incarnation: receiver.Incarnation,

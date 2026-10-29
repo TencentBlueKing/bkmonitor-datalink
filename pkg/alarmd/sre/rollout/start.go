@@ -40,6 +40,7 @@ const MaxImageBytes = 512
 type Request struct {
 	Namespace, Name, UID, Container, Image string
 	SessionID, RequestID                   string
+	Operator, IssuedVia                    string
 }
 
 // Receipt is what an image change answers at once: its receipt id, the
@@ -91,7 +92,7 @@ func (d *Driver) Start(ctx context.Context, request Request) (Receipt, error) {
 	now := d.now()
 	record := Record{ID: id, Namespace: request.Namespace, Name: request.Name, UID: request.UID, Container: request.Container,
 		Previous: previous, Image: request.Image, State: StatePending, Warnings: warnings(dep),
-		SessionID: request.SessionID, RequestID: request.RequestID, StartedAt: now.UnixMilli()}
+		SessionID: request.SessionID, RequestID: request.RequestID, Operator: request.Operator, IssuedVia: request.IssuedVia, StartedAt: now.UnixMilli()}
 	if previous == request.Image {
 		record = end(record, StateUnchanged, "the container already runs this image", now)
 		return Receipt{Record: record}, nil

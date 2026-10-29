@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 var costA = CostPlanIdentity{"tenant", "business", "healthy-large"}
@@ -248,7 +249,7 @@ func TestCostSummaryObserveNeverWaitsForPublisher(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-testwait.Expired(t):
 		account.mu.Unlock()
 		t.Fatal("execution waited for summary publication")
 	}
@@ -361,7 +362,7 @@ func BenchmarkCostSummaryConcurrentReporting(b *testing.B) {
 				if reportEvery > 0 {
 					go func() {
 						defer close(finished)
-						ticker := time.NewTicker(reportEvery)
+						ticker := time.NewTicker(reportEvery) // fixed-wait: the reporting cadence the benchmark measures under
 						defer ticker.Stop()
 						for {
 							select {
@@ -411,7 +412,7 @@ func BenchmarkCostSummaryNormalReporting(b *testing.B) {
 			go func() {
 				defer close(finished)
 				lastReconcile := time.Now()
-				ticker := time.NewTicker(5 * time.Second)
+				ticker := time.NewTicker(5 * time.Second) // fixed-wait: production's five-second publication cadence, which the benchmark reproduces
 				defer ticker.Stop()
 				for {
 					select {

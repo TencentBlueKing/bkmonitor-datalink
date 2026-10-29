@@ -57,19 +57,39 @@ Commands:
                                            column=governance list what strategy owners must fix and never fail
                                            it (output refusals whose rule is the strategy's). The items and every
                                            answer they were decided from are saved in meta.result_file.
+  snapshot --env <id> [--out <dir>]        Write the deployment's diagnostic reads, at the session's rate, to one
+                                           alarmd-snapshot-<env>-<UTC>.tar.gz with its .sha256; manifest.json
+                                           files every read with its result. Exit 0 when every read was collected,
+                                           exit 3 only when a read was not collected (refused, timeout,
+                                           skipped_by_bound, not_in_catalog), each named; an answer with partial
+                                           status was collected, filed with its reason, and does not make it 3.
+                                           Exit 1 when nothing was written. Read one back with --snapshot <file>
+                                           on discover, describe, invoke and diagnose, without the network.
   describe <operation> --env <id>           Fetch schema, limits, sources and examples.
   invoke <operation> --env <id> [--input <JSON|@file> | --params-file <file|->]
              [--stdin-file <file|-> | --script-file <file|->]
                                            Send file content through the described stdin parameter.
                                            Scripts are data; no local shell is started.
                                            Fetch describe once, then invoke once with its revision.
+             [--entry alarmd]              Send through the deployment's own entry on the admin's domain,
+                                           which a session issued through the admin is told by the server.
+                                           A read moves there by itself when the admin is down (no admin
+                                           backend, or it cannot reach alarmd), never for a network failure;
+                                           an executing call never moves by itself (it may have run) and
+                                           says so: check sre.receipts, then re-run with this.
+  skills list | show                       The AI tools the built-in agent skill installs for, and its text.
+  skills install [--tool <tool>]... [--scope user|project] [--directory <dir>] [--dry-run] [--force]
+                                           Write <tool skills dir>/alarmd-cli/SKILL.md (default tool universal,
+                                           all for every tool); same content is unchanged, a different one or a
+                                           symbolic link is a conflict (exit 3, with next_call adding --force for
+                                           the different ones). No configuration or network required.
   --help / -h                             This guide; no configuration or network required.
   --version                               JSON version; no configuration or network required.
 
 Agent rules:
   Always specify --env on remote commands; login may derive it from the code.
-  Discover/describe supplies all operation names and input contracts; only diagnose and accept
-  compose built-in reads.
+  Discover/describe supplies all operation names and input contracts; only diagnose, accept
+  and snapshot compose built-in reads.
   Read next_call as a suggestion. It is never executed automatically.
   An invoke renews only if admitted by the server and due; there is no background keepalive.
   Local expiry is a hint. The server decides whether a token is still valid.
@@ -93,7 +113,7 @@ Storage and transport:
   profile list and meta.client_transport show the saved/actual verification mode.
   HTTP needs no TLS flags; meta.client_transport.encrypted=false identifies HTTP evidence.
   Invoke network deadline: described execution timeout plus 5 seconds; legacy server default 30 seconds.
-  Response limit 8 MiB; input file limit 1 MiB and each operation's described request/stdin limits.
+  Response limit 256 MiB; input file limit 16 MiB and each operation's described request/stdin limits.
   No automatic retry, schema cache, arbitrary endpoint or built-in business operations.`)
 	if err != nil {
 		return 1

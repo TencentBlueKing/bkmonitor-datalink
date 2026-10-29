@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 func independentQueryExecution(t *testing.T) (execution.FrozenExecutionContractRef, FrozenPlan) {
@@ -83,7 +84,7 @@ func TestSourceOverlapsIndependentReadyQueriesAndJoinsCancellation(t *testing.T)
 				t.Fatal("one physical query started twice")
 			}
 			seen[digest] = true
-		case <-time.After(time.Second):
+		case <-testwait.Expired(t):
 			cancel()
 			<-done
 			t.Fatal("ready sibling did not start while independent query was blocked")
@@ -138,7 +139,7 @@ func TestSourceStartsReadySiblingBeforeEarlierDeadlineFutureQuery(t *testing.T) 
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(time.Second):
+		case <-testwait.Expired(t):
 			return errors.New("waited for late readiness before starting ready sibling")
 		}
 	}

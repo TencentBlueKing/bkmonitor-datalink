@@ -37,6 +37,34 @@ type ControlFacts struct {
 	// in: preferred, or fallback while a Worker leads because no control
 	// process is there. Empty in records written before candidacy existed.
 	CandidacyClass string `json:"candidacy_class,omitempty"`
+	// Handback is the handback watch of a fallback Leader; nil from a
+	// preferred one, which has nothing to hand back.
+	Handback *HandbackFacts `json:"handback,omitempty"`
+}
+
+// MaxHandbackCandidates bounds the candidates a record names: a deployment
+// runs one or two control processes, and a record that grew with whatever
+// registered would cost every reader.
+const MaxHandbackCandidates = 8
+
+// HandbackFacts is a fallback Leader's handback watch, so one read says why
+// the lease has not been given back yet: no preferred candidate is ready
+// (Ready empty), or which one is and when it is due, when the watch last read
+// the candidates, and how often it started over since this process began.
+type HandbackFacts struct {
+	WindowSeconds int64               `json:"window_seconds"`
+	LastReadingAt *time.Time          `json:"last_reading_at,omitempty"`
+	Ready         []HandbackCandidate `json:"ready"`
+	Resets        map[string]uint64   `json:"resets"`
+}
+
+// HandbackCandidate is one preferred candidate the watch is counting: ready
+// without a break since ReadySince, handed the lease at DueAt.
+type HandbackCandidate struct {
+	Instance    string    `json:"instance"`
+	Incarnation string    `json:"incarnation"`
+	ReadySince  time.Time `json:"ready_since"`
+	DueAt       time.Time `json:"due_at"`
 }
 
 func (facts ControlFacts) Validate() error {
@@ -261,6 +289,9 @@ type ControlFactsStanding struct {
 	// leads because no control process is there. Empty when the record
 	// does not say.
 	LeaderClass string `json:"leader_class,omitempty"`
+	// Handback is the record's handback watch while a fallback Leader wrote
+	// it: why the lease has not been given back yet.
+	Handback *HandbackFacts `json:"handback,omitempty"`
 }
 
 type controlRead struct {

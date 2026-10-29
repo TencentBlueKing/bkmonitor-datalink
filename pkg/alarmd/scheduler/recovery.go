@@ -21,9 +21,28 @@ import (
 
 var (
 	ErrRecoveryLimitsInvalid = errors.New("alarmd scheduler: recovery limits are invalid")
-	ErrQueryPermitQueueFull  = errors.New("alarmd scheduler: query permit queue is full")
-	ErrRecoveryPermitsOff    = errors.New("alarmd scheduler: recovery query permits are disabled")
+	// ErrQueryPermitQueueFull and ErrRecoveryPermitsOff are permits not
+	// granted, and say so to whatever reads the failure: the query whose
+	// permit it was completes with the admission word the query_admission
+	// line already named, not internal_unknown and code OTHER.
+	ErrQueryPermitQueueFull error = &queryPermitRefusal{code: string(permitQueueFull), text: "alarmd scheduler: query permit queue is full"}
+	ErrRecoveryPermitsOff   error = &queryPermitRefusal{code: string(permitRecoveryOff), text: "alarmd scheduler: recovery query permits are disabled"}
 )
+
+// queryPermitRefusal is a permit refused for want of room or of recovery
+// permits. Each is one value, compared with errors.Is as before.
+type queryPermitRefusal struct {
+	code string
+	text string
+}
+
+func (err *queryPermitRefusal) Error() string { return err.text }
+
+// QueryFailure is the admission category and the refusal's word, as the
+// query failure facts read it.
+func (err *queryPermitRefusal) QueryFailure() (string, string) {
+	return observability.QueryFailureCategoryAdmission, err.code
+}
 
 // RecoveryLimits are process-wide fixed bounds. They deliberately do not
 // contain QG-specific weights or adaptive controls.
@@ -37,6 +56,18 @@ type RecoveryLimits struct {
 	MaxReplayAge          time.Duration
 	RetryMinDelay         time.Duration
 	RetryMaxDelay         time.Duration
+	// TakeoverDivertFloor is the least query budget a round must have left to
+	// run as a normal round, when the group has no reading of its own query's
+	// duration (WithQueryLatency) and its read-hold record keeps none from
+	// its previous owner (WithInheritedQueryLatency): a round due before this
+	// process took its Query Group over, or one whose readiness landed at the
+	// edge of its deadline (divertShortOfTime). Below it the round goes to
+	// replay at once, under replay's own deadline, instead of starting a
+	// normal attempt that cannot finish. A group that never completes a first
+	// read in time never gets a reading, and stays on the fallback, as does a
+	// group whose record keeps no reading (a group never measured keeps no record).
+	// Zero turns the diversion off where there is no reading.
+	TakeoverDivertFloor time.Duration
 }
 
 func (limits RecoveryLimits) Validate() error {
@@ -46,7 +77,8 @@ func (limits RecoveryLimits) Validate() error {
 		limits.MaxQueuedItemsPerQG <= 0 || limits.MaxQueuedItemsPerQG >= limits.ReadyQueueCapacity ||
 		limits.MaxQueuedItemsPerQG >= limits.RecoveryQueueCapacity ||
 		limits.MaxReplaySlots == 0 || limits.MaxReplayAge <= 0 ||
-		limits.RetryMinDelay <= 0 || limits.RetryMaxDelay < limits.RetryMinDelay {
+		limits.RetryMinDelay <= 0 || limits.RetryMaxDelay < limits.RetryMinDelay ||
+		limits.TakeoverDivertFloor < 0 || limits.TakeoverDivertFloor >= limits.MaxReplayAge {
 		return ErrRecoveryLimitsInvalid
 	}
 	return nil
@@ -108,6 +140,22 @@ type SlotRecoveryFacts struct {
 	// between a report someone can act on and one they have to reproduce.
 	ReadyAtUnixMilli          int64
 	DistanceBoundaryUnixMilli int64
+	// SlotAgeMillis, AgeLimit and DistanceLimit are what an expiry was decided
+	// against, taken where it was decided (expiryDecided): the decision
+	// instant less the Slot's evaluation time, and the two configured limits
+	// the age and the distance were compared with. Set on REPLAY_EXPIRED only,
+	// for the slot_skipped line of the Slot it gives up.
+	SlotAgeMillis int64
+	AgeLimit      time.Duration
+	DistanceLimit uint32
+	// RangeDistance is the distance a range built this round was sized by,
+	// for the same line.
+	RangeDistance *observability.RangeDistanceFacts
+	// Decision is what the source judged when it let a live Slot run as a
+	// normal round (classifyRecoveryOf), carried to the Slot's completion so
+	// a round that then times out says on its own line why it was not sent
+	// to replay. Nil on every other disposition.
+	Decision *observability.DivertDecisionFacts
 }
 
 func (facts SlotRecoveryFacts) validate(operation execution.Operation) error {
@@ -461,6 +509,9 @@ func (coordinator *FlightCoordinator) releaseQueryPermit(operation execution.Ope
 }
 
 func (coordinator *FlightCoordinator) dispatchQueryPermitsLocked() {
+	// The hold reference scans a day of hours; read it once, and only when a
+	// recovery turn is actually contested by normal waiters.
+	hold := time.Duration(-1)
 	for coordinator.queryInflight < coordinator.limits.ProcessQueryPermits {
 		coordinator.expireWaitersLocked(&coordinator.normalWaiters)
 		coordinator.expireWaitersLocked(&coordinator.recoveryWaiters)
@@ -469,7 +520,18 @@ func (coordinator *FlightCoordinator) dispatchQueryPermitsLocked() {
 		if !canRecovery && !canNormal {
 			return
 		}
-		useRecovery := canRecovery && (!canNormal || coordinator.nextRecovery)
+		// Recovery takes every other permit only while no normal waiter is
+		// about to miss its deadline. A replay burst (a handover's takeovers)
+		// arriving in the last seconds of a Slot's permit window otherwise
+		// halves the normal queue's drain and turns its tail away, though the
+		// replays' own deadlines are far off.
+		useRecovery := canRecovery && !canNormal
+		if canRecovery && canNormal && coordinator.nextRecovery {
+			if hold < 0 {
+				hold = coordinator.holds.MeanReference(coordinator.now())
+			}
+			useRecovery = !coordinator.normalDueLocked(hold)
+		}
 		var waiter *queryPermitWaiter
 		if useRecovery {
 			waiter = coordinator.popFairWaiterLocked(&coordinator.recoveryWaiters, &coordinator.lastRecoveryQG)
@@ -481,6 +543,7 @@ func (coordinator *FlightCoordinator) dispatchQueryPermitsLocked() {
 			}
 		}
 		coordinator.queryInflight++
+		coordinator.heldPeak.Observe(coordinator.now(), coordinator.queryInflight)
 		coordinator.permitSequence++
 		permit := &QueryPermit{coordinator: coordinator, operation: waiter.operation, id: coordinator.permitSequence}
 		coordinator.inflightByOp[waiter.operation]++
@@ -493,6 +556,26 @@ func (coordinator *FlightCoordinator) dispatchQueryPermitsLocked() {
 		}
 		waiter.grant <- permit
 	}
+}
+
+// normalDueLocked reports whether a queued normal waiter's deadline falls
+// within the time the normal queue needs to drain with every permit: one hold
+// per ProcessQueryPermits waiters ahead, plus the hold of its own. hold is the
+// normal permit hold when the query service is not under pressure
+// (HoldReference); zero before any hold, when no waiter is due and recovery
+// keeps its turn.
+func (coordinator *FlightCoordinator) normalDueLocked(hold time.Duration) bool {
+	if hold <= 0 || len(coordinator.normalWaiters) == 0 || coordinator.limits.ProcessQueryPermits <= 0 {
+		return false
+	}
+	rounds := 1 + len(coordinator.normalWaiters)/coordinator.limits.ProcessQueryPermits
+	due := coordinator.now().Add(time.Duration(rounds) * hold)
+	for _, waiter := range coordinator.normalWaiters {
+		if !waiter.deadline.After(due) {
+			return true
+		}
+	}
+	return false
 }
 
 func (coordinator *FlightCoordinator) waiterQueuedLocked(waiter *queryPermitWaiter, recovery bool) bool {
@@ -553,7 +636,7 @@ func (coordinator *FlightCoordinator) observeQueryPermitReason(
 	defer func() { _ = recover() }()
 	coordinator.observer.Observe(ctx, observability.Observation{
 		Component: observability.ComponentScheduler, Stage: observability.StageQueryAdmission,
-		Result: result, ReasonCode: reason, Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
+		Result: result, ReasonCode: reason, Operation: observability.Operation(operation),
 		QueryPermit: &observability.QueryPermitFacts{
 			QueueKind: queueKind, Admission: admission,
 			NormalWaiting: snapshot.NormalWaiting, RecoveryWaiting: snapshot.RecoveryWaiting,

@@ -61,6 +61,74 @@ type LevelOutcome struct {
 	// own for it. Set by the evaluator, which is the only place that knows;
 	// read by the completion's cause (SlotInputWholeness.UnknownIsGuardTail).
 	GuardTail bool
+	// ReasonCarried marks an UNKNOWN outcome whose reason is a stored guard's
+	// - the Level's saved state reason or a loaded gap marker scope's - and
+	// not anything this round's inputs said. ReasonOriginSlot is the Slot
+	// that guard came from (ReasonOrigin, whose cause is ReasonCode), zero
+	// when it was stamped without one; stored as on the Level's state
+	// (RuntimeLevelStateMutation.GapReasonOriginSlot), in the alignment gap
+	// after the flags, so it costs an outcome no bytes. Observation only:
+	// set by the evaluator, read by the lines and counters that must not
+	// file a carried reason as this round's failure.
+	ReasonCarried bool
+	// RecoveryWithheld marks a NORMAL outcome whose Level met its recovery
+	// windows and did not recover, with which of the contract's reasons
+	// (contract.RecoveryWithheldReasons): the round's own value was a count
+	// of zero from a source whose zero is no observation, and on a Level
+	// written to end on no data, whether its last real point was unknown.
+	// One byte, in the same alignment gap, so it costs an outcome nothing.
+	// Observation only, like ReasonCarried: read by the withheld recovery
+	// counter, nothing decides anything from it.
+	RecoveryWithheld RecoveryWithheldCode
+	ReasonOriginSlot uint32
+}
+
+// RecoveryWithheldCode is LevelOutcome.RecoveryWithheld: a withheld reason of
+// the contract as one byte, None for an outcome nothing withheld.
+type RecoveryWithheldCode uint8
+
+const (
+	RecoveryWithheldNone RecoveryWithheldCode = iota
+	RecoveryWithheldZeroCount
+	RecoveryWithheldNoDataLastPointUnknown
+)
+
+// RecoveryWithheldCodes is every code but None, in the contract's order.
+var RecoveryWithheldCodes = []RecoveryWithheldCode{RecoveryWithheldZeroCount, RecoveryWithheldNoDataLastPointUnknown}
+
+// RecoveryWithheldCodeOf is the code of a contract reason; a reason outside
+// the list is None.
+func RecoveryWithheldCodeOf(reason string) RecoveryWithheldCode {
+	switch reason {
+	case contract.RecoveryWithheldZeroCount:
+		return RecoveryWithheldZeroCount
+	case contract.RecoveryWithheldNoDataLastPointUnknown:
+		return RecoveryWithheldNoDataLastPointUnknown
+	}
+	return RecoveryWithheldNone
+}
+
+// Reason is the contract reason of a code, empty for None.
+func (code RecoveryWithheldCode) Reason() string {
+	switch code {
+	case RecoveryWithheldZeroCount:
+		return contract.RecoveryWithheldZeroCount
+	case RecoveryWithheldNoDataLastPointUnknown:
+		return contract.RecoveryWithheldNoDataLastPointUnknown
+	}
+	return ""
+}
+
+// ReasonOrigin is where the outcome's carried reason came from.
+func (outcome LevelOutcome) ReasonOrigin() ReasonOrigin {
+	return unpackedOrigin(outcome.ReasonOriginSlot, outcome.ReasonCode)
+}
+
+// WithReasonOrigin is the outcome carrying origin for its reason. Set it
+// after ReasonCode: an origin that is not that reason's is not stored.
+func (outcome LevelOutcome) WithReasonOrigin(origin ReasonOrigin) LevelOutcome {
+	outcome.ReasonOriginSlot = packedOriginSlot(origin, outcome.ReasonCode)
+	return outcome
 }
 
 type levelOutcomeIdentity struct {
@@ -1085,6 +1153,8 @@ func runtimeLevelsFromMutation(levels []RuntimeLevelStateMutation) []RuntimeLeve
 			LevelID: level.LevelID, HistoryCompleteness: level.HistoryCompleteness,
 			GapReasonCode: level.GapReasonCode, WarmupRequirementRef: level.WarmupRequirementRef,
 			LevelStateCompatibility: level.LevelStateCompatibility,
+			GapReasonOriginSlot:     level.GapReasonOriginSlot,
+			LastRealPointTime:       level.LastRealPointTime,
 		}
 	}
 	return result
@@ -1330,7 +1400,10 @@ func validateEventOutcomes(input InternalExecution, result PlanEvaluationResult,
 				effective, effectiveFound := findEffectiveTimeFact(
 					input, result.Plan, level.LevelID, state.Mutation.Identity.SeriesIdentityDigest,
 				)
-				if !ok || !effectiveFound || string(outcome.Outcome) != level.Result ||
+				// An event the Slot built is about a record and carries the
+				// detect evidence; one about an absent series is not this
+				// contract's to see and contradicts it here.
+				if !ok || !effectiveFound || string(outcome.Outcome) != level.Result || level.DetectEvidence == nil ||
 					level.DetectEvidence.EffectiveTimeStatus != string(effective.Fact.Status()) {
 					return resultContractViolation(codeEventLevelResultContradicts, "TriggerEvent Level result contradicts Level outcome decomposition")
 				}

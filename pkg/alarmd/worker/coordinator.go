@@ -19,6 +19,7 @@ import (
 	"net"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -33,28 +34,41 @@ import (
 type Ports struct {
 	// EffectiveTime supplies bounded legacy facts; nil yields UNKNOWN for legacy schedules.
 	EffectiveTime strategy.EffectiveTimeProvider
-	Finalization  execution.QueryFreeFinalizationSource
-	Activation    execution.PlanActivationSource
-	Query         execution.QueryExecutionSource
-	Sequencer     execution.SideEffectSequencer
-	Evaluator     execution.Evaluator
-	Admission     execution.SideEffectAdmitter
-	GapGuard      execution.GapGuardStore
+	// Now is the wall clock the effective time is judged at: the moment the
+	// worker decides a Level's Trigger and Recovery, not the Slot's
+	// evaluation time. Optional: nil is time.Now.
+	Now          func() time.Time
+	Finalization execution.QueryFreeFinalizationSource
+	Activation   execution.PlanActivationSource
+	Query        execution.QueryExecutionSource
+	Sequencer    execution.SideEffectSequencer
+	Evaluator    execution.Evaluator
+	Admission    execution.SideEffectAdmitter
+	GapGuard     execution.GapGuardStore
 	// NoData is required, like every other port here. A worker without it would
 	// evaluate every Plan's thresholds and none of their absence, and the only
 	// sign would be no-data alerts that never fire - which is indistinguishable
 	// from nothing being absent.
 	NoData execution.PlanNoDataStore
+	// NoDataEnds keeps the no-data end index (execution.NoDataEndIndex).
+	// Optional: without it a level written to end on no data ends only while
+	// its group is in the answer.
+	NoDataEnds execution.NoDataEndIndex
 	// Hosts resolves which business a host belongs to, which decides both what
 	// a no-data roster expects and which of its groups have left. Required for
 	// the same reason: without it every declared host would read as unknown, so
 	// every static target would expect nothing and no absence would ever be
 	// reported - a silence that looks exactly like health.
-	Hosts    execution.HostBusiness
-	Events   execution.EventSink
-	State    execution.StateStore
-	Progress execution.ProgressStore
-	Observer execution.Observer
+	Hosts execution.HostBusiness
+	// NoDataManualCloses is read just before a batch's no-data alerts go to
+	// the sink, to drop the ones a user closed while the round ran
+	// (decision-024). Optional: without it nothing is checked there, and a
+	// close still stops the absence at the Plan's next Slot.
+	NoDataManualCloses execution.NoDataManualCloseReader
+	Events             execution.EventSink
+	State              execution.StateStore
+	Progress           execution.ProgressStore
+	Observer           execution.Observer
 	// OpenAlerts is required: a worker that evaluates without it sends every
 	// RECOVERY envelope, and the trigger counts that as not_configured, which
 	// on a production worker is the wiring having come apart.
@@ -116,6 +130,9 @@ type SlotExecutionCoordinator struct {
 	// effect for this process, the bound below which a window hole's minute
 	// is not judged against the schedule. See out_of_hours.go.
 	effectiveSeen effectiveTimeSeen
+	// holders is who holds the retained budget now, by Slot
+	// (RetainedHolders): the pool's figure says how much, this says whose.
+	holders retainedHolderRegistry
 }
 
 type processProvisionalReservations struct {
@@ -160,6 +177,14 @@ type activationProtectionRequiredError struct {
 
 func (*activationProtectionRequiredError) Error() string {
 	return "alarmd worker: changed activation requires Guard protection"
+}
+
+// now is the wall clock of a decision (Ports.Now).
+func (coordinator *SlotExecutionCoordinator) now() time.Time {
+	if coordinator.ports.Now != nil {
+		return coordinator.ports.Now()
+	}
+	return time.Now()
 }
 
 func NewSlotExecutionCoordinator(ports Ports, budget ProvisionalBudget) (*SlotExecutionCoordinator, error) {
@@ -258,6 +283,14 @@ func frameRetainedBytes(frame *execution.EncodedStateFrame) uint64 {
 type heldFrames struct {
 	coordinator *SlotExecutionCoordinator
 	bytes       uint64
+	// slot and operation name whose frames these are, and since when they are
+	// held, for the retained-holder reading; bytesNow is bytes for it, and
+	// holding says the frames are in the coordinator's holder registry.
+	slot      execution.SlotIdentity
+	operation execution.Operation
+	since     time.Time
+	bytesNow  atomic.Uint64
+	holding   bool
 	// refused is set once the budget did not take a chunk: the Plan keeps
 	// the frames reserved before it and lets every later one go.
 	refused  bool
@@ -281,6 +314,11 @@ func (held *heldFrames) keep(chunk []admittedState) {
 	}
 	if !held.refused && held.coordinator.tryAcquireRetained(total) {
 		held.bytes += total
+		held.bytesNow.Store(held.bytes)
+		if !held.holding {
+			held.holding, held.since = true, time.Now()
+			held.coordinator.holders.add(held)
+		}
 		return
 	}
 	held.refused = true
@@ -305,6 +343,7 @@ func (held *heldFrames) settle(kept []admittedState) {
 	if total < held.bytes {
 		held.coordinator.releaseProvisional(0, held.bytes-total)
 		held.bytes = total
+		held.bytesNow.Store(total)
 	}
 }
 
@@ -317,6 +356,10 @@ func (held *heldFrames) release() {
 	}
 	held.released = true
 	held.coordinator.releaseProvisional(0, held.bytes)
+	held.bytesNow.Store(0)
+	if held.holding {
+		held.coordinator.holders.remove(held)
+	}
 }
 
 // Execute performs one already-scheduled attempt. normal, retry, replay and
@@ -411,13 +454,20 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 			// normalizes to internal_unknown (observability.NormalizeReason),
 			// which made every deferral read as an unclassified internal error -
 			// in the logs and in the stage counter's reason label alike.
-			coordinator.observe(ctx, observability.ComponentAccess, observability.StageQueryCompleted, request.Operation,
-				started, observability.ResultRetrying, observability.ReasonCode(contract.ReasonQueryNotReady), nil)
+			// And what it waits for: the query, its requirement, when it is
+			// ready and on what basis.
+			coordinator.emitObservation(ctx, observability.Observation{
+				Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted,
+				Result: observability.ResultRetrying, Operation: observability.Operation(request.Operation),
+				ReasonCode: observability.ReasonCode(contract.ReasonQueryNotReady),
+				Duration:   time.Since(started), ReadinessDeferral: readinessDeferralOf(err),
+			})
 		} else {
 			coordinator.observeQueryFailure(ctx, request.Operation, started, "execute", err)
 		}
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: query: %w", err)
 	}
+	execution.MarkQueryReturned(ctx, time.Now())
 	ctx, cancelCompletion := shortPeriodCompletionContext(ctx, request.Operation, stream.header)
 	defer cancelCompletion()
 	if err := ctx.Err(); err != nil {
@@ -430,8 +480,13 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		// day was a state read of ours timing out, with the query fine.
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: complete Slot: %w", err)
 	}
+	// The Slot's result is the evaluation's; the query line reports the
+	// physical queries' own beside it (observeQueryCompleted).
 	queryResult, queryReason := provisionalResult(stream.evaluated)
-	coordinator.observeQueryCompleted(ctx, request.Operation, started, queryResult, queryReason, completion, stream.evaluated)
+	coordinator.observeQueryCompleted(ctx, request.Operation, started, completion, stream.evaluated)
+	// Whether a physical query of the round answered short, by the rule the
+	// query line reports it by, for the completion line's lost-round facts.
+	physicalLoss, _ := physicalQueryFailure(completion)
 	if len(stream.evaluated.Plans) == 0 {
 		// The timing travels with the usage here for the same reason it does at
 		// the other exit: this Slot ran. A round that produced no Plan result
@@ -439,14 +494,15 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		// budgets it used beside an empty clock would read as a Slot that was
 		// never measured rather than one that found nothing to decide.
 		return execution.SlotExecutionResult{Result: queryResult, ReasonCode: queryReason,
-			Usage: stream.budgetUsage(), Timing: stream.timing(), InPlaceWait: completion.InPlaceWait}, nil
+			Usage: stream.budgetUsage(), Timing: stream.timing(), InPlaceWait: completion.InPlaceWait,
+			PhysicalQueryLoss: physicalLoss}, nil
 	}
 
 	var result execution.SlotExecutionResult
 	err = coordinator.ports.Sequencer.Sequence(ctx, sequencingScope(stream.header, stream.stateItems, stream.gapItems), func(sequenceCtx context.Context) error {
 		var executeErr error
 		result, executeErr = coordinator.finalizePreparedWithGaps(
-			sequenceCtx, request, stream.header, stream.bindings, stream.state, stream.gaps, stream.evaluated,
+			withNoDataEnds(withNoDataAbsenceStarts(sequenceCtx, stream.noDataAbsenceStarts), stream.noDataEndRound()), request, stream.header, stream.bindings, stream.state, stream.gaps, stream.evaluated,
 			stream.noDataMutations, stream.queryEvidence, stream.seriesCensus, stream.targetSummaries(),
 		)
 		return executeErr
@@ -459,6 +515,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 				return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: converge changed activation: %w", convergeErr)
 			}
 			result.InPlaceWait = completion.InPlaceWait
+			result.PhysicalQueryLoss = physicalLoss
 			return result, nil
 		}
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: execute frozen Slot: %w", err)
@@ -469,6 +526,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	result.Usage = stream.budgetUsage()
 	result.Timing = stream.timing()
 	result.InPlaceWait = completion.InPlaceWait
+	result.PhysicalQueryLoss = physicalLoss
 	return result, nil
 }
 
@@ -533,6 +591,18 @@ func eventsWithoutMessage(result execution.EvaluationResult) uint64 {
 		}
 	}
 	return count
+}
+
+// readinessDeferralOf is what a deferred Slot waits for, as its error names
+// it; nil when it names nothing.
+func readinessDeferralOf(err error) *observability.ReadinessDeferralFacts {
+	var deferred interface {
+		ReadinessDeferral() *observability.ReadinessDeferralFacts
+	}
+	if !errors.As(err, &deferred) {
+		return nil
+	}
+	return deferred.ReadinessDeferral()
 }
 
 func isReadinessDeferred(err error) bool {
@@ -612,7 +682,7 @@ func (coordinator *SlotExecutionCoordinator) executeQueryFreeFinalization(
 			Contract: request.Contract, Kind: completionKind,
 			Result: observability.ResultDegraded, ReasonCode: finalization.ReasonCode,
 			Evidence: evidence,
-		}, execution.CompletionAttribution{Cause: finalization.Cause})
+		}, execution.CompletionAttribution{Cause: finalization.Cause, Reason: finalization.ReasonCode})
 		return err
 	})
 	if err != nil {
@@ -1278,9 +1348,8 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		if err := coordinator.admitActivatedPlans(ctx, request, guardActivations); err != nil {
 			return execution.SlotExecutionResult{}, err
 		}
-		driftCompletion, driftCause := activationChangeCompletion(request.Contract, &primary, change)
-		return coordinator.commitProgress(ctx, request, driftCompletion,
-			execution.CompletionAttribution{Cause: driftCause})
+		driftCompletion, driftAttribution := activationChangeCompletion(request.Contract, &primary, change, bindings, targets)
+		return coordinator.commitProgress(ctx, request, driftCompletion, driftAttribution)
 	}
 
 	planResults := append([]execution.PlanEvaluationResult(nil), evaluated.Plans...)
@@ -1404,7 +1473,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 				reason, _ := StateConflictReason(err)
 				coordinator.emitObservation(ctx, observability.Observation{
 					Component: observability.ComponentState, Stage: observability.StageMutationCompared,
-					Operation: observability.Operation(request.Operation), Direction: observability.DirectionInternal,
+					Operation:  observability.Operation(request.Operation),
 					ReasonCode: observability.ReasonCode(reason), Duration: time.Since(started), Err: err,
 					StateVersionConflict: conflicts,
 				})
@@ -1421,7 +1490,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			coordinator.emitObservation(ctx, observability.Observation{
 				Component: observability.ComponentState, Stage: observability.StageMutationCompared,
 				Result: observability.ResultSuccess, Operation: observability.Operation(request.Operation),
-				Direction: observability.DirectionInternal, ReasonCode: observability.ReasonNone,
+				ReasonCode:      observability.ReasonNone,
 				StateWriteReuse: &facts,
 			})
 		}
@@ -1482,6 +1551,11 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 				acceptedBytes = append(acceptedBytes, encodedBytes[index])
 			}
 			held.settle(acceptedBytes)
+			// A user may have closed one of these absences after the round
+			// read its memory; its alert must not go out (decision-024). The
+			// series' events are taken out where they are kept, so what is
+			// counted as sent below is what went to the sink.
+			eventsByState = coordinator.withoutManuallyClosed(planCtx, request.Operation, planResult.Plan, accepted, eventsByState)
 			events, withoutMessage := outputsOf(accepted, eventsByState, withoutMessageByState)
 			sortTriggerEvents(events)
 			if err := coordinator.writeEvents(ctx, request.Operation, planResult.Plan, events, withoutMessage); err != nil {
@@ -1589,6 +1663,9 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		withoutWithheldNoData(noDataMemory, withheldNoData)); err != nil {
 		return execution.SlotExecutionResult{}, err
 	}
+	if err := coordinator.applyNoDataEnds(ctx, request, header, evaluated, withheldNoData); err != nil {
+		return execution.SlotExecutionResult{}, err
+	}
 	if retryPendingReason != "" {
 		return execution.SlotExecutionResult{
 			Completed: false, Result: observability.ResultRetrying, ReasonCode: retryPendingReason,
@@ -1599,7 +1676,9 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: derive PRIMARY input fact: %w", err)
 	}
 	primary.EmptiedByTarget = query.emptiedByTarget(primary)
+	primary.Identity = query.identityEvidence(primary)
 	primary.QuietWhenEmpty = query.quietWhenEmpty(primary, header.Requirements)
+	primary.UnfilledWhenEmpty = query.unfilledWhenEmpty(primary, header.Requirements)
 	completion := execution.SlotCompletion{Contract: request.Contract, Primary: &primary, TargetResolutions: targets}
 	// Observation only. The cause is deliberately not put on
 	// completion.ReasonCode, which is persisted and decides how consecutive gaps
@@ -1610,14 +1689,15 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		attribution.Coverage.Merge(plan.HistoryCoverage)
 	}
 	if len(changedPlans) > 0 {
-		var cause execution.CompletionCause
-		completion, cause = activationChangeCompletion(request.Contract, &primary,
-			classifyActivationChange(header.DuePlans, guardActivations, loadedGaps))
-		attribution.Cause = cause
+		var drift execution.CompletionAttribution
+		completion, drift = activationChangeCompletion(request.Contract, &primary,
+			classifyActivationChange(header.DuePlans, guardActivations, loadedGaps), bindings, targets)
+		attribution.Cause, attribution.Reason, attribution.Scope = drift.Cause, drift.Reason, drift.Scope
 	} else {
 		var derived execution.CompletionAttribution
 		completion.Kind, derived, err = execution.DeriveStreamingCompletionAttribution(header, bindings, evaluated)
 		attribution.Cause, attribution.Reason, attribution.Scope = derived.Cause, derived.Reason, derived.Scope
+		attribution.ReasonCarried, attribution.ReasonOrigin = derived.ReasonCarried, derived.ReasonOrigin
 		if err != nil {
 			return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: derive completion: %w", err)
 		}
@@ -1654,15 +1734,15 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		return activationRetry(execution.ReasonCode(contract.ReasonActivationReadFailed)), nil
 	}
 	if !guardActivations.SameSelections(progressActivations) {
-		driftCompletion, driftCause := activationChangeCompletion(request.Contract, &primary,
-			classifyActivationChange(header.DuePlans, progressActivations, loadedGaps))
+		driftCompletion, driftAttribution := activationChangeCompletion(request.Contract, &primary,
+			classifyActivationChange(header.DuePlans, progressActivations, loadedGaps), bindings, targets)
 		changedSelected := changedSelectedActivations(guardActivations, progressActivations)
 		return execution.SlotExecutionResult{}, &activationProtectionRequiredError{
 			activationRequest: activationRequest,
 			currentFacts:      progressActivations,
 			activations:       changedSelected,
 			completion:        driftCompletion,
-			completionCause:   execution.CompletionAttribution{Cause: driftCause},
+			completionCause:   driftAttribution,
 			guardReason:       guardReasonFor(header.DuePlans, changedSelected, loadedGaps),
 		}
 	}
@@ -1718,7 +1798,7 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 		return execution.SlotExecutionResult{}, err
 	}
 	if request.ExpiredRange != nil {
-		return coordinator.commitExpiredRange(ctx, request, completion)
+		return coordinator.commitExpiredRange(ctx, request, completion, completionCause)
 	}
 	started := time.Now()
 	progressRequest := execution.ProgressCommitRequest{
@@ -1757,9 +1837,14 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 		observationReason = completion.ReasonCode
 	}
 	coordinator.observeCommittedProgress(ctx, request.Operation, started, observationResult, observationReason,
-		string(completion.Kind), string(completionCause.Cause), string(completionCause.Reason), completionScopeFacts(completionCause),
-		completionCause.Coverage, completion.Evidence, completion.Primary)
-	return execution.SlotExecutionResult{Completed: true, CompletionKind: completion.Kind, Result: completion.Result, ReasonCode: completion.ReasonCode}, nil
+		string(completion.Kind), string(completionCause.Cause), string(completionCause.Reason), completionCause.SlotCause().CarriedReason(),
+		completionScopeFacts(completionCause), completionCause.Coverage, completion.Evidence, completion.Primary)
+	committed := execution.SlotExecutionResult{Completed: true, CompletionKind: completion.Kind, Result: completion.Result, ReasonCode: completion.ReasonCode,
+		CompletionCause: completionCause.SlotCause()}
+	if completion.Kind == execution.CompletionGapSkipped || completion.Kind == execution.CompletionSnapshotUnavailable {
+		committed.QueryFreeCause = queryFreeCause(completionCause.Cause)
+	}
+	return committed, nil
 }
 
 // progressNotCommitted is the error for a Progress commit the store did not
@@ -1937,10 +2022,16 @@ func (coordinator *SlotExecutionCoordinator) writeEvents(
 	failureKind := ""
 	if err != nil {
 		failureKind = observability.OutputFailureKindOf(err)
+		// A refusal the sink named is the client's by what it is, whether or
+		// not its error states a kind: the fleet reads a refusal code under
+		// no kind as unknown.
+		if rejection != nil && failureKind == observability.OutputFailureUnknown {
+			failureKind = observability.OutputFailureClientRejected
+		}
 	}
 	coordinator.emitObservation(ctx, observability.Observation{
 		Component: observability.ComponentOutput, Stage: observability.StageEventACKed,
-		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
+		Operation:  observability.Operation(operation),
 		ReasonCode: observability.ReasonCode(reason), Duration: time.Since(started),
 		Counts: observability.Counts{Events: int64(len(events) + len(withoutMessage))}, Err: err, OutputRejection: rejection,
 		OutputFailureKind: failureKind,
@@ -2138,7 +2229,7 @@ func (coordinator *SlotExecutionCoordinator) admitState(
 	started := time.Now()
 	deterministic := make(map[execution.StateKeyIdentity]execution.ReasonCode)
 	encodedBytes := make([]admittedState, len(mutations))
-	held := &heldFrames{coordinator: coordinator}
+	held := &heldFrames{coordinator: coordinator, slot: contractRef.Slot, operation: operation}
 	var totals applyTotals
 	err := forEachChunk(ctx, len(mutations), coordinator.applyChunkItems(coordinator.budget.MaxStateMutations), func(chunk applyChunk) error {
 		chunkItems := mutations[chunk.start:chunk.end]
@@ -2410,7 +2501,7 @@ func (coordinator *SlotExecutionCoordinator) emitAlreadyApplied(ctx context.Cont
 	coordinator.emitObservation(ctx, observability.Observation{
 		Component: observability.ComponentState, Stage: observability.StageMutationCompared,
 		Result: observability.ResultSuccess, Operation: observability.Operation(operation),
-		Direction: observability.DirectionInternal, ReasonCode: observability.ReasonNone,
+		ReasonCode:          observability.ReasonNone,
 		StateAlreadyApplied: &facts,
 	})
 }
@@ -2473,7 +2564,7 @@ func (coordinator *SlotExecutionCoordinator) observeWithCounts(
 ) {
 	coordinator.emitObservation(ctx, observability.Observation{
 		Component: component, Stage: stage, Result: result,
-		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
+		Operation:  observability.Operation(operation),
 		ReasonCode: reason, Duration: time.Since(started), Counts: counts, Err: err,
 	})
 }
@@ -2506,8 +2597,8 @@ func (coordinator *SlotExecutionCoordinator) observeOutputUnapplied(
 	coordinator.emitObservation(ctx, observability.Observation{
 		Component: observability.ComponentState, Stage: observability.StageOutputUnapplied,
 		Result: observability.ResultFailed, Operation: observability.Operation(operation),
-		Direction: observability.DirectionInternal, ReasonCode: observability.ReasonCode(refusal),
-		Counts: observability.Counts{Events: int64(len(sent))}, Err: err,
+		ReasonCode: observability.ReasonCode(refusal),
+		Counts:     observability.Counts{Events: int64(len(sent))}, Err: err,
 	})
 }
 
@@ -2543,7 +2634,7 @@ func (coordinator *SlotExecutionCoordinator) observeCapacityRejection(
 	observation := observability.Observation{
 		Component: observability.ComponentResource, Stage: observability.StageResourceHard,
 		Result: observability.ResultPaused, Operation: observability.Operation(operation),
-		Direction: observability.DirectionInternal, ReasonCode: observability.ReasonCode(contract.ReasonResourceHardStop),
+		ReasonCode:     observability.ReasonCode(contract.ReasonResourceHardStop),
 		CapacityBudget: budget, Err: err,
 	}
 	var exceeded *provisionalBudgetExceededError
@@ -2565,25 +2656,6 @@ func (coordinator *SlotExecutionCoordinator) observeCapacityRejection(
 	coordinator.ports.Observer.Observe(ctx, observation)
 }
 
-// qgShareBytes is the most of the retained-byte pool one Query Group's Slot may
-// hold: half of it.
-//
-// A share exists because acquireEffects otherwise only asks whether the pool
-// has room, so one object may legitimately take all of it and every other Query
-// Group on the replica starves. Placement spreads large objects across
-// replicas, which makes that less likely; it does not stop one object from
-// filling the replica it lands on.
-//
-// Half rather than a smaller fraction because the share has to leave the
-// largest object that legitimately exists able to run: on a 4 GiB replica half
-// the pool is 512 MiB. The estimate this was first set against - 65 to 134 MiB
-// for the largest strategy - was wrong by a factor of three to seven; that
-// strategy's Slots measure 464 MB at the median and 489 MB at p99, 86 to 91
-// percent of the share. A strategy that does not fit in half a replica's pool
-// is one that has to be sharded, and refusing it by name is better than letting
-// it fill the pool and take its neighbours down with it - but a refusal nobody
-// saw coming stops a strategy whole, which is why an object nearing its share
-// is reported before it arrives (fleet's RETAINED_SHARE_APPROACHING).
 // stateHorizon is how long this Plan's series keep their runtime state past
 // their last write: the Plan's own no-data horizon when it has one frozen -
 // the strategy's, or the platform's at compile time - else the platform's
@@ -2600,8 +2672,26 @@ func (coordinator *SlotExecutionCoordinator) stateHorizon(due execution.DuePlan)
 	return max(coordinator.ports.StateHorizon(), 0)
 }
 
+// qgShareBytes is the most of the retained-byte pool one Query Group's Slot may
+// hold: three quarters of it.
+//
+// A share exists because acquireEffects otherwise only asks whether the pool
+// has room, so one object may legitimately take all of it and every other Query
+// Group on the replica starves. Placement spreads large objects across
+// replicas, which makes that less likely; it does not stop one object from
+// filling the replica it lands on.
+//
+// Three quarters is derived from measured usage (decision-019 §5.2): what a
+// share protects is the room its co-tenants on the replica hold at the same
+// moment, measured at 76.5 MB beside the largest object, and the process's
+// live heap with the share full stays under the collector's limit with room.
+// On a 4 GiB replica the share is 768 MiB, which leaves the largest strategy
+// measured (about 506 MiB at its peak) about half again of its size. A
+// strategy that still does not fit is refused by name rather than let fill
+// the pool, and an object nearing its share is reported before it arrives
+// (fleet's RETAINED_SHARE_APPROACHING).
 func (coordinator *SlotExecutionCoordinator) qgShareBytes() uint64 {
-	return coordinator.budget.MaxRetainedBytes / 2
+	return coordinator.budget.MaxRetainedBytes / 4 * 3
 }
 
 func summarizeStateLoad(result execution.StatePreflightResult) (observability.Result, observability.ReasonCode) {
@@ -2766,7 +2856,7 @@ func indexStatePreflight(result execution.StatePreflightResult) map[execution.St
 }
 
 // Called only after this invocation received and validated ProgressCommitted.
-func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx context.Context, operation execution.Operation, started time.Time, result observability.Result, reason observability.ReasonCode, kind, cause, causeReason string, scope *observability.CompletionScopeFacts, coverage execution.HistoryCoverage, evidence *execution.ExecutionEvidence, primary *execution.PrimaryInputFact) {
+func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx context.Context, operation execution.Operation, started time.Time, result observability.Result, reason observability.ReasonCode, kind, cause, causeReason string, carried *observability.CarriedReasonFacts, scope *observability.CompletionScopeFacts, coverage execution.HistoryCoverage, evidence *execution.ExecutionEvidence, primary *execution.PrimaryInputFact) {
 	if reason == "" {
 		reason = observability.ReasonNone
 	}
@@ -2785,9 +2875,10 @@ func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx contex
 	}
 	coordinator.ports.Observer.Observe(ctx, observability.Observation{
 		Component: observability.ComponentProgress, Stage: observability.StageProgressCommitted,
-		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
-		Result: result, ReasonCode: reason, Duration: time.Since(started), ProgressCompletionKind: kind,
+		Operation: observability.Operation(operation),
+		Result:    result, ReasonCode: reason, Duration: time.Since(started), ProgressCompletionKind: kind,
 		ProgressCompletionCause: cause, ProgressCompletionReason: causeReason, ProgressCompletionScope: scope,
+		CarriedReason:   carried,
 		HistoryCoverage: coverageFacts, ExecutionEvidence: executionEvidenceFacts(evidence),
 		PrimaryInput: primaryInputFacts(primary),
 		HeldBy:       heldBy,
@@ -2879,7 +2970,25 @@ func primaryInputFacts(primary *execution.PrimaryInputFact) *observability.Prima
 		return nil
 	}
 	return &observability.PrimaryInputFacts{Completeness: string(primary.Completeness), DataState: string(primary.DataState),
-		EmptiedByTarget: primary.EmptiedByTarget, QuietWhenEmpty: primary.QuietWhenEmpty}
+		EmptiedByTarget: primary.EmptiedByTarget, QuietWhenEmpty: primary.QuietWhenEmpty, UnfilledWhenEmpty: primary.UnfilledWhenEmpty,
+		Identity: identityFacts(primary.Identity)}
+}
+
+// identityFacts restates a round's identity evidence for the observation.
+func identityFacts(evidence *execution.IdentityEvidence) *observability.IdentityFacts {
+	if evidence == nil {
+		return nil
+	}
+	facts := &observability.IdentityFacts{Withheld: evidence.Withheld, OutsideTarget: evidence.OutsideTarget, KeyMissing: evidence.KeyMissing}
+	for _, sample := range evidence.Samples {
+		fields := make([]observability.IdentityField, 0, len(sample.Fields))
+		for _, field := range sample.Fields {
+			fields = append(fields, observability.IdentityField{Name: field.Name, Expected: field.Expected, Actual: field.Actual,
+				Present: field.Present, Canonical: field.Canonical})
+		}
+		facts.Samples = append(facts.Samples, observability.IdentitySample{Fields: fields})
+	}
+	return facts
 }
 
 // configDriftCompletion builds the completion of a Slot whose activations moved
@@ -2914,29 +3023,43 @@ func primaryInputFacts(primary *execution.PrimaryInputFact) *observability.Prima
 func configDriftCompletion(
 	contractRef execution.FrozenExecutionContractRef,
 	primary *execution.PrimaryInputFact,
-) (execution.SlotCompletion, execution.CompletionCause) {
-	return activationChangeCompletion(contractRef, primary, activationChangeDrift)
+	bindings []execution.NamedInputBinding,
+	targets []execution.TargetResolutionSummary,
+) (execution.SlotCompletion, execution.CompletionAttribution) {
+	return activationChangeCompletion(contractRef, primary, activationChangeDrift, bindings, targets)
 }
 
 // activationChangeCompletion is configDriftCompletion with the change named:
 // the same completion under CONFIG_DRIFT, PLAN_REACTIVATED or PLAN_NOT_ACTIVE,
 // which are one shape with three reasons. The unavailable-primary rule is the
 // same for all three.
+//
+// The attribution names the reason beside the cause, as a derived completion
+// does: the change's own word, or, when the primary input was unavailable,
+// the primary binding's reason and scope (execution.PrimaryBindingAttribution).
+// The completion's ReasonCode stays the change's word: it is persisted and
+// decides how consecutive gaps fold into a Progress gap summary. The targets
+// the Slot resolved at Begin are the completion's whatever changed, as
+// LastCompletion reports them after a restart; every caller has resolved
+// them by the time it builds this completion.
 func activationChangeCompletion(
 	contractRef execution.FrozenExecutionContractRef,
 	primary *execution.PrimaryInputFact,
 	change activationChange,
-) (execution.SlotCompletion, execution.CompletionCause) {
+	bindings []execution.NamedInputBinding,
+	targets []execution.TargetResolutionSummary,
+) (execution.SlotCompletion, execution.CompletionAttribution) {
 	kind := execution.CompletionPartialGap
-	cause := change.cause()
+	attribution := execution.CompletionAttribution{Cause: change.cause(), Reason: change.reason()}
 	if primary != nil && primary.Completeness == execution.CompletenessUnavailable {
 		kind = execution.CompletionUnavailable
-		cause = execution.CausePrimaryInputUnavailable
+		attribution.Cause = execution.CausePrimaryInputUnavailable
+		attribution.Reason, attribution.Scope = execution.PrimaryBindingAttribution(bindings, execution.CompletenessUnavailable)
 	}
 	return execution.SlotCompletion{
-		Contract: contractRef, Kind: kind, Primary: primary,
+		Contract: contractRef, Kind: kind, Primary: primary, TargetResolutions: targets,
 		Result: observability.ResultDegraded, ReasonCode: change.reason(),
-	}, cause
+	}, attribution
 }
 
 // storedStateLabel names the stored state a write-reuse comparison was made

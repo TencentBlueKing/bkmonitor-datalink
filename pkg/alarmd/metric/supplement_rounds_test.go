@@ -80,12 +80,12 @@ func TestTheRoundMetricsLeaveAWholeSupplementOut(t *testing.T) {
 			}
 		}
 		read := map[string]string{}
-		for _, family := range []string{"bkmonitor_alarmd_execute_return_total", "bkmonitor_alarmd_slot_operation_duration_seconds",
-			"bkmonitor_alarmd_state_retained_share_approaching_slots_total"} {
+		for _, family := range []string{"alarmd_execute_return_total", "alarmd_slot_operation_duration_seconds",
+			"alarmd_state_retained_share_approaching_slots_total"} {
 			read[family] = seriesReading(gatherFamily(t, r, family))
 		}
 		kinds := []string{}
-		for _, metric := range gatherFamily(t, r, "bkmonitor_alarmd_last_progress_timestamp_seconds") {
+		for _, metric := range gatherFamily(t, r, "alarmd_last_progress_timestamp_seconds") {
 			for _, label := range metric.GetLabel() {
 				kinds = append(kinds, label.GetValue())
 			}

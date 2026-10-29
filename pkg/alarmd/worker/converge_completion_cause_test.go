@@ -25,12 +25,17 @@ import (
 // TestConfigDriftCompletionDoesNotHideAnUnavailablePrimary against the one
 // constructor that makes both.
 func TestConvergedSlotStillSaysWhyItWasUnavailable(t *testing.T) {
-	result, causes := convergeDriftedSlot(t, execution.CompletenessUnavailable)
+	result, causes, reasons := convergeDriftedSlot(t, execution.CompletenessUnavailable)
 	if !result.Completed || result.CompletionKind != execution.CompletionUnavailable {
 		t.Fatalf("convergence result=%+v, want a completed unavailable Slot", result)
 	}
 	if len(causes) != 1 || causes[0] != string(execution.CausePrimaryInputUnavailable) {
 		t.Fatalf("observed completion causes=%q, want one %q", causes, execution.CausePrimaryInputUnavailable)
+	}
+	// And with the reason of the primary binding that was unavailable, as a
+	// derived completion names it, not reason_not_reported.
+	if len(reasons) != 1 || reasons[0] != contract.ReasonQueryUnavailable {
+		t.Fatalf("observed completion reasons=%q, want one %q", reasons, contract.ReasonQueryUnavailable)
 	}
 }
 
@@ -40,12 +45,16 @@ func TestConvergedSlotStillSaysWhyItWasUnavailable(t *testing.T) {
 // caused and could not tell an edited strategy from a hole in storage.
 func TestConvergedDriftedSlotSaysItsPlansMoved(t *testing.T) {
 	for _, completeness := range []execution.Completeness{execution.CompletenessFull, execution.CompletenessPartial} {
-		result, causes := convergeDriftedSlot(t, completeness)
+		result, causes, reasons := convergeDriftedSlot(t, completeness)
 		if !result.Completed || result.CompletionKind != execution.CompletionPartialGap {
 			t.Fatalf("%s primary: convergence result=%+v, want a completed partial-gap Slot", completeness, result)
 		}
 		if len(causes) != 1 || causes[0] != string(execution.CauseConfigDrift) {
 			t.Fatalf("%s primary: observed completion causes=%q, want one %q", completeness, causes, execution.CauseConfigDrift)
+		}
+		// With the drift's own word as the reason, not reason_not_reported.
+		if len(reasons) != 1 || reasons[0] != contract.ReasonConfigDrift {
+			t.Fatalf("%s primary: observed completion reasons=%q, want one %q", completeness, reasons, contract.ReasonConfigDrift)
 		}
 	}
 }
@@ -53,7 +62,7 @@ func TestConvergedDriftedSlotSaysItsPlansMoved(t *testing.T) {
 // convergeDriftedSlot drives the converge path for a Slot whose only Plan was
 // deselected while it ran, and returns the result together with every cause
 // the Progress commit line reported.
-func convergeDriftedSlot(t *testing.T, completeness execution.Completeness) (execution.SlotExecutionResult, []string) {
+func convergeDriftedSlot(t *testing.T, completeness execution.Completeness) (execution.SlotExecutionResult, []string, []string) {
 	t.Helper()
 	contractRef := execution.FrozenExecutionContractRef{
 		Slot:             execution.SlotIdentity{QueryGroup: "query-group", EvaluationTime: 1_788_000_000},
@@ -75,7 +84,13 @@ func convergeDriftedSlot(t *testing.T, completeness execution.Completeness) (exe
 	if completeness == execution.CompletenessUnavailable {
 		primary.DataState = execution.DataStateUnknown
 	}
-	completion, cause := configDriftCompletion(contractRef, &primary)
+	var bindings []execution.NamedInputBinding
+	if completeness == execution.CompletenessUnavailable {
+		bindings = []execution.NamedInputBinding{{Role: execution.InputRolePrimary, Completeness: execution.CompletenessUnavailable,
+			ReasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable), Consumer: execution.ConsumerRef{Plan: plan}}}
+	}
+	completion, attribution := configDriftCompletion(contractRef, &primary, bindings, nil)
+	cause := attribution.Cause
 	if cause == "" {
 		t.Fatal("the constructor produced a completion with no cause; the rest of this test proves nothing")
 	}
@@ -89,6 +104,7 @@ func convergeDriftedSlot(t *testing.T, completeness execution.Completeness) (exe
 			Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 				if observation.Stage == observability.StageProgressCommitted {
 					ports.committedCauses = append(ports.committedCauses, observation.ProgressCompletionCause)
+					ports.committedReasons = append(ports.committedReasons, observation.ProgressCompletionReason)
 					ports.committedPrimary = append(ports.committedPrimary, observation.PrimaryInput)
 				}
 			}),
@@ -108,7 +124,7 @@ func convergeDriftedSlot(t *testing.T, completeness execution.Completeness) (exe
 		currentFacts:      deselected,
 		activations:       deselected,
 		completion:        completion,
-		completionCause:   execution.CompletionAttribution{Cause: cause},
+		completionCause:   attribution,
 	}
 	result, err := coordinator.convergeNormalActivation(context.Background(), request, protection)
 	if err != nil {
@@ -122,11 +138,12 @@ func convergeDriftedSlot(t *testing.T, completeness execution.Completeness) (exe
 		ports.committedPrimary[0].Completeness != string(completeness) || ports.committedPrimary[0].DataState != string(primary.DataState) {
 		t.Fatalf("committed primary=%+v, want %s with %q on the completion line", ports.committedPrimary, completeness, primary.DataState)
 	}
-	return result, ports.committedCauses
+	return result, ports.committedCauses, ports.committedReasons
 }
 
 type convergeObservingPorts struct {
 	committedCauses  []string
+	committedReasons []string
 	committedPrimary []*observability.PrimaryInputFacts
 }
 

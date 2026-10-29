@@ -66,6 +66,10 @@ type StrategyDirectorySnapshot struct {
 	Revision   string    `json:"revision"`
 	Complete   bool      `json:"complete"`
 	Reason     string    `json:"reason,omitempty"`
+	// Partial is a page that stopped short of its rows to answer within the
+	// reader's deadline (Reason DEADLINE); the rows it has are whole, and
+	// the next page goes on after them.
+	Partial bool `json:"partial,omitempty"`
 	// FailedRead and Error are the first read that failed the answer and
 	// its own words, bounded and with URLs redacted: activation, manifest
 	// or group_object. The reason alone said DEPENDENCY_UNAVAILABLE

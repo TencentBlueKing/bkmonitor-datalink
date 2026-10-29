@@ -24,7 +24,7 @@ import (
 func gapSkipped(ctx context.Context, tracker *Tracker, slot int64, evidence *observability.ExecutionEvidenceFacts) {
 	tracker.Observe(ctx, observability.Observation{
 		Component: observability.ComponentProgress, Stage: observability.StageProgressCommitted,
-		Direction: observability.DirectionInternal, Result: observability.ResultSuccess, ReasonCode: observability.ReasonNone,
+		Result: observability.ResultSuccess, ReasonCode: observability.ReasonNone,
 		ProgressCompletionKind: "GAP_SKIPPED", ProgressCompletionCause: "REPLAY_EXPIRED",
 		Trace:             observability.TraceFields{EvaluationTime: slot},
 		ExecutionEvidence: evidence,

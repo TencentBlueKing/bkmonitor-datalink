@@ -44,7 +44,7 @@ func readMany(ctx context.Context, source string, binding RedisBinding, keys []s
 	commands := 3 * len(keys) // TYPE, PTTL, GETRANGE per key.
 	if commands > MaxCommands {
 		for i := range results {
-			results[i].Status = "budget_exceeded"
+			results[i].Status = "too_many_keys"
 		}
 		return results, raw
 	}
@@ -108,7 +108,7 @@ func readMany(ctx context.Context, source string, binding RedisBinding, keys []s
 		payload := []byte(values[i].Val())
 		bytesRead += len(payload)
 		if len(payload) > limit {
-			r.Status = "budget_exceeded"
+			r.Status = "document_too_large"
 			r.Reason = "document_bytes"
 			continue
 		}

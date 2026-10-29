@@ -607,3 +607,64 @@ func TestNoDataLoadCallsUnreadableBytesCorrupt(t *testing.T) {
 		})
 	}
 }
+
+// closesUnreadableBackend is the memory backend whose close reads fail.
+type closesUnreadableBackend struct {
+	*casMemoryBackend
+}
+
+func (backend closesUnreadableBackend) ReadHashPair(
+	ctx context.Context, first, _ string,
+) (map[string][]byte, map[string][]byte, error, error) {
+	memory, err := backend.ReadHash(ctx, first)
+	return memory, nil, errors.New("closes unreadable"), err
+}
+
+func (backend closesUnreadableBackend) RecordHashField(
+	context.Context, string, string, []byte, time.Duration, int,
+) (bool, error) {
+	return false, errors.New("closes unreadable")
+}
+
+func (backend closesUnreadableBackend) ReadHashFields(context.Context, string, []string) ([][]byte, error) {
+	return nil, errors.New("closes unreadable")
+}
+
+// Closes that cannot be read cost only themselves (decision-024): the memory
+// is found, carries no closes, and says they were not read.
+func TestNoDataMemoryIsFoundWhenItsClosesCannotBeRead(t *testing.T) {
+	memory := &casMemoryBackend{values: make(map[string][]byte)}
+	ctx := context.Background()
+	writer := generationStore(t, memory)
+	if _, err := writer.ApplyNoData(ctx, execution.NoDataApplyRequest{Retention: planRetention(retentionEvery(5, time.Minute)),
+		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{
+			noDataMutationV2(t, 0, execution.NoDataGroupMemory{GroupKey: "a", FirstAbsent: 940}),
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	router, err := NewFixedRouter("target", closesUnreadableBackend{casMemoryBackend: memory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewExecutionStore(ExecutionStoreOptions{
+		Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4,
+		MinTTL: time.Minute, MaxTTL: 30 * 24 * time.Hour, RestartMargin: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.LoadNoData(ctx, execution.NoDataLoadRequest{
+		Contract: frozenRef(), Items: []execution.PlanNoDataLoadItem{noDataLoadItemV2()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := loaded.Items[0]
+	if snapshot.Status != execution.NoDataMemoryFound || len(snapshot.Groups) != 1 {
+		t.Fatalf("snapshot = %+v, want the memory found", snapshot)
+	}
+	if !snapshot.ManualClosesUnread || snapshot.ManualCloses != nil {
+		t.Fatalf("closes = %+v, unread = %t; want none and the read named", snapshot.ManualCloses, snapshot.ManualClosesUnread)
+	}
+}

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 // delivered is a provider answer whose deliveries are whole, as a query's
@@ -231,7 +232,7 @@ func TestADirectedSlotNotReadIsUnobservedByWhy(t *testing.T) {
 // kept, or it failed.
 func TestADirectedSlotWhoseSupplementDidNotRunIsCountedByWhy(t *testing.T) {
 	for refused, want := range map[string]string{DirectedFlightBusy: DirectedFlightBusy,
-		DirectedContractExpired: DirectedContractExpired, "redis": DirectedFailed} {
+		DirectedContractExpired: DirectedContractExpired, DirectedKeptReadAbsent: DirectedKeptReadAbsent, "redis": DirectedFailed} {
 		f, _ := directedFixture(t, SupplementOutcome{Refused: refused})
 		slot := f.clock.now().Unix()
 		f.firstRead(slot, execution.CompletenessFull)
@@ -372,15 +373,11 @@ func TestADirectedGroupsSlotsAreReadOneAtATimeOldestFirst(t *testing.T) {
 	}
 	f.answers <- late(first)
 	f.engine.Step(context.Background())
-	for {
+	testwait.Until(t, "the first Slot's supplement started", func() bool {
 		mu.Lock()
-		started := len(order)
-		mu.Unlock()
-		if started == 1 {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
+		defer mu.Unlock()
+		return len(order) == 1
+	})
 	// Its supplement still running, the second is not read.
 	f.engine.Step(context.Background())
 	if len(f.answers) != 0 {
@@ -388,7 +385,7 @@ func TestADirectedGroupsSlotsAreReadOneAtATimeOldestFirst(t *testing.T) {
 	}
 	f.answers <- late(second)
 	f.engine.Step(context.Background())
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond) // fixed-wait: a window in which the second Slot's supplement must not start; an absence sends no signal to wait on
 	mu.Lock()
 	if len(order) != 1 {
 		mu.Unlock()

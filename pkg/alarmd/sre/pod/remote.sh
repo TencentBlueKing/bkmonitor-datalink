@@ -8,10 +8,19 @@
 # /dev/null.
 nonce=$1 t=$2
 shift 2
+# A command's output is read as it is written, so a timed-out command still
+# answers with what it printed. Python buffers a non-TTY stdout and loses
+# that buffer when the timer ends it; unbuffered, it has flushed every line.
+export PYTHONUNBUFFERED=1
 exec 3>&2 2>/dev/null
+# The exec's stdin is kept on fd 4 for the command: a shell without job
+# control gives a background command /dev/null for stdin before any
+# redirection of its own (POSIX; dash applies it, bash does not), so the
+# command's <&0 would read nothing and a script sent as stdin would exit 0.
+exec 4<&0
 if ! command -v sleep >/dev/null; then
 	printf '%s nosleep\n' "$nonce" >&3
-	exec "$@" 2>&3 3>&-
+	exec "$@" 2>&3 3>&- 4<&-
 fi
 # The command gets a process group of its own, so the timer ends its
 # children's children too: under setsid where the image has it (it makes one
@@ -30,9 +39,9 @@ fi
 # supervisor before the command is launched.
 printf '%s started\n' "$nonce" >&3 || exit 125
 if [ -n "$wrap" ]; then
-	setsid "$@" <&0 2>&3 3>&- &
+	setsid "$@" <&4 4<&- 2>&3 3>&- &
 else
-	"$@" <&0 2>&3 3>&- &
+	"$@" <&4 4<&- 2>&3 3>&- &
 fi
 pid=$!
 # The timer starts before anything more is written: a write into a closed
@@ -52,7 +61,7 @@ pid=$!
 	kill -TERM -"$pid" || kill -TERM "$pid"
 	sleep 2 3>&-
 	kill -KILL -"$pid" || kill -KILL "$pid"
-) </dev/null >/dev/null &
+) </dev/null >/dev/null 4<&- &
 timer=$!
 # setsid makes the group once it runs, a moment after the launch: wait for
 # it while the command lives, a bounded number of tries.

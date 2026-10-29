@@ -145,7 +145,7 @@ func (service *Service) planRecords(ctx context.Context, request StoreRequest) R
 	// The object's read and this one share the request's budget.
 	commands := r.Limits.Commands + planRecordCommands*len(reads)
 	if commands > MaxCommands {
-		r.Status, r.Complete, r.Reason = "budget_exceeded", false, "plans"
+		r.Status, r.Complete, r.Reason = "too_many_keys", false, "plans"
 		return r
 	}
 	r.Location.Key = ""
@@ -266,7 +266,7 @@ func readPlanRecords(ctx context.Context, binding RedisBinding, reads []planReco
 		bytesRead += len(raw)
 		switch observed, named, err := read.matches(raw); {
 		case !read.hash && len(raw) > limit:
-			record.Status, record.Reason = "budget_exceeded", "document_bytes"
+			record.Status, record.Reason = "document_too_large", "document_bytes"
 		case err != nil:
 			record.Status = "invalid_document"
 		case !named:

@@ -26,7 +26,7 @@ func TestActivationHeaderRebuildsAndRenewalConflictsAreScrapedFromZero(t *testin
 		}
 		return got
 	}
-	rebuilds, conflicts := "bkmonitor_alarmd_activation_header_rebuild_total", "bkmonitor_alarmd_activation_renewal_conflict_total"
+	rebuilds, conflicts := "alarmd_activation_header_rebuild_total", "alarmd_activation_renewal_conflict_total"
 	if got := read(rebuilds); len(got) != len(controlplane.ActivationHeaderRebuildOutcomes) {
 		t.Fatalf("rebuilds before any source: %v, want every outcome at zero", got)
 	}

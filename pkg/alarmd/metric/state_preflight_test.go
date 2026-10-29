@@ -25,7 +25,7 @@ import (
 // fold, and the family is the cross product of the two lists and no more.
 func TestStatePreflightsAreSeriesFromStartupAndCountByResultAndReason(t *testing.T) {
 	r := NewRecorder(BuildInfo{})
-	const family = "bkmonitor_alarmd_state_preflight_total"
+	const family = "alarmd_state_preflight_total"
 	before := gatherFamily(t, r, family)
 	want := len(observability.StatePreflightResults) * len(observability.StatePreflightReasons)
 	if len(before) != want {

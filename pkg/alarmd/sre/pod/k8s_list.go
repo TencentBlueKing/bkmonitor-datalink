@@ -5,12 +5,14 @@ package pod
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"math"
 	"sort"
 	"strings"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/fields"
@@ -27,7 +29,7 @@ const (
 	// DefaultResourceLimit and MaxResourceLimit bound one page: what the
 	// apiserver returns and this process decodes for one call.
 	DefaultResourceLimit = 50
-	MaxResourceLimit     = 100
+	MaxResourceLimit     = 500
 	// MaxResourcePaths bounds a projection.
 	MaxResourcePaths = 32
 	maxPathBytes     = 256
@@ -49,6 +51,18 @@ type resourceKind struct {
 	Kind       string
 	Resource   schema.GroupVersionResource
 	Namespaced bool
+	// Custom is a custom resource on the fixed list: a list the apiserver
+	// answers not-found means its CRD is not installed.
+	Custom bool
+	// KeysOnly returns the object as its metadata and its data keys with
+	// their sizes, never a value (keysOnlyRow); Fingerprinted adds each
+	// value's fingerprint, for Secrets.
+	KeysOnly      bool
+	Fingerprinted bool
+	// Webhooks drops each webhook's clientConfig.caBundle: the CA a webhook
+	// is called under is the cluster's trust material, and which webhooks
+	// gate what needs only their rules, selectors and targets.
+	Webhooks bool
 }
 
 var resourceKinds = []resourceKind{
@@ -57,6 +71,8 @@ var resourceKinds = []resourceKind{
 	{Kind: "Pod", Resource: schema.GroupVersionResource{Version: "v1", Resource: "pods"}, Namespaced: true},
 	{Kind: "Service", Resource: schema.GroupVersionResource{Version: "v1", Resource: "services"}, Namespaced: true},
 	{Kind: "Endpoints", Resource: schema.GroupVersionResource{Version: "v1", Resource: "endpoints"}, Namespaced: true},
+	// Endpoints stops at 1,000 addresses per Service; the slices hold them all.
+	{Kind: "EndpointSlice", Resource: schema.GroupVersionResource{Group: "discovery.k8s.io", Version: "v1", Resource: "endpointslices"}, Namespaced: true},
 	{Kind: "Event", Resource: schema.GroupVersionResource{Version: "v1", Resource: "events"}, Namespaced: true},
 	{Kind: "Deployment", Resource: schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}, Namespaced: true},
 	{Kind: "StatefulSet", Resource: schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}, Namespaced: true},
@@ -66,7 +82,36 @@ var resourceKinds = []resourceKind{
 	{Kind: "CronJob", Resource: schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "cronjobs"}, Namespaced: true},
 	{Kind: "Ingress", Resource: schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"}, Namespaced: true},
 	{Kind: "HorizontalPodAutoscaler", Resource: schema.GroupVersionResource{Group: "autoscaling", Version: "v2", Resource: "horizontalpodautoscalers"}, Namespaced: true},
+	// What a Helm release owns besides its workloads, read by its ownership
+	// annotations (helmOwnership).
+	{Kind: "ConfigMap", Resource: schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}, Namespaced: true, KeysOnly: true},
+	{Kind: "Secret", Resource: schema.GroupVersionResource{Version: "v1", Resource: "secrets"}, Namespaced: true, KeysOnly: true, Fingerprinted: true},
+	{Kind: "ServiceAccount", Resource: schema.GroupVersionResource{Version: "v1", Resource: "serviceaccounts"}, Namespaced: true},
+	{Kind: "PersistentVolumeClaim", Resource: schema.GroupVersionResource{Version: "v1", Resource: "persistentvolumeclaims"}, Namespaced: true},
+	{Kind: "Role", Resource: schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles"}, Namespaced: true},
+	{Kind: "RoleBinding", Resource: schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings"}, Namespaced: true},
+	{Kind: "ClusterRole", Resource: schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"}},
+	{Kind: "ClusterRoleBinding", Resource: schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"}},
+	// Custom resources, a fixed list rather than any group/version/kind: a
+	// kind is read only where its group is granted, and some custom
+	// resources carry credentials.
+	{Kind: "ServiceMonitor", Resource: schema.GroupVersionResource{Group: "monitoring.coreos.com", Version: "v1", Resource: "servicemonitors"}, Namespaced: true, Custom: true},
+	{Kind: "PodMonitor", Resource: schema.GroupVersionResource{Group: "monitoring.coreos.com", Version: "v1", Resource: "podmonitors"}, Namespaced: true, Custom: true},
+	{Kind: "BkLogConfig", Resource: schema.GroupVersionResource{Group: "bk.tencent.com", Version: "v1alpha1", Resource: "bklogconfigs"}, Namespaced: true, Custom: true},
+	// bk-monitor-operator's DataID: which business each kind of collected
+	// data lands in, the fact the trends derive their space from.
+	{Kind: "DataID", Resource: schema.GroupVersionResource{Group: "monitoring.bk.tencent.com", Version: "v1beta1", Resource: "dataids"}, Custom: true},
+	// The admission webhooks: which webhook gates which resources, so a
+	// dry run's denial can be traced to the webhook that made it.
+	{Kind: "ValidatingWebhookConfiguration", Resource: schema.GroupVersionResource{Group: "admissionregistration.k8s.io", Version: "v1", Resource: "validatingwebhookconfigurations"}, Webhooks: true},
+	{Kind: "MutatingWebhookConfiguration", Resource: schema.GroupVersionResource{Group: "admissionregistration.k8s.io", Version: "v1", Resource: "mutatingwebhookconfigurations"}, Webhooks: true},
 }
+
+// helmLabel and helmAnnotations are Helm's ownership marks on every object a
+// release manages: what "what does this release own" is read by.
+const helmLabel = "app.kubernetes.io/managed-by"
+
+var helmAnnotations = []string{"meta.helm.sh/release-name", "meta.helm.sh/release-namespace"}
 
 // ResourceKinds is every kind the read serves, for the operation's schema.
 func ResourceKinds() []string {
@@ -77,18 +122,8 @@ func ResourceKinds() []string {
 	return kinds
 }
 
-// refusedKinds have operations of their own, which mask what this read
-// would return in full.
-var refusedKinds = map[string]string{
-	"secret": OpReadSecret, "secrets": OpReadSecret,
-	"configmap": OpReadConfigMap, "configmaps": OpReadConfigMap,
-}
-
 func lookupKind(value string) (resourceKind, error) {
 	name := strings.ToLower(strings.TrimSpace(value))
-	if op, refused := refusedKinds[name]; refused {
-		return resourceKind{}, denied(value + " is read with " + op + ", which masks its values")
-	}
 	for _, kind := range resourceKinds {
 		if name == strings.ToLower(kind.Kind) || name == kind.Resource.Resource {
 			return kind, nil
@@ -113,24 +148,35 @@ type ResourceRequest struct {
 // ResourceReceipt is what one read returned. Items are the objects as
 // cleaned (cleanObject) and, with paths, projected; each is whole or, when
 // one object alone is over the output bound, its identity only and named in
-// OversizedItems. Truncated says the page held more than the bound let
-// through: the rest are omitted, Continue is empty, and ReadWith is the
-// token this page was read with, to read it again with a smaller limit.
+// OversizedItems. A page whose objects do not all fit the output bound is
+// listed again at the count that fit (resourceListCuts), so
+// it ends where its items end and Continue goes on from there: a walk that
+// follows Continue reads every object. Truncated says even that did not
+// fit -- the objects grew between the two lists: the rest are omitted,
+// Continue is empty, and ReadWith is the token this page was read with, to
+// read it again with a smaller limit.
 type ResourceReceipt struct {
-	Kind              string            `json:"kind"`
-	APIVersion        string            `json:"api_version"`
-	Namespace         string            `json:"namespace"`
-	ClusterWide       bool              `json:"cluster_wide"`
-	Items             []json.RawMessage `json:"items"`
-	Count             int               `json:"count"`
-	Continue          string            `json:"continue,omitempty"`
-	ResourceVersion   string            `json:"resource_version,omitempty"`
-	Truncated         bool              `json:"truncated"`
-	ItemsOmitted      int               `json:"items_omitted,omitempty"`
-	ReadWith          string            `json:"read_with,omitempty"`
-	OversizedItems    []string          `json:"oversized_items,omitempty"`
-	RedactionContract string            `json:"redaction_contract"`
-	At                time.Time         `json:"at"`
+	Kind        string            `json:"kind"`
+	APIVersion  string            `json:"api_version"`
+	Namespace   string            `json:"namespace"`
+	ClusterWide bool              `json:"cluster_wide"`
+	Items       []json.RawMessage `json:"items"`
+	Count       int               `json:"count"`
+	Continue    string            `json:"continue,omitempty"`
+	// RemainingItems is how many objects the apiserver says are past this
+	// page, when it says; with Continue set and no count, more pages follow
+	// of a size it did not state.
+	RemainingItems    *int64   `json:"remaining_items,omitempty"`
+	ResourceVersion   string   `json:"resource_version,omitempty"`
+	Truncated         bool     `json:"truncated"`
+	ItemsOmitted      int      `json:"items_omitted,omitempty"`
+	ReadWith          string   `json:"read_with,omitempty"`
+	OversizedItems    []string `json:"oversized_items,omitempty"`
+	RedactionContract string   `json:"redaction_contract"`
+	// FingerprintScope is where a Secret's fingerprints compare; set on a
+	// Secret read only.
+	FingerprintScope string    `json:"fingerprint_scope,omitempty"`
+	At               time.Time `json:"at"`
 }
 
 // identityPaths are on every item, projected or not.
@@ -147,6 +193,10 @@ func (p *Provider) ListResources(ctx context.Context, request ResourceRequest) (
 		return result, err
 	}
 	result.Kind, result.APIVersion = kind.Kind, kind.Resource.GroupVersion().String()
+	fingerprints := p.newFingerprints()
+	if kind.Fingerprinted {
+		result.FingerprintScope = fingerprints.Scope()
+	}
 	if p.options.Resources == nil {
 		return result, &Error{Code: CodeAPIError, Message: "Kubernetes resource adapter is unavailable"}
 	}
@@ -197,20 +247,66 @@ func (p *Provider) ListResources(ctx context.Context, request ResourceRequest) (
 	} else {
 		list, err := p.options.Resources.ListResources(ctx, kind.Resource, request.Namespace, metav1.ListOptions{
 			LabelSelector: request.LabelSelector, FieldSelector: request.FieldSelector, Continue: request.Continue, Limit: int64(limit)})
+		if kind.Custom && apierrors.IsNotFound(err) {
+			return result, &Error{Code: CodeKindNotInstalled, Message: kind.Kind + " is not installed on this cluster: its CRD " +
+				kind.Resource.Resource + "." + kind.Resource.Group + " is absent"}
+		}
 		if err != nil {
 			return result, apiError(err)
 		}
-		objects, result.Continue, result.ResourceVersion = list.Items, list.GetContinue(), list.GetResourceVersion()
+		objects, result.Continue, result.ResourceVersion, result.RemainingItems = list.Items, list.GetContinue(), list.GetResourceVersion(), list.GetRemainingItemCount()
 	}
+	for cuts := 0; ; cuts++ {
+		fit, err := p.encodeResources(&result, kind, paths, objects, fingerprints)
+		if err != nil || fit == len(objects) {
+			return result, err
+		}
+		if request.Name != "" || cuts == resourceListCuts {
+			result.Truncated, result.ItemsOmitted = true, len(objects)-fit
+			result.ReadWith, result.Continue = request.Continue, ""
+			return result, nil
+		}
+		// The page again, at the count that fit: the apiserver's own token
+		// then resumes after the last item returned.
+		list, err := p.options.Resources.ListResources(ctx, kind.Resource, request.Namespace, metav1.ListOptions{
+			LabelSelector: request.LabelSelector, FieldSelector: request.FieldSelector, Continue: request.Continue, Limit: int64(fit)})
+		if err != nil {
+			return result, apiError(err)
+		}
+		objects, result.Continue, result.ResourceVersion, result.RemainingItems = list.Items, list.GetContinue(), list.GetResourceVersion(), list.GetRemainingItemCount()
+		result.Items, result.Count, result.OversizedItems = []json.RawMessage{}, 0, nil
+	}
+}
+
+// resourceListCuts is how many times a page cut by the output bound is
+// listed again at the count that fit: once, which costs the apiserver one
+// more LIST of fewer objects than the page. Objects that grew between the
+// two lists leave the page truncated, said so.
+const resourceListCuts = 1
+
+// encodeResources cleans, projects and encodes objects into the receipt
+// while they fit the output bound, and says how many did. The first always
+// fits: one alone over the bound is its identity only, named in
+// OversizedItems.
+func (p *Provider) encodeResources(result *ResourceReceipt, kind resourceKind, paths [][]string, objects []unstructured.Unstructured,
+	fingerprints *fingerprints,
+) (int, error) {
 	remaining := p.options.MaxOutputBytes
 	for index, object := range objects {
-		item := p.cleanObject(object.Object)
+		raw := object.Object
+		if kind.KeysOnly {
+			raw = p.keysOnlyRow(raw, kind.Fingerprinted, fingerprints)
+		}
+		if kind.Webhooks {
+			raw = withoutCABundles(raw)
+		}
+		item := p.cleanObject(raw, fingerprints)
 		if len(paths) > 0 {
-			item = project(item, append(append([][]string(nil), identityPaths...), paths...))
+			item = keepHelmOwnership(project(item, append(append([][]string(nil), identityPaths...), paths...)), item)
 		}
 		encoded, err := json.Marshal(item)
 		if err != nil {
-			return result, &Error{Code: CodeAPIError, Message: "a Kubernetes object did not encode"}
+			return index, &Error{Code: CodeAPIError, Message: "a Kubernetes object did not encode"}
 		}
 		if int64(len(encoded)) > p.options.MaxOutputBytes {
 			// Alone over the bound: its identity, so the caller can read it
@@ -219,15 +315,105 @@ func (p *Provider) ListResources(ctx context.Context, request ResourceRequest) (
 			result.OversizedItems = append(result.OversizedItems, object.GetNamespace()+"/"+object.GetName())
 		}
 		if int64(len(encoded)) > remaining {
-			result.Truncated, result.ItemsOmitted = true, len(objects)-index
-			result.ReadWith, result.Continue = request.Continue, ""
-			break
+			return index, nil
 		}
 		remaining -= int64(len(encoded))
 		result.Items = append(result.Items, encoded)
+		result.Count = len(result.Items)
 	}
-	result.Count = len(result.Items)
-	return result, nil
+	return len(objects), nil
+}
+
+// keysOnlyRow is a ConfigMap or a Secret as listed: its identity, metadata,
+// type, and each data and binaryData key with its value's size in bytes and,
+// fingerprinted, its value's fingerprint, sorted by key. It is built from
+// nothing that holds a value, so neither the whole item nor any projection
+// of it can carry one. configmap.get reads ConfigMap values, masked; no read
+// returns a Secret value.
+func (p *Provider) keysOnlyRow(object map[string]any, fingerprinted bool, fingerprints *fingerprints) map[string]any {
+	row := map[string]any{"apiVersion": object["apiVersion"], "kind": object["kind"]}
+	if kind, ok := object["type"].(string); ok {
+		row["type"] = kind
+	}
+	if metadata, ok := object["metadata"].(map[string]any); ok {
+		kept := map[string]any{}
+		for _, key := range []string{"name", "namespace", "uid", "labels", "annotations", "ownerReferences", "creationTimestamp"} {
+			if value, present := metadata[key]; present {
+				kept[key] = value
+			}
+		}
+		row["metadata"] = kept
+	}
+	text := func(value string) ([]byte, bool) { return []byte(value), true }
+	encoded := func(value string) ([]byte, bool) {
+		decoded, err := base64.StdEncoding.DecodeString(value)
+		return decoded, err == nil
+	}
+	data := text
+	if fingerprinted {
+		// A Secret's data is base64 on the wire, like a ConfigMap's binaryData.
+		data = encoded
+	}
+	row["data"] = keySizes(object["data"], data, fingerprinted, fingerprints)
+	if _, present := object["binaryData"]; present || !fingerprinted {
+		row["binaryData"] = keySizes(object["binaryData"], encoded, fingerprinted, fingerprints)
+	}
+	return row
+}
+
+func keySizes(value any, decode func(string) ([]byte, bool), fingerprinted bool, fingerprints *fingerprints) []any {
+	entries, _ := value.(map[string]any)
+	keys := make([]string, 0, len(entries))
+	for key := range entries {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]any, 0, len(keys))
+	for _, key := range keys {
+		raw, _ := entries[key].(string)
+		decoded, ok := decode(raw)
+		entry := map[string]any{"key": key, "bytes": len(decoded)}
+		if !ok {
+			entry["bytes"] = -1
+		} else if fingerprinted {
+			entry["fingerprint"] = fingerprints.sum(decoded)
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// keepHelmOwnership puts Helm's ownership label and annotations, where the
+// object has them, back on a projected item: a path cannot name a key with
+// dots in it, and a release's inventory is read by these on every kind.
+func keepHelmOwnership(projected, item map[string]any) map[string]any {
+	metadata, _ := item["metadata"].(map[string]any)
+	if metadata == nil {
+		return projected
+	}
+	out, _ := projected["metadata"].(map[string]any)
+	if out == nil {
+		out = map[string]any{}
+	}
+	keep := func(field string, keys []string) {
+		from, _ := metadata[field].(map[string]any)
+		for _, key := range keys {
+			value, present := from[key]
+			if !present {
+				continue
+			}
+			to, _ := out[field].(map[string]any)
+			if to == nil {
+				to = map[string]any{}
+				out[field] = to
+			}
+			to[key] = value
+		}
+	}
+	keep("labels", []string{helmLabel})
+	keep("annotations", helmAnnotations)
+	projected["metadata"] = out
+	return projected
 }
 
 func resourcePaths(values []string) ([][]string, error) {
@@ -257,8 +443,8 @@ func sliceHasEmpty(values []string) bool {
 // cleanObject is an object as the read returns it:
 //   - metadata.managedFields dropped, and the last-applied annotation, which
 //     can carry env values in clear;
-//   - an annotation under a credential-like key masked whole, as configmap.get
-//     masks such a key;
+//   - an annotation under a credential-like key, or holding something shaped
+//     like a key under any name, masked whole, as configmap.get masks it;
 //   - in any env list, the value of an entry whose name is credential-like
 //     masked whole;
 //   - every string through the output redaction.
@@ -266,35 +452,35 @@ func sliceHasEmpty(values []string) bool {
 // References by name - secretKeyRef, configMapKeyRef, envFrom - are left as
 // they are on purpose: a Secret's or ConfigMap's name is not its content,
 // and it is how a reader finds which one a workload reads.
-func (p *Provider) cleanObject(object map[string]any) map[string]any {
+func (p *Provider) cleanObject(object map[string]any, fingerprints *fingerprints) map[string]any {
 	if metadata, ok := object["metadata"].(map[string]any); ok {
 		delete(metadata, "managedFields")
 		if annotations, ok := metadata["annotations"].(map[string]any); ok {
 			delete(annotations, lastAppliedAnnotation)
 			for key, value := range annotations {
-				if text, isText := value.(string); isText && text != "" && credentialKey.MatchString(key) {
+				if text, isText := value.(string); isText && text != "" && (credentialKey.MatchString(key) || credentialName(key) || keyMaterial(text)) {
 					annotations[key] = "<redacted>"
 				}
 			}
 		}
 	}
-	cleaned, _ := p.cleanValue(object).(map[string]any)
+	cleaned, _ := p.cleanValue(object, fingerprints).(map[string]any)
 	return cleaned
 }
 
-func (p *Provider) cleanValue(value any) any {
+func (p *Provider) cleanValue(value any, fingerprints *fingerprints) any {
 	switch v := value.(type) {
 	case map[string]any:
 		for key, item := range v {
 			if key == "env" {
-				maskEnv(item)
+				maskEnv(item, fingerprints)
 			}
-			v[key] = p.cleanValue(item)
+			v[key] = p.cleanValue(item, fingerprints)
 		}
 		return v
 	case []any:
 		for index := range v {
-			v[index] = p.cleanValue(v[index])
+			v[index] = p.cleanValue(v[index], fingerprints)
 		}
 		return v
 	case string:
@@ -305,7 +491,10 @@ func (p *Provider) cleanValue(value any) any {
 	}
 }
 
-func maskEnv(value any) {
+// maskEnv masks an env value under a credential name and puts its
+// fingerprint beside it, so a value set in place can be compared with the
+// Secret that should hold it.
+func maskEnv(value any, fingerprints *fingerprints) {
 	entries, ok := value.([]any)
 	if !ok {
 		return
@@ -317,7 +506,7 @@ func maskEnv(value any) {
 		}
 		name, _ := variable["name"].(string)
 		if text, isText := variable["value"].(string); isText && text != "" && credentialKey.MatchString(name) {
-			variable["value"] = "<redacted>"
+			variable["value"], variable["valueFingerprint"] = "<redacted>", fingerprints.sum([]byte(text))
 		}
 	}
 }
@@ -398,4 +587,19 @@ func mergeProjected(into, from any) any {
 	default:
 		return from
 	}
+}
+
+// withoutCABundles is a webhook configuration with every webhook's
+// clientConfig.caBundle removed.
+func withoutCABundles(object map[string]any) map[string]any {
+	copied := (&unstructured.Unstructured{Object: object}).DeepCopy().Object
+	webhooks, _ := copied["webhooks"].([]any)
+	for _, raw := range webhooks {
+		if webhook, ok := raw.(map[string]any); ok {
+			if config, ok := webhook["clientConfig"].(map[string]any); ok {
+				delete(config, "caBundle")
+			}
+		}
+	}
+	return copied
 }

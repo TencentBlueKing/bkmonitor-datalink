@@ -142,7 +142,7 @@ type fleetCollector struct {
 
 func newFleetCollector(source FleetVerdictSource) *fleetCollector {
 	descriptor := func(name, help string, labels []string) *prometheus.Desc {
-		return prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, name), help, labels, nil)
+		return prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, name), help, labels, nil)
 	}
 	return &fleetCollector{
 		source:        source,

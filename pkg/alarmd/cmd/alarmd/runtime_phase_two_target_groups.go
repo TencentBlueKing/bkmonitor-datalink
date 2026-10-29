@@ -65,16 +65,13 @@ func targetGroupEvidence(health cmdbcache.GroupHealth, at time.Time) *fleet.Writ
 	return evidence
 }
 
-// targetGroupReading is the store's health as the collector reads it: while
-// the refreshes fail, every group held is served past them.
+// targetGroupReading is the store's health as the collector reads it:
+// failing is the groups held past a failed read - every one when the round
+// trip failed, a group alone when Redis answered its key with an error.
 func targetGroupReading(health cmdbcache.GroupHealth) metric.TargetGroupReading {
-	failing := 0
-	if health.RefreshFailed {
-		failing = health.Loaded + health.Unavailable
-	}
 	return metric.TargetGroupReading{
 		Groups: map[string]int{
-			"referenced": health.Referenced, "loaded": health.Loaded, "unavailable": health.Unavailable, "failing": failing,
+			"referenced": health.Referenced, "loaded": health.Loaded, "unavailable": health.Unavailable, "failing": health.Failing,
 		},
 		RefreshFailed: health.RefreshFailed,
 	}

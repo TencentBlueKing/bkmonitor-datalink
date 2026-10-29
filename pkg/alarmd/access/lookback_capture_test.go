@@ -19,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
 )
 
@@ -112,12 +113,12 @@ func TestAFirstReadIsSummarizedBeforeTheTargetFilter(t *testing.T) {
 	clock.Unlock()
 	engine.Step(context.Background())
 	first := lookback.RungNames[0]
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := testwait.Deadline(t)
 	for engine.Stats().Sources["bk_log_search/log"].Rechecks[first][lookback.RecheckCompared] == 0 {
 		if time.Now().After(deadline) {
 			t.Fatalf("no recheck: %v", engine.Stats().Sources["bk_log_search/log"].Rechecks[first])
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	changes := engine.Stats().Sources["bk_log_search/log"].Changes[first]
 	if changes[lookback.ChangeValuesChanged] != 1 || changes[lookback.ChangePointsAdded] != 0 {

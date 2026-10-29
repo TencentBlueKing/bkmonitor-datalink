@@ -127,4 +127,8 @@ func TestProductionPhaseTwoWorkerAcknowledgesTheActivationItExecutesBy(t *testin
 	if len(health.PerReplica) != 1 || health.PerReplica[0].AckedVersion == nil || *health.PerReplica[0].AckedVersion != activation.RecordRevision {
 		t.Fatalf("per-replica acked version = %+v, want %d", health.PerReplica, activation.RecordRevision)
 	}
+	// The replica's stage counters ride its summary, with the roles it runs.
+	if flow := health.PerReplica[0].Flow; flow == nil || len(flow.Roles) != 3 || len(flow.QueryDuration.Buckets) != len(fleet.FlowQueryBounds) {
+		t.Fatalf("per-replica flow = %+v, want the counters and the three roles this replica runs", flow)
+	}
 }

@@ -33,7 +33,7 @@ type roundMemoryCollector struct {
 }
 
 func newRoundMemoryCollector() *roundMemoryCollector {
-	name := func(suffix string) string { return prometheus.BuildFQName(metricNamespace, metricSubsystem, suffix) }
+	name := func(suffix string) string { return prometheus.BuildFQName("", metricSubsystem, suffix) }
 	return &roundMemoryCollector{
 		objects: prometheus.NewDesc(name("fleet_round_memory_objects"),
 			"Objects this replica runs, by how many rounds its fleet tracker keeps for each to read window holes by "+

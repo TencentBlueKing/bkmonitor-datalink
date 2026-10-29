@@ -23,7 +23,7 @@ func TestTargetFlowRendersSlotCapacityRejectionFacts(t *testing.T) {
 	own := uint64(65537)
 	rejection := Observation{
 		Component: ComponentResource, Stage: StageResourceHard, Result: ResultPaused, Operation: OperationNormal,
-		Direction: DirectionInternal, ReasonCode: ReasonCode("SLOT_BUDGET_EXCEEDED"),
+		ReasonCode:        ReasonCode("SLOT_BUDGET_EXCEEDED"),
 		CapacityBudget:    CapacityBudgetStateMutations,
 		CapacityRejection: &CapacityRejectionFacts{Phase: "slot_output", OwnUsed: &own, Requested: 1, Limit: 65536},
 		Err:               errors.New("alarmd worker: provisional state_mutations budget exceeded"),

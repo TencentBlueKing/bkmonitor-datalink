@@ -71,4 +71,66 @@ func TestTheChannelListsClusterResourcesAndPointsAtTheNextPage(t *testing.T) {
 		response.Next[0].Params["kind"] != "Node" {
 		t.Fatalf("next %+v, want the same read from page-2", response.Next)
 	}
+	if !strings.Contains(response.Summary, "还有更多页") {
+		t.Fatalf("summary %q, want it to say more pages follow", response.Summary)
+	}
+}
+
+// secretList answers a Secret list with two Secrets, or the apiserver's
+// refusal.
+type secretList struct{ refuse bool }
+
+func (l secretList) ListResources(_ context.Context, resource schema.GroupVersionResource, _ string, _ metav1.ListOptions) (*unstructured.UnstructuredList, error) {
+	if l.refuse {
+		return nil, &pod.Error{Code: pod.CodeForbidden, Message: "refused"}
+	}
+	list := &unstructured.UnstructuredList{}
+	for _, name := range []string{"s1", "s2"} {
+		list.Items = append(list.Items, unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": resource.Resource,
+			"metadata": map[string]any{"name": name, "namespace": "ns1", "uid": "uid-" + name},
+			"data":     map[string]any{"password": "c2VudGluZWwtbGlzdGVk"}}})
+	}
+	return list, nil
+}
+
+func (secretList) GetResource(context.Context, schema.GroupVersionResource, string, string) (*unstructured.Unstructured, error) {
+	return nil, &pod.Error{Code: pod.CodeNotFound, Message: "not used"}
+}
+
+// Listing Secrets is audited with the Secrets it returned, also when the
+// apiserver refuses; neither the answer nor the audit carries a value. A
+// list of another kind is not an SRE action.
+func TestASecretListingIsAuditedWithTheNamesItReturned(t *testing.T) {
+	for _, refuse := range []bool{false, true} {
+		client := &postObservationClient{target: corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "fixture", Name: "web-0", UID: "pod-uid"}}}
+		provider, err := pod.New(pod.Options{Client: client, Resources: secretList{refuse: refuse}, DefaultNamespace: "fixture"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var actions []SREAction
+		channel, err := New(Options{Auth: postObservationAuth{}, EnvironmentID: "test", Replica: "replica-1", Operations: SREOperations(SREOptions{Pods: provider, Audit: func(action SREAction) { actions = append(actions, action) }})})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, response := call(t, channel, envelope(channel, "invoke", pod.OpListResources, Params{"kind": "Secret", "namespace": "ns1"}))
+		encoded, _ := json.Marshal(response)
+		if strings.Contains(string(encoded), "sentinel") || strings.Contains(string(encoded), "c2VudGluZWwtbGlzdGVk") {
+			t.Fatalf("refuse=%v answer carries a value: %s", refuse, encoded)
+		}
+		want := SREAction{Op: pod.OpListResources, Namespace: "ns1", Kind: "Secret", Name: "ns1/s1,ns1/s2", Detail: "secrets 2, no values", Result: SREResultDone}
+		if refuse {
+			want.Name, want.Detail, want.Result, want.Code = "", "secrets 0, no values", SREResultForbidden, pod.CodeForbidden
+		}
+		if len(actions) != 1 || actions[0].Op != want.Op || actions[0].Namespace != want.Namespace || actions[0].Kind != want.Kind ||
+			actions[0].Name != want.Name || actions[0].Detail != want.Detail || actions[0].Result != want.Result || actions[0].Code != want.Code {
+			t.Fatalf("refuse=%v audit %+v, want %+v", refuse, actions, want)
+		}
+		if encoded, _ := json.Marshal(actions[0]); strings.Contains(string(encoded), "sentinel") {
+			t.Fatalf("the audit carries a value: %s", encoded)
+		}
+		call(t, channel, envelope(channel, "invoke", pod.OpListResources, Params{"kind": "ConfigMap", "namespace": "ns1"}))
+		if len(actions) != 1 {
+			t.Fatalf("a ConfigMap list was audited: %+v", actions)
+		}
+	}
 }

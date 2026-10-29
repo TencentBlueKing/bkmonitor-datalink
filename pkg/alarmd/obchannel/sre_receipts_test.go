@@ -66,7 +66,7 @@ func TestSREReceiptsAreSelectedAndPaged(t *testing.T) {
 	if ids, page = list(SREReceiptFilter{Limit: 3, Offset: 3}); fmt.Sprint(ids) != "[r1]" || page.NextOffset != 0 {
 		t.Fatalf("second page %v %+v", ids, page)
 	}
-	if ttl := client.TTL(context.Background(), "test.sre:{env}:receipts").Val(); ttl <= SREReceiptRetention-time.Minute || ttl > SREReceiptRetention {
+	if ttl := client.TTL(context.Background(), "test.sre:{env}:receipts:exec").Val(); ttl <= SREReceiptRetention-time.Minute || ttl > SREReceiptRetention {
 		t.Fatalf("ttl %v, want the retention", ttl)
 	}
 }
@@ -75,18 +75,18 @@ func TestSREReceiptsAreSelectedAndPaged(t *testing.T) {
 func TestSREReceiptsKeepTheNewest(t *testing.T) {
 	client := redistest.Start(t).Client()
 	receipts := NewSREReceipts(client, "test.sre:{env}:receipts", nil, nil)
-	for index := 0; index < MaxSREReceipts+5; index++ {
+	for index := 0; index < MaxSREChangeReceipts+5; index++ {
 		receipts.Record(SREAction{Op: "pod.delete", RequestID: fmt.Sprint(index), At: time.Unix(int64(1_700_000_000+index), 0)})
 	}
 	page, err := receipts.List(context.Background(), SREReceiptFilter{Limit: 1})
-	if err != nil || page.Stored != MaxSREReceipts || page.Receipts[0].RequestID != fmt.Sprint(MaxSREReceipts+4) {
-		t.Fatalf("%+v %v, want %d kept, the newest first", page.Stored, err, MaxSREReceipts)
+	if err != nil || page.Stored != MaxSREChangeReceipts || page.Receipts[0].RequestID != fmt.Sprint(MaxSREChangeReceipts+4) {
+		t.Fatalf("%+v %v, want %d kept, the newest first", page.Stored, err, MaxSREChangeReceipts)
 	}
 	if page, _ := receipts.List(context.Background(), SREReceiptFilter{RequestID: "4"}); page.Matched != 0 {
 		t.Fatal("the oldest receipts were kept past the bound")
 	}
-	if kept := client.LLen(context.Background(), "test.sre:{env}:receipts").Val(); kept != MaxSREReceipts {
-		t.Fatalf("the store holds %d receipts, want %d", kept, MaxSREReceipts)
+	if kept := client.LLen(context.Background(), "test.sre:{env}:receipts:change").Val(); kept != MaxSREChangeReceipts {
+		t.Fatalf("the store holds %d receipts, want %d", kept, MaxSREChangeReceipts)
 	}
 }
 
@@ -153,4 +153,29 @@ func TestSREReceiptsReadAnExecutionBack(t *testing.T) {
 		}
 	}
 	t.Fatal("sre.receipts is missing")
+}
+
+// Every action the channel records is filed on purpose: a write goes to the
+// change list, where whoever asks what was changed reads it, a command to
+// the exec list, and a read to the access list. An action added without
+// being decided here fails, so a write cannot drift into the access list
+// unnoticed.
+func TestEveryRecordedActionIsFiledAsAChangeACommandOrAnAccess(t *testing.T) {
+	want := map[string]string{
+		OpNodeExec: SREEffectExec, OpNodeCancel: SREEffectExec, OpNodeEnded: SREEffectExec, OpNodeGet: SREEffectAccess,
+		"pod.exec": SREEffectExec, pod.OpDeletePod: SREEffectChange, pod.OpRestartWorkload: SREEffectChange, pod.OpScaleWorkload: SREEffectChange,
+		pod.OpReadSecret: SREEffectAccess, pod.OpReadConfigMap: SREEffectAccess, OpSetImage: SREEffectChange, OpRevert: SREEffectChange,
+		pod.OpListResources: SREEffectAccess, pod.OpDryRun: SREEffectAccess, pod.OpApply: SREEffectChange, pod.OpDelete: SREEffectChange,
+		pod.OpPatch: SREEffectChange, pod.OpEditConfigMapText: SREEffectChange,
+	}
+	for _, op := range SREActionOps {
+		effect, decided := want[op]
+		if !decided {
+			t.Errorf("action %s is recorded but not decided here as a change, a command or an access", op)
+			continue
+		}
+		if got := sreEffect(op); got != effect {
+			t.Errorf("action %s filed as %s, want %s", op, got, effect)
+		}
+	}
 }

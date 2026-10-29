@@ -56,16 +56,16 @@ func TestObjectGetReadsAWarmingGuard(t *testing.T) {
 // strategy.get puts the reading on each warming plan row and counts them in
 // the summary; rows under other causes are left as they came.
 func TestStrategyGetReadsEachWarmingRow(t *testing.T) {
-	body := `{"strategy_id":"1001","line":"策略 1001","plans":[` +
+	body := `{"strategy_id":"101","line":"策略 101","plans":[` +
 		`{"query_group":"q1","existence":"present","rows":[` + warmingRow + `]},` +
 		`{"query_group":"q2","existence":"present","rows":[{"kind":"DEGRADED_RUN","cause_reason":"HISTORY_GAPPED"}]}]}`
 	native := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) })
 	c := testChannel(t, &testAuth{}, NativeOperations(native)...)
-	status, out := call(t, c, envelope(c, "invoke", "strategy.get", Params{"strategy_id": "1001"}))
+	status, out := call(t, c, envelope(c, "invoke", "strategy.get", Params{"strategy_id": "101"}))
 	if status != 200 {
 		t.Fatalf("status %d: %+v", status, out)
 	}
-	if !strings.HasPrefix(out.Summary, "策略 1001") || !strings.Contains(out.Summary, "1 个运行对象处于 GAP_GUARD_WARMING") ||
+	if !strings.HasPrefix(out.Summary, "策略 101") || !strings.Contains(out.Summary, "1 个运行对象处于 GAP_GUARD_WARMING") ||
 		!strings.Contains(out.Summary, "ABNORMAL 和 RECOVERY 照常判") {
 		t.Fatalf("summary %q", out.Summary)
 	}

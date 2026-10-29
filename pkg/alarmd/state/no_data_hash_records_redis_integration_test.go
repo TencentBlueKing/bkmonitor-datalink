@@ -74,7 +74,8 @@ func TestTheDefaultGroupBoundIsTakenOnBothSidesOnARealServer(t *testing.T) {
 				got.ReasonCode != execution.ReasonCode(contract.ReasonStateBudgetExceeded) {
 				t.Fatalf("write of %d groups = %+v, want a refusal by name", arm.groups, got)
 			}
-			want := execution.NoDataRecordSize{Record: execution.NoDataRecordGroups, Groups: limit + 1, Limit: limit}
+			want := execution.NoDataRecordSize{Record: execution.NoDataRecordGroups, Groups: limit + 1, Limit: limit,
+				LimitSource: execution.NoDataLimitPlatform}
 			if got.Size == nil || *got.Size != want {
 				t.Fatalf("refusal measured %+v, want %+v", got.Size, want)
 			}

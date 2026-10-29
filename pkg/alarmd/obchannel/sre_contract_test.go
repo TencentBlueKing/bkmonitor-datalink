@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/cliauth"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 type scopedTestAuth struct {
@@ -95,27 +97,53 @@ func TestNestedObjectAndArrayBoundaries(t *testing.T) {
 	}
 }
 
-func TestProviderPoolsDoNotBlockShortEvidenceReads(t *testing.T) {
-	auth := &scopedTestAuth{scope: cliauth.ScopeReadonly}
-	run := func(ctx context.Context, _ Params) Outcome {
-		<-ctx.Done()
-		return Outcome{Value: map[string]any{"remote_state": "unknown"}}
+// Reads, SRE reads and executions all run at once: operations that answer
+// none until every one of them has arrived all answer. Before, the SRE and
+// exec pools ran one at a time and the rest waited, then were refused as
+// request_budget_exceeded.
+func TestReadsSREReadsAndExecutionsAllRunAtOnce(t *testing.T) {
+	const each = 6
+	var arrived sync.WaitGroup
+	arrived.Add(3 * each)
+	all := make(chan struct{})
+	go func() { arrived.Wait(); close(all) }()
+	run := func(context.Context, Params) Outcome {
+		arrived.Done()
+		select {
+		case <-all:
+			return Outcome{Complete: true, Value: map[string]any{"remote_state": "remote_completed"}}
+		case <-testwait.Expired(t):
+			return Outcome{Error: &Failure{Code: "not_together", Message: "the operations did not run at once"}}
+		}
 	}
-	operations := []Operation{{ID: "read", Summary: "Read", Run: func(context.Context, Params) Outcome { return Outcome{Complete: true} }}, {ID: "uq.query", Summary: "Query", ExecutionPool: "sre", Run: run}, {ID: "pod.exec", Summary: "Exec", Effect: "exec", Run: run}}
+	auth := &scopedTestAuth{scope: cliauth.ScopeReadonly}
+	operations := []Operation{{ID: "read", Summary: "Read", Run: run}, {ID: "uq.query", Summary: "Query", ExecutionPool: "sre", Run: run},
+		{ID: "pod.exec", Summary: "Exec", Effect: "exec", ExecutionPool: "exec", Run: run}}
 	c, err := New(Options{Auth: auth, EnvironmentID: "test", Operations: operations})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Occupied provider permits do not contend for the existing reader pool.
-	c.sreSlots <- struct{}{}
-	c.execSlots <- struct{}{}
-	defer func() { <-c.sreSlots; <-c.execSlots }()
-	if status, response := call(t, c, envelope(c, "invoke", "read", nil)); status != 200 {
-		t.Fatalf("provider blocked read: %+v", response)
+	type answer struct {
+		status int
+		code   string
 	}
-	for _, id := range []string{"uq.query", "pod.exec"} {
-		if status, response := call(t, c, envelope(c, "invoke", id, nil)); status != 429 || response.Error.Code != "request_budget_exceeded" {
-			t.Fatalf("provider pool did not bound %s: %+v", id, response)
+	answers := make([]answer, 3*each)
+	var done sync.WaitGroup
+	for i := range answers {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			status, response := call(t, c, envelope(c, "invoke", []string{"read", "uq.query", "pod.exec"}[i%3], nil))
+			answers[i].status = status
+			if response.Error != nil {
+				answers[i].code = response.Error.Code
+			}
+		}()
+	}
+	done.Wait()
+	for i, a := range answers {
+		if a.status != 200 {
+			t.Errorf("call %d answered %d %s, want all %d run at once", i, a.status, a.code, 3*each)
 		}
 	}
 }
@@ -170,7 +198,7 @@ func TestOperationDeadlineAndExecReceiptSurviveCancellation(t *testing.T) {
 	}
 	_, description := call(t, c, envelope(c, "describe", op.ID, nil))
 	limits := description.Result.(map[string]any)["request_limits"].(map[string]any)
-	if limits["execution_timeout_ms"] != float64(20) || limits["transport_margin_ms"] != float64(5000) || limits["budget_scope"] != "process" {
+	if limits["execution_timeout_ms"] != float64(20) || limits["transport_margin_ms"] != float64(5000) || limits["concurrency"] != "unbounded" || limits["response_max_bytes"] != float64(MaxResponseBytes()) {
 		t.Fatalf("limit metadata: %+v", limits)
 	}
 }

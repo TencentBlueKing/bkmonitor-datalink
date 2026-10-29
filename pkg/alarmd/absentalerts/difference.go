@@ -30,11 +30,23 @@
 // before is not judged: a strategy leaves the list when it is gone, and a
 // writer that drops strategies on error is the writer's to fix.
 //
+// A strategy the cache lists and alarmd's publication refused stands with
+// the absent ones when the refusal is for a capability this build lacks and
+// no configuration change brings back (fleet.ClosesAsUnsupported): alarmd
+// will not run it, so its unrecovered alerts have nothing to recover them
+// either, and its close says it is no longer detected rather than gone
+// (Round.Refused). A refusal a configuration change or a later read can
+// undo is not a candidate: the strategy comes back on its own.
+//
 // The roster can only err by missing a strategy or listing one twice, which
 // costs a close and never makes one; and a close the link receives for an
-// alert that is no longer active is a no-op on its side. The link's own
-// health is a gate as well, because a roster from a link whose maintenance
-// has stopped says nothing current.
+// alert that is no longer active is a no-op on its side. So the link's own
+// account of its maintenance is not a gate: a roster from a link whose
+// maintenance has stopped is an old one, which can only miss a strategy, and
+// absence is decided by the snapshot alone. Refusing on it would turn "may
+// close fewer" into "close none" - and a link whose maintenance fails under
+// the alerts of a strategy that is gone is exactly the one whose close would
+// remove them. The health page reports the link's word (LinkHealthWord).
 package absentalerts
 
 import (
@@ -57,6 +69,10 @@ type Key struct {
 type Identity struct {
 	BusinessID int64
 	Revision   int64
+	// GlobalBusiness is a strategy whose alerts are each filed under the
+	// business they are about: BusinessID is the strategy's own, and each
+	// close carries its alert's business instead.
+	GlobalBusiness bool
 }
 
 // Absence is this loop's own memory of a candidate: when it first found the
@@ -83,11 +99,13 @@ type Round struct {
 	// RosterComplete says the walk reached its end. An incomplete walk is a
 	// smaller roster, which costs closes and never makes one.
 	RosterComplete bool
-	// LinkLastSuccess and LinkError are the link's account of its own set
-	// maintenance: when a full discovery last succeeded, and why the latest
-	// one failed if it did.
-	LinkLastSuccess time.Time
-	LinkError       string
+	// Refused is, by strategy id, every strategy the source lists that alarmd
+	// does not run because its publication refused it for a capability this
+	// build lacks, with that refusal's reason. Its unrecovered alerts have
+	// nothing left to judge them either, so it is a candidate as an absent
+	// strategy is, under the same grace and the same two observations, and
+	// its close says it is no longer detected rather than gone.
+	Refused map[string]string
 	// SnapshotStrategies is every strategy the source says exists right now.
 	// SnapshotUsable says it was observed rather than assumed, and
 	// SnapshotObservation identifies which observation it is.
@@ -122,6 +140,9 @@ type Decision struct {
 	Key         Key
 	Outcome     string
 	AbsentSince time.Time
+	// Refused is the capability the strategy was refused for, empty for a
+	// strategy absent from the snapshot.
+	Refused string
 }
 
 // Absent is one strategy the round decided to close.
@@ -132,6 +153,10 @@ type Absent struct {
 	Identity Identity
 	// AbsentSince is when this loop first found the strategy missing.
 	AbsentSince time.Time
+	// Refused is the capability the strategy was refused for (Round.Refused):
+	// its close says alarmd no longer detects it. Empty for a strategy absent
+	// from the snapshot.
+	Refused string
 }
 
 // The refusals of a whole round. Each names the fact that was not good
@@ -145,10 +170,6 @@ const (
 	// RefusalLinkUnavailable: the link's roster could not be read. Nothing
 	// read is not an empty roster.
 	RefusalLinkUnavailable = "link_unavailable"
-	// RefusalLinkUnhealthy: the roster was read, and the link itself says the
-	// process maintaining it is failing or has not succeeded recently. A
-	// roster the link is not keeping current is not one to act on.
-	RefusalLinkUnhealthy = "link_unhealthy"
 	// RefusalSnapshotUnusable: the snapshot was not observed this round. An
 	// unread snapshot is not an empty one, and reading it as empty would
 	// close every unrecovered alert in the deployment.
@@ -166,8 +187,8 @@ const (
 )
 
 // Refusals is the closed list of whole-round refusals.
-var Refusals = []string{RefusalNone, RefusalLinkUnavailable, RefusalLinkUnhealthy, RefusalSnapshotUnusable,
-	RefusalSnapshotEmpty, RefusalSnapshotStale}
+var Refusals = []string{RefusalNone, RefusalLinkUnavailable, RefusalSnapshotUnusable, RefusalSnapshotEmpty,
+	RefusalSnapshotStale}
 
 // The per-strategy outcomes of the decision. Every candidate the round did
 // not close lands on one of these, and every one of them is counted.
@@ -204,10 +225,21 @@ const (
 	// OutcomeRevisionUnknown: the business is known and the snapshot
 	// revision is not. The close contract requires one. Per strategy.
 	OutcomeRevisionUnknown = "revision_unknown"
+	// OutcomeBusinessUnknown: the strategy files each alert under the
+	// business it is about, and this alert's record could not be read or
+	// names none. That alert is not closed this round. Per alert.
+	OutcomeBusinessUnknown = "business_unknown"
 	// OutcomeEvidenceUnavailable: the strategy's alerts could not be read
 	// from the link, so there is nothing to address a close to. Per
 	// strategy.
 	OutcomeEvidenceUnavailable = "evidence_unavailable"
+	// OutcomeEvidenceTruncated: the strategy's alerts were read, and the
+	// link's answer was incomplete or past the reader's caps
+	// (openalerts.Reconciliation.Truncated). The alerts it listed are closed
+	// as usual and the rest are left for a later round, when the strategy is
+	// decided again; when none listed is this deployment's, that is not "it
+	// has none of ours". Per strategy, beside its other outcomes.
+	OutcomeEvidenceTruncated = "evidence_truncated"
 	// OutcomeCloseSent: an alert the broker acknowledged a close for. Per
 	// alert, where OutcomeCloseDecided counts strategies. Sent, not closed:
 	// the link closes the alert or does not, and an alert it left open is
@@ -236,8 +268,8 @@ const (
 
 // Outcomes is the closed list, for the metric that reports every cell.
 var Outcomes = []string{OutcomeCloseDecided, OutcomeWithinGrace, OutcomeUnconfirmed,
-	OutcomeDeferred, OutcomeIndexUnreadable, OutcomeIdentityUnknown, OutcomeRevisionUnknown,
-	OutcomeEvidenceUnavailable, OutcomeCloseSent, OutcomeSendFailed,
+	OutcomeDeferred, OutcomeIndexUnreadable, OutcomeIdentityUnknown, OutcomeRevisionUnknown, OutcomeBusinessUnknown,
+	OutcomeEvidenceUnavailable, OutcomeEvidenceTruncated, OutcomeCloseSent, OutcomeSendFailed,
 	OutcomeNotLeader, OutcomeMemoryFull, OutcomeProducerForeign, OutcomeProducerUnknown}
 
 // Counts is what the round measured. The denominators are reported with
@@ -266,10 +298,6 @@ type Bounds struct {
 	// than this has not seen the strategies created since, and every one of
 	// them holding an alert would read as absent.
 	MaxSnapshotAge time.Duration
-	// MaxLinkHealthAge is how long ago the link's last successful full
-	// discovery may be. Older, the link's maintenance has stopped and its
-	// roster is not current.
-	MaxLinkHealthAge time.Duration
 	// MaxCloseStrategies bounds how many strategies one round closes, so a
 	// backlog is worked off over rounds instead of in one batch.
 	MaxCloseStrategies int
@@ -301,9 +329,6 @@ func Candidates(round Round, bounds Bounds) ([]Key, Counts, string) {
 	if !round.LinkRead {
 		return nil, counts, RefusalLinkUnavailable
 	}
-	if linkUnhealthy(round, bounds) {
-		return nil, counts, RefusalLinkUnhealthy
-	}
 	if !round.SnapshotUsable || round.SnapshotObservation == "" {
 		return nil, counts, RefusalSnapshotUnusable
 	}
@@ -322,7 +347,8 @@ func Candidates(round Round, bounds Bounds) ([]Key, Counts, string) {
 	existing := strategyIDs(round.SnapshotStrategies)
 	candidates := make([]Key, 0)
 	for key := range round.Roster {
-		if _, present := existing[key.StrategyID]; present {
+		_, present := existing[key.StrategyID]
+		if _, refused := round.Refused[key.StrategyID]; present && !refused {
 			continue
 		}
 		candidates = append(candidates, key)
@@ -349,12 +375,21 @@ func Compute(round Round, bounds Bounds) Result {
 		return Result{Counts: counts, Refusal: refusal}
 	}
 	result := Result{Counts: counts, Refusal: RefusalNone, Decisions: make([]Decision, len(candidates))}
+	var listed map[string]struct{}
+	if len(round.Refused) > 0 {
+		listed = strategyIDs(round.SnapshotStrategies)
+	}
 	start := rotation(candidates, round.After)
 	for step := range candidates {
 		at := (start + step) % len(candidates)
 		key := candidates[at]
 		absence, tracked := round.FirstAbsent[key]
 		decision := Decision{Key: key}
+		if _, present := listed[key.StrategyID]; present {
+			// A refused strategy the snapshot no longer lists is gone, and
+			// closes as gone.
+			decision.Refused = round.Refused[key.StrategyID]
+		}
 		if tracked {
 			decision.AbsentSince = absence.Since
 		}
@@ -370,7 +405,8 @@ func Compute(round Round, bounds Bounds) Result {
 			result.Counts.Deferred++
 		default:
 			decision.Outcome = OutcomeCloseDecided
-			result.Close = append(result.Close, Absent{Key: key, Identity: round.Identities[key], AbsentSince: absence.Since})
+			result.Close = append(result.Close, Absent{Key: key, Identity: round.Identities[key], AbsentSince: absence.Since,
+				Refused: decision.Refused})
 			result.Counts.CloseDecided++
 		}
 		result.Decisions[at] = decision
@@ -400,17 +436,9 @@ func lessKey(a, b Key) bool {
 	return a.StrategyID < b.StrategyID
 }
 
-// linkUnhealthy reads the link's own account of its maintenance. A latest
-// discovery that failed, one that never succeeded, and one that last
-// succeeded longer ago than the bound all say the roster is not current.
-func linkUnhealthy(round Round, bounds Bounds) bool {
-	return LinkHealthWord(round.LinkLastSuccess, round.LinkError, round.Now, bounds.MaxLinkHealthAge) != LinkHealthy
-}
-
-// The words for the link's account of its own set maintenance, closed. A
-// round refuses as link_unhealthy on every word but LinkHealthy; the health
-// page names which one, from this same function, so the two cannot differ
-// about one reading.
+// The words for the link's account of its own set maintenance, closed. The
+// health page and the Console's state name which one; the difference does
+// not read it (see the package doc).
 const (
 	LinkHealthy                 = "healthy"
 	LinkDiscoveryFailing        = "discovery_failing"

@@ -51,7 +51,7 @@ func TestTheResolutionsOwnReadIsBoundedByItsCaller(t *testing.T) {
 		_, source, now := effectiveCacheFixture(t)
 		recorder := &deadlineRedis{effectiveCacheRedis: source}
 		cache := NewLegacyEffectiveTime(recorder, recorder, "monitor", func() time.Time { return *now }, 64, 64<<10)
-		ctx, cancel := context.WithTimeout(context.Background(), c.left)
+		ctx, cancel := context.WithTimeout(context.Background(), c.left) // fixed-wait: the caller's time left, the value the case checks the read is bounded by
 		if _, err := cache.Provider().Resolve(ctx, []strategy.EffectiveTimeRequest{effectiveRequest(t, "tenant-a", now.Unix(), false)}); err != nil {
 			t.Fatal(err)
 		}

@@ -21,7 +21,7 @@ type targetScopeCloseCollector struct {
 
 func newTargetScopeCloseCollector() *targetScopeCloseCollector {
 	return &targetScopeCloseCollector{
-		outcomeIs: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "target_scope_close_total"),
+		outcomeIs: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "target_scope_close_total"),
 			"What the close of alerts whose target left the strategy's monitoring scope decided, by outcome. "+
 				"unconfirmed is a fingerprint of an open alert turned away by one Slot, waiting for a second; "+
 				"close_sent counts alerts a close was sent for, acknowledged by the broker, not alerts the link "+
@@ -39,7 +39,14 @@ func newTargetScopeCloseCollector() *targetScopeCloseCollector {
 				"cache_unavailable, which is a verdict reached without its facts; observation_expired first observations "+
 				"whose second did not arrive within two of the strategy's periods plus its Slot's read offset (at least "+
 				"half an hour), forgotten - the strategies counted there are ones this close could not reach, named in "+
-				"its facts. Every cell exists from the start so a zero is a reading and not an absence.",
+				"its facts; business_unknown closes of a global business strategy's alerts whose record names no "+
+				"business they were filed under, kept for the next step; superseded_identity_close_sent counts, among close_sent, "+
+				"the closes of alerts a series opened under the fingerprint of its own address before its alert identity "+
+				"read CMDB's (reason superseded_identity). Such an offer is made for every series whose host overlay moves "+
+				"its fingerprint, every Slot; one that finds no open alert under the old fingerprint, or a set that cannot "+
+				"say, counts nothing, so not_member and set_unavailable at an offer stay target rejections; one the consumer "+
+				"holds is decided and counted as a target close is. Every cell exists from the start so a zero "+
+				"is a reading and not an absence.",
 			[]string{"outcome"}, nil),
 	}
 }

@@ -217,13 +217,68 @@ type Options struct {
 	// ReadHoldAt is a Slot's effective hold, including a decrease transition.
 	// With neither callback, directed reads keep the original frozen hold.
 	CurrentReadHold func(execution.QueryGroupIdentity) time.Duration
-	ReadHoldAt      func(execution.QueryGroupIdentity, execution.EvaluationTime) time.Duration
+	// CurrentCandidate is the hold the group's next trial tries, and false
+	// when there is none to try: the controller's, which narrows on the
+	// trials' own evidence (readhold.Controller.EarlierCandidate). Nil tries
+	// half the base hold (execution.LoweredReadHold).
+	CurrentCandidate func(execution.QueryGroupIdentity) (time.Duration, bool)
+	// EarlierRefused hears a Slot Prepare would have reserved a trial for -
+	// the group's rest over, no sample or trial of it in flight - when
+	// CurrentCandidate gave it none (readhold.Controller.EarlierRefused).
+	// Nil hears nothing.
+	EarlierRefused func(execution.QueryGroupIdentity)
+	ReadHoldAt     func(execution.QueryGroupIdentity, execution.EvaluationTime) time.Duration
 	// Callbacks run outside the engine lock. Only confirmed whole-window
 	// arrival raises a hold; a decrease compares an earlier read with the
 	// formal first read, never with a later rung.
 	OnWholeWindowReadEarly func(ReadHoldEvidence)
 	OnEarlierRead          func(EarlierReadEvidence)
 	OnReadHoldIgnored      func(ReadHoldEvidence, string)
+	// OnEarlierTrialEnd sees every trial end, completed or dropped, with its
+	// Query Group: the per-group reading of a deployment whose lookback route
+	// is not public.
+	OnEarlierTrialEnd func(EarlierTrialEnd)
+	// ProbationRounds overrides ProbationRounds when positive; only a test
+	// sets it.
+	ProbationRounds int
+	// LastLowering is the Slot a Query Group's hold was last lowered at,
+	// while its last change was a lowering (readhold.Controller.LastLowering).
+	// A group this process has not seen a round of resumes the probation of
+	// a lowering that recent; nil resumes none.
+	LastLowering func(execution.QueryGroupIdentity) (execution.EvaluationTime, bool)
+	// LoweringVerified says a Query Group's last lowering was to a hold its
+	// shadow probe read clean first (readhold.Controller.LoweringVerified):
+	// the probation that follows it is counted apart when it catches a round
+	// read early (probation_caught after=verified). Nil verifies none.
+	LoweringVerified func(execution.QueryGroupIdentity) bool
+	// FloorProbe is the hold a Query Group with no trial to run has its rounds
+	// read at as well - the candidate its trials chose, read before the hold
+	// moves, or below a search that has run out the midpoint above its floor
+	// or the floor itself - the probe's kind (FloorProbeKinds), whether it is
+	// near a floor a probe has failed at, which needs EdgeProbeSpan of clean
+	// rounds to pass, and false when it has none to probe
+	// (readhold.Controller.FloorProbe; floor_probe.go). Nil probes none.
+	FloorProbe func(execution.QueryGroupIdentity) (floor time.Duration, kind string, edge, probing bool)
+	// OnFloorProbe sees every probe end, outside the engine's lock: one that
+	// passed lowers the hold to the hold it read at, one that failed makes it
+	// the floor or relearns the floor (readhold.Controller.FloorProbeResult).
+	OnFloorProbe func(FloorProbeEnd)
+	// FloorProbeResume is how far a probe of the group at floor, of kind, had
+	// read in the process that ran it before - a rollout, a takeover - for a
+	// probe starting here to go on from (readhold.Controller.
+	// FloorProbeResume). Nil resumes none.
+	FloorProbeResume func(queryGroup execution.QueryGroupIdentity, kind string, floor time.Duration) (clean int, started execution.EvaluationTime, ok bool)
+	// OnFloorProbeProgress sees a running probe's clean rounds every
+	// FloorProbeProgressEvery of them, outside the engine's lock, to keep them
+	// for the next process (readhold.Controller.FloorProbeProgress).
+	OnFloorProbeProgress func(FloorProbeProgress)
+	// OnFloorProbeStart sees every probe start, outside the engine's lock.
+	OnFloorProbeStart func(FloorProbeStart)
+	// OnWindowReadEarly sees every round found read early, a sample's or a
+	// probation reread's, with what it decided when its group kept that
+	// (read_early_line.go), outside the engine's lock: one line each, not
+	// sampled.
+	OnWindowReadEarly func(WindowReadEarly)
 }
 
 // Query is what the access layer knows about a physical query before it is
@@ -249,6 +304,10 @@ type Query struct {
 	// per physical query, and a Slot whose other queries were not kept
 	// cannot be supplemented (it is set aside as multi_query).
 	Secondary bool
+	// BackendFailing marks a query whose Query Group's queries are failing
+	// (execution.BackendFailing): Prepare reserves it no trial, a trial being
+	// one more read of the same backend, and counts it backend_failing.
+	BackendFailing bool
 }
 
 // Engine is the lookback of one process.
@@ -258,12 +317,23 @@ type Engine struct {
 	// source, counted on the query's own goroutine: the map is built once
 	// and only its counters change.
 	firstReadBytes map[string]*atomic.Uint64
+	// probationGroups is the Query Groups in probation, kept beside each
+	// group's probation (setProbationLocked) and read without the lock: every
+	// series of every Slot reports its decision (NoteSlotDecision), and only
+	// a group in probation keeps it.
+	probationGroups sync.Map
 
-	mu     sync.Mutex
-	groups map[execution.QueryGroupIdentity]*group
-	counts counters
-	recent []Recent
-	nextID uint64
+	mu sync.Mutex
+	// stepping holds one pass over the samples (Step) at a time. A pass
+	// reads which samples are due under mu and launches them after taking
+	// permits outside it; two passes at once would both launch the same due
+	// sample, and the read that finished first moves it past its last rung
+	// before the other reads it.
+	stepping sync.Mutex
+	groups   map[execution.QueryGroupIdentity]*group
+	counts   counters
+	recent   []Recent
+	nextID   uint64
 	// earlyPending is the directed Slots waiting for their early read,
 	// holdMax the longest supplement hold this process has seen, and woken
 	// the loop's wake-up when a read ends (early.go).
@@ -273,6 +343,13 @@ type Engine struct {
 	woken           chan struct{}
 	holdEvidence    []ReadHoldEvidence
 	ignoredEvidence []ignoredReadHold
+	trialEnds       []EarlierTrialEnd
+	probeEnds       []FloorProbeEnd
+	readEarlyLines  []WindowReadEarly
+	probeStarts     []FloorProbeStart
+	probeProgress   []FloorProbeProgress
+	// plans is the control plane's plan set for this Worker (plan.go).
+	plans map[execution.QueryGroupIdentity]Plan
 }
 
 // group is one Query Group: how it is rechecked, which it learns from its
@@ -325,9 +402,22 @@ type group struct {
 	// read of its query again is bounded by (rereadTimeout).
 	firstReads durations
 	capturing  bool
-	prepared   *earlierSample
+	// sampled says a sample of it has completed in this process, which then
+	// decides it rather than any plan; planKept that a plan was set aside
+	// for that, counted once.
+	sampled  bool
+	planKept bool
+	prepared *earlierSample
+	// floorProbe is its shadow probe of its floor while one runs
+	// (floor_probe.go): apart from prepared, which its trials ride on.
+	floorProbe *floorProbeState
 	sample     *sample
 	nextAt     time.Time
+	// decided is the latest Slot Prepare reserved a trial for or counted
+	// skipped (skipLocked), so a Slot prepared again on a readiness retry -
+	// even after a later Slot's first attempt - is counted, and
+	// EarlierRefused told of it, once.
+	decided execution.EvaluationTime
 	// period is the observed time between two of its Slots, lastSlot the
 	// latest one seen; a Query Group is sampled at its first reads, so how
 	// fresh its measurement can be depends on how often it reads.
@@ -343,6 +433,19 @@ type group struct {
 	incompleteFirstReads uint64
 	completeFirstRead    bool
 	reading              groupCounts
+	// lastHold is the hold its latest round was frozen with, once holdSeen;
+	// probation is set while its rounds are read again after the hold was
+	// lowered, and probations is those rereads in flight (probation.go): one
+	// a round, each until its rung is read or passed, so no more than the
+	// rounds a rung window and the rung after it span.
+	lastHold   int64
+	holdSeen   bool
+	probation  *probationState
+	probations []*sample
+	// decisions is what its rounds decided, kept by Slot while it is in
+	// probation until each round's reread ends, maxKeptDecisions at most
+	// (NoteSlotDecision): what a round found read early is written with.
+	decisions map[execution.EvaluationTime]*SlotDecision
 }
 
 type sample struct {
@@ -375,9 +478,12 @@ type sample struct {
 	lastChange    int
 	lastChangeAge time.Duration
 	lastBuckets   []int64
-	unread        bool
-	running       bool
-	dropped       bool
+	// changes is its rungs' buckets that changed, by class (Changes), summed
+	// over the rungs that did: how its data came, on a round read early.
+	changes map[string]int
+	unread  bool
+	running bool
+	dropped bool
 	// yieldAt is when a waiting formal query asked the read in flight to
 	// yield, zero while none has; overdue is set once the read held its
 	// permit past RecheckTimeout after that and was counted as a fault.
@@ -422,6 +528,11 @@ type sample struct {
 	seriesAdded     bool
 	seriesAddedRung int
 	seriesUnknown   bool
+	// probation marks a reread of a round of a Query Group in probation,
+	// kept apart from its samples; readFailed that a rung of it was read and
+	// did not come back whole.
+	probation  bool
+	readFailed bool
 }
 
 // Recent is one recheck that found a change, kept whole for a reader.
@@ -466,6 +577,8 @@ func (engine *Engine) Begin(query Query) *Read {
 	step := time.Duration(facts.StepMillis) * time.Millisecond
 	slot := query.Contract.Slot
 	now := engine.options.Now()
+	lowering := engine.lastLowering(query)
+	verified := engine.loweringVerified(query)
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	engine.counts.firstReads[source]++
@@ -491,6 +604,12 @@ func (engine *Engine) Begin(query Query) *Read {
 	if state.seriesLate != nil && engine.options.Supplement != nil {
 		read.directed = engine.captureDirectedLocked(state, query, source, step, now)
 	}
+	engine.noteRoundHoldLocked(state, query, lowering, verified)
+	read.probation = state.probation != nil
+	engine.attachProbeLocked(state, read, query)
+	if read.probation || read.floorProbe != nil {
+		engine.trackLocked(read, query, step, now, state.depth)
+	}
 	if state.capturing || state.sample != nil || now.Before(state.nextAt) {
 		return read
 	}
@@ -501,17 +620,25 @@ func (engine *Engine) Begin(query Query) *Read {
 		read.earlier = state.prepared
 		read.earlier.formal = true
 		if !read.earlier.done {
-			read.earlier.done, read.earlier.outcome = true, EarlierOvertaken
+			read.earlier.overtake(OvertakenFormalFirst)
 			if read.earlier.cancel != nil {
 				read.earlier.cancel()
 			}
 		}
 	}
-	state.capturing = true
-	read.query, read.step, read.readAt, read.depth = query, step, now, state.depth
-	read.keptFrom = tailFrom(query.Spec.LogicalWindow, step, tailSteps)
-	read.summary = newSummarizer(facts.Normalization.CanonicalValueField).trackSeries(read.keptFrom, engine.options.Memory)
+	state.capturing, read.sampled = true, true
+	if read.summary == nil {
+		engine.trackLocked(read, query, step, now, state.depth)
+	}
 	return read
+}
+
+// trackLocked has a first read keep its series sums over the window's tail,
+// for its group's sample, its probation reread, or both.
+func (engine *Engine) trackLocked(read *Read, query Query, step time.Duration, now time.Time, depth int) {
+	read.query, read.step, read.readAt, read.depth = query, step, now, depth
+	read.keptFrom = tailFrom(query.Spec.LogicalWindow, step, tailSteps)
+	read.summary = newSummarizer(query.Spec.PlanFacts.Normalization.CanonicalValueField).trackSeries(read.keptFrom, engine.options.Memory)
 }
 
 // Read is one formal first read. The access layer calls Series for every
@@ -536,6 +663,13 @@ type Read struct {
 	// read, on a directed Query Group; nil otherwise.
 	directed *directedQuery
 	earlier  *earlierSample
+	// floorProbe is the probe round reserved for its Slot, compared with it
+	// once it completes (completeFloorProbe).
+	floorProbe *earlierSample
+	// sampled is a read taken as its group's sample, probation one kept as
+	// a probation reread; either keeps summary.
+	sampled   bool
+	probation bool
 }
 
 // Series counts one delivered series' bytes, and on a sample adds it to the
@@ -562,6 +696,7 @@ func (read *Read) Complete(completion execution.ProviderCompletion, err error) {
 		return
 	}
 	defer read.completeEarlier(completion, err)
+	defer read.completeFloorProbe(completion, err)
 	if !read.sentAt.IsZero() && err == nil && completion.Completeness == execution.CompletenessFull {
 		now := read.engine.options.Now()
 		read.engine.mu.Lock()
@@ -586,13 +721,22 @@ func (read *Read) Complete(completion execution.ProviderCompletion, err error) {
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	state := engine.groups[queryGroup]
+	whole := err == nil && completion.Completeness == execution.CompletenessFull
+	if read.probation && state != nil && whole && !read.summary.faulted && owned {
+		// A first read not whole has nothing to compare a reread with, and is
+		// no round read clean; the next round is.
+		engine.captureProbationLocked(state, read, readLookback(read, lookback, lookbackKnown))
+	}
+	if !read.sampled {
+		return
+	}
 	if state == nil || !state.capturing {
 		engine.counts.samples[key2(read.source, OutcomeOwnerLost)]++
 		return
 	}
 	state.capturing = false
 	switch {
-	case err != nil || completion.Completeness != execution.CompletenessFull:
+	case !whole:
 		engine.counts.samples[key2(read.source, OutcomeFirstReadIncomplete)]++
 		state.incompleteFirstReads++
 		return
@@ -607,19 +751,9 @@ func (read *Read) Complete(completion execution.ProviderCompletion, err error) {
 		return
 	}
 	if !lookbackKnown {
-		// Read from a step early: the tail's first bucket may still differ
-		// where a window reaches further back than that.
 		engine.counts.unknownLookback[read.source]++
-		lookback = read.step
 	}
-	if read.query.Spec.PlanFacts.NotTimeAlign && read.step > 0 {
-		// An unaligned query buckets from where its request starts, so a
-		// tail read that starts anywhere but a whole number of data steps
-		// before the kept tail reads every bucket at another phase than the
-		// first read did, and every one of them reads as changed. An aligned
-		// query is aligned by the query service and does not need it.
-		lookback = (lookback + read.step - 1) / read.step * read.step
-	}
+	lookback = readLookback(read, lookback, lookbackKnown)
 	keptFrom := read.keptFrom
 	engine.nextID++
 	state.sample = &sample{id: engine.nextID, source: read.source, queryGroup: queryGroup,
@@ -631,6 +765,24 @@ func (read *Read) Complete(completion execution.ProviderCompletion, err error) {
 		probe: state.sinceProbe >= probeEvery-1, settles: state.settle, emptyFirstRead: len(read.summary.buckets) == 0,
 		first: read.summary.series, delaySeconds: read.query.Spec.PlanFacts.QueryDelaySeconds}
 	engine.counts.samples[key2(read.source, OutcomeCaptured)]++
+}
+
+// readLookback is how far before its kept tail a reread of read reads.
+func readLookback(read *Read, lookback time.Duration, known bool) time.Duration {
+	if !known {
+		// Read from a step early: the tail's first bucket may still differ
+		// where a window reaches further back than that.
+		lookback = read.step
+	}
+	if read.query.Spec.PlanFacts.NotTimeAlign && read.step > 0 {
+		// An unaligned query buckets from where its request starts, so a
+		// tail read that starts anywhere but a whole number of data steps
+		// before the kept tail reads every bucket at another phase than the
+		// first read did, and every one of them reads as changed. An aligned
+		// query is aligned by the query service and does not need it.
+		lookback = (lookback + read.step - 1) / read.step * read.step
+	}
+	return lookback
 }
 
 func (engine *Engine) faultLocked(reason, source string, queryGroup execution.QueryGroupIdentity) {
@@ -655,9 +807,126 @@ func (engine *Engine) rereadTimeout(queryGroup execution.QueryGroupIdentity) tim
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	if state := engine.groups[queryGroup]; state != nil {
-		return max(RecheckTimeout, state.firstReads.longest())
+		return state.rereadBound()
 	}
 	return RecheckTimeout
+}
+
+// RereadBound is the group's own reading of how long its query takes - the
+// longest of its last whole first reads, never less than RecheckTimeout -
+// and false when this process has no such reading: a group it has not read
+// yet, which is every group just taken over. Read-only; a scheduler deciding
+// whether a round still has time to run asks it.
+func (engine *Engine) RereadBound(queryGroup execution.QueryGroupIdentity) (time.Duration, bool) {
+	if engine == nil {
+		return 0, false
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	state := engine.groups[queryGroup]
+	if state == nil || state.firstReads.longest() <= 0 {
+		return 0, false
+	}
+	return state.rereadBound(), true
+}
+
+// QueryDuration is the group's own reading of how long its query takes - the
+// longest of its last whole first reads, as measured - and false when this
+// process has no such reading. RereadBound keeps that reading at
+// RecheckTimeout or more, the least a read again is given; a scheduler asking
+// whether a round still has time to finish needs what the query takes, and a
+// quick query given RecheckTimeout would be judged short of time with seconds
+// to spare. Read-only.
+func (engine *Engine) QueryDuration(queryGroup execution.QueryGroupIdentity) (time.Duration, bool) {
+	if engine == nil {
+		return 0, false
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	state := engine.groups[queryGroup]
+	if state == nil {
+		return 0, false
+	}
+	longest := state.firstReads.longest()
+	return longest, longest > 0
+}
+
+// Busy is what the lookback has of a Query Group in flight or reserved at
+// this moment, read under the engine lock: its capture, its sample and probe
+// waiting for a rung, its probation rereads and directed reads, how many of
+// all those are being read right now, and a prepared earlier-read trial.
+// False when the engine is absent. Read-only.
+type Busy struct {
+	Capturing        bool
+	SamplePending    bool
+	ProbePending     bool
+	ProbationRereads int
+	DirectedPending  int
+	ReadsInFlight    int
+	TrialPrepared    bool
+	// FloorProbeRounds is its shadow probe's rounds reserved and not yet
+	// compared.
+	FloorProbeRounds int
+}
+
+func (engine *Engine) Busy(queryGroup execution.QueryGroupIdentity) (Busy, bool) {
+	if engine == nil {
+		return Busy{}, false
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	state := engine.groups[queryGroup]
+	if state == nil {
+		return Busy{}, true
+	}
+	busy := Busy{Capturing: state.capturing}
+	count := func(candidate *sample) bool {
+		if candidate == nil || candidate.dropped {
+			return false
+		}
+		if candidate.running {
+			busy.ReadsInFlight++
+		}
+		return true
+	}
+	busy.SamplePending = count(state.sample)
+	busy.ProbePending = count(state.probe)
+	for _, candidate := range state.probations {
+		if count(candidate) {
+			busy.ProbationRereads++
+		}
+	}
+	for _, slot := range state.directed {
+		if slot == nil || slot.dropped {
+			continue
+		}
+		busy.DirectedPending++
+		if slot.running {
+			busy.ReadsInFlight++
+		}
+	}
+	if trial := state.prepared; trial != nil && !trial.done {
+		busy.TrialPrepared = true
+		if trial.running {
+			busy.ReadsInFlight++
+		}
+	}
+	if probe := state.floorProbe; probe != nil {
+		for _, round := range probe.reserved {
+			busy.FloorProbeRounds++
+			if round.running {
+				busy.ReadsInFlight++
+			}
+		}
+	}
+	return busy, true
+}
+
+// rereadBound is how long a read of the group's query again may take: the
+// longest of its last whole first reads, never less than RecheckTimeout.
+// Caller holds the engine lock.
+func (state *group) rereadBound() time.Duration {
+	return max(RecheckTimeout, state.firstReads.longest())
 }
 
 // Forget drops a Query Group this process no longer owns, with its samples.
@@ -688,9 +957,14 @@ func (engine *Engine) Forget(queryGroup execution.QueryGroupIdentity) {
 			engine.counts.rechecks[key3(candidate.source, RungNames[candidate.rung], RecheckOwnerLost)]++
 		}
 	}
+	for _, candidate := range state.probations {
+		candidate.dropped = true
+	}
 	for _, slot := range state.directed {
 		slot.dropped = true
 	}
+	engine.endProbeLocked(state, FloorProbeOwnerLost, execution.FrozenExecutionContractRef{Slot: execution.SlotIdentity{QueryGroup: queryGroup}})
+	engine.probationGroups.Delete(queryGroup)
 	delete(engine.groups, queryGroup)
 }
 
@@ -717,7 +991,7 @@ func (engine *Engine) Run(ctx context.Context, tick time.Duration) {
 			engine.StepEarly(ctx)
 		}
 		wait := time.Until(nextStep)
-		if at := engine.nextEarlyWake(); !at.IsZero() {
+		if at := engine.NextEarlyWake(); !at.IsZero() {
 			wait = min(wait, max(at.Sub(engine.options.Now()), time.Millisecond))
 		}
 		if !timer.Stop() {
@@ -734,15 +1008,25 @@ func (engine *Engine) Run(ctx context.Context, tick time.Duration) {
 // again if a permit is free, and one past its window without a permit is
 // counted as yielded, the window as not read there, and the next rung
 // planned.
+//
+// A pass that comes while another is still running does nothing: the one
+// running reads every sample due, and the next pass reads what it left.
 func (engine *Engine) Step(ctx context.Context) {
+	if !engine.stepping.TryLock() {
+		return
+	}
+	defer engine.stepping.Unlock()
 	defer engine.publishReadHold()
 	now := engine.options.Now()
 	engine.mu.Lock()
+	// A plan entry that expired with no new set from the control plane -
+	// a lost stream, a fallback Leader that plans nothing - ends here.
+	engine.expirePlansLocked(now)
 	due := make([]*sample, 0)
 	var directed []*directedSlot
 	for _, state := range engine.groups {
 		directed = append(directed, engine.dueDirectedLocked(state, now)...)
-		for _, candidate := range [...]*sample{state.sample, state.probe} {
+		for _, candidate := range append([]*sample{state.sample, state.probe}, state.probations...) {
 			if candidate != nil && candidate.running {
 				// A read asked to yield that still holds its permit past its
 				// own deadline has stopped honouring either.
@@ -768,7 +1052,14 @@ func (engine *Engine) Step(ctx context.Context) {
 		}
 	}
 	engine.mu.Unlock()
-	sort.Slice(due, func(i, j int) bool { return due[i].id < due[j].id })
+	// A probation reread goes before the samples: it is the one read of its
+	// round, where a sample's rung is one of several.
+	sort.Slice(due, func(i, j int) bool {
+		if due[i].probation != due[j].probation {
+			return due[i].probation
+		}
+		return due[i].id < due[j].id
+	})
 	sort.Slice(directed, func(i, j int) bool { return directed[i].id < directed[j].id })
 	// A directed read is the Slot's supplement: it goes before the samples,
 	// which measure and can wait for their next rung.
@@ -794,8 +1085,11 @@ func (engine *Engine) Step(ctx context.Context) {
 			continue
 		}
 		slot.running = true
+		// The Slot's first query, taken under the lock: a later physical query
+		// of the Slot appends to its queries while the read runs.
+		captured := slot.queries[0]
 		engine.mu.Unlock()
-		go engine.directedRead(ctx, slot, release, yield)
+		go engine.directedRead(ctx, slot, captured, release, yield)
 	}
 	for _, candidate := range due {
 		if !engine.options.Owns(candidate.queryGroup) {
@@ -820,8 +1114,9 @@ func (engine *Engine) Step(ctx context.Context) {
 			continue
 		}
 		candidate.running = true
+		rung := candidate.rung
 		engine.mu.Unlock()
-		go engine.recheck(ctx, candidate, release, yield)
+		go engine.recheck(ctx, candidate, rung, release, yield)
 	}
 	engine.StepEarly(ctx)
 }
@@ -831,6 +1126,10 @@ func (engine *Engine) Step(ctx context.Context) {
 func (engine *Engine) advanceLocked(state *group, candidate *sample, now time.Time) {
 	candidate.rung++
 	if candidate.rung < candidate.planned {
+		return
+	}
+	if candidate.probation {
+		engine.finishProbationLocked(state, candidate)
 		return
 	}
 	if candidate.probing {
@@ -982,7 +1281,9 @@ func recheckFrom(candidate *sample) int64 {
 	return max(candidate.spec.LogicalWindow.Start, candidate.keptFrom-int64(candidate.lookback/time.Second))
 }
 
-func (engine *Engine) recheck(ctx context.Context, candidate *sample, release func(), yield <-chan struct{}) {
+// rung is the sample's rung as it was launched, read under the lock: the
+// sample is not read outside it while the reread runs.
+func (engine *Engine) recheck(ctx context.Context, candidate *sample, at int, release func(), yield <-chan struct{}) {
 	defer engine.publishReadHold()
 	readCtx, cancel := context.WithTimeout(ctx, engine.rereadTimeout(candidate.queryGroup))
 	// The watcher waits for the read to come back, not for the read's
@@ -1025,7 +1326,7 @@ func (engine *Engine) recheck(ctx context.Context, candidate *sample, release fu
 	close(back)
 	cancel()
 	engine.releasedAfterYield(candidate, released, watched)
-	rung := RungNames[candidate.rung]
+	rung := RungNames[at]
 	if (err != nil || completion.Completeness != execution.CompletenessFull) && closed(yield) {
 		// Stopped for a formal query, not a read that failed: the rung keeps
 		// its window and is tried again, counted once by what it comes to.
@@ -1076,6 +1377,14 @@ func (engine *Engine) recheck(ctx context.Context, candidate *sample, release fu
 		engine.faultLocked(FaultBucketsExceeded, candidate.source, candidate.queryGroup)
 	}
 	candidate.seriesUnknown = candidate.seriesUnknown || seriesUnknown
+	if len(changes) > 0 {
+		if candidate.changes == nil {
+			candidate.changes = map[string]int{}
+		}
+		for class, count := range changes {
+			candidate.changes[class] += count
+		}
+	}
 	engine.counts.rechecks[key3(candidate.source, rung, outcome)]++
 	if state := engine.groups[candidate.queryGroup]; state != nil && outcome == RecheckCompared {
 		hold := groupHoldClass(candidate.contract.ReadHoldMillis)
@@ -1087,6 +1396,7 @@ func (engine *Engine) recheck(ctx context.Context, candidate *sample, release fu
 	// A rung compared covers any rung before it that was not read: it is
 	// compared with the last read kept, not with the rung it follows.
 	candidate.unread = outcome != RecheckCompared
+	candidate.readFailed = candidate.readFailed || outcome == RecheckFailed || outcome == RecheckPartial
 	// The series stand as this rung read them against the first read, not as
 	// any rung once did: a value that changed and came back was judged as it
 	// stands, and a series that came and went was not late. The rung a
@@ -1130,7 +1440,7 @@ func (engine *Engine) recheck(ctx context.Context, candidate *sample, release fu
 		engine.remember(Recent{Source: candidate.source, QueryGroup: candidate.queryGroup, EvaluationTime: candidate.evaluation,
 			Rung: rung, ReadAgeSeconds: int64(age / time.Second), Changes: changes, At: started})
 	}
-	if state := engine.groups[candidate.queryGroup]; state != nil && (state.sample == candidate || state.probe == candidate) {
+	if state := engine.groups[candidate.queryGroup]; state != nil && (state.sample == candidate || state.probe == candidate || candidate.probation) {
 		engine.advanceLocked(state, candidate, engine.options.Now())
 	}
 }

@@ -12,7 +12,7 @@ func TestActivationRebuildsAreScrapedByOutcomeFromZero(t *testing.T) {
 	r := NewRecorder(BuildInfo{})
 	read := func() map[string]float64 {
 		got := map[string]float64{}
-		for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_activation_rebuild_total") {
+		for _, m := range gatherFamily(t, r, "alarmd_activation_rebuild_total") {
 			got[m.Label[0].GetValue()] = m.GetCounter().GetValue()
 		}
 		return got

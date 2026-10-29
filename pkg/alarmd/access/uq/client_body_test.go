@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 const bodyTestSeries = `{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["bk_target_ip"],"group_values":["127.0.0.1"],"values":[[1700123456789,12.5]]}`
@@ -22,7 +23,7 @@ const bodyTestSeries = `{"name":"_result0","columns":["_time","_result"],"types"
 func partialBodyServer(t *testing.T, cut bool, delay time.Duration) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		time.Sleep(delay)
+		time.Sleep(delay) // fixed-wait: the server's answer delay, which the case sets
 		head := `{"series":[` + bodyTestSeries + `,`
 		if cut {
 			hijacker, ok := writer.(http.Hijacker)
@@ -44,11 +45,9 @@ func partialBodyServer(t *testing.T, cut bool, delay time.Duration) *httptest.Se
 		writer.WriteHeader(http.StatusOK)
 		_, _ = writer.Write([]byte(head))
 		writer.(http.Flusher).Flush()
-		timer := time.NewTimer(2 * time.Second)
-		defer timer.Stop()
 		select {
 		case <-request.Context().Done():
-		case <-timer.C:
+		case <-testwait.Expired(t):
 		}
 	}))
 	t.Cleanup(server.Close)
@@ -64,7 +63,7 @@ type slowSink struct {
 }
 
 func (sink *slowSink) ConsumeProviderSeries(ctx context.Context, batch execution.ProviderSeriesBatch) error {
-	time.Sleep(sink.delay)
+	time.Sleep(sink.delay) // fixed-wait: the sink's per-series delay, which the case sets
 	if sink.err != nil {
 		return sink.err
 	}
@@ -115,7 +114,8 @@ func TestAQueryWhoseBodyStopsPartwayNamesItself(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A second for the answer to begin, well inside the server's 2 s stall:
+	// A second for the answer to begin, well inside the server's stall, which
+	// lasts until the request ends:
 	// this case is a body that stops after its headers, and a deadline the
 	// headers could miss under a loaded run reads as a request that never got
 	// an answer instead (a transport timeout, no body failure at all).
@@ -135,6 +135,11 @@ func TestAQueryWhoseBodyStopsPartwayNamesItself(t *testing.T) {
 	}
 	if len(sink.batches) != 1 {
 		t.Fatalf("delivered %d batches, want the one series that arrived", len(sink.batches))
+	}
+	// How far the answer got before it stopped: the series handed on and the
+	// bytes read, so a failure that came partway says how much there was.
+	if volume := failure.QueryFailureVolume(); volume == nil || volume.SeriesDelivered != 1 || volume.BytesRead == 0 {
+		t.Fatalf("volume = %+v, want the one series delivered and the bytes read", volume)
 	}
 
 	late := partialBodyServer(t, false, 200*time.Millisecond)
@@ -159,7 +164,7 @@ func TestAQueryWhoseBodyStopsPartwayNamesItself(t *testing.T) {
 	_, err = slow.Execute(context.Background(), attempt, &slowSink{delay: 500 * time.Millisecond})
 	failure = bodyFailureOf(t, err)
 	timing = failure.QueryFailureTiming()
-	if category, code := failure.QueryFailure(); category != "other" || code != "OTHER" || failure.QueryFailureDetail() != "delivery=timeout" ||
+	if category, code := failure.QueryFailure(); category != "delivery" || code != "QUERY_DELIVERY_TIMEOUT" || failure.QueryFailureDetail() != "delivery=timeout" ||
 		timing == nil || !whole(timing, attempt) || timing.LocalMillis < 400 || timing.LocalMillis > timing.ElapsedMillis {
 		t.Fatalf("a sink that did not keep up = %s/%s %q timing %+v, want alarmd's own delivery timeout, spent mostly local",
 			category, code, failure.QueryFailureDetail(), timing)
@@ -218,7 +223,7 @@ func TestOnlyABodysTransportFailureIsNamed(t *testing.T) {
 	}
 	attempt := validAttempt(t)
 	attempt.DeadlineUnixMilli = time.Now().Add(time.Minute).UnixMilli()
-	caller, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	caller, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond) // fixed-wait: the caller's deadline the case runs out
 	defer cancel()
 	if _, err := client.Execute(caller, attempt, &collectingSink{}); err == nil || errors.As(err, &failure) {
 		t.Fatalf("a caller that gave up = %v, want its own error unnamed", err)
@@ -235,7 +240,7 @@ func TestOnlyABodysTransportFailureIsNamed(t *testing.T) {
 func TestABodyDeadlineIsNamedForWhoHeldTheTime(t *testing.T) {
 	client := &Client{now: time.Now}
 	deadline := time.Now().Add(-time.Second)
-	expired, cancel := context.WithDeadline(context.Background(), deadline)
+	expired, cancel := context.WithDeadline(context.Background(), deadline) // fixed-wait: a deadline the case sets in the past
 	defer cancel()
 	attempt := queryIdentity{Budget: queryBudget{StartUnixMilli: deadline.Add(-time.Minute).UnixMilli(), ReadyAtUnixMilli: deadline.Add(-time.Minute).UnixMilli(),
 		DeadlineUnixMilli: deadline.UnixMilli()}}
@@ -245,12 +250,12 @@ func TestABodyDeadlineIsNamedForWhoHeldTheTime(t *testing.T) {
 		category, code, detail string
 	}{
 		"a read the deadline ended":       {-time.Second, 10 * time.Millisecond, "provider_transport", "QUERY_TIMEOUT", "body=timeout"},
-		"a read begun after the deadline": {10 * time.Millisecond, 20 * time.Millisecond, "other", "OTHER", "delivery=timeout"},
+		"a read begun after the deadline": {10 * time.Millisecond, 20 * time.Millisecond, "delivery", "QUERY_DELIVERY_TIMEOUT", "delivery=timeout"},
 		"a connection broken before it":   {-2 * time.Second, -time.Second, "provider_transport", "QUERY_UNAVAILABLE", "body=connection_reset"},
 	} {
 		body := &countingReader{failed: syscall.ECONNRESET, failedBegan: deadline.Add(testCase.began), failedAt: deadline.Add(testCase.returned)}
 		err := client.bodyFailure(context.Background(), expired, attempt, fmt.Errorf("alarmd access uq: decode series payload: %w", syscall.ECONNRESET),
-			body, started, started.Add(time.Second))
+			body, 0, started, started.Add(time.Second))
 		failure := bodyFailureOf(t, err)
 		if category, code := failure.QueryFailure(); category != testCase.category || code != testCase.code || failure.QueryFailureDetail() != testCase.detail {
 			t.Errorf("%s = %s/%s %q, want %s/%s %q", name, category, code, failure.QueryFailureDetail(), testCase.category, testCase.code, testCase.detail)
@@ -259,7 +264,7 @@ func TestABodyDeadlineIsNamedForWhoHeldTheTime(t *testing.T) {
 	// With no deadline at all, nothing expired: a broken connection is the
 	// backend's unavailability whenever its read returned.
 	body := &countingReader{failed: syscall.ECONNRESET, failedBegan: time.Now(), failedAt: time.Now()}
-	err := client.bodyFailure(context.Background(), context.Background(), attempt, fmt.Errorf("decode: %w", syscall.ECONNRESET), body, started, started)
+	err := client.bodyFailure(context.Background(), context.Background(), attempt, fmt.Errorf("decode: %w", syscall.ECONNRESET), body, 0, started, started)
 	if failure := bodyFailureOf(t, err); failure.QueryFailureDetail() != "body=connection_reset" {
 		t.Errorf("a reset under no deadline = %q, want body=connection_reset", failure.QueryFailureDetail())
 	}
@@ -270,7 +275,7 @@ func TestABodyDeadlineIsNamedForWhoHeldTheTime(t *testing.T) {
 type failingReader struct{ wait time.Duration }
 
 func (reader failingReader) Read([]byte) (int, error) {
-	time.Sleep(reader.wait)
+	time.Sleep(reader.wait) // fixed-wait: the body reader's stall, which the case sets
 	return 0, syscall.ECONNRESET
 }
 

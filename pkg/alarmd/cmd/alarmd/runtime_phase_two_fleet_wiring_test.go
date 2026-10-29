@@ -147,7 +147,7 @@ func TestProductionBundleReportsFleetSnapshotPublishOutcome(t *testing.T) {
 		ProgressCompletionKind: "FULL_COMPLETED",
 		Trace:                  observability.TraceFields{StrategyID: "4101", BusinessID: "7", EvaluationTime: 600},
 	})
-	if got := recorderGauge(t, recorder, "bkmonitor_alarmd_fleet_round_memory_rounds"); got != 1 {
+	if got := recorderGauge(t, recorder, "alarmd_fleet_round_memory_rounds"); got != 1 {
 		t.Fatalf("round memory rounds = %v, want the one round observed through the bundle", got)
 	}
 	// Past the fixed sixteen an object's rounds grow under the observation
@@ -162,7 +162,7 @@ func TestProductionBundleReportsFleetSnapshotPublishOutcome(t *testing.T) {
 			HistoryCoverage:        &observability.HistoryCoverageFacts{Levels: 1, End: end, WindowStart: 1},
 		})
 	}
-	if got := consumerCounter(t, recorder, "bkmonitor_alarmd_observation_memory_admitted_bytes_total", "fleet_rounds"); got != 128 {
+	if got := consumerCounter(t, recorder, "alarmd_observation_memory_admitted_bytes_total", "fleet_rounds"); got != 128 {
 		t.Fatalf("fleet_rounds admitted bytes = %v, want the 128 the seventeenth round grew by", got)
 	}
 }
@@ -317,7 +317,7 @@ func fleetPublishSeries(t *testing.T, recorder *metric.Recorder, result string) 
 		t.Fatal(err)
 	}
 	for _, family := range families {
-		if family.GetName() != "bkmonitor_alarmd_observation_total" {
+		if family.GetName() != "alarmd_observation_total" {
 			continue
 		}
 		for _, series := range family.GetMetric() {

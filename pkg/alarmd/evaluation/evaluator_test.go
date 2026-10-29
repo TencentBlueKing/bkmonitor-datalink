@@ -162,6 +162,66 @@ func TestEvaluatorInactiveLevelStillAdvancesDetectHistory(t *testing.T) {
 	}
 }
 
+// A series anomalous across the start of its hours (09:00-17:00 UTC, two
+// anomalies in a window of three) is alerted on the first Slot in them, from
+// the anomalies recorded before them, as the Python backend alerts it: its
+// detect writes every point's result to the window cache whatever the hour
+// (core/control/mixins/detect.py), its trigger drops the points it pulls out
+// of hours (trigger/processor.py, in_alarm_time) and counts the window from
+// that cache (trigger/checker.py). Its alert begins at the point that passed
+// the trigger, the 09:00 one (alert.py from_event: begin_time = event.time),
+// and its first anomaly is the earliest in that window, 08:58
+// (adapter.py: anomaly_ids[0]). Neither Slot out of hours emits.
+func TestTheFirstSlotInItsHoursCountsTheAnomaliesRecordedBeforeThem(t *testing.T) {
+	plan := compiledWindowWithUptime(t, 3, 2, true)
+	const at0858, at0859, at0900 = int64(8*3600 + 58*60), int64(8*3600 + 59*60), int64(9 * 3600)
+	series := strings.Repeat("c", 64)
+	record := func(id string, at int64) []contract.CanonicalRecordV2 {
+		return []contract.CanonicalRecordV2{{RecordID: strings.Repeat(id, 64), SourceTime: at, BusinessID: "2",
+			DimensionIdentity: contract.DimensionIdentityV2{Digest: series}, Values: map[string]json.RawMessage{"value": json.RawMessage(`80`)},
+			Dimensions: map[string]json.RawMessage{}, ReceivedTime: at}}
+	}
+	var state *execution.RuntimeStateView
+	slot := func(id string, at int64, wantStatus string) execution.PlanEvaluationResult {
+		t.Helper()
+		request := requestFixtureAt(t, plan, at, record(id, at), nil)
+		if got := request.Header.EffectiveTimeFacts[0].Fact.Status(); got != wantStatus {
+			t.Fatalf("fixture: the Slot at %d is %s, want %s", at, got, wantStatus)
+		}
+		if state != nil {
+			request.State.Items[0] = *state
+		}
+		evaluated, err := newEvaluator(t).Evaluate(context.Background(), request)
+		if err != nil {
+			t.Fatalf("Evaluate(%d)=%v", at, err)
+		}
+		result := evaluated.Plans[0]
+		if len(result.StateResults) != 1 {
+			t.Fatalf("the Slot at %d wrote no state: %+v", at, result)
+		}
+		next := stateViewFromMutation(result.StateResults[0].Mutation, execution.StateFoundReady)
+		state = &next
+		return result
+	}
+	for _, out := range []struct {
+		id string
+		at int64
+	}{{"b", at0858}, {"d", at0859}} {
+		if events := slot(out.id, out.at, strategy.EffectiveTimeInactive).StateResults[0].Events; len(events) != 0 {
+			t.Fatalf("the Slot at %d, out of its hours, emitted %+v", out.at, events)
+		}
+	}
+	events := slot("e", at0900, strategy.EffectiveTimeActive).StateResults[0].Events
+	if len(events) != 1 || len(events[0].LevelResults) != 1 {
+		t.Fatalf("the first Slot in its hours emitted %+v, want one event: three anomalies in the window, two required", events)
+	}
+	event, window := events[0], events[0].LevelResults[0].DecisionWindow.Trigger
+	if event.RecordRef.SourceTime != at0900 || window.ObservedAnomalies != 3 || window.AnomalyBeginTime != at0858 {
+		t.Fatalf("the event begins at %d, its window saw %d anomalies from %d; want it begun at %d, three anomalies from %d",
+			event.RecordRef.SourceTime, window.ObservedAnomalies, window.AnomalyBeginTime, at0900, at0858)
+	}
+}
+
 func TestEvaluatorBoundsPersistedHistoryAcrossOneSeriesBatch(t *testing.T) {
 	series := strings.Repeat("c", 64)
 	records := make([]contract.CanonicalRecordV2, 0, 3)
@@ -603,15 +663,23 @@ func requestFixture(t testing.TB, value json.RawMessage, history []execution.Sta
 }
 
 func requestFixtureForPlan(t testing.TB, plan *strategy.CompiledPlan, records []contract.CanonicalRecordV2, history []execution.StateHistoryPoint) execution.EvaluationRequest {
+	return requestFixtureAt(t, plan, 100, records, history)
+}
+
+// requestFixtureAt is requestFixtureForPlan for the Slot at evaluation time
+// at, decided at that time: its effective time is resolved there, its read
+// is the minute before it, and its deadlines are a little after it.
+func requestFixtureAt(t testing.TB, plan *strategy.CompiledPlan, at int64, records []contract.CanonicalRecordV2, history []execution.StateHistoryPoint) execution.EvaluationRequest {
+	deadline := (at + 100) * 1000
 	id := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}
-	due := execution.DuePlan{Identity: id, CompiledPlan: plan, StateGeneration: "state-v1", StateApplyEpoch: 1, ScheduleRevision: "plan-schedule", CompletionDeadlineUnixMilli: 200000}
+	due := execution.DuePlan{Identity: id, CompiledPlan: plan, StateGeneration: "state-v1", StateApplyEpoch: 1, ScheduleRevision: "plan-schedule", CompletionDeadlineUnixMilli: deadline}
 	consumer := execution.ConsumerRef{Plan: id, LevelID: 5, HasLevel: true}
-	requirement := execution.DataRequirement{RequirementID: "main", DatasetName: "main", Role: execution.InputRolePrimary, LogicalQueryRef: "q", RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: -60, EndOffsetSeconds: 0, HalfOpen: true}, StepMillis: 60000, AlignmentMillis: 60000, ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessEager, RequiredColumns: []string{"value"}, Consumers: []execution.DataRequirementConsumer{{Consumer: consumer, ConsumerDeadlineUnixMilli: 200000, DownstreamExecutionReserveMilliSec: 1000}}}
+	requirement := execution.DataRequirement{RequirementID: "main", DatasetName: "main", Role: execution.InputRolePrimary, LogicalQueryRef: "q", RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: -60, EndOffsetSeconds: 0, HalfOpen: true}, StepMillis: 60000, AlignmentMillis: 60000, ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessEager, RequiredColumns: []string{"value"}, Consumers: []execution.DataRequirementConsumer{{Consumer: consumer, ConsumerDeadlineUnixMilli: deadline, DownstreamExecutionReserveMilliSec: 1000}}}
 	digest, err := execution.DeriveDuePlanSetDigest([]execution.DuePlan{due}, []execution.DataRequirement{requirement})
 	if err != nil {
 		t.Fatal(err)
 	}
-	contractRef := execution.FrozenExecutionContractRef{Slot: execution.SlotIdentity{QueryGroup: "qg", EvaluationTime: 100}, SnapshotRevision: "snapshot", QueryRevision: "query", ScheduleRevision: "schedule", ScheduleSegmentStart: 100, DuePlanSetDigest: digest}
+	contractRef := execution.FrozenExecutionContractRef{Slot: execution.SlotIdentity{QueryGroup: "qg", EvaluationTime: execution.EvaluationTime(at)}, SnapshotRevision: "snapshot", QueryRevision: "query", ScheduleRevision: "schedule", ScheduleSegmentStart: 100, DuePlanSetDigest: digest}
 	series := execution.SeriesIdentityDigest(records[0].DimensionIdentity.Digest)
 	dataset := execution.NewDataset(records)
 	ordinals := make([]uint32, len(records))
@@ -619,11 +687,11 @@ func requestFixtureForPlan(t testing.TB, plan *strategy.CompiledPlan, records []
 		ordinals[i] = uint32(i)
 	}
 	view, _ := execution.NewDatasetView(dataset, ordinals)
-	binding := execution.NamedInputBinding{Consumer: consumer, RequirementID: "main", DatasetName: "main", Role: execution.InputRolePrimary, ProviderResult: "provider", QueryWindow: execution.QueryWindow{Start: 40, End: 100}, Dataset: dataset, View: view, Completeness: execution.CompletenessFull, DataState: execution.DataStateData, Disposition: execution.AccessAvailable, ImpactScope: execution.ImpactPlan, Provenance: execution.InputProvenance{PhysicalQuery: "physical", AttemptNo: 1}}
+	binding := execution.NamedInputBinding{Consumer: consumer, RequirementID: "main", DatasetName: "main", Role: execution.InputRolePrimary, ProviderResult: "provider", QueryWindow: execution.QueryWindow{Start: at - 60, End: at}, Dataset: dataset, View: view, Completeness: execution.CompletenessFull, DataState: execution.DataStateData, Disposition: execution.AccessAvailable, ImpactScope: execution.ImpactPlan, Provenance: execution.InputProvenance{PhysicalQuery: "physical", AttemptNo: 1}}
 	provider := strategy.NewStaticScheduleProvider(strategy.TimezoneResolverFunc(func(context.Context, string, string, string) (*time.Location, error) {
 		return time.UTC, nil
 	}))
-	facts, err := provider.Resolve(context.Background(), []strategy.EffectiveTimeRequest{{TenantID: "tenant", BusinessID: "2", EvaluationTime: 100, Requirement: plan.Levels().At(0).EffectiveTimeRequirement()}})
+	facts, err := provider.Resolve(context.Background(), []strategy.EffectiveTimeRequest{{TenantID: "tenant", BusinessID: "2", EvaluationTime: at, Requirement: plan.Levels().At(0).EffectiveTimeRequirement()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -632,7 +700,7 @@ func requestFixtureForPlan(t testing.TB, plan *strategy.CompiledPlan, records []
 		t.Fatal(err)
 	}
 	stateView := execution.RuntimeStateView{Identity: execution.StateKeyIdentity{Plan: id, StateGeneration: "state-v1", SeriesIdentityDigest: series}, Status: execution.StateFoundReady, BlobRevision: 1, VersionComparison: execution.ApplyVersionPersistedOlder, History: append([]execution.StateHistoryPoint(nil), history...), Levels: []execution.RuntimeLevelStateView{{LevelID: 5, LevelStateCompatibility: refs[0].LevelStateCompatibility, WarmupRequirementRef: refs[0].WarmupRequirementRef, HistoryCompleteness: execution.HistoryFull}}}
-	return execution.EvaluationRequest{Header: execution.InternalExecutionHeader{ExecutionID: "execution", Contract: contractRef, DuePlans: []execution.DuePlan{due}, Requirements: []execution.DataRequirement{requirement}, EffectiveTimeFacts: []execution.BoundEffectiveTimeFact{{Consumer: consumer, SeriesIdentity: series, Fact: facts[0]}}, RequiredPhysicalQueries: []execution.PlannedPhysicalQueryRef{{Digest: "physical", QueryRevision: "query"}}, DeadlineUnixMilli: 200000}, Inputs: []execution.SeriesEvaluationInputRequest{{Contract: contractRef, Consumer: consumer, SeriesIdentity: series, RequirementIDs: []execution.RequirementID{"main"}, Inputs: []execution.NamedInputBinding{binding}}}, State: execution.StatePreflightResult{Items: []execution.RuntimeStateView{stateView}}, Gaps: execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{Identity: execution.PlanGapIdentity{Plan: id, StateGeneration: "state-v1"}, Status: execution.GapMissing}}}}
+	return execution.EvaluationRequest{Header: execution.InternalExecutionHeader{ExecutionID: "execution", Contract: contractRef, DuePlans: []execution.DuePlan{due}, Requirements: []execution.DataRequirement{requirement}, EffectiveTimeFacts: []execution.BoundEffectiveTimeFact{{Consumer: consumer, SeriesIdentity: series, Fact: facts[0]}}, RequiredPhysicalQueries: []execution.PlannedPhysicalQueryRef{{Digest: "physical", QueryRevision: "query"}}, DeadlineUnixMilli: deadline, DecisionTime: int64(contractRef.Slot.EvaluationTime)}, Inputs: []execution.SeriesEvaluationInputRequest{{Contract: contractRef, Consumer: consumer, SeriesIdentity: series, RequirementIDs: []execution.RequirementID{"main"}, Inputs: []execution.NamedInputBinding{binding}}}, State: execution.StatePreflightResult{Items: []execution.RuntimeStateView{stateView}}, Gaps: execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{Identity: execution.PlanGapIdentity{Plan: id, StateGeneration: "state-v1"}, Status: execution.GapMissing}}}}
 }
 
 func compiled(t testing.TB) *strategy.CompiledPlan {

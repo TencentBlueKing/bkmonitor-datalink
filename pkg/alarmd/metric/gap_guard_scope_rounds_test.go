@@ -20,7 +20,7 @@ import (
 func gapGuardScopeRound(reason, progress string) observability.Observation {
 	return observability.Observation{
 		Component: observability.ComponentState, Stage: observability.StageGapGuardProgress,
-		Result: observability.ResultSuccess, Direction: observability.DirectionInternal,
+		Result: observability.ResultSuccess,
 		GapProgress: &observability.GapProgressFacts{
 			Scope: "plan", Status: "GAPPED", Reason: reason, Required: 5, Progress: progress,
 		},
@@ -35,7 +35,7 @@ func gapGuardSeries(t *testing.T, recorder *Recorder) map[[3]string]float64 {
 	}
 	series := map[[3]string]float64{}
 	for _, family := range families {
-		if family.GetName() != "bkmonitor_alarmd_worker_gap_guard_scope_rounds_total" {
+		if family.GetName() != "alarmd_worker_gap_guard_scope_rounds_total" {
 			continue
 		}
 		for _, sample := range family.Metric {

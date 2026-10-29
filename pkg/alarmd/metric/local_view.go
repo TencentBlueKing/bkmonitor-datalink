@@ -35,7 +35,7 @@ type localViewCollector struct {
 func newLocalViewCollector() *localViewCollector {
 	return &localViewCollector{
 		bytes: prometheus.NewDesc(
-			prometheus.BuildFQName(metricNamespace, metricSubsystem, "local_view_object_bytes"),
+			prometheus.BuildFQName("", metricSubsystem, "local_view_object_bytes"),
 			"Stored bytes of the control content this Worker holds for the Query Groups it owns, by kind: "+
 				"query_group is the execution objects, output_context the output contexts their Plans name. "+
 				"Each Query Group counts the object and contexts its last Slot was frozen from, so the sum is "+
@@ -46,7 +46,7 @@ func newLocalViewCollector() *localViewCollector {
 			[]string{"kind"}, nil,
 		),
 		queryGroups: prometheus.NewDesc(
-			prometheus.BuildFQName(metricNamespace, metricSubsystem, "local_view_query_groups"),
+			prometheus.BuildFQName("", metricSubsystem, "local_view_query_groups"),
 			"Owned Query Groups whose last Slot was read by content and so have an object in the view. "+
 				"Read it against worker_owned_query_groups: the difference is Query Groups this Worker owns "+
 				"but has not frozen a Slot for yet, or whose last Slot was served from the Snapshot instead "+

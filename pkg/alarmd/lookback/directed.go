@@ -31,26 +31,29 @@ import (
 // A Slot of more than one physical query is not read: its late series would
 // be found in one query and needed from all of them, which one read of each
 // in any order cannot keep. It is counted unobserved, multi_query, and a
-// supplement of it is not attempted.
+// supplement of it is not attempted. Nor is a Slot of a query with named
+// outputs read: unobserved, named_outputs.
 
 // Directed window outcomes, closed: what became of each Slot of a directed
 // Query Group. supplemented is a Slot read whose supplement ran, whatever
 // each of its series came to; nothing_late one read that had no series its
 // first read did not. flight_busy, contract_expired and failed are Slots
-// read whose supplement did not run, by why; unobserved one not read, by
-// the reason in DirectedUnobservedReasons.
+// read whose supplement did not run, by why - kept_read_absent one whose
+// queries, planned again, were not the query the read kept; unobserved one
+// not read, by the reason in DirectedUnobservedReasons.
 const (
 	DirectedSupplemented    = "supplemented"
 	DirectedNothingLate     = "nothing_late"
 	DirectedFlightBusy      = "flight_busy"
 	DirectedContractExpired = "contract_expired"
+	DirectedKeptReadAbsent  = "kept_read_absent"
 	DirectedFailed          = "failed"
 	DirectedUnobserved      = "unobserved"
 )
 
 // DirectedOutcomes is every directed window outcome.
 var DirectedOutcomes = []string{DirectedSupplemented, DirectedNothingLate, DirectedFlightBusy, DirectedContractExpired,
-	DirectedFailed, DirectedUnobserved}
+	DirectedKeptReadAbsent, DirectedFailed, DirectedUnobserved}
 
 // Why a directed Slot was not read, closed.
 const (
@@ -68,11 +71,16 @@ const (
 	// UnobservedMemoryRefused is a Slot whose series set or kept series the
 	// process's memory line refused.
 	UnobservedMemoryRefused = "memory_refused"
+	// UnobservedNamedOutputs is a Slot of a query with named outputs. It is
+	// one physical query, so multi_query does not take it; a supplement of
+	// it would evaluate a read of its legacy output alone, and its alerts
+	// would carry none of the outputs the Slot's own read aligned.
+	UnobservedNamedOutputs = "named_outputs"
 )
 
 // DirectedUnobservedReasons is every reason.
 var DirectedUnobservedReasons = []string{UnobservedYielded, UnobservedReadFailed, UnobservedFirstReadIncomplete,
-	UnobservedMultiQuery, UnobservedMemoryRefused}
+	UnobservedMultiQuery, UnobservedMemoryRefused, UnobservedNamedOutputs}
 
 // Series outcomes of the supplements that ran, closed: the names
 // execution.SupplementFacts counts, and the points the admitted ones were
@@ -162,10 +170,23 @@ type KeptRead struct {
 	completion execution.ProviderCompletion
 }
 
+// Digest is the physical query the read kept.
+func (read *KeptRead) Digest() execution.PhysicalQueryDigest {
+	if read == nil {
+		return ""
+	}
+	return read.digest
+}
+
+// Keeps says whether the read is of the physical query of digest.
+func (read *KeptRead) Keeps(digest execution.PhysicalQueryDigest) bool {
+	return read != nil && digest == read.digest
+}
+
 // Replay delivers the kept series in the order they were read and returns
 // the completion restated for them.
 func (read *KeptRead) Replay(ctx context.Context, spec execution.PhysicalQuerySpec, sink execution.ProviderSeriesSink) (execution.ProviderCompletion, error) {
-	if read == nil || spec.Digest != read.digest {
+	if !read.Keeps(spec.Digest) {
 		return execution.ProviderCompletion{}, ErrNotKept
 	}
 	for _, batch := range read.batches {
@@ -348,6 +369,8 @@ func (engine *Engine) dueDirectedLocked(state *group, now time.Time) []*directed
 			reason = UnobservedYielded
 		case len(slot.queries) != 1:
 			reason = UnobservedMultiQuery
+		case slot.queries[0].spec.PlanFacts.NamedOutputs != nil:
+			reason = UnobservedNamedOutputs
 		case !slot.queries[0].finished || !slot.queries[0].complete:
 			reason = UnobservedFirstReadIncomplete
 			if slot.queries[0].first.refused {
@@ -481,7 +504,7 @@ func (sink *keptSink) kept(spec execution.PhysicalQuerySpec, completion executio
 // series to the supplement. The permit is given back before the supplement
 // runs: a supplement reads nothing, and it waits for nothing but its own
 // Query Group's flight.
-func (engine *Engine) directedRead(ctx context.Context, slot *directedSlot, release func(), yield <-chan struct{}) {
+func (engine *Engine) directedRead(ctx context.Context, slot *directedSlot, captured *directedQuery, release func(), yield <-chan struct{}) {
 	readCtx, cancel := context.WithTimeout(ctx, engine.rereadTimeout(slot.queryGroup))
 	back := make(chan struct{})
 	if yield != nil {
@@ -493,7 +516,6 @@ func (engine *Engine) directedRead(ctx context.Context, slot *directedSlot, rele
 			}
 		}()
 	}
-	captured := slot.queries[0]
 	engine.mu.Lock()
 	first := captured.first.set
 	engine.mu.Unlock()
@@ -555,7 +577,8 @@ func (engine *Engine) directedRead(ctx context.Context, slot *directedSlot, rele
 	case outcome.Ran:
 		rung.facts = &outcome.Facts
 		engine.fileWindowLocked(state, slot, DirectedSupplemented, "", rung)
-	case outcome.Refused == DirectedFlightBusy || outcome.Refused == DirectedContractExpired:
+	case outcome.Refused == DirectedFlightBusy || outcome.Refused == DirectedContractExpired ||
+		outcome.Refused == DirectedKeptReadAbsent:
 		engine.fileWindowLocked(state, slot, outcome.Refused, "", rung)
 	default:
 		engine.fileWindowLocked(state, slot, DirectedFailed, "", rung)
@@ -571,6 +594,8 @@ func earlyRefusalWindow(early string) (outcome string, ok bool) {
 		return DirectedFlightBusy, true
 	case EarlyContractExpired, EarlyOvertaken:
 		return DirectedContractExpired, true
+	case EarlyKeptReadAbsent:
+		return DirectedKeptReadAbsent, true
 	case EarlyFailed:
 		return DirectedFailed, true
 	}

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
 )
 
@@ -511,7 +512,7 @@ func TestSharedSchemaCallerCancelStopsDeliveryAndReleasesHTTP(t *testing.T) {
 	}
 	select {
 	case <-released:
-	case <-time.After(time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("request remained active after local cancellation")
 	}
 }
@@ -528,7 +529,7 @@ func TestSharedSchemaRecheckAndRangeRemainLegacy(t *testing.T) {
 	}))
 	defer server.Close()
 	client, _ := NewClientWithLimits(server.URL, "alarmd", server.Client(), DefaultLimits())
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithCancel(testwait.Context(t))
 	defer cancel()
 	if _, err := client.Recheck(ctx, validAttempt(t).Spec, &collectingSink{}); err != nil {
 		t.Fatal(err)

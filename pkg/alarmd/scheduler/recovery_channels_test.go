@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"testing"
 	"time"
 )
@@ -17,7 +18,7 @@ func TestRecoveryChannelsLeavePForNormalAndReuseAcrossQueries(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	deadline := time.Now().Add(time.Minute)
+	deadline := testwait.Deadline(t)
 	slot := execution.SlotIdentity{QueryGroup: "recovery", EvaluationTime: 100}
 	channels, err := f.AcquireRecoveryChannels(ctx, slot, execution.OperationReplay, deadline, 20)
 	if err != nil {
@@ -74,7 +75,7 @@ func TestRecoveryChannelCancellationWhileWaitingForPReleasesBoth(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	deadline := time.Now().Add(time.Minute)
+	deadline := testwait.Deadline(t)
 	var held []*QueryPermit
 	for _, qg := range []execution.QueryGroupIdentity{"a", "b"} {
 		p, e := f.AcquireQueryPermit(ctx, execution.SlotIdentity{QueryGroup: qg, EvaluationTime: 100}, execution.OperationNormal, deadline)

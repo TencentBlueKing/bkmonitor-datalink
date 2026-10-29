@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -48,7 +49,7 @@ func healthFromSnapshots(view View, at time.Time, stallAfter time.Duration) Heal
 		ReadEarly: firstScreenList(readEarly), ReadEarlyTotal: len(readEarly),
 		Coverage: view.Coverage, Handover: handoverOf(view.Coverage), PerReplica: view.PerReplica,
 		PublishedVersion: view.PublishedVersion, Workers: view.Workers, Builds: view.Builds,
-		OutputProtocols: outputProtocolList(view.OutputProtocols), Retentions: retentionList(view.Retentions),
+		OutputProtocols: outputProtocolList(view.OutputProtocols), Tracings: tracingList(view.Tracings), Retentions: retentionList(view.Retentions),
 		OutputPath: OutputPathOf(&view), Degradations: degradationList(view.Degradations),
 		Activation: view.Activation, ActivationReplica: view.ActivationReplica, NoDataHorizon: view.NoDataHorizon,
 		Rebalance: view.Rebalance, RebalanceReplica: view.RebalanceReplica,
@@ -342,8 +343,7 @@ func TestAHealthReadItsCallerLeftRecordsNoVerdict(t *testing.T) {
 		defer close(served)
 		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/health", nil).WithContext(ctx))
 	}()
-	for deadline := time.Now().Add(2 * time.Second); reader.count() == 0 && time.Now().Before(deadline); time.Sleep(time.Millisecond) {
-	}
+	testwait.Until(t, "the scrape reading the replicas", func() bool { return reader.count() > 0 })
 	leave()
 	<-served
 	if history, _ := service.VerdictHistory(); len(history) != 0 {
@@ -425,10 +425,10 @@ func TestReadersThatComeDuringASummarizedReadShareIt(t *testing.T) {
 		answers <- view
 	}
 	go read()
-	for deadline := time.Now().Add(2 * time.Second); reader.count() == 0 && time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+	for deadline := testwait.Deadline(t); reader.count() == 0 && time.Now().Before(deadline); time.Sleep(time.Millisecond) { // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	go read()
-	time.Sleep(100 * time.Millisecond)
+	testwait.Until(t, "the second reader waiting on the summarized read", func() bool { return sharedWaiters(&service.summaries) == 2 })
 	close(reader.release)
 	first, second := <-answers, <-answers
 	if reader.count() != 1 || first.AnomaliesTotal != 2 || second.AnomaliesTotal != 2 {

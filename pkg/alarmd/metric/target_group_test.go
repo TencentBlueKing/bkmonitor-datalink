@@ -26,9 +26,9 @@ func TestTargetGroupsReadTheStoreAtScrape(t *testing.T) {
 		for _, family := range families {
 			for _, sample := range family.GetMetric() {
 				switch name := family.GetName(); name {
-				case "bkmonitor_alarmd_target_group_groups":
+				case "alarmd_target_group_groups":
 					values["groups:"+sample.GetLabel()[0].GetValue()] = sample.GetGauge().GetValue()
-				case "bkmonitor_alarmd_target_group_refresh_failed":
+				case "alarmd_target_group_refresh_failed":
 					values[name] = sample.GetGauge().GetValue()
 				}
 			}
@@ -54,7 +54,7 @@ func TestTargetGroupsReadTheStoreAtScrape(t *testing.T) {
 	values = read(recorder)
 	want := map[string]float64{
 		"groups:referenced": 7, "groups:loaded": 5, "groups:unavailable": 2, "groups:failing": 3,
-		"bkmonitor_alarmd_target_group_refresh_failed": 1,
+		"alarmd_target_group_refresh_failed": 1,
 	}
 	for name, value := range want {
 		if values[name] != value {

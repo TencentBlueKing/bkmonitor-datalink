@@ -19,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
 )
 
@@ -132,7 +133,7 @@ func TestTheSlotsSampleIsItsPrimaryWindowWhenADependencyIsReadFirst(t *testing.T
 	now = now.Add(time.Duration(lookback.RungSteps[0] * float64(step)))
 	clock.Unlock()
 	engine.Step(context.Background())
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := testwait.Deadline(t)
 	for {
 		recheck.mu.Lock()
 		read := len(recheck.specs)
@@ -143,7 +144,7 @@ func TestTheSlotsSampleIsItsPrimaryWindowWhenADependencyIsReadFirst(t *testing.T
 		if time.Now().After(deadline) {
 			t.Fatalf("no recheck of the sample: %+v", engine.Stats())
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	recheck.mu.Lock()
 	defer recheck.mu.Unlock()
@@ -162,12 +163,18 @@ func TestAHeldSlotsTrialReadIsItsPrimaryWindow(t *testing.T) {
 	// the primary, and the reservation must be the primary's either way.
 	for _, dependencyFirst := range []bool{true, false} {
 		t.Run(map[bool]string{true: "dependency planned first", false: "primary planned first"}[dependencyFirst], func(t *testing.T) {
-			heldSlotTrialRead(t, dependencyFirst)
+			heldSlotTrialRead(t, dependencyFirst, false)
 		})
 	}
 }
 
-func heldSlotTrialRead(t *testing.T, dependencyFirst bool) {
+// While the Query Group's queries are failing, a held Slot reserves no earlier-read trial: the trial would be one
+// more read of a backend not answering in time.
+func TestAHeldSlotWhoseBackendIsFailingReservesNoTrial(t *testing.T) {
+	heldSlotTrialRead(t, false, true)
+}
+
+func heldSlotTrialRead(t *testing.T, dependencyFirst, failing bool) {
 	hold := 300 * time.Second
 	var contractRef execution.FrozenExecutionContractRef
 	var frozen FrozenPlan
@@ -222,7 +229,7 @@ func heldSlotTrialRead(t *testing.T, dependencyFirst bool) {
 	source.now = at
 	source.wait = func(context.Context, time.Duration) error { return nil }
 	request := execution.QueryExecutionRequest{Contract: contractRef, Operation: execution.OperationNormal, AttemptNo: 1}
-	_, err = source.Execute(context.Background(), request, &recordingConsumer{})
+	_, err = source.Execute(execution.WithBackendFailing(context.Background(), failing), request, &recordingConsumer{})
 	heldReady, deferred := ReadinessDeferredAt(err)
 	if !deferred || !heldReady.After(evaluation.Add(hold)) {
 		t.Fatalf("fixture: the held Slot answered %v (ready at %s) at its evaluation time %s, want it deferred past its hold", err, heldReady, evaluation)
@@ -233,10 +240,32 @@ func heldSlotTrialRead(t *testing.T, dependencyFirst bool) {
 	step := time.Duration(frozen.QueryFacts[frozen.Requirements[0].LogicalQueryRef].StepMillis) * time.Millisecond
 	set(heldReady.Add(-hold + execution.LoweredReadHold(hold, step) - lookback.RecheckTimeout))
 	engine.StepEarly(context.Background())
+	if failing {
+		time.Sleep(50 * time.Millisecond) // fixed-wait: a window in which a failing backend must start no recheck; an absence sends no signal to wait on
+		recheck.mu.Lock()
+		defer recheck.mu.Unlock()
+		if len(recheck.specs) != 0 {
+			t.Fatalf("a Slot whose backend is failing made %d trial reads", len(recheck.specs))
+		}
+		// Counted as what kept it from a trial, once though its readiness was asked twice.
+		_, _ = source.Execute(execution.WithBackendFailing(context.Background(), failing), request, &recordingConsumer{})
+		skipped := map[string]uint64{}
+		for _, source := range engine.Stats().Sources {
+			for reason, count := range source.EarlierSkipped {
+				if count > 0 {
+					skipped[reason] += count
+				}
+			}
+		}
+		if len(skipped) != 1 || skipped[lookback.EarlierSkipBackendFailing] != 1 {
+			t.Fatalf("a Slot whose backend is failing was counted skipped %v, want once, backend_failing", skipped)
+		}
+		return
+	}
 	// Wait for the trial read to have finished, not only to have asked: the
 	// engine counts its bytes in the same step that files its answer, and a
 	// formal first read that finds it still running takes it as overtaken.
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := testwait.Deadline(t)
 	for {
 		var earlier uint64
 		for _, source := range engine.Stats().Sources {
@@ -252,7 +281,7 @@ func heldSlotTrialRead(t *testing.T, dependencyFirst bool) {
 			}
 			t.Fatalf("no trial read was made; earlier-read outcomes %v", reads)
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 
 	set(heldReady.Add(time.Second))
@@ -264,7 +293,7 @@ func heldSlotTrialRead(t *testing.T, dependencyFirst bool) {
 		if got.Outcome != lookback.EarlierEqual || !got.Observed {
 			t.Fatalf("trial read outcome %q observed %v, want it compared with the primary's first read and equal", got.Outcome, got.Observed)
 		}
-	case <-time.After(5 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("no trial read evidence after the formal first read")
 	}
 	recheck.mu.Lock()

@@ -368,6 +368,8 @@ func legacyRecoveryCatalog(t *testing.T, detects string, levels ...int) controlp
 type legacyRecoveryReading struct {
 	Enabled            bool   `json:"enabled"`
 	ConsecutiveWindows uint32 `json:"consecutive_windows"`
+	End                string `json:"end"`
+	MissingData        string `json:"missing_data"`
 }
 
 func legacyRecoveryOf(t *testing.T, catalog controlplane.Catalog) map[uint32]legacyRecoveryReading {

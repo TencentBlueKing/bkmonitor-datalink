@@ -625,3 +625,124 @@ func TestAnObservationExpiringAtTheStepIsCounted(t *testing.T) {
 	f.closer.Step(context.Background())
 	f.want(t, "expired at the step", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeObservationExpired: 1})
 }
+
+// alertBusinesses is the link's record of which business each alert was
+// filed under, counting the reads.
+type alertBusinesses struct {
+	byAlert map[string]int64
+	reads   int
+}
+
+func (b *alertBusinesses) of(_ context.Context, tenantID, source, strategyID, alertID string) (int64, error) {
+	b.reads++
+	business, ok := b.byAlert[alertID]
+	if !ok || tenantID != tenant || source != ownSrc || strategyID != strategy {
+		return 0, openalerts.ErrAlertBusinessUnknown
+	}
+	return business, nil
+}
+
+func globalDrop(fingerprint string) Drop {
+	d := drop(fingerprint, 0)
+	d.BusinessID, d.GlobalBusiness = "9", true
+	return d
+}
+
+// A global business strategy files each alert under the business it is
+// about, and the close of each carries that one, read from the alert's
+// record - not the strategy's own. An alert whose record names none is not
+// closed and is tried again at the next step; the others go out.
+func TestAGlobalStrategysCloseCarriesEachAlertsBusiness(t *testing.T) {
+	f := newFixture(openSet(ownSrc, fp(1), fp(2), fp(3)), nil)
+	records := &alertBusinesses{byAlert: map[string]int64{"alert-0": 2, "alert-1": 3}}
+	f.closer.BindAlertBusiness(records.of)
+	f.slot(1700000000, globalDrop(fp(1)), globalDrop(fp(2)), globalDrop(fp(3)))
+	f.slot(1700000060, globalDrop(fp(1)), globalDrop(fp(2)), globalDrop(fp(3)))
+	got := map[string]int64{}
+	for _, request := range f.writer.sent() {
+		got[request.AlertInstanceID] = request.BusinessID
+	}
+	if len(got) != 2 || got["alert-0"] != 2 || got["alert-1"] != 3 {
+		t.Fatalf("closes carried %v, want alert-0 under 2 and alert-1 under 3, alert-2 not sent", got)
+	}
+	if f.closer.Stats()[OutcomeBusinessUnknown] != 1 {
+		t.Fatalf("the alert with no business on its record was not counted: %v", f.closer.Stats())
+	}
+	records.byAlert["alert-2"] = 4
+	f.slot(1700000120, globalDrop(fp(3)))
+	sent := f.writer.sent()
+	if last := sent[len(sent)-1]; last.AlertInstanceID != "alert-2" || last.BusinessID != 4 {
+		t.Fatalf("the kept close was not sent once its record named a business: %+v", last)
+	}
+}
+
+// Every other strategy's alerts are filed under the strategy's business:
+// its close carries that and reads no record.
+func TestAnOrdinaryStrategysCloseReadsNoRecord(t *testing.T) {
+	f := newFixture(openSet(ownSrc, fp(1), fp(2)), nil)
+	records := &alertBusinesses{byAlert: map[string]int64{"alert-0": 5, "alert-1": 6}}
+	f.closer.BindAlertBusiness(records.of)
+	f.slot(1700000000, drop(fp(1), 0), drop(fp(2), 0))
+	f.slot(1700000060, drop(fp(1), 0), drop(fp(2), 0))
+	sent := f.writer.sent()
+	if len(sent) != 2 || sent[0].BusinessID != 2 || sent[1].BusinessID != 2 || records.reads != 0 {
+		t.Fatalf("sent %+v with %d record reads, want both under the strategy's business and no read", sent, records.reads)
+	}
+}
+
+// A superseded-identity observation is closed under the same rules as a
+// target rejection - two Slots, once, the alert's own id - and carries its
+// own reason; it is counted apart among the closes sent. A target rejection
+// of another alert beside it keeps its reason.
+func TestASupersededIdentityCloseCarriesItsReason(t *testing.T) {
+	superseded, target := fp(1), fp(2)
+	f := newFixture(openSet(ownSrc, superseded, target), nil)
+	moved := drop(superseded, 0)
+	moved.CloseReason = linkdoutput.CloseReasonSupersededIdentity
+	for i := int64(0); i < 4; i++ {
+		f.slot(1700000000+60*i, moved, drop(target, 0))
+	}
+	f.want(t, "four Slots", map[string]uint64{OutcomeUnconfirmed: 2, OutcomeCloseSent: 2, OutcomeSupersededCloseSent: 1})
+	reasons := map[string]string{}
+	for _, request := range f.writer.sent() {
+		reasons[request.Fingerprint] = request.Reason
+	}
+	if len(f.writer.sent()) != 2 || reasons[superseded] != linkdoutput.CloseReasonSupersededIdentity ||
+		reasons[target] != linkdoutput.CloseReasonTargetOutOfScope {
+		t.Fatalf("sent %+v, want one close of each alert under its own reason", f.writer.sent())
+	}
+	event, err := linkdoutput.ConvertClose(f.writer.sent()[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Action != linkdoutput.ActionClosed {
+		t.Fatalf("event %+v is not a close", event)
+	}
+}
+
+// A superseded-identity offer whose old fingerprint the consumer does not
+// hold - most overlaid series, every Slot - counts nothing, nor does one the
+// set cannot answer; a target rejection of the same kind still counts.
+func TestASupersededOfferWithNothingToCloseCountsNothing(t *testing.T) {
+	f := newFixture(openSet(ownSrc, fp(9)), nil)
+	offer := drop(fp(1), 0)
+	offer.CloseReason = linkdoutput.CloseReasonSupersededIdentity
+	for i := int64(0); i < 5; i++ {
+		offer.Round = 1700000000 + 60*i
+		f.closer.Observe(offer)
+		f.closer.Step(context.Background())
+		f.clock.at = f.clock.at.Add(time.Minute)
+	}
+	f.want(t, "five offers, none held", map[string]uint64{})
+	unbound := New(Options{})
+	unbound.Observe(offer)
+	if got := unbound.Stats()[OutcomeSetUnavailable]; got != 0 {
+		t.Fatalf("an offer to an unbound close counted set_unavailable %d, want nothing", got)
+	}
+	target := drop(fp(2), 1700000300)
+	f.closer.Observe(target)
+	f.want(t, "a target rejection", map[string]uint64{OutcomeNotMember: 1})
+	if len(f.writer.sent()) != 0 {
+		t.Fatalf("sent %+v, want nothing", f.writer.sent())
+	}
+}

@@ -86,6 +86,18 @@ func TestOnlyASlowSlotWaitSpendsLogQuota(t *testing.T) {
 			if test.wantLog && !strings.Contains(output.String(), observability.SlotWaitFinalization) {
 				t.Fatalf("the line does not name the wait: %s", output.String())
 			}
+			// A slow wait names itself, at WARN, where it was written as
+			// reason_not_reported; an ordinary one carries none.
+			wantReason := observability.ReasonNone
+			if test.wantLog {
+				wantReason = observability.ReasonSlotWaitSlow
+				if !strings.Contains(output.String(), `"reason_code":"SLOT_WAIT_SLOW"`) || !strings.Contains(output.String(), `"level":"WARN"`) {
+					t.Fatalf("the slow wait is not written as SLOT_WAIT_SLOW at WARN: %s", output.String())
+				}
+			}
+			if reason := observability.NormalizeObservation(measured[0]).ReasonCode; reason != wantReason {
+				t.Fatalf("reason = %s, want %s", reason, wantReason)
+			}
 		})
 	}
 }

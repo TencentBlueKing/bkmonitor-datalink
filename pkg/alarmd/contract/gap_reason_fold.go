@@ -57,6 +57,13 @@ var GapReasonFoldOrder = []string{
 	// As persistent: the storage cannot read the step the strategy asks for,
 	// and nothing changes that but an edit.
 	ReasonDetectIntervalStorageNotSliding,
+	// As persistent: an output answers twice at one time and labels, and
+	// nothing changes that but an edit.
+	ReasonQueryNamedOutputDuplicateKey,
+	// The backend read the query and refused it as written: it stays until
+	// the query or the backend's limits change, and says more than an
+	// answer that did not come.
+	ReasonQueryRejected,
 	ReasonQueryUnavailable,
 	ReasonQueryTimeout,
 	ReasonExecutionBudgetExhausted,

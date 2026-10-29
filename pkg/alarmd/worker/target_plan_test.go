@@ -8,6 +8,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -212,6 +213,34 @@ func TestBeginResolvesEachTargetPlanOnceForBothViews(t *testing.T) {
 	last := observations[len(observations)-1]
 	if last.TargetResolution == nil || last.TargetResolution.Selectors[0].Reason != targetplan.ReasonSourceUnwired {
 		t.Fatalf("the unwired resolution did not say so: %+v", last.TargetResolution)
+	}
+}
+
+// A selector's dropped members reach its target_resolved line by name, as
+// "<id>:<reason>" in the resolver's order: the line is where an operator
+// finds which members an Incomplete selector refused.
+func TestTheTargetResolvedLineNamesTheDroppedMembers(t *testing.T) {
+	incomplete := &targetplan.Resolution{Static: map[string]struct{}{"1": {}}, Selectors: []targetplan.SelectorResult{
+		{Kind: targetplan.SelectorKindGroup, ID: "1001", State: targetplan.SelectorIncomplete, Reason: targetplan.ReasonMembersDropped,
+			Members: map[string]struct{}{"101": {}}, Kept: 1, Dropped: 2, DroppedMembers: []targetplan.DroppedMember{
+				{ID: "709", Reason: targetplan.DroppedMemberLost}, {ID: "703", Reason: targetplan.DroppedNoHostID}}}}}
+	incomplete.Compose()
+	var facts *observability.TargetResolutionFacts
+	observer := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		if observation.Stage == observability.StageTargetResolved {
+			facts = observation.TargetResolution
+		}
+	})
+	one := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "1"}
+	plan := &contract.TargetPlanV1{SchemaVersion: 1, ModelID: "cw-Host", Rule: contract.TargetPlanRuleHostID,
+		Identity: contract.TargetPlanIdentityV1{Dimensions: []string{"bk_host_id"}, HostIdentity: true}, StaticKeys: []string{"1"}, DynamicGroups: []string{"1001"}}
+	stream := &streamedExecution{
+		coordinator: &SlotExecutionCoordinator{ports: Ports{Targets: &scriptedTargetResolver{resolutions: map[string]*targetplan.Resolution{"1": incomplete}}, Observer: observer}},
+		header:      execution.InternalExecutionHeader{DuePlans: []execution.DuePlan{{Identity: one, CompiledPlan: targetPlanCompiledPlan(t, "1", plan)}}},
+	}
+	stream.resolveTargetPlans(context.Background())
+	if facts == nil || len(facts.Selectors) != 1 || !reflect.DeepEqual(facts.Selectors[0].DroppedMembers, []string{"709:member_lost", "703:no_host_id"}) {
+		t.Fatalf("target_resolved facts = %+v, want the group's two dropped members named in order", facts)
 	}
 }
 

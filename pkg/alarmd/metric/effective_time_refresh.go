@@ -20,7 +20,7 @@ type effectiveTimeRefreshCollector struct {
 }
 
 func newEffectiveTimeRefreshCollector() *effectiveTimeRefreshCollector {
-	return &effectiveTimeRefreshCollector{refreshes: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "effective_time_refresh_total"),
+	return &effectiveTimeRefreshCollector{refreshes: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "effective_time_refresh_total"),
 		"Reads of the business timezones and calendars that legacy effective times are resolved from, by result: ok, "+
 			"timeout (the read ran out of the time its caller could spare), error. Only reads that were due count. A "+
 			"dependency that keeps failing past the two-minute trust window resolves EFFECTIVE_TIME_UNKNOWN for every "+

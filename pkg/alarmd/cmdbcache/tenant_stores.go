@@ -36,8 +36,11 @@ func (store *Store) For(string) *Store { return store }
 // TenantStores holds one host index per tenant: the default tenant's under
 // the platform prefix, read before the replica is ready, and another
 // tenant's under "<tenant>.<prefix>", read the first time a record or a Plan
-// of that tenant asks for it - on that Slot's path, once, as a dynamic group
-// is - so the first Slot after a start decides on it. A load that fails
+// of that tenant asks for it. The read runs on its own, bounded by
+// firstLoadBound; a caller on a Slot's path waits for it within its own
+// deadline (ForWithin, PrimeTenant), so the first Slot after a start decides on
+// it, and a caller without one is answered by the store as it stands,
+// never_loaded until the read lands. A load that fails
 // leaves the store never_loaded, its records admitted under
 // host_facts_unavailable by name, until a refresh reads it. A tenant's index
 // is refreshed with the default's from then on and kept for the process's
@@ -51,10 +54,13 @@ type TenantStores struct {
 
 	mu      sync.Mutex
 	tenants map[string]*Store
+	// loaded is closed when a tenant's first read has returned.
+	loaded map[string]chan struct{}
 }
 
-// firstLoadBound bounds the load a tenant's first reference makes on its
-// Slot's path.
+// firstLoadBound bounds a tenant's first read. A caller waits for it only
+// within its own deadline; the read itself is not cut by that caller's
+// leaving, so the next Slot finds it done.
 const firstLoadBound = 30 * time.Second
 
 func NewTenantStores(client redis.Cmdable, prefix string, options StoreOptions) (*TenantStores, error) {
@@ -67,7 +73,7 @@ func NewTenantStores(client redis.Cmdable, prefix string, options StoreOptions) 
 		return nil, err
 	}
 	return &TenantStores{client: client, prefix: strings.TrimSuffix(strings.TrimSpace(prefix), "."), options: options,
-		base: base, tenants: make(map[string]*Store)}, nil
+		base: base, tenants: make(map[string]*Store), loaded: make(map[string]chan struct{})}, nil
 }
 
 // Default is the default tenant's store, the one the replica's readiness
@@ -80,38 +86,77 @@ func (stores *TenantStores) Default() *Store {
 }
 
 // For is the tenant's store: the default tenant's for DefaultTenant or no
-// tenant; another tenant's, read on its first reference. The first
-// reference's caller waits for that read; a caller that asks while it runs
-// is answered by the store as it stands, never_loaded.
+// tenant; another tenant's, whose first read it starts on its first
+// reference and does not wait for: until the read lands the store answers
+// as it stands, never_loaded. A caller with a deadline waits through
+// ForWithin.
 func (stores *TenantStores) For(tenant string) *Store {
+	store, _ := stores.lookup(tenant)
+	return store
+}
+
+// ForWithin is For, waiting for the tenant's first read until ctx ends: the
+// caller's deadline, not one of the store's own, bounds how long a Slot
+// waits for a tenant it is the first to read. A ctx with no deadline waits
+// at most the read's own firstLoadBound.
+func (stores *TenantStores) ForWithin(ctx context.Context, tenant string) *Store {
+	store, loaded := stores.lookup(tenant)
+	if loaded != nil {
+		select {
+		case <-loaded:
+		case <-ctx.Done():
+		}
+	}
+	return store
+}
+
+// lookup is the tenant's store and the channel its first read closes, nil for
+// the default tenant's, which is read before the replica is ready.
+func (stores *TenantStores) lookup(tenant string) (*Store, <-chan struct{}) {
 	if stores == nil {
-		return nil
+		return nil, nil
 	}
 	tenant = strings.TrimSpace(tenant)
 	if tenant == "" || tenant == DefaultTenant {
-		return stores.base
+		return stores.base, nil
 	}
 	stores.mu.Lock()
 	if store, held := stores.tenants[tenant]; held {
+		loaded := stores.loaded[tenant]
 		stores.mu.Unlock()
-		return store
+		return store, loaded
 	}
 	reader, err := NewReader(stores.client, tenant+"."+stores.prefix)
 	if err != nil {
 		stores.mu.Unlock()
-		return nil
+		return nil, nil
 	}
 	store, err := NewStore(reader, stores.options)
 	if err != nil {
 		stores.mu.Unlock()
-		return nil
+		return nil, nil
 	}
+	store.tenant = tenant
+	loaded := make(chan struct{})
 	stores.tenants[tenant] = store
+	stores.loaded[tenant] = loaded
 	stores.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), firstLoadBound)
-	defer cancel()
-	_ = store.Refresh(ctx)
-	return store
+	go func() {
+		defer close(loaded)
+		ctx, cancel := context.WithTimeout(context.Background(), firstLoadBound)
+		defer cancel()
+		_ = store.Refresh(ctx)
+	}()
+	return store, loaded
+}
+
+// PrimeTenant waits, within ctx, for the tenant's first read in whatever
+// source a fuller or resolver reads: a TenantStores waits (ForWithin); a
+// single Store has nothing to read first.
+func PrimeTenant(ctx context.Context, source StoreSource, tenant string) {
+	if stores, ok := source.(*TenantStores); ok {
+		stores.ForWithin(ctx, tenant)
+	}
 }
 
 // Refresh refreshes every tenant's store. A store that fails keeps its last

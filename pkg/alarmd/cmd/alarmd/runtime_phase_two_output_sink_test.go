@@ -22,6 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -196,7 +197,7 @@ func TestLazyOutputSinkCloseEndsTheRetry(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Close() = %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("Close() did not end the retry loop")
 	}
 	if state := sink.State(); state.Ready || state.Attempts != 1 {

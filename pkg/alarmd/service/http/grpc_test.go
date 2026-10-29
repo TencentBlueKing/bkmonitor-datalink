@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream/pb"
@@ -45,7 +47,7 @@ func TestTheQueryListenerServesTheControlStreamOverH2C(t *testing.T) {
 	}
 	defer conn.Close()
 	client := pb.NewControlServiceClient(conn)
-	callCtx, cancelCall := context.WithTimeout(ctx, 5*time.Second)
+	callCtx, cancelCall := context.WithDeadline(ctx, testwait.Deadline(t))
 	defer cancelCall()
 
 	// Before the stream is installed: UNAVAILABLE, in gRPC's own words.
@@ -71,7 +73,15 @@ func TestTheQueryListenerServesTheControlStreamOverH2C(t *testing.T) {
 	}
 	grpcServer := grpc.NewServer()
 	pb.RegisterControlServiceServer(grpcServer, stream)
-	server.SetGRPC(grpcServer)
+	// The listener that serves the stream, as the stream's own request
+	// names it.
+	var listening atomic.Pointer[http.Server]
+	server.SetGRPC(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if served, ok := request.Context().Value(http.ServerContextKey).(*http.Server); ok {
+			listening.Store(served)
+		}
+		grpcServer.ServeHTTP(response, request)
+	}))
 	connected, err := client.Connect(callCtx)
 	if err != nil {
 		t.Fatal(err)
@@ -91,8 +101,17 @@ func TestTheQueryListenerServesTheControlStreamOverH2C(t *testing.T) {
 	}
 	// The stream survives longer than every request timeout the listener
 	// sets: nothing but ReadHeaderTimeout is set, and it does not apply to
-	// an open stream.
-	time.Sleep(50 * time.Millisecond)
+	// an open stream. Read off the server that serves it rather than waited
+	// out: a window short enough for a test cannot show a stream outliving
+	// a timeout of seconds.
+	served := listening.Load()
+	if served == nil {
+		t.Fatal("the stream's request did not name the listener serving it")
+	}
+	if served.ReadTimeout != 0 || served.WriteTimeout != 0 || served.IdleTimeout != 0 {
+		t.Fatalf("the listener serving the stream sets read %s, write %s, idle %s; any of them cuts an open stream",
+			served.ReadTimeout, served.WriteTimeout, served.IdleTimeout)
+	}
 	if err := connected.Send(&pb.WorkerMessage{Body: &pb.WorkerMessage_Heartbeat{Heartbeat: &pb.Heartbeat{SentAtMs: 1}}}); err != nil {
 		t.Fatal(err)
 	}

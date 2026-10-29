@@ -243,6 +243,31 @@ func TestSourceFactsOfCarriesTheCompositionAndTheMarker(t *testing.T) {
 	}
 }
 
+// The Leader publishes the round's capability counts with the facts, by
+// distinct strategy: a strategy with a record per level is one strategy, and
+// supported is the strategies the source listed less those refused there.
+func TestSourceFactsOfCountsCapabilityByStrategy(t *testing.T) {
+	composition := &controlplane.CatalogComposition{
+		Objects:          map[controlplane.Disposition]int{controlplane.DispositionAccepted: 3, controlplane.DispositionUnsupported: 2},
+		ListedStrategies: []string{"9", "12", "81", "100"},
+		WithheldObjects: []controlplane.ObjectDisposition{
+			{SourceID: "12", Scope: "LEVEL", LevelID: 1, Disposition: controlplane.DispositionUnsupported, Reason: "ALGORITHM_NOT_MIGRATED"},
+			{SourceID: "12", Scope: "LEVEL", LevelID: 2, Disposition: controlplane.DispositionUnsupported, Reason: "ALGORITHM_NOT_MIGRATED"},
+		},
+	}
+	facts := sourceFactsOf(phaseTwoControlRefreshResult{Composition: composition}, time.Unix(7000, 0))
+	if facts.Capability == nil {
+		t.Fatal("the Leader published no capability counts")
+	}
+	cells := map[string]int{}
+	for _, cell := range facts.Capability.Cells {
+		cells[cell.Area+"/"+cell.Outcome] = cell.Strategies
+	}
+	if cells["algorithm/partial"] != 1 || cells["algorithm/supported"] != 3 || cells["source/supported"] != 4 {
+		t.Fatalf("cells = %v, want strategy 12 partial in algorithm once and the other three supported", cells)
+	}
+}
+
 // The readiness the fleet snapshot carries is the readiness endpoint's, from
 // the same tracker, bit for bit: a process that is not ready because its
 // output is not open publishes exactly that, and the fleet cannot say ready

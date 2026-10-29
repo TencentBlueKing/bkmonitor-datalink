@@ -15,7 +15,7 @@ func TestTriggerEventBatchUsesStableDedupePartitionKey(t *testing.T) {
 	input := contract.TriggerEventBuildInputV1{
 		EventKind: legacy.EventKind, TenantID: legacy.TenantID, BusinessID: legacy.BusinessID,
 		PlanRef: legacy.PlanRef, RecordRef: legacy.RecordRef, Observed: legacy.Observed,
-		LevelResults: append([]contract.LevelResultV1(nil), legacy.LevelResults...), EvaluationTime: legacy.EvaluationTime,
+		LevelResults: contract.CloneLevelResultsV1(legacy.LevelResults), EvaluationTime: legacy.EvaluationTime,
 		DetectPlanFingerprint: legacy.DetectPlanFingerprint, TriggerStateFingerprint: legacy.TriggerStateFingerprint,
 		ExecutionID: legacy.Trace.ExecutionID, MaxEvidenceBytes: 64 << 10,
 		StrategyRef: &contract.StrategySnapshotRef{TenantID: "default", BusinessID: 2, StrategyID: 1001, Revision: 7},

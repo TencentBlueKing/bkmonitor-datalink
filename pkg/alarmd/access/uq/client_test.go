@@ -17,6 +17,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 func TestClientUsesFinalPythonWireContractAndNormalizesMilliseconds(t *testing.T) {
@@ -391,11 +392,9 @@ func stalledResponseServer(t *testing.T) *httptest.Server {
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		// A broken attempt deadline must fail the assertions, not leave
 		// Execute blocked forever before cleanup can release the handler.
-		timer := time.NewTimer(2 * time.Second)
-		defer timer.Stop()
 		select {
 		case <-release:
-		case <-timer.C:
+		case <-testwait.Expired(t):
 		}
 	}))
 	t.Cleanup(func() {
@@ -677,4 +676,10 @@ func wantLimitCompletion(t *testing.T, client *Client, detail string) {
 	if completion.Delivery.Series != delivered {
 		t.Fatalf("completion delivery = %d series, the sink received %d: delivery is not conserved", completion.Delivery.Series, delivered)
 	}
+}
+
+// buildRequest is the request the client sends for spec, carrying the APM
+// application exactly when the client would.
+func buildRequest(spec execution.PhysicalQuerySpec) (request, error) {
+	return buildRequestCarrying(spec, carriesAPMApp(spec))
 }

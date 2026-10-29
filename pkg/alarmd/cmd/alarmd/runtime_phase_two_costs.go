@@ -122,9 +122,9 @@ const (
 // The known edge: a Query Group whose retained bytes jump past its measured
 // peak and the quarter (new series, a merged strategy) is still admitted by
 // the coordinator up to the ceiling, and observation reads admitted on the
-// old sum share that room for a while. The Go soft memory limit, half the
-// container, takes that as collection pressure, not as running out of
-// memory.
+// old sum share that room for a while. The Go soft memory limit, five
+// eighths of the container, takes that as collection pressure, not as
+// running out of memory.
 func (source *workerCostSource) RetainedReservation(ceiling, held uint64) uint64 {
 	if source == nil {
 		return ceiling

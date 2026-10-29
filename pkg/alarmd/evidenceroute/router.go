@@ -60,7 +60,7 @@ func New(options Options) (*Router, error) {
 // Invoke is called only after the ingress has admitted the CLI session. New
 // channel/control identities may dispatch directly to the resolved provider.
 func (r *Router) Invoke(ctx context.Context, call obchannel.Invocation) obchannel.Response {
-	ctx, cancel := context.WithTimeout(ctx, obchannel.RequestTimeout)
+	ctx, cancel := obchannel.CallerBounded(ctx, obchannel.RequestTimeout)
 	defer cancel()
 	if response, handled := r.invokeDirect(ctx, call); handled {
 		return response
@@ -109,8 +109,23 @@ func (r *Router) Handle(ctx context.Context, req *pb.EvidenceRequest) (*pb.Evide
 	if req == nil || proto.Size(req) > obchannel.MaxRequestBytes {
 		return nil, status.Error(codes.InvalidArgument, "Evidence request exceeds its budget.")
 	}
-	ctx, cancel := context.WithTimeout(ctx, obchannel.RequestTimeout)
+	ctx, cancel := obchannel.CallerBounded(ctx, obchannel.RequestTimeout)
 	defer cancel()
+	// A hop works to its caller's deadline less HopReturnMargin, so it
+	// answers -- with what it has, for a read that keeps it on timeout --
+	// while the caller is still waiting for the answer. The caller's wait
+	// is the deadline gRPC carried; only the work here ends earlier.
+	if deadline, bounded := ctx.Deadline(); bounded {
+		left := time.Until(deadline) - obchannel.HopReturnMargin
+		if left <= 0 {
+			// The caller reads this as its target's timeout, as it would a
+			// hop that ran out of time on the way.
+			return nil, status.Error(codes.DeadlineExceeded, "No time is left to answer the caller within.")
+		}
+		var cancelWork context.CancelFunc
+		ctx, cancelWork = context.WithTimeout(ctx, left)
+		defer cancelWork()
+	}
 	if req.EnvironmentId != r.options.EnvironmentID || req.ChannelVersion != obchannel.Version || req.RequestId == "" {
 		return nil, status.Error(codes.FailedPrecondition, "Evidence environment or protocol does not match.")
 	}
@@ -233,7 +248,7 @@ func (r *Router) send(ctx context.Context, workerID string, req *pb.EvidenceRequ
 		// The same private-deployment h2c transport as ControlService.Connect.
 		// Each bounded read owns its connection; there is no new discovery loop.
 		conn, dialErr := grpc.DialContext(ctx, worker.endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock(),
-			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(obchannel.MaxRequestBytes), grpc.MaxCallRecvMsgSize(obchannel.MaxResponseBytes)))
+			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(obchannel.MaxRequestBytes), grpc.MaxCallRecvMsgSize(obchannel.MaxResponseCeiling+64<<10)))
 		if dialErr != nil {
 			if err := ctx.Err(); err != nil {
 				return obchannel.Response{}, status.FromContextError(err).Err()
@@ -246,7 +261,7 @@ func (r *Router) send(ctx context.Context, workerID string, req *pb.EvidenceRequ
 	if err != nil {
 		return obchannel.Response{}, err
 	}
-	if result == nil || len(result.ResponseJson) > obchannel.MaxResponseBytes {
+	if result == nil || len(result.ResponseJson) > obchannel.MaxResponseCeiling {
 		return obchannel.Response{}, status.Error(codes.DataLoss, "Invalid evidence response.")
 	}
 	var response obchannel.Response
@@ -269,7 +284,7 @@ func (r *Router) send(ctx context.Context, workerID string, req *pb.EvidenceRequ
 
 func (r *Router) encode(response obchannel.Response) (*pb.EvidenceResult, error) {
 	encoded, err := json.Marshal(response)
-	if err != nil || len(encoded)+16 > obchannel.MaxResponseBytes {
+	if err != nil || len(encoded)+16 > obchannel.MaxResponseBytes() {
 		return nil, status.Error(codes.ResourceExhausted, "Evidence response exceeds its budget.")
 	}
 	return &pb.EvidenceResult{ResponseJson: encoded}, nil
@@ -286,7 +301,7 @@ func (r *Router) transportFailure(requestID string, err error) obchannel.Respons
 	case codes.Unimplemented:
 		code, message = "target_unsupported", "The Leader or target does not support control-plane evidence reads; upgrade that instance."
 	case codes.ResourceExhausted:
-		code, message = "request_budget_exceeded", "Control-plane evidence slots or byte limits were exceeded."
+		code, message = "evidence_response_too_large", "The target's evidence answer exceeds the response size bound; narrow the read."
 	case codes.Unauthenticated, codes.PermissionDenied:
 		code, message = "worker_identity_rejected", "The registered internal instance identity was not accepted."
 	case codes.FailedPrecondition:

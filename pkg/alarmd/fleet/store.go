@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -180,6 +181,84 @@ func (store *RedisStore) ownedKey(replica string) string {
 	return store.replicaKey("fleet-owned", replica)
 }
 
+// lookbackPlanKey is where the control plane keeps its lookback plan set:
+// one key for the deployment, under the fleet's prefix.
+func (store *RedisStore) lookbackPlanKey() string {
+	return store.prefix + ":lookback-plan"
+}
+
+// LookbackPlanEntry is one Query Group of the control plane's lookback plan
+// set as it is kept: the rung its late series were seen at and when the
+// entry expires.
+type LookbackPlanEntry struct {
+	Rung        int   `json:"rung"`
+	ExpiresAtMs int64 `json:"expires_at_ms"`
+}
+
+// SaveLookbackPlan writes the control plane's whole lookback plan set, to
+// live until its latest entry expires: a deployment that stops planning
+// leaves nothing behind. An empty set deletes the key.
+//
+// A plain SET, like the fleet control record: during a takeover the previous
+// Leader may still save once before it learns it lost the lease, over what
+// the new one loaded. What it writes is advice that expires within
+// lookback.PlanLife, and the new Leader's next change of the set writes it
+// whole again; a restart in between plans from the older set, which a
+// Worker's own samples override anyway.
+func (store *RedisStore) SaveLookbackPlan(ctx context.Context, entries map[string]LookbackPlanEntry, now time.Time) error {
+	var latest int64
+	for _, entry := range entries {
+		latest = max(latest, entry.ExpiresAtMs)
+	}
+	life := time.Duration(latest-now.UnixMilli()) * time.Millisecond
+	if len(entries) == 0 || life <= 0 {
+		if err := store.client.Del(ctx, store.lookbackPlanKey()).Err(); err != nil {
+			return fmt.Errorf("alarmd fleet: clear lookback plan: %w", err)
+		}
+		return nil
+	}
+	payload, err := json.Marshal(entries)
+	if err != nil {
+		return fmt.Errorf("alarmd fleet: encode lookback plan: %w", err)
+	}
+	if err := store.client.Set(ctx, store.lookbackPlanKey(), payload, life).Err(); err != nil {
+		return fmt.Errorf("alarmd fleet: save lookback plan: %w", err)
+	}
+	return nil
+}
+
+// LoadLookbackPlan reads the control plane's lookback plan set, without the
+// entries expired by now: a set read after a longer gap than an entry's life
+// is empty whatever the key held.
+func (store *RedisStore) LoadLookbackPlan(ctx context.Context, now time.Time) (map[string]LookbackPlanEntry, error) {
+	payload, err := store.client.Get(ctx, store.lookbackPlanKey()).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return map[string]LookbackPlanEntry{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("alarmd fleet: read lookback plan: %w", err)
+	}
+	var entries map[string]LookbackPlanEntry
+	if err := json.Unmarshal(payload, &entries); err != nil {
+		return nil, fmt.Errorf("alarmd fleet: decode lookback plan: %w", err)
+	}
+	for queryGroup, entry := range entries {
+		if entry.ExpiresAtMs <= now.UnixMilli() {
+			delete(entries, queryGroup)
+		}
+	}
+	if entries == nil {
+		entries = map[string]LookbackPlanEntry{}
+	}
+	return entries, nil
+}
+
+// lookbackKey is where a replica's lookback late list is written, beside
+// its snapshot.
+func (store *RedisStore) lookbackKey(replica string) string {
+	return store.replicaKey("fleet-lookback", replica)
+}
+
 func (store *RedisStore) replicaKey(kind, replica string) string {
 	digest := sha256.Sum256([]byte(replica))
 	return store.prefix + ":" + kind + ":" + hex.EncodeToString(digest[:])
@@ -279,13 +358,19 @@ func (store *RedisStore) PublishSummarized(ctx context.Context, snapshot Snapsho
 	if err != nil {
 		return ReplicaSummary{}, fmt.Errorf("alarmd fleet: encode owned objects: %w", err)
 	}
+	late := withinLookbackBudget(snapshot.LookbackLate, store.maxAnomalyBytes)
+	latePayload, err := json.Marshal(late)
+	if err != nil {
+		return ReplicaSummary{}, fmt.Errorf("alarmd fleet: encode lookback late list: %w", err)
+	}
 	ttl := store.ttl.Milliseconds()
 	if ttl < 1 {
 		ttl = 1
 	}
 	if err := publishSummarizedWrite.Run(ctx, store.client,
-		[]string{store.snapshotKey(snapshot.Replica), store.summaryKey(snapshot.Replica), store.ownedKey(snapshot.Replica)},
-		payload, summaryPayload, ownedPayload, ttl); err != nil {
+		[]string{store.snapshotKey(snapshot.Replica), store.summaryKey(snapshot.Replica), store.ownedKey(snapshot.Replica),
+			store.lookbackKey(snapshot.Replica)},
+		payload, summaryPayload, ownedPayload, ttl, latePayload); err != nil {
 		return ReplicaSummary{}, fmt.Errorf("alarmd fleet: publish snapshot and summary: %w", err)
 	}
 	if store.meter != nil {
@@ -295,8 +380,8 @@ func (store *RedisStore) PublishSummarized(ctx context.Context, snapshot Snapsho
 	return summary, nil
 }
 
-// publishSummarizedWrite sets a replica's snapshot, summary and owned list,
-// each with the store's life, as one script rather than a MULTI/EXEC (see
+// publishSummarizedWrite sets a replica's snapshot, summary, owned list and
+// lookback late list, each with the store's life, as one script rather than a MULTI/EXEC (see
 // redisatomic for why). The three keys share no hash tag: like the
 // activation scripts (controlplane/activation_rebuild.go) this runs on a
 // standalone or Sentinel server, and the configuration refuses Cluster
@@ -305,6 +390,7 @@ var publishSummarizedWrite = redisatomic.New(`
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[4])
 redis.call('SET', KEYS[2], ARGV[2], 'PX', ARGV[4])
 redis.call('SET', KEYS[3], ARGV[3], 'PX', ARGV[4])
+redis.call('SET', KEYS[4], ARGV[5], 'PX', ARGV[4])
 return 1
 `)
 
@@ -338,6 +424,27 @@ func (store *RedisStore) written(snapshot Snapshot) (Snapshot, error) {
 	// full count. The aggregate notices the shortfall and refuses to compare,
 	// rather than reporting set arithmetic done on half the objects.
 	snapshot.OwnedObjects = withinObjectBudget(snapshot.OwnedObjects, store.maxAnomalyBytes)
+	// The due lists likewise, each its own budget, cut on a copy so the
+	// caller's lists stay whole, and each cut said: a cut list is a lower
+	// bound and the page must never present it as the exact count.
+	if snapshot.Due != nil {
+		due := *snapshot.Due
+		late, overdue, never := withinObjectBudget(due.Late, store.maxAnomalyBytes),
+			withinObjectBudget(due.Overdue, store.maxAnomalyBytes), withinObjectBudget(due.Never, store.maxAnomalyBytes)
+		due.LateCut = due.LateCut || len(late) < len(due.Late)
+		due.OverdueCut = due.OverdueCut || len(overdue) < len(due.Overdue)
+		due.NeverCut = due.NeverCut || len(never) < len(due.Never)
+		due.Late, due.Overdue, due.Never = late, overdue, never
+		snapshot.Due = &due
+	}
+	// The open-alert counts likewise, on a copy, each list its own budget.
+	if snapshot.OpenAlerts != nil {
+		open := *snapshot.OpenAlerts
+		counts, unknown := withinCountBudget(open.Counts, store.maxAnomalyBytes), withinObjectBudget(open.Unknown, store.maxAnomalyBytes)
+		open.Cut = open.Cut || len(counts) < len(open.Counts) || len(unknown) < len(open.Unknown)
+		open.Counts, open.Unknown = counts, unknown
+		snapshot.OpenAlerts = &open
+	}
 	held := withinReadHoldBudget(snapshot.ReadHolds, store.maxAnomalyBytes)
 	snapshot.ReadHoldsCut = snapshot.ReadHoldsCut || len(held) < len(snapshot.ReadHolds)
 	snapshot.ReadHolds = held
@@ -423,6 +530,11 @@ func (store *RedisStore) loadEach(ctx context.Context, replicas []string, admitt
 			decodeErr = fmt.Errorf("alarmd fleet: snapshot for %s reports replica %q", replicas[index], snapshot.Replica)
 			return decodeErr
 		}
+		// A replica on a build before cause_origin publishes reasons without
+		// one: unknown, not physical.
+		for row := range snapshot.Anomalies {
+			settleCauseOrigin(&snapshot.Anomalies[row])
+		}
 		keep(snapshot)
 		loaded++
 		return nil
@@ -497,6 +609,54 @@ func (store *RedisStore) LoadOwned(ctx context.Context, replicas []string) (map[
 		return nil, decodeErr
 	}
 	return owned, nil
+}
+
+// LoadLookbackLate reads the named replicas' lookback late lists: by
+// replica, the Query Groups its lookback reads directed and the rung each
+// was seen late at. A replica with no readable list is absent, as with the
+// snapshots.
+func (store *RedisStore) LoadLookbackLate(ctx context.Context, replicas []string) (map[string]map[string]int, error) {
+	lists := make(map[string]map[string]int, len(replicas))
+	var decodeErr error
+	_, err := store.read(ctx, replicas, store.lookbackKey, nil, func(index int, text string) error {
+		var list map[string]int
+		if err := json.Unmarshal([]byte(text), &list); err != nil {
+			decodeErr = fmt.Errorf("alarmd fleet: decode lookback late list for %s: %w", replicas[index], err)
+			return decodeErr
+		}
+		lists[replicas[index]] = list
+		return nil
+	})
+	if err != nil && decodeErr == nil {
+		return nil, fmt.Errorf("alarmd fleet: read lookback late lists: %w", err)
+	}
+	if decodeErr != nil {
+		return nil, decodeErr
+	}
+	return lists, nil
+}
+
+// withinLookbackBudget keeps as much of a lookback late list as fits the
+// budget, the Query Groups in their order, so the cut is the same on every
+// publish of the same list.
+func withinLookbackBudget(late map[string]int, budget int) map[string]int {
+	kept := make(map[string]int, len(late))
+	names := make([]string, 0, len(late))
+	for queryGroup := range late {
+		names = append(names, queryGroup)
+	}
+	sort.Strings(names)
+	used := 2
+	for _, queryGroup := range names {
+		// "name":rung, plus the comma: the rung is at most two digits.
+		cost := len(queryGroup) + 6
+		if budget > 0 && used+cost > budget {
+			break
+		}
+		used += cost
+		kept[queryGroup] = late[queryGroup]
+	}
+	return kept
 }
 
 // readChunkBytes is the most one MGET of a read asks for: the budget one of

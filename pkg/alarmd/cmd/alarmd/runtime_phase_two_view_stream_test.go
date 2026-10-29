@@ -21,6 +21,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
@@ -61,6 +62,16 @@ func TestTheProductionLeaderServesItsDesiredSetOverTheViewStream(t *testing.T) {
 		t.Fatalf("control leader = %+v found=%t err=%v, want this replica with a term", leader, found, err)
 	}
 
+	// The Slot it ran was heard by the flow's counters: its physical queries
+	// by the Source and its decision by the production executor.
+	// Its state was written through the Redis client that serves runtime
+	// state, whichever hook label that client has: here it is the source's,
+	// as in the default single-Redis deployment.
+	if flow := bundle.dependencies.Recorder.FlowCounters(); flow.Queries == 0 || flow.QueryDuration.Count != flow.Queries || flow.DecisionLag.Count == 0 ||
+		flow.RuntimeRedis.Count == 0 {
+		t.Fatalf("flow counters after a Slot = %+v, want its queries timed, its decision's lag and its runtime Redis round trips", flow)
+	}
+
 	// The fixture serves the control stream once it runs a Slot, and this
 	// replica's own Worker holds a session under the Worker id the manual
 	// stream below uses. It is stopped first: replaced by the manual stream,
@@ -69,8 +80,8 @@ func TestTheProductionLeaderServesItsDesiredSetOverTheViewStream(t *testing.T) {
 	// long -- which under a full parallel run it did.
 	bundle.cancelViewClient()
 	stats := bundle.dependencies.ViewStreamStats()
-	for deadline := time.Now().Add(5 * time.Second); stats.Sessions != 0 && time.Now().Before(deadline); stats = bundle.dependencies.ViewStreamStats() {
-		time.Sleep(10 * time.Millisecond)
+	for deadline := testwait.Deadline(t); stats.Sessions != 0 && time.Now().Before(deadline); stats = bundle.dependencies.ViewStreamStats() {
+		time.Sleep(10 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	if !stats.Leading || stats.ControlEpoch != leader.OwnerEpoch || stats.Revision == 0 || stats.Counts.Expected != 1 || stats.Sessions != 0 {
 		t.Fatalf("stream stats after the first round = %+v, want leading in term %d with a revision, one expected receiver and "+
@@ -93,7 +104,7 @@ func TestTheProductionLeaderServesItsDesiredSetOverTheViewStream(t *testing.T) {
 	}
 	defer conn.Close()
 	client := pb.NewControlServiceClient(conn)
-	callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	callCtx, cancel := context.WithDeadline(ctx, testwait.Deadline(t))
 	defer cancel()
 
 	// The wrong token is refused before anything is served.
@@ -167,7 +178,7 @@ func TestTheProductionLeaderServesItsDesiredSetOverTheViewStream(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := testwait.Deadline(t)
 	for {
 		stats = bundle.dependencies.ViewStreamStats()
 		if stats.Counts.Installed == 1 && stats.Sessions == 1 {
@@ -176,7 +187,7 @@ func TestTheProductionLeaderServesItsDesiredSetOverTheViewStream(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("stats = %+v, want one session and the receipt installed", stats)
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	if stats.Counts != (viewstream.Counts{Expected: 1, Sent: 1, Acked: 1, Installed: 1}) || stats.Counts.Switched != 0 {
 		t.Fatalf("counts = %+v, want expected/sent/acked/installed 1 and switched 0 in the shadow", stats.Counts)
@@ -209,7 +220,7 @@ func TestAViewPublishFailureIsReportedAndTheRoundStands(t *testing.T) {
 	authority := ownership.PublicationAuthority{Fence: execution.OwnerFence{
 		QueryGroup: ownership.ControlLeaderIdentity, OwnerID: "leader", OwnerEpoch: 4, LeaseToken: "token",
 	}}
-	runtime.publishView(context.Background(), authority, nil, nil)
+	runtime.publishView(context.Background(), authority, nil, nil, nil, false)
 	if len(observed) != 1 || observed[0].Stage != observability.StageViewPublished || observed[0].Result != observability.ResultDegraded ||
 		observed[0].ViewStream == nil || observed[0].ViewStream.Event != "publish_failed" || !strings.Contains(observed[0].ViewStream.Reason, "redis gone") {
 		t.Fatalf("observed = %+v, want one degraded view_published naming the failure", observed)
@@ -219,7 +230,7 @@ func TestAViewPublishFailureIsReportedAndTheRoundStands(t *testing.T) {
 	}
 	// Not leading is a failure of the same kind, not a panic and not a stall.
 	runtime.dependencies.ViewSource = staticViewSource{}
-	runtime.publishView(context.Background(), authority, nil, nil)
+	runtime.publishView(context.Background(), authority, nil, nil, nil, false)
 	if len(observed) != 2 || !strings.Contains(observed[1].ViewStream.Reason, "not leading") {
 		t.Fatalf("observed = %+v, want a second failure for not leading", observed)
 	}

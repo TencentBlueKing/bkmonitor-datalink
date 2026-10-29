@@ -26,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/roles"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/tracing"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/worker"
 )
@@ -118,6 +119,19 @@ func (source *productionFrozenExecution) ResolveFinalization(
 ) (execution.QueryFreeFinalization, error) {
 	if err := request.Validate(); err != nil {
 		return execution.QueryFreeFinalization{}, err
+	}
+	// The Runner saw this Slot refused for its Query Group's share and decided
+	// no retry fits it (scheduler shareRefusalState): finalized without a
+	// query, under GAP_SKIPPED like an expired replay, so the gap markers and
+	// the evaluator read it as every other query-free gap, and named by its
+	// cause. Past the recovery bound it falls to the expiry below, which
+	// finalizes it the same way it would have.
+	if request.ShareExceeded && source.now().UnixMilli() < request.RecoveryUntilUnixMilli {
+		return execution.QueryFreeFinalization{
+			Contract: request.Contract, Mode: execution.FinalizationGapSkipped,
+			ReasonCode: execution.ReasonCode(contract.ReasonGapSkipped),
+			Targets:    request.DuePlanTargets.Clone(), Cause: execution.CauseResourceShareExceeded,
+		}, nil
 	}
 	if request.ReplayExpired && source.now().UnixMilli() < request.RecoveryUntilUnixMilli {
 		return execution.QueryFreeFinalization{
@@ -527,7 +541,7 @@ func (runtime *productionPhaseTwoControl) refresh(
 		// limiter bounds these lines per window; the metric counts them all.
 		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
 			Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotRefreshed,
-			Result: observability.ResultFailed, Direction: observability.DirectionInternal,
+			Result:     observability.ResultFailed,
 			ReasonCode: observability.ReasonContractRetryable, Err: err, SourceKind: sourceKind,
 			ControlSourceRound: &observability.ControlSourceRoundFacts{
 				Outcome: observability.ControlSourceRoundFailed, Exit: string(controlplane.SourceRefreshExitOf(err)),
@@ -547,7 +561,7 @@ func (runtime *productionPhaseTwoControl) refresh(
 	if markErr := runtime.dependencies.Repository.MarkSourceRefreshSuccess(ctx, runtime.dependencies.Now()); markErr != nil {
 		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
 			Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotRefreshed,
-			Result: observability.ResultFailed, Direction: observability.DirectionInternal,
+			Result:     observability.ResultFailed,
 			ReasonCode: observability.ReasonContractRetryable, Err: fmt.Errorf("phase-two mark source refresh success: %w", markErr),
 		})
 	}
@@ -680,7 +694,6 @@ func (runtime *productionPhaseTwoControl) activate(
 			Stage:     observability.StageActivationFailed,
 			Result:    observability.ResultDegraded,
 			Operation: observability.OperationTransition,
-			Direction: observability.DirectionInternal,
 			// The classification, as the reason: the same word the fleet
 			// page groups the failure on. contract_retryable here was folded
 			// to _other by the normaliser, and the field people grep said
@@ -1255,8 +1268,13 @@ type productionPhaseTwoOwnershipDependencies struct {
 	// QueryCooldowns keeps each owned Query Group's place in the query
 	// cooldown pool across restarts and owners. Nil keeps it in the Runner
 	// alone, which is what every runtime did before.
-	QueryCooldowns   scheduler.QueryCooldownStore
-	ReadHolds        *productionReadHolds
+	QueryCooldowns scheduler.QueryCooldownStore
+	ReadHolds      *productionReadHolds
+	// Traces exports the spans of the Slots it samples; nil exports none.
+	Traces *tracing.Exporter
+	// DecisionLag hears each decided Slot's lag (the flow's evaluate
+	// stage); nil hears nothing.
+	DecisionLag      func(time.Duration)
 	Store            productionPhaseTwoOwnershipStore
 	WorkerID         string
 	Catalog          productionPhaseTwoSlotCatalog
@@ -1270,9 +1288,23 @@ type productionPhaseTwoOwnershipDependencies struct {
 	// Leader, so the readings that belong to the role can be taken off the
 	// scrape. Optional; a runtime without it keeps its last readings, which
 	// is what every runtime did before.
-	SteppedDownAsLeader       func()
-	Flights                   *scheduler.FlightCoordinator
-	RecoveryLimits            scheduler.RecoveryLimits
+	SteppedDownAsLeader func()
+	Flights             *scheduler.FlightCoordinator
+	RecoveryLimits      scheduler.RecoveryLimits
+	// QueryLatency is each Query Group's own reading of how long its query
+	// takes (the lookback's), which decides whether a round taken over late
+	// can still run as a normal round. Optional: without it every such round
+	// is judged by RecoveryLimits.TakeoverDivertFloor.
+	QueryLatency scheduler.QueryLatency
+	// LookbackBusy reads what the lookback has of a Query Group in flight
+	// or reserved, for the slot_skipped line. Optional.
+	LookbackBusy scheduler.LookbackBusy
+	// InheritedQueryLatency is the previous owner's reading of a Query
+	// Group's query duration, as the group's read-hold record keeps it,
+	// asked when the group has no reading of its own here: what a group just
+	// taken over is judged by before the fallback. Optional: without it no
+	// group has an inherited reading.
+	InheritedQueryLatency     scheduler.QueryLatency
 	PostRecoveryTerminalDelay time.Duration
 	QueryDeadlineReserve      time.Duration
 	SnapshotRetention         time.Duration
@@ -1320,6 +1352,9 @@ type productionPhaseTwoOwnership struct {
 	dependencies productionPhaseTwoOwnershipDependencies
 	reconciler   *scheduler.Reconciler
 	flights      *scheduler.FlightCoordinator
+	// lookbackPlanner is the Leader's lookback planning after each view
+	// publication (WithLookbackPlanner); nil plans nothing.
+	lookbackPlanner *lookbackPlanner
 	// viewGate decides, per Slot read, whether a Query Group is executed
 	// from the installed view (decision-016 batch 4); nil reads every
 	// Query Group the control plane's way.
@@ -1515,7 +1550,7 @@ func (runtime *productionPhaseTwoOwnership) contentScopesFor(
 		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
 			Component: observability.ComponentOwnership, Stage: observability.StageAssignmentAcquired,
 			Result: observability.ResultDegraded, Operation: observability.OperationTransition,
-			Direction: observability.DirectionInternal, ReasonCode: observability.ReasonInternalUnknown, Err: err,
+			ReasonCode: observability.ReasonInternalUnknown, Err: err,
 		})
 		return scheduler.ContentScopes{}, nil
 	}
@@ -1646,7 +1681,7 @@ func (runtime *productionPhaseTwoOwnership) PublishAssignments(
 	round.done(fleet.LeaderRoundStageAssignmentIndex)
 	runtime.sweepRetiredAssignments(ctx, authority, ordered)
 	round.done(fleet.LeaderRoundStageAssignmentSweep)
-	runtime.publishView(ctx, authority, records, owners)
+	runtime.publishView(ctx, authority, records, owners, workers, true)
 	round.done(fleet.LeaderRoundStageViewPublish)
 	return nil
 }
@@ -2572,7 +2607,8 @@ func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 		previousRelease := release
 		release = func() { previousRelease(); runtime.viewGate.forget(queryGroup, session) }
 	}
-	executor = &observedProductionSlotExecutor{next: executor, observer: runtime.dependencies.Observer, readHolds: runtime.dependencies.ReadHolds}
+	executor = &observedProductionSlotExecutor{next: executor, observer: runtime.dependencies.Observer, readHolds: runtime.dependencies.ReadHolds,
+		decisionLag: runtime.dependencies.DecisionLag, traces: runtime.dependencies.Traces}
 	var readHolds scheduler.ReadHolds
 	if runtime.dependencies.ReadHolds != nil {
 		readHolds = runtime.dependencies.ReadHolds
@@ -2588,6 +2624,9 @@ func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 		scheduler.WithObserver(runtime.dependencies.Observer),
 		scheduler.WithTakeoverClock(runtime.takeovers),
 		scheduler.WithReadHolds(readHolds),
+		scheduler.WithQueryLatency(runtime.dependencies.QueryLatency),
+		scheduler.WithInheritedQueryLatency(runtime.dependencies.InheritedQueryLatency),
+		scheduler.WithLiveReserve(slotSourceLiveReserve(runtime.dependencies.Flights)),
 	)
 	if err != nil {
 		release()
@@ -2606,6 +2645,7 @@ func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 	if runtime.dependencies.QueryCooldowns != nil {
 		runner.WithQueryCooldownStore(runtime.dependencies.QueryCooldowns)
 	}
+	runner.WithSlotSkipReport(runtime.dependencies.Observer, runtime.dependencies.LookbackBusy)
 	return &productionPhaseTwoQueryGroup{
 		session: session, runner: runner, observer: runtime.dependencies.Observer, now: runtime.dependencies.Now,
 		release: release, flights: runtime.flights, queryGroup: queryGroup, viewGate: runtime.viewGate,
@@ -2759,8 +2799,8 @@ func (source observedProductionSlotSource) Next(
 		observeRuntime(ctx, source.observer, observability.Observation{
 			Component: observability.ComponentScheduler, Stage: observability.StageScheduleDue,
 			Result: observability.Result(observability.ResultRetrying), ReasonCode: observability.ReasonCode(contract.ReasonViewNotExecutable),
-			Direction: observability.DirectionInternal, AwaitingView: notExecutable.AwaitingView,
-			Trace: observability.TraceFields{QueryGroupKey: string(queryGroup)}, Err: notExecutable,
+			AwaitingView: notExecutable.AwaitingView,
+			Trace:        observability.TraceFields{QueryGroupKey: string(queryGroup)}, Err: notExecutable,
 		})
 	} else if errors.As(err, &retry) || errors.As(err, &blocked) {
 		var reason observability.ReasonCode
@@ -2776,15 +2816,15 @@ func (source observedProductionSlotSource) Next(
 		}
 		observeRuntime(ctx, source.observer, observability.Observation{
 			Component: observability.ComponentScheduler, Stage: observability.StageScheduleDue,
-			Result: observability.Result(observability.ResultRetrying), ReasonCode: reason, Direction: observability.DirectionInternal,
+			Result: observability.Result(observability.ResultRetrying), ReasonCode: reason,
 			Trace: observability.TraceFields{QueryGroupKey: string(queryGroup)}, Err: cause,
 		})
 	}
 	if err == nil && due {
 		observeRuntime(ctx, source.observer, observability.Observation{
 			Component: observability.ComponentScheduler, Stage: observability.StageScheduleDue,
-			Result: observability.ResultSuccess, Direction: observability.DirectionInternal,
-			Trace: frozenSlotTrace(slot.Contract, slot.Dispatch.OwnerFence),
+			Result: observability.ResultSuccess,
+			Trace:  frozenSlotTrace(slot.Contract, slot.Dispatch.OwnerFence),
 		})
 	}
 	return slot, due, facts, err
@@ -2794,6 +2834,12 @@ type observedProductionSlotExecutor struct {
 	next      scheduler.Executor
 	observer  observability.Observer
 	readHolds *productionReadHolds
+	// decisionLag hears each decided Slot's lag from readable data to its
+	// completion; nil hears nothing.
+	decisionLag func(time.Duration)
+	// traces decides whether the Slot is exported and holds its span; nil
+	// exports nothing.
+	traces *tracing.Exporter
 }
 
 func (executor observedProductionSlotExecutor) Execute(
@@ -2806,9 +2852,15 @@ func (executor observedProductionSlotExecutor) Execute(
 	observeRuntime(ctx, executor.observer, observability.Observation{
 		Component: observability.ComponentScheduler, Stage: observability.StageSlotStarted,
 		Operation: observability.Operation(request.Operation),
-		Result:    observability.ResultStarted, Direction: observability.DirectionInternal, Trace: trace,
+		Result:    observability.ResultStarted, Trace: trace,
 	})
 	started := time.Now()
+	// The Slot's span, when the export samples it; its queries and their
+	// retries read the decision from ctx.
+	ctx, slotSpan := executor.traces.StartSlot(ctx, string(request.Contract.Slot.QueryGroup), int64(request.Contract.Slot.EvaluationTime))
+	// The attempt's query budget, recorded by access for whichever plan binds
+	// the round, rendered on the completion only when the round ends degraded.
+	ctx, budget := observability.ContextWithBudgetCapture(ctx)
 	result, err := executor.next.Execute(ctx, request)
 	if executor.readHolds != nil {
 		if reason, known := worker.StateConflictReason(err); known && reason == execution.ReasonCode(contract.ReasonStateStaleVersion) {
@@ -2816,12 +2868,29 @@ func (executor observedProductionSlotExecutor) Execute(
 		}
 	}
 	var shortCompletion *observability.ShortPeriodCompletionFacts
-	if err == nil && result.Completed && result.CompletionKind != "" && observability.IsShortPeriodCohort(request.ShortPeriodCohort) {
+	readAtLimit := false
+	if err == nil && result.Completed && result.CompletionKind != "" {
 		// Lag from when the Slot was to be read: its evaluation time, read
 		// hold later. A read hold is not lag; it is the wait the Slot chose.
 		due := time.Unix(int64(request.Contract.Slot.EvaluationTime), 0).Add(time.Duration(request.Contract.ReadHoldMillis) * time.Millisecond)
-		shortCompletion = &observability.ShortPeriodCompletionFacts{Cohort: request.ShortPeriodCohort, CompletionKind: string(result.CompletionKind),
-			LagSeconds: time.Since(due).Seconds(), AttemptNo: request.AttemptNo}
+		lag := time.Since(due)
+		// Every period's decision in a normal round, for the overview's
+		// evaluate stage. A Slot booked without a decision lags by its
+		// booking, not its detection; a replay, a probe and a supplement are
+		// late by what they are and would read as the rounds running late.
+		decided := result.CompletionKind != execution.CompletionGapSkipped && result.CompletionKind != execution.CompletionSnapshotUnavailable &&
+			(request.Operation == execution.OperationNormal || request.Operation == execution.OperationRetry)
+		if executor.decisionLag != nil && decided {
+			executor.decisionLag(lag)
+		}
+		// A decided round read at its group's hold limit says so on its own
+		// completion, every round, and is counted: the hold stops at the
+		// limit, the data does not, and nothing else marks the round.
+		readAtLimit = decided && executor.readHolds != nil && executor.readHolds.roundReadAtLimit(request.Contract)
+		if observability.IsShortPeriodCohort(request.ShortPeriodCohort) {
+			shortCompletion = &observability.ShortPeriodCompletionFacts{Cohort: request.ShortPeriodCohort, CompletionKind: string(result.CompletionKind),
+				LagSeconds: lag.Seconds(), AttemptNo: request.AttemptNo}
+		}
 	}
 	// What held the round before this one, on the completions where that is
 	// the question. Any cohort: it used to ride inside the short-period
@@ -2851,6 +2920,9 @@ func (executor observedProductionSlotExecutor) Execute(
 	observedResult := result.Result
 	reason := result.ReasonCode
 	observedErr := err
+	retryingAfterFailure := false
+	// What a Slot turned away as not ready waits for, on its line.
+	var readiness *observability.ReadinessDeferralFacts
 	var notExecutable *scheduler.ViewNotExecutableError
 	if err != nil {
 		if errors.As(err, &notExecutable) {
@@ -2859,6 +2931,12 @@ func (executor observedProductionSlotExecutor) Execute(
 			// failure of this deployment.
 			observedResult = observability.ResultRetrying
 			reason = observability.ReasonCode(contract.ReasonViewNotExecutable)
+		} else if errors.Is(err, execution.ErrSupplementKeptReadAbsent) {
+			// A supplement whose kept read does not hold the Slot's query
+			// ran nothing and wrote nothing: skipped, by name, at WARN. The
+			// Slot stands as it completed.
+			observedResult = observability.ResultSkipped
+			reason = observability.ReasonCode(contract.ReasonSupplementKeptReadAbsent)
 		} else if _, deferred := access.ReadinessDeferredAt(err); deferred {
 			// The Slot's data is not in yet: the normal pacing of every Slot,
 			// and the single highest-volume completion line alarmd writes. The
@@ -2871,6 +2949,7 @@ func (executor observedProductionSlotExecutor) Execute(
 			observedResult = observability.ResultRetrying
 			reason = observability.ReasonCode(contract.ReasonQueryNotReady)
 			observedErr = nil
+			readiness = access.ReadinessDeferralOf(err)
 		} else {
 			observedResult = observability.ResultFailed
 			reason, gapApplySite = slotFailureReason(err)
@@ -2879,15 +2958,24 @@ func (executor observedProductionSlotExecutor) Execute(
 			if reason == observability.ReasonInternalUnknown && observability.CancelledFromAbove(ctx, err) {
 				reason = observability.ReasonSlotCancelled
 			}
+			// An attempt its Runner backs off and retries is one attempt, not
+			// the Slot's end: retrying, with the failure's reason and error,
+			// at WARN. Only a Slot that really finishes short stays failed.
+			if scheduler.FailureRetried(ctx, err) {
+				observedResult, retryingAfterFailure = observability.ResultRetrying, true
+			}
 		}
 	} else if observedResult == "" {
 		observedResult = observability.ResultSuccess
 	}
+	slotSpan.End(string(observedResult), string(reason), observedResult == observability.ResultFailed)
 	observeRuntime(ctx, executor.observer, observability.Observation{
 		Component: observability.ComponentScheduler, Stage: observability.StageSlotCompleted,
 		Operation: observability.Operation(request.Operation), ShortPeriodCompletion: shortCompletion,
-		AwaitingView: notExecutable != nil && notExecutable.AwaitingView,
-		HeldBy:       heldBy, GapApplySite: gapApplySite,
+		AwaitingView: notExecutable != nil && notExecutable.AwaitingView, RetryingAfterFailure: retryingAfterFailure,
+		ReadAtLimit: readAtLimit, HeldBy: heldBy, GapApplySite: gapApplySite,
+		DivertDecision: lostRoundDecision(ctx, queryLossResult(observedResult, result), retryingAfterFailure, budget),
+		QueryBudget:    lostRoundBudget(queryLossResult(observedResult, result), retryingAfterFailure, budget),
 		// The completion the Slot reached, beside the reason it reports. They
 		// are separate fields and disagree in the case this line is hardest to
 		// read: a Slot whose Level outcomes are UNKNOWN completes
@@ -2895,8 +2983,17 @@ func (executor observedProductionSlotExecutor) Execute(
 		// which is indistinguishable on the reason alone from a Slot that was
 		// given up on before it ran.
 		SlotCompletionKind: string(result.CompletionKind),
-		ExecuteOutcome:     executeReturnOutcome(result, err),
-		Result:             observedResult, ReasonCode: reason, Direction: observability.DirectionInternal,
+		// And which of the conditions folded into that kind happened, with
+		// its reason: the attribution the progress line reports. Without it
+		// this line said UNAVAILABLE and QUERY_TIMEOUT for a Slot whose
+		// queries all answered and whose Level only waited on a guard an
+		// earlier timeout raised (GAP_GUARD_WARMING).
+		SlotCompletionCause:  string(result.CompletionCause.Cause),
+		SlotCompletionReason: string(result.CompletionCause.Reason),
+		CarriedReason:        result.CompletionCause.CarriedReason(),
+		ReadinessDeferral:    readiness,
+		ExecuteOutcome:       executeReturnOutcome(result, err),
+		Result:               observedResult, ReasonCode: reason,
 		Duration: time.Since(started), Trace: trace, Err: observedErr,
 		SlotBudgetUsage: slotBudgetUsageFacts(result.Usage),
 		SlotTiming:      slotTimingFacts(result.Timing),
@@ -2905,6 +3002,70 @@ func (executor observedProductionSlotExecutor) Execute(
 	})
 	observability.EmitTargetFlow(ctx, "execution_outcome", trace, observability.TargetFlowFacts{ExecutionOutcomeKnown: true, Attempted: true, Completed: result.Completed, Completion: string(result.CompletionKind)})
 	return result, err
+}
+
+// lostRound says a round's completion is one that lost it or failed it: it
+// ended degraded or failed, or its attempt failed and is being retried. A
+// round that succeeded, or that is only waiting for its data, is none.
+// queryLossResult is the result the lost-round facts are keyed on: the
+// Slot's own, except for a completion whose cause's reason was carried from
+// a stored guard while none of its physical queries answered short. That
+// Slot's queries answered; it is degraded only because a guard an earlier
+// round raised still holds a Level, and it lost no query for a decision or
+// a budget to explain - the rule the query line follows (worker
+// observeQueryCompleted). The physical loss is asked of the round, not of
+// the cause: the attribution ranks a carried Level outcome above a primary
+// input that came back PARTIAL, and a Query Group whose one Plan was held by
+// a guard while another Plan's query was short lost that query all the
+// same. The Slot's result and reason on the line are unchanged.
+//
+// The same holds for a Slot whose reason is alarmd's own judgement
+// (contract.ReasonJudgedV2) - a round outside its configured hours, a
+// history still warming - while none of its queries answered short: its
+// queries answered, and it is degraded by a decision, not a loss.
+func queryLossResult(observed observability.Result, result execution.SlotExecutionResult) observability.Result {
+	if result.PhysicalQueryLoss {
+		return observed
+	}
+	if result.CompletionCause.Cause != "" && result.CompletionCause.ReasonCarried {
+		return observability.ResultSuccess
+	}
+	reason := result.CompletionCause.Reason
+	if reason == "" {
+		reason = result.ReasonCode
+	}
+	if contract.ReasonJudgedV2(string(reason)) {
+		return observability.ResultSuccess
+	}
+	return observed
+}
+
+func lostRound(result observability.Result, retryingAfterFailure bool) bool {
+	return result == observability.ResultDegraded || result == observability.ResultFailed ||
+		(result == observability.ResultRetrying && retryingAfterFailure)
+}
+
+// lostRoundBudget is the binding query budget access resolved for a round,
+// on the completion of a round lost or failed for any reason; nil on every
+// other completion.
+func lostRoundBudget(result observability.Result, retryingAfterFailure bool, budget *observability.BudgetCapture) *observability.QueryBudgetFacts {
+	if !lostRound(result, retryingAfterFailure) {
+		return nil
+	}
+	return budget.Facts()
+}
+
+// lostRoundDecision is the decision that let a round run as a normal one, on
+// the completion of a round that then was lost or failed for any reason; nil
+// on every other completion, so normal lines stay as they were.
+//
+// A round not judged by the divert (a replay, retry or probe) has its
+// remaining time measured against the deadline access derived for it.
+func lostRoundDecision(ctx context.Context, result observability.Result, retryingAfterFailure bool, budget *observability.BudgetCapture) *observability.DivertDecisionFacts {
+	if !lostRound(result, retryingAfterFailure) {
+		return nil
+	}
+	return observability.DivertDecisionWithBudget(ctx, budget)
 }
 
 func frozenSlotTrace(
@@ -3056,7 +3217,7 @@ func observeProductionRenewalFailure(
 ) {
 	observeRuntime(ctx, observer, observability.Observation{
 		Component: observability.ComponentOwnership, Stage: stage, Result: observability.ResultFailed,
-		Direction: observability.DirectionInternal, ReasonCode: phaseTwoControlDependencyReason, Err: err,
+		ReasonCode: phaseTwoControlDependencyReason, Err: err,
 		Trace: observability.TraceFieldsFromContext(ctx),
 	})
 }
@@ -3076,7 +3237,7 @@ func observeProductionOwnership(
 	}
 	observeRuntime(ctx, observer, observability.Observation{
 		Component: observability.ComponentOwnership, Stage: stage, Result: result,
-		Direction: observability.DirectionInternal, ReasonCode: ownershipObservationReason(err), Err: err,
+		ReasonCode: ownershipObservationReason(err), Err: err,
 		Trace: observability.TraceFieldsFromContext(ctx),
 	})
 }
@@ -3176,7 +3337,15 @@ func publishedComposition(
 // against. Both halves arrive from the execution that produced them, so the
 // row is readable against the numbers that were in force when it was written
 // rather than against a configuration a reader looks up later.
+//
+// A Slot that ended without a finished result has no usage (the coordinator
+// fills it at the one exit that has both), and the line carries none rather
+// than a row of zeros: retained_bytes 0 beside a refusal read as a Slot that
+// held nothing when the share refused it.
 func slotBudgetUsageFacts(usage execution.SlotBudgetUsage) *observability.SlotBudgetUsageFacts {
+	if usage == (execution.SlotBudgetUsage{}) {
+		return nil
+	}
 	return &observability.SlotBudgetUsageFacts{
 		StateMutations: usage.StateMutations, GapMutations: usage.GapMutations, Events: usage.Events,
 		EventsWithoutMessage: usage.EventsWithoutMessage,

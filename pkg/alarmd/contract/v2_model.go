@@ -116,6 +116,20 @@ const (
 	ReasonQueryEmpty       = "QUERY_EMPTY"
 	ReasonQueryTimeout     = "QUERY_TIMEOUT"
 	ReasonQueryUnavailable = "QUERY_UNAVAILABLE"
+	// ReasonQueryRejected names a query the backend answered with a client
+	// error (HTTP 4xx other than 408 and 429): it read the request and
+	// refused it - an expression it cannot parse, a filter it rejects, a
+	// range over its sample limit. The backend is up; the query as written
+	// is what it will not run, so the reading is the strategy's, not the
+	// storage's. 408 and 429 are the backend asking for time and stay
+	// QUERY_UNAVAILABLE.
+	ReasonQueryRejected = "QUERY_REJECTED"
+	// ReasonQueryDeliveryTimeout names a query whose deadline passed while
+	// alarmd was still decoding or delivering an answer that had begun to
+	// arrive: the backend answered, and the time ran out on alarmd's side.
+	// It fails the attempt and never rides a query result, so it is not a
+	// coverage reason and has no rank among them; the next attempt retries.
+	ReasonQueryDeliveryTimeout = "QUERY_DELIVERY_TIMEOUT"
 	// ReasonQueryTargetMissing names a query the backend answered and
 	// refused because the table or field it names does not route in the
 	// strategy's space: a statement about where the data is, not about
@@ -134,7 +148,14 @@ const (
 	// query is not used. Like QUERY_TARGET_MISSING it stays until the
 	// strategy changes - here, until its detect_interval is removed.
 	ReasonDetectIntervalStorageNotSliding = "DETECT_INTERVAL_STORAGE_NOT_SLIDING"
-	ReasonReadinessBudgetInvalid          = "READINESS_BUDGET_INVALID"
+	// ReasonQueryNamedOutputDuplicateKey names a query with named outputs
+	// one of whose outputs answered two points at the same time under the
+	// same labels, __name__ aside: the outputs cannot be aligned to the
+	// records detection reads, so the query is not used, as the platform
+	// refuses it. It stays until the strategy changes - until each output
+	// is aggregated to the labels of the one detection reads.
+	ReasonQueryNamedOutputDuplicateKey = "QUERY_NAMED_OUTPUT_DUPLICATE_KEY"
+	ReasonReadinessBudgetInvalid       = "READINESS_BUDGET_INVALID"
 	// ReasonQueryNotReady names a Slot deferred because the window it would
 	// query is not in yet. It is the normal pacing of every Slot, and the
 	// highest-volume observation alarmd makes, so it needs its own name:
@@ -264,10 +285,22 @@ const (
 	// large objects across replicas; nothing stops one from filling the replica
 	// it lands on.
 	ReasonQGBudgetShareExceeded = "QG_BUDGET_SHARE_EXCEEDED"
-	ReasonProviderUnavailable   = "PROVIDER_UNAVAILABLE"
-	ReasonProgressBeginRejected = "PROGRESS_BEGIN_REJECTED"
-	ReasonProgressBeginFailed   = "PROGRESS_BEGIN_FAILED"
-	ReasonActivationReadFailed  = "ACTIVATION_READ_FAILED"
+	// ReasonSupplementKeptReadAbsent names a supplement of a Slot whose
+	// queries, planned again from the Slot's frozen plan, are not all the
+	// query the lookback kept the late read of. Nothing is run and nothing
+	// is written: the Slot stands as it completed, and the series stay for a
+	// later Slot to read. Deterministic, since the kept read does not change.
+	ReasonSupplementKeptReadAbsent = "SUPPLEMENT_KEPT_READ_ABSENT"
+	// ReasonTargetResolutionIncomplete names a Plan's monitoring target
+	// resolved in part - a dynamic group with members dropped, a node
+	// missing - and ReasonTargetResolutionUnavailable one not resolved at
+	// all. The selectors on the target_resolved line say which and how many.
+	ReasonTargetResolutionIncomplete  = "TARGET_RESOLUTION_INCOMPLETE"
+	ReasonTargetResolutionUnavailable = "TARGET_RESOLUTION_UNAVAILABLE"
+	ReasonProviderUnavailable         = "PROVIDER_UNAVAILABLE"
+	ReasonProgressBeginRejected       = "PROGRESS_BEGIN_REJECTED"
+	ReasonProgressBeginFailed         = "PROGRESS_BEGIN_FAILED"
+	ReasonActivationReadFailed        = "ACTIVATION_READ_FAILED"
 	// ReasonActivationMissing names a control round that found no activation
 	// record at all. It is separate from ACTIVATION_READ_FAILED because the
 	// store answered: there is no record, rather than no answer, and the two
@@ -280,15 +313,11 @@ const (
 	ReasonSlotSourceRetry            = "SLOT_SOURCE_RETRY"
 	ReasonBlockedExactSetUnavailable = "BLOCKED_EXACT_SET_UNAVAILABLE"
 	// ReasonScheduleUnreadable names a round the Slot source could not take
-	// because the Query Group's schedule timeline does not decode: corrupt
-	// bytes, or a timeline written by a build this one cannot read (a rollout
-	// whose new content the previous build cannot run). Until the timeline is
-	// rewritten or the Query Group moves to a build that reads it, every round
-	// meets the same bytes.
-	//
-	// Retire when: the upstream snapshot after the one that adds this word is
-	// merged, the previous-build case is gone; the word stays for corrupt
-	// bytes.
+	// because the Query Group's schedule timeline does not decode: its bytes
+	// are corrupt. Every build a deployment can run reads every timeline
+	// another writes (the persisted shape's note in controlplane), so a
+	// timeline one replica cannot decode is not another build's. Until the
+	// timeline is rewritten, every round meets the same bytes.
 	ReasonScheduleUnreadable = "SCHEDULE_UNREADABLE"
 	// ReasonScheduleMissing names a round the Slot source could not take
 	// because the Query Group's schedule timeline key is not there at all -
@@ -866,6 +895,12 @@ type TriggerRecordRefV1 struct {
 	SourceTime              int64                      `json:"source_time"`
 	DimensionIdentityDigest string                     `json:"dimension_identity_digest"`
 	Dimensions              map[string]json.RawMessage `json:"dimensions"`
+	// Absent says the series had no record this round: the event is about
+	// its absence, and its record is the series' identity at the round's
+	// time, not a point. Only a RECOVERY no data ended (RecoveryEndedByNoData)
+	// is about an absent series, and its levels carry no detect evidence -
+	// there was nothing to detect. Omitted on every event about a record.
+	Absent bool `json:"absent,omitempty"`
 }
 
 type TriggerObservedV1 struct {
@@ -915,7 +950,50 @@ type RecoveryWindowEvidenceV1 struct {
 	// without it, a run of five misses spanning an hour and one spanning a
 	// week look the same on the evidence.
 	SkippedWindows uint32 `json:"skipped_windows,omitempty"`
+	// Withheld says the recovery windows were met and the Level still did
+	// not recover, and why (RecoveryWithheldReasons): the result is NORMAL,
+	// not RECOVERY. Empty for every recovery that was decided as the windows
+	// say.
+	Withheld string `json:"withheld,omitempty"`
+	// End is how a RECOVERY ends its alert when not as recovered:
+	// RecoveryEndClose for a Level written to end it closed (status_setter
+	// close or close-nodata). Empty on every other result and every Level
+	// written to recover.
+	End string `json:"end,omitempty"`
+	// EndedBy says a RECOVERY was decided by something other than its
+	// windows: RecoveryEndedByNoData, a Level written to end on no data
+	// whose last real point is (R + T + 1) periods old. Empty on every
+	// recovery the windows decided and every other result.
+	EndedBy string `json:"ended_by,omitempty"`
 }
+
+// RecoveryEndedByNoData: no real point arrived through the recovery span
+// (status_setter -nodata, RecoveryMissingDataEvaluateAsZero). The round's
+// own value is a count of zero that is no observation.
+const RecoveryEndedByNoData = "no_data"
+
+// RecoveryEndClose: the Level's alert ends closed, not resolved.
+const RecoveryEndClose = "close"
+
+// RecoveryMissingDataEvaluateAsZero: no data through the recovery span ends
+// the Level's alert (status_setter recovery-nodata or close-nodata), timed
+// from the last real point.
+const RecoveryMissingDataEvaluateAsZero = "evaluate_as_zero"
+
+// RecoveryWithheldZeroCount: this round's own value is a count of zero from
+// a source whose zero is no observation - an event count, or a log count
+// with no grouping - so it does not end an alert, though the trigger reads
+// it as any value. The alert recovers on a round with a count above zero.
+const RecoveryWithheldZeroCount = "zero_count"
+
+// RecoveryWithheldNoDataLastPointUnknown: as RecoveryWithheldZeroCount, on a
+// Level written to end on no data whose last real point is not known - the
+// alert was opened on a build that did not keep it - so no data cannot be
+// timed and ends nothing. The next real point starts the clock.
+const RecoveryWithheldNoDataLastPointUnknown = "no_data_last_point_unknown"
+
+// RecoveryWithheldReasons is the closed list.
+var RecoveryWithheldReasons = []string{RecoveryWithheldZeroCount, RecoveryWithheldNoDataLastPointUnknown}
 
 type WindowEvidenceV1 struct {
 	AnomalyTimestampsDigest string `json:"anomaly_timestamps_digest"`
@@ -943,13 +1021,17 @@ type DetectEvidenceV1 struct {
 }
 
 type LevelResultV1 struct {
-	LevelID                 uint32           `json:"level_id"`
-	LevelCode               string           `json:"level_code,omitempty"`
-	Priority                uint32           `json:"priority"`
-	Result                  string           `json:"result"`
-	DecisionWindow          DecisionWindowV1 `json:"decision_window"`
-	DetectEvidence          DetectEvidenceV1 `json:"detect_evidence"`
-	LevelTriggerFingerprint string           `json:"level_trigger_fingerprint"`
+	LevelID        uint32           `json:"level_id"`
+	LevelCode      string           `json:"level_code,omitempty"`
+	Priority       uint32           `json:"priority"`
+	Result         string           `json:"result"`
+	DecisionWindow DecisionWindowV1 `json:"decision_window"`
+	// DetectEvidence is required on every level result but the one about an
+	// absent series (TriggerRecordRefV1.Absent), which has no point to have
+	// detected anything on. A pointer only so that one can be left out; every
+	// event about a record encodes it exactly as before.
+	DetectEvidence          *DetectEvidenceV1 `json:"detect_evidence,omitempty"`
+	LevelTriggerFingerprint string            `json:"level_trigger_fingerprint"`
 }
 
 type TriggerEventTraceV1 struct {
@@ -977,7 +1059,14 @@ type TriggerEventV1 struct {
 	WireFormat string `json:"-"`
 	// SignalType travels beside WireFormat and for the same reason: the sink
 	// has no Plan in hand. Empty means this build could not name it.
-	SignalType              string               `json:"-"`
+	SignalType string `json:"-"`
+	// DetectionSnapshot is what the detection decided on, encoded and held
+	// to its bounds (EncodeDetectionSnapshotV1), for the output to carry
+	// (extra_data.detection_snapshot): beside the event and not in
+	// it, so neither the event id nor its semantic digest moves with what is
+	// read beside the detection. Nil on the events of a strategy without
+	// named outputs.
+	DetectionSnapshot       json.RawMessage      `json:"-"`
 	Schema                  Schema               `json:"schema"`
 	RequiredFeatures        []string             `json:"required_features"`
 	EventID                 string               `json:"event_id"`

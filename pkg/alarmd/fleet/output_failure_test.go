@@ -123,7 +123,8 @@ func TestTheOutputEvidenceWordsAreClosed(t *testing.T) {
 
 // statedRefusal runs an object through rounds whose event write the sink
 // refused on its own account -- reason word and bare sentence as facts on the
-// failed event write -- so the word alone has to decide.
+// failed event write, under the kind the coordinator puts on every refusal --
+// so no signature in the sentence has anything to decide.
 func statedRefusal(t *testing.T, word, sentence string) Anomaly {
 	t.Helper()
 	tracker := newTracker(t, &clock{at: now})
@@ -133,8 +134,9 @@ func statedRefusal(t *testing.T, word, sentence string) Anomaly {
 		tracker.Observe(context.Background(), observability.Observation{
 			Component: observability.ComponentOutput, Stage: observability.StageEventACKed,
 			Result: observability.ResultFailed, ReasonCode: observability.ReasonCode(word), Err: errors.New(chain),
-			OutputRejection: &observability.OutputRejectionFacts{Reason: word, Detail: sentence},
-			Trace:           observability.TraceFields{QueryGroupKey: "qg-rejected", EvaluationTime: slot},
+			OutputRejection:   &observability.OutputRejectionFacts{Reason: word, Detail: sentence},
+			OutputFailureKind: observability.OutputFailureClientRejected,
+			Trace:             observability.TraceFields{QueryGroupKey: "qg-rejected", EvaluationTime: slot},
 		})
 		tracker.Observe(context.Background(), observability.Observation{
 			ExecuteOutcome: "error", ReasonCode: observability.ReasonCode(word), Err: errors.New(chain),
@@ -150,11 +152,10 @@ func statedRefusal(t *testing.T, word, sentence string) Anomaly {
 }
 
 // When the sink states its own refusal, the row carries the sentence, not the
-// chain, and the reason word decides the kind whatever the sentence says --
-// for both of the sink's words, each with a sentence no signature matches.
-// Each word is its own case because each is its own table row: a word
-// dropped from the reading's list would fall back to the sentence, and with
-// an unsigned sentence read unknown while the table still said commit.
+// chain, and the refusal's kind decides whatever the sentence says -- for
+// both of the sink's words, each with a sentence no signature matches. Each
+// word is its own case because each is its own table row: a word dropped
+// from the table would lose its commit reading.
 func TestTheSinksOwnRefusalIsCarriedAsFactsAndDecidesTheKind(t *testing.T) {
 	for _, test := range []struct {
 		word, sentence string
@@ -163,7 +164,7 @@ func TestTheSinksOwnRefusalIsCarriedAsFactsAndDecidesTheKind(t *testing.T) {
 		// The converter's refusal in words no signature knows.
 		{contract.ReasonOutputConversionRejected, "two levels of one decision share the severity", ClassContract},
 		// The client's refusal in words no signature knows: the client's own
-		// message-size error, not its configuration error. Only the word can
+		// message-size error, not its configuration error. Only the kind can
 		// make this client_rejected.
 		{contract.ReasonOutputClientRejected, "Message was too large, the client refused it before sending", ClassConfig},
 	} {
@@ -175,15 +176,31 @@ func TestTheSinksOwnRefusalIsCarriedAsFactsAndDecidesTheKind(t *testing.T) {
 			if row.Internal == nil {
 				t.Fatal("a refusal the sink stated was not filed as this deployment's own")
 			}
-			// The word decides the kind; the word's own reading in the table
+			// The kind is the client's; the word's own reading in the table
 			// -- commit, no dependency, its class -- stands.
 			if b := row.Blocked; b == nil || b.DependencyEvidence != observability.OutputFailureClientRejected || b.Dependency != DependencyNone || b.Class != test.class || b.Stage != StageCommit {
-				t.Fatalf("blocked = %+v, want client_rejected by the sink's own word with the word's reading (%s)", row.Blocked, test.class)
+				t.Fatalf("blocked = %+v, want client_rejected with the word's reading (%s)", row.Blocked, test.class)
 			}
 			if row.Finding.Check != CheckDefect || row.Finding.Owner != OwnerAlarmd {
 				t.Fatalf("finding = %+v, want the sink's refusal on the defect line", row.Finding)
 			}
 		})
+	}
+}
+
+// The kind alone says whose an output failure was: a refusal code under no
+// kind is read as unknown, not as the client's - the coordinator puts
+// client_rejected on every refusal, so a row without it claims nothing.
+func TestARefusalCodeUnderNoKindReadsUnknown(t *testing.T) {
+	for _, code := range []string{contract.ReasonOutputClientRejected, contract.ReasonOutputConversionRejected} {
+		_, kind, isOutput := outputFailureOf(Anomaly{Failure: &FailureRef{Stage: "output", Code: code}})
+		if !isOutput || kind != observability.OutputFailureUnknown {
+			t.Fatalf("%s under no kind: output %v kind %q, want unknown", code, isOutput, kind)
+		}
+		_, kind, _ = outputFailureOf(Anomaly{Failure: &FailureRef{Stage: "output", Code: code, Kind: observability.OutputFailureClientRejected}})
+		if kind != observability.OutputFailureClientRejected {
+			t.Fatalf("%s under client_rejected: kind %q", code, kind)
+		}
 	}
 }
 

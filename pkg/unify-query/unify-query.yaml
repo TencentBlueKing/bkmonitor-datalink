@@ -75,6 +75,8 @@ logger:
 trace:
   dataid: 0
   service_name: "unify-query"
+  # always 记录所有请求；parent_based 时带 traceparent 的请求按其 sampled 标志决定是否记录
+  sampler: always
   otlp:
     host: 127.0.0.1
     port: 4317

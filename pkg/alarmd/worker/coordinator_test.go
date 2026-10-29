@@ -120,12 +120,21 @@ func TestSlotExecutionCoordinatorObservesReadinessDeferralWithoutFailureOrSideEf
 	if reason := observability.NormalizeReason(observation.ReasonCode, observation.Result); reason != want {
 		t.Fatalf("readiness reason=%q (normalized %q), want %q", observation.ReasonCode, reason, want)
 	}
+	// And what it waits for, as the deferral named it.
+	if facts := observation.ReadinessDeferral; facts == nil || facts.PhysicalQuery != "physical-304" ||
+		facts.Requirement != "primary" || facts.ReadyAtUnixMilli != readyAt.UnixMilli() || facts.Basis != observability.ReadinessBasisSettleWait {
+		t.Fatalf("readiness facts=%+v, want the deferral's query, requirement, time and basis", facts)
+	}
 }
 
 type coordinatorReadinessDeferredError struct{ readyAt time.Time }
 
 func (err coordinatorReadinessDeferredError) Error() string               { return "readiness deferred" }
 func (err coordinatorReadinessDeferredError) ReadinessReadyAt() time.Time { return err.readyAt }
+func (err coordinatorReadinessDeferredError) ReadinessDeferral() *observability.ReadinessDeferralFacts {
+	return &observability.ReadinessDeferralFacts{Requirement: "primary", PhysicalQuery: "physical-304",
+		ReadyAtUnixMilli: err.readyAt.UnixMilli(), Basis: observability.ReadinessBasisSettleWait}
+}
 
 func TestSlotExecutionCoordinatorBindsAlwaysEffectiveTimeToRealSeries(t *testing.T) {
 	fixture := newFixture(t, true, "")
@@ -232,14 +241,13 @@ func TestSlotExecutionCoordinatorBudgetsRetainedSeriesAndBytes(t *testing.T) {
 }
 
 func TestSlotExecutionCoordinatorRejectsCumulativeUQPayloadBeforeSideEffectsAndReleasesReservation(t *testing.T) {
-	// Two MiB so the pool is what this case is about. One Query Group may hold
-	// half the pool, so at 1 MiB a single 600 KiB batch is over its share and
-	// the cumulative pool rejection below would never be the thing that fired.
+	// Two MiB, so one 900 KiB batch fits the share (three quarters of the
+	// pool, 1.5 MiB) and the second one's cumulative total does not.
 	fixture := newFixtureWithBudget(t, worker.ProvisionalBudget{
 		MaxSeries: 100, MaxRetainedBytes: 2 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10,
 	})
 	fixture.ports.reverseStateReceipts = true
-	fixture.ports.queryDeliveryBytes = []uint64{600 << 10, 600 << 10}
+	fixture.ports.queryDeliveryBytes = []uint64{900 << 10, 900 << 10}
 
 	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
 	if err == nil || result.Completed {
@@ -248,8 +256,8 @@ func TestSlotExecutionCoordinatorRejectsCumulativeUQPayloadBeforeSideEffectsAndR
 	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 || !isZeroProgressCommit(fixture.ports.lastProgress) {
 		t.Fatal("retained-byte rejection reached Event, State or Progress")
 	}
-	// The share, not the pool. One Query Group may hold half the retained-byte
-	// budget, so a single object's cumulative payload always crosses its share
+	// The share, not the pool. One Query Group may hold three quarters of the
+	// retained-byte budget, so a single object's cumulative payload crosses its share
 	// before it can reach the pool - the pool's own retained-byte refusal needs
 	// two Query Groups running at once. The property this case is about is
 	// unchanged: a rejected cumulative payload reaches no side effect and
@@ -267,9 +275,9 @@ func TestSlotExecutionCoordinatorRejectsCumulativeUQPayloadBeforeSideEffectsAndR
 	// and the share it crossed, and no shared usage: nothing another Query
 	// Group did is part of why this one was refused, and reporting a pool
 	// figure here would point the reader at a neighbour that is not involved.
-	// Limit is half the 2 MiB budget.
+	// Limit is three quarters of the 2 MiB budget.
 	if rejection == nil || rejection.Phase != "normal_output" || rejection.OwnUsed == nil ||
-		*rejection.OwnUsed < 600<<10 || rejection.SharedUsed != 0 || rejection.Limit != 1<<20 {
+		*rejection.OwnUsed < 900<<10 || rejection.SharedUsed != 0 || rejection.Limit != 3<<19 {
 		t.Fatalf("missing exact failed-reservation facts: %+v", rejection)
 	}
 	usedAtRejection := *rejection.OwnUsed
@@ -790,6 +798,15 @@ func TestSlotExecutionCoordinatorDiscardsProvisionalEffectsForPartialData(t *tes
 		fixture.ports.lastProgress.Completion.Primary.Completeness != execution.CompletenessPartial {
 		t.Fatalf("Progress=%+v", fixture.ports.lastProgress)
 	}
+	// The completion line's lost-round facts key on this, not on the cause.
+	if !result.PhysicalQueryLoss {
+		t.Fatal("a PARTIAL physical query did not mark the Slot's physical loss")
+	}
+	whole := newFixture(t, true, "")
+	if result, err := whole.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal)); err != nil ||
+		result.PhysicalQueryLoss {
+		t.Fatalf("whole round: result=%+v error=%v, want no physical loss", result, err)
+	}
 }
 
 func TestSlotExecutionCoordinatorShortCircuitsAlreadyAppliedState(t *testing.T) {
@@ -1301,6 +1318,13 @@ func (ports *recordingPorts) ResolveFinalization(
 	_ context.Context,
 	request execution.SlotExecutionRequest,
 ) (execution.QueryFreeFinalization, error) {
+	// A Slot the Runner gave up for its share, as the production source
+	// finalizes it (cmd/alarmd productionFrozenExecution).
+	if request.ShareExceeded {
+		return execution.QueryFreeFinalization{Contract: request.Contract, Mode: execution.FinalizationGapSkipped,
+			ReasonCode: execution.ReasonCode(contract.ReasonGapSkipped), Targets: request.DuePlanTargets,
+			Cause: execution.CauseResourceShareExceeded}, nil
+	}
 	mode := ports.finalizationMode
 	if mode == "" {
 		mode = execution.FinalizationQueryRequired
@@ -1563,7 +1587,7 @@ func (ports *recordingPorts) Execute(ctx context.Context, request execution.Quer
 		return execution.QueryExecutionCompletion{}, err
 	}
 	if ports.queryTakes > 0 {
-		time.Sleep(ports.queryTakes)
+		time.Sleep(ports.queryTakes) // fixed-wait: the stub query's duration, which the case sets
 	}
 	if err := ports.fail("query"); err != nil {
 		return execution.QueryExecutionCompletion{}, err
@@ -1979,6 +2003,9 @@ func (ports *recordingPorts) WriteBatch(ctx context.Context, events []contract.T
 		if ports.eventRejection != nil {
 			// The sink refusing to write, as the sink states it: not a
 			// retryable dependency, and named by reason word and sentence.
+			if ports.eventRejection.kindless {
+				return &outputRejectedKindlessTestError{err: err, reason: ports.eventRejection.reason, detail: ports.eventRejection.detail}
+			}
 			return &outputRejectedTestError{err: err, reason: ports.eventRejection.reason, detail: ports.eventRejection.detail}
 		}
 		return &retryableOutputTestError{err: err, kind: ports.eventFailureKind}
@@ -2004,7 +2031,24 @@ func (err *outputRejectedTestError) OutputFailureKind() string {
 }
 func (err *outputRejectedTestError) OutputRejectionDetail() string { return err.detail }
 
-type eventRejectionShape struct{ reason, detail string }
+// eventRejectionShape is the refusal the test sink states; kindless leaves
+// out the kind a refusal's error carries.
+type eventRejectionShape struct {
+	reason, detail string
+	kindless       bool
+}
+
+// outputRejectedKindlessTestError is a refusal whose error names its reason
+// word and sentence and states no kind.
+type outputRejectedKindlessTestError struct {
+	err            error
+	reason, detail string
+}
+
+func (err *outputRejectedKindlessTestError) Error() string                 { return err.reason + ": " + err.detail }
+func (err *outputRejectedKindlessTestError) Unwrap() error                 { return err.err }
+func (err *outputRejectedKindlessTestError) OutputRejectionReason() string { return err.reason }
+func (err *outputRejectedKindlessTestError) OutputRejectionDetail() string { return err.detail }
 
 type retryableOutputTestError struct {
 	err  error
@@ -2343,7 +2387,7 @@ func validTriggerEventFor(recordID, seriesDigest string) contract.TriggerEventV1
 				HistoryCompleteness: "FULL",
 				WindowEvidence:      contract.WindowEvidenceV1{AnomalyTimestampsDigest: strings.Repeat("9", 64)},
 			},
-			DetectEvidence: contract.DetectEvidenceV1{
+			DetectEvidence: &contract.DetectEvidenceV1{
 				DetectionResult: "ANOMALOUS", PredicateDigest: strings.Repeat("8", 64),
 				NormalizedValue: json.RawMessage(`50.1`), EffectiveTimeStatus: "ACTIVE",
 			},

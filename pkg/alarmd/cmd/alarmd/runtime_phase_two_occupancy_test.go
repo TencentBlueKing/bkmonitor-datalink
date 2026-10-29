@@ -8,6 +8,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
@@ -67,12 +68,12 @@ func occupancyDispatcher(observer observability.Observer) (*phaseTwoRunnerDispat
 
 func awaitExecuting(t *testing.T, dispatcher *phaseTwoRunnerDispatcher, want int64) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := testwait.Deadline(t)
 	for time.Now().Before(deadline) {
 		if dispatcher.executing.Load() == want {
 			return
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	t.Fatalf("occupancy stayed at %d, want %d", dispatcher.executing.Load(), want)
 }

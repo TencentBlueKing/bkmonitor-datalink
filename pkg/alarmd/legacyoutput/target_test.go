@@ -32,7 +32,18 @@ func TestTargetPythonSourceOracle(t *testing.T) {
 	if err := json.Unmarshal(raw, &cases); err != nil {
 		t.Fatal(err)
 	}
+	// Cases where alarmd deliberately answers otherwise than Python, with what
+	// it answers instead. apm_table: Python reads the APM application out of
+	// the result table's name, which is the application's normalised form
+	// (hyphens and dots to underscores, lowercased) and so names no
+	// application when it had either; alarmd places the record as any other.
+	diverges := map[string]TargetProjection{
+		"apm_table": {Type: "", Target: nil, Dimensions: map[string]json.RawMessage{"service_name": json.RawMessage(`"svc"`)}, AdditionalDimensions: map[string]json.RawMessage{}},
+	}
 	for _, tc := range cases {
+		if want, ok := diverges[tc.Name]; ok {
+			tc.Expected = want
+		}
 		t.Run(tc.Name, func(t *testing.T) {
 			got, err := ProjectTarget(context.Background(), TargetScope{TenantID: "default", BusinessID: 2}, tc.Strategy, tc.Dimensions, tc.Fields, fixedPod{tc.Pod})
 			if err != nil {
@@ -44,6 +55,49 @@ func TestTargetPythonSourceOracle(t *testing.T) {
 		})
 	}
 }
+
+// The APM application comes from the record's app_name, else the strategy's
+// APM-APP label, and never from the result table. A strategy shaped like
+// the one that showed it (only service_name in the record, an application
+// whose name has hyphens, its table named in normalised form) gets no APM
+// object and no app_name, so downstream enrichment falls back to the
+// strategy's own data source instead of a name that matches nothing.
+func TestTheAPMApplicationIsNeverReadFromTheResultTable(t *testing.T) {
+	strategy := func(labels ...string) json.RawMessage {
+		raw, _ := json.Marshal(map[string]any{"bk_biz_id": 2, "labels": labels, "items": []any{map[string]any{"query_configs": []any{map[string]any{
+			"agg_dimension": []string{"service_name"}, "data_type_label": "time_series", "data_source_label": "bk_monitor",
+			"result_table_id": "2_bkapm_metric_cross_bank_trade.__default__"}}}}})
+		return raw
+	}
+	project := func(t *testing.T, s json.RawMessage, dims map[string]json.RawMessage, fields []string) TargetProjection {
+		t.Helper()
+		got, err := ProjectTarget(context.Background(), TargetScope{TenantID: "default", BusinessID: 2}, s, dims, fields, fixedPod{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	service := map[string]json.RawMessage{"service_name": json.RawMessage(`"transfer"`)}
+	if got := project(t, strategy(), service, []string{"service_name"}); got.Type != "" || got.AdditionalDimensions["app_name"] != nil {
+		t.Errorf("no dimension, no label: %s, want no APM object and no app_name", mustJSON(got))
+	}
+	if got := project(t, strategy("APM-APP(cross-bank-trade)"), service, []string{"service_name"}); got.Type != "APM-SERVICE" ||
+		string(got.Target) != `"cross-bank-trade:transfer"` || string(got.AdditionalDimensions["app_name"]) != `"cross-bank-trade"` {
+		t.Errorf("label: %s, want the labelled application", mustJSON(got))
+	}
+	// The application the APM query carries beside the identity dimensions
+	// names the object, before any label, and is reported as supplementary.
+	carried := map[string]json.RawMessage{"app_name": json.RawMessage(`"cross-bank-trade"`), "service_name": json.RawMessage(`"transfer"`)}
+	if got := project(t, strategy("APM-APP(other)"), carried, []string{"service_name"}); string(got.Target) != `"cross-bank-trade:transfer"` ||
+		string(got.AdditionalDimensions["app_name"]) != `"cross-bank-trade"` {
+		t.Errorf("carried application: %s, want it to name the object", mustJSON(got))
+	}
+	both := map[string]json.RawMessage{"app_name": json.RawMessage(`"cross-bank-trade"`), "service_name": json.RawMessage(`"transfer"`)}
+	if got := project(t, strategy("APM-APP(other)"), both, []string{"app_name", "service_name"}); string(got.Target) != `"cross-bank-trade:transfer"` || got.AdditionalDimensions["app_name"] != nil {
+		t.Errorf("dimension and label: %s, want the dimension's application, not repeated", mustJSON(got))
+	}
+}
+
 func mustJSON(v any) []byte { raw, _ := json.Marshal(v); return raw }
 func normalizedJSON(t *testing.T, v any) any {
 	t.Helper()

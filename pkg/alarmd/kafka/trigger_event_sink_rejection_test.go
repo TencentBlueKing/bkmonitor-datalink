@@ -14,6 +14,7 @@ import (
 	"github.com/Shopify/sarama"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // What this process decides on its own about an output is not a dependency
@@ -51,6 +52,11 @@ func outputRejectionOf(t *testing.T, err error) *OutputRejectedError {
 	if !errors.As(err, &structured) || structured.OutputRejectionDetail() != rejected.Detail || rejected.Detail == "" ||
 		strings.Contains(structured.OutputRejectionDetail(), "(event ") {
 		t.Fatalf("structured detail = %q, want the bare sentence %q without the identity suffix", structured.OutputRejectionDetail(), rejected.Detail)
+	}
+	// The kind is what the fleet reads a refusal by: a row with a refusal
+	// code and no kind is read as unknown, not as the client's.
+	if kind := observability.OutputFailureKindOf(err); kind != observability.OutputFailureClientRejected {
+		t.Fatalf("refusal %s: kind %q, want %q", rejected.Reason, kind, observability.OutputFailureClientRejected)
 	}
 	return rejected
 }

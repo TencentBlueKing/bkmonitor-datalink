@@ -33,7 +33,7 @@ type storeCensusCollector struct {
 
 func newStoreCensusCollector(source StoreCensusSource) *storeCensusCollector {
 	name := func(suffix string) string {
-		return prometheus.BuildFQName(metricNamespace, metricSubsystem, "store_census_"+suffix)
+		return prometheus.BuildFQName("", metricSubsystem, "store_census_"+suffix)
 	}
 	return &storeCensusCollector{
 		source: source,

@@ -191,8 +191,12 @@ func TestALongLivedSegmentKeepsDetectingAcrossASnapshotChangeAndATakeover(t *tes
 			t.Fatalf("publish the second strategy: %v", err)
 		}
 	}
-	waitPhaseTwoCondition(t, 10*time.Second, "the first replica opens the new strategy's Query Group", func() bool {
-		_ = first.refreshAndReconcile(ctx, true)
+	// The same round as the two above, repeated until the Query Group opens:
+	// an error from it is no more expected here than there.
+	waitPhaseTwoCondition(t, "the first replica opens the new strategy's Query Group", func() bool {
+		if err := first.refreshAndReconcile(ctx, true); err != nil {
+			t.Fatalf("reconcile while the new strategy's Query Group opens: %v", err)
+		}
 		return len(first.runners) == 2
 	})
 	round(first, 2)
@@ -206,7 +210,7 @@ func TestALongLivedSegmentKeepsDetectingAcrossASnapshotChangeAndATakeover(t *tes
 	firstClosed = true
 	next := open("long-lived-replica-b")
 	t.Cleanup(func() { _ = next.Shutdown(context.Background()) })
-	waitPhaseTwoCondition(t, 10*time.Second, "the new replica leads and owns both Query Groups", func() bool {
+	waitPhaseTwoCondition(t, "the new replica leads and owns both Query Groups", func() bool {
 		if err := next.refreshAndReconcile(ctx, true); err != nil {
 			return false
 		}

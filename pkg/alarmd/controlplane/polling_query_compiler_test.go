@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -39,6 +40,25 @@ func TestPollingSourceQuerySemantics(t *testing.T) {
 			}
 			if tc.name == "monitor-event-count" && facts.Normalization.DatasetContract.IdentityFields[0] != "host" {
 				t.Fatalf("canonical identity=%+v", facts.Normalization)
+			}
+		})
+	}
+}
+
+// A filter with no matcher in it compiles to no match. "{}" is not a
+// selector: the provider refused the query beside it on every round, and a
+// strategy saved with an empty filter detected nothing.
+func TestPollingPromQLFilterWithoutAMatcherIsNoMatch(t *testing.T) {
+	planner, _ := NewLegacyPrimaryQueryCompiler("uq", "UTC", LegacyQueryRuntimeFacts{})
+	for _, filter := range []string{`null`, `{}`, `{"labels":{}}`, `{"ignored":1}`, `{"labels":{"nested":{}},"count":2}`} {
+		t.Run(filter, func(t *testing.T) {
+			source := pollingTestSource(`{"data_source_label":"prometheus","data_type_label":"time_series","promql":"avg_over_time(up[60s])","agg_interval":60,"filter_dict":` + filter + `}`)
+			facts, err := planner.CompilePrimaryQuery(context.Background(), source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if facts.PromQL == nil || facts.PromQL.Match != "" {
+				t.Fatalf("promql=%+v, want no match", facts.PromQL)
 			}
 		})
 	}
@@ -129,5 +149,125 @@ func TestLogSearchQueryString(t *testing.T) {
 	}
 	if facts.QueryList[0].TableID != "bklog_index_set_7_clustered" {
 		t.Fatalf("query=%+v", facts.QueryList[0])
+	}
+}
+
+// The event name and the recovery filter go into every OR group of a custom
+// event strategy's conditions, as the platform's _filter_dict_to_conditions
+// puts its filters, not once after the last group: appended at the end they
+// filtered only that group, and every other group counted every event of the
+// table, recoveries included.
+func TestCustomEventFiltersAreAndedIntoEveryOrGroup(t *testing.T) {
+	planner, _ := NewLegacyPrimaryQueryCompiler("uq", "UTC", LegacyQueryRuntimeFacts{})
+	facts, err := planner.CompilePrimaryQuery(context.Background(), pollingTestSource(`{"data_source_label":"custom","data_type_label":"event",
+		"result_table_id":"base_tenant_2_event","custom_event_name":"AgentLost","agg_method":"COUNT","agg_interval":60,
+		"agg_dimension":["bk_target_ip","bk_target_cloud_id","bk_agent_id"],
+		"agg_condition":[{"key":"bk_target_ip","method":"eq","value":["192.0.2.10"]},
+			{"condition":"or","key":"bk_target_ip","method":"eq","value":["192.0.2.11"]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conditions := facts.QueryList[0].Conditions
+	want := []string{"event_name", "dimensions.event_type", "dimensions.bk_target_ip", "event_name", "dimensions.event_type", "dimensions.bk_target_ip"}
+	wantConnectors := []string{"and", "and", "or", "and", "and"}
+	if len(conditions.Fields) != len(want) || len(conditions.Connectors) != len(wantConnectors) {
+		t.Fatalf("conditions %+v, want both OR groups filtered", conditions)
+	}
+	for index, field := range want {
+		if conditions.Fields[index].Field != field {
+			t.Fatalf("condition %d is %q, want %q: %+v", index, conditions.Fields[index].Field, field, conditions)
+		}
+	}
+	for index, connector := range wantConnectors {
+		if conditions.Connectors[index] != connector {
+			t.Fatalf("connector %d is %q, want %q: %+v", index, conditions.Connectors[index], connector, conditions)
+		}
+	}
+}
+
+// A dimension or condition key that already names a dimensions field keeps
+// its name, as the platform adds the prefix only to one that does not start
+// with it (is_dimensions_field).
+func TestAnEventFieldAlreadyUnderDimensionsIsNotPrefixedTwice(t *testing.T) {
+	planner, _ := NewLegacyPrimaryQueryCompiler("uq", "UTC", LegacyQueryRuntimeFacts{})
+	facts, err := planner.CompilePrimaryQuery(context.Background(), pollingTestSource(`{"data_source_label":"custom","data_type_label":"event",
+		"result_table_id":"k8s_event","custom_event_name":"PodError","agg_interval":60,"agg_dimension":["dimensions.namespace"],
+		"agg_condition":[{"key":"dimensions.pod","method":"eq","value":["api-0"]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clause := facts.QueryList[0]
+	if clause.Dimensions[0] != "dimensions.namespace" {
+		t.Fatalf("dimension %q, want dimensions.namespace", clause.Dimensions[0])
+	}
+	for _, field := range clause.Conditions.Fields {
+		if field.Field == "dimensions.dimensions.pod" {
+			t.Fatalf("condition key prefixed twice: %+v", clause.Conditions)
+		}
+	}
+}
+
+// Several PromQL queries without expression_mode are the retired form, named
+// so with the three ways to rewrite it; PromQL beside another source is not
+// that form and keeps its own word.
+func TestTheRetiredMultiPromQLFormIsRefusedByName(t *testing.T) {
+	planner, _ := NewLegacyPrimaryQueryCompiler("uq", "UTC", LegacyQueryRuntimeFacts{})
+	promql := func(alias string) string {
+		return `{"data_source_label":"prometheus","data_type_label":"time_series","alias":"` + alias + `","promql":"sum by (host) (up)","agg_interval":60}`
+	}
+	retired := pollingTestSource(promql("a"))
+	retired.QueryConfigs = append(retired.QueryConfigs, json.RawMessage(promql("b")))
+	_, err := planner.CompilePrimaryQuery(context.Background(), retired)
+	var failure *QueryPlanCompileError
+	if !errors.As(err, &failure) || failure.Reason != "QUERY_PROMQL_FORM_RETIRED" || failure.Err == nil ||
+		!strings.Contains(failure.Err.Error(), "expression_mode multi-PromQL expression") || !strings.Contains(failure.Err.Error(), "separate strategies") {
+		t.Fatalf("err = %v, want QUERY_PROMQL_FORM_RETIRED naming the rewrites", err)
+	}
+	// The same queries marked expression_mode are the platform's expression,
+	// which runs as one PromQL: not the retired form, and compiled as one.
+	marked := func(alias string) string {
+		return strings.Replace(promql(alias), `"alias"`, `"expression_mode":"promql","alias"`, 1)
+	}
+	expression := pollingTestSource(marked("a"))
+	expression.QueryConfigs = append(expression.QueryConfigs, json.RawMessage(marked("b")))
+	if facts, err := planner.CompilePrimaryQuery(context.Background(), expression); err != nil || facts.PromQL == nil {
+		t.Fatalf("facts=%+v err=%v, want the marked expression compiled as one PromQL", facts.PromQL, err)
+	}
+	mixed := pollingTestSource(promql("a"))
+	mixed.QueryConfigs = append(mixed.QueryConfigs, json.RawMessage(`{"data_source_label":"bk_monitor","data_type_label":"time_series",`+
+		`"metric_field":"usage","alias":"b","agg_method":"AVG","agg_interval":60,"result_table_id":"system.cpu_summary"}`))
+	if _, err := planner.CompilePrimaryQuery(context.Background(), mixed); !errors.As(err, &failure) || failure.Reason != "QUERY_MIXED_PROMQL_NOT_MIGRATED" {
+		t.Fatalf("err = %v, want QUERY_MIXED_PROMQL_NOT_MIGRATED for PromQL beside another source", err)
+	}
+}
+
+// A group whose conditions all have no value still counts the event, as the
+// platform's query does: the filters go before each group, so the group's
+// "or" stays on them when its own condition is dropped for having no value.
+func TestAnOrGroupOfOnlyEmptyConditionsStillFiltersByTheEvent(t *testing.T) {
+	planner, _ := NewLegacyPrimaryQueryCompiler("uq", "UTC", LegacyQueryRuntimeFacts{})
+	facts, err := planner.CompilePrimaryQuery(context.Background(), pollingTestSource(`{"data_source_label":"custom","data_type_label":"event",
+		"result_table_id":"base_tenant_2_event","custom_event_name":"AgentLost","agg_method":"COUNT","agg_interval":60,
+		"agg_dimension":["bk_target_ip"],
+		"agg_condition":[{"key":"bk_target_ip","method":"eq","value":["192.0.2.10"]},
+			{"condition":"or","key":"bk_target_ip","method":"eq","value":[]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conditions := facts.QueryList[0].Conditions
+	want := []string{"event_name", "dimensions.event_type", "dimensions.bk_target_ip", "event_name", "dimensions.event_type"}
+	wantConnectors := []string{"and", "and", "or", "and"}
+	if len(conditions.Fields) != len(want) || len(conditions.Connectors) != len(wantConnectors) {
+		t.Fatalf("conditions %+v, want the empty group kept as the filters alone", conditions)
+	}
+	for index, field := range want {
+		if conditions.Fields[index].Field != field {
+			t.Fatalf("condition %d is %q, want %q: %+v", index, conditions.Fields[index].Field, field, conditions)
+		}
+	}
+	for index, connector := range wantConnectors {
+		if conditions.Connectors[index] != connector {
+			t.Fatalf("connector %d is %q, want %q: %+v", index, conditions.Connectors[index], connector, conditions)
+		}
 	}
 }

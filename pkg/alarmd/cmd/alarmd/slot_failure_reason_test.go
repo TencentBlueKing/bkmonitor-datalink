@@ -52,6 +52,21 @@ func TestASlotFailureThatNamesItselfIsNotReportedAsUnnamed(t *testing.T) {
 			err:  fmt.Errorf("alarmd worker: query: %w", admissionFailure{}),
 			want: "QUERY_PERMIT_DEADLINE",
 		},
+		{
+			name: "the Slot's own retained bytes are over its Query Group's share",
+			err:  fmt.Errorf("alarmd worker: complete Slot: %w", ownTotalOverShare{}),
+			want: observability.ReasonCode(contract.ReasonQGBudgetShareExceeded),
+		},
+		{
+			name: "the query's request was cancelled at its deadline",
+			err:  fmt.Errorf("alarmd worker: query: %w", providerTimeout{}),
+			want: observability.ReasonCode(contract.ReasonQueryTimeout),
+		},
+		{
+			name: "the query's deadline passed while alarmd delivered its answer",
+			err:  fmt.Errorf("alarmd worker: query: %w", deliveryTimeout{}),
+			want: observability.ReasonCode(contract.ReasonQueryDeliveryTimeout),
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			reason, site := slotFailureReason(test.err)
@@ -113,4 +128,32 @@ func (admissionFailure) Error() string {
 }
 func (admissionFailure) QueryFailure() (string, string) {
 	return observability.QueryFailureCategoryAdmission, "QUERY_PERMIT_DEADLINE"
+}
+
+// providerTimeout is a query failure that names the provider's timeout, as a
+// query ended by its own deadline does.
+type providerTimeout struct{}
+
+func (providerTimeout) Error() string { return "execute request: context canceled" }
+func (providerTimeout) QueryFailure() (string, string) {
+	return observability.QueryFailureCategoryProviderTransport, contract.ReasonQueryTimeout
+}
+
+type deliveryTimeout struct{}
+
+func (deliveryTimeout) Error() string { return "decode answer: context deadline exceeded" }
+func (deliveryTimeout) QueryFailure() (string, string) {
+	return observability.QueryFailureCategoryDelivery, observability.QueryFailureCodeDeliveryTimeout
+}
+
+// ownTotalOverShare stands for the worker's share refusal of a Slot whose own
+// total is over its Query Group's share.
+type ownTotalOverShare struct{}
+
+func (ownTotalOverShare) Error() string {
+	return "alarmd worker: provisional retained_bytes budget exceeded"
+}
+
+func (ownTotalOverShare) DeterministicShareRefusal() (execution.ShareRefusal, bool) {
+	return execution.ShareRefusal{Phase: "normal_output", OwnUsedBytes: 530 << 20, LimitBytes: 512 << 20}, true
 }

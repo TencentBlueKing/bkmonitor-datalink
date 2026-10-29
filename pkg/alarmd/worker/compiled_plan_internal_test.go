@@ -23,6 +23,13 @@ import (
 // one-minute strategy, lateness tolerance included.
 func internalCompiledPlan(t testing.TB, strategyID string, windowSize uint32, intervalSeconds uint32) *strategy.CompiledPlan {
 	t.Helper()
+	return internalCompiledPlanRecovering(t, strategyID, windowSize, intervalSeconds, json.RawMessage(`{"enabled":true,"consecutive_windows":1}`))
+}
+
+// internalCompiledPlanRecovering is internalCompiledPlan with its Level's
+// recovery plan config given.
+func internalCompiledPlanRecovering(t testing.TB, strategyID string, windowSize uint32, intervalSeconds uint32, recovery json.RawMessage) *strategy.CompiledPlan {
+	t.Helper()
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{
 		MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 16, MaxAlgorithmsPerLevel: 8, MaxGroupsPerAlgorithm: 16,
 		MaxConditionsPerAlgorithm: 64, MaxASTNodesPerLevel: 256, MaxTriggerWindowSize: 4096,
@@ -61,7 +68,7 @@ func internalCompiledPlan(t testing.TB, strategyID string, windowSize uint32, in
 					Config: json.RawMessage(`{"value_field":"value","data_unit":"percent","threshold_unit_prefix":"","precision":{"decimal_places":6,"rounding":"HALF_EVEN"},"groups":[{"conditions":[{"operator":"GTE","threshold_decimal":"50"}]}]}`),
 				}}},
 				TriggerPlan:  contract.TypedPlanV1{Type: "N_OF_M", Version: 1, Config: trigger},
-				RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1, Config: json.RawMessage(`{"enabled":true,"consecutive_windows":1}`)},
+				RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1, Config: recovery},
 			}},
 		},
 	}

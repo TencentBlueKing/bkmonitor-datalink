@@ -13,7 +13,7 @@ func TestLegacyPodCacheObservationKeepsBoundedOutcomes(t *testing.T) {
 	}
 	wire := scrape(t, recorder)
 	for _, result := range []string{"hit", "miss", "error"} {
-		if !strings.Contains(wire, `bkmonitor_alarmd_legacy_pod_cache_total{result="`+result+`"} 1`) {
+		if !strings.Contains(wire, `alarmd_legacy_pod_cache_total{result="`+result+`"} 1`) {
 			t.Fatalf("missing %s counter", result)
 		}
 	}

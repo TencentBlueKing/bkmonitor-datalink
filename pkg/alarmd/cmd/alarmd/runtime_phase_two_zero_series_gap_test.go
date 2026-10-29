@@ -51,15 +51,26 @@ func (fixture *cutoverStallFixture) levelGuard(ctx context.Context) (observed, r
 // under test, but it would leave the first current round meeting a marker
 // already part-way to clearing.
 func (fixture *cutoverStallFixture) seedLevelGuard(ctx context.Context, reason string) bool {
+	return fixture.seedLevelGuardFrom(ctx, reason, 0)
+}
+
+// seedLevelGuardFrom is seedLevelGuard with the scope's origin: the Slot that
+// opened it, under reason. Zero writes the scope without one, as a build
+// before origins did.
+func (fixture *cutoverStallFixture) seedLevelGuardFrom(ctx context.Context, reason string, originSlot int64) bool {
 	fixture.t.Helper()
 	envelope, found := fixture.readPlanGapMarker(ctx)
 	if !found {
 		return false
 	}
-	envelope["scopes"] = []any{map[string]any{
+	scope := map[string]any{
 		"Scope": map[string]any{"LevelID": 1, "HasLevel": true}, "Status": "GAPPED", "ReasonCode": reason,
 		"RequiredFullSlots": fixture.requiredFullSlots(ctx), "ObservedFullSlots": 0,
-	}}
+	}
+	if originSlot > 0 {
+		scope["ReasonOriginSlot"], scope["ReasonOriginCause"] = originSlot, reason
+	}
+	envelope["scopes"] = []any{scope}
 	encoded, err := json.Marshal(envelope)
 	if err != nil {
 		fixture.t.Fatal(err)
@@ -82,6 +93,18 @@ func (fixture *cutoverStallFixture) runCurrentDataRounds(
 	rounds int,
 	each func(round int, outcome execution.SlotExecutionResult, observed []observability.Observation),
 ) {
+	fixture.t.Helper()
+	fixture.runCurrentDataRoundsSeeded(ctx, func() bool { return fixture.seedLevelGuard(ctx, reason) }, rounds, each)
+}
+
+// runCurrentDataRoundsSeeded is runCurrentDataRounds with the marker reseeded
+// by seed, which reports whether a marker was there to rewrite.
+func (fixture *cutoverStallFixture) runCurrentDataRoundsSeeded(
+	ctx context.Context,
+	seed func() bool,
+	rounds int,
+	each func(round int, outcome execution.SlotExecutionResult, observed []observability.Observation),
+) {
 	t := fixture.t
 	t.Helper()
 	limits := fixture.production.dependencies.RecoveryLimits
@@ -95,7 +118,7 @@ func (fixture *cutoverStallFixture) runCurrentDataRounds(
 		if nextAt := fixture.runner.NextReadyAt(); nextAt.After(fixture.now()) {
 			fixture.clock.Store(nextAt.UnixMilli() + 1)
 		}
-		if current == 0 && fixture.seedLevelGuard(ctx, reason) {
+		if current == 0 && seed() {
 			rewritten = true
 		}
 		at := fixture.now()

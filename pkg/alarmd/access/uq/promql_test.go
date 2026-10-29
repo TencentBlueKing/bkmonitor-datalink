@@ -9,6 +9,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -31,7 +32,7 @@ func rangeClient(t *testing.T, handler http.HandlerFunc) (*Client, *http.Request
 func rangeRequest() RangeRequest {
 	end := time.Unix(1789006380, 0)
 	return RangeRequest{
-		PromQL: "max(bkmonitor_alarmd_fleet_objects)", SpaceUID: "bkcc__2",
+		PromQL: "max(alarmd_fleet_objects)", SpaceUID: "bkcc__2",
 		Start: end.Add(-time.Hour), End: end, Step: time.Minute,
 	}
 }
@@ -121,5 +122,38 @@ func TestRangeSendsTheScopeAndSourceHeaders(t *testing.T) {
 	// resolve the scope; bk_biz_ids in the body does not.
 	if headers.Get(headerSpace) != "bkcc__2" || headers.Get(headerQuerySource) != "alarmd" {
 		t.Fatalf("headers = %v", headers)
+	}
+}
+
+// Each series keeps its group labels and its own samples, so a chart of
+// several lines -- one per stage, one per pod -- can tell them apart.
+func TestRangeKeepsEachSeriesWithItsLabels(t *testing.T) {
+	client, _ := rangeClient(t, func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write([]byte(`{"series":[
+			{"group_keys":["pod"],"group_values":["alarmd-a"],"columns":["_time","_value"],"values":[[1789006260000,0.04]]},
+			{"group_keys":["pod"],"group_values":["alarmd-b"],"columns":["_time","_value"],"values":[[1789006260000,0.05],[1789006320000,0.06]]}]}`))
+	})
+	result, err := client.Range(context.Background(), rangeRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Series) != 2 || result.Series[0].Labels["pod"] != "alarmd-a" || len(result.Series[0].Points) != 1 ||
+		result.Series[1].Labels["pod"] != "alarmd-b" || len(result.Series[1].Points) != 2 || result.Series[1].Points[1].Value != 0.06 {
+		t.Fatalf("series = %+v, want two series with their pods and samples", result.Series)
+	}
+}
+
+// A range read that failed with no answer, or with an answer it could not
+// read, names the trace id it was sent with, as a refusal does.
+func TestARangeFailureNamesTheTraceItWasSentWith(t *testing.T) {
+	var sent string
+	client, _ := rangeClient(t, func(response http.ResponseWriter, request *http.Request) {
+		sent = request.Header.Get(headerTraceParent)
+		_, _ = response.Write([]byte(`{"series":[`))
+	})
+	_, err := client.Range(context.Background(), rangeRequest())
+	parts := strings.Split(sent, "-")
+	if err == nil || len(parts) != 4 || !strings.Contains(err.Error(), "trace "+parts[1]) {
+		t.Fatalf("error %v, want the sent trace id of %q", err, sent)
 	}
 }

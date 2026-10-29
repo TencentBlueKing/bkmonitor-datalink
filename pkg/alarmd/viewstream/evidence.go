@@ -15,11 +15,14 @@ import (
 )
 
 const (
-	EvidenceRequestBytes  = 64 << 10
-	EvidenceResponseBytes = 2 << 20
-	EvidenceTimeout       = 3 * time.Second
-	EvidenceConcurrency   = 4
+	EvidenceRequestBytes = 64 << 10
+	EvidenceTimeout      = 3 * time.Second
 )
+
+// EvidenceResponseBytes bounds one evidence answer between replicas: the
+// OB channel's response ceiling, 256 MiB, so a routed read is bounded by the
+// channel's own per-request bound and not a smaller one here.
+var EvidenceResponseBytes = 256 << 20
 
 // SetEvidenceHandler binds the runtime's authenticated diagnostic handler.
 // This layer only enforces transport budgets; it must not authenticate with
@@ -31,12 +34,19 @@ func (server *Server) SetEvidenceHandler(handler func(context.Context, *pb.Evide
 	server.evidenceMu.Unlock()
 }
 
-// ReadEvidence runs independently of Connect. Cancellation returns promptly,
-// but the slot stays occupied until the handler actually exits: an uncooperative
-// handler can consume at most EvidenceConcurrency goroutines, not an unbounded
-// series of abandoned executions. Runtime readers must observe their context.
+// ReadEvidence runs independently of Connect. Cancellation returns promptly;
+// the handler runs on until it exits, so runtime readers must observe their
+// context. Reads have no count of their own: they are an operator's, a
+// handful next to the business work.
 func (server *Server) ReadEvidence(ctx context.Context, request *pb.EvidenceRequest) (*pb.EvidenceResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, EvidenceTimeout)
+	// The caller's deadline, which gRPC carries across, is the operation's
+	// own; EvidenceTimeout bounds only a caller that sent none.
+	var cancel context.CancelFunc
+	if _, bounded := ctx.Deadline(); bounded {
+		ctx, cancel = context.WithCancel(ctx)
+	} else {
+		ctx, cancel = context.WithTimeout(ctx, EvidenceTimeout)
+	}
 	defer cancel()
 	server.evidenceMu.RLock()
 	handler := server.evidenceHandler
@@ -53,18 +63,12 @@ func (server *Server) ReadEvidence(ctx context.Context, request *pb.EvidenceRequ
 	if err := ctx.Err(); err != nil {
 		return nil, status.FromContextError(err).Err()
 	}
-	select {
-	case server.evidenceSlots <- struct{}{}:
-	default:
-		return nil, status.Error(codes.ResourceExhausted, "diagnostic request slots are busy")
-	}
 	type outcome struct {
 		result *pb.EvidenceResult
 		err    error
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		defer func() { <-server.evidenceSlots }()
 		if err := ctx.Err(); err != nil {
 			done <- outcome{err: status.FromContextError(err).Err()}
 			return

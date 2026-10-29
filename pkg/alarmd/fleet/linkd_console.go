@@ -34,7 +34,8 @@ type LinkdConsoleStanding struct {
 	Replica string `json:"replica,omitempty"`
 	// Attention is Needed with a Console that is not configured, not
 	// answering, or answering for a link that says it is behind: the closes
-	// the deployment relies on are not running. The first screen says so.
+	// the deployment relies on are not running, or run on a roster that may
+	// miss strategies. The first screen says so.
 	Attention bool `json:"attention"`
 }
 

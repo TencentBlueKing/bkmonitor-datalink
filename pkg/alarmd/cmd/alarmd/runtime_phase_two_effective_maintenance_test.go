@@ -13,6 +13,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
@@ -26,17 +27,30 @@ type maintenanceTestCatalog struct {
 	uncompilable int
 	reads        int
 	err          error
+	// took, when set, is the read's cost, answered against the caller's
+	// deadline.
+	took func(context.Context) error
 }
 
-func (c *maintenanceTestCatalog) CurrentPlans(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (controlplane.MaintenancePlans, error) {
+func (c *maintenanceTestCatalog) CurrentPlans(ctx context.Context, _ execution.QueryGroupIdentity, _ execution.EvaluationTime) (controlplane.MaintenancePlans, error) {
 	c.reads++
+	if c.took != nil {
+		if err := c.took(ctx); err != nil {
+			return controlplane.MaintenancePlans{}, err
+		}
+	}
 	if c.err != nil {
 		return controlplane.MaintenancePlans{}, c.err
 	}
 	return controlplane.MaintenancePlans{Plans: c.plans, Uncompilable: c.uncompilable}, nil
 }
 
-type maintenanceTestIndex struct{ alerts []openalerts.Alert }
+// maintenanceTestIndex answers the copy's reads with alerts; own, when set,
+// is the source its calibration names as this deployment's.
+type maintenanceTestIndex struct {
+	alerts []openalerts.Alert
+	own    string
+}
 
 func (s maintenanceTestIndex) ReadSet(context.Context, openalerts.StrategyKey) ([]string, error) {
 	var members []string
@@ -47,7 +61,7 @@ func (s maintenanceTestIndex) ReadSet(context.Context, openalerts.StrategyKey) (
 }
 func (s maintenanceTestIndex) Reconcile(ctx context.Context, key openalerts.StrategyKey) (openalerts.Reconciliation, error) {
 	members, _ := s.ReadSet(ctx, key)
-	return openalerts.Reconciliation{Members: members, Alerts: s.alerts}, nil
+	return openalerts.Reconciliation{EventSourceID: s.own, Members: members, Alerts: s.alerts}, nil
 }
 func (s maintenanceTestIndex) Watch(ctx context.Context, ready func(bool), _ func(openalerts.StrategyKey), _ func(openalerts.NoticeRefusal)) error {
 	ready(true)
@@ -115,6 +129,13 @@ func (f *maintenanceTestFixture) advance(d time.Duration) {
 
 func newMaintenanceTestFixture(t *testing.T, snapshot string, at time.Time, alerts []openalerts.Alert, mutate ...func(*contract.EvaluationPlanV2)) *maintenanceTestFixture {
 	t.Helper()
+	return newMaintenanceTestFixtureFrom(t, snapshot, at, maintenanceTestIndex{alerts: alerts}, mutate...)
+}
+
+// newMaintenanceTestFixtureFrom is newMaintenanceTestFixture with the copy's
+// index given whole.
+func newMaintenanceTestFixtureFrom(t *testing.T, snapshot string, at time.Time, source maintenanceTestIndex, mutate ...func(*contract.EvaluationPlanV2)) *maintenanceTestFixture {
+	t.Helper()
 	f := &maintenanceTestFixture{at: at, writer: &maintenanceTestWriter{}, runner: &maintenanceTestRunner{check: func(context.Context) error { return nil }, scope: "obj-a", revision: 1}}
 	catalog := productionG4Catalog(t, 123, "Threshold", "usage", "system.cpu", []string{"host"}, [][]map[string]any{{{"method": "gte", "threshold": 50}}})
 	group := catalog.QueryGroups[0]
@@ -140,7 +161,6 @@ func newMaintenanceTestFixture(t *testing.T, snapshot string, at time.Time, aler
 	if !ok || compiled.Levels().Len() == 0 {
 		t.Fatalf("compile terminal=%+v levels=%+v", result.PlanTerminal(), result.LevelTerminals())
 	}
-	source := maintenanceTestIndex{alerts: alerts}
 	cache, err := openalerts.NewIndex(openalerts.IndexOptions{Source: source, Reconciler: source, Subscriber: source, Now: f.now,
 		MaxStrategies: 10, MaxMembers: 100, MaxBytes: 1 << 20, MaxLocalEntries: 100, ReadBatch: 2, ReconcileBatch: 1,
 		RefreshInterval: time.Hour, IndexInterval: time.Hour, ReconcileInterval: time.Hour, CalibrationMaxAge: 2 * time.Hour, LocalRetention: time.Minute, CycleTimeout: time.Second})
@@ -155,12 +175,12 @@ func newMaintenanceTestFixture(t *testing.T, snapshot string, at time.Time, aler
 	done := make(chan struct{})
 	go func() { defer close(done); _ = cache.Run(ctx) }()
 	t.Cleanup(func() { cancel(); <-done })
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := testwait.Deadline(t)
 	for !cache.Snapshot(key).Calibrated {
 		if time.Now().After(deadline) {
 			t.Fatal("cache did not calibrate")
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	bundle := &phaseTwoWorkerBundle{dependencies: phaseTwoWorkerBundleDependencies{Now: f.now, Observer: observability.NopObserver{}}, runners: map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle{group.Identity: {runner: f.runner}}}
 	f.m = &effectiveMaintenance{bundle: bundle, catalog: &maintenanceTestCatalog{plans: []controlplane.MaintenancePlan{{Identity: p.Identity, Compiled: compiled}}}, cache: cache, writer: f.writer, sourceID: "native", capacity: config.LinkdCapacity{GroupBatch: 2, CloseBatch: 5, LocalEntries: 100}}
@@ -375,7 +395,144 @@ func TestEffectiveMaintenanceTakesItsSourceFromTheLinksTarget(t *testing.T) {
 	g.m.sourceID = ""
 	g.m.sourceOf = func(context.Context) (string, error) { return "", errors.New("console unreachable") }
 	g.m.step(context.Background())
-	if len(g.writer.batches) != 0 || g.m.Stats()["unavailable"] == 0 {
-		t.Fatalf("a Console that could not name the source still closed, or said nothing: %v %v", g.writer.batches, g.m.Stats())
+	if len(g.writer.batches) != 0 || g.m.Stats()["source_unknown"] != 1 {
+		t.Fatalf("a Console that could not name the source, with none read before, still closed or said nothing: %v %v", g.writer.batches, g.m.Stats())
+	}
+}
+
+// slowStore spends time against the caller's deadline without sleeping: a
+// call of cost d fails as a deadline would when the caller has less than
+// what was spent so far plus d left, and otherwise counts d as spent.
+type slowStore struct {
+	mu    sync.Mutex
+	spent time.Duration
+}
+
+func (s *slowStore) take(d time.Duration) func(context.Context) error {
+	return func(ctx context.Context) error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < s.spent+d {
+			return context.DeadlineExceeded
+		}
+		s.spent += d
+		return nil
+	}
+}
+
+// Each call the loop makes is bounded by its own client (the Redis
+// command by the configured timeouts, the Kafka write by the producer's), so
+// a store slow on every call but answering each one inside its timeout still
+// closes: a Plans read and an owner check that together outlast the five
+// seconds the whole step used to have, and either one alone outlasting the
+// five seconds its own round used to have (two Redis round trips near the
+// default three-second read timeout).
+func TestEffectiveMaintenanceClosesWhenItsCallsTogetherOutlastTheOldStepBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		read, check time.Duration
+	}{
+		{"read-and-check-together", 3 * time.Second, 2500 * time.Millisecond},
+		{"read-alone", 5500 * time.Millisecond, 0},
+		{"check-alone", 0, 5500 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), []openalerts.Alert{maintenanceAlert("native", "critical")})
+			store := &slowStore{}
+			f.m.catalog.(*maintenanceTestCatalog).took = store.take(tc.read)
+			f.runner.check = store.take(tc.check)
+			f.m.step(context.Background())
+			if f.runner.lastErr != nil || len(f.writer.batches) != 1 {
+				t.Fatalf("err=%v batches=%v spent=%s", f.runner.lastErr, f.writer.batches, store.spent)
+			}
+		})
+	}
+}
+
+// The source the closes are for is read once a step: with no step deadline
+// any more, a Console that does not answer would otherwise be waited on once
+// for every owned group in turn, and its failure is one count for the step,
+// not one for every group it holds back.
+func TestEffectiveMaintenanceReadsTheSourceOnceAStep(t *testing.T) {
+	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), []openalerts.Alert{maintenanceAlert("native", "")})
+	for _, qg := range []execution.QueryGroupIdentity{"query-group-b", "query-group-c"} {
+		f.m.bundle.runners[qg] = &phaseTwoQueryGroupLifecycle{runner: f.runner}
+	}
+	f.m.capacity.GroupBatch = 3
+	f.m.sourceID = ""
+	asked := 0
+	f.m.sourceOf = func(context.Context) (string, error) { asked++; return "", errors.New("console unreachable") }
+	f.m.step(context.Background())
+	if asked != 1 || len(f.writer.batches) != 0 || f.m.Stats()["source_unknown"] != 1 || f.m.Stats()["unavailable"] != 0 {
+		t.Fatalf("asked=%d batches=%v stats=%v, want one read, no close, one source_unknown for the step", asked, f.writer.batches, f.m.Stats())
+	}
+}
+
+// A Console that fails does not stop the closes once this deployment's
+// source has been read: the source is a deployment property, used as a
+// filter, and the closes go on with the one last read, counted once a step
+// as source_last_known. The failed read waits out its back-off rather than
+// being asked again every step.
+func TestEffectiveMaintenanceClosesOnTheLastReadSourceWhileTheConsoleFails(t *testing.T) {
+	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), []openalerts.Alert{maintenanceAlert("native", "")})
+	asked := 0
+	f.m.sourceOf = func(context.Context) (string, error) { asked++; return "", errors.New("console unreachable") }
+	f.m.step(context.Background())
+	if asked != 1 || len(f.writer.batches) != 1 || f.m.Stats()["source_last_known"] != 1 {
+		t.Fatalf("asked=%d batches=%v stats=%v, want the close sent on the source last read", asked, f.writer.batches, f.m.Stats())
+	}
+	f.m.step(context.Background())
+	if asked != 1 {
+		t.Fatalf("the Console was asked again %d times inside its back-off", asked-1)
+	}
+}
+
+// With no source read by this loop, the open-alert copy's own - the source
+// its last calibration named - is the one last read.
+func TestEffectiveMaintenanceFallsBackToTheCopysOwnSource(t *testing.T) {
+	f := newMaintenanceTestFixtureFrom(t, maintenanceReadySnapshot, maintenanceTime(8, 0),
+		maintenanceTestIndex{alerts: []openalerts.Alert{maintenanceAlert("native", "")}, own: "native"})
+	f.m.sourceID = ""
+	f.m.sourceOf = func(context.Context) (string, error) { return "", errors.New("console unreachable") }
+	f.m.step(context.Background())
+	if len(f.writer.batches) != 1 || f.m.Stats()["source_last_known"] != 1 || f.m.sourceID != "native" {
+		t.Fatalf("batches=%v stats=%v source=%q, want the close sent on the copy's own source", f.writer.batches, f.m.Stats(), f.m.sourceID)
+	}
+}
+
+// A failed source read backs off from one step, doubling up to the
+// coverage, and a read that answers again resets it and is used.
+func TestEffectiveMaintenanceSourceReadBacksOffAndRecovers(t *testing.T) {
+	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), []openalerts.Alert{maintenanceAlert("native", "")})
+	f.m.sourceID = ""
+	failing, asked := true, 0
+	f.m.sourceOf = func(context.Context) (string, error) {
+		asked++
+		if failing {
+			return "", errors.New("console unreachable")
+		}
+		return "native", nil
+	}
+	f.m.step(context.Background())
+	if asked != 1 || f.m.sourceBackoff != effectiveSourceRetryFloor || len(f.writer.batches) != 0 {
+		t.Fatalf("asked=%d backoff=%s batches=%v after the first failure", asked, f.m.sourceBackoff, f.writer.batches)
+	}
+	for want := 2 * effectiveSourceRetryFloor; want <= effectiveSourceCoverage; want *= 2 {
+		f.advance(f.m.sourceBackoff)
+		f.m.step(context.Background())
+		if f.m.sourceBackoff != min(want, effectiveSourceCoverage) {
+			t.Fatalf("backoff %s after %d reads, want %s", f.m.sourceBackoff, asked, min(want, effectiveSourceCoverage))
+		}
+	}
+	f.advance(f.m.sourceBackoff)
+	f.m.step(context.Background())
+	if f.m.sourceBackoff != effectiveSourceCoverage {
+		t.Fatalf("backoff %s, want it held at the coverage %s", f.m.sourceBackoff, effectiveSourceCoverage)
+	}
+	failing = false
+	f.advance(f.m.sourceBackoff)
+	f.m.step(context.Background())
+	if f.m.sourceBackoff != 0 || f.m.sourceID != "native" || len(f.writer.batches) != 1 {
+		t.Fatalf("backoff=%s source=%q batches=%v once the Console answered, want reset and the close sent", f.m.sourceBackoff, f.m.sourceID, f.writer.batches)
 	}
 }

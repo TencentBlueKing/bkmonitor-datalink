@@ -41,6 +41,19 @@ func TestAnElasticsearchFailureKeepsItsStatus(t *testing.T) {
 		"ES refuses this service (403)": {err: &elastic.Error{Status: http.StatusForbidden}, want: http.StatusBadGateway},
 		"ES answers 400":                {err: &elastic.Error{Status: http.StatusBadRequest, Details: &elastic.ErrorDetails{Type: "parsing_exception"}}, want: http.StatusBadRequest},
 		"ES cannot be reached":          {err: refused, want: http.StatusBadGateway},
+		// A bucket limit is the query asking too much, whatever status ES
+		// gives it: retried as it is it fails the same way.
+		"too many buckets, reported as 503": {err: &elastic.Error{Status: http.StatusServiceUnavailable, Details: &elastic.ErrorDetails{
+			Type: "search_phase_execution_exception", CausedBy: map[string]interface{}{"type": "too_many_buckets_exception"}}}, want: http.StatusBadRequest},
+		"too many buckets, deeper in the cause chain": {err: &elastic.Error{Status: http.StatusServiceUnavailable, Details: &elastic.ErrorDetails{
+			Type: "search_phase_execution_exception", CausedBy: map[string]interface{}{"type": "exception",
+				"caused_by": map[string]interface{}{"type": "too_many_buckets_exception"}}}}, want: http.StatusBadRequest},
+		"too many buckets, as a root cause": {err: &elastic.Error{Status: http.StatusServiceUnavailable, Details: &elastic.ErrorDetails{
+			Type: "search_phase_execution_exception", RootCause: []*elastic.ErrorDetails{{Type: "too_many_buckets_exception"}}}}, want: http.StatusBadRequest},
+		"too many buckets in the body": {res: &elastic.SearchResult{Status: http.StatusServiceUnavailable, Error: &elastic.ErrorDetails{
+			Type: "too_many_buckets_exception"}}, want: http.StatusBadRequest},
+		"another 503 cause stays the backend's": {err: &elastic.Error{Status: http.StatusServiceUnavailable, Details: &elastic.ErrorDetails{
+			Type: "search_phase_execution_exception", CausedBy: map[string]interface{}{"type": "node_not_connected_exception"}}}, want: http.StatusBadGateway},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

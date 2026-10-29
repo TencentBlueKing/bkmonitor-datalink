@@ -63,6 +63,9 @@ var ErrNoEventSource = errors.New("the target's event source is not known yet")
 // link's Console and keeps it on the record. The Console proxies its
 // control plane's read of the definition; nothing is written.
 func (reader *HTTPReconciler) EventSource(ctx context.Context) (EventSourceKeying, error) {
+	if err := requireDeadline(ctx); err != nil {
+		return EventSourceKeying{}, err
+	}
 	keying, err := reader.eventSource(ctx)
 	at := reader.now()
 	reader.record(ConsoleOpEventSource, at, err)
@@ -96,7 +99,7 @@ func (reader *HTTPReconciler) eventSource(ctx context.Context) (EventSourceKeyin
 			FingerprintFields []string `json:"fingerprint_fields"`
 		} `json:"spec"`
 	}
-	if err := reader.getPath(ctx, "/local-api/event-sources/"+url.PathEscape(target.EventSourceID), nil, &response); err != nil {
+	if err := reader.getPath(ctx, "/event-sources/"+url.PathEscape(target.EventSourceID), nil, &response); err != nil {
 		return EventSourceKeying{}, err
 	}
 	if response.ID != target.EventSourceID {

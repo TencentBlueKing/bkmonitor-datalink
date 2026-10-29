@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -149,6 +150,17 @@ type HistoryView interface {
 type LevelHistory struct {
 	LevelID uint32
 	View    HistoryView
+	// ReadGapOpen says a round of this Level's Plan was not read whole and
+	// its gap marker is still open: a marker clears only after as many whole
+	// rounds as the Level's history needs, so while it is open the unread
+	// round may lie inside any window the recovery walk reads, and a hole
+	// there is a round nobody read rather than a minute with no point. The
+	// walk treats every window as unsettled until it clears.
+	ReadGapOpen bool
+	// LastRealPoint is the series' last real point for this Level
+	// (execution.RuntimeLevelStateView.LastRealPointTime), zero when not
+	// known. A Level written to end on no data times that end from it.
+	LastRealPoint int64
 }
 
 type LevelEffectiveTimeFact struct {
@@ -167,6 +179,11 @@ func (e StateEligibilityV2) StateDisposition() string {
 }
 
 type EvaluationRequestV2 struct {
+	// NamedOutputs is the named outputs aligned to the Plan's records, by
+	// RecordID; nil for a Plan without them. An event of a Plan with them
+	// carries its detection snapshot (detectionSnapshot); nothing else reads
+	// it.
+	NamedOutputs       *execution.NamedOutputRecords
 	TenantID           string
 	BusinessID         string
 	Plan               *strategy.CompiledPlan
@@ -176,9 +193,37 @@ type EvaluationRequestV2 struct {
 	Histories          []LevelHistory
 	EffectiveTimeFacts []LevelEffectiveTimeFact
 	EvaluationTime     int64
-	ExecutionID        string
-	LateAccepted       bool
-	Limits             EvaluationLimitsV2
+	// DecisionTime is the wall clock, in Unix seconds, that the effective
+	// time is judged at (execution.InternalExecutionHeader.DecisionTime):
+	// EffectiveTimeFacts must hold at it. Everything else - history, the
+	// event's times - is the Slot's EvaluationTime.
+	DecisionTime int64
+	// ReadHoldMillis is the read hold of the Slot this record is evaluated
+	// in, as its frozen execution contract carries it
+	// (execution.FrozenExecutionContractRef.ReadHoldMillis): how much later
+	// than its schedule the Slot's read was made. It does not move the
+	// settled boundary - ReadEnd does - because the read it delays is the
+	// one that settles what it covers.
+	ReadHoldMillis int64
+	// ReadEnd is where the current Slot's own read of the Plan's primary
+	// input ends, exclusive: the evaluation time plus the primary
+	// requirement's EndOffsetSeconds, which is minus the query delay
+	// (controlplane buildRequirements). A position before it counts as
+	// settled. Zero names no read and settles nothing: every window keeps the
+	// skip rule. Production always names one - every due Level has exactly
+	// one PRIMARY requirement (execution/named_input_request.go, the worker's
+	// named-input index) - so zero comes only from a caller that builds the
+	// request without the header's requirements.
+	ReadEnd int64
+	// SeriesSeenBefore says the series' state held history before this
+	// round: it was observed before this record, even where retention has
+	// since dropped those positions. A series without it is new, and the
+	// recovery walk does not read minutes before its first position as quiet
+	// ones.
+	SeriesSeenBefore bool
+	ExecutionID      string
+	LateAccepted     bool
+	Limits           EvaluationLimitsV2
 	// OpenAlerts is the consumer's open alert set for the second recovery
 	// gate. Nil means the caller has no such gate, which is a different
 	// thing from a set that could not be loaded: the latter is a set that
@@ -195,6 +240,17 @@ type EvaluationRequestV2 struct {
 	// recover, so a round that recovers nothing costs nothing. Nil holds
 	// nothing.
 	HoldRecovery func(levelID uint32) (reason string, held bool)
+	// ZeroCountIsNoObservation says this record's value, when it is a count
+	// of zero, is no observation: an event count, or a log count with no
+	// grouping. Such a round does not end an alert - its Level is NORMAL on
+	// a whole window, with the recovery evidence saying why
+	// (contract.RecoveryWithheldZeroCount), and unavailable with the history
+	// reason on one that is not - while the trigger reads the zero as it
+	// reads any value. The recovery
+	// walk is unchanged: earlier zero rounds still count as windows that did
+	// not trigger, so the alert recovers on the first round with a count
+	// above zero.
+	ZeroCountIsNoObservation bool
 }
 
 type LevelOutcomeV2 struct {
@@ -214,6 +270,11 @@ type LevelOutcomeV2 struct {
 	DecisionWindow      *contract.DecisionWindowV1
 	DetectEvidence      *contract.DetectEvidenceV1
 	TriggerFingerprint  string
+	// RealPoint says this round's value is a real point: the Level's fact is
+	// valid, and its value is not a count of zero the request says is no
+	// observation (EvaluationRequestV2.ZeroCountIsNoObservation). The
+	// series' last real point (LevelHistory.LastRealPoint) advances on it.
+	RealPoint bool
 }
 
 type EvaluationCountsV2 struct {
@@ -311,6 +372,9 @@ type EvaluationResultV2 struct {
 	// leaves TriggerEvent nil while RecordResult stays RECOVERY. Held is the
 	// union of both gates; Cause says which.
 	RecoveryGate RecoveryGateV2
+	// Snapshot is what the event's detection snapshot came to, for its
+	// counters; nil for an event that carries none.
+	Snapshot *DetectionSnapshotFacts
 	// WithoutMessageFormat is set when the record decided an event its
 	// Plan's protocol has no message for (contract.NoMessageFor): under the
 	// compatibility protocol, every RECOVERY that passed the gates. The

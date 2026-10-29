@@ -21,13 +21,13 @@ func TestLeaderRoundCollectorEmitsEveryStageOnceLeading(t *testing.T) {
 	r := NewRecorder(BuildInfo{})
 	stats := LeaderRoundStats{}
 	r.SetLeaderRoundSource(func() LeaderRoundStats { return stats })
-	if series := gatherFamily(t, r, "bkmonitor_alarmd_leader_round_stage_seconds_total"); len(series) != 0 {
+	if series := gatherFamily(t, r, "alarmd_leader_round_stage_seconds_total"); len(series) != 0 {
 		t.Fatalf("stage series before any round = %v, want none", series)
 	}
 	stats = LeaderRoundStats{Leading: true, Rounds: map[string]uint64{fleet.LeaderRoundCompleted: 3},
 		Seconds: map[string]float64{fleet.LeaderRoundStageAssignmentSweep: 1.5, LeaderRoundStageTotal: 6}}
 	seconds := map[string]float64{}
-	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_leader_round_stage_seconds_total") {
+	for _, m := range gatherFamily(t, r, "alarmd_leader_round_stage_seconds_total") {
 		seconds[m.Label[0].GetValue()] = m.GetCounter().GetValue()
 	}
 	if len(seconds) != len(fleet.LeaderRoundStages)+1 || seconds[fleet.LeaderRoundStageAssignmentSweep] != 1.5 ||
@@ -35,7 +35,7 @@ func TestLeaderRoundCollectorEmitsEveryStageOnceLeading(t *testing.T) {
 		t.Fatalf("stage seconds = %v, want every stage and the total", seconds)
 	}
 	rounds := map[string]float64{}
-	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_leader_rounds_total") {
+	for _, m := range gatherFamily(t, r, "alarmd_leader_rounds_total") {
 		rounds[m.Label[0].GetValue()] = m.GetCounter().GetValue()
 	}
 	if len(rounds) != 2 || rounds[fleet.LeaderRoundCompleted] != 3 || rounds[fleet.LeaderRoundFailed] != 0 {

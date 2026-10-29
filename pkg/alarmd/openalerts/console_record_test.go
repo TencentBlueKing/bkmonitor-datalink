@@ -4,7 +4,6 @@
 package openalerts
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -19,13 +18,13 @@ func consoleServer(t *testing.T, browse, alert http.HandlerFunc) *HTTPReconciler
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/local-api/strategy-index/targets":
+		case r.URL.Path == "/api/modules/linkd/strategy-index/targets":
 			_ = json.NewEncoder(w).Encode([]TargetBinding{testBinding()})
-		case r.URL.Path == "/local-api/strategy-index/reconcile":
+		case r.URL.Path == "/api/modules/linkd/strategy-index/reconcile":
 			_ = json.NewEncoder(w).Encode(reconciliationJSON())
-		case r.URL.Path == "/local-api/strategy-index/browse":
+		case r.URL.Path == "/api/modules/linkd/strategy-index/browse":
 			browse(w, r)
-		case strings.HasPrefix(r.URL.Path, "/local-api/alerts/"):
+		case strings.HasPrefix(r.URL.Path, "/api/modules/linkd/alerts/"):
 			alert(w, r)
 		default:
 			http.NotFound(w, r)
@@ -33,7 +32,7 @@ func consoleServer(t *testing.T, browse, alert http.HandlerFunc) *HTTPReconciler
 	}))
 	t.Cleanup(server.Close)
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	reader, err := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: server.URL, Client: server.Client(), Username: "user",
+	reader, err := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: server.URL + testLinkdAPIRoot, Client: server.Client(), Username: "user",
 		Password: "secret", Index: testIndex(), MaxResponseBytes: 1 << 20, Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
@@ -47,10 +46,10 @@ func consoleServer(t *testing.T, browse, alert http.HandlerFunc) *HTTPReconciler
 // the calibration reads as answering, beside each other.
 func TestALinkOlderThanTheRosterFailsTheRosterAloneAndSaysSo(t *testing.T) {
 	reader := consoleServer(t, http.NotFound, http.NotFound)
-	if _, err := reader.Roster(context.Background(), ""); err == nil {
+	if _, err := reader.Roster(consoleCtx(), ""); err == nil {
 		t.Fatal("a 404 browse was read as a page")
 	}
-	if _, err := reader.Reconcile(context.Background(), keyA); err != nil {
+	if _, err := reader.Reconcile(consoleCtx(), keyA); err != nil {
 		t.Fatal(err)
 	}
 	record := reader.Record()
@@ -87,8 +86,8 @@ func TestAConsoleNeverCalledListsEveryOperationAtZero(t *testing.T) {
 // failure it would make a working Console read as unreadable every time a
 // close looked for a record the link had already let go.
 func TestAnAlertTheLinkDoesNotHaveIsAnAnswerNotAFailure(t *testing.T) {
-	reader := consoleServer(t, http.NotFound, http.NotFound)
-	if _, err := reader.AlertRecord(context.Background(), "system", "a-1"); err != ErrAlertNotFound {
+	reader := consoleServer(t, http.NotFound, objectMissingAnswer)
+	if _, err := reader.AlertRecord(consoleCtx(), "system", "a-1"); err != ErrAlertNotFound {
 		t.Fatalf("err = %v", err)
 	}
 	if call := reader.Record().Calls[ConsoleOpAlertRecord]; call.LatestFailed || call.Failures != 0 || call.Calls != 1 {
@@ -97,9 +96,36 @@ func TestAnAlertTheLinkDoesNotHaveIsAnAnswerNotAFailure(t *testing.T) {
 	failing := consoleServer(t, http.NotFound, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
-	_, _ = failing.AlertRecord(context.Background(), "system", "a-1")
+	_, _ = failing.AlertRecord(consoleCtx(), "system", "a-1")
 	if call := failing.Record().Calls[ConsoleOpAlertRecord]; !call.LatestFailed || call.Failures != 1 {
 		t.Fatalf("a 500 alert record was recorded as %+v", call)
+	}
+}
+
+// An alert read by id is the alert asked for: an answer naming another
+// alert or tenant is not taken as it, and the link not having the alert is
+// an answer rather than a failure.
+func TestAnAlertReadByIDIsTheAlertAskedFor(t *testing.T) {
+	answering := func(tenant, id string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"tenantId": tenant, "id": id, "payload": map[string]any{"alert_id": id}})
+		}
+	}
+	item, err := consoleServer(t, http.NotFound, answering("system", "a-1")).Alert(consoleCtx(), "system", "a-1")
+	if err != nil || !strings.Contains(string(item), `"a-1"`) {
+		t.Fatalf("item %s err %v", item, err)
+	}
+	for _, other := range []http.HandlerFunc{answering("system", "a-2"), answering("other", "a-1")} {
+		if _, err := consoleServer(t, http.NotFound, other).Alert(consoleCtx(), "system", "a-1"); err != ErrIncomplete {
+			t.Fatalf("another alert's answer taken: err = %v", err)
+		}
+	}
+	reader := consoleServer(t, http.NotFound, objectMissingAnswer)
+	if _, err := reader.Alert(consoleCtx(), "system", "a-1"); err != ErrAlertNotFound {
+		t.Fatalf("err = %v", err)
+	}
+	if call := reader.Record().Calls[ConsoleOpAlertRead]; call.Failures != 0 || call.Calls != 1 {
+		t.Fatalf("a missing alert was recorded as %+v", call)
 	}
 }
 
@@ -110,7 +136,7 @@ func TestTheLinksOwnHealthIsKeptFromTheRosterPage(t *testing.T) {
 		body["health"].(map[string]any)["error"] = "discovery_failed"
 		_ = json.NewEncoder(w).Encode(body)
 	}, http.NotFound)
-	if _, err := reader.Roster(context.Background(), ""); err != nil {
+	if _, err := reader.Roster(consoleCtx(), ""); err != nil {
 		t.Fatal(err)
 	}
 	record := reader.Record()

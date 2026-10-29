@@ -29,11 +29,18 @@ type RedisConnectionConfig struct {
 	Password         string   `yaml:"password"`
 	SentinelUsername string   `yaml:"sentinel_username"`
 	SentinelPassword string   `yaml:"sentinel_password"`
-	DB               int      `yaml:"db"`
-	DialTimeout      Duration `yaml:"dial_timeout"`
-	ReadTimeout      Duration `yaml:"read_timeout"`
-	WriteTimeout     Duration `yaml:"write_timeout"`
-	PoolSize         int      `yaml:"pool_size"`
+	// The _file fields name a file holding the credential beside them
+	// (resolveCredentials); each is cleared once read, so a loaded
+	// configuration carries values only.
+	UsernameFile         string   `yaml:"username_file"`
+	PasswordFile         string   `yaml:"password_file"`
+	SentinelUsernameFile string   `yaml:"sentinel_username_file"`
+	SentinelPasswordFile string   `yaml:"sentinel_password_file"`
+	DB                   int      `yaml:"db"`
+	DialTimeout          Duration `yaml:"dial_timeout"`
+	ReadTimeout          Duration `yaml:"read_timeout"`
+	WriteTimeout         Duration `yaml:"write_timeout"`
+	PoolSize             int      `yaml:"pool_size"`
 }
 
 // A fixed connection pool is the smallest concurrency gate this process has.

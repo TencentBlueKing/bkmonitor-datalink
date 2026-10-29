@@ -30,7 +30,7 @@ func TestTheRetainedReservationIsReadAtEachScrape(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, family := range families {
-			if family.GetName() != "bkmonitor_alarmd_capacity_reserved" {
+			if family.GetName() != "alarmd_capacity_reserved" {
 				continue
 			}
 			series := family.GetMetric()

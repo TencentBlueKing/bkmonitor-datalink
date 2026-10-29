@@ -11,6 +11,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisatomic"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
@@ -223,4 +224,27 @@ func readLifecycle(ctx context.Context, client redis.UniversalClient, key string
 		reading.Replicas = append(reading.Replicas, *byReplica[replica])
 	}
 	return reading, nil
+}
+
+// changesOperation is changes.list over the channel's change receipts and
+// the lifecycle record, both in the runtime store: any replica answers it,
+// whether or not it hosts the channel that writes the receipts.
+func changesOperation(cfg config.Config, binding ChannelBinding, client redis.UniversalClient) obchannel.Operation {
+	options := obchannel.ChangesOptions{}
+	if client != nil {
+		options.Receipts = obchannel.NewSREReceipts(client, sreKeyPrefix(cfg, binding)+"receipts", nil, nil)
+		key := lifecycleRecordKey(cfg)
+		options.Lifecycle = func(ctx context.Context) (obchannel.LifecycleRead, error) {
+			reading, err := readLifecycle(ctx, client, key)
+			if err != nil {
+				return obchannel.LifecycleRead{}, err
+			}
+			read := obchannel.LifecycleRead{Cap: lifecycleRecordEntries, Retention: lifecycleRecordTTL, Undecoded: reading.Unreadable, Events: make([]obchannel.LifecycleEvent, 0, len(reading.Entries))}
+			for _, entry := range reading.Entries {
+				read.Events = append(read.Events, obchannel.LifecycleEvent{Replica: entry.Replica, Event: entry.Event, At: entry.At, Build: entry.Build, Reason: entry.Reason})
+			}
+			return read, nil
+		}
+	}
+	return obchannel.ChangesOperation(options)
 }

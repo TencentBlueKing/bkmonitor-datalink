@@ -88,11 +88,11 @@ type controlCacheCollector struct {
 func newControlCacheCollector() *controlCacheCollector {
 	descriptor := func(name, help string) *prometheus.Desc {
 		return prometheus.NewDesc(
-			prometheus.BuildFQName(metricNamespace, metricSubsystem, name), help, []string{"object"}, nil)
+			prometheus.BuildFQName("", metricSubsystem, name), help, []string{"object"}, nil)
 	}
 	return &controlCacheCollector{
 		desc: prometheus.NewDesc(
-			prometheus.BuildFQName(metricNamespace, metricSubsystem, "control_cache_total"),
+			prometheus.BuildFQName("", metricSubsystem, "control_cache_total"),
 			"Control plane read cache outcomes by cached object and result. An evict is an entry "+
 				"dropped to stay inside the byte budget; evictions rising while refreshes stay at zero "+
 				"means the budget cannot hold the working set, not that the control plane changed. A clear "+
@@ -112,7 +112,7 @@ func newControlCacheCollector() *controlCacheCollector {
 				"ceiling and not a target: occupancy well below it is the cache holding a working set "+
 				"smaller than the container allows for."),
 		audit: prometheus.NewDesc(
-			prometheus.BuildFQName(metricNamespace, metricSubsystem, "control_cache_audit_total"),
+			prometheus.BuildFQName("", metricSubsystem, "control_cache_audit_total"),
 			"Sampled reconciliations of a cached object against the store, by result. sample counts audits "+
 				"run and agreed the ones that found nothing wrong, so a zero elsewhere can be told from no "+
 				"audit having run. over_named counts objects the cache dropped that had not changed (a wasted "+

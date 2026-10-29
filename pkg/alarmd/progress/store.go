@@ -248,6 +248,9 @@ func (store *Store) BeginSlot(ctx context.Context, request execution.ProgressBeg
 		return execution.ProgressBeginResult{Status: execution.ProgressRetryableIO, ReasonCode: execution.ReasonCode(contract.ReasonRedisUnavailable)}, nil
 	}
 	current := execution.ScheduleProgress{Identity: request.Identity, NextSlot: request.Projection.Contract.Slot.EvaluationTime}
+	// abandoned is the unfinished Slot a later Segment skipped, reported once
+	// the write that records the skip applies.
+	var abandoned *execution.UnfinishedSlotProjection
 	if !missing {
 		current, err = decode(raw)
 		if err != nil {
@@ -274,12 +277,16 @@ func (store *Store) BeginSlot(ctx context.Context, request execution.ProgressBeg
 			case current.NextSlot != requested && newerSegment:
 				// A later Segment owns the unfinished Slot's time and moves the
 				// cursor: the persisted contract can never be re-frozen.
+				abandonedAt := current.NextSlot
 				conflict, abandonErr := store.abandonUnfinishedSlot(ctx, &current, requested)
 				if abandonErr != nil {
 					return execution.ProgressBeginResult{}, abandonErr
 				}
 				if conflict {
 					return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
+				}
+				if requested > abandonedAt {
+					abandoned = &persisted
 				}
 			default:
 				// Another Slot on the same or an older Segment, or the same Slot
@@ -312,6 +319,9 @@ func (store *Store) BeginSlot(ctx context.Context, request execution.ProgressBeg
 	})
 	switch status {
 	case ownership.FencedCASApplied:
+		if abandoned != nil {
+			store.observeAbandonedSlot(ctx, request, *abandoned)
+		}
 		return execution.ProgressBeginResult{Status: execution.ProgressCommitted}, nil
 	case ownership.FencedCASConflict:
 		return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
@@ -388,7 +398,7 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 			ReasonCode:        request.Completion.ReasonCode,
 			Contract:          request.Completion.Contract,
 			TargetResolutions: request.Completion.TargetResolutions,
-			Empty:             emptyRoundOf(request.Completion.Primary, request.ContentScope),
+			Empty:             emptyRoundOf(request.Completion.Primary, request.ContentScope, previousEmpty(current, missing)),
 		}}
 	if !missing {
 		next.LastFullSlot = current.LastFullSlot
@@ -561,7 +571,6 @@ func (store *Store) observeSupersededProjection(
 	store.options.Observer.Observe(ctx, observability.Observation{
 		Component: observability.ComponentProgress, Stage: observability.StageProgressCommitted,
 		Result: observability.ResultDegraded, ReasonCode: observability.ReasonCode(contract.ReasonConfigDrift),
-		Direction: observability.DirectionInternal,
 		Trace: observability.TraceFields{
 			QueryGroupKey: string(queryGroup), EvaluationTime: int64(request.Contract.Slot.EvaluationTime),
 			ScheduleSegmentStart: int64(request.Contract.ScheduleSegmentStart), SnapshotRevision: string(request.Contract.SnapshotRevision),
@@ -630,12 +639,19 @@ func encode(progress execution.ScheduleProgress) ([]byte, error) {
 	if err := progress.Validate(); err != nil {
 		return nil, err
 	}
+	return encodeValidated(progress)
+}
+
+// encodeValidated is encode past the record's validation: the bytes stored
+// for it, a range record without the fields an older range decoder rejects.
+func encodeValidated(progress execution.ScheduleProgress) ([]byte, error) {
 	schema := schemaV2
 	if progress.UnfinishedRange != nil {
 		schema = schemaRangeV1
 		if progress.UnfinishedRange.EligibilityV2 != nil {
 			schema = schemaRangeV2
 		}
+		progress.LastCompletion = rangeLastCompletion(progress.LastCompletion)
 	}
 	raw, err := json.Marshal(envelope{Schema: schema, Progress: progress})
 	if err == nil && progress.UnfinishedRange != nil && len(raw) > execution.MaxExpiredRangeProjectionBytes {
@@ -644,18 +660,64 @@ func encode(progress execution.ScheduleProgress) ([]byte, error) {
 	return raw, err
 }
 
+// rangeLastCompletion is the last completion a range record carries: the
+// summary without the fields the range decoder of a running release does not
+// know. Range records are decoded strictly (DisallowUnknownFields, below), and
+// during a rolling update or after a rollback an older replica reads what a
+// newer one wrote; a field it does not know makes the whole record corrupt to
+// it. IdentityRounds and Unfilled are such fields, both newer than the
+// previous upstream snapshot's decoder. Dropping IdentityRounds costs only
+// the run: the range is a run of expired Slots, which ends any run of
+// identity-emptied rounds anyway, so the count would start again after it.
+// Dropping Unfilled costs a replica restarted during the range the
+// unfilled-count word on the group's row until its next real completion
+// writes it again. TestARangeRecordCarriesOnlyFieldsThePreviousSnapshotDecodes
+// holds every field a range record can carry to that decoder's.
+func rangeLastCompletion(summary *execution.LastCompletionSummary) *execution.LastCompletionSummary {
+	if summary == nil || summary.Empty == nil || summary.Empty.IdentityRounds == 0 && !summary.Empty.Unfilled {
+		return summary
+	}
+	copied, empty := *summary, *summary.Empty
+	empty.IdentityRounds, empty.Unfilled = 0, false
+	copied.Empty = &empty
+	if !empty.Quiet && !empty.EmptiedByTarget {
+		// Nothing else was said about the round: no summary, as before
+		// the count was kept.
+		copied.Empty = nil
+	}
+	return &copied
+}
+
 // emptyRoundOf is what a whole, empty primary said about its emptiness, with
 // the content the round ran under; nil when it said nothing, so the record
 // carries nothing for it. Nil too when the commit declares no content: the
 // word is restored only under the content it was said under, and without
 // one it never would be.
-func emptyRoundOf(primary *execution.PrimaryInputFact, contentScope string) *execution.EmptyRoundSummary {
+func emptyRoundOf(primary *execution.PrimaryInputFact, contentScope string, previous *execution.EmptyRoundSummary) *execution.EmptyRoundSummary {
 	if contentScope == "" || primary == nil || primary.Completeness != execution.CompletenessFull ||
-		primary.DataState != execution.DataStateEmpty || !primary.QuietWhenEmpty && !primary.EmptiedByTarget {
+		primary.DataState != execution.DataStateEmpty || !primary.QuietWhenEmpty && !primary.EmptiedByTarget && !primary.UnfilledWhenEmpty && primary.Identity == nil {
 		return nil
 	}
-	return &execution.EmptyRoundSummary{Quiet: primary.QuietWhenEmpty, EmptiedByTarget: primary.EmptiedByTarget,
-		ContentScope: contentScope}
+	summary := &execution.EmptyRoundSummary{Quiet: primary.QuietWhenEmpty, EmptiedByTarget: primary.EmptiedByTarget,
+		Unfilled: primary.UnfilledWhenEmpty, ContentScope: contentScope}
+	if primary.Identity != nil {
+		// The run continues the previous round's when that round was the
+		// same kind of empty under the same content.
+		summary.IdentityRounds = 1
+		if previous != nil && previous.IdentityRounds > 0 && previous.ContentScope == contentScope {
+			summary.IdentityRounds = previous.IdentityRounds + 1
+		}
+	}
+	return summary
+}
+
+// previousEmpty is the stored record's last round's empty summary, nil when
+// there is none to continue.
+func previousEmpty(current execution.ScheduleProgress, missing bool) *execution.EmptyRoundSummary {
+	if missing || current.LastCompletion == nil {
+		return nil
+	}
+	return current.LastCompletion.Empty
 }
 
 func decode(raw []byte) (execution.ScheduleProgress, error) {
@@ -799,4 +861,20 @@ func (store *Store) SkipPrunedRange(ctx context.Context, request execution.Progr
 		_ = applyErr
 		return execution.ProgressSkipResult{Status: execution.ProgressRetryableIO}, nil
 	}
+}
+
+// observeAbandonedSlot reports the unfinished Slot a later Segment moved the
+// cursor past, once the write recording the skip applied. Nothing queried it
+// and no Plan marker is written for it: the skip is the recent gap on the
+// Progress record.
+func (store *Store) observeAbandonedSlot(ctx context.Context, request execution.ProgressBeginRequest, abandoned execution.UnfinishedSlotProjection) {
+	evaluation := int64(abandoned.Contract.Slot.EvaluationTime)
+	observability.ObserveSlotSkipped(ctx, store.options.Observer, observability.TraceFields{
+		QueryGroupKey: string(request.Identity.QueryGroup), EvaluationTime: evaluation,
+		SnapshotRevision: string(abandoned.Contract.SnapshotRevision), ScheduleSegmentStart: int64(abandoned.Contract.ScheduleSegmentStart),
+		OwnerID: request.OwnerFence.OwnerID, OwnerEpoch: request.OwnerFence.OwnerEpoch,
+	}, observability.OperationWrite, observability.SlotSkippedFacts{
+		Path: observability.SlotSkippedProgressStore, FirstSlot: evaluation, LastSlot: evaluation, SlotCount: 1,
+		Reason: contract.ReasonGapSkipped, GapGuard: observability.SkipGapProgressOnly,
+	})
 }

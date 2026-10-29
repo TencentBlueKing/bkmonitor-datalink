@@ -15,6 +15,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 )
 
 func diagnoseNative(t *testing.T, page map[string]any) http.Handler {
@@ -196,5 +199,41 @@ func TestRedisMemoryNearTheLimitIsReportedPastItsLine(t *testing.T) {
 	}
 	if shares["[unlimited]@unlimited:1"] != "不限" || shares["[at]@at:1"] != "80.00%" || shares["[nomax]@nomax:1"] != "未知" || len(memory) != 6 {
 		t.Errorf("standings %+v", memory)
+	}
+}
+
+// The diagnosis has the time of its parts: the diagnosis read, then the
+// deployment parts side by side, each under its own operation's time. A part
+// that runs out of its own time is that part's finding; the page and the
+// other parts stand, and the whole takes the longest part, not their sum.
+func TestDiagnoseEnvironmentHasItsPartsTimeAndKeepsThePageOnASlowPart(t *testing.T) {
+	page := map[string]any{"universe": map[string]any{"status": "ok", "count": 1},
+		"page": map[string]any{"holds": true, "ids_expected": 1, "rows": 1}, "strategies": []any{}}
+	slow := func(id string) Operation {
+		return Operation{ID: id, Summary: id, ExecutionTimeout: time.Second, Run: func(ctx context.Context, _ Params) Outcome {
+			<-ctx.Done()
+			return Outcome{Error: &Failure{Code: "request_timeout", Message: "ran out of its time"}}
+		}}
+	}
+	op := DiagnoseOperation(diagnoseNative(t, page), []Operation{slow("k8s.pods"), slow("store.info")})
+	if op.ExecutionTimeout != fleet.DiagnosisReadTimeout+RequestTimeout {
+		t.Fatalf("budget %v, want the diagnosis read plus the longest part (%v)", op.ExecutionTimeout, fleet.DiagnosisReadTimeout+RequestTimeout)
+	}
+	long := DiagnoseOperation(diagnoseNative(t, page), []Operation{{ID: "store.info", ExecutionTimeout: 10 * time.Second}})
+	if long.ExecutionTimeout != fleet.DiagnosisReadTimeout+10*time.Second {
+		t.Fatalf("budget %v with a 10 s part", long.ExecutionTimeout)
+	}
+	c := testChannel(t, &testAuth{}, op)
+	started := time.Now()
+	status, out := call(t, c, envelope(c, "invoke", "diagnose.environment", Params{"limit": 20}))
+	if took := time.Since(started); took > 1800*time.Millisecond {
+		t.Fatalf("took %v: the parts ran one after another or past their own time", took)
+	}
+	if status != 200 || out.Error != nil {
+		t.Fatalf("status %d error %+v: the page was dropped for a slow part", status, out.Error)
+	}
+	findings := findingsOf(t, out)
+	if !hasFinding(findings, FindingPartUnreadable, "request_timeout") {
+		t.Fatalf("findings %+v, want the slow parts named unreadable", findings)
 	}
 }

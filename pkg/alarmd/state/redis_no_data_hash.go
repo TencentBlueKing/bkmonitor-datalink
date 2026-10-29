@@ -259,6 +259,7 @@ var _ NoDataHashBackend = (*RedisBackend)(nil)
 // phase-one set.
 type hashClient interface {
 	HGetAll(context.Context, string) *redis.StringStringMapCmd
+	HScan(ctx context.Context, key string, cursor uint64, match string, count int64) *redis.ScanCmd
 	HGet(context.Context, string, string) *redis.StringCmd
 	EvalSha(context.Context, string, []string, ...interface{}) *redis.Cmd
 }

@@ -50,7 +50,7 @@ func TestWorkflowContractCountsAndSeriesBound(t *testing.T) {
 	}
 	count := 0
 	for _, f := range families {
-		name := strings.TrimPrefix(f.GetName(), "bkmonitor_alarmd_")
+		name := strings.TrimPrefix(f.GetName(), "alarmd_")
 		switch name {
 		case "run_one_return_total", "execute_return_total", "progress_completed_total", "scheduler_active_executions", "scheduler_ready_runners", "scheduler_delayed_runners", "query_permit_wait_seconds", "slot_operation_duration_seconds":
 		default:

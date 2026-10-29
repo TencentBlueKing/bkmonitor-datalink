@@ -35,12 +35,13 @@ type SREUQConfig struct {
 // endpoint when the deployment registers none.
 const DefaultSREEgress = "current"
 
-// DefaultSREEndpoints are the native QueryTs endpoints the synthesized egress
-// carries, under the time contract registered egresses use.
+// DefaultSREEndpoints are the native QueryTs and PromQL endpoints the synthesized egress
+// carries, each under its own time contract.
 var DefaultSREEndpoints = []uq.Endpoint{
 	{Path: "/query/ts", StartField: "start_time", EndField: "end_time", TimeUnit: "s"},
 	{Path: "/query/ts/raw", StartField: "start_time", EndField: "end_time", TimeUnit: "s"},
 	{Path: "/query/ts/raw_with_scroll", StartField: "start_time", EndField: "end_time", TimeUnit: "s"},
+	{Path: "/query/ts/promql", StartField: "start", EndField: "end", TimeUnit: "s"},
 }
 
 // WithUQEndpoint resolves the egresses against the current runtime endpoint:

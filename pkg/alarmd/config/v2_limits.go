@@ -75,9 +75,12 @@ type LimitsConfig struct {
 func defaultLimits() LimitsConfig {
 	return LimitsConfig{
 		Compiler: CompilerLimitsConfig{
-			MaxPlanBytes: 256 << 10, MaxLevelsPerPlan: 8, MaxAlgorithmsPerLevel: 8,
-			MaxGroupsPerAlgorithm: 16, MaxConditionsPerAlgorithm: 32, MaxASTNodesPerLevel: 512,
-			MaxRequiredHistoryPoints: 4096, MaxCompiledPlanBytes: 512 << 10,
+			// The shape limits bound compile CPU, which the compile cache and
+			// the trigger's compute cost already bound; they only have to stop
+			// a malformed Plan, not a large real one (a long IP list).
+			MaxPlanBytes: 2 << 20, MaxLevelsPerPlan: 8, MaxAlgorithmsPerLevel: 64,
+			MaxGroupsPerAlgorithm: 256, MaxConditionsPerAlgorithm: 1024, MaxASTNodesPerLevel: 8192,
+			MaxRequiredHistoryPoints: 4096, MaxCompiledPlanBytes: 4 << 20,
 			NegativeCacheTTL: Duration(time.Minute),
 			BudgetRevision:   "phase-one-default-v1",
 		},

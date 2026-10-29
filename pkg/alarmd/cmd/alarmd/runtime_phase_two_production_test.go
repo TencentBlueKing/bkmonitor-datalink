@@ -22,6 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
@@ -479,6 +480,21 @@ func TestProductionFrozenExecutionSkipsExpiredNormalSlotWithoutRecoveryPermit(t 
 	}
 	if err := finalization.Validate(request); err != nil {
 		t.Fatalf("ResolveFinalization() produced invalid finalization: %v", err)
+	}
+	// A Slot the Runner gave up for its share is finalized without a query,
+	// under GAP_SKIPPED and named by its cause, on any operation.
+	for _, operation := range []execution.Operation{execution.OperationNormal, execution.OperationRetry} {
+		shared := request
+		shared.Operation, shared.ShareExceeded = operation, true
+		finalization, err = resolver.ResolveFinalization(context.Background(), shared)
+		if err != nil || finalization.Mode != execution.FinalizationGapSkipped ||
+			finalization.ReasonCode != execution.ReasonCode(contract.ReasonGapSkipped) ||
+			finalization.Cause != execution.CauseResourceShareExceeded || !finalization.Targets.Equal(shared.DuePlanTargets) {
+			t.Fatalf("ResolveFinalization(share exceeded, %s) = %+v, %v", operation, finalization, err)
+		}
+		if err := finalization.Validate(shared); err != nil {
+			t.Fatalf("ResolveFinalization(share exceeded, %s) produced invalid finalization: %v", operation, err)
+		}
 	}
 	request.ReplayExpired = true
 	finalization, err = resolver.ResolveFinalization(context.Background(), request)
@@ -2234,12 +2250,53 @@ func TestObservedProductionSlotExecutorDoesNotReportReadinessDeferralAsFailure(t
 	if metricReason := observability.NormalizeMetricReason(observability.ComponentScheduler, observations[1].ReasonCode, observations[1].Result); metricReason == observability.ReasonNotReported {
 		t.Fatalf("deferral metric reason=%q, want a named class", metricReason)
 	}
+	// And what the Slot waits for, as the query line names it.
+	if facts := completed.ReadinessDeferral; facts == nil || facts.PhysicalQuery != "physical-305" || facts.Requirement != "primary" ||
+		facts.ReadyAtUnixMilli != readyAt.UnixMilli() || facts.Basis != observability.ReadinessBasisReadHold || facts.ReadHoldMillis != 300_000 {
+		t.Fatalf("deferral readiness facts=%+v, want the deferral's query, requirement, time, basis and hold", facts)
+	}
+}
+
+// A failed attempt the Runner will retry completes retrying, with the
+// failure's reason and error kept (its level, WARN, is the observability
+// rule's); the same failure from a Runner that will not retry it stays the
+// Slot's end, failed.
+func TestAFailureTheSlotRetriesCompletesRetrying(t *testing.T) {
+	wantErr := errors.New("query permit deadline elapsed")
+	run := func(ctx context.Context) observability.Observation {
+		var observations []observability.Observation
+		executor := observedProductionSlotExecutor{
+			next: slotExecutorFunc(func(context.Context, execution.SlotExecutionRequest) (execution.SlotExecutionResult, error) {
+				return execution.SlotExecutionResult{}, wantErr
+			}),
+			observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+				observations = append(observations, observation)
+			}),
+		}
+		if _, err := executor.Execute(ctx, execution.SlotExecutionRequest{}); !errors.Is(err, wantErr) {
+			t.Fatalf("Execute() error=%v", err)
+		}
+		return observations[len(observations)-1]
+	}
+	retried := run(scheduler.WithFailureRetried(context.Background()))
+	if retried.Stage != observability.StageSlotCompleted || retried.Result != observability.ResultRetrying || !retried.RetryingAfterFailure ||
+		!errors.Is(retried.Err, wantErr) || retried.ReasonCode == "" {
+		t.Fatalf("retried completion=%+v, want retrying with the failure's reason and error", retried)
+	}
+	final := run(context.Background())
+	if final.Result != observability.ResultFailed || final.RetryingAfterFailure {
+		t.Fatalf("unretried completion=%+v, want failed", final)
+	}
 }
 
 type phaseTwoReadinessDeferredError struct{ readyAt time.Time }
 
 func (err phaseTwoReadinessDeferredError) Error() string               { return "readiness deferred" }
 func (err phaseTwoReadinessDeferredError) ReadinessReadyAt() time.Time { return err.readyAt }
+func (err phaseTwoReadinessDeferredError) ReadinessDeferral() *observability.ReadinessDeferralFacts {
+	return &observability.ReadinessDeferralFacts{Requirement: "primary", PhysicalQuery: "physical-305",
+		ReadyAtUnixMilli: err.readyAt.UnixMilli(), Basis: observability.ReadinessBasisReadHold, ReadHoldMillis: 300_000}
+}
 
 func productionRequest(fact execution.FrozenSlotContractFact, operation execution.Operation) execution.SlotExecutionRequest {
 	targets, deadline, err := frozenExecutionFacts(fact)
@@ -2515,10 +2572,15 @@ func (source *fakePlanActivationSource) LoadActivations(
 	return source.result, nil
 }
 
+// errRejectingExecutorReached is what rejectingSlotExecutor answers every
+// Slot with, named so a case can tell a round that reached the executor from
+// one that ended before it.
+var errRejectingExecutorReached = errors.New("stale fence reached executor")
+
 type rejectingSlotExecutor struct{}
 
 func (rejectingSlotExecutor) Execute(context.Context, execution.SlotExecutionRequest) (execution.SlotExecutionResult, error) {
-	return execution.SlotExecutionResult{}, errors.New("stale fence reached executor")
+	return execution.SlotExecutionResult{}, errRejectingExecutorReached
 }
 
 type slotSourceFunc func(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, scheduler.SlotDueFacts, error)
@@ -2653,7 +2715,7 @@ func TestProductionMaintainLeaseRetriesTransientRenewFailureInsideTTL(t *testing
 	leaseDone := make(chan error, 1)
 	go func() { leaseDone <- runner.MaintainLease(leaseCtx, time.Millisecond, time.Minute) }()
 
-	waitPhaseTwoCondition(t, 3*time.Second, "lease renewal retries", func() bool { return fixture.store.renewCount() >= 6 })
+	waitPhaseTwoCondition(t, "lease renewal retries", func() bool { return fixture.store.renewCount() >= 6 })
 	select {
 	case err := <-leaseDone:
 		t.Fatalf("MaintainLease() returned %v while the lease was still inside its TTL", err)
@@ -2667,7 +2729,7 @@ func TestProductionMaintainLeaseRetriesTransientRenewFailureInsideTTL(t *testing
 	}
 
 	failure.set(nil)
-	waitPhaseTwoCondition(t, 3*time.Second, "lease renewal recovery", func() bool {
+	waitPhaseTwoCondition(t, "lease renewal recovery", func() bool {
 		return countLeaseRenewalObservations(fixture.observations(), observability.ResultSuccess, observability.ReasonNone) > 0
 	})
 	// Every renewal line names the lease it is about: the Query Group and
@@ -2693,7 +2755,7 @@ func TestProductionMaintainLeaseRetriesTransientRenewFailureInsideTTL(t *testing
 		if !errors.Is(err, transient) {
 			t.Fatalf("MaintainLease(TTL exhausted) error = %v, want the store error", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("MaintainLease() kept running after the lease TTL was exhausted")
 	}
 	if _, err := queryGroup.session.ValidateCurrent(context.Background(), fixture.clock.Now()); !errors.Is(err, ownership.ErrStaleFence) {
@@ -2715,7 +2777,7 @@ func TestProductionMaintainLeaseReturnsAuthoritativeDecisionImmediately(t *testi
 		if !errors.Is(err, ownership.ErrStaleFence) {
 			t.Fatalf("MaintainLease(stale) error = %v, want ErrStaleFence", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("MaintainLease() retried an authoritative stale fence decision")
 	}
 	if fixture.store.renewCount() != 1 {
@@ -2743,7 +2805,7 @@ func TestProductionMaintainControlLeaderRetriesTransientRenewFailureInsideTTL(t 
 		leaderDone <- fixture.production.MaintainControlLeader(leaderCtx, time.Millisecond, time.Minute)
 	}()
 
-	waitPhaseTwoCondition(t, 3*time.Second, "control leader renewal retries", func() bool {
+	waitPhaseTwoCondition(t, "control leader renewal retries", func() bool {
 		return fixture.store.renewLeaderCount() >= 6
 	})
 	select {
@@ -2759,7 +2821,7 @@ func TestProductionMaintainControlLeaderRetriesTransientRenewFailureInsideTTL(t 
 	}
 
 	failure.set(nil)
-	waitPhaseTwoCondition(t, 3*time.Second, "control leader renewal recovery", func() bool {
+	waitPhaseTwoCondition(t, "control leader renewal recovery", func() bool {
 		return countLeaseRenewalObservations(fixture.observations(), observability.ResultSuccess, observability.ReasonNone) > 0
 	})
 	// The control leader's renewal lines name its lease too: the leader key
@@ -2780,7 +2842,7 @@ func TestProductionMaintainControlLeaderRetriesTransientRenewFailureInsideTTL(t 
 		if !errors.Is(err, transient) {
 			t.Fatalf("MaintainControlLeader(TTL exhausted) error = %v, want the store error", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("MaintainControlLeader() kept running after the authority TTL was exhausted")
 	}
 	leader, err = fixture.production.TryAcquireControlLeader(context.Background(), fixture.clock.Now(), time.Minute)
@@ -2806,7 +2868,7 @@ func TestProductionMaintainControlLeaderClearsAuthorityOnStaleDecision(t *testin
 		if !errors.Is(err, ownership.ErrStaleFence) {
 			t.Fatalf("MaintainControlLeader(stale) error = %v, want ErrStaleFence", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("MaintainControlLeader() retried an authoritative stale fence decision")
 	}
 	if fixture.store.renewLeaderCount() != 1 {

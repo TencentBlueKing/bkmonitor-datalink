@@ -141,6 +141,11 @@ func TestWorkflowRunnerActualExits(t *testing.T) {
 			if len(observed) != 1 || observed[0].RunOutcome != name || observed[0].Attempted != expectedAttempted || attempted != expectedAttempted {
 				t.Fatalf("outcome=%+v attempted=%v want %s/%v", observed, attempted, name, expectedAttempted)
 			}
+			// The outcome is the line's reason, kept as itself: the round
+			// said why it returned, and read reason_not_reported.
+			if reason := observability.NormalizeObservation(observed[0]).ReasonCode; reason != observability.ReasonCode(name) {
+				t.Fatalf("%s reads reason %q, want the outcome", name, reason)
+			}
 			// A round the source or the view refused carries what it was
 			// refused with; every other exit carries no words of its own.
 			if refused := source.err; refused != nil && name != "ownership_rejected" {

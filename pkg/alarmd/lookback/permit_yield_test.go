@@ -12,10 +12,12 @@ package lookback
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 // A read asked to yield is timed from the yield to the moment it gave its
@@ -85,7 +87,7 @@ func TestAReadStillHoldingItsPermitPastItsDeadlineAfterAYieldIsAFault(t *testing
 		defer engine.mu.Unlock()
 		return engine.groups["qg"].sample != nil && !engine.groups["qg"].sample.yieldAt.IsZero()
 	}
-	for deadline := time.Now().Add(5 * time.Second); !yielded(); time.Sleep(time.Millisecond) {
+	for deadline := testwait.Deadline(t); !yielded(); time.Sleep(time.Millisecond) { // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 		if time.Now().After(deadline) {
 			t.Fatal("the yield was never noted")
 		}
@@ -106,7 +108,7 @@ func TestAReadStillHoldingItsPermitPastItsDeadlineAfterAYieldIsAFault(t *testing
 	}
 	close(stop)
 	stats := func() Stats {
-		for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		for deadline := testwait.Deadline(t); ; time.Sleep(time.Millisecond) { // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 			if stats := engine.Stats(); stats.Sources[sourceLog].YieldReleases == 1 {
 				return stats
 			}
@@ -153,16 +155,29 @@ func TestAYieldAfterTheReadsContextEndedIsStillWatched(t *testing.T) {
 	engine.Step(ctx)
 	<-started
 	cancel() // the read's context ends; the read does not
-	time.Sleep(50 * time.Millisecond)
+	// An absence window: a yield watcher that wrongly ended with the read's context has quit by now, so the yield
+	// below finds nobody and the case fails every time rather than by select order; correct code reacts to nothing.
+	time.Sleep(50 * time.Millisecond) // fixed-wait: the absence window above; an absence sends no signal to wait on
 	close(yield)
-	time.Sleep(50 * time.Millisecond)
+	testwait.Until(t, "the yield watcher stamping the yield", func() bool {
+		engine.mu.Lock()
+		defer engine.mu.Unlock()
+		for _, state := range engine.groups {
+			for _, candidate := range append([]*sample{state.sample, state.probe}, state.probations...) {
+				if candidate != nil && !candidate.yieldAt.IsZero() {
+					return true
+				}
+			}
+		}
+		return false
+	})
 	c.set(c.now().Add(RecheckTimeout + time.Second))
 	engine.Step(context.Background())
 	if n := engine.Stats().Faults[FaultYieldOverdue]; n != 1 {
 		t.Fatalf("yield_overdue %d, want the yield after the read's context ended watched and counted", n)
 	}
 	close(stop)
-	for deadline := time.Now().Add(5 * time.Second); engine.Stats().Sources[sourceLog].YieldReleases != 1; time.Sleep(time.Millisecond) {
+	for deadline := testwait.Deadline(t); engine.Stats().Sources[sourceLog].YieldReleases != 1; time.Sleep(time.Millisecond) { // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 		if time.Now().After(deadline) {
 			t.Fatal("the release after the late yield was not timed")
 		}
@@ -190,7 +205,7 @@ func TestAReadNeverAskedToYieldSettlesItsRung(t *testing.T) {
 	read.Complete(execution.ProviderCompletion{Completeness: execution.CompletenessFull}, nil)
 	c.set(c.now().Add(rungDelay(0, minute)))
 	engine.Step(context.Background())
-	for deadline := time.Now().Add(5 * time.Second); engine.Stats().Sources[sourceLog].Samples[OutcomeCompleted] != 1; time.Sleep(time.Millisecond) {
+	for deadline := testwait.Deadline(t); engine.Stats().Sources[sourceLog].Samples[OutcomeCompleted] != 1; time.Sleep(time.Millisecond) { // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 		if time.Now().After(deadline) {
 			t.Fatalf("a read no formal query asked to yield never settled: %v", engine.Stats().Sources[sourceLog].Rechecks[RungNames[0]])
 		}
@@ -205,18 +220,31 @@ func TestAReadNeverAskedToYieldSettlesItsRung(t *testing.T) {
 // yield, and the rung is compared, not preempted.
 func TestAYieldAfterTheReadCameBackIsNotTimed(t *testing.T) {
 	c := &clock{at: time.Unix(1_700_000_100, 0)}
+	// The read's context: the watcher cancels it when it takes the yield.
+	var reading atomic.Value
+	bound := testwait.Context(t)
 	engine, err := New(Options{Now: c.now, UnspreadFirstSamples: true,
 		Recheck: func(ctx context.Context, _ execution.PhysicalQuerySpec, sink execution.ProviderSeriesSink) (execution.ProviderCompletion, error) {
+			reading.Store(ctx)
 			_ = sink.ConsumeProviderSeries(ctx, execution.ProviderSeriesBatch{Dataset: dataset("h1", steady)})
 			return execution.ProviderCompletion{Completeness: execution.CompletenessFull}, nil
 		},
 		Permit: func() (func(), <-chan struct{}, string) {
 			yield := make(chan struct{})
 			// The waiting formal query arrives as the permit is given back,
-			// and the release lingers long enough for the watcher to take
-			// the yield before a read that marked itself back only now
-			// would have.
-			return func() { close(yield); time.Sleep(50 * time.Millisecond) }, yield, ""
+			// and the release lasts until the watcher has taken the yield,
+			// which it marks by cancelling the read's context: a read that
+			// marked itself back only after the release would be found not
+			// back then, and timed.
+			return func() {
+				close(yield)
+				if read, ok := reading.Load().(context.Context); ok {
+					select {
+					case <-read.Done():
+					case <-bound.Done():
+					}
+				}
+			}, yield, ""
 		},
 		Owns: func(execution.QueryGroupIdentity) bool { return true }, Owned: func() int { return 1 },
 	})
@@ -229,7 +257,7 @@ func TestAYieldAfterTheReadCameBackIsNotTimed(t *testing.T) {
 	c.set(c.now().Add(rungDelay(0, minute)))
 	engine.Step(context.Background())
 	var source SourceStats
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+	for deadline := testwait.Deadline(t); ; time.Sleep(time.Millisecond) { // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 		source = engine.Stats().Sources[sourceLog]
 		if source.Rechecks[RungNames[0]][RecheckCompared] == 1 {
 			break

@@ -39,13 +39,13 @@ func TestActivationBlockedReadsTheLeadersLastCutover(t *testing.T) {
 				label = pair.GetValue()
 			}
 			switch family.GetName() {
-			case "bkmonitor_alarmd_activation_blocked_query_groups":
+			case "alarmd_activation_blocked_query_groups":
 				values["blocked:"+label] = sample.GetGauge().GetValue()
 				series["blocked"]++
-			case "bkmonitor_alarmd_activation_blocked_set_total":
+			case "alarmd_activation_blocked_set_total":
 				values["accounting:"+label] = sample.GetCounter().GetValue()
 				series["accounting"]++
-			case "bkmonitor_alarmd_activation_timeline_reopened_total":
+			case "alarmd_activation_timeline_reopened_total":
 				values["reopened"] = sample.GetCounter().GetValue()
 			}
 		}
@@ -66,7 +66,7 @@ func TestActivationBodyBytesIsTheLastReadLength(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, family := range families {
-			if family.GetName() == "bkmonitor_alarmd_activation_body_bytes" {
+			if family.GetName() == "alarmd_activation_body_bytes" {
 				return family.GetMetric()[0].GetGauge().GetValue(), len(family.GetMetric())
 			}
 		}

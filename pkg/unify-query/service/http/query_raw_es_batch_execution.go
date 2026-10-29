@@ -391,96 +391,188 @@ func executeRawESBatchPreGroup(
 	dispatcher *rawQueryDispatcher,
 	sink *rawQueryExecutionSink,
 ) rawESBatchGroupExecutionStats {
+	// 满批直接在完成准备的 worker 中执行。重新提交到调度器会在并发上限为 1 时死锁，
+	// 也可能让慢准备任务占满槽位，阻塞已就绪的搜索。
+	var lock sync.Mutex
+	var stats rawESBatchGroupExecutionStats
+	groups := make(map[string]*rawESReadyGroup)
+	var groupOrder []string
+	mergeStats := func(delta rawESBatchGroupExecutionStats) {
+		lock.Lock()
+		defer lock.Unlock()
+		stats.batchCount += delta.batchCount
+		stats.singleCount += delta.singleCount
+	}
+	var preparations sync.WaitGroup
+	preparations.Add(len(preGroup.members))
+	prepareMember := func(member *rawESBatchRuntimeMember) *rawESReadyGroup {
+		// 执行取出的批次或单成员回退前，先通知准备完成。
+		// 准备失败或 panic 时也必须通知，避免尾批一直等待。
+		defer preparations.Done()
+		prepareRawESBatchMember(ctx, queryTs, qb, member, sink)
+		if member.prepared == nil {
+			return nil
+		}
+		fingerprint, err := elasticsearch.PreparedRawQueryFingerprint(member.prepared)
+		if err != nil {
+			metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerFingerprintFallback)
+			return &rawESReadyGroup{members: []*rawESBatchRuntimeMember{member}}
+		}
+		lock.Lock()
+		defer lock.Unlock()
+		group := groups[fingerprint]
+		if group == nil {
+			group = &rawESReadyGroup{}
+			groups[fingerprint] = group
+			groupOrder = append(groupOrder, fingerprint)
+		}
+		group.totalMembers++
+		group.members = append(group.members, member)
+		if len(group.members) < settings.maxMembers {
+			return nil
+		}
+		ready := &rawESReadyGroup{members: group.members}
+		if len(group.members) == 1 {
+			group.singleChunks++
+		}
+		group.members = nil
+		return ready
+	}
 	preparationTasks := make([]func(), 0, len(preGroup.members))
 	for _, plannedMember := range preGroup.members {
 		member := runtimeByLoc[plannedMember.location]
 		preparationTasks = append(preparationTasks, sink.guardTask(func() {
-			prepareStartedAt := time.Now()
-			defer func() {
-				metric.QueryRawESBatchDurationObserve(
-					ctx,
-					metric.QueryRawESBatchDurationPrepare,
-					time.Since(prepareStartedAt),
-				)
-			}()
-			var prefetched *elasticsearch.PreparedFieldMetadata
-			if queryTs.HighLight != nil && queryTs.HighLight.Enable {
-				fieldMetadata, fieldErr := member.es.PrepareRawFieldMetadata(
-					ctx, member.query, qb.Start, qb.End,
-				)
-				if fieldErr == nil {
-					prefetched = fieldMetadata
-					sink.mergeFieldsMap(fieldMetadata.FieldsMap())
+			ready := prepareMember(member)
+			if ready != nil {
+				tasks, delta := rawESReadyExecutionTasks(ctx, settings, []*rawESReadyGroup{ready}, sink)
+				mergeStats(delta)
+				for _, task := range tasks {
+					task()
 				}
-			}
-
-			prepared, prepareErr := member.es.PrepareRawQuery(
-				ctx, member.query, qb.Start, qb.End, prefetched,
-			)
-			if prepareErr != nil {
-				sink.errCh <- prepareErr
-				return
-			}
-			member.prepared = prepared
-			if prefetched == nil && queryTs.HighLight != nil && queryTs.HighLight.Enable {
-				sink.mergeFieldsMap(prepared.FieldsMap())
 			}
 		}))
 	}
-	dispatcher.run(preparationTasks)
-
-	type fingerprintGroup struct {
-		members []*rawESBatchRuntimeMember
+	executionsDone := make(chan struct{})
+	go func() {
+		defer close(executionsDone)
+		dispatcher.run(preparationTasks)
+	}()
+	defer func() { <-executionsDone }()
+	preparations.Wait()
+	tailReadyAt := time.Now()
+	// 所有准备任务已结束，分组不会再变化，但满批搜索可能仍在执行。
+	// 由协调器提交尾批，使其能使用共享调度器中的空闲 worker。
+	stats.finalGroupCount = len(groups)
+	metric.QueryRawESBatchEventAdd(ctx, metric.QueryRawESBatchEventPlannerFinalGroup, len(groups))
+	tails := make([]*rawESReadyGroup, 0, len(groups))
+	for _, fingerprint := range groupOrder {
+		group := groups[fingerprint]
+		if len(group.members) > 0 {
+			group.tailReadyAt = tailReadyAt
+			tails = append(tails, group)
+		}
+		if len(group.members) == 1 {
+			group.singleChunks++
+		}
+		// 仅当后续也没有相同指纹的成员时，单成员批次才计为最终请求体分组拆分。
+		// maxMembers=1 只是打包限制，不能把每个成员都计为新的最终分组。
+		if group.totalMembers == 1 {
+			metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerFinalSplit)
+		} else {
+			metric.QueryRawESBatchEventAdd(ctx, metric.QueryRawESBatchEventPlannerPackedSingle, group.singleChunks)
+		}
 	}
-	var (
-		stats             rawESBatchGroupExecutionStats
-		fingerprintGroups []fingerprintGroup
-		fingerprintIndex  = make(map[string]int)
-		executionTasks    []func()
-	)
-	for _, plannedMember := range preGroup.members {
-		member := runtimeByLoc[plannedMember.location]
-		if member.prepared == nil {
-			continue
-		}
-		fingerprint, fingerprintErr := elasticsearch.PreparedRawQueryFingerprint(member.prepared)
-		if fingerprintErr != nil {
-			stats.singleCount++
-			metric.QueryRawESBatchEventInc(
-				ctx,
-				metric.QueryRawESBatchEventPlannerSingle,
-			)
-			metric.QueryRawESBatchEventInc(
-				ctx,
-				metric.QueryRawESBatchEventPlannerFingerprintFallback,
-			)
-			executionTasks = append(executionTasks, sink.guardTask(func() {
-				executeRawPreparedMember(ctx, member, sink)
-			}))
-			continue
-		}
-		index, ok := fingerprintIndex[fingerprint]
-		if !ok {
-			index = len(fingerprintGroups)
-			fingerprintIndex[fingerprint] = index
-			fingerprintGroups = append(fingerprintGroups, fingerprintGroup{})
-		}
-		fingerprintGroups[index].members = append(fingerprintGroups[index].members, member)
-	}
-	stats.finalGroupCount = len(fingerprintGroups)
-	metric.QueryRawESBatchEventAdd(
-		ctx,
-		metric.QueryRawESBatchEventPlannerFinalGroup,
-		len(fingerprintGroups),
-	)
+	tasks, delta := rawESReadyExecutionTasks(ctx, settings, tails, sink)
+	mergeStats(delta)
+	dispatcher.run(tasks)
+	<-executionsDone
+	return stats
+}
 
-	for _, finalGroup := range fingerprintGroups {
+type rawESReadyGroup struct {
+	members      []*rawESBatchRuntimeMember
+	totalMembers int
+	singleChunks int
+	tailReadyAt  time.Time
+}
+
+func (g *rawESReadyGroup) executionTask(
+	ctx context.Context,
+	sink *rawQueryExecutionSink,
+	execute func(context.Context),
+) func() {
+	return sink.guardTask(func() {
+		executionCtx := ctx
+		if !g.tailReadyAt.IsZero() {
+			var span *trace.Span
+			var spanErr error
+			executionCtx, span = trace.NewSpan(ctx, "query-raw-es-tail-execute")
+			span.Set("es_batch_tail_ready_unix_millis", g.tailReadyAt.UnixMilli())
+			span.Set("es_batch_tail_wait_duration_ms", float64(time.Since(g.tailReadyAt))/float64(time.Millisecond))
+			defer span.End(&spanErr)
+		}
+		execute(executionCtx)
+	})
+}
+
+func prepareRawESBatchMember(
+	ctx context.Context,
+	queryTs *structured.QueryTs,
+	qb *metadata.QueryParams,
+	member *rawESBatchRuntimeMember,
+	sink *rawQueryExecutionSink,
+) {
+	prepareStartedAt := time.Now()
+	defer func() {
+		metric.QueryRawESBatchDurationObserve(
+			ctx,
+			metric.QueryRawESBatchDurationPrepare,
+			time.Since(prepareStartedAt),
+		)
+	}()
+	var prefetched *elasticsearch.PreparedFieldMetadata
+	if queryTs.HighLight != nil && queryTs.HighLight.Enable {
+		fieldMetadata, fieldErr := member.es.PrepareRawFieldMetadata(
+			ctx, member.query, qb.Start, qb.End,
+		)
+		if fieldErr == nil {
+			prefetched = fieldMetadata
+			sink.mergeFieldsMap(fieldMetadata.FieldsMap())
+		}
+	}
+
+	prepared, prepareErr := member.es.PrepareRawQuery(
+		ctx, member.query, qb.Start, qb.End, prefetched,
+	)
+	if prepareErr != nil {
+		sink.errCh <- prepareErr
+		return
+	}
+	member.prepared = prepared
+	if prefetched == nil && queryTs.HighLight != nil && queryTs.HighLight.Enable {
+		sink.mergeFieldsMap(prepared.FieldsMap())
+	}
+}
+
+func rawESReadyExecutionTasks(
+	ctx context.Context,
+	settings queryRawESBatchSettings,
+	groups []*rawESReadyGroup,
+	sink *rawQueryExecutionSink,
+) ([]func(), rawESBatchGroupExecutionStats) {
+	var stats rawESBatchGroupExecutionStats
+	var executionTasks []func()
+	for _, finalGroup := range groups {
+		// 准备完成顺序可能与路由顺序不同；批内按稳定序号排序，
+		// 并按发送顺序解码响应，保证成员与结果对应。
+		sort.Slice(finalGroup.members, func(i, j int) bool {
+			return rawESBatchMemberLocationLess(finalGroup.members[i].location, finalGroup.members[j].location)
+		})
 		if len(finalGroup.members) < 2 {
 			member := finalGroup.members[0]
 			stats.singleCount++
 			metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerSingle)
-			metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerFinalSplit)
-			executionTasks = append(executionTasks, sink.guardTask(func() {
+			executionTasks = append(executionTasks, finalGroup.executionTask(ctx, sink, func(ctx context.Context) {
 				executeRawPreparedMember(ctx, member, sink)
 			}))
 			continue
@@ -513,7 +605,7 @@ func executeRawESBatchPreGroup(
 			)
 			for _, member := range finalGroup.members {
 				member := member
-				executionTasks = append(executionTasks, sink.guardTask(func() {
+				executionTasks = append(executionTasks, finalGroup.executionTask(ctx, sink, func(ctx context.Context) {
 					executeRawPreparedMember(ctx, member, sink)
 				}))
 			}
@@ -527,14 +619,14 @@ func executeRawESBatchPreGroup(
 				stats.singleCount++
 				metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerSingle)
 				metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerPackedSingle)
-				executionTasks = append(executionTasks, sink.guardTask(func() {
+				executionTasks = append(executionTasks, finalGroup.executionTask(ctx, sink, func(ctx context.Context) {
 					executeRawPreparedMember(ctx, member, sink)
 				}))
 				continue
 			}
 			stats.batchCount++
 			metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerBatch)
-			executionTasks = append(executionTasks, sink.guardTask(func() {
+			executionTasks = append(executionTasks, finalGroup.executionTask(ctx, sink, func(ctx context.Context) {
 				results, batchErr := finalGroup.members[0].es.ExecuteRawBatch(
 					ctx, batch, settings.maxConcurrentSearches,
 				)
@@ -560,14 +652,13 @@ func executeRawESBatchPreGroup(
 			stats.singleCount++
 			metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerSingle)
 			metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerBodyOversized)
-			executionTasks = append(executionTasks, sink.guardTask(func() {
+			executionTasks = append(executionTasks, finalGroup.executionTask(ctx, sink, func(ctx context.Context) {
 				executeRawPreparedMember(ctx, member, sink)
 			}))
 		}
 	}
 
-	dispatcher.run(executionTasks)
-	return stats
+	return executionTasks, stats
 }
 
 func stableRawESBatchQueries(queries metadata.QueryList) metadata.QueryList {

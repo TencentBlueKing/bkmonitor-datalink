@@ -233,6 +233,7 @@ func (evaluator *Evaluator) evaluateNamedInputLevel(
 	truths := make([]algorithmTruth, 0, len(level.algorithms))
 	var firstUnavailable namedAlgorithmResult
 	var evidence ThresholdEvidence
+	decidingEvidenceSet := false
 	var fallbackEvidence ThresholdEvidence
 	var fallbackEvidenceSet bool
 	var evaluations uint64
@@ -306,10 +307,16 @@ func (evaluator *Evaluator) evaluateNamedInputLevel(
 		default:
 			return LevelFact{}, evaluations, errors.New("alarmd detect: named-input detector returned an invalid result")
 		}
+		// The evidence is the algorithm that decided the level - the first
+		// match of an OR, the first miss of an AND - as the standard path
+		// keeps it. Every later algorithm sees the level still decided, and
+		// letting it write again put a later algorithm's evidence on the
+		// level: a normal one on an anomalous OR, a matched one on a normal
+		// AND.
 		matched, determined := combineAlgorithmTruth(level.compiled.Connector(), truths)
-		if determined && ((level.compiled.Connector() == contract.LevelConnectorAND && !matched) ||
+		if !decidingEvidenceSet && determined && ((level.compiled.Connector() == contract.LevelConnectorAND && !matched) ||
 			(level.compiled.Connector() == contract.LevelConnectorOR && matched)) {
-			evidence = currentEvidence
+			evidence, decidingEvidenceSet = currentEvidence, true
 		}
 	}
 	matched, determined := combineAlgorithmTruth(level.compiled.Connector(), truths)

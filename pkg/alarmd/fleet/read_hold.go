@@ -20,10 +20,14 @@ type ReadHoldFacts struct {
 	// TransitionMillis the part of Millis a Plan's transition (or a
 	// predecessor's bound standing in for an unread hold) froze above it,
 	// which falls back by itself and suggests no time_delay.
-	BaseMillis          int64  `json:"base_ms"`
-	TransitionMillis    int64  `json:"transition_ms,omitempty"`
-	ArrivalAgeMillis    int64  `json:"arrival_age_ms"`
-	LimitMillis         int64  `json:"limit_ms"`
+	BaseMillis       int64 `json:"base_ms"`
+	TransitionMillis int64 `json:"transition_ms,omitempty"`
+	ArrivalAgeMillis int64 `json:"arrival_age_ms"`
+	LimitMillis      int64 `json:"limit_ms"`
+	// AtLimit says the group is held at its limit with its data still
+	// landing past it (readhold Record.AtLimitHeld): false once it has been
+	// quiet for its bar and is tried lower, and once trials lower the hold
+	// below the limit.
 	AtLimit             bool   `json:"at_limit"`
 	RaisedAfterLowering uint64 `json:"raised_after_lowering"`
 	// NoWholeWindowArrival is the samples classed window read early in
@@ -49,6 +53,12 @@ type ReadHoldFacts struct {
 	// a Slot is ready, which the suggestion was reckoned net of: why the
 	// time_delay suggested can be less than the arrival age.
 	SettlingWaitSeconds int64 `json:"settling_wait_seconds,omitempty"`
+	// QueryDurationMillis is how long the group's query takes as its record
+	// keeps it for a successor - the owner's measured whole first read,
+	// rounded up to the second - and QueryDurationAtMillis when it was
+	// written, Unix milliseconds; zero while the record keeps none.
+	QueryDurationMillis   int64 `json:"query_duration_ms,omitempty"`
+	QueryDurationAtMillis int64 `json:"query_duration_at_ms,omitempty"`
 }
 
 func withinReadHoldBudget(facts map[string]ReadHoldFacts, budget int) map[string]ReadHoldFacts {

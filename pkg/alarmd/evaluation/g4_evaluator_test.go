@@ -387,3 +387,16 @@ func g4Record(sourceTime int64, value string, dimensions map[string]json.RawMess
 		BusinessID: "2", DimensionIdentity: contract.DimensionIdentityV2{Digest: strings.Repeat("c", 64)}, Values: map[string]json.RawMessage{"value": json.RawMessage(value)},
 		Dimensions: dimensions, ReceivedTime: sourceTime}
 }
+
+// evaluateSeries is evaluateSeriesWith for a series with no host overlay and
+// no named outputs to record.
+func (e *Evaluator) evaluateSeries(
+	ctx context.Context,
+	header execution.InternalExecutionHeader,
+	inputs []execution.SeriesEvaluationInputRequest,
+	stateResult execution.StatePreflightResult,
+	gaps execution.GapLoadResult,
+	openAlerts contract.OpenAlertSet,
+) (execution.PlanEvaluationResult, error) {
+	return e.evaluateSeriesWith(ctx, header, inputs, stateResult, gaps, openAlerts, nil, nil)
+}

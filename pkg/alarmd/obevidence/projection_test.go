@@ -215,6 +215,16 @@ func TestACredentialNamedKeyIsKnownByItsName(t *testing.T) {
 		"password": true, "db_passwd": true, "webhook_secret": true, "api_token": true, "Authorization": true, "cookie": true,
 		"credentials": true, "headers": true, "private_key": true, "basic_auth": true, "pass": true, "passphrase": true, "cert": true, "apiKey": true, "access_key_id": true, "signature": true, "session_id": true,
 		"cw_calendars": false, "filter_dict": false, "runtime_config": false, "global_scope": false, "bk_biz_ids": false,
+		// Whole segments, not substrings: none of these holds a credential.
+		"status_setter": false, "offset": false, "reset_window": false, "reset_count": false, "bypass": false,
+		"author": false, "concert_hall": false, "headroom": false, "sessionless": false, "tokenizer_name": false,
+		"metric_key": false, "routing_key": false, "cache_keys": false,
+		// And the credentials themselves, in the forms a writer uses.
+		"secret": true, "token": true, "secret_key": true, "client_secret": true, "authToken": true, "requirepass": true,
+		"dbpassword": true, "x_api_key": true,
+		// Acronym-led camelCase and run-together names.
+		"SSLCert": true, "HTTPHeader": true, "XApiKey": true, "APIKey": true, "JWTSecret": true, "DBPassword": true,
+		"basicauth": true, "oauth": true, "redispwd": true, "HTTPServerName": false, "URLPath": false,
 	} {
 		if got := credentialFieldName(key); got != want {
 			t.Errorf("credentialFieldName(%q) = %v, want %v", key, got, want)

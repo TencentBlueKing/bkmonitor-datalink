@@ -116,66 +116,12 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 	values.AggregateFunc = aggregateFunc
 	values.TimeInterval = timeInterval
 	values.WhereCondition = whereCondition
-	// 参数随当次丰富结果冻结，KAC 通过原来源插件取数，不在读取时重建历史查询。
-	values.MetricQueryParams = buildMetricQueryParams(projection, strategy, queryDimensions, metricResourceBusiness(scope))
+	// 所有来源均由消费侧组织指标查询；历史已存参数继续由解码和 Hook 投影承接。
 	value, encodeErr := metricResultValue(scope, values)
 	if encodeErr != nil {
 		return enrich.ProcessorResult{}, encodeErr
 	}
 	return enrich.ProcessorResult{Status: status, Value: value, Diagnostics: diagnostics}, nil
-}
-
-// 取数附带资源已确认的业务；来源空间不能充当资源业务。
-func metricResourceBusiness(scope *enrich.Scope) int64 {
-	if id := bizIDFromResource(scope.Context().Resource.Values); id > 0 {
-		return id
-	}
-	return enrich.OptionalBusinessID(scope.Facts())
-}
-
-type metricQueryParams struct {
-	Expression   string                    `json:"expression"`
-	Functions    any                       `json:"functions"`
-	QueryConfigs []metricQueryConfig       `json:"query_configs"`
-	Function     metricQueryParamFunctions `json:"function"`
-	BKBizID      int64                     `json:"bk_biz_id"`
-	FieldTag     models.CWStrategyFieldTag `json:"field_tag,omitempty"`
-}
-
-type metricQueryParamFunctions struct {
-	TimeCompare []string `json:"time_compare"`
-}
-
-type metricQueryConfig struct {
-	CustomEventName string                 `json:"custom_event_name"`
-	QueryString     string                 `json:"query_string"`
-	IndexSetID      int64                  `json:"index_set_id"`
-	BKBizID         int64                  `json:"bk_biz_id"`
-	DataSourceLabel string                 `json:"data_source_label"`
-	DataTypeLabel   string                 `json:"data_type_label"`
-	GroupBy         []string               `json:"group_by"`
-	Table           string                 `json:"table"`
-	PromQL          string                 `json:"promql"`
-	Metrics         []metricQueryMetric    `json:"metrics"`
-	Interval        int64                  `json:"interval"`
-	Where           []metricQueryCondition `json:"where"`
-	TimeField       any                    `json:"time_field"`
-	ExtendFields    any                    `json:"extend_fields"`
-	FilterDict      map[string]any         `json:"filter_dict"`
-	Functions       any                    `json:"functions"`
-}
-
-type metricQueryMetric struct {
-	Field  string `json:"field"`
-	Method string `json:"method"`
-	Alias  string `json:"alias"`
-}
-
-type metricQueryCondition struct {
-	Condition string `json:"condition,omitempty"`
-	Key       string `json:"key"`
-	Method    string `json:"method"`
-	Value     any    `json:"value"`
 }
 
 // metricIdentity 返回冻结指标身份使用的结果表与字段。
@@ -194,64 +140,6 @@ func metricUniqueID(table, field string) string {
 		return ""
 	}
 	return table + "." + field
-}
-
-func buildMetricQueryParams(
-	projection models.StrategyItemProjection,
-	strategy models.CWStrategy,
-	dimensions domain.DimensionMap,
-	bizID int64,
-) metricQueryParams {
-	params := metricQueryParams{
-		Expression: projection.Expression, Functions: rawJSONValue(projection.Functions, []any{}),
-		QueryConfigs: make([]metricQueryConfig, 0, len(projection.QueryConfigs)),
-		Function:     metricQueryParamFunctions{TimeCompare: []string{}}, BKBizID: bizID,
-	}
-	// 单指标的别名只引用自身，不需要表达式求值。KMC 普通指标接口拒绝非空
-	// expression；只有无函数的恒等引用可以省略，不能丢弃计算或衍生语义。
-	if len(projection.QueryConfigs) == 1 && strategy.Spec.FieldTag != models.CWStrategyFieldTagDerivedMetric {
-		query := projection.QueryConfigs[0]
-		alias := query.Alias
-		// PromQL 声明不带 alias；发布端默认使用 A。只识别该已确认的恒等引用，
-		// 不能把任意非空表达式当成别名，否则会丢失真实计算。
-		if alias == "" && query.IsPromQL() {
-			alias = "A"
-		}
-		if alias != "" && strings.TrimSpace(params.Expression) == alias &&
-			!hasFunctions(projection.Functions) && !hasFunctions(query.Functions) {
-			params.Expression = ""
-		}
-	}
-	if strategy.Kind != models.CWStrategyKindCloud && strategy.Spec.FieldTag == models.CWStrategyFieldTagDerivedMetric {
-		params.FieldTag = strategy.Spec.FieldTag
-	}
-	for _, query := range projection.QueryConfigs {
-		// PromQL 由完整表达式表达取数范围和过滤条件：where、group_by 和 metrics
-		// 必须留空，不能从事件维度或冒号段派生，否则会与表达式冲突。
-		if query.IsPromQL() {
-			params.QueryConfigs = append(params.QueryConfigs, metricQueryConfig{
-				CustomEventName: query.CustomEventName, QueryString: query.QueryString, IndexSetID: query.IndexSetID,
-				BKBizID: bizID, DataSourceLabel: query.DataSourceLabel, DataTypeLabel: query.DataTypeLabel,
-				GroupBy: []string{}, Table: query.ResultTableID, PromQL: query.PromQL,
-				Metrics: []metricQueryMetric{}, Interval: query.AggregatePeriod, Where: []metricQueryCondition{},
-				TimeField: rawJSONValue(query.TimeField, nil), ExtendFields: jsonObjectValue(query.ExtendFields),
-				FilterDict: map[string]any{}, Functions: rawJSONValue(query.Functions, []any{}),
-			})
-			continue
-		}
-		selectedDimensions := selectQueryDimensions(query, dimensions)
-		translated := translateMetricQuery(query, selectedDimensions)
-		params.QueryConfigs = append(params.QueryConfigs, metricQueryConfig{
-			CustomEventName: query.CustomEventName, QueryString: query.QueryString, IndexSetID: query.IndexSetID,
-			BKBizID: bizID, DataSourceLabel: query.DataSourceLabel, DataTypeLabel: query.DataTypeLabel,
-			GroupBy: intersectDimensions(query.AggregateBy, selectedDimensions), Table: translated.table,
-			PromQL: query.PromQL, Metrics: []metricQueryMetric{{Field: translated.field, Method: query.AggregateMethod, Alias: query.Alias}},
-			Interval: query.AggregatePeriod, Where: mergeQueryConditions(query.AggregateFilter, selectedDimensions),
-			TimeField: rawJSONValue(query.TimeField, nil), ExtendFields: jsonObjectValue(query.ExtendFields),
-			FilterDict: translated.filterDict, Functions: rawJSONValue(query.Functions, []any{}),
-		})
-	}
-	return params
 }
 
 // 指标目录策略只冻结目录身份，resolved 策略中的物理表可以为空或过期。
@@ -307,43 +195,6 @@ func resolveMetricQueryLocations(ctx context.Context, scope *enrich.Scope, strat
 		query.MetricField = metadata.PhysicalField
 	}
 	return strategy, projection, nil
-}
-
-type translatedMetricQuery struct {
-	field      string
-	table      string
-	filterDict map[string]any
-}
-
-func translateMetricQuery(query models.StrategyQueryConfig, dimensions map[string]any) translatedMetricQuery {
-	if query.DataSourceLabel == rules.DataSourcePrometheus {
-		// PromQL 的取数条件已在表达式内，不翻译维度、也不改写表名与字段。
-		return translatedMetricQuery{field: query.MetricField, table: query.ResultTableID, filterDict: map[string]any{}}
-	}
-	translated := translatedMetricQuery{field: query.MetricField, table: query.ResultTableID, filterDict: map[string]any{}}
-	switch {
-	case query.DataSourceLabel == rules.DataSourceBKFTA:
-		translated.field = query.AlertName
-		translated.table = rules.ResultTableEvent
-	case query.DataSourceLabel == rules.DataSourceBKMonitor && query.DataTypeLabel == rules.DataTypeLog:
-		if objectID, objectFound := dimensions[rules.FieldBKObjID]; objectFound {
-			if instanceID, instanceFound := dimensions[rules.FieldBKInstID]; instanceFound {
-				delete(dimensions, rules.FieldBKObjID)
-				delete(dimensions, rules.FieldBKInstID)
-				dimensions[fmt.Sprintf("bk_%v_id", objectID)] = fmt.Sprint(instanceID)
-			}
-		}
-		translated.field = rules.MetricFieldEventCount
-	case query.DataSourceLabel == rules.DataSourceCustom && query.DataTypeLabel == rules.DataTypeEvent:
-		translated.field = rules.MetricFieldIndex
-		translated.filterDict[rules.FieldEventName] = query.CustomEventName
-	case query.DataSourceLabel == rules.DataSourceBKMonitor && query.DataTypeLabel == rules.DataTypeAlert:
-		translated.field = fmt.Sprint(query.BKStrategyID)
-		translated.table = rules.ResultTableAlert
-	case query.DataSourceLabel == rules.DataSourceBKLogSearch && query.DataTypeLabel == rules.DataTypeLog:
-		translated.field = query.QueryString
-	}
-	return translated
 }
 
 // promQLSeriesPattern 同时识别普通指标和冒号分段指标，防止混合表达式遗漏序列。
@@ -510,86 +361,6 @@ func promQLMetricIdentity(query models.StrategyQueryConfig) (string, string) {
 	return table, field
 }
 
-func selectQueryDimensions(query models.StrategyQueryConfig, dimensions domain.DimensionMap) map[string]any {
-	available := make(map[string]any, len(dimensions)+2)
-	for key, value := range dimensions {
-		if key == rules.FieldBKHostID || key == rules.FieldNoDataDimension {
-			continue
-		}
-		available[strings.TrimPrefix(key, rules.DimensionTagPrefix)] = rules.ScalarValue(value)
-	}
-	if strings.HasPrefix(query.ResultTableID, rules.SystemTablePrefix) {
-		if value, exists := available[rules.FieldIP]; exists {
-			available[rules.FieldBKTargetIP] = value
-		}
-		if value, exists := available[rules.FieldBKCloudID]; exists {
-			available[rules.FieldBKTargetCloudID] = value
-		}
-	}
-
-	selected := make(map[string]any)
-	for _, key := range query.AggregateBy {
-		if strings.HasPrefix(key, rules.TaskIndexPrefix) {
-			continue
-		}
-		value, exists := available[key]
-		if exists {
-			selected[key] = value
-		}
-	}
-	return selected
-}
-
-func intersectDimensions(aggregateBy []string, dimensions map[string]any) []string {
-	groupBy := make([]string, 0, len(aggregateBy))
-	for _, key := range aggregateBy {
-		if _, exists := dimensions[key]; exists {
-			groupBy = append(groupBy, key)
-		}
-	}
-	return groupBy
-}
-
-func mergeQueryConditions(raw json.RawMessage, dimensions map[string]any) []metricQueryCondition {
-	var conditions []metricQueryCondition
-	_ = json.Unmarshal(raw, &conditions)
-	keys := make([]string, 0, len(dimensions))
-	for key := range dimensions {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		value := dimensions[key]
-		conditions = append(conditions, metricQueryCondition{Condition: rules.ConditionAnd, Key: key, Method: rules.ConditionEqual, Value: []any{value}})
-	}
-	if len(conditions) != 0 {
-		conditions[0].Condition = ""
-	}
-	return conditions
-}
-
-func rawJSONValue(raw json.RawMessage, fallback any) any {
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return fallback
-	}
-	var value any
-	if json.Unmarshal(raw, &value) != nil {
-		return fallback
-	}
-	return value
-}
-
-func jsonObjectValue(value domain.JSONObject) any {
-	if value == nil {
-		return map[string]any{}
-	}
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return map[string]any{}
-	}
-	return rawJSONValue(encoded, map[string]any{})
-}
-
 func metricResultValue(scope *enrich.Scope, values models.MetricValues) (domain.JSONObject, error) {
 	scope.Context().Metric.Set(values)
 	return scope.Context().Metric.JSONObject()
@@ -754,7 +525,7 @@ func cleanMetricName(
 	}
 	// Projection 对应单个监控项；多条 query 是该项表达式的输入。
 	// 沿用旧 KAC 的首查询字段作为兼容指标名，完整取数语义由
-	// metric_query_params 中的全部 query、别名和表达式表达。
+	// 消费侧的查询逻辑承接；Linkd 不再生成 metric_query_params。
 	return query.MetricField
 }
 

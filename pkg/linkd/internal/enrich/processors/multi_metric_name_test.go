@@ -10,7 +10,7 @@ import (
 	"linkd/internal/enrich/models"
 )
 
-func TestMultiQueryMetricNameKeepsLegacyFirstField(t *testing.T) {
+func TestExternalMultiQueryMetricNameKeepsLegacyFirstField(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, want                string
@@ -44,6 +44,8 @@ func TestMultiQueryMetricNameKeepsLegacyFirstField(t *testing.T) {
 			reader.strategy.Spec.StrategyItem.QueryConfigs = queries
 			before, _ := json.Marshal(reader.strategy)
 			event := processorBaseTargetAlert(t, domain.DimensionMap{})
+			// 外部来源同样不再生成指标查询参数。
+			event.EventSourceID = "external"
 			original := event.Clone()
 			scope, err := enrich.NewScope(event, enrich.Sources{CWStrategy: reader, Metric: reader})
 			if err != nil {
@@ -60,23 +62,8 @@ func TestMultiQueryMetricNameKeepsLegacyFirstField(t *testing.T) {
 			if values.MetricName != tc.want || values.DisplayName != "CPU使用率+CPU空闲率" {
 				t.Fatalf("wrong compatibility metric field or display name: %+v", values)
 			}
-			var params metricQueryParams
-			raw, _ := json.Marshal(values.MetricQueryParams)
-			if json.Unmarshal(raw, &params) != nil || len(params.QueryConfigs) != 2 || params.Expression != "A+B" {
-				t.Fatalf("multi-query semantics lost: %s", raw)
-			}
-			for i, query := range queries {
-				got := params.QueryConfigs[i]
-				functions := query.Functions
-				if len(functions) == 0 {
-					functions = tc.functions
-				}
-				if got.Metrics[0].Alias != query.Alias || got.Metrics[0].Field != query.MetricField || !reflect.DeepEqual(got.Functions, rawJSONValue(functions, []any{})) {
-					t.Fatalf("query member changed: %+v", got)
-				}
-			}
-			if !reflect.DeepEqual(params.Functions, rawJSONValue(tc.functions, []any{})) {
-				t.Fatalf("item functions changed: %+v", params)
+			if values.MetricQueryParams != nil {
+				t.Fatal("multi-metric queries must be constructed by consumers")
 			}
 			after, _ := json.Marshal(reader.strategy)
 			if !reflect.DeepEqual(before, after) || !reflect.DeepEqual(original, event) {

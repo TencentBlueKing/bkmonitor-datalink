@@ -20,7 +20,7 @@ import (
 )
 
 // StrategyQueryConfig 是鲸眼声明式策略中单条 query_config 的类型化读取视图。
-// Raw 保留完整配置，供 metric_query_params 在不回查蓝鲸策略历史的情况下透传扩展字段。
+// Raw 保留发布材料中的原始配置，供执行快照绑定和读取校验使用。
 type StrategyQueryConfig struct {
 	ID              int64             `json:"id"`
 	CustomEventName string            `json:"custom_event_name"`

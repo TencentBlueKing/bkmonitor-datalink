@@ -302,20 +302,8 @@ func TestPromQLPublishedSnapshotEnrichChain(t *testing.T) {
 		metricValues.TimeInterval != float64(60) {
 		t.Fatalf("metric=%#v", metricValues)
 	}
-	params, err := json.Marshal(metricValues.MetricQueryParams)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var queryParams metricQueryParams
-	if err := json.Unmarshal(params, &queryParams); err != nil {
-		t.Fatal(err)
-	}
-	expression := fixture.RuntimeConfig.Spec.StrategyItem.QueryConfigs[0].PromQL
-	if queryParams.Expression != "" || len(queryParams.QueryConfigs) != 1 || queryParams.QueryConfigs[0].PromQL != expression ||
-		queryParams.QueryConfigs[0].DataSourceLabel != rules.DataSourcePrometheus ||
-		len(queryParams.QueryConfigs[0].Metrics) != 0 || len(queryParams.QueryConfigs[0].Where) != 0 ||
-		len(queryParams.QueryConfigs[0].GroupBy) != 0 {
-		t.Fatalf("params=%s", params)
+	if metricValues.MetricQueryParams != nil {
+		t.Fatal("new builtin PromQL parameters must be constructed by KAC")
 	}
 	display := payload.Processors[2][rules.DisplayProcessor]
 	var displayValues models.DisplayValues
@@ -592,16 +580,8 @@ func TestPromQLMixedSeriesEnrich(t *testing.T) {
 	if metric.Unit != "" || metric.MetricName != "" || metric.ResultTableID != "" || metric.MetricUniqueID != "" || metric.DisplayName != strategy.Spec.Name || len(reader.metricQueries) != 0 {
 		t.Fatalf("metric=%#v catalog=%#v", metric, reader.metricQueries)
 	}
-	encoded, err := json.Marshal(metric.MetricQueryParams)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var params metricQueryParams
-	if err := json.Unmarshal(encoded, &params); err != nil {
-		t.Fatal(err)
-	}
-	if params.Expression != "" || len(params.QueryConfigs) != 1 || params.QueryConfigs[0].PromQL != expression {
-		t.Fatalf("query=%s", encoded)
+	if metric.MetricQueryParams != nil {
+		t.Fatal("new builtin PromQL parameters must be constructed by KAC")
 	}
 	var display models.DisplayValues
 	if err := json.Unmarshal(mustRawObject(t, payload.Processors[2][rules.DisplayProcessor].Value), &display); err != nil {

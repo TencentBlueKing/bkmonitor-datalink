@@ -17,10 +17,10 @@ import (
 	"linkd/internal/enrich/models"
 )
 
-// TestMetricQueryLiveAlert 显式启用后，用真实告警维度和当前已发布策略在内存中
+// TestExternalMetricQueryLiveAlert 显式启用后，仅为外部来源在内存中
 // 生成查询参数，再向 KMC 发送只读指标请求。连接与 Cookie 只从 stdin 读取，
 // 不写文件、告警或消息；普通单测不依赖外部服务。
-func TestMetricQueryLiveAlert(t *testing.T) {
+func TestExternalMetricQueryLiveAlert(t *testing.T) {
 	if os.Getenv("LINKD_METRIC_QUERY_LIVE") != "1" {
 		t.Skip("requires explicit test environment and transient stdin credentials")
 	}
@@ -33,6 +33,9 @@ func TestMetricQueryLiveAlert(t *testing.T) {
 	}
 	if err := json.NewDecoder(io.LimitReader(os.Stdin, 1<<20)).Decode(&input); err != nil {
 		t.Fatal("invalid bounded live input")
+	}
+	if input.Event.EventSourceID == "built_in_bk" {
+		t.Fatal("builtin query migration must be validated through the KAC metric endpoint")
 	}
 	if input.Cookie == "" {
 		t.Fatal("transient authentication cookie is required")

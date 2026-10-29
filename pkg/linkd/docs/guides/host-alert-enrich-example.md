@@ -166,7 +166,7 @@ Kafka 发布时间时使用 `published_at`，以区分消息生产时间和传�
 
 `values` 不参与 fingerprint，也不替代 `dimensions`、`labels` 或 `extra_data`。
 当前数值快照保存在 Event 中，Alert 没有 `values` 或 `evaluations` 字段；本例的 Metric Processor
-仍通过策略和指标库生成指标信息及查询参数，Display Processor 使用传入的 `content`。
+仍通过策略和指标库生成指标信息，不再生成取数参数，Display Processor 使用传入的 `content`。
 
 ## 3. EventSource 配置
 
@@ -583,7 +583,7 @@ Strategy 输出沿用 Kafka labels 中的策略身份字段名：
 }
 ```
 
-`metric_query_params` 还会包含平台查询配置转换后的 `query_configs`、`function.time_compare` 和 `bk_biz_id`，这里省略展开内容。
+历史已存的 `metric_query_params` 可包含 `query_configs`、`function.time_compare` 和 `bk_biz_id`。所有来源均不再由 Linkd 生成参数；内置告警改由 KAC 按准确 Event 和执行历史组装查询，外部来源由所属插件承接；须先完成新版 KAC 验收再部署此配套改动。
 
 ### 7.5 Source
 

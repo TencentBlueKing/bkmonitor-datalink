@@ -14,11 +14,11 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"linkd/internal/domain"
 	"linkd/internal/enrich"
-	"linkd/internal/enrich/models"
 	"linkd/internal/enrich/rules"
 )
 
@@ -97,13 +97,13 @@ func TestNoDataIdentityDoesNotBecomeMetricFilter(t *testing.T) {
 	t.Parallel()
 	dims := domain.DimensionMap{"__NO_DATA_DIMENSION__": domain.NewBoolScalar(true), "model_id": domain.NewStringScalar("cw-Host"), "model_inst_id": domain.NewStringScalar("101"), "device": domain.NewStringScalar("cpu-total")}
 	original := dims.Clone()
-	query := models.StrategyQueryConfig{AggregateBy: []string{"model_id", "model_inst_id", "device"}}
-	selected := selectQueryDimensions(query, metricDimensions(dims))
-	if len(selected) != 1 || selected["device"] != "cpu-total" || cleanWhereCondition(metricDimensions(dims)) != "device='cpu-total'" || !reflect.DeepEqual(dims, original) {
+	selected := metricDimensions(dims)
+	if cleanWhereCondition(selected) != "device='cpu-total'" || !reflect.DeepEqual(dims, original) {
 		t.Fatalf("selected=%#v dimensions=%#v", selected, dims)
 	}
 	dims["__NO_DATA_DIMENSION__"] = domain.NewBoolScalar(false)
-	if len(selectQueryDimensions(query, metricDimensions(dims))) != 3 {
+	where := cleanWhereCondition(metricDimensions(dims))
+	if !strings.Contains(where, "model_id='cw-Host'") || !strings.Contains(where, "model_inst_id='101'") {
 		t.Fatal("ordinary metric identity dimensions were removed")
 	}
 }

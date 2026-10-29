@@ -97,6 +97,48 @@ func TestConvertMessageMapsAlertAndEnrichToKACAlarm(t *testing.T) {
 	}
 }
 
+func TestNewBuiltinWithoutQueryParametersRetainsExecutionReference(t *testing.T) {
+	t.Parallel()
+	alert := testAlert()
+	alert.Enrich["processors"] = json.RawMessage(strings.ReplaceAll(
+		string(alert.Enrich["processors"]), `"metric_query_params":{"expression":"A"},`, "",
+	))
+	alert.Enrich["processors"] = json.RawMessage(strings.ReplaceAll(
+		string(alert.Enrich["processors"]), `"url":"/strategy/7",`, `"strategy_kind":"Strategy","is_default":true,`,
+	))
+	before := alert.Clone()
+	message, err := CompatibilityMessage(alert, kacLevel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.MetricQueryParams != "{}" || message.AlarmID != alert.AlertID || message.EventID != alert.TriggerEventID || message.MetricName != "usage" {
+		t.Fatalf("metric fields or alert identity changed: %+v", message)
+	}
+	encoded, err := json.Marshal(message.FieldExtraInfo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var extra struct {
+		StrategyName struct {
+			Context struct {
+				Tenant   string `json:"bk_tenant_id"`
+				ID       int64  `json:"strategy_set_split_record_id"`
+				Revision int64  `json:"strategy_set_split_record_version"`
+			} `json:"strategy_context"`
+		} `json:"strategy_name"`
+	}
+	if err := json.Unmarshal(encoded, &extra); err != nil {
+		t.Fatal(err)
+	}
+	context := extra.StrategyName.Context
+	if context.Tenant != "tenant-1" || context.ID != 123 || context.Revision != 1 {
+		t.Fatalf("execution reference lost: %s", encoded)
+	}
+	if !reflect.DeepEqual(alert, before) {
+		t.Fatal("query migration rewrote the saved alert")
+	}
+}
+
 func TestKACPayloadOmitsAbsentContextFields(t *testing.T) {
 	alert := testAlert()
 	message, err := convertMessage(lifecycle.FinalHookInput{

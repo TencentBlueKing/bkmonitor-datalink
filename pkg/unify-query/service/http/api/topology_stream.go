@@ -54,12 +54,6 @@ func (r *topologyResponse) JSONSegments() ([][]byte, error) {
 	return append(parts, []byte("]}")), nil
 }
 
-// marshalLargeTopologySnapshots encodes each frame before response writing,
-// preserving the ability to report an encoding failure as an HTTP error.
-func marshalLargeTopologySnapshotsContext(ctx context.Context, item cmdb.SharedTopologyResponseData) ([][]byte, int, error) {
-	return marshalTopologySnapshotItem(ctx, item, false)
-}
-
 // marshalOwnedTopologySnapshots consumes private frame headers handed over by
 // the handler. It never mutates maps or the public model's original headers.
 func marshalOwnedTopologySnapshots(ctx context.Context, item cmdb.SharedTopologyResponseData) ([][]byte, int, error) {

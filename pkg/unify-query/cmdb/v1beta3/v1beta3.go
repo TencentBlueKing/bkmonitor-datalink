@@ -43,7 +43,7 @@ type Model struct {
 }
 
 // GetModel 返回 v1beta3 HTTP handler 使用的服务模型。
-func GetModel(ctx context.Context) (cmdb.CMDB, error) {
+func GetModel(ctx context.Context) (*Model, error) {
 	modelMutex.Lock()
 	defer modelMutex.Unlock()
 	if defaultModel == nil {
@@ -336,41 +336,6 @@ func inferSourceTypeFromInfo(req *QueryRequest, provider SchemaProvider) (Resour
 		return "", fmt.Errorf("cannot infer source_type from source_info %v", req.SourceInfo)
 	}
 	return best, nil
-}
-
-// adjustMaxHopsForUnconstrainedPath 允许服务端发现超过历史两跳默认值的路径，
-// 普通模式执行 MaxAllowedHops 上限，YOLO 搜索全部有限 schema 路径。
-func adjustMaxHopsForUnconstrainedPath(ctx context.Context, req *QueryRequest, provider SchemaProvider) error {
-	if req == nil || provider == nil || len(req.PathResource) > 0 || req.SourceType == "" || req.TargetType == "" || req.SourceType == req.TargetType {
-		return nil
-	}
-	if !yoloMode && req.MaxHops >= MaxAllowedHops {
-		return nil
-	}
-	pathFinder := NewPathFinder(
-		WithAllowedCategories(req.AllowedRelationTypes...),
-		WithDynamicDirection(req.DynamicRelationDirection),
-		WithMaxHops(effectivePathSearchMaxHops()),
-		WithSchemaProvider(provider),
-		WithNamespace(req.SchemaNamespace()),
-	)
-	paths, err := pathFinder.FindAllPathsContext(ctx, req.SourceType, req.TargetType, nil)
-	if err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return nil
-	}
-	for _, path := range paths {
-		hops := len(path.Steps) - 1
-		if hops > req.MaxHops {
-			req.MaxHops = hops
-		}
-	}
-	if !yoloMode && req.MaxHops > MaxAllowedHops {
-		req.MaxHops = MaxAllowedHops
-	}
-	return nil
 }
 
 func validateSchemaProvider(provider SchemaProvider, namespace string, resourceTypes ...ResourceType) error {

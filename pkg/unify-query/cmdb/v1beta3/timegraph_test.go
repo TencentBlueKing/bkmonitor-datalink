@@ -49,11 +49,12 @@ func TestTimeGraphFindShortestPathAcrossTimestamps(t *testing.T) {
 
 func TestBuildRelationsFromPathsDeduplicatesEdges(t *testing.T) {
 	r := &Model{}
-	relations := r.buildRelationsFromPaths([][]cmdb.Resource{
+	paths := [][]cmdb.Resource{
 		{"pod", "node", "system"},
 		{"pod", "node", "system"},
 		{"pod", "service"},
-	})
+	}
+	relations := r.buildRelationsFromRelationPathsForNamespace("", cmdb.RelationPathsFromResourcePaths(paths))
 	if len(relations) != 3 {
 		t.Fatalf("expected 3 unique relations, got %d: %+v", len(relations), relations)
 	}

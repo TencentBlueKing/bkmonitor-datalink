@@ -75,3 +75,11 @@ func TestOwnedSnapshotEncodingPreservesPublicInput(t *testing.T) {
 		}
 	}
 }
+
+func marshalLargeTopologySnapshotsContext(ctx context.Context, item cmdb.SharedTopologyResponseData) ([][]byte, int, error) {
+	return marshalTopologySnapshotItem(ctx, item, false)
+}
+
+func marshalRepeatedTopologySnapshotsContext(ctx context.Context, snapshots []cmdb.SharedTopologySnapshot) ([][]byte, error) {
+	return marshalTopologySnapshotFrames(ctx, snapshots, false)
+}

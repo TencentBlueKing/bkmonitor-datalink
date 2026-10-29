@@ -46,10 +46,6 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	grid, err = NewTopologyGrid(grid.Timestamps)
-	if err != nil {
-		return nil, err
-	}
 	q.lock.RLock()
 	defer q.lock.RUnlock()
 	if q.shared == nil {
@@ -75,18 +71,18 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 		span.Set("expanded-budget-elements", budget.elements)
 		span.Set("expanded-budget-bytes", budget.bytes)
 	}()
-	if err := budget.addCharge(int64(unsafe.Sizeof(cmdb.CompactTopology{}))+int64(len(grid.Timestamps))*8+int64(len(query.PartialTimestamps))*int64(unsafe.Sizeof(cmdb.CompactTopologyPartial{})), 0); err != nil {
+	if err := budget.addCharge(int64(unsafe.Sizeof(cmdb.CompactTopology{}))+int64(len(grid.timestamps))*8+int64(len(query.PartialTimestamps))*int64(unsafe.Sizeof(cmdb.CompactTopologyPartial{})), 0); err != nil {
 		return nil, err
 	}
 	if err := budget.checkBytes(0); err != nil {
 		return nil, err
 	}
 	result = &cmdb.CompactTopology{
-		Version: 1, Timestamps: append([]int64(nil), grid.Timestamps...),
+		Version: 1, Timestamps: append([]int64(nil), grid.timestamps...),
 		Nodes: make([]cmdb.CompactTopologyNode, 0), Edges: make([]cmdb.CompactTopologyEdge, 0),
 		Partial: make([]cmdb.CompactTopologyPartial, 0, len(query.PartialTimestamps)),
 	}
-	for i, ts := range grid.Timestamps {
+	for i, ts := range grid.timestamps {
 		if reason, ok := query.PartialTimestamps[ts]; ok {
 			result.Partial = append(result.Partial, cmdb.CompactTopologyPartial{Index: i, Reason: reason})
 		}

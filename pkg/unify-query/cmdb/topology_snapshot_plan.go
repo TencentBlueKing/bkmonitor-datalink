@@ -2,13 +2,6 @@
 // Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 package cmdb
 
-import "context"
-
-// SharedTopologySnapshotPlanner 是可选的自有快照编码能力。
-// 普通查询仍使用 QuerySharedTopology 及其逐帧预算。
-type SharedTopologySnapshotPlanner interface {
-	QuerySharedTopologySnapshotPlan(context.Context, SharedTopologyQuery) (SharedTopologySnapshotPlanResult, error)
-}
 type SharedTopologySnapshotPlanResult struct {
 	StartTime, EndTime int64
 	Step               string

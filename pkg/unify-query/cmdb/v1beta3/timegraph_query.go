@@ -45,10 +45,6 @@ type timeGraphForceSourceInfoKey struct{}
 
 type timeGraphQueryStageKey struct{}
 
-func withTimeGraphForceSourceInfo(ctx context.Context) context.Context {
-	return context.WithValue(ctx, timeGraphForceSourceInfoKey{}, true)
-}
-
 func timeGraphForceSourceInfo(ctx context.Context) bool {
 	force, _ := ctx.Value(timeGraphForceSourceInfoKey{}).(bool)
 	return force
@@ -138,26 +134,6 @@ func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured
 	return expr.String(), metadata.GetQueryParams(ctx), nil
 }
 
-// buildTimeGraphFromRelations 在一个查询时间窗口内，将关系指标装载到临时的
-// 内存 TimeGraph 中。
-func (m *Model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, relations []cmdb.Relation, lookBackDelta string) (*TimeGraph, error) {
-	return m.buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx, spaceUID, start, end, step, sourceType, sourceInfo, sourceExpandInfo, nil, relations, lookBackDelta, nil)
-}
-
-func (m *Model) buildTimeGraphFromRelationsWithQuery(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, relations []cmdb.Relation, lookBackDelta string, matrixQuery timeGraphMatrixQuery) (*TimeGraph, error) {
-	return m.buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx, spaceUID, start, end, step, sourceType, sourceInfo, sourceExpandInfo, nil, relations, lookBackDelta, matrixQuery)
-}
-
-// buildTimeGraphFromRelationsWithRootRelations 只允许 rootRelations 对应的第一跳
-// 关系使用 sourceInfo。该入口用于完整关系路径查询，避免把起点条件带到后续跳数。
-func (m *Model) buildTimeGraphFromRelationsWithRootRelations(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, rootRelations map[timeGraphRelationKey]struct{}, relations []cmdb.Relation, lookBackDelta string) (*TimeGraph, error) {
-	return m.buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx, spaceUID, start, end, step, sourceType, sourceInfo, sourceExpandInfo, rootRelations, relations, lookBackDelta, nil)
-}
-
-func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, rootRelations map[timeGraphRelationKey]struct{}, relations []cmdb.Relation, lookBackDelta string, matrixQuery timeGraphMatrixQuery) (graph *TimeGraph, err error) {
-	return m.buildTimeGraph(ctx, spaceUID, start, end, step, sourceType, sourceInfo, sourceExpandInfo, rootRelations, relations, lookBackDelta, matrixQuery, nil)
-}
-
 func validateTimeGraphPrecision(start, end time.Time, step time.Duration) error {
 	// QueryTs 和 VM 网关以整数秒传递时间戳与步长。
 	if start.Nanosecond() != 0 || end.Nanosecond() != 0 {
@@ -200,17 +176,13 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	_, storageSpan := trace.NewSpan(ctx, "timegraph-create-storage")
 	var tg *TimeGraph
 	if topologyGrid != nil {
-		tg, err = newSharedTimeGraph(config, *topologyGrid)
-		if err != nil {
-			storageSpan.End(&err)
-			return nil, err
-		}
+		tg = newSharedTimeGraph(config, *topologyGrid)
 	} else {
 		tg = NewTimeGraphWithConfig(config)
 	}
 	if deferred, _ := ctx.Value(timeGraphDeferredCompressionKey{}).(bool); tg.shared != nil && deferred {
 		tg.nodeBuilder.deferCompression = true
-		if len(tg.shared.grid.Timestamps) <= 64 {
+		if len(tg.shared.grid.timestamps) <= 64 {
 			tg.shared.wordEdges = make(map[sharedCompactEdgeKey]uint64)
 			tg.shared.wordPairs = make(map[timeGraphEdgeKey]uint64)
 		} else {
@@ -1032,11 +1004,6 @@ func queryTimeGraphInstant(ctx context.Context, instance tsdb.Instance, expr str
 	return vector, false, err
 }
 
-// buildRelationsFromPaths 从路径中提取相邻边，并对重复关系去重。
-func (m *Model) buildRelationsFromPaths(paths [][]cmdb.Resource) []cmdb.Relation {
-	return m.buildRelationsFromRelationPathsForNamespace("", cmdb.RelationPathsFromResourcePaths(paths))
-}
-
 func (m *Model) buildRelationsFromRelationPathsForNamespace(namespace string, paths []cmdb.RelationPath) []cmdb.Relation {
 	seen := make(map[timeGraphRelationKey]struct{})
 	relations := make([]cmdb.Relation, 0)
@@ -1336,7 +1303,7 @@ func (m *Model) QueryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 		ctx = context.WithValue(ctx, timeGraphLegacyPathKey{}, paths[0])
 	}
 
-	tg, err := m.buildTimeGraphFromRelationsWithRootRelations(ctx, spaceUID, start, end, step, sourceType, matcher, sourceExpandInfo, rootRelations, relations, lookBackDelta)
+	tg, err := m.buildTimeGraph(ctx, spaceUID, start, end, step, sourceType, matcher, sourceExpandInfo, rootRelations, relations, lookBackDelta, nil, nil)
 	if err != nil {
 		return nil, errors.WithMessage(err, "build time graph")
 	}

@@ -17,9 +17,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
-// TopologyGrid 是共享拓扑查询使用的规范化时间网格，时间点严格递增。
+// TopologyGrid 由 NewTopologyGrid 创建并持有不可变的递增时间点，内部直接复用。
 type TopologyGrid struct {
-	Timestamps []int64
+	timestamps []int64
 }
 
 // NewTopologyGrid 校验时间网格并复制输入切片，避免调用方后续修改查询状态。
@@ -36,7 +36,7 @@ func NewTopologyGrid(timestamps []int64) (TopologyGrid, error) {
 			return TopologyGrid{}, fmt.Errorf("topology time grid must be strictly increasing")
 		}
 	}
-	return TopologyGrid{Timestamps: append([]int64(nil), timestamps...)}, nil
+	return TopologyGrid{timestamps: append([]int64(nil), timestamps...)}, nil
 }
 
 // SharedTopologyQuery 控制共享拓扑的遍历和关系过滤。完整拓扑先遍历所有符合
@@ -105,8 +105,8 @@ func (q *TimeGraph) sharedTopologyState(ctx context.Context, grid TopologyGrid, 
 		return q.shared.state(ctx, grid, query)
 	}
 
-	timestampIndex := make(map[int64]int, len(grid.Timestamps))
-	for i, timestamp := range grid.Timestamps {
+	timestampIndex := make(map[int64]int, len(grid.timestamps))
+	for i, timestamp := range grid.timestamps {
 		timestampIndex[timestamp] = i
 	}
 	nodeBits := make(map[uint64]timeBitmap, len(q.topologyNodes))
@@ -227,17 +227,11 @@ func (q *TimeGraph) findSharedTopology(ctx context.Context, grid TopologyGrid, q
 	}()
 	span.Set("source-type", query.SourceType)
 	span.Set("max-hops", query.MaxHops)
-	span.Set("grid-point-count", len(grid.Timestamps))
+	span.Set("grid-point-count", len(grid.timestamps))
 	span.Set("partial-point-count", len(query.PartialTimestamps))
 	if err := ctx.Err(); err != nil {
 		return topologySnapshotCounts{}, err
 	}
-	normalizedGrid, err := NewTopologyGrid(grid.Timestamps)
-	if err != nil {
-		return topologySnapshotCounts{}, err
-	}
-	grid = normalizedGrid
-
 	q.lock.RLock()
 	defer q.lock.RUnlock()
 
@@ -315,7 +309,7 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 		if len(query.SourceMatcher) != 0 {
 			_, info := q.nodeBuilder.Info(node)
 			matchedBits = timeBitmap{}
-			for index, timestamp := range grid.Timestamps {
+			for index, timestamp := range grid.timestamps {
 				if !bits.has(index) {
 					continue
 				}
@@ -422,11 +416,11 @@ func (q *TimeGraph) materializeSharedTopology(ctx context.Context, grid Topology
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := ReserveTopologyStage(ctx, "output", int64(len(grid.Timestamps))*int64(unsafe.Sizeof(SharedTopologySnapshot{}))); err != nil {
+	if err := ReserveTopologyStage(ctx, "output", int64(len(grid.timestamps))*int64(unsafe.Sizeof(SharedTopologySnapshot{}))); err != nil {
 		return nil, err
 	}
-	result := make([]SharedTopologySnapshot, len(grid.Timestamps))
-	for index, timestamp := range grid.Timestamps {
+	result := make([]SharedTopologySnapshot, len(grid.timestamps))
+	for index, timestamp := range grid.timestamps {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -440,7 +434,7 @@ func (q *TimeGraph) materializeSharedTopology(ctx context.Context, grid Topology
 		func(index int, node SharedTopologyNode) { result[index].Nodes = append(result[index].Nodes, node) },
 		func(index int, edge SharedTopologyEdge) { result[index].Edges = append(result[index].Edges, edge) },
 		func(_ bool, budget *topologyOutputBudget) error {
-			nodes, counts, e := topologyFrameCounts(ctx, len(grid.Timestamps), reachable, edges)
+			nodes, counts, e := topologyFrameCounts(ctx, len(grid.timestamps), reachable, edges)
 			if e != nil {
 				return e
 			}
@@ -473,11 +467,11 @@ func (q *TimeGraph) materializeSharedTopologyDTO(ctx context.Context, grid Topol
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := ReserveTopologyStage(ctx, "output", int64(len(grid.Timestamps))*int64(unsafe.Sizeof(cmdb.SharedTopologySnapshot{}))); err != nil {
+	if err := ReserveTopologyStage(ctx, "output", int64(len(grid.timestamps))*int64(unsafe.Sizeof(cmdb.SharedTopologySnapshot{}))); err != nil {
 		return nil, err
 	}
-	result := make([]cmdb.SharedTopologySnapshot, len(grid.Timestamps))
-	for index, timestamp := range grid.Timestamps {
+	result := make([]cmdb.SharedTopologySnapshot, len(grid.timestamps))
+	for index, timestamp := range grid.timestamps {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -497,7 +491,7 @@ func (q *TimeGraph) materializeSharedTopologyDTO(ctx context.Context, grid Topol
 			result[index].Edges = append(result[index].Edges, cmdb.SharedTopologyEdge(edge))
 		},
 		func(ordered bool, budget *topologyOutputBudget) error {
-			nodes, edgeCounts, err := topologyFrameCounts(ctx, len(grid.Timestamps), reachable, edges)
+			nodes, edgeCounts, err := topologyFrameCounts(ctx, len(grid.timestamps), reachable, edges)
 			if err != nil {
 				return err
 			}
@@ -613,8 +607,8 @@ func (q *TimeGraph) emitSharedTopology(ctx context.Context, grid TopologyGrid, q
 	// 持有图读锁时一次性定位存储网格，避免每帧重复查找。
 	var infoFrameIndices []int
 	if q.shared != nil {
-		infoFrameIndices = make([]int, len(grid.Timestamps))
-		for index, timestamp := range grid.Timestamps {
+		infoFrameIndices = make([]int, len(grid.timestamps))
+		for index, timestamp := range grid.timestamps {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
@@ -670,7 +664,7 @@ func (q *TimeGraph) emitSharedTopology(ctx context.Context, grid TopologyGrid, q
 		if err := budget.retainEdge(edge.key); err != nil {
 			return err
 		}
-		for index := range grid.Timestamps {
+		for index := range grid.timestamps {
 			if index%256 == 0 {
 				if err := ctx.Err(); err != nil {
 					return err
@@ -746,7 +740,7 @@ func (q *TimeGraph) emitSharedTopologyNode(ctx context.Context, grid TopologyGri
 		}
 	}
 	fallbackRetained := false
-	for index := range grid.Timestamps {
+	for index := range grid.timestamps {
 		if index%256 == 0 {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -771,7 +765,7 @@ func (q *TimeGraph) emitSharedTopologyNode(ctx context.Context, grid TopologyGri
 				}
 			}
 		} else {
-			info, exists = q.storedNodeInfoAt(grid.Timestamps[index], node)
+			info, exists = q.storedNodeInfoAt(grid.timestamps[index], node)
 		}
 		if !exists {
 			info = q.topologyBorrowedNodeInfo(node)

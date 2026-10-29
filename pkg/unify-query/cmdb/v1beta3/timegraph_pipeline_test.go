@@ -257,3 +257,7 @@ func TestSharedTopologyPipelineProbe(t *testing.T) {
 		require.NotContains(t, row, "error")
 	}
 }
+
+func withTimeGraphForceSourceInfo(ctx context.Context) context.Context {
+	return context.WithValue(ctx, timeGraphForceSourceInfoKey{}, true)
+}

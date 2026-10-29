@@ -508,3 +508,7 @@ func TestTimeGraphSubqueryContextsPreserveUser(t *testing.T) {
 		})
 	}
 }
+
+func (m *Model) buildTimeGraphFromRelationsWithQuery(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, relations []cmdb.Relation, lookBackDelta string, matrixQuery timeGraphMatrixQuery) (*TimeGraph, error) {
+	return m.buildTimeGraph(ctx, spaceUID, start, end, step, sourceType, sourceInfo, sourceExpandInfo, nil, relations, lookBackDelta, matrixQuery, nil)
+}

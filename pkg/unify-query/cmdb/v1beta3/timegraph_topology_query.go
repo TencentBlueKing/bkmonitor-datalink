@@ -110,9 +110,9 @@ func (m *Model) querySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	gridSpan.Set("max-point-count", effectiveMaxSharedTopologyPoints())
 	start, end, step, responseStep, grid, gridErr := normalizeSharedTopologyTime(request)
 	if gridErr == nil {
-		gridSpan.Set("point-count", len(grid.Timestamps))
-		gridSpan.Set("normalized-start", grid.Timestamps[0])
-		gridSpan.Set("normalized-end", grid.Timestamps[len(grid.Timestamps)-1])
+		gridSpan.Set("point-count", len(grid.timestamps))
+		gridSpan.Set("normalized-start", grid.timestamps[0])
+		gridSpan.Set("normalized-end", grid.timestamps[len(grid.timestamps)-1])
 		gridSpan.Set("normalized-step", responseStep)
 	}
 	gridSpan.End(&gridErr)
@@ -248,10 +248,10 @@ func (m *Model) querySharedTopology(ctx context.Context, request cmdb.SharedTopo
 			return cmdb.SharedTopologyResult{}, errors.WithMessage(compactErr, "export compact topology")
 		}
 		return cmdb.SharedTopologyResult{
-			StartTime:  grid.Timestamps[0],
-			EndTime:    grid.Timestamps[len(grid.Timestamps)-1],
+			StartTime:  grid.timestamps[0],
+			EndTime:    grid.timestamps[len(grid.timestamps)-1],
 			Step:       responseStep,
-			PointCount: len(grid.Timestamps),
+			PointCount: len(grid.timestamps),
 			Compact:    compact,
 		}, nil
 	}
@@ -261,7 +261,7 @@ func (m *Model) querySharedTopology(ctx context.Context, request cmdb.SharedTopo
 			return cmdb.SharedTopologyResult{}, errors.WithMessage(planErr, "export snapshot plan")
 		}
 		*planOut = plan
-		result = cmdb.SharedTopologyResult{StartTime: grid.Timestamps[0], EndTime: grid.Timestamps[len(grid.Timestamps)-1], Step: responseStep, PointCount: len(grid.Timestamps)}
+		result = cmdb.SharedTopologyResult{StartTime: grid.timestamps[0], EndTime: grid.timestamps[len(grid.timestamps)-1], Step: responseStep, PointCount: len(grid.timestamps)}
 		span.Set("query-start", result.StartTime)
 		span.Set("query-end", result.EndTime)
 		span.Set("point-count", result.PointCount)
@@ -291,10 +291,10 @@ func (m *Model) querySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "filter shared topology")
 	}
 	result = cmdb.SharedTopologyResult{
-		StartTime:  grid.Timestamps[0],
-		EndTime:    grid.Timestamps[len(grid.Timestamps)-1],
+		StartTime:  grid.timestamps[0],
+		EndTime:    grid.timestamps[len(grid.timestamps)-1],
 		Step:       responseStep,
-		PointCount: len(grid.Timestamps),
+		PointCount: len(grid.timestamps),
 		Snapshots:  snapshots,
 	}
 	convertSpan.Set("snapshot-count", len(result.Snapshots))

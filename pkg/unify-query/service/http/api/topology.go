@@ -213,14 +213,6 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		resp.failed(ctx, err)
 		return
 	}
-	topologyModel, ok := model.(cmdb.SharedTopologyCMDB)
-	if !ok {
-		err = fmt.Errorf("relation model does not support shared topology query")
-		handlerErr = err
-		resp.failed(ctx, err)
-		return
-	}
-
 	data := &topologyResponse{
 		TraceID: span.TraceID(),
 		Data:    make([]stdjson.RawMessage, len(request.QueryList)),
@@ -273,13 +265,13 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 			queryErr = fmt.Errorf("instant topology query requires timestamp")
 		}
 		if queryErr == nil {
-			if planner, ok := model.(cmdb.SharedTopologySnapshotPlanner); ok && v1beta3.YoloModeEnabled() && query.ResponseFormat != cmdb.CompactTopologyFormat {
+			if v1beta3.YoloModeEnabled() && query.ResponseFormat != cmdb.CompactTopologyFormat {
 				var planned cmdb.SharedTopologySnapshotPlanResult
-				planned, queryErr = planner.QuerySharedTopologySnapshotPlan(queryCtx, query)
+				planned, queryErr = model.QuerySharedTopologySnapshotPlan(queryCtx, query)
 				result = cmdb.SharedTopologyResult{StartTime: planned.StartTime, EndTime: planned.EndTime, Step: planned.Step, PointCount: planned.PointCount}
 				snapshotPlan = planned.Plan
 			} else {
-				result, queryErr = topologyModel.QuerySharedTopology(queryCtx, query)
+				result, queryErr = model.QuerySharedTopology(queryCtx, query)
 			}
 		} else {
 			// HTTP 时间模式校验未进入模型，单独记录该子查询，避免遗漏或重复计数。

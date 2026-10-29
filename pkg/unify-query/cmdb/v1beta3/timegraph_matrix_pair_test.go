@@ -45,8 +45,7 @@ func TestTopologyReversePairMatchesOrderedFullAttributeAndWireApplication(t *tes
 			require.Len(t, relations, 2)
 			var baseline []byte
 			for _, paired := range []bool{false, true} {
-				graph, err := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
-				require.NoError(t, err)
+				graph := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
 				require.True(t, graph.topologyReversePair(relations))
 				if paired {
 					require.NoError(t, graph.applyRelationMatrixWithReverse(context.Background(), data, relations[0], &relations[1], nil, nil))

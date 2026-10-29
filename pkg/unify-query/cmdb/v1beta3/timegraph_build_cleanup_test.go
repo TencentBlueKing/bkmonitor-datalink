@@ -174,18 +174,16 @@ func TestBuildTimeGraphCleansFailedStorage(t *testing.T) {
 	}
 }
 
-func TestBuildTimeGraphConstructorFailureDoesNotClean(t *testing.T) {
+func TestQuerySharedTopologyInvalidGridDoesNotCreateStorage(t *testing.T) {
 	observer := newBuildCleanupObserver(t)
 	ctx := initTimeGraphQueryTestEnvironment()
-	start := time.Unix(1700000000, 0)
-	// The invalid grid is rejected before any shared storage is constructed.
-	invalid := TopologyGrid{Timestamps: []int64{start.UnixMilli(), start.UnixMilli()}}
-	graph, err := sharedTopologyQueryModel(nil).buildTimeGraph(ctx, "space", start, start, time.Second, "source", nil, nil, nil, nil, "1m", nil, &invalid)
-	require.Error(t, err)
-	require.Nil(t, graph)
-	require.Equal(t, 1, observer.started["timegraph-create-storage"])
-	require.Equal(t, 1, observer.ended["timegraph-create-storage"])
-	require.Equal(t, codes.Error, observer.status["timegraph-create-storage"])
+	result, err := sharedTopologyQueryModel(nil).QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{
+		SpaceUID: "space", SourceType: "source", StartTime: 1700000060, EndTime: 1700000000, Step: "60s",
+	})
+	require.ErrorContains(t, err, "start_time must be less than or equal to end_time")
+	require.Empty(t, result)
+	require.Zero(t, observer.started["timegraph-create-storage"])
+	require.Zero(t, observer.ended["timegraph-create-storage"])
 	require.Zero(t, observer.started["timegraph-clean"])
 	require.Zero(t, observer.ended["timegraph-clean"])
 	require.Equal(t, observer.started, observer.ended)

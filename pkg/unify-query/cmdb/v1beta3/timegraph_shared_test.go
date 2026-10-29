@@ -38,8 +38,7 @@ func TestDirectSharedGraphStorageAndOwnership(t *testing.T) {
 	times := sharedGraphTestTimes(60)
 	grid, err := NewTopologyGrid(times)
 	require.NoError(t, err)
-	g, err := newSharedTimeGraph(sharedGraphTestConfig(), grid)
-	require.NoError(t, err)
+	g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
 	info := cmdb.Matcher{"from_id": "a", "to_id": "b"}
 	require.NoError(t, g.AddTimeRelationWithRelation(ctx, sharedGraphTestRelation("calls"), info, times...))
 	info["from_id"] = "changed"
@@ -89,8 +88,7 @@ func TestDirectSharedGraphDifferential(t *testing.T) {
 			grid, err := NewTopologyGrid(times)
 			require.NoError(t, err)
 			legacy := NewTimeGraphWithConfig(sharedGraphTestConfig())
-			direct, err := newSharedTimeGraph(sharedGraphTestConfig(), grid)
-			require.NoError(t, err)
+			direct := newSharedTimeGraph(sharedGraphTestConfig(), grid)
 			graphs := []*TimeGraph{legacy, direct}
 			rng := rand.New(rand.NewSource(1499))
 			for node := 0; node < 40; node++ {
@@ -165,12 +163,11 @@ func TestDirectSharedGraphBudgetsAndGrid(t *testing.T) {
 			cfg.MaxNodeInfos = test.infos
 			grid, err := NewTopologyGrid(sharedGraphTestTimes(3))
 			require.NoError(t, err)
-			g, err := newSharedTimeGraph(cfg, grid)
-			require.NoError(t, err)
-			err = g.AddTimeRelationWithRelation(context.Background(), sharedGraphTestRelation("calls"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, grid.Timestamps...)
+			g := newSharedTimeGraph(cfg, grid)
+			err = g.AddTimeRelationWithRelation(context.Background(), sharedGraphTestRelation("calls"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, grid.timestamps...)
 			if test.edges > 0 && err == nil {
 				other := sharedGraphTestRelation("other")
-				err = g.AddTimeRelationWithRelation(context.Background(), other, cmdb.Matcher{"from_id": "a", "to_id": "b"}, grid.Timestamps...)
+				err = g.AddTimeRelationWithRelation(context.Background(), other, cmdb.Matcher{"from_id": "a", "to_id": "b"}, grid.timestamps...)
 			}
 			var limit *ResultLimitError
 			require.ErrorAs(t, err, &limit)
@@ -179,10 +176,9 @@ func TestDirectSharedGraphBudgetsAndGrid(t *testing.T) {
 	}
 	grid, err := NewTopologyGrid(sharedGraphTestTimes(1))
 	require.NoError(t, err)
-	g, err := newSharedTimeGraph(sharedGraphTestConfig(), grid)
-	require.NoError(t, err)
+	g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
 	require.ErrorContains(t, g.AddTimeNode(context.Background(), "entity", cmdb.Matcher{"id": "a"}, 0), "does not match")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.ErrorIs(t, g.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": "a"}, grid.Timestamps...), context.Canceled)
+	require.ErrorIs(t, g.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": "a"}, grid.timestamps...), context.Canceled)
 }

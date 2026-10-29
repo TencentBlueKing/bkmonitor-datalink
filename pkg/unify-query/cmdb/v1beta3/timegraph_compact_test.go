@@ -63,11 +63,10 @@ func TestCompactOwnershipFallbackBudgetAndClient(t *testing.T) {
 	ctx := context.Background()
 	grid, err := NewTopologyGrid(sharedGraphTestTimes(129))
 	require.NoError(t, err)
-	graph, err := newSharedTimeGraph(sharedGraphTestConfig(), grid)
-	require.NoError(t, err)
-	require.NoError(t, graph.AddTimeRelationWithRelation(ctx, sharedGraphTestRelation("calls"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, grid.Timestamps...))
-	require.NoError(t, graph.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": "a", "version": "old <&>", "name": "\u2028"}, grid.Timestamps[:64]...))
-	require.NoError(t, graph.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": "a", "version": "new"}, grid.Timestamps[64:]...))
+	graph := newSharedTimeGraph(sharedGraphTestConfig(), grid)
+	require.NoError(t, graph.AddTimeRelationWithRelation(ctx, sharedGraphTestRelation("calls"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, grid.timestamps...))
+	require.NoError(t, graph.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": "a", "version": "old <&>", "name": "\u2028"}, grid.timestamps[:64]...))
+	require.NoError(t, graph.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": "a", "version": "new"}, grid.timestamps[64:]...))
 	// Exercise stable identity fallback when no version covers a reachable node.
 	for id := range graph.shared.nodeInfos {
 		_, info := graph.nodeBuilder.Info(id)
@@ -75,7 +74,7 @@ func TestCompactOwnershipFallbackBudgetAndClient(t *testing.T) {
 			delete(graph.shared.nodeInfos, id)
 		}
 	}
-	query := SharedTopologyQuery{SourceType: "entity", SourceMatcher: cmdb.Matcher{"id": "a"}, MaxHops: 1, PartialTimestamps: map[int64]string{grid.Timestamps[64]: "backend_partial", grid.Timestamps[128]: ""}}
+	query := SharedTopologyQuery{SourceType: "entity", SourceMatcher: cmdb.Matcher{"id": "a"}, MaxHops: 1, PartialTimestamps: map[int64]string{grid.timestamps[64]: "backend_partial", grid.timestamps[128]: ""}}
 	want, err := graph.FindSharedTopology(ctx, grid, query)
 	require.NoError(t, err)
 	compact, err := graph.FindCompactTopology(ctx, grid, query, nil)
@@ -147,11 +146,11 @@ func BenchmarkTopologyOutputFormats(b *testing.B) {
 	ctx := context.Background()
 	grid, err := NewTopologyGrid(sharedGraphTestTimes(60))
 	require.NoError(b, err)
-	graph, err := newSharedTimeGraph(sharedGraphTestConfig(), grid)
+	graph := newSharedTimeGraph(sharedGraphTestConfig(), grid)
 	require.NoError(b, err)
 	defer graph.Clean(ctx)
 	for i := 0; i < 1000; i++ {
-		require.NoError(b, graph.AddTimeRelationWithRelation(ctx, sharedGraphTestRelation("calls"), cmdb.Matcher{"from_id": "root", "to_id": fmt.Sprint(i)}, grid.Timestamps...))
+		require.NoError(b, graph.AddTimeRelationWithRelation(ctx, sharedGraphTestRelation("calls"), cmdb.Matcher{"from_id": "root", "to_id": fmt.Sprint(i)}, grid.timestamps...))
 	}
 	query := SharedTopologyQuery{SourceType: "entity", SourceMatcher: cmdb.Matcher{"id": "root"}, MaxHops: 1}
 	for _, format := range []string{"snapshots", "compact"} {
@@ -188,7 +187,6 @@ func TestCompactLargeFixtureDifferential(t *testing.T) {
 		t.Skip("set TG_COMPACT_VALIDATE_EDGES for a separate large-fixture correctness run")
 	}
 	n, err := strconv.Atoi(value)
-	require.NoError(t, err)
 	require.Positive(t, n)
 	oldYolo := yoloMode
 	yoloMode = true
@@ -196,12 +194,11 @@ func TestCompactLargeFixtureDifferential(t *testing.T) {
 	ctx := context.Background()
 	grid, err := NewTopologyGrid(sharedGraphTestTimes(60))
 	require.NoError(t, err)
-	graph, err := newSharedTimeGraph(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{{Name: "source", Index: cmdb.Index{"source_id"}}, {Name: "middle", Index: cmdb.Index{"middle_id"}}}}, grid)
-	require.NoError(t, err)
+	graph := newSharedTimeGraph(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{{Name: "source", Index: cmdb.Index{"source_id"}}, {Name: "middle", Index: cmdb.Index{"middle_id"}}}}, grid)
 	defer graph.Clean(ctx)
 	relation := cmdb.Relation{V: []cmdb.Resource{"source", "middle"}, RelationType: "source_to_middle", MetricName: "source_middle_flow", Category: "static", Direction: "outbound"}
 	for i := 0; i < n; i++ {
-		require.NoError(t, graph.AddTimeRelationWithRelation(ctx, relation, cmdb.Matcher{"source_id": "a", "middle_id": strconv.Itoa(i)}, grid.Timestamps...))
+		require.NoError(t, graph.AddTimeRelationWithRelation(ctx, relation, cmdb.Matcher{"source_id": "a", "middle_id": strconv.Itoa(i)}, grid.timestamps...))
 	}
 	query := SharedTopologyQuery{SourceType: "source", SourceMatcher: cmdb.Matcher{"source_id": "a"}, MaxHops: 1}
 	want, err := graph.FindSharedTopology(ctx, grid, query)

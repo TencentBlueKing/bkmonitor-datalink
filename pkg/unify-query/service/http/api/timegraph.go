@@ -22,11 +22,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
-type timeGraphQuerier interface {
-	QueryPathResources(context.Context, string, string, string, cmdb.Resource, []cmdb.Resource, [][]cmdb.Resource, cmdb.Matcher) ([]cmdb.PathResourcesResult, error)
-	QueryPathResourcesRange(context.Context, string, string, string, string, string, cmdb.Resource, []cmdb.Resource, [][]cmdb.Resource, cmdb.Matcher) ([]cmdb.PathResourcesResult, error)
-}
-
 func observeTimeGraphPathQueryMetrics(ctx context.Context, queryMode string, started time.Time, results []cmdb.PathResourcesResult, queryErr error) {
 	result := metric.CMDBRelationResultSuccess
 	if queryErr != nil {
@@ -49,17 +44,13 @@ func observeTimeGraphPathQueryMetrics(ctx context.Context, queryMode string, sta
 	}
 }
 
-func getTimeGraphQuerier(ctx context.Context, spaceUID string) (querier timeGraphQuerier, err error) {
+func getTimeGraphQuerier(ctx context.Context, spaceUID string) (querier *v1beta3.Model, err error) {
 	ctx, span := trace.NewSpan(ctx, "handler-api-timegraph-resolve-querier")
 	defer span.End(&err)
 	span.Set("space-uid", spaceUID)
-	model, err := v1beta3.GetModel(ctx)
+	querier, err = v1beta3.GetModel(ctx)
 	if err != nil {
 		return nil, err
-	}
-	querier, ok := model.(timeGraphQuerier)
-	if !ok {
-		return nil, fmt.Errorf("relation model does not support TimeGraph query")
 	}
 	span.Set("querier-type", fmt.Sprintf("%T", querier))
 	return querier, nil

@@ -213,8 +213,8 @@ func TestPathResourcesHTTPQualityIsolation(t *testing.T) {
 			model, err := v1beta3.GetModel(ctx)
 			require.NoError(t, err)
 			provider := v1beta3.NewStaticSchemaProvider()
-			model.(*v1beta3.Model).SetSchemaProvider(provider)
-			t.Cleanup(func() { model.(*v1beta3.Model).SetSchemaProvider(v1beta3.GetSchemaProvider()) })
+			model.SetSchemaProvider(provider)
+			t.Cleanup(func() { model.SetSchemaProvider(v1beta3.GetSchemaProvider()) })
 			router, err := influxdb.GetSpaceTsDbRouter()
 			require.NoError(t, err)
 			const spaceName = "example-path-quality"
@@ -332,8 +332,8 @@ func runTopologyConsumerExampleHTTP(t *testing.T, yolo bool) {
 	t.Cleanup(func() { viper.Set(v1beta3.YoloModeConfigPath, oldYolo); v1beta3.LoadConfig() })
 	model, err := v1beta3.GetModel(ctx)
 	require.NoError(t, err)
-	model.(*v1beta3.Model).SetSchemaProvider(v1beta3.NewStaticSchemaProvider())
-	t.Cleanup(func() { model.(*v1beta3.Model).SetSchemaProvider(v1beta3.GetSchemaProvider()) })
+	model.SetSchemaProvider(v1beta3.NewStaticSchemaProvider())
+	t.Cleanup(func() { model.SetSchemaProvider(v1beta3.GetSchemaProvider()) })
 	router, err := influxdb.GetSpaceTsDbRouter()
 	require.NoError(t, err)
 	space := ir.Space{influxdb.ResultTableVM: &ir.SpaceResultTable{TableId: influxdb.ResultTableVM}}

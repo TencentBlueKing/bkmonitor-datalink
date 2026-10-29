@@ -154,8 +154,7 @@ func TestTopologyFrontierBatchSplitsIdentityBeforeTimeAndKeepsPartial(t *testing
 			}
 			grid, err := NewTopologyGrid([]int64{stamp, stamp + 60000, stamp + 120000})
 			require.NoError(t, err)
-			graph, err := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
-			require.NoError(t, err)
+			graph := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
 			loader := &timeGraphMatrixLoader{model: model, graph: graph, start: time.Unix(1700000000, 0), end: time.Unix(1700000120, 0), step: time.Minute, lookBack: 5 * time.Minute, topology: true}
 			relations := model.sharedTopologyRelations("space", nil, nil, DirectionOutbound)
 			queries := 0
@@ -196,8 +195,7 @@ func TestTopologyFrontierSingleIdentityCapAndCanceledShardStayFatal(t *testing.T
 			}
 			grid, err := NewTopologyGrid([]int64{1700000000000, 1700000060000, 1700000120000})
 			require.NoError(t, err)
-			graph, err := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
-			require.NoError(t, err)
+			graph := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
 			loader := &timeGraphMatrixLoader{model: model, graph: graph, start: time.Unix(1700000000, 0), end: time.Unix(1700000120, 0), step: time.Minute, lookBack: 5 * time.Minute, topology: true}
 			relations := model.sharedTopologyRelations("space", nil, nil, DirectionOutbound)
 			queries := 0

@@ -156,8 +156,7 @@ func TestSharedStorageBudgetsCountStoredVersions(t *testing.T) {
 	cfg := sharedGraphTestConfig()
 	cfg.MaxEdges = 1
 	cfg.MaxNodeInfos = 2
-	g, err := newSharedTimeGraph(cfg, grid)
-	require.NoError(t, err)
+	g := newSharedTimeGraph(cfg, grid)
 	relation := sharedGraphTestRelation("calls")
 	info := cmdb.Matcher{"from_id": "a", "to_id": "b"}
 	require.NoError(t, g.AddTimeRelationWithRelation(ctx, relation, info, times...))
@@ -182,8 +181,7 @@ func TestCompactBudgetsRepresentationAndIntegerSafety(t *testing.T) {
 	times := sharedGraphTestTimes(60)
 	grid, err := NewTopologyGrid(times)
 	require.NoError(t, err)
-	g, err := newSharedTimeGraph(sharedGraphTestConfig(), grid)
-	require.NoError(t, err)
+	g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
 	require.NoError(t, g.AddTimeRelationWithRelation(context.Background(), sharedGraphTestRelation("calls"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, times...))
 	query := SharedTopologyQuery{SourceType: "entity", SourceMatcher: cmdb.Matcher{"id": "a"}, MaxHops: 1}
 	compact, err := g.FindCompactTopology(context.Background(), grid, query, nil)
@@ -223,13 +221,13 @@ func TestSourceInfoMissingRouteRealLocalEngine(t *testing.T) {
 		return ref, nil
 	}
 	point := time.Unix(1700000040, 0)
-	graph, err := model.buildTimeGraphFromRelations(ctx, "space", point, point, time.Minute, "node", cmdb.Matcher{"node_id": "n1"}, cmdb.Matcher{"zone": "east"}, nil, "10m")
+	graph, err := model.buildTimeGraph(ctx, "space", point, point, time.Minute, "node", cmdb.Matcher{"node_id": "n1"}, cmdb.Matcher{"zone": "east"}, nil, nil, "10m", nil, nil)
 	require.NoError(t, err)
 	defer graph.Clean(ctx)
 	require.Nil(t, metadata.GetExpand(infoCtx))
 	require.False(t, metadata.GetQueryParams(infoCtx).IsDirectQuery())
 	require.Equal(t, "source_info_no_route", metadata.GetStatus(infoCtx).Message)
-	require.Empty(t, graph.findNodesByPartialMatcher("node", nil))
+	require.Empty(t, graph.findNodesByResourceType("node"))
 	require.Equal(t, "source_info_no_route", graph.partialTimesCopy()[point.UnixMilli()])
 }
 
@@ -268,8 +266,7 @@ func TestSharedEmptyEdgesAndVersionBudgetRelease(t *testing.T) {
 	cfg := sharedGraphTestConfig()
 	cfg.MaxEdges = 1
 	cfg.MaxNodeInfos = 2
-	g, err := newSharedTimeGraph(cfg, grid)
-	require.NoError(t, err)
+	g := newSharedTimeGraph(cfg, grid)
 	for _, kind := range []string{"a", "b", "c"} {
 		require.NoError(t, g.AddTimeRelationWithRelation(context.Background(), sharedGraphTestRelation(kind), cmdb.Matcher{"from_id": "a", "to_id": "b"}))
 	}

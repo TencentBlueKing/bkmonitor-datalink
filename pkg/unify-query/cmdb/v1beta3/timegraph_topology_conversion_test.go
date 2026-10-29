@@ -56,8 +56,7 @@ func TestDirectTopologyDTOEquivalenceAndOwnership(t *testing.T) {
 				require.NoError(t, err)
 				g := NewTimeGraphWithConfig(sharedGraphTestConfig())
 				if storage {
-					g, err = newSharedTimeGraph(sharedGraphTestConfig(), grid)
-					require.NoError(t, err)
+					g = newSharedTimeGraph(sharedGraphTestConfig(), grid)
 				}
 				for _, id := range []string{"a", "b", "c"} {
 					require.NoError(t, g.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": id, "version": "old"}, times...))

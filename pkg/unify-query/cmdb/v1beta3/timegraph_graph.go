@@ -1228,49 +1228,6 @@ func nodePathKeyFromPathNodes(path []cmdb.PathNode) string {
 	return builder.String()
 }
 
-// validatePathResourceTypes 验证路径中的节点资源类型是否符合指定的路径顺序
-func (q *TimeGraph) validatePathResourceTypes(nodePath []uint64, expectedPath []cmdb.Resource) bool {
-	if len(nodePath) != len(expectedPath) {
-		return false
-	}
-
-	for i, nodeID := range nodePath {
-		resourceType, _ := q.nodeBuilder.Info(nodeID)
-		if resourceType != expectedPath[i] {
-			return false
-		}
-	}
-
-	return true
-}
-
-// findNodesByPartialMatcher 根据部分匹配条件查找节点
-// 只要 partialMatcher 中的键值对在节点信息中存在且匹配，即认为满足条件
-func (q *TimeGraph) findNodesByPartialMatcher(resourceType cmdb.Resource, partialMatcher cmdb.Matcher) []uint64 {
-	if len(partialMatcher) == 0 {
-		// 如果没有匹配条件，返回该资源类型的所有节点
-		return q.findNodesByResourceType(resourceType)
-	}
-
-	var matchedNodes []uint64
-	allNodes := q.nodeBuilder.ResourceNodeInfo(resourceType)
-
-	for _, nodeInfo := range allNodes {
-		// 检查是否满足部分匹配条件
-		if q.matchesPartial(nodeInfo, partialMatcher) {
-			// 需要获取节点ID，但 ResourceNodeInfo 只返回 Matcher，需要反向查找
-			// 这里我们需要通过尝试获取ID来找到匹配的节点
-			// 注意：由于节点已经存在，GetID 会返回现有节点ID
-			nodeID, err := q.nodeBuilder.GetID(resourceType, nodeInfo)
-			if err == nil {
-				matchedNodes = append(matchedNodes, nodeID)
-			}
-		}
-	}
-
-	return matchedNodes
-}
-
 func (q *TimeGraph) infoAt(timestamp int64, nodeID uint64) (cmdb.Resource, cmdb.Matcher) {
 	resourceType, fallback := q.nodeBuilder.Info(nodeID)
 	if info, ok := q.nodeInfos[timestamp][nodeID]; ok {

@@ -17,10 +17,9 @@ func traversalTestGraph(t *testing.T) (*TimeGraph, TopologyGrid, SharedTopologyQ
 	t.Helper()
 	grid, err := NewTopologyGrid(sharedGraphTestTimes(60))
 	require.NoError(t, err)
-	graph, err := newSharedTimeGraph(sharedGraphTestConfig(), grid)
-	require.NoError(t, err)
+	graph := newSharedTimeGraph(sharedGraphTestConfig(), grid)
 	for _, edge := range []cmdb.Matcher{{"from_id": "a", "to_id": "b"}, {"from_id": "b", "to_id": "c"}, {"from_id": "a", "to_id": "c"}} {
-		require.NoError(t, graph.AddTimeRelationWithRelation(context.Background(), sharedGraphTestRelation("calls"), edge, grid.Timestamps...))
+		require.NoError(t, graph.AddTimeRelationWithRelation(context.Background(), sharedGraphTestRelation("calls"), edge, grid.timestamps...))
 	}
 	return graph, grid, SharedTopologyQuery{SourceType: "entity", SourceMatcher: cmdb.Matcher{"id": "a"}, MaxHops: 2}
 }
@@ -103,7 +102,7 @@ func TestTopologyTraversalReservation(t *testing.T) {
 		ctx, release, err := AcquireSharedTopology(parent)
 		require.NoError(t, err)
 		defer release()
-		badGrid, err := NewTopologyGrid(grid.Timestamps[:59])
+		badGrid, err := NewTopologyGrid(grid.timestamps[:59])
 		require.NoError(t, err)
 		_, err = graph.FindCompactTopology(ctx, badGrid, query, nil)
 		require.ErrorContains(t, err, "grid does not match")

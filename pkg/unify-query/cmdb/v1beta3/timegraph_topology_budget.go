@@ -269,7 +269,7 @@ type topologyOutputBudget struct {
 // Model allocation and wire size are different budgets. This budget reserves
 // DTO backing storage before allocation; HTTP encoding owns the wire cap.
 func newTopologyOutputBudget(grid TopologyGrid, _ map[int64]string) *topologyOutputBudget {
-	return &topologyOutputBudget{bytes: int64(len(grid.Timestamps)) * int64(unsafe.Sizeof(cmdb.SharedTopologySnapshot{}))}
+	return &topologyOutputBudget{bytes: int64(len(grid.timestamps)) * int64(unsafe.Sizeof(cmdb.SharedTopologySnapshot{}))}
 }
 
 func (b *topologyOutputBudget) checkBytes(size int64) error {

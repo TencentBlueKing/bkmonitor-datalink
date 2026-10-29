@@ -23,8 +23,8 @@ func (q *TimeGraph) findSharedTopologySnapshotPlan(ctx context.Context, grid Top
 		if !yoloMode || q.shared == nil {
 			return topologySnapshotCounts{}, fmt.Errorf("snapshot plan requires YOLO shared storage")
 		}
-		plan = &cmdb.SharedTopologySnapshotPlan{Timestamps: append([]int64(nil), grid.Timestamps...)}
-		for i, ts := range grid.Timestamps {
+		plan = &cmdb.SharedTopologySnapshotPlan{Timestamps: append([]int64(nil), grid.timestamps...)}
+		for i, ts := range grid.timestamps {
 			if reason, ok := query.PartialTimestamps[ts]; ok {
 				plan.Partial = append(plan.Partial, cmdb.SharedTopologySnapshotPlanPartial{Index: i, Reason: reason})
 			}

@@ -25,8 +25,7 @@ func TestOwnedCompactEdgeStoreMatchesLegacyFullIdentityAndClears(t *testing.T) {
 		var baseline []byte
 		var baselineCount int
 		for _, compact := range []bool{false, true} {
-			graph, err := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
-			require.NoError(t, err)
+			graph := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
 			if compact {
 				graph.shared.relationIDs = make(map[timeGraphEdgeRelation]uint64)
 				if points <= 64 {

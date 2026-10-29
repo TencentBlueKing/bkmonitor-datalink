@@ -16,11 +16,10 @@ func TestYOLOIndexedTraversalAndOrderedSnapshotsMatchScan(t *testing.T) {
 	times := sharedGraphTestTimes(130)
 	grid, err := NewTopologyGrid(times)
 	require.NoError(t, err)
-	g, err := newSharedTimeGraph(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
+	g := newSharedTimeGraph(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
 		{Name: "root", Index: cmdb.Index{"id"}, Info: cmdb.Index{"version"}},
 		{Name: "entity", Index: cmdb.Index{"id"}, Info: cmdb.Index{"version"}},
 	}}, grid)
-	require.NoError(t, err)
 	nodes := make(map[uint64]timeBitmap)
 	ids := make([]uint64, 12)
 	for i := range ids {
@@ -125,7 +124,7 @@ func TestYOLOIndexedTraversalChecksCancellationWithinIndexAndDegree(t *testing.T
 	query := SharedTopologyQuery{SourceType: "root", MaxHops: 2}
 	for _, after := range []int{10, 110} {
 		ctx := &traversalCancelContext{Context: context.Background(), remaining: after}
-		_, _, err := g.propagateSharedTopology(ctx, TopologyGrid{Timestamps: []int64{1}}, query, nodes, edges)
+		_, _, err := g.propagateSharedTopology(ctx, TopologyGrid{timestamps: []int64{1}}, query, nodes, edges)
 		require.ErrorIs(t, err, context.Canceled)
 	}
 }
@@ -151,11 +150,10 @@ func TestCompactReservationsPreserveSparseTargetsAndVersions(t *testing.T) {
 	times := sharedGraphTestTimes(130)
 	grid, err := NewTopologyGrid(times)
 	require.NoError(t, err)
-	g, err := newSharedTimeGraph(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
+	g := newSharedTimeGraph(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
 		{Name: "root", Index: cmdb.Index{"root_id"}, Info: cmdb.Index{"version"}},
 		{Name: "entity", Index: cmdb.Index{"entity_id"}},
 	}}, grid)
-	require.NoError(t, err)
 	ctx := context.Background()
 	relation := cmdb.Relation{V: []cmdb.Resource{"root", "entity"}, RelationType: "owns", Category: "static", Direction: "outbound"}
 	require.NoError(t, g.AddTimeRelationWithRelation(ctx, relation, cmdb.Matcher{"root_id": "r", "entity_id": "e"}, times[64], times[128]))
@@ -190,7 +188,7 @@ func TestEmptyRootMatcherNormalizesZeroWordsWithoutChangingSharedBits(t *testing
 	require.NoError(t, err)
 	bits := timeBitmap{first: 1, rest: []uint64{0, 0}}
 	nodes := map[uint64]timeBitmap{id: bits}
-	result, count, err := g.propagateSharedTopology(context.Background(), TopologyGrid{Timestamps: sharedGraphTestTimes(130)}, SharedTopologyQuery{SourceType: "root", MaxHops: 0}, nodes, nil)
+	result, count, err := g.propagateSharedTopology(context.Background(), TopologyGrid{timestamps: sharedGraphTestTimes(130)}, SharedTopologyQuery{SourceType: "root", MaxHops: 0}, nodes, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, count)
 	require.Empty(t, result[id].rest)

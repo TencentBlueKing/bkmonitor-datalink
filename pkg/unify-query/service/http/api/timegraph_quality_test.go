@@ -63,9 +63,8 @@ func TestLegacyHTTPPartialDoesNotContaminateAnotherBatchItem(t *testing.T) {
 		metadata.InitMetadata()
 		ctx := metadata.InitHashID(context.Background())
 		metadata.SetUser(ctx, &metadata.User{SpaceUID: "space"})
-		cmdbModel, err := v1beta3.GetModel(ctx)
+		model, err := v1beta3.GetModel(ctx)
 		require.NoError(t, err)
-		model := cmdbModel.(*v1beta3.Model)
 		model.SetSchemaProvider(qualityTestSchema{})
 		model.SetTimeGraphResolver(func(context.Context, string) (v1beta3.TimeGraphQuerier, error) { return &qualityTestBackend{}, nil })
 		t.Cleanup(func() {
@@ -109,9 +108,8 @@ func TestLegacyHTTPStorageCoverageQuality(t *testing.T) {
 				metadata.InitMetadata()
 				ctx := metadata.InitHashID(context.Background())
 				metadata.SetUser(ctx, &metadata.User{SpaceUID: "space"})
-				backend, err := v1beta3.GetModel(ctx)
+				model, err := v1beta3.GetModel(ctx)
 				require.NoError(t, err)
-				model := backend.(*v1beta3.Model)
 				model.SetSchemaProvider(qualityTestSchema{})
 				model.SetTimeGraphResolver(func(context.Context, string) (v1beta3.TimeGraphQuerier, error) { return &qualityTestBackend{}, nil })
 				t.Cleanup(func() {

@@ -108,12 +108,6 @@ type topologyCachedEdge struct {
 	boundary uint64
 }
 
-// marshalRepeatedTopologySnapshots validates/encodes all values before writing.
-// Each request owns its dictionaries. Public snapshot maps remain independent.
-func marshalRepeatedTopologySnapshotsContext(ctx context.Context, snapshots []cmdb.SharedTopologySnapshot) ([][]byte, error) {
-	return marshalTopologySnapshotFrames(ctx, snapshots, false)
-}
-
 func marshalTopologySnapshotFrames(ctx context.Context, snapshots []cmdb.SharedTopologySnapshot, consume bool) ([][]byte, error) {
 	b := topologySnapshotChunkBuilder{ctx: ctx, meter: topologyMeter(ctx), byHash: make(map[uint64][][]byte)}
 	nodes := make(map[uint64]topologyCachedNode)

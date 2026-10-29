@@ -70,8 +70,7 @@ func TestSnapshotPlanMatchesFullDTOAndOwnsGraphData(t *testing.T) {
 	times := sharedGraphTestTimes(130)
 	grid, err := NewTopologyGrid(times)
 	require.NoError(t, err)
-	g, err := newSharedTimeGraph(sharedGraphTestConfig(), grid)
-	require.NoError(t, err)
+	g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
 	t.Cleanup(func() { g.Clean(ctx) })
 	relation := sharedGraphTestRelation("calls")
 	input := cmdb.Matcher{"from_id": "a", "from_version": "m", "to_id": "b", "to_version": "before"}
@@ -125,8 +124,7 @@ func TestSnapshotPlanMatchesFullDTOAndOwnsGraphData(t *testing.T) {
 	}
 	require.Equal(t, want, expandSnapshotPlanForTest(t, plan))
 	g.Clean(ctx)
-	other, err := newSharedTimeGraph(sharedGraphTestConfig(), grid)
-	require.NoError(t, err)
+	other := newSharedTimeGraph(sharedGraphTestConfig(), grid)
 	t.Cleanup(func() { other.Clean(ctx) })
 	for i := 0; i < 64; i++ {
 		require.NoError(t, other.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": fmt.Sprintf("new-%d", i), "version": "recycled"}, times...))
@@ -143,7 +141,7 @@ func TestSnapshotPlanMatchesFullDTOAndOwnsGraphData(t *testing.T) {
 	require.Equal(t, want, expandSnapshotPlanForTest(t, plan))
 	// Exported timestamps must also survive caller reuse of the input grid.
 	times[0] = 0
-	grid.Timestamps[64] = 0
+	grid.timestamps[64] = 0
 	require.Equal(t, want, expandSnapshotPlanForTest(t, plan))
 }
 
@@ -154,11 +152,10 @@ func TestSnapshotPlanFallbackShapes(t *testing.T) {
 			ctx := context.Background()
 			grid, err := NewTopologyGrid(sharedGraphTestTimes(130))
 			require.NoError(t, err)
-			g, err := newSharedTimeGraph(sharedGraphTestConfig(), grid)
-			require.NoError(t, err)
+			g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
 			t.Cleanup(func() { g.Clean(ctx) })
 			initial := cmdb.Matcher{"id": "a", "version": "before"}
-			require.NoError(t, g.AddTimeNode(ctx, "entity", initial, grid.Timestamps...))
+			require.NoError(t, g.AddTimeNode(ctx, "entity", initial, grid.timestamps...))
 			id, err := g.nodeBuilder.GetID("entity", initial)
 			require.NoError(t, err)
 			// Restore the valid pooled map after the deliberately malformed fallback fixture.
@@ -184,8 +181,8 @@ func TestSnapshotPlanFallbackShapes(t *testing.T) {
 			query := SharedTopologyQuery{SourceType: "entity"}
 			plan, err := g.findSharedTopologySnapshotPlan(ctx, grid, query, nil)
 			require.NoError(t, err)
-			want := make([]cmdb.SharedTopologySnapshot, len(grid.Timestamps))
-			for i, ts := range grid.Timestamps {
+			want := make([]cmdb.SharedTopologySnapshot, len(grid.timestamps))
+			for i, ts := range grid.timestamps {
 				want[i] = cmdb.SharedTopologySnapshot{Timestamp: ts, Nodes: []cmdb.SharedTopologyNode{{ID: id, ResourceType: "entity", Dimensions: dimensions}}, Edges: []cmdb.SharedTopologyEdge{}}
 			}
 			require.Equal(t, want, expandSnapshotPlanForTest(t, plan))
@@ -257,8 +254,7 @@ func TestSnapshotPlanFilteredInducedEdgesAcrossWords(t *testing.T) {
 		{Name: "middle", Index: cmdb.Index{"id"}, Info: cmdb.Index{"version"}},
 		{Name: "target", Index: cmdb.Index{"id"}, Info: cmdb.Index{"version"}},
 	}}
-	graph, err := newSharedTimeGraph(cfg, grid)
-	require.NoError(t, err)
+	graph := newSharedTimeGraph(cfg, grid)
 	t.Cleanup(func() { graph.Clean(ctx) })
 	add := func(source, target cmdb.Resource, from, to, name string, active ...int64) {
 		relation := cmdb.Relation{V: []cmdb.Resource{source, target}, RelationType: name, MetricName: name + "_flow", Category: "dynamic", Direction: "outbound"}

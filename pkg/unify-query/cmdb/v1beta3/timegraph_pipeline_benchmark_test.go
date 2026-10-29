@@ -47,10 +47,7 @@ func BenchmarkTopologyShardedGroups(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				ctx := metadata.WithExactTimeGrid(initTimeGraphQueryTestEnvironment())
-				graph, err := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
-				if err != nil {
-					b.Fatal(err)
-				}
+				graph := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
 				loader := &timeGraphMatrixLoader{model: model, graph: graph, topology: true, start: time.UnixMilli(timestamps[0]), end: time.UnixMilli(timestamps[len(timestamps)-1]), step: time.Minute}
 				loader.override = func(_ context.Context, query *structured.QueryTs) (pl.Matrix, error) {
 					calls.Add(1)

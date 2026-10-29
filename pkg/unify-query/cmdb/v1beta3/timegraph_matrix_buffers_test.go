@@ -28,8 +28,7 @@ func TestMatrixWorkingBuffersMatchOwnedInputApplication(t *testing.T) {
 		t.Run(map[bool]string{false: "legacy", true: "shared"}[shared], func(t *testing.T) {
 			newGraph := func() *TimeGraph {
 				if shared {
-					g, e := newSharedTimeGraph(sharedGraphTestConfig(), grid)
-					require.NoError(t, e)
+					g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
 					return g
 				}
 				return NewTimeGraphWithConfig(sharedGraphTestConfig())
@@ -110,8 +109,7 @@ func TestSourceAndTargetMatrixWorkingBuffersPreserveTimeAttributes(t *testing.T)
 			t.Run(map[bool]string{false: "source", true: "target"}[target]+map[bool]string{false: "-legacy", true: "-shared"}[shared], func(t *testing.T) {
 				newGraph := func() *TimeGraph {
 					if shared {
-						g, e := newSharedTimeGraph(sharedGraphTestConfig(), grid)
-						require.NoError(t, e)
+						g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
 						return g
 					}
 					return NewTimeGraphWithConfig(sharedGraphTestConfig())

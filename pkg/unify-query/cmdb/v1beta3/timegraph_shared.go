@@ -79,31 +79,27 @@ type sharedNodeInfo struct {
 	dimensions cmdb.Matcher
 }
 
-func newSharedTimeGraph(cfg *TimeGraphConfig, grid TopologyGrid) (*TimeGraph, error) {
-	grid, err := NewTopologyGrid(grid.Timestamps)
-	if err != nil {
-		return nil, err
-	}
+func newSharedTimeGraph(cfg *TimeGraphConfig, grid TopologyGrid) *TimeGraph {
 	q := newTimeGraphWithConfig(cfg)
 	q.shared = &sharedTimeGraph{
 		grid:             grid,
-		timestampIndex:   make(map[int64]int, len(grid.Timestamps)),
+		timestampIndex:   make(map[int64]int, len(grid.timestamps)),
 		nodeBits:         make(map[uint64]timeBitmap),
 		relationNodeBits: make(map[uint64]timeBitmap),
 		nodeInfos:        make(map[uint64][]sharedNodeInfo),
 		edgeBits:         make(map[timeGraphTopologyEdgeKey]timeBitmap),
 		edgePairBits:     make(map[timeGraphEdgeKey]timeBitmap),
 	}
-	for index, timestamp := range grid.Timestamps {
+	for index, timestamp := range grid.timestamps {
 		q.shared.timestampIndex[timestamp] = index
 		q.shared.fullGridBits.set(index)
 	}
-	if len(grid.Timestamps) > 1 {
-		first, last := grid.Timestamps[0], grid.Timestamps[len(grid.Timestamps)-1]
-		step, span := grid.Timestamps[1]-first, last-first
-		if step > 0 && span >= 0 && int64(len(grid.Timestamps)-1) <= span/step {
+	if len(grid.timestamps) > 1 {
+		first, last := grid.timestamps[0], grid.timestamps[len(grid.timestamps)-1]
+		step, span := grid.timestamps[1]-first, last-first
+		if step > 0 && span >= 0 && int64(len(grid.timestamps)-1) <= span/step {
 			uniform := true
-			for index, timestamp := range grid.Timestamps {
+			for index, timestamp := range grid.timestamps {
 				if timestamp != first+int64(index)*step {
 					uniform = false
 					break
@@ -114,7 +110,7 @@ func newSharedTimeGraph(cfg *TimeGraphConfig, grid TopologyGrid) (*TimeGraph, er
 			}
 		}
 	}
-	return q, nil
+	return q
 }
 
 func (g *sharedTimeGraph) clear() {
@@ -146,7 +142,7 @@ func (q *TimeGraph) timepointCount() int {
 
 func (g *sharedTimeGraph) timeBits(timestamps []int64) (timeBitmap, error) {
 	// 完整网格可共用不变的位图字，无须逐点查索引。
-	if slices.Equal(timestamps, g.grid.Timestamps) {
+	if slices.Equal(timestamps, g.grid.timestamps) {
 		return g.fullGridBits, nil
 	}
 	var active timeBitmap
@@ -332,7 +328,7 @@ func (q *TimeGraph) addSharedRelationWithBits(ctx context.Context, relation cmdb
 }
 
 func (g *sharedTimeGraph) state(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery) (map[uint64]timeBitmap, []sharedTopologyEdgeState, error) {
-	if !slices.Equal(grid.Timestamps, g.grid.Timestamps) {
+	if !slices.Equal(grid.timestamps, g.grid.timestamps) {
 		return nil, nil, fmt.Errorf("topology query grid does not match shared graph grid")
 	}
 	edges := make([]sharedTopologyEdgeState, 0, g.edgeCount())

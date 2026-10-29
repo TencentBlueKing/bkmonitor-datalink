@@ -66,7 +66,7 @@ func (q *TimeGraph) withTraversalReservation(ctx context.Context) (context.Conte
 	_, span := trace.NewSpan(ctx, "timegraph-reserve-traversal")
 	var err error
 	defer func() { span.End(&err) }()
-	want, err := traversalReservationBytes(len(q.shared.nodeBits), len(q.shared.relationNodeBits), q.shared.edgeCount(), len(q.shared.grid.Timestamps))
+	want, err := traversalReservationBytes(len(q.shared.nodeBits), len(q.shared.relationNodeBits), q.shared.edgeCount(), len(q.shared.grid.timestamps))
 	if err != nil {
 		return ctx, noop, err
 	}

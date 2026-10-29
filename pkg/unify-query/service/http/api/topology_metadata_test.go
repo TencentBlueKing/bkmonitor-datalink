@@ -79,8 +79,8 @@ func TestTopologyBatchMetadataLifetime(t *testing.T) {
 	t.Cleanup(func() { viper.Set(v1beta3.YoloModeConfigPath, oldYolo); v1beta3.LoadConfig() })
 	model, err := v1beta3.GetModel(context.Background())
 	require.NoError(t, err)
-	model.(*v1beta3.Model).SetSchemaProvider(topologyMetadataSchema{})
-	t.Cleanup(func() { model.(*v1beta3.Model).SetSchemaProvider(v1beta3.GetSchemaProvider()) })
+	model.SetSchemaProvider(topologyMetadataSchema{})
+	t.Cleanup(func() { model.SetSchemaProvider(v1beta3.GetSchemaProvider()) })
 	for _, yolo := range []bool{false, true} {
 		for _, rangeQuery := range []bool{false, true} {
 			for _, proxied := range []bool{false, true} {

@@ -38,8 +38,7 @@ func TestTopologyReadyGroupFailureReleasesWorkersAndReservations(t *testing.T) {
 				model := &Model{schemaProvider: provider}
 				grid, err := NewTopologyGrid([]int64{1700000000000})
 				require.NoError(t, err)
-				graph, err := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
-				require.NoError(t, err)
+				graph := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
 				defer graph.Clean(ctx)
 				require.NoError(t, graph.enableResidency(ctx))
 				loader := &timeGraphMatrixLoader{model: model, graph: graph, topology: true, start: time.Unix(1700000000, 0), end: time.Unix(1700000000, 0), step: time.Minute}
@@ -64,7 +63,7 @@ func TestTopologyReadyGroupFailureReleasesWorkersAndReservations(t *testing.T) {
 						cancel()
 						return nil, ctx.Err()
 					case "apply":
-						return contractMatrix(map[string]string{"a_id": "root"}, grid.Timestamps...), nil
+						return contractMatrix(map[string]string{"a_id": "root"}, grid.timestamps...), nil
 					default:
 						return nil, failure
 					}
@@ -108,11 +107,10 @@ func TestTopologyAttributeSensitiveGroupsKeepOrderedApplication(t *testing.T) {
 	var baseline []string
 	for _, parallel := range []bool{false, true} {
 		ctx := metadata.WithExactTimeGrid(initTimeGraphQueryTestEnvironment())
-		graph, err := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
-		require.NoError(t, err)
+		graph := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
 		loader := &timeGraphMatrixLoader{model: model, graph: graph, topology: true, start: time.Unix(1700000000, 0), end: time.Unix(1700000000, 0), step: time.Minute}
 		loader.override = func(_ context.Context, query *structured.QueryTs) (pl.Matrix, error) {
-			return contractMatrix(map[string]string{"a_id": "root", "b_id": query.SpaceUid}, grid.Timestamps...), nil
+			return contractMatrix(map[string]string{"a_id": "root", "b_id": query.SpaceUid}, grid.timestamps...), nil
 		}
 		relations := model.sharedTopologyRelations("space", nil, nil, DirectionBoth)
 		groups := make([]topologyFetchGroup, 2)
@@ -147,8 +145,7 @@ func TestTopologySafeGroupsDrainShardsWithoutWaitingForFirstGroup(t *testing.T) 
 	var baseline []string
 	for _, parallel := range []bool{false, true} {
 		ctx, cancel := context.WithTimeout(metadata.WithExactTimeGrid(initTimeGraphQueryTestEnvironment()), time.Second)
-		graph, err := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
-		require.NoError(t, err)
+		graph := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
 		secondFinished := make(chan struct{})
 		loader := &timeGraphMatrixLoader{model: model, graph: graph, topology: true, start: time.Unix(1700000000, 0), end: time.Unix(1700000060, 0), step: time.Minute}
 		loader.override = func(ctx context.Context, query *structured.QueryTs) (pl.Matrix, error) {
@@ -251,8 +248,7 @@ func TestTopologyParallelFetchAppliesGroupsInOriginalOrder(t *testing.T) {
 	model := &Model{schemaProvider: provider}
 	grid, err := NewTopologyGrid([]int64{1700000000000})
 	require.NoError(t, err)
-	graph, err := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
-	require.NoError(t, err)
+	graph := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
 	defer graph.Clean(ctx)
 	started := make(chan struct{}, 4)
 	release := make(chan struct{})
@@ -264,7 +260,7 @@ func TestTopologyParallelFetchAppliesGroupsInOriginalOrder(t *testing.T) {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
-		return contractMatrix(map[string]string{"a_id": "root", "b_id": query.SpaceUid}, grid.Timestamps...), nil
+		return contractMatrix(map[string]string{"a_id": "root", "b_id": query.SpaceUid}, grid.timestamps...), nil
 	}
 	relations := model.sharedTopologyRelations("space", nil, nil, DirectionBoth)[:2]
 	groups := make([]topologyFetchGroup, 4)

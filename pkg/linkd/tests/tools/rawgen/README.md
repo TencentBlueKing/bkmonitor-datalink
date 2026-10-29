@@ -1,6 +1,6 @@
 # standard 测试数据生成器
 
-`rawgen` 为 all-in-one E2E、压测和问题复现生成 `standard` payload JSONL，并输出可计算的 Event、EventProcessing、Alert、AlertLog、Redis signal 和 Kafka Alert V1 预期结果。
+`rawgen` 为 all-in-one E2E、压测和问题复现生成 `standard` payload JSONL，并输出可计算的 Event、EventProcessing、Alert、AlertLog和 Redis signal 预期结果；已移除的 Kafka V1 Hook 不再计入输出和 push 流水。
 
 - 相同 seed 和配置产生完全相同的数据；
 - 生命周期块之间随机排列，块内保持稳定顺序；

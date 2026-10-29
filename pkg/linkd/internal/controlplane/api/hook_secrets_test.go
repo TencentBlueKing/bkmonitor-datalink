@@ -59,7 +59,7 @@ func TestHookSecretsSurviveConsoleEdit(t *testing.T) {
 		Storage: config.EventSourceStorageConfig{Type: "kafka", Kafka: config.KafkaStorageConfig{Brokers: []string{"kafka:9092"}, Topic: "raw", ConsumerGroup: "review"}},
 		Hooks: []config.HookConfig{
 
-			{Name: "output", Type: config.HookTypeKafka, Config: config.HookParameters{Brokers: []string{"kafka:9092"}, Topic: "alerts", Security: kafkaclient.SecurityConfig{Protocol: "sasl_plaintext", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "test", Password: "synthetic-kafka-secret"}}}},
+			{Name: "output", Type: config.HookTypeKAC, Config: config.HookParameters{Brokers: []string{"kafka:9092"}, Topic: "alerts", Security: kafkaclient.SecurityConfig{Protocol: "sasl_plaintext", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "test", Password: "synthetic-kafka-secret"}}}},
 		}}.WithDefaults()
 	kac := spec.Hooks[0]
 	kac.Name = "kac-output"
@@ -105,14 +105,14 @@ func TestHookSecretsSurviveConsoleEdit(t *testing.T) {
 		t.Fatal("KAC hook password overwritten")
 	}
 	if saved.Spec.Hooks[0].Config.Security.SASL.Password != spec.Hooks[0].Config.Security.SASL.Password {
-		t.Errorf("Kafka hook password overwritten with %q", saved.Spec.Hooks[1].Config.Security.SASL.Password)
+		t.Errorf("KAC hook password overwritten with %q", saved.Spec.Hooks[1].Config.Security.SASL.Password)
 	}
 }
 
 func TestAPIRejectsUnmatchedMaskedHookCredentials(t *testing.T) {
 	docs := &hookDocuments{map[string]json.RawMessage{}, map[string]int{}}
 	svc := eventsource.New(docs, config.SeverityConfig{})
-	spec := config.EventSource{EventSourceID: "source", Enabled: true, Storage: config.EventSourceStorageConfig{Type: "kafka", Kafka: config.KafkaStorageConfig{Brokers: []string{"kafka:9092"}, Topic: "raw", ConsumerGroup: "review"}}, Hooks: []config.HookConfig{{Name: "index", Type: config.HookTypeKafka, Config: config.HookParameters{Brokers: []string{"kafka:9092"}, Topic: "alerts", Security: kafkaclient.SecurityConfig{Protocol: "sasl_plaintext", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "reader", Password: "******"}}}}}}.WithDefaults()
+	spec := config.EventSource{EventSourceID: "source", Enabled: true, Storage: config.EventSourceStorageConfig{Type: "kafka", Kafka: config.KafkaStorageConfig{Brokers: []string{"kafka:9092"}, Topic: "raw", ConsumerGroup: "review"}}, Hooks: []config.HookConfig{{Name: "index", Type: config.HookTypeKAC, Config: config.HookParameters{Brokers: []string{"kafka:9092"}, Topic: "alerts", Security: kafkaclient.SecurityConfig{Protocol: "sasl_plaintext", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "reader", Password: "******"}}}}}}.WithDefaults()
 	api := (&API{Sources: svc, Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "synthetic-admin"}}}).Handler()
 	body, err := json.Marshal(Mutation{Spec: spec})
 	if err != nil {

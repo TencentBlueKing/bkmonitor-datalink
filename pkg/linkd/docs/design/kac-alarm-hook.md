@@ -1,5 +1,7 @@
 # KAC Alarm Hook 设计
 
+> 2026-10-29 更新：通用 `type: kafka` / Kafka Alert V1 已移除，遗留配置忽略且不报错。下文涉及与该输出并存、回滚或测试的内容是历史方案；当前行为以[退役说明](../reference/contracts/alert-output.md)为准。旧 `type: kac` Hook 仍独立保留。
+
 > 本文描述现行逐 Alert 快照产生 KAC Alarm 消息的实现。后续已确认改为
 > [Alert 到 KAC alarm_event 的稳定兼容投影](event-enrich-and-alarm-policies.md#102-hook-分类与-kac-投影契约)，
 > 已由[全局 KAC 插件](kac-compatibility-plugin.md)实现直接写入、版本防回退与持久化重试；下面仅保留旧 Hook 说明。

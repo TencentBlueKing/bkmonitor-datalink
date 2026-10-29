@@ -90,7 +90,6 @@ type Expected struct {
 	EventStates        map[string]domain.EventProcessState `json:"event_states"`
 	FallbackReceivedAt map[string]time.Time                `json:"fallback_received_time"`
 	InputRecords       int                                 `json:"input_records"`
-	OutputMessages     int                                 `json:"output_messages"`
 	Alerts             []ExpectedAlert                     `json:"alerts"`
 	OperationCounts    map[domain.OperationKind]int        `json:"operation_counts"`
 }
@@ -145,14 +144,6 @@ func Generate(input Config) (Dataset, error) {
 	withDuplicates := injectDuplicates(baseRecords, config.DuplicateRecords, random)
 	records := injectInvalidRecords(withDuplicates, config.InvalidRecords, config.StartTime, random)
 	generator.expected.InputRecords = len(records)
-	for id, state := range generator.expected.EventStates {
-		if state == domain.EventProcessStateAccepted || generator.expected.EventReasons[id] == "duplicate_trigger" {
-			generator.expected.OutputMessages++
-		}
-	}
-	// 每次等级升级由同一 Event 产生旧 Alert closed 和新 Alert active 两个快照。
-	generator.expected.OutputMessages += config.Counts[ScenarioSeverityRotation]
-	generator.expected.OperationCounts[domain.OperationKindPush] = generator.expected.OutputMessages
 	return Dataset{Config: config, Records: records, Expected: generator.expected}, nil
 }
 

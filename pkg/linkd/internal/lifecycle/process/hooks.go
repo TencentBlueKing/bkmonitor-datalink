@@ -17,7 +17,6 @@ import (
 	"linkd/internal/config"
 	"linkd/internal/lifecycle"
 	"linkd/internal/lifecycle/kachook"
-	"linkd/internal/lifecycle/kafkahook"
 	"linkd/internal/runtimeconfig"
 	"linkd/internal/telemetry"
 )
@@ -71,6 +70,10 @@ func assembleHooks(configs []config.HookConfig, runtime *telemetry.Runtime, fact
 		return closeErr
 	}
 	for _, spec := range configs {
+		// 遗留声明不创建客户端、执行 Hook 或生成 push 流水，也不触发全量快照读取。
+		if spec.Type == config.HookTypeKafka {
+			continue
+		}
 		spec = spec.WithDefaults()
 		hook, closeHook, err := factory(spec)
 		if err != nil {
@@ -99,13 +102,6 @@ func openHook(spec config.HookConfig) (lifecycle.FinalHook, func() error, error)
 			return nil, nil, err
 		}
 		return hook, func() error { hook.Close(); return nil }, nil
-	case config.HookTypeKafka:
-		hook, err := kafkahook.New(spec.KafkaConfig())
-		if err != nil {
-			return nil, nil, err
-		}
-		return hook, func() error { hook.Close(); return nil }, nil
-
 	default:
 		return nil, nil, fmt.Errorf("unregistered hook type")
 	}

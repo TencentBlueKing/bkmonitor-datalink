@@ -14,7 +14,6 @@ internal/
   lifecycle/                 # 生命周期裁决及其消费端口
     process/                 # 生命周期进程装配
     kachook/                 # KAC Kafka 输出运行时
-    kafkahook/               # 通用 Alert Kafka 输出运行时
   enrich/                    # 独立丰富能力
     types.go                 # 共用 Input/Result/ChainKind
     custom/                  # CMDB/fields 规则编译与执行
@@ -80,7 +79,7 @@ Worker/API 的 Redis 集成测试迁入 API 包，使用独立命名空间及 WA
 ## 5. 配置与共享参数
 
 - `config.TelemetryConfig` 及其子类型只定义 YAML 配置和校验；`telemetry` 消费这些参数创建 SDK/监听器。
-- `kafkaclient.ProducerConfig` 为通用 Kafka 输出提供参数校验；配置包不再通过 Kafka Hook 运行时获取校验能力。
+- `kafkaclient.ProducerConfig` 为旧 KAC Kafka Hook 提供传输参数校验；配置包不再通过 Kafka Hook 运行时获取校验能力。
 - `config` 仍可以调用无 I/O 的规则编译和纯协议校验，保持发布前发现错误的行为。
 - `dynamicconfig` 管理同步/持久化，`runtimeconfig` 提供原子有效快照；两者继续分开。
 

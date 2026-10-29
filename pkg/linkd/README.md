@@ -41,7 +41,7 @@ MQ delivery
   生命周期、屏蔽、合并、处置准入和同步水位分别保存。定时解除屏蔽或父关闭解联只更新关系，等待下一条触发 Event。
 - `plugins.kac` 全局开启兼容存储和处置通知，覆盖普通来源、内置合并来源及各租户；
   `alarm_event` 沿用 KAC 原索引定义，一个 Alert 生命周期对应一条稳定文档。
-  普通来源 Hook（Kafka V1 等）保留自己的输出保证；全局 KAC 插件启用时跳过旧 KAC Kafka Hook。
+  通用 Kafka V1 Hook 已移除，残留 `type: kafka` 声明忽略；全局 KAC 插件启用时跳过旧 KAC Kafka Hook。
 - MySQL 和 Elasticsearch 都只承诺单对象 CAS；跨对象步骤依赖稳定身份和幂等流水恢复。Cleaner 确认
   原消息后不再扫描 Event 补发 Signal，因此 Redis Mailbox 必须依靠自身持久化和复制保证已确认数据。
 - Elasticsearch Event create 使用 `refresh=false`；Cleaner 在主分片确认后入 Mailbox，Lifecycle 和重复

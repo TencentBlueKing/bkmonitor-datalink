@@ -20,7 +20,7 @@ import (
 )
 
 func TestSourceHookAssemblyAndClose(t *testing.T) {
-	source := []config.HookConfig{{Name: "active", Type: config.HookTypeKafka, Config: config.HookParameters{Brokers: []string{"127.0.0.1:1"}, Topic: "alerts"}}}
+	source := []config.HookConfig{{Name: "active", Type: config.HookTypeKAC, Config: config.HookParameters{Brokers: []string{"127.0.0.1:1"}, Topic: "alerts"}}}
 	hooks, closeHooks, err := openHooks(source, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -39,6 +39,34 @@ func TestSourceHookAssemblyAndClose(t *testing.T) {
 	}
 	if _, _, err := openHooks([]config.HookConfig{{Name: "old", Type: "active-alert-by-strategy"}}, nil); err == nil {
 		t.Fatal("removed hook accepted")
+	}
+}
+
+func TestRemovedKafkaHookNeverReachesRuntimeFactory(t *testing.T) {
+	legacy := config.HookConfig{Name: "duplicate", Type: config.HookTypeKafka, Config: config.HookParameters{MaxMessageBytes: -1}}
+	active := config.HookConfig{Name: "duplicate", Type: config.HookTypeKAC, Config: config.HookParameters{Brokers: []string{"kafka:9092"}, Topic: "alerts"}}
+	for _, specs := range [][]config.HookConfig{{legacy, legacy}, {legacy, active, legacy}} {
+		calls := 0
+		hooks, closeHooks, err := assembleHooks(specs, nil, func(spec config.HookConfig) (lifecycle.FinalHook, func() error, error) {
+			calls++
+			if spec.Type != config.HookTypeKAC {
+				t.Error("removed Kafka hook created a runtime")
+			}
+			return lifecycle.NoopFinalHook{}, func() error { return nil }, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := 0
+		if len(specs) == 3 {
+			want = 1
+		}
+		if len(hooks) != want || calls != want {
+			t.Fatal("obsolete hook was executed or retained", len(hooks), calls)
+		}
+		if err := closeHooks(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -61,7 +89,7 @@ func TestOpenHookSupportsKAC(t *testing.T) {
 func TestHookAssemblyFailureClosesEarlierInstances(t *testing.T) {
 	specs := []config.HookConfig{}
 	for _, name := range []string{"first", "second", "third"} {
-		specs = append(specs, config.HookConfig{Name: name, Type: config.HookTypeKafka, Config: config.HookParameters{Brokers: []string{"kafka:9092"}, Topic: "alerts"}})
+		specs = append(specs, config.HookConfig{Name: name, Type: config.HookTypeKAC, Config: config.HookParameters{Brokers: []string{"kafka:9092"}, Topic: "alerts"}})
 	}
 	var closed []string
 	fail := errors.New("construct failed")

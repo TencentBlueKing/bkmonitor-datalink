@@ -25,7 +25,7 @@ import (
 const (
 	// HookTypeKAC 注册 KAC Alarm 兼容 Kafka 输出。
 	HookTypeKAC = "kac"
-	// HookTypeKafka 注册完整 Alert V1 Kafka 输出。
+	// HookTypeKafka 仅识别并忽略已移除的通用 Kafka V1 Hook 配置。
 	HookTypeKafka = "kafka"
 	// MaxHooksPerSource 限制每个任务持有的插件、连接和单次输出数量。
 	MaxHooksPerSource = 16
@@ -39,8 +39,60 @@ type HookConfig struct {
 	Name string `yaml:"name" json:"name"`
 	// Type 选择内置注册实现。
 	Type string `yaml:"type" json:"type"`
-	// Config 只允许所选插件的参数。
+	// Config 只允许在用插件的参数；已移除的 kafka Hook 参数全部忽略。
 	Config HookParameters `yaml:"config" json:"config"`
+}
+
+// UnmarshalJSON 保持在用 Hook 的严格解码；遗留 kafka Hook 仅保留名称和类型，不解析废弃参数。
+func (h *HookConfig) UnmarshalJSON(data []byte) error {
+	var header struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return err
+	}
+	if header.Type == HookTypeKafka {
+		*h = HookConfig{Name: header.Name, Type: header.Type}
+		return nil
+	}
+	type plain HookConfig
+	var decoded plain
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*h = HookConfig(decoded)
+	return nil
+}
+
+// UnmarshalYAML 跳过遗留 kafka Hook 的整个参数对象，不检查无效 broker、凭据或多余字段。
+func (h *HookConfig) UnmarshalYAML(node *yaml.Node) error {
+	var header struct {
+		Name string `yaml:"name"`
+		Type string `yaml:"type"`
+	}
+	if err := node.Decode(&header); err != nil {
+		return err
+	}
+	if header.Type == HookTypeKafka {
+		*h = HookConfig{Name: header.Name, Type: header.Type}
+		return nil
+	}
+	type plain HookConfig
+	data, err := yaml.Marshal(node)
+	if err != nil {
+		return err
+	}
+	var decoded plain
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*h = HookConfig(decoded)
+	return nil
 }
 
 // HookParameters 是内置插件参数的封闭联合；ValidateHooks 拒绝其他插件的参数。
@@ -119,9 +171,13 @@ func (h HookConfig) clone() HookConfig {
 
 // WithDefaults 深拷贝参数，只为选中的插件补齐默认值。
 func (h HookConfig) WithDefaults() HookConfig {
+	if h.Type == HookTypeKafka {
+		h.Config = HookParameters{}
+		return h
+	}
 	h = h.clone()
 	switch h.Type {
-	case HookTypeKafka, HookTypeKAC:
+	case HookTypeKAC:
 		if h.Config.MaxMessageBytes == 0 {
 			h.Config.MaxMessageBytes = 1 << 20
 		}
@@ -170,25 +226,30 @@ func (s EventSource) WithPreservedHookSecrets(previous EventSource) EventSource 
 	return s
 }
 
-// KafkaParameters 返回 Kafka 传输参数；Kafka V1 与 KAC Hook 共用配置形状。
+// KafkaParameters 返回 KAC Hook 的 Kafka 传输参数。
 func (h HookConfig) KafkaParameters() (brokers []string, topic, clientID string, maxMessageBytes int, security kafkaclient.SecurityConfig) {
 	c := h.WithDefaults().Config
 	return c.Brokers, c.Topic, c.ClientID, c.MaxMessageBytes, c.Security
 }
 
-// KafkaConfig 构造 Kafka V1 插件运行时参数；调用方须先验证插件类型。
+// KafkaConfig 构造 KAC Hook 的 Kafka 客户端参数；调用方须先验证插件类型。
 func (h HookConfig) KafkaConfig() kafkaclient.ProducerConfig {
 	c := h.WithDefaults().Config
 	return kafkaclient.ProducerConfig{Brokers: c.Brokers, Topic: c.Topic, ClientID: c.ClientID, MaxMessageBytes: c.MaxMessageBytes, Security: c.Security}
 }
 
-// ValidateHooks 在发布前校验注册类型、实例身份和各插件参数，不连接外部服务。
+// ValidateHooks 校验在用插件；遗留 kafka Hook 不占实例名额、不校验参数，也不连接外部服务。
 func ValidateHooks(hooks []HookConfig) error {
-	if len(hooks) > MaxHooksPerSource {
-		return fmt.Errorf("hooks must contain at most %d instances", MaxHooksPerSource)
-	}
 	seen := make(map[string]bool, len(hooks))
+	active := 0
 	for i, hook := range hooks {
+		if hook.Type == HookTypeKafka {
+			continue
+		}
+		active++
+		if active > MaxHooksPerSource {
+			return fmt.Errorf("hooks must contain at most %d instances", MaxHooksPerSource)
+		}
 		if !hookNamePattern.MatchString(hook.Name) || seen[hook.Name] {
 			return fmt.Errorf("hooks[%d].name must be unique and contain 1 to 64 identifier characters", i)
 		}
@@ -217,7 +278,7 @@ func (h HookConfig) validate() error {
 		}
 	}
 	switch h.Type {
-	case HookTypeKafka, HookTypeKAC:
+	case HookTypeKAC:
 		if c.Redis != nil || c.KeyPrefix != "" || c.TimeoutMilliseconds != nil || c.PoolSize != 0 {
 			return fmt.Errorf("removed Redis hook parameters cannot be published")
 		}

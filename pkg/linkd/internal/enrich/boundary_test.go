@@ -38,7 +38,7 @@ func TestPackageBoundaries(t *testing.T) {
 		{"internal/enrich/kingeye", []string{"linkd/internal/config", "linkd/internal/lifecycle", "linkd/internal/telemetry", "linkd/internal/store"}},
 		{"internal/enrich/preview", []string{"linkd/internal/lifecycle", "linkd/internal/telemetry", "linkd/internal/enrich/assembly", "linkd/internal/enrich/datasources", "linkd/internal/store/assembly", "linkd/internal/store/mysql", "linkd/internal/store/elasticsearch", "linkd/internal/controlplane/process"}},
 		{"internal/taskdispatch", []string{"linkd/internal/controlplane/api", "linkd/internal/enrich/preview", "linkd/internal/enrich/assembly", "linkd/internal/dynamicconfig"}},
-		{"internal/config", []string{"linkd/internal/telemetry", "linkd/internal/lifecycle/kachook", "linkd/internal/lifecycle/kafkahook", "linkd/internal/enrich/assembly"}},
+		{"internal/config", []string{"linkd/internal/telemetry", "linkd/internal/lifecycle/kachook", "linkd/internal/enrich/assembly"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.directory, func(t *testing.T) {

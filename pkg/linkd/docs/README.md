@@ -30,7 +30,7 @@ Linkd 项目仍处于早期开发阶段。文档中心区分当前代码、测�
 10. [消息消费运行时](design/message-consumption-runtime.md)：MQ 通用端口、确认和背压。
 11. [核心存储契约](design/core-storage-contract.md)：Repository、CAS 和物理资源。
 12. [Linkd 标准事件](reference/contracts/standard-event.md)：RawEvent 输入、KAC V2 校验与旧 `AlarmEvent` 字段映射。
-13. [其他外部协议](reference/contracts/README.md)：Kafka Alert V1 和 KAC Alarm 输出。
+13. [其他外部协议](reference/contracts/README.md)：KAC Alarm 输出与已移除的 Kafka V1 Hook。
 
 Kubernetes 部署入口：[Helm 部署与 worker 分组](guides/helm.md)。
 多级别事件改造的测试环境切换见[重置升级指南](guides/multilevel-event-upgrade.md)；

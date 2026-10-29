@@ -1033,7 +1033,7 @@ event_sources:
   - event_source_id: source-a
     hooks:
       - name: alerts
-        type: kafka
+        type: kac
         config:
           brokers: [kafka.example.com:9093]
           topic: alerts
@@ -1082,6 +1082,33 @@ event_sources:
 	_, err = load(configPath, Overrides{}, mapLookup(nil))
 	if err == nil || !strings.Contains(err.Error(), caPath) || !strings.Contains(err.Error(), "valid certificate") {
 		t.Fatalf("load(invalid CA) error = %v", err)
+	}
+}
+
+func TestLoadIgnoresRemovedKafkaHookAndItsTLSFiles(t *testing.T) {
+	path := writeConfig(t, `event_sources:
+  - event_source_id: source
+    enabled: true
+    storage:
+      type: kafka
+      kafka: {brokers: ["kafka:9092"], topic: raw, consumer_group: cleaner}
+    hooks:
+      - name: ignored
+        type: kafka
+        unused: true
+        config:
+          security:
+            protocol: ssl
+            tls: {ca_file: ./does-not-exist.pem}
+          max_message_bytes: obsolete
+          unused: ignored
+`)
+	cfg, err := load(path, Overrides{}, mapLookup(nil))
+	if err != nil {
+		t.Fatal("obsolete hook prevented loading", err)
+	}
+	if len(cfg.EventSources[0].Hooks) != 1 || cfg.EventSources[0].Hooks[0].Config.Security.TLS != nil {
+		t.Fatal("obsolete hook parameters retained")
 	}
 }
 

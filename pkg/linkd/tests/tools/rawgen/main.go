@@ -123,12 +123,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 	_, _ = fmt.Fprintf(
 		stderr,
-		"seed=%d scenarios=%d records=%d valid_events=%d outputs=%d alerts=%d invalid=%d duplicates=%d\n",
+		"seed=%d scenarios=%d records=%d valid_events=%d alerts=%d invalid=%d duplicates=%d\n",
 		dataset.Config.Seed,
 		scenarioCount(dataset.Config.Counts),
 		dataset.Expected.InputRecords,
 		len(dataset.Expected.SourceEventIDs),
-		dataset.Expected.OutputMessages,
 		len(dataset.Expected.Alerts),
 		dataset.Config.InvalidRecords,
 		dataset.Config.DuplicateRecords,

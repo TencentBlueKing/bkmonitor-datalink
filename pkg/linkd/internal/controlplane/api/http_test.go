@@ -42,7 +42,7 @@ func (d publishedDocuments) Get(ctx context.Context, collection, key string) (js
 }
 
 func TestPublishedSourceListPreservesScopeAndRedaction(t *testing.T) {
-	draft := config.EventSource{EventSourceID: "source", Hooks: []config.HookConfig{{Name: "active", Type: config.HookTypeKafka, Config: config.HookParameters{Brokers: []string{"kafka:9092"}, Topic: "draft", Security: kafkaclient.SecurityConfig{Protocol: "sasl_plaintext", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "u", Password: "draft-secret"}}}}}}
+	draft := config.EventSource{EventSourceID: "source", Hooks: []config.HookConfig{{Name: "active", Type: config.HookTypeKAC, Config: config.HookParameters{Brokers: []string{"kafka:9092"}, Topic: "draft", Security: kafkaclient.SecurityConfig{Protocol: "sasl_plaintext", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "u", Password: "draft-secret"}}}}}}
 	released := draft.WithDefaults()
 	released.Hooks[0].Config.Topic = "published"
 	released.Hooks[0].Config.Security.SASL.Password = "release-secret"

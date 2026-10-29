@@ -180,7 +180,6 @@ flowchart TB
   抑制受控对账及可靠投递；同时维护 Elasticsearch Schema、时间桶、终态归档和 Redis Signal 安全裁剪。
 - `internal/lifecycle` 按 `(bk_tenant_id, event_source_id, fingerprint)` 关联 active Alert，在 Event 丰富后
   执行策略、等级和状态裁决，冻结处理计划并完成 CAS、输出意图及部分成功恢复。
-- `internal/lifecycle/kafkahook` 根据 Alert change/cause 输出 V1 完整快照，不要求每次变更都存在 Event。
 - `internal/blueking` 统一 APIGW 身份解析与租户用户缓存；`internal/cmdb` 负责 CMDB 请求及完整性检查。
 - `internal/kaccompat` 直接维护 KAC 兼容索引和文档，`internal/projection` 与 `internal/actiondelivery`
   分别推进持久同步和获准动作，不由普通 Hook 承担可靠重试。

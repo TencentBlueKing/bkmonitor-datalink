@@ -10,10 +10,10 @@ RawEventMessage(standard)
   -> Redis Mailbox Event ID + lifecycle signal
   -> 上游 Kafka offset 确认
   -> Alert / AlertLog
-  -> Kafka Alert V1 snapshot
+  -> 遗留 Kafka V1 Hook 不产生消息或 push 流水
 ```
 
-[`rawgen`](../../tools/rawgen) 使用固定 seed 生成 triggered、重复投递、resolved、closed、等级升级、低等级抑制、坏消息和跨租户场景。断言覆盖稳定 Event ID、租户覆盖、时间回退、Severity mapping、`related_alert_ids`、处理 outcome、Alert 不可变继承字段、默认 close_and_create 的双快照升级输出和 Kafka cause。
+[`rawgen`](../../tools/rawgen) 使用固定 seed 生成 triggered、重复投递、resolved、closed、等级升级、低等级抑制、坏消息和跨租户场景。断言覆盖稳定 Event ID、租户覆盖、时间回退、Severity mapping、`related_alert_ids`、处理 outcome、Alert 不可变继承字段、默认 close_and_create 的等级轮换，以及遗留 Kafka V1 声明被忽略。
 
 当前 rawgen 的输入为单项 evaluations；多级别组合、update_current、升级优先级及计划恢复由
 [Lifecycle 回归测试](../../../internal/lifecycle/multilevel_test.go)覆盖，不把该单元测试结果描述为真实中间件 E2E。
@@ -21,7 +21,7 @@ RawEventMessage(standard)
 
 每次运行使用唯一的 MySQL database 或 Elasticsearch index prefix，以及独立 Kafka topic/group 和
 Redis stream/group/mailbox/lock 前缀；结束时只清理本次资源。Raw topic 固定创建 3 个 partition，并
-验证最终 Event、Alert、AlertLog 和输出数量，并验证每条 Event 在完成处理前保存完整 Enrich 结果。
+验证最终 Event、Alert、AlertLog 及遗留输出为空，并验证每条 Event 在完成处理前保存完整 Enrich 结果。
 固定 fixture 使用历史时间；测试在控制面创建模板后调用 storage prepare 显式准备对应时间桶，不随系统日期修改输入。Mailbox Signal 按空到非空产生并允许冗余，因此只断言
 consumer group 无 pending/lag，并完整扫描确认不存在非空 Mailbox List，不断言 Signal 与 Event 一一对应。普通 `go test ./...` 不访问
 外部服务，未设置 `LINKD_E2E=1` 时跳过。
@@ -71,7 +71,7 @@ LINKD_E2E=1 go test -race -count=1 -timeout 15m \
 入队不依赖后台补扫或接收端凭据。fixture 没有共享近期缓存，发送下一 Event 前先等待 ES 活动查询
 可见，不以此等待替代正式 Worker 的缓存行为。
 初始 Alert 建立后再发布含旧 KAC Hook 的来源版本；升级与关闭仍只留下原绑定的可靠动作任务，
-旧 KAC action topic 必须没有消息，普通 Kafka V1 状态 topic 则保留升级和关闭的两个快照。
+旧 KAC action topic 必须没有消息，普通 Kafka V1 状态 topic 在 2026-10-29 移除该 Hook 后也不再产生消息；此前快照数量仅为历史验证结果。
 这同时验证后续来源配置不能绕过已有 Alert 的动作归属，未选择目标迁移规则。
 
 ```bash

@@ -230,7 +230,7 @@ func TestPublicationPreservesHookParametersAndIsolation(t *testing.T) {
 	ctx := context.Background()
 	service := New(newDocs(), config.SeverityConfig{})
 	spec := sample()
-	spec.Hooks = []config.HookConfig{{Name: "active", Type: config.HookTypeKafka, Config: config.HookParameters{Brokers: []string{"kafka:9092"}, Topic: "first", Security: kafkaclient.SecurityConfig{Protocol: "sasl_plaintext", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "u", Password: "private"}}}}}
+	spec.Hooks = []config.HookConfig{{Name: "active", Type: config.HookTypeKAC, Config: config.HookParameters{Brokers: []string{"kafka:9092"}, Topic: "first", Security: kafkaclient.SecurityConfig{Protocol: "sasl_plaintext", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "u", Password: "private"}}}}}
 	record, err := service.Apply(ctx, spec, 0, false, "api")
 	if err != nil {
 		t.Fatal(err)
@@ -254,6 +254,23 @@ func TestPublicationPreservesHookParametersAndIsolation(t *testing.T) {
 	spec.Hooks[0].Type = "unknown"
 	if _, err := service.Apply(ctx, spec, 2, false, "api"); err == nil {
 		t.Fatal("published unknown hook")
+	}
+}
+
+func TestPublicationIgnoresRemovedKafkaHook(t *testing.T) {
+	service := New(newDocs(), config.SeverityConfig{})
+	spec := sample()
+	spec.Hooks = []config.HookConfig{{Type: config.HookTypeKafka, Config: config.HookParameters{MaxMessageBytes: -1, Security: kafkaclient.SecurityConfig{Protocol: "obsolete"}}}}
+	record, err := service.Apply(t.Context(), spec, 0, false, "api")
+	if err != nil {
+		t.Fatal("removed hook blocked publication", err)
+	}
+	release, err := service.GetRelease(t.Context(), record.ID, record.Published)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(release.Spec.Hooks) != 1 || release.Spec.Hooks[0].Type != config.HookTypeKafka || release.Spec.Hooks[0].Config.MaxMessageBytes != 0 {
+		t.Fatal("removed hook retained runtime parameters")
 	}
 }
 

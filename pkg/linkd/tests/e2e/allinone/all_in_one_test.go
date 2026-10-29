@@ -42,7 +42,6 @@ import (
 	controlapi "linkd/internal/controlplane/api"
 	"linkd/internal/domain"
 	"linkd/internal/eventsource"
-	"linkd/internal/lifecycle/kafkahook"
 	"linkd/internal/lifecycle/mailbox"
 	"linkd/internal/lifecycle/scheduler"
 	"linkd/internal/policy"
@@ -88,7 +87,6 @@ type resourceNames struct {
 	RawTopic             string
 	OutputTopic          string
 	CleanerGroup         string
-	OutputGroup          string
 	SignalStream         string
 	SignalGroup          string
 	SignalConsumerPrefix string
@@ -192,8 +190,7 @@ func TestAllInOneElasticsearchE2E(t *testing.T) {
 	assertAlerts(t, alerts, expected.Alerts)
 	logs := waitForAlertLogsVisible(ctx, t, process, es, names.AlertLogIndex, expected.OperationCounts)
 	assertAlertLogs(t, logs, expected.OperationCounts)
-	outputs := consumeOutputs(ctx, t, environment.KafkaBroker, names, expected.OutputMessages)
-	assertOutputs(t, outputs, events, expected.OutputMessages)
+	assertNoLegacyOutputs(ctx, t, environment.KafkaBroker, names)
 	waitForRedisDrain(ctx, t, redisClient, names)
 	verifySourceMutationCycle(ctx, t, configPath)
 
@@ -201,13 +198,12 @@ func TestAllInOneElasticsearchE2E(t *testing.T) {
 		t.Fatalf("gracefully stop all-in-one: %v", err)
 	}
 	t.Logf(
-		"E2E passed: backend=elasticsearch version=%s input=%d events=%d alerts=%d logs=%d output=%d stream=%s",
+		"E2E passed: backend=elasticsearch version=%s input=%d events=%d alerts=%d logs=%d stream=%s",
 		version,
 		expected.InputRecords,
 		len(events),
 		len(alerts),
 		len(logs),
-		len(outputs),
 		names.SignalStream,
 	)
 }
@@ -361,8 +357,7 @@ func TestAllInOneMySQLE2E(t *testing.T) {
 	assertAlerts(t, alerts, expected.Alerts)
 	logs := loadMySQLAlertLogs(ctx, t, repositoryDatabase)
 	assertAlertLogs(t, logs, expected.OperationCounts)
-	outputs := consumeOutputs(ctx, t, environment.KafkaBroker, names, expected.OutputMessages)
-	assertOutputs(t, outputs, events, expected.OutputMessages)
+	assertNoLegacyOutputs(ctx, t, environment.KafkaBroker, names)
 	waitForRedisDrain(ctx, t, redisClient, names)
 	verifySourceMutationCycle(ctx, t, configPath)
 
@@ -370,13 +365,12 @@ func TestAllInOneMySQLE2E(t *testing.T) {
 		t.Fatalf("gracefully stop all-in-one: %v", err)
 	}
 	t.Logf(
-		"E2E passed: backend=mysql version=%s input=%d events=%d alerts=%d logs=%d output=%d database=%s",
+		"E2E passed: backend=mysql version=%s input=%d events=%d alerts=%d logs=%d database=%s",
 		version,
 		expected.InputRecords,
 		len(events),
 		len(alerts),
 		len(logs),
-		len(outputs),
 		names.MySQLDatabase,
 	)
 }
@@ -432,7 +426,6 @@ func newResourceNames() resourceNames {
 		RawTopic:             prefix + "-raw",
 		OutputTopic:          prefix + "-output",
 		CleanerGroup:         prefix + "-cleaner",
-		OutputGroup:          prefix + "-assert-output",
 		SignalStream:         "linkd:e2e:" + token + ":signals",
 		SignalGroup:          prefix + "-lifecycle",
 		SignalConsumerPrefix: prefix + "-consumer",
@@ -1455,91 +1448,30 @@ func assertAlertLogs(t *testing.T, logs []domain.AlertLog, expected map[domain.O
 	}
 }
 
-func consumeOutputs(
-	ctx context.Context,
-	t *testing.T,
-	broker string,
-	names resourceNames,
-	expected int,
-) []kafkahook.Message {
+// 基础 E2E 故意保留旧 kafka Hook 声明，验证该声明不会产生消息或 push 流水。
+func assertNoLegacyOutputs(ctx context.Context, t *testing.T, broker string, names resourceNames) {
 	t.Helper()
+	partitions := make(map[int32]kgo.Offset, e2eTopicPartitions)
+	for partition := int32(0); partition < e2eTopicPartitions; partition++ {
+		partitions[partition] = kgo.NewOffset().AtStart()
+	}
 	consumer, err := kgo.NewClient(
 		kgo.SeedBrokers(broker),
 		kgo.ClientID("linkd-e2e-output-reader-"+names.Token),
-		kgo.ConsumerGroup(names.OutputGroup),
-		kgo.ConsumeTopics(names.OutputTopic),
-		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
-		kgo.DisableAutoCommit(),
+		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{names.OutputTopic: partitions}),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer consumer.Close()
-	messages := make([]kafkahook.Message, 0, expected)
-	for len(messages) < expected {
-		fetches := consumer.PollRecords(ctx, expected-len(messages))
-		if err := fetches.Err(); err != nil {
-			t.Fatalf("consume output Kafka: %v", err)
-		}
-		for _, record := range fetches.Records() {
-			var message kafkahook.Message
-			if err := json.Unmarshal(record.Value, &message); err != nil {
-				t.Fatalf("decode output Kafka message: %v", err)
-			}
-			headers := make(map[string]string, len(record.Headers))
-			for _, header := range record.Headers {
-				headers[header.Key] = string(header.Value)
-			}
-			if headers["message_id"] != message.MessageID || headers["cause_id"] != message.Cause.ID ||
-				headers["bk_tenant_id"] != message.BKTenantID {
-				t.Fatalf("output Kafka header/payload mismatch: headers=%v message=%#v", headers, message)
-			}
-			messages = append(messages, message)
-		}
-	}
-	quietCtx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	quietCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
 	defer cancel()
-	extra := consumer.PollRecords(quietCtx, 1)
-	if records := extra.Records(); len(records) != 0 {
-		t.Fatalf("output Kafka contains unexpected duplicate message: %s", records[0].Value)
+	fetches := consumer.PollRecords(quietCtx, 1)
+	if err := fetches.Err(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("read retired output topic: %v", err)
 	}
-	return messages
-}
-
-func assertOutputs(
-	t *testing.T,
-	outputs []kafkahook.Message,
-	events []storedEventView,
-	expected int,
-) {
-	t.Helper()
-	eventIDs := make(map[string]struct{}, len(events))
-	suppressedEventIDs := make(map[string]struct{})
-	for _, stored := range events {
-		eventIDs[stored.Event.EventID] = struct{}{}
-		if stored.Processing.State == domain.EventProcessStateSuppressed && stored.Processing.ReasonCode != "duplicate_trigger" {
-			suppressedEventIDs[stored.Event.EventID] = struct{}{}
-		}
-	}
-	seen := make(map[string]struct{}, len(outputs))
-	for _, output := range outputs {
-		if _, exists := eventIDs[output.Cause.ID]; !exists {
-			t.Fatalf("output references unknown Event %q", output.Cause.ID)
-		}
-		if _, suppressed := suppressedEventIDs[output.Cause.ID]; suppressed {
-			t.Fatalf("suppressed Event %q unexpectedly emitted an Alert snapshot", output.Cause.ID)
-		}
-		if _, duplicate := seen[output.MessageID]; duplicate {
-			t.Fatalf("output repeated message %q", output.MessageID)
-		}
-		seen[output.MessageID] = struct{}{}
-		if output.SchemaVersion != "1" || output.Alert.AlertID != output.AlertID ||
-			output.EnrichStatus != domain.EnrichStatusSucceeded {
-			t.Fatalf("invalid output message: %#v", output)
-		}
-	}
-	if len(outputs) != expected || len(seen) != expected {
-		t.Fatalf("output messages = %d unique=%d, want %d", len(outputs), len(seen), expected)
+	if len(fetches.Records()) != 0 {
+		t.Fatal("removed Kafka Hook still produced messages")
 	}
 }
 

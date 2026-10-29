@@ -271,7 +271,7 @@ sequenceDiagram
   R-->>RT: 确认成功，释放在途名额
 ```
 
-**重要：当前实现并非“Kafka 输出成功才允许 Event 终态”。** [Kafka Hook](../../internal/lifecycle/kafkahook/hook.go) 使用 `ProduceSync` 并要求 all ISR ACK，调用方同步等待；但 [runFinalHook](../../internal/lifecycle/hook.go) 将普通发送错误或 Hook panic 记录为 `hook_failed` 日志，通常继续后续流程。context 已取消、日志构造/持久化失败等才向 Processor 返回错误。不能把“同步调用”误写成跨 Kafka 与 ES 的事务成功保证。
+**重要：当前实现并非“Kafka 输出成功才允许 Event 终态”。** 历史 Kafka V1 Hook（2026-10-29 已移除，见[退役说明](../reference/contracts/alert-output.md)） 使用 `ProduceSync` 并要求 all ISR ACK，调用方同步等待；但 [runFinalHook](../../internal/lifecycle/hook.go) 将普通发送错误或 Hook panic 记录为 `hook_failed` 日志，通常继续后续流程。context 已取消、日志构造/持久化失败等才向 Processor 返回错误。不能把“同步调用”误写成跨 Kafka 与 ES 的事务成功保证。
 
 [appendAlertLogs](../../internal/lifecycle/log.go) 汇总本次决策的日志并逐项检查。已成功项通过确定性 log ID 和 create-only 在重试时吸收；某一项失败不能放行 Event CAS。输出可能因恢复被再次调用，稳定 MessageID 只提供消费者去重依据，不是发送端跨恢复的 exactly-once 承诺。
 

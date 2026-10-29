@@ -331,30 +331,27 @@ func GetRawConfig() *Config {
 
 // Send sends a mapstr event
 func Send(event MapStr) bool {
-	if beatNotRunning() {
-		return false
-	}
-	if commonBKBeat.Client == nil {
-		return false
-	}
-	(*commonBKBeat.Client).Publish(bkEventToEvent(event))
-	if *testMode {
-		time.Sleep(time.Second * 2)
-		os.Exit(0)
-	}
-	return true
+	return publishEvent(bkEventToEvent(event))
 }
 
 // SendEvent sends a Event type event
 func SendEvent(event Event) bool {
+	return publishEvent(formatEvent(event))
+}
+
+// publishEvent is shared by Send and SendEvent. In managed preview mode it only
+// publishes: the coordinator owns termination and output draining. The legacy
+// -T diagnostic keeps the original sleep-and-exit behavior.
+func publishEvent(event Event) bool {
 	if beatNotRunning() {
 		return false
 	}
-	if commonBKBeat.Client == nil {
+	client := commonBKBeat.getClient()
+	if client == nil {
 		return false
 	}
-	(*commonBKBeat.Client).Publish(formatEvent(event))
-	if *testMode {
+	(*client).Publish(event)
+	if *testMode && !managedPreview.isEnabled() {
 		time.Sleep(time.Second * 2)
 		os.Exit(0)
 	}
@@ -375,7 +372,9 @@ func Stop() error {
 	// running state (partial initialization), so it runs unconditionally.
 	// commonBKBeat.Stop itself only releases the publisher client when the
 	// beat is actually running, and freeResource only releases resources that
-	// this process acquired.
+	// this process acquired. The publisher client is closed before storage in
+	// every mode; managed preview defers both until Registrar.Stop returned.
+	commonBKBeat.stopPublish()
 	commonBKBeat.Stop()
 	stopReloader()
 	freeResource()

@@ -184,8 +184,8 @@ func (p *gsePusher) Error() error {
 func (p *gsePusher) getClient() (beat.Client, error) {
 	c := p.client
 	if c == nil {
-		if commonBKBeat.Client != nil {
-			c = *commonBKBeat.Client
+		if shared := commonBKBeat.getClient(); shared != nil {
+			c = *shared
 		}
 	}
 	if c == nil {

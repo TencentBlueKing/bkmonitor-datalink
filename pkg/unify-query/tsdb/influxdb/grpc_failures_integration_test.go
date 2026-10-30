@@ -99,8 +99,10 @@ func TestInfluxGRPCStartupFailuresIntegration(t *testing.T) {
 			t.Run("healthy_"+strconv.FormatBool(healthy)+"/strict_"+strconv.FormatBool(strict), func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(strictInfluxContext(t, strict), 3*time.Second)
 				defer cancel()
-				i, err := NewInstance(ctx, &Options{Host: host, GrpcPort: port, Protocol: influxrouter.GRPC,
-					Timeout: time.Second, ReadRateLimit: 100, MaxLimit: 100, MaxSlimit: 100})
+				i, err := NewInstance(ctx, &Options{
+					Host: host, GrpcPort: port, Protocol: influxrouter.GRPC,
+					Timeout: time.Second, ReadRateLimit: 100, MaxLimit: 100, MaxSlimit: 100,
+				})
 				require.NoError(t, err)
 				set := i.grpcStream(ctx, "db", "rp", "good", "value", "", "", 100, 100)
 				values, err := strictInfluxValues(set)

@@ -735,6 +735,21 @@ func TestSpanSetStorageListDiff(t *testing.T) {
 			wantStatus:            "match",
 			wantMissing:           "",
 		},
+		"unknown request storage is not a proven match": {
+			rtDetail:              map[string]metadata.RtDetail{"rt_vm_1": {TableID: "rt_1"}},
+			responseVMClusterList: []string{},
+			wantStatus:            "unknown",
+			wantReason:            "unknown_request_storage",
+		},
+		"known missing storage takes precedence over unknown request storage": {
+			rtDetail: map[string]metadata.RtDetail{
+				"rt_vm_1": {TableID: "rt_1", StorageName: "vm_op_1"},
+				"rt_vm_2": {TableID: "rt_2"},
+			},
+			responseVMClusterList: []string{},
+			wantStatus:            "mismatch",
+			wantMissing:           `[{"cluster":"vm_op_1","vm_rt_list":["rt_vm_1"],"table_id_list":["rt_1"]}]`,
+		},
 	}
 
 	for name, tc := range cases {

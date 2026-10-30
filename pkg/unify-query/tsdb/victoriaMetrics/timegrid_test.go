@@ -27,6 +27,7 @@ func TestExactTimeGridCacheCases(t *testing.T) {
 		{"旧短步长行为", 1700000001, 60, false, 0},
 		{"旧长步长行为", 1700000001, 120, false, 1},
 		{"零步长不除零", 1700000001, 0, false, 0},
+		{"负步长不使用网格缓存", 1700000001, -1, false, 0},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()

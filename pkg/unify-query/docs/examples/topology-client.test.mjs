@@ -7,6 +7,27 @@ const catalog = JSON.parse(readFileSync(new URL("../api/timegraph-schema.json", 
 const scenarioFixture = JSON.parse(readFileSync(new URL("topology-scenarios.json", import.meta.url)));
 const scenarios = scenarioFixture.cases;
 
+test("snapshot integer token boundaries preserve safe runtimes", () => {
+  const hasSource = JSON.parse("0", (_, value, context) => context?.source ?? value) === "0";
+  for (const key of ["id", "source", "target"]) {
+    for (const token of ["0", "9007199254740991"]) {
+      assert.equal(parseTopologyJSON(`{"${key}":${token}}`)[key], token);
+    }
+    for (const token of ["-1", "1.5", "18446744073709551616"]) {
+      assert.throws(() => parseTopologyJSON(`{"${key}":${token}}`), TypeError);
+    }
+    const unsafe = `{"${key}":9007199254740993}`;
+    if (hasSource) {
+      assert.equal(parseTopologyJSON(unsafe)[key], "9007199254740993");
+      assert.throws(() => parseTopologyJSON(`{"${key}":1e3}`), TypeError);
+    } else {
+      assert.throws(() => parseTopologyJSON(unsafe), TypeError);
+    }
+    assert.equal(parseTopologyJSON(`{"${key}":"18446744073709551615"}`)[key], "18446744073709551615");
+  }
+  assert.deepEqual(parseTopologyJSON('{"timestamp":1700000000000,"value":1.5}'), { timestamp: 1700000000000, value: 1.5 });
+});
+
 test("snapshot uint64 tokens remain exact; identities ignore request IDs and optional properties", () => {
   const frame = parseTopologyJSON('{"timestamp":1700000000000,"partial":false,"nodes":[{"id":18446744073709551615,"resource_type":"container","dimensions":{"bcs_cluster_id":"example-cluster","namespace":"demo","pod":"pod-a","container":"app-a","version":"v1"}},{"id":9007199254740993,"resource_type":"pod","dimensions":{"bcs_cluster_id":"example-cluster","namespace":"demo","pod":"pod-a"}}],"edges":[{"source":18446744073709551615,"target":9007199254740993,"relation_type":"one","metric_name":"m1","category":"static","direction":"outbound"},{"source":18446744073709551615,"target":9007199254740993,"relation_type":"two","metric_name":"m2","category":"static","direction":"outbound"}]}');
   assert.equal(frame.nodes[0].id, "18446744073709551615");

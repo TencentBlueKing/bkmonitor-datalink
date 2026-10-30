@@ -34,6 +34,74 @@ test("reject malformed masks, IDs, overlaps and dangling edges", () => {
   ]) { const input = fixture(); change(input); assert.throws(() => createTopologyReader(input)); }
 });
 
+test("compact validation covers each grid, mask, field and partial-state boundary", () => {
+  const cases = [
+    [x => { x.timestamps = []; }, /Unsupported compact/],
+    [x => { x.timestamps = null; }, /Unsupported compact/],
+    [x => { x.timestamps[1] = 0; }, /Invalid topology grid/],
+    [x => { x.timestamps[1] = -1; }, /Invalid topology grid/],
+    [x => { x.timestamps[0] = 0.5; }, /Invalid topology grid/],
+    [x => { x.timestamps[128] = Number.MAX_SAFE_INTEGER + 1; }, /Invalid topology grid/],
+    [x => { x.nodes[0].mask = []; }, /Invalid time mask/],
+    [x => { x.nodes[0].mask = null; }, /Invalid time mask/],
+    [x => { x.nodes[0].mask = ["0000000000000001", "0000000000000000", "0000000000000000", "0000000000000000"]; }, /Invalid time mask/],
+    [x => { x.nodes[0].mask = [1]; }, /Invalid mask word/],
+    [x => { x.nodes[0].mask = ["FFFFFFFFFFFFFFFF"]; }, /Invalid mask word/],
+    [x => { x.nodes[0].mask = ["fffffffffffffffff"]; }, /Invalid mask word/],
+    [x => { x.nodes[0].mask = ["0000000000000001", "0000000000000000", "0000000000000002"]; }, /Mask exceeds grid/],
+    [x => { x.nodes[0].mask = ["0000000000000000"]; x.edges = []; }, /Empty version mask/],
+    [x => { x.partial[0].index = -1; }, /Invalid partial state/],
+    [x => { x.partial[0].index = 0.5; }, /Invalid partial state/],
+    [x => { x.partial[0].index = x.timestamps.length; }, /Invalid partial state/],
+    [x => { x.partial.push({ ...x.partial[0] }); }, /Invalid partial state/],
+    [x => { x.partial[0].reason = 42; }, /Invalid partial state/],
+  ];
+  for (const [change, message] of cases) {
+    const input = fixture(); change(input);
+    assert.throws(() => createTopologyReader(input), message);
+  }
+  for (const field of ["id", "source", "target"]) {
+    for (const value of [42, "-1", "01", "18446744073709551616"]) {
+      const input = fixture();
+      (field === "id" ? input.nodes[0] : input.edges[0])[field] = value;
+      assert.throws(() => createTopologyReader(input), /Invalid uint64/);
+    }
+  }
+  for (const field of ["resource_type", "relation_type", "metric_name", "category", "direction"]) {
+    for (const value of [undefined, null, 42]) {
+      const input = fixture();
+      (field === "resource_type" ? input.nodes[0] : input.edges[0])[field] = value;
+      assert.throws(() => createTopologyReader(input), new RegExp(`Invalid ${field}`));
+    }
+  }
+  for (const dimensions of [undefined, [], "invalid", 42, { name: 42 }]) {
+    const input = fixture(); input.nodes[0].dimensions = dimensions;
+    assert.throws(() => createTopologyReader(input), /Invalid dimensions/);
+  }
+  for (const value of [undefined, null]) assert.throws(() => createTopologyReader(value), /Unsupported compact/);
+});
+
+test("compact accepts zero IDs, empty details and partial reasons without sharing frames", () => {
+  const input = fixture();
+  input.timestamps = input.timestamps.map((value) => value - 1000);
+  for (const node of input.nodes) node.id = "0";
+  input.nodes[0].dimensions = null;
+  input.nodes[1].dimensions = {};
+  input.edges[0].source = "0"; input.edges[0].target = "0";
+  input.partial[0].reason = "";
+  const reader = createTopologyReader(input);
+  assert.equal(reader.frame(0).timestamp, -1000);
+  assert.equal(reader.frame(0).nodes[0].id, "0");
+  assert.equal(reader.frame(0).nodes[0].dimensions, null);
+  assert.deepEqual(reader.frame(64).nodes[0].dimensions, {});
+  assert.equal(reader.frame(64).partial, true);
+  assert.equal(Object.hasOwn(reader.frame(64), "partial_reason"), false);
+  for (const index of [-1, 0.5, reader.pointCount]) assert.throws(() => reader.frame(index), RangeError);
+  input.nodes = []; input.edges = []; input.partial = [];
+  const empty = createTopologyReader(input).frame(0);
+  assert.deepEqual(empty, { timestamp: -1000, nodes: [], edges: [], partial: false });
+});
+
 test("Go shared-graph differential fixtures", {skip: !process.env.TG_COMPACT_FIXTURE}, () => {
   const cases = JSON.parse(readFileSync(process.env.TG_COMPACT_FIXTURE, "utf8"));
   for (const {compact, snapshots} of cases) {

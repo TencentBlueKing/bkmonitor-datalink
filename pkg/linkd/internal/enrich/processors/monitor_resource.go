@@ -37,7 +37,7 @@ func (MonitorResource) Match(context.Context, *enrich.Scope) (bool, error) { ret
 // Process 查询资源依赖并生成资源上下文。
 func (MonitorResource) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
 	result, err := processResource(ctx, scope)
-	if err != nil {
+	if err != nil || result.Status == domain.EnrichStatusSkipped {
 		return result, err
 	}
 	values := scope.Context().Resource.Values
@@ -196,6 +196,12 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 	catalogModel := ""
 	if found {
 		catalogModel = metadata.ObjectModelCode
+	}
+	if found && catalogModel == "" && metadata.MetricsetCode == "k8s_custom" {
+		// k8s_custom 指标在目录中不关联对象，这是正常定义。只有成功命中的
+		// 目录行才能确认该来源；资源交给 k8s Processor 按现有维度规则定位，
+		// 不发布空资源字段覆盖已有身份，也不把真实目录错误降级为跳过。
+		return enrich.ProcessorResult{Status: domain.EnrichStatusSkipped, Value: domain.JSONObject{}}, nil
 	}
 	// 普通时序必须由指标目录确认对象模型；PromQL 声明可以没有目录模型，
 	// 目录只在能可靠定位时补充。

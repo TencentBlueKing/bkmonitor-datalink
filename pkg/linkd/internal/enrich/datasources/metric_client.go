@@ -29,6 +29,7 @@ type metricMetadataRow struct {
 	ID              int64
 	TenantID        string `gorm:"column:bk_tenant_id"`
 	SpaceUID        string
+	MetricsetCode   string
 	ObjectModelCode string `gorm:"column:model_id"`
 	FieldName       string `gorm:"column:metric_name"`
 	FieldCNName     string `gorm:"column:display_name"`
@@ -74,7 +75,7 @@ func (c *MetricClient) FindMetric(ctx context.Context, query models.MetricQuery)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	// JSON 在 SQL 端限长，避免异常目录行使单次丰富分配无界内存。
-	base := c.db.WithContext(ctx).Table("metric").Select("id,bk_tenant_id,space_uid,model_id,metric_name,display_name,description,unit,kind,result_table_id,data_label,physical_field,CASE WHEN OCTET_LENGTH(value_mapping) <= ? THEN value_mapping ELSE NULL END AS value_mapping,CASE WHEN OCTET_LENGTH(dimensions) <= ? THEN dimensions ELSE NULL END AS dimensions", maxMetricJSONBytes, maxMetricJSONBytes).Where("bk_tenant_id = ?", query.TenantID)
+	base := c.db.WithContext(ctx).Table("metric").Select("id,bk_tenant_id,space_uid,metricset_code,model_id,metric_name,display_name,description,unit,kind,result_table_id,data_label,physical_field,CASE WHEN OCTET_LENGTH(value_mapping) <= ? THEN value_mapping ELSE NULL END AS value_mapping,CASE WHEN OCTET_LENGTH(dimensions) <= ? THEN dimensions ELSE NULL END AS dimensions", maxMetricJSONBytes, maxMetricJSONBytes).Where("bk_tenant_id = ?", query.TenantID)
 	if query.MetricID > 0 {
 		base = base.Where("id = ?", query.MetricID)
 	} else {
@@ -143,5 +144,5 @@ func (c *MetricClient) FindMetric(ctx context.Context, query models.MetricQuery)
 		}
 		outputDimensions = append(outputDimensions, models.MetricDimension{Key: dimension.ID, Name: dimension.Name})
 	}
-	return models.MetricMetadata{ObjectModelCode: row.ObjectModelCode, Kind: row.Kind, TableID: row.TableID, DataLabel: row.DataLabel, PhysicalField: row.PhysicalField, FieldName: row.FieldName, FieldCNName: row.FieldCNName, Description: row.Description, Unit: row.Unit, ValueMapping: mapping, Dimensions: outputDimensions}, true, nil
+	return models.MetricMetadata{MetricsetCode: row.MetricsetCode, ObjectModelCode: row.ObjectModelCode, Kind: row.Kind, TableID: row.TableID, DataLabel: row.DataLabel, PhysicalField: row.PhysicalField, FieldName: row.FieldName, FieldCNName: row.FieldCNName, Description: row.Description, Unit: row.Unit, ValueMapping: mapping, Dimensions: outputDimensions}, true, nil
 }

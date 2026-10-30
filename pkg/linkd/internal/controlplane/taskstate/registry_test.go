@@ -128,6 +128,32 @@ func TestBoundedConcurrentSnapshotsAndRestart(t *testing.T) {
 	}
 }
 
+func TestNotificationIdleDoesNotExpire(t *testing.T) {
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-time.Hour)
+	for _, tc := range []struct {
+		name      string
+		execution Execution
+		steps     []Execution
+		want      string
+	}{
+		{name: "waiting for first notification", execution: Execution{Outcome: "pending"}, want: "pending"},
+		{name: "idle without notifications", execution: Execution{Outcome: "idle", FinishedAt: &old}, want: "idle"},
+		{name: "completed notification", execution: Execution{Outcome: "succeeded", FinishedAt: &old}, want: "healthy"},
+		{name: "running notification timed out", execution: Execution{Outcome: "succeeded", Running: true, StartedAt: &old}, want: "overdue"},
+		{name: "running step timed out", execution: Execution{Outcome: "idle", FinishedAt: &old}, steps: []Execution{{Outcome: "succeeded", Running: true, StartedAt: &old}}, want: "overdue"},
+		{name: "failed notification", execution: Execution{Outcome: "failed", FinishedAt: &old}, want: "failed"},
+		{name: "failed subscription", execution: Execution{Outcome: "idle", FinishedAt: &old}, steps: []Execution{{Outcome: "failed"}}, want: "failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := Task{Definition: Definition{Kind: "notification", Enabled: true, DeadlineSeconds: 45}, Active: true, Execution: tc.execution, Steps: tc.steps}
+			if got := state(task, now); got != tc.want {
+				t.Fatalf("notification state = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestOwnerReleasedOnPanic(t *testing.T) {
 	r := testRegistry()
 	task := r.Wrap("periodic", taskgroup.Task{Name: "panic", Run: func(context.Context) error { panic("test") }})

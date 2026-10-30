@@ -234,7 +234,7 @@ func (r *Registry) save(e *entry, step string, x Execution) {
 }
 
 // Snapshot 返回独立副本；只对有明确整轮预算的任务推导逾期。
-// 连续归档不使用空闲间隔推断失败，服务不要求周期成功事件。
+// 通知任务不因等待事件而逾期，服务不要求周期成功事件。
 func (r *Registry) Snapshot() Snapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -286,7 +286,8 @@ func state(t Task, now time.Time) string {
 		if x.Running && x.StartedAt != nil && now.Sub(*x.StartedAt) > budget {
 			return "overdue"
 		}
-		if !x.Running && x.FinishedAt != nil && now.Sub(*x.FinishedAt) > budget+time.Duration(t.IntervalSeconds*float64(time.Second)) {
+		// 通知任务只有收到事件才开始一轮，等待下一条通知没有周期性期限。
+		if t.Kind != "notification" && !x.Running && x.FinishedAt != nil && now.Sub(*x.FinishedAt) > budget+time.Duration(t.IntervalSeconds*float64(time.Second)) {
 			return "overdue"
 		}
 	}

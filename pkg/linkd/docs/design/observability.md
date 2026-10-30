@@ -334,6 +334,9 @@ EventSource ID、固定 Processor、固定 DataSource/operation、状态和原�
 启用配置、生命周期、完整轮次和子流程结果彼此独立。Prometheus 负责跨重启的历史趋势，不作为当前 owner
 唯一来源。运行状态由 Kingeye Admin 展示。
 
+`notification` 任务等待事件期间没有固定执行周期，空闲时间不能用于推断 `overdue`；
+已经开始的一轮或子流程仍按 `deadlineSeconds` 检查执行超时，真实失败和停止状态继续独立展示。
+
 轮次口径：调度为一次 tick；Provider 为一次 Pull 与完整 Apply；动态配置为读取到安装完整轮次；
 策略索引主任务为目标发现/初始化轮次，目标子项保留逐策略刷新数量与失败数；Redis 主任务为来源分页扫描，
 其历史指标沿用逐 Stream reconcile 口径。管理 API 只展示服务生命周期，不伪造周期执行计数。

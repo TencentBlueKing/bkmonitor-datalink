@@ -65,6 +65,52 @@ func TestUnlimitedInfluxSQLLimits(t *testing.T) {
 	require.Equal(t, 3, i.maxSLimit)
 }
 
+func TestUnlimitedInfluxNegativeLimits(t *testing.T) {
+	i := &Instance{maxLimit: 2, maxSLimit: 3, tolerance: 1}
+	limit, slimit := i.getLimitAndSlimit(unlimitedInfluxContext(t, true), -1, -2)
+	require.Zero(t, limit)
+	require.Zero(t, slimit)
+	limit, slimit = i.getLimitAndSlimit(unlimitedInfluxContext(t, false), -1, -2)
+	require.Zero(t, limit)
+	require.Zero(t, slimit)
+}
+
+func TestUnlimitedInfluxSeriesStatus(t *testing.T) {
+	ctx := unlimitedInfluxContext(t, false)
+	previousTransport := http.DefaultTransport
+	transport := &http.Transport{}
+	http.DefaultTransport = transport
+	t.Cleanup(func() { transport.CloseIdleConnections(); http.DefaultTransport = previousTransport })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[{"series":[{"name":"good","tags":{"host":"a"},"columns":["_time","_value"],"values":[["2023-11-14T22:13:20Z",1]]},{"name":"good","tags":{"host":"b"},"columns":["_time","_value"],"values":[["2023-11-14T22:13:20Z",2]]}]}]}`)
+	}))
+	defer server.Close()
+	address, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	host, portText, err := net.SplitHostPort(address.Host)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	i, err := NewInstance(ctx, &Options{
+		Host: host, Port: port, Protocol: influxrouter.HTTP, ContentType: ContentTypeJson,
+		Curl: &curl.HttpCurl{}, Timeout: time.Second, MaxLimit: 10, MaxSlimit: 1,
+	})
+	require.NoError(t, err)
+	for _, unlimited := range []bool{false, true} {
+		ctx := unlimitedInfluxContext(t, unlimited)
+		query := strictInfluxQuery([]string{"good"}, []string{"value"})
+		values, err := strictInfluxValues(i.QuerySeriesSet(ctx, query, time.Unix(1700000000, 0), time.Unix(1700000060, 0)))
+		require.NoError(t, err)
+		require.ElementsMatch(t, []float64{1, 2}, values)
+		if unlimited {
+			require.Nil(t, metadata.GetStatus(ctx))
+		} else {
+			require.NotNil(t, metadata.GetStatus(ctx))
+			require.Equal(t, metadata.ExceedsMaximumSlimit, metadata.GetStatus(ctx).Code)
+		}
+	}
+}
+
 func TestUnlimitedInfluxHTTPDeadlineAndStatus(t *testing.T) {
 	mockCtx := unlimitedInfluxContext(t, true)
 	if http.DefaultTransport == httpmock.DefaultTransport {

@@ -34,6 +34,7 @@ func TestVmExpandUsesOnlyExpressionSelectors(t *testing.T) {
 		refs []string
 	}{
 		{"a", []string{"a"}},
+		{`{__name__="a",job="b"}`, []string{"a"}},
 		{`count_over_time({__name__=~"a"}[5m])`, []string{"a"}},
 		{"count_over_time(a[5m]) or b", []string{"a", "b"}},
 		{`label_replace(a, "label", "b", "source", ".*")`, []string{"a"}},
@@ -71,6 +72,27 @@ func TestVmExpandUsesOnlyExpressionSelectors(t *testing.T) {
 			require.Equal(t, "filter-a", full.MetricFilterCondition["a"])
 		})
 	}
+}
+
+func TestVmExpandDoesNotResolveUnrelatedSelectors(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	qr := metadata.QueryReference{
+		"a": {{QueryList: []*metadata.Query{{VmRt: "rt-a", StorageName: "storage-a"}}}},
+		"b": {{QueryList: []*metadata.Query{{VmRt: "rt-b", StorageName: "storage-b"}}}},
+	}
+	for _, expression := range []string{
+		"c", `{job="a"}`, `{__name__!="a",job="b"}`,
+		`{__name__!~"a",job="b"}`, `{__name__=~"a|b"}`,
+	} {
+		t.Run(expression, func(t *testing.T) {
+			expr, err := parser.ParseExpr(expression)
+			require.NoError(t, err)
+			require.Nil(t, ToVmExpandForExpression(ctx, qr, expr))
+		})
+	}
+	expr, err := parser.ParseExpr("vector(1)")
+	require.NoError(t, err)
+	require.Nil(t, ToVmExpandForExpression(ctx, nil, expr))
 }
 
 func TestVmExpand(t *testing.T) {

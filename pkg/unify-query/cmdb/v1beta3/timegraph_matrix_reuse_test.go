@@ -10,13 +10,16 @@ import (
 	"testing"
 	"time"
 
+	kitlog "github.com/go-kit/log"
 	pl "github.com/prometheus/prometheus/promql"
+	promtsdb "github.com/prometheus/prometheus/tsdb"
 	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	prombackend "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
 )
 
 func TestMatrixReuseSlot(t *testing.T) {
@@ -112,6 +115,51 @@ func TestMatrixReuseKeyStorageAndEvaluationInputs(t *testing.T) {
 	}
 	loader.start = time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC)
 	require.Empty(t, loader.matrixReuseKey(ctx, query, "metric", params))
+}
+
+func TestMatrixReuseEligibilityWithLocalPrometheus(t *testing.T) {
+	db, err := promtsdb.Open(t.TempDir(), kitlog.NewNopLogger(), nil, promtsdb.DefaultOptions(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	engine := pl.NewEngine(pl.EngineOpts{Timeout: time.Second, MaxSamples: 1000})
+	previous := SharedTopologyReuseMatrix
+	t.Cleanup(func() { SharedTopologyReuseMatrix = previous })
+	for _, test := range []struct {
+		name       string
+		topology   bool
+		enabled    bool
+		stage      string
+		params     *metadata.QueryParams
+		wantReused int
+	}{
+		{"direct relation", true, true, "relation-edge", &metadata.QueryParams{StorageType: set.New(metadata.VictoriaMetricsStorageType)}, 1},
+		{"legacy relation", false, true, "relation-edge", &metadata.QueryParams{StorageType: set.New(metadata.VictoriaMetricsStorageType)}, 0},
+		{"disabled", true, false, "relation-edge", &metadata.QueryParams{StorageType: set.New(metadata.VictoriaMetricsStorageType)}, 0},
+		{"source info", true, true, "source-info", &metadata.QueryParams{StorageType: set.New(metadata.VictoriaMetricsStorageType)}, 0},
+		{"missing params", true, true, "relation-edge", nil, 0},
+		{"missing storage", true, true, "relation-edge", &metadata.QueryParams{}, 0},
+		{"local relation", true, true, "relation-edge", &metadata.QueryParams{StorageType: set.New(metadata.InfluxDBStorageType)}, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			SharedTopologyReuseMatrix = test.enabled
+			ctx := withTimeGraphQueryStage(initTimeGraphQueryTestEnvironment(), test.stage)
+			backend := prombackend.NewInstance(ctx, engine, db, time.Minute, 2)
+			loader := &timeGraphMatrixLoader{topology: test.topology}
+			fetch := func() (pl.Matrix, bool, error) {
+				matrix, _, queryErr := backend.DirectQueryRange(ctx, "vector(1)", time.Unix(100, 0), time.Unix(102, 0), time.Second)
+				return matrix, false, queryErr
+			}
+			for i := 0; i < 2; i++ {
+				matrix, partial, queryErr := loader.loadPrepared(ctx, &structured.QueryTs{}, "vector(1)", test.params, fetch)
+				require.NoError(t, queryErr)
+				require.False(t, partial)
+				require.Len(t, matrix, 1)
+				require.Len(t, matrix[0].Points, 3)
+			}
+			require.Equal(t, test.wantReused, loader.reusedQueryCount)
+			require.Equal(t, 2-test.wantReused, loader.physicalQueryCount)
+		})
+	}
 }
 
 func TestMatrixReuseDirectionsKeepAnswerAndInput(t *testing.T) {

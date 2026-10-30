@@ -107,7 +107,7 @@ func (m *Model) buildTimeGraphRequest(
 	if req.SourceType == "" {
 		inferred, err := inferSourceTypeFromInfo(req, m.getSchemaProvider())
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("get resource error: resource is empty with %+v", req.SourceInfo)
 		}
 		req.SourceType = inferred
 	}
@@ -123,8 +123,8 @@ func (m *Model) buildTimeGraphRequest(
 	// 保持现有 v1beta3 旧接口的兼容语义：先用主键字段确定源资源，再用
 	// source_expand_info 按非主键节点属性过滤已经确定的源资源。
 	req.SourceInfo = sourcePrimaryKeySubset(req, provider)
-	if req.SourceInfo == nil && len(req.SourceExpandInfo) > 0 {
-		req.SourceInfo = make(map[string]string, len(req.SourceExpandInfo))
+	if len(provider.GetResourcePrimaryKeys(req.SchemaNamespace(), req.SourceType)) == 0 {
+		return req, nil, fmt.Errorf("get index matcher error: index is empty with %+v", req.SourceType)
 	}
 	for key, value := range req.SourceExpandInfo {
 		if sourceValue, exists := req.SourceInfo[key]; exists && sourceValue != value {
@@ -146,7 +146,7 @@ func (m *Model) buildTimeGraphRequest(
 	)
 	paths, err := pathFinder.FindAllPathsContext(ctx, req.SourceType, req.TargetType, req.PathResource)
 	if err != nil {
-		return nil, nil, err
+		return req, nil, fmt.Errorf("get path error: %w", err)
 	}
 	if pathFinder.depthLimited {
 		metadata.SetStatus(ctx, metadata.QueryTsPartial, "path_search_depth_limit")
@@ -208,7 +208,7 @@ func queryFirstTimeGraphPath(ctx context.Context, paths []resourcePath, query fu
 		sort.Strings(ordered)
 		metadata.SetStatus(ctx, metadata.QueryTsPartial, strings.Join(ordered, ";"))
 	}()
-	var failures []error
+	var failures []any
 	for index, path := range paths {
 		if err := ctx.Err(); err != nil {
 			return nil, lastSuccess, err
@@ -225,7 +225,7 @@ func queryFirstTimeGraphPath(ctx context.Context, paths []resourcePath, query fu
 				lastSuccess = index
 				continue
 			}
-			failures = append(failures, err)
+			failures = append(failures, fmt.Errorf("path [%v] do request error: %w", resourcePathToResourceTypes(path), err))
 			continue
 		}
 		lastSuccess = index
@@ -234,10 +234,12 @@ func queryFirstTimeGraphPath(ctx context.Context, paths []resourcePath, query fu
 		}
 	}
 	if len(failures) > 0 {
+		prefix := "relation paths failed without an alternative hit"
 		if len(failures) == len(paths) {
-			return nil, lastSuccess, fmt.Errorf("all relation paths failed: %w", errors.Join(failures...))
+			prefix = "all relation paths failed"
 		}
-		return nil, lastSuccess, fmt.Errorf("relation paths failed without an alternative hit: %w", errors.Join(failures...))
+		// 保留旧路径列表文案，同时让取消和限额错误仍可由 errors.Is/As 识别。
+		return nil, lastSuccess, fmt.Errorf(prefix+": ["+strings.Repeat("%w ", len(failures)-1)+"%w]", failures...)
 	}
 	return nil, lastSuccess, nil
 }
@@ -486,18 +488,23 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	}()
 
 	req, paths, err := m.buildTimeGraphRequest(ctx, spaceUID, target, source, indexMatcher, expandMatcher, expandShow, pathResource)
+	if req != nil {
+		result.source = cmdb.Resource(req.SourceType)
+		result.sourceMatcher = cmdb.Matcher(sourcePrimaryKeySubset(req, m.getSchemaProvider()))
+		result.target = cmdb.Resource(req.TargetType)
+	}
 	if err != nil {
-		return timeGraphRangeResult{}, err
+		return result, err
 	}
 	_, startTime, endTime, err := function.QueryTimestamp(startTimestamp, endTimestamp)
 	if err != nil {
-		return timeGraphRangeResult{}, fmt.Errorf("parse TimeGraph timestamps: %w", err)
+		return result, fmt.Errorf("parse TimeGraph timestamps: %w", err)
 	}
 	window := time.Minute
 	if step != "" {
 		duration, parseErr := prommodel.ParseDuration(step)
 		if parseErr != nil {
-			return timeGraphRangeResult{}, fmt.Errorf("parse step: %w", parseErr)
+			return result, fmt.Errorf("parse step: %w", parseErr)
 		}
 		window = time.Duration(duration)
 	}
@@ -508,24 +515,24 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	startTime, endTime = time.Unix(startTime.Unix(), 0), time.Unix(endTime.Unix(), 0)
 	stepDuration := window.Truncate(time.Second)
 	if err := validateTimeGraphPrecision(startTime, endTime, stepDuration); err != nil {
-		return timeGraphRangeResult{}, err
+		return result, err
 	}
 	startMs, endMs := startTime.UnixMilli(), endTime.UnixMilli()
 	stepMs := stepDuration.Milliseconds()
 	if lookBackDelta != "" {
 		lookBack, err := time.ParseDuration(lookBackDelta)
 		if err != nil {
-			return timeGraphRangeResult{}, fmt.Errorf("parse look back delta: %w", err)
+			return result, fmt.Errorf("parse look back delta: %w", err)
 		}
 		if lookBack <= 0 {
-			return timeGraphRangeResult{}, fmt.Errorf("look back delta must be positive")
+			return result, fmt.Errorf("look back delta must be positive")
 		}
 	}
 	// Preserve the original aggregation window independently of the wire step.
 	lookBackDelta = window.String()
 	points, err := validateRangeBuckets(startMs, endMs, stepMs)
 	if err != nil {
-		return timeGraphRangeResult{}, err
+		return result, err
 	}
 	// Legacy VM queries allow caching for steps <= 60s. At 50 or more
 	// evaluation points VM rounds the start down to a step boundary while
@@ -538,7 +545,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	}
 	querier, err := m.getTimeGraphQuerier(ctx, spaceUID)
 	if err != nil {
-		return timeGraphRangeResult{}, err
+		return result, err
 	}
 	ctx = withTimeGraphTargetInfoShow(ctx, req.TargetInfoShow)
 	ctx = context.WithValue(ctx, timeGraphLegacyCompatibilityKey{}, true)
@@ -556,7 +563,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 		)
 	})
 	if err != nil {
-		return timeGraphRangeResult{}, err
+		return result, err
 	}
 	result.rawResultCount = len(results)
 
@@ -600,7 +607,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	}
 	sort.SliceStable(series, func(i, j int) bool { return series[i].Timestamp < series[j].Timestamp })
 	if _, err := validateRangeTargetCounts(series); err != nil {
-		return timeGraphRangeResult{}, err
+		return result, err
 	}
 
 	selectedPath := []string(nil)

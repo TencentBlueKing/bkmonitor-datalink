@@ -565,7 +565,7 @@ func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
 			)
 			observeLegacyRelationQuality(queryCtx, querySpan, metric.CMDBRelationQueryModeRange, queryErr)
 			if queryErr != nil {
-				d.Message = queryErr.Error()
+				d.Message = metadata.NewMessage(metadata.MsgQueryRelation, "关联数据查询异常").Error(queryCtx, queryErr).Error()
 				d.Code = http.StatusBadRequest
 			}
 

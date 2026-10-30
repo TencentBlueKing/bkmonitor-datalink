@@ -174,7 +174,7 @@ func (m *Model) QueryResourceMatcherRange(
 	)
 	if err != nil {
 		span.Set("failure-stage", "timegraph-query")
-		return "", nil, nil, "", nil, err
+		return timeGraphResult.source, timeGraphResult.sourceMatcher, nil, timeGraphResult.target, nil, err
 	}
 	span.Set("relation-backend", metric.CMDBRelationRouteTimeGraph)
 	span.Set("query-mode", metric.CMDBRelationQueryModeRange)
@@ -249,12 +249,6 @@ func validateRangeBuckets(start, end, stepMs int64) (int, error) {
 }
 
 func sourcePrimaryKeySubset(req *QueryRequest, provider SchemaProvider) map[string]string {
-	if req == nil {
-		return nil
-	}
-	if len(req.SourceInfo) == 0 || provider == nil {
-		return req.SourceInfo
-	}
 	result := make(map[string]string)
 	for _, key := range provider.GetResourcePrimaryKeys(req.SchemaNamespace(), req.SourceType) {
 		if value, ok := req.SourceInfo[key]; ok {

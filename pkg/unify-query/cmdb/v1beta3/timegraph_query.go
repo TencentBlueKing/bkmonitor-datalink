@@ -1310,6 +1310,9 @@ func (m *Model) QueryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 
 	tg, err := m.buildTimeGraph(ctx, spaceUID, start, end, step, sourceType, matcher, sourceExpandInfo, rootRelations, relations, lookBackDelta, nil, nil)
 	if err != nil {
+		if timeGraphLegacyCompatibility(ctx) {
+			return nil, err
+		}
 		return nil, errors.WithMessage(err, "build time graph")
 	}
 	defer tg.Clean(ctx)

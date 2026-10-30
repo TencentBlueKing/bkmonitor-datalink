@@ -895,6 +895,7 @@ func resetGlobals() {
 	defer mtx.Unlock()
 	models = nil
 	provider = nil
+	updateResourceConfig(configData)
 }
 
 func TestInitSchemaProvider_MultiNamespace(t *testing.T) {

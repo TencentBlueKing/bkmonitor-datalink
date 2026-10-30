@@ -36,8 +36,10 @@ func TestSchemaCatalogFieldAndRelationForms(t *testing.T) {
 	t.Cleanup(func() { *resource, *definition = originalResource, originalRelation })
 	*resource = relation.ResourceDefinition{Name: "contract_resource", Fields: []relation.FieldDefinition{
 		{Name: "id", Required: true, Type: relation.FieldTypeString},
-		{Name: "label"}, {Name: "count", Type: relation.FieldTypeInteger},
-		{Name: "ratio", Type: relation.FieldTypeNumber}, {Name: "ready", Type: relation.FieldTypeBoolean},
+		{Name: "label"},
+		{Name: "count", Type: relation.FieldTypeInteger},
+		{Name: "ratio", Type: relation.FieldTypeNumber},
+		{Name: "ready", Type: relation.FieldTypeBoolean},
 	}}
 	for _, category := range []string{"", "static", "dynamic"} {
 		for _, directional := range []bool{false, true} {

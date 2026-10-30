@@ -43,7 +43,8 @@ func TestRelationPathHelpersEmptyAndMismatchedCandidates(t *testing.T) {
 		candidates [][]Resource
 		want       int
 	}{
-		{nil, 0}, {[][]Resource{{"pod", "service"}}, 0},
+		{nil, 0},
+		{[][]Resource{{"pod", "service"}}, 0},
 		{[][]Resource{{"pod", "node"}, {"pod", "service"}}, 1},
 		{[][]Resource{{"node", "service"}, {"pod"}, {"pod", "service"}}, 2},
 		{[][]Resource{{"pod", "node"}}, 1},

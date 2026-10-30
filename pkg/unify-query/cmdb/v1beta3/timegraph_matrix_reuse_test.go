@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
@@ -74,6 +75,43 @@ func TestMatrixReusePreparedIdentity(t *testing.T) {
 	params.Step = 0
 	metadata.SetUser(ctx, &metadata.User{TenantID: "other"})
 	require.NotEqual(t, key, loader.matrixReuseKey(ctx, query, "metric", params))
+}
+
+func TestMatrixReuseKeyStorageAndEvaluationInputs(t *testing.T) {
+	ctx := initTimeGraphQueryTestEnvironment()
+	loader := &timeGraphMatrixLoader{}
+	query := &structured.QueryTs{}
+	params := &metadata.QueryParams{}
+	key := loader.matrixReuseKey(ctx, query, "metric", params)
+	require.NotEmpty(t, loader.matrixReuseKey(ctx, query, "metric", nil))
+	require.NotEmpty(t, key)
+	params.StorageType = set.New(metadata.VictoriaMetricsStorageType)
+	storageKey := loader.matrixReuseKey(ctx, query, "metric", params)
+	require.NotEqual(t, key, storageKey)
+	params.StorageType.Add(metadata.InfluxDBStorageType)
+	mixedKey := loader.matrixReuseKey(ctx, query, "metric", params)
+	require.NotEqual(t, storageKey, mixedKey)
+	params.StorageType = set.New(metadata.InfluxDBStorageType, metadata.VictoriaMetricsStorageType)
+	require.Equal(t, mixedKey, loader.matrixReuseKey(ctx, query, "metric", params))
+	params.StorageType = nil
+	query.SpaceUid = "other"
+	require.NotEqual(t, key, loader.matrixReuseKey(ctx, query, "metric", params))
+	query.SpaceUid = ""
+	metadata.SetExpand(ctx, &metadata.VmExpand{ClusterName: "other"})
+	require.NotEqual(t, key, loader.matrixReuseKey(ctx, query, "metric", params))
+	metadata.SetExpand(ctx, nil)
+	for name, changed := range map[string]timeGraphMatrixLoader{
+		"start":    {start: time.Unix(100, 0)},
+		"end":      {end: time.Unix(200, 0)},
+		"step":     {step: time.Second},
+		"lookBack": {lookBack: time.Minute},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.NotEqual(t, key, changed.matrixReuseKey(ctx, query, "metric", params))
+		})
+	}
+	loader.start = time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	require.Empty(t, loader.matrixReuseKey(ctx, query, "metric", params))
 }
 
 func TestMatrixReuseDirectionsKeepAnswerAndInput(t *testing.T) {

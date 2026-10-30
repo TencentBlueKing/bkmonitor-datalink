@@ -17,7 +17,11 @@ func TestCandidatePlannerKeepsInducedAndAttributeEdges(t *testing.T) {
 	}
 	require.Equal(t, relations[:5], planSharedTopologyCandidates("A", 1, relations))
 	require.Equal(t, relations[:6], planSharedTopologyCandidates("A", 2, relations))
+	require.Equal(t, relations[4:5], planSharedTopologyCandidates("A", 0, relations))
+	require.Empty(t, planSharedTopologyCandidates("A", 1, nil))
 	require.Equal(t, relations[:0], planSharedTopologyCandidates("unknown", 1, relations))
-	malformed := append(relations, cmdb.Relation{})
-	require.Equal(t, malformed, planSharedTopologyCandidates("A", 1, malformed))
+	for _, endpoints := range [][]cmdb.Resource{nil, {"A"}, {"A", "B", "C"}} {
+		malformed := append(relations, cmdb.Relation{V: endpoints})
+		require.Equal(t, malformed, planSharedTopologyCandidates("A", 1, malformed))
+	}
 }

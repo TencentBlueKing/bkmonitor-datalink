@@ -101,3 +101,28 @@ curl --location --request POST 'http://127.0.0.1:10211/bmw/task/' \
 每个 DataID 使用独立且稳定的 Kafka consumer group：`active-profiling-materializer-<dataid>`。消息每达到 500 条或到达 `flushInterval` 时批量写入 MySQL；存储失败时当前批次会重试。
 
 Kafka offset 在消息进入内存队列后即确认。因此，进程若在 MySQL 写入前崩溃或被强制终止，队列中的已确认消息可能丢失。
+
+
+
+### Active Profiling 独立 Pod
+
+`bk-monitor-worker` 子 chart 部署时会创建一个独立的 Profiling Deployment，默认副本数为 1。Pod 使用 `bk-monitor-worker start_profiling --config /data/bkmonitor/config/bmw.yaml` 启动，并通过 BMW 配置连接 MySQL、Consul 和 Kafka，从 Consul 发现需要处理的 Profiling DataID。
+
+Profiling Pod 使用 `bk-monitor-worker` 的通用配置、环境变量 ConfigMap 和 Secret。可在 umbrella chart 的 values 中通过 `bk-monitor-worker.deploymentConfig.profiling` 单独调整副本数、资源和调度策略：
+
+```yaml
+bk-monitor-worker:
+  deploymentConfig:
+    profiling:
+      replicas: 1
+      resource:
+        limits:
+          cpu: 4000m
+          memory: 1Gi
+        requests:
+          cpu: 100m
+          memory: 128Mi
+      nodeSelector: {}
+      affinity: {}
+      tolerations: []
+```

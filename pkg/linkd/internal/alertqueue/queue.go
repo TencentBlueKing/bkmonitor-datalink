@@ -25,6 +25,13 @@ func Stream(deployment string) string {
 	return "linkd:kac:" + base64.RawURLEncoding.EncodeToString([]byte(deployment))
 }
 
+// Notification 是轻量通知；ProjectionIndex 只在同步文档写入成功后填充，表示只需执行后续动作。
+// 它只携带动作刷新所需的物理位置，不保存水位、摘要或业务回执。
+type Notification struct {
+	domain.AlertChange
+	ProjectionIndex string `json:"projection_index,omitempty"`
+}
+
 // Publisher 复用进程 Redis 连接，仅发布小消息；失败由业务入口记录，不回滚业务写入。
 type Publisher struct {
 	Client redis.UniversalClient
@@ -44,12 +51,21 @@ func (p *Publisher) Publish(ctx context.Context, change domain.AlertChange) erro
 
 // PublishBatch 将本批轻量通知放入一次 pipeline，每条消息仍有独立投递结果。
 func (p *Publisher) PublishBatch(ctx context.Context, changes []domain.AlertChange) []error {
-	results := make([]error, len(changes))
-	commands := make([]*redis.StringCmd, len(changes))
+	notifications := make([]Notification, len(changes))
+	for i, c := range changes {
+		notifications[i].AlertChange = c
+	}
+	return p.PublishNotifications(ctx, notifications)
+}
+
+// PublishNotifications 按一次 pipeline 发布普通投影通知或已经投影完成的动作通知。
+func (p *Publisher) PublishNotifications(ctx context.Context, notifications []Notification) []error {
+	results := make([]error, len(notifications))
+	commands := make([]*redis.StringCmd, len(notifications))
 	pipe := p.Client.Pipeline()
 	call, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	for i, c := range changes {
+	for i, c := range notifications {
 		raw, err := json.Marshal(c)
 		if err != nil {
 			results[i] = err

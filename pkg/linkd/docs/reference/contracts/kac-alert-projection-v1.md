@@ -61,12 +61,25 @@ rollover 后更新原物理索引，不向当前 write alias 重复创建。
 主动关闭保存 Linkd 终态后，使用同一个写入器；只对同租户同 Alert ID 的投影串行，互不重叠的关闭批次可以并行。
 关闭状态按 Alert 冻结的 `EndOperation.Source` 区分：`auto_policy` 为 `auto_closed`、`self_heal` 为 `autoexecute_closed`、`work_order` 为 `autoorder_closed`。手动关闭仍为 `closed`，系统关闭仍为 `system_closed`；无主动关闭命令的来源关闭，以及来源等级升级结束旧告警（`EndType=severity_upgrade`），均为 `source_closed`，恢复保持 `restored`。此映射同时用于新建及后续更新；流转日志保留等级升级的具体原因。
 普通投影在 Alert 身份锁内实时读取；批量关闭复用本次成功关闭返回的不可变终态快照，缺失 KAC 文档才补读完整快照。Bulk 使用 `refresh=false`，写入被接受后返回，不强制搜索刷新；搜索在索引自然刷新后可见。普通动作执行前原有刷新保持不变。
-2026-10-29 本地批量关闭实现通过 `ProjectBatchNow` 按固定通道顺序取得本批涉及的通道，避免批次交叉等待；
-现存目标只批读关闭状态，Bulk 仅更新 `status/action/source_alarm_status/close_reason/close_time` 五个字段，
-不读取或回写 Enrich、正文、等级和既有处置数据。KAC 文档不存在时，仅为缺失项补读完整快照创建；
-写入器仍按现有字节预算切片。缺失目标、逐项失败保持输入位置，
-不为每条关闭单独执行投影；取消时释放已取得的通道。该路径尚未部署验证。
-写入失败返回 502，保留 Linkd 关闭事实，原命令重试重新执行同步写入。没有独立确认记录或回读水位。
+现存目标的主动关闭直接 Bulk 更新 `status/action/source_alarm_status/close_reason/close_time` 五个字段，
+不读取或回写 Enrich、正文、等级和处置数据；不存在时才补读完整 Alert 创建。使用 Alert 身份锁，
+不再占满固定投影通道。写入器按已有字节预算切片，不逐条提交；失败保留逐项位置和 502 结果不确定语义。
+
+同步写入成功的关闭不再发布普通投影消息。存在后续动作时，内部 Redis 通知携带原动作及
+`projection_index` 物理索引位置，后台直接进入既有刷新、发送、确认流程，不再读取完整 Alert 或更新 KAC；
+无动作时不发布通知。动作队列满时背压后台读取，取消时未开始动作的通知不确认，保留在原有 PEL 恢复；不阻塞 HTTP 关闭，也不额外建立任务。物理位置只用于动作路由与刷新，不是水位、摘要、Receipt 或回读确认。
+普通生命周期变更以及同步失败项继续走普通投影通知。动作请求仍为原有 V3 小参数，身份和原因保持。
+
+关闭诊断分别记录 `projection.locate`、实际查询的 `projection.search.succeeded/failed/canceled`、
+实际 Bulk 的 `projection.bulk.succeeded/failed/canceled`；这些直方图的 count 表示真实请求数，
+成功、失败和取消的耗时不能混成成功写入均值。ES 返回可解码响应且含 `took` 时，另记录
+`projection.es_search_took`、`projection.es_bulk_took`；无响应的取消不虚构服务端耗时。
+缓存命中时不会产生查询请求样本；单纯定位耗时仍记录在 `projection.locate`。
+
+普通投影失败记录诊断并确认当前消息，不新增补偿扫描；动作发送仍沿用原有尽力通知和失败确认语义。
+优雅退出与队列恢复见[动作 V3](kac-action-delivery-v3.md)。
+旧投影任务 API、快照、人工恢复、水位及页面已移除；旧存储不自动删除。
+实现入口为 `internal/kaccompat/runtime.go`、`close_batch.go` 与 `internal/alertqueue/queue.go`。
 
 ## 失败与观测
 

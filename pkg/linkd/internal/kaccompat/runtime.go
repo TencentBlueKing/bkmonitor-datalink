@@ -19,6 +19,7 @@ import (
 	"time"
 
 	redis "github.com/redis/go-redis/v9"
+	"linkd/internal/alertqueue"
 	"linkd/internal/config"
 	"linkd/internal/domain"
 	"linkd/internal/processingerror"
@@ -156,16 +157,14 @@ func (r *Runtime) Run(ctx context.Context) error {
 				if cursor != ">" {
 					cursor = entry.ID
 				}
-				var change domain.AlertChange
+				var notification alertqueue.Notification
 				raw, _ := entry.Values["body"].(string)
-				if err := json.Unmarshal([]byte(raw), &change); err != nil {
-					r.report(ctx, "decode", err, change, 0, 1)
+				if err := json.Unmarshal([]byte(raw), &notification); err != nil {
+					r.report(ctx, "decode", err, notification.AlertChange, 0, 1)
 					r.ack(entry.ID)
 					continue
 				}
-				select {
-				case r.lane(change.BKTenantID, change.AlertID).items <- queuedChange{entry.ID, change}:
-				case <-ctx.Done():
+				if !r.dispatchNotification(ctx, entry.ID, notification) {
 					return nil
 				}
 			}
@@ -272,13 +271,7 @@ func (r *Runtime) process(ctx context.Context, entries []queuedChange) {
 			r.ack(entry.id)
 			continue
 		}
-		job := actionJob{request: ActionRequest{SchemaVersion: "linkd.kac-action.v3", TenantID: change.BKTenantID, AlertID: change.AlertID, AlertAction: *change.Action}, index: result.Index, entry: entry}
-		select {
-		case r.actions <- job:
-		default:
-			r.report(ctx, "action_buffer", fmt.Errorf("KAC action buffer full"), change, 0, 1)
-			r.ack(entry.id)
-		}
+		r.enqueueAction(ctx, entry, result.Index)
 	}
 }
 
@@ -432,4 +425,96 @@ func (r *Runtime) observeQueue(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (r *Runtime) dispatchNotification(ctx context.Context, id string, n alertqueue.Notification) bool {
+	entry := queuedChange{id: id, change: n.AlertChange}
+	if n.ProjectionIndex != "" {
+		if n.Action == nil {
+			r.ack(id)
+			return true
+		}
+		// 同步关闭已经成功，动作队列满时仅背压后台读取，不能丢弃动作。
+		// 取消时不确认该通知，留在 PEL 供既有启动恢复流程继续处理。
+		job := makeActionJob(entry, n.ProjectionIndex)
+		select {
+		case r.actions <- job:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+	select {
+	case r.lane(n.BKTenantID, n.AlertID).items <- entry:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (r *Runtime) enqueueAction(ctx context.Context, entry queuedChange, index string) {
+	change := entry.change
+	if change.Action == nil {
+		r.ack(entry.id)
+		return
+	}
+	job := makeActionJob(entry, index)
+	select {
+	case r.actions <- job:
+	default:
+		r.report(ctx, "action_buffer", fmt.Errorf("KAC action buffer full"), change, 0, 1)
+		r.ack(entry.id)
+	}
+}
+
+// PublishProjectedChanges 只为同步文档写入成功的关闭发布动作，不重新读取或投影 Alert。
+// 无动作的通知直接省略；动作仍走既有刷新、发送和确认流程，发布失败沿用尽力通知语义。
+func (r *Runtime) PublishProjectedChanges(ctx context.Context, changes []domain.AlertChange) []error {
+	results := make([]error, len(changes))
+	client, ok := r.writer.(*Client)
+	if !ok {
+		for i := range results {
+			results[i] = fmt.Errorf("KAC document locations unavailable")
+		}
+		return results
+	}
+	keys := []alarmKey{}
+	positions := []int{}
+	for i, c := range changes {
+		if c.Action != nil {
+			keys = append(keys, alarmKey{c.BKTenantID, c.AlertID})
+			positions = append(positions, i)
+		}
+	}
+	if len(keys) == 0 {
+		return results
+	}
+	locations, err := client.locate(ctx, keys)
+	if err != nil {
+		for _, i := range positions {
+			results[i] = err
+		}
+		return results
+	}
+	notifications := []alertqueue.Notification{}
+	owners := []int{}
+	for j, key := range keys {
+		if index, found := locations[key]; found {
+			notifications = append(notifications, alertqueue.Notification{AlertChange: changes[positions[j]], ProjectionIndex: index})
+			owners = append(owners, positions[j])
+		} else {
+			results[positions[j]] = store.ErrNotFound
+		}
+	}
+	publisher := alertqueue.Publisher{Client: r.redis, Stream: r.stream}
+	errs := publisher.PublishNotifications(ctx, notifications)
+	for j, i := range owners {
+		results[i] = errs[j]
+	}
+	return results
+}
+
+func makeActionJob(entry queuedChange, index string) actionJob {
+	change := entry.change
+	return actionJob{request: ActionRequest{SchemaVersion: "linkd.kac-action.v3", TenantID: change.BKTenantID, AlertID: change.AlertID, AlertAction: *change.Action}, index: index, entry: entry}
 }

@@ -69,7 +69,9 @@ func (s *AlertCloser) CloseAlerts(ctx context.Context, commands []lifecycle.Clos
 func (s *AlertCloser) closeAlertsWave(ctx context.Context, commands []lifecycle.CloseAlertCommand) []lifecycle.CloseAlertOutcome {
 	notifications := &closeBatchNotifications{}
 	ctx = context.WithValue(ctx, closeBatchNotificationsKey{}, notifications)
-	defer notifications.flush(ctx, s.logger)
+	projected := map[string]bool{}
+	publisher, _ := s.projection.(projectedChangePublisher)
+	defer notifications.flush(ctx, s.logger, publisher, projected)
 	results := s.closeBatch(ctx, commands)
 	ids, positions := []string{}, []int{}
 	for i := range results {
@@ -95,6 +97,9 @@ func (s *AlertCloser) closeAlertsWave(ctx context.Context, commands []lifecycle.
 		}
 		store.ObserveBatchPhase(ctx, "batch.projection", time.Since(started))
 		for j, i := range positions {
+			if errs[j] == nil {
+				projected[commands[i].AlertID] = true
+			}
 			if errs[j] != nil {
 				if s.logger != nil {
 					s.logger.WarnContext(ctx, "synchronous close projection failed", "module", "lifecycle", "operation", "close_projection", "error", errs[j], "bk_tenant_id", commands[i].BKTenantID, "alert_id", commands[i].AlertID, "operation_id", commands[i].OperationID)

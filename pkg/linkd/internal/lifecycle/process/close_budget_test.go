@@ -58,10 +58,43 @@ func TestCloseNotificationsWaitForExplicitCompletionAndKeepBatch(t *testing.T) {
 			if cancelled {
 				cancel()
 			}
-			pending.flush(ctx, nil)
+			pending.flush(ctx, nil, nil, nil)
 			if sink.calls != 1 || sink.count != 10 {
 				t.Fatal(sink.calls, sink.count)
 			}
 		})
+	}
+}
+
+type projectedNotificationSink struct {
+	changes []domain.AlertChange
+	err     error
+}
+
+func (p *projectedNotificationSink) PublishProjectedChanges(_ context.Context, changes []domain.AlertChange) []error {
+	p.changes = append(p.changes, changes...)
+	out := make([]error, len(changes))
+	for i := range out {
+		out[i] = p.err
+	}
+	return out
+}
+
+func TestCloseNotificationsDoNotReprojectSuccessfulItems(t *testing.T) {
+	pending := &closeBatchNotifications{}
+	ordinary := &closeNotificationSink{}
+	direct := &projectedNotificationSink{err: errors.New("action queue unavailable")}
+	changes := []domain.AlertChange{{BKTenantID: "tenant", AlertID: "success", Action: &domain.AlertAction{ID: "original-action", Type: "close"}}, {BKTenantID: "tenant", AlertID: "failed"}}
+	publisher := pending.use(ordinary)
+	for _, err := range publisher.(interface {
+		PublishBatch(context.Context, []domain.AlertChange) []error
+	}).PublishBatch(t.Context(), changes) {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	pending.flush(t.Context(), nil, direct, map[string]bool{"success": true})
+	if ordinary.count != 1 || len(direct.changes) != 1 || direct.changes[0].AlertID != "success" || direct.changes[0].Action.ID != "original-action" {
+		t.Fatal("successful projection entered ordinary notification path", ordinary.count, direct.changes)
 	}
 }

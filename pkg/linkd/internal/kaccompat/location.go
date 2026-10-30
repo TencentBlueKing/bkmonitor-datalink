@@ -5,9 +5,13 @@ package kaccompat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
+
+	"linkd/internal/store"
 )
 
 type alarmKey struct {
@@ -59,7 +63,8 @@ func (c *Client) locate(ctx context.Context, keys []alarmKey) (map[alarmKey]stri
 	body := map[string]any{"size": size, "_source": []string{"bk_tenant_id"},
 		"query": map[string]any{"bool": map[string]any{"should": clauses, "minimum_should_match": 1}}}
 	var response struct {
-		TimedOut bool `json:"timed_out"`
+		Took     *int64 `json:"took"`
+		TimedOut bool   `json:"timed_out"`
 		Shards   struct {
 			Failed int `json:"failed"`
 		} `json:"_shards"`
@@ -73,8 +78,21 @@ func (c *Client) locate(ctx context.Context, keys []alarmKey) (map[alarmKey]stri
 			} `json:"hits"`
 		} `json:"hits"`
 	}
-	if err := c.request(ctx, http.MethodPost, "/"+url.PathEscape(c.config.AlarmEventIndex)+"/_search", nil, body, &response); err != nil {
+	started := time.Now()
+	err := c.request(ctx, http.MethodPost, "/"+url.PathEscape(c.config.AlarmEventIndex)+"/_search", nil, body, &response)
+	outcome := "succeeded"
+	if err != nil {
+		outcome = "failed"
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			outcome = "canceled"
+		}
+	}
+	store.ObserveBatchPhase(ctx, "projection.search."+outcome, time.Since(started))
+	if err != nil {
 		return nil, err
+	}
+	if response.Took != nil {
+		store.ObserveBatchPhase(ctx, "projection.es_search_took", time.Duration(*response.Took)*time.Millisecond)
 	}
 	if response.TimedOut || response.Shards.Failed > 0 {
 		return nil, fmt.Errorf("KAC document lookup returned incomplete results")

@@ -147,7 +147,9 @@ func (c *Client) WriteCloseBatch(ctx context.Context, alerts []domain.Alert) []W
 	for i, a := range alerts {
 		keys[i] = alarmKey{tenant: a.BKTenantID, alert: a.AlertID}
 	}
+	at := time.Now()
 	locations, err := c.locate(ctx, keys)
+	store.ObserveBatchPhase(ctx, "projection.locate", time.Since(at))
 	if err != nil {
 		for i := range results {
 			results[i].Err = err
@@ -161,11 +163,13 @@ func (c *Client) WriteCloseBatch(ctx context.Context, alerts []domain.Alert) []W
 			return
 		}
 		var response struct {
+			Took  *int64 `json:"took"`
 			Items []map[string]struct {
 				Status int    `json:"status"`
 				Index  string `json:"_index"`
 			} `json:"items"`
 		}
+		started := time.Now()
 		err := c.requestRaw(ctx, http.MethodPost, "/_bulk", url.Values{"refresh": {"false"}}, raw.Bytes(), "application/x-ndjson", &response)
 		for j, i := range positions {
 			if err != nil {
@@ -188,6 +192,25 @@ func (c *Client) WriteCloseBatch(ctx context.Context, alerts []domain.Alert) []W
 				results[i].Index = item.Index
 			}
 		}
+		outcome := "succeeded"
+		if err != nil {
+			outcome = "failed"
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				outcome = "canceled"
+			}
+		} else {
+			for _, i := range positions {
+				if results[i].Err != nil {
+					outcome = "failed"
+					break
+				}
+			}
+		}
+		store.ObserveBatchPhase(ctx, "projection.bulk."+outcome, time.Since(started))
+		if err == nil && response.Took != nil {
+			store.ObserveBatchPhase(ctx, "projection.es_bulk_took", time.Duration(*response.Took)*time.Millisecond)
+		}
+
 		raw.Reset()
 		positions = positions[:0]
 	}

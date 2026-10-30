@@ -248,6 +248,8 @@ func TestLegacyFrontierDoesNotMutateMatrixOrDropMissingKeys(t *testing.T) {
 	require.Len(t, matrix[0].Points, 2)
 	_, err = graph.filterLegacyPathMatrix(ctx, contractMatrix(map[string]string{"middle_id": "b"}, 1700000040000), relation, frontier, make(legacyPathFrontier))
 	require.ErrorContains(t, err, "incomplete endpoint")
+	_, err = graph.filterLegacyPathMatrix(ctx, contractMatrix(map[string]string{"target_id": "c"}, 1700000040000), relation, frontier, make(legacyPathFrontier))
+	require.ErrorContains(t, err, "incomplete endpoint")
 }
 
 func TestLegacyFrontierDynamicDirectionAndRepeatedResource(t *testing.T) {

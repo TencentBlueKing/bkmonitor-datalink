@@ -58,3 +58,32 @@ func TestTimeBitmapBoundaryBits(t *testing.T) {
 		require.False(t, bitmap.has(index))
 	}
 }
+
+func TestTimeBitmapSparseRepresentations(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		bitmap    timeBitmap
+		wantEmpty bool
+		wantCount int
+		wantWords int
+	}{
+		{name: "empty", wantEmpty: true},
+		{name: "first_word", bitmap: timeBitmap{first: 1}, wantCount: 1},
+		{name: "extended_only", bitmap: timeBitmap{rest: []uint64{1}}, wantCount: 1, wantWords: 1},
+		{name: "extended_gap", bitmap: timeBitmap{rest: []uint64{0, 1}}, wantCount: 1, wantWords: 2},
+		{name: "zero_words", bitmap: timeBitmap{rest: []uint64{0, 0}}, wantEmpty: true},
+		{name: "trailing_zeros", bitmap: timeBitmap{first: 1, rest: []uint64{0, 1, 0, 0}}, wantCount: 2, wantWords: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := append([]uint64(nil), tc.bitmap.rest...)
+			require.Equal(t, tc.wantEmpty, tc.bitmap.empty())
+			require.Equal(t, tc.wantCount, tc.bitmap.count())
+			trimmed := tc.bitmap.trimTrailingZeroWords()
+			require.Equal(t, tc.bitmap.first, trimmed.first)
+			require.Len(t, trimmed.rest, tc.wantWords)
+			require.Equal(t, tc.wantEmpty, trimmed.empty())
+			require.Equal(t, tc.wantCount, trimmed.count())
+			require.Equal(t, original, tc.bitmap.rest)
+		})
+	}
+}

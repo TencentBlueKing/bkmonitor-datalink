@@ -62,3 +62,34 @@ func TestDefaultStaticProviderConfigKeepsRelationMetricName(t *testing.T) {
 	}
 	t.Fatal("pod_to_system relation schema not found")
 }
+
+func TestStaticProviderRelationMetricRoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		metric string
+		labels map[string]string
+	}{
+		{name: "default metric", labels: map[string]string{}},
+		{name: "explicit metric", metric: "calls_flow", labels: map[string]string{"metric_name": "calls_flow"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := NewStaticSchemaProvider(StaticProviderConfig{RelationSchemas: []RelationSchema{{
+				RelationName: "calls", FromType: "service", ToType: "service", MetricName: tc.metric,
+			}}})
+			definition, err := provider.GetRelationDefinition(NamespaceAll, "calls")
+			require.NoError(t, err)
+			require.Equal(t, tc.labels, definition.Labels)
+			schema, err := provider.GetRelationSchema("calls")
+			require.NoError(t, err)
+			require.Equal(t, tc.metric, schema.MetricName)
+		})
+	}
+}
+
+func TestRelationSchemaWithoutMetricLabels(t *testing.T) {
+	for _, labels := range []map[string]string{nil, {}, {"unrelated": "value"}} {
+		schema := ToRelationSchema(&RelationDefinition{Name: "calls", Labels: labels})
+		require.Empty(t, schema.MetricName)
+		require.Equal(t, RelationName("calls"), schema.RelationName)
+	}
+}

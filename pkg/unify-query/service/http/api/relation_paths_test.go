@@ -45,9 +45,34 @@ func TestSelectLegacyRangePath(t *testing.T) {
 	paths := []cmdb.RelationMultiResourceRangePathData{
 		{Path: []string{"node", "pod"}, TargetList: []cmdb.MatchersWithTimestamp{}},
 		{Path: []string{"node", "replicaset", "pod"}, TargetList: []cmdb.MatchersWithTimestamp{{Timestamp: 1}}},
+		{Path: []string{"node", "deployment", "pod"}, TargetList: []cmdb.MatchersWithTimestamp{{Timestamp: 2}}},
 	}
 
 	path, targetList := selectLegacyRangePath(paths)
 	assert.Equal(t, []string{"node", "replicaset", "pod"}, path)
 	assert.Equal(t, []cmdb.MatchersWithTimestamp{{Timestamp: 1}}, targetList)
+}
+
+func TestSelectLegacyRangePathWhenAllEmpty(t *testing.T) {
+	paths := []cmdb.RelationMultiResourceRangePathData{
+		{Path: []string{"node", "pod"}, TargetList: []cmdb.MatchersWithTimestamp{}},
+		{Path: []string{"node", "replicaset", "pod"}, TargetList: []cmdb.MatchersWithTimestamp{}},
+	}
+	path, targetList := selectLegacyRangePath(paths)
+	assert.Equal(t, paths[1].Path, path)
+	assert.NotNil(t, targetList)
+	assert.Empty(t, targetList)
+}
+
+func TestSelectLegacyPathsWithoutCandidates(t *testing.T) {
+	for _, paths := range [][]cmdb.RelationMultiResourcePathData{nil, {}} {
+		path, targetList := selectLegacyInstantPath(paths)
+		assert.Nil(t, path)
+		assert.Nil(t, targetList)
+	}
+	for _, paths := range [][]cmdb.RelationMultiResourceRangePathData{nil, {}} {
+		path, targetList := selectLegacyRangePath(paths)
+		assert.Nil(t, path)
+		assert.Nil(t, targetList)
+	}
 }

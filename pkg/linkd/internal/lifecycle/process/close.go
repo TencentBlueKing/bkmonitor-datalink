@@ -193,7 +193,6 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 	} else {
 		options := cfg.Storage.Redis.ClientOptions()
 		options.ContextTimeoutEnabled = true
-		options.PoolSize = 2
 		client, err = redisclient.New(options)
 		if err != nil {
 			return err

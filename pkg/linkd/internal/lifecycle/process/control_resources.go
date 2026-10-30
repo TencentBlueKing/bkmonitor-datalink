@@ -82,8 +82,8 @@ func OpenAlertProcessorResources(ctx context.Context, cfg config.Config) (*Alert
 		return nil, err
 	}
 	options := cfg.Storage.Redis.ClientOptions()
+	// 不给所有管理请求叠加固定活跃连接上限；每个关闭请求自行控制内部批次并发。
 	options.ContextTimeoutEnabled = true
-	options.PoolSize = 8
 	client, err := redisclient.New(options)
 	if err != nil {
 		return nil, errors.Join(err, r.Close())

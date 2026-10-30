@@ -205,7 +205,6 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	// 管理读取复用上下文感知的部署 Redis 池，与后台裁决共享数据边界但不共享可写端口。
 	queryOptions := cfg.Storage.Redis.ClientOptions()
 	queryOptions.ContextTimeoutEnabled = true
-	queryOptions.PoolSize = 4
 	queryRedis, err := redisclient.New(queryOptions)
 	if err != nil {
 		return err

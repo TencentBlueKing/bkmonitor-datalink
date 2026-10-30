@@ -204,3 +204,19 @@ func BenchmarkControlHooksCachedAcquire(b *testing.B) {
 		})
 	}
 }
+
+func TestControlResourcesDoNotCapRedisConnectionsAcrossRequests(t *testing.T) {
+	cfg := config.Config{Storage: &config.StorageConfig{Repository: config.RepositoryTypeElasticsearch, Elasticsearch: &config.ElasticsearchConfig{Addresses: []string{"http://127.0.0.1:9200"}}, Redis: &config.RedisConfig{Address: "127.0.0.1:6379"}}}
+	resources, err := OpenAlertProcessorResources(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := resources.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	if resources.client.Options().MaxActiveConns != 0 {
+		t.Fatal("shared control Redis client imposes a global request limit", resources.client.Options().MaxActiveConns)
+	}
+}

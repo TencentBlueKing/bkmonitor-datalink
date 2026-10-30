@@ -48,6 +48,61 @@ test("snapshot uint64 tokens remain exact; identities ignore request IDs and opt
 });
 
 const endpoint = process.env.TG_EXAMPLE_URL;
+
+test("topology item formats, point counts and snapshot frame boundaries", () => {
+  const items = parseTopologyJSON(readFileSync(new URL("topology-responses.json", import.meta.url), "utf8"))
+    .filter((record) => record.http_status === 200).flatMap((record) => record.response.data);
+  const snapshot = items.find((item) => item.code === 200 && item.snapshots?.length);
+  const compact = items.find((item) => item.code === 200 && item.response_format === "compact-v1");
+  assert.ok(snapshot); assert.ok(compact);
+  for (const response_format of [undefined, "", "snapshots"]) {
+    const reader = readTopologyItem({ ...snapshot, response_format });
+    assert.equal(reader.ok, true);
+    assert.deepEqual(reader.frame(0), snapshot.snapshots[0]);
+    assert.deepEqual(reader.frame(reader.pointCount - 1), snapshot.snapshots.at(-1));
+    for (const index of [-1, 0.5, reader.pointCount]) assert.throws(() => reader.frame(index), RangeError);
+    reader.frame(0).timestamp = -1;
+    assert.equal(reader.frame(0).timestamp, snapshot.snapshots[0].timestamp);
+  }
+  assert.throws(() => readTopologyItem({ ...snapshot, response_format: "unknown" }), /Unsupported response format/);
+  assert.throws(() => readTopologyItem({ ...snapshot, point_count: snapshot.point_count + 1 }), /Inconsistent snapshots/);
+  for (const snapshots of [undefined, null, {}]) {
+    assert.throws(() => readTopologyItem({ ...snapshot, snapshots }), /Inconsistent snapshots/);
+  }
+  assert.throws(() => readTopologyItem({ ...compact, point_count: compact.point_count + 1 }), /Inconsistent compact/);
+});
+
+test("entity and edge validation checks each required identity field", () => {
+  const items = parseTopologyJSON(readFileSync(new URL("topology-responses.json", import.meta.url), "utf8"))
+    .filter((record) => record.http_status === 200).flatMap((record) => record.response.data);
+  const frame = items.flatMap((item) => item.snapshots ?? []).find((frame) => frame.nodes.length > 1 && frame.edges.length);
+  assert.ok(frame);
+  const first = frame.nodes[0], second = frame.nodes[1];
+  assert.throws(() => alignFrame({ ...frame, nodes: [{ ...first, id: 1 }], edges: [] }, catalog), /losslessly/);
+  assert.throws(() => alignFrame({ ...frame, nodes: [first, { ...second, id: first.id }], edges: [] }, catalog), /Duplicate node ID/);
+  const otherID = (BigInt(first.id) ^ 1n).toString();
+  assert.throws(() => alignFrame({ ...frame, nodes: [first, { ...first, id: otherID }], edges: [] }, catalog), /Duplicate full entity identity/);
+  for (const key of ["relation_type", "metric_name", "category", "direction"]) {
+    for (const value of [undefined, null, 42]) {
+      const edge = { ...frame.edges[0], [key]: value };
+      assert.throws(() => alignFrame({ ...frame, edges: [edge] }, catalog), new RegExp(`Invalid edge ${key}`));
+    }
+  }
+  for (const key of ["source", "target"]) {
+    const edge = { ...frame.edges[0], [key]: "missing-node" };
+    assert.throws(() => alignFrame({ ...frame, edges: [edge] }, catalog), /Dangling edge/);
+  }
+  assert.throws(() => entityKey({ ...first, resource_type: "unknown" }, catalog), /Unknown resource/);
+  assert.throws(() => entityKey(first, { resources: [{ name: first.resource_type, fields: [] }] }), /no primary keys/);
+  const keys = catalog.resources.find((resource) => resource.name === first.resource_type).fields.filter((field) => field.required);
+  for (const { name } of keys) {
+    for (const value of [undefined, "", 42]) {
+      assert.throws(() => entityKey({ ...first, dimensions: { ...first.dimensions, [name]: value } }, catalog), /Missing primary key/);
+    }
+  }
+  for (const dimensions of [undefined, null]) assert.throws(() => entityKey({ ...first, dimensions }, catalog), /Missing primary key/);
+});
+
 test("consumer serializer to real UQ HTTP handler/model and back", { skip: !endpoint }, async () => {
   const call = (path, queryList) => queryRelations({ baseURL: endpoint, spaceUID: "example-space", path, queryList });
   for (const path of ["multi_resource", "multi_resource_range", "path_resources", "path_resources_range",

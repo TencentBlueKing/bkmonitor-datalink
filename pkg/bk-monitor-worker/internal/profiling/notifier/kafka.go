@@ -39,6 +39,11 @@ type kafkaConfig struct {
 	saramaConfig   *sarama.Config
 }
 
+type queuedMessage struct {
+	session sarama.ConsumerGroupSession
+	message *sarama.ConsumerMessage
+}
+
 const (
 	eventProcessingRetryDelay = time.Second
 	eventQueueDrainTimeout    = 30 * time.Second
@@ -130,7 +135,7 @@ func (n *KafkaNotifier) Run(ctx context.Context) error {
 
 	consumeCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	messages := make(chan []byte, n.config.eventQueueSize)
+	messages := make(chan queuedMessage, n.config.eventQueueSize)
 	workerCtx, cancelWorker := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelWorker()
 	workerDone := make(chan struct{})
@@ -172,23 +177,30 @@ func (n *KafkaNotifier) Run(ctx context.Context) error {
 	}
 }
 
-func (n *KafkaNotifier) processMessages(ctx context.Context, messages <-chan []byte, done chan<- struct{}) {
+func (n *KafkaNotifier) processMessages(ctx context.Context, messages <-chan queuedMessage, done chan<- struct{}) {
 	defer close(done)
 	ticker := time.NewTicker(n.config.flushInterval)
 	defer ticker.Stop()
-	var pending [][]byte
+	var pending []queuedMessage
 	flush := func() error {
 		if len(pending) == 0 {
 			return nil
 		}
+		payloads := make([][]byte, len(pending))
+		for i, queued := range pending {
+			payloads[i] = queued.message.Value
+		}
 		for {
-			err := n.processor.HandleMessages(ctx, pending)
+			err := n.processor.HandleMessages(ctx, payloads)
 			if err == nil || errors.Is(err, core.ErrInvalidEvent) {
 				if errors.Is(err, core.ErrInvalidEvent) {
 					logger.Errorf("skip invalid Event(s) in queued Kafka batch data_id=%d messages=%d: %s",
 						n.dataID, len(pending), err)
 				} else {
 					logger.Debugf("queued Kafka batch persisted data_id=%d messages=%d", n.dataID, len(pending))
+				}
+				for _, queued := range pending {
+					queued.session.MarkMessage(queued.message, "")
 				}
 				pending = nil
 				return nil
@@ -261,7 +273,7 @@ func (n *KafkaNotifier) watchErrors(
 }
 
 type consumerGroupHandler struct {
-	messages chan<- []byte
+	messages chan<- queuedMessage
 }
 
 func (*consumerGroupHandler) Setup(sarama.ConsumerGroupSession) error   { return nil }
@@ -278,8 +290,7 @@ func (h *consumerGroupHandler) ConsumeClaim(
 				return nil
 			}
 			select {
-			case h.messages <- append([]byte(nil), message.Value...):
-				session.MarkMessage(message, "")
+			case h.messages <- queuedMessage{session: session, message: message}:
 			case <-session.Context().Done():
 				return nil
 			}

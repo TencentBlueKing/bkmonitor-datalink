@@ -159,3 +159,24 @@ func TestTimeGraphCumulativePointsIndependentOfBudgetMode(t *testing.T) {
 		})
 	}
 }
+
+func TestTimeGraphLoadMetricNameInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		query *structured.QueryTs
+		want  string
+	}{
+		{name: "nil_query", want: "__unknown__"},
+		{name: "empty_queries", query: &structured.QueryTs{}, want: "__unknown__"},
+		{name: "nil_item", query: &structured.QueryTs{QueryList: []*structured.Query{nil}}, want: "__unknown__"},
+		{name: "empty_metric", query: &structured.QueryTs{QueryList: []*structured.Query{{}}}, want: "__unknown__"},
+		{name: "single_metric", query: &structured.QueryTs{QueryList: []*structured.Query{{FieldName: "calls"}}}, want: "calls"},
+		{name: "same_metrics", query: &structured.QueryTs{QueryList: []*structured.Query{{FieldName: "calls"}, {FieldName: "calls"}}}, want: "calls"},
+		{name: "mixed_metrics", query: &structured.QueryTs{QueryList: []*structured.Query{{FieldName: "calls"}, {FieldName: "owns"}}}, want: "__mixed__"},
+		{name: "missing_later_metric", query: &structured.QueryTs{QueryList: []*structured.Query{{FieldName: "calls"}, {}}}, want: "__unknown__"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, timeGraphLoadMetricName(tc.query))
+		})
+	}
+}

@@ -43,9 +43,11 @@ test: test-promql
 test-promql:
 	cd third_party/prometheus && go test ./promql/...
 
+SWAG_VERSION ?= v1.16.4
+
 .PHONY: swag
 swag:
-	swag init --parseDependency true --parseInternal true
+	go run github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION) init --parseDependency true --parseInternal true
 
 .PHONY: fmt
 fmt:
@@ -68,3 +70,8 @@ imports: addlicense
 .PHONY: race
 race:
 	go test -race -timeout 1m -parallel 8  ./...
+.PHONY: test-timegraph-examples
+test-timegraph-examples:
+	node -e 'if (Number(process.versions.node.split(".")[0]) < 22) throw Error("Node.js 22+ required")'
+	go test -tags "$(BUILDTAGS)" -count=1 -run 'TestTimeGraphSwagger|TestTimeGraphCatalogue|TestTopologyConsumerExampleHTTP|TestTopologyDocumentedFailures|TestCompactOwnershipFallbackBudgetAndClient' ./docs ./service/http/api ./cmdb/v1beta3
+	node --test docs/examples/topology-client.test.mjs

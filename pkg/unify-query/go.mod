@@ -47,7 +47,7 @@ require (
 	github.com/swaggo/swag v1.16.1
 	github.com/thomaspoignant/go-feature-flag v1.0.1
 	github.com/tinylib/msgp v1.1.6
-	go.etcd.io/bbolt v1.3.3
+	go.etcd.io/bbolt v1.3.12
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.63.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0
 	go.opentelemetry.io/otel v1.38.0

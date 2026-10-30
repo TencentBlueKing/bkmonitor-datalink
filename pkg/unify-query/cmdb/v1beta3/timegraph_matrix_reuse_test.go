@@ -1,0 +1,329 @@
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+
+package v1beta3
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"testing"
+	"time"
+
+	kitlog "github.com/go-kit/log"
+	pl "github.com/prometheus/prometheus/promql"
+	promtsdb "github.com/prometheus/prometheus/tsdb"
+	"github.com/stretchr/testify/require"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	prombackend "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
+)
+
+func TestMatrixReuseSlot(t *testing.T) {
+	ctx := withTimeGraphQueryStage(initTimeGraphQueryTestEnvironment(), "relation-edge")
+	params := metadata.GetQueryParams(ctx).SetStorageType(metadata.VictoriaMetricsStorageType)
+	loader := &timeGraphMatrixLoader{topology: true}
+	query := &structured.QueryTs{}
+	matrix := contractMatrix(map[string]string{"id": "a"}, 1000)
+	calls := 0
+	fetch := func() (pl.Matrix, bool, error) { calls++; return matrix, true, nil }
+	first, partial, err := loader.loadPrepared(ctx, query, "a", params, fetch)
+	require.NoError(t, err)
+	require.True(t, partial)
+	second, partial, err := loader.loadPrepared(ctx, query, "a", params, fetch)
+	require.NoError(t, err)
+	require.True(t, partial)
+	require.Equal(t, first, second)
+	require.Equal(t, 1, calls)
+	require.Equal(t, 1, loader.reusedQueryCount)
+	_, _, err = loader.loadPrepared(ctx, query, "b", params, fetch)
+	require.NoError(t, err)
+	_, _, err = loader.loadPrepared(ctx, query, "a", params, fetch)
+	require.NoError(t, err)
+	require.Equal(t, 3, calls, "one-slot cache must evict previous query")
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	_, _, err = loader.loadPrepared(canceled, query, "a", params, fetch)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, 3, calls)
+	failure := errors.New("backend unavailable")
+	for i := 0; i < 2; i++ {
+		_, _, err = loader.loadPrepared(ctx, query, "error", params, func() (pl.Matrix, bool, error) { calls++; return nil, false, failure })
+		require.ErrorIs(t, err, failure)
+	}
+	require.Equal(t, 5, calls)
+	for i := 0; i < 2; i++ {
+		_, _, err = loader.loadPrepared(ctx, query, "empty", params, func() (pl.Matrix, bool, error) { calls++; return nil, false, nil })
+		require.NoError(t, err)
+	}
+	require.Equal(t, 6, calls, "empty results are reusable")
+}
+
+func TestMatrixReusePreparedIdentity(t *testing.T) {
+	ctx := initTimeGraphQueryTestEnvironment()
+	loader := &timeGraphMatrixLoader{topology: true}
+	params := metadata.GetQueryParams(ctx).SetStorageType(metadata.VictoriaMetricsStorageType)
+	query := &structured.QueryTs{}
+	key := loader.matrixReuseKey(ctx, query, "metric", params)
+	require.NotEmpty(t, key)
+	for _, changed := range []context.Context{metadata.WithExactTimeGrid(ctx), metadata.WithLeftOpenTimeWindow(ctx), metadata.WithBackendResponseLimit(ctx, 123)} {
+		require.NotEqual(t, key, loader.matrixReuseKey(changed, query, "metric", params))
+	}
+	require.NotEqual(t, key, loader.matrixReuseKey(ctx, query, "other", params))
+	params.Step = time.Second
+	require.NotEqual(t, key, loader.matrixReuseKey(ctx, query, "metric", params))
+	params.Step = 0
+	metadata.SetUser(ctx, &metadata.User{TenantID: "other"})
+	require.NotEqual(t, key, loader.matrixReuseKey(ctx, query, "metric", params))
+}
+
+func TestMatrixReuseKeyStorageAndEvaluationInputs(t *testing.T) {
+	ctx := initTimeGraphQueryTestEnvironment()
+	loader := &timeGraphMatrixLoader{}
+	query := &structured.QueryTs{}
+	params := &metadata.QueryParams{}
+	key := loader.matrixReuseKey(ctx, query, "metric", params)
+	require.NotEmpty(t, loader.matrixReuseKey(ctx, query, "metric", nil))
+	require.NotEmpty(t, key)
+	params.StorageType = set.New(metadata.VictoriaMetricsStorageType)
+	storageKey := loader.matrixReuseKey(ctx, query, "metric", params)
+	require.NotEqual(t, key, storageKey)
+	params.StorageType.Add(metadata.InfluxDBStorageType)
+	mixedKey := loader.matrixReuseKey(ctx, query, "metric", params)
+	require.NotEqual(t, storageKey, mixedKey)
+	params.StorageType = set.New(metadata.InfluxDBStorageType, metadata.VictoriaMetricsStorageType)
+	require.Equal(t, mixedKey, loader.matrixReuseKey(ctx, query, "metric", params))
+	params.StorageType = nil
+	query.SpaceUid = "other"
+	require.NotEqual(t, key, loader.matrixReuseKey(ctx, query, "metric", params))
+	query.SpaceUid = ""
+	metadata.SetExpand(ctx, &metadata.VmExpand{ClusterName: "other"})
+	require.NotEqual(t, key, loader.matrixReuseKey(ctx, query, "metric", params))
+	metadata.SetExpand(ctx, nil)
+	for name, changed := range map[string]timeGraphMatrixLoader{
+		"start":    {start: time.Unix(100, 0)},
+		"end":      {end: time.Unix(200, 0)},
+		"step":     {step: time.Second},
+		"lookBack": {lookBack: time.Minute},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.NotEqual(t, key, changed.matrixReuseKey(ctx, query, "metric", params))
+		})
+	}
+	loader.start = time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	require.Empty(t, loader.matrixReuseKey(ctx, query, "metric", params))
+}
+
+func TestMatrixReuseEligibilityWithLocalPrometheus(t *testing.T) {
+	db, err := promtsdb.Open(t.TempDir(), kitlog.NewNopLogger(), nil, promtsdb.DefaultOptions(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	engine := pl.NewEngine(pl.EngineOpts{Timeout: time.Second, MaxSamples: 1000})
+	previous := SharedTopologyReuseMatrix
+	t.Cleanup(func() { SharedTopologyReuseMatrix = previous })
+	for _, test := range []struct {
+		name       string
+		topology   bool
+		enabled    bool
+		stage      string
+		params     *metadata.QueryParams
+		wantReused int
+	}{
+		{"direct relation", true, true, "relation-edge", &metadata.QueryParams{StorageType: set.New(metadata.VictoriaMetricsStorageType)}, 1},
+		{"legacy relation", false, true, "relation-edge", &metadata.QueryParams{StorageType: set.New(metadata.VictoriaMetricsStorageType)}, 0},
+		{"disabled", true, false, "relation-edge", &metadata.QueryParams{StorageType: set.New(metadata.VictoriaMetricsStorageType)}, 0},
+		{"source info", true, true, "source-info", &metadata.QueryParams{StorageType: set.New(metadata.VictoriaMetricsStorageType)}, 0},
+		{"missing params", true, true, "relation-edge", nil, 0},
+		{"missing storage", true, true, "relation-edge", &metadata.QueryParams{}, 0},
+		{"local relation", true, true, "relation-edge", &metadata.QueryParams{StorageType: set.New(metadata.InfluxDBStorageType)}, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			SharedTopologyReuseMatrix = test.enabled
+			ctx := withTimeGraphQueryStage(initTimeGraphQueryTestEnvironment(), test.stage)
+			backend := prombackend.NewInstance(ctx, engine, db, time.Minute, 2)
+			loader := &timeGraphMatrixLoader{topology: test.topology}
+			fetch := func() (pl.Matrix, bool, error) {
+				matrix, _, queryErr := backend.DirectQueryRange(ctx, "vector(1)", time.Unix(100, 0), time.Unix(102, 0), time.Second)
+				return matrix, false, queryErr
+			}
+			for i := 0; i < 2; i++ {
+				matrix, partial, queryErr := loader.loadPrepared(ctx, &structured.QueryTs{}, "vector(1)", test.params, fetch)
+				require.NoError(t, queryErr)
+				require.False(t, partial)
+				require.Len(t, matrix, 1)
+				require.Len(t, matrix[0].Points, 3)
+			}
+			require.Equal(t, test.wantReused, loader.reusedQueryCount)
+			require.Equal(t, 2-test.wantReused, loader.physicalQueryCount)
+		})
+	}
+}
+
+func TestMatrixReuseDirectionsKeepAnswerAndInput(t *testing.T) {
+	old := SharedTopologyReuseMatrix
+	t.Cleanup(func() { SharedTopologyReuseMatrix = old })
+	responses := map[string]pl.Matrix{
+		"source_info_relation": contractMatrix(map[string]string{"source_id": "a"}, 1700000000000),
+		"source_middle_flow":   contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, 1700000000000),
+		"middle_target_flow":   nil,
+	}
+	before, err := json.Marshal(responses)
+	require.NoError(t, err)
+	var results []cmdb.SharedTopologyResult
+	var counts []int
+	for _, enabled := range []bool{false, true} {
+		SharedTopologyReuseMatrix = enabled
+		ctx := initTimeGraphQueryTestEnvironment()
+		model := sharedTopologyQueryModel(responses)
+		provider := sharedTopologyQueryProvider().(contractSchemaProvider)
+		provider.schemas[0].IsDirectional = false
+		model.schemaProvider = provider
+		model.timeGraphQueryReference = func(ctx context.Context, query *structured.QueryTs) (metadata.QueryReference, error) {
+			ref, err := timeGraphTestQueryReference(ctx, query)
+			metadata.GetQueryParams(ctx).SetStorageType(metadata.VictoriaMetricsStorageType)
+			return ref, err
+		}
+		calls := 0
+		matrixLabels := func(kind string) map[string]string {
+			return map[string]string{"storage": "shared", "kind": kind, "result": "success"}
+		}
+		physicalBefore := readTimeGraphMetric(t, "cmdb_timegraph_matrix_queries_per_build", matrixLabels("physical"), "sum")
+		reusedBefore := readTimeGraphMetric(t, "cmdb_timegraph_matrix_queries_per_build", matrixLabels("reused"), "sum")
+		fetch := model.timeGraphVMQuery
+		model.timeGraphVMQuery = func(ctx context.Context, query *structured.QueryTs, expr string, instant bool, start, end time.Time, step time.Duration) (pl.Matrix, error) {
+			calls++
+			return fetch(ctx, query, expr, instant, start, end, step)
+		}
+		result, err := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: 1700000000, MaxHops: 2})
+		require.NoError(t, err)
+		require.Equal(t, physicalBefore+float64(calls), readTimeGraphMetric(t, "cmdb_timegraph_matrix_queries_per_build", matrixLabels("physical"), "sum"))
+		reuseHits := readTimeGraphMetric(t, "cmdb_timegraph_matrix_queries_per_build", matrixLabels("reused"), "sum") - reusedBefore
+		if enabled {
+			require.Positive(t, reuseHits)
+		} else {
+			require.Zero(t, reuseHits)
+		}
+		results = append(results, result)
+		counts = append(counts, calls)
+		oldLimit := MaxSharedTopologyMatrixPoints
+		MaxSharedTopologyMatrixPoints = 2
+		withOldCountLimit, budgetErr := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: 1700000000, MaxHops: 2})
+		MaxSharedTopologyMatrixPoints = oldLimit
+		require.NoError(t, budgetErr)
+		require.Equal(t, result, withOldCountLimit, "logical reuse must not be charged as additional resident memory")
+	}
+	require.Equal(t, results[0], results[1])
+	require.Equal(t, counts[0]-1, counts[1])
+	after, err := json.Marshal(responses)
+	require.NoError(t, err)
+	require.Equal(t, before, after, "apply must not mutate a reused Matrix")
+}
+
+func TestMatrixReuseExceptionalTopologyParity(t *testing.T) {
+	previous := SharedTopologyReuseMatrix
+	t.Cleanup(func() { SharedTopologyReuseMatrix = previous })
+	for _, tt := range []struct {
+		name        string
+		matrix      pl.Matrix
+		partial     bool
+		failure     error
+		wantPartial bool
+	}{
+		{name: "complete empty"},
+		{name: "partial empty", partial: true, wantPartial: true},
+		{name: "partial with relation", matrix: contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, 1700000000000, 1700000060000), partial: true, wantPartial: true},
+		{name: "fetch failure", failure: errors.New("backend unavailable")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var baseline []string
+			var calls []int
+			for _, enabled := range []bool{false, true} {
+				SharedTopologyReuseMatrix = enabled
+				ctx := initTimeGraphQueryTestEnvironment()
+				model := sharedTopologyQueryModel(nil)
+				provider := sharedTopologyQueryProvider().(contractSchemaProvider)
+				provider.schemas[0].IsDirectional = false
+				model.schemaProvider = provider
+				model.timeGraphQueryReference = func(ctx context.Context, query *structured.QueryTs) (metadata.QueryReference, error) {
+					ref, err := timeGraphTestQueryReference(ctx, query)
+					metadata.GetQueryParams(ctx).SetStorageType(metadata.VictoriaMetricsStorageType)
+					return ref, err
+				}
+				count := 0
+				model.timeGraphVMQueryWithPartial = func(_ context.Context, query *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, bool, error) {
+					count++
+					if query.QueryList[0].FieldName == "source_middle_flow" {
+						return tt.matrix, tt.partial, tt.failure
+					}
+					return nil, false, nil
+				}
+				request := cmdb.SharedTopologyQuery{
+					SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
+					StartTime: 1700000000, EndTime: 1700000060, Step: "60s", MaxHops: 2,
+				}
+				result, err := model.QuerySharedTopology(ctx, request)
+				calls = append(calls, count)
+				if tt.failure != nil {
+					require.ErrorContains(t, err, tt.failure.Error())
+					require.Empty(t, result.Snapshots)
+					continue
+				}
+				require.NoError(t, err)
+				require.Len(t, result.Snapshots, 2)
+				for _, snapshot := range result.Snapshots {
+					require.Equal(t, tt.wantPartial, snapshot.Partial)
+					if len(tt.matrix) == 0 {
+						require.Empty(t, snapshot.Nodes)
+						require.Empty(t, snapshot.Edges)
+					}
+					if tt.wantPartial {
+						require.Equal(t, "backend_partial", snapshot.PartialReason)
+					} else {
+						require.Empty(t, snapshot.PartialReason)
+					}
+				}
+				canonical := canonicalTopologyForTest(t, result.Snapshots)
+				if baseline == nil {
+					baseline = canonical
+				} else {
+					require.Equal(t, baseline, canonical)
+				}
+				request.ResponseFormat = cmdb.CompactTopologyFormat
+				compact, err := model.QuerySharedTopology(ctx, request)
+				require.NoError(t, err)
+				require.Equal(t, result.Snapshots, decodeCompactForTest(t, compact.Compact))
+			}
+			require.Len(t, calls, 2)
+			t.Logf("physical fetches with reuse disabled/enabled: %d/%d", calls[0], calls[1])
+			if tt.partial {
+				require.Less(t, calls[1], calls[0], "reuse must reduce physical fetches without hiding partial")
+			} else if tt.failure != nil {
+				require.Equal(t, calls[0], calls[1], "failed fetches stop before repeated relation reads")
+			} else {
+				require.LessOrEqual(t, calls[1], calls[0], "incoming root observation can reuse the same complete empty physical selector")
+			}
+		})
+	}
+}
+
+func TestMatrixReusePreservesStorageCoverageMetadata(t *testing.T) {
+	ctx := withTimeGraphQueryStage(initTimeGraphQueryTestEnvironment(), "relation-edge")
+	params := metadata.GetQueryParams(ctx).SetStorageType(metadata.VictoriaMetricsStorageType)
+	loader := &timeGraphMatrixLoader{topology: true}
+	calls := 0
+	fetch := func() (pl.Matrix, bool, error) {
+		calls++
+		metadata.SetStatus(ctx, metadata.QueryTsPartial, "vm_storage_coverage_mismatch")
+		return nil, false, nil
+	}
+	for i := 0; i < 2; i++ {
+		_, partial, err := loader.loadPrepared(ctx, &structured.QueryTs{}, "a", params, fetch)
+		require.NoError(t, err)
+		require.True(t, partial)
+	}
+	require.Equal(t, 1, calls)
+	require.Equal(t, "vm_storage_coverage_mismatch", metadata.GetStatus(ctx).Message)
+}

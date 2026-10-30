@@ -1,0 +1,98 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+
+package metric
+
+import (
+	"context"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+)
+
+var (
+	cmdbTimeGraphStorageSize = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "unify_query", Name: "cmdb_timegraph_storage_size",
+		Help:    "stored graph objects or logical time entries at build exit, not memory bytes",
+		Buckets: []float64{0, 1, 10, 60, 100, 1000, 10000, 100000, 200000, 1000000},
+	}, []string{"storage", "kind", "result"})
+	cmdbTimeGraphBuildPhaseSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "unify_query", Name: "cmdb_timegraph_build_phase_seconds",
+		Help:    "per-build cumulative matrix query time or remaining local wall time, not CPU time",
+		Buckets: secondsBuckets,
+	}, []string{"storage", "phase", "result"})
+	cmdbTimeGraphMatrixQueriesPerBuild = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "unify_query", Name: "cmdb_timegraph_matrix_queries_per_build",
+		Help:    "logical Matrix calls, backend fetches and reuse hits per completed graph build; backend fetches are not individual HTTP requests",
+		Buckets: []float64{0, 1, 2, 4, 8, 16, 32, 64, 128, 256},
+	}, []string{"storage", "kind", "result"})
+	cmdbTopologyAdmissionActive = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: "unify_query", Name: "cmdb_topology_admission_active",
+		Help: "active topology requests, including HTTP response writing",
+	})
+	cmdbTopologyWaiters      = promauto.NewGauge(prometheus.GaugeOpts{Namespace: "unify_query", Name: "cmdb_topology_admission_waiters", Help: "topology requests waiting for an execution slot"})
+	cmdbTopologyMaterialized = promauto.NewGauge(prometheus.GaugeOpts{Namespace: "unify_query", Name: "cmdb_topology_materialized_bytes", Help: "confirmed lower bound of live owned topology memory; not measured RSS"})
+	cmdbTopologyReserved     = promauto.NewGauge(prometheus.GaugeOpts{Namespace: "unify_query", Name: "cmdb_topology_reserved_bytes", Help: "estimated memory reserved by topology requests, not measured RSS"})
+	cmdbTopologyPayloadBytes = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "unify_query", Name: "cmdb_topology_payload_bytes",
+		Help:    "bytes read from request/backend bodies or encoded response items; not complete wire response bytes",
+		Buckets: []float64{0, 1024, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864},
+	}, []string{"stage", "result"})
+)
+
+func timeGraphStorage(storage string) bool { return storage == "shared" || storage == "time-buckets" }
+
+func CMDBTimeGraphStorageObserve(ctx context.Context, storage, kind, result string, count int) {
+	if !timeGraphStorage(storage) || !timeGraphResult(result) || count < 0 {
+		return
+	}
+	switch kind {
+	case "nodes", "relations", "attribute_versions", "legacy_graphs", "edge_time_entries", "node_time_entries":
+		observe(ctx, cmdbTimeGraphStorageSize.WithLabelValues(storage, kind, result), float64(count))
+	}
+}
+
+func CMDBTimeGraphBuildPhaseObserve(ctx context.Context, storage, phase, result string, duration time.Duration) {
+	if !timeGraphStorage(storage) || !timeGraphResult(result) || duration < 0 || (phase != "matrix" && phase != "local") {
+		return
+	}
+	observe(ctx, cmdbTimeGraphBuildPhaseSeconds.WithLabelValues(storage, phase, result), duration.Seconds())
+}
+
+// CMDBTimeGraphMatrixQueriesObserve preserves per-build request amplification,
+// including zero-call and failed builds after storage initialization, without
+// metric-name or request labels.
+func CMDBTimeGraphMatrixQueriesObserve(ctx context.Context, storage, result string, logical, physical, reused int) {
+	if !timeGraphStorage(storage) || !timeGraphResult(result) || logical < 0 || physical < 0 || reused < 0 {
+		return
+	}
+	for kind, count := range map[string]int{"logical": logical, "physical": physical, "reused": reused} {
+		observe(ctx, cmdbTimeGraphMatrixQueriesPerBuild.WithLabelValues(storage, kind, result), float64(count))
+	}
+}
+
+// CMDBTopologyAdmissionSet 由活动计数锁保护更新，嵌套模型调用不重复计数。
+func CMDBTopologyAdmissionSet(active int) {
+	cmdbTopologyAdmissionActive.Set(float64(active))
+}
+
+func CMDBTopologyReservedSet(bytes int64) { cmdbTopologyReserved.Set(float64(bytes)) }
+
+func CMDBTopologyPayloadObserve(ctx context.Context, stage, result string, bytes int) {
+	if !timeGraphResult(result) || bytes < 0 {
+		return
+	}
+	switch stage {
+	case "request-body", "backend-response", "response-item":
+		observe(ctx, cmdbTopologyPayloadBytes.WithLabelValues(stage, result), float64(bytes))
+	}
+}
+
+// CMDBTopologyWaitersSet is updated while holding the admission lock.
+func CMDBTopologyWaitersSet(waiters int) { cmdbTopologyWaiters.Set(float64(waiters)) }
+
+// CMDBTopologyMaterializedSet excludes borrowed memory and pending reservations.
+func CMDBTopologyMaterializedSet(bytes int64) { cmdbTopologyMaterialized.Set(float64(bytes)) }

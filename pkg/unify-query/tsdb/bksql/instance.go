@@ -119,11 +119,19 @@ func (i *Instance) sqlQuery(ctx context.Context, req QuerySyncRequest) (*QuerySy
 	span.Set("query-source", user.Key)
 	span.Set("query-username", user.Name)
 
-	ctx, cancel := context.WithTimeout(ctx, i.timeout)
+	var cancel context.CancelFunc
+	if promql.QueryLimitsDisabled(ctx) {
+		ctx, cancel = context.WithCancel(ctx)
+	} else {
+		ctx, cancel = context.WithTimeout(ctx, i.timeout)
+	}
 	defer cancel()
 
 	// 发起异步查询
 	res := i.client.QuerySync(ctx, req, span)
+	if metadata.IsStrictQueryFailures(ctx) && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if res == nil {
 		return nil, nil
 	}
@@ -538,7 +546,9 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
-	queryFactory.WithMaxLimit(i.maxLimit + i.tolerance)
+	if !promql.QueryLimitsDisabled(ctx) {
+		queryFactory.WithMaxLimit(i.maxLimit + i.tolerance)
+	}
 	sql, err := queryFactory.SQL()
 	if err != nil {
 		return storage.ErrSeriesSet(err)
@@ -560,7 +570,7 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 
 	span.Set("data-total-records", data.TotalRecords)
 
-	if i.maxLimit > 0 && data.TotalRecords > i.maxLimit {
+	if !promql.QueryLimitsDisabled(ctx) && i.maxLimit > 0 && data.TotalRecords > i.maxLimit {
 		return storage.ErrSeriesSet(fmt.Errorf("记录数(%d)超过限制(%d)", data.TotalRecords, i.maxLimit))
 	}
 

@@ -1,0 +1,182 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+
+package v1beta3
+
+import (
+	"context"
+	"fmt"
+	"testing"
+	"time"
+
+	pl "github.com/prometheus/prometheus/promql"
+	"github.com/stretchr/testify/require"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+)
+
+func TestTimeGraphLoadAttributionPreservesRejectedInput(t *testing.T) {
+	for _, test := range []struct {
+		name, outcome string
+		backendErr    error
+		rejected      bool
+		empty         bool
+	}{
+		{name: "success", outcome: "success"},
+		{name: "empty", outcome: "empty", empty: true},
+		{name: "matrix_budget", outcome: "rejected", rejected: true},
+		{name: "backend_error", outcome: "failed", backendErr: fmt.Errorf("private backend error")},
+		{name: "canceled", outcome: "canceled", backendErr: context.Canceled},
+		{name: "timeout", outcome: "timeout", backendErr: context.DeadlineExceeded},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := withTimeGraphQueryStage(initTimeGraphQueryTestEnvironment(), "relation-edge")
+			oldLimit, oldYolo := MaxSharedTopologyMatrixPoints, yoloMode
+			t.Cleanup(func() { MaxSharedTopologyMatrixPoints, yoloMode = oldLimit, oldYolo })
+			yoloMode = false
+			if test.rejected {
+				ctx = metadata.WithBackendResponseLimit(ctx, 16)
+				metadata.MarkBackendResponseLimitExceeded(ctx)
+			}
+			matrix := contractMatrix(map[string]string{"from_id": "a", "to_id": "b"}, 1700000000000, 1700000060000)
+			if test.empty {
+				matrix = nil
+			}
+			loader := timeGraphMatrixLoader{
+				model: &Model{}, graph: NewTimeGraph(), topology: true,
+				start: time.Unix(1700000000, 0), end: time.Unix(1700000060, 0), step: time.Minute,
+				override: func(fetchCtx context.Context, _ *structured.QueryTs) (pl.Matrix, error) {
+					if test.rejected {
+						metadata.MarkBackendResponseLimitExceeded(fetchCtx)
+					}
+					return matrix, test.backendErr
+				},
+			}
+			name := "load_test_" + test.name
+			query := &structured.QueryTs{QueryList: []*structured.Query{{FieldName: name}}}
+			labels := map[string]string{"stage": "relation-edge", "metric_name": name, "result": test.outcome}
+			beforeCalls := readTimeGraphMetric(t, "cmdb_timegraph_load_operations_total", labels, "counter")
+			expected := map[string]float64{"series": 1, "points": 2, "label_bytes": 14}
+			if test.empty || test.backendErr != nil {
+				expected = map[string]float64{"series": 0, "points": 0, "label_bytes": 0}
+			}
+			before := map[string]float64{}
+			for kind := range expected {
+				before[kind] = readTimeGraphMetric(t, "cmdb_timegraph_load_size_total", map[string]string{"stage": "relation-edge", "metric_name": name, "kind": kind}, "counter")
+			}
+			got, _, err := loader.query(ctx, query)
+			if test.backendErr != nil || test.rejected {
+				require.Error(t, err)
+				require.Nil(t, got)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, beforeCalls+1, readTimeGraphMetric(t, "cmdb_timegraph_load_operations_total", labels, "counter"))
+			require.Greater(t, readTimeGraphMetric(t, "cmdb_timegraph_load_last_timestamp_seconds", map[string]string{"stage": "relation-edge", "metric_name": name}, "gauge"), float64(0))
+			for kind, count := range expected {
+				require.Equal(t, before[kind]+count, readTimeGraphMetric(t, "cmdb_timegraph_load_size_total", map[string]string{"stage": "relation-edge", "metric_name": name, "kind": kind}, "counter"), kind)
+			}
+		})
+	}
+}
+
+func TestTimeGraphLoadAttributionAcrossSourceAndRelationQueries(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		t.Run(fmt.Sprintf("partial=%t", partial), func(t *testing.T) {
+			ctx := initTimeGraphQueryTestEnvironment()
+			responses := map[string]pl.Matrix{
+				"source_middle_flow": contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, 1700000000000),
+				"middle_target_flow": {},
+			}
+			model := sharedTopologyQueryModel(responses)
+			model.timeGraphVMQueryWithPartial = func(_ context.Context, q *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, bool, error) {
+				return responses[q.QueryList[0].FieldName], partial, nil
+			}
+			outcome := "success"
+			if partial {
+				outcome = "partial"
+			}
+			names := map[string]string{"source_middle_flow": "relation-edge"}
+			beforePoints, beforeCalls := map[string]float64{}, map[string]float64{}
+			for name, stage := range names {
+				beforePoints[name] = readTimeGraphMetric(t, "cmdb_timegraph_load_size_total", map[string]string{"stage": stage, "metric_name": name, "kind": "points"}, "counter")
+				beforeCalls[name] = readTimeGraphMetric(t, "cmdb_timegraph_load_operations_total", map[string]string{"stage": stage, "metric_name": name, "result": outcome}, "counter")
+			}
+			result, err := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: 1700000000, MaxHops: 1})
+			require.NoError(t, err)
+			require.NotEmpty(t, result.Snapshots)
+			for name, stage := range names {
+				require.Equal(t, beforePoints[name]+1, readTimeGraphMetric(t, "cmdb_timegraph_load_size_total", map[string]string{"stage": stage, "metric_name": name, "kind": "points"}, "counter"))
+				require.Equal(t, beforeCalls[name]+1, readTimeGraphMetric(t, "cmdb_timegraph_load_operations_total", map[string]string{"stage": stage, "metric_name": name, "result": outcome}, "counter"))
+			}
+		})
+	}
+	require.Equal(t, "__mixed__", timeGraphLoadMetricName(&structured.QueryTs{QueryList: []*structured.Query{{FieldName: "a"}, {FieldName: "b"}}}))
+}
+
+func TestTimeGraphCumulativePointsIndependentOfBudgetMode(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		topology bool
+		yolo     bool
+	}{
+		{name: "topology_default", topology: true},
+		{name: "topology_yolo", topology: true, yolo: true},
+		{name: "legacy_default"},
+		{name: "legacy_yolo", yolo: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			oldYolo, oldLimit := yoloMode, MaxSharedTopologyMatrixPoints
+			t.Cleanup(func() { yoloMode, MaxSharedTopologyMatrixPoints = oldYolo, oldLimit })
+			yoloMode, MaxSharedTopologyMatrixPoints = test.yolo, 3
+			loader := timeGraphMatrixLoader{graph: NewTimeGraph(), topology: test.topology}
+			matrix := contractMatrix(map[string]string{"id": "a"}, 1700000000000, 1700000060000)
+			for call := 1; call <= 2; call++ {
+				count, err := loader.validateMatrix(context.Background(), matrix, nil)
+				require.Equal(t, 2, count)
+				require.Equal(t, call*2, loader.pointCount)
+				require.NoError(t, err)
+			}
+			count, err := loader.validateMatrix(context.Background(), nil, nil)
+			require.NoError(t, err)
+			require.Zero(t, count)
+			require.Equal(t, 4, loader.pointCount)
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			count, err = loader.validateMatrix(ctx, matrix, nil)
+			require.ErrorIs(t, err, context.Canceled)
+			require.Zero(t, count)
+			require.Equal(t, 4, loader.pointCount)
+			backendErr := fmt.Errorf("backend query failed")
+			count, err = loader.validateMatrix(context.Background(), matrix, backendErr)
+			require.ErrorIs(t, err, backendErr)
+			require.Zero(t, count)
+			require.Equal(t, 4, loader.pointCount)
+		})
+	}
+}
+
+func TestTimeGraphLoadMetricNameInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		query *structured.QueryTs
+		want  string
+	}{
+		{name: "nil_query", want: "__unknown__"},
+		{name: "empty_queries", query: &structured.QueryTs{}, want: "__unknown__"},
+		{name: "nil_item", query: &structured.QueryTs{QueryList: []*structured.Query{nil}}, want: "__unknown__"},
+		{name: "empty_metric", query: &structured.QueryTs{QueryList: []*structured.Query{{}}}, want: "__unknown__"},
+		{name: "single_metric", query: &structured.QueryTs{QueryList: []*structured.Query{{FieldName: "calls"}}}, want: "calls"},
+		{name: "same_metrics", query: &structured.QueryTs{QueryList: []*structured.Query{{FieldName: "calls"}, {FieldName: "calls"}}}, want: "calls"},
+		{name: "mixed_metrics", query: &structured.QueryTs{QueryList: []*structured.Query{{FieldName: "calls"}, {FieldName: "owns"}}}, want: "__mixed__"},
+		{name: "missing_later_metric", query: &structured.QueryTs{QueryList: []*structured.Query{{FieldName: "calls"}, {}}}, want: "__unknown__"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, timeGraphLoadMetricName(tc.query))
+		})
+	}
+}

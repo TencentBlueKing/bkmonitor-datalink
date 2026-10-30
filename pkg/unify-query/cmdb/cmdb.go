@@ -20,3 +20,11 @@ type CMDB interface {
 	// QueryResourceMatcherRange 获取目标的关键维度和值（query_range 查询），返回 []string 路径
 	QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, step string, startTs, endTs string, target, source Resource, indexesMatcher, expandMatcher Matcher, expandShow bool, pathResource []Resource) (Resource, Matcher, []string, Resource, []MatchersWithTimestamp, error)
 }
+
+// MultiPathCMDB 是 legacy CMDB 查询的可选扩展。
+// 使用独立接口而不是修改 CMDB，避免影响 v1beta3 或其他 CMDB 实现。
+type MultiPathCMDB interface {
+	QueryResourceMatcherAll(ctx context.Context, lookBackDelta, spaceUid string, ts string, target, source Resource, indexesMatcher, expandMatcher Matcher, expandShow bool, pathResource []Resource) (Resource, Matcher, []RelationMultiResourcePathData, Resource, error)
+
+	QueryResourceMatcherRangeAll(ctx context.Context, lookBackDelta, spaceUid string, step string, startTs, endTs string, target, source Resource, indexesMatcher, expandMatcher Matcher, expandShow bool, pathResource []Resource) (Resource, Matcher, []RelationMultiResourceRangePathData, Resource, error)
+}

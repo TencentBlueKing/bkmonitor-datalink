@@ -75,6 +75,13 @@ func TestLegacyRangeStorageGrid(t *testing.T) {
 			m.timeGraphQueryReference = func(ctx context.Context, q *structured.QueryTs) (metadata.QueryReference, error) {
 				q.TsDBMap = make(map[string]structured.TsDBs)
 				for _, metric := range q.QueryList {
+					rootFilter := structured.ConditionField{DimensionName: "source_id", Value: []string{"a"}, Operator: structured.ConditionEqual}
+					switch metric.FieldName {
+					case "source_middle_flow", "source_target_flow":
+						require.Contains(t, metric.Conditions.FieldList, rootFilter)
+					case "middle_target_flow":
+						require.NotContains(t, metric.Conditions.FieldList, rootFilter)
+					}
 					storageType := metadata.InfluxDBStorageType
 					if metric.FieldName == tc.vmMetric {
 						storageType = metadata.VictoriaMetricsStorageType

@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -398,8 +399,15 @@ func runTopologyConsumerExampleHTTP(t *testing.T, yolo bool) {
 	t.Cleanup(func() { httpmock.RegisterMatcherResponder(http.MethodPost, mock.BkBaseUrl, matcher, nil) })
 	gin.SetMode(gin.ReleaseMode)
 	route := gin.New()
+	var cliJWTSeen, cliNoJWTSeen atomic.Bool
 	group := route.Group("/")
 	group.Use(func(c *gin.Context) {
+		switch c.GetHeader("X-Bk-Scope-Space-Uid") {
+		case "example-cli-with-jwt":
+			cliJWTSeen.Store(c.GetHeader("X-Bkapi-Jwt") == "example-cli-jwt")
+		case "example-cli-without-jwt":
+			cliNoJWTSeen.Store(c.GetHeader("X-Bkapi-Jwt") == "")
+		}
 		raw, readErr := io.ReadAll(c.Request.Body)
 		if readErr != nil {
 			c.AbortWithStatus(http.StatusBadRequest)
@@ -420,11 +428,13 @@ func runTopologyConsumerExampleHTTP(t *testing.T, yolo bool) {
 	RegisterRelation(endpoint.NewRegisterHandler(ctx, group))
 	server := httptest.NewServer(route)
 	defer server.Close()
-	cmd := exec.Command(node, "--test", "../../../docs/examples/topology-client.test.mjs")
+	cmd := exec.Command(node, "--test", "../../../docs/examples/topology-client.test.mjs", "../../../docs/examples/topology-run.test.mjs")
 	cmd.Env = append(os.Environ(), "TG_EXAMPLE_URL="+server.URL)
 	output, err := cmd.CombinedOutput()
 	t.Log(string(output))
 	require.NoError(t, err)
+	require.True(t, cliJWTSeen.Load(), "CLI forwards the configured JWT")
+	require.True(t, cliNoJWTSeen.Load(), "CLI omits an unconfigured JWT")
 	if os.Getenv("UPDATE_TIMEGRAPH_EXAMPLES") == "1" {
 		recordsMu.Lock()
 		data, marshalErr := json.MarshalIndent(records, "", "  ")

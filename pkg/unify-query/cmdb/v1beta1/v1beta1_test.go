@@ -655,6 +655,11 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 		t.Run(n, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 			metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid, SkipSpace: "skip"})
+			result := "success"
+			if n == "system to pod" {
+				result = "partial"
+			}
+			checkTelemetry := observeLegacyQuery(t, "instant", "first_path", result)
 			source, sourceInfo, path, target, rets, err := testModel.QueryResourceMatcher(ctx, "", influxdb.SpaceUid, timestamp, c.target, c.source, c.indexMatcher, c.expandMatcher, c.targetInfoShow, c.pathResource)
 			assert.Nil(t, err)
 			if err == nil {
@@ -664,6 +669,7 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 				assert.Equal(t, c.expectedSourceInfo, sourceInfo)
 				assert.Equal(t, c.expectedTarget, target)
 			}
+			checkTelemetry(c.expectedPath, len(c.expectedTargetList))
 		})
 	}
 }
@@ -850,6 +856,7 @@ func TestModel_GetResourceMatcherRange(t *testing.T) {
 		t.Run(n, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 			metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid, SkipSpace: "skip"})
+			checkTelemetry := observeLegacyQuery(t, "range", "first_path", "success")
 			source, sourceInfo, path, target, rets, err := testModel.QueryResourceMatcherRange(ctx, "", influxdb.SpaceUid, step, start, end, c.target, c.source, c.indexMatcher, c.expandMatcher, c.targetInfoShow, c.pathResource)
 			assert.Nil(t, err)
 			if err == nil {
@@ -859,6 +866,20 @@ func TestModel_GetResourceMatcherRange(t *testing.T) {
 				assert.Equal(t, c.expectedSourceInfo, sourceInfo)
 				assert.Equal(t, c.expectedTarget, target)
 			}
+			targetCount := 0
+			for _, bucket := range c.expectedTargetList {
+				targetCount += len(bucket.Matchers)
+			}
+			checkTelemetry(c.expectedPath, targetCount)
+			pathResource := make([]cmdb.Resource, len(c.expectedPath))
+			for i, resource := range c.expectedPath {
+				pathResource[i] = cmdb.Resource(resource)
+			}
+			checkAll := observeLegacyQuery(t, "range", "all_paths", "success")
+			_, _, paths, _, allErr := testModel.QueryResourceMatcherRangeAll(ctx, "", influxdb.SpaceUid, step, start, end, c.target, c.source, c.indexMatcher, c.expandMatcher, c.targetInfoShow, pathResource)
+			require.NoError(t, allErr)
+			require.Equal(t, []cmdb.RelationMultiResourceRangePathData{{Path: c.expectedPath, TargetList: c.expectedTargetList}}, paths)
+			checkAll(c.expectedPath, targetCount)
 		})
 	}
 }

@@ -26,11 +26,31 @@ import (
 )
 
 func metricTestColumns() []string {
-	return []string{"id", "bk_tenant_id", "space_uid", "model_id", "metric_name", "display_name", "description", "unit", "kind", "result_table_id", "data_label", "physical_field", "value_mapping", "dimensions"}
+	return []string{"id", "bk_tenant_id", "space_uid", "model_id", "metric_name", "display_name", "description", "unit", "kind", "result_table_id", "data_label", "physical_field", "value_mapping", "dimensions", "metricset_code"}
 }
 
 func metricTestRow() []driver.Value {
-	return []driver.Value{int64(42), "tenant-a", "*", "cw-Host", "usage", "CPU 使用率", "CPU usage", "percent", "native", "system.cpu", "plugin.cpu", "usage", []byte(`[{"original_value":"1","mapped_value":"正常"}]`), []byte(`[{"id":"bk_target_ip","name":"目标IP","src_name":"IP","detect":true}]`)}
+	return []driver.Value{int64(42), "tenant-a", "*", "cw-Host", "usage", "CPU 使用率", "CPU usage", "percent", "native", "system.cpu", "plugin.cpu", "usage", []byte(`[{"original_value":"1","mapped_value":"正常"}]`), []byte(`[{"id":"bk_target_ip","name":"目标IP","src_name":"IP","detect":true}]`), "plugin.cpu"}
+}
+
+func TestMetricClientK8sCustomWithoutModel(t *testing.T) {
+	t.Parallel()
+	db := openReaderTestDB(t, func(_ context.Context, sql string, _ []driver.NamedValue) (driver.Rows, error) {
+		if !strings.Contains(sql, "metricset_code") {
+			t.Error("catalog query omitted definition source")
+		}
+		row := metricTestRow()
+		row[3], row[14] = nil, "k8s_custom"
+		return &readerTestRows{columns: metricTestColumns(), values: [][]driver.Value{row}}, nil
+	})
+	client, err := NewMetricClient(MetricClientConfig{DB: db})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, found, err := client.FindMetric(t.Context(), models.MetricQuery{TenantID: "tenant-a", MetricID: 42})
+	if err != nil || !found || metadata.MetricsetCode != "k8s_custom" || metadata.ObjectModelCode != "" {
+		t.Fatalf("metadata=%+v found=%v err=%v", metadata, found, err)
+	}
 }
 
 func TestMetricClientCatalogProjection(t *testing.T) {

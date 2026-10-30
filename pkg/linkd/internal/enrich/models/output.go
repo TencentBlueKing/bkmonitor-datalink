@@ -189,6 +189,8 @@ func (q MetricQuery) LocatorComplete() bool {
 
 // MetricMetadata 是指标丰富和展示所需的元数据。
 type MetricMetadata struct {
+	// MetricsetCode 是指标定义来源，用于识别允许不关联对象模型的目录指标。
+	MetricsetCode   string
 	ObjectModelCode string
 	// Kind 区分原生物理指标与衍生定义，禁止把衍生定义降级为普通取数。
 	Kind string

@@ -43,7 +43,9 @@ func TestTopologyHTTPQueueLifecycle(t *testing.T) {
 				done := make(chan bool, 2)
 				path := "/test-topology-queue-" + outcome
 				if proxied {
-					metadata.AddHandler(path, HandlerAPIRelationV1Beta3TopologyRange)
+					if _, registered := metadata.GetHandler(path); !registered {
+						metadata.AddHandler(path, HandlerAPIRelationV1Beta3TopologyRange)
+					}
 				}
 				route := gin.New()
 				route.POST("/query", func(c *gin.Context) {

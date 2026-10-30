@@ -126,7 +126,9 @@ func TestTopologyBatchMetadataLifetime(t *testing.T) {
 						body := `{"query_list":[` + strings.Join(items, ",") + `]}`
 						if proxied {
 							route := fmt.Sprintf("/test-topology-metadata-lifetime-%t-%t-%t", yolo, rangeQuery, cancelAfterFirst)
-							metadata.AddHandler(route, handler)
+							if _, registered := metadata.GetHandler(route); !registered {
+								metadata.AddHandler(route, handler)
+							}
 							body = `{"path":"` + route + `","data":` + body + `}`
 						}
 						w := &topologyMetadataWriter{ResponseRecorder: httptest.NewRecorder()}
@@ -137,7 +139,8 @@ func TestTopologyBatchMetadataLifetime(t *testing.T) {
 							writes++
 							require.Equal(t, expectedUser, *metadata.GetUser(c.Request.Context()), "identity must survive through response write")
 							if cancelAfterFirst {
-								require.ErrorIs(t, c.Request.Context().Err(), context.Canceled)
+								require.ErrorIs(t, parent.Err(), context.Canceled)
+								require.NoError(t, c.Request.Context().Err(), "bounded failure response survives query cancellation")
 							}
 						}
 						if proxied {
@@ -157,8 +160,11 @@ func TestTopologyBatchMetadataLifetime(t *testing.T) {
 								}
 							}
 							require.Equal(t, 1, endedItems, "cancellation stops subsequent queries")
-							require.ErrorIs(t, c.Request.Context().Err(), context.Canceled)
-							require.Zero(t, writes, "a canceled response is not encoded or written")
+							require.ErrorIs(t, parent.Err(), context.Canceled)
+							require.Equal(t, 1, writes, "only the bounded failure response is written")
+							require.Equal(t, http.StatusBadRequest, w.Code)
+							require.True(t, json.Valid(w.Body.Bytes()), w.Body.String())
+							require.Contains(t, w.Body.String(), "context canceled")
 							return
 						}
 						require.Positive(t, writes)

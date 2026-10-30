@@ -93,10 +93,12 @@ func TestTopologyBodyFailureHTTP(t *testing.T) {
 				// The real proxy fully decodes its socket body before calling topology.
 				// This explicit inner-reader injection tests failure wrapping, not a
 				// claim that an ordinary proxy body is a slow network reader.
-				metadata.AddHandler("/research-body-failure", func(c *gin.Context) {
-					c.Request.Body = topologyCanceledBody{ctx: c.Request.Context()}
-					HandlerAPIRelationV1Beta3TopologyRange(c)
-				})
+				if _, registered := metadata.GetHandler("/research-body-failure"); !registered {
+					metadata.AddHandler("/research-body-failure", func(c *gin.Context) {
+						c.Request.Body = topologyCanceledBody{ctx: c.Request.Context()}
+						HandlerAPIRelationV1Beta3TopologyRange(c)
+					})
+				}
 			}
 			route.POST("/query", func(c *gin.Context) {
 				defer close(done)

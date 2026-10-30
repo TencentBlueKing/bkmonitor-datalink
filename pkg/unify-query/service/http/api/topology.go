@@ -122,12 +122,15 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 	maxRequestBytes := v1beta3.TopologyRequestByteLimit()
 	var body []byte
 	bodyRead := false
-	// Only admission/body failure reporting survives cancellation. No query or
-	// successful large payload executes under the detached context.
-	failBeforeQuery := func(failureCtx context.Context, failure error) {
+	// 只有限长错误响应脱离取消；查询和成功响应（含代理最终写出）仍保留准入期限。
+	fail := func(failureCtx context.Context, failure error) {
 		failureCtx = context.WithoutCancel(failureCtx)
 		c.Request = c.Request.WithContext(failureCtx)
-		resp.failed(failureCtx, errors.New(truncateTopologyErrorMessage(failure.Error(), topologyErrorMessageMaxBytes)))
+		resp.failed(failureCtx, metadata.ErrorWithCauses(truncateTopologyErrorMessage(failure.Error(), topologyErrorMessageMaxBytes), failure))
+	}
+	// 准入和请求体拒绝保持原有的无效请求状态码。
+	failBeforeQuery := func(failureCtx context.Context, failure error) {
+		fail(failureCtx, errors.New(failure.Error()))
 	}
 	prepareBody := func(readCtx context.Context) error {
 		if bodyRead {
@@ -191,7 +194,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		reason := topologyInvalidRequestReason
 		metric.CMDBTopologyRejectInc(ctx, queryMode, reason)
 		metric.CMDBTopologyPayloadObserve(ctx, "request-body", metric.CMDBRelationResultRejected, len(body))
-		resp.failed(ctx, err)
+		fail(ctx, err)
 		return
 	}
 	metric.CMDBTopologyPayloadObserve(ctx, "request-body", metric.CMDBRelationResultSuccess, len(body))
@@ -200,7 +203,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		handlerErr = &v1beta3.ResultLimitError{Reason: "max_topology_queries", Count: len(request.QueryList), Limit: maxQueries}
 		requestResult = metric.CMDBRelationResultRejected
 		metric.CMDBTopologyRejectInc(ctx, queryMode, "max_topology_queries")
-		resp.failed(ctx, handlerErr)
+		fail(ctx, handlerErr)
 		return
 	}
 	span.Set("query-count", len(request.QueryList))
@@ -210,7 +213,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 	modelSpan.End(&err)
 	if err != nil {
 		handlerErr = err
-		resp.failed(ctx, err)
+		fail(ctx, err)
 		return
 	}
 	data := &topologyResponse{
@@ -232,7 +235,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 	for index, query := range request.QueryList {
 		if err := ctx.Err(); err != nil {
 			handlerErr = err
-			resp.failed(ctx, err)
+			fail(ctx, err)
 			return
 		}
 		queryStarted := time.Now()
@@ -381,7 +384,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		if encodeErr != nil {
 			querySpan.End(&encodeErr)
 			handlerErr = encodeErr
-			resp.failed(ctx, encodeErr)
+			fail(ctx, encodeErr)
 			return
 		}
 		if limit := v1beta3.TopologyOutputByteLimit(); limit > 0 && encodedBytes > limit-responseBytes {
@@ -391,7 +394,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 			handlerErr = queryErr
 			requestResult = metric.CMDBRelationResultRejected
 			metric.CMDBTopologyRejectInc(ctx, queryMode, "max_topology_output_bytes")
-			resp.failed(ctx, queryErr)
+			fail(ctx, queryErr)
 			return
 		}
 		responseBytes += encodedBytes + 1

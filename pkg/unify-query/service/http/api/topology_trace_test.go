@@ -71,7 +71,9 @@ func TestTopologyFullHTTPTraceLifecycle(t *testing.T) {
 				body := test.body
 				if proxied {
 					const route = "/test-full-topology-trace"
-					metadata.AddHandler(route, HandlerAPIRelationV1Beta3Topology)
+					if _, registered := metadata.GetHandler(route); !registered {
+						metadata.AddHandler(route, HandlerAPIRelationV1Beta3Topology)
+					}
 					body = `{"path":"` + route + `","data":` + body + `}`
 				}
 				c.Request = httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(body))

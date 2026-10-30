@@ -31,7 +31,9 @@ func TestTopologyYoloBypassesHTTPBudgets(t *testing.T) {
 	useRelationTestConfig(t)
 	log.InitTestLogger()
 	const route = "/test-topology-yolo"
-	metadata.AddHandler(route, HandlerAPIRelationV1Beta3Topology)
+	if _, registered := metadata.GetHandler(route); !registered {
+		metadata.AddHandler(route, HandlerAPIRelationV1Beta3Topology)
+	}
 	for _, enabled := range []bool{false, true, false} {
 		viper.Set(v1beta3.YoloModeConfigPath, enabled)
 		v1beta3.LoadConfig()
@@ -134,7 +136,9 @@ func (w *topologyAdmissionWriter) Write(body []byte) (int, error) {
 func TestTopologyActivityTrackedThroughProxyResponse(t *testing.T) {
 	log.InitTestLogger()
 	const route = "/test-topology-proxy-admission"
-	metadata.AddHandler(route, HandlerAPIRelationV1Beta3Topology)
+	if _, registered := metadata.GetHandler(route); !registered {
+		metadata.AddHandler(route, HandlerAPIRelationV1Beta3Topology)
+	}
 	w := &topologyAdmissionWriter{ResponseRecorder: httptest.NewRecorder(), t: t}
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/proxy", strings.NewReader(`{"path":"`+route+`","data":{"query_list":[]}}`))
@@ -149,7 +153,9 @@ func TestTopologyAdmissionHeldThroughProxyWrite(t *testing.T) {
 	v1beta3.MaxSharedTopologyConcurrent = 1
 	t.Cleanup(func() { v1beta3.MaxSharedTopologyConcurrent = old })
 	const route = "/test-topology-proxy-admission-limit"
-	metadata.AddHandler(route, HandlerAPIRelationV1Beta3Topology)
+	if _, registered := metadata.GetHandler(route); !registered {
+		metadata.AddHandler(route, HandlerAPIRelationV1Beta3Topology)
+	}
 	w := &topologyAdmissionWriter{ResponseRecorder: httptest.NewRecorder(), t: t, rejectNext: true}
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/proxy", strings.NewReader(`{"path":"`+route+`","data":{"query_list":[]}}`))
@@ -178,7 +184,9 @@ func TestTopologyHTTPRequestsContinueWhileOthersAreActive(t *testing.T) {
 				body := `{"query_list":[]}`
 				if proxied {
 					route := "/test-topology-concurrent-" + test.name
-					metadata.AddHandler(route, test.handler)
+					if _, registered := metadata.GetHandler(route); !registered {
+						metadata.AddHandler(route, test.handler)
+					}
 					body = `{"path":"` + route + `","data":` + body + `}`
 				}
 				w := httptest.NewRecorder()

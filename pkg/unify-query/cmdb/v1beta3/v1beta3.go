@@ -248,10 +248,10 @@ func validateRangeBuckets(start, end, stepMs int64) (int, error) {
 	return int(quotient) + 1, nil
 }
 
-func sourcePrimaryKeySubset(req *QueryRequest, provider SchemaProvider) map[string]string {
+func sourcePrimaryKeySubset(sourceInfo map[string]string, primaryKeys []string) map[string]string {
 	result := make(map[string]string)
-	for _, key := range provider.GetResourcePrimaryKeys(req.SchemaNamespace(), req.SourceType) {
-		if value, ok := req.SourceInfo[key]; ok {
+	for _, key := range primaryKeys {
+		if value, ok := sourceInfo[key]; ok {
 			result[key] = value
 		}
 	}

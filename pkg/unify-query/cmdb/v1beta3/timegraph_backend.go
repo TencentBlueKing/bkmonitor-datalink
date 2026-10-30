@@ -122,8 +122,9 @@ func (m *Model) buildTimeGraphRequest(
 	req.MaxHops = effectivePathSearchMaxHops()
 	// 保持现有 v1beta3 旧接口的兼容语义：先用主键字段确定源资源，再用
 	// source_expand_info 按非主键节点属性过滤已经确定的源资源。
-	req.SourceInfo = sourcePrimaryKeySubset(req, provider)
-	if len(provider.GetResourcePrimaryKeys(req.SchemaNamespace(), req.SourceType)) == 0 {
+	primaryKeys := provider.GetResourcePrimaryKeys(req.SchemaNamespace(), req.SourceType)
+	req.SourceInfo = sourcePrimaryKeySubset(req.SourceInfo, primaryKeys)
+	if len(primaryKeys) == 0 {
 		return req, nil, fmt.Errorf("get index matcher error: index is empty with %+v", req.SourceType)
 	}
 	for key, value := range req.SourceExpandInfo {
@@ -490,7 +491,9 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	req, paths, err := m.buildTimeGraphRequest(ctx, spaceUID, target, source, indexMatcher, expandMatcher, expandShow, pathResource)
 	if req != nil {
 		result.source = cmdb.Resource(req.SourceType)
-		result.sourceMatcher = cmdb.Matcher(sourcePrimaryKeySubset(req, m.getSchemaProvider()))
+		result.sourceMatcher = cmdb.Matcher(sourcePrimaryKeySubset(
+			indexMatcher.Rename(), m.getSchemaProvider().GetResourcePrimaryKeys(req.SchemaNamespace(), req.SourceType),
+		))
 		result.target = cmdb.Resource(req.TargetType)
 	}
 	if err != nil {

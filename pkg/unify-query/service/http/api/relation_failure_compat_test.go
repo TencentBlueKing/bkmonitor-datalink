@@ -51,6 +51,8 @@ func TestRelationFailureResponseCompatibility(t *testing.T) {
 		{"root without matcher", `"source_type":"pod"`},
 		{"root without info fields", `"source_type":"pod","target_info_show":true,"source_info":{"pod":"pod-1"}`},
 		{"root expanded", `"source_type":"container","source_info":{"bcs_cluster_id":"cluster","namespace":"namespace","pod":"pod-1","container":"container-1"},"source_expand_info":{"version":"v1"}`},
+		{"root expanded primary key", `"source_type":"pod","source_info":{"pod":"pod-1"},"source_expand_info":{"namespace":"namespace"}`},
+		{"root only expanded primary key", `"source_type":"pod","source_expand_info":{"pod":"pod-1"}`},
 		{"unknown inference", `"source_info":{"device":"example"}`},
 		{"empty inference", `"source_info":{}`},
 		{"unknown source", `"source_type":"unknown","source_info":{"id":"example"}`},

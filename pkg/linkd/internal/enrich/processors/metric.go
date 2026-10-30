@@ -171,9 +171,12 @@ func resolveMetricQueryLocations(ctx context.Context, scope *enrich.Scope, strat
 		if strategy.Spec.FieldTag == models.CWStrategyFieldTagDerivedMetric && metadata.Kind != "derived" {
 			return strategy, projection, fmt.Errorf("%w: derived metric catalog kind mismatch", enrich.ErrInvalidDataSourceResponse)
 		}
-		if found && metadata.Kind == "derived" && metadata.FieldName != "" {
-			// 衍生目录定义没有物理表/字段。只在当前副本标记定义语义，不改写历史材料，
-			// 也不把检测面展开后的成员引用误当成父指标的物理位置。
+		if found && metadata.Kind == "derived" && metadata.RecordRuleID == nil && metadata.FieldName != "" {
+			// 展开计算的目录定义没有物理主引用，不能把检测面成员当作父指标位置。
+			// 物化型由 record_rule_id 区分，必须保留它自己的结果表与字段。
+			if metadata.TableID != "" || metadata.DataLabel != "" || metadata.PhysicalField != "" {
+				return strategy, projection, fmt.Errorf("%w: inline derived metric unexpectedly has a physical reference", enrich.ErrInvalidDataSourceResponse)
+			}
 			query.MetricField, query.ResultTableID = metadata.FieldName, ""
 			if len(projection.QueryConfigs) == 1 {
 				strategy.Spec.FieldTag, strategy.Spec.FieldName = models.CWStrategyFieldTagDerivedMetric, metadata.FieldName
@@ -185,14 +188,19 @@ func resolveMetricQueryLocations(ctx context.Context, scope *enrich.Scope, strat
 			}
 			continue
 		}
-		if !found || metadata.Kind != "native" || metadata.PhysicalField == "" || (metadata.TableID == "" && metadata.DataLabel == "") {
-			return strategy, projection, fmt.Errorf("%w: native metric catalog location is incomplete", enrich.ErrInvalidDataSourceResponse)
+		physicalKind := metadata.Kind == "native" || metadata.Kind == "predefined" ||
+			(metadata.Kind == "derived" && metadata.RecordRuleID != nil && *metadata.RecordRuleID > 0)
+		if !found || !physicalKind || metadata.PhysicalField == "" || (metadata.TableID == "" && metadata.DataLabel == "") {
+			return strategy, projection, fmt.Errorf("%w: metric catalog physical reference is incomplete or kind is invalid", enrich.ErrInvalidDataSourceResponse)
 		}
 		query.ResultTableID = metadata.TableID
 		if query.ResultTableID == "" {
 			query.ResultTableID = metadata.DataLabel
 		}
 		query.MetricField = metadata.PhysicalField
+		if metadata.Kind == "derived" && len(projection.QueryConfigs) == 1 && strategy.Spec.FieldTag == models.CWStrategyFieldTagDerivedMetric {
+			strategy.Spec.FieldName = metadata.FieldName
+		}
 	}
 	return strategy, projection, nil
 }

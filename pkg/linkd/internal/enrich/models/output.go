@@ -189,12 +189,18 @@ func (q MetricQuery) LocatorComplete() bool {
 
 // MetricMetadata 是指标丰富和展示所需的元数据。
 type MetricMetadata struct {
-	// MetricsetCode 是指标定义来源，用于识别允许不关联对象模型的目录指标。
+	// MetricsetCode 是指标定义来源，不据此推导对象模型。
 	MetricsetCode   string
 	ObjectModelCode string
-	// Kind 区分原生物理指标与衍生定义，禁止把衍生定义降级为普通取数。
+	// ModelIDs 是 metric_object 保存的适用对象集合；空集合表示未关联对象。
+	ModelIDs []string
+	// RefMetricsetCode 是主引用的实际取数来源，可与定义来源不同。
+	RefMetricsetCode string
+	// RecordRuleID 非空时指向物化型计算指标的规则，不表示规则已经产出数据。
+	RecordRuleID *int64
+	// Kind 保留 native、predefined、derived；derived 是否物化由 RecordRuleID 判断。
 	Kind string
-	// TableID、DataLabel 和 PhysicalField 是目录持有的原生指标主引用。
+	// TableID、DataLabel 和 PhysicalField 是目录主引用；预定义和物化型计算指标也可持有。
 	TableID       string
 	DataLabel     string
 	PhysicalField string

@@ -50,11 +50,14 @@ func (K8s) Match(ctx context.Context, scope *enrich.Scope) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	modelCode, err := k8sModelCodeForScope(scope)
+	modelCode, diagnostics, err := k8sModelCodeForScope(scope)
 	if err != nil {
 		return false, err
 	}
 	_, known := k8sIdentityFields[modelCode]
+	if len(diagnostics) > 0 {
+		return known || k8sModelCode(scope.Facts().Dimensions) != "", nil
+	}
 	return known, nil
 }
 
@@ -74,9 +77,12 @@ func (K8s) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 		ContainerName: dimensionText(alert.Dimensions, rules.FieldContainerName),
 		CWLabels:      []string{},
 	}
-	modelCode, err := k8sModelCodeForScope(scope)
+	modelCode, diagnostics, err := k8sModelCodeForScope(scope)
 	if err != nil {
 		return enrich.ProcessorResult{}, err
+	}
+	if len(diagnostics) > 0 {
+		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil
 	}
 	if _, known := k8sIdentityFields[modelCode]; !known {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusSkipped}, nil
@@ -94,6 +100,11 @@ func (K8s) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 		invalidModels = append(invalidModels, modelCode)
 		instance = enrich.Instance{}
 	} else {
+		if diagnostics, err := k8sInstanceClaims(scope, instance); err != nil {
+			return enrich.ProcessorResult{}, err
+		} else if len(diagnostics) > 0 {
+			return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil
+		}
 		values.ModelID, values.ModelInstID = instance.ModelCode, instance.InstanceID
 		if name := k8sClusterName(instance); name != "" {
 			values.ClusterName = name
@@ -112,6 +123,39 @@ func (K8s) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 		return k8sValuesDiagnostic(scope, values, domain.EnrichStatusPartial, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel, Fields: invalidModels})
 	}
 	return k8sValuesResult(scope.Context().K8s.Values)
+}
+
+// k8sInstanceClaims 允许前序 Processor 只提供模型上下文；一旦明确给出实例，
+// 模型与实例必须在同一位置成对，且不能被原生维度查询得到的另一实例覆盖。
+func k8sInstanceClaims(scope *enrich.Scope, instance enrich.Instance) ([]enrich.Diagnostic, error) {
+	state, err := scope.EvaluationState()
+	if err != nil {
+		return nil, err
+	}
+	document := state.Document()
+	for _, root := range []string{"labels", "extra_data", "dimensions"} {
+		fields, _ := document[root].(map[string]any)
+		value, provided := fields[rules.FieldModelInstID]
+		if !provided {
+			continue
+		}
+		id, ok := value.(string)
+		paths := []string{root + ".model_id", root + ".model_inst_id"}
+		if !ok {
+			return []enrich.Diagnostic{{Code: enrich.DiagnosticCodeInvalidField, Fields: paths}}, nil
+		}
+		if id == "" {
+			continue
+		}
+		model, ok := fields[rules.FieldModelID].(string)
+		if !ok || model == "" {
+			return []enrich.Diagnostic{{Code: enrich.DiagnosticCodeInvalidField, Fields: paths}}, nil
+		}
+		if model != instance.ModelCode || id != instance.InstanceID {
+			return []enrich.Diagnostic{{Code: "identity_conflict", Fields: paths}}, nil
+		}
+	}
+	return nil, nil
 }
 
 func k8sValuesDiagnostic(scope *enrich.Scope, values models.K8sValues, status domain.EnrichStatus, diagnostic enrich.Diagnostic) (enrich.ProcessorResult, error) {
@@ -176,19 +220,35 @@ func k8sValuesResult(values models.K8sValues) (enrich.ProcessorResult, error) {
 
 // k8sModelCodeForScope 为匹配和处理提供同一模型选择规则，不使用可能已被规则覆盖的 Resource 缓存。
 // 优先读取当前 evaluation 的 labels、extra_data、dimensions；模型未知时才按原始维度推断。
-func k8sModelCodeForScope(scope *enrich.Scope) (string, error) {
+func k8sModelCodeForScope(scope *enrich.Scope) (string, []enrich.Diagnostic, error) {
 	state, err := scope.EvaluationState()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	document := state.Document()
+	selected := ""
+	var primaryField string
 	for _, root := range []string{"labels", "extra_data", "dimensions"} {
 		fields, _ := document[root].(map[string]any)
-		if model, ok := fields[rules.FieldModelID].(string); ok && model != "" {
-			return model, nil
+		value, provided := fields[rules.FieldModelID]
+		if !provided {
+			continue
+		}
+		model, ok := value.(string)
+		if !ok {
+			return selected, []enrich.Diagnostic{{Code: enrich.DiagnosticCodeInvalidField, Fields: []string{root + ".model_id"}}}, nil
+		}
+		if model != "" {
+			if selected != "" && selected != model {
+				return selected, []enrich.Diagnostic{{Code: "identity_conflict", Fields: []string{primaryField, root + ".model_id"}}}, nil
+			}
+			selected, primaryField = model, root+".model_id"
 		}
 	}
-	return k8sModelCode(scope.Facts().Dimensions), nil
+	if selected != "" {
+		return selected, nil, nil
+	}
+	return k8sModelCode(scope.Facts().Dimensions), nil, nil
 }
 
 func k8sModelCode(dimensions domain.DimensionMap) string {

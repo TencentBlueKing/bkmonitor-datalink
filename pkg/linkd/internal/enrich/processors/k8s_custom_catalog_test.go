@@ -96,11 +96,7 @@ func TestK8sCustomCatalogKeepsDirectoryFailures(t *testing.T) {
 	}{
 		{name: "missing catalog row", change: func(r *k8sCustomCatalogReader) { r.found = false }},
 		{name: "catalog read failure", change: func(r *k8sCustomCatalogReader) { r.err = errors.New("catalog unavailable") }},
-		{name: "strategy 207 ordinary custom report", change: func(r *k8sCustomCatalogReader) { r.metadata.MetricsetCode = "report.xx_test" }},
-		{name: "builtin K8s", change: func(r *k8sCustomCatalogReader) { r.metadata.MetricsetCode = "k8s" }},
 		{name: "missing catalog source", change: func(r *k8sCustomCatalogReader) { r.metadata.MetricsetCode = "" }},
-		{name: "single cluster keeps model validation", change: func(r *k8sCustomCatalogReader) { r.metadata.MetricsetCode = "k8s_cluster.bcs_k8s_00000" }},
-		{name: "similar source is not custom K8s", change: func(r *k8sCustomCatalogReader) { r.metadata.MetricsetCode = "k8s_custom_other" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -148,4 +144,22 @@ func (r *k8sCustomCatalogReader) GetByStrategyID(context.Context, models.Strateg
 func (r *k8sCustomCatalogReader) FindMetric(_ context.Context, query models.MetricQuery) (models.MetricMetadata, bool, error) {
 	r.queries = append(r.queries, query)
 	return r.metadata, r.found, r.err
+}
+
+func TestUnassociatedCatalogSourcesDoNotRequireModel(t *testing.T) {
+	t.Parallel()
+	for _, code := range []string{"k8s", "k8s_custom", "k8s_cluster.bcs_k8s_00000", "source.demo", "external.metrics", "report.xx_test", "report.other"} {
+		t.Run(code, func(t *testing.T) {
+			t.Parallel()
+			reader := newK8sCustomCatalogReader(code)
+			scope, err := enrich.NewScope(processorBaseTargetAlert(t, domain.DimensionMap{}), enrich.Sources{CWStrategy: reader, Metric: reader})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := (MonitorResource{}).Process(t.Context(), scope)
+			if err != nil || result.Status != domain.EnrichStatusSkipped || len(result.Diagnostics) != 0 || len(result.Value) != 0 {
+				t.Fatalf("valid unassociated definition failed: %+v err=%v", result, err)
+			}
+		})
+	}
 }

@@ -1,0 +1,349 @@
+[
+  {
+    "AlertID": "alert-20261030040008-hkzndoreuiize",
+    "EventID": "event-20261030042248-qwvc2pcypsn2k",
+    "IntakeVersion": 41,
+    "SourceVersion": 41,
+    "Status": "succeeded",
+    "Reads": [
+      {
+        "Query": {
+          "MetricID": 249,
+          "SpaceUID": "",
+          "TenantID": "system",
+          "TableID": "",
+          "FieldName": "",
+          "ObjectModelCode": "",
+          "FieldTag": ""
+        },
+        "Found": true,
+        "Invalid": false,
+        "MetricsetCode": "k8s",
+        "RefMetricsetCode": "",
+        "Kind": "derived",
+        "FieldName": "k8s_pod_memory_rss",
+        "ModelIDs": [
+          "cw-K8s_Pod"
+        ],
+        "RecordRuleID": null
+      }
+    ],
+    "Evaluations": [
+      {
+        "apm": {
+          "diagnostics": null,
+          "status": "skipped"
+        },
+        "display": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "fields": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "k8s": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "log": {
+          "diagnostics": null,
+          "status": "skipped"
+        },
+        "metric": {
+          "diagnostics": null,
+          "status": "succeeded",
+          "values": {
+            "metric_name": "k8s_pod_memory_rss",
+            "metric_unique_id": ".container_memory_rss",
+            "result_table_id": "",
+            "unit": "bytes"
+          }
+        },
+        "monitor-resource": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "source": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "strategy": {
+          "diagnostics": null,
+          "status": "succeeded"
+        }
+      },
+      {
+        "apm": {
+          "diagnostics": null,
+          "status": "skipped"
+        },
+        "display": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "fields": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "k8s": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "log": {
+          "diagnostics": null,
+          "status": "skipped"
+        },
+        "metric": {
+          "diagnostics": null,
+          "status": "succeeded",
+          "values": {
+            "metric_name": "k8s_pod_memory_rss",
+            "metric_unique_id": ".container_memory_rss",
+            "result_table_id": "",
+            "unit": "bytes"
+          }
+        },
+        "monitor-resource": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "source": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "strategy": {
+          "diagnostics": null,
+          "status": "succeeded"
+        }
+      }
+    ]
+  },
+  {
+    "AlertID": "alert-20261028140715-m6zkbil3trobq",
+    "EventID": "event-20261030045014-fuumh3ipbply4",
+    "IntakeVersion": 41,
+    "SourceVersion": 41,
+    "Status": "succeeded",
+    "Reads": [
+      {
+        "Query": {
+          "MetricID": 1459,
+          "SpaceUID": "",
+          "TenantID": "system",
+          "TableID": "",
+          "FieldName": "",
+          "ObjectModelCode": "",
+          "FieldTag": ""
+        },
+        "Found": true,
+        "Invalid": false,
+        "MetricsetCode": "k8s_custom",
+        "RefMetricsetCode": "k8s_custom",
+        "Kind": "native",
+        "FieldName": "batch_num",
+        "ModelIDs": [],
+        "RecordRuleID": null
+      }
+    ],
+    "Evaluations": [
+      {
+        "apm": {
+          "diagnostics": null,
+          "status": "skipped"
+        },
+        "display": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "fields": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "k8s": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "log": {
+          "diagnostics": null,
+          "status": "skipped"
+        },
+        "metric": {
+          "diagnostics": null,
+          "status": "succeeded",
+          "values": {
+            "metric_name": "batch_num",
+            "metric_unique_id": "k8s_custom.batch_num",
+            "result_table_id": "k8s_custom",
+            "unit": ""
+          }
+        },
+        "monitor-resource": {
+          "diagnostics": null,
+          "status": "skipped"
+        },
+        "source": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "strategy": {
+          "diagnostics": null,
+          "status": "succeeded"
+        }
+      }
+    ]
+  },
+  {
+    "AlertID": "alert-20261028235215-pl5h4wqnhpfbi",
+    "EventID": "event-20261028235714-62cyphqxkky3s",
+    "IntakeVersion": 38,
+    "SourceVersion": 41,
+    "Status": "succeeded",
+    "Reads": [
+      {
+        "Query": {
+          "MetricID": 10539,
+          "SpaceUID": "",
+          "TenantID": "system",
+          "TableID": "",
+          "FieldName": "",
+          "ObjectModelCode": "",
+          "FieldTag": ""
+        },
+        "Found": true,
+        "Invalid": false,
+        "MetricsetCode": "apm",
+        "RefMetricsetCode": "",
+        "Kind": "derived",
+        "FieldName": "average_response_time",
+        "ModelIDs": [
+          "cw-application",
+          "cw-interface",
+          "cw-service",
+          "cw-service_instance"
+        ],
+        "RecordRuleID": null
+      }
+    ],
+    "Evaluations": [
+      {
+        "apm": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "display": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "fields": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "k8s": {
+          "diagnostics": null,
+          "status": "skipped"
+        },
+        "log": {
+          "diagnostics": null,
+          "status": "skipped"
+        },
+        "metric": {
+          "diagnostics": null,
+          "status": "succeeded",
+          "values": {
+            "metric_name": "average_response_time",
+            "metric_unique_id": ".bk_apm_duration_delta",
+            "result_table_id": "",
+            "unit": "ms"
+          }
+        },
+        "monitor-resource": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "source": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "strategy": {
+          "diagnostics": null,
+          "status": "succeeded"
+        }
+      }
+    ]
+  },
+  {
+    "AlertID": "alert-20261029180614-z5omi7vdps65i",
+    "EventID": "event-20261030050014-n5hog2zvos25c",
+    "IntakeVersion": 41,
+    "SourceVersion": 41,
+    "Status": "succeeded",
+    "Reads": [
+      {
+        "Query": {
+          "MetricID": 10366,
+          "SpaceUID": "",
+          "TenantID": "system",
+          "TableID": "",
+          "FieldName": "",
+          "ObjectModelCode": "",
+          "FieldTag": ""
+        },
+        "Found": true,
+        "Invalid": false,
+        "MetricsetCode": "report.xx_test",
+        "RefMetricsetCode": "report.xx_test",
+        "Kind": "native",
+        "FieldName": "cpu_load",
+        "ModelIDs": [],
+        "RecordRuleID": null
+      }
+    ],
+    "Evaluations": [
+      {
+        "apm": {
+          "diagnostics": null,
+          "status": "skipped"
+        },
+        "display": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "fields": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "k8s": {
+          "diagnostics": null,
+          "status": "skipped"
+        },
+        "log": {
+          "diagnostics": null,
+          "status": "skipped"
+        },
+        "metric": {
+          "diagnostics": null,
+          "status": "succeeded",
+          "values": {
+            "metric_name": "cpu_load",
+            "metric_unique_id": "2_bkmonitor_time_series_1573883.__default__.cpu_load",
+            "result_table_id": "2_bkmonitor_time_series_1573883.__default__",
+            "unit": ""
+          }
+        },
+        "monitor-resource": {
+          "diagnostics": null,
+          "status": "skipped"
+        },
+        "source": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "strategy": {
+          "diagnostics": null,
+          "status": "succeeded"
+        }
+      }
+    ]
+  }
+]

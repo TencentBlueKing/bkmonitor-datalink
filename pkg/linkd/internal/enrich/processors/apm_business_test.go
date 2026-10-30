@@ -85,7 +85,7 @@ func TestAPMBusinessScopeFailures(t *testing.T) {
 				reader := apmBusinessTestReader{apmCatalogTestReader: apmCatalogTestReader{strategy: apmCatalogStrategy(t), apmTestReader: apmTestReader{apps: tc.apps, applicationReads: &reads}}, global: tc.global, found: tc.found, businessErr: tc.businessErr}
 				event := processorBaseTargetAlert(t, domain.DimensionMap{"app_name": domain.NewStringScalar("demo")})
 				event.Labels["bk_biz_id"] = processorNumber(t, 524)
-				sources := enrich.Sources{CWStrategy: reader, APMApplication: reader}
+				sources := enrich.Sources{CWStrategy: reader, APMApplication: reader, Metric: reader}
 				if !tc.noBusinessReader {
 					sources.Business = reader
 				}
@@ -113,7 +113,7 @@ func TestAPMBusinessLookupCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	event := processorBaseTargetAlert(t, domain.DimensionMap{"app_name": domain.NewStringScalar("demo")})
-	scope, err := enrich.NewScope(event, enrich.Sources{CWStrategy: reader, Business: apmBusinessReaderFunc(func(context.Context, string, int64) (bool, bool, error) {
+	scope, err := enrich.NewScope(event, enrich.Sources{CWStrategy: reader, Metric: reader, Business: apmBusinessReaderFunc(func(context.Context, string, int64) (bool, bool, error) {
 		cancel()
 		return false, false, context.Canceled
 	})})

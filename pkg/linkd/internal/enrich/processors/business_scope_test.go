@@ -16,7 +16,7 @@ func TestCatalogProcessorsDoNotRequireSourceBusiness(t *testing.T) {
 	for _, biz := range []string{"missing", "negative", "different", "invalid"} {
 		for _, processor := range []enrich.Processor{MonitorResource{}, Display{}, Metric{}} {
 			t.Run(biz+"/"+processor.Name(), func(t *testing.T) {
-				reader := &metricLocationReader{dataSliceReader: dataSliceReader{model: "cw-K8s_Container"}, metadata: models.MetricMetadata{Kind: "native", ObjectModelCode: "cw-K8s_Container", FieldName: "usage", TableID: "k8s", PhysicalField: "usage", Unit: "percent"}}
+				reader := &metricLocationReader{dataSliceReader: dataSliceReader{model: "cw-K8s_Container"}, metadata: models.MetricMetadata{Kind: "native", ObjectModelCode: "cw-K8s_Container", ModelIDs: []string{"cw-K8s_Container"}, FieldName: "usage", TableID: "k8s", PhysicalField: "usage", Unit: "percent"}}
 				reader.strategy = reader.strategyForTest()
 				reader.strategy.Spec.StrategyItem.QueryConfigs[0].MetricRefID = 219
 				reader.strategy.Spec.ConfigType = models.CWStrategyConfigTypeData
@@ -65,7 +65,7 @@ func TestCatalogDerivedMetricWithoutLegacyFieldTag(t *testing.T) {
 		{name: "function", expression: "a", functions: json.RawMessage(`[{"id":"rate"}]`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			reader := &metricLocationReader{metadata: models.MetricMetadata{Kind: "derived", ObjectModelCode: "cw-K8s_Container", FieldName: "container_memory_resource_limits_ratio", FieldCNName: "限制内存使用率", Unit: "percent"}}
+			reader := &metricLocationReader{metadata: models.MetricMetadata{Kind: "derived", ObjectModelCode: "cw-K8s_Container", ModelIDs: []string{"cw-K8s_Container"}, FieldName: "container_memory_resource_limits_ratio", FieldCNName: "限制内存使用率", Unit: "percent"}}
 			reader.strategy = reader.strategyForTest()
 			reader.strategy.Spec.TableID = ""
 			reader.strategy.FirstExecutionQuery = &models.StrategyQueryConfig{ResultTableID: "k8s", MetricField: "container_memory_rss"}

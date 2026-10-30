@@ -14,7 +14,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
+	"unicode"
 
 	"gorm.io/gorm"
 	"linkd/internal/enrich"
@@ -25,22 +28,27 @@ var _ enrich.MetricReader = (*MetricClient)(nil)
 
 const maxMetricJSONBytes = 1 << 20
 
+// 按 1 MiB 模型标识文本预算和每个标识 128 字节折算行数上限；超限失败，不截断集合。
+const maxMetricModels = maxMetricJSONBytes / 128
+
 type metricMetadataRow struct {
-	ID              int64
-	TenantID        string `gorm:"column:bk_tenant_id"`
-	SpaceUID        string
-	MetricsetCode   string
-	ObjectModelCode string `gorm:"column:model_id"`
-	FieldName       string `gorm:"column:metric_name"`
-	FieldCNName     string `gorm:"column:display_name"`
-	Description     string
-	Unit            string
-	Kind            string
-	TableID         string `gorm:"column:result_table_id"`
-	DataLabel       string
-	PhysicalField   string
-	ValueMapping    json.RawMessage
-	Dimensions      json.RawMessage
+	ID               int64
+	TenantID         string `gorm:"column:bk_tenant_id"`
+	SpaceUID         string
+	MetricsetCode    string
+	ObjectModelCode  string `gorm:"column:model_id"`
+	FieldName        string `gorm:"column:metric_name"`
+	FieldCNName      string `gorm:"column:display_name"`
+	Description      string
+	Unit             string
+	Kind             string
+	TableID          string `gorm:"column:result_table_id"`
+	DataLabel        string
+	PhysicalField    string
+	ValueMapping     json.RawMessage
+	Dimensions       json.RawMessage
+	RefMetricsetCode string
+	RecordRuleID     *int64
 }
 
 // MetricClientConfig 注入已经选择 Kingeye schema 的 GORM 连接。
@@ -75,7 +83,7 @@ func (c *MetricClient) FindMetric(ctx context.Context, query models.MetricQuery)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	// JSON 在 SQL 端限长，避免异常目录行使单次丰富分配无界内存。
-	base := c.db.WithContext(ctx).Table("metric").Select("id,bk_tenant_id,space_uid,metricset_code,model_id,metric_name,display_name,description,unit,kind,result_table_id,data_label,physical_field,CASE WHEN OCTET_LENGTH(value_mapping) <= ? THEN value_mapping ELSE NULL END AS value_mapping,CASE WHEN OCTET_LENGTH(dimensions) <= ? THEN dimensions ELSE NULL END AS dimensions", maxMetricJSONBytes, maxMetricJSONBytes).Where("bk_tenant_id = ?", query.TenantID)
+	base := c.db.WithContext(ctx).Table("metric").Select("id,bk_tenant_id,space_uid,metricset_code,model_id,metric_name,display_name,description,unit,kind,result_table_id,data_label,physical_field,ref_metricset_code,record_rule_id,CASE WHEN OCTET_LENGTH(value_mapping) <= ? THEN value_mapping ELSE NULL END AS value_mapping,CASE WHEN OCTET_LENGTH(dimensions) <= ? THEN dimensions ELSE NULL END AS dimensions", maxMetricJSONBytes, maxMetricJSONBytes).Where("bk_tenant_id = ?", query.TenantID)
 	if query.MetricID > 0 {
 		base = base.Where("id = ?", query.MetricID)
 	} else {
@@ -89,7 +97,7 @@ func (c *MetricClient) FindMetric(ctx context.Context, query models.MetricQuery)
 		}
 		// 明确指定对象时必须精确命中；不继承旧指标库跨模型 first() 回退。
 		if query.ObjectModelCode != "" {
-			base = base.Where("model_id = ?", query.ObjectModelCode)
+			base = base.Where("EXISTS (SELECT 1 FROM metric_object WHERE metric_object.bk_tenant_id = metric.bk_tenant_id AND metric_object.metric_id = metric.id AND metric_object.model_id = ?)", query.ObjectModelCode)
 		}
 	}
 	var rows []metricMetadataRow
@@ -109,7 +117,6 @@ func (c *MetricClient) FindMetric(ctx context.Context, query models.MetricQuery)
 	}
 	if query.MetricID == 0 {
 		valid := query.SpaceUID == "" || row.SpaceUID == query.SpaceUID || row.SpaceUID == "*"
-		valid = valid && (query.ObjectModelCode == "" || row.ObjectModelCode == query.ObjectModelCode)
 		if query.FieldTag == models.CWStrategyFieldTagDerivedMetric {
 			valid = valid && row.Kind == "derived" && row.FieldName == query.FieldName
 		} else {
@@ -119,8 +126,8 @@ func (c *MetricClient) FindMetric(ctx context.Context, query models.MetricQuery)
 			return models.MetricMetadata{}, false, fmt.Errorf("%w: metric locator mismatch", enrich.ErrInvalidDataSourceResponse)
 		}
 	}
-	if row.FieldName == "" {
-		return models.MetricMetadata{}, false, fmt.Errorf("%w: metric_name is empty", enrich.ErrInvalidDataSourceResponse)
+	if row.FieldName == "" || row.MetricsetCode == "" {
+		return models.MetricMetadata{}, false, fmt.Errorf("%w: metric_name or metricset_code is empty", enrich.ErrInvalidDataSourceResponse)
 	}
 	var mapping []models.MetricValueMapping
 	var dimensions []struct {
@@ -144,5 +151,42 @@ func (c *MetricClient) FindMetric(ctx context.Context, query models.MetricQuery)
 		}
 		outputDimensions = append(outputDimensions, models.MetricDimension{Key: dimension.ID, Name: dimension.Name})
 	}
-	return models.MetricMetadata{MetricsetCode: row.MetricsetCode, ObjectModelCode: row.ObjectModelCode, Kind: row.Kind, TableID: row.TableID, DataLabel: row.DataLabel, PhysicalField: row.PhysicalField, FieldName: row.FieldName, FieldCNName: row.FieldCNName, Description: row.Description, Unit: row.Unit, ValueMapping: mapping, Dimensions: outputDimensions}, true, nil
+	modelIDs, err := c.metricModelIDs(ctx, query.TenantID, row.ID)
+	if err != nil {
+		return models.MetricMetadata{}, false, err
+	}
+	if query.MetricID == 0 && query.ObjectModelCode != "" && !slices.Contains(modelIDs, query.ObjectModelCode) {
+		return models.MetricMetadata{}, false, fmt.Errorf("%w: metric model membership mismatch", enrich.ErrInvalidDataSourceResponse)
+	}
+	// metric.model_id 只是派生列；空集合与多对象不能从该列区分，也不能用旧值补关系。
+	modelCode := ""
+	if len(modelIDs) == 1 {
+		modelCode = modelIDs[0]
+	}
+	return models.MetricMetadata{MetricsetCode: row.MetricsetCode, ObjectModelCode: modelCode, ModelIDs: modelIDs, RefMetricsetCode: row.RefMetricsetCode, RecordRuleID: row.RecordRuleID, Kind: row.Kind, TableID: row.TableID, DataLabel: row.DataLabel, PhysicalField: row.PhysicalField, FieldName: row.FieldName, FieldCNName: row.FieldCNName, Description: row.Description, Unit: row.Unit, ValueMapping: mapping, Dimensions: outputDimensions}, true, nil
+}
+
+func (c *MetricClient) metricModelIDs(ctx context.Context, tenant string, metricID int64) ([]string, error) {
+	var rows []struct {
+		TenantID string `gorm:"column:bk_tenant_id"`
+		MetricID int64
+		ModelID  string
+	}
+	if err := c.db.WithContext(ctx).Table("metric_object").Select("bk_tenant_id,metric_id,model_id").Where("bk_tenant_id = ? AND metric_id = ?", tenant, metricID).Order("model_id").Limit(maxMetricModels + 1).Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("query metric model relations: %w", err)
+	}
+	if len(rows) > maxMetricModels {
+		return nil, fmt.Errorf("%w: metric model relations exceed budget", enrich.ErrInvalidDataSourceResponse)
+	}
+	models := make([]string, 0, len(rows))
+	seen := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		if row.TenantID != tenant || row.MetricID != metricID || row.ModelID == "" || len(row.ModelID) > 128 || strings.IndexFunc(row.ModelID, unicode.IsSpace) >= 0 || seen[row.ModelID] {
+			return nil, fmt.Errorf("%w: invalid metric model relation", enrich.ErrInvalidDataSourceResponse)
+		}
+		seen[row.ModelID] = true
+		models = append(models, row.ModelID)
+	}
+	slices.Sort(models)
+	return models, nil
 }

@@ -278,7 +278,7 @@ func TestDATAOrdinaryModelUsesCanonicalIdentity(t *testing.T) {
 		{name: "opaque instance", dimensions: domain.DimensionMap{rules.FieldModelID: domain.NewStringScalar("cw-MySQL"), rules.FieldModelInstID: domain.NewStringScalar("svc|opaque-17")},
 			instance: enrich.Instance{TenantID: "tenant-a", ModelCode: "cw-MySQL", InstanceID: "svc|opaque-17", Attributes: map[string]any{rules.FieldBKInstID: int64(17), rules.FieldBKBizID: int64(2)}}, found: true,
 			wantID: "svc|opaque-17", wantQuery: enrich.InstanceQuery{ModelCode: "cw-MySQL", InstanceID: "svc|opaque-17"}},
-		{name: "wrong model", dimensions: domain.DimensionMap{rules.FieldModelID: domain.NewStringScalar("cw-Redis"), rules.FieldModelInstID: domain.NewStringScalar("17")}, wantCode: enrich.DiagnosticCodeInvalidField, wantPartial: true},
+		{name: "wrong model", dimensions: domain.DimensionMap{rules.FieldModelID: domain.NewStringScalar("cw-Redis"), rules.FieldModelInstID: domain.NewStringScalar("17")}, wantCode: "identity_conflict", wantPartial: true},
 		{name: "numeric identity", dimensions: domain.DimensionMap{rules.FieldModelID: domain.NewStringScalar("cw-MySQL"), rules.FieldModelInstID: dataNumber(t, 17)}, wantCode: enrich.DiagnosticCodeInvalidField, wantPartial: true},
 		{name: "not found", dimensions: domain.DimensionMap{rules.FieldModelID: domain.NewStringScalar("cw-MySQL"), rules.FieldModelInstID: domain.NewStringScalar("17")}, wantCode: enrich.DiagnosticCodeDependencyInvalid, wantQuery: enrich.InstanceQuery{ModelCode: "cw-MySQL", InstanceID: "17"}, wantPartial: true},
 		{name: "response mismatch", dimensions: domain.DimensionMap{rules.FieldModelID: domain.NewStringScalar("cw-MySQL"), rules.FieldModelInstID: domain.NewStringScalar("17")}, instance: enrich.Instance{TenantID: "tenant-b", ModelCode: "cw-MySQL", InstanceID: "17"}, found: true, wantCode: enrich.DiagnosticCodeDependencyInvalid, wantQuery: enrich.InstanceQuery{ModelCode: "cw-MySQL", InstanceID: "17"}, wantPartial: true},
@@ -299,6 +299,12 @@ func TestDATAOrdinaryModelUsesCanonicalIdentity(t *testing.T) {
 				t.Fatal(err)
 			}
 			resource := payload.Processors[1][rules.MonitorResourceProcessor]
+			if tc.wantCode == "identity_conflict" {
+				if resource.Status != domain.EnrichStatusFailed || string(resource.Value["model_id"]) != `""` || string(resource.Value["model_inst_id"]) != `""` || len(resource.Diagnostics) != 1 || resource.Diagnostics[0].Code != tc.wantCode || reader.query.ModelCode != "" {
+					t.Fatalf("conflicting identity published: %+v query=%+v", resource, reader.query)
+				}
+				return
+			}
 			if string(resource.Value["model_inst_id"]) != `"`+tc.wantID+`"` || !reflect.DeepEqual(reader.query, tc.wantQuery) {
 				t.Fatalf("resource=%#v query=%#v", resource, reader.query)
 			}
@@ -537,7 +543,7 @@ func (r *dataSliceReader) FindMetric(ctx context.Context, query models.MetricQue
 	if r.metricMissing {
 		return models.MetricMetadata{}, false, nil
 	}
-	return models.MetricMetadata{ObjectModelCode: r.model, FieldName: "usage", Unit: r.metricUnit, ValueMapping: r.metricValueMapping}, true, nil
+	return models.MetricMetadata{ObjectModelCode: r.model, ModelIDs: []string{r.model}, FieldName: "usage", Unit: r.metricUnit, ValueMapping: r.metricValueMapping}, true, nil
 }
 
 func (r *dataSliceReader) GetModelByCode(ctx context.Context, tenant, code string) (enrich.Model, bool, error) {

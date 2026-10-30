@@ -44,8 +44,30 @@ func (APM) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 		return failedDependency(rules.DependencyKingeyeStrategy), nil
 	}
 	projection, err := strategy.StrategyItemProjection()
-	if err != nil || !rules.IsAPMQuery(projection.QueryConfigs[0]) {
+	if err != nil {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusSkipped, Value: domain.JSONObject{}}, nil
+	}
+	metrics, err := readAPMResourceMetrics(ctx, scope, strategy, projection)
+	if ctx.Err() != nil {
+		return enrich.ProcessorResult{}, ctx.Err()
+	}
+	if err != nil {
+		return failedDependency(rules.DependencyMetricCatalog), nil
+	}
+	matched := 0
+	for _, metric := range metrics {
+		if metric.query.MetricRefID > 0 && !metric.found {
+			return failedDependency(rules.DependencyMetricCatalog), nil
+		}
+		if resourceMetricIsAPM(metric) {
+			matched++
+		}
+	}
+	if matched == 0 {
+		return enrich.ProcessorResult{Status: domain.EnrichStatusSkipped, Value: domain.JSONObject{}}, nil
+	}
+	if matched != len(metrics) || apmSourceConflict(metrics) {
+		return dataResourceConflict("query_configs.metricset_code"), nil
 	}
 	bizID, diagnostics := enrich.ValidateBusinessID(alert)
 	if len(diagnostics) != 0 {
@@ -63,7 +85,13 @@ func (APM) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	bizID = application.BKBizID
 	service := dimensionText(dimensions, rules.FieldServiceName)
 	instance := dimensionText(dimensions, rules.FieldAPMInstanceID)
-	modelID, modelInstID := apmModelIdentity(application.ID, service, instance)
+	modelID, modelInstID, identityDiagnostics, err := apmResourceIdentity(ctx, scope, strategy, metrics, application.ID, service, instance)
+	if err != nil {
+		return enrich.ProcessorResult{}, err
+	}
+	if len(identityDiagnostics) > 0 {
+		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: identityDiagnostics}, nil
+	}
 	values := models.APMValues{APMAppID: apmIDValue(application.ID), APMAppName: application.Name, APMAppAlias: application.Alias, APMServiceName: service, APMInstanceName: instance, APMInterfaceName: dimensionText(dimensions, rules.FieldAPMSpanName), APMNetPeerName: dimensionText(dimensions, rules.FieldAPMNetPeerName), ModelID: modelID, ModelInstID: modelInstID, BKBizID: bizID}
 	if application.ID != "" {
 		values.CWLabels = apmLabels(bizID, application.ID)

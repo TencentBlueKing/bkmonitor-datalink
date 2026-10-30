@@ -1,0 +1,81 @@
+[
+  {
+    "AlertID": "alert-20261029180614-z5omi7vdps65i",
+    "EventID": "event-20261030050014-n5hog2zvos25c",
+    "IntakeVersion": 41,
+    "SourceVersion": 41,
+    "Status": "partial",
+    "Reads": [
+      {
+        "Query": {
+          "MetricID": 10366,
+          "SpaceUID": "",
+          "TenantID": "system",
+          "TableID": "",
+          "FieldName": "",
+          "ObjectModelCode": "",
+          "FieldTag": ""
+        },
+        "Found": true,
+        "Invalid": false,
+        "MetricsetCode": "report.xx_test",
+        "RefMetricsetCode": "report.xx_test",
+        "Kind": "native",
+        "FieldName": "cpu_load",
+        "ModelIDs": [],
+        "RecordRuleID": null
+      }
+    ],
+    "Evaluations": [
+      {
+        "apm": {
+          "diagnostics": null,
+          "status": "skipped"
+        },
+        "display": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "fields": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "k8s": {
+          "diagnostics": null,
+          "status": "skipped"
+        },
+        "log": {
+          "diagnostics": null,
+          "status": "skipped"
+        },
+        "metric": {
+          "diagnostics": null,
+          "status": "succeeded",
+          "values": {
+            "metric_name": "cpu_load",
+            "metric_unique_id": "2_bkmonitor_time_series_1573883.__default__.cpu_load",
+            "result_table_id": "2_bkmonitor_time_series_1573883.__default__",
+            "unit": ""
+          }
+        },
+        "monitor-resource": {
+          "diagnostics": [
+            {
+              "code": "dependency_invalid",
+              "dependency": "metric_catalog"
+            }
+          ],
+          "status": "failed"
+        },
+        "source": {
+          "diagnostics": null,
+          "status": "succeeded"
+        },
+        "strategy": {
+          "diagnostics": null,
+          "status": "succeeded"
+        }
+      }
+    ]
+  }
+]

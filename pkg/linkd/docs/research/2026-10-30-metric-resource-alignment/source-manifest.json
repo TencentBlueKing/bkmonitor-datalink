@@ -1,0 +1,36 @@
+{
+  "baseline": "e98efbfaabb3e9cb08f558e02c0adcecc7e40b22",
+  "files": {
+    "internal/enrich/assembly/metric_resource_live_test.go": "bf65dcb70c3228ad92188dd1f46b8bc886c03e0922fd5087a18cc6368f1a36f7",
+    "internal/enrich/datasources/metric_client.go": "066f5e7c949468d55a73b483f9f061af7cb0089d422d73d0163f6dc91dd3188d",
+    "internal/enrich/datasources/metric_client_test.go": "1a7cfa1b52f34cef755eb363199a410c2124bc9dbb71ba618a0369f23b019710",
+    "internal/enrich/datasources/metric_models_test.go": "e9d6d3ed664a9f6ba646cb5bd8ae577ad47cd1ddf491716194af234c45164498",
+    "internal/enrich/models/output.go": "290e1c0d8f5e57ea469831f9ebcc58aa97a61f4f21891c62c9341c3aed243cf4",
+    "internal/enrich/processors/apm.go": "b06e3c9f1067a20aaa472ee7380e2d926edc2260e4866149c04361eee8b91dc8",
+    "internal/enrich/processors/apm_business_test.go": "f4f5c3edca201ba6c8b6779a19955e4a450a8f72e256d28b98ce9640955d0853",
+    "internal/enrich/processors/apm_catalog_test.go": "7eeb81e6a546859abc9f12bd5e988ce7559f71b7bb3c69b2d6f20cedd10bbdc2",
+    "internal/enrich/processors/apm_metric_source_test.go": "52e1d8b990186cd31d53170008c59a796401fc7ee8fdefd77c7c18cc7832daa4",
+    "internal/enrich/processors/business_scope_test.go": "f1d1481c6f7a40aef3c79a185dc4a2b0799b03d9f2a0e7fda8818bcdd4683ee8",
+    "internal/enrich/processors/data_test.go": "02b104e7bcdd3ffc29c56486a429da2d8adef46cd377cf9e28baf3207c3b2589",
+    "internal/enrich/processors/k8s.go": "d8e03b5d574ea56ed72c169e6aa967b5a8243b26226cc043f6509a2239463640",
+    "internal/enrich/processors/k8s_custom_catalog_test.go": "5046bdc962fb30a91e65819dd0ee5f76c787592d364d7dea8b270bd7d23a2de2",
+    "internal/enrich/processors/k8s_resource_conflict_test.go": "8cbddd2010127767aca125adba105a5a882cfa01a18a683aee677238b2b0b8d1",
+    "internal/enrich/processors/metric.go": "b7a25768e2822dd4fbfb81241d0a81095c724425a0022d495fa30cc68f4b8c45",
+    "internal/enrich/processors/metric_catalog_kinds_test.go": "42d61cc0e199314d4c5fd0177d53939cc26632183c84d69b74789ac71b4c1b7a",
+    "internal/enrich/processors/metric_resource.go": "9b3db5427c98af5f6880f19caab7fb267dd67c14e2c868e79269fd97a5ac2f2a",
+    "internal/enrich/processors/metric_resource_models_test.go": "9d3fd68deb0842dab490f3efdb87b473506f2be2c055fec352c2c7dec7c7f5bb",
+    "internal/enrich/processors/monitor_resource.go": "d232baa5be048f984c44d414433eba1e588a7b5dbe63c5c672d2f5ba6059b166",
+    "internal/enrich/processors/promql_test.go": "d5b676f1e1cc38ece0d171620c79f49ff771f7ab5391bfea90f42e90e2b47465",
+    "internal/enrich/processors/testdata/kac_basetarget/data_basic_data.json": "f1fc55e4e5868aba238fb61874d88eee2af99a925f9e1bcdd7f772ef2475d4cc",
+    "internal/enrich/processors/testdata/kac_basetarget/data_ordinary_onemodel.json": "ecf7677011a33eb75434cad5c8a2f7a3b0c62a40f6c4943e2ebe8e5105e78a55",
+    "internal/enrich/rules/rules.go": "a4ab4c2790b3fa15a7f19cacab8c02fde61945e954b58b45eca8dfa7a4d5ac82"
+  },
+  "checks": {
+    "go_test": "3803 passed / 15 packages",
+    "go_test_race": "3803 passed / 15 packages",
+    "go_vet": "passed",
+    "golangci_lint": "v2.13.2 / 0 issues",
+    "live_samples": "4 succeeded / source version 41"
+  },
+  "initial_validation_baseline": "a6d1d9e9d214c7b798a1ea3205dc8998c0b441f1"
+}

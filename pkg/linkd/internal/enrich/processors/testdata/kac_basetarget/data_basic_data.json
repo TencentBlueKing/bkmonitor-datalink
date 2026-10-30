@@ -68,6 +68,7 @@
   },
   "metric": {
     "ObjectModelCode": "cw-Others",
+    "ModelIDs": ["cw-Others"],
     "FieldName": "cpu_load",
     "FieldCNName": "cpu_load",
     "Description": "",

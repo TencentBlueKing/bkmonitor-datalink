@@ -1,0 +1,192 @@
+[
+  {
+    "AlertID": "alert-20261030040008-hkzndoreuiize",
+    "EventID": "event-20261030040949-pghepulo46fmk",
+    "Status": "succeeded",
+    "Reads": [
+      {
+        "Query": {
+          "MetricID": 249,
+          "SpaceUID": "",
+          "TenantID": "system",
+          "TableID": "",
+          "FieldName": "",
+          "ObjectModelCode": "",
+          "FieldTag": ""
+        },
+        "Found": true,
+        "Invalid": false,
+        "MetricsetCode": "k8s",
+        "RefMetricsetCode": "",
+        "ModelIDs": [
+          "cw-K8s_Pod"
+        ],
+        "RecordRuleID": null,
+        "Kind": "derived",
+        "FieldName": "k8s_pod_memory_rss"
+      }
+    ],
+    "Evaluations": [
+      {
+        "apm": {
+          "status": "skipped",
+          "diagnostics": null
+        },
+        "display": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "fields": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "k8s": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "log": {
+          "status": "skipped",
+          "diagnostics": null
+        },
+        "metric": {
+          "status": "succeeded",
+          "diagnostics": null,
+          "values": {
+            "metric_name": "k8s_pod_memory_rss",
+            "metric_unique_id": ".container_memory_rss",
+            "result_table_id": "",
+            "unit": "bytes"
+          }
+        },
+        "monitor-resource": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "source": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "strategy": {
+          "status": "succeeded",
+          "diagnostics": null
+        }
+      },
+      {
+        "apm": {
+          "status": "skipped",
+          "diagnostics": null
+        },
+        "display": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "fields": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "k8s": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "log": {
+          "status": "skipped",
+          "diagnostics": null
+        },
+        "metric": {
+          "status": "succeeded",
+          "diagnostics": null,
+          "values": {
+            "metric_name": "k8s_pod_memory_rss",
+            "metric_unique_id": ".container_memory_rss",
+            "result_table_id": "",
+            "unit": "bytes"
+          }
+        },
+        "monitor-resource": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "source": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "strategy": {
+          "status": "succeeded",
+          "diagnostics": null
+        }
+      }
+    ]
+  },
+  {
+    "AlertID": "alert-20261028140715-m6zkbil3trobq",
+    "EventID": "event-20261030014414-2btzdeu3b62iw",
+    "Status": "succeeded",
+    "Reads": [
+      {
+        "Query": {
+          "MetricID": 1459,
+          "SpaceUID": "",
+          "TenantID": "system",
+          "TableID": "",
+          "FieldName": "",
+          "ObjectModelCode": "",
+          "FieldTag": ""
+        },
+        "Found": true,
+        "Invalid": false,
+        "MetricsetCode": "k8s_custom",
+        "RefMetricsetCode": "k8s_custom",
+        "ModelIDs": [],
+        "RecordRuleID": null,
+        "Kind": "native",
+        "FieldName": "batch_num"
+      }
+    ],
+    "Evaluations": [
+      {
+        "apm": {
+          "status": "skipped",
+          "diagnostics": null
+        },
+        "display": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "fields": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "k8s": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "log": {
+          "status": "skipped",
+          "diagnostics": null
+        },
+        "metric": {
+          "status": "succeeded",
+          "diagnostics": null,
+          "values": {
+            "metric_name": "batch_num",
+            "metric_unique_id": "k8s_custom.batch_num",
+            "result_table_id": "k8s_custom",
+            "unit": ""
+          }
+        },
+        "monitor-resource": {
+          "status": "skipped",
+          "diagnostics": null
+        },
+        "source": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "strategy": {
+          "status": "succeeded",
+          "diagnostics": null
+        }
+      }
+    ]
+  }
+]

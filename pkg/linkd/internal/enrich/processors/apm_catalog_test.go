@@ -84,7 +84,7 @@ func TestAPMCatalogDependencyFailures(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := apmCatalogTestReader{apmTestReader: tc.reader, strategy: apmCatalogStrategy(t)}
-			chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}, APM{}}, enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, APMApplication: reader, Business: reader})
+			chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}, APM{}}, enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, APMApplication: reader, Business: reader, Metric: reader})
 			if err != nil {
 				t.Fatal(err)
 			}

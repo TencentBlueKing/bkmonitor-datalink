@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -167,57 +168,91 @@ func processResource(ctx context.Context, scope *enrich.Scope) (enrich.Processor
 	return resourceScenarioResult(scope, result.Resource, result.ResourceDiagnostics, classification.BaseTarget != rules.BaseTargetBasic)
 }
 
-// processDataResource 先迁移普通时序中有权威指标目录模型、无实例身份的用例。
-// 资源身份由指标库确定；没有已确认的实例定位字段时保留空 model_inst_id。
+// processDataResource 使用策略和 Event 的明确对象上下文，并按所有输入的适用集合校验。
+// 目录只声明适用对象，不保证本次结果能定位单个实例。
 func processDataResource(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, bizID int64) (enrich.ProcessorResult, error) {
 	projection, err := strategy.StrategyItemProjection()
 	if err != nil {
 		return failedDependency(rules.DependencyKingeyeStrategy), nil
 	}
-	query := projection.QueryConfigs[0]
-	if strings.HasPrefix(query.ResultTableID, "uptimecheck") {
-		result, err := uptimeenrich.Enrich(ctx, scope, rules.UptimeModelCode, scope.Facts().Dimensions, bizID)
+	dimensions, identityDiagnostics, err := dataResourceDimensions(scope)
+	if err != nil {
+		return enrich.ProcessorResult{}, err
+	}
+	if len(identityDiagnostics) > 0 && identityDiagnostics[0].Code == "identity_conflict" {
+		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: identityDiagnostics}, nil
+	}
+	modelCode := dataObjectModelCode(strategy, dimensions)
+	allPromQL := true
+	for _, query := range projection.QueryConfigs {
+		allPromQL = allPromQL && query.IsPromQL()
+	}
+	if eventModel := dimensionText(dimensions, rules.FieldModelID); len(identityDiagnostics) == 0 && eventModel != "" && modelCode != eventModel {
+		return dataResourceConflict("strategy.object_model_code", "dimensions.model_id"), nil
+	}
+	metrics, readErr := readResourceMetrics(ctx, scope, strategy, projection, modelCode)
+	if ctx.Err() != nil {
+		return enrich.ProcessorResult{}, ctx.Err()
+	}
+	if readErr != nil {
+		return failedDependency(rules.DependencyMetricCatalog), nil
+	}
+	allAPM, anyAPM, allUptime := true, false, true
+	for _, metric := range metrics {
+		if metric.query.MetricRefID > 0 && !metric.found {
+			return failedDependency(rules.DependencyMetricCatalog), nil
+		}
+		apm := resourceMetricIsAPM(metric)
+		anyAPM = anyAPM || apm
+		allAPM = allAPM && apm
+		allUptime = allUptime && strings.HasPrefix(metric.query.ResultTableID, "uptimecheck")
+	}
+	if anyAPM && (!allAPM || apmSourceConflict(metrics)) {
+		return dataResourceConflict("query_configs.metricset_code"), nil
+	}
+	if allAPM {
+		return processAPMResource(ctx, scope, strategy, metrics, bizID)
+	}
+	if allUptime {
+		result, err := uptimeenrich.Enrich(ctx, scope, rules.UptimeModelCode, dimensions, bizID)
 		if err != nil {
 			return enrich.ProcessorResult{}, err
 		}
 		return resourceScenarioResult(scope, result.Resource, result.ResourceDiagnostics, false)
 	}
-	if rules.IsAPMQuery(query) {
-		return processAPMResource(ctx, scope, strategy, query, bizID)
+	for _, metric := range metrics {
+		if !metric.query.IsPromQL() && !metric.found {
+			return failedDependency(rules.DependencyMetricCatalog), nil
+		}
 	}
-	modelCode := dataObjectModelCode(strategy, scope.Facts().Dimensions)
-	metadata, found, readErr := metricDefinitionMetadata(ctx, scope, strategy, query, modelCode)
-	if err := ctx.Err(); err != nil {
-		return enrich.ProcessorResult{}, err
-	}
-	if readErr != nil {
-		return failedDependency(rules.DependencyMetricCatalog), nil
-	}
-	catalogModel := ""
-	if found {
-		catalogModel = metadata.ObjectModelCode
-	}
-	if found && catalogModel == "" && metadata.MetricsetCode == "k8s_custom" {
-		// k8s_custom 指标在目录中不关联对象，这是正常定义。只有成功命中的
-		// 目录行才能确认该来源；资源交给 k8s Processor 按现有维度规则定位，
-		// 不发布空资源字段覆盖已有身份，也不把真实目录错误降级为跳过。
-		return enrich.ProcessorResult{Status: domain.EnrichStatusSkipped, Value: domain.JSONObject{}}, nil
-	}
-	// 普通时序必须由指标目录确认对象模型；PromQL 声明可以没有目录模型，
-	// 目录只在能可靠定位时补充。
-	if !query.IsPromQL() && (!found || catalogModel == "") {
-		return failedDependency(rules.DependencyMetricCatalog), nil
-	}
-	if modelCode == "" {
-		modelCode = catalogModel
-	}
-	if modelCode == "" && query.IsPromQL() {
-		// 目录不可用时只能用事件已确认的身份，不能根据表达式或表名猜测模型。
+	if modelCode == "" && allPromQL {
 		modelCode = promQLSubjectModelCode(scope.Facts())
 	}
-	if catalogModel != "" && catalogModel != modelCode {
-		return failedDependency(rules.DependencyMetricCatalog), nil
+	catalogModels, constrained := resourceMetricModels(metrics)
+	if constrained {
+		if len(catalogModels) == 0 || (modelCode != "" && !slices.Contains(catalogModels, modelCode)) {
+			return dataResourceConflict("query_configs.metric_ref_id", "dimensions.model_id", "strategy.object_model_code"), nil
+		}
+		if modelCode == "" && len(catalogModels) == 1 {
+			modelCode = catalogModels[0]
+		}
+	} else {
+		unassociated := true
+		for _, metric := range metrics {
+			unassociated = unassociated && metric.found && metric.metadata.MetricsetCode != ""
+		}
+		if unassociated {
+			if len(identityDiagnostics) > 0 {
+				return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: identityDiagnostics}, nil
+			}
+			if modelCode == "" {
+				return enrich.ProcessorResult{Status: domain.EnrichStatusSkipped, Value: domain.JSONObject{}}, nil
+			}
+		} else if !allPromQL {
+			return failedDependency(rules.DependencyMetricCatalog), nil
+		}
 	}
+
 	values := models.ResourceValues{ModelID: modelCode, BKBizID: bizID, DynamicGroupID: []string{}}
 	if modelCode == "" {
 		// PromQL 无法确定对象模型时保留业务与来源，让展示和指标继续生成，
@@ -252,20 +287,23 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 		enrich.ApplyModelContext(&values, model)
 	}
 	values.CWLabels = enrich.ResourceLabels(values)
+	if len(identityDiagnostics) > 0 {
+		return resourceScenarioResult(scope, values, append(diagnostics, identityDiagnostics...), true)
+	}
 	// 目录查询可以只保存 metric_ref_id 而没有物理表名；主机身份已由目录
 	// 确认后统一解析实例，不能再用声明表名筛掉合法的主机事件。
 	if values.ModelID == rules.HostModelCode {
-		return processDataHostResource(ctx, scope, values, scope.Facts().Dimensions)
+		return processDataHostResource(ctx, scope, values, dimensions)
 	}
 	if _, knownK8s := k8sIdentityFields[values.ModelID]; knownK8s {
-		_, hasModel := scope.Facts().Dimensions[rules.FieldModelID]
-		_, hasInstance := scope.Facts().Dimensions[rules.FieldModelInstID]
+		_, hasModel := dimensions[rules.FieldModelID]
+		_, hasInstance := dimensions[rules.FieldModelInstID]
 		if !hasModel && !hasInstance {
 			return processK8sResource(ctx, scope, values.ModelID, bizID)
 		}
 	}
 	if values.ModelID != rules.OtherModelCode && values.ModelID != rules.HostModelCode {
-		if instanceID, provided, valid := dataInstanceIdentity(scope.Facts().Dimensions, values.ModelID); provided {
+		if instanceID, provided, valid := dataInstanceIdentity(dimensions, values.ModelID); provided {
 			if !valid {
 				return resourceScenarioResult(scope, values, append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"dimensions.model_id", "dimensions.model_inst_id"}}), true)
 			}
@@ -302,7 +340,8 @@ func processK8sResource(ctx context.Context, scope *enrich.Scope, code string, b
 	return resourceScenarioResult(scope, resource, diagnostics, true)
 }
 
-func processAPMResource(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, query models.StrategyQueryConfig, bizID int64) (enrich.ProcessorResult, error) {
+func processAPMResource(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, metrics []resourceMetric, bizID int64) (enrich.ProcessorResult, error) {
+	query := metrics[0].query
 	dimensions, err := combinedDimensions(scope.Facts())
 	if err != nil {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: []enrich.Diagnostic{{Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"extra_data.additional_dimensions"}}}}, nil
@@ -314,7 +353,13 @@ func processAPMResource(ctx context.Context, scope *enrich.Scope, strategy model
 	bizID = application.BKBizID
 	service := rules.DimensionText(dimensions, rules.FieldServiceName)
 	instance := rules.DimensionText(dimensions, rules.FieldAPMInstanceID)
-	modelID, modelInstID := apmModelIdentity(application.ID, service, instance)
+	modelID, modelInstID, identityDiagnostics, err := apmResourceIdentity(ctx, scope, strategy, metrics, application.ID, service, instance)
+	if err != nil {
+		return enrich.ProcessorResult{}, err
+	}
+	if len(identityDiagnostics) > 0 {
+		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: identityDiagnostics}, nil
+	}
 	values := models.ResourceValues{ModelID: modelID, ModelInstID: modelInstID, BKInstID: apmIDValue(application.ID), BKBizID: bizID, DynamicGroupID: []string{}}
 	if application.ID == "" {
 		return resourceScenarioResult(scope, values, diagnostics, true)

@@ -1,0 +1,120 @@
+[
+  {
+    "AlertID": "alert-20261030040008-hkzndoreuiize",
+    "EventID": "event-20261030042248-qwvc2pcypsn2k",
+    "Status": "succeeded",
+    "Reads": [
+      {
+        "Query": {
+          "MetricID": 249,
+          "SpaceUID": "",
+          "TenantID": "system",
+          "TableID": "",
+          "FieldName": "",
+          "ObjectModelCode": "",
+          "FieldTag": ""
+        },
+        "Found": true,
+        "Invalid": false,
+        "MetricsetCode": "k8s",
+        "RefMetricsetCode": "",
+        "ModelIDs": [
+          "cw-K8s_Pod"
+        ],
+        "RecordRuleID": null,
+        "Kind": "derived",
+        "FieldName": "k8s_pod_memory_rss"
+      }
+    ],
+    "Evaluations": [
+      {
+        "apm": {
+          "status": "skipped",
+          "diagnostics": null
+        },
+        "display": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "fields": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "k8s": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "log": {
+          "status": "skipped",
+          "diagnostics": null
+        },
+        "metric": {
+          "status": "succeeded",
+          "diagnostics": null,
+          "values": {
+            "metric_name": "k8s_pod_memory_rss",
+            "metric_unique_id": ".container_memory_rss",
+            "result_table_id": "",
+            "unit": "bytes"
+          }
+        },
+        "monitor-resource": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "source": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "strategy": {
+          "status": "succeeded",
+          "diagnostics": null
+        }
+      },
+      {
+        "apm": {
+          "status": "skipped",
+          "diagnostics": null
+        },
+        "display": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "fields": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "k8s": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "log": {
+          "status": "skipped",
+          "diagnostics": null
+        },
+        "metric": {
+          "status": "succeeded",
+          "diagnostics": null,
+          "values": {
+            "metric_name": "k8s_pod_memory_rss",
+            "metric_unique_id": ".container_memory_rss",
+            "result_table_id": "",
+            "unit": "bytes"
+          }
+        },
+        "monitor-resource": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "source": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "strategy": {
+          "status": "succeeded",
+          "diagnostics": null
+        }
+      }
+    ]
+  }
+]

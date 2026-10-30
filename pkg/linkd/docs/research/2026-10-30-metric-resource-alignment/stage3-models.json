@@ -1,0 +1,79 @@
+[
+  {
+    "AlertID": "alert-20261028235215-pl5h4wqnhpfbi",
+    "EventID": "event-20261028235714-62cyphqxkky3s",
+    "Status": "succeeded",
+    "Reads": [
+      {
+        "Query": {
+          "MetricID": 10539,
+          "SpaceUID": "",
+          "TenantID": "system",
+          "TableID": "",
+          "FieldName": "",
+          "ObjectModelCode": "",
+          "FieldTag": ""
+        },
+        "Found": true,
+        "Invalid": false,
+        "MetricsetCode": "apm",
+        "RefMetricsetCode": "",
+        "ModelIDs": [
+          "cw-application",
+          "cw-interface",
+          "cw-service",
+          "cw-service_instance"
+        ],
+        "RecordRuleID": null,
+        "Kind": "derived",
+        "FieldName": "average_response_time"
+      }
+    ],
+    "Evaluations": [
+      {
+        "apm": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "display": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "fields": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "k8s": {
+          "status": "skipped",
+          "diagnostics": null
+        },
+        "log": {
+          "status": "skipped",
+          "diagnostics": null
+        },
+        "metric": {
+          "status": "succeeded",
+          "diagnostics": null,
+          "values": {
+            "metric_name": "average_response_time",
+            "metric_unique_id": ".bk_apm_duration_delta",
+            "result_table_id": "",
+            "unit": "ms"
+          }
+        },
+        "monitor-resource": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "source": {
+          "status": "succeeded",
+          "diagnostics": null
+        },
+        "strategy": {
+          "status": "succeeded",
+          "diagnostics": null
+        }
+      }
+    ]
+  }
+]

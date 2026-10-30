@@ -1,0 +1,51 @@
+{
+  "metric_candidates": [
+    {
+      "id": 10008,
+      "metric_name": "cpu_usage",
+      "kind": "derived",
+      "record_rule_id": 2
+    },
+    {
+      "id": 11223,
+      "metric_name": "cpu_xx",
+      "kind": "derived",
+      "record_rule_id": 4
+    },
+    {
+      "id": 6632,
+      "metric_name": "wxy_test",
+      "kind": "derived",
+      "record_rule_id": 1
+    },
+    {
+      "id": 6247,
+      "metric_name": "cpu_load111",
+      "kind": "predefined",
+      "record_rule_id": null
+    },
+    {
+      "id": 6248,
+      "metric_name": "cpu_load111",
+      "kind": "predefined",
+      "record_rule_id": null
+    },
+    {
+      "id": 10011,
+      "metric_name": "dish_usage",
+      "kind": "derived",
+      "record_rule_id": 3
+    }
+  ],
+  "explicit_id_revisions": [],
+  "matching_legacy_field_names": [
+    {
+      "strategy_id": 18,
+      "strategy_revision": 1
+    },
+    {
+      "strategy_id": 73,
+      "strategy_revision": 1
+    }
+  ]
+}

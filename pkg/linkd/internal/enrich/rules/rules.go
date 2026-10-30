@@ -58,6 +58,7 @@ const (
 	APMApplicationModelCode        = "cw-application"
 	APMServiceModelCode            = "cw-service"
 	APMServiceInstanceModelCode    = "cw-service_instance"
+	APMInterfaceModelCode          = "cw-interface"
 	UptimeModelCode                = "cw-web_service"
 	OtherModelCode                 = "cw-Others"
 	SystemEventTableID             = "system.event"
@@ -421,5 +422,10 @@ func IsAPMTable(tableID string) bool {
 
 // IsAPMQuery 按指标集或结果表识别 APM；目录衍生指标无需伪造物理表名。
 func IsAPMQuery(query models.StrategyQueryConfig) bool {
-	return query.MetricsetCode == "apm" || IsAPMTable(query.ResultTableID)
+	return IsAPMMetricset(query.MetricsetCode) || IsAPMTable(query.ResultTableID)
+}
+
+// IsAPMMetricset 识别聚合及单应用来源；对象模型不从来源编码推导。
+func IsAPMMetricset(code string) bool {
+	return code == "apm" || (strings.HasPrefix(code, "apm_application.") && len(code) > len("apm_application."))
 }

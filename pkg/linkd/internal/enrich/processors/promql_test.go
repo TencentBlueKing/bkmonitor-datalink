@@ -236,7 +236,7 @@ func (r *promQLSnapshotReader) FindMetric(_ context.Context, query models.Metric
 			continue
 		}
 		return models.MetricMetadata{
-			ObjectModelCode: row.ObjectModelCode, Kind: row.Kind, TableID: row.TableID, DataLabel: row.DataLabel,
+			ObjectModelCode: row.ObjectModelCode, ModelIDs: []string{row.ObjectModelCode}, Kind: row.Kind, TableID: row.TableID, DataLabel: row.DataLabel,
 			PhysicalField: row.PhysicalField, FieldName: row.FieldName, FieldCNName: row.FieldCNName, Unit: row.Unit,
 		}, true, nil
 	}

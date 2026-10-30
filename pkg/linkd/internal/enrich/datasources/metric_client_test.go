@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+
 	"linkd/internal/enrich"
 	"linkd/internal/enrich/models"
 )
@@ -35,7 +37,7 @@ func metricTestRow() []driver.Value {
 
 func TestMetricClientK8sCustomWithoutModel(t *testing.T) {
 	t.Parallel()
-	db := openReaderTestDB(t, func(_ context.Context, sql string, _ []driver.NamedValue) (driver.Rows, error) {
+	db := openMetricTestDB(t, func(_ context.Context, sql string, _ []driver.NamedValue) (driver.Rows, error) {
 		if !strings.Contains(sql, "metricset_code") {
 			t.Error("catalog query omitted definition source")
 		}
@@ -68,7 +70,7 @@ func TestMetricClientCatalogProjection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			calls := 0
-			db := openReaderTestDB(t, func(ctx context.Context, sql string, args []driver.NamedValue) (driver.Rows, error) {
+			db := openMetricTestDB(t, func(ctx context.Context, sql string, args []driver.NamedValue) (driver.Rows, error) {
 				calls++
 				sql = strings.ReplaceAll(sql, "`", "")
 				if !strings.Contains(sql, "FROM metric WHERE") || !strings.Contains(sql, "LIMIT ?") {
@@ -121,6 +123,7 @@ func TestMetricClientFailureAndMissing(t *testing.T) {
 		{name: "other tenant", count: 1, modify: func(row []driver.Value) { row[1] = "tenant-b" }, wantErr: true},
 		{name: "wrong ID", count: 1, modify: func(row []driver.Value) { row[0] = int64(43) }, wantErr: true},
 		{name: "empty name", count: 1, modify: func(row []driver.Value) { row[4] = "" }, wantErr: true},
+		{name: "empty definition source", count: 1, modify: func(row []driver.Value) { row[14] = "" }, wantErr: true},
 		{name: "invalid dimensions", count: 1, modify: func(row []driver.Value) { row[13] = []byte(`{}`) }, wantErr: true},
 		{name: "old dimension shape rejected", count: 1, modify: func(row []driver.Value) { row[13] = []byte(`[{"key":"ip","name":"IP"}]`) }, wantErr: true},
 		{name: "invalid mapping", count: 1, modify: func(row []driver.Value) { row[12] = []byte(`{}`) }, wantErr: true},
@@ -131,7 +134,7 @@ func TestMetricClientFailureAndMissing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			calls := 0
-			db := openReaderTestDB(t, func(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+			db := openMetricTestDB(t, func(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
 				calls++
 				if tc.queryErr != nil {
 					return nil, tc.queryErr
@@ -181,7 +184,7 @@ func TestMetricClientLocatorValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			calls := 0
-			db := openReaderTestDB(t, func(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+			db := openMetricTestDB(t, func(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
 				calls++
 				r := metricTestRow()
 				if tc.rowChange != nil {
@@ -202,7 +205,7 @@ func TestMetricClientCancellation(t *testing.T) {
 	t.Parallel()
 	calls := 0
 	entered := make(chan struct{}, 1)
-	db := openReaderTestDB(t, func(ctx context.Context, _ string, _ []driver.NamedValue) (driver.Rows, error) {
+	db := openMetricTestDB(t, func(ctx context.Context, _ string, _ []driver.NamedValue) (driver.Rows, error) {
 		calls++
 		entered <- struct{}{}
 		<-ctx.Done()
@@ -252,7 +255,7 @@ func TestMetricClientCancellation(t *testing.T) {
 
 func TestMetricClientIDReadsUnboundDefinition(t *testing.T) {
 	t.Parallel()
-	db := openReaderTestDB(t, func(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+	db := openMetricTestDB(t, func(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
 		row := metricTestRow()
 		row[3] = nil
 		row[8] = "predefined"
@@ -268,4 +271,25 @@ func TestMetricClientIDReadsUnboundDefinition(t *testing.T) {
 	if err != nil || !found || got.ObjectModelCode != "" || len(got.Dimensions) != 0 || len(got.ValueMapping) != 0 || got.FieldCNName != "CPU 使用率" {
 		t.Fatalf("definition=%#v found=%v err=%v", got, found, err)
 	}
+}
+
+// 旧的单对象样本显式生成同一关系；多对象、无关联和损坏关系由 metric_models_test 单独覆盖。
+func openMetricTestDB(t *testing.T, query func(context.Context, string, []driver.NamedValue) (driver.Rows, error)) *gorm.DB {
+	t.Helper()
+	var relations [][]driver.Value
+	return openReaderTestDB(t, func(ctx context.Context, statement string, args []driver.NamedValue) (driver.Rows, error) {
+		if strings.Contains(statement, "FROM `metric_object`") {
+			return &readerTestRows{columns: []string{"bk_tenant_id", "metric_id", "model_id"}, values: relations}, nil
+		}
+		rows, err := query(ctx, statement, args)
+		relations = nil
+		if fixture, ok := rows.(*readerTestRows); ok {
+			for _, row := range fixture.values {
+				if row[3] != nil && row[3] != "" {
+					relations = append(relations, []driver.Value{row[1], row[0], row[3]})
+				}
+			}
+		}
+		return rows, err
+	})
 }

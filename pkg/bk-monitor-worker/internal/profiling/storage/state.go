@@ -159,7 +159,8 @@ func shouldApplyEvent(current models.ActiveProfilingHostExecution, event core.Ev
 		return currentStarted && event.Timestamp > current.EventTime
 	}
 	if currentStarted {
-		return current.EventTime == 0 || event.Timestamp >= current.EventTime
+		// Started and finished Events can come from different producers, so their timestamps are not comparable.
+		return true
 	}
 	return event.Timestamp > current.EventTime
 }

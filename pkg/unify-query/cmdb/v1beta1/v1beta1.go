@@ -499,12 +499,8 @@ func (r *model) queryResourceMatcherAll(ctx context.Context, opt QueryResourceOp
 		}
 	}
 
-	for _, result := range results {
-		if len(result.ts) > 0 {
-			hasData = true
-			break
-		}
-	}
+	selected := selectLegacyPathResult(results)
+	hasData = len(selected.ts) > 0
 	if !hasData {
 		metadata.NewMessage(
 			metadata.MsgQueryRelation,
@@ -513,14 +509,7 @@ func (r *model) queryResourceMatcherAll(ctx context.Context, opt QueryResourceOp
 		).Warn(ctx)
 	}
 
-	var hitPath []string
-	for _, result := range results {
-		hitPath = result.path
-		if len(result.ts) > 0 {
-			break
-		}
-	}
-	span.Set("query-hit-path", hitPath)
+	span.Set("query-hit-path", selected.path)
 	span.Set("query-path-errors", errorMessage)
 	span.Set("query-path-result-count", len(results))
 	span.Set("query-path-error-count", pathErrorCount)

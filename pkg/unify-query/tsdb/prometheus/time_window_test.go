@@ -8,6 +8,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/prometheus/prometheus/promql"
+	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/storage"
 	promremote "github.com/prometheus/prometheus/storage/remote"
 	"github.com/stretchr/testify/require"
@@ -53,5 +54,30 @@ func TestLeftOpenTimeWindowIsOptIn(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestLeftOpenTimeWindowMinimumRange(t *testing.T) {
+	engine := promql.NewEngine(promql.EngineOpts{Timeout: time.Second, MaxSamples: 1000})
+	for _, tc := range []struct {
+		name          string
+		initial, want time.Duration
+	}{
+		{name: "zero", initial: 0, want: 0},
+		{name: "sub millisecond", initial: time.Microsecond, want: time.Microsecond},
+		{name: "one millisecond", initial: time.Millisecond, want: 0},
+		{name: "two milliseconds", initial: 2 * time.Millisecond, want: time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			query, err := engine.NewInstantQuery(nil, nil, "metric[1ms]", time.Unix(1, 0))
+			require.NoError(t, err)
+			defer query.Close()
+			selector := query.Statement().(*parser.EvalStmt).Expr.(*parser.MatrixSelector)
+			selector.Range = tc.initial
+			applyLeftOpenTimeWindow(context.Background(), query)
+			require.Equal(t, tc.initial, selector.Range)
+			applyLeftOpenTimeWindow(metadata.WithLeftOpenTimeWindow(context.Background()), query)
+			require.Equal(t, tc.want, selector.Range)
+		})
 	}
 }

@@ -50,6 +50,21 @@ test("snapshot uint64 tokens remain exact; identities ignore request IDs and opt
 const endpoint = process.env.TG_EXAMPLE_URL;
 test("consumer serializer to real UQ HTTP handler/model and back", { skip: !endpoint }, async () => {
   const call = (path, queryList) => queryRelations({ baseURL: endpoint, spaceUID: "example-space", path, queryList });
+  for (const path of ["multi_resource", "multi_resource_range", "path_resources", "path_resources_range",
+    "v1beta3/multi_resource", "v1beta3/multi_resource_range", "v1beta3/topology", "v1beta3/topology_range"]) {
+    assert.deepEqual((await call(path, [])).data, [], path);
+  }
+  for (const spaceUID of [undefined, ""]) {
+    await assert.rejects(() => queryRelations({ baseURL: endpoint, spaceUID, path: "v1beta3/topology", queryList: [] }),
+      { name: "TypeError", message: "spaceUID and queryList are required" });
+  }
+  for (const queryList of [undefined, null, {}]) {
+    await assert.rejects(() => call("v1beta3/topology", queryList), { name: "TypeError", message: "spaceUID and queryList are required" });
+  }
+  await assert.rejects(() => call("unknown", []), { name: "TypeError", message: "Unknown relation endpoint" });
+  const changedBatch = [{}];
+  changedBatch.toJSON = () => [];
+  await assert.rejects(() => call("v1beta3/topology", changedBatch), { name: "TypeError", message: "Relation response does not match the ordered batch" });
   for (const scenario of scenarios) {
     if (!scenario.path.includes("topology")) {
       const { data } = await call(scenario.path, [scenario.query]);

@@ -746,6 +746,26 @@ func (q *TimeGraph) makeResourceInfoQueryTs(spaceUID string, resource cmdb.Resou
 
 	fieldList := make([]structured.ConditionField, 0, len(primaryFields)+len(expandInfo))
 	conditionList := make([]string, 0, max(len(fieldList)-1, 0))
+	expandFields := make([]string, 0, len(expandInfo))
+	for field := range expandInfo {
+		expandFields = append(expandFields, field)
+	}
+	sort.Strings(expandFields)
+	appendExpandConditions := func() {
+		for _, field := range expandFields {
+			value := expandInfo[field]
+			if _, isPrimary := primarySet[field]; !isPrimary {
+				if len(fieldList) > 0 {
+					conditionList = append(conditionList, structured.ConditionAnd)
+				}
+				fieldList = append(fieldList, structured.ConditionField{
+					DimensionName: field,
+					Value:         []string{value},
+					Operator:      structured.ConditionEqual,
+				})
+			}
+		}
+	}
 	if len(primaryMatchers) > 0 {
 		// 每个 matcher 表示一个完整的主键元组，构造为
 		// (k1=v1 AND k2=v2) OR (k1=v1 AND k2=v2)，避免按字段分别过滤时产生
@@ -767,6 +787,8 @@ func (q *TimeGraph) makeResourceInfoQueryTs(spaceUID string, resource cmdb.Resou
 				}
 				fieldList = append(fieldList, structured.ConditionField{DimensionName: field, Value: []string{value}, Operator: structured.ConditionEqual})
 			}
+			// 属性条件约束每个 OR 分组中的完整主键元组。
+			appendExpandConditions()
 		}
 	} else {
 		for _, field := range primaryFields {
@@ -776,24 +798,7 @@ func (q *TimeGraph) makeResourceInfoQueryTs(spaceUID string, resource cmdb.Resou
 				fieldList = append(fieldList, structured.ConditionField{DimensionName: field, Value: []string{""}, Operator: structured.ConditionNotEqual})
 			}
 		}
-	}
-	expandFields := make([]string, 0, len(expandInfo))
-	for field := range expandInfo {
-		expandFields = append(expandFields, field)
-	}
-	sort.Strings(expandFields)
-	for _, field := range expandFields {
-		value := expandInfo[field]
-		if _, isPrimary := primarySet[field]; !isPrimary {
-			if len(fieldList) > 0 {
-				conditionList = append(conditionList, structured.ConditionAnd)
-			}
-			fieldList = append(fieldList, structured.ConditionField{
-				DimensionName: field,
-				Value:         []string{value},
-				Operator:      structured.ConditionEqual,
-			})
-		}
+		appendExpandConditions()
 	}
 	if len(primaryMatchers) == 0 {
 		sort.SliceStable(fieldList, func(i, j int) bool {

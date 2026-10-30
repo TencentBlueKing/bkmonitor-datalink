@@ -70,3 +70,107 @@ func TestTopologyReversePairMatchesOrderedFullAttributeAndWireApplication(t *tes
 		})
 	}
 }
+
+func TestTopologyReversePairRequiresEquivalentUnboundedRelations(t *testing.T) {
+	old := yoloMode
+	t.Cleanup(func() { yoloMode = old })
+	for _, tc := range []struct {
+		name   string
+		change func(*TimeGraph, []cmdb.Relation) []cmdb.Relation
+		want   bool
+	}{
+		{name: "static", want: true},
+		{name: "dynamic", want: true, change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			relations[0].Category, relations[1].Category = string(RelationCategoryDynamic), string(RelationCategoryDynamic)
+			return relations
+		}},
+		{name: "inbound_first", want: true, change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			relations[0].Direction, relations[1].Direction = string(DirectionInbound), string(DirectionOutbound)
+			return relations
+		}},
+		{name: "bounded_mode", change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			yoloMode = false
+			return relations
+		}},
+		{name: "non_shared", change: func(graph *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			graph.shared = nil
+			return relations
+		}},
+		{name: "empty_relations", change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation { return nil }},
+		{name: "single_relation", change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation { return relations[:1] }},
+		{name: "extra_relation", change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation { return append(relations, relations[0]) }},
+		{name: "node_limit", change: func(graph *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			graph.maxNodes = 1
+			return relations
+		}},
+		{name: "edge_limit", change: func(graph *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			graph.maxEdges = 1
+			return relations
+		}},
+		{name: "info_limit", change: func(graph *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			graph.maxNodeInfos = 1
+			return relations
+		}},
+		{name: "first_missing_endpoint", change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			relations[0].V = relations[0].V[:1]
+			return relations
+		}},
+		{name: "second_missing_endpoint", change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			relations[1].V = relations[1].V[:1]
+			return relations
+		}},
+		{name: "first_extra_endpoint", change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			relations[0].V = append(relations[0].V, "c")
+			return relations
+		}},
+		{name: "second_extra_endpoint", change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			relations[1].V = append(relations[1].V, "c")
+			return relations
+		}},
+		{name: "source_identity", change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			relations[1].V[1] = "c"
+			return relations
+		}},
+		{name: "target_identity", change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			relations[1].V[0] = "c"
+			return relations
+		}},
+		{name: "relation_identity", change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			relations[1].RelationType = "contains"
+			return relations
+		}},
+		{name: "metric_identity", change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			relations[1].MetricName = "other_metric"
+			return relations
+		}},
+		{name: "unknown_category", change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			relations[0].Category, relations[1].Category = "unknown", "unknown"
+			return relations
+		}},
+		{name: "category_identity", change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			relations[1].Category = string(RelationCategoryDynamic)
+			return relations
+		}},
+		{name: "same_outbound", change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			relations[1].Direction = string(DirectionOutbound)
+			return relations
+		}},
+		{name: "same_inbound", change: func(_ *TimeGraph, relations []cmdb.Relation) []cmdb.Relation {
+			relations[0].Direction = string(DirectionInbound)
+			return relations
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			yoloMode = true
+			graph := &TimeGraph{shared: &sharedTimeGraph{}}
+			relations := []cmdb.Relation{
+				{V: []cmdb.Resource{"a", "b"}, RelationType: "calls", MetricName: "calls_metric", Category: string(RelationCategoryStatic), Direction: string(DirectionOutbound)},
+				{V: []cmdb.Resource{"b", "a"}, RelationType: "calls", MetricName: "calls_metric", Category: string(RelationCategoryStatic), Direction: string(DirectionInbound)},
+			}
+			if tc.change != nil {
+				relations = tc.change(graph, relations)
+			}
+			require.Equal(t, tc.want, graph.topologyReversePair(relations))
+		})
+	}
+}

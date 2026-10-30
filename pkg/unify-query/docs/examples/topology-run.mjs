@@ -23,7 +23,6 @@ for (const item of response.data) {
   if (item.code !== 200) { console.error(JSON.stringify(item)); process.exitCode = 1; continue; }
   if (!Object.hasOwn(item,"snapshots") && item.response_format !== "compact-v1") { console.log(JSON.stringify(item)); continue; }
   const reader = readTopologyItem(item);
-  if (!reader.ok) { console.error(reader); continue; }
   for (let i = 0; i < reader.pointCount; i++) {
     const aligned = alignFrame(reader.frame(i), catalog);
     console.log(JSON.stringify({ ...aligned, nodes: [...aligned.nodes], edges: [...aligned.edges] }));

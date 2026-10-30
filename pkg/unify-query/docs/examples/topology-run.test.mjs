@@ -3,15 +3,16 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { queryRelations } from "./topology-client.mjs";
 
 const cli = fileURLToPath(new URL("topology-run.mjs", import.meta.url));
 const scenarios = JSON.parse(readFileSync(new URL("topology-scenarios.json", import.meta.url))).cases;
-const run = (args = [], env = {}) => spawnSync(process.execPath, [cli, ...args], {
+const run = (args = [], env = {}, entry = cli) => spawnSync(process.execPath, [entry, ...args], {
   encoding: "utf8", timeout: 5000,
   env: { ...process.env, UQ_URL: "", UQ_SPACE_UID: "", UQ_JWT: "", ...env },
 });
@@ -57,7 +58,7 @@ test("CLI live options require each input", () => {
   }
 });
 
-test("CLI live HTTP handles formats, item failures and optional JWT", { skip: !process.env.TG_EXAMPLE_URL }, () => {
+test("CLI live HTTP handles formats, item failures and optional JWT", { skip: !process.env.TG_EXAMPLE_URL }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "topology-cli-"));
   try {
     const request = join(dir, "request.json");
@@ -82,6 +83,28 @@ test("CLI live HTTP handles formats, item failures and optional JWT", { skip: !p
       assert.equal(result.stdout, "");
       assert.equal(result.stderr, "");
     }
+
+    const examples = join(dir, "examples"), api = join(dir, "api");
+    mkdirSync(examples); mkdirSync(api);
+    for (const name of ["topology-run.mjs", "topology-client.mjs", "topology-compact.mjs"]) {
+      copyFileSync(new URL(name, import.meta.url), join(examples, name));
+    }
+    copyFileSync(new URL("../api/timegraph-schema.json", import.meta.url), join(api, "timegraph-schema.json"));
+    writeFileSync(join(examples, "topology-scenarios.json"), JSON.stringify({ cases: [scenarios[0]] }));
+    const records = [];
+    for (const queryList of [[], [scenarios[0].query]]) {
+      const response = await queryRelations({ baseURL: env.UQ_URL, spaceUID: env.UQ_SPACE_UID, path: scenarios[0].path, queryList });
+      records.push({ space: env.UQ_SPACE_UID, path: `/api/v1/relation/${scenarios[0].path}`, request: { query_list: queryList }, response });
+    }
+    const recording = join(examples, "topology-responses.json");
+    writeFileSync(recording, JSON.stringify(records));
+    const replay = run([], {}, join(examples, "topology-run.mjs"));
+    assert.equal(replay.status, 0, replay.stderr);
+    assert.deepEqual(lines(replay.stdout).map((frame) => frame.nodes.length), [2, 2, 2]);
+    writeFileSync(recording, JSON.stringify(records.slice(0, 1)));
+    const missing = run([], {}, join(examples, "topology-run.mjs"));
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /Scenario response fixture is missing/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

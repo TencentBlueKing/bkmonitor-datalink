@@ -406,7 +406,7 @@ func runTopologyConsumerExampleHTTP(t *testing.T, yolo bool) {
 		case "example-cli-with-jwt":
 			cliJWTSeen.Store(c.GetHeader("X-Bkapi-Jwt") == "example-cli-jwt")
 		case "example-cli-without-jwt":
-			cliNoJWTSeen.Store(c.GetHeader("X-Bkapi-Jwt") == "")
+			cliNoJWTSeen.Store(len(c.Request.Header.Values("X-Bkapi-Jwt")) == 0)
 		}
 		raw, readErr := io.ReadAll(c.Request.Body)
 		if readErr != nil {

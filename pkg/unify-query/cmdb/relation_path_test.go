@@ -43,10 +43,10 @@ func TestRelationPathHelpersEmptyAndMismatchedCandidates(t *testing.T) {
 		candidates [][]Resource
 		want       int
 	}{
-		{nil, 0}, {{{"pod", "service"}}, 0},
-		{{{"pod", "node"}, {"pod", "service"}}, 1},
-		{{{"node", "service"}, {"pod"}, {"pod", "service"}}, 2},
-		{{{"pod", "node"}}, 1},
+		{nil, 0}, {[][]Resource{{"pod", "service"}}, 0},
+		{[][]Resource{{"pod", "node"}, {"pod", "service"}}, 1},
+		{[][]Resource{{"node", "service"}, {"pod"}, {"pod", "service"}}, 2},
+		{[][]Resource{{"pod", "node"}}, 1},
 	} {
 		require.Equal(t, tc.want, PathRank(path, tc.candidates))
 	}

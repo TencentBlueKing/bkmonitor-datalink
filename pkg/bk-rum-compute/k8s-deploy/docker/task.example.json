@@ -1,0 +1,14 @@
+{
+  "kafka.bootstrap.servers": "",
+  "kafka.topic": "",
+  "sink.type": "es",
+  "sink.es.hosts": "",
+  "sink.es.username": "",
+  "sink.es.password": "",
+  "sink.es.index-prefix": "",
+  "late.sink.type": "none",
+  "session.gap.minutes": "15",
+  "session.max.life.minutes": "240",
+  "view.gap.minutes": "15",
+  "view.max.life.minutes": "240"
+}

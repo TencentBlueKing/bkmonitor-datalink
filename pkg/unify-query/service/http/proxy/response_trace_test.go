@@ -16,6 +16,9 @@ import (
 	uqjson "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 type responseSegments [][]byte
@@ -35,8 +38,17 @@ func (w *segmentErrorWriter) Write(data []byte) (int, error) {
 }
 
 func TestSegmentedResponseDirectAndProxyEnvelope(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+		require.NoError(t, provider.Shutdown(context.Background()))
+	})
 	value := responseSegments{[]byte(`{"trace_id":"abc","data":`), []byte(`["中文","<&>"]}`)}
 	for _, proxied := range []bool{false, true} {
+		recorder.Reset()
 		writer := httptest.NewRecorder()
 		ctx, _ := gin.CreateTestContext(writer)
 		ctx.Request = httptest.NewRequest(http.MethodPost, "/test", nil)
@@ -51,6 +63,41 @@ func TestSegmentedResponseDirectAndProxyEnvelope(t *testing.T) {
 		require.NoError(t, ResponseWriteError(ctx))
 		require.Equal(t, want, writer.Body.String())
 		require.Equal(t, "application/json; charset=utf-8", writer.Header().Get("Content-Type"))
+		require.Len(t, recorder.Ended(), 3)
+		for _, span := range recorder.Ended() {
+			attrs := map[string]any{}
+			for _, attr := range span.Attributes() {
+				attrs[string(attr.Key)] = attr.Value.AsInterface()
+			}
+			if span.Name() == "http-response-encode" {
+				require.Equal(t, true, attrs["segmented"])
+				require.Equal(t, int64(len(want)), attrs["encoded-body-bytes"])
+			} else {
+				require.Equal(t, int64(len(want)), attrs["writer-body-bytes"])
+			}
+		}
+	}
+}
+
+func TestSegmentedResponseEnvelopeFallbacks(t *testing.T) {
+	for _, data := range []any{
+		map[string]string{"key": "value"},
+		responseSegments(nil),
+		responseSegments{},
+		&apiGwResponse{Result: false, Data: responseSegments{[]byte(`{}`)}, Message: SuccessMessage},
+		&apiGwResponse{Result: true, Data: responseSegments{[]byte(`{}`)}, Message: "custom"},
+		&apiGwResponse{Result: true, Data: map[string]string{"key": "value"}, Message: SuccessMessage},
+		&apiGwResponse{Result: true, Data: responseSegments(nil), Message: SuccessMessage},
+	} {
+		want, err := json.Marshal(data)
+		require.NoError(t, err)
+		writer := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(writer)
+		TraceJSONEncoding(ctx)
+		_ = ctx.Error(errors.New("previous handler error"))
+		WriteJSON(context.Background(), ctx, 200, data)
+		require.NoError(t, ResponseWriteError(ctx))
+		require.JSONEq(t, string(want), writer.Body.String())
 	}
 }
 

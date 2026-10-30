@@ -109,6 +109,9 @@ func TestTopologyFullHTTPTraceLifecycle(t *testing.T) {
 				if test.writeFailure {
 					require.Equal(t, codes.Error, spans["http-response-encode-write"].Status().Code)
 					require.Equal(t, codes.Error, root.Status().Code)
+					if proxied {
+						require.Equal(t, codes.Error, spans["handler-proxy"].Status().Code)
+					}
 				}
 				if test.name == "item validation" {
 					require.NotNil(t, spans["timegraph-encode-topology-item"])

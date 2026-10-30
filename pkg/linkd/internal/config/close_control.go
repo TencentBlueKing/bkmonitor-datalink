@@ -11,15 +11,15 @@ import (
 
 // CloseControlConfig 是筛选关闭独立的批次和成员预算，不占用单条关闭或 Lifecycle Worker 的名额。
 type CloseControlConfig struct {
-	// BatchSize 是默认候选数及一次执行波次的大小。
+	// BatchSize 是一次内部读写批次的大小，与 HTTP 候选 limit 独立。
 	BatchSize int `yaml:"batch_size"`
-	// Concurrency 是在途筛选关闭请求数，不占用单条关闭请求的名额。
+	// Concurrency 是控制面全部筛选关闭请求共用的在途内部批次数，不占用单条关闭名额。
 	Concurrency int `yaml:"concurrency"`
 	// MemberConcurrency 是每来源子批的前置调用、清理及 Hook 并发。
 	MemberConcurrency int `yaml:"member_concurrency"`
 }
 
-// WithDefaults 默认每批 1000 条、最多 8 个请求、每批 32 个成员外部调用并发。
+// WithDefaults 默认每批 1000 条、最多 8 个内部批次、每批 32 个成员外部调用并发。
 func (c CloseControlConfig) WithDefaults() CloseControlConfig {
 	if c.BatchSize == 0 {
 		c.BatchSize = 1000

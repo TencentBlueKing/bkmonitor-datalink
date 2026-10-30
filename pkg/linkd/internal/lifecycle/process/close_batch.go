@@ -61,7 +61,6 @@ func (s *AlertCloser) CloseAlerts(ctx context.Context, commands []lifecycle.Clos
 	}
 	select {
 	case s.batchSlots <- struct{}{}:
-		defer func() { <-s.batchSlots }()
 	default:
 		return fail(&CloseError{Status: 429, Code: "busy", Message: "close capacity exceeded"})
 	}
@@ -72,19 +71,47 @@ func (s *AlertCloser) CloseAlerts(ctx context.Context, commands []lifecycle.Clos
 	defer func() { store.ObserveBatchPhase(ctx, "batch.total", time.Since(started)) }()
 	// 冷启动按此前千条实测约七秒留整估计；后续采用本请求已完成批次的平均墙钟。
 	estimate, spent, completed := 8*time.Second, time.Duration(0), 0
-	for start := 0; start < len(commands); start += max(1, s.batchSize) {
+	finished := make(chan time.Duration, cap(s.batchSlots))
+	next, running := 0, 0
+	startBatch := func() {
+		start := next
 		end := min(start+max(1, s.batchSize), len(commands))
-		if !closeBatchFitsBudget(ctx, estimate) {
-			for i := start; i < len(commands); i++ {
-				results[i].Err = &CloseError{Status: 504, Code: "not_attempted", Message: "remaining request budget is below estimated batch duration; retry the same operation", cause: ctx.Err()}
+		next, running = end, running+1
+		go func() {
+			at := time.Now()
+			copy(results[start:end], s.closeAlertsWave(ctx, commands[start:end]))
+			finished <- time.Since(at)
+		}()
+	}
+	// concurrency 约束控制面全部请求在途的内部批次。名额覆盖读写、租约释放、
+	// 投影和通知；完成后由调度方更新耗时估计并复用或释放，不再依赖调用方并发 HTTP。
+	if closeBatchFitsBudget(ctx, estimate) {
+		startBatch()
+	} else {
+		<-s.batchSlots
+	}
+	for running > 0 {
+	dispatch:
+		for next < len(commands) && closeBatchFitsBudget(ctx, estimate) {
+			select {
+			case s.batchSlots <- struct{}{}:
+				startBatch()
+			default:
+				break dispatch
 			}
-			break
 		}
-		waveStarted := time.Now()
-		copy(results[start:end], s.closeAlertsWave(ctx, commands[start:end]))
-		spent += time.Since(waveStarted)
+		spent += <-finished
+		running--
 		completed++
 		estimate = spent / time.Duration(completed)
+		if next < len(commands) && closeBatchFitsBudget(ctx, estimate) {
+			startBatch()
+		} else {
+			<-s.batchSlots
+		}
+	}
+	for i := next; i < len(commands); i++ {
+		results[i].Err = &CloseError{Status: 504, Code: "not_attempted", Message: "remaining request budget is below estimated batch duration; retry the same operation", cause: ctx.Err()}
 	}
 	return results
 }

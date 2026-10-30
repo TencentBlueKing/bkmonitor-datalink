@@ -16,7 +16,7 @@ import (
 )
 
 func TestCloseBatchStopsBeforeInsufficientNextWave(t *testing.T) {
-	closer, repo, _, commands, held := closeBatchFixture(t, 4)
+	closer, repo, _, commands, held := closeBatchFixture(t, 6)
 	closer.batchSize = 2
 	ctx, cancel := context.WithTimeout(t.Context(), 8200*time.Millisecond)
 	defer cancel()
@@ -33,7 +33,7 @@ func TestCloseBatchStopsBeforeInsufficientNextWave(t *testing.T) {
 	}
 	results := closer.CloseAlerts(ctx, commands)
 	for i, result := range results {
-		if i < 2 {
+		if i < 4 {
 			if result.Err != nil {
 				t.Fatal(result.Err)
 			}
@@ -44,7 +44,7 @@ func TestCloseBatchStopsBeforeInsufficientNextWave(t *testing.T) {
 			}
 		}
 	}
-	if ctx.Err() != nil || repo.writes.Load() != 1 || held.Load() != 0 {
+	if ctx.Err() != nil || repo.writes.Load() != 2 || held.Load() != 0 {
 		t.Fatal("started an unaffordable wave", ctx.Err(), repo.writes.Load(), held.Load())
 	}
 }

@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"time"
 
-	"linkd/internal/config"
 	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
 	lifecycleprocess "linkd/internal/lifecycle/process"
@@ -54,10 +53,7 @@ func (a *API) closeAlertsByFilter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "filtered close requires Elasticsearch storage", http.StatusNotImplemented)
 		return
 	}
-	input := closeAlertsInput{Limit: a.CloseBatchSize}
-	if input.Limit == 0 {
-		input.Limit = (config.CloseControlConfig{}).WithDefaults().BatchSize
-	}
+	input := closeAlertsInput{Limit: store.MaxCloseBatchSize}
 	if err := decodeAlertQuery(w, r, service.config.MaxRequestBytes, &input); err != nil {
 		status := http.StatusBadRequest
 		var tooLarge *http.MaxBytesError

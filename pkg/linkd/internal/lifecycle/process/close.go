@@ -59,7 +59,8 @@ type AlertProjectionSynchronizer interface {
 }
 
 // AlertCloser 为用户或系统关闭装配当前已发布来源的 Hook，复用正式 Lifecycle 的 CAS 和流水逻辑。
-// 最多四个并发请求；重试必须携带相同命令，终态部分成功不等同于未执行。
+// 单条入口最多四个并发请求；筛选关闭使用独立的全局内部批次预算。
+// 重试必须携带相同命令，终态部分成功不等同于未执行。
 type AlertCloser struct {
 	logger        *slog.Logger
 	metrics       *telemetry.Runtime

@@ -50,16 +50,14 @@ type API struct {
 		ListTenants(context.Context) ([]blueking.Tenant, error)
 	}
 	// Tasks 提供当前进程的只读任务目录及执行快照。
-	Tasks       interface{ Snapshot() taskstate.Snapshot }
-	OneModel    *queryservice.Service
-	AlertCloser AlertCloser
-	// CloseBatchSize 是省略 limit 时的筛选关闭候选数，不影响普通检索分页。
-	CloseBatchSize int
-	KACCloser      KACCloser
-	SourceAlerts   *SourceAlerts
-	AlertSearch    *AlertSearch
-	EnrichRecords  *EnrichRecords
-	Previewer      interface {
+	Tasks         interface{ Snapshot() taskstate.Snapshot }
+	OneModel      *queryservice.Service
+	AlertCloser   AlertCloser
+	KACCloser     KACCloser
+	SourceAlerts  *SourceAlerts
+	AlertSearch   *AlertSearch
+	EnrichRecords *EnrichRecords
+	Previewer     interface {
 		Preview(context.Context, preview.Request) (preview.Response, error)
 	}
 	// IngestPreviewer 只标准化并返回 KAC 调试字段，不执行丰富和业务写入。

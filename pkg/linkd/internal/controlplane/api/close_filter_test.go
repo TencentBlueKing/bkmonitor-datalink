@@ -260,3 +260,16 @@ func TestFilteredCloseSearchFailureNeverCloses(t *testing.T) {
 		t.Fatal(w.Code)
 	}
 }
+
+func TestFilteredCloseDefaultCandidateLimitIsIndependentOfInternalBatchSize(t *testing.T) {
+	search := alertSearchFunc(func(_ context.Context, q store.AlertSearchRequest) (store.AlertSearchPage, error) {
+		if q.Limit != store.MaxCloseBatchSize {
+			t.Fatal("default candidate limit was reduced to internal batch size", q.Limit)
+		}
+		return store.AlertSearchPage{}, nil
+	})
+	handler := filteredCloseAPI(t, search, nil, config.AlertSearchConfig{}).Handler()
+	if w := policyHTTP(t, handler, http.MethodPost, "/api/v1/alerts/close", `{"bk_tenant_id":"tenant","filter":{"match_all":{}},"dry_run":true}`); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}

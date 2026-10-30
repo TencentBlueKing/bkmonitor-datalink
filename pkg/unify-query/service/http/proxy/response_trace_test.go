@@ -103,15 +103,17 @@ func TestSegmentedResponseEnvelopeFallbacks(t *testing.T) {
 
 func TestSegmentedResponseWriteErrors(t *testing.T) {
 	for _, short := range []bool{false, true} {
-		writer := &segmentErrorWriter{ResponseRecorder: httptest.NewRecorder(), short: short}
-		ctx, _ := gin.CreateTestContext(writer)
-		ctx.Request = httptest.NewRequest(http.MethodPost, "/test", nil)
-		TraceJSONEncoding(ctx)
-		WriteJSON(context.Background(), ctx, http.StatusOK, responseSegments{[]byte("{}")})
-		if short {
-			require.ErrorIs(t, ResponseWriteError(ctx), io.ErrShortWrite)
-		} else {
-			require.ErrorContains(t, ResponseWriteError(ctx), "test writer failed")
+		for _, data := range []any{responseSegments{[]byte("{}")}, map[string]string{"key": "value"}} {
+			writer := &segmentErrorWriter{ResponseRecorder: httptest.NewRecorder(), short: short}
+			ctx, _ := gin.CreateTestContext(writer)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/test", nil)
+			TraceJSONEncoding(ctx)
+			WriteJSON(context.Background(), ctx, http.StatusOK, data)
+			if short {
+				require.ErrorIs(t, ResponseWriteError(ctx), io.ErrShortWrite)
+			} else {
+				require.ErrorContains(t, ResponseWriteError(ctx), "test writer failed")
+			}
 		}
 	}
 }

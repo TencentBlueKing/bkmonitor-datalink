@@ -101,13 +101,3 @@ curl --location --request POST 'http://127.0.0.1:10211/bmw/task/' \
 每个 DataID 使用独立且稳定的 Kafka consumer group：`active-profiling-materializer-<dataid>`。消息每达到 500 条或到达 `flushInterval` 时批量写入 MySQL；存储失败时当前批次会重试。
 
 Kafka offset 在消息进入内存队列后即确认。因此，进程若在 MySQL 写入前崩溃或被强制终止，队列中的已确认消息可能丢失。
-
-## 本地流程示例
-
-Mock 命令无需连接 Kafka 或 MySQL，会使用内存 Store 处理示例事件并输出窗口超时前后的结果：
-
-```sh
-go run ./bmw.go run_profiling_mock
-```
-
-可以通过 `--file` 指定事件文件，并用 `--max-duration`、`--delay` 调整模拟窗口。

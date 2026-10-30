@@ -73,8 +73,19 @@ func (s *MySQLStore) applyExecutionEvents(
 	nowMS int64,
 	policy core.WindowPolicy,
 ) (retErr error) {
-	defer func() { retErr = classifyMySQLError(retErr) }()
 	started := time.Now()
+	phase := "acquire connection"
+	executionID := 0
+	defer func() {
+		retErr = classifyMySQLError(retErr)
+		if retErr != nil {
+			logger.Debugf(
+				"[profiling] MySQL event batch failed execution_id=%d tenant_id=%s biz_id=%d task_id=%d scheduled_at=%d phase=%s event_count=%d cost=%s err=%s",
+				executionID, key.TenantID, key.BizID, key.TaskID, key.ScheduledAt,
+				phase, len(events), time.Since(started), retErr,
+			)
+		}
+	}()
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire active profiling event connection: %w", err)
@@ -82,29 +93,35 @@ func (s *MySQLStore) applyExecutionEvents(
 	defer func() { _ = conn.Close() }()
 
 	now := time.Now()
-	executionID, err := ensureExecutionRow(ctx, conn, events[0], now)
+	phase = "ensure execution row"
+	executionID, err = ensureExecutionRow(ctx, conn, events[0], now)
 	if err != nil {
 		return err
 	}
+	phase = "acquire execution lock"
 	if err := acquireExecutionLock(ctx, conn, executionID); err != nil {
 		return err
 	}
 	defer releaseExecutionLock(conn, executionID)
+	phase = "begin transaction"
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin active profiling event transaction execution_id=%d: %w", executionID, err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	phase = "lock execution row"
 	execution, err := scanExecution(tx.QueryRowContext(ctx, selectExecutionByIDLockSQL, executionID))
 	if err != nil {
 		return fmt.Errorf("read active profiling execution id=%d: %w", executionID, err)
 	}
+	phase = "load execution hosts"
 	hostStates, err := loadExecutionHosts(ctx, tx, executionID)
 	if err != nil {
 		return err
 	}
 
+	phase = "prepare event changes"
 	changes, err := prepareExecutionEventChanges(execution, events, hostStates, now, nowMS, policy)
 	if err != nil {
 		return err
@@ -121,9 +138,11 @@ func (s *MySQLStore) applyExecutionEvents(
 		changes.hosts[i].ExecutionID = executionID
 	}
 	updateSummary := executionAggregateChanged(execution, aggregate)
+	phase = "persist event changes"
 	if err := persistExecutionEventChanges(ctx, tx, execution, changes, aggregate, updateSummary, now); err != nil {
 		return err
 	}
+	phase = "commit transaction"
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit active profiling event transaction execution_id=%d: %w", executionID, err)
 	}

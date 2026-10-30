@@ -15,39 +15,39 @@ import (
 
 func TestMetadataCenterGetDataIDInfo(t *testing.T) {
 	client := &fakeConsulClient{value: []byte(`{
-		"bk_tenant_id":"system",
-		"bk_biz_id":2,
-		"bk_data_id":1618077,
+		"bk_tenant_id":"test-tenant",
+		"bk_biz_id":1,
+		"bk_data_id":42,
 		"kafka_info":{
-			"host":"bk-kafka.blueking.svc.cluster.local:9092",
+			"host":"kafka.example.invalid:9092",
 			"username":"",
 			"password":"",
-			"topic":"0bkmonitor_16180770"
+			"topic":"test-topic"
 		}
 	}`)}
-	center, err := NewMetadataCenter(client, "/bk_monitorv3_community_production/active_profiling/data_id/")
+	center, err := NewMetadataCenter(client, "/test/active_profiling/data_id/")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	info, err := center.GetDataIDInfo(context.Background(), 1618077)
+	info, err := center.GetDataIDInfo(context.Background(), 42)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.getKey != "bk_monitorv3_community_production/active_profiling/data_id/1618077" {
+	if client.getKey != "test/active_profiling/data_id/42" {
 		t.Fatalf("Get() key = %q", client.getKey)
 	}
-	if info.TenantID != "system" || info.BizID != 2 || info.DataID != 1618077 {
+	if info.TenantID != "test-tenant" || info.BizID != 1 || info.DataID != 42 {
 		t.Fatalf("unexpected DataID info: %+v", info)
 	}
-	if info.KafkaInfo.Host != "bk-kafka.blueking.svc.cluster.local:9092" || info.KafkaInfo.Topic != "0bkmonitor_16180770" {
+	if info.KafkaInfo.Host != "kafka.example.invalid:9092" || info.KafkaInfo.Topic != "test-topic" {
 		t.Fatalf("unexpected Kafka info: %+v", info.KafkaInfo)
 	}
 }
 
 func TestMetadataCenterListDataIDs(t *testing.T) {
 	client := &fakeConsulClient{keys: []string{
-		"prefix/active_profiling/data_id/1618077",
+		"prefix/active_profiling/data_id/42",
 		"prefix/active_profiling/data_id/123",
 	}}
 	center, err := NewMetadataCenter(client, "prefix/active_profiling/data_id")
@@ -59,8 +59,8 @@ func TestMetadataCenterListDataIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0] != 123 || got[1] != 1618077 {
-		t.Fatalf("ListDataIDs() = %v, want [123 1618077]", got)
+	if len(got) != 2 || got[0] != 42 || got[1] != 123 {
+		t.Fatalf("ListDataIDs() = %v, want [42 123]", got)
 	}
 	if client.listPrefix != "prefix/active_profiling/data_id/" {
 		t.Fatalf("ListKeysWithPrefix() prefix = %q", client.listPrefix)
@@ -77,15 +77,15 @@ func TestDecodeDataIDInfoRejectsInvalidConfig(t *testing.T) {
 		{
 			name: "mismatched DataID",
 			id:   1,
-			value: `{"bk_tenant_id":"system","bk_biz_id":2,"bk_data_id":2,` +
-				`"kafka_info":{"host":"kafka:9092","topic":"events"}}`,
+			value: `{"bk_tenant_id":"test-tenant","bk_biz_id":1,"bk_data_id":2,` +
+				`"kafka_info":{"host":"kafka.example.invalid:9092","topic":"test-topic"}}`,
 			want: "does not match",
 		},
 		{
 			name: "partial credentials",
 			id:   1,
-			value: `{"bk_tenant_id":"system","bk_biz_id":2,"bk_data_id":1,` +
-				`"kafka_info":{"host":"kafka:9092","username":"user","topic":"events"}}`,
+			value: `{"bk_tenant_id":"test-tenant","bk_biz_id":1,"bk_data_id":1,` +
+				`"kafka_info":{"host":"kafka.example.invalid:9092","username":"test-user","topic":"test-topic"}}`,
 			want: "both Kafka username and password",
 		},
 	}

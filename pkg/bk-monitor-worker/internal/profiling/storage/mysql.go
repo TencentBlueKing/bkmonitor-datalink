@@ -130,6 +130,14 @@ func upsertHosts(ctx context.Context, runner sqlExecer, hosts []models.ActivePro
 			process_pids=VALUES(process_pids), processes=VALUES(processes),
 			event_time=VALUES(event_time), unknown_at=VALUES(unknown_at), updated_at=VALUES(updated_at)`)
 		if _, err := runner.ExecContext(ctx, query.String(), args...); err != nil {
+			hostIDs := make([]int, len(chunk))
+			for index, host := range chunk {
+				hostIDs[index] = host.BkHostID
+			}
+			logger.Debugf(
+				"[profiling] MySQL host upsert failed execution_id=%d biz_id=%d scheduled_at=%d hosts=%d host_ids=%v err=%s",
+				chunk[0].ExecutionID, chunk[0].BkBizID, chunk[0].ScheduledAt, len(chunk), hostIDs, err,
+			)
 			return fmt.Errorf("upsert active profiling host batch execution_id=%d hosts=%d: %w", chunk[0].ExecutionID, len(chunk), err)
 		}
 	}

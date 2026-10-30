@@ -11,8 +11,6 @@ package storage
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -21,10 +19,42 @@ import (
 )
 
 func TestActiveProfilingFullFlow(t *testing.T) {
-	payload, err := os.ReadFile(filepath.Join("..", "testdata", "active_profiling_events.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	payload := []byte(`[
+		{
+			"event_name": "active_profiling_started",
+			"timestamp": 1700000000000,
+			"dimension": {
+				"bk_tenant_id": "tenant-test",
+				"bk_biz_id": 1,
+				"bk_host_id": 101,
+				"task_id": 1,
+				"schedule_type": "scheduled",
+				"scheduled_at": 1700000000000,
+				"status": "running"
+			},
+			"content": {
+				"started_at": 1700000000000,
+				"target_hosts": [{"bk_host_id": 101}, {"bk_host_id": 202}]
+			}
+		},
+		{
+			"event_name": "active_profiling_finished",
+			"timestamp": 1700000000500,
+			"dimension": {
+				"bk_tenant_id": "tenant-test",
+				"bk_biz_id": 1,
+				"bk_host_id": 101,
+				"task_id": 1,
+				"schedule_type": "scheduled",
+				"scheduled_at": 1700000000000,
+				"status": "succeed"
+			},
+			"content": {
+				"started_at": 1700000000000,
+				"finished_at": 1700000000500
+			}
+		}
+	]`)
 	events, err := core.DecodeMessage(payload)
 	if err != nil {
 		t.Fatalf("decode mock Events: %s", err)

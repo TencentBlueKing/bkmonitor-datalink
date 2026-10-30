@@ -417,6 +417,14 @@ func (rp *RedisProvider) reloadNamespace(kind, namespace string) error {
 	rp.reloadMu.Lock()
 	defer rp.reloadMu.Unlock()
 
+	// 收到 schema 通知后，即使读取或解码失败、旧查询继续使用原快照，
+	// 就绪检查仍需重新验证，不能沿用此前验证通过的版本。
+	if kind == KindResourceDefinition || kind == KindRelationDefinition {
+		rp.mu.Lock()
+		rp.ensuredVersion = ""
+		rp.mu.Unlock()
+	}
+
 	redisKey := RedisKeyPrefix + ":" + kind
 	normalizedNs := rp.normalizeNamespace(namespace)
 
@@ -456,7 +464,6 @@ func (rp *RedisProvider) reloadNamespace(kind, namespace string) error {
 			newMap[name] = &def
 		}
 		rp.mu.Lock()
-		rp.ensuredVersion = ""
 		rp.resourceDefinitions[normalizedNs] = newMap
 		rp.mu.Unlock()
 
@@ -471,7 +478,6 @@ func (rp *RedisProvider) reloadNamespace(kind, namespace string) error {
 			newMap[name] = &def
 		}
 		rp.mu.Lock()
-		rp.ensuredVersion = ""
 		rp.relationDefinitions[normalizedNs] = newMap
 		rp.mu.Unlock()
 	}

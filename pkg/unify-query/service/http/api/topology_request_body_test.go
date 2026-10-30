@@ -7,14 +7,83 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httptrace"
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta3"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
+
+func TestTopologyBodyReadBoundaries(t *testing.T) {
+	for _, limit := range []int{-1, 0, 6, 7, 8, math.MaxInt} {
+		data, err := readTopologyRequestBody(context.Background(), bytes.NewBufferString("payload"), httptest.NewRecorder(), limit)
+		require.Equal(t, "payload", string(data), "limit=%d", limit)
+		if limit == 6 {
+			var exceeded *v1beta3.ResultLimitError
+			require.ErrorAs(t, err, &exceeded)
+			require.Equal(t, "max_topology_request_bytes", exceeded.Reason)
+			require.Equal(t, 7, exceeded.Count)
+			require.Equal(t, limit, exceeded.Limit)
+		} else {
+			require.NoError(t, err, "limit=%d", limit)
+		}
+	}
+	reader := bytes.NewBufferString("payload continues")
+	data, err := readTopologyRequestBody(context.Background(), reader, httptest.NewRecorder(), 6)
+	require.Error(t, err)
+	require.Equal(t, "payload", string(data))
+	require.Equal(t, " continues", reader.String())
+
+	ctx, release, err := v1beta3.AcquireSharedTopology(context.Background())
+	require.NoError(t, err)
+	release()
+	reader = bytes.NewBufferString("unread")
+	data, err = readTopologyRequestBody(ctx, reader, httptest.NewRecorder(), 6)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, data)
+	require.Equal(t, "unread", reader.String())
+}
+
+func TestTopologyBodyReadUnsupportedCancellationControl(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+		require.NoError(t, provider.Shutdown(context.Background()))
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+	written := make(chan error, 1)
+	go func() {
+		_, err := writer.Write([]byte("a"))
+		cancel()
+		_ = writer.CloseWithError(io.ErrUnexpectedEOF)
+		written <- err
+	}()
+	data, err := readTopologyRequestBody(ctx, reader, httptest.NewRecorder(), 6)
+	require.NoError(t, <-written)
+	require.Equal(t, "a", string(data))
+	require.ErrorIs(t, err, context.Canceled)
+	require.Len(t, recorder.Ended(), 1)
+	attrs := make(map[string]any)
+	for _, attr := range recorder.Ended()[0].Attributes() {
+		attrs[string(attr.Key)] = attr.Value.AsInterface()
+	}
+	require.Equal(t, false, attrs["request-body-cancel-control-supported"])
+	require.Contains(t, attrs["request-body-cancel-control-error"], "not supported")
+}
 
 func TestTopologyBodyRead(t *testing.T) {
 	t.Run("normal_read_keeps_connection_reusable", func(t *testing.T) {

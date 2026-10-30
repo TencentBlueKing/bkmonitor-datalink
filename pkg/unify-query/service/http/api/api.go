@@ -105,7 +105,7 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 		sendWg.Add(1)
 		if submitErr := p.Submit(func() {
 			defer sendWg.Done()
-			queryCtx, querySpan := trace.NewSpan(ctx, "handler-api-relation-multi-resource-item")
+			queryCtx, querySpan := trace.NewSpan(metadata.WithQueryMetadata(ctx), "handler-api-relation-multi-resource-item")
 			var queryErr error
 			defer querySpan.End(&queryErr)
 			querySpan.Set("query-index", idx)
@@ -251,7 +251,7 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 		sendWg.Add(1)
 		if submitErr := p.Submit(func() {
 			defer sendWg.Done()
-			queryCtx, querySpan := trace.NewSpan(ctx, "handler-api-relation-multi-resource-range-item")
+			queryCtx, querySpan := trace.NewSpan(metadata.WithQueryMetadata(ctx), "handler-api-relation-multi-resource-range-item")
 			var queryErr error
 			defer querySpan.End(&queryErr)
 			querySpan.Set("query-index", idx)

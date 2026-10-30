@@ -1,0 +1,3 @@
+# Each dataId must have a matching key under
+# <pathPrefix>/active_profiling/data_id/<dataId> in BMW Consul.
+connections:

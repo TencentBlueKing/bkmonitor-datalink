@@ -8,6 +8,7 @@ package curl
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httptrace"
@@ -139,4 +140,25 @@ func TestCurlTraceRecordsRequestWriteError(t *testing.T) {
 	}
 	require.False(t, attributes["outbound.request.write_complete"].AsBool())
 	require.Equal(t, "write: broken pipe", attributes["outbound.request.write_error"].AsString())
+}
+
+func TestConnectionFingerprintUnavailableInputs(t *testing.T) {
+	require.Empty(t, connectionFingerprint(nil))
+	require.Empty(t, connectionFingerprint(&net.TCPConn{}))
+	udp, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.NoError(t, err)
+	defer udp.Close()
+	require.NotNil(t, udp.LocalAddr())
+	require.Nil(t, udp.RemoteAddr())
+	require.Empty(t, connectionFingerprint(udp))
+
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	ready := connectionFingerprintReady
+	connectionFingerprintReady = false
+	t.Cleanup(func() { connectionFingerprintReady = ready })
+	require.Empty(t, connectionFingerprint(left))
+	connectionFingerprintReady = true
+	require.NotEmpty(t, connectionFingerprint(left))
 }

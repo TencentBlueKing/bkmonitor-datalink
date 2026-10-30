@@ -276,7 +276,7 @@ func TestAlarmdClosePrecedesStateAndSkipsNotificationOnProjectionRetry(t *testin
 		t.Fatal(err)
 	}
 	projections := 0
-	closer := &AlertCloser{slots: make(chan struct{}, 4), run: processor.CloseAlert, projection: closeProjectionFunc(func(context.Context, string, string) error {
+	closer := &AlertCloser{run: processor.CloseAlert, projection: closeProjectionFunc(func(context.Context, string, string) error {
 		projections++
 		if projections == 1 {
 			return errors.New("ES unavailable")

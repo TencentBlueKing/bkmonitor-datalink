@@ -108,7 +108,7 @@ func TestAlertCloserCommandValidationAndErrors(t *testing.T) {
 		status int
 	}{{"missing", store.ErrNotFound, 404}, {"conflict", store.ErrVersionConflict, 409}, {"terminal", store.ErrInvalidTransition, 409}, {"unknown partial", errors.New("secret infrastructure detail"), 502}} {
 		t.Run(tc.name, func(t *testing.T) {
-			closer := &AlertCloser{slots: make(chan struct{}, 4), run: func(_ context.Context, received lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
+			closer := &AlertCloser{run: func(_ context.Context, received lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
 				if received != command {
 					t.Fatal("command changed")
 				}
@@ -126,52 +126,36 @@ func TestAlertCloserCommandValidationAndErrors(t *testing.T) {
 	}
 }
 
-func TestAlertCloserCapacityCancellationAndReuse(t *testing.T) {
-	entered := make(chan struct{}, 4)
-	closer := &AlertCloser{slots: make(chan struct{}, 4), run: func(ctx context.Context, _ lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
+func TestAlertCloserHasNoGlobalCapacityAndCancels(t *testing.T) {
+	entered := make(chan struct{}, 8)
+	closer := &AlertCloser{run: func(ctx context.Context, _ lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
 		entered <- struct{}{}
 		<-ctx.Done()
 		return lifecycle.CloseAlertResult{}, ctx.Err()
 	}}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	done := make(chan error, 4)
-	for range 4 {
+	done := make(chan error, 8)
+	for range 8 {
 		go func() { _, err := closer.CloseAlert(ctx, validCloseCommand()); done <- err }()
 	}
-	for range 4 {
+	for range 8 {
 		select {
 		case <-entered:
 		case <-time.After(time.Second):
-			t.Fatal("close did not start")
+			t.Fatal("another request was blocked by a global close limit")
 		}
 	}
-	_, err := closer.CloseAlert(context.Background(), validCloseCommand())
-	var capacity *CloseError
-	if !errors.As(err, &capacity) || capacity.Status != 429 {
-		t.Fatalf("capacity error = %v", err)
-	}
 	cancel()
-	for range 4 {
+	for range 8 {
 		select {
-		case <-done:
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatal(err)
+			}
 		case <-time.After(time.Second):
 			t.Fatal("close did not stop")
 		}
-	}
-	if len(closer.slots) != 0 {
-		t.Fatal("slots leaked")
-	}
-	_, err = closer.CloseAlert(ctx, validCloseCommand())
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled call = %v", err)
-	}
-	closer.run = func(_ context.Context, command lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
-		return lifecycle.CloseAlertResult{Alert: domain.Alert{Revision: 1, BKTenantID: command.BKTenantID, AlertID: command.AlertID, Status: domain.AlertStatusClosed}}, nil
-	}
-	result, err := closer.CloseAlert(context.Background(), validCloseCommand())
-	if err != nil || result.Alert.Status != domain.AlertStatusClosed {
-		t.Fatalf("reuse = %#v, %v", result, err)
 	}
 }
 
@@ -191,7 +175,7 @@ func TestAlertCloserSynchronizesBothEntrypointsAndRetries(t *testing.T) {
 			if logErr != nil {
 				t.Fatal(logErr)
 			}
-			closer := &AlertCloser{slots: make(chan struct{}, 4), logger: logger}
+			closer := &AlertCloser{logger: logger}
 			closer.run = func(ctx context.Context, c lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
 				if c != command {
 					t.Fatal("operation identity changed")
@@ -245,7 +229,7 @@ func TestAlertCloserSynchronizesBothEntrypointsAndRetries(t *testing.T) {
 
 func TestAlertCloserCancelsProjection(t *testing.T) {
 	entered := make(chan struct{})
-	closer := &AlertCloser{slots: make(chan struct{}, 4), run: func(_ context.Context, c lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
+	closer := &AlertCloser{run: func(_ context.Context, c lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
 		return lifecycle.CloseAlertResult{Alert: domain.Alert{BKTenantID: c.BKTenantID, AlertID: c.AlertID, Revision: 2}}, nil
 	}, projection: closeProjectionFunc(func(ctx context.Context, _, _ string) error {
 		close(entered)
@@ -270,8 +254,5 @@ func TestAlertCloserCancelsProjection(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("projection did not cancel")
-	}
-	if len(closer.slots) != 0 {
-		t.Fatal("close capacity leaked")
 	}
 }

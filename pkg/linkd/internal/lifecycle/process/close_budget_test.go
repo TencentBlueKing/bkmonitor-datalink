@@ -8,61 +8,9 @@ import (
 	"errors"
 	"sync"
 	"testing"
-	"time"
 
 	"linkd/internal/domain"
-	"linkd/internal/lifecycle"
-	"linkd/internal/store"
 )
-
-func TestCloseBatchStopsBeforeInsufficientNextWave(t *testing.T) {
-	closer, repo, _, commands, held := closeBatchFixture(t, 6)
-	closer.batchSize = 2
-	ctx, cancel := context.WithTimeout(t.Context(), 8200*time.Millisecond)
-	defer cancel()
-	original := closer.withProcessor
-	closer.withProcessor = func(ctx context.Context, a store.StoredAlert, run func(*lifecycle.Processor) error) error {
-		timer := time.NewTimer(4500 * time.Millisecond)
-		defer timer.Stop()
-		select {
-		case <-timer.C:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		return original(ctx, a, run)
-	}
-	results := closer.CloseAlerts(ctx, commands)
-	for i, result := range results {
-		if i < 4 {
-			if result.Err != nil {
-				t.Fatal(result.Err)
-			}
-		} else {
-			var e *CloseError
-			if !errors.As(result.Err, &e) || e.Code != "not_attempted" {
-				t.Fatal(result.Err)
-			}
-		}
-	}
-	if ctx.Err() != nil || repo.writes.Load() != 2 || held.Load() != 0 {
-		t.Fatal("started an unaffordable wave", ctx.Err(), repo.writes.Load(), held.Load())
-	}
-}
-
-func TestCloseBatchColdStartRequiresEstimatedBudget(t *testing.T) {
-	closer, repo, _, commands, held := closeBatchFixture(t, 2)
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-	defer cancel()
-	for _, result := range closer.CloseAlerts(ctx, commands) {
-		var e *CloseError
-		if !errors.As(result.Err, &e) || e.Code != "not_attempted" {
-			t.Fatal(result.Err)
-		}
-	}
-	if repo.reads.Load() != 0 || held.Load() != 0 {
-		t.Fatal("short budget started reads or leases")
-	}
-}
 
 type closeNotificationSink struct {
 	calls, count int

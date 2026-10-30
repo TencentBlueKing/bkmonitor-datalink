@@ -6,7 +6,6 @@ package lifecycleprocess
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
 	"linkd/internal/domain"
@@ -27,7 +26,7 @@ type closeBatchProjection interface {
 	ProjectBatchNow(context.Context, string, []string) []error
 }
 
-// CloseAlerts 使用独立预算显式执行关闭批次，整个 HTTP 请求受二十秒截止约束。
+// CloseAlerts 执行调用方已形成的一个关闭块，截止时间继承整个 HTTP 请求。
 // 存储和投影必须提供批量能力，不退回逐条 CloseAlert。结果按输入顺序返回。
 func (s *AlertCloser) CloseAlerts(ctx context.Context, commands []lifecycle.CloseAlertCommand) []lifecycle.CloseAlertOutcome {
 	results := make([]lifecycle.CloseAlertOutcome, len(commands))
@@ -40,7 +39,7 @@ func (s *AlertCloser) CloseAlerts(ctx context.Context, commands []lifecycle.Clos
 	if len(commands) == 0 {
 		return results
 	}
-	if ctx == nil || len(commands) > store.MaxCloseBatchSize {
+	if ctx == nil {
 		return fail(&CloseError{Status: 400, Code: "invalid_command", Message: "invalid close batch"})
 	}
 	for _, c := range commands {
@@ -59,61 +58,12 @@ func (s *AlertCloser) CloseAlerts(ctx context.Context, commands []lifecycle.Clos
 			return fail(&CloseError{Status: 503, Code: "unavailable", Message: "batch close projection is not configured"})
 		}
 	}
-	select {
-	case s.batchSlots <- struct{}{}:
-	default:
-		return fail(&CloseError{Status: 429, Code: "busy", Message: "close capacity exceeded"})
-	}
 	ctx, cancel := context.WithTimeout(s.resources.context(ctx), 20*time.Second)
 	defer cancel()
 	ctx = store.WithBatchPhaseObserver(ctx, s.metrics.ObserveClosePhase)
 	started := time.Now()
 	defer func() { store.ObserveBatchPhase(ctx, "batch.total", time.Since(started)) }()
-	// 冷启动按此前千条实测约七秒留整估计；后续采用本请求已完成批次的平均墙钟。
-	estimate, spent, completed := 8*time.Second, time.Duration(0), 0
-	finished := make(chan time.Duration, cap(s.batchSlots))
-	next, running := 0, 0
-	startBatch := func() {
-		start := next
-		end := min(start+max(1, s.batchSize), len(commands))
-		next, running = end, running+1
-		go func() {
-			at := time.Now()
-			copy(results[start:end], s.closeAlertsWave(ctx, commands[start:end]))
-			finished <- time.Since(at)
-		}()
-	}
-	// concurrency 约束控制面全部请求在途的内部批次。名额覆盖读写、租约释放、
-	// 投影和通知；完成后由调度方更新耗时估计并复用或释放，不再依赖调用方并发 HTTP。
-	if closeBatchFitsBudget(ctx, estimate) {
-		startBatch()
-	} else {
-		<-s.batchSlots
-	}
-	for running > 0 {
-	dispatch:
-		for next < len(commands) && closeBatchFitsBudget(ctx, estimate) {
-			select {
-			case s.batchSlots <- struct{}{}:
-				startBatch()
-			default:
-				break dispatch
-			}
-		}
-		spent += <-finished
-		running--
-		completed++
-		estimate = spent / time.Duration(completed)
-		if next < len(commands) && closeBatchFitsBudget(ctx, estimate) {
-			startBatch()
-		} else {
-			<-s.batchSlots
-		}
-	}
-	for i := next; i < len(commands); i++ {
-		results[i].Err = &CloseError{Status: 504, Code: "not_attempted", Message: "remaining request budget is below estimated batch duration; retry the same operation", cause: ctx.Err()}
-	}
-	return results
+	return s.closeAlertsWave(ctx, commands)
 }
 
 func (s *AlertCloser) closeAlertsWave(ctx context.Context, commands []lifecycle.CloseAlertCommand) []lifecycle.CloseAlertOutcome {
@@ -250,9 +200,8 @@ func (s *AlertCloser) closeBatch(ctx context.Context, commands []lifecycle.Close
 		at := time.Now()
 		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
-		var release sync.WaitGroup
 		for _, b := range held {
-			release.Go(func() {
+			func() {
 				errs := b.locker.ReleaseBatch(releaseCtx, b.leases)
 				for j, g := range b.groups {
 					if b.acquired[j] == nil && errs[j] != nil {
@@ -261,9 +210,8 @@ func (s *AlertCloser) closeBatch(ctx context.Context, commands []lifecycle.Close
 						}
 					}
 				}
-			})
+			}()
 		}
-		release.Wait()
 		store.ObserveBatchPhase(ctx, "batch.release", time.Since(at))
 	}()
 	ready := map[controlHookKey]*closeLeaseGroup{}
@@ -305,39 +253,24 @@ func (s *AlertCloser) closeBatch(ctx context.Context, commands []lifecycle.Close
 	}
 	store.ObserveBatchPhase(ctx, "batch.leases", time.Since(started))
 	ctx = context.WithValue(ctx, closeBatchLeasesHeldKey{}, true)
-	var batches sync.WaitGroup
-	slots := make(chan struct{}, max(1, s.concurrency))
 	for _, source := range ready {
-		slots <- struct{}{}
-		batches.Go(func() {
-			defer func() { <-slots }()
-			err := s.withProcessor(ctx, source.identity, func(p *lifecycle.Processor) error {
-				batch := make([]lifecycle.CloseAlertCommand, len(source.positions))
-				for j, i := range source.positions {
-					batch[j] = commands[i]
-				}
-				outcomes := p.CloseAlerts(ctx, batch, max(1, s.concurrency))
-				for j, i := range source.positions {
-					results[i] = outcomes[j]
-				}
-				return nil
-			})
-			if err != nil {
-				for _, i := range source.positions {
-					results[i].Err = errors.Join(results[i].Err, err)
-				}
+		err := s.withProcessor(ctx, source.identity, func(p *lifecycle.Processor) error {
+			batch := make([]lifecycle.CloseAlertCommand, len(source.positions))
+			for j, i := range source.positions {
+				batch[j] = commands[i]
 			}
+			// 并发只由 HTTP 请求的批次调度控制；块内不再叠加另一层成员或来源并发。
+			outcomes := p.CloseAlerts(ctx, batch, 1)
+			for j, i := range source.positions {
+				results[i] = outcomes[j]
+			}
+			return nil
 		})
+		if err != nil {
+			for _, i := range source.positions {
+				results[i].Err = errors.Join(results[i].Err, err)
+			}
+		}
 	}
-	batches.Wait()
 	return results
-}
-
-// closeBatchFitsBudget 在取锁和发送读写前检查预估预算；估计不承诺消除外部存储抖动。
-func closeBatchFitsBudget(ctx context.Context, estimate time.Duration) bool {
-	if ctx.Err() != nil {
-		return false
-	}
-	deadline, ok := ctx.Deadline()
-	return !ok || time.Until(deadline) > estimate
 }

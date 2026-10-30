@@ -59,16 +59,11 @@ type AlertProjectionSynchronizer interface {
 }
 
 // AlertCloser 为用户或系统关闭装配当前已发布来源的 Hook，复用正式 Lifecycle 的 CAS 和流水逻辑。
-// 单条入口最多四个并发请求；筛选关闭使用独立的全局内部批次预算。
 // 重试必须携带相同命令，终态部分成功不等同于未执行。
 type AlertCloser struct {
 	logger        *slog.Logger
 	metrics       *telemetry.Runtime
 	resources     *AlertProcessorResources
-	slots         chan struct{}
-	batchSlots    chan struct{}
-	batchSize     int
-	concurrency   int
 	sources       closeSourceReader
 	withProcessor func(context.Context, store.StoredAlert, func(*lifecycle.Processor) error) error
 	batchLocker   func(string) (closeBatchLocker, error)
@@ -82,11 +77,7 @@ func (s *AlertCloser) UseResources(resources *AlertProcessorResources) { s.resou
 
 // NewAlertCloser 创建控制面专用的有界关闭入口，不启动消费者或修改存储 schema。
 func NewAlertCloser(cfg config.Config, sources closeSourceReader, severity *runtimeconfig.Severity, logger *slog.Logger, metrics *telemetry.Runtime, projection AlertProjectionSynchronizer) *AlertCloser {
-	closer := &AlertCloser{slots: make(chan struct{}, 4), projection: projection, logger: logger, metrics: metrics, sources: sources}
-	closeConfig := cfg.CloseControlSettings()
-	closer.batchSlots = make(chan struct{}, closeConfig.Concurrency)
-	closer.batchSize = closeConfig.BatchSize
-	closer.concurrency = closeConfig.MemberConcurrency
+	closer := &AlertCloser{projection: projection, logger: logger, metrics: metrics, sources: sources}
 	closer.batchLocker = func(source string) (closeBatchLocker, error) {
 		lockConfig := cfg.Lifecycle.ForSource(cfg.Dispatch.WithDefaults().Deployment, source).SchedulerConfig()
 		lockConfig.LockTTL = max(lockConfig.LockTTL, 30*time.Second)
@@ -268,12 +259,6 @@ func (s *AlertCloser) CloseAlert(ctx context.Context, command lifecycle.CloseAle
 		return lifecycle.CloseAlertResult{}, ctx.Err()
 	default:
 	}
-	select {
-	case s.slots <- struct{}{}:
-		defer func() { <-s.slots }()
-	default:
-		return lifecycle.CloseAlertResult{}, &CloseError{Status: 429, Code: "busy", Message: "close capacity exceeded"}
-	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	ctx = store.WithBatchPhaseObserver(ctx, s.metrics.ObserveClosePhase)
@@ -331,12 +316,6 @@ func (s *AlertCloser) CloseKACAlert(ctx context.Context, command lifecycle.Close
 func (s *AlertCloser) GetAlert(ctx context.Context, tenantID, alertID string) (domain.Alert, error) {
 	if ctx == nil || domain.ValidateIdentityPart("bk_tenant_id", tenantID, 64) != nil || alertID == "" || len(alertID) > domain.EntityIDMaxBytes {
 		return domain.Alert{}, &CloseError{Status: 400, Code: "invalid_command", Message: "invalid alert identity"}
-	}
-	select {
-	case s.slots <- struct{}{}:
-		defer func() { <-s.slots }()
-	default:
-		return domain.Alert{}, &CloseError{Status: 429, Code: "busy", Message: "close capacity exceeded"}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

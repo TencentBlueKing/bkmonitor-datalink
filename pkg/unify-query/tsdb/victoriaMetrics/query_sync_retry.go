@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"syscall"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 const http2ClientConnCloseError = "http2: client connection force closed via ClientConn.Close"
@@ -21,6 +23,11 @@ var http2GoAwayNoError = regexp.MustCompile("http2: server sent GOAWAY and close
 // 但 HTTP 状态、业务错误、JSON 解析错误及响应上限错误不能重复请求。
 func vmQuerySyncRetryReason(err error) string {
 	if err == nil {
+		return ""
+	}
+	// HTTP 状态行也可能包含连接错误文本，已有响应时不能据此重试。
+	var statusErr *metadata.BackendStatusError
+	if errors.As(err, &statusErr) {
 		return ""
 	}
 	var netErr *net.OpError

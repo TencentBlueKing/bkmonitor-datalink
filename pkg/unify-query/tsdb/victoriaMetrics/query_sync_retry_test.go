@@ -56,7 +56,7 @@ func (c *vmRetryCurl) Request(_ context.Context, method string, opt curl.Options
 
 func TestVMQuerySyncRetry(t *testing.T) {
 	mock.Init()
-	http2Close := errors.New(http2ClientConnCloseError)
+	http2Close := errors.New("http2: client connection force closed via ClientConn.Close")
 	http2GoAway := errors.New(`http2: server sent GOAWAY and closed the connection; LastStreamID=1999, ErrCode=NO_ERROR, debug=""`)
 	writeBrokenPipe := curl.HandleClientError(
 		metadata.InitHashID(context.Background()), metadata.MsgHttpCurl, "http://example.invalid/query_sync/",

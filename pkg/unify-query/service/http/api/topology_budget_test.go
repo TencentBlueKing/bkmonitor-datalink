@@ -28,14 +28,10 @@ import (
 )
 
 func TestTopologyYoloBypassesHTTPBudgets(t *testing.T) {
+	useRelationTestConfig(t)
 	log.InitTestLogger()
 	const route = "/test-topology-yolo"
 	metadata.AddHandler(route, HandlerAPIRelationV1Beta3Topology)
-	oldYolo := viper.GetBool(v1beta3.YoloModeConfigPath)
-	t.Cleanup(func() {
-		viper.Set(v1beta3.YoloModeConfigPath, oldYolo)
-		v1beta3.LoadConfig()
-	})
 	for _, enabled := range []bool{false, true, false} {
 		viper.Set(v1beta3.YoloModeConfigPath, enabled)
 		v1beta3.LoadConfig()

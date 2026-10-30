@@ -25,6 +25,7 @@ import (
 )
 
 func TestRelationFailureResponseCompatibility(t *testing.T) {
+	useRelationTestConfig(t)
 	log.InitTestLogger()
 	metadata.InitMetadata()
 	previous := v1beta3.GetUnderlyingProvider(v1beta3.GetSchemaProvider())
@@ -34,11 +35,6 @@ func TestRelationFailureResponseCompatibility(t *testing.T) {
 	model, err := v1beta3.GetModel(context.Background())
 	require.NoError(t, err)
 	model.SetTimeGraphResolver(func(context.Context, string) (v1beta3.TimeGraphQuerier, error) { return model, nil })
-	previousYolo := viper.GetBool(v1beta3.YoloModeConfigPath)
-	t.Cleanup(func() {
-		viper.Set(v1beta3.YoloModeConfigPath, previousYolo)
-		v1beta3.LoadConfig()
-	})
 
 	// 使用生产静态 schema 和实际查询入口；这些错误均发生在存储访问前。
 	cases := []struct {

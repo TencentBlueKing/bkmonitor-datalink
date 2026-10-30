@@ -30,10 +30,12 @@ func timeGraphTestQueryReference(ctx context.Context, queryTs *structured.QueryT
 		if query == nil {
 			continue
 		}
+		metadata.GetQueryParams(ctx).SetStorageType(metadata.VictoriaMetricsStorageType)
 		reference[query.ReferenceName] = append(reference[query.ReferenceName], &metadata.QueryMetric{
 			ReferenceName: query.ReferenceName,
 			MetricName:    query.FieldName,
 			QueryList: metadata.QueryList{{
+				StorageType: metadata.VictoriaMetricsStorageType,
 				VmRt:        "timegraph_test",
 				VmCondition: metadata.VmCondition(fmt.Sprintf(`__name__=%q`, query.FieldName)),
 				StorageName: "timegraph_test",

@@ -206,10 +206,9 @@ func TestPathResourcesHTTPQualityIsolation(t *testing.T) {
 			promql.MockEngine()
 			ctx := metadata.InitHashID(context.Background())
 			influxdb.MockSpaceRouter(ctx)
-			oldYolo := viper.GetBool(v1beta3.YoloModeConfigPath)
+			useRelationTestConfig(t)
 			viper.Set(v1beta3.YoloModeConfigPath, yolo)
 			v1beta3.LoadConfig()
-			t.Cleanup(func() { viper.Set(v1beta3.YoloModeConfigPath, oldYolo); v1beta3.LoadConfig() })
 			model, err := v1beta3.GetModel(ctx)
 			require.NoError(t, err)
 			provider := v1beta3.NewStaticSchemaProvider()
@@ -326,10 +325,9 @@ func runTopologyConsumerExampleHTTP(t *testing.T, yolo bool) {
 	promql.MockEngine()
 	ctx := metadata.InitHashID(context.Background())
 	influxdb.MockSpaceRouter(ctx)
-	oldYolo := viper.GetBool(v1beta3.YoloModeConfigPath)
+	useRelationTestConfig(t)
 	viper.Set(v1beta3.YoloModeConfigPath, yolo)
 	v1beta3.LoadConfig()
-	t.Cleanup(func() { viper.Set(v1beta3.YoloModeConfigPath, oldYolo); v1beta3.LoadConfig() })
 	model, err := v1beta3.GetModel(ctx)
 	require.NoError(t, err)
 	model.SetSchemaProvider(v1beta3.NewStaticSchemaProvider())
@@ -443,10 +441,9 @@ func runTopologyConsumerExampleHTTP(t *testing.T, yolo bool) {
 // Keep request-level failures distinct from HTTP-200 per-item failures.
 func TestTopologyDocumentedFailures(t *testing.T) {
 	log.InitTestLogger()
-	oldYolo := viper.GetBool(v1beta3.YoloModeConfigPath)
+	useRelationTestConfig(t)
 	viper.Set(v1beta3.YoloModeConfigPath, false)
 	v1beta3.LoadConfig()
-	t.Cleanup(func() { viper.Set(v1beta3.YoloModeConfigPath, oldYolo); v1beta3.LoadConfig() })
 	type failureRecord struct {
 		Name       string          `json:"name"`
 		HTTPStatus int             `json:"http_status"`
@@ -457,7 +454,7 @@ func TestTopologyDocumentedFailures(t *testing.T) {
 		t.Helper()
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
-		c.Request = httptest.NewRequest(http.MethodPost, RelationV1Beta3TopologyRange, strings.NewReader(body)).WithContext(ctx)
+		c.Request = httptest.NewRequest(http.MethodPost, viper.GetString(RelationV1Beta3TopologyRangeConfigPath), strings.NewReader(body)).WithContext(ctx)
 		HandlerAPIRelationV1Beta3TopologyRange(c)
 		require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 		require.Contains(t, w.Body.String(), message)

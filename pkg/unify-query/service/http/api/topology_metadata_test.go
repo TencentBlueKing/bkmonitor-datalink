@@ -74,9 +74,8 @@ func (w *topologyMetadataWriter) Write(b []byte) (int, error) {
 }
 
 func TestTopologyBatchMetadataLifetime(t *testing.T) {
+	useRelationTestConfig(t)
 	log.InitTestLogger()
-	oldYolo := viper.GetBool(v1beta3.YoloModeConfigPath)
-	t.Cleanup(func() { viper.Set(v1beta3.YoloModeConfigPath, oldYolo); v1beta3.LoadConfig() })
 	model, err := v1beta3.GetModel(context.Background())
 	require.NoError(t, err)
 	model.SetSchemaProvider(topologyMetadataSchema{})

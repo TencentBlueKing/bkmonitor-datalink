@@ -537,15 +537,10 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	if err != nil {
 		return result, err
 	}
-	// Legacy VM queries allow caching for steps <= 60s. At 50 or more
-	// evaluation points VM rounds the start down to a step boundary while
-	// preserving the point count (promql.AdjustStartEnd). Build every edge on
-	// that same grid before requesting exact timestamps from the backend.
-	if stepDuration <= time.Minute && points >= 50 {
-		startMs -= startMs % stepMs
-		endMs = startMs + int64(points-1)*stepMs
-		startTime, endTime = time.UnixMilli(startMs), time.UnixMilli(endMs)
-	}
+	cacheStartMs := startMs - startMs%stepMs
+	cacheEndMs := cacheStartMs + int64(points-1)*stepMs
+	mayAdjustGrid := stepDuration <= time.Minute && points >= 50 &&
+		(cacheStartMs != startMs || cacheEndMs != endMs)
 	querier, err := m.getTimeGraphQuerier(ctx, spaceUID)
 	if err != nil {
 		return result, err
@@ -558,12 +553,27 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
 	result.candidatePathCount = len(candidatePaths)
 	results, lastSuccess, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) ([]cmdb.PathResourcesResult, error) {
-		return querier.QueryRelationTimeGraph(
-			ctx, lookBackDelta, spaceUID, startTime, endTime, stepDuration,
+		pathStart, pathEnd := startTime, endTime
+		if mayAdjustGrid {
+			useVM, routeErr := m.legacyRangeUsesVM(ctx, req, path, startTime, endTime, stepDuration, window)
+			if routeErr != nil {
+				return nil, routeErr
+			}
+			if useVM {
+				pathStart, pathEnd = time.UnixMilli(cacheStartMs), time.UnixMilli(cacheEndMs)
+			}
+		}
+		pathResults, queryErr := querier.QueryRelationTimeGraph(
+			ctx, lookBackDelta, spaceUID, pathStart, pathEnd, stepDuration,
 			cmdb.Resource(req.SourceType), []cmdb.Resource{cmdb.Resource(req.TargetType)},
 			resourcePathsToTimeGraphRelationPaths([]resourcePath{path}),
 			cmdb.Matcher(req.SourceInfo), cmdb.Matcher(req.SourceExpandInfo),
 		)
+		if queryErr == nil {
+			// 分桶必须使用本次成功候选的网格，不能沿用前一个候选。
+			startMs, endMs = pathStart.UnixMilli(), pathEnd.UnixMilli()
+		}
+		return pathResults, queryErr
 	})
 	if err != nil {
 		return result, err

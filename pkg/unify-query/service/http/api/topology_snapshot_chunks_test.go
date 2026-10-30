@@ -64,6 +64,17 @@ func TestRepeatedTopologySnapshotChunksMatchStandardJSON(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, len(want), size)
 			require.Equal(t, want, bytes.Join(parts, nil))
+			if !changing {
+				seen := make(map[*byte]bool)
+				reused := false
+				for _, part := range parts {
+					if len(part) >= topologyChunkMinBytes {
+						reused = reused || seen[&part[0]]
+						seen[&part[0]] = true
+					}
+				}
+				require.True(t, reused, "repeated frames must reuse owned encoded blocks")
+			}
 		})
 	}
 }

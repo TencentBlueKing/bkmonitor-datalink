@@ -26,6 +26,8 @@ func TestOneModelK8sReaderMapsModelIdentity(t *testing.T) {
 		{"pod", "cw-K8s_Pod", map[string]string{"namespace": "default", "pod_name": "web-1"}, map[string]string{"namespace": "default", "name": "web-1"}},
 		{"standalone pod", "cw-K8s_Pod", map[string]string{"namespace": "default", "workload_kind": "Pod", "workload_name": "standalone"}, map[string]string{"namespace": "default", "name": "standalone"}},
 		{"container", "cw-K8s_Container", map[string]string{"namespace": "default", "pod_name": "web-1", "container_name": "nginx"}, map[string]string{"namespace": "default", "pod_name": "web-1", "name": "nginx"}},
+		{"persistent volume", "cw-K8s_PersistentVolume", map[string]string{"persistentvolume": "data-pv", "namespace": "exporter", "pod_name": "collector"}, map[string]string{"name": "data-pv"}},
+		{"persistent volume claim", "cw-K8s_PersistentVolumeClaim", map[string]string{"namespace": "default", "persistentvolumeclaim": "data-pvc", "pod_name": "collector"}, map[string]string{"namespace": "default", "name": "data-pvc"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dims := domain.DimensionMap{"bcs_cluster_id": domain.NewStringScalar("cluster-1")}

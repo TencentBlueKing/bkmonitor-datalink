@@ -43,18 +43,21 @@ func (r *OneModelK8sReader) FindK8sInstance(ctx context.Context, tenantID, model
 
 func k8sInstanceFilters(modelCode string, dimensions domain.DimensionMap) ([]enrich.InstanceAttributeFilter, error) {
 	fields := map[string][]string{
-		"cw-K8s_Cluster":   {"cluster_id"},
-		"cw-K8s_Namespace": {"cluster_id", "namespace"},
-		"cw-K8s_Service":   {"cluster_id", "namespace", "name"},
-		"cw-K8s_Workload":  {"cluster_id", "namespace", "type", "name"},
-		"cw-K8s_Pod":       {"cluster_id", "namespace", "name"},
-		"cw-K8s_Container": {"cluster_id", "namespace", "pod_name", "name"},
-		"cw-K8s_Node":      {"cluster_id", "name"},
+		"cw-K8s_PersistentVolume":      {"cluster_id", "name"},
+		"cw-K8s_PersistentVolumeClaim": {"cluster_id", "namespace", "name"},
+		"cw-K8s_Cluster":               {"cluster_id"},
+		"cw-K8s_Namespace":             {"cluster_id", "namespace"},
+		"cw-K8s_Service":               {"cluster_id", "namespace", "name"},
+		"cw-K8s_Workload":              {"cluster_id", "namespace", "type", "name"},
+		"cw-K8s_Pod":                   {"cluster_id", "namespace", "name"},
+		"cw-K8s_Container":             {"cluster_id", "namespace", "pod_name", "name"},
+		"cw-K8s_Node":                  {"cluster_id", "name"},
 	}[modelCode]
 	if fields == nil {
 		return nil, fmt.Errorf("unsupported k8s model code %q", modelCode)
 	}
 	nameDimension := map[string]string{
+		"cw-K8s_PersistentVolume": "persistentvolume", "cw-K8s_PersistentVolumeClaim": "persistentvolumeclaim",
 		"cw-K8s_Service": "service", "cw-K8s_Workload": "workload_name",
 		"cw-K8s_Pod": "pod_name", "cw-K8s_Container": "container_name", "cw-K8s_Node": "node",
 	}[modelCode]

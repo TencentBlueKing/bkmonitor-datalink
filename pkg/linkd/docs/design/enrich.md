@@ -753,7 +753,9 @@ K8s 已完成 OneModel Reader 主流程接入，复用统一实例索引 `kingey
 - K8s Reader 返回真实实例后，投影 `model_id`、`model_inst_id`、`cluster_name`、`bk_biz_id`、`bk_biz_name` 和确定的 `cw_labels`；
 - 业务选择对齐旧 KAC：Namespace `bk_biz_id` 优先，Cluster `bk_biz_id` 回退，随后使用 `bk_biz_ids` 第一个值，最后回退 Kafka `labels.bk_biz_id`；
 - `OneModelK8sReader` 通过 `onemodel.Client` 按租户、对象模型和类型化属性过滤；
-- Cluster、Namespace、Service、Workload、Pod、Container、Node 的身份维度映射；
+- Cluster、Namespace、Service、Workload、Pod、Container、Node、PV、PVC 的身份维度映射；PV 使用 `bcs_cluster_id + persistentvolume`，PVC 使用 `bcs_cluster_id + namespace + persistentvolumeclaim` 查询 OneModel，名称维度映射到实例属性 `name`；
+- PV/PVC 模型未知时按对应资源维度推断，优先于指标携带的采集 Pod / Workload 维度；已明确的模型仍优先，不被其他维度改写；
+- PV 属于集群，指标附带的采集器 `namespace` 不参与业务和命名空间标签计算；原始 Event 维度保留不变。PVC 仍使用自身 Namespace 上下文；
 - Workload `workload_kind=Pod` 改查 `cw-K8s_Pod` 的旧 KAC 特殊规则；
 - Reader 响应租户、模型、实例和 `entity_uid` 复核；
 - `EnrichContext.K8s` 输出；
@@ -766,7 +768,6 @@ K8s 已完成 OneModel Reader 主流程接入，复用统一实例索引 `kingey
 - 真实 Kafka Event → Lifecycle → K8s Processor 回放；
 - 真实 Kafka Event 回放；
 - 更完整的名称/`cw_labels` 对照和真实 Kafka 回放；
-- PV/PVC 是否进入当前 Linkd K8s 输出范围；
 - 完整 K8s JSON fixture；
 - 双租户和真实失败响应。
 
@@ -1012,7 +1013,7 @@ Cloud/VMWARE 主链已完成第一轮收敛：CloudResource MySQL Reader 已接�
 
 ### P5：K8s
 
-K8s OneModel Reader 已接入主流程，并已用本机 ES system 租户真实数据核验 `kingeye_all_instance` 的模型和实例身份；业务优先级、业务名称和 `cw_labels` 已按旧 KAC 规则接入。后续补充真实 Kafka Event 回放、PV/PVC 范围确认和完整 fixture。
+K8s OneModel Reader 已接入主流程，包含 PV/PVC 的自然维度定位；已用本机 ES system 租户真实数据核验 `kingeye_all_instance` 的模型和实例身份；业务优先级、业务名称和 `cw_labels` 已按旧 KAC 规则接入。后续补充真实 Kafka Event 回放和完整 fixture。
 
 ### P6：APM
 

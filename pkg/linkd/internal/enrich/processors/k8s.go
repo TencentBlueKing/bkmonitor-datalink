@@ -27,18 +27,21 @@ type K8sIdentityReader interface {
 }
 
 var k8sModelCodes = map[string]string{
+	"persistentvolume": "cw-K8s_PersistentVolume", "persistentvolumeclaim": "cw-K8s_PersistentVolumeClaim",
 	rules.FieldBCSClusterID: "cw-K8s_Cluster", rules.FieldNamespace: "cw-K8s_Namespace",
 	rules.FieldContainerName: "cw-K8s_Container", rules.FieldPodName: "cw-K8s_Pod", rules.FieldWorkloadName: "cw-K8s_Workload", rules.FieldService: "cw-K8s_Service", "node": "cw-K8s_Node",
 }
 
 var k8sIdentityFields = map[string][]string{
-	"cw-K8s_Cluster":   {rules.FieldBCSClusterID},
-	"cw-K8s_Namespace": {rules.FieldBCSClusterID, rules.FieldNamespace},
-	"cw-K8s_Service":   {rules.FieldBCSClusterID, rules.FieldNamespace, rules.FieldService},
-	"cw-K8s_Workload":  {rules.FieldBCSClusterID, rules.FieldNamespace, rules.FieldWorkloadKind, rules.FieldWorkloadName},
-	"cw-K8s_Pod":       {rules.FieldBCSClusterID, rules.FieldNamespace, rules.FieldPodName},
-	"cw-K8s_Container": {rules.FieldBCSClusterID, rules.FieldNamespace, rules.FieldPodName, rules.FieldContainerName},
-	"cw-K8s_Node":      {rules.FieldBCSClusterID, "node"},
+	"cw-K8s_PersistentVolume":      {rules.FieldBCSClusterID, "persistentvolume"},
+	"cw-K8s_PersistentVolumeClaim": {rules.FieldBCSClusterID, rules.FieldNamespace, "persistentvolumeclaim"},
+	"cw-K8s_Cluster":               {rules.FieldBCSClusterID},
+	"cw-K8s_Namespace":             {rules.FieldBCSClusterID, rules.FieldNamespace},
+	"cw-K8s_Service":               {rules.FieldBCSClusterID, rules.FieldNamespace, rules.FieldService},
+	"cw-K8s_Workload":              {rules.FieldBCSClusterID, rules.FieldNamespace, rules.FieldWorkloadKind, rules.FieldWorkloadName},
+	"cw-K8s_Pod":                   {rules.FieldBCSClusterID, rules.FieldNamespace, rules.FieldPodName},
+	"cw-K8s_Container":             {rules.FieldBCSClusterID, rules.FieldNamespace, rules.FieldPodName, rules.FieldContainerName},
+	"cw-K8s_Node":                  {rules.FieldBCSClusterID, "node"},
 }
 
 type K8s struct{}
@@ -86,6 +89,10 @@ func (K8s) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	}
 	if _, known := k8sIdentityFields[modelCode]; !known {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusSkipped}, nil
+	}
+	if modelCode == "cw-K8s_PersistentVolume" {
+		// PV 属于集群；指标中的 namespace 可能来自采集 Pod，不能用作资源归属或标签。
+		values.Namespace = ""
 	}
 	if missing := k8sMissingIdentityFields(modelCode, alert.Dimensions); len(missing) != 0 {
 		return k8sValuesDiagnostic(scope, values, domain.EnrichStatusFailed, enrich.Diagnostic{Code: enrich.DiagnosticCodeMissingField, Fields: missing})
@@ -252,6 +259,12 @@ func k8sModelCodeForScope(scope *enrich.Scope) (string, []enrich.Diagnostic, err
 }
 
 func k8sModelCode(dimensions domain.DimensionMap) string {
+	// PV/PVC 指标可能携带采集 Pod 的维度，资源身份优先于采集器身份。
+	for _, field := range []string{"persistentvolumeclaim", "persistentvolume"} {
+		if dimensionText(dimensions, field) != "" {
+			return k8sModelCodes[field]
+		}
+	}
 	if dimensionText(dimensions, rules.FieldWorkloadName) != "" && dimensionText(dimensions, rules.FieldWorkloadKind) == "Pod" {
 		return "cw-K8s_Pod"
 	}
@@ -317,6 +330,9 @@ func resolveK8sBusiness(ctx context.Context, scope *enrich.Scope, modelCode stri
 	candidates := make([]enrich.Instance, 0, 3)
 	invalidModels := []string{}
 	for _, contextModel := range []string{"cw-K8s_Namespace", "cw-K8s_Cluster"} {
+		if modelCode == "cw-K8s_PersistentVolume" && contextModel == "cw-K8s_Namespace" {
+			continue
+		}
 		if contextModel == modelCode {
 			if instance.InstanceID != "" {
 				candidates = append(candidates, instance)

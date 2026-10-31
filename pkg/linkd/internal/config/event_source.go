@@ -160,6 +160,7 @@ func (c EnrichConfig) SelectResources(configured ResourcesConfig) (ResourcesConf
 				selected.KingeyeDisplay = configured.KingeyeDisplay
 			}
 		case "cmdb-access":
+			selected.OneModel = configured.OneModel
 			selected.DynamicGroup = configured.DynamicGroup
 		case "test":
 			// 测试处理器只生成固定字段和等待，不需要外部连接。

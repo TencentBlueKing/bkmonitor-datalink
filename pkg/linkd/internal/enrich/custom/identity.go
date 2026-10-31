@@ -183,27 +183,30 @@ func (r *run) bindInstance(ctx context.Context, rule Rule, lookup map[string]any
 	}
 	// 身份定位成功独立于后续展示字段是否成功。
 	r.fieldSucceeded = true
-	if len(rule.Assignments) == 0 {
-		return nil
-	}
-	return r.fillTopology(ctx, rule, lookup, result)
+	return r.fillTopology(ctx, rule, lookup, result, len(rule.Assignments) > 0)
 }
 
-func (r *run) fillTopology(ctx context.Context, rule Rule, lookup map[string]any, result *RuntimeResult) error {
+func (r *run) fillTopology(ctx context.Context, rule Rule, lookup map[string]any, result *RuntimeResult, includeHostTopology bool) error {
 	i := rule.Identity
 	id := lookup["model_inst_id"]
 	attributes, _ := lookup["attributes"].(map[string]any)
 	// 旧内置拓扑在属性赋值前只补空字段；属性规则仍可以显式覆盖。
 	values := map[string]any{}
-	for _, name := range []string{"bk_biz_id", "bk_biz_name"} {
-		if !identityProvided(i.read(r.current, name)) && identityProvided(attributes[name]) {
-			values[name] = attributes[name]
+	instanceBizID := attributes["bk_biz_id"]
+	if !identityProvided(instanceBizID) {
+		if ids, ok := lookup["bk_biz_ids"].([]any); ok && len(ids) == 1 {
+			instanceBizID = ids[0]
 		}
 	}
-	if !identityProvided(i.read(r.current, "bk_biz_id")) && values["bk_biz_id"] == nil {
-		if ids, ok := lookup["bk_biz_ids"].([]any); ok && len(ids) == 1 {
-			values["bk_biz_id"] = ids[0]
-		}
+	currentBizID := i.read(r.current, "bk_biz_id")
+	if !identityProvided(currentBizID) && identityProvided(instanceBizID) {
+		values["bk_biz_id"] = instanceBizID
+		currentBizID = instanceBizID
+	}
+	// 实例冗余名称只能与其归属 ID 配对，不能补到来源明确指定的另一业务。
+	if !identityProvided(i.read(r.current, "bk_biz_name")) && identityProvided(attributes["bk_biz_name"]) &&
+		identityProvided(instanceBizID) && fmt.Sprint(currentBizID) == fmt.Sprint(instanceBizID) {
+		values["bk_biz_name"] = attributes["bk_biz_name"]
 	}
 	patches, err := i.patches(values)
 	if err != nil {
@@ -213,7 +216,7 @@ func (r *run) fillTopology(ctx context.Context, rule Rule, lookup map[string]any
 		return err
 	}
 	values = map[string]any{}
-	if i.BKObjID == "host" {
+	if i.BKObjID == "host" && includeHostTopology {
 		reader, ok := r.sources.Instances.(interface {
 			FindCMDBTopology(context.Context, string, string) (onemodel.ResourceTopology, bool, error)
 		})
@@ -229,6 +232,9 @@ func (r *run) fillTopology(ctx context.Context, rule Rule, lookup map[string]any
 		}
 		if found {
 			for name, value := range map[string]any{"bk_biz_id": top.BKBizID, "bk_biz_name": top.BKBizName, "bk_set_id": top.BKSetIDs, "bk_set_name": top.BKSetNames, "bk_module_id": top.BKModuleIDs, "bk_module_name": top.BKModuleNames} {
+				if current := i.read(r.current, "bk_biz_id"); name == "bk_biz_name" && identityProvided(current) && fmt.Sprint(current) != fmt.Sprint(top.BKBizID) {
+					continue
+				}
 				if !identityProvided(i.read(r.current, name)) && identityProvided(value) {
 					values[name] = value
 				}
@@ -317,7 +323,7 @@ func (r *run) fallbackTopology(ctx context.Context, rules []Rule, result *Runtim
 		if len(items) == 0 {
 			return nil
 		}
-		return r.fillTopology(ctx, rule, items[0].Document(), result)
+		return r.fillTopology(ctx, rule, items[0].Document(), result, true)
 	}
 	return nil
 }

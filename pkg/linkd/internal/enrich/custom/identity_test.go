@@ -163,6 +163,29 @@ func TestCMDBTopologyFailureStillAssignsAndPreservesIdentity(t *testing.T) {
 	}
 }
 
+func TestCMDBTopologyDoesNotNameAnotherBusiness(t *testing.T) {
+	var config map[string]any
+	_ = json.Unmarshal([]byte(`{"rules":[`+identityRule+`]}`), &config)
+	config["rules"].([]any)[0].(map[string]any)["assignments"] = []any{map[string]any{"target": "$.extra_data.owner", "value": map[string]any{"jsonpath": "$.lookup.attributes.owner"}}}
+	p, err := Compile("cmdb", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := map[string]any{"extra_data": map[string]any{"bk_obj_id": "host", "bk_inst_id": "101", "bk_biz_id": "3"}}
+	result, err := p.Execute(t.Context(), input, input, "t", Sources{Instances: &identityReader{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	effective, err := domain.ApplyEnrichPatches(input, result.Patches)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := effective["extra_data"].(map[string]any)
+	if values["bk_biz_id"] != "3" || values["bk_biz_name"] != nil || values["owner"] != "alice" {
+		t.Fatalf("topology borrowed another business name: %v", values)
+	}
+}
+
 func TestCMDBIdentityConcurrentAndCancellation(t *testing.T) {
 	p := compileTest(t, "cmdb", `{"rules":[`+identityRule+`]}`)
 	input := map[string]any{"extra_data": map[string]any{"bk_obj_id": "host", "bk_inst_id": "101"}}

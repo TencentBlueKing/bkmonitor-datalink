@@ -52,7 +52,7 @@ type StrategyInstance struct {
 
 // ResourceValues 定义 resource Processor 的完整输出字段。
 type ResourceValues struct {
-	// BKHostID 是按同租户主机地址确认的主机 ID，独立于告警对象的实例身份。
+	// BKHostID 对主机告警取已确认的被采实例 ID；其他对象按同租户主机地址补充。
 	BKHostID any `json:"bk_host_id,omitempty"`
 	// BKHostName 只使用主机属性 bk_host_name，不以展示名或 IP 代替。
 	BKHostName      string   `json:"bk_host_name,omitempty"`

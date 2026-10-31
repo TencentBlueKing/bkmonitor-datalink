@@ -209,6 +209,10 @@ func dataResourceDisplay(ctx context.Context, scope *enrich.Scope, strategy mode
 		branch := rules.BaseTargetSystemMetric
 		if rules.ScalarProvided(event.Dimensions[rules.FieldNoDataDimension]) {
 			branch = rules.BaseTargetNoData
+		} else if _, hasModel := event.Dimensions[rules.FieldModelID]; hasModel {
+			branch = rules.BaseTargetMonitorSource
+		} else if _, hasInstance := event.Dimensions[rules.FieldModelInstID]; hasInstance {
+			branch = rules.BaseTargetMonitorSource
 		}
 		result, err := basetarget.Enrich(ctx, scope, rules.Classification{Main: rules.MainData, BaseTarget: branch}, strategy, event.Dimensions, bizID, event.SubjectName)
 		if err != nil {

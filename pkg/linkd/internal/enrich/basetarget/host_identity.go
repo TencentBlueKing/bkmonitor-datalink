@@ -30,9 +30,6 @@ func nativeHostQuery(dimensions domain.DimensionMap, event domain.Event) (enrich
 		if !valid {
 			return enrich.InstanceQuery{}, invalidField(field), inputInvalid
 		}
-		if hostSubjectConflict(event, id) {
-			return enrich.InstanceQuery{}, []enrich.Diagnostic{{Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"subject_id", "dimensions." + field}}}, inputInvalid
-		}
 		return enrich.InstanceQuery{ModelCode: rules.HostModelCode, InstanceID: id}, nil, inputValid
 	}
 	if event.SubjectSystem == "cmdb" && event.SubjectType == "host" && event.SubjectID != "" {
@@ -89,9 +86,4 @@ func dimensionAlias(dimensions domain.DimensionMap, primary, alias string) (doma
 	}
 	value, exists = dimensions[alias]
 	return value, exists
-}
-
-func hostSubjectConflict(event domain.Event, instanceID string) bool {
-	return instanceID != "" && event.SubjectSystem == "cmdb" && event.SubjectType == "host" &&
-		event.SubjectID != "" && event.SubjectID != instanceID
 }

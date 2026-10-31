@@ -316,7 +316,13 @@ cw_labels
 `model_id` 和 `model_inst_id` 读取当前 Kingeye 写入端的 Redis 投影，将整数 ID 转为十进制字符串；
 未配置或未命中时为空数组。旧迁移设计曾记录 `[]int64`，目前以已实现的输出类型为准。
 
-Resource 对同时含主机 IP 和云区域的 Event 独立补充 `bk_host_id`、`bk_host_name`，接受
+主机告警显式提供 `model_id` 或 `model_inst_id` 时，Resource 和 Display 必须校验并按完整的
+`model_id + model_inst_id` 定位被采实例；身份不完整、非法或查询失败时保留诊断，不回退采集主机。
+远程采集的 `subject_id`、原生主机字段和输入 IP 可能属于执行主机，不要求它们与被采实例一致。
+主机告警的 `bk_host_id`、`bk_host_name` 也从该已确认实例补充，名称展示使用该实例，原始 Event 不变。
+
+未提供上述规范身份的主机告警，以及其他对象，对同时含主机 IP 和云区域的 Event 独立补充
+`bk_host_id`、`bk_host_name`，接受
 `bk_target_ip` / `bk_target_cloud_id` 与 `ip` / `bk_cloud_id`，云区域 `0` 有效。查询必须命中
 同租户唯一 `cw-Host`；主机名只取真实 `bk_host_name` 属性。主机未命中、响应无效、别名或
 显式身份冲突以及主机名缺失均保留诊断，已有资源结果降为 `partial`，不以展示名代替主机名。

@@ -25,21 +25,35 @@ import (
 func resourceHostContext(ctx context.Context, scope *enrich.Scope, values *models.ResourceValues) ([]enrich.Diagnostic, error) {
 	event := scope.Facts()
 	dimensions := event.Dimensions
-	_, targetIP := dimensions[rules.FieldBKTargetIP]
-	_, ip := dimensions[rules.FieldIP]
-	_, targetCloud := dimensions[rules.FieldBKTargetCloudID]
-	_, cloud := dimensions[rules.FieldBKCloudID]
-	if !targetIP && !ip || !targetCloud && !cloud {
-		return nil, nil
-	}
+	var query enrich.InstanceQuery
+	canonicalHost := false
 	if values.ModelID == rules.HostModelCode {
-		if _, provided, valid := dataInstanceIdentity(dimensions, rules.HostModelCode); provided && !valid {
-			return []enrich.Diagnostic{{Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"dimensions.model_id", "dimensions.model_inst_id"}}}, nil
+		_, hasModel := dimensions[rules.FieldModelID]
+		_, hasInstance := dimensions[rules.FieldModelInstID]
+		if hasModel || hasInstance {
+			if values.ModelInstID == "" {
+				// 主资源已保留身份或依赖错误；不能再按地址绑定采集主机。
+				return nil, nil
+			}
+			// 主机告警的主机信息属于被采实例，远程执行主机的地址和
+			// Subject 不能覆盖该身份；查询复用主资源已确认的实例。
+			canonicalHost = true
+			query = enrich.InstanceQuery{ModelCode: rules.HostModelCode, InstanceID: values.ModelInstID}
 		}
 	}
-	query, diagnostics := basetarget.HostAddressQuery(dimensions)
-	if len(diagnostics) != 0 {
-		return diagnostics, nil
+	if !canonicalHost {
+		_, targetIP := dimensions[rules.FieldBKTargetIP]
+		_, ip := dimensions[rules.FieldIP]
+		_, targetCloud := dimensions[rules.FieldBKTargetCloudID]
+		_, cloud := dimensions[rules.FieldBKCloudID]
+		if !targetIP && !ip || !targetCloud && !cloud {
+			return nil, nil
+		}
+		var diagnostics []enrich.Diagnostic
+		query, diagnostics = basetarget.HostAddressQuery(dimensions)
+		if len(diagnostics) != 0 {
+			return diagnostics, nil
+		}
 	}
 	host, found, err := scope.Instance(ctx, query)
 	if ctx.Err() != nil {
@@ -48,7 +62,7 @@ func resourceHostContext(ctx context.Context, scope *enrich.Scope, values *model
 	invalid := func() ([]enrich.Diagnostic, error) {
 		return []enrich.Diagnostic{{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel, Fields: []string{"bk_host_id", "bk_host_name"}}}, nil
 	}
-	if err != nil || !found || host.TenantID != event.BKTenantID || host.ModelCode != rules.HostModelCode {
+	if err != nil || !found || host.TenantID != event.BKTenantID || host.ModelCode != rules.HostModelCode || canonicalHost && host.InstanceID != query.InstanceID {
 		return invalid()
 	}
 	id, parseErr := strconv.ParseInt(host.InstanceID, 10, 64)
@@ -59,19 +73,18 @@ func resourceHostContext(ctx context.Context, scope *enrich.Scope, values *model
 	if raw, exists := fields[rules.FieldBKHostID]; exists && rules.FirstStringFieldValue(map[string]any{rules.FieldBKHostID: raw}, rules.FieldBKHostID) != host.InstanceID {
 		return invalid()
 	}
-	// 地址不能覆盖已确认的主机主键或来源显式主机身份；bk_inst_id 在
-	// MySQL 等模型中属于原对象，不能拿来与主机 ID 比较。
+	// 地址补充不能覆盖已确认的主机主键。显式 model_id/model_inst_id
+	// 存在时，原生字段可属于远程执行主机，不再要求它们与被采实例一致。
 	conflicts := []string{}
 	if values.ModelID == rules.HostModelCode && values.ModelInstID != "" && values.ModelInstID != host.InstanceID {
 		conflicts = append(conflicts, "model_inst_id")
 	}
-	for _, field := range []string{rules.FieldBKHostID, rules.FieldBKTargetHostID} {
-		if value, exists := dimensions[field]; exists && rules.ScalarIdentity(value) != host.InstanceID {
-			conflicts = append(conflicts, "dimensions."+field)
+	if !canonicalHost {
+		for _, field := range []string{rules.FieldBKHostID, rules.FieldBKTargetHostID} {
+			if value, exists := dimensions[field]; exists && rules.ScalarIdentity(value) != host.InstanceID {
+				conflicts = append(conflicts, "dimensions."+field)
+			}
 		}
-	}
-	if event.SubjectSystem == "cmdb" && event.SubjectType == "host" && event.SubjectID != "" && event.SubjectID != host.InstanceID {
-		conflicts = append(conflicts, "subject_id")
 	}
 	if len(conflicts) != 0 {
 		return []enrich.Diagnostic{{Code: enrich.DiagnosticCodeInvalidField, Fields: conflicts}}, nil

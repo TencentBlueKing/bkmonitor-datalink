@@ -187,7 +187,7 @@ func TestResourceHostCanonicalIdentity(t *testing.T) {
 		wantStatus                                 domain.EnrichStatus
 	}{
 		{name: "matching canonical host", canonicalID: "101", wantBinding: "101", wantHostID: "101", wantStatus: domain.EnrichStatusSucceeded},
-		{name: "address cannot replace canonical host", canonicalID: "102", wantBinding: "102", wantStatus: domain.EnrichStatusPartial},
+		{name: "address cannot replace canonical host", canonicalID: "102", wantBinding: "102", wantHostID: "102", wantStatus: domain.EnrichStatusSucceeded},
 		{name: "invalid canonical identity cannot fall back", invalid: true, wantStatus: domain.EnrichStatusPartial},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

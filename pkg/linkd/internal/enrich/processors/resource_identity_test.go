@@ -64,7 +64,7 @@ func TestCanonicalResourceIdentityPrecedesCollectTask(t *testing.T) {
 	}
 }
 
-func TestCanonicalHostIdentityChecksConflicts(t *testing.T) {
+func TestCanonicalHostIdentityPrecedesCollector(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name         string
@@ -73,8 +73,8 @@ func TestCanonicalHostIdentityChecksConflicts(t *testing.T) {
 		wantInstance string
 	}{
 		{name: "matching host", hostID: "101", subjectID: "101", wantInstance: "101"},
-		{name: "native host conflict", hostID: "999", subjectID: "101"},
-		{name: "subject conflict", hostID: "101", subjectID: "999"},
+		{name: "native host differs", hostID: "999", subjectID: "101", wantInstance: "101"},
+		{name: "subject differs", hostID: "101", subjectID: "999", wantInstance: "101"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			event := processorBaseTargetAlert(t, domain.DimensionMap{

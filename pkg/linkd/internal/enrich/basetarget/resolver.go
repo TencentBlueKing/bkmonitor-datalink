@@ -118,43 +118,19 @@ func resolve(
 	}
 
 	var err error
-	result.query, result.queryDiagnostics, result.inputState, err = branchQuery(branch, result.modelCode, dimensions, fallbackBizID)
-	if err != nil {
-		return resolution{}, err
-	}
 	_, hasModel := dimensions[rules.FieldModelID]
 	_, hasInstance := dimensions[rules.FieldModelInstID]
-	if result.modelCode == rules.HostModelCode && (branch == rules.BaseTargetNoData ||
-		branch == rules.BaseTargetMonitorSource && (hasModel || hasInstance)) {
-		// 显式提供的规范身份不完整或非法时不得换用其他身份掩盖错误。
-		if !hasModel && !hasInstance {
-			result.query, result.queryDiagnostics, result.inputState = nativeHostQuery(dimensions, scope.Facts())
-		}
-		if (hasModel || hasInstance) && result.inputState == inputValid {
-			for _, field := range []string{rules.FieldBKTargetHostID, rules.FieldBKHostID} {
-				value, provided := dimensions[field]
-				if !provided || !rules.ScalarProvided(value) {
-					continue
-				}
-				identity, valid := positiveIntegerIdentity(value)
-				if !valid || identity != result.query.InstanceID {
-					result.inputState = inputInvalid
-					result.queryDiagnostics = invalidField(field)
-				}
-				break
-			}
-		}
-		if result.inputState == inputValid && hostSubjectConflict(scope.Facts(), result.query.InstanceID) {
-			result.inputState = inputInvalid
-			result.queryDiagnostics = []enrich.Diagnostic{{Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"subject_id", "dimensions.model_inst_id"}}}
-		}
-	}
-	if branch == rules.BaseTargetSystemMetric && result.modelCode == rules.HostModelCode {
+	if result.modelCode == rules.HostModelCode && (hasModel || hasInstance) {
+		// 远程采集的 Subject 和原生主机字段可能指向执行主机；被采实例
+		// 只按显式 model_id/model_inst_id 定位，身份缺失或非法时不得回退。
+		result.query, result.queryDiagnostics, result.inputState, err = modelInstanceQuery(result.modelCode, dimensions, fallbackBizID)
+	} else if result.modelCode == rules.HostModelCode && (branch == rules.BaseTargetNoData || branch == rules.BaseTargetSystemMetric) {
 		result.query, result.queryDiagnostics, result.inputState = nativeHostQuery(dimensions, scope.Facts())
-		if result.inputState == inputValid && hostSubjectConflict(scope.Facts(), result.query.InstanceID) {
-			result.inputState = inputInvalid
-			result.queryDiagnostics = []enrich.Diagnostic{{Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"subject_id"}}}
-		}
+	} else {
+		result.query, result.queryDiagnostics, result.inputState, err = branchQuery(branch, result.modelCode, dimensions, fallbackBizID)
+	}
+	if err != nil {
+		return resolution{}, err
 	}
 	if result.inputState == inputValid && result.query.ModelCode != "" {
 		result.modelCode = result.query.ModelCode

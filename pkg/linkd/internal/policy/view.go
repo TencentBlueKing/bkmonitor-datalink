@@ -92,7 +92,7 @@ func EventView(event domain.Event, severity string, mappings map[string]FieldMap
 		return nil, err
 	}
 	document := state.Document()
-	return newFactView(event.BKTenantID, document, severity, string(evaluation.Action), event.OccurredAt, mappings, level, relation)
+	return newFactView(event.BKTenantID, event.Fingerprint, document, severity, string(evaluation.Action), event.OccurredAt, mappings, level, relation)
 }
 
 // AlertView 只使用 opening Event 的固定丰富快照，当前 severity/action 仍来自 Alert 的真实状态。
@@ -111,10 +111,10 @@ func AlertView(alert domain.Alert, mappings map[string]FieldMapping, level Level
 	default:
 		return nil, ErrUnavailable
 	}
-	return newFactView(alert.BKTenantID, document, alert.Severity, action, alert.BeginAt, mappings, level, relation)
+	return newFactView(alert.BKTenantID, alert.Fingerprint, document, alert.Severity, action, alert.BeginAt, mappings, level, relation)
 }
 
-func newFactView(tenant string, document map[string]any, severity, action string, occurred time.Time, mappings map[string]FieldMapping, level LevelMapper, relation RelationContext) (*FactView, error) {
+func newFactView(tenant, fingerprint string, document map[string]any, severity, action string, occurred time.Time, mappings map[string]FieldMapping, level LevelMapper, relation RelationContext) (*FactView, error) {
 	if err := domain.ValidateIdentityPart("bk_tenant_id", tenant, 64); err != nil {
 		return nil, err
 	}
@@ -126,7 +126,7 @@ func newFactView(tenant string, document map[string]any, severity, action string
 	if kacAction == "" || occurred.IsZero() {
 		return nil, ErrUnavailable
 	}
-	view := &FactView{TenantID: tenant, document: document, facts: map[string]any{"bk_tenant_id": tenant, "level": kacLevel, "action": kacAction, "alarm_time": occurred.In(time.FixedZone("Asia/Shanghai", 8*60*60)).Format("2006-01-02 15:04:05")}, levelError: levelErr != nil, mappings: map[string][]jsonpath.Target{}, relation: relation}
+	view := &FactView{TenantID: tenant, document: document, facts: map[string]any{"bk_tenant_id": tenant, "fingerprint": fingerprint, "level": kacLevel, "action": kacAction, "alarm_time": occurred.In(time.FixedZone("Asia/Shanghai", 8*60*60)).Format("2006-01-02 15:04:05")}, levelError: levelErr != nil, mappings: map[string][]jsonpath.Target{}, relation: relation}
 	for name, mapping := range mappings {
 		targets, err := mapping.ReadTargets()
 		if err != nil {

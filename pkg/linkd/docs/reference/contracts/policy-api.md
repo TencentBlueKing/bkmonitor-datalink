@@ -189,6 +189,8 @@ reason、groups（逐条件结果）及可用的 group_key。`evaluated=false` �
 
 ## 有效字段读取
 
+`fingerprint` 为精确匹配的内置 keyword，直接读取当前 Event/Alert 的原生指纹，不使用同名 labels/extra_data。KAC 快捷屏蔽以此字段生成条件，保留实例范围，并对当前活动 Alert 立即绑定。
+
 ### 时间屏蔽批量匹配预览
 
 `POST /api/v1/policies/preview-batch` 使用管理 JWT，接收 `bk_tenant_id`、`type=shield`、

@@ -376,3 +376,35 @@ func TestPolicyMissingOrDifferentTargetDoesNotReadBusinessScope(t *testing.T) {
 		})
 	}
 }
+
+// 同指纹的新一轮告警仍命中；丰富中的同名字段不能覆盖生命周期指纹。
+func TestFingerprintPolicyAcrossAlertLifecycles(t *testing.T) {
+	expression, err := CompileExpression(expressionJSON("term", "fingerprint", "f1"), KACFields())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fingerprint := range []string{"f1", "different"} {
+		event := policyEvent(`[]`, domain.EnrichStatusSucceeded)
+		event.Fingerprint = fingerprint
+		event.Labels["fingerprint"] = domain.NewStringScalar("spoofed")
+		event.ExtraData["fingerprint"] = json.RawMessage(`"spoofed"`)
+		view := mustEventView(t, event, nil)
+		result, err := expression.Match(t.Context(), view)
+		if err != nil || !result.Evaluated || result.Matched != (fingerprint == "f1") {
+			t.Fatalf("event result=%+v err=%v", result, err)
+		}
+		for _, id := range []string{"old-alert", "new-alert"} {
+			alert := storetest.Alert("tenant", id, "opening-"+id, fingerprint, "warning")
+			alert.Labels = event.Labels
+			alert.ExtraData = event.ExtraData
+			view, err := AlertView(alert, nil, nil, RelationContext{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := expression.Match(t.Context(), view)
+			if err != nil || !result.Evaluated || result.Matched != (fingerprint == "f1") {
+				t.Fatalf("alert %s result=%+v err=%v", id, result, err)
+			}
+		}
+	}
+}

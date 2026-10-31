@@ -55,7 +55,7 @@ func TestPolicyJSONPathReadOrderAndAvailability(t *testing.T) {
 	mapping := map[string]FieldMapping{"owner": {Path: "$.extra_data.owner", ReadPath: `$['extra_data','labels']['owner']`, Kind: FieldText}}
 	for _, value := range []any{"", false, json.Number("0"), nil, "custom"} {
 		document := map[string]any{"extra_data": map[string]any{"owner": value}, "labels": map[string]any{"owner": "builtin"}}
-		view, err := newFactView("tenant", document, "warning", "triggered", time.Now(), mapping, nil, RelationContext{})
+		view, err := newFactView("tenant", "fingerprint", document, "warning", "triggered", time.Now(), mapping, nil, RelationContext{})
 		if err != nil {
 			t.Fatal(err)
 		}

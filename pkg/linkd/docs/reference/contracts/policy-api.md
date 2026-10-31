@@ -170,8 +170,8 @@ CMDB/OneModel 目标解析保留策略空间范围，动态分组与拓扑查询
 省略 severity 时逐项返回 Event 的全部 evaluation；输入 Alert 只返回当前等级。省略 at 使用当前时间。
 依赖屏蔽可通过 `rely=true` 选择被屏蔽条件，`origin_alert_id` 提供同租户主告警的有效字段和关系查询起点。
 只有 `rely_policy` 可以设置 `is_alarm_field_referenced: true`，其 `target_value` 必须是包含
-`${字段key}` 的字符串。字段必须在内置目录或 `field_mappings` 中；未提供的值替换为空字符串，
-不可用的丰富字段仍使条件不可求值。每次匹配独立解析，不修改编译模板；`terms/must_not_terms`
+`${字段key}` 的字符串。字段必须在内置目录或 `field_mappings` 中；未提供的值替换为空字符串。
+所有策略只读取当前丰富输出的有效字段，丰富状态和诊断 code 不限制字段读取。每次匹配独立解析，不修改编译模板；`terms/must_not_terms`
 将替换结果包装为单元素数组，不拆分字符串或展开字段数组。未启用标记的模板文本保持字面值。
 
 时间屏蔽允许 KAC 发布 `rely_policy: {}` 作为空占位，与省略依赖条件具有相同规范内容和摘要；
@@ -206,9 +206,8 @@ KAC 在调用前裁剪用户权限，Linkd 保留租户门禁；接口不扫描�
 `name/content` 来自保存补丁合成的 title/content。旧清洗同名 `extra_data.object/item/meta_info/strategy_id/dimension_info`
 优先使用有效视图中的值；显式空值、0、false 不触发回退。没有旧字段时，object 使用 subject_name/subject_id，
 meta_info 使用有效同名丰富值或 source_event_id。
-`object` 没有显式覆盖时，`subject_name` 因丰富失败不可用也允许回退到非空的 `subject_id`；
-不读取失败处理器留下的名称。没有可用身份时仍不可求值，不能把失败降成空字符串用于聚合。
-显式 `extra_data.object` 本身不可用，或自定义处理器失败导致该路径不可用时，仍返回不可求值，不绕过覆盖字段回退。
+`object` 没有显式覆盖时，先使用当前 `subject_name`，缺失或空字符串才回退 `subject_id`；
+显式 `extra_data.object` 即使为空也不触发回退。丰富 failed/partial 不使已有名称或覆盖字段失效。
 其他内置字段优先读取有效 labels，再读取有效 extra_data；`bk_biz_id` 在不存在丰富覆盖时可使用来源
 `dimensions.bk_biz_id`。`source_id/source_name` 不回退到 Linkd EventSourceID。
 `strategy` 对应 strategy_name，`strategy_id` 对应 monitor_template_id，`dimension_info` 对应 dimension_text，
@@ -219,10 +218,12 @@ level 使用本次冻结的严重程度映射；默认 critical→fatal、info�
 alarm_time 保留 KAC 字段表示：将来源发生时间投影为 Asia/Shanghai 的 `YYYY-MM-DD HH:mm:ss`；
 该无偏移文本与 KAC ES 字段查询一致，原 Event 时间仍以 UTC 保存。策略 timezone 只控制生效时段。
 
-已失败/partial 的内置处理器使其输出字段不可求值，后续成功覆盖的具体字段可恢复为已知值。
-缺少目标声明的自定义处理器失败时，对全部可变字段保守标记不可求值，避免负条件误命中；
-自定义 cmdb/fields 的 partial 结果中，已提交补丁对应的字段可正常读取，未写入字段仍不可求值，后续失败处理器的标记继续生效。
-skipped 处理器不产生失败标记。自定义字段使用显式 `read_path` 中按顺序排列的 labels/extra_data
+屏蔽（时间、依赖）、抑制（防抖、聚合）、合并及其候选筛选、预览、模拟、分组、模板与绑定复查，
+统一读取当前丰富输出，不根据整体或处理器的 failed/partial 状态、诊断 code 封锁路径。
+字段真实缺失沿用缺失语义（包括否定条件）；存在的 null、空字符串、0、false 不冒充缺失。
+成功/部分成功的已提交补丁仍按处理顺序合成；failed/skipped 步骤不贡献补丁，这不使此前字段失效。
+租户、身份、数据格式校验和真实外部依赖错误仍按原规则处理，不将这些错误当作缺失。
+自定义字段使用显式 `read_path` 中按顺序排列的 labels/extra_data
 名称/下标路径，选择第一个存在的值；省略时使用原有精确 `path`。
 
 ## Worker 读取与 Event 上下文

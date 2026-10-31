@@ -96,7 +96,7 @@ func TestPolicyEffectiveViewUsesFrozenEnrichAndExplicitFields(t *testing.T) {
 	}
 }
 
-func TestPolicyMissingAndFailedEnrichDifferForNegativeConditions(t *testing.T) {
+func TestPolicyNegativeConditionsUseActualFieldsAfterFailedEnrich(t *testing.T) {
 	condition := json.RawMessage(`{"expression":"A","A":{"condition":"must_not_term","target_key":"model_id","target_value":"cw-Host"}}`)
 	expr, err := CompileExpression(condition, KACFields())
 	if err != nil {
@@ -109,8 +109,8 @@ func TestPolicyMissingAndFailedEnrichDifferForNegativeConditions(t *testing.T) {
 	}
 	failed := mustEventView(t, policyEvent(`[{"resource":{"status":"failed","patches":[]}}]`, domain.EnrichStatusFailed), nil)
 	result, err = expr.Match(t.Context(), failed)
-	if !errors.Is(err, ErrUnavailable) || result.Evaluated || result.Matched {
-		t.Fatalf("failure became negative match %+v %v", result, err)
+	if err != nil || !result.Evaluated || !result.Matched {
+		t.Fatalf("actual missing should negate after failure %+v %v", result, err)
 	}
 	title, err := failed.Field(t.Context(), "name")
 	if err != nil || title.Data != "original" {
@@ -121,8 +121,12 @@ func TestPolicyMissingAndFailedEnrichDifferForNegativeConditions(t *testing.T) {
 	if err != nil || value.Data != "cw-Host" {
 		t.Fatalf("later known write did not clear uncertainty %+v %v", value, err)
 	}
-	if _, err := resolved.Field(t.Context(), "model_inst_id"); !errors.Is(err, ErrUnavailable) {
-		t.Fatal("unwritten field uncertainty cleared")
+	if value, err := resolved.Field(t.Context(), "model_inst_id"); err != nil || value.Present {
+		t.Fatal("unwritten field must remain missing", value, err)
+	}
+	result, err = expr.Match(t.Context(), resolved)
+	if err != nil || !result.Evaluated || result.Matched {
+		t.Fatalf("existing model must not negate: %+v %v", result, err)
 	}
 }
 
@@ -146,13 +150,14 @@ func TestCustomPartialKeepsCommittedFieldsAvailable(t *testing.T) {
 			t.Fatal(err)
 		}
 		event := policyEvent(string(payload), result.Status)
+		event.Content = "keep"
 		view := mustEventView(t, event, nil)
 		value, err := view.Field(t.Context(), "name")
 		if err != nil || value.Data != "updated" {
 			t.Fatalf("committed title unavailable: %+v %v", value, err)
 		}
-		if _, err := view.Field(t.Context(), "content"); !errors.Is(err, ErrUnavailable) {
-			t.Fatalf("unwritten field must remain unavailable: %v", err)
+		if value, err := view.Field(t.Context(), "content"); err != nil || !value.Present || value.Data != "keep" {
+			t.Fatalf("unwritten content must retain current value: %+v %v", value, err)
 		}
 		compiled, err := Compile(Suppression, testSpec("partial"))
 		if err != nil {
@@ -176,25 +181,25 @@ func TestCustomPartialKeepsCommittedFieldsAvailable(t *testing.T) {
 	}
 }
 
-func TestPartialAvailabilityKeepsProcessorOrderAndFailureBoundaries(t *testing.T) {
+func TestPartialOutputKeepsCommittedPatchOrder(t *testing.T) {
 	for _, tc := range []struct {
 		name, payload string
-		available     bool
+		present       bool
 	}{
 		{"partial overrides earlier failure", `[{"resource":{"status":"failed","patches":[]}},{"cmdb":{"status":"partial","patches":[{"op":"set","path":"$.labels.model_id","value":"host"}]}}]`, true},
-		{"later failure blocks partial", `[{"cmdb":{"status":"partial","patches":[{"op":"set","path":"$.labels.model_id","value":"host"}]}},{"fields":{"status":"failed","patches":[]}}]`, false},
+		{"later failure preserves partial", `[{"cmdb":{"status":"partial","patches":[{"op":"set","path":"$.labels.model_id","value":"host"}]}},{"fields":{"status":"failed","patches":[]}}]`, true},
 		{"failed patch not applied", `[{"cmdb":{"status":"failed","patches":[{"op":"set","path":"$.labels.model_id","value":"host"}]}}]`, false},
-		{"builtin partial unchanged", `[{"resource":{"status":"partial","patches":[{"op":"set","path":"$.labels.model_id","value":"host"}]}}]`, false},
+		{"builtin partial contributes output", `[{"resource":{"status":"partial","patches":[{"op":"set","path":"$.labels.model_id","value":"host"}]}}]`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			view := mustEventView(t, policyEvent(tc.payload, domain.EnrichStatusPartial), nil)
 			value, err := view.Field(t.Context(), "model_id")
-			if tc.available {
+			if tc.present {
 				if err != nil || value.Data != "host" {
 					t.Fatalf("%+v %v", value, err)
 				}
-			} else if !errors.Is(err, ErrUnavailable) {
-				t.Fatalf("failure was cleared: %+v %v", value, err)
+			} else if err != nil || value.Present {
+				t.Fatalf("failed step contributed output: %+v %v", value, err)
 			}
 		})
 	}

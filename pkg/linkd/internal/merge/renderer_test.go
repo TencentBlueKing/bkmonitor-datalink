@@ -145,6 +145,22 @@ func TestRenderParentKeepsDeclaredCustomOutputForKACProjection(t *testing.T) {
 	}
 }
 
+func TestRenderParentUsesCurrentFieldsAfterEnrichFailure(t *testing.T) {
+	for _, status := range []domain.EnrichStatus{domain.EnrichStatusFailed, domain.EnrichStatusPartial} {
+		t.Run(string(status), func(t *testing.T) {
+			d, members, source, severity := renderFixture(t)
+			for i := range members {
+				members[i].Alert.EnrichStatus = status
+				members[i].Alert.Enrich = domain.JSONObject{"processors": json.RawMessage(`[{"cmdb":{"status":"` + string(status) + `","patches":[],"diagnostics":[{"code":"missing_field"}]}}]`)}
+			}
+			event, err := renderParent(t.Context(), d, members, source, severity)
+			if err != nil || event.Title != "联合告警 2" || event.Content != `a ${alarm_num}###b ${alarm_num} {"a":[1,false],"z":true}` || string(event.ExtraData["bk_biz_id"]) != "2" {
+				t.Fatalf("current member fields lost: %+v %v", event, err)
+			}
+		})
+	}
+}
+
 func TestRenderParentRejectsScopeAndInvalidOutputs(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -169,10 +185,6 @@ func TestRenderParentRejectsScopeAndInvalidOutputs(t *testing.T) {
 			s.Spec.Enabled = false
 		}, policy.ErrUnavailable},
 		{"source deleted", func(_ *Decision, _ []Snapshot, s *eventsource.Release, _ *runtimeconfig.Snapshot) { s.Deleted = true }, policy.ErrUnavailable},
-		{"failed enrichment", func(_ *Decision, m []Snapshot, _ *eventsource.Release, _ *runtimeconfig.Snapshot) {
-			m[0].Alert.EnrichStatus = domain.EnrichStatusFailed
-			m[0].Alert.Enrich = domain.JSONObject{"processors": json.RawMessage(`[{"display":{"status":"failed","patches":[]}}]`)}
-		}, policy.ErrUnavailable},
 		{"not a valid standard severity", func(_ *Decision, _ []Snapshot, _ *eventsource.Release, s *runtimeconfig.Snapshot) {
 			s.NativeNames = true
 		}, nil},

@@ -11,13 +11,11 @@ package policy
 
 import (
 	"encoding/json"
-	"errors"
 	"reflect"
 	"testing"
 	"time"
 
 	"linkd/internal/domain"
-	"linkd/internal/jsonpath"
 	"linkd/internal/onemodel"
 )
 
@@ -57,7 +55,7 @@ func TestPolicyJSONPathReadOrderAndAvailability(t *testing.T) {
 	mapping := map[string]FieldMapping{"owner": {Path: "$.extra_data.owner", ReadPath: `$['extra_data','labels']['owner']`, Kind: FieldText}}
 	for _, value := range []any{"", false, json.Number("0"), nil, "custom"} {
 		document := map[string]any{"extra_data": map[string]any{"owner": value}, "labels": map[string]any{"owner": "builtin"}}
-		view, err := newFactView("tenant", document, "warning", "triggered", time.Now(), domain.EnrichStatusSucceeded, nil, mapping, nil, RelationContext{})
+		view, err := newFactView("tenant", document, "warning", "triggered", time.Now(), mapping, nil, RelationContext{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -69,11 +67,6 @@ func TestPolicyJSONPathReadOrderAndAvailability(t *testing.T) {
 		got, err = view.Field(t.Context(), "owner")
 		if err != nil || got.Data != "builtin" {
 			t.Fatalf("configured second path not read: %+v %v", got, err)
-		}
-		target, _ := jsonpath.ParseTarget("$.extra_data.owner")
-		view.uncertain = []uncertainPath{{target: target, step: 1}}
-		if _, err = view.Field(t.Context(), "owner"); !errors.Is(err, ErrUnavailable) {
-			t.Fatalf("failure fell back: %v", err)
 		}
 	}
 	for _, path := range []string{"$.source_raw_data.secret", `$['labels','source_raw_data'].owner`} {

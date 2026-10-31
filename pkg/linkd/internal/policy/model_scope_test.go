@@ -132,7 +132,7 @@ func (r *modelScopeTargets) ContainsTarget(context.Context, string, string, *one
 
 func TestModelScopeEvaluateKeepsModelTenantBusinessAndAvailability(t *testing.T) {
 	for _, kind := range []Kind{Suppression, Shield, Merge} {
-		for _, name := range []string{"same without instance", "invalid instance ignored", "other model", "missing model", "invalid model", "unavailable model", "other tenant", "other business", "global without business", "non BKCC", "scope unavailable", "scope denied", "terminal"} {
+		for _, name := range []string{"same without instance", "invalid instance ignored", "other model", "missing model", "invalid model", "failed enrich preserves model", "other tenant", "other business", "global without business", "non BKCC", "scope unavailable", "scope denied", "terminal"} {
 			t.Run(string(kind)+"/"+name, func(t *testing.T) {
 				spec := modelScopeSpec(t, kind)
 				event := policyEvent("[]", domain.EnrichStatusSucceeded)
@@ -152,9 +152,8 @@ func TestModelScopeEvaluateKeepsModelTenantBusinessAndAvailability(t *testing.T)
 					delete(event.Labels, "model_id")
 					event.ExtraData["model_id"] = json.RawMessage("42")
 					matched, evaluated = false, false
-				case "unavailable model":
+				case "failed enrich preserves model":
 					event.Enrich.Evaluations[0].Data["processors"] = json.RawMessage("[{\"resource\":{\"status\":\"failed\",\"patches\":[]}}]")
-					matched, evaluated = false, false
 				case "other tenant":
 					event.BKTenantID = "other"
 					matched, wantErr = false, true

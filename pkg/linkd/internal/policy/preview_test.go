@@ -47,8 +47,13 @@ func TestDependencyReferencePreviewUsesMainEffectiveFieldsWithoutInstance(t *tes
 	r.OriginAlertID = origin.AlertID
 	facts.alert.Enrich = domain.JSONObject{"processors": json.RawMessage(`[{"fields":{"status":"failed","patches":[]}}]`)}
 	result, err = p.Preview(t.Context(), r)
-	if err != nil || result.Evaluations[0].Evaluated {
-		t.Fatal("failed main enrichment became missing string", result, err)
+	if err != nil || !result.Evaluations[0].Evaluated || result.Evaluations[0].Matched {
+		t.Fatal("failed step must use current empty object for reference", result, err)
+	}
+	facts.alert.ExtraData["object"] = json.RawMessage(`"host-1"`)
+	result, err = p.Preview(t.Context(), r)
+	if err != nil || !result.Evaluations[0].Evaluated || !result.Evaluations[0].Matched {
+		t.Fatal("failed enrich blocked current main field", result, err)
 	}
 	facts.alert.BKTenantID = "other"
 	if _, err := p.Preview(t.Context(), r); !errors.Is(err, ErrInvalid) {

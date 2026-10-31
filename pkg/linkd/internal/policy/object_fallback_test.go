@@ -5,7 +5,6 @@ package policy
 
 import (
 	"encoding/json"
-	"errors"
 	"testing"
 
 	"linkd/internal/domain"
@@ -15,17 +14,16 @@ import (
 func TestObjectFallbackAfterEnrichFailure(t *testing.T) {
 	for _, tc := range []struct {
 		name, processors, explicit, subjectID, subjectName, want string
-		unavailable                                              bool
 	}{
 		{name: "resource failed", processors: `[{"resource":{"status":"failed","patches":[]}}]`, subjectID: "stable-service", want: "stable-service"},
 		{name: "resource partial", processors: `[{"resource":{"status":"partial","patches":[]}}]`, subjectID: "stable-service", want: "stable-service"},
-		{name: "failed display name is not trusted", processors: `[{"display":{"status":"failed","patches":[]}}]`, subjectID: "stable-service", subjectName: "stale name", want: "stable-service"},
-		{name: "no stable identity", processors: `[{"resource":{"status":"failed","patches":[]}}]`, unavailable: true},
+		{name: "failed display preserves current name", processors: `[{"display":{"status":"failed","patches":[]}}]`, subjectID: "stable-service", subjectName: "current name", want: "current name"},
+		{name: "empty identity stays empty", processors: `[{"resource":{"status":"failed","patches":[]}}]`},
 		{name: "successful display overrides failed resource", processors: `[{"resource":{"status":"failed","patches":[]}},{"display":{"status":"succeeded","patches":[{"op":"set","path":"$.subject_name","value":"known name"}]}}]`, subjectID: "stable-service", want: "known name"},
 		{name: "explicit empty object", processors: `[{"resource":{"status":"failed","patches":[]}}]`, explicit: `""`, subjectID: "stable-service"},
 		{name: "explicit object", processors: `[{"display":{"status":"failed","patches":[]}}]`, explicit: `"explicit"`, subjectID: "stable-service", want: "explicit"},
-		{name: "explicit object unavailable cannot fall back", processors: `[{"fields":{"status":"failed","patches":[]}}]`, explicit: `"explicit"`, subjectID: "stable-service", unavailable: true},
-		{name: "unknown failed processor remains unavailable", processors: `[{"unknown":{"status":"failed","patches":[]}}]`, subjectID: "stable-service", unavailable: true},
+		{name: "explicit object survives failure", processors: `[{"fields":{"status":"failed","patches":[]}}]`, explicit: `"explicit"`, subjectID: "stable-service", want: "explicit"},
+		{name: "unknown failed processor preserves identity", processors: `[{"unknown":{"status":"failed","patches":[]}}]`, subjectID: "stable-service", want: "stable-service"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			event := policyEvent(tc.processors, domain.EnrichStatusPartial)
@@ -44,12 +42,6 @@ func TestObjectFallbackAfterEnrichFailure(t *testing.T) {
 			views["alert"] = view
 			for name, view := range views {
 				got, err := view.Field(t.Context(), "object")
-				if tc.unavailable {
-					if !errors.Is(err, ErrUnavailable) {
-						t.Fatalf("%s: got %+v, err=%v", name, got, err)
-					}
-					continue
-				}
 				if err != nil || !got.Present || got.Data != tc.want {
 					t.Fatalf("%s: got %+v, err=%v, want %q", name, got, err, tc.want)
 				}
@@ -84,8 +76,8 @@ func TestObjectGroupingAfterEnrichFailure(t *testing.T) {
 		if err != nil || reason != "" || key != want {
 			t.Fatalf("%s: group=%q reason=%q err=%v", processor, key, reason, err)
 		}
-		if _, err := view.Field(t.Context(), "model_id"); processor == "resource" && !errors.Is(err, ErrUnavailable) {
-			t.Fatalf("resource model became available: %v", err)
+		if value, err := view.Field(t.Context(), "model_id"); err != nil || value.Present {
+			t.Fatalf("model must remain missing: %+v %v", value, err)
 		}
 	}
 }

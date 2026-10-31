@@ -246,7 +246,7 @@ func TestDependencySelectsNewestBeforeChildTimeAndKeepsBinding(t *testing.T) {
 	}
 }
 
-func TestDependencyIgnoresUnevaluableCandidateWhenSelectingNewMain(t *testing.T) {
+func TestDependencySelectsCurrentFieldsRegardlessOfEnrichStatus(t *testing.T) {
 	for _, status := range []domain.EnrichStatus{domain.EnrichStatusPartial, domain.EnrichStatusFailed} {
 		t.Run(string(status), func(t *testing.T) {
 			repo, clock, s, state, action := dependencyFixture(t, "custom_shield")
@@ -256,15 +256,19 @@ func TestDependencyIgnoresUnevaluableCandidateWhenSelectingNewMain(t *testing.T)
 			unknown.BeginAt = clock.at.Add(time.Minute)
 			unknown.EnrichStatus = status
 			unknown.Enrich = domain.JSONObject{"processors": json.RawMessage(`[{"cmdb":{"status":"` + string(status) + `","patches":[]}}]`)}
-			if _, err := repo.CreateAlert(t.Context(), unknown); err != nil {
+			created, err := repo.CreateAlert(t.Context(), unknown)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ObserveDependencyAlert(t.Context(), created.Alert, nil); err != nil {
 				t.Fatal(err)
 			}
 			clock.at = clock.at.Add(2 * time.Minute)
 			p := dependencyProcessor(t, repo, clock, s, state, action)
 			child := mustProcessAggregation(t, repo, p, dependencyEvent("child-known-main", "other-source", "child", clock))
 			current, err := repo.GetAlert(t.Context(), "tenant", child.Event.RelatedAlertIDs[0])
-			if err != nil || !current.Alert.Shield.Active || current.Alert.Shield.Bindings[0].MainAlertID != valid.AlertID {
-				t.Fatalf("unrelated unevaluable candidate blocked valid main: shield=%+v err=%v", current.Alert.Shield, err)
+			if err != nil || !current.Alert.Shield.Active || current.Alert.Shield.Bindings[0].MainAlertID != unknown.AlertID {
+				t.Fatalf("enrich status excluded newest matching main: shield=%+v err=%v", current.Alert.Shield, err)
 			}
 		})
 	}
@@ -336,7 +340,7 @@ func TestDependencyReferenceBindsAndRechecksFrozenMain(t *testing.T) {
 	if changed, err := p.CheckShield(t.Context(), "tenant", id); err != nil || changed {
 		t.Fatal("reference recheck changed binding", err)
 	}
-	// 主告警读取成功但其字段不可用时保持关系，不把故障替换为空字符串后解除。
+	// 主告警的资源丰富失败不使现有实例字段失效，复查继续保留匹配关系。
 	s.CurrentAlert = func(ctx context.Context, tenant, alertID string) (store.StoredAlert, error) {
 		row, err := repo.GetAlert(ctx, tenant, alertID)
 		if alertID == main.AlertID {
@@ -346,11 +350,11 @@ func TestDependencyReferenceBindsAndRechecksFrozenMain(t *testing.T) {
 	}
 	clock.at = clock.at.Add(time.Minute)
 	if changed, err := p.CheckShield(t.Context(), "tenant", id); err != nil || changed {
-		t.Fatal("unavailable origin released shield", err)
+		t.Fatal("failed enrichment changed matching shield", err)
 	}
 	current, _ = repo.GetAlert(t.Context(), "tenant", id)
 	if !current.Alert.Shield.Active || current.Alert.Shield.Bindings[0].BindingID != binding {
-		t.Fatal("fixed binding lost on reference failure")
+		t.Fatal("fixed binding lost despite matching current fields")
 	}
 }
 

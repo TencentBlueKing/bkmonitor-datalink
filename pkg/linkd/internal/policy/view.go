@@ -12,15 +12,10 @@ package policy
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"reflect"
-	"strings"
 	"time"
 
 	"linkd/internal/domain"
-	"linkd/internal/enrich/kingeye"
-	"linkd/internal/enrich/models"
 	enrichview "linkd/internal/enrich/view"
 	"linkd/internal/jsonpath"
 	"linkd/internal/onemodel"
@@ -55,26 +50,14 @@ type RelationContext struct {
 	Lookup RelationLookup
 }
 
-type uncertainPath struct {
-	target jsonpath.Target
-	step   int
-}
-
-type certainPath struct {
-	target jsonpath.Target
-	step   int
-}
-
 // FactView 是某个 Event evaluation 或 Alert 的只读有效字段视图，不读取原始 payload。
-// 失败处理器影响的字段保持不可求值，不能被缺失判断或否定条件绕过。
+// 只认当前丰富输出的字段；丰富状态和诊断 code 不限制读取。
 type FactView struct {
 	TenantID   string
 	document   map[string]any
 	facts      map[string]any
 	levelError bool
 	mappings   map[string][]jsonpath.Target
-	uncertain  []uncertainPath
-	certain    []certainPath
 	relation   RelationContext
 	origin     *FactView
 }
@@ -91,7 +74,7 @@ func (v *FactView) WithOrigin(origin *FactView) (*FactView, error) {
 
 // EventView 读取指定等级已经冻结的丰富结果；不会重新运行 Enrich。
 func EventView(event domain.Event, severity string, mappings map[string]FieldMapping, level LevelMapper, relation RelationContext) (*FactView, error) {
-	result, found := event.ForSeverity(severity)
+	_, found := event.ForSeverity(severity)
 	if !found {
 		return nil, ErrUnavailable
 	}
@@ -109,7 +92,7 @@ func EventView(event domain.Event, severity string, mappings map[string]FieldMap
 		return nil, err
 	}
 	document := state.Document()
-	return newFactView(event.BKTenantID, document, severity, string(evaluation.Action), event.OccurredAt, result.Status, result.Data, mappings, level, relation)
+	return newFactView(event.BKTenantID, document, severity, string(evaluation.Action), event.OccurredAt, mappings, level, relation)
 }
 
 // AlertView 只使用 opening Event 的固定丰富快照，当前 severity/action 仍来自 Alert 的真实状态。
@@ -128,10 +111,10 @@ func AlertView(alert domain.Alert, mappings map[string]FieldMapping, level Level
 	default:
 		return nil, ErrUnavailable
 	}
-	return newFactView(alert.BKTenantID, document, alert.Severity, action, alert.BeginAt, alert.EnrichStatus, alert.Enrich, mappings, level, relation)
+	return newFactView(alert.BKTenantID, document, alert.Severity, action, alert.BeginAt, mappings, level, relation)
 }
 
-func newFactView(tenant string, document map[string]any, severity, action string, occurred time.Time, status domain.EnrichStatus, payload domain.JSONObject, mappings map[string]FieldMapping, level LevelMapper, relation RelationContext) (*FactView, error) {
+func newFactView(tenant string, document map[string]any, severity, action string, occurred time.Time, mappings map[string]FieldMapping, level LevelMapper, relation RelationContext) (*FactView, error) {
 	if err := domain.ValidateIdentityPart("bk_tenant_id", tenant, 64); err != nil {
 		return nil, err
 	}
@@ -154,9 +137,6 @@ func newFactView(tenant string, document map[string]any, severity, action string
 		}
 		view.mappings[name] = targets
 	}
-	if err := view.readAvailability(status, payload); err != nil {
-		return nil, err
-	}
 	return view, nil
 }
 
@@ -170,140 +150,7 @@ func pathFor(parts ...string) jsonpath.Target {
 	return target
 }
 
-func (v *FactView) readAvailability(status domain.EnrichStatus, payload domain.JSONObject) error {
-	var entries []map[string]struct {
-		Status  domain.EnrichStatus  `json:"status"`
-		Patches []domain.EnrichPatch `json:"patches"`
-		Value   domain.JSONObject    `json:"value"`
-	}
-	if raw := payload["processors"]; raw != nil {
-		if err := json.Unmarshal(raw, &entries); err != nil {
-			return err
-		}
-	}
-	block := func(paths []jsonpath.Target, step int) {
-		for _, target := range paths {
-			v.uncertain = append(v.uncertain, uncertainPath{target, step})
-		}
-	}
-	broad := []jsonpath.Target{pathFor("title"), pathFor("content"), pathFor("subject_name"), pathFor("labels"), pathFor("extra_data")}
-	if len(entries) == 0 && (status == domain.EnrichStatusFailed || status == domain.EnrichStatusPartial || status == domain.EnrichStatusPending) {
-		block(broad, 0)
-	}
-	for i, entry := range entries {
-		if len(entry) != 1 {
-			return ErrUnavailable
-		}
-		for name, result := range entry {
-			if result.Status == domain.EnrichStatusFailed || result.Status == domain.EnrichStatusPartial {
-				paths := processorPaths(name)
-				if paths == nil {
-					paths = broad
-				}
-				block(paths, i+1)
-			}
-			// 自定义 partial 只保存原子提交成功的补丁，它们仍是有效事实。
-			// 未写入字段继续保守封锁；内置 partial 的历史 value 不作成功输出解释。
-			committedPartial := result.Status == domain.EnrichStatusPartial && (name == "cmdb" || name == "fields") && result.Patches != nil
-			if result.Status != domain.EnrichStatusSucceeded && !committedPartial {
-				continue
-			}
-			patches := result.Patches
-			var err error
-			if patches == nil && result.Value != nil {
-				patches, err = kingeye.ProjectValue(name, result.Value)
-				if err != nil {
-					return err
-				}
-			}
-			for _, patch := range patches {
-				target, err := jsonpath.ParseTarget(patch.Path)
-				if err != nil {
-					return err
-				}
-				v.certain = append(v.certain, certainPath{target, i + 1})
-			}
-		}
-	}
-	return nil
-}
-
-func processorPaths(name string) []jsonpath.Target {
-	var value any
-	switch name {
-	case "resource":
-		paths := []jsonpath.Target{pathFor("subject_name")}
-		for _, field := range []string{"model_id", "model_inst_id", "model_name", "bk_obj_id", "bk_inst_id"} {
-			paths = append(paths, pathFor("labels", field), pathFor("extra_data", field))
-		}
-		return paths
-	case "monitor-resource":
-		value = models.ResourceValues{}
-	case "strategy":
-		value = models.StrategyValues{}
-	case "source":
-		value = models.SourceValues{}
-	case "display":
-		value = models.DisplayValues{}
-	case "metric":
-		value = models.MetricValues{}
-	case "log":
-		value = models.LogValues{}
-	case "apm":
-		value = models.APMValues{}
-	case "k8s":
-		value = models.K8sValues{}
-	default:
-		return nil
-	}
-	typ := reflect.TypeOf(value)
-	paths := []jsonpath.Target{}
-	for i := 0; i < typ.NumField(); i++ {
-		field := strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]
-		if field == "" {
-			continue
-		}
-		if name == "display" {
-			switch field {
-			case "title", "content":
-				paths = append(paths, pathFor(field))
-				continue
-			case "object":
-				paths = append(paths, pathFor("subject_name"))
-				continue
-			}
-		}
-		paths = append(paths, pathFor("labels", field), pathFor("extra_data", field))
-	}
-	return paths
-}
-
 func (v *FactView) readPath(target jsonpath.Target) (Value, error) {
-	blocked := 0
-	for _, item := range v.uncertain {
-		if item.target.Overlaps(target) {
-			blocked = max(blocked, item.step)
-		}
-	}
-	if blocked > 0 || len(v.uncertain) > 0 {
-		uncertain := false
-		for _, item := range v.uncertain {
-			if item.target.Overlaps(target) {
-				uncertain = true
-			}
-		}
-		if uncertain {
-			cleared := false
-			for _, item := range v.certain {
-				if item.step >= blocked && item.target.Overlaps(target) && len(item.target.Parts()) <= len(target.Parts()) {
-					cleared = true
-				}
-			}
-			if !cleared {
-				return Value{}, ErrUnavailable
-			}
-		}
-	}
 	value, present := target.Get(v.document)
 	return Value{Data: jsonpath.Clone(value), Present: present}, nil
 }
@@ -343,7 +190,7 @@ func (v *FactView) Field(ctx context.Context, name string) (Value, error) {
 		return Value{}, fmt.Errorf("unknown policy field")
 	}
 	// 同名旧清洗字段是显式来源事实；仅缺失时才用新模型展示默认值。
-	// 通过 readPath 保留补丁覆盖和不可用语义，不能用真假值跳过空字符串、0 或 false。
+	// 补丁已在有效视图合成时应用；仅字段真实缺失时才继续备用路径。
 	switch name {
 	case "object", "item", "meta_info", "strategy_id", "dimension_info":
 		value, err := v.readPath(pathFor("extra_data", name))
@@ -358,23 +205,13 @@ func (v *FactView) Field(ctx context.Context, name string) (Value, error) {
 		return v.readPath(pathFor("content"))
 	case "object":
 		value, err := v.readPath(pathFor("subject_name"))
-		if err != nil && !errors.Is(err, ErrUnavailable) {
+		if err != nil {
 			return Value{}, err
 		}
-		if err == nil && value.Present && value.Data != "" {
+		if value.Present && value.Data != "" {
 			return value, nil
 		}
-		// 名称丰富失败不使来源身份失效；只能回退到非空 subject_id，
-		// 避免把不可用名称降成空字符串，让不相关告警进入同一聚合分组。
-		// 显式 extra_data.object 的读取失败已在上面返回，不绕过其失败边界。
-		identity, identityErr := v.readPath(pathFor("subject_id"))
-		if identityErr != nil {
-			return Value{}, identityErr
-		}
-		if err != nil && (!identity.Present || identity.Data == "") {
-			return Value{}, err
-		}
-		return identity, nil
+		return v.readPath(pathFor("subject_id"))
 	case "item":
 		first, err := v.flat("display_name")
 		if err != nil {

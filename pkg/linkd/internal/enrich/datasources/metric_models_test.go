@@ -15,6 +15,26 @@ import (
 	"linkd/internal/enrich/models"
 )
 
+func TestMetricClientCatalogWithoutRetiredRuleColumn(t *testing.T) {
+	db := openReaderTestDB(t, func(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+		if strings.Contains(query, "record_rule_id") {
+			return nil, errors.New("Unknown column 'record_rule_id' in 'field list'")
+		}
+		if strings.Contains(query, "FROM `metric_object`") {
+			return &readerTestRows{columns: []string{"bk_tenant_id", "metric_id", "model_id"}, values: [][]driver.Value{{"tenant-a", int64(42), "cw-Host"}}}, nil
+		}
+		return &readerTestRows{columns: metricTestColumns(), values: [][]driver.Value{metricTestRow()}}, nil
+	})
+	client, err := NewMetricClient(MetricClientConfig{DB: db})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := client.FindMetric(t.Context(), models.MetricQuery{TenantID: "tenant-a", MetricID: 42})
+	if err != nil || !found || got.FieldName != "usage" || got.ObjectModelCode != "cw-Host" {
+		t.Fatalf("catalog without retired rule column: metadata=%+v found=%v err=%v", got, found, err)
+	}
+}
+
 func TestMetricClientAuthoritativeModels(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -67,8 +87,8 @@ func TestMetricClientAuthoritativeModels(t *testing.T) {
 				if len(tc.models) > 1 {
 					row[3] = nil
 				}
-				columns := append(metricTestColumns(), "ref_metricset_code", "record_rule_id")
-				row = append(row, "plugin.cpu", int64(7))
+				columns := append(metricTestColumns(), "ref_metricset_code")
+				row = append(row, "plugin.cpu")
 				return &readerTestRows{columns: columns, values: [][]driver.Value{row}}, nil
 			})
 			client, _ := NewMetricClient(MetricClientConfig{DB: db})
@@ -83,7 +103,7 @@ func TestMetricClientAuthoritativeModels(t *testing.T) {
 			if tc.wantErr {
 				return
 			}
-			if !relationRead || !reflect.DeepEqual(got.ModelIDs, tc.models) || got.RefMetricsetCode != "plugin.cpu" || got.RecordRuleID == nil || *got.RecordRuleID != 7 {
+			if !relationRead || !reflect.DeepEqual(got.ModelIDs, tc.models) || got.RefMetricsetCode != "plugin.cpu" {
 				t.Fatalf("projection=%+v relationRead=%v", got, relationRead)
 			}
 			wantScalar := ""

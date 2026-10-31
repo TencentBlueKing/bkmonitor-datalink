@@ -171,9 +171,9 @@ func resolveMetricQueryLocations(ctx context.Context, scope *enrich.Scope, strat
 		if strategy.Spec.FieldTag == models.CWStrategyFieldTagDerivedMetric && metadata.Kind != "derived" {
 			return strategy, projection, fmt.Errorf("%w: derived metric catalog kind mismatch", enrich.ErrInvalidDataSourceResponse)
 		}
-		if found && metadata.Kind == "derived" && metadata.RecordRuleID == nil && metadata.FieldName != "" {
+		if found && metadata.Kind == "derived" && metadata.FieldName != "" {
 			// 展开计算的目录定义没有物理主引用，不能把检测面成员当作父指标位置。
-			// 物化型由 record_rule_id 区分，必须保留它自己的结果表与字段。
+			// Kingeye 已退役物化计算指标，带物理主引用的 derived 定义属于无效数据。
 			if metadata.TableID != "" || metadata.DataLabel != "" || metadata.PhysicalField != "" {
 				return strategy, projection, fmt.Errorf("%w: inline derived metric unexpectedly has a physical reference", enrich.ErrInvalidDataSourceResponse)
 			}
@@ -188,8 +188,7 @@ func resolveMetricQueryLocations(ctx context.Context, scope *enrich.Scope, strat
 			}
 			continue
 		}
-		physicalKind := metadata.Kind == "native" || metadata.Kind == "predefined" ||
-			(metadata.Kind == "derived" && metadata.RecordRuleID != nil && *metadata.RecordRuleID > 0)
+		physicalKind := metadata.Kind == "native" || metadata.Kind == "predefined"
 		if !found || !physicalKind || metadata.PhysicalField == "" || (metadata.TableID == "" && metadata.DataLabel == "") {
 			return strategy, projection, fmt.Errorf("%w: metric catalog physical reference is incomplete or kind is invalid", enrich.ErrInvalidDataSourceResponse)
 		}
@@ -198,9 +197,6 @@ func resolveMetricQueryLocations(ctx context.Context, scope *enrich.Scope, strat
 			query.ResultTableID = metadata.DataLabel
 		}
 		query.MetricField = metadata.PhysicalField
-		if metadata.Kind == "derived" && len(projection.QueryConfigs) == 1 && strategy.Spec.FieldTag == models.CWStrategyFieldTagDerivedMetric {
-			strategy.Spec.FieldName = metadata.FieldName
-		}
 	}
 	return strategy, projection, nil
 }

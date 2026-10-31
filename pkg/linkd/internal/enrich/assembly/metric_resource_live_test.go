@@ -25,7 +25,6 @@ type metricResourceLiveCatalog struct {
 	ID               int64    `json:"id"`
 	MetricsetCode    string   `json:"metricset_code"`
 	RefMetricsetCode string   `json:"ref_metricset_code"`
-	RecordRuleID     *int64   `json:"record_rule_id"`
 	ModelIDs         []string `json:"model_ids"`
 }
 
@@ -41,14 +40,13 @@ type metricResourceLiveRead struct {
 	Found, Invalid                                   bool
 	MetricsetCode, RefMetricsetCode, Kind, FieldName string
 	ModelIDs                                         []string
-	RecordRuleID                                     *int64
 }
 
 func (r *metricResourceLiveReader) FindMetric(ctx context.Context, query models.MetricQuery) (models.MetricMetadata, bool, error) {
 	metadata, found, err := r.reader.FindMetric(ctx, query)
-	r.reads = append(r.reads, metricResourceLiveRead{Query: query, Found: found, Invalid: err != nil, MetricsetCode: metadata.MetricsetCode, RefMetricsetCode: metadata.RefMetricsetCode, Kind: metadata.Kind, FieldName: metadata.FieldName, ModelIDs: metadata.ModelIDs, RecordRuleID: metadata.RecordRuleID})
+	r.reads = append(r.reads, metricResourceLiveRead{Query: query, Found: found, Invalid: err != nil, MetricsetCode: metadata.MetricsetCode, RefMetricsetCode: metadata.RefMetricsetCode, Kind: metadata.Kind, FieldName: metadata.FieldName, ModelIDs: metadata.ModelIDs})
 	if expected, ok := r.expected[query.MetricID]; ok {
-		if err != nil || !found || metadata.MetricsetCode != expected.MetricsetCode || metadata.RefMetricsetCode != expected.RefMetricsetCode || !reflect.DeepEqual(metadata.RecordRuleID, expected.RecordRuleID) || !reflect.DeepEqual(metadata.ModelIDs, expected.ModelIDs) {
+		if err != nil || !found || metadata.MetricsetCode != expected.MetricsetCode || metadata.RefMetricsetCode != expected.RefMetricsetCode || !reflect.DeepEqual(metadata.ModelIDs, expected.ModelIDs) {
 			r.t.Errorf("catalog projection differs from independent snapshot: metric_id=%d", query.MetricID)
 		}
 	} else {
@@ -79,8 +77,8 @@ func TestMetricResourceLiveReplay(t *testing.T) {
 		}
 	}
 	var connection struct {
-		MySQL     datasources.MySQLConfig `json:"mysql"`
-		ESAddress string                  `json:"es_address"`
+		MySQL    datasources.MySQLConfig `json:"mysql"`
+		OneModel config.OneModelResource `json:"onemodel"`
 	}
 	read(connectionFile, 16<<10, &connection)
 	var fixture struct {
@@ -109,7 +107,7 @@ func TestMetricResourceLiveReplay(t *testing.T) {
 			t.Error("close MySQL failed")
 		}
 	})
-	client, transport, err := onemodelassembly.Open(&config.OneModelResource{Addresses: []string{connection.ESAddress}}, 4, 5*time.Second)
+	client, transport, err := onemodelassembly.Open(&connection.OneModel, 4, 5*time.Second)
 	if err != nil {
 		t.Fatal("open read-only OneModel failed")
 	}

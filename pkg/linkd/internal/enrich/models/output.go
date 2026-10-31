@@ -196,11 +196,9 @@ type MetricMetadata struct {
 	ModelIDs []string
 	// RefMetricsetCode 是主引用的实际取数来源，可与定义来源不同。
 	RefMetricsetCode string
-	// RecordRuleID 非空时指向物化型计算指标的规则，不表示规则已经产出数据。
-	RecordRuleID *int64
-	// Kind 保留 native、predefined、derived；derived 是否物化由 RecordRuleID 判断。
+	// Kind 保留 native、predefined、derived；derived 仅表示现场展开的计算配方。
 	Kind string
-	// TableID、DataLabel 和 PhysicalField 是目录主引用；预定义和物化型计算指标也可持有。
+	// TableID、DataLabel 和 PhysicalField 是 native、已绑定 predefined 的物理主引用。
 	TableID       string
 	DataLabel     string
 	PhysicalField string

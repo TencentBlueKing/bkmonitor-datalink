@@ -48,7 +48,6 @@ type metricMetadataRow struct {
 	ValueMapping     json.RawMessage
 	Dimensions       json.RawMessage
 	RefMetricsetCode string
-	RecordRuleID     *int64
 }
 
 // MetricClientConfig 注入已经选择 Kingeye schema 的 GORM 连接。
@@ -83,7 +82,7 @@ func (c *MetricClient) FindMetric(ctx context.Context, query models.MetricQuery)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	// JSON 在 SQL 端限长，避免异常目录行使单次丰富分配无界内存。
-	base := c.db.WithContext(ctx).Table("metric").Select("id,bk_tenant_id,space_uid,metricset_code,model_id,metric_name,display_name,description,unit,kind,result_table_id,data_label,physical_field,ref_metricset_code,record_rule_id,CASE WHEN OCTET_LENGTH(value_mapping) <= ? THEN value_mapping ELSE NULL END AS value_mapping,CASE WHEN OCTET_LENGTH(dimensions) <= ? THEN dimensions ELSE NULL END AS dimensions", maxMetricJSONBytes, maxMetricJSONBytes).Where("bk_tenant_id = ?", query.TenantID)
+	base := c.db.WithContext(ctx).Table("metric").Select("id,bk_tenant_id,space_uid,metricset_code,model_id,metric_name,display_name,description,unit,kind,result_table_id,data_label,physical_field,ref_metricset_code,CASE WHEN OCTET_LENGTH(value_mapping) <= ? THEN value_mapping ELSE NULL END AS value_mapping,CASE WHEN OCTET_LENGTH(dimensions) <= ? THEN dimensions ELSE NULL END AS dimensions", maxMetricJSONBytes, maxMetricJSONBytes).Where("bk_tenant_id = ?", query.TenantID)
 	if query.MetricID > 0 {
 		base = base.Where("id = ?", query.MetricID)
 	} else {
@@ -163,7 +162,7 @@ func (c *MetricClient) FindMetric(ctx context.Context, query models.MetricQuery)
 	if len(modelIDs) == 1 {
 		modelCode = modelIDs[0]
 	}
-	return models.MetricMetadata{MetricsetCode: row.MetricsetCode, ObjectModelCode: modelCode, ModelIDs: modelIDs, RefMetricsetCode: row.RefMetricsetCode, RecordRuleID: row.RecordRuleID, Kind: row.Kind, TableID: row.TableID, DataLabel: row.DataLabel, PhysicalField: row.PhysicalField, FieldName: row.FieldName, FieldCNName: row.FieldCNName, Description: row.Description, Unit: row.Unit, ValueMapping: mapping, Dimensions: outputDimensions}, true, nil
+	return models.MetricMetadata{MetricsetCode: row.MetricsetCode, ObjectModelCode: modelCode, ModelIDs: modelIDs, RefMetricsetCode: row.RefMetricsetCode, Kind: row.Kind, TableID: row.TableID, DataLabel: row.DataLabel, PhysicalField: row.PhysicalField, FieldName: row.FieldName, FieldCNName: row.FieldCNName, Description: row.Description, Unit: row.Unit, ValueMapping: mapping, Dimensions: outputDimensions}, true, nil
 }
 
 func (c *MetricClient) metricModelIDs(ctx context.Context, tenant string, metricID int64) ([]string, error) {

@@ -15,27 +15,22 @@ import (
 
 func TestMetricCatalogDefinitionKinds(t *testing.T) {
 	t.Parallel()
-	ruleID, invalidRuleID := int64(3), int64(0)
 	for _, tc := range []struct {
 		name         string
 		kind         string
-		rule         *int64
 		table, field string
 		failed       bool
 		legacyTag    bool
 	}{
 		{name: "bound predefined", kind: "predefined", table: "system.cpu", field: "usage"},
 		{name: "unbound predefined", kind: "predefined", failed: true},
-		{name: "materialized derived", kind: "derived", rule: &ruleID, table: "record_rule.result", field: "result_usage"},
-		{name: "materialized derived keeps legacy identity", kind: "derived", rule: &ruleID, table: "record_rule.result", field: "result_usage", legacyTag: true},
-		{name: "materialized derived missing reference", kind: "derived", rule: &ruleID, failed: true},
-		{name: "invalid materialization rule", kind: "derived", rule: &invalidRuleID, table: "record_rule.result", field: "result_usage", failed: true},
 		{name: "inline derived", kind: "derived"},
-		{name: "physical derived missing materialization rule", kind: "derived", table: "record_rule.result", field: "result_usage", failed: true},
+		{name: "inline derived keeps legacy identity", kind: "derived", legacyTag: true},
+		{name: "derived with physical reference rejected", kind: "derived", table: "record_rule.result", field: "result_usage", failed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			r := &metricLocationReader{metadata: models.MetricMetadata{MetricsetCode: "manual.test", Kind: tc.kind, RecordRuleID: tc.rule, FieldName: "result_usage", FieldCNName: "使用率", Unit: "percent", TableID: tc.table, PhysicalField: tc.field}}
+			r := &metricLocationReader{metadata: models.MetricMetadata{MetricsetCode: "manual.test", Kind: tc.kind, FieldName: "result_usage", FieldCNName: "使用率", Unit: "percent", TableID: tc.table, PhysicalField: tc.field}}
 			r.strategy = r.strategyForTest()
 			r.strategy.Spec.TableID = ""
 			r.strategy.Spec.StrategyItem.QueryConfigs = []models.StrategyQueryConfig{{MetricRefID: 42, QueryConfigType: "catalog", Alias: "a"}}

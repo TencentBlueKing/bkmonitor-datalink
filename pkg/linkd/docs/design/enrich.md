@@ -330,6 +330,16 @@ cw_labels
 DATA 的模型由目录确认后统一进入主机解析，不再以声明中的物理表名为前提，目录引用可不带表名。
 上述内容是新丰富结果的生成规则，不回填历史 Event 或 Alert。
 
+MySQL、服务实例等非主机组件告警不输出有效的 `bk_cloud_id`、`bk_cloud_name`：既不复制组件实例的
+同名属性，也不继承关联主机的云区域。`monitor-resource` 使用空字符串覆盖来源 `labels` 中的这两个
+字段，KAC 固定协议键仍保留、值为空；原始 `dimensions` 中的 `bk_cloud_id`、`bk_target_cloud_id` 等
+维度保留，继续参与主机地址定位和指标查询。主机告警仍保留真实云区域，包括有效的区域 ID `0`。
+
+实例业务归属同时识别根字段及 `attributes` 中的标量业务 ID 和非空 `bk_biz_ids` 数组。
+数组只有一个元素时采用该业务 ID；多个元素时继续使用来源业务兜底，不任取数组中的第一个值。
+非远程组件已有数组业务归属时跳过关联主机业务补偿，缺失的业务名称按最终业务 ID 查询同租户
+`cw-biz` 实例。空数组仍允许现有的主机拓扑补偿，远程采集仍按其配置补充主机拓扑。
+
 ### 6.3 display
 
 适用场景：所有需要统一标题、内容、对象和维度展示的链路。日志、Cloud、K8s、APM 可以在 Display 前后提供场景字段，Display 本身继续保持 Alert 原始字段只读。
@@ -544,7 +554,7 @@ BaseTarget 显式规范身份的优先级高于旧实例字段和采集任务：
 | 场景 | 当前完成度 | 已实现 | 主要差距 |
 | --- | ---: | --- | --- |
 | `BASE_COLLECT/MONITOR_SOURCE` | 90% | 独立 Resolver、两类身份、模型/实例/拓扑、Resource/Display、`cw_labels`、五 Processor payload、KAC `base_collect_monitor_source_01` 脱敏差异 fixture | 服务实例真实样本 |
-| `BASE_COLLECT/COLLECT_TASK` | 90% | CollectConfig、实例定位、模型/拓扑生产 Reader、OneModel 执行主机云区域回填、Resource/Display、`cw_labels`、动态分组 Redis Reader、KAC 远程 MySQL 脱敏 fixture | 动态分组目标 Redis 实测、其他采集类型样本 |
+| `BASE_COLLECT/COLLECT_TASK` | 90% | CollectConfig、实例定位、模型/拓扑生产 Reader、主机云区域投影与非主机组件云区域清空、Resource/Display、`cw_labels`、动态分组 Redis Reader、KAC 远程 MySQL 脱敏 fixture | 动态分组目标 Redis 实测、其他采集类型样本 |
 | `BASE_COLLECT/NO_DATA` | 90% | `__NO_DATA_DIMENSION__` 分类、`model_id + model_inst_id` 规范身份、策略模型一致性校验、实例/拓扑、通用 KAC title/content/object、五 Processor payload 与失败矩阵 | 真实来源样本复核 |
 | `BASE_COLLECT/SYSTEM_METRIC` | 90% | 主机 ID/地址定位、实例唯一性、模型/拓扑、多 membership 稳定首路径、Resource/Display、`cw_labels`、两份 KAC 脱敏差异 fixture | 组合 `event.target` 差异样本 |
 | BaseTarget `UPTIME_CHECK` | 85%～90% | Task/Node 双 ID、协议维度、删除任务回退、OneModel 业务名称与可信目标主机云区域名称、业务/任务 `cw_labels`、两份 KAC 脱敏 fixture | 非主机目标的云区域名称、真实外部样本 |
@@ -587,8 +597,7 @@ Event.Dimensions.bk_collect_config_id
 - Resource/Display 场景复用；
 - 基础 `cw_labels`；
 - 主机实例从 OneModel `attributes.bk_cloud_id/bk_cloud_name` 投影云区域；
-- 需要拓扑的远程或非主机采集，可由相同云区域 ID 的关联主机补齐名称；
-- 非主机资源已有业务并跳过拓扑时，按告警 `bk_host_id/bk_target_host_id + bk_target_cloud_id`，或 `bk_target_ip + bk_target_cloud_id` 查询 OneModel `cw-Host`，补齐同云区域名称；
+- 非主机组件不从实例或关联主机补充云区域；已有业务并跳过拓扑时，不再为云区域名称额外查询主机；
 - Event 不可变、未命中和依赖故障测试。
 
 生产限制：

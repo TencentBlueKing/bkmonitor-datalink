@@ -63,10 +63,10 @@ func ApplyTopology(values *models.ResourceValues, topology models.ResourceTopolo
 	}
 }
 
-// ApplyHostCloudContext 从已验证的关联主机补齐云区域；资源自身的区域身份优先，
+// ApplyHostCloudContext 仅为主机资源补齐云区域；组件不能继承关联主机的区域。
 // 不把不同区域的名称拼到已有区域 ID 上。租户及关联身份由查询方复核。
 func ApplyHostCloudContext(values *models.ResourceValues, host Instance) {
-	if host.ModelCode != rules.HostModelCode || host.InstanceID == "" {
+	if values.ModelID != rules.HostModelCode || host.ModelCode != rules.HostModelCode || host.InstanceID == "" {
 		return
 	}
 	fields := make(map[string]any, len(host.Attributes)+len(host.Fields))
@@ -123,14 +123,41 @@ func ResourceValuesFromInstance(instance Instance, fallbackBizID int64) models.R
 	if value, exists := rules.FirstField(fields, rules.FieldBKModuleName); exists {
 		values.BKModuleName = fmt.Sprint(value)
 	}
-	values.BKCloudID, _ = rules.FirstField(fields, rules.FieldBKCloudID)
-	if value, exists := rules.FirstField(fields, rules.FieldBKCloudName); exists {
-		values.BKCloudName = fmt.Sprint(value)
+	// 云区域描述主机。组件实例即使携带同名属性，也不能将其作为告警云区域。
+	if instance.ModelCode == rules.HostModelCode {
+		values.BKCloudID, _ = rules.FirstField(fields, rules.FieldBKCloudID)
+		if value, exists := rules.FirstField(fields, rules.FieldBKCloudName); exists {
+			values.BKCloudName = fmt.Sprint(value)
+		}
 	}
 	values.CloudPlatformID, _ = rules.FirstField(fields, rules.FieldCloudPlatformID)
 	values.DynamicGroupID = []string{}
 	values.CWLabels = []string{}
 	return values
+}
+
+// InstanceHasBusiness 判断实例是否已有业务归属；非空 bk_biz_ids 数组也表示已有归属。
+// 此处只判断是否已有归属，不从多业务数组中选择业务；空数组仍允许业务拓扑补偿。
+func InstanceHasBusiness(instance Instance) bool {
+	fields := make(map[string]any, len(instance.Fields)+len(instance.Attributes))
+	for key, value := range instance.Attributes {
+		fields[key] = value
+	}
+	for key, value := range instance.Fields {
+		fields[key] = value
+	}
+	if rules.FirstStringFieldValue(fields, rules.FieldBKBizID, rules.FieldCWBIZID) != "" {
+		return true
+	}
+	switch ids := fields["bk_biz_ids"].(type) {
+	case []any:
+		return len(ids) > 0
+	case []int64:
+		return len(ids) > 0
+	case []int:
+		return len(ids) > 0
+	}
+	return false
 }
 
 func uniqueBusinessID(value any) any {

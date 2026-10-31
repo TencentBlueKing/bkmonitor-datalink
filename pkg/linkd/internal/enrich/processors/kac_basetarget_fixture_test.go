@@ -189,18 +189,65 @@ func TestKACBaseTargetFixtures(t *testing.T) {
 					delete(entry, rules.MonitorResourceProcessor)
 				}
 			}
+			// 非主机组件的云区域已停止输出；历史 KAC 样本仍保留原值，
+			// 单独验证新输出为空后，仅调整这两个字段参与其余投影的逐项比较。
+			component := fixture.Model.ModelCode != "" && fixture.Model.ModelCode != rules.HostModelCode
+			historicalCloudName, _ := fixture.ExpectedKAC[rules.ResourceProcessor]["bk_cloud_name"].(string)
+			if component {
+				resource := payload.Processors[1][rules.ResourceProcessor]
+				for _, field := range []string{"bk_cloud_id", "bk_cloud_name"} {
+					if string(resource.Value[field]) != `""` {
+						t.Fatalf("component resource field %s=%s, want empty", field, resource.Value[field])
+					}
+					fixture.ExpectedKAC[rules.ResourceProcessor][field] = ""
+				}
+			}
 			assertKACProjection(t, payload, fixture.ExpectedKAC)
 			for _, evaluation := range result.Data.Evaluations {
 				raw := evaluation.Data["processors"]
 				evaluation.Data["processors"] = json.RawMessage(strings.ReplaceAll(string(raw), `"monitor-resource":`, `"resource":`))
 			}
-			// 固定历史样本保持原值；本次唯一输出差异是内置参数移交 KAC，
-			// 先独立断言新输出没有该键，再从历史预期中剔除它，其他字段仍逐一比较。
+			// 固定历史样本保持原值；内置参数移交 KAC、非主机组件清空云区域
+			// 已在上方独立断言，仅调整这几项差异，其他字段仍逐一比较。
 			var expected map[string]any
 			if err := json.Unmarshal(fixture.ExpectedData, &expected); err != nil {
 				t.Fatal(err)
 			}
 			for _, raw := range expected["processors"].([]any) {
+				// 组件原始云区域维度仍保留，但不再用关联主机的名称翻译该维度。
+				if display, exists := raw.(map[string]any)[rules.DisplayProcessor]; component && exists && historicalCloudName != "" {
+					for _, rawPatch := range display.(map[string]any)["patches"].([]any) {
+						patch := rawPatch.(map[string]any)
+						switch patch["path"] {
+						case `$["labels"]["dimension_text"]`:
+							patch["value"] = strings.ReplaceAll(patch["value"].(string), "("+historicalCloudName+")", "")
+						case `$["extra_data"]["dimensions"]`:
+							for _, rawDimension := range patch["value"].([]any) {
+								dimension := rawDimension.(map[string]any)
+								if dimension["real_key"] == "bk_cloud_id" || dimension["real_key"] == "bk_target_cloud_id" {
+									dimension["value"] = dimension["real_value"]
+								}
+							}
+						}
+					}
+				}
+				if resource, exists := raw.(map[string]any)[rules.ResourceProcessor]; component && exists {
+					envelope := resource.(map[string]any)
+					patches := envelope["patches"].([]any)
+					kept := make([]any, 0, len(patches)+1)
+					for _, rawPatch := range patches {
+						patch := rawPatch.(map[string]any)
+						if patch["path"] == `$["labels"]["bk_cloud_id"]` {
+							continue
+						}
+						if patch["path"] == `$["labels"]["bk_cloud_name"]` {
+							kept = append(kept, map[string]any{"op": "set", "path": `$["labels"]["bk_cloud_id"]`, "value": ""})
+							patch["value"] = ""
+						}
+						kept = append(kept, patch)
+					}
+					envelope["patches"] = kept
+				}
 				if metric, exists := raw.(map[string]any)[rules.MetricProcessor]; exists {
 					envelope := metric.(map[string]any)
 					patches := envelope["patches"].([]any)

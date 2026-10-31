@@ -530,6 +530,11 @@ func combinedDimensions(alert domain.Event) (domain.DimensionMap, error) {
 }
 
 func resourceContextValue(scope *enrich.Scope, values models.ResourceValues) (domain.JSONObject, error) {
+	if values.ModelID != "" && values.ModelID != rules.HostModelCode {
+		// 显式空值覆盖来源 labels 中可能已有的主机云区域，避免跳过 nil 补丁后
+		// 将其继续投递给 KAC。原始 dimensions 和主机地址查询不受影响。
+		values.BKCloudID, values.BKCloudName = "", ""
+	}
 	scope.Context().Resource.Set(values)
 	return scope.Context().Resource.JSONObject()
 }

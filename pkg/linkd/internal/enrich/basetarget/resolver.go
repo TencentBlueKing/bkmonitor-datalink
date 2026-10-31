@@ -175,7 +175,7 @@ func resolve(
 	}
 	result.instanceID = result.instance.InstanceID
 
-	result.topologyRequired = result.modelCode == rules.HostModelCode || !instanceHasBusiness(result.instance)
+	result.topologyRequired = result.modelCode == rules.HostModelCode || !enrich.InstanceHasBusiness(result.instance)
 	if !result.topologyRequired {
 		return result, nil
 	}
@@ -341,11 +341,6 @@ func missingFields(fields ...string) []enrich.Diagnostic {
 		paths[index] = "dimensions." + field
 	}
 	return []enrich.Diagnostic{{Code: enrich.DiagnosticCodeMissingField, Fields: paths}}
-}
-
-func instanceHasBusiness(instance enrich.Instance) bool {
-	fields := mergeInstanceFields(instance)
-	return rules.FirstStringFieldValue(fields, rules.FieldBKBizID, "bk_biz_ids", rules.FieldCWBIZID) != ""
 }
 
 func mergeInstanceFields(instance enrich.Instance) map[string]any {

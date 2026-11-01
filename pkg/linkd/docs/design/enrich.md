@@ -429,7 +429,8 @@ Workload 的 `workload_name`、Pod 的 `pod_name`、Container 的 `container_nam
 - `metric_object` 是适用对象集合 `model_ids` 的权威来源，零个或多个对象时派生 `ObjectModelCode` 为空，恰好一个时等于该模型；不以旧 `metric.model_id` 补关系。关系读取按事件租户和命中的指标 ID 隔离，上限 8192 条，超限、重复、跨租户或指标身份不匹配均失败，不截断集合。`ref_metricset_code` 保留实际取数来源；Kingeye 已退役物化计算指标并删除 `metric.record_rule_id`，Linkd 不再读取该列。
 - `metric_name/display_name/description/unit/value_mapping` 映射为既有丰富元数据；`dimensions[].id/name` 映射为维度 key/name。定义全名与来源编码不用于推断指标身份，不从带点编码拆取来源。
 - 目录适用对象使用 `model_ids` 集合。成功命中的未关联定义不构成目录故障：没有策略或 Event 对象上下文时 `monitor-resource` 返回 `skipped`，有明确上下文时独立校验 OneModel；不生成空资源字段覆盖已有身份。K8s 来源（包括 `k8s_cluster.<集群标识>`）的资源由既有维度和已配置 Processor 定位，来源编码不代表资源类型。不新增 `pod/container` 到 `pod_name/container_name` 的映射。
-- DATA 资源检查全部输入的适用对象集合；显式对象必须属于每个非空集合，没有显式上下文时只采用唯一公共模型。集合冲突、策略与 Event 冲突、不同位置的标准身份冲突使用 `identity_conflict`，不改报目录故障，也不任取第一个输入或模型。当前 evaluation 的标准身份读取 `labels`、`extra_data`、`dimensions`，完整的一对来自同一位置；非法身份不回退采集主机。
+- DATA 的 K8s 结果身份优先使用 Event 中完整且一致的 `model_id/model_inst_id`；没有明确身份时按原生维度推断 Cluster、Namespace、Node、Service、Workload、Pod、Container、PV 或 PVC，再通过同租户 OneModel 查询验证。指标目录或策略上的 K8s 模型描述原始对象，不能覆盖聚合后的结果对象：例如 Container 指标按集群和 Namespace 汇总后可定位 Namespace，不要求补回被聚合掉的 Pod、Container 维度。没有可识别维度时身份留空；更具体的维度存在但不完整、实例未命中或查询失败时不退回其他模型。PV/PVC 仍优先于采集 Pod 维度，不能把采集器所属 Namespace 当作 PV 归属。
+- 上述调整仅用于对象上下文和目录非空适用对象都属于已知 K8s 模型的 DATA 策略。混入非 K8s 模型、其他模型的 DATA 推断及所有基于实例策略保持原有校验：检查全部输入的适用对象集合；显式对象必须属于每个非空集合，没有显式上下文时只采用唯一公共模型。集合冲突、非 K8s 策略与 Event 冲突、不同位置的标准身份冲突使用 `identity_conflict`，不改报目录故障，也不任取第一个输入或模型。当前 evaluation 的标准身份读取 `labels`、`extra_data`、`dimensions`，完整的一对来自同一位置；非法身份不按原生维度回退。目录的缺失和读取错误仍如实报告，结果身份推断不掩盖指标元数据故障。
 - APM 来源识别优先使用目录 `ref_metricset_code`，没有主引用时使用定义来源；识别 `apm` 和 `apm_application.<标识>`，旧的无目录 ID 查询保留表名识别。APM 与其他来源混合、或多个不同单应用来源的输入不能选择首条定位应用。应用/服务/服务实例在策略和 Event 的明确上下文、适用集合约束下定位；`cw-interface` 仅接收并校验完整标准身份，不从 `span_name` 猜测缺少 category/span_kind 的接口实例 ID。K8s 的重复模型声明必须一致，原生维度查出的实例不得覆盖显式声明的另一实例。
 
 - 定义查询不按 `enabled/ref_status` 过滤，已触发告警仍可展示停用或失效指标的定义。时序取数继续使用已发布的检测语义；已有参数继续插件协议，无参数内置告警由 KAC 按准确 Event 与执行历史重建，外部来源由所属插件承接。
@@ -651,18 +652,18 @@ Event.Dimensions.task_id
 
 当前已覆盖普通时序 `cw-Others`、system 主机与 uptimecheck 的基础资源定位：
 
-- `MetricReader` 投影 `object_model_code`，用于 DATA 对象分类；
+- `MetricReader` 投影目录适用对象集合，用于非 K8s DATA 对象分类；K8s 结果身份遵循第 7 节的维度推断约定；
 - 指标目录同步读取 `value_mapping`，DATA 单指标且无函数时将匹配数值追加枚举名称，多指标、函数和衍生指标保留原始内容；
-- 策略无 `object_model_code` 时，按指标库模型回退；
+- 非 K8s DATA 策略无 `object_model_code` 时，按指标目录适用对象集合回退；
 - 无实例身份的 `cw-Others` 告警保留模型代码、模型名称、来源业务和 `cw_labels`；
 - 业务名称可从同租户 OneModel `cw-biz` 实例读取；
 - Display 使用空 object，保留 Alert 内容和指标标题；
 - KAC `basic_data` 转换 fixture 验证完整五 Processor payload；
 - system 主机按 `bk_target_host_id` 优先，随后以 `bk_target_ip + bk_target_cloud_id` 查询 OneModel `cw-Host`；
 - uptimecheck 结果表复用 `uptime.Enrich`，按 `task_id` 定位任务数据库主键；
-- 普通 OneModel 单模型在标准 Event 明确提供 `model_id + model_inst_id` 且模型与指标目录一致时查询 OneModel；`model_inst_id` 按不透明字符串原值使用，实例成功才生成实例标签；
+- 非 K8s 普通 OneModel 单模型在标准 Event 明确提供 `model_id + model_inst_id` 且模型与指标目录一致时查询 OneModel；`model_inst_id` 按不透明字符串原值使用，实例成功才生成实例标签；
 - `data_ordinary_onemodel` 是依据统一实例身份规格构造的派生 fixture，真实普通实例 KAC 样例仍待取证；
-- 上游缺少显式 canonical 模型／实例身份时保留模型和业务并返回 Resource partial；身份冲突或查询未命中时 Resource failed。
+- 非 K8s 普通实例缺少显式 canonical 模型／实例身份时保留模型和业务并返回 Resource partial；身份冲突或查询未命中时 Resource failed。
 
 当前仍缺：
 
@@ -985,7 +986,7 @@ NoData 迁移已完成：
 已完成：
 
 1. `basic_data` KAC 样例转换 fixture，保留 `cw-Others`、空实例和业务标签语义；
-2. 指标目录数据源读取 `metric.model_id`，并用于 DATA 资源模型回退；
+2. 指标目录数据源按 `metric_object` 投影适用对象集合，用于非 K8s DATA 资源模型回退；K8s 结果身份遵循第 7 节的维度推断约定；
 3. DATA Resource 保留模型、业务和标签，不伪造实例身份；
 4. system 主机使用目标主机 ID 或 IP+云区域定位 OneModel；uptimecheck 复用 `task_id` 任务定位；
 5. 普通 OneModel 仅按显式 `model_id + model_inst_id` 原值查询，已覆盖成功、模型冲突、非法数字、未命中和响应身份不匹配；

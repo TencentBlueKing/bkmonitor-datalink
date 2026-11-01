@@ -345,7 +345,20 @@ func processK8sResource(ctx context.Context, scope *enrich.Scope, code string, b
 		return enrich.ProcessorResult{}, ctx.Err()
 	}
 	if readErr != nil || !found || instance.TenantID != scope.Facts().BKTenantID || instance.ModelCode != code || instance.InstanceID == "" {
-		return resourceScenarioResult(scope, values, appendResourceDependency(diagnostics, rules.DependencyOneModel), true)
+		diagnostics = appendResourceDependency(diagnostics, rules.DependencyOneModel)
+		if readErr == nil && !found {
+			id, fallbackDiagnostics, err := fallbackK8sIdentity(ctx, scope, code)
+			if err != nil {
+				return enrich.ProcessorResult{}, err
+			}
+			diagnostics = append(diagnostics, fallbackDiagnostics...)
+			if id != "" {
+				// 只补确定的自然身份，不将缺失实例伪装为已查询到的业务/属性快照。
+				values.ModelID, values.ModelInstID = code, id
+				values.CWLabels = enrich.ResourceLabels(values)
+			}
+		}
+		return resourceScenarioResult(scope, values, diagnostics, true)
 	}
 	resource := enrich.ResourceValuesFromInstance(instance, bizID)
 	resource.ModelName, resource.BKObjID = values.ModelName, values.BKObjID

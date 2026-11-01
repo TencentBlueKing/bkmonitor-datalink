@@ -45,7 +45,7 @@ func TestResourceThenK8sRequiresCompleteNodeIdentity(t *testing.T) {
 				delete(dims, test.missing)
 				event := processorBaseTargetAlert(t, dims)
 				if !noData && test.missing == "node" {
-					// DATA 只保留集群维度时改为定位 Cluster；此 Reader 无 Cluster，仍须拒绝实例绑定。
+					// DATA 只保留集群维度时定位 Cluster，未命中后保留诊断并按自然键兜底。
 					test.wantCode = enrich.DiagnosticCodeDependencyInvalid
 				}
 				original := event.Clone()
@@ -84,8 +84,16 @@ func TestResourceThenK8sRequiresCompleteNodeIdentity(t *testing.T) {
 					t.Fatalf("dependency=%s", step.Diagnostics[0].Dependency)
 				}
 				wantModel := ""
+				if !noData && ((test.name == "node not found") || test.missing == "node") {
+					wantModel, test.wantID = rules.K8sNodeModelCode, "cluster-1|node-1"
+					if test.missing == "node" {
+						wantModel, test.wantID = "cw-K8s_Cluster", "cluster-1"
+					}
+				}
 				if test.wantID != "" {
-					wantModel = rules.K8sNodeModelCode
+					if wantModel == "" {
+						wantModel = rules.K8sNodeModelCode
+					}
 				}
 				event.Enrich = result.Data
 				effective, err := view.EnrichedEvent(event, "warning")

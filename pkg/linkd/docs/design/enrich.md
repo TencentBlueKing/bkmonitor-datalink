@@ -289,7 +289,7 @@ data_source
 
 ### 6.2 monitor-resource
 
-适用场景：BaseTarget、DATA、Cloud/APM 等需要资源身份的链路。Resource 只在取得可信模型和实例身份后生成实例级标签；场景级 Processor 可在 Resource 之外补充专用资源投影。
+适用场景：BaseTarget、DATA、Cloud/APM 等需要资源身份的链路。Resource 在取得可信模型和实例身份后生成实例级标签；DATA K8s 的 OneModel 查询成功但未命中时允许按自然键兜底，并保留部分成功诊断。场景级 Processor 可在 Resource 之外补充专用资源投影。
 
 ```text
 bk_obj_id
@@ -399,6 +399,16 @@ Workload 的 `workload_name`、Pod 的 `pod_name`、Container 的 `container_nam
 `workload_kind=Pod + workload_name` 表达仍受支持。缺少必要维度时在本地拒绝查询，错误链保留
 具体维度；不能把其他模型的名称维度当作兜底。Display 从 Node 维度取得的名称不会被 Basic 分支
 返回的空 `subject_name` 清除；其他资源分支仍遵循自己的展示覆盖规则。
+
+DATA K8s 主实例在同租户 OneModel 查询成功但未命中时，`monitor-resource` 和 `k8s`
+按 OneModel 的自然键顺序生成 `model_id/model_inst_id`：Cluster 使用集群，Namespace 使用集群与命名空间，
+Node 使用集群与节点名，Service 使用集群、命名空间与 Service 名，Workload 使用集群、命名空间、类型与名称，
+Pod 使用集群、命名空间与 Pod 名，Container 再包含容器名，PV 使用集群与卷名，PVC 使用集群、命名空间与声明名。
+各维度原值按固定顺序以 `|` 连接，不排序、哈希或转义；独立 Pod 的名称沿用上述 `workload_name` 映射。
+缺失维度、分隔符、非法文本、超过 1024 字节或与已有明确身份冲突时不输出兜底身份，并记录
+`missing_field`、`invalid_field` 或 `identity_conflict` 诊断。兜底成功与失败都保留原有
+`dependency_invalid/onemodel`；成功只补身份，状态仍为 `partial`，不伪造实例属性或业务归属。
+查询报错、返回跨租户/错误模型/空身份均不触发兜底，基于实例的策略保持原有行为。
 
 ## 7. DataSource 现状
 

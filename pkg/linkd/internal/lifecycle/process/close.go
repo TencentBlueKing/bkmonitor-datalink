@@ -58,7 +58,7 @@ type AlertProjectionSynchronizer interface {
 	ProjectNow(context.Context, string, string) error
 }
 
-// AlertCloser 为用户或系统关闭装配当前已发布来源的 Hook，复用正式 Lifecycle 的 CAS 和流水逻辑。
+// AlertCloser 为用户或系统关闭装配来源当前或历史版本的 Hook，复用正式 Lifecycle 的 CAS 和流水逻辑。
 // 重试必须携带相同命令，终态部分成功不等同于未执行。
 type AlertCloser struct {
 	logger        *slog.Logger
@@ -157,11 +157,9 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 	if err != nil {
 		return err
 	}
-	if source.Published <= 0 {
-		return &CloseError{Status: 409, Code: "source_unpublished", Message: "event source has no published configuration"}
-	}
 	version := source.Published
-	if source.Deleted {
+	// 来源下线不阻止处理已有告警；无当前发布配置时沿用告警的历史版本。
+	if source.Deleted || version <= 0 {
 		version = stored.Alert.EventSourceVersion
 	}
 	var release eventsource.Release
@@ -173,7 +171,8 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 	if err != nil {
 		return err
 	}
-	if release.Spec.RelatedTenantID != "" && release.Spec.RelatedTenantID != tenant {
+	// 单租户部署不以来源绑定租户限制已有告警的管理操作；存储仍按请求租户隔离。
+	if cfg.Blueking.EnableMultiTenantMode && release.Spec.RelatedTenantID != "" && release.Spec.RelatedTenantID != tenant {
 		return &CloseError{Status: 403, Code: "tenant_mismatch", Message: "event source tenant mismatch"}
 	}
 	var hooks []lifecycle.NamedFinalHook

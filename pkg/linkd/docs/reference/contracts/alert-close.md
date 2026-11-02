@@ -1,6 +1,6 @@
 # Alert 主动关闭 API
 
-状态：2026-10-30。批量路径及请求内并发的版本、实测和发布状态见[验证报告](../../research/2026-10-29-close-batches.md)。接口复用 Lifecycle 的 `CloseAlert`，支持显式人工、系统关闭和按条件批量关闭。
+状态：2026-11-02。批量路径及请求内并发的版本、实测和发布状态见[验证报告](../../research/2026-10-29-close-batches.md)。接口复用 Lifecycle 的 `CloseAlert`，支持显式人工、系统关闭和按条件批量关闭。
 
 `POST /api/v1/alerts/{alert_id}/close` 使用控制面管理 JWT（`Internal-Token: Bearer <JWT>`）；worker token 无权调用。
 Console 代理为 `POST /local-api/alerts/{alert_id}/close`，浏览器无需也不能获取管理 JWT。
@@ -34,7 +34,7 @@ Console 代理为 `POST /local-api/alerts/{alert_id}/close`，浏览器无需也
 
 成功返回 `200` 和 `{ "alert": <关闭后的 Alert>, "already_closed": false }`；重复完成返回 `already_closed: true`。
 响应为 `Cache-Control: no-store`。结束类型按操作者保存 user/system，不接受关闭以外动作；不创建 Event、不会更改 latest_event_id。
-执行当前已发布来源的全部 FinalHook（不重新丰富），普通 Hook 失败记录在 push 流水中，不回滚已保存状态。
+执行当前已发布来源的全部 FinalHook（不重新丰富）；来源已删除或没有当前发布版本时，使用告警记录的 `event_source_version` 对应的历史配置，普通 Hook 失败记录在 push 流水中，不回滚已保存状态。
 启用 `plugins.kac` 时，管理入口和集成入口在返回 200 前使用控制面的投影写入器；只对同租户同 Alert ID 串行，互不重叠的关闭批次可以并行。
 同一告警的普通投影在身份锁内实时读取，关闭投影在相同身份锁内写入，避免旧快照随后覆盖关闭；直接写入 `refresh=false`，Bulk 成功后返回，不等待搜索刷新，不回读水位或创建确认记录。
 关闭接口成功只确认 KAC 写入已被接受，不承诺立即可搜索。既有后台动作在执行前的刷新保持不变。
@@ -47,14 +47,14 @@ Console 代理为 `POST /local-api/alerts/{alert_id}/close`，浏览器无需也
 | 400 | 字段、字节长度、时间或 JSON 格式无效 |
 | 401 / 403 | 管理鉴权失败或来源租户不匹配 |
 | 404 | 告警或来源不存在 |
-| 409 | 告警已进入其他终态、CAS 冲突未收敛或来源无发布配置 |
+| 409 | 告警已进入其他终态或 CAS 冲突未收敛 |
 | 429 | 同 fingerprint 正在被 Worker 处理 |
 | 502 | 依赖失败或执行结果不确定，可能已保存终态；使用原命令重试 |
 | 503 | 未配置 Lifecycle、Repository 或 Redis |
 
 请求预算十秒，包含同步 KAC 投影；超时不承诺回滚。Linkd 列表或流水仍可能受自身 ES refresh 延迟影响。
 入口与 Lifecycle Worker 共用按租户、来源和 fingerprint 隔离的 Redis lease；请求取消后仍有界释放。
-来源发布配置可能在两次请求间变化；重试保持同一操作身份，但按请求时的发布配置装配 Hook。
+来源发布配置可能在两次请求间变化；重试保持同一操作身份，但按请求时的发布配置装配 Hook；来源已删除或没有当前发布版本时使用告警的历史配置。来源停用不阻止关闭，历史配置不存在仍返回 404，`blueking.enable_multi_tenant_mode=true` 时，来源的非空 `related_tenant_id` 必须与请求租户一致，否则返回 403 `tenant_mismatch`；单租户模式跳过这项来源匹配。两种模式均按请求租户读取告警，不跨租户查找。
 此边界不提供“恰好一次”外部投递保证，下游继续使用稳定消息身份去重。
 
 系统调用示例：将 operator_kind 设为 system，operation_source 设为 self_heal，operator_id 设为稳定的
@@ -205,5 +205,5 @@ KAC 使用 `BKAPP_KAC_LINKD_API_URL` 调用 `POST /api/v1/integrations/kac/alert
 KAC 在超时、429 或 5xx 后复用原命令重试；接口每次只关闭一条 Alert。
 
 集成入口错误响应为 `{ "error_code": "...", "message": "..." }`：400 `invalid_command`、
-403 `tenant_mismatch`、404 `not_found`、409 `invalid_transition` / `version_conflict` / `source_unpublished`、
+403 `tenant_mismatch`、404 `not_found`、409 `invalid_transition` / `version_conflict`、
 429 `busy`、502 `result_uncertain`、503 `unavailable`。

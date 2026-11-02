@@ -380,6 +380,7 @@ resources:
 ```
 
 `enable_multi_tenant_mode` 缺省为 false：单租户业务调用直接使用 `admin`，不调用用户管理解析用户名。
+管理操作（主动关闭、屏蔽与合并步骤）装配来源处理器时，单租户模式不检查来源 `related_tenant_id` 与请求租户是否匹配；多租户模式保留该检查。
 多租户根据当前请求的租户查询并缓存 `bk_admin`。两种模式均将调用者显式租户写入 APIGW 的 `X-Bk-Tenant-Id` 请求头，
 不会把 Event/Alert、管理 API、Redis 或存储中的租户改为默认租户。全租户应用只需一份凭据，无租户名单。
 

@@ -158,11 +158,11 @@ func (s *AlertCloser) closeBatch(ctx context.Context, commands []lifecycle.Close
 	releases := map[controlHookKey]controlReleaseResult{}
 	for _, a := range identities.Alerts {
 		record := records[a.Alert.EventSourceID]
-		if record.err != nil || record.record.Published <= 0 {
+		if record.err != nil {
 			continue
 		}
 		version := record.record.Published
-		if record.record.Deleted {
+		if record.record.Deleted || version <= 0 {
 			version = a.Alert.EventSourceVersion
 		}
 		key := controlHookKey{a.Alert.EventSourceID, version}
@@ -246,7 +246,7 @@ func (s *AlertCloser) closeBatch(ctx context.Context, commands []lifecycle.Close
 			}
 			a := g.identity.Alert
 			version := a.EventSourceVersion
-			if record := records[a.EventSourceID]; !record.record.Deleted {
+			if record := records[a.EventSourceID]; !record.record.Deleted && record.record.Published > 0 {
 				version = record.record.Published
 			}
 			key := controlHookKey{a.EventSourceID, version}

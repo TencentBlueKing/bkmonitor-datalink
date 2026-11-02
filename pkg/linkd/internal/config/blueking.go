@@ -16,7 +16,7 @@ import (
 
 // BluekingConfig 定义部署级蓝鲸调用配置；不改变 Event/Alert 或管理 API 的租户身份。
 type BluekingConfig struct {
-	EnableMultiTenantMode bool   `yaml:"enable_multi_tenant_mode" json:"enable_multi_tenant_mode"` // EnableMultiTenantMode 控制是否查询租户 bk_admin；缺省使用 admin。
+	EnableMultiTenantMode bool   `yaml:"enable_multi_tenant_mode" json:"enable_multi_tenant_mode"` // EnableMultiTenantMode 控制租户目录、bk_admin 查询和管理操作的来源租户匹配；缺省为单租户。
 	APIURL                string `yaml:"api_url,omitempty" json:"api_url,omitempty"`               // APIURL 为 APIGW 公共根地址，不包含具体网关名。
 	AppCode               string `yaml:"app_code,omitempty" json:"app_code,omitempty"`             // AppCode 为全租户应用代码。
 	AppSecret             string `yaml:"app_secret,omitempty" json:"app_secret,omitempty"`         // AppSecret 仅保存在部署配置，展示时脱敏。

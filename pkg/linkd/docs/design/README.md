@@ -23,6 +23,10 @@
 | [task-scheduling-observability.md](task-scheduling-observability.md) | 中心与 worker 调度指标、语义和验证入口 |
 | [observability.md](observability.md)                             | 日志、指标和诊断约束                                   |
 | [enrich.md](enrich.md) | 内置丰富场景、Observation 和 KAC 迁移状态 |
+| [enrich-resource-identity.md](enrich-resource-identity.md) | 各类资源的 model_id、model_inst_id、OneModel 查询条件及与统一原则的差距 |
+| [enrich-object.md](enrich-object.md) | 告警对象 object 的来源、各场景名称、查询条件、覆盖和快照规则 |
+| [enrich-item.md](enrich-item.md) | item 的取值顺序、各类告警名称、策略和指标库查询、失败与 Alert 快照规则 |
+| [enrich-metric-identity-and-item.md](enrich-metric-identity-and-item.md) | KAC 告警指标ID与指标唯一标识的字段含义、补全规则、场景和歧义处理 |
 | [alert-content-generation.md](alert-content-generation.md) | 新 Alert 内容生成迁移的实施草案、数据前置条件和验收范围 |
 | [custom-enrichment.md](custom-enrichment.md) | 自定义 CMDB/字段规则、补丁、SDK、预览和转换 |
 | [event-source-dynamic-configuration.md](event-source-dynamic-configuration.md) | EventSource 管理、发布、多副本与分片上限 |

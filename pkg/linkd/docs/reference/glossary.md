@@ -59,9 +59,13 @@
 | strategy（丰富分组） | 丰富结果中的策略补充信息，包含 bk_strategy_id、monitor_template_id、strategy_config_id 三种独立身份，以及展示名称、跳转链接和鲸眼配置数据源；monitor_template_id 沿用旧 clean_strategy_id 的模板名称/策略名称回退行为 |
 | source（丰富分组） | 丰富结果中的来源补充信息：按租户和 Event.EventSourceID（KAC 的 linkd_source_id）回查 alarm_collect_alarmsource，source_id 保存该表的 id，source_name 保存名称，meta_info 承载来源事件标识；不替代 Linkd 的 EventSourceID |
 | meta_info（丰富字段） | 优先保留旧清洗的同名 extra_data 值；未提供时使用来源丰富值或 Event.SourceEventID，不替代来源原始身份 |
-| metric（丰富分组） | 丰富结果中的指标补充信息，包含监控项展示名称、按原分类解释的指标名称、单位及表和维度等事实；内置及外部来源继续生成兼容查询参数并随丰富结果冻结。指标名称不统一定义为指标 ID，多个丰富分类共用该分组 |
+| metric（丰富分组） | 丰富结果中的指标补充信息，包含 `display_name / metric_name / unit / result_table_id` 等事实；当前内置及外部来源均不生成指标查询参数。指标名称不统一定义为指标 ID，多个丰富分类共用该分组 |
+| item | KAC 文本字段。有效 `extra_data.item` 存在时直接采用；不存在时取非空 `display_name`，再取 `strategy_name`；不以对象实例名称补全。查询、场景和空值规则见 [item 补全规则](../design/enrich-item.md) |
+| object（告警对象展示文本） | 正式 KAC 转换优先采用有效 `extra_data.object`，不存在时取非空 `subject_name`，再取 `subject_id`。Display 的 `value.object` 映射为 `subject_name` 补丁；名称不等于模型/实例关联，详见 [object 补全规则](../design/enrich-object.md) |
 | metricset（指标来源） | Kingeye 新指标目录的来源登记表；来源编码不是指标身份，指标定义与主引用存放在 metric 表 |
 | metric_id（指标目录身份） | Kingeye metric 表的租户内可读取主键；策略 query_config 使用 metric_ref_id 携带它，与检测面的字符串 metric_id 不同 |
+| metric_name（KAC 告警指标ID） | Linkd 按场景生成的指标字段名、衍生父定义名或日志文本，允许为空；不等同于指标库主键或指标库同名列，详见[指标字段说明](../design/enrich-metric-identity-and-item.md) |
+| metric_unique_id（KAC 指标唯一标识） | 通常由查询的表与字段拼成，衍生指标取同版本首条执行查询且允许前导点；不表达租户、实例或完整公式，详见[补全规则与歧义处理](../design/enrich-metric-identity-and-item.md) |
 | 指标目录定义查询 | Enrich 按事件租户读取 metric 的名称、单位、模型、枚举和维度；优先 ID，无 ID 时按可信来源空间与平台层反查唯一的原生物理引用或衍生定义名；不执行时序取数 |
 | 来源策略身份 | Event.Labels 中 `strategy_id` 与 `strategy_version`；新发布链中前者为 SplitRecord 主键，后者为执行快照的 `strategy_revision`。不能用来源水位 `source_resource_version`、当前态 `record_revision` 或 Config status 版本替代。 |
 | 鲸眼策略配置 | Linkd 从 Kingeye MySQL `alarm_strategy_execution_revision` 的准确执行快照构造的只读丰富视图；分类和展示使用冻结的 `runtime_config.metadata/spec`，文案查询/算法使用同快照根部 `items`，不读取当前配置替代历史。 |

@@ -53,6 +53,16 @@ Lifecycle 等模块复用；包含停止确认、失联自停、超时强切及�
 `design/`、`modules/`、`guides/` 和 `reference/` 是现行文档，修改行为时必须同步更新。已经被当前
 模型替换的早期占位页和重复模块页不再保留；旧的 alarm_callback 丰富迁移计划也未纳入本目录。
 当前接口以[丰富设计](design/enrich.md)与[核心模型](design/define.md)为准。
+各类资源如何取得 `model_id`、`model_inst_id` 并关联 OneModel，见[资源关联规则](design/enrich-resource-identity.md)。
+
+告警对象展示文本 `object` 如何补全，见 [object 补全规则](design/enrich-object.md)：按场景说明
+`subject_name`、实例名称、维度和任务名称的选择，以及 `extra_data.object` 的覆盖规则。
+
+字段梳理：[Enrich 的 item 补全规则](design/enrich-item.md)，按当前代码说明来源字段、策略名称、
+指标库名称、各类告警取值及 Alert 快照规则。
+
+KAC 告警详情中的指标字段见 [metric_name 与 metric_unique_id](design/enrich-metric-identity-and-item.md)：
+按普通指标、多查询、衍生指标、PromQL、日志和 dataset 分别说明当前补全规则与歧义处理。
 
 `research/` 与 `reviews/` 是带日期或 commit 基线的归档输入，不属于当前契约。阅读归档时必须以
 其记录的版本为准，不能反向覆盖当前代码和设计。

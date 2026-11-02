@@ -13,7 +13,6 @@ package collect
 
 import (
 	"context"
-	"math"
 	"strconv"
 
 	"linkd/internal/domain"
@@ -65,11 +64,6 @@ type Resolution struct {
 	model         enrich.Model
 	modelFound    bool
 	modelErr      error
-
-	cloudHostLookup bool
-	cloudHost       enrich.Instance
-	cloudHostFound  bool
-	cloudHostErr    error
 
 	topologyRequired  bool
 	relatedHost       enrich.Instance
@@ -129,16 +123,8 @@ func resolve(
 	// KAC 对主机始终补业务拓扑；非主机仅在实例自身缺少业务时沿 host_related_field 补偿。
 	// IsRemoteCollect 表示执行目标可能是关联主机，资源身份仍固定使用 CollectConfig.BKInstID。
 	resolution.topologyRequired = resolution.config.BKObjectCode == rules.HostModelCode ||
-		resolution.config.IsRemoteCollect || !instanceHasBusiness(resolution.instance)
+		resolution.config.IsRemoteCollect || !enrich.InstanceHasBusiness(resolution.instance)
 	if !resolution.topologyRequired {
-		query, ok := collectCloudHostQuery(dimensions)
-		if ok && !instanceHasCloudName(resolution.instance) {
-			resolution.cloudHostLookup = true
-			resolution.cloudHost, resolution.cloudHostFound, resolution.cloudHostErr = scope.Instance(ctx, query)
-			if err := ctx.Err(); err != nil {
-				return Resolution{}, err
-			}
-		}
 		return resolution, nil
 	}
 	if resolution.config.BKObjectCode == rules.HostModelCode {
@@ -177,56 +163,6 @@ func resolve(
 	return resolution, nil
 }
 
-func collectCloudHostQuery(dimensions domain.DimensionMap) (enrich.InstanceQuery, bool) {
-	cloudID, cloudExists := dimensions[rules.FieldBKTargetCloudID]
-	if !cloudExists {
-		cloudID, cloudExists = dimensions[rules.FieldBKCloudID]
-	}
-	cloudIdentity, validCloud := collectCloudID(cloudID)
-	if !cloudExists || !validCloud {
-		return enrich.InstanceQuery{}, false
-	}
-	for _, field := range []string{rules.FieldBKHostID, rules.FieldBKTargetHostID} {
-		value, exists := dimensions[field]
-		if !exists {
-			continue
-		}
-		identity := rules.ScalarIdentity(value)
-		parsed, err := strconv.ParseInt(identity, 10, 64)
-		if err == nil && parsed > 0 && strconv.FormatInt(parsed, 10) == identity {
-			return enrich.InstanceQuery{ModelCode: rules.HostModelCode, InstanceID: identity, AttributeFilters: []enrich.InstanceAttributeFilter{
-				{Field: rules.FieldBKCloudID, Type: enrich.InstanceAttributeLong, Value: cloudIdentity},
-			}}, true
-		}
-	}
-	ip, ipExists := dimensions[rules.FieldBKTargetIP]
-	if !ipExists {
-		ip, ipExists = dimensions[rules.FieldIP]
-	}
-	ipText, validIP := ip.StringValue()
-	if !ipExists || !validIP || ipText == "" {
-		return enrich.InstanceQuery{}, false
-	}
-	return enrich.InstanceQuery{ModelCode: rules.HostModelCode, AttributeFilters: []enrich.InstanceAttributeFilter{
-		{Field: rules.FieldBKHostInnerIP, Type: enrich.InstanceAttributeKeyword, Value: ipText},
-		{Field: rules.FieldBKCloudID, Type: enrich.InstanceAttributeLong, Value: cloudIdentity},
-	}}, true
-}
-
-func collectCloudID(value domain.Scalar) (int64, bool) {
-	if number, ok := value.NumberValue(); ok {
-		if number >= 0 && number < float64(math.MaxInt64) && math.Trunc(number) == number {
-			return int64(number), true
-		}
-		return 0, false
-	}
-	if text, ok := value.StringValue(); ok {
-		parsed, err := strconv.ParseInt(text, 10, 64)
-		return parsed, err == nil && parsed >= 0 && strconv.FormatInt(parsed, 10) == text
-	}
-	return 0, false
-}
-
 func collectTaskIdentity(value domain.Scalar, exists bool) (string, taskInputState) {
 	if !exists || !rules.ScalarProvided(value) {
 		return "", taskInputMissing
@@ -237,22 +173,6 @@ func collectTaskIdentity(value domain.Scalar, exists bool) (string, taskInputSta
 	default:
 		return "", taskInputInvalid
 	}
-}
-
-func instanceHasCloudName(instance enrich.Instance) bool {
-	fields := make(map[string]any, len(instance.Fields)+len(instance.Attributes))
-	for key, value := range instance.Attributes {
-		fields[key] = value
-	}
-	for key, value := range instance.Fields {
-		fields[key] = value
-	}
-	name, found := rules.FirstStringField(fields, rules.FieldBKCloudName)
-	return found && name != ""
-}
-
-func instanceHasBusiness(instance enrich.Instance) bool {
-	return rules.FirstStringFieldValue(instance.Fields, rules.FieldBKBizID, rules.FieldCWBIZID) != ""
 }
 
 func validConfig(resolution Resolution) bool {

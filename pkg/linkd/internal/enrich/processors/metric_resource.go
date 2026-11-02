@@ -181,6 +181,39 @@ func resourceMetricModels(metrics []resourceMetric) ([]string, bool) {
 	return slices.Compact(selected), constrained
 }
 
+// dataK8sModelCode 仅调整已确认属于 K8s 的 DATA 结果模型；混入其他模型时沿用原校验。
+// 显式身份已经由 dataResourceDimensions 检查成对与一致性；否则按 Event 的原生维度推断。
+// 无法推断时返回空模型，不能再用目录模型补回已被聚合掉的实例身份。
+func dataK8sModelCode(metrics []resourceMetric, modelCode string, dimensions domain.DimensionMap) (string, bool) {
+	knownK8s := false
+	if modelCode != "" {
+		if _, known := k8sIdentityFields[modelCode]; !known {
+			return "", false
+		}
+		knownK8s = true
+	}
+	for _, metric := range metrics {
+		for _, code := range metric.metadata.ModelIDs {
+			if _, known := k8sIdentityFields[code]; !known {
+				return "", false
+			}
+			knownK8s = true
+		}
+	}
+	if !knownK8s {
+		return "", false
+	}
+	if explicit := dimensionText(dimensions, rules.FieldModelID); explicit != "" {
+		return explicit, true
+	}
+	inferred := k8sModelCode(dimensions)
+	if inferred == "cw-K8s_Pod" && dimensionText(dimensions, rules.FieldContainerName) != "" {
+		// 独立 Pod 的 workload_kind=Pod 描述所属工作负载；结果保留容器维度时仍定位 Container。
+		inferred = "cw-K8s_Container"
+	}
+	return inferred, true
+}
+
 // dataResourceDimensions 只在本地副本加入当前 evaluation 的标准身份；完整的一对
 // 必须来自同一位置，重复声明必须一致。不能拼接 labels 的模型与 dimensions 的实例。
 func dataResourceDimensions(scope *enrich.Scope) (domain.DimensionMap, []enrich.Diagnostic, error) {

@@ -14,6 +14,7 @@ package collect
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"slices"
@@ -116,18 +117,14 @@ func TestResolverAndProjectors(t *testing.T) {
 	}
 }
 
-func TestCollectUsesOneModelHostForCloudName(t *testing.T) {
+func TestCollectKeepsCloudDimensionsWithoutHostCloudLookup(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name       string
 		dimensions domain.DimensionMap
-		wantQuery  enrich.InstanceQuery
 	}{
-		{name: "host id", dimensions: domain.DimensionMap{rules.FieldBKCollectConfigID: domain.NewStringScalar("collect-1"), rules.FieldBKHostID: collectNumber(t, 101), rules.FieldBKTargetCloudID: collectNumber(t, 0)}, wantQuery: enrich.InstanceQuery{ModelCode: rules.HostModelCode, InstanceID: "101", AttributeFilters: []enrich.InstanceAttributeFilter{{Field: rules.FieldBKCloudID, Type: enrich.InstanceAttributeLong, Value: int64(0)}}}},
-		{name: "string cloud id", dimensions: domain.DimensionMap{rules.FieldBKCollectConfigID: domain.NewStringScalar("collect-1"), rules.FieldBKTargetIP: domain.NewStringScalar("192.0.2.10"), rules.FieldBKTargetCloudID: domain.NewStringScalar("0")}, wantQuery: enrich.InstanceQuery{ModelCode: rules.HostModelCode, AttributeFilters: []enrich.InstanceAttributeFilter{
-			{Field: rules.FieldBKHostInnerIP, Type: enrich.InstanceAttributeKeyword, Value: "192.0.2.10"},
-			{Field: rules.FieldBKCloudID, Type: enrich.InstanceAttributeLong, Value: int64(0)},
-		}}},
+		{name: "host id", dimensions: domain.DimensionMap{rules.FieldBKCollectConfigID: domain.NewStringScalar("collect-1"), rules.FieldBKHostID: collectNumber(t, 101), rules.FieldBKTargetCloudID: collectNumber(t, 0)}},
+		{name: "string cloud id", dimensions: domain.DimensionMap{rules.FieldBKCollectConfigID: domain.NewStringScalar("collect-1"), rules.FieldBKTargetIP: domain.NewStringScalar("192.0.2.10"), rules.FieldBKTargetCloudID: domain.NewStringScalar("0")}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			reader := &collectReader{
@@ -135,6 +132,7 @@ func TestCollectUsesOneModelHostForCloudName(t *testing.T) {
 				instance: enrich.Instance{TenantID: "tenant-a", ModelCode: "cw-Service", InstanceID: "2", Fields: map[string]any{rules.FieldBKBizID: int64(3)}}, instanceFound: true,
 				secondaryInstance: enrich.Instance{TenantID: "tenant-a", ModelCode: rules.HostModelCode, InstanceID: "101", Attributes: map[string]any{rules.FieldBKCloudID: int64(0), rules.FieldBKCloudName: "默认区域"}}, secondaryFound: true,
 			}
+			original := test.dimensions.Clone()
 			scope, err := enrich.NewScope(collectAlert(t, test.dimensions), enrich.Sources{CollectConfig: reader, Model: reader, OneModel: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 			if err != nil {
 				t.Fatal(err)
@@ -143,10 +141,34 @@ func TestCollectUsesOneModelHostForCloudName(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(reader.secondaryQuery, test.wantQuery) || result.Resource.BKCloudID != int64(0) || result.Resource.BKCloudName != "默认区域" || len(result.ResourceDiagnostics) != 0 {
+			if reader.instanceCalls != 1 || result.Resource.BKCloudID != nil || result.Resource.BKCloudName != "" || len(result.ResourceDiagnostics) != 0 || !reflect.DeepEqual(test.dimensions, original) {
 				t.Fatalf("query=%#v resource=%#v diagnostics=%#v", reader.secondaryQuery, result.Resource, result.ResourceDiagnostics)
 			}
 		})
+	}
+}
+
+func TestComponentCollectRecognizesBusinessArray(t *testing.T) {
+	t.Parallel()
+	for _, ids := range []any{[]any{json.Number("2")}, []int64{2}, []int{2}, []any{json.Number("2"), json.Number("3")}} {
+		reader := &collectReader{
+			config: models.CollectConfig{BKTenantID: "tenant-a", BKCollectTaskID: "collect-1", BKObjectCode: "cw-Service", BKInstID: 2}, configFound: true,
+			model: enrich.Model{TenantID: "tenant-a", ModelID: "20", ModelCode: "cw-Service", Fields: map[string]any{"host_related_field": "run_host"}}, modelFound: true,
+			instance: enrich.Instance{TenantID: "tenant-a", ModelCode: "cw-Service", InstanceID: "2", Fields: map[string]any{"bk_biz_ids": ids}, Attributes: map[string]any{"bk_biz_id": nil}}, instanceFound: true,
+			relatedErr: errors.New("component with business must not require host topology"),
+		}
+		dimensions := domain.DimensionMap{rules.FieldBKCollectConfigID: domain.NewStringScalar("collect-1")}
+		scope, err := enrich.NewScope(collectAlert(t, dimensions), enrich.Sources{CollectConfig: reader, Model: reader, OneModel: reader, CollectTopology: reader})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := Enrich(t.Context(), scope, dimensions, 2, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.ResourceDiagnostics) != 0 || rules.FirstStringFieldValue(map[string]any{"id": result.Resource.BKBizID}, "id") != "2" {
+			t.Fatalf("bk_biz_ids=%v resource=%+v diagnostics=%+v", ids, result.Resource, result.ResourceDiagnostics)
+		}
 	}
 }
 
@@ -216,20 +238,18 @@ func TestRemoteCollectTopologyFailurePreservesResourceAndReportsDependency(t *te
 	}
 }
 
-func TestCollectAppliesRelatedHostCloudContext(t *testing.T) {
+func TestComponentCollectOmitsCloudContext(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name          string
 		instanceCloud map[string]any
 		hostCloud     map[string]any
-		wantID        any
-		wantName      string
 	}{
-		{name: "fill from related host", hostCloud: map[string]any{rules.FieldBKCloudID: int64(0), rules.FieldBKCloudName: "默认区域"}, wantID: int64(0), wantName: "默认区域"},
-		{name: "preserve resource cloud", instanceCloud: map[string]any{rules.FieldBKCloudID: int64(7), rules.FieldBKCloudName: "资源区域"}, hostCloud: map[string]any{rules.FieldBKCloudID: int64(0), rules.FieldBKCloudName: "默认区域"}, wantID: int64(7), wantName: "资源区域"},
-		{name: "reject mismatched host name", instanceCloud: map[string]any{rules.FieldBKCloudID: int64(7)}, hostCloud: map[string]any{rules.FieldBKCloudID: int64(0), rules.FieldBKCloudName: "默认区域"}, wantID: int64(7)},
-		{name: "fill matching host name", instanceCloud: map[string]any{rules.FieldBKCloudID: int64(0)}, hostCloud: map[string]any{rules.FieldBKCloudID: int64(0), rules.FieldBKCloudName: "默认区域"}, wantID: int64(0), wantName: "默认区域"},
-		{name: "missing host name", hostCloud: map[string]any{rules.FieldBKCloudID: int64(0)}, wantID: int64(0)},
+		{name: "related host cloud", hostCloud: map[string]any{rules.FieldBKCloudID: int64(0), rules.FieldBKCloudName: "默认区域"}},
+		{name: "component cloud attributes", instanceCloud: map[string]any{rules.FieldBKCloudID: int64(7), rules.FieldBKCloudName: "资源区域"}, hostCloud: map[string]any{rules.FieldBKCloudID: int64(0), rules.FieldBKCloudName: "默认区域"}},
+		{name: "component cloud ID only", instanceCloud: map[string]any{rules.FieldBKCloudID: int64(7)}, hostCloud: map[string]any{rules.FieldBKCloudID: int64(0), rules.FieldBKCloudName: "默认区域"}},
+		{name: "matching component and host cloud", instanceCloud: map[string]any{rules.FieldBKCloudID: int64(0)}, hostCloud: map[string]any{rules.FieldBKCloudID: int64(0), rules.FieldBKCloudName: "默认区域"}},
+		{name: "missing host name", hostCloud: map[string]any{rules.FieldBKCloudID: int64(0)}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			finalBizID := int64(9)
@@ -257,7 +277,7 @@ func TestCollectAppliesRelatedHostCloudContext(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(result.Resource.BKCloudID, test.wantID) || result.Resource.BKCloudName != test.wantName || len(result.ResourceDiagnostics) != 0 {
+			if result.Resource.BKCloudID != nil || result.Resource.BKCloudName != "" || len(result.ResourceDiagnostics) != 0 {
 				t.Fatalf("resource=%#v diagnostics=%#v", result.Resource, result.ResourceDiagnostics)
 			}
 		})
@@ -308,7 +328,7 @@ func TestRemoteCollectAppliesRelatedHostTopologyAndLabels(t *testing.T) {
 		"bk_biz_id", "bk_biz_id|3", "bk_set_id", "bk_set_id|4", "cw-Service", "cw-Service|2",
 	}
 	if result.Resource.BKBizID != int64(3) || result.Resource.BKSetID != int64(4) ||
-		result.Resource.BKModuleID != int64(5) || result.Resource.BKCloudID != int64(0) || result.Resource.BKCloudName != "默认区域" ||
+		result.Resource.BKModuleID != int64(5) || result.Resource.BKCloudID != nil || result.Resource.BKCloudName != "" ||
 		!slices.Equal(result.Resource.CWLabels, wantLabels) ||
 		len(result.Resource.DynamicGroupID) != 0 {
 		t.Fatalf("result=%#v", result)

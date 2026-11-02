@@ -65,7 +65,6 @@ func projectResource(resolution Resolution, fallbackBizID int64) resourceProject
 		}
 		values = enrich.ResourceValuesFromInstance(resolution.instance, fallbackBizID)
 		applyModelContext(&values, resolution)
-		applyCloudHostContext(&values, resolution)
 		applyServiceAndRemoteContext(&values, resolution)
 		if resolution.topologyRequired && (resolution.relatedHostErr != nil || !resolution.relatedHostFound ||
 			resolution.hostTopologyErr != nil || !resolution.hostTopologyFound) {
@@ -84,14 +83,6 @@ func applyModelContext(values *models.ResourceValues, resolution Resolution) {
 	enrich.ApplyModelContext(values, resolution.model)
 }
 
-func applyCloudHostContext(values *models.ResourceValues, resolution Resolution) {
-	if !resolution.cloudHostLookup || resolution.cloudHostErr != nil || !resolution.cloudHostFound ||
-		resolution.cloudHost.TenantID != resolution.tenantID || resolution.cloudHost.ModelCode != rules.HostModelCode {
-		return
-	}
-	enrich.ApplyHostCloudContext(values, resolution.cloudHost)
-}
-
 func applyServiceAndRemoteContext(values *models.ResourceValues, resolution Resolution) {
 	if resolution.config.FinalBizID != nil && *resolution.config.FinalBizID > 0 && values.BKBizID == nil {
 		values.BKBizID = *resolution.config.FinalBizID
@@ -100,8 +91,7 @@ func applyServiceAndRemoteContext(values *models.ResourceValues, resolution Reso
 		resolution.relatedHost.TenantID != resolution.tenantID || resolution.relatedHost.ModelCode != rules.HostModelCode || resolution.relatedHost.InstanceID == "" {
 		return
 	}
-	// KAC 的云区域名称来自全局映射。OneModel 关联主机已携带同一 CMDB 属性，
-	// 因此可在请求内直接补齐名称，避免为同一事实新增独立外部查询。
+	// 云区域只用于主机资源；远程采集和服务实例仍可补业务拓扑，但不继承主机区域。
 	enrich.ApplyHostCloudContext(values, resolution.relatedHost)
 	if resolution.hostTopologyErr != nil || !resolution.hostTopologyFound {
 		return

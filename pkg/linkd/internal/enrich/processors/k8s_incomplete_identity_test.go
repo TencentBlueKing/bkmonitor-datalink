@@ -44,6 +44,10 @@ func TestResourceThenK8sRequiresCompleteNodeIdentity(t *testing.T) {
 				}
 				delete(dims, test.missing)
 				event := processorBaseTargetAlert(t, dims)
+				if !noData && test.missing == "node" {
+					// DATA 只保留集群维度时定位 Cluster，未命中后保留诊断并按自然键兜底。
+					test.wantCode = enrich.DiagnosticCodeDependencyInvalid
+				}
 				original := event.Clone()
 				reader := &processorBaseTargetReader{model: processorModel(event.BKTenantID, rules.K8sNodeModelCode, "K8s节点", ""), modelFound: true}
 				sources := enrich.Sources{CWStrategy: processorBaseTargetStrategy{modelCode: rules.K8sNodeModelCode}, Model: reader, OneModel: reader, K8s: &test.reader}
@@ -73,15 +77,23 @@ func TestResourceThenK8sRequiresCompleteNodeIdentity(t *testing.T) {
 				if test.wantCode != "" && (len(step.Diagnostics) != 1 || step.Diagnostics[0].Code != test.wantCode) {
 					t.Fatalf("K8s diagnostics=%+v", step.Diagnostics)
 				}
-				if test.missing != "" && !reflect.DeepEqual(step.Diagnostics[0].Fields, []string{"dimensions." + test.missing}) {
+				if test.missing != "" && test.wantCode == enrich.DiagnosticCodeMissingField && !reflect.DeepEqual(step.Diagnostics[0].Fields, []string{"dimensions." + test.missing}) {
 					t.Fatalf("missing fields=%v", step.Diagnostics[0].Fields)
 				}
 				if test.wantCode == enrich.DiagnosticCodeDependencyInvalid && step.Diagnostics[0].Dependency != rules.DependencyOneModel {
 					t.Fatalf("dependency=%s", step.Diagnostics[0].Dependency)
 				}
 				wantModel := ""
+				if !noData && ((test.name == "node not found") || test.missing == "node") {
+					wantModel, test.wantID = rules.K8sNodeModelCode, "cluster-1|node-1"
+					if test.missing == "node" {
+						wantModel, test.wantID = "cw-K8s_Cluster", "cluster-1"
+					}
+				}
 				if test.wantID != "" {
-					wantModel = rules.K8sNodeModelCode
+					if wantModel == "" {
+						wantModel = rules.K8sNodeModelCode
+					}
 				}
 				event.Enrich = result.Data
 				effective, err := view.EnrichedEvent(event, "warning")

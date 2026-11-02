@@ -42,7 +42,11 @@ func TestCollectCMDBSetModuleDisabled(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(result.ResourceDiagnostics) != 0 || result.Resource.BKBizID != int64(3) || result.Resource.BKCloudName != "默认区域" ||
+				wantCloudID, wantCloudName := any(int64(0)), "默认区域"
+				if remote {
+					wantCloudID, wantCloudName = nil, ""
+				}
+				if len(result.ResourceDiagnostics) != 0 || result.Resource.BKBizID != int64(3) || result.Resource.BKCloudID != wantCloudID || result.Resource.BKCloudName != wantCloudName ||
 					result.Resource.BKSetID != int64(30) || result.Resource.BKModuleID != int64(40) ||
 					result.Resource.BKSetName != "实例集群" || result.Resource.BKModuleName != "实例模块" {
 					t.Fatalf("result=%#v", result)

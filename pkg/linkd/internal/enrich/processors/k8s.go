@@ -97,7 +97,7 @@ func (K8s) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	if missing := k8sMissingIdentityFields(modelCode, alert.Dimensions); len(missing) != 0 {
 		return k8sValuesDiagnostic(scope, values, domain.EnrichStatusFailed, enrich.Diagnostic{Code: enrich.DiagnosticCodeMissingField, Fields: missing})
 	}
-	// 1. 主实例身份只由本次查验成功的结果发布，不能借用上下文身份。
+	// 1. 主实例优先采用查验结果；DATA 查询成功但未命中时可按自然键兜底，不能借用上下文身份。
 	instance, found, err := scope.K8sInstance(ctx, modelCode, alert.Dimensions)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return enrich.ProcessorResult{}, ctxErr
@@ -106,6 +106,16 @@ func (K8s) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	if err != nil || !found || !validK8sInstance(instance, alert.BKTenantID, modelCode) {
 		invalidModels = append(invalidModels, modelCode)
 		instance = enrich.Instance{}
+		if err == nil && !found {
+			id, fallbackDiagnostics, fallbackErr := fallbackK8sIdentity(ctx, scope, modelCode)
+			if fallbackErr != nil {
+				return enrich.ProcessorResult{}, fallbackErr
+			}
+			diagnostics = append(diagnostics, fallbackDiagnostics...)
+			if id != "" {
+				values.ModelID, values.ModelInstID = modelCode, id
+			}
+		}
 	} else {
 		if diagnostics, err := k8sInstanceClaims(scope, instance); err != nil {
 			return enrich.ProcessorResult{}, err
@@ -127,7 +137,9 @@ func (K8s) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	scope.Context().K8s.Set(values)
 	// 3. 发布已验证的上下文，同时保留失败模型及原有身份清理规则。
 	if len(invalidModels) != 0 {
-		return k8sValuesDiagnostic(scope, values, domain.EnrichStatusPartial, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel, Fields: invalidModels})
+		result, err := k8sValuesDiagnostic(scope, values, domain.EnrichStatusPartial, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel, Fields: invalidModels})
+		result.Diagnostics = append(result.Diagnostics, diagnostics...)
+		return result, err
 	}
 	return k8sValuesResult(scope.Context().K8s.Values)
 }
@@ -172,7 +184,7 @@ func k8sValuesDiagnostic(scope *enrich.Scope, values models.K8sValues, status do
 	}
 	result.Status, result.Diagnostics = status, []enrich.Diagnostic{diagnostic}
 	if values.ModelID != "" && values.ModelInstID != "" {
-		// 仅上下文降级时，已查验成功的主实例身份必须保留。
+		// 保留查验成功或按 DATA 自然键兜底的主身份，诊断仍说明 OneModel 的缺失。
 		return result, nil
 	}
 	state, err := scope.EvaluationState()
@@ -216,7 +228,7 @@ func k8sValuesResult(values models.K8sValues) (enrich.ProcessorResult, error) {
 	if err := json.Unmarshal(encoded, &value); err != nil {
 		return enrich.ProcessorResult{}, err
 	}
-	// 查询成功才发布新的身份；失败分支由 k8sValuesDiagnostic 区分
+	// 完整身份才发布；查询未命中的 DATA 自然键兜底仍保留 partial 诊断。失败分支区分
 	// 已有完整身份和需要清理的残缺身份，不能用缺省零值无条件覆盖。
 	if values.ModelID == "" || values.ModelInstID == "" {
 		delete(value, rules.FieldModelID)

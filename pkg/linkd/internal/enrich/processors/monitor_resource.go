@@ -168,8 +168,8 @@ func processResource(ctx context.Context, scope *enrich.Scope) (enrich.Processor
 	return resourceScenarioResult(scope, result.Resource, result.ResourceDiagnostics, classification.BaseTarget != rules.BaseTargetBasic)
 }
 
-// processDataResource 使用策略和 Event 的明确对象上下文，并按所有输入的适用集合校验。
-// 目录只声明适用对象，不保证本次结果能定位单个实例。
+// processDataResource 使用策略和 Event 的对象上下文；K8s 数据策略按结果维度定位，
+// 其余模型仍按全部输入的适用集合校验。目录中的原始对象不等于聚合后的 K8s 对象。
 func processDataResource(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, bizID int64) (enrich.ProcessorResult, error) {
 	projection, err := strategy.StrategyItemProjection()
 	if err != nil {
@@ -188,9 +188,20 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 		allPromQL = allPromQL && query.IsPromQL()
 	}
 	if eventModel := dimensionText(dimensions, rules.FieldModelID); len(identityDiagnostics) == 0 && eventModel != "" && modelCode != eventModel {
-		return dataResourceConflict("strategy.object_model_code", "dimensions.model_id"), nil
+		_, eventK8s := k8sIdentityFields[eventModel]
+		_, strategyK8s := k8sIdentityFields[modelCode]
+		if !eventK8s || !strategyK8s {
+			return dataResourceConflict("strategy.object_model_code", "dimensions.model_id"), nil
+		}
+		// DATA 中完整的 Event 身份代表查询结果；策略上的 K8s 模型不能覆盖它。
+		modelCode = eventModel
 	}
-	metrics, readErr := readResourceMetrics(ctx, scope, strategy, projection, modelCode)
+	metricModelCode := modelCode
+	if _, knownK8s := k8sIdentityFields[modelCode]; knownK8s {
+		// K8s 聚合结果可从 Container 变为 Namespace，目录反查不能用结果模型过滤原指标。
+		metricModelCode = ""
+	}
+	metrics, readErr := readResourceMetrics(ctx, scope, strategy, projection, metricModelCode)
 	if ctx.Err() != nil {
 		return enrich.ProcessorResult{}, ctx.Err()
 	}
@@ -229,7 +240,9 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 		modelCode = promQLSubjectModelCode(scope.Facts())
 	}
 	catalogModels, constrained := resourceMetricModels(metrics)
-	if constrained {
+	if inferred, k8s := dataK8sModelCode(metrics, modelCode, dimensions); k8s && len(identityDiagnostics) == 0 {
+		modelCode = inferred
+	} else if constrained {
 		if len(catalogModels) == 0 || (modelCode != "" && !slices.Contains(catalogModels, modelCode)) {
 			return dataResourceConflict("query_configs.metric_ref_id", "dimensions.model_id", "strategy.object_model_code"), nil
 		}
@@ -332,7 +345,20 @@ func processK8sResource(ctx context.Context, scope *enrich.Scope, code string, b
 		return enrich.ProcessorResult{}, ctx.Err()
 	}
 	if readErr != nil || !found || instance.TenantID != scope.Facts().BKTenantID || instance.ModelCode != code || instance.InstanceID == "" {
-		return resourceScenarioResult(scope, values, appendResourceDependency(diagnostics, rules.DependencyOneModel), true)
+		diagnostics = appendResourceDependency(diagnostics, rules.DependencyOneModel)
+		if readErr == nil && !found {
+			id, fallbackDiagnostics, err := fallbackK8sIdentity(ctx, scope, code)
+			if err != nil {
+				return enrich.ProcessorResult{}, err
+			}
+			diagnostics = append(diagnostics, fallbackDiagnostics...)
+			if id != "" {
+				// 只补确定的自然身份，不将缺失实例伪装为已查询到的业务/属性快照。
+				values.ModelID, values.ModelInstID = code, id
+				values.CWLabels = enrich.ResourceLabels(values)
+			}
+		}
+		return resourceScenarioResult(scope, values, diagnostics, true)
 	}
 	resource := enrich.ResourceValuesFromInstance(instance, bizID)
 	resource.ModelName, resource.BKObjID = values.ModelName, values.BKObjID
@@ -530,6 +556,11 @@ func combinedDimensions(alert domain.Event) (domain.DimensionMap, error) {
 }
 
 func resourceContextValue(scope *enrich.Scope, values models.ResourceValues) (domain.JSONObject, error) {
+	if values.ModelID != "" && values.ModelID != rules.HostModelCode {
+		// 显式空值覆盖来源 labels 中可能已有的主机云区域，避免跳过 nil 补丁后
+		// 将其继续投递给 KAC。原始 dimensions 和主机地址查询不受影响。
+		values.BKCloudID, values.BKCloudName = "", ""
+	}
 	scope.Context().Resource.Set(values)
 	return scope.Context().Resource.JSONObject()
 }

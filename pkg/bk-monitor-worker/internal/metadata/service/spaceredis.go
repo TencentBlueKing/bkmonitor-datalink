@@ -2500,6 +2500,9 @@ func (s *SpacePusher) composeData(bkTenantId string, spaceType, spaceId string, 
 	}
 	// 只保留当前租户具备 AccessVMRecord 或 ESStorage 查询链路的结果表。
 	tableIds, err = s.refineTableIds(bkTenantId, tableIds)
+	if err != nil {
+		return nil, err
+	}
 	tableIdDataIdMap := make(map[string]uint)
 	var dataIdList []uint
 	for _, tableId := range tableIds {

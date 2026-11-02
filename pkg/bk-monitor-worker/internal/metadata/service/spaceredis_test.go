@@ -1352,6 +1352,29 @@ func TestSpacePusher_getFieldAliasMapWithChunkedTableIDs(t *testing.T) {
 	assert.Equal(t, lastFieldPath, aliasMap[tableIDs[tableCount-1]][lastQueryAlias])
 }
 
+func TestSpacePusher_ComposeDataRefineTableIdsError(t *testing.T) {
+	pusher := NewSpacePusher()
+	expectedErr := errors.New("refine table IDs query failed")
+	patches := gomonkey.NewPatches()
+	defer patches.Reset()
+	patches.ApplyMethod(pusher, "GetSpaceTableIdDataId", func(_ *SpacePusher, bkTenantId, spaceType, spaceId string, tableIdList []string, excludeDataIdList []uint, options *optionx.Options) (map[string]uint, error) {
+		return map[string]uint{"metric.rt": 1001}, nil
+	})
+	patches.ApplyPrivateMethod(pusher, "refineTableIds", func(_ *SpacePusher, bkTenantId string, tableIdList []string) ([]string, error) {
+		return nil, expectedErr
+	})
+
+	values, err := pusher.composeData(tenant.DefaultTenantId, models.SpaceTypeBKCC, "302", nil, nil, nil)
+	if !assert.ErrorIs(t, err, expectedErr) {
+		return
+	}
+	assert.Nil(t, values)
+
+	isPublish, err := pusher.pushBkccSpaceTableIds(tenant.DefaultTenantId, models.SpaceTypeBKCC, "302", SpaceTableIdValues{})
+	assert.ErrorIs(t, err, expectedErr)
+	assert.False(t, isPublish)
+}
+
 func TestSpacePusher_ComposeData(t *testing.T) {
 	// 初始化数据库
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")

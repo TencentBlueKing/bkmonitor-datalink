@@ -12,7 +12,66 @@ package beater
 import (
 	"testing"
 	"time"
+
+	"github.com/elastic/beats/libbeat/common"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs/validator"
+	"github.com/elastic/go-ucfg"
 )
+
+func TestClockJumpThresholdConfigCompatibility(t *testing.T) {
+	registerRegexpValidatorOnce.Do(func() {
+		registerRegexpValidatorErr = ucfg.RegisterValidator("regexp", validator.ValidateRegex)
+	})
+	if registerRegexpValidatorErr != nil {
+		t.Fatalf("register regexp validator: %v", registerRegexpValidatorErr)
+	}
+
+	tests := []struct {
+		name      string
+		configure func(map[string]interface{})
+		want      time.Duration
+	}{
+		{
+			name:      "legacy config without threshold stays disabled",
+			configure: func(map[string]interface{}) {},
+			want:      0,
+		},
+		{
+			name: "explicit threshold enables restart",
+			configure: func(values map[string]interface{}) {
+				values["clock_jump_threshold"] = "10m"
+			},
+			want: 10 * time.Minute,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			values := map[string]interface{}{
+				"mode":        "daemon",
+				"node_id":     "clock-jump-test",
+				"ip":          "127.0.0.1",
+				"bk_biz_id":   1,
+				"bk_cloud_id": 0,
+			}
+			tt.configure(values)
+
+			cfg, err := common.NewConfigFrom(values)
+			if err != nil {
+				t.Fatalf("create config: %v", err)
+			}
+			conf := configs.NewConfig()
+			if err := cfg.Unpack(conf); err != nil {
+				t.Fatalf("unpack config: %v", err)
+			}
+			if got := conf.ClockJumpThreshold; got != tt.want {
+				t.Fatalf("clock jump threshold = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestMeasureClockJump(t *testing.T) {
 	tests := []struct {

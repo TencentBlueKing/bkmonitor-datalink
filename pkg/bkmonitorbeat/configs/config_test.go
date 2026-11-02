@@ -12,15 +12,14 @@ package configs_test
 import (
 	"math/rand"
 	"testing"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 )
 
 func TestDefaultClockJumpThreshold(t *testing.T) {
-	if got := configs.NewConfig().ClockJumpThreshold; got != 10*time.Minute {
-		t.Fatalf("default clock jump threshold = %s, want %s", got, 10*time.Minute)
+	if got := configs.NewConfig().ClockJumpThreshold; got != 0 {
+		t.Fatalf("default clock jump threshold = %s, want disabled", got)
 	}
 }
 

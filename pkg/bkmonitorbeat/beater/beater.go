@@ -596,7 +596,7 @@ func (bt *MonitorBeater) Run() error {
 		clockJumpRestart bool
 		lastClockJump    time.Duration
 	)
-	if bt.config.Mode == "daemon" {
+	if bt.config.Mode == "daemon" && bt.config.ClockJumpThreshold > 0 {
 		clockTicker = time.NewTicker(clockJumpCheckInterval)
 		clockTickerC = clockTicker.C
 	}

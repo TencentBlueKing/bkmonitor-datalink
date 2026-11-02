@@ -144,7 +144,7 @@ func NewConfig() *Config {
 	config := &Config{
 		TaskTypeMapping:    make(map[string]define.TaskMetaConfig),
 		CheckInterval:      500 * time.Millisecond,
-		ClockJumpThreshold: 10 * time.Minute,
+		ClockJumpThreshold: 0,
 		CleanUpTimeout:     time.Second,
 		EventBufferSize:    10,
 		Mode:               "check",

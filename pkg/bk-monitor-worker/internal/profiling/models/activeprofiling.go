@@ -28,7 +28,7 @@ type ActiveProfilingExecution struct {
 	ExecutionStatus  string          `gorm:"column:execution_status"`         // Status aggregated from host executions.
 	StatusSummary    json.RawMessage `gorm:"column:status_summary;type:json"` // Number of hosts in each status.
 	TargetCount      int             `gorm:"column:target_count"`             // Number of host rows, including placeholders.
-	StartedAt        int64           `gorm:"column:started_at"`               // Earliest host start time; falls back to scheduled_at when unavailable.
+	StartedAt        *int64          `gorm:"column:started_at"`               // Earliest host start time, or NULL until a host starts.
 	FinishedAt       *int64          `gorm:"column:finished_at"`              // Latest finished host time for a non-running execution, if available.
 	Config           json.RawMessage `gorm:"column:config;type:json"`         // Execution config with merged target and per-host PID data.
 	CreatedAt        time.Time       `gorm:"column:created_at"`               // Record creation time in SQL DATETIME.

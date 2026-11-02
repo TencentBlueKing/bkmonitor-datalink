@@ -125,7 +125,7 @@ func (s *MySQLStore) markExecutionUnknown(ctx context.Context, executionID int, 
 	if executionAggregateChanged(execution, aggregate) {
 		if _, err := tx.ExecContext(ctx, updateExecutionSummarySQL,
 			aggregate.status, aggregate.statusSummary, aggregate.targetCount,
-			aggregate.startedAt, nullableInt(aggregate.finishedAt), now, executionID,
+			nullableInt(aggregate.startedAt), nullableInt(aggregate.finishedAt), now, executionID,
 		); err != nil {
 			return 0, fmt.Errorf("update active profiling summary id=%d: %w", executionID, err)
 		}

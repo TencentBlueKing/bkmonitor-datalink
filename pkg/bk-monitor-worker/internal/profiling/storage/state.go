@@ -25,7 +25,7 @@ type executionRow struct {
 	ExecutionStatus string
 	StatusSummary   json.RawMessage
 	TargetCount     int
-	StartedAt       int64
+	StartedAt       *int64
 	FinishedAt      *int64
 	Config          json.RawMessage
 }
@@ -169,7 +169,7 @@ type executionAggregate struct {
 	status        string
 	statusSummary string
 	targetCount   int
-	startedAt     int64
+	startedAt     *int64
 	finishedAt    *int64
 }
 
@@ -199,16 +199,15 @@ func (s *executionAggregateStats) addHost(status string, startedAt, finishedAt *
 	}
 }
 
-func (s executionAggregateStats) aggregate(execution executionRow) (executionAggregate, error) {
+func (s executionAggregateStats) aggregate(executionID int) (executionAggregate, error) {
 	if len(s.counts) == 0 {
 		return executionAggregate{
 			status:        core.StatusRunning,
 			statusSummary: `{}`,
-			startedAt:     execution.ScheduledAt,
 		}, nil
 	}
 	return aggregateExecutionFromStats(
-		execution,
+		executionID,
 		s.counts,
 		s.minStartedAt,
 		s.hasStartedAt,
@@ -228,11 +227,11 @@ func aggregateExecution(
 	for _, host := range hosts {
 		stats.addHost(host.Status, host.StartedAt, host.FinishedAt)
 	}
-	return stats.aggregate(execution)
+	return stats.aggregate(execution.ID)
 }
 
 func aggregateExecutionFromStats(
-	execution executionRow,
+	executionID int,
 	counts map[string]int,
 	minStartedAt int64,
 	hasStartedAt bool,
@@ -243,7 +242,6 @@ func aggregateExecutionFromStats(
 		return executionAggregate{
 			status:        core.StatusRunning,
 			statusSummary: `{}`,
-			startedAt:     execution.ScheduledAt,
 		}, nil
 	}
 	allSame := len(counts) == 1
@@ -266,9 +264,9 @@ func aggregateExecutionFromStats(
 	case anySuccess:
 		status = "partial_succeed"
 	}
-	if !hasStartedAt {
-		// The schema requires started_at. Use scheduled_at when all rows are placeholders.
-		minStartedAt = execution.ScheduledAt
+	var startedAt *int64
+	if hasStartedAt {
+		startedAt = &minStartedAt
 	}
 	var finishedAt *int64
 	if status != core.StatusRunning && hasFinishedAt {
@@ -276,13 +274,13 @@ func aggregateExecutionFromStats(
 	}
 	statusSummary, err := json.Marshal(counts)
 	if err != nil {
-		return executionAggregate{}, fmt.Errorf("encode status summary execution_id=%d: %w", execution.ID, err)
+		return executionAggregate{}, fmt.Errorf("encode status summary execution_id=%d: %w", executionID, err)
 	}
 	return executionAggregate{
 		status:        status,
 		statusSummary: string(statusSummary),
 		targetCount:   sumStatusCounts(counts),
-		startedAt:     minStartedAt,
+		startedAt:     startedAt,
 		finishedAt:    finishedAt,
 	}, nil
 }

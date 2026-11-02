@@ -27,7 +27,7 @@ INSERT INTO apm_activeprofilingexecution (
 	bk_tenant_id, bk_biz_id, schedule_type, task_id, scheduled_at, task_name,
 	creator, collection_method, collection_type, execution_status, status_summary,
 	target_count, started_at, config, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', '{}', 0, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', '{}', 0, NULL, ?, ?, ?)
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`
 
 	selectExecutionHostsSQL = `SELECT id, execution_id, bk_biz_id, scheduled_at,
@@ -174,7 +174,7 @@ func ensureExecutionRow(
 	result, err := conn.ExecContext(ctx, ensureExecutionSQL,
 		event.TenantID, event.BizID, event.ScheduleType, event.TaskID,
 		event.ScheduledAt, event.TaskName, event.Creator, event.CollectionMethod,
-		event.CollectionType, event.ScheduledAt, initialConfig, now, now,
+		event.CollectionType, initialConfig, now, now,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("ensure active profiling execution row: %w", err)
@@ -288,7 +288,7 @@ func persistExecutionEventChanges(
 	if updateSummary {
 		if _, err := runner.ExecContext(ctx, updateExecutionSummarySQL,
 			aggregate.status, aggregate.statusSummary, aggregate.targetCount,
-			aggregate.startedAt, nullableInt(aggregate.finishedAt), now, execution.ID,
+			nullableInt(aggregate.startedAt), nullableInt(aggregate.finishedAt), now, execution.ID,
 		); err != nil {
 			return fmt.Errorf("update active profiling summary id=%d: %w", execution.ID, err)
 		}

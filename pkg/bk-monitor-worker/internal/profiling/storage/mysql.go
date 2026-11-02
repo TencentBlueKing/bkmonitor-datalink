@@ -164,16 +164,18 @@ func logWindowChange(executionID int, previous *models.ActiveProfilingHostExecut
 func scanExecution(row scanner) (executionRow, error) {
 	var execution executionRow
 	var statusSummary []byte
+	var startedAt sql.NullInt64
 	var finishedAt sql.NullInt64
 	err := row.Scan(
 		&execution.ID, &execution.Key.TenantID, &execution.Key.BizID, &execution.Key.TaskID,
 		&execution.ScheduledAt, &execution.ExecutionStatus, &statusSummary,
-		&execution.TargetCount, &execution.StartedAt, &finishedAt, &execution.Config,
+		&execution.TargetCount, &startedAt, &finishedAt, &execution.Config,
 	)
 	if err != nil {
 		return executionRow{}, err
 	}
 	execution.StatusSummary = append(json.RawMessage(nil), statusSummary...)
+	execution.StartedAt = nullInt64(startedAt)
 	execution.FinishedAt = nullInt64(finishedAt)
 	execution.Key.ScheduledAt = execution.ScheduledAt
 	return execution, nil
@@ -207,7 +209,7 @@ func executionAggregateChanged(execution executionRow, aggregate executionAggreg
 	return execution.ExecutionStatus != aggregate.status ||
 		!maps.Equal(currentSummary, nextSummary) ||
 		execution.TargetCount != aggregate.targetCount ||
-		execution.StartedAt != aggregate.startedAt ||
+		!equalNullableInt(execution.StartedAt, aggregate.startedAt) ||
 		!equalNullableInt(execution.FinishedAt, aggregate.finishedAt)
 }
 

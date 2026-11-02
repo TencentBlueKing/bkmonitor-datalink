@@ -5,6 +5,7 @@
 本文回答：告警对象 `object` 从哪里来、不同告警怎样补名称、查询失败时显示什么。
 规则来自当前代码，不代表目标环境已部署，也不表示已有告警会自动重新补全。
 对象模型和实例的完整定位规则另见 [model_id、model_inst_id 与 OneModel](enrich-resource-identity.md)。
+对象名称如何参与告警名称，以及待实现的跨策略类型规则，见 [title 生成规则](enrich-title.md)。
 
 ## 1. object 最终取什么值
 

@@ -61,6 +61,9 @@ Lifecycle 等模块复用；包含停止确认、失联自停、超时强切及�
 字段梳理：[Enrich 的 item 补全规则](design/enrich-item.md)，按当前代码说明来源字段、策略名称、
 指标库名称、各类告警取值及 Alert 快照规则。
 
+告警名称见 [title 生成规则](design/enrich-title.md)：区分当前按类型拼接的行为与待实现的
+“有对象名称时统一拼接”规则，说明字段来源、覆盖顺序及历史告警边界。
+
 KAC 告警详情中的指标字段见 [metric_name 与 metric_unique_id](design/enrich-metric-identity-and-item.md)：
 按普通指标、多查询、衍生指标、PromQL、日志和 dataset 分别说明当前补全规则与歧义处理。
 

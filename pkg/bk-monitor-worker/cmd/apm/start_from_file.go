@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	bmwHttp "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/http"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/tools"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/profiling"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -38,6 +39,33 @@ func StartFromFileCmd() *cobra.Command {
 
 	cmd.Flags().StringVarP(&filePath, "file", "f", "", "connection file")
 	return cmd
+}
+
+// StartProfilingCmd creates the Active Profiling standalone command.
+func StartProfilingCmd() *cobra.Command {
+	var configFile string
+	cmd := &cobra.Command{
+		Use:   "start_profiling",
+		Short: "start Active Profiling tasks from a custom config file or BMW Consul",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return startProfiling(configFile)
+		},
+	}
+	cmd.Flags().StringVarP(&configFile, "file", "f", "", "optional Active Profiling task config file; defaults to BMW Consul DataIDs")
+	return cmd
+}
+
+func startProfiling(configFile string) error {
+	config.InitConfig()
+	log.InitLogger()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	processor, err := profiling.Initial(ctx)
+	if err != nil {
+		return err
+	}
+	return processor.RunStandalone(configFile)
 }
 
 func listenFile(cmd *cobra.Command, args []string) {

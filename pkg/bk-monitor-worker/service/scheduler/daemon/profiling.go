@@ -12,12 +12,42 @@ import (
 	"fmt"
 	"sync"
 
+	redis "github.com/go-redis/redis/v8"
+
+	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/profiling"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // ActiveProfilingTaskKind is the daemon task kind for one DataID or the Consul prefix.
 const ActiveProfilingTaskKind = "daemon:profiling:active"
+
+const activeProfilingQueue = "profiling"
+
+// EnsureActiveProfilingTask registers the Consul-prefix task when this worker listens to the profiling queue.
+func EnsureActiveProfilingTask(ctx context.Context, queues []string) error {
+	for _, queue := range queues {
+		if queue == activeProfilingQueue {
+			return enqueueActiveProfilingTask(ctx, rdb.GetRDB().Client())
+		}
+	}
+	return nil
+}
+
+func enqueueActiveProfilingTask(ctx context.Context, client redis.UniversalClient) error {
+	data, err := jsonx.Marshal(task.SerializerTask{
+		Kind:    ActiveProfilingTaskKind,
+		Payload: []byte("{}"),
+		Options: task.Options{Queue: activeProfilingQueue},
+	})
+	if err != nil {
+		return err
+	}
+	return client.SAdd(ctx, common.DaemonTaskKey(), data).Err()
+}
 
 type activeProfilingOperator struct {
 	ctx context.Context

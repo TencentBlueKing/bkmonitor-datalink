@@ -77,17 +77,11 @@ go run ./bmw.go start_profiling \
 
 ### BMW daemon
 
-提交 `daemon:profiling:active` 常驻任务。指定 `data_id` 时消费单个 DataID；使用空 payload `{}` 时消费 Consul 前缀下的全部 DataID。
+`daemon:profiling:active` 是由 Profiling worker 管理的系统常驻任务，不通过 BMW daemon HTTP 接口注册。接口提交该任务类型会返回 400，避免手工任务与 worker 启动时的自动注册产生冲突。
 
-```sh
-curl --location --request POST 'http://127.0.0.1:10211/bmw/task/' \
-  --header 'Content-Type: application/json' \
-  --data '{
-    "kind": "daemon:profiling:active",
-    "payload": {"data_id": 1618077},
-    "options": {"queue": "default"}
-  }'
-```
+Profiling worker 监听 `profiling` 队列时，会在启动阶段自动注册一个 payload 为 `{}` 的常驻任务。该任务从配置的 Consul 前缀发现并消费全部 DataID；任务注册使用 Redis Set，worker 重启或多个副本同时启动都不会产生重复任务。
+
+如需运行单个 DataID，请使用独立的 `start_profiling --file` 模式。已有的历史 Profiling daemon 任务不会由升级过程自动清理，需要在升级前手动移除。
 
 ## 事件与状态
 
@@ -104,25 +98,28 @@ Kafka offset 在消息进入内存队列后即确认。因此，进程若在 MyS
 
 
 
-### Active Profiling 独立 Pod
+### Active Profiling worker 队列
 
-`bk-monitor-worker` 子 chart 部署时会创建一个独立的 Profiling Deployment，默认副本数为 1。Pod 使用 `bk-monitor-worker start_profiling --config /data/bkmonitor/config/bmw.yaml` 启动，并通过 BMW 配置连接 MySQL、Consul 和 Kafka，从 Consul 发现需要处理的 Profiling DataID。
-
-Profiling Pod 使用 `bk-monitor-worker` 的通用配置、环境变量 ConfigMap 和 Secret。可在 umbrella chart 的 values 中通过 `bk-monitor-worker.deploymentConfig.profiling` 单独调整副本数、资源和调度策略：
+`bk-monitor-worker` 子 chart 通过 `deploymentConfig.worker.queues` 创建 Profiling worker Deployment 和对应的 BMW ConfigMap。worker 使用通用配置、环境变量 ConfigMap 和 Secret，监听 `profiling` 队列。在 umbrella chart 的 values 中将以下条目追加到现有 `queues` 列表，保留其他队列配置：
 
 ```yaml
 bk-monitor-worker:
   deploymentConfig:
-    profiling:
-      replicas: 1
-      resource:
-        limits:
-          cpu: 4000m
-          memory: 1Gi
-        requests:
-          cpu: 100m
-          memory: 128Mi
-      nodeSelector: {}
-      affinity: {}
-      tolerations: []
+    worker:
+      queues:
+        - replicas: 1
+          queueName: profiling
+          resources:
+            limits:
+              cpu: 4000m
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          config: {}
+          nodeSelector: {}
+          affinity: {}
+          tolerations: []
 ```
+
+`profiling` worker 启动时会向 Redis 投递一次 `daemon:profiling:active` 常驻任务，payload 为 `{}`，从 Consul 前缀发现所有 DataID。多个 worker 副本使用相同任务记录，Redis Set 会去重。BMW controller 将任务绑定到监听 `profiling` 队列的 worker。该任务类型禁止通过 BMW daemon API 注册。

@@ -141,7 +141,7 @@ func apmResourceIdentity(ctx context.Context, scope *enrich.Scope, strategy mode
 			return "", "", nil, ctx.Err()
 		}
 		if readErr != nil || !found || entity.TenantID != scope.Facts().BKTenantID || entity.ModelCode != code || entity.InstanceID != id || entity.Fields["entity_uid"] != code+"|"+id {
-			return "", "", []enrich.Diagnostic{{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel}}, nil
+			return "", "", []enrich.Diagnostic{{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel, ModelID: code, ReasonCode: enrich.InstanceFailureReason(scope.Facts().BKTenantID, enrich.InstanceQuery{ModelCode: code, InstanceID: id}, entity, found, readErr)}}, nil
 		}
 		if fmt.Sprint(firstInstanceValue(entity, "app_id")) != appID || (service != "" && firstInstanceText(entity, "service_name") != service) {
 			return "", "", []enrich.Diagnostic{{Code: "identity_conflict", Fields: []string{"dimensions.model_inst_id", "dimensions.app_name", "dimensions.service_name"}}}, nil

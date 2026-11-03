@@ -46,7 +46,8 @@ func TestResourceThenK8sRequiresCompleteNodeIdentity(t *testing.T) {
 				event := processorBaseTargetAlert(t, dims)
 				if !noData && test.missing == "node" {
 					// DATA 只保留集群维度时定位 Cluster，未命中后保留诊断并按自然键兜底。
-					test.wantCode = enrich.DiagnosticCodeDependencyInvalid
+					test.wantCode = enrich.DiagnosticCodeFallbackSucceeded
+					test.wantStatus = domain.EnrichStatusSucceeded
 				}
 				original := event.Clone()
 				reader := &processorBaseTargetReader{model: processorModel(event.BKTenantID, rules.K8sNodeModelCode, "K8s节点", ""), modelFound: true}
@@ -74,11 +75,22 @@ func TestResourceThenK8sRequiresCompleteNodeIdentity(t *testing.T) {
 				if step.Status != test.wantStatus {
 					t.Fatalf("K8s status=%s want=%s diagnostics=%+v", step.Status, test.wantStatus, step.Diagnostics)
 				}
-				if test.wantCode != "" && (len(step.Diagnostics) != 1 || step.Diagnostics[0].Code != test.wantCode) {
+				wantDiagnostics := 1
+				if test.wantCode == enrich.DiagnosticCodeDependencyInvalid && test.missing == "" {
+					wantDiagnostics = 2
+				}
+				firstCode := test.wantCode
+				if !noData && test.name == "node not found" {
+					firstCode = enrich.DiagnosticCodeFallbackSucceeded
+				}
+				if test.wantCode != "" && (len(step.Diagnostics) != wantDiagnostics || step.Diagnostics[0].Code != firstCode) {
 					t.Fatalf("K8s diagnostics=%+v", step.Diagnostics)
 				}
 				if test.missing != "" && test.wantCode == enrich.DiagnosticCodeMissingField && !reflect.DeepEqual(step.Diagnostics[0].Fields, []string{"dimensions." + test.missing}) {
 					t.Fatalf("missing fields=%v", step.Diagnostics[0].Fields)
+				}
+				if wantDiagnostics == 2 && (step.Diagnostics[0].ModelID != rules.K8sNodeModelCode || step.Diagnostics[1].ModelID != "cw-K8s_Cluster" || step.Diagnostics[1].Code != test.wantCode || step.Diagnostics[0].ReasonCode == "" || step.Diagnostics[1].ReasonCode == "") {
+					t.Fatalf("per-model diagnostics=%+v", step.Diagnostics)
 				}
 				if test.wantCode == enrich.DiagnosticCodeDependencyInvalid && step.Diagnostics[0].Dependency != rules.DependencyOneModel {
 					t.Fatalf("dependency=%s", step.Diagnostics[0].Dependency)

@@ -39,13 +39,17 @@ func TestDataK8sMissingInstanceFallback(t *testing.T) {
 				reader := &dataSliceReader{model: tc.model}
 				event := processorBaseTargetAlert(t, dims)
 				result, effective := runK8sFallbackTest(t, mode, event, reader, &k8sTestReader{})
-				if result.Status != domain.EnrichStatusPartial {
-					t.Fatalf("status=%s want=partial", result.Status)
+				wantStatus := domain.EnrichStatusPartial
+				if mode == "monitor-resource" || tc.model == "cw-K8s_Cluster" {
+					wantStatus = domain.EnrichStatusSucceeded
+				}
+				if result.Status != wantStatus {
+					t.Fatalf("status=%s want=%s", result.Status, wantStatus)
 				}
 				if dimensionText(effective.Labels, rules.FieldModelID) != tc.model || dimensionText(effective.Labels, rules.FieldModelInstID) != tc.id {
 					t.Fatalf("identity=%s/%s want=%s/%s", dimensionText(effective.Labels, rules.FieldModelID), dimensionText(effective.Labels, rules.FieldModelInstID), tc.model, tc.id)
 				}
-				assertK8sFallbackDiagnostics(t, result, mode, enrich.DiagnosticCodeDependencyInvalid)
+				assertK8sFallbackDiagnostics(t, result, mode, enrich.DiagnosticCodeFallbackSucceeded)
 			})
 		}
 	}

@@ -11,7 +11,8 @@ import (
 
 // fallbackK8sIdentity 只供 OneModel 查询成功但未命中的分支调用。
 // DATA 策略可以按 OneModel 自然键生成身份；实例策略继续要求真实实例命中。
-// 返回的身份不表示 OneModel 已存在该实例，调用方必须保留原查询诊断及 partial 状态。
+// 返回的身份不表示 OneModel 已存在该实例；调用方以 fallback_succeeded 保留未命中原因。
+// 仅在没有其他未解决问题时标记 succeeded，该成功结果遵循 reuse_on_active 参与快照复用。
 func fallbackK8sIdentity(ctx context.Context, scope *enrich.Scope, code string) (string, []enrich.Diagnostic, error) {
 	strategy, found, err := scope.CWStrategy(ctx)
 	if ctx.Err() != nil {
@@ -69,4 +70,15 @@ func k8sIdentityDimensionFields(code string, dimensions domain.DimensionMap) []s
 		return []string{rules.FieldBCSClusterID, rules.FieldNamespace, rules.FieldWorkloadName}
 	}
 	return k8sIdentityFields[code]
+}
+
+// 成功兜底也保存诊断；只有未被兜底解决的问题才使处理器降级。
+// 当前 fallback_succeeded 仅由 K8s DATA 主实例的自然键兜底产生。
+func hasUnresolvedDiagnostics(diagnostics []enrich.Diagnostic) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code != enrich.DiagnosticCodeFallbackSucceeded {
+			return true
+		}
+	}
+	return false
 }

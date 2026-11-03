@@ -59,19 +59,19 @@ func resourceHostContext(ctx context.Context, scope *enrich.Scope, values *model
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	invalid := func() ([]enrich.Diagnostic, error) {
-		return []enrich.Diagnostic{{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel, Fields: []string{"bk_host_id", "bk_host_name"}}}, nil
+	invalid := func(reason string) ([]enrich.Diagnostic, error) {
+		return []enrich.Diagnostic{{Code: enrich.DiagnosticCodeDependencyInvalid, ReasonCode: reason, ModelID: rules.HostModelCode, Dependency: rules.DependencyOneModel, Fields: []string{"bk_host_id", "bk_host_name"}}}, nil
 	}
 	if err != nil || !found || host.TenantID != event.BKTenantID || host.ModelCode != rules.HostModelCode || canonicalHost && host.InstanceID != query.InstanceID {
-		return invalid()
+		return invalid(enrich.InstanceFailureReason(event.BKTenantID, query, host, found, err))
 	}
 	id, parseErr := strconv.ParseInt(host.InstanceID, 10, 64)
 	if parseErr != nil || id <= 0 || strconv.FormatInt(id, 10) != host.InstanceID {
-		return invalid()
+		return invalid("instance_id_invalid")
 	}
 	fields := mergeInstanceFields(host.Fields, host.Attributes)
 	if raw, exists := fields[rules.FieldBKHostID]; exists && rules.FirstStringFieldValue(map[string]any{rules.FieldBKHostID: raw}, rules.FieldBKHostID) != host.InstanceID {
-		return invalid()
+		return invalid("instance_id_mismatch")
 	}
 	// 地址补充不能覆盖已确认的主机主键。显式 model_id/model_inst_id
 	// 存在时，原生字段可属于远程执行主机，不再要求它们与被采实例一致。
@@ -92,7 +92,7 @@ func resourceHostContext(ctx context.Context, scope *enrich.Scope, values *model
 	values.BKHostID = id
 	name, ok := fields["bk_host_name"].(string)
 	if !ok || strings.TrimSpace(name) == "" {
-		return []enrich.Diagnostic{{Code: enrich.DiagnosticCodeMissingField, Dependency: rules.DependencyOneModel, Fields: []string{"bk_host_name"}}}, nil
+		return []enrich.Diagnostic{{Code: enrich.DiagnosticCodeMissingField, ReasonCode: instanceNameFailureReason(fields, "bk_host_name"), ModelID: rules.HostModelCode, Dependency: rules.DependencyOneModel, Fields: []string{"bk_host_name"}}}, nil
 	}
 	values.BKHostName = name
 	return nil, nil

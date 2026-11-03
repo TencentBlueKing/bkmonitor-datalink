@@ -266,7 +266,7 @@ func (d *dorisReader) edgeRows(ctx context.Context, filters []any, limit int) ([
 	}
 	for _, row := range rows {
 		if row["bk_tenant_id"] != tenant {
-			return nil, ErrInvalidDataSourceResponse
+			return nil, diagnosticError("tenant_mismatch", ErrInvalidDataSourceResponse)
 		}
 	}
 	return rows, nil
@@ -325,11 +325,11 @@ func (d *dorisReader) rows(ctx context.Context, table string, columns []string, 
 				decoder := json.NewDecoder(strings.NewReader(text))
 				decoder.UseNumber()
 				if decoder.Decode(&value) != nil || decoder.Decode(new(any)) != io.EOF {
-					return nil, ErrInvalidDataSourceResponse
+					return nil, diagnosticError("response_decode_failed", ErrInvalidDataSourceResponse)
 				}
 				if name == "attributes" {
 					if _, ok = value.(map[string]any); !ok {
-						return nil, ErrInvalidDataSourceResponse
+						return nil, diagnosticError("attributes_invalid", ErrInvalidDataSourceResponse)
 					}
 				} else if _, ok = value.([]any); !ok {
 					return nil, ErrInvalidDataSourceResponse

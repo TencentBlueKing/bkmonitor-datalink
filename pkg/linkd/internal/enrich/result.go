@@ -22,6 +22,7 @@ import (
 type DiagnosticCode string
 
 const (
+	DiagnosticCodeFallbackSucceeded    DiagnosticCode = "fallback_succeeded"
 	DiagnosticCodeIdentityConflict     DiagnosticCode = "identity_conflict"
 	DiagnosticCodeMissingField         DiagnosticCode = "missing_field"
 	DiagnosticCodeInvalidField         DiagnosticCode = "invalid_field"
@@ -31,6 +32,10 @@ const (
 
 // Diagnostic 描述单个 Processor 的输入或依赖问题。
 type Diagnostic struct {
+	// ReasonCode 细分 code 的原因；历史记录和未细分的依赖允许省略。
+	ReasonCode string `json:"reason_code,omitempty"`
+	// ModelID 标识本次查询使用的模型代码，不保存查询属性值或响应正文。
+	ModelID    string         `json:"model_id,omitempty"`
 	Code       DiagnosticCode `json:"code"`
 	Dependency string         `json:"dependency,omitempty"`
 	Fields     []string       `json:"fields,omitempty"`
@@ -148,7 +153,7 @@ func DecodePayload(object domain.JSONObject) (Payload, error) {
 
 func (c DiagnosticCode) Valid() bool {
 	switch c {
-	case DiagnosticCodeMissingField, DiagnosticCodeInvalidField,
+	case DiagnosticCodeFallbackSucceeded, DiagnosticCodeMissingField, DiagnosticCodeInvalidField,
 		DiagnosticCodeDependencyInvalid, DiagnosticCodeClassificationFailed, DiagnosticCodeIdentityConflict:
 		return true
 	default:

@@ -53,7 +53,7 @@ func projectResource(resolution Resolution, fallbackBizID int64) resourceProject
 		}
 		applyModelContext(&values, resolution)
 		if resolution.instanceErr != nil || !resolution.instanceFound || !validInstance(resolution) {
-			diagnostics = appendDependency(diagnostics, rules.DependencyOneModel)
+			diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel, ModelID: resolution.config.BKObjectCode, ReasonCode: enrich.InstanceFailureReason(resolution.tenantID, enrich.InstanceQuery{ModelCode: resolution.config.BKObjectCode, InstanceID: fmt.Sprint(resolution.config.BKInstID)}, resolution.instance, resolution.instanceFound, resolution.instanceErr)})
 			if resolution.hostTopologyErr == nil && resolution.hostTopologyFound &&
 				resolution.config.BKObjectCode == rules.HostModelCode &&
 				(!resolution.instanceFound || resolution.instanceErr != nil) &&

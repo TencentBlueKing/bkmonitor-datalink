@@ -102,9 +102,9 @@ func (K8s) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return enrich.ProcessorResult{}, ctxErr
 	}
-	invalidModels := []string{}
+	invalidModels := []enrich.Diagnostic{}
 	if err != nil || !found || !validK8sInstance(instance, alert.BKTenantID, modelCode) {
-		invalidModels = append(invalidModels, modelCode)
+		invalidModels = append(invalidModels, k8sFailureDiagnostic(scope, modelCode, instance, found, err))
 		instance = enrich.Instance{}
 		if err == nil && !found {
 			id, fallbackDiagnostics, fallbackErr := fallbackK8sIdentity(ctx, scope, modelCode)
@@ -114,6 +114,8 @@ func (K8s) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 			diagnostics = append(diagnostics, fallbackDiagnostics...)
 			if id != "" {
 				values.ModelID, values.ModelInstID = modelCode, id
+				// 主身份已由 DATA 自然键补齐；原未命中原因仍可诊断，但不再代表本项失败。
+				invalidModels[0].Code = enrich.DiagnosticCodeFallbackSucceeded
 			}
 		}
 	} else {
@@ -137,7 +139,12 @@ func (K8s) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	scope.Context().K8s.Set(values)
 	// 3. 发布已验证的上下文，同时保留失败模型及原有身份清理规则。
 	if len(invalidModels) != 0 {
-		result, err := k8sValuesDiagnostic(scope, values, domain.EnrichStatusPartial, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel, Fields: invalidModels})
+		status := domain.EnrichStatusSucceeded
+		if hasUnresolvedDiagnostics(invalidModels) || hasUnresolvedDiagnostics(diagnostics) {
+			status = domain.EnrichStatusPartial
+		}
+		result, err := k8sValuesDiagnostic(scope, values, status, invalidModels[0])
+		result.Diagnostics = append(result.Diagnostics, invalidModels[1:]...)
 		result.Diagnostics = append(result.Diagnostics, diagnostics...)
 		return result, err
 	}
@@ -184,7 +191,7 @@ func k8sValuesDiagnostic(scope *enrich.Scope, values models.K8sValues, status do
 	}
 	result.Status, result.Diagnostics = status, []enrich.Diagnostic{diagnostic}
 	if values.ModelID != "" && values.ModelInstID != "" {
-		// 保留查验成功或按 DATA 自然键兜底的主身份，诊断仍说明 OneModel 的缺失。
+		// 保留查验成功或按 DATA 自然键兜底的主身份；成功兜底诊断保留原未命中原因。
 		return result, nil
 	}
 	state, err := scope.EvaluationState()
@@ -228,7 +235,7 @@ func k8sValuesResult(values models.K8sValues) (enrich.ProcessorResult, error) {
 	if err := json.Unmarshal(encoded, &value); err != nil {
 		return enrich.ProcessorResult{}, err
 	}
-	// 完整身份才发布；查询未命中的 DATA 自然键兜底仍保留 partial 诊断。失败分支区分
+	// 完整身份才发布；DATA 自然键兜底成功与其他未解决诊断分别决定状态。失败分支区分
 	// 已有完整身份和需要清理的残缺身份，不能用缺省零值无条件覆盖。
 	if values.ModelID == "" || values.ModelInstID == "" {
 		delete(value, rules.FieldModelID)
@@ -338,9 +345,9 @@ func k8sClusterName(instance enrich.Instance) string {
 	return firstInstanceText(instance, "cluster_name")
 }
 
-func resolveK8sBusiness(ctx context.Context, scope *enrich.Scope, modelCode string, dimensions domain.DimensionMap, instance enrich.Instance, values *models.K8sValues) ([]string, error) {
+func resolveK8sBusiness(ctx context.Context, scope *enrich.Scope, modelCode string, dimensions domain.DimensionMap, instance enrich.Instance, values *models.K8sValues) ([]enrich.Diagnostic, error) {
 	candidates := make([]enrich.Instance, 0, 3)
-	invalidModels := []string{}
+	invalidModels := []enrich.Diagnostic{}
 	for _, contextModel := range []string{"cw-K8s_Namespace", "cw-K8s_Cluster"} {
 		if modelCode == "cw-K8s_PersistentVolume" && contextModel == "cw-K8s_Namespace" {
 			continue
@@ -359,7 +366,7 @@ func resolveK8sBusiness(ctx context.Context, scope *enrich.Scope, modelCode stri
 			return nil, ctxErr
 		}
 		if err != nil || !found || !validK8sInstance(value, scope.Facts().BKTenantID, contextModel) {
-			invalidModels = append(invalidModels, contextModel)
+			invalidModels = append(invalidModels, k8sFailureDiagnostic(scope, contextModel, value, found, err))
 			continue
 		}
 		candidates = append(candidates, value)
@@ -443,4 +450,9 @@ func dimensionText(dimensions domain.DimensionMap, field string) string {
 		return ""
 	}
 	return rules.ScalarIdentity(value)
+}
+
+// 每个模型独立保留查询原因；主实例和上下文可能同时以不同原因失败。
+func k8sFailureDiagnostic(scope *enrich.Scope, code string, instance enrich.Instance, found bool, err error) enrich.Diagnostic {
+	return enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel, ModelID: code, Fields: []string{code}, ReasonCode: enrich.InstanceFailureReason(scope.Facts().BKTenantID, enrich.InstanceQuery{ModelCode: code}, instance, found, err)}
 }

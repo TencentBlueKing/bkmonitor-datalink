@@ -32,7 +32,7 @@ func projectResource(resolution resolution, fallbackBizID int64) resourceProject
 	if resolution.branch == rules.BaseTargetBasic {
 		values.BKBizID = fallbackBizID
 		if resolution.modelErr != nil || !resolution.modelFound || !validModel(resolution) {
-			diagnostics = appendDependency(diagnostics, rules.DependencyOneModel)
+			diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel, ModelID: resolution.modelCode, ReasonCode: enrich.ModelFailureReason(resolution.tenantID, resolution.modelCode, resolution.model, resolution.modelFound, resolution.modelErr)})
 		} else {
 			enrich.ApplyModelContext(&values, resolution.model)
 		}
@@ -48,7 +48,7 @@ func projectResource(resolution resolution, fallbackBizID int64) resourceProject
 		return resourceProjection{Values: values, Diagnostics: diagnostics}
 	}
 	if resolution.instanceErr != nil || !resolution.instanceFound || !validInstance(resolution) {
-		diagnostics = appendDependency(diagnostics, rules.DependencyOneModel)
+		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel, ModelID: resolution.modelCode, ReasonCode: enrich.InstanceFailureReason(resolution.tenantID, enrich.InstanceQuery{ModelCode: resolution.modelCode, InstanceID: resolution.instanceID}, resolution.instance, resolution.instanceFound, resolution.instanceErr)})
 		if resolution.topologyErr == nil && resolution.topologyFound {
 			enrich.ApplyTopology(&values, resolution.topology)
 		}
@@ -62,7 +62,7 @@ func projectResource(resolution resolution, fallbackBizID int64) resourceProject
 	}
 	values = enrich.ResourceValuesFromInstance(resolution.instance, fallbackBizID)
 	if resolution.modelErr != nil || !resolution.modelFound || !validModel(resolution) {
-		diagnostics = appendDependency(diagnostics, rules.DependencyOneModel)
+		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel, ModelID: resolution.modelCode, ReasonCode: enrich.ModelFailureReason(resolution.tenantID, resolution.modelCode, resolution.model, resolution.modelFound, resolution.modelErr)})
 	} else {
 		enrich.ApplyModelContext(&values, resolution.model)
 	}

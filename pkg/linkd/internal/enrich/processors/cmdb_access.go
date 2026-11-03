@@ -147,8 +147,8 @@ func fillBusinessName(ctx context.Context, scope *enrich.Scope, document map[str
 	if !present {
 		return nil, nil, nil
 	}
-	diagnostic := func(code enrich.DiagnosticCode) []enrich.Diagnostic {
-		return []enrich.Diagnostic{{Code: code, Dependency: "onemodel_instance", Fields: []string{"bk_biz_name"}}}
+	diagnostic := func(code enrich.DiagnosticCode, reason string) []enrich.Diagnostic {
+		return []enrich.Diagnostic{{Code: code, ReasonCode: reason, ModelID: "cw-biz", Dependency: "onemodel_instance", Fields: []string{"bk_biz_name"}}}
 	}
 	id, valid := resourceCMDBID(value)
 	if !valid {
@@ -159,18 +159,18 @@ func fillBusinessName(ctx context.Context, scope *enrich.Scope, document map[str
 		return nil, nil, ctx.Err()
 	}
 	if err != nil {
-		return nil, diagnostic(enrich.DiagnosticCodeDependencyInvalid), nil
+		return nil, diagnostic(enrich.DiagnosticCodeDependencyInvalid, enrich.InstanceFailureReason(scope.Facts().BKTenantID, enrich.InstanceQuery{ModelCode: "cw-biz", InstanceID: id}, business, found, err)), nil
 	}
 	if !found {
-		return nil, diagnostic(enrich.DiagnosticCodeMissingField), nil
+		return nil, diagnostic(enrich.DiagnosticCodeMissingField, "instance_not_found"), nil
 	}
 	if business.TenantID != scope.Facts().BKTenantID || business.ModelCode != "cw-biz" || business.InstanceID != id {
-		return nil, diagnostic(enrich.DiagnosticCodeDependencyInvalid), nil
+		return nil, diagnostic(enrich.DiagnosticCodeDependencyInvalid, enrich.InstanceFailureReason(scope.Facts().BKTenantID, enrich.InstanceQuery{ModelCode: "cw-biz", InstanceID: id}, business, found, err)), nil
 	}
 	fields := mergeInstanceFields(business.Fields, business.Attributes)
 	nameText, ok := fields["bk_biz_name"].(string)
 	if !ok || nameText == "" {
-		return nil, diagnostic(enrich.DiagnosticCodeMissingField), nil
+		return nil, diagnostic(enrich.DiagnosticCodeMissingField, instanceNameFailureReason(fields, "bk_biz_name")), nil
 	}
 	target, err := jsonpath.ParseTarget("$." + root + ".bk_biz_name")
 	if err != nil {
@@ -189,4 +189,19 @@ func legacyPermissionText(v any) string {
 		return "[" + strings.Join(parts, ", ") + "]"
 	}
 	return fmt.Sprint(v)
+}
+
+// 字段的不存在、空值和类型异常分别记录；调用方保留各自既有的非空判断。
+func instanceNameFailureReason(fields map[string]any, field string) string {
+	value, found := fields[field]
+	if !found {
+		return "field_missing"
+	}
+	if value == nil {
+		return "field_empty"
+	}
+	if _, ok := value.(string); !ok {
+		return "field_type_invalid"
+	}
+	return "field_empty"
 }

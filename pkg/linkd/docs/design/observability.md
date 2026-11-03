@@ -48,6 +48,11 @@ Event 原文、告警正文或依赖响应正文拼入错误；任意未标记�
 Enrich 每个失败 Processor / 等级记录一条诊断。依赖错误在本次 Scope 中保留，到 Processor 边界合并记录，
 即使 Processor 返回 `partial` 和 nil error，也不会丢失具体的依赖错误。Scope 不跨 Event 共享，正常路径
 不创建错误集合，成功处理器不输出日志。
+OneModel 相关 `diagnostics` 用 `code` 保留大类，以 `reason_code` 和 `model_id` 区分具体原因及查询模型；
+K8s 多模型失败写入同一条日志的诊断数组。具体分类见[Enrich 设计](enrich.md#5-payload-契约)。
+K8s DATA 的 `fallback_succeeded` 是成功诊断：该 Processor 没有其他未解决问题时为 `succeeded`，
+不输出失败 WARN；仍随诊断指标按该 code 计数，不能把全部 diagnostics 计数解释为失败次数。
+存在其他未解决问题时仍为 partial，WARN 同时包含成功兜底记录和剩余失败原因。
 
 示例（字段值为示意，行号以实际输出为准）：
 

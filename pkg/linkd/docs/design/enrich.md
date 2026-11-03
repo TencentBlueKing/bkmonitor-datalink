@@ -68,7 +68,7 @@ strategy → monitor-resource → display → metric → source
 - 单个 Processor 的 error 或 panic 转换为该 Processor 的 failed envelope，后续 Processor 继续执行。
 - 可预期输入错误和依赖故障通过 `ProcessorResult` 与 diagnostics 表达。
 - 场景已有核心身份但可选名称、拓扑或标签依赖失败：Processor 返回 `partial`，保留已确认字段。
-- 场景核心身份缺失、输入非法、实例未命中或响应身份不匹配：已有已验证模型名称或 CMDB 映射时 Resource 返回 `partial`，发布独立成立的模型、业务和展示补偿；没有可用上下文时返回 `failed`。两种情况都保留诊断，禁止生成未验证的实例绑定与实例标签。
+- 场景核心身份缺失、输入非法、实例未命中或响应身份不匹配：已有已验证模型名称或 CMDB 映射时 Resource 返回 `partial`，发布独立成立的模型、业务和展示补偿；没有可用上下文时返回 `failed`。两种情况都保留诊断，禁止生成未验证的实例绑定与实例标签；已确认允许的 K8s DATA 自然键兜底按下文专门规则处理。
 - Chain 最终状态按现有聚合规则计算：所有适用 Processor 成功为 `succeeded`，所有适用 Processor 失败为 `failed`，其余组合为 `partial`；因此单个 Resource failed 且其他 Processor succeeded 时，该 evaluation 状态为 `partial`；Event 再汇总全部 evaluation。
 - Enrich failed 不阻断 Alert 创建；Lifecycle 会持久化合法失败 payload。
 - 当前不提供查询重试、Enrich 重试、后台补丰富或已创建 Alert 的重丰富接口。
@@ -102,6 +102,9 @@ KAC 按历史 `agg_dimension` 与原始 Event 实际维度的交集生成分组�
 - 复用按 `bk_tenant_id/event_source_id/fingerprint` 隔离，并且只适用于 `Alert.enrich_severity` 对应的 evaluation。
   原地升级只改变当前 severity，不改变快照等级；其他等级正常执行。
   同条 Event 全等级关闭后再触发，或当前等级被移除而系统关闭时，新生命周期不沿用旧快照。
+- K8s DATA 自然键兜底成功且无其他未解决问题时产生的 `succeeded/fallback_succeeded`，
+  与普通成功结果一样参与复用；`reuse_on_active` 默认值仍为 false。开启后同一生命周期可继续沿用兜底身份，
+  即使 OneModel 随后补齐实例也不自动刷新；原 `instance_not_found` 表示快照生成时的查询结果。
 - 只有指定 Processor 的 `succeeded` 结果可复用；缺少步骤、快照等级或成功结果时正常执行。
   `partial/failed/skipped` 不作为后续新 Event 的复用来源。缺少元信息的现有 Alert 不补查 opening Event、不回填。
   Elasticsearch 的 `enrich_severity` 映射由既有索引对账追加，MySQL 沿用 Alert JSON payload，不新增表或回填任务。
@@ -242,9 +245,39 @@ Diagnostics 原因码：
 | `missing_field` | 场景必需输入缺失 |
 | `invalid_field` | 输入类型、范围或格式非法 |
 | `dependency_invalid` | 未取得可用依赖结果 |
+| `fallback_succeeded` | K8s DATA 的主实例未命中后，已按合法自然键完成身份兜底 |
 | `classification_failed` | 已取得分类输入，但无法选择支持场景 |
 
 Diagnostics 不保存 SQL、URL、凭据、完整请求、响应或原始异常文本。
+
+OneModel 实例读取相关诊断保留原 `code` 大类，并用可选 `reason_code` 表达具体原因；
+`model_id` 保存查询使用的模型代码。二级分类不参与查询、匹配、重试、状态或兜底决策。
+旧快照及其他依赖的诊断可以没有这两个字段；不从旧 `code` 反推具体失败原因。
+
+| `reason_code` | 含义 |
+| --- | --- |
+| `query_error` / `query_timeout` | 查询执行异常 / 查询超时 |
+| `search_incomplete` | ES 的 `timed_out` 或失败分片表明结果不完整 |
+| `response_decode_failed` | 响应或 Doris JSON 列解码失败 |
+| `response_invalid` | 响应已确认不可用，但原 Reader 未提供更具体分类 |
+| `multiple_instances` | 单实例查询得到多个结果 |
+| `instance_not_found` / `model_not_found` | 正常查询未命中实例 / 模型元数据 |
+| `tenant_mismatch` / `model_mismatch` | 返回租户 / 模型不符合查询 |
+| `instance_id_empty` / `instance_id_invalid` / `instance_id_mismatch` | 实例 ID 为空 / 类型或既有格式校验失败 / 不符合查询或主机字段声明 |
+| `entity_uid_mismatch` | 返回 `entity_uid` 与模型和实例不一致 |
+| `attributes_invalid` | 返回的 `attributes` 不是对象 |
+| `field_missing` / `field_empty` / `field_type_invalid` | 所需名称字段不存在 / null 或既有判空规则认为为空 / 类型不正确 |
+
+Client 在产生错误的位置附带类型化原因，并保留 `Unwrap`、底层错误链及
+`ErrInvalidDataSourceResponse` 的 `errors.Is` 结果。Processor 按查询结果和原有校验分支记录诊断，
+不解析错误字符串。父 context 取消仍按原流程返回，不转换成普通降级。
+`instance_not_found` 仅表示本次查询未命中，不能据此认定匹配实现有错。
+
+例如同为 `missing_field / onemodel_instance / bk_biz_name`，业务实例未命中记录
+`instance_not_found`，实例存在但没有名称字段记录 `field_missing`，名称为空记录 `field_empty`。
+K8s 的主实例、Namespace、Cluster 分别保存诊断与 `model_id`；单个 Processor/等级仍只记一条
+WARN，具体原因在 `diagnostics` 数组中，不为每个模型增加一条日志。
+
 
 BaseTarget 降级矩阵：
 
@@ -292,7 +325,7 @@ data_source
 
 ### 6.2 monitor-resource
 
-适用场景：BaseTarget、DATA、Cloud/APM 等需要资源身份的链路。Resource 在取得可信模型和实例身份后生成实例级标签；DATA K8s 的 OneModel 查询成功但未命中时允许按自然键兜底，并保留部分成功诊断。场景级 Processor 可在 Resource 之外补充专用资源投影。
+适用场景：BaseTarget、DATA、Cloud/APM 等需要资源身份的链路。Resource 在取得可信模型和实例身份后生成实例级标签；DATA K8s 的 OneModel 查询成功但未命中时允许按自然键兜底，记录 `fallback_succeeded`；没有其他未解决问题时返回 `succeeded`。场景级 Processor 可在 Resource 之外补充专用资源投影。
 
 ```text
 bk_obj_id
@@ -409,8 +442,13 @@ Node 使用集群与节点名，Service 使用集群、命名空间与 Service �
 Pod 使用集群、命名空间与 Pod 名，Container 再包含容器名，PV 使用集群与卷名，PVC 使用集群、命名空间与声明名。
 各维度原值按固定顺序以 `|` 连接，不排序、哈希或转义；独立 Pod 的名称沿用上述 `workload_name` 映射。
 缺失维度、分隔符、非法文本、超过 1024 字节或与已有明确身份冲突时不输出兜底身份，并记录
-`missing_field`、`invalid_field` 或 `identity_conflict` 诊断。兜底成功与失败都保留原有
-`dependency_invalid/onemodel`；成功只补身份，状态仍为 `partial`，不伪造实例属性或业务归属。
+`missing_field`、`invalid_field` 或 `identity_conflict` 诊断。兜底失败保留原有
+`dependency_invalid/onemodel`；兜底成功将对应主实例诊断改为 `fallback_succeeded`，
+`reason_code=instance_not_found` 和查询 `model_id` 保留。仅补身份，不伪造实例属性或业务归属。
+主实例兜底成功后，只有该 Processor 没有其他未解决诊断时才返回 `succeeded`；
+Namespace、Cluster、模型元数据或动态分组仍失败时继续 `partial`，并同时保留成功兜底和失败诊断。
+`monitor-resource` 和 `k8s` 分别决定状态，再按原规则汇总等级和 Event 状态。
+主机及非 DATA 策略的既有状态规则保持不变。
 查询报错、返回跨租户/错误模型/空身份均不触发兜底，基于实例的策略保持原有行为。
 
 ## 7. DataSource 现状
@@ -760,7 +798,7 @@ Cloud 主链已完成收敛：业务 ID统一使用 Kafka `labels.bk_biz_id`，C
 所有查询结果均复核租户、模型和非空实例身份；无效结果不能参与名称、业务或标签计算。
 主实例失败时不发布新实例身份，仍按原规则保留已有完整身份或清理残缺身份；
 上下文查验成功只补充业务与集群名称，不能把主实例失败改成成功。
-任一必需查询失败保留 `partial / dependency_invalid / onemodel`，`fields` 列出失败模型，
+未被允许的 DATA 自然键兜底解决的必需查询失败保留 `partial / dependency_invalid / onemodel`，每个失败模型各有一项诊断，`model_id` 标识查询模型，`reason_code` 标识原因，`fields` 保留该失败模型，
 不把未命中、查询异常与身份不符臆断成容器已删除；底层错误仍由依赖边界日志记录。
 取消必须向调用方传播。缺少主实例定位维度仍走原 missing_field 分支，不发残缺查询。
 

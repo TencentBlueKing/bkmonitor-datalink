@@ -295,7 +295,7 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 	}
 	diagnostics := []enrich.Diagnostic{}
 	if modelErr != nil || !modelFound || model.TenantID != scope.Facts().BKTenantID || model.ModelCode != values.ModelID || model.ModelID == "" {
-		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel})
+		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel, ModelID: values.ModelID, ReasonCode: enrich.ModelFailureReason(scope.Facts().BKTenantID, values.ModelID, model, modelFound, modelErr)})
 	} else {
 		enrich.ApplyModelContext(&values, model)
 	}
@@ -345,7 +345,8 @@ func processK8sResource(ctx context.Context, scope *enrich.Scope, code string, b
 		return enrich.ProcessorResult{}, ctx.Err()
 	}
 	if readErr != nil || !found || instance.TenantID != scope.Facts().BKTenantID || instance.ModelCode != code || instance.InstanceID == "" {
-		diagnostics = appendResourceDependency(diagnostics, rules.DependencyOneModel)
+		failureIndex := len(diagnostics)
+		diagnostics = append(diagnostics, k8sFailureDiagnostic(scope, code, instance, found, readErr))
 		if readErr == nil && !found {
 			id, fallbackDiagnostics, err := fallbackK8sIdentity(ctx, scope, code)
 			if err != nil {
@@ -355,6 +356,7 @@ func processK8sResource(ctx context.Context, scope *enrich.Scope, code string, b
 			if id != "" {
 				// 只补确定的自然身份，不将缺失实例伪装为已查询到的业务/属性快照。
 				values.ModelID, values.ModelInstID = code, id
+				diagnostics[failureIndex].Code = enrich.DiagnosticCodeFallbackSucceeded
 				values.CWLabels = enrich.ResourceLabels(values)
 			}
 		}
@@ -398,7 +400,7 @@ func processAPMResource(ctx context.Context, scope *enrich.Scope, strategy model
 	}
 	modelName, hasModelName := rules.FirstStringField(model.Fields, rules.FieldObjectModelName)
 	if modelErr != nil || !modelFound || model.TenantID != scope.Facts().BKTenantID || model.ModelCode != modelID || model.ModelID == "" || !hasModelName {
-		diagnostics = appendResourceDependency(diagnostics, rules.DependencyOneModel)
+		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel, ModelID: modelID, ReasonCode: enrich.ModelFailureReason(scope.Facts().BKTenantID, modelID, model, modelFound, modelErr)})
 	} else {
 		values.ModelName = modelName
 	}
@@ -462,7 +464,7 @@ func processDataModelInstance(ctx context.Context, scope *enrich.Scope, values m
 		return enrich.ProcessorResult{}, err
 	}
 	if readErr != nil || !found || instance.TenantID != scope.Facts().BKTenantID || instance.ModelCode != values.ModelID || instance.InstanceID != instanceID {
-		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel})
+		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel, ModelID: values.ModelID, ReasonCode: enrich.InstanceFailureReason(scope.Facts().BKTenantID, enrich.InstanceQuery{ModelCode: values.ModelID, InstanceID: instanceID}, instance, found, readErr)})
 		return resourceScenarioResult(scope, values, diagnostics, true)
 	}
 	resource := enrich.ResourceValuesFromInstance(instance, bizIDFromResource(values))
@@ -512,7 +514,7 @@ func resourceScenarioResult(scope *enrich.Scope, values models.ResourceValues, d
 		return enrich.ProcessorResult{}, err
 	}
 	status := domain.EnrichStatusSucceeded
-	if len(diagnostics) != 0 {
+	if hasUnresolvedDiagnostics(diagnostics) {
 		status = domain.EnrichStatusPartial
 		// 已确认模型的名称/CMDB 映射可以独立输出。实例缺失仍保留诊断，
 		// 但不能让 failed 丢弃这些补丁，也不能伪造实例绑定。

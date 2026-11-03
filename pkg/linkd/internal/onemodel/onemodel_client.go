@@ -101,13 +101,13 @@ func (c *Client) FindInstance(
 		}
 		rows, err := c.doris.instancesPage(ctx, tenantID, query.ModelCode, where, 2, "")
 		if err != nil {
-			return Instance{}, false, err
+			return Instance{}, false, diagnosticError(ErrorReason(err), err)
 		}
 		if len(rows) == 0 {
 			return Instance{}, false, nil
 		}
 		if len(rows) != 1 {
-			return Instance{}, false, ErrInvalidDataSourceResponse
+			return Instance{}, false, diagnosticError("multiple_instances", ErrInvalidDataSourceResponse)
 		}
 		return parseInstanceSource(rows[0], tenantID, query)
 	}
@@ -117,7 +117,7 @@ func (c *Client) FindInstance(
 	}
 	response, err := c.transport.Perform(request)
 	if err != nil {
-		return Instance{}, false, fmt.Errorf("find onemodel instance: search: %w", err)
+		return Instance{}, false, diagnosticError(ErrorReason(err), fmt.Errorf("find onemodel instance: search: %w", err))
 	}
 	defer func() { _ = response.Body.Close() }()
 
@@ -195,13 +195,13 @@ func parseFindInstanceResponse(
 	limited := io.LimitReader(response.Body, maxOneModelResponseBytes+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
-		return Instance{}, false, fmt.Errorf("read response: %w", err)
+		return Instance{}, false, diagnosticError(ErrorReason(err), fmt.Errorf("read response: %w", err))
 	}
 	if len(data) > maxOneModelResponseBytes {
-		return Instance{}, false, fmt.Errorf("response exceeds %d bytes", maxOneModelResponseBytes)
+		return Instance{}, false, diagnosticError("response_invalid", fmt.Errorf("response exceeds %d bytes", maxOneModelResponseBytes))
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return Instance{}, false, fmt.Errorf("elasticsearch status %d", response.StatusCode)
+		return Instance{}, false, diagnosticError("query_error", fmt.Errorf("elasticsearch status %d", response.StatusCode))
 	}
 	var result struct {
 		TimedOut bool `json:"timed_out"`
@@ -217,39 +217,45 @@ func parseFindInstanceResponse(
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	if err := decoder.Decode(&result); err != nil {
-		return Instance{}, false, fmt.Errorf("%w: decode response: %w", ErrInvalidDataSourceResponse, err)
+		return Instance{}, false, diagnosticError("response_decode_failed", fmt.Errorf("%w: decode response: %w", ErrInvalidDataSourceResponse, err))
 	}
 	// HTTP 200 的部分失败不等价于实例不存在，必须交给调用方重试。
 	if result.TimedOut || result.Shards.Failed > 0 {
-		return Instance{}, false, fmt.Errorf("%w: incomplete search timed_out=%t failed_shards=%d", ErrInvalidDataSourceResponse, result.TimedOut, result.Shards.Failed)
+		return Instance{}, false, diagnosticError("search_incomplete", fmt.Errorf("%w: incomplete search timed_out=%t failed_shards=%d", ErrInvalidDataSourceResponse, result.TimedOut, result.Shards.Failed))
 	}
 	if len(result.Hits.Hits) == 0 {
 		return Instance{}, false, nil
 	}
 	if len(result.Hits.Hits) != 1 {
-		return Instance{}, false, fmt.Errorf("%w: query returned multiple instance identities", ErrInvalidDataSourceResponse)
+		return Instance{}, false, diagnosticError("multiple_instances", fmt.Errorf("%w: query returned multiple instance identities", ErrInvalidDataSourceResponse))
 	}
 	return parseInstanceSource(result.Hits.Hits[0].Source, tenantID, query)
 }
 
 func parseInstanceSource(source map[string]any, tenantID string, query InstanceQuery) (Instance, bool, error) {
-	if source["bk_tenant_id"] != tenantID || source["model_id"] != query.ModelCode {
-		return Instance{}, false, fmt.Errorf("%w: response identity does not match query", ErrInvalidDataSourceResponse)
+	if source["bk_tenant_id"] != tenantID {
+		return Instance{}, false, diagnosticError("tenant_mismatch", fmt.Errorf("%w: response tenant identity does not match query", ErrInvalidDataSourceResponse))
+	}
+	if source["model_id"] != query.ModelCode {
+		return Instance{}, false, diagnosticError("model_mismatch", fmt.Errorf("%w: response model identity does not match query", ErrInvalidDataSourceResponse))
 	}
 	instanceID, ok := source["model_inst_id"].(string)
-	if !ok || instanceID == "" {
-		return Instance{}, false, fmt.Errorf("%w: response has invalid instance identity", ErrInvalidDataSourceResponse)
+	if !ok {
+		return Instance{}, false, diagnosticError("instance_id_invalid", fmt.Errorf("%w: response has invalid instance identity", ErrInvalidDataSourceResponse))
+	}
+	if instanceID == "" {
+		return Instance{}, false, diagnosticError("instance_id_empty", fmt.Errorf("%w: response has empty instance identity", ErrInvalidDataSourceResponse))
 	}
 	if query.InstanceID != "" && instanceID != query.InstanceID {
-		return Instance{}, false, fmt.Errorf("%w: response instance identity does not match query", ErrInvalidDataSourceResponse)
+		return Instance{}, false, diagnosticError("instance_id_mismatch", fmt.Errorf("%w: response instance identity does not match query", ErrInvalidDataSourceResponse))
 	}
 	entityUID, ok := source["entity_uid"].(string)
 	if !ok || entityUID != query.ModelCode+"|"+instanceID {
-		return Instance{}, false, fmt.Errorf("%w: response has inconsistent entity identity", ErrInvalidDataSourceResponse)
+		return Instance{}, false, diagnosticError("entity_uid_mismatch", fmt.Errorf("%w: response has inconsistent entity identity", ErrInvalidDataSourceResponse))
 	}
 	attributes, ok := source["attributes"].(map[string]any)
 	if !ok {
-		return Instance{}, false, fmt.Errorf("%w: response attributes must be an object", ErrInvalidDataSourceResponse)
+		return Instance{}, false, diagnosticError("attributes_invalid", fmt.Errorf("%w: response attributes must be an object", ErrInvalidDataSourceResponse))
 	}
 	return Instance{
 		TenantID: tenantID, ModelCode: query.ModelCode, InstanceID: instanceID,

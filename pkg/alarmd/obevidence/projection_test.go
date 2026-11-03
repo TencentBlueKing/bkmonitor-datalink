@@ -179,11 +179,15 @@ func TestTheSourceViewShowsWhatTheOutputAndTheObjectTargetRead(t *testing.T) {
 }
 
 // A recovery_config is shown as written both where alarmd reads it (detects)
-// and in the publisher's copy (runtime_config.spec.strategy_item); the rest of
-// the copy keeps its shape only.
+// and in the publisher's copy (runtime_config.spec.strategy_item), as are the
+// copy's other item values, under the item's rules; the rest of the copy
+// keeps its shape only.
 func TestTheSourceViewShowsBothRecoveryConfigs(t *testing.T) {
 	raw := []byte(`{"id":7,"detects":[{"level":1,"recovery_config":{"check_window":2,"status_setter":"close"}}],` +
-		`"runtime_config":{"spec":{"name":"cpu high","strategy_item":{"agg_method":"AVG","recovery_config":{"check_window":3,"status_setter":"recovery"}}}}}`)
+		`"runtime_config":{"spec":{"name":"cpu high","strategy_item":{"agg_method":"AVG","agg_interval":60,` +
+		`"agg_condition":[{"key":"password","method":"eq","value":["COPY_SECRET"]},{"key":"bk_host_id","method":"eq","value":["42"]}],` +
+		`"query_configs":[{"metric_field":"usage","result_table_id":"system.cpu_summary"}],` +
+		`"recovery_config":{"check_window":3,"status_setter":"recovery"}}}}}`)
 	value, _, err := projectSourceJSON(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -191,10 +195,14 @@ func TestTheSourceViewShowsBothRecoveryConfigs(t *testing.T) {
 	text := plainJSON(t, value)
 	for _, want := range []string{`"detects":[{"level":1,"recovery_config":{"check_window":2,"status_setter":"close"}}]`,
 		`"recovery_config":{"check_window":3,"status_setter":"recovery"}`,
-		`"name":"<string of 8 bytes>"`, `"agg_method":"<string of 3 bytes>"`} {
+		`"name":"<string of 8 bytes>"`, `"agg_method":"AVG"`, `"agg_interval":60`, `"42"`,
+		`"metric_field":"usage"`, `"result_table_id":"system.cpu_summary"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("projection lacks %s: %s", want, text)
 		}
+	}
+	if strings.Contains(text, "SECRET") {
+		t.Fatalf("a condition named like a credential in the copy is shown: %s", text)
 	}
 }
 

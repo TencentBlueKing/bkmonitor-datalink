@@ -130,6 +130,7 @@ var capabilityByReason = map[string]CapabilityClass{
 	"ALGORITHM_NOT_MIGRATED":         {Area: CapabilityAlgorithm, Outcome: CapabilityNotYetSupported},
 	"ALGORITHM_UNSUPPORTED":          {Area: CapabilityAlgorithm, Outcome: CapabilityNotYetSupported},
 	"ALGORITHM_NOT_SLIDING":          {Area: CapabilityAlgorithm, Outcome: CapabilityNotYetSupported},
+	"HISTORY_OFF_GRID":               {Area: CapabilityAlgorithm, Outcome: CapabilityNotYetSupported},
 	"EVALUATION_STEP_INCONSISTENT":   {Area: CapabilityAlgorithm, Outcome: CapabilityNotYetSupported, Reversible: true},
 	"NO_DATA_TRIGGER_BEYOND_HORIZON": {Area: CapabilityAlgorithm, Outcome: CapabilityNotYetSupported},
 

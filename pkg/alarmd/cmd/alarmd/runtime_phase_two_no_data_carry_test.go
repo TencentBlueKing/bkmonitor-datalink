@@ -222,10 +222,11 @@ func (fixture *lifecycleFixture) publish(strategy lifecycleStrategy) {
 // edited strategy's to read, so the new generation starts with none and the
 // Leader says why; the edit is what decides what its open alerts become.
 //
-// An edit to the query names another Query Group, and the Leader finds the
-// previous version under the Query Group the Plan is in now: it reports that
-// version unreadable, which carries nothing either. The comparison of the
-// two queries is decided apart (TestTheNoDataCarryIsDecidedFromTheTwoVersionsAlone).
+// An edit to the query names another Query Group: the previous version is
+// not under the group the Plan is in now, which is itself a changed query, and
+// the Leader says so (not_carried_semantics_changed, as the state carry says
+// none_group_changed). The comparison of the two queries is decided apart
+// (TestTheNoDataCarryIsDecidedFromTheTwoVersionsAlone).
 func TestAnEditThatChangesNoDataSemanticsCarriesNoNoDataState(t *testing.T) {
 	for name, test := range map[string]struct {
 		edit func(map[string]any)
@@ -267,12 +268,9 @@ func TestAnEditThatChangesNoDataSemanticsCarriesNoNoDataState(t *testing.T) {
 				}
 			}
 			got := fixture.noDataCarryOutcomes()
-			if got["carried"] != 0 || got["carried_ends_only"] != 0 ||
-				got["not_carried_semantics_changed"]+got["not_carried_previous_unreadable"] != 1 {
-				t.Fatalf("the Leader's no-data carry decisions = %v, want one not carried", got)
-			}
-			if test.rounds && got["not_carried_semantics_changed"] != 1 {
-				t.Fatalf("the Leader's no-data carry decisions = %v, want not_carried_semantics_changed", got)
+			if got["carried"] != 0 || got["carried_ends_only"] != 0 || got["not_carried_previous_unreadable"] != 0 ||
+				got["not_carried_semantics_changed"] != 1 {
+				t.Fatalf("the Leader's no-data carry decisions = %v, want one not_carried_semantics_changed", got)
 			}
 		})
 	}

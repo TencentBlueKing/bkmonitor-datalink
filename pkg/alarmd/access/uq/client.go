@@ -637,7 +637,7 @@ func buildRequestCarrying(spec execution.PhysicalQuerySpec, carryApp bool) (requ
 	}
 	body := request{TSDBMap: spec.PlanFacts.TSDBMap, QueryList: queries, MetricMerge: spec.PlanFacts.MetricMerge,
 		StartTime: strconv.FormatInt(spec.ProviderRange.Start, 10), EndTime: strconv.FormatInt(spec.ProviderRange.End, 10),
-		Step: durationString(spec.PlanFacts.StepMillis), SpaceUID: bodySpace(spec.PlanFacts),
+		Step: durationString(spec.PlanFacts.RequestStepMillis()), SpaceUID: bodySpace(spec.PlanFacts),
 		DownSampleRange: string(spec.PlanFacts.DownSampleRange), Timezone: spec.PlanFacts.Timezone,
 		NotTimeAlign: spec.PlanFacts.NotTimeAlign}
 	if outputs := spec.PlanFacts.NamedOutputs; outputs != nil {
@@ -1123,9 +1123,9 @@ var errOffRequestGrid = errors.New("alarmd access uq: unaligned query answered o
 
 // onRequestGrid says whether an unaligned query's point sits where its
 // request's buckets start: the accepted range's start plus a whole number of
-// data steps.
+// request steps.
 func onRequestGrid(spec execution.PhysicalQuerySpec, sourceTime int64) bool {
-	step := spec.PlanFacts.StepMillis / 1000
+	step := spec.PlanFacts.RequestStepMillis() / 1000
 	if step <= 0 {
 		return true
 	}

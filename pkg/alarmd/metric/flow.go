@@ -36,7 +36,7 @@ var DecisionLagBuckets = []float64{0.1, 0.5, 1, 2.5, 5, 10, 15, 20, 25, 30, 40, 
 // queryFailureReasons is access.QueryFailures, held here because this
 // package does not import access; a test in the wiring holds the two
 // equal.
-var queryFailureReasons = []string{"timeout", "refused", "not_found", "transport", "decode", "other"}
+var queryFailureReasons = []string{"timeout", "refused", "not_found", "transport", "decode", "other", "sample_limit"}
 
 type flowMetrics struct {
 	physicalQueries   prometheus.Counter
@@ -80,7 +80,9 @@ func newFlowMetrics(work *prometheus.CounterVec) flowMetrics {
 			Subsystem: metricSubsystem, Name: "access_query_failure_total",
 			Help: "Physical queries that did not answer, by what their last failed attempt says: timeout, refused (the " +
 				"backend answered no), not_found (its status names something that does not exist), transport, decode " +
-				"(the answer broke the wire contract), other. Closed set.",
+				"(the answer broke the wire contract), other, sample_limit (the backend refused the query as reading more " +
+				"samples than it serves in one query, VM_SAMPLE_LIMIT; which Query Group it was is on the fleet's page). " +
+				"Closed set.",
 		}, []string{"reason"}),
 		decisionLag: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Subsystem: metricSubsystem, Name: "slot_decision_lag_seconds",

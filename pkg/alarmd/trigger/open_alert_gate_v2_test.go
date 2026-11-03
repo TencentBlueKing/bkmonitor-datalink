@@ -347,3 +347,33 @@ func TestARecoveryCarriesOnlyTheLevelsTheAlertHasOpen(t *testing.T) {
 		})
 	}
 }
+
+// After an edit that adds a Level, the carried history holds results for the
+// Levels both versions have and none for the new one (worker carryHistory):
+// the carried Level triggers on its carried window, and the new Level warms
+// up on its own, as a new series does, and decides nothing.
+func TestALevelAddedByAnEditWarmsUpOnItsOwnWindowBesideACarriedOne(t *testing.T) {
+	const source = int64(300)
+	identity := &contract.MonitorOutputIdentity{DimensionFields: []string{"host"}}
+	plan := nativePlanV2(t, []contract.LevelIRV2{levelV2(1, 1, 3, 2, 1, nil), levelV2(2, 2, 3, 2, 1, nil)}, identity)
+	levels := plan.Levels().Copy()
+	facts := []DetectionFact{factV2(levels[0], DetectionAnomalous), factV2(levels[1], DetectionAnomalous)}
+	histories := []LevelHistory{
+		// Level 1 carried a whole window, one anomaly before this round's.
+		{LevelID: 1, View: pointHistory{step: 60, points: map[int64]bool{source - 120: false, source - 60: true, source: true}}},
+		// Level 2 is new: only this round's point.
+		{LevelID: 2, View: pointHistory{step: 60, points: map[int64]bool{source: true}}},
+	}
+	request := requestV2(t, plan, source, facts, histories, activeFactsV2(t, plan, source))
+	request.SeriesSeenBefore = true
+	got, err := EvaluateV2(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LevelOutcomes[0].Result != contract.LevelResultAbnormal {
+		t.Fatalf("the carried Level decided %+v, want ABNORMAL on its carried window (2 of 3)", got.LevelOutcomes[0])
+	}
+	if outcome := got.LevelOutcomes[1]; outcome.Result != "" || outcome.UnavailableReason != historyReasonV2(HistoryWarming) {
+		t.Fatalf("the new Level decided %+v, want it warming on its own window", outcome)
+	}
+}

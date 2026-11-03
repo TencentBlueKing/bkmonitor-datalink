@@ -527,7 +527,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		// reasons, one label-free counter
 		fqName("access_query_duration_seconds"):    13,
 		fqName("slot_decision_lag_seconds"):        18,
-		fqName("access_query_failure_total"):       6,
+		fqName("access_query_failure_total"):       7,
 		fqName("output_events_rejected_all_total"): 1,
 		fqName("access_response_codec_total"):      3 * 3 * 4,
 		// One per source answered through Elasticsearch terms.
@@ -748,6 +748,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("leader_rounds_total")] = 2
 	bounds[fqName("query_cooldown_saves_total")] = len(QueryCooldownSaveResults)
 	bounds[fqName("fleet_control_facts_writes_total")] = len(ControlFactsWriteResults)
+	bounds[fqName("fleet_plan_carries_reads_total")] = len(PlanCarriesReadResults)
 	bounds[fqName("query_cooldown_loads_total")] = len(QueryCooldownLoadResults)
 	bounds[fqName("event_business_attribution_total")] = len(contract.BusinessAttributionSources)
 	bounds[fqName("event_detection_snapshots_total")] = len(DetectionSnapshotResults)
@@ -1076,6 +1077,21 @@ func TestControlFactsWriteResultsArePreCreated(t *testing.T) {
 	}
 	if len(counts) != len(ControlFactsWriteResults) || counts["oversized"] != 1 || counts["written"] != 0 {
 		t.Fatalf("writes = %v, want every result present, oversized at 1, nothing else", counts)
+	}
+}
+
+// The plan carries reads are pre-created, and a result outside the closed list
+// creates no series.
+func TestPlanCarriesReadResultsArePreCreated(t *testing.T) {
+	r := NewRecorder(BuildInfo{})
+	r.ObservePlanCarriesRead("failed")
+	r.ObservePlanCarriesRead("guessed")
+	counts := map[string]float64{}
+	for _, m := range gatherFamily(t, r, "alarmd_fleet_plan_carries_reads_total") {
+		counts[m.GetLabel()[0].GetValue()] = m.GetCounter().GetValue()
+	}
+	if len(counts) != len(PlanCarriesReadResults) || counts["failed"] != 1 || counts["read"] != 0 || counts["no_open_segment"] != 0 {
+		t.Fatalf("reads = %v, want every result present, failed at 1, nothing else", counts)
 	}
 }
 

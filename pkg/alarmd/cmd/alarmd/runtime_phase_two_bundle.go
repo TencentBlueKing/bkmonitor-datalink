@@ -1006,6 +1006,13 @@ func openProductionPhaseTwoBundleAssembly(
 	// request for the objects it tracks.
 	fleetService.SetLocalRows(fleetTracker.TrackedRow)
 	fleetService.SetLocalQueryRanges(fleetTracker.QueryRanges)
+	// Where an object's Plans' Runtime State comes from, read from its
+	// timeline on request: any replica can answer it.
+	fleetService.SetPlanCarries(func(ctx context.Context, queryGroup string) (controlplane.PlanCarriesReading, error) {
+		reading, err := repository.PlanCarries(ctx, execution.QueryGroupIdentity(queryGroup), controlplane.MaxPlanCarries)
+		recorder.ObservePlanCarriesRead(planCarriesReadResult(err))
+		return reading, err
+	})
 	// Windows live under the same phase-two prefix as the rest of the runtime
 	// objects, and every replica reads them on the reconcile tick it already
 	// runs, so opening one needs neither a restart nor a release.
@@ -1774,4 +1781,17 @@ func shutdownTraces(ctx context.Context, traces *tracing.Exporter) error {
 	ctx, cancel := context.WithTimeout(ctx, traceShutdownBound)
 	defer cancel()
 	return traces.Shutdown(ctx)
+}
+
+// planCarriesReadResult is the plan carries read counter's result for a read's
+// error, the same split the object detail names in plan_carries_unavailable.
+func planCarriesReadResult(err error) string {
+	switch {
+	case err == nil:
+		return "read"
+	case errors.Is(err, controlplane.ErrScheduleUnavailable):
+		return "no_open_segment"
+	default:
+		return "failed"
+	}
 }

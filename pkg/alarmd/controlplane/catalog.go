@@ -2861,7 +2861,7 @@ func compileAlgorithmConfig(
 		if err := json.Unmarshal(raw.Config, &parameters); err != nil {
 			return nil, err
 		}
-		offsets, err := strategy.TraditionalHistoryOffsets(raw.Type, parameters, step)
+		offsets, err := strategy.TraditionalHistoryOffsets(raw.Type, parameters, strategy.RingHistoryInterval(step, interval))
 		if err != nil {
 			return nil, err
 		}
@@ -3039,16 +3039,18 @@ func (inputs *compiledPlanInputs) buildRequirements(
 
 	switch kind {
 	case strategy.DetectorKindSimpleRingRatio:
+		previous := strategy.RingHistoryInterval(step, interval)
 		dependency, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
 			DatasetName: "previous", Role: execution.InputRoleAlgorithmDependency, ConsumerLevelID: levelID,
 			LogicalQueryRef: primaryRef,
-			// The previous point is the previous detection, a step back, read
-			// over a whole aggregation window.
-			RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: -inputs.primary.QueryDelaySeconds - step - interval, EndOffsetSeconds: -inputs.primary.QueryDelaySeconds - step, HalfOpen: true},
+			// The previous point is the previous aggregation window, or the
+			// previous detection when that is further back, read over a
+			// whole aggregation window.
+			RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: -inputs.primary.QueryDelaySeconds - previous - interval, EndOffsetSeconds: -inputs.primary.QueryDelaySeconds - previous, HalfOpen: true},
 			StepMillis:     inputs.primary.StepMillis, AlignmentMillis: inputs.primary.AlignmentMillis,
 			ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessFinalizedRequired,
-			InputProjection: projection, PointOffsetsSeconds: []int64{step},
-			NamedPoints: []execution.NamedInputPoint{{Name: "previous", OffsetSeconds: step}},
+			InputProjection: projection, PointOffsetsSeconds: []int64{previous},
+			NamedPoints: []execution.NamedInputPoint{{Name: "previous", OffsetSeconds: previous}},
 		})
 		if err != nil {
 			return nil, err
@@ -3060,16 +3062,19 @@ func (inputs *compiledPlanInputs) buildRequirements(
 			return nil, errors.New("alarmd controlplane: OsRestart history query facts are missing")
 		}
 		historyRef := execution.LogicalQueryRef(inputs.osRestartHistory.QueryRevision)
+		// The window starts at the farthest point, so each point sits its
+		// distance from the farthest after the start (osRestartHistoryOnGrid).
+		offsets := strategy.OsRestartHistoryOffsets(step, interval)
 		dependency, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
 			DatasetName: "uptime_history", Role: execution.InputRoleAlgorithmDependency, ConsumerLevelID: levelID,
 			LogicalQueryRef: historyRef,
-			RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -inputs.primary.QueryDelaySeconds - (1500 + interval), EndOffsetSeconds: -inputs.primary.QueryDelaySeconds, HalfOpen: true},
+			RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -inputs.primary.QueryDelaySeconds - (offsets[2] + interval), EndOffsetSeconds: -inputs.primary.QueryDelaySeconds, HalfOpen: true},
 			StepMillis:      inputs.osRestartHistory.StepMillis, AlignmentMillis: inputs.osRestartHistory.AlignmentMillis,
 			ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessFinalizedRequired,
-			InputProjection: projection, PointOffsetsSeconds: []int64{step, 600, 1500},
+			InputProjection: projection, PointOffsetsSeconds: offsets,
 			NamedPoints: []execution.NamedInputPoint{
-				{Name: "previous", OffsetSeconds: step}, {Name: "previous_10m", OffsetSeconds: 600},
-				{Name: "previous_25m", OffsetSeconds: 1500},
+				{Name: "previous", OffsetSeconds: offsets[0]}, {Name: "previous_10m", OffsetSeconds: offsets[1]},
+				{Name: "previous_25m", OffsetSeconds: offsets[2]},
 			},
 		})
 		if err != nil {

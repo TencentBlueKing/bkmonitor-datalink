@@ -383,6 +383,13 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePrimaryQueryConfigs(source Pr
 	if err != nil {
 		return execution.QueryPlanFacts{}, err
 	}
+	// A detection more often than the aggregation interval asks for buckets
+	// a step apart: each still an aggregation interval wide, and the
+	// request range narrowed to the step, so only the newest is read.
+	var queryStepMillis int64
+	if sliding && source.DetectStepSeconds < stepSeconds {
+		queryStepMillis = source.DetectStepSeconds * 1000
+	}
 	legacyOnly := true
 	for _, label := range sourceSemantics {
 		if label != omittedSourceSemantics {
@@ -414,6 +421,7 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePrimaryQueryConfigs(source Pr
 		Timezone:         compiler.timezone,
 		NotTimeAlign:     sliding,
 		Normalization:    normalization,
+		QueryStepMillis:  queryStepMillis,
 	})
 	if err != nil {
 		return execution.QueryPlanFacts{}, queryConfigRejected("QUERY_FACTS_INVALID", err)

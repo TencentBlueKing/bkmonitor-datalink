@@ -66,7 +66,7 @@ func (spec PhysicalQuerySpec) Validate() error {
 			return err
 		}
 	}
-	if spec.ProviderRange.Start > spec.LogicalWindow.Start || spec.ProviderRange.End < spec.LogicalWindow.End ||
+	if spec.ProviderRange.Start > spec.LogicalWindow.Start || spec.ProviderRange.End < spec.PlanFacts.RequestRange(spec.LogicalWindow).End ||
 		spec.AcceptedRange.Start < spec.ProviderRange.Start || spec.AcceptedRange.End > spec.ProviderRange.End {
 		return errors.New("alarmd execution: physical query ranges are inconsistent")
 	}

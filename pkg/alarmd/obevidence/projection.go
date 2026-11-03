@@ -117,12 +117,17 @@ var sourcePolicy = fields("id bk_biz_id bk_tenant_id space_uid is_global_strateg
 	}),
 	"detects":        fields("level priority connector", map[string]*policy{"trigger_config": triggerPolicy, "recovery_config": recoveryPolicy, "effective_time": uptimePolicy}),
 	"effective_time": uptimePolicy, "uptime": uptimePolicy, "effective_time_snapshot": effectiveSnapshotPolicy,
-	// The publisher's copy of the strategy item it compiled from. alarmd
-	// reads detects, not this; its recovery_config is shown as written so a
-	// recovery the detects disagree with can be read against what the writer
-	// started from. The rest of the copy keeps its shape only.
+	// The publisher's copy of the strategy item it compiled from
+	// (StrategyItemSpec). alarmd reads items and detects, not this; its
+	// values are shown as written, under the same rules as the item's, so
+	// an item the copy disagrees with - its recovery, its query, its
+	// conditions - can be read against what the writer started from. The
+	// rest of the copy keeps its shape only.
 	"runtime_config": fields("", map[string]*policy{"spec": fields("", map[string]*policy{
-		"strategy_item": fields("", map[string]*policy{"recovery_config": recoveryPolicy}),
+		"strategy_item": fields("agg_method agg_interval agg_dimension connector expression alarm_level", map[string]*policy{
+			"trigger_config": triggerPolicy, "recovery_config": recoveryPolicy, "no_data_config": noDataPolicy,
+			"agg_condition": conditionPolicy, "functions": functionPolicy, "query_configs": sourceQueryPolicy,
+		}),
 	})}),
 })
 var groupPolicy = fields("model_id model_inst_ids", map[string]*policy{"member_list": memberPolicy})
@@ -145,7 +150,7 @@ var frozenConditionsPolicy = fields("Connectors", map[string]*policy{"Fields": n
 var frozenClausePolicy = fields("DataSource Driver TableID FieldName TimeField IsRegexp ReferenceName Dimensions Offset OffsetForward KeepColumns QueryString", map[string]*policy{
 	"Conditions": frozenConditionsPolicy, "Functions": frozenFunctionPolicy, "TimeAggregation": frozenFunctionPolicy,
 })
-var frozenQueryPolicy = fields("QueryDelaySeconds SourceSemantics QueryRevision Provider ProviderRouteRef TenantID BusinessID SpaceScope GlobalBusiness MetricMerge StepMillis AlignmentMillis DownSampleRange Timezone NotTimeAlign", map[string]*policy{
+var frozenQueryPolicy = fields("QueryDelaySeconds SourceSemantics QueryRevision Provider ProviderRouteRef TenantID BusinessID SpaceScope GlobalBusiness MetricMerge StepMillis AlignmentMillis DownSampleRange Timezone NotTimeAlign QueryStepMillis", map[string]*policy{
 	"QueryList": frozenClausePolicy, "PromQL": fields("Expression Match", nil),
 	"TSDBMap": dictionary(fields("table_id storage_id storage_type db measurement need_add_time source_type", map[string]*policy{"time_field": fields("name type unit", nil)})),
 })

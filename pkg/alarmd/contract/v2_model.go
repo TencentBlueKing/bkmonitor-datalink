@@ -146,7 +146,12 @@ const (
 	// storage the query service routed the table to does not read unaligned
 	// windows. Its points cover partial buckets at the wrong times, so the
 	// query is not used. Like QUERY_TARGET_MISSING it stays until the
-	// strategy changes - here, until its detect_interval is removed.
+	// strategy changes - here, until its detect_interval is removed. A
+	// Plan detected more often than it aggregates is asked a step apart
+	// (QueryPlanFacts.QueryStepMillis), a step below its window, which the
+	// query service computes itself from where the request starts, so this
+	// is not expected of it; it is kept as the guard. A Plan detected less
+	// often is asked its aggregation interval and can still meet it.
 	ReasonDetectIntervalStorageNotSliding = "DETECT_INTERVAL_STORAGE_NOT_SLIDING"
 	// ReasonQueryNamedOutputDuplicateKey names a query with named outputs
 	// one of whose outputs answered two points at the same time under the

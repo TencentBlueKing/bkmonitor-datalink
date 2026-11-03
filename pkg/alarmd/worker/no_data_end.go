@@ -12,6 +12,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -415,10 +416,13 @@ func (coordinator *SlotExecutionCoordinator) applyPlanNoDataEnds(ctx context.Con
 		}
 	}
 	if len(decision.ends) > 0 {
-		sent, failed := coordinator.sendNoDataEnds(ctx, request, executionID, judgedAt, due, decision.ends)
-		write.Deletes = append(write.Deletes, sent...)
+		sent, held, failed := coordinator.sendNoDataEnds(ctx, request, executionID, judgedAt, due, decision.ends)
+		write.Deletes = append(append(write.Deletes, sent...), held...)
 		if len(sent) > 0 {
 			coordinator.observeNoDataEnds(ctx, request, due.Identity, observability.NoDataEndSent, len(sent))
+		}
+		if len(held) > 0 {
+			coordinator.observeNoDataEnds(ctx, request, due.Identity, observability.NoDataEndLevelNotOpen, len(held))
 		}
 		if failed > 0 {
 			coordinator.observeNoDataEnds(ctx, request, due.Identity, observability.NoDataEndSendFailed, failed)
@@ -536,17 +540,18 @@ func noDataEndTTL(due execution.DuePlan) time.Duration {
 }
 
 // sendNoDataEnds sends each absent series' end, one event per series for its
-// due levels, and returns the entries whose end the sink took and how many
-// series it did not.
+// due levels, and returns the entries whose end the sink took, the entries of
+// series held because none of their due levels is the one the alert is at,
+// and how many series the sink did not take.
 func (coordinator *SlotExecutionCoordinator) sendNoDataEnds(ctx context.Context, request execution.SlotExecutionRequest,
-	executionID string, sourceTime int64, due execution.DuePlan, ends map[execution.SeriesIdentityDigest][]execution.NoDataEndEntry) ([]execution.NoDataEndEntryKey, int) {
+	executionID string, sourceTime int64, due execution.DuePlan, ends map[execution.SeriesIdentityDigest][]execution.NoDataEndEntry) ([]execution.NoDataEndEntryKey, []execution.NoDataEndEntryKey, int) {
 	series := make([]execution.SeriesIdentityDigest, 0, len(ends))
 	for digest := range ends {
 		series = append(series, digest)
 	}
 	sort.Slice(series, func(i, j int) bool { return series[i] < series[j] })
 	now := int64(request.Contract.Slot.EvaluationTime)
-	var sent []execution.NoDataEndEntryKey
+	var sent, held []execution.NoDataEndEntryKey
 	failed := 0
 	for _, digest := range series {
 		entries := ends[digest]
@@ -555,6 +560,13 @@ func (coordinator *SlotExecutionCoordinator) sendNoDataEnds(ctx context.Context,
 			levels = append(levels, entry.LevelID)
 		}
 		sort.Slice(levels, func(i, j int) bool { return levels[i] < levels[j] })
+		levels, ended := currentLevelEnds(coordinator.ports.OpenAlerts, due.Identity, entries[0].Fingerprint, levels)
+		if !ended {
+			for _, entry := range entries {
+				held = append(held, entry.Key())
+			}
+			continue
+		}
 		event, err := trigger.BuildAbsentNoDataEndV1(trigger.AbsentNoDataEndV1{
 			TenantID: due.Identity.TenantID, BusinessID: due.Identity.BusinessID, Plan: due.CompiledPlan,
 			DimensionIdentityDigest: string(digest), Dimensions: entries[0].Dimensions, DedupeMD5: entries[0].Fingerprint,
@@ -569,14 +581,33 @@ func (coordinator *SlotExecutionCoordinator) sendNoDataEnds(ctx context.Context,
 			failed++
 			continue
 		}
-		if coordinator.ports.OpenAlerts != nil {
-			coordinator.ports.OpenAlerts.Acknowledged([]contract.TriggerEventV1{*event})
-		}
+		// writeEvents told the copy of the acknowledged end; told again, the
+		// open-episode record and the open count heard it twice.
 		for _, entry := range entries {
 			sent = append(sent, entry.Key())
 		}
 	}
-	return sent, failed
+	return sent, held, failed
+}
+
+// currentLevelEnds is the due levels an absent series' end carries: only
+// the Level the alert is at - the lowest open Level id, as the open-alert
+// gate takes it (trigger openLevelResultsV2) - when the set knows the
+// series' open Levels; every due level otherwise, as before it could tell.
+// ended is false when none of them is that Level.
+func currentLevelEnds(set any, plan execution.PlanIdentity, fingerprint string, levels []uint32) ([]uint32, bool) {
+	levelSet, ok := set.(contract.OpenLevelSet)
+	if !ok {
+		return levels, true
+	}
+	open, known := levelSet.OpenLevels(plan.TenantID, plan.StrategyID, fingerprint)
+	if !known {
+		return levels, true
+	}
+	if len(open) == 0 || !slices.Contains(levels, slices.Min(open)) {
+		return nil, false
+	}
+	return []uint32{slices.Min(open)}, true
 }
 
 // observeNoDataEnds reports one outcome of a Plan's index, counted.

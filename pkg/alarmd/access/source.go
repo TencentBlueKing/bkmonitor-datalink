@@ -921,9 +921,12 @@ func prepare(
 		}
 		window := requirement.AbsoluteWindow(contractRef.Slot.EvaluationTime)
 		// The provider is asked from earlier for an event count (its
-		// requirement's lead); only the window is accepted.
+		// requirement's lead); only the window is accepted. A query asked a
+		// step apart is asked for, and accepts, only the buckets that lie
+		// inside the window.
 		spec, err := execution.BuildPhysicalQuerySpec(execution.PhysicalQuerySpec{PlanFacts: facts,
-			LogicalWindow: window, ProviderRange: requirement.ProviderWindow(contractRef.Slot.EvaluationTime), AcceptedRange: window,
+			LogicalWindow: window, ProviderRange: facts.RequestRange(requirement.ProviderWindow(contractRef.Slot.EvaluationTime)),
+			AcceptedRange:   facts.RequestRange(window),
 			RequiredColumns: append([]string(nil), requirement.RequiredColumns...)})
 		if err != nil {
 			return PreparedExecution{}, fmt.Errorf("alarmd access: build physical query: %w", err)

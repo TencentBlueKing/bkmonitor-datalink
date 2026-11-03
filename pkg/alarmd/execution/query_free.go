@@ -196,13 +196,12 @@ type ActivatedPlan struct {
 	// never with ==.
 	Shard *ShardRef `json:",omitempty"`
 	// Carry names, on an activation whose state generation moved while the
-	// Plan stayed active, the generation it moved from and the Levels whose
-	// detection did not change with it: their stored results are the same
-	// facts under the new generation, and are carried over rather than
-	// warmed up again. Nil everywhere else, and omitted, so a record without
-	// it serializes exactly as before. It only narrows what warms up; the
-	// Worker still keeps a carried point only when its detect fingerprint is
-	// the new one.
+	// Plan stayed active in its Query Group, the generation it moved from and
+	// the Levels both versions have: their stored results stand as they were
+	// decided, under whichever detection decided them, and are carried over
+	// rather than warmed up again - the Worker writes them under the Level's
+	// detect fingerprint now. Nil everywhere else, and omitted,
+	// so a record without it serializes exactly as before.
 	Carry *StateCarry `json:",omitempty"`
 	// NoDataCarry names, on an activation whose state generation moved while
 	// the Plan stayed active, the generation whose no-data state the Plan

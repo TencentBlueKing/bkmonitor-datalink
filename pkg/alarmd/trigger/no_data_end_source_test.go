@@ -10,6 +10,7 @@
 package trigger
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -94,5 +95,50 @@ func TestAZeroCountWithoutNoDataEndAsksNoSource(t *testing.T) {
 	got, _ := evaluateCountsAsking(t, plan, points, true, nil, int64(1000*60), source)
 	if len(source.asked) != 0 || source.dueNext != 0 {
 		t.Fatalf("asked %v, due next %d, want nothing (results %v)", source.asked, source.dueNext, got)
+	}
+}
+
+// A no-data end is a RECOVERY like any other at the open-alert gate: it goes
+// when its Level is the alert's current one, and is held when the alert is
+// at another Level, as Python ends an alert only at its own Level.
+// The Level here is 2; the alert is at Level 2, or at Level 1.
+func TestANoDataEndGoesOnlyForTheLevelTheAlertIsAt(t *testing.T) {
+	identity := &contract.MonitorOutputIdentity{DimensionFields: []string{"host"}}
+	level := levelV2(2, 2, 1, 1, 4, nil)
+	level.RecoveryPlan.Config = mustJSONV2(map[string]any{"enabled": true, "consecutive_windows": 4,
+		"missing_data": contract.RecoveryMissingDataEvaluateAsZero})
+	plan := nativePlanV2(t, []contract.LevelIRV2{level}, identity)
+	md5, err := contract.MonitorDedupeMD5("1001", "2", map[string]json.RawMessage{"host": json.RawMessage(`"127.0.0.1"`)}, *identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	points := []countPoint{{"5.000000", true}}
+	for range 6 {
+		points = append(points, countPoint{"0.000000", false})
+	}
+	base := int64(1000 * 60)
+	for _, test := range []struct {
+		name     string
+		open     []uint32
+		wantGate string
+	}{
+		{name: "the alert is at the ending Level: the end goes", open: []uint32{2}, wantGate: OpenAlertGatePassed},
+		{name: "the alert is at a more severe Level: the end is held", open: []uint32{1, 2}, wantGate: OpenAlertGateHeldLevelNotOpen},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			set := &openLevelSetFixture{openAlertSetFixture: openAlertSetFixture{members: map[string]bool{"default/1001/" + md5: true}}, open: test.open, known: true}
+			_, evaluated := evaluateCountsWith(t, plan, points, true, nil, base, &recordedSource{alive: true},
+				func(request *EvaluationRequestV2) { request.OpenAlerts = set })
+			round := evaluated[6]
+			if window := round.LevelOutcomes[0].DecisionWindow; window == nil || window.Recovery.EndedBy != contract.RecoveryEndedByNoData {
+				t.Fatalf("round 6 outcome %+v, want the Level ended by no data", round.LevelOutcomes[0])
+			}
+			if round.RecoveryGate.OpenAlertGate != test.wantGate {
+				t.Fatalf("round 6 gate %+v, want %s", round.RecoveryGate, test.wantGate)
+			}
+			if passed := test.wantGate == OpenAlertGatePassed; passed != (round.TriggerEvent != nil) || round.RecoveryGate.Held == passed {
+				t.Fatalf("round 6 gate %+v, event %v: want an envelope only when the end goes", round.RecoveryGate, round.TriggerEvent != nil)
+			}
+		})
 	}
 }

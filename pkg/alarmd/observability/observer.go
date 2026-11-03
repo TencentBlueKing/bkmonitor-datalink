@@ -1421,8 +1421,9 @@ type StateCarryFacts struct {
 var (
 	StateCarryScopes  = []string{"plan", "series", "no_data_plan", "no_data_load"}
 	StateCarryResults = map[string][]string{
-		"plan":   {"carried", "partial", "none_detect_changed", "none_previous_unreadable", "none_discontinuous"},
-		"series": {"carried", "nothing_kept", "skipped_active_guard", "old_missing"},
+		"plan": {"carried", "carried_detect_changed", "none_group_changed", "none_no_common_level", "none_previous_unreadable", "none_discontinuous"},
+		"series": {"carried", "carried_across_detect", "nothing_kept", "skipped_active_guard", "skipped_guard_warming",
+			"skipped_guard_gapped", "old_missing"},
 		"no_data_plan": {"carried", "carried_ends_only", "not_carried_semantics_changed",
 			"not_carried_previous_unreadable"},
 		"no_data_load": {"memory_carried", "memory_previous_empty", "memory_previous_unreadable",
@@ -2288,6 +2289,11 @@ const (
 	// held because the source could not be shown alive (sourceliveness): the
 	// entry stays, nothing is sent, and the next round asks again.
 	NoDataEndSourceUnknown = "source_unknown"
+	// NoDataEndLevelNotOpen counts absent series whose due Levels are none of
+	// them the Level the alert is at (contract.OpenLevelSet): the consumer
+	// ends an alert only on its own Level, as Python does, so nothing is
+	// sent and the entries are removed, as a sent end's are.
+	NoDataEndLevelNotOpen = "level_not_open"
 )
 
 // SourceLivenessHeldFact is one Plan's Levels whose no-data end is held
@@ -2326,7 +2332,7 @@ type NewOpensHourFact struct {
 
 // NoDataEndOutcomes is the closed list.
 var NoDataEndOutcomes = []string{NoDataEndSent, NoDataEndNotOpen, NoDataEndOverflow, NoDataEndUnavailable,
-	NoDataEndSendFailed, NoDataEndUndecodable, NoDataEndUnjudged, NoDataEndSourceUnknown}
+	NoDataEndSendFailed, NoDataEndUndecodable, NoDataEndUnjudged, NoDataEndSourceUnknown, NoDataEndLevelNotOpen}
 
 // RecoveryWithheldFact counts, for one evaluation, the Level outcomes whose
 // recovery was withheld for one reason.

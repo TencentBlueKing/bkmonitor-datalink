@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -114,17 +116,17 @@ func comparisonNumber(value string) *json.Number { n := json.Number(value); retu
 
 func traditionalCompileFixture(t *testing.T, kind string, params TraditionalComparisonParameters) (AlgorithmCompileContext, contract.AlgorithmIRV2) {
 	t.Helper()
-	return traditionalCompileFixtureStepped(t, kind, params, 60)
+	return traditionalCompileFixtureStepped(t, kind, params, 60, 60)
 }
 
 // traditionalCompileFixtureStepped is the fixture of an item detected every
-// step over one-minute windows: its history points are steps apart.
-func traditionalCompileFixtureStepped(t *testing.T, kind string, params TraditionalComparisonParameters, step int64) (AlgorithmCompileContext, contract.AlgorithmIRV2) {
+// step over one-minute windows whose ring history points are history apart.
+func traditionalCompileFixtureStepped(t *testing.T, kind string, params TraditionalComparisonParameters, step, history int64) (AlgorithmCompileContext, contract.AlgorithmIRV2) {
 	t.Helper()
 	projection := AlgorithmInputProjection{ValueFields: []string{"value"}, IdentityFields: []string{"host"}}
 	primary := AlgorithmInputRequirement{RequirementID: strings.Repeat("0", 64), DatasetName: "primary", Role: AlgorithmInputPrimary, ConsumerLevelID: 1, LogicalQueryRef: "query", RelativeWindow: AlgorithmRelativeWindow{-60, 0, true}, StepMillis: 60000, AlignmentMillis: 60000, ReadinessClass: AlgorithmReadinessEager, InputProjection: projection}
 	requirements := []AlgorithmInputRequirement{primary}
-	offsets, err := TraditionalHistoryOffsets(kind, params, step)
+	offsets, err := TraditionalHistoryOffsets(kind, params, history)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,17 +171,49 @@ func TestTraditionalComparisonHistoryBounds(t *testing.T) {
 	}
 }
 
-// An item detected every fifteen seconds over one-minute windows compares
-// with the previous detection, fifteen seconds back: the history points it
-// keys are steps apart, and its windows an aggregation interval long.
-func TestATraditionalComparisonKeysItsHistoryByTheEvaluationStep(t *testing.T) {
-	params := TraditionalComparisonParameters{Ratio: comparisonNumber("-1"), Shock: comparisonNumber("-2"), Threshold: comparisonNumber("-3")}
-	ctx, raw := traditionalCompileFixtureStepped(t, DetectorKindRingRatioAmplitude, params, 15)
-	compiled, err := traditionalComparisonCompiler{DetectorKindRingRatioAmplitude}.Compile(context.Background(), ctx, raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config := compiled.Config.TraditionalComparison; config == nil || config.AggregationInterval != 15 {
-		t.Fatalf("compiled %+v, want its history keyed fifteen seconds apart", compiled.Config.TraditionalComparison)
+// A ring comparison keys its history an aggregation interval apart, as the
+// Python detector does (ring_ratio_amplitude.py inherits simple_ring_ratio.py
+// get_history_offsets [agg_interval]; year_round_amplitude.py takes
+// i*86400 and i*86400+agg_interval): an item detected every fifteen seconds
+// over one-minute windows compares windows that do not overlap, and history
+// a step apart is refused. An item detected every two minutes keeps its
+// previous detection, two minutes back.
+func TestARingComparisonKeysItsHistoryByTheAggregationInterval(t *testing.T) {
+	amplitude := TraditionalComparisonParameters{Ratio: comparisonNumber("-1"), Shock: comparisonNumber("-2"), Threshold: comparisonNumber("-3")}
+	yearRound := TraditionalComparisonParameters{Days: 2, Method: "gte", Ratio: comparisonNumber("2"), Shock: comparisonNumber("0")}
+	for _, test := range []struct {
+		kind          string
+		params        TraditionalComparisonParameters
+		step, history int64
+		offsets       []int64
+	}{
+		{DetectorKindRingRatioAmplitude, amplitude, 15, 60, []int64{60}},
+		{DetectorKindYearRoundAmplitude, yearRound, 15, 60, []int64{60, 86400, 86460, 172800, 172860}},
+		{DetectorKindRingRatioAmplitude, amplitude, 120, 120, []int64{120}},
+		{DetectorKindYearRoundAmplitude, yearRound, 120, 120, []int64{120, 86400, 86520, 172800, 172920}},
+	} {
+		t.Run(test.kind+" step "+strconv.FormatInt(test.step, 10), func(t *testing.T) {
+			ctx, raw := traditionalCompileFixtureStepped(t, test.kind, test.params, test.step, test.history)
+			compiled, err := traditionalComparisonCompiler{test.kind}.Compile(context.Background(), ctx, raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if config := compiled.Config.TraditionalComparison; config == nil || config.AggregationInterval != test.history {
+				t.Fatalf("compiled %+v, want its history keyed %d seconds apart", compiled.Config.TraditionalComparison, test.history)
+			}
+			var keyed []int64
+			for _, requirement := range compiled.InputRequirements[1:] {
+				keyed = append(keyed, requirement.PointOffsetsSeconds...)
+			}
+			if !reflect.DeepEqual(keyed, test.offsets) {
+				t.Fatalf("reads history at %v, want %v", keyed, test.offsets)
+			}
+			if test.step < test.history {
+				ctx, raw := traditionalCompileFixtureStepped(t, test.kind, test.params, test.step, test.step)
+				if _, err := (traditionalComparisonCompiler{test.kind}).Compile(context.Background(), ctx, raw); err == nil {
+					t.Fatal("compiled with its history a step apart, overlapping the current window")
+				}
+			}
+		})
 	}
 }

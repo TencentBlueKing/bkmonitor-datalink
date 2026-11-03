@@ -968,7 +968,7 @@ func overviewDependencyNumbers(stage *OverviewStage, role string, latency, failu
 }
 
 // overviewQueryFailureOrder is the order the pull stage lists causes in.
-var overviewQueryFailureOrder = []string{"timeout", "refused", "not_found", "transport", "decode", "other"}
+var overviewQueryFailureOrder = []string{"timeout", "refused", "not_found", "transport", "decode", "other", "sample_limit"}
 
 // sameLayout says a replica's flow histograms have one bucket per bound of
 // this process's: the only layout whose buckets can be added to this

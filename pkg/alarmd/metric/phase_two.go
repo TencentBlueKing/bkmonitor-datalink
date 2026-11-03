@@ -192,6 +192,7 @@ type phaseTwoMetrics struct {
 	strategiesReturnedAfterRemoval  prometheus.Counter
 	queryCooldownSaves              *prometheus.CounterVec
 	controlFactsWrites              *prometheus.CounterVec
+	planCarriesReads                *prometheus.CounterVec
 	queryCooldownLoads              *prometheus.CounterVec
 	eventBusinessAttribution        *prometheus.CounterVec
 	detectionSnapshots              *prometheus.CounterVec
@@ -1119,7 +1120,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.objectReads = prometheus.NewCounterVec(prometheus.CounterOpts{Subsystem: metricSubsystem, Name: "object_read_total", Help: "Catalog object reads by a Worker, by object kind and outcome; for a Segment, whether its Query Group was read by content and if not, why."}, []string{"kind", "result"})
 	// Pre-created so that "no skew" reads as zeros, not as an absent family.
 	metrics.stateGenerationSkew = prometheus.NewCounterVec(prometheus.CounterOpts{Subsystem: metricSubsystem, Name: "state_generation_skew_total", Help: "Due Plans whose activation record names a state generation that disagrees with one derived elsewhere: formula (this process compiles the same Plan to another generation than the Control Leader that published it; tolerated, the record's generation governs the Slot; expected while a release rolls, a version mismatch if it persists), record (the record names a generation the Query Group object published with it does not carry; the Slot is refused)."}, []string{"kind"})
-	metrics.stateCarry = prometheus.NewCounterVec(prometheus.CounterOpts{Subsystem: metricSubsystem, Name: "state_generation_carry_total", Help: "History carried across a state generation that moved while its Plan stayed active. scope=plan: the Control Leader's decision per activation (carried: every Level's detection is unchanged, the Plan warms up for one full Slot and its series keep their results; partial and none_*: the Plan warms up whole, as before). scope=series: what a Worker did for each series with no record under the new generation (carried: results with the new detect fingerprint kept; nothing_kept: none were; skipped_active_guard: the old record still guarded holes and the series starts over; old_missing: the old generation held nothing). scope=no_data_plan: the Control Leader's decision about the Plan's no-data memory and no-data end index, from the two versions of the Plan (carried: the same query, projection and alert identity, and for the memory the same no-data section, so both are read from the old generation while the new one holds none; carried_ends_only: the end index is, the memory is not because the no-data section changed; not_carried_semantics_changed: the query, projection or alert identity changed, and the edit decides what the open alerts become; not_carried_previous_unreadable: the previous version could not be read back). scope=no_data_load: what a Worker found reading that state from the old generation (memory_carried and ends_carried: something was read; *_previous_empty: the old generation held nothing; *_previous_unreadable: it could not be read, and the Plan runs on the new generation's own state; ends_previous_not_cleared: carried entries could not be removed from the old index after they were written to the new one)."}, []string{"scope", "result"})
+	metrics.stateCarry = prometheus.NewCounterVec(prometheus.CounterOpts{Subsystem: metricSubsystem, Name: "state_generation_carry_total", Help: "History carried across a state generation that moved while its Plan stayed active. scope=plan: the Control Leader's decision per activation that commits, counted once its cutover commits (carried: every Level both versions have is carried and none's detection changed, the Plan warms up for one full Slot and its series keep their results; carried_detect_changed: the same, and some Level's detection changed, its results kept as they were decided, as Python keeps its check results across an edit; none_group_changed: the edit moved the Plan to another Query Group - its query facts changed: the query, its delay, the detection step (detect_interval), shard, named outputs, normalization or global business scope - so its old results are about other data and the Plan warms up whole; none_no_common_level: the previous version was read and shares no Level id with the new one; none_previous_unreadable: the previous version could not be read back or compiled; none_discontinuous: the Query Group is back from retirement; every none_* warms the Plan up whole). scope=series: what a Worker did on each evaluation of a series with no record under the new generation yet - counted per evaluation, not per series: a series is counted again on every evaluation until its first record under the new generation is written, so one series usually counts more than once (carried: the carried Levels' results kept; carried_across_detect: kept, some decided by the Level's previous detection; nothing_kept: none were; skipped_active_guard: the old record held a series guard; skipped_guard_warming and skipped_guard_gapped: a guard other than the activation's own drift guard held a carried Level of the old record WARMING, or GAPPED; each of the three starts the series over - a Level WARMING or GAPPED for its window's own holes, or under its activation's drift guard (CONFIG_DRIFT), is carried, its holes with it; old_missing: the old generation held nothing). scope=no_data_plan: the Control Leader's decision about the Plan's no-data memory and no-data end index, from the two versions of the Plan (carried: the same query, projection and alert identity, and for the memory the same no-data section, so both are read from the old generation while the new one holds none; carried_ends_only: the end index is, the memory is not because the no-data section changed; not_carried_semantics_changed: the query, projection or alert identity changed, or the edit moved the Plan to another Query Group, and the edit decides what the open alerts become; not_carried_previous_unreadable: the previous version could not be read back). scope=no_data_load: what a Worker found reading that state from the old generation (memory_carried and ends_carried: something was read; *_previous_empty: the old generation held nothing; *_previous_unreadable: it could not be read, and the Plan runs on the new generation's own state; ends_previous_not_cleared: carried entries could not be removed from the old index after they were written to the new one)."}, []string{"scope", "result"})
 	for _, scope := range observability.StateCarryScopes {
 		for _, result := range observability.StateCarryResults[scope] {
 			metrics.stateCarry.WithLabelValues(scope, result)
@@ -1336,7 +1337,9 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			"because the consumer's set could not be judged - not read yet after a handover, or no Console; " +
 			"nothing sent or removed), source_unknown (absent entries whose end was due and was held because the " +
 			"source could not be shown alive; the entry stays, " +
-			"nothing is sent, the next round asks again). Counted in series or entries, per round. Every outcome " +
+			"nothing is sent, the next round asks again), level_not_open (absent series none of whose due levels is " +
+			"the level the alert is at, the lowest open level id: the consumer ends an alert only on its own level, " +
+			"so nothing is sent and the entries are removed). Counted in series or entries, per round. Every outcome " +
 			"exists from start.",
 	}, []string{"outcome"})
 	for _, outcome := range observability.NoDataEndOutcomes {
@@ -1419,6 +1422,16 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	}, []string{"result"})
 	for _, result := range ControlFactsWriteResults {
 		metrics.controlFactsWrites.WithLabelValues(result)
+	}
+	metrics.planCarriesReads = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Subsystem: metricSubsystem, Name: "fleet_plan_carries_reads_total",
+		Help: "Reads of where an object's Plans' Runtime State comes from (plan_carries on an object detail), " +
+			"from the Query Group's timeline, by result: read; no_open_segment (the timeline holds no open " +
+			"Segment, so the object runs no Plan here now); failed (the timeline or an output context it names " +
+			"did not read back: the detail answers plan_carries_unavailable read_failed). Made on request only.",
+	}, []string{"result"})
+	for _, result := range PlanCarriesReadResults {
+		metrics.planCarriesReads.WithLabelValues(result)
 	}
 	metrics.queryCooldownLoads = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Subsystem: metricSubsystem, Name: "query_cooldown_loads_total",
@@ -2036,7 +2049,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.undrainedDrainingQueryGroups, m.drainingCursorPrunedQueryGroups, m.rebalancePlannedMoves, m.shardUnawareReadyReplicas, m.rebalanceGap, m.assignmentMoves, m.rebalancePaused, m.controlReadRoundTrips, m.controlReadKeys, m.controlReadDuration, m.assignmentIndexStaleRounds, m.assignmentIndexWrites, m.assignmentIndexReads, m.assignmentIndexConfirm, m.assignmentRecordReads, m.scheduleCursorAdvances, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
 		m.algorithmEvaluations, m.algorithmInputs, m.levelAbnormal, m.levelOutcomes, m.historyCoverageRejected, m.historyCoverageUnsummarised, m.recoveryBeside, m.recoveryWithheld, m.noDataEnd, m.openAlertGate,
 	}...), append(append(append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...), append(m.handover.collectors(), m.sreActions.actions, m.sreActions.rollouts, m.sreActions.watched, m.sreActions.receipts, m.cliAuth.total, m.cliAuth.rosterApplied)...), append(m.controlFacts.collectors(), m.traceExport.collectors()...)...),
-		m.startupDependencyWaits, m.liveness, m.controlCache, m.dispatchRotation, m.localView, m.viewStream, m.viewClient, m.activeCopy, m.fleetTracker, m.effectiveTimeRefresh, m.activationRebuild, m.timelineRepair, m.activationSkippedTimelines, m.timelineUnreadableReports, m.activationHeader, m.activationBlocked, m.liveReserve, m.roundMemory, m.targetGroup, m.effectiveClose, m.logLines, m.observerPanics, m.absentClose, m.editClose, m.noDataCloseAPI, m.linkdFilterClose, m.openEpisodeRecord, m.newOpens, m.frontRefused, m.processMemory, m.strategyScopeClose, m.targetScopeClose, m.controlSourceRounds, m.apmCarried, m.apmCarriedBytes, m.sourceLivenessChecks, m.sourceLivenessSeconds, m.sourceLivenessDeferred, m.sourceLivenessEvicted, m.sourceLivenessHeldEvicted, m.strategiesReturnedAfterRemoval, m.queryCooldownSaves, m.controlFactsWrites, m.queryCooldownLoads, m.eventBusinessAttribution, m.detectionSnapshots, m.detectionSnapshotStates, m.diagnosticRedisFailures, m.diagnosticRedisDialRetries, m.leaderForward, m.controlSource, m.leaderRound, m.lookback,
+		m.startupDependencyWaits, m.liveness, m.controlCache, m.dispatchRotation, m.localView, m.viewStream, m.viewClient, m.activeCopy, m.fleetTracker, m.effectiveTimeRefresh, m.activationRebuild, m.timelineRepair, m.activationSkippedTimelines, m.timelineUnreadableReports, m.activationHeader, m.activationBlocked, m.liveReserve, m.roundMemory, m.targetGroup, m.effectiveClose, m.logLines, m.observerPanics, m.absentClose, m.editClose, m.noDataCloseAPI, m.linkdFilterClose, m.openEpisodeRecord, m.newOpens, m.frontRefused, m.processMemory, m.strategyScopeClose, m.targetScopeClose, m.controlSourceRounds, m.apmCarried, m.apmCarriedBytes, m.sourceLivenessChecks, m.sourceLivenessSeconds, m.sourceLivenessDeferred, m.sourceLivenessEvicted, m.sourceLivenessHeldEvicted, m.strategiesReturnedAfterRemoval, m.queryCooldownSaves, m.controlFactsWrites, m.planCarriesReads, m.queryCooldownLoads, m.eventBusinessAttribution, m.detectionSnapshots, m.detectionSnapshotStates, m.diagnosticRedisFailures, m.diagnosticRedisDialRetries, m.leaderForward, m.controlSource, m.leaderRound, m.lookback,
 		m.controlSourceRetainedStale, m.controlSourceLastGoodIdentity, m.platformSettings,
 		m.redisPool, m.renewalGate, m.canonicalEncoding, m.legacyPodCache,
 		m.seriesAdmission, m.cmdbAddressDiffers, m.cmdbPlacedByHostID, m.cmdbIndexHosts, m.cmdbIndexServiceInstances, m.cmdbIndexBusinessMappings, m.cmdbIndexRecordsRefused, m.hostDisableMonitorStates, m.cmdbIndexAge, m.cmdbIndexPublish,
@@ -2972,6 +2985,23 @@ func (r *Recorder) ObserveControlFactsWrite(result string) {
 	for _, known := range ControlFactsWriteResults {
 		if result == known {
 			r.phaseTwo.controlFactsWrites.WithLabelValues(result).Inc()
+			return
+		}
+	}
+}
+
+// PlanCarriesReadResults is every result of a plan carries read, closed.
+var PlanCarriesReadResults = []string{"read", "no_open_segment", "failed"}
+
+// ObservePlanCarriesRead counts one plan carries read by its result; a result
+// outside PlanCarriesReadResults is dropped rather than creating a series.
+func (r *Recorder) ObservePlanCarriesRead(result string) {
+	if r == nil || r.phaseTwo.planCarriesReads == nil {
+		return
+	}
+	for _, known := range PlanCarriesReadResults {
+		if result == known {
+			r.phaseTwo.planCarriesReads.WithLabelValues(result).Inc()
 			return
 		}
 	}

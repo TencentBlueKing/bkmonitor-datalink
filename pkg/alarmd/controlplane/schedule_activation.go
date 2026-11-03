@@ -341,7 +341,12 @@ func (reconciler *ScheduleActivationReconciler) ensure(
 		}
 	}
 	carries := make(map[int]*execution.StateCarry)
+	carryOutcomes := make(map[int]string)
 	noDataCarries := make(map[int]*execution.NoDataCarry)
+	// The outcomes that carry nothing, and the no-data ones, wait for the
+	// cutover to commit with the carries, for the same reason (see
+	// observeCarries).
+	var uncarried, noDataOutcomes []string
 	for index := range records {
 		previousRecord, continuouslyActive := previousRecords[records[index].Fact.Key()]
 		if _, unread := unreadContinuing[records[index].Fact.Key()]; unread && !continuouslyActive {
@@ -356,7 +361,7 @@ func (reconciler *ScheduleActivationReconciler) ensure(
 		if continuouslyActive && previousRecord.Fact.Selected.StateGeneration != records[index].Fact.Selected.StateGeneration {
 			current, compiledHere := changedPlans[records[index].Fact.Key()]
 			if !compiledHere {
-				reconciler.observeStateCarry(ctx, StateCarryPreviousUnreadable)
+				uncarried = append(uncarried, StateCarryPreviousUnreadable)
 				continue
 			}
 			// The no-data state is decided on its own: a detection edit that
@@ -365,14 +370,14 @@ func (reconciler *ScheduleActivationReconciler) ensure(
 				if noData != nil {
 					noDataCarries[index] = noData
 				}
-				reconciler.observeNoDataCarry(ctx, outcome)
+				noDataOutcomes = append(noDataOutcomes, outcome)
 			}
 			carry, outcome := reconciler.stateCarry(ctx, previousRecord, previousContent, current)
 			if carry != nil {
-				carries[index] = carry
+				carries[index], carryOutcomes[index] = carry, outcome
 				continue
 			}
-			reconciler.observeStateCarry(ctx, outcome)
+			uncarried = append(uncarried, outcome)
 		}
 	}
 	// A Query Group that reopens a retired timeline restarts every Plan it
@@ -396,13 +401,29 @@ func (reconciler *ScheduleActivationReconciler) ensure(
 			}
 		}
 	}
-	carried, discontinuous := applyStateCarries(records, carries, returned)
+	_, discontinuous := applyStateCarries(records, carries, returned)
 	applyNoDataCarries(records, noDataCarries, returned)
-	for ; carried > 0; carried-- {
-		reconciler.observeStateCarry(ctx, StateCarryCarried)
-	}
-	for ; discontinuous > 0; discontinuous-- {
-		reconciler.observeStateCarry(ctx, StateCarryDiscontinuous)
+	// Each carry put on its record is counted by what stateCarry decided -
+	// carried, or carried_detect_changed - not as one kind, and only once the
+	// cutover commits: an attempt that does not has activated nothing, and the
+	// retry would count the same activation again. The same
+	// holds for every outcome of this activation: what carried nothing, and
+	// the no-data decisions.
+	observeCarries := func() {
+		for _, outcome := range uncarried {
+			reconciler.observeStateCarry(ctx, outcome)
+		}
+		for _, outcome := range noDataOutcomes {
+			reconciler.observeNoDataCarry(ctx, outcome)
+		}
+		for index := range carries {
+			if _, back := returned[index]; !back {
+				reconciler.observeStateCarry(ctx, carryOutcomes[index])
+			}
+		}
+		for ; discontinuous > 0; discontinuous-- {
+			reconciler.observeStateCarry(ctx, StateCarryDiscontinuous)
+		}
 	}
 	sort.Slice(records, func(i, j int) bool { return lessPlanIdentity(records[i].Fact.Plan, records[j].Fact.Plan) })
 	next := ActivationState{RecordRevision: previous.RecordRevision + 1, Current: publication,
@@ -436,6 +457,7 @@ func (reconciler *ScheduleActivationReconciler) ensure(
 		failureStage, failureClass = ActivationFailureStageScheduleCutover, ActivationFailureClassScheduleConflict
 		return ActivationState{}, applyErr
 	}
+	observeCarries()
 	failureStage, failureClass = ActivationFailureStagePersist, ActivationFailureClassDependencyIO
 	return reconciler.repository.LoadActivation(ctx)
 }

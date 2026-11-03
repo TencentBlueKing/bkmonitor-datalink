@@ -363,7 +363,7 @@ func TestTheDeclaredCapabilitiesAreNamedReasonsAndOnlyThose(t *testing.T) {
 func TestADetectIntervalWarningHasWordsAndTheActionItsOwnerCanTake(t *testing.T) {
 	for reason, action := range map[string]ActionWord{
 		"ABOVE_AGG_INTERVAL": ActionStrategyEdit, "NOT_DIVISIBLE": ActionStrategyEdit, "BELOW_FLOOR": ActionStrategyEdit,
-		"ALGORITHM_NOT_SLIDING": ActionStrategyEdit, "SOURCE_NOT_SLIDING": ActionNone,
+		"ALGORITHM_NOT_SLIDING": ActionStrategyEdit, "HISTORY_OFF_GRID": ActionStrategyEdit, "SOURCE_NOT_SLIDING": ActionNone,
 	} {
 		words := WithheldWordsOf(reason)
 		if words.Kind != WithheldStrategyDefinition || words.What == "" || words.Next == "" || words.Action != action {

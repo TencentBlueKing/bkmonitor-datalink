@@ -183,6 +183,34 @@ type QueryPlanFacts struct {
 	// every other Plan serialize exactly as they did: a struct value would
 	// encode itself when empty and move every revision.
 	NamedOutputs *NamedOutputs `json:"NamedOutputs,omitempty"`
+	// QueryStepMillis is the step the provider is asked for when an item is
+	// detected more often than it aggregates: each bucket is still
+	// StepMillis wide, and buckets start QueryStepMillis apart. Zero means
+	// StepMillis. Only an unaligned query carries it, and only below
+	// StepMillis; omitted when zero, so every other Plan's facts serialize
+	// exactly as they did.
+	QueryStepMillis int64 `json:"QueryStepMillis,omitempty"`
+}
+
+// RequestStepMillis is the step the provider is asked for.
+func (facts QueryPlanFacts) RequestStepMillis() int64 {
+	if facts.QueryStepMillis > 0 {
+		return facts.QueryStepMillis
+	}
+	return facts.StepMillis
+}
+
+// RequestRange is the part of a window the provider is asked for: the
+// whole window, except for a query asked a step apart, whose buckets are
+// still StepMillis wide and labelled at their start. Only the buckets that
+// start a step or less into the window's last aggregation interval lie
+// inside it, so the range ends StepMillis - QueryStepMillis earlier and a
+// one-interval window reads its newest bucket alone.
+func (facts QueryPlanFacts) RequestRange(window QueryWindow) QueryWindow {
+	if facts.QueryStepMillis > 0 {
+		window.End -= (facts.StepMillis - facts.QueryStepMillis) / 1000
+	}
+	return window
 }
 
 // NamedOutputsContract is the response contract named outputs are asked under.
@@ -259,6 +287,9 @@ func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
 	}
 	if facts.QueryDelaySeconds < 0 {
 		return QueryPlanFacts{}, errors.New("alarmd execution: invalid query delay")
+	}
+	if facts.QueryStepMillis < 0 || facts.QueryStepMillis > 0 && (facts.QueryStepMillis >= facts.StepMillis || !facts.NotTimeAlign) {
+		return QueryPlanFacts{}, errors.New("alarmd execution: a query step is below the bucket width of an unaligned query")
 	}
 	if facts.PromQL != nil {
 		if facts.PromQL.Expression == "" || len(facts.QueryList) != 0 || facts.MetricMerge != "" || len(facts.TSDBMap) != 0 || !facts.Normalization.DatasetContract.DynamicDimensions {

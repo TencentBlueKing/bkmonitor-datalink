@@ -60,6 +60,25 @@ func TestAFailedQueryIsClassifiedByItsLastAttempt(t *testing.T) {
 	}
 }
 
+// A refusal the backend names as the query reading more samples than it
+// serves is counted as its own failure, apart from every other refusal with
+// the same status.
+func TestASampleLimitRefusalIsCountedApart(t *testing.T) {
+	unavailable := execution.ReasonCode(contract.ReasonQueryUnavailable)
+	for class, want := range map[string]string{
+		execution.RejectionClassVMSampleLimit: QueryFailureSampleLimit,
+		execution.RejectionClassPromQLParse:   QueryFailureRefused,
+		"HTTP_400":                            QueryFailureRefused,
+	} {
+		completion := failedAttempt(unavailable, execution.HTTPStatusRouteDetail(400))
+		completion.RouteFacts.Attempts[0].HTTPStatus = 400
+		completion.RouteFacts.Attempts[0].Rejection = &execution.ProviderRejection{Class: class}
+		if got := queryFailureOf(completion, nil); got != want {
+			t.Fatalf("a %s refusal is %q, want %q", class, got, want)
+		}
+	}
+}
+
 type observedQuery struct {
 	elapsed time.Duration
 	failure string

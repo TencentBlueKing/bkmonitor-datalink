@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -119,7 +120,7 @@ func TestTheIdentityOfARowSaysWhereItCameFrom(t *testing.T) {
 	remembered.control.departed = []controlplane.DepartedStrategy{{TenantID: "system", StrategyID: "10", BusinessID: 5, Revision: 9}}
 	remembered.mature(context.Background())
 	identity := absentRowOf(t, readAbsentPage(t, remembered.loop, fleet.AbsentCandidateQuery{}), "10").Execution.Identity
-	if identity == nil || identity.Source != fleet.AbsentIdentityCatalog || identity.Business != 5 || identity.Revision != 9 || identity.RecordsRead != 0 {
+	if identity == nil || identity.Source != fleet.AbsentIdentityCatalog || identity.Business != 5 || identity.Revision != 9 {
 		t.Fatalf("a remembered identity is not named as the catalog's: %+v", identity)
 	}
 
@@ -139,6 +140,65 @@ func TestARowSaysWhatTheCloseSent(t *testing.T) {
 	row := absentRowOf(t, page, "10")
 	if row.Execution == nil || row.Execution.Word != filterclose.OutcomeJobDone || row.Sends != 1 || fixture.link.closed()["mine"] != 1 {
 		t.Fatalf("the row does not say what the close did: %+v %+v", row, row.Execution)
+	}
+}
+
+// The page filters by a close's own word, the filtered close's: a row the
+// close left job_done is found by it, and not by another word.
+func TestThePageFiltersByTheWordACloseLeft(t *testing.T) {
+	fixture := newAbsentFixture(t, []*fakeLinkdAlert{absentAlert("mine", "10")})
+	fixture.mature(context.Background())
+	if page := readAbsentPage(t, fixture.loop, fleet.AbsentCandidateQuery{Execution: filterclose.OutcomeJobDone}); len(page.Rows) != 1 ||
+		page.Rows[0].StrategyID != "10" {
+		t.Fatalf("execution=job_done answered %+v, want the row the close left job_done", page.Rows)
+	}
+	if page := readAbsentPage(t, fixture.loop, fleet.AbsentCandidateQuery{Execution: fleet.AbsentExecutionNotRun}); len(page.Rows) != 0 {
+		t.Fatalf("execution=not_run answered %+v, want none", page.Rows)
+	}
+}
+
+// A row's execution says only what a close writes: when it was decided, its
+// word and the identity it carried. The close reads no alert of the
+// strategy (it goes through the link's filter alone), so nothing on the row
+// counts alerts by whose they are, names a sample alert, a batch or the
+// records read, or says how many stayed active after a send: such a field
+// would always be empty or zero.
+func TestARowsExecutionHasOnlyWhatACloseWrites(t *testing.T) {
+	fixture := newAbsentFixture(t, []*fakeLinkdAlert{absentAlert("mine", "10")})
+	fixture.control.departed = []controlplane.DepartedStrategy{{TenantID: "system", StrategyID: "10", BusinessID: 5, Revision: 9}}
+	fixture.mature(context.Background())
+	encoded, err := json.Marshal(absentRowOf(t, readAbsentPage(t, fixture.loop, fleet.AbsentCandidateQuery{}), "10"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var row struct {
+		Execution map[string]json.RawMessage `json:"execution"`
+	}
+	if err := json.Unmarshal(encoded, &row); err != nil {
+		t.Fatal(err)
+	}
+	var identity map[string]json.RawMessage
+	if err := json.Unmarshal(row.Execution["identity"], &identity); err != nil {
+		t.Fatalf("execution %s: %v", encoded, err)
+	}
+	for _, part := range []struct {
+		name    string
+		keys    map[string]json.RawMessage
+		allowed []string
+	}{
+		{"execution", row.Execution, []string{"decided_at", "word", "identity"}},
+		{"execution.identity", identity, []string{"source", "business", "revision"}},
+	} {
+		got := make([]string, 0, len(part.keys))
+		for key := range part.keys {
+			got = append(got, key)
+		}
+		sort.Strings(got)
+		want := append([]string(nil), part.allowed...)
+		sort.Strings(want)
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Fatalf("%s has keys %v, want exactly %v: %s", part.name, got, want, encoded)
+		}
 	}
 }
 
@@ -255,7 +315,7 @@ func TestARowKeepsItsLatestCloseUntilItLeaves(t *testing.T) {
 func TestACloseTheRoundsDeadlineCutOffReadsNotRun(t *testing.T) {
 	fixture := newAbsentFixture(t, []*fakeLinkdAlert{absentAlert("mine", "10"), absentAlert("eleven", "11")})
 	fixture.loop.step(context.Background())
-	fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
+	fixture.readAgain()
 	fixture.control.snapshot = liveSnapshot("observation-two", fixture.now, 100)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -527,5 +587,31 @@ func TestAnIDTheSourceCannotNameLeavesTheOtherRowsTheirAnswer(t *testing.T) {
 	}
 	if len(stub.asked) != 1 || len(stub.asked[0]) != 1 || stub.asked[0][0] != "10" {
 		t.Fatalf("the check was not sent for exactly the ids the source can name: %+v", stub.asked)
+	}
+}
+
+// A close the link refuses item by item every round is sent every round:
+// its items were answered, so close_sent counts it and the row's sends
+// grow though nothing closes - which is how a strategy the link never
+// closes shows on absent.list: sent again and again, still on the page.
+func TestACloseTheLinkRefusesItemByItemIsSentEveryRound(t *testing.T) {
+	fixture := newAbsentFixture(t, []*fakeLinkdAlert{absentAlert("mine", "10")})
+	fixture.link.itemRefused = func(string) bool { return true }
+	ctx := context.Background()
+	fixture.mature(ctx)
+	row := absentRowOf(t, readAbsentPage(t, fixture.loop, fleet.AbsentCandidateQuery{}), "10")
+	if row.Execution == nil || row.Execution.Word != filterclose.OutcomeJobDoneRefused || row.Sends != 1 ||
+		fixture.loop.Stats()[absentalerts.OutcomeCloseSent] != 1 || len(fixture.link.closed()) != 0 {
+		t.Fatalf("first round: %+v sends %d, close_sent %d, closed %v: want job_done_refused sent once, nothing closed",
+			row.Execution, row.Sends, fixture.loop.Stats()[absentalerts.OutcomeCloseSent], fixture.link.closed())
+	}
+	fixture.now = fixture.now.Add(absentCloseInterval)
+	fixture.control.snapshot = liveSnapshot("observation-later", fixture.now, 100)
+	fixture.loop.step(ctx)
+	row = absentRowOf(t, readAbsentPage(t, fixture.loop, fleet.AbsentCandidateQuery{}), "10")
+	if row.Sends != 2 || fixture.loop.Stats()[absentalerts.OutcomeCloseSent] != 2 || row.Execution == nil ||
+		row.Execution.Word != filterclose.OutcomeJobDoneRefused || len(fixture.link.closed()) != 0 {
+		t.Fatalf("second round: sends %d, close_sent %d, execution %+v, closed %v: want sent again, nothing closed",
+			row.Sends, fixture.loop.Stats()[absentalerts.OutcomeCloseSent], row.Execution, fixture.link.closed())
 	}
 }

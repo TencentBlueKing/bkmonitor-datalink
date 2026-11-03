@@ -106,14 +106,21 @@ func ScopeFilter(scope Scope, shape TargetShape, current []Target) (Filter, erro
 // is how often the strategy is evaluated (settle).
 func (closer *Closer) ScopeChange(ctx context.Context, scope Scope, shape TargetShape, current []Target, revision int64, digest string,
 	period time.Duration) string {
+	return closer.ScopeChangeResult(ctx, scope, shape, current, revision, digest, period).Word
+}
+
+// ScopeChangeResult is ScopeChange's Result: every part's word and what was
+// closed.
+func (closer *Closer) ScopeChangeResult(ctx context.Context, scope Scope, shape TargetShape, current []Target, revision int64, digest string,
+	period time.Duration) Result {
 	filter, err := ScopeFilter(scope, shape, current)
 	switch {
 	case errors.Is(err, ErrTargetListTooLarge):
 		closer.count(OutcomeTargetListTooLarge, 1)
-		return OutcomeTargetListTooLarge
+		return only(OutcomeTargetListTooLarge, jobTally{})
 	case err != nil:
 		closer.count(OutcomeFilterRefused, 1)
-		return OutcomeFilterRefused
+		return only(OutcomeFilterRefused, jobTally{})
 	}
 	names := sorted(shape.Dimensions)
 	inScope := make(map[string]struct{}, len(current))

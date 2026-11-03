@@ -17,7 +17,8 @@ import (
 
 // A CMDB index going stale is one WARN line naming the tenant, the
 // transition, the published age, the bound in force and the gap it was
-// derived from; coming back is another.
+// derived from; coming back is another. Neither carries duration_ms: a
+// transition is a point event, nothing timed.
 func TestACMDBIndexTransitionIsOneWarnLine(t *testing.T) {
 	var out bytes.Buffer
 	line := cmdbIndexTransitionLine(observability.New("worker", &out))
@@ -41,6 +42,11 @@ func TestACMDBIndexTransitionIsOneWarnLine(t *testing.T) {
 	}
 	if !strings.Contains(lines[1], `"INFO"`) || !strings.Contains(lines[1], `"result":"success"`) {
 		t.Errorf("the line back into usable is %s, want INFO with result success", lines[1])
+	}
+	for _, line := range lines {
+		if strings.Contains(line, `"duration_ms"`) {
+			t.Errorf("the line %s carries duration_ms: a transition is a point event, nothing timed", line)
+		}
 	}
 }
 

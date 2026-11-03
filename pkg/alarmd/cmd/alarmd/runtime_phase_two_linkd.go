@@ -37,7 +37,7 @@ import (
 // writes, once per failure class change.
 func effectiveTimeFailureLine(logger *observability.Logger) func(dependency, class string, failures uint64) {
 	return func(dependency, class string, failures uint64) {
-		logger.Warn("effective_time_refresh_failed", "failed", 0, 0, slog.String("dependency", dependency),
+		logger.WarnEvent("effective_time_refresh_failed", "failed", 0, slog.String("dependency", dependency),
 			slog.String("class", class), slog.Uint64("failures", failures))
 	}
 }
@@ -61,7 +61,7 @@ func linkdUnsupportedWarning(logger *observability.Logger, part string) func(err
 		if logger == nil {
 			return
 		}
-		logger.Warn("linkd_filter_close_unsupported", "degraded", 0, 0, slog.String("part", part),
+		logger.WarnEvent("linkd_filter_close_unsupported", "degraded", 0, slog.String("part", part),
 			slog.String("error", err.Error()))
 	}
 }
@@ -74,7 +74,7 @@ func linkdRefusedWarning(logger *observability.Logger, part string) func(error) 
 		if logger == nil {
 			return
 		}
-		logger.Warn("linkd_credential_refused", "degraded", 0, 0, slog.String("part", part),
+		logger.WarnEvent("linkd_credential_refused", "degraded", 0, slog.String("part", part),
 			slog.String("error", err.Error()))
 	}
 }
@@ -87,7 +87,7 @@ func warnLinkdUnconfigured(cfg config.Config, logger *observability.Logger) {
 	if logger == nil || cfg.PhaseTwo.Linkd.ControlPlane.Configured() {
 		return
 	}
-	logger.Warn("linkd_control_plane_unconfigured", "degraded", 0, 0,
+	logger.WarnEvent("linkd_control_plane_unconfigured", "degraded", 0,
 		slog.String("detail", "no phase_two.linkd block: alerts are not read back from or closed at the link; the recovery gate "+
 			"passes a RECOVERY only for an alert this process opened, and no edit, absent, inactive or scope close is made"))
 }

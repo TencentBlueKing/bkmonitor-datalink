@@ -28,10 +28,13 @@ func newTargetScopeCloseCollector() *targetScopeCloseCollector {
 				"old fingerprint of every admitted series whose host overlay moves it, every Slot, for a strategy alarmd's "+
 				"copy of the link's active alerts knows an open alert of; an offer the copy has no word on or judges not "+
 				"open counts nothing. unconfirmed is an old fingerprint of an open alert offered by one Slot, waiting for "+
-				"a second; close_sent counts closes sent and acknowledged by the broker, one per alert: the broker's "+
-				"acknowledgement, not the link's, so it includes closes the link finds no active alert for (orphaned "+
-				"there); superseded_identity_close_sent counts the same closes by their reason; send_failed closes the "+
-				"link did not settle, kept for the next step; filter_close_unsupported closes the link cannot run (501, "+
+				"a second; close_sent counts, one per old fingerprint, closes the link's filtered close settled: it "+
+				"closed the alert or found nothing active of it (one already ended counts too), so it is not a count "+
+				"of alerts closed; superseded_identity_close_sent counts the same closes by their reason; send_failed closes the "+
+				"link did not settle but may (busy, failing, items to be found again), kept for the next step; "+
+				"close_refused closes the same command would be answered the same way (items or the request refused, "+
+				"past the expectation or the client's answer bound, a filter that cannot be built), kept and not sent "+
+				"again for five minutes; filter_close_unsupported closes the link cannot run (501, "+
 				"404, 405); unrouted confirmed closes on a replica with no link to close through; close_identity_invalid "+
 				"closes whose request could not be built from the observation's facts (strategy id or revision "+
 				"unusable), nothing sent, the word the effective-time close uses for the same facts; memory_full first "+

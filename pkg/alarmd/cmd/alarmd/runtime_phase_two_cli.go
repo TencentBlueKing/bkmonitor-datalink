@@ -280,12 +280,12 @@ func publicSurfaceStandingOf(cfg config.Config, restricted bool) publicSurfaceSt
 
 func (standing publicSurfaceStanding) warn(logger *observability.Logger) {
 	if standing.MetricsUnexported {
-		logger.Warn(observability.StageStartup, observability.ResultDegraded, 0, 0,
+		logger.WarnEvent(observability.StageStartup, observability.ResultDegraded, 0,
 			slog.String("reason_code", string(fleet.DegradationMetricsUnexported)),
 			slog.String("detail", "the public listener is restricted and http.internal_listen is not set: /metrics is served nowhere"))
 	}
 	if standing.CLIUnavailable {
-		logger.Warn(observability.StageStartup, observability.ResultDegraded, 0, 0,
+		logger.WarnEvent(observability.StageStartup, observability.ResultDegraded, 0,
 			slog.String("reason_code", string(fleet.DegradationCLIAuthUnavailable)),
 			slog.String("detail", "a CLI admin key is configured and the CLI did not come up: the public surface stays unrestricted"))
 	}

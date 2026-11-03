@@ -151,7 +151,7 @@ func lookbackSupplement(
 				return lookback.SupplementOutcome{Refused: lookback.DirectedKeptReadAbsent, Held: held}
 			default:
 				if logger != nil {
-					logger.Warn("lookback", "supplement_failed", 0, 0, slog.String("query_group", string(job.QueryGroup)),
+					logger.WarnEvent("lookback", "supplement_failed", 0, slog.String("query_group", string(job.QueryGroup)),
 						slog.Int64("evaluation_time", int64(job.EvaluationTime)), slog.String("error", err.Error()))
 				}
 				return lookback.SupplementOutcome{Refused: lookback.DirectedFailed, Held: held}
@@ -241,7 +241,7 @@ func lookbackOptions(
 		Supplement:  lookbackSupplement(ownership, logger, now, waitWithin),
 		OnFault: func(reason string, queryGroup execution.QueryGroupIdentity) {
 			if logger != nil {
-				logger.Warn("lookback", "fault", 0, 0, slog.String("reason", reason), slog.String("query_group", string(queryGroup)))
+				logger.WarnEvent("lookback", "fault", 0, slog.String("reason", reason), slog.String("query_group", string(queryGroup)))
 			}
 		}}
 }

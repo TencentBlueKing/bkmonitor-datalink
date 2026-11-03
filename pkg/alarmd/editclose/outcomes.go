@@ -62,9 +62,10 @@ const (
 	// OutcomeBusinessUnknown is a close decided for an alert whose record
 	// names no business to file it under: not sent. Alerts.
 	OutcomeBusinessUnknown = "business_unknown"
-	// OutcomeCloseSent and OutcomeSendFailed are closes the producer
-	// accepted and refused. Accepted is the broker's acknowledgement, not
-	// the link closing the alert. Alerts.
+	// OutcomeCloseSent and OutcomeSendFailed are the edit close's job line
+	// words for a close sent and one not sent (observeCloseJob). The close
+	// goes through the link's filtered close, whose counts are the filter
+	// close's (linkd_filter_close_total): neither is counted here.
 	OutcomeCloseSent  = "close_sent"
 	OutcomeSendFailed = "send_failed"
 	// OutcomeMemoryFull counts the times the decision memory reached its

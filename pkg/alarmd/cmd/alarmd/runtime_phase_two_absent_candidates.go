@@ -7,7 +7,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode/utf8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/absentalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
@@ -44,9 +43,6 @@ func (page *absentCandidatePage) source() fleet.AbsentCandidateSource {
 	}
 	return loop.Page
 }
-
-// absentSampleAlertIDBytes bounds the sample alert id a row keeps.
-const absentSampleAlertIDBytes = 128
 
 // absentCandidateTable is the absent close's last deciding round, one row
 // per strategy it decided about, with what the latest close of each found.
@@ -94,25 +90,13 @@ type absentCandidateRow struct {
 
 // absentExecution is what one close of a strategy found and did.
 type absentExecution struct {
-	decidedAt     time.Time
-	word          string
-	alertsRead    bool
-	own           int
-	foreign       int
-	unknown       int
-	batch         int
-	identity      string
-	business      int64
-	revision      int64
-	recordsRead   int
-	sampleAlertID string
-	// activeAfterSend is own, read by a close that came after an earlier one
-	// went out: how many of this deployment's alerts the link's reconcile
-	// still listed active once it had been sent their close. Nil before the
-	// first send and when the alerts were not read.
-	activeAfterSend *int
-	// sent is a close the link ran: its filter job done, or begun and
-	// carried into the next round.
+	decidedAt time.Time
+	word      string
+	identity  string
+	business  int64
+	revision  int64
+	// sent is a real close whose items the link answered
+	// (filterclose.Result.Sent), whatever the word to wait on.
 	sent bool
 }
 
@@ -188,10 +172,6 @@ func (table *absentCandidateTable) rebuild(at time.Time, result absentalerts.Res
 // executed records what a close of the strategy found. A strategy the
 // table did not keep has nowhere to record it, which rows_not_kept already
 // says.
-//
-// A close that reads the strategy's alerts after an earlier close of it went
-// out is the reading of whether that one took: the alerts the link still
-// lists active were sent their close and are open all the same.
 func (table *absentCandidateTable) executed(key absentalerts.Key, execution absentExecution) {
 	table.mu.Lock()
 	defer table.mu.Unlock()
@@ -199,10 +179,6 @@ func (table *absentCandidateTable) executed(key absentalerts.Key, execution abse
 		row := &table.rows[index]
 		if row.key != key {
 			continue
-		}
-		if row.sends > 0 && execution.alertsRead {
-			active := execution.own
-			execution.activeAfterSend = &active
 		}
 		if execution.sent {
 			if row.sends == 0 {
@@ -408,31 +384,11 @@ func absentRowFacts(row absentCandidateRow) fleet.AbsentCandidateRow {
 	}
 	if execution := row.execution; execution != nil {
 		facts.Execution = &fleet.AbsentExecutionFacts{DecidedAt: execution.decidedAt.UTC().Format(time.RFC3339),
-			Word: execution.word, Batch: execution.batch, SampleAlertID: execution.sampleAlertID}
-		if execution.activeAfterSend != nil {
-			active := *execution.activeAfterSend
-			facts.Execution.ActiveAfterSend = &active
-		}
-		if execution.alertsRead {
-			facts.Execution.Alerts = &fleet.AbsentAlertCounts{Own: execution.own, Foreign: execution.foreign, Unknown: execution.unknown}
-		}
+			Word: execution.word}
 		if execution.identity != "" {
 			facts.Execution.Identity = &fleet.AbsentIdentityFacts{Source: execution.identity,
-				Business: execution.business, Revision: execution.revision, RecordsRead: execution.recordsRead}
+				Business: execution.business, Revision: execution.revision}
 		}
 	}
 	return facts
-}
-
-// boundedAlertID is an alert id as a row keeps it: at most
-// absentSampleAlertIDBytes, cut at a character boundary and marked.
-func boundedAlertID(id string) string {
-	if len(id) <= absentSampleAlertIDBytes {
-		return id
-	}
-	cut := absentSampleAlertIDBytes - len("...")
-	for cut > 0 && !utf8.RuneStart(id[cut]) {
-		cut--
-	}
-	return id[:cut] + "..."
 }

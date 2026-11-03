@@ -32,8 +32,7 @@ func TestAbsentListReadsThePageAndSaysWhatItCannot(t *testing.T) {
 			op = candidate
 		}
 	}
-	if strings.Join(op.Fields["outcome"].Enum, ",") != strings.Join(fleet.AbsentOutcomes, ",") ||
-		strings.Join(op.Fields["execution"].Enum, ",") != strings.Join(fleet.AbsentExecutions, ",") {
+	if strings.Join(op.Fields["outcome"].Enum, ",") != strings.Join(fleet.AbsentOutcomes, ",") || len(op.Fields["execution"].Enum) != 0 {
 		t.Fatalf("the filters are not the page's words: %+v", op.Fields)
 	}
 	for _, limit := range []string{"拆分前的旧策略表", "⌈候选数/8⌉ 轮 × 5 分钟", "source_now=document 只说明文档键还在", "table.at 早于 last_round.at"} {

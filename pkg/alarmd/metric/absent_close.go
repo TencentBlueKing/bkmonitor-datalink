@@ -38,17 +38,29 @@ func newAbsentCloseCollector() *absentCloseCollector {
 	return &absentCloseCollector{
 		outcomeIs: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "absent_strategy_close_total"),
 			"What the control leader's difference against disabled or deleted strategies decided, by outcome. "+
-				"Counted per strategy except close_sent, send_failed, producer_foreign, producer_unknown and "+
-				"business_unknown, "+
-				"which count alerts. close_decided counts decisions and close_sent counts closes sent and "+
-				"acknowledged by the broker, which includes closes the link finds no active alert for (orphaned "+
-				"there); neither says the link closed anything, which absent.list reads "+
-				"per strategy as the alerts its reconcile still lists active after an earlier send. "+
-				"identity_unknown and revision_unknown are strategies decided and not sent because no business or "+
-				"revision could be found for them; business_unknown are alerts of a global business strategy not "+
-				"closed that round because their record names no business they were filed under. evidence_truncated "+
-				"is a strategy whose alerts the link answered incomplete or past 10000 rows / 5000 active alerts: "+
-				"the alerts it listed are closed as usual and the rest wait for a later round. Why a whole round "+
+				"Counted per strategy. close_decided counts decisions and close_sent counts, once per strategy's "+
+				"close decision, a decision that sent at least one real close whose items the link answered (closed, "+
+				"refused or busy, item by item), so a strategy the link refuses every round is sent every round; "+
+				"neither says the link closed anything, which is read per alert on the link (linkd.alerts); a "+
+				"strategy whose absent.list sends keep growing while its row stays is one the link is sent and does "+
+				"not close. "+
+				"identity_unknown is a strategy decided and not sent: its id is not a positive integer, or there is no "+
+				"link to close through. revision_unknown, business_unknown, evidence_unavailable, evidence_truncated, "+
+				"send_failed, producer_foreign and producer_unknown name the close as first designed, which read the "+
+				"strategy's alerts and sent through the event producer; the filtered close counts none of them, and "+
+				"they stay zero. "+
+				"Two paths are counted apart: a strategy with no mark is within_grace until three rounds found it "+
+				"missing (rounds, not time), unconfirmed until two observations did, then close_decided; one the "+
+				"strategy list's writer marked disabled or deleted (departed_strategies) is departed_waiting on its "+
+				"first round under that mark, then departed_close_decided, and is re-checked just before its own close: "+
+				"departed_reappeared (listed again) or departed_mark_changed (the mark gone or moved) is not closed. "+
+				"marks_unreadable (once a round, the round's read or a re-check's; the implicit path then) and "+
+				"mark_invalid (per mark: not decoded, or naming another tenant) are the marks' reads. The candidates are "+
+				"kept across leader terms under the Control Leader's lease: memory_load_failed (per term: the term starts "+
+				"from nothing), memory_invalid (per kept candidate that did not decode), memory_save_failed (per round), "+
+				"and memory_fenced (the lease is gone; that round sends nothing). In a new term both paths wait for the "+
+				"term's own second round, and a kept candidate is confirmed again under two observations of the term's own. "+
+				"Why a whole round "+
 				"decided nothing is "+
 				"absent_strategy_round_total, not a cell here. Every cell exists from the start so a zero is a "+
 				"reading and not an absence.", []string{"outcome"}, nil),

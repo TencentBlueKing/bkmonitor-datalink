@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/absentalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
@@ -147,9 +148,14 @@ func (loop *editStrategyClose) step(ctx context.Context, snapshot map[absentaler
 		}
 		examined++
 		// Each bucket's expectation is alarmd's own record of the strategy's
-		// open episodes at its version (filterclose.Closer.Edit).
+		// open episodes at its version (filterclose.Closer.Edit). Edit runs
+		// each of its jobs again within the round while the job has more
+		// and closed something itself.
+		started := time.Now()
 		word, buckets := loop.filter.closer.Edit(ctx, filterclose.EditInput{Scope: loop.filter.scope(key), Plan: planOf(facts),
 			Period: facts.Interval})
+		observeCloseJob(ctx, loop.bundle.dependencies.Observer, observability.StageStrategyEditClose, editclose.OutcomeCloseSent,
+			key.StrategyID, word, false, time.Since(started))
 		if word == filterclose.OutcomeUnsupported {
 			return
 		}

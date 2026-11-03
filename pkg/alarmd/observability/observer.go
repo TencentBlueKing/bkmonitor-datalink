@@ -2356,6 +2356,11 @@ type LevelOutcomeFact struct {
 	// ReasonCarried). Only an UNKNOWN outcome's reason can be.
 	Carried bool   `json:"carried,omitempty"`
 	Count   uint64 `json:"count"`
+	// OmittedRecoveries is, of a RECOVERY cell's count, how many its record's
+	// envelope left out because the alert is at another Level
+	// (execution.LevelOutcome.EventOmitted): the Level recovered in the state
+	// and its message did not go. Zero on every other outcome; at most Count.
+	OmittedRecoveries uint64 `json:"omitted_recoveries,omitempty"`
 }
 
 // LevelOutcomeKinds is every Level outcome kind, in the execution's words.
@@ -2454,6 +2459,10 @@ func normalizeLevelOutcomeFacts(observation Observation) []LevelOutcomeFact {
 		if fact.Outcome != "UNKNOWN" {
 			fact.Carried = false
 		}
+		if fact.Outcome != "RECOVERY" {
+			fact.OmittedRecoveries = 0
+		}
+		fact.OmittedRecoveries = min(fact.OmittedRecoveries, fact.Count)
 		facts = append(facts, fact)
 	}
 	if len(facts) == 0 {
@@ -2826,6 +2835,17 @@ type Observation struct {
 	DurationKnown          bool
 	EvaluationOwner        CostPlanIdentity
 	EvaluationRecordsKnown bool
+}
+
+// Timed reports whether the observation carries a measured Duration: its
+// producer set DurationKnown (a measured zero included), or, as
+// DurationKnown's comment allows for older producers, its Duration is
+// positive. One that is neither is a point event - a lease renewed, a view
+// published, a no-data judgement - which took no time anyone measured, and
+// its log line carries no duration_ms rather than a 0 that reads as zero
+// milliseconds.
+func (observation Observation) Timed() bool {
+	return observation.DurationKnown || observation.Duration > 0
 }
 
 type Observer interface {
@@ -3978,6 +3998,17 @@ const (
 	// time its batch was ready. The batch is not sent, and the step goes on
 	// to the Query Group's next Plan.
 	EffectiveCloseBoundaryActive ReasonCode = "close_boundary_active"
+	// EffectiveCloseBoundaryNear is an inactive close not started: the Plan
+	// may be active again in less than one request's budget, so no request
+	// to the link could start before then. The next step past the boundary
+	// rechecks first. Apart from the filter close's round_spent, which is a
+	// close that started and ran out of its own time.
+	EffectiveCloseBoundaryNear ReasonCode = "close_boundary_near"
+	// EffectiveCloseStepSpent is a maintenance step whose inactive closes
+	// used their shared time down to less than one request's budget: the
+	// closes after it are not started in this step, and the next step goes
+	// on. Once a step.
+	EffectiveCloseStepSpent ReasonCode = "close_step_spent"
 )
 
 // EffectiveCloseOutcomes is every outcome, for the metric to pre-create each
@@ -3987,7 +4018,7 @@ var EffectiveCloseOutcomes = []ReasonCode{
 	EffectiveClosePrecheckFailed, EffectiveCloseMaintenanceBusy, EffectiveClosePlanUncompilable, EffectiveCloseIdentityInvalid,
 	EffectiveCloseEffectiveTimeUnknown, EffectiveCloseLegacyUnavailable, EffectiveCloseUnavailable, EffectiveCloseUnsupportedRunner,
 	EffectiveCloseViewNotExecutable, EffectiveCloseCalendarDeletionUnsettled, EffectiveCloseBoundaryActive,
-	EffectiveCloseGroupRetiring,
+	EffectiveCloseGroupRetiring, EffectiveCloseBoundaryNear, EffectiveCloseStepSpent,
 }
 
 // Maintenance details are bounded log reasons, not new metric label dimensions.
@@ -4028,7 +4059,7 @@ func editCloseReasons() []ReasonCode {
 // StrategyScopeCloseReasons are the words the control leader's strategy
 // scope close writes its lines with (StageStrategyScopeClose).
 var StrategyScopeCloseReasons = []ReasonCode{"snapshot_unavailable", "link_unavailable", "publication_unavailable",
-	"member_unreadable", "scope_empty", "target_list_too_large"}
+	"member_unreadable", "scope_empty", "target_list_too_large", "close_run", "send_failed"}
 
 var contractClassReasons = []ReasonCode{
 	ReasonContractDeterministic, ReasonContractRetryable, ReasonContractCoverage,
@@ -4289,6 +4320,6 @@ func ObserveSlotWait(
 	defer func() { _ = recover() }()
 	observer.Observe(ctx, Observation{
 		Component: ComponentScheduler, Stage: StageSlotWait, Result: result, ReasonCode: reason, Operation: operation,
-		Duration: elapsed, SlotWait: &SlotWaitFacts{Wait: wait},
+		Duration: elapsed, DurationKnown: true, SlotWait: &SlotWaitFacts{Wait: wait},
 	})
 }

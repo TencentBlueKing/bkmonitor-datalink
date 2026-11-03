@@ -52,3 +52,37 @@ func TestAPageTheRoundEndedKeepsItsCandidates(t *testing.T) {
 		t.Fatalf("pending %d after the retry (stats %v)", size, nonZero(closer.Stats()))
 	}
 }
+
+// A real close whose answer is lost may have closed any id it named and
+// nothing else: it named only the ids its dry run read, so those are kept
+// to retry by id, and alerts that matched only after the dry run are
+// neither closed nor kept.
+func TestALostAnswerKeepsTheIdsItsCloseNamed(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 10; i++ {
+		h.link.add(&fakeAlert{id: alertID(i), labels: map[string]string{"strategy_id": "41", "strategy_version": "3"}})
+	}
+	h.opened(t, "41", "3", nil, fingerprints(0, 10)...)
+	h.link.beforeClose = func(link *fakeLink, _ *http.Request) {
+		for i := 10; i < 15; i++ {
+			id := "a-" + alertID(i)
+			link.alerts[id] = &fakeAlert{id: id, status: "active", tenant: "tenant-a", source: "built_in_bk", created: fakeOpenedAt,
+				labels: map[string]string{"strategy_id": "41", "strategy_version": "3"}}
+		}
+		link.sorted = nil
+		link.beforeClose = nil
+	}
+	h.link.loseAnswer = func(n int) bool { return n == 1 }
+	closer := h.closer(t)
+	if word := closer.Inactive(context.Background(), testScope, "3", 3, fakeOpenedAt, testPeriod); word != OutcomeLinkFailed {
+		t.Fatalf("word %s (stats %v)", word, nonZero(closer.Stats()))
+	}
+	if stats := closer.Stats(); stats[OutcomeItemPending] != 10 || closer.PendingSize(context.Background()) != 10 {
+		t.Fatalf("stats %v, pending %d: want the ten ids the close named kept", nonZero(stats), closer.PendingSize(context.Background()))
+	}
+	for i := 10; i < 15; i++ {
+		if closes := h.link.alert("a-" + alertID(i)).closes; closes != 0 {
+			t.Fatalf("a-%s closed %d times by a close that did not name it", alertID(i), closes)
+		}
+	}
+}

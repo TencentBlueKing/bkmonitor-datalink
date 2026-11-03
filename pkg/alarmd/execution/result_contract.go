@@ -41,8 +41,16 @@ type PartialDecisionProof struct {
 }
 
 type LevelOutcome struct {
-	Plan                 PlanIdentity
-	LevelID              uint32
+	Plan    PlanIdentity
+	LevelID uint32
+	// EventOmitted marks a RECOVERY outcome its record's envelope left out:
+	// the envelope carries only the RECOVERY of the Level the alert is at,
+	// and the other Levels' RECOVERY are facts of their own
+	// Levels that still reach the state. The result contract expects every
+	// other successful Level of the record in its event, and this one not.
+	// Declared beside LevelID, in the gap after it, so it costs an outcome no
+	// bytes (worker's retained size pin).
+	EventOmitted         bool
 	SeriesIdentityDigest SeriesIdentityDigest
 	Record               RecordAnchor
 	Outcome              LevelOutcomeKind
@@ -1350,6 +1358,7 @@ func validateEventOutcomes(input InternalExecution, result PlanEvaluationResult,
 	// ABNORMAL outcome there: an abnormal Level decides the record before
 	// the gate is consulted, so a hold beside it is a contradiction.
 	held := make(map[recordIdentity]bool)
+	recoveries := make(map[recordIdentity]struct{ sent, omitted int })
 	for identity, outcome := range outcomes {
 		effective, found := findEffectiveTimeFact(input, identity.Plan, identity.LevelID, identity.SeriesIdentityDigest)
 		if !found {
@@ -1362,6 +1371,22 @@ func validateEventOutcomes(input InternalExecution, result PlanEvaluationResult,
 		if outcome.EnvelopeHeld && outcome.Outcome != LevelOutcomeRecovery {
 			return resultContractViolation(codeEventHeldOnNonRecoveryOutcome, "a held envelope is a property of RECOVERY outcomes only")
 		}
+		// A Level left out of its record's envelope is a RECOVERY of a record
+		// that was sent, beside the RECOVERY of the Level the alert is at:
+		// never another outcome, never on a held record, never every RECOVERY
+		// of the record (that record is held instead).
+		if outcome.EventOmitted && (outcome.Outcome != LevelOutcomeRecovery || outcome.EnvelopeHeld) {
+			return &ResultContractError{code: codeEventOmittedOnNonRecovery, what: "an omitted Level is a RECOVERY of a record that was sent"}
+		}
+		if outcome.Outcome == LevelOutcomeRecovery {
+			tally := recoveries[record]
+			if outcome.EventOmitted {
+				tally.omitted++
+			} else {
+				tally.sent++
+			}
+			recoveries[record] = tally
+		}
 		switch outcome.Outcome {
 		case LevelOutcomeAbnormal:
 			expectedEvents[record] = contract.TriggerEventAbnormal
@@ -1373,6 +1398,11 @@ func validateEventOutcomes(input InternalExecution, result PlanEvaluationResult,
 			if expectedEvents[record] == "" {
 				expectedEvents[record] = contract.TriggerEventRecovery
 			}
+		}
+	}
+	for _, tally := range recoveries {
+		if tally.omitted > 0 && tally.sent == 0 {
+			return &ResultContractError{code: codeEventOmittedEveryRecovery, what: "a record with an omitted Level keeps the RECOVERY of the Level the alert is at"}
 		}
 	}
 	for record, wasHeld := range held {
@@ -1410,6 +1440,9 @@ func validateEventOutcomes(input InternalExecution, result PlanEvaluationResult,
 				// An event the Slot built is about a record and carries the
 				// detect evidence; one about an absent series is not this
 				// contract's to see and contradicts it here.
+				if ok && outcome.EventOmitted {
+					return &ResultContractError{code: codeEventCarriesOmittedLevel, what: "TriggerEvent carries a Level its decomposition says was left out"}
+				}
 				if !ok || !effectiveFound || string(outcome.Outcome) != level.Result || level.DetectEvidence == nil ||
 					level.DetectEvidence.EffectiveTimeStatus != string(effective.Fact.Status()) {
 					return resultContractViolation(codeEventLevelResultContradicts, "TriggerEvent Level result contradicts Level outcome decomposition")
@@ -1420,7 +1453,7 @@ func validateEventOutcomes(input InternalExecution, result PlanEvaluationResult,
 				effective, _ := findEffectiveTimeFact(input, identity.Plan, identity.LevelID, identity.SeriesIdentityDigest)
 				if identity.Plan == result.Plan && identity.SeriesIdentityDigest == state.Mutation.Identity.SeriesIdentityDigest &&
 					identity.Record.RecordID == event.RecordRef.RecordID && identity.Record.SourceTime == event.RecordRef.SourceTime &&
-					effective.Fact.Status() == strategy.EffectiveTimeActive &&
+					effective.Fact.Status() == strategy.EffectiveTimeActive && !outcome.EventOmitted &&
 					(outcome.Outcome == LevelOutcomeNormal || outcome.Outcome == LevelOutcomeAbnormal || outcome.Outcome == LevelOutcomeRecovery) {
 					if _, ok := seen[identity.LevelID]; !ok {
 						return resultContractViolation(codeEventOmitsSiblingOutcome, "TriggerEvent omitted a successful sibling Level outcome")

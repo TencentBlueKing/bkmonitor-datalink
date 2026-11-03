@@ -11,6 +11,16 @@ package fleet
 
 import "time"
 
+// WitnessFacts is the run of empty rounds as an unfiltered witness answered
+// it (DataRequirement.UnfilteredWitness): how many rounds it answered with
+// data, and how many without - empty, not whole, or not bound. Both above
+// zero says the row went back and forth between FILTERED_EMPTY and its data
+// line; the latest round decides which it is on now.
+type WitnessFacts struct {
+	DataRounds    uint32 `json:"data_rounds"`
+	MissingRounds uint32 `json:"missing_rounds"`
+}
+
 // EmptyEveryRoundFacts is what a row of KindEmptyEveryRound says for itself:
 // how many rounds have completed empty in a row, since when, at what period,
 // that this process has never seen the object return records, and what it can

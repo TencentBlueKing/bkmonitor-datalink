@@ -41,9 +41,10 @@ import (
 )
 
 // The link's own bounds, transcribed (alert-search.md, alert-close.md):
-// one page holds 1..500 alerts, a filtered request body at most 1 MiB by
-// default (dispatch.alert_search.max_request_bytes), a single close body
-// 4096 bytes, a search page at most 8 MiB by default.
+// one search page holds 1..500 alerts, a filtered request body at most 1 MiB
+// by default (dispatch.alert_search.max_request_bytes), a single close body
+// 4096 bytes, an answer read at most 8 MiB by default. A filtered close takes
+// no page: the link closes what its own budget allows and says has_more.
 const (
 	MaxLimit            = 500
 	MaxFilterBodyBytes  = 1 << 20
@@ -188,16 +189,35 @@ func (c *Client) post(ctx context.Context, route, path string, body []byte, out 
 	defer response.Body.Close()
 	payload, err := io.ReadAll(io.LimitReader(response.Body, c.maxBytes+1))
 	if err != nil {
+		if response.StatusCode == http.StatusOK {
+			// The link answered 200 and the body broke off: it may have
+			// acted on the request, as for any 200 that cannot be read.
+			return fmt.Errorf("%w: %s: %w", ErrInvalidResponse, route, err)
+		}
 		return err
 	}
 	if response.StatusCode != http.StatusOK {
 		return &StatusError{Route: route, Status: response.StatusCode, Message: cut(strings.TrimSpace(string(payload)), 160)}
 	}
 	if int64(len(payload)) > c.maxBytes {
-		return fmt.Errorf("alarmd linkdmanage: %s answered past %d bytes", route, c.maxBytes)
+		return fmt.Errorf("%w: %w: %s answered past %d bytes", ErrInvalidResponse, ErrAnswerTooLarge, route, c.maxBytes)
 	}
-	return json.Unmarshal(payload, out)
+	if err := json.Unmarshal(payload, out); err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrInvalidResponse, route, err)
+	}
+	return nil
 }
+
+// ErrInvalidResponse is a 200 the link answered whose body alarmd could not
+// read: it broke off, did not decode, or ran past the client's bound. The request
+// reached the link, which may have acted on it.
+var ErrInvalidResponse = errors.New("alarmd linkdmanage: the link's answer could not be read")
+
+// ErrAnswerTooLarge is the ErrInvalidResponse of a 200 whose body ran past
+// the client's bound, told apart from one that broke off or did not decode:
+// a dry run that enumerated more ids than the bound holds answers it, and
+// so does any request again until its match set shrinks.
+var ErrAnswerTooLarge = errors.New("alarmd linkdmanage: the link's answer ran past the client's bound")
 
 func cut(text string, limit int) string {
 	if len(text) <= limit {
@@ -277,19 +297,27 @@ func (c *Client) Search(ctx context.Context, tenantID string, query json.RawMess
 }
 
 // ErrInvalidRequest is a request the link would refuse with 400, not sent:
-// no query or filter object (sent as JSON null), or a limit outside 1..500
+// no query or filter object (sent as JSON null), or a search limit outside 1..500
 // (b7e5beddf internal/controlplane/api/alert_search.go validAlertQuery,
 // close_filter.go:68). A caller that means every alert says
 // {"match_all":{}}.
 var ErrInvalidRequest = errors.New("alarmd linkdmanage: a query object and a limit of 1..500 are required")
 
 func validRequest(query json.RawMessage, limit int) error {
-	trimmed := bytes.TrimSpace(query)
-	if len(trimmed) == 0 || trimmed[0] != '{' || limit < 1 || limit > MaxLimit {
+	if !isObject(query) || limit < 1 || limit > MaxLimit {
 		return ErrInvalidRequest
 	}
 	return nil
 }
+
+func isObject(query json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(query)
+	return len(trimmed) > 0 && trimmed[0] == '{'
+}
+
+// ErrCommandNotObject is a filtered close not sent: its close command is
+// not a JSON object, so its fields cannot follow the request's.
+var ErrCommandNotObject = errors.New("alarmd linkdmanage: the close command is not a JSON object")
 
 // ErrBodyTooLarge is a request alarmd would not send: past the link's body
 // bound, it would be refused whole (413).
@@ -303,32 +331,44 @@ type Item struct {
 	Status        int    `json:"status"`
 	AlreadyClosed bool   `json:"already_closed,omitempty"`
 	ErrorCode     string `json:"error_code,omitempty"`
+	Message       string `json:"message,omitempty"`
 }
 
-// FilterPage is one filtered close request's answer.
+// FilterPage is one filtered close request's answer (alert-close.md
+// "按 filter 批量关闭", Linkd c5e2443a3): an item per alert the request
+// enumerated, has_more when it stopped on its budget or a failed candidate
+// query and the same request may match more, and a count of the closed and
+// the failed (failed takes the items not attempted). A 200 with ErrorCode
+// query_failed kept the items of the candidates read before a later query
+// failed; Message is the link's safe diagnostic.
 type FilterPage struct {
-	Items  []Item `json:"items"`
-	Next   string `json:"next"`
-	DryRun bool   `json:"dry_run"`
-	Closed int    `json:"closed"`
-	Failed int    `json:"failed"`
+	Items     []Item `json:"items"`
+	HasMore   bool   `json:"has_more"`
+	DryRun    bool   `json:"dry_run"`
+	Closed    int    `json:"closed"`
+	Failed    int    `json:"failed"`
+	ErrorCode string `json:"error_code,omitempty"`
+	Message   string `json:"message,omitempty"`
 }
+
+// QueryFailed is the top-level error code of a 200 whose later candidate
+// query failed after some items were read.
+const QueryFailed = "query_failed"
 
 // CloseByFilter sends one filtered close: command is the close command's
-// exact JSON object (Command.Bytes), sent byte for byte with the filter, the
-// cursor, the limit and dry_run added before it; nil on a dry run.
-func (c *Client) CloseByFilter(ctx context.Context, command []byte, tenantID string, filter json.RawMessage, after string, limit int,
-	dryRun bool) (FilterPage, error) {
-	if err := validRequest(filter, limit); err != nil {
-		return FilterPage{}, err
+// exact JSON object (Command.Bytes), sent byte for byte with the filter and
+// dry_run added before it; nil on a dry run. It names no page or cursor: the
+// link refuses unknown fields (alert_search.go decodeAlertQuery), and closes
+// or, on a dry run, enumerates as much as its own budget allows.
+func (c *Client) CloseByFilter(ctx context.Context, command []byte, tenantID string, filter json.RawMessage, dryRun bool) (FilterPage, error) {
+	if !isObject(filter) {
+		return FilterPage{}, ErrInvalidRequest
 	}
 	head, err := json.Marshal(struct {
 		TenantID string          `json:"bk_tenant_id,omitempty"`
 		Filter   json.RawMessage `json:"filter"`
-		After    string          `json:"after,omitempty"`
-		Limit    int             `json:"limit"`
 		DryRun   bool            `json:"dry_run"`
-	}{TenantID: tenantIfBare(command, tenantID), Filter: filter, After: after, Limit: limit, DryRun: dryRun})
+	}{TenantID: tenantIfBare(command, tenantID), Filter: filter, DryRun: dryRun})
 	if err != nil {
 		return FilterPage{}, err
 	}
@@ -336,7 +376,7 @@ func (c *Client) CloseByFilter(ctx context.Context, command []byte, tenantID str
 	if len(command) > 0 {
 		trimmed := bytes.TrimSpace(command)
 		if len(trimmed) < 2 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
-			return FilterPage{}, errors.New("alarmd linkdmanage: the close command is not a JSON object")
+			return FilterPage{}, ErrCommandNotObject
 		}
 		// The command's own fields, unchanged, after the request's.
 		body = append(append(head[:len(head)-1:len(head)-1], ','), trimmed[1:]...)

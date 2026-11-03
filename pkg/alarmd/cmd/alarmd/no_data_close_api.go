@@ -132,7 +132,7 @@ func (api *noDataCloseAPI) serve(response http.ResponseWriter, request *http.Req
 	response.Header().Set("Cache-Control", "no-store")
 	refuse := func(status int, outcome, message string, identity ...slog.Attr) {
 		api.count(outcome)
-		api.logger.Warn(noDataCloseLogStage, outcome, 0, 0, append(identity, slog.Int("status", status))...)
+		api.logger.WarnEvent(noDataCloseLogStage, outcome, 0, append(identity, slog.Int("status", status))...)
 		writeNoDataCloseError(response, status, outcome, message)
 	}
 	if request.Method != http.MethodPost {
@@ -167,14 +167,14 @@ func (api *noDataCloseAPI) serve(response http.ResponseWriter, request *http.Req
 	switch {
 	case errors.Is(err, state.ErrNoDataManualClosesFull):
 		api.count(noDataCloseFullSkipped)
-		api.logger.Warn(noDataCloseLogStage, noDataCloseFullSkipped, 0, 0, identity...)
+		api.logger.WarnEvent(noDataCloseLogStage, noDataCloseFullSkipped, 0, identity...)
 	case err != nil:
 		refuse(http.StatusServiceUnavailable, noDataCloseStoreUnavailable, "The close could not be recorded.",
 			append(identity, slog.String("error", observability.SanitizeErrorText(err.Error())))...)
 		return
 	default:
 		api.count(noDataCloseRecorded)
-		api.logger.Info(noDataCloseLogStage, noDataCloseRecorded, 1, 0, identity...)
+		api.logger.InfoEvent(noDataCloseLogStage, noDataCloseRecorded, 1, identity...)
 	}
 	response.WriteHeader(http.StatusOK)
 	_, _ = response.Write([]byte("{}"))
@@ -222,7 +222,7 @@ func bindNoDataCloseAPI(api *noDataCloseAPI, internalListen string, recorder *me
 		return false
 	}
 	api.count(noDataCloseInternalListenOff)
-	logger.Warn(observability.StageStartup, "no_data_close_route_unserved", 0, 0, slog.String("path", noDataClosePath),
+	logger.WarnEvent(observability.StageStartup, "no_data_close_route_unserved", 0, slog.String("path", noDataClosePath),
 		slog.String("detail", "http.internal_listen is empty: the alert link's manual closes of no-data alerts fail while its no_data_close_endpoint names this process"))
 	return true
 }

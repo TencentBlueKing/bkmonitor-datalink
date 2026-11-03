@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -381,6 +382,7 @@ func carriedEditResumesWithinOneWarmingSlot(t *testing.T, change func(first map[
 	// The fixture's strategies carry no snapshot revision.
 	generationAfter := activationGenerationOf(t, activation.Plans, "1001")
 	var found *controlplane.PlanCarryFact
+	var foundIn execution.QueryGroupIdentity
 	groups := fixture.bundle.ownedQueryGroups()
 	for _, group := range groups {
 		recorder := httptest.NewRecorder()
@@ -397,7 +399,7 @@ func carriedEditResumesWithinOneWarmingSlot(t *testing.T, change func(first map[
 		}
 		for index, plan := range body.PlanCarries.Plans {
 			if plan.Plan.StrategyID == "1001" {
-				found = &body.PlanCarries.Plans[index]
+				found, foundIn = &body.PlanCarries.Plans[index], group
 			}
 		}
 	}
@@ -406,6 +408,12 @@ func carriedEditResumesWithinOneWarmingSlot(t *testing.T, change func(first map[
 		len(carriedLevels) != 1 || !slices.Equal(found.CarriedFrom.Levels, carriedLevels) {
 		t.Fatalf("object.get says %+v (carried from %+v), want generation %s activated at or after %d, carried from %s and found, Levels %v",
 			found, found.CarriedFrom, generationAfter, boundary, generationBefore, carriedLevels)
+	}
+	// slot.query reads the same source as object.get, not a reading of its
+	// own.
+	reading, err := cliPlanCarries(fixture.repository)(context.Background(), foundIn)
+	if err != nil || !slices.ContainsFunc(reading.Plans, func(fact controlplane.PlanCarryFact) bool { return reflect.DeepEqual(fact, *found) }) {
+		t.Fatalf("slot.query's plan carries read %+v (%v), want the Plan object.get names, %+v", reading, err, *found)
 	}
 	if got := counterValue(t, fixture.bundle.dependencies.Recorder, "alarmd_fleet_plan_carries_reads_total", map[string]string{"result": "read"}); got != float64(len(groups)) {
 		t.Fatalf("plan carries reads counted %v, want one read for each of the %d objects asked", got, len(groups))

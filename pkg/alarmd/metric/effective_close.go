@@ -53,7 +53,11 @@ func newEffectiveCloseCollector() *effectiveCloseCollector {
 				"calendar this replica's strategies name read deleted at once, a calendar source gone; "+
 				"close_boundary_active is a Plan the recheck just before a send found active again, its close not sent "+
 				"while the Query Group's other Plans go on (effective_time_unknown counts the same recheck finding the "+
-				"time unreadable). Every cell exists from the "+
+				"time unreadable); close_boundary_near is an inactive close not started because the Plan may be active "+
+				"again in less than one request's budget (the filter close's round_spent is a close that started and "+
+				"ran out of time); close_step_spent is a maintenance step whose inactive closes, which share one "+
+				"step's time, left less than one request's budget, so its further closes start in the next step "+
+				"(once a step). Every cell exists from the "+
 				"start so a zero is a reading and not an absence.", []string{"outcome"}, nil),
 	}
 }

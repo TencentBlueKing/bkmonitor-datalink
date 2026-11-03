@@ -23,8 +23,10 @@ import (
 // a summary without one restores none.
 func TestTheEmptyRoundIsMappedFromTheCommittedSummary(t *testing.T) {
 	summary := &execution.LastCompletionSummary{Slot: 1_700_000_060, Kind: execution.CompletionFullEmpty,
-		Empty: &execution.EmptyRoundSummary{Quiet: true, EmptiedByTarget: true, ContentScope: "content-a"}}
-	want := &fleet.RestoredEmptyRound{Quiet: true, EmptiedByTarget: true, ContentScope: "content-a"}
+		Empty: &execution.EmptyRoundSummary{Quiet: true, EmptiedByTarget: true, ContentScope: "content-a",
+			Filtered: true, WitnessDataRounds: 7, WitnessMissingRounds: 2}}
+	want := &fleet.RestoredEmptyRound{Quiet: true, EmptiedByTarget: true, ContentScope: "content-a",
+		Filtered: true, WitnessDataRounds: 7, WitnessMissingRounds: 2}
 	if round := restoredRoundOf(summary); round == nil || !reflect.DeepEqual(round.Empty, want) {
 		t.Fatalf("restored round = %+v, want the empty round %+v", round, want)
 	}

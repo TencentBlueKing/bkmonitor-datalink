@@ -164,6 +164,12 @@ const (
 	// provider leaves a group with no document out of the answer instead of
 	// counting it zero, and the line does not claim either reading.
 	CheckLogCountEmpty Check = "LOG_COUNT_EMPTY"
+	// FilteredEmpty is a primary whose expression filters its values,
+	// answered whole and filtered empty for as long as NO_DATA_PERSISTENT or
+	// EMPTY_EVERY_ROUND would wait, while the unfiltered witness of the same
+	// source had data: nothing passed the filter - for an OsRestart, no host
+	// restarted within the hour. Detecting, nothing to do.
+	CheckFilteredEmpty Check = "FILTERED_EMPTY"
 	// AnswerTruncated is an answer that may have been cut at the query
 	// service's terms cap: thresholds evaluate the groups that came back,
 	// and a Plan that detects no data judges no absence that round
@@ -403,6 +409,7 @@ var checkAnswers = map[Check]struct {
 	// strategy owner's to say, and the data owner can say whether data went
 	// missing; the answer alone cannot.
 	CheckLogCountEmpty:   {OwnerStrategy, GroupByStrategy},
+	CheckFilteredEmpty:   {OwnerStrategy, GroupByStrategy},
 	CheckAnswerTruncated: {OwnerStrategy, GroupByStrategy},
 	CheckSeriesChurning:  {OwnerStrategy, GroupByStrategy},
 	// The strategy's: its grouping is what opens an alert per value.
@@ -516,6 +523,8 @@ var checkOrder = []Check{
 	CheckQuiet,
 	// A log count answered empty: detecting, quiet or missing unknown.
 	CheckLogCountEmpty,
+	// A filtered primary answered empty with its data there: detecting.
+	CheckFilteredEmpty,
 	// Detecting and recovering as Python does; only NORMAL never comes.
 	CheckSeriesSparserThanWindow,
 	// An answer that may have been cut: thresholds evaluate what came back,

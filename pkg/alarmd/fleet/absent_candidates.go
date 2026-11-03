@@ -59,41 +59,21 @@ var AbsentStates = []string{AbsentStateReady, AbsentStateNoRoundYet, AbsentState
 var AbsentOutcomes = []string{absentalerts.OutcomeWithinGrace, absentalerts.OutcomeUnconfirmed,
 	absentalerts.OutcomeDeferred, absentalerts.OutcomeCloseDecided, absentalerts.OutcomeIndexUnreadable}
 
-// The execution words that are the page's own; the rest are the absent
-// close's outcome words for the same facts.
-const (
-	// AbsentExecutionNotRun: the round decided to close the strategy and
-	// its deadline came before the close ran. decided_at is that round.
-	AbsentExecutionNotRun = "not_run"
-	// AbsentExecutionNoOwnAlerts: every alert the link holds for the
-	// strategy is another producer's or names none, so there was nothing
-	// of this deployment's to close.
-	AbsentExecutionNoOwnAlerts = "no_own_alerts"
-)
-
-// AbsentExecutions is every word a row's execution takes.
-var AbsentExecutions = []string{AbsentExecutionNotRun,
-	absentalerts.OutcomeCloseSent, absentalerts.OutcomeSendFailed, AbsentExecutionNoOwnAlerts,
-	absentalerts.OutcomeIdentityUnknown, absentalerts.OutcomeRevisionUnknown, absentalerts.OutcomeEvidenceUnavailable,
-	absentalerts.OutcomeEvidenceTruncated}
+// AbsentExecutionNotRun is the execution word that is the page's own: the
+// round decided to close the strategy and its deadline came before the
+// close ran. decided_at is that round. The rest are identity_unknown and
+// the filtered close's words (filterclose).
+const AbsentExecutionNotRun = "not_run"
 
 // Where a close's business and revision came from. Closed.
 const (
 	// AbsentIdentityCatalog: the catalog's memory of the strategies it let
-	// go gave every part that is known.
+	// go gave the revision.
 	AbsentIdentityCatalog = "catalog"
-	// AbsentIdentityAlertRecord: at least one part was read from the
-	// link's record of one of the strategy's own alerts.
-	AbsentIdentityAlertRecord = "alert_record"
-	// AbsentIdentityNone: looked for, and neither part was found.
-	AbsentIdentityNone = "none"
-	// AbsentIdentityNotRead: there was no own alert to close, so no record
-	// was read; what the catalog remembers is still given.
+	// AbsentIdentityNotRead: the catalog remembers no revision; the
+	// business it remembers is still given. No alert record is read.
 	AbsentIdentityNotRead = "not_read"
 )
-
-// AbsentIdentitySources is every identity source word.
-var AbsentIdentitySources = []string{AbsentIdentityCatalog, AbsentIdentityAlertRecord, AbsentIdentityNone, AbsentIdentityNotRead}
 
 // Whether a row's strategy is in the source now, read when the page is
 // asked. Closed.
@@ -194,11 +174,12 @@ type AbsentCandidateRow struct {
 	// Execution is the latest close of the strategy in this term; absent
 	// for one never decided to close.
 	Execution *AbsentExecutionFacts `json:"execution,omitempty"`
-	// Sends is how many closes of the strategy went out this term, the
-	// broker acknowledging each, and FirstSentAt when the first did; both
-	// last as long as the strategy stays a candidate. Sent is not closed:
-	// the link closes the alerts or does not, which
-	// Execution.ActiveAfterSend reads.
+	// Sends is how many closes of the strategy were sent this term - a
+	// real close whose items the link answered (closed, refused, busy, any
+	// item answer) - and FirstSentAt when the first was; both last as long
+	// as the strategy stays a candidate. Sent is not closed: a strategy the
+	// link refuses item by item is sent every round, its sends growing
+	// while it stays on the page.
 	Sends           int    `json:"sends"`
 	FirstSentAt     string `json:"first_sent_at,omitempty"`
 	SourceNow       string `json:"source_now"`
@@ -207,36 +188,17 @@ type AbsentCandidateRow struct {
 
 // AbsentExecutionFacts is what one close of a strategy found and did.
 type AbsentExecutionFacts struct {
-	DecidedAt string `json:"decided_at"`
-	Word      string `json:"word"`
-	// Alerts is absent when the strategy's alerts were not read.
-	Alerts *AbsentAlertCounts `json:"alerts,omitempty"`
-	// Batch is how many alerts the close addressed.
-	Batch    int                  `json:"batch"`
-	Identity *AbsentIdentityFacts `json:"identity,omitempty"`
-	// SampleAlertID is one of the strategy's alerts, its own first.
-	SampleAlertID string `json:"sample_alert_id,omitempty"`
-	// ActiveAfterSend is how many of this deployment's alerts of the
-	// strategy the link's reconcile still listed active when this close
-	// read them, an earlier close of them having gone out: above zero, the
-	// link did not close what it was sent. Absent before the first send.
-	ActiveAfterSend *int `json:"active_after_send,omitempty"`
-}
-
-// AbsentAlertCounts is the strategy's alerts by whose they are.
-type AbsentAlertCounts struct {
-	Own     int `json:"own"`
-	Foreign int `json:"foreign"`
-	Unknown int `json:"unknown"`
+	DecidedAt string               `json:"decided_at"`
+	Word      string               `json:"word"`
+	Identity  *AbsentIdentityFacts `json:"identity,omitempty"`
 }
 
 // AbsentIdentityFacts is the business and revision a close carries and
 // where they came from.
 type AbsentIdentityFacts struct {
-	Source      string `json:"source"`
-	Business    int64  `json:"business,omitempty"`
-	Revision    int64  `json:"revision,omitempty"`
-	RecordsRead int    `json:"records_read"`
+	Source   string `json:"source"`
+	Business int64  `json:"business,omitempty"`
+	Revision int64  `json:"revision,omitempty"`
 }
 
 // AbsentCandidateQuery is one page asked for.
@@ -352,12 +314,29 @@ func absentQueryOf(request *http.Request) (AbsentCandidateQuery, map[string]any)
 		query.Outcome = word
 	}
 	if word := values.Get("execution"); word != "" {
-		if !containsWord(AbsentExecutions, word) {
-			return query, map[string]any{"error": "EXECUTION_UNKNOWN", "accepted": AbsentExecutions}
+		if !absentExecutionWord(word) {
+			return query, map[string]any{"error": "EXECUTION_INVALID", "accepted": "a word of at most 64 lowercase letters, digits and underscores"}
 		}
 		query.Execution = word
 	}
 	return query, nil
+}
+
+// absentExecutionWord says word has the shape of an execution word. A
+// close's word is the filtered close's (filterclose), which names a job's
+// end as it finds it, so the filter takes any word of the shape rather than
+// a list the page would have to keep in step; a word no row has matches
+// nothing.
+func absentExecutionWord(word string) bool {
+	if word == "" || len(word) > 64 {
+		return false
+	}
+	for _, r := range word {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 func containsWord(words []string, word string) bool {

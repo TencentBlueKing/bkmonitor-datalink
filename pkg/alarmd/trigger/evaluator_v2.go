@@ -123,12 +123,14 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 			}
 			if result.RecoveryGate.OpenAlertGate == OpenAlertGatePassed {
 				var held bool
-				levelResults, held = openLevelResultsV2(request, ref.StrategyID, dedupeMD5, levelResults)
+				var omitted []uint32
+				levelResults, omitted, held = openLevelResultsV2(request, ref.StrategyID, dedupeMD5, levelResults)
 				if held {
 					result.RecoveryGate.Held, result.RecoveryGate.Cause = true, RecoveryHeldLevelNotOpen
 					result.RecoveryGate.OpenAlertGate = OpenAlertGateHeldLevelNotOpen
 					return result, nil
 				}
+				result.OmittedRecoveryLevels = omitted
 			}
 		}
 		// An event the Plan's protocol has no message for is decided and not
@@ -905,34 +907,42 @@ func openAlertGateV2(gate RecoveryGateV2, request EvaluationRequestV2, strategyI
 // Level is left out. The current Level is the most severe open one by Level
 // id, the lowest, as the link (its severity table) and Python rank Levels,
 // not by the Plan's detect priority, which a strategy may set against the
-// ids. held is no RECOVERY left. Where the set does not know the series'
-// open Levels, every result stays, as before it could tell.
+// ids. omitted is the Levels whose RECOVERY was left out, for the
+// decomposition to say so (execution.LevelOutcome.EventOmitted); held is no
+// RECOVERY left, and then omitted is nil: the whole record is held. Where the
+// set does not know the series' open Levels, every result stays, as before it
+// could tell.
 func openLevelResultsV2(request EvaluationRequestV2, strategyID, dedupeMD5 string,
-	results []contract.LevelResultV1) ([]contract.LevelResultV1, bool) {
+	results []contract.LevelResultV1) ([]contract.LevelResultV1, []uint32, bool) {
 	set, ok := request.OpenAlerts.(contract.OpenLevelSet)
 	if !ok {
-		return results, false
+		return results, nil, false
 	}
 	open, known := set.OpenLevels(request.TenantID, strategyID, dedupeMD5)
 	if !known {
-		return results, false
+		return results, nil, false
 	}
 	if len(open) == 0 {
-		return nil, true
+		return nil, nil, true
 	}
 	current := slices.Min(open)
 	kept := make([]contract.LevelResultV1, 0, len(results))
+	var omitted []uint32
 	recovering := false
 	for _, result := range results {
 		if result.Result == contract.LevelResultRecovery {
 			if result.LevelID != current {
+				omitted = append(omitted, result.LevelID)
 				continue
 			}
 			recovering = true
 		}
 		kept = append(kept, result)
 	}
-	return kept, !recovering
+	if !recovering {
+		return kept, nil, true
+	}
+	return kept, omitted, false
 }
 
 // oneTimeClose is whether the set answers for the one close of a dropped

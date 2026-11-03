@@ -14,6 +14,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/filterclose"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
 
 // A strategy stops being a candidate when the link's search no longer finds
@@ -22,25 +23,35 @@ import (
 // next round may run the same close again; it is the same command
 // (filterclose), and an alert no longer active is not matched.
 //
-// absentCloseInterval is how often the leader takes the difference. The
-// bound is the grace: a candidate has to be seen missing by two rounds under
-// two observations before it is closed, and the source is read again at
-// least every controlplane.SourceFullReadInterval, so a round no slower than
-// that re-read, with absentCloseGrace, is what makes a confirmed absence
-// reach a close inside absentCloseBound. Both relations are pinned by a test
-// against the source's own bound, so neither number drifts from it.
+// absentCloseInterval is how often the leader takes the difference. A
+// candidate with no mark has to be seen missing by absentCloseMinReads
+// rounds under two observations before it is closed, and the source is read
+// again at least every controlplane.SourceFullReadInterval, so a round no
+// slower than that re-read is what makes a confirmed absence reach a close
+// inside absentCloseBound. Both relations are pinned by a test against the
+// source's own bound, so neither number drifts from it.
 const absentCloseInterval = 5 * time.Minute
+
+// absentCloseRoundTime is how long one round's absent closes may take: half
+// the round, as the edit close's (editCloseRoundTime). A job now runs again
+// within its round while it gets somewhere (filterclose.Closer.UntilProgressStops),
+// so either could fill the round; each half is its own.
+const absentCloseRoundTime = absentCloseInterval / 2
 
 // absentCloseBound is how long a confirmed absence may take to reach a close.
 const absentCloseBound = 15 * time.Minute
 
-// absentCloseGrace is how long this loop must have seen a strategy missing
-// from the snapshot before it closes the strategy's alerts. It is this
-// loop's own number and not the catalog's removal grace: that grace serves
-// only a writer that makes no statement and goes when that writer is fixed
-// (controlplane.AbsenceGracePeriod), while closing alerts takes a confirmed
-// absence whatever the writer states.
-const absentCloseGrace = 10 * time.Minute
+// absentCloseMinReads is how many deciding rounds must have found a strategy
+// with no mark missing from the snapshot before its alerts are closed: the
+// first round, and two more absentCloseInterval apart, which is the ten
+// minutes the grace used to be, counted in rounds so that a release that
+// restarts the leader no longer starts the count over. It is
+// this loop's own number and not the catalog's removal grace: that grace
+// serves only a writer that makes no statement and goes when that writer is
+// fixed (controlplane.AbsenceGracePeriod), while closing alerts takes a
+// confirmed absence whatever the writer states. A strategy under the
+// writer's mark takes the fast path instead (absentalerts.PathDeparted).
+const absentCloseMinReads = 3
 
 // absentStrategyClose closes the unrecovered alerts of strategies that no
 // longer exist. See package absentalerts for what the difference is and
@@ -84,6 +95,23 @@ type absentStrategyClose struct {
 	logger       *observability.Logger
 	statementKey string
 	unstatedSaid bool
+	// marks reads the writer's departure marks each round and again before
+	// a fast-path close; nil where the source keeps none, and every
+	// candidate takes the implicit path.
+	marks departedMarkReader
+	// memory keeps the candidates across terms; nil keeps them in this
+	// process only. saved is the candidates the last save wrote, for the
+	// removals the next one makes.
+	memory absentMemory
+	saved  map[absentalerts.Key]struct{}
+}
+
+// departedMarkReader is the source's read of the writer's departure marks:
+// all of them for a round, one for the re-check just before a close
+// (controlplane.LegacyRedisStrategySource.DepartedMarks, DepartedMark).
+type departedMarkReader interface {
+	DepartedMarks(context.Context) (map[string]controlplane.DepartedMark, int, error)
+	DepartedMark(context.Context, string) (controlplane.DepartedMark, bool, error)
 }
 
 // absentRoundSizes is what the last round read, beside what it decided on.
@@ -115,7 +143,7 @@ func newAbsentStrategyClose(bundle *phaseTwoWorkerBundle, control absentCloseCon
 		bundle: bundle, control: control, filter: filter,
 		tracker: absentalerts.NewTracker(controlplane.MaxDepartedStrategies),
 		bounds: absentalerts.Bounds{
-			Grace: absentCloseGrace,
+			MinReads: absentCloseMinReads,
 			// Derived from how often the source is actually read rather than
 			// set as a second constant: a bound that does not follow the
 			// reader's own cadence refuses every round on a deployment whose
@@ -217,29 +245,28 @@ func (loop *absentStrategyClose) run(ctx context.Context) {
 	}
 }
 
-// step is one round. It may run until the next is due: the round has that
-// deadline and no other, and each request is bounded by the link's own
-// budget (filterCloseHTTPTimeout). What a round does not finish - closes it
-// decided - the next one carries on with.
+// step is one round's absent closes. It may run for half the round
+// (absentCloseRoundTime), the edit close the other half, and each request is
+// bounded by the link's own budget (filterCloseHTTPTimeout). What a round
+// does not finish - closes it decided - the next one carries on with.
 func (loop *absentStrategyClose) step(ctx context.Context) {
-	ctx, cancel := context.WithTimeout(ctx, absentCloseInterval)
+	started := time.Now()
+	ctx, cancel := context.WithTimeout(ctx, absentCloseRoundTime)
 	defer cancel()
 	if !loop.leading() {
 		if loop.wasLeader {
-			// The term ended. Every candidate's clock restarts, so a replica
-			// that becomes leader again cannot close on an absence it
-			// observed under a term it no longer holds.
-			loop.tracker.Forget()
-			loop.table.forget()
-			loop.lastSnapshot = nil
-			loop.filter.forget()
-			loop.unstatedSaid = false
+			loop.endTerm()
 		}
-		loop.wasLeader = false
 		loop.count(absentalerts.OutcomeNotLeader, 1)
 		return
 	}
+	if !loop.wasLeader {
+		loop.startTerm(ctx)
+	}
 	loop.wasLeader = true
+	// marksSaid is whether this round has counted marks_unreadable: once a
+	// round, whichever read failed.
+	marksSaid := false
 	now := loop.bundle.dependencies.Now()
 	observed, haveSnapshot := loop.control.ObservedSnapshot()
 	departed, refusedDepartures := loop.control.DepartedStrategies()
@@ -250,6 +277,7 @@ func (loop *absentStrategyClose) step(ctx context.Context) {
 		Refused:             capabilityRefusals(loop.control.CapabilityRefused()),
 		SnapshotObservation: observed.Observation,
 		After:               loop.lastDecided, Now: now,
+		Marks: loop.readMarks(ctx, &marksSaid),
 	}
 	round.WriterHoldsLastGood = haveSnapshot && observed.HoldsLastGood
 	sizes := absentRoundSizes{identities: len(round.Identities)}
@@ -269,7 +297,14 @@ func (loop *absentStrategyClose) step(ctx context.Context) {
 	}
 	result := loop.tracker.Round(round, loop.bounds)
 	sizes.counts = result.Counts
-	loop.record(ctx, result, sizes)
+	if result.Refusal == absentalerts.RefusalNone && !loop.save(ctx) {
+		// The lease is gone: another replica holds the term. Nothing this
+		// round decided is sent, and the memory is left to that term.
+		loop.record(ctx, result, sizes, time.Since(started))
+		loop.endTerm()
+		return
+	}
+	loop.record(ctx, result, sizes, time.Since(started))
 	loop.sayUnstated(result.Refusal, round.WriterHoldsLastGood)
 	loop.table.noteRound(now, result.Refusal)
 	if result.Refusal == absentalerts.RefusalNone {
@@ -277,13 +312,156 @@ func (loop *absentStrategyClose) step(ctx context.Context) {
 	}
 	for _, absent := range result.Close {
 		// A round now runs for minutes: the term is asked again before each
-		// strategy, not only once at the start.
+		// strategy, not only once at the start, and a fast-path close reads
+		// its strategy's mark and the latest snapshot again right before it
+		// is sent, so a strategy enabled again while earlier closes of the
+		// round ran is not closed.
 		if ctx.Err() != nil || !loop.leading() {
 			return
+		}
+		if absent.Path == absentalerts.PathDeparted && !loop.stillDeparted(ctx, absent, &marksSaid) {
+			continue
 		}
 		loop.table.executed(absent.Key, loop.closeStrategy(ctx, absent, now))
 		loop.lastDecided = absent.Key
 	}
+}
+
+// endTerm forgets what this term held. Every candidate's count restarts in
+// this process, so a replica that becomes leader again starts from what the
+// term in between kept (startTerm), not from what it observed itself under
+// a term it no longer holds.
+func (loop *absentStrategyClose) endTerm() {
+	loop.tracker.Forget()
+	loop.table.forget()
+	loop.lastSnapshot = nil
+	loop.filter.forget()
+	loop.unstatedSaid = false
+	loop.saved = nil
+	loop.wasLeader = false
+}
+
+// startTerm restores the candidates the last term kept. None of them counts
+// as read in this term (absentalerts.Tracker.Restore). A memory that cannot
+// be read starts from nothing, counted.
+func (loop *absentStrategyClose) startTerm(ctx context.Context) {
+	if loop.memory == nil {
+		return
+	}
+	kept, invalid, err := loop.memory.Recall(ctx)
+	if err != nil {
+		loop.observe(ctx, absentalerts.OutcomeMemoryLoadFailed, err, 1)
+		return
+	}
+	if invalid > 0 {
+		loop.observe(ctx, absentalerts.OutcomeMemoryInvalid, errors.New("kept candidates that did not decode were skipped"), invalid)
+	}
+	loop.tracker.Restore(kept)
+	loop.saved = make(map[absentalerts.Key]struct{}, len(kept))
+	for key := range kept {
+		loop.saved[key] = struct{}{}
+	}
+}
+
+// save writes the round's candidates and removes the ones that stopped
+// being candidates since the last save - a strategy the snapshot lists
+// again, one the link stopped listing. False when the lease is gone; any
+// other failure is counted and the term goes on from its own memory.
+func (loop *absentStrategyClose) save(ctx context.Context) bool {
+	if loop.memory == nil {
+		return true
+	}
+	current := loop.tracker.Absences()
+	var removed []absentalerts.Key
+	for key := range loop.saved {
+		if _, still := current[key]; !still {
+			removed = append(removed, key)
+		}
+	}
+	err := loop.memory.Remember(ctx, current, removed)
+	switch {
+	case err == nil:
+		loop.saved = make(map[absentalerts.Key]struct{}, len(current))
+		for key := range current {
+			loop.saved[key] = struct{}{}
+		}
+		return true
+	case errors.Is(err, ownership.ErrStaleFence):
+		loop.observe(ctx, absentalerts.OutcomeMemoryFenced, err, 1)
+		return false
+	default:
+		loop.observe(ctx, absentalerts.OutcomeMemorySaveFailed, err, 1)
+		return true
+	}
+}
+
+// readMarks is this round's writer's marks by strategy id, nil where the
+// source keeps none or the read failed (counted): every candidate then takes
+// the implicit path. A mark that did not decode is counted and skipped.
+func (loop *absentStrategyClose) readMarks(ctx context.Context, marksSaid *bool) map[string]absentalerts.Mark {
+	if loop.marks == nil {
+		return nil
+	}
+	read, invalid, err := loop.marks.DepartedMarks(ctx)
+	if err != nil {
+		loop.marksUnreadable(ctx, err, marksSaid)
+		return nil
+	}
+	if invalid > 0 {
+		loop.observe(ctx, absentalerts.OutcomeMarkInvalid, errors.New("departure marks that did not decode were skipped"), invalid)
+	}
+	marks := make(map[string]absentalerts.Mark, len(read))
+	for id, mark := range read {
+		marks[id] = absentalerts.Mark{TenantID: mark.TenantID, State: mark.State, Revision: mark.Revision}
+	}
+	return marks
+}
+
+// stillDeparted is the re-check just before a fast-path close: the latest
+// snapshot does not list the strategy, and its mark, read again with one
+// HGET, is the one it was decided under - the same tenant, state and
+// revision. A strategy enabled again is listed, or its mark is gone or
+// moved; either way it is not closed. A re-check that cannot read is not a
+// yes.
+func (loop *absentStrategyClose) stillDeparted(ctx context.Context, absent absentalerts.Absent, marksSaid *bool) bool {
+	if loop.marks == nil {
+		loop.marksUnreadable(ctx, errors.New("the fast path's re-check has no marks to read"), marksSaid)
+		return false
+	}
+	mark, found, err := loop.marks.DepartedMark(ctx, absent.Key.StrategyID)
+	if err != nil {
+		loop.marksUnreadable(ctx, err, marksSaid)
+		return false
+	}
+	// The snapshot after the mark: the latest the reconciler holds once the
+	// mark is in hand.
+	observed, haveSnapshot := loop.control.ObservedSnapshot()
+	if !haveSnapshot {
+		loop.marksUnreadable(ctx, errors.New("the fast path's re-check has no snapshot"), marksSaid)
+		return false
+	}
+	for _, entry := range observed.Strategies {
+		if entry.StrategyID == absent.Key.StrategyID {
+			loop.observe(ctx, absentalerts.OutcomeDepartedReappeared, nil, 1)
+			return false
+		}
+	}
+	if !found || mark.State != absent.Mark.State || mark.Revision != absent.Mark.Revision || mark.TenantID != absent.Mark.TenantID {
+		loop.observe(ctx, absentalerts.OutcomeDepartedMarkChanged, nil, 1)
+		return false
+	}
+	return true
+}
+
+// marksUnreadable counts marks_unreadable once a round and writes a line
+// for every failed read.
+func (loop *absentStrategyClose) marksUnreadable(ctx context.Context, err error, said *bool) {
+	count := 1
+	if *said {
+		count = 0
+	}
+	*said = true
+	loop.observe(ctx, absentalerts.OutcomeMarksUnreadable, err, count)
 }
 
 // sayUnstated writes, the first time a term's round is refused as
@@ -299,7 +477,7 @@ func (loop *absentStrategyClose) sayUnstated(refusal string, stated bool) {
 		return
 	}
 	loop.unstatedSaid = true
-	loop.logger.Warn("absent_close_writer_unstated", "refused", 0, 0, slog.String("statement_key", loop.statementKey),
+	loop.logger.WarnEvent("absent_close_writer_unstated", "refused", 0, slog.String("statement_key", loop.statementKey),
 		slog.String("detail", "the strategy list's writer made no publication_semantics statement about this list "+
 			"(hold_last_good with the list's strategy_ids digest): no strategy's alerts are closed as absent; "+
 			"each round is counted writer_unstated"))
@@ -392,15 +570,30 @@ func (loop *absentStrategyClose) closeStrategy(ctx context.Context, absent absen
 		return execution
 	}
 	decision := filterclose.DecisionAbsent
-	if absent.Refused != "" {
+	switch {
+	case absent.Refused != "":
 		decision = filterclose.DecisionUnsupported
+	case absent.Path == absentalerts.PathDeparted && absent.Mark.State == absentalerts.MarkDisabled:
+		decision = filterclose.DecisionDisabled
+	case absent.Path == absentalerts.PathDeparted && absent.Mark.State == absentalerts.MarkDeleted:
+		decision = filterclose.DecisionDeleted
 	}
 	// The expectation is alarmd's own record of the strategy's open
 	// episodes; without one each alert is closed by its id
 	// (filterclose.Closer.Absent).
-	execution.word = loop.filter.closer.Absent(ctx, loop.filter.scope(absent.Key), decision, absent.Identity.Revision)
-	switch execution.word {
-	case filterclose.OutcomeJobDone, filterclose.OutcomeJobIncomplete, filterclose.OutcomeJobDoneRederived:
+	// Run again within the round while a part has more and the run closed
+	// something; sent is a real close whose items the link answered
+	// (Result.Sent: closed, refused, busy), whatever the word to wait on -
+	// a part refused beside one that closed hands on the refusal, and a
+	// strategy the link refuses item by item is sent every round.
+	started := time.Now()
+	result := loop.filter.closer.UntilProgressStops(ctx, func() filterclose.Result {
+		return loop.filter.closer.AbsentResult(ctx, loop.filter.scope(absent.Key), decision, absent.Identity.Revision)
+	})
+	execution.word = result.Word
+	observeCloseJob(ctx, loop.bundle.dependencies.Observer, observability.StageAbsentStrategyClose, absentalerts.OutcomeCloseSent,
+		absent.Key.StrategyID, result.Word, result.Sent, time.Since(started))
+	if result.Sent {
 		execution.sent = true
 		loop.count(absentalerts.OutcomeCloseSent, 1)
 	}
@@ -409,7 +602,10 @@ func (loop *absentStrategyClose) closeStrategy(ctx context.Context, absent absen
 
 // record writes the round's line: its refusal or its decision, with every
 // denominator on it.
-func (loop *absentStrategyClose) record(ctx context.Context, result absentalerts.Result, sizes absentRoundSizes) {
+// elapsed is how long the round took to decide: the snapshot, the discovery
+// of the link's active strategies and the difference; its closes, after,
+// write their own lines.
+func (loop *absentStrategyClose) record(ctx context.Context, result absentalerts.Result, sizes absentRoundSizes, elapsed time.Duration) {
 	counts := result.Counts
 	loop.countsMu.Lock()
 	loop.last = sizes
@@ -420,13 +616,16 @@ func (loop *absentStrategyClose) record(ctx context.Context, result absentalerts
 	loop.count(absentalerts.OutcomeUnconfirmed, counts.Unconfirmed)
 	loop.count(absentalerts.OutcomeDeferred, counts.Deferred)
 	loop.count(absentalerts.OutcomeIndexUnreadable, counts.RosterUnreadable)
+	loop.count(absentalerts.OutcomeDepartedCloseDecided, counts.DepartedCloseDecided)
+	loop.count(absentalerts.OutcomeDepartedWaiting, counts.DepartedWaiting)
+	loop.count(absentalerts.OutcomeMarkInvalid, counts.MarkForeign)
 	outcome := observability.Result(observability.ResultSuccess)
 	if result.Refusal != absentalerts.RefusalNone {
 		outcome = observability.ResultDegraded
 	}
 	loop.bundle.dependencies.Observer.Observe(ctx, observability.Observation{
 		Component: observability.ComponentControlPlane, Stage: observability.StageAbsentStrategyClose,
-		Result: outcome, ReasonCode: observability.ReasonCode(result.Refusal),
+		Result: outcome, ReasonCode: observability.ReasonCode(result.Refusal), Duration: elapsed, DurationKnown: true,
 		Counts: observability.Counts{Events: int64(counts.Candidates)},
 	})
 }

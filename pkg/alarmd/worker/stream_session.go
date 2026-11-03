@@ -2022,6 +2022,7 @@ func levelOutcomeFacts(due execution.DuePlan, evaluated execution.EvaluationResu
 		carried         bool
 	}
 	counts := make(map[cell]uint64)
+	omitted := make(map[cell]uint64)
 	for _, outcome := range evaluated.Plans[0].LevelOutcomes {
 		key := cell{outcome: string(outcome.Outcome)}
 		if outcome.Outcome == execution.LevelOutcomeUnknown || outcome.Outcome == execution.LevelOutcomeTerminal {
@@ -2039,10 +2040,16 @@ func levelOutcomeFacts(due execution.DuePlan, evaluated execution.EvaluationResu
 		// round timing out.
 		key.carried = outcome.Outcome == execution.LevelOutcomeUnknown && outcome.ReasonCarried
 		counts[key]++
+		// A RECOVERY its record's envelope left out (the alert is at another
+		// Level) is still a RECOVERY of its Level; the cell says how many.
+		if outcome.Outcome == execution.LevelOutcomeRecovery && outcome.EventOmitted {
+			omitted[key]++
+		}
 	}
 	facts := make([]observability.LevelOutcomeFact, 0, len(counts))
 	for key, count := range counts {
-		facts = append(facts, observability.LevelOutcomeFact{Outcome: key.outcome, Reason: key.reason, Carried: key.carried, Count: count})
+		facts = append(facts, observability.LevelOutcomeFact{Outcome: key.outcome, Reason: key.reason, Carried: key.carried, Count: count,
+			OmittedRecoveries: omitted[key]})
 	}
 	sort.Slice(facts, func(i, j int) bool {
 		if facts[i].Outcome != facts[j].Outcome {

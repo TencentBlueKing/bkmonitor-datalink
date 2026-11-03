@@ -402,6 +402,10 @@ type EvaluationResultV2 struct {
 	// leaves TriggerEvent nil while RecordResult stays RECOVERY. Held is the
 	// union of both gates; Cause says which.
 	RecoveryGate RecoveryGateV2
+	// OmittedRecoveryLevels is the Levels whose RECOVERY the envelope left
+	// out because the alert is at another Level (openLevelResultsV2); empty
+	// when the record is held whole, which RecoveryGate says instead.
+	OmittedRecoveryLevels []uint32
 	// Snapshot is what the event's detection snapshot came to, for its
 	// counters; nil for an event that carries none.
 	Snapshot *DetectionSnapshotFacts

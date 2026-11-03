@@ -259,7 +259,7 @@ func openProductionRoleChannel(cfg config.Config, binding ChannelBinding) (_ *ro
 			return obchannel.MetricsOperations(providers.read().Control.Metrics)[index]
 		}))
 	}
-	ops = append(ops, obchannel.SlotOperations(obchannel.SlotOptions{Resolve: newCLISlotResolver(cfg, diagnosticRuntime), Evidence: newCLISlotEvidenceReader(cfg, diagnosticRuntime), UQ: queryClient, LatestPublication: cliLatestPublication(catalog)})...)
+	ops = append(ops, obchannel.SlotOperations(obchannel.SlotOptions{Resolve: newCLISlotResolver(cfg, diagnosticRuntime), Evidence: newCLISlotEvidenceReader(cfg, diagnosticRuntime), UQ: queryClient, LatestPublication: cliLatestPublication(catalog), PlanCarries: cliPlanCarries(catalog)})...)
 	if binding.Roles.Has(roles.Channel) {
 		var sreOps []obchannel.Operation
 		sreOps, closeSRE, err = channelSREOperations(cfg, binding, clientFor("sre")(cfg.RuntimeStoreRedis()))

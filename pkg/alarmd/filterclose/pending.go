@@ -20,8 +20,8 @@ import (
 )
 
 // Pending is the items whose close may have been saved without its
-// outputs: a 5xx other than not_attempted, the link's result_uncertain
-// above all. Such an alert may no longer match status=active, so no filter
+// outputs: a 5xx other than not_attempted and 503, the link's
+// result_uncertain above all. Such an alert may no longer match status=active, so no filter
 // finds it again, and the contract says to retry it by its id with the
 // very same command (b7e5beddf docs/reference/contracts/alert-close.md,
 // "按 filter 批量关闭"). One hash in the runtime Redis, keyed by tenant and
@@ -29,7 +29,7 @@ import (
 // retries what the last one left.
 //
 // Items whose close was certainly not saved - 429 busy, 504 not_attempted,
-// 409 version_conflict - are not kept here: they are still active, and the
+// 503 unavailable, 409 version_conflict - are not kept here: they are still active, and the
 // decision's filter finds them again next round and sends the same command.
 // That keeps every retry of them behind the filter, so an alert that left
 // the decision's bucket in between is not closed by an id remembered from

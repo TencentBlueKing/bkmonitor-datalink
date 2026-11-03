@@ -36,7 +36,7 @@ func TestAFilteredCloseNoticeIsWrittenOncePerStrategyAPeriod(t *testing.T) {
 	report(refused("802"))
 	report(refused("802"))
 	report(refused("804"))
-	report(filterclose.Notice{Outcome: filterclose.OutcomeAlertsTruncated, Scope: filterclose.Scope{TenantID: "system", StrategyID: "802"}, Read: 500})
+	report(filterclose.Notice{Outcome: filterclose.OutcomeAlertsTruncated, Scope: filterclose.Scope{TenantID: "system", StrategyID: "802"}, Read: 500, Elapsed: 1500 * time.Millisecond})
 	at = at.Add(filterCloseReportEvery)
 	report(refused("802"))
 	var lines []map[string]any
@@ -55,7 +55,7 @@ func TestAFilteredCloseNoticeIsWrittenOncePerStrategyAPeriod(t *testing.T) {
 		first["matched"] != float64(48) || first["expect_source"] != filterclose.ExpectOwnRecord || first["held_since_last"] != float64(0) {
 		t.Fatalf("the refusal's line does not place it: %v", first)
 	}
-	if lines[1]["strategy_id"] != "804" || lines[2]["read"] != float64(500) {
+	if lines[1]["strategy_id"] != "804" || lines[2]["read"] != float64(500) || lines[2]["duration_ms"] != float64(1500) {
 		t.Fatalf("another strategy or outcome was held back: %v", lines)
 	}
 	if last["strategy_id"] != "802" || last["held_since_last"] != float64(2) {

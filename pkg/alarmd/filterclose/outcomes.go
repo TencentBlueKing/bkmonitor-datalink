@@ -20,11 +20,20 @@ const (
 	OutcomeJobDone = "job_done"
 	// OutcomeJobDoneRederived is a job whose filter ran out but some of its
 	// items came back certainly not closed (item_rederived: 429, 504
-	// not_attempted, 409 version_conflict): not settled, the caller runs
+	// not_attempted, 409 version_conflict; item_unavailable: 503): not settled, the caller runs
 	// the decision again until it answers job_done or nothing_matched.
 	OutcomeJobDoneRederived = "job_done_rederived"
+	// OutcomeJobDoneRefused is a job whose filter ran out with no item left
+	// to find again, but some refused by the link and still open (400
+	// invalid_command, 403 tenant_mismatch, 409 source_unpublished, a 409
+	// of a code alarmd does not know, any other status): not
+	// settled, so the record keeps their entries; not run again in the
+	// round, since the same command would be refused.
+	OutcomeJobDoneRefused = "job_done_refused"
 	// OutcomeJobIncomplete is a job the round ended, or whose closes reached
-	// the count its dry run checked, before the filter ran out; the next
+	// the count its dry run checked, before the filter ran out - or whose
+	// request got no further (nothing closed, no id newly refused), or whose
+	// dry run had more past ids all refused earlier in the run; the next
 	// round carries on from a new dry run.
 	OutcomeJobIncomplete  = "job_incomplete"
 	OutcomeNothingMatched = "nothing_matched"
@@ -44,15 +53,22 @@ const (
 	OutcomeLinkRefused = "link_refused"
 	// OutcomeLinkFailed is a request that failed, timed out, or answered
 	// 5xx: no decision, next round.
-	OutcomeLinkFailed         = "link_failed"
+	OutcomeLinkFailed = "link_failed"
+	// OutcomeLinkAnswerTooLarge is a request answered 200 past the
+	// client's bound (linkdmanage.ErrAnswerTooLarge): a dry run of more
+	// ids than the bound holds, which a filter matching far past its
+	// expectation answers again every round. No decision; a real close's
+	// ids are kept as for a lost answer.
+	OutcomeLinkAnswerTooLarge = "link_answer_too_large"
 	OutcomeCommandUnavailable = "command_unavailable"
 	OutcomeFilterRefused      = "filter_refused"
 	// OutcomeTargetListTooLarge is a scope close whose current targets do
 	// not fit one filter (ScopeFilter): nothing is sent, no part of it.
 	OutcomeTargetListTooLarge = "target_list_too_large"
-	// OutcomePageLost is a real close page whose whole answer was lost
+	// OutcomePageLost is a real close request whose whole answer was lost
 	// (timeout, reset, 5xx): its candidates, read by the dry run sent just
-	// before it, are kept to be retried by id (item_pending each).
+	// before it, are kept to be retried by id (item_pending each). The word
+	// keeps its name from when a request sent a page.
 	OutcomePageLost = "page_lost"
 
 	// Each item of a filtered close.
@@ -67,6 +83,11 @@ const (
 	// not_attempted, 409 version_conflict - left for the decision's filter
 	// to find again next round.
 	OutcomeItemRederived = "item_rederived"
+	// OutcomeItemUnavailable is a 503: the link refused before the close
+	// ran (its close resources not configured). Certainly not closed and not
+	// kept to retry by id; like item_rederived it leaves the job not
+	// settled, and the next round's filter finds the alert again.
+	OutcomeItemUnavailable = "item_unavailable"
 	// OutcomeItemPending is an item whose close may have been saved (5xx):
 	// kept to be retried by id with its command.
 	OutcomeItemPending          = "item_pending"
@@ -134,20 +155,95 @@ const (
 	// OutcomeAbsentTruncated is a tenant's discovery that found
 	// MaxAbsentPerRound strategies and stopped; the next round goes on.
 	OutcomeAbsentTruncated = "absent_truncated"
+	// OutcomeCloseCapReached is a job whose closes so far leave less than
+	// its next dry run matched: no further request this run, the job
+	// incomplete; the next round checks again. A request closes only ids
+	// its dry run read, so the job's closes stay within what is allowed.
+	OutcomeCloseCapReached = "close_cap_reached"
+	// OutcomeRoundSpent is a job ended before its next request because the
+	// round had less than one request's budget left (RequestBudget):
+	// nothing more sent, nothing more kept; the job incomplete.
+	OutcomeRoundSpent = "round_spent"
+	// OutcomeLinkQueryFailed is a 200 whose later candidate query failed:
+	// the items read before are answered and has_more is set
+	// (error_code query_failed). OutcomeLinkErrorUnknown is a 200 with a
+	// top-level error code alarmd does not know.
+	OutcomeLinkQueryFailed  = "link_query_failed"
+	OutcomeLinkErrorUnknown = "link_error_unknown"
+	// OutcomeItemNotFound is an item the link enumerated and then did not
+	// find to close (404): gone, not closed by this command, nothing to
+	// retry.
+	OutcomeItemNotFound = "item_not_found"
+	// OutcomeItemInvalidCommand (400 invalid_command) and
+	// OutcomeItemTenantMismatch (403 tenant_mismatch) are items the link
+	// refused the command for: not closed, and the same command would be
+	// refused again, so not retried. item_refused is any other 4xx.
+	OutcomeItemInvalidCommand = "item_invalid_command"
+	OutcomeItemTenantMismatch = "item_tenant_mismatch"
+	// OutcomeJobAgain is a job run again within its round because it has
+	// more and its last run closed something (UntilProgressStops).
+	OutcomeJobAgain = "job_again"
 )
+
+// Next is what the caller of a job does after its word (NextAfter): every
+// caller that runs a job again on its own schedule decides from it, so a
+// job the same command would answer the same way is not sent again at that
+// schedule's pace.
+type Next string
+
+const (
+	// NextSettled: the decision is done (job_done, nothing_matched).
+	NextSettled Next = "settled"
+	// NextAgain: the job got somewhere and has more - items to be found
+	// again (job_done_rederived), the round's or a request's time spent,
+	// the expectation's cap reached, a search page left (job_incomplete) -
+	// and the next run goes on from a new dry run.
+	NextAgain Next = "again"
+	// NextTransient: a failure that may clear by itself - the link busy
+	// (link_busy, 429) or not answering (link_failed: timeout, 5xx,
+	// transport, a lost answer whose ids are kept to retry by id), or
+	// alarmd's own Redis read (record_unavailable, command_unavailable).
+	NextTransient Next = "transient"
+	// NextHeld: the same command is answered the same way until something
+	// outside the job changes - items refused (job_done_refused), the
+	// request refused (link_refused), the dry run past the expectation
+	// (expect_exceeded) or the client's bound (link_answer_too_large), a
+	// filter alarmd cannot build (filter_refused, target_list_too_large),
+	// filtered close unsupported (filter_close_unsupported) - and any word
+	// not named here.
+	NextHeld Next = "held"
+)
+
+// NextAfter is the class of a job's word. No word ("") is no job run - a
+// caller's own refusal before it (an inactive close too near its
+// boundary, an edit close that found nothing to close) - and is not a
+// word of this classification: it reads held, so a caller must check for
+// it first and not wait on a job that never ran.
+func NextAfter(word string) Next {
+	switch word {
+	case OutcomeJobDone, OutcomeNothingMatched:
+		return NextSettled
+	case OutcomeJobDoneRederived, OutcomeJobIncomplete:
+		return NextAgain
+	case OutcomeLinkBusy, OutcomeLinkFailed, OutcomeRecordUnavailable, OutcomeCommandUnavailable:
+		return NextTransient
+	}
+	return NextHeld
+}
 
 // Outcomes is every outcome, the edit decisions' words among them.
 var Outcomes = append([]string{
-	OutcomeJobDone, OutcomeJobDoneRederived, OutcomeJobIncomplete, OutcomeNothingMatched, OutcomeExpectExceeded, OutcomeUnsupported, OutcomeLinkBusy,
-	OutcomeLinkRefused, OutcomeLinkFailed, OutcomeCommandUnavailable, OutcomeFilterRefused, OutcomeTargetListTooLarge,
+	OutcomeJobDone, OutcomeJobDoneRederived, OutcomeJobDoneRefused, OutcomeJobIncomplete, OutcomeNothingMatched, OutcomeExpectExceeded, OutcomeUnsupported, OutcomeLinkBusy,
+	OutcomeLinkRefused, OutcomeLinkFailed, OutcomeLinkAnswerTooLarge, OutcomeCommandUnavailable, OutcomeFilterRefused, OutcomeTargetListTooLarge,
 	OutcomePageLost, OutcomeItemClosed, OutcomeItemAlreadyClosed, OutcomeItemEndedOtherwise, OutcomeItemSourceUnpublished, OutcomeItemConflictUnknown,
-	OutcomeItemRederived, OutcomeItemPending, OutcomeItemPendingFull, OutcomeItemPendingLost, OutcomeItemRefused,
+	OutcomeItemRederived, OutcomeItemUnavailable, OutcomeItemPending, OutcomeItemPendingFull, OutcomeItemPendingLost, OutcomeItemRefused,
 	OutcomePendingClosed, OutcomePendingAlreadyClosed, OutcomePendingEndedOther, OutcomePendingLeftDecision, OutcomePendingNotFound,
 	OutcomePendingRetryFailed, OutcomePendingGivenUp, OutcomePendingRefused, OutcomePendingUnreadable, OutcomePendingUnavailable,
 	OutcomeExpectDecidedIDs, OutcomeExpectOwnRecord,
 	OutcomeRecordMissing, OutcomeRecordTruncated, OutcomeRecordUnavailable, OutcomeRecordPruned, OutcomeRecordPruneFailed,
 	OutcomeBucketsTruncated, OutcomeDigestMismatch, OutcomeFamilyMismatch, OutcomeSampleUnreadable, OutcomeAlertsRead, OutcomeAlertsTruncated,
 	OutcomeAlertDecidedClose, OutcomeAbsentTruncated, OutcomeWalkRemembered, OutcomeWalkReopened,
+	OutcomeCloseCapReached, OutcomeRoundSpent, OutcomeLinkQueryFailed, OutcomeLinkErrorUnknown, OutcomeItemNotFound, OutcomeItemInvalidCommand, OutcomeItemTenantMismatch, OutcomeJobAgain,
 }, editWords()...)
 
 func editWords() []string {

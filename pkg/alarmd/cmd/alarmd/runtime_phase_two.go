@@ -225,7 +225,7 @@ func runPhaseTwoApplicationWithDependencies(
 	// The collector budget rides on the same line. Nothing outside the process
 	// can set it, so this and the facts table are the only two places anyone
 	// reading a running Pod can find out what the collector was told.
-	logger.Info(observability.StageStartup, observability.ResultStarted, 0, 0,
+	logger.InfoEvent(observability.StageStartup, observability.ResultStarted, 0,
 		slog.String("diagnostics_listen", cfg.HTTP.DiagnosticsFact()),
 		slog.Int64("go_memory_limit_bytes", profile.Capacity.GoMemoryLimitBytes),
 		slog.Int("go_gc_percent", profile.Capacity.GoGCPercent),
@@ -234,7 +234,7 @@ func runPhaseTwoApplicationWithDependencies(
 	// from the generic one: counted on canonical_encoding_records_shadow_total
 	// and said here at most once a minute. The generic digest was returned.
 	contract.SetRecordsDigestDivergenceReporter(func(divergence contract.RecordsDigestDivergence) {
-		logger.Warn("canonical_encoder", "records_digest_differed", divergence.Records, 0,
+		logger.WarnEvent("canonical_encoder", "records_digest_differed", divergence.Records,
 			slog.String("domain", divergence.Domain), slog.String("served", divergence.Served),
 			slog.String("established", divergence.Established))
 	})
@@ -246,7 +246,7 @@ func runPhaseTwoApplicationWithDependencies(
 		if errors.Is(err, clirelease.ErrInvalid) {
 			result = "invalid"
 		}
-		logger.Warn("cli_release", result, 0, 0, slog.String("error", err.Error()))
+		logger.WarnEvent("cli_release", result, 0, slog.String("error", err.Error()))
 	}
 	server, err := dependencies.newHTTP(recorder, application, httpSurfaceOf(cfg))
 	if err != nil {
@@ -385,9 +385,9 @@ func runPhaseTwoApplicationWithDependencies(
 		normalizeRuntimeShutdownError(httpErr, httpStoppedEarly),
 	)
 	if result == nil {
-		logger.Info(observability.StageShutdown, observability.ResultSuccess, 0, 0)
+		logger.InfoEvent(observability.StageShutdown, observability.ResultSuccess, 0)
 	} else {
-		logger.Error(observability.StageShutdown, observability.ResultFailed, 0, 0)
+		logger.ErrorEvent(observability.StageShutdown, observability.ResultFailed, 0)
 	}
 	return result
 }
@@ -4531,7 +4531,8 @@ func phaseTwoRuntimeObserver(observer observability.Observer) observability.Obse
 		observeRuntime(ctx, observer, observability.Observation{
 			Component: observability.ComponentOwnership, Stage: observability.StageFenceChecked,
 			Result: observation.Result, Operation: observation.Operation,
-			ReasonCode: observation.ReasonCode, Duration: observation.Duration, Trace: observation.Trace, Err: observation.Err,
+			ReasonCode: observation.ReasonCode, Duration: observation.Duration, DurationKnown: observation.DurationKnown,
+			Trace: observation.Trace, Err: observation.Err,
 		})
 	})
 }

@@ -253,6 +253,7 @@ var checkWords = map[Check]wordPair{
 	// group at rest or data gone missing; the row says the answer cannot
 	// tell them apart.
 	CheckLogCountEmpty: {StateDetecting, ActionNone},
+	CheckFilteredEmpty: {StateDetecting, ActionNone},
 	// Detecting what came back; the grouping is the strategy's to narrow.
 	CheckAnswerTruncated: {StateDetecting, ActionStrategyEdit},
 	// Detecting; whose the unreadable source is, the maintainer finds out.

@@ -16,7 +16,9 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 
@@ -118,12 +120,105 @@ func TestDiscoverOverAHundredOwnersFinishesInsideTheDeadline(t *testing.T) {
 	}
 }
 
+// A Pod whose Job was deleted while the Pod was kept names an owner the
+// apiserver no longer has. Through the production client that is the
+// apiserver's 404: the discovery leaves that Pod out by name and returns
+// every other Pod of the namespace, where it used to fail whole. A failure
+// of the apiserver itself still fails the page.
+func TestDiscoverLeavesOutAPodWhoseOwnerIsGone(t *testing.T) {
+	pods := scalePods(3)
+	orphan := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ns1", Name: "close-validate-x7", UID: "pod-orphan", Labels: map[string]string{"job-name": "close-validate"},
+		OwnerReferences: []metav1.OwnerReference{controllerRef("Job", "close-validate", "job-gone")}},
+		Spec:   corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img:1"}}},
+		Status: corev1.PodStatus{Phase: corev1.PodSucceeded}}
+	pods = append(pods[:1], append([]corev1.Pod{orphan}, pods[1:]...)...)
+	var mu sync.Mutex
+	failOwners := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/namespaces/ns1/pods" {
+			_ = json.NewEncoder(w).Encode(corev1.PodList{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "PodList"}, Items: pods})
+			return
+		}
+		mu.Lock()
+		fail := failOwners
+		mu.Unlock()
+		if fail {
+			http.Error(w, "etcd unavailable", http.StatusInternalServerError)
+			return
+		}
+		parts := strings.Split(r.URL.Path, "/")
+		if len(parts) != 8 {
+			http.NotFound(w, r)
+			return
+		}
+		kind := map[string]string{"replicasets": "ReplicaSet", "deployments": "Deployment"}[parts[6]]
+		owner, ok := scaleOwner(kind, parts[7])
+		if !ok {
+			// jobs/close-validate: deleted.
+			http.NotFound(w, r)
+			return
+		}
+		object := map[string]any{"apiVersion": "apps/v1", "kind": kind, "metadata": map[string]any{"name": owner.Name, "namespace": owner.Namespace, "uid": owner.UID, "labels": owner.Labels, "ownerReferences": owner.Owners},
+			"spec": map[string]any{"selector": owner.Selector}}
+		_ = json.NewEncoder(w).Encode(object)
+	}))
+	defer server.Close()
+	client, err := NewKubernetesClient(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := mustProvider(t, Options{Client: client})
+	result, err := provider.Discover(testwait.Context(t), DiscoverRequest{Namespace: "ns1"})
+	if err != nil {
+		t.Fatalf("one orphan Pod failed the whole namespace: %v", err)
+	}
+	if len(result.Targets) != 3 || result.Rejected != 1 || len(result.RejectedPods) != 1 {
+		t.Fatalf("targets=%d rejected=%d named=%+v, want the 3 Deployments' Pods and the orphan left out", len(result.Targets), result.Rejected, result.RejectedPods)
+	}
+	if got := result.RejectedPods[0]; got.Pod != "close-validate-x7" || got.Reason != RejectedOwnerNotFound || got.Message == "" {
+		t.Fatalf("rejected pod %+v, want close-validate-x7 named owner_not_found with the provider's words", got)
+	}
+
+	mu.Lock()
+	failOwners = true
+	mu.Unlock()
+	if _, err := provider.Discover(testwait.Context(t), DiscoverRequest{Namespace: "ns1"}); err == nil {
+		t.Fatal("an apiserver failing every owner read gave a page of left-out Pods")
+	} else {
+		requireCode(t, err, CodeAPIError)
+	}
+}
+
+// A page names at most MaxRejectedNamed of the Pods it left out and counts
+// them all.
+func TestDiscoverNamesABoundedNumberOfLeftOutPods(t *testing.T) {
+	var pods []corev1.Pod
+	for i := 0; i < MaxRejectedNamed+5; i++ {
+		pods = append(pods, corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ns1", Name: fmt.Sprintf("orphan-%02d", i), UID: types.UID(fmt.Sprintf("o-%d", i)),
+			OwnerReferences: []metav1.OwnerReference{controllerRef("Job", fmt.Sprintf("gone-%02d", i), fmt.Sprintf("job-%d", i))}},
+			Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main"}}}})
+	}
+	client := &countingClient{pods: pods, reads: map[string]int{}, missing: true}
+	provider := mustProvider(t, Options{Client: client})
+	result, err := provider.Discover(context.Background(), DiscoverRequest{Namespace: "ns1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Rejected != MaxRejectedNamed+5 || len(result.RejectedPods) != MaxRejectedNamed || len(result.Targets) != 0 {
+		t.Fatalf("rejected=%d named=%d targets=%d", result.Rejected, len(result.RejectedPods), len(result.Targets))
+	}
+}
+
 // countingClient serves a namespace of many Pods and counts owner reads.
 type countingClient struct {
 	mu     sync.Mutex
 	pods   []corev1.Pod
 	owners map[string]OwnerResource
 	reads  map[string]int
+	// missing answers an owner it does not serve as the apiserver's
+	// not-found rather than a transport error.
+	missing bool
 }
 
 func (c *countingClient) ListPods(ctx context.Context, namespace string, options metav1.ListOptions) (*corev1.PodList, error) {
@@ -141,6 +236,9 @@ func (c *countingClient) GetOwner(ctx context.Context, namespace string, ref met
 	}
 	if owner, ok := scaleOwner(ref.Kind, ref.Name); ok {
 		return owner, nil
+	}
+	if c.missing {
+		return OwnerResource{}, apierrors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, ref.Name)
 	}
 	return OwnerResource{}, fmt.Errorf("no owner %s/%s", ref.Kind, ref.Name)
 }

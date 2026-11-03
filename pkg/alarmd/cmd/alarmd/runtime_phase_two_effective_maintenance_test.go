@@ -20,7 +20,10 @@ import (
 )
 
 type maintenanceTestCatalog struct {
-	plans        []controlplane.MaintenancePlan
+	plans []controlplane.MaintenancePlan
+	// byGroup, where it names a Query Group, is that one's Plans in place
+	// of plans.
+	byGroup      map[execution.QueryGroupIdentity][]controlplane.MaintenancePlan
 	uncompilable int
 	// until is the end of the Segment the Plans are read from, zero open.
 	until execution.EvaluationTime
@@ -31,7 +34,7 @@ type maintenanceTestCatalog struct {
 	took func(context.Context) error
 }
 
-func (c *maintenanceTestCatalog) CurrentPlans(ctx context.Context, _ execution.QueryGroupIdentity, _ execution.EvaluationTime) (controlplane.MaintenancePlans, error) {
+func (c *maintenanceTestCatalog) CurrentPlans(ctx context.Context, qg execution.QueryGroupIdentity, _ execution.EvaluationTime) (controlplane.MaintenancePlans, error) {
 	c.reads++
 	if c.took != nil {
 		if err := c.took(ctx); err != nil {
@@ -41,7 +44,11 @@ func (c *maintenanceTestCatalog) CurrentPlans(ctx context.Context, _ execution.Q
 	if c.err != nil {
 		return controlplane.MaintenancePlans{}, c.err
 	}
-	return controlplane.MaintenancePlans{Plans: c.plans, Uncompilable: c.uncompilable, Until: c.until}, nil
+	plans := c.plans
+	if own, named := c.byGroup[qg]; named {
+		plans = own
+	}
+	return controlplane.MaintenancePlans{Plans: plans, Uncompilable: c.uncompilable, Until: c.until}, nil
 }
 
 type maintenanceTestRunner struct {
@@ -280,8 +287,8 @@ func TestEffectiveMaintenanceClosesOncePerInactivePeriodAndConfirmsOnce(t *testi
 	f.matchAgain("later")
 	f.advance(10 * time.Minute)
 	f.m.step(context.Background())
-	// Two passes, each a dry run, the page's dry run and the close.
-	if requests := f.stub.requests("/api/v1/alerts/close"); len(f.closed()) != 2 || len(requests) != 6 {
+	// Two passes, each a dry run and the close.
+	if requests := f.stub.requests("/api/v1/alerts/close"); len(f.closed()) != 2 || len(requests) != 4 {
 		t.Fatalf("requests %d (closes %d) after the confirming pass, want the version left alone", len(requests), len(f.closed()))
 	}
 	// Active again, then inactive: a new period.
@@ -314,8 +321,16 @@ func TestEffectiveMaintenanceClosesOncePerInactivePeriodAndConfirmsOnce(t *testi
 	if g.m.Stats()[closeOutcomeNotSettled] != 1 || len(g.closed()) != 0 {
 		t.Fatalf("stats %v closes %v, want the busy link counted not settled", g.m.Stats(), g.closed())
 	}
+	// Not settled, and not sent again at the step's pace either: a busy
+	// link waits inactiveRefusedRetry (filterclose.NextTransient), then
+	// the close is sent again.
 	g.stub.busy = false
 	g.advance(time.Second)
+	g.m.step(context.Background())
+	if len(g.closed()) != 0 {
+		t.Fatal("a close the busy link answered was sent again the next step")
+	}
+	g.advance(inactiveRefusedRetry)
 	g.m.step(context.Background())
 	if len(g.closed()) != 1 {
 		t.Fatal("a close the link did not settle was remembered as done")
@@ -346,7 +361,11 @@ func TestEffectiveMaintenanceCountsALinkThatCannotCloseByFilter(t *testing.T) {
 	if f.m.Stats()[closeOutcomeUnsupported] != 1 || len(f.closed()) != 0 {
 		t.Fatalf("stats %v closes %v, want close_unsupported and nothing closed", f.m.Stats(), f.closed())
 	}
+	// Held as any close that got nowhere (inactiveRefusedRetry): the next
+	// step past the hold, without the link's control plane, counts it
+	// unrouted.
 	f.m.filter = nil
+	f.advance(inactiveRefusedRetry)
 	f.m.step(context.Background())
 	if f.m.Stats()[closeOutcomeUnrouted] != 1 {
 		t.Fatalf("stats %v, want close_unrouted without the link's control plane", f.m.Stats())

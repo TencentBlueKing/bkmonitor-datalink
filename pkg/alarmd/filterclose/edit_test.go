@@ -221,13 +221,14 @@ func spread(id string, mod uint32) bool {
 }
 
 // faulty makes the link answer as it does under load: every 17th
-// request of a route 429, at most 60 items attempted per filtered close
-// (the rest 504 not_attempted), and on its first attempt an alert now and
-// then busy, in a version conflict, closed with an uncertain answer, or
-// not closed with an uncertain answer.
+// request of a route 429, a filtered close's budget spent after 1000
+// attempts with 100 more enumerated and answered 504 not_attempted, a dry
+// run's after 1000 matches (has_more), and on its first attempt an alert
+// now and then busy, in a version conflict, closed with an uncertain
+// answer, or not closed with an uncertain answer.
 func faulty(link *fakeLink) {
 	link.requestBusy = func(_ string, n int) bool { return n%17 == 0 }
-	link.attemptBudget = 60
+	link.closeBudget, link.notAttempted, link.dryBudget = 1000, 100, 1000
 	link.itemFault = func(id string, n int) string {
 		if n > 0 {
 			return ""
@@ -247,12 +248,16 @@ func faulty(link *fakeLink) {
 }
 
 // bigBucket is 36,000 alerts in an orphaned bucket and 1,000 in a kept one.
-func bigBucket(h *harness) {
+func bigBucket(h *harness) { orphanedBucket(h, 36000, 1000) }
+
+// orphanedBucket is orphaned alerts in an orphaned bucket and kept ones in a kept
+// bucket after them.
+func orphanedBucket(h *harness, orphaned, kept int) {
 	old, current := factsOf("m4"), factsOf("m5")
-	for i := 0; i < 36000; i++ {
+	for i := 0; i < orphaned; i++ {
 		h.link.add(opened(alertID(i), "4", old, false, "critical", map[string]string{"bk_target_ip": fmt.Sprintf("192.0.2.%d", i%250)}))
 	}
-	for i := 36000; i < 37000; i++ {
+	for i := orphaned; i < orphaned+kept; i++ {
 		h.link.add(opened(alertID(i), "4", current, false, "critical", nil))
 	}
 }
@@ -261,24 +266,29 @@ func bigBucket(h *harness) {
 // outputs answered, no kept alert was closed, and nothing is pending.
 func settled(t *testing.T, h *harness, closer *Closer) bool {
 	t.Helper()
+	return settledOf(t, h, closer, 36000, 1000)
+}
+
+func settledOf(t *testing.T, h *harness, closer *Closer, orphaned, kept int) bool {
+	t.Helper()
 	h.link.mu.Lock()
 	defer h.link.mu.Unlock()
 	done := true
-	for i := 0; i < 37000; i++ {
+	for i := 0; i < orphaned+kept; i++ {
 		alert := h.link.alerts[alertID(i)]
 		switch {
-		case i >= 36000 && alert.closes != 0:
+		case i >= orphaned && alert.closes != 0:
 			t.Fatalf("%s outside the decision closed", alert.id)
 		case alert.closes > 1:
 			t.Fatalf("%s closed %d times", alert.id, alert.closes)
-		case i < 36000 && (alert.closes != 1 || !alert.completed):
+		case i < orphaned && (alert.closes != 1 || !alert.completed):
 			done = false
 		}
 	}
 	return done && closer.PendingSize(context.Background()) == 0
 }
 
-// A bucket of 36,000 alerts served 100 a page by a link that answers 429,
+// A bucket of 36,000 alerts at a link that answers 429,
 // 504 not_attempted, version conflicts and uncertain results eventually
 // closes whole: every alert once, its outputs answered, nothing outside the
 // filter. Busy and unattempted items are found again by the filter and
@@ -306,16 +316,21 @@ func TestABigBucketUnderLoadClosesWholeAndOnce(t *testing.T) {
 	}
 }
 
-// A leader that stops partway - pages done, items pending - is followed by
-// another with nothing in memory: it re-derives the cursor from the filter,
-// retries the pending items from the runtime Redis with their stored
-// commands, and the bucket closes whole and once. The link never sees one
+// A leader that stops partway - requests done, items pending - is followed
+// by another with nothing in memory: it runs the same filter again (the link
+// keeps no cursor), retries the pending items from the runtime Redis with
+// their stored commands, and the bucket closes whole and once. The link never sees one
 // operation id with two contents.
 func TestANewLeaderCarriesOnWhereTheLastStopped(t *testing.T) {
+	const orphaned, kept = 3600, 100
 	h := newHarness(t)
-	bigBucket(h)
-	h.opened(t, "41", "4", nil, fingerprints(0, 37000)...)
+	orphanedBucket(h, orphaned, kept)
+	h.opened(t, "41", "4", nil, fingerprints(0, orphaned+kept)...)
 	faulty(h.link)
+	// The bucket a tenth of TestABigBucketUnderLoadClosesWholeAndOnce's, the
+	// link's budgets with it: a dry run reads at least what a close may
+	// reach, as the link's own dry run, closing nothing, does.
+	h.link.closeBudget, h.link.notAttempted, h.link.dryBudget = 100, 10, 110
 	input := EditInput{Scope: testScope, Plan: currentPlan()}
 	first := h.closer(t)
 	// The first leader runs rounds until it has closed some and kept some,
@@ -329,7 +344,7 @@ func TestANewLeaderCarriesOnWhereTheLastStopped(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	h.link.beforeClose = func(*fakeLink, *http.Request) { cancel() }
 	first.Edit(ctx, input)
-	if settled(t, h, first) {
+	if settledOf(t, h, first, orphaned, kept) {
 		t.Fatal("the first leader finished")
 	}
 	h.link.beforeClose = nil
@@ -341,7 +356,7 @@ func TestANewLeaderCarriesOnWhereTheLastStopped(t *testing.T) {
 		}
 		second.RetryPending(context.Background(), 5000)
 		second.Edit(context.Background(), input)
-		if settled(t, h, second) {
+		if settledOf(t, h, second, orphaned, kept) {
 			break
 		}
 	}

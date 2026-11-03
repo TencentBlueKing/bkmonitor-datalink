@@ -258,6 +258,12 @@
     "owner": "STRATEGY"
   },
   {
+    "check": "FILTERED_EMPTY",
+    "state": "DETECTING",
+    "action": "NONE",
+    "owner": "STRATEGY"
+  },
+  {
     "check": "SERIES_SPARSER_THAN_WINDOW",
     "state": "DETECTING",
     "action": "NONE",

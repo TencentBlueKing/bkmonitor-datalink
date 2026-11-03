@@ -32,7 +32,7 @@ const (
 // is silent -- a kind the page has no word for renders as whichever word the
 // fallback happens to be, which reads as an ordinary row of a familiar kind.
 // That is worse than showing the raw name, so the page is checked against this.
-var AnomalyKinds = []string{KindDegradedRun, KindBlockedRun, KindOverdueWake, KindQueryCooldown, KindSkippedSpan, KindNoData, KindEmptyEveryRound, KindQuiet, KindLogCountEmpty, KindAnswerTruncated, KindSourceUnknownHeld, KindNewAlertsBurst, KindRetainedShareApproaching, KindReadBeforeComplete, KindReadHeld, KindLatePastRound, KindLateSeriesMissed}
+var AnomalyKinds = []string{KindDegradedRun, KindBlockedRun, KindOverdueWake, KindQueryCooldown, KindSkippedSpan, KindNoData, KindEmptyEveryRound, KindQuiet, KindLogCountEmpty, KindFilteredEmpty, KindAnswerTruncated, KindSourceUnknownHeld, KindNewAlertsBurst, KindRetainedShareApproaching, KindReadBeforeComplete, KindReadHeld, KindLatePastRound, KindLateSeriesMissed}
 
 // SinceSources is the closed set of start-time provenances this build produces.
 //
@@ -205,4 +205,7 @@ var ResultContractRefusals = []string{
 	"EVENT_MISSING_FOR_BUSINESS_OUTCOME",
 	"EVENT_HELD_ON_NON_RECOVERY_OUTCOME",
 	"EVENT_HELD_DISAGREES_ACROSS_LEVELS",
+	"EVENT_OMITTED_ON_NON_RECOVERY_OUTCOME",
+	"EVENT_OMITTED_EVERY_RECOVERY",
+	"EVENT_CARRIES_OMITTED_LEVEL",
 }

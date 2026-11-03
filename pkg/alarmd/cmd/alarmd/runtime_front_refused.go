@@ -60,7 +60,7 @@ func frontRefusedLine(logger *observability.Logger, now func() time.Time) func(c
 		last[key] = at
 		delete(held, key)
 		mu.Unlock()
-		logger.Warn("front_read_refused", code, 0, 0, slog.String("code", code), slog.String("operation", operation),
+		logger.WarnEvent("front_read_refused", code, 0, slog.String("code", code), slog.String("operation", operation),
 			slog.Int("held_since_last", suppressed))
 	}
 }

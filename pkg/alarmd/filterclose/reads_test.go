@@ -12,6 +12,7 @@ package filterclose
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -118,10 +119,11 @@ func TestASampleWhoseFactsAreNotItsDigestDecidesNothing(t *testing.T) {
 	}
 }
 
-// The closes of a job stop at the count its dry run checked: matches that
-// grow between the dry run and the close are not closed under it, and the
-// job says it is incomplete, so the next round checks again.
-func TestClosesStopAtWhatTheDryRunChecked(t *testing.T) {
+// A real close closes only the ids its dry run read: alerts that match
+// between the dry run and the close are not closed by it, however many,
+// so the job's closes never pass what the expectation allows (a dry run
+// past it is refused before a close; a close is narrowed after one).
+func TestClosesStayWithinTheExpectation(t *testing.T) {
 	h := newHarness(t)
 	for i := 0; i < 30; i++ {
 		h.link.add(&fakeAlert{id: alertID(i), labels: map[string]string{"strategy_id": "41", "strategy_version": "3"}})
@@ -134,24 +136,24 @@ func TestClosesStopAtWhatTheDryRunChecked(t *testing.T) {
 		}
 		grown = true
 		for i := 30; i < 80; i++ {
-			// Ids that sort before the checked ones: the close's page
-			// meets them first.
+			// Ids that sort before the checked ones: an unnarrowed close
+			// would meet them first.
 			id := "a-" + alertID(i)
 			link.alerts[id] = &fakeAlert{id: id, status: "active", tenant: "tenant-a", source: "built_in_bk", created: fakeOpenedAt,
 				labels: map[string]string{"strategy_id": "41", "strategy_version": "3"}}
 		}
 		link.sorted = nil
 	}
+	h.link.closeBudget = 60
 	closer := h.closer(t)
-	if word := closer.Inactive(context.Background(), testScope, "3", 3, fakeOpenedAt, testPeriod); word != OutcomeJobIncomplete {
-		t.Fatalf("word %s, want job_incomplete (stats %v)", word, nonZero(closer.Stats()))
+	if word := closer.Inactive(context.Background(), testScope, "3", 3, fakeOpenedAt, testPeriod); word != OutcomeJobDone {
+		t.Fatalf("word %s, want job_done for the 30 the dry run read (stats %v)", word, nonZero(closer.Stats()))
 	}
-	closed := 0
-	for _, alert := range h.link.alerts {
-		closed += alert.closes
-	}
-	if closed != 30 {
-		t.Fatalf("closed %d, want the 30 the dry run checked", closed)
+	for id, alert := range h.link.alerts {
+		grownID := strings.HasPrefix(id, "a-")
+		if grownID && alert.closes != 0 || !grownID && alert.closes != 1 {
+			t.Fatalf("%s closed %d times: want the 30 read once each and none of the 50 grown after (stats %v)", id, alert.closes, nonZero(closer.Stats()))
+		}
 	}
 }
 

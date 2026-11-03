@@ -749,6 +749,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("query_cooldown_saves_total")] = len(QueryCooldownSaveResults)
 	bounds[fqName("fleet_control_facts_writes_total")] = len(ControlFactsWriteResults)
 	bounds[fqName("fleet_plan_carries_reads_total")] = len(PlanCarriesReadResults)
+	bounds[fqName("linkd_filter_close_request_seconds")] = histogramSeries(2*len(filterclose.RequestResults), len(linkdFilterCloseRequestBuckets))
 	bounds[fqName("query_cooldown_loads_total")] = len(QueryCooldownLoadResults)
 	bounds[fqName("event_business_attribution_total")] = len(contract.BusinessAttributionSources)
 	bounds[fqName("event_detection_snapshots_total")] = len(DetectionSnapshotResults)
@@ -1110,20 +1111,32 @@ func TestQueryCooldownLoadResultsArePreCreated(t *testing.T) {
 	}
 }
 
-// close_acked and close_sent are what the broker took, not what the link
-// did with it. The producer's answer is the broker's acknowledgement: it
-// cannot tell a close the link acted on from one the link found no active
-// alert for (orphaned), so every close family's help says it counts the
-// sends acknowledged, those among them, and does not say none is left open.
-func TestTheCloseHelpsCountSendsTheBrokerAcknowledged(t *testing.T) {
-	for family, help := range map[string]string{
-		"target_scope_close_total":    newTargetScopeCloseCollector().outcomeIs.String(),
-		"strategy_edit_close_total":   newEditCloseCollector().outcomeIs.String(),
-		"absent_strategy_close_total": newAbsentCloseCollector().outcomeIs.String(),
-	} {
-		if strings.Contains(help, "left open") || !strings.Contains(help, "acknowledged by the broker") || !strings.Contains(help, "(orphaned there)") {
-			t.Fatalf("%s help = %s, want the sends the broker acknowledged counted, closes the link finds nothing active for among them", family, help)
+// Every close goes through the link's filtered close, so no close help
+// counts a broker's acknowledgement: the target scope close's close_sent is
+// a close the link settled, nothing active found among them; the edit
+// close counts its rounds and strategies and leaves what its closes did to
+// linkd_filter_close_total; the absent close's send is a close answered
+// item by item, which does not say the link closed anything. None says
+// none is left open.
+func TestTheCloseHelpsSayWhatTheFilteredCloseCounts(t *testing.T) {
+	target := newTargetScopeCloseCollector().outcomeIs.String()
+	edit := newEditCloseCollector().outcomeIs.String()
+	for family, help := range map[string]string{"target_scope_close_total": target, "strategy_edit_close_total": edit,
+		"absent_strategy_close_total": newAbsentCloseCollector().outcomeIs.String()} {
+		if strings.Contains(help, "left open") || strings.Contains(help, "broker") || strings.Contains(help, "acknowledg") {
+			t.Fatalf("%s help = %s, want no broker acknowledgement and nothing said to be left open", family, help)
 		}
+	}
+	if !strings.Contains(target, "closes the link's filtered close settled") || !strings.Contains(target, "found nothing active of it") {
+		t.Fatalf("target_scope_close_total help = %s, want close_sent a close the link settled, nothing active found among them", target)
+	}
+	if !strings.Contains(edit, "linkd_filter_close_total") || !strings.Contains(edit, "they stay zero") {
+		t.Fatalf("strategy_edit_close_total help = %s, want what the closes did read on linkd_filter_close_total", edit)
+	}
+	absent := newAbsentCloseCollector().outcomeIs.String()
+	if strings.Contains(absent, "left open") || !strings.Contains(absent, "whose items the link answered") ||
+		!strings.Contains(absent, "neither says the link closed anything") || strings.Contains(absent, "reconcile still lists") {
+		t.Fatalf("absent_strategy_close_total help = %s, want a send counted as a close the link answered item by item, not as one it closed", absent)
 	}
 }
 

@@ -585,11 +585,11 @@ func overdueEpisodeObserver(logger *observability.Logger, recorder *metric.Recor
 		if began {
 			result = "began"
 		}
-		write := logger.Warn
+		write := logger.WarnEvent
 		if hold == "positive" {
-			write = logger.Info
+			write = logger.InfoEvent
 		}
-		write("fleet_overdue_episode", result, 0, 0, slog.String("query_group", episode.QueryGroup),
+		write("fleet_overdue_episode", result, 0, slog.String("query_group", episode.QueryGroup),
 			slog.String("hold", hold), slog.Int64("read_hold_ms", episode.ReadHoldMillis),
 			slog.Time("due_at", episode.DueAt), slog.Int64("interval_seconds", episode.IntervalSeconds),
 			slog.Time("onset", episode.Onset), slog.Int("strategies", len(episode.Strategies)))

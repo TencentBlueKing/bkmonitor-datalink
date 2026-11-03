@@ -55,10 +55,17 @@ const (
 	// OutcomeUnconfirmed counts first observations: an old fingerprint of
 	// an open alert offered by one Slot, waiting for a second.
 	OutcomeUnconfirmed = "unconfirmed"
-	// OutcomeSendFailed counts entries the link did not settle - busy,
-	// failed, refused, past the expectation, items left to be found again
-	// (job_done_rederived) - kept and tried next step.
+	// OutcomeSendFailed counts entries the link did not settle but may
+	// next step - busy or failing (filterclose.NextTransient), items left
+	// to be found again or a close cut short (filterclose.NextAgain) - kept
+	// and tried next step.
 	OutcomeSendFailed = "send_failed"
+	// OutcomeRefused counts entries whose close the same command would be
+	// answered the same way again (filterclose.NextHeld: items refused,
+	// the request refused, the dry run past the expectation or the
+	// client's bound, a filter that cannot be built): kept, and not sent
+	// again until RefusedRetry after.
+	OutcomeRefused = "close_refused"
 	// OutcomeUnsupported counts entries not closed because filtered close
 	// is unsupported: the link answered 501, 404 or 405. Nothing else
 	// closes them.
@@ -86,8 +93,17 @@ const (
 )
 
 // Outcomes lists every outcome, for the metric that pre-creates them.
-var Outcomes = []string{OutcomeCloseSent, OutcomeUnconfirmed, OutcomeSendFailed, OutcomeUnsupported, OutcomeUnrouted,
+var Outcomes = []string{OutcomeCloseSent, OutcomeUnconfirmed, OutcomeSendFailed, OutcomeRefused, OutcomeUnsupported, OutcomeUnrouted,
 	OutcomeMemoryFull, OutcomeStaleDeferred, OutcomeIdentityInvalid, OutcomeObservationExpired, OutcomeSupersededCloseSent}
+
+// RefusedRetry is how long a close the link answered held
+// (OutcomeRefused) waits before it is sent again. Every step - every 30 s -
+// sent it again before, a dry run and a real close each time, and the same
+// command is answered the same way. A fixed interval, as the inactive
+// close's: one close per group per interval is little for the link, and a
+// refusal that can clear (the source published again, the record caught
+// up with the link) is picked up within it.
+const RefusedRetry = 5 * time.Minute
 
 // The bounds of what the facts carry.
 const (
@@ -168,6 +184,9 @@ type entry struct {
 	lastSeen   time.Time
 	// ttl is how long the observation waits for its second (lifetime).
 	ttl time.Duration
+	// heldUntil is until when its close is not sent again: its last close
+	// was answered held (OutcomeRefused). Zero when it was not.
+	heldUntil time.Time
 }
 
 // lifetime is how long an observation of offer waits for its second: two of
@@ -282,6 +301,11 @@ func (closer *Closer) Observe(offer Offer) {
 		return
 	}
 	existing.lastSeen = now
+	if existing.revision != offer.StrategyRevision {
+		// Another revision is another decision, closed by another command:
+		// what held the last one does not hold it.
+		existing.heldUntil = time.Time{}
+	}
 	existing.revision = offer.StrategyRevision
 	existing.ttl = closer.lifetime(offer)
 	if offer.Round != existing.firstRound {
@@ -333,7 +357,7 @@ func (closer *Closer) Step(ctx context.Context) {
 		closer.mu.Lock()
 		e := closer.entries[ek]
 		closer.mu.Unlock()
-		if e == nil {
+		if e == nil || now.Before(e.heldUntil) {
 			continue
 		}
 		if now.Sub(e.lastSeen) > closer.options.Freshness {
@@ -367,8 +391,10 @@ func (closer *Closer) Step(ctx context.Context) {
 }
 
 // closeGroup runs one group's filter close and decides its entries by the
-// word: done or matching nothing decides them; filtered close unsupported
-// counts them; anything else keeps them for the next step.
+// word (filterclose.NextAfter): done or matching nothing decides them;
+// filtered close unsupported counts them; a word the same command would
+// answer again holds them for RefusedRetry; anything else - transient, or
+// a close that got somewhere - keeps them for the next step.
 func (closer *Closer) closeGroup(ctx context.Context, link Link, source string, g group, keys []entryKey, now time.Time) {
 	scope := filterclose.Scope{TenantID: g.key.TenantID, EventSourceID: source, StrategyID: g.key.StrategyID}
 	closer.mu.Lock()
@@ -385,14 +411,30 @@ func (closer *Closer) closeGroup(ctx context.Context, link Link, source string, 
 	}
 	closer.mu.Unlock()
 	sort.Strings(fingerprints)
-	switch link.Fingerprints(ctx, scope, fingerprints, DecisionSuperseded, g.revision, decidedAt) {
-	case filterclose.OutcomeJobDone, filterclose.OutcomeNothingMatched:
+	word := link.Fingerprints(ctx, scope, fingerprints, DecisionSuperseded, g.revision, decidedAt)
+	switch next := filterclose.NextAfter(word); {
+	case next == filterclose.NextSettled:
 		closer.decide(keys, now)
-	case filterclose.OutcomeUnsupported:
+	case word == filterclose.OutcomeUnsupported:
 		closer.countEach(keys, OutcomeUnsupported)
+	case next == filterclose.NextHeld:
+		closer.hold(keys, now.Add(RefusedRetry))
 	default:
 		// Kept: the next step runs the filter again, from a new dry run.
 		closer.countEach(keys, OutcomeSendFailed)
+	}
+}
+
+// hold keeps the entries and holds their close until until, counted
+// OutcomeRefused.
+func (closer *Closer) hold(keys []entryKey, until time.Time) {
+	closer.mu.Lock()
+	defer closer.mu.Unlock()
+	for _, ek := range keys {
+		if e := closer.entries[ek]; e != nil {
+			e.heldUntil = until
+		}
+		closer.countLocked(ek.key, OutcomeRefused, 1)
 	}
 }
 

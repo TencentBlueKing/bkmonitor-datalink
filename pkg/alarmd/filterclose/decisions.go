@@ -29,21 +29,43 @@ const (
 	DecisionAbsent      = "absent"
 	DecisionUnsupported = "unsupported"
 	DecisionInactive    = "inactive"
+	// DecisionDisabled and DecisionDeleted are a strategy gone under the
+	// writer's mark (absentalerts.PathDeparted): each its own command and
+	// count, with the same reason as DecisionAbsent.
+	DecisionDisabled = "disabled"
+	DecisionDeleted  = "deleted"
 )
 
+// absentReason is the reason a strategy gone is closed with, the platform's
+// own sentence for a strategy disabled or deleted (bk-monitor upstream/master
+// 6086a88112 alarm_backends/service/alert/manager/checker/close.py:84-95).
+// The mark's state is in the decision word and the counts, not in the text.
+const absentReason = "策略已被停用或删除，告警关闭"
+
 // Absent closes every alert of a strategy no longer published (decision
-// absent) or refused for a capability (unsupported). The expectation is
-// every entry of the strategy's record; without one, each alert of the
-// strategy is closed by its id. Its period is not known: the record
-// vouches recordSettle after its start.
+// absent, or disabled or deleted under the writer's mark) or refused for a
+// capability (unsupported). The expectation is every entry of the
+// strategy's record; without one, each alert of the strategy is closed by
+// its id. Its period is not known: the record vouches recordSettle after its
+// start. It returns the word to wait on (AbsentResult has every part).
 func (closer *Closer) Absent(ctx context.Context, scope Scope, decision string, revision int64) string {
+	return closer.AbsentResult(ctx, scope, decision, revision).Word
+}
+
+// AbsentResult is Absent's Result: every part's word and what was closed.
+func (closer *Closer) AbsentResult(ctx context.Context, scope Scope, decision string, revision int64) Result {
 	filter, err := StrategyFilter(scope)
 	if err != nil {
 		closer.count(OutcomeFilterRefused, 1)
-		return OutcomeFilterRefused
+		return only(OutcomeFilterRefused, jobTally{})
 	}
-	return closer.recorded(ctx, Job{Filter: filter, Decision: decision, Revision: revision,
-		Reason: fmt.Sprintf("alarmd: strategy %s %s", scope.StrategyID, decision)}, everyEntry, labelIs("strategy_id", scope.StrategyID))
+	reason := fmt.Sprintf("alarmd: strategy %s %s", scope.StrategyID, decision)
+	switch decision {
+	case DecisionAbsent, DecisionDisabled, DecisionDeleted:
+		reason = absentReason
+	}
+	return closer.recorded(ctx, Job{Filter: filter, Decision: decision, Revision: revision, Reason: reason},
+		everyEntry, labelIs("strategy_id", scope.StrategyID))
 }
 
 // AbsentFound is a strategy the link holds active alerts of this source
@@ -131,9 +153,16 @@ func (closer *Closer) Fingerprints(ctx context.Context, scope Scope, fingerprint
 // often the strategy is evaluated (settle).
 func (closer *Closer) Inactive(ctx context.Context, scope Scope, version string, revision int64, since time.Time,
 	period time.Duration) string {
+	return closer.inactiveResult(ctx, scope, version, revision, since, period).Word
+}
+
+// inactiveResult is Inactive with every job's word and what they sent and
+// closed.
+func (closer *Closer) inactiveResult(ctx context.Context, scope Scope, version string, revision int64, since time.Time,
+	period time.Duration) Result {
 	if since.IsZero() {
 		closer.count(OutcomeFilterRefused, 1)
-		return OutcomeFilterRefused
+		return only(OutcomeFilterRefused, jobTally{})
 	}
 	filter, err := StrategyFilter(scope)
 	match, decide := everyEntry, labelIs("strategy_id", scope.StrategyID)
@@ -143,7 +172,7 @@ func (closer *Closer) Inactive(ctx context.Context, scope Scope, version string,
 	}
 	if err != nil {
 		closer.count(OutcomeFilterRefused, 1)
-		return OutcomeFilterRefused
+		return only(OutcomeFilterRefused, jobTally{})
 	}
 	return closer.recorded(ctx, Job{Filter: filter, Decision: DecisionInactive, Version: version, Revision: revision,
 		Batch:  "since:" + strconv.FormatInt(since.Unix(), 10),
@@ -253,7 +282,7 @@ func (closer *Closer) Edit(ctx context.Context, input EditInput) (string, int) {
 		// revision scheme than the Plans' (editclose.RevisionsComparable),
 		// is judged alert by alert; oneByOne counts each incomparable alert.
 		if bucket.Digest == "" || (err == nil && revision > 0 && !editclose.RevisionsComparable(revision, plan.Revision)) {
-			if word := closer.oneByOne(ctx, input, bucket, time.Time{}); word == OutcomeUnsupported {
+			if word := closer.oneByOneSettling(ctx, input, bucket, time.Time{}); word == OutcomeUnsupported {
 				return word, len(buckets)
 			}
 			continue
@@ -285,7 +314,7 @@ func (closer *Closer) Edit(ctx context.Context, input EditInput) (string, int) {
 		closer.count("edit_"+note, 1)
 		switch {
 		case decision == editclose.OutcomeGroupDimensionsUndecided:
-			if word := closer.oneByOne(ctx, input, bucket, time.Time{}); word == OutcomeUnsupported {
+			if word := closer.oneByOneSettling(ctx, input, bucket, time.Time{}); word == OutcomeUnsupported {
 				return word, len(buckets)
 			}
 		case editclose.Closes(decision):
@@ -303,7 +332,7 @@ func (closer *Closer) Edit(ctx context.Context, input EditInput) (string, int) {
 					closer.count(OutcomeFilterRefused, 1)
 					continue
 				}
-				word = closer.Run(ctx, Job{Filter: filter, Decision: decision, Version: bucket.Version, Digest: bucket.Digest,
+				word = closer.runSettling(ctx, Job{Filter: filter, Decision: decision, Version: bucket.Version, Digest: bucket.Digest,
 					Revision: plan.Revision, expect: fromRecord(bucket.Version), Reason: editReason(input.Scope, decision, bucket.Version)})
 			}
 			switch word {
@@ -312,11 +341,11 @@ func (closer *Closer) Edit(ctx context.Context, input EditInput) (string, int) {
 			case OutcomeRecordMissing:
 				// No record, or none with a start: the whole bucket alert by
 				// alert.
-				word = closer.oneByOne(ctx, input, bucket, time.Time{})
+				word = closer.oneByOneSettling(ctx, input, bucket, time.Time{})
 			default:
 				// The bucket's alerts opened before the record's start,
 				// which it cannot vouch for: alert by alert.
-				word = closer.oneByOne(ctx, input, bucket, since)
+				word = closer.oneByOneSettling(ctx, input, bucket, since)
 			}
 			if word == OutcomeUnsupported {
 				return word, len(buckets)
@@ -361,18 +390,41 @@ func (closer *Closer) Edit(ctx context.Context, input EditInput) (string, int) {
 			closer.count(OutcomeFilterRefused, 1)
 			return "", len(buckets)
 		}
-		word = closer.Run(ctx, recent)
+		word = closer.runSettling(ctx, recent)
 		if word != OutcomeRecordMissing && word != OutcomeUnsupported {
-			word = closer.perAlert(ctx, olderPart, levelRemoved)
+			word = closer.perAlertSettling(ctx, olderPart, levelRemoved)
 		}
 	}
 	if word == OutcomeRecordMissing {
-		word = closer.perAlert(ctx, job, levelRemoved)
+		word = closer.perAlertSettling(ctx, job, levelRemoved)
 	}
 	if word == OutcomeUnsupported {
 		return word, len(buckets)
 	}
 	return "", len(buckets)
+}
+
+// runSettling, perAlertSettling and oneByOneSettling are how the edit
+// close runs each of its jobs: again within the round while the job has
+// more (job_done_rederived, or job_incomplete with pages left) and its own
+// last run closed something, with a request's budget left
+// (UntilProgressStops). Progress is the job's own
+// tally, not what the process closed meanwhile, so a job that got nowhere
+// is not run again while other closes get somewhere. Each returns the
+// word the Edit acts on.
+func (closer *Closer) runSettling(ctx context.Context, job Job) string {
+	return closer.UntilProgressStops(ctx, func() Result {
+		word, tally := closer.runTallied(ctx, job)
+		return only(word, tally)
+	}).Word
+}
+
+func (closer *Closer) perAlertSettling(ctx context.Context, job Job, decide func(linkdmanage.Alert) bool) string {
+	return closer.UntilProgressStops(ctx, func() Result { return closer.perAlertResult(ctx, job, decide) }).Word
+}
+
+func (closer *Closer) oneByOneSettling(ctx context.Context, input EditInput, bucket Bucket, before time.Time) string {
+	return closer.UntilProgressStops(ctx, func() Result { return closer.oneByOne(ctx, input, bucket, before) }).Word
 }
 
 // pruneOlder removes the record's entries of versions older than current:
@@ -483,12 +535,16 @@ func sampleFacts(alert linkdmanage.Alert) (contract.StrategyFactsV2, bool) {
 // alert asks: the alerts read decide as they did (Plan.Key), and an alert
 // can still join a bucket of an older version, from a Slot frozen with the
 // older Plans and replayed or taken over after the edit. A changed key or a
-// newer alert starts a new pass from the bucket's first alert.
-func (closer *Closer) oneByOne(ctx context.Context, input EditInput, bucket Bucket, before time.Time) string {
+// newer alert starts a new pass from the bucket's first alert. Its Result
+// is each close's word and tally, and job_incomplete while the pass has
+// pages left; its Word is the walk's own: empty, or the word that ended it
+// early (filter_refused, a link word, unsupported).
+func (closer *Closer) oneByOne(ctx context.Context, input EditInput, bucket Bucket, before time.Time) Result {
+	started := time.Now()
 	filter, err := BucketFilter(input.Scope, bucket)
 	if err != nil {
 		closer.count(OutcomeFilterRefused, 1)
-		return OutcomeFilterRefused
+		return only(OutcomeFilterRefused, jobTally{})
 	}
 	read := filter
 	if !before.IsZero() {
@@ -500,7 +556,7 @@ func (closer *Closer) oneByOne(ctx context.Context, input EditInput, bucket Buck
 	walkKey := filterKey(read)
 	if err != nil {
 		closer.count(OutcomeFilterRefused, 1)
-		return OutcomeFilterRefused
+		return only(OutcomeFilterRefused, jobTally{})
 	}
 	planKey := input.Plan.Key()
 	closer.mu.Lock()
@@ -510,15 +566,15 @@ func (closer *Closer) oneByOne(ctx context.Context, input EditInput, bucket Buck
 		newer, err := openedAfter(read, walked.newest)
 		if err != nil {
 			closer.count(OutcomeFilterRefused, 1)
-			return OutcomeFilterRefused
+			return only(OutcomeFilterRefused, jobTally{})
 		}
 		page, err := closer.link.Search(ctx, input.Scope.TenantID, newer.body, "", 1)
 		if err != nil {
-			return closer.failed(err)
+			return only(closer.failed(err), jobTally{})
 		}
 		if len(page.Items) == 0 {
 			closer.count(OutcomeWalkRemembered, 1)
-			return ""
+			return Result{}
 		}
 		closer.count(OutcomeWalkReopened, 1)
 		closer.mu.Lock()
@@ -541,7 +597,7 @@ func (closer *Closer) oneByOne(ctx context.Context, input EditInput, bucket Buck
 	for n < maxAlertsPerTurn {
 		page, err := closer.link.Search(ctx, input.Scope.TenantID, read.body, after, min(linkdmanage.MaxLimit, maxAlertsPerTurn-n))
 		if err != nil {
-			return closer.failed(err)
+			return only(closer.failed(err), jobTally{})
 		}
 		for _, alert := range page.Items {
 			n++
@@ -573,11 +629,15 @@ func (closer *Closer) oneByOne(ctx context.Context, input EditInput, bucket Buck
 	closer.count(OutcomeAlertsRead, n)
 	if after != "" {
 		closer.count(OutcomeAlertsTruncated, 1)
-		closer.notice(Notice{Outcome: OutcomeAlertsTruncated, Scope: input.Scope, Decision: "edit", Read: n})
+		closer.notice(Notice{Outcome: OutcomeAlertsTruncated, Scope: input.Scope, Decision: "edit", Read: n, Elapsed: time.Since(started)})
 	}
 	closer.mu.Lock()
 	closer.buckets[walkKey] = after
 	closer.mu.Unlock()
+	// result holds each close's word and tally, for the caller to judge
+	// whether to walk again within the round; its Word stays the walk's
+	// own, empty unless a close was unsupported.
+	var result Result
 	decisions := make([]string, 0, len(decided))
 	for decision := range decided {
 		decisions = append(decisions, decision)
@@ -596,11 +656,13 @@ func (closer *Closer) oneByOne(ctx context.Context, input EditInput, bucket Buck
 				closer.mu.Unlock()
 				continue
 			}
-			word := closer.Run(ctx, Job{Filter: byID, Decision: decision, Version: bucket.Version, Digest: bucket.Digest,
+			word, tally := closer.runTallied(ctx, Job{Filter: byID, Decision: decision, Version: bucket.Version, Digest: bucket.Digest,
 				Revision: input.Plan.Revision, Expect: Expectation{Count: len(batch), Source: ExpectDecidedIDs},
 				Reason: editReason(input.Scope, decision, bucket.Version), Recheck: filter})
+			result.add(word, tally)
 			if word == OutcomeUnsupported {
-				return word
+				result.Word = word
+				return result
 			}
 			if !settledWord(word) {
 				closer.mu.Lock()
@@ -618,8 +680,12 @@ func (closer *Closer) oneByOne(ctx context.Context, input EditInput, bucket Buck
 		}
 		delete(closer.passes, walkKey)
 		closer.mu.Unlock()
+	} else {
+		// Pages left: the walk is not done, whatever its closes answered.
+		result.add(OutcomeJobIncomplete, jobTally{})
 	}
-	return ""
+	result.Word = ""
+	return result
 }
 
 // recordOf is what Decide reads of an alert: the record the link returned.

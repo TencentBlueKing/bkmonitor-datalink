@@ -371,10 +371,13 @@ func TestEachItemIsCountedByItsKind(t *testing.T) {
 		{AlertID: "g", Status: 429, ErrorCode: "busy"}, {AlertID: "h", Status: 504, ErrorCode: "not_attempted"},
 		{AlertID: "i", Status: 502, ErrorCode: "result_uncertain"}, {AlertID: "j", Status: 503, ErrorCode: "unavailable"},
 		{AlertID: "k", Status: 504, ErrorCode: "timeout"}, {AlertID: "l", Status: 400, ErrorCode: "invalid_command"},
+		{AlertID: "m", Status: 403, ErrorCode: "tenant_mismatch"}, {AlertID: "n", Status: 404, ErrorCode: "not_found"},
+		{AlertID: "o", Status: 422, ErrorCode: "another"},
 	}
-	closer.items(context.Background(), Job{Filter: filter}, Command{ID: "op", Bytes: []byte(`{}`)}, items)
+	closer.items(context.Background(), Job{Filter: filter}, Command{ID: "op", Bytes: []byte(`{}`)}, items, nil)
 	want := map[string]uint64{OutcomeItemClosed: 1, OutcomeItemAlreadyClosed: 1, OutcomeItemEndedOtherwise: 1, OutcomeItemRederived: 3,
-		OutcomeItemSourceUnpublished: 1, OutcomeItemConflictUnknown: 1, OutcomeItemPending: 3, OutcomeItemRefused: 1}
+		OutcomeItemUnavailable: 1, OutcomeItemSourceUnpublished: 1, OutcomeItemConflictUnknown: 1, OutcomeItemPending: 2,
+		OutcomeItemInvalidCommand: 1, OutcomeItemTenantMismatch: 1, OutcomeItemNotFound: 1, OutcomeItemRefused: 1}
 	if got := nonZero(closer.Stats()); len(got) != len(want) {
 		t.Fatalf("stats %v, want %v", got, want)
 	}
@@ -388,8 +391,69 @@ func TestEachItemIsCountedByItsKind(t *testing.T) {
 	for _, item := range kept {
 		ids[item.AlertID] = true
 	}
-	if len(ids) != 3 || !ids["i"] || !ids["j"] || !ids["k"] {
-		t.Fatalf("kept %v, want the three 5xx other than not_attempted", ids)
+	if len(ids) != 2 || !ids["i"] || !ids["k"] {
+		t.Fatalf("kept %v, want the two 5xx other than not_attempted and 503", ids)
+	}
+}
+
+// A link that answers every item 503 - its close resources not configured -
+// closed nothing and saved nothing: no item is kept to retry by id however
+// many rounds it lasts, the job is not settled (so the record keeps its
+// entries), it is not run again within the round, and once the link is
+// fixed the next round's filter finds the alerts again and closes them -
+// run again within that round while a run closes some and leaves more.
+// It shows the run-again wrapper (UntilProgressStops) over the decision's
+// own Result, its Closed from the jobs' tallies; it is not the inactive
+// close's pace, which does not go through the wrapper in production.
+func TestItemsTheLinkRefusedUnavailableAreFoundAgainNotKept(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 10; i++ {
+		h.link.add(&fakeAlert{id: alertID(i), labels: map[string]string{"strategy_id": "41", "strategy_version": "3"}})
+	}
+	h.opened(t, "41", "3", nil, fingerprints(0, 10)...)
+	unavailable := true
+	h.link.itemFault = func(id string, n int) string {
+		if unavailable {
+			return "unavailable"
+		}
+		// Fixed: the first close after the fix leaves the odd alerts,
+		// attempted three times before it, answered 503 once more.
+		if n == 3 && id[len(id)-1]%2 == 1 {
+			return "unavailable"
+		}
+		return ""
+	}
+	closer := h.closer(t)
+	run := func() Result {
+		return closer.UntilProgressStops(context.Background(), func() Result {
+			return closer.inactiveResult(context.Background(), testScope, "3", 3, fakeOpenedAt, testPeriod)
+		})
+	}
+	for round := 0; round < 3; round++ {
+		if word := run().Word; word != OutcomeJobDoneRederived {
+			t.Fatalf("round %d word %s, want job_done_rederived (stats %v)", round, word, nonZero(closer.Stats()))
+		}
+	}
+	stats := closer.Stats()
+	if stats[OutcomeItemUnavailable] != 30 || stats[OutcomeItemPending] != 0 || stats[OutcomeJobAgain] != 0 {
+		t.Fatalf("stats %v, want 30 item_unavailable over three rounds, nothing kept, no run again within a round", nonZero(stats))
+	}
+	if kept, _, _ := closer.pending.Next(context.Background(), 100); len(kept) != 0 {
+		t.Fatalf("kept %d items to retry by id", len(kept))
+	}
+	record, err := h.record(t).Load(context.Background(), openepisodes.Key{TenantID: "tenant-a", StrategyID: "41"})
+	if err != nil || len(record.Entries) != 10 {
+		t.Fatalf("record %d entries (%v): pruned while the alerts are still active", len(record.Entries), err)
+	}
+	unavailable = false
+	if result := run(); result.Word != OutcomeJobDone || result.Closed != 10 || closer.Stats()[OutcomeJobAgain] != 1 {
+		t.Fatalf("result %+v once the link is fixed, want job_done with 10 closed, run once again within the round (stats %v)",
+			result, nonZero(closer.Stats()))
+	}
+	for i := 0; i < 10; i++ {
+		if h.link.alert(alertID(i)).closes != 1 {
+			t.Fatalf("%s closed %d times", alertID(i), h.link.alert(alertID(i)).closes)
+		}
 	}
 }
 
@@ -588,5 +652,27 @@ func TestALostPageKeepsItsCandidatesForTheRetry(t *testing.T) {
 	}
 	if stats := closer.Stats(); stats[OutcomePendingAlreadyClosed] != 10 || closer.PendingSize(context.Background()) != 0 {
 		t.Fatalf("stats %v", nonZero(stats))
+	}
+}
+
+// A decision run again within the round answers what every run sent and
+// closed, not only its last: a first run that sent a close and closed two
+// with more left, then a run that sent nothing and settled, is a decision
+// sent that closed two - the absent close's close_sent and execution.sent
+// read Sent, and a strategy whose closes all went out in the first run is
+// still a send.
+func TestARunAgainAnswersWhatEveryRunSentAndClosed(t *testing.T) {
+	closer := newHarness(t).closer(t)
+	runs := []Result{
+		{Word: OutcomeJobDoneRederived, Parts: []string{OutcomeJobDoneRederived}, Sent: true, Closed: 2},
+		{Word: OutcomeNothingMatched, Parts: []string{OutcomeNothingMatched}},
+	}
+	calls := 0
+	result := closer.UntilProgressStops(context.Background(), func() Result {
+		calls++
+		return runs[calls-1]
+	})
+	if calls != 2 || result.Word != OutcomeNothingMatched || !result.Sent || result.Closed != 2 {
+		t.Fatalf("%d runs answered %+v, want two runs, the last's word, sent, 2 closed", calls, result)
 	}
 }

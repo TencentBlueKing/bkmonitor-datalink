@@ -31,13 +31,12 @@ import (
 // route, as the link's API documents it.
 type closeRequest struct {
 	Filter json.RawMessage `json:"filter"`
-	Limit  int             `json:"limit"`
 	DryRun bool            `json:"dry_run"`
 }
 
 // scopeLink is the link's filtered close route. Each request matches
-// `active` alerts (as many as the request's limit allows); a real close
-// closes them. status, when set, answers every request with that status
+// `active` alerts, all within the link's budget (no page: alert-close.md,
+// Linkd c5e2443a3); a real close closes them. status, when set, answers every request with that status
 // instead.
 type scopeLink struct {
 	mu     sync.Mutex
@@ -64,7 +63,7 @@ func (link *scopeLink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "refused", link.status)
 		return
 	}
-	n := min(link.active, request.Limit)
+	n := link.active
 	items := make([]map[string]any, 0, n)
 	status := http.StatusOK
 	if !request.DryRun && link.itemStatus != 0 {
@@ -76,7 +75,7 @@ func (link *scopeLink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !request.DryRun && status == http.StatusOK {
 		link.active -= n
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "next": "", "dry_run": request.DryRun, "closed": n})
+	_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "has_more": false, "dry_run": request.DryRun, "closed": n})
 }
 
 func (link *scopeLink) set(active, status int) {
@@ -302,6 +301,62 @@ func TestAFailedCloseIsHeldAndRetried(t *testing.T) {
 	closer.Step(context.Background())
 	if stats := closer.Stats(); stats[OutcomeUnsupported] != 1 || stats[OutcomeCloseSent] != 0 {
 		t.Fatalf("stats %v", stats)
+	}
+}
+
+// A close the same command would be answered the same way - items
+// refused (400 each: job_done_refused), the request refused (400:
+// link_refused) - is counted close_refused and held: the steps within
+// RefusedRetry send nothing, the first past it sends the close again. An
+// offer under another revision is another decision and is not held.
+func TestARefusedCloseWaitsBeforeItIsSentAgain(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		status, itemStatus int
+	}{
+		{"items refused", 0, http.StatusBadRequest},
+		{"request refused", http.StatusBadRequest, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			closer, link, now := newScopeHarness(t, knownSet{"fp-1": true})
+			link.set(1, tc.status)
+			link.mu.Lock()
+			link.itemStatus = tc.itemStatus
+			link.mu.Unlock()
+			sent := func() int {
+				link.mu.Lock()
+				defer link.mu.Unlock()
+				return len(link.requests)
+			}
+			confirm(closer, Offer{Fingerprint: "fp-1"})
+			closer.Step(context.Background())
+			first := sent()
+			if stats := closer.Stats(); first == 0 || stats[OutcomeRefused] != 1 || stats[OutcomeSendFailed] != 0 {
+				t.Fatalf("%d requests, stats %v: want the close sent and counted close_refused", first, stats)
+			}
+			for _, d := range []time.Duration{30 * time.Second, RefusedRetry - 31*time.Second} {
+				*now = now.Add(d)
+				confirm(closer, Offer{Fingerprint: "fp-1"})
+				closer.Step(context.Background())
+				if n := sent(); n != first {
+					t.Fatalf("%d requests within %s of the refusal, want none", n-first, RefusedRetry)
+				}
+			}
+			*now = now.Add(time.Second)
+			confirm(closer, Offer{Fingerprint: "fp-1"})
+			closer.Step(context.Background())
+			if n := sent(); n != 2*first || closer.Stats()[OutcomeRefused] != 2 {
+				t.Fatalf("%d requests, stats %v at %s: want the close sent once more", n-first, closer.Stats(), RefusedRetry)
+			}
+			// Another revision: sent at once.
+			for _, round := range []int64{720, 780} {
+				closer.Observe(Offer{TenantID: testTenant, StrategyID: testStrategy, StrategyRevision: 4, Round: round, Fingerprint: "fp-1"})
+			}
+			closer.Step(context.Background())
+			if n := sent(); n != 3*first {
+				t.Fatalf("%d requests after an offer under another revision, want it sent", n-2*first)
+			}
+		})
 	}
 }
 

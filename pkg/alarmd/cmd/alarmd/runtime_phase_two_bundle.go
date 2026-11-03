@@ -1300,6 +1300,13 @@ func openProductionPhaseTwoBundleAssembly(
 		if statement, ok := strategySource.(controlplane.PublicationStatementSource); ok {
 			absentClose.statementKey = statement.PublicationStatementKey()
 		}
+		// The writer's departure marks (the fast path) where the source keeps
+		// them, and the candidates kept across terms under the Control
+		// Leader's lease where the ownership store can fence a hash.
+		absentClose.marks, _ = strategySource.(departedMarkReader)
+		if ownershipStore != nil && productionOwnership != nil {
+			absentClose.memory = &redisAbsentMemory{store: ownershipStore, fence: productionOwnership}
+		}
 		absentClose.edits = newEditStrategyClose(bundle, reconciler, route)
 		recorder.SetEditCloseSource(absentClose.edits.Stats)
 		// The leader's close of each strategy's alerts outside its current

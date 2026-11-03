@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/admission"
@@ -600,6 +601,12 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 			// business outcome. A record the recovery gate held has RECOVERY
 			// outcomes and no envelope, and says so on each of them.
 			EnvelopeHeld: tr.RecoveryGate.Held && kind == execution.LevelOutcomeRecovery,
+			// A RECOVERY the envelope left out because the alert is at
+			// another Level: the Level still recovers in the state, and the
+			// contract does not look for it in the event. No reason: a
+			// successful RECOVERY carries none, and its readers read the
+			// outcome.
+			EventOmitted: kind == execution.LevelOutcomeRecovery && slices.Contains(tr.OmittedRecoveryLevels, o.LevelID),
 			GuardTail:    guardTail, ReasonCarried: carried,
 			RecoveryWithheld: normalWithheld(kind, o, alertOpen)}.WithReasonOrigin(origin)
 	}

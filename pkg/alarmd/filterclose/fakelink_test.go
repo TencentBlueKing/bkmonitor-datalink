@@ -27,6 +27,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdmanage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openepisodes"
 )
@@ -60,18 +61,50 @@ type fakeLink struct {
 	// requestBusy answers a whole request 429 when it returns true, given
 	// the route and the request's number on it.
 	requestBusy func(route string, n int) bool
-	// attemptBudget is how many items one filtered close attempts before
-	// the rest answer 504 not_attempted; 0 is no bound.
-	attemptBudget int
+	// brokenAnswer answers a whole request 200 with a body cut short when
+	// it returns true, given the route and the request's number on it.
+	brokenAnswer func(route string, n int) bool
+	// stallAnswer, when it returns true, answers a whole request 200,
+	// writes the start of its body, then stalls until the client gives up,
+	// the link's lock released while it does.
+	stallAnswer func(route string, n int) bool
+	// The filtered close's own budget, as the link has one and pages
+	// nothing (alert-close.md, Linkd c5e2443a3): closeBudget is how many
+	// matches one real close attempts, and notAttempted how many more it
+	// enumerates and answers 504 not_attempted (a batch its remaining
+	// budget did not admit); dryBudget is how many one dry run enumerates.
+	// Zero is no bound. Matches beyond what a request answers set has_more
+	// and get no item.
+	closeBudget, notAttempted, dryBudget int
+	// closeHasMore makes every real close answer has_more, also where it
+	// answered each id it named: the link stopped on its budget after its
+	// last batch (alert-close.md: has_more is no count of what is left).
+	closeHasMore bool
+	// queryFailAfter, when positive, makes a request's candidate read fail
+	// after that many matches: a 200 with error_code query_failed and
+	// has_more, the items read before answered.
+	queryFailAfter int
+	// closeDelay is what one alert's close costs inside a filtered close:
+	// once the request's context ends - the caller stopped waiting - the
+	// rest answer 504 not_attempted and has_more is set, and the closes
+	// before stay saved.
+	closeDelay time.Duration
 	// itemFault is an item's injected answer: "busy" (429, nothing saved),
 	// "conflict" (409 version_conflict, nothing saved), "uncertain_saved"
-	// (502, the close saved), "uncertain_unsaved" (502, nothing saved), or
-	// "" for none. n is how many times the alert was attempted before.
+	// (502, the close saved), "uncertain_unsaved" (502, nothing saved),
+	// "unavailable" (503, nothing saved), "gone" (404 not_found), "invalid"
+	// (400 invalid_command), "foreign" (403 tenant_mismatch), "ended"
+	// (409 invalid_transition), "unpublished" (409 source_unpublished),
+	// "conflict_other" (a 409 of a code alarmd does not know),
+	// "unprocessable" (422), or "" for none. n is how many times the alert was attempted before.
 	itemFault func(alertID string, n int) string
 	// beforeClose runs when a filtered close (not a dry run) arrives,
 	// before it selects its candidates, under the lock. request is the
 	// close's own request, whose context ends when the caller stops waiting.
 	beforeClose func(link *fakeLink, request *http.Request)
+	// beforeDryRun runs when a dry run arrives, before it selects its
+	// candidates, under the lock.
+	beforeDryRun func(link *fakeLink, request *http.Request)
 	// loseAnswer, when it returns true for a real close (its number among
 	// them), runs the close and then answers 502 with no items: the
 	// answer lost after the closes were saved.
@@ -403,6 +436,22 @@ func (link *fakeLink) closeOne(command fakeCommand, id string) (int, string, boo
 		return http.StatusConflict, linkdmanage.ConflictVersion, false
 	case "uncertain_unsaved":
 		return http.StatusBadGateway, "result_uncertain", false
+	case "unavailable":
+		return http.StatusServiceUnavailable, "unavailable", false
+	case "gone":
+		return http.StatusNotFound, "not_found", false
+	case "invalid":
+		return http.StatusBadRequest, "invalid_command", false
+	case "foreign":
+		return http.StatusForbidden, "tenant_mismatch", false
+	case "ended":
+		return http.StatusConflict, linkdmanage.ConflictInvalidTransition, false
+	case "unpublished":
+		return http.StatusConflict, linkdmanage.ConflictSourceUnpublished, false
+	case "conflict_other":
+		return http.StatusConflict, "some_new_conflict", false
+	case "unprocessable":
+		return http.StatusUnprocessableEntity, "unprocessable", false
 	}
 	if alert.status != "active" {
 		if alert.status == "closed" && alert.endOperation == string(identity) {
@@ -446,6 +495,14 @@ func decodeStrict(r *http.Request, maximum int64, target any) error {
 	return nil
 }
 
+// setCloseDelay sets closeDelay under the link's lock: a filtered close the
+// client gave up on is still being served, and reads it.
+func (link *fakeLink) setCloseDelay(delay time.Duration) {
+	link.mu.Lock()
+	defer link.mu.Unlock()
+	link.closeDelay = delay
+}
+
 func (link *fakeLink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	link.mu.Lock()
 	defer link.mu.Unlock()
@@ -464,6 +521,24 @@ func (link *fakeLink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if link.requestBusy != nil && link.requestBusy(route, link.requests[route]) {
 		http.Error(w, "alert search busy", http.StatusTooManyRequests)
+		return
+	}
+	if link.stallAnswer != nil && link.stallAnswer(route, link.requests[route]) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"items":[`))
+		w.(http.Flusher).Flush()
+		link.mu.Unlock()
+		defer link.mu.Lock()
+		// The test's deadline only keeps a client that never gives up
+		// from hanging it.
+		select {
+		case <-r.Context().Done():
+		case <-testwait.Expired(link.t):
+		}
+		return
+	}
+	if link.brokenAnswer != nil && link.brokenAnswer(route, link.requests[route]) {
+		_, _ = w.Write([]byte(`{"items":[`))
 		return
 	}
 	switch route {
@@ -485,15 +560,14 @@ func (link *fakeLink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.NewEncoder(w).Encode(page)
 	case linkdmanage.RouteCloseFilter:
+		// No limit or after: the link decodes strictly and refuses them.
 		var input struct {
 			fakeCommand
 			Filter json.RawMessage `json:"filter"`
-			After  string          `json:"after"`
-			Limit  int             `json:"limit"`
 			DryRun bool            `json:"dry_run"`
 		}
 		if err := decodeStrict(r, linkdmanage.MaxFilterBodyBytes, &input); err != nil || input.TenantID == "" || len(input.Filter) == 0 ||
-			input.Limit < 1 || input.Limit > 500 || (!input.DryRun && !input.valid()) {
+			(!input.DryRun && !input.valid()) {
 			http.Error(w, "invalid filtered close request", http.StatusBadRequest)
 			return
 		}
@@ -503,20 +577,40 @@ func (link *fakeLink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !input.DryRun && link.beforeClose != nil {
 			link.beforeClose(link, r)
 		}
-		alerts, next := link.page(input.TenantID, input.Filter, true, input.After, input.Limit)
-		page := linkdmanage.FilterPage{Items: []linkdmanage.Item{}, Next: next, DryRun: input.DryRun}
+		if input.DryRun && link.beforeDryRun != nil {
+			link.beforeDryRun(link, r)
+		}
+		matches, _ := link.page(input.TenantID, input.Filter, true, "", len(link.alerts)+1)
+		answered, attempted := len(matches), len(matches)
+		switch {
+		case input.DryRun && link.dryBudget > 0:
+			answered = min(answered, link.dryBudget)
+		case !input.DryRun && link.closeBudget > 0:
+			attempted = min(attempted, link.closeBudget)
+			answered = min(answered, attempted+link.notAttempted)
+		}
+		page := linkdmanage.FilterPage{Items: []linkdmanage.Item{}, DryRun: input.DryRun, HasMore: answered < len(matches)}
+		if link.queryFailAfter > 0 && answered > link.queryFailAfter {
+			answered, attempted = link.queryFailAfter, min(attempted, link.queryFailAfter)
+			page.HasMore, page.ErrorCode, page.Message = true, linkdmanage.QueryFailed, "candidate search failed; continue with the same operation"
+		}
 		lost := false
 		if !input.DryRun {
+			page.HasMore = page.HasMore || link.closeHasMore
 			link.realCloses++
 			lost = link.loseAnswer != nil && link.loseAnswer(link.realCloses)
 		}
-		for i, alert := range alerts {
+		for i, alert := range matches[:answered] {
 			item := linkdmanage.Item{AlertID: alert.id, Status: http.StatusOK}
 			switch {
 			case input.DryRun:
-			case link.attemptBudget > 0 && i >= link.attemptBudget:
+			case i >= attempted, link.closeDelay > 0 && r.Context().Err() != nil:
 				item.Status, item.ErrorCode = http.StatusGatewayTimeout, "not_attempted"
+				page.HasMore = true
 			default:
+				if link.closeDelay > 0 {
+					time.Sleep(link.closeDelay) // fixed-wait: the link's cost per alert is the behaviour under test
+				}
 				status, code, already := link.closeOne(input.fakeCommand, alert.id)
 				item.Status, item.ErrorCode, item.AlreadyClosed = status, code, already
 			}
@@ -554,8 +648,13 @@ func (link *fakeLink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 type harness struct {
 	link   *fakeLink
 	client *linkdmanage.Client
-	redis  *redistest.Instance
-	prefix string
+	// observe, when set, is the closers' ObserveRequest.
+	observe func(Request)
+	// reportJob, when set, is the closers' ReportJob.
+	reportJob func(JobResult)
+	redis     *redistest.Instance
+	prefix    string
+	base      string
 }
 
 func newHarness(t *testing.T) *harness {
@@ -571,7 +670,21 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &harness{link: link, client: client, redis: server, prefix: "alarmd-test"}
+	return &harness{link: link, client: client, redis: server, prefix: "alarmd-test", base: http.URL}
+}
+
+// closerWithBudget is a closer whose requests the client gives up on after
+// budget, as alarmd's does (filterCloseHTTPTimeout), and that knows it.
+func (h *harness) closerWithBudget(t *testing.T, budget time.Duration) *Closer {
+	t.Helper()
+	closer := h.closer(t)
+	client, err := linkdmanage.New(linkdmanage.Options{BaseURL: h.base, Secret: "example-secret", Username: "alarmd",
+		Client: &http.Client{Timeout: budget}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closer.link, closer.requestBudget = client, budget
+	return closer
 }
 
 // closer is a new Closer, as a new leader or a restarted process builds
@@ -586,7 +699,8 @@ func (h *harness) closer(t *testing.T) *Closer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closer, err := New(Options{Link: h.client, Commands: commands, Pending: pending, Record: h.record(t)})
+	closer, err := New(Options{Link: h.client, Commands: commands, Pending: pending, Record: h.record(t), ObserveRequest: h.observe,
+		ReportJob: h.reportJob})
 	if err != nil {
 		t.Fatal(err)
 	}

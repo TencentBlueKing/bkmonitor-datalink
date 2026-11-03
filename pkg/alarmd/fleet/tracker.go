@@ -107,6 +107,13 @@ const (
 	// same empty answer is a group at rest and a group whose data stopped,
 	// and the row does not claim either.
 	KindLogCountEmpty = "LOG_COUNT_EMPTY"
+	// KindFilteredEmpty: a primary whose expression filters its values (an
+	// OsRestart's "a <= 3600") came back filtered empty for as long as the
+	// data lines above wait, while the unfiltered witness of the same source
+	// had data in its latest round: the data is there and nothing passed the
+	// filter. Detecting, like quiet; a witness without data leaves the row
+	// on the data line it was on.
+	KindFilteredEmpty = "FILTERED_EMPTY"
 	// KindIdentityUnmatched: an object whose rounds come back empty because
 	// every series its query returned was one the target's identity could
 	// not read -- the key's dimensions were missing or its model gate did
@@ -405,7 +412,16 @@ type queryGroupState struct {
 	// unfilled is whether the latest empty round was a grouped count its
 	// provider does not zero-fill (KindLogCountEmpty), read like quiet.
 	unfilled bool
-	sawData  bool
+	// filtered is whether the latest empty round was filtered empty with its
+	// unfiltered witness answering data (KindFilteredEmpty), valueFiltered
+	// whether its primary filters at all. witnessData and witnessMissing
+	// count the run's empty rounds whose witness answered with data and
+	// without: both above zero is a row that went back and forth.
+	filtered       bool
+	valueFiltered  bool
+	witnessData    uint32
+	witnessMissing uint32
+	sawData        bool
 	// emptySinceSlot and lastEmptySlot bound the run of empty completions on
 	// the source's own clock: the Slot of the first empty round of the run and
 	// of the latest. The "every round" line gates on their distance, Slot to
@@ -1832,6 +1848,22 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 			}
 			state.quiet = observation.PrimaryInput != nil && observation.PrimaryInput.QuietWhenEmpty
 			state.unfilled = observation.PrimaryInput != nil && observation.PrimaryInput.UnfilledWhenEmpty
+			state.filtered = observation.PrimaryInput != nil && observation.PrimaryInput.FilteredWhenEmpty
+			state.valueFiltered = observation.PrimaryInput != nil && observation.PrimaryInput.ValueFiltered
+			// The run's witness counts are under one configuration, as the
+			// progress record keeps them under one content: a round under
+			// other revisions begins them again. The observation carries the
+			// revisions, not the content digest, so the triple stands for it.
+			if state.configChanged {
+				state.witnessData, state.witnessMissing = 0, 0
+			}
+			if observation.PrimaryInput != nil && observation.PrimaryInput.WitnessData != "" {
+				if observation.PrimaryInput.WitnessData == "DATA" {
+					state.witnessData = saturatingAdd(state.witnessData)
+				} else {
+					state.witnessMissing = saturatingAdd(state.witnessMissing)
+				}
+			}
 			if state.emptyRuns == 0 {
 				state.emptySince = at
 				state.emptySinceFrom = SinceSnapshotContinuity
@@ -1904,6 +1936,7 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		} else {
 			state.emptyRuns = 0
 			state.identityRounds, state.identity = 0, nil
+			state.witnessData, state.witnessMissing = 0, 0
 			if completion == "FULL_COMPLETED" {
 				// Seen retires the Slot run for good: the line asks for no
 				// round known to have had records, and never reads the
@@ -3195,6 +3228,20 @@ func (tracker *Tracker) NoData() []Anomaly {
 		if state.unfilled && (anomaly.Kind == KindNoData || anomaly.Kind == KindEmptyEveryRound && !state.emptiedByTarget) {
 			anomaly.Kind, anomaly.EmptyEveryRound = KindLogCountEmpty, nil
 		}
+		// A filtered primary whose witness answered data is filtered empty,
+		// not missing: same clock, its own line. A witness without data
+		// leaves the row where it was, and data the target turned away is
+		// still the target's.
+		if state.filtered && (anomaly.Kind == KindNoData || anomaly.Kind == KindEmptyEveryRound && !state.emptiedByTarget) {
+			anomaly.Kind, anomaly.EmptyEveryRound = KindFilteredEmpty, nil
+		}
+		if state.witnessData > 0 || state.witnessMissing > 0 {
+			anomaly.Witness = &WitnessFacts{DataRounds: state.witnessData, MissingRounds: state.witnessMissing}
+		} else if state.valueFiltered {
+			// No witness can speak for this empty answer: the row says
+			// the filter is there, and stays on its data line.
+			anomaly.ValueFiltered = true
+		}
 		for strategy := range state.strategies {
 			anomaly.Strategies = append(anomaly.Strategies, strategy)
 		}
@@ -3652,4 +3699,12 @@ func (tracker *Tracker) LocalRejection(queryGroup string) (KeptRejection, bool) 
 	defer tracker.mu.Unlock()
 	kept, ok := tracker.rejections[queryGroup]
 	return kept, ok
+}
+
+// saturatingAdd adds one, staying at the largest count once there.
+func saturatingAdd(count uint32) uint32 {
+	if count == ^uint32(0) {
+		return count
+	}
+	return count + 1
 }

@@ -251,8 +251,13 @@ func TestTheCheckTableIsClosedAtTwenty(t *testing.T) {
 	// how many values its widest dimension took - because a strategy that
 	// opens an alert per value of an unbounded dimension detects correctly
 	// and buried the link in 65,000 alerts with no line naming it.
-	if got := len(Checks()); got != 46 || len(checkAnswers) != 46 {
-		t.Errorf("the check table has %d rows in order and %d answered, want 46: a new check has to "+
+	// Forty-seven: FILTERED_EMPTY is a rule over a dimension the rows did
+	// not carry before - whether a primary that filters its values came back
+	// filtered empty while the unfiltered witness of its source had data -
+	// because an OsRestart group with no host restarted in the hour read as
+	// data absent, for its data owner to chase.
+	if got := len(Checks()); got != 47 || len(checkAnswers) != 47 {
+		t.Errorf("the check table has %d rows in order and %d answered, want 47: a new check has to "+
 			"be a rule over the existing dimensions or a named standing, and the design says which", got, len(checkAnswers))
 	}
 	seen := map[Check]bool{}
@@ -326,6 +331,7 @@ func TestEveryCheckHasAProducerExceptTheNamedOne(t *testing.T) {
 		CheckIdentityUnmatched:   {Kind: KindIdentityUnmatched, IdentityUnmatched: &IdentityUnmatchedFacts{Rounds: 3, Withheld: 2, KeyMissing: 2}},
 		CheckQuiet:               {Kind: KindQuiet},
 		CheckLogCountEmpty:       {Kind: KindLogCountEmpty},
+		CheckFilteredEmpty:       {Kind: KindFilteredEmpty},
 		CheckAnswerTruncated:     {Kind: KindAnswerTruncated},
 		CheckSourceUnknownHeld:   {Kind: KindSourceUnknownHeld},
 		CheckNewAlertsBurst:      {Kind: KindNewAlertsBurst},

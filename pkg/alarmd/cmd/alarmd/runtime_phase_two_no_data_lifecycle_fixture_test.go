@@ -844,7 +844,7 @@ func lifecycleLink(client *redis.Client) http.HandlerFunc {
 			if !request.DryRun {
 				_ = client.RPush(r.Context(), lifecycleLinkPrefix+":closes", string(body)).Err()
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "next": "", "dry_run": request.DryRun})
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "has_more": false, "dry_run": request.DryRun})
 		default:
 			http.NotFound(w, r)
 		}

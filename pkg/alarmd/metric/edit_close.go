@@ -23,7 +23,15 @@ func newEditCloseCollector() *editCloseCollector {
 	return &editCloseCollector{
 		outcomeIs: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "strategy_edit_close_total"),
 			"What the control leader's close of alerts orphaned by an edit of their strategy came to, by outcome. "+
-				"Per listed alert: current_revision (raised under the strategy's current revision, not a candidate), "+
+				"Per round: not_leader, roster_unavailable, evidence_unavailable (no link to close through) and "+
+				"publication_unavailable. Per strategy, not examined: strategy_unpublished, plan_unrevisioned, "+
+				"plan_retained and plans_disagree; remembered is a strategy passed over because a round found none of "+
+				"its alerts at another version and its revision has not changed since. What an examined strategy's "+
+				"buckets decided and what their closes did is counted on linkd_filter_close_total: each decision and "+
+				"note as edit_<word>, each job by its word, each item the link answered as item_<word>. The other "+
+				"cells name the close as first designed, which read and decided each listed alert and sent its close "+
+				"through the event producer; the filtered close counts none of them here, and they stay zero: "+
+				"current_revision (raised under the strategy's current revision, not a candidate), "+
 				"revision_ahead, revision_unknown, family_unknown, kept (a candidate every decidable rule keeps), "+
 				"levels_partial, severity_unmapped and no_data_suspended (a rule could not decide it; not closed), "+
 				"and the closes decided - metric_changed, condition_changed, dimensions_changed, level_removed, "+
@@ -35,9 +43,7 @@ func newEditCloseCollector() *editCloseCollector {
 				"condition_rule_held counts no-data candidates whose condition digest changed while the condition rule is "+
 				"held (it closes nothing until the publisher states what a catalog metric's snapshot conditions are), "+
 				"snapshot_unreadable those whose digest was taken beside a metric snapshot whose conditions could not be "+
-				"read. close_sent counts closes sent and acknowledged by the broker - the broker's acknowledgement, not "+
-				"the link's, so it includes closes the link finds no active alert for (orphaned there) - and send_failed "+
-				"closes the producer refused, business_unknown closes not sent for want of a business, "+
+				"read; close_sent and send_failed closes sent or refused, business_unknown closes not sent for want of a business, "+
 				"record_unreadable alerts whose record could not be read (read again later), read_deferred alerts not "+
 				"read because the round's reads were spent, producer_foreign and producer_unknown alerts of another "+
 				"source or none. Per strategy: strategy_unpublished, plan_retained, plans_disagree, plan_unrevisioned, "+

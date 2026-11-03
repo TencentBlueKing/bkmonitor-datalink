@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -2607,6 +2609,7 @@ func (runtime *RedisCatalogRuntime) slotRequirements(
 	// count words and the event lead the threshold path sets on its own
 	// primary (countPrimary).
 	templateFacts := make(map[execution.RequirementID]execution.QueryPlanFacts)
+	dependencyFacts := make(map[execution.RequirementID]execution.QueryPlanFacts)
 	legacyDuePlans := make([]execution.DuePlan, 0, len(duePlans))
 	legacyLevels := make(map[execution.PlanIdentity]map[uint32]struct{}, len(duePlans))
 
@@ -2700,6 +2703,8 @@ func (runtime *RedisCatalogRuntime) slotRequirements(
 			templates[originalID] = rebuilt
 			if rebuilt.Role == execution.InputRolePrimary {
 				templateFacts[originalID] = facts
+			} else {
+				dependencyFacts[originalID] = facts
 			}
 		}
 
@@ -2739,7 +2744,9 @@ func (runtime *RedisCatalogRuntime) slotRequirements(
 			copy := requirement
 			byID[requirement.RequirementID] = &copy
 		}
+		templateFacts[requirement.RequirementID] = group.QueryPlan
 	}
+	markUnfilteredWitnesses(byID, templateFacts, dependencyFacts)
 
 	result := make([]execution.DataRequirement, 0, len(byID))
 	for _, requirement := range byID {
@@ -2849,6 +2856,7 @@ func eventCountProviderLeads(query execution.QueryPlanFacts, duePlans []executio
 func countPrimary(requirement *execution.DataRequirement, facts execution.QueryPlanFacts, duePlans []execution.DuePlan) {
 	requirement.UnfilledCounts = readsUnfilledCounts(facts)
 	requirement.ZeroIsNoObservation = readsZeroAsNoObservation(facts)
+	requirement.ValueFiltered = readsValueFilter(facts)
 	if !readsEventCountOnly(facts) || requirement.StepMillis <= 0 {
 		return
 	}
@@ -2927,6 +2935,81 @@ func readsZeroAsNoObservation(query execution.QueryPlanFacts) bool {
 		}
 	}
 	return true
+}
+
+// readsValueFilter is whether a query's expression compares its values: a
+// comparison token (<, <=, >, >=, ==, !=) outside quotes in the merged
+// expression (MetricMerge), as OsRestart's "a <= 3600", which leaves out
+// every series that fails it - an empty answer may be data filtered out, not
+// data missing (DataRequirement.ValueFiltered). A PromQL query is not read:
+// its comparison may carry the bool modifier, which keeps every series. An
+// expression the tokenizer cannot read says nothing.
+func readsValueFilter(query execution.QueryPlanFacts) bool {
+	if query.PromQL != nil {
+		return false
+	}
+	compares := false
+	for rest := query.MetricMerge; rest != ""; {
+		token, ok := nextPromQLToken(rest)
+		if !ok {
+			return false
+		}
+		switch token {
+		case "<", "<=", ">", ">=", "==", "!=":
+			compares = true
+		}
+		rest = rest[len(token):]
+	}
+	return compares
+}
+
+// markUnfilteredWitnesses marks the algorithm dependencies that witness for a
+// filtered primary (DataRequirement.UnfilteredWitness): one whose query reads
+// what the primary of every Level it serves reads - the same sources and
+// clauses - through another query, which filters nothing. OsRestart's uptime
+// history is one; a ring ratio's previous point or a year-on-year history is
+// the primary's own query, filter and all, and is not. A requirement shared
+// by several Plans (its identity has no Plan) witnesses only when it does for
+// every consumer. Derived here, where the requirement is bound, and never
+// written into the frozen template: the template's bytes are its identity.
+func markUnfilteredWitnesses(byID map[execution.RequirementID]*execution.DataRequirement,
+	primaryFacts, dependencyFacts map[execution.RequirementID]execution.QueryPlanFacts) {
+	type primaryOf struct {
+		ref   execution.LogicalQueryRef
+		facts execution.QueryPlanFacts
+	}
+	primaries := make(map[execution.ConsumerRef]primaryOf)
+	for id, requirement := range byID {
+		if requirement.Role != execution.InputRolePrimary {
+			continue
+		}
+		for _, consumer := range requirement.Consumers {
+			primaries[consumer.Consumer] = primaryOf{ref: requirement.LogicalQueryRef, facts: primaryFacts[id]}
+		}
+	}
+	for id, requirement := range byID {
+		facts, known := dependencyFacts[id]
+		if requirement.Role != execution.InputRoleAlgorithmDependency || !known || len(requirement.Consumers) == 0 ||
+			facts.PromQL != nil || readsValueFilter(facts) {
+			continue
+		}
+		witness := true
+		for _, consumer := range requirement.Consumers {
+			primary, found := primaries[consumer.Consumer]
+			if !found || primary.ref == requirement.LogicalQueryRef || !sameSource(primary.facts, facts) {
+				witness = false
+				break
+			}
+		}
+		requirement.UnfilteredWitness = witness
+	}
+}
+
+// sameSource is whether two queries read the same data: the same sources and
+// the same clauses, whatever their merged expressions do with it.
+func sameSource(left, right execution.QueryPlanFacts) bool {
+	return len(left.QueryList) > 0 && slices.Equal(left.SourceSemantics, right.SourceSemantics) &&
+		reflect.DeepEqual(left.QueryList, right.QueryList)
 }
 
 // readsUnfilledCounts is whether a query's one source answers counts its
@@ -3014,6 +3097,7 @@ func (runtime *RedisCatalogRuntime) primaryRequirements(
 			requirement = &execution.DataRequirement{RequirementID: execution.RequirementID(identity), ProviderLeadSeconds: lead,
 				UnfilledCounts:      readsUnfilledCounts(group.QueryPlan),
 				ZeroIsNoObservation: readsZeroAsNoObservation(group.QueryPlan),
+				ValueFiltered:       readsValueFilter(group.QueryPlan),
 				DatasetName:         execution.DatasetName("primary:" + identity), Role: execution.InputRolePrimary,
 				LogicalQueryRef: execution.LogicalQueryRef(group.QueryPlan.QueryRevision),
 				RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -group.QueryPlan.QueryDelaySeconds - window, EndOffsetSeconds: -group.QueryPlan.QueryDelaySeconds, HalfOpen: true},

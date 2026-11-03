@@ -1816,6 +1816,15 @@ type Anomaly struct {
 	// IdentityUnmatched is on rows of KindIdentityUnmatched: the rounds, the
 	// withheld series by reason, and a few series' identity fields.
 	IdentityUnmatched *IdentityUnmatchedFacts `json:"identity_unmatched,omitempty"`
+	// Witness is on no-data rows of an object whose primary has an
+	// unfiltered witness: how many rounds of the run of empty rounds it
+	// answered with data and without. Both above zero is a row that went
+	// back and forth between FILTERED_EMPTY and its data line.
+	Witness *WitnessFacts `json:"witness,omitempty"`
+	// ValueFiltered is on no-data rows of an object whose primary filters
+	// its values and has no witness: its empty answer may be data filtered
+	// out, and nothing here can tell.
+	ValueFiltered bool `json:"value_filtered,omitempty"`
 	// ConfigChanged says the object's snapshot, query or schedule revision
 	// differs between its last two completed rounds: the configuration it
 	// runs under actually changed. It is the one fact that tells a

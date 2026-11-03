@@ -1,6 +1,8 @@
 package worker
 
 import (
+	"slices"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
@@ -142,6 +144,99 @@ func (e queryAvailabilityEvidence) quietWhenEmpty(primary execution.PrimaryInput
 		}
 	}
 	return false
+}
+
+// labelFiltered gives the round's primary what its filter and its unfiltered
+// witness say: whether it filters, what the witness answered, and whether
+// its empty answer was filtered empty.
+func (e queryAvailabilityEvidence) labelFiltered(primary *execution.PrimaryInputFact, requirements []execution.DataRequirement,
+	bindings []execution.NamedInputBinding) {
+	primary.WitnessData = witnessData(requirements, bindings)
+	primary.ValueFiltered = valueFiltered(requirements)
+	primary.FilteredWhenEmpty = e.filteredWhenEmpty(*primary, requirements)
+}
+
+// filteredWhenEmpty says a FULL, EMPTY primary whose expression filters its
+// values (DataRequirement.ValueFiltered) was filtered empty: the round's
+// unfiltered witness answered FULL with data (witnessData), so the data is
+// there and no series passed the filter. A witness that answered anything
+// else leaves the empty answer as it was - data that may be missing.
+// Withholding rules as for quiet.
+func (e queryAvailabilityEvidence) filteredWhenEmpty(primary execution.PrimaryInputFact, requirements []execution.DataRequirement) bool {
+	if primary.Completeness != execution.CompletenessFull || primary.DataState != execution.DataStateEmpty ||
+		e.primaryEmptiedOutside || e.primaryWithheldOtherwise || primary.WitnessData != execution.WitnessDataFull {
+		return false
+	}
+	for _, requirement := range requirements {
+		if requirement.Role == execution.InputRolePrimary && requirement.ValueFiltered {
+			return true
+		}
+	}
+	return false
+}
+
+// valueFiltered is whether the round's primary filters its values.
+func valueFiltered(requirements []execution.DataRequirement) bool {
+	for _, requirement := range requirements {
+		if requirement.Role == execution.InputRolePrimary && requirement.ValueFiltered {
+			return true
+		}
+	}
+	return false
+}
+
+// witnessData is what the round's unfiltered witnesses answered
+// (DataRequirement.UnfilteredWitness), matched to their bindings by
+// requirement, the worst of several witnesses, WitnessNone when the round has
+// none. One witness's bindings are its streamed series, FULL with data, and
+// the completion's share, which never carries records - EMPTY for a FULL
+// query that delivered its series streamed, UNKNOWN for one that failed
+// (access completionBindings) - so a series streamed is DATA unless the
+// query failed, and EMPTY is a FULL query that streamed none. A requirement
+// marked a witness that reads a primary's own query is no witness - it
+// carries the primary's filter - whatever marked it.
+func witnessData(requirements []execution.DataRequirement, bindings []execution.NamedInputBinding) execution.WitnessData {
+	primaryRefs := make(map[execution.LogicalQueryRef]struct{})
+	for _, requirement := range requirements {
+		if requirement.Role == execution.InputRolePrimary {
+			primaryRefs[requirement.LogicalQueryRef] = struct{}{}
+		}
+	}
+	rank := func(word execution.WitnessData) int { return slices.Index(execution.WitnessDataWords, word) }
+	worst := execution.WitnessNone
+	for _, requirement := range requirements {
+		if _, own := primaryRefs[requirement.LogicalQueryRef]; !requirement.UnfilteredWitness ||
+			requirement.Role != execution.InputRoleAlgorithmDependency || own {
+			continue
+		}
+		bound, data, notFull := false, false, false
+		for _, binding := range bindings {
+			if binding.RequirementID != requirement.RequirementID {
+				continue
+			}
+			bound = true
+			switch {
+			case binding.Completeness != execution.CompletenessFull:
+				notFull = true
+			case binding.DataState == execution.DataStateData:
+				data = true
+			}
+		}
+		word := execution.WitnessUnbound
+		switch {
+		case !bound:
+		case notFull:
+			word = execution.WitnessNotFull
+		case data:
+			word = execution.WitnessDataFull
+		default:
+			word = execution.WitnessEmpty
+		}
+		if worst == execution.WitnessNone || rank(word) < rank(worst) {
+			worst = word
+		}
+	}
+	return worst
 }
 
 // unfilledWhenEmpty says a FULL, EMPTY primary is a count its provider does

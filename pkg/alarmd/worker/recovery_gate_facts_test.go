@@ -106,3 +106,26 @@ func TestLevelOutcomeFactsCarryAWithheldRecoverysReasonOnNormal(t *testing.T) {
 		t.Fatalf("facts = %+v, want %+v", got, want)
 	}
 }
+
+// A RECOVERY its record's envelope left out, because the alert is at another
+// Level, stays in the RECOVERY cell and is counted apart in it; a sent
+// RECOVERY, and every other outcome, counts none.
+func TestLevelOutcomeFactsCountTheRecoveriesAnEnvelopeLeftOut(t *testing.T) {
+	identity := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}
+	due := execution.DuePlan{Identity: identity}
+	evaluated := execution.EvaluationResult{Plans: []execution.PlanEvaluationResult{{
+		Plan: identity, LevelOutcomes: []execution.LevelOutcome{
+			{LevelID: 1, Outcome: execution.LevelOutcomeRecovery},
+			{LevelID: 2, Outcome: execution.LevelOutcomeRecovery, EventOmitted: true},
+			{LevelID: 3, Outcome: execution.LevelOutcomeRecovery, EventOmitted: true},
+			{LevelID: 4, Outcome: execution.LevelOutcomeNormal},
+		},
+	}}}
+	want := []observability.LevelOutcomeFact{
+		{Outcome: "NORMAL", Count: 1},
+		{Outcome: "RECOVERY", Count: 3, OmittedRecoveries: 2},
+	}
+	if got := levelOutcomeFacts(due, evaluated); !reflect.DeepEqual(got, want) {
+		t.Fatalf("facts = %+v, want %+v", got, want)
+	}
+}

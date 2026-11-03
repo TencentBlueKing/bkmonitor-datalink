@@ -89,9 +89,11 @@ type ReasonFacts struct {
 	ReadHold   *ReadHoldReason   `json:"read_hold,omitempty"`
 	ReadEarly  *ReadEarlyReason  `json:"read_early,omitempty"`
 	DataAbsent *DataAbsentReason `json:"data_absent,omitempty"`
-	Window     *WindowReason     `json:"window,omitempty"`
-	Refusal    *RefusalReason    `json:"refusal,omitempty"`
-	Withheld   *WithheldReason   `json:"withheld,omitempty"`
+	// FilteredEmpty is a FILTERED_EMPTY row's witness rounds.
+	FilteredEmpty *WitnessFacts   `json:"filtered_empty,omitempty"`
+	Window        *WindowReason   `json:"window,omitempty"`
+	Refusal       *RefusalReason  `json:"refusal,omitempty"`
+	Withheld      *WithheldReason `json:"withheld,omitempty"`
 }
 
 // ReadHoldReason is a held object's hold, in seconds: how late the data has
@@ -125,6 +127,11 @@ type DataAbsentReason struct {
 	SinceIsLowerBound bool       `json:"since_is_lower_bound,omitempty"`
 	Rounds            int        `json:"rounds,omitempty"`
 	NeverSawData      bool       `json:"never_saw_data,omitempty"`
+	// Witness is the run's unfiltered witness rounds, on an object whose
+	// primary has one; ValueFiltered says its primary filters its values
+	// and has none, so the empty answer may be data filtered out.
+	Witness       *WitnessFacts `json:"witness,omitempty"`
+	ValueFiltered bool          `json:"value_filtered,omitempty"`
 }
 
 // WindowReason is the worst short window's pair: the valid positions it held
@@ -245,15 +252,17 @@ func factSentence(check Check, row Anomaly, at time.Time) (string, *ReasonFacts,
 		return readEarlySentence(row.ReadEarly)
 	case check == CheckNoDataPersistent && absentSeconds(at, row.Since) > 0:
 		absent := &DataAbsentReason{Since: utcPointer(row.Since), AbsentSeconds: absentSeconds(at, row.Since),
-			SinceIsLowerBound: sinceBasisOf(row.SinceFrom) == SinceAtLeast}
+			SinceIsLowerBound: sinceBasisOf(row.SinceFrom) == SinceAtLeast, Witness: row.Witness, ValueFiltered: row.ValueFiltered}
 		longer := ""
 		if absent.SinceIsLowerBound {
 			longer = "（只会更久）"
 		}
-		return fmt.Sprintf("查询正常返回，但已经%s没有数据%s；数据负责人查数据为什么停了（采集、上报或入库）",
-			aboutWords(absent.AbsentSeconds), longer), &ReasonFacts{DataAbsent: absent}, true
+		return fmt.Sprintf("查询正常返回，但已经%s没有数据%s；数据负责人查数据为什么停了（采集、上报或入库）%s",
+			aboutWords(absent.AbsentSeconds), longer, valueFilteredWords(row)), &ReasonFacts{DataAbsent: absent}, true
+	case check == CheckFilteredEmpty:
+		return checkSentence(check), &ReasonFacts{FilteredEmpty: row.Witness}, row.Witness != nil
 	case (check == CheckEmptyEveryRound || check == CheckEmptyAfterTarget) && row.EmptyEveryRound != nil:
-		return emptyRoundsSentence(check, row.EmptyEveryRound, at)
+		return emptyRoundsSentence(check, row, at)
 	case check == CheckPlanUnevaluable && refusalNamesStrategyQuery(row.Failure):
 		return "存储拒绝了这条策略的查询：单次查询要读的样本数超过存储的上限（" + row.Failure.Rejection.Class + "），没有在检测；" +
 				"策略负责人缩小查询（时间范围、聚合维度或过滤条件）；同一时间多条策略都这样时，先请存储负责人核对单次查询样本上限是否设得过低",
@@ -326,7 +335,15 @@ func readEarlySentence(early *ReadEarlyFacts) (string, *ReasonFacts, bool) {
 	return sentence, &ReasonFacts{ReadEarly: facts}, true
 }
 
-// emptyRoundsSentence is the run of empty rounds: how many, for how long, and
+// valueFilteredWords is what a data-absent sentence adds for a primary that
+// filters its values with no witness to speak for its empty answer.
+func valueFilteredWords(row Anomaly) string {
+	if !row.ValueFiltered {
+		return ""
+	}
+	return "；表达式带值过滤，为空也可能是没有满足条件的对象"
+}
+
 // absentSeconds is how long since a start, in whole seconds, and 0 when there
 // is no start or it is not before at: a replica whose clock runs ahead of this
 // process's puts its start in the future, and a sentence then says no span
@@ -338,10 +355,13 @@ func absentSeconds(at, since time.Time) int64 {
 	return int64(at.Sub(since) / time.Second)
 }
 
+// emptyRoundsSentence is the run of empty rounds: how many, for how long, and
 // whose to look at -- the strategy's period, or its target when the query did
 // return series and the target selected none.
-func emptyRoundsSentence(check Check, empty *EmptyEveryRoundFacts, at time.Time) (string, *ReasonFacts, bool) {
-	absent := &DataAbsentReason{Rounds: empty.Rounds, SinceIsLowerBound: empty.SinceIsLowerBound, NeverSawData: empty.NeverSawData}
+func emptyRoundsSentence(check Check, row Anomaly, at time.Time) (string, *ReasonFacts, bool) {
+	empty := row.EmptyEveryRound
+	absent := &DataAbsentReason{Rounds: empty.Rounds, SinceIsLowerBound: empty.SinceIsLowerBound, NeverSawData: empty.NeverSawData,
+		Witness: row.Witness, ValueFiltered: row.ValueFiltered}
 	span := ""
 	if !empty.Since.IsZero() {
 		absent.Since = utcPointer(empty.Since)
@@ -362,7 +382,7 @@ func emptyRoundsSentence(check Check, empty *EmptyEveryRoundFacts, at time.Time)
 	if empty.NeverSawData {
 		never = "，从没查到过数据"
 	}
-	return fmt.Sprintf("每轮查询都正常返回但没有数据，已连续 %d 轮%s%s；策略负责人确认这个周期下本来就有数据可查（例如聚合周期比数据上报间隔短，或指标、过滤条件写错）",
+	return fmt.Sprintf("每轮查询都正常返回但没有数据，已连续 %d 轮%s%s；策略负责人确认这个周期下本来就有数据可查（例如聚合周期比数据上报间隔短，或指标、过滤条件写错）"+valueFilteredWords(row),
 		empty.Rounds, span, never), &ReasonFacts{DataAbsent: absent}, true
 }
 
@@ -370,7 +390,7 @@ func emptyRoundsSentence(check Check, empty *EmptyEveryRoundFacts, at time.Time)
 // whose deciding row carried none says so.
 var factChecks = map[Check]bool{
 	CheckReadHeld: true, CheckReadBeforeComplete: true, CheckNoDataPersistent: true, CheckEmptyEveryRound: true,
-	CheckEmptyAfterTarget: true, CheckQueryRefused: true, CheckQueryTargetMissing: true,
+	CheckEmptyAfterTarget: true, CheckQueryRefused: true, CheckQueryTargetMissing: true, CheckFilteredEmpty: true,
 }
 
 // windowChecks are the checks decided on a short window, whose sentence adds
@@ -422,6 +442,7 @@ var checkSentences = map[Check]string{
 	CheckIdentityUnmatched:        "查询返回了数据，但序列都对不上监控目标的身份字段（缺维度或模型条件不成立）；策略负责人或采集方对齐身份标签",
 	CheckQuiet:                    "事件计数正常返回，这段时间没有事件；在检测，不用处理",
 	CheckLogCountEmpty:            "日志计数正常返回但是空的，分不清是没有日志还是日志没到；在检测，需要时数据负责人确认日志在不在",
+	CheckFilteredEmpty:            "主查询按表达式过滤后为空，同轮不带过滤的查询有数据：没有满足条件的对象，正在检测",
 	CheckAnswerTruncated:          "查询结果可能被查询服务按分组数上限截断，只检测了返回的分组；策略负责人收窄分组维度",
 	CheckSourceUnknownHeld:        "写了无数据恢复的告警到了该结束的时候，但查不出数据源是否还在上报，超过时限仍保持打开；是链路、查询服务还是数据源已下线还判不出，由 alarmd 维护方查明是谁的",
 	CheckNewAlertsBurst:           "一小时内新开的告警超过 5000 条，多是按取值没有上限的维度（请求名、ID 这类）分组，每个取值各开一条告警；策略负责人去掉或收敛行上点名的维度",

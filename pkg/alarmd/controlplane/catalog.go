@@ -1829,8 +1829,10 @@ type legacyNoDataConfig struct {
 	AggDimension []json.RawMessage `json:"agg_dimension"`
 	Level        json.RawMessage   `json:"level"`
 	// TrackingHorizonSeconds is this item's own horizon, overriding the
-	// deployment's. Absent means the deployment's applies; a stated zero is an
-	// opt-out and is not the same as absent.
+	// deployment's: a positive whole number of seconds. Absent (or null)
+	// means the deployment's applies; a stated zero or less is refused as
+	// NO_DATA_CONFIG_INVALID, not taken as an opt-out (legacyNoDataHorizon,
+	// and why in the compiler's note on the effective horizon).
 	TrackingHorizonSeconds json.RawMessage `json:"tracking_horizon_seconds"`
 	// MaxGroups is this item's own bound on its no-data groups, overriding the
 	// deployment's. Absent means the deployment's applies.

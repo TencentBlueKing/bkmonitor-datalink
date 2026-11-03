@@ -10,6 +10,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -43,6 +44,19 @@ type stubControlPlane struct {
 	// itemBusy answers each item of a close that is not a dry run 429:
 	// certainly not closed, the matches stay.
 	itemBusy bool
+	// dryRunDelay and closeDelay are what a dry run and a real close cost
+	// the link before it answers.
+	dryRunDelay, closeDelay time.Duration
+	// closeHasMore answers every real close has_more: the link stopped on
+	// its budget (alert-close.md: has_more is no count of what is left).
+	closeHasMore bool
+	// itemRefused answers each item of a close that is not a dry run 400
+	// invalid_command: refused, left open, the matches stay.
+	itemRefused bool
+	// closeStatus, when set, answers every filtered close - dry run or not
+	// - with that status and no body the client reads: 400 refuses the
+	// request (link_refused), 500 fails it (link_failed).
+	closeStatus int
 }
 
 func (stub *stubControlPlane) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -62,17 +76,31 @@ func (stub *stubControlPlane) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	case "/api/v1/alerts/search":
 		_ = json.NewEncoder(w).Encode(map[string]any{"items": stub.searchItems(body), "next": ""})
 	case "/api/v1/alerts/close":
+		if stub.closeStatus != 0 {
+			http.Error(w, "filtered close answered by the test", stub.closeStatus)
+			return
+		}
 		var request struct {
 			DryRun bool `json:"dry_run"`
 		}
 		_ = json.Unmarshal(body, &request)
+		if delay := map[bool]time.Duration{true: stub.dryRunDelay, false: stub.closeDelay}[request.DryRun]; delay > 0 {
+			time.Sleep(delay) // fixed-wait: the link's cost per request is the behaviour under test
+		}
 		items := []map[string]any{}
-		status := http.StatusOK
-		if stub.itemBusy && !request.DryRun {
+		status, code := http.StatusOK, ""
+		switch {
+		case stub.itemBusy && !request.DryRun:
 			status = http.StatusTooManyRequests
+		case stub.itemRefused && !request.DryRun:
+			status, code = http.StatusBadRequest, "invalid_command"
 		}
 		for _, id := range stub.matches {
-			items = append(items, map[string]any{"alert_id": id, "status": status})
+			item := map[string]any{"alert_id": id, "status": status}
+			if code != "" {
+				item["error_code"] = code
+			}
+			items = append(items, item)
 		}
 		if !request.DryRun && status == http.StatusOK {
 			stub.matches = nil
@@ -80,7 +108,16 @@ func (stub *stubControlPlane) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 				stub.onClose()
 			}
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "next": "", "dry_run": request.DryRun})
+		closed, failed := 0, 0
+		switch {
+		case request.DryRun:
+		case status == http.StatusOK:
+			closed = len(items)
+		default:
+			failed = len(items)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "has_more": stub.closeHasMore && !request.DryRun, "dry_run": request.DryRun,
+			"closed": closed, "failed": failed})
 	default:
 		http.NotFound(w, r)
 	}
@@ -173,11 +210,19 @@ type fakeLinkd struct {
 	// onClose, when set, runs as a filtered close (dry run or not) arrives,
 	// before it is answered.
 	onClose func()
+	// onSearch, when set, runs as a search arrives, before it is answered.
+	onSearch func()
 	// closeBusy answers 429 to every filtered close; searches still answer.
 	closeBusy bool
 	// searchFails, when set, answers 500 to a search whose body it returns
 	// true for.
 	searchFails func(body string) bool
+	// itemBusy, when set, answers 429 to an item of a real close it returns
+	// true for: certainly not closed, the alert stays active.
+	itemBusy func(id string) bool
+	// itemRefused, when set, answers 400 invalid_command to an item of a
+	// real close it returns true for: refused, left open.
+	itemRefused func(id string) bool
 }
 
 type fakeLinkdAlert struct {
@@ -426,6 +471,9 @@ func (link *fakeLinkd) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if link.onClose != nil && r.URL.Path == "/api/v1/alerts/close" {
 		link.onClose()
 	}
+	if link.onSearch != nil && r.URL.Path == "/api/v1/alerts/search" {
+		link.onSearch()
+	}
 	if link.searchFails != nil && r.URL.Path == "/api/v1/alerts/search" && link.searchFails(string(body)) {
 		http.Error(w, "alert search failed", http.StatusInternalServerError)
 		return
@@ -453,22 +501,37 @@ func (link *fakeLinkd) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "next": next})
 	case "/api/v1/alerts/close":
+		// The link's own request (close_filter.go closeAlertsInput, Linkd
+		// c5e2443a3), decoded strictly as it does: no page or cursor.
 		var input struct {
-			TenantID string          `json:"bk_tenant_id"`
-			Reason   string          `json:"reason"`
-			Filter   json.RawMessage `json:"filter"`
-			After    string          `json:"after"`
-			Limit    int             `json:"limit"`
-			DryRun   bool            `json:"dry_run"`
+			TenantID        string          `json:"bk_tenant_id"`
+			OperationID     string          `json:"operation_id"`
+			OperatorKind    string          `json:"operator_kind"`
+			OperationSource string          `json:"operation_source"`
+			OperatorID      string          `json:"operator_id"`
+			Reason          string          `json:"reason"`
+			EffectiveAt     string          `json:"effective_at"`
+			Filter          json.RawMessage `json:"filter"`
+			DryRun          bool            `json:"dry_run"`
 		}
-		if json.Unmarshal(body, &input) != nil || input.TenantID == "" || len(input.Filter) == 0 || input.Limit < 1 || input.Limit > 500 {
+		decoder := json.NewDecoder(bytes.NewReader(body))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&input) != nil || input.TenantID == "" || len(input.Filter) == 0 {
 			http.Error(w, "invalid filtered close request", http.StatusBadRequest)
 			return
 		}
-		alerts, next := link.page(input.TenantID, input.Filter, true, input.After, input.Limit)
+		alerts, _ := link.page(input.TenantID, input.Filter, true, "", len(link.alerts)+1)
 		items := []map[string]any{}
 		closed := 0
 		for _, alert := range alerts {
+			if !input.DryRun && link.itemBusy != nil && link.itemBusy(alert.id) {
+				items = append(items, map[string]any{"alert_id": alert.id, "status": http.StatusTooManyRequests})
+				continue
+			}
+			if !input.DryRun && link.itemRefused != nil && link.itemRefused(alert.id) {
+				items = append(items, map[string]any{"alert_id": alert.id, "status": http.StatusBadRequest, "error_code": "invalid_command"})
+				continue
+			}
 			if !input.DryRun {
 				alert.status, alert.reason = "closed", input.Reason
 				alert.closes++
@@ -476,7 +539,7 @@ func (link *fakeLinkd) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			items = append(items, map[string]any{"alert_id": alert.id, "status": http.StatusOK})
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "next": next, "dry_run": input.DryRun, "closed": closed})
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "has_more": false, "dry_run": input.DryRun, "closed": closed})
 	default:
 		http.NotFound(w, r)
 	}
@@ -528,7 +591,7 @@ var quietLink = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			DryRun bool `json:"dry_run"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&request)
-		_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}, "next": "", "dry_run": request.DryRun})
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}, "has_more": false, "dry_run": request.DryRun})
 	default:
 		http.NotFound(w, r)
 	}

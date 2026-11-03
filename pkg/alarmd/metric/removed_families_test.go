@@ -116,8 +116,7 @@ var removedLabelValues = []struct {
 	// The close counts said closed where they counted decisions and sends:
 	// a deployment read 354 alert_closed while the link still listed nearly every
 	// one of those alerts active. They now say close_decided and close_sent,
-	// and whether the link closed anything is read per strategy, from what
-	// its reconcile still lists active after an earlier send.
+	// and whether the link closed anything is read per alert on the link.
 	{"absent_strategy_close_total", "outcome", "alert_closed", false},
 	{"absent_strategy_close_total", "outcome", "closed", true},
 	{"target_scope_close_total", "outcome", "closed", true},

@@ -87,13 +87,24 @@ func newAbsentFixture(t *testing.T, alerts []*fakeLinkdAlert) *absentTestFixture
 	return fixture
 }
 
-// mature runs the first round, then a round after the grace under a second
-// observation of the source: the earliest a close can be sent.
+// mature runs the first round, a second under the same observation, then a
+// third under a second observation of the source: absentCloseMinReads reads,
+// the earliest a close of a strategy with no mark can be sent.
 func (fixture *absentTestFixture) mature(ctx context.Context) {
 	fixture.loop.step(ctx)
-	fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
+	fixture.readAgain()
 	fixture.control.snapshot = liveSnapshot("observation-two", fixture.now, 100)
 	fixture.loop.step(ctx)
+}
+
+// readAgain is one more deciding round under the snapshot as it stands,
+// absentCloseInterval after the last, and moves the clock on another
+// interval: with the round before it and the one after, absentCloseMinReads
+// reads.
+func (fixture *absentTestFixture) readAgain() {
+	fixture.now = fixture.now.Add(absentCloseInterval)
+	fixture.loop.step(context.Background())
+	fixture.now = fixture.now.Add(absentCloseInterval)
 }
 
 // closeFilters is the strategy ids the link's filtered closes named, in
@@ -132,21 +143,21 @@ func TestAnEmptyListIsDecidedOnOnlyUnderTheWritersStatement(t *testing.T) {
 		fixture.control.snapshot = liveSnapshot("observation-one", fixture.now, 0)
 		fixture.control.snapshot.HoldsLastGood = stated
 		fixture.loop.step(ctx)
-		fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
+		fixture.readAgain()
 		fixture.control.snapshot = liveSnapshot("observation-two", fixture.now, 0)
 		fixture.control.snapshot.HoldsLastGood = stated
 		fixture.loop.step(ctx)
 		rounds := fixture.loop.Rounds()
 		closed := fixture.link.closed()
 		if stated {
-			if rounds[absentalerts.RefusalNone] != 2 || rounds[absentalerts.RefusalSnapshotEmpty] != 0 ||
+			if rounds[absentalerts.RefusalNone] != 3 || rounds[absentalerts.RefusalSnapshotEmpty] != 0 ||
 				closed["alert-1"] != 1 || fixture.loop.Stats()[absentalerts.OutcomeCloseDecided] == 0 {
 				t.Fatalf("empty list under the statement: rounds %+v stats %+v closed %+v, want decided and closed",
 					rounds, fixture.loop.Stats(), closed)
 			}
 			continue
 		}
-		if rounds[absentalerts.RefusalSnapshotEmpty] != 2 || rounds[absentalerts.RefusalNone] != 0 || len(closed) != 0 {
+		if rounds[absentalerts.RefusalSnapshotEmpty] != 3 || rounds[absentalerts.RefusalNone] != 0 || len(closed) != 0 {
 			t.Fatalf("empty list without the statement: rounds %+v closed %+v, want refused as snapshot_empty", rounds, closed)
 		}
 	}
@@ -167,7 +178,7 @@ func TestAListWithoutTheWritersStatementClosesNothingAndSaysSoOnce(t *testing.T)
 		fixture.control.snapshot = liveSnapshot(observation, fixture.now, 100)
 		fixture.control.snapshot.HoldsLastGood = false
 		fixture.loop.step(ctx)
-		fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
+		fixture.now = fixture.now.Add(absentCloseInterval)
 	}
 	for _, observation := range []string{"observation-one", "observation-two", "observation-three"} {
 		unstated(observation)
@@ -202,7 +213,7 @@ func TestTheAlertsOfAStrategyDeletedBeforeThisProcessSawItAreClosed(t *testing.T
 	if len(fixture.link.closed()) != 0 || fixture.loop.Stats()[absentalerts.OutcomeWithinGrace] != 1 {
 		t.Fatalf("the first round closed, or did not say why it did not: %+v", fixture.loop.Stats())
 	}
-	fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
+	fixture.readAgain()
 	fixture.loop.step(ctx)
 	if len(fixture.link.closed()) != 0 || fixture.loop.Stats()[absentalerts.OutcomeUnconfirmed] != 1 {
 		t.Fatalf("one observation confirmed an absence: %+v", fixture.loop.Stats())
@@ -215,8 +226,8 @@ func TestTheAlertsOfAStrategyDeletedBeforeThisProcessSawItAreClosed(t *testing.T
 	fixture.link.mu.Lock()
 	reason := fixture.link.alerts["alert-1"].reason
 	fixture.link.mu.Unlock()
-	if !strings.Contains(reason, "strategy 10") || !strings.Contains(reason, filterclose.DecisionAbsent) {
-		t.Fatalf("the close reason %q does not name the strategy and its decision", reason)
+	if reason != "策略已被停用或删除，告警关闭" {
+		t.Fatalf("the close reason %q is not the platform's own for a strategy gone without the writer saying how", reason)
 	}
 	closes := fixture.link.requests("/api/v1/alerts/close")
 	for _, field := range []string{`"bk_tenant_id":"system"`, `"event_source_id":"built_in_bk"`, `"labels.strategy_id":"10"`} {
@@ -249,7 +260,7 @@ func TestTheAlertsOfAStrategyRefusedForACapabilityAreClosedAsNoLongerDetected(t 
 		return fixture
 	}
 	advance := func(fixture *absentTestFixture, observation string) {
-		fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
+		fixture.readAgain()
 		fixture.control.snapshot = listed(observation, fixture.now)
 	}
 	ctx := context.Background()
@@ -351,7 +362,7 @@ func TestLosingTheControlTermRestartsTheGrace(t *testing.T) {
 	fixture.loop.bundle.controlLeader = false
 	fixture.loop.step(ctx)
 	fixture.loop.bundle.controlLeader = true
-	fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
+	fixture.readAgain()
 	fixture.control.snapshot = liveSnapshot("observation-two", fixture.now, 100)
 	fixture.loop.step(ctx)
 	if len(fixture.link.closed()) != 0 {
@@ -366,15 +377,15 @@ func TestAnUnreachableLinkRefusesTheRoundByName(t *testing.T) {
 	busy := newAbsentFixture(t, []*fakeLinkdAlert{absentAlert("alert-1", "10")})
 	busy.link.busy = true
 	busy.mature(context.Background())
-	if len(busy.link.closed()) != 0 || busy.loop.Rounds()[absentalerts.RefusalLinkUnavailable] != 2 {
+	if len(busy.link.closed()) != 0 || busy.loop.Rounds()[absentalerts.RefusalLinkUnavailable] != 3 {
 		t.Fatalf("a round without the discovery decided, or did not say why: %+v", busy.loop.Rounds())
 	}
 
 	unsupported := newAbsentFixture(t, []*fakeLinkdAlert{absentAlert("alert-1", "10")})
 	unsupported.link.unsupported = true
 	unsupported.mature(context.Background())
-	if len(unsupported.link.closed()) != 0 || unsupported.loop.Rounds()[absentalerts.RefusalLinkUnavailable] != 2 ||
-		unsupported.loop.filter.closer.Stats()[filterclose.OutcomeUnsupported] != 2 {
+	if len(unsupported.link.closed()) != 0 || unsupported.loop.Rounds()[absentalerts.RefusalLinkUnavailable] != 3 ||
+		unsupported.loop.filter.closer.Stats()[filterclose.OutcomeUnsupported] != 3 {
 		t.Fatalf("a link that cannot search: rounds %+v closer %+v", unsupported.loop.Rounds(), unsupported.loop.filter.closer.Stats())
 	}
 	if searches := unsupported.link.requests("/api/v1/alerts/search"); len(searches) != 1 {
@@ -388,7 +399,7 @@ func TestADiscoveryThatBreaksOffRefusesTheRound(t *testing.T) {
 	fixture := newAbsentFixture(t, []*fakeLinkdAlert{absentAlert("alert-10", "10"), absentAlert("alert-11", "11")})
 	fixture.link.searchBusyAfter = 1
 	fixture.mature(context.Background())
-	if len(fixture.link.closed()) != 0 || fixture.loop.Rounds()[absentalerts.RefusalLinkUnavailable] != 2 ||
+	if len(fixture.link.closed()) != 0 || fixture.loop.Rounds()[absentalerts.RefusalLinkUnavailable] != 3 ||
 		fixture.loop.Difference()["discovery_complete"] != 0 {
 		t.Fatalf("a broken discovery decided: rounds %+v difference %+v closed %+v",
 			fixture.loop.Rounds(), fixture.loop.Difference(), fixture.link.closed())
@@ -404,7 +415,7 @@ func TestASnapshotThatShrankIsDecidedOn(t *testing.T) {
 	ctx := context.Background()
 	fixture.loop.step(ctx)
 	for round, observation := range []string{"observation-two", "observation-three"} {
-		fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
+		fixture.now = fixture.now.Add(absentCloseInterval)
 		fixture.control.snapshot = liveSnapshot(observation, fixture.now, 40)
 		fixture.loop.step(ctx)
 		if decided := fixture.loop.Rounds()[absentalerts.RefusalNone]; decided != uint64(round+2) {
@@ -500,7 +511,7 @@ func TestAListThatLostMostOfItsStrategiesIsDecidedOnOnlyUnderItsStatement(t *tes
 	fixture := newAbsentFixture(t, []*fakeLinkdAlert{absentAlert("alert-1", "10"), absentAlert("running", "1001")})
 	reconciler, refresh := absentSourceReconciler(t, client, func() time.Time { return fixture.now })
 	fixture.loop.control = reconciler
-	later := func() { fixture.now = fixture.now.Add(absentCloseGrace + time.Minute) }
+	later := func() { fixture.now = fixture.now.Add(absentCloseInterval) }
 	// publish writes the list, moves last_updated, and states the
 	// publication about the ids named (none: no statement).
 	lastUpdated := int64(1_790_000_000)
@@ -534,15 +545,15 @@ func TestAListThatLostMostOfItsStrategiesIsDecidedOnOnlyUnderItsStatement(t *tes
 			t.Fatalf("unstated round %d: %+v closed %+v", round+2, rounds, fixture.link.closed())
 		}
 	}
-	for round := 1; round <= 2; round++ {
+	for round := 1; round <= absentCloseMinReads; round++ {
 		later()
 		publish(forty, forty)
 		fixture.loop.step(ctx)
 		if fixture.loop.Rounds()[absentalerts.RefusalNone] != uint64(round) || fixture.loop.Difference()["snapshot_strategies"] != 40 {
 			t.Fatalf("stated round %d on the forty: %+v %+v", round, fixture.loop.Rounds(), fixture.loop.Difference())
 		}
-		if closed := fixture.link.closed(); round == 1 && len(closed) != 0 {
-			t.Fatalf("closed on the first stated round, before its grace: %+v", closed)
+		if closed := fixture.link.closed(); round < absentCloseMinReads && len(closed) != 0 {
+			t.Fatalf("closed on stated round %d, before its reads: %+v", round, closed)
 		}
 	}
 	if closed := fixture.link.closed(); fixture.loop.Stats()[absentalerts.OutcomeCloseDecided] < 1 || closed["alert-1"] != 1 || closed["running"] != 0 {
@@ -577,7 +588,7 @@ func TestAStrategyWhoseDocumentLostItsTenantKeepsItsAlerts(t *testing.T) {
 	ctx := context.Background()
 	fixture.control.snapshot = withoutTenant(fixture.control.snapshot)
 	fixture.loop.step(ctx)
-	fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
+	fixture.readAgain()
 	fixture.control.snapshot = withoutTenant(liveSnapshot("observation-two", fixture.now, 100))
 	fixture.loop.step(ctx)
 	if closed := fixture.link.closed(); closed["alert-1"] != 0 || closed["alert-11"] != 1 || fixture.loop.Difference()["candidates"] != 1 {
@@ -616,11 +627,12 @@ func TestARoundCutWhileClosingResumesAtTheFirstCloseNotExecuted(t *testing.T) {
 	}
 	ctx := context.Background()
 	fixture.loop.step(ctx)
+	fixture.readAgain()
 	var attempted []string
 	for round := 0; round < 3; round++ {
 		cut, cancel := context.WithCancel(ctx)
 		fixture.link.onClose = func() { cancel() }
-		fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
+		fixture.now = fixture.now.Add(absentCloseInterval)
 		fixture.control.snapshot = liveSnapshot("observation-"+strconv.Itoa(round+2), fixture.now, 100)
 		before := len(fixture.closeFilters(t))
 		fixture.loop.step(cut)
@@ -638,12 +650,77 @@ func TestARoundCutWhileClosingResumesAtTheFirstCloseNotExecuted(t *testing.T) {
 
 // The absent-close round follows the source's re-read bound rather than
 // repeating it as a second number: a round no slower than the re-read, and
-// grace plus one round within the close bound.
+// the reads a strategy with no mark waits for within the close bound.
 func TestTheAbsentCloseRoundFollowsTheSourceReadBound(t *testing.T) {
 	if absentCloseInterval > controlplane.SourceFullReadInterval {
 		t.Fatalf("absent-close round %s is slower than the source re-read %s", absentCloseInterval, controlplane.SourceFullReadInterval)
 	}
-	if absentCloseGrace+absentCloseInterval > absentCloseBound {
-		t.Fatalf("grace %s plus a round %s exceeds the close bound %s", absentCloseGrace, absentCloseInterval, absentCloseBound)
+	if reads := time.Duration(absentCloseMinReads) * absentCloseInterval; reads > absentCloseBound {
+		t.Fatalf("%d reads a round %s apart take %s, past the close bound %s", absentCloseMinReads, absentCloseInterval, reads, absentCloseBound)
+	}
+}
+
+// A round's absent closes and its edit closes each have their own share of
+// the round, and the two fit in it: a job now runs again while it gets
+// somewhere, so either would otherwise fill the round and starve the other.
+// Each share fits more than one request.
+func TestTheAbsentAndEditClosesShareTheRound(t *testing.T) {
+	if absentCloseRoundTime+editCloseRoundTime > absentCloseInterval {
+		t.Fatalf("absent %s plus edit %s exceed the round %s", absentCloseRoundTime, editCloseRoundTime, absentCloseInterval)
+	}
+	if absentCloseRoundTime <= filterCloseHTTPTimeout || editCloseRoundTime <= filterCloseHTTPTimeout {
+		t.Fatalf("a share (absent %s, edit %s) fits no more than one request of %s", absentCloseRoundTime, editCloseRoundTime, filterCloseHTTPTimeout)
+	}
+}
+
+// The round's line and each strategy's close line carry how long they took,
+// read from the log line as written: the round from its start to its
+// decision (the link's searches in it), the close from its job's first
+// request to its last.
+func TestTheAbsentCloseLinesSayHowLongTheyTook(t *testing.T) {
+	fixture := newAbsentFixture(t, []*fakeLinkdAlert{absentAlert("alert-1", "10"), absentAlert("alert-2", "10")})
+	cost := 2 * time.Millisecond
+	fixture.link.onSearch = func() { time.Sleep(cost) } // fixed-wait: the link's cost is what the lines measure
+	fixture.link.onClose = func() { time.Sleep(cost) }  // fixed-wait: the link's cost is what the lines measure
+	var output bytes.Buffer
+	limiter, err := observability.NewScopedLogLimiter(observability.ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 100, MaxScopes: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := observability.NewScopedBoundedLogPolicy(limiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.loop.bundle.dependencies.Observer = observability.NewLoggingObserver(observability.New("alarmd", &output), policy)
+	fixture.mature(context.Background())
+	if closed := fixture.link.closed(); closed["alert-1"] != 1 || closed["alert-2"] != 1 {
+		t.Fatalf("the deleted strategy's alerts were not closed: %+v", closed)
+	}
+	rounds, closes := 0, 0
+	for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+		var entry struct {
+			Stage      string `json:"stage"`
+			Result     string `json:"result"`
+			Reason     string `json:"reason_code"`
+			DurationMS int64  `json:"duration_ms"`
+		}
+		if err := json.Unmarshal([]byte(line), &entry); err != nil || entry.Stage != observability.StageAbsentStrategyClose {
+			continue
+		}
+		switch {
+		case entry.Reason == absentalerts.OutcomeCloseSent:
+			closes++
+			if entry.DurationMS < cost.Milliseconds() {
+				t.Fatalf("the close line says it took %d ms, want at least the link's %v a request: %s", entry.DurationMS, cost, line)
+			}
+		case entry.Result == string(observability.ResultSuccess):
+			rounds++
+			if entry.DurationMS < cost.Milliseconds() {
+				t.Fatalf("the round line says it took %d ms, want at least the link's %v a search: %s", entry.DurationMS, cost, line)
+			}
+		}
+	}
+	if rounds == 0 || closes != 1 {
+		t.Fatalf("read %d round lines and %d close lines, want rounds and one close:\n%s", rounds, closes, output.String())
 	}
 }

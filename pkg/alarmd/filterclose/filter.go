@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdmanage"
 )
 
 // The fields a filter names, as the link indexes them (b7e5beddf
@@ -188,6 +189,68 @@ func requireScope(filter Filter) error {
 		return errUnscoped
 	}
 	return nil
+}
+
+// closeIDsPerRequest is the most ids one real close names (withIDs): a
+// few thousand, as the link's request body is at most 1 MiB
+// (linkdmanage.MaxFilterBodyBytes) and the store's terms at most 65536 ids
+// by default (max_terms_count). Ids past it, or past the body's room, go
+// in the job's next request.
+const closeIDsPerRequest = 4096
+
+// closeIDsRoom is what a request body keeps free of ids beyond the
+// filter's own bytes: the terms clause's syntax and the request's other
+// fields (tenant, command, dry_run).
+const closeIDsRoom = 16 << 10
+
+// withIDs is the filter narrowed to the first of the ids that fit one
+// request - at most max and at most closeIDsPerRequest, and no more than
+// the body's room - and the ids it names: the top bool.filter gains
+// terms(alert_id), so the real close closes only alerts its dry run read
+// (alert_id is a keyword the link filters by terms, alert-search.md). Ids
+// in skip - refused by an earlier close of the same run - are not named.
+func (filter Filter) withIDs(items []linkdmanage.Item, max int, skip map[string]bool) (Filter, []string, error) {
+	room := linkdmanage.MaxFilterBodyBytes - closeIDsRoom - len(filter.body)
+	var ids []string
+	for _, item := range items {
+		if len(ids) >= max || len(ids) >= closeIDsPerRequest {
+			break
+		}
+		if skip[item.AlertID] {
+			continue
+		}
+		// Quoted, with its comma; an id needing escapes counts its worst.
+		room -= 2*len(item.AlertID) + 3
+		if room < 0 {
+			break
+		}
+		ids = append(ids, item.AlertID)
+	}
+	var query map[string]map[string]json.RawMessage
+	if err := json.Unmarshal(filter.body, &query); err != nil {
+		return Filter{}, nil, err
+	}
+	var clauses []json.RawMessage
+	if err := json.Unmarshal(query["bool"]["filter"], &clauses); err != nil {
+		return Filter{}, nil, err
+	}
+	terms, err := json.Marshal(object{"terms": object{fieldAlertID: ids}})
+	if err != nil {
+		return Filter{}, nil, err
+	}
+	query["bool"]["filter"], err = json.Marshal(append(clauses, terms))
+	if err != nil {
+		return Filter{}, nil, err
+	}
+	body, err := json.Marshal(query)
+	if err != nil {
+		return Filter{}, nil, err
+	}
+	narrowed := Filter{scope: filter.scope, body: body, batch: filter.batch}
+	if err := requireScope(narrowed); err != nil {
+		return Filter{}, nil, err
+	}
+	return narrowed, ids, nil
 }
 
 // StrategyFilter is every alert of the strategy: the absent close.

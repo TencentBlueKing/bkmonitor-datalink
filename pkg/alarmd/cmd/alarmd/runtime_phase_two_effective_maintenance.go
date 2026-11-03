@@ -110,6 +110,8 @@ const (
 	closeOutcomeGroupRetiring        = string(observability.EffectiveCloseGroupRetiring)
 	closeOutcomeDeletionUnsettled    = string(observability.EffectiveCloseCalendarDeletionUnsettled)
 	closeOutcomeBoundaryActive       = string(observability.EffectiveCloseBoundaryActive)
+	closeOutcomeBoundaryNear         = string(observability.EffectiveCloseBoundaryNear)
+	closeOutcomeStepSpent            = string(observability.EffectiveCloseStepSpent)
 )
 
 // maintenanceGroup is what the loop knows about one owned Query Group from
@@ -164,6 +166,22 @@ type effectiveMaintenance struct {
 	inactiveClosed map[inactiveKey]inactiveClose
 	// stepJobs is how many inactive closes this step has run.
 	stepJobs int
+	// stepCloseUntil is when this step's inactive closes run out of time,
+	// on the process's clock: inactiveJobTime after its first close
+	// started, shared by every close after it. Zero until then.
+	// stepCloseSpent is that the step found less than a request's budget
+	// left and counted it (closeOutcomeStepSpent), once a step.
+	stepCloseUntil time.Time
+	stepCloseSpent bool
+	// closeCursor is the Query Group the next step's inactive closes start
+	// from. Where the last step stopped - out of time (stepSpent) or at
+	// inactiveJobsPerStep - in a Query Group that ran a close, it is the
+	// one after it, so a Query Group with many closes or a slow link does
+	// not take the head of every step (its own planCursor keeps its place
+	// for its next turn); where the step stopped at a Query Group before it
+	// ran any, it is that one. Empty after a step that closed in every
+	// Query Group.
+	closeCursor execution.QueryGroupIdentity
 	// steps is how many steps ran to their end, the close of every Query
 	// Group included.
 	steps        atomic.Uint64
@@ -378,6 +396,7 @@ func (m *effectiveMaintenance) step(ctx context.Context) {
 
 	now := m.bundle.dependencies.Now()
 	m.stepJobs = 0
+	m.stepCloseUntil, m.stepCloseSpent = time.Time{}, false
 	groups := make([]execution.QueryGroupIdentity, 0, len(owned))
 	for qg := range owned {
 		groups = append(groups, qg)
@@ -438,7 +457,15 @@ func (m *effectiveMaintenance) step(ctx context.Context) {
 
 	deletions := m.settleCalendarDeletions(calendarReads(readUnderCurrentLease(m.groups, runners)), now)
 	m.pruneInactiveClosed()
-	for _, qg := range groups {
+	// From closeCursor: a step out of close time stops where it is, and
+	// starting every step from the first Query Group by name would leave
+	// the later ones waiting for as long as the first ones have closes to
+	// run.
+	first := sort.Search(len(groups), func(i int) bool { return groups[i] >= m.closeCursor })
+	stopped, cursor := false, execution.QueryGroupIdentity("")
+	for n := range groups {
+		at := (first + n) % len(groups)
+		qg := groups[at]
 		if ctx.Err() != nil {
 			return
 		}
@@ -462,8 +489,15 @@ func (m *effectiveMaintenance) step(ctx context.Context) {
 		if scope, revision, accepting := runner.maintenanceLease(); !accepting || !known.current(scope, revision, now) {
 			continue
 		}
-		m.closeInactive(ctx, qg, runner, known.closable, deletions)
+		ran := m.stepJobs
+		if m.closeInactive(ctx, qg, runner, known.closable, deletions) && !stopped {
+			stopped, cursor = true, qg
+			if m.stepJobs > ran {
+				cursor = groups[(at+1)%len(groups)]
+			}
+		}
 	}
+	m.closeCursor = cursor
 	m.steps.Add(1)
 }
 
@@ -674,11 +708,21 @@ type inactiveKey struct {
 // inactiveClose is one inactiveKey's inactive period: when a step first
 // found it inactive (the period's close decision, filterclose's command
 // key), when a step first settled it (zero until then), and whether the
-// one confirming pass after inactiveConfirmAfter has run.
+// one confirming pass after inactiveConfirmAfter has run. nearBoundary is
+// the boundary a close of it was last not started before, too near to send
+// (closeOutcomeBoundaryNear): counted once per Plan and boundary, not once
+// a step through the seconds before it. heldAt is when a close of it last
+// ended neither settled nor having got somewhere (filterclose.NextAfter:
+// held or transient): it is not sent again until inactiveRefusedRetry
+// after. A close that settles after
+// it needs nothing cleared: the confirming pass comes inactiveConfirmAfter
+// later still, past the wait.
 type inactiveClose struct {
-	since     time.Time
-	settledAt time.Time
-	confirmed bool
+	since        time.Time
+	settledAt    time.Time
+	confirmed    bool
+	nearBoundary time.Time
+	heldAt       time.Time
 }
 
 // inactiveConfirmAfter is when a settled inactive close runs once more: an
@@ -688,16 +732,66 @@ type inactiveClose struct {
 // strategy costs two dry runs a period, not one a step.
 const inactiveConfirmAfter = 5 * time.Minute
 
+// inactiveRefusedRetry is how long a close waits before it is sent again
+// when it ended neither settled nor having got somewhere: the same command
+// answered the same way (filterclose.NextHeld: items refused, the request
+// refused, the dry run past the expectation or the client's bound, a filter
+// that cannot be built), or a failure that may clear (NextTransient: the
+// link busy or not answering, a Redis read). Every step - one a second -
+// sent it again before, a dry run and a real close each time, with no end.
+// A Plan whose inactive window is shorter than the interval is not closed
+// again inside that window after such an end: its next chance is its next
+// window (or the confirming pass's). A transient failure waits as long: an inactive close is not urgent (its
+// strategy is outside its effective time, and the absent close runs a
+// round every absentCloseInterval, the same five minutes), a link that is
+// busy or failing is not sent a close a second, and the ids of a real close
+// whose answer was lost are retried by id meanwhile (RetryPending). A fixed interval rather
+// than a growing backoff: one close per Plan per interval is little for
+// the link, a refusal that can clear (the source published again) is
+// picked up within the interval rather than after a backoff grown long,
+// and it needs nothing kept but the time of the last refusal. The same
+// interval as the confirming pass. Each retry counts its refusals as the
+// first did (the filter close's job_done_refused and item counts, its job
+// line, the effective_close line); the steps between send and count
+// nothing.
+const inactiveRefusedRetry = inactiveConfirmAfter
+
 // inactiveJobsPerStep bounds the inactive closes one step runs over every
 // owned Query Group: a mass boundary (every strategy of a calendar going
 // inactive at once) is walked a few a second, not sent to the link at once.
 const inactiveJobsPerStep = 4
 
-// inactiveJobLead is the least time a close needs before the next minute
-// starts: effective time changes only at a minute boundary (a time range is
-// HH:MM), so a Plan rechecked inactive stays so until the next minute, and a
-// close runs only inside that minute.
-const inactiveJobLead = 2 * time.Second
+// inactiveJobTime is how long the inactive closes of one step may run
+// together: a dry run and a real close, each at a request's full budget
+// (filterCloseHTTPTimeout, what filterclose waits for before it starts a
+// request), and inactiveJobSlack for the command and record reads around
+// them. A close given less than that may have its real close refused for
+// time after a slow dry run. The step's closes share it, each after the
+// first with what the ones before it left (stepCloseUntil): one each, up
+// to inactiveJobsPerStep of them against a slow link, kept the step - and
+// every other job of the maintenance loop behind it - for four times as
+// long. It stays under a minute: what proves a Plan inactive for the whole
+// of it is the Plan read inactive in this minute and at the next one's
+// start.
+const inactiveJobTime = 2*filterCloseHTTPTimeout + inactiveJobSlack
+
+// inactiveJobSlack is the part of inactiveJobTime that is not the link's:
+// the close's own Redis reads (its command, the episode record).
+const inactiveJobSlack = 5 * time.Second
+
+// inactiveHoldsUntil is until when a Plan rechecked inactive at checkedAt
+// stays inactive, which no close of it may run past. Effective time changes
+// only at a minute boundary (a time range is HH:MM, a daylight-saving jump
+// whole minutes), so the Plan stays inactive to the end of checkedAt's
+// minute; read inactive at the next minute's start as well (inactiveNext),
+// to the end of that one too.
+func inactiveHoldsUntil(checkedAt time.Time, inactiveNext bool) time.Time {
+	until := checkedAt.Truncate(time.Minute).Add(time.Minute)
+	if inactiveNext {
+		until = until.Add(time.Minute)
+	}
+	return until
+}
 
 // closeInactive closes, through the link's filter, the alerts of the
 // current version of every Plan whose Levels are all inactive now: the
@@ -706,15 +800,24 @@ const inactiveJobLead = 2 * time.Second
 // touched only for the owner check before the close. A Plan that reads a
 // calendar deleted is not closed until the deletion settles
 // (settleCalendarDeletions).
-func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.QueryGroupIdentity, runner maintenanceRunner, plans []controlplane.MaintenancePlan, deletions calendarDeletions) {
+//
+// It reports whether the step's closes stopped here, with Plans of this
+// Query Group left - out of the step's close time, or at
+// inactiveJobsPerStep: the next step starts from this Query Group, and its
+// cursor (planCursor) at the Plan the step stopped before, which is the
+// first the next step takes.
+func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.QueryGroupIdentity, runner maintenanceRunner, plans []controlplane.MaintenancePlan, deletions calendarDeletions) bool {
 	if len(plans) == 0 {
-		return
+		return false
 	}
 	at := m.bundle.dependencies.Now()
 	start := m.planCursor[qg]
 	for n := 0; n < len(plans); n++ {
-		if ctx.Err() != nil || m.stepJobs >= inactiveJobsPerStep {
-			return
+		if ctx.Err() != nil {
+			return false
+		}
+		if m.stepJobs >= inactiveJobsPerStep {
+			return true
 		}
 		i := (start + n) % len(plans)
 		plan := plans[i]
@@ -736,6 +839,9 @@ func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.Q
 		if ok && !done.settledAt.IsZero() && (done.confirmed || at.Sub(done.settledAt) < inactiveConfirmAfter) {
 			continue
 		}
+		if ok && !done.heldAt.IsZero() && at.Sub(done.heldAt) < inactiveRefusedRetry {
+			continue
+		}
 		if !ok && len(m.inactiveClosed) < m.capacity.LocalEntries {
 			// The period's first sighting: its start names the period's
 			// close decision.
@@ -755,7 +861,13 @@ func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.Q
 			m.observeTrace(ctx, trace, closeOutcomeUnrouted, errInactiveUnrouted, 0)
 			continue
 		}
-		m.stepJobs++
+		if m.stepSpent(ctx, trace) {
+			m.planCursor[qg] = i
+			return true
+		}
+		if m.stepCloseUntil.IsZero() {
+			m.stepCloseUntil = time.Now().Add(inactiveJobTime)
+		}
 		since := done.since
 		if since.IsZero() {
 			// Past the memory's bound the period is not remembered: each
@@ -764,16 +876,34 @@ func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.Q
 			since = at.Truncate(time.Minute)
 		}
 		word, err := m.sendClose(ctx, qg, runner, plan, key, since)
+		if err == nil && word != "" {
+			// Counted only when a close ran: a recheck that refused it, a
+			// boundary too near, or the step's time spent by the owner check
+			// sends nothing, takes none of the step's jobs, and does not make
+			// this Query Group one that ran a close (closeCursor).
+			m.stepJobs++
+		}
+		if errors.Is(err, errCloseStepSpent) {
+			// The owner check and the recheck took the step's last request
+			// budget: this Plan is the first of the next step.
+			m.planCursor[qg] = i
+			return true
+		}
 		if planRecheckRefused(err) {
 			continue
 		}
 		if err != nil {
-			return
+			return false
 		}
-		// Only a settled word: job_done_rederived left items for the filter
-		// to find again, and the next step runs the close again.
-		switch word {
-		case filterclose.OutcomeJobDone, filterclose.OutcomeNothingMatched:
+		// A settled word settles the Plan; a close that got somewhere
+		// (job_done_rederived, job_incomplete) runs again the next step; any
+		// other word waits inactiveRefusedRetry. No word (boundary near) is
+		// none of these: the next step past the boundary rechecks first.
+		if word == "" {
+			continue
+		}
+		switch filterclose.NextAfter(word) {
+		case filterclose.NextSettled:
 			if done, ok := m.inactiveClosed[key]; ok {
 				if done.settledAt.IsZero() {
 					done.settledAt = at
@@ -782,8 +912,32 @@ func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.Q
 				}
 				m.inactiveClosed[key] = done
 			}
+		case filterclose.NextAgain:
+		default:
+			if done, ok := m.inactiveClosed[key]; ok {
+				done.heldAt = at
+				m.inactiveClosed[key] = done
+			}
 		}
 	}
+	return false
+}
+
+// stepSpent reports that this step's close time (stepCloseUntil) has less
+// than one request's budget left: no further close starts in the step, as
+// no request of it could (filterclose refuses one it cannot wait for). It
+// is counted once a step, closeOutcomeStepSpent, on the Plan it stopped
+// before; the next step starts its own time from that Query Group and
+// that Plan (closeCursor, planCursor).
+func (m *effectiveMaintenance) stepSpent(ctx context.Context, trace observability.TraceFields) bool {
+	if m.stepCloseUntil.IsZero() || time.Until(m.stepCloseUntil) >= filterCloseHTTPTimeout {
+		return false
+	}
+	if !m.stepCloseSpent {
+		m.stepCloseSpent = true
+		m.observeTrace(ctx, trace, closeOutcomeStepSpent, nil, 1)
+	}
+	return true
 }
 
 // pruneInactiveClosed forgets the versions no Plan read here names.
@@ -808,9 +962,11 @@ func (m *effectiveMaintenance) pruneInactiveClosed() {
 // sendClose runs one inactive close: under the Query Group's flight the
 // owner check and the recheck of the Plan's effective time, then, outside
 // the flight so detection never waits behind the link, the link's filter
-// until the minute ends. Each way it can not close is named: the flight
-// busy, the owner check refusing, the Plan active again or its effective
-// time unreadable at the recheck, the link not settling it.
+// for the close's own time, never past the moment the Plan may be active
+// again (inactiveJobTime, inactiveHoldsUntil). Each way it can not close is
+// named: the flight busy, the owner check refusing, the Plan active again
+// or its effective time unreadable at the recheck, less than a request's
+// time before it may be active again, the link not settling it.
 func (m *effectiveMaintenance) sendClose(ctx context.Context, qg execution.QueryGroupIdentity, runner maintenanceRunner, plan controlplane.MaintenancePlan,
 	key inactiveKey, since time.Time) (string, error) {
 	// Counted in flight on the Query Group's lifecycle, as a Slot is: a
@@ -826,6 +982,7 @@ func (m *effectiveMaintenance) sendClose(ctx context.Context, qg execution.Query
 	}
 	defer m.bundle.exitOwnedWork(lifecycle)
 	var checkedAt time.Time
+	inactiveNext := false
 	err := runner.withMaintenance(ctx, func(round context.Context, check func(context.Context) error) error {
 		// Recheck current ownership and rules immediately before side effects;
 		// never act on an old inactive judgment across an active boundary.
@@ -845,6 +1002,13 @@ func (m *effectiveMaintenance) sendClose(ctx context.Context, qg execution.Query
 		case fact.Status() != strategy.EffectiveTimeInactive:
 			return errCloseTimeUnknown
 		}
+		// And at the next minute's start, the one boundary a close's own
+		// time can cross: inactive there too, the close may run past this
+		// minute (inactiveHoldsUntil). Active, unknown or unreadable there,
+		// it is held to this minute.
+		next, err := plan.Compiled.ResolveEffectiveTimeWithProvider(round, checkedAt.Truncate(time.Minute).Add(time.Minute).Unix(),
+			plan.Identity.BusinessID, m.legacy)
+		inactiveNext = err == nil && next.Status() == strategy.EffectiveTimeInactive
 		return nil
 	})
 	switch {
@@ -869,25 +1033,50 @@ func (m *effectiveMaintenance) sendClose(ctx context.Context, qg execution.Query
 		}
 		return "", err
 	}
-	minuteEnd := checkedAt.Truncate(time.Minute).Add(time.Minute)
-	if minuteEnd.Sub(checkedAt) < inactiveJobLead {
-		// Too little of the minute left to close in: the next step, in the
-		// next minute, rechecks first.
+	trace := observability.TraceFields{QueryGroupKey: string(qg), StrategyID: key.strategyID}
+	// The close's time is what is left of the step's (stepCloseUntil), cut
+	// where the judgement may change: never acted on past the moment the
+	// Plan may be active again. Bound to the minute alone, a close started
+	// in a minute's last request budget was refused by filterclose before
+	// its first or second request and counted round_spent, every step of
+	// those seconds.
+	boundary := inactiveHoldsUntil(checkedAt, inactiveNext)
+	holds := boundary.Sub(checkedAt)
+	if holds < filterCloseHTTPTimeout {
+		// Not one request's time before the Plan may be active again: no
+		// request could start (filterclose refuses one it cannot wait for).
+		// Not started, counted as its own outcome once for this Plan and
+		// boundary (every step of the seconds before it gets here); the
+		// next step past the boundary rechecks first. A Plan past the
+		// memory's bound has no entry and is counted each time.
+		done, remembered := m.inactiveClosed[key]
+		if !remembered || !done.nearBoundary.Equal(boundary) {
+			if remembered {
+				done.nearBoundary = boundary
+				m.inactiveClosed[key] = done
+			}
+			m.observeTrace(ctx, trace, closeOutcomeBoundaryNear, nil, 1)
+		}
 		return "", nil
 	}
-	// What is left of the minute, as a duration: the deadline is on the
-	// process's own clock, the minute on the injected one.
-	job, cancel := context.WithTimeout(ctx, minuteEnd.Sub(checkedAt))
+	if m.stepSpent(ctx, trace) {
+		// The owner check and the recheck took the step's last request
+		// budget.
+		return "", errCloseStepSpent
+	}
+	budget := min(time.Until(m.stepCloseUntil), holds)
+	// As a duration: the deadline is on the process's own clock, the
+	// judgement on the injected one.
+	job, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	// The expectation is alarmd's own record of the version's open
 	// episodes (filterclose.Closer.Inactive).
 	period := time.Duration(plan.Compiled.EvaluationSemantics().EvaluationInterval) * time.Second
 	word := m.filter.closer.Inactive(job, m.filter.scope(absentalerts.Key{TenantID: key.tenantID, StrategyID: key.strategyID}), strconv.FormatInt(key.revision, 10),
 		key.revision, since, period)
-	trace := observability.TraceFields{QueryGroupKey: string(qg), StrategyID: key.strategyID}
 	outcome := closeOutcomeNotSettled
 	switch word {
-	case filterclose.OutcomeJobDone, filterclose.OutcomeJobIncomplete, filterclose.OutcomeJobDoneRederived:
+	case filterclose.OutcomeJobDone, filterclose.OutcomeJobIncomplete, filterclose.OutcomeJobDoneRederived, filterclose.OutcomeJobDoneRefused:
 		outcome = closeOutcomeDone
 		m.observeTrace(ctx, trace, outcome, nil, 1)
 	case filterclose.OutcomeNothingMatched:
@@ -899,7 +1088,7 @@ func (m *effectiveMaintenance) sendClose(ctx context.Context, qg execution.Query
 	default:
 		m.observeTrace(ctx, trace, outcome, errors.New("inactive close: the link's filter answered "+word), 1)
 	}
-	m.logger.Info(effectiveCloseLogStage, outcome, 0, 0, slog.String("query_group_key", string(qg)),
+	m.logger.InfoEvent(effectiveCloseLogStage, outcome, 0, slog.String("query_group_key", string(qg)),
 		slog.String("bk_tenant_id", key.tenantID), slog.String("strategy_id", key.strategyID),
 		slog.Int64("revision", key.revision), slog.String("filter_outcome", word))
 	return word, nil
@@ -923,6 +1112,9 @@ var (
 	errCloseTimeUnknown    = errors.New("inactive close: the Plan's effective time is unknown at the send")
 	errInactiveUnrouted    = errors.New("inactive close: no link control plane is named, nothing closes the Plan's alerts")
 	errInactiveUnsupported = errors.New("inactive close: filtered close unsupported, the link cannot search or close by filter")
+	// errCloseStepSpent is a close not sent because its owner check and
+	// recheck left the step less than a request's budget (stepSpent).
+	errCloseStepSpent = errors.New("inactive close: the step's close time is spent")
 )
 
 // planRecheckRefused reports a send the recheck of its own Plan refused:

@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -665,20 +666,24 @@ func encodeValidated(progress execution.ScheduleProgress) ([]byte, error) {
 // know. Range records are decoded strictly (DisallowUnknownFields, below), and
 // during a rolling update or after a rollback an older replica reads what a
 // newer one wrote; a field it does not know makes the whole record corrupt to
-// it. IdentityRounds and Unfilled are such fields, both newer than the
-// previous upstream snapshot's decoder. Dropping IdentityRounds costs only
+// it. IdentityRounds, Unfilled, Filtered and the witness counts are such
+// fields, all newer than the previous upstream snapshot's decoder. Dropping IdentityRounds costs only
 // the run: the range is a run of expired Slots, which ends any run of
 // identity-emptied rounds anyway, so the count would start again after it.
 // Dropping Unfilled costs a replica restarted during the range the
 // unfilled-count word on the group's row until its next real completion
-// writes it again. TestARangeRecordCarriesOnlyFieldsThePreviousSnapshotDecodes
+// writes it again; dropping Filtered and the witness counts costs the same
+// for the filtered-empty word and restarts the counts, which a range of
+// expired Slots ends anyway. TestARangeRecordCarriesOnlyFieldsThePreviousSnapshotDecodes
 // holds every field a range record can carry to that decoder's.
 func rangeLastCompletion(summary *execution.LastCompletionSummary) *execution.LastCompletionSummary {
-	if summary == nil || summary.Empty == nil || summary.Empty.IdentityRounds == 0 && !summary.Empty.Unfilled {
+	if summary == nil || summary.Empty == nil || summary.Empty.IdentityRounds == 0 && !summary.Empty.Unfilled &&
+		!summary.Empty.Filtered && summary.Empty.WitnessDataRounds == 0 && summary.Empty.WitnessMissingRounds == 0 {
 		return summary
 	}
 	copied, empty := *summary, *summary.Empty
 	empty.IdentityRounds, empty.Unfilled = 0, false
+	empty.Filtered, empty.WitnessDataRounds, empty.WitnessMissingRounds = false, 0, 0
 	copied.Empty = &empty
 	if !empty.Quiet && !empty.EmptiedByTarget {
 		// Nothing else was said about the round: no summary, as before
@@ -695,11 +700,25 @@ func rangeLastCompletion(summary *execution.LastCompletionSummary) *execution.La
 // one it never would be.
 func emptyRoundOf(primary *execution.PrimaryInputFact, contentScope string, previous *execution.EmptyRoundSummary) *execution.EmptyRoundSummary {
 	if contentScope == "" || primary == nil || primary.Completeness != execution.CompletenessFull ||
-		primary.DataState != execution.DataStateEmpty || !primary.QuietWhenEmpty && !primary.EmptiedByTarget && !primary.UnfilledWhenEmpty && primary.Identity == nil {
+		primary.DataState != execution.DataStateEmpty || !primary.QuietWhenEmpty && !primary.EmptiedByTarget && !primary.UnfilledWhenEmpty &&
+		primary.Identity == nil && !primary.FilteredWhenEmpty && primary.WitnessData == execution.WitnessNone {
 		return nil
 	}
 	summary := &execution.EmptyRoundSummary{Quiet: primary.QuietWhenEmpty, EmptiedByTarget: primary.EmptiedByTarget,
-		Unfilled: primary.UnfilledWhenEmpty, ContentScope: contentScope}
+		Unfilled: primary.UnfilledWhenEmpty, Filtered: primary.FilteredWhenEmpty, ContentScope: contentScope}
+	if primary.WitnessData != execution.WitnessNone {
+		// The run's witness counts go on from the previous round's when it
+		// was an empty round under the same content; a round with records
+		// wrote no summary and ends the run.
+		if previous != nil && previous.ContentScope == contentScope {
+			summary.WitnessDataRounds, summary.WitnessMissingRounds = previous.WitnessDataRounds, previous.WitnessMissingRounds
+		}
+		if primary.WitnessData == execution.WitnessDataFull {
+			summary.WitnessDataRounds = saturatingIncrement(summary.WitnessDataRounds)
+		} else {
+			summary.WitnessMissingRounds = saturatingIncrement(summary.WitnessMissingRounds)
+		}
+	}
 	if primary.Identity != nil {
 		// The run continues the previous round's when that round was the
 		// same kind of empty under the same content.
@@ -709,6 +728,14 @@ func emptyRoundOf(primary *execution.PrimaryInputFact, contentScope string, prev
 		}
 	}
 	return summary
+}
+
+// saturatingIncrement adds one, staying at the largest count once there.
+func saturatingIncrement(count uint32) uint32 {
+	if count == math.MaxUint32 {
+		return count
+	}
+	return count + 1
 }
 
 // previousEmpty is the stored record's last round's empty summary, nil when

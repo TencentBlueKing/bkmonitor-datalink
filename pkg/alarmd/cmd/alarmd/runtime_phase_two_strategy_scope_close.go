@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/absentalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -149,16 +150,49 @@ func (loop *strategyScopeClose) leading() bool {
 	return loop.bundle.controlLeader && !loop.bundle.draining && !loop.bundle.closed
 }
 
-// settles says a close's word ends the scope's decision: closed, nothing
-// to close, refused by the request's bounds. A word of a failed or
-// unfinished request, or job_done_rederived (items left for the filter to
-// find again), leaves it to the next round; expect_exceeded to a round
-// after scopeRefusedRounds.
+// settles says a part's word ends that part of the scope's decision:
+// closed, nothing to close, refused by the request's bounds. A word of a
+// failed or unfinished request, or job_done_rederived (items left for the
+// filter to find again), leaves it to the next round; expect_exceeded to a
+// round after scopeRefusedRounds. The decision ends only when every part
+// does (settled): a part a filter could not be built for ends itself, not
+// a part beside it with more to close.
 func settles(word string) bool {
 	switch word {
 	case filterclose.OutcomeJobDone, filterclose.OutcomeNothingMatched, filterclose.OutcomeTargetListTooLarge,
 		filterclose.OutcomeFilterRefused:
 		return true
+	}
+	return false
+}
+
+// settled says every part of a scope close ended (settles). A part ending
+// filter_refused beside another part is a defence: such a part needs a
+// filter alarmd cannot build from inputs it built the other part's filter
+// from, which no input reaches today, so judging on the word to wait on
+// instead (settles(result.Word)) answers the same for every decision a
+// test can make; the rule is held on its parts
+// (TestAScopeClosePartSettlesOnlyItself).
+func settled(result filterclose.Result) bool {
+	for _, word := range result.Parts {
+		if !settles(word) {
+			return false
+		}
+	}
+	return true
+}
+
+// refusedPastRecord says a scope close waits scopeRefusedRounds: a part
+// was refused past its record (expect_exceeded) and no part has more to
+// close, which the next round goes on with instead.
+func refusedPastRecord(result filterclose.Result) bool {
+	if result.Again() {
+		return false
+	}
+	for _, word := range result.Parts {
+		if word == filterclose.OutcomeExpectExceeded {
+			return true
+		}
 	}
 	return false
 }
@@ -271,7 +305,11 @@ func (loop *strategyScopeClose) step(ctx context.Context, snapshot map[absentale
 		}
 		sent++
 		shape := filterclose.TargetShape{Dimensions: identity.Dimensions, ModelDimension: identity.ModelDimension, ModelValue: identity.ModelValue}
-		word := loop.filter.closer.ScopeChange(ctx, loop.filter.scope(key), shape, current, target.Revision, digest, target.Interval)
+		started := time.Now()
+		result := loop.filter.closer.ScopeChangeResult(ctx, loop.filter.scope(key), shape, current, target.Revision, digest, target.Interval)
+		word := result.Word
+		observeCloseJob(ctx, loop.bundle.dependencies.Observer, observability.StageStrategyScopeClose, scopeCloseSent, key.StrategyID, word,
+			result.Sent, time.Since(started))
 		loop.count(scopeCloseSent, 1)
 		if word == filterclose.OutcomeTargetListTooLarge {
 			loop.observe(ctx, filterclose.OutcomeTargetListTooLarge, key.StrategyID, 0)
@@ -279,10 +317,10 @@ func (loop *strategyScopeClose) step(ctx context.Context, snapshot map[absentale
 		if word == filterclose.OutcomeUnsupported {
 			return
 		}
-		if word == filterclose.OutcomeExpectExceeded {
+		if refusedPastRecord(result) {
 			loop.refused[key] = scopeRefusedRounds
 		}
-		if settles(word) {
+		if settled(result) {
 			loop.closed[key] = digest
 			loop.count(scopeCloseSettled, 1)
 		}

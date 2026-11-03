@@ -33,6 +33,15 @@ var (
 	// round that met it by its own word and reports the Query Group, and the
 	// Control Leader opens the timeline again (RepairUnreadableTimelines).
 	ErrScheduleTimelineAbsent = fmt.Errorf("%w: the timeline key is absent", ErrScheduleUnavailable)
+	// ErrQueryGroupRetiring is a Query Group leaving the catalog: its
+	// timeline retired at or before the time asked about and no Segment
+	// covers that time. A publication that drops the Query Group retires its
+	// timeline at the cutover, so this is also how "no longer in the catalog"
+	// reads. Asked again it answers the same until the owner's lease moves,
+	// unlike a store that did not answer. It is wrapped beside
+	// ErrScheduleUnavailable, which the read returned before it existed, so
+	// no reader that tested for that goes another way.
+	ErrQueryGroupRetiring = errors.New("alarmd controlplane: the Query Group is leaving the catalog")
 )
 
 type FreezeSlotContractFailureClass string
@@ -2791,6 +2800,9 @@ func (runtime *RedisCatalogRuntime) readPersistedSegment(
 		if segment.Schedule.Segment.Contains(evaluationTime) {
 			return segment, nil
 		}
+	}
+	if timeline.RetiredAt != nil && *timeline.RetiredAt <= evaluationTime {
+		return persistedScheduleSegment{}, fmt.Errorf("%w: %w", ErrScheduleUnavailable, ErrQueryGroupRetiring)
 	}
 	return persistedScheduleSegment{}, ErrScheduleUnavailable
 }

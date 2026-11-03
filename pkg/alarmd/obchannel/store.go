@@ -14,6 +14,9 @@ import (
 
 // StoreOperations exposes named domain readers, never caller-supplied keys or
 // Redis commands. The producer owns both key construction and document meaning.
+// The page bounds of open_episodes_entries, as the schema states them.
+var minEpisodeEntries, maxEpisodeEntries int64 = 1, obevidence.MaxEpisodeEntries
+
 func StoreOperations(service *obevidence.Service) []Operation {
 	id := Field{Type: "string", Description: "策略ID。", Source: "用户输入或 strategy.get", Pattern: "^[1-9][0-9]*$", MaxLength: 20}
 	object := Field{Type: "string", Description: "运行对象ID。", Source: "strategy.get plans[].query_group", Pattern: "^[A-Za-z0-9_.:-]+$", MinLength: 1, MaxLength: 256}
@@ -28,7 +31,7 @@ func StoreOperations(service *obevidence.Service) []Operation {
 		"business":      {Type: "string", MaxLength: 256, MinLength: 1, Description: "发布计划的业务筛选。", Source: "strategy.get plans[].business"},
 	}
 	storeFields := map[string]Field{
-		"family":      {Type: "string", Enum: []string{"source_strategy", "target_group", "dynamic_config", "query_progress", "query_cooldown", "gap_marker", "no_data_memory", "cmdb_host", "cmdb_service_instance"}, Description: "受支持的存储证据族；cmdb_host 和 cmdb_service_instance 是平台 CMDB 缓存里的一条主机或服务实例记录（主机按 host id 或 \"ip|云区域\"，服务实例按实例 id），返回写方写入的原文，以及 alarmd 能否解码、解码出什么——全量加载时解码不了的记录会被静默跳过，这里能看到它；键整体不在为 missing/key_absent，键在而这条不在为 missing/field_absent；query_cooldown 是运行对象在降级池里的持久记录（入池时间、失败次数、上次出池及原因、写入者任期，以及后端截断上限 ceiling_ms、最近正常轮的耗时 run_times_ms 和最近几次决定去留的探查 probes，每次探查带 rule 说明出池或留池按的是哪条比较），重启或换持有者后按它恢复；query_progress 的键里只有运行对象 ID 的 SHA-256（花括号内），结果的 key_identity 给出两者的对应；gap_marker 和 no_data_memory 是一个 Plan 的缺口标记和无数据记忆，按 strategy.get 给出的运行对象、发布对象摘要和策略读，返回每个键在不在、剩余寿命（毫秒）、大小（字符串字节数或哈希字段数）和头部的修订号、写入的 Slot；键名里的状态代际与分片取自发布对象；no_data_memory 还在 group_keys 里列出组名：按字节序的前 max_group_keys 个组键（合计不超过 max_group_key_bytes 字节）与组总数 total，这是用 HSCAN 扫完整个哈希、在本次请求剩余的命令与字节预算内得出的，scan 不是 complete 时列出的只是已扫到字段里的前几个，不是全部组的前几个。"},
+		"family":      {Type: "string", Enum: []string{"source_strategy", "target_group", "dynamic_config", "query_progress", "query_cooldown", "gap_marker", "no_data_memory", "open_episodes", "open_episodes_entries", "cmdb_host", "cmdb_service_instance"}, Description: "受支持的存储证据族；open_episodes_entries 按指纹逐条列出同一条记录（按 tenant 和 strategy_id），每条带开启时的修订号和开启时间，按指纹排序分页：version 只列这个修订的条目（解码不了的条目修订号读不出，总是列出），limit 是每页条数（默认 200，最多 500），cursor 填上一页的 next_cursor；matching 是 version 选中的条目总数，与 Linkd 上同一修订的活跃告警逐条对照时用它找出差的是哪个指纹；open_episodes 是 alarmd 自己记下的一条策略已开告警段的记录（按 tenant 和 strategy_id），整条策略的关闭（缺席、修改后、范围、生效时间外）按它算试跑的预期：返回记录在不在、起点、剩余寿命、条目数（按开启时的修订分）、无法解码的条目数、开启时间的最早和最晚，以及起点一小时之后开启的条目数（关闭最少从起点加一小时起算）；条目数比 Linkd 上该策略的活跃告警少很多时，整条策略的关闭会被护栏拒绝；cmdb_host 和 cmdb_service_instance 是平台 CMDB 缓存里的一条主机或服务实例记录（主机按 host id 或 \"ip|云区域\"，服务实例按实例 id），返回写方写入的原文，以及 alarmd 能否解码、解码出什么——全量加载时解码不了的记录会被静默跳过，这里能看到它；键整体不在为 missing/key_absent，键在而这条不在为 missing/field_absent；query_cooldown 是运行对象在降级池里的持久记录（入池时间、失败次数、上次出池及原因、写入者任期，以及后端截断上限 ceiling_ms、最近正常轮的耗时 run_times_ms 和最近几次决定去留的探查 probes，每次探查带 rule 说明出池或留池按的是哪条比较），重启或换持有者后按它恢复；query_progress 的键里只有运行对象 ID 的 SHA-256（花括号内），结果的 key_identity 给出两者的对应；gap_marker 和 no_data_memory 是一个 Plan 的缺口标记和无数据记忆，按 strategy.get 给出的运行对象、发布对象摘要和策略读，返回每个键在不在、剩余寿命（毫秒）、大小（字符串字节数或哈希字段数）和头部的修订号、写入的 Slot；键名里的状态代际与分片取自发布对象；no_data_memory 还在 group_keys 里列出组名：按字节序的前 max_group_keys 个组键（合计不超过 max_group_key_bytes 字节）与组总数 total，这是用 HSCAN 扫完整个哈希、在本次请求剩余的命令与字节预算内得出的，scan 不是 complete 时列出的只是已扫到字段里的前几个，不是全部组的前几个。"},
 		"strategy_id": id, "query_group": object,
 		"group_id": {Type: "string", Pattern: "^[^\\s\\x00-\\x1f\\x7f]+$", MinLength: 1, MaxLength: 512, Description: "目标组ID。", Source: "源策略 target 配置或既有目标组证据"},
 		"fields":   {Type: "array", MaxItems: len(platformsettings.Fields), UniqueItems: true, Items: &fields, Description: "动态配置字段；省略或空数组时读取全部字段。"},
@@ -39,14 +42,19 @@ func StoreOperations(service *obevidence.Service) []Operation {
 
 		"host":             {Type: "string", Pattern: "^([1-9][0-9]*|[^\\s|]+\\|(0|[1-9][0-9]*))$", MinLength: 1, MaxLength: 128, Description: "CMDB 主机：host id，或 \"ip|云区域\"（与写方的哈希字段同形）。", Source: "告警维度 bk_host_id，或 bk_target_ip 与 bk_target_cloud_id"},
 		"service_instance": {Type: "string", Pattern: "^[1-9][0-9]*$", MinLength: 1, MaxLength: 32, Description: "CMDB 服务实例 id。", Source: "告警维度 bk_target_service_instance_id"},
+		"version":          {Type: "string", Pattern: "^[0-9A-Za-z._-]+$", MinLength: 1, MaxLength: 64, Description: "只列开启时为这个修订号的条目。", Source: "open_episodes 的 by_version 键，或告警 labels.strategy_version"},
+		"cursor":           {Type: "string", Pattern: "^[0-9A-Za-z._-]+$", MinLength: 1, MaxLength: 64, Description: "上一页的 next_cursor，不自行构造。", Source: "上一页 next_cursor"},
+		"limit":            {Type: "integer", Minimum: &minEpisodeEntries, Maximum: &maxEpisodeEntries, Description: "每页条数，默认 200。"},
 	}
 	configVariants := map[string][]string{"source": {"strategy_id"}, "published": {"strategy_id", "query_group", "object_digest", "tenant", "business"}}
 	planRecords := []string{"query_group", "object_digest", "strategy_id", "tenant", "business"}
 	storeVariants := map[string][]string{"source_strategy": {"strategy_id"}, "target_group": {"group_id"}, "dynamic_config": {"fields"}, "query_progress": {"query_group"}, "query_cooldown": {"query_group"},
-		"gap_marker": planRecords, "no_data_memory": planRecords, "cmdb_host": {"host"}, "cmdb_service_instance": {"service_instance"}}
+		"gap_marker": planRecords, "no_data_memory": planRecords, "open_episodes": {"strategy_id", "tenant"},
+		"open_episodes_entries": {"strategy_id", "tenant", "version", "cursor", "limit"}, "cmdb_host": {"host"}, "cmdb_service_instance": {"service_instance"}}
 	configRequired := map[string][]string{"source": {"strategy_id"}, "published": {"strategy_id", "query_group", "object_digest"}}
 	storeRequired := map[string][]string{"source_strategy": {"strategy_id"}, "target_group": {"group_id"}, "query_progress": {"query_group"}, "query_cooldown": {"query_group"},
 		"gap_marker": {"query_group", "object_digest", "strategy_id"}, "no_data_memory": {"query_group", "object_digest", "strategy_id"},
+		"open_episodes": {"strategy_id", "tenant"}, "open_episodes_entries": {"strategy_id", "tenant"},
 		"cmdb_host": {"host"}, "cmdb_service_instance": {"service_instance"}}
 	ops := []Operation{
 		{ID: "strategy.config", Summary: "读取策略具体配置，并区分当前源缓存与指定发布对象；源缓存视图里本构建不认识的键按形状给出（键名、嵌套结构、数字与布尔原值，字符串只给长度），凭据类字段与秘密参数有明确省略记录。", Fields: configFields, Required: []string{"view", "strategy_id"}, Limits: limits, OutputSchema: SchemaOf(obevidence.Result{}), InputRules: variantRules("view", configFields, configVariants, configRequired), Examples: []Params{{"view": "source", "strategy_id": "101"}}, Validate: func(p Params) error { return validateVariant(p, "view", configVariants, configRequired) }, Run: func(ctx context.Context, p Params) Outcome {
@@ -67,7 +75,8 @@ func StoreOperations(service *obevidence.Service) []Operation {
 		}, Run: func(ctx context.Context, p Params) Outcome {
 			return storeOutcome(service.Store(ctx, obevidence.StoreRequest{Family: p.String("family"), StrategyID: p.String("strategy_id"), GroupID: p.String("group_id"), QueryGroup: p.String("query_group"), Fields: selectedFields(p),
 				ObjectDigest: p.String("object_digest"), Tenant: p.String("tenant"), Business: p.String("business"),
-				Host: p.String("host"), ServiceInstance: p.String("service_instance")}))
+				Host: p.String("host"), ServiceInstance: p.String("service_instance"),
+				Version: p.String("version"), Cursor: p.String("cursor"), Limit: p.Int("limit", 0)}))
 		}},
 		{ID: "store.info", Summary: "读取 alarmd 用到的每个 Redis 的内存上限、淘汰策略、已用内存、淘汰与过期计数、各角色所在库的键数、脚本命令（eval/evalsha）累计调用与耗时、复制 offset 与各副本落后字节数（不含副本地址）（INFO 白名单字段）；读不到的服务器具名标出。", Fields: map[string]Field{}, Limits: limits, OutputSchema: SchemaOf(obevidence.InfoResult{}), Run: func(ctx context.Context, _ Params) Outcome {
 			info := service.Info(ctx)

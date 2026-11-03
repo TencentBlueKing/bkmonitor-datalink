@@ -41,6 +41,15 @@ func (fixture *closePathsFixture) ownedGroups() []execution.QueryGroupIdentity {
 	return groups
 }
 
+// maintenanceSteps is how many steps the bundle's effective-time
+// maintenance ran to their end.
+func (fixture *closePathsFixture) maintenanceSteps() uint64 {
+	if loop := fixture.life.bundle.maintenance.loop.Load(); loop != nil {
+		return loop.steps.Load()
+	}
+	return 0
+}
+
 // groupOutcomes counts the inactive close's lines of one outcome about qg.
 func (fixture *closePathsFixture) groupOutcomes(qg execution.QueryGroupIdentity, outcome string) int {
 	life := fixture.life
@@ -94,20 +103,35 @@ func moveStrategyOutOfItsGroup(t *testing.T, shift, editAt time.Duration) (*clos
 // heldAcrossSteps waits until the inactive close has failed to read the old
 // Query Group under its moved lease twice more - at least one whole step of
 // the loop ran at this time, past the read, through every Plan it judges -
-// or until the old Query Group has drained and left the bundle, when it
-// judges nothing. A close sent ends the wait too, so a case that should
-// send none fails on it rather than on the deadline.
+// or has read it once as leaving the catalog and then run one more whole
+// step: the loop remembers that group under the lease holding no Plans, so
+// no later step judges any of it, and the step after the read is past the
+// close phase of the step that read it. Or until the old Query Group has
+// drained and left the bundle, when it judges nothing. A close sent ends
+// the wait too, so a case that should send none fails on it rather than on
+// the deadline.
 func (fixture *closePathsFixture) heldAcrossSteps(old execution.QueryGroupIdentity) {
 	fixture.t.Helper()
 	from := fixture.groupOutcomes(old, closeOutcomeUnavailable)
+	retiringFrom := fixture.groupOutcomes(old, closeOutcomeGroupRetiring)
+	// The steps ended when the retiring read was first seen. Two more is
+	// the step that read it, had it not ended yet, and a whole step after
+	// it.
+	var stepsAtRetiring uint64
+	retiring := false
 	fixture.waitFor("the inactive close reads the old Query Group again", func() bool {
 		owned := false
 		for _, qg := range fixture.ownedGroups() {
 			owned = owned || qg == old
 		}
-		return fixture.groupOutcomes(old, closeOutcomeUnavailable) >= from+2 || !owned || len(fixture.closes()) > 0
+		if !retiring && fixture.groupOutcomes(old, closeOutcomeGroupRetiring) > retiringFrom {
+			retiring, stepsAtRetiring = true, fixture.maintenanceSteps()
+		}
+		return fixture.groupOutcomes(old, closeOutcomeUnavailable) >= from+2 ||
+			retiring && fixture.maintenanceSteps() >= stepsAtRetiring+2 || !owned || len(fixture.closes()) > 0
 	}, func() string {
-		return "unavailable=" + strconv.Itoa(fixture.groupOutcomes(old, closeOutcomeUnavailable)-from)
+		return "unavailable=" + strconv.Itoa(fixture.groupOutcomes(old, closeOutcomeUnavailable)-from) +
+			" group_retiring=" + strconv.Itoa(fixture.groupOutcomes(old, closeOutcomeGroupRetiring)-retiringFrom)
 	})
 }
 

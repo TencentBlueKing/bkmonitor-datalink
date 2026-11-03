@@ -55,6 +55,41 @@ type activationStanding struct {
 	failureStage string
 	failureClass string
 	lastFailure  string
+	// unreadSince is, per Query Group the last activation read left out
+	// with an absent or undecodable timeline, when a round first found it
+	// so and every round since has: the clock its repair is held to. A Query
+	// Group read again, or left out for a newer format, drops out.
+	unreadSince map[string]unreadTimeline
+}
+
+// unreadTimeline is one Query Group's unread run: since when, and why.
+type unreadTimeline struct {
+	since  time.Time
+	reason controlplane.SkippedTimelineReason
+}
+
+// noteUnreadLocked updates the unread runs from the activation read the
+// round just made. Called under the bundle's mutex.
+func (bundle *phaseTwoWorkerBundle) noteUnreadLocked(now time.Time) {
+	if bundle.dependencies.ActivationSkipped == nil {
+		return
+	}
+	state := &bundle.activation
+	reading := bundle.dependencies.ActivationSkipped()
+	current := make(map[string]unreadTimeline, len(reading.Rebuildable))
+	for _, skipped := range reading.Rebuildable {
+		if skipped.Reason != controlplane.SkippedTimelineAbsent && skipped.Reason != controlplane.SkippedTimelineUndecodable {
+			continue
+		}
+		key := string(skipped.QueryGroup)
+		run, held := state.unreadSince[key]
+		if !held {
+			run = unreadTimeline{since: now}
+		}
+		run.reason = skipped.Reason
+		current[key] = run
+	}
+	state.unreadSince = current
 }
 
 // noteActivationLocked records one round's activation outcome. Called under
@@ -66,6 +101,7 @@ func (bundle *phaseTwoWorkerBundle) noteActivationLocked(outcome *phaseTwoActiva
 	}
 	state := &bundle.activation
 	now := bundle.dependencies.Now()
+	bundle.noteUnreadLocked(now)
 	state.attempted = true
 	state.published = outcome.Published
 	// Zero means the last good activation could not even be read; the
@@ -126,11 +162,22 @@ func (bundle *phaseTwoWorkerBundle) activationHeaderFleetFacts() *fleet.Activati
 func (bundle *phaseTwoWorkerBundle) activationFleetFacts() *fleet.ActivationFacts {
 	bundle.mu.RLock()
 	state := bundle.activation
+	unread := make([]string, 0, len(state.unreadSince))
+	var oldest time.Time
+	now := bundle.dependencies.Now()
+	for key, run := range state.unreadSince {
+		if now.Sub(run.since) <= controlplane.SourceStalenessBound {
+			continue
+		}
+		unread = append(unread, key+":"+string(run.reason))
+		if oldest.IsZero() || run.since.Before(oldest) {
+			oldest = run.since
+		}
+	}
 	bundle.mu.RUnlock()
 	if !state.attempted {
 		return nil
 	}
-	now := bundle.dependencies.Now()
 	facts := &fleet.ActivationFacts{
 		Applied: string(state.applied.SnapshotRevision), AppliedEpoch: state.applied.PublicationEpoch,
 		Published: string(state.published.SnapshotRevision), PublishedEpoch: state.published.PublicationEpoch,
@@ -166,6 +213,16 @@ func (bundle *phaseTwoWorkerBundle) activationFleetFacts() *fleet.ActivationFact
 			named = append(named, string(skipped.QueryGroup)+":"+string(skipped.Reason))
 		}
 		facts.SkippedNamed = strings.Join(named, ",")
+	}
+	if len(unread) > 0 {
+		sort.Strings(unread)
+		age := now.Sub(oldest).Seconds()
+		facts.UnrepairedBeyondBound, facts.UnrepairedSeconds = len(unread), &age
+		// Every one is counted; the names are capped as the skipped ones are.
+		if len(unread) > controlplane.MaxNamedSkippedTimelines {
+			unread = unread[:controlplane.MaxNamedSkippedTimelines]
+		}
+		facts.UnrepairedNamed = strings.Join(unread, ",")
 	}
 	if !state.failingSince.IsZero() {
 		failing := now.Sub(state.failingSince).Seconds()

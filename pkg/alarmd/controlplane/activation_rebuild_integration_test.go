@@ -31,6 +31,11 @@ type rebuildFixture struct {
 
 func newRebuildFixture(t *testing.T, name string) *rebuildFixture {
 	t.Helper()
+	return newRebuildFixtureOf(t, name, validCatalog(t, 80))
+}
+
+func newRebuildFixtureOf(t *testing.T, name string, catalog controlplane.Catalog) *rebuildFixture {
+	t.Helper()
 	client := newControlplaneRedis(t)
 	ctx := context.Background()
 	prefix := "alarmd:control:rebuild-" + name
@@ -43,7 +48,7 @@ func newRebuildFixture(t *testing.T, name string) *rebuildFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, _, err := repository.PublishCatalog(ctx, validCatalog(t, 80))
+	snapshot, _, err := repository.PublishCatalog(ctx, catalog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,32 +187,6 @@ func TestARebuildThatCannotBeProvenWritesNothing(t *testing.T) {
 		_, err := f.reconciler.Ensure(ctx, f.publication)
 		if !errors.Is(err, controlplane.ErrActivationRebuildRefused) || !f.bodyGone(t) ||
 			f.repository.ActivationRebuildCounts()[controlplane.ActivationRebuildHeaderPending] != 1 {
-			t.Fatalf("err %v counts %v", err, f.repository.ActivationRebuildCounts())
-		}
-	})
-	t.Run("a Query Group of the publication without its timeline", func(t *testing.T) {
-		f := newRebuildFixture(t, "timeline-missing")
-		ctx := context.Background()
-		f.loseBody(t)
-		if err := f.client.Del(ctx, f.timelineKeys(t)[0]).Err(); err != nil {
-			t.Fatal(err)
-		}
-		_, err := f.reconciler.Ensure(ctx, f.publication)
-		if !errors.Is(err, controlplane.ErrActivationRebuildRefused) || !f.bodyGone(t) ||
-			f.repository.ActivationRebuildCounts()[controlplane.ActivationRebuildTimelineMissing] != 1 {
-			t.Fatalf("err %v counts %v", err, f.repository.ActivationRebuildCounts())
-		}
-	})
-	t.Run("a Query Group of the publication whose timeline does not decode", func(t *testing.T) {
-		f := newRebuildFixture(t, "timeline-unreadable")
-		ctx := context.Background()
-		f.loseBody(t)
-		if err := f.client.Set(ctx, f.timelineKeys(t)[0], "{not a timeline", time.Hour).Err(); err != nil {
-			t.Fatal(err)
-		}
-		_, err := f.reconciler.Ensure(ctx, f.publication)
-		if !errors.Is(err, controlplane.ErrActivationRebuildRefused) || !f.bodyGone(t) ||
-			f.repository.ActivationRebuildCounts()[controlplane.ActivationRebuildTimelineUnreadable] != 1 {
 			t.Fatalf("err %v counts %v", err, f.repository.ActivationRebuildCounts())
 		}
 	})
@@ -456,5 +435,138 @@ func TestAHeldQueryGroupIsRecoveredIntoDrainingFromItsTimeline(t *testing.T) {
 	}
 	if counts := restarted.ActivationRebuildCounts(); counts[controlplane.ActivationRebuiltDrainingUnknown] != 1 {
 		t.Fatalf("counts = %v", counts)
+	}
+}
+
+// rebuildUnreadTimeline is one way a Query Group's timeline can be unreadable
+// while the body is lost: what is done to its key, the name the rebuild and
+// the activation read give it, and what the repair then does with it.
+type rebuildUnreadTimeline struct {
+	name   string
+	spoil  func(t *testing.T, f *rebuildFixture, key string)
+	reason controlplane.SkippedTimelineReason
+	repair controlplane.TimelineRepairOutcome
+}
+
+var rebuildUnreadTimelines = []rebuildUnreadTimeline{
+	{name: "absent", reason: controlplane.SkippedTimelineAbsent, repair: controlplane.TimelineRepairReopened,
+		spoil: func(t *testing.T, f *rebuildFixture, key string) {
+			if err := f.client.Del(context.Background(), key).Err(); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	{name: "undecodable", reason: controlplane.SkippedTimelineUndecodable, repair: controlplane.TimelineRepairRewritten,
+		spoil: func(t *testing.T, f *rebuildFixture, key string) {
+			if err := f.client.Set(context.Background(), key, "{not a timeline", time.Hour).Err(); err != nil {
+				t.Fatal(err)
+			}
+		}},
+}
+
+func (f *rebuildFixture) activeSet(t *testing.T, repository *controlplane.RedisCatalogRepository) []execution.QueryGroupIdentity {
+	t.Helper()
+	ctx := context.Background()
+	head, err := repository.LoadActivationHead(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := repository.LoadActiveQueryGroupSet(ctx, head.ActiveQGSetRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Slice(active, func(i, j int) bool { return active[i] < active[j] })
+	return active
+}
+
+// One Query Group whose timeline is gone or does not decode no longer keeps
+// the whole fleet without an activation: the body is written back for every
+// Query Group, and the unread one stays in the active set - named as unread,
+// never taken for one that left - so its owner, its view and its alerts stay
+// where they were, and the activation's own repair then gives it a timeline
+// again under the publication it runs.
+func TestOneUnreadableTimelineDoesNotKeepTheBodyFromEveryOtherQueryGroup(t *testing.T) {
+	for _, spoiled := range rebuildUnreadTimelines {
+		for _, leader := range []string{"last-good", "restarted"} {
+			t.Run(spoiled.name+" "+leader, func(t *testing.T) {
+				f := newRebuildFixtureOf(t, "unread-"+spoiled.name+"-"+leader, twoQueryGroupCatalog(t))
+				ctx := context.Background()
+				before := f.activeSet(t, f.repository)
+				if len(before) != 2 {
+					t.Fatalf("setup: active set %v, want two Query Groups", before)
+				}
+				keys := f.timelineKeys(t)
+				bad := execution.QueryGroupIdentity(strings.TrimPrefix(keys[0], f.prefix+":schedule_timeline:"))
+				f.loseBody(t)
+				spoiled.spoil(t, f, keys[0])
+				repository, reconciler, want := f.repository, f.reconciler, controlplane.ActivationRebuilt
+				if leader == "restarted" {
+					repository, reconciler = f.restarted(t)
+					want = controlplane.ActivationRebuiltDrainingUnknown
+				}
+
+				outcome, err := repository.RebuildActivationBody(ctx)
+				if err != nil || outcome != want {
+					t.Fatalf("rebuild = %s, %v; want %s", outcome, err, want)
+				}
+				restored, err := f.client.Get(ctx, f.prefix+":activation").Bytes()
+				if err != nil {
+					t.Fatalf("no body written back: %v", err)
+				}
+				if got, lost := decodedActivation(t, restored), decodedActivation(t, f.body); !reflect.DeepEqual(got, lost) {
+					t.Fatalf("written body differs from the lost one:\n got %+v\nwant %+v", got, lost)
+				}
+				if after := f.activeSet(t, repository); !reflect.DeepEqual(after, before) {
+					t.Fatalf("active set after the rebuild %v, want %v: the unread Query Group must not leave it", after, before)
+				}
+				if counts := repository.ActivationRebuildUnreadCounts(); counts[spoiled.reason] != 1 || len(counts) != len(controlplane.SkippedTimelineReasons) {
+					t.Fatalf("unread counts %v, want one %s", counts, spoiled.reason)
+				}
+				read, err := repository.LoadActivation(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(read.SkippedTimelines) != 1 || read.SkippedTimelines[0] != (controlplane.SkippedTimeline{QueryGroup: bad, Reason: spoiled.reason}) {
+					t.Fatalf("skipped %+v, want %s named %s", read.SkippedTimelines, bad, spoiled.reason)
+				}
+				if len(read.Plans) == 0 {
+					t.Fatal("the other Query Group's Plans are not in the activation")
+				}
+
+				if _, err := reconciler.Ensure(ctx, f.publication); err != nil {
+					t.Fatalf("ensure after the rebuild: %v", err)
+				}
+				if counts := repository.TimelineRepairCounts(); counts[spoiled.repair] != 1 {
+					t.Fatalf("repair counts %v, want one %s", counts, spoiled.repair)
+				}
+				if read, err := repository.LoadActivation(ctx); err != nil || len(read.SkippedTimelines) != 0 {
+					t.Fatalf("after the repair: skipped %+v, %v", read.SkippedTimelines, err)
+				}
+			})
+		}
+	}
+}
+
+// The unread timeline is fenced like every other: one written, or rewritten,
+// between the read and the write wins, and the rebuild writes nothing.
+func TestAnUnreadTimelineThatMovesDuringTheRebuildIsAConflict(t *testing.T) {
+	for _, spoiled := range rebuildUnreadTimelines {
+		t.Run(spoiled.name, func(t *testing.T) {
+			f := newRebuildFixtureOf(t, "unread-conflict-"+spoiled.name, twoQueryGroupCatalog(t))
+			ctx := context.Background()
+			key := f.timelineKeys(t)[0]
+			raw, err := f.client.Get(ctx, key).Result()
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.loseBody(t)
+			spoiled.spoil(t, f, key)
+			other := redis.NewClient(&redis.Options{Addr: f.client.Options().Addr})
+			defer other.Close()
+			f.client.AddHook(moveBeforeRebuild{client: other, key: key, value: raw})
+			outcome, err := f.repository.RebuildActivationBody(ctx)
+			if err != nil || outcome != controlplane.ActivationRebuildConflict || !f.bodyGone(t) {
+				t.Fatalf("outcome %s err %v body gone %v", outcome, err, f.bodyGone(t))
+			}
+		})
 	}
 }

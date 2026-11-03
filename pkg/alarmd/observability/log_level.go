@@ -105,11 +105,11 @@ var warnSlotPathReasons = makeReasonSet([]ReasonCode{ReasonSlotWaitSlow})
 var warnDecisionReasons = makeReasonSet([]ReasonCode{"unexplained", "freeze_failed", "proof_too_large"})
 
 // warnMaintenanceReasons are effective-time maintenance outcomes that are a
-// close or a plan failing; the others are a close acknowledged, contention
-// or a wait.
+// close or a plan failing, or a link that closes nothing; the others are a
+// close run or settled later, contention or a wait.
 var warnMaintenanceReasons = makeReasonSet([]ReasonCode{
-	"close_precheck_failed", "close_send_failed", "maintenance_plan_uncompilable",
-	"close_identity_invalid", "unavailable", "unsupported_runner", "evidence_unavailable",
+	"close_precheck_failed", "maintenance_plan_uncompilable", "close_identity_invalid",
+	"unavailable", "unsupported_runner", "filter_close_unsupported",
 })
 
 // warnAbsentCloseReasons are absent-strategy close outcomes that could not

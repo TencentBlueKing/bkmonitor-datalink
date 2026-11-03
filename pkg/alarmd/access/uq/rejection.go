@@ -138,18 +138,18 @@ func bodyTraceID(body []byte) string {
 // rejectionClass names what a refusal was about from words the provider's
 // storages answer with, HTTP_<status> when it names none of them. A bounded
 // word, so it can be a label and a log field; the body itself is not.
-// It stays a log-only diagnostic: nothing decides a reason, check or owner
-// on it, and attribution reads the status alone.
+// It decides no reason. The fleet reads one class for whose a refusal is
+// (execution.RejectionClassVMSampleLimit); the rest stay diagnostics.
 func rejectionClass(status int, body []byte) string {
 	text := bytes.ToLower(body)
 	switch {
 	case bytes.Contains(text, []byte("reduce the time range")) ||
 		bytes.Contains(text, []byte("samples")) && bytes.Contains(text, []byte("limit")):
-		return "VM_SAMPLE_LIMIT"
+		return execution.RejectionClassVMSampleLimit
 	case bytes.Contains(text, []byte("parse error")) || bytes.Contains(text, []byte("promql")) && bytes.Contains(text, []byte("parse")):
-		return "PROMQL_PARSE"
+		return execution.RejectionClassPromQLParse
 	case bytes.Contains(text, []byte("invalid query")):
-		return "INVALID_QUERY"
+		return execution.RejectionClassInvalidQuery
 	}
 	return "HTTP_" + strconv.Itoa(status)
 }

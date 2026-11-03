@@ -230,28 +230,44 @@ func TestARecordWithEntriesAndNoStartIsDecidedAlertByAlert(t *testing.T) {
 	}
 }
 
-// The record's entries are pruned only when neither part of the decision
-// found anything: the alerts opened since the record vouches and the older
-// ones decided one by one. Where the recent part matched nothing but older
-// alerts were still open, the entries stay.
-func TestNothingIsPrunedWhileOlderAlertsWereStillOpen(t *testing.T) {
-	h := newHarness(t)
-	h.opened(t, "41", "3", nil, fingerprints(0, 5)...)
-	for i := 0; i < 3; i++ {
-		h.link.add(&fakeAlert{id: alertID(i), labels: map[string]string{"strategy_id": "41", "strategy_version": "3"},
-			created: fakeRecordStart.Add(-time.Hour)})
-	}
-	closer := h.closer(t)
-	if word := closer.Inactive(context.Background(), testScope, "3", 3, fakeOpenedAt, testPeriod); word != OutcomeJobDone {
-		t.Fatalf("word %s (stats %v)", word, nonZero(closer.Stats()))
-	}
-	for i := 0; i < 3; i++ {
-		if h.link.alert(alertID(i)).closes != 1 {
-			t.Fatalf("the older %s was not closed", alertID(i))
-		}
-	}
-	record, err := h.record(t).Load(context.Background(), openepisodes.Key{TenantID: "tenant-a", StrategyID: "41"})
-	if err != nil || len(record.Entries) != 5 || closer.Stats()[OutcomeRecordPruned] != 0 {
-		t.Fatalf("record %d entries (%v), stats %v: want the five kept", len(record.Entries), err, nonZero(closer.Stats()))
+// The record's entries go once both parts of the decision settled: the
+// alerts opened since the record vouches and the older ones decided one by
+// one, with nothing left or what was left closed. The link then holds none of
+// the decision's alerts, and an entry kept past its episode hides the series'
+// next one from the record. Where a close did not
+// settle, the entries stay.
+func TestEntriesArePrunedOnceTheDecisionSettledClosingIncluded(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		fault string
+		word  string
+		kept  int
+	}{
+		{name: "older alerts closed", fault: "", word: OutcomeJobDone, kept: 0},
+		{name: "an older close did not settle", fault: "busy", word: "", kept: 5},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.opened(t, "41", "3", nil, fingerprints(0, 5)...)
+			for i := 0; i < 3; i++ {
+				h.link.add(&fakeAlert{id: alertID(i), labels: map[string]string{"strategy_id": "41", "strategy_version": "3"},
+					created: fakeRecordStart.Add(-time.Hour)})
+			}
+			if test.fault != "" {
+				h.link.itemFault = func(alertID string, n int) string { return test.fault }
+			}
+			closer := h.closer(t)
+			word := closer.Inactive(context.Background(), testScope, "3", 3, fakeOpenedAt, testPeriod)
+			if test.word != "" && word != test.word {
+				t.Fatalf("word %s (stats %v)", word, nonZero(closer.Stats()))
+			}
+			if test.word == "" && settledWord(word) {
+				t.Fatalf("word %s settled with every older close refused (stats %v)", word, nonZero(closer.Stats()))
+			}
+			record, err := h.record(t).Load(context.Background(), openepisodes.Key{TenantID: "tenant-a", StrategyID: "41"})
+			if err != nil || len(record.Entries) != test.kept {
+				t.Fatalf("record %d entries (%v), stats %v: want %d kept", len(record.Entries), err, nonZero(closer.Stats()), test.kept)
+			}
+		})
 	}
 }

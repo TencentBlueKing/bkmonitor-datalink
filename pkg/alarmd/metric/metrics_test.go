@@ -30,13 +30,16 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/filterclose"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/newopens"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/nodata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openepisodes"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scopeclose"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/sourceliveness"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategycache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/targetplan"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/tracing"
@@ -633,7 +636,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("undrained_draining_query_groups"):     1,
 		fqName("draining_cursor_pruned_query_groups"): 1,
 		fqName("rebalance_planned_moves"):             1,
-		fqName("level_outcome_total"):                 3 + 3*len(observability.LevelOutcomeReasons()),
+		fqName("level_outcome_total"):                 3 + 3*len(observability.LevelOutcomeReasons()) + len(observability.RecoveryWithheldReasons),
 		fqName("shard_unaware_ready_replicas"):        1,
 		fqName("rebalance_gap"):                       1,
 		fqName("dispatch_queue_turnaways_total"):      len(dispatchTurnawayOutcomes) * len(dispatchTurnawayCohorts),
@@ -692,6 +695,12 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("trigger_recovery_beside_level_total")] = 3
 	bounds[fqName("trigger_recovery_withheld_total")] = len(observability.RecoveryWithheldReasons)
 	bounds[fqName("no_data_end_total")] = len(observability.NoDataEndOutcomes)
+	bounds[fqName("source_liveness_checks_total")] = len(sourceliveness.Kinds) *
+		(1 + len(sourceliveness.UnknownReasons) + len(sourceliveness.UnsupportedReasons))
+	bounds[fqName("source_liveness_probe_deferred_total")] = 1
+	bounds[fqName("source_liveness_answers_evicted_total")] = 1
+	bounds[fqName("source_liveness_held_evicted_total")] = 1
+	bounds[fqName("source_liveness_check_seconds")] = histogramSeries(len(sourceliveness.Kinds), len(sourceLivenessBuckets))
 	bounds[fqName("trigger_open_alert_gate_total")] = len(observability.OpenAlertGateOutcomes)
 	bounds[fqName("effective_close_total")] = len(observability.EffectiveCloseOutcomes)
 	bounds[fqName("active_copy_lookup_total")] = len(activecopy.Answers)
@@ -707,6 +716,14 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("no_data_close_requests_total")] = 8
 	bounds[fqName("linkd_filter_close_total")] = len(filterclose.Outcomes)
 	bounds[fqName("open_episode_record_total")] = len(openepisodes.Outcomes)
+	bounds[fqName("new_opens_total")] = len(newopens.Outcomes)
+	bounds[fqName("front_refused_total")] = len(obchannel.FrontRefusalCodes)
+	bounds[fqName("process_resident_bytes")] = 1
+	bounds[fqName("go_heap_idle_bytes")] = 1
+	bounds[fqName("go_heap_released_bytes")] = 1
+	bounds[fqName("container_memory_stat_bytes")] = len(cgroupMemoryKinds)
+	// statm and memory_stat.
+	bounds[fqName("process_memory_read_failed_total")] = 2
 	bounds[fqName("strategy_scope_close_total")] = 11
 	bounds[fqName("target_scope_close_total")] = len(scopeclose.Outcomes)
 	bounds[fqName("absent_strategy_round_total")] = len(absentalerts.Refusals)
@@ -715,6 +732,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("fleet_tracker_dropped_total")] = len(fleet.TrackerDroppedKinds)
 	bounds[fqName("effective_time_refresh_total")] = len(strategycache.EffectiveTimeRefreshResults)
 	bounds[fqName("activation_rebuild_total")] = len(controlplane.ActivationRebuildOutcomes)
+	bounds[fqName("activation_rebuild_unread_query_groups_total")] = len(controlplane.SkippedTimelineReasons)
 	bounds[fqName("timeline_repairs_total")] = len(controlplane.TimelineRepairOutcomes)
 	bounds[fqName("activation_timelines_skipped_total")] = len(controlplane.SkippedTimelineReasons)
 	bounds[fqName("timeline_unreadable_reports_total")] = 1
@@ -1083,13 +1101,29 @@ func TestQueryCooldownLoadResultsArePreCreated(t *testing.T) {
 // sends acknowledged, those among them, and does not say none is left open.
 func TestTheCloseHelpsCountSendsTheBrokerAcknowledged(t *testing.T) {
 	for family, help := range map[string]string{
-		"effective_close_total":       newEffectiveCloseCollector().outcomes.String(),
 		"target_scope_close_total":    newTargetScopeCloseCollector().outcomeIs.String(),
 		"strategy_edit_close_total":   newEditCloseCollector().outcomeIs.String(),
 		"absent_strategy_close_total": newAbsentCloseCollector().outcomeIs.String(),
 	} {
 		if strings.Contains(help, "left open") || !strings.Contains(help, "acknowledged by the broker") || !strings.Contains(help, "(orphaned there)") {
 			t.Fatalf("%s help = %s, want the sends the broker acknowledged counted, closes the link finds nothing active for among them", family, help)
+		}
+	}
+}
+
+// The effective-time maintenance closes through the link's filter close,
+// not the broker, so its help describes every outcome it counts and none of
+// the broker-era words it no longer has.
+func TestTheEffectiveCloseHelpNamesItsOutcomes(t *testing.T) {
+	help := newEffectiveCloseCollector().outcomes.String()
+	for _, outcome := range observability.EffectiveCloseOutcomes {
+		if !strings.Contains(help, string(outcome)) {
+			t.Fatalf("effective_close_total help does not name %q: %s", outcome, help)
+		}
+	}
+	for _, gone := range []string{"close_acked", "index_set", "evidence_unavailable", "close_send_failed", "calibration", "Console"} {
+		if strings.Contains(help, gone) {
+			t.Fatalf("effective_close_total help still says %q: %s", gone, help)
 		}
 	}
 }

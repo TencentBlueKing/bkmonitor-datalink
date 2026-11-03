@@ -17,9 +17,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/editclose"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdmanage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openepisodes"
 )
 
@@ -368,5 +370,117 @@ func TestAnEditThatFindsNoOlderBucketPrunesTheOlderEntries(t *testing.T) {
 		if entry.Version != "5" {
 			t.Fatalf("entry %+v left", entry)
 		}
+	}
+}
+
+// A bucket an edit walks alert by alert is not read again once a whole pass
+// of it ended under the same Plans' key with nothing left it could not
+// close: every alert still in it decides as it did. One strategy's old
+// revisions, kept open by the stale-alerts ruling, were read and counted
+// again each round, about 2,000 reads and a facts-missing count that only
+// grew. A changed key walks the bucket again from its first alert.
+func TestAWalkedBucketIsNotReadAgainWhileThePlansKeyHolds(t *testing.T) {
+	h := newHarness(t)
+	h.link.add(opened("k1", "4", factsOf("m5"), false, "critical", nil))
+	h.link.add(opened("f1", "4", nil, false, "critical", nil))
+	closer := h.closer(t)
+	plan := currentPlan()
+	edit := func() map[string]uint64 {
+		t.Helper()
+		if word, _ := closer.Edit(context.Background(), EditInput{Scope: testScope, Plan: plan}); word != "" {
+			t.Fatalf("word %s", word)
+		}
+		return closer.Stats()
+	}
+	first := edit()
+	// k1 carries facts and is decided with its bucket; f1 carries none and
+	// is the one alert the edit reads alert by alert.
+	if first[OutcomeAlertsRead] != 1 || first["edit_"+editclose.OutcomeFactsMissing] != 1 || first[OutcomeWalkRemembered] != 0 {
+		t.Fatalf("the first pass: %v", nonZero(first))
+	}
+	second := edit()
+	if second[OutcomeAlertsRead] != 1 || second["edit_"+editclose.OutcomeFactsMissing] != 1 || second[OutcomeWalkRemembered] != 1 {
+		t.Fatalf("the same key again: %v, want nothing read or counted again and the bucket remembered", nonZero(second))
+	}
+	plan.NoDataSuspended = true
+	third := edit()
+	if third[OutcomeAlertsRead] != 2 || third["edit_"+editclose.OutcomeFactsMissing] != 2 {
+		t.Fatalf("a changed key: %v, want the bucket walked again", nonZero(third))
+	}
+	if h.link.alert("k1").closes != 0 || h.link.alert("f1").closes != 0 {
+		t.Fatalf("kept alerts were closed")
+	}
+}
+
+// A pass whose close did not settle is not remembered: the next round walks
+// the bucket again rather than leave an alert it decided to close open.
+func TestAPassWithAnUnsettledCloseIsWalkedAgain(t *testing.T) {
+	h := newHarness(t)
+	// No facts, and grouped by a dimension the Plans no longer group by: read
+	// alert by alert and decided closed. The link answers every close busy.
+	h.link.add(opened("d1", "4", nil, false, "critical", map[string]string{"old_dim": "x"}))
+	h.link.requestBusy = func(route string, _ int) bool { return route != linkdmanage.RouteSearch }
+	closer := h.closer(t)
+	for round := 1; round <= 2; round++ {
+		closer.Edit(context.Background(), EditInput{Scope: testScope, Plan: currentPlan()})
+		if stats := closer.Stats(); stats[OutcomeAlertsRead] != uint64(round) || stats[OutcomeAlertDecidedClose] != uint64(round) ||
+			stats[OutcomeWalkRemembered] != 0 {
+			t.Fatalf("round %d: %v, want the bucket walked each round while its close fails", round, nonZero(stats))
+		}
+	}
+}
+
+// A pass cut at maxAlertsPerTurn goes on from where it stopped next round,
+// but not across a change of the Plans' key: the alerts read before the
+// change were decided under the old key, so the walk starts again from the
+// bucket's first alert. Carried on instead, the pass would end and be
+// remembered with those alerts never decided under the key it is
+// remembered by.
+func TestAPassCutAndThenUnderANewKeyStartsAgain(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i <= maxAlertsPerTurn; i++ {
+		h.link.add(opened(fmt.Sprintf("f%04d", i), "4", nil, false, "critical", nil))
+	}
+	closer := h.closer(t)
+	plan := currentPlan()
+	closer.Edit(context.Background(), EditInput{Scope: testScope, Plan: plan})
+	if stats := closer.Stats(); stats[OutcomeAlertsRead] != maxAlertsPerTurn || stats[OutcomeAlertsTruncated] != 1 {
+		t.Fatalf("the first round: %v, want a pass cut at %d", nonZero(stats), maxAlertsPerTurn)
+	}
+	plan.NoDataSuspended = true
+	closer.Edit(context.Background(), EditInput{Scope: testScope, Plan: plan})
+	if stats := closer.Stats(); stats[OutcomeAlertsRead] != 2*maxAlertsPerTurn {
+		t.Fatalf("the key changed mid-pass: %v, want the walk started again from the first alert", nonZero(stats))
+	}
+}
+
+// An alert can still join a remembered bucket: a Slot frozen with the
+// older Plans, replayed or taken over after the edit, opens at the older
+// version. A remembered bucket is read again when an alert opened in it
+// after the newest one its pass read, and that alert is decided - here,
+// closed for a dimension the Plans no longer group by. With nothing newer
+// the bucket stays remembered and is not read (R63).
+func TestAnAlertJoiningARememberedBucketIsDecided(t *testing.T) {
+	h := newHarness(t)
+	h.link.add(opened("f1", "4", nil, false, "critical", nil))
+	closer := h.closer(t)
+	edit := func() map[string]uint64 {
+		t.Helper()
+		closer.Edit(context.Background(), EditInput{Scope: testScope, Plan: currentPlan()})
+		return closer.Stats()
+	}
+	edit()
+	if stats := edit(); stats[OutcomeWalkRemembered] != 1 || stats[OutcomeWalkReopened] != 0 || stats[OutcomeAlertsRead] != 1 {
+		t.Fatalf("nothing newer: %v, want the bucket remembered and not read", nonZero(stats))
+	}
+	late := opened("d1", "4", nil, false, "critical", map[string]string{"old_dim": "x"})
+	late.created = fakeOpenedAt.Add(time.Hour)
+	h.link.add(late)
+	stats := edit()
+	if stats[OutcomeWalkReopened] != 1 || stats[OutcomeAlertsRead] != 3 || h.link.alert("d1").closes != 1 || h.link.alert("f1").closes != 0 {
+		t.Fatalf("an alert joined: %v, d1 closed %d times; want the bucket walked again and d1 closed", nonZero(stats), h.link.alert("d1").closes)
+	}
+	if stats := edit(); stats[OutcomeWalkRemembered] != 2 || stats[OutcomeWalkReopened] != 1 {
+		t.Fatalf("after the late alert was decided: %v, want the bucket remembered again", nonZero(stats))
 	}
 }

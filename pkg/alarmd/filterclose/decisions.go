@@ -476,7 +476,14 @@ func sampleFacts(alert linkdmanage.Alert) (contract.StrategyFactsV2, bool) {
 // oneByOne reads a bucket's alerts (only the ones opened before before,
 // when it is set), up to maxAlertsPerTurn a round from where the last
 // round stopped, decides each from its own record, and
-// closes the ones decided by their ids, under the bucket's filter.
+// closes the ones decided by their ids, under the bucket's filter. A bucket
+// a whole pass ended under the Plans' current key, with every close it
+// decided settled, is not read again while the key holds and no alert has
+// opened in it since the newest one the pass read - one search of a single
+// alert asks: the alerts read decide as they did (Plan.Key), and an alert
+// can still join a bucket of an older version, from a Slot frozen with the
+// older Plans and replayed or taken over after the edit. A changed key or a
+// newer alert starts a new pass from the bucket's first alert.
 func (closer *Closer) oneByOne(ctx context.Context, input EditInput, bucket Bucket, before time.Time) string {
 	filter, err := BucketFilter(input.Scope, bucket)
 	if err != nil {
@@ -495,7 +502,38 @@ func (closer *Closer) oneByOne(ctx context.Context, input EditInput, bucket Buck
 		closer.count(OutcomeFilterRefused, 1)
 		return OutcomeFilterRefused
 	}
+	planKey := input.Plan.Key()
 	closer.mu.Lock()
+	walked, remembered := closer.walked[walkKey]
+	closer.mu.Unlock()
+	if remembered && walked.key == planKey {
+		newer, err := openedAfter(read, walked.newest)
+		if err != nil {
+			closer.count(OutcomeFilterRefused, 1)
+			return OutcomeFilterRefused
+		}
+		page, err := closer.link.Search(ctx, input.Scope.TenantID, newer.body, "", 1)
+		if err != nil {
+			return closer.failed(err)
+		}
+		if len(page.Items) == 0 {
+			closer.count(OutcomeWalkRemembered, 1)
+			return ""
+		}
+		closer.count(OutcomeWalkReopened, 1)
+		closer.mu.Lock()
+		delete(closer.walked, walkKey)
+		delete(closer.passes, walkKey)
+		closer.mu.Unlock()
+	}
+	closer.mu.Lock()
+	pass := closer.passes[walkKey]
+	if pass == nil || pass.key != planKey {
+		pass = &walkPass{key: planKey, clean: true}
+		closer.passes[walkKey] = pass
+		delete(closer.walked, walkKey)
+		closer.buckets[walkKey] = ""
+	}
 	after := closer.buckets[walkKey]
 	closer.mu.Unlock()
 	decided := map[string][]string{}
@@ -507,6 +545,11 @@ func (closer *Closer) oneByOne(ctx context.Context, input EditInput, bucket Buck
 		}
 		for _, alert := range page.Items {
 			n++
+			if alert.CreateAt.After(pass.newest) {
+				closer.mu.Lock()
+				pass.newest = alert.CreateAt
+				closer.mu.Unlock()
+			}
 			if alert.Status != "active" {
 				continue
 			}
@@ -530,6 +573,7 @@ func (closer *Closer) oneByOne(ctx context.Context, input EditInput, bucket Buck
 	closer.count(OutcomeAlertsRead, n)
 	if after != "" {
 		closer.count(OutcomeAlertsTruncated, 1)
+		closer.notice(Notice{Outcome: OutcomeAlertsTruncated, Scope: input.Scope, Decision: "edit", Read: n})
 	}
 	closer.mu.Lock()
 	closer.buckets[walkKey] = after
@@ -547,6 +591,9 @@ func (closer *Closer) oneByOne(ctx context.Context, input EditInput, bucket Buck
 			byID, err := alertsFilter(input.Scope, bucket, batch)
 			if err != nil {
 				closer.count(OutcomeFilterRefused, 1)
+				closer.mu.Lock()
+				pass.clean = false
+				closer.mu.Unlock()
 				continue
 			}
 			word := closer.Run(ctx, Job{Filter: byID, Decision: decision, Version: bucket.Version, Digest: bucket.Digest,
@@ -555,7 +602,22 @@ func (closer *Closer) oneByOne(ctx context.Context, input EditInput, bucket Buck
 			if word == OutcomeUnsupported {
 				return word
 			}
+			if !settledWord(word) {
+				closer.mu.Lock()
+				pass.clean = false
+				closer.mu.Unlock()
+			}
 		}
+	}
+	if after == "" {
+		// The pass reached the bucket's last alert. Remembered when every
+		// close it decided settled; otherwise the next round walks it again.
+		closer.mu.Lock()
+		if pass.clean {
+			closer.walked[walkKey] = walkedBucket{key: planKey, newest: pass.newest}
+		}
+		delete(closer.passes, walkKey)
+		closer.mu.Unlock()
 	}
 	return ""
 }

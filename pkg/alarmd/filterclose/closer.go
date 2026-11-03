@@ -181,6 +181,27 @@ type Options struct {
 	// search or the filtered close: filtered close is unsupported, and
 	// nothing closes the decisions instead.
 	Warn func(error)
+	// Report is told each outcome a reader has to place by strategy to act
+	// on -- a close refused past its expectation, a walk cut at its turn's
+	// bound -- which the counts cannot say: they carry no strategy. Optional.
+	Report func(Notice)
+}
+
+// Notice is one outcome Report is told, with what places it.
+type Notice struct {
+	Outcome  string
+	Scope    Scope
+	Decision string
+	// Expected, Allowed and Matched are an expect_exceeded's: the
+	// expectation's count and source, the most a dry run may match, and
+	// what it matched.
+	Expected int
+	Source   string
+	Allowed  int
+	Matched  int
+	// Read is an alerts_truncated's: the alerts the turn read before it
+	// stopped.
+	Read int
 }
 
 // Closer runs jobs and retries kept items. It is safe for concurrent use.
@@ -191,6 +212,7 @@ type Closer struct {
 	record   Record
 	now      func() time.Time
 	warn     func(error)
+	report   func(Notice)
 
 	mu sync.Mutex
 	// progress is, per job filter, its dry run's cursor while it runs, then
@@ -203,6 +225,30 @@ type Closer struct {
 	// buckets is the edit close's per-alert walk, per bucket, within the
 	// term.
 	buckets map[string]string
+	// passes is, per bucket walked alert by alert, the walk in progress: the
+	// Plans' key it decides against, whether every close it decided so far
+	// settled, and the newest alert it read. walked is, per bucket, the
+	// Plans' key a whole pass ended under with nothing left that it could
+	// not close, and the newest alert it read: while the key holds every
+	// alert read decides the same way it did, so the bucket is read again
+	// only when an alert opened in it after that one (OutcomeWalkReopened;
+	// otherwise OutcomeWalkRemembered). Both per term.
+	passes map[string]*walkPass
+	walked map[string]walkedBucket
+}
+
+// walkPass is one bucket's alert-by-alert walk under one Plans' key.
+type walkPass struct {
+	key    string
+	clean  bool
+	newest time.Time
+}
+
+// walkedBucket is a bucket a whole pass ended for: the Plans' key and the
+// newest alert the pass read, on the link's clock.
+type walkedBucket struct {
+	key    string
+	newest time.Time
 }
 
 // progress is one filter's state in the term: the dry run's cursor and
@@ -222,8 +268,9 @@ func New(options Options) (*Closer, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Closer{link: options.Link, commands: options.Commands, pending: options.Pending, record: options.Record, now: now, warn: options.Warn,
-		progress: map[string]*progress{}, counts: map[string]uint64{}, buckets: map[string]string{}}, nil
+	return &Closer{link: options.Link, commands: options.Commands, pending: options.Pending, record: options.Record, now: now, warn: options.Warn, report: options.Report,
+		progress: map[string]*progress{}, counts: map[string]uint64{}, buckets: map[string]string{},
+		passes: map[string]*walkPass{}, walked: map[string]walkedBucket{}}, nil
 }
 
 // Unsupported says the link answered within unsupportedRecheck that it
@@ -252,6 +299,8 @@ func (closer *Closer) Forget() {
 	closer.mu.Lock()
 	closer.progress = map[string]*progress{}
 	closer.buckets = map[string]string{}
+	closer.passes = map[string]*walkPass{}
+	closer.walked = map[string]walkedBucket{}
 	closer.mu.Unlock()
 }
 
@@ -365,6 +414,8 @@ func (closer *Closer) Run(ctx context.Context, job Job) string {
 		case matched > allowed:
 			closer.forgetProgress(progressKey)
 			closer.count(OutcomeExpectExceeded, 1)
+			closer.notice(Notice{Outcome: OutcomeExpectExceeded, Scope: job.Filter.scope, Decision: job.Decision,
+				Expected: job.Expect.Count, Source: job.Expect.Source, Allowed: allowed, Matched: matched})
 			return OutcomeExpectExceeded
 		case matched == 0:
 			closer.forgetProgress(progressKey)
@@ -611,4 +662,11 @@ func (closer *Closer) PendingSize(ctx context.Context) int64 {
 		return -1
 	}
 	return size
+}
+
+// notice tells Report, when there is one.
+func (closer *Closer) notice(notice Notice) {
+	if closer.report != nil {
+		closer.report(notice)
+	}
 }

@@ -84,6 +84,16 @@ func TestASameBoundaryCutoverMovesPastTheOpenSegments(t *testing.T) {
 			if _, err := fixture.runtime.ReadFrozenSchedule(fixture.ctx, untouched.Identity, 61); !errors.Is(err, controlplane.ErrScheduleUnavailable) {
 				t.Fatalf("the leaving Query Group's schedule at 61 = %v, want none", err)
 			}
+			// Past its retirement a maintenance read names the Query Group as
+			// leaving, beside the unavailable it always was; before it, and
+			// for the Query Group that stays, nothing is leaving.
+			if _, err := fixture.runtime.CurrentPlans(fixture.ctx, untouched.Identity, 61); !errors.Is(err, controlplane.ErrQueryGroupRetiring) ||
+				!errors.Is(err, controlplane.ErrScheduleUnavailable) {
+				t.Fatalf("the leaving Query Group's maintenance read at 61 = %v, want it leaving the catalog and unavailable", err)
+			}
+			if read, err := fixture.runtime.CurrentPlans(fixture.ctx, edited.Identity, 61); err != nil || len(read.Plans) == 0 {
+				t.Fatalf("the edited Query Group's maintenance read at 61 = (%d Plans, %v), want its Plans", len(read.Plans), err)
+			}
 			if current := fixture.currentGroups(t, state); current[untouched.Identity] || !current[edited.Identity] || len(current) != 1 {
 				t.Fatalf("current = %v, want %s alone", current, edited.Identity)
 			}

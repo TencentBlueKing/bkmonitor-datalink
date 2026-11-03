@@ -122,12 +122,12 @@ func TestTrendsReadEachChartInItsSpaceScopedToThisDeployment(t *testing.T) {
 		}
 	}
 	cpu := trendByKey(answer, "cpu_cores")
-	if len(cpu.Lines) < 2 || cpu.Lines[0].Pod != "alarmd-a" || cpu.Lines[0].Name != "使用 · alarmd-a" || cpu.Lines[1].Pod != "alarmd-b" ||
+	if len(cpu.Lines) < 2 || cpu.Lines[0].Pod != "alarmd-a" || cpu.Lines[0].Name != "使用（alarmd-a）" || cpu.Lines[1].Pod != "alarmd-b" ||
 		!strings.Contains(cpu.Lines[0].PromQL, "container_cpu_usage_seconds_total") {
 		t.Fatalf("cpu lines = %+v, want one per pod in pod order, named and with the expression", cpu.Lines)
 	}
 	failures := trendByKey(answer, "failures_per_minute")
-	if len(failures.Lines) != 4 || failures.Lines[1].Name != "状态·准入未成功" || !strings.Contains(failures.Lines[1].PromQL, `result!="success"`) {
+	if len(failures.Lines) != 4 || failures.Lines[1].Name != "状态：准入未成功" || !strings.Contains(failures.Lines[1].PromQL, `result!="success"`) {
 		t.Fatalf("failure lines = %+v, want the four stages", failures.Lines)
 	}
 }

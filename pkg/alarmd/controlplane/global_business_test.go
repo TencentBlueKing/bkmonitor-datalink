@@ -201,14 +201,6 @@ func TestAGlobalBusinessStrategyIsWithheldWhereItCannotRunAsOne(t *testing.T) {
 			source: controlplane.GlobalQuerySourcePromQL,
 			metric: "bklog:index_set:m",
 		},
-		"an event query": {
-			item: func(item map[string]any) {
-				item["query_configs"] = []any{map[string]any{"data_source_label": "custom", "data_type_label": "event",
-					"result_table_id": "k8s_event", "custom_event_name": "PodError", "agg_interval": 60, "agg_dimension": []any{"namespace"}}}
-			},
-			reason: controlplane.GlobalBusinessQueryKind,
-			source: "custom/event",
-		},
 		"a query naming no table": {
 			item: func(item map[string]any) {
 				configs := item["query_configs"].([]any)
@@ -284,7 +276,8 @@ func TestAGlobalBusinessStrategyIsWithheldWhereItCannotRunAsOne(t *testing.T) {
 
 // What a global business strategy may be: no target or a target plan, a
 // structured time series query over the metric router - the platform's own
-// or a custom one - naming its table.
+// or a custom one - naming its table, or a custom event query naming its
+// table or data label.
 func TestAGlobalBusinessStrategyThatMeetsTheConditionsCompiles(t *testing.T) {
 	for name, item := range map[string]func(map[string]any){
 		"no target": nil,
@@ -298,6 +291,11 @@ func TestAGlobalBusinessStrategyThatMeetsTheConditionsCompiles(t *testing.T) {
 			configs := item["query_configs"].([]any)
 			configs[0].(map[string]any)["data_source_label"] = "custom"
 			configs[0].(map[string]any)["result_table_id"] = "2_bkmonitor_time_series_100.__default__"
+		},
+		"a custom event over a data label": func(item map[string]any) {
+			item["query_configs"] = []any{map[string]any{"data_source_label": "custom", "data_type_label": "event",
+				"result_table_id": "system_event", "custom_event_name": "OOM", "agg_method": "COUNT", "agg_interval": 60,
+				"agg_dimension": []any{"bk_target_ip", "bk_target_cloud_id", "bk_biz_id"}}}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -316,9 +314,10 @@ func TestAGlobalBusinessStrategyThatMeetsTheConditionsCompiles(t *testing.T) {
 			if !plan.GlobalBusiness || !catalog.QueryGroups[0].QueryPlan.GlobalBusiness {
 				t.Fatalf("Plan global=%t, facts global=%t", plan.GlobalBusiness, catalog.QueryGroups[0].QueryPlan.GlobalBusiness)
 			}
-			source := "bk_monitor/time_series"
-			if name == "a custom time series" {
-				source = "custom/time_series"
+			source := map[string]string{"a custom time series": "custom/time_series",
+				"a custom event over a data label": "custom/event"}[name]
+			if source == "" {
+				source = "bk_monitor/time_series"
 			}
 			wantRecord := []controlplane.GlobalStrategy{{SourceID: strategy.SourceID, QuerySource: source}}
 			if !reflect.DeepEqual(catalog.GlobalStrategies, wantRecord) {
@@ -708,6 +707,93 @@ func TestAGlobalBusinessPromQLCarryingAConditionIsRefused(t *testing.T) {
 				t.Fatalf("groups = %d, dispositions %+v", len(catalog.QueryGroups), catalog.Dispositions)
 			}
 			wantRecord := []controlplane.GlobalStrategy{{SourceID: strategy.SourceID, QuerySource: "promql"}}
+			if !reflect.DeepEqual(catalog.GlobalStrategies, wantRecord) {
+				t.Fatalf("global strategies = %+v, want %+v", catalog.GlobalStrategies, wantRecord)
+			}
+		})
+	}
+}
+
+// A global strategy over custom events with no target and no bk_biz_id
+// among its dimensions is refused as business_dimension: its series key
+// holds no business, so one host's events in two businesses would add into
+// one alert filed under the global business. Grouped by bk_biz_id, or with a
+// target, it compiles; an ordinary strategy without bk_biz_id compiles as
+// before, and so does a global time series one.
+func TestAGlobalBusinessCustomEventStrategyWithNoBusinessDimensionIsRefused(t *testing.T) {
+	events := func(dimensions ...any) func(map[string]any) {
+		return func(item map[string]any) {
+			item["query_configs"] = []any{map[string]any{"data_source_label": "custom", "data_type_label": "event",
+				"result_table_id": "system_event", "custom_event_name": "OOM", "agg_method": "COUNT", "agg_interval": 60,
+				"agg_dimension": dimensions}}
+		}
+	}
+	build := func(t *testing.T, item func(map[string]any), global bool) (controlplane.SourceStrategy, controlplane.Catalog) {
+		t.Helper()
+		strategy := twoThresholdStrategiesWithDelay(t, 0)[0]
+		strategy.Document = editedDocument(t, strategy.Document, func(top map[string]any) { top["strategy_revision"] = 7 }, item)
+		strategy.Identity.GlobalBusiness = global
+		catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
+			Planner: globalBusinessPlanner(t), Strategies: []controlplane.SourceStrategy{strategy}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strategy, catalog
+	}
+	withoutBusiness := events("bk_target_ip", "bk_target_cloud_id", "process")
+
+	strategy, refused := build(t, withoutBusiness, true)
+	if len(refused.QueryGroups) != 0 {
+		t.Fatalf("the global strategy compiled into %d groups", len(refused.QueryGroups))
+	}
+	var refusals []controlplane.ObjectDisposition
+	for _, disposition := range refused.Dispositions {
+		if disposition.Reason == "GLOBAL_STRATEGY_UNSUPPORTED" {
+			refusals = append(refusals, disposition)
+		}
+	}
+	if len(refusals) != 1 || refusals[0].SourceID != strategy.SourceID || refusals[0].Disposition != controlplane.DispositionUnsupported ||
+		refusals[0].Detail != "reason=business_dimension source=custom/event" || refusals[0].FieldPath != "items[0].query_configs" {
+		t.Fatalf("refusals = %+v, want one UNSUPPORTED naming strategy %s, business_dimension and custom/event", refusals, strategy.SourceID)
+	}
+	wantRecord := []controlplane.GlobalStrategy{{SourceID: strategy.SourceID, Refusal: "business_dimension", QuerySource: "custom/event"}}
+	if !reflect.DeepEqual(refused.GlobalStrategies, wantRecord) {
+		t.Fatalf("global strategies = %+v, want %+v", refused.GlobalStrategies, wantRecord)
+	}
+	wantSplit := map[controlplane.GlobalUnsupportedKey]int{{Reason: "business_dimension", QuerySource: "custom/event"}: 1}
+	if got := controlplane.ComposeCatalog(refused).GlobalUnsupported; !reflect.DeepEqual(got, wantSplit) {
+		t.Fatalf("global unsupported = %v, want %v", got, wantSplit)
+	}
+
+	kubernetesTarget := func(item map[string]any) {
+		withoutBusiness(item)
+		item["target_plan"] = map[string]any{"schema_version": 1, "model_id": "cw-K8s_Cluster", "target_rule": "k8s_cluster",
+			"failure_policy": "no_match", "dynamic_groups": []any{}, "dynamic_topologies": []any{},
+			"static_targets": []any{map[string]any{"model_id": "cw-K8s_Cluster", "model_inst_id": "cluster-a",
+				"match": map[string]any{"bcs_cluster_id": "cluster-a"}, "bk_biz_id": 11}}}
+	}
+	for name, test := range map[string]struct {
+		item   func(map[string]any)
+		global bool
+		source string
+	}{
+		"global, grouped by bk_biz_id":            {item: events("bk_target_ip", "bk_target_cloud_id", "process", "bk_biz_id"), global: true, source: "custom/event"},
+		"global, with a target":                   {item: kubernetesTarget, global: true, source: "custom/event"},
+		"global time series without bk_biz_id":    {item: nil, global: true, source: "bk_monitor/time_series"},
+		"ordinary custom event without bk_biz_id": {item: withoutBusiness, global: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			strategy, catalog := build(t, test.item, test.global)
+			if len(catalog.QueryGroups) != 1 {
+				t.Fatalf("groups = %d, dispositions %+v", len(catalog.QueryGroups), catalog.Dispositions)
+			}
+			if !test.global {
+				if catalog.GlobalStrategies != nil {
+					t.Fatalf("global strategies = %+v for an ordinary strategy", catalog.GlobalStrategies)
+				}
+				return
+			}
+			wantRecord := []controlplane.GlobalStrategy{{SourceID: strategy.SourceID, QuerySource: test.source}}
 			if !reflect.DeepEqual(catalog.GlobalStrategies, wantRecord) {
 				t.Fatalf("global strategies = %+v, want %+v", catalog.GlobalStrategies, wantRecord)
 			}

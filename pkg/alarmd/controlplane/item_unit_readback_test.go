@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 )
 
@@ -41,21 +40,22 @@ func TestAThresholdUnitIsReadFromTheQueryConfigWhereTheCacheKeepsIt(t *testing.T
 		name   string
 		unit   string
 		prefix string
-		// refused is the level being taken out of service, which is what the
-		// missing unit did to every one of these.
-		refused bool
+		// note is the reason the level is noted with when its unit reading
+		// is named; none of these takes the level out of service any more.
+		note string
 	}{
 		{name: "a percentage with a percent prefix", unit: "percent", prefix: "%"},
 		{name: "bits per second with a mega prefix", unit: "bps", prefix: "M"},
 		{name: "bytes with a gibi prefix", unit: "bytes", prefix: "Gi"},
 		// A unit with no scale of its own. Python converts nothing for these,
-		// so the prefix is pointless rather than wrong, and the strategy runs.
-		{name: "no unit at all with a percent prefix", unit: "", prefix: "%"},
-		// And the one that must still be refused: a unit that does have a
-		// scale, given a prefix that is not one of its own. Here the prefix
-		// changes the number, and accepting an unrecognised one would compare
-		// against a threshold nobody meant.
-		{name: "bits per second with a gibi prefix", unit: "bps", prefix: "Gi", refused: true},
+		// so the prefix is pointless rather than wrong, and the strategy runs
+		// -- with the ignored prefix named, since its owner chose it.
+		{name: "no unit at all with a percent prefix", unit: "", prefix: "%", note: controlplane.ReasonUnitPrefixIgnoredNoUnit},
+		// A unit that does have a scale, given a prefix that is not one of
+		// its own. Nothing says what the threshold means in that unit, so the
+		// level compares raw values and says so, rather than leaving the
+		// whole level out of service (the user's rule of 2026-10-28).
+		{name: "bits per second with a gibi prefix", unit: "bps", prefix: "Gi", note: controlplane.ReasonUnitPrefixOutsideStepsReadAsSmallest},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			client := newControlplaneRedis(t)
@@ -86,17 +86,16 @@ func TestAThresholdUnitIsReadFromTheQueryConfigWhereTheCacheKeepsIt(t *testing.T
 				t.Fatalf("publish = (%#v, %v)", published, err)
 			}
 
-			if test.refused {
-				assertAuditDispositionExact(t, repository, "1001", "LEVEL", 1,
-					controlplane.DispositionConfigRejected, contract.ReasonLevelInvalid)
-				// And the refusal says which field. Without it the reader has a
-				// reason word for a document of a few hundred keys, and the only
-				// way to find the key is to compile the document again offline.
-				assertAuditDispositionField(t, repository, "1001", "LEVEL", 1, "level.detect_plan.algorithms")
-				return
-			}
 			assertAuditDispositionExact(t, repository, "1001", "PLAN", 0, controlplane.DispositionAccepted, "")
 			assertNoAuditDisposition(t, repository, "1001", controlplane.DispositionConfigRejected)
+			if test.note != "" {
+				assertAuditDispositionExact(t, repository, "1001", "LEVEL", 1, controlplane.DispositionConfigNoted, test.note)
+				// The note says which field, so the owner finds the prefix
+				// without compiling the document again.
+				assertAuditDispositionField(t, repository, "1001", "LEVEL", 1, "items[0].algorithms[*].unit_prefix")
+			} else {
+				assertNoAuditDisposition(t, repository, "1001", controlplane.DispositionConfigNoted)
+			}
 
 			// The unit itself reached the compiled Plan. Acceptance alone
 			// cannot say so: an empty unit accepts an empty prefix too, and

@@ -195,6 +195,7 @@ func openProductionControlRoleBundle(
 	}
 	route := newFilterRoute(cfg, filterCloser)
 	recorder.SetActivationRebuildSource(core.Repository.ActivationRebuildCounts)
+	recorder.SetActivationRebuildUnreadSource(core.Repository.ActivationRebuildUnreadCounts)
 	recorder.SetTimelineRepairSource(core.Repository.TimelineRepairCounts)
 	recorder.SetActivationSkippedTimelinesSource(core.Repository.SkippedTimelinesReading)
 	recorder.SetActivationHeaderSource(core.Repository.ActivationHeaderReading)

@@ -999,8 +999,17 @@ const RecoveryWithheldZeroCount = "zero_count"
 // timed and ends nothing. The next real point starts the clock.
 const RecoveryWithheldNoDataLastPointUnknown = "no_data_last_point_unknown"
 
+// RecoveryWithheldSourceUnknown: a Level written to end on no data reached
+// its end, and the probe of its source - the same table in the same space,
+// the strategy's own conditions removed - could not say the source is alive:
+// the answer carried a status or was partial, the probe failed or timed out,
+// or it came back empty without a status. No data from a source that may
+// itself be down is not "it stopped happening", so the alert stays open.
+// Only ever on a no-data end; the quiet-group zero count path is not probed.
+const RecoveryWithheldSourceUnknown = "source_unknown"
+
 // RecoveryWithheldReasons is the closed list.
-var RecoveryWithheldReasons = []string{RecoveryWithheldZeroCount, RecoveryWithheldNoDataLastPointUnknown}
+var RecoveryWithheldReasons = []string{RecoveryWithheldZeroCount, RecoveryWithheldNoDataLastPointUnknown, RecoveryWithheldSourceUnknown}
 
 type WindowEvidenceV1 struct {
 	AnomalyTimestampsDigest string `json:"anomaly_timestamps_digest"`

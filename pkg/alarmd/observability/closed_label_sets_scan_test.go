@@ -186,7 +186,9 @@ func closedLabelSets() []labelSet {
 		},
 		{
 			name: "level_outcome_reason", fields: []fieldSink{{"observability.LevelOutcomeFact", "Reason"}},
-			known: func(v string) bool { return v == "" || LevelOutcomeReasonLabel(v) == v },
+			known: func(v string) bool {
+				return v == "" || LevelOutcomeReasonLabel(v) == v || levelOutcomeWithheldReason(v)
+			},
 		},
 		{
 			name: "query_status_code", fields: []fieldSink{{"observability.QueryStatusFacts", "Code"}},

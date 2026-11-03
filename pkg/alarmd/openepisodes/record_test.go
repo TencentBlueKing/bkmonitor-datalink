@@ -195,7 +195,7 @@ func TestAFailedWriteAndAFullQueueAreCounted(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 	clk := &clock{at: time.Unix(1_800_000_000, 0)}
 	w := newWorker(t, client, clk)
-	w.acknowledge(t, envelope(contract.TriggerEventAbnormal, 1), envelope(contract.TriggerEventRecovery, 2))
+	w.acknowledge(t, envelope(contract.TriggerEventAbnormal, 1), envelope(contract.TriggerEventRecovery, 1))
 	if stats := w.writer.Stats(); stats[openepisodes.OutcomeWriteFailed] != 2 || stats[openepisodes.OutcomeOpened] != 0 {
 		t.Fatalf("stats %v", stats)
 	}
@@ -270,5 +270,84 @@ func TestARepeatAfterARestartKeepsTheEpisodesVersion(t *testing.T) {
 	restarted.acknowledge(t, moved)
 	if record := load(t, client); len(record.Entries) != 1 || record.Entries[0].Version != "8" {
 		t.Fatalf("record %+v, want the new episode at version 8", record)
+	}
+}
+
+// An entry a close pruned is written back by the series' next ABNORMAL past
+// ReensureEvery, though the copy still holds the own send that kept the
+// writer from writing it: the close may run on another replica, whose copy is
+// not this one. Inside the hour nothing is written; an entry that still
+// stands is not rewritten -- set-if-absent keeps its opening and version.
+func TestAnEntryAClosePrunedIsWrittenBackWithinTheHour(t *testing.T) {
+	server := redistest.Start(t)
+	if server == nil {
+		t.Skip("no redis-server")
+	}
+	client := server.Client()
+	clk := &clock{at: time.Unix(1_800_000_000, 0)}
+	w := newWorker(t, client, clk)
+	w.acknowledge(t, envelope(contract.TriggerEventAbnormal, 1), envelope(contract.TriggerEventAbnormal, 2))
+	opened := load(t, client).Entries
+	store, _ := openepisodes.NewStore(client, prefix)
+	// The close settled for fp(1): its entry goes; fp(2)'s stands.
+	if err := store.Prune(context.Background(), key, []string{fp(1)}); err != nil {
+		t.Fatal(err)
+	}
+	clk.at = clk.at.Add(openepisodes.ReensureEvery - time.Second)
+	w.acknowledge(t, envelope(contract.TriggerEventAbnormal, 1), envelope(contract.TriggerEventAbnormal, 2))
+	if record := load(t, client); len(record.Entries) != 1 || w.writer.Stats()[openepisodes.OutcomeReensured] != 0 {
+		t.Fatalf("written back inside the hour: %+v, stats %v", record, w.writer.Stats())
+	}
+	clk.at = clk.at.Add(time.Second)
+	w.acknowledge(t, envelope(contract.TriggerEventAbnormal, 1), envelope(contract.TriggerEventAbnormal, 2))
+	record := load(t, client)
+	if len(record.Entries) != 2 || w.writer.Stats()[openepisodes.OutcomeReensured] != 2 {
+		t.Fatalf("not written back after the hour: %+v, stats %v", record, w.writer.Stats())
+	}
+	for _, entry := range record.Entries {
+		switch entry.Fingerprint {
+		case fp(1):
+			// The new episode opens at the write back, inside what a close
+			// counts from then on.
+			if entry.OpenedAt != clk.at.Unix() {
+				t.Fatalf("the written-back entry opens at %d, want %d", entry.OpenedAt, clk.at.Unix())
+			}
+		case fp(2):
+			for _, first := range opened {
+				if first.Fingerprint == fp(2) && first.OpenedAt != entry.OpenedAt {
+					t.Fatalf("the standing entry was rewritten: %+v, first %+v", entry, first)
+				}
+			}
+		}
+	}
+}
+
+// A series the writer no longer sees is let go after two hours unwritten;
+// one still repeating its ABNORMAL is written again each hour and stays.
+// The memory used to grow with every series ever seen.
+func TestASeriesNoLongerSeenIsLetGoAndOneStillOpenStays(t *testing.T) {
+	server := redistest.Start(t)
+	if server == nil {
+		t.Skip("no redis-server")
+	}
+	clk := &clock{at: time.Unix(1_800_000_000, 0)}
+	w := newWorker(t, server.Client(), clk)
+	w.acknowledge(t, envelope(contract.TriggerEventAbnormal, 1), envelope(contract.TriggerEventAbnormal, 2))
+	if n := w.writer.Remembered(); n != 2 {
+		t.Fatalf("remembers %d series, want 2", n)
+	}
+	// fp(1) repeats every half hour; fp(2) is not seen again.
+	for step := 0; step < 5; step++ {
+		clk.at = clk.at.Add(30 * time.Minute)
+		w.acknowledge(t, envelope(contract.TriggerEventAbnormal, 1))
+	}
+	if n := w.writer.Remembered(); n != 1 {
+		t.Fatalf("after 2h30m remembers %d series, want only the one still open", n)
+	}
+	// Seen again, the series let go is written at once, set-if-absent.
+	before := w.writer.Stats()[openepisodes.OutcomeReensured]
+	w.acknowledge(t, envelope(contract.TriggerEventAbnormal, 2))
+	if after := w.writer.Stats()[openepisodes.OutcomeReensured]; after != before+1 || w.writer.Remembered() != 2 {
+		t.Fatalf("the returning series was not written: reensured %d -> %d, remembered %d", before, after, w.writer.Remembered())
 	}
 }

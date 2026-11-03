@@ -296,7 +296,7 @@ func boardLine(row BoardRow) string {
 	if row.ActionWord != "" {
 		parts = append(parts, row.ActionWord)
 	}
-	line := strings.Join(parts, " · ")
+	line := strings.Join(parts, "，")
 	if row.WatchWord != "" {
 		line += "（" + row.WatchWord + "）"
 	}

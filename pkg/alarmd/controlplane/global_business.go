@@ -28,11 +28,11 @@ const (
 	// own business, so every other business's hosts would lose no-data
 	// detection without a word.
 	GlobalBusinessLegacyTarget = "legacy_target"
-	// GlobalBusinessQueryKind: the query does not read the metric router's
-	// time series: a structured query over logs, events or the computing
-	// platform's tables, or a PromQL selector whose name starts with such a
-	// source (bkdata:, bklog:, bkapm:). How those are routed with the space
-	// skipped has not been established.
+	// GlobalBusinessQueryKind: the query reads neither the metric router's
+	// time series nor custom events: a structured query over logs or the
+	// computing platform's tables, or a PromQL selector whose name starts
+	// with such a source (bkdata:, bklog:, bkapm:). How those are routed with
+	// the space skipped has not been established.
 	GlobalBusinessQueryKind = "query_kind"
 	// GlobalBusinessQueryTable: a query names no table or data label. With
 	// the space skipped the provider has no space to find tables in, answers
@@ -54,21 +54,36 @@ const (
 	// condition keys (keys=<key>,...). The writer lifts it by writing the
 	// filter into the PromQL itself.
 	GlobalBusinessConditionIgnored = "condition_ignored"
+	// GlobalBusinessBusinessDimension: a custom event query that neither
+	// targets nor groups by bk_biz_id. Its series key holds no business, so
+	// one host's events in several businesses add into one count and one
+	// alert, filed under the strategy's own business, where none of those
+	// businesses' owners sees it. The writer lifts it by grouping by
+	// bk_biz_id.
+	GlobalBusinessBusinessDimension = "business_dimension"
 )
 
 // GlobalBusinessRefusalWords is every word a GLOBAL_STRATEGY_UNSUPPORTED
 // refusal names, the reason label's closed set in the global composition.
 var GlobalBusinessRefusalWords = []string{
 	GlobalBusinessLegacyTarget, GlobalBusinessQueryKind, GlobalBusinessQueryTable, GlobalBusinessOutputProtocol,
-	GlobalBusinessConditionIgnored,
+	GlobalBusinessConditionIgnored, GlobalBusinessBusinessDimension,
 }
 
 // globalBusinessQuerySemantics are the query sources a global business Plan
-// may read: the structured time series the metric router serves. An empty
-// SourceSemantics is the first of them alone.
+// may read: the structured time series the metric router serves, and custom
+// events. An empty SourceSemantics is the first of them alone.
+//
+// A custom event query names its table or data label as written (the
+// built-in system_event, k8s_event and cicd_event labels) and the provider
+// resolves it with the space skipped to every table under it in the tenant,
+// with no space filter. The business an event is about is the strategy's
+// target or its bk_biz_id dimension (admission.AttributeBusiness); a
+// strategy that has neither is refused (globalBusinessDimensionRefusal).
 var globalBusinessQuerySemantics = map[string]struct{}{
 	"bk_monitor/time_series": {},
 	"custom/time_series":     {},
+	"custom/event":           {},
 }
 
 // GlobalQuerySourcePromQL labels a global strategy whose query is PromQL.
@@ -139,6 +154,35 @@ func globalBusinessRefusal(
 		}
 	}
 	return nil, ""
+}
+
+// globalBusinessDimensionRefusal is the refusal of a global business Plan
+// that reads custom events with nothing to file them under a business by:
+// no target and no bk_biz_id among its dimensions. It reads the compiled
+// Plan, where the target plan and the dimensions are, so it runs after the
+// Plan is compiled; nil for every other Plan.
+func globalBusinessDimensionRefusal(
+	sourceID string, identity SourceIdentity, facts execution.QueryPlanFacts, plan contract.EvaluationPlanV2,
+) *ObjectDisposition {
+	if !identity.GlobalBusiness || facts.PromQL != nil || plan.TargetPlan != nil {
+		return nil
+	}
+	readsEvents := false
+	for _, semantics := range facts.SourceSemantics {
+		if semantics == "custom/event" {
+			readsEvents = true
+		}
+	}
+	if !readsEvents {
+		return nil
+	}
+	for _, field := range plan.InputProjection.DimensionFields {
+		if field == contract.BusinessDimension {
+			return nil
+		}
+	}
+	refusal := globalBusinessUnsupported(sourceID, GlobalBusinessBusinessDimension, "items[0].query_configs", GlobalQuerySource(facts))
+	return &refusal
 }
 
 // promQLConditionKeysShown bounds the condition keys a condition_ignored

@@ -70,9 +70,9 @@ func TestTheSecondPageRendersWithoutThrowingOrLeakingCodes(t *testing.T) {
 	waiting := fleet.Standing{State: fleet.StateResultUntrusted, Action: fleet.ActionWatch, Watch: fleet.WatchWindowFilling, Check: fleet.CheckSeriesDataMissing, RefinedBy: fleet.RuleWatch}
 	lines := []fleet.StrategyLine{
 		{StrategyID: "4101", BusinessID: "7", Standing: standing, Objects: 2, Since: &since, SinceFrom: fleet.SinceProcessStart, SinceBasis: fleet.SinceAtLeast,
-			LastGoodAt: &lastGood, DecidingObject: "qg-window-abcdef", Line: "策略 4101 · 2 个对象 · 数据没到 · 数据负责人查 · 最差窗口 6/9，缺的 3 分钟查询都正常返回、序列不在结果里"},
+			LastGoodAt: &lastGood, DecidingObject: "qg-window-abcdef", Line: "策略 4101，2 个对象，数据没到，数据负责人查，最差窗口 6/9，缺的 3 分钟查询都正常返回、序列不在结果里"},
 		{StrategyID: "4102", BusinessID: "7", Standing: waiting, Objects: 1, Since: &since, SinceFrom: fleet.SinceBusinessState, SinceBasis: fleet.SinceExact,
-			DecidingObject: "qg-window-abcdef", Line: "策略 4102 · 1 个对象 · 检测结果不能采信 · 等着看 · 窗口在补 · 最差窗口 8/9"},
+			DecidingObject: "qg-window-abcdef", Line: "策略 4102，1 个对象，检测结果不能采信，等着看，窗口在补，最差窗口 8/9"},
 	}
 	list := fleet.StrategyListResponse{Words: words, Strategies: lines, Summary: fleet.SummarizeStrategyLines(lines), Total: 2, Listed: 2}
 	expected := 40
@@ -123,7 +123,7 @@ func TestTheSecondPageRendersWithoutThrowingOrLeakingCodes(t *testing.T) {
 		Standing: &standing, Finding: fleet.Finding{Check: fleet.CheckWindowUndecided},
 		Coverage: &fleet.HistoryCoverage{Levels: 22, Resumed: 227}}
 	card := fleet.StrategyStanding{StrategyID: "4101", AnsweredBy: "pod-a", Publication: fleet.StrategyPublication{SnapshotRevision: "53b81c9bbb2e", Epoch: 9},
-		Standing: fleet.StandingDetecting, Found: true, Line: "策略 4101：已生效，1 个对象在检测：qg-window-abc（pod-a 持有，数据没到·数据负责人查）",
+		Standing: fleet.StandingDetecting, Found: true, Line: "策略 4101：已生效，1 个对象在检测：qg-window-abc（pod-a 持有，数据没到，数据负责人查）",
 		Plans: []fleet.StrategyPlanStanding{{StrategyPlanRef: fleet.StrategyPlanRef{QueryGroup: "qg-window-abcdef", Business: "7"}, Replica: "pod-a", Existence: "active", Rows: []fleet.Anomaly{row, named, refused, refusedSet, partial, neighbour},
 			Config: &fleet.StrategyPlanConfigs{Redacted: true, Items: []fleet.StrategyPlanConfig{{
 				PlanID:   "4101",
@@ -158,8 +158,8 @@ func TestTheSecondPageRendersWithoutThrowingOrLeakingCodes(t *testing.T) {
 	rendered := text[strings.Index(text, "RENDERED ::"):]
 	t.Log(rendered)
 	for _, want := range []string{
-		"降级", "现在要做的：策略 4101 · 2 个对象 · 数据没到 · 数据负责人查",
-		"数据负责人查", "等着看", "策略 4102 · 1 个对象",
+		"降级", "现在要做的：策略 4101，2 个对象，数据没到，数据负责人查",
+		"数据负责人查", "等着看", "策略 4102，1 个对象",
 		"自 2 小时前（只会更久）", "最近一次正常 2 小时前",
 		"查询正常返回，这条序列不在结果里", "本侧那一轮没查全", "超出本进程记忆", "本侧没查全",
 		"每 60 秒检测一次", "查 system.cpu_summary 的 usage，avg_over_time 60s", "目标 36 个", "级别 1：5 个周期内 1 次异常触发，连续 5 个周期正常恢复",

@@ -114,6 +114,12 @@
     "owner": "ALARMD"
   },
   {
+    "check": "WINDOW_REWARMING",
+    "state": "DETECTING",
+    "action": "WATCH",
+    "owner": "ALARMD"
+  },
+  {
     "check": "WINDOW_UNDECIDED",
     "state": "RESULT_UNTRUSTED",
     "action": "SERVICE_FIX",
@@ -134,6 +140,12 @@
   {
     "check": "QUERY_REFUSED",
     "state": "DEPENDENCY_UNANSWERED",
+    "action": "SERVICE_FIX",
+    "owner": "UNDETERMINED"
+  },
+  {
+    "check": "SOURCE_UNKNOWN_HELD",
+    "state": "DETECTING",
     "action": "SERVICE_FIX",
     "owner": "UNDETERMINED"
   },
@@ -176,6 +188,12 @@
   {
     "check": "SERIES_CHURNING",
     "state": "RESULT_UNTRUSTED",
+    "action": "STRATEGY_EDIT",
+    "owner": "STRATEGY"
+  },
+  {
+    "check": "NEW_ALERTS_BURST",
+    "state": "DETECTING",
     "action": "STRATEGY_EDIT",
     "owner": "STRATEGY"
   },

@@ -217,6 +217,8 @@ type Alert struct {
 	Labels        map[string]json.RawMessage `json:"labels"`
 	Dimensions    map[string]json.RawMessage `json:"dimensions"`
 	ExtraData     json.RawMessage            `json:"extra_data"`
+	// CreateAt is when the link opened the alert, on the link's clock.
+	CreateAt time.Time `json:"create_at"`
 }
 
 // Label reads a label the way the link's index does: a string as it is, an

@@ -379,7 +379,7 @@ func TestTheFlowRatesAreTheCountersOverTwoComputations(t *testing.T) {
 	second := first.Add(time.Minute)
 	before := &FlowFacts{Queries: 100, QueryDuration: FlowHistogram{Buckets: make([]uint64, len(FlowQueryBounds)), Count: 100},
 		DecisionLag: FlowHistogram{Buckets: make([]uint64, len(FlowDecisionBounds))}, RuntimeRedis: FlowHistogram{Buckets: make([]uint64, len(FlowRedisBounds))},
-		Detections: 50, StateWrites: 10, EventsEmitted: 4}
+		Detections: 50, StateWrites: 10, EventsEmitted: 4, SeriesRejected: uint64Of(20)}
 	// 300 more queries: 270 within 0.5 s, 30 cut at 30 s (past the last
 	// bound); 6 timed out.
 	after := *before
@@ -387,6 +387,7 @@ func TestTheFlowRatesAreTheCountersOverTwoComputations(t *testing.T) {
 	after.QueryFailures = map[string]uint64{"timeout": 6}
 	after.QueryDuration = FlowHistogram{Buckets: cumulative(0, 0, 0, 270, 0, 0, 0, 0, 0, 0), Count: 400}
 	after.Detections, after.StateWrites, after.EventsEmitted, after.EventsRejected = 110, 130, 10, 3
+	after.SeriesRejected = uint64Of(80)
 	after.DecisionLag = FlowHistogram{Buckets: cumulative(0, 0, 0, 0, 60, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), Count: 60}
 
 	flows := newOverviewFlows()
@@ -394,6 +395,9 @@ func TestTheFlowRatesAreTheCountersOverTwoComputations(t *testing.T) {
 	flows.apply(&one, flowHealth(first, started, before), first)
 	if pull := flowStage(one, "pull"); pull.Volume.Measured || pull.LatencyP95MS.Measured {
 		t.Fatalf("first computation = %+v, want nothing measured with nothing to subtract", pull)
+	}
+	if throughput := one.Resources.Throughput; throughput.SeriesPerMinute.Measured || throughput.RejectedPerMinute.Measured {
+		t.Fatalf("first computation throughput = %+v, want unmeasured", throughput)
 	}
 	two := overviewOf(flowHealth(second, started, &after), nil, false, second)
 	flows.apply(&two, flowHealth(second, started, &after), second)
@@ -415,6 +419,11 @@ func TestTheFlowRatesAreTheCountersOverTwoComputations(t *testing.T) {
 	if state, output := flowStage(two, "state"), flowStage(two, "output"); state.Volume.Value != 2 || output.Volume.Value != 0.1 ||
 		output.Failures.Value != 3 || output.LatencyP95MS.Measured {
 		t.Fatalf("state %+v output %+v", state, output)
+	}
+	// 120 state writes and 60 refused series over the minute, read from the same two readings as the flow.
+	if throughput := two.Resources.Throughput; throughput != (OverviewThroughput{SeriesPerMinute: overviewMeasured(120, "per_minute"),
+		RejectedPerMinute: overviewMeasured(60, "per_minute")}) {
+		t.Fatalf("throughput = %+v, want 120 judged and 60 refused a minute", throughput)
 	}
 	restarted := second.Add(time.Minute)
 	// A new process that has already counted past the old one: higher
@@ -723,5 +732,51 @@ func TestAReplicaWithOtherBucketBoundsIsNotAddedByPosition(t *testing.T) {
 				t.Fatalf("a rolled replica = P95 %+v coverage %+v, want counted with a P95 in (25 s, 30 s]", evaluate.LatencyP95MS, overview.FlowCoverage)
 			}
 		}
+	}
+}
+
+func uint64Of(value uint64) *uint64 { return &value }
+
+// During a rollout a replica of an earlier build publishes no rejected
+// count, and is counted as none: the fleet's rejected rate is then what the
+// others refused, at least, and says so. With every replica reporting - one
+// of them zero - it is exact.
+func TestTheRejectedRateIsAtLeastWhileAReplicaDoesNotReportIt(t *testing.T) {
+	started := time.Date(2026, 10, 13, 11, 0, 0, 0, time.UTC)
+	first := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	second := first.Add(time.Minute)
+	facts := func(stateWrites uint64, rejected *uint64) *FlowFacts {
+		return &FlowFacts{QueryDuration: FlowHistogram{Buckets: make([]uint64, len(FlowQueryBounds))},
+			DecisionLag:  FlowHistogram{Buckets: make([]uint64, len(FlowDecisionBounds))},
+			RuntimeRedis: FlowHistogram{Buckets: make([]uint64, len(FlowRedisBounds))}, StateWrites: stateWrites, SeriesRejected: rejected}
+	}
+	for _, test := range []struct {
+		name           string
+		bBefore, bNext *uint64
+		atLeast        bool
+	}{
+		{name: "one replica of an earlier build", bBefore: nil, bNext: nil, atLeast: true},
+		{name: "both reporting, one refusing none", bBefore: uint64Of(5), bNext: uint64Of(5), atLeast: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			health := func(at time.Time, a, b *FlowFacts) HealthResponse {
+				h := flowHealth(at, started, a)
+				other := h.PerReplica[0]
+				other.Replica, other.Flow = "replica-b", b
+				h.PerReplica = append(h.PerReplica, other)
+				return h
+			}
+			flows := newOverviewFlows()
+			before := health(first, facts(0, uint64Of(10)), facts(0, test.bBefore))
+			one := overviewOf(before, nil, false, first)
+			flows.apply(&one, before, first)
+			next := health(second, facts(60, uint64Of(70)), facts(60, test.bNext))
+			two := overviewOf(next, nil, false, second)
+			flows.apply(&two, next, second)
+			rejected := two.Resources.Throughput.RejectedPerMinute
+			if !rejected.Measured || rejected.Value != 60 || rejected.AtLeast != test.atLeast {
+				t.Fatalf("rejected = %+v, want 60 a minute from replica-a, at least %t", rejected, test.atLeast)
+			}
+		})
 	}
 }

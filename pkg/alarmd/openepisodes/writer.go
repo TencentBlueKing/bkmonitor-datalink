@@ -31,15 +31,53 @@ const (
 	// the ACK path never waits on the record. Counted per change.
 	OutcomeQueueFull = "queue_full"
 	// OutcomeWriteFailed is a change in a pipeline the Redis did not take,
-	// counted per change. An ABNORMAL lost so is missing from the record
-	// until this process restarts (the copy holds its own send and does not
-	// hand it over again): the strategy's next close sees a dry run past
-	// its count and refuses, counted - no close on a short record.
+	// counted per change. An ABNORMAL lost so is written again by the
+	// series' next ABNORMAL past ReensureEvery (OutcomeReensured); until
+	// then the strategy's next close may see a dry run past its count and
+	// refuse, counted - no close on a short record.
 	OutcomeWriteFailed = "write_failed"
+	// OutcomeReensured is an entry written again for an episode the copy
+	// held an own send of, at most once a ReensureEvery per series: the
+	// write is set-if-absent, so it changes nothing where the entry stands,
+	// and writes back one a close pruned -- possibly on another replica,
+	// whose copy this process's is not -- or one a lost write left out.
+	OutcomeReensured = "reensured"
+	// OutcomeEnsuredFull is a series not remembered because the writer
+	// already remembers MaxEnsured: it is written only on the copy's word
+	// until one is let go.
+	OutcomeEnsuredFull = "ensured_full"
 )
 
+// ReensureEvery is how often a series that only repeats its ABNORMAL has
+// its entry written again (OutcomeReensured): one set-if-absent write per
+// open series an hour, so a record that lost an entry learns it back
+// within the hour.
+const ReensureEvery = time.Hour
+
+// MaxEnsured bounds the series whose last write the writer remembers. Past
+// it a series it does not remember is not written again; the copy's word
+// alone decides for it, as before, counted (OutcomeEnsuredFull).
+const MaxEnsured = 1 << 20
+
+// ensuredLife is how long a series is remembered without a write: a series
+// the writer no longer sees -- closed on the leader, no longer reported, moved
+// to another worker -- goes, and is written at once, set-if-absent, if it is
+// seen again. Without it the memory only grew, past MaxEnsured within weeks
+// of a strategy that opens a new series a minute.
+const ensuredLife = 2 * ReensureEvery
+
+// ensuredSweepEvery is how often the remembered series are swept.
+const ensuredSweepEvery = time.Minute
+
+// series is one strategy's series in the record.
+type series struct {
+	key         Key
+	fingerprint string
+}
+
 // Outcomes lists every writer outcome.
-var Outcomes = []string{OutcomeOpened, OutcomeEnded, OutcomeRefreshed, OutcomeQueueFull, OutcomeWriteFailed}
+var Outcomes = []string{OutcomeOpened, OutcomeEnded, OutcomeRefreshed, OutcomeQueueFull, OutcomeWriteFailed, OutcomeReensured,
+	OutcomeEnsuredFull}
 
 // QueueBatches bounds the acknowledged batches waiting for the writer.
 const QueueBatches = 4096
@@ -67,7 +105,11 @@ type Writer struct {
 	// refreshed is when each strategy's hash life was last set by this
 	// process.
 	refreshed map[Key]time.Time
-	counts    map[string]uint64
+	// ensured is when each open series' entry was last written by this
+	// process.
+	ensured map[series]time.Time
+	swept   time.Time
+	counts  map[string]uint64
 }
 
 func NewWriter(store *Store, now func() time.Time) (*Writer, error) {
@@ -78,7 +120,7 @@ func NewWriter(store *Store, now func() time.Time) (*Writer, error) {
 		now = time.Now
 	}
 	return &Writer{store: store, now: now, queue: make(chan batch, QueueBatches), refreshed: map[Key]time.Time{},
-		counts: map[string]uint64{}}, nil
+		ensured: map[series]time.Time{}, counts: map[string]uint64{}}, nil
 }
 
 // Acknowledged queues what one acknowledged batch changes: changed is the
@@ -91,14 +133,29 @@ func (writer *Writer) Acknowledged(acked, changed []contract.TriggerEventV1) {
 	}
 	now := writer.now()
 	var next batch
+	writer.mu.Lock()
+	if now.Sub(writer.swept) >= ensuredSweepEvery {
+		writer.swept = now
+		for s, last := range writer.ensured {
+			if now.Sub(last) > ensuredLife {
+				delete(writer.ensured, s)
+			}
+		}
+	}
+	full := 0
+	written := map[series]bool{}
 	for _, event := range changed {
 		if change, ok := ChangeOf(event, now); ok {
 			next.changes = append(next.changes, change)
+			writer.refreshed[change.Key] = now
+			s := series{key: change.Key, fingerprint: change.Fingerprint}
+			written[s] = true
+			if change.Open {
+				writer.ensured[s] = now
+			} else {
+				delete(writer.ensured, s)
+			}
 		}
-	}
-	writer.mu.Lock()
-	for _, change := range next.changes {
-		writer.refreshed[change.Key] = now
 	}
 	for _, event := range acked {
 		if event.EventKind != contract.TriggerEventAbnormal || event.DedupeMD5 == "" || event.StrategyRef == nil ||
@@ -110,8 +167,31 @@ func (writer *Writer) Acknowledged(acked, changed []contract.TriggerEventV1) {
 			writer.refreshed[key] = now
 			next.refresh = append(next.refresh, key)
 		}
+		s := series{key: key, fingerprint: event.DedupeMD5}
+		if written[s] {
+			continue
+		}
+		last, known := writer.ensured[s]
+		if known && now.Sub(last) < ReensureEvery {
+			continue
+		}
+		if !known && len(writer.ensured) >= MaxEnsured {
+			full++
+			continue
+		}
+		if change, ok := ChangeOf(event, now); ok {
+			// Written back, an entry opens now: an alert that opened before
+			// the record vouches is then counted in the recent part's
+			// expectation. The expectation is a bound; this widens it by
+			// those alerts, all this process's own, and closes none.
+			change.Reensure = true
+			next.changes = append(next.changes, change)
+			writer.ensured[s] = now
+			written[s] = true
+		}
 	}
 	writer.mu.Unlock()
+	writer.count(OutcomeEnsuredFull, full)
 	if len(next.changes) == 0 && len(next.refresh) == 0 {
 		return
 	}
@@ -146,15 +226,29 @@ func (writer *Writer) write(ctx context.Context, next batch) {
 		writer.forgetRefresh(next)
 		return
 	}
-	opened := 0
+	opened, reensured := 0, 0
 	for _, change := range next.changes {
-		if change.Open {
+		switch {
+		case change.Reensure:
+			reensured++
+		case change.Open:
 			opened++
 		}
 	}
 	writer.count(OutcomeOpened, opened)
-	writer.count(OutcomeEnded, len(next.changes)-opened)
+	writer.count(OutcomeReensured, reensured)
+	writer.count(OutcomeEnded, len(next.changes)-opened-reensured)
 	writer.count(OutcomeRefreshed, len(next.refresh))
+}
+
+// Remembered is how many series the writer remembers a write of.
+func (writer *Writer) Remembered() int {
+	if writer == nil {
+		return 0
+	}
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return len(writer.ensured)
 }
 
 // Pending is the batches queued or being written.

@@ -145,8 +145,16 @@ var capabilityByReason = map[string]CapabilityClass{
 	"EFFECTIVE_TIME_RANGE_INVALID":      {Area: CapabilityConfig, Outcome: CapabilityNotYetSupported},
 	"LEVEL_TRIGGER_BORROWED":            {Area: CapabilityConfig, Outcome: CapabilityNotYetSupported},
 	"AGG_INTERVAL_DEFAULTED":            {Area: CapabilityConfig, Outcome: CapabilityNotYetSupported},
+	"AGG_METHOD_VARIABLE_DEFAULTED":     {Area: CapabilityConfig, Outcome: CapabilityNotYetSupported},
+	"AGG_METHOD_UNDEFINED_DEFAULTED":    {Area: CapabilityConfig, Outcome: CapabilityNotYetSupported},
+	"AGG_METHOD_WITHOUT_TIME_DEFAULTED": {Area: CapabilityConfig, Outcome: CapabilityNotYetSupported},
 	"RECOVERY_CONFIG_DEFAULTED":         {Area: CapabilityConfig, Outcome: CapabilityNotYetSupported},
 	"RECOVERY_STATUS_SETTER_DEFAULTED":  {Area: CapabilityConfig, Outcome: CapabilityNotYetSupported},
+	// The level runs, comparing raw values where its unit or prefix cannot
+	// be read, or ignoring a prefix where its values have no unit.
+	"DATA_UNIT_UNKNOWN_COMPARED_RAW":             {Area: CapabilityConfig, Outcome: CapabilityNotYetSupported},
+	"UNIT_PREFIX_OUTSIDE_STEPS_READ_AS_SMALLEST": {Area: CapabilityConfig, Outcome: CapabilityNotYetSupported},
+	"UNIT_PREFIX_IGNORED_NO_UNIT":                {Area: CapabilityConfig, Outcome: CapabilityNotYetSupported},
 
 	"PRIORITY_IGNORED": {IgnoredByDesign: true},
 }

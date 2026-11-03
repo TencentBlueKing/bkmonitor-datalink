@@ -194,6 +194,7 @@ type FlowCounters struct {
 	DecisionLag    FlowHistogram     `json:"decision_lag"`
 	StateWrites    uint64            `json:"state_writes"`
 	StateFailures  uint64            `json:"state_failures"`
+	SeriesRejected uint64            `json:"series_rejected"`
 	RuntimeRedis   FlowHistogram     `json:"runtime_redis"`
 	EventsEmitted  uint64            `json:"events_emitted"`
 	EventsRejected uint64            `json:"events_rejected"`
@@ -236,6 +237,13 @@ func (r *Recorder) FlowCounters() FlowCounters {
 		}
 	})
 	eachSample(m.stateVersionConflict, func(sample *dto.Metric) { flow.StateFailures += uint64(sample.GetCounter().GetValue()) })
+	// One admission decision per series per Plan; rejected is never recorded under host_identity, which
+	// only adds a second record for an admitted series.
+	eachSample(m.seriesAdmission, func(sample *dto.Metric) {
+		if labelOf(sample, "result") == "rejected" {
+			flow.SeriesRejected += uint64(sample.GetCounter().GetValue())
+		}
+	})
 	flow.RuntimeRedis = FlowHistogram{Buckets: make([]uint64, len(redisDurationBuckets))}
 	runtimeClient := r.runtimeRedisClient()
 	eachSample(m.redisCalls.duration, func(sample *dto.Metric) {

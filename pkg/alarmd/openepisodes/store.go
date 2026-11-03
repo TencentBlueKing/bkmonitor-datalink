@@ -110,16 +110,20 @@ type Record struct {
 
 // Store is the record in the runtime Redis.
 type Store struct {
-	client redis.UniversalClient
+	client redis.Cmdable
 	prefix string
 }
 
-func NewStore(client redis.UniversalClient, prefix string) (*Store, error) {
+func NewStore(client redis.Cmdable, prefix string) (*Store, error) {
 	if client == nil || strings.TrimSpace(prefix) == "" || strings.ContainsAny(prefix, "{} \t\r\n") {
 		return nil, errors.New("alarmd openepisodes: the record's client and prefix are required")
 	}
 	return &Store{client: client, prefix: prefix}, nil
 }
+
+// KeyOf is the Redis key of one strategy's record, for a reader that shows
+// where it read.
+func (store *Store) KeyOf(key Key) string { return store.key(key) }
 
 func (store *Store) key(key Key) string {
 	return store.prefix + ":openepisodes:v1:" + url.PathEscape(key.TenantID) + ":" + url.PathEscape(key.StrategyID)
@@ -132,6 +136,9 @@ type Change struct {
 	Fingerprint string
 	Open        bool
 	Entry       Entry
+	// Reensure is an open written again for an episode already written
+	// (OutcomeReensured); it is written the same way, set-if-absent.
+	Reensure bool
 }
 
 // ChangeOf is the write an acknowledged envelope makes, false for one that

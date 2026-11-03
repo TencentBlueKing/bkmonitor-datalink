@@ -360,7 +360,7 @@ func (link *fakeLink) wire(alert *fakeAlert) linkdmanage.Alert {
 		dimensions[contract.NoDataDimensionTag] = json.RawMessage("true")
 	}
 	return linkdmanage.Alert{AlertID: alert.id, TenantID: alert.tenant, EventSourceID: alert.source, Status: alert.status,
-		Severity: alert.severity, Labels: labels, Dimensions: dimensions, ExtraData: alert.extra}
+		Severity: alert.severity, Labels: labels, Dimensions: dimensions, ExtraData: alert.extra, CreateAt: alert.created}
 }
 
 type fakeCommand struct {

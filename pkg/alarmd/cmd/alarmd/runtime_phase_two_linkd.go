@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdmanage"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/newopens"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openepisodes"
 )
@@ -118,6 +119,9 @@ type openAlertCopyPort struct {
 	// record hears what each acknowledged batch opened and ended, as the
 	// copy judges it (openepisodes); nil without the link's control plane.
 	record *openepisodes.Writer
+	// opens counts each strategy's opens in the hour, as the copy judges
+	// them (newopens); nil in tests that need only the copy.
+	opens *newopens.Counter
 }
 
 // Linked says whether a link stands behind the copy (execution.OpenAlertLink).
@@ -156,4 +160,16 @@ func (port openAlertCopyPort) Acknowledged(events []contract.TriggerEventV1) {
 	changed := port.copy.Acknowledged(events)
 	port.own.Acknowledged(events)
 	port.record.Acknowledged(events, changed)
+	port.opens.Note(changed)
+}
+
+// OpenLevels is the copy's word on which Levels of the series' alert are
+// open (contract.OpenLevelSet); not known without a copy.
+func (port openAlertCopyPort) OpenLevels(tenantID, strategyID, fingerprint string) ([]uint32, bool) {
+	return port.copy.OpenLevels(tenantID, strategyID, fingerprint)
+}
+
+// NewOpens is the strategy's opens in the hour (worker.NewOpensReporter).
+func (port openAlertCopyPort) NewOpens(key newopens.Key) (newopens.Report, bool) {
+	return port.opens.Report(key)
 }

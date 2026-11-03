@@ -251,6 +251,14 @@ func (written *writtenActivation) remember(payload []byte, state ActivationState
 	written.mu.Unlock()
 }
 
+// forget drops the records kept, so that the next read of the activation
+// takes them from the open Segments, which name what they cannot read.
+func (written *writtenActivation) forget() {
+	written.mu.Lock()
+	written.payload, written.state = "", nil
+	written.mu.Unlock()
+}
+
 func (written *writtenActivation) lookup(payload string) (ActivationState, bool) {
 	written.mu.Lock()
 	defer written.mu.Unlock()

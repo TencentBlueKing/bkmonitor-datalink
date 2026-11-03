@@ -13,7 +13,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
@@ -43,21 +42,6 @@ func (c *maintenanceTestCatalog) CurrentPlans(ctx context.Context, _ execution.Q
 		return controlplane.MaintenancePlans{}, c.err
 	}
 	return controlplane.MaintenancePlans{Plans: c.plans, Uncompilable: c.uncompilable, Until: c.until}, nil
-}
-
-type maintenanceTestWriter struct {
-	batches [][]linkdoutput.CloseRequest
-	err     error
-	// onWrite, when set, runs as a batch is sent.
-	onWrite func()
-}
-
-func (w *maintenanceTestWriter) WriteCloseBatch(_ context.Context, requests []linkdoutput.CloseRequest) error {
-	if w.onWrite != nil {
-		w.onWrite()
-	}
-	w.batches = append(w.batches, append([]linkdoutput.CloseRequest(nil), requests...))
-	return w.err
 }
 
 type maintenanceTestRunner struct {
@@ -205,6 +189,48 @@ func TestEffectiveMaintenanceClosesTheInactiveVersionThroughTheLinksFilter(t *te
 			}
 			if f.m.Stats()[closeOutcomeDone] != 1 {
 				t.Fatalf("stats %v, want one close_done", f.m.Stats())
+			}
+		})
+	}
+}
+
+// Every close sent writes one line naming the strategy, its version and the
+// Query Group with the outcome; a Plan that is not closed writes none.
+func TestEffectiveMaintenanceWritesALinePerCloseSent(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		at    time.Time
+		lines int
+	}{
+		{"inactive", maintenanceTime(8, 0), 1},
+		{"active", maintenanceTime(10, 0), 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, tc.at, maintenanceMatches)
+			var out strings.Builder
+			f.m.logger = observability.New("alarmd", &out)
+			f.m.step(context.Background())
+			var lines []map[string]any
+			for _, raw := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+				var line map[string]any
+				if raw == "" {
+					continue
+				}
+				if err := json.Unmarshal([]byte(raw), &line); err != nil {
+					t.Fatalf("line %q: %v", raw, err)
+				}
+				lines = append(lines, line)
+			}
+			if len(lines) != tc.lines {
+				t.Fatalf("lines %v, want %d", lines, tc.lines)
+			}
+			for qg := range f.m.bundle.runners {
+				for _, line := range lines {
+					if line["level"] != "INFO" || line["stage"] != "effective_close" || line["result"] != "close_done" ||
+						line["query_group_key"] != string(qg) || line["strategy_id"] != "123" || line["revision"] != float64(4) {
+						t.Fatalf("line %v, want close_done for strategy 123 version 4 on %s", line, qg)
+					}
+				}
 			}
 		})
 	}

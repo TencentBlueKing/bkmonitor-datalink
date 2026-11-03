@@ -29,6 +29,31 @@ type InternalExecutionHeader struct {
 	EffectiveTimeFacts      []BoundEffectiveTimeFact
 	RequiredPhysicalQueries []PlannedPhysicalQueryRef
 	DeadlineUnixMilli       int64
+	// QueryFacts is the frozen query facts of the Requirements' logical
+	// queries, as Access resolved them for this Slot (access.FrozenPlan
+	// .QueryFacts). Read only by the source liveness probe of a no-data end
+	// (sourceliveness), which derives its query from a Plan's primary facts
+	// at run time rather than storing it in them. Never validated, digested
+	// or sent: the contract is the Requirements' query revisions. Nil from a
+	// caller that resolved none.
+	QueryFacts map[LogicalQueryRef]QueryPlanFacts `json:"-"`
+}
+
+// PrimaryQueryFacts is the query facts of plan's primary requirement, when
+// the header carries them.
+func (header InternalExecutionHeader) PrimaryQueryFacts(plan PlanIdentity) (QueryPlanFacts, bool) {
+	for _, requirement := range header.Requirements {
+		if requirement.Role != InputRolePrimary {
+			continue
+		}
+		for _, consumer := range requirement.Consumers {
+			if consumer.Consumer.Plan == plan {
+				facts, found := header.QueryFacts[requirement.LogicalQueryRef]
+				return facts, found
+			}
+		}
+	}
+	return QueryPlanFacts{}, false
 }
 
 func (header InternalExecutionHeader) Validate(expected FrozenExecutionContractRef) error {

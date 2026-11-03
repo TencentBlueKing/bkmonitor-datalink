@@ -2008,7 +2008,8 @@ func (stream *streamedExecution) observeEvaluationFailure(ctx context.Context, s
 // openAlertGateFacts carries what the open alert gate did with the
 // Plan's RECOVERY records, one fact per outcome that counted something.
 // levelOutcomeFacts is what the evaluation concluded per Level outcome and,
-// for the outcomes that carry one, per reason: the line's own reason is the
+// for the outcomes that carry one, per reason (a withheld recovery's, on
+// NORMAL): the line's own reason is the
 // Plan's fold, one word for the worst Level, so a Level suppressed by its
 // effective time or held on a warming window had no name on the line unless
 // it was that word. Sorted by outcome then reason so the line is stable.
@@ -2025,6 +2026,13 @@ func levelOutcomeFacts(due execution.DuePlan, evaluated execution.EvaluationResu
 		key := cell{outcome: string(outcome.Outcome)}
 		if outcome.Outcome == execution.LevelOutcomeUnknown || outcome.Outcome == execution.LevelOutcomeTerminal {
 			key.reason = string(outcome.ReasonCode)
+		}
+		// A NORMAL that met its recovery windows and was held NORMAL is
+		// counted under why: without it a zero holding alerts open moved
+		// counts from RECOVERY to NORMAL with nothing on the family to say
+		// which rule did it.
+		if outcome.Outcome == execution.LevelOutcomeNormal && outcome.RecoveryWithheld != execution.RecoveryWithheldNone {
+			key.reason = outcome.RecoveryWithheld.Reason()
 		}
 		// A stored guard's reason repeated on this round is its own cell:
 		// QUERY_TIMEOUT carried from the round that timed out is not this
@@ -2059,6 +2067,7 @@ func openAlertGateFacts(due execution.DuePlan, evaluated execution.EvaluationRes
 		{Outcome: observability.OpenAlertGatePassedOneTimeClose, Records: gate.PassedOneTimeClose},
 		{Outcome: observability.OpenAlertGateHeldNoOpenAlert, Records: gate.HeldNoOpenAlert},
 		{Outcome: observability.OpenAlertGateHeldFingerprintUnknown, Records: gate.HeldFingerprintUnknown},
+		{Outcome: observability.OpenAlertGateHeldLevelNotOpen, Records: gate.HeldLevelNotOpen},
 		{Outcome: observability.OpenAlertGateNotConfigured, Records: gate.NotConfigured},
 		{Outcome: observability.OpenAlertGateProtocolNotGated, Records: gate.ProtocolNotGated},
 	} {

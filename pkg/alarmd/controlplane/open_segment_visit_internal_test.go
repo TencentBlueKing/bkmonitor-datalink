@@ -129,3 +129,43 @@ func TestOpenSegmentsRedisAnswersWithAnErrorVisitNothing(t *testing.T) {
 		t.Fatalf("a read Redis answered with errors visited %d and returned %v, want none and the dependency's", visited, err)
 	}
 }
+
+// A read for a time no Segment covers is leaving the catalog only when the
+// timeline retired at or before that time; a timeline not retired, or one
+// retiring later, is plainly unavailable. Each is still ErrScheduleUnavailable.
+func TestOnlyARetiredTimelineReadsAsLeavingTheCatalog(t *testing.T) {
+	groups := []execution.QueryGroupIdentity{"qg-leaving"}
+	repository, client := timelineCacheFixture(t, groups, 2)
+	runtime := &RedisCatalogRuntime{repository: repository}
+	timeline, err := decodeScheduleTimeline("qg-leaving", []byte(client.values[repository.scheduleTimelineKey("qg-leaving")]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := &timeline.Segments[len(timeline.Segments)-1]
+	end := last.Schedule.Segment.Start + 60
+	last.Schedule.Segment.End = &end
+	before := timeline.Segments[0].Schedule.Segment.Start - 1
+	for _, test := range []struct {
+		name    string
+		retired *execution.EvaluationTime
+		at      execution.EvaluationTime
+		leaving bool
+	}{
+		{name: "retired before the time asked", retired: &end, at: end + 5, leaving: true},
+		{name: "retired at the time asked", retired: &end, at: end, leaving: true},
+		{name: "asked before the timeline starts, retired after it", retired: &end, at: before, leaving: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			timeline.RetiredAt = test.retired
+			payload, err := json.Marshal(timeline)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.values[repository.scheduleTimelineKey("qg-leaving")] = string(payload)
+			_, err = runtime.readPersistedSegment(context.Background(), "qg-leaving", test.at)
+			if !errors.Is(err, ErrScheduleUnavailable) || errors.Is(err, ErrQueryGroupRetiring) != test.leaving {
+				t.Fatalf("read at %d = %v, want unavailable, leaving %t", test.at, err, test.leaving)
+			}
+		})
+	}
+}

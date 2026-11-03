@@ -54,7 +54,10 @@ func newOpenEpisodeRecordCollector() *outcomeCounterCollector {
 			"strategy-wide closes check a dry run against, by outcome: opened (an entry written for an ABNORMAL the "+
 			"process had no own send of), ended (an entry removed for a RECOVERY), refreshed (a hash's life set again "+
 			"for a strategy that only repeats its ABNORMALs), queue_full (a change dropped: the ACK path never waits), "+
-			"write_failed (a change in a pipeline the Redis did not take). Counted per change; every cell exists from "+
+			"write_failed (a change in a pipeline the Redis did not take), reensured (an entry written again, "+
+			"set-if-absent, for an episode the process had an own send of, at most once an hour per series: it "+
+			"restores an entry a close pruned or a lost write left out), ensured_full (a series not remembered "+
+			"because the writer remembers its bound already: written only on the copy's word). Counted per change; every cell exists from "+
 			"the start.")
 }
 
@@ -65,6 +68,23 @@ func (r *Recorder) SetOpenEpisodeRecordSource(words []string, outcomes func() ma
 		return
 	}
 	r.phaseTwo.openEpisodeRecord.set(words, outcomes)
+}
+
+// SetNewOpensSource binds the per-strategy open count's outcomes. Safe
+// before or after registration; a nil recorder is a no-op.
+func (r *Recorder) SetNewOpensSource(words []string, outcomes func() map[string]uint64) {
+	if r == nil || r.phaseTwo.newOpens == nil {
+		return
+	}
+	r.phaseTwo.newOpens.set(words, outcomes)
+}
+
+func newNewOpensCollector() *outcomeCounterCollector {
+	return newOutcomeCounterCollector("new_opens_total",
+		"Alerts this process opened (an ABNORMAL the open-alert copy says is its episode's first, standard protocol "+
+			"only), as the per-strategy hourly count behind the fleet's NEW_ALERTS_BURST line hears them, by outcome: "+
+			"counted, untracked (its strategy not counted: the count holds its bound of strategies already, so that "+
+			"strategy cannot be named). Every cell exists from the start.")
 }
 
 func newStrategyScopeCloseCollector() *outcomeCounterCollector {

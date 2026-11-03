@@ -6,11 +6,13 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
 // containerShapes spans what a deployment or a build agent can hand the
@@ -311,7 +313,7 @@ func TestThePermitShareAtEachContainerSize(t *testing.T) {
 		}
 		// What the coordinator requires of any shape it runs under.
 		if shape.RecoveryQueryPermits < 1 || shape.RecoveryQueryPermits >= shape.ProcessQueryPermits ||
-			shape.ActiveExecutions <= shape.ProcessQueryPermits+shape.RecoveryQueryPermits ||
+			shape.ActiveExecutions <= shape.ProcessQueryPermits ||
 			shape.ReadyQueueCapacity <= 16 || shape.RecoveryQueueCapacity <= 16 {
 			t.Fatalf("%d MiB derived %+v, a shape the coordinator refuses", c.memory>>20, shape)
 		}
@@ -518,6 +520,54 @@ func TestExecutionSlotsStayAtTheMemoryCeiling(t *testing.T) {
 	} {
 		if got := DeriveSchedulerShape(ceiling, demand).ActiveExecutions; got != ceiling.ActiveExecutionCeiling {
 			t.Fatalf("demand %+v derived %d execution slots, want the %d ceiling", demand, got, ceiling.ActiveExecutionCeiling)
+		}
+	}
+}
+
+// The admitted concurrency is what the scheduler built from the same config
+// lets into flight: no more with every recovery permit taken, and no fewer
+// with none taken.
+func TestAdmittedQueryConcurrencyIsWhatTheSchedulerAdmits(t *testing.T) {
+	cfg := Default().withDerivedCapacity(CapacityInputs{CPUBudget: 1, MemoryLimitBytes: 256 << 20})
+	limits := cfg.PhaseTwo.Scheduler.RecoveryLimits()
+	if limits.RecoveryQueryPermits < 1 {
+		t.Fatalf("shape has no recovery permits to take: %+v", limits)
+	}
+	admits := func(t *testing.T, recovery bool) int {
+		t.Helper()
+		now := time.Now()
+		flights, err := scheduler.NewFlightCoordinatorWithRecovery(limits, func() time.Time { return now })
+		if err != nil {
+			t.Fatal(err)
+		}
+		held := 0
+		if recovery {
+			slot := execution.SlotIdentity{QueryGroup: "qg", EvaluationTime: execution.EvaluationTime(now.Unix())}
+			deadline := now.Add(time.Minute)
+			channels, err := flights.AcquireRecoveryChannels(context.Background(), slot, execution.OperationReplay, deadline, limits.RecoveryQueryPermits)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range limits.RecoveryQueryPermits {
+				if _, err := channels.AcquireQueryPermit(context.Background(), slot, execution.OperationReplay, deadline); err != nil {
+					t.Fatal(err)
+				}
+				held++
+			}
+		}
+		for {
+			if _, refused := flights.TryAcquireLookbackPermit(); refused != "" {
+				if refused != scheduler.LookbackRefusedFull {
+					t.Fatalf("refused %q before the budget was full", refused)
+				}
+				return held
+			}
+			held++
+		}
+	}
+	for _, recovery := range []bool{false, true} {
+		if got, want := admits(t, recovery), cfg.AdmittedQueryConcurrency(); got != want {
+			t.Errorf("recovery permits taken %v: scheduler admitted %d, config says %d", recovery, got, want)
 		}
 	}
 }

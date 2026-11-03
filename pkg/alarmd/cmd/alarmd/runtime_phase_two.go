@@ -734,7 +734,10 @@ type phaseTwoWorkerBundle struct {
 	targetScopeClose *scopeclose.Closer
 	// cmdbIndex is the CMDB host index of every tenant the admission step
 	// reads. Kept so a test can refresh it rather than wait for its loop.
-	cmdbIndex     *cmdbcache.TenantStores
+	cmdbIndex *cmdbcache.TenantStores
+	// maintenance is the effective-time maintenance loop, once bound. Kept
+	// so a test can tell a whole step ran rather than wait a fixed time.
+	maintenance   *maintenanceSource
 	runtimeConfig *observability.RuntimeConfigFacts
 	dependencies  phaseTwoWorkerBundleDependencies
 	// liveness is what the liveness probe judges; see phaseTwoLiveness.

@@ -116,8 +116,20 @@ const (
 	OutcomeSampleUnreadable = "sample_unreadable"
 	// OutcomeAlertsRead, OutcomeAlertsTruncated and OutcomeAlertDecidedClose
 	// are also the alert-by-alert close's of a strategy with no record.
-	OutcomeAlertsRead        = "alerts_read"
-	OutcomeAlertsTruncated   = "alerts_truncated"
+	OutcomeAlertsRead      = "alerts_read"
+	OutcomeAlertsTruncated = "alerts_truncated"
+	// OutcomeWalkRemembered is a bucket the edit close did not read alert by
+	// alert again: a whole pass of it ended under the same Plans' key with
+	// nothing left it could not close, so every alert still in it decides
+	// as it did. Before it a bucket of alerts that never end (an old
+	// revision's, kept open by the stale-alerts ruling) was read and every
+	// alert counted again each round.
+	OutcomeWalkRemembered = "alerts_walk_remembered"
+	// OutcomeWalkReopened is a remembered bucket walked again because an
+	// alert opened in it after the newest one its pass read: a Slot frozen
+	// with the older Plans, replayed or taken over after the edit, opens at
+	// the older version, and has to be decided too.
+	OutcomeWalkReopened      = "alerts_walk_reopened"
 	OutcomeAlertDecidedClose = "alert_decided_close"
 	// OutcomeAbsentTruncated is a tenant's discovery that found
 	// MaxAbsentPerRound strategies and stopped; the next round goes on.
@@ -135,7 +147,7 @@ var Outcomes = append([]string{
 	OutcomeExpectDecidedIDs, OutcomeExpectOwnRecord,
 	OutcomeRecordMissing, OutcomeRecordTruncated, OutcomeRecordUnavailable, OutcomeRecordPruned, OutcomeRecordPruneFailed,
 	OutcomeBucketsTruncated, OutcomeDigestMismatch, OutcomeFamilyMismatch, OutcomeSampleUnreadable, OutcomeAlertsRead, OutcomeAlertsTruncated,
-	OutcomeAlertDecidedClose, OutcomeAbsentTruncated,
+	OutcomeAlertDecidedClose, OutcomeAbsentTruncated, OutcomeWalkRemembered, OutcomeWalkReopened,
 }, editWords()...)
 
 func editWords() []string {

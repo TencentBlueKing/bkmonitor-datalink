@@ -32,7 +32,7 @@ func TestTheFlowBlockStaysWithinItsBound(t *testing.T) {
 	facts := FlowFacts{Queries: flowCeiling, QueryDuration: full(FlowQueryBounds), Detections: flowCeiling,
 		DecisionLag: full(FlowDecisionBounds), StateWrites: flowCeiling, StateFailures: flowCeiling,
 		RuntimeRedis: full(FlowRedisBounds), EventsEmitted: flowCeiling, EventsRejected: flowCeiling,
-		LiveHeapBytes: &heap, Hosts: flowCeiling,
+		SeriesRejected: uint64Of(flowCeiling), LiveHeapBytes: &heap, Hosts: flowCeiling,
 		QueryFailures: map[string]uint64{"timeout": flowCeiling, "refused": flowCeiling, "not_found": flowCeiling,
 			"transport": flowCeiling, "decode": flowCeiling, "other": flowCeiling},
 		Roles: []string{"control", "worker", "channel"}}

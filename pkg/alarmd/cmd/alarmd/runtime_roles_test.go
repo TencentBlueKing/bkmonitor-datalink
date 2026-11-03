@@ -57,7 +57,14 @@ func TestControlRoleStopsRenewalAndWaitsForControlWritesBeforeRelease(t *testing
 		t.Run(fmt.Sprintf("ignore_cancel=%v", ignoreCancel), func(t *testing.T) {
 			cfg := validGoAccessRuntimeConfig()
 			cfg.Roles = roles.Set{roles.Control}
+			// A round that ignores its cancellation must outlast the budget,
+			// so that budget is short; one that honours it must finish within
+			// it, which a machine running the whole suite did not do in 50 ms
+			// (gate on 74f2a91d4, 2026-10-28), so that budget is the test's.
 			cfg.ShutdownTimeout = config.Duration(50 * time.Millisecond)
+			if !ignoreCancel {
+				cfg.ShutdownTimeout = config.Duration(5 * time.Second)
+			}
 			cfg.PhaseTwo.Control.RefreshInterval = config.Duration(5 * time.Millisecond)
 			cfg.PhaseTwo.Control.ReconcileInterval = config.Duration(time.Hour)
 			control := &blockedRoleControl{fakePhaseTwoControl: &fakePhaseTwoControl{},

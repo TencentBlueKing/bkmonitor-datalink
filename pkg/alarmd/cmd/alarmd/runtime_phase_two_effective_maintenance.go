@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"sync"
@@ -106,6 +107,7 @@ const (
 	closeOutcomeUnavailable          = string(observability.EffectiveCloseUnavailable)
 	closeOutcomeUnsupportedRunner    = string(observability.EffectiveCloseUnsupportedRunner)
 	closeOutcomeViewNotExecutable    = string(observability.EffectiveCloseViewNotExecutable)
+	closeOutcomeGroupRetiring        = string(observability.EffectiveCloseGroupRetiring)
 	closeOutcomeDeletionUnsettled    = string(observability.EffectiveCloseCalendarDeletionUnsettled)
 	closeOutcomeBoundaryActive       = string(observability.EffectiveCloseBoundaryActive)
 )
@@ -153,12 +155,18 @@ type effectiveMaintenance struct {
 	// through; nil without the link's control plane, where nothing closes
 	// (close_unrouted).
 	filter *filterRoute
+	// logger writes one line per close sent (effectiveCloseLogStage); nil
+	// writes none.
+	logger *observability.Logger
 	// inactiveClosed is, per strategy version outside its effective time,
 	// what the link's filter did for it in this inactive period. Forgotten
 	// when its Plan is found active again, or no Plan read here names it.
 	inactiveClosed map[inactiveKey]inactiveClose
 	// stepJobs is how many inactive closes this step has run.
-	stepJobs     int
+	stepJobs int
+	// steps is how many steps ran to their end, the close of every Query
+	// Group included.
+	steps        atomic.Uint64
 	groups       map[execution.QueryGroupIdentity]*maintenanceGroup
 	readCursor   execution.QueryGroupIdentity
 	planCursor   map[execution.QueryGroupIdentity]int
@@ -410,9 +418,19 @@ func (m *effectiveMaintenance) step(ctx context.Context) {
 			// owned Query Group once in a replica's first seconds; the store
 			// not answering is not. Under one word the first hid the second.
 			var notExecutable *scheduler.ViewNotExecutableError
-			if errors.As(err, &notExecutable) {
+			switch {
+			case errors.As(err, &notExecutable):
 				m.observe(ctx, qg, closeOutcomeViewNotExecutable, err, 0)
-			} else {
+			case errors.Is(err, controlplane.ErrQueryGroupRetiring):
+				// Leaving the catalog: the same read gives the same answer
+				// until the lease moves, so it is remembered under the lease
+				// it was read with, holding no Plans, and not read again
+				// each second.
+				m.observe(ctx, qg, closeOutcomeGroupRetiring, err, 0)
+				if scope, revision, accepting := runners[qg].maintenanceLease(); accepting {
+					m.groups[qg] = &maintenanceGroup{contentScope: scope, timelineRevision: revision}
+				}
+			default:
 				m.observe(ctx, qg, closeOutcomeUnavailable, err, 0)
 			}
 		}
@@ -446,6 +464,7 @@ func (m *effectiveMaintenance) step(ctx context.Context) {
 		}
 		m.closeInactive(ctx, qg, runner, known.closable, deletions)
 	}
+	m.steps.Add(1)
 }
 
 // readUnderCurrentLease is the groups whose Plans were read under the lease
@@ -866,18 +885,34 @@ func (m *effectiveMaintenance) sendClose(ctx context.Context, qg execution.Query
 	word := m.filter.closer.Inactive(job, m.filter.scope(absentalerts.Key{TenantID: key.tenantID, StrategyID: key.strategyID}), strconv.FormatInt(key.revision, 10),
 		key.revision, since, period)
 	trace := observability.TraceFields{QueryGroupKey: string(qg), StrategyID: key.strategyID}
+	outcome := closeOutcomeNotSettled
 	switch word {
 	case filterclose.OutcomeJobDone, filterclose.OutcomeJobIncomplete, filterclose.OutcomeJobDoneRederived:
-		m.observeTrace(ctx, trace, closeOutcomeDone, nil, 1)
+		outcome = closeOutcomeDone
+		m.observeTrace(ctx, trace, outcome, nil, 1)
 	case filterclose.OutcomeNothingMatched:
-		m.observeTrace(ctx, trace, closeOutcomeNothingMatched, nil, 1)
+		outcome = closeOutcomeNothingMatched
+		m.observeTrace(ctx, trace, outcome, nil, 1)
 	case filterclose.OutcomeUnsupported:
-		m.observeTrace(ctx, trace, closeOutcomeUnsupported, errInactiveUnsupported, 1)
+		outcome = closeOutcomeUnsupported
+		m.observeTrace(ctx, trace, outcome, errInactiveUnsupported, 1)
 	default:
-		m.observeTrace(ctx, trace, closeOutcomeNotSettled, errors.New("inactive close: the link's filter answered "+word), 1)
+		m.observeTrace(ctx, trace, outcome, errors.New("inactive close: the link's filter answered "+word), 1)
 	}
+	m.logger.Info(effectiveCloseLogStage, outcome, 0, 0, slog.String("query_group_key", string(qg)),
+		slog.String("bk_tenant_id", key.tenantID), slog.String("strategy_id", key.strategyID),
+		slog.Int64("revision", key.revision), slog.String("filter_outcome", word))
 	return word, nil
 }
+
+// effectiveCloseLogStage is the stage of the line every inactive close sent
+// writes, its outcome word as the result. The observation beside it is a
+// metric only: a success outside the workflow stages is not a log line, so
+// without this nothing says which strategy and Query Group a close was for.
+// Not sampled: a version is closed twice an inactive period (the close and
+// its confirming pass), again only while the link has not settled it, and a
+// step sends at most inactiveJobsPerStep.
+const effectiveCloseLogStage = "effective_close"
 
 var (
 	errClosePrecheck = errors.New("inactive close: owner check before send")

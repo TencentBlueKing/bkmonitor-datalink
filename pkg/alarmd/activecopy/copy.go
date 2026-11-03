@@ -45,6 +45,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -205,6 +206,10 @@ type word struct {
 	// at is when the send was acknowledged or the search that found it was
 	// sent; firstMiss is the first search of a run of misses.
 	at, firstMiss time.Time
+	// levels are the Levels of an own send still open: added by the
+	// ABNORMAL results this process acknowledged, removed by RECOVERY ones.
+	// Nil is not known - a word from a search, or one from before a restart.
+	levels []uint32
 }
 
 // Copy is the copy. Its lookups are memory only.
@@ -398,9 +403,20 @@ func (c *Copy) queue(m member) bool {
 // It returns the envelopes that change alarmd's record of the episodes it
 // opened (package openepisodes): an ABNORMAL the copy held no own send of
 // before - the episode's first, or its first since this process started
-// or the strategy was tracked again - and every RECOVERY. A repeated
-// ABNORMAL of an episode returns nothing, so the record is written once
-// an episode, not once a round.
+// or the strategy was tracked again - and a RECOVERY that ends it. A
+// repeated ABNORMAL of an episode returns nothing, so the record is written
+// once an episode, not once a round.
+//
+// The link keeps one alert per fingerprint across its Levels, at the most
+// severe Level it was raised to, and resolves it on that Level's RECOVERY
+// alone: a RECOVERY of a less severe Level leaves the alert active, and
+// ending the episode then would leave the record short of the link.
+// So the copy keeps the open Levels of each
+// own send, and a RECOVERY ends the episode when it recovers the most
+// severe of them or leaves none open; one whose open Levels the copy does
+// not know (after a restart, or a series it learned of by a search) keeps
+// the episode, the direction the record may err in, which a close that
+// settles prunes.
 func (c *Copy) Acknowledged(events []contract.TriggerEventV1) []contract.TriggerEventV1 {
 	if c == nil || len(events) == 0 {
 		return nil
@@ -414,22 +430,82 @@ func (c *Copy) Acknowledged(events []contract.TriggerEventV1) []contract.Trigger
 			continue
 		}
 		m := member{key: StrategyKey{TenantID: event.TenantID, StrategyID: event.PlanRef.StrategyID}, fingerprint: event.DedupeMD5}
+		old, known := c.words[m]
+		var levels []uint32
+		if known && old.kind == kindOwnSent {
+			levels = old.levels
+		}
 		switch event.EventKind {
 		case contract.TriggerEventAbnormal:
-			old, known := c.words[m]
-			if !known || old.kind != kindOwnSent {
+			// An ABNORMAL that also recovers the Level the alert is at ends
+			// that alert at the link, which opens a new one on the Level it
+			// triggers: a new episode, as the same two in two envelopes are.
+			if !known || old.kind != kindOwnSent || len(levels) > 0 && recoversAt(event, mostSevere(levels)) {
 				changed = append(changed, event)
+				levels = nil
 			}
 			if known || len(c.words)+len(c.queued) < MaxEntries {
-				c.set(m, word{kind: kindOwnSent, at: now})
+				c.set(m, word{kind: kindOwnSent, at: now, levels: openLevels(levels, event.LevelResults)})
 			}
 			delete(c.queued, m)
 		case contract.TriggerEventRecovery:
+			if levels == nil {
+				// Which Levels are open is not known: the episode stays.
+				continue
+			}
+			if remaining := openLevels(levels, event.LevelResults); len(remaining) > 0 && !recoversAt(event, mostSevere(levels)) {
+				c.set(m, word{kind: kindOwnSent, at: old.at, levels: remaining})
+				continue
+			}
 			c.forget(m)
 			changed = append(changed, event)
 		}
 	}
 	return changed
+}
+
+// OpenLevels is the Levels of the series' own send still open
+// (contract.OpenLevelSet): known only for a series whose ABNORMAL this
+// process acknowledged since it was last forgotten.
+func (c *Copy) OpenLevels(tenantID, strategyID, fingerprint string) ([]uint32, bool) {
+	if c == nil {
+		return nil, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	w, ok := c.words[member{key: StrategyKey{TenantID: tenantID, StrategyID: strategyID}, fingerprint: fingerprint}]
+	if !ok || w.kind != kindOwnSent || w.levels == nil {
+		return nil, false
+	}
+	return slices.Clone(w.levels), true
+}
+
+// mostSevere is the open Level the link keeps the alert at: it raises the
+// alert to a more severe Level and never lowers it, so while the most
+// severe Level is open no other has been. Most severe is the lowest Level
+// id, as the link's severity table and Python rank Levels, not the Plan's
+// detect priority, which a strategy may set against the ids.
+func mostSevere(open []uint32) standingLevel {
+	return standingLevel{id: slices.Min(open)}
+}
+
+// openLevels is the open Levels after one envelope's results: an ABNORMAL
+// result opens its Level, a RECOVERY one closes it, any other leaves it.
+// Always a known set (empty, not nil, when none is open), and a new slice:
+// the word's own is never changed in place.
+func openLevels(open []uint32, results []contract.LevelResultV1) []uint32 {
+	next := make([]uint32, 0, len(open)+len(results))
+	next = append(next, open...)
+	for _, result := range results {
+		at := slices.Index(next, result.LevelID)
+		switch {
+		case result.Result == contract.LevelResultAbnormal && at < 0:
+			next = append(next, result.LevelID)
+		case result.Result == contract.LevelResultRecovery && at >= 0:
+			next = slices.Delete(next, at, at+1)
+		}
+	}
+	return next
 }
 
 // Track notes the strategies this process evaluates. A strategy tracked
@@ -682,10 +758,24 @@ func (c *Copy) pruneLocked(now time.Time) {
 			c.forget(m)
 		}
 	}
+	// A strategy untracked past the gap is let go whole: its tracked moment
+	// and every word on it. Letting the moment go alone made Track see the
+	// strategy as new rather than as returning, so its own sends -- kept for
+	// OwnLife -- survived the absence: a returning strategy's ABNORMALs then
+	// read as repeats, its new episodes were never recorded, and the
+	// strategy-wide closes counted it short and were refused.
+	var expired map[StrategyKey]bool
 	for key, at := range c.tracked {
 		if now.Sub(at) > untrackedGap {
 			delete(c.tracked, key)
+			if expired == nil {
+				expired = map[StrategyKey]bool{}
+			}
+			expired[key] = true
 		}
+	}
+	if expired != nil {
+		c.dropLocked(func(key StrategyKey) bool { return expired[key] })
 	}
 }
 

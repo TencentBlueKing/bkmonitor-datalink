@@ -371,10 +371,10 @@ func TestBoardLineIsWrittenInTheTableWords(t *testing.T) {
 	lines := []StrategyLine{{StrategyID: "2", Standing: Standing{State: StateResultUntrusted, Action: ActionWatch, Watch: WatchWindowFilling}}}
 	index := buildBoard("c1", time.Unix(1, 0), "d", []string{"1", "2"}, func(id string) DiagnosisRow { return rows[id] }, lines, nil, nil, nil)
 	got := boardRows(index)
-	if want := words.State[StateDataAbsent] + " · " + words.Action[ActionDataCheck]; got["1"].Line != want {
+	if want := words.State[StateDataAbsent] + "，" + words.Action[ActionDataCheck]; got["1"].Line != want {
 		t.Errorf("line = %q, want %q", got["1"].Line, want)
 	}
-	if want := words.State[StateResultUntrusted] + " · " + words.Action[ActionWatch] + "（" + words.Watch[WatchWindowFilling] + "）"; got["2"].Line != want {
+	if want := words.State[StateResultUntrusted] + "，" + words.Action[ActionWatch] + "（" + words.Watch[WatchWindowFilling] + "）"; got["2"].Line != want {
 		t.Errorf("line = %q, want %q", got["2"].Line, want)
 	}
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/sourceliveness"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/targetplan"
 )
@@ -54,6 +55,12 @@ type Ports struct {
 	// Optional: without it a level written to end on no data ends only while
 	// its group is in the answer.
 	NoDataEnds execution.NoDataEndIndex
+	// SourceLiveness is asked, before a Level written to end on no data ends
+	// an absent series' alert, whether the Plan's source is alive
+	// (sourceliveness): not shown alive, the end is held and the entry kept.
+	// The Evaluator asks the same judge for a present series. Optional: nil
+	// ends on no data as configured.
+	SourceLiveness sourceliveness.Judge
 	// Hosts resolves which business a host belongs to, which decides both what
 	// a no-data roster expects and which of its groups have left. Required for
 	// the same reason: without it every declared host would read as unknown, so
@@ -1666,6 +1673,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	if err := coordinator.applyNoDataEnds(ctx, request, header, evaluated, withheldNoData); err != nil {
 		return execution.SlotExecutionResult{}, err
 	}
+	coordinator.observeSourceHeldUnindexed(ctx, request, header)
 	if retryPendingReason != "" {
 		return execution.SlotExecutionResult{
 			Completed: false, Result: observability.ResultRetrying, ReasonCode: retryPendingReason,
@@ -2056,6 +2064,7 @@ func (coordinator *SlotExecutionCoordinator) writeEvents(
 	// requires the port; the guard is for tests that build the struct.
 	if coordinator.ports.OpenAlerts != nil && len(acked) > 0 {
 		coordinator.ports.OpenAlerts.Acknowledged(acked)
+		coordinator.observeNewOpens(ctx, operation, plan)
 	}
 	if err != nil {
 		return fmt.Errorf("alarmd worker: acknowledge events: %w", err)

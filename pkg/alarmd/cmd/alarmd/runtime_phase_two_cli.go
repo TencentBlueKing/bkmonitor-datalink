@@ -207,6 +207,9 @@ func deploymentReads(cfg config.Config, catalog *controlplane.RedisCatalogReposi
 	}
 	// The pool records sit in the same runtime store, under their own prefix.
 	options.QueryCooldown = obevidence.RedisBinding{Client: diagnosticRuntime, Location: obevidence.Location{Role: "runtime", Address: redisAddress(runtimeConnection), Mode: runtimeConnection.Mode, DB: runtimeConnection.DB, Prefix: queryCooldownPrefix(cfg)}}
+	// alarmd's record of the episodes it opened sits in the same runtime
+	// store, under the state prefix the episode writer uses.
+	options.OpenEpisodes = obevidence.RedisBinding{Client: diagnosticRuntime, Location: obevidence.Location{Role: "runtime", Address: redisAddress(runtimeConnection), Mode: runtimeConnection.Mode, DB: runtimeConnection.DB, Prefix: cfg.Redis.StatePrefix}}
 	if connection, configured := cfg.TargetGroupRedis(); configured {
 		options.TargetGroup = bind("target_group", connection, targetGroupPrefix(cfg))
 	}
@@ -220,7 +223,7 @@ func deploymentReads(cfg config.Config, catalog *controlplane.RedisCatalogReposi
 	podName, _ := os.Hostname()
 	// Every binding reports an unanswered read by its reason.
 	for _, binding := range []*obevidence.RedisBinding{&options.SourceStrategy, &options.CMDBCache, &options.Published,
-		&options.QueryProgress, &options.QueryCooldown, &options.TargetGroup, &options.DynamicConfig} {
+		&options.QueryProgress, &options.QueryCooldown, &options.OpenEpisodes, &options.TargetGroup, &options.DynamicConfig} {
 		binding.OnFailure = failed
 	}
 	return obchannel.StoreOperations(obevidence.New(options)),

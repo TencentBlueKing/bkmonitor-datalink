@@ -340,9 +340,10 @@ func DeriveGoRuntime(inputs CapacityInputs) DerivedGoRuntime {
 	}
 }
 
-// AdmittedConcurrency is how many queries this container may have in flight.
+// AdmittedConcurrency is how many queries this container may have in flight:
+// the process permits, which the recovery permits are a share of.
 func (d DerivedScheduler) AdmittedConcurrency() int {
-	return d.ProcessQueryPermits + d.RecoveryQueryPermits
+	return d.ProcessQueryPermits
 }
 
 // DerivedControlTimelineCache bounds the control plane's Schedule timeline

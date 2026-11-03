@@ -11,6 +11,8 @@ package controlplane
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -35,6 +37,13 @@ type ActivationRebuildOutcome string
 const (
 	// ActivationRebuilt: the body was written back, exactly as the leader
 	// last read it under the same header.
+	//
+	// Either rebuilt outcome may leave Query Groups of the publication whose
+	// timeline is gone or does not decode unread: they keep their place - in
+	// the active set, or in Draining where the copy last read held them - so
+	// that no reader takes them for Query Groups that left, and they are
+	// counted by reason (ActivationRebuildUnreadCounts). The activation read
+	// names them in SkippedTimelines, and Ensure gives them a timeline again.
 	ActivationRebuilt ActivationRebuildOutcome = "rebuilt"
 	// ActivationRebuiltDrainingUnknown: the body was rebuilt from the open
 	// Segments without a last-good copy. The Plans are exact; Draining holds
@@ -42,6 +51,8 @@ const (
 	// cutover removed and that had not drained yet stop executing now rather
 	// than at their boundary: their Plans have no owner until then, and that
 	// stretch shows up as a gap. A reader of this count checks the gaps.
+	// A Query Group of the publication whose timeline is unread cannot say
+	// whether it was held either, and is kept in the active set.
 	ActivationRebuiltDrainingUnknown ActivationRebuildOutcome = "rebuilt_draining_unknown"
 	// ActivationRebuildNotNeeded: the body was back, or the header gone, by
 	// the time the rebuild looked.
@@ -49,13 +60,6 @@ const (
 	// ActivationRebuildConflict: another writer moved the header, a body, or
 	// a timeline between the read and the write. Nothing was written.
 	ActivationRebuildConflict ActivationRebuildOutcome = "conflict"
-	// ActivationRebuildTimelineMissing: a Query Group of the current
-	// publication has no timeline, so its Plans cannot be recovered.
-	ActivationRebuildTimelineMissing ActivationRebuildOutcome = "timeline_missing"
-	// ActivationRebuildTimelineUnreadable: a Query Group of the current
-	// publication has a timeline that does not decode, so its Plans cannot be
-	// recovered either.
-	ActivationRebuildTimelineUnreadable ActivationRebuildOutcome = "timeline_unreadable"
 	// ActivationRebuildCoverageInvalid: the candidate body and the open
 	// Segments disagree. Nothing that disagrees with the Segments is written.
 	ActivationRebuildCoverageInvalid ActivationRebuildOutcome = "coverage_invalid"
@@ -71,8 +75,7 @@ const (
 // pre-creates them all.
 var ActivationRebuildOutcomes = []ActivationRebuildOutcome{
 	ActivationRebuilt, ActivationRebuiltDrainingUnknown, ActivationRebuildNotNeeded, ActivationRebuildConflict,
-	ActivationRebuildTimelineMissing, ActivationRebuildTimelineUnreadable, ActivationRebuildCoverageInvalid,
-	ActivationRebuildHeaderUnparsable, ActivationRebuildHeaderPending,
+	ActivationRebuildCoverageInvalid, ActivationRebuildHeaderUnparsable, ActivationRebuildHeaderPending,
 }
 
 // ErrActivationRebuildRefused is the error of every outcome that wrote
@@ -109,10 +112,26 @@ func (last *lastGoodActivation) under(header string) (*parsedActivation, bool) {
 }
 
 // activationRebuildCounts is every rebuild this process attempted, by how it
-// ended; read at scrape time.
+// ended, and every Query Group a rebuild it wrote left unread, by why; read
+// at scrape time.
 type activationRebuildCounts struct {
 	mu     sync.Mutex
 	counts map[ActivationRebuildOutcome]uint64
+	unread map[SkippedTimelineReason]uint64
+}
+
+func (counts *activationRebuildCounts) addUnread(unread []SkippedTimeline) {
+	if len(unread) == 0 {
+		return
+	}
+	counts.mu.Lock()
+	defer counts.mu.Unlock()
+	if counts.unread == nil {
+		counts.unread = make(map[SkippedTimelineReason]uint64, len(SkippedTimelineReasons))
+	}
+	for _, entry := range unread {
+		counts.unread[entry.Reason]++
+	}
 }
 
 func (counts *activationRebuildCounts) add(outcome ActivationRebuildOutcome) {
@@ -134,6 +153,21 @@ func (repository *RedisCatalogRepository) ActivationRebuildCounts() map[Activati
 	defer repository.rebuilds.mu.Unlock()
 	for _, outcome := range ActivationRebuildOutcomes {
 		result[outcome] = repository.rebuilds.counts[outcome]
+	}
+	return result
+}
+
+// ActivationRebuildUnreadCounts is every Query Group a written rebuild kept
+// without reading its timeline, by reason, zero included.
+func (repository *RedisCatalogRepository) ActivationRebuildUnreadCounts() map[SkippedTimelineReason]uint64 {
+	result := make(map[SkippedTimelineReason]uint64, len(SkippedTimelineReasons))
+	if repository == nil {
+		return result
+	}
+	repository.rebuilds.mu.Lock()
+	defer repository.rebuilds.mu.Unlock()
+	for _, reason := range SkippedTimelineReasons {
+		result[reason] = repository.rebuilds.unread[reason]
 	}
 	return result
 }
@@ -181,8 +215,9 @@ func parsePublicationRef(text string) (SnapshotPublicationRef, error) {
 
 // rebuildActivationBodyScript writes the body back only while the header is
 // the one read, no body has appeared, and every timeline the candidate was
-// checked against is unchanged. The header, the timelines and the revision
-// are not touched: the body is the one the header already describes.
+// checked against is unchanged: still the bytes read, or still absent where
+// the fence is empty. The header, the timelines and the revision are not
+// touched: the body is the one the header already describes.
 //
 // Like the cutover script it touches keys with no common hash tag, which a
 // standalone or Sentinel deployment allows and Redis Cluster refuses with
@@ -192,7 +227,11 @@ if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
 if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
 for index = 3, #KEYS do
   local current = redis.call('GET', KEYS[index])
-  if not current or redis.sha1hex(current) ~= ARGV[index] then return 0 end
+  if ARGV[index] == '' then
+    if current then return 0 end
+  elseif not current or redis.sha1hex(current) ~= ARGV[index] then
+    return 0
+  end
 end
 redis.call('SET', KEYS[2], ARGV[2])
 return 1
@@ -205,6 +244,14 @@ return 1
 // from the copy this process last read under the same header when it has one,
 // and from the Segments themselves when it does not. Either candidate is
 // checked against the Segments before it is written.
+//
+// A Query Group whose timeline is gone or does not decode is not read, and
+// does not keep the body from every other Query Group: it keeps its place in
+// the active set (or in Draining, where the copy last read held it), its
+// Plans are left to its own timeline, and it is fenced on what was found - no
+// key, or the bytes that did not decode. Left out instead, it would read as
+// a Query Group that left: its owner would let it go, and nothing would give
+// it a timeline again before the next publication.
 func (repository *RedisCatalogRepository) RebuildActivationBody(ctx context.Context) (ActivationRebuildOutcome, error) {
 	if repository == nil || repository.client == nil {
 		return "", errors.New("alarmd controlplane: Redis catalog repository is required")
@@ -228,22 +275,38 @@ func (repository *RedisCatalogRepository) RebuildActivationBody(ctx context.Cont
 		return "", err
 	}
 	identities := published.identities()
+	last, haveLast := repository.lastGood.under(version.header)
 	keys := []string{repository.activationHeaderKey(), repository.activationKey()}
 	fences := make([]interface{}, 0, len(identities))
 	var plans []PlanActivationRecord
 	var active []execution.QueryGroupIdentity
 	var held []DrainingQueryGroup
+	var unread []SkippedTimeline
+	unreadPlans := make(map[execution.PlanKey]struct{})
 	open := make(map[execution.QueryGroupIdentity]persistedScheduleSegment, len(identities))
 	for _, identity := range identities {
 		timeline, raw, err := repository.loadScheduleTimelineForUpdate(ctx, identity)
-		if errors.Is(err, ErrScheduleUnavailable) {
-			return ActivationRebuildTimelineMissing, fmt.Errorf("%w: Query Group %s of the current publication has no timeline",
-				ErrActivationRebuildRefused, identity)
-		}
 		var undecodable *DeterministicScheduleError
-		if errors.As(err, &undecodable) {
-			return ActivationRebuildTimelineUnreadable, fmt.Errorf("%w: the timeline of Query Group %s of the current publication does not decode: %v",
-				ErrActivationRebuildRefused, identity, err)
+		if errors.Is(err, ErrScheduleUnavailable) || (errors.As(err, &undecodable) && raw != nil) {
+			entry := SkippedTimeline{QueryGroup: identity, Reason: SkippedTimelineAbsent}
+			fence := ""
+			if raw != nil {
+				entry.Reason = skippedTimelineReason(raw)
+				sum := sha1.Sum(raw)
+				fence = hex.EncodeToString(sum[:])
+			}
+			unread = append(unread, entry)
+			keys = append(keys, repository.scheduleTimelineKey(identity))
+			fences = append(fences, fence)
+			for _, plan := range published.groups[identity].Plans {
+				unreadPlans[plan.Key()] = struct{}{}
+			}
+			if retired, ok := heldIn(last, haveLast, identity); ok {
+				held = append(held, retired)
+			} else {
+				active = append(active, identity)
+			}
+			continue
 		}
 		if err != nil {
 			return "", err
@@ -273,7 +336,7 @@ func (repository *RedisCatalogRepository) RebuildActivationBody(ctx context.Cont
 
 	var payload []byte
 	outcome := ActivationRebuilt
-	if last, ok := repository.lastGood.under(version.header); ok {
+	if haveLast {
 		// The body as it was, Draining included. The Segments still decide
 		// whether it may be written.
 		if last.state.ActiveQGSetRef != activeRef {
@@ -286,7 +349,7 @@ func (repository *RedisCatalogRepository) RebuildActivationBody(ctx context.Cont
 		if full, ok := repository.written.lookup(last.payload); ok {
 			covered = full
 		}
-		if err := checkRebuiltCoverage(covered, open); err != nil {
+		if err := checkRebuiltCoverage(covered, open, unreadPlans); err != nil {
 			return ActivationRebuildCoverageInvalid, fmt.Errorf("%w: %v", ErrActivationRebuildRefused, err)
 		}
 		payload = []byte(last.payload)
@@ -295,7 +358,7 @@ func (repository *RedisCatalogRepository) RebuildActivationBody(ctx context.Cont
 		sort.Slice(held, func(i, j int) bool { return held[i].QueryGroup < held[j].QueryGroup })
 		state := ActivationState{SchemaVersion: activationSchemaVersion, RecordRevision: revision, Current: current,
 			Plans: plans, Draining: held, ActiveQGSetRef: activeRef}
-		if err := checkRebuiltCoverage(state, open); err != nil {
+		if err := checkRebuiltCoverage(state, open, unreadPlans); err != nil {
 			return ActivationRebuildCoverageInvalid, fmt.Errorf("%w: %v", ErrActivationRebuildRefused, err)
 		}
 		payload, err = encodeActivationHead(state)
@@ -313,15 +376,39 @@ func (repository *RedisCatalogRepository) RebuildActivationBody(ctx context.Cont
 		return ActivationRebuildConflict, nil
 	}
 	repository.clearActivationCaches()
+	if len(unread) > 0 {
+		// The records this process wrote with the head would answer for the
+		// unread Query Groups as if their timelines were there; read from the
+		// Segments instead, they are named, and Ensure repairs them.
+		repository.written.forget()
+		repository.rebuilds.addUnread(unread)
+	}
 	return outcome, nil
+}
+
+// heldIn is the Draining entry the copy last read gives a Query Group, when
+// there is a copy and it holds the Query Group there.
+func heldIn(last *parsedActivation, haveLast bool, identity execution.QueryGroupIdentity) (DrainingQueryGroup, bool) {
+	if !haveLast {
+		return DrainingQueryGroup{}, false
+	}
+	for _, draining := range last.state.Draining {
+		if draining.QueryGroup == identity {
+			return draining, true
+		}
+	}
+	return DrainingQueryGroup{}, false
 }
 
 // checkRebuiltCoverage is the invariant every writer of the body keeps: its
 // Plans are exactly the Plans of the open Segments, each equal, none twice.
+// The Plans of a Query Group whose timeline was not read have no Segment to
+// hold them against; the body may carry them, and nothing else unopened.
 //
 // A head carries no records, so all that is left of it is that no Plan is
 // open in two Query Groups.
-func checkRebuiltCoverage(state ActivationState, open map[execution.QueryGroupIdentity]persistedScheduleSegment) error {
+func checkRebuiltCoverage(state ActivationState, open map[execution.QueryGroupIdentity]persistedScheduleSegment,
+	unread map[execution.PlanKey]struct{}) error {
 	head := state.SchemaVersion == activationHeadSchemaVersion
 	expected, err := activationRecordMap(state.Plans)
 	if err != nil {
@@ -341,8 +428,13 @@ func checkRebuiltCoverage(state ActivationState, open map[execution.QueryGroupId
 			covered[record.Fact.Key()] = struct{}{}
 		}
 	}
-	if !head && len(covered) != len(expected) {
-		return errors.New("the body holds a Plan no open Segment carries")
+	if !head {
+		for key := range expected {
+			_, carried := covered[key]
+			if _, unknown := unread[key]; !carried && !unknown {
+				return errors.New("the body holds a Plan no open Segment carries")
+			}
+		}
 	}
 	return nil
 }

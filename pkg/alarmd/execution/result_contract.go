@@ -75,7 +75,8 @@ type LevelOutcome struct {
 	// windows and did not recover, with which of the contract's reasons
 	// (contract.RecoveryWithheldReasons): the round's own value was a count
 	// of zero from a source whose zero is no observation, and on a Level
-	// written to end on no data, whether its last real point was unknown.
+	// written to end on no data, whether its last real point was unknown or
+	// its source could not be shown alive.
 	// One byte, in the same alignment gap, so it costs an outcome nothing.
 	// Observation only, like ReasonCarried: read by the withheld recovery
 	// counter, nothing decides anything from it.
@@ -91,10 +92,12 @@ const (
 	RecoveryWithheldNone RecoveryWithheldCode = iota
 	RecoveryWithheldZeroCount
 	RecoveryWithheldNoDataLastPointUnknown
+	RecoveryWithheldSourceUnknown
 )
 
 // RecoveryWithheldCodes is every code but None, in the contract's order.
-var RecoveryWithheldCodes = []RecoveryWithheldCode{RecoveryWithheldZeroCount, RecoveryWithheldNoDataLastPointUnknown}
+var RecoveryWithheldCodes = []RecoveryWithheldCode{RecoveryWithheldZeroCount, RecoveryWithheldNoDataLastPointUnknown,
+	RecoveryWithheldSourceUnknown}
 
 // RecoveryWithheldCodeOf is the code of a contract reason; a reason outside
 // the list is None.
@@ -104,6 +107,8 @@ func RecoveryWithheldCodeOf(reason string) RecoveryWithheldCode {
 		return RecoveryWithheldZeroCount
 	case contract.RecoveryWithheldNoDataLastPointUnknown:
 		return RecoveryWithheldNoDataLastPointUnknown
+	case contract.RecoveryWithheldSourceUnknown:
+		return RecoveryWithheldSourceUnknown
 	}
 	return RecoveryWithheldNone
 }
@@ -115,6 +120,8 @@ func (code RecoveryWithheldCode) Reason() string {
 		return contract.RecoveryWithheldZeroCount
 	case RecoveryWithheldNoDataLastPointUnknown:
 		return contract.RecoveryWithheldNoDataLastPointUnknown
+	case RecoveryWithheldSourceUnknown:
+		return contract.RecoveryWithheldSourceUnknown
 	}
 	return ""
 }

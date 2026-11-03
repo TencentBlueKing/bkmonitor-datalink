@@ -699,6 +699,26 @@ func TestSeveralObservedValuesWriteNoValue(t *testing.T) {
 	}
 }
 
+// The observed value goes out as the record wrote it: 2^53+1 has no float64,
+// and read through one it would come out as 2^53. A value that is not a
+// finite number token is still no value.
+func TestTheObservedValueIsWrittenAsCarried(t *testing.T) {
+	for _, written := range []string{`9007199254740993`, `0.1000000000000000055511151231257827`, `-1.5e-7`} {
+		message := convert(t, decision(func(e *contract.TriggerEventV1) {
+			e.Observed.Values = map[string]json.RawMessage{"value": json.RawMessage(written)}
+		}))
+		if got, want := string(message["values"]), `{"value":`+written+`}`; got != want {
+			t.Fatalf("values = %s, want %s", got, want)
+		}
+	}
+	for _, refused := range []string{`1e999`, `"5"`, `null`, `true`} {
+		message := convert(t, decision(func(e *contract.TriggerEventV1) {
+			e.Observed.Values = map[string]json.RawMessage{"value": json.RawMessage(refused)}
+		}))
+		assertAbsent(t, message, "values")
+	}
+}
+
 // A decision with no frozen revision has no alert identity here, so it is
 // refused rather than written with holes in it.
 func TestADecisionWithNoAlertIdentityIsRefused(t *testing.T) {

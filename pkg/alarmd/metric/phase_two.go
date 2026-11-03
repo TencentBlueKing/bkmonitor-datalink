@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/sourceliveness"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/targetplan"
 )
 
@@ -175,11 +176,19 @@ type phaseTwoMetrics struct {
 	noDataCloseAPI                  *outcomeCounterCollector
 	linkdFilterClose                *outcomeCounterCollector
 	openEpisodeRecord               *outcomeCounterCollector
+	newOpens                        *outcomeCounterCollector
+	frontRefused                    *outcomeCounterCollector
+	processMemory                   *processMemoryCollector
 	strategyScopeClose              *outcomeCounterCollector
 	targetScopeClose                *targetScopeCloseCollector
 	controlSourceRounds             *prometheus.CounterVec
 	apmCarried                      *prometheus.CounterVec
 	apmCarriedBytes                 *prometheus.HistogramVec
+	sourceLivenessChecks            *prometheus.CounterVec
+	sourceLivenessSeconds           *prometheus.HistogramVec
+	sourceLivenessDeferred          prometheus.Counter
+	sourceLivenessEvicted           prometheus.Counter
+	sourceLivenessHeldEvicted       prometheus.Counter
 	strategiesReturnedAfterRemoval  prometheus.Counter
 	queryCooldownSaves              *prometheus.CounterVec
 	controlFactsWrites              *prometheus.CounterVec
@@ -1227,15 +1236,19 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.levelOutcomes = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Subsystem: metricSubsystem, Name: "level_outcome_total",
 		Help: "Level outcomes the evaluation concluded, by outcome kind and, for UNKNOWN and TERMINAL, by reason. " +
-			"NORMAL, ABNORMAL and RECOVERY carry no reason. UNKNOWN by reason is the reading for a Level that was not " +
+			"ABNORMAL and RECOVERY carry no reason. NORMAL carries one only where the Level met its recovery windows " +
+			"and was held NORMAL on an open alert: the trigger_recovery_withheld_total reason (zero_count, " +
+			"no_data_last_point_unknown, source_unknown), origin derived, so a shift from RECOVERY to NORMAL is read on this family " +
+			"by the rule that made it; every other NORMAL has reason empty. A reason on NORMAL is not an unjudged " +
+			"Level: read UNKNOWN by outcome=\"UNKNOWN\", never by reason!=\"\". UNKNOWN by reason is the reading for a Level that was not " +
 			"judged: EFFECTIVE_TIME_INACTIVE is its configured hours, EFFECTIVE_TIME_UNKNOWN a schedule that could not " +
 			"be resolved, HISTORY_WARMING a window not yet full, GAP_* a guard. This counts Level outcomes per series " +
 			"per evaluation, not alerts and not strategies; read a reason against level_outcome_total summed over " +
 			"every cell for its share. origin says whose the reason is: physical for what this round met itself, " +
 			"carried for a stored guard's reason repeated on a later round (an UNKNOWN Level held by a guard an " +
 			"earlier round raised; the origin Slot is on the evaluation_completed line), derived for alarmd's own " +
-			"judgement from configuration, schedule or State (EFFECTIVE_TIME_INACTIVE, HISTORY_WARMING, ...). " +
-			"Only UNKNOWN is ever carried.",
+			"judgement from configuration, schedule or State (EFFECTIVE_TIME_INACTIVE, HISTORY_WARMING, a withheld " +
+			"recovery's reason, ...). Only UNKNOWN is ever carried.",
 	}, []string{"outcome", "reason", "origin"})
 	for _, outcome := range observability.LevelOutcomeKinds {
 		if outcome == "UNKNOWN" || outcome == "TERMINAL" {
@@ -1248,6 +1261,12 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			continue
 		}
 		metrics.levelOutcomes.WithLabelValues(outcome, "", observability.ReasonOriginPhysical)
+		if outcome == "NORMAL" {
+			// A withheld recovery's reason, derived (LevelOutcomeLabels).
+			for _, reason := range observability.RecoveryWithheldReasons {
+				metrics.levelOutcomes.WithLabelValues(outcome, string(reason), observability.ReasonOriginDerived)
+			}
+		}
 	}
 	metrics.levelAbnormal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Subsystem: metricSubsystem, Name: "level_abnormal_total",
@@ -1291,7 +1310,11 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			"whose zero is no observation; the alert recovers on a round with a count above zero, or ends by " +
 			"-nodata or close), no_data_last_point_unknown (the same, on a Level written to end on no data " +
 			"whose last real point is not known - opened on a build that did not keep it - so no data ends " +
-			"nothing until the next real point). Counted per Level per evaluation, so one alert held open adds one " +
+			"nothing until the next real point), source_unknown (a Level written to end on no data was due to " +
+			"end, and the probe of its source - the same table in the same space, the strategy's conditions " +
+			"removed - could not show the source alive: an answer with a status, partial, failed, not in " +
+			"time, or empty without a status; the alert stays open, and the quiet-group zero count path is " +
+			"never probed). Counted per Level per evaluation, so one alert held open adds one " +
 			"each round it stays open; a quiet series with no open alert is not counted, though its decision " +
 			"window still carries recovery.withheld. A round whose window is not whole is unavailable with its " +
 			"history reason instead, and not counted here. A zero here is a reading: every reason exists from start.",
@@ -1311,7 +1334,10 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			"sink did not take; sent again on the next complete round), undecodable (entries this build could not " +
 			"read, left to the alert's own end), unjudged (absent entries a complete round could not decide on " +
 			"because the consumer's set could not be judged - not read yet after a handover, or no Console; " +
-			"nothing sent or removed). Counted in series or entries, per round. Every outcome exists from start.",
+			"nothing sent or removed), source_unknown (absent entries whose end was due and was held because the " +
+			"source could not be shown alive; the entry stays, " +
+			"nothing is sent, the next round asks again). Counted in series or entries, per round. Every outcome " +
+			"exists from start.",
 	}, []string{"outcome"})
 	for _, outcome := range observability.NoDataEndOutcomes {
 		metrics.noDataEnd.WithLabelValues(outcome)
@@ -1329,7 +1355,9 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			"dropped group, more only when that round's no-data memory write failed and the round ran again; an " +
 			"orphan at the consumer where it holds no such alert), held_no_open_alert (none; nothing to " +
 			"resolve, no envelope), held_fingerprint_unknown (the series identity the consumer keys alerts by " +
-			"could not be built; held and named rather than read as absent), not_configured (the evaluation ran " +
+			"could not be built; held and named rather than read as absent), held_level_not_open (every Level the " +
+			"record recovers is one the series' open alert does not have open, so the consumer would drop it as an " +
+			"orphan; held, no envelope), not_configured (the evaluation ran " +
 			"without a set; the envelope went as before the gate -- on a production worker this is a wiring " +
 			"fault), protocol_not_gated (the Plan publishes the compatibility protocol, which has no RECOVERY " +
 			"message: the set was not asked and the envelope is not built; output_events_without_message_total " +
@@ -1361,6 +1389,9 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.noDataCloseAPI = newNoDataCloseAPICollector()
 	metrics.linkdFilterClose = newLinkdFilterCloseCollector()
 	metrics.openEpisodeRecord = newOpenEpisodeRecordCollector()
+	metrics.newOpens = newNewOpensCollector()
+	metrics.frontRefused = newFrontRefusedCollector()
+	metrics.processMemory = newProcessMemoryCollector()
 	metrics.strategyScopeClose = newStrategyScopeCloseCollector()
 	metrics.targetScopeClose = newTargetScopeCloseCollector()
 	metrics.strategiesReturnedAfterRemoval = prometheus.NewCounter(prometheus.CounterOpts{
@@ -1512,6 +1543,63 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 		metrics.apmCarriedBytes.WithLabelValues(table)
 		for _, outcome := range APMCarriedOutcomes {
 			metrics.apmCarried.WithLabelValues(table, outcome)
+		}
+	}
+	metrics.sourceLivenessChecks = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Subsystem: metricSubsystem, Name: "source_liveness_checks_total",
+		Help: "Verdicts on the source of a Level written to end on no data, asked on the round its end is due and on no " +
+			"other, by source kind (log, event, time_series), result and reason. alive: the source - the same table in the " +
+			"same space, the strategy's conditions removed - has data within the Level's no-data span, read from a " +
+			"period after its first empty one to the judged period, at most the span, and never over the last period " +
+			"with data; the " +
+			"Level ends as configured. unknown: it could not be shown alive, and the Level stays open: status (the answer " +
+			"carried a status, such as a table, field or space the query service does not know), partial (a route " +
+			"failed), timeout (no answer in time: past the probe's own bound, or not yet back when the round asked - a " +
+			"probe runs beside the round, never inside it; this includes probes not started because the in-flight cap " +
+			"was full, source_liveness_probe_deferred_total), error (transport, an HTTP status, an answer that does not " +
+			"decode or lacks is_partial, or no query facts to probe from), empty_without_status (answered whole with no " +
+			"data and no status; the shape a source that stopped should have, not yet confirmed by a real sample, so not " +
+			"called silent). unsupported: no probe is expressed for this source in this version, and the Level ends as it " +
+			"did before: promql, bkdata, apm, multi_table, data_label, event_sparse (an event source: a quiet event " +
+			"table and a broken one answer the probe alike). Counted per Level per round, so a probe that serves " +
+			"many Levels counts once for each; probes themselves are source_liveness_check_seconds. A Level held unknown " +
+			"for longer than its bound is on the fleet's SOURCE_UNKNOWN_HELD line. Every cell exists from start.",
+	}, []string{"source_kind", "result", "reason"})
+	metrics.sourceLivenessSeconds = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Subsystem: metricSubsystem, Name: "source_liveness_check_seconds",
+		Help: "How long each source liveness probe took, by source kind: one per source and period, whichever Levels " +
+			"asked, run beside the round. Bounded by the probe's own 20 s, inside the query service's 30 s; a probe at " +
+			"the top bucket is one that timed out.",
+		Buckets: sourceLivenessBuckets,
+	}, []string{"source_kind"})
+	metrics.sourceLivenessDeferred = prometheus.NewCounter(prometheus.CounterOpts{
+		Subsystem: metricSubsystem, Name: "source_liveness_probe_deferred_total",
+		Help: "Source liveness probes not started because the process already ran its in-flight cap of them " +
+			"(sourceliveness.MaxInFlight, 16): many distinct sources due at once. Each one's round reads unknown by " +
+			"timeout in source_liveness_checks_total, though no probe was sent, and the next round asks again. Above " +
+			"zero is the cap being reached.",
+	})
+	metrics.sourceLivenessEvicted = prometheus.NewCounter(prometheus.CounterOpts{
+		Subsystem: metricSubsystem, Name: "source_liveness_answers_evicted_total",
+		Help: "Source liveness answers dropped from the process's cache to keep a newer source's, the cache holding " +
+			"its bound of them (sourceliveness.MaxAnswers, 4096 sources): the oldest goes, the one whose window ends " +
+			"first. Its source is probed again when next asked. Above zero is more sources due at once than the cache " +
+			"holds.",
+	})
+	metrics.sourceLivenessHeldEvicted = prometheus.NewCounter(prometheus.CounterOpts{
+		Subsystem: metricSubsystem, Name: "source_liveness_held_evicted_total",
+		Help: "Held Levels - no-data ends held on a source that could not be shown alive - the process stopped " +
+			"remembering to keep a newer one, its account holding its bound of them (sourceliveness.MaxHeldLevels, " +
+			"4096): the one asked about least recently goes. Its end stays held; only the fleet's SOURCE_UNKNOWN_HELD " +
+			"line no longer counts it until it is asked about again. Above zero is more held Levels than the account " +
+			"holds.",
+	})
+	for _, kind := range sourceliveness.Kinds {
+		metrics.sourceLivenessSeconds.WithLabelValues(string(kind))
+		for _, result := range sourceliveness.Results {
+			for _, reason := range sourceliveness.ReasonsOf(result) {
+				metrics.sourceLivenessChecks.WithLabelValues(string(kind), string(result), string(reason))
+			}
 		}
 	}
 	metrics.controlSourceRounds = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -1786,6 +1874,13 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			metrics.ownershipRefusals.WithLabelValues(site, refusal)
 		}
 	}
+	// A budget that never rejected reads as zero rather than absent, so a
+	// rejection rate over this family has a denominator from the first scrape.
+	for _, budget := range phaseTwoBudgets {
+		for _, result := range phaseTwoCapacityResults {
+			metrics.capacity.WithLabelValues(budget, result)
+		}
+	}
 	for _, outcome := range nodata.SlotOutcomes {
 		metrics.noDataSlotPlans.WithLabelValues(string(outcome))
 	}
@@ -1941,7 +2036,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.undrainedDrainingQueryGroups, m.drainingCursorPrunedQueryGroups, m.rebalancePlannedMoves, m.shardUnawareReadyReplicas, m.rebalanceGap, m.assignmentMoves, m.rebalancePaused, m.controlReadRoundTrips, m.controlReadKeys, m.controlReadDuration, m.assignmentIndexStaleRounds, m.assignmentIndexWrites, m.assignmentIndexReads, m.assignmentIndexConfirm, m.assignmentRecordReads, m.scheduleCursorAdvances, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
 		m.algorithmEvaluations, m.algorithmInputs, m.levelAbnormal, m.levelOutcomes, m.historyCoverageRejected, m.historyCoverageUnsummarised, m.recoveryBeside, m.recoveryWithheld, m.noDataEnd, m.openAlertGate,
 	}...), append(append(append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...), append(m.handover.collectors(), m.sreActions.actions, m.sreActions.rollouts, m.sreActions.watched, m.sreActions.receipts, m.cliAuth.total, m.cliAuth.rosterApplied)...), append(m.controlFacts.collectors(), m.traceExport.collectors()...)...),
-		m.startupDependencyWaits, m.liveness, m.controlCache, m.dispatchRotation, m.localView, m.viewStream, m.viewClient, m.activeCopy, m.fleetTracker, m.effectiveTimeRefresh, m.activationRebuild, m.timelineRepair, m.activationSkippedTimelines, m.timelineUnreadableReports, m.activationHeader, m.activationBlocked, m.liveReserve, m.roundMemory, m.targetGroup, m.effectiveClose, m.logLines, m.observerPanics, m.absentClose, m.editClose, m.noDataCloseAPI, m.linkdFilterClose, m.openEpisodeRecord, m.strategyScopeClose, m.targetScopeClose, m.controlSourceRounds, m.apmCarried, m.apmCarriedBytes, m.strategiesReturnedAfterRemoval, m.queryCooldownSaves, m.controlFactsWrites, m.queryCooldownLoads, m.eventBusinessAttribution, m.detectionSnapshots, m.detectionSnapshotStates, m.diagnosticRedisFailures, m.diagnosticRedisDialRetries, m.leaderForward, m.controlSource, m.leaderRound, m.lookback,
+		m.startupDependencyWaits, m.liveness, m.controlCache, m.dispatchRotation, m.localView, m.viewStream, m.viewClient, m.activeCopy, m.fleetTracker, m.effectiveTimeRefresh, m.activationRebuild, m.timelineRepair, m.activationSkippedTimelines, m.timelineUnreadableReports, m.activationHeader, m.activationBlocked, m.liveReserve, m.roundMemory, m.targetGroup, m.effectiveClose, m.logLines, m.observerPanics, m.absentClose, m.editClose, m.noDataCloseAPI, m.linkdFilterClose, m.openEpisodeRecord, m.newOpens, m.frontRefused, m.processMemory, m.strategyScopeClose, m.targetScopeClose, m.controlSourceRounds, m.apmCarried, m.apmCarriedBytes, m.sourceLivenessChecks, m.sourceLivenessSeconds, m.sourceLivenessDeferred, m.sourceLivenessEvicted, m.sourceLivenessHeldEvicted, m.strategiesReturnedAfterRemoval, m.queryCooldownSaves, m.controlFactsWrites, m.queryCooldownLoads, m.eventBusinessAttribution, m.detectionSnapshots, m.detectionSnapshotStates, m.diagnosticRedisFailures, m.diagnosticRedisDialRetries, m.leaderForward, m.controlSource, m.leaderRound, m.lookback,
 		m.controlSourceRetainedStale, m.controlSourceLastGoodIdentity, m.platformSettings,
 		m.redisPool, m.renewalGate, m.canonicalEncoding, m.legacyPodCache,
 		m.seriesAdmission, m.cmdbAddressDiffers, m.cmdbPlacedByHostID, m.cmdbIndexHosts, m.cmdbIndexServiceInstances, m.cmdbIndexBusinessMappings, m.cmdbIndexRecordsRefused, m.hostDisableMonitorStates, m.cmdbIndexAge, m.cmdbIndexPublish,
@@ -2182,12 +2277,8 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 		m.levelAbnormal.WithLabelValues("incomplete").Add(float64(facts.AbnormalOnIncomplete))
 	}
 	for _, fact := range observation.LevelOutcomes {
-		reason := ""
-		if fact.Outcome == "UNKNOWN" || fact.Outcome == "TERMINAL" {
-			reason = observability.LevelOutcomeReasonLabel(fact.Reason)
-		}
-		m.levelOutcomes.WithLabelValues(fact.Outcome, reason,
-			observability.ReasonOriginOf(observability.ReasonCode(reason), fact.Outcome == "UNKNOWN" && fact.Carried)).Add(float64(fact.Count))
+		reason, origin := observability.LevelOutcomeLabels(fact)
+		m.levelOutcomes.WithLabelValues(fact.Outcome, reason, origin).Add(float64(fact.Count))
 	}
 	for _, fact := range observation.RecoveryGates {
 		m.recoveryBeside.WithLabelValues(string(fact.Cause)).Add(float64(fact.Records))
@@ -2988,6 +3079,59 @@ var (
 	APMCarriedTables   = []string{"metric", "trace"}
 	APMCarriedOutcomes = []string{"unique", "not_unique"}
 )
+
+// sourceLivenessBuckets are source_liveness_check_seconds' buckets, up to the
+// probe's own bound.
+var sourceLivenessBuckets = []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20}
+
+// SourceLivenessChecked counts one verdict a no-data end was decided on
+// (sourceliveness.Observer). A kind, result or reason outside the closed
+// sets is dropped rather than creating a series.
+func (r *Recorder) SourceLivenessChecked(kind sourceliveness.Kind, verdict sourceliveness.Verdict) {
+	if r == nil || r.phaseTwo.sourceLivenessChecks == nil || !slices.Contains(sourceliveness.Kinds, kind) ||
+		!slices.Contains(sourceliveness.ReasonsOf(verdict.Result), verdict.Reason) || !slices.Contains(sourceliveness.Results, verdict.Result) {
+		return
+	}
+	r.phaseTwo.sourceLivenessChecks.WithLabelValues(string(kind), string(verdict.Result), string(verdict.Reason)).Inc()
+}
+
+// SourceLivenessProbed records how long one probe took (sourceliveness
+// .Observer).
+func (r *Recorder) SourceLivenessProbed(kind sourceliveness.Kind, elapsed time.Duration) {
+	if r == nil || r.phaseTwo.sourceLivenessSeconds == nil || !slices.Contains(sourceliveness.Kinds, kind) {
+		return
+	}
+	r.phaseTwo.sourceLivenessSeconds.WithLabelValues(string(kind)).Observe(elapsed.Seconds())
+}
+
+// SourceLivenessDeferred counts a probe not started at the in-flight cap
+// (sourceliveness.Observer).
+func (r *Recorder) SourceLivenessDeferred(sourceliveness.Kind) {
+	if r == nil || r.phaseTwo.sourceLivenessDeferred == nil {
+		return
+	}
+	r.phaseTwo.sourceLivenessDeferred.Inc()
+}
+
+// SourceLivenessEvicted counts an answer dropped at the cache's bound
+// (sourceliveness.Observer).
+func (r *Recorder) SourceLivenessEvicted() {
+	if r == nil || r.phaseTwo.sourceLivenessEvicted == nil {
+		return
+	}
+	r.phaseTwo.sourceLivenessEvicted.Inc()
+}
+
+// SourceLivenessHeldEvicted counts a held Level let go at the account's
+// bound (sourceliveness.Observer).
+func (r *Recorder) SourceLivenessHeldEvicted() {
+	if r == nil || r.phaseTwo.sourceLivenessHeldEvicted == nil {
+		return
+	}
+	r.phaseTwo.sourceLivenessHeldEvicted.Inc()
+}
+
+var _ sourceliveness.Observer = (*Recorder)(nil)
 
 // ObserveAPMCarriedResponse records one response read with the APM
 // application carried: its table kind, whether an identity repeated, and

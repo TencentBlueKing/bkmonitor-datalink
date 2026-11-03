@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
@@ -124,6 +125,9 @@ type lifecycleFixture struct {
 
 	observationsMu sync.Mutex
 	observations   []observability.Observation
+	// tracker reads every observation as a replica's own fleet tracker does,
+	// on the fixture's clock.
+	tracker *fleet.Tracker
 }
 
 // startLifecycleFixture installs the strategy and the host records and opens
@@ -153,6 +157,7 @@ func startLifecycleFixtureOn(t *testing.T, address string, client *redis.Client,
 	base += fixture.interval - base%fixture.interval
 	fixture.base = base
 	fixture.clock.Store(base * 1000)
+	fixture.tracker = fleet.NewTracker(nil, "lifecycle", func() time.Time { return time.UnixMilli(fixture.clock.Load()) })
 
 	uqServer := httptest.NewServer(http.HandlerFunc(fixture.answerQuery))
 	t.Cleanup(uqServer.Close)
@@ -367,7 +372,10 @@ func (fixture *lifecycleFixture) open(workerID string, client *http.Client) {
 			PrepareEvents: preparedEvents(func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
 				return fixture.sink, nil
 			}),
-			AdditionalObserver: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			AdditionalObserver: observability.ObserverFunc(func(ctx context.Context, observation observability.Observation) {
+				if fixture.tracker != nil {
+					fixture.tracker.Observe(ctx, observation)
+				}
 				fixture.observationsMu.Lock()
 				defer fixture.observationsMu.Unlock()
 				fixture.observations = append(fixture.observations, observation)
@@ -442,6 +450,7 @@ func (fixture *lifecycleFixture) evaluationAt(round int64) int64 {
 func (fixture *lifecycleFixture) attempt(round int64, delay time.Duration) bool {
 	fixture.t.Helper()
 	fixture.clock.Store(roundReadAtMillis(fixture.cfg, fixture.queryGroup, fixture.evaluationAt(round), fixture.interval) + delay.Milliseconds())
+	waitSourceProbes(fixture.bundle)
 	_, attempted, err := fixture.runner.RunOne(context.Background())
 	if err != nil {
 		fixture.t.Fatalf("round %d RunOne error = %v", round, err)
@@ -718,8 +727,8 @@ func (fixture *lifecycleFixture) linkCloses() []string {
 func (fixture *lifecycleFixture) activeCopyPort() *openAlertCopyPort {
 	fixture.t.Helper()
 	port, ok := fixture.bundle.workerPorts.OpenAlerts.(*openAlertCopyPort)
-	if !ok || port.copy == nil {
-		fixture.t.Fatalf("the open alert port is %T without a copy", fixture.bundle.workerPorts.OpenAlerts)
+	if !ok || port.copy == nil || port.opens == nil {
+		fixture.t.Fatalf("the open alert port is %T without a copy or the open count", fixture.bundle.workerPorts.OpenAlerts)
 	}
 	return port
 }

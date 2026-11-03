@@ -1639,10 +1639,18 @@ type Anomaly struct {
 	DemotedSince time.Time `json:"demoted_since,omitempty"`
 	// AnswerTruncation is the suspected cut on a KindAnswerTruncated row.
 	AnswerTruncation *AnswerTruncation `json:"answer_truncation,omitempty"`
+	// SourceUnknownHeld is the held Levels on a KindSourceUnknownHeld row.
+	SourceUnknownHeld *SourceUnknownHeld `json:"source_unknown_held,omitempty"`
+	// NewAlertsBurst is the hour's opens on a KindNewAlertsBurst row.
+	NewAlertsBurst *NewAlertsBurst `json:"new_alerts_burst,omitempty"`
 	// MemoryGap is a short window reaching back before the first round this
 	// replica remembers for the object (BEFORE_THIS_PROCESS holes): since
 	// that round, and until the window has slid past it.
 	MemoryGap *MemoryGap `json:"memory_gap,omitempty"`
+	// Rewarm is a window guard this process raised itself, refilling: the
+	// trigger the guard carries and since when (Rewarm). Absent on every
+	// other row.
+	Rewarm *Rewarm `json:"rewarm,omitempty"`
 	// AwaitingView is the wait on a blocked row whose every round so far
 	// the view refused only because it had not carried the Query Group yet.
 	AwaitingView *AwaitingView `json:"awaiting_view,omitempty"`
@@ -2459,6 +2467,17 @@ type ActivationFacts struct {
 	// written by another schema, are left alone.
 	SkippedTimelines int    `json:"skipped_timelines,omitempty"`
 	SkippedNamed     string `json:"skipped_named,omitempty"`
+	// UnrepairedBeyondBound is how many of the named Query Groups whose
+	// timeline is absent or undecodable have stayed unread for longer than
+	// controlplane.SourceStalenessBound: their repair keeps failing. Such a
+	// Query Group keeps its place in the activation and executes none of its
+	// Plans, which a rebuild that went on without it no longer refuses.
+	// UnrepairedNamed lists them as query_group:reason, and
+	// UnrepairedSeconds is the oldest one's age. A newer-format timeline is
+	// left alone by design and never counted.
+	UnrepairedBeyondBound int      `json:"unrepaired_beyond_bound,omitempty"`
+	UnrepairedNamed       string   `json:"unrepaired_named,omitempty"`
+	UnrepairedSeconds     *float64 `json:"unrepaired_seconds,omitempty"`
 }
 
 // ActivationHeaderFacts is a missing activation header as the control leader
@@ -2708,6 +2727,13 @@ const (
 	// hours, so this is said while there is time to act. The stage is the
 	// failed round's, the text its reason and failure.
 	DegradationActivationFailing DegradationKind = "ACTIVATION_FAILING"
+	// DegradationActivationTimelineUnrepaired: a Query Group of the
+	// activation whose timeline is absent or does not decode has stayed
+	// unread for longer than the staleness bound: its repair keeps failing.
+	// The rebuild of the activation goes on without it, so ACTIVATION_FAILING
+	// no longer says so; the Query Group keeps its place and executes none of
+	// its Plans until the timeline is back. The text names them.
+	DegradationActivationTimelineUnrepaired DegradationKind = "ACTIVATION_TIMELINE_UNREPAIRED"
 )
 
 // DegradationKinds is the closed set, for the page's wording table and the
@@ -2717,7 +2743,7 @@ var DegradationKinds = []DegradationKind{
 	DegradationActiveCopyUnsupported, DegradationPlatformSettingsStale, DegradationSourceBlocked,
 	DegradationOutputNotReady, DegradationViewPublishFailing, DegradationViewStreamNoSessions, DegradationActivationBlocked,
 	DegradationMetricsUnexported, DegradationCLIAuthUnavailable, DegradationActivationHeaderMissing,
-	DegradationActivationFailing,
+	DegradationActivationFailing, DegradationActivationTimelineUnrepaired,
 }
 
 // endpointByRole is the entry under role in a replica's list, or nil.
@@ -3717,6 +3743,9 @@ func aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	// prevented this" is a real question about a demoted object, and the column
 	// it sits in does not answer it. What the column decides is whether the
 	// object bears on the verdict; who could have prevented it is decided here.
+	// Each replica lists its own share of a strategy's hour of new alerts;
+	// the line is about the strategy's sum.
+	view.NoData = FoldNewAlertsBursts(view.NoData)
 	if heads == nil || !heads.rowsDecided {
 		Attribute(view.Anomalies, now)
 		Attribute(view.Demoted, now)
@@ -4268,6 +4297,12 @@ type SkippedSpan struct {
 	// now: an object whose cooldown ended thirty seconds ago carried a
 	// cooldown's skip that read as detection lost to capacity.
 	HeldBy string `json:"held_by,omitempty"`
+	// HeldByFailure is, on a record a query cooldown held, the failure the
+	// cooldown was for, in a row's bounded fields: what decides the line the
+	// record is the consequence of (cooldownLine) once the object has left
+	// the pool. Absent on every other record, and on one from a build
+	// before the field.
+	HeldByFailure *FailureRef `json:"held_by_failure,omitempty"`
 	// FirstSeenAt is when this replica first saw a round of this object in
 	// this process -- when it actually started working it, which after a
 	// rollout is a lease expiry, a catalog load and a reconcile round later

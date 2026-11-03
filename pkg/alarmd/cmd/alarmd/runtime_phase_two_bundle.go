@@ -35,11 +35,13 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/memoryline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/newopens"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/roles"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/sourceliveness"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategycache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/tracing"
@@ -630,6 +632,21 @@ func openProductionPhaseTwoBundleAssembly(
 	hostBusiness := tenantHostLookup{cmdbcache.NewHostBusinessLookup(cmdbIndex)}
 	evaluator.WithBusinessAttribution(businessAttributionLookups(hostBusiness.HostBusinessLookup), recorder.ObserveEventBusinessAttribution)
 	evaluator.WithDetectionSnapshots(recorder.ObserveDetectionSnapshot)
+	// Before a Level written to end on no data ends, its source is asked
+	// whether it is alive, by a probe that runs beside the round and is
+	// kept in this process only. The evaluator asks it for a present
+	// series, the worker for an absent one; the probes stop with the Bundle.
+	livenessCtx, stopLiveness := context.WithCancel(context.Background())
+	defer func() {
+		if resultErr != nil {
+			stopLiveness()
+		}
+	}()
+	sourceLiveness, err := sourceliveness.NewChecker(livenessCtx, queryClient, recorder)
+	if err != nil {
+		return nil, err
+	}
+	evaluator.WithSourceLiveness(sourceLiveness)
 	sequencer, err := worker.NewKeyedSideEffectSequencer(cfg.PhaseTwo.Coordinator.MaxSequencerReservations)
 	if err != nil {
 		return nil, err
@@ -743,6 +760,7 @@ func openProductionPhaseTwoBundleAssembly(
 		return nil, err
 	}
 	recorder.SetActivationRebuildSource(repository.ActivationRebuildCounts)
+	recorder.SetActivationRebuildUnreadSource(repository.ActivationRebuildUnreadCounts)
 	recorder.SetTimelineRepairSource(repository.TimelineRepairCounts)
 	recorder.SetActivationSkippedTimelinesSource(repository.SkippedTimelinesReading)
 	recorder.SetActivationHeaderSource(repository.ActivationHeaderReading)
@@ -764,17 +782,22 @@ func openProductionPhaseTwoBundleAssembly(
 	if err != nil {
 		return nil, err
 	}
+	// Each strategy's opens in the hour, for the fleet's NEW_ALERTS_BURST
+	// line: named, never limited.
+	newOpens := newopens.New(external.Now)
+	recorder.SetNewOpensSource(newopens.Outcomes, newOpens.Stats)
 	workerPorts := worker.Ports{
 		Now:           time.Now,
 		EffectiveTime: legacyTime.Provider(),
 		Finalization:  frozen, Activation: repository, Query: querySource, Sequencer: sequencer,
 		Evaluator: evaluator, Admission: admitter, GapGuard: executionStore, Events: events,
 		NoData: executionStore, NoDataEnds: executionStore, NoDataManualCloses: executionStore, Hosts: hostBusiness, State: executionStore, Progress: progressStore, Observer: observer,
+		SourceLiveness:    sourceLiveness,
 		ExecutionEvidence: slotAppliedMarks,
 		// Linked only with the link's control plane: without it the copy is
 		// never refreshed and can never judge, and the worker keeps no
 		// no-data end index.
-		OpenAlerts: &openAlertCopyPort{copy: openAlertCopy, own: ownOpens, record: episodeWriter},
+		OpenAlerts: &openAlertCopyPort{copy: openAlertCopy, own: ownOpens, record: episodeWriter, opens: newOpens},
 		// The horizon the platform settings copy resolves now, read per Slot:
 		// runtime state lives at most this long past a series' last write.
 		StateHorizon: func() int64 { return platformSettings.Current().NoDataTrackingHorizonSeconds },
@@ -1194,6 +1217,9 @@ func openProductionPhaseTwoBundleAssembly(
 			if episodeWriter != nil {
 				go episodeWriter.Run(runCtx)
 			}
+			// Without the copy nothing is counted; with it, quiet strategies'
+			// counts are let go once a minute.
+			go newOpens.Run(runCtx)
 			openAlertCopy.Run(runCtx)
 			return nil
 		},
@@ -1210,6 +1236,7 @@ func openProductionPhaseTwoBundleAssembly(
 			observationMemory.Close()
 			stopDiagnosticWriter()
 			stopCMDBIndex()
+			stopLiveness()
 			viewServer.Close()
 			eventsClosed = true
 			closers := []error{events.Shutdown(shutdownCtx), closeCLI(), shutdownTraces(shutdownCtx, traces)}
@@ -1247,9 +1274,10 @@ func openProductionPhaseTwoBundleAssembly(
 	}
 	route := newFilterRoute(cfg, filterCloser)
 	maintenance := &effectiveMaintenance{bundle: bundle, catalog: catalog, capacity: linkdBudget, legacy: legacyTime.Provider(),
-		legacyCache: legacyTime, filter: route}
+		legacyCache: legacyTime, filter: route, logger: logger}
 	bundle.dependencies.RunEffectiveTime = maintenance.run
 	maintenanceReadings.bind(maintenance)
+	bundle.maintenance = maintenanceReadings
 	bindTargetScopeClose(bundle, scopeClose, openAlertCopy, route, recorder)
 	activeCopyFacts := withTargetScopeClose(activeCopyFactsSource(openAlertCopy), scopeClose)
 	// The control leader's difference against the strategies that no longer

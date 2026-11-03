@@ -81,6 +81,20 @@ var withheldReasonWords = map[string]WithheldReasonWords{
 	// The one reason under CONFIG_NOTED: not withheld at all. The
 	// words say what was read instead of what was written, and that the
 	// strategy detects more than it asked for until the range is fixed.
+	// Under CONFIG_NOTED: the level runs, comparing values and thresholds
+	// raw because the unit or the prefix it was written with cannot be read.
+	"DATA_UNIT_UNKNOWN_COMPARED_RAW": {Kind: WithheldStrategyDefinition,
+		What:   "这一级别的数据单位不在 alarmd 的单位表里，无法换算，按原始数值比较：值和阈值都按写的数字比，阈值前缀不起作用。策略在检测，不是被扣住",
+		Next:   "策略负责人把指标或表达式的单位改成平台支持的单位；改好后下一轮刷新按单位换算，这一行消失",
+		Action: ActionStrategyEdit},
+	"UNIT_PREFIX_OUTSIDE_STEPS_READ_AS_SMALLEST": {Kind: WithheldStrategyDefinition,
+		What:   "这一级别的阈值单位不在数据单位的阶梯里（例如数据是时间、阈值选了字节），按没选单位处理：阈值按数据单位的最小阶读，例如数据是 ms 时阈值按 ns，与平台原有检测的结果一致。策略在检测，不是被扣住",
+		Next:   "策略负责人把阈值单位改成和数据单位同一类的单位；改好后下一轮刷新按单位换算，这一行消失",
+		Action: ActionStrategyEdit},
+	"UNIT_PREFIX_IGNORED_NO_UNIT": {Kind: WithheldStrategyDefinition,
+		What:   "这一级别的阈值带了单位，但数据没有单位（多指标计算的结果、表达式声明了无单位，或指标本身没有单位），阈值单位不起作用，按原始数值比较。策略在检测，不是被扣住",
+		Next:   "阈值按原始数值写即可；要按单位比较时，给表达式声明结果单位。改好后下一轮刷新这一行消失",
+		Action: ActionStrategyEdit},
 	"EFFECTIVE_TIME_RANGE_INVALID": {Kind: WithheldStrategyDefinition,
 		What:   "生效时间段的开始或结束时间格式不合法，已按平台自己的读法读：开始坏读作 00:00、结束坏读作 23:59——策略在检测，但检测的时段比配置写的宽，不是被扣住",
 		Next:   "策略负责人把该时间段改成 HH:MM；改好后下一轮刷新按写的时段检测，这一行消失",
@@ -103,6 +117,21 @@ var withheldReasonWords = map[string]WithheldReasonWords{
 	"AGG_INTERVAL_DEFAULTED": {Kind: WithheldStrategyDefinition,
 		What:   "策略的查询配置没有写聚合周期，或写的是 0，已按平台的读法按 60 秒作为检测周期——策略在检测，不是被扣住",
 		Next:   "策略负责人在查询配置里写上聚合周期；改好后下一轮刷新按写的周期检测，这一行消失",
+		Action: ActionStrategyEdit},
+	// Under CONFIG_NOTED too: the strategy runs, aggregating by the sum the
+	// platform's metric source puts in place of the method written, one
+	// word for each of its fallbacks.
+	"AGG_METHOD_VARIABLE_DEFAULTED": {Kind: WithheldStrategyDefinition,
+		What:   "策略查询配置的聚合方法是没有填值的变量（含 $），已按平台指标数据源的读法按 SUM 聚合（带 _without_time 后缀的按 SUM(PromQL)）——策略在检测，不是被扣住",
+		Next:   "策略负责人把聚合方法改成具体的方法；改好后下一轮刷新按写的方法检测，这一行消失",
+		Action: ActionStrategyEdit},
+	"AGG_METHOD_UNDEFINED_DEFAULTED": {Kind: WithheldStrategyDefinition,
+		What:   "策略查询配置的聚合方法以 undefined 开头（没有取到值的变量），已按平台指标数据源的读法按 SUM 聚合（带 _without_time 后缀的按 SUM(PromQL)）——策略在检测，不是被扣住",
+		Next:   "策略负责人把聚合方法改成具体的方法；改好后下一轮刷新按写的方法检测，这一行消失",
+		Action: ActionStrategyEdit},
+	"AGG_METHOD_WITHOUT_TIME_DEFAULTED": {Kind: WithheldStrategyDefinition,
+		What:   "策略查询配置的聚合方法带 _without_time 后缀，但不是平台登记的五种（sum、avg、count、min、max），已按平台指标数据源的读法按 SUM 聚合——策略在检测，不是被扣住",
+		Next:   "策略负责人把聚合方法改成平台支持的方法；改好后下一轮刷新按写的方法检测，这一行消失",
 		Action: ActionStrategyEdit},
 	// Under CONFIG_NOTED too: the level recovers, on the window the platform
 	// reads when it cannot read the one written.
@@ -195,8 +224,8 @@ var withheldReasonWords = map[string]WithheldReasonWords{
 	// A global business strategy written in a form this build cannot run
 	// across businesses; the detail's reason= names which one.
 	"GLOBAL_STRATEGY_UNSUPPORTED": {Kind: WithheldBuildCapability,
-		What: "全局业务策略的这种写法本构建还不能按全局运行：详情里的 reason 说明是哪一条（旧写法的目标、非结构化时序查询、查询没写表或数据标签、输出兼容事件、PromQL 查询带了不生效的 agg_condition）",
-		Next: "一般要等支持该写法的构建。三种例外：reason 为 query_table 时，策略负责人给查询补上表或数据标签即可；reason 为 output_protocol 时，部署输出协议（phase_two.output.protocol）是 legacy 的改为 auto 或 native 即可（策略须带快照 revision），是 auto 的要等写方给策略补上快照 revision；reason 为 condition_ignored 时，PromQL 不读 agg_condition，按全局运行会读到租户下全部业务，要由写方（策略发布方）把 keys 列出的条件（多业务策略的 bk_biz_id 业务条件）写进 PromQL 本身"},
+		What: "全局业务策略的这种写法本构建还不能按全局运行：详情里的 reason 说明是哪一条（旧写法的目标、既不是结构化时序也不是自定义事件的查询、查询没写表或数据标签、输出兼容事件、PromQL 查询带了不生效的 agg_condition、自定义事件查询既没有目标也不按 bk_biz_id 分组）",
+		Next: "一般要等支持该写法的构建。四种例外：reason 为 business_dimension 时，写方给策略加上 bk_biz_id 分组即可，否则同一主机在各业务的事件会合成一条告警、归到全局业务下；reason 为 query_table 时，策略负责人给查询补上表或数据标签即可；reason 为 output_protocol 时，部署输出协议（phase_two.output.protocol）是 legacy 的改为 auto 或 native 即可（策略须带快照 revision），是 auto 的要等写方给策略补上快照 revision；reason 为 condition_ignored 时，PromQL 不读 agg_condition，按全局运行会读到租户下全部业务，要由写方（策略发布方）把 keys 列出的条件（多业务策略的 bk_biz_id 业务条件）写进 PromQL 本身"},
 	"UNSUPPORTED_MULTI_ITEM_STRATEGY": {Kind: WithheldBuildCapability,
 		What: "多 item 的策略本构建不支持",
 		Next: "等支持多 item 的构建；改部署参数没有用"},

@@ -20,7 +20,17 @@ import (
 // diagnostic scripts must omit those values or configure LiteralSecrets.
 const RedactionContract = "credential_fields_v1"
 
-var credentialAssignment = regexp.MustCompile(`(?i)(["']?(?:access[_-]?token|api[_-]?key|token|password|secret|client[_-]?secret|authorization|cookie)["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}]+)`)
+// redactedMarker is a value masked already: the ConfigMap view's
+// "<redacted bytes=N fingerprint=F>", or "<redacted>". credentialAssignment
+// matches it whole, and only in those exact shapes, and keeps it: the
+// bare-word form would stop at its first space and leave the rest of the
+// marker, and its closing ">", behind the new one. The match runs on to the
+// end of the bare word, so a value that only starts with a marker
+// ("<redacted>hunter2") is not one and is masked whole.
+const redactedMarker = `<redacted(?: bytes=\d+ fingerprint=[0-9a-f]+)?>`
+
+var redactedValue = regexp.MustCompile(`^` + redactedMarker + `$`)
+var credentialAssignment = regexp.MustCompile(`(?i)(["']?(?:access[_-]?token|api[_-]?key|token|password|secret|client[_-]?secret|authorization|cookie)["']?\s*[:=]\s*)(` + redactedMarker + `[^\s,;}]*|"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}]+)`)
 var authCredential = regexp.MustCompile(`(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+`)
 
 // urlCredential is URL userinfo under any scheme - redis://, mysql://,
@@ -78,7 +88,13 @@ func (r *redactor) bounded(value string, limit int64) (string, bool) {
 	// The scheme rule first: run after the field rule, "Authorization: Bearer
 	// x" lost only the scheme word to it and kept x.
 	value = authCredential.ReplaceAllString(value, "${1} <redacted>")
-	value = credentialAssignment.ReplaceAllString(value, "${1}<redacted>")
+	value = credentialAssignment.ReplaceAllStringFunc(value, func(assignment string) string {
+		parts := credentialAssignment.FindStringSubmatch(assignment)
+		if redactedValue.MatchString(parts[2]) {
+			return assignment
+		}
+		return parts[1] + "<redacted>"
+	})
 	value = urlCredential.ReplaceAllString(value, "${1}<redacted>@")
 	for _, secret := range r.secrets {
 		if secret != "" {

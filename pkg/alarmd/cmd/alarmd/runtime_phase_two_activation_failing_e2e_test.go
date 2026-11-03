@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,31 +15,36 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 )
 
-// The activation body is lost under its header while one Query Group's
-// timeline is gone or does not decode, and the source keeps publishing the
-// same content. The Leader's rebuild is refused every round, by name, and so
-// is every activation round; nothing renews what the activation names, so
-// when those keys expire the fleet stops detecting. No newer publication
-// waits, so the fleet is not behind and ACTIVATION_BEHIND cannot see it.
-// Through the production wiring against Redis: the refusal is counted under
-// its outcome, one failed round inside the bound leaves the fleet as it was,
-// and once the failing has lasted past the bound - long before the catalog
-// expires - the fleet is DEGRADED with ACTIVATION_FAILING.
+// The activation body is lost under a header that names a pending
+// publication, and the source keeps publishing the same content. The
+// Leader's rebuild is refused every round, by name, and so is every
+// activation round; nothing renews what the activation names, so when those
+// keys expire the fleet stops detecting. No newer publication waits, so the
+// fleet is not behind and ACTIVATION_BEHIND cannot see it. Through the
+// production wiring against Redis: the refusal is counted under its outcome,
+// one failed round inside the bound leaves the fleet as it was, and once the
+// failing has lasted past the bound - long before the catalog expires - the
+// fleet is DEGRADED with ACTIVATION_FAILING. (A Query Group whose timeline is
+// gone or does not decode no longer refuses the rebuild: the body is written
+// back without it, controlplane's TestOneUnreadableTimelineDoesNotKeepTheBodyFromEveryOtherQueryGroup.)
 func TestAnActivationRoundFailingPastTheBoundDegradesTheFleetWithNoNewerPublication(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
-		spoil   func(t *testing.T, fixture *lifecycleFixture, key string)
+		spoil   func(t *testing.T, fixture *lifecycleFixture, prefix string)
 		outcome controlplane.ActivationRebuildOutcome
 	}{
-		{name: "absent", outcome: controlplane.ActivationRebuildTimelineMissing,
-			spoil: func(t *testing.T, fixture *lifecycleFixture, key string) {
-				if err := fixture.redis.Del(context.Background(), key).Err(); err != nil {
+		{name: "header pending", outcome: controlplane.ActivationRebuildHeaderPending,
+			spoil: func(t *testing.T, fixture *lifecycleFixture, prefix string) {
+				ctx := context.Background()
+				header, err := fixture.redis.Get(ctx, prefix+":activation_header").Result()
+				if err != nil {
 					t.Fatal(err)
 				}
-			}},
-		{name: "undecodable", outcome: controlplane.ActivationRebuildTimelineUnreadable,
-			spoil: func(t *testing.T, fixture *lifecycleFixture, key string) {
-				if err := fixture.redis.Set(context.Background(), key, "{not a timeline", time.Hour).Err(); err != nil {
+				pending := strings.TrimSuffix(header, "-") + strings.Split(header, "|")[1]
+				if pending == header {
+					t.Fatalf("setup: header %q has no pending form", header)
+				}
+				if err := fixture.redis.Set(ctx, prefix+":activation_header", pending, 0).Err(); err != nil {
 					t.Fatal(err)
 				}
 			}},
@@ -52,7 +58,7 @@ func TestAnActivationRoundFailingPastTheBoundDegradesTheFleetWithNoNewerPublicat
 			if err := fixture.redis.Del(ctx, prefix+":activation").Err(); err != nil {
 				t.Fatal(err)
 			}
-			tc.spoil(t, fixture, prefix+":schedule_timeline:"+string(fixture.queryGroup))
+			tc.spoil(t, fixture, prefix)
 
 			start := time.UnixMilli(fixture.clock.Load())
 			round := func(at time.Time) *fleet.ActivationFacts {

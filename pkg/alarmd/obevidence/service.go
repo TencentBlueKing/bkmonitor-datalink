@@ -36,6 +36,15 @@ const (
 	FamilyDynamicConfig  = "dynamic_config"
 	FamilyQueryProgress  = "query_progress"
 	FamilyQueryCooldown  = "query_cooldown"
+	// FamilyOpenEpisodes is alarmd's own record of the episodes it opened
+	// for one strategy (package openepisodes): the expectation every
+	// strategy-wide close checks a dry run against.
+	FamilyOpenEpisodes = "open_episodes"
+	// FamilyOpenEpisodeEntries lists the same record's entries by
+	// fingerprint, with the revision each opened at and when, a page at a
+	// time: what a reconciliation that matches the link's count by revision
+	// but not alert by alert needs to name the alert.
+	FamilyOpenEpisodeEntries = "open_episodes_entries"
 )
 
 type Location struct {
@@ -69,6 +78,9 @@ type Options struct {
 	// QueryCooldown is the runtime store under the pool records' prefix: the
 	// record a Query Group's owner keeps of its place in the demoted pool.
 	QueryCooldown RedisBinding
+	// OpenEpisodes is the runtime store under the state prefix: alarmd's
+	// record of the episodes it opened, per strategy.
+	OpenEpisodes RedisBinding
 	// CMDBCache is the platform's host cache: INFO, and one host or service
 	// instance record at a time.
 	CMDBCache RedisBinding
@@ -99,6 +111,13 @@ type StoreRequest struct {
 	// instance hash, by instance id.
 	Host            string `json:"host,omitempty"`
 	ServiceInstance string `json:"service_instance,omitempty"`
+
+	// Version narrows open_episodes_entries to the entries opened at one
+	// revision; Cursor is the last fingerprint of the page before, and Limit
+	// the page's size (DefaultEpisodeEntries, at most MaxEpisodeEntries).
+	Version string `json:"version,omitempty"`
+	Cursor  string `json:"cursor,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
 }
 type ConfigRequest struct {
 	View         string `json:"view"`
@@ -285,6 +304,10 @@ func (service *Service) Store(ctx context.Context, request StoreRequest) Result 
 		return r
 	case FamilyQueryCooldown:
 		return service.queryCooldown(ctx, request)
+	case FamilyOpenEpisodes:
+		return service.openEpisodes(ctx, request)
+	case FamilyOpenEpisodeEntries:
+		return service.openEpisodeEntries(ctx, request)
 	case FamilyGapMarker, FamilyNoDataMemory:
 		return service.planRecords(ctx, request)
 	default:

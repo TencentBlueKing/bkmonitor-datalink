@@ -396,6 +396,15 @@ func mergeControlFacts(view *View, snapshot ControlFacts) {
 			}
 			view.Degradations = append(view.Degradations, degradation)
 		}
+		if activation := snapshot.Activation; activation.UnrepairedBeyondBound > 0 {
+			degradation := Degradation{Kind: DegradationActivationTimelineUnrepaired, Replica: replica,
+				Text: fmt.Sprintf("%d timelines unread past the bound, repair failing: %s", activation.UnrepairedBeyondBound, activation.UnrepairedNamed)}
+			if activation.UnrepairedSeconds != nil {
+				age := *activation.UnrepairedSeconds
+				degradation.AgeSeconds = &age
+			}
+			view.Degradations = append(view.Degradations, degradation)
+		}
 		if snapshot.Activation.BlockedQueryGroups > 0 {
 			view.Degradations = append(view.Degradations, Degradation{Kind: DegradationActivationBlocked, Replica: replica,
 				Text: fmt.Sprintf("%d held back (%s): %s; timeline keys to delete: %s", snapshot.Activation.BlockedQueryGroups,

@@ -11,6 +11,8 @@ package main
 
 import (
 	"context"
+	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -63,7 +65,7 @@ func newFilterCloser(cfg config.Config, client *linkdmanage.Client, runtime redi
 		return nil, err
 	}
 	closer, err := filterclose.New(filterclose.Options{Link: client, Commands: commands, Pending: pending, Record: record, Now: now,
-		Warn: linkdUnsupportedWarning(logger, "filter_close")})
+		Warn: linkdUnsupportedWarning(logger, "filter_close"), Report: newFilterCloseReporter(logger, now)})
 	if err != nil {
 		return nil, err
 	}
@@ -125,5 +127,57 @@ func (route *filterRoute) retryPending(ctx context.Context) {
 func (route *filterRoute) forget() {
 	if route != nil {
 		route.closer.Forget()
+	}
+}
+
+// filterCloseReportEvery is how often one outcome of one strategy writes its
+// line; the lines held back meanwhile are counted on the next.
+const filterCloseReportEvery = 10 * time.Minute
+
+// filterCloseReportKeys bounds the outcome-and-strategy pairs remembered;
+// past it the ones not written for two periods go.
+const filterCloseReportKeys = 4096
+
+// newFilterCloseReporter writes a filtered close's notice -- a close
+// refused past its expectation, a walk cut at its turn's bound -- with the
+// strategy, the decision and the numbers that place it, sampled per outcome
+// and strategy. The counts alone carry no strategy, so a refusal was found
+// only by reading the absent roster.
+func newFilterCloseReporter(logger *observability.Logger, now func() time.Time) func(filterclose.Notice) {
+	if logger == nil {
+		return nil
+	}
+	if now == nil {
+		now = time.Now
+	}
+	var mu sync.Mutex
+	last := map[string]time.Time{}
+	held := map[string]int{}
+	return func(notice filterclose.Notice) {
+		at := now()
+		key := notice.Outcome + "\x00" + notice.Scope.TenantID + "\x00" + notice.Scope.StrategyID
+		mu.Lock()
+		if written, ok := last[key]; ok && at.Sub(written) < filterCloseReportEvery {
+			held[key]++
+			mu.Unlock()
+			return
+		}
+		if len(last) >= filterCloseReportKeys {
+			for k, written := range last {
+				if at.Sub(written) >= 2*filterCloseReportEvery {
+					delete(last, k)
+					delete(held, k)
+				}
+			}
+		}
+		suppressed := held[key]
+		last[key] = at
+		delete(held, key)
+		mu.Unlock()
+		logger.Warn("linkd_filter_close_"+notice.Outcome, "attention", notice.Read, 0,
+			slog.String("tenant", notice.Scope.TenantID), slog.String("strategy_id", notice.Scope.StrategyID),
+			slog.String("decision", notice.Decision), slog.Int("expected", notice.Expected), slog.String("expect_source", notice.Source),
+			slog.Int("allowed", notice.Allowed), slog.Int("matched", notice.Matched), slog.Int("read", notice.Read),
+			slog.Int("held_since_last", suppressed))
 	}
 }

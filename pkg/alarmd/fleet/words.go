@@ -226,12 +226,15 @@ var checkWords = map[Check]wordPair{
 	CheckNoDataMemoryRefused:  {StateResultUntrusted, ActionServiceFix},
 	// Not detecting while the view does not carry it, and alarmd's own to
 	// fix: the view is its control plane, not a dependency.
-	CheckAwaitingView:           {StateNotDetecting, ActionServiceFix},
-	CheckDependencyDown:         {StateDependencyUnanswered, ActionServiceFix},
-	CheckDefect:                 {StateDefect, ActionServiceFix},
-	CheckObservationGap:         {StateResultUntrusted, ActionWatch},
-	CheckQueryRefused:           {StateDependencyUnanswered, ActionServiceFix},
-	CheckWindowUndecided:        {StateResultUntrusted, ActionServiceFix},
+	CheckAwaitingView:    {StateNotDetecting, ActionServiceFix},
+	CheckDependencyDown:  {StateDependencyUnanswered, ActionServiceFix},
+	CheckDefect:          {StateDefect, ActionServiceFix},
+	CheckObservationGap:  {StateResultUntrusted, ActionWatch},
+	CheckQueryRefused:    {StateDependencyUnanswered, ActionServiceFix},
+	CheckWindowUndecided: {StateResultUntrusted, ActionServiceFix},
+	// Detecting: the guard withholds only NORMAL. A wait, for as long as
+	// the window or the guard moves; flat, it is this side's (RuleStalled).
+	CheckWindowRewarming:        {StateDetecting, ActionWatch},
 	CheckCoverageReadingRefused: {StateResultUntrusted, ActionServiceFix},
 	CheckConfigUnresolved:       {StateResultUntrusted, ActionWatch},
 	CheckBackendNotAnswering:    {StateDependencyUnanswered, ActionServiceFix},
@@ -252,7 +255,11 @@ var checkWords = map[Check]wordPair{
 	CheckLogCountEmpty: {StateDetecting, ActionNone},
 	// Detecting what came back; the grouping is the strategy's to narrow.
 	CheckAnswerTruncated: {StateDetecting, ActionStrategyEdit},
-	CheckSeriesChurning:  {StateResultUntrusted, ActionStrategyEdit},
+	// Detecting; whose the unreadable source is, the maintainer finds out.
+	CheckSourceUnknownHeld: {StateDetecting, ActionServiceFix},
+	// Detecting every alert it opens; the grouping is the strategy's to narrow.
+	CheckNewAlertsBurst: {StateDetecting, ActionStrategyEdit},
+	CheckSeriesChurning: {StateResultUntrusted, ActionStrategyEdit},
 	// Detecting, and recovering where Python would; the owner acts only if
 	// whole windows are wanted.
 	CheckSeriesSparserThanWindow: {StateDetecting, ActionNone},

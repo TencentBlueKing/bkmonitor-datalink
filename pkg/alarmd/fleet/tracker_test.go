@@ -1567,12 +1567,15 @@ func TestACarriedConfigDriftIsNotAConfigLineButARealOneIs(t *testing.T) {
 		t.Fatalf("rows = %+v, want one row with no revision change across its rounds", rows)
 	}
 	Attribute(rows, now)
-	if rows[0].Finding.Check == CheckConfigUnresolved || rows[0].Finding.Check != CheckWindowUndecided {
-		t.Fatalf("carried CONFIG_DRIFT with unchanged revisions is under %q, want the undecided window, never the configuration line",
+	// A few rounds into the guard the activation change raised: the
+	// rewarm this deployment opened itself (WINDOW_REWARMING), never the
+	// configuration line.
+	if rows[0].Finding.Check == CheckConfigUnresolved || rows[0].Finding.Check != CheckWindowRewarming {
+		t.Fatalf("carried CONFIG_DRIFT with unchanged revisions is under %q, want the rewarm, never the configuration line",
 			rows[0].Finding.Check)
 	}
-	if rows[0].Finding.Group != "保护未解除（最初触发 CONFIG_DRIFT）" {
-		t.Fatalf("fold = %q, want the guard named with its trigger", rows[0].Finding.Group)
+	if !strings.HasPrefix(rows[0].Finding.Group, "计划变更后重攒（CONFIG_DRIFT，起点 ") {
+		t.Fatalf("fold = %q, want the rewarm named with its trigger and start", rows[0].Finding.Group)
 	}
 
 	// The counterexample: one revision moves. That round's CONFIG_DRIFT is a
@@ -1591,8 +1594,8 @@ func TestACarriedConfigDriftIsNotAConfigLineButARealOneIs(t *testing.T) {
 	round("qg-846", "snap-a", "query-b", "schedule-a")
 	rows = tracker.Anomalies()
 	Attribute(rows, now)
-	if rows[0].ConfigChanged || rows[0].Finding.Check != CheckWindowUndecided {
-		t.Fatalf("the round after the change: changed=%v check=%q, want unchanged and back under the window", rows[0].ConfigChanged, rows[0].Finding.Check)
+	if rows[0].ConfigChanged || rows[0].Finding.Check != CheckWindowRewarming {
+		t.Fatalf("the round after the change: changed=%v check=%q, want unchanged and back under the rewarm", rows[0].ConfigChanged, rows[0].Finding.Check)
 	}
 }
 

@@ -1829,8 +1829,11 @@ type OpenAlertGateCounts struct {
 	PassedOneTimeClose     uint64
 	HeldNoOpenAlert        uint64
 	HeldFingerprintUnknown uint64
-	NotConfigured          uint64
-	ProtocolNotGated       uint64
+	// HeldLevelNotOpen is a RECOVERY of Levels none of which the series'
+	// open alert has open: held, no envelope.
+	HeldLevelNotOpen uint64
+	NotConfigured    uint64
+	ProtocolNotGated uint64
 }
 
 type PlanEvaluationResult struct {

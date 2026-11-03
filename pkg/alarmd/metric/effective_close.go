@@ -30,43 +30,30 @@ type effectiveCloseCollector struct {
 func newEffectiveCloseCollector() *effectiveCloseCollector {
 	return &effectiveCloseCollector{
 		outcomes: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "effective_close_total"),
-			"What the effective-time maintenance did, by outcome. close_acked counts closes sent and acknowledged by "+
-				"the broker, one per alert, at every level of the strategy (__ALL__): the broker's acknowledgement, not "+
-				"the link's, so it includes closes the link finds no active alert for (orphaned there), such as one sent "+
-				"again after the link closed the alert. The others count "+
-				"events: maintenance_busy is a close that could not take the Query Group's flight because a Slot was "+
-				"executing (one is nothing, a steady rate is a Query Group whose close never happens); "+
-				"close_precheck_failed is the owner or content check refusing before a send; close_send_failed is "+
-				"the producer not acknowledging; maintenance_plan_uncompilable is an activated Plan the maintenance "+
-				"could not compile and so cannot judge; unavailable is a Query Group whose Plans could not be read "+
-				"or whose owner stopped accepting during the read - an owner not accepting when the step begins is a "+
-				"handover and is skipped uncounted, and a Console that does not answer is not one; source_last_known is a "+
-				"step whose read of the event source failed or was backed off and whose closes went on under the last "+
-				"source known, once per step; source_unknown is a step whose closes were deferred because no source "+
-				"has been known yet, once per step; effective_time_unknown, legacy_effective_time_unavailable and "+
-				"close_identity_invalid name the judgement that could not be made; calendar_deletion_unsettled is a "+
-				"close held back because a calendar the strategy reads deleted has not settled as a deletion: read "+
-				"deleted for too short a time, read present elsewhere, or every calendar this replica's strategies "+
-				"name read deleted at once, a calendar source gone; close_boundary_active is a Plan the recheck just "+
-				"before a send found active again, its batch not sent while the Query Group's other Plans go on "+
-				"(effective_time_unknown counts the same recheck finding the time unreadable); close_business_unknown "+
-				"counts alerts of a global business Plan whose record names no business they were filed under, or that "+
-				"were addressed from the index set, which names none - not closed that round; evidence_unavailable is "+
-				"a Plan outside its effective time whose open alerts could not be listed because its set has no current "+
-				"calibration (never calibrated, past its age, failing, or truncated with nothing listed) and its index "+
-				"set was not read fresh either, or its index set stands in while an earlier reconcile named alerts active and "+
-				"missing from the set, which the set's members do not carry and are not closed from it, once per Plan per "+
-				"step - a calibrated set with no alerts is not counted; "+
-				"index_set_close_acked counts, among close_acked, closes sent by fingerprint from the index set's "+
-				"members because the set had no current calibration to list them; close_already_sent counts, once "+
-				"per send held and not per step, closes held back because this process sent them - a listed alert's "+
-				"within a minute of the send, one from the index set until a read of the set after the send no longer "+
-				"carries the member or the set's stale bound has passed since the send, after which a set still "+
-				"carrying it closes it once more; sent_memory_full counts, once per Plan per step, closes not sent because "+
-				"that memory of sends is at its bound, sent once it has room; reopened_since_read and recovery_unknown count, by alert, closes held "+
-				"back because a recovery of the fingerprint was sent after the listing or set they were decided from "+
-				"was read and an ABNORMAL of it after that, or the record of reopens could not be read. Every cell "+
-				"exists from the "+
+			"What the effective-time maintenance did, by outcome. An inactive Plan's alerts are closed by the link's "+
+				"filter close, one close per Plan and version: close_done is one the filter ran (done, or carried on "+
+				"by the next step), close_nothing_matched one whose dry run matched no active alert of the Plan's "+
+				"version, close_not_settled one the link did not settle this step (busy, failed, refused, past its "+
+				"expectation; the linkd filter close metric names which), tried again by the next step; the alerts "+
+				"themselves are counted by the filter close's items. filter_close_unsupported is the link answering "+
+				"501, 404 or 405 to a filtered close, and close_unrouted an inactive Plan on a deployment that names "+
+				"no link control plane: in both nothing closes the Plan's alerts. The others count events: "+
+				"close_precheck_failed is the owner and content check refusing before a send (the fence, the content "+
+				"scope or the timeline moved); maintenance_busy is a close that could not take the Query Group's flight "+
+				"because a Slot was executing (one is nothing, a steady rate is a Query Group whose close never "+
+				"happens); maintenance_plan_uncompilable is an activated Plan the maintenance could not compile and so "+
+				"cannot judge; unavailable is a Query Group whose Plans could not be read or whose owner stopped "+
+				"accepting during the read - an owner not accepting when the step begins is a handover and is skipped "+
+				"uncounted; view_not_executable is a Query Group whose Plans the executable view does not allow "+
+				"reading yet (not installed, or the lease behind it), a rollout's shape rather than a store failure; group_retiring is a Query Group leaving the catalog (its timeline retired), read once per lease rather than every second; "+
+				"unsupported_runner is a Query Group whose owner runner cannot run the maintenance; effective_time_unknown, "+
+				"legacy_effective_time_unavailable and close_identity_invalid name the judgement that could not be "+
+				"made; calendar_deletion_unsettled is a close held back because a calendar the strategy reads deleted "+
+				"has not settled as a deletion: read deleted for too short a time, read present elsewhere, or every "+
+				"calendar this replica's strategies name read deleted at once, a calendar source gone; "+
+				"close_boundary_active is a Plan the recheck just before a send found active again, its close not sent "+
+				"while the Query Group's other Plans go on (effective_time_unknown counts the same recheck finding the "+
+				"time unreadable). Every cell exists from the "+
 				"start so a zero is a reading and not an absence.", []string{"outcome"}, nil),
 	}
 }

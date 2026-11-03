@@ -323,8 +323,12 @@ func overviewDependencyOf(endpoint Endpoint) OverviewDependency {
 }
 
 type OverviewResources struct {
-	Scale    OverviewScale             `json:"scale"`
-	Replicas []OverviewReplicaResource `json:"replicas"`
+	Scale OverviewScale `json:"scale"`
+	// Throughput is how many series the fleet judged a minute and how many
+	// its admission refused, both per series per Plan, from the same two
+	// readings as the flow.
+	Throughput OverviewThroughput        `json:"throughput"`
+	Replicas   []OverviewReplicaResource `json:"replicas"`
 	// Fleet is the replicas' memory and query permits added up, as shares of
 	// their limits added up; MostConstrained the replica closest to a limit
 	// past the line the overview names one at, and Line the sentence for
@@ -335,6 +339,16 @@ type OverviewResources struct {
 	// Constraint is the load judgment's bottleneck, as the health route
 	// decides it.
 	Constraint string `json:"constraint"`
+}
+
+type OverviewThroughput struct {
+	// SeriesPerMinute are the series a Plan judged and wrote state for
+	// (worker_work_total{work_kind="state_apply"}), the state stage's volume
+	// per minute.
+	SeriesPerMinute OverviewNumber `json:"series_per_minute"`
+	// RejectedPerMinute are the series a Plan's admission refused
+	// (series_admission_total{result="rejected"}).
+	RejectedPerMinute OverviewNumber `json:"rejected_per_minute"`
 }
 
 type OverviewScale struct {
@@ -498,7 +512,8 @@ func overviewOf(health HealthResponse, running map[StateWord]int, runningKnown b
 	}
 
 	overview.Resources = OverviewResources{Constraint: string(health.Load.Bottleneck.Resource), Replicas: []OverviewReplicaResource{},
-		Scale: OverviewScale{Strategies: overviewUnmeasured("strategies"), MergedQueries: overviewUnmeasured("merged_queries"), Series: overviewUnmeasured("series"), Hosts: overviewUnmeasured("hosts")}}
+		Scale:      OverviewScale{Strategies: overviewUnmeasured("strategies"), MergedQueries: overviewUnmeasured("merged_queries"), Series: overviewUnmeasured("series"), Hosts: overviewUnmeasured("hosts")},
+		Throughput: OverviewThroughput{SeriesPerMinute: overviewUnmeasured("per_minute"), RejectedPerMinute: overviewUnmeasured("per_minute")}}
 	if health.SourceStanding != nil {
 		overview.Resources.Scale.Strategies = overviewMeasured(float64(health.SourceStanding.Accepted), "strategies")
 	}
@@ -780,10 +795,13 @@ func newOverviewFlows() *overviewFlows {
 // flowContribution is one replica's rates and histogram differences between
 // two of its readings.
 type flowContribution struct {
-	queries, detections, stateWrites, stateFailures, emitted, rejected float64
-	failures                                                           map[string]float64
-	queryBuckets, lagBuckets, redisBuckets                             []uint64
-	queryCount, lagCount, redisCount                                   uint64
+	queries, detections, stateWrites, stateFailures, emitted, rejected, seriesRejected float64
+	failures                                                                           map[string]float64
+	queryBuckets, lagBuckets, redisBuckets                                             []uint64
+	queryCount, lagCount, redisCount                                                   uint64
+	// seriesRejectedMissing is a reading pair one side of which carries no
+	// series_rejected: a replica of an earlier build, counted as none.
+	seriesRejectedMissing bool
 }
 
 type flowSum struct {
@@ -879,6 +897,13 @@ func (flows *overviewFlows) apply(overview *Overview, health HealthResponse, at 
 		overview.Resources.Scale.Hosts = overviewMeasured(float64(hosts), "hosts")
 	}
 	overviewSummarize(overview, health)
+	if sum.contributed {
+		overview.Resources.Throughput = OverviewThroughput{SeriesPerMinute: overviewMeasured(sum.stateWrites*60, "per_minute"),
+			RejectedPerMinute: overviewMeasured(sum.seriesRejected, "per_minute")}
+		// A replica of an earlier build publishes no rejected count, and is
+		// counted as none: the sum is what the others refused, at least.
+		overview.Resources.Throughput.RejectedPerMinute.AtLeast = sum.seriesRejectedMissing
+	}
 	for index := range overview.Flow {
 		stage := &overview.Flow[index]
 		stage.Basis = overviewStageBasis[stage.Stage]
@@ -973,6 +998,11 @@ func contributionOf(previous, current overviewReading) (flowContribution, bool) 
 	contribution.emitted = float64(now.EventsEmitted-was.EventsEmitted) / elapsed
 	contribution.stateFailures = float64(subtract(now.StateFailures, was.StateFailures)) / elapsed * 60
 	contribution.rejected = float64(subtract(now.EventsRejected, was.EventsRejected)) / elapsed * 60
+	if now.SeriesRejected != nil && was.SeriesRejected != nil {
+		contribution.seriesRejected = float64(subtract(*now.SeriesRejected, *was.SeriesRejected)) / elapsed * 60
+	} else {
+		contribution.seriesRejectedMissing = true
+	}
 	for cause, count := range now.QueryFailures {
 		contribution.failures[cause] = float64(subtract(count, was.QueryFailures[cause])) / elapsed * 60
 	}
@@ -990,6 +1020,8 @@ func (sum *flowSum) add(contribution flowContribution) {
 	sum.emitted += contribution.emitted
 	sum.stateFailures += contribution.stateFailures
 	sum.rejected += contribution.rejected
+	sum.seriesRejected += contribution.seriesRejected
+	sum.seriesRejectedMissing = sum.seriesRejectedMissing || contribution.seriesRejectedMissing
 	for cause, count := range contribution.failures {
 		sum.failures[cause] += count
 	}

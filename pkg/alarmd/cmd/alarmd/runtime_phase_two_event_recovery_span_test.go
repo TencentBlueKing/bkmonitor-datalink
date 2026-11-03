@@ -90,6 +90,30 @@ type eventSpanCase struct {
 	// threshold, with algorithmConfig as its config: a template-bound count.
 	algorithm       string
 	algorithmConfig any
+	// sourceAlive answers the source liveness probe of a no-data end with
+	// counts: other documents of the table still arrive. Without it the
+	// probe is answered with nothing, as a table nothing is written to.
+	sourceAlive bool
+	// logCount reads a log index set's document count in place of the event
+	// count, the same one document at round 0; set with ungrouped, it is
+	// the log count whose zero is no observation. The log source reads a
+	// minute late by default, and the document sits a minute earlier with
+	// every window.
+	logCount bool
+	// timeDelay is the item's time_delay in seconds: every window, the
+	// event's bucket with them, sits that much earlier.
+	timeDelay int64
+	// beforeRound, when set, runs before each round, on the process that
+	// runs it.
+	beforeRound func(round int, bundle *phaseTwoWorkerBundle)
+	// probeReadsBack answers the source liveness probe as a store whose
+	// count over one period reaches one period back from each instant
+	// (count_over_time on VictoriaMetrics covers (t - W, t]): data when the
+	// one document - written half a period into its bucket - lies in
+	// (start - period, end), nothing otherwise. The table holds nothing
+	// else, so a window that reaches back over the last period with data is
+	// the only way to read it alive.
+	probeReadsBack bool
 }
 
 // eventSpanStrategyID is the strategy the runner writes and publishes.
@@ -111,6 +135,13 @@ type eventSpanRounds struct {
 	withheld map[int]uint64
 	written  []contract.TriggerEventV1
 	ranges   [][2]int64
+	// probes is how many source liveness probes the query service answered;
+	// they are not among ranges.
+	probes int
+	// probeWindows is each probe's [round, start, end], in seconds.
+	probeWindows [][3]int64
+	// recorder is the last process's metrics.
+	recorder *metric.Recorder
 	// restored is the second process's row kind before its first round
 	// (readRestored), empty when the object is on no line.
 	restored string
@@ -157,9 +188,21 @@ func runGroupedEventCount(t *testing.T, run eventSpanCase) eventSpanRounds {
 		t.Fatal(err)
 	}
 	item := document["items"].([]any)[0].(map[string]any)
+	if run.timeDelay > 0 {
+		item["time_delay"] = run.timeDelay
+	}
 	query := item["query_configs"].([]any)[0].(map[string]any)
 	query["data_source_label"], query["data_type_label"], query["agg_method"] = "custom", "event", "COUNT"
 	query["custom_event_name"], query["result_table_id"] = "synthetic-event", "system_event"
+	delay := run.timeDelay
+	if run.logCount {
+		delete(query, "custom_event_name")
+		query["data_source_label"], query["data_type_label"], query["index_set_id"] = "bk_log_search", "log", "7"
+		query["result_table_id"], query["query_string"], query["metric_field"] = "", "*", ""
+		if delay == 0 {
+			delay = 60
+		}
+	}
 	levels := run.levels
 	if levels == nil {
 		levels = [][2]int{{2, 3}}
@@ -207,7 +250,7 @@ func runGroupedEventCount(t *testing.T, run eventSpanCase) eventSpanRounds {
 	// any request, so every request of a round - the primary and a Level's
 	// previous point alike, in whatever order they come - sees it in the
 	// same bucket.
-	eventBucket := base - period
+	eventBucket := base - period - delay
 	var (
 		mu     sync.Mutex
 		round  int
@@ -230,6 +273,25 @@ func runGroupedEventCount(t *testing.T, run eventSpanCase) eventSpanRounds {
 		end, err := strconv.ParseInt(fmt.Sprint(payload["end_time"]), 10, 64)
 		if err != nil {
 			return nil, err
+		}
+		if payload["not_time_align"] == true {
+			// A source liveness probe: the table counted, the strategy's
+			// own conditions and grouping gone.
+			mu.Lock()
+			result.probes++
+			result.probeWindows = append(result.probeWindows, [3]int64{int64(round), start, end})
+			mu.Unlock()
+			series := []any{}
+			written := eventBucket + period/2
+			if run.sourceAlive || run.probeReadsBack && written > start-period && written < end {
+				series = append(series, map[string]any{"name": "_result0", "columns": []string{"_time", "_value"}, "types": []string{"float", "float"},
+					"group_keys": []string{}, "group_values": []string{}, "values": []any{[]any{start * 1000, 3}}})
+			}
+			var buf bytes.Buffer
+			if err := json.NewEncoder(&buf).Encode(map[string]any{"series": series, "status": nil, "trace_id": "event-span-probe", "is_partial": false}); err != nil {
+				return nil, err
+			}
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(&buf), Request: request}, nil
 		}
 		mu.Lock()
 		result.ranges = append(result.ranges, [2]int64{start, end})
@@ -325,7 +387,9 @@ func runGroupedEventCount(t *testing.T, run eventSpanCase) eventSpanRounds {
 		case run.native:
 			cfg.PhaseTwo.Linkd.ControlPlane = quietLinkControlPlane(t)
 		}
-		bundle, err := openProductionPhaseTwoBundleWithDependencies(ctx, cfg, metric.NewRecorder(metric.BuildInfo{}),
+		recorder := metric.NewRecorder(metric.BuildInfo{})
+		result.recorder = recorder
+		bundle, err := openProductionPhaseTwoBundleWithDependencies(ctx, cfg, recorder,
 			observability.Discard(observability.ComponentRuntime), newPhaseTwoApplicationHealth(),
 			func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
 				return controlplane.NewLegacyRedisStrategySource(client, prefix)
@@ -363,6 +427,12 @@ func runGroupedEventCount(t *testing.T, run eventSpanCase) eventSpanRounds {
 			if run.readRestored {
 				result.restored = restoredRowKind(t, ctx, bundle)
 			}
+		}
+		// The probes the last round started answer before this round
+		// begins, under the round that started them.
+		waitSourceProbes(bundle)
+		if run.beforeRound != nil {
+			run.beforeRound(current, bundle)
 		}
 		mu.Lock()
 		round = current

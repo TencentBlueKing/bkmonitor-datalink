@@ -254,6 +254,10 @@ func factSentence(check Check, row Anomaly, at time.Time) (string, *ReasonFacts,
 			aboutWords(absent.AbsentSeconds), longer), &ReasonFacts{DataAbsent: absent}, true
 	case (check == CheckEmptyEveryRound || check == CheckEmptyAfterTarget) && row.EmptyEveryRound != nil:
 		return emptyRoundsSentence(check, row.EmptyEveryRound, at)
+	case check == CheckPlanUnevaluable && refusalNamesStrategyQuery(row.Failure):
+		return "存储拒绝了这条策略的查询：单次查询要读的样本数超过存储的上限（" + row.Failure.Rejection.Class + "），没有在检测；" +
+				"策略负责人缩小查询（时间范围、聚合维度或过滤条件）；同一时间多条策略都这样时，先请存储负责人核对单次查询样本上限是否设得过低",
+			&ReasonFacts{Refusal: &RefusalReason{Code: row.Failure.Code}}, true
 	case (check == CheckQueryRefused || check == CheckQueryTargetMissing) && row.Failure != nil && row.Failure.Code != "":
 		return checkSentence(check) + "（查询服务答复 " + row.Failure.Code + "）", &ReasonFacts{Refusal: &RefusalReason{Code: row.Failure.Code}}, true
 	case windowChecks[check] && row.Coverage != nil && row.Coverage.Short > 0:
@@ -373,7 +377,7 @@ var factChecks = map[Check]bool{
 // the worst window's pair.
 var windowChecks = map[Check]bool{
 	CheckWindowUndecided: true, CheckSeriesDataMissing: true, CheckSeriesSparse: true, CheckSeriesChurning: true,
-	CheckCoverageReadingRefused: true, CheckSeriesSparserThanWindow: true,
+	CheckCoverageReadingRefused: true, CheckSeriesSparserThanWindow: true, CheckWindowRewarming: true,
 }
 
 // checkSentences is every check's sentence where its row carries no numbers:
@@ -399,6 +403,7 @@ var checkSentences = map[Check]string{
 	CheckDefect:                   "alarmd 处理这条策略时遇到程序缺陷，每轮都会重复；由本服务处理",
 	CheckObservationGap:           "alarmd 对这条策略的观察有缺口，结果暂时不能确认；等后续轮次补上",
 	CheckCoverageReadingRefused:   "这轮检测窗口的计数不自洽，说不清窗口是不是在补，检测结果不能采信；由本服务处理",
+	CheckWindowRewarming:          "alarmd 自己的计划变更或重启接手让检测窗口从头攒，窗口补满前只是不判正常，告警和恢复照常；等它自行结束，连续多轮不动才由本服务查",
 	CheckWindowUndecided:          "检测窗口里缺点，alarmd 判不出是谁的问题（不是已知的本服务故障），检测结果不能采信；由 alarmd 维护方查明是谁的",
 	CheckConfigUnresolved:         "这条策略的配置还没解析完，结果暂时不能确认；等后续轮次",
 	CheckBackendNotAnswering:      "查询服务没应答这条策略的查询，暂时检测不了；是查询服务还是连接的问题还判不出（不是已知的本服务故障），由 alarmd 维护方查明是谁的",
@@ -418,6 +423,8 @@ var checkSentences = map[Check]string{
 	CheckQuiet:                    "事件计数正常返回，这段时间没有事件；在检测，不用处理",
 	CheckLogCountEmpty:            "日志计数正常返回但是空的，分不清是没有日志还是日志没到；在检测，需要时数据负责人确认日志在不在",
 	CheckAnswerTruncated:          "查询结果可能被查询服务按分组数上限截断，只检测了返回的分组；策略负责人收窄分组维度",
+	CheckSourceUnknownHeld:        "写了无数据恢复的告警到了该结束的时候，但查不出数据源是否还在上报，超过时限仍保持打开；是链路、查询服务还是数据源已下线还判不出，由 alarmd 维护方查明是谁的",
+	CheckNewAlertsBurst:           "一小时内新开的告警超过 5000 条，多是按取值没有上限的维度（请求名、ID 这类）分组，每个取值各开一条告警；策略负责人去掉或收敛行上点名的维度",
 	CheckSeriesChurning:           "序列的身份不断变化（按 Pod 名这类短命维度分组），窗口永远攒不满，检测结果不能采信；策略负责人去掉短命的分组维度",
 	CheckSeriesSparserThanWindow:  "序列上报比检测窗口稀，告警照常、按平台规则恢复，只是不会出现完整窗口；不用处理，要完整窗口时策略负责人调整周期",
 	CheckSeriesDataMissing:        "检测窗口里缺点，可能是 alarmd 没查全，也可能是数据当时没到，还判不出（不是已知的本服务故障）；检测结果不能采信，由 alarmd 维护方查明是谁的",

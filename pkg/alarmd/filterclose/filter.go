@@ -105,6 +105,12 @@ func openedSince(filter Filter, since time.Time) (Filter, error) {
 	return narrowed(filter, object{"range": object{fieldCreated: object{"gte": since.UTC().Format(time.RFC3339Nano)}}})
 }
 
+// openedAfter is filter narrowed to the alerts the link opened after at,
+// on the link's own clock.
+func openedAfter(filter Filter, at time.Time) (Filter, error) {
+	return narrowed(filter, object{"range": object{fieldCreated: object{"gt": at.UTC().Format(time.RFC3339Nano)}}})
+}
+
 // openedBefore is filter narrowed to the alerts the link opened before
 // since: the ones the record cannot vouch for, decided alert by alert.
 func openedBefore(filter Filter, since time.Time) (Filter, error) {

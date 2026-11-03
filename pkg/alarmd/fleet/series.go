@@ -13,7 +13,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 )
@@ -152,8 +151,8 @@ var trendCatalog = []TrendDefinition{
 		Help: "拉取：access_query_failure_total；状态：state_admission_total 中非 success 的准入与 state_version_conflict_total；输出：output_events_rejected_all_total。判定段的失败是调度普查里此刻迟到和超期的检测，不是计数，不在图上。",
 		Lines: []TrendLine{
 			{Name: "拉取", PromQL: perMinute("access_query_failure_total", "")},
-			{Name: "状态·准入未成功", PromQL: perMinute("state_admission_total", `result!="success"`)},
-			{Name: "状态·版本冲突", PromQL: perMinute("state_version_conflict_total", "")},
+			{Name: "状态：准入未成功", PromQL: perMinute("state_admission_total", `result!="success"`)},
+			{Name: "状态：版本冲突", PromQL: perMinute("state_version_conflict_total", "")},
 			{Name: "输出", PromQL: perMinute("output_events_rejected_all_total", "")},
 		},
 	},
@@ -522,7 +521,7 @@ func linesOf(line TrendLine, promQL string, series []SeriesLine) []TrendLineAnsw
 	answers := make([]TrendLineAnswer, 0, len(series))
 	for _, one := range series {
 		pod := one.Labels["pod"]
-		answers = append(answers, TrendLineAnswer{Name: strings.TrimSpace(line.Name + " · " + pod), Pod: pod, PromQL: promQL,
+		answers = append(answers, TrendLineAnswer{Name: trendLineName(line.Name, pod), Pod: pod, PromQL: promQL,
 			Points: append([]SeriesPoint{}, one.Points...)})
 	}
 	sort.Slice(answers, func(i, j int) bool { return answers[i].Pod < answers[j].Pod })
@@ -535,4 +534,13 @@ func seriesWindowKeys() []string {
 		keys = append(keys, window.Key)
 	}
 	return keys
+}
+
+// trendLineName is a by-Pod line's name: the line's, with the Pod in
+// parentheses when there is one.
+func trendLineName(name, pod string) string {
+	if pod == "" {
+		return name
+	}
+	return name + "（" + pod + "）"
 }

@@ -159,7 +159,18 @@ func (closer *Closer) recorded(ctx context.Context, job Job, match func(openepis
 		return word
 	}
 	olderWord := closer.perAlert(ctx, older, decide)
-	if word == OutcomeNothingMatched && olderWord == OutcomeNothingMatched {
+	// Settled both ways -- nothing left, or what was left closed -- the
+	// link holds none of the decision's alerts, and the entries go. Kept
+	// after a close, they outlived their episodes: the series' next episode
+	// is a new alert at the link, and its entry was not written while the
+	// old one stood, so the next strategy-wide close counted the strategy
+	// short and was refused. Where a close did not
+	// settle, the entries stay. A series that opens again between the record
+	// read and this prune loses its entry here (its write found the old one
+	// and wrote nothing); the next strategy-wide close then expects one short,
+	// which refuses rather than closes, and the writer writes the entry back
+	// within openepisodes.ReensureEvery.
+	if settledWord(word) && settledWord(olderWord) {
 		closer.prune(ctx, job.Filter.scope, prune)
 	}
 	return worse(word, olderWord)
@@ -235,6 +246,7 @@ func (closer *Closer) perAlert(ctx context.Context, job Job, decide func(linkdma
 	closer.count(OutcomeAlertsRead, n)
 	if after != "" {
 		closer.count(OutcomeAlertsTruncated, 1)
+		closer.notice(Notice{Outcome: OutcomeAlertsTruncated, Scope: job.Filter.scope, Decision: job.Decision, Read: n})
 	}
 	closer.mu.Lock()
 	closer.buckets[walkKey] = after

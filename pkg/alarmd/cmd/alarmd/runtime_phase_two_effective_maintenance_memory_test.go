@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
@@ -190,5 +192,36 @@ func TestAViewGateRefusalOfAMaintenanceReadIsNamedAndRetried(t *testing.T) {
 	f.m.step(context.Background())
 	if stats := f.m.Stats(); stats["unavailable"] != 1 {
 		t.Fatalf("a store failure was not counted as unavailable: %v", stats)
+	}
+}
+
+// A Query Group leaving the catalog is named group_retiring, read once and
+// not again under the same lease: the same read answers the same until the
+// lease moves, when it is read again. A read the store did not answer stays
+// "unavailable" and is tried every tick. Before this the two were one word,
+// and a leaving Query Group was read and counted unavailable every second for
+// about a minute, hiding any real store failure in that minute.
+func TestALeavingQueryGroupIsNamedAndReadOncePerLease(t *testing.T) {
+	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(10, 0), nil)
+	catalog := f.m.catalog.(*maintenanceTestCatalog)
+	catalog.err = fmt.Errorf("%w: %w", controlplane.ErrScheduleUnavailable, controlplane.ErrQueryGroupRetiring)
+	for i := 0; i < 5; i++ {
+		f.m.step(context.Background())
+		f.advance(time.Second)
+	}
+	if stats := f.m.Stats(); catalog.reads != 1 || stats["group_retiring"] != 1 || stats["unavailable"] != 0 {
+		t.Fatalf("five ticks on a leaving Query Group: %d reads, stats %v; want one read named group_retiring", catalog.reads, stats)
+	}
+	f.runner.revision = 2
+	f.m.step(context.Background())
+	if stats := f.m.Stats(); catalog.reads != 2 || stats["group_retiring"] != 2 {
+		t.Fatalf("the lease moved and the leaving Query Group was not read again: %d reads, stats %v", catalog.reads, stats)
+	}
+	catalog.err = errors.New("store unavailable")
+	f.runner.revision = 3
+	f.m.step(context.Background())
+	f.m.step(context.Background())
+	if stats := f.m.Stats(); catalog.reads != 4 || stats["unavailable"] != 2 || stats["group_retiring"] != 2 {
+		t.Fatalf("a store failure: %d reads, stats %v; want it retried each tick as unavailable", catalog.reads, stats)
 	}
 }

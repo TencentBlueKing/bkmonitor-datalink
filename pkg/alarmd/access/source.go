@@ -1016,7 +1016,7 @@ func prepare(
 	header := execution.InternalExecutionHeader{ExecutionID: executionDigest, Contract: contractRef,
 		DuePlans: append([]execution.DuePlan(nil), frozen.DuePlans...), Requirements: append([]execution.DataRequirement(nil), frozen.Requirements...),
 		EffectiveTimeFacts: append([]execution.BoundEffectiveTimeFact(nil), frozen.EffectiveTimeFacts...), RequiredPhysicalQueries: refs,
-		DeadlineUnixMilli: deadline}
+		DeadlineUnixMilli: deadline, QueryFacts: frozen.QueryFacts}
 	if err := header.Validate(contractRef); err != nil {
 		return PreparedExecution{}, err
 	}

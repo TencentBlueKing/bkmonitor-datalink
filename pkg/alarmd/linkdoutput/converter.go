@@ -24,6 +24,7 @@
 package linkdoutput
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,10 +40,9 @@ import (
 // The two actions this process produces, out of the consumer's three.
 //
 // Detector conversion emits closed only for a level written to end its alert
-// closed (status_setter close: LevelAction, ActionReasonRecoveryClose);
-// ConvertClose handles the control-plane closes - effective time, absence,
-// scope, identity, an unsupported strategy, a strategy edit - separately. A repeated triggered
-// is how a continuing anomaly is stated.
+// closed (status_setter close: LevelAction, ActionReasonRecoveryClose); the
+// control-plane closes go through the link's filter close, not a message. A
+// repeated triggered is how a continuing anomaly is stated.
 const (
 	ActionTriggered = "triggered"
 	ActionResolved  = "resolved"
@@ -192,7 +192,7 @@ type wireEvent struct {
 	AlertID     string                     `json:"alert_id"`
 	Title       string                     `json:"title"`
 	Content     string                     `json:"content"`
-	Values      map[string]float64         `json:"values,omitempty"`
+	Values      map[string]json.Number     `json:"values,omitempty"`
 	Evaluations []wireEvaluation           `json:"evaluations"`
 	Dimensions  map[string]json.RawMessage `json:"dimensions"`
 	Subject     *wireSubject               `json:"subject,omitempty"`
@@ -484,16 +484,25 @@ func isJSONNull(raw json.RawMessage) bool {
 // strategy did not make. The values are all in the content either way, which
 // is where a reader sees them. Nothing is written when there is nothing to
 // say: the consumer reads an absent map as empty.
-func observedValues(observed contract.TriggerObservedV1) map[string]float64 {
-	raw := soleObservedValue(observed)
-	if raw == nil {
+//
+// The number is written as the record carried it. Read through a float64 an
+// integer above 2^53 or a long decimal would come out as a different number
+// than the one the strategy decided on.
+func observedValues(observed contract.TriggerObservedV1) map[string]json.Number {
+	raw := bytes.TrimSpace(soleObservedValue(observed))
+	// A JSON string decodes into a json.Number when its text is a number;
+	// only a number token is a value here.
+	if len(raw) == 0 || raw[0] == '"' {
 		return nil
 	}
-	var number float64
-	if err := json.Unmarshal(raw, &number); err != nil || math.IsNaN(number) || math.IsInf(number, 0) {
+	var number json.Number
+	if err := json.Unmarshal(raw, &number); err != nil {
 		return nil
 	}
-	return map[string]float64{observedValueName: number}
+	if value, err := strconv.ParseFloat(number.String(), 64); err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+		return nil
+	}
+	return map[string]json.Number{observedValueName: number}
 }
 
 // soleObservedValue is the observation's value when there is exactly one, and

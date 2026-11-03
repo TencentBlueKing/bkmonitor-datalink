@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -502,8 +503,13 @@ func TestAcknowledgedReturnsWhatChangesTheEpisodeRecord(t *testing.T) {
 	if changed := c.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventAbnormal, 2)}); len(changed) != 1 {
 		t.Fatalf("the first own ABNORMAL of a hit changed %v", changed)
 	}
-	if changed := c.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventRecovery, 1), event(contract.TriggerEventRecovery, 3)}); len(changed) != 2 {
-		t.Fatalf("RECOVERY changed %v", changed)
+	// fp(1)'s RECOVERY empties the Levels its ABNORMAL opened (none named,
+	// so none open): the episode ends. fp(3) was never sent by this process,
+	// so which of its Levels are open is not known: its entry, if any, stays,
+	// the direction the record may err in.
+	if changed := c.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventRecovery, 1), event(contract.TriggerEventRecovery, 3)}); len(changed) != 1 ||
+		changed[0].DedupeMD5 != fp(1) {
+		t.Fatalf("RECOVERY changed %v, want fp(1)'s alone", changed)
 	}
 	if changed := c.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventAbnormal, 1)}); len(changed) != 1 {
 		t.Fatalf("an ABNORMAL after the RECOVERY changed %v", changed)
@@ -575,5 +581,115 @@ func TestARefusedCredentialIsItsOwnOutcome(t *testing.T) {
 	c.Pass(context.Background())
 	if c.Stats().Outcomes[OutcomeReadFailed] != 1 || c.Stats().Outcomes[OutcomeLinkRefused] != 3 || told != 2 {
 		t.Fatalf("a 500: told %d, stats %+v", told, c.Stats().Outcomes)
+	}
+}
+
+// A strategy that returns after the gap opens its episodes anew, even when a
+// pass ran while it was away. The pass lets an untracked strategy's tracked
+// moment go; it used to keep the strategy's own sends, so Track saw a new
+// strategy rather than a returning one and the own sends of the absence
+// survived it: the returning ABNORMALs read as repeats and the episode record
+// was never written for them. Inside the gap the
+// own sends stand, pass or no pass.
+func TestAStrategyBackAfterTheGapOpensItsEpisodesAnewThoughAPassRan(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		away    time.Duration
+		reopens bool
+	}{
+		{name: "back after the gap", away: untrackedGap + time.Minute, reopens: true},
+		{name: "back inside the gap", away: untrackedGap / 2, reopens: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			link := newFakeSearch(t)
+			clk := &clock{at: time.Unix(1_800_000_000, 0)}
+			c := newCopy(t, link, clk)
+			key := StrategyKey{TenantID: "t", StrategyID: "1"}
+			ref := &contract.StrategySnapshotRef{TenantID: "t", StrategyID: 1, Revision: 1}
+			abnormal := contract.TriggerEventV1{TenantID: "t", DedupeMD5: fp(1), StrategyRef: ref, EventKind: contract.TriggerEventAbnormal}
+			abnormal.PlanRef.StrategyID = "1"
+			c.Track(key)
+			if changed := c.Acknowledged([]contract.TriggerEventV1{abnormal}); len(changed) != 1 {
+				t.Fatalf("the first ABNORMAL changed %v", changed)
+			}
+			clk.at = clk.at.Add(test.away)
+			// The pass of the absence: the strategy is not tracked while it runs.
+			c.Pass(context.Background())
+			c.Track(key)
+			changed := c.Acknowledged([]contract.TriggerEventV1{abnormal})
+			if got := len(changed) == 1; got != test.reopens {
+				t.Fatalf("the ABNORMAL on return changed %v, want a new episode %t", changed, test.reopens)
+			}
+		})
+	}
+}
+
+// The open Levels of a series are known only from this process's own sends:
+// an ABNORMAL opens its Levels, a RECOVERY closes them, and the last RECOVERY
+// forgets the series; a series learned of by a search, or never seen, is not
+// known.
+func TestOpenLevelsAreKnownOnlyFromOwnSends(t *testing.T) {
+	link := newFakeSearch(t)
+	clk := &clock{at: time.Unix(1_800_000_000, 0)}
+	c := newCopy(t, link, clk)
+	ref := &contract.StrategySnapshotRef{TenantID: "t", StrategyID: 1, Revision: 1}
+	event := func(kind string, n int, results ...contract.LevelResultV1) contract.TriggerEventV1 {
+		e := contract.TriggerEventV1{TenantID: "t", DedupeMD5: fp(n), StrategyRef: ref, EventKind: kind, LevelResults: results}
+		e.PlanRef.StrategyID = "1"
+		return e
+	}
+	// The Level's priority is its id: warning (2) is more severe than info (3).
+	result := func(id uint32, value string) contract.LevelResultV1 {
+		return contract.LevelResultV1{LevelID: id, Priority: id, Result: value}
+	}
+	if _, known := c.OpenLevels("t", "1", fp(1)); known {
+		t.Fatal("a series never seen has known open Levels")
+	}
+	c.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventAbnormal, 1, result(3, contract.LevelResultAbnormal))})
+	c.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventAbnormal, 1, result(2, contract.LevelResultAbnormal), result(3, contract.LevelResultAbnormal))})
+	if open, known := c.OpenLevels("t", "1", fp(1)); !known || !slices.Equal(open, []uint32{3, 2}) {
+		t.Fatalf("after info then warning: %v %t", open, known)
+	}
+	if changed := c.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventRecovery, 1, result(3, contract.LevelResultRecovery))}); len(changed) != 0 {
+		t.Fatalf("info's RECOVERY beside open warning changed %v", changed)
+	}
+	if open, known := c.OpenLevels("t", "1", fp(1)); !known || !slices.Equal(open, []uint32{2}) {
+		t.Fatalf("after info recovered: %v %t", open, known)
+	}
+	if changed := c.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventRecovery, 1, result(2, contract.LevelResultRecovery))}); len(changed) != 1 {
+		t.Fatalf("the last RECOVERY changed %v, want the episode ended", changed)
+	}
+	if _, known := c.OpenLevels("t", "1", fp(1)); known {
+		t.Fatal("a forgotten series has known open Levels")
+	}
+	// The link resolves the alert on its standing Level's RECOVERY, the most
+	// severe open one, whatever less severe Levels the copy still lists.
+	c.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventAbnormal, 3, result(3, contract.LevelResultAbnormal))})
+	c.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventAbnormal, 3, result(2, contract.LevelResultAbnormal))})
+	if changed := c.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventRecovery, 3, result(2, contract.LevelResultRecovery))}); len(changed) != 1 {
+		t.Fatalf("the standing Level's RECOVERY beside open info changed %v, want the episode ended", changed)
+	}
+	if _, known := c.OpenLevels("t", "1", fp(3)); known {
+		t.Fatal("the standing Level's RECOVERY left the series known")
+	}
+	// A detect priority set against the Level ids does not move the Level
+	// the link keeps the alert at: the lowest id, as its severity table and
+	// Python rank them. Level 2's RECOVERY, the lower priority, leaves the
+	// alert at Level 1 open; Level 1's ends it.
+	inverted := func(id uint32, value string) contract.LevelResultV1 {
+		return contract.LevelResultV1{LevelID: id, Priority: 3 - id, Result: value}
+	}
+	c.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventAbnormal, 4, inverted(1, contract.LevelResultAbnormal), inverted(2, contract.LevelResultAbnormal))})
+	if changed := c.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventRecovery, 4, inverted(2, contract.LevelResultRecovery))}); len(changed) != 0 {
+		t.Fatalf("Level 2's RECOVERY under Level 1, its priority inverted, changed %v", changed)
+	}
+	if changed := c.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventRecovery, 4, inverted(1, contract.LevelResultRecovery))}); len(changed) != 1 {
+		t.Fatalf("Level 1's RECOVERY, its priority inverted, changed %v, want the episode ended", changed)
+	}
+	link.open("t", "1", fp(2))
+	c.Holds("t", "1", fp(2))
+	c.Pass(context.Background())
+	if _, known := c.OpenLevels("t", "1", fp(2)); known {
+		t.Fatal("a series learned of by a search has known open Levels")
 	}
 }

@@ -82,3 +82,27 @@ func TestRecoveryWithheldFactsCarryTheZeroCount(t *testing.T) {
 		t.Fatalf("facts with nothing withheld = %+v, want none", got)
 	}
 }
+
+// The same withheld outcomes reach the Level outcome facts as NORMAL under
+// the withheld reason, so the outcome family says which rule held them
+// NORMAL; a NORMAL nothing withheld, and a RECOVERY, carry no reason.
+func TestLevelOutcomeFactsCarryAWithheldRecoverysReasonOnNormal(t *testing.T) {
+	identity := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}
+	due := execution.DuePlan{Identity: identity}
+	evaluated := execution.EvaluationResult{Plans: []execution.PlanEvaluationResult{{
+		Plan: identity, LevelOutcomes: []execution.LevelOutcome{
+			{Outcome: execution.LevelOutcomeNormal, RecoveryWithheld: execution.RecoveryWithheldZeroCount},
+			{Outcome: execution.LevelOutcomeNormal},
+			{Outcome: execution.LevelOutcomeNormal, RecoveryWithheld: execution.RecoveryWithheldZeroCount},
+			{Outcome: execution.LevelOutcomeRecovery},
+		},
+	}}}
+	want := []observability.LevelOutcomeFact{
+		{Outcome: "NORMAL", Count: 1},
+		{Outcome: "NORMAL", Reason: "zero_count", Count: 2},
+		{Outcome: "RECOVERY", Count: 1},
+	}
+	if got := levelOutcomeFacts(due, evaluated); !reflect.DeepEqual(got, want) {
+		t.Fatalf("facts = %+v, want %+v", got, want)
+	}
+}

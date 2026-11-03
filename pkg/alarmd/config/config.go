@@ -497,10 +497,11 @@ func (c Config) DeploymentProfile() string {
 // AdmittedQueryConcurrency is the number of queries the scheduler may have in
 // flight at once. It bounds the query stage only; it is not the bound on Redis
 // concurrency, because the Slot source reads the control plane before a Slot
-// becomes eligible to query and holds no permit while doing so.
+// becomes eligible to query and holds no permit while doing so. It is the
+// process permits alone: the recovery permits are a share of them, and a
+// recovery query holds a process permit as well as its own.
 func (c Config) AdmittedQueryConcurrency() int {
-	s := c.PhaseTwo.Scheduler
-	return s.ProcessQueryPermits + s.RecoveryQueryPermits
+	return c.PhaseTwo.Scheduler.ProcessQueryPermits
 }
 
 // redisPoolCapacityInputs is the container the pool derives from: the one this

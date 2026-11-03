@@ -52,6 +52,9 @@ type ChannelBinding struct {
 	// SREReceiptWritten hears whether each receipt write landed; nil hears
 	// none.
 	SREReceiptWritten func(ok bool)
+	// FrontRefused hears each refused front read: its code and the operation
+	// it asked for. Optional.
+	FrontRefused func(code, operation string)
 }
 
 type roleChannelRuntime struct {
@@ -65,6 +68,9 @@ type roleChannelRuntime struct {
 	Ready func(context.Context) error
 	Bind  func(ChannelBinding)
 	Close func() error
+	// FrontRefusals is the front surface's refusals by code; nil without a
+	// channel.
+	FrontRefusals func() map[string]uint64
 }
 
 type channelProviders struct {
@@ -352,6 +358,7 @@ func openProductionRoleChannel(cfg config.Config, binding ChannelBinding) (_ *ro
 	if router != nil {
 		options.Route = router.Invoke
 	}
+	options.OnFrontRefused = binding.FrontRefused
 	channel, err := obchannel.New(options)
 	if err != nil {
 		return nil, err
@@ -360,6 +367,7 @@ func openProductionRoleChannel(cfg config.Config, binding ChannelBinding) (_ *ro
 		restrictPublic()
 	}
 	runtime.Handler = composeCLI(publicNative, channel, manager.Handler(), frontSurface(channel, manager))
+	runtime.FrontRefusals = channel.FrontRefusals
 	runtime.HTTPConfigured = true
 	runtime.Ready = func(ctx context.Context) error {
 		// ActivePairings uses the auth pool's real Lua/read contract within

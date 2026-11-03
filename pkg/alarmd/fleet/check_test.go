@@ -233,8 +233,26 @@ func TestTheCheckTableIsClosedAtTwenty(t *testing.T) {
 	// the same for a quiet group and a missing one, and NO_DATA_PERSISTENT or
 	// EMPTY_EVERY_ROUND told it back as data missing (leader 10-20: log
 	// counts are not widened, the diagnosis is made honest instead).
-	if got := len(Checks()); got != 43 || len(checkAnswers) != 43 {
-		t.Errorf("the check table has %d rows in order and %d answered, want 43: a new check has to "+
+	// Forty-four: WINDOW_REWARMING is a rule over a dimension the rows did
+	// not carry before - whether the guard holding a window was raised by
+	// this process's own state change, and since when (Rewarm) - because a
+	// window the deployment itself opened again refills by itself, and on
+	// WINDOW_UNDECIDED it sent the alarmd maintainer to find whose the
+	// missing minutes were after every rollout and trigger change (ledger,
+	// 0.4.x follow-ups).
+	// Forty-five: SOURCE_UNKNOWN_HELD is a rule over a dimension the rows did
+	// not carry before - a Level written to end on no data whose end is held
+	// because its source could not be shown alive, and since when - because
+	// such an alert stays open by the recovery ruling, and one held past its
+	// bound on a retired source or a broken route would otherwise stay open
+	// with no line naming it (design L1 §4b).
+	// Forty-six: NEW_ALERTS_BURST is a rule over a dimension the rows did
+	// not carry before - how many alerts a strategy opened in an hour, and
+	// how many values its widest dimension took - because a strategy that
+	// opens an alert per value of an unbounded dimension detects correctly
+	// and buried the link in 65,000 alerts with no line naming it.
+	if got := len(Checks()); got != 46 || len(checkAnswers) != 46 {
+		t.Errorf("the check table has %d rows in order and %d answered, want 46: a new check has to "+
 			"be a rule over the existing dimensions or a named standing, and the design says which", got, len(checkAnswers))
 	}
 	seen := map[Check]bool{}
@@ -309,6 +327,8 @@ func TestEveryCheckHasAProducerExceptTheNamedOne(t *testing.T) {
 		CheckQuiet:               {Kind: KindQuiet},
 		CheckLogCountEmpty:       {Kind: KindLogCountEmpty},
 		CheckAnswerTruncated:     {Kind: KindAnswerTruncated},
+		CheckSourceUnknownHeld:   {Kind: KindSourceUnknownHeld},
+		CheckNewAlertsBurst:      {Kind: KindNewAlertsBurst},
 		CheckNoDataMemoryRefused: {Kind: KindNoDataMemoryRefused, ReasonCode: "STATE_BUDGET_EXCEEDED"},
 		CheckRetainedShareApproaching: {Kind: KindRetainedShareApproaching,
 			RetainedShare: &RetainedShareFacts{RetainedBytes: 96, ShareBytes: 100, PercentOfShare: 96}},
@@ -336,6 +356,10 @@ func TestEveryCheckHasAProducerExceptTheNamedOne(t *testing.T) {
 				HolesBy: WindowHoleCounts{AnsweredWithoutSeries: 7}}}}},
 		CheckWindowUndecided: {Kind: KindDegradedRun, CauseReason: "HISTORY_WARMING", Coverage: &HistoryCoverage{
 			Levels: 3, Short: 2, Empty: 2, WorstRequired: 14, ShortRounds: 40, EmptyRounds: 40}},
+		// A guard the activation change raised, three rounds in.
+		CheckWindowRewarming: {Kind: KindDegradedRun, CauseReason: "CONFIG_DRIFT", Consecutive: 3,
+			Rewarm:   &Rewarm{Trigger: "CONFIG_DRIFT", Since: at},
+			Coverage: &HistoryCoverage{Levels: 3, Short: 1, Guarded: 3, WorstValid: 6, WorstRequired: 9, ShortRounds: 3}},
 		CheckCoverageReadingRefused: {Kind: KindDegradedRun, CauseReason: "HISTORY_GAPPED",
 			CoverageRejected: &CoverageRejected{Rule: "WINDOW_HOLE_ARITHMETIC", Series: "abc"}},
 		CheckPlanUnevaluable:  {Kind: KindDegradedRun, CauseReason: "ALGORITHM_UNSUPPORTED"},

@@ -16,26 +16,34 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
-// The record of this process's own opens answers as the self-maintained
-// gate did: an alert this process opened passes its RECOVERY - every round
-// of the grace after the first, so each Level's RECOVERY has its turn - and
-// is let go RecoveredGrace after it; an alert it did not open, or one on the
-// Python-compatible format, is never in it; an ABNORMAL after a RECOVERY
-// opens the alert again.
-func TestOwnPassesOnlyWhatThisProcessOpenedUntilTheGraceAfterItsRecovery(t *testing.T) {
+// The record of this process's own opens holds exactly the alerts this
+// process opened on the consumer's protocol: not one it did not open, not
+// one on the Python-compatible format. A RECOVERY at the level the alert
+// stands at ends it; one without that level keeps it for RecoveredGrace;
+// an ABNORMAL after a RECOVERY opens the alert again. The evaluator-driven
+// cases are in package trigger (open_alert_gate_own_test.go).
+func TestOwnPassesOnlyWhatThisProcessOpenedUntilItsRecovery(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	own := NewOwn(func() time.Time { return now })
 	event := func(kind, fingerprint string) contract.TriggerEventV1 {
-		return contract.TriggerEventV1{EventKind: kind, TenantID: "t", DedupeMD5: fingerprint,
-			StrategyRef: &contract.StrategySnapshotRef{}, PlanRef: contract.RuntimePlanRefV1{StrategyID: "1"}}
+		result := contract.LevelResultAbnormal
+		if kind == contract.TriggerEventRecovery {
+			result = contract.LevelResultRecovery
+		}
+		return contract.TriggerEventV1{EventKind: kind, TenantID: "t", DedupeMD5: fingerprint, PrimaryLevelID: 1,
+			LevelResults: []contract.LevelResultV1{{LevelID: 1, Priority: 1, Result: result}},
+			StrategyRef:  &contract.StrategySnapshotRef{}, PlanRef: contract.RuntimePlanRefV1{StrategyID: "1"}}
 	}
+	// A RECOVERY that does not carry the standing level 1.
+	beside := event(contract.TriggerEventRecovery, "a")
+	beside.LevelResults[0].Result = contract.LevelResultUnavailable
 	legacy := event(contract.TriggerEventAbnormal, "compat")
 	legacy.LegacyOutput = &contract.LegacyEventContext{}
 	own.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventAbnormal, "a"), legacy})
 	if !own.Contains("t", "1", "a") || own.Contains("t", "1", "b") || own.Contains("t", "1", "compat") || own.Contains("t", "2", "a") {
 		t.Fatal("the record must hold exactly the alert this process opened on the consumer's protocol")
 	}
-	own.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventRecovery, "a")})
+	own.Acknowledged([]contract.TriggerEventV1{beside})
 	now = now.Add(RecoveredGrace)
 	if !own.Contains("t", "1", "a") {
 		t.Fatal("within the grace after its first RECOVERY the alert still passes")
@@ -46,6 +54,9 @@ func TestOwnPassesOnlyWhatThisProcessOpenedUntilTheGraceAfterItsRecovery(t *test
 	}
 	own.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventAbnormal, "a")})
 	own.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventRecovery, "a")})
+	if own.Contains("t", "1", "a") {
+		t.Fatal("a RECOVERY at the standing level ends the alert")
+	}
 	own.Acknowledged([]contract.TriggerEventV1{event(contract.TriggerEventAbnormal, "a")})
 	now = now.Add(2 * RecoveredGrace)
 	if !own.Contains("t", "1", "a") {

@@ -1096,6 +1096,13 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 	if len(observation.RecoveryWithheld) > 0 {
 		attributes = append(attributes, slog.Any("recovery_withheld", observation.RecoveryWithheld))
 	}
+	// Which source holds a Plan's no-data ends open, since when, on what.
+	if observation.SourceLivenessHeld != nil {
+		attributes = append(attributes, slog.Any("source_liveness_held", *observation.SourceLivenessHeld))
+	}
+	if observation.NewOpens != nil {
+		attributes = append(attributes, slog.Any("new_opens", *observation.NewOpens))
+	}
 	if observation.Err != nil {
 		attributes = append(attributes,
 			slog.String("error_type", fmt.Sprintf("%T", observation.Err)),

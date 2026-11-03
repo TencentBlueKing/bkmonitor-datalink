@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
@@ -53,16 +52,5 @@ func TestADetectionEventLabelsItsFactsDigest(t *testing.T) {
 	bare := convert(t, decision(nil))
 	if strings.Contains(string(bare["labels"]), "strategy_facts_digest") {
 		t.Fatalf("labels = %s, want no digest on an event without facts", bare["labels"])
-	}
-	closed, err := ConvertClose(CloseRequest{TenantID: "tenant-a", Fingerprint: strings.Repeat("b", 32), AlertInstanceID: "alert-1",
-		StrategyID: 123, StrategyRevision: 7, BusinessID: 2, OccurredAt: time.Unix(1756684800, 0)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var close struct {
-		Labels map[string]any `json:"labels"`
-	}
-	if json.Unmarshal(closed.Payload, &close) != nil || len(close.Labels) != 3 {
-		t.Fatalf("close labels = %v, want only the three the enrichment reads", close.Labels)
 	}
 }

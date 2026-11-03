@@ -258,3 +258,50 @@ func TestAnEmptyDisabledStateListStillDropsUnknownHosts(t *testing.T) {
 		t.Fatalf("unknown host with no disabled states = %+v, want host_unknown", decision)
 	}
 }
+
+// An agg_method fallback is noted on the Plan through the compiler the runtime
+// wires (newPlatformBoundPlanner), on the round that compiles it and on the
+// round that reuses the candidate. The note comes from the compile itself
+// (the compiler reports the fallbacks it ran), so a wrapper around the
+// compiler that does not pass that report on drops the notes; this fails
+// then rather than the notes going missing unseen.
+func TestAnAggMethodFallbackIsNotedThroughTheWiredCompiler(t *testing.T) {
+	ctx := context.Background()
+	cfg := validGoAccessRuntimeConfig()
+	cache, err := platformsettings.New(platformsettings.Options{
+		Source: &fakePlatformSource{publication: publishedPlatformSettings("r1", nil)}, Deployment: cfg.PhaseTwo.PlatformSettings.Layer(),
+		Now: func() time.Time { return time.Unix(1_700_000_000, 0) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache.Refresh(ctx)
+	planner, err := newPlatformBoundPlanner(cfg, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := `{"id":301,"bk_biz_id":2,"update_time":1,"items":[{"id":1,"query_md5":"q","expression":"a","query_configs":[` +
+		`{"data_source_label":"bk_monitor","data_type_label":"time_series","metric_field":"usage","alias":"a","agg_method":"$method",` +
+		`"agg_interval":60,"agg_dimension":["host"],"result_table_id":"system.cpu","functions":[]}],` +
+		`"algorithms":[{"level":1,"type":"Threshold","config":[[{"method":"gte","threshold":1}]]}]}],` +
+		`"detects":[{"level":1,"trigger_config":{"count":1,"check_window":5},"recovery_config":{"check_window":3}}]}`
+	strategies := []controlplane.SourceStrategy{{SourceID: "301", Document: json.RawMessage(document),
+		Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}}}
+	candidates := controlplane.NewCandidateCache()
+	for _, round := range []string{"compiled", "reused"} {
+		catalog, err := controlplane.BuildCatalog(ctx, controlplane.BuildRequest{Strategies: strategies, Planner: planner, Cache: candidates})
+		if err != nil {
+			t.Fatal(err)
+		}
+		noted := 0
+		for _, disposition := range catalog.Dispositions {
+			if disposition.Disposition == controlplane.DispositionConfigNoted && disposition.Reason == controlplane.ReasonAggMethodVariableDefaulted {
+				noted++
+			}
+		}
+		if len(catalog.QueryGroups) != 1 || noted != 1 {
+			t.Fatalf("%s round: %d groups, %d %s notes, want 1 and 1: %+v", round, len(catalog.QueryGroups), noted,
+				controlplane.ReasonAggMethodVariableDefaulted, catalog.Dispositions)
+		}
+	}
+}

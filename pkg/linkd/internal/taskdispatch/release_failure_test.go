@@ -51,7 +51,7 @@ func (d *releaseFailureDocuments) Get(_ context.Context, kind, id string) (json.
 	}
 	for _, r := range d.records {
 		if id == r.ID+":1" {
-			b, _ := json.Marshal(eventsource.Release{ID: r.ID, Version: 1, Spec: r.Spec})
+			b, _ := json.Marshal(eventsource.Release{ID: r.ID, Version: 1, Spec: r.Spec, Deleted: r.Deleted})
 			return b, "", nil
 		}
 	}

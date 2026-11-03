@@ -420,7 +420,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		if live, ok := queryRepository.Repository.(store.CurrentAlertBatchStore); ok {
 			currentBatch = live.GetAlertsCurrent
 		}
-		indexer := &dependencyIndexManager{tenants: map[string]*dependencyIndexWork{}, wake: make(chan struct{}, 1), dependencies: policyResources.Dependencies, severity: severity, logger: logger,
+		indexer := &dependencyIndexManager{tenants: map[string]*dependencyIndexWork{}, wake: make(chan struct{}, 1), dependencies: policyResources.Dependencies, severity: severity, logger: logger, registry: registry,
 			shielder: &policyruntime.Shielder{Loader: &policyruntime.Suppressor{Releases: policies, Catalog: policyResources.Catalog, Targets: policyResources.Dependencies},
 				Candidates: queryRepository.Repository.(store.ActiveAlertReader), CurrentAlert: current, CurrentAlerts: currentBatch, Index: queryWindows, Dependency: queryWindows, Relations: policyResources.Dependencies, Logger: logger, Observer: metrics}}
 		api.PolicyPreparation = indexer

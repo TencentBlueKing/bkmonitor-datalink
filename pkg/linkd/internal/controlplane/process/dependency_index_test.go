@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"linkd/internal/config"
+	"linkd/internal/controlplane/taskstate"
 	"linkd/internal/policy"
 	policyruntime "linkd/internal/policy/runtime"
 	"linkd/internal/runtimeconfig"
@@ -349,5 +350,38 @@ func TestDependencyPreparationSeverityChangesDuringFinalJobCannotActivate(t *tes
 	m.finish(job, err)
 	if !errors.Is(err, policyruntime.ErrDependencyIndexNotReady) || len(index.calls) != 1 || m.tenants["tenant"].settleAt.IsZero() {
 		t.Fatal("old completed job opened namespace or lost final retry", err, index.calls, m.tenants["tenant"])
+	}
+}
+
+func TestDependencyPreparationReportsActualOutcomes(t *testing.T) {
+	for _, mode := range []string{"success", "failure", "panic", "canceled"} {
+		t.Run(mode, func(t *testing.T) {
+			m, _, candidates, now := preparationManager(t)
+			m.registry = taskstate.New("test", []taskstate.Definition{{ID: "dependency-candidate-index", Kind: "periodic", Enabled: true}})
+			if err := m.Schedule(t.Context(), "tenant"); err != nil {
+				t.Fatal(err)
+			}
+			*now = now.Add(15 * time.Second)
+			jobs := m.selectJobs(*now, m.severity.SeveritySnapshot(), nil, false, 4)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			want := "succeeded"
+			switch mode {
+			case "failure":
+				candidates.failure = errors.New("backend unavailable")
+				want = "failed"
+			case "panic":
+				candidates.onRefresh = func() { panic("private payload") }
+				want = "failed"
+			case "canceled":
+				cancel()
+				want = "canceled"
+			}
+			_ = m.runJob(ctx, jobs[0])
+			snapshot := m.registry.Snapshot().Tasks[0]
+			if snapshot.Execution.Outcome != want || len(snapshot.Steps) != 1 || snapshot.Steps[0].Outcome != want {
+				t.Fatalf("snapshot=%+v", snapshot)
+			}
+		})
 	}
 }

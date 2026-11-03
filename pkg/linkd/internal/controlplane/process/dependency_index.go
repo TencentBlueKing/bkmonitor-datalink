@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"linkd/internal/controlplane/taskstate"
 	policyruntime "linkd/internal/policy/runtime"
 	"linkd/internal/runtimeconfig"
 )
@@ -47,6 +48,7 @@ type dependencyIndexManager struct {
 	dependencies *policyruntime.Dependencies
 	severity     *runtimeconfig.Severity
 	logger       *slog.Logger
+	registry     *taskstate.Registry
 	digest       string
 	now          func() time.Time
 }
@@ -193,6 +195,25 @@ func (m *dependencyIndexManager) jobCurrent(job dependencyIndexJob) bool {
 	return work != nil && work.initialized && !work.next.After(job.started)
 }
 
+// runJob 在 panic 隔离边界外记录完成状态，失败不会被误记为成功。
+func (m *dependencyIndexManager) runJob(ctx context.Context, job dependencyIndexJob) error {
+	started := time.Now()
+	if m.registry != nil {
+		m.registry.Begin("dependency-candidate-index", job.tenant, job.tenant)
+	}
+	err := runControlCall(func() error { return m.execute(ctx, job) })
+	if m.registry != nil {
+		code := ""
+		if err != nil {
+			code = "dependency_index_refresh_failed"
+		}
+		// 租户 step 各自串行；汇总项累计完成的准备任务，运行中的任务由 step 表示。
+		m.registry.Finish(ctx, "dependency-candidate-index", job.tenant, job.tenant, time.Since(started), 1, 0, code)
+		m.registry.Finish(ctx, "dependency-candidate-index", "", "", time.Since(started), 1, 0, code)
+	}
+	return err
+}
+
 func (m *dependencyIndexManager) execute(ctx context.Context, job dependencyIndexJob) error {
 	base := m.shielder.WithConfigDigest(job.snapshot.Digest).(*policyruntime.Shielder)
 	// 1. 固定本次策略集合，再复核截止；发布中的新版本不能混入已启动的force任务。
@@ -263,7 +284,7 @@ func (m *dependencyIndexManager) Run(ctx context.Context) error {
 				case <-ctx.Done():
 					return
 				case job := <-queue:
-					err := runControlCall(func() error { return m.execute(ctx, job) })
+					err := m.runJob(ctx, job)
 					if err != nil && ctx.Err() == nil && !errors.Is(err, policyruntime.ErrDependencyIndexNotReady) && m.logger != nil {
 						m.logger.WarnContext(ctx, "dependency candidate index refresh failed", "module", "policy", "operation", "dependency_index_refresh", "bk_tenant_id", job.tenant, "error", err)
 					}

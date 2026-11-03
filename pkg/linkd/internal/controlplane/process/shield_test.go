@@ -13,11 +13,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"linkd/internal/domain"
+	"linkd/internal/lifecycle/scheduler"
 	"linkd/internal/store"
 	"linkd/internal/store/memory"
 	"linkd/internal/store/storetest"
@@ -79,5 +81,37 @@ func TestShieldRoundBoundsConcurrencyAndAdvancesPastRowFailures(t *testing.T) {
 	}), store.ShieldWorkCursor{}, at)
 	if err == nil || count != 16 || failed != 1 {
 		t.Fatalf("panic was not isolated to one row: count=%d failed=%d err=%v", count, failed, err)
+	}
+}
+
+func TestShieldRowErrorsPreserveIdentityAndCause(t *testing.T) {
+	repo := memory.New()
+	at := time.Now()
+	alert := storetest.Alert("tenant", "alert", "event", "fp", "warning")
+	alert.Shield = domain.AlertShield{Active: true, Bindings: []domain.ShieldBinding{storetest.ShieldBinding(alert.CreateAt)}, NextCheckAt: &at}
+	if _, err := repo.CreateAlert(t.Context(), alert); err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("backend unavailable")
+	for _, tc := range []struct {
+		name   string
+		cause  error
+		failed int
+	}{{"success", nil, 0}, {"lock busy", scheduler.ErrLockBusy, 0}, {"backend failure", cause, 1}, {"canceled", context.Canceled, 1}} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, count, failed, err := checkShieldPage(t.Context(), repo, shieldCheckFunc(func(context.Context, string, string) error { return tc.cause }), store.ShieldWorkCursor{}, at)
+			if count != 1 || failed != tc.failed {
+				t.Fatalf("count=%d failed=%d error=%v", count, failed, err)
+			}
+			if tc.failed == 0 {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.cause) || !strings.Contains(err.Error(), `tenant "tenant" alert "alert"`) {
+				t.Fatal("lost identity or cause", err)
+			}
+		})
 	}
 }

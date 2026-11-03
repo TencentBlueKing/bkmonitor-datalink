@@ -15,11 +15,11 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"linkd/internal/config"
 	"linkd/internal/controlplane/taskstate"
+	"linkd/internal/lifecycle/scheduler"
 	"linkd/internal/store"
 	storeassembly "linkd/internal/store/assembly"
 	"linkd/internal/telemetry"
@@ -88,28 +88,35 @@ func checkShieldPage(ctx context.Context, work store.ShieldWorkStore, checker sh
 	}
 	close(jobs)
 	var wg sync.WaitGroup
-	var failed atomic.Int64
+	errorsByRow := make(chan error, len(page.Alerts))
 	for range min(4, len(page.Alerts)) {
 		wg.Go(func() {
 			for item := range jobs {
-				if ctx.Err() != nil {
-					failed.Add(1)
-					continue
+				err := ctx.Err()
+				if err == nil {
+					err = item.Alert.Validate()
+					if err == nil && item.Version.IsZero() {
+						err = store.ErrInvalidArgument
+					}
 				}
-				if err := item.Alert.Validate(); err != nil || item.Version.IsZero() {
-					failed.Add(1)
-					continue
+				if err == nil {
+					err = runControlCall(func() error { return checker.CheckShield(ctx, item.Alert.BKTenantID, item.Alert.AlertID) })
 				}
-				if err := runControlCall(func() error { return checker.CheckShield(ctx, item.Alert.BKTenantID, item.Alert.AlertID) }); err != nil {
-					failed.Add(1)
+				// 锁忙没有产生检查事实，由下一轮重读；不能把正常并发竞争计作业务失败。
+				if err != nil && !errors.Is(err, scheduler.ErrLockBusy) {
+					errorsByRow <- fmt.Errorf("tenant %q alert %q: %w", item.Alert.BKTenantID, item.Alert.AlertID, err)
 				}
 			}
 		})
 	}
 	wg.Wait()
-	n := int(failed.Load())
-	if n > 0 {
-		err = errors.New("shield row checks failed")
+	close(errorsByRow)
+	var failures []error
+	for rowErr := range errorsByRow {
+		failures = append(failures, rowErr)
 	}
+	n := len(failures)
+	err = errors.Join(failures...)
+
 	return page.Next, len(page.Alerts), n, err
 }

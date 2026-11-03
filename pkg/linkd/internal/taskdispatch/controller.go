@@ -427,7 +427,7 @@ func (c *Controller) tick(ctx context.Context) (runErr error) {
 		return a.Attempt.Before(b.Attempt)
 	})
 	for _, rel := range probes {
-		if rel.Spec.Storage.Type == config.StorageTypeInternalMerge {
+		if rel.Deleted || !rel.Spec.Enabled || rel.Spec.Storage.Type == config.StorageTypeInternalMerge {
 			continue
 		}
 		previous := snapshot.Metadata[rel.ID]
@@ -468,6 +468,12 @@ func (c *Controller) tick(ctx context.Context) (runErr error) {
 	write, stop := context.WithTimeout(ctx, 5*time.Second)
 	defer stop()
 	return c.update(write, func(s *State) error {
+		// 停用和删除来源仍参与任务撤销，但不再探测输入 Topic，也不保留其历史探测错误。
+		for _, rel := range releases {
+			if rel.Deleted || !rel.Spec.Enabled || rel.Spec.Storage.Type == config.StorageTypeInternalMerge {
+				delete(s.Metadata, rel.ID)
+			}
+		}
 		for id, m := range updates {
 			s.Metadata[id] = m
 		}

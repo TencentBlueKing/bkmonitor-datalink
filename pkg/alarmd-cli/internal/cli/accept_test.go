@@ -34,8 +34,15 @@ type acceptFixture struct {
 	objects  int
 	// objectsBody answers api/objects in place of the refusal.
 	objectsBody string
-	calls       map[string]int
-	leader      func(call int) map[string]any
+	// forwardsCLIOnly is an entry that forwards only the CLI's paths: it
+	// answers api/objects and api/health 404 and the metrics path with its
+	// own page.
+	forwardsCLIOnly bool
+	// metricsBody, when set, is a 200 answer to the metrics path, served as
+	// metricsType (the exposition format's when empty).
+	metricsBody, metricsType string
+	calls                    map[string]int
+	leader                   func(call int) map[string]any
 	// diagnosis answers diagnose.environment in place of two DETECTING rows.
 	diagnosis func() map[string]any
 }
@@ -93,7 +100,33 @@ func (f *acceptFixture) serve(t *testing.T, p *Profile) *httptest.Server {
 		switch r.URL.Path {
 		case "/ob/api/cli/auth/exchange":
 			writeJSON(t, w, sessionResponse(*p))
-		case "/ob/api/objects":
+		case "/ob/api/objects", "/ob/api/health", "/ob/metrics":
+			if f.forwardsCLIOnly && r.URL.Path != "/ob/metrics" {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"error":{"code":"not_forwarded","message":"only the CLI's paths are forwarded"}}`))
+				return
+			}
+			if r.URL.Path == "/ob/metrics" {
+				switch {
+				case f.forwardsCLIOnly:
+					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+					_, _ = w.Write([]byte("<!doctype html><html></html>"))
+				case f.metricsBody != "":
+					contentType := f.metricsType
+					if contentType == "" {
+						contentType = "text/plain; version=0.0.4"
+					}
+					w.Header().Set("Content-Type", contentType)
+					_, _ = w.Write([]byte(f.metricsBody))
+				default:
+					w.WriteHeader(http.StatusForbidden)
+				}
+				return
+			}
+			if r.URL.Path == "/ob/api/health" {
+				writeJSON(t, w, map[string]any{"restricted": true, "health": "ok"})
+				return
+			}
 			w.WriteHeader(f.objectsStatus())
 			// The refusal as datalink publicsurface.Refuse writes it.
 			body := `{"status":"error","error":{"code":"public_surface_restricted","message":"This read is restricted to CLI sessions.","login_page":"cli","login_href":"../cli"}}`
@@ -101,10 +134,6 @@ func (f *acceptFixture) serve(t *testing.T, p *Profile) *httptest.Server {
 				body = f.objectsBody
 			}
 			_, _ = w.Write([]byte(body))
-		case "/ob/api/health":
-			writeJSON(t, w, map[string]any{"restricted": true, "health": "ok"})
-		case "/ob/metrics":
-			w.WriteHeader(http.StatusForbidden)
 		case "/ob/cli":
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write([]byte("<html></html>"))
@@ -244,7 +273,7 @@ func TestAcceptPassesAHealthyDeployment(t *testing.T) {
 		"control source publishes and activates": verdictPass, "no-data horizon": verdictPass, "pods": verdictPass, "pod restarts": verdictInfo, "redis read": verdictPass,
 		"redis noeviction and nothing evicted": verdictPass, "redis memory": verdictPass, "metrics read on every replica": verdictPass,
 		"source refresh counted": verdictPass, "held recovery counter removed": verdictPass, "recovery beside another Level": verdictPass,
-		"target out of scope closes": verdictInfo, "control loop slowest turn": verdictPass, "output events refused by alarmd": verdictPass,
+		"superseded identity closes": verdictInfo, "control loop slowest turn": verdictPass, "output events refused by alarmd": verdictPass,
 		"diagnosis covers every strategy": verdictPass, "strategies detecting": verdictInfo, "public: restricted read refused": verdictPass,
 		"public: health carries no coordinates": verdictPass, "public: metrics not served": verdictPass, "public: login page served": verdictPass,
 		"control source rounds over the window": verdictUndecided, "control source publication conflicts": verdictPass,
@@ -260,10 +289,10 @@ func TestAcceptPassesAHealthyDeployment(t *testing.T) {
 	}
 }
 
-// Closes sent for alerts whose target left the strategy's scope are what the
-// deployment does: the item reads them and does not fail the run for them.
-// Only a close the producer refused does.
-func TestAcceptReadsSentTargetScopeClosesAsWhatTheDeploymentDid(t *testing.T) {
+// Superseded-identity closes sent are what the deployment does: the item
+// reads them and does not fail the run for them. Only a close the link did
+// not settle does.
+func TestAcceptReadsSentSupersededClosesAsWhatTheDeploymentDid(t *testing.T) {
 	for _, c := range []struct {
 		sent, failed float64
 		want         string
@@ -274,8 +303,8 @@ func TestAcceptReadsSentTargetScopeClosesAsWhatTheDeploymentDid(t *testing.T) {
 				series(map[string]string{"outcome": "close_sent"}, c.sent), series(map[string]string{"outcome": "send_failed"}, c.failed)}})
 		}
 		code, verdicts, _ := acceptRunOf(t, f, "--window", "0")
-		if verdicts["target out of scope closes"] != c.want {
-			t.Errorf("sent %g, failed %g: item = %q, want %q", c.sent, c.failed, verdicts["target out of scope closes"], c.want)
+		if verdicts["superseded identity closes"] != c.want {
+			t.Errorf("sent %g, failed %g: item = %q, want %q", c.sent, c.failed, verdicts["superseded identity closes"], c.want)
 		}
 		if c.want == verdictInfo && code != 0 {
 			t.Errorf("sent %g, failed %g: exit %d, want 0", c.sent, c.failed, code)
@@ -301,7 +330,7 @@ func TestAcceptFailsEachWrongFact(t *testing.T) {
 			"fields": map[string]any{"maxmemory": "1000", "used_memory": "900", "maxmemory_policy": "allkeys-lru", "evicted_keys": "5"}}}}
 	}}
 	code, verdicts, result := acceptRunOf(t, f, "--window", "0")
-	for _, item := range []string{"held recovery counter removed", "target out of scope closes", "output events refused by alarmd",
+	for _, item := range []string{"held recovery counter removed", "superseded identity closes", "output events refused by alarmd",
 		"control loop slowest turn", "redis noeviction and nothing evicted", "redis memory", "public: restricted read refused"} {
 		if verdicts[item] != verdictFail {
 			t.Errorf("%s = %q, want FAIL", item, verdicts[item])
@@ -328,7 +357,7 @@ func TestAcceptFailsWhenAStrategyChangeDoesNotReachTheFleet(t *testing.T) {
 	for kind, want := range map[string]string{
 		"CONTROL_SOURCE_STALE": verdictFail, "ACTIVATION_BEHIND": verdictFail, "CONTROL_LEADER_ABSENT": verdictFail,
 		"SOURCE_BLOCKED": verdictFail, "ACTIVATION_BLOCKED": verdictFail, "VIEW_PUBLISH_FAILING": verdictFail,
-		"VIEW_STREAM_NO_SESSIONS": verdictFail, "PLATFORM_SETTINGS_STALE": verdictPass,
+		"VIEW_STREAM_NO_SESSIONS": verdictFail, "ACTIVATION_FAILING": verdictFail, "PLATFORM_SETTINGS_STALE": verdictPass,
 	} {
 		f := healthyFixture()
 		f.override = map[string]func() (string, map[string]any){"fleet.get": fleetWith(kind)}
@@ -695,6 +724,34 @@ func TestAcceptDoesNotFailDetectingOnAPartialDiagnosis(t *testing.T) {
 		if item := raw.(map[string]any); stringField(item, "item") == "strategies detecting" &&
 			!strings.HasPrefix(stringField(item, "detail"), "coverage does not hold") {
 			t.Fatalf("detail = %q, want it to say the read was partial", stringField(item, "detail"))
+		}
+	}
+}
+
+// An entry that forwards only the CLI's paths answers the restricted read
+// and the health summary 404 and the metrics path with its own page: none of
+// them reaches alarmd, and the three pass. Metrics actually served - the
+// exposition format at 200 - fail, whatever entry answers them.
+func TestAcceptReadsAnEntryThatForwardsOnlyTheCLIsPaths(t *testing.T) {
+	f := healthyFixture()
+	f.forwardsCLIOnly = true
+	_, verdicts, _ := acceptRunOf(t, f, "--window", "0")
+	for _, check := range []string{"public: restricted read refused", "public: health carries no coordinates", "public: metrics not served",
+		"public: login page served"} {
+		if verdicts[check] != verdictPass {
+			t.Fatalf("%s: %s, want pass (verdicts %v)", check, verdicts[check], verdicts)
+		}
+	}
+	for name, body := range map[string]string{
+		"with comments": "# HELP alarmd_up Whether alarmd is up.\n# TYPE alarmd_up gauge\nalarmd_up 1\n",
+		"bare samples":  "alarmd_up 1\nalarmd_queries_total{outcome=\"ok\"} 42\n",
+	} {
+		for _, contentType := range []string{"text/plain; version=0.0.4", "text/plain"} {
+			served := healthyFixture()
+			served.metricsBody, served.metricsType = body, contentType
+			if code, verdicts, _ := acceptRunOf(t, served, "--window", "0"); verdicts["public: metrics not served"] != verdictFail || code != 1 {
+				t.Fatalf("metrics served %s as %s: code %d, %s", name, contentType, code, verdicts["public: metrics not served"])
+			}
 		}
 	}
 }

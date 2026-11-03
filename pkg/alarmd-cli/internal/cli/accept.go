@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,13 +48,15 @@ var acceptSurfaceDegradations = []string{"METRICS_INTERNAL_LISTEN_MISSING", "CLI
 // change does not reach what the fleet executes - in the publication, the
 // activation, or the view reaching the workers - each held to the fleet's
 // bound: no refresh round has succeeded, the activation is behind the
-// publication, nobody holds the leader lease, the round accepts none of the
-// strategies the source lists, the cutover held query groups back, the
+// publication or its round keeps failing with nothing newer waiting, nobody
+// holds the leader lease, the round accepts none of the
+// strategies the source lists, the cutover held query groups back, a query
+// group's timeline stays unread while its repair keeps failing, the
 // leader cannot publish its view, or no worker holds a stream to take it.
 // The refresh counters cannot say it: a round that fails is not in
 // source_refresh_total, and the rest happen after the round.
 var acceptControlDegradations = []string{"CONTROL_SOURCE_STALE", "ACTIVATION_BEHIND", "CONTROL_LEADER_ABSENT", "SOURCE_BLOCKED",
-	"ACTIVATION_BLOCKED", "VIEW_PUBLISH_FAILING", "VIEW_STREAM_NO_SESSIONS"}
+	"ACTIVATION_BLOCKED", "VIEW_PUBLISH_FAILING", "VIEW_STREAM_NO_SESSIONS", "ACTIVATION_FAILING", "ACTIVATION_TIMELINE_UNREPAIRED"}
 
 // acceptHorizonSources are the sources a no-data horizon may be read from.
 var acceptHorizonSources = []string{"DEFAULT", "VALUES", "DYNAMIC"}
@@ -572,7 +575,7 @@ func (run *acceptRun) checkMetrics(targets []string) {
 	}
 	if read == 0 {
 		for _, item := range []string{"source refresh counted", "held recovery counter removed", "recovery beside another Level",
-			"target out of scope closes", "control loop slowest turn", "output events refused by alarmd"} {
+			"superseded identity closes", "control loop slowest turn", "output events refused by alarmd"} {
 			run.add(item, verdictReadFailed, "no replica's metrics were read")
 		}
 		return
@@ -584,13 +587,13 @@ func (run *acceptRun) checkMetrics(targets []string) {
 		run.add("held recovery counter removed", verdictPass, metricRecoveryHeld+" absent on every replica read")
 	}
 	run.checkBeside(beside, recoveries)
-	// The alerts of a target that left the strategy's scope are closed, and the closes are sent: how many
-	// went out is what the deployment did, not a fault. A close the producer would not take is.
+	// The alerts a series opened under its identity before CMDB placed its host are closed, and the closes
+	// are sent: how many went out is what the deployment did, not a fault. A close the link would not settle is.
 	scopeVerdict := verdictInfo
 	if closeSendFailed > 0 {
 		scopeVerdict = verdictFail
 	}
-	run.add("target out of scope closes", scopeVerdict, fmt.Sprintf("send_failed %g (want 0); by outcome %s", closeSendFailed, floats(closes)))
+	run.add("superseded identity closes", scopeVerdict, fmt.Sprintf("send_failed %g (want 0); by outcome %s", closeSendFailed, floats(closes)))
 	switch {
 	case worst == 0:
 		run.add("control loop slowest turn", verdictUndecided, "no control loop turn observed on any replica read")
@@ -810,7 +813,11 @@ func (run *acceptRun) checkDetecting(diagnosis diagnosisRun, covered bool) {
 // checkPublicSurface reads the public surface as anyone can, without a
 // session: the restricted reads refuse and point at the login page, the
 // health summary carries no coordinates, the metrics are not served and the
-// login page is.
+// login page is. An entry in front of alarmd may forward only the CLI's
+// paths: it answers the restricted read and the health summary 404, and
+// the metrics path with its own page. Neither reaches alarmd, so each is
+// "not served" and passes; the login page still has to be there, so an
+// entry that answers nothing at all does not pass.
 func (run *acceptRun) checkPublicSurface() {
 	get := func(path string) (int, string, string, error) {
 		client, base, release, err := run.app.environmentClient(run.p)
@@ -844,7 +851,11 @@ func (run *acceptRun) checkPublicSurface() {
 		failure := objectField(refusal, "error")
 		refused := status == http.StatusForbidden && stringField(failure, "code") == "public_surface_restricted" &&
 			run.reachesLoginPage("api/objects", stringField(failure, "login_href"))
-		run.add("public: restricted read refused", passIf(refused), fmt.Sprintf("GET api/objects: %d %s", status, body))
+		detail := fmt.Sprintf("GET api/objects: %d %s", status, body)
+		if status == http.StatusNotFound {
+			refused, detail = true, "GET api/objects: 404, not forwarded by the entry: "+body
+		}
+		run.add("public: restricted read refused", passIf(refused), detail)
 	}
 	status, _, body, err = get("api/health")
 	switch {
@@ -859,22 +870,46 @@ func (run *acceptRun) checkPublicSurface() {
 				leaks = append(leaks, word)
 			}
 		}
+		if status == http.StatusNotFound {
+			run.add("public: health carries no coordinates", verdictPass, "GET api/health: 404, not forwarded by the entry")
+			break
+		}
 		run.add("public: health carries no coordinates", passIf(status == http.StatusOK && health["restricted"] == true && len(leaks) == 0),
 			fmt.Sprintf("GET api/health: %d restricted=%v coordinate words %s", status, health["restricted"], listOrNone(leaks)))
 	}
-	status, _, _, err = get("metrics")
+	status, contentType, body, err := get("metrics")
 	if err != nil {
 		run.add("public: metrics not served", verdictReadFailed, err.Error())
 	} else {
-		run.add("public: metrics not served", passIf(status == http.StatusForbidden), fmt.Sprintf("GET metrics: %d", status))
+		// Refused, not there, or answered with something that is not the
+		// exposition format (the entry's own page): none of it is metrics.
+		exposed := status == http.StatusOK && isExposition(body)
+		run.add("public: metrics not served", passIf(status == http.StatusForbidden || status == http.StatusNotFound ||
+			status == http.StatusOK && !exposed), fmt.Sprintf("GET metrics: %d %s exposition=%t", status, contentType, exposed))
 	}
-	status, contentType, _, err := get("cli")
+	status, contentType, _, err = get("cli")
 	if err != nil {
 		run.add("public: login page served", verdictReadFailed, err.Error())
 	} else {
 		run.add("public: login page served", passIf(status == http.StatusOK && strings.HasPrefix(contentType, "text/html")), fmt.Sprintf("GET cli: %d %s", status, contentType))
 	}
 }
+
+// isExposition is whether an answer reads as the Prometheus text exposition
+// format: a HELP or TYPE comment line, or a bare sample line - a metric
+// name, its labels if any, and a value - whatever content type it is served
+// as.
+func isExposition(body string) bool {
+	for _, line := range strings.SplitN(body, "\n", 64) {
+		if strings.HasPrefix(line, "# HELP ") || strings.HasPrefix(line, "# TYPE ") || exposedSample.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// exposedSample is one sample line of the exposition format.
+var exposedSample = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*(\{[^}]*\})? [-+]?([0-9.]+([eE][-+]?[0-9]+)?|NaN|Inf)( [0-9]+)?$`)
 
 // reachesLoginPage is whether href, a link the server wrote into its answer
 // to path, leads to this environment's login page. The server computes it

@@ -27,8 +27,8 @@ type QueryPlan struct {
 
 // QueryPlanStats 记录规划过程中实际发生的目标复用和数据库合并次数。
 type QueryPlanStats struct {
-	ReusedTargets int
-	MergedQueries int
+	ReusedTargets int // 因重复历史目标而复用的查询项数。
+	MergedQueries int // 启用 IsMergeDB 后合并的查询项数。
 }
 
 type queryMode uint8
@@ -45,6 +45,7 @@ type queryMetricPlan struct {
 }
 
 // ToRawQueryPlan 按完整查询时间生成执行目标，保留每个目标对应的历史分段。
+// 完整规划成功后统一发布目标复用与 DB 合并指标。
 func (q *QueryTs) ToRawQueryPlan(ctx context.Context) (plan QueryPlan, err error) {
 	ctx, span := trace.NewSpan(ctx, "query-raw-plan")
 	defer span.End(&err)
@@ -74,6 +75,7 @@ type rawStorageTarget struct {
 	sourceType  string
 }
 
+// rawTarget 提取已完成默认值补齐和历史覆盖的存储定位字段。
 func rawTarget(query *metadata.Query) rawStorageTarget {
 	return rawStorageTarget{
 		storageType: query.StorageType,
@@ -93,6 +95,7 @@ type queryMergeTarget struct {
 	sourceType  string
 }
 
+// mergeTarget 生成 DB 合并分组键，Raw 查询同时区分集群、Measurement 和 SourceType。
 func mergeTarget(query *metadata.Query, mode queryMode) queryMergeTarget {
 	target := queryMergeTarget{storageUUID: query.StorageUUID()}
 	if mode == rawQuery {

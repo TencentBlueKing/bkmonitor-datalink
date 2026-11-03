@@ -27,6 +27,7 @@ type rawQueryTraceStats struct {
 	readyQueries             int
 }
 
+// newRawQueryTraceStats 保存执行筛选前的规划数量，并统计缺少索引前缀的查询。
 func newRawQueryTraceStats(plan structured.QueryPlan) rawQueryTraceStats {
 	stats := rawQueryTraceStats{routes: plan.Routes.Count(), plannedQueries: plan.Queries.Count()}
 	plan.Queries.Range("", func(query *metadata.Query) {
@@ -37,6 +38,7 @@ func newRawQueryTraceStats(plan structured.QueryPlan) rawQueryTraceStats {
 	return stats
 }
 
+// record 在请求结束时上报各阶段的查询数量和过滤原因。
 func (s rawQueryTraceStats) record(ctx context.Context, span *trace.Span) {
 	span.Set("raw_route_count", s.routes)
 	span.Set("raw_planned_query_count", s.plannedQueries)
@@ -57,6 +59,7 @@ type rawScrollTraceStats struct {
 	submissionFailed  atomic.Uint32
 }
 
+// record 在切片任务结束后上报结果，失败数包含未达到重试阈值的查询失败。
 func (s *rawScrollTraceStats) record(span *trace.Span) {
 	span.Set("raw_slice_candidate_count", s.candidates)
 	span.Set("raw_slice_completed_skip_count", int(s.completed.Load()))

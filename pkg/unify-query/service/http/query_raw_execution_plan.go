@@ -14,7 +14,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
-// prepareRawQueryExecutions 为已解析的执行目标应用分页，供普通查询和 Batch 共用。
+// prepareRawQueryExecutions 统一准备普通 Raw 与 Batch 的分页，返回本页查询及因分页完成而跳过的目标数。
 // 每次执行复制查询及游标，避免执行过程修改原查询计划和调用方的分页状态。
 func prepareRawQueryExecutions(queryRef metadata.QueryReference, queryTs *structured.QueryTs) (metadata.QueryReference, int) {
 	prepared := make(metadata.QueryReference, len(queryRef))

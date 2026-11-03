@@ -181,8 +181,8 @@ func (d *rawQueryDispatcher) close() {
 	d.workersWG.Wait()
 }
 
-// executeQueryRawWithESBatch preserves the query_raw aggregation contract while
-// replacing only eligible, body-equivalent direct ES searches with _msearch.
+// executeQueryRawWithESBatch 将符合条件且请求体等价的 ES 查询组织为 _msearch，其余查询单独执行。
+// 所有结果通过 sink 汇总到同一次 Raw 请求。
 func executeQueryRawWithESBatch(
 	ctx context.Context,
 	queryTs *structured.QueryTs,

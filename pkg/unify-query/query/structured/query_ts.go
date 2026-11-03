@@ -255,11 +255,13 @@ func (q *QueryTs) ToTime(ctx context.Context) error {
 	return nil
 }
 
+// ToQueryReference 保留历史时间分段，生成查询列表。
 func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference, error) {
 	plan, err := q.toQueryPlan(ctx, timeSeriesQuery)
 	return plan.Queries, err
 }
 
+// toQueryPlan 继承请求参数，汇总各逻辑查询的执行列表、历史路由和规划统计。
 func (q *QueryTs) toQueryPlan(ctx context.Context, mode queryMode) (QueryPlan, error) {
 	// 优先解析 queryTs 里面的时间元素
 	err := q.ToTime(ctx)
@@ -894,6 +896,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	return plan.queries, err
 }
 
+// toQueryMetricPlan 解析一个逻辑查询；Raw 按存储目标执行，时序查询按历史时间分段执行。
 func (q *Query) toQueryMetricPlan(ctx context.Context, spaceUid string, tsDBs TsDBs, mode queryMode) (queryMetricPlan, error) {
 	var (
 		referenceName = q.ReferenceName

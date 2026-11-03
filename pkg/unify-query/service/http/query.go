@@ -215,6 +215,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 	return resp, err
 }
 
+// queryRawWithInstance 执行本页 Raw 查询，统一汇总普通查询与 Batch 的数据、计数和分页状态。
 func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, routeInfo []metadata.RouteInfo, err error) {
 	ignoreDimensions := []string{metadata.KeyTableUUID}
 	list = make([]map[string]any, 0)
@@ -253,6 +254,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		stats.record(ctx, span)
 		succeeded := int(successedPaths.Load())
 		span.Set("raw_succeeded_query_count", succeeded)
+		// 未成功完成的逻辑查询包含实例构建、请求准备或执行失败。
 		span.Set("raw_failed_query_count", stats.readyQueries-succeeded)
 	}()
 	span.Set("raw_is_es_batch", queryTs.IsESBatch)
@@ -518,6 +520,7 @@ func hasRawOffsetCursor(option *metadata.ResultTableOption) bool {
 	return option != nil && option.From != nil && *option.From > 0
 }
 
+// queryRawWithScroll 根据下载会话调度尚未完成的切片，并更新各切片的游标和重试状态。
 func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (int64, []map[string]any, metadata.ResultTableOptions, []metadata.RouteInfo, bool, error) {
 	var (
 		receiveWg sync.WaitGroup

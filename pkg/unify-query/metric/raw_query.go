@@ -19,10 +19,10 @@ import (
 )
 
 const (
-	RawQueryDecisionHistoryDuplicate   = "history_duplicate"
-	RawQueryDecisionMergeDB            = "merge_db"
-	RawQueryDecisionMissingIndex       = "missing_index"
-	RawQueryDecisionPaginationFinished = "pagination_finished"
+	RawQueryDecisionHistoryDuplicate   = "history_duplicate"   // 同一逻辑查询和 TsDB 的历史分段重复命中存储目标，复用已有执行查询。
+	RawQueryDecisionMergeDB            = "merge_db"            // 启用 IsMergeDB 后，额外查询项合并到同一个 DBs 查询中。
+	RawQueryDecisionMissingIndex       = "missing_index"       // ES 执行目标的 DB 与 DBs 均无有效索引前缀。
+	RawQueryDecisionPaginationFinished = "pagination_finished" // SearchAfter 后续页中，目标的 SearchAfter 和正数 From 游标均不存在。
 )
 
 var rawQueryDecisionsTotal = promauto.NewCounterVec(

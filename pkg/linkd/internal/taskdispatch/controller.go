@@ -293,36 +293,59 @@ func (c *Controller) Beat(ctx context.Context, h Heartbeat) (_ []Task, runErr er
 	return tasks, e
 }
 
-func (c *Controller) releases(ctx context.Context) ([]eventsource.Release, error) {
+// releases 隔离单来源发布错误；列表失败仍终止本轮，避免把不完整清单当作来源删除。
+func (c *Controller) releases(ctx context.Context) ([]eventsource.Release, map[string]bool, error) {
 	var all []eventsource.Release
+	unavailable := map[string]bool{}
 	after := ""
 	for {
-		rs, e := c.sources.List(ctx, after, 100)
-		if e != nil {
-			return nil, e
+		rs, err := c.sources.List(ctx, after, 100)
+		if err != nil {
+			return nil, nil, err
 		}
 		for _, r := range rs {
+			// 游标必须先推进，末条来源失败也不能重复读取同一页。
+			after = r.ID
+			id := r.ID
+			started := time.Now()
 			if r.Pending != nil {
-				r, e = c.sources.Recover(ctx, r.ID)
-				if e != nil {
-					return nil, e
+				r, err = c.sources.Recover(ctx, id)
+				if err != nil {
+					if ctx.Err() != nil {
+						return nil, nil, ctx.Err()
+					}
+					unavailable[id] = true
+					c.releaseFailed(ctx, id, "recover", err, started)
+					continue
 				}
 			}
 			if r.Published > 0 {
-				rel, e := c.sources.GetRelease(ctx, r.ID, r.Published)
-				if e != nil {
-					return nil, e
+				rel, err := c.sources.GetRelease(ctx, id, r.Published)
+				if err != nil {
+					if ctx.Err() != nil {
+						return nil, nil, ctx.Err()
+					}
+					unavailable[id] = true
+					c.releaseFailed(ctx, id, "read", fmt.Errorf("release %d: %w", r.Published, err), started)
+					continue
 				}
 				all = append(all, rel)
 			}
-			after = r.ID
 		}
 		if len(rs) < 100 {
 			break
 		}
-
 	}
-	return all, nil
+	return all, unavailable, nil
+}
+
+func (c *Controller) releaseFailed(ctx context.Context, id, operation string, err error, started time.Time) {
+	c.observer.Operation(ctx, "source_release_"+operation, false, time.Since(started))
+	if observer, ok := c.observer.(interface {
+		SourceReleaseFailed(context.Context, string, string, error)
+	}); ok {
+		observer.SourceReleaseFailed(ctx, id, operation, err)
+	}
 }
 
 // Run 周期刷新 Kafka 元数据并重新规划，不因单来源探测错误停止整个控制面。
@@ -373,8 +396,8 @@ func (c *Controller) tick(ctx context.Context) (runErr error) {
 		return fmt.Errorf("scheduler lease lost: %w", errors.Join(e, context.Canceled))
 	}
 	recoveryStarted := time.Now()
-	releases, e := c.releases(call)
-	c.observer.Operation(ctx, "release_recovery", e == nil, time.Since(recoveryStarted))
+	releases, unavailable, e := c.releases(call)
+	c.observer.Operation(ctx, "release_recovery", e == nil && len(unavailable) == 0, time.Since(recoveryStarted))
 	if e != nil {
 		return e
 	}
@@ -448,7 +471,7 @@ func (c *Controller) tick(ctx context.Context) (runErr error) {
 		for id, m := range updates {
 			s.Metadata[id] = m
 		}
-		Reconcile(s, releases, time.Now())
+		reconcile(s, releases, unavailable, time.Now())
 		return nil
 	})
 }

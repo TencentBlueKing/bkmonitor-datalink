@@ -11,7 +11,7 @@
 
 | 名称（前缀 `linkd.dispatch.`） | 类型 | 语义与属性 |
 | --- | --- | --- |
-| operations | Counter | operation、outcome；reconcile、heartbeat_server/client、kafka_probe、task_run、forced_exit、recovery_required |
+| operations | Counter | operation、outcome；reconcile、heartbeat_server/client、kafka_probe、task_run、forced_exit、recovery_required、release_recovery、source_release_read、source_release_recover |
 | operation.duration | Histogram/s | 上述操作耗时；task_run 是执行开始到返回；没有执行耗时的事件为0 |
 | transitions | Counter | side=controller/worker、role、from、phase、reason；中心提交转换与 worker 本地转换分开统计 |
 | handoff.duration | Histogram/s | side、role；中心停止请求到停止确认/超时终结，worker 停止请求到实际返回；不是完整端到端迁移耗时 |
@@ -46,3 +46,14 @@
 任务失败日志保留来源、角色、assignment epoch、来源版本、阶段与固定 `reason_code`，
 不输出驱动的任意错误文本。`invalid_event_processing` 表示 Event 处理快照违反状态约束，
 包括终态残留计划或缺少完成结果；该分类可穿透包装与 `errors.Join`，不应误判为网络故障。
+
+## 单来源发布失败隔离
+
+调度按来源恢复 pending 并读取已发布 Release。单来源恢复或读取失败时，记录包含
+`event_source_id`、`operation` 和原始错误链的错误日志，并通过 `operations` 的
+`source_release_read` / `source_release_recover`、`outcome=failed` 分别计数；来源 ID 不进入指标标签。
+该轮 `release_recovery` 标记失败，但其他正常来源仍进入任务规划，成功提交的 `reconcile` 仍计为成功。
+
+失败来源本轮不新增或重配任务，也不因缺少快照被当作删除；已有任务仍遵循心跳、授权到期与退出规则。
+下一轮重新读取，读取恢复后重新应用真实发布状态。来源列表读取失败或本轮上下文取消时仍终止本轮，
+不能用不完整清单撤销任务。此行为不补造历史 Release，也不修改发布指针。

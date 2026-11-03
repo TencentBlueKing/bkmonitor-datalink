@@ -22,6 +22,12 @@ import (
 // Reconcile 保留已有匹配 owner，再补足目标；撤销中的 assignment 仍占位置。
 // Kafka 分片元数据失败时只允许保留/撤销，不能新增 assignment。
 func Reconcile(st *State, releases []eventsource.Release, now time.Time) {
+	reconcile(st, releases, nil, now)
+}
+
+// unavailable 中的来源没有可用发布快照，不新增或重配任务；保留已有任务，
+// 但仍执行统一的授权过期处理，不能把读取失败当作删除或延长旧授权。
+func reconcile(st *State, releases []eventsource.Release, unavailable map[string]bool, now time.Time) {
 	for id, t := range st.Tasks {
 		if t.Phase != "stopped" && !now.Before(t.Expires.Add(SafetyMargin)) {
 			t.Phase = "stopped"
@@ -227,7 +233,7 @@ func Reconcile(st *State, releases []eventsource.Release, now time.Time) {
 		}
 	}
 	for id, t := range st.Tasks {
-		if !sourceSet[t.Source] && t.Phase != "stopped" {
+		if !sourceSet[t.Source] && !unavailable[t.Source] && t.Phase != "stopped" {
 			t.Phase = "stopping"
 			st.Tasks[id] = t
 		}

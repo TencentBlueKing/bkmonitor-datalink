@@ -188,6 +188,10 @@ type dispatchTaskObserver struct {
 	logger   *slog.Logger
 }
 
+func (o dispatchTaskObserver) SourceReleaseFailed(ctx context.Context, id, operation string, err error) {
+	o.logger.ErrorContext(ctx, "scheduler source release failed; skipping source", "module", "controlplane", "operation", "source_release_"+operation, "event_source_id", id, "error", err)
+}
+
 func (o dispatchTaskObserver) ReconcileFailed(ctx context.Context, err error) {
 	o.logger.ErrorContext(ctx, "scheduler reconciliation failed; retrying", "module", "controlplane", "operation", "scheduler_reconcile", "error", err)
 }

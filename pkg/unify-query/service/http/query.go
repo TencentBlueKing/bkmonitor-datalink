@@ -431,20 +431,11 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		}()
 
 		qb := metadata.GetQueryParams(ctx)
-		queryRef.Range("", func(qry *metadata.Query) {
-			localQry := *qry
-			localQry.ResultTableOption = qry.ResultTableOption.Clone()
-			if localQry.ResultTableOption != nil && localQry.ResultTableOption.From != nil && *localQry.ResultTableOption.From > 0 {
-				localQry.From = *localQry.ResultTableOption.From
-			}
-			// SearchAfter 模式下，跳过已完成的 RT
-			// RT 不在 ResultTableOptions 中（nil）或 SearchAfter 为空，表示该 RT 数据已查完
-			if queryTs.IsSearchAfter && len(queryTs.ResultTableOptions) > 0 {
-				if !hasRawPaginationCursor(localQry.ResultTableOption) {
-					skippedRoutes.Add(1)
-					return
-				}
-			}
+		// 普通 Raw 查询按执行规划提交，每项保留对应的查询参数和时间范围。
+		plans, skipped := planRawQueryExecutions(queryRef, queryTs, qb.Start, qb.End)
+		skippedRoutes.Add(uint32(skipped))
+		for _, plan := range plans {
+			localQry := plan.query
 
 			sendWg.Add(1)
 
@@ -459,14 +450,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				allLabelMap[k] = append(allLabelMap[k], lm...)
 			}
 			lock.Unlock()
-
-			// 如果是多数据合并，为了保证排序和Limit 的准确性，需要查询原始的所有数据，所以这里对 from 和 size 进行重写
-			if queryRef.Count() > 1 && !hasRawOffsetCursor(localQry.ResultTableOption) {
-				if !queryTs.IsMultiFrom {
-					localQry.Size += localQry.From
-					localQry.From = 0
-				}
-			}
 
 			_ = p.Submit(func() {
 				defer func() {
@@ -484,7 +467,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 				// 如果开启了高亮，收集字段映射信息用于判断大小写敏感性
 				if queryTs.HighLight != nil && queryTs.HighLight.Enable {
-					if fieldsMap, fmErr := instance.QueryFieldMap(ctx, &localQry, qb.Start, qb.End); fmErr == nil && fieldsMap != nil {
+					if fieldsMap, fmErr := instance.QueryFieldMap(ctx, &localQry, plan.start, plan.end); fmErr == nil && fieldsMap != nil {
 						lock.Lock()
 						for k, v := range fieldsMap {
 							if _, ok := allFieldsMap[k]; !ok {
@@ -495,7 +478,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					}
 				}
 
-				_, size, option, queryErr := instance.QueryRawData(ctx, &localQry, qb.Start, qb.End, dataCh)
+				_, size, option, queryErr := instance.QueryRawData(ctx, &localQry, plan.start, plan.end, dataCh)
 				if queryErr != nil {
 					errCh <- queryErr
 					return
@@ -510,7 +493,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 				atomic.AddInt64(&total, size)
 			})
-		})
+		}
 	}()
 
 	// 等待数据组装完毕

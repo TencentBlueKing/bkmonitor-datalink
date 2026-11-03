@@ -10,79 +10,50 @@
 package http
 
 import (
-	"reflect"
-	"time"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
-type rawQueryExecutionPlan struct {
-	query metadata.Query
-	start time.Time
-	end   time.Time
-}
-
-type rawQueryExecutionTracker struct {
-	queries []rawQueryExecutionPlan
-}
-
-// isDuplicate 仅合并同一请求中查询参数与时间范围相同的 ES Raw 请求。
-// 历史路由时间用于描述数据位置，不参与 ES Raw 请求体的构造。
-func (t *rawQueryExecutionTracker) isDuplicate(query *metadata.Query, start, end time.Time) bool {
-	if query.StorageType != metadata.ElasticsearchStorageType || query.Scroll != "" {
-		return false
-	}
-	if option := query.ResultTableOption; option != nil && (option.ScrollID != "" || option.SliceMax > 0 || option.SliceIndex > 0) {
-		return false
-	}
-
-	comparable := *query
-	comparable.RouteStart = time.Time{}
-	comparable.RouteEnd = time.Time{}
-	comparable.RouteEndInclusive = false
-	comparable.RouteQueryStart = time.Time{}
-	comparable.RouteQueryEnd = time.Time{}
-	for _, previous := range t.queries {
-		if previous.start.Equal(start) && previous.end.Equal(end) && reflect.DeepEqual(previous.query, comparable) {
-			return true
-		}
-	}
-	t.queries = append(t.queries, rawQueryExecutionPlan{query: comparable, start: start, end: end})
-	return false
-}
-
-// planRawQueryExecutions 根据历史路由生成普通 Raw 查询计划。
-// start 和 end 是本次请求的全局时间范围；各历史分段的生效时间保存在 query 的路由字段中。
-func planRawQueryExecutions(
-	queryRef metadata.QueryReference,
-	queryTs *structured.QueryTs,
-	start, end time.Time,
-) ([]rawQueryExecutionPlan, int) {
-	plans := make([]rawQueryExecutionPlan, 0, queryRef.Count())
-	skipped := 0
+// prepareRawQueryExecutions 为已解析的执行目标应用分页，供普通查询和 Batch 共用。
+// 每次执行复制查询及游标，避免执行过程修改原查询计划和调用方的分页状态。
+func prepareRawQueryExecutions(queryRef metadata.QueryReference, queryTs *structured.QueryTs) (metadata.QueryReference, int) {
+	prepared := make(metadata.QueryReference, len(queryRef))
 	queryCount := queryRef.Count()
-	var executed rawQueryExecutionTracker
-	queryRef.Range("", func(qry *metadata.Query) {
-		localQry := *qry
-		localQry.ResultTableOption = qry.ResultTableOption.Clone()
-		if localQry.ResultTableOption != nil && localQry.ResultTableOption.From != nil && *localQry.ResultTableOption.From > 0 {
-			localQry.From = *localQry.ResultTableOption.From
+	skipped := 0
+	for name, references := range queryRef {
+		for _, reference := range references {
+			if reference == nil {
+				continue
+			}
+			queries := make(metadata.QueryList, 0, len(reference.QueryList))
+			for _, query := range reference.QueryList {
+				if query == nil {
+					continue
+				}
+				localQuery := *query
+				localQuery.ResultTableOption = query.ResultTableOption.Clone()
+				localQuery.IsSearchAfter = queryTs.IsSearchAfter
+				if hasRawOffsetCursor(localQuery.ResultTableOption) {
+					localQuery.From = *localQuery.ResultTableOption.From
+				}
+				// 后续页只查询仍有游标的目标；Doris 兼容仅返回 From 的分页方式。
+				if queryTs.IsSearchAfter && len(queryTs.ResultTableOptions) > 0 && !hasRawPaginationCursor(localQuery.ResultTableOption) {
+					skipped++
+					continue
+				}
+				// 多目标合并排序时，从起点读取足够数量的数据，再统一裁剪。
+				if queryCount > 1 && !hasRawOffsetCursor(localQuery.ResultTableOption) && !queryTs.IsMultiFrom {
+					localQuery.Size += localQuery.From
+					localQuery.From = 0
+				}
+				queries = append(queries, &localQuery)
+			}
+			if len(queries) > 0 {
+				localReference := *reference
+				localReference.QueryList = queries
+				prepared[name] = append(prepared[name], &localReference)
+			}
 		}
-		// SearchAfter 翻页时，已查询完成的路由不再提交，并计入跳过数量。
-		if queryTs.IsSearchAfter && len(queryTs.ResultTableOptions) > 0 && !hasRawPaginationCursor(localQry.ResultTableOption) {
-			skipped++
-			return
-		}
-		// 多路由合并排序时，每条路由需从起点读取足够数量的数据。
-		if queryCount > 1 && !hasRawOffsetCursor(localQry.ResultTableOption) && !queryTs.IsMultiFrom {
-			localQry.Size += localQry.From
-			localQry.From = 0
-		}
-		if executed.isDuplicate(&localQry, start, end) {
-			return
-		}
-		plans = append(plans, rawQueryExecutionPlan{query: localQry, start: start, end: end})
-	})
-	return plans, skipped
+	}
+	return prepared, skipped
 }

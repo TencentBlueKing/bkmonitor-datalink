@@ -181,62 +181,6 @@ func (d *rawQueryDispatcher) close() {
 	d.workersWG.Wait()
 }
 
-type rawESBatchQueryExecutionPlan struct {
-	location rawESBatchMemberLocation
-	query    metadata.Query
-}
-
-// planRawESBatchQueryExecutions 从历史路由中选择 Batch 执行请求；QueryReference 保留全部分段。
-func planRawESBatchQueryExecutions(
-	queryRef metadata.QueryReference,
-	queryTs *structured.QueryTs,
-	start, end time.Time,
-) []rawESBatchQueryExecutionPlan {
-	var executed rawQueryExecutionTracker
-	plans := make([]rawESBatchQueryExecutionPlan, 0, queryRef.Count())
-	queryCount := queryRef.Count()
-	referenceNames := make([]string, 0, len(queryRef))
-	for referenceName := range queryRef {
-		referenceNames = append(referenceNames, referenceName)
-	}
-	sort.Strings(referenceNames)
-
-	for _, referenceName := range referenceNames {
-		for referenceIndex, reference := range queryRef[referenceName] {
-			if reference == nil {
-				continue
-			}
-			for queryIndex, query := range stableRawESBatchQueries(reference.QueryList) {
-				if query == nil {
-					continue
-				}
-				localQuery := *query
-				localQuery.ResultTableOption = query.ResultTableOption.Clone()
-				if queryTs.IsSearchAfter && len(queryTs.ResultTableOptions) > 0 &&
-					(localQuery.ResultTableOption == nil || len(localQuery.ResultTableOption.SearchAfter) == 0) {
-					continue
-				}
-				if queryCount > 1 && !queryTs.IsMultiFrom {
-					localQuery.Size += localQuery.From
-					localQuery.From = 0
-				}
-				if executed.isDuplicate(&localQuery, start, end) {
-					continue
-				}
-				plans = append(plans, rawESBatchQueryExecutionPlan{
-					location: rawESBatchMemberLocation{
-						referenceName:  referenceName,
-						referenceIndex: referenceIndex,
-						queryIndex:     queryIndex,
-					},
-					query: localQuery,
-				})
-			}
-		}
-	}
-	return plans
-}
-
 // executeQueryRawWithESBatch preserves the query_raw aggregation contract while
 // replacing only eligible, body-equivalent direct ES searches with _msearch.
 func executeQueryRawWithESBatch(
@@ -281,33 +225,53 @@ func executeQueryRawWithESBatch(
 		span.End(&spanErr)
 	}()
 
-	for _, planned := range planRawESBatchQueryExecutions(queryRef, queryTs, qb.Start, qb.End) {
-		localQuery := planned.query
-		sink.mergeLabelMap(function.LabelMap(ctx, &localQuery))
-		instance := prometheus.GetTsDbInstance(ctx, &localQuery)
-		member := &rawESBatchRuntimeMember{
-			location: planned.location,
-			query:    &localQuery,
-			instance: instance,
-		}
-		allMembers = append(allMembers, member)
-		runtimeByLoc[planned.location] = member
+	referenceNames := make([]string, 0, len(queryRef))
+	for referenceName := range queryRef {
+		referenceNames = append(referenceNames, referenceName)
+	}
+	sort.Strings(referenceNames)
+	for _, referenceName := range referenceNames {
+		for referenceIndex, reference := range queryRef[referenceName] {
+			if reference == nil {
+				continue
+			}
+			for queryIndex, query := range stableRawESBatchQueries(reference.QueryList) {
+				if query == nil {
+					continue
+				}
+				localQuery := *query
+				location := rawESBatchMemberLocation{
+					referenceName:  referenceName,
+					referenceIndex: referenceIndex,
+					queryIndex:     queryIndex,
+				}
+				sink.mergeLabelMap(function.LabelMap(ctx, &localQuery))
+				instance := prometheus.GetTsDbInstance(ctx, &localQuery)
+				member := &rawESBatchRuntimeMember{
+					location: location,
+					query:    &localQuery,
+					instance: instance,
+				}
+				allMembers = append(allMembers, member)
+				runtimeByLoc[location] = member
 
-		esInstance, isES := instance.(*elasticsearch.Instance)
-		if !isES {
-			continue
-		}
+				esInstance, isES := instance.(*elasticsearch.Instance)
+				if !isES {
+					continue
+				}
 
-		member.es = esInstance
-		esMemberCount++
-		if !rawESBatchEligible(settings, &localQuery) {
-			continue
+				member.es = esInstance
+				esMemberCount++
+				if !rawESBatchEligible(settings, &localQuery) {
+					continue
+				}
+				candidateInputs = append(candidateInputs, rawESBatchPlanInput{
+					location:      location,
+					connectionKey: esInstance.RawBatchConnectionKey(ctx),
+					query:         &localQuery,
+				})
+			}
 		}
-		candidateInputs = append(candidateInputs, rawESBatchPlanInput{
-			location:      planned.location,
-			connectionKey: esInstance.RawBatchConnectionKey(ctx),
-			query:         &localQuery,
-		})
 	}
 	metric.QueryRawESBatchEventAdd(
 		ctx,

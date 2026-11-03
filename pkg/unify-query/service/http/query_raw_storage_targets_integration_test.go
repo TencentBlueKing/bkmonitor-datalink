@@ -20,6 +20,11 @@ import (
 
 	elastic "github.com/olivere/elastic/v7"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -43,6 +48,14 @@ func TestRawStorageTargetsIntegration(t *testing.T) {
 
 	log.InitTestLogger()
 	metadata.InitMetadata()
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	previousProvider := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previousProvider)
+		require.NoError(t, provider.Shutdown(context.Background()))
+	})
 	oldTimeout, oldMaxSize := tsdbService.EsTimeout, tsdbService.EsMaxSize
 	oldRouting, oldSettings := QueryMaxRouting, queryRawESBatchSettingsSnapshot.Load()
 	tsdbService.EsTimeout, tsdbService.EsMaxSize = 30*time.Second, 1000
@@ -146,8 +159,51 @@ func TestRawStorageTargetsIntegration(t *testing.T) {
 		require.NoError(t, json.Unmarshal(response.Body, &stats))
 		return []int64{stats.Indices[indexes[0]].Primaries.Search.QueryTotal, stats.Indices[indexes[1]].Primaries.Search.QueryTotal}
 	}
+	assertSpans := func(t *testing.T, executionCounts map[string]int64, wantError bool) {
+		t.Helper()
+		expected := map[string]map[string]int64{
+			"query-raw-with-instance": executionCounts,
+			"query-raw-plan": {
+				"raw_plan_route_count":         3,
+				"raw_plan_query_count":         2,
+				"raw_plan_reused_target_count": 1,
+				"raw_plan_merge_db_count":      0,
+			},
+		}
+		for name, counts := range expected {
+			var matching []tracetest.SpanStub
+			for _, span := range exporter.GetSpans() {
+				if span.Name == name {
+					matching = append(matching, span)
+				}
+			}
+			require.Len(t, matching, 1, "Span %s 应在每次请求中生成一次", name)
+			attributes := make(map[string]attribute.Value)
+			for _, field := range matching[0].Attributes {
+				attributes[string(field.Key)] = field.Value
+			}
+			for field, count := range counts {
+				require.Contains(t, attributes, field, "Span %s", name)
+				require.Equal(t, attribute.INT64, attributes[field].Type(), "计数字段 %s 应使用整数类型", field)
+				require.Equal(t, count, attributes[field].AsInt64(), "Span %s 的 %s", name, field)
+			}
+			if name == "query-raw-with-instance" && wantError {
+				require.Equal(t, codes.Error, matching[0].Status.Code)
+			}
+		}
+	}
+	successfulExecutionCounts := map[string]int64{
+		"raw_route_count":                    3,
+		"raw_planned_query_count":            2,
+		"raw_missing_index_query_count":      0,
+		"raw_pagination_skipped_query_count": 0,
+		"raw_ready_query_count":              2,
+		"raw_succeeded_query_count":          2,
+		"raw_failed_query_count":             0,
+	}
 	execute := func(t *testing.T, request *structured.QueryTs) ([]map[string]any, metadata.ResultTableOptions) {
 		t.Helper()
+		exporter.Reset()
 		before := searchCounts(t)
 		requestCtx := metadata.InitHashID(ctx)
 		metadata.SetUser(requestCtx, &metadata.User{SpaceUID: "bkcc__2"})
@@ -159,6 +215,7 @@ func TestRawStorageTargetsIntegration(t *testing.T) {
 		for target := range indexes {
 			require.EqualValues(t, 1, after[target]-before[target], "执行目标 %s 的查询次数", indexes[target])
 		}
+		assertSpans(t, successfulExecutionCounts, false)
 		return list, options
 	}
 	spanIDs := func(list []map[string]any) []string {
@@ -191,6 +248,34 @@ func TestRawStorageTargetsIntegration(t *testing.T) {
 				second, _ := execute(t, request)
 				require.Len(t, second, 4)
 				require.ElementsMatch(t, expectedIDs, append(spanIDs(first), spanIDs(second)...))
+			})
+			t.Run("completed_target_exact_total", func(t *testing.T) {
+				exporter.Reset()
+				request := newQuery(batch)
+				request.IsSearchAfter = true
+				request.ResultTableOptions = metadata.ResultTableOptions{
+					"trace.raw_targets|" + storageIDs[0]: {SearchAfter: []any{start.UnixMilli()}},
+				}
+				before := searchCounts(t)
+				requestCtx := metadata.InitHashID(ctx)
+				metadata.SetUser(requestCtx, &metadata.User{SpaceUID: "bkcc__2"})
+				total, list, _, routes, queryErr := queryRawWithInstance(requestCtx, request)
+				require.ErrorContains(t, queryErr, "exact total")
+				require.EqualValues(t, 5, total)
+				require.Len(t, list, 5)
+				require.Len(t, routes, 3)
+				after := searchCounts(t)
+				require.EqualValues(t, 1, after[0]-before[0])
+				require.EqualValues(t, 0, after[1]-before[1])
+				assertSpans(t, map[string]int64{
+					"raw_route_count":                    3,
+					"raw_planned_query_count":            2,
+					"raw_missing_index_query_count":      0,
+					"raw_pagination_skipped_query_count": 1,
+					"raw_ready_query_count":              1,
+					"raw_succeeded_query_count":          1,
+					"raw_failed_query_count":             0,
+				}, true)
 			})
 			t.Run("scroll", func(t *testing.T) {
 				request := newQuery(batch)

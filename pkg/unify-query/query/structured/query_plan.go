@@ -14,12 +14,21 @@ import (
 	"context"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 // QueryPlan 分别保存执行查询与完整历史路由，路由数量不决定执行次数。
 type QueryPlan struct {
 	Queries metadata.QueryReference
 	Routes  metadata.QueryReference
+	Stats   QueryPlanStats
+}
+
+// QueryPlanStats 记录规划过程中实际发生的目标复用和数据库合并次数。
+type QueryPlanStats struct {
+	ReusedTargets int
+	MergedQueries int
 }
 
 type queryMode uint8
@@ -32,11 +41,25 @@ const (
 type queryMetricPlan struct {
 	queries *metadata.QueryMetric
 	routes  *metadata.QueryMetric
+	stats   QueryPlanStats
 }
 
 // ToRawQueryPlan 按完整查询时间生成执行目标，保留每个目标对应的历史分段。
-func (q *QueryTs) ToRawQueryPlan(ctx context.Context) (QueryPlan, error) {
-	return q.toQueryPlan(ctx, rawQuery)
+func (q *QueryTs) ToRawQueryPlan(ctx context.Context) (plan QueryPlan, err error) {
+	ctx, span := trace.NewSpan(ctx, "query-raw-plan")
+	defer span.End(&err)
+
+	plan, err = q.toQueryPlan(ctx, rawQuery)
+	span.Set("raw_plan_route_count", plan.Routes.Count())
+	span.Set("raw_plan_query_count", plan.Queries.Count())
+	span.Set("raw_plan_reused_target_count", plan.Stats.ReusedTargets)
+	span.Set("raw_plan_merge_db_count", plan.Stats.MergedQueries)
+	if err != nil {
+		return plan, err
+	}
+	metric.RawQueryDecisionAdd(ctx, metric.RawQueryDecisionHistoryDuplicate, plan.Stats.ReusedTargets)
+	metric.RawQueryDecisionAdd(ctx, metric.RawQueryDecisionMergeDB, plan.Stats.MergedQueries)
+	return plan, nil
 }
 
 // rawStorageTarget 只在同一个逻辑查询和同一个结果表的历史展开中使用。

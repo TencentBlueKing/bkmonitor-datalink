@@ -248,6 +248,14 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	if err != nil {
 		return total, list, resultTableOptions, routeInfo, err
 	}
+	stats := newRawQueryTraceStats(plan)
+	defer func() {
+		stats.record(ctx, span)
+		succeeded := int(successedPaths.Load())
+		span.Set("raw_succeeded_query_count", succeeded)
+		span.Set("raw_failed_query_count", stats.readyQueries-succeeded)
+	}()
+	span.Set("raw_is_es_batch", queryTs.IsESBatch)
 	queryRef, err = filterRawRoutesForExactTotal(ctx, plan.Queries, queryTs)
 	if err != nil {
 		return total, list, resultTableOptions, routeInfo, err
@@ -258,6 +266,8 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	}).CollectRouteInfo()
 	queryRef, skipped := prepareRawQueryExecutions(queryRef, queryTs)
 	skippedRoutes.Add(uint32(skipped))
+	stats.paginationSkippedQueries = skipped
+	stats.readyQueries = queryRef.Count()
 
 	receiveWg.Add(1)
 	go func() {
@@ -544,6 +554,8 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 			"查询参数配置异常",
 		).Error(ctx, err)
 	}
+	stats := newRawQueryTraceStats(plan)
+	defer func() { stats.record(ctx, span) }()
 	queryRef := excludeElasticsearchIndexPrefixMissingQueries(ctx, plan.Queries, metadata.MsgQueryRawScroll, func(qry *metadata.Query) {
 		for i := 0; i < session.SliceLength(); i++ {
 			sliceQry := *qry
@@ -553,6 +565,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 			session.UpdateSliceStatus(sliceQry.TableUUID(), slice)
 		}
 	})
+	stats.readyQueries = queryRef.Count()
 	// scroll 每次只取部分分片，routeInfo 仍返回完整解析范围。
 	routeInfo = plan.Routes.Filter(func(qry *metadata.Query) bool {
 		return !qry.IsElasticsearchIndexPrefixMissing()
@@ -594,6 +607,8 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 		wg         sync.WaitGroup
 		optionLock sync.Mutex
 	)
+	sliceStats := rawScrollTraceStats{candidates: stats.readyQueries * session.SliceLength()}
+	defer sliceStats.record(span)
 
 	p, _ := ants.NewPool(QueryMaxRouting)
 	defer p.Release()
@@ -605,6 +620,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 			newQry := &metadata.Query{}
 			if copyErr := copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true}); copyErr != nil {
+				sliceStats.preparationFailed.Add(1)
 				errCh <- metadata.NewMessage(
 					metadata.MsgQueryRawScroll,
 					"查询失败",
@@ -631,6 +647,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				}()
 
 				if slice.Done() {
+					sliceStats.completed.Add(1)
 					return
 				}
 
@@ -645,6 +662,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 				instance := prometheus.GetTsDbInstance(ctx, localQry)
 				if instance == nil {
+					sliceStats.preparationFailed.Add(1)
 					errCh <- metadata.NewMessage(
 						metadata.MsgQueryRawScroll,
 						"查询实例为空",
@@ -652,8 +670,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					return
 				}
 
+				sliceStats.attempted.Add(1)
 				size, _, option, rawErr := instance.QueryRawData(ctx, localQry, qb.Start, qb.End, dataCh)
 				if rawErr != nil {
+					sliceStats.failed.Add(1)
 					slice.FailedNum++
 					// 只有重试次数超过了最大限制才把错误返回，否则正常往后执行
 					if slice.FailedNum >= slice.MaxFailedNum {
@@ -661,6 +681,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					}
 					return
 				}
+				sliceStats.succeeded.Add(1)
 
 				// 查询成功，更新 scroll 状态
 				if option != nil {
@@ -680,6 +701,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				resultTableOptions.SetOption(localQry.TableUUID(), option)
 				optionLock.Unlock()
 			}); submitErr != nil {
+				sliceStats.submissionFailed.Add(1)
 				errCh <- metadata.NewMessage(
 					metadata.MsgQueryRawScroll,
 					"提交查询任务失败",

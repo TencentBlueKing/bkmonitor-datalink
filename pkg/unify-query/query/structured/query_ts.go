@@ -270,6 +270,7 @@ func (q *QueryTs) toQueryPlan(ctx context.Context, mode queryMode) (QueryPlan, e
 	astBranchCount := queryASTBranchCount(q.MetricMerge, len(q.QueryList))
 	queryReference := make(metadata.QueryReference)
 	routeReference := make(metadata.QueryReference)
+	var stats QueryPlanStats
 	for _, query := range q.QueryList {
 		if query.ASTBranchCount == 0 {
 			query.ASTBranchCount = astBranchCount
@@ -347,10 +348,12 @@ func (q *QueryTs) toQueryPlan(ctx context.Context, mode queryMode) (QueryPlan, e
 
 		queryReference[query.ReferenceName] = append(queryReference[query.ReferenceName], metricPlan.queries)
 		routeReference[query.ReferenceName] = append(routeReference[query.ReferenceName], metricPlan.routes)
+		stats.ReusedTargets += metricPlan.stats.ReusedTargets
+		stats.MergedQueries += metricPlan.stats.MergedQueries
 	}
 
 	metadata.SetQueryReference(ctx, queryReference)
-	return QueryPlan{Queries: queryReference, Routes: routeReference}, nil
+	return QueryPlan{Queries: queryReference, Routes: routeReference, Stats: stats}, nil
 }
 
 func queryASTBranchCount(expression string, fallback int) int {
@@ -989,7 +992,8 @@ func (q *Query) toQueryMetricPlan(ctx context.Context, spaceUid string, tsDBs Ts
 		for _, storageRange := range storageRanges {
 			query, buildErr := q.buildStorageQuery(ctx, tsDB, storageRange, aggregates, allConditions)
 			if buildErr != nil {
-				return queryMetricPlan{}, buildErr
+				err = buildErr
+				return queryMetricPlan{}, err
 			}
 			if query == nil {
 				continue
@@ -1009,6 +1013,7 @@ func (q *Query) toQueryMetricPlan(ctx context.Context, spaceUid string, tsDBs Ts
 				plan.routes.QueryList = append(plan.routes.QueryList, &routedQuery)
 				target := rawTarget(query)
 				if _, exists := targets[target]; exists {
+					plan.stats.ReusedTargets++
 					continue
 				}
 				targets[target] = struct{}{}
@@ -1024,6 +1029,7 @@ func (q *Query) toQueryMetricPlan(ctx context.Context, spaceUid string, tsDBs Ts
 
 			target := mergeTarget(query, mode)
 			if oq, ok := queryMap[target]; ok {
+				plan.stats.MergedQueries++
 				queryMergePairs = append(queryMergePairs, fmt.Sprintf("%s->%s", oq.TableID, query.TableID))
 				// merge db 只合并 DB 列表，主 query 固定选择 TableID 较小的记录，避免上游 tsDB 顺序变化导致结果不稳定。
 				if query.TableID < oq.TableID {

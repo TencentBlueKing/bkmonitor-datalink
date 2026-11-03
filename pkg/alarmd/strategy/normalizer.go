@@ -263,18 +263,6 @@ func UnitPrefixInSteps(dataUnit, prefix string) bool {
 	return false
 }
 
-// UnitDefaultPrefix is the step dataUnit itself is written in -- "ms" for
-// ms, "Ki" for kbytes, "x100%" for percentunit -- and "" for a unit without
-// steps or one the table does not define. A threshold given with this prefix
-// is a threshold in the data's own unit.
-func UnitDefaultPrefix(dataUnit string) string {
-	spec, ok := unitSpecOf(dataUnit)
-	if !ok || spec.identity {
-		return ""
-	}
-	return spec.suffixes[spec.defaultIndex]
-}
-
 func powers(factor int64, count int) []int64 {
 	result := make([]int64, count)
 	result[0] = 1

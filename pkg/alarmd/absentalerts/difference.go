@@ -60,7 +60,7 @@
 // absence is decided by the snapshot alone. Refusing on it would turn "may
 // close fewer" into "close none" - and a link whose maintenance fails under
 // the alerts of a strategy that is gone is exactly the one whose close would
-// remove them. The health page reports the link's word (LinkHealthWord).
+// remove them.
 package absentalerts
 
 import (
@@ -615,34 +615,6 @@ func lessKey(a, b Key) bool {
 		return a.TenantID < b.TenantID
 	}
 	return a.StrategyID < b.StrategyID
-}
-
-// The words for the link's account of its own set maintenance, closed. The
-// health page and the Console's state name which one; the difference does
-// not read it (see the package doc).
-const (
-	LinkHealthy                 = "healthy"
-	LinkDiscoveryFailing        = "discovery_failing"
-	LinkDiscoveryNeverSucceeded = "discovery_never_succeeded"
-	LinkDiscoveryStale          = "discovery_stale"
-)
-
-// LinkHealthWords is every word LinkHealthWord returns.
-var LinkHealthWords = []string{LinkHealthy, LinkDiscoveryFailing, LinkDiscoveryNeverSucceeded, LinkDiscoveryStale}
-
-// LinkHealthWord names the link's account of itself: its latest discovery
-// failed, none ever succeeded, or the last success is older than maxAge. A
-// zero maxAge does not judge age.
-func LinkHealthWord(lastSuccess time.Time, linkError string, now time.Time, maxAge time.Duration) string {
-	switch {
-	case linkError != "":
-		return LinkDiscoveryFailing
-	case lastSuccess.IsZero():
-		return LinkDiscoveryNeverSucceeded
-	case maxAge > 0 && now.Sub(lastSuccess) > maxAge:
-		return LinkDiscoveryStale
-	}
-	return LinkHealthy
 }
 
 func sortKeys(keys []Key) {

@@ -11,6 +11,18 @@ package strategy
 
 import "testing"
 
+// unitDefaultPrefix is the step dataUnit itself is written in -- "ms" for
+// ms, "Ki" for kbytes, "x100%" for percentunit -- and "" for a unit without
+// steps or one the table does not define. A threshold given with this prefix
+// is a threshold in the data's own unit.
+func unitDefaultPrefix(dataUnit string) string {
+	spec, ok := unitSpecOf(dataUnit)
+	if !ok || spec.identity {
+		return ""
+	}
+	return spec.suffixes[spec.defaultIndex]
+}
+
 // The control plane decides how a Level reads its unit before compiling it,
 // from three questions to the unit table. Each is pinned in both directions.
 func TestTheUnitTableAnswersWhatTheControlPlaneAsks(t *testing.T) {
@@ -42,8 +54,8 @@ func TestTheUnitTableAnswersWhatTheControlPlaneAsks(t *testing.T) {
 		if got := UnitHasSteps(test.unit); got != test.hasSteps {
 			t.Errorf("UnitHasSteps(%q) = %t, want %t", test.unit, got, test.hasSteps)
 		}
-		if got := UnitDefaultPrefix(test.unit); got != test.defaultPrefix {
-			t.Errorf("UnitDefaultPrefix(%q) = %q, want %q", test.unit, got, test.defaultPrefix)
+		if got := unitDefaultPrefix(test.unit); got != test.defaultPrefix {
+			t.Errorf("unitDefaultPrefix(%q) = %q, want %q", test.unit, got, test.defaultPrefix)
 		}
 	}
 }
@@ -55,7 +67,7 @@ func TestTheUnitTableAnswersWhatTheControlPlaneAsks(t *testing.T) {
 // step, so 20 against ms is 20 ns.
 func TestAThresholdInTheUnitsOwnStepComparesRaw(t *testing.T) {
 	for _, unit := range []string{"ms", "s", "kbytes", "MBs", "percentunit", "percent", "bytes", "none", ""} {
-		normalizer, threshold, ok := compileUnitNormalizer(unit, UnitDefaultPrefix(unit))
+		normalizer, threshold, ok := compileUnitNormalizer(unit, unitDefaultPrefix(unit))
 		if !ok {
 			t.Fatalf("compileUnitNormalizer(%q, own step) refused", unit)
 		}

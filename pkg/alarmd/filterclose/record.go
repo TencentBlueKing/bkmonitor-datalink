@@ -296,7 +296,7 @@ func (closer *Closer) prune(ctx context.Context, scope Scope, fingerprints []str
 	closer.count(OutcomeRecordPruned, len(fingerprints))
 }
 
-// perAlert is a decision's close without a record: the decision's active
+// perAlertResult is a decision's close without a record: the decision's active
 // alerts paged with the search, up to maxAlertsPerTurn a round from where
 // the term's last round stopped, each decided from its own record, the
 // ones decided closed by their ids under the decision's filter (so an
@@ -304,10 +304,6 @@ func (closer *Closer) prune(ctx context.Context, scope Scope, fingerprints []str
 // each batch's word - and job_incomplete while the walk has pages left -
 // and what they closed; its Word is the one to wait on, job_done when a
 // close ran and settled, nothing_matched when nothing was decided.
-func (closer *Closer) perAlert(ctx context.Context, job Job, decide func(linkdmanage.Alert) bool) string {
-	return closer.perAlertResult(ctx, job, decide).Word
-}
-
 func (closer *Closer) perAlertResult(ctx context.Context, job Job, decide func(linkdmanage.Alert) bool) Result {
 	started := time.Now()
 	read, err := activeOnly(job.Filter)

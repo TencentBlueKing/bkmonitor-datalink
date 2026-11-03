@@ -277,13 +277,6 @@ func (reporter *filterCloseJobReporter) report(result filterclose.JobResult) {
 		slog.Int("refused", result.Refused), slog.Int("held_since_last", before.held), slog.Int("closed_since_last", before.heldClosed))
 }
 
-// remembered is how many strategies the reporter holds a line's memory of.
-func (reporter *filterCloseJobReporter) remembered() int {
-	reporter.mu.Lock()
-	defer reporter.mu.Unlock()
-	return len(reporter.last)
-}
-
 // observeCloseJob writes one strategy's filtered close job line, with how
 // long the job ran (its runs within the round), on the counter's own
 // reading of a send (sent, filterclose.Result.Sent: a real close whose

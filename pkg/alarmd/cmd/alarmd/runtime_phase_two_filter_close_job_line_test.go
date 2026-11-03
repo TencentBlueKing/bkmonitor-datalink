@@ -25,6 +25,13 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
+// remembered is how many strategies the reporter holds a line's memory of.
+func (reporter *filterCloseJobReporter) remembered() int {
+	reporter.mu.Lock()
+	defer reporter.mu.Unlock()
+	return len(reporter.last)
+}
+
 // lockedBuffer is a log writer the test reads while the closer writes.
 type lockedBuffer struct {
 	mu  sync.Mutex

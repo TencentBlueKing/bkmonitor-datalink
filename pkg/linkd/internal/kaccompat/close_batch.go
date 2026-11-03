@@ -225,7 +225,7 @@ func (c *Client) WriteCloseBatch(ctx context.Context, alerts []domain.Alert) []W
 		if a.EndAt != nil {
 			closeTime = a.EndAt.In(kacZone).Format(kacTimeLayout)
 		}
-		body, err := json.Marshal(map[string]any{"doc": map[string]any{"status": closedStatus(a), "action": "close", "source_alarm_status": "close", "close_reason": a.EndReason, "close_time": closeTime}})
+		body, err := json.Marshal(map[string]any{"doc": map[string]any{"status": closedStatus(a), "action": "close", "source_alarm_status": sourceAlarmStatus(a), "close_reason": a.EndReason, "close_time": closeTime}})
 		if err != nil {
 			results[i].Err = err
 			continue

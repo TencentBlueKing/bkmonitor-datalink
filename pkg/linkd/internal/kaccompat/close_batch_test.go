@@ -52,7 +52,7 @@ func TestCloseProjection5000PatchesOnlyFiveFields(t *testing.T) {
 			if err := json.Unmarshal([]byte(lines[i+1]), &body); err != nil {
 				t.Fatal(err)
 			}
-			if len(body.Doc) != 5 || body.Doc["status"] != "closed" || body.Doc["source_alarm_status"] != "close" {
+			if len(body.Doc) != 5 || body.Doc["status"] != "closed" || body.Doc["source_alarm_status"] != "firing" {
 				t.Fatal("not a terminal patch", body)
 			}
 			items = append(items, map[string]any{"update": map[string]any{"status": 200, "_index": head.Update["_index"]}})

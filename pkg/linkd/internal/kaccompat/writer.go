@@ -168,6 +168,17 @@ func (c *Client) Refresh(ctx context.Context, indices []string) error {
 	return c.request(ctx, http.MethodPost, "/"+strings.Join(indices, ",")+"/_refresh", nil, nil, nil)
 }
 
+// sourceAlarmStatus 区分来源事实与处置终态；主动关闭和等级升级并未恢复或关闭来源告警。
+func sourceAlarmStatus(a domain.Alert) string {
+	if a.Status == domain.AlertStatusRecovered {
+		return "resolved"
+	}
+	if a.Status == domain.AlertStatusClosed && a.EndType == domain.AlertEndTypeSource {
+		return "close"
+	}
+	return "firing"
+}
+
 const kacTimeLayout = "2006-01-02 15:04:05"
 
 var kacZone = time.FixedZone("Asia/Shanghai", 8*3600)
@@ -207,7 +218,7 @@ func (c *Client) fields(ctx context.Context, a domain.Alert, create bool) (map[s
 	if a.Status == domain.AlertStatusClosed {
 		action = "close"
 	}
-	fields["action"], fields["source_alarm_status"] = action, action
+	fields["action"], fields["source_alarm_status"] = action, sourceAlarmStatus(a)
 	fields["close_reason"] = a.EndReason
 	if a.EndAt != nil {
 		fields["close_time"] = a.EndAt.In(kacZone).Format(kacTimeLayout)

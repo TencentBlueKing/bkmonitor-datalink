@@ -44,7 +44,8 @@ rollover 后更新原物理索引，不向当前 write alias 重复创建。
 | --- | --- |
 | 身份、来源、丰富数据、storage_time 和处置默认值 | 新建时转换，后续普通同步不重置 |
 | fingerprint | 写入器直接取 Alert.Fingerprint，新建与后续同步均写入，不依赖自定义字段目录 |
-| content、level、action、source_alarm_status、close_reason、close_time | 从最新 Alert 更新；content 包含持续触发更新及显式空串 |
+| content、level、action、close_reason、close_time | 从最新 Alert 更新；content 包含持续触发更新及显式空串 |
+| source_alarm_status | 表示来源事实：活动为 firing、来源恢复为 resolved、来源关闭为 close；人工/系统主动关闭及等级升级结束旧生命周期仍为 firing |
 | associate_alarm_id、associate_count | 同步当前合并关系及解联 |
 | status | 屏蔽、合并及终态按业务转换；普通 active 保留 KAC 处置状态 |
 | linkd_disposal_status | KAC 文档内的业务字段；屏蔽/合并前保存原处置状态，解除后恢复 |
@@ -57,6 +58,12 @@ rollover 后更新原物理索引，不向当前 write alias 重复创建。
 仅原生 ID 文档随正常投影补齐指纹；旧 UUID 文档保持原样，不新增回填任务。
 
 ## 主动关闭
+
+`status/action` 表示本告警的处置和生命周期，`source_alarm_status` 表示来源状态，二者不能共用终态映射。
+人工关闭第三方告警时，`status=closed`、`action=close`，源状态保持 `firing`（未恢复），与 KAC 关闭命令冻结的审计状态一致。
+系统、处理策略、自愈、工单主动关闭和等级升级同样不生成来源恢复/关闭事实；只有 `EndType=source` 的真实来源关闭映射为 `close`，恢复映射为 `resolved`。
+普通投影的新建/更新与同步关闭的五字段补丁使用同一源状态规则，关闭原因和时间继续按真实终态输出。
+本次修复只影响后续正常投影，不自动修正或重放历史文档。
 
 主动关闭保存 Linkd 终态后，使用同一个写入器；只对同租户同 Alert ID 的投影串行，互不重叠的关闭批次可以并行。
 关闭状态按 Alert 冻结的 `EndOperation.Source` 区分：`auto_policy` 为 `auto_closed`、`self_heal` 为 `autoexecute_closed`、`work_order` 为 `autoorder_closed`。手动关闭仍为 `closed`，系统关闭仍为 `system_closed`；无主动关闭命令的来源关闭，以及来源等级升级结束旧告警（`EndType=severity_upgrade`），均为 `source_closed`，恢复保持 `restored`。此映射同时用于新建及后续更新；流转日志保留等级升级的具体原因。

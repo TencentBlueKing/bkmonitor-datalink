@@ -17,6 +17,7 @@ BMW 现有配置需提供 MySQL 和 Consul 连接。Active Profiling 使用以�
 ```yaml
 taskConfig:
   activeProfiling:
+    enabled: true
     kafka:
       flushInterval: 8s
       eventQueueSize: 1000
@@ -28,7 +29,7 @@ taskConfig:
       delay: 5m
 ```
 
-`eventQueueSize` 是每个 DataID 消费者的内存队列容量，默认 `1000`；`eventBatchSize` 是批量写入条数阈值，默认 `500`。未配置这两项时使用默认值。
+`enabled` 控制是否启动 Active Profiling 事件消费，默认 `true`；设为 `false` 时，worker 不会注册或运行消费任务，独立 `start_profiling` 命令也会拒绝启动。`eventQueueSize` 是每个 DataID 消费者的内存队列容量，默认 `1000`；`eventBatchSize` 是批量写入条数阈值，默认 `500`。未配置这些项时使用默认值。
 
 DataID 的 Consul key 为：
 

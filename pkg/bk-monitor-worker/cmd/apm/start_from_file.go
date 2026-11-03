@@ -58,6 +58,9 @@ func StartProfilingCmd() *cobra.Command {
 func startProfiling(configFile string) error {
 	config.InitConfig()
 	log.InitLogger()
+	if !config.ActiveProfilingEnabled {
+		return fmt.Errorf("Active Profiling is disabled by taskConfig.activeProfiling.enabled")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()

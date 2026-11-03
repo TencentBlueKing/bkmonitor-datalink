@@ -16,6 +16,7 @@ import (
 
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/profiling"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -29,6 +30,9 @@ const activeProfilingQueue = "profiling"
 
 // EnsureActiveProfilingTask registers the Consul-prefix task when this worker listens to the profiling queue.
 func EnsureActiveProfilingTask(ctx context.Context, queues []string) error {
+	if !config.ActiveProfilingEnabled {
+		return nil
+	}
 	for _, queue := range queues {
 		if queue == activeProfilingQueue {
 			return enqueueActiveProfilingTask(ctx, rdb.GetRDB().Client())
@@ -64,6 +68,9 @@ func newActiveProfilingOperator(ctx context.Context) *activeProfilingOperator {
 }
 
 func (o *activeProfilingOperator) Start(runCtx context.Context, errorReceiveChan chan<- error, payload []byte) {
+	if !config.ActiveProfilingEnabled {
+		return
+	}
 	if _, err := profiling.ParseTaskParams(payload); err != nil {
 		o.reportError(runCtx, errorReceiveChan, fmt.Errorf("parse Active Profiling task payload: %w", err))
 		return

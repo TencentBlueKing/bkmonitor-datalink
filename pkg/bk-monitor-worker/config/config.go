@@ -191,6 +191,8 @@ var (
 	WorkerListenHost string
 	// WorkerListenPort http listen port
 	WorkerListenPort int
+	// ActiveProfilingEnabled controls whether Active Profiling consumes events.
+	ActiveProfilingEnabled bool
 	// ActiveProfilingConsulPathPrefix KV path relative to store.consul.pathPrefix.
 	ActiveProfilingConsulPathPrefix string
 	// ActiveProfilingEventFlushInterval Kafka event batch flush interval.
@@ -378,6 +380,7 @@ func initVariables() {
 	ControllerListenPort = GetValue("service.controller.port", 10212)
 	WorkerListenHost = GetValue("service.worker.listen", "127.0.0.1")
 	WorkerListenPort = GetValue("service.worker.port", 10213)
+	ActiveProfilingEnabled = GetValue("taskConfig.activeProfiling.enabled", true)
 	ActiveProfilingConsulPathPrefix = GetValue(
 		"taskConfig.activeProfiling.consul.pathPrefix", "active_profiling/data_id",
 	)

@@ -340,3 +340,100 @@ func TestRawQueryPlanKeepsReferenceIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestTimeSeriesQueryPlanMergeDBKeepsHistoricalRanges(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		storageIDs []string
+		databases  []string
+	}{
+		{name: "same storage and database in two periods", storageIDs: []string{"16", "16"}},
+		{name: "same storage with different databases", storageIDs: []string{"16", "16"}, databases: []string{"history-database", "current-database"}},
+		{name: "storage revisited in a later period", storageIDs: []string{"16", "40", "16"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, query, table := rawPlanFixture()
+			query.IsMergeDB = true
+			table.StorageType = metadata.BkSqlStorageType
+			table.Measurement = metadata.DorisStorageType
+			table.StorageClusterRecords = rawPlanRecords(table, tc.storageIDs...)
+			for index, database := range tc.databases {
+				table.StorageClusterRecords[index].DB = database
+			}
+			reference, err := query.ToQueryReference(ctx)
+			require.NoError(t, err)
+			require.Equal(t, len(tc.storageIDs), reference.Count())
+			queriesByStart := make(map[int64]*metadata.Query)
+			storageUUIDs := make(map[string]bool)
+			reference.Range("A", func(executable *metadata.Query) {
+				start := executable.RouteStart.Unix()
+				require.NotContains(t, queriesByStart, start)
+				queriesByStart[start] = executable
+				uuid := executable.StorageUUID()
+				require.False(t, storageUUIDs[uuid], "不同时间分段必须保留独立的存储身份")
+				storageUUIDs[uuid] = true
+			})
+			for index, record := range table.StorageClusterRecords {
+				start := time.Unix(rawPlanStart, 0)
+				if index > 0 {
+					start = time.Unix(record.EnableTime, 0)
+				}
+				end := time.Unix(rawPlanStart, 0).Add(7 * 24 * time.Hour)
+				if index+1 < len(table.StorageClusterRecords) {
+					end = time.Unix(table.StorageClusterRecords[index+1].EnableTime, 0)
+				}
+				executable := queriesByStart[start.Unix()]
+				require.NotNil(t, executable)
+				require.True(t, executable.RouteStart.Equal(start))
+				require.True(t, executable.RouteEnd.Equal(end))
+				require.Equal(t, index == len(table.StorageClusterRecords)-1, executable.RouteEndInclusive)
+				require.Equal(t, record.StorageID, executable.StorageID)
+				require.Equal(t, record.DB, executable.DB)
+				require.Equal(t, []string{record.DB}, executable.DBs)
+				require.True(t, executable.IsMergeDB)
+			}
+		})
+	}
+}
+
+func TestTimeSeriesQueryPlanMergeDBMergesOnlyWithinSameRange(t *testing.T) {
+	ctx, query, first := rawPlanFixture()
+	query.IsMergeDB = true
+	first.StorageType = metadata.BkSqlStorageType
+	first.Measurement = metadata.DorisStorageType
+	first.StorageClusterRecords = rawPlanRecords(first, "16", "16")
+	first.StorageClusterRecords[0].DB = "a-history"
+	first.StorageClusterRecords[1].DB = "a-current"
+	second := *first
+	second.TableID = "trace.other_result_table"
+	second.StorageClusterRecords = rawPlanRecords(&second, "16", "16")
+	second.StorageClusterRecords[0].DB = "b-history"
+	second.StorageClusterRecords[1].DB = "b-current"
+	query.TsDBMap["A"] = append(query.TsDBMap["A"], &second)
+
+	// 同一时间分段内的数据库仍需合并，两个时间分段继续独立执行。
+	reference, err := query.ToQueryReference(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, reference.Count())
+	queries := reference["A"][0].QueryList
+	require.Len(t, queries, 2)
+	require.NotEqual(t, queries[0].StorageUUID(), queries[1].StorageUUID())
+	start := time.Unix(rawPlanStart, 0)
+	switchTime := time.Unix(first.StorageClusterRecords[1].EnableTime, 0)
+	end := start.Add(7 * 24 * time.Hour)
+	for _, executable := range queries {
+		var databases []string
+		if executable.RouteStart.Equal(start) {
+			require.True(t, executable.RouteEnd.Equal(switchTime))
+			databases = []string{"a-history", "b-history"}
+		} else {
+			require.True(t, executable.RouteStart.Equal(switchTime))
+			require.True(t, executable.RouteEnd.Equal(end))
+			databases = []string{"a-current", "b-current"}
+		}
+		require.Equal(t, "16", executable.StorageID)
+		require.Equal(t, databases, executable.DBs)
+		require.Contains(t, databases, executable.DB)
+		require.True(t, executable.IsMergeDB)
+	}
+}

@@ -40,11 +40,11 @@ func newRawQueryTraceStats(plan structured.QueryPlan) rawQueryTraceStats {
 
 // record 在请求结束时上报各阶段的查询数量和过滤原因。
 func (s rawQueryTraceStats) record(ctx context.Context, span *trace.Span) {
-	span.Set("raw_route_count", s.routes)
-	span.Set("raw_planned_query_count", s.plannedQueries)
-	span.Set("raw_missing_index_query_count", s.missingIndexQueries)
-	span.Set("raw_pagination_skipped_query_count", s.paginationSkippedQueries)
-	span.Set("raw_ready_query_count", s.readyQueries)
+	span.Set("raw.route_count", s.routes)
+	span.Set("raw.planned_query_count", s.plannedQueries)
+	span.Set("raw.missing_index_query_count", s.missingIndexQueries)
+	span.Set("raw.pagination_skipped_query_count", s.paginationSkippedQueries)
+	span.Set("raw.ready_query_count", s.readyQueries)
 	metric.RawQueryDecisionAdd(ctx, metric.RawQueryDecisionMissingIndex, s.missingIndexQueries)
 	metric.RawQueryDecisionAdd(ctx, metric.RawQueryDecisionPaginationFinished, s.paginationSkippedQueries)
 }
@@ -61,11 +61,11 @@ type rawScrollTraceStats struct {
 
 // record 在切片任务结束后上报结果，失败数包含未达到重试阈值的查询失败。
 func (s *rawScrollTraceStats) record(span *trace.Span) {
-	span.Set("raw_slice_candidate_count", s.candidates)
-	span.Set("raw_slice_completed_skip_count", int(s.completed.Load()))
-	span.Set("raw_slice_attempted_count", int(s.attempted.Load()))
-	span.Set("raw_slice_succeeded_count", int(s.succeeded.Load()))
-	span.Set("raw_slice_failed_count", int(s.failed.Load()))
-	span.Set("raw_slice_preparation_failed_count", int(s.preparationFailed.Load()))
-	span.Set("raw_slice_submission_failed_count", int(s.submissionFailed.Load()))
+	span.Set("raw.slice.candidate_count", s.candidates)
+	span.Set("raw.slice.completed_skip_count", int(s.completed.Load()))
+	span.Set("raw.slice.attempted_count", int(s.attempted.Load()))
+	span.Set("raw.slice.succeeded_count", int(s.succeeded.Load()))
+	span.Set("raw.slice.failed_count", int(s.failed.Load()))
+	span.Set("raw.slice.preparation_failed_count", int(s.preparationFailed.Load()))
+	span.Set("raw.slice.submission_failed_count", int(s.submissionFailed.Load()))
 }

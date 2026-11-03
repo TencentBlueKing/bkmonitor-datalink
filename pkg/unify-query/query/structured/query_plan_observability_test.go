@@ -106,10 +106,10 @@ func TestRawQueryPlanObservabilityExecutionModes(t *testing.T) {
 			require.Equal(t, codes.Unset, span.Status.Code)
 			require.True(t, span.EndTime.After(span.StartTime))
 			require.Equal(t, map[string]int64{
-				"raw_plan_route_count":         3,
-				"raw_plan_query_count":         2,
-				"raw_plan_reused_target_count": 1,
-				"raw_plan_merge_db_count":      0,
+				"raw.plan.route_count":         3,
+				"raw.plan.query_count":         2,
+				"raw.plan.reused_target_count": 1,
+				"raw.plan.merge_db_count":      0,
 			}, rawPlanningCounts(span))
 			for _, child := range exporter.GetSpans() {
 				if child.Name == "query-ts-to-query-metric" {
@@ -142,10 +142,10 @@ func TestRawQueryPlanObservabilityMergeDBAndLogicalQueries(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, QueryPlanStats{ReusedTargets: logicalQueries, MergedQueries: logicalQueries}, plan.Stats)
 			require.Equal(t, map[string]int64{
-				"raw_plan_route_count":         int64(3 * logicalQueries),
-				"raw_plan_query_count":         int64(logicalQueries),
-				"raw_plan_reused_target_count": int64(logicalQueries),
-				"raw_plan_merge_db_count":      int64(logicalQueries),
+				"raw.plan.route_count":         int64(3 * logicalQueries),
+				"raw.plan.query_count":         int64(logicalQueries),
+				"raw.plan.reused_target_count": int64(logicalQueries),
+				"raw.plan.merge_db_count":      int64(logicalQueries),
 			}, rawPlanningCounts(rawPlanningSpan(t, exporter)))
 			after := rawPlanDecisionCounts(t)
 			for _, reason := range []string{metric.RawQueryDecisionHistoryDuplicate, metric.RawQueryDecisionMergeDB} {
@@ -197,10 +197,10 @@ func TestRawQueryPlanObservabilityFailures(t *testing.T) {
 			require.Equal(t, err.Error(), span.Status.Description)
 			require.NotEmpty(t, span.Events)
 			require.Equal(t, map[string]int64{
-				"raw_plan_route_count":         0,
-				"raw_plan_query_count":         0,
-				"raw_plan_reused_target_count": 0,
-				"raw_plan_merge_db_count":      0,
+				"raw.plan.route_count":         0,
+				"raw.plan.query_count":         0,
+				"raw.plan.reused_target_count": 0,
+				"raw.plan.merge_db_count":      0,
 			}, rawPlanningCounts(span))
 			if !tc.invalidTime {
 				failedChildren := 0

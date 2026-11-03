@@ -253,11 +253,11 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	defer func() {
 		stats.record(ctx, span)
 		succeeded := int(successedPaths.Load())
-		span.Set("raw_succeeded_query_count", succeeded)
+		span.Set("raw.succeeded_query_count", succeeded)
 		// 未成功完成的逻辑查询包含实例构建、请求准备或执行失败。
-		span.Set("raw_failed_query_count", stats.readyQueries-succeeded)
+		span.Set("raw.failed_query_count", stats.readyQueries-succeeded)
 	}()
-	span.Set("raw_is_es_batch", queryTs.IsESBatch)
+	span.Set("raw.is_es_batch", queryTs.IsESBatch)
 	queryRef, err = filterRawRoutesForExactTotal(ctx, plan.Queries, queryTs)
 	if err != nil {
 		return total, list, resultTableOptions, routeInfo, err

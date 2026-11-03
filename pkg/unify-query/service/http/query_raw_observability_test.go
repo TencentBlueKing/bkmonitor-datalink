@@ -47,17 +47,17 @@ func TestRawQueryObservabilityFilteredTargets(t *testing.T) {
 					request.IsESBatch = batch
 					request.QueryList[0].ExactTotal = exact
 					counts := map[string]int64{
-						"raw_route_count": 1, "raw_planned_query_count": 1,
-						"raw_missing_index_query_count": 0, "raw_pagination_skipped_query_count": 0,
-						"raw_ready_query_count": 0, "raw_succeeded_query_count": 0, "raw_failed_query_count": 0,
+						"raw.route_count": 1, "raw.planned_query_count": 1,
+						"raw.missing_index_query_count": 0, "raw.pagination_skipped_query_count": 0,
+						"raw.ready_query_count": 0, "raw.succeeded_query_count": 0, "raw.failed_query_count": 0,
 					}
 					if reason == metric.RawQueryDecisionMissingIndex {
 						request.TsDBMap["A"][0].DB = ""
-						counts["raw_missing_index_query_count"] = 1
+						counts["raw.missing_index_query_count"] = 1
 					} else {
 						request.IsSearchAfter = true
 						request.ResultTableOptions = metadata.ResultTableOptions{"finished": {}}
-						counts["raw_pagination_skipped_query_count"] = 1
+						counts["raw.pagination_skipped_query_count"] = 1
 					}
 					before := rawQueryObservationDecision(t, reason)
 					_, list, _, _, err := queryRawWithInstance(ctx, request)
@@ -91,9 +91,9 @@ func TestRawQueryObservabilityUnavailableInstance(t *testing.T) {
 			_, _, _, _, err := queryRawWithInstance(metadata.InitHashID(context.Background()), request)
 			require.Error(t, err)
 			rawQueryObservationAssert(t, exporter, map[string]int64{
-				"raw_route_count": 1, "raw_planned_query_count": 1,
-				"raw_missing_index_query_count": 0, "raw_pagination_skipped_query_count": 0,
-				"raw_ready_query_count": 1, "raw_succeeded_query_count": 0, "raw_failed_query_count": 1,
+				"raw.route_count": 1, "raw.planned_query_count": 1,
+				"raw.missing_index_query_count": 0, "raw.pagination_skipped_query_count": 0,
+				"raw.ready_query_count": 1, "raw.succeeded_query_count": 0, "raw.failed_query_count": 1,
 			}, true)
 		})
 	}

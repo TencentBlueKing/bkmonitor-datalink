@@ -164,10 +164,10 @@ func TestRawStorageTargetsIntegration(t *testing.T) {
 		expected := map[string]map[string]int64{
 			"query-raw-with-instance": executionCounts,
 			"query-raw-plan": {
-				"raw_plan_route_count":         3,
-				"raw_plan_query_count":         2,
-				"raw_plan_reused_target_count": 1,
-				"raw_plan_merge_db_count":      0,
+				"raw.plan.route_count":         3,
+				"raw.plan.query_count":         2,
+				"raw.plan.reused_target_count": 1,
+				"raw.plan.merge_db_count":      0,
 			},
 		}
 		for name, counts := range expected {
@@ -193,13 +193,13 @@ func TestRawStorageTargetsIntegration(t *testing.T) {
 		}
 	}
 	successfulExecutionCounts := map[string]int64{
-		"raw_route_count":                    3,
-		"raw_planned_query_count":            2,
-		"raw_missing_index_query_count":      0,
-		"raw_pagination_skipped_query_count": 0,
-		"raw_ready_query_count":              2,
-		"raw_succeeded_query_count":          2,
-		"raw_failed_query_count":             0,
+		"raw.route_count":                    3,
+		"raw.planned_query_count":            2,
+		"raw.missing_index_query_count":      0,
+		"raw.pagination_skipped_query_count": 0,
+		"raw.ready_query_count":              2,
+		"raw.succeeded_query_count":          2,
+		"raw.failed_query_count":             0,
 	}
 	execute := func(t *testing.T, request *structured.QueryTs) ([]map[string]any, metadata.ResultTableOptions) {
 		t.Helper()
@@ -268,13 +268,13 @@ func TestRawStorageTargetsIntegration(t *testing.T) {
 				require.EqualValues(t, 1, after[0]-before[0])
 				require.EqualValues(t, 0, after[1]-before[1])
 				assertSpans(t, map[string]int64{
-					"raw_route_count":                    3,
-					"raw_planned_query_count":            2,
-					"raw_missing_index_query_count":      0,
-					"raw_pagination_skipped_query_count": 1,
-					"raw_ready_query_count":              1,
-					"raw_succeeded_query_count":          1,
-					"raw_failed_query_count":             0,
+					"raw.route_count":                    3,
+					"raw.planned_query_count":            2,
+					"raw.missing_index_query_count":      0,
+					"raw.pagination_skipped_query_count": 1,
+					"raw.ready_query_count":              1,
+					"raw.succeeded_query_count":          1,
+					"raw.failed_query_count":             0,
 				}, true)
 			})
 			t.Run("scroll", func(t *testing.T) {

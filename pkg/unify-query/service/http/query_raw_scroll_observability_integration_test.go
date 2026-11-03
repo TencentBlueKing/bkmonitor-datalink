@@ -148,10 +148,10 @@ func TestRawScrollObservabilityIntegration(t *testing.T) {
 		}
 	}
 	counts := map[string]int64{
-		"raw_route_count": 1, "raw_planned_query_count": 1, "raw_missing_index_query_count": 0, "raw_ready_query_count": 1,
-		"raw_slice_candidate_count": 2, "raw_slice_completed_skip_count": 1,
-		"raw_slice_attempted_count": 1, "raw_slice_succeeded_count": 1, "raw_slice_failed_count": 0,
-		"raw_slice_preparation_failed_count": 0, "raw_slice_submission_failed_count": 0,
+		"raw.route_count": 1, "raw.planned_query_count": 1, "raw.missing_index_query_count": 0, "raw.ready_query_count": 1,
+		"raw.slice.candidate_count": 2, "raw.slice.completed_skip_count": 1,
+		"raw.slice.attempted_count": 1, "raw.slice.succeeded_count": 1, "raw.slice.failed_count": 0,
+		"raw.slice.preparation_failed_count": 0, "raw.slice.submission_failed_count": 0,
 	}
 	session := newSession("-success")
 	list, done := execute(session)
@@ -166,8 +166,8 @@ func TestRawScrollObservabilityIntegration(t *testing.T) {
 	list, done = execute(session)
 	require.Empty(t, list)
 	require.True(t, done)
-	counts["raw_slice_completed_skip_count"] = 2
-	counts["raw_slice_attempted_count"], counts["raw_slice_succeeded_count"] = 0, 0
+	counts["raw.slice.completed_skip_count"] = 2
+	counts["raw.slice.attempted_count"], counts["raw.slice.succeeded_count"] = 0, 0
 	assertCounts(counts)
 
 	// 真实关闭索引触发查询错误，未达到重试阈值时仍保留原先的成功返回语义。
@@ -177,8 +177,8 @@ func TestRawScrollObservabilityIntegration(t *testing.T) {
 	list, done = execute(failedSession)
 	require.Empty(t, list)
 	require.False(t, done)
-	counts["raw_slice_completed_skip_count"] = 1
-	counts["raw_slice_attempted_count"], counts["raw_slice_failed_count"] = 1, 1
+	counts["raw.slice.completed_skip_count"] = 1
+	counts["raw.slice.attempted_count"], counts["raw.slice.failed_count"] = 1, 1
 	assertCounts(counts)
 	retrying := failedSession.Slice("trace.scroll|" + prefix + "|0")
 	require.Equal(t, 1, retrying.FailedNum)

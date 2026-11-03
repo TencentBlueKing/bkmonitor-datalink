@@ -51,10 +51,10 @@ func (q *QueryTs) ToRawQueryPlan(ctx context.Context) (plan QueryPlan, err error
 	defer span.End(&err)
 
 	plan, err = q.toQueryPlan(ctx, rawQuery)
-	span.Set("raw_plan_route_count", plan.Routes.Count())
-	span.Set("raw_plan_query_count", plan.Queries.Count())
-	span.Set("raw_plan_reused_target_count", plan.Stats.ReusedTargets)
-	span.Set("raw_plan_merge_db_count", plan.Stats.MergedQueries)
+	span.Set("raw.plan.route_count", plan.Routes.Count())
+	span.Set("raw.plan.query_count", plan.Queries.Count())
+	span.Set("raw.plan.reused_target_count", plan.Stats.ReusedTargets)
+	span.Set("raw.plan.merge_db_count", plan.Stats.MergedQueries)
 	if err != nil {
 		return plan, err
 	}

@@ -35,13 +35,17 @@ func newEditCloseCollector() *editCloseCollector {
 				"condition_rule_held counts no-data candidates whose condition digest changed while the condition rule is "+
 				"held (it closes nothing until the publisher states what a catalog metric's snapshot conditions are), "+
 				"snapshot_unreadable those whose digest was taken beside a metric snapshot whose conditions could not be "+
-				"read. close_sent and send_failed "+
-				"count closes the producer accepted and refused, business_unknown closes not sent for want of a business, "+
+				"read. close_sent counts closes sent and acknowledged by the broker - the broker's acknowledgement, not "+
+				"the link's, so it includes closes the link finds no active alert for (orphaned there) - and send_failed "+
+				"closes the producer refused, business_unknown closes not sent for want of a business, "+
 				"record_unreadable alerts whose record could not be read (read again later), read_deferred alerts not "+
 				"read because the round's reads were spent, producer_foreign and producer_unknown alerts of another "+
 				"source or none. Per strategy: strategy_unpublished, plan_retained, plans_disagree, plan_unrevisioned, "+
 				"evidence_unavailable, evidence_truncated. Per round: not_leader, publication_unavailable, "+
-				"roster_unavailable. memory_full counts drops of the decision memory. Every cell exists from the start "+
+				"roster_unavailable. memory_full counts drops of the decision memory. reopened_since_read and "+
+				"recovery_unknown count closes held back before the send: a recovery of the fingerprint was sent after "+
+				"the listing began and an ABNORMAL of it after that, or the record of reopens could not be read. "+
+				"Every cell exists from the start "+
 				"so a zero is a reading and not an absence.", []string{"outcome"}, nil),
 	}
 }

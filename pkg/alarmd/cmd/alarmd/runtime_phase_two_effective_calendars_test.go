@@ -13,7 +13,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -84,7 +83,7 @@ func twoGroups(f *maintenanceTestFixture, a, b []controlplane.MaintenancePlan) (
 // counted, and logged as degraded with the strategy and the calendar.
 func TestEveryCalendarReadingDeletedAtOnceClosesNothing(t *testing.T) {
 	f := newMaintenanceTestFixture(t, calendarSnapshot(deletedCalendar(7)), maintenanceTime(8, 0),
-		[]openalerts.Alert{maintenanceAlert("native", "critical")}, alertDaysOn(7))
+		maintenanceMatches, alertDaysOn(7))
 	plan := f.m.catalog.(*maintenanceTestCatalog).plans[0]
 	fact, err := plan.Compiled.ResolveEffectiveTime(context.Background(), maintenanceTime(8, 0).Unix())
 	if err != nil || fact.Status() != strategy.EffectiveTimeInactive {
@@ -97,8 +96,8 @@ func TestEveryCalendarReadingDeletedAtOnceClosesNothing(t *testing.T) {
 	f.advance(2 * calendarDeletionSettle)
 	f.m.step(context.Background())
 
-	if f.runner.lastErr != nil || len(f.writer.batches) != 0 {
-		t.Fatalf("err=%v batches=%v, want no close while every calendar reads deleted", f.runner.lastErr, f.writer.batches)
+	if f.runner.lastErr != nil || len(f.closed()) != 0 {
+		t.Fatalf("err=%v closes=%v, want no close while every calendar reads deleted", f.runner.lastErr, f.closed())
 	}
 	if held := f.m.Stats()[closeOutcomeDeletionUnsettled]; held != 2 {
 		t.Fatalf("held closes counted %d, want one a step", held)
@@ -123,13 +122,13 @@ func TestEveryCalendarReadingDeletedAtOnceClosesNothing(t *testing.T) {
 // after it deleted, in one publication.
 func TestACalendarDeletedAmongPresentOnesClosesOnceTheDeletionSettles(t *testing.T) {
 	f := newMaintenanceTestFixture(t, calendarSnapshot(deletedCalendar(7), presentCalendar(8, calendarItemElsewhere)), maintenanceTime(8, 0),
-		[]openalerts.Alert{maintenanceAlert("native", "critical")}, alertDaysOnBesideRestDays(7, 8))
+		maintenanceMatches, alertDaysOnBesideRestDays(7, 8))
 
 	f.m.step(context.Background())
 	f.advance(calendarDeletionSettle - time.Second)
 	f.m.step(context.Background())
-	if len(f.writer.batches) != 0 {
-		t.Fatalf("closed %v on a deletion read for less than the settle time", f.writer.batches)
+	if len(f.closed()) != 0 {
+		t.Fatalf("closed %v on a deletion read for less than the settle time", f.closed())
 	}
 	if held := f.m.Stats()[closeOutcomeDeletionUnsettled]; held != 2 {
 		t.Fatalf("held closes counted %d, want 2", held)
@@ -137,8 +136,8 @@ func TestACalendarDeletedAmongPresentOnesClosesOnceTheDeletionSettles(t *testing
 
 	f.advance(time.Second)
 	f.m.step(context.Background())
-	if f.runner.lastErr != nil || len(f.writer.batches) != 1 {
-		t.Fatalf("err=%v batches=%v, want the inactive strategy closed once the deletion settled", f.runner.lastErr, f.writer.batches)
+	if f.runner.lastErr != nil || len(f.closed()) != 1 {
+		t.Fatalf("err=%v closes=%v, want the inactive strategy closed once the deletion settled", f.runner.lastErr, f.closed())
 	}
 }
 
@@ -163,7 +162,7 @@ func TestACalendarDeletedAgainStartsItsSettleTimeOver(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newMaintenanceTestFixture(t, calendarSnapshot(deletedCalendar(7), restDays), at,
-				[]openalerts.Alert{maintenanceAlert("native", "critical")}, alertDaysOnBesideRestDays(7, 8))
+				maintenanceMatches, alertDaysOnBesideRestDays(7, 8))
 			catalog := f.m.catalog.(*maintenanceTestCatalog)
 			lost := catalog.plans
 			f.m.step(context.Background())
@@ -177,13 +176,13 @@ func TestACalendarDeletedAgainStartsItsSettleTimeOver(t *testing.T) {
 			f.runner.revision = 3
 			f.advance(calendarDeletionSettle)
 			f.m.step(context.Background())
-			if len(f.writer.batches) != 0 {
-				t.Fatalf("closed %v on the settle time of the first deletion", f.writer.batches)
+			if len(f.closed()) != 0 {
+				t.Fatalf("closed %v on the settle time of the first deletion", f.closed())
 			}
 			f.advance(calendarDeletionSettle)
 			f.m.step(context.Background())
-			if len(f.writer.batches) != 1 {
-				t.Fatalf("batches=%v, want the strategy closed once the second deletion settled", f.writer.batches)
+			if len(f.closed()) != 1 {
+				t.Fatalf("closes=%v, want the strategy closed once the second deletion settled", f.closed())
 			}
 		})
 	}
@@ -196,7 +195,7 @@ func TestACalendarReadDeletedByOnePlanAndPresentByAnotherNeverCloses(t *testing.
 	at := maintenanceTime(8, 0)
 	restDays := presentCalendar(8, calendarItemElsewhere)
 	f := newMaintenanceTestFixture(t, calendarSnapshot(deletedCalendar(7), restDays), at,
-		[]openalerts.Alert{maintenanceAlert("native", "critical")}, alertDaysOnBesideRestDays(7, 8))
+		maintenanceMatches, alertDaysOnBesideRestDays(7, 8))
 	catalog := f.m.catalog.(*maintenanceTestCatalog)
 	present := compiledMaintenancePlans(t, calendarSnapshot(presentCalendar(7, calendarItemCovering(at)), restDays), at, alertDaysOnBesideRestDays(7, 8))
 	// The Plan that reads it present is read first, so the later one's
@@ -206,8 +205,8 @@ func TestACalendarReadDeletedByOnePlanAndPresentByAnotherNeverCloses(t *testing.
 	f.m.step(context.Background())
 	f.advance(2 * calendarDeletionSettle)
 	f.m.step(context.Background())
-	if len(f.writer.batches) != 0 {
-		t.Fatalf("closed %v on a calendar another Plan still reads present", f.writer.batches)
+	if len(f.closed()) != 0 {
+		t.Fatalf("closed %v on a calendar another Plan still reads present", f.closed())
 	}
 	if held := f.m.Stats()[closeOutcomeDeletionUnsettled]; held != 2 {
 		t.Fatalf("held closes counted %d, want 2", held)
@@ -221,15 +220,15 @@ func TestACalendarReadDeletedByOnePlanAndPresentByAnotherNeverCloses(t *testing.
 // last read deleted.
 func TestTheReturnOfEveryCalendarClosesNothingUntilItSettles(t *testing.T) {
 	at := maintenanceTime(8, 0)
-	f := newMaintenanceTestFixture(t, calendarSnapshot(deletedCalendar(7)), at, []openalerts.Alert{maintenanceAlert("native", "critical")}, alertDaysOn(7))
+	f := newMaintenanceTestFixture(t, calendarSnapshot(deletedCalendar(7)), at, maintenanceMatches, alertDaysOn(7))
 	lost := f.m.catalog.(*maintenanceTestCatalog).plans
 	catalogs, _, second := twoGroups(f, lost, compiledMaintenancePlans(t, calendarSnapshot(deletedCalendar(8)), at, alertDaysOn(8)))
 	f.m.step(context.Background())
 	f.advance(calendarDeletionSettle + time.Minute)
 	f.m.step(context.Background())
 	lastLoss := f.now()
-	if len(f.writer.batches) != 0 {
-		t.Fatalf("setup: closed %v while every calendar reads deleted", f.writer.batches)
+	if len(f.closed()) != 0 {
+		t.Fatalf("setup: closed %v while every calendar reads deleted", f.closed())
 	}
 
 	// The return: qg-b's Plans read calendar 8 present and active, qg-a's
@@ -243,14 +242,14 @@ func TestTheReturnOfEveryCalendarClosesNothingUntilItSettles(t *testing.T) {
 	if f.m.groups["qg-b"].timelineRevision != 2 {
 		t.Fatal("setup: qg-b was not read again")
 	}
-	if len(f.writer.batches) != 0 {
-		t.Fatalf("closed %v within the settle time of every calendar reading deleted", f.writer.batches)
+	if len(f.closed()) != 0 {
+		t.Fatalf("closed %v within the settle time of every calendar reading deleted", f.closed())
 	}
 
 	f.advance(time.Second)
 	f.m.step(context.Background())
-	if len(f.writer.batches) != 1 {
-		t.Fatalf("batches=%v, want calendar 7's strategy closed once the return settled", f.writer.batches)
+	if len(f.closed()) != 1 {
+		t.Fatalf("closes=%v, want calendar 7's strategy closed once the return settled", f.closed())
 	}
 }
 
@@ -260,14 +259,14 @@ func TestTheReturnOfEveryCalendarClosesNothingUntilItSettles(t *testing.T) {
 // two Query Groups; only the one that names no calendar may close.
 func TestAStrategyNamingNoCalendarClosesWhileEveryCalendarReadsDeleted(t *testing.T) {
 	at := maintenanceTime(8, 0)
-	f := newMaintenanceTestFixture(t, calendarSnapshot(deletedCalendar(7)), at, []openalerts.Alert{maintenanceAlert("native", "critical")}, alertDaysOn(7))
+	f := newMaintenanceTestFixture(t, calendarSnapshot(deletedCalendar(7)), at, maintenanceMatches, alertDaysOn(7))
 	calendarOnly := f.m.catalog.(*maintenanceTestCatalog).plans
 	twoGroups(f, calendarOnly, compiledMaintenancePlans(t, maintenanceReadySnapshot, at))
 
 	f.m.step(context.Background())
 
-	if len(f.writer.batches) != 1 {
-		t.Fatalf("batches=%v, want the strategy on time ranges alone closed", f.writer.batches)
+	if len(f.closed()) != 1 {
+		t.Fatalf("closes=%v, want the strategy on time ranges alone closed", f.closed())
 	}
 	if held := f.m.Stats()[closeOutcomeDeletionUnsettled]; held != 1 {
 		t.Fatalf("held closes counted %d, want the calendar strategy's one", held)
@@ -289,14 +288,14 @@ func (catalogs maintenanceCatalogByGroup) CurrentPlans(ctx context.Context, qg e
 // after the settle time.
 func TestTheGroupsReadAfterACalendarLossAreNotClosedOnAnotherGroupsOldRead(t *testing.T) {
 	at := maintenanceTime(8, 0)
-	f := newMaintenanceTestFixture(t, calendarSnapshot(deletedCalendar(7)), at, []openalerts.Alert{maintenanceAlert("native", "critical")}, alertDaysOn(7))
+	f := newMaintenanceTestFixture(t, calendarSnapshot(deletedCalendar(7)), at, maintenanceMatches, alertDaysOn(7))
 	afterLoss := f.m.catalog.(*maintenanceTestCatalog).plans
 	catalogs, first, second := twoGroups(f,
 		compiledMaintenancePlans(t, calendarSnapshot(presentCalendar(7, calendarItemCovering(at))), at, alertDaysOn(7)),
 		compiledMaintenancePlans(t, calendarSnapshot(presentCalendar(8, calendarItemCovering(at))), at, alertDaysOn(8)))
 	f.m.step(context.Background())
-	if len(f.writer.batches) != 0 {
-		t.Fatalf("setup: closed %v while the calendars cover the moment", f.writer.batches)
+	if len(f.closed()) != 0 {
+		t.Fatalf("setup: closed %v while the calendars cover the moment", f.closed())
 	}
 
 	// The loss: both groups' Plans change; qg-a is read again, qg-b cannot be.
@@ -309,8 +308,8 @@ func TestTheGroupsReadAfterACalendarLossAreNotClosedOnAnotherGroupsOldRead(t *te
 	if f.m.groups["qg-a"].timelineRevision != 2 || f.m.groups["qg-b"].timelineRevision != 1 {
 		t.Fatal("setup: want qg-a read again and qg-b not")
 	}
-	if len(f.writer.batches) != 0 {
-		t.Fatalf("closed %v on qg-b's read from before the loss", f.writer.batches)
+	if len(f.closed()) != 0 {
+		t.Fatalf("closed %v on qg-b's read from before the loss", f.closed())
 	}
 }
 

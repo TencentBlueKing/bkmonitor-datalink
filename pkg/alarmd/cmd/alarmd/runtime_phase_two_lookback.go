@@ -197,9 +197,13 @@ func buildLookback(
 	logger *observability.Logger,
 	now func() time.Time,
 	memory func(bytes uint64) bool,
+	rounds func(*lookback.Options),
 	holds ...*productionReadHolds,
 ) (*lookback.Engine, lookbackStanding, error) {
 	options := lookbackOptions(recheck, flights, ownership, logger, now, memory)
+	if rounds != nil {
+		rounds(&options)
+	}
 	if len(holds) > 0 && holds[0] != nil {
 		holds[0].bindLookback(&options)
 	}
@@ -212,6 +216,12 @@ func buildLookback(
 		holds[0].queryDuration.Store(&measure)
 	}
 	return engine, lookbackStanding{Running: true}, nil
+}
+
+// lookbackRounds gives the lookback the probation and edge-probe span the
+// external dependencies override, none in production.
+func (external phaseTwoProductionExternalDependencies) lookbackRounds(options *lookback.Options) {
+	options.ProbationRounds, options.EdgeProbeSpan = external.ProbationRounds, external.EdgeProbeSpan
 }
 
 // lookbackOptions wire the lookback to this process: its query client, its

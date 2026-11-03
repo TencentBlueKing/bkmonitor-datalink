@@ -9,7 +9,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
@@ -54,7 +53,7 @@ func TestMaintenanceReadsAQueryGroupsPlansOnlyWhenItsLeaseMoves(t *testing.T) {
 // refresh, no close. This is the deployment-wide case wherever no strategy
 // has an uptime, and it has to be free.
 func TestAQueryGroupWithoutAScheduleCostsNothingAfterItsRead(t *testing.T) {
-	f := newMaintenanceTestFixture(t, "", maintenanceTime(8, 0), []openalerts.Alert{maintenanceAlert("native", "critical")},
+	f := newMaintenanceTestFixture(t, "", maintenanceTime(8, 0), maintenanceMatches,
 		func(plan *contract.EvaluationPlanV2) {
 			plan.StrategyIR.Levels[0].TriggerPlan.Config = json.RawMessage(`{"window_size":1,"required_anomalies":1,"step_seconds":60}`)
 		})
@@ -64,14 +63,9 @@ func TestAQueryGroupWithoutAScheduleCostsNothingAfterItsRead(t *testing.T) {
 		f.m.step(context.Background())
 		f.advance(time.Second)
 	}
-	if f.runner.entered != 1 || refresher.calls != 0 || len(f.writer.batches) != 0 {
+	if f.runner.entered != 1 || refresher.calls != 0 || len(f.closed()) != 0 {
 		t.Fatalf("a Query Group without a schedule entered the owner %d times, refreshed %d times, closed %d batches; want 1, 0, 0",
-			f.runner.entered, refresher.calls, len(f.writer.batches))
-	}
-	// And its strategy is still tracked for the open alert index, which every
-	// Plan needs whatever its schedule.
-	if f.m.cache.Stats().Tracked != 1 {
-		t.Fatalf("tracked %d strategies, want the one", f.m.cache.Stats().Tracked)
+			f.runner.entered, refresher.calls, len(f.closed()))
 	}
 }
 
@@ -108,36 +102,36 @@ func TestEveryLegacyPlanOfAQueryGroupIsRefreshedEachRound(t *testing.T) {
 
 // Every way a close does not happen has a name and a count, and every
 // outcome has a cell whether or not it happened: a Query Group whose flight
-// is always busy, one whose owner check refuses before every send, one whose
-// producer never acknowledges, and one whose alerts all lack a severity were
-// the same silence as a Query Group with nothing to close.
+// is always busy, one whose owner check refuses before every send, one the
+// link does not settle, and one the link has nothing open for were the same
+// silence as a Query Group with nothing to close.
 func TestEveryWayACloseDoesNotHappenIsNamedAndCounted(t *testing.T) {
-	t.Run("acked", func(t *testing.T) {
-		f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), []openalerts.Alert{maintenanceAlert("native", "critical")})
+	t.Run("done", func(t *testing.T) {
+		f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), maintenanceMatches)
 		f.m.catalog.(*maintenanceTestCatalog).uncompilable = 3
 		f.m.step(context.Background())
 		stats := f.m.Stats()
 		if len(stats) != len(observability.EffectiveCloseOutcomes) {
 			t.Fatalf("stats carry %d cells, want every one of the %d outcomes", len(stats), len(observability.EffectiveCloseOutcomes))
 		}
-		if stats["close_acked"] != 1 || stats["maintenance_plan_uncompilable"] != 3 {
-			t.Fatalf("stats=%v, want one close acked and three uncompilable Plans", stats)
+		if stats["close_done"] != 1 || stats["maintenance_plan_uncompilable"] != 3 {
+			t.Fatalf("stats=%v, want one close done and three uncompilable Plans", stats)
 		}
 	})
 	t.Run("busy keeps the Plans", func(t *testing.T) {
-		f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), []openalerts.Alert{maintenanceAlert("native", "critical")})
+		f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), maintenanceMatches)
 		f.runner.check = func(context.Context) error { return errMaintenanceBusy }
 		f.m.step(context.Background())
 		f.m.step(context.Background())
-		if stats := f.m.Stats(); stats["maintenance_busy"] != 2 || len(f.writer.batches) != 0 {
-			t.Fatalf("stats=%v batches=%d, want two busy outcomes and no batch", stats, len(f.writer.batches))
+		if stats := f.m.Stats(); stats["maintenance_busy"] != 2 || len(f.closed()) != 0 {
+			t.Fatalf("stats=%v closes=%d, want two busy outcomes and no batch", stats, len(f.closed()))
 		}
 		if reads := f.m.catalog.(*maintenanceTestCatalog).reads; reads != 1 {
 			t.Fatalf("a busy flight made the loop read the Plans again: %d reads", reads)
 		}
 	})
 	t.Run("precheck refused reads the Plans again", func(t *testing.T) {
-		f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), []openalerts.Alert{maintenanceAlert("native", "critical")})
+		f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), maintenanceMatches)
 		refused := errors.New("owner lost")
 		f.runner.check = func(context.Context) error { return refused }
 		f.m.step(context.Background())
@@ -149,21 +143,19 @@ func TestEveryWayACloseDoesNotHappenIsNamedAndCounted(t *testing.T) {
 			t.Fatalf("after the owner check refused, the Plans were not read again: %d reads", reads)
 		}
 	})
-	t.Run("send failed", func(t *testing.T) {
-		f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), []openalerts.Alert{maintenanceAlert("native", "critical")})
-		f.writer.err = errors.New("producer unavailable")
+	t.Run("not settled", func(t *testing.T) {
+		f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), maintenanceMatches)
+		f.stub.busy = true
 		f.m.step(context.Background())
-		if stats := f.m.Stats(); stats["close_send_failed"] != 1 || stats["close_acked"] != 0 {
+		if stats := f.m.Stats(); stats["close_not_settled"] != 1 || stats["close_done"] != 0 {
 			t.Fatalf("stats=%v", stats)
 		}
 	})
-	t.Run("an alert whose level the link does not report is still closed", func(t *testing.T) {
-		alerts := []openalerts.Alert{maintenanceAlert("native", ""), maintenanceAlert("native", "")}
-		alerts[1].AlertID, alerts[1].Fingerprint = "second", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-		f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), alerts)
+	t.Run("nothing matched", func(t *testing.T) {
+		f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), nil)
 		f.m.step(context.Background())
-		if stats := f.m.Stats(); stats["close_acked"] != 2 || len(f.writer.batches) != 1 || len(f.writer.batches[0]) != 2 {
-			t.Fatalf("stats=%v batches=%v, want both alerts closed at every level", stats, f.writer.batches)
+		if stats := f.m.Stats(); stats["close_nothing_matched"] != 1 || stats["close_done"] != 0 || len(f.closed()) != 0 {
+			t.Fatalf("stats=%v closes=%v", stats, f.closed())
 		}
 	})
 }

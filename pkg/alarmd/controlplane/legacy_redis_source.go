@@ -187,6 +187,18 @@ var ErrStrategyDocumentPresenceUnsupported = errors.New("alarmd controlplane: st
 
 // StrategyDocumentPresence is a source that can say whether a strategy's
 // document is stored, whatever its active set says.
+// PublicationStatementKey is the key a source reads its writer's
+// publication statement from, for a line that names it.
+func (source *LegacyRedisStrategySource) PublicationStatementKey() string {
+	return source.publicationSemanticsKey
+}
+
+// PublicationStatementSource is a source that names where its writer's
+// statement is read from.
+type PublicationStatementSource interface {
+	PublicationStatementKey() string
+}
+
 type StrategyDocumentPresence interface {
 	StrategyDocumentsPresent(context.Context, []string) ([]bool, error)
 }

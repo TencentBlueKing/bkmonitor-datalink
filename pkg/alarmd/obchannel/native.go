@@ -82,9 +82,6 @@ func NativeOperationsWith(handler http.Handler, options NativeOptions) []Operati
 						}
 					}
 				}
-				if id == "fleet.get" {
-					absentNext(&out, result)
-				}
 				if id == "strategy.board" {
 					if code, ok := result["error"].(string); ok && code != "" {
 						reason, _ := result["reason"].(string)
@@ -270,21 +267,6 @@ func NativeOperationsWith(handler http.Handler, options NativeOptions) []Operati
 		}
 	}
 	return ops
-}
-
-// absentNext points from the deployment's health to the absent close's
-// candidate page wherever the alert link's Console is configured: the page
-// is where the absent_strategy_* counts are named strategy by strategy.
-func absentNext(out *Outcome, result map[string]any) {
-	console, ok := result["linkd_console"].(map[string]any)
-	if !ok {
-		return
-	}
-	if state, _ := console["state"].(string); state == "" || state == fleet.LinkdConsoleNotConfigured {
-		return
-	}
-	out.Next = append(out.Next, Call{Operation: "absent.list", Params: Params{},
-		Reason: "逐条读缺失关闭的候选策略：哪些策略、告警是谁的、身份从哪来、源里还有没有它。"})
 }
 
 func enumField[T ~string](description string, values []T) Field {

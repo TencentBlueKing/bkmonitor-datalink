@@ -139,10 +139,19 @@ type wireSubject struct {
 
 // wireLabels are the three the consumer's enrichment requires as positive
 // integers; a string or a zero fails its processors with invalid_field.
+//
+// The last is on a detection event only, never on a close: the digest of
+// the event's extra_data.strategy_facts (contract.StrategyFactsV2.Digest),
+// a string. The link keeps an alert's labels as its opening event wrote
+// them and indexes labels.* for its search, never extra_data, so the
+// filter close selects one (strategy, version, facts) bucket by it
+// (package filterclose). It is absent where the event carries no facts;
+// such alerts are decided one by one from their own extra_data.
 type wireLabels struct {
-	StrategyID      int64 `json:"strategy_id"`
-	StrategyVersion int64 `json:"strategy_version"`
-	BusinessID      int64 `json:"bk_biz_id"`
+	StrategyID          int64  `json:"strategy_id"`
+	StrategyVersion     int64  `json:"strategy_version"`
+	BusinessID          int64  `json:"bk_biz_id"`
+	StrategyFactsDigest string `json:"strategy_facts_digest,omitempty"`
 }
 
 type wireWindow struct {
@@ -314,6 +323,7 @@ func (converter *Converter) Convert(event *contract.TriggerEventV1) (Event, erro
 	if event.StrategyFacts != nil {
 		facts := event.StrategyFacts.ForEvent(noData)
 		message.ExtraData.StrategyFacts = &facts
+		message.Labels.StrategyFactsDigest = facts.Digest()
 	}
 	if noData {
 		// No value, on purpose. The synthetic point a no-data round produces

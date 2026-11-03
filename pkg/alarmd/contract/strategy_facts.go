@@ -131,6 +131,17 @@ func (facts StrategyFactsV2) ForEvent(noData bool) StrategyFactsV2 {
 	return facts
 }
 
+// Digest is the facts as one word: the hex MD5 of their JSON encoding, the
+// bytes an event's extra_data.strategy_facts carries. An event writes it as
+// labels.strategy_facts_digest beside the facts, so alerts can be selected
+// by it at the link (its search indexes labels.*, never extra_data); two
+// digests are equal exactly when the facts are. Taken of an event's facts
+// (ForEvent), never of a Plan's, which carry both groupings.
+func (facts StrategyFactsV2) Digest() string {
+	encoded, _ := json.Marshal(facts)
+	return md5Hex(string(encoded))
+}
+
 // StrategyGrouping is what a Plan's series are grouped by: its output
 // identity fields (Fields, or every dimension when Dynamic), and its no-data
 // configuration's agg_dimension when it detects no-data.

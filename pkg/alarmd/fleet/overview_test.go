@@ -65,7 +65,7 @@ func TestTheOverviewVerdictIsTheHealthVerdictInOneLine(t *testing.T) {
 	}
 	degraded := overviewHealth()
 	degraded.Health = HealthDegraded
-	degraded.Degradations = []Degradation{{Kind: DegradationOpenAlertSetStale, Replica: "replica-a"}}
+	degraded.Degradations = []Degradation{{Kind: DegradationActiveCopyUnsupported, Replica: "replica-a"}}
 	if got := overviewOf(degraded, running, true, at).Verdict; got.State != OverviewAttention || got.Stage != "output" {
 		t.Fatalf("degraded verdict = %+v, want attention at the output stage", got)
 	}
@@ -660,32 +660,6 @@ func TestADependencyCarriesTheNumbersThatMeasureItAlone(t *testing.T) {
 	// Before two computations there is nothing to put on any dependency.
 	if first := flowStage(one, "pull").Dependencies[0]; first.LatencyP95MS != nil || first.FailuresPerMinute != nil {
 		t.Fatalf("first computation's query backend = %+v, want no numbers", first)
-	}
-}
-
-// The Console's state reads its own word: an operation whose latest call
-// failed is attention even when another answered later, and the row says
-// which event source the link keys this deployment by.
-func TestTheConsoleDependencyReadsTheConsolesOwnWord(t *testing.T) {
-	recent, older := 1.0, 100.0
-	health := overviewHealth()
-	health.Dependencies = append(health.Dependencies, Endpoint{Role: EndpointLinkdConsole, Address: "http://198.51.100.8/api", Configured: true,
-		LastSuccessAgeSeconds: &recent, LastFailureAgeSeconds: &older, LastFailure: "roster: status 502",
-		Console: &LinkdConsoleFacts{State: LinkdConsoleUnreadable, Reason: "roster", EventSource: &LinkdEventSourceFacts{EventSourceID: "source-7"}}})
-	console := flowStage(overviewOf(health, nil, false, time.Now()), "output").Dependencies[1]
-	if console.State != OverviewAttention || console.ConsoleState != LinkdConsoleUnreadable || console.EventSourceID != "source-7" ||
-		console.LastFailure != "roster: status 502" || console.Address != "http://198.51.100.8/api" {
-		t.Fatalf("console = %+v, want attention from its own word, with its event source and latest failure", console)
-	}
-	for _, word := range []string{LinkdConsoleLinkUnhealthy} {
-		health.Dependencies[3].Console.State = word
-		if got := flowStage(overviewOf(health, nil, false, time.Now()), "output").Dependencies[1].State; got != OverviewAttention {
-			t.Fatalf("console %s reads %s, want attention", word, got)
-		}
-	}
-	health.Dependencies[3].Console.State = LinkdConsoleReachable
-	if got := flowStage(overviewOf(health, nil, false, time.Now()), "output").Dependencies[1].State; got != OverviewOK {
-		t.Fatalf("a reachable Console whose last failure is older than its last answer reads %s, want ok", got)
 	}
 }
 

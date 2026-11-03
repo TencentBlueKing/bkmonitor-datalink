@@ -19,7 +19,9 @@
 // revision the strategy's current Plans raise alerts under. Nothing about
 // the edit itself is observed or remembered: a process that starts after
 // the edit finds the same candidates as one that watched it happen, and an
-// alert at the current revision is never one.
+// alert at the current revision is never one. An alert whose revision is of
+// another revision scheme than the Plans' (RevisionsComparable) has no
+// order against them: it is judged as a candidate, from its own record.
 //
 // Each candidate is judged from its own record against the current Plans'
 // facts, and closed only on a fact both sides state, in the platform's
@@ -75,6 +77,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
@@ -201,7 +204,9 @@ func (plan Plan) Key() string {
 	return b.String()
 }
 
-// Alert is what an alert's record states (openalerts.AlertRecord).
+// Alert is what an alert's record states, as the link's search returns it
+// (filterclose reads it from the alert's labels, dimensions and
+// extra_data).
 type Alert struct {
 	Revision         int64
 	DimensionKeys    []string
@@ -235,12 +240,44 @@ var addedDimensions = map[string]struct{}{
 // writes them (linkdoutput.SeverityFor): its default severities, by name.
 var builtInLevels = map[string]uint32{"critical": 1, "warning": 2, "info": 3}
 
+// OutcomeRevisionIncomparable is an alert, or a bucket of them, whose
+// revision is of the other scheme than the current Plans' (see
+// RevisionsComparable): which of the two is newer is not known, so the
+// alert is not a candidate by its revision and is judged from its own
+// record, alert by alert, as an older one would be. Counted beside that
+// decision. A bucket of such alerts is not decided whole (DecideGroup).
+const OutcomeRevisionIncomparable = "revision_incomparable"
+
+// microsecondRevisionFloor is the Unix microsecond time of
+// 2000-01-01T00:00:00Z.
+//
+// A strategy's revision came from two schemes. The publisher's first one
+// published, as strategy_revision, the update time of the strategy's
+// declarative source in Unix microseconds (every value of it, a
+// 21st-century time, is at or above this floor). Its current one counts a
+// strategy's execution snapshots from 1, one per content change, each one a
+// stored row: it does not reach this floor, which is about 9.5e14 edits of
+// one strategy. Alerts raised under the first scheme stay open across the
+// change, beside Plans of the second, and their order against those Plans
+// is not stated by either number.
+var microsecondRevisionFloor = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC).UnixMicro()
+
+// RevisionsComparable reports whether two positive revisions are of the
+// same scheme, so that the larger is the newer: both microsecond times,
+// or both counts.
+func RevisionsComparable(a, b int64) bool {
+	return (a >= microsecondRevisionFloor) == (b >= microsecondRevisionFloor)
+}
+
 // Decide is one alert's verdict against the current Plans, and a note when
-// the strategy facts could not be compared (one of Notes, or empty).
+// the strategy facts could not be compared (one of Notes, or empty). An
+// alert whose revision is not comparable with the Plans' is judged as an
+// older one; the caller counts it (OutcomeRevisionIncomparable).
 func Decide(plan Plan, alert Alert) (decision, note string) {
 	switch {
 	case alert.Revision <= 0:
 		return OutcomeRevisionUnknown, ""
+	case !RevisionsComparable(alert.Revision, plan.Revision):
 	case alert.Revision == plan.Revision:
 		return OutcomeCurrentRevision, ""
 	case alert.Revision > plan.Revision:

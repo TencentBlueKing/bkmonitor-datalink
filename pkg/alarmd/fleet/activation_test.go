@@ -66,8 +66,8 @@ func TestStandingsAreTheFirstLinesAndNameReplicas(t *testing.T) {
 		ActivationReplica: "pod-a",
 		Degradations: []Degradation{
 			{Kind: DegradationActivationBehind, Replica: "pod-a"},
-			{Kind: DegradationOpenAlertSetStale, Replica: "pod-a"},
-			{Kind: DegradationOpenAlertSetStale, Replica: "pod-b"},
+			{Kind: DegradationActiveCopyUnsupported, Replica: "pod-a"},
+			{Kind: DegradationActiveCopyUnsupported, Replica: "pod-b"},
 			{Kind: DegradationControlLeaderAbsent, Replica: "pod-c"},
 		},
 		Anomalies: []Anomaly{{QueryGroup: "qg-1", Kind: KindOverdueWake, Finding: Finding{Check: CheckSlotsOverdue, Group: "pod-a"}}},
@@ -90,7 +90,7 @@ func TestStandingsAreTheFirstLinesAndNameReplicas(t *testing.T) {
 	for _, group := range degraded.Groups {
 		groups[group.Key] = group.Replicas
 	}
-	if len(groups[string(DegradationOpenAlertSetStale)]) != 2 || len(groups[string(DegradationControlLeaderAbsent)]) != 1 ||
+	if len(groups[string(DegradationActiveCopyUnsupported)]) != 2 || len(groups[string(DegradationControlLeaderAbsent)]) != 1 ||
 		groups[string(DegradationActivationBehind)] != nil {
 		t.Fatalf("REPLICA_DEGRADED groups = %+v, want two replicas under the open alert set, one under leader absent, none under activation", groups)
 	}

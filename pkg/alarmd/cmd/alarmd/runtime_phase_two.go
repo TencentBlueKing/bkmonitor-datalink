@@ -33,7 +33,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/roles"
@@ -298,7 +297,8 @@ func runPhaseTwoApplicationWithDependencies(
 		server.SetAPI(bundle.dependencies.FleetAPI)
 	}
 	if err == nil && bundle != nil && bundle.dependencies.NoDataCloseAPI != nil {
-		server.SetInternalAPI(bundle.dependencies.NoDataCloseAPI)
+		bindNoDataCloseAPI(bundle.dependencies.NoDataCloseAPI, bundle.dependencies.Config.HTTP.InternalListen, bundle.dependencies.Recorder,
+			logger, server.SetInternalAPI)
 	}
 	if err == nil && bundle != nil && bundle.dependencies.ControlStream != nil {
 		// The same for the control stream: a Worker that connects before
@@ -654,11 +654,8 @@ type phaseTwoWorkerBundleDependencies struct {
 	Recorder    *metric.Recorder
 	Observer    observability.Observer
 	TargetFlow  *observability.TargetFlow
-	// FleetAPI serves the object facts once this runtime is open, and
-	// RefreshOpenAlerts reads the consumer's open alert publication into the
-	// process copy; run once at start and then on its own cadence.
-	RefreshOpenAlerts func(context.Context)
-	// RunOpenAlerts owns subscription/reconciliation for the current protocol.
+	// RunOpenAlerts runs the refresh passes of alarmd's own copy of the
+	// link's active alerts (activecopy.Copy.Run).
 	RunOpenAlerts    func(context.Context) error
 	RunEffectiveTime func(context.Context)
 	// RunAbsentClose is the control leader's difference against the
@@ -666,9 +663,8 @@ type phaseTwoWorkerBundleDependencies struct {
 	// goroutine for the process, which decides per round whether it is the
 	// leader.
 	RunAbsentClose func(context.Context)
-	// RunTargetScopeClose decides the closes of alerts whose target left
-	// the strategy's scope, from what this replica's own admission step
-	// turned away. Every replica runs its own.
+	// RunTargetScopeClose decides the superseded-identity closes, from what
+	// this replica's own admission step offered. Every replica runs its own.
 	RunTargetScopeClose func(context.Context)
 	// Lookback is the late-data lookback on the query path, nil when this
 	// process does not run it. The bundle runs its rechecks and drops the
@@ -684,7 +680,7 @@ type phaseTwoWorkerBundleDependencies struct {
 	// NoDataCloseAPI records manual closes of no-data alerts (decision-024),
 	// served on the cluster-only listener; nil for a process without the
 	// control role.
-	NoDataCloseAPI http.Handler
+	NoDataCloseAPI *noDataCloseAPI
 	// PublicSurfaceRestricted is whether the listener's public surface is
 	// restricted: asked for by the configuration and the CLI came up.
 	PublicSurfaceRestricted bool
@@ -3094,10 +3090,6 @@ func (bundle *phaseTwoWorkerBundle) startMaintenance() {
 		bundle.maintenanceWG.Add(1)
 		go bundle.publishFleetSnapshots()
 	}
-	if bundle.dependencies.RefreshOpenAlerts != nil {
-		bundle.maintenanceWG.Add(1)
-		go bundle.refreshOpenAlerts()
-	}
 	if bundle.dependencies.RefreshPlatformSettings != nil {
 		bundle.maintenanceWG.Add(1)
 		go bundle.refreshPlatformSettings()
@@ -3148,27 +3140,6 @@ func (bundle *phaseTwoWorkerBundle) refreshPlatformSettings() {
 			return
 		case <-ticker.C:
 			bundle.dependencies.RefreshPlatformSettings(bundle.maintenanceCtx)
-		}
-	}
-}
-
-// refreshOpenAlerts keeps the process copy of the consumer's open alert set
-// current. The first read is immediate rather than a cycle away, so the
-// first evaluations after a start are not answered from an empty copy when
-// the publication is there to read. A read that fails is the copy's own
-// state to report (it goes self-maintained and says why); nothing here
-// retries or stops the pipeline over it.
-func (bundle *phaseTwoWorkerBundle) refreshOpenAlerts() {
-	defer bundle.maintenanceWG.Done()
-	bundle.dependencies.RefreshOpenAlerts(bundle.maintenanceCtx)
-	ticker := time.NewTicker(openalerts.RefreshInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-bundle.maintenanceCtx.Done():
-			return
-		case <-ticker.C:
-			bundle.dependencies.RefreshOpenAlerts(bundle.maintenanceCtx)
 		}
 	}
 }

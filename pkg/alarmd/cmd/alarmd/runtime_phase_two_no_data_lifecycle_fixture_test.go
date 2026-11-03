@@ -8,6 +8,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,7 +31,6 @@ import (
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 )
 
 // The lifecycle fixture runs the production bundle over a real redis-server
@@ -87,15 +88,17 @@ type lifecycleStrategy struct {
 }
 
 type lifecycleFixture struct {
-	t        *testing.T
-	address  string
-	redis    *redis.Client
-	cfg      config.Config
-	base     int64
-	interval int64
-	clock    *atomic.Int64
-	sink     *followsSink
-	retry    time.Duration
+	t       *testing.T
+	address string
+	redis   *redis.Client
+	// published are the alerts publishOpenAlert made active in the link.
+	published []string
+	cfg       config.Config
+	base      int64
+	interval  int64
+	clock     *atomic.Int64
+	sink      *followsSink
+	retry     time.Duration
 
 	// What the query service answers: the hosts whose series arrive, the
 	// value they carry, and whether the answer is partial. byHostID names a
@@ -167,13 +170,12 @@ func startLifecycleFixtureOn(t *testing.T, address string, client *redis.Client,
 	cfg.PhaseTwo.Ownership.ControlLeaderRenewInterval = config.Duration(time.Minute)
 	cfg.PhaseTwo.Ownership.LeaseTTL = config.Duration(6 * time.Hour)
 	cfg.PhaseTwo.Ownership.LeaseRenewInterval = config.Duration(time.Minute)
-	// The link Console a deployment on the consumer's protocol has. Without
-	// one the open alert copy is not configured and reads no set, so the
-	// cases that publish an open alert and wait for it to be read need it.
-	console := httptest.NewServer(lifecycleConsole(address, client))
-	t.Cleanup(console.Close)
-	cfg.PhaseTwo.Linkd.ConsoleURL = console.URL + testLinkdAPIRoot
-	cfg.PhaseTwo.Linkd.Username, cfg.PhaseTwo.Linkd.Password = "user", "secret"
+	// The link's control plane a deployment on the consumer's protocol has.
+	// Without it the open alert copy is not configured and asks nothing, so
+	// the cases that publish an open alert and wait for it to be read need it.
+	link := httptest.NewServer(lifecycleLink(client))
+	t.Cleanup(link.Close)
+	cfg.PhaseTwo.Linkd.ControlPlane = config.LinkdControlPlaneConfig{URL: link.URL, JWTSecret: "example-secret"}
 	if configure != nil {
 		configure(&cfg)
 	}
@@ -680,63 +682,81 @@ func (fixture *lifecycleFixture) progressKey() string {
 	return keys[0]
 }
 
-// publishOpenAlert puts one alert in the consumer's open alert set for the
-// fixture's strategy, the way the consumer publishes an alert it opened:
-// the set "<prefix>:<tenant>:<strategy>" holding the alert's dedupe md5
-// (no-data tracking retention proposal, section 5), and a change notice for
-// the strategy on "<prefix>:changes". The prefix is the deployment's
-// default, as the fixture configures no other.
+// publishOpenAlert makes one alert active in the link for the fixture's
+// strategy: the link's search (lifecycleLink) finds it from then on. The
+// alert is kept in the set "<lifecycleLinkPrefix>:<tenant>:<strategy>" on
+// the fixture's redis-server, the stub's store.
 func (fixture *lifecycleFixture) publishOpenAlert(dedupeMD5 string) {
 	fixture.t.Helper()
-	ctx := context.Background()
-	prefix := lifecycleLinkPrefix
-	if err := fixture.redis.SAdd(ctx, prefix+":tenant-a:"+lifecycleStrategyID, dedupeMD5).Err(); err != nil {
+	if err := fixture.redis.SAdd(context.Background(), lifecycleLinkPrefix+":tenant-a:"+lifecycleStrategyID, dedupeMD5).Err(); err != nil {
 		fixture.t.Fatal(err)
 	}
-	notice := `{"bk_tenant_id":"tenant-a","strategy_id":"` + lifecycleStrategyID + `"}`
-	if err := fixture.redis.Publish(ctx, prefix+":changes", notice).Err(); err != nil {
-		fixture.t.Fatal(err)
-	}
+	fixture.published = append(fixture.published, dedupeMD5)
 }
 
-// withdrawOpenAlert takes one alert out of the consumer's open alert set, as
-// the consumer does when the alert is closed by hand, and says so on the
-// change channel.
+// withdrawOpenAlert ends one alert in the link, as a close by hand does: the
+// search no longer finds it.
 func (fixture *lifecycleFixture) withdrawOpenAlert(dedupeMD5 string) {
 	fixture.t.Helper()
-	ctx := context.Background()
-	prefix := lifecycleLinkPrefix
-	if err := fixture.redis.SRem(ctx, prefix+":tenant-a:"+lifecycleStrategyID, dedupeMD5).Err(); err != nil {
-		fixture.t.Fatal(err)
-	}
-	notice := `{"bk_tenant_id":"tenant-a","strategy_id":"` + lifecycleStrategyID + `"}`
-	if err := fixture.redis.Publish(ctx, prefix+":changes", notice).Err(); err != nil {
+	if err := fixture.redis.SRem(context.Background(), lifecycleLinkPrefix+":tenant-a:"+lifecycleStrategyID, dedupeMD5).Err(); err != nil {
 		fixture.t.Fatal(err)
 	}
 }
 
-// waitOpenAlertSetRead waits until the current process's copy of the open
-// alert set holds the published member, which its own loop reads once the
-// strategy is registered. The loop decides a read is due by the bundle's
-// clock, so the wait moves that clock on a second at a time from the round
-// it is in, never past the next round's attempt.
-func (fixture *lifecycleFixture) waitOpenAlertSetRead(round int64) {
+// linkCloses are the closes by filter (not dry runs) the link stub took, as
+// requested.
+func (fixture *lifecycleFixture) linkCloses() []string {
+	fixture.t.Helper()
+	closes, err := fixture.redis.LRange(context.Background(), lifecycleLinkPrefix+":closes", 0, -1).Result()
+	if err != nil {
+		fixture.t.Fatal(err)
+	}
+	return closes
+}
+
+// activeCopyPort is the current process's open alert port.
+func (fixture *lifecycleFixture) activeCopyPort() *openAlertCopyPort {
 	fixture.t.Helper()
 	port, ok := fixture.bundle.workerPorts.OpenAlerts.(*openAlertCopyPort)
-	if !ok {
-		fixture.t.Fatalf("the open alert port is %T", fixture.bundle.workerPorts.OpenAlerts)
+	if !ok || port.copy == nil {
+		fixture.t.Fatalf("the open alert port is %T without a copy", fixture.bundle.workerPorts.OpenAlerts)
 	}
-	attemptedAt := (fixture.evaluationAt(round) + fixture.interval/2) * 1000
-	for deadline, step := testwait.Deadline(fixture.t), int64(1); ; step++ {
-		if stats := port.cache.Stats(); stats.Loaded >= 1 && stats.Members >= 1 {
+	return port
+}
+
+// passActiveCopy runs one pass of the current process's copy, the one its
+// own loop runs every 10 s of wall time, at the fixture's clock.
+func (fixture *lifecycleFixture) passActiveCopy() {
+	fixture.t.Helper()
+	fixture.activeCopyPort().copy.Pass(context.Background())
+}
+
+// waitOpenAlertSetRead waits until the current process's copy judges every
+// published alert held: its own word (an acknowledged send) or a search hit.
+// A lookup with no word queues the fingerprint; the wait then runs the pass
+// the copy's loop would run. round is the round the wait follows; the
+// fixture's clock is not moved.
+func (fixture *lifecycleFixture) waitOpenAlertSetRead(round int64) {
+	fixture.t.Helper()
+	for _, fingerprint := range fixture.published {
+		fixture.waitOpenAlertJudged(round, fingerprint, true)
+	}
+}
+
+// waitOpenAlertJudged waits until the current process's copy judges one
+// fingerprint as held or not, as wanted, running a pass after each lookup
+// that is not yet that judgement.
+func (fixture *lifecycleFixture) waitOpenAlertJudged(round int64, fingerprint string, held bool) {
+	fixture.t.Helper()
+	port := fixture.activeCopyPort()
+	for deadline := testwait.Deadline(fixture.t); ; {
+		if got, judged := port.copy.Holds("tenant-a", lifecycleStrategyID, fingerprint); judged && got == held {
 			return
 		}
-		if step < fixture.interval/2 {
-			fixture.clock.Store(attemptedAt + step*1000)
-		}
+		port.copy.Pass(context.Background())
 		time.Sleep(20 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 		if time.Now().After(deadline) {
-			fixture.t.Fatalf("the open alert copy has not read the strategy's set by the test's deadline: %+v", port.cache.Stats())
+			fixture.t.Fatalf("after round %d the copy does not judge %s held=%v by the test's deadline: %+v", round, fingerprint, held, port.copy.Stats())
 		}
 	}
 }
@@ -778,38 +798,119 @@ func (fixture *lifecycleFixture) heldForNoOpenAlert() uint64 {
 	return held
 }
 
-// lifecycleLinkPrefix is where the fixture's link Console says the open alert
-// sets are written, on the runtime redis-server.
+// lifecycleLinkPrefix is where the fixture's link stub keeps each
+// strategy's active alerts, on the runtime redis-server.
 const lifecycleLinkPrefix = "hook:open"
 
-// lifecycleConsole is a link Console naming the runtime redis-server under
-// lifecycleLinkPrefix, its event source keyed by the alert id, and answering
-// each reconciliation with what that strategy's set holds, as matched - so a
-// calibration agrees with the set the fixture published rather than replacing
-// it.
-func lifecycleConsole(address string, client *redis.Client) http.HandlerFunc {
-	target := openalerts.TargetBinding{EventSourceID: "source", HookName: "active", KeyPrefix: lifecycleLinkPrefix,
-		Address: address, Database: 0, Sources: []string{"source"}}
+// lifecycleLink is the link's control plane over the fixture's store: the
+// search answers the active alerts of "<lifecycleLinkPrefix>:<tenant>:<strategy>"
+// that match the query's fingerprint and strategy terms (must_not honoured),
+// each under the default event source; a close by filter matches the same
+// way over its filter, and a close that is not a dry run ends the matched
+// alerts and appends its request to "<lifecycleLinkPrefix>:closes". Any other
+// route is a 404: the deployment reads nothing else of the link.
+func lifecycleLink(client *redis.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			TenantID string          `json:"bk_tenant_id"`
+			Query    json.RawMessage `json:"query"`
+			Filter   json.RawMessage `json:"filter"`
+			DryRun   bool            `json:"dry_run"`
+		}
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &request)
 		switch r.URL.Path {
-		case "/api/modules/linkd/strategy-index/targets":
-			_ = json.NewEncoder(w).Encode([]openalerts.TargetBinding{target})
-		case "/api/modules/linkd/event-sources/" + target.EventSourceID:
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": target.EventSourceID, "revision": 1, "published": 1,
-				"spec": map[string]any{"fingerprint_mode": "field", "fingerprint_field": "source_alert_id"}})
-		default:
-			q := r.URL.Query()
-			tenant, strategy := q.Get("bk_tenant_id"), q.Get("strategy_id")
-			key := target.KeyPrefix + ":" + tenant + ":" + strategy
-			members, _ := client.SMembers(r.Context(), key).Result()
-			rows := make([]any, 0, len(members))
-			for _, fingerprint := range members {
-				rows = append(rows, map[string]any{"fingerprint": fingerprint, "status": "matched",
-					"alerts": []openalerts.Alert{{AlertID: fingerprint, EventSourceID: target.EventSourceID, Fingerprint: fingerprint, Severity: "warning"}}})
+		case "/api/v1/alerts/search":
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": lifecycleLinkSearch(r.Context(), client, request.TenantID, request.Query), "next": ""})
+		case "/api/v1/alerts/close":
+			matched := lifecycleLinkSearch(r.Context(), client, request.TenantID, request.Filter)
+			items := make([]map[string]any, 0, len(matched))
+			for _, alert := range matched {
+				items = append(items, map[string]any{"alert_id": alert["alert_id"], "status": http.StatusOK})
+				if !request.DryRun {
+					strategy := alert["labels"].(map[string]any)["strategy_id"].(string)
+					_ = client.SRem(r.Context(), lifecycleLinkPrefix+":"+request.TenantID+":"+strategy, alert["fingerprint"]).Err()
+				}
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"target": target, "tenantId": tenant, "strategyId": strategy,
-				"key": key, "complete": true, "redis": map[string]any{"complete": true}, "alerts": map[string]any{"complete": true},
-				"rows": rows})
+			if !request.DryRun {
+				_ = client.RPush(r.Context(), lifecycleLinkPrefix+":closes", string(body)).Err()
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "next": "", "dry_run": request.DryRun})
+		default:
+			http.NotFound(w, r)
 		}
 	}
+}
+
+// lifecycleLinkSearch is the stub's search over the store.
+func lifecycleLinkSearch(ctx context.Context, client *redis.Client, tenant string, query json.RawMessage) []map[string]any {
+	var node any
+	_ = json.Unmarshal(query, &node)
+	must, mustNot := map[string]map[string]bool{}, map[string]map[string]bool{}
+	var walk func(node any, negated bool)
+	walk = func(node any, negated bool) {
+		switch value := node.(type) {
+		case map[string]any:
+			for key, child := range value {
+				switch key {
+				case "must_not":
+					walk(child, true)
+				case "term", "terms":
+					fields, _ := child.(map[string]any)
+					for field, raw := range fields {
+						target := must
+						if negated {
+							target = mustNot
+						}
+						if target[field] == nil {
+							target[field] = map[string]bool{}
+						}
+						switch v := raw.(type) {
+						case []any:
+							for _, one := range v {
+								target[field][fmt.Sprint(one)] = true
+							}
+						default:
+							target[field][fmt.Sprint(v)] = true
+						}
+					}
+				default:
+					walk(child, negated)
+				}
+			}
+		case []any:
+			for _, child := range value {
+				walk(child, negated)
+			}
+		}
+	}
+	walk(node, false)
+	allowed := func(field, value string) bool {
+		if mustNot[field][value] {
+			return false
+		}
+		return must[field] == nil || must[field][value]
+	}
+	items := []map[string]any{}
+	keys, _ := client.Keys(ctx, lifecycleLinkPrefix+":"+tenant+":*").Result()
+	if node == nil {
+		return []map[string]any{}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		strategy := strings.TrimPrefix(key, lifecycleLinkPrefix+":"+tenant+":")
+		if !allowed("labels.strategy_id", strategy) || !allowed("status", "active") || !allowed("event_source_id", "built_in_bk") {
+			continue
+		}
+		members, _ := client.SMembers(ctx, key).Result()
+		sort.Strings(members)
+		for _, fingerprint := range members {
+			if !allowed("fingerprint", fingerprint) {
+				continue
+			}
+			items = append(items, map[string]any{"alert_id": "alert-" + fingerprint, "bk_tenant_id": tenant, "event_source_id": "built_in_bk",
+				"fingerprint": fingerprint, "status": "active", "severity": "warning", "labels": map[string]any{"strategy_id": strategy}})
+		}
+	}
+	return items
 }

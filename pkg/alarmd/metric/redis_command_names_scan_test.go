@@ -147,7 +147,6 @@ func TestEveryRedisCommandTheCodeIssuesIsNamed(t *testing.T) {
 var redisMethodNamesTheModuleDefines = map[string]string{
 	"Publish": "viewstream.Server, controlplane.SnapshotPublisher, fleet.CostProjectionStore, fleet.RedisStore",
 	"Wait":    "worker.KeyReservation",
-	"Watch":   "openalerts.RedisSubscriber, cmd/alarmd linkdLocationSwitch",
 }
 
 // contextArgument says an argument is a context, as far as its spelling

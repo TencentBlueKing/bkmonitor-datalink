@@ -333,12 +333,11 @@ func targetWord(target StrategyTargetConfig) string {
 }
 
 // ActualDetection is what the strategy does detect: how punctual, its objects
-// by punctuality, and its open alerts on alarmd's copy.
+// by punctuality.
 type ActualDetection struct {
 	Punctuality     Punctuality `json:"punctuality"`
 	PunctualityWord string      `json:"punctuality_word"`
 	Objects         ViewObjects `json:"objects"`
-	OpenAlerts      *BoardCount `json:"open_alerts,omitempty"`
 	// LateWaits is what the late and overdue objects waited on, grouped.
 	LateWaits []LateWaitGroup `json:"late_waits,omitempty"`
 }
@@ -364,6 +363,6 @@ func ComposeStrategyView(actual StrategyViewActual, standing *StrategyStanding) 
 	return StrategyView{GeneratedAt: actual.GeneratedAt, MaxAgeSeconds: actual.MaxAgeSeconds, Conclusion: actual.Row,
 		Expected: ExpectedOf(standing),
 		Actual: ActualDetection{Punctuality: actual.Row.Punctuality, PunctualityWord: PunctualityWords[actual.Row.Punctuality],
-			Objects: actual.Objects, OpenAlerts: actual.Row.OpenAlerts, LateWaits: actual.LateWaits},
+			Objects: actual.Objects, LateWaits: actual.LateWaits},
 		StoreOutages: actual.StoreOutages, Check: actual.Check, KBAnchor: actual.Row.KBAnchor}
 }

@@ -30,10 +30,9 @@ type absentCloseCollector struct {
 
 // differenceSides is the closed list of denominators, so every one of them
 // has a cell from the first scrape.
-var differenceSides = []string{"roster_strategies", "roster_unreadable", "roster_invalid", "roster_pages", "roster_complete",
+var differenceSides = []string{"found_strategies", "discovery_searches", "discovery_tenants", "discovery_complete",
 	"candidates", "snapshot_strategies", "remembered_identities",
-	"snapshot_age_seconds", "max_snapshot_age_seconds", "link_health_age_seconds", "max_link_health_age_seconds",
-	"link_pending"}
+	"snapshot_age_seconds", "max_snapshot_age_seconds"}
 
 func newAbsentCloseCollector() *absentCloseCollector {
 	return &absentCloseCollector{
@@ -41,8 +40,9 @@ func newAbsentCloseCollector() *absentCloseCollector {
 			"What the control leader's difference against disabled or deleted strategies decided, by outcome. "+
 				"Counted per strategy except close_sent, send_failed, producer_foreign, producer_unknown and "+
 				"business_unknown, "+
-				"which count alerts. close_decided counts decisions and close_sent counts what went out, "+
-				"acknowledged by the broker; neither says the link closed anything, which absent.list reads "+
+				"which count alerts. close_decided counts decisions and close_sent counts closes sent and "+
+				"acknowledged by the broker, which includes closes the link finds no active alert for (orphaned "+
+				"there); neither says the link closed anything, which absent.list reads "+
 				"per strategy as the alerts its reconcile still lists active after an earlier send. "+
 				"identity_unknown and revision_unknown are strategies decided and not sent because no business or "+
 				"revision could be found for them; business_unknown are alerts of a global business strategy not "+
@@ -54,23 +54,19 @@ func newAbsentCloseCollector() *absentCloseCollector {
 				"reading and not an absence.", []string{"outcome"}, nil),
 		roundIs: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "absent_strategy_round_total"),
 			"How each round of the difference ended: none is a round that decided, and the rest name the fact "+
-				"that was not good enough to decide on - link_unavailable (the alert link's roster could not be "+
-				"read), snapshot_unusable (the source was not observed this round), snapshot_empty and "+
-				"snapshot_stale. Rounds, not strategies. none is the denominator the outcome family is read against.",
+				"that was not good enough to decide on - link_unavailable (the alert link's search could not be "+
+				"read or its control plane is not named), snapshot_unusable (the source was not observed this round), snapshot_empty, "+
+				"snapshot_stale and writer_unstated (the strategy list's writer made no publication_semantics statement "+
+				"about this list: a strategy missing from it is not known to be gone, so nothing is closed). Rounds, not strategies. none is the denominator the outcome family is read against.",
 			[]string{"disposition"}, nil),
 		sides: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "absent_strategy_difference"),
-			"The sizes the last round decided on: roster_strategies is the strategies the alert link listed "+
-				"with an unrecovered alert, roster_unreadable the ones it listed and could not read, roster_invalid "+
-				"the rows its walk skipped as naming no strategy of this binding (a smaller roster, never a failed page), roster_pages "+
-				"and roster_complete how far the walk of its roster got, candidates the difference itself, "+
-				"snapshot_strategies the strategy cache it was judged against, remembered_identities "+
-				"the strategies the catalog let go and still knows the business of. "+
-				"Each age is reported beside its bound - snapshot_age_seconds beside max_snapshot_age_seconds, "+
-				"link_health_age_seconds (since the link's last successful discovery) beside "+
-				"max_link_health_age_seconds, past which the health page calls the link's maintenance stale - so a "+
-				"refused round, or a roster that stopped growing, can be read as the side falling behind rather "+
-				"than as a bound that does not fit. The link's age never refuses a round: an old roster can only "+
-				"miss a strategy. link_pending is the link's own refresh backlog.",
+			"The sizes the last round decided on: found_strategies is the strategies the alert link's search "+
+				"found with an active alert outside the running set, discovery_searches and discovery_tenants the "+
+				"searches that took and the tenants walked, discovery_complete whether every tenant was walked (1) "+
+				"or a search failed (0), candidates the difference itself, snapshot_strategies the strategy cache it "+
+				"was judged against, remembered_identities the strategies the catalog let go and still knows the "+
+				"business of. snapshot_age_seconds is reported beside its bound max_snapshot_age_seconds, so a "+
+				"refused round can be read as the source falling behind rather than as a bound that does not fit.",
 			[]string{"side"}, nil),
 	}
 }

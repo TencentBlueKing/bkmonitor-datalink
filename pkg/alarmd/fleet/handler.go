@@ -348,9 +348,6 @@ type HealthResponse struct {
 	Dependencies         []Endpoint `json:"dependencies"`
 	DependenciesReplica  string     `json:"dependencies_replica,omitempty"`
 	DependenciesReplicas int        `json:"dependencies_replicas"`
-	// LinkdConsole is the alert link's Console read against whether the
-	// deployment needs it; see LinkdConsoleStanding.
-	LinkdConsole *LinkdConsoleStanding `json:"linkd_console,omitempty"`
 	// ReplicasNotReady is how many counted replicas answer their own
 	// readiness probe with no; which bit, on each per_replica row.
 	ReplicasNotReady int `json:"replicas_not_ready"`
@@ -1078,7 +1075,7 @@ func healthOf(view *View, part ReplicaPart, at time.Time) HealthResponse {
 		Source: view.Source, SourceReplica: view.SourceReplica, SourceStanding: view.SourceStanding, ControlFacts: view.ControlFacts,
 		NoDataTracking: view.NoDataTracking,
 		Dependencies:   dependencyList(view.Dependencies), DependenciesReplica: view.DependenciesReplica,
-		DependenciesReplicas: view.DependenciesReplicas, LinkdConsole: view.LinkdConsole, ReplicasNotReady: view.ReplicasNotReady,
+		DependenciesReplicas: view.DependenciesReplicas, ReplicasNotReady: view.ReplicasNotReady,
 		Overdue: view.Overdue, Dispatch: view.Dispatch, Schedule: view.Schedule, AddressDiffers: view.AddressDiffers, TrackerDropped: view.TrackerDropped,
 		EffectiveTimeUnread: view.EffectiveTimeUnread, EffectiveTimeUnreadTotal: view.EffectiveTimeUnreadTotal,
 		AwaitingFirstRound: view.AwaitingFirstRound, Undetermined: view.Undetermined, UndeterminedTotal: view.UndeterminedTotal,

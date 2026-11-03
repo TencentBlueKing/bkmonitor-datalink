@@ -313,23 +313,12 @@ type OverviewDependency struct {
 	LastFailure           string          `json:"last_failure,omitempty"`
 	LatencyP95MS          *OverviewNumber `json:"latency_p95_ms,omitempty"`
 	FailuresPerMinute     *OverviewNumber `json:"failures_per_minute,omitempty"`
-	// ConsoleState is the Console's own word, on the Console only
-	// (LinkdConsoleStates), and EventSourceID how the link names this
-	// deployment's event source, as its Console last answered.
-	ConsoleState  string `json:"console_state,omitempty"`
-	EventSourceID string `json:"event_source_id,omitempty"`
 }
 
 // overviewDependencyOf is one endpoint as the overview shows it.
 func overviewDependencyOf(endpoint Endpoint) OverviewDependency {
 	dependency := OverviewDependency{Name: endpoint.Role, State: endpointState(endpoint), Address: endpoint.Address, SharedWith: endpoint.SharedWith,
 		LastSuccessAgeSeconds: endpoint.LastSuccessAgeSeconds, LastFailureAgeSeconds: endpoint.LastFailureAgeSeconds, LastFailure: endpoint.LastFailure}
-	if console := endpoint.Console; console != nil {
-		dependency.ConsoleState = console.State
-		if console.EventSource != nil {
-			dependency.EventSourceID = console.EventSource.EventSourceID
-		}
-	}
 	return dependency
 }
 
@@ -437,14 +426,13 @@ var overviewStageOf = map[string]string{
 	"query_backend": "pull", "cmdb_cache": "pull",
 	"strategy_cache": "evaluate", "dynamic_config": "evaluate", "target_group": "evaluate",
 	"state_redis":  "state",
-	"output_kafka": "output", "compat_output_redis": "output", "linkd_console": "output", "open_alert_set": "output",
+	"output_kafka": "output", "compat_output_redis": "output",
 }
 
 // overviewDegradationStage is the stage each degradation is about; one not
 // listed is the evaluation's, which every other one ends up holding back.
 var overviewDegradationStage = map[DegradationKind]string{
-	DegradationOpenAlertSetStale:       "output",
-	DegradationOpenAlertSetUnconfirmed: "output",
+	DegradationActiveCopyUnsupported: "output",
 }
 
 // overviewOf projects the health route's answer, and the replicas'
@@ -632,11 +620,6 @@ func endpointState(endpoint Endpoint) string {
 	switch {
 	case !endpoint.Configured:
 		return OverviewNotConfigured
-	case endpoint.Console != nil && (endpoint.Console.State == LinkdConsoleUnreadable || endpoint.Console.State == LinkdConsoleLinkUnhealthy):
-		// The Console's own word: an operation whose latest call failed
-		// fails a close whatever answered last, and a link that says it is
-		// behind lists a roster that may miss strategies.
-		return OverviewAttention
 	case endpoint.LastFailureAgeSeconds != nil && (endpoint.LastSuccessAgeSeconds == nil || *endpoint.LastFailureAgeSeconds < *endpoint.LastSuccessAgeSeconds):
 		return OverviewAttention
 	case endpoint.LastSuccessAgeSeconds != nil || (endpoint.Ready != nil && *endpoint.Ready):

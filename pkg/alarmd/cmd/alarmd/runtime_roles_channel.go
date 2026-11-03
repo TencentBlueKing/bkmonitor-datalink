@@ -20,7 +20,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/evidenceroute"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdtoken"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
@@ -237,14 +236,9 @@ func openProductionRoleChannel(cfg config.Config, binding ChannelBinding) (_ *ro
 		}
 		return cliMaintenanceOperation(current.Control.Maintenance)
 	}))
-	ops = append(ops, dynamicChannelOperation(cliLinkdAlertsOperation(nil), func() obchannel.Operation {
-		return cliLinkdAlertsOperation(linkdConsoleOf(providers.read().Control.LinkdConsole))
-	}))
-	ops = append(ops, dynamicChannelOperation(cliLinkdReconcileOperation(nil), func() obchannel.Operation {
-		if console := providers.read().Control.LinkdConsole; console != nil {
-			return cliLinkdReconcileOperation(console)
-		}
-		return cliLinkdReconcileOperation(nil)
+	ops = append(ops, dynamicChannelOperation(cliLinkdAlertsOperation(nil, ""), func() obchannel.Operation {
+		control := providers.read().Control
+		return cliLinkdAlertsOperation(linkdSearchOf(control.LinkdSearch), control.LinkdSource)
 	}))
 	ops = append(ops, cliLifecycleOperation(diagnosticRuntime, lifecycleRecordKey(cfg)))
 	ops = append(ops, changesOperation(cfg, binding, diagnosticRuntime))
@@ -349,15 +343,6 @@ func openProductionRoleChannel(cfg config.Config, binding ChannelBinding) (_ *ro
 		}})
 	if authErr != nil {
 		return runtime, nil
-	}
-	// A link read through the admin is read with the token the admin hands
-	// over here; the Workers and the Control read it from the same key.
-	if linkdTokenMode(cfg) {
-		tokens, err := linkdtoken.New(authClient, cfg.Redis.StatePrefix, nil)
-		if err != nil {
-			return nil, err
-		}
-		manager.ServeLinkdTokens(tokens)
 	}
 	options := obchannel.Options{Auth: manager, EnvironmentID: binding.EnvironmentID, Replica: binding.InstanceID, Incarnation: binding.Control.Incarnation,
 		Build: version + "/" + commit, Executor: executor, RouteControlDefaults: !binding.Roles.Has(roles.Worker)}

@@ -232,6 +232,7 @@ func startIdentityFixture(t *testing.T, protocol string, shape noDataFixtureShap
 	t.Cleanup(uqServer.Close)
 
 	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Linkd.ControlPlane = quietLinkControlPlane(t)
 	cfg.Redis.Address = address
 	cfg.Redis.StatePrefix = "alarmd-no-data-identity"
 	withCompatibilityOutput(&cfg, address)

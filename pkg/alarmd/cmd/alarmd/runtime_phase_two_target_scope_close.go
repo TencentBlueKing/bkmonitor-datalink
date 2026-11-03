@@ -5,11 +5,11 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/activecopy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scopeclose"
 )
 
@@ -19,9 +19,10 @@ import (
 // whole Slot for its close without making the step itself a load.
 const targetScopeCloseInterval = 30 * time.Second
 
-// targetScopeCloseLoop runs the close's decisions on this replica. The
-// observations come from this replica's own admission step, so every replica
-// runs its own loop over what it saw; there is no leader and nothing shared.
+// targetScopeCloseLoop runs the superseded-identity close's decisions on
+// this replica (scopeclose; the family keeps the target-scope name). The
+// offers come from this replica's own admission step, so every replica runs
+// its own loop over what it saw; there is no leader and nothing shared.
 type targetScopeCloseLoop struct {
 	bundle *phaseTwoWorkerBundle
 	closer *scopeclose.Closer
@@ -48,76 +49,61 @@ func (loop targetScopeCloseLoop) run(ctx context.Context) {
 	}
 }
 
-// targetScopeCloseFor builds the close and the sink the admission step
-// reports to, only for a deployment with the alert link's Console. Without
-// it there is no calibrated set, no alert ids and no own source to judge
-// against, so the close could never act; wiring it anyway would have every
-// rejection of every Plan screened and counted as set_unavailable for
-// nothing. The sink is then a nil interface, which the access path reads as
-// "nobody listens", and the outcome counters stay at zero.
-func targetScopeCloseFor(cfg config.Config, now func() time.Time) (*scopeclose.Closer, access.ScopeDropSink) {
-	if cfg.PhaseTwo.Linkd.ConsoleURL == "" {
+// targetScopeCloseFor builds the superseded-identity close and the sink the
+// admission step offers to, only for a deployment with the link's control
+// plane. Without it there is no copy to judge against and no filter to
+// close through, so the close could never act. The sink is then a nil
+// interface, which the access path reads as "nobody listens".
+func targetScopeCloseFor(cfg config.Config, now func() time.Time) (*scopeclose.Closer, access.SupersededSink) {
+	if !cfg.PhaseTwo.Linkd.ControlPlane.Configured() {
 		return nil, nil
 	}
 	budget := config.DeriveLinkdCapacity(config.DetectCapacityInputs())
 	closer := scopeclose.New(scopeclose.Options{Now: now,
 		MaxEntries: budget.LocalEntries, Batch: budget.CloseBatch})
-	return closer, scopeDropSink{closer: closer}
+	return closer, supersededSink{closer: closer}
 }
 
-// bindTargetScopeClose binds the close to the open alert copy and the
-// producer, its counts to the metric and its loop to the bundle. Nothing is
-// wired for a nil close.
-func bindTargetScopeClose(bundle *phaseTwoWorkerBundle, closer *scopeclose.Closer, cache *openalerts.Cache,
-	writer scopeclose.Writer, businesses *openalerts.AlertBusinesses, recorder *metric.Recorder) {
+// bindTargetScopeClose binds the close to the copy and the link's filter,
+// its counts to the metric and its loop to the bundle. Nothing is wired for
+// a nil close.
+func bindTargetScopeClose(bundle *phaseTwoWorkerBundle, closer *scopeclose.Closer, copy *activecopy.Copy, route *filterRoute,
+	recorder *metric.Recorder) {
 	if closer == nil {
 		return
 	}
-	closer.Bind(scopeclose.CacheSet(cache), writer)
-	if businesses != nil {
-		closer.BindAlertBusiness(businesses.Of)
+	var set scopeclose.OpenSet
+	if copy != nil {
+		set = copy
+	}
+	if route != nil {
+		closer.Bind(set, route.closer, route.source)
+	} else {
+		closer.Bind(set, nil, "")
 	}
 	recorder.SetTargetScopeCloseSource(closer.Stats)
 	bundle.targetScopeClose = closer
 	bundle.dependencies.RunTargetScopeClose = targetScopeCloseLoop{bundle: bundle, closer: closer}.run
 }
 
-// scopeDropSink hands the admission step's target rejections to the close:
-// the per-query screen, the one-by-one observations of the strategies it
-// cleared, and the bulk counts, each word mapped to the close's outcome.
-type scopeDropSink struct{ closer *scopeclose.Closer }
+// supersededSink hands the admission step's offers to the close: the
+// per-query screen and the offers of the strategies it cleared.
+type supersededSink struct{ closer *scopeclose.Closer }
 
-func (sink scopeDropSink) Screen(plan execution.PlanIdentity) string {
-	return sink.closer.Screen(openalerts.StrategyKey{TenantID: plan.TenantID, StrategyID: plan.StrategyID})
+func (sink supersededSink) Screen(plan execution.PlanIdentity) bool {
+	return sink.closer.Offers(scopeclose.Key{TenantID: plan.TenantID, StrategyID: plan.StrategyID})
 }
 
-func (sink scopeDropSink) Observe(drop access.ScopeDrop) {
-	sink.closer.Observe(scopeclose.Drop{TenantID: drop.Plan.TenantID, BusinessID: drop.Plan.BusinessID,
-		StrategyID: drop.Plan.StrategyID, Fingerprint: drop.Fingerprint, StrategyRevision: drop.StrategyRevision, GlobalBusiness: drop.GlobalBusiness,
-		Round: drop.Round, IntervalSeconds: drop.IntervalSeconds, ReadOffset: drop.ReadOffset, CloseReason: drop.CloseReason})
+func (sink supersededSink) Observe(offer access.SupersededOffer) {
+	sink.closer.Observe(scopeclose.Offer{TenantID: offer.Plan.TenantID, StrategyID: offer.Plan.StrategyID,
+		Fingerprint: offer.Fingerprint, StrategyRevision: offer.StrategyRevision, Round: offer.Round,
+		IntervalSeconds: offer.IntervalSeconds, ReadOffset: offer.ReadOffset})
 }
 
-func (sink scopeDropSink) Count(reporter access.ScopeDropReporter, word string, n int) {
-	plan := reporter.Plan
-	outcome := word
-	switch word {
-	case access.ScopeDropIndefinite:
-		outcome = scopeclose.OutcomeIndefinite
-	case access.ScopeDropCacheUnavailable:
-		outcome = scopeclose.OutcomeCacheUnavailable
-	case access.ScopeDropFingerprintUnsupported:
-		outcome = scopeclose.OutcomeFingerprintUnsupported
-	case access.ScopeDropNoFingerprint:
-		outcome = scopeclose.OutcomeNotMember
-	}
-	sink.closer.Count(openalerts.StrategyKey{TenantID: plan.TenantID, StrategyID: plan.StrategyID},
-		reporter.Instance(), int64(reporter.Slot.EvaluationTime), outcome, n)
-}
-
-// withTargetScopeClose puts the close's reading beside the open set it acts
-// on, in the replica's facts and so in fleet.get and the health view.
-func withTargetScopeClose(source func() *fleet.OpenAlertSetFacts, closer *scopeclose.Closer) func() *fleet.OpenAlertSetFacts {
-	return func() *fleet.OpenAlertSetFacts {
+// withTargetScopeClose puts the close's reading beside the copy it judges
+// from, in the replica's facts and so in fleet.get and the health view.
+func withTargetScopeClose(source func() *fleet.ActiveCopyFacts, closer *scopeclose.Closer) func() *fleet.ActiveCopyFacts {
+	return func() *fleet.ActiveCopyFacts {
 		facts := source()
 		if facts != nil && closer != nil {
 			facts.TargetScopeClose = targetScopeCloseFacts(closer.Facts())

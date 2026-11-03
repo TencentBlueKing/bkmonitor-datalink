@@ -63,12 +63,20 @@ const (
 	// names no business to file it under: not sent. Alerts.
 	OutcomeBusinessUnknown = "business_unknown"
 	// OutcomeCloseSent and OutcomeSendFailed are closes the producer
-	// accepted and refused. Alerts.
+	// accepted and refused. Accepted is the broker's acknowledgement, not
+	// the link closing the alert. Alerts.
 	OutcomeCloseSent  = "close_sent"
 	OutcomeSendFailed = "send_failed"
 	// OutcomeMemoryFull counts the times the decision memory reached its
 	// bound and was dropped whole: the next rounds read again what it held.
 	OutcomeMemoryFull = "memory_full"
+	// OutcomeReopenedSinceRead and OutcomeRecoveryUnknown are closes held
+	// back before the send: a recovery of the fingerprint was sent
+	// after the listing the close was decided from began and an ABNORMAL of
+	// it after that, or the record of reopens could not be read. Decided
+	// again next round. Alerts.
+	OutcomeReopenedSinceRead = "reopened_since_read"
+	OutcomeRecoveryUnknown   = "recovery_unknown"
 )
 
 // Outcomes is every word the loop counts, decisions included, for the
@@ -78,7 +86,8 @@ var Outcomes = append(append(append([]string(nil), Decisions...), Notes...),
 	OutcomeStrategyUnpublished, OutcomePlanRetained, OutcomePlansDisagree, OutcomePlanUnrevisioned,
 	OutcomeEvidenceUnavailable, OutcomeEvidenceTruncated,
 	OutcomeProducerForeign, OutcomeProducerUnknown, OutcomeRecordUnreadable, OutcomeReadDeferred, OutcomeRemembered,
-	OutcomeBusinessUnknown, OutcomeCloseSent, OutcomeSendFailed, OutcomeMemoryFull)
+	OutcomeBusinessUnknown, OutcomeCloseSent, OutcomeSendFailed, OutcomeMemoryFull,
+	OutcomeReopenedSinceRead, OutcomeRecoveryUnknown)
 
 // Failures are the outcomes that could not read or could not send, which
 // a log line names at warning.

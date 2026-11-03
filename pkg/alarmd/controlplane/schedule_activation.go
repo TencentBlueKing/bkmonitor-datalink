@@ -113,9 +113,30 @@ func NewScheduleActivationReconcilerWithProgress(
 	return reconciler, nil
 }
 
+// Ensure activates the publication. A cutover refused because an open
+// Segment it would close starts at or after the boundary (the activation
+// before was cut in the same second, or on a clock ahead of this one) is
+// cut once more at the first boundary past every such Segment: the
+// activation boundary only moves forward, so a Query Group the publication
+// leaves is retired at a boundary after its open Segment starts, and drains.
 func (reconciler *ScheduleActivationReconciler) Ensure(
 	ctx context.Context,
 	publication SnapshotPublicationRef,
+) (ActivationState, error) {
+	state, err := reconciler.ensure(ctx, publication, 0)
+	var behind *boundaryBehindError
+	if errors.As(err, &behind) {
+		return reconciler.ensure(ctx, publication, behind.floor)
+	}
+	return state, err
+}
+
+// ensure is Ensure with the boundary of a new publication's cutover at the
+// clock's second or floor, whichever is later.
+func (reconciler *ScheduleActivationReconciler) ensure(
+	ctx context.Context,
+	publication SnapshotPublicationRef,
+	floor execution.EvaluationTime,
 ) (state ActivationState, err error) {
 	failureStage := ActivationFailureStageActivationLoad
 	failureClass := ActivationFailureClassOther
@@ -238,7 +259,7 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 		return ActivationState{}, err
 	}
 	failureStage, failureClass = ActivationFailureStageCompile, ActivationFailureClassOther
-	boundary := execution.EvaluationTime(reconciler.now().Unix())
+	boundary := max(execution.EvaluationTime(reconciler.now().Unix()), floor)
 	if boundary <= 0 {
 		return ActivationState{}, errors.New("alarmd controlplane: Schedule activation clock must produce a positive Unix second")
 	}

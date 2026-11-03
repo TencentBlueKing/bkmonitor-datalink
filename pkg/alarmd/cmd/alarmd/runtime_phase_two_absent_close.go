@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sort"
 	"strconv"
 	"sync"
@@ -10,18 +11,16 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/absentalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/filterclose"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 )
 
-// A strategy stops being a candidate when the alert link no longer lists it,
-// which is the link's to decide: it rebuilds each strategy's set from its
-// alert store, and a closed alert leaves the set on the next rebuild. That
-// is this loop's termination condition. Until the rebuild, the next round
-// may send the same closes again; the link treats a close for an alert that
-// is no longer active as a no-op, so a repeat costs a message, not a state.
+// A strategy stops being a candidate when the link's search no longer finds
+// an active alert of it: its alerts closed, the next round's discovery
+// passes over it. That is this loop's termination condition. Until then the
+// next round may run the same close again; it is the same command
+// (filterclose), and an alert no longer active is not matched.
 //
 // absentCloseInterval is how often the leader takes the difference. The
 // bound is the grace: a candidate has to be seen missing by two rounds under
@@ -43,51 +42,18 @@ const absentCloseBound = 15 * time.Minute
 // absence whatever the writer states.
 const absentCloseGrace = 10 * time.Minute
 
-// absentCloseRosterPages bounds one walk of the link's roster, across the
-// rounds it takes. Each page is the link scanning part of its key space on
-// its own connection; the bound is there so that a key space far larger than
-// expected turns into an incomplete walk that says so, not into a walk that
-// never ends. An incomplete walk is a smaller roster, which delays closes and
-// never makes one.
-const absentCloseRosterPages = 2000
-
-// absentCloseAlertBatch is the size of one write of a strategy's closes. All
-// of its alerts are closed in the round that decides them, a batch at a time.
-const absentCloseAlertBatch = 64
-
-// absentCloseIdentityReads bounds how many of a strategy's alert records are
-// read looking for its business and revision. The first normally answers;
-// the bound is for a strategy whose alerts were written by a build that did
-// not label them.
-const absentCloseIdentityReads = 3
-
-// linkHealthMaxAge is how long ago the link's last successful full
-// discovery may be before the health page calls its maintenance stale. The
-// link runs one a minute by default and retries a failure within seconds, so
-// a quarter of an hour without one is a maintenance process that has
-// stopped, not one that is slow. The close does not read it: a stale roster
-// can only miss a strategy (absentalerts' package doc).
-const linkHealthMaxAge = 15 * time.Minute
-
 // absentStrategyClose closes the unrecovered alerts of strategies that no
 // longer exist. See package absentalerts for what the difference is and
 // what has to hold before anything is closed.
 type absentStrategyClose struct {
 	bundle  *phaseTwoWorkerBundle
 	control absentCloseControl
-	link    absentCloseLink
-	writer  closeWriter
 	tracker *absentalerts.Tracker
 	bounds  absentalerts.Bounds
 	// lastDecided is the last strategy a round closed, where the next
 	// round's walk over the candidates starts: a close decided and not
 	// executed, the round having ended first, is first in line next time.
 	lastDecided absentalerts.Key
-	// walk is the roster walk in progress, carried from the round it did not
-	// finish in to the next; walked is the last walk that reached the end,
-	// which a round whose walk is still going decides on. Both are dropped
-	// with the term.
-	walk, walked *rosterWalk
 	// wasLeader is whether the previous round ran as leader. Losing the
 	// term clears the candidate clocks: a replica that comes back after an
 	// hour must not close on memory it made in another term.
@@ -101,29 +67,36 @@ type absentStrategyClose struct {
 	// reads source_now with, nil where the source has none.
 	table     *absentCandidateTable
 	documents controlplane.StrategyDocumentPresence
-	// businesses answers, for a global business strategy, which business
-	// each of its alerts was filed under.
-	businesses *openalerts.AlertBusinesses
-	// edits is the edit close, run after each round over the roster that
-	// round read (lastRoster: nil before a round has read the link, and
-	// after the term ends). Nil where it is not wired.
-	edits      *editStrategyClose
-	lastRoster map[absentalerts.Key]int
+	// edits is the edit close, run after each round over the strategies
+	// that round's snapshot holds (lastSnapshot: nil before a round has
+	// read one, and after the term ends). Nil where it is not wired.
+	edits        *editStrategyClose
+	lastSnapshot map[absentalerts.Key]struct{}
+	// scopes is the strategy scope close, run after the edit close over
+	// the same snapshot. Nil where it is not wired.
+	scopes *strategyScopeClose
+	// filter is the link's search and close by filter: the discovery of
+	// the strategies the link holds alerts for, and every close.
+	filter *filterRoute
+	// logger writes the writer_unstated line, once per leader term and
+	// again after a round with the statement; statementKey is the key the
+	// statement is read from, which the line names. Either may be empty.
+	logger       *observability.Logger
+	statementKey string
+	unstatedSaid bool
 }
 
 // absentRoundSizes is what the last round read, beside what it decided on.
 type absentRoundSizes struct {
 	counts absentalerts.Counts
-	// snapshotAge and linkAge are how old the two sides were, reported
-	// beside their bounds so that a stale snapshot or a link whose
-	// maintenance stopped can be read as the side falling behind rather than
-	// as a bound that does not fit.
-	snapshotAge, linkAge int
-	rosterPages          int
-	rosterInvalid        int
-	rosterComplete       bool
-	linkPending          int
-	identities           int
+	// snapshotAge is how old the snapshot was, reported beside its bound
+	// so that a stale snapshot reads as the side falling behind.
+	snapshotAge int
+	// searches is the discovery's requests this round, tenants how many
+	// tenants it walked, and complete whether every walk reached its end.
+	searches, tenants int
+	complete          bool
+	identities        int
 }
 
 // absentCloseControl is what the loop asks the control plane: what the
@@ -137,27 +110,9 @@ type absentCloseControl interface {
 	CapabilityRefused() map[string]string
 }
 
-// absentCloseLink is what the loop asks the alert link: its roster, one
-// strategy's active alerts, and one alert's record.
-type absentCloseLink interface {
-	Roster(context.Context, string) (openalerts.RosterPage, error)
-	Reconcile(context.Context, openalerts.StrategyKey) (openalerts.Reconciliation, error)
-	AlertRecord(context.Context, string, string) (openalerts.AlertRecord, error)
-}
-
-// eventSourceReader is a link that can also say how it keys this
-// deployment's alerts. The roster walk reads it once per walk, so the
-// reading is at most one walk old on the control leader; it is kept on the
-// Console's record for the endpoint entry, and a failure there is the
-// Console record's to show, never the walk's.
-type eventSourceReader interface {
-	EventSource(context.Context) (openalerts.EventSourceKeying, error)
-}
-
-func newAbsentStrategyClose(bundle *phaseTwoWorkerBundle, control absentCloseControl, link absentCloseLink,
-	writer closeWriter) *absentStrategyClose {
+func newAbsentStrategyClose(bundle *phaseTwoWorkerBundle, control absentCloseControl, filter *filterRoute) *absentStrategyClose {
 	return &absentStrategyClose{
-		bundle: bundle, control: control, link: link, writer: writer,
+		bundle: bundle, control: control, filter: filter,
 		tracker: absentalerts.NewTracker(controlplane.MaxDepartedStrategies),
 		bounds: absentalerts.Bounds{
 			Grace: absentCloseGrace,
@@ -169,9 +124,8 @@ func newAbsentStrategyClose(bundle *phaseTwoWorkerBundle, control absentCloseCon
 			MaxSnapshotAge:     5 * controlplane.SourceFullReadInterval,
 			MaxCloseStrategies: 8,
 		},
-		counts:     make(map[string]uint64),
-		table:      newAbsentCandidateTable(controlplane.MaxDepartedStrategies),
-		businesses: openalerts.NewAlertBusinesses(link.AlertRecord),
+		counts: make(map[string]uint64),
+		table:  newAbsentCandidateTable(controlplane.MaxDepartedStrategies),
 	}
 }
 
@@ -209,13 +163,11 @@ func (loop *absentStrategyClose) Difference() map[string]int {
 	defer loop.countsMu.Unlock()
 	last := loop.last
 	return map[string]int{
-		"roster_strategies": last.counts.Roster, "roster_unreadable": last.counts.RosterUnreadable,
-		"roster_pages": last.rosterPages, "roster_invalid": last.rosterInvalid, "roster_complete": boolSide(last.rosterComplete),
-		"candidates": last.counts.Candidates, "snapshot_strategies": last.counts.SnapshotStrategies,
+		"found_strategies": last.counts.Roster, "discovery_searches": last.searches, "discovery_tenants": last.tenants,
+		"discovery_complete": boolSide(last.complete),
+		"candidates":         last.counts.Candidates, "snapshot_strategies": last.counts.SnapshotStrategies,
 		"remembered_identities": last.identities,
 		"snapshot_age_seconds":  last.snapshotAge, "max_snapshot_age_seconds": int(loop.bounds.MaxSnapshotAge / time.Second),
-		"link_health_age_seconds": last.linkAge, "max_link_health_age_seconds": int(linkHealthMaxAge / time.Second),
-		"link_pending": last.linkPending,
 	}
 }
 
@@ -249,7 +201,13 @@ func (loop *absentStrategyClose) run(ctx context.Context) {
 	for {
 		loop.step(ctx)
 		if loop.edits != nil {
-			loop.edits.step(ctx, loop.lastRoster)
+			loop.edits.step(ctx, loop.lastSnapshot)
+		}
+		if loop.scopes != nil {
+			loop.scopes.step(ctx, loop.lastSnapshot)
+		}
+		if loop.leading() {
+			loop.filter.retryPending(ctx)
 		}
 		select {
 		case <-ctx.Done():
@@ -260,14 +218,12 @@ func (loop *absentStrategyClose) run(ctx context.Context) {
 }
 
 // step is one round. It may run until the next is due: the round has that
-// deadline and no other, and each request it makes to the Console is bounded
-// by the Console's own observed speed within it (openalerts.ConsoleLatency).
-// What a round does not finish -- a roster walk, closes it decided -- the
-// next one carries on with.
+// deadline and no other, and each request is bounded by the link's own
+// budget (filterCloseHTTPTimeout). What a round does not finish - closes it
+// decided - the next one carries on with.
 func (loop *absentStrategyClose) step(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, absentCloseInterval)
 	defer cancel()
-	ctx = openalerts.WithRequestCoverage(ctx, absentCloseInterval)
 	if !loop.leading() {
 		if loop.wasLeader {
 			// The term ended. Every candidate's clock restarts, so a replica
@@ -275,8 +231,9 @@ func (loop *absentStrategyClose) step(ctx context.Context) {
 			// observed under a term it no longer holds.
 			loop.tracker.Forget()
 			loop.table.forget()
-			loop.walk, loop.walked = nil, nil
-			loop.lastRoster = nil
+			loop.lastSnapshot = nil
+			loop.filter.forget()
+			loop.unstatedSaid = false
 		}
 		loop.wasLeader = false
 		loop.count(absentalerts.OutcomeNotLeader, 1)
@@ -300,22 +257,23 @@ func (loop *absentStrategyClose) step(ctx context.Context) {
 		round.SnapshotAgeSeconds = int64(now.Sub(observed.ReadAt) / time.Second)
 		sizes.snapshotAge = int(round.SnapshotAgeSeconds)
 	}
-	var health openalerts.LinkHealth
-	var unreadable []absentalerts.Key
-	health, unreadable, sizes.rosterPages, sizes.rosterInvalid = loop.readRoster(ctx, &round)
-	sizes.rosterComplete, sizes.linkPending = round.RosterComplete, health.PendingCount
-	if round.LinkRead {
-		loop.lastRoster = round.Roster
-	}
-	if !health.LastSuccess.IsZero() {
-		sizes.linkAge = int(now.Sub(health.LastSuccess) / time.Second)
+	if haveSnapshot {
+		loop.lastSnapshot = round.SnapshotStrategies
+		sizes.searches, sizes.tenants = loop.discover(ctx, &round, observed, departed)
+		sizes.complete = round.RosterComplete
+	} else {
+		// The discovery excludes the running strategies and cannot run
+		// without them: the snapshot is what the round lacks, and the link,
+		// not asked, is not named for it.
+		round.LinkRead = true
 	}
 	result := loop.tracker.Round(round, loop.bounds)
 	sizes.counts = result.Counts
 	loop.record(ctx, result, sizes)
+	loop.sayUnstated(result.Refusal, round.WriterHoldsLastGood)
 	loop.table.noteRound(now, result.Refusal)
 	if result.Refusal == absentalerts.RefusalNone {
-		loop.table.rebuild(now, result, round.Roster, unreadable)
+		loop.table.rebuild(now, result, round.Roster, nil)
 	}
 	for _, absent := range result.Close {
 		// A round now runs for minutes: the term is asked again before each
@@ -328,6 +286,25 @@ func (loop *absentStrategyClose) step(ctx context.Context) {
 	}
 }
 
+// sayUnstated writes, the first time a term's round is refused as
+// writer_unstated, that absent closes are off until the writer states its
+// publication: one line, not one per round (the count is per round). A
+// round with the statement re-arms it.
+func (loop *absentStrategyClose) sayUnstated(refusal string, stated bool) {
+	if stated {
+		loop.unstatedSaid = false
+		return
+	}
+	if refusal != absentalerts.RefusalWriterUnstated || loop.unstatedSaid {
+		return
+	}
+	loop.unstatedSaid = true
+	loop.logger.Warn("absent_close_writer_unstated", "refused", 0, 0, slog.String("statement_key", loop.statementKey),
+		slog.String("detail", "the strategy list's writer made no publication_semantics statement about this list "+
+			"(hold_last_good with the list's strategy_ids digest): no strategy's alerts are closed as absent; "+
+			"each round is counted writer_unstated"))
+}
+
 // leading is whether this replica is the control leader and neither
 // draining nor closed, read from memory.
 func (loop *absentStrategyClose) leading() bool {
@@ -336,284 +313,98 @@ func (loop *absentStrategyClose) leading() bool {
 	return loop.bundle.controlLeader && !loop.bundle.draining && !loop.bundle.closed
 }
 
-// rosterWalk is one walk of the link's roster: where it is, what it has
-// read, and how many pages it has taken over the rounds so far.
-type rosterWalk struct {
-	cursor     string
-	pages      int
-	roster     map[absentalerts.Key]int
-	unreadable map[absentalerts.Key]struct{}
-	// invalid is how many rows the walk's pages skipped as naming no
-	// strategy of this binding (openalerts.RosterPage.Invalid).
-	invalid int
+// discover fills the round's roster from the link's search: per tenant the
+// snapshot or the catalog's departures name, the strategies of active
+// alerts of this source the snapshot does not run
+// (filterclose.AbsentStrategies). A strategy the publication refused for a
+// capability is not "running": its alerts are found and close as no longer
+// detected. A tenant whose walk failed leaves the round unread - the link
+// unavailable - and one whose walk stopped at its bound leaves it
+// incomplete; both can only delay a close. It returns the searches made
+// and the tenants walked.
+func (loop *absentStrategyClose) discover(ctx context.Context, round *absentalerts.Round, observed controlplane.ObservedSnapshot,
+	departed []controlplane.DepartedStrategy) (int, int) {
+	if loop.filter == nil {
+		loop.observe(ctx, absentalerts.RefusalLinkUnavailable, errors.New("the link's control plane is not named"), 0)
+		return 0, 0
+	}
+	// A strategy listed without a tenant still exists (absentalerts reads
+	// existence by id): it is running under every tenant, and no tenant ""
+	// is walked - the link searches within a tenant only.
+	running := map[string][]string{}
+	var tenantless []string
+	for _, entry := range observed.Strategies {
+		if _, refused := round.Refused[entry.StrategyID]; refused {
+			if _, ok := running[entry.TenantID]; !ok && entry.TenantID != "" {
+				running[entry.TenantID] = nil
+			}
+			continue
+		}
+		if entry.TenantID == "" {
+			tenantless = append(tenantless, entry.StrategyID)
+			continue
+		}
+		running[entry.TenantID] = append(running[entry.TenantID], entry.StrategyID)
+	}
+	for _, entry := range departed {
+		if _, ok := running[entry.TenantID]; !ok && entry.TenantID != "" {
+			running[entry.TenantID] = nil
+		}
+	}
+	tenants := make([]string, 0, len(running))
+	for tenant := range running {
+		running[tenant] = append(running[tenant], tenantless...)
+		tenants = append(tenants, tenant)
+	}
+	sort.Strings(tenants)
+	round.Roster = map[absentalerts.Key]int{}
+	round.LinkRead, round.RosterComplete = true, true
+	searches := 0
+	for _, tenant := range tenants {
+		found, word := loop.filter.closer.AbsentStrategies(ctx, tenant, loop.filter.source, running[tenant])
+		searches += len(found) + 1
+		for _, strategy := range found {
+			round.Roster[absentalerts.Key{TenantID: tenant, StrategyID: strategy.StrategyID}] = 1
+		}
+		switch {
+		case word != "":
+			round.LinkRead, round.RosterComplete = false, false
+			loop.observe(ctx, absentalerts.RefusalLinkUnavailable, errors.New("the link's discovery answered "+word), 0)
+			return searches, len(tenants)
+		case len(found) == filterclose.MaxAbsentPerRound:
+			round.RosterComplete = false
+		}
+	}
+	return searches, len(tenants)
 }
 
-func newRosterWalk() *rosterWalk {
-	return &rosterWalk{roster: make(map[absentalerts.Key]int), unreadable: make(map[absentalerts.Key]struct{})}
-}
-
-// readRoster walks the link's roster into the round, carrying on the walk
-// the previous round did not finish. The first page this round reads is what
-// says whether the link could be read at all and carries the link's own
-// health; a resumed walk whose first page fails starts again from the first
-// page, so a cursor the link no longer answers costs one request. A walk that
-// reaches the end is the round's roster, complete; one still going leaves
-// the round the last walk that reached the end, or, before there is one,
-// what this walk has read so far, incomplete. A failure after the first page
-// ends the round's part of the walk, which the next round carries on; a
-// smaller roster can only cost closes. The strategies the link listed and
-// could not read come back in key order, for the candidate page to name,
-// beside how many rows the decided walk skipped as invalid.
-func (loop *absentStrategyClose) readRoster(ctx context.Context, round *absentalerts.Round) (openalerts.LinkHealth, []absentalerts.Key, int, int) {
-	if reader, ok := loop.link.(eventSourceReader); ok {
-		_, _ = reader.EventSource(ctx)
-	}
-	if loop.walk == nil {
-		loop.walk = newRosterWalk()
-	}
-	var health openalerts.LinkHealth
-	pages, ended, complete := 0, false, false
-	for {
-		page, err := loop.link.Roster(ctx, loop.walk.cursor)
-		if err != nil {
-			if pages == 0 && loop.walk.cursor != "" {
-				loop.walk = newRosterWalk()
-				continue
-			}
-			if pages == 0 {
-				loop.observe(ctx, absentalerts.RefusalLinkUnavailable, err, 0)
-			}
-			break
-		}
-		if pages == 0 {
-			health = page.Health
-			round.LinkRead = true
-		}
-		pages++
-		loop.walk.pages++
-		loop.walk.invalid += page.Invalid
-		for _, row := range page.Rows {
-			key := absentalerts.Key{TenantID: row.TenantID, StrategyID: row.StrategyID}
-			switch {
-			case row.Members == nil:
-				loop.walk.unreadable[key] = struct{}{}
-			case *row.Members > 0:
-				loop.walk.roster[key] = *row.Members
-			}
-		}
-		loop.walk.cursor = page.Next
-		if page.Next == "" {
-			ended, complete = true, true
-			break
-		}
-		if loop.walk.pages >= absentCloseRosterPages {
-			ended = true
-			break
-		}
-	}
-	decided := loop.walk
-	switch {
-	case complete:
-		loop.walked = loop.walk
-	case !ended && loop.walked != nil:
-		decided, complete = loop.walked, true
-	}
-	if ended {
-		loop.walk = nil
-	}
-	round.RosterComplete = complete
-	round.Roster = make(map[absentalerts.Key]int, len(decided.roster))
-	for key, n := range decided.roster {
-		round.Roster[key] = n
-	}
-	// A strategy read on one page and unreadable on another was read.
-	keys := make([]absentalerts.Key, 0, len(decided.unreadable))
-	for key := range decided.unreadable {
-		if _, read := decided.roster[key]; !read {
-			keys = append(keys, key)
-		}
-	}
-	round.RosterUnreadable = len(keys)
-	sort.Slice(keys, func(i, j int) bool { return absentalerts.LessKey(keys[i], keys[j]) })
-	return health, keys, pages, decided.invalid
-}
-
-// closeStrategy reads the strategy's active alerts from the link and closes
-// the ones this deployment produced, and returns what it found and did, for
-// the candidate page.
+// closeStrategy closes the strategy's active alerts of this source through
+// the link's filter and returns what it did, for the candidate page.
 func (loop *absentStrategyClose) closeStrategy(ctx context.Context, absent absentalerts.Absent, now time.Time) absentExecution {
-	execution := absentExecution{decidedAt: now}
-	key := openalerts.StrategyKey{TenantID: absent.Key.TenantID, StrategyID: absent.Key.StrategyID}
-	reconciliation, err := loop.link.Reconcile(ctx, key)
-	if err != nil {
-		loop.observe(ctx, absentalerts.OutcomeEvidenceUnavailable, err, 1)
-		execution.word = absentalerts.OutcomeEvidenceUnavailable
+	execution := absentExecution{decidedAt: now, identity: fleet.AbsentIdentityNotRead,
+		business: absent.Identity.BusinessID, revision: absent.Identity.Revision}
+	if absent.Identity.Revision > 0 {
+		execution.identity = fleet.AbsentIdentityCatalog
+	}
+	if _, err := strconv.ParseInt(absent.Key.StrategyID, 10, 64); err != nil || loop.filter == nil {
+		loop.observe(ctx, absentalerts.OutcomeIdentityUnknown, errors.New("strategy id is not a positive integer, or no link to close by"), 1)
+		execution.word = absentalerts.OutcomeIdentityUnknown
 		return execution
 	}
-	execution.alertsRead = true
-	own := make([]openalerts.Alert, 0, len(reconciliation.Alerts))
-	foreign, unknown := 0, 0
-	for _, alert := range reconciliation.Alerts {
-		switch alert.EventSourceID {
-		case "":
-			unknown++
-		case reconciliation.EventSourceID:
-			own = append(own, alert)
-		default:
-			foreign++
-		}
-	}
-	execution.own, execution.foreign, execution.unknown = len(own), foreign, unknown
-	switch {
-	case len(own) > 0:
-		execution.sampleAlertID = boundedAlertID(own[0].AlertID)
-	case len(reconciliation.Alerts) > 0:
-		execution.sampleAlertID = boundedAlertID(reconciliation.Alerts[0].AlertID)
-	}
-	loop.count(absentalerts.OutcomeProducerForeign, foreign)
-	loop.count(absentalerts.OutcomeProducerUnknown, unknown)
-	if reconciliation.Truncated {
-		// The listed alerts are closed below; the rest wait for the round
-		// that decides this strategy again.
-		loop.count(absentalerts.OutcomeEvidenceTruncated, 1)
-		if len(own) == 0 {
-			execution.word = absentalerts.OutcomeEvidenceTruncated
-			return execution
-		}
-	}
-	if len(own) == 0 {
-		// Nothing of this deployment's to close, so nothing to address and no
-		// record to read; what the catalog remembers is still the answer to
-		// "which business was it".
-		execution.word = fleet.AbsentExecutionNoOwnAlerts
-		execution.identity, execution.business, execution.revision =
-			fleet.AbsentIdentityNotRead, absent.Identity.BusinessID, absent.Identity.Revision
-		return execution
-	}
-	strategyID, err := strconv.ParseInt(absent.Key.StrategyID, 10, 64)
-	if err != nil || strategyID <= 0 {
-		loop.observe(ctx, absentalerts.OutcomeIdentityUnknown, errors.New("strategy id is not a positive integer"), 1)
-		execution.word, execution.identity = absentalerts.OutcomeIdentityUnknown, fleet.AbsentIdentityNone
-		return execution
-	}
-	found := loop.identity(ctx, absent, own, reconciliation.EventSourceID)
-	identity := found.identity
-	execution.identity, execution.business, execution.revision, execution.recordsRead =
-		found.source, identity.BusinessID, identity.Revision, found.recordsRead
-	if found.outcome != "" {
-		loop.observe(ctx, found.outcome, errors.New("no business or revision for a strategy whose alerts are to close"), 1)
-		execution.word = found.outcome
-		return execution
-	}
-	// A global business strategy's alerts are each filed under the business
-	// they are about, so each close carries its own alert's, read from the
-	// alert's record. So does a strategy the catalog never knew (it
-	// remembers no business for it): whether it was global is not written
-	// anywhere else. Every other strategy's alerts are filed under the
-	// strategy's business and nothing is read.
-	perAlert := identity.GlobalBusiness || absent.Identity.BusinessID == 0
-	reason := linkdoutput.CloseReasonAbsent
+	decision := filterclose.DecisionAbsent
 	if absent.Refused != "" {
-		reason = linkdoutput.CloseReasonUnsupported
+		decision = filterclose.DecisionUnsupported
 	}
-	for start := 0; start < len(own); start += absentCloseAlertBatch {
-		batch := make([]linkdoutput.CloseRequest, 0, min(len(own)-start, absentCloseAlertBatch))
-		unknown := 0
-		for _, alert := range own[start:min(len(own), start+absentCloseAlertBatch)] {
-			business := identity.BusinessID
-			if perAlert {
-				if ctx.Err() != nil {
-					break
-				}
-				read, err := loop.businesses.Of(ctx, key.TenantID, reconciliation.EventSourceID, absent.Key.StrategyID, alert.AlertID)
-				if err != nil {
-					// Not closed on a guess: it stays open, and the next
-					// round reads its record again.
-					unknown++
-					continue
-				}
-				business = read
-			}
-			batch = append(batch, linkdoutput.CloseRequest{TenantID: key.TenantID, Fingerprint: alert.Fingerprint,
-				AlertInstanceID: alert.AlertID, StrategyID: strategyID,
-				StrategyRevision: identity.Revision, BusinessID: business,
-				OccurredAt: now, Reason: reason, Detail: absent.Refused})
-		}
-		if unknown > 0 {
-			loop.observe(ctx, absentalerts.OutcomeBusinessUnknown, errors.New("an alert's record names no business for a global business strategy"), unknown)
-		}
-		if len(batch) == 0 {
-			if ctx.Err() != nil {
-				break
-			}
-			continue
-		}
-		execution.batch += len(batch)
-		if err := loop.writer.WriteCloseBatch(ctx, batch); err != nil {
-			// The rest are not sent this round; they are still open and the
-			// next round closes them.
-			loop.observe(ctx, absentalerts.OutcomeSendFailed, err, len(own)-start)
-			execution.word = absentalerts.OutcomeSendFailed
-			return execution
-		}
-		loop.count(absentalerts.OutcomeCloseSent, len(batch))
+	// The expectation is alarmd's own record of the strategy's open
+	// episodes; without one each alert is closed by its id
+	// (filterclose.Closer.Absent).
+	execution.word = loop.filter.closer.Absent(ctx, loop.filter.scope(absent.Key), decision, absent.Identity.Revision)
+	switch execution.word {
+	case filterclose.OutcomeJobDone, filterclose.OutcomeJobIncomplete, filterclose.OutcomeJobDoneRederived:
+		execution.sent = true
+		loop.count(absentalerts.OutcomeCloseSent, 1)
 	}
-	execution.word = absentalerts.OutcomeCloseSent
 	return execution
-}
-
-// identityReading is a close's business and revision, where they came from,
-// how many alert records were read for them, and the outcome word when
-// either is still missing.
-type identityReading struct {
-	identity    absentalerts.Identity
-	source      string
-	recordsRead int
-	outcome     string
-}
-
-// identity is the business and revision a close carries. The catalog's
-// memory answers for a strategy this process watched go; for the rest the
-// answer is on the alerts themselves, in the labels they were created with,
-// read from the link's record of the alert. A record is used only if it is
-// this deployment's alert of this strategy.
-func (loop *absentStrategyClose) identity(ctx context.Context, absent absentalerts.Absent, own []openalerts.Alert, source string) identityReading {
-	if absent.Identity.BusinessID != 0 && absent.Identity.Revision > 0 {
-		return identityReading{identity: absent.Identity, source: fleet.AbsentIdentityCatalog}
-	}
-	reading := identityReading{identity: absent.Identity}
-	fromRecord := false
-	for i := 0; i < len(own) && i < absentCloseIdentityReads; i++ {
-		reading.recordsRead++
-		record, err := loop.link.AlertRecord(ctx, absent.Key.TenantID, own[i].AlertID)
-		if err != nil || record.EventSourceID != source || record.StrategyID != absent.Key.StrategyID {
-			continue
-		}
-		if reading.identity.BusinessID == 0 && record.BusinessID != 0 {
-			reading.identity.BusinessID, fromRecord = record.BusinessID, true
-		}
-		if reading.identity.Revision <= 0 && record.Revision > 0 {
-			reading.identity.Revision, fromRecord = record.Revision, true
-		}
-		if reading.identity.BusinessID != 0 && reading.identity.Revision > 0 {
-			break
-		}
-	}
-	switch {
-	case fromRecord:
-		reading.source = fleet.AbsentIdentityAlertRecord
-	case reading.identity.BusinessID != 0 || reading.identity.Revision > 0:
-		reading.source = fleet.AbsentIdentityCatalog
-	default:
-		reading.source = fleet.AbsentIdentityNone
-	}
-	switch {
-	case reading.identity.BusinessID == 0:
-		reading.outcome = absentalerts.OutcomeIdentityUnknown
-	case reading.identity.Revision <= 0:
-		reading.outcome = absentalerts.OutcomeRevisionUnknown
-	}
-	return reading
 }
 
 // record writes the round's line: its refusal or its decision, with every

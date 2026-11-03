@@ -70,9 +70,9 @@ func credentialConfig(extra map[string][]string) string {
 	if _, stated := extra["cli"]; stated {
 		cli = "cli:\n  environment_id: env-test\n  environment_name: test\n  public_base_url: https://alarmd.example.test\n" + lines("cli", "  ")
 	}
-	linkd := ""
+	linkd := linkdControlPlaneYAML
 	if _, stated := extra["phase_two.linkd"]; stated {
-		linkd = "  linkd:\n    console_url: https://console.example.test/local-api\n" + lines("phase_two.linkd", "    ")
+		linkd = "  linkd:\n" + lines("phase_two.linkd", "    ")
 	}
 	return fmt.Sprintf(`http:
   listen: 127.0.0.1:8080
@@ -111,8 +111,7 @@ func writeCredential(t *testing.T, name, content string) string {
 // clearCredentialEnvironment keeps the process's own environment out of a
 // test: an empty variable is no source.
 func clearCredentialEnvironment(t *testing.T) {
-	for _, name := range []string{CLIAdminKeyEnvironment, CLIAdminKeySecretNameEnvironment, CLIAdminKeySecretKeyEnvironment,
-		LinkdConsoleUsernameEnvironment, LinkdConsolePasswordEnvironment} {
+	for _, name := range []string{CLIAdminKeyEnvironment, CLIAdminKeySecretNameEnvironment, CLIAdminKeySecretKeyEnvironment} {
 		t.Setenv(name, "")
 	}
 }
@@ -211,8 +210,13 @@ func TestEachReferenceIsReadOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reads[password] != 1 || len(reads) != 1 {
+	if reads[password] != 1 {
 		t.Fatalf("reads = %v, want the top-level reference read once", reads)
+	}
+	for path, n := range reads {
+		if n != 1 {
+			t.Fatalf("%s read %d times, want once", path, n)
+		}
 	}
 	if cfg.CMDBCacheRedis().Password != "test-password-1" {
 		t.Fatal("the inheriting cache lost the password")
@@ -350,10 +354,6 @@ func TestACredentialWithTwoSourcesIsRefused(t *testing.T) {
 			map[string]string{CLIAdminKeyEnvironment: testAdminKey}, "cli.admin_key_file and " + CLIAdminKeyEnvironment + " are both set"},
 		{"admin key environment and value", map[string][]string{"cli": {"admin_key: " + testAdminKey}},
 			map[string]string{CLIAdminKeyEnvironment: testAdminKey}, "cli admin_key is set both in the file and in " + CLIAdminKeyEnvironment},
-		{"console password environment and file", map[string][]string{"phase_two.linkd": {"username: reader", "password_file: " + file}},
-			map[string]string{LinkdConsolePasswordEnvironment: "test-password-1"}, "phase_two.linkd.password_file and " + LinkdConsolePasswordEnvironment + " are both set"},
-		{"console username value and file", map[string][]string{"phase_two.linkd": {"username: reader", "username_file: " + file, "password: test-password-1"}}, nil,
-			"phase_two.linkd.username and phase_two.linkd.username_file are both set"},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -401,18 +401,17 @@ func TestTheAdminKeySecretNameIsNotASourceOfTheKey(t *testing.T) {
 	}
 }
 
-// The linkd Console credentials come from files like the rest.
-func TestTheConsoleCredentialsComeFromFiles(t *testing.T) {
+// The link control plane's secret comes from its file.
+func TestTheControlPlaneSecretComesFromItsFile(t *testing.T) {
 	clearCredentialEnvironment(t)
 	cfg, err := LoadWithRoles(writeConfig(t, credentialConfig(map[string][]string{"phase_two.linkd": {
-		"username_file: " + writeCredential(t, "username", "reader\n"),
-		"password_file: " + writeCredential(t, "password", "test-password-1\n")}})), nil)
+		"control_plane:", "  url: https://linkd.example.test", "  jwt_secret_file: " + writeCredential(t, "secret", "test-secret-1\n")}})), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	linkd := cfg.PhaseTwo.Linkd
-	if linkd.Username != "reader" || linkd.Password != "test-password-1" || linkd.UsernameFile != "" || linkd.PasswordFile != "" {
-		t.Fatalf("console credentials = %q/%q, references %q/%q", linkd.Username, linkd.Password, linkd.UsernameFile, linkd.PasswordFile)
+	plane := cfg.PhaseTwo.Linkd.ControlPlane
+	if plane.JWTSecret != "test-secret-1" || plane.JWTSecretFile != "" || !plane.Configured() {
+		t.Fatalf("secret %q, reference %q", plane.JWTSecret, plane.JWTSecretFile)
 	}
 }
 
@@ -431,16 +430,16 @@ func TestOnlyTheReferencesTheRolesUseAreRead(t *testing.T) {
 		{"channel does not open the compatibility output", roles.Set{roles.Channel},
 			map[string][]string{"kafka.legacy_adapter.service_redis": {"password_file: " + absent},
 				"kafka.legacy_adapter.pod_cache.connection": {"password_file: " + absent}}, ""},
-		{"channel does not talk to the console", roles.Set{roles.Channel},
-			map[string][]string{"phase_two.linkd": {"username_file: " + absent, "password_file: " + absent}}, ""},
+		{"channel does not talk to the link", roles.Set{roles.Channel},
+			map[string][]string{"phase_two.linkd": {"control_plane:", "  url: https://linkd.example.test", "  jwt_secret_file: " + absent}}, ""},
 		{"control does not serve the CLI", roles.Set{roles.Control},
 			map[string][]string{"cli": {"admin_key_file: " + absent}}, ""},
 		{"worker does not serve the CLI", roles.Set{roles.Worker},
 			map[string][]string{"cli": {"admin_key_file: " + absent}}, ""},
 		{"worker opens the compatibility output", roles.Set{roles.Worker},
 			map[string][]string{"kafka.legacy_adapter.pod_cache.connection": {"password_file: " + absent}}, "kafka.legacy_adapter.pod_cache.connection.password_file"},
-		{"control talks to the console", roles.Set{roles.Control},
-			map[string][]string{"phase_two.linkd": {"username: reader", "password_file: " + absent}}, "phase_two.linkd.password_file"},
+		{"control talks to the link", roles.Set{roles.Control},
+			map[string][]string{"phase_two.linkd": {"control_plane:", "  url: https://linkd.example.test", "  jwt_secret_file: " + absent}}, "phase_two.linkd.control_plane.jwt_secret_file"},
 		{"channel serves the CLI", roles.Set{roles.Channel},
 			map[string][]string{"cli": {"admin_key_file: " + absent}}, "cli.admin_key_file"},
 		{"channel opens the runtime store", roles.Set{roles.Channel},
@@ -475,7 +474,7 @@ func TestTheCheckModesReadNothingOrEverything(t *testing.T) {
 		"redis":                              {"password_file: " + absent},
 		"kafka.legacy_adapter.service_redis": {"password_file: " + absent},
 		"cli":                                {"admin_key_file: " + absent},
-		"phase_two.linkd":                    {"username_file: " + absent, "password_file: " + absent},
+		"phase_two.linkd":                    {"control_plane:", "  url: https://linkd.example.test", "  jwt_secret_file: " + absent},
 	})
 	path := writeConfig(t, text)
 	cfg, err := LoadWithCredentials(path, nil, CredentialsUnread)
@@ -504,15 +503,14 @@ func TestTheCheckModesReadNothingOrEverything(t *testing.T) {
 func TestInlineCredentialsStillLoad(t *testing.T) {
 	clearCredentialEnvironment(t)
 	cfg, err := LoadWithRoles(writeConfig(t, credentialConfig(map[string][]string{
-		"redis":           {"password: test-password-1"},
-		"cli":             {"admin_key: " + testAdminKey},
-		"phase_two.linkd": {"username: reader", "password: test-password-2"},
+		"redis": {"password: test-password-1"},
+		"cli":   {"admin_key: " + testAdminKey},
 	})), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.Redis.Password != "test-password-1" || cfg.StrategySourceRedis().Password != "test-password-1" ||
-		cfg.CLI.AdminKey != testAdminKey || cfg.PhaseTwo.Linkd.Password != "test-password-2" {
+		cfg.CLI.AdminKey != testAdminKey {
 		t.Fatal("inline credentials were not loaded as written")
 	}
 }

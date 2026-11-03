@@ -303,7 +303,7 @@ redis:
   address: redis.test:6379
   state_prefix: alarmd:phase-two:g2:v1
 phase_two:
-  worker:
+%s  worker:
     id: %s
   control:
     strategy_cache_prefix: alarm-config
@@ -311,7 +311,7 @@ phase_two:
   access:
     uq_endpoint: http://unify-query.service
     query_source: alarmd
-`, workerID)
+`, linkdControlPlaneYAML, workerID)
 }
 
 // The state key lifetimes are the program's: the restart margin is the

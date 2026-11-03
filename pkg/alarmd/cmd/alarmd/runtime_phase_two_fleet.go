@@ -255,16 +255,9 @@ type fleetPublisher struct {
 	// restoreAttempts is scoped to current ownership. The maximum also marks
 	// successful reads (including missing/stale history) as finished.
 	restoreAttempts map[execution.QueryGroupIdentity]int
-	// openAlerts reports the state of this replica's copy of the consumer's
-	// open alert set. Nil on a build without the gate, and the snapshot then
-	// carries no facts, which the aggregate keeps apart from a copy that is
-	// fine.
-	openAlerts func() *fleet.OpenAlertSetFacts
-	// openAlertCounts is the copy's open alerts per tracked strategy, for the
-	// strategy board, given the strategies of the owned objects (nil when
-	// they cannot be named) so an untracked one is said unknown; nil without
-	// a copy.
-	openAlertCounts func(owned []string) *fleet.OpenAlertCounts
+	// activeCopy reports the state of this replica's own copy of the link's
+	// active alerts. Nil on a bundle that keeps none.
+	activeCopy func() *fleet.ActiveCopyFacts
 	// controlSource reports the state of this replica's control source
 	// refresh. Nil on a bundle that has none, and the snapshot then carries
 	// no facts.
@@ -766,18 +759,8 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	// wrong direction for the number people escalate on.
 	snapshot.Demoted = demoted
 	snapshot.TotalDemoted = len(demoted)
-	if publisher.openAlerts != nil {
-		snapshot.OpenAlertSet = publisher.openAlerts()
-	}
-	if publisher.openAlertCounts != nil {
-		var ownedStrategies []string
-		if publisher.strategies != nil {
-			ownedStrategies = []string{}
-			for _, ref := range evaluatingStrategies(owned, publisher.strategies) {
-				ownedStrategies = append(ownedStrategies, ref.StrategyID)
-			}
-		}
-		snapshot.OpenAlerts = publisher.openAlertCounts(ownedStrategies)
+	if publisher.activeCopy != nil {
+		snapshot.ActiveCopy = publisher.activeCopy()
 	}
 	if publisher.controlSource != nil {
 		snapshot.ControlSource = publisher.controlSource()

@@ -12,14 +12,19 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 )
 
 // credentialApplicationYAML is the application configuration with the
@@ -36,6 +41,11 @@ func credentialApplicationYAML(t *testing.T, redisLines ...string) string {
 	for _, line := range redisLines {
 		extra += "  " + line + "\n"
 	}
+	secret := filepath.Join(t.TempDir(), "linkd-jwt-secret")
+	if err := os.WriteFile(secret, []byte("example-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base = strings.Replace(base, applicationLinkdJWTSecretFile, secret, 1)
 	path := filepath.Join(t.TempDir(), "alarmd.yaml")
 	if err := os.WriteFile(path, []byte(strings.Replace(base, anchor, anchor+extra, 1)), 0o600); err != nil {
 		t.Fatal(err)
@@ -102,15 +112,12 @@ func TestResolveCredentialsGoesWithCheckConfig(t *testing.T) {
 	}
 }
 
-// The link's sets are read through a connection this process already
-// holds, copied by value. When that connection took its password from a
-// file, the copy carries the password: references are resolved at load,
-// before anything is copied - including a platform cache inheriting the
-// top-level redis.
-func TestTheAdoptedLinkdConnectionCarriesAPasswordReadFromAFile(t *testing.T) {
-	for _, name := range []string{"ALARMD_CLI_ADMIN_KEY", "ALARMD_LINKD_CONSOLE_USERNAME", "ALARMD_LINKD_CONSOLE_PASSWORD"} {
-		t.Setenv(name, "")
-	}
+// The link's control plane is signed with a secret read from a file: the
+// path is resolved at load, the client built from the loaded configuration
+// signs every search with that secret (HS256 over header.claims), and the
+// file's value is never left in the path field.
+func TestTheLinkdControlPlaneSecretIsReadFromItsFile(t *testing.T) {
+	t.Setenv("ALARMD_CLI_ADMIN_KEY", "")
 	dir := t.TempDir()
 	write := func(name, content string) string {
 		path := filepath.Join(dir, name)
@@ -119,38 +126,41 @@ func TestTheAdoptedLinkdConnectionCarriesAPasswordReadFromAFile(t *testing.T) {
 		}
 		return path
 	}
-	contents := strings.Replace(validGoAccessApplicationYAML(), "redis:\n  address: 127.0.0.1:6379\n",
-		"redis:\n  address: 127.0.0.1:6379\n  password_file: "+write("redis-password", "test-password-1\n")+"\n", 1) +
-		"  linkd:\n    console_url: http://console.example.test/local-api\n" +
-		"    username_file: " + write("console-username", "reader\n") + "\n" +
-		"    password_file: " + write("console-password", "test-password-3\n") + "\n" +
-		"platform_cache:\n  dynamic_group_key_prefix: 'groups:'\n  target_group:\n    mode: standalone\n    address: 192.0.2.10:6379\n" +
-		"    password_file: " + write("groups-password", "test-password-2\n") + "\n"
-	path := write("alarmd.yaml", contents)
-	cfg, err := config.LoadWithCredentials(path, nil, config.CredentialsForRoles)
+	tokens := make(chan string, 1)
+	plane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case tokens <- r.Header.Get("Internal-Token"):
+		default:
+		}
+		_, _ = w.Write([]byte(`{"items":[],"next":""}`))
+	}))
+	defer plane.Close()
+	contents := strings.Replace(validGoAccessApplicationYAML(), applicationLinkdControlPlaneYAML,
+		"  linkd:\n    control_plane:\n      url: "+plane.URL+"\n"+
+			"      jwt_secret_file: "+write("linkd-secret", "test-secret-3\n")+"\n", 1)
+	cfg, err := config.LoadWithCredentials(write("alarmd.yaml", contents), nil, config.CredentialsForRoles)
 	if err != nil {
 		t.Fatal(err)
 	}
-	discover := func(target openalerts.TargetBinding) discoverLinkdTarget {
-		return func(_ context.Context, options openalerts.HTTPReconcilerOptions) (openalerts.TargetBinding, error) {
-			if options.Username != "reader" || options.Password != "test-password-3" {
-				return openalerts.TargetBinding{}, errors.New("the Console was asked without the credentials read from files")
-			}
-			return target, nil
-		}
+	if got := cfg.PhaseTwo.Linkd.ControlPlane.JWTSecret; got != "test-secret-3" {
+		t.Fatalf("secret length %d, want the file's value", len(got))
 	}
-	for _, test := range []struct{ address, password string }{
-		{"192.0.2.10:6379", "test-password-2"},
-		// The top-level redis, also held through the CMDB cache that
-		// inherited it.
-		{"127.0.0.1:6379", "test-password-1"},
-	} {
-		adopted, _ := adoptLinkdLocation(context.Background(), cfg, discover(openalerts.TargetBinding{
-			KeyPrefix: "hook:open", Address: test.address, Database: 3}))
-		got := adopted.PhaseTwo.Linkd.Connection
-		if got == nil || got.Address != test.address || got.Password != test.password || got.PasswordFile != "" || got.DB != 3 {
-			t.Fatalf("target at %s: adopted %+v, want its held connection with the password read from the file", test.address, got)
-		}
+	client, err := newLinkdManage(cfg, time.Now)
+	if err != nil || client == nil {
+		t.Fatalf("client %v (%v)", client, err)
+	}
+	if _, err := client.Search(context.Background(), "system", json.RawMessage(`{"match_all":{}}`), "", 1); err != nil {
+		t.Fatal(err)
+	}
+	token := strings.TrimPrefix(<-tokens, "Bearer ")
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		t.Fatalf("token has %d parts", len(parts))
+	}
+	mac := hmac.New(sha256.New, []byte("test-secret-3"))
+	mac.Write([]byte(parts[0] + "." + parts[1]))
+	if base64.RawURLEncoding.EncodeToString(mac.Sum(nil)) != parts[2] {
+		t.Fatal("the search was not signed with the secret read from the file")
 	}
 }
 

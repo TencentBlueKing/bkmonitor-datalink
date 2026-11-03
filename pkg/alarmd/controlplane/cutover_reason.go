@@ -49,6 +49,13 @@ const (
 	// or that starts at or after the boundary this cutover is cutting at. A
 	// cutover that stopped half way leaves Segments in exactly this state.
 	CutoverReasonOpenSegmentClosed = "open_segment_closed_or_ahead"
+	// CutoverReasonBoundaryBehindOpenSegment is an open Segment starting at or
+	// after the boundary, within MaxClockSkew of it: the activation before was
+	// cut in the same second, or on a clock ahead of this one. The cutover
+	// is refused and cut again one second past the latest such Segment, so a
+	// count here is followed by a cutover that lands. One further out than
+	// MaxClockSkew is open_segment_closed_or_ahead.
+	CutoverReasonBoundaryBehindOpenSegment = "boundary_behind_open_segment"
 	// CutoverReasonOpenDigestMismatch is the open Segment naming content that
 	// is not what the last activation says it should name. The Segment was
 	// moved by something other than this path -- including a previous cutover
@@ -103,7 +110,7 @@ const (
 // startup and for a reader to bound the family by.
 var CutoverReasons = []string{
 	CutoverReasonActivationRecordMissing,
-	CutoverReasonTimelineMissing, CutoverReasonOpenSegmentClosed,
+	CutoverReasonTimelineMissing, CutoverReasonOpenSegmentClosed, CutoverReasonBoundaryBehindOpenSegment,
 	CutoverReasonOpenDigestMismatch,
 	CutoverReasonSegmentContentMismatch, CutoverReasonSegmentConflict,
 	CutoverReasonDigestMismatch, CutoverReasonObjectNewer, CutoverReasonConflict, CutoverReasonUnavailable,
@@ -244,3 +251,18 @@ func verifySegmentContent(group QueryGroup, named ContentEntry) error {
 	}
 	return nil
 }
+
+// boundaryBehindError is a cutover refused because an open Segment it would
+// close starts at or after its boundary (CutoverReasonBoundaryBehindOpenSegment);
+// floor is the first boundary past every such Segment the walk found. The
+// reconciler cuts again there (ScheduleActivationReconciler.Ensure).
+type boundaryBehindError struct {
+	conflict *ScheduleConflictError
+	floor    execution.EvaluationTime
+}
+
+func (e *boundaryBehindError) Error() string {
+	return fmt.Sprintf("%s; the activation is cut again at %d", e.conflict.Error(), e.floor)
+}
+
+func (e *boundaryBehindError) Unwrap() error { return e.conflict }

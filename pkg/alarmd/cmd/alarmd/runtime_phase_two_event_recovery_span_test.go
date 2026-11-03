@@ -269,12 +269,12 @@ func runGroupedEventCount(t *testing.T, run eventSpanCase) eventSpanRounds {
 	sink := &recordingPhaseTwoEventSink{}
 	var console *httptest.Server
 	if run.openAlert {
-		console = httptest.NewServer(lifecycleConsole(address, client))
+		console = httptest.NewServer(lifecycleLink(client))
 		t.Cleanup(console.Close)
 	}
-	published := false
-	// publishOpen puts the ABNORMAL's alert in the consumer's set and says
-	// so on the change channel, as the consumer does on taking it.
+	published, fingerprint := false, ""
+	// publishOpen makes the ABNORMAL's alert active in the link, as the
+	// consumer does on taking it: the link's search finds it from then on.
 	publishOpen := func() {
 		for _, event := range sink.snapshot() {
 			if event.EventKind != contract.TriggerEventAbnormal {
@@ -283,33 +283,27 @@ func runGroupedEventCount(t *testing.T, run eventSpanCase) eventSpanRounds {
 			if err := client.SAdd(ctx, lifecycleLinkPrefix+":tenant-a:"+eventSpanStrategyID, event.DedupeMD5).Err(); err != nil {
 				t.Fatal(err)
 			}
-			notice, _ := json.Marshal(map[string]string{"bk_tenant_id": "tenant-a", "strategy_id": eventSpanStrategyID})
-			if err := client.Publish(ctx, lifecycleLinkPrefix+":changes", notice).Err(); err != nil {
-				t.Fatal(err)
-			}
-			published = true
+			published, fingerprint = true, event.DedupeMD5
 			return
 		}
 		t.Fatal("round 0 sent no ABNORMAL to put in the consumer's set")
 	}
-	// waitHeld waits until the process's copy holds the published alert. The
-	// copy reads on its own loop, which the bundle's clock paces, so the wait
-	// moves the clock on a second at a time within the round's half period.
+	// waitHeld waits until the process's copy judges the published alert
+	// held, running the pass its own loop runs every 10 s of wall time after
+	// each lookup that is not yet that judgement.
 	waitHeld := func(bundle *phaseTwoWorkerBundle, current int) {
 		port, ok := bundle.workerPorts.OpenAlerts.(*openAlertCopyPort)
-		if !ok {
-			t.Fatalf("the open alert port is %T", bundle.workerPorts.OpenAlerts)
+		if !ok || port.copy == nil {
+			t.Fatalf("the open alert port is %T without a copy", bundle.workerPorts.OpenAlerts)
 		}
-		for deadline, step := testwait.Deadline(t), int64(1); ; step++ {
-			if stats := port.cache.Stats(); stats.Loaded >= 1 && stats.Members >= 1 {
+		for deadline := testwait.Deadline(t); ; {
+			if held, judged := port.copy.Holds("tenant-a", eventSpanStrategyID, fingerprint); held && judged {
 				return
 			}
-			if step < period/2 {
-				clock.Store(base + int64(current)*period + 1 + step)
-			}
+			port.copy.Pass(ctx)
 			time.Sleep(20 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 			if time.Now().After(deadline) {
-				t.Fatalf("round %d: the open alert copy has not read the strategy's set by the test's deadline: %+v", current, port.cache.Stats())
+				t.Fatalf("round %d: the open alert copy does not hold the published alert by the test's deadline: %+v", current, port.copy.Stats())
 			}
 		}
 	}
@@ -325,9 +319,11 @@ func runGroupedEventCount(t *testing.T, run eventSpanCase) eventSpanRounds {
 		if run.native || run.openAlert {
 			cfg.PhaseTwo.Output.Protocol = config.OutputProtocolNative
 		}
-		if run.openAlert {
-			cfg.PhaseTwo.Linkd.ConsoleURL = console.URL + testLinkdAPIRoot
-			cfg.PhaseTwo.Linkd.Username, cfg.PhaseTwo.Linkd.Password = "user", "secret"
+		switch {
+		case run.openAlert:
+			cfg.PhaseTwo.Linkd.ControlPlane = config.LinkdControlPlaneConfig{URL: console.URL, JWTSecret: "example-secret"}
+		case run.native:
+			cfg.PhaseTwo.Linkd.ControlPlane = quietLinkControlPlane(t)
 		}
 		bundle, err := openProductionPhaseTwoBundleWithDependencies(ctx, cfg, metric.NewRecorder(metric.BuildInfo{}),
 			observability.Discard(observability.ComponentRuntime), newPhaseTwoApplicationHealth(),

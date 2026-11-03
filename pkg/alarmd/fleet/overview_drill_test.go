@@ -53,7 +53,7 @@ func drillBoard(t *testing.T) (*boardIndex, *SourceCapability) {
 			row.Dispositions = append(row.Dispositions, DiagnosisDisposition{StrategyDisposition: disposition})
 		}
 		return row
-	}, nil, nil, nil, nil, nil)
+	}, nil, nil, nil, nil)
 	return index, CountCapability(records, len(universe))
 }
 

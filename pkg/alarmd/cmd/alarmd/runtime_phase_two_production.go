@@ -384,26 +384,6 @@ type productionPhaseTwoControl struct {
 	dependencies  productionPhaseTwoControlDependencies
 	renewMu       sync.Mutex
 	renewDegraded bool
-	// currentAndDraining is the Query Groups the last read of the
-	// activation found in the current active set and in the draining
-	// projection at once (loadActiveQueryGroups), nil before one.
-	currentAndDrainingMu sync.Mutex
-	currentAndDraining   map[execution.QueryGroupIdentity]struct{}
-}
-
-// CurrentAndDraining reports whether the last read of the activation found
-// the Query Group current and draining at once: an activation that left it
-// with its timeline open (the cutover settles a leaving Query Group whose
-// open Segment starts at the activation boundary without retiring it). Its
-// Plans can be a strategy's revision the current one replaced.
-func (runtime *productionPhaseTwoControl) CurrentAndDraining(queryGroup execution.QueryGroupIdentity) bool {
-	if runtime == nil {
-		return false
-	}
-	runtime.currentAndDrainingMu.Lock()
-	defer runtime.currentAndDrainingMu.Unlock()
-	_, both := runtime.currentAndDraining[queryGroup]
-	return both
 }
 
 func (runtime *productionPhaseTwoControl) recordControlFactRead(fact string) {
@@ -1013,20 +993,8 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 			EarliestRetainedSlot: retention.earliest, CursorPruned: retention.pruned, InFlight: inFlight,
 		})
 	}
-	// Which Query Groups are current and draining at once needs no store
-	// read, so it is published before the reads below: one that fails
-	// returns early and would otherwise leave the previous read's answer.
-	both := make(map[execution.QueryGroupIdentity]struct{})
 	for _, draining := range state.Draining {
 		if _, current := active[draining.QueryGroup]; current {
-			both[draining.QueryGroup] = struct{}{}
-		}
-	}
-	runtime.currentAndDrainingMu.Lock()
-	runtime.currentAndDraining = both
-	runtime.currentAndDrainingMu.Unlock()
-	for _, draining := range state.Draining {
-		if _, current := both[draining.QueryGroup]; current {
 			drainingFacts.Isolated++
 			runtime.isolateDrainingQueryGroup(ctx, draining.QueryGroup,
 				errors.New("phase-two Query Group cannot be current and draining"))

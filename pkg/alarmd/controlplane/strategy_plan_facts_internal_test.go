@@ -12,6 +12,7 @@ package controlplane
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -81,6 +82,20 @@ func TestStrategyPlanFactsSayWhatIsPartial(t *testing.T) {
 	}
 }
 
+// The interval is the longest of the strategy's Plans, how often it sends
+// at the slowest; Plans that differ only in it still agree.
+func TestStrategyPlanFactsCarryTheLongestInterval(t *testing.T) {
+	minute, fiveMinutes := factsPlan("t", 9, []string{"ip"}, 1), factsPlan("t", 9, []string{"ip"}, 1)
+	minute.Plan.StrategyIR.ExecutionSemantics.EvaluationInterval = 60
+	fiveMinutes.Plan.StrategyIR.ExecutionSemantics.EvaluationInterval = 300
+	for _, order := range [][]FrozenPlan{{minute, fiveMinutes}, {fiveMinutes, minute}} {
+		index := buildStrategyIndex(SnapshotPublicationRef{}, []QueryGroup{{Identity: "a", Plans: order[:1]}, {Identity: "b", Plans: order[1:]}}, nil)
+		if facts, _ := index.planFacts("t", "7"); facts.Interval != 5*time.Minute || !facts.Agree {
+			t.Fatalf("interval %s agree %v, want 5m0s and agreeing", facts.Interval, facts.Agree)
+		}
+	}
+}
+
 // A process without a publication of its own answers unavailable, not "no
 // such strategy".
 func TestStrategyPlanFactsWithoutAPublicationAreUnavailable(t *testing.T) {
@@ -91,5 +106,36 @@ func TestStrategyPlanFactsWithoutAPublicationAreUnavailable(t *testing.T) {
 	reconciler.strategies.replace(buildStrategyIndex(SnapshotPublicationRef{}, nil, nil))
 	if _, available, found := reconciler.StrategyPlanFacts("t", "7"); !available || found {
 		t.Fatalf("available %v found %v, want a publication without the strategy", available, found)
+	}
+}
+
+// A strategy's target is its Plans' target plan, with the revision and the
+// evaluation period; Plans with different target plans disagree; a Plan
+// without one answers found with no plan; another tenant is not found.
+func TestStrategyTargetIsThePlansTargetPlan(t *testing.T) {
+	targetPlan := &contract.TargetPlanV1{SchemaVersion: 1, Rule: contract.TargetPlanRuleIPCloud,
+		Identity:   contract.TargetPlanIdentityV1{Dimensions: []string{"bk_target_ip", "bk_target_cloud_id"}, Address: true},
+		StaticKeys: []string{"192.0.2.1|0"}}
+	plan := factsPlan("t", 9, nil, 1)
+	plan.Plan.TargetPlan = targetPlan
+	plan.Plan.StrategyIR.ExecutionSemantics.EvaluationInterval = 60
+	index := buildStrategyIndex(SnapshotPublicationRef{}, []QueryGroup{{Identity: "qg", Plans: []FrozenPlan{plan}}}, nil)
+	target, found := index.target("t", "7")
+	if !found || target.Plan != targetPlan || target.Revision != 9 || target.Interval.Seconds() != 60 || !target.Agree {
+		t.Fatalf("target %+v found %v", target, found)
+	}
+	if _, found := index.target("other", "7"); found {
+		t.Fatal("another tenant's strategy was answered")
+	}
+	other := factsPlan("t", 9, nil, 1)
+	other.Plan.TargetPlan = &contract.TargetPlanV1{SchemaVersion: 1, Rule: contract.TargetPlanRuleIPCloud,
+		Identity: targetPlan.Identity, StaticKeys: []string{"192.0.2.2|0"}}
+	split := buildStrategyIndex(SnapshotPublicationRef{}, []QueryGroup{{Identity: "a", Plans: []FrozenPlan{plan}}, {Identity: "b", Plans: []FrozenPlan{other}}}, nil)
+	if target, _ := split.target("t", "7"); target.Agree {
+		t.Fatal("Plans with different target plans read as agreeing")
+	}
+	whole := buildStrategyIndex(SnapshotPublicationRef{}, []QueryGroup{{Identity: "qg", Plans: []FrozenPlan{factsPlan("t", 9, nil, 1)}}}, nil)
+	if target, found := whole.target("t", "7"); !found || target.Plan != nil {
+		t.Fatalf("a whole-business strategy: %+v found %v", target, found)
 	}
 }

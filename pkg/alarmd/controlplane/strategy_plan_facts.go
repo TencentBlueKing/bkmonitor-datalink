@@ -12,6 +12,7 @@ package controlplane
 import (
 	"reflect"
 	"sort"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
@@ -64,6 +65,10 @@ type StrategyPlanFacts struct {
 	// facts. A strategy whose Plans disagree has no one answer, and the
 	// fields above are the first Plan's.
 	Agree bool
+	// Interval is the longest evaluation interval among the Plans: how
+	// often the strategy sends at the slowest. It is not a fact Agree
+	// compares.
+	Interval time.Duration
 }
 
 // StrategyPlanFacts answers one strategy's facts under a tenant from the
@@ -83,11 +88,13 @@ func (reconciler *SourceReconciler) StrategyPlanFacts(tenantID, strategyID strin
 func (index *strategyIndex) planFacts(tenantID, strategyID string) (StrategyPlanFacts, bool) {
 	var first *StrategyPlanFacts
 	agree := true
+	var interval time.Duration
 	for _, at := range index.plans[strategyID] {
 		plan := &index.groups[at.group].Plans[at.plan]
 		if plan.Identity.TenantID != tenantID {
 			continue
 		}
+		interval = max(interval, time.Duration(plan.Plan.StrategyIR.ExecutionSemantics.EvaluationInterval)*time.Second)
 		facts := frozenPlanFacts(plan)
 		if first == nil {
 			first = &facts
@@ -102,6 +109,7 @@ func (index *strategyIndex) planFacts(tenantID, strategyID string) (StrategyPlan
 	}
 	facts := *first
 	facts.Agree = agree
+	facts.Interval = interval
 	facts.LevelsWhole = true
 	for _, disposition := range index.dispositions[strategyID] {
 		if retainingDisposition(disposition.Disposition) {
@@ -144,4 +152,49 @@ func sortedCopy(values []string) []string {
 	copied := append([]string(nil), values...)
 	sort.Strings(copied)
 	return copied
+}
+
+// StrategyTarget is the target plan the published Plans of one strategy
+// carry, as a scope close reads it: the plan, the strategy revision, the
+// evaluation period its groups are resolved for, and whether every Plan of
+// the strategy carries the same plan.
+type StrategyTarget struct {
+	Revision int64
+	Plan     *contract.TargetPlanV1
+	Interval time.Duration
+	Agree    bool
+}
+
+// StrategyTarget answers the strategy's target plan from the published
+// index, like StrategyPlanFacts: available false before one is published,
+// found false for a strategy none of whose Plans is under the tenant. A
+// found strategy whose Plans name no target plan has a nil Plan.
+func (reconciler *SourceReconciler) StrategyTarget(tenantID, strategyID string) (target StrategyTarget, available, found bool) {
+	index := reconciler.publishedIndex()
+	if index == nil {
+		return StrategyTarget{}, false, false
+	}
+	target, found = index.target(tenantID, strategyID)
+	return target, true, found
+}
+
+func (index *strategyIndex) target(tenantID, strategyID string) (target StrategyTarget, found bool) {
+	target.Agree = true
+	for _, at := range index.plans[strategyID] {
+		plan := &index.groups[at.group].Plans[at.plan]
+		if plan.Identity.TenantID != tenantID {
+			continue
+		}
+		if !found {
+			found = true
+			target.Revision = plan.Plan.StrategyRef.SnapshotRevision
+			target.Plan = plan.Plan.TargetPlan
+			target.Interval = time.Duration(plan.Plan.StrategyIR.ExecutionSemantics.EvaluationInterval) * time.Second
+			continue
+		}
+		if !reflect.DeepEqual(target.Plan, plan.Plan.TargetPlan) || target.Revision != plan.Plan.StrategyRef.SnapshotRevision {
+			target.Agree = false
+		}
+	}
+	return target, found
 }

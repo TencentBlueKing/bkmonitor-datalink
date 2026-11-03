@@ -139,7 +139,7 @@ func ReasonLogLevel(reason ReasonCode) slog.Level {
 	case inReasonSet(warnReasons, reason), inReasonSet(warnViewStreamReasons, reason), inReasonSet(warnDecisionReasons, reason),
 		inReasonSet(warnRunOutcomes, reason), inReasonSet(warnCursorRefusals, reason), inReasonSet(warnSlotPathReasons, reason),
 		inReasonSet(warnMaintenanceReasons, reason), inReasonSet(warnAbsentCloseReasons, reason),
-		inReasonSet(warnEditCloseReasons, reason):
+		inReasonSet(warnEditCloseReasons, reason), inReasonSet(strategyScopeCloseReasonSet, reason):
 		return slog.LevelWarn
 	case inReasonSet(activationFailureReasonSet, reason):
 		if _, kind, ok := strings.Cut(string(reason), "/"); ok && infoActivationKinds[kind] {

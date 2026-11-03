@@ -564,6 +564,11 @@ func (repository *RedisCatalogRepository) compareAndSetPublicationScheduleActiva
 		}
 	}
 	timelines := repository.cutoverTimelines(toRead)
+	// behind is the latest open Segment the walk found starting at or after
+	// the boundary, within MaxClockSkew of it: the activation is cut again
+	// one second past it (boundaryBehindError) rather than settling the
+	// Query Group as if it could not be cut.
+	var behind *boundaryBehindError
 	for _, queryGroup := range oldIdentities {
 		// Recorded before anything can fail on it: the cutover returns at its
 		// first failure, so this names the one that stopped it.
@@ -686,6 +691,24 @@ func (repository *RedisCatalogRepository) compareAndSetPublicationScheduleActiva
 			continue
 		}
 		open := timeline.Segments[last]
+		if start := open.Schedule.Segment.Start; open.Schedule.Segment.End == nil && start >= boundary &&
+			time.Duration(start-boundary)*time.Second < execution.MaxClockSkew {
+			// An open Segment that starts at the boundary or after it: the
+			// activation before this one was cut in the same second, or on
+			// a clock ahead of this one. It cannot be closed at the
+			// boundary (a Segment ending where it starts is invalid), and
+			// settling it left a Query Group that leaves the publication
+			// with its timeline open on its old Plans, current and draining
+			// at once. Every such Segment is found first; the cutover then
+			// refuses, naming the boundary past all of them, and the
+			// reconciler cuts there.
+			if behind == nil || start+1 > behind.floor {
+				behind = &boundaryBehindError{floor: start + 1, conflict: &ScheduleConflictError{
+					Reason: CutoverReasonBoundaryBehindOpenSegment, QueryGroup: queryGroup,
+					Detail: fmt.Sprintf("open_start=%d boundary=%d", start, boundary)}}
+			}
+			continue
+		}
 		if open.Schedule.Segment.End != nil || open.Schedule.Segment.Start >= boundary {
 			end := "open"
 			if open.Schedule.Segment.End != nil {
@@ -823,6 +846,10 @@ func (repository *RedisCatalogRepository) compareAndSetPublicationScheduleActiva
 			candidates = append(candidates, pruneCandidate{update: len(updates), dead: dead})
 		}
 		updates = append(updates, scheduleTimelineUpdate{expected: raw, next: timeline})
+	}
+	if behind != nil {
+		cutover.failedAt(behind.conflict.QueryGroup)
+		return behind
 	}
 	if readAll {
 		// Both ways round: every record the activation holds is carried by an
@@ -1430,6 +1457,14 @@ func (repository *RedisCatalogRepository) persistCutoverActivation(
 		} else {
 			delete(active, update.next.QueryGroup)
 		}
+	}
+	// A draining Query Group is never current. A leaving Query Group whose
+	// timeline the cutover could not retire (its key gone, its bytes
+	// unreadable, its last Segment already closed: retired_unwritten) has
+	// no update above and used to stay in the set beside its draining
+	// entry, which every Worker refuses as "current and draining".
+	for _, draining := range next.Draining {
+		delete(active, draining.QueryGroup)
 	}
 	identities := make([]execution.QueryGroupIdentity, 0, len(active))
 	for identity := range active {

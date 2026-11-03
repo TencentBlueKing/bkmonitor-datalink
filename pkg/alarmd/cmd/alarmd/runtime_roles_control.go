@@ -22,7 +22,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/memoryline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/roles"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
@@ -50,20 +49,7 @@ func openProductionControlRoleBundle(
 	}
 	cfg = cfg.WithResolvedRedisPoolSize()
 	wait := external.startupWaiter(recorder, logger, health)
-	linkdTokens, linkdTokenClient, err := openLinkdTokens(cfg, recorder.RedisHook("linkd"), external.Now)
-	if err != nil {
-		return nil, err
-	}
-	// Closed here until the owned clients take it over below.
-	linkdTokensOwned := false
-	defer func() {
-		if resultErr != nil && linkdTokenClient != nil && !linkdTokensOwned {
-			resultErr = errors.Join(resultErr, linkdTokenClient.Close())
-		}
-	}()
-	discoverLinkd := withLinkdToken(openalerts.DiscoverTarget, linkdTokenSource(linkdTokens))
-	cfg, linkdDiscovery := adoptLinkdLocation(ctx, cfg, discoverLinkd)
-	logLinkdDiscovery(logger, linkdDiscovery)
+	warnLinkdUnconfigured(cfg, logger)
 	baseObserver, err := newPhaseTwoRuntimeObserver(recorder, logger)
 	if err != nil {
 		return nil, err
@@ -76,9 +62,6 @@ func openProductionControlRoleBundle(
 		return nil, err
 	}
 	var ownedClients []redis.UniversalClient
-	if linkdTokenClient != nil {
-		ownedClients, linkdTokensOwned = append(ownedClients, linkdTokenClient), true
-	}
 	closeOwned := func() error {
 		var errs []error
 		for _, client := range ownedClients {
@@ -200,42 +183,17 @@ func openProductionControlRoleBundle(
 	if err := events.ConfigureLegacyOutput(converter, cfg.Kafka.LegacyAdapter.Topic, cfg.Kafka.TriggerEvent.MaxMessageBytes); err != nil {
 		return nil, err
 	}
-	openLinkd := func(connection config.RedisConnectionConfig) (redis.UniversalClient, bool) {
-		if sameRedisConnection(connection, runtimeConnection) {
-			return redisForCaller(runtimeClient, redisfailure.CallerLinkd), false
-		}
-		client := redis.NewUniversalClient(productionRedisOptions(connection))
-		client.AddHook(recorder.RedisHook("linkd"))
-		return client, true
-	}
-	linkdConnection := runtimeConnection
-	linkdClient := redisForCaller(runtimeClient, redisfailure.CallerLinkd)
-	if cfg.PhaseTwo.Linkd.Connection != nil {
-		linkdConnection = *cfg.PhaseTwo.Linkd.Connection
-		var owned bool
-		linkdClient, owned = openLinkd(linkdConnection)
-		if owned {
-			ownedClients = append(ownedClients, linkdClient)
-		}
-	}
-	linkd, err := newLinkdIndex(cfg, linkdClient, linkdConnection, linkdDiscovery, openLinkd, linkdTokenSource(linkdTokens), external.Now, logger)
+	// The link's control plane: the absent and edit closes discover and
+	// close through its search and filter.
+	linkdManage, err := newLinkdManage(cfg, external.Now)
 	if err != nil {
 		return nil, err
 	}
-	closeMovedLinkd := func() error {
-		if client := linkd.Location.OwnedClient(); client != nil {
-			return client.Close()
-		}
-		return nil
+	filterCloser, err := newFilterCloser(cfg, linkdManage, redisForCaller(runtimeClient, redisfailure.CallerLinkd), external.Now, recorder, logger)
+	if err != nil {
+		return nil, err
 	}
-	defer func() {
-		if resultErr != nil {
-			resultErr = errors.Join(resultErr, closeMovedLinkd())
-		}
-	}()
-	recorder.SetOpenAlertSetSource(linkd.Cache.Stats)
-	recorder.SetLinkdConsoleSource(fleet.LinkdConsoleStates, openalerts.ConsoleOps, openalerts.ConsoleFailureClasses,
-		linkdConsoleReading(linkd.Console, external.Now))
+	route := newFilterRoute(cfg, filterCloser)
 	recorder.SetActivationRebuildSource(core.Repository.ActivationRebuildCounts)
 	recorder.SetTimelineRepairSource(core.Repository.TimelineRepairCounts)
 	recorder.SetActivationSkippedTimelinesSource(core.Repository.SkippedTimelinesReading)
@@ -360,7 +318,8 @@ func openProductionControlRoleBundle(
 	binding := cliControlBinding{Incarnation: incarnation, StreamToken: streamIdentity.Token, Server: viewServer,
 		Metrics: recorder.Gatherer(), PublicWindows: fleet.NewPublicWindowsHandler(windows, external.Now),
 		RedisFailures: cliRedisFailures(recorder, observer), RedisDialRetries: recorder.ObserveDiagnosticRedisDialRetry,
-		AuthEvents: cliAuthEvents(recorder), RosterApplied: recorder.SetCLIRosterApplied, LinkdConsole: linkd.Console}
+		AuthEvents: cliAuthEvents(recorder), RosterApplied: recorder.SetCLIRosterApplied, LinkdSearch: linkdManage,
+		LinkdSource: cfg.PhaseTwo.Linkd.ControlPlane.Source()}
 	facts := func() *observability.RuntimeConfigFacts {
 		if bundle == nil {
 			return nil
@@ -391,8 +350,9 @@ func openProductionControlRoleBundle(
 		ViewStreamStats: viewServer.Stats, ActivationBlocked: core.Repository.ActivationBlockedReading,
 		ActivationSkipped: core.Repository.SkippedTimelinesReading, ActivationHeader: core.Repository.ActivationHeaderReading,
 		RunOpenAlerts: func(runCtx context.Context) error {
-			go linkd.Location.retry(runCtx, cfg, discoverLinkd, linkdRetryFirst, linkdRetryCeiling)
-			return linkd.Cache.Run(runCtx)
+			// The copy is the Workers': a control-only process gates nothing.
+			<-runCtx.Done()
+			return nil
 		},
 		RefreshPlatformSettings: func(refreshCtx context.Context) { settings.Refresh(refreshCtx) },
 		ProbeControlRedis:       func(probeCtx context.Context) error { return controlClient.Ping(probeCtx).Err() }, MeasureStores: census.measure,
@@ -405,16 +365,20 @@ func openProductionControlRoleBundle(
 		CloseResources: func(shutdownCtx context.Context) error {
 			observationMemory.Close()
 			viewServer.Close()
-			return errors.Join(events.Shutdown(shutdownCtx), closeCLI(), closeMovedLinkd(), closeOwned())
+			return errors.Join(events.Shutdown(shutdownCtx), closeCLI(), closeOwned())
 		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	if linkd.Console != nil {
-		closeLoop := newAbsentStrategyClose(bundle, core.Reconciler, linkd.Console, events)
+	if route != nil {
+		closeLoop := newAbsentStrategyClose(bundle, core.Reconciler, route)
 		closeLoop.documents, _ = core.StrategySource.(controlplane.StrategyDocumentPresence)
-		closeLoop.edits = newEditStrategyClose(bundle, core.Reconciler, linkd.Console, events)
+		closeLoop.logger = logger
+		if statement, ok := core.StrategySource.(controlplane.PublicationStatementSource); ok {
+			closeLoop.statementKey = statement.PublicationStatementKey()
+		}
+		closeLoop.edits = newEditStrategyClose(bundle, core.Reconciler, route)
 		recorder.SetEditCloseSource(closeLoop.edits.Stats)
 		absentPage.bind(closeLoop)
 		bundle.dependencies.RunAbsentClose = closeLoop.run

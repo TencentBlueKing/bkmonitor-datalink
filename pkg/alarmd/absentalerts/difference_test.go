@@ -4,6 +4,7 @@
 package absentalerts
 
 import (
+	"strconv"
 	"testing"
 	"time"
 )
@@ -16,24 +17,12 @@ func testBounds() Bounds {
 
 func key(id string) Key { return Key{TenantID: "system", StrategyID: id} }
 
-func itoa(value int) string {
-	if value == 0 {
-		return "0"
-	}
-	digits := ""
-	for value > 0 {
-		digits = string(rune('0'+value%10)) + digits
-		value /= 10
-	}
-	return digits
-}
-
 // filled is a snapshot of the given size that lists none of the strategies
 // the tests close.
 func filled(count int) map[Key]struct{} {
 	snapshot := make(map[Key]struct{}, count)
 	for i := 0; i < count; i++ {
-		snapshot[key("live-"+itoa(i))] = struct{}{}
+		snapshot[key("live-"+strconv.Itoa(i))] = struct{}{}
 	}
 	return snapshot
 }
@@ -58,11 +47,11 @@ func ripe(keys ...Key) map[Key]Absence {
 }
 
 // roundFor is a healthy round: the link read and maintained a minute ago,
-// a snapshot of 200 live strategies, and the roster listing the given
-// strategies beside a few live ones.
+// a snapshot of 200 live strategies under its writer's statement, and the
+// roster listing the given strategies beside a few live ones.
 func roundFor(roster map[Key]struct{}, absences map[Key]Absence) Round {
 	for i := 0; i < 5; i++ {
-		roster[key("live-"+itoa(i))] = struct{}{}
+		roster[key("live-"+strconv.Itoa(i))] = struct{}{}
 	}
 	members := make(map[Key]int, len(roster))
 	for k := range roster {
@@ -70,7 +59,7 @@ func roundFor(roster map[Key]struct{}, absences map[Key]Absence) Round {
 	}
 	return Round{LinkRead: true, Roster: members, RosterComplete: true,
 		SnapshotStrategies: filled(200), SnapshotUsable: true, SnapshotObservation: "observation-now",
-		FirstAbsent: absences, Now: testNow}
+		WriterHoldsLastGood: true, FirstAbsent: absences, Now: testNow}
 }
 
 // The whole point, stated once: a strategy the link holds an unrecovered
@@ -187,8 +176,50 @@ func TestAnEmptySnapshotWithoutTheWritersStatementClosesNothing(t *testing.T) {
 	k := key("10")
 	round := roundFor(set(k), ripe(k))
 	round.SnapshotStrategies = map[Key]struct{}{}
+	round.WriterHoldsLastGood = false
 	if result := Compute(round, testBounds()); result.Refusal != RefusalSnapshotEmpty || len(result.Close) != 0 {
 		t.Fatalf("an empty snapshot decided something: %+v", result)
+	}
+}
+
+// A list that is not empty, without its writer's statement, is refused
+// whole as writer_unstated: a strategy missing from it is not known to be
+// gone. Nothing is closed, however ripe, and no clock starts or ages, so
+// the first rounds with the statement serve the whole grace and two
+// observations. Where it is also empty or stale, that refusal is the
+// round's word (snapshot_empty, snapshot_stale): writer_unstated is checked
+// last.
+func TestAListWithoutTheWritersStatementClosesNothing(t *testing.T) {
+	k := key("10")
+	round := roundFor(set(k), ripe(k))
+	round.WriterHoldsLastGood = false
+	if result := Compute(round, testBounds()); result.Refusal != RefusalWriterUnstated || len(result.Close) != 0 ||
+		len(result.Decisions) != 0 {
+		t.Fatalf("a list without the statement = %+v, want refused as writer_unstated", result)
+	}
+	stale := round
+	stale.SnapshotAgeSeconds = int64(testBounds().MaxSnapshotAge/time.Second) + 1
+	if result := Compute(stale, testBounds()); result.Refusal != RefusalSnapshotStale {
+		t.Fatalf("a stale list without the statement = %s, want snapshot_stale", result.Refusal)
+	}
+	tracker := NewTracker(100)
+	for i, observation := range []string{"observation-one", "observation-two"} {
+		unstated := roundFor(set(k), nil)
+		unstated.WriterHoldsLastGood = false
+		unstated.SnapshotObservation = observation
+		unstated.Now = testNow.Add(time.Duration(i) * 11 * time.Minute)
+		if result := tracker.Round(unstated, testBounds()); result.Refusal != RefusalWriterUnstated || len(result.Close) != 0 {
+			t.Fatalf("unstated round %d: %+v", i, result)
+		}
+	}
+	if tracker.Tracked() != 0 {
+		t.Fatal("an unstated round started a candidate's clock")
+	}
+	stated := roundFor(set(k), nil)
+	stated.SnapshotObservation = "observation-three"
+	stated.Now = testNow.Add(30 * time.Minute)
+	if result := tracker.Round(stated, testBounds()); result.Refusal != RefusalNone || result.Counts.WithinGrace != 1 || len(result.Close) != 0 {
+		t.Fatalf("the first stated round after unstated ones: %+v, want the candidate within its grace", result)
 	}
 }
 
@@ -239,7 +270,7 @@ func TestABacklogLargerThanAnyRatioIsStillWorkedOff(t *testing.T) {
 	roster := map[Key]struct{}{}
 	gone := []Key{}
 	for i := 0; i < 100; i++ {
-		k := key("gone-" + itoa(i))
+		k := key("gone-" + strconv.Itoa(i))
 		roster[k] = struct{}{}
 		gone = append(gone, k)
 	}
@@ -365,7 +396,7 @@ func TestTheWalkStartsPastTheLastDecidedStrategy(t *testing.T) {
 	roster := map[Key]struct{}{}
 	gone := []Key{}
 	for i := 1; i <= 6; i++ {
-		k := key("gone-" + itoa(i))
+		k := key("gone-" + strconv.Itoa(i))
 		roster[k] = struct{}{}
 		gone = append(gone, k)
 	}

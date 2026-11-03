@@ -42,29 +42,3 @@ func TestAbsentListReadsThePageAndSaysWhatItCannot(t *testing.T) {
 		}
 	}
 }
-
-// fleet.get points to the page where the deployment has the Console, and
-// nowhere else.
-func TestFleetGetPointsToTheCandidatePageWhereTheConsoleIs(t *testing.T) {
-	for name, tc := range map[string]struct {
-		body string
-		next bool
-	}{
-		"configured":     {`{"linkd_console":{"needed":true,"state":"healthy"}}`, true},
-		"not configured": {`{"linkd_console":{"needed":false,"state":"not_configured"}}`, false},
-		"no standing":    {`{}`, false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			native := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(tc.body)) })
-			c := testChannel(t, &testAuth{}, NativeOperations(native)...)
-			_, out := call(t, c, envelope(c, "invoke", "fleet.get", Params{}))
-			found := false
-			for _, next := range out.Next {
-				found = found || next.Operation == "absent.list"
-			}
-			if found != tc.next {
-				t.Fatalf("next calls %+v, want absent.list %v", out.Next, tc.next)
-			}
-		})
-	}
-}

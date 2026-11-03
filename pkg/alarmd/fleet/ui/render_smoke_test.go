@@ -398,36 +398,6 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			Prefix: "bk_monitorv3.ee.cache", Configured: true, SharedWith: fleet.EndpointStrategyCache, LastSuccessAgeSeconds: &successAge,
 			Writer: &fleet.WriterEvidence{Present: true, Count: 47788, AgeSeconds: &cmdbAge, State: "loaded"}},
 		{Role: fleet.EndpointDynamicConfig, Kind: "redis"},
-		// The consumer's sets: read 200 s ago, the latest refresh failed and
-		// the calibration past its bound, the gate answering on the copy's
-		// own record for the last question.
-		{Role: fleet.EndpointOpenAlertSet, Kind: "redis", Address: "monitor@sentinel-0.example:26379,sentinel-1.example:26379", Mode: "sentinel", DB: &stateDB,
-			Prefix: "alarmd:open_alerts:", Configured: true, SharedWith: fleet.EndpointStateRedis, LastSuccessAgeSeconds: &successAge,
-			OpenAlertSet: &fleet.OpenAlertSetFacts{Configured: true, LocationConfirmed: true, KeyedByAlertID: ptrBool(true),
-				SubscriptionReady: true, CalibrationConfigured: true, IndexReadAgeSeconds: ptrFloat(200),
-				StaleBeyondBound: true, AuthoritativeAgeSeconds: ptrFloat(190), Available: false, UnavailableReason: "read_error",
-				TrackedSets: 6, LoadedSets: 6, Members: 517,
-				Lookups: map[string]uint64{"index_member": 3, "index_absent": 12, "self_maintained": 1}}},
-		// The same dependency under the index protocol, which has no heartbeat:
-		// configured, subscribed, read seconds ago, covering every strategy --
-		// and holding nothing, with every lookup coming back "not in it". The
-		// row read as "no publication at all, and the gate has not been asked"
-		// on a live deployment of exactly this shape.
-		{Role: fleet.EndpointOpenAlertSet, Kind: "redis", Address: "monitor@sentinel-0.example:26379", Mode: "sentinel", DB: &stateDB,
-			Prefix: "alarmd:open_alerts", Configured: true, SharedWith: fleet.EndpointStateRedis,
-			OpenAlertSet: &fleet.OpenAlertSetFacts{SubscriptionReady: true,
-				CalibrationConfigured: false, IndexReadAgeSeconds: ptrFloat(27), MemberBytes: 15899,
-				Available: true, StaleBeyondBound: false,
-				TrackedSets: 60, LoadedSets: 60, Members: 0,
-				Lookups: map[string]uint64{"index_absent": 168},
-				// The Console's two facts: the location confirmed, the keying
-				// not yet read, which the page states as not read.
-				Configured: true, LocationConfirmed: true,
-				// The target-scope close: its samples stay in the API.
-				TargetScopeClose: &fleet.TargetScopeCloseFacts{Pending: 2, Confirmed: 1, MaxEntries: 1024,
-					Outcomes: map[string]uint64{"close_sent": 3, "unconfirmed": 5, "cache_unavailable": 7},
-					Strategies: []fleet.TargetScopeCloseStrategy{{TenantID: "tenant-test", StrategyID: "1001", Pending: 2, Confirmed: 1,
-						PendingSample: []string{"feedf00d"}, DecidedSample: []string{"beadcafe"}}}}}},
 		{Role: fleet.EndpointQueryBackend, Kind: "http", Address: "http://unify-query.example:10205", Configured: true},
 		// The output sink's own record: open, since sixteen minutes, on the
 		// first attempt.
@@ -438,7 +408,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	}
 	degradations := []fleet.Degradation{
 		{Kind: fleet.DegradationActivationBehind, Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde"},
-		{Kind: fleet.DegradationOpenAlertSetStale, Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-fghij"},
+		{Kind: fleet.DegradationActiveCopyUnsupported, Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-fghij"},
 		// The stale source with the failure behind it: a catalogue that would
 		// not validate because one plan asks for more retention than the
 		// deployment keeps. The line says that, not the kind name.
@@ -1155,7 +1125,6 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		{"DEPS ::", "策略缓存（平台写、alarmd 读）redis standalone redis.example:6379 · db 0 · bk_monitorv3.ee.cache成功 3 秒前；失败 1 小时 0 分前：dial tcp: i/o timeout有：列出 62 条策略；写入方标记 last_updated 于 1 分 35 秒前更新"},
 		{"DEPS ::", "CMDB 主机缓存（平台写、alarmd 读）redis standalone redis.example:6379 · db 0 · bk_monitorv3.ee.cache · 与 strategy_cache 共用连接成功 3 秒前有：47788 台主机，来源刷新于 4 分 0 秒前"},
 		{"DEPS ::", "平台动态配置（平台写、alarmd 读）未配置"},
-		{"DEPS ::", "未恢复时序指纹集合（告警消费方写、alarmd 读；恢复门据此判有没有可恢复的告警）redis sentinel 主节点名 monitor，哨兵 sentinel-0.example:26379,sentinel-1.example:26379 · db 8 · alarmd:open_alerts: · 与 state_redis 共用连接成功 3 秒前有：消费方按索引协议发布，本端 3 分 20 秒前读到；跟踪 6 条策略、索引覆盖 6 条、未恢复指纹 517 个；Console 确认：写入位置已确认、按告警 ID 建键是；当前不可用：读不到（索引读取或校准失败）；校准已超过设计的暴露时长；恢复门查过 16 次：索引里有 3、索引里没有 12、按本副本记录 1"},
 		// The sentinel address in words -- master name, then sentinels -- so
 		// the one '@' an address legitimately carries never reads as an account.
 		{"DEPS ::", "alarmd 自己的状态（目录、归属、进度、舰队）redis sentinel 主节点名 monitor，哨兵 sentinel-0.example:26379,sentinel-1.example:26379 · db 8 · alarmd:phase2:g2:runtime:v1成功 3 秒前"},
@@ -1165,17 +1134,6 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// The shown list is one of two: the basis says so and where the others are.
 		{"DEPS ::", "副本 abcde 解析到的坐标（2 个副本都发布了，这里显示最新发布的这一份；各副本自己的连接记录在 /api/health 的 per_replica[].dependencies）"},
 		{"DEPS ::", "兼容输出用的服务 Redis（策略快照）redis standalone redis.example:6379 · db 8 · bk_monitorv3.ee.cache本进程还没对它发过命令"},
-		// The index read and the answer it gives have to be counted, or the
-		// row says the gate was never asked.
-		{"DEPS ::", "有：消费方按索引协议发布，本端 27 秒前读到"},
-		{"DEPS ::", "跟踪 60 条策略、索引覆盖 60 条、未恢复指纹 0 个（未配校准）"},
-		{"DEPS ::", "恢复门查过 168 次：索引里没有 168"},
-		{"DEPS ::", "目标移出范围关闭：等第二轮确认 2 个、已确认待关 1 个；累计发出关闭 3（发出不等于 linkd 已关；其中由索引集合按指纹关闭 0）、首次观测 5、目标缓存不确定未判 7、不在集合 0、集合不可判 0、他源告警 0、发送失败 0、观测表满 0、多输入无法算指纹 0、观测过旧暂缓 0、拒绝本身不确定 0"},
-		// The Console's two facts, the keying not read yet said as such.
-		{"DEPS ::", "Console 确认：写入位置已确认、按告警 ID 建键还没读到"},
-		// The consequence, said once rather than left for the reader to derive
-		// from a row that also says "available" and "not stale", both true.
-		{"DEPS ::", "这套部署现在发不出恢复：集合装载了但一条未恢复指纹都没有，168 次全部落空、恢复被扣住"},
 		{"VAR degraded why ::", "策略缓存里有策略，但这一轮一条都没接受，且没有任何对象在检测——整个部署没有在检测任何东西；不是没负载，是全部被扣在配置获取环节（副本 abcde）"},
 		{"NOTHING-RUNNING CHECKS ::", "5 条策略这个部署跑不了（1 种原因）——本构建不支持 5 条；处理办法按原因组看"},
 		{"NOTHING-RUNNING GROUPS ::", "这是什么：该检测算法还没迁到 Go 侧，本构建不评估它。谁处理：本构建能力（等新构建，改参数没有用）。下一步：等带该算法的构建；改部署参数没有用"},
@@ -1218,7 +1176,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// failure.
 		{"GROUPS WINDOW ::", "保护未解除（最初触发 CONFIG_DRIFT） · 1 个对象 · 正在恢复（窗口内没有新失败；轮次在结束或只是迟到，结果还没补齐） · 首次 17:00:00 · 最近一轮 17:59:30 · 本进程没见过这些对象成功完成 · 1 条策略 · 1 个业务"},
 		{"BASIS CUTOVER ::", "最近一次激活失败：alarmd controlplane: schedule activation conflict（副本 abcde）。伴随证据：segment_content_freshness_total{stale}"},
-		{"GROUPS DEGRADED ::", "OPEN_ALERT_SET_STALE（已开告警集合的副本超过设计允许的时间没拿到消费者的发布，恢复门在用旧知识） · 副本 fghij，没有可列的对象"},
+		{"GROUPS DEGRADED ::", "ACTIVE_COPY_UNSUPPORTED（linkd 回答不支持检索（501/404/405）：期间本副本的活动告警副本不刷新，恢复门只放行本副本自己发过异常的告警（其余计入 link_unsupported 并暂缓），按退避（1 分钟起、最长 10 分钟）重试，检索恢复即解除） · 副本 fghij，没有可列的对象"},
 		{"GROUPS DEGRADED ::", "CONTROL_SOURCE_STALE（策略源超过设计允许的时间没有刷新成功，跑的是上一份好的目录——最近一次失败于 validate_catalog：plan retention 60h13m exceeds catalog retention 24h13m） · 副本 abcde，没有可列的对象"},
 		// The failure's own words stay on the expanded group; the first
 		// screen says which replica, for how long and how many tries.
@@ -1475,7 +1433,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			"健康且没有覆盖缺口时不能还说证据不全"},
 		{"VAR degraded why ::", "副本级运行状态超出设计界：控制面变更没有生效", "容量或架构",
 			"副本级 standing 决定的 DEGRADED 要点名 standing，不能说成对象列表的容量或架构问题"},
-		{"VAR degraded why ::", "（副本 abcde）；已开告警集合", "",
+		{"VAR degraded why ::", "（副本 abcde）；linkd 回答不支持检索", "",
 			"两种 standing 各说一次并带副本"},
 		{"VAR degraded-objects why ::", "存在 alarmd 自己该负责的异常", "超出设计界",
 			"没有 standing 时 DEGRADED 才是对象列表决定的"},

@@ -34,12 +34,6 @@ func (r *Recorder) SetNotApplicableToRole(families ...string) {
 				c.offRole = true
 				c.mu.Unlock()
 			}
-		case "alarmd_linkd_console_state":
-			if c := r.phaseTwo.linkdConsole; c != nil {
-				c.mu.Lock()
-				c.offRole = true
-				c.mu.Unlock()
-			}
 		case "alarmd_platform_settings_mode":
 			if c := r.phaseTwo.platformSettings; c != nil {
 				c.mu.Lock()
@@ -60,7 +54,6 @@ func (r *Recorder) SetNotApplicableToRole(families ...string) {
 var OneHotFamilies = []string{
 	"alarmd_build_info",
 	"alarmd_control_source_mode",
-	"alarmd_linkd_console_state",
 	"alarmd_platform_settings_mode",
 	"alarmd_trace_export",
 }

@@ -2038,9 +2038,6 @@ type Snapshot struct {
 	// Due names the objects Schedule counts as late, overdue and never
 	// evaluated (DueClasses). Absent with Schedule: no due index, no names.
 	Due *DueClasses `json:"due,omitempty"`
-	// OpenAlerts counts open alerts per strategy this replica's copy of the
-	// consumer's set tracks (OpenAlertCounts). Absent without a copy.
-	OpenAlerts *OpenAlertCounts `json:"open_alerts,omitempty"`
 	// Suppression is present only on a build whose dispatcher actually holds
 	// objects back. Absent, the overdue count above is structurally zero and
 	// must not be read as "nothing is overdue".
@@ -2065,10 +2062,9 @@ type Snapshot struct {
 	// by, as its record revision. Zero means the replica did not report it,
 	// which the aggregate keeps apart from any lag.
 	AppliedActivationRecordRevision uint64 `json:"applied_activation_record_revision,omitempty"`
-	// OpenAlertSet is the state of this replica's copy of the consumer's open
-	// alert set, which gates RECOVERY envelopes. Absent on a build without the
-	// gate, which is a different answer from a copy that is fine.
-	OpenAlertSet *OpenAlertSetFacts `json:"open_alert_set,omitempty"`
+	// ActiveCopy is the state of this replica's own copy of the link's
+	// active alerts, which gates RECOVERY envelopes and judges no-data ends.
+	ActiveCopy *ActiveCopyFacts `json:"active_copy,omitempty"`
 	// ControlSource is the state of this replica's control source refresh:
 	// its role in it, the state the refresh is in, and how long since any
 	// process last refreshed the source successfully. Absent on a build
@@ -2572,159 +2568,27 @@ type ControlSourceFacts struct {
 	LastFailure     string `json:"last_failure,omitempty"`
 }
 
-// OpenAlertSetFacts is what a replica says about its copy of the consumer's
-// open alert set -- the fingerprints of the series the consumer holds an
-// open alert on, kept in the consumer's index and read by every replica to
-// decide whether a recovery has anything to recover. StaleBeyondBound is the
-// one fact the verdict reads: a set calibrated once has gone without a
-// calibration for longer than the bound, so the gate has been working from
-// the replica's own knowledge past the exposure it was designed for. A set
-// never calibrated is not stale -- the reconciler may not be bound, which
-// CalibrationConfigured says -- and degrades nothing.
-//
-// The rest is the reader's account of the consumer's sets, for the
-// dependency table: a deployment whose dependency list named every Redis and
-// Kafka it touched had no row for this one, so whether the consumer's sets
-// were there at all -- and whether the gate was passing recoveries on the
-// consumer's word or on its own -- could not be read anywhere.
-// GateLookupFact is one recovery-gate lookup as the replica kept it: the
-// key it was asked, its answer and decision, whether it was the replica's
-// own open alert, and, for a "not open", other strategies whose sets carry
-// the same fingerprint.
-type GateLookupFact struct {
-	At          time.Time `json:"at"`
-	TenantID    string    `json:"tenant_id"`
-	StrategyID  string    `json:"strategy_id"`
-	Fingerprint string    `json:"fingerprint"`
-	Answer      string    `json:"answer"`
-	Open        bool      `json:"open"`
-	Own         bool      `json:"own"`
-	InOtherSets []string  `json:"in_other_sets,omitempty"`
-}
-
-// TooLargeSetRow is a strategy whose set was refused for its size.
-type TooLargeSetRow struct {
-	TenantID   string `json:"tenant_id"`
-	StrategyID string `json:"strategy_id"`
-	Members    int64  `json:"members"`
-	Bytes      int64  `json:"bytes,omitempty"`
-	MaxMembers int    `json:"max_members"`
-	MaxBytes   int    `json:"max_bytes"`
-}
-
-// CalibrationOverAgeRow is a strategy past the calibration age and how long
-// since its last calibration.
-type CalibrationOverAgeRow struct {
-	TenantID   string  `json:"tenant_id"`
-	StrategyID string  `json:"strategy_id"`
-	AgeSeconds float64 `json:"age_seconds"`
-}
-
-type OpenAlertSetFacts struct {
-	// CalibrationConfigured is whether a reconciler is bound; false is a
-	// reading, not an absence: with the index protocol and no calibration,
-	// membership is known and no close is ever sent.
-	CalibrationConfigured bool     `json:"calibration_configured"`
-	IndexReadAgeSeconds   *float64 `json:"index_read_age_seconds,omitempty"`
-	// IndexStaleAfterSeconds is the bound a set's last successful read is
-	// judged against - 3 x (index interval + ceil(tracked sets / read
-	// batch) x refresh interval) - and StaleSets how many sets are past it
-	// and answer by the unavailable policy. Beside the read's age, so the
-	// two read in one step whatever the deployment's strategy count.
-	IndexStaleAfterSeconds float64 `json:"index_stale_after_seconds,omitempty"`
-	StaleSets              int     `json:"stale_sets,omitempty"`
-	SubscriptionReady      bool    `json:"subscription_ready,omitempty"`
-	CalibratedSets         int     `json:"calibrated_sets,omitempty"`
-	PendingReads           int     `json:"pending_reads,omitempty"`
-	PendingReconciles      int     `json:"pending_reconciles,omitempty"`
-	MemberBytes            int     `json:"member_bytes,omitempty"`
-	StaleBeyondBound       bool    `json:"stale_beyond_bound"`
-	// AuthoritativeAgeSeconds is how long ago the oldest calibration among
-	// the tracked sets completed. Absent until one has; a zero here would
-	// read as "just now".
-	AuthoritativeAgeSeconds *float64 `json:"authoritative_age_seconds,omitempty"`
-	// Available says the copy is answering from the consumer's sets now;
-	// UnavailableReason why not, in the reader's closed words (read_error,
-	// location_unconfirmed, keying_unconfirmed), empty while available or
-	// not configured. Configured is whether there is a Console to answer
-	// from at all: a replica without one is not degraded for it.
-	Available         bool   `json:"available"`
-	UnavailableReason string `json:"unavailable_reason,omitempty"`
-	// TrackedSets is how many strategies this replica asks the publication
-	// about, LoadedSets how many of those the last publication covered, and
-	// Members the fingerprints held across them.
-	TrackedSets int `json:"tracked_sets"`
-	LoadedSets  int `json:"loaded_sets"`
-	Members     int `json:"members"`
-	// LocationConfirmed and KeyedByAlertID are the Console's two facts the
-	// sets are trusted on: the place they are read from is the one the
-	// Console names, and the link keys this deployment's alerts by the alert
-	// id the replica sends. KeyedByAlertID is absent until the Console has
-	// answered, and KeyedByAlertIDAsOf is when it last did: the answer is
-	// kept while later reads fail, and ages. Either false, on a configured
-	// copy, degrades the verdict with DegradationOpenAlertSetUnconfirmed.
-	Configured         bool       `json:"configured"`
-	LocationConfirmed  bool       `json:"location_confirmed"`
-	KeyedByAlertID     *bool      `json:"keyed_by_alert_id,omitempty"`
-	KeyedByAlertIDAsOf *time.Time `json:"keyed_by_alert_id_as_of,omitempty"`
-	// CalibrationNeeded is how many strategies a calibration round must take
-	// to cover every tracked one within the calibration interval, and
-	// CalibrationCapacity how many the Console answers in a round; a positive
-	// CalibrationShort is the strategies an interval at that capacity cannot
-	// reach, whose sets go unjudged and unclosed. CalibrationOverAge names the
-	// strategies past the calibration age, oldest first and bounded.
-	CalibrationNeeded   int `json:"calibration_needed,omitempty"`
-	CalibrationCapacity int `json:"calibration_capacity,omitempty"`
-	CalibrationShort    int `json:"calibration_short,omitempty"`
-	// RoundsSkipped is the copy's maintenance rounds not run because the
-	// previous one was still running (a slow Console holding a calibration
-	// to its own deadline); skipped, never stacked.
-	RoundsSkipped      uint64                  `json:"rounds_skipped,omitempty"`
-	CalibrationOverAge []CalibrationOverAgeRow `json:"calibration_over_age,omitempty"`
-	// TooLarge names the strategies whose open-alert sets were refused for
-	// their size, largest first and bounded: members, bytes and the budget.
-	// Their sets go unread, and so unjudged and unclosed.
-	TooLarge []TooLargeSetRow `json:"too_large,omitempty"`
-	// GateOwnLookups is Lookups for the gate's lookups of this replica's
-	// own open alerts, every answer word present; GateOwnHeld how many of
-	// those the gate answered "not open". A healthy series asks the gate
-	// every round and has no alert, so the plain counts are mostly "not
-	// open" by design; a "not open" for an alert this replica opened is a
-	// RECOVERY held while its alert stays open. GateRecent and
-	// GateRecentOwnHeld are the last lookups of each, whole.
-	GateOwnLookups map[string]uint64 `json:"gate_own_lookups,omitempty"`
-	// OwnOpen is how many alerts the replica opened that a trusted set has
-	// not shown closed: the alerts the gate asks about as its own. It keeps
-	// an alert that is no longer re-sent, which the recent sends do not.
-	// OwnOpenDepartures counts why alerts left it (not_in_set, recovered,
-	// untracked, evicted: a full record makes room by letting the alert
-	// whose last ABNORMAL is oldest go). SentDepartures counts why alerts
-	// left the recent sends (not_resent, untracked, evicted). All since the
-	// process started, every word present; the own-open fields are absent
-	// on a copy that does not read the index.
-	OwnOpen           *int              `json:"own_open,omitempty"`
-	OwnOpenDepartures map[string]uint64 `json:"own_open_departures,omitempty"`
-	SentDepartures    map[string]uint64 `json:"sent_departures,omitempty"`
-	GateOwnHeld       uint64            `json:"gate_own_held,omitempty"`
-	// GateSince is when the own split started. What the replica sent is
-	// held in memory and starts empty at every start, so an alert opened
-	// before GateSince is not "own" here: no own lookup says only that no
-	// alert sent since then reached the gate.
-	GateSince         *time.Time       `json:"gate_since,omitempty"`
-	GateRecent        []GateLookupFact `json:"gate_recent,omitempty"`
-	GateRecentOwnHeld []GateLookupFact `json:"gate_recent_own_held,omitempty"`
-	// Lookups counts how the gate's questions were answered since the process
-	// started, by the reader's closed answer words: the authoritative ones
-	// against the copy's own. A gate that has answered every question on its
-	// own knowledge reads here, and nowhere on the object list.
-	Lookups map[string]uint64 `json:"lookups,omitempty"`
-	// TargetScopeClose is the close of alerts whose target left the
-	// strategy's monitoring scope, read beside the set it acts on. Absent
-	// on a replica that does not run it.
+// ActiveCopyFacts is what a replica says about its own copy of the link's
+// active alerts (activecopy): how the gate's and the no-data end's lookups
+// were answered, the refresh passes' requests and results, what it holds,
+// and whether the link answered that it cannot search - filtered close
+// unsupported, which degrades the verdict (DegradationActiveCopyUnsupported).
+// Configured is whether the deployment names the link's control plane: a
+// replica without one holds every RECOVERY it did not send the ABNORMAL of.
+type ActiveCopyFacts struct {
+	Configured  bool              `json:"configured"`
+	Known       int               `json:"known"`
+	Queued      int               `json:"queued"`
+	Unsupported bool              `json:"unsupported"`
+	Answers     map[string]uint64 `json:"answers,omitempty"`
+	Outcomes    map[string]uint64 `json:"outcomes,omitempty"`
+	// TargetScopeClose is the superseded-identity close (the field keeps the
+	// target-scope name its readers know), which judges from this copy.
+	// Absent on a replica that does not run it.
 	TargetScopeClose *TargetScopeCloseFacts `json:"target_scope_close,omitempty"`
 }
 
-// TargetScopeCloseFacts is what the target-scope close decided and holds:
+// TargetScopeCloseFacts is what the superseded-identity close decided and holds:
 // the outcome totals (every outcome present, zeros included), how many
 // fingerprints wait for a second Slot and how many are confirmed, and up
 // to eight strategies with at most three fingerprint prefixes per list.
@@ -2752,18 +2616,12 @@ type TargetScopeCloseStrategy struct {
 type DegradationKind string
 
 const (
-	// DegradationOpenAlertSetStale: the replica's copy of the consumer's open
-	// alert set has been without the consumer's publication for longer than
-	// the staleness bound. Every recovery it holds meanwhile on its own
-	// knowledge is an alert that stays open past its due, and nothing on the
-	// object list shows that.
-	DegradationOpenAlertSetStale DegradationKind = "OPEN_ALERT_SET_STALE"
-	// DegradationOpenAlertSetUnconfirmed: the link's Console has not
-	// confirmed where the open alert sets are, or that they are keyed by the
-	// alert ids this replica sends. The replica answers the recovery gate
-	// from what it sent instead, and this names that, because a recovery of
-	// an alert it did not open itself waits until the Console confirms.
-	DegradationOpenAlertSetUnconfirmed DegradationKind = "OPEN_ALERT_SET_UNCONFIRMED"
+	// DegradationActiveCopyUnsupported: the link answered that it cannot
+	// search (501, or 404/405 from a link older than the routes). While it
+	// lasts the replica's copy is not refreshed - every RECOVERY it did not
+	// send the ABNORMAL of is held, counted link_unsupported - and the copy
+	// asks again on a bounded backoff; it clears on the next answered search.
+	DegradationActiveCopyUnsupported DegradationKind = "ACTIVE_COPY_UNSUPPORTED"
 	// DegradationControlSourceStale: no refresh round of the control plane's
 	// strategy source has succeeded for longer than the staleness bound. The
 	// deployment executes the last good catalog and every strategy saved
@@ -2856,8 +2714,8 @@ const (
 // check that folds them.
 var DegradationKinds = []DegradationKind{
 	DegradationActivationBehind, DegradationControlSourceStale, DegradationControlLeaderAbsent,
-	DegradationOpenAlertSetStale, DegradationPlatformSettingsStale, DegradationSourceBlocked,
-	DegradationOutputNotReady, DegradationOpenAlertSetUnconfirmed, DegradationViewPublishFailing, DegradationViewStreamNoSessions, DegradationActivationBlocked,
+	DegradationActiveCopyUnsupported, DegradationPlatformSettingsStale, DegradationSourceBlocked,
+	DegradationOutputNotReady, DegradationViewPublishFailing, DegradationViewStreamNoSessions, DegradationActivationBlocked,
 	DegradationMetricsUnexported, DegradationCLIAuthUnavailable, DegradationActivationHeaderMissing,
 	DegradationActivationFailing,
 }
@@ -3186,9 +3044,6 @@ type View struct {
 	// (DueView). Kept in memory only, never in the health answer: the lists
 	// are the size of what is wrong and the health answer is read on every page.
 	Due *DueView `json:"-"`
-	// OpenAlerts is the replicas' open-alert counts for the strategy board
-	// (OpenView), in memory only like Due.
-	OpenAlerts *OpenView `json:"-"`
 	// Suppression says whether anything in this deployment can be parked at
 	// all. See DispatchSuppression: its absence, not its value, is the answer.
 	Dispatch *DispatchSuppression `json:"dispatch,omitempty"`
@@ -3414,9 +3269,6 @@ type View struct {
 	Dependencies         []Endpoint `json:"dependencies,omitempty"`
 	DependenciesReplica  string     `json:"dependencies_replica,omitempty"`
 	DependenciesReplicas int        `json:"dependencies_replicas,omitempty"`
-	// LinkdConsole is the alert link's Console read against whether this
-	// deployment needs it. Nil until the leader has published a round.
-	LinkdConsole *LinkdConsoleStanding `json:"linkd_console,omitempty"`
 	// ReplicasNotReady counts the counted replicas whose own readiness says
 	// not ready: up and publishing, and answering the probe with no. Which
 	// bit is on each replica's row. A replica that published no readiness is
@@ -3595,16 +3447,8 @@ func aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		if truncated {
 			view.Gaps = append(view.Gaps, Gap{Kind: GapListTruncated, Replica: replica})
 		}
-		if snapshot.OpenAlertSet != nil && snapshot.OpenAlertSet.StaleBeyondBound {
-			view.Degradations = append(view.Degradations, Degradation{Kind: DegradationOpenAlertSetStale, Replica: replica})
-		}
-		if set := snapshot.OpenAlertSet; set != nil && set.Configured && (!set.LocationConfirmed || set.KeyedByAlertID == nil || !*set.KeyedByAlertID) {
-			// Which of the two facts is missing, in the copy's own words.
-			stage := "keying_unconfirmed"
-			if !set.LocationConfirmed {
-				stage = "location_unconfirmed"
-			}
-			view.Degradations = append(view.Degradations, Degradation{Kind: DegradationOpenAlertSetUnconfirmed, Replica: replica, Stage: stage})
+		if snapshot.ActiveCopy != nil && snapshot.ActiveCopy.Unsupported {
+			view.Degradations = append(view.Degradations, Degradation{Kind: DegradationActiveCopyUnsupported, Replica: replica})
 		}
 		if snapshot.PlatformSettings != nil && snapshot.PlatformSettings.StaleBeyondBound {
 			view.Degradations = append(view.Degradations, Degradation{Kind: DegradationPlatformSettingsStale, Replica: replica})
@@ -3781,7 +3625,6 @@ func aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	aggregateOverdue(&view, counted)
 	aggregateSchedule(&view, counted)
 	aggregateDue(&view, counted)
-	aggregateOpenAlerts(&view, counted)
 	aggregateDispatchSuppression(&view, counted)
 	aggregateAddressDiffers(&view, counted)
 	aggregateTrackerDropped(&view, counted)
@@ -3899,7 +3742,6 @@ func aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	// it has is a cache that cannot update the run, which the standing says
 	// and the badge does not.
 	view.SourceStanding = sourceStandingOf(view.Source, executingObjects(&view))
-	view.LinkdConsole = linkdConsoleStandingOf(&view)
 	if view.SourceStanding != nil && view.SourceStanding.Kind == SourceBlocked {
 		view.Degradations = append(view.Degradations, Degradation{Kind: DegradationSourceBlocked,
 			Replica: view.SourceReplica, Stage: "catalog", Text: sourceBlockedText(view.Source)})

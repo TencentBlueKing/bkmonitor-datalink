@@ -23,6 +23,12 @@ func current() Plan {
 		LevelsWhole: true, NoData: true, NoDataDimensions: []string{"ip"}}
 }
 
+func microsecondPlan(revision int64) Plan {
+	plan := current()
+	plan.Revision = revision
+	return plan
+}
+
 func threshold(revision int64, severity string, keys ...string) Alert {
 	return Alert{Revision: revision, DimensionKeys: keys, DimensionsRead: true, EvaluationFamily: "metric_algorithm", Severity: severity}
 }
@@ -69,10 +75,16 @@ func TestDecide(t *testing.T) {
 		want  string
 	}{
 		// The candidate rule: only an alert older than the current revision.
-		"raised under the current revision":   {withoutDevice, threshold(9, "warning", "ip", "device"), OutcomeCurrentRevision},
-		"raised under a newer revision":       {withoutDevice, threshold(10, "warning", "ip", "device"), OutcomeRevisionAhead},
-		"raised under no revision":            {withoutDevice, threshold(0, "warning", "ip", "device"), OutcomeRevisionUnknown},
-		"an edit that changed nothing it has": {current(), threshold(8, "warning", "ip", "device"), OutcomeKept},
+		"raised under the current revision": {withoutDevice, threshold(9, "warning", "ip", "device"), OutcomeCurrentRevision},
+		"raised under a newer revision":     {withoutDevice, threshold(10, "warning", "ip", "device"), OutcomeRevisionAhead},
+		"raised under no revision":          {withoutDevice, threshold(0, "warning", "ip", "device"), OutcomeRevisionUnknown},
+		// A microsecond-time revision of the publisher's earlier scheme
+		// (synthetic) has no order against a count: judged as a candidate.
+		"a microsecond revision, dimension dropped": {withoutDevice, threshold(1700000000000000, "warning", "ip", "device"), OutcomeDimensionsChanged},
+		"a microsecond revision, group intact":      {current(), threshold(1700000000000000, "warning", "ip", "device"), OutcomeKept},
+		"both microsecond, the alert newer":         {microsecondPlan(1700000000000000), threshold(1700000000000001, "warning", "ip", "device"), OutcomeRevisionAhead},
+		"both microsecond, the alert older":         {microsecondPlan(1700000000000001), threshold(1700000000000000, "warning", "ip", "device"), OutcomeKept},
+		"an edit that changed nothing it has":       {current(), threshold(8, "warning", "ip", "device"), OutcomeKept},
 		// A target edit moves the revision and leaves the grouping alone.
 		"a target edit": {current(), threshold(8, "critical", "ip", "device", "bk_target_ip", "bk_target_cloud_id"), OutcomeKept},
 		"a host filled in by CMDB is not grouping": {withoutDevice, threshold(8, "warning", "ip", "bk_host_id"), OutcomeKept},

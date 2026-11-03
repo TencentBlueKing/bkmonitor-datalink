@@ -199,9 +199,10 @@ type Config struct {
 	// it failed (QueryFailures), "" when it answered. Diagnostic reads do
 	// not go through a Source and are not heard.
 	ObserveQuery func(elapsed time.Duration, failure string)
-	// ScopeDrops receives the series the target filters turned away, for
-	// the target-scope close; see ScopeDropSink. Optional.
-	ScopeDrops ScopeDropSink
+	// Superseded receives the old fingerprints of admitted series whose
+	// alert identity moved, for the superseded-identity close; see
+	// SupersededSink. Optional.
+	Superseded SupersededSink
 	// ObserveSeriesPulled counts what this process actually read: one call per
 	// series handed into the pipeline, carrying the datapoints it held. It is
 	// the load figure the per-Slot ceilings have to be read against -- a limit
@@ -361,7 +362,7 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 	// one of them would otherwise repeat the same lookup.
 	scopes := buildPlanScopes(prepared.Header.DuePlans, consumer.ResolvedTargets(), consumer.ResolvedScopeGroups())
 	var outputs planOutputs
-	if source.config.ScopeDrops != nil {
+	if source.config.Superseded != nil {
 		outputs = buildPlanOutputs(prepared.Header.DuePlans, prepared.Queries)
 	}
 	// Only one permit acquisition per Source is pending at a time. Queries
@@ -369,9 +370,6 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 	queryCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var running sync.WaitGroup
-	// The adapters are kept so that the target rejections of the whole
-	// attempt are handed over once, after every query has ended.
-	adapters := make([]*seriesAdapter, len(prepared.Queries))
 	var queryFailure sync.Once
 	var firstQueryErr error
 	// firstQueryDeadline is the deadline the first failed query ran under,
@@ -483,9 +481,8 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 			adapter := &seriesAdapter{consumer: consumer, query: query, attemptNo: attempt.AttemptNo,
 				admission: source.config.Admission, observe: source.config.ObserveAdmission,
 				hostPlacement: source.config.ObserveHostPlacement, queryGroup: request.Contract.Slot.QueryGroup, pulled: source.config.ObserveSeriesPulled, scopes: scopes,
-				scopeSink: source.config.ScopeDrops, outputs: outputs, round: int64(request.Contract.Slot.EvaluationTime),
+				supersededSink: source.config.Superseded, outputs: outputs, round: int64(request.Contract.Slot.EvaluationTime),
 				lookback: kept}
-			adapters[index] = adapter
 			primeQueryTenants(queryCtx, source.config.Admission, query)
 			completion, err := source.executeWithPermit(queryCtx, attempt, adapter, permit)
 			// A failed physical query says which input it was and the
@@ -525,7 +522,6 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		cancel()
 	}
 	running.Wait()
-	flushScopeDrops(source.config.ScopeDrops, adapters, request.Contract.Slot, outputs)
 	if firstQueryErr != nil {
 		return execution.QueryExecutionCompletion{}, endedByDeadline(firstQueryErr, firstQueryDeadline, source.now())
 	}
@@ -1165,15 +1161,13 @@ type seriesAdapter struct {
 	// pulled counts the series this query actually handed on. Optional.
 	pulled func(records uint64)
 	scopes planScopes
-	// scopeSink, outputs and round serve the target-scope close; see
-	// ScopeDropSink. scopeScreens and scopeTallies are this query's own
-	// memory of it: one Screen per Plan, and the bulk counts handed over
-	// when the query ends. Empty when nothing listens.
-	scopeSink    ScopeDropSink
-	outputs      planOutputs
-	round        int64
-	scopeScreens map[execution.PlanIdentity]string
-	scopeTallies map[scopeTallyKey]int
+	// supersededSink, outputs and round serve the superseded-identity
+	// close; see SupersededSink. supersededScreens is this query's own
+	// memory of it: one Screen per Plan. Empty when nothing listens.
+	supersededSink    SupersededSink
+	outputs           planOutputs
+	round             int64
+	supersededScreens map[execution.PlanIdentity]bool
 	// lookback is this query's first read as the lookback sees it: its bytes
 	// counted, and a summary kept when it was taken as its Query Group's
 	// sample; nil for a query that is not a formal first read.
@@ -1319,9 +1313,6 @@ func (adapter *seriesAdapter) admittedPlans(batch execution.ProviderSeriesBatch)
 			}
 			admit, filter, reason := adapter.admission.Admit(plan, &facts)
 			decisions[identity] = admit
-			if !admit {
-				adapter.reportScopeDrop(identity, plan, &facts, filter, reason)
-			}
 			unreadable = unreadable || (admit && facts.HostIdentityUnavailable)
 			if admit && adapter.observe != nil {
 				// Where the alert identity of a host-placed series came from

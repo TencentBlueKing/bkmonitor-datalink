@@ -38,8 +38,8 @@ func TestPhaseTwoRuntimeProfileUsesEffectiveCapacityAndExcludesSecrets(t *testin
 			want.Capacity.DerivedActiveExecutions, want.Capacity.EffectiveActiveExecutions)
 	}
 	cfg.Redis.Password = "DO_NOT_LOG_PASSWORD"
-	cfg.PhaseTwo.Linkd.Password = "DO_NOT_LOG_LINKD_PASSWORD"
-	cfg.PhaseTwo.Linkd.Username = "DO_NOT_LOG_LINKD_USER"
+	cfg.PhaseTwo.Linkd.ControlPlane.JWTSecret = "DO_NOT_LOG_LINKD_SECRET"
+	cfg.PhaseTwo.Linkd.ControlPlane.JWTUsername = "DO_NOT_LOG_LINKD_USER"
 	cfg.PhaseTwo.Access.UQEndpoint = "DO_NOT_LOG_ENDPOINT"
 	cfg.PhaseTwo.Worker.ID = "DO_NOT_LOG_WORKER"
 	got, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
@@ -241,12 +241,12 @@ func TestThePhaseTwoRuntimeProfileSaysWhetherTheLinkIsConfigured(t *testing.T) {
 	if off.Linkd != (observability.RuntimeLinkdFacts{}) {
 		t.Fatalf("default linkd facts = %+v, want nothing configured", off.Linkd)
 	}
-	cfg.PhaseTwo.Linkd.ConsoleURL = "http://DO_NOT_LOG_CONSOLE:8080/api/modules/linkd"
+	cfg.PhaseTwo.Linkd.ControlPlane = config.LinkdControlPlaneConfig{URL: "http://DO_NOT_LOG_LINK:8080", JWTSecret: "DO_NOT_LOG_SECRET"}
 	on, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := observability.RuntimeLinkdFacts{ConsoleConfigured: true}
+	want := observability.RuntimeLinkdFacts{ControlPlaneConfigured: true}
 	encoded, _ := json.Marshal(on)
 	if on.Linkd != want || strings.Contains(string(encoded), "DO_NOT_LOG") || on.Digest == off.Digest {
 		t.Fatalf("linkd facts = %+v (want %+v), digest moved %v: %s", on.Linkd, want, on.Digest != off.Digest, encoded)

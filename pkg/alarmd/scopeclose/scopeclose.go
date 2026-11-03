@@ -3,135 +3,91 @@
 // Copyright (C) 2017-2025 Tencent. All rights reserved.
 // Licensed under the MIT License.
 
-// Package scopeclose closes the alerts of targets that left their strategy's
-// monitoring scope, and the alerts of series whose alert identity moved: a
-// host whose alerts were filed under the fingerprint of the record's own
-// address before its identity read CMDB's (Drop.CloseReason). Both are
-// fact-closes of an alert nothing evaluates any more, decided under the same
-// rules below; only the reason the close carries differs.
+// Package scopeclose closes the alerts of series whose alert identity
+// moved: a host whose alerts were filed under the fingerprint of the
+// record's own address before its identity read CMDB's (reason
+// superseded_identity). The series goes on under its new alert, so nothing
+// this process evaluates will ever end the old one, and the alert link only
+// moves an alert on an event.
 //
-// A record the target filter turns away is never evaluated, so nothing this
-// process sends will ever end the alert its series opened while it was still
-// in scope; the alert link only moves an alert on an event, so the alert
-// stays open. The one place that knows the target let the record go is the
-// admission step, and the one fact that makes the drop actionable is that
-// the record's fingerprint - the one the evaluator would have given it - is
-// an open alert of this deployment's own. This package joins the two.
+// The admission step offers the old fingerprint of every admitted series
+// whose host overlay moves it, on every Slot (Offer). The one fact that
+// makes an offer actionable is that the old fingerprint is an open alert
+// of this deployment's own, as alarmd's copy of the link's active alerts
+// already knows it (activecopy): a send of its own, or a current search
+// hit. An offer the copy has no word on, or judges not open, is not this
+// close's, and counts nothing.
 //
-// What has to hold before anything is sent, each named when it does not:
+// What has to hold before anything is closed, each named when it does not:
 //
-//   - the rejection is the target's own verdict on facts that were all read
-//     and current (admission.DefinitelyOutside); a cache that could not
-//     answer is cache_unavailable, never a reason to close;
-//   - the strategy's open set could be judged at all: calibrated, and
-//     confirmed by the link's Console (where it is, how it is keyed);
-//     otherwise set_unavailable. A truncated calibration judges only the
-//     alerts it lists, held; the rest of that strategy's records are
-//     set_unavailable, never not_member;
-//   - the fingerprint is in the set (not_member otherwise) and the alert is
-//     this deployment's (producer_foreign otherwise);
-//   - two different Slots turned the same fingerprint away. One Slot is a
-//     first observation, unconfirmed; the second makes it a close;
-//   - the last of them is fresh when the close is sent (Freshness): a target
-//     that came back into scope stops being rejected, and nothing else
-//     would tell this memory so.
+//   - two different Slots offered the same fingerprint. One Slot is a first
+//     observation, unconfirmed; the second makes it a close;
+//   - the last of them is fresh when the close is run (Freshness).
 //
-// Cost is shaped around the common case, a strategy with no open alert:
-// the access path asks Screen once per strategy per query and counts such
-// rejections in bulk, with no fingerprint and no lock per record.
+// The close itself is the filter's (filterclose): a dry run against the
+// fingerprints, then the strategy's active alerts of this source the filter
+// names, each closed by its alert id.
 //
-// Closes are sent at most Batch per step, starting after the last one the
-// previous step decided, so a large backlog is walked rather than retried
-// from its head.
+// Closes are run at most Batch entries per step, starting after the last
+// one the previous step decided, so a large backlog is walked rather than
+// retried from its head.
+//
+// The close of alerts whose target left the strategy's scope is the control
+// leader's, per strategy, on a change of the scope; this package used to
+// decide it per series as well, and the family keeps its name.
 package scopeclose
 
 import (
 	"context"
-	"errors"
 	"sort"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/filterclose"
 )
 
 // The outcomes, closed: a metric label is made of them.
 const (
-	// OutcomeCloseSent counts alerts a close was sent for: acknowledged by
-	// the broker, which is not that the link closed them.
+	// OutcomeCloseSent counts fingerprints the link's filter closed or
+	// found nothing active of.
 	OutcomeCloseSent = "close_sent"
-	// OutcomeUnconfirmed counts first observations: a fingerprint of an
-	// open alert turned away by one Slot, waiting for a second.
+	// OutcomeUnconfirmed counts first observations: an old fingerprint of
+	// an open alert offered by one Slot, waiting for a second.
 	OutcomeUnconfirmed = "unconfirmed"
-	// OutcomeCacheUnavailable counts rejections the target could not stand
-	// behind: facts that were not read, a target plan that did not resolve
-	// in full. Never closed.
-	OutcomeCacheUnavailable = "cache_unavailable"
-	// OutcomeNotMember counts definitive rejections whose fingerprint is
-	// not an open alert of the strategy - the ordinary case.
-	OutcomeNotMember = "not_member"
-	// OutcomeSetUnavailable counts decisions refused because the open set
-	// could not be judged: not calibrated, not confirmed by the Console, not
-	// read.
-	OutcomeSetUnavailable = "set_unavailable"
-	// OutcomeProducerForeign counts open alerts of another source.
-	OutcomeProducerForeign = "producer_foreign"
-	// OutcomeSendFailed counts alerts whose close the producer refused.
+	// OutcomeSendFailed counts entries the link did not settle - busy,
+	// failed, refused, past the expectation, items left to be found again
+	// (job_done_rederived) - kept and tried next step.
 	OutcomeSendFailed = "send_failed"
-	// OutcomeIdentityInvalid is a close whose request could not be built
-	// from the facts the observation carried: the strategy id not a
-	// positive number, the business zero or not a number, the revision not
-	// positive. Nothing was sent, and the observation is forgotten. The same
-	// word the effective-time close counts the same facts under.
+	// OutcomeUnsupported counts entries not closed because filtered close
+	// is unsupported: the link answered 501, 404 or 405. Nothing else
+	// closes them.
+	OutcomeUnsupported = "filter_close_unsupported"
+	// OutcomeUnrouted counts entries confirmed on a replica with no link to
+	// close through.
+	OutcomeUnrouted = "unrouted"
+	// OutcomeIdentityInvalid is a close whose strategy id is not a positive
+	// number or whose revision is not positive. Nothing was sent, and the
+	// observation is forgotten.
 	OutcomeIdentityInvalid = "close_identity_invalid"
 	// OutcomeMemoryFull counts first observations not recorded because the
-	// observation table was at its bound; the close for them may be delayed
-	// beyond the observation TTL, and is never made on less than two fresh
-	// observations.
+	// observation table was at its bound.
 	OutcomeMemoryFull = "memory_full"
-	// OutcomeFingerprintUnsupported counts definitive rejections of a Plan
-	// fed by more than one input, whose alert fingerprint no single series
-	// carries; never closed.
-	OutcomeFingerprintUnsupported = "fingerprint_unsupported"
 	// OutcomeStaleDeferred counts closes held back at the step because the
-	// last observation is older than the freshness bound: the target may
-	// have come back into scope since, and a rejection is the only thing
-	// that renews an observation. The close waits for a fresh one.
+	// last observation is older than the freshness bound.
 	OutcomeStaleDeferred = "stale_deferred"
-	// OutcomeIndefinite counts rejections that are themselves not a verdict
-	// on the record's place - a key or object identity that could not be
-	// built - as opposed to a verdict reached without its facts
-	// (cache_unavailable). Never closed.
-	OutcomeIndefinite = "indefinite"
 	// OutcomeObservationExpired counts first observations whose second did
-	// not arrive inside the observation's lifetime - two periods of the
-	// strategy plus its Slot's read wait, at least ObservationTTL - and were
-	// forgotten. A strategy counted here is one this close could not reach.
+	// not arrive inside the observation's lifetime.
 	OutcomeObservationExpired = "observation_expired"
-	// OutcomeBusinessUnknown counts closes of a global business strategy's
-	// alerts whose record could not be read or names no business. Such a
-	// strategy files each alert under the business it is about, and a close
-	// must carry it; the fingerprint is kept and tried at the next step.
-	OutcomeBusinessUnknown = "business_unknown"
-	// OutcomeSupersededCloseSent counts, among close_sent, the closes sent
-	// with CloseReasonSupersededIdentity: alerts a series opened under the
-	// fingerprint of its own address before its alert identity read CMDB's.
-	// Every other outcome counts those observations with the target ones.
+	// OutcomeSupersededCloseSent counts, among close_sent, the closes of
+	// alerts a series opened under the fingerprint of its own address
+	// before its alert identity read CMDB's.
 	OutcomeSupersededCloseSent = "superseded_identity_close_sent"
-	// OutcomeIndexSetCloseSent counts, among close_sent, the closes
-	// addressed from the strategy's index set: the link's reconcile gave no
-	// rows to list the alert by, and the set, read fresh, carries its
-	// fingerprint, which the close carries as the alert's id.
-	OutcomeIndexSetCloseSent = "index_set_close_sent"
 )
 
 // Outcomes lists every outcome, for the metric that pre-creates them.
-var Outcomes = []string{OutcomeCloseSent, OutcomeUnconfirmed, OutcomeCacheUnavailable, OutcomeNotMember,
-	OutcomeSetUnavailable, OutcomeProducerForeign, OutcomeSendFailed, OutcomeMemoryFull, OutcomeFingerprintUnsupported,
-	OutcomeStaleDeferred, OutcomeIndefinite, OutcomeIdentityInvalid, OutcomeObservationExpired, OutcomeBusinessUnknown,
-	OutcomeSupersededCloseSent, OutcomeIndexSetCloseSent}
+var Outcomes = []string{OutcomeCloseSent, OutcomeUnconfirmed, OutcomeSendFailed, OutcomeUnsupported, OutcomeUnrouted,
+	OutcomeMemoryFull, OutcomeStaleDeferred, OutcomeIdentityInvalid, OutcomeObservationExpired, OutcomeSupersededCloseSent}
 
 // The bounds of what the facts carry.
 const (
@@ -142,116 +98,83 @@ const (
 	maxTalliedStrategies = 256
 )
 
-// Drop is one definitive target rejection of one series of a strategy that
-// Screen cleared.
-type Drop struct {
-	TenantID, BusinessID, StrategyID string
-	// GlobalBusiness is a strategy that files each alert under the business
-	// the alert is about. BusinessID is then the strategy's own, and the
-	// close carries the alert's, read from its record.
-	GlobalBusiness bool
-	// Fingerprint is the evaluator's dedupe identity of the record; empty
-	// when there is none to compute.
+// DecisionSuperseded is the decision the closes carry (a filterclose
+// decision word).
+const DecisionSuperseded = "superseded_identity"
+
+// Key names one strategy.
+type Key struct {
+	TenantID   string
+	StrategyID string
+}
+
+// Offer is one admitted series of a strategy Offers cleared, whose alert
+// identity reads CMDB's address over its own.
+type Offer struct {
+	TenantID, StrategyID string
+	// Fingerprint is the one its alerts were filed under before: the
+	// evaluator's dedupe identity of the record's own dimensions.
 	Fingerprint      string
 	StrategyRevision int64
 	// Round is the Slot's evaluation time.
 	Round int64
 	// IntervalSeconds is the strategy's evaluation period, and ReadOffset
-	// how long after Round its Slot was frozen to read - the settling wait,
-	// any stagger phase and read hold. The second observation arrives when
-	// the next Slot is read, which these two place.
+	// how long after Round its Slot was frozen to read. The second
+	// observation arrives when the next Slot is read, which these two place.
 	IntervalSeconds int64
 	ReadOffset      time.Duration
-	// CloseReason is the reason the close carries
-	// (linkdoutput.CloseReason*): empty is CloseReasonTargetOutOfScope, a
-	// target the filter turned away; CloseReasonSupersededIdentity is a
-	// series whose alert identity now reads CMDB's address, observed with
-	// the fingerprint it was filed under before.
-	CloseReason string
 }
 
-// OpenSet is what the close asks the open alert copy.
+// OpenSet is what the close asks alarmd's copy of the link's active alerts
+// (activecopy.Copy).
 type OpenSet interface {
-	// Trusted is whether the sets may answer at all: the link's Console has
-	// confirmed where they are and that they are keyed by our alert ids. An
-	// untrusted copy's every "not a member" is a lookup that could not see.
-	Trusted() bool
-	// MemberCount is asked once per strategy per query before any record.
-	MemberCount(key openalerts.StrategyKey) (count int, judged bool)
-	Holds(key openalerts.StrategyKey, fingerprint string) (held, judged bool)
-	ActiveAlerts(key openalerts.StrategyKey) []openalerts.Alert
-	OwnEventSourceID() string
-	// UnlistedMemberCount and UnlistedHolds answer from the strategy's index
-	// set where the link's reconcile gave no usable rows for it
-	// (openalerts.UnlistedMembers); ok is false anywhere else.
-	UnlistedMemberCount(key openalerts.StrategyKey) (count int, ok bool)
-	UnlistedHolds(key openalerts.StrategyKey, fingerprint string) (held, ok bool)
+	// KnowsOpen is asked once per strategy per query before any record.
+	KnowsOpen(tenantID, strategyID string) bool
+	// Known is the copy's word on one fingerprint, without refreshing it.
+	Known(tenantID, strategyID, fingerprint string) (held, judged bool)
 }
 
-// AlertBusiness answers which business one alert was filed under, from the
-// alert's own record (openalerts.AlertBusinesses.Of).
-type AlertBusiness func(ctx context.Context, tenantID, source, strategyID, alertID string) (int64, error)
-
-// Writer sends closes; the same producer path every other close uses.
-type Writer interface {
-	WriteCloseBatch(context.Context, []linkdoutput.CloseRequest) error
+// Link is the link's close by filter (filterclose.Closer).
+type Link interface {
+	Fingerprints(ctx context.Context, scope filterclose.Scope, fingerprints []string, decision string, revision int64,
+		decidedAt time.Time) string
 }
 
 // Options bound the close.
 type Options struct {
 	Now func() time.Time
-	// MaxEntries bounds the fingerprints observed and not yet decided.
+	// MaxEntries bounds the entries observed and not yet decided.
 	MaxEntries int
-	// Batch bounds the closes one step decides.
+	// Batch bounds the entries one step closes.
 	Batch int
 	// ObservationTTL is how long an observation waits for its second
-	// before it is forgotten, and how long a decided fingerprint is not
-	// decided again.
+	// before it is forgotten, and how long a decided entry is not decided
+	// again.
 	ObservationTTL time.Duration
 	// Freshness is how recent the last observation must be when a close is
-	// sent: two of the close's steps, so a Slot's rejection is acted on by
-	// the step after it, and a backlog is never sent on an old one.
+	// run.
 	Freshness time.Duration
 }
 
 type entryKey struct {
-	key         openalerts.StrategyKey
+	key         Key
 	fingerprint string
 }
 
 type entry struct {
-	// closeReason is the reason of the last observation
-	// (Drop.CloseReason).
-	closeReason string
-	businessID  string
-	global      bool
-	revision    int64
-	firstRound  int64
-	confirmed   bool
-	lastSeen    time.Time
+	revision   int64
+	firstRound int64
+	confirmed  bool
+	lastSeen   time.Time
 	// ttl is how long the observation waits for its second (lifetime).
 	ttl time.Duration
 }
 
-// lifetime is how long an observation of drop waits for its second: two of
+// lifetime is how long an observation of offer waits for its second: two of
 // the strategy's periods plus its Slot's read offset, at least
-// ObservationTTL - a fixed lifetime would never let a strategy whose period
-// reaches it close.
-func (closer *Closer) lifetime(drop Drop) time.Duration {
-	return max(closer.options.ObservationTTL, 2*time.Duration(drop.IntervalSeconds)*time.Second+drop.ReadOffset)
-}
-
-// bulkKey and bulkRound remember, per reporter and outcome, the last round
-// counted in bulk and how much of it, so a retried round is counted once.
-type bulkKey struct {
-	key      openalerts.StrategyKey
-	reporter string
-	outcome  string
-}
-
-type bulkRound struct {
-	round int64
-	n     int
+// ObservationTTL.
+func (closer *Closer) lifetime(offer Offer) time.Duration {
+	return max(closer.options.ObservationTTL, 2*time.Duration(offer.IntervalSeconds)*time.Second+offer.ReadOffset)
 }
 
 type tally struct {
@@ -264,24 +187,19 @@ type Closer struct {
 	options Options
 	mu      sync.Mutex
 	set     OpenSet
-	writer  Writer
-	// business is where a global business strategy's close finds its
-	// alert's business; nil, and such a close is not sent.
-	business AlertBusiness
-	entries  map[entryKey]*entry
-	// decided remembers what was closed or would have been, so the Slots
-	// that keep turning the same series away before the link's set catches
-	// up do not decide it again.
+	link    Link
+	source  string
+	entries map[entryKey]*entry
+	// decided remembers what was closed, so the Slots that keep offering
+	// the same fingerprint do not decide it again within the TTL.
 	decided map[entryKey]time.Time
 	after   entryKey
 	counts  map[string]uint64
-	tallies map[openalerts.StrategyKey]*tally
-	bulk    map[bulkKey]bulkRound
+	tallies map[Key]*tally
 }
 
-// New builds a closer with nothing bound; Bind attaches the open set and
-// the writer once they exist. Until then every observation that needs the
-// set is set_unavailable.
+// New builds a closer with nothing bound; Bind attaches the copy and the
+// link once they exist. Until then nothing is offered.
 func New(options Options) *Closer {
 	if options.Now == nil {
 		options.Now = time.Now
@@ -299,142 +217,56 @@ func New(options Options) *Closer {
 		options.Freshness = time.Minute
 	}
 	return &Closer{options: options, entries: map[entryKey]*entry{}, decided: map[entryKey]time.Time{},
-		counts: map[string]uint64{}, tallies: map[openalerts.StrategyKey]*tally{}, bulk: map[bulkKey]bulkRound{}}
+		counts: map[string]uint64{}, tallies: map[Key]*tally{}}
 }
 
-// Bind attaches the open set and the writer.
-func (closer *Closer) Bind(set OpenSet, writer Writer) {
+// Bind attaches the copy, the link and the event source every filter names.
+// A nil link is a replica with no link control plane: confirmed entries are
+// counted unrouted.
+func (closer *Closer) Bind(set OpenSet, link Link, source string) {
 	closer.mu.Lock()
-	closer.set, closer.writer = set, writer
+	closer.set, closer.link, closer.source = set, link, source
 	closer.mu.Unlock()
 }
 
-// BindAlertBusiness attaches where a global business strategy's close reads
-// its alert's business.
-func (closer *Closer) BindAlertBusiness(business AlertBusiness) {
-	closer.mu.Lock()
-	closer.business = business
-	closer.mu.Unlock()
-}
-
-// Screen answers once per strategy per query whether its rejections are
-// worth a fingerprint each: "" when the strategy has open alerts to judge
-// against, and otherwise the outcome all of them are counted under in bulk
-// - set_unavailable when the copy cannot say, not_member when the set is
-// empty, which on a filtered wide table is nearly every strategy. A strategy
-// whose fresh calibration was truncated and lists alerts is cleared: its
-// records are judged one by one, the listed ones held and the rest waiting.
-// The answer is the strategy's own; another's set says nothing of it.
-func (closer *Closer) Screen(key openalerts.StrategyKey) string {
+// Offers answers once per strategy per query whether its series are worth
+// a fingerprint each: only when the copy knows an open alert of the
+// strategy. Nothing is counted either way.
+func (closer *Closer) Offers(key Key) bool {
 	closer.mu.Lock()
 	set := closer.set
 	closer.mu.Unlock()
-	if set == nil || !set.Trusted() || set.OwnEventSourceID() == "" {
-		return OutcomeSetUnavailable
-	}
-	count, judged := set.MemberCount(key)
-	switch {
-	case !judged:
-		// Without a calibration, a fresh index set with members still has
-		// alerts to judge against; an empty one is not judged empty.
-		if members, ok := set.UnlistedMemberCount(key); ok && members > 0 {
-			return ""
-		}
-		return OutcomeSetUnavailable
-	case count == 0:
-		return OutcomeNotMember
-	}
-	return ""
+	return set != nil && set.KnowsOpen(key.TenantID, key.StrategyID)
 }
 
-// Count adds one reporter's rejections of a strategy under one outcome, in
-// bulk. The reporter names one Plan instance - business, shard, Query
-// Group - of the strategy; several of them report the same round and are
-// summed. A retried Slot reports as the same reporter and round again; that
-// is counted once, at the largest total any of its attempts reported, so an
-// attempt that failed halfway and the retry that completed are not summed.
-// Only readings depend on this; no close is decided from it.
-func (closer *Closer) Count(key openalerts.StrategyKey, reporter string, round int64, outcome string, n int) {
-	if n <= 0 {
-		return
-	}
-	closer.mu.Lock()
-	defer closer.mu.Unlock()
-	bk := bulkKey{key: key, reporter: reporter, outcome: outcome}
-	last, seen := closer.bulk[bk]
-	if seen && last.round == round {
-		if n <= last.n {
-			return
-		}
-		closer.countLocked(key, outcome, n-last.n)
-		closer.bulk[bk] = bulkRound{round: round, n: n}
-		return
-	}
-	if seen || len(closer.bulk) < closer.options.MaxEntries {
-		closer.bulk[bk] = bulkRound{round: round, n: n}
-	}
-	closer.countLocked(key, outcome, n)
-}
-
-// Observe records one rejection of a strategy Screen cleared. It is called
-// on the query's goroutine and does no I/O: one membership lookup in
-// memory, and a map update.
-func (closer *Closer) Observe(drop Drop) {
-	key := openalerts.StrategyKey{TenantID: drop.TenantID, StrategyID: drop.StrategyID}
-	// A superseded-identity offer is made for every admitted series whose
-	// host overlay moves its fingerprint, every Slot, whether or not an
-	// alert was ever opened under the old one. An offer that finds nothing
-	// to close - no such alert held, or a set that cannot say - counts
-	// nothing, so not_member and set_unavailable keep meaning target
-	// rejections; one the consumer holds is decided and counted as a target
-	// close is, and its close also as OutcomeSupersededCloseSent.
-	quiet := drop.CloseReason == linkdoutput.CloseReasonSupersededIdentity
-	if drop.Fingerprint == "" {
-		if !quiet {
-			closer.count(key, OutcomeNotMember, 1)
-		}
+// Observe records one offer. It is called on the query's goroutine and does
+// no I/O: one lookup in the copy, and a map update. An offer finds nothing
+// to close for every series whose old fingerprint never opened an alert,
+// or that the copy has no word on; such an offer counts nothing.
+func (closer *Closer) Observe(offer Offer) {
+	key := Key{TenantID: offer.TenantID, StrategyID: offer.StrategyID}
+	if offer.Fingerprint == "" {
 		return
 	}
 	closer.mu.Lock()
 	set := closer.set
 	closer.mu.Unlock()
 	if set == nil {
-		if !quiet {
-			closer.count(key, OutcomeSetUnavailable, 1)
-		}
 		return
 	}
-	held, judged := set.Holds(key, drop.Fingerprint)
-	if !judged {
-		// Only a member is taken from the index set: a fingerprint it does
-		// not carry stays unjudged, never "not a member".
-		if member, ok := set.UnlistedHolds(key, drop.Fingerprint); ok && member {
-			held, judged = true, true
-		}
+	if held, judged := set.Known(offer.TenantID, offer.StrategyID, offer.Fingerprint); !judged || !held {
+		return
 	}
-	ek := entryKey{key: key, fingerprint: drop.Fingerprint}
+	ek := entryKey{key: key, fingerprint: offer.Fingerprint}
 	now := closer.options.Now()
 	closer.mu.Lock()
 	defer closer.mu.Unlock()
-	switch {
-	case !judged:
-		if !quiet {
-			closer.countLocked(key, OutcomeSetUnavailable, 1)
-		}
-		return
-	case !held:
-		delete(closer.entries, ek)
-		if !quiet {
-			closer.countLocked(key, OutcomeNotMember, 1)
-		}
-		return
-	}
 	if until, done := closer.decided[ek]; done && now.Before(until) {
 		return
 	}
 	existing := closer.entries[ek]
 	if existing != nil && now.Sub(existing.lastSeen) >= existing.ttl {
-		// Waited too long for its second: the two are not one absence.
+		// Waited too long for its second: the two are not one observation.
 		delete(closer.entries, ek)
 		closer.countLocked(key, OutcomeObservationExpired, 1)
 		existing = nil
@@ -444,21 +276,27 @@ func (closer *Closer) Observe(drop Drop) {
 			closer.countLocked(key, OutcomeMemoryFull, 1)
 			return
 		}
-		closer.entries[ek] = &entry{closeReason: closeReasonOf(drop), businessID: drop.BusinessID, global: drop.GlobalBusiness, revision: drop.StrategyRevision,
-			firstRound: drop.Round, lastSeen: now, ttl: closer.lifetime(drop)}
+		closer.entries[ek] = &entry{revision: offer.StrategyRevision, firstRound: offer.Round, lastSeen: now,
+			ttl: closer.lifetime(offer)}
 		closer.countLocked(key, OutcomeUnconfirmed, 1)
 		return
 	}
 	existing.lastSeen = now
-	existing.closeReason = closeReasonOf(drop)
-	existing.businessID, existing.global, existing.revision = drop.BusinessID, drop.GlobalBusiness, drop.StrategyRevision
-	existing.ttl = closer.lifetime(drop)
-	if drop.Round != existing.firstRound {
+	existing.revision = offer.StrategyRevision
+	existing.ttl = closer.lifetime(offer)
+	if offer.Round != existing.firstRound {
 		existing.confirmed = true
 	}
 }
 
-// Step decides and sends at most Batch closes.
+// group is the confirmed entries of one strategy and revision that one
+// filter call closes.
+type group struct {
+	key      Key
+	revision int64
+}
+
+// Step decides and closes at most Batch confirmed entries.
 func (closer *Closer) Step(ctx context.Context) {
 	now := closer.options.Now()
 	closer.mu.Lock()
@@ -479,176 +317,83 @@ func (closer *Closer) Step(ctx context.Context) {
 			confirmed = append(confirmed, ek)
 		}
 	}
-	set, writer, after, business := closer.set, closer.writer, closer.after, closer.business
+	link, source, after := closer.link, closer.source, closer.after
 	closer.mu.Unlock()
 	if len(confirmed) == 0 {
 		return
 	}
 	sort.Slice(confirmed, func(i, j int) bool { return lessEntry(confirmed[i], confirmed[j]) })
-	own := ""
-	if set != nil && set.Trusted() {
-		own = set.OwnEventSourceID()
-	}
-	if own == "" {
-		for _, ek := range confirmed {
-			closer.count(ek.key, OutcomeSetUnavailable, 1)
-		}
-		return
-	}
 	start := sort.Search(len(confirmed), func(i int) bool { return lessEntry(after, confirmed[i]) })
-	alerts := map[openalerts.StrategyKey]map[string]openalerts.Alert{}
-	batch := make([]linkdoutput.CloseRequest, 0, closer.options.Batch)
-	decided := make([]entryKey, 0, closer.options.Batch)
-	fromSet := map[entryKey]bool{}
-	for n := 0; n < len(confirmed) && len(batch) < closer.options.Batch; n++ {
+	var order []group
+	members := map[group][]entryKey{}
+	picked := 0
+	for n := 0; n < len(confirmed) && picked < closer.options.Batch; n++ {
 		ek := confirmed[(start+n)%len(confirmed)]
 		after = ek
-		if !closer.fresh(ek, now) {
+		closer.mu.Lock()
+		e := closer.entries[ek]
+		closer.mu.Unlock()
+		if e == nil {
+			continue
+		}
+		if now.Sub(e.lastSeen) > closer.options.Freshness {
 			closer.count(ek.key, OutcomeStaleDeferred, 1)
 			continue
 		}
-		byFingerprint, read := alerts[ek.key]
-		if !read {
-			byFingerprint = map[string]openalerts.Alert{}
-			for _, alert := range set.ActiveAlerts(ek.key) {
-				byFingerprint[alert.Fingerprint] = alert
-			}
-			alerts[ek.key] = byFingerprint
-		}
-		alert, listed := byFingerprint[ek.fingerprint]
-		if !listed {
-			held, judged := set.Holds(ek.key, ek.fingerprint)
-			member, unlisted := set.UnlistedHolds(ek.key, ek.fingerprint)
-			switch {
-			case judged && !held:
-				closer.forget(ek, OutcomeNotMember)
-				continue
-			case unlisted && member:
-				// The reconcile gave no rows to list the alert by, and the
-				// index set carries it: the close is addressed by its
-				// fingerprint, on this deployment's source, which is what
-				// the link resolves a close by.
-				alert = openalerts.Alert{AlertID: ek.fingerprint, EventSourceID: own, Fingerprint: ek.fingerprint}
-				fromSet[ek] = true
-			default:
-				// Held, and the calibration has not listed the alert yet:
-				// the close needs the alert's id, which only it carries.
-				closer.count(ek.key, OutcomeSetUnavailable, 1)
-				continue
-			}
-		}
-		if alert.EventSourceID != own {
-			closer.forget(ek, OutcomeProducerForeign)
-			continue
-		}
-		request, global, built := closer.request(ek, alert, now)
-		switch built {
-		case requestGone:
-			// Forgotten meanwhile, and counted where it was.
-			continue
-		case requestIdentityInvalid:
+		if id, err := strconv.ParseInt(ek.key.StrategyID, 10, 64); err != nil || id <= 0 || e.revision <= 0 {
 			closer.forget(ek, OutcomeIdentityInvalid)
 			continue
 		}
-		if global && fromSet[ek] {
-			// Its business is on the alert's record, and an alert addressed
-			// from the index set has no id to read the record by.
-			closer.count(ek.key, OutcomeBusinessUnknown, 1)
+		if link == nil || source == "" {
+			closer.count(ek.key, OutcomeUnrouted, 1)
 			continue
 		}
-		if global {
-			// The strategy files each alert under the business it is
-			// about: the close carries the alert's, or is not sent and is
-			// tried again at the next step.
-			if ctx.Err() != nil {
-				break
-			}
-			read, err := closer.alertBusiness(ctx, business, ek, alert)
-			if err != nil {
-				closer.count(ek.key, OutcomeBusinessUnknown, 1)
-				continue
-			}
-			request.BusinessID = read
+		g := group{key: ek.key, revision: e.revision}
+		if _, seen := members[g]; !seen {
+			order = append(order, g)
 		}
-		batch = append(batch, request)
-		decided = append(decided, ek)
+		members[g] = append(members[g], ek)
+		picked++
 	}
 	closer.mu.Lock()
 	closer.after = after
 	closer.mu.Unlock()
-	if len(batch) == 0 {
-		return
-	}
-	if writer == nil {
-		closer.countEach(decided, OutcomeSendFailed)
-		return
-	}
-	if err := writer.WriteCloseBatch(ctx, batch); err != nil {
-		// Kept: the next step tries again.
-		closer.countEach(decided, OutcomeSendFailed)
-		return
-	}
-	closer.decide(decided, OutcomeCloseSent, now)
-	for _, ek := range decided {
-		if fromSet[ek] {
-			closer.count(ek.key, OutcomeIndexSetCloseSent, 1)
+	for _, g := range order {
+		if ctx.Err() != nil {
+			return
 		}
+		closer.closeGroup(ctx, link, source, g, members[g], now)
 	}
 }
 
-// fresh is whether the entry's last observation is recent enough to act on.
-func (closer *Closer) fresh(ek entryKey, now time.Time) bool {
+// closeGroup runs one group's filter close and decides its entries by the
+// word: done or matching nothing decides them; filtered close unsupported
+// counts them; anything else keeps them for the next step.
+func (closer *Closer) closeGroup(ctx context.Context, link Link, source string, g group, keys []entryKey, now time.Time) {
+	scope := filterclose.Scope{TenantID: g.key.TenantID, EventSourceID: source, StrategyID: g.key.StrategyID}
 	closer.mu.Lock()
-	defer closer.mu.Unlock()
-	e := closer.entries[ek]
-	return e != nil && now.Sub(e.lastSeen) <= closer.options.Freshness
-}
-
-// requestBuilt is what building a close request found: built, the entry
-// gone, or its identity facts unusable.
-type requestBuilt int
-
-const (
-	requestReady requestBuilt = iota
-	requestGone
-	requestIdentityInvalid
-)
-
-// request builds the close of ek's alert under the strategy's business, and
-// says whether the strategy is a global business one, whose close carries
-// its alert's business instead.
-func (closer *Closer) request(ek entryKey, alert openalerts.Alert, now time.Time) (linkdoutput.CloseRequest, bool, requestBuilt) {
-	closer.mu.Lock()
-	e := closer.entries[ek]
-	var global bool
-	var reason string
-	if e != nil {
-		global, reason = e.global, e.closeReason
+	// The decision was read when the group's entries were last offered; the
+	// earliest of them bounds the close, so an alert opened after that is
+	// not selected.
+	var decidedAt time.Time
+	fingerprints := make([]string, 0, len(keys))
+	for _, ek := range keys {
+		if e := closer.entries[ek]; e != nil && (decidedAt.IsZero() || e.lastSeen.Before(decidedAt)) {
+			decidedAt = e.lastSeen
+		}
+		fingerprints = append(fingerprints, ek.fingerprint)
 	}
 	closer.mu.Unlock()
-	if e == nil {
-		return linkdoutput.CloseRequest{}, false, requestGone
+	sort.Strings(fingerprints)
+	switch link.Fingerprints(ctx, scope, fingerprints, DecisionSuperseded, g.revision, decidedAt) {
+	case filterclose.OutcomeJobDone, filterclose.OutcomeNothingMatched:
+		closer.decide(keys, now)
+	case filterclose.OutcomeUnsupported:
+		closer.countEach(keys, OutcomeUnsupported)
+	default:
+		// Kept: the next step runs the filter again, from a new dry run.
+		closer.countEach(keys, OutcomeSendFailed)
 	}
-	strategyID, err := strconv.ParseInt(ek.key.StrategyID, 10, 64)
-	if err != nil || strategyID <= 0 {
-		return linkdoutput.CloseRequest{}, false, requestIdentityInvalid
-	}
-	businessID, err := strconv.ParseInt(e.businessID, 10, 64)
-	if err != nil || businessID == 0 || e.revision <= 0 {
-		return linkdoutput.CloseRequest{}, false, requestIdentityInvalid
-	}
-	return linkdoutput.CloseRequest{TenantID: ek.key.TenantID, Fingerprint: ek.fingerprint, AlertInstanceID: alert.AlertID,
-		StrategyID: strategyID, StrategyRevision: e.revision, BusinessID: businessID, OccurredAt: now,
-		Reason: reason}, global, requestReady
-}
-
-// alertBusiness is the business ek's alert was filed under, read through
-// business; without one there is nothing to read it from.
-func (closer *Closer) alertBusiness(ctx context.Context, business AlertBusiness, ek entryKey, alert openalerts.Alert) (int64, error) {
-	if business == nil {
-		return 0, errors.New("alarmd scopeclose: no alert record reader bound")
-	}
-	return business(ctx, ek.key.TenantID, alert.EventSourceID, ek.key.StrategyID, alert.AlertID)
 }
 
 func (closer *Closer) forget(ek entryKey, outcome string) {
@@ -658,48 +403,46 @@ func (closer *Closer) forget(ek entryKey, outcome string) {
 	closer.mu.Unlock()
 }
 
-func (closer *Closer) decide(decided []entryKey, outcome string, now time.Time) {
+func (closer *Closer) decide(keys []entryKey, now time.Time) {
 	closer.mu.Lock()
 	defer closer.mu.Unlock()
-	for _, ek := range decided {
+	for _, ek := range keys {
 		ttl := closer.options.ObservationTTL
 		if e := closer.entries[ek]; e != nil {
 			ttl = e.ttl
-			if outcome == OutcomeCloseSent && e.closeReason == linkdoutput.CloseReasonSupersededIdentity {
-				closer.countLocked(ek.key, OutcomeSupersededCloseSent, 1)
-			}
 		}
 		delete(closer.entries, ek)
 		if len(closer.decided) < closer.options.MaxEntries {
 			closer.decided[ek] = now.Add(ttl)
 		}
-		closer.countLocked(ek.key, outcome, 1)
+		closer.countLocked(ek.key, OutcomeCloseSent, 1)
+		closer.countLocked(ek.key, OutcomeSupersededCloseSent, 1)
 		t := closer.tallyLocked(ek.key)
 		if t == nil {
 			continue
 		}
-		t.decided = append(t.decided, prefix(ek.fingerprint))
+		t.decided = append(t.decided, prefix(sampleOf(ek)))
 		if len(t.decided) > FactsSamplesPerStrategy {
 			t.decided = t.decided[len(t.decided)-FactsSamplesPerStrategy:]
 		}
 	}
 }
 
-func (closer *Closer) countEach(decided []entryKey, outcome string) {
+func (closer *Closer) countEach(keys []entryKey, outcome string) {
 	closer.mu.Lock()
 	defer closer.mu.Unlock()
-	for _, ek := range decided {
+	for _, ek := range keys {
 		closer.countLocked(ek.key, outcome, 1)
 	}
 }
 
-func (closer *Closer) count(key openalerts.StrategyKey, outcome string, n int) {
+func (closer *Closer) count(key Key, outcome string, n int) {
 	closer.mu.Lock()
 	closer.countLocked(key, outcome, n)
 	closer.mu.Unlock()
 }
 
-func (closer *Closer) countLocked(key openalerts.StrategyKey, outcome string, n int) {
+func (closer *Closer) countLocked(key Key, outcome string, n int) {
 	closer.counts[outcome] += uint64(n)
 	if t := closer.tallyLocked(key); t != nil {
 		t.counts[outcome] += uint64(n)
@@ -708,21 +451,13 @@ func (closer *Closer) countLocked(key openalerts.StrategyKey, outcome string, n 
 
 // tallyLocked is the strategy's counts, created while there is room; a
 // strategy past the bound is counted in the totals only.
-func (closer *Closer) tallyLocked(key openalerts.StrategyKey) *tally {
+func (closer *Closer) tallyLocked(key Key) *tally {
 	t := closer.tallies[key]
 	if t == nil && len(closer.tallies) < maxTalliedStrategies {
 		t = &tally{counts: map[string]uint64{}}
 		closer.tallies[key] = t
 	}
 	return t
-}
-
-// closeReasonOf is the reason a drop's close carries.
-func closeReasonOf(drop Drop) string {
-	if drop.CloseReason == "" {
-		return linkdoutput.CloseReasonTargetOutOfScope
-	}
-	return drop.CloseReason
 }
 
 // Stats is the outcome totals, every outcome present.
@@ -746,8 +481,8 @@ type Facts struct {
 	MaxTalliedStrategies int
 }
 
-// StrategyFacts is one strategy's reading: its counts, the fingerprints it
-// has waiting, and the last ones decided, each a prefix.
+// StrategyFacts is one strategy's reading: its counts, the entries it has
+// waiting, and the last ones decided, each a bounded prefix.
 type StrategyFacts struct {
 	TenantID, StrategyID string
 	Pending, Confirmed   int
@@ -757,7 +492,7 @@ type StrategyFacts struct {
 }
 
 // Facts reads the close's state: totals, and up to FactsStrategies
-// strategies, those with fingerprints waiting first.
+// strategies, those with entries waiting first.
 func (closer *Closer) Facts() Facts {
 	closer.mu.Lock()
 	defer closer.mu.Unlock()
@@ -766,8 +501,8 @@ func (closer *Closer) Facts() Facts {
 	for _, outcome := range Outcomes {
 		facts.Outcomes[outcome] = closer.counts[outcome]
 	}
-	rows := map[openalerts.StrategyKey]*StrategyFacts{}
-	row := func(key openalerts.StrategyKey) *StrategyFacts {
+	rows := map[Key]*StrategyFacts{}
+	row := func(key Key) *StrategyFacts {
 		r := rows[key]
 		if r == nil {
 			r = &StrategyFacts{TenantID: key.TenantID, StrategyID: key.StrategyID}
@@ -775,7 +510,7 @@ func (closer *Closer) Facts() Facts {
 		}
 		return r
 	}
-	pending := map[openalerts.StrategyKey][]entryKey{}
+	pending := map[Key][]entryKey{}
 	for ek, e := range closer.entries {
 		r := row(ek.key)
 		if e.confirmed {
@@ -804,7 +539,7 @@ func (closer *Closer) Facts() Facts {
 			return keys[i].fingerprint < keys[j].fingerprint
 		})
 		for i := 0; i < len(keys) && i < FactsSamplesPerStrategy; i++ {
-			rows[key].PendingSample = append(rows[key].PendingSample, prefix(keys[i].fingerprint))
+			rows[key].PendingSample = append(rows[key].PendingSample, prefix(sampleOf(keys[i])))
 		}
 	}
 	ordered := make([]*StrategyFacts, 0, len(rows))
@@ -837,41 +572,14 @@ func lessEntry(a, b entryKey) bool {
 	return a.fingerprint < b.fingerprint
 }
 
+// sampleOf is what an entry is shown as: its fingerprint.
+func sampleOf(ek entryKey) string {
+	return ek.fingerprint
+}
+
 func prefix(value string) string {
 	if len(value) <= samplePrefix {
 		return value
 	}
 	return value[:samplePrefix]
 }
-
-// CacheSet is the open alert copy as the close reads it. The whole copy is
-// refused only when the Console has not confirmed it; calibration,
-// freshness and availability are judged per strategy by MemberCount and
-// Holds.
-func CacheSet(cache *openalerts.Cache) OpenSet { return cacheSet{cache: cache} }
-
-type cacheSet struct{ cache *openalerts.Cache }
-
-func (set cacheSet) Trusted() bool { return set.cache.Trusted() }
-
-func (set cacheSet) MemberCount(key openalerts.StrategyKey) (int, bool) {
-	return set.cache.MemberCount(key)
-}
-
-func (set cacheSet) Holds(key openalerts.StrategyKey, fingerprint string) (bool, bool) {
-	return set.cache.Holds(key, fingerprint)
-}
-
-func (set cacheSet) ActiveAlerts(key openalerts.StrategyKey) []openalerts.Alert {
-	return set.cache.ActiveAlerts(key)
-}
-
-func (set cacheSet) UnlistedMemberCount(key openalerts.StrategyKey) (int, bool) {
-	return set.cache.UnlistedMemberCount(key)
-}
-
-func (set cacheSet) UnlistedHolds(key openalerts.StrategyKey, fingerprint string) (bool, bool) {
-	return set.cache.UnlistedHolds(key, fingerprint)
-}
-
-func (set cacheSet) OwnEventSourceID() string { return set.cache.OwnEventSourceID() }

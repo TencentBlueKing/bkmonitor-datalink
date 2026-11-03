@@ -155,7 +155,7 @@ type phaseTwoMetrics struct {
 	historyCoverageUnsummarised     *prometheus.CounterVec
 	levelOutcomes                   *prometheus.CounterVec
 	openAlertGate                   *prometheus.CounterVec
-	openAlertSet                    *openAlertSetCollector
+	activeCopy                      *activeCopyCollector
 	fleetTracker                    *fleetTrackerCollector
 	effectiveTimeRefresh            *effectiveTimeRefreshCollector
 	activationRebuild               *activationRebuildCollector
@@ -172,8 +172,11 @@ type phaseTwoMetrics struct {
 	observerPanics                  *observerPanicsCollector
 	absentClose                     *absentCloseCollector
 	editClose                       *editCloseCollector
+	noDataCloseAPI                  *outcomeCounterCollector
+	linkdFilterClose                *outcomeCounterCollector
+	openEpisodeRecord               *outcomeCounterCollector
+	strategyScopeClose              *outcomeCounterCollector
 	targetScopeClose                *targetScopeCloseCollector
-	linkdConsole                    *linkdConsoleCollector
 	controlSourceRounds             *prometheus.CounterVec
 	apmCarried                      *prometheus.CounterVec
 	apmCarriedBytes                 *prometheus.HistogramVec
@@ -1298,8 +1301,9 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	}
 	metrics.noDataEnd = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Subsystem: metricSubsystem, Name: "no_data_end_total",
-		Help: "What the no-data end index did, by outcome: sent (series whose alert a level written to end on no " +
-			"data ended while the series was absent from complete answers through the recovery span), not_open " +
+		Help: "What the no-data end index did, by outcome: sent (series whose end event the sink took, for a level " +
+			"written to end on no data, the series absent from complete answers through the recovery span - taken " +
+			"by the broker, not ended by the link, which finds no active alert for one already closed), not_open " +
 			"(entries removed because the consumer no longer holds their alert - closed by hand, by effective " +
 			"time, by the absent or superseded-identity close - nothing sent), overflow (open alerts not indexed, " +
 			"the Plan's index full; they stay open while their group is absent), unavailable (Plans whose index " +
@@ -1319,7 +1323,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	// come apart, and an absent series would hide exactly that.
 	metrics.openAlertGate = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Subsystem: metricSubsystem, Name: "trigger_open_alert_gate_total",
-		Help: "RECOVERY records, by what the consumer's open alert set decided: " +
+		Help: "RECOVERY records, by what alarmd's copy of the consumer's active alerts decided: " +
 			"passed (an open alert on the series; the envelope went), passed_one_time_close (the one close of a " +
 			"group the target dropped, let through without the consumer's copy vouching for it: about one per " +
 			"dropped group, more only when that round's no-data memory write failed and the round ran again; an " +
@@ -1331,13 +1335,13 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			"message: the set was not asked and the envelope is not built; output_events_without_message_total " +
 			"counts it). " +
 			"It counts records per evaluation, not alerts. Which of passed and held_no_open_alert " +
-			"dominates says nothing on its own; read it against open_alert_set_lookup_total, whose " +
-			"self_maintained and passed_through answers are this process's own knowledge, not the consumer's.",
+			"dominates says nothing on its own; read it against active_copy_lookup_total, whose own_sent " +
+			"answers are this process's own knowledge, not the consumer's.",
 	}, []string{"outcome"})
 	for _, outcome := range observability.OpenAlertGateOutcomes {
 		metrics.openAlertGate.WithLabelValues(string(outcome))
 	}
-	metrics.openAlertSet = newOpenAlertSetCollector()
+	metrics.activeCopy = newActiveCopyCollector()
 	metrics.fleetTracker = newFleetTrackerCollector()
 	metrics.effectiveTimeRefresh = newEffectiveTimeRefreshCollector()
 	metrics.activationRebuild = newActivationRebuildCollector()
@@ -1354,8 +1358,11 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.observerPanics = newObserverPanicsCollector()
 	metrics.absentClose = newAbsentCloseCollector()
 	metrics.editClose = newEditCloseCollector()
+	metrics.noDataCloseAPI = newNoDataCloseAPICollector()
+	metrics.linkdFilterClose = newLinkdFilterCloseCollector()
+	metrics.openEpisodeRecord = newOpenEpisodeRecordCollector()
+	metrics.strategyScopeClose = newStrategyScopeCloseCollector()
 	metrics.targetScopeClose = newTargetScopeCloseCollector()
-	metrics.linkdConsole = newLinkdConsoleCollector()
 	metrics.strategiesReturnedAfterRemoval = prometheus.NewCounter(prometheus.CounterOpts{
 		Subsystem: metricSubsystem, Name: "catalog_strategy_returned_after_removal_total",
 		Help: "Strategies the source listed again after their Plan had already left the Catalog: absent past the " +
@@ -1934,7 +1941,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.undrainedDrainingQueryGroups, m.drainingCursorPrunedQueryGroups, m.rebalancePlannedMoves, m.shardUnawareReadyReplicas, m.rebalanceGap, m.assignmentMoves, m.rebalancePaused, m.controlReadRoundTrips, m.controlReadKeys, m.controlReadDuration, m.assignmentIndexStaleRounds, m.assignmentIndexWrites, m.assignmentIndexReads, m.assignmentIndexConfirm, m.assignmentRecordReads, m.scheduleCursorAdvances, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
 		m.algorithmEvaluations, m.algorithmInputs, m.levelAbnormal, m.levelOutcomes, m.historyCoverageRejected, m.historyCoverageUnsummarised, m.recoveryBeside, m.recoveryWithheld, m.noDataEnd, m.openAlertGate,
 	}...), append(append(append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...), append(m.handover.collectors(), m.sreActions.actions, m.sreActions.rollouts, m.sreActions.watched, m.sreActions.receipts, m.cliAuth.total, m.cliAuth.rosterApplied)...), append(m.controlFacts.collectors(), m.traceExport.collectors()...)...),
-		m.startupDependencyWaits, m.liveness, m.controlCache, m.dispatchRotation, m.localView, m.viewStream, m.viewClient, m.openAlertSet, m.fleetTracker, m.effectiveTimeRefresh, m.activationRebuild, m.timelineRepair, m.activationSkippedTimelines, m.timelineUnreadableReports, m.activationHeader, m.activationBlocked, m.liveReserve, m.roundMemory, m.targetGroup, m.effectiveClose, m.logLines, m.observerPanics, m.absentClose, m.editClose, m.targetScopeClose, m.linkdConsole, m.controlSourceRounds, m.apmCarried, m.apmCarriedBytes, m.strategiesReturnedAfterRemoval, m.queryCooldownSaves, m.controlFactsWrites, m.queryCooldownLoads, m.eventBusinessAttribution, m.detectionSnapshots, m.detectionSnapshotStates, m.diagnosticRedisFailures, m.diagnosticRedisDialRetries, m.leaderForward, m.controlSource, m.leaderRound, m.lookback,
+		m.startupDependencyWaits, m.liveness, m.controlCache, m.dispatchRotation, m.localView, m.viewStream, m.viewClient, m.activeCopy, m.fleetTracker, m.effectiveTimeRefresh, m.activationRebuild, m.timelineRepair, m.activationSkippedTimelines, m.timelineUnreadableReports, m.activationHeader, m.activationBlocked, m.liveReserve, m.roundMemory, m.targetGroup, m.effectiveClose, m.logLines, m.observerPanics, m.absentClose, m.editClose, m.noDataCloseAPI, m.linkdFilterClose, m.openEpisodeRecord, m.strategyScopeClose, m.targetScopeClose, m.controlSourceRounds, m.apmCarried, m.apmCarriedBytes, m.strategiesReturnedAfterRemoval, m.queryCooldownSaves, m.controlFactsWrites, m.queryCooldownLoads, m.eventBusinessAttribution, m.detectionSnapshots, m.detectionSnapshotStates, m.diagnosticRedisFailures, m.diagnosticRedisDialRetries, m.leaderForward, m.controlSource, m.leaderRound, m.lookback,
 		m.controlSourceRetainedStale, m.controlSourceLastGoodIdentity, m.platformSettings,
 		m.redisPool, m.renewalGate, m.canonicalEncoding, m.legacyPodCache,
 		m.seriesAdmission, m.cmdbAddressDiffers, m.cmdbPlacedByHostID, m.cmdbIndexHosts, m.cmdbIndexServiceInstances, m.cmdbIndexBusinessMappings, m.cmdbIndexRecordsRefused, m.hostDisableMonitorStates, m.cmdbIndexAge, m.cmdbIndexPublish,

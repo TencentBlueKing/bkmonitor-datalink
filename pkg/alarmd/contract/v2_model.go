@@ -1077,7 +1077,13 @@ type TriggerEventV1 struct {
 	// StrategyFacts is the Plan's (EvaluationPlanV2.StrategyFacts), for the
 	// output to carry (extra_data.strategy_facts): beside the event and not
 	// in it, like the signal type. Nil where the Plan has none.
-	StrategyFacts           *StrategyFactsV2     `json:"-"`
+	StrategyFacts *StrategyFactsV2 `json:"-"`
+	// TargetDimensions is the Plan's target identity dimensions
+	// (TargetPlanIdentityV1.Dimensions), beside the event like the facts:
+	// alarmd's record of the episodes it opened (package openepisodes)
+	// keeps the series' values of them, which a scope close compares with
+	// the current targets. Nil where the Plan names no target plan.
+	TargetDimensions        []string             `json:"-"`
 	Schema                  Schema               `json:"schema"`
 	RequiredFeatures        []string             `json:"required_features"`
 	EventID                 string               `json:"event_id"`

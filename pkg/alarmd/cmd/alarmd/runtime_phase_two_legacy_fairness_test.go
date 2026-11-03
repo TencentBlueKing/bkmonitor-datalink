@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 )
 
 type slowLegacyRefresh struct{ calls int }
@@ -18,7 +17,7 @@ func (s *slowLegacyRefresh) Refresh(ctx context.Context, _, _ string, _ []int64)
 }
 
 func TestEffectiveMaintenanceSlowLegacyDoesNotStarveSnapshotPlan(t *testing.T) {
-	modern := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(18, 0), []openalerts.Alert{maintenanceAlert("native", "critical")})
+	modern := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(18, 0), maintenanceMatches)
 	legacy := newMaintenanceTestFixture(t, "", maintenanceTime(18, 0), nil)
 	legacyPlan := legacy.m.catalog.(*maintenanceTestCatalog).plans[0]
 	modernPlan := modern.m.catalog.(*maintenanceTestCatalog).plans[0]
@@ -26,18 +25,18 @@ func TestEffectiveMaintenanceSlowLegacyDoesNotStarveSnapshotPlan(t *testing.T) {
 	slow := &slowLegacyRefresh{}
 	modern.m.legacyCache = slow
 	modern.m.step(context.Background())
-	if slow.calls != 1 || len(modern.writer.batches) != 1 {
-		t.Fatalf("slow calls=%d modern closes=%d", slow.calls, len(modern.writer.batches))
+	if slow.calls != 1 || len(modern.closed()) != 1 {
+		t.Fatalf("slow calls=%d modern closes=%d", slow.calls, len(modern.closed()))
 	}
 }
 
-func TestEffectiveMaintenancePartialPlanRetainsTrackingWithoutClosing(t *testing.T) {
-	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(18, 0), []openalerts.Alert{maintenanceAlert("native", "critical")})
+func TestEffectiveMaintenancePartialPlanDoesNotClose(t *testing.T) {
+	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(18, 0), maintenanceMatches)
 	catalog := f.m.catalog.(*maintenanceTestCatalog)
 	catalog.plans[0].CloseUnavailable = true
 	f.m.step(context.Background())
-	if len(f.writer.batches) != 0 || f.m.cache.Stats().Tracked != 1 {
-		t.Fatalf("partial plan closes=%d tracked=%d", len(f.writer.batches), f.m.cache.Stats().Tracked)
+	if requests := f.stub.requests("/api/v1/alerts/close"); len(requests) != 0 {
+		t.Fatalf("partial plan asked the link to close: %v", requests)
 	}
 }
 

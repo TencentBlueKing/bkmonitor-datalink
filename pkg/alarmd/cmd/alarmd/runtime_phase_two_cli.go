@@ -24,12 +24,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/k8sread"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdmanage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obevidence"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
@@ -77,9 +77,11 @@ type cliControlBinding struct {
 	// Maintenance is the effective-time maintenance, bound once the loop is
 	// built; read by maintenance.get.
 	Maintenance *maintenanceSource
-	// LinkdConsole is the process's linkd Console client, read by
-	// linkd.alerts; nil without a Console.
-	LinkdConsole *openalerts.HTTPReconciler
+	// LinkdSearch is the process's link management client, read by
+	// linkd.alerts, and LinkdSource the event source it reads; nil without
+	// the link's control plane.
+	LinkdSearch *linkdmanage.Client
+	LinkdSource string
 }
 
 // cliAuthEvents counts the CLI authorization's events, every cell created

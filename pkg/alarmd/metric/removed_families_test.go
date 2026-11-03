@@ -21,9 +21,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/filterclose"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 )
 
 // removedFamilies are families taken out because nothing read them: their
@@ -82,6 +82,15 @@ var removedFamilies = []string{
 	// and counted when sent again. A duplicate RECOVERY is an orphan there,
 	// which changes nothing, so the copy no longer hides one or counts it.
 	"open_alert_set_recovery_resent_total",
+	// The copy of the link's index sets, read through its Console, the
+	// Console itself and the record of reopens: the recovery gate and the
+	// no-data end read alarmd's own copy, refreshed by fingerprint through
+	// the link's search (active_copy_*), and every close is by the link's
+	// filter, by alert id (2026-10-27).
+	"open_alert_set_authoritative_age_seconds", "open_alert_set_unavailable_total", "open_alert_set_refresh_total",
+	"open_alert_set_lookup_total", "open_alert_set_entries", "open_alert_set_tracked_strategies",
+	"open_alert_set_evictions_total", "open_alert_set_notices_refused_total", "linkd_calibration_coverage",
+	"linkd_console_state", "linkd_console_calls_total", "linkd_console_failures_total", "recovery_record_total",
 }
 
 // removedLabelValues are label values taken out of families that stay.
@@ -112,6 +121,21 @@ var removedLabelValues = []struct {
 	{"absent_strategy_close_total", "outcome", "alert_closed", false},
 	{"absent_strategy_close_total", "outcome", "closed", true},
 	{"target_scope_close_total", "outcome", "closed", true},
+	// The per-series close of alerts whose target left the strategy's scope
+	// never sent: it judged only on the copy's existing word, and the copy is
+	// not refreshed for a rejection. The control leader's close per strategy,
+	// on a change of the scope, closes them (strategy_scope_close_total); the
+	// family keeps the superseded-identity close and its words.
+	{"target_scope_close_total", "outcome", "not_known_open", false},
+	{"target_scope_close_total", "outcome", "set_unavailable", false},
+	{"target_scope_close_total", "outcome", "not_member", false},
+	{"target_scope_close_total", "outcome", "cache_unavailable", true},
+	{"target_scope_close_total", "outcome", "indefinite", true},
+	{"target_scope_close_total", "outcome", "fingerprint_unsupported", true},
+	{"target_scope_close_total", "outcome", "target_close_sent", false},
+	// The per-series target-scope close was the one job whose expectation was
+	// its removed targets times their series.
+	{"linkd_filter_close_total", "outcome", "expect_removed_targets", false},
 	// An item accepted with a note on its configuration was CONFIG_NORMALIZED,
 	// which says its configuration was read otherwise than written. A no-data
 	// trigger the tracking horizon stops first is noted with nothing read
@@ -148,11 +172,6 @@ var removedLabelValues = []struct {
 	// Every Plan a series is admitted for has its scope indexed: a consumer
 	// of a Plan that is not due is refused before the query is prepared.
 	{"series_admission_total", "reason", "plan_not_indexed", false},
-	// The disjoint inference went with its families: the Console's facts
-	// replace it, as location_unconfirmed and keying_unconfirmed.
-	{"open_alert_set_unavailable_total", "reason", "members_disjoint", false},
-	// The ledger's entries went with the ledger.
-	{"open_alert_set_entries", "kind", "sent_closed", false},
 	// The absent close refused a round whose strategy list had lost more than
 	// a fifth of the round before's, unless the writer stated it holds the
 	// last good document. The list's writer is what decides a strategy is
@@ -187,6 +206,8 @@ func TestARemovedLabelValueIsNotEmitted(t *testing.T) {
 		return sides
 	})
 	r.SetTargetScopeCloseSource(everything)
+	// The filter close's words are the list it is bound with: this build's.
+	r.SetLinkdFilterCloseSource(filterclose.Outcomes, everything)
 	for _, removed := range removedLabelValues {
 		if removed.family == "cmdb_index_business_mappings" {
 			r.SetCMDBBusinessMapping("bcs_cluster", 1, 0, 0, false, true)
@@ -213,13 +234,6 @@ func TestARemovedLabelValueIsNotEmitted(t *testing.T) {
 	r.Observe(context.Background(), observability.Observation{
 		Component: observability.ComponentAccess, Stage: observability.StageTargetResolved,
 		TargetResolution: &observability.TargetResolutionFacts{StrategyID: "1", State: "Unavailable", Selectors: selectors},
-	})
-	r.SetOpenAlertSetSource(func() openalerts.Stats {
-		counts := map[openalerts.UnavailableReason]uint64{}
-		for _, removed := range removedLabelValues {
-			counts[openalerts.UnavailableReason(removed.value)] = 1
-		}
-		return openalerts.Stats{Unavailable: counts}
 	})
 	// The catalog's and the fleet's families are filled by their producers'
 	// closed lists, so the guard drives those: an object recorded under a

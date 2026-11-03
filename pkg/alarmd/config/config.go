@@ -771,6 +771,12 @@ func decodeDocument(raw []byte, cfg *Config) error {
 	if cfg.Roles == nil && yamlRolesDeclared(&document) {
 		cfg.Roles = roles.Set{}
 	}
+	// The same for the link: an empty or null phase_two.linkd decodes like
+	// none, and the block's presence is what states the link as the
+	// deployment's destination (LinkdConfig.Present).
+	if yamlPathDeclared(&document, "phase_two", "linkd") {
+		cfg.PhaseTwo.Linkd.Declared = true
+	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err == nil {
@@ -899,6 +905,43 @@ func yamlRolesDeclared(node *yaml.Node) bool {
 					if yamlRolesDeclared(entry) {
 						return true
 					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// yamlPathDeclared reports whether the document has the key path, through
+// aliases and merge keys, whatever the value under it, null included.
+func yamlPathDeclared(node *yaml.Node, path ...string) bool {
+	if len(path) == 0 {
+		return true
+	}
+	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+		return yamlPathDeclared(node.Content[0], path...)
+	}
+	if node.Kind == yaml.AliasNode {
+		return yamlPathDeclared(node.Alias, path...)
+	}
+	if node.Kind != yaml.MappingNode {
+		return false
+	}
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		key, value := node.Content[index], node.Content[index+1]
+		if key.Value == path[0] && yamlPathDeclared(value, path[1:]...) {
+			return true
+		}
+		if key.Value != "<<" {
+			continue
+		}
+		if yamlPathDeclared(value, path...) {
+			return true
+		}
+		if value.Kind == yaml.SequenceNode {
+			for _, entry := range value.Content {
+				if yamlPathDeclared(entry, path...) {
+					return true
 				}
 			}
 		}
@@ -1052,6 +1095,11 @@ func (c Config) validateGoAccessRuntime() error {
 	}
 	if err := c.PhaseTwo.validateRoles(selected); err != nil {
 		return err
+	}
+	if business {
+		if err := c.PhaseTwo.Linkd.validateDestination(); err != nil {
+			return err
+		}
 	}
 	if !business {
 		return c.CLI.validateEnabled()

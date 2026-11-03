@@ -30,9 +30,10 @@ type effectiveCloseCollector struct {
 func newEffectiveCloseCollector() *effectiveCloseCollector {
 	return &effectiveCloseCollector{
 		outcomes: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "effective_close_total"),
-			"What the effective-time maintenance did, by outcome. close_acked counts alerts, one per alert the "+
-				"broker acknowledged a close for: the close was sent, at every level of the strategy (__ALL__); "+
-				"whether the alert closed is the consumer's to say. The others count "+
+			"What the effective-time maintenance did, by outcome. close_acked counts closes sent and acknowledged by "+
+				"the broker, one per alert, at every level of the strategy (__ALL__): the broker's acknowledgement, not "+
+				"the link's, so it includes closes the link finds no active alert for (orphaned there), such as one sent "+
+				"again after the link closed the alert. The others count "+
 				"events: maintenance_busy is a close that could not take the Query Group's flight because a Slot was "+
 				"executing (one is nothing, a steady rate is a Query Group whose close never happens); "+
 				"close_precheck_failed is the owner or content check refusing before a send; close_send_failed is "+
@@ -53,11 +54,19 @@ func newEffectiveCloseCollector() *effectiveCloseCollector {
 				"were addressed from the index set, which names none - not closed that round; evidence_unavailable is "+
 				"a Plan outside its effective time whose open alerts could not be listed because its set has no current "+
 				"calibration (never calibrated, past its age, failing, or truncated with nothing listed) and its index "+
-				"set was not read fresh either, once per Plan per step - a calibrated set with no alerts is not counted; "+
-				"index_set_close_acked counts, among close_acked, alerts closed by fingerprint from the index set's "+
-				"members because the set had no current calibration to list them; index_set_group_draining is such a "+
-				"Plan whose set was held back instead, its Query Group in the current active set and in the draining "+
-				"projection at once, once per Plan per step. Every cell exists from the "+
+				"set was not read fresh either, or its index set stands in while an earlier reconcile named alerts active and "+
+				"missing from the set, which the set's members do not carry and are not closed from it, once per Plan per "+
+				"step - a calibrated set with no alerts is not counted; "+
+				"index_set_close_acked counts, among close_acked, closes sent by fingerprint from the index set's "+
+				"members because the set had no current calibration to list them; close_already_sent counts, once "+
+				"per send held and not per step, closes held back because this process sent them - a listed alert's "+
+				"within a minute of the send, one from the index set until a read of the set after the send no longer "+
+				"carries the member or the set's stale bound has passed since the send, after which a set still "+
+				"carrying it closes it once more; sent_memory_full counts, once per Plan per step, closes not sent because "+
+				"that memory of sends is at its bound, sent once it has room; reopened_since_read and recovery_unknown count, by alert, closes held "+
+				"back because a recovery of the fingerprint was sent after the listing or set they were decided from "+
+				"was read and an ABNORMAL of it after that, or the record of reopens could not be read. Every cell "+
+				"exists from the "+
 				"start so a zero is a reading and not an absence.", []string{"outcome"}, nil),
 	}
 }

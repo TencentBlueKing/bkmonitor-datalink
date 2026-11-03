@@ -29,7 +29,7 @@ func TestAStrategyViewCountsItsObjectsByPunctuality(t *testing.T) {
 	decided := rows["2"]
 	decided.Check = CheckSlotsOverdue
 	rows["2"] = decided
-	index := buildBoard("c1", time.Unix(10_000, 0), "digest-1", universe, func(id string) DiagnosisRow { return rows[id] }, nil, due, census, nil, nil)
+	index := buildBoard("c1", time.Unix(10_000, 0), "digest-1", universe, func(id string) DiagnosisRow { return rows[id] }, nil, due, census, nil)
 	want := map[string]map[Punctuality]int{
 		"1": {PunctualityOverdue: 1, PunctualityOnTime: 1},
 		"2": {PunctualityLate: 1, PunctualityNotStarted: 1},
@@ -190,7 +190,6 @@ func TestExpectedDetectionHasAWordForEveryKnownKind(t *testing.T) {
 func TestStrategyViewCarriesNoDeveloperCoordinates(t *testing.T) {
 	index := boardOf(t, false)
 	actual, _ := index.view("1", DiagnosisSummaryFreshFor)
-	actual.Row.OpenAlerts = &BoardCount{Value: 3, AtLeast: true}
 	view := ComposeStrategyView(actual, viewStanding())
 	encoded, err := json.Marshal(view)
 	if err != nil {
@@ -213,7 +212,7 @@ func TestStrategyViewCarriesNoDeveloperCoordinates(t *testing.T) {
 	}
 	if view.Actual.Punctuality != PunctualityOverdue || view.Actual.PunctualityWord != "超期" || view.Actual.Objects.Total != 2 ||
 		view.KBAnchor != actual.Row.KBAnchor || view.Conclusion.Line == "" || !view.Expected.Known ||
-		!reflect.DeepEqual(view.Actual.OpenAlerts, &BoardCount{Value: 3, AtLeast: true}) || view.MaxAgeSeconds != actual.MaxAgeSeconds {
+		view.MaxAgeSeconds != actual.MaxAgeSeconds {
 		t.Fatalf("view %+v", view)
 	}
 }

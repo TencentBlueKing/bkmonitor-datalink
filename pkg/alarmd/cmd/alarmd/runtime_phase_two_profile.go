@@ -154,7 +154,7 @@ func phaseTwoRuntimeProfile(cfg config.Config, cpuSource string, procs int) (obs
 			DynamicGroupKeyPrefix:     targetGroupPrefix(cfg),
 			PlatformSettingsKeyPrefix: cfg.PhaseTwo.PlatformSettings.RedisKeyPrefix,
 		},
-		Linkd:     observability.RuntimeLinkdFacts{ConsoleConfigured: cfg.PhaseTwo.Linkd.ConsoleURL != ""},
+		Linkd:     observability.RuntimeLinkdFacts{ControlPlaneConfigured: cfg.PhaseTwo.Linkd.ControlPlane.Configured()},
 		UQCodec:   phaseTwoUQCodecFacts(),
 		Retention: phaseTwoRuntimeRetention(cfg),
 	}

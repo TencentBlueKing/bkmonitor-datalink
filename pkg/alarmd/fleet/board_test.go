@@ -49,7 +49,7 @@ func boardFixture(cut bool) ([]string, map[string]DiagnosisRow, *DueView, *Sched
 func boardOf(t *testing.T, cut bool) *boardIndex {
 	t.Helper()
 	universe, rows, due, census := boardFixture(cut)
-	return buildBoard("c1", time.Unix(10_000, 0), "digest-1", universe, func(id string) DiagnosisRow { return rows[id] }, nil, due, census, nil, nil)
+	return buildBoard("c1", time.Unix(10_000, 0), "digest-1", universe, func(id string) DiagnosisRow { return rows[id] }, nil, due, census, nil)
 }
 
 func boardRows(index *boardIndex) map[string]BoardRow {
@@ -115,7 +115,7 @@ func TestBoardReplicaWithoutNamesReadsUnknown(t *testing.T) {
 	aggregateDue(view, []Snapshot{{Replica: "old", Owned: 1, OwnedObjects: []string{"qg"}, Schedule: &ScheduleCensus{}}})
 	index := buildBoard("c1", time.Unix(1, 0), "d", []string{"1"}, func(string) DiagnosisRow {
 		return DiagnosisRow{StrategyID: "1", Verdict: StateDetecting, Plans: []DiagnosisPlan{boardPlan("qg", "old")}}
-	}, nil, view.Due, &ScheduleCensus{}, nil, nil)
+	}, nil, view.Due, &ScheduleCensus{}, nil)
 	if index.rows[0].Punctuality != PunctualityUnknown || !index.lateStrats.AtLeast {
 		t.Fatalf("row %+v strategies %+v; want unknown and at least", index.rows[0], index.lateStrats)
 	}
@@ -168,7 +168,7 @@ func TestBoardOrdersByActionThenLongestStanding(t *testing.T) {
 		"d": {StrategyID: "d", Verdict: StateDefect, Action: ActionServiceFix},
 	}
 	lines := []StrategyLine{{StrategyID: "b", Since: &later}, {StrategyID: "c", Since: &earlier}}
-	index := buildBoard("c1", time.Unix(1, 0), "d", []string{"a", "b", "c", "d"}, func(id string) DiagnosisRow { return rows[id] }, lines, nil, nil, nil, nil)
+	index := buildBoard("c1", time.Unix(1, 0), "d", []string{"a", "b", "c", "d"}, func(id string) DiagnosisRow { return rows[id] }, lines, nil, nil, nil)
 	got := []string{}
 	for _, row := range index.rows {
 		got = append(got, row.StrategyID)
@@ -199,7 +199,7 @@ func TestBoardPagesWithinOneComputationAndRereadsOtherwise(t *testing.T) {
 	}
 	other := buildBoard("c2", time.Unix(10_030, 0), "digest-1", []string{"1"}, func(string) DiagnosisRow {
 		return DiagnosisRow{StrategyID: "1", Verdict: StateDetecting}
-	}, nil, nil, nil, nil, nil)
+	}, nil, nil, nil, nil)
 	reread := other.page(BoardFilter{}, first.NextCursor, 3, DiagnosisSummaryFreshFor)
 	if !reread.Reread || len(reread.Rows) != 1 || reread.Rows[0].StrategyID != "1" {
 		t.Fatalf("a foreign cursor: %+v", reread)
@@ -354,7 +354,7 @@ func TestBoardCutOwnedSetReadsUnknown(t *testing.T) {
 	aggregateDue(view, []Snapshot{{Replica: "r1", Owned: 3, OwnedObjects: []string{"qg-a"}, Schedule: &ScheduleCensus{}, Due: &DueClasses{}}})
 	index := buildBoard("c1", time.Unix(1, 0), "d", []string{"1"}, func(string) DiagnosisRow {
 		return DiagnosisRow{StrategyID: "1", Verdict: StateDetecting, Plans: []DiagnosisPlan{boardPlan("qg-a", "r1")}}
-	}, nil, view.Due, &ScheduleCensus{}, nil, nil)
+	}, nil, view.Due, &ScheduleCensus{}, nil)
 	if index.rows[0].Punctuality != PunctualityUnknown || !index.lateObjects.AtLeast {
 		t.Fatalf("row %+v objects %+v; want unknown and at least when the owned set was cut", index.rows[0], index.lateObjects)
 	}
@@ -369,7 +369,7 @@ func TestBoardLineIsWrittenInTheTableWords(t *testing.T) {
 		"2": {StrategyID: "2", Verdict: StateResultUntrusted, Action: ActionWatch},
 	}
 	lines := []StrategyLine{{StrategyID: "2", Standing: Standing{State: StateResultUntrusted, Action: ActionWatch, Watch: WatchWindowFilling}}}
-	index := buildBoard("c1", time.Unix(1, 0), "d", []string{"1", "2"}, func(id string) DiagnosisRow { return rows[id] }, lines, nil, nil, nil, nil)
+	index := buildBoard("c1", time.Unix(1, 0), "d", []string{"1", "2"}, func(id string) DiagnosisRow { return rows[id] }, lines, nil, nil, nil)
 	got := boardRows(index)
 	if want := words.State[StateDataAbsent] + " · " + words.Action[ActionDataCheck]; got["1"].Line != want {
 		t.Errorf("line = %q, want %q", got["1"].Line, want)
@@ -425,7 +425,7 @@ func TestBoardReadsAnObjectFromItsOwnReplica(t *testing.T) {
 	})
 	index := buildBoard("c1", time.Unix(1, 0), "d", []string{"1"}, func(string) DiagnosisRow {
 		return DiagnosisRow{StrategyID: "1", Verdict: StateDetecting, Plans: []DiagnosisPlan{boardPlan("g", "b")}}
-	}, nil, view.Due, &ScheduleCensus{}, nil, nil)
+	}, nil, view.Due, &ScheduleCensus{}, nil)
 	if index.rows[0].Punctuality != PunctualityOnTime {
 		t.Fatalf("punctuality %s, want on time from the replica that holds g", index.rows[0].Punctuality)
 	}

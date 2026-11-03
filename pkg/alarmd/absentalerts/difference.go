@@ -115,9 +115,11 @@ type Round struct {
 	SnapshotAgeSeconds  int64
 	// WriterHoldsLastGood is the writer's statement, made about this very
 	// list, that a strategy leaves it only for a fact about the strategy
-	// itself and never because publishing it failed. It decides one thing
-	// here: an empty list under it is a fact, every strategy gone, and is
-	// decided on; an empty list without it is refused (RefusalSnapshotEmpty).
+	// itself and never because publishing it failed. Only under it is a
+	// strategy missing from the list gone, so only under it does a round
+	// decide: a list without it is refused (RefusalWriterUnstated; an empty
+	// one RefusalSnapshotEmpty), and an empty list under it is a fact, every
+	// strategy gone.
 	WriterHoldsLastGood bool
 	// Identities is what the catalog remembers about the strategies it let
 	// go. A candidate not here is still closed; its identity is read from its
@@ -184,11 +186,21 @@ const (
 	// RefusalSnapshotStale: the observation is older than this round may
 	// decide on. Strategies created since it was read would read as absent.
 	RefusalSnapshotStale = "snapshot_stale"
+	// RefusalWriterUnstated: the list was observed and is not empty, and its
+	// writer made no statement about it (Round.WriterHoldsLastGood): no
+	// publication_semantics saying it holds the last good document, or one
+	// about another set of strategy ids. A writer without the statement
+	// drops strategies that still exist and adds them back later, so a
+	// strategy missing from its list is not known to be gone; the round
+	// closes nothing, and the platform's own close stays the closer there.
+	// Checked after every other refusal: an empty list without the
+	// statement is snapshot_empty, a stale one snapshot_stale.
+	RefusalWriterUnstated = "writer_unstated"
 )
 
 // Refusals is the closed list of whole-round refusals.
 var Refusals = []string{RefusalNone, RefusalLinkUnavailable, RefusalSnapshotUnusable, RefusalSnapshotEmpty,
-	RefusalSnapshotStale}
+	RefusalSnapshotStale, RefusalWriterUnstated}
 
 // The per-strategy outcomes of the decision. Every candidate the round did
 // not close lands on one of these, and every one of them is counted.
@@ -234,8 +246,9 @@ const (
 	// strategy.
 	OutcomeEvidenceUnavailable = "evidence_unavailable"
 	// OutcomeEvidenceTruncated: the strategy's alerts were read, and the
-	// link's answer was incomplete or past the reader's caps
-	// (openalerts.Reconciliation.Truncated). The alerts it listed are closed
+	// link's answer was incomplete or past the reader's caps. No reader of
+	// this build reports it (the Console-era listing is gone); the word
+	// stays in the closed list until the outcomes are cut. The alerts it listed are closed
 	// as usual and the rest are left for a later round, when the strategy is
 	// decided again; when none listed is this deployment's, that is not "it
 	// has none of ours". Per strategy, beside its other outcomes.
@@ -337,6 +350,9 @@ func Candidates(round Round, bounds Bounds) ([]Key, Counts, string) {
 	}
 	if bounds.MaxSnapshotAge > 0 && time.Duration(round.SnapshotAgeSeconds)*time.Second > bounds.MaxSnapshotAge {
 		return nil, counts, RefusalSnapshotStale
+	}
+	if !round.WriterHoldsLastGood {
+		return nil, counts, RefusalWriterUnstated
 	}
 	// Presence is decided by the strategy id alone. The snapshot lists a
 	// strategy whose source document lost its tenant with an empty one, while

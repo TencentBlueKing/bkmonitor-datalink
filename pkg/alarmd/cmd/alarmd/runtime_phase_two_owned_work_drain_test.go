@@ -15,7 +15,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 )
 
 // supplementingPhaseTwoQueryGroup is a fake Query Group whose supplement
@@ -207,17 +206,17 @@ func TestAStopWaitsForTheSupplementMidSendBeforeReleasing(t *testing.T) {
 // counted the same way, and refused, unsent, for a Query Group this replica
 // no longer holds.
 func TestAnInactiveCloseIsCountedOnItsQueryGroupAndRefusedOnceItIsNotHeld(t *testing.T) {
-	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), []openalerts.Alert{maintenanceAlert("native", "critical")})
+	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), maintenanceMatches)
 	var queryGroup execution.QueryGroupIdentity
 	var lifecycle *phaseTwoQueryGroupLifecycle
 	for held, current := range f.m.bundle.runners {
 		queryGroup, lifecycle = held, current
 	}
 	var countedDuringSend int
-	f.writer.onWrite = func() { countedDuringSend, _ = f.m.bundle.slotsInFlight(lifecycle) }
+	f.stub.onClose = func() { countedDuringSend, _ = f.m.bundle.slotsInFlight(lifecycle) }
 	f.m.step(context.Background())
-	if len(f.writer.batches) != 1 || countedDuringSend != 1 {
-		t.Fatalf("batches=%v counted during the send=%d, want one batch sent while counted", f.writer.batches, countedDuringSend)
+	if len(f.closed()) != 1 || countedDuringSend != 1 {
+		t.Fatalf("closes=%v counted during the send=%d, want one close sent while counted", f.closed(), countedDuringSend)
 	}
 	if counted, _ := f.m.bundle.slotsInFlight(lifecycle); counted != 0 {
 		t.Fatalf("still counted after the send: %d", counted)
@@ -226,11 +225,12 @@ func TestAnInactiveCloseIsCountedOnItsQueryGroupAndRefusedOnceItIsNotHeld(t *tes
 	f.m.bundle.mu.Lock()
 	delete(f.m.bundle.runners, queryGroup)
 	f.m.bundle.mu.Unlock()
-	sent, err := f.m.sendClose(context.Background(), queryGroup, f.runner, f.m.catalog.(*maintenanceTestCatalog).plans[0],
-		openalerts.StrategyKey{TenantID: "tenant-a", StrategyID: "123"}, nil, false)
-	if sent != 0 || !errors.Is(err, errClosePrecheck) || !errors.Is(err, errCloseNotHeld) || len(f.writer.batches) != 1 {
-		t.Fatalf("a close for a Query Group no longer held: sent=%d err=%v batches=%d, want refused before the send",
-			sent, err, len(f.writer.batches))
+	f.matchAgain("late")
+	word, err := f.m.sendClose(context.Background(), queryGroup, f.runner, f.m.catalog.(*maintenanceTestCatalog).plans[0],
+		inactiveKey{tenantID: "tenant-a", strategyID: "123", revision: 4}, f.at)
+	if word != "" || !errors.Is(err, errClosePrecheck) || !errors.Is(err, errCloseNotHeld) || len(f.closed()) != 1 {
+		t.Fatalf("a close for a Query Group no longer held: word=%q err=%v closes=%d, want refused before the send",
+			word, err, len(f.closed()))
 	}
 }
 

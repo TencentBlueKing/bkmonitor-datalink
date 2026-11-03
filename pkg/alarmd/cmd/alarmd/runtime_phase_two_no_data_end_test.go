@@ -14,13 +14,10 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 )
 
 // recoveriesOf is the RECOVERY events among events.
@@ -104,37 +101,13 @@ func TestAnAbsentSeriesWrittenToEndOnNoDataEndsAcrossARollOnCompleteRoundsOnly(t
 	}
 }
 
-// waitOpenAlertJudged waits until the current process's copy of the open
-// alert set judges one fingerprint as held or not, as wanted: a change the
-// consumer published is read on the copy's own loop, which the bundle's
-// clock paces, so the wait moves that clock on within round's half period.
-func (fixture *lifecycleFixture) waitOpenAlertJudged(round int64, fingerprint string, held bool) {
-	fixture.t.Helper()
-	port, ok := fixture.bundle.workerPorts.OpenAlerts.(*openAlertCopyPort)
-	if !ok {
-		fixture.t.Fatalf("the open alert port is %T", fixture.bundle.workerPorts.OpenAlerts)
-	}
-	key := openalerts.StrategyKey{TenantID: "tenant-a", StrategyID: lifecycleStrategyID}
-	attemptedAt := (fixture.evaluationAt(round) + fixture.interval/2) * 1000
-	for deadline, step := testwait.Deadline(fixture.t), int64(1); ; step++ {
-		if got, judged := port.cache.Holds(key, fingerprint); judged && got == held {
-			return
-		}
-		if step < fixture.interval/2 {
-			fixture.clock.Store(attemptedAt + step*1000)
-		}
-		time.Sleep(20 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
-		if time.Now().After(deadline) {
-			fixture.t.Fatalf("the open alert copy does not judge %s held=%v by the test's deadline: %+v", fingerprint, held, port.cache.Stats())
-		}
-	}
-}
-
-// An absent series whose alert the consumer no longer holds - closed by hand
-// in the link - is dropped from the index at its due round and nothing is
-// sent for it. Under an owner that did not send the alert, so the consumer's
-// set is the only word on it: the process that sent an alert counts it held
-// for a while whatever the set says, to cover the set's own lag.
+// An absent series whose alert the link no longer holds - closed by hand -
+// is dropped from the index and nothing is sent for it. Under an owner that
+// did not send the alert, so the link's search is the only word on it (the
+// process that sent an alert counts it held on its own send). The alert is
+// closed before the new owner first asks: from its due round the search
+// misses, and a young miss run holds the entry (neither ended nor dropped)
+// until two misses at least 2 minutes apart judge it, on the rounds' clock.
 func TestAnAbsentSeriesWhoseAlertIsNoLongerOpenIsDroppedNotEnded(t *testing.T) {
 	strategy := lifecycleStrategy{revision: 7, noDataOff: true, statusSetter: "recovery-nodata"}
 	fixture := startLifecycleFixture(t, strategy, nil)
@@ -149,11 +122,20 @@ func TestAnAbsentSeriesWhoseAlertIsNoLongerOpenIsDroppedNotEnded(t *testing.T) {
 	fixture.mustAttempt(2)
 	fixture.replace("alarmd-worker-1")
 	fixture.mustAttempt(3)
-	fixture.waitOpenAlertJudged(3, openedB[0].DedupeMD5, true)
 	fixture.withdrawOpenAlert(openedB[0].DedupeMD5)
-	fixture.waitOpenAlertJudged(3, openedB[0].DedupeMD5, false)
-	for round := int64(4); round <= 6; round++ {
+	young := 0
+	for round := int64(4); round <= 8; round++ {
 		fixture.mustAttempt(round)
+		if got, judged := fixture.activeCopyPort().copy.Known("tenant-a", lifecycleStrategyID, openedB[0].DedupeMD5); !judged && !got {
+			young++
+		}
+		fixture.passActiveCopy()
+	}
+	if held, judged := fixture.activeCopyPort().copy.Holds("tenant-a", lifecycleStrategyID, openedB[0].DedupeMD5); held || !judged {
+		t.Fatalf("after round 8 the copy says held %v judged %v, want a judged miss", held, judged)
+	}
+	if young == 0 {
+		t.Fatal("no round saw the alert unjudged: the case did not exercise the young miss run")
 	}
 	if got := recoveriesOf(fixture.thresholdEventsFor(lifecycleHostB)); len(got) != 0 {
 		t.Fatalf("B, closed by hand, was ended on no data: %+v", got)
@@ -216,20 +198,22 @@ func TestALevelWithRecoveryDisabledEndsNothingUntilTheSwitchIsOff(t *testing.T) 
 	}
 }
 
-// The index serves only a deployment that can ask the consumer's open alert
-// set, one with the link's Console. Without it no absent series' alert could
+// The index serves only a deployment that can ask the link's search, one with
+// the link's control plane. Without the link - a deployment with no
+// phase_two.linkd block, here on the legacy output - no absent series' alert could
 // ever be judged open, so no end would ever be sent, and every entry would be
 // a write each round for nothing: no index is kept. The same strategy and
-// rounds with the Console keep the Plan's one key.
+// rounds with the control plane keep the Plan's one key.
 func TestADeploymentWithoutTheLinkKeepsNoNoDataEndIndex(t *testing.T) {
 	strategy := lifecycleStrategy{revision: 7, noDataOff: true, statusSetter: "recovery-nodata"}
 	for name, test := range map[string]struct {
 		configure func(*config.Config)
 		keys      int
 	}{
-		"with the Console": {keys: 1},
-		"without the Console": {configure: func(cfg *config.Config) {
-			cfg.PhaseTwo.Linkd.ConsoleURL, cfg.PhaseTwo.Linkd.Username, cfg.PhaseTwo.Linkd.Password = "", "", ""
+		"with the control plane": {keys: 1},
+		"without the control plane": {configure: func(cfg *config.Config) {
+			cfg.PhaseTwo.Output.Protocol = config.OutputProtocolLegacy
+			cfg.PhaseTwo.Linkd.ControlPlane = config.LinkdControlPlaneConfig{}
 		}},
 	} {
 		t.Run(name, func(t *testing.T) {

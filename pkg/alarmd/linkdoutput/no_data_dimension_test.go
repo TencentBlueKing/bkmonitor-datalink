@@ -51,6 +51,8 @@ func TestTheNoDataTagAndTheTargetIdentityBothReachTheWire(t *testing.T) {
 	message := convert(t, decision(func(event *contract.TriggerEventV1) {
 		event.Subject = &contract.MonitorSubjectContext{Subject: subject, Dimensions: remaining}
 		event.RecordRef.Dimensions = recordDimensions
+		// A no-data point carries its period count (worker/no_data_series.go).
+		event.Observed = contract.TriggerObservedV1{Values: map[string]json.RawMessage{contract.NoDataPeriodFactField: json.RawMessage("5")}}
 	}))
 
 	var dimensions map[string]json.RawMessage

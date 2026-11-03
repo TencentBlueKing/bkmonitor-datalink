@@ -125,7 +125,7 @@ func TestLineCountIsWhatTheLinePrints(t *testing.T) {
 		// kinds nor the entries.
 		{"replicas under bounds are counted once each", CheckReport{Code: CheckReplicaDegraded,
 			Groups: []CheckGroup{
-				{Key: string(DegradationOpenAlertSetStale), Replicas: []string{"pod-a", "pod-b", "pod-c"}},
+				{Key: string(DegradationActiveCopyUnsupported), Replicas: []string{"pod-a", "pod-b", "pod-c"}},
 				{Key: string(DegradationControlLeaderAbsent), Replicas: []string{"pod-a"}},
 			}}, 3},
 		{"a standing with no replicas is down", CheckReport{Code: CheckReplicaDegraded}, 0},

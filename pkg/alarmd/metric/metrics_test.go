@@ -22,15 +22,17 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/absentalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/activecopy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/cliauth"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/editclose"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/filterclose"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/nodata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openepisodes"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
@@ -234,433 +236,31 @@ func TestCustomMetricFamilySeriesDevelopmentLimits(t *testing.T) {
 	}
 }
 
-func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
-	recorder := NewRecorder(BuildInfo{})
-	expected := map[string]string{
-		"alarmd_build_info":                                   "variableLabels: {version,commit,schema_version}",
-		"alarmd_config_unknown_keys":                          "variableLabels: {}",
-		"alarmd_observation_total":                            "variableLabels: {component,stage,result,reason_code}",
-		"alarmd_operation_total":                              "variableLabels: {operation,result,reason_code}",
-		"alarmd_observation_duration_seconds":                 "variableLabels: {component,stage,result}",
-		"alarmd_worker_work_total":                            "variableLabels: {work_kind}",
-		"alarmd_worker_busy_seconds_total":                    "variableLabels: {stage}",
-		"alarmd_last_progress_timestamp_seconds":              "variableLabels: {kind}",
-		"alarmd_capacity_transition_total":                    "variableLabels: {budget,result}",
-		"alarmd_state_retained_share_approaching_slots_total": "variableLabels: {}",
-		"alarmd_state_write_reuse_total":                      "variableLabels: {class,stored}",
-		"alarmd_state_already_applied_total":                  "variableLabels: {site,kind}",
-		"alarmd_state_version_conflict_total":                 "variableLabels: {site,kind}",
-		"alarmd_worker_owned_query_groups":                    "variableLabels: {worker_role}",
-		"alarmd_ownership_transition_total":                   "variableLabels: {transition,result,reason_class}",
-		"alarmd_ownership_refusals_total":                     "variableLabels: {site,refusal}",
-		"alarmd_source_observation_total":                     "variableLabels: {source_kind,result,reason_class}",
-		"alarmd_source_refresh_total":                         "variableLabels: {status}",
-		"alarmd_source_compile_total":                         "variableLabels: {result}",
-		"alarmd_source_read_total":                            "variableLabels: {mode,reason}",
-		"alarmd_source_refresh_build_total":                   "variableLabels: {build}",
-		"alarmd_source_strategies_read_total":                 "variableLabels: {}",
-		"alarmd_source_change_signal_age_seconds":             "variableLabels: {}",
-		"alarmd_activation_failure_total":                     "variableLabels: {activation_failure_stage,activation_failure_class}",
-		"alarmd_worker_query_admission_total":                 "variableLabels: {operation,result}",
-		"alarmd_query_downstream_distress_total":              "variableLabels: {class,contended}",
-		"alarmd_control_cache_total":                          "variableLabels: {object,result}",
-		"alarmd_control_cache_entries":                        "variableLabels: {object}",
-		"alarmd_control_cache_bytes":                          "variableLabels: {object}",
-		"alarmd_control_cache_bytes_limit":                    "variableLabels: {object}",
-		"alarmd_heap_inuse_site_bytes":                        "variableLabels: {site}",
-		"alarmd_heap_inuse_site_objects":                      "variableLabels: {site}",
-		"alarmd_heap_inuse_profiled_bytes":                    "variableLabels: {}",
-		"alarmd_heap_inuse_profile_records":                   "variableLabels: {}",
-		"alarmd_heap_inuse_live_bytes":                        "variableLabels: {}",
-		"alarmd_control_cache_audit_total":                    "variableLabels: {object,result}",
-		"alarmd_legacy_pod_cache_total":                       "variableLabels: {result}",
-		"alarmd_series_admission_total":                       "variableLabels: {filter,result,reason}",
-		"alarmd_admission_cmdb_address_differs_total":         "variableLabels: {grouped_by_target_ip,cause}",
-		"alarmd_admission_cmdb_placed_by_host_id_total":       "variableLabels: {grouped_by_target_ip}",
-		"alarmd_unmapped_severity_total":                      "variableLabels: {level}",
-		"alarmd_cmdb_host_index_hosts":                        "variableLabels: {}",
-		"alarmd_cmdb_service_instance_index_instances":        "variableLabels: {}",
-		"alarmd_cmdb_index_business_mappings":                 "variableLabels: {mapping,state}",
-		"alarmd_cmdb_index_records_refused":                   "variableLabels: {record}",
-		"alarmd_fleet_snapshot_bytes":                         "variableLabels: {}",
-		"alarmd_fleet_view_snapshot_loads_total":              "variableLabels: {}",
-		"alarmd_fleet_view_snapshot_bytes_total":              "variableLabels: {}",
-		"alarmd_fleet_summary_bytes":                          "variableLabels: {}",
-		"alarmd_fleet_view_summary_loads_total":               "variableLabels: {}",
-		"alarmd_fleet_view_summary_bytes_total":               "variableLabels: {}",
-		"alarmd_fleet_view_owned_loads_total":                 "variableLabels: {}",
-		"alarmd_fleet_view_owned_bytes_total":                 "variableLabels: {}",
-		"alarmd_retained_peak_census_groups":                  "variableLabels: {}",
-		"alarmd_retained_peak_census_overflow":                "variableLabels: {}",
-		"alarmd_host_disable_monitor_states":                  "variableLabels: {}",
-		"alarmd_cmdb_host_index_age_seconds":                  "variableLabels: {kind}",
-		"alarmd_cmdb_host_index_publish_seconds":              "variableLabels: {kind}",
-		"alarmd_cmdb_host_index_degraded":                     "variableLabels: {reason}",
-		"alarmd_cmdb_host_index_reads_total":                  "variableLabels: {result}",
-		"alarmd_due_index_entries":                            "variableLabels: {}",
-		"alarmd_due_index_prediction_total":                   "variableLabels: {prediction,actual}",
-		"alarmd_due_index_recomputed_total":                   "variableLabels: {trigger}",
-		"alarmd_due_index_version_check_total":                "variableLabels: {result}",
-		"alarmd_due_index_horizon_seconds":                    "variableLabels: {}",
-		"alarmd_dispatch_skipped_total":                       "variableLabels: {reason}",
-		"alarmd_schedule_objects":                             "variableLabels: {class}",
-		"alarmd_dispatch_crowded_out_total":                   "variableLabels: {by}",
-		"alarmd_redis_operation_total":                        "variableLabels: {client}",
-		"alarmd_redis_pool_size":                              "variableLabels: {client}",
-		"alarmd_redis_pool_connections":                       "variableLabels: {client,state}",
-		"alarmd_redis_pool_waits_total":                       "variableLabels: {client,result}",
-		"alarmd_redis_command_total":                          "variableLabels: {client,command,pipelined}",
-		"alarmd_redis_command_failure_total":                  "variableLabels: {client,command,pipelined}",
-		"alarmd_redis_failure_reason_total":                   "variableLabels: {client,reason}",
-		"alarmd_redis_caller_operation_total":                 "variableLabels: {client,caller}",
-		"alarmd_redis_caller_failure_reason_total":            "variableLabels: {client,caller,reason}",
-		"alarmd_redis_command_duration_seconds":               "variableLabels: {client,command,pipelined}",
-		"alarmd_short_period_slot_completions_total":          "variableLabels: {cohort,operation,completion_kind}",
-		"alarmd_query_cooldown_events_total":                  "variableLabels: {event}",
-		"alarmd_access_response_status_total":                 "variableLabels: {code,outcome}",
-		"alarmd_access_query_duration_seconds":                "variableLabels: {}",
-		"alarmd_access_query_failure_total":                   "variableLabels: {reason}",
-		"alarmd_slot_decision_lag_seconds":                    "variableLabels: {}",
-		"alarmd_output_events_rejected_all_total":             "variableLabels: {}",
-		"alarmd_access_response_codec_total":                  "variableLabels: {codec,negotiation,completion}",
-		"alarmd_uq_answer_truncated_total":                    "variableLabels: {source_semantics}",
-		"alarmd_query_unavailable_attribution_total":          "variableLabels: {attribution,http_class}",
-		"alarmd_slot_readiness_slack_seconds":                 "variableLabels: {}",
-		"alarmd_slot_readiness_boundary_total":                "variableLabels: {boundary}",
-		"alarmd_short_period_slot_execution_duration_seconds": "variableLabels: {cohort,completion_kind}",
-		"alarmd_short_period_slot_completion_lag_seconds":     "variableLabels: {cohort,completion_kind}",
-		"alarmd_run_one_return_total":                         "variableLabels: {outcome}",
-		"alarmd_expired_range_total":                          "variableLabels: {result}",
-		"alarmd_expired_slots_finalized_total":                "variableLabels: {reason}",
-		"alarmd_unfinished_slots_abandoned_total":             "variableLabels: {}",
-		"alarmd_share_refusal_gaps_total":                     "variableLabels: {}",
-		"alarmd_execute_return_total":                         "variableLabels: {outcome}",
-		"alarmd_progress_completed_total":                     "variableLabels: {kind}",
-		"alarmd_progress_completion_causes_total":             "variableLabels: {completion_kind,cause,reason,origin}",
-		"alarmd_scheduler_active_executions":                  "variableLabels: {}",
-		"alarmd_scheduler_ready_runners":                      "variableLabels: {}",
-		"alarmd_scheduler_delayed_runners":                    "variableLabels: {}",
-		"alarmd_query_permit_wait_seconds":                    "variableLabels: {queue_kind}",
-		"alarmd_slot_operation_duration_seconds":              "variableLabels: {stage}",
-		"alarmd_active_qg_set_query_groups":                   "variableLabels: {}",
-		"alarmd_active_qg_set_object_bytes":                   "variableLabels: {}",
-		"alarmd_active_qg_set_redis_duration_seconds":         "variableLabels: {operation,result}",
-		"alarmd_schedule_cutover_payload_bytes":               "variableLabels: {}",
-		"alarmd_schedule_timeline_bytes_max":                  "variableLabels: {}",
-		"alarmd_schedule_timeline_bytes":                      "variableLabels: {}",
-		"alarmd_schedule_segments_pruned_total":               "variableLabels: {}",
-		"alarmd_dispatch_rotation_total":                      "variableLabels: {result}",
-		"alarmd_local_view_object_bytes":                      "variableLabels: {kind}",
-		"alarmd_local_view_query_groups":                      "variableLabels: {}",
-		"alarmd_view_stream_leading":                          "variableLabels: {}",
-		"alarmd_view_revision":                                "variableLabels: {}",
-		"alarmd_view_stream_sessions":                         "variableLabels: {}",
-		"alarmd_view_version_receivers":                       "variableLabels: {stage}",
-		"alarmd_view_receipts_ignored_total":                  "variableLabels: {reason}",
-		"alarmd_view_publications_total":                      "variableLabels: {result}",
-		"alarmd_view_messages_sent_total":                     "variableLabels: {kind}",
-		"alarmd_view_stream_refusals_total":                   "variableLabels: {}",
-		"alarmd_view_publish_failures_total":                  "variableLabels: {reason}",
-		"alarmd_view_publish_failing_seconds":                 "variableLabels: {}",
-		"alarmd_view_stream_no_sessions_seconds":              "variableLabels: {}",
-		"alarmd_view_deltas_oversized_total":                  "variableLabels: {}",
-		"alarmd_view_executed_query_groups":                   "variableLabels: {outcome}",
-		"alarmd_view_gate_lease_renewal_total":                "variableLabels: {result}",
-		"alarmd_view_client_connected":                        "variableLabels: {}",
-		"alarmd_view_installed_revision":                      "variableLabels: {}",
-		"alarmd_view_objects_missing":                         "variableLabels: {}",
-		"alarmd_view_install_total":                           "variableLabels: {kind}",
-		"alarmd_view_install_failure_total":                   "variableLabels: {reason}",
-		"alarmd_view_snapshot_request_total":                  "variableLabels: {}",
-		"alarmd_view_client_refusal_total":                    "variableLabels: {reason}",
-		"alarmd_view_client_connection_total":                 "variableLabels: {}",
-		"alarmd_view_discovery_miss_total":                    "variableLabels: {reason}",
-		"alarmd_dispatch_walk_total":                          "variableLabels: {result}",
-		"alarmd_due_index_audit_overshoot_seconds":            "variableLabels: {cooldown}",
-		"alarmd_schedule_prune_skipped_total":                 "variableLabels: {reason}",
-		"alarmd_schedule_cutover_query_groups_total":          "variableLabels: {decision}",
-		"alarmd_schedule_cutover_read_hold_links_total":       "variableLabels: {decision}",
-		"alarmd_fleet_overdue_episodes_total":                 "variableLabels: {hold}",
-		"alarmd_fleet_restore_unread_total":                   "variableLabels: {reason}",
-		"alarmd_schedule_cutover_timelines_read":              "variableLabels: {}",
-		"alarmd_schedule_cutover_first_duration_seconds":      "variableLabels: {}",
-		"alarmd_schedule_cutover_first_timelines_read":        "variableLabels: {}",
-		"alarmd_query_failure_total":                          "variableLabels: {stage,category}",
-		"alarmd_schedule_cutover_duration_seconds":            "variableLabels: {result}",
-		"alarmd_object_catalog_objects_total":                 "variableLabels: {operation,outcome}",
-		"alarmd_object_catalog_written_bytes_total":           "variableLabels: {kind}",
-		"alarmd_canonical_encoding_calls_total":               "variableLabels: {outcome}",
-		"alarmd_canonical_encoding_records_shadow_total":      "variableLabels: {outcome}",
-		"alarmd_object_catalog_redis_duration_seconds":        "variableLabels: {operation,result}",
-		"alarmd_object_catalog_manifest_bytes":                "variableLabels: {}",
-		"alarmd_object_read_total":                            "variableLabels: {kind,result}",
-		"alarmd_state_generation_skew_total":                  "variableLabels: {kind}",
-		"alarmd_state_generation_carry_total":                 "variableLabels: {scope,result}",
-		"alarmd_undrained_draining_query_groups":              "variableLabels: {}",
-		"alarmd_draining_cursor_pruned_query_groups":          "variableLabels: {}",
-		"alarmd_rebalance_planned_moves":                      "variableLabels: {}",
-		"alarmd_level_outcome_total":                          "variableLabels: {outcome,reason,origin}",
-		"alarmd_shard_unaware_ready_replicas":                 "variableLabels: {}",
-		"alarmd_rebalance_gap":                                "variableLabels: {}",
-		"alarmd_dispatch_queue_turnaways_total":               "variableLabels: {outcome,cohort}",
-		"alarmd_handover_drains_total":                        "variableLabels: {outcome}",
-		"alarmd_handover_drain_seconds":                       "variableLabels: {}",
-		"alarmd_output_unapplied_total":                       "variableLabels: {refusal}",
-		"alarmd_executions_hung_total":                        "variableLabels: {outcome}",
-		"alarmd_control_tier_paused_total":                    "variableLabels: {function}",
-		"alarmd_assignment_moves_total":                       "variableLabels: {reason}",
-		"alarmd_rebalance_paused_total":                       "variableLabels: {reason}",
-		"alarmd_control_read_round_trips_total":               "variableLabels: {read}",
-		"alarmd_control_read_keys_total":                      "variableLabels: {read}",
-		"alarmd_control_read_duration_seconds":                "variableLabels: {read}",
-		"alarmd_assignment_index_stale_rounds":                "variableLabels: {}",
-		"alarmd_assignment_index_write_total":                 "variableLabels: {result}",
-		"alarmd_control_facts_read_total":                     "variableLabels: {fact}",
-		"alarmd_control_facts_unavailable_total":              "variableLabels: {fact,reason}",
-		"alarmd_control_facts_rebuilt_total":                  "variableLabels: {fact}",
-		"alarmd_control_health_facts_total":                   "variableLabels: {status}",
-		"alarmd_control_health_invalid_total":                 "variableLabels: {field}",
-		"alarmd_control_leader_transitions_total":             "variableLabels: {to_class,reason}",
-		"alarmd_control_handback_watch_resets_total":          "variableLabels: {reason}",
-		"alarmd_trace_export":                                 "variableLabels: {state}",
-		"alarmd_trace_slots_total":                            "variableLabels: {decision}",
-		"alarmd_trace_spans_dropped_total":                    "variableLabels: {reason}",
-		"alarmd_startup_dependency_wait_total":                "variableLabels: {dependency}",
-		"alarmd_activation_blocked_query_groups":              "variableLabels: {reason}",
-		"alarmd_activation_blocked_set_total":                 "variableLabels: {accounting}",
-		"alarmd_activation_timeline_reopened_total":           "variableLabels: {}",
-		"alarmd_activation_body_bytes":                        "variableLabels: {}",
-		"alarmd_live_query_reserve_seconds":                   "variableLabels: {}",
-		"alarmd_fleet_round_memory_objects":                   "variableLabels: {rounds}",
-		"alarmd_fleet_round_memory_rounds":                    "variableLabels: {}",
-		"alarmd_fleet_round_memory_bytes":                     "variableLabels: {}",
-		"alarmd_fleet_round_memory_max_rounds":                "variableLabels: {}",
-		"alarmd_fleet_round_memory_window_sized_objects":      "variableLabels: {}",
-		"alarmd_fleet_round_memory_line_held_objects":         "variableLabels: {}",
-		"alarmd_target_group_groups":                          "variableLabels: {state}",
-		"alarmd_target_group_refresh_failed":                  "variableLabels: {}",
-		"alarmd_loop_turn_age_seconds":                        "variableLabels: {loop}",
-		"alarmd_loop_turn_duration_seconds":                   "variableLabels: {loop}",
-		"alarmd_executions_past_deadline":                     "variableLabels: {}",
-		"alarmd_assignment_index_read_total":                  "variableLabels: {result}",
-		"alarmd_assignment_index_confirm_total":               "variableLabels: {result}",
-		"alarmd_assignment_record_read_total":                 "variableLabels: {path}",
-		"alarmd_schedule_cursor_advance_total":                "variableLabels: {result,refusal}",
-		"alarmd_activation_held_query_groups":                 "variableLabels: {}",
-		"alarmd_activation_held_age_seconds_max":              "variableLabels: {}",
-	}
-	expected["alarmd_algorithm_evaluation_total"] = "variableLabels: {algorithm_family,result}"
-	expected["alarmd_algorithm_input_total"] = "variableLabels: {algorithm_family,input_name,dependency_point,result}"
-	expected["alarmd_trigger_recovery_beside_level_total"] = "variableLabels: {beside}"
-	expected["alarmd_trigger_recovery_withheld_total"] = "variableLabels: {reason}"
-	expected["alarmd_no_data_end_total"] = "variableLabels: {outcome}"
-	expected["alarmd_trigger_open_alert_gate_total"] = "variableLabels: {outcome}"
-	expected["alarmd_open_alert_set_authoritative_age_seconds"] = "variableLabels: {}"
-	expected["alarmd_open_alert_set_unavailable_total"] = "variableLabels: {reason}"
-	expected["alarmd_open_alert_set_refresh_total"] = "variableLabels: {result}"
-	expected["alarmd_open_alert_set_lookup_total"] = "variableLabels: {answer}"
-	expected["alarmd_effective_close_total"] = "variableLabels: {outcome}"
-	expected["alarmd_log_lines_total"] = "variableLabels: {stage,admission}"
-	expected["alarmd_observer_panics_total"] = "variableLabels: {observer}"
-	expected["alarmd_absent_strategy_close_total"] = "variableLabels: {outcome}"
-	expected["alarmd_strategy_edit_close_total"] = "variableLabels: {outcome}"
-	expected["alarmd_target_scope_close_total"] = "variableLabels: {outcome}"
-	expected["alarmd_absent_strategy_difference"] = "variableLabels: {side}"
-	expected["alarmd_absent_strategy_round_total"] = "variableLabels: {disposition}"
-	expected["alarmd_open_alert_set_entries"] = "variableLabels: {kind}"
-	expected["alarmd_open_alert_set_tracked_strategies"] = "variableLabels: {}"
-	expected["alarmd_open_alert_set_evictions_total"] = "variableLabels: {}"
-	expected["alarmd_open_alert_set_notices_refused_total"] = "variableLabels: {reason}"
-	expected["alarmd_linkd_calibration_coverage"] = "variableLabels: {state}"
-	expected["alarmd_fleet_tracker_dropped_total"] = "variableLabels: {what}"
-	expected["alarmd_effective_time_refresh_total"] = "variableLabels: {result}"
-	expected["alarmd_activation_rebuild_total"] = "variableLabels: {outcome}"
-	expected["alarmd_timeline_repairs_total"] = "variableLabels: {outcome}"
-	expected["alarmd_activation_timelines_skipped_total"] = "variableLabels: {reason}"
-	expected["alarmd_timeline_unreadable_reports_total"] = "variableLabels: {}"
-	expected["alarmd_activation_header_rebuild_total"] = "variableLabels: {outcome}"
-	expected["alarmd_activation_renewal_conflict_total"] = "variableLabels: {reason}"
-	expected["alarmd_control_source_refresh_total"] = "variableLabels: {outcome,exit}"
-	expected["alarmd_catalog_strategy_returned_after_removal_total"] = "variableLabels: {}"
-	expected["alarmd_leader_forward_duration_seconds"] = "variableLabels: {route,result}"
-	expected["alarmd_apm_app_carried_responses_total"] = "variableLabels: {table,outcome}"
-	expected["alarmd_apm_app_carried_response_bytes"] = "variableLabels: {table}"
-	expected["alarmd_control_source_mode"] = "variableLabels: {role,mode}"
-	expected["alarmd_control_source_last_success_age_seconds"] = "variableLabels: {}"
-	expected["alarmd_leader_rounds_total"] = "variableLabels: {result}"
-	expected["alarmd_query_cooldown_saves_total"] = "variableLabels: {result}"
-	expected["alarmd_fleet_control_facts_writes_total"] = "variableLabels: {result}"
-	expected["alarmd_query_cooldown_loads_total"] = "variableLabels: {result}"
-	expected["alarmd_event_business_attribution_total"] = "variableLabels: {source}"
-	expected["alarmd_event_detection_snapshots_total"] = "variableLabels: {result}"
-	expected["alarmd_event_detection_snapshot_ref_states_total"] = "variableLabels: {state}"
-	expected["alarmd_diagnostic_redis_failures_total"] = "variableLabels: {client,reason}"
-	expected["alarmd_diagnostic_redis_dial_retries_total"] = "variableLabels: {client,reason}"
-	expected["alarmd_leader_round_stage_seconds_total"] = "variableLabels: {stage}"
-	expected["alarmd_lookback_first_reads_total"] = "variableLabels: {source}"
-	expected["alarmd_lookback_rechecks_total"] = "variableLabels: {source,outcome}"
-	expected["alarmd_lookback_changed_windows_total"] = "variableLabels: {source}"
-	expected["alarmd_lookback_changes_total"] = "variableLabels: {source,class}"
-	expected["alarmd_lookback_sample_classes_total"] = "variableLabels: {source,class}"
-	expected["alarmd_lookback_read_early_groups"] = "variableLabels: {source}"
-	expected["alarmd_lookback_series_late_groups"] = "variableLabels: {source}"
-	expected["alarmd_lookback_supplement_windows_total"] = "variableLabels: {source,outcome}"
-	expected["alarmd_lookback_supplement_unobserved_total"] = "variableLabels: {source,reason}"
-	expected["alarmd_lookback_supplement_series_total"] = "variableLabels: {source,outcome}"
-	expected["alarmd_lookback_supplement_points_total"] = "variableLabels: {source}"
-	expected["alarmd_lookback_directed_read_bytes_total"] = "variableLabels: {source}"
-	expected["alarmd_lookback_supplement_hold_total"] = "variableLabels: {source,bucket}"
-	expected["alarmd_lookback_supplement_hold_max_seconds"] = "variableLabels: {source}"
-	expected["alarmd_lookback_directed_early_total"] = "variableLabels: {source,group}"
-	expected["alarmd_lookback_directed_early_undecided_total"] = "variableLabels: {source}"
-	expected["alarmd_lookback_directed_early_read_bytes_total"] = "variableLabels: {source}"
-	expected["alarmd_lookback_earlier_read_bytes_total"] = "variableLabels: {source}"
-	expected["alarmd_lookback_earlier_reads_total"] = "variableLabels: {source,outcome}"
-	expected["alarmd_lookback_earlier_overtaken_total"] = "variableLabels: {source,path}"
-	expected["alarmd_lookback_earlier_ahead_total"] = "variableLabels: {source,slots}"
-	expected["alarmd_lookback_earlier_skipped_total"] = "variableLabels: {source,reason}"
-	expected["alarmd_lookback_probation_rereads_total"] = "variableLabels: {source,outcome}"
-	expected["alarmd_lookback_probation_caught_total"] = "variableLabels: {source,after}"
-	expected["alarmd_lookback_probation_groups"] = "variableLabels: {source}"
-	expected["alarmd_lookback_floor_probe_rounds_total"] = "variableLabels: {source,outcome}"
-	expected["alarmd_lookback_floor_probes_total"] = "variableLabels: {source,kind,event}"
-	expected["alarmd_lookback_floor_probe_groups"] = "variableLabels: {source}"
-	expected["alarmd_lookback_floor_probe_changes_total"] = "variableLabels: {source,change}"
-	expected["alarmd_read_hold_floor_probes_total"] = "variableLabels: {kind,outcome}"
-	expected["alarmd_read_hold_floor_probe_progress_writes_total"] = "variableLabels: {outcome}"
-	expected["alarmd_read_hold_probation_findings_total"] = "variableLabels: {outcome}"
-	expected["alarmd_read_hold_query_duration_writes_total"] = "variableLabels: {reason}"
-	expected["alarmd_lookback_earlier_prepared_late_max_seconds"] = "variableLabels: {source}"
-	expected["alarmd_lookback_read_hold_ignored_total"] = "variableLabels: {source,reason}"
-	expected["alarmd_read_hold_transition_total"] = "variableLabels: {}"
-	expected["alarmd_read_hold_transition_overtaken_total"] = "variableLabels: {}"
-	expected["alarmd_read_hold_predecessor_total"] = "variableLabels: {reason}"
-	expected["alarmd_read_hold_seeds_total"] = "variableLabels: {origin}"
-	expected["alarmd_read_hold_transition_clamped_total"] = "variableLabels: {source}"
-	expected["alarmd_read_hold_record_corrupt_total"] = "variableLabels: {}"
-	expected["alarmd_read_hold_retire_close_failed_total"] = "variableLabels: {}"
-	expected["alarmd_read_hold_close_previous_skipped_total"] = "variableLabels: {}"
-	expected["alarmd_read_hold_degraded_total"] = "variableLabels: {reason}"
-	expected["alarmd_read_hold_earlier_skipped_total"] = "variableLabels: {reason}"
-	expected["alarmd_rounds_read_at_limit_total"] = "variableLabels: {source}"
-	expected["alarmd_read_hold_groups"] = "variableLabels: {source,kind}"
-	expected["alarmd_read_hold_max_seconds"] = "variableLabels: {source}"
-	expected["alarmd_lookback_first_read_bytes_total"] = "variableLabels: {source}"
-	expected["alarmd_lookback_recheck_bytes_total"] = "variableLabels: {source}"
-	expected["alarmd_lookback_unknown_lookback_total"] = "variableLabels: {source}"
-	expected["alarmd_lookback_coverage"] = "variableLabels: {what}"
-	expected["alarmd_lookback_pending"] = "variableLabels: {what}"
-	expected["alarmd_lookback_plan_entries"] = "variableLabels: {}"
-	expected["alarmd_lookback_preemptions_total"] = "variableLabels: {source}"
-	expected["alarmd_lookback_permit_refusals_total"] = "variableLabels: {reason}"
-	expected["alarmd_lookback_faults_total"] = "variableLabels: {reason}"
-	expected["alarmd_lookback_plan_total"] = "variableLabels: {outcome}"
-	expected["alarmd_linkd_console_state"] = "variableLabels: {state}"
-	expected["alarmd_linkd_console_calls_total"] = "variableLabels: {op,result}"
-	expected["alarmd_sre_actions_total"] = "variableLabels: {op,result}"
-	expected["alarmd_sre_rollouts_total"] = "variableLabels: {state}"
-	expected["alarmd_sre_rollouts_watched"] = "variableLabels: {}"
-	expected["alarmd_sre_receipts_write_total"] = "variableLabels: {result}"
-	expected["alarmd_cli_auth_total"] = "variableLabels: {event}"
-	expected["alarmd_cli_roster_applied_timestamp_seconds"] = "variableLabels: {}"
-	expected["alarmd_linkd_console_failures_total"] = "variableLabels: {op,class}"
-	expected["alarmd_control_source_retained_stale_revisions_total"] = "variableLabels: {}"
-	expected["alarmd_control_source_last_good_identity_changed_total"] = "variableLabels: {}"
-	expected["alarmd_catalog_query_groups"] = "variableLabels: {source_semantics}"
-	expected["alarmd_catalog_plans"] = "variableLabels: {source_semantics}"
-	expected["alarmd_catalog_objects"] = "variableLabels: {disposition}"
-	expected["alarmd_catalog_withheld_objects"] = "variableLabels: {disposition,reason}"
-	expected["alarmd_catalog_no_data_plans"] = "variableLabels: {source}"
-	expected["alarmd_catalog_plans_by_wire_format"] = "variableLabels: {format}"
-	expected["alarmd_output_events_by_wire_format_total"] = "variableLabels: {format}"
-	expected["alarmd_output_events_without_message_total"] = "variableLabels: {format,event_kind}"
-	expected["alarmd_output_events_by_kind_total"] = "variableLabels: {format,event_kind}"
-	expected["alarmd_output_events_rejected_total"] = "variableLabels: {rule,strategy}"
-	expected["alarmd_output_events_rejected_strategies_overflow_total"] = "variableLabels: {}"
-	expected["alarmd_history_coverage_rejected_total"] = "variableLabels: {rule}"
-	expected["alarmd_history_coverage_unsummarised_total"] = "variableLabels: {cause}"
-	expected["alarmd_worker_no_data_slot_plans_total"] = "variableLabels: {outcome}"
-	expected["alarmd_worker_no_data_absences_total"] = "variableLabels: {outcome}"
-	expected["alarmd_worker_no_data_manual_close_dropped_total"] = "variableLabels: {}"
-	expected["alarmd_worker_no_data_manual_close_read_failures_total"] = "variableLabels: {site}"
-	expected["alarmd_target_plan_resolution_total"] = "variableLabels: {state}"
-	expected["alarmd_target_selector_resolutions_total"] = "variableLabels: {kind,state,reason}"
-	expected["alarmd_target_excluded_absent_members_total"] = "variableLabels: {}"
-	expected["alarmd_worker_no_data_persistent_skips_total"] = "variableLabels: {outcome}"
-	expected["alarmd_worker_no_data_memory_refusals_total"] = "variableLabels: {reason,record}"
-	expected["alarmd_worker_no_data_memory_writes_total"] = "variableLabels: {outcome}"
-	expected["alarmd_query_free_completion_total"] = "variableLabels: {kind,evidence}"
-	expected["alarmd_execution_evidence_written_total"] = "variableLabels: {result}"
-	expected["alarmd_worker_no_data_memory_reads_total"] = "variableLabels: {representation}"
-	expected["alarmd_worker_no_data_memory_renewals_total"] = "variableLabels: {result,reason}"
-	expected["alarmd_worker_frozen_state_renewals_total"] = "variableLabels: {result}"
-	expected["alarmd_worker_frozen_state_census_total"] = "variableLabels: {stage}"
-	expected["alarmd_worker_gap_guard_scope_rounds_total"] = "variableLabels: {status,reason,progress}"
-	expected["alarmd_worker_no_data_plans_seen_total"] = "variableLabels: {}"
-	expected["alarmd_no_data_plans_by_hop_total"] = "variableLabels: {hop}"
-	expected["alarmd_segment_content_freshness_total"] = "variableLabels: {state}"
-	expected["alarmd_access_inplace_readiness_waits_total"] = "variableLabels: {wait}"
-	expected["alarmd_access_inplace_held_input_bytes"] = "variableLabels: {}"
-	expected["alarmd_schedule_cutover_total"] = "variableLabels: {result,reason}"
-	expected["alarmd_replay_expired_total"] = "variableLabels: {reason}"
-	expected["alarmd_replay_takeover_slots_total"] = "variableLabels: {outcome}"
-	expected["alarmd_slot_diversions_total"] = "variableLabels: {reason}"
-	expected["alarmd_range_gate_total"] = "variableLabels: {outcome}"
-	expected["alarmd_state_preflight_total"] = "variableLabels: {result,reason}"
-	expected["alarmd_state_admission_total"] = "variableLabels: {result,reason}"
-	expected["alarmd_slot_wait_duration_seconds"] = "variableLabels: {wait}"
-	expected["alarmd_control_source_withheld_lines_total"] = "variableLabels: {result}"
-	expected["alarmd_state_renewal_gate_resets_total"] = "variableLabels: {}"
-	expected["alarmd_catalog_inert_plans"] = "variableLabels: {}"
-	expected["alarmd_catalog_required_history_points"] = "variableLabels: {}"
-	expected["alarmd_catalog_retained_history_points"] = "variableLabels: {}"
-	expected["alarmd_catalog_levels_with_retention_slack"] = "variableLabels: {dominant}"
-	expected["alarmd_catalog_global_strategies"] = "variableLabels: {outcome}"
-	expected["alarmd_catalog_global_strategies_unsupported"] = "variableLabels: {reason,source_semantics}"
-	expected["alarmd_level_abnormal_total"] = "variableLabels: {window}"
-	expected["alarmd_platform_settings_mode"] = "variableLabels: {mode}"
-	expected["alarmd_platform_settings_authoritative_age_seconds"] = "variableLabels: {}"
-	expected["alarmd_platform_settings_refresh_total"] = "variableLabels: {result}"
-	expected["alarmd_platform_settings_unavailable_total"] = "variableLabels: {reason}"
-	expected["alarmd_platform_settings_change_total"] = "variableLabels: {field}"
-	expected["alarmd_platform_settings_read_retry_total"] = "variableLabels: {}"
-
-	descriptions := make(chan string)
-	go func() {
-		descriptors := make(chan *prometheus.Desc)
-		go func() {
-			recorder.registry.Describe(descriptors)
-			close(descriptors)
-		}()
-		for descriptor := range descriptors {
-			descriptions <- descriptor.String()
-		}
-		close(descriptions)
-	}()
-
-	seen := make(map[string]bool, len(expected))
-	for description := range descriptions {
+// Which families there are, with which labels, is METRICS.md's
+// (TestTheMetricsReferenceIsTheRegistry). What the reference does not show is
+// a constant label or a family outside alarmd's namespace, so none may exist.
+func TestEveryFamilyIsAlarmdsAndCarriesNoConstantLabel(t *testing.T) {
+	recorder := describedRecorder(t)
+	descs := make(chan *prometheus.Desc, 64)
+	go func() { recorder.registry.Describe(descs); close(descs) }()
+	families := 0
+	for desc := range descs {
+		description := desc.String()
 		name := metricNameFromDescriptor(description)
 		if strings.HasPrefix(name, "go_") || strings.HasPrefix(name, "process_") {
 			continue
 		}
-		labels, approved := expected[name]
-		if !approved {
-			t.Errorf("unapproved metric descriptor: %s", description)
+		if !strings.HasPrefix(name, metricSubsystem+"_") {
+			t.Errorf("a family outside alarmd's namespace: %s", description)
 			continue
 		}
-		seen[name] = true
+		families++
 		if !strings.Contains(description, "constLabels: {}") {
-			t.Errorf("metric %s descriptor contains unapproved constant labels: %s", name, description)
-		}
-		if !strings.Contains(description, labels) {
-			t.Errorf("metric %s descriptor = %q, want %q", name, description, labels)
+			t.Errorf("%s carries a constant label: %s", name, description)
 		}
 	}
-	for name := range expected {
-		if !seen[name] {
-			t.Errorf("approved custom metric %s is not registered", name)
-		}
+	if families == 0 {
+		t.Fatal("the recorder described no alarmd family; the check read nothing")
 	}
 }
 
@@ -1093,25 +693,25 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("trigger_recovery_withheld_total")] = len(observability.RecoveryWithheldReasons)
 	bounds[fqName("no_data_end_total")] = len(observability.NoDataEndOutcomes)
 	bounds[fqName("trigger_open_alert_gate_total")] = len(observability.OpenAlertGateOutcomes)
-	bounds[fqName("open_alert_set_authoritative_age_seconds")] = 1
-	bounds[fqName("open_alert_set_unavailable_total")] = len(openalerts.UnavailableReasons)
-	bounds[fqName("open_alert_set_refresh_total")] = 3
-	bounds[fqName("open_alert_set_lookup_total")] = len(openalerts.Answers)
 	bounds[fqName("effective_close_total")] = len(observability.EffectiveCloseOutcomes)
+	bounds[fqName("active_copy_lookup_total")] = len(activecopy.Answers)
+	bounds[fqName("active_copy_pass_total")] = len(activecopy.Outcomes)
+	bounds[fqName("active_copy_entries")] = 2
+	bounds[fqName("active_copy_link_unsupported")] = 1
 	// Every stage of the closed list, _other among them, written and limited.
 	bounds[fqName("log_lines_total")] = 2 * len(observability.AllStages())
 	bounds[fqName("observer_panics_total")] = len(observability.ObserverNames)
 	bounds[fqName("absent_strategy_close_total")] = len(absentalerts.Outcomes)
 	bounds[fqName("strategy_edit_close_total")] = len(editclose.Outcomes)
+	// cmd/alarmd noDataCloseOutcomes: eight words.
+	bounds[fqName("no_data_close_requests_total")] = 8
+	bounds[fqName("linkd_filter_close_total")] = len(filterclose.Outcomes)
+	bounds[fqName("open_episode_record_total")] = len(openepisodes.Outcomes)
+	bounds[fqName("strategy_scope_close_total")] = 11
 	bounds[fqName("target_scope_close_total")] = len(scopeclose.Outcomes)
 	bounds[fqName("absent_strategy_round_total")] = len(absentalerts.Refusals)
 	bounds[fqName("absent_strategy_difference")] = len(differenceSides)
-	bounds[fqName("open_alert_set_entries")] = 3
-	bounds[fqName("open_alert_set_tracked_strategies")] = 1
-	bounds[fqName("open_alert_set_evictions_total")] = 1
-	bounds[fqName("open_alert_set_notices_refused_total")] = len(openalerts.NoticeRefusals)
 	// covered and short.
-	bounds[fqName("linkd_calibration_coverage")] = 2
 	bounds[fqName("fleet_tracker_dropped_total")] = len(fleet.TrackerDroppedKinds)
 	bounds[fqName("effective_time_refresh_total")] = len(strategycache.EffectiveTimeRefreshResults)
 	bounds[fqName("activation_rebuild_total")] = len(controlplane.ActivationRebuildOutcomes)
@@ -1141,8 +741,6 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		bounds[fqName(name)] = n
 	}
 	// Five states; three operations by two results.
-	bounds[fqName("linkd_console_state")] = len(fleet.LinkdConsoleStates) + 1
-	bounds[fqName("linkd_console_calls_total")] = 6
 	// Eight SRE execution, management, Secret- and ConfigMap-read and image-change operations by six results.
 	bounds[fqName("sre_actions_total")] = 48
 	// Seven final states of an image change; one gauge.
@@ -1153,7 +751,6 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("cli_auth_total")] = len(cliauth.Counts)
 	bounds[fqName("cli_roster_applied_timestamp_seconds")] = 1
 	// Every Console operation by every failure class.
-	bounds[fqName("linkd_console_failures_total")] = len(openalerts.ConsoleOps) * len(openalerts.ConsoleFailureClasses)
 	bounds[fqName("control_source_retained_stale_revisions_total")] = 1
 	bounds[fqName("control_source_last_good_identity_changed_total")] = 1
 	// The supported data sources, plus other for one the compiler started
@@ -1479,13 +1076,21 @@ func TestQueryCooldownLoadResultsArePreCreated(t *testing.T) {
 	}
 }
 
-// close_acked is what the broker took, not what the consumer did with it:
-// whether an alert closed is the consumer's to say, so the help does not say
-// that none is left open.
-func TestTheEffectiveCloseHelpCountsSendsNotClosedAlerts(t *testing.T) {
-	help := newEffectiveCloseCollector().outcomes.String()
-	if strings.Contains(help, "left open") || !strings.Contains(help, "consumer") {
-		t.Fatalf("help = %s, want the sends counted and the closing left to the consumer", help)
+// close_acked and close_sent are what the broker took, not what the link
+// did with it. The producer's answer is the broker's acknowledgement: it
+// cannot tell a close the link acted on from one the link found no active
+// alert for (orphaned), so every close family's help says it counts the
+// sends acknowledged, those among them, and does not say none is left open.
+func TestTheCloseHelpsCountSendsTheBrokerAcknowledged(t *testing.T) {
+	for family, help := range map[string]string{
+		"effective_close_total":       newEffectiveCloseCollector().outcomes.String(),
+		"target_scope_close_total":    newTargetScopeCloseCollector().outcomeIs.String(),
+		"strategy_edit_close_total":   newEditCloseCollector().outcomeIs.String(),
+		"absent_strategy_close_total": newAbsentCloseCollector().outcomeIs.String(),
+	} {
+		if strings.Contains(help, "left open") || !strings.Contains(help, "acknowledged by the broker") || !strings.Contains(help, "(orphaned there)") {
+			t.Fatalf("%s help = %s, want the sends the broker acknowledged counted, closes the link finds nothing active for among them", family, help)
+		}
 	}
 }
 

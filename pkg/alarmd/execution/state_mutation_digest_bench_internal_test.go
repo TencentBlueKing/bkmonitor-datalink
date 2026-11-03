@@ -5,7 +5,10 @@
 
 package execution
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
 
 // BenchmarkBuildStateMutationByPoints measures the cost of deriving one
 // series' mutation digest against how many points the mutation names.
@@ -47,18 +50,6 @@ func benchName(points int) string {
 	case 1469:
 		return "the_whole_retained_window"
 	default:
-		return "points_" + itoa(points)
+		return "points_" + strconv.Itoa(points)
 	}
-}
-
-func itoa(value int) string {
-	if value == 0 {
-		return "0"
-	}
-	digits := ""
-	for value > 0 {
-		digits = string(rune('0'+value%10)) + digits
-		value /= 10
-	}
-	return digits
 }

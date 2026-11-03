@@ -70,7 +70,7 @@ func oneHotFamiliesNotApplicable(cfg config.Config) []string {
 		families = append(families, "alarmd_trace_export")
 	}
 	if !cfg.HasRole(roles.Worker) && !cfg.HasRole(roles.Control) {
-		families = append(families, "alarmd_control_source_mode", "alarmd_linkd_console_state", "alarmd_platform_settings_mode")
+		families = append(families, "alarmd_control_source_mode", "alarmd_platform_settings_mode")
 	}
 	return families
 }

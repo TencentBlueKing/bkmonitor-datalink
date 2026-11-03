@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package main
 
 import (
@@ -5,47 +14,26 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/activecopy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdmanage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
-	"github.com/go-redis/redis/v8"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openepisodes"
 )
 
-// linkdIndex is the alert link as this process uses it: the per-strategy
-// copy the workers read, and the two ports the control leader's absent
-// strategy difference needs - one point read per departed strategy, and the
-// reconciliation that says what its alerts are.
-type linkdIndex struct {
-	Cache  *openalerts.Cache
-	Source *openalerts.SetSource
-	// Alerts is nil when the deployment configures no reconciliation
-	// endpoint. Nothing is closed then.
-	Alerts openalerts.Reconciler
-	// Console is the same endpoint with the rest of what it answers - the
-	// roster and the alert records - or nil without one. The difference
-	// against strategies that no longer exist runs only when it is set:
-	// without the link's roster there is no difference to take.
-	Console *openalerts.HTTPReconciler
-	// Location is the source and subscriber the Cache reads through, and
-	// the background discovery that can move them; see linkdLocationSwitch.
-	Location *linkdLocationSwitch
-}
+// The link's control plane is the one way alarmd reads or closes the link's
+// alerts: its search and its close by filter, called with the management
+// Internal-Token (linkdmanage). The recovery gate and the no-data end read
+// alarmd's own copy, refreshed by fingerprint through the search
+// (activecopy); every close the leader or an owner decides goes through the
+// filter (filterclose). A deployment that names no control plane reads and
+// closes nothing at the link, and says so at startup; a link that answers
+// 501 is filtered close unsupported, counted and warned, with no other path.
 
-// consoleFailureLine writes the console_call_failed line: an operation's
-// failures starting, or changing class, with the class and the failures so
-// far, never the address. The record and linkd_console_failures_total
-// count every one.
-func consoleFailureLine(logger *observability.Logger) func(op, class string, failures uint64) {
-	return func(op, class string, failures uint64) {
-		logger.Warn("console_call_failed", "failed", 0, 0, slog.String("op", op), slog.String("class", class),
-			slog.Uint64("failures", failures))
-	}
-}
-
-// effectiveTimeFailureLine writes a failed effective-time read, at most
-// once a minute for each business timezone or calendar, with the failures
-// since the last line.
+// effectiveTimeFailureLine is the warning a failing effective-time refresh
+// writes, once per failure class change.
 func effectiveTimeFailureLine(logger *observability.Logger) func(dependency, class string, failures uint64) {
 	return func(dependency, class string, failures uint64) {
 		logger.Warn("effective_time_refresh_failed", "failed", 0, 0, slog.String("dependency", dependency),
@@ -53,78 +41,119 @@ func effectiveTimeFailureLine(logger *observability.Logger) func(dependency, cla
 	}
 }
 
-func newLinkdIndex(cfg config.Config, client redis.UniversalClient, connection config.RedisConnectionConfig,
-	discovery *fleet.LinkdDiscoveryFacts, open func(config.RedisConnectionConfig) (redis.UniversalClient, bool), token openalerts.TokenSource,
-	now func() time.Time, logger *observability.Logger) (linkdIndex, error) {
-	capacity := config.DeriveLinkdCapacity(config.DetectCapacityInputs())
-	settings := cfg.PhaseTwo.Linkd
-	// One read cannot monopolize the allowance for the whole worker. These
-	// are scan bounds, not an assertion that an oversized SET was empty.
-	limits := openalerts.ReadLimits{MaxMembers: max(1, capacity.Members/4), MaxBytes: max(1, capacity.Bytes/4), PageSize: 256,
-		MaxLargeRead: config.LinkdCalibrationInterval / 4}
-	// The sets are read only where the Console named them: a connection its
-	// target named at startup (adopted), or one the deployment stated, which
-	// the first reconciliation then confirms or not. Otherwise nothing is
-	// bound and nothing is read until the Console names a place.
-	var binding linkdBinding
-	index := openalerts.IndexLocation{KeyPrefix: settings.Prefix(), Address: "unbound"}
-	if settings.ConsoleURL != "" && settings.Connection != nil {
-		var err error
-		if binding, err = newLinkdBinding(client, connection, settings.Prefix(), limits); err != nil {
-			return linkdIndex{}, err
+// newLinkdManage is the link's management client for a deployment that
+// names the control plane and its secret; nil otherwise.
+func newLinkdManage(cfg config.Config, now func() time.Time) (*linkdmanage.Client, error) {
+	plane := cfg.PhaseTwo.Linkd.ControlPlane
+	if !plane.Configured() {
+		return nil, nil
+	}
+	return linkdmanage.New(linkdmanage.Options{BaseURL: plane.URL, Secret: plane.JWTSecret, Username: plane.Username(),
+		Client: &http.Client{Timeout: filterCloseHTTPTimeout}, Now: now})
+}
+
+// linkdUnsupportedWarning is the line written when the link answers that it
+// cannot search or close by filter (501, or 404/405 from a link older than
+// the routes): nothing reads or closes the link's alerts until it can.
+func linkdUnsupportedWarning(logger *observability.Logger, part string) func(error) {
+	return func(err error) {
+		if logger == nil {
+			return
 		}
-		index = openalerts.IndexLocation{KeyPrefix: settings.Prefix(), Address: linkdLocation(connection), Database: connection.DB}
+		logger.Warn("linkd_filter_close_unsupported", "degraded", 0, 0, slog.String("part", part),
+			slog.String("error", err.Error()))
 	}
-	location := &linkdLocationSwitch{current: binding, replaced: make(chan struct{}), limits: limits, open: open, cfg: cfg}
-	if discovery != nil {
-		location.discovery = *discovery
-	}
-	adopted := discovery != nil && discovery.Outcome == fleet.LinkdDiscoveryAdopted
-	var reconciler openalerts.Reconciler
-	var console *openalerts.HTTPReconciler
-	var facts openalerts.ConsoleFacts
-	var err error
-	if settings.ConsoleURL != "" {
-		// The link's target, and its source scope, are read from the
-		// Console, which lists one target for a link alarmd reads. The
-		// client has no timeout of its own: each call is bounded by its
-		// caller's deadline (a calibration's derived one, a page's, the
-		// absent-close round's), which the client requires (ErrNoDeadline).
-		// A client-wide 5 s used to cut every one of them, longer ones
-		// included.
-		console, err = openalerts.NewHTTPReconciler(openalerts.HTTPReconcilerOptions{BaseURL: settings.ConsoleURL,
-			Username: settings.Username, Password: settings.Password, Token: token, Client: &http.Client{}, MaxResponseBytes: int64(capacity.Bytes / 4),
-			Now: now, Index: index, LocationConfirmed: adopted, OnLocationMismatch: location.relocate,
-			KeyingEvery: config.LinkdCalibrationInterval, OnFailure: consoleFailureLine(logger),
-			// The source this deployment's events arrive under is the one
-			// subscribed to the topic they are written to.
-			OutputTopic: cfg.Kafka.TriggerEvent.Topic})
-		if err != nil {
-			return linkdIndex{}, err
+}
+
+// linkdRefusedWarning is the line written when the link starts refusing
+// alarmd's credential (401, 403): nothing is read from the link until the
+// secret is the link's again. Once per run of refusals.
+func linkdRefusedWarning(logger *observability.Logger, part string) func(error) {
+	return func(err error) {
+		if logger == nil {
+			return
 		}
-		reconciler, facts = console, console
-		location.console = console
+		logger.Warn("linkd_credential_refused", "degraded", 0, 0, slog.String("part", part),
+			slog.String("error", err.Error()))
 	}
-	// The calibration rate is not written here. ReconcileBatch is only the
-	// floor, and what a round calibrates before any Console call has been
-	// timed; each round then calibrates what covers every tracked strategy
-	// within the calibration interval, at the pace the Console's measured p90
-	// allows before the next round is due (openalerts calibrationPlan), and a
-	// shortfall is reported as calibration_short. Calibration runs in its own
-	// loop, each call under a deadline derived from the Console's measured
-	// tail (openalerts calibrationDeadline). RefreshInterval is both rounds'
-	// cadence; CycleTimeout now bounds only the index round's Redis
-	// reads, left for the timeout audit.
-	cache, err := openalerts.NewIndex(openalerts.IndexOptions{Source: location, Subscriber: location, Reconciler: reconciler, Now: now,
-		Policy: openalerts.PolicySelfMaintain, MaxStrategies: capacity.Strategies, MaxMembers: capacity.Members, MaxBytes: capacity.Bytes,
-		MaxLocalEntries: capacity.LocalEntries, ReadBatch: capacity.ReadBatch, ReconcileBatch: 1, RefreshInterval: time.Second,
-		IndexInterval: time.Minute, ReconcileInterval: config.LinkdCalibrationInterval, CalibrationMaxAge: 2 * config.LinkdCalibrationInterval,
-		LocalRetention: time.Minute, CycleTimeout: 5 * time.Second, Facts: facts})
-	if err != nil {
-		return linkdIndex{}, err
+}
+
+// warnLinkdUnconfigured writes, at startup, that a deployment whose alerts
+// do not go to the link (no phase_two.linkd block; one with the block does
+// not load without its control plane) reads and closes nothing there, and
+// that its recovery gate answers from the alerts this process opened.
+func warnLinkdUnconfigured(cfg config.Config, logger *observability.Logger) {
+	if logger == nil || cfg.PhaseTwo.Linkd.ControlPlane.Configured() {
+		return
 	}
-	location.mu.Lock()
-	location.calibrate = cache.LocationMoved
-	location.mu.Unlock()
-	return linkdIndex{Cache: cache, Source: binding.source, Alerts: reconciler, Console: console, Location: location}, nil
+	logger.Warn("linkd_control_plane_unconfigured", "degraded", 0, 0,
+		slog.String("detail", "no phase_two.linkd block: alerts are not read back from or closed at the link; the recovery gate "+
+			"passes a RECOVERY only for an alert this process opened, and no edit, absent, inactive or scope close is made"))
+}
+
+// newActiveCopy is the copy for a deployment with the link's management
+// client; nil otherwise.
+func newActiveCopy(cfg config.Config, client *linkdmanage.Client, now func() time.Time, logger *observability.Logger) (*activecopy.Copy, error) {
+	if client == nil {
+		return nil, nil
+	}
+	return activecopy.New(activecopy.Options{Link: client, EventSourceID: cfg.PhaseTwo.Linkd.ControlPlane.Source(), Now: now,
+		Warn: linkdUnsupportedWarning(logger, "active_copy"), Refused: linkdRefusedWarning(logger, "active_copy")})
+}
+
+// openAlertCopyPort adapts the copy to the worker's port: the worker speaks
+// in Plan identities, the copy in strategy keys. A nil copy is a deployment
+// whose alerts do not go to the link (no phase_two.linkd block; one with the
+// block does not load without the control plane): never linked, so the
+// worker keeps no no-data end index, and the gate answers from own, the
+// record of the alerts this process opened, as it did before the link copy
+// existed.
+type openAlertCopyPort struct {
+	copy *activecopy.Copy
+	// own answers the gate when there is no copy; nil beside a copy.
+	own *activecopy.Own
+	// registerOwned also tells the effective-time maintenance which Plans
+	// this process evaluates; nil in tests that need only the copy.
+	registerOwned func(execution.QueryGroupIdentity, []execution.PlanIdentity)
+	// record hears what each acknowledged batch opened and ended, as the
+	// copy judges it (openepisodes); nil without the link's control plane.
+	record *openepisodes.Writer
+}
+
+// Linked says whether a link stands behind the copy (execution.OpenAlertLink).
+func (port openAlertCopyPort) Linked() bool { return port.copy.Linked() }
+
+// Holds is the copy's judged membership (execution.OpenAlertJudge).
+func (port openAlertCopyPort) Holds(tenantID, strategyID, fingerprint string) (bool, bool) {
+	return port.copy.Holds(tenantID, strategyID, fingerprint)
+}
+
+// Contains is the recovery gate's question: the link copy's answer where
+// the link is the destination, the record of this process's own opens
+// where it is not.
+func (port openAlertCopyPort) Contains(tenantID, strategyID, fingerprint string) bool {
+	if port.copy == nil {
+		return port.own.Contains(tenantID, strategyID, fingerprint)
+	}
+	return port.copy.Contains(tenantID, strategyID, fingerprint)
+}
+
+func (port openAlertCopyPort) TrackPlans(qg execution.QueryGroupIdentity, plans []execution.PlanIdentity) {
+	keys := make([]activecopy.StrategyKey, 0, len(plans))
+	for _, plan := range plans {
+		keys = append(keys, activecopy.StrategyKey{TenantID: plan.TenantID, StrategyID: plan.StrategyID})
+	}
+	port.copy.Track(keys...)
+	port.own.Track(keys...)
+	if port.registerOwned != nil {
+		port.registerOwned(qg, plans)
+	}
+}
+
+// Acknowledged tells the copy, then the record what the copy says changed.
+// Neither waits on I/O: the record's writes are queued.
+func (port openAlertCopyPort) Acknowledged(events []contract.TriggerEventV1) {
+	changed := port.copy.Acknowledged(events)
+	port.own.Acknowledged(events)
+	port.record.Acknowledged(events, changed)
 }

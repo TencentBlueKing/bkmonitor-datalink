@@ -23,13 +23,12 @@ import (
 // point, the points one period apart; a round whose query was not FULL
 // contributes no point and bridges nothing (P9). One round with data closes
 // an open alert (P11, one recovery window), and only an open one (the
-// open-alert gate). The fixture has no link Console, so the gate answers
-// from what this process sent, and a RECOVERY it sent hides nothing: through
-// the grace (the calibration interval, 30 minutes against these one-minute
-// rounds) the alert still answers open, so every round that decides
-// RECOVERY sends it again, an orphan at the consumer, until an ABNORMAL
-// clears the grace: at most grace / period of them, 30 here, before the
-// record lets the alert go. A new absence after a close starts from nothing. A
+// open-alert gate). The fixture's link holds no alert, so the gate answers
+// from what this process sent: its acknowledged ABNORMAL is the copy's own
+// word that the alert is open, and its acknowledged RECOVERY makes the copy
+// forget it, so a later round that decides RECOVERY asks the link, which
+// holds none, and the envelope is held: one close per alert, no orphans.
+// A new absence after a close starts from nothing. A
 // round not FULL is neither an absent point nor a present one: it neither
 // raises nor closes, so an open alert stays open across it until data
 // actually returns.
@@ -47,8 +46,8 @@ func TestNoDataSequencesSendWhatTheTriggerDefines(t *testing.T) {
 		{"a round not FULL after two absent ones restarts the count", 3, "AAUAAA", []string{"", "", "", "", "", a}},
 		{"a round with data between absent ones restarts the count and closes nothing", 3, "APAAA", []string{"", "", "", "", a}},
 		// The two absent rounds after the close are short of the trigger and
-		// decide RECOVERY; within the grace each goes out again.
-		{"data closes the alert, the close repeats through the grace, and a new absence starts from nothing", 3, "AAAPAAA", []string{"", "", a, r, r, r, a}},
+		// decide RECOVERY; the alert is closed, so neither goes out.
+		{"data closes the alert once, and a new absence starts from nothing", 3, "AAAPAAA", []string{"", "", a, r, "", "", a}},
 		{"a round not FULL does not close an open alert, and data after it does", 3, "AAAUP", []string{"", "", a, "", r}},
 		// The window after the hole holds two absent points of three, short
 		// of the trigger; the hole is not a miss, so it closes nothing.

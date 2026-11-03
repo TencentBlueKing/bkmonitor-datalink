@@ -668,6 +668,7 @@ func TestAnEventWritesTheGroupingOfItsOwnSeries(t *testing.T) {
 			e.StrategyFacts = &facts
 			if noData {
 				e.RecordRef.Dimensions[contract.NoDataDimensionTag] = json.RawMessage("true")
+				e.Observed = contract.TriggerObservedV1{Values: map[string]json.RawMessage{contract.NoDataPeriodFactField: json.RawMessage("5")}}
 			}
 		}))
 		var extra struct {

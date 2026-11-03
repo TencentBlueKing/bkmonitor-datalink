@@ -204,7 +204,6 @@ details.group table{margin:6px 0 0 12px}
       <p id="briefSchedule"></p>
       <p id="briefTodo"></p>
       <p id="briefBlind"></p>
-      <p id="briefConsole" hidden></p>
     </div>
     <!-- The badge answers "is alarmd well". Nobody opens this page to ask that:
          they ask whether alerting is working, what is affected and whether to
@@ -899,8 +898,7 @@ var DEGRADATION = {
   ACTIVATION_BEHIND: '控制面变更没有生效：源发布了新内容，激活跟不上去，舰队在执行旧发布',
   CONTROL_SOURCE_STALE: '策略源超过设计允许的时间没有刷新成功，跑的是上一份好的目录',
   CONTROL_LEADER_ABSENT: '副本拿不到控制面 leader 租约、也不知道谁持有，超过设计允许的时间——可能没人在刷新',
-  OPEN_ALERT_SET_STALE: '已开告警集合的副本超过设计允许的时间没拿到消费者的发布，恢复门在用旧知识',
-  OPEN_ALERT_SET_UNCONFIRMED: 'linkd 的 Console 还没确认已开告警集合在哪里、或没确认集合按本副本发出的告警 ID 建键；恢复门改按本副本发过的告警放行，本副本没开过的告警的恢复要等 Console 确认后才放行，看开放告警集合那一行写的是哪一条没确认',
+  ACTIVE_COPY_UNSUPPORTED: 'linkd 回答不支持检索（501/404/405）：期间本副本的活动告警副本不刷新，恢复门只放行本副本自己发过异常的告警（其余计入 link_unsupported 并暂缓），按退避（1 分钟起、最长 10 分钟）重试，检索恢复即解除',
   PLATFORM_SETTINGS_STALE: '平台设置的副本超过设计允许的时间没拿到平台的发布，检测在用可能已变的设置',
   OUTPUT_NOT_READY: '副本连不上告警输出：进程活着但不就绪，不接检测任务，由其余副本顶着——少一个副本的容量',
   VIEW_PUBLISH_FAILING: 'leader 超过一分钟发不出视图：已有视图的副本照常检测，这期间重启的副本没有视图、什么都不执行；原因见说明',
@@ -1663,97 +1661,6 @@ function renderBrief(deployment) {
   // said as what it is.
   var covered = deployment.covered || 0;
   text('briefBlind', '状态覆盖：' + (blind.length ? blind.join('；') : (covered ? '全部对象都有结论' : '没有对象在检测（0 个），无所谓结论')) + '。' + detail);
-  var consoleLine = consoleBrief(deployment.linkd_console, deployment);
-  text('briefConsole', consoleLine);
-  show('briefConsole', consoleLine !== '');
-}
-
-// The alert link's Console on the first screen, only where the server says
-// the deployment needs it and it is not working: events go to the link as
-// the standard raw event, so their alerts can be closed only through the
-// Console. A deployment whose events all go the Python-compatible way hands
-// its alerts to the Python backend; its Console is unconfigured by design
-// and the line stays off -- that decision is the server's (attention), not
-// this page's.
-var CONSOLE_STATE = {
-  not_configured: '未配置告警链路 Console（phase_two.linkd.console_url）：集合校准、已停用/删除策略的告警关闭都不运行',
-  not_called: '已配置，本副本还没调用过',
-  unreadable: '已配置但读不到：两项关闭每轮都在尝试、都没成',
-  link_unhealthy: '读得到，但 linkd 自报集合维护不健康：名册可能缺策略，已停用/删除策略的关闭照常按名册执行、可能漏关（link_unhealthy）',
-  reachable: '可达'
-};
-var CONSOLE_OP = { roster: '名册', reconcile: '校准对账', alert_record: '单条告警记录', event_source: '事件源键规则', alert_read: '运维告警查询' };
-// Why a Console call failed, by the class the replica records: the
-// transport's words (the same a query provider's route detail uses), status
-// and incomplete.
-var CONSOLE_FAILURE_CLASS = { cancelled: '调用方先放弃了（进程退出或放手）', timeout: '超时', connection_refused: '连接被拒绝',
-  connection_reset: '连接被重置', dns: '域名解析失败', tls: 'TLS 握手或证书校验失败', eof: '连接被对端提前关闭',
-  other: '其他传输错误', status: '应答不是 200', incomplete: '应答体读不全或解析不了',
-  not_api: '地址答的是网页不是 linkd 的 API，Console 地址要写到 API 根', no_token: '还没有可用的 admin 令牌（未交接、过期或被拒）' };
-var LINK_HEALTH = {
-  discovery_failing: '最近一次全量发现失败',
-  discovery_never_succeeded: '从未成功完成全量发现',
-  discovery_stale: '距上次成功的全量发现已超过界限'
-};
-// The startup question "where does the link write", and what came of it.
-var LINKD_DISCOVERY = {
-  adopted: '已按 Console 给出的位置读取',
-  no_held_connection: 'Console 给出的 Redis 不是本进程已持有连接的任何一个，仍按原位置读取，每轮对账会拒绝并写出两处位置',
-  failed: '启动时向 Console 询问失败，仍按原位置读取'
-};
-function linkdTargetWords(t) {
-  return t.event_source_id + '/' + t.hook_name + ' 写在 ' + t.address + ' db ' + t.database + ' 前缀 ' + t.key_prefix;
-}
-function consoleFailureHint(text) {
-  if (/status 401/.test(text || '')) return '；401 是 Console 拒绝了账号口令（phase_two.linkd 的 username/password 或对应环境变量），不是接口不存在';
-  if (/status 403/.test(text || '')) return '；403 是账号没有该接口的权限';
-  return '';
-}
-function consoleWords(c) {
-  var words = CONSOLE_STATE[c.state] || c.state;
-  if (c.state === 'unreadable') {
-    var failing = (c.calls || []).filter(function (call) { return call.op === c.reason; })[0];
-    words += '（' + (CONSOLE_OP[c.reason] || c.reason) + '最近一次失败'
-      + (failing && failing.last_failure_class ? '，原因：' + (CONSOLE_FAILURE_CLASS[failing.last_failure_class] || failing.last_failure_class) : '')
-      + (failing && failing.last_failure ? '：' + failing.last_failure : '') + '）';
-    // A link older than the roster answers every reconciliation and refuses
-    // every browse; the status says which of the two this is.
-    if (c.reason === 'roster' && failing && /status 404/.test(failing.last_failure || '')) {
-      words += '；名册接口 404，多半是 linkd 版本早于名册接口';
-    }
-    words += consoleFailureHint(failing && failing.last_failure);
-  } else if (c.state === 'link_unhealthy') {
-    words += '（' + (LINK_HEALTH[c.reason] || c.reason)
-      + (c.link_health_age_seconds != null ? '，上次成功在 ' + elapsedLabel(c.link_health_age_seconds) + '前，界限 ' + elapsedLabel(c.max_link_health_age_seconds) : '')
-      + (c.link_error ? '：' + c.link_error : '') + '）';
-  }
-  if (c.target) {
-    words += '；目标 ' + linkdTargetWords(c.target)
-      + (c.target_age_seconds != null ? '（' + elapsedLabel(c.target_age_seconds) + '前解析）' : '');
-  }
-  var d = c.discovery;
-  if (d) {
-    words += '；启动时：' + (LINKD_DISCOVERY[d.outcome] || d.outcome)
-      + (d.target && d.outcome !== 'adopted' ? '（Console 说 ' + linkdTargetWords(d.target) + '）' : '')
-      + (d.error ? '（试了 ' + d.attempts + ' 次：' + d.error + consoleFailureHint(d.error) + '）' : '')
-      // A link that lists several targets: alarmd reads one, so the listing
-      // is the reason, named here rather than left inside the error.
-      + (d.target_count > 1 ? '；Console 列出 ' + d.target_count + ' 个目标'
-        + ((d.target_names || []).length ? '：' + d.target_names.join('、') + (d.target_names.length < d.target_count ? ' 等' : '') : '')
-        + '，alarmd 只读只列一个目标的 link' : '');
-  }
-  return words;
-}
-function consoleBrief(standing, deployment) {
-  if (!standing || !standing.attention) return '';
-  // The entry the server decided from, for the failure text and the link's
-  // ages; the standing's own two words when that replica's list is not here.
-  var own = (deployment.per_replica || []).filter(function (r) { return r.replica === standing.replica; })[0];
-  var deps = (own && own.dependencies) || (standing.replica === deployment.dependencies_replica ? deployment.dependencies || [] : []);
-  var dep = deps.filter(function (d) { return d.role === 'linkd_console'; })[0];
-  var c = dep && dep.console ? dep.console : { state: standing.state, reason: standing.reason };
-  return standing.standard_plans + ' 条计划的事件发往告警链路，但告警链路 Console ' + consoleWords(c)
-    + '——这些告警在策略停用/删除后不会被 alarmd 关闭。';
 }
 
 // Which build the numbers came from. Held to the Go grouping: one group per
@@ -3213,7 +3120,6 @@ function renderRestrictedBrief(deployment) {
   if (unattributed) blind.push(unattributed + ' 个对象没留下成因，还说不清归谁');
   restrictedNotice(document.getElementById('briefBlind'), '状态覆盖：' + (blind.length ? blind.join('；') : '各栏计数见下')
     + '。明细是否完整：');
-  show('briefConsole', false);
 }
 
 // What the verdict costs, in the unit the work is done in.
@@ -3531,8 +3437,6 @@ var ENDPOINT = {
   cmdb_cache: 'CMDB 主机缓存（平台写、alarmd 读）',
   dynamic_config: '平台动态配置（平台写、alarmd 读）',
   target_group: '目标分组成员缓存（平台写、alarmd 读）',
-  open_alert_set: '未恢复时序指纹集合（告警消费方写、alarmd 读；恢复门据此判有没有可恢复的告警）',
-  linkd_console: '告警链路 Console（HTTP；集合校准、已停用/删除策略的告警关闭都靠它）',
   query_backend: '查询后端（unify-query）',
   output_kafka: '告警输出 Kafka（topic 在前缀列）',
   compat_output_redis: '兼容输出用的服务 Redis（策略快照）'
@@ -3588,22 +3492,6 @@ function renderDependencies(list, replica, replicasWithList) {
       seenParts.push('脚本缓存未命中 ' + dep.script_cache_misses + ' 次（最近 '
         + elapsedLabel(dep.last_script_cache_miss_age_seconds) + '前；不是失败——启动后首次 EVALSHA 的正常装载，若发生在运行很久之后则是 Redis 重启或切主）');
     }
-    // The Console keeps one record per operation, because they fail apart:
-    // a link older than the roster answers every reconciliation and refuses
-    // every browse.
-    if (dep.configured && dep.console && dep.console.calls) {
-      dep.console.calls.forEach(function (call) {
-        var bits = (CONSOLE_OP[call.op] || call.op) + ' ' + call.calls + ' 次';
-        if (!call.calls) {
-          bits += call.op === 'roster' ? '（只有控制 leader 走名册）' : '';
-        } else {
-          if (call.failures) bits += '、失败 ' + call.failures;
-          if (call.last_success_age_seconds != null) bits += '，成功 ' + elapsedLabel(call.last_success_age_seconds) + '前';
-          if (call.last_failure_age_seconds != null) bits += '，失败 ' + elapsedLabel(call.last_failure_age_seconds) + '前：' + (call.last_failure || '（无文本）');
-        }
-        seenParts.push(bits);
-      });
-    }
     if (!seenParts.length) {
       seenParts.push(dep.kind === 'redis' && dep.configured ? '本进程还没对它发过命令' : '这一列只对 Redis 连接与告警输出有记录；查询后端的失败在检查项里按对象归因');
     }
@@ -3634,15 +3522,6 @@ function addressWords(dep) {
 // nothing was, or that the role has no writer to speak of.
 function writerWords(dep) {
   var w = dep.writer;
-  // A role that carries its own account answers from it whether or not there
-  // is a writer summary beside it. The open alert set under the index
-  // protocol has none on purpose -- that protocol has no publisher heartbeat,
-  // so the server clears the summary -- and this early return then rendered
-  // the whole column as a dash: the members, the gate's answers, the
-  // subscription and the calibration were all on the response and none of
-  // them reached the page.
-  if (dep.open_alert_set) return openAlertSetWords(dep);
-  if (dep.console) return consoleWords(dep.console);
   if (!w) {
     return dep.role === 'strategy_cache' ? '（这个副本不是 leader，没读过策略缓存）' : '—';
   }
@@ -3656,95 +3535,8 @@ function writerWords(dep) {
         + (w.state && w.state !== 'loaded' ? '（' + w.state + '）' : '');
     case 'dynamic_config':
       return (w.present ? '有：已加载' + (age ? '，' + age : '') : '没有') + (w.state ? '（' + w.state + '）' : '');
-    case 'open_alert_set':
-      return openAlertSetWords(dep);
   }
   return w.present ? '有' : '没有';
-}
-
-// The reader's account of the alert consumer's open alert sets, as one
-// sentence: when the index was last read, what is held, whether the copy is
-// unavailable or past its calibration bound, and -- the part the object list
-// never shows -- whether the recovery gate has been answering on the
-// consumer's word or on the copy's own.
-var OPEN_ALERT_UNAVAILABLE = {
-  read_error: '读不到（索引读取或校准失败）',
-  location_unconfirmed: 'Console 还没确认集合写在哪里（发现失败、Console 给的 Redis 本副本没有连接，或对账发现写入位置变了）；这期间一条集合也不读',
-  keying_unconfirmed: 'Console 还没确认集合按本副本发出的告警 ID 建键（事件源没读到、按其他字段建键，或未发布）'
-};
-// Every answer the gate can give. A key missing here is not rendered and
-// does not count towards the total, so the row said "the gate has not been
-// asked yet" on a deployment where it had answered 168 times and held every
-// recovery: the index protocol's two answers were added to the server and
-// not to this table. The table is hand-listed, so it is the thing to check
-// whenever the server gains an answer.
-var OPEN_ALERT_ANSWER = {
-  index_member: '索引里有',
-  index_absent: '索引里没有',
-  recently_sent: '本副本刚发过',
-  self_maintained: '按本副本记录',
-  passed_through: '直接放行',
-  index_stale: '索引过期，按本副本记录'
-};
-// What the numbers above mean for the deployment, said once rather than left
-// for the reader to derive. The gate holds a recovery when the series is not
-// in the consumer's set, so a set that is loaded and holds nothing while
-// every lookup comes back "not in it" means no recovery event leaves this
-// deployment -- which the row could not be read to say: it showed the set as
-// available and not stale, both true, and neither of them the answer.
-//
-// Two things produce it and this cannot tell them apart, so it names both:
-// the consumer genuinely holds no open alert (nothing is alarming), or it is
-// not recording what this deployment sends it. The count of held recoveries
-// is what separates them in practice -- a consumer with nothing open is one
-// this deployment also sent nothing to.
-function openAlertConsequence(a, lookups) {
-  if (!lookups || a.members !== 0 || a.loaded_sets === 0) return '';
-  var absent = (a.lookups && a.lookups.index_absent) || 0;
-  if (absent < lookups) return '';
-  return '这套部署现在发不出恢复：集合装载了但一条未恢复指纹都没有，' + lookups
-    + ' 次全部落空、恢复被扣住——要么消费方此刻确实没有未恢复告警，要么它没有把本部署发过去的告警记进这个集合';
-}
-
-// The close of alerts whose target left the strategy's scope, in counts
-// only: the fingerprint samples stay in the API.
-function targetScopeCloseWords(c) {
-  if (!c) return '';
-  var o = c.outcomes || {};
-  var n = function (k) { return o[k] || 0; };
-  return '目标移出范围关闭：等第二轮确认 ' + (c.pending || 0)
-    + ' 个、已确认待关 ' + (c.confirmed || 0) + ' 个；累计发出关闭 ' + n('close_sent') + '（发出不等于 linkd 已关；其中由索引集合按指纹关闭 ' + n('index_set_close_sent') + '）'
-    + '、首次观测 ' + n('unconfirmed') + '、目标缓存不确定未判 ' + n('cache_unavailable') + '、不在集合 ' + n('not_member')
-    + '、集合不可判 ' + n('set_unavailable') + '、他源告警 ' + n('producer_foreign') + '、发送失败 ' + n('send_failed')
-    + '、观测表满 ' + n('memory_full') + '、多输入无法算指纹 ' + n('fingerprint_unsupported') + '、观测过旧暂缓 ' + n('stale_deferred') + '、拒绝本身不确定 ' + n('indefinite');
-}
-
-function openAlertSetWords(dep) {
-  var a = dep.open_alert_set;
-  var w = dep.writer;
-  if (!a) return w && w.present ? '有' : '没有';
-  if (!a.configured) return '没配 linkd 的 Console：本副本不读集合，恢复门按本副本发过的告警回答';
-  var parts = [];
-  parts.push('有：消费方按索引协议发布'
-    + (a.index_read_age_seconds != null ? '，本端 ' + elapsedLabel(a.index_read_age_seconds) + '前读到' : '，本端还没读到过')
-    + (a.subscription_ready ? '' : '，订阅未就绪'));
-  parts.push('跟踪 ' + a.tracked_sets + ' 条策略、索引覆盖 ' + a.loaded_sets + ' 条、未恢复指纹 ' + a.members + ' 个'
-    + (a.calibration_configured ? '' : '（未配校准）'));
-  parts.push('Console 确认：写入位置' + (a.location_confirmed ? '已确认' : '未确认') + '、按告警 ID 建键'
-    + (a.keyed_by_alert_id == null ? '还没读到' : (a.keyed_by_alert_id ? '是' : '否'))
-    + (a.keyed_by_alert_id_as_of ? '（' + elapsedLabel((Date.now() - Date.parse(a.keyed_by_alert_id_as_of)) / 1000) + '前确认）' : ''));
-  if (a.unavailable_reason) parts.push('当前不可用：' + (OPEN_ALERT_UNAVAILABLE[a.unavailable_reason] || a.unavailable_reason));
-  if (a.stale_beyond_bound) parts.push('校准已超过设计的暴露时长');
-  var answers = [];
-  var total = 0;
-  Object.keys(OPEN_ALERT_ANSWER).forEach(function (key) {
-    var n = a.lookups && a.lookups[key];
-    if (n) { answers.push(OPEN_ALERT_ANSWER[key] + ' ' + n); total += n; }
-  });
-  parts.push(total ? '恢复门查过 ' + total + ' 次：' + answers.join('、') : '恢复门还没查过');
-  parts.push(openAlertConsequence(a, total));
-  parts.push(targetScopeCloseWords(a.target_scope_close));
-  return parts.filter(Boolean).join('；');
 }
 
 function renderReplicas(rows) {

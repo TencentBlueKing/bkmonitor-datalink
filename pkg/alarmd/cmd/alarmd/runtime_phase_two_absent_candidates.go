@@ -111,6 +111,9 @@ type absentExecution struct {
 	// still listed active once it had been sent their close. Nil before the
 	// first send and when the alerts were not read.
 	activeAfterSend *int
+	// sent is a close the link ran: its filter job done, or begun and
+	// carried into the next round.
+	sent bool
 }
 
 func newAbsentCandidateTable(limit int) *absentCandidateTable {
@@ -201,7 +204,7 @@ func (table *absentCandidateTable) executed(key absentalerts.Key, execution abse
 			active := execution.own
 			execution.activeAfterSend = &active
 		}
-		if execution.word == absentalerts.OutcomeCloseSent {
+		if execution.sent {
 			if row.sends == 0 {
 				row.firstSentAt = execution.decidedAt
 			}

@@ -60,7 +60,11 @@ const (
 	StageAbsentStrategyClose = "absent_strategy_close"
 	// StageStrategyEditClose is the control leader's close of the alerts an
 	// edit of their strategy orphaned (package editclose).
-	StageStrategyEditClose    = "strategy_edit_close"
+	StageStrategyEditClose = "strategy_edit_close"
+	// StageStrategyScopeClose is the control leader's close of a strategy's
+	// alerts outside its current target scope, on its start and on each
+	// change of the scope.
+	StageStrategyScopeClose   = "strategy_scope_close"
 	StageLegacyPodCache       = "legacy_pod_cache"
 	StageSnapshotRefreshed    = "snapshot_refreshed"
 	StageSnapshotUnavailable  = "snapshot_unavailable"
@@ -3685,6 +3689,8 @@ var phaseTwoComponentStages = []ComponentStage{
 	// The edit close, for the same reason: its own family
 	// (strategy_edit_close_total) has a cell per outcome.
 	{ComponentControlPlane, StageStrategyEditClose},
+	// The strategy scope close, for the same reason: strategy_scope_close_total.
+	{ComponentControlPlane, StageStrategyScopeClose},
 	{ComponentControlPlane, StageSnapshotRefreshed}, {ComponentControlPlane, StageSnapshotUnavailable},
 	{ComponentControlPlane, StageActivationFailed},
 	// A failed write of the leader's control facts. It was written as
@@ -3800,14 +3806,27 @@ const ReasonTraceExportFailed ReasonCode = "trace_export_failed"
 // existed the whole close chain normalized to reason_code=other on the
 // metrics side and had no cell of its own.
 const (
-	// EffectiveCloseAcked counts alerts closed, one per alert the broker
-	// acknowledged.
-	EffectiveCloseAcked ReasonCode = "close_acked"
+	// EffectiveCloseDone counts inactive closes the link's filter ran: one
+	// per Plan and version, done or carried on by the next step
+	// (filterclose job_done, job_incomplete). The alerts are counted by the
+	// filter close's own items (linkd filter close metric).
+	EffectiveCloseDone ReasonCode = "close_done"
+	// EffectiveCloseNothingMatched is an inactive close whose dry run
+	// matched no active alert of the Plan's version.
+	EffectiveCloseNothingMatched ReasonCode = "close_nothing_matched"
+	// EffectiveCloseNotSettled is an inactive close the link did not settle
+	// this step - busy, failed, refused, past its expectation - tried again
+	// by the next step; the filter close's metric names which.
+	EffectiveCloseNotSettled ReasonCode = "close_not_settled"
+	// EffectiveCloseUnsupported is filtered close unsupported: the link
+	// answered 501, 404 or 405, and nothing closes the Plan's alerts.
+	EffectiveCloseUnsupported ReasonCode = "filter_close_unsupported"
+	// EffectiveCloseUnrouted is an inactive Plan on a deployment that names
+	// no link control plane: nothing closes its alerts.
+	EffectiveCloseUnrouted ReasonCode = "close_unrouted"
 	// EffectiveClosePrecheckFailed is the owner and content check before a
 	// send refusing: the fence, the content scope or the timeline moved.
 	EffectiveClosePrecheckFailed ReasonCode = "close_precheck_failed"
-	// EffectiveCloseSendFailed is the producer not acknowledging a batch.
-	EffectiveCloseSendFailed ReasonCode = "close_send_failed"
 	// EffectiveCloseMaintenanceBusy is a close that could not take the Query
 	// Group's flight because a Slot was executing. Once is nothing; on every
 	// tick it is a Query Group whose close never happens, which used to be
@@ -3844,53 +3863,15 @@ const (
 	// time its batch was ready. The batch is not sent, and the step goes on
 	// to the Query Group's next Plan.
 	EffectiveCloseBoundaryActive ReasonCode = "close_boundary_active"
-	// EffectiveCloseBusinessUnknown is an alert of a global business Plan
-	// whose record could not be read or names no business. Such a Plan's
-	// alerts are each filed under the business they are about, and a close
-	// must carry it; the alert is not closed this round. Counts alerts.
-	EffectiveCloseBusinessUnknown ReasonCode = "close_business_unknown"
-	// EffectiveCloseSourceLastKnown is a step whose read of this
-	// deployment's event source failed, or waited out its back-off, and
-	// whose closes were decided on the source last read: a deployment
-	// property that an outage of the alert link's Console does not change.
-	// One per step, not per Query Group.
-	EffectiveCloseSourceLastKnown ReasonCode = "source_last_known"
-	// EffectiveCloseSourceUnknown is a step whose closes were deferred: the
-	// event source could not be read and none has been read yet, by this
-	// loop or by the open-alert copy. One per step.
-	EffectiveCloseSourceUnknown ReasonCode = "source_unknown"
-	// EffectiveCloseEvidenceUnavailable is a Plan outside its effective time
-	// whose open alerts could not be listed: its set in the open-alert copy
-	// has no current calibration - never calibrated, past its age, the
-	// calibration failing, or a truncated one that listed nothing. Not
-	// "nothing to close": a calibrated set with no alerts is not counted,
-	// and neither is a set whose members, read fresh, stand in for its
-	// alerts (index_set_close_acked). The absent-strategy close's word for
-	// the same condition. One per Plan, per step that finds it inactive.
-	EffectiveCloseEvidenceUnavailable ReasonCode = "evidence_unavailable"
-	// EffectiveCloseIndexSetAcked counts, among close_acked, the alerts
-	// closed from the strategy's index set: its alerts not listed (no
-	// current calibration), its members read fresh and standing in for them,
-	// each close addressed by fingerprint. Counts alerts.
-	EffectiveCloseIndexSetAcked ReasonCode = "index_set_close_acked"
-	// EffectiveCloseIndexSetGroupDraining is a Plan outside its effective
-	// time whose index set would stand in for its unlisted alerts, held
-	// because its Query Group is in the current active set and in the
-	// draining projection at once: an activation that left the Query Group
-	// with its timeline open, whose Plans may be a strategy's revision the
-	// current one replaced. One per Plan, per step that finds it inactive.
-	EffectiveCloseIndexSetGroupDraining ReasonCode = "index_set_group_draining"
 )
 
 // EffectiveCloseOutcomes is every outcome, for the metric to pre-create each
 // cell and for a reader to bound the family by.
 var EffectiveCloseOutcomes = []ReasonCode{
-	EffectiveCloseAcked, EffectiveClosePrecheckFailed, EffectiveCloseSendFailed,
-	EffectiveCloseMaintenanceBusy, EffectiveClosePlanUncompilable, EffectiveCloseIdentityInvalid,
+	EffectiveCloseDone, EffectiveCloseNothingMatched, EffectiveCloseNotSettled, EffectiveCloseUnsupported, EffectiveCloseUnrouted,
+	EffectiveClosePrecheckFailed, EffectiveCloseMaintenanceBusy, EffectiveClosePlanUncompilable, EffectiveCloseIdentityInvalid,
 	EffectiveCloseEffectiveTimeUnknown, EffectiveCloseLegacyUnavailable, EffectiveCloseUnavailable, EffectiveCloseUnsupportedRunner,
 	EffectiveCloseViewNotExecutable, EffectiveCloseCalendarDeletionUnsettled, EffectiveCloseBoundaryActive,
-	EffectiveCloseBusinessUnknown, EffectiveCloseSourceLastKnown, EffectiveCloseSourceUnknown,
-	EffectiveCloseEvidenceUnavailable, EffectiveCloseIndexSetAcked, EffectiveCloseIndexSetGroupDraining,
 }
 
 // Maintenance details are bounded log reasons, not new metric label dimensions.
@@ -3927,6 +3908,11 @@ func editCloseReasons() []ReasonCode {
 	}
 	return reasons
 }
+
+// StrategyScopeCloseReasons are the words the control leader's strategy
+// scope close writes its lines with (StageStrategyScopeClose).
+var StrategyScopeCloseReasons = []ReasonCode{"snapshot_unavailable", "link_unavailable", "publication_unavailable",
+	"member_unreadable", "scope_empty", "target_list_too_large"}
 
 var contractClassReasons = []ReasonCode{
 	ReasonContractDeterministic, ReasonContractRetryable, ReasonContractCoverage,
@@ -4043,7 +4029,7 @@ var allResourceReasons = joinReasons(
 // allLogReasons is every reason NormalizeReason can return: the limiter keeps
 // a bucket for each, and refuses a reason it has none for, so a catalogue
 // NormalizeReason accepts and this list leaves out has its lines dropped.
-var allLogReasons = joinReasons(unclassifiedReasons, []ReasonCode{ReasonTraceExportFailed}, resourceOnlyReasons, activationFailureReasons, ViewStreamReasons, SchedulerDecisionReasons, SlotPathReasons, effectiveMaintenanceReasons, AbsentCloseReasons, EditCloseReasons, CompletionAttributionReasons, AdmissionFailureReasons, NoDataStallReasons, contractClassReasons, []ReasonCode{ReasonHeldBySupplement, ReasonHeldByMaintenance, ReasonSlotCancelled}, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
+var allLogReasons = joinReasons(unclassifiedReasons, []ReasonCode{ReasonTraceExportFailed}, resourceOnlyReasons, activationFailureReasons, ViewStreamReasons, SchedulerDecisionReasons, SlotPathReasons, effectiveMaintenanceReasons, AbsentCloseReasons, EditCloseReasons, StrategyScopeCloseReasons, CompletionAttributionReasons, AdmissionFailureReasons, NoDataStallReasons, contractClassReasons, []ReasonCode{ReasonHeldBySupplement, ReasonHeldByMaintenance, ReasonSlotCancelled}, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
 
 var componentStageSet = makeComponentStageSet(allComponentStages)
 var metricComponentStageSet = makeComponentStageSet(metricComponentStages)
@@ -4059,6 +4045,7 @@ var schedulerDecisionReasonSet = makeReasonSet(SchedulerDecisionReasons)
 var effectiveMaintenanceReasonSet = makeReasonSet(effectiveMaintenanceReasons)
 var absentCloseReasonSet = makeReasonSet(AbsentCloseReasons)
 var editCloseReasonSet = makeReasonSet(EditCloseReasons)
+var strategyScopeCloseReasonSet = makeReasonSet(StrategyScopeCloseReasons)
 var contractObservationReasons, contractObservationReasonSet, contractObservationMetricReasonByCode = loadContractObservationReasons()
 
 func makeComponentStageSet(values []ComponentStage) map[ComponentStage]struct{} {

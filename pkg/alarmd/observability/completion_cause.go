@@ -76,7 +76,7 @@ var admissionFailureReasonSet = makeReasonSet(AdmissionFailureReasons)
 // labelled by a normalized reason has at most this many values of it.
 func NormalizedReasonCount() int {
 	return len(commonReasonSet) + len(resourceReasonSet) + len(contractObservationReasonSet) + len(activationFailureReasonSet) +
-		len(viewStreamReasonSet) + len(schedulerDecisionReasonSet) + len(effectiveMaintenanceReasonSet) + len(absentCloseReasonSet) + len(editCloseReasonSet) +
+		len(viewStreamReasonSet) + len(schedulerDecisionReasonSet) + len(effectiveMaintenanceReasonSet) + len(absentCloseReasonSet) + len(editCloseReasonSet) + len(strategyScopeCloseReasonSet) +
 		len(completionAttributionReasonSet) + len(admissionFailureReasonSet) + len(NoDataStallReasons) + len(contractClassReasons) +
 		len(slotPathReasonSet) + 3 + 3
 }

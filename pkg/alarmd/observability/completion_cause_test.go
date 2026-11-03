@@ -65,7 +65,7 @@ func TestTheCommittedLineNamesTheCauseAndWhereItWasFound(t *testing.T) {
 func TestTheReasonBoundCountsEveryWordNormalizeReasonKeeps(t *testing.T) {
 	kept := map[ReasonCode]bool{ReasonNone: true, ReasonNotReported: true, ReasonOther: true}
 	catalogues := []map[ReasonCode]struct{}{commonReasonSet, resourceReasonSet, activationFailureReasonSet, viewStreamReasonSet,
-		schedulerDecisionReasonSet, effectiveMaintenanceReasonSet, absentCloseReasonSet, editCloseReasonSet, completionAttributionReasonSet}
+		schedulerDecisionReasonSet, effectiveMaintenanceReasonSet, absentCloseReasonSet, editCloseReasonSet, strategyScopeCloseReasonSet, completionAttributionReasonSet}
 	words := []ReasonCode{}
 	for _, catalogue := range catalogues {
 		for word := range catalogue {

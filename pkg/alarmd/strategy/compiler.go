@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -37,9 +38,50 @@ type PlanCompiler struct {
 	cache            *compileCache
 	capabilityDigest string
 	budgetDigest     string
+	keys             compileKeyMemo
+	boundaryLocation *time.Location
 }
 
-func NewCompiler(registry *AlgorithmCompilerRegistry, limits Limits) (*PlanCompiler, error) {
+// CompilerOption sets what a compiler compiles every Plan with beside its
+// budgets.
+type CompilerOption func(*PlanCompiler)
+
+// WithBoundaryLocation lays the aggregation boundaries of every Plan detected
+// more often than it aggregates in location: the time zone the deployment's
+// queries are laid in, where the query service starts an aligned query's
+// buckets. One deployment lays every query in one zone, so the zone is the
+// compiler's and no Plan carries it; without the option it is UTC.
+func WithBoundaryLocation(location *time.Location) CompilerOption {
+	return func(compiler *PlanCompiler) { compiler.boundaryLocation = location }
+}
+
+// BoundaryLocation is the location WithBoundaryLocation set, nil without it.
+func (c *PlanCompiler) BoundaryLocation() *time.Location { return c.boundaryLocation }
+
+// compileKeyMemoEntries bounds how many content keys the compiler remembers
+// a cache key for. A replica freezes the Slots of the Query Groups it owns --
+// on a production deployment some seven hundred groups holding about 730
+// Plans, while the Leader compiles the deployment's 2,900 -- and a
+// publication that changes content brings a second key for each Plan it
+// changes while the first is still being frozen. Twice the Leader's Plans
+// with room over is 8,192 entries at about 350 bytes each, under 3 MB. Past
+// it the memory is cleared whole and refilled; a cleared key only derives
+// its cache key from the Plan again, as a request without a content key does.
+const compileKeyMemoEntries = 8192
+
+// compileKeyMemo is the cache key each content key was found to have, by
+// content key and the state semantics the key was derived under.
+type compileKeyMemo struct {
+	mu   sync.RWMutex
+	keys map[compileKeyMemoKey]string
+}
+
+type compileKeyMemoKey struct {
+	content string
+	state   StateSemantics
+}
+
+func NewCompiler(registry *AlgorithmCompilerRegistry, limits Limits, options ...CompilerOption) (*PlanCompiler, error) {
 	if registry == nil || len(registry.compilers) == 0 {
 		return nil, errors.New("strategy: algorithm registry is empty")
 	}
@@ -72,11 +114,15 @@ func NewCompiler(registry *AlgorithmCompilerRegistry, limits Limits) (*PlanCompi
 	if err != nil {
 		return nil, fmt.Errorf("strategy: derive compiler budget digest: %w", err)
 	}
-	return &PlanCompiler{
+	compiler := &PlanCompiler{
 		registry: registry, limits: limits,
 		cache:            newCompileCache(limits.MaxCacheEntries, limits.MaxCacheBytes, limits.NegativeCacheTTL),
 		capabilityDigest: registry.CapabilityDigest(), budgetDigest: budgetDigest,
-	}, nil
+	}
+	for _, option := range options {
+		option(compiler)
+	}
+	return compiler, nil
 }
 
 func (c *PlanCompiler) Compile(ctx context.Context, request CompileRequest) (CompileResult, error) {
@@ -106,16 +152,25 @@ func (c *PlanCompiler) CacheStats() CacheStats {
 	return c.cache.snapshot()
 }
 
+// ForgetCached drops every compiled result the compiler keeps. The control
+// rounds and a Worker's Slot freezing share the one compiler, so a process
+// that led holds the compiled Plans of every Query Group, of which as a
+// Worker it uses only its own; nothing evicts the rest under a Worker's
+// steady load. A process calls it when its term ends, and refills what its
+// own Slots compile.
+func (c *PlanCompiler) ForgetCached() {
+	if c == nil || c.cache == nil {
+		return
+	}
+	c.cache.clear()
+}
+
 func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileRequest) (CompileResult, error) {
 	if err := ctx.Err(); err != nil {
 		return CompileResult{}, err
 	}
 	if terminal := c.validatePlan(request); terminal != nil {
 		return CompileResult{planTerminal: terminal}, nil
-	}
-	stateHash, err := c.deriveStateCompatibilityHash(request)
-	if err != nil {
-		return CompileResult{}, fmt.Errorf("strategy: derive state compatibility: %w", err)
 	}
 	levelsByID := make(map[uint32]struct{}, len(request.Plan.StrategyIR.Levels))
 	for _, level := range request.Plan.StrategyIR.Levels {
@@ -130,19 +185,43 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 		return CompileResult{}, fmt.Errorf("strategy: derive dataset contract digest: %w", err)
 	}
 	compiled := &CompiledPlan{
+		legacyOutput: contract.FreezeLegacyOutput(request.Plan.LegacyOutput),
+		strategyRef:  request.Plan.StrategyRef,
 		planRef: contract.RuntimePlanRefV1{
 			StrategyID: request.Plan.StrategyRef.StrategyID, StrategyRevision: request.Plan.StrategyRef.Revision,
-			StateCompatibilityHash: stateHash,
 		},
 		projection:          cloneProjection(request.Plan.InputProjection),
 		evaluationSemantics: request.Plan.StrategyIR.ExecutionSemantics,
+		boundaryLocation:    c.boundaryLocation,
 		normalizers:         make(map[string]NumericNormalizerSpec),
 		datasetDigest:       datasetDigest,
+		targetScope:         request.Plan.TargetScope,
+		targetPlan:          request.Plan.TargetPlan,
+		noData:              request.Plan.NoData,
+		globalBusiness:      request.Plan.GlobalBusiness,
+	}
+	compiled.effectiveRules, err = compileEffectiveRules(request.Plan.EffectiveTimeSnapshot, request.Plan.StrategyRef.TenantID)
+	if err != nil {
+		return CompileResult{planTerminal: &Terminal{ReasonCode: err.Error(), FieldPath: "effective_time_snapshot"}}, nil
 	}
 	terminals := make([]Terminal, 0)
+	if request.Plan.OutputIdentity != nil {
+		compiled.outputIdentity = &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, request.Plan.OutputIdentity.DimensionFields...), DynamicDimensions: request.Plan.OutputIdentity.DynamicDimensions}
+	}
+	compiled.wireFormat = request.Plan.WireFormat
+	compiled.signalType = request.Plan.SignalType
+	if request.Plan.SubjectFacts != nil {
+		compiled.subjectFacts = &contract.MonitorSubjectFacts{
+			Labels:        append([]string{}, request.Plan.SubjectFacts.Labels...),
+			ResultTableID: request.Plan.SubjectFacts.ResultTableID,
+		}
+	}
 	var triggerComputeCost uint64
 	for _, rawLevel := range request.Plan.StrategyIR.Levels {
-		level, normalizers, terminal, err := c.compileLevel(ctx, request.Plan.InputProjection, request.Plan.StrategyIR.ExecutionSemantics, rawLevel)
+		level, normalizers, terminal, err := c.compileLevel(
+			ctx, request.Plan.InputProjection, request.DatasetContract.IdentityFields,
+			request.Plan.StrategyIR.ExecutionSemantics, rawLevel,
+		)
 		if err != nil {
 			return CompileResult{}, err
 		}
@@ -160,9 +239,103 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 			compiled.normalizers[normalizer.ref] = normalizer
 		}
 	}
+	if request.Plan.NoData != nil {
+		rawLevel, err := BuildNoDataLevelIR(request.Plan.NoData, request.Plan.StrategyIR.ExecutionSemantics)
+		if err != nil {
+			return CompileResult{}, err
+		}
+		// Its own projection, not the item's: the synthetic series carry one
+		// value that is the absence answer, and a detector pointed at one of the
+		// item's real value fields would declare an input it never receives.
+		level, normalizers, terminal, err := c.compileLevel(
+			ctx, NoDataProjection(request.Plan.NoData), request.DatasetContract.IdentityFields,
+			request.Plan.StrategyIR.ExecutionSemantics, rawLevel,
+		)
+		if err != nil {
+			return CompileResult{}, err
+		}
+		switch {
+		case terminal != nil:
+			// The whole Plan, not the level. A level terminal would leave a Plan
+			// that detects its thresholds and not its absence, with the no_data
+			// section present and no level compiled from it - so "does alarmd
+			// cover strategy X" would have no answer. It is the same half-wired
+			// Plan the config layer refuses, one layer deeper, and it is
+			// reachable: continuous arrives from an open type domain, so a value
+			// that passes validation can still run the trigger window past a
+			// compiler limit.
+			//
+			// The code is this shape's own, not the config layer's. They are
+			// the same setting failing two different checks, but they leave the
+			// strategy in opposite states - one detects its thresholds and the
+			// other detects nothing - and a reader downstream has only the code
+			// to tell them apart. The path keeps the no_data prefix to say
+			// which part of the definition it was.
+			return CompileResult{planTerminal: &Terminal{
+				ReasonCode: contract.ReasonNoDataPlanUncompilable,
+				FieldPath:  "no_data." + terminal.FieldPath,
+				Detail:     terminal.Detail,
+			}}, nil
+		default:
+			levelCost := triggerComputeCostForLevel(level.trigger, level.recovery)
+			if levelCost > c.limits.MaxTriggerComputeCost-triggerComputeCost {
+				return CompileResult{planTerminal: &Terminal{ReasonCode: contract.ReasonPlanBudgetExceeded, FieldPath: "no_data.trigger_compute"}}, nil
+			}
+			triggerComputeCost += levelCost
+			compiled.noDataLevel = &level
+			for _, normalizer := range normalizers {
+				compiled.normalizers[normalizer.ref] = normalizer
+			}
+		}
+	}
 	sort.Slice(compiled.levels, func(left, right int) bool {
 		return compiled.levels[left].definition.LevelID < compiled.levels[right].definition.LevelID
 	})
+	if compiled.noDataLevel != nil && len(request.Plan.StrategyIR.Levels) > 0 {
+		// No-data follows its corresponding source level's uptime, even when
+		// that level's detector was rejected. Missing levels use the first
+		// source trigger, as the legacy strategy-wide uptime fallback does.
+		raw := request.Plan.StrategyIR.Levels[0]
+		for _, candidate := range request.Plan.StrategyIR.Levels {
+			if candidate.Definition.LevelID == compiled.noDataLevel.definition.LevelID {
+				raw = candidate
+				break
+			}
+		}
+		var config triggerPlanConfigV1
+		if err := json.Unmarshal(raw.TriggerPlan.Config, &config); err != nil {
+			return CompileResult{planTerminal: &Terminal{ReasonCode: ReasonEffectiveTimeInvalid, FieldPath: "strategy_ir.levels.trigger_plan",
+				Detail: err.Error()}}, nil
+		}
+		requirement, err := compileEffectiveTimeRequirement(config.Uptime, config.TimezoneRef)
+		if err != nil {
+			return CompileResult{planTerminal: &Terminal{ReasonCode: ReasonEffectiveTimeInvalid, FieldPath: "strategy_ir.levels.trigger_plan.uptime",
+				Detail: err.Error()}}, nil
+		}
+		compiled.noDataLevel.effectiveTime = requirement
+	}
+	if compiled.effectiveRules != nil {
+		levels := append([]CompiledLevel(nil), compiled.levels...)
+		if compiled.noDataLevel != nil {
+			levels = append(levels, *compiled.noDataLevel)
+		}
+		for _, level := range levels {
+			requirement := level.effectiveTime
+			for _, id := range append(requirement.ActiveCalendarIDs(), requirement.InactiveCalendarIDs()...) {
+				if _, exists := compiled.effectiveRules.calendars[id]; !exists {
+					return CompileResult{planTerminal: &Terminal{ReasonCode: ReasonEffectiveTimeCalendarMissing, FieldPath: "effective_time_snapshot.calendars"}}, nil
+				}
+			}
+		}
+	}
+	if terminal := c.checkRetainedPointsFit(compiled); terminal != nil {
+		return CompileResult{planTerminal: terminal}, nil
+	}
+	stateHash, err := c.deriveStateCompatibilityHash(request, compiled.levels)
+	if err != nil {
+		return CompileResult{}, fmt.Errorf("strategy: derive state compatibility: %w", err)
+	}
+	compiled.planRef.StateCompatibilityHash = stateHash
 	if err := compilePlanFingerprints(compiled); err != nil {
 		return CompileResult{}, err
 	}
@@ -178,8 +351,31 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 
 func (c *PlanCompiler) validatePlan(request CompileRequest) *Terminal {
 	plan := request.Plan
+	if err := plan.LegacyOutput.Validate(); err != nil {
+		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "legacy_output", Detail: err.Error()}
+	}
+	// The conversion context belongs to the Plans that publish that protocol
+	// and to no others: carrying it elsewhere means a Plan that could be
+	// converted two ways. This read the frozen revision until a deployment
+	// could force the choice, which made a forced compatibility choice reject
+	// every strategy that had one.
+	if plan.LegacyOutput != nil && !plan.PublishesCompatibleProtocol() {
+		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "legacy_output"}
+	}
+	if plan.OutputIdentity != nil && (plan.OutputIdentity.DimensionFields == nil || plan.OutputIdentity.DynamicDimensions != request.DatasetContract.DynamicDimensions) {
+		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "output_identity.dimension_fields"}
+	}
+	// A target has one frozen form. A Plan carrying both would be filtered
+	// by whichever the worker happened to read first, and a target plan that
+	// does not validate is a compiler defect this side must not run.
+	if plan.TargetScope != nil && plan.TargetPlan != nil {
+		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "target_plan"}
+	}
+	if err := plan.TargetPlan.Validate(); err != nil {
+		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "target_plan"}
+	}
 	strategy := plan.StrategyIR
-	if plan.PlanID == "" || plan.PlanID != plan.StrategyRef.StrategyID || plan.StrategyRef != strategy.StrategyRef ||
+	if plan.PlanID == "" || plan.PlanID != plan.StrategyRef.StrategyID || plan.StrategyRef != strategy.StrategyRef || plan.StrategyRef.SnapshotRevision < 0 ||
 		plan.InputProjection.BusinessIdentityField == "" || !equalProjection(plan.InputProjection, strategy.InputProjection) ||
 		strategy.Schema.Name != contract.StrategyIRSchemaV2 || strategy.Schema.Major != 2 || strategy.Schema.Minor < 0 ||
 		len(strategy.Levels) == 0 {
@@ -202,17 +398,59 @@ func (c *PlanCompiler) validatePlan(request CompileRequest) *Terminal {
 	projection := plan.InputProjection
 	if projection.MissingValuePolicy != contract.MissingValuePolicyRequired || projection.MultiValueAlignment != "SINGLE_VALUE" ||
 		len(projection.ValueFields) == 0 || !sortedUnique(projection.ValueFields, false) || !sortedUnique(projection.DimensionFields, true) ||
-		projection.BusinessIdentityField != "bk_biz_id" || !equalStrings(projection.DimensionFields, request.DatasetContract.IdentityFields) {
+		projection.DynamicDimensions != request.DatasetContract.DynamicDimensions ||
+		projection.BusinessIdentityField != "bk_biz_id" || !sortedUnique(request.DatasetContract.IdentityFields, false) {
 		return &Terminal{ReasonCode: contract.ReasonProjectionInvalid, FieldPath: "input_projection"}
 	}
 	return nil
 }
 
-func (c *PlanCompiler) deriveStateCompatibilityHash(request CompileRequest) (string, error) {
+// deriveStateCompatibilityHash closes the state generation over everything a
+// persisted Runtime State is later checked against. The Level contract a
+// Worker validates loaded state with (execution.DeriveRuntimeLevelContractRefs)
+// is built from the detect and trigger fingerprints and the state requirement
+// of each Level, so each of them is an input here: a Plan whose generation
+// stayed while one of them moved would be activated without WARMING under the
+// same generation, its loaded state would then fail that check, and the Query
+// Group would stop evaluating with nothing but an evaluation failure to show
+// for it. A trigger window, a recovery window and a level connector are
+// ordinary edits, and each of them moves one of those inputs.
+//
+// Changing what this hash closes over changes every Plan's state generation
+// at once: at the rollout of such a change every Plan is forced through
+// WARMING once and every event id changes namespace once. That is the price
+// of every edit to this function, not only of the one that added the Level
+// contract inputs.
+func (c *PlanCompiler) deriveStateCompatibilityHash(request CompileRequest, levels []CompiledLevel) (string, error) {
 	semantics := request.StateSemantics
+	levelClosure := make([]struct {
+		LevelID            uint32                      `json:"level_id"`
+		Algorithms         []compiledAlgorithmSemantic `json:"algorithms"`
+		DetectFingerprint  string                      `json:"detect_fingerprint"`
+		TriggerFingerprint string                      `json:"trigger_fingerprint"`
+		StateRequirement   StateRequirement            `json:"state_requirement"`
+	}, len(levels))
+	for levelIndex, level := range levels {
+		levelClosure[levelIndex].LevelID = level.definition.LevelID
+		levelClosure[levelIndex].Algorithms = make([]compiledAlgorithmSemantic, len(level.algorithms))
+		for algorithmIndex, algorithm := range level.algorithms {
+			levelClosure[levelIndex].Algorithms[algorithmIndex] = algorithm.semantic()
+		}
+		levelClosure[levelIndex].DetectFingerprint = level.fingerprints.Detect
+		levelClosure[levelIndex].TriggerFingerprint = level.fingerprints.Trigger
+		levelClosure[levelIndex].StateRequirement = level.stateRequirement.StateIdentityView()
+	}
+	identityAndAlgorithmDigest, err := contract.DeriveCanonicalDigestV2("strategy-state-input-closure-v2", struct {
+		IdentitySchemaDigest  string   `json:"identity_schema_digest"`
+		DatasetIdentityFields []string `json:"dataset_identity_fields"`
+		LevelClosure          any      `json:"level_closure"`
+	}{semantics.IdentitySchemaDigest, request.DatasetContract.IdentityFields, levelClosure})
+	if err != nil {
+		return "", err
+	}
 	return contract.DeriveStateCompatibilityHashV1(contract.StateCompatibilityInputV1{
 		StateSchemaVersion: semantics.StateSchemaVersion, CodecSemanticsVersion: semantics.CodecSemanticsVersion,
-		IdentitySchemaDigest:        semantics.IdentitySchemaDigest,
+		IdentitySchemaDigest:        identityAndAlgorithmDigest,
 		EvaluationScope:             request.Plan.StrategyIR.ExecutionSemantics.EvaluationScope,
 		AggregationInterval:         request.Plan.StrategyIR.ExecutionSemantics.AggregationInterval,
 		EvaluationInterval:          request.Plan.StrategyIR.ExecutionSemantics.EvaluationInterval,
@@ -224,12 +462,17 @@ func (c *PlanCompiler) deriveStateCompatibilityHash(request CompileRequest) (str
 func (c *PlanCompiler) compileLevel(
 	ctx context.Context,
 	projection contract.InputProjectionV2,
+	identityFields []string,
 	execution contract.ExecutionSemanticsV2,
 	raw contract.LevelIRV2,
 ) (CompiledLevel, []NumericNormalizerSpec, *Terminal, error) {
 	levelID := raw.Definition.LevelID
 	terminal := func(reason, field string) (CompiledLevel, []NumericNormalizerSpec, *Terminal, error) {
 		return CompiledLevel{}, nil, &Terminal{LevelID: levelID, ReasonCode: reason, FieldPath: field}, nil
+	}
+	// A refusal decided by an error carries what the error said.
+	refused := func(reason, field string, err error) (CompiledLevel, []NumericNormalizerSpec, *Terminal, error) {
+		return CompiledLevel{}, nil, &Terminal{LevelID: levelID, ReasonCode: reason, FieldPath: field, Detail: err.Error()}, nil
 	}
 	if levelID == 0 || raw.Definition.Priority == 0 || (raw.Connector != contract.LevelConnectorAND && raw.Connector != contract.LevelConnectorOR) ||
 		len(raw.DetectPlan.Algorithms) == 0 {
@@ -240,8 +483,9 @@ func (c *PlanCompiler) compileLevel(
 	}
 	detectors := make([]DetectorSpec, 0, len(raw.DetectPlan.Algorithms))
 	normalizers := make([]NumericNormalizerSpec, 0, len(raw.DetectPlan.Algorithms))
+	algorithms := make([]CompiledAlgorithmPlan, 0, len(raw.DetectPlan.Algorithms))
 	astNodes := 1
-	for _, algorithm := range raw.DetectPlan.Algorithms {
+	for position, algorithm := range raw.DetectPlan.Algorithms {
 		registration, ok := c.registry.lookup(algorithm.Type, algorithm.Version)
 		if !ok {
 			return terminal(contract.ReasonAlgorithmUnsupported, "level.detect_plan.algorithms")
@@ -250,13 +494,14 @@ func (c *PlanCompiler) compileLevel(
 			return terminal(contract.ReasonAlgorithmUnsupported, "level.detect_plan.algorithms")
 		}
 		compiled, err := registration.compiler.Compile(ctx, AlgorithmCompileContext{
-			Projection: projection, ExecutionSemantics: execution, Limits: c.limits,
+			Projection: projection, IdentityFields: append([]string(nil), identityFields...),
+			ExecutionSemantics: execution, Limits: c.limits,
 		}, algorithm)
 		if errors.Is(err, errAlgorithmBudget) {
 			return terminal(contract.ReasonLevelBudgetExceeded, "level.detect_plan.algorithms")
 		}
 		if errors.Is(err, errAlgorithmConfig) {
-			return terminal(contract.ReasonLevelInvalid, "level.detect_plan.algorithms")
+			return refused(contract.ReasonLevelInvalid, "level.detect_plan.algorithms", err)
 		}
 		if err != nil {
 			return CompiledLevel{}, nil, nil, fmt.Errorf("strategy: compile %s@%d: %w", algorithm.Type, algorithm.Version, err)
@@ -264,20 +509,34 @@ func (c *PlanCompiler) compileLevel(
 		if err := validateAlgorithmCompileResult(algorithm, registration.capability, projection, &compiled); err != nil {
 			return CompiledLevel{}, nil, nil, err
 		}
+		for _, requirement := range compiled.InputRequirements {
+			if requirement.ConsumerLevelID != levelID {
+				return terminal(contract.ReasonLevelInvalid, "level.detect_plan.algorithms.requirements")
+			}
+		}
 		astNodes += compiled.ASTNodes
 		if astNodes > c.limits.MaxASTNodesPerLevel {
 			return terminal(contract.ReasonLevelBudgetExceeded, "level.detect_plan")
 		}
-		detectors = append(detectors, compiled.Detector)
-		normalizers = append(normalizers, compiled.Normalizer)
+		algorithmPlan, err := buildCompiledAlgorithmPlan(
+			levelID, position, algorithm, registration.capability, registration.capabilityDigest, compiled,
+		)
+		if err != nil {
+			return CompiledLevel{}, nil, nil, fmt.Errorf("strategy: freeze %s@%d: %w", algorithm.Type, algorithm.Version, err)
+		}
+		algorithms = append(algorithms, algorithmPlan)
+		if compiled.Detector.kind != "" {
+			detectors = append(detectors, compiled.Detector)
+			normalizers = append(normalizers, compiled.Normalizer)
+		}
 	}
 	trigger, effectiveTime, canonicalTrigger, err := compileTriggerPlan(raw.TriggerPlan, execution)
 	if err != nil {
-		return terminal(contract.ReasonLevelInvalid, "level.trigger_plan")
+		return refused(contract.ReasonLevelInvalid, "level.trigger_plan", err)
 	}
 	recovery, canonicalRecovery, err := compileRecoveryPlan(raw.RecoveryPlan)
 	if err != nil {
-		return terminal(contract.ReasonLevelInvalid, "level.recovery_plan")
+		return refused(contract.ReasonLevelInvalid, "level.recovery_plan", err)
 	}
 	if trigger.WindowSize > c.limits.MaxTriggerWindowSize {
 		return terminal(contract.ReasonLevelBudgetExceeded, "level.trigger_plan")
@@ -299,14 +558,22 @@ func (c *PlanCompiler) compileLevel(
 	if requiredPoints > c.limits.MaxRequiredHistoryPoints {
 		return terminal(contract.ReasonLevelBudgetExceeded, "level.state_requirement")
 	}
-	level := CompiledLevel{
-		definition: raw.Definition, connector: raw.Connector, detectors: detectors, trigger: trigger, recovery: recovery,
-		effectiveTime:    effectiveTime,
-		stateRequirement: StateRequirement{RequiredDetectHistoryPoints: requiredPoints, RetentionPoints: requiredPoints},
+	retentionPoints := requiredPoints + retentionSlack(requiredPoints, trigger, recovery, execution.EvaluationInterval)
+	if retentionPoints < requiredPoints {
+		return terminal(contract.ReasonLevelBudgetExceeded, "level.state_requirement")
 	}
-	level.resourceEstimate.Algorithms = len(detectors)
+	level := CompiledLevel{
+		definition: raw.Definition, connector: raw.Connector, algorithms: algorithms,
+		detectors: detectors, trigger: trigger, recovery: recovery,
+		effectiveTime:    effectiveTime,
+		stateRequirement: StateRequirement{RequiredDetectHistoryPoints: requiredPoints, RetentionPoints: retentionPoints},
+	}
+	level.resourceEstimate.Algorithms = len(algorithms)
 	level.resourceEstimate.ASTNodes = astNodes
-	level.resourceEstimate.StatePointsPerSeries = uint64(requiredPoints)
+	// The pool pays for what is retained, not for what the window requires.
+	// Since the slack those are different numbers, and the smaller one would
+	// under-count every Level the slack applies to.
+	level.resourceEstimate.StatePointsPerSeries = uint64(retentionPoints)
 	level.resourceEstimate.FixedComputeCost = 1
 	for _, algorithm := range raw.DetectPlan.Algorithms {
 		registration, _ := c.registry.lookup(algorithm.Type, algorithm.Version)
@@ -318,13 +585,13 @@ func (c *PlanCompiler) compileLevel(
 	if err != nil {
 		return CompiledLevel{}, nil, nil, fmt.Errorf("strategy: derive projection digest: %w", err)
 	}
-	semantics := make([]detectorSemantic, len(detectors))
-	for index := range detectors {
-		semantics[index] = detectors[index].semantic(normalizers[index])
+	semantics := make([]compiledAlgorithmSemantic, len(algorithms))
+	for index := range algorithms {
+		semantics[index] = algorithms[index].semantic()
 	}
-	detectorDigest, err := contract.DeriveCanonicalDigestV2("level-detector-semantics-v1", struct {
-		Connector string             `json:"connector"`
-		Detectors []detectorSemantic `json:"detectors"`
+	detectorDigest, err := contract.DeriveCanonicalDigestV2("level-algorithm-semantics-v1", struct {
+		Connector  string                      `json:"connector"`
+		Algorithms []compiledAlgorithmSemantic `json:"algorithms"`
 	}{raw.Connector, semantics})
 	if err != nil {
 		return CompiledLevel{}, nil, nil, fmt.Errorf("strategy: derive detector digest: %w", err)
@@ -340,6 +607,83 @@ func (c *PlanCompiler) compileLevel(
 		return CompiledLevel{}, nil, nil, fmt.Errorf("strategy: derive Level trigger fingerprint: %w", err)
 	}
 	return level, normalizers, nil, nil
+}
+
+// RecoveryHoleToleranceSeconds is the longest run of missing positions the
+// recovery walk is built to step over: one rollout bounce, which is what
+// punches the holes it exists for.
+//
+// A duration and not a count of points, because a bounce is a length of time
+// and the same bounce is a different number of points at every evaluation
+// interval. It is the one constant in the derivation below, and it is a
+// program constant rather than configuration: an operator knows the release
+// cadence, not how a walk spends its retained window.
+const RecoveryHoleToleranceSeconds = 600
+
+// retentionSlack is how many positions a Level retains beyond the ones its
+// window requires, so the recovery walk can step over a hole and still reach
+// the run of answered windows it needs.
+//
+// Why any is needed: the walk reaches back over WindowSize+ConsecutiveWindows-1
+// offsets, but only the newest ConsecutiveWindows of them lie wholly inside a
+// window retained at exactly the required size - the rest run off the end and
+// read as holes. The usable margin is therefore RequiredAnomalies-1, while a
+// run of H holes puts WindowSize+H-2*RequiredAnomalies+1 windows out of reach.
+// At the common RequiredAnomalies of one the margin is zero: a single hole
+// anywhere leaves the recovery unreachable until it ages out of the window,
+// which for a day-long window is a day. Retaining the difference is what makes
+// the rule reachable at all rather than a rule that reads well and never fires.
+//
+// Why it is gated twice: the slack is paid per series in retained memory, and
+// two different Levels get nothing for the money, at opposite ends.
+//
+// A Level whose whole window is shorter than the tolerance is the first. The
+// hole ages out of such a window within the tolerance on its own, so the wait
+// the slack removes is shorter than the wait it is built to remove - the
+// benefit is below a delay already accepted. Charging every Level cost 22% of
+// the fleet's retained bytes to shorten nine-minute waits.
+//
+// A Level whose slack would come to more than its own window is the second.
+// The wait removed is requiredPoints long and the memory costs slack points,
+// so once slack reaches requiredPoints the cheaper trade is to let the hole
+// age out. This is the case the first gate cannot see: the slack's leading
+// term is the trigger window, and requiredPoints is that window plus the
+// recovery run, so two Levels with the same requiredPoints cost differently
+// depending on which term dominates. A Level at window 1469 and one anomaly
+// retains 2947 points against 1469 - double - while a Level of the same
+// required size built from a short window and a long recovery run retains
+// 1508.
+//
+// Neither gate subsumes the other and neither adds a constant. A Level at
+// window 3, threshold 3, recovery run 8 on a one minute interval spans exactly
+// the tolerance and is refused by the first while the second would admit it;
+// the window 1469 Level is refused by the second while the first admits it.
+func retentionSlack(requiredPoints uint32, trigger TriggerPlan, recovery RecoveryPlan, intervalSeconds uint32) uint32 {
+	if !recovery.Enabled || intervalSeconds == 0 || trigger.RequiredAnomalies == 0 {
+		return 0
+	}
+	// The wait this buys out: how long the hole takes to leave the window on
+	// its own. Compared in seconds so it does not depend on how the interval
+	// divides the tolerance.
+	if uint64(requiredPoints)*uint64(intervalSeconds) <= RecoveryHoleToleranceSeconds {
+		return 0
+	}
+	tolerancePoints := (RecoveryHoleToleranceSeconds + uint64(intervalSeconds) - 1) / uint64(intervalSeconds)
+	// WindowSize + tolerancePoints - 3*RequiredAnomalies + 2, in a width that
+	// cannot wrap while the subtraction is taken.
+	slack := int64(trigger.WindowSize) + int64(tolerancePoints) + 2 - 3*int64(trigger.RequiredAnomalies)
+	if slack < 1 {
+		// A Level whose threshold is high enough to absorb the holes on its
+		// own still retains one spare position: the arithmetic says it needs
+		// none, and one keeps "retains more than it requires" true for every
+		// Level both gates admit, so a count of those Levels is a count of the
+		// Levels the rule reaches rather than an arithmetic artefact.
+		slack = 1
+	}
+	if slack >= int64(requiredPoints) {
+		return 0
+	}
+	return uint32(slack)
 }
 
 func triggerComputeCostForLevel(trigger TriggerPlan, recovery RecoveryPlan) uint64 {
@@ -359,11 +703,25 @@ func validateAlgorithmCompileResult(
 	if result == nil {
 		return fmt.Errorf("strategy: invalid compiler output for %s@%d", raw.Type, raw.Version)
 	}
-	if capability.Kind != raw.Type || capability.Version != raw.Version || result.Detector.kind != raw.Type || result.Detector.version != raw.Version ||
-		result.Detector.valueRef == "" || !contains(projection.ValueFields, result.Detector.valueRef) ||
-		result.Detector.normalizerRef == "" || result.Detector.normalizerRef != result.Normalizer.ref || len(result.Normalizer.ref) != 64 ||
-		result.Normalizer.sourceMultiplier <= 0 || result.Normalizer.decimalPlaces != 6 || result.Normalizer.rounding != "HALF_EVEN" ||
-		result.ASTNodes <= 0 {
+	if capability.Kind != raw.Type || capability.Version != raw.Version || result.CompilerVersion == "" || result.ProofVersion == "" ||
+		result.ASTNodes <= 0 || result.InputProjection.validate() != nil ||
+		!equalStrings(result.InputProjection.ValueFields, projection.ValueFields) ||
+		!equalStrings(result.InputProjection.DimensionFields, projection.DimensionFields) ||
+		(result.Detector.kind == "" && !compiledConfigMatchesKind(result.Config, raw.Type)) {
+		return fmt.Errorf("strategy: invalid compiler output for %s@%d", raw.Type, raw.Version)
+	}
+	for _, requirement := range result.InputRequirements {
+		if err := requirement.validate(); err != nil {
+			return fmt.Errorf("strategy: invalid compiler output for %s@%d", raw.Type, raw.Version)
+		}
+	}
+	if result.Detector.kind == "" {
+		return nil
+	}
+	if result.Detector.kind != raw.Type || result.Detector.version != raw.Version || result.Detector.valueRef == "" ||
+		!contains(projection.ValueFields, result.Detector.valueRef) || result.Detector.normalizerRef == "" ||
+		result.Detector.normalizerRef != result.Normalizer.ref || len(result.Normalizer.ref) != 64 ||
+		result.Normalizer.sourceMultiplier <= 0 || result.Normalizer.decimalPlaces != 6 || result.Normalizer.rounding != "HALF_EVEN" {
 		return fmt.Errorf("strategy: invalid compiler output for %s@%d", raw.Type, raw.Version)
 	}
 	nodes, err := result.Detector.predicate.root.validate()
@@ -375,8 +733,7 @@ func validateAlgorithmCompileResult(
 	sort.Strings(reasons)
 	canonicalReasons := reasons[:0]
 	for _, reason := range reasons {
-		if !contract.ReasonAllowedForV2(reason, contract.ReasonDomainReceipt) ||
-			!contract.ReasonAllowedForV2(reason, contract.ReasonDomainObservation) {
+		if !contract.LevelUnavailableReasonV2(reason) {
 			return fmt.Errorf("strategy: invalid compiler output for %s@%d", raw.Type, raw.Version)
 		}
 		if len(canonicalReasons) == 0 || canonicalReasons[len(canonicalReasons)-1] != reason {
@@ -385,6 +742,36 @@ func validateAlgorithmCompileResult(
 	}
 	result.Detector.declaredExecutorErrors = canonicalReasons
 	return nil
+}
+
+func compiledConfigMatchesKind(config compiledAlgorithmConfig, kind string) bool {
+	count := 0
+	for _, configured := range []bool{
+		config.Threshold != nil, config.SimpleRingRatio != nil, config.OsRestart != nil,
+		config.ProcPort != nil, config.TraditionalComparison != nil,
+	} {
+		if configured {
+			count++
+		}
+	}
+	if count != 1 {
+		return false
+	}
+	if IsTraditionalComparison(kind) {
+		return config.TraditionalComparison != nil
+	}
+	switch kind {
+	case DetectorKindThreshold:
+		return config.Threshold != nil
+	case DetectorKindSimpleRingRatio:
+		return config.SimpleRingRatio != nil
+	case DetectorKindOsRestart:
+		return config.OsRestart != nil
+	case DetectorKindProcPort:
+		return config.ProcPort != nil
+	default:
+		return false
+	}
 }
 
 func compileTriggerPlan(
@@ -420,18 +807,28 @@ func compileRecoveryPlan(raw contract.TypedPlanV1) (RecoveryPlan, contract.Typed
 	if err := decodeStrict(raw.Config, &config); err != nil {
 		return RecoveryPlan{}, contract.TypedPlanV1{}, err
 	}
-	if config.Enabled == nil || (*config.Enabled && config.ConsecutiveWindows == 0) {
+	if config.Enabled == nil || (*config.Enabled && config.ConsecutiveWindows == 0) ||
+		config.End != "" && config.End != contract.RecoveryEndClose ||
+		config.MissingData != "" && config.MissingData != contract.RecoveryMissingDataEvaluateAsZero {
 		return RecoveryPlan{}, contract.TypedPlanV1{}, errors.New("invalid recovery plan")
 	}
 	if !*config.Enabled {
-		config.ConsecutiveWindows = 0
+		config.ConsecutiveWindows, config.End, config.MissingData = 0, "", ""
 	}
-	normalized := struct {
+	// The canonical plan is what the Level's trigger fingerprint hashes, and
+	// through it the Level's state compatibility: the recovery's windows,
+	// which decide how much history the Level keeps and reads. How the alert
+	// ends (End) and whether no data ends it (MissingData) change no history,
+	// so they stay out of it: an owner switching recovery to close, or adding
+	// -nodata, keeps the Level's state instead of warming it up again, and a
+	// Plan written to recover hashes the bytes it always has.
+	windows := struct {
 		Enabled            bool   `json:"enabled"`
 		ConsecutiveWindows uint32 `json:"consecutive_windows"`
 	}{Enabled: *config.Enabled, ConsecutiveWindows: config.ConsecutiveWindows}
-	canonical, err := canonicalTypedPlan(raw.Type, raw.Version, normalized)
-	return RecoveryPlan(normalized), canonical, err
+	canonical, err := canonicalTypedPlan(raw.Type, raw.Version, windows)
+	return RecoveryPlan{Enabled: windows.Enabled, ConsecutiveWindows: windows.ConsecutiveWindows, End: config.End,
+		MissingData: config.MissingData}, canonical, err
 }
 
 func canonicalTypedPlan(kind string, version uint32, config any) (contract.TypedPlanV1, error) {
@@ -468,7 +865,40 @@ func compilePlanFingerprints(plan *CompiledPlan) error {
 	return nil
 }
 
+// compileCacheKey is the cache key of the request: remembered by its content
+// key when it has one, derived from the Plan otherwise. What is remembered is
+// the key deriving it gives, so the cache holds and shares entries exactly as
+// it did before; only the derivation, the whole Plan's canonical encoding and
+// its digest, is skipped for a content key already seen. That was 3.4% of a
+// replica's CPU, all of it on Slots whose Plan had not changed.
 func (c *PlanCompiler) compileCacheKey(request CompileRequest) (string, error) {
+	if request.ContentKey == "" {
+		return c.deriveCompileCacheKey(request)
+	}
+	memoKey := compileKeyMemoKey{content: request.ContentKey, state: request.StateSemantics}
+	c.keys.mu.RLock()
+	key, ok := c.keys.keys[memoKey]
+	c.keys.mu.RUnlock()
+	if ok {
+		return key, nil
+	}
+	key, err := c.deriveCompileCacheKey(request)
+	if err != nil {
+		return "", err
+	}
+	c.keys.mu.Lock()
+	if c.keys.keys == nil || len(c.keys.keys) >= compileKeyMemoEntries {
+		c.keys.keys = make(map[compileKeyMemoKey]string)
+	}
+	c.keys.keys[memoKey] = key
+	c.keys.mu.Unlock()
+	return key, nil
+}
+
+// deriveCompileCacheKey derives the cache key from everything the compiler
+// reads: the Plan, the dataset contract, the state semantics, and the
+// compiler's own algorithms and budgets.
+func (c *PlanCompiler) deriveCompileCacheKey(request CompileRequest) (string, error) {
 	planDigest, err := contract.DeriveCanonicalDigestV2("strategy-plan-semantic-v1", request.Plan)
 	if err != nil {
 		return "", err
@@ -507,6 +937,7 @@ func deriveDatasetContractDigest(dataset contract.DatasetContractV2) (string, er
 type compiledLevelWire struct {
 	Definition       contract.LevelDefinitionV2   `json:"definition"`
 	Connector        string                       `json:"connector"`
+	Algorithms       []compiledAlgorithmSemantic  `json:"algorithms"`
 	Detectors        []detectorSemantic           `json:"detectors"`
 	Trigger          TriggerPlan                  `json:"trigger"`
 	Recovery         RecoveryPlan                 `json:"recovery"`
@@ -529,9 +960,13 @@ func compileResourceEstimate(plan *CompiledPlan) error {
 			detectors[detectorIndex] = detector.semantic(normalizer)
 		}
 		wire := compiledLevelWire{
-			Definition: level.definition, Connector: level.connector, Detectors: detectors,
-			Trigger: level.trigger, Recovery: level.recovery, EffectiveTime: level.effectiveTime.wire(),
+			Definition: level.definition, Connector: level.connector, Algorithms: make([]compiledAlgorithmSemantic, len(level.algorithms)),
+			Detectors: detectors,
+			Trigger:   level.trigger, Recovery: level.recovery, EffectiveTime: level.effectiveTime.wire(),
 			StateRequirement: level.stateRequirement, Fingerprints: level.fingerprints,
+		}
+		for algorithmIndex, algorithm := range level.algorithms {
+			wire.Algorithms[algorithmIndex] = algorithm.semantic()
 		}
 		encoded, err := contract.CanonicalJSONV2(wire)
 		if err != nil {
@@ -557,6 +992,12 @@ func compileResourceEstimate(plan *CompiledPlan) error {
 		return fmt.Errorf("strategy: estimate compiled Plan bytes: %w", err)
 	}
 	aggregate.CompiledBytes = len(encoded)
+	if plan.effectiveRules != nil {
+		aggregate.CompiledBytes += plan.effectiveRules.bytes
+	}
+	if plan.legacyOutput != nil {
+		aggregate.CompiledBytes += plan.legacyOutput.SizeBytes()
+	}
 	plan.resourceEstimate = aggregate
 	return nil
 }
@@ -599,7 +1040,7 @@ func cloneProjection(projection contract.InputProjectionV2) contract.InputProjec
 func equalProjection(left, right contract.InputProjectionV2) bool {
 	return left.BusinessIdentityField == right.BusinessIdentityField && left.MultiValueAlignment == right.MultiValueAlignment &&
 		left.DataUnit == right.DataUnit && left.MissingValuePolicy == right.MissingValuePolicy &&
-		equalStrings(left.ValueFields, right.ValueFields) && equalStrings(left.DimensionFields, right.DimensionFields)
+		left.DynamicDimensions == right.DynamicDimensions && equalStrings(left.ValueFields, right.ValueFields) && equalStrings(left.DimensionFields, right.DimensionFields)
 }
 
 func equalStrings(left, right []string) bool {
@@ -632,4 +1073,40 @@ func contains(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+// checkRetainedPointsFit refuses a Plan whose retained window cannot be stored
+// in the representation the store actually writes.
+//
+// The ceiling depends on the Level count, so it cannot be decided while
+// compiling one Level: every Level's facts are recorded on every point of one
+// shared record, so a window that fits alone may not fit beside a second Level.
+//
+// Refused here rather than discovered at write time. Nothing above this stops
+// it: MaxRequiredHistoryPoints is 4096 and the representation runs out at about
+// 2100 for one Level, so a Plan configured between the two compiles cleanly,
+// activates, evaluates - and has every state write refused as budget exceeded,
+// per series, with no alert and nothing in the strategy to suggest why. A
+// deterministic refusal at compile time is the same verdict delivered where
+// someone can act on it.
+func (c *PlanCompiler) checkRetainedPointsFit(compiled *CompiledPlan) *Terminal {
+	levels := compiled.levels
+	if compiled.noDataLevel != nil {
+		levels = append(append([]CompiledLevel(nil), levels...), *compiled.noDataLevel)
+	}
+	if len(levels) == 0 || len(levels) >= len(c.limits.MaxRetainedPointsByLevels) {
+		return nil
+	}
+	ceiling := c.limits.MaxRetainedPointsByLevels[len(levels)]
+	if ceiling == 0 {
+		return nil
+	}
+	for _, level := range levels {
+		if level.stateRequirement.RetentionPoints > ceiling {
+			// The window is what an operator set, so the path names it rather
+			// than the storage arithmetic that decided it does not fit.
+			return &Terminal{ReasonCode: contract.ReasonPlanBudgetExceeded, FieldPath: "level.state_requirement"}
+		}
+	}
+	return nil
 }

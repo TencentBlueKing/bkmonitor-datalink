@@ -1,0 +1,151 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package worker
+
+import (
+	"context"
+	"errors"
+	"sort"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
+)
+
+type alwaysEffectiveTimeTarget struct {
+	consumer execution.ConsumerRef
+	series   execution.SeriesIdentityDigest
+}
+
+// PrepareEffectiveTimeFacts runs once per Plan/Slot, before binding real series,
+// judging every Level's effective time at the wall clock at (Unix seconds):
+// the decision's, not the Slot's evaluation time (InternalExecutionHeader.DecisionTime).
+// legacy is consulted only by Plans without a complete frozen snapshot.
+func PrepareEffectiveTimeFacts(ctx context.Context, header execution.InternalExecutionHeader, legacy strategy.EffectiveTimeProvider, at int64) (map[execution.ConsumerRef]strategy.EffectiveTimeFact, error) {
+	facts := make(map[execution.ConsumerRef]strategy.EffectiveTimeFact)
+	for _, due := range header.DuePlans {
+		if due.CompiledPlan == nil {
+			return nil, errors.New("alarmd worker: EffectiveTime target references an unknown Plan")
+		}
+		byRequirement := make(map[string]strategy.EffectiveTimeFact)
+		for _, level := range levelsNeedingEffectiveTime(due) {
+			requirement := level.EffectiveTimeRequirement()
+			fact, ok := byRequirement[requirement.Digest()]
+			if !ok {
+				var err error
+				fact, err = due.CompiledPlan.ResolveEffectiveTimeRequirement(ctx, strategy.EffectiveTimeRequest{TenantID: due.Identity.TenantID, BusinessID: due.Identity.BusinessID, EvaluationTime: at, Requirement: requirement}, legacy)
+				if err != nil {
+					return nil, err
+				}
+				byRequirement[requirement.Digest()] = fact
+			}
+			facts[execution.ConsumerRef{Plan: due.Identity, LevelID: level.Definition().LevelID, HasLevel: true}] = fact
+		}
+	}
+	return facts, nil
+}
+
+// effectiveFactsHoldAt says every prepared fact is valid at at: judged for an
+// interval that contains it. A fact whose interval at has left - its window
+// boundary crossed between preparing and deciding - has to be judged again.
+func effectiveFactsHoldAt(prepared map[execution.ConsumerRef]strategy.EffectiveTimeFact, at int64) bool {
+	for _, fact := range prepared {
+		if fact.ValidFrom() > at || fact.ValidUntil() <= at {
+			return false
+		}
+	}
+	return true
+}
+
+// bindAlwaysEffectiveTimeFacts binds the facts prepared once per Slot only
+// after Access has supplied real series identities. The returned header is
+// scoped to one EvaluationRequest; the static header remains series-agnostic.
+// levelsNeedingEffectiveTime is every level a Plan could be judged on in one
+// Slot: the declared ones, plus the no-data level when it has one.
+func levelsNeedingEffectiveTime(due execution.DuePlan) []strategy.CompiledLevel {
+	levels := due.CompiledPlan.Levels().Copy()
+	if noData := due.CompiledPlan.NoDataLevel(); noData != nil {
+		levels = append(levels, *noData)
+	}
+	return levels
+}
+
+func bindAlwaysEffectiveTimeFacts(
+	header execution.InternalExecutionHeader,
+	stateItems []execution.StatePreflightItem,
+	prepared map[execution.ConsumerRef]strategy.EffectiveTimeFact,
+	kind execution.SeriesKind,
+) (execution.InternalExecutionHeader, error) {
+	// Scanned rather than indexed: this binds one series at a time, so a map of
+	// every due Plan would be built and thrown away once per series, while the
+	// due Plans of one Query Group are few and already in hand.
+	findDuePlan := func(identity execution.PlanIdentity) (execution.DuePlan, bool) {
+		for _, due := range header.DuePlans {
+			if due.Identity == identity {
+				return due, true
+			}
+		}
+		return execution.DuePlan{}, false
+	}
+	targets := make([]alwaysEffectiveTimeTarget, 0)
+	seen := make(map[alwaysEffectiveTimeTarget]struct{})
+	for _, item := range stateItems {
+		due, ok := findDuePlan(item.Identity.Plan)
+		if !ok || due.CompiledPlan == nil {
+			return execution.InternalExecutionHeader{}, errors.New("alarmd worker: EffectiveTime target references an unknown Plan")
+		}
+		// The Plan as this kind of series sees it. Binding the declared levels
+		// for a synthetic series would carry facts for levels it is not judged
+		// against and none for the level it is.
+		due, err := execution.PlanViewFor(due, kind)
+		if err != nil {
+			return execution.InternalExecutionHeader{}, err
+		}
+		for _, level := range due.CompiledPlan.Levels().All() {
+			target := alwaysEffectiveTimeTarget{
+				consumer: execution.ConsumerRef{Plan: due.Identity, LevelID: level.Definition().LevelID, HasLevel: true},
+				series:   item.Identity.SeriesIdentityDigest,
+			}
+			if _, duplicate := seen[target]; duplicate {
+				continue
+			}
+			seen[target] = struct{}{}
+			targets = append(targets, target)
+		}
+	}
+	sort.Slice(targets, func(i, j int) bool {
+		left, right := targets[i], targets[j]
+		if left.consumer.Plan.TenantID != right.consumer.Plan.TenantID {
+			return left.consumer.Plan.TenantID < right.consumer.Plan.TenantID
+		}
+		if left.consumer.Plan.BusinessID != right.consumer.Plan.BusinessID {
+			return left.consumer.Plan.BusinessID < right.consumer.Plan.BusinessID
+		}
+		if left.consumer.Plan.StrategyID != right.consumer.Plan.StrategyID {
+			return left.consumer.Plan.StrategyID < right.consumer.Plan.StrategyID
+		}
+		if left.consumer.LevelID != right.consumer.LevelID {
+			return left.consumer.LevelID < right.consumer.LevelID
+		}
+		return left.series < right.series
+	})
+
+	bound := header
+	bound.EffectiveTimeFacts = make([]execution.BoundEffectiveTimeFact, 0, len(targets))
+	for _, target := range targets {
+		fact, ok := prepared[target.consumer]
+		if !ok {
+			return execution.InternalExecutionHeader{}, errors.New("alarmd worker: prepared ALWAYS EffectiveTime fact is missing")
+		}
+		bound.EffectiveTimeFacts = append(bound.EffectiveTimeFacts, execution.BoundEffectiveTimeFact{
+			Consumer: target.consumer, SeriesIdentity: target.series, Fact: fact,
+		})
+	}
+	return bound, nil
+}

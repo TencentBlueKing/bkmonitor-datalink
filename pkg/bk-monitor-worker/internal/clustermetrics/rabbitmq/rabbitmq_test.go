@@ -10,21 +10,152 @@
 package rabbitmq
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/credential"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics"
 )
+
+func TestKMSMultiInstanceCollectionAndIndependentReport(t *testing.T) {
+	var reportMu sync.Mutex
+	reports := map[string]clustermetrics.CustomReportData{}
+	var failReport int32
+	reportServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var report clustermetrics.CustomReportData
+		if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if report.AccessToken != "test-rabbit-report-token" {
+			t.Errorf("unexpected reporting token")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if atomic.LoadInt32(&failReport) != 0 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		reportMu.Lock()
+		reports[report.Data[0].Dimension["rabbitmq_name"].(string)] = report
+		reportMu.Unlock()
+	}))
+	defer reportServer.Close()
+	var failA int32
+	var requestsA, requestsB int32
+	management := func(user, password string, fail, counter *int32) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			u, p, ok := r.BasicAuth()
+			if !ok || u != user || p != password {
+				t.Errorf("unexpected instance authentication")
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			atomic.AddInt32(counter, 1)
+			if atomic.LoadInt32(fail) != 0 {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			switch {
+			case r.URL.Path == "/api/overview":
+				_, _ = w.Write([]byte(`{"object_totals":{"queues":2},"queue_totals":{"messages_ready":5}}`))
+			case r.URL.Path == "/api/nodes":
+				_, _ = w.Write([]byte(`[{"mem_alarm":false,"disk_free_alarm":false}]`))
+			case r.URL.EscapedPath() == "/api/queues/%2F":
+				_, _ = w.Write([]byte(`[{"name":"important.queue","vhost":"/","state":"running","messages_ready":4},{"name":"skip.queue","vhost":"/","state":"running","messages_ready":1}]`))
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+	}
+	var failB int32
+	a := management("user-a", "password-a", &failA, &requestsA)
+	defer a.Close()
+	b := management("user-b", "password-b", &failB, &requestsB)
+	defer b.Close()
+	instances := []cfg.RabbitMQClusterMetricInstance{
+		newTestInstance(t, a.URL, cfg.RabbitMQClusterMetricInstance{Name: "kms-a", CredentialsRef: "alias-a", Vhosts: []string{"/"}, QueueIncludes: []string{"important.*"}, QueueExcludes: []string{"skip.*"}, BkBizID: 2, BkTenantID: "tenant-a", TimeoutSeconds: 3}),
+		newTestInstance(t, b.URL, cfg.RabbitMQClusterMetricInstance{Name: "kms-b", CredentialsRef: "alias-b", Vhosts: []string{"/"}, QueueIncludeRegexes: []string{`^important\.`}, BkBizID: 3, BkTenantID: "tenant-b", TimeoutSeconds: 3}),
+	}
+	dir, err := filepath.Abs("../../../credential/testdata")
+	require.NoError(t, err)
+	old := cfg.FilePath
+	t.Cleanup(func() { cfg.FilePath = old; viper.Reset() })
+	setReportConfig(t, reportServer.URL)
+	writeConfig := func(instances []cfg.RabbitMQClusterMetricInstance) {
+		rawInstances := make([]map[string]any, 0, len(instances))
+		for _, inst := range instances {
+			rawInstances = append(rawInstances, map[string]any{"name": inst.Name, "credentialsRef": inst.CredentialsRef, "schema": inst.Schema, "domainName": inst.DomainName, "httpPort": inst.HTTPPort, "amqpPort": 5672, "vhosts": inst.Vhosts, "queueIncludes": inst.QueueIncludes, "queueExcludes": inst.QueueExcludes, "queueIncludeRegexes": inst.QueueIncludeRegexes, "bkBizId": inst.BkBizID, "bkTenantId": inst.BkTenantID, "timeoutSeconds": inst.TimeoutSeconds})
+		}
+		data, err := json.Marshal(map[string]any{"kms": map[string]any{"enabled": true, "envelope_file": filepath.Join(dir, "envelope"), "private_key_file": filepath.Join(dir, "private-key")}, "taskConfig": map[string]any{"rabbitmqMetric": map[string]any{"enabled": true, "reportUrl": reportServer.URL, "reportDataId": 123, "instances": rawInstances}}})
+		require.NoError(t, err)
+		cfg.FilePath = filepath.Join(t.TempDir(), "bmw.json")
+		require.NoError(t, os.WriteFile(cfg.FilePath, data, 0600))
+		viper.Reset()
+		cfg.InitConfig()
+	}
+	for _, order := range [][]cfg.RabbitMQClusterMetricInstance{instances, {instances[1], instances[0]}} {
+		writeConfig(order)
+		for _, inst := range cfg.RabbitMQClusterMetricInstances {
+			require.NoError(t, CollectAndReportMetrics(context.Background(), inst))
+		}
+	}
+	reportMu.Lock()
+	for _, name := range []string{"kms-a", "kms-b"} {
+		report := reports[name]
+		require.Equal(t, 123, report.DataId)
+		require.Len(t, report.Data, 2)
+		require.Equal(t, float64(1), report.Data[0].Metrics[metricUp])
+		require.Equal(t, "important.queue", report.Data[1].Dimension["queue"])
+		require.Equal(t, "/", report.Data[1].Dimension["vhost"])
+	}
+	reportMu.Unlock()
+	require.GreaterOrEqual(t, atomic.LoadInt32(&requestsA), int32(6))
+	require.GreaterOrEqual(t, atomic.LoadInt32(&requestsB), int32(6))
+	atomic.StoreInt32(&failA, 1)
+	for _, inst := range cfg.RabbitMQClusterMetricInstances {
+		err := CollectAndReportMetrics(context.Background(), inst)
+		if inst.Name == "kms-a" {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+		}
+	}
+	reportMu.Lock()
+	require.Equal(t, float64(0), reports["kms-a"].Data[0].Metrics[metricUp])
+	require.Equal(t, float64(1), reports["kms-b"].Data[0].Metrics[metricUp])
+	reportMu.Unlock()
+	atomic.StoreInt32(&failReport, 1)
+	require.Error(t, CollectAndReportMetrics(context.Background(), cfg.RabbitMQClusterMetricInstances[0]))
+	// Unknown aliases stop configuration binding before collection is possible.
+	v, raw := viper.New(), viper.New()
+	data, err := os.ReadFile(cfg.FilePath)
+	require.NoError(t, err)
+	for _, c := range []*viper.Viper{v, raw} {
+		c.SetConfigType("json")
+		require.NoError(t, c.ReadConfig(bytes.NewReader(data)))
+	}
+	v.Set("taskConfig.rabbitmqMetric.instances", []map[string]any{{"credentialsref": "missing"}})
+	_, err = credential.Prepare(v, raw, "bmw")
+	require.Error(t, err)
+}
 
 func TestCollectAndReportMetrics(t *testing.T) {
 	var report clustermetrics.CustomReportData

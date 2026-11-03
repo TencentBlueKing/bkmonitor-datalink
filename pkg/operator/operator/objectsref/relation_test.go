@@ -93,7 +93,7 @@ func TestWritePodRelationsWithStatefulSet(t *testing.T) {
 				ID:         ObjectID{Name: "test-pod-0", Namespace: "test-ns-1"},
 				NodeName:   "test-node-1",
 				Containers: []ContainerKey{{Name: "test-container-1"}},
-				OwnerRefs:  []OwnerRef{{Kind: tc.ownerKind, Name: "test-sts-1"}},
+				OwnerRefs:  []OwnerRef{{Kind: tc.ownerKind, Name: "test-sts-1", Controller: true}},
 			}
 
 			stsObjs, gstsObjs := tc.setupObjs()
@@ -112,6 +112,7 @@ func TestWritePodRelationsWithStatefulSet(t *testing.T) {
 
 			output := buf.String()
 			assert.Contains(t, output, `node_with_pod_relation{namespace="test-ns-1",pod="test-pod-0",node="test-node-1"} 1`)
+			assert.Contains(t, output, `pod_with_workload_relation{namespace="test-ns-1",pod="test-pod-0",workload_kind="`+tc.ownerKind+`",workload_name="test-sts-1"} 1`)
 			assert.Contains(t, output, `pod_with_statefulset_relation{namespace="test-ns-1",pod="test-pod-0",statefulset="test-sts-1"} 1`)
 		})
 	}

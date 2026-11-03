@@ -1,0 +1,168 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+
+package config
+
+import (
+	"errors"
+	"fmt"
+	"net"
+	"strings"
+)
+
+const (
+	RedisModeStandalone = "standalone"
+	RedisModeSentinel   = "sentinel"
+)
+
+// RedisConnectionConfig follows the two Redis connection modes already used
+// by datalink. Business state prefixes and TTLs deliberately stay outside the
+// connection contract.
+type RedisConnectionConfig struct {
+	Mode             string   `yaml:"mode"`
+	Address          string   `yaml:"address"`
+	SentinelAddress  []string `yaml:"sentinel_address"`
+	MasterName       string   `yaml:"master_name"`
+	Username         string   `yaml:"username"`
+	Password         string   `yaml:"password"`
+	SentinelUsername string   `yaml:"sentinel_username"`
+	SentinelPassword string   `yaml:"sentinel_password"`
+	// The _file fields name a file holding the credential beside them
+	// (resolveCredentials); each is cleared once read, so a loaded
+	// configuration carries values only.
+	UsernameFile         string   `yaml:"username_file"`
+	PasswordFile         string   `yaml:"password_file"`
+	SentinelUsernameFile string   `yaml:"sentinel_username_file"`
+	SentinelPasswordFile string   `yaml:"sentinel_password_file"`
+	DB                   int      `yaml:"db"`
+	DialTimeout          Duration `yaml:"dial_timeout"`
+	ReadTimeout          Duration `yaml:"read_timeout"`
+	WriteTimeout         Duration `yaml:"write_timeout"`
+	PoolSize             int      `yaml:"pool_size"`
+}
+
+// A fixed connection pool is the smallest concurrency gate this process has.
+// Every scheduler probe and every admitted query round-trips through it, so a
+// pool below the concurrency the scheduler is licensed to run converts command
+// latency into queueing latency with no gate reporting that it did: the client
+// still returns, only later.
+//
+// Keying the pool to the query permits was wrong, and a block profile from a
+// running Worker says how wrong: goroutines spent 354 of 4,192 recorded hours
+// parked in the pool's waitTurn, about thirty-two goroutines queued at any
+// moment against a pool of forty-eight. The permits never covered that demand
+// because the goroutines doing the queueing hold no permit. The heaviest
+// caller is the Slot source, not the query: reading the activation header, the
+// schedule timeline, the retirement boundary and the ownership fence all
+// happen before a Slot is even eligible to query, and the scheduler runs those
+// for every ready runner at once. With the active execution limit left
+// unlimited on purpose, nothing else bounds that fan-out, so the pool became
+// the process's real execution gate while reporting a pool that looked idle:
+// waiting on the pool's semaphore increments neither the miss nor the timeout
+// counter.
+//
+// So the pool covers every execution slot the container can run at once, its
+// memory-derived ceiling (DerivedScheduler.ActiveExecutionCeiling), plus the
+// floor below for what runs outside a slot - the Slot source's control-plane
+// reads for a ready runner, maintenance, the fleet snapshot. A profile of the
+// saturated slots put 77.5 of 128 inside a Redis round trip: a pool smaller
+// than the slots is where they queue, and it becomes the process's real gate
+// while every reading of it looks idle. It was sized from CPU before, which no
+// part of a Redis round trip spends. The pool dials lazily, so the ceiling is
+// what may be open at once, not what is. Zero means "derive"; an explicit
+// positive pool_size still wins so an operator can pin it.
+const redisPoolMinimum = 64
+
+// DeriveRedisPoolSize sizes the pool to cover the container's execution
+// ceiling, with the floor above it.
+func DeriveRedisPoolSize(inputs CapacityInputs) int {
+	return DeriveScheduler(inputs).ActiveExecutionCeiling + redisPoolMinimum
+}
+
+// EffectivePoolSize resolves the value actually handed to the client.
+func (c RedisConnectionConfig) EffectivePoolSize(inputs CapacityInputs) int {
+	if c.PoolSize > 0 {
+		return c.PoolSize
+	}
+	return DeriveRedisPoolSize(inputs)
+}
+
+func (c RedisConnectionConfig) clone() RedisConnectionConfig {
+	c.SentinelAddress = append([]string(nil), c.SentinelAddress...)
+	return c
+}
+
+// Destination renders where this connection points, and nothing else. It feeds
+// the startup evidence surface, which is credential-free by contract, so the
+// password and the sentinel password are deliberately absent - a master name
+// and a sentinel address are coordinates, not secrets.
+func (c RedisConnectionConfig) Destination() string {
+	if c.Mode == RedisModeSentinel {
+		return fmt.Sprintf("sentinel %s [%s]/%d", c.MasterName, strings.Join(c.SentinelAddress, ","), c.DB)
+	}
+	return fmt.Sprintf("standalone %s/%d", c.Address, c.DB)
+}
+
+func (c RedisConnectionConfig) validate(field string) error {
+	if c.Mode != RedisModeStandalone && c.Mode != RedisModeSentinel {
+		return fmt.Errorf("%s mode must be standalone or sentinel", field)
+	}
+	if c.DB < 0 || c.DialTimeout.Duration() <= 0 || c.ReadTimeout.Duration() <= 0 ||
+		c.WriteTimeout.Duration() <= 0 || c.PoolSize < 0 {
+		return fmt.Errorf("%s db, timeouts and pool_size are invalid", field)
+	}
+	if c.Username != "" && strings.TrimSpace(c.Username) != c.Username {
+		return fmt.Errorf("%s username must be canonical text", field)
+	}
+	if c.SentinelUsername != "" && strings.TrimSpace(c.SentinelUsername) != c.SentinelUsername {
+		return fmt.Errorf("%s sentinel_username must be canonical text", field)
+	}
+
+	if c.Mode == RedisModeStandalone {
+		if !canonicalRedisAddress(c.Address) {
+			return fmt.Errorf("%s address must be a canonical host:port", field)
+		}
+		return nil
+	}
+	if !canonicalText(c.MasterName) || len(c.SentinelAddress) == 0 {
+		return fmt.Errorf("%s sentinel_address and master_name are required", field)
+	}
+	seen := make(map[string]struct{}, len(c.SentinelAddress))
+	for _, address := range c.SentinelAddress {
+		if !canonicalRedisAddress(address) {
+			return fmt.Errorf("%s sentinel_address must contain canonical host:port values", field)
+		}
+		if _, duplicate := seen[address]; duplicate {
+			return fmt.Errorf("%s sentinel_address must not contain duplicates", field)
+		}
+		seen[address] = struct{}{}
+	}
+	return nil
+}
+
+func canonicalRedisAddress(address string) bool {
+	if address == "" || strings.TrimSpace(address) != address {
+		return false
+	}
+	host, port, err := net.SplitHostPort(address)
+	return err == nil && host != "" && port != ""
+}
+
+func validateRuntimePrefixIsolation(statePrefix, strategyCachePrefix string) error {
+	if !canonicalRedisPrefix(statePrefix) {
+		return errors.New("redis state_prefix must be non-empty canonical text without Redis hash tags")
+	}
+	if !canonicalRedisPrefix(strategyCachePrefix) {
+		return errors.New("phase_two control strategy_cache_prefix must be canonical Redis text")
+	}
+	if strings.HasPrefix(statePrefix, strategyCachePrefix) || strings.HasPrefix(strategyCachePrefix, statePrefix) {
+		return errors.New("redis state_prefix must not overlap phase_two strategy_cache_prefix")
+	}
+	return nil
+}
+
+func canonicalRedisPrefix(prefix string) bool {
+	return prefix != "" && strings.TrimSpace(prefix) == prefix && !strings.ContainsAny(prefix, "{} \t\r\n")
+}

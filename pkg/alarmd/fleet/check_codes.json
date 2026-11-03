@@ -1,0 +1,260 @@
+[
+  {
+    "check": "SOURCE_INCOMPLETE",
+    "state": "NOT_DETECTING",
+    "action": "CACHE_WRITER_FILL",
+    "owner": "PLATFORM"
+  },
+  {
+    "check": "SOURCE_SET_FLAPPING",
+    "state": "NOT_DETECTING",
+    "action": "CACHE_WRITER_FILL",
+    "owner": "PLATFORM"
+  },
+  {
+    "check": "CAPABILITY_UNSUPPORTED",
+    "state": "NOT_DETECTING",
+    "action": "NONE",
+    "owner": "CAPABILITY"
+  },
+  {
+    "check": "CAPABILITY_UNLISTED",
+    "state": "NOT_DETECTING",
+    "action": "SERVICE_FIX",
+    "owner": "ALARMD"
+  },
+  {
+    "check": "CUTOVER_FAILING",
+    "state": "RESULT_UNTRUSTED",
+    "action": "SERVICE_FIX",
+    "owner": "ALARMD"
+  },
+  {
+    "check": "REPLICA_DEGRADED",
+    "state": "RESULT_UNTRUSTED",
+    "action": "SERVICE_FIX",
+    "owner": "ALARMD"
+  },
+  {
+    "check": "OWNERSHIP_SKEWED",
+    "state": "DETECTING",
+    "action": "NONE",
+    "owner": "ALARMD"
+  },
+  {
+    "check": "SLOTS_OVERDUE",
+    "state": "NOT_DETECTING",
+    "action": "SERVICE_FIX",
+    "owner": "ALARMD"
+  },
+  {
+    "check": "NEVER_EVALUATED",
+    "state": "NOT_DETECTING",
+    "action": "SERVICE_FIX",
+    "owner": "ALARMD"
+  },
+  {
+    "check": "ROUNDS_STALLED",
+    "state": "NOT_DETECTING",
+    "action": "SERVICE_FIX",
+    "owner": "ALARMD"
+  },
+  {
+    "check": "DETECTION_ABANDONED",
+    "state": "NOT_DETECTING",
+    "action": "SERVICE_FIX",
+    "owner": "ALARMD"
+  },
+  {
+    "check": "TIMELINE_PRUNED",
+    "state": "NOT_DETECTING",
+    "action": "SERVICE_FIX",
+    "owner": "ALARMD"
+  },
+  {
+    "check": "BOOKKEEPING_ABANDONED",
+    "state": "DETECTING",
+    "action": "SERVICE_FIX",
+    "owner": "ALARMD"
+  },
+  {
+    "check": "NO_DATA_MEMORY_REFUSED",
+    "state": "RESULT_UNTRUSTED",
+    "action": "SERVICE_FIX",
+    "owner": "ALARMD"
+  },
+  {
+    "check": "AWAITING_VIEW",
+    "state": "NOT_DETECTING",
+    "action": "SERVICE_FIX",
+    "owner": "ALARMD"
+  },
+  {
+    "check": "DEPENDENCY_DOWN",
+    "state": "DEPENDENCY_UNANSWERED",
+    "action": "SERVICE_FIX",
+    "owner": "ALARMD"
+  },
+  {
+    "check": "DEFECT",
+    "state": "DEFECT",
+    "action": "SERVICE_FIX",
+    "owner": "ALARMD"
+  },
+  {
+    "check": "OBSERVATION_GAP",
+    "state": "RESULT_UNTRUSTED",
+    "action": "WATCH",
+    "owner": "ALARMD"
+  },
+  {
+    "check": "COVERAGE_READING_REFUSED",
+    "state": "RESULT_UNTRUSTED",
+    "action": "SERVICE_FIX",
+    "owner": "ALARMD"
+  },
+  {
+    "check": "WINDOW_UNDECIDED",
+    "state": "RESULT_UNTRUSTED",
+    "action": "SERVICE_FIX",
+    "owner": "UNDETERMINED"
+  },
+  {
+    "check": "CONFIG_UNRESOLVED",
+    "state": "RESULT_UNTRUSTED",
+    "action": "WATCH",
+    "owner": "UNDETERMINED"
+  },
+  {
+    "check": "BACKEND_NOT_ANSWERING",
+    "state": "DEPENDENCY_UNANSWERED",
+    "action": "SERVICE_FIX",
+    "owner": "UNDETERMINED"
+  },
+  {
+    "check": "QUERY_REFUSED",
+    "state": "DEPENDENCY_UNANSWERED",
+    "action": "SERVICE_FIX",
+    "owner": "UNDETERMINED"
+  },
+  {
+    "check": "SERIES_DATA_MISSING",
+    "state": "RESULT_UNTRUSTED",
+    "action": "SERVICE_FIX",
+    "owner": "UNDETERMINED"
+  },
+  {
+    "check": "NO_DATA_PERSISTENT",
+    "state": "DATA_ABSENT",
+    "action": "DATA_CHECK",
+    "owner": "DATA"
+  },
+  {
+    "check": "SERIES_SPARSE",
+    "state": "DATA_ABSENT",
+    "action": "DATA_CHECK",
+    "owner": "DATA"
+  },
+  {
+    "check": "EMPTY_EVERY_ROUND",
+    "state": "DATA_ABSENT",
+    "action": "STRATEGY_EDIT",
+    "owner": "STRATEGY"
+  },
+  {
+    "check": "EMPTY_AFTER_TARGET",
+    "state": "NOT_DETECTING",
+    "action": "STRATEGY_EDIT",
+    "owner": "STRATEGY"
+  },
+  {
+    "check": "IDENTITY_UNMATCHED",
+    "state": "IDENTITY_MISMATCH",
+    "action": "IDENTITY_ALIGN",
+    "owner": "STRATEGY_OR_COLLECTION"
+  },
+  {
+    "check": "SERIES_CHURNING",
+    "state": "RESULT_UNTRUSTED",
+    "action": "STRATEGY_EDIT",
+    "owner": "STRATEGY"
+  },
+  {
+    "check": "PLAN_UNEVALUABLE",
+    "state": "STRATEGY_INVALID",
+    "action": "STRATEGY_EDIT",
+    "owner": "STRATEGY"
+  },
+  {
+    "check": "QUERY_TARGET_MISSING",
+    "state": "STRATEGY_INVALID",
+    "action": "STRATEGY_EDIT",
+    "owner": "STRATEGY"
+  },
+  {
+    "check": "CONFIG_REJECTED",
+    "state": "NOT_DETECTING",
+    "action": "STRATEGY_EDIT",
+    "owner": "STRATEGY"
+  },
+  {
+    "check": "READ_BEFORE_COMPLETE",
+    "state": "RESULT_UNTRUSTED",
+    "action": "STRATEGY_EDIT",
+    "owner": "STRATEGY"
+  },
+  {
+    "check": "LATE_PAST_ROUND",
+    "state": "RESULT_UNTRUSTED",
+    "action": "STRATEGY_EDIT",
+    "owner": "STRATEGY"
+  },
+  {
+    "check": "LATE_SERIES_MISSED",
+    "state": "RESULT_UNTRUSTED",
+    "action": "DATA_CHECK",
+    "owner": "DATA"
+  },
+  {
+    "check": "RETAINED_SHARE_APPROACHING",
+    "state": "DETECTING",
+    "action": "STRATEGY_EDIT",
+    "owner": "STRATEGY"
+  },
+  {
+    "check": "READ_HELD",
+    "state": "DETECTING",
+    "action": "STRATEGY_EDIT",
+    "owner": "STRATEGY"
+  },
+  {
+    "check": "QUIET",
+    "state": "DETECTING",
+    "action": "NONE",
+    "owner": "STRATEGY"
+  },
+  {
+    "check": "LOG_COUNT_EMPTY",
+    "state": "DETECTING",
+    "action": "NONE",
+    "owner": "STRATEGY"
+  },
+  {
+    "check": "SERIES_SPARSER_THAN_WINDOW",
+    "state": "DETECTING",
+    "action": "NONE",
+    "owner": "STRATEGY"
+  },
+  {
+    "check": "ANSWER_TRUNCATED",
+    "state": "DETECTING",
+    "action": "STRATEGY_EDIT",
+    "owner": "STRATEGY"
+  },
+  {
+    "check": "CONFIG_NOTED",
+    "state": "DETECTING",
+    "action": "STRATEGY_EDIT",
+    "owner": "STRATEGY"
+  }
+]

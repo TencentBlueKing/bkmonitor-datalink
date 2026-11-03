@@ -1,0 +1,807 @@
+[
+ {
+  "name": "sum",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a + b",
+  "promql": "(sum by (job) (rate(requests_total{status=\"success\"}[5m]))) + (sum by (job) (rate(requests_total{status=\"error\"}[5m])))"
+ },
+ {
+  "name": "ratio with bool and vector matching",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a / on(job) group_left() b > bool 0.5",
+  "promql": "(sum by (job) (rate(requests_total{status=\"success\"}[5m]))) / on(job) group_left() (sum by (job) (rate(requests_total{status=\"error\"}[5m]))) > bool 0.5"
+ },
+ {
+  "name": "unused alias",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "c",
+    "promql": "sum by (job) (queue_depth)",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a + b",
+  "promql": "(sum by (job) (rate(requests_total{status=\"success\"}[5m]))) + (sum by (job) (rate(requests_total{status=\"error\"}[5m])))"
+ },
+ {
+  "name": "functions and aggregators",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "sum by (job) (a) / clamp_min(b, 1)",
+  "promql": "sum by (job) ((sum by (job) (rate(requests_total{status=\"success\"}[5m])))) / clamp_min((sum by (job) (rate(requests_total{status=\"error\"}[5m]))), 1)"
+ },
+ {
+  "name": "scientific number",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a * 1e3 + b * .5",
+  "promql": "(sum by (job) (rate(requests_total{status=\"success\"}[5m]))) * 1e3 + (sum by (job) (rate(requests_total{status=\"error\"}[5m]))) * .5"
+ },
+ {
+  "name": "string literal kept",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "label_replace(a, \"dst\", \"b\", \"src\", \"(.*)\") + b",
+  "promql": "label_replace((sum by (job) (rate(requests_total{status=\"success\"}[5m]))), \"dst\", \"b\", \"src\", \"(.*)\") + (sum by (job) (rate(requests_total{status=\"error\"}[5m])))"
+ },
+ {
+  "name": "uppercase alias",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "A",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "B",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "A + B",
+  "promql": "(sum by (job) (rate(requests_total{status=\"success\"}[5m]))) + (sum by (job) (rate(requests_total{status=\"error\"}[5m])))"
+ },
+ {
+  "name": "and or unless",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "c",
+    "promql": "sum by (job) (queue_depth)",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a and b or c unless a",
+  "promql": "(sum by (job) (rate(requests_total{status=\"success\"}[5m]))) and (sum by (job) (rate(requests_total{status=\"error\"}[5m]))) or (sum by (job) (queue_depth)) unless (sum by (job) (rate(requests_total{status=\"success\"}[5m])))"
+ },
+ {
+  "name": "ignoring list",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a + ignoring(instance, pod) b",
+  "promql": "(sum by (job) (rate(requests_total{status=\"success\"}[5m]))) + ignoring(instance, pod) (sum by (job) (rate(requests_total{status=\"error\"}[5m])))"
+ },
+ {
+  "name": "comparison ops",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a >= b != 0",
+  "promql": "(sum by (job) (rate(requests_total{status=\"success\"}[5m]))) >= (sum by (job) (rate(requests_total{status=\"error\"}[5m]))) != 0"
+ },
+ {
+  "name": "whitespace kept",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "  a\t+\n b  ",
+  "promql": "  (sum by (job) (rate(requests_total{status=\"success\"}[5m])))\t+\n (sum by (job) (rate(requests_total{status=\"error\"}[5m])))  "
+ },
+ {
+  "name": "unicode space",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a　+ b",
+  "promql": "(sum by (job) (rate(requests_total{status=\"success\"}[5m])))　+ (sum by (job) (rate(requests_total{status=\"error\"}[5m])))"
+ },
+ {
+  "name": "information separators as space",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a\u001c+\u001fb",
+  "promql": "(sum by (job) (rate(requests_total{status=\"success\"}[5m])))\u001c+\u001f(sum by (job) (rate(requests_total{status=\"error\"}[5m])))"
+ },
+ {
+  "name": "exponent without digits refused",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a * 1e + b",
+  "refused": true
+ },
+ {
+  "name": "signed exponent without digits refused",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a * 1e+ + b",
+  "refused": true
+ },
+ {
+  "name": "one query",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a",
+  "refused": true
+ },
+ {
+  "name": "empty expression",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "   ",
+  "refused": true
+ },
+ {
+  "name": "other data source",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "bk_monitor",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a + b",
+  "refused": true
+ },
+ {
+  "name": "invalid alias",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "1a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "b",
+  "refused": true
+ },
+ {
+  "name": "reserved alias",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "on",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "b",
+  "refused": true
+ },
+ {
+  "name": "reserved alias case",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "OFFSET",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "b",
+  "refused": true
+ },
+ {
+  "name": "duplicate alias",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a",
+  "refused": true
+ },
+ {
+  "name": "empty promql",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "  ",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a + b",
+  "refused": true
+ },
+ {
+  "name": "zero interval",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 0
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 0
+   }
+  ],
+  "expression": "a + b",
+  "refused": true
+ },
+ {
+  "name": "bool interval",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": true
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": true
+   }
+  ],
+  "expression": "a + b",
+  "refused": true
+ },
+ {
+  "name": "string interval",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": "60"
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": "60"
+   }
+  ],
+  "expression": "a + b",
+  "promql": "(sum by (job) (rate(requests_total{status=\"success\"}[5m]))) + (sum by (job) (rate(requests_total{status=\"error\"}[5m])))"
+ },
+ {
+  "name": "float interval",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60.0
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60.0
+   }
+  ],
+  "expression": "a + b",
+  "refused": true
+ },
+ {
+  "name": "different intervals",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 120
+   }
+  ],
+  "expression": "a + b",
+  "refused": true
+ },
+ {
+  "name": "range selector",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "rate(a[5m])",
+  "refused": true
+ },
+ {
+  "name": "outer offset",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a offset 5m",
+  "refused": true
+ },
+ {
+  "name": "unknown identifier",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a + c",
+  "refused": true
+ },
+ {
+  "name": "alias as function",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a(b)",
+  "refused": true
+ },
+ {
+  "name": "modifier without list",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a + on b",
+  "refused": true
+ },
+ {
+  "name": "bad label list",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a + on(job + x) b",
+  "refused": true
+ },
+ {
+  "name": "incomplete modifier",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a + b by",
+  "refused": true
+ },
+ {
+  "name": "unsupported token",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a + b; drop",
+  "refused": true
+ },
+ {
+  "name": "by after identifier is aggregation",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "max by (job) (a) - b",
+  "promql": "max by (job) ((sum by (job) (rate(requests_total{status=\"success\"}[5m])))) - (sum by (job) (rate(requests_total{status=\"error\"}[5m])))"
+ },
+ {
+  "name": "group_left without list",
+  "query_configs": [
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "a",
+    "promql": "sum by (job) (rate(requests_total{status=\"success\"}[5m]))",
+    "agg_interval": 60
+   },
+   {
+    "data_source_label": "prometheus",
+    "data_type_label": "time_series",
+    "alias": "b",
+    "promql": "sum by (job) (rate(requests_total{status=\"error\"}[5m]))",
+    "agg_interval": 60
+   }
+  ],
+  "expression": "a * on(job) group_left b",
+  "promql": "(sum by (job) (rate(requests_total{status=\"success\"}[5m]))) * on(job) group_left (sum by (job) (rate(requests_total{status=\"error\"}[5m])))"
+ }
+]

@@ -216,14 +216,12 @@ type StandardSpan struct {
 }
 
 func (s *StandardSpan) GetFieldValue(f ...core.CommonField) string {
-	var res string
 	for _, item := range f {
-		res, exist := s.Collections[item.DisplayKey()]
-		if exist {
-			return res
+		if value := s.Collections[item.DisplayKey()]; value != "" {
+			return value
 		}
 	}
-	return res
+	return ""
 }
 
 func (s *StandardSpan) IsError() bool {

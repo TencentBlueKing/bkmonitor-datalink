@@ -1,0 +1,20 @@
+id: tspider_promql_aggregate_fallback_001
+storage: tspider
+enabled: true
+shape_signature: promql/range/tspider/avg_by/avg_over_time_5m/raw_fallback/schema_query/output2
+source:
+  kind: production_log
+  outputs_kind: production_log
+  sampled_at: "2026-10-17"
+  fingerprint: sha256:aba43f3d6e2e7da761b3794c655d62cafc5d3c460a73adfbb250261f87baae16
+tags: [promql_api, range, aggregate, raw_fallback, schema_query, production_shape]
+notes:
+  - A single PromQL reference routes to one TSpider table and emits schema plus raw SQL.
+  - avg_over_time stays in the PromQL engine; SQL selects raw rows without GROUP BY.
+  - Entities and timestamps are sanitized consistently; the five-minute selector and range are preserved.
+  - Production revision is unavailable; replay baseline is ec97e499e.
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

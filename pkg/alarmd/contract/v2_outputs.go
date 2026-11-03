@@ -11,19 +11,72 @@ package contract
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
+	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 )
 
+// CloneLevelResultsV1 copies level results so that the copy shares nothing
+// with them: a LevelResultV1 holds its Detect evidence by pointer, and the
+// evidence holds its normalized value and ordinals by reference, so a plain
+// copy of the slice is one set of evidence under two names, and writing one
+// rewrites the other.
+func CloneLevelResultsV1(results []LevelResultV1) []LevelResultV1 {
+	if results == nil {
+		return nil
+	}
+	cloned := make([]LevelResultV1, len(results))
+	for index, result := range results {
+		if result.DetectEvidence != nil {
+			evidence := *result.DetectEvidence
+			if evidence.NormalizedValue != nil {
+				evidence.NormalizedValue = append(json.RawMessage{}, evidence.NormalizedValue...)
+			}
+			evidence.MatchedAlgorithmOrdinal = cloneUint32(evidence.MatchedAlgorithmOrdinal)
+			evidence.MatchedGroupOrdinal = cloneUint32(evidence.MatchedGroupOrdinal)
+			result.DetectEvidence = &evidence
+		}
+		cloned[index] = result
+	}
+	return cloned
+}
+
+func cloneRawValues(values map[string]json.RawMessage) map[string]json.RawMessage {
+	if values == nil {
+		return nil
+	}
+	cloned := make(map[string]json.RawMessage, len(values))
+	for key, value := range values {
+		if value != nil {
+			value = append(json.RawMessage{}, value...)
+		}
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func cloneUint32(value *uint32) *uint32 {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
+}
+
+// BuildTriggerEventV1 builds the event from its input; the event shares
+// nothing with the input it was built from: its level results, record
+// dimensions and observed values are copies (CloneLevelResultsV1).
 func BuildTriggerEventV1(input TriggerEventBuildInputV1) (*TriggerEventV1, error) {
 	if input.MaxEvidenceBytes <= 0 {
 		return nil, invalid("trigger_event.max_evidence_bytes", "must be positive")
 	}
-	results := append([]LevelResultV1(nil), input.LevelResults...)
+	results := CloneLevelResultsV1(input.LevelResults)
 	sort.Slice(results, func(left, right int) bool { return results[left].LevelID < results[right].LevelID })
-	if err := validateSuccessfulLevelResultsV1(results); err != nil {
+	if err := validateSuccessfulLevelResultsV1(results, input.RecordRef.Absent); err != nil {
 		return nil, err
 	}
 	evidence, err := CanonicalJSONV2(results)
@@ -40,8 +93,8 @@ func BuildTriggerEventV1(input TriggerEventBuildInputV1) (*TriggerEventV1, error
 	if input.EventKind != computedKind {
 		return nil, invalid("trigger_event.event_kind", "does not match successful active Level results")
 	}
-	semanticDigest, err := DeriveEventSemanticDigestV1(
-		input.EventKind, results, input.DetectPlanFingerprint, input.TriggerStateFingerprint,
+	semanticDigest, err := deriveEventSemanticDigestWithSnapshot(
+		input.EventKind, results, input.DetectPlanFingerprint, input.TriggerStateFingerprint, input.StrategyRef,
 	)
 	if err != nil {
 		return nil, err
@@ -53,13 +106,26 @@ func BuildTriggerEventV1(input TriggerEventBuildInputV1) (*TriggerEventV1, error
 	if err != nil {
 		return nil, err
 	}
+	// The record's dimensions and the observed values are maps of raw
+	// values, copied for the reason the level results are.
+	recordRef, observed := input.RecordRef, input.Observed
+	recordRef.Dimensions, observed.Values = cloneRawValues(recordRef.Dimensions), cloneRawValues(observed.Values)
 	event := &TriggerEventV1{
 		Schema: Schema{Name: TriggerEventSchemaV1, Major: 1, Minor: 0}, RequiredFeatures: []string{},
 		EventID: eventID, EventSemanticDigest: semanticDigest, EventKind: input.EventKind, PrimaryLevelID: primary,
-		TenantID: input.TenantID, BusinessID: input.BusinessID, PlanRef: input.PlanRef, RecordRef: input.RecordRef,
-		Observed: input.Observed, LevelResults: results, EvaluationTime: input.EvaluationTime,
+		TenantID: input.TenantID, BusinessID: input.BusinessID, PlanRef: input.PlanRef, RecordRef: recordRef,
+		Observed: observed, LevelResults: results, EvaluationTime: input.EvaluationTime,
 		DetectPlanFingerprint: input.DetectPlanFingerprint, TriggerStateFingerprint: input.TriggerStateFingerprint,
-		Trace: TriggerEventTraceV1{ExecutionID: input.ExecutionID},
+		Trace:     TriggerEventTraceV1{ExecutionID: input.ExecutionID},
+		DedupeMD5: input.DedupeMD5,
+	}
+	if input.StrategyRef != nil {
+		ref := *input.StrategyRef
+		event.StrategyRef = &ref
+		event.Schema.Minor = 1
+		if event.DedupeMD5 != "" {
+			event.Schema.Minor = 2
+		}
 	}
 	if err := ValidateTriggerEventV1(event); err != nil {
 		return nil, err
@@ -113,12 +179,39 @@ func DeriveTriggerEventIDV1(tenantID, businessID, strategyID, stateCompatibility
 	)
 }
 
+func deriveEventSemanticDigestWithSnapshot(eventKind string, results []LevelResultV1, detect, trigger string, ref *StrategySnapshotRef) (string, error) {
+	legacyDigest, err := DeriveEventSemanticDigestV1(eventKind, results, detect, trigger)
+	if err != nil || ref == nil {
+		return legacyDigest, err
+	}
+	return digestCanonicalV2("trigger_event.event_semantic_digest", "event-semantic-digest-v1.1", struct {
+		ResultDigest string              `json:"result_digest"`
+		StrategyRef  StrategySnapshotRef `json:"strategy_ref"`
+	}{legacyDigest, *ref})
+}
+
 func ValidateTriggerEventV1(event *TriggerEventV1) error {
 	if event == nil {
 		return invalid("trigger_event", "must be non-null")
 	}
-	if event.Schema.Name != TriggerEventSchemaV1 || event.Schema.Major != 1 || event.Schema.Minor != 0 || event.RequiredFeatures == nil || len(event.RequiredFeatures) != 0 {
+	if event.Schema.Name != TriggerEventSchemaV1 || event.Schema.Major != 1 || event.Schema.Minor < 0 || event.Schema.Minor > 2 || event.RequiredFeatures == nil || len(event.RequiredFeatures) != 0 {
 		return invalid("trigger_event.schema", "unsupported header")
+	}
+	if (event.Schema.Minor >= 1) != (event.StrategyRef != nil) {
+		return invalid("trigger_event.strategy_ref", "required by schema 1.1 and 1.2")
+	}
+	if event.Schema.Minor == 2 {
+		if _, err := hex.DecodeString(event.DedupeMD5); err != nil || len(event.DedupeMD5) != 32 || strings.ToLower(event.DedupeMD5) != event.DedupeMD5 {
+			return invalid("trigger_event.dedupe_md5", "must be 32 lowercase hexadecimal characters")
+		}
+	} else if event.DedupeMD5 != "" {
+		return invalid("trigger_event.dedupe_md5", "only supported in schema 1.2")
+	}
+	if ref := event.StrategyRef; ref != nil {
+		if ref.TenantID != event.TenantID || ref.BusinessID == 0 || strconv.FormatInt(ref.BusinessID, 10) != event.BusinessID ||
+			ref.StrategyID <= 0 || strconv.FormatInt(ref.StrategyID, 10) != event.PlanRef.StrategyID || ref.Revision <= 0 {
+			return invalid("trigger_event.strategy_ref", "must match event identity and contain a positive immutable revision")
+		}
 	}
 	if event.TenantID == "" || !utf8.ValidString(event.TenantID) || !canonicalSignedDecimalPattern.MatchString(event.BusinessID) ||
 		!canonicalDecimalPattern.MatchString(event.PlanRef.StrategyID) || event.PlanRef.StrategyRevision == "" || !utf8.ValidString(event.PlanRef.StrategyRevision) ||
@@ -131,7 +224,12 @@ func ValidateTriggerEventV1(event *TriggerEventV1) error {
 	if event.RecordRef.Dimensions == nil || event.Observed.Values == nil {
 		return invalid("trigger_event", "dimensions and observed values must be objects")
 	}
-	if err := validateSuccessfulLevelResultsV1(event.LevelResults); err != nil {
+	// The same spelling as business_id: the attribution falls back to the
+	// Plan's own business, so whatever business_id admits this admits.
+	if event.AttributedBusinessID != "" && (!canonicalSignedDecimalPattern.MatchString(event.AttributedBusinessID) || event.AttributedBusinessID == "0") {
+		return invalid("trigger_event.attributed_business_id", "must be a canonical non-zero decimal when present")
+	}
+	if err := validateSuccessfulLevelResultsV1(event.LevelResults, event.RecordRef.Absent); err != nil {
 		return err
 	}
 	for _, result := range event.LevelResults {
@@ -146,8 +244,8 @@ func ValidateTriggerEventV1(event *TriggerEventV1) error {
 	if kind != event.EventKind || primary != event.PrimaryLevelID {
 		return invalid("trigger_event", "event kind or primary Level does not match Level results")
 	}
-	expectedSemanticDigest, err := DeriveEventSemanticDigestV1(
-		event.EventKind, event.LevelResults, event.DetectPlanFingerprint, event.TriggerStateFingerprint,
+	expectedSemanticDigest, err := deriveEventSemanticDigestWithSnapshot(
+		event.EventKind, event.LevelResults, event.DetectPlanFingerprint, event.TriggerStateFingerprint, event.StrategyRef,
 	)
 	if err != nil {
 		return err
@@ -195,9 +293,34 @@ func DecodeTriggerEventV1WithLimits(payload []byte, limits TriggerEventReaderLim
 		"business_id", "plan_ref", "record_ref", "observed", "level_results", "evaluation_time", "detect_plan_fingerprint",
 		"trigger_state_fingerprint", "trace",
 	}
-	object, err := validateOutputHeaderV1(payload, "trigger_event", TriggerEventSchemaV1, required)
+	// Inspect only the schema before selecting the strict field set. Other
+	// output contracts remain 1.0; a snapshot reference is mandatory in 1.1.
+	var header struct {
+		Schema Schema `json:"schema"`
+	}
+	if err := json.Unmarshal(payload, &header); err != nil {
+		return nil, err
+	}
+	if header.Schema.Minor >= 1 {
+		required = append(required, "strategy_ref")
+	}
+	if header.Schema.Minor == 2 {
+		required = append(required, "dedupe_md5")
+	}
+	// attributed_business_id is optional in every minor: a global business
+	// Plan's events carry it and no other Plan's do, and a reader must take
+	// both. Present, it is never null.
+	object, err := validateOutputHeaderV1(payload, "trigger_event", TriggerEventSchemaV1, required, "attributed_business_id")
 	if err != nil {
 		return nil, err
+	}
+	if raw, present := object["attributed_business_id"]; present && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, invalid("trigger_event.attributed_business_id", "must be omitted instead of null")
+	}
+	if header.Schema.Minor >= 1 {
+		if _, err := validateJSONObjectFields(object["strategy_ref"], "trigger_event.strategy_ref", []string{"bk_tenant_id", "strategy_bk_biz_id", "strategy_id", "strategy_revision"}, nil, false); err != nil {
+			return nil, err
+		}
 	}
 	if len(bytes.TrimSpace(object["level_results"])) > limits.MaxEvidenceBytes {
 		return nil, invalid("trigger_event.level_results", "encoded evidence exceeds Reader limit")
@@ -209,7 +332,7 @@ func DecodeTriggerEventV1WithLimits(payload []byte, limits TriggerEventReaderLim
 		optional []string
 	}{
 		{"plan_ref", object["plan_ref"], []string{"strategy_id", "strategy_revision", "state_compatibility_hash"}, nil},
-		{"record_ref", object["record_ref"], []string{"record_id", "source_time", "dimension_identity_digest", "dimensions"}, nil},
+		{"record_ref", object["record_ref"], []string{"record_id", "source_time", "dimension_identity_digest", "dimensions"}, []string{"absent"}},
 		{"observed", object["observed"], []string{"values", "unit"}, nil},
 		{"trace", object["trace"], []string{"execution_id"}, nil},
 	}
@@ -224,7 +347,7 @@ func DecodeTriggerEventV1WithLimits(payload []byte, limits TriggerEventReaderLim
 	}
 	for index, rawResult := range rawResults {
 		path := "trigger_event.level_results[" + strconv.Itoa(index) + "]"
-		resultObject, err := validateJSONObjectFields(rawResult, path, []string{"level_id", "priority", "result", "decision_window", "detect_evidence", "level_trigger_fingerprint"}, []string{"level_code"}, false)
+		resultObject, err := validateJSONObjectFields(rawResult, path, []string{"level_id", "priority", "result", "decision_window", "level_trigger_fingerprint"}, []string{"level_code", "detect_evidence"}, false)
 		if err != nil {
 			return nil, err
 		}
@@ -235,16 +358,22 @@ func DecodeTriggerEventV1WithLimits(payload []byte, limits TriggerEventReaderLim
 		if err != nil {
 			return nil, err
 		}
-		if _, err := validateJSONObjectFields(window["trigger"], path+".decision_window.trigger", []string{"window_start", "window_end", "window_size", "required_anomalies", "observed_anomalies"}, nil, false); err != nil {
+		if _, err := validateJSONObjectFields(window["trigger"], path+".decision_window.trigger", []string{"window_start", "window_end", "window_size", "required_anomalies", "observed_anomalies"}, []string{"anomaly_begin_time"}, false); err != nil {
 			return nil, err
 		}
-		if _, err := validateJSONObjectFields(window["recovery"], path+".decision_window.recovery", []string{"enabled", "required_consecutive_windows", "observed_consecutive_misses", "oldest_window_start"}, nil, false); err != nil {
+		if _, err := validateJSONObjectFields(window["recovery"], path+".decision_window.recovery", []string{"enabled", "required_consecutive_windows", "observed_consecutive_misses", "oldest_window_start"}, []string{"skipped_windows", "withheld", "end", "ended_by"}, false); err != nil {
 			return nil, err
 		}
 		if _, err := validateJSONObjectFields(window["window_evidence"], path+".decision_window.window_evidence", []string{"anomaly_timestamps_digest", "late_accepted"}, nil, false); err != nil {
 			return nil, err
 		}
-		detect, err := validateJSONObjectFields(resultObject["detect_evidence"], path+".detect_evidence", []string{"detection_result", "predicate_digest", "normalized_value", "effective_time_status"}, []string{"matched_algorithm_ordinal", "matched_group_ordinal", "result_reason"}, false)
+		rawDetect, hasDetect := resultObject["detect_evidence"]
+		if !hasDetect {
+			// Whether it may be left out is the semantic validation's: only
+			// on an event about an absent series.
+			continue
+		}
+		detect, err := validateJSONObjectFields(rawDetect, path+".detect_evidence", []string{"detection_result", "predicate_digest", "normalized_value", "effective_time_status"}, []string{"matched_algorithm_ordinal", "matched_group_ordinal", "result_reason"}, false)
 		if err != nil {
 			return nil, err
 		}
@@ -264,7 +393,11 @@ func DecodeTriggerEventV1WithLimits(payload []byte, limits TriggerEventReaderLim
 	return &event, nil
 }
 
-func validateSuccessfulLevelResultsV1(results []LevelResultV1) error {
+// validateSuccessfulLevelResultsV1 checks an event's level results. absent
+// is the event's record being an absent series (TriggerRecordRefV1.Absent):
+// then every level is a RECOVERY no data ended, with no detect evidence, and
+// on every other event every level carries it.
+func validateSuccessfulLevelResultsV1(results []LevelResultV1, absent bool) error {
 	if len(results) == 0 {
 		return invalid("trigger_event.level_results", "must contain at least one successful active Level result")
 	}
@@ -298,7 +431,21 @@ func validateSuccessfulLevelResultsV1(results []LevelResultV1) error {
 		if window.Recovery.Enabled && window.Recovery.RequiredConsecutiveWindows == 0 {
 			return invalid("trigger_event.level_results.decision_window.recovery", "enabled recovery requires a positive window count")
 		}
-		detect := result.DetectEvidence
+		if absent {
+			if result.DetectEvidence != nil || result.Result != LevelResultRecovery || window.Recovery.EndedBy != RecoveryEndedByNoData ||
+				window.Trigger.ObservedAnomalies >= window.Trigger.RequiredAnomalies || window.Recovery.Withheld != "" {
+				return invalid("trigger_event.level_results", "an absent series' event carries only RECOVERY no data ended, with no detect evidence")
+			}
+			if end := window.Recovery.End; end != "" && end != RecoveryEndClose {
+				return invalid("trigger_event.level_results.decision_window.recovery.end", "names no closed ending")
+			}
+			previous = result.LevelID
+			continue
+		}
+		if result.DetectEvidence == nil {
+			return invalid("trigger_event.level_results.detect_evidence", "is required on a level result about a record")
+		}
+		detect := *result.DetectEvidence
 		if (detect.DetectionResult != "ANOMALOUS" && detect.DetectionResult != "NORMAL") ||
 			!sha256Pattern.MatchString(detect.PredicateDigest) || len(detect.NormalizedValue) == 0 ||
 			detect.EffectiveTimeStatus != "ACTIVE" {
@@ -313,18 +460,62 @@ func validateSuccessfulLevelResultsV1(results []LevelResultV1) error {
 		if triggerSatisfied && recoverySatisfied {
 			return invalid("trigger_event.level_results.decision_window", "trigger and recovery cannot both be satisfied")
 		}
+		if withheld := window.Recovery.Withheld; withheld != "" && (!recoverySatisfied || !slices.Contains(RecoveryWithheldReasons, withheld)) {
+			return invalid("trigger_event.level_results.decision_window.recovery.withheld", "names no closed reason, or a recovery the windows did not meet")
+		}
+		if end := window.Recovery.End; end != "" && (end != RecoveryEndClose || result.Result != LevelResultRecovery) {
+			return invalid("trigger_event.level_results.decision_window.recovery.end", "names no closed ending, or is not on a RECOVERY")
+		}
+		endedByNoData := window.Recovery.EndedBy == RecoveryEndedByNoData
+		// A satisfied trigger beside it is refused below, by the result it
+		// expects: ABNORMAL or NORMAL, never this RECOVERY.
+		if endedBy := window.Recovery.EndedBy; endedBy != "" && (!endedByNoData || window.Recovery.Withheld != "") {
+			return invalid("trigger_event.level_results.decision_window.recovery.ended_by", "names no closed cause, or a recovery also withheld")
+		}
 		expectedResult := LevelResultNormal
 		if detect.DetectionResult == "ANOMALOUS" && triggerSatisfied {
 			expectedResult = LevelResultAbnormal
-		} else if !triggerSatisfied && recoverySatisfied {
+		} else if !triggerSatisfied && (recoverySatisfied && window.Recovery.Withheld == "" || endedByNoData) {
 			expectedResult = LevelResultRecovery
 		}
 		if result.Result != expectedResult {
 			return invalid("trigger_event.level_results.result", "does not match current Detect result and trigger/recovery window evidence")
 		}
-		if window.HistoryCompleteness != "FULL" && result.Result != LevelResultAbnormal {
-			return invalid("trigger_event.level_results.result", "WARMING and GAPPED history permit only monotonic ABNORMAL")
+		// An incomplete window may escalate, and may close what it opened, but
+		// may not call the Level normal.
+		//
+		// It used to permit ABNORMAL alone. That was sound in one direction --
+		// anomalies counted across a hole are a lower bound, so an incomplete
+		// window never over-fires -- and the cost was in the other: an alert
+		// opened on an incomplete window could not close until the window was
+		// FULL again, and a window that stays short holds it open for ever.
+		// The cost is now measured rather than assumed: of 3305 enabled
+		// strategies, 35 have a window longer than the interval between
+		// releases and so never reach FULL at all, and one of them was holding
+		// nine anomalous series with three missing positions out of 1469. That
+		// is why decision-022 overturned it; it was a deliberate trade made
+		// without those numbers.
+		//
+		// RECOVERY is admitted only with the evidence for it, which is checked
+		// above and repeated in the condition rather than assumed: a Level
+		// claiming recovery on an incomplete window and carrying no recovery
+		// evidence is still refused whole. NORMAL stays refused, so the
+		// monotonic half of the rule is intact -- an incomplete window cannot
+		// say a Level is fine, only that what it opened is over.
+		if window.HistoryCompleteness != "FULL" {
+			switch {
+			case result.Result == LevelResultAbnormal:
+			case result.Result == LevelResultRecovery && (recoverySatisfied || endedByNoData):
+			default:
+				return invalid("trigger_event.level_results.result",
+					"WARMING and GAPPED history permit only ABNORMAL and evidenced RECOVERY")
+			}
 		}
+		// A recovery window starting after the record it was reached from is
+		// refused with the rest of the bounded window evidence above, by the
+		// same OldestWindowStart > SourceTime comparison. It is not repeated
+		// here: a second copy is a branch no event can reach, and the walk's
+		// own comments call that code no round runs.
 		previous = result.LevelID
 	}
 	return nil
@@ -358,303 +549,8 @@ func aggregateTriggerEventV1(results []LevelResultV1) (string, uint32, error) {
 	return kind, primary, nil
 }
 
-func BuildMessageReceiptV1(receipt MessageReceiptV1) (*MessageReceiptV1, error) {
-	receipt.Schema = Schema{Name: MessageReceiptSchemaV1, Major: 1, Minor: 0}
-	receipt.RequiredFeatures = []string{}
-	if receipt.PerPlan == nil {
-		receipt.PerPlan = []PlanReceiptV1{}
-	}
-	if receipt.ReasonCounts == nil {
-		receipt.ReasonCounts = []ReasonCountV1{}
-	}
-	sort.Slice(receipt.PerPlan, func(left, right int) bool {
-		return compareCanonicalDecimal(receipt.PerPlan[left].PlanID, receipt.PerPlan[right].PlanID) < 0
-	})
-	sort.Slice(receipt.ReasonCounts, func(left, right int) bool {
-		return receipt.ReasonCounts[left].ReasonCode < receipt.ReasonCounts[right].ReasonCode
-	})
-	receiptID, err := deriveLengthPrefixedSHA256("message_receipt.receipt_id", "message-receipt-id-v1", []byte(receipt.MessageID), []byte(receipt.PayloadDigest))
-	if err != nil {
-		return nil, err
-	}
-	receipt.ReceiptID = receiptID
-	if err := ValidateMessageReceiptV1(&receipt); err != nil {
-		return nil, err
-	}
-	return &receipt, nil
-}
-
-func ValidateMessageReceiptV1(receipt *MessageReceiptV1) error {
-	if receipt == nil || receipt.Schema.Name != MessageReceiptSchemaV1 || receipt.Schema.Major != 1 || receipt.Schema.Minor != 0 ||
-		receipt.RequiredFeatures == nil || len(receipt.RequiredFeatures) != 0 || !isOpaqueASCII(receipt.ExecutionID) || !isOpaqueASCII(receipt.MessageID) ||
-		!sha256Pattern.MatchString(receipt.PayloadDigest) || !sha256Pattern.MatchString(receipt.PlanSetDigest) ||
-		receipt.SourceWindow.FromTime < 0 || receipt.SourceWindow.UntilTime < receipt.SourceWindow.FromTime ||
-		receipt.PerPlan == nil || receipt.ReasonCounts == nil {
-		return invalid("message_receipt", "contains invalid header or identity")
-	}
-	if receipt.Status != ReceiptStatusCompleted && receipt.Status != ReceiptStatusCompletedWithTerminal && receipt.Status != ReceiptStatusRejected {
-		return invalid("message_receipt.status", "unsupported value")
-	}
-	expected, err := deriveLengthPrefixedSHA256("message_receipt.receipt_id", "message-receipt-id-v1", []byte(receipt.MessageID), []byte(receipt.PayloadDigest))
-	if err != nil || expected != receipt.ReceiptID {
-		return invalid("message_receipt.receipt_id", "does not match stable identity")
-	}
-	if !sortedPlanReceiptsV1(receipt.PerPlan) || !sortedReasonCountsV2(receipt.ReasonCounts, ReasonDomainReceipt) {
-		return invalid("message_receipt", "per_plan and reason_counts must be sorted and unique")
-	}
-	if err := validateReceiptCountsV1(receipt); err != nil {
-		return err
-	}
-	return nil
-}
-
-func EncodeMessageReceiptV1(receipt *MessageReceiptV1) ([]byte, error) {
-	if err := ValidateMessageReceiptV1(receipt); err != nil {
-		return nil, err
-	}
-	return CanonicalJSONV2(receipt)
-}
-
-func BuildExecutionSummaryV1(summary ExecutionSummaryV1) (*ExecutionSummaryV1, error) {
-	summary.Schema = Schema{Name: ExecutionSummarySchemaV1, Major: 1, Minor: 0}
-	summary.RequiredFeatures = []string{}
-	if summary.ReasonCounts == nil {
-		summary.ReasonCounts = []ReasonCountV1{}
-	}
-	sort.Slice(summary.ReasonCounts, func(left, right int) bool {
-		return summary.ReasonCounts[left].ReasonCode < summary.ReasonCounts[right].ReasonCode
-	})
-	window, err := CanonicalJSONV2(summary.SourceWindow)
-	if err != nil {
-		return nil, err
-	}
-	summaryID, err := deriveLengthPrefixedSHA256(
-		"execution_summary.summary_id", "execution-summary-id-v1", []byte(summary.ExecutionID), []byte(summary.PlanSetDigest), window,
-	)
-	if err != nil {
-		return nil, err
-	}
-	summary.SummaryID = summaryID
-	if err := ValidateExecutionSummaryV1(&summary); err != nil {
-		return nil, err
-	}
-	return &summary, nil
-}
-
-func ValidateExecutionSummaryV1(summary *ExecutionSummaryV1) error {
-	if summary == nil || summary.Schema.Name != ExecutionSummarySchemaV1 || summary.Schema.Major != 1 || summary.Schema.Minor != 0 ||
-		summary.RequiredFeatures == nil || len(summary.RequiredFeatures) != 0 || !isOpaqueASCII(summary.ExecutionID) ||
-		summary.TenantID == "" || !utf8.ValidString(summary.TenantID) || summary.QueryGroupKey == "" || !utf8.ValidString(summary.QueryGroupKey) ||
-		!sha256Pattern.MatchString(summary.PlanSetDigest) ||
-		summary.SourceWindow.FromTime < 0 || summary.SourceWindow.UntilTime < summary.SourceWindow.FromTime ||
-		summary.ReasonCounts == nil || !sortedReasonCountsV2(summary.ReasonCounts, ReasonDomainSummary) {
-		return invalid("execution_summary", "contains invalid header, identity, window or reasons")
-	}
-	window, err := CanonicalJSONV2(summary.SourceWindow)
-	if err != nil {
-		return err
-	}
-	expected, err := deriveLengthPrefixedSHA256("execution_summary.summary_id", "execution-summary-id-v1", []byte(summary.ExecutionID), []byte(summary.PlanSetDigest), window)
-	if err != nil || expected != summary.SummaryID {
-		return invalid("execution_summary.summary_id", "does not match stable identity")
-	}
-	if !countSetBalancedV1(summary.Source, summary.Published, summary.Dropped) {
-		return invalid("execution_summary", "source must equal published plus dropped for messages, records and bytes")
-	}
-	hasDropped := summary.Dropped.Messages != 0 || summary.Dropped.Records != 0 || summary.Dropped.Bytes != 0
-	if hasDropped != (len(summary.ReasonCounts) != 0) {
-		return invalid("execution_summary.reason_counts", "must be non-empty exactly when data was dropped")
-	}
-	return nil
-}
-
-func EncodeExecutionSummaryV1(summary *ExecutionSummaryV1) ([]byte, error) {
-	if err := ValidateExecutionSummaryV1(summary); err != nil {
-		return nil, err
-	}
-	return CanonicalJSONV2(summary)
-}
-
-func sortedPlanReceiptsV1(values []PlanReceiptV1) bool {
-	previous := ""
-	for index, value := range values {
-		if !canonicalDecimalPattern.MatchString(value.PlanID) || (index > 0 && compareCanonicalDecimal(value.PlanID, previous) <= 0) {
-			return false
-		}
-		previous = value.PlanID
-	}
-	return true
-}
-
-func sortedReasonCountsV2(values []ReasonCountV1, domain ReasonDomainsV2) bool {
-	previous := ""
-	for index, value := range values {
-		if !ReasonAllowedForV2(value.ReasonCode, domain) || value.Count == 0 || (index > 0 && value.ReasonCode <= previous) {
-			return false
-		}
-		previous = value.ReasonCode
-	}
-	return true
-}
-
-func validateReceiptCountsV1(receipt *MessageReceiptV1) error {
-	if receipt.Status == ReceiptStatusRejected {
-		if receipt.Counts != (ReceiptCountsV1{}) || len(receipt.PerPlan) != 0 || len(receipt.ReasonCounts) == 0 {
-			return invalid("message_receipt", "REJECTED must have zero business counts, empty per_plan and a reason")
-		}
-		return nil
-	}
-
-	var selected, processed, unavailable, terminal, levelTerminalAffected, events uint64
-	for _, plan := range receipt.PerPlan {
-		if plan.Selected > receipt.Counts.Received {
-			return invalid("message_receipt.per_plan.selected", "cannot exceed received Dataset records")
-		}
-		planProcessed, ok := sumCountsV1(plan.Abnormal, plan.Normal, plan.Recovery)
-		if !ok {
-			return invalid("message_receipt.per_plan", "count overflow")
-		}
-		if plan.LevelTerminalAffected > planProcessed {
-			return invalid("message_receipt.per_plan.level_terminal_affected", "cannot exceed Plan x Record evaluations with a valid three-state result")
-		}
-		planSelected, ok := sumCountsV1(planProcessed, plan.Unavailable, plan.Terminal)
-		if !ok || plan.Selected != planSelected {
-			return invalid("message_receipt.per_plan.selected", "must equal abnormal + normal + recovery + unavailable + terminal")
-		}
-		planEvents, ok := sumCountsV1(plan.Abnormal, plan.Recovery)
-		if !ok || !addCountV1(&selected, plan.Selected) || !addCountV1(&processed, planProcessed) ||
-			!addCountV1(&unavailable, plan.Unavailable) || !addCountV1(&terminal, plan.Terminal) || !addCountV1(&events, planEvents) {
-			return invalid("message_receipt.per_plan", "count overflow")
-		}
-		if !addCountV1(&levelTerminalAffected, plan.LevelTerminalAffected) {
-			return invalid("message_receipt.per_plan", "count overflow")
-		}
-	}
-	if selected != receipt.Counts.Selected || processed != receipt.Counts.Processed || unavailable != receipt.Counts.Unavailable ||
-		terminal != receipt.Counts.Terminal || levelTerminalAffected != receipt.Counts.LevelTerminalAffected || events != receipt.Counts.Events {
-		return invalid("message_receipt.counts", "must equal per_plan result sums")
-	}
-	topSelected, ok := sumCountsV1(receipt.Counts.Processed, receipt.Counts.Unavailable, receipt.Counts.Terminal)
-	if !ok || topSelected != receipt.Counts.Selected {
-		return invalid("message_receipt.counts.selected", "must equal processed + unavailable + terminal")
-	}
-	wantStatus := ReceiptStatusCompleted
-	// An isolated validation terminal may have no trustworthy Plan x Record
-	// cardinality. It is then represented by one reason fact rather than by
-	// selected/per_plan/terminal counts.
-	if receipt.Counts.Terminal != 0 || receipt.Counts.LevelTerminalAffected != 0 ||
-		hasValidationTerminalReasonV1(receipt.ReasonCounts) {
-		wantStatus = ReceiptStatusCompletedWithTerminal
-	}
-	if receipt.Status != wantStatus {
-		return invalid("message_receipt.status", "does not match terminal counts")
-	}
-	return nil
-}
-
-func hasValidationTerminalReasonV1(values []ReasonCountV1) bool {
-	for _, value := range values {
-		definition, ok := LookupReasonV2(value.ReasonCode)
-		if ok && value.Count != 0 && definition.Domains.Has(ReasonDomainValidationIssue) {
-			return true
-		}
-	}
-	return false
-}
-
-func sumCountsV1(values ...uint64) (uint64, bool) {
-	var total uint64
-	for _, value := range values {
-		if !addCountV1(&total, value) {
-			return 0, false
-		}
-	}
-	return total, true
-}
-
-func addCountV1(total *uint64, value uint64) bool {
-	if ^uint64(0)-*total < value {
-		return false
-	}
-	*total += value
-	return true
-}
-
-func countSetBalancedV1(source, published, dropped CountSetV1) bool {
-	return countBalancedV1(source.Messages, published.Messages, dropped.Messages) &&
-		countBalancedV1(source.Records, published.Records, dropped.Records) &&
-		countBalancedV1(source.Bytes, published.Bytes, dropped.Bytes)
-}
-
-func countBalancedV1(source, published, dropped uint64) bool {
-	return published <= source && source-published == dropped
-}
-
-// Decode helpers intentionally use strict JSON object decoding and then the
-// same validators used by Writers; they do not accept null optionals.
-func DecodeMessageReceiptV1(payload []byte) (*MessageReceiptV1, error) {
-	required := []string{
-		"schema", "required_features", "receipt_id", "execution_id", "message_id", "payload_digest", "plan_set_digest",
-		"source_window", "status", "counts", "per_plan", "reason_counts",
-	}
-	object, err := validateOutputHeaderV1(payload, "message_receipt", MessageReceiptSchemaV1, required)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := validateJSONObjectFields(object["source_window"], "message_receipt.source_window", []string{"from_time", "until_time"}, nil, false); err != nil {
-		return nil, err
-	}
-	if _, err := validateJSONObjectFields(object["counts"], "message_receipt.counts", []string{"received", "selected", "processed", "unavailable", "terminal", "level_terminal_affected", "events"}, nil, false); err != nil {
-		return nil, err
-	}
-	if err := validateRawObjectArrayV1(object["per_plan"], "message_receipt.per_plan", []string{"plan_id", "selected", "abnormal", "normal", "recovery", "unavailable", "terminal", "level_terminal_affected"}); err != nil {
-		return nil, err
-	}
-	if err := validateRawObjectArrayV1(object["reason_counts"], "message_receipt.reason_counts", []string{"reason_code", "count"}); err != nil {
-		return nil, err
-	}
-	var receipt MessageReceiptV1
-	if err := decodeJSONObject(payload, &receipt); err != nil {
-		return nil, err
-	}
-	if err := ValidateMessageReceiptV1(&receipt); err != nil {
-		return nil, err
-	}
-	return &receipt, nil
-}
-
-func DecodeExecutionSummaryV1(payload []byte) (*ExecutionSummaryV1, error) {
-	required := []string{
-		"schema", "required_features", "summary_id", "execution_id", "tenant_id", "query_group_key", "source_window",
-		"plan_set_digest", "source", "published", "dropped", "reason_counts",
-	}
-	object, err := validateOutputHeaderV1(payload, "execution_summary", ExecutionSummarySchemaV1, required)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := validateJSONObjectFields(object["source_window"], "execution_summary.source_window", []string{"from_time", "until_time"}, nil, false); err != nil {
-		return nil, err
-	}
-	for _, field := range []string{"source", "published", "dropped"} {
-		if _, err := validateJSONObjectFields(object[field], "execution_summary."+field, []string{"messages", "records", "bytes"}, nil, false); err != nil {
-			return nil, err
-		}
-	}
-	if err := validateRawObjectArrayV1(object["reason_counts"], "execution_summary.reason_counts", []string{"reason_code", "count"}); err != nil {
-		return nil, err
-	}
-	var summary ExecutionSummaryV1
-	if err := decodeJSONObject(payload, &summary); err != nil {
-		return nil, err
-	}
-	if err := ValidateExecutionSummaryV1(&summary); err != nil {
-		return nil, err
-	}
-	return &summary, nil
-}
-
-func validateOutputHeaderV1(payload []byte, field, schemaName string, required []string) (map[string]json.RawMessage, error) {
-	object, err := validateJSONObjectFields(payload, field, required, nil, false)
+func validateOutputHeaderV1(payload []byte, field, schemaName string, required []string, optional ...string) (map[string]json.RawMessage, error) {
+	object, err := validateJSONObjectFields(payload, field, required, optional, false)
 	if err != nil {
 		return nil, err
 	}
@@ -665,17 +561,4 @@ func validateOutputHeaderV1(payload []byte, field, schemaName string, required [
 		return nil, err
 	}
 	return object, nil
-}
-
-func validateRawObjectArrayV1(raw json.RawMessage, field string, required []string) error {
-	var values []json.RawMessage
-	if err := decodeJSONObject(raw, &values); err != nil || values == nil {
-		return invalid(field, "must be an array")
-	}
-	for index, value := range values {
-		if _, err := validateJSONObjectFields(value, field+"["+strconv.Itoa(index)+"]", required, nil, false); err != nil {
-			return err
-		}
-	}
-	return nil
 }

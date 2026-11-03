@@ -123,7 +123,7 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 	return ins, nil
 }
 
-func (i *Instance) getClient(ctx context.Context, connect Connect) (*elastic.Client, error) {
+func (i *Instance) getClient(ctx context.Context, connect Connect, options ...elastic.ClientOptionFunc) (*elastic.Client, error) {
 	cliOpts := []elastic.ClientOptionFunc{
 		elastic.SetURL(connect.Address),
 		elastic.SetSniff(false),
@@ -148,6 +148,7 @@ func (i *Instance) getClient(ctx context.Context, connect Connect) (*elastic.Cli
 		)
 	}
 
+	cliOpts = append(cliOpts, options...)
 	return elastic.DialContext(ctx, cliOpts...)
 }
 
@@ -188,12 +189,30 @@ func (i *Instance) checkQuery(query *metadata.Query) error {
 	return nil
 }
 
+type esIndexMetadata struct {
+	settings        map[string]map[string]any
+	mappings        map[string]map[string]any
+	physicalIndexes []string
+	directQuerySafe map[string]bool
+}
+
 func resolveIndexMetadata(ctx context.Context, span *trace.Span, cli *elastic.Client, aliases ...string) (map[string]map[string]any, map[string]map[string]any, []string, error) {
+	snapshot, err := resolveIndexMetadataSnapshot(ctx, span, cli, aliases...)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return snapshot.settings, snapshot.mappings, snapshot.physicalIndexes, nil
+}
+
+func resolveIndexMetadataSnapshot(ctx context.Context, span *trace.Span, cli *elastic.Client, aliases ...string) (*esIndexMetadata, error) {
 	settings := make(map[string]map[string]any)
+	directQuerySafe := make(map[string]bool)
 	mappings := make(map[string]map[string]any)
 
 	span.Set("get-indexes", aliases)
+	indexStartedAt := time.Now()
 	indices, indicesErr := cli.IndexGet(aliases...).Do(ctx)
+	span.Set("index-get-duration-ms", float64(time.Since(indexStartedAt))/float64(time.Millisecond))
 	span.Set("index-get-fallback", indicesErr != nil)
 	if indicesErr != nil {
 		indexGetError := truncateString(indicesErr.Error(), esIndexMetadataErrorMaxLength)
@@ -207,14 +226,16 @@ func resolveIndexMetadata(ctx context.Context, span *trace.Span, cli *elastic.Cl
 		).Warn(ctx)
 
 		span.Set("get-mapping", aliases)
+		mappingStartedAt := time.Now()
 		res, err := cli.GetMapping().Index(aliases...).Type("").Do(ctx)
+		span.Set("get-mapping-duration-ms", float64(time.Since(mappingStartedAt))/float64(time.Millisecond))
 		if err != nil {
 			span.Set("get-mapping-error", truncateString(err.Error(), esIndexMetadataErrorMaxLength))
-			return nil, nil, nil, metadata.NewMessage(
+			return nil, metadata.NewMessage(
 				metadata.MsgQueryES,
 				"索引查询异常: %+v",
 				aliases,
-			).Error(ctx, err)
+			).Error(ctx, withBackendStatus(err))
 		}
 
 		for index, r := range res {
@@ -226,6 +247,7 @@ func resolveIndexMetadata(ctx context.Context, span *trace.Span, cli *elastic.Cl
 		for index, indice := range indices {
 			settings[index] = indice.Settings
 			mappings[index] = indice.Mappings
+			directQuerySafe[index] = collapseDirectQuerySafe(index, indice.Aliases, aliases)
 		}
 	}
 
@@ -235,7 +257,7 @@ func resolveIndexMetadata(ctx context.Context, span *trace.Span, cli *elastic.Cl
 	}
 	sort.Strings(physicalIndexes)
 
-	return settings, mappings, physicalIndexes, nil
+	return &esIndexMetadata{settings: settings, mappings: mappings, physicalIndexes: physicalIndexes, directQuerySafe: directQuerySafe}, nil
 }
 
 // fieldMap 获取es索引的字段映射
@@ -245,8 +267,13 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 }
 
 func (i *Instance) fieldMapWithPhysicalIndexes(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (metadata.FieldsMap, []string, error) {
+	fields, indexes, _, err := i.fieldMapWithIndexFields(ctx, fieldAlias, aliases...)
+	return fields, indexes, err
+}
+
+func (i *Instance) fieldMapWithIndexFields(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (metadata.FieldsMap, []string, *collapseIndexMetadata, error) {
 	if len(aliases) == 0 {
-		return nil, nil, fmt.Errorf("query indexes is empty")
+		return nil, nil, nil, fmt.Errorf("query indexes is empty")
 	}
 
 	var err error
@@ -258,25 +285,35 @@ func (i *Instance) fieldMapWithPhysicalIndexes(ctx context.Context, fieldAlias m
 		span.End(&err)
 	}()
 	span.Set("aliases", aliases)
-	cli, err := i.getClient(ctx, i.connect)
+	decoder := &indexMetadataDecoder{}
+	defer decoder.record(span)
+	clientStartedAt := time.Now()
+	cli, err := i.getClient(ctx, i.connect, elastic.SetDecoder(decoder))
+	span.Set("mapping-client-duration-ms", float64(time.Since(clientStartedAt))/float64(time.Millisecond))
 	if err != nil {
-		return nil, nil, fmt.Errorf("get client error: %w", err)
+		return nil, nil, nil, fmt.Errorf("get client error: %w", err)
 	}
 	defer cli.Stop()
 
-	settings, mappings, physicalIndexes, err := resolveIndexMetadata(ctx, span, cli, aliases...)
+	snapshot, err := resolveIndexMetadataSnapshot(ctx, span, cli, aliases...)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+	settings, mappings, physicalIndexes := snapshot.settings, snapshot.mappings, snapshot.physicalIndexes
 	span.Set("mapping-length", len(mappings))
 	span.Set("physical-index-length", len(physicalIndexes))
 
+	parseStartedAt := time.Now()
+	defer func() {
+		span.Set("mapping-field-parse-duration-ms", float64(time.Since(parseStartedAt))/float64(time.Millisecond))
+	}()
 	iof := NewIndexOptionFormat(fieldAlias)
+	indexFields := &collapseIndexMetadata{fields: make(map[string]map[string]bool, len(mappings)), directQuerySafe: snapshot.directQuerySafe}
 
 	// 忽略 mapping 为空的情况的报错
 	if len(mappings) == 0 {
 		span.Set("field-map-length", 0)
-		return iof.FieldsMap(), physicalIndexes, nil
+		return iof.FieldsMap(), physicalIndexes, indexFields, nil
 	}
 
 	indexes := make([]string, 0)
@@ -291,11 +328,12 @@ func (i *Instance) fieldMapWithPhysicalIndexes(ctx context.Context, fieldAlias m
 		index := indexes[idx]
 		if in, ok := mappings[index]; ok && in != nil {
 			iof.Parse(settings[index], in)
+			indexFields.fields[index] = mappingFieldNames(in)
 		}
 	}
 
 	span.Set("field-map-length", len(iof.FieldsMap()))
-	return iof.FieldsMap(), physicalIndexes, nil
+	return iof.FieldsMap(), physicalIndexes, indexFields, nil
 }
 
 func buildESQuerySource(ctx context.Context, qb *metadata.Query, fact *FormatFactory, forceUnmappedTypes map[string]string) (*elastic.SearchSource, elastic.Query, string, error) {
@@ -311,7 +349,7 @@ func buildESQuerySource(ctx context.Context, qb *metadata.Query, fact *FormatFac
 	}
 
 	// 查询时间生成 elastic.query
-	rangeQuery, err := fact.RangeQuery()
+	rangeQuery, err := fact.rangeQuery(qb.RangeEndExclusive)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -326,6 +364,9 @@ func buildESQuerySource(ctx context.Context, qb *metadata.Query, fact *FormatFac
 	}
 
 	source := elastic.NewSearchSource()
+	if qb.ExactTotal {
+		source.TrackTotalHits(true)
+	}
 	for _, order := range fact.Orders() {
 		fs := elastic.NewFieldSort(order.Name).Order(order.Ast)
 		unmappedType := order.UnmappedType
@@ -413,7 +454,7 @@ func (i *Instance) executeESQuery(
 	qbString, _ := json.Marshal(qb)
 	span.Set("metadata-query", qbString)
 	span.Set("query-connect", qo.conn.String())
-	span.Set("query-headers", i.headers)
+	span.Set("query-header-count", len(i.headers))
 	span.Set("query-indexes", qo.indexes)
 	span.Set("query-body", bodyString)
 
@@ -1092,7 +1133,7 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 
 	searchResult, err := cli.Search().Index(aliases...).SearchSource(source).Do(ctx)
 	if err != nil {
-		return nil, err
+		return nil, withBackendStatus(err)
 	}
 
 	if searchResult.Aggregations == nil {

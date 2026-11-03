@@ -1,0 +1,961 @@
+{
+  "space_uid": "bkcc__golden_vm_matching",
+  "result_tables": [
+    {
+      "table_id": "demo_matching.partition_01"
+    },
+    {
+      "table_id": "demo_matching.partition_02"
+    },
+    {
+      "table_id": "demo_matching.partition_03"
+    },
+    {
+      "table_id": "demo_matching.partition_04"
+    },
+    {
+      "table_id": "demo_matching.partition_05"
+    },
+    {
+      "table_id": "demo_matching.partition_06"
+    },
+    {
+      "table_id": "demo_matching.partition_07"
+    },
+    {
+      "table_id": "demo_matching.partition_08"
+    },
+    {
+      "table_id": "demo_matching.partition_09"
+    },
+    {
+      "table_id": "demo_matching.partition_10"
+    },
+    {
+      "table_id": "demo_matching.partition_11"
+    },
+    {
+      "table_id": "demo_matching.partition_12"
+    },
+    {
+      "table_id": "demo_matching.partition_13"
+    },
+    {
+      "table_id": "demo_matching.partition_14"
+    },
+    {
+      "table_id": "demo_matching.partition_15"
+    },
+    {
+      "table_id": "demo_matching.partition_16"
+    },
+    {
+      "table_id": "demo_matching.partition_17"
+    },
+    {
+      "table_id": "demo_matching.partition_18"
+    },
+    {
+      "table_id": "demo_matching.partition_19"
+    },
+    {
+      "table_id": "demo_matching.partition_20"
+    },
+    {
+      "table_id": "demo_matching.partition_21"
+    },
+    {
+      "table_id": "demo_matching.partition_22"
+    },
+    {
+      "table_id": "demo_matching.partition_23"
+    },
+    {
+      "table_id": "demo_matching.partition_24"
+    },
+    {
+      "table_id": "demo_matching.partition_25"
+    },
+    {
+      "table_id": "demo_matching.partition_26"
+    },
+    {
+      "table_id": "demo_matching.partition_27"
+    },
+    {
+      "table_id": "demo_matching.partition_28"
+    },
+    {
+      "table_id": "demo_matching.partition_29"
+    },
+    {
+      "table_id": "demo_matching.partition_30"
+    },
+    {
+      "table_id": "demo_matching.partition_31"
+    },
+    {
+      "table_id": "demo_matching.partition_32"
+    },
+    {
+      "table_id": "demo_matching.partition_33"
+    },
+    {
+      "table_id": "demo_matching.partition_34"
+    },
+    {
+      "table_id": "demo_matching.partition_35"
+    },
+    {
+      "table_id": "demo_matching.partition_36"
+    },
+    {
+      "table_id": "demo_matching.partition_37"
+    },
+    {
+      "table_id": "demo_matching.partition_38"
+    },
+    {
+      "table_id": "demo_matching.partition_39"
+    },
+    {
+      "table_id": "demo_matching.partition_40"
+    },
+    {
+      "table_id": "demo_matching.partition_41"
+    },
+    {
+      "table_id": "demo_matching.partition_42"
+    },
+    {
+      "table_id": "demo_matching.partition_43"
+    },
+    {
+      "table_id": "demo_matching.partition_44"
+    },
+    {
+      "table_id": "demo_matching.partition_45"
+    },
+    {
+      "table_id": "demo_matching.partition_46"
+    },
+    {
+      "table_id": "demo_matching.partition_47"
+    },
+    {
+      "table_id": "demo_matching.partition_48"
+    },
+    {
+      "table_id": "demo_matching.partition_49"
+    },
+    {
+      "table_id": "demo_matching.partition_50"
+    },
+    {
+      "table_id": "demo_matching.partition_51"
+    },
+    {
+      "table_id": "demo_matching.partition_52"
+    },
+    {
+      "table_id": "demo_matching.partition_53"
+    },
+    {
+      "table_id": "demo_matching.partition_54",
+      "filters": [
+        {
+          "bk_biz_id": "9001"
+        }
+      ]
+    }
+  ],
+  "result_table_details": {
+    "demo_matching.partition_01": {
+      "storage_id": 910202,
+      "storage_name": "vm_storage_matching_2",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_01",
+      "measurement": "partition_01",
+      "vm_rt": "vm_rt_demo_matching_53",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_02": {
+      "storage_id": 910202,
+      "storage_name": "vm_storage_matching_2",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_02",
+      "measurement": "partition_02",
+      "vm_rt": "vm_rt_demo_matching_01",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_03": {
+      "storage_id": 910202,
+      "storage_name": "vm_storage_matching_2",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_03",
+      "measurement": "partition_03",
+      "vm_rt": "vm_rt_demo_matching_02",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_04": {
+      "storage_id": 910202,
+      "storage_name": "vm_storage_matching_2",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_04",
+      "measurement": "partition_04",
+      "vm_rt": "vm_rt_demo_matching_03",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_05": {
+      "storage_id": 910202,
+      "storage_name": "vm_storage_matching_2",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_05",
+      "measurement": "partition_05",
+      "vm_rt": "vm_rt_demo_matching_04",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_06": {
+      "storage_id": 910202,
+      "storage_name": "vm_storage_matching_2",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_06",
+      "measurement": "partition_06",
+      "vm_rt": "vm_rt_demo_matching_05",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_07": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_07",
+      "measurement": "partition_07",
+      "vm_rt": "vm_rt_demo_matching_06",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_08": {
+      "storage_id": 910202,
+      "storage_name": "vm_storage_matching_2",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_08",
+      "measurement": "partition_08",
+      "vm_rt": "vm_rt_demo_matching_07",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_09": {
+      "storage_id": 910202,
+      "storage_name": "vm_storage_matching_2",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_09",
+      "measurement": "partition_09",
+      "vm_rt": "vm_rt_demo_matching_08",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_10": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_10",
+      "measurement": "partition_10",
+      "vm_rt": "vm_rt_demo_matching_09",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_11": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_11",
+      "measurement": "partition_11",
+      "vm_rt": "vm_rt_demo_matching_10",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_12": {
+      "storage_id": 910202,
+      "storage_name": "vm_storage_matching_2",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_12",
+      "measurement": "partition_12",
+      "vm_rt": "vm_rt_demo_matching_11",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_13": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_13",
+      "measurement": "partition_13",
+      "vm_rt": "vm_rt_demo_matching_12",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_14": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_14",
+      "measurement": "partition_14",
+      "vm_rt": "vm_rt_demo_matching_13",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_15": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_15",
+      "measurement": "partition_15",
+      "vm_rt": "vm_rt_demo_matching_14",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_16": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_16",
+      "measurement": "partition_16",
+      "vm_rt": "vm_rt_demo_matching_15",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_17": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_17",
+      "measurement": "partition_17",
+      "vm_rt": "vm_rt_demo_matching_16",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_18": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_18",
+      "measurement": "partition_18",
+      "vm_rt": "vm_rt_demo_matching_17",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_19": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_19",
+      "measurement": "partition_19",
+      "vm_rt": "vm_rt_demo_matching_18",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_20": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_20",
+      "measurement": "partition_20",
+      "vm_rt": "vm_rt_demo_matching_19",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_21": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_21",
+      "measurement": "partition_21",
+      "vm_rt": "vm_rt_demo_matching_20",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_22": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_22",
+      "measurement": "partition_22",
+      "vm_rt": "vm_rt_demo_matching_21",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_23": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_23",
+      "measurement": "partition_23",
+      "vm_rt": "vm_rt_demo_matching_22",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_24": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_24",
+      "measurement": "partition_24",
+      "vm_rt": "vm_rt_demo_matching_23",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_25": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_25",
+      "measurement": "partition_25",
+      "vm_rt": "vm_rt_demo_matching_24",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_26": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_26",
+      "measurement": "partition_26",
+      "vm_rt": "vm_rt_demo_matching_25",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_27": {
+      "storage_id": 910204,
+      "storage_name": "vm_storage_matching_4",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_27",
+      "measurement": "partition_27",
+      "vm_rt": "vm_rt_demo_matching_26",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_28": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_28",
+      "measurement": "partition_28",
+      "vm_rt": "vm_rt_demo_matching_27",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_29": {
+      "storage_id": 910202,
+      "storage_name": "vm_storage_matching_2",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_29",
+      "measurement": "partition_29",
+      "vm_rt": "vm_rt_demo_matching_28",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_30": {
+      "storage_id": 910204,
+      "storage_name": "vm_storage_matching_4",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_30",
+      "measurement": "partition_30",
+      "vm_rt": "vm_rt_demo_matching_29",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_31": {
+      "storage_id": 910204,
+      "storage_name": "vm_storage_matching_4",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_31",
+      "measurement": "partition_31",
+      "vm_rt": "vm_rt_demo_matching_30",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_32": {
+      "storage_id": 910204,
+      "storage_name": "vm_storage_matching_4",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_32",
+      "measurement": "partition_32",
+      "vm_rt": "vm_rt_demo_matching_31",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_33": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_33",
+      "measurement": "partition_33",
+      "vm_rt": "vm_rt_demo_matching_32",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_34": {
+      "storage_id": 910204,
+      "storage_name": "vm_storage_matching_4",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_34",
+      "measurement": "partition_34",
+      "vm_rt": "vm_rt_demo_matching_33",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_35": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_35",
+      "measurement": "partition_35",
+      "vm_rt": "vm_rt_demo_matching_34",
+      "fields": [
+        "demo_inflight",
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_36": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_36",
+      "measurement": "partition_36",
+      "vm_rt": "vm_rt_demo_matching_35",
+      "fields": [
+        "demo_inflight",
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_37": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_37",
+      "measurement": "partition_37",
+      "vm_rt": "vm_rt_demo_matching_36",
+      "fields": [
+        "demo_inflight",
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_38": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_38",
+      "measurement": "partition_38",
+      "vm_rt": "vm_rt_demo_matching_37",
+      "fields": [
+        "demo_inflight",
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_39": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_39",
+      "measurement": "partition_39",
+      "vm_rt": "vm_rt_demo_matching_38",
+      "fields": [
+        "demo_inflight",
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_40": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_40",
+      "measurement": "partition_40",
+      "vm_rt": "vm_rt_demo_matching_39",
+      "fields": [
+        "demo_inflight",
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_41": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_41",
+      "measurement": "partition_41",
+      "vm_rt": "vm_rt_demo_matching_40",
+      "fields": [
+        "demo_inflight",
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_42": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_42",
+      "measurement": "partition_42",
+      "vm_rt": "vm_rt_demo_matching_41",
+      "fields": [
+        "demo_inflight",
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_43": {
+      "storage_id": 910203,
+      "storage_name": "vm_storage_matching_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_43",
+      "measurement": "partition_43",
+      "vm_rt": "vm_rt_demo_matching_42",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_44": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_44",
+      "measurement": "partition_44",
+      "vm_rt": "vm_rt_demo_matching_43",
+      "fields": [
+        "demo_inflight",
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_45": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_45",
+      "measurement": "partition_45",
+      "vm_rt": "vm_rt_demo_matching_44",
+      "fields": [
+        "demo_inflight",
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_46": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_46",
+      "measurement": "partition_46",
+      "vm_rt": "vm_rt_demo_matching_45",
+      "fields": [
+        "demo_inflight",
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_47": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_47",
+      "measurement": "partition_47",
+      "vm_rt": "vm_rt_demo_matching_46",
+      "fields": [
+        "demo_inflight",
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_48": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_48",
+      "measurement": "partition_48",
+      "vm_rt": "vm_rt_demo_matching_47",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_49": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_49",
+      "measurement": "partition_49",
+      "vm_rt": "vm_rt_demo_matching_48",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_50": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_50",
+      "measurement": "partition_50",
+      "vm_rt": "vm_rt_demo_matching_49",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_51": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_51",
+      "measurement": "partition_51",
+      "vm_rt": "vm_rt_demo_matching_50",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_52": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_52",
+      "measurement": "partition_52",
+      "vm_rt": "vm_rt_demo_matching_51",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_53": {
+      "storage_id": 910205,
+      "storage_name": "vm_storage_matching_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_53",
+      "measurement": "partition_53",
+      "vm_rt": "vm_rt_demo_matching_52",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_matching.partition_54": {
+      "storage_id": 910201,
+      "storage_name": "vm_storage_matching_1",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_matching.partition_54",
+      "measurement": "partition_54",
+      "vm_rt": "vm_rt_demo_matching_54",
+      "fields": [
+        "demo_restarts_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    }
+  },
+  "storages": {
+    "910201": {
+      "type": "victoria_metrics"
+    },
+    "910202": {
+      "type": "victoria_metrics"
+    },
+    "910203": {
+      "type": "victoria_metrics"
+    },
+    "910204": {
+      "type": "victoria_metrics"
+    },
+    "910205": {
+      "type": "victoria_metrics"
+    }
+  },
+  "must_vm_table_ids": [
+    "demo_matching.partition_01",
+    "demo_matching.partition_02",
+    "demo_matching.partition_03",
+    "demo_matching.partition_04",
+    "demo_matching.partition_05",
+    "demo_matching.partition_06",
+    "demo_matching.partition_07",
+    "demo_matching.partition_08",
+    "demo_matching.partition_09",
+    "demo_matching.partition_10",
+    "demo_matching.partition_11",
+    "demo_matching.partition_12",
+    "demo_matching.partition_13",
+    "demo_matching.partition_14",
+    "demo_matching.partition_15",
+    "demo_matching.partition_16",
+    "demo_matching.partition_17",
+    "demo_matching.partition_18",
+    "demo_matching.partition_19",
+    "demo_matching.partition_20",
+    "demo_matching.partition_21",
+    "demo_matching.partition_22",
+    "demo_matching.partition_23",
+    "demo_matching.partition_24",
+    "demo_matching.partition_25",
+    "demo_matching.partition_26",
+    "demo_matching.partition_27",
+    "demo_matching.partition_28",
+    "demo_matching.partition_29",
+    "demo_matching.partition_30",
+    "demo_matching.partition_31",
+    "demo_matching.partition_32",
+    "demo_matching.partition_33",
+    "demo_matching.partition_34",
+    "demo_matching.partition_35",
+    "demo_matching.partition_36",
+    "demo_matching.partition_37",
+    "demo_matching.partition_38",
+    "demo_matching.partition_39",
+    "demo_matching.partition_40",
+    "demo_matching.partition_41",
+    "demo_matching.partition_42",
+    "demo_matching.partition_43",
+    "demo_matching.partition_44",
+    "demo_matching.partition_45",
+    "demo_matching.partition_46",
+    "demo_matching.partition_47",
+    "demo_matching.partition_48",
+    "demo_matching.partition_49",
+    "demo_matching.partition_50",
+    "demo_matching.partition_51",
+    "demo_matching.partition_52",
+    "demo_matching.partition_53",
+    "demo_matching.partition_54"
+  ]
+}

@@ -1,0 +1,306 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package main
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
+)
+
+// The control plane's answer maps onto the fleet's facts field for field:
+// the publication, the Plans with their revisions and digests, every
+// disposition with its scope, level, reason, field and the compiler's words
+// -- the three booleans that tell the standings apart, and whether the
+// source marks the strategy global; and each Plan's source and grouping.
+func TestTheStrategyLookupReachesTheFleetFieldForField(t *testing.T) {
+	lookup := controlplane.StrategyLookup{
+		Available: true, Found: true, Retained: true, Global: true,
+		Publication: controlplane.SnapshotPublicationRef{SnapshotRevision: "s1", PublicationEpoch: 7},
+		Plans: []controlplane.StrategyPlanRef{{
+			Plan:       execution.PlanIdentity{TenantID: "default", BusinessID: "2", StrategyID: "4101"},
+			QueryGroup: "qg-a", ObjectDigest: "d-a", SnapshotRevision: "s1", QueryRevision: "q1", ScheduleRevision: "r1",
+			SourceSemantics: []string{"custom/event"}, GroupBy: []string{"namespace", "pod"}, GroupByTotal: 3, PromQL: true}},
+		Dispositions: []controlplane.ObjectDisposition{
+			{SourceID: "4101", Scope: "PLAN", Disposition: controlplane.DispositionStaleConfig, Reason: "QUERY_CONFIG_INVALID", FieldPath: "items[0].query_configs[0]",
+				Detail: "query interval is invalid"},
+			{SourceID: "4101", Scope: "PLAN", Disposition: controlplane.DispositionUnsupported, Reason: "UNSUPPORTED_TARGET_SCOPE", FieldPath: "items[0].target",
+				Detail: `TARGET_SCOPE_UNSUPPORTED: target field "host_set_template"`},
+			{SourceID: "4101", Scope: "LEVEL", LevelID: 2, Disposition: controlplane.DispositionAccepted}},
+	}
+	want := fleet.StrategyLookupFacts{
+		Available: true, Found: true, Retained: true, Global: true, Publication: fleet.StrategyPublication{SnapshotRevision: "s1", Epoch: 7},
+		Plans: []fleet.StrategyPlanRef{{Tenant: "default", Business: "2", QueryGroup: "qg-a", ObjectDigest: "d-a",
+			SnapshotRevision: "s1", QueryRevision: "q1", ScheduleRevision: "r1",
+			SourceSemantics: []string{"custom/event"}, GroupBy: []string{"namespace", "pod"}, GroupByTotal: 3, PromQL: true}},
+		Dispositions: []fleet.StrategyDisposition{
+			{Scope: "PLAN", Disposition: "STALE_CONFIG", Reason: "QUERY_CONFIG_INVALID", FieldPath: "items[0].query_configs[0]", Detail: "query interval is invalid"},
+			{Scope: "PLAN", Disposition: string(controlplane.DispositionUnsupported), Reason: "UNSUPPORTED_TARGET_SCOPE", FieldPath: "items[0].target",
+				Detail: `TARGET_SCOPE_UNSUPPORTED: target field "host_set_template"`},
+			{Scope: "LEVEL", LevelID: 2, Disposition: "ACCEPTED"}},
+	}
+	if got := strategyLookupFactsOf(lookup); !reflect.DeepEqual(got, want) {
+		t.Fatalf("facts = %+v\nwant %+v", got, want)
+	}
+	if got := strategyLookupFactsOf(controlplane.StrategyLookup{}); got.Available || got.Found || len(got.Plans) != 0 {
+		t.Fatalf("an unavailable lookup = %+v, want nothing", got)
+	}
+	if strategyLookupSource(nil) != nil {
+		t.Fatal("a source without a reconciler answers")
+	}
+}
+
+type scriptedLeaderDiscovery struct {
+	endpoint viewstream.LeaderEndpoint
+	miss     string
+	err      error
+}
+
+func (discovery scriptedLeaderDiscovery) Leader(context.Context) (viewstream.LeaderEndpoint, string, error) {
+	return discovery.endpoint, discovery.miss, discovery.err
+}
+
+// The forwarder hands the request to the Leader's listener once, marked so
+// the Leader will not hand it on, with the query intact, and copies the
+// Leader's status and body back as they are. Each way of having no Leader
+// is the discovery's own word; a Leader that does not answer in time is
+// a failed forward, not a hang.
+func TestTheForwarderHandsTheRequestToTheLeaderOnceWithItsMark(t *testing.T) {
+	var seen *http.Request
+	leader := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		seen = request.Clone(context.Background())
+		response.Header().Set("Content-Type", "application/json")
+		response.WriteHeader(http.StatusOK)
+		_, _ = response.Write([]byte(`{"standing":"WITHHELD","answered_by":"pod-leader"}`))
+	}))
+	defer leader.Close()
+	endpoint := strings.TrimPrefix(leader.URL, "http://")
+	forward := leaderForwarder(scriptedLeaderDiscovery{endpoint: viewstream.LeaderEndpoint{WorkerID: "pod-leader", Endpoint: endpoint}}, "pod-follower", nil, nil)
+	response := httptest.NewRecorder()
+	forwarded, refusal := forward(response, httptest.NewRequest(http.MethodGet, "/api/strategies/4101?tenant=default&business=2", nil))
+	if !forwarded || refusal != "" {
+		t.Fatalf("forward = (%v, %q), want forwarded", forwarded, refusal)
+	}
+	if seen == nil || seen.URL.Path != "/api/strategies/4101" || seen.URL.Query().Get("tenant") != "default" ||
+		seen.Header.Get(fleet.ForwardedHeader()) != "pod-follower" {
+		t.Fatalf("the Leader saw %v, want the same path and query, marked as forwarded by pod-follower", seen)
+	}
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"answered_by":"pod-leader"`) ||
+		response.Header().Get("Content-Type") != "application/json" || response.Header().Get("X-Alarmd-Answered-By") != "pod-leader" {
+		t.Fatalf("relayed = %d %s %v, want the Leader's answer as it was", response.Code, response.Body.String(), response.Header())
+	}
+	// A refusal the Leader gives is relayed as the Leader gave it.
+	refusing := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = response.Write([]byte(`{"error":"NOT_PUBLISHED"}`))
+	}))
+	defer refusing.Close()
+	forward = leaderForwarder(scriptedLeaderDiscovery{endpoint: viewstream.LeaderEndpoint{WorkerID: "pod-leader", Endpoint: strings.TrimPrefix(refusing.URL, "http://")}}, "pod-follower", nil, nil)
+	response = httptest.NewRecorder()
+	if forwarded, _ := forward(response, httptest.NewRequest(http.MethodGet, "/api/strategies/4101", nil)); !forwarded || response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a refusing Leader = forwarded %v code %d, want relayed as 503", forwarded, response.Code)
+	}
+	// No Leader, each in its own word; a discovery that failed is its own.
+	for _, miss := range viewstream.DiscoveryMissReasons {
+		forward = leaderForwarder(scriptedLeaderDiscovery{miss: miss}, "pod-follower", nil, nil)
+		if forwarded, refusal := forward(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/strategies/4101", nil)); forwarded || refusal != miss {
+			t.Errorf("miss %s: forward = (%v, %q), want not forwarded with the miss word", miss, forwarded, refusal)
+		}
+	}
+	forward = leaderForwarder(scriptedLeaderDiscovery{err: errors.New("redis: i/o timeout")}, "pod-follower", nil, nil)
+	if forwarded, refusal := forward(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/strategies/4101", nil)); forwarded || refusal != viewstream.MissDiscoveryFailed {
+		t.Errorf("a failed discovery: forward = (%v, %q), want DISCOVERY_FAILED", forwarded, refusal)
+	}
+	// An endpoint nothing listens on: a failed forward, said as such.
+	forward = leaderForwarder(scriptedLeaderDiscovery{endpoint: viewstream.LeaderEndpoint{WorkerID: "pod-gone", Endpoint: "127.0.0.1:1"}}, "pod-follower", nil, nil)
+	if forwarded, refusal := forward(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/strategies/4101", nil)); forwarded || refusal != "FORWARD_FAILED" {
+		t.Errorf("a Leader nothing listens on: forward = (%v, %q), want FORWARD_FAILED", forwarded, refusal)
+	}
+	if leaderForwarder(nil, "pod-follower", nil, nil) != nil {
+		t.Fatal("a forwarder without discovery forwards")
+	}
+}
+
+// A write a follower cannot answer - a sample window's open, which only the
+// Leader's directory resolves - reaches the Leader as it came: its method,
+// its body and the body's type. A read carries no body. A body past the
+// bound the open itself is read within is not sent at all.
+func TestTheForwarderCarriesAWritesMethodAndBody(t *testing.T) {
+	type seenRequest struct {
+		method, contentType, body string
+	}
+	var seen []seenRequest
+	leader := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		payload, _ := io.ReadAll(request.Body)
+		seen = append(seen, seenRequest{request.Method, request.Header.Get("Content-Type"), string(payload)})
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer leader.Close()
+	forward := leaderForwarderWithin(scriptedLeaderDiscovery{endpoint: viewstream.LeaderEndpoint{WorkerID: "pod-leader",
+		Endpoint: strings.TrimPrefix(leader.URL, "http://")}}, "pod-follower", nil, time.Second, "directory", nil)
+	open := `{"mode":"sample","strategy":"4101"}`
+	request := httptest.NewRequest(http.MethodPost, "/api/windows", strings.NewReader(open))
+	request.Header.Set("Content-Type", "application/json")
+	if forwarded, refusal := forward(httptest.NewRecorder(), request); !forwarded || refusal != "" {
+		t.Fatalf("forward = (%v, %q), want forwarded", forwarded, refusal)
+	}
+	if forwarded, _ := forward(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/objects?scope=strategies", nil)); !forwarded {
+		t.Fatal("a read was not forwarded")
+	}
+	if len(seen) != 2 || seen[0] != (seenRequest{http.MethodPost, "application/json", open}) || seen[1].method != http.MethodGet || seen[1].body != "" {
+		t.Fatalf("the Leader saw %+v, want the POST with its type and body, then a GET with none", seen)
+	}
+	oversized := httptest.NewRequest(http.MethodPost, "/api/windows", strings.NewReader(strings.Repeat("x", forwardBodyBytes+1)))
+	if forwarded, refusal := forward(httptest.NewRecorder(), oversized); forwarded || refusal != fleet.ForwardFailed || len(seen) != 2 {
+		t.Fatalf("an oversized body = (%v, %q) with %d requests seen, want a failed forward and nothing sent", forwarded, refusal, len(seen))
+	}
+}
+
+// Every hop is recorded under its route with what became of it: the reply
+// says only FORWARD_FAILED, and a Leader that ran out the hop's bound, one
+// nothing listens for and no Leader at all are different things to look at.
+func TestEveryForwardIsRecordedWithWhatBecameOfIt(t *testing.T) {
+	type hop struct {
+		route, result string
+		waited        time.Duration
+	}
+	var hops []hop
+	observe := func(route, result string, waited time.Duration) { hops = append(hops, hop{route, result, waited}) }
+	answering := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer answering.Close()
+	slow := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		select {
+		case <-request.Context().Done():
+		case <-time.After(2 * time.Second): // fixed-wait: a slow leader is what the case simulates; the read is bounded by its own deadline
+		}
+	}))
+	defer slow.Close()
+	at := func(server *httptest.Server) scriptedLeaderDiscovery {
+		return scriptedLeaderDiscovery{endpoint: viewstream.LeaderEndpoint{WorkerID: "pod-leader", Endpoint: strings.TrimPrefix(server.URL, "http://")}}
+	}
+	for _, tc := range []struct {
+		name      string
+		discovery scriptedLeaderDiscovery
+		want      string
+	}{
+		{"a Leader that answered, even with a refusal", at(answering), "answered"},
+		{"a Leader slower than the bound", at(slow), "timeout"},
+		{"nothing listening", scriptedLeaderDiscovery{endpoint: viewstream.LeaderEndpoint{WorkerID: "pod-gone", Endpoint: "127.0.0.1:1"}}, "refused"},
+		{"no Leader", scriptedLeaderDiscovery{miss: viewstream.DiscoveryMissReasons[0]}, "no_leader"},
+		{"discovery failed", scriptedLeaderDiscovery{err: errors.New("redis: i/o timeout")}, "no_leader"},
+	} {
+		hops = nil
+		forward := leaderForwarderWithin(tc.discovery, "pod-follower", nil, 100*time.Millisecond, "diagnosis", observe)
+		_, _ = forward(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/diagnose", nil))
+		if len(hops) != 1 || hops[0].route != "diagnosis" || hops[0].result != tc.want {
+			t.Errorf("%s: recorded %+v, want one diagnosis hop %s", tc.name, hops, tc.want)
+		}
+		if tc.want == "timeout" && (len(hops) != 1 || hops[0].waited < 100*time.Millisecond) {
+			t.Errorf("%s: waited %+v, want at least the bound", tc.name, hops)
+		}
+	}
+	// The reader leaving first is canceled, not a Leader that failed.
+	hops = nil
+	forward := leaderForwarderWithin(at(slow), "pod-follower", nil, time.Second, "diagnosis", observe)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(50 * time.Millisecond); cancel() }() // fixed-wait: the reader leaving after 50 ms is the behaviour simulated
+	_, _ = forward(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/diagnose", nil).WithContext(ctx))
+	if len(hops) != 1 || hops[0].result != "canceled" {
+		t.Errorf("a reader that left: recorded %+v, want canceled", hops)
+	}
+	// The results are the metric's closed list.
+	for _, result := range []string{"answered", "timeout", "refused", "error", "no_leader", "canceled"} {
+		if !slices.Contains(metric.LeaderForwardResults, result) {
+			t.Errorf("result %s is not in metric.LeaderForwardResults", result)
+		}
+	}
+}
+
+// A hop takes the reader's time: under a reader that waits five seconds, a
+// Leader that answers in three is answered -- the directory hop's fixed
+// two and a half seconds used to cut it -- and the Leader is told how long
+// it has, the reader's time less the way back, which WithForwardedDeadline
+// makes its request's deadline. A reader whose time runs out is a timeout,
+// not a reader that left.
+func TestAHopTakesTheReadersTimeAndTellsTheLeader(t *testing.T) {
+	var budget time.Duration
+	leader := httptest.NewServer(fleet.WithForwardedDeadline(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if deadline, ok := request.Context().Deadline(); ok {
+			budget = time.Until(deadline)
+		}
+		select {
+		case <-request.Context().Done():
+		case <-time.After(3 * time.Second): // fixed-wait: a slow leader is what the case simulates; the read is bounded by its forwarded deadline
+		}
+		response.WriteHeader(http.StatusOK)
+	})))
+	defer leader.Close()
+	var results []string
+	observe := func(_, result string, _ time.Duration) { results = append(results, result) }
+	forward := leaderForwarderWithin(scriptedLeaderDiscovery{endpoint: viewstream.LeaderEndpoint{WorkerID: "pod-leader",
+		Endpoint: strings.TrimPrefix(leader.URL, "http://")}}, "pod-follower", nil, directoryForwardTimeout, "directory", observe)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // fixed-wait: the reader's own time, which the forwarded deadline is derived from
+	defer cancel()
+	response := httptest.NewRecorder()
+	forwarded, refusal := forward(response, httptest.NewRequest(http.MethodGet, "/api/objects?scope=strategies", nil).WithContext(ctx))
+	if !forwarded || refusal != "" || response.Code != http.StatusOK {
+		t.Fatalf("forward = (%v, %q) %d, want a three-second Leader answered under a five-second reader", forwarded, refusal, response.Code)
+	}
+	if budget <= 3*time.Second || budget > 5*time.Second-forwardReturnMargin {
+		t.Fatalf("the Leader had %s, want the reader's five seconds less %s", budget, forwardReturnMargin)
+	}
+	// A Leader held to the time it was told answers inside the reader's.
+	short, cancelShort := context.WithTimeout(context.Background(), forwardReturnMargin+500*time.Millisecond) // fixed-wait: a short reader is the behaviour under test
+	defer cancelShort()
+	results = nil
+	if forwarded, _ := forward(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/objects?scope=strategies", nil).WithContext(short)); !forwarded ||
+		short.Err() != nil || len(results) != 1 || results[0] != "answered" {
+		t.Fatalf("a short reader: forwarded %v, reader %v, recorded %v, want the Leader's answer before the reader's time", forwarded, short.Err(), results)
+	}
+	// A Leader that keeps no time runs out the reader's: a timeout, not a
+	// reader that left.
+	deaf := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		time.Sleep(3 * time.Second) // fixed-wait: a Leader that keeps no time is the behaviour simulated; the reader bounds the read
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer deaf.Close()
+	deafForward := leaderForwarderWithin(scriptedLeaderDiscovery{endpoint: viewstream.LeaderEndpoint{WorkerID: "pod-leader",
+		Endpoint: strings.TrimPrefix(deaf.URL, "http://")}}, "pod-follower", nil, directoryForwardTimeout, "directory", observe)
+	cut, cancelCut := context.WithTimeout(context.Background(), forwardReturnMargin+500*time.Millisecond) // fixed-wait: a short reader is the behaviour under test
+	defer cancelCut()
+	results = nil
+	if forwarded, _ := deafForward(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/objects?scope=strategies", nil).WithContext(cut)); forwarded ||
+		len(results) != 1 || results[0] != "timeout" {
+		t.Fatalf("a Leader past the reader's time: forwarded %v, recorded %v, want a timeout", forwarded, results)
+	}
+	// A reader with less than the way back left is not handed on.
+	spent, cancelSpent := context.WithTimeout(context.Background(), forwardReturnMargin/2) // fixed-wait: a reader with less than the way back left is the behaviour under test
+	defer cancelSpent()
+	results = nil
+	if forwarded, _ := forward(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/objects?scope=strategies", nil).WithContext(spent)); forwarded ||
+		len(results) != 1 || results[0] != "timeout" {
+		t.Fatalf("a reader with no time left: forwarded %v, recorded %v, want a timeout and no hop", forwarded, results)
+	}
+}

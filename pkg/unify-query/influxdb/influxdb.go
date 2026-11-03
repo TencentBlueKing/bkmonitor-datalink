@@ -17,7 +17,6 @@ import (
 
 	ants "github.com/panjf2000/ants/v2"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/client"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -27,11 +26,6 @@ import (
 const (
 	BKTaskIndex = "bk_task_index"
 )
-
-// 全局table信息
-var tableLock sync.RWMutex
-
-var tableInfos map[string]*TableInfo
 
 var perQueryMaxGoroutine int
 
@@ -58,60 +52,6 @@ func GetInstance(clusterID string) (*Instance, error) {
 		return nil, fmt.Errorf("%s: clusterID: %s", ErrStorageNotFound, clusterID)
 	}
 	return instance, nil
-}
-
-// SetTablesInfo
-func SetTablesInfo(infos map[string]*consul.InfluxdbTableInfo) {
-	result := make(map[string]*TableInfo)
-	for key, info := range infos {
-		result[key] = &TableInfo{
-			SegmentedQueryEnable: info.SegmentedQueryEnable,
-			IsPivotTable:         info.PivotTable,
-			InfluxdbVersion:      info.InfluxdbVersion,
-		}
-	}
-	log.Debugf(context.TODO(), "update influxdb table info:%v", result)
-	tableLock.Lock()
-	defer tableLock.Unlock()
-	tableInfos = result
-}
-
-var SegmentedQueryEnable = func(db, measurement string) bool {
-	tableLock.RLock()
-	defer tableLock.RUnlock()
-
-	for _, tableID := range []string{
-		fmt.Sprintf("%s.%s", db, measurement),
-		fmt.Sprintf("%s.__default__", db),
-	} {
-		if value, ok := tableInfos[tableID]; ok {
-			return value.SegmentedQueryEnable
-		}
-	}
-
-	return false
-}
-
-// IsPivotTable 判断是否为自定义类型table
-var IsPivotTable = func(tableID string) bool {
-	tableLock.RLock()
-	defer tableLock.RUnlock()
-	if value, ok := tableInfos[tableID]; ok {
-		return value.IsPivotTable
-	}
-	return false
-}
-
-// TableInfo
-type TableInfo struct {
-	// 是否是行转列表
-	IsPivotTable bool
-
-	// 是否开启分段查询
-	SegmentedQueryEnable bool
-
-	// table_id对应的influxdb集群版本号，用于决定ast逻辑的版本
-	InfluxdbVersion string
 }
 
 // SQLInfo

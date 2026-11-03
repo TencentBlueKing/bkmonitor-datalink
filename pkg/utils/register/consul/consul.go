@@ -37,12 +37,13 @@ type Instance struct {
 }
 
 type InstanceOptions struct {
-	SrvName    string
-	Addr       string
-	Port       int
-	ConsulAddr string
-	Tags       []string
-	TTL        string
+	SrvName       string
+	Addr          string
+	Port          int
+	ConsulAddr    string
+	Tags          []string
+	TTL           string
+	ClientOptions *ClientOptions
 }
 
 func NewConsulInstance(ctx context.Context, opt InstanceOptions) (*Instance, error) {
@@ -55,7 +56,7 @@ func NewConsulInstance(ctx context.Context, opt InstanceOptions) (*Instance, err
 	}
 
 	serviceID := fmt.Sprintf("%s-%d", opt.SrvName, hash.Sum32())
-	client, err := NewClient(opt.ConsulAddr)
+	client, err := NewClientWithOptions(opt.ConsulAddr, opt.ClientOptions)
 	if err != nil {
 		return nil, err
 	}

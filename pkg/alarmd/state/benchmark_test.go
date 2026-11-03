@@ -14,35 +14,6 @@ import (
 	"testing"
 )
 
-func BenchmarkCodecWindow(b *testing.B) {
-	codec, err := NewCodec(CodecLimits{MaxLevels: 8, MaxPoints: 256, MaxEncodedBytes: 64 << 10})
-	if err != nil {
-		b.Fatal(err)
-	}
-	window := benchmarkWindow(b, 8, 120)
-	blob, err := codec.Encode(window)
-	if err != nil {
-		b.Fatal(err)
-	}
-	b.ReportMetric(float64(len(blob)), "blob_bytes")
-	b.Run("encode", func(b *testing.B) {
-		b.ReportAllocs()
-		for index := 0; index < b.N; index++ {
-			if _, encodeErr := codec.Encode(window); encodeErr != nil {
-				b.Fatal(encodeErr)
-			}
-		}
-	})
-	b.Run("decode", func(b *testing.B) {
-		b.ReportAllocs()
-		for index := 0; index < b.N; index++ {
-			if _, decodeErr := codec.Decode(blob); decodeErr != nil {
-				b.Fatal(decodeErr)
-			}
-		}
-	})
-}
-
 func BenchmarkWindowApplyAndSummarize(b *testing.B) {
 	requirement := requirement(5, "5", 30, 60)
 	points := make([]StatePoint, 60)
@@ -62,32 +33,4 @@ func BenchmarkWindowApplyAndSummarize(b *testing.B) {
 		history, _ := window.History(5)
 		_ = history.Summarize(100+59*60, 30)
 	}
-}
-
-func benchmarkWindow(b *testing.B, levels, points int) *Window {
-	b.Helper()
-	window := &Window{levels: make([]levelState, levels), points: make([]pointState, points)}
-	bitmapBytes := (levels + 7) / 8
-	for index := 0; index < levels; index++ {
-		fingerprint, err := decodeDigest32(fmt.Sprintf("%064x", index+1))
-		if err != nil {
-			b.Fatal(err)
-		}
-		window.levels[index] = levelState{levelID: uint32(index + 1), detectFingerprint: fingerprint}
-	}
-	for index := 0; index < points; index++ {
-		digest, err := decodeDigest32(fmt.Sprintf("%064x", index+1))
-		if err != nil {
-			b.Fatal(err)
-		}
-		window.points[index] = pointState{
-			sourceTime: int64(100 + index*60), valid: make([]byte, bitmapBytes), anomalous: make([]byte, bitmapBytes),
-		}
-		copy(window.points[index].recordDigest[:], digest[:16])
-		for level := 0; level < levels; level++ {
-			setBit(window.points[index].valid, level, true)
-			setBit(window.points[index].anomalous, level, (index+level)%3 == 0)
-		}
-	}
-	return window
 }

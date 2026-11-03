@@ -386,7 +386,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "(CAST(object['field'] AS STRING) MATCH_PHRASE 'What''s UP' OR CAST(object['field'] AS STRING) = 'What''s UP' AND `tag` != 'test')",
+			want: "(CAST(object['field'] AS STRING) LIKE '%What''s UP%' OR CAST(object['field'] AS STRING) = 'What''s UP' AND `tag` != 'test')",
 		},
 		{
 			name: "doris test object field condition",
@@ -1027,6 +1027,24 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 			},
 			want: "`host` LIKE '%srv%'",
 		},
+		{
+			name: "doris 不分词字段 contains 按子串匹配并转义 LIKE 元字符",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "host",
+						Value:         []string{"Go", `a_b%c\`},
+						Operator:      metadata.ConditionContains,
+					},
+					{
+						DimensionName: "host",
+						Value:         []string{"Task"},
+						Operator:      metadata.ConditionNotContains,
+					},
+				},
+			},
+			want: "(`host` LIKE '%Go%' OR `host` LIKE '%a\\_b\\%c\\\\\\\\%') AND `host` NOT LIKE '%Task%'",
+		},
 	}
 
 	fieldsMap := metadata.FieldsMap{
@@ -1072,6 +1090,30 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 				return
 			}
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestDorisSQLExpr_ContainsUsesPhysicalFieldOption(t *testing.T) {
+	fieldsMap := metadata.FieldsMap{
+		"log":  {FieldType: DorisTypeText, IsAnalyzed: true},
+		"host": {FieldType: DorisTypeString},
+	}
+	for name, c := range map[string]struct {
+		field, op, want string
+	}{
+		"别名指向分词字段 contains":  {"message", metadata.ConditionContains, "`log` MATCH_PHRASE 'error'"},
+		"别名指向分词字段 ncontains": {"message", metadata.ConditionNotContains, "`log` NOT MATCH_PHRASE 'error'"},
+		"反引号分词字段 contains":   {"`log`", metadata.ConditionContains, "`log` MATCH_PHRASE 'error'"},
+		"反引号分词字段 ncontains":  {"`log`", metadata.ConditionNotContains, "`log` NOT MATCH_PHRASE 'error'"},
+		"别名指向不分词字段 contains": {"hostname", metadata.ConditionContains, "`host` LIKE '%error%'"},
+		"反引号不分词字段 ncontains": {"`host`", metadata.ConditionNotContains, "`host` NOT LIKE '%error%'"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := NewSQLExpr(Doris).WithFieldsMap(fieldsMap).WithFieldAlias(metadata.FieldAlias{"message": "log", "hostname": "host"})
+			got, err := e.ParserAllConditions(metadata.AllConditions{{{DimensionName: c.field, Value: []string{"error"}, Operator: c.op}}})
+			assert.NoError(t, err)
+			assert.Equal(t, c.want, got)
 		})
 	}
 }

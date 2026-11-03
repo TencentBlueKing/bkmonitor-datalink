@@ -12,6 +12,7 @@ package timesync
 import (
 	"context"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
@@ -23,9 +24,16 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+type gatherState struct {
+	taskConf *configs.TimeSyncConfig
+	cli      *Client
+}
+
 type Gather struct {
 	tasks.BaseTask
-	cli *Client
+
+	stateLock sync.RWMutex
+	state     *gatherState
 }
 
 func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
@@ -35,32 +43,101 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather.Init()
 
 	taskConf := taskConfig.(*configs.TimeSyncConfig)
-	gather.cli = NewClient(&Option{
-		NtpdPath:   taskConf.NtpdPath,
-		ChronyAddr: taskConf.ChronyAddress,
-		Timeout:    taskConf.QueryTimeout,
-	})
+	gather.state = &gatherState{taskConf: taskConf, cli: newClient(taskConf)}
 
 	return gather
 }
 
-func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
-	g.PreRun(ctx)
-	defer g.PostRun(ctx)
+func newClient(taskConf *configs.TimeSyncConfig) *Client {
+	return NewClient(&Option{
+		NtpdPath:    taskConf.NtpdPath,
+		ChronyAddr:  taskConf.ChronyAddress,
+		BkNTPSource: taskConf.BkNTPSource,
+		Timeout:     taskConf.QueryTimeout,
+	})
+}
 
-	stat, err := g.cli.Query()
-	if err != nil {
-		logger.Errorf("failed to query stats: %v", err)
+// Reload 在调度器热加载后，用最新 TaskConfig 一次性替换配置与 Client 快照。
+// 调度器 reload 对同一 Gather 实例执行 SetConfig + Reload；基类 Reload 是空实现。
+func (g *Gather) Reload() {
+	taskConf, ok := g.TaskConfig.(*configs.TimeSyncConfig)
+	if !ok {
 		return
 	}
 
-	taskConf := g.TaskConfig.(*configs.TimeSyncConfig)
+	state := &gatherState{taskConf: taskConf, cli: newClient(taskConf)}
+	g.stateLock.Lock()
+	g.state = state
+	g.stateLock.Unlock()
+}
 
-	e <- &Event{
-		BizID:  g.TaskConfig.GetBizID(),
-		DataID: g.TaskConfig.GetDataID(),
-		Labels: g.TaskConfig.GetLabels(),
-		Data:   stats2Metrics(taskConf.Env, stat),
+func (g *Gather) snapshot() *gatherState {
+	g.stateLock.RLock()
+	defer g.stateLock.RUnlock()
+	return g.state
+}
+
+func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
+	state := g.snapshot()
+	taskConf := state.taskConf
+
+	g.PreRun(ctx)
+	defer g.PostRun(ctx)
+
+	bizID := taskConf.GetBizID()
+	dataID := taskConf.GetDataID()
+	labels := taskConf.GetLabels()
+
+	bkConfigured := taskConf.BkNTPSource != ""
+	stat, details, err := state.cli.QueryAll()
+	if err != nil {
+		if bkConfigured && taskConf.NtpdPath == "" && taskConf.ChronyAddress == "" {
+			logger.Warnf("no local ntp source configured: %v", err)
+		} else {
+			logger.Errorf("failed to query stats: %v", err)
+		}
+	} else if stat != nil {
+		e <- &Event{
+			BizID:  bizID,
+			DataID: dataID,
+			Labels: labels,
+			Data:   stats2Metrics(taskConf.Env, stat),
+		}
+	}
+
+	bkResult, bkErr := state.cli.QueryBlueking()
+	if bkConfigured && bkErr != nil {
+		logger.Warnf("failed to query blueking ntp: %v", bkErr)
+	}
+	bkSuccess := bkConfigured && bkErr == nil && bkResult != nil
+
+	// 本地偏移与蓝鲸查询相互独立：本地源查询成功就上报偏移，蓝鲸成败只影响蓝鲸指标。
+	collectedAt := time.Now()
+	localItems := buildLocalNTPMetrics(taskConf.Env, details, collectedAt)
+	if len(localItems) > 0 {
+		e <- &BatchEvent{
+			BizID:       bizID,
+			DataID:      dataID,
+			Labels:      labels,
+			TimeSeconds: collectedAt.Unix(),
+			Data:        localItems,
+		}
+	}
+
+	// 蓝鲸指标的时间轴使用蓝鲸 NTP 时间（T_blue）；未配置或查询失败时回落本地采集时间。
+	bkTime := collectedAt
+	if bkSuccess {
+		bkTime = bkResult.TBlue
+	}
+	bkItems := buildBkMetrics(taskConf.Env, taskConf.BkNTPSource, bkResult, bkConfigured, bkTime)
+	if len(bkItems) > 0 {
+		e <- &BatchEvent{
+			BizID:       bizID,
+			DataID:      dataID,
+			Labels:      labels,
+			TimeSeconds: bkTime.Unix(),
+			Data:        bkItems,
+		}
 	}
 }
 
@@ -102,17 +179,79 @@ func stats2Metrics(env string, stat *Stat) *Metrics {
 		named("timesync_query_err"):         float64(stat.Err),
 	}
 
+	return &Metrics{
+		Metrics:   metrics,
+		Target:    stat.Source,
+		Timestamp: time.Now().UnixMilli(),
+		Dimension: hostDimensions(env),
+	}
+}
+
+func hostDimensions(env string) map[string]string {
 	dims := map[string]string{}
 	if env == "host" {
 		info, _ := gse.GetAgentInfo()
 		dims = tasks.HostDimension(info)
 	}
-	return &Metrics{
-		Metrics:   metrics,
-		Target:    stat.Source,
-		Timestamp: time.Now().UnixMilli(),
-		Dimension: dims,
+	return dims
+}
+
+// buildLocalNTPMetrics 按地址组装新增 NTP 指标。
+// 每个已查询到的地址都会生成一条数据点：成功报 offset + available=1（真实 0 偏差照常上报），
+// 失败只报 available=0。时间戳优先使用时间源自己的时间，缺少源时间时回落本地采集时间。
+func buildLocalNTPMetrics(env string, details []SourceResult, fallback time.Time) []Metrics {
+	items := make([]Metrics, 0, len(details))
+	for _, detail := range details {
+		metrics := map[string]float64{}
+		if detail.Available {
+			metrics["available"] = 1
+			metrics["offset"] = detail.OffsetSeconds
+		} else {
+			metrics["available"] = 0
+		}
+
+		ts := detail.SourceTime
+		if ts.IsZero() {
+			ts = fallback
+		}
+
+		dims := hostDimensions(env)
+		dims["time_source"] = detail.Address
+		items = append(items, Metrics{
+			Metrics:   metrics,
+			Target:    detail.Target,
+			Timestamp: ts.UnixMilli(),
+			Dimension: dims,
+		})
 	}
+	return items
+}
+
+// buildBkMetrics 组装蓝鲸 NTP 指标。未配置蓝鲸源时不生成任何数据点；
+// 配置后查询成功时生成偏差和可用性，查询失败时只生成可用性 0。
+// 数据点时间戳使用蓝鲸 NTP 时间（T_blue）；查询失败时由调用方传入本地采集时间。
+func buildBkMetrics(env, bkSource string, bkResult *BkResult, bkConfigured bool, ts time.Time) []Metrics {
+	if !bkConfigured {
+		return nil
+	}
+
+	metrics := map[string]float64{}
+	dims := hostDimensions(env)
+	dims["time_source"] = bkSource
+
+	if bkResult != nil {
+		metrics["bk_offset"] = bkResult.OffsetSeconds
+		metrics["bk_available"] = 1
+	} else {
+		metrics["bk_available"] = 0
+	}
+
+	return []Metrics{{
+		Metrics:   metrics,
+		Target:    "ntpd",
+		Timestamp: ts.UnixMilli(),
+		Dimension: dims,
+	}}
 }
 
 type Event struct {
@@ -157,6 +296,52 @@ func (e *Event) AsMapStr() common.MapStr {
 	}
 }
 
+type BatchEvent struct {
+	BizID       int32
+	DataID      int32
+	Labels      []map[string]string
+	TimeSeconds int64
+	Data        []Metrics
+}
+
+func (e *BatchEvent) GetType() string {
+	return define.ModuleTimeSync
+}
+
+func (e *BatchEvent) IgnoreCMDBLevel() bool {
+	return true
+}
+
+func (e *BatchEvent) AsMapStr() common.MapStr {
+	if len(e.Labels) > 0 {
+		lbs := e.Labels[0] // 只会有一个元素
+		for i := range e.Data {
+			item := &e.Data[i]
+			if item.Dimension == nil {
+				item.Dimension = make(map[string]string)
+			}
+			for k, v := range lbs {
+				if _, ok := item.Dimension[k]; ok {
+					item.Dimension["exported_"+k] = v
+					continue
+				}
+				item.Dimension[k] = v
+			}
+		}
+	}
+
+	data := make([]map[string]interface{}, 0, len(e.Data))
+	for i := range e.Data {
+		data = append(data, e.Data[i].AsMapStr())
+	}
+	return common.MapStr{
+		"dataid":    e.DataID,
+		"data":      data,
+		"time":      e.TimeSeconds,
+		"timestamp": e.TimeSeconds,
+	}
+}
+
 type Stat struct {
 	Source string
 	Min    float64
@@ -191,7 +376,8 @@ func (s *Stat) Add(v float64) {
 }
 
 type Option struct {
-	NtpdPath   string
-	ChronyAddr string
-	Timeout    time.Duration
+	NtpdPath    string
+	ChronyAddr  string
+	BkNTPSource string
+	Timeout     time.Duration
 }

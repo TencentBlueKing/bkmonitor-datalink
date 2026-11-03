@@ -25,7 +25,15 @@ var versionCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("%s", config.Version)
 		if cmd.Flag("detail").Changed {
-			fmt.Printf("-%s", config.CommitHash)
+			// The first line stays the bare version, so callers that read it (image pipelines) are unaffected.
+			fmt.Printf("\nCommitId: %s", config.CommitHash)
+			fmt.Printf("\nTag: %s", config.GitTag)
+			fmt.Printf("\nCommitter: %s", config.GitCommitter)
+			fmt.Printf("\nCommitTime: %s", config.GitCommitTime)
+			fmt.Printf("\nBuildTime: %s", config.BuildTime)
+			fmt.Printf("\nBuildId: %s", config.BuildId)
+			fmt.Printf("\nBuildNo: %s", config.BuildNo)
+			fmt.Printf("\nRelease: %s", config.Release)
 		}
 		fmt.Printf("\n")
 	},

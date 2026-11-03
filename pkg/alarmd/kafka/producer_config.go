@@ -26,21 +26,35 @@ const (
 	decisionProducerMessageOverheadCap = 64 * 1024
 )
 
+// OutputBatchBound is how long one output batch is allowed to take to land
+// before the sink refuses to start it against a lease with less life left
+// (decision-016 per-batch admission): the producer's per-request timeout,
+// the time one attempt at the broker may take. Not the retried worst case:
+// retries follow a failure, and a failure is reported as an unknown ACK
+// whether or not the lease outlives it; what admission decides is whether a
+// batch that goes well lands inside the lease. It is the same constant the
+// producer is built with, so the two cannot drift.
+const OutputBatchBound = decisionProducerTimeout
+
+// OutputAdmissionMargin is the allowance between the admission check and
+// the first byte on the wire, and for the spread between the clock the lease
+// deadline was carried over on and the one this process reads now.
+const OutputAdmissionMargin = time.Second
+
 var kafkaTopicNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // DecisionSinkConfig contains the immutable coordinates and application-level
 // output policy for the isolated Shadow decision producer.
 type DecisionSinkConfig struct {
-	Brokers             []string
-	InputTopic          string
-	OutputTopic         string
-	AllowedOutputTopics []string
-	ClientID            string
-	BrokerVersion       string
-	MaxMessageBytes     int
+	Brokers         []string
+	OutputTopic     string
+	ClientID        string
+	BrokerVersion   string
+	MaxMessageBytes int
 }
 
-func (c DecisionSinkConfig) Validate() error {
+// ValidateProducerOnly validates the output producer's coordinates.
+func (c DecisionSinkConfig) ValidateProducerOnly() error {
 	if len(c.Brokers) == 0 {
 		return errors.New("kafka decision producer: at least one broker is required")
 	}
@@ -54,33 +68,8 @@ func (c DecisionSinkConfig) Validate() error {
 		}
 		seenBrokers[broker] = struct{}{}
 	}
-	if err := validateKafkaTopicName("input_topic", c.InputTopic); err != nil {
-		return err
-	}
 	if err := validateKafkaTopicName("output_topic", c.OutputTopic); err != nil {
 		return err
-	}
-	if c.InputTopic == c.OutputTopic {
-		return errors.New("kafka decision producer: input_topic and output_topic must differ")
-	}
-	if len(c.AllowedOutputTopics) == 0 {
-		return errors.New("kafka decision producer: output topic allowlist must be non-empty")
-	}
-	seenTopics := make(map[string]struct{}, len(c.AllowedOutputTopics))
-	for _, topic := range c.AllowedOutputTopics {
-		if err := validateKafkaTopicName("allowed_output_topics", topic); err != nil {
-			return err
-		}
-		if topic == c.InputTopic {
-			return errors.New("kafka decision producer: input topic must not appear in output allowlist")
-		}
-		if _, exists := seenTopics[topic]; exists {
-			return fmt.Errorf("kafka decision producer: duplicate allowed output topic %q", topic)
-		}
-		seenTopics[topic] = struct{}{}
-	}
-	if _, allowed := seenTopics[c.OutputTopic]; !allowed {
-		return fmt.Errorf("kafka decision producer: output topic %q is not allowlisted", c.OutputTopic)
 	}
 	for name, value := range map[string]string{"client_id": c.ClientID, "broker_version": c.BrokerVersion} {
 		if value == "" || strings.TrimSpace(value) != value {
@@ -90,22 +79,22 @@ func (c DecisionSinkConfig) Validate() error {
 	if c.MaxMessageBytes <= 0 {
 		return errors.New("kafka decision producer: max_message_bytes must be positive")
 	}
-	version, err := sarama.ParseKafkaVersion(c.BrokerVersion)
-	if err != nil {
-		return fmt.Errorf("kafka decision producer: broker_version %q: %w", c.BrokerVersion, err)
-	}
-	if !version.IsAtLeast(sarama.V0_10_2_0) || !sarama.MaxVersion.IsAtLeast(version) {
-		return fmt.Errorf("kafka decision producer: broker_version %q is outside supported producer range 0.10.2.0..%s", c.BrokerVersion, sarama.MaxVersion)
+	if _, err := ValidateBrokerVersion("kafka decision producer", c.BrokerVersion); err != nil {
+		return err
 	}
 	return nil
 }
 
-// NewDecisionProducerConfig fixes all acknowledgement, retry and timeout
-// invariants required by the isolated Shadow decision sink.
-func NewDecisionProducerConfig(coordinates DecisionSinkConfig) (*sarama.Config, error) {
-	if err := coordinates.Validate(); err != nil {
+// NewDecisionProducerOnlyConfig builds the synchronous output producer used
+// by phase-two TriggerEvent without inventing a phase-one input coordinate.
+func NewDecisionProducerOnlyConfig(coordinates DecisionSinkConfig) (*sarama.Config, error) {
+	if err := coordinates.ValidateProducerOnly(); err != nil {
 		return nil, err
 	}
+	return newDecisionProducerConfig(coordinates)
+}
+
+func newDecisionProducerConfig(coordinates DecisionSinkConfig) (*sarama.Config, error) {
 	version, err := sarama.ParseKafkaVersion(coordinates.BrokerVersion)
 	if err != nil {
 		return nil, fmt.Errorf("kafka decision producer: parse broker_version: %w", err)

@@ -53,9 +53,10 @@ const (
 
 // 特殊处理的字段
 const (
-	BizID     = "bk_biz_id"
-	ProjectID = "project_id"
-	ClusterID = "bcs_cluster_id"
+	BizID              = "bk_biz_id"
+	ProjectID          = "project_id"
+	ClusterID          = "bcs_cluster_id"
+	ApmApplicationName = "apm_application_name"
 )
 
 func PromOperatorToConditions(matchType labels.MatchType) string {

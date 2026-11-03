@@ -29,6 +29,7 @@ func setDefaultConfig() {
 
 	viper.SetDefault(ServiceNameConfigPath, "unify-query")
 	viper.SetDefault(EnableConfigPath, true)
+	viper.SetDefault(SamplerConfigPath, SamplerAlways)
 }
 
 // InitConfig
@@ -45,6 +46,7 @@ func InitConfig() {
 	otlpToken = viper.GetString(OtlpTokenConfigPath)
 	OtlpType = viper.GetString(OtlpTypeConfigPath)
 	ServiceName = viper.GetString(ServiceNameConfigPath)
+	Sampler = viper.GetString(SamplerConfigPath)
 }
 
 // init

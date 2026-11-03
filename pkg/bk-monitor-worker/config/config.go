@@ -20,7 +20,9 @@ import (
 	"github.com/spf13/viper"
 	"golang.org/x/exp/slices"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/credential"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	consulUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/consul"
 )
 
 var (
@@ -121,6 +123,8 @@ var (
 	StorageConsulTag []string
 	// StorageConsulTll consul ttl
 	StorageConsulTll string
+	// StorageConsulClientOptions is nil in legacy mode and explicit in KMS mode.
+	StorageConsulClientOptions *consulUtils.ClientOptions
 
 	// StorageMysqlHost mysql host
 	StorageMysqlHost string
@@ -187,6 +191,20 @@ var (
 	WorkerListenHost string
 	// WorkerListenPort http listen port
 	WorkerListenPort int
+	// ActiveProfilingEnabled controls whether Active Profiling consumes events.
+	ActiveProfilingEnabled bool
+	// ActiveProfilingConsulPathPrefix KV path relative to store.consul.pathPrefix.
+	ActiveProfilingConsulPathPrefix string
+	// ActiveProfilingEventFlushInterval Kafka event batch flush interval.
+	ActiveProfilingEventFlushInterval time.Duration
+	// ActiveProfilingEventQueueSize Kafka event queue capacity per DataID consumer.
+	ActiveProfilingEventQueueSize int
+	// ActiveProfilingEventBatchSize Number of events persisted in one batch.
+	ActiveProfilingEventBatchSize int
+	// ActiveProfilingWindowMaxDuration 活动采集时长上限；事件配置的采集时长超过该值时会被截断。
+	ActiveProfilingWindowMaxDuration time.Duration
+	// ActiveProfilingWindowDelay 采集窗口结束后的迟到事件宽限时间，超时后仍运行的主机会转为 unknown。
+	ActiveProfilingWindowDelay time.Duration
 
 	// AesKey project aes key
 	AesKey string
@@ -362,6 +380,26 @@ func initVariables() {
 	ControllerListenPort = GetValue("service.controller.port", 10212)
 	WorkerListenHost = GetValue("service.worker.listen", "127.0.0.1")
 	WorkerListenPort = GetValue("service.worker.port", 10213)
+	ActiveProfilingEnabled = GetValue("taskConfig.activeProfiling.enabled", true)
+	ActiveProfilingConsulPathPrefix = GetValue(
+		"taskConfig.activeProfiling.consul.pathPrefix", "active_profiling/data_id",
+	)
+	ActiveProfilingEventFlushInterval = GetValue(
+		"taskConfig.activeProfiling.kafka.flushInterval", 8*time.Second, viper.GetDuration,
+	)
+	ActiveProfilingEventQueueSize = GetValue(
+		"taskConfig.activeProfiling.kafka.eventQueueSize", 1000,
+	)
+	ActiveProfilingEventBatchSize = GetValue(
+		"taskConfig.activeProfiling.kafka.eventBatchSize", 500,
+	)
+	// 采集窗口设置控制事件时长上限和迟到事件宽限；两个配置项缺省时均使用 5 分钟。
+	ActiveProfilingWindowMaxDuration = GetValue(
+		"taskConfig.activeProfiling.window.maxDuration", 5*time.Minute, viper.GetDuration,
+	)
+	ActiveProfilingWindowDelay = GetValue(
+		"taskConfig.activeProfiling.window.delay", 5*time.Minute, viper.GetDuration,
+	)
 
 	AesKey = GetValue("aes.key", "")
 	BkdataTokenSalt = GetValue("aes.bkdataToken", "bk")
@@ -462,16 +500,38 @@ func GetFloatSlice(key string) []float64 {
 // and should only be called once in the project.
 // The purpose of this method is not private is that it can be called in the test file.
 func InitConfig() {
+	if err := loadConfig(); err != nil {
+		logger.Fatalf("initialize configuration failed: %s", err)
+	}
+}
+
+func loadConfig() error {
 	viper.SetConfigFile(FilePath)
 
 	if err := viper.ReadInConfig(); err != nil {
 		pwd, _ := os.Getwd()
-		logger.Fatalf("read config file: %s in %s error: %s", FilePath, pwd, err)
+		return fmt.Errorf("read config file: %s in %s error: %s", FilePath, pwd, err)
 	}
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix(EnvKeyPrefix)
 	replacer := strings.NewReplacer(".", "_")
 	viper.SetEnvKeyReplacer(replacer)
+	// Control and plaintext checks use the original file, before env overrides.
+	raw := viper.New()
+	raw.SetConfigFile(FilePath)
+	if err := raw.ReadInConfig(); err != nil {
+		return fmt.Errorf("read original configuration failed")
+	}
+	snapshot, err := credential.Prepare(viper.GetViper(), raw, EnvKeyPrefix)
+	if err != nil {
+		return err
+	}
+	StorageConsulClientOptions = nil
+	if snapshot != nil {
+		snapshot.Apply(viper.GetViper())
+		StorageConsulClientOptions = snapshot.ConsulOptions
+		logger.Info("deployment credentials initialized: kms enabled")
+	}
 	keys = viper.AllKeys()
 
 	initVariables()
@@ -479,4 +539,5 @@ func InitConfig() {
 	initClusterMetricVariables()
 	initApmVariables()
 	initAlarmConfig()
+	return nil
 }

@@ -57,6 +57,9 @@ func GetMetricValue(metricType io_prometheus_client.MetricType, metric *io_prome
 
 // CollectAndReportMetrics 采集&上报ES集群指标
 func CollectAndReportMetrics(c storage.ClusterInfo) error {
+	if cfg.ESClusterMetricReportUrl == "" {
+		return nil
+	}
 	logger.Infof("CollectAndReportMetrics:start to collect es cluster metrics, es cluster name [%s].", c.ClusterName)
 	// 从custom option中获取集群业务id
 	var bkBizID float64
@@ -253,6 +256,9 @@ var targetBizRe = regexp.MustCompile(`v2(_space)?_(\d+)_`)
 var rtRe = regexp.MustCompile(`^v2_(.*)_.*?_.*$`)
 
 func ReportESClusterMetrics(ctx context.Context, currentTask *t.Task) error {
+	if cfg.ESClusterMetricReportUrl == "" {
+		return nil
+	}
 	logger.Infof("start report es cluster metrics task.")
 	// 1. 从metadata db中获取所有ES类型集群信息
 	dbSession := mysql.GetDBSession()

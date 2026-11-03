@@ -1032,11 +1032,18 @@ bk-collector:
                   - "attributes.apdex_type"
 
 
+
   # =============================== Pipeline =================================
   # name: pipeline 名称作为标识
   # type: pipeline 处理类型，可选项：traces/metrics/logs 以及派生项: traces.derived/metrics.derived/logs.derived
   # processors: 上述定义的处理器名称
   pipeline:
+    - name: "rum_pipeline/common"
+      type: "rumTraces"
+      processors:
+        - "token_checker/aes256"
+        - "rate_limiter/token_bucket"
+
     - name: "traces_pipeline/common"
       type: "traces"
       processors:

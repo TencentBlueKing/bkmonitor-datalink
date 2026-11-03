@@ -11,9 +11,11 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -25,19 +27,19 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 		return EvaluationResultV2{}, err
 	}
 	result := EvaluationResultV2{
-		LevelOutcomes: make([]LevelOutcomeV2, 0, len(levels)),
-		Counts:        EvaluationCountsV2{Levels: uint64(len(levels))},
+		LevelOutcomes: make([]LevelOutcomeV2, 0, levels.Len()),
+		Counts:        EvaluationCountsV2{Levels: uint64(levels.Len())},
 	}
-	levelResults := make([]contract.LevelResultV1, 0, len(levels))
-	for index, level := range levels {
+	levelResults := make([]contract.LevelResultV1, 0, levels.Len())
+	for index, level := range levels.All() {
 		eligibility, err := EvaluateStateEligibilityV2(
-			request.EvaluationTime, level, request.Record.LevelFacts[index], request.EffectiveTimeFacts[index].Fact,
+			request.DecisionTime, level, request.Record.LevelFacts[index], request.EffectiveTimeFacts[index].Fact,
 		)
 		if err != nil {
 			return EvaluationResultV2{}, err
 		}
 		outcome, successful, err := evaluateLevelV2(
-			request, level, request.Record.LevelFacts[index], request.Histories[index].View,
+			request, level, request.Record.LevelFacts[index], request.Histories[index],
 			request.EffectiveTimeFacts[index].Fact, eligibility,
 		)
 		if err != nil {
@@ -47,6 +49,14 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 			return EvaluationResultV2{}, invariantV2(
 				"assert state eligibility", outcome.LevelID, errors.New("Level outcome changed pre-history disposition"),
 			)
+		}
+		// A recovery the caller holds is not a recovery: decided here, before
+		// anything is derived from the Level's result, and not rewritten on
+		// an envelope that already says RECOVERY.
+		if outcome.Result == contract.LevelResultRecovery && request.HoldRecovery != nil {
+			if reason, held := request.HoldRecovery(outcome.LevelID); held {
+				outcome.Result, outcome.UnavailableReason = "", reason
+			}
 		}
 		result.LevelOutcomes = append(result.LevelOutcomes, outcome)
 		switch {
@@ -79,13 +89,60 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 	default:
 		result.Completion = CompletionSuppressed
 	}
+	if result.RecordResult == contract.LevelResultRecovery {
+		result.RecoveryGate = recoveryGateV2(result.LevelOutcomes)
+	}
 	if result.RecordResult == contract.LevelResultAbnormal || result.RecordResult == contract.LevelResultRecovery {
 		if uint32(len(levelResults)) > request.Limits.MaxLevelResultsPerEvent {
 			return EvaluationResultV2{}, invariantV2("admit event Level results", 0, errors.New("compiled result exceeds admitted limit"))
 		}
 		fingerprints := request.Plan.Fingerprints()
+		var snapshotRef *contract.StrategySnapshotRef
+		var dedupeMD5 string
+		ref := request.Plan.StrategyRef()
+		if ref.SnapshotRevision > 0 {
+			strategyID, strategyErr := strconv.ParseInt(ref.StrategyID, 10, 64)
+			businessID, businessErr := strconv.ParseInt(request.BusinessID, 10, 64)
+			if strategyErr != nil || businessErr != nil || ref.TenantID != request.TenantID {
+				return EvaluationResultV2{}, invariantV2("build strategy snapshot reference", 0, errors.New("invalid frozen strategy identity"))
+			}
+			snapshotRef = &contract.StrategySnapshotRef{TenantID: ref.TenantID, BusinessID: businessID, StrategyID: strategyID, Revision: ref.SnapshotRevision}
+			if identity := request.Plan.OutputIdentity(); identity != nil {
+				var err error
+				dedupeMD5, err = contract.MonitorDedupeMD5(ref.StrategyID, request.BusinessID, request.RecordRef.Dimensions, *identity)
+				if err != nil {
+					return EvaluationResultV2{}, invariantV2("build monitor dedupe identity", 0, err)
+				}
+			}
+		}
+		if result.RecordResult == contract.LevelResultRecovery {
+			result.RecoveryGate = openAlertGateV2(result.RecoveryGate, request, ref.StrategyID, dedupeMD5)
+			if result.RecoveryGate.Held {
+				return result, nil
+			}
+		}
+		// An event the Plan's protocol has no message for is decided and not
+		// built: under the compatibility protocol that is every RECOVERY, one
+		// per healthy series per round, and building it was most of this
+		// function's cost for an envelope thrown away as soon as it existed.
+		// The rule and the context are the ones the envelope would have
+		// carried, so it is not built exactly where the sink would have left
+		// it without a message. What building it also did no longer happens
+		// for these records: its invariants are not checked, so one that
+		// would have failed no longer fails the Slot.
+		// A detection between two aggregation boundaries of a Plan detected
+		// more often than it aggregates has no message on that protocol
+		// either: its window is none of the buckets the consumer counts.
+		if format := request.Plan.WireFormat(); contract.NoMessageForAt(format, result.RecordResult,
+			request.Plan.LegacyOutput() != nil && request.Plan.PublishesCompatibleProtocol(),
+			request.Plan.CompatibleOffBoundary(request.RecordRef.SourceTime)) {
+			result.WithoutMessageFormat = format
+			return result, nil
+		}
 		event, err := contract.BuildTriggerEventV1(contract.TriggerEventBuildInputV1{
-			EventKind: result.RecordResult, TenantID: request.TenantID, BusinessID: request.BusinessID,
+			StrategyRef: snapshotRef,
+			DedupeMD5:   dedupeMD5,
+			EventKind:   result.RecordResult, TenantID: request.TenantID, BusinessID: request.BusinessID,
 			PlanRef: request.Plan.PlanRef(), RecordRef: request.RecordRef, Observed: request.Observed,
 			LevelResults: levelResults, EvaluationTime: request.EvaluationTime,
 			DetectPlanFingerprint: fingerprints.Detect, TriggerStateFingerprint: fingerprints.Trigger,
@@ -95,6 +152,71 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 			return EvaluationResultV2{}, invariantV2("build TriggerEvent", 0, err)
 		}
 		result.TriggerEvent = event
+		// A Plan with named outputs carries what its detection decided on;
+		// every other Plan's event carries nothing more than it did.
+		if request.NamedOutputs != nil {
+			// An optional field never stops detection: a snapshot that cannot
+			// be held to its bounds is left off, and the event goes without it.
+			snapshot := detectionSnapshot(request, event)
+			encoded, truncated, snapshotErr := encodeDetectionSnapshot(snapshot)
+			if snapshotErr != nil {
+				result.Snapshot = &DetectionSnapshotFacts{Result: contract.DetectionSnapshotDropped}
+			} else {
+				event.DetectionSnapshot = encoded
+				result.Snapshot = snapshotFacts(snapshot, truncated)
+			}
+		}
+		// The compatibility context is attached whenever the Plan publishes that
+		// protocol. Before the format was stated, the only Plans that did were
+		// the ones with no frozen revision, so the two conditions were the same
+		// one; a forced compatibility choice makes them different, and reading
+		// the revision here would leave those Plans without the context their
+		// conversion needs.
+		if legacy := request.Plan.LegacyOutput(); legacy != nil && request.Plan.PublishesCompatibleProtocol() {
+			var timestamps []int64
+			for _, outcome := range event.LevelResults {
+				if outcome.LevelID != event.PrimaryLevelID {
+					continue
+				}
+				for _, history := range request.Histories {
+					if history.LevelID != event.PrimaryLevelID {
+						continue
+					}
+					iterator, ok := history.View.(interface {
+						ForEachAnomaly(int64, int64, func(int64) bool)
+					})
+					if !ok {
+						return EvaluationResultV2{}, invariantV2("legacy anomaly history", event.PrimaryLevelID, errors.New("history cannot expose actual anomaly timestamps"))
+					}
+					iterator.ForEachAnomaly(outcome.DecisionWindow.Trigger.WindowStart, request.RecordRef.SourceTime, func(ts int64) bool { timestamps = append(timestamps, ts); return true })
+				}
+				if len(timestamps) != int(outcome.DecisionWindow.Trigger.ObservedAnomalies) {
+					return EvaluationResultV2{}, invariantV2("legacy anomaly history", event.PrimaryLevelID, errors.New("actual anomaly timestamps disagree with trigger evidence"))
+				}
+			}
+			// The anomalies the consumer is told of are the ones at windows it
+			// counts: a Plan detected more often than it aggregates names only
+			// those on the aggregation boundaries, the windows it would have
+			// read had it been detected once an interval.
+			kept := make([]int64, 0, len(timestamps))
+			for _, ts := range timestamps {
+				if !request.Plan.CompatibleOffBoundary(ts) {
+					kept = append(kept, ts)
+				}
+			}
+			event.LegacyOutput = &contract.LegacyEventContext{Configuration: legacy, AnomalyTimestamps: kept}
+		}
+		event.WireFormat = request.Plan.WireFormat()
+		event.SignalType = request.Plan.SignalType()
+		if identity := request.Plan.OutputIdentity(); identity != nil {
+			subject, remaining, subjectErr := contract.ProjectMonitorSubject(
+				request.RecordRef.Dimensions, *identity, request.Plan.SubjectFacts(),
+			)
+			if subjectErr != nil {
+				return EvaluationResultV2{}, invariantV2("project event subject", 0, subjectErr)
+			}
+			event.Subject = &contract.MonitorSubjectContext{Subject: subject, Dimensions: remaining}
+		}
 		result.Counts.Events = 1
 	}
 	return result, nil
@@ -134,8 +256,7 @@ func EvaluateStateEligibilityV2(
 
 	switch fact.Result {
 	case DetectionUnavailable, DetectionError:
-		if fact.ReasonCode == "" ||
-			!contract.ReasonAllowedForV2(fact.ReasonCode, contract.ReasonDomainReceipt|contract.ReasonDomainObservation) {
+		if !contract.LevelUnavailableReasonV2(fact.ReasonCode) {
 			return StateEligibilityV2{}, invariantV2(
 				"validate unavailable Detect fact", definition.LevelID, errors.New("invalid fact result or reason"),
 			)
@@ -150,44 +271,46 @@ func EvaluateStateEligibilityV2(
 	return StateEligibilityV2{stateDisposition: effectiveDisposition}, nil
 }
 
-func validateRequestV2(request EvaluationRequestV2) ([]strategy.CompiledLevel, error) {
+func validateRequestV2(request EvaluationRequestV2) (strategy.LevelList, error) {
 	if request.Plan == nil || !request.Limits.valid() || request.TenantID == "" || request.BusinessID == "" ||
-		request.Record.RecordID == "" || request.Record.SourceTime < 0 || request.EvaluationTime < 0 || request.ExecutionID == "" ||
+		request.Record.RecordID == "" || request.Record.SourceTime < 0 || request.EvaluationTime < 0 || request.DecisionTime <= 0 || request.ExecutionID == "" ||
+		request.ReadHoldMillis < 0 || request.ReadHoldMillis > execution.MaxReadHoldMillis ||
+		request.ReadEnd < 0 || request.ReadEnd > request.EvaluationTime ||
 		request.RecordRef.RecordID != request.Record.RecordID || request.RecordRef.SourceTime != request.Record.SourceTime ||
 		request.RecordRef.Dimensions == nil || request.Observed.Values == nil {
-		return nil, invariantV2("validate request", 0, errors.New("missing identity, value, time, or budget"))
+		return strategy.LevelList{}, invariantV2("validate request", 0, errors.New("missing identity, value, time, or budget"))
 	}
 	levels := request.Plan.Levels()
-	if len(levels) == 0 || uint32(len(levels)) > request.Limits.MaxLevels || uint32(len(levels)) > request.Limits.MaxLevelResultsPerEvent ||
-		len(request.Record.LevelFacts) != len(levels) || len(request.Histories) != len(levels) || len(request.EffectiveTimeFacts) != len(levels) {
-		return nil, invariantV2("align Level inputs", 0, errors.New("Level input cardinality mismatch"))
+	if levels.Len() == 0 || uint32(levels.Len()) > request.Limits.MaxLevels || uint32(levels.Len()) > request.Limits.MaxLevelResultsPerEvent ||
+		len(request.Record.LevelFacts) != levels.Len() || len(request.Histories) != levels.Len() || len(request.EffectiveTimeFacts) != levels.Len() {
+		return strategy.LevelList{}, invariantV2("align Level inputs", 0, errors.New("Level input cardinality mismatch"))
 	}
 	var computeCost uint64
-	for index, level := range levels {
+	for index, level := range levels.All() {
 		definition := level.Definition()
-		if definition.LevelID == 0 || (index > 0 && definition.LevelID <= levels[index-1].Definition().LevelID) ||
+		if definition.LevelID == 0 || (index > 0 && definition.LevelID <= levels.At(index-1).Definition().LevelID) ||
 			request.Record.LevelFacts[index].Definition.LevelID != definition.LevelID || request.Histories[index].LevelID != definition.LevelID ||
 			request.EffectiveTimeFacts[index].LevelID != definition.LevelID || request.Histories[index].View == nil {
-			return nil, invariantV2("align Level inputs", definition.LevelID, errors.New("Level inputs must be sorted, unique, and aligned"))
+			return strategy.LevelList{}, invariantV2("align Level inputs", definition.LevelID, errors.New("Level inputs must be sorted, unique, and aligned"))
 		}
 		triggerPlan, recoveryPlan := level.Trigger(), level.Recovery()
 		required, ok := requiredHistoryPointsV2(triggerPlan, recoveryPlan)
 		if !ok || triggerPlan.WindowSize > request.Limits.MaxTriggerWindowSize ||
 			recoveryPlan.ConsecutiveWindows > request.Limits.MaxRecoveryConsecutiveWindows ||
 			required > request.Limits.MaxRequiredHistoryPoints || required != level.RequiredDetectHistoryPoints() {
-			return nil, invariantV2("admit Level plan", definition.LevelID, errors.New("compiled window exceeds admitted shape"))
+			return strategy.LevelList{}, invariantV2("admit Level plan", definition.LevelID, errors.New("compiled window exceeds admitted shape"))
 		}
 		levelCost := uint64(1)
 		if recoveryPlan.Enabled {
 			levelCost += uint64(recoveryPlan.ConsecutiveWindows)
 		}
 		if math.MaxUint64-computeCost < levelCost {
-			return nil, invariantV2("admit compute", definition.LevelID, errors.New("compute cost overflow"))
+			return strategy.LevelList{}, invariantV2("admit compute", definition.LevelID, errors.New("compute cost overflow"))
 		}
 		computeCost += levelCost
 	}
 	if computeCost > request.Limits.MaxComputeCost {
-		return nil, invariantV2("admit compute", 0, errors.New("compute cost exceeds admitted limit"))
+		return strategy.LevelList{}, invariantV2("admit compute", 0, errors.New("compute cost exceeds admitted limit"))
 	}
 	return levels, nil
 }
@@ -196,13 +319,18 @@ func evaluateLevelV2(
 	request EvaluationRequestV2,
 	level strategy.CompiledLevel,
 	fact DetectionFact,
-	history HistoryView,
+	levelHistory LevelHistory,
 	effective strategy.EffectiveTimeFact,
 	eligibility StateEligibilityV2,
 ) (LevelOutcomeV2, contract.LevelResultV1, error) {
 	definition := level.Definition()
+	history := levelHistory.View
+	// RecoveryEnabled is set here, before any return, so that every outcome
+	// carries it: the suppressed and unavailable paths leave before the
+	// recovery plan is otherwise consulted.
 	outcome := LevelOutcomeV2{
 		LevelID: definition.LevelID, LevelCode: definition.LevelCode, Priority: definition.Priority,
+		RecoveryEnabled:    level.Recovery().Enabled,
 		TriggerFingerprint: level.Fingerprints().Trigger, StateDisposition: eligibility.StateDisposition(),
 	}
 	validFact := fact.Result == DetectionAnomalous || fact.Result == DetectionNormal
@@ -214,6 +342,8 @@ func evaluateLevelV2(
 	if err != nil {
 		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("build Detect evidence", definition.LevelID, err)
 	}
+	inferredZero := request.ZeroCountIsNoObservation && zeroCountV2(detectEvidence.NormalizedValue)
+	outcome.RealPoint = !inferredZero
 	switch effective.Status() {
 	case strategy.EffectiveTimeInactive:
 		outcome.SuppressedReason = contract.ReasonEffectiveTimeInactive
@@ -237,40 +367,220 @@ func evaluateLevelV2(
 		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("calculate Trigger window", definition.LevelID, errors.New("window time overflow"))
 	}
 	observedAnomalies := history.CountAnomalies(triggerStart, request.Record.SourceTime)
+	anomalyBeginTime, _ := history.FirstAnomaly(triggerStart, request.Record.SourceTime)
 	if observedAnomalies > triggerPlan.WindowSize {
 		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("count Trigger anomalies", definition.LevelID, errors.New("anomaly count exceeds window positions"))
 	}
 	result := ""
 	if fact.Result == DetectionAnomalous && observedAnomalies >= triggerPlan.RequiredAnomalies {
 		result = contract.LevelResultAbnormal
-	} else if summary.Completeness != HistoryFull {
-		outcome.UnavailableReason = historyReasonV2(summary.Completeness)
-		outcome.HistoryCompleteness = summary.Completeness
-		return outcome, contract.LevelResultV1{}, nil
 	}
-	observedMisses := uint32(0)
+	// The recovery walk runs before the completeness gate, and only recovery
+	// does. A window short of positions cannot say a Level is normal, but it
+	// can say the Level has been observed normal for long enough to close what
+	// is open: an alert stays open until a recovery closes it, so making
+	// recovery wait for a full window means a three minute hole keeps every
+	// open alert of a Plan with a day-long window open for a day. Decided at
+	// decision-022: recovery reads observed positions, NORMAL is unchanged and
+	// still requires FULL.
+	observedMisses, skippedWindows := uint32(0), uint32(0)
+	// settledHoleMisses counts the misses read off settled holes, the ones
+	// the settled range guard below is for.
+	settledHoleMisses := uint32(0)
 	oldestWindowStart := triggerStart
+	// settledThrough is the newest source time the walk counts as settled.
+	// A position counts once a read made under the group's hold has covered
+	// it, meaning the current Slot's own read, up to E - delay: the Slot was
+	// read its hold later than its schedule, so what that read covered had
+	// landed, and every earlier position was covered by an earlier Slot's
+	// read under the same rule. ReadEnd is that read's end, exclusive.
+	//
+	// A hold set too low reads data before it has all landed; that is the
+	// read hold's own probation to catch and raise (lookback/probation.go),
+	// not this boundary's to guess at.
+	//
+	// No read end means no read is known to have covered anything, so
+	// nothing is settled and every window keeps the skip rule: a missing
+	// requirement can delay a recovery, never bring one early.
+	settledThrough := int64(math.MinInt64)
+	if request.ReadEnd > 0 {
+		settledThrough = request.ReadEnd - 1
+	}
+	// A round of the Plan not read whole is not settled data either: its
+	// hole is a round nobody read. Until the gap marker clears, which takes
+	// as many whole rounds as this history needs, that round may be in any
+	// window the walk reads, so none of them is settled.
+	if levelHistory.ReadGapOpen {
+		settledThrough = math.MinInt64
+	}
 	if recoveryPlan.Enabled && result == "" {
-		for offset := uint32(0); offset < recoveryPlan.ConsecutiveWindows; offset++ {
+		// How far back an observed position may still count: the retained
+		// window and no further, because nothing older than that exists to be
+		// read. A bound wider than the retention would be a bound nothing can
+		// reach, and its branches would be code no round runs.
+		//
+		// Read off the Level's own retention rather than recomputed from the
+		// window. The two were the same number until the compiler began
+		// retaining a slack beyond the required window, and a walk still
+		// bounded at the required size would stop exactly where the slack
+		// begins - leaving the positions the slack exists to keep unread, and
+		// this whole rule reachable only in the cases that never needed it.
+		//
+		// Not read off the summary either: the summary comes from the history,
+		// and a history that leaves the field zero would silently bound the
+		// walk to nothing rather than to the window.
+		retained := level.StateRequirement().RetentionPoints
+		if retained == 0 {
+			return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2(
+				"bound Recovery walk", definition.LevelID, errors.New("Level retains no positions"))
+		}
+		for offset := uint32(0); observedMisses < recoveryPlan.ConsecutiveWindows && offset < retained; offset++ {
 			shift, ok := multiplyUint32ToInt64(offset, triggerPlan.StepSeconds)
-			if !ok || shift > request.Record.SourceTime {
+			if !ok {
 				return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("calculate Recovery window", definition.LevelID, errors.New("window time overflow"))
+			}
+			// Reaching the start of time is a stop, not a fault. Before this
+			// walk could skip, the offset count kept it inside the history and
+			// getting here meant the configuration was impossible, so it was
+			// an invariant violation; a walk that steps over holes reaches it
+			// on ordinary histories.
+			if shift > request.Record.SourceTime {
+				break
 			}
 			windowEnd := request.Record.SourceTime - shift
 			windowStart, ok := windowStartV2(windowEnd, triggerPlan.WindowSize, triggerPlan.StepSeconds)
 			if !ok {
-				return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("calculate Recovery window", definition.LevelID, errors.New("window time overflow"))
-			}
-			oldestWindowStart = windowStart
-			if history.CountAnomalies(windowStart, windowEnd) >= triggerPlan.RequiredAnomalies {
+				// No window can be formed this far back, so there is nothing
+				// left to observe. Same stop as the two above, and for the
+				// same reason they changed: a walk that can skip reaches here
+				// on ordinary histories, where the fixed-length one could only
+				// arrive by misconfiguration.
 				break
 			}
-			observedMisses++
+			oldestWindowStart = windowStart
+			// Unsettled, a window nobody observed is evidence of neither
+			// recovery nor its opposite: its holes may still fill.
+			// Counting it as a miss would build a recovery on points that
+			// have not arrived; breaking on it would make a single hole cost
+			// the whole run. It is stepped over, and said so on the evidence.
+			//
+			// Which of the three it is has to be decided with the holes in
+			// hand. CountAnomalies returns the same small number for a quiet
+			// window and for a window that was never observed, so the anomaly
+			// count alone cannot tell "this did not trigger" from "there was
+			// not enough here to say". Only when every hole could have been
+			// anomalous and the window still would not have reached the
+			// threshold is the miss an observation rather than an absence.
+			anomalies := history.CountAnomalies(windowStart, windowEnd)
+			if anomalies >= triggerPlan.RequiredAnomalies {
+				break
+			}
+			observed := history.CountObserved(windowStart, windowEnd)
+			holes := uint32(0)
+			if observed < triggerPlan.WindowSize {
+				holes = triggerPlan.WindowSize - observed
+			}
+			if anomalies+holes < triggerPlan.RequiredAnomalies {
+				observedMisses++
+				continue
+			}
+			// A settled window answers with what it holds. Every point that
+			// will reach it has arrived, so a hole there is a minute with no
+			// point rather than a point still on its way, and a minute with
+			// no point is not an anomaly. That is Python's rule:
+			// check_result_cache in recover.py (:467-506) counts only the
+			// anomaly timestamps in each window, so a missing minute is a
+			// non-anomalous one, and a window with no point at all passes
+			// like any other window under the threshold. Without it a series
+			// whose points come further apart than its window never fills a
+			// window and never recovers, while Python recovers it.
+			//
+			// Settled and also inside the series' observed life: the series
+			// had state before this round, or the history holds a position
+			// before the window starts. Before a new series' first position,
+			// a hole is not a minute the series was quiet, it is a minute
+			// before anything was known of it - the same warming the skip
+			// below exists for. Python never asks there: it checks recovery
+			// only for an open alert, and every window such a check can count
+			// starts after the series' first point, because a window reaching
+			// back over it would hold the anomalies that opened the alert and
+			// stop the walk. A series with state is past its first point even
+			// where retention has dropped every position older than the
+			// window, which a sparse series' retention does: it keeps the
+			// window's positions and the lateness tolerance, and a point every
+			// five minutes need leave none of them before the oldest window.
+			//
+			// A window that is not settled keeps the skip: a window no read has
+			// covered yet, or one an unread round may still be in. A point may
+			// still arrive there, and it may be the anomaly that fires the
+			// window; counting its hole as normal would close the alert before
+			// that point could say otherwise.
+			if windowEnd <= settledThrough && (request.SeriesSeenBefore || windowStart > 0 && history.CountObserved(0, windowStart-1) > 0) {
+				observedMisses++
+				settledHoleMisses++
+				continue
+			}
+			skippedWindows++
 		}
 	}
-	if result == "" && recoveryPlan.Enabled && observedMisses >= recoveryPlan.ConsecutiveWindows {
-		result = contract.LevelResultRecovery
-	} else if result == "" {
+	// Python gives up on a time series only when its whole range holds no
+	// check result at all (recover.py:429-431); that range reaches one step
+	// further back than its oldest window (min_check_timestamp, :424). The
+	// same guard applies here, on the same range: a run of misses read from
+	// nothing is not a recovery. The record's own point is applied before it
+	// is evaluated, so on the production path the range always holds that one.
+	//
+	// The same range, read at the settled boundary, when a settled hole was
+	// counted: a quiet minute is a fact only beside a point that was read
+	// whole, and a range whose only points are past the settled boundary
+	// has none. No RECOVERY then; the alert stays as it is. Python's no-data
+	// end (recover.py:191-197) is a Level written to end on no data, decided
+	// below and, for an absent series, by the worker's no-data end index.
+	rangeObserved := true
+	if observedMisses >= recoveryPlan.ConsecutiveWindows {
+		from := pythonRecoveryRangeStartV2(request.Record.SourceTime, triggerPlan, recoveryPlan)
+		rangeObserved = history.CountObserved(from, request.Record.SourceTime) > 0
+		if rangeObserved && settledHoleMisses > 0 {
+			rangeObserved = settledThrough >= from && history.CountObserved(from, min(settledThrough, request.Record.SourceTime)) > 0
+		}
+	}
+	// A recovery withheld on a zero is decided as any round that did not
+	// recover: NORMAL on a whole window, saying it was withheld, and on an
+	// incomplete one the history reason, since only a RECOVERY may be
+	// decided on a window that is not FULL (decision-022).
+	withheld, end, endedBy := "", "", ""
+	if result == "" && recoveryPlan.Enabled && observedMisses >= recoveryPlan.ConsecutiveWindows && rangeObserved {
+		if inferredZero {
+			withheld = contract.RecoveryWithheldZeroCount
+		} else {
+			result, end = contract.LevelResultRecovery, recoveryPlan.End
+		}
+	}
+	// No data ends a Level written so (status_setter -nodata) on a round
+	// whose own value is a zero that is no observation, once the series'
+	// last real point is (R + T + 1) periods old, as Python's recovery check
+	// times it (recover.py:191-197). Not known, it ends nothing and says so.
+	// Never beside a trigger window that still holds its anomalies: this
+	// round's detection may be NORMAL while an earlier zero was anomalous -
+	// a ring ratio judges a zero against the recent average - and the window
+	// is then still triggering, which is not an alert to end.
+	if result == "" && inferredZero && recoveryPlan.MissingData == contract.RecoveryMissingDataEvaluateAsZero &&
+		observedAnomalies < triggerPlan.RequiredAnomalies {
+		switch last := levelHistory.LastRealPoint; {
+		case last <= 0:
+			if withheld != "" {
+				withheld = contract.RecoveryWithheldNoDataLastPointUnknown
+			}
+		case noDataEndDueV2(request.Record.SourceTime, last, triggerPlan, recoveryPlan):
+			result, end, endedBy, withheld = contract.LevelResultRecovery, recoveryPlan.End, contract.RecoveryEndedByNoData, ""
+		}
+	}
+	if result == "" {
+		if summary.Completeness != HistoryFull {
+			outcome.UnavailableReason = historyReasonV2(summary.Completeness)
+			outcome.HistoryCompleteness = summary.Completeness
+			return outcome, contract.LevelResultV1{}, nil
+		}
 		result = contract.LevelResultNormal
 	}
 
@@ -279,10 +589,12 @@ func evaluateLevelV2(
 		Trigger: contract.TriggerWindowEvidenceV1{
 			WindowStart: triggerStart, WindowEnd: request.Record.SourceTime, WindowSize: triggerPlan.WindowSize,
 			RequiredAnomalies: triggerPlan.RequiredAnomalies, ObservedAnomalies: observedAnomalies,
+			AnomalyBeginTime: anomalyBeginTime,
 		},
 		Recovery: contract.RecoveryWindowEvidenceV1{
 			Enabled: recoveryPlan.Enabled, RequiredConsecutiveWindows: recoveryPlan.ConsecutiveWindows,
 			ObservedConsecutiveMisses: observedMisses, OldestWindowStart: oldestWindowStart,
+			SkippedWindows: skippedWindows, Withheld: withheld, End: end, EndedBy: endedBy,
 		},
 		HistoryCompleteness: summary.Completeness,
 		WindowEvidence: contract.WindowEvidenceV1{
@@ -295,9 +607,23 @@ func evaluateLevelV2(
 	outcome.DetectEvidence = &detectEvidence
 	levelResult := contract.LevelResultV1{
 		LevelID: definition.LevelID, LevelCode: definition.LevelCode, Priority: definition.Priority, Result: result,
-		DecisionWindow: decisionWindow, DetectEvidence: detectEvidence, LevelTriggerFingerprint: level.Fingerprints().Trigger,
+		DecisionWindow: decisionWindow, DetectEvidence: &detectEvidence, LevelTriggerFingerprint: level.Fingerprints().Trigger,
 	}
 	return outcome, levelResult, nil
+}
+
+// noDataEndDueV2 is whether a series whose last real point is last has had
+// no real point through (R + T + 1) periods at source time now: the recovery
+// windows, the trigger window and one period more.
+func noDataEndDueV2(now, last int64, triggerPlan strategy.TriggerPlan, recoveryPlan strategy.RecoveryPlan) bool {
+	periods := int64(recoveryPlan.ConsecutiveWindows) + int64(triggerPlan.WindowSize) + 1
+	return now-last >= periods*int64(triggerPlan.StepSeconds)
+}
+
+// zeroCountV2 says a Level's normalized value is a count of zero.
+func zeroCountV2(value json.RawMessage) bool {
+	number, err := strconv.ParseFloat(string(value), 64)
+	return err == nil && number == 0
 }
 
 func buildDetectEvidenceV2(record DetectionRecord, fact DetectionFact, effectiveStatus string) (contract.DetectEvidenceV1, error) {
@@ -411,12 +737,133 @@ func windowStartV2(endTime int64, windowSize, stepSeconds uint32) (int64, bool) 
 	return endTime - span, true
 }
 
+// pythonRecoveryRangeStartV2 is the oldest source time Python reads for a
+// recovery check at end: min_check_timestamp in recover.py, end less R steps
+// less one window less a second. Clamped at zero, the start of time.
+func pythonRecoveryRangeStartV2(end int64, triggerPlan strategy.TriggerPlan, recoveryPlan strategy.RecoveryPlan) int64 {
+	step := int64(triggerPlan.StepSeconds)
+	span := (int64(recoveryPlan.ConsecutiveWindows)+int64(triggerPlan.WindowSize))*step - 1
+	if span >= end {
+		return 0
+	}
+	return end - span
+}
+
 func multiplyUint32ToInt64(left, right uint32) (int64, bool) {
 	value := uint64(left) * uint64(right)
 	if value > math.MaxInt64 {
 		return 0, false
 	}
 	return int64(value), true
+}
+
+// recoveryGateV2 describes a record whose evaluated Levels came to RECOVERY
+// and none to ABNORMAL. It no longer holds the envelope on another Level.
+//
+// Each Level's RECOVERY is a fact about that Level alone: its own recovery
+// span holds no triggering window. The envelope says only that. The standard
+// conversion writes one evaluation per decided Level under that Level's own
+// severity, RECOVERY as resolved, and leaves out every Level that is NORMAL,
+// unavailable or suppressed (linkdoutput evaluations). The alert consumer
+// ends an active alert only on an evaluation whose severity is the alert's
+// own and whose action is not triggered; an evaluation for any other
+// severity is recorded as orphaned and changes nothing. So a RECOVERY for
+// one Level can close that Level's alert and no other, which is what the
+// reference implementation does: it recovers an alert by the alert's own
+// Level. The compatibility protocol carries no RECOVERY at all.
+//
+// The gate used to hold the envelope until every Level had agreed, on the
+// premise that the consumer resolved an alert on any RECOVERY whatever its
+// Level. That premise stopped holding when the conversion went per Level,
+// and the hold stayed: an alert whose own Level had recovered waited for as
+// long as a sibling Level was undecidable, which for a Level whose query
+// comes back empty or whose history stays gapped is indefinitely.
+//
+// What the gate still reports is the shape it used to hold: the first other
+// Level, in Level order, that is unavailable or reads NORMAL with recovery
+// enabled, and failing that one that reads NORMAL with recovery disabled.
+// That count is what the change is read by: records that now go on where
+// they used to wait.
+func recoveryGateV2(outcomes []LevelOutcomeV2) RecoveryGateV2 {
+	gate := RecoveryGateV2{}
+	withoutRecovery := uint32(0)
+	for _, outcome := range outcomes {
+		switch {
+		case outcome.UnavailableReason != "":
+			if gate.Beside == "" {
+				gate.Beside, gate.BesideLevelID = RecoveryBesideLevelUnavailable, outcome.LevelID
+			}
+		case outcome.SuppressedReason != "":
+			// Suppressed by effective time: says nothing about this record.
+		case outcome.Result == contract.LevelResultNormal:
+			if outcome.RecoveryEnabled {
+				if gate.Beside == "" {
+					gate.Beside, gate.BesideLevelID = RecoveryBesideLevelRecovering, outcome.LevelID
+				}
+			} else if withoutRecovery == 0 {
+				withoutRecovery = outcome.LevelID
+			}
+		}
+	}
+	if gate.Beside == "" && withoutRecovery != 0 {
+		gate.Beside, gate.BesideLevelID = RecoveryBesideLevelWithoutRecovery, withoutRecovery
+	}
+	return gate
+}
+
+// openAlertGateV2 is the gate on a RECOVERY envelope: does the consumer hold
+// an open alert on this series at all? The consumer ends the alert of the
+// envelope's severity and records the envelope as an orphan when it holds
+// none, and a healthy series says RECOVERY every cycle, so without this gate
+// the orphans outnumber the real resolutions by the ratio of healthy series
+// to open alerts. The set answers membership only, not severity: an envelope
+// for one Level on a series whose open alert stands at another still passes
+// and is an orphan there, bounded by the open alerts. It does not say whether
+// the series recovered, which the Level results have already decided.
+//
+// Two shapes do not ask the set. A Plan that does not publish the alert
+// consumer's protocol is not gated: the set is that consumer's, and the
+// Python compatibility protocol carries no RECOVERY message, so its envelope
+// is not built at all. A caller that passed no
+// set has no gate; that is the state before the gate existed and is named
+// as such, so a worker that stops passing the set shows up as a count
+// rather than as recoveries quietly going out again.
+//
+// A fingerprint that could not be built is a third state, held and named.
+// On the consumer's protocol it is unreachable by construction: the control
+// plane sets the output identity with the frozen revision the protocol
+// requires, and admission refuses the pairing that would leave it out. If
+// it happened anyway, the choice here is between holding this Plan's
+// recoveries and passing an envelope the sink cannot convert -- which fails
+// the whole batch and with it every series in the Slot. Holding costs one
+// Plan; it is counted, and it is not read as "not a member", which would
+// look exactly like a consumer that holds no alerts on it.
+//
+// The Level the record was decided beside is kept whatever this gate says:
+// it describes the record, not the envelope.
+func openAlertGateV2(gate RecoveryGateV2, request EvaluationRequestV2, strategyID, dedupeMD5 string) RecoveryGateV2 {
+	switch {
+	case request.Plan.WireFormat() != contract.WireFormatStandardRawEvent:
+		gate.OpenAlertGate = OpenAlertGateProtocolNotGated
+	case request.OpenAlerts == nil:
+		gate.OpenAlertGate = OpenAlertGateNotConfigured
+	case dedupeMD5 == "":
+		gate.Held, gate.Cause, gate.OpenAlertGate = true, RecoveryHeldFingerprintUnknown, OpenAlertGateHeldFingerprintUnknown
+	case !request.OpenAlerts.Contains(request.TenantID, strategyID, dedupeMD5):
+		gate.Held, gate.Cause, gate.OpenAlertGate = true, RecoveryHeldNoOpenAlert, OpenAlertGateHeldNoOpenAlert
+	case oneTimeClose(request.OpenAlerts):
+		gate.OpenAlertGate = OpenAlertGatePassedOneTimeClose
+	default:
+		gate.OpenAlertGate = OpenAlertGatePassed
+	}
+	return gate
+}
+
+// oneTimeClose is whether the set answers for the one close of a dropped
+// group (contract.OneTimeCloseSet).
+func oneTimeClose(set contract.OpenAlertSet) bool {
+	closer, ok := set.(contract.OneTimeCloseSet)
+	return ok && closer.OneTimeClose()
 }
 
 func aggregateRecordResultV2(results []contract.LevelResultV1) string {

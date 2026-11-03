@@ -1,0 +1,137 @@
+package worker
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+)
+
+type rangeCommittedCountKey struct{}
+
+func (coordinator *SlotExecutionCoordinator) executeExpiredRange(ctx context.Context, request execution.SlotExecutionRequest) (result execution.SlotExecutionResult, err error) {
+	var committed uint32
+	// The finalization's cause, once built, for the range's line: the
+	// commit writes no completion line that would carry it.
+	var cause execution.CompletionCause
+	ctx = context.WithValue(ctx, rangeCommittedCountKey{}, &committed)
+	defer func() {
+		outcome := "retrying"
+		if err != nil {
+			outcome = "error"
+		} else if result.Completed {
+			outcome = "committed"
+		} else if result.ReasonCode == execution.ReasonBlockedExactSetUnavailable {
+			outcome = "blocked"
+		}
+		func() {
+			defer func() { _ = recover() }()
+			p := request.ExpiredRange
+			coordinator.ports.Observer.Observe(ctx, observability.Observation{Component: observability.ComponentScheduler, Stage: observability.StageExpiredRangeReturned, Result: observability.ResultSuccess, ExpiredRange: &observability.ExpiredRangeFacts{
+				Result: outcome, CommittedSlots: committed, ReasonCode: observability.ReasonCode(p.CompletionReason()),
+				FirstSlot: int64(p.First.Contract.Slot.EvaluationTime), LastSlot: int64(p.Last.Contract.Slot.EvaluationTime), Slots: p.Count,
+				Kind: string(p.CompletionKind()), Cause: string(cause), Strategies: rangeStrategies(p.First.DuePlanTargets)}})
+		}()
+		p := request.ExpiredRange
+		observability.EmitTargetFlow(ctx, "expired_range_returned", observability.TraceFields{}, observability.TargetFlowFacts{Decision: outcome, RangeFirst: int64(p.First.Contract.Slot.EvaluationTime), RangeLast: int64(p.Last.Contract.Slot.EvaluationTime), RangeCount: p.Count, RangeDigest: p.Digest, NextSlot: int64(p.Next), Completed: result.Completed})
+	}()
+	owner := &streamedExecution{coordinator: coordinator, request: request}
+	defer owner.releaseProvisional()
+	if err := owner.retainTargets(ctx, len(request.DuePlanTargets.Plans), request.ExpiredRange); err != nil {
+		return execution.SlotExecutionResult{}, err
+	}
+	store, ok := coordinator.ports.Progress.(execution.ExpiredRangeStore)
+	if !ok {
+		return execution.SlotExecutionResult{}, errors.New("alarmd worker: range-aware Progress Store is required")
+	}
+	begin, err := store.BeginRange(ctx, execution.ExpiredRangeRequest{OwnerFence: request.OwnerFence, Projection: *request.ExpiredRange, ContentScope: request.ContentScope})
+	if err != nil {
+		return activationRetry(execution.ReasonBlockedExactSetUnavailable), nil
+	}
+	if begin.Status != execution.ProgressCommitted {
+		reason := begin.ReasonCode
+		if reason == "" {
+			reason = execution.ReasonCode(contract.ReasonProgressBeginRejected)
+		}
+		return activationRetry(reason), nil
+	}
+	if begin.AlreadyCommitted {
+		return expiredRangeCompletedFor(request), nil
+	}
+	// The durable proof, not a new Snapshot read or a larger current floor,
+	// selects the original tail. Dynamic activation/admission remain in the
+	// existing query-free finalizer and are re-read before Guard and Progress.
+	mode := execution.FinalizationSnapshotUnavailable
+	if request.ExpiredRange.CompletionKind() == execution.CompletionGapSkipped {
+		mode = execution.FinalizationGapSkipped
+	}
+	finalization := execution.QueryFreeFinalization{Contract: request.Contract,
+		Mode: mode, ReasonCode: request.ExpiredRange.CompletionReason(),
+		Targets: request.DuePlanTargets.Clone(), Cause: execution.CauseExpiredReplay}
+	if err := finalization.Validate(request); err != nil {
+		return execution.SlotExecutionResult{}, err
+	}
+	cause = finalization.Cause
+	return coordinator.executeQueryFreeFinalization(ctx, request, finalization)
+}
+
+// rangeStrategies is the strategies of a range's due Plans, once each, in
+// their order.
+func rangeStrategies(targets execution.FrozenDuePlanTargets) []observability.ExpiredRangeStrategy {
+	var strategies []observability.ExpiredRangeStrategy
+	seen := map[observability.ExpiredRangeStrategy]bool{}
+	for _, plan := range targets.Plans {
+		strategy := observability.ExpiredRangeStrategy{BusinessID: plan.BusinessID, StrategyID: plan.StrategyID}
+		if !seen[strategy] {
+			seen[strategy] = true
+			strategies = append(strategies, strategy)
+		}
+	}
+	return strategies
+}
+
+func (coordinator *SlotExecutionCoordinator) commitExpiredRange(ctx context.Context, request execution.SlotExecutionRequest, completion execution.SlotCompletion, attribution execution.CompletionAttribution) (execution.SlotExecutionResult, error) {
+	if completion.Kind != request.ExpiredRange.CompletionKind() || completion.ReasonCode != request.ExpiredRange.CompletionReason() || completion.Contract != request.Contract {
+		return execution.SlotExecutionResult{}, errors.New("alarmd worker: range completion differs from proof")
+	}
+	store, ok := coordinator.ports.Progress.(execution.ExpiredRangeStore)
+	if !ok {
+		return execution.SlotExecutionResult{}, errors.New("alarmd worker: range-aware Progress Store is required")
+	}
+	result, err := store.CommitRange(ctx, execution.ExpiredRangeRequest{OwnerFence: request.OwnerFence, Projection: *request.ExpiredRange, ContentScope: request.ContentScope})
+	if err != nil {
+		return execution.SlotExecutionResult{}, err
+	}
+	if result.Status != execution.ProgressCommitted {
+		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: range %w", progressNotCommitted(result.Status))
+	}
+	completed := expiredRangeCompletedFor(request)
+	if !result.AlreadyCommitted {
+		if count, ok := ctx.Value(rangeCommittedCountKey{}).(*uint32); ok {
+			*count = request.ExpiredRange.Count
+		}
+		completed.QueryFreeCause = queryFreeCause(attribution.Cause)
+		completed.CompletionCause = attribution.SlotCause()
+	}
+	return completed, nil
+}
+
+func expiredRangeCompletedFor(request execution.SlotExecutionRequest) execution.SlotExecutionResult {
+	return execution.SlotExecutionResult{Completed: true, CompletionKind: request.ExpiredRange.CompletionKind(),
+		Result: observability.ResultDegraded, ReasonCode: request.ExpiredRange.CompletionReason()}
+}
+
+// queryFreeCause is the cause a committed query-free finalization names for
+// its slot_skipped line. The line is written when it names one and the
+// completion counter counts the kind, so a finalization without a cause still
+// names one -- NONE, the cause word the progress observation uses for it --
+// and is never counted without its line.
+func queryFreeCause(cause execution.CompletionCause) execution.CompletionCause {
+	if cause == "" {
+		return execution.CompletionCause(observability.ProgressCompletionCauseNone)
+	}
+	return cause
+}

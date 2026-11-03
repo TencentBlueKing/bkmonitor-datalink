@@ -274,7 +274,7 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.Vm
 	)
 
 	if vmRt != "" {
-		defaultLabels = append(defaultLabels, fmt.Sprintf(`result_table_id%s"%s"`, promql.EqualOperator, vmRt))
+		defaultLabels = append(defaultLabels, "result_table_id"+promql.EqualOperator+vmStringLiteral(vmRt))
 	}
 	if metric != "" {
 		operator := promql.EqualOperator
@@ -282,7 +282,7 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.Vm
 			operator = promql.RegexpOperator
 		}
 
-		defaultLabels = append(defaultLabels, fmt.Sprintf(`%s%s"%s"`, labels.MetricName, operator, metric))
+		defaultLabels = append(defaultLabels, labels.MetricName+operator+vmStringLiteral(metric))
 	}
 
 	if len(c) == 0 {
@@ -300,10 +300,7 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.Vm
 				continue
 			}
 
-			val := nf.Value[0]
-			val = strings.ReplaceAll(val, `\`, `\\`)
-			val = strings.ReplaceAll(val, `"`, `\"`)
-			lbl = append(lbl, fmt.Sprintf(`%s%s"%s"`, nf.DimensionName, nf.ToPromOperator(), val))
+			lbl = append(lbl, fmt.Sprintf("%s%s%s", nf.DimensionName, nf.ToPromOperator(), vmStringLiteral(nf.Value[0])))
 		}
 		for _, dl := range defaultLabels {
 			lbl = append(lbl, dl)
@@ -314,6 +311,13 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.Vm
 	}
 
 	return metadata.VmCondition(strings.Join(vmLabels, or)), num
+}
+
+// vmStringLiteral 把值写成 MetricsQL 的双引号字符串字面量。MetricsQL 用 strconv.Unquote
+// 解析双引号字面量，所以这里用它的逆 strconv.Quote：反斜杠、双引号之外，换行、回车、制表符
+// 等控制字符也被转义；只转义反斜杠和双引号时，含控制字符的值会让整条查询无法解析。
+func vmStringLiteral(value string) string {
+	return strconv.Quote(value)
 }
 
 // Compare 比较 AllConditions 中的条件 condition
@@ -384,6 +388,62 @@ func (c AllConditions) Compare(key, value string) (bool, error) {
 		}
 
 		if andCheck {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// MayMatchLabel 判断已知标签值是否仍可能满足样本条件，只用于候选表剪枝，不替代样本过滤。
+// 仅投影 key 维度，保留 AND/OR 结构；不含该维度的 OR 分支必须放行。
+// 正则同时考虑 InfluxDB 的子串匹配和 VM 的全字符串匹配，任一后端可能匹配即保留。
+func (c AllConditions) MayMatchLabel(key, value string) (bool, error) {
+	if len(c) == 0 {
+		return true, nil
+	}
+	for _, group := range c {
+		possible := true
+		for _, field := range group {
+			if field.DimensionName != key || len(field.Value) == 0 {
+				continue
+			}
+			switch field.Operator {
+			case ConditionEqual, ConditionNotEqual, ConditionContains, ConditionNotContains,
+				ConditionRegEqual, ConditionNotRegEqual:
+			default:
+				// 未知操作不作为排除表的依据，由原样本过滤处理。
+				continue
+			}
+			// field 是副本，转换多值条件不会改写下游仍需使用的样本条件。
+			originalOperator := field.Operator
+			originalValues := field.Value
+			field.ContainsToPromReg()
+			matcher, err := labels.NewMatcher(field.ToPromOperator(), key, field.Value[0])
+			if err != nil {
+				return false, err
+			}
+			matched := matcher.Matches(value)
+			if originalOperator == ConditionRegEqual || originalOperator == ConditionNotRegEqual {
+				influxMatched := false
+				for _, expression := range originalValues {
+					re, err := regexp.Compile(expression)
+					if err != nil {
+						return false, err
+					}
+					influxMatched = influxMatched || re.MatchString(value)
+				}
+				if originalOperator == ConditionRegEqual {
+					matched = matched || influxMatched
+				} else {
+					matched = matched || !influxMatched
+				}
+			}
+			if !matched {
+				possible = false
+				break
+			}
+		}
+		if possible {
 			return true, nil
 		}
 	}

@@ -1,0 +1,45 @@
+[
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {
+      "prefer_storage": "vm",
+      "sql": {
+        "api_params": {
+          "end": 1792226340,
+          "nocache": 0,
+          "query": "(avg by (dimension_1, dimension_2, dimension_3) (avg_over_time(label_replace({__name__=~\"a\"} offset -59s999ms, \"dimension_3\", \"$1\", \"__name__\", \"demo_metric_(.*)_ratio_value\")[20m:]))) * 100",
+          "start": 1792226160,
+          "step": 60
+        },
+        "api_type": "query_range",
+        "bk_biz_id": "golden_vm_subquery",
+        "cluster_name": "",
+        "influx_compatible": true,
+        "metric_filter_condition": {
+          "a": "filter_dimension_1=~\".*demo\\\\.service.*\", filter_dimension_2=\"101\", result_table_id=\"vm_rt_demo_subquery_partition_3\", __name__=~\"demo_metric_(.*)_ratio_value\" or filter_dimension_1=~\".*demo\\\\.service.*\", filter_dimension_2=\"101\", result_table_id=\"vm_rt_demo_subquery_partition_10\", __name__=~\"demo_metric_(.*)_ratio_value\" or route_dimension=\"route_value\", filter_dimension_1=~\".*demo\\\\.service.*\", filter_dimension_2=\"101\", result_table_id=\"vm_rt_demo_subquery_partition_2\", __name__=~\"demo_metric_(.*)_ratio_value\" or filter_dimension_1=~\".*demo\\\\.service.*\", filter_dimension_2=\"101\", result_table_id=\"vm_rt_demo_subquery_partition_5\", __name__=~\"demo_metric_(.*)_ratio_value\" or filter_dimension_1=~\".*demo\\\\.service.*\", filter_dimension_2=\"101\", result_table_id=\"vm_rt_demo_subquery_partition_11\", __name__=~\"demo_metric_(.*)_ratio_value\" or filter_dimension_1=~\".*demo\\\\.service.*\", filter_dimension_2=\"101\", result_table_id=\"vm_rt_demo_subquery_partition_13\", __name__=~\"demo_metric_(.*)_ratio_value\" or filter_dimension_1=~\".*demo\\\\.service.*\", filter_dimension_2=\"101\", result_table_id=\"vm_rt_demo_subquery_partition_14\", __name__=~\"demo_metric_(.*)_ratio_value\" or filter_dimension_1=~\".*demo\\\\.service.*\", filter_dimension_2=\"101\", result_table_id=\"vm_rt_demo_subquery_partition_4\", __name__=~\"demo_metric_(.*)_ratio_value\" or filter_dimension_1=~\".*demo\\\\.service.*\", filter_dimension_2=\"101\", result_table_id=\"vm_rt_demo_subquery_partition_6\", __name__=~\"demo_metric_(.*)_ratio_value\" or filter_dimension_1=~\".*demo\\\\.service.*\", filter_dimension_2=\"101\", result_table_id=\"vm_rt_demo_subquery_partition_15\", __name__=~\"demo_metric_(.*)_ratio_value\" or route_dimension=\"route_value\", filter_dimension_1=~\".*demo\\\\.service.*\", filter_dimension_2=\"101\", result_table_id=\"vm_rt_demo_subquery_partition_1\", __name__=~\"demo_metric_(.*)_ratio_value\" or filter_dimension_1=~\".*demo\\\\.service.*\", filter_dimension_2=\"101\", result_table_id=\"vm_rt_demo_subquery_partition_8\", __name__=~\"demo_metric_(.*)_ratio_value\" or filter_dimension_1=~\".*demo\\\\.service.*\", filter_dimension_2=\"101\", result_table_id=\"vm_rt_demo_subquery_partition_9\", __name__=~\"demo_metric_(.*)_ratio_value\" or filter_dimension_1=~\".*demo\\\\.service.*\", filter_dimension_2=\"101\", result_table_id=\"vm_rt_demo_subquery_partition_16\", __name__=~\"demo_metric_(.*)_ratio_value\" or filter_dimension_1=~\".*demo\\\\.service.*\", filter_dimension_2=\"101\", result_table_id=\"vm_rt_demo_subquery_partition_12\", __name__=~\"demo_metric_(.*)_ratio_value\" or filter_dimension_1=~\".*demo\\\\.service.*\", filter_dimension_2=\"101\", result_table_id=\"vm_rt_demo_subquery_partition_7\", __name__=~\"demo_metric_(.*)_ratio_value\""
+        },
+        "result_table_list": [
+          "vm_rt_demo_subquery_partition_1",
+          "vm_rt_demo_subquery_partition_10",
+          "vm_rt_demo_subquery_partition_11",
+          "vm_rt_demo_subquery_partition_12",
+          "vm_rt_demo_subquery_partition_13",
+          "vm_rt_demo_subquery_partition_14",
+          "vm_rt_demo_subquery_partition_15",
+          "vm_rt_demo_subquery_partition_16",
+          "vm_rt_demo_subquery_partition_2",
+          "vm_rt_demo_subquery_partition_3",
+          "vm_rt_demo_subquery_partition_4",
+          "vm_rt_demo_subquery_partition_5",
+          "vm_rt_demo_subquery_partition_6",
+          "vm_rt_demo_subquery_partition_7",
+          "vm_rt_demo_subquery_partition_8",
+          "vm_rt_demo_subquery_partition_9"
+        ],
+        "use_native_or": true
+      }
+    }
+  }
+]

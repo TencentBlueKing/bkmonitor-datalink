@@ -1,0 +1,128 @@
+[
+ {
+  "name": "instance placed, host target",
+  "strategy_id": 101,
+  "bk_biz_id": 2,
+  "agg_dimension": [
+   "bk_target_ip",
+   "bk_target_cloud_id",
+   "device"
+  ],
+  "dimensions": {
+   "bk_target_service_instance_id": "7",
+   "bk_agent_id": "agent-live",
+   "device": "sda",
+   "bk_target_ip": "192.0.2.172",
+   "bk_target_cloud_id": 0
+  },
+  "target_type": "HOST",
+  "target": "192.0.2.172|0",
+  "dedupe_md5": "ae3ec98a35a1d0dffcc04e149de3e651",
+  "bk_target_cloud_id": "0"
+ },
+ {
+  "name": "instance placed, cloud as a string",
+  "strategy_id": 101,
+  "bk_biz_id": 2,
+  "agg_dimension": [
+   "bk_target_ip",
+   "bk_target_cloud_id",
+   "device"
+  ],
+  "dimensions": {
+   "bk_target_service_instance_id": "7",
+   "bk_agent_id": "agent-live",
+   "device": "sda",
+   "bk_target_ip": "192.0.2.172",
+   "bk_target_cloud_id": "0"
+  },
+  "target_type": "HOST",
+  "target": "192.0.2.172|0",
+  "dedupe_md5": "ae3ec98a35a1d0dffcc04e149de3e651",
+  "bk_target_cloud_id": "\"0\""
+ },
+ {
+  "name": "instance placed, cloud in the tags",
+  "strategy_id": 101,
+  "bk_biz_id": 2,
+  "agg_dimension": [
+   "bk_target_cloud_id",
+   "bk_target_service_instance_id",
+   "device"
+  ],
+  "dimensions": {
+   "bk_target_service_instance_id": "7",
+   "bk_agent_id": "agent-live",
+   "device": "sda",
+   "bk_target_ip": "192.0.2.172",
+   "bk_target_cloud_id": 0
+  },
+  "target_type": "SERVICE",
+  "target": "7",
+  "dedupe_md5": "c2da5128ffc66f51fee3b136fe85c5ad",
+  "bk_target_cloud_id": "0"
+ },
+ {
+  "name": "instance placed, cloud in the tags as a string",
+  "strategy_id": 101,
+  "bk_biz_id": 2,
+  "agg_dimension": [
+   "bk_target_cloud_id",
+   "bk_target_service_instance_id",
+   "device"
+  ],
+  "dimensions": {
+   "bk_target_service_instance_id": "7",
+   "bk_agent_id": "agent-live",
+   "device": "sda",
+   "bk_target_ip": "192.0.2.172",
+   "bk_target_cloud_id": "0"
+  },
+  "target_type": "SERVICE",
+  "target": "7",
+  "dedupe_md5": "c2da5128ffc66f51fee3b136fe85c5ad",
+  "bk_target_cloud_id": "\"0\""
+ },
+ {
+  "name": "instance placed, service target",
+  "strategy_id": 101,
+  "bk_biz_id": 2,
+  "agg_dimension": [
+   "bk_target_service_instance_id",
+   "device"
+  ],
+  "dimensions": {
+   "bk_target_service_instance_id": "7",
+   "bk_agent_id": "agent-live",
+   "device": "sda",
+   "bk_target_ip": "192.0.2.172",
+   "bk_target_cloud_id": 0
+  },
+  "target_type": "SERVICE",
+  "target": "7",
+  "dedupe_md5": "dfde337b0931f1d1be8c62c25dea2eb4",
+  "bk_target_cloud_id": "0"
+ },
+ {
+  "name": "host placed by agent, host target",
+  "strategy_id": 101,
+  "bk_biz_id": 2,
+  "agg_dimension": [
+   "bk_target_ip",
+   "bk_target_cloud_id",
+   "device"
+  ],
+  "dimensions": {
+   "bk_target_service_instance_id": "7",
+   "bk_agent_id": "agent-live",
+   "device": "sda",
+   "bk_target_ip": "192.0.2.172",
+   "bk_target_cloud_id": "0",
+   "bk_host_id": "720002"
+  },
+  "target_type": "HOST",
+  "target": "192.0.2.172|0",
+  "dedupe_md5": "ae3ec98a35a1d0dffcc04e149de3e651",
+  "bk_target_cloud_id": "\"0\""
+ }
+]

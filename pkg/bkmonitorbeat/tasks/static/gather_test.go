@@ -106,7 +106,7 @@ func (s *TestSuite) TestGather() {
 			},
 		},
 	}
-	s.stub.Stub(&static.GetData, func(ctx context.Context) (*static.Report, error) {
+	s.stub.Stub(&static.GetData, func(ctx context.Context, cfg *configs.StaticTaskConfig) (*static.Report, error) {
 		if callIndex == 5 {
 			return reportList[1], nil
 		}

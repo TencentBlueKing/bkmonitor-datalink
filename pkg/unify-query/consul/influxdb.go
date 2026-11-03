@@ -9,68 +9,29 @@
 
 package consul
 
-import (
-	"context"
-	"fmt"
-	"strings"
+import "context"
 
-	"github.com/hashicorp/consul/api"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-)
-
-const (
-	influxdbInfoPath = "influxdb/info"
-	influxdbStorage  = "influxdb"
-)
-
-// InfluxdbTableInfo
-type InfluxdbTableInfo struct {
-	// 存储类型，如果为free则需要特殊处理
-	PivotTable bool `json:"pivot_table"`
-
-	// 分段查询开关
-	SegmentedQueryEnable bool `json:"segmented_query_enable"`
-
-	// table_id对应的influxdb集群版本号，用于决定ast逻辑的版本
-	InfluxdbVersion string `json:"influxdb_version"`
-}
-
-// FormatESTableInfo :
-func FormatInfluxdbTableInfo(kvPairs api.KVPairs) (map[string]*InfluxdbTableInfo, error) {
-	result := make(map[string]*InfluxdbTableInfo)
-	for _, kvPair := range kvPairs {
-		var data *InfluxdbTableInfo
-		err := json.Unmarshal(kvPair.Value, &data)
-		if err != nil {
-			return nil, err
-		}
-		prefix := fmt.Sprintf("%s/%s/%s/", basePath, dataPath, influxdbInfoPath)
-		key := strings.ReplaceAll(string(kvPair.Key), prefix, "")
-		result[key] = data
-	}
-	return result, nil
-}
-
-// WatchInfluxdbTableInfo
-func WatchInfluxdbTableInfo(ctx context.Context) (<-chan any, error) {
-	path := fmt.Sprintf("%s/%s/%s", basePath, versionPath, influxdbInfoPath)
-	return WatchChange(ctx, path)
-}
-
-// GetInfluxdbTableInfo
-func GetInfluxdbTableInfo() (map[string]*InfluxdbTableInfo, error) {
-	path := fmt.Sprintf("%s/%s/%s", basePath, dataPath, influxdbInfoPath)
-	pairs, err := GetDataWithPrefix(path)
-	if err != nil {
-		return nil, err
-	}
-	return FormatInfluxdbTableInfo(pairs)
-}
+const influxdbStorage = "influxdb"
 
 // GetInfluxdbStorageInfo 获取 influxdb 存储实例
 func GetInfluxdbStorageInfo() (map[string]*Storage, error) {
 	infos, err := GetStorageInfo()
+	if err != nil {
+		return nil, err
+	}
+	influxdbInfos := make(map[string]*Storage)
+	for key, info := range infos {
+		if info.Type != influxdbStorage {
+			continue
+		}
+		influxdbInfos[key] = info
+	}
+	return influxdbInfos, nil
+}
+
+// GetInfluxdbStorageInfoContext 获取 InfluxDB 存储实例，并传递生命周期 Context。
+func GetInfluxdbStorageInfoContext(ctx context.Context) (map[string]*Storage, error) {
+	infos, err := GetStorageInfoContext(ctx)
 	if err != nil {
 		return nil, err
 	}

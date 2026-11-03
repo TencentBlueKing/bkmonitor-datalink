@@ -52,6 +52,9 @@ config_templates:
             metricbeat_align_ts:
               title: metricbeat_align_ts
               type: string
+            bk_ntp_source:
+              title: bk_ntp_source
+              type: string
   - plugin_version: "*"
     name: bkmonitorbeat_prometheus.conf
     version: 1

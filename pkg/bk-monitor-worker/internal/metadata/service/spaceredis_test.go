@@ -948,19 +948,19 @@ func TestGetDataLabelTableIdMap(t *testing.T) {
 		{
 			name:          "查询不存在的数据标签",
 			dataLabelList: []string{"non_existent_label"},
-			expectedMap:   map[string][]string{},
+			expectedMap:   map[string][]string{"non_existent_label": {}},
 			expectedError: false,
 		},
 		{
 			name:          "查询已删除标签的数据",
 			dataLabelList: []string{"deleted_label"},
-			expectedMap:   map[string][]string{},
+			expectedMap:   map[string][]string{"deleted_label": {}},
 			expectedError: false,
 		},
 		{
 			name:          "查询已禁用标签的数据",
 			dataLabelList: []string{"disabled_label"},
-			expectedMap:   map[string][]string{},
+			expectedMap:   map[string][]string{"disabled_label": {}},
 			expectedError: false,
 		},
 		{
@@ -1350,6 +1350,29 @@ func TestSpacePusher_getFieldAliasMapWithChunkedTableIDs(t *testing.T) {
 	lastFieldPath := fmt.Sprintf("__ext.field_%03d", tableCount-1)
 	lastQueryAlias := fmt.Sprintf("alias_%03d", tableCount-1)
 	assert.Equal(t, lastFieldPath, aliasMap[tableIDs[tableCount-1]][lastQueryAlias])
+}
+
+func TestSpacePusher_ComposeDataRefineTableIdsError(t *testing.T) {
+	pusher := NewSpacePusher()
+	expectedErr := errors.New("refine table IDs query failed")
+	patches := gomonkey.NewPatches()
+	defer patches.Reset()
+	patches.ApplyMethod(pusher, "GetSpaceTableIdDataId", func(_ *SpacePusher, bkTenantId, spaceType, spaceId string, tableIdList []string, excludeDataIdList []uint, options *optionx.Options) (map[string]uint, error) {
+		return map[string]uint{"metric.rt": 1001}, nil
+	})
+	patches.ApplyPrivateMethod(pusher, "refineTableIds", func(_ *SpacePusher, bkTenantId string, tableIdList []string) ([]string, error) {
+		return nil, expectedErr
+	})
+
+	values, err := pusher.composeData(tenant.DefaultTenantId, models.SpaceTypeBKCC, "302", nil, nil, nil)
+	if !assert.ErrorIs(t, err, expectedErr) {
+		return
+	}
+	assert.Nil(t, values)
+
+	isPublish, err := pusher.pushBkccSpaceTableIds(tenant.DefaultTenantId, models.SpaceTypeBKCC, "302", SpaceTableIdValues{})
+	assert.ErrorIs(t, err, expectedErr)
+	assert.False(t, isPublish)
 }
 
 func TestSpacePusher_ComposeData(t *testing.T) {

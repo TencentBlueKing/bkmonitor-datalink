@@ -13,6 +13,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 )
 
+const OptionDataLabelAliases = "data_label_aliases"
+
 //go:generate goqueryset -in resulttableoption.go -out qs_rtoption_gen.go
 
 // ResultTableOption result table option model

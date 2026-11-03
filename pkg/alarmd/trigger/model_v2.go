@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -109,22 +110,57 @@ type DetectionEvidence struct {
 }
 
 type HistorySummary struct {
-	Completeness   string
-	WindowStart    int64
-	WindowEnd      int64
-	ValidPositions uint32
-	AnomalyCount   uint32
-	AnomalyDigest  [32]byte
+	Completeness string
+	WindowStart  int64
+	WindowEnd    int64
+	// ValidPositions and RequiredPositions travel together because neither
+	// answers anything alone: the shortfall is the whole signal, and a reader
+	// given only the verdict cannot separate a window that is one point away
+	// from converging from one that has never been close.
+	ValidPositions    uint32
+	RequiredPositions uint32
+	AnomalyCount      uint32
+	AnomalyDigest     [32]byte
 }
 
 type HistoryView interface {
 	Summarize(endTime int64, requiredPositions uint32) HistorySummary
 	CountAnomalies(fromTime, untilTime int64) uint32
+	// FirstAnomaly reports the earliest anomalous source time in the range, and
+	// whether the range held one at all. Zero is a valid source time, so the
+	// answer cannot be carried by the value alone.
+	FirstAnomaly(fromTime, untilTime int64) (int64, bool)
+	// CountObserved reports how many positions in the range the window actually
+	// holds. It separates "nothing was seen here" from "something was seen and
+	// it was not anomalous", which CountAnomalies alone cannot: that returns
+	// zero for both.
+	//
+	// The recovery walk needs the count, not a yes/no on one position. A window
+	// mostly made of holes counts few anomalies for the same reason an empty
+	// one does, so "did this window trigger" can only be answered once the
+	// holes are counted alongside the anomalies.
+	//
+	// Required rather than an optional interface on purpose. An implementation
+	// that silently lacked it would have every position read as unobserved,
+	// and the recovery walk would step over a whole window of real data
+	// looking for evidence it already had.
+	CountObserved(fromTime, untilTime int64) uint32
 }
 
 type LevelHistory struct {
 	LevelID uint32
 	View    HistoryView
+	// ReadGapOpen says a round of this Level's Plan was not read whole and
+	// its gap marker is still open: a marker clears only after as many whole
+	// rounds as the Level's history needs, so while it is open the unread
+	// round may lie inside any window the recovery walk reads, and a hole
+	// there is a round nobody read rather than a minute with no point. The
+	// walk treats every window as unsettled until it clears.
+	ReadGapOpen bool
+	// LastRealPoint is the series' last real point for this Level
+	// (execution.RuntimeLevelStateView.LastRealPointTime), zero when not
+	// known. A Level written to end on no data times that end from it.
+	LastRealPoint int64
 }
 
 type LevelEffectiveTimeFact struct {
@@ -143,6 +179,11 @@ func (e StateEligibilityV2) StateDisposition() string {
 }
 
 type EvaluationRequestV2 struct {
+	// NamedOutputs is the named outputs aligned to the Plan's records, by
+	// RecordID; nil for a Plan without them. An event of a Plan with them
+	// carries its detection snapshot (detectionSnapshot); nothing else reads
+	// it.
+	NamedOutputs       *execution.NamedOutputRecords
 	TenantID           string
 	BusinessID         string
 	Plan               *strategy.CompiledPlan
@@ -152,15 +193,75 @@ type EvaluationRequestV2 struct {
 	Histories          []LevelHistory
 	EffectiveTimeFacts []LevelEffectiveTimeFact
 	EvaluationTime     int64
-	ExecutionID        string
-	LateAccepted       bool
-	Limits             EvaluationLimitsV2
+	// DecisionTime is the wall clock, in Unix seconds, that the effective
+	// time is judged at (execution.InternalExecutionHeader.DecisionTime):
+	// EffectiveTimeFacts must hold at it. Everything else - history, the
+	// event's times - is the Slot's EvaluationTime.
+	DecisionTime int64
+	// ReadHoldMillis is the read hold of the Slot this record is evaluated
+	// in, as its frozen execution contract carries it
+	// (execution.FrozenExecutionContractRef.ReadHoldMillis): how much later
+	// than its schedule the Slot's read was made. It does not move the
+	// settled boundary - ReadEnd does - because the read it delays is the
+	// one that settles what it covers.
+	ReadHoldMillis int64
+	// ReadEnd is where the current Slot's own read of the Plan's primary
+	// input ends, exclusive: the evaluation time plus the primary
+	// requirement's EndOffsetSeconds, which is minus the query delay
+	// (controlplane buildRequirements). A position before it counts as
+	// settled. Zero names no read and settles nothing: every window keeps the
+	// skip rule. Production always names one - every due Level has exactly
+	// one PRIMARY requirement (execution/named_input_request.go, the worker's
+	// named-input index) - so zero comes only from a caller that builds the
+	// request without the header's requirements.
+	ReadEnd int64
+	// SeriesSeenBefore says the series' state held history before this
+	// round: it was observed before this record, even where retention has
+	// since dropped those positions. A series without it is new, and the
+	// recovery walk does not read minutes before its first position as quiet
+	// ones.
+	SeriesSeenBefore bool
+	ExecutionID      string
+	LateAccepted     bool
+	Limits           EvaluationLimitsV2
+	// OpenAlerts is the consumer's open alert set for the second recovery
+	// gate. Nil means the caller has no such gate, which is a different
+	// thing from a set that could not be loaded: the latter is a set that
+	// answers from what this process sent, and is never nil. The two are
+	// told apart in the gate outcome, not folded into one another.
+	OpenAlerts contract.OpenAlertSet
+	// HoldRecovery is asked about a Level this record would recover: whether
+	// that recovery is held, and why. The caller's own inputs for the Level
+	// this round may have been incomplete, which this package cannot see --
+	// it is handed facts, not the bindings they were detected from. A held
+	// Level is unavailable for that reason instead, before the record's
+	// result, the recovery gate and the envelope are derived, so every one
+	// of them agrees with the verdict. Asked only for a Level that would
+	// recover, so a round that recovers nothing costs nothing. Nil holds
+	// nothing.
+	HoldRecovery func(levelID uint32) (reason string, held bool)
+	// ZeroCountIsNoObservation says this record's value, when it is a count
+	// of zero, is no observation: an event count, or a log count with no
+	// grouping. Such a round does not end an alert - its Level is NORMAL on
+	// a whole window, with the recovery evidence saying why
+	// (contract.RecoveryWithheldZeroCount), and unavailable with the history
+	// reason on one that is not - while the trigger reads the zero as it
+	// reads any value. The recovery
+	// walk is unchanged: earlier zero rounds still count as windows that did
+	// not trigger, so the alert recovers on the first round with a count
+	// above zero.
+	ZeroCountIsNoObservation bool
 }
 
 type LevelOutcomeV2 struct {
-	LevelID             uint32
-	LevelCode           string
-	Priority            uint32
+	LevelID   uint32
+	LevelCode string
+	Priority  uint32
+	// RecoveryEnabled is whether the Level's recovery plan is enabled. It is
+	// set on every outcome, whichever way the Level was decided, so the
+	// recovery gate reads it off the outcome and never has to line outcomes
+	// up against the compiled Levels by position.
+	RecoveryEnabled     bool
 	Result              string
 	SuppressedReason    string
 	UnavailableReason   string
@@ -169,6 +270,11 @@ type LevelOutcomeV2 struct {
 	DecisionWindow      *contract.DecisionWindowV1
 	DetectEvidence      *contract.DetectEvidenceV1
 	TriggerFingerprint  string
+	// RealPoint says this round's value is a real point: the Level's fact is
+	// valid, and its value is not a count of zero the request says is no
+	// observation (EvaluationRequestV2.ZeroCountIsNoObservation). The
+	// series' last real point (LevelHistory.LastRealPoint) advances on it.
+	RealPoint bool
 }
 
 type EvaluationCountsV2 struct {
@@ -182,10 +288,98 @@ type EvaluationCountsV2 struct {
 	Events      uint64
 }
 
+// The states of another Level a RECOVERY record can be decided beside. The
+// set is closed: a metric label is made of it. None of them holds the
+// envelope; see recoveryGateV2.
+const (
+	// RecoveryBesideLevelUnavailable: another Level could not be evaluated.
+	RecoveryBesideLevelUnavailable = "level_unavailable"
+	// RecoveryBesideLevelRecovering: another Level read NORMAL with recovery
+	// enabled, so a window inside its recovery span still meets its trigger.
+	RecoveryBesideLevelRecovering = "level_recovering"
+	// RecoveryBesideLevelWithoutRecovery: another Level read NORMAL with its
+	// recovery disabled.
+	RecoveryBesideLevelWithoutRecovery = "level_without_recovery"
+)
+
+// The causes a RECOVERY envelope is held for, all from the open alert set.
+// The set is closed: a metric label is made of it.
+const (
+	// RecoveryHeldNoOpenAlert: the consumer holds no open alert on the
+	// series, so there is nothing for the envelope to resolve.
+	RecoveryHeldNoOpenAlert = "no_open_alert"
+	// RecoveryHeldFingerprintUnknown: the series identity the consumer keys
+	// alerts by could not be built, so membership cannot be asked. Not "not a
+	// member": an unknown read as absent would hold this Plan's recoveries
+	// for good and leave no trace.
+	RecoveryHeldFingerprintUnknown = "fingerprint_unknown"
+)
+
+// The outcomes of the recovery gate, the open alert set. The set is
+// closed: a metric label is made of it. Each is reachable in production:
+// the first four from a Plan on the alert consumer's protocol against a
+// set, the last from a Plan on any other protocol.
+const (
+	// OpenAlertGatePassed: the consumer holds an open alert; the envelope goes.
+	OpenAlertGatePassed = "passed"
+	// OpenAlertGatePassedOneTimeClose: the one close of a group the target
+	// dropped, asked against a set that lets it through (a
+	// contract.OneTimeCloseSet); the envelope goes whether or not the
+	// consumer holds the alert, and where it does not the close is an orphan
+	// there.
+	OpenAlertGatePassedOneTimeClose = "passed_one_time_close"
+	// OpenAlertGateHeldNoOpenAlert: see RecoveryHeldNoOpenAlert.
+	OpenAlertGateHeldNoOpenAlert = "held_no_open_alert"
+	// OpenAlertGateHeldFingerprintUnknown: see RecoveryHeldFingerprintUnknown.
+	OpenAlertGateHeldFingerprintUnknown = "held_fingerprint_unknown"
+	// OpenAlertGateNotConfigured: the caller passed no set. The envelope goes
+	// as it did before the gate existed. A production worker always passes a
+	// set, so this outcome counting there is the wiring having come apart.
+	OpenAlertGateNotConfigured = "not_configured"
+	// OpenAlertGateProtocolNotGated: the Plan does not publish the alert
+	// consumer's protocol, so the consumer's open alert set has nothing to
+	// say about its envelope. That is the compatibility protocol, which
+	// carries anomalies only: its RECOVERY envelope is not built at all
+	// (EvaluationResultV2.WithoutMessageFormat). The set is not asked.
+	OpenAlertGateProtocolNotGated = "protocol_not_gated"
+)
+
+// RecoveryGateV2 is what became of a record whose evaluated Levels came to
+// RECOVERY and none to ABNORMAL. Only the open alert set holds its envelope;
+// another Level's state does not (recoveryGateV2).
+type RecoveryGateV2 struct {
+	// Held and Cause are the open alert set's: one of the RecoveryHeld*
+	// values when it held the envelope.
+	Held  bool
+	Cause string
+	// Beside and BesideLevelID name the first other Level the record was
+	// decided beside, one of the RecoveryBeside* values, or empty when every
+	// other Level agreed or was suppressed.
+	Beside        string
+	BesideLevelID uint32
+	// OpenAlertGate is the open alert set's outcome, one of the
+	// OpenAlertGate* values, for every RECOVERY record.
+	OpenAlertGate string
+}
+
 type EvaluationResultV2 struct {
 	Completion    string
 	RecordResult  string
 	LevelOutcomes []LevelOutcomeV2
 	TriggerEvent  *contract.TriggerEventV1
 	Counts        EvaluationCountsV2
+	// RecoveryGate is set only when RecordResult is RECOVERY. A held gate
+	// leaves TriggerEvent nil while RecordResult stays RECOVERY. Held is the
+	// union of both gates; Cause says which.
+	RecoveryGate RecoveryGateV2
+	// Snapshot is what the event's detection snapshot came to, for its
+	// counters; nil for an event that carries none.
+	Snapshot *DetectionSnapshotFacts
+	// WithoutMessageFormat is set when the record decided an event its
+	// Plan's protocol has no message for (contract.NoMessageFor): under the
+	// compatibility protocol, every RECOVERY that passed the gates. The
+	// envelope is not built and TriggerEvent stays nil; this names the
+	// resolved wire format, and RecordResult the kind, so the record still
+	// stands for one event the protocol had no message for.
+	WithoutMessageFormat string
 }

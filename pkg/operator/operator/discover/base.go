@@ -155,6 +155,10 @@ func (d *BaseDiscover) PreStart() {
 	d.ctx, d.cancel = context.WithCancel(d.parentCtx)
 	d.childConfigGroups = make(map[string]map[uint64]*ChildConfig)
 	d.cache = newHashCache(d.opts.Name, time.Minute*10)
+	// Reload()/Start() 走 PreStart：必须清掉上一轮的 fetched。
+	// 否则 target 未变时 loopHandleTargetGroup 会 skip 重建 childConfig，
+	// DataID 切换后会留下约 resync×interval（默认约 25 分钟）的采集空窗。
+	d.fetched = false
 	logger.Infof("starting discover %s", d.Name())
 }
 

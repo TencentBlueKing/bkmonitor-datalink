@@ -1,0 +1,9 @@
+# `go build ./...` drops one binary per main package into the working
+# directory. They are build output, not source, and a 32 MB blob committed by
+# accident is not something a review of a diff summary catches.
+/alarmd
+/alarmd-node-runner
+# The embedded alarmd-cli release is build output; only its placeholder is
+# source.
+/clirelease/assets/*
+!/clirelease/assets/README.md

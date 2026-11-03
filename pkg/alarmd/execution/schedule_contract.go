@@ -1,0 +1,707 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License.
+
+package execution
+
+import (
+	"errors"
+	"fmt"
+	"math"
+	"sort"
+	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+)
+
+type PublicationEpoch uint64
+
+// ScheduleSpec is the complete immutable cadence input for one Plan.
+type ScheduleSpec struct {
+	EvaluationIntervalSeconds       int64          `json:"evaluation_interval"`
+	Alignment                       EvaluationTime `json:"alignment"`
+	Timezone                        string         `json:"timezone"`
+	CompletionDeadlineOffsetSeconds int64          `json:"completion_deadline_offset_seconds,omitempty"`
+}
+
+func (spec ScheduleSpec) Validate() error {
+	if spec.CompletionDeadlineOffsetSeconds < 0 {
+		return errors.New("alarmd execution: completion offset cannot be negative")
+	}
+	if spec.EvaluationIntervalSeconds <= 0 {
+		return errors.New("alarmd execution: positive evaluation interval is required")
+	}
+	if spec.Alignment < 0 || int64(spec.Alignment) >= spec.EvaluationIntervalSeconds {
+		return errors.New("alarmd execution: schedule alignment must be within one evaluation interval")
+	}
+	if spec.Timezone == "" {
+		return errors.New("alarmd execution: schedule timezone is required")
+	}
+	if _, err := time.LoadLocation(spec.Timezone); err != nil {
+		return fmt.Errorf("alarmd execution: invalid schedule timezone: %w", err)
+	}
+	return nil
+}
+
+func (spec ScheduleSpec) IsAligned(at EvaluationTime) bool {
+	if spec.Validate() != nil || at <= 0 || at < spec.Alignment {
+		return false
+	}
+	return (int64(at)-int64(spec.Alignment))%spec.EvaluationIntervalSeconds == 0
+}
+
+func (spec ScheduleSpec) nextAtOrAfter(at EvaluationTime) (EvaluationTime, bool) {
+	if spec.Validate() != nil || at <= 0 {
+		return 0, false
+	}
+	if at <= spec.Alignment {
+		if spec.Alignment <= 0 {
+			return EvaluationTime(spec.EvaluationIntervalSeconds), true
+		}
+		return spec.Alignment, true
+	}
+	delta := int64(at) - int64(spec.Alignment)
+	remainder := delta % spec.EvaluationIntervalSeconds
+	if remainder == 0 {
+		return at, true
+	}
+	increment := spec.EvaluationIntervalSeconds - remainder
+	if int64(at) > math.MaxInt64-increment {
+		return 0, false
+	}
+	return EvaluationTime(int64(at) + increment), true
+}
+
+// HeldCompletionDeadlineUnixMilli is the completion deadline of the Slot at
+// at read readHoldMillis later than its schedule says: the deadline a frozen
+// contract with that read hold carries.
+func (spec ScheduleSpec) HeldCompletionDeadlineUnixMilli(at EvaluationTime, readHoldMillis int64) (int64, bool) {
+	deadline, ok := spec.CompletionDeadlineUnixMilli(at)
+	if !ok || readHoldMillis < 0 || readHoldMillis > MaxReadHoldMillis || deadline > math.MaxInt64-readHoldMillis {
+		return 0, false
+	}
+	return deadline + readHoldMillis, true
+}
+
+// MinimumSettlingWaitSeconds is the shortest wait this product has ever
+// treated as enough for data to land: it is Python's ACCESS_DATA_TIME_DELAY,
+// which that side adds to every strategy's lookback whatever the period.
+const MinimumSettlingWaitSeconds = 10
+
+// MinimumSettlingWait is that wait as a duration.
+const MinimumSettlingWait = MinimumSettlingWaitSeconds * time.Second
+
+// SettlingWaitWithinQueryBudget reports how long after its window closes a
+// Slot waits before reading it. The configured wait is what the deployment
+// says the data needs, and it is taken only while the Slot has longer than
+// that between its evaluation time and the deadline its query must meet.
+//
+// A wait that outlasts its own budget does not delay the read, it cancels it:
+// the readiness boundary lands past the deadline, so every consumer fails that
+// comparison on every round and is bound unavailable.
+//
+// It lives here because two packages ask the same question about one Slot and
+// must get one answer. access asks it to decide when to read; the scheduler
+// asks it to decide whether a replay can still be read before its distance
+// runs out. Those two derivations were written separately, and a wait longer
+// than the scheduler's replay window was the result: every 10-second Slot that
+// missed its live deadline was told to wait until an instant at which it was
+// already too far behind to run, so it was skipped -- the system requiring the
+// wait and then abandoning the Slot for having waited.
+//
+// Both callers express their input as this budget: access as the Plan's
+// completion offset less the downstream execution reserve, the scheduler as
+// the query deadline it already holds less the evaluation time. The reserve
+// cancels, which is why the budget rather than the schedule is the argument.
+func SettlingWaitWithinQueryBudget(queryBudget, configured time.Duration) time.Duration {
+	if configured < queryBudget {
+		return configured
+	}
+	return MinimumSettlingWait
+}
+
+// MinimumCompletionBudgetSeconds is the smallest completion budget on which a
+// Slot can do anything at all: the settling wait, plus the downstream
+// execution reserve the deployment holds back from every query deadline.
+//
+// A Slot given less is not slow, it is inert. Its readiness boundary lands
+// past its own deadline, every consumer fails that comparison on every round
+// and is bound unavailable -- so the strategy compiles, schedules, executes,
+// and detects nothing, forever, with no failure anywhere to read.
+const MinimumCompletionBudgetSeconds = MinimumSettlingWaitSeconds + 5
+
+// AffordsSettlingWait reports whether a schedule's completion budget leaves
+// room for the data to settle before the window is read. An interval that
+// does not is inert, and access keeps that fact readable rather than acting
+// on a window whose data has not landed.
+func (spec ScheduleSpec) AffordsSettlingWait() bool {
+	return spec.CompletionOffsetSeconds() > MinimumCompletionBudgetSeconds
+}
+
+// DeriveScheduleSpec is the one place an evaluation interval becomes a
+// schedule. The completion budget and the settling wait are two halves of one
+// inequality, and they were derived in two packages that did not read each
+// other: the compiler set the budget from the interval, access set the wait
+// by listing the interval values it had in mind. Every interval on neither
+// list produced a Slot whose wait outlasted its budget -- and the strategy
+// serializer accepts any of them, since it validates agg_interval only as a
+// non-negative integer, with no tier list behind it.
+func DeriveScheduleSpec(intervalSeconds int64) ScheduleSpec {
+	spec := ScheduleSpec{EvaluationIntervalSeconds: intervalSeconds, Alignment: 0, Timezone: "UTC"}
+	if intervalSeconds == 10 || intervalSeconds == 15 {
+		spec.CompletionDeadlineOffsetSeconds = 30
+	}
+	return spec
+}
+
+// CompletionOffsetSeconds preserves the meaning of pre-offset frozen schedules.
+func (spec ScheduleSpec) CompletionOffsetSeconds() int64 {
+	if spec.CompletionDeadlineOffsetSeconds != 0 {
+		return spec.CompletionDeadlineOffsetSeconds
+	}
+	return spec.EvaluationIntervalSeconds
+}
+
+func (spec ScheduleSpec) CompletionDeadlineUnixMilli(at EvaluationTime) (int64, bool) {
+	offset := spec.CompletionOffsetSeconds()
+	if spec.Validate() != nil || at <= 0 || int64(at) > math.MaxInt64-offset {
+		return 0, false
+	}
+	deadlineSeconds := int64(at) + offset
+	if deadlineSeconds > math.MaxInt64/1000 {
+		return 0, false
+	}
+	return deadlineSeconds * 1000, true
+}
+
+func DerivePlanScheduleRevision(spec ScheduleSpec) (PlanScheduleRevision, error) {
+	if err := spec.Validate(); err != nil {
+		return "", err
+	}
+	digest, err := contract.DeriveCanonicalDigestV2("alarmd-plan-schedule-v1", spec)
+	if err != nil {
+		return "", fmt.Errorf("alarmd execution: derive Plan schedule revision: %w", err)
+	}
+	return PlanScheduleRevision(digest), nil
+}
+
+type FrozenPlanSchedule struct {
+	Identity         PlanIdentity
+	ScheduleRevision PlanScheduleRevision
+	Spec             ScheduleSpec
+	// Shard is the piece of a split strategy this entry schedules, nil for a
+	// Plan that is not split. Persisted inside the Schedule timeline, so a
+	// pointer omitted when nil: no timeline of an unsplit Plan changes bytes.
+	Shard *ShardRef `json:",omitempty"`
+}
+
+// Key is this entry's Plan key: the strategy and the piece. Activation
+// records are matched to Schedule entries by it across every Query Group.
+func (schedule FrozenPlanSchedule) Key() PlanKey {
+	return PlanKeyOf(schedule.Identity, ShardOf(schedule.Shard))
+}
+
+func (schedule FrozenPlanSchedule) Validate() error {
+	if err := schedule.Identity.Validate(); err != nil {
+		return err
+	}
+	revision, err := DerivePlanScheduleRevision(schedule.Spec)
+	if err != nil {
+		return err
+	}
+	if schedule.ScheduleRevision == "" || schedule.ScheduleRevision != revision {
+		return errors.New("alarmd execution: Plan schedule revision does not match ScheduleSpec")
+	}
+	return nil
+}
+
+type FrozenPlanScheduleRef struct {
+	Identity         PlanIdentity
+	ScheduleRevision PlanScheduleRevision
+	// Shard is the piece this ref schedules, nil for a Plan that is not
+	// split. The ref is in the due-Plan-set digest domain, so it is omitted
+	// when nil and no digest of an unsplit Plan moves.
+	Shard *ShardRef `json:",omitempty"`
+}
+
+// Key is this ref's Plan key: the strategy and the piece.
+func (ref FrozenPlanScheduleRef) Key() PlanKey { return PlanKeyOf(ref.Identity, ShardOf(ref.Shard)) }
+
+func (ref FrozenPlanScheduleRef) Validate() error {
+	if err := ref.Identity.Validate(); err != nil {
+		return err
+	}
+	if ref.ScheduleRevision == "" {
+		return errors.New("alarmd execution: Plan schedule revision is required")
+	}
+	return nil
+}
+
+func DeriveQueryGroupScheduleRevision(plans []FrozenPlanSchedule) (ScheduleRevision, error) {
+	if len(plans) == 0 {
+		return "", errors.New("alarmd execution: at least one active Plan schedule is required")
+	}
+	entries := make([]struct {
+		Identity PlanIdentity
+		Revision PlanScheduleRevision
+	}, len(plans))
+	seen := make(map[PlanIdentity]struct{}, len(plans))
+	for index, plan := range plans {
+		if err := plan.Validate(); err != nil {
+			return "", err
+		}
+		if _, duplicate := seen[plan.Identity]; duplicate {
+			return "", errors.New("alarmd execution: duplicate Plan schedule")
+		}
+		seen[plan.Identity] = struct{}{}
+		entries[index] = struct {
+			Identity PlanIdentity
+			Revision PlanScheduleRevision
+		}{Identity: plan.Identity, Revision: plan.ScheduleRevision}
+	}
+	sort.Slice(entries, func(left, right int) bool {
+		return lessPlanIdentity(entries[left].Identity, entries[right].Identity)
+	})
+	digest, err := contract.DeriveCanonicalDigestV2("alarmd-query-group-schedule-v1", entries)
+	if err != nil {
+		return "", fmt.Errorf("alarmd execution: derive Query Group schedule revision: %w", err)
+	}
+	return ScheduleRevision(digest), nil
+}
+
+type SnapshotPublicationRef struct {
+	SnapshotRevision SnapshotRevision
+	PublicationEpoch PublicationEpoch
+}
+
+func (ref SnapshotPublicationRef) Validate() error {
+	if ref.SnapshotRevision == "" || ref.PublicationEpoch == 0 {
+		return errors.New("alarmd execution: complete content-addressed Snapshot publication is required")
+	}
+	return nil
+}
+
+// ScheduleSegmentFact gives one schedule revision the half-open ownership
+// interval [Start, End) on a Query Group's single logical timeline.
+//
+// ObjectDigest names the execution content the Query Group was activated
+// with for this Segment, and OutputContextRefs name, per Plan, the rendering
+// context its Slots publish with. A Worker that finds them reads the Query
+// Group by content instead of reading the whole Snapshot the Publication
+// names; a Segment written before they existed carries neither, and is read
+// the way it always was. Both are metadata of the Segment: they take no part
+// in whether two Segments are the same Segment.
+//
+// A Segment is cut only when its execution content changes. An edit that
+// changes a Plan's rendering context and nothing it executes does not cut
+// the Segment; it appends one OutputContextRevision, and the refs a Slot
+// renders with are the latest revision whose Since is at or before the
+// Slot's evaluation time, or OutputContextRefs when there is none. That is
+// a pure function of the evaluation time, so a retry, a replay, a restart
+// and a takeover of one Slot all resolve the same context, whatever moment
+// they run at.
+type ScheduleSegmentFact struct {
+	Publication            SnapshotPublicationRef
+	QueryGroup             QueryGroupIdentity
+	QueryRevision          QueryRevision
+	ScheduleRevision       ScheduleRevision
+	Start                  EvaluationTime
+	End                    *EvaluationTime
+	ObjectDigest           ObjectDigest            `json:",omitempty"`
+	OutputContextRefs      []OutputContextRef      `json:",omitempty"`
+	OutputContextRevisions []OutputContextRevision `json:",omitempty"`
+}
+
+// OutputContextRef names the output context one Plan renders with.
+type OutputContextRef struct {
+	Plan   PlanIdentity
+	Digest OutputContextDigest
+}
+
+// OutputContextRevision replaces the Segment's output context refs for every
+// evaluation time at or after Since.
+type OutputContextRevision struct {
+	Since EvaluationTime
+	Refs  []OutputContextRef
+}
+
+// OutputContextRefsAt returns the output context refs in force at the
+// evaluation time.
+func (segment ScheduleSegmentFact) OutputContextRefsAt(at EvaluationTime) []OutputContextRef {
+	refs := segment.OutputContextRefs
+	for _, revision := range segment.OutputContextRevisions {
+		if revision.Since > at {
+			break
+		}
+		refs = revision.Refs
+	}
+	return refs
+}
+
+// At returns the Segment as a Slot at the evaluation time sees it: the refs
+// in force at that time stand as OutputContextRefs and the revision history
+// is dropped. Readers that resolve a Plan's context go through it so that no
+// caller resolves against the base refs by accident.
+func (segment ScheduleSegmentFact) At(at EvaluationTime) ScheduleSegmentFact {
+	segment.OutputContextRefs = segment.OutputContextRefsAt(at)
+	segment.OutputContextRevisions = nil
+	return segment
+}
+
+// OutputContextRefFor returns the output context digest the Segment's base
+// refs name for plan, or an empty digest when they name none. Call At first
+// to resolve the refs a Slot renders with.
+func (segment ScheduleSegmentFact) OutputContextRefFor(plan PlanIdentity) OutputContextDigest {
+	for _, ref := range segment.OutputContextRefs {
+		if ref.Plan == plan {
+			return ref.Digest
+		}
+	}
+	return ""
+}
+
+// SameOutputContextRefs reports whether two ref lists name the same context
+// for the same Plans, in any order.
+func SameOutputContextRefs(left, right []OutputContextRef) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	byPlan := make(map[PlanIdentity]OutputContextDigest, len(left))
+	for _, ref := range left {
+		byPlan[ref.Plan] = ref.Digest
+	}
+	for _, ref := range right {
+		if digest, ok := byPlan[ref.Plan]; !ok || digest != ref.Digest {
+			return false
+		}
+	}
+	return true
+}
+
+func (segment ScheduleSegmentFact) Validate() error {
+	if err := segment.Publication.Validate(); err != nil {
+		return err
+	}
+	if segment.QueryGroup == "" || segment.QueryRevision == "" || segment.ScheduleRevision == "" || segment.Start <= 0 {
+		return errors.New("alarmd execution: complete Schedule Segment is required")
+	}
+	if segment.End != nil && *segment.End <= segment.Start {
+		return errors.New("alarmd execution: Schedule Segment end must follow its start")
+	}
+	previous := segment.Start
+	for _, revision := range segment.OutputContextRevisions {
+		if revision.Since <= previous || len(revision.Refs) == 0 {
+			return errors.New("alarmd execution: output context revisions must advance past the Segment start in order")
+		}
+		previous = revision.Since
+	}
+	return nil
+}
+
+func (segment ScheduleSegmentFact) Contains(at EvaluationTime) bool {
+	return at >= segment.Start && (segment.End == nil || at < *segment.End)
+}
+
+func sameScheduleSegment(left, right ScheduleSegmentFact) bool {
+	if left.Publication != right.Publication || left.QueryGroup != right.QueryGroup ||
+		left.QueryRevision != right.QueryRevision || left.ScheduleRevision != right.ScheduleRevision || left.Start != right.Start {
+		return false
+	}
+	if left.End == nil || right.End == nil {
+		return left.End == nil && right.End == nil
+	}
+	return *left.End == *right.End
+}
+
+// FrozenQueryGroupSchedule binds one immutable Plan schedule set to the exact
+// persisted Segment that owns its Slot times.
+type FrozenQueryGroupSchedule struct {
+	Segment ScheduleSegmentFact
+	Plans   []FrozenPlanSchedule
+}
+
+func (schedule FrozenQueryGroupSchedule) Validate() error {
+	if err := schedule.Segment.Validate(); err != nil {
+		return err
+	}
+	revision, err := DeriveQueryGroupScheduleRevision(schedule.Plans)
+	if err != nil {
+		return err
+	}
+	if revision != schedule.Segment.ScheduleRevision {
+		return errors.New("alarmd execution: Segment revision does not match active Plan schedules")
+	}
+	if _, ok := schedule.FirstSlot(); !ok && schedule.Segment.End == nil {
+		return errors.New("alarmd execution: Schedule Segment contains no legal Slot")
+	}
+	return nil
+}
+
+func (schedule FrozenQueryGroupSchedule) FirstSlot() (EvaluationTime, bool) {
+	return schedule.nextSlotAtOrAfter(schedule.Segment.Start)
+}
+
+func (schedule FrozenQueryGroupSchedule) DuePlanRefs(at EvaluationTime) []FrozenPlanScheduleRef {
+	if !schedule.Segment.Contains(at) {
+		return nil
+	}
+	due := make([]FrozenPlanScheduleRef, 0, len(schedule.Plans))
+	for _, plan := range schedule.Plans {
+		if plan.Spec.IsAligned(at) {
+			due = append(due, FrozenPlanScheduleRef{Identity: plan.Identity, ScheduleRevision: plan.ScheduleRevision, Shard: plan.Shard})
+		}
+	}
+	sort.Slice(due, func(left, right int) bool {
+		return lessPlanIdentity(due[left].Identity, due[right].Identity)
+	})
+	return due
+}
+
+func (schedule FrozenQueryGroupSchedule) NextSlotAfter(current EvaluationTime) (EvaluationTime, bool) {
+	if !schedule.Segment.Contains(current) || current >= EvaluationTime(math.MaxInt64) {
+		return 0, false
+	}
+	return schedule.nextSlotAtOrAfter(current + 1)
+}
+
+func (schedule FrozenQueryGroupSchedule) nextSlotAtOrAfter(at EvaluationTime) (EvaluationTime, bool) {
+	if at < schedule.Segment.Start {
+		at = schedule.Segment.Start
+	}
+	next := EvaluationTime(math.MaxInt64)
+	for _, plan := range schedule.Plans {
+		candidate, ok := plan.Spec.nextAtOrAfter(at)
+		if ok && candidate < next {
+			next = candidate
+		}
+	}
+	return next, next != EvaluationTime(math.MaxInt64) && schedule.Segment.Contains(next)
+}
+
+// InitialScheduleActivationFact establishes the first open Segment without an
+// invented old publication or a Worker-local first-seen time.
+type InitialScheduleActivationFact struct {
+	Segment ScheduleSegmentFact
+}
+
+func (fact InitialScheduleActivationFact) Validate(schedule FrozenQueryGroupSchedule) error {
+	if err := fact.Segment.Validate(); err != nil {
+		return err
+	}
+	if err := schedule.Validate(); err != nil {
+		return err
+	}
+	if fact.Segment.End != nil || !sameScheduleSegment(fact.Segment, schedule.Segment) {
+		return errors.New("alarmd execution: initial activation must establish the first open Schedule Segment")
+	}
+	return nil
+}
+
+// FreezeSlotContractRequest is the exact Scheduler-to-Catalog request. It has
+// no latest selector, local time, ownership, assignment or execution identity.
+type FreezeSlotContractRequest struct {
+	QueryGroup           QueryGroupIdentity
+	ScheduleRevision     ScheduleRevision
+	ScheduleSegmentStart EvaluationTime
+	EvaluationTime       EvaluationTime
+	DuePlans             []FrozenPlanScheduleRef
+	// ReadHoldMillis is the Slot's read hold (FrozenExecutionContractRef):
+	// the Query Group's current one for a Slot frozen for the first time,
+	// and the contract's own for every later freeze of it.
+	ReadHoldMillis int64
+}
+
+func (request FreezeSlotContractRequest) Validate() error {
+	if request.QueryGroup == "" || request.ScheduleRevision == "" || request.ScheduleSegmentStart <= 0 ||
+		request.EvaluationTime < request.ScheduleSegmentStart || len(request.DuePlans) == 0 {
+		return errors.New("alarmd execution: complete frozen Slot request is required")
+	}
+	if request.ReadHoldMillis < 0 || request.ReadHoldMillis > MaxReadHoldMillis {
+		return errors.New("alarmd execution: frozen Slot request read hold is out of range")
+	}
+	seen := make(map[PlanIdentity]struct{}, len(request.DuePlans))
+	for _, due := range request.DuePlans {
+		if err := due.Validate(); err != nil {
+			return err
+		}
+		if _, duplicate := seen[due.Identity]; duplicate {
+			return errors.New("alarmd execution: duplicate exact due Plan ref")
+		}
+		seen[due.Identity] = struct{}{}
+	}
+	return nil
+}
+
+// FrozenSlotContractFact returns the full due digest inputs so Scheduler can
+// independently validate exact refs, ScheduleSpec/deadline and the digest.
+type FrozenSlotContractFact struct {
+	Contract     FrozenExecutionContractRef
+	DuePlans     []DuePlan
+	Requirements []DataRequirement
+}
+
+func (fact FrozenSlotContractFact) DeriveDuePlanSetDigest() (DuePlanSetDigest, error) {
+	return DeriveDuePlanSetDigest(fact.DuePlans, fact.Requirements)
+}
+
+func (fact FrozenSlotContractFact) Validate(request FreezeSlotContractRequest) error {
+	if err := fact.validateAgainst(request); err != nil {
+		return err
+	}
+	digest, err := fact.DeriveDuePlanSetDigest()
+	if err != nil {
+		return err
+	}
+	if digest != fact.Contract.DuePlanSetDigest {
+		return errors.New("alarmd execution: frozen due Plan digest cannot be independently reproduced")
+	}
+	return nil
+}
+
+// SealFrozenSlotContractFact is how the freeze that builds a fact finishes
+// it: the due Plan set digest derived here, once, from the fact's own due
+// Plans and requirements, and every other rule Validate holds a fact to. The
+// freeze used to derive the digest, then validate the fact, which derived it
+// again from the same slices a line later -- the whole of the due Plans'
+// canonical encoding twice per Slot, for a comparison that could not fail.
+// Validate stays what a fact arriving from anywhere else is held to.
+func SealFrozenSlotContractFact(fact FrozenSlotContractFact, request FreezeSlotContractRequest) (FrozenSlotContractFact, error) {
+	digest, err := fact.DeriveDuePlanSetDigest()
+	if err != nil {
+		return FrozenSlotContractFact{}, err
+	}
+	fact.Contract.DuePlanSetDigest = digest
+	if err := fact.validateAgainst(request); err != nil {
+		return FrozenSlotContractFact{}, err
+	}
+	return fact, nil
+}
+
+// validateAgainst is every rule Validate holds a fact to but the digest.
+func (fact FrozenSlotContractFact) validateAgainst(request FreezeSlotContractRequest) error {
+	if err := request.Validate(); err != nil {
+		return err
+	}
+	if err := fact.Contract.Validate(); err != nil {
+		return err
+	}
+	if fact.Contract.Slot.QueryGroup != request.QueryGroup ||
+		fact.Contract.ScheduleRevision != request.ScheduleRevision ||
+		fact.Contract.ScheduleSegmentStart != request.ScheduleSegmentStart ||
+		fact.Contract.Slot.EvaluationTime != request.EvaluationTime ||
+		fact.Contract.ReadHoldMillis != request.ReadHoldMillis {
+		return errors.New("alarmd execution: frozen Slot contract differs from requested Segment or time")
+	}
+	if len(fact.DuePlans) != len(request.DuePlans) {
+		return errors.New("alarmd execution: frozen due Plan cardinality differs from exact request")
+	}
+	wanted := make(map[PlanIdentity]PlanScheduleRevision, len(request.DuePlans))
+	for _, due := range request.DuePlans {
+		wanted[due.Identity] = due.ScheduleRevision
+	}
+	seen := make(map[PlanIdentity]struct{}, len(fact.DuePlans))
+	for _, due := range fact.DuePlans {
+		if err := due.Identity.Validate(); err != nil {
+			return err
+		}
+		revision, err := DerivePlanScheduleRevision(due.ScheduleSpec)
+		if err != nil {
+			return err
+		}
+		deadline, ok := due.ScheduleSpec.HeldCompletionDeadlineUnixMilli(request.EvaluationTime, request.ReadHoldMillis)
+		if !ok || revision != due.ScheduleRevision || !due.ScheduleSpec.IsAligned(request.EvaluationTime) ||
+			deadline != due.CompletionDeadlineUnixMilli {
+			return errors.New("alarmd execution: frozen due Plan ScheduleSpec or deadline is invalid")
+		}
+		wantedRevision, exists := wanted[due.Identity]
+		if !exists || wantedRevision != due.ScheduleRevision {
+			return errors.New("alarmd execution: frozen due Plan facts differ from exact request")
+		}
+		if _, duplicate := seen[due.Identity]; duplicate {
+			return errors.New("alarmd execution: duplicate frozen due Plan fact")
+		}
+		seen[due.Identity] = struct{}{}
+	}
+	return nil
+}
+
+// ReadWaitWithinQueryBudget is how long after its window closes a Query
+// Group's Slot is read: the settling wait, then the group's own phase.
+//
+// Without the phase every group on a schedule is read in the same second.
+// Measured on a deployment where 88% of groups run every minute, about 80% of
+// a minute's queries became ready at second 30: every query permit was held
+// and a further 160 to 184 queries waited for one, for four to five seconds,
+// while the fleet held permits 11.7% of the minute. The downstream answered
+// that second at twice its usual latency. Nothing was short of capacity; the
+// reads were synchronized.
+//
+// The phase spreads each schedule's groups over readPhaseSpread. It only ever
+// delays a read - the settling wait stays the floor, so no window is read
+// before the deployment says its data has landed - and it is a pure function
+// of the group and its budget, so a restarted process and the replica a group
+// is handed to read it at the same moment, with nothing stored.
+//
+// Every place that asks when a Slot is read asks here: access to read it, the
+// scheduler to judge whether a replay can still be read inside its distance,
+// and the read holds to measure lateness from the moment the group actually
+// reads. A place that added the settling wait itself would disagree with the
+// read by up to the phase.
+//
+// The settling wait here is the floor, MinimumSettlingWait, or the
+// deployment's own wait when that is shorter: how much longer a group's data
+// takes to land is measured per group and read as its read hold (readhold),
+// which starts a group nothing has measured at the deployment's wait.
+func ReadWaitWithinQueryBudget(queryGroup QueryGroupIdentity, queryBudget, configured time.Duration) time.Duration {
+	settle := SettlingFloorWithinQueryBudget(queryBudget, configured)
+	return settle + readPhase(queryGroup, readPhaseSpread(queryBudget, settle))
+}
+
+// SettlingFloorWithinQueryBudget is the settling wait every group reads
+// past: the floor, MinimumSettlingWait, or the deployment's wait as the
+// budget allows it when that is shorter. A group's read hold is reckoned
+// from it - how much later than the floor the group's data lands - and the
+// group's phase comes after both, so groups whose data lands at one moment
+// still read at their own seconds.
+func SettlingFloorWithinQueryBudget(queryBudget, configured time.Duration) time.Duration {
+	return min(SettlingWaitWithinQueryBudget(queryBudget, configured), MinimumSettlingWait)
+}
+
+// Of the budget left after the settling wait, a phase takes at most two
+// fifths. The rest is the query's and the evaluation's: the slow groups
+// already answer close to the whole budget, and half would leave a one-minute
+// group 12.5 seconds where it has 25 today.
+const (
+	readPhaseBudgetShareNumerator   = 2
+	readPhaseBudgetShareDenominator = 5
+)
+
+// readPhaseSpread is how far a schedule's phases spread: two fifths of what
+// the settling wait leaves of the budget, and never more than the settling
+// wait itself, so a long schedule's first read is at most twice as late as
+// its data needs rather than a third of its period. A one-minute schedule
+// spreads over 10 seconds, a 30-second one over 6, anything of two minutes or
+// more over 30; an inert schedule, whose settling wait already exceeds its
+// budget, not at all.
+func readPhaseSpread(queryBudget, settle time.Duration) time.Duration {
+	if queryBudget <= settle {
+		return 0
+	}
+	return min((queryBudget-settle)*readPhaseBudgetShareNumerator/readPhaseBudgetShareDenominator, settle)
+}
+
+// readPhase is the group's place in the spread, to the millisecond: FNV-1a
+// of its identity, computed inline so the call allocates nothing.
+func readPhase(queryGroup QueryGroupIdentity, spread time.Duration) time.Duration {
+	millis := uint64(spread / time.Millisecond)
+	if millis == 0 {
+		return 0
+	}
+	hash := uint64(14695981039346656037)
+	for i := 0; i < len(queryGroup); i++ {
+		hash ^= uint64(queryGroup[i])
+		hash *= 1099511628211
+	}
+	return time.Duration(hash%millis) * time.Millisecond
+}

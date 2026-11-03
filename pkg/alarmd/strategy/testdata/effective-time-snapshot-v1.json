@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "status": "READY",
+  "business_timezone": "Asia/Shanghai",
+  "calendars": [
+    {
+      "id": 1,
+      "bk_tenant_id": "example-tenant",
+      "status": "PRESENT",
+      "items": [
+        {
+          "id": 8,
+          "time_kind": "UNIX_SECONDS",
+          "start_time": 1700000000,
+          "end_time": 1700000300,
+          "time_zone": "Asia/Shanghai",
+          "parent_id": null,
+          "repeat": {
+            "freq": "week",
+            "interval": 1,
+            "until": null,
+            "every": [1, 3],
+            "exclude_date": [1790006400, 1790010000],
+            "exclude_date_encoding_timezone": "Asia/Shanghai"
+          }
+        }
+      ]
+    }
+  ]
+}

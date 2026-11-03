@@ -55,8 +55,23 @@ func GetStorageInfo() (map[string]*Storage, error) {
 	return FormatStorageInfo(pairs)
 }
 
+// GetStorageInfoContext 获取存储配置，并传递生命周期 Context 到 Consul 请求。
+func GetStorageInfoContext(ctx context.Context) (map[string]*Storage, error) {
+	path := fmt.Sprintf("%s/%s/%s", basePath, dataPath, storagePath)
+	pairs, err := GetDataWithPrefixContext(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	return FormatStorageInfo(pairs)
+}
+
 // WatchStorageInfo
 func WatchStorageInfo(ctx context.Context) (<-chan any, error) {
 	path := fmt.Sprintf("%s/%s/%s", basePath, versionPath, storagePath)
 	return WatchChange(ctx, path)
+}
+
+// GetStoragePath 获取存储配置的 consul 存储地址
+func GetStoragePath() string {
+	return fmt.Sprintf("%s/%s/%s", basePath, dataPath, storagePath)
 }

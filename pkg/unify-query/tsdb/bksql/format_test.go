@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -79,8 +80,9 @@ func TestNewSqlFactory(t *testing.T) {
 	end := time.Unix(1741796260, 0)
 
 	for name, c := range map[string]struct {
-		query    *metadata.Query
-		expected string
+		query     *metadata.Query
+		expected  string
+		fieldsMap metadata.FieldsMap
 
 		start time.Time
 		end   time.Time
@@ -357,6 +359,45 @@ func TestNewSqlFactory(t *testing.T) {
 			},
 			expected: "SELECT *, `dtEventTimeStamp` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_2_p8oibru8se2clq50`.doris WHERE `dtEventTimeStamp` >= 1784108029336 AND `dtEventTimeStamp` <= 1784108929336 AND `dtEventTime` >= '2026-07-15 17:33:49' AND `dtEventTime` <= '2026-07-15 17:48:50' AND `thedate` = '20260715' LIMIT 10000",
 		},
+		"Doris search_after 缺少唯一键时使用旧日志组合游标": {
+			query: &metadata.Query{
+				DB:            "legacy_doris_log",
+				Measurement:   sql_expr.Doris,
+				Field:         "dtEventTimeStamp",
+				Source:        []string{"log"},
+				Size:          10,
+				IsSearchAfter: true,
+				Orders: metadata.Orders{
+					{Name: "dtEventTimeStamp", Ast: false},
+				},
+			},
+			fieldsMap: metadata.FieldsMap{
+				"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+				"gseIndex":         {FieldType: sql_expr.DorisTypeInt},
+				"iterationIndex":   {FieldType: sql_expr.DorisTypeInt},
+				"log":              {FieldType: sql_expr.DorisTypeText},
+			},
+			expected: "SELECT `log`, `dtEventTimeStamp` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_`, `dtEventTimeStamp` AS `__search_after_0`, `gseIndex` AS `__search_after_1`, `iterationIndex` AS `__search_after_2` FROM `legacy_doris_log`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313' ORDER BY `dtEventTimeStamp` DESC, `gseIndex` DESC, `iterationIndex` DESC LIMIT 10",
+		},
+		"Doris search_after 缺少组合字段时降级 offset": {
+			query: &metadata.Query{
+				DB:            "legacy_doris_log",
+				Measurement:   sql_expr.Doris,
+				Field:         "dtEventTimeStamp",
+				Source:        []string{"log"},
+				From:          7,
+				Size:          10,
+				IsSearchAfter: true,
+				Orders: metadata.Orders{
+					{Name: "dtEventTimeStamp", Ast: false},
+				},
+			},
+			fieldsMap: metadata.FieldsMap{
+				"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+				"log":              {FieldType: sql_expr.DorisTypeText},
+			},
+			expected: "SELECT `log`, `dtEventTimeStamp` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `legacy_doris_log`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313' ORDER BY `dtEventTimeStamp` DESC LIMIT 10 OFFSET 7",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
@@ -368,9 +409,9 @@ func TestNewSqlFactory(t *testing.T) {
 			}
 
 			log.Infof(ctx, "start: %s, end: %s", c.start, c.end)
-			fact := bksql.NewQueryFactory(ctx, c.query).
-				WithRangeTime(c.start, c.end).
-				WithFieldsMap(map[string]metadata.FieldOption{
+			fieldsMap := c.fieldsMap
+			if fieldsMap == nil {
+				fieldsMap = metadata.FieldsMap{
 					"level": {
 						FieldType: sql_expr.DorisTypeString,
 					},
@@ -383,7 +424,13 @@ func TestNewSqlFactory(t *testing.T) {
 					"gseIndex": {
 						FieldType: sql_expr.DorisTypeInt,
 					},
-				})
+				}
+			}
+
+			fact := bksql.NewQueryFactory(ctx, c.query).
+				WithRangeTime(c.start, c.end).
+				WithFieldsMap(fieldsMap).
+				WithKeepColumns(c.query.Source)
 			sql, err := fact.SQL()
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, sql)
@@ -413,34 +460,36 @@ func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
 			userSQL string
 			size    int
 			wantSQL string
+			// wantErr: the visitor does not model this construct, so the query is rejected instead of rewritten
+			wantErr string
 		}{
 			{
 				name:    "basic_dtEventTimeStamp_limit10",
 				db:      "132_lol_new_login_queue_login_1min",
 				field:   "login_rate",
 				userSQL: "SELECT dtEventTimeStamp FROM tbl WHERE dtEventTimeStamp > 0 LIMIT 10",
-				wantSQL: "SELECT NULL AS dtEventTimeStamp FROM `132_lol_new_login_queue_login_1min` WHERE NULL > 0 AND " + whereTime + " LIMIT 10",
+				wantSQL: "SELECT NULL AS dtEventTimeStamp FROM `132_lol_new_login_queue_login_1min` WHERE (NULL > 0) AND (" + whereTime + ") LIMIT 10",
 			},
 			{
 				name:    "count_star_alias",
 				db:      "132_lol_new_login_queue_login_1min",
 				field:   "login_rate",
 				userSQL: "SELECT COUNT(*) AS cnt FROM tbl WHERE id > 0",
-				wantSQL: "SELECT COUNT(*) AS cnt FROM `132_lol_new_login_queue_login_1min` WHERE NULL > 0 AND " + whereTime + " LIMIT 100",
+				wantSQL: "SELECT COUNT(*) AS cnt FROM `132_lol_new_login_queue_login_1min` WHERE (NULL > 0) AND (" + whereTime + ") LIMIT 100",
 			},
 			{
 				name:    "select_with_explicit_limit",
 				db:      "132_lol_new_login_queue_login_1min",
 				field:   "login_rate",
 				userSQL: "SELECT serverIp FROM tbl WHERE 1 = 1 LIMIT 5",
-				wantSQL: "SELECT NULL AS serverIp FROM `132_lol_new_login_queue_login_1min` WHERE 1 = 1 AND " + whereTime + " LIMIT 5",
+				wantSQL: "SELECT NULL AS serverIp FROM `132_lol_new_login_queue_login_1min` WHERE (1 = 1) AND (" + whereTime + ") LIMIT 5",
 			},
 			{
 				name:    "different_table_id_db",
 				db:      "5000140_bklog_demo",
 				field:   "cnt",
 				userSQL: "SELECT dtEventTimeStamp FROM tbl WHERE 1 = 1 LIMIT 3",
-				wantSQL: "SELECT NULL AS dtEventTimeStamp FROM `5000140_bklog_demo` WHERE 1 = 1 AND " + whereTime + " LIMIT 3",
+				wantSQL: "SELECT NULL AS dtEventTimeStamp FROM `5000140_bklog_demo` WHERE (1 = 1) AND (" + whereTime + ") LIMIT 3",
 			},
 			{
 				name:    "multi_db_union_combined",
@@ -463,49 +512,49 @@ func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
 				db:      "132_lol_new_login_queue_login_1min",
 				field:   "login_rate",
 				userSQL: "SELECT a, b FROM tbl WHERE (dim1 = 'x' OR dim2 > 1) AND dim3 IS NOT NULL ORDER BY a DESC, b ASC LIMIT 20 OFFSET 2",
-				wantSQL: "SELECT NULL AS a, NULL AS b FROM `132_lol_new_login_queue_login_1min` WHERE ( NULL = 'x' OR NULL > 1 ) AND NULL IS NOT NULL  AND " + whereTime + " LIMIT 20 OFFSET 2",
+				wantSQL: "SELECT NULL AS a, NULL AS b FROM `132_lol_new_login_queue_login_1min` WHERE (( NULL = 'x' OR NULL > 1 ) AND NULL IS NOT NULL) AND (" + whereTime + ") LIMIT 20 OFFSET 2",
 			},
 			{
 				name:    "match_phrase_count_order_by",
 				db:      "132_lol_new_login_queue_login_1min",
 				field:   "login_rate",
 				userSQL: "SELECT serverIp, COUNT(*) AS c FROM tbl WHERE log MATCH_PHRASE 'Error' GROUP BY serverIp ORDER BY c DESC LIMIT 30",
-				wantSQL: "SELECT NULL AS serverIp, COUNT(*) AS c FROM `132_lol_new_login_queue_login_1min` WHERE NULL MATCH_PHRASE 'Error' AND " + whereTime + " ORDER BY `c` DESC LIMIT 30",
+				wantSQL: "SELECT NULL AS serverIp, COUNT(*) AS c FROM `132_lol_new_login_queue_login_1min` WHERE (NULL MATCH_PHRASE 'Error') AND (" + whereTime + ") ORDER BY `c` DESC LIMIT 30",
 			},
 			{
 				name:    "case_when_in_select",
 				db:      "132_lol_new_login_queue_login_1min",
 				field:   "login_rate",
 				userSQL: "SELECT CASE WHEN level = 'error' THEN 1 ELSE 0 END AS err_flag, dtEventTimeStamp FROM tbl WHERE 1=1",
-				wantSQL: "SELECT CASE WHEN NULL = 'error' THEN 1 ELSE 0 END AS err_flag, NULL AS dtEventTimeStamp FROM `132_lol_new_login_queue_login_1min` WHERE 1 = 1 AND " + whereTime + " LIMIT 100",
+				wantSQL: "SELECT CASE WHEN NULL = 'error' THEN 1 ELSE 0 END AS err_flag, NULL AS dtEventTimeStamp FROM `132_lol_new_login_queue_login_1min` WHERE (1 = 1) AND (" + whereTime + ") LIMIT 100",
 			},
 			{
 				name:    "inner_join_qualifiers",
 				db:      "132_lol_new_login_queue_login_1min",
 				field:   "login_rate",
 				userSQL: "SELECT t1.a FROM tbl t1 INNER JOIN tbl t2 ON t1.id = t2.parent_id WHERE t1.x > 0",
-				wantSQL: "SELECT NULL AS t1__bk_46__a FROM `132_lol_new_login_queue_login_1min` WHERE NULL > 0 AND " + whereTime + " LIMIT 100",
+				wantErr: "unsupported Doris SQL: JOIN in FROM clause",
 			},
 			{
 				name:    "in_list_count_order_by",
 				db:      "132_lol_new_login_queue_login_1min",
 				field:   "login_rate",
 				userSQL: "SELECT city, COUNT(*) AS c FROM tbl WHERE status IN ('ok', 'fail') GROUP BY city HAVING c > 10 ORDER BY c DESC LIMIT 50",
-				wantSQL: "SELECT NULL AS city, COUNT(*) AS c FROM `132_lol_new_login_queue_login_1min` WHERE NULL IN ('ok', 'fail') AND " + whereTime + " ORDER BY `c` DESC LIMIT 50",
+				wantSQL: "SELECT NULL AS city, COUNT(*) AS c FROM `132_lol_new_login_queue_login_1min` WHERE (NULL IN ('ok', 'fail')) AND (" + whereTime + ") HAVING `c` > 10 ORDER BY `c` DESC LIMIT 50",
 			},
 			{
 				name:    "subquery_preserved_outer_where",
 				db:      "132_lol_new_login_queue_login_1min",
 				field:   "login_rate",
 				userSQL: "SELECT * FROM (SELECT id, cnt FROM tbl WHERE cnt > 0) AS sub WHERE id < 100",
-				wantSQL: "SELECT * FROM (SELECT NULL AS id, NULL AS cnt FROM `132_lol_new_login_queue_login_1min` WHERE NULL > 0 AND " + whereTime + ") sub WHERE NULL < 100 LIMIT 100",
+				wantSQL: "SELECT * FROM (SELECT NULL AS id, NULL AS cnt FROM `132_lol_new_login_queue_login_1min` WHERE (NULL > 0) AND (" + whereTime + ")) sub WHERE NULL < 100 LIMIT 100",
 			},
 			{
 				name:    "json_extract_split_part_match_all",
 				db:      "132_lol_new_login_queue_login_1min",
 				field:   "login_rate",
 				userSQL: "SELECT JSON_EXTRACT_STRING(__ext, '$.pod') AS pod, split_part(log, '|', 2) AS seg FROM tbl WHERE log MATCH_ALL 'timeout' LIMIT 99",
-				wantSQL: "SELECT JSON_EXTRACT_STRING(NULL, '$.pod') AS pod, split_part(NULL, '|', 2) AS seg FROM `132_lol_new_login_queue_login_1min` WHERE NULL MATCH_ALL 'timeout' AND " + whereTime + " LIMIT 99",
+				wantSQL: "SELECT JSON_EXTRACT_STRING(NULL, '$.pod') AS pod, split_part(NULL, '|', 2) AS seg FROM `132_lol_new_login_queue_login_1min` WHERE (NULL MATCH_ALL 'timeout') AND (" + whereTime + ") LIMIT 99",
 			},
 		}
 
@@ -521,6 +570,10 @@ func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
 					Size:        tt.size,
 				}
 				got, err := bksql.NewQueryFactory(ctx, q).WithRangeTime(start, end).SQL()
+				if tt.wantErr != "" {
+					require.ErrorContains(t, err, tt.wantErr)
+					return
+				}
 				require.NoError(t, err)
 				require.NotEmpty(t, got)
 				assert.Equal(t, tt.wantSQL, got)
@@ -542,12 +595,12 @@ func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
 			{
 				name:    "dtEventTimeStamp_resolved",
 				userSQL: "SELECT dtEventTimeStamp FROM tbl WHERE dtEventTimeStamp > 0 LIMIT 10",
-				wantSQL: "SELECT `dtEventTimeStamp` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` > 0 AND " + whereTime + " LIMIT 10",
+				wantSQL: "SELECT `dtEventTimeStamp` FROM `132_lol_new_login_queue_login_1min` WHERE (`dtEventTimeStamp` > 0) AND (" + whereTime + ") LIMIT 10",
 			},
 			{
 				name:    "serverIp_resolved",
 				userSQL: "SELECT serverIp FROM tbl WHERE 1 = 1 LIMIT 5",
-				wantSQL: "SELECT `serverIp` FROM `132_lol_new_login_queue_login_1min` WHERE 1 = 1 AND " + whereTime + " LIMIT 5",
+				wantSQL: "SELECT `serverIp` FROM `132_lol_new_login_queue_login_1min` WHERE (1 = 1) AND (" + whereTime + ") LIMIT 5",
 			},
 		}
 		for _, tt := range withMapTests {
@@ -867,6 +920,58 @@ func TestFormatDataToQueryResult_ValueParsing(t *testing.T) {
 		list     []map[string]any
 		expected map[int64]float64
 	}{
+		"区间最小值跳过空值": {
+			query: &metadata.Query{
+				Measurement:        "doris",
+				Field:              "value",
+				IsRangeAggregation: true,
+				Aggregates:         metadata.Aggregates{{Name: "min"}},
+			},
+			list: []map[string]any{
+				{"_timestamp_": int64(1776758700000), "_value_": nil},
+				{"_timestamp_": int64(1776759000000), "_value_": 10.0},
+			},
+			expected: map[int64]float64{1776759000000: 10},
+		},
+		"区间最大值跳过空值": {
+			query: &metadata.Query{
+				Measurement:        "doris",
+				Field:              "value",
+				IsRangeAggregation: true,
+				Aggregates:         metadata.Aggregates{{Name: "max"}},
+			},
+			list: []map[string]any{
+				{"_timestamp_": int64(1776758700000), "_value_": nil},
+				{"_timestamp_": int64(1776759000000), "_value_": 10.0},
+			},
+			expected: map[int64]float64{1776759000000: 10},
+		},
+		"区间平均值跳过空值": {
+			query: &metadata.Query{
+				Measurement:        "doris",
+				Field:              "value",
+				IsRangeAggregation: true,
+				Aggregates:         metadata.Aggregates{{Name: "avg"}},
+			},
+			list: []map[string]any{
+				{"_timestamp_": int64(1776758700000), "_value_": nil},
+				{"_timestamp_": int64(1776759000000), "_value_": 10.0},
+			},
+			expected: map[int64]float64{1776759000000: 10},
+		},
+		"区间求和保留零值贡献": {
+			query: &metadata.Query{
+				Measurement:        "doris",
+				Field:              "value",
+				IsRangeAggregation: true,
+				Aggregates:         metadata.Aggregates{{Name: "sum"}},
+			},
+			list: []map[string]any{
+				{"_timestamp_": int64(1776758700000), "_value_": nil},
+				{"_timestamp_": int64(1776759000000), "_value_": 10.0},
+			},
+			expected: map[int64]float64{1776758700000: 0, 1776759000000: 10},
+		},
 		"first _value_ is nil": {
 			query: baseQuery(),
 			list: []map[string]any{
@@ -937,4 +1042,61 @@ func TestFormatDataToQueryResult_ValueParsing(t *testing.T) {
 			assert.Equal(t, c.expected, actual)
 		})
 	}
+}
+
+func TestFormatDataToQueryResultDynamicLabelsIncreaseSeriesRowsRatio(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	start := time.Unix(1776758700, 0)
+	end := start.Add(5 * time.Minute)
+
+	format := func(dynamic bool) *prompb.QueryResult {
+		t.Helper()
+		query := &metadata.Query{
+			DataSource:  "bkdata",
+			StorageType: metadata.BkSqlStorageType,
+			TableID:     "2_cdn_flow",
+			DB:          "2_cdn_flow",
+			Field:       "metric_value2",
+		}
+		factory := bksql.NewQueryFactory(ctx, query).WithRangeTime(start, end)
+		_, err := factory.SQL()
+		require.NoError(t, err)
+
+		rows := make([]map[string]any, 0, 5)
+		for i := 0; i < 5; i++ {
+			labelValue := "stable"
+			if dynamic {
+				labelValue = fmt.Sprintf("minute-%d", i)
+			}
+			rows = append(rows, map[string]any{
+				"_timestamp_": start.Add(time.Duration(i) * time.Minute).UnixMilli(),
+				"_value_":     float64(i),
+				"data_time":   labelValue,
+			})
+		}
+		result, err := factory.FormatDataToQueryResult(ctx, rows)
+		require.NoError(t, err)
+		return result
+	}
+
+	stable := format(false)
+	dynamic := format(true)
+	require.Len(t, stable.Timeseries, 1)
+	require.Len(t, dynamic.Timeseries, 5)
+
+	countPointsAndLabelBytes := func(result *prompb.QueryResult) (int, int) {
+		var points, labelBytes int
+		for _, series := range result.Timeseries {
+			points += len(series.Samples)
+			for _, label := range series.Labels {
+				labelBytes += len(label.Name) + len(label.Value)
+			}
+		}
+		return points, labelBytes
+	}
+	stablePoints, stableLabelBytes := countPointsAndLabelBytes(stable)
+	dynamicPoints, dynamicLabelBytes := countPointsAndLabelBytes(dynamic)
+	require.Equal(t, 5, stablePoints)
+	require.Equal(t, 5, dynamicPoints)
+	require.Greater(t, dynamicLabelBytes, stableLabelBytes)
 }

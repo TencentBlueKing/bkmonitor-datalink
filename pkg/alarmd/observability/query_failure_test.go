@@ -1,0 +1,224 @@
+package observability
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+)
+
+func newQueryFailureTestObserver(output *bytes.Buffer) *LoggingObserver {
+	l, _ := NewScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 10, MaxScopes: 1024})
+	p, _ := NewScopedBoundedLogPolicy(l)
+	return NewLoggingObserver(New("alarmd", output), p)
+}
+
+func TestQueryFailureLogRejectsSensitiveValues(t *testing.T) {
+	secret := "https://user:secret@example.test/?token=secret"
+	for _, facts := range []QueryFailureFacts{
+		{Stage: "execute", Category: "source_backend", Code: "SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"},
+		{Stage: "stream_complete", Category: "budget", Code: CapacityBudgetFailureCode(CapacityBudgetRetainedBytes)},
+		{Stage: secret, Category: secret, Code: secret, Detail: secret},
+	} {
+		var output bytes.Buffer
+		newQueryFailureTestObserver(&output).Observe(context.Background(), Observation{Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultFailed, Err: errors.New("query " + secret + " failed"), QueryFailure: &facts})
+		if strings.Contains(output.String(), "secret") || strings.Contains(output.String(), "https://") {
+			t.Fatalf("sensitive log: %s", output.String())
+		}
+		var event map[string]any
+		if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event["error"] != "query <url> failed" {
+			t.Fatalf("error text was not sanitized: %v", event)
+		}
+		if facts.Stage == secret {
+			if event["failure_stage"] != "other" || event["failure_category"] != "other" || event["failure_code"] != "OTHER" || event["failure_detail"] != nil {
+				t.Fatalf("unbounded facts: %v", event)
+			}
+		} else if event["failure_stage"] != facts.Stage || event["failure_category"] != facts.Category || event["failure_code"] != facts.Code {
+			t.Fatalf("lost facts: %v", event)
+		}
+	}
+}
+
+func TestQueryFailureCodesFollowBoundedGrammarInsteadOfWhitelist(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		input QueryFailureFacts
+		want  QueryFailureFacts
+	}{
+		{"known UQ code", QueryFailureFacts{Stage: "execute", Category: "source_backend", Code: "SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"}, QueryFailureFacts{Stage: "execute", Category: "source_backend", Code: "SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"}},
+		{"new UQ code kept", QueryFailureFacts{Stage: "execute", Category: "source_backend", Code: "QUERY_TS_SOME_NEW_STATUS"}, QueryFailureFacts{Stage: "execute", Category: "source_backend", Code: "QUERY_TS_SOME_NEW_STATUS"}},
+		{"lowercase collapses", QueryFailureFacts{Stage: "execute", Category: "source_backend", Code: "not a code"}, QueryFailureFacts{Stage: "execute", Category: "source_backend", Code: "OTHER"}},
+		{"leading digit collapses", QueryFailureFacts{Stage: "execute", Category: "series_identity", Code: "1IDENTITY"}, QueryFailureFacts{Stage: "execute", Category: "series_identity", Code: "OTHER"}},
+		{"worker contract code", QueryFailureFacts{Stage: "stream_complete", Category: "completion_contract", Code: "COMPLETION_BINDING_MISMATCH"}, QueryFailureFacts{Stage: "stream_complete", Category: "completion_contract", Code: "COMPLETION_BINDING_MISMATCH"}},
+		{"named input code", QueryFailureFacts{Stage: "stream_complete", Category: "named_input", Code: "COMPLETION_ONLY_REQUIREMENT_MISSING"}, QueryFailureFacts{Stage: "stream_complete", Category: "named_input", Code: "COMPLETION_ONLY_REQUIREMENT_MISSING"}},
+		{"admission code", QueryFailureFacts{Stage: "execute", Category: "admission", Code: "QUERY_PERMIT_DEADLINE"}, QueryFailureFacts{Stage: "execute", Category: "admission", Code: "QUERY_PERMIT_DEADLINE"}},
+		{"evaluation code", QueryFailureFacts{Stage: "stream_complete", Category: "evaluation", Code: "EVALUATION_RESULT_INVALID"}, QueryFailureFacts{Stage: "stream_complete", Category: "evaluation", Code: "EVALUATION_RESULT_INVALID"}},
+		// A budget's own value is a metric label, not a code, and budget has no
+		// exemption from the grammar: a publisher that passes the label through
+		// gets OTHER and has to notice. It used to be kept, which is how every
+		// budget rejection published an unparsable code unnoticed.
+		{"capacity budget label is not a code", QueryFailureFacts{Stage: "stream_complete", Category: "budget", Code: "retained_bytes"}, QueryFailureFacts{Stage: "stream_complete", Category: "budget", Code: "OTHER"}},
+		{"capacity budget code", QueryFailureFacts{Stage: "stream_complete", Category: "budget", Code: CapacityBudgetFailureCode(CapacityBudgetRetainedBytes)}, QueryFailureFacts{Stage: "stream_complete", Category: "budget", Code: CapacityBudgetFailureCode(CapacityBudgetRetainedBytes)}},
+		{"response budget", QueryFailureFacts{Stage: "execute", Category: "budget", Code: "RESPONSE_BYTES_EXCEEDED"}, QueryFailureFacts{Stage: "execute", Category: "budget", Code: "RESPONSE_BYTES_EXCEEDED"}},
+		{"unknown budget", QueryFailureFacts{Stage: "execute", Category: "budget", Code: "free text"}, QueryFailureFacts{Stage: "execute", Category: "budget", Code: "OTHER"}},
+		{"unknown category", QueryFailureFacts{Stage: "execute", Category: "mystery", Code: "VALID_CODE"}, QueryFailureFacts{Stage: "execute", Category: "other", Code: "OTHER"}},
+		{"unknown stage", QueryFailureFacts{Stage: "elsewhere", Category: "source_backend", Code: "X"}, QueryFailureFacts{Stage: "other", Category: "source_backend", Code: "X"}},
+		{"provider detail kept", QueryFailureFacts{Stage: "provider", Category: "provider_transport", Code: "QUERY_UNAVAILABLE", Detail: "transport=connection_refused"}, QueryFailureFacts{Stage: "provider", Category: "provider_transport", Code: "QUERY_UNAVAILABLE", Detail: "transport=connection_refused"}},
+		{"http detail kept", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=503"}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=503"}},
+		{"free text detail dropped", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "body: {\"error\":\"table x\"}"}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE"}},
+		{"http status kept", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=400", HTTPStatus: 400}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=400", HTTPStatus: 400}},
+		{"status outside HTTP dropped", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", HTTPStatus: 700}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE"}},
+		{"status below HTTP dropped", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", HTTPStatus: 99}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE"}},
+		{"long detail dropped", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: strings.Repeat("a", 97)}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := test.input
+			got := normalizeQueryFailure(ComponentAccess, StageQueryCompleted, &input)
+			if got == nil || *got != test.want {
+				t.Fatalf("normalizeQueryFailure(%+v) = %+v, want %+v", test.input, got, test.want)
+			}
+			if input != test.input {
+				t.Fatal("normalization mutated the caller's facts")
+			}
+		})
+	}
+	if got := normalizeQueryFailure(ComponentRuntime, StageStartup, &QueryFailureFacts{Stage: "execute"}); got != nil {
+		t.Fatalf("facts outside the Access query boundary were kept: %+v", got)
+	}
+}
+
+func TestQueryFailureFactsSurviveWithoutErrorForDegradedProviderResults(t *testing.T) {
+	var output bytes.Buffer
+	facts := QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=503", HTTPStatus: 503}
+	newQueryFailureTestObserver(&output).Observe(context.Background(), Observation{
+		Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultDegraded,
+		ReasonCode: "QUERY_UNAVAILABLE", QueryFailure: &facts,
+		Trace: TraceFields{QueryGroupKey: "query-group-1"},
+	})
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode: %v; log=%s", err, output.String())
+	}
+	for field, want := range map[string]any{
+		"failure_stage": "provider", "failure_category": "source_backend", "failure_code": "QUERY_UNAVAILABLE",
+		"failure_detail": "http_status=503", "reason_code": "QUERY_UNAVAILABLE", "query_group_key": "query-group-1",
+		"failure_http_status": float64(503),
+	} {
+		if event[field] != want {
+			t.Fatalf("event[%q]=%#v, want %#v; event=%#v", field, event[field], want, event)
+		}
+	}
+	if _, exists := event["error"]; exists {
+		t.Fatalf("degraded provider line invented an error: %#v", event)
+	}
+}
+
+// A timed-out query's line carries the numbers its row reads the timeout
+// by: the settling wait, how late after it the query began, what it was
+// given, what it used and how much of that was alarmd's own - a query begun
+// past its deadline too, whose budget is below zero. A line without a timing carries none of them rather
+// than zeros.
+func TestATimedOutQueryLogsItsBudgetBesideItsDetail(t *testing.T) {
+	var output bytes.Buffer
+	facts := QueryFailureFacts{Stage: "provider", Category: "provider_transport", Code: "QUERY_TIMEOUT", Detail: "transport=timeout",
+		Timing: &QueryTiming{SettleMillis: 30_000, StartLateMillis: 11_000, BudgetMillis: 9_000, ElapsedMillis: 9_004, LocalMillis: 7_500}}
+	observer := newQueryFailureTestObserver(&output)
+	observer.Observe(context.Background(), Observation{Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultDegraded,
+		ReasonCode: "QUERY_TIMEOUT", QueryFailure: &facts, Trace: TraceFields{QueryGroupKey: "query-group-1"}})
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode: %v; log=%s", err, output.String())
+	}
+	for field, want := range map[string]any{"failure_settle_ms": 30_000.0, "failure_start_late_ms": 11_000.0, "failure_budget_ms": 9_000.0,
+		"failure_elapsed_ms": 9_004.0, "failure_local_ms": 7_500.0} {
+		if event[field] != want {
+			t.Fatalf("event[%q]=%#v, want %#v; event=%#v", field, event[field], want, event)
+		}
+	}
+	output.Reset()
+	facts.Timing = &QueryTiming{SettleMillis: 30_000, StartLateMillis: 32_000, BudgetMillis: -2_000, ElapsedMillis: 0}
+	observer.Observe(context.Background(), Observation{Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultDegraded,
+		ReasonCode: "QUERY_TIMEOUT", QueryFailure: &facts, Trace: TraceFields{QueryGroupKey: "query-group-late"}})
+	event = nil
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode: %v; log=%s", err, output.String())
+	}
+	for field, want := range map[string]any{"failure_settle_ms": 30_000.0, "failure_start_late_ms": 32_000.0, "failure_budget_ms": -2_000.0, "failure_elapsed_ms": 0.0} {
+		if event[field] != want {
+			t.Fatalf("begun past its deadline: event[%q]=%#v, want %#v; event=%#v", field, event[field], want, event)
+		}
+	}
+	output.Reset()
+	facts.Timing = nil
+	observer.Observe(context.Background(), Observation{Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultDegraded,
+		ReasonCode: "QUERY_TIMEOUT", QueryFailure: &facts, Trace: TraceFields{QueryGroupKey: "query-group-2"}})
+	if !strings.Contains(output.String(), "query-group-2") {
+		t.Fatalf("setup: the untimed failure's line was not written: %q", output.String())
+	}
+	if strings.Contains(output.String(), "failure_budget_ms") {
+		t.Fatalf("an untimed failure logged a budget: %s", output.String())
+	}
+}
+
+func TestValidQueryFailureCodeGrammar(t *testing.T) {
+	for code, want := range map[string]bool{
+		"A": true, "OTHER": true, "A_1": true, "QUERY_TS_PARTIAL": true, strings.Repeat("A", 64): true,
+		"": false, "a": false, "1A": false, "A-B": false, "A B": false, strings.Repeat("A", 65): false,
+		"https://example.test": false,
+	} {
+		if got := ValidQueryFailureCode(code); got != want {
+			t.Fatalf("ValidQueryFailureCode(%q) = %t, want %t", code, got, want)
+		}
+	}
+	if NormalizeQueryFailureCode("bad code") != "OTHER" || NormalizeQueryFailureCode("GOOD_CODE") != "GOOD_CODE" {
+		t.Fatal("NormalizeQueryFailureCode did not apply the grammar")
+	}
+}
+
+// A refusal's log line names its class and the provider's trace id, never
+// the excerpt: the excerpt can echo the request and is kept only with the
+// Query Group's last failure. A class or trace id outside its grammar is
+// not carried as written.
+func TestARejectionLogsItsClassAndTraceButNeverItsExcerpt(t *testing.T) {
+	var output bytes.Buffer
+	facts := QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_REJECTED", Detail: "http_status=400", HTTPStatus: 400,
+		Rejection: &QueryRejection{Class: "VM_SAMPLE_LIMIT", TraceID: "4bf92f3577b34da6a3ce929d0e0e4736", Excerpt: "excerpt-marker-text"}}
+	newQueryFailureTestObserver(&output).Observe(context.Background(), Observation{
+		Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultDegraded,
+		ReasonCode: "QUERY_REJECTED", QueryFailure: &facts, Trace: TraceFields{QueryGroupKey: "query-group-1"},
+	})
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode: %v; log=%s", err, output.String())
+	}
+	if event["failure_rejection_class"] != "VM_SAMPLE_LIMIT" || event["failure_provider_trace_id"] != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Fatalf("event=%#v", event)
+	}
+	if strings.Contains(output.String(), "excerpt-marker-text") {
+		t.Fatalf("the excerpt reached the log: %s", output.String())
+	}
+	odd := normalizeQueryRejection(&QueryRejection{Class: "not a class", TraceID: "ZZ", Excerpt: strings.Repeat("x", MaxRejectionExcerptBytes+1)})
+	if odd.Class != QueryFailureCodeOther || odd.TraceID != "" || odd.Excerpt != "" {
+		t.Fatalf("out-of-grammar rejection kept as %+v", odd)
+	}
+	// And so it is on the line an observation writes.
+	output.Reset()
+	facts.Rejection = &QueryRejection{Class: "not a class", TraceID: "ZZ-not-hex"}
+	newQueryFailureTestObserver(&output).Observe(context.Background(), Observation{
+		Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultDegraded,
+		ReasonCode: "QUERY_REJECTED", QueryFailure: &facts, Trace: TraceFields{QueryGroupKey: "query-group-1"},
+	})
+	event = map[string]any{}
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode: %v; log=%s", err, output.String())
+	}
+	if _, traced := event["failure_provider_trace_id"]; event["failure_rejection_class"] != QueryFailureCodeOther || traced {
+		t.Fatalf("an out-of-grammar rejection logged as %#v", event)
+	}
+}

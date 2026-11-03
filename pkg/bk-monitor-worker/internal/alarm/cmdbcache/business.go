@@ -77,7 +77,7 @@ func getBusinessList(ctx context.Context, bkTenantId string) ([]map[string]any, 
 		},
 		// 设置分页参数
 		func(page int) define.Operation {
-			return cmdbApi.SearchBusiness().SetContext(ctx).SetBody(map[string]any{"page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.SearchBusiness().SetContext(ctx).SetBody(map[string]any{"page": map[string]any{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize, "sort": "bk_biz_id"}})
 		},
 		10,
 	)

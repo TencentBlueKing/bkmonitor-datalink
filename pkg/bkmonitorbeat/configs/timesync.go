@@ -27,12 +27,13 @@ type TimeSyncConfig struct {
 	QueryTimeout  time.Duration `config:"query_timeout"`
 	NtpdPath      string        `config:"ntpd_path"`
 	ChronyAddress string        `config:"chrony_address"`
+	BkNTPSource   string        `config:"bk_ntp_source"`
 }
 
 func (c *TimeSyncConfig) GetTaskConfigList() []define.TaskConfig {
 	tasks := make([]define.TaskConfig, 0)
 	// 说明没有任务
-	if len(c.NtpdPath) == 0 && len(c.ChronyAddress) == 0 {
+	if len(c.NtpdPath) == 0 && len(c.ChronyAddress) == 0 && len(c.BkNTPSource) == 0 {
 		return tasks
 	}
 

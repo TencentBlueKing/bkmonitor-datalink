@@ -23,6 +23,11 @@ type metaData struct {
 // Get 通过 traceID + key 获取缓存
 func (m *metaData) get(ctx context.Context, key string) (any, bool) {
 	id := hashID(ctx)
+	if scope, ok := ctx.Value(namedOutputScopeContextKey{}).(string); ok {
+		if value, found := m.c.Get(id + "_output:" + scope + "_" + key); found {
+			return value, true
+		}
+	}
 	k := id + "_" + key
 	return m.c.Get(k)
 }
@@ -30,6 +35,9 @@ func (m *metaData) get(ctx context.Context, key string) (any, bool) {
 // Set 通过 traceID + key 写入缓存
 func (m *metaData) set(ctx context.Context, key string, value any) {
 	id := hashID(ctx)
+	if scope, ok := ctx.Value(namedOutputScopeContextKey{}).(string); ok {
+		id += "_output:" + scope
+	}
 	k := id + "_" + key
 	m.c.SetDefault(k, value)
 }

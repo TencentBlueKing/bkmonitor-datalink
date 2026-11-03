@@ -1,0 +1,19 @@
+{
+  "method": "POST",
+  "path": "/query/ts/promql",
+  "headers": {
+    "Content-Type": "application/json",
+    "Bk-Query-Source": "golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__golden_tspider_fallback",
+    "X-Bk-Tenant-Id": "tenant_golden"
+  },
+  "body": {
+    "promql": "avg by (service, status) (avg_over_time(bkdata:golden_tspider_fallback_table:events_total[5m]))",
+    "start": "1784701800",
+    "end": "1784703600",
+    "step": "60s",
+    "timezone": "Asia/Shanghai",
+    "look_back_delta": "",
+    "instant": false
+  }
+}

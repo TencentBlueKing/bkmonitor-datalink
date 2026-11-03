@@ -31,6 +31,7 @@ type PreparedFieldMetadata struct {
 	indexes         []string
 	physicalIndexes []string
 	fieldMap        metadata.FieldsMap
+	indexFields     *collapseIndexMetadata
 	connectionKey   RawBatchConnectionKey
 	reuseIdentity   [sha256.Size]byte
 	complete        bool
@@ -93,7 +94,7 @@ func (i *Instance) PrepareRawFieldMetadata(
 	if err != nil {
 		return nil, err
 	}
-	fieldMap, physicalIndexes, err := i.fieldMapWithPhysicalIndexes(ctx, query.FieldAlias, indexes...)
+	fieldMap, physicalIndexes, indexFields, err := i.fieldMapWithIndexFields(ctx, query.FieldAlias, indexes...)
 	if err != nil {
 		return nil, metadata.NewMessage(
 			metadata.MsgQueryES,
@@ -106,6 +107,7 @@ func (i *Instance) PrepareRawFieldMetadata(
 		indexes:         append([]string(nil), indexes...),
 		physicalIndexes: append([]string(nil), physicalIndexes...),
 		fieldMap:        cloneFieldsMap(fieldMap),
+		indexFields:     indexFields,
 		connectionKey:   i.RawBatchConnectionKey(ctx),
 		reuseIdentity:   reuseIdentity,
 		complete:        true,
@@ -168,6 +170,9 @@ func (i *Instance) PrepareRawQuery(
 	fact := newRawFormatFactory(ctx, rawQuery, qo, fieldMetadata.fieldMap)
 	source, countQuery, _, err := buildESQuerySource(ctx, rawQuery, fact, nil)
 	if err != nil {
+		return nil, err
+	}
+	if err := filterCollapseIndexes(qo, fieldMetadata.indexFields, fact.Collapse(rawQuery.Collapse), source); err != nil {
 		return nil, err
 	}
 	body, err := marshalSearchSource(source)
@@ -272,6 +277,7 @@ func clonePreparedFieldMetadata(source *PreparedFieldMetadata) *PreparedFieldMet
 		indexes:         append([]string(nil), source.indexes...),
 		physicalIndexes: append([]string(nil), source.physicalIndexes...),
 		fieldMap:        cloneFieldsMap(source.fieldMap),
+		indexFields:     cloneCollapseIndexMetadata(source.indexFields),
 		connectionKey:   source.connectionKey,
 		reuseIdentity:   source.reuseIdentity,
 		complete:        source.complete,
@@ -348,7 +354,19 @@ func decodePreparedRawResult(
 	}
 
 	if sr == nil {
+		if rawQuery.ExactTotal {
+			return size, total, option, fmt.Errorf("ES exact total unavailable: search response is missing")
+		}
 		return size, total, option, nil
+	}
+	if rawQuery.ExactTotal {
+		// relation=eq only describes the shards that answered; a timed-out or partly failed search can still be incomplete.
+		if sr.TimedOut || sr.Shards == nil || sr.Shards.Failed != 0 || len(sr.Shards.Failures) != 0 {
+			return size, total, option, fmt.Errorf("ES exact total unavailable: search timed out or shards are incomplete")
+		}
+		if sr.Hits == nil || sr.Hits.TotalHits == nil || sr.Hits.TotalHits.Relation != "eq" {
+			return size, total, option, fmt.Errorf("ES exact total unavailable: total hits relation is not eq")
+		}
 	}
 	if sr.Hits != nil {
 		for idx, d := range sr.Hits.Hits {

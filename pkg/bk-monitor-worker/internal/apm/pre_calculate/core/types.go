@@ -294,6 +294,9 @@ var (
 	NetHostIpField = CommonField{
 		SourceResource, "net.host.ip", toResource("net.host.ip"),
 	}
+	NetHostIpAttributeField = CommonField{
+		SourceAttributes, "net.host.ip", toAttributes("net.host.ip"),
+	}
 	K8sBcsClusterId = CommonField{
 		SourceResource, "k8s.bcs.cluster.id", toResource("k8s.bcs.cluster.id"),
 	}
@@ -361,6 +364,7 @@ var StandardFields = []CommonField{
 	ServiceNamespaceField,
 	ServiceInstanceIdField,
 	NetHostIpField,
+	NetHostIpAttributeField,
 	HostIpField,
 	K8sBcsClusterId,
 	K8sNamespace,

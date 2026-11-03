@@ -119,6 +119,9 @@ func applyProcessorOptions(precalculateOption *PrecalculateOption, extraProcesso
 	if metricLayer4ReportEnabled, ok := extraProcessorOptions["metric_layer4_report_enabled"]; ok {
 		precalculateOption.processorConfig = append(precalculateOption.processorConfig, window.TraceMetricsLayer4ReportEnabled(metricLayer4ReportEnabled.(bool)))
 	}
+	if dynamicRelationFlowReportEnabled, ok := extraProcessorOptions["dynamic_relation_flow_report_enabled"]; ok {
+		precalculateOption.processorConfig = append(precalculateOption.processorConfig, window.DynamicRelationFlowReportEnabled(dynamicRelationFlowReportEnabled.(bool)))
+	}
 	if podToPodErrorFlowEnabled, ok := extraProcessorOptions["pod_instance_error_flow_report_enabled"]; ok {
 		precalculateOption.processorConfig = append(precalculateOption.processorConfig, window.PodInstanceErrorFlowReportEnabled(podToPodErrorFlowEnabled.(bool)))
 	}

@@ -1,0 +1,12 @@
+# Build output and release state never belong in the image context.
+.release/
+dist/
+alarmd
+alarmd-node-runner
+# Documentation does not change the binary; keeping it out keeps the
+# COPY layer cache stable across doc-only commits.
+docs/
+# The image build packs its own alarmd-cli release; a local one must not
+# ride in with the context.
+clirelease/assets/*
+!clirelease/assets/README.md

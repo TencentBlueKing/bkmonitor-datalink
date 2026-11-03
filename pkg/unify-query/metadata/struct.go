@@ -78,6 +78,8 @@ type FieldOption struct {
 	IsAgg           bool   `json:"is_agg"`
 	IsAnalyzed      bool   `json:"is_analyzed"`
 	IsCaseSensitive bool   `json:"is_case_sensitive"`
+	// HasMixedTypes 表示跨索引同名字段的类型不一致，不能按单一类型优化查询。
+	HasMixedTypes bool `json:"has_mixed_types,omitempty"`
 	// IsCaseInsensitive 只在 mapping 明确证明 keyword/text 会 lowercase 时置 true。
 	// 不能只用 IsCaseSensitive 的 false 值，因为历史/手写 FieldsMap 里的 keyword 零值仍应按大小写敏感处理。
 	IsCaseInsensitive bool `json:"is_case_insensitive,omitempty"`
@@ -124,6 +126,12 @@ type Aggregate struct {
 	Args []any `json:"args,omitempty"`
 }
 
+// HasTimeBucket 与各存储实际生成的时间分桶保持一致，不能通过 instant 或 step 判断。
+func (a Aggregate) HasTimeBucket(storageType string) bool {
+	return a.Name == "date_histogram" ||
+		(a.Window > 0 && (storageType != ElasticsearchStorageType || !a.Without))
+}
+
 // OffSetInfo Offset的信息存储，供promql查询转换为influxdb查询语句时使用
 type OffSetInfo struct {
 	OffSet  time.Duration
@@ -133,6 +141,18 @@ type OffSetInfo struct {
 }
 
 type Aggregates []Aggregate
+
+// QueryCostProfile describes structural query properties used for observation.
+// It must not be used as an environment-independent admission policy.
+type QueryCostProfile struct {
+	SelectAllCandidate bool
+	RangeFunction      bool
+	StepLessThanWindow bool
+	ASTBranchCount     int
+	SQLPushdown        bool
+	Window             time.Duration
+	Step               time.Duration
+}
 
 // Query 查询扩展信息，为后面查询提供定位
 type Query struct {
@@ -176,6 +196,8 @@ type Query struct {
 
 	Aggregates Aggregates `json:"aggregates,omitempty"` // 聚合方法列表，从内到外排序
 
+	CostProfile QueryCostProfile `json:"-"`
+
 	Condition string `json:"condition,omitempty"` // 过滤条件
 
 	// Vm 过滤条件
@@ -188,11 +210,13 @@ type Query struct {
 
 	SegmentedEnable bool `json:"segmented_enable,omitempty"` // 是否开启分段查询
 
-	RouteStart        time.Time `json:"-"` // 当前存储路由在本次查询中的生效开始时间，用于计算权重
-	RouteEnd          time.Time `json:"-"` // 当前存储路由在本次查询中的生效结束时间，用于计算权重
-	RouteEndInclusive bool      `json:"-"` // RouteEnd 是否为本次查询终点；内部路由切换点仍保持半开区间
-	RouteQueryStart   time.Time `json:"-"` // 当前存储路由带迁移重叠的查询开始时间
-	RouteQueryEnd     time.Time `json:"-"` // 当前存储路由带迁移重叠的查询结束时间
+	RouteStart         time.Time `json:"-"` // 当前存储路由在本次查询中的生效开始时间，用于计算权重
+	RouteEnd           time.Time `json:"-"` // 当前存储路由在本次查询中的生效结束时间，用于计算权重
+	RouteEndInclusive  bool      `json:"-"` // RouteEnd 是否为本次查询终点；内部路由切换点仍保持半开区间
+	RouteQueryStart    time.Time `json:"-"` // 当前存储路由带迁移重叠的查询开始时间
+	RouteQueryEnd      time.Time `json:"-"` // 当前存储路由带迁移重叠的查询结束时间
+	RangeEndExclusive  bool      `json:"-"` // 区间聚合在内部切换点使用排他上界，避免重复统计
+	IsRangeAggregation bool      `json:"-"` // 按原始路由范围执行的无时间分桶聚合
 
 	// 查询扩展
 	QueryString string `json:"query_string,omitempty"`
@@ -206,6 +230,8 @@ type Query struct {
 	Source []string `json:"source,omitempty"`
 	From   int      `json:"from,omitempty"`
 	Size   int      `json:"size,omitempty"`
+	// ExactTotal asks Elasticsearch to count every hit (track_total_hits); only set when the caller requests it.
+	ExactTotal bool `json:"exact_total,omitempty"`
 
 	Scroll            string             `json:"scroll,omitempty"`
 	IsSearchAfter     bool               `json:"is_search_after,omitempty"`
@@ -596,7 +622,7 @@ func (qRef QueryReference) GetMaxWindowAndTimezone() (time.Duration, string) {
 	)
 	qRef.Range("", func(q *Query) {
 		for _, a := range q.Aggregates {
-			if a.Window > window {
+			if a.HasTimeBucket(q.StorageType) && a.Window > window {
 				window = a.Window
 				timezone = a.TimeZone
 			}

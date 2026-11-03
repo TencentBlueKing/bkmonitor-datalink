@@ -326,6 +326,12 @@ bk-collector:
     - name: "traces_deriver/duration"
 
   pipeline:
+    - name: "rum_pipeline/common"
+      type: "rumTraces"
+      processors:
+        - "token_checker/aes256"
+        - "rate_limiter/token_bucket"
+
     - name: "traces_pipeline/common"
       type: "traces"
       processors:

@@ -1,0 +1,145 @@
+{
+  "tenant": "tenant-a",
+  "plan": {
+    "schema_version": 1,
+    "bk_tenant_id": "tenant-a",
+    "model_id": "cw-Host",
+    "target_rule": "ip_cloud",
+    "failure_policy": "no_match",
+    "static_targets": [
+      {
+        "bk_host_id": 501
+      }
+    ],
+    "dynamic_groups": [],
+    "dynamic_topologies": []
+  },
+  "host": {
+    "bk_tenant_id": "tenant-a",
+    "bk_host_id": 501,
+    "bk_biz_id": 2,
+    "bk_host_innerip": "192.0.2.1",
+    "bk_cloud_id": 0,
+    "model_id": "cw-Host",
+    "model_inst_id": "501",
+    "target_address": {
+      "bk_target_ip": "192.0.2.1",
+      "bk_target_cloud_id": 0
+    }
+  },
+  "member_key": "192.0.2.1|0",
+  "no_data_dimensions": [
+    "bk_target_cloud_id",
+    "bk_target_ip"
+  ],
+  "records": [
+    {
+      "name": "explicit_zero",
+      "dimensions": {
+        "bk_target_ip": "192.0.2.1",
+        "bk_target_cloud_id": "0"
+      },
+      "key": "192.0.2.1|0",
+      "matches": true
+    },
+    {
+      "name": "aliases",
+      "dimensions": {
+        "ip": "192.0.2.1",
+        "bk_cloud_id": "0"
+      },
+      "key": "192.0.2.1|0",
+      "matches": true
+    },
+    {
+      "name": "other_cloud",
+      "dimensions": {
+        "bk_target_ip": "192.0.2.1",
+        "bk_target_cloud_id": "1"
+      },
+      "key": "192.0.2.1|1",
+      "matches": false
+    },
+    {
+      "name": "missing_cloud",
+      "dimensions": {
+        "bk_target_ip": "192.0.2.1"
+      },
+      "key": "",
+      "matches": false
+    },
+    {
+      "name": "missing_ip",
+      "dimensions": {
+        "bk_target_cloud_id": "0"
+      },
+      "key": "",
+      "matches": false
+    },
+    {
+      "name": "conflicting_alias",
+      "dimensions": {
+        "bk_target_ip": "192.0.2.1",
+        "ip": "192.0.2.2",
+        "bk_target_cloud_id": "0"
+      },
+      "key": "",
+      "matches": false
+    },
+    {
+      "name": "negative_cloud",
+      "dimensions": {
+        "bk_target_ip": "192.0.2.1",
+        "bk_target_cloud_id": "-1"
+      },
+      "key": "",
+      "matches": false
+    },
+    {
+      "name": "invalid_ip",
+      "dimensions": {
+        "bk_target_ip": "not-an-ip",
+        "bk_target_cloud_id": "0"
+      },
+      "key": "",
+      "matches": false
+    },
+    {
+      "name": "null_cloud",
+      "dimensions": {
+        "bk_target_ip": "192.0.2.1",
+        "bk_target_cloud_id": null
+      },
+      "key": "",
+      "matches": false
+    },
+    {
+      "name": "boolean_cloud",
+      "dimensions": {
+        "bk_target_ip": "192.0.2.1",
+        "bk_target_cloud_id": false
+      },
+      "key": "",
+      "matches": false
+    },
+    {
+      "name": "fraction_cloud",
+      "dimensions": {
+        "bk_target_ip": "192.0.2.1",
+        "bk_target_cloud_id": 0.5
+      },
+      "key": "",
+      "matches": false
+    },
+    {
+      "name": "invalid_canonical_with_alias",
+      "dimensions": {
+        "bk_target_ip": "192.0.2.1",
+        "bk_target_cloud_id": null,
+        "bk_cloud_id": "0"
+      },
+      "key": "",
+      "matches": false
+    }
+  ]
+}

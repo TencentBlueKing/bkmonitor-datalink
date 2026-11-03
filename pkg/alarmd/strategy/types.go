@@ -11,9 +11,9 @@ package strategy
 
 import (
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 	"math/big"
 	"sort"
 	"strings"
@@ -23,7 +23,13 @@ import (
 )
 
 const (
-	DetectorKindThreshold = "Threshold"
+	DetectorKindThreshold       = "Threshold"
+	DetectorKindSimpleRingRatio = "SimpleRingRatio"
+	DetectorKindOsRestart       = "OsRestart"
+	DetectorKindProcPort        = "ProcPort"
+
+	SourceAlgorithmFamilyPingUnreachable = "ping_unreachable"
+	SourceMappingPingUnreachableV1       = "ping-unreachable-to-threshold-v1"
 
 	TriggerPlanTypeNOfM                   = "N_OF_M"
 	RecoveryPlanTypeContinuousTriggerMiss = "CONTINUOUS_TRIGGER_MISS"
@@ -43,12 +49,23 @@ type Limits struct {
 	MaxTriggerWindowSize          uint32
 	MaxRecoveryConsecutiveWindows uint32
 	MaxRequiredHistoryPoints      uint32
-	MaxTriggerComputeCost         uint64
-	MaxCompiledPlanBytes          int
-	MaxCacheEntries               int
-	MaxCacheBytes                 int
-	NegativeCacheTTL              time.Duration
-	BudgetRevision                string
+	// MaxRetainedPointsByLevels is the most retained points a Plan may keep,
+	// indexed by how many Levels share one stored record. Index 0 is unused;
+	// an index past the end means no ceiling is stated for that shape.
+	//
+	// It is a table rather than one number because the stored record holds
+	// every Level's facts on every point, so what fits depends on the Level
+	// count: about 2100 points for one Level and about 1400 for two, against a
+	// MaxRequiredHistoryPoints of 4096 that neither shape can reach. Derived
+	// from the representation by whoever builds these limits, so the two move
+	// together instead of one being written down beside the other.
+	MaxRetainedPointsByLevels []uint32
+	MaxTriggerComputeCost     uint64
+	MaxCompiledPlanBytes      int
+	MaxCacheEntries           int
+	MaxCacheBytes             int
+	NegativeCacheTTL          time.Duration
+	BudgetRevision            string
 }
 
 type StateSemantics struct {
@@ -63,12 +80,27 @@ type CompileRequest struct {
 	Plan            contract.EvaluationPlanV2
 	DatasetContract contract.DatasetContractV2
 	StateSemantics  StateSemantics
+	// ContentKey, when set, names the content Plan and DatasetContract were
+	// built from, such that the same key always means the same Plan and the
+	// same DatasetContract: the caller says so, and the compiler takes its
+	// word for it. The cache key is then derived from the Plan the first time
+	// a key is seen and remembered for it after. Empty derives the cache key
+	// from the Plan every time, as a caller with nothing to name does.
+	ContentKey string
 }
 
 type Terminal struct {
 	LevelID    uint32
 	ReasonCode string
 	FieldPath  string
+	// Detail is what the check that refused said, when the refusal came from
+	// an error: which key a strict decode met, which value a parse could not
+	// read. The code and the path say where; this says what, and without it a
+	// level refused as LEVEL_INVALID at level.trigger_plan had to be compiled
+	// again offline to learn a key was one the decoder does not know. Empty
+	// for a refusal decided without an error. Unbounded here; the catalog
+	// bounds it where it becomes a disposition.
+	Detail string
 }
 
 type CompileResult struct {
@@ -112,11 +144,46 @@ type TriggerPlan struct {
 type RecoveryPlan struct {
 	Enabled            bool
 	ConsecutiveWindows uint32
+	// End is contract.RecoveryEndClose for a Level whose recovery ends the
+	// alert closed, empty for one that ends it resolved.
+	End string
+	// MissingData is contract.RecoveryMissingDataEvaluateAsZero for a Level
+	// whose alert also ends when no real point arrives through the recovery
+	// span, empty for one that ends only as its windows say.
+	MissingData string
 }
 
 type StateRequirement struct {
 	RequiredDetectHistoryPoints uint32
 	RetentionPoints             uint32
+}
+
+// StateIdentityView is this requirement as the two hashes that decide state
+// identity see it: the retention filled in as the required count.
+//
+// Retention is not part of what makes stored state compatible with a Plan. It
+// decides how many positions are kept beyond the ones detection reads, so a
+// Level that raises it keeps more and one that lowers it trims more, and
+// either way the record it was already keeping is still readable by the Plan
+// that asks. Hashing it made raising the retention indistinguishable from
+// changing what the Level detects: the Plan's state generation moved, so the
+// record moved to a new key and started from zero, and the Level contract
+// stored on the old record no longer matched the compiled one, so what could
+// still be read was refused and dropped.
+//
+// Filling the field rather than removing it from the hashed shape is what
+// keeps this byte-compatible. Until retention could differ from the required
+// count it was always equal to it, so every hash a deployment has stored was
+// derived over a value shaped exactly like this one. A Level that never took
+// any slack hashes to the same string it already had; a Level that took some
+// goes back to the string it had before it did.
+//
+// Both sites derive this from here rather than each filling the field: the
+// two hashes have to agree about what state identity means, and a rule stated
+// twice is a rule that will be changed once.
+func (requirement StateRequirement) StateIdentityView() StateRequirement {
+	requirement.RetentionPoints = requirement.RequiredDetectHistoryPoints
+	return requirement
 }
 
 type ResourceEstimate struct {
@@ -216,6 +283,28 @@ type predicateNode struct {
 	operator  string
 	threshold NormalizedNumber
 	children  []predicateNode
+}
+
+// PredicateFacts is a detached view of the compiled predicate, never a new
+// executable predicate. Changing its slices cannot change the frozen plan.
+type PredicateFacts struct {
+	Kind                string
+	Operator            string
+	NormalizedThreshold string
+	Children            []PredicateFacts
+}
+
+func (p Predicate) Facts() PredicateFacts { return p.root.facts() }
+
+func (n predicateNode) facts() PredicateFacts {
+	f := PredicateFacts{Kind: n.kind, Operator: n.operator}
+	if n.kind == PredicateCompare {
+		f.NormalizedThreshold = n.threshold.CanonicalDecimal()
+	}
+	for _, child := range n.children {
+		f.Children = append(f.Children, child.facts())
+	}
+	return f
 }
 
 type PredicateEvaluation struct {
@@ -381,6 +470,8 @@ func (s NumericNormalizerSpec) SourceUnit() string {
 	return s.sourceUnit
 }
 
+func (s NumericNormalizerSpec) SourceMultiplier() int64 { return s.sourceMultiplier }
+
 func (s NumericNormalizerSpec) TargetUnit() string {
 	return s.targetUnit
 }
@@ -396,6 +487,7 @@ func (s NumericNormalizerSpec) Rounding() string {
 type CompiledLevel struct {
 	definition       contract.LevelDefinitionV2
 	connector        string
+	algorithms       []CompiledAlgorithmPlan
 	detectors        []DetectorSpec
 	trigger          TriggerPlan
 	recovery         RecoveryPlan
@@ -415,6 +507,48 @@ func (l CompiledLevel) Connector() string {
 
 func (l CompiledLevel) Detectors() []DetectorSpec {
 	return append([]DetectorSpec(nil), l.detectors...)
+}
+
+func (l CompiledLevel) Algorithms() AlgorithmList {
+	return AlgorithmList{algorithms: l.algorithms}
+}
+
+// AlgorithmList is a Level's compiled algorithms, read-only, as LevelList is
+// a Plan's Levels: each can be read, none replaced, reordered or appended to,
+// and a caller that needs a slice of its own asks for one with Copy.
+//
+// Algorithms copied the whole slice on every call, from every stage that
+// walks a Level's algorithms for every series of every Slot -- 1.1% of a
+// replica's allocation -- for seven callers that all only read it.
+type AlgorithmList struct {
+	algorithms []CompiledAlgorithmPlan
+}
+
+// Len is the number of algorithms.
+func (l AlgorithmList) Len() int { return len(l.algorithms) }
+
+// At is the algorithm at index, as a value: changing it does not change the
+// Level.
+func (l AlgorithmList) At(index int) CompiledAlgorithmPlan { return l.algorithms[index] }
+
+// All yields each algorithm with its index, in order, as range does over a
+// slice.
+func (l AlgorithmList) All() iter.Seq2[int, CompiledAlgorithmPlan] {
+	return func(yield func(int, CompiledAlgorithmPlan) bool) {
+		for index := range l.algorithms {
+			if !yield(index, l.algorithms[index]) {
+				return
+			}
+		}
+	}
+}
+
+// Copy is a slice of the algorithms the caller owns.
+func (l AlgorithmList) Copy() []CompiledAlgorithmPlan {
+	if l.algorithms == nil {
+		return nil
+	}
+	return append([]CompiledAlgorithmPlan(nil), l.algorithms...)
 }
 
 func (l CompiledLevel) Trigger() TriggerPlan {
@@ -448,14 +582,229 @@ func (l CompiledLevel) Fingerprints() LevelFingerprints {
 func (l CompiledLevel) ResourceEstimate() ResourceEstimate { return l.resourceEstimate }
 
 type CompiledPlan struct {
+	effectiveRules      *compiledEffectiveRules
 	planRef             contract.RuntimePlanRefV1
+	strategyRef         contract.StrategyRefV2
+	outputIdentity      *contract.MonitorOutputIdentity
+	subjectFacts        *contract.MonitorSubjectFacts
+	wireFormat          string
+	signalType          string
+	legacyOutput        *contract.FrozenLegacyOutput
 	projection          contract.InputProjectionV2
 	evaluationSemantics contract.ExecutionSemanticsV2
-	levels              []CompiledLevel
-	normalizers         map[string]NumericNormalizerSpec
-	fingerprints        PlanFingerprints
-	resourceEstimate    ResourceEstimate
-	datasetDigest       string
+	// boundaryLocation is the compiler's (WithBoundaryLocation); nil lays the
+	// aggregation grid in UTC.
+	boundaryLocation *time.Location
+	levels           []CompiledLevel
+	normalizers      map[string]NumericNormalizerSpec
+	fingerprints     PlanFingerprints
+	resourceEstimate ResourceEstimate
+	datasetDigest    string
+	targetScope      *contract.TargetScopeV2
+	targetPlan       *contract.TargetPlanV1
+	noData           *contract.NoDataConfigV1
+	noDataLevel      *CompiledLevel
+	globalBusiness   bool
+}
+
+// NoData is the strategy's no-data configuration, frozen with the Plan. Nil
+// means the strategy does not detect no-data; enablement is the presence of the
+// section rather than a field inside it.
+func (p *CompiledPlan) NoData() *contract.NoDataConfigV1 {
+	if p == nil {
+		return nil
+	}
+	return p.noData
+}
+
+// NoDataLevel is the level the synthetic no-data series are evaluated against,
+// compiled from the no_data configuration by the same compiler that compiles a
+// declared level. Nil means the Plan detects no no-data.
+//
+// It is deliberately not in Levels(). A caller iterating the strategy's levels
+// is asking what the operator configured, and this is not one of those; a
+// caller evaluating a no-data series asks for it by name.
+func (p *CompiledPlan) NoDataLevel() *CompiledLevel {
+	if p == nil {
+		return nil
+	}
+	return p.noDataLevel
+}
+
+// NoDataView is this Plan seen as a synthetic no-data series sees it: the same
+// Plan in every respect except that its levels are the one no-data level.
+//
+// It exists because "which levels is this Plan judged against" turned out to be
+// asked in fifteen places across four packages - the evaluator, the detector,
+// the trigger and the execution contract's own validators - and every one of
+// them asks the same way, by calling Levels(). Threading a level set through
+// all fifteen would have left the sixteenth, added later by someone with no
+// reason to know the rule; answering the existing question differently leaves
+// nothing to thread and nothing to forget.
+//
+// Everything else is shared with the Plan it came from, deliberately: the plan
+// ref, the fingerprints, the state compatibility hash. The alert identity is
+// the exception, below. A synthetic series is
+// this Plan's series, and its runtime state is told apart by the series digest
+// - its dimensions carry the no-data tag - not by pretending to be a different
+// Plan.
+//
+// The view is read-only, and it is safe because a CompiledPlan is: the copy is
+// shallow, so it shares every reference the Plan holds, and nothing on this type
+// mutates. A setter added here later would reach through the view into the Plan
+// it came from - and through every other view of it.
+//
+// Nil when the Plan detects no no-data, which is the caller asking for a view
+// of something that is not there.
+// RequiredFullSlots is how many whole Slots a gap marker of this Plan waits
+// for before it clears: the most history points any of its Levels reads,
+// the no-data Level included. The marker is the Plan's, and a round not read
+// whole leaves a hole in the no-data series' history as well as the real
+// ones'; a marker sized on the declared Levels alone clears while the no-data
+// Level's window still holds the unread round, which its recovery walk would
+// then read as a quiet minute. Positions and Slots are the same unit: the
+// trigger's step must equal the evaluation interval, which is the cadence.
+func (p *CompiledPlan) RequiredFullSlots() uint32 {
+	if p == nil {
+		return 0
+	}
+	var required uint32
+	for _, level := range p.levels {
+		required = max(required, level.RequiredDetectHistoryPoints())
+	}
+	if p.noDataLevel != nil {
+		required = max(required, p.noDataLevel.RequiredDetectHistoryPoints())
+	}
+	return required
+}
+
+func (p *CompiledPlan) NoDataView() *CompiledPlan {
+	if p == nil || p.noDataLevel == nil {
+		return nil
+	}
+	view := *p
+	view.levels = []CompiledLevel{*p.noDataLevel}
+	// The one thing not shared: the alert identity reads the record's own
+	// dimensions, the group's and the tag. The backend's adapter hands
+	// extract_target the event's dimension_fields (adapter.py:109-111), which
+	// for a no-data record are exactly those (nodata.py:259); the Plan's
+	// fields name the item's dimensions, and a topology or service-instance
+	// group read through them stopped at an empty host target and filed every
+	// such group of the strategy under one alert.
+	if p.outputIdentity != nil {
+		view.outputIdentity = &contract.MonitorOutputIdentity{DynamicDimensions: true}
+	}
+	return &view
+}
+
+// NoDataOutputIdentity is the alert identity a no-data event of this Plan is
+// fingerprinted with: the no-data view's, which reads every dimension the
+// record carries - the group's no-data agg_dimension and the tag - not the
+// Plan's DimensionFields. Hashing a no-data group with OutputIdentity drops
+// any no-data field outside the item's dimensions, and two groups differing
+// only there share one fingerprint. Anything that recomputes a no-data
+// event's fingerprint asks here, so it hashes as the trigger does. Nil when
+// the Plan detects no no-data.
+func (p *CompiledPlan) NoDataOutputIdentity() *contract.MonitorOutputIdentity {
+	return p.NoDataView().OutputIdentity()
+}
+
+// TargetScope is the strategy's monitoring target, frozen with the Plan. Nil
+// means the strategy names no target; it never means one was dropped, because
+// a target the catalog cannot reduce rejects the Plan instead.
+func (p *CompiledPlan) TargetScope() *contract.TargetScopeV2 {
+	if p == nil {
+		return nil
+	}
+	return p.targetScope
+}
+
+// TargetPlan is the target's second frozen form, for a Plan compiled from a
+// target_plan document. Nil for every other Plan. A Plan with neither this
+// nor TargetScope names no target; a Plan with this and no resolution for
+// it admits nothing, which is the filter's rule, not this accessor's.
+func (p *CompiledPlan) TargetPlan() *contract.TargetPlanV1 {
+	if p == nil {
+		return nil
+	}
+	return p.targetPlan
+}
+
+// GlobalBusiness reports whether the Plan belongs to a global business,
+// whose events name the business each one is about beside the Plan's own.
+func (p *CompiledPlan) GlobalBusiness() bool {
+	return p != nil && p.globalBusiness
+}
+
+func (p *CompiledPlan) StrategyRef() contract.StrategyRefV2 {
+	if p == nil {
+		return contract.StrategyRefV2{}
+	}
+	return p.strategyRef
+}
+
+func (p *CompiledPlan) OutputIdentity() *contract.MonitorOutputIdentity {
+	if p == nil || p.outputIdentity == nil {
+		return nil
+	}
+	return &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, p.outputIdentity.DimensionFields...), DynamicDimensions: p.outputIdentity.DynamicDimensions}
+}
+
+// CompatibleOffBoundary reports whether a record at sourceTime is one of the
+// detections between two aggregation boundaries of a Plan detected more often
+// than it aggregates (contract.CompatibleOffBoundary).
+func (p *CompiledPlan) CompatibleOffBoundary(sourceTime int64) bool {
+	if p == nil {
+		return false
+	}
+	return contract.CompatibleOffBoundary(p.evaluationSemantics, p.boundaryLocation, sourceTime)
+}
+
+// PublishesCompatibleProtocol reports whether this Plan's events go out as the
+// Python-compatible event.
+func (p *CompiledPlan) PublishesCompatibleProtocol() bool {
+	if p == nil {
+		return false
+	}
+	if p.wireFormat != "" {
+		return p.wireFormat == contract.WireFormatPythonCompatible
+	}
+	return p.strategyRef.SnapshotRevision == 0
+}
+
+// WireFormat returns the format this Plan's events are published as.
+// SignalType is what this Plan's events are observed from, frozen with the
+// Plan. Empty means this build could not name it; see EvaluationPlanV2.
+func (p *CompiledPlan) SignalType() string {
+	if p == nil {
+		return ""
+	}
+	return p.signalType
+}
+
+func (p *CompiledPlan) WireFormat() string {
+	if p == nil {
+		return ""
+	}
+	return contract.ResolveOutputWireFormat(p.wireFormat, p.strategyRef.SnapshotRevision)
+}
+
+// SubjectFacts returns the frozen strategy facts the subject projection reads.
+func (p *CompiledPlan) SubjectFacts() *contract.MonitorSubjectFacts {
+	if p == nil || p.subjectFacts == nil {
+		return nil
+	}
+	return &contract.MonitorSubjectFacts{
+		Labels:        append([]string{}, p.subjectFacts.Labels...),
+		ResultTableID: p.subjectFacts.ResultTableID,
+	}
+}
+
+func (p *CompiledPlan) LegacyOutput() *contract.FrozenLegacyOutput {
+	if p == nil {
+		return nil
+	}
+	return p.legacyOutput
 }
 
 func (p *CompiledPlan) PlanRef() contract.RuntimePlanRefV1 {
@@ -489,15 +838,54 @@ func (p *CompiledPlan) EvaluationSemantics() contract.ExecutionSemanticsV2 {
 	return p.evaluationSemantics
 }
 
-func (p *CompiledPlan) Levels() []CompiledLevel {
-	if p == nil {
+// LevelList is a Plan's compiled Levels, read-only. Its slice is unexported,
+// so code outside this package can read each Level but cannot replace,
+// reorder or append to the Plan's own: code that tries does not compile, and
+// code that needs a slice of its own asks for one with Copy.
+//
+// It is what Levels returns because Levels was called from every stage of
+// every Slot, a few dozen times per series per round, and copied the whole
+// slice each time -- 336 bytes a Level -- for callers that, all but four,
+// only read it.
+type LevelList struct {
+	levels []CompiledLevel
+}
+
+// Len is the number of Levels.
+func (l LevelList) Len() int { return len(l.levels) }
+
+// At is the Level at index, as a value: changing it does not change the Plan.
+func (l LevelList) At(index int) CompiledLevel { return l.levels[index] }
+
+// All yields each Level with its index, in order, as range does over a slice.
+func (l LevelList) All() iter.Seq2[int, CompiledLevel] {
+	return func(yield func(int, CompiledLevel) bool) {
+		for index := range l.levels {
+			if !yield(index, l.levels[index]) {
+				return
+			}
+		}
+	}
+}
+
+// Copy is a slice of the Levels the caller owns: for a caller that appends to
+// it, reorders it or keeps it.
+func (l LevelList) Copy() []CompiledLevel {
+	if l.levels == nil {
 		return nil
 	}
-	return append([]CompiledLevel(nil), p.levels...)
+	return append([]CompiledLevel(nil), l.levels...)
+}
+
+func (p *CompiledPlan) Levels() LevelList {
+	if p == nil {
+		return LevelList{}
+	}
+	return LevelList{levels: p.levels}
 }
 
 func (p *CompiledPlan) LevelsByPriority() []CompiledLevel {
-	levels := p.Levels()
+	levels := p.Levels().Copy()
 	sort.Slice(levels, func(left, right int) bool {
 		if levels[left].definition.Priority == levels[right].definition.Priority {
 			return levels[left].definition.LevelID < levels[right].definition.LevelID
@@ -537,11 +925,16 @@ func (p *CompiledPlan) DatasetContractDigest() string {
 }
 
 type thresholdConfigV1 struct {
-	ValueField          string             `json:"value_field"`
-	DataUnit            string             `json:"data_unit"`
-	ThresholdUnitPrefix *string            `json:"threshold_unit_prefix"`
-	Precision           thresholdPrecision `json:"precision"`
-	Groups              []thresholdGroup   `json:"groups"`
+	ValueField            string                      `json:"value_field"`
+	DataUnit              string                      `json:"data_unit"`
+	ThresholdUnitPrefix   *string                     `json:"threshold_unit_prefix"`
+	Precision             thresholdPrecision          `json:"precision"`
+	Groups                []thresholdGroup            `json:"groups"`
+	SourceAlgorithmFamily string                      `json:"source_algorithm_family,omitempty"`
+	SourceMappingVersion  string                      `json:"source_mapping_version,omitempty"`
+	CanonicalQueryDigest  string                      `json:"canonical_query_digest,omitempty"`
+	InputProjection       *AlgorithmInputProjection   `json:"input_projection,omitempty"`
+	Requirements          []AlgorithmInputRequirement `json:"requirements,omitempty"`
 }
 
 type thresholdPrecision struct {
@@ -580,6 +973,8 @@ type uptimeTimeRangeV1 struct {
 type recoveryPlanConfigV1 struct {
 	Enabled            *bool  `json:"enabled"`
 	ConsecutiveWindows uint32 `json:"consecutive_windows"`
+	End                string `json:"end,omitempty"`
+	MissingData        string `json:"missing_data,omitempty"`
 }
 
 type detectorSemantic struct {
@@ -632,8 +1027,4 @@ func (n predicateNode) wire() predicateWire {
 		}
 	}
 	return wire
-}
-
-func cloneRawMessage(raw json.RawMessage) json.RawMessage {
-	return append(json.RawMessage(nil), raw...)
 }

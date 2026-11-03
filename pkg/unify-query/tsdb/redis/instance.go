@@ -23,7 +23,6 @@ import (
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -31,6 +30,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/utils"
 )
 
 var _ tsdb.Instance = (*Instance)(nil)
@@ -115,7 +115,8 @@ func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time
 	if len(clusterNames) == 0 {
 		return nil, errors.Errorf("Dimension(%s) must be passed in query-condition ", ClusterMetricFieldClusterName)
 	}
-	stoCtx, _ := context.WithTimeout(ctx, i.Timeout)
+	stoCtx, cancel := context.WithTimeout(ctx, i.Timeout)
+	defer cancel()
 	startAnaylize = time.Now()
 
 	sto := MetricStorage{ctx: stoCtx, storagePrefix: i.ClusterMetricPrefix}
@@ -182,7 +183,7 @@ func (i *Instance) matrixFormat(ctx context.Context, df dataframe.DataFrame) (pr
 		if err != nil {
 			return nil, false, err
 		}
-		h := consul.HashIt(labelsGroup)
+		h := utils.HashIt(labelsGroup)
 		var oneSeries promql.Series
 		var ok bool
 		if oneSeries, ok = groupPoints[h]; ok {

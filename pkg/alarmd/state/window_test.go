@@ -10,7 +10,6 @@
 package state
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -137,6 +136,45 @@ func TestWindowDistinguishesWarmingGapAndUnavailableLevel(t *testing.T) {
 	}
 }
 
+// A point exists for a source time without that source time having been
+// observed for every Level: a round can leave one Level's fact unavailable and
+// record the others. CountObserved answers per Level and has to read the valid
+// bit, not the point's presence.
+//
+// It matters because of who reads it. The recovery walk decides that a window
+// "did not trigger" when its anomalies plus its holes stay under the threshold,
+// and CountAnomalies does not count an unavailable fact as an anomaly. A point
+// counted as observed but never counted as anomalous is therefore read as a
+// quiet position on both sides at once - and a window of them reads as an
+// answered miss, which is a recovery built on facts nobody ever judged.
+//
+// The two Levels here share the same two points and must disagree about them,
+// so presence alone cannot produce both answers.
+func TestWindowCountsObservedPerLevelNotPerPoint(t *testing.T) {
+	one := requirement(1, "1", 3, 4)
+	five := requirement(5, "5", 3, 4)
+	window, err := NewWindow([]LevelRequirement{one, five})
+	if err != nil {
+		t.Fatalf("NewWindow() error = %v", err)
+	}
+	mustApply(t, window, []StatePoint{
+		point(100, "a", fact(one, LevelFactNormal), fact(five, LevelFactUnavailable)),
+		point(220, "c", fact(one, LevelFactNormal), fact(five, LevelFactNormal)),
+	})
+	oneHistory, _ := window.History(1)
+	if got := oneHistory.CountObserved(100, 220); got != 2 {
+		t.Fatalf("level 1 CountObserved(100, 220) = %d, want 2: both points carry a fact for it", got)
+	}
+	fiveHistory, _ := window.History(5)
+	if got := fiveHistory.CountObserved(100, 220); got != 1 {
+		t.Fatalf("level 5 CountObserved(100, 220) = %d, want 1: the point at 100 exists but its fact for "+
+			"this Level was unavailable, so nothing was observed there", got)
+	}
+	if got := fiveHistory.CountAnomalies(100, 220); got != 0 {
+		t.Fatalf("level 5 CountAnomalies(100, 220) = %d, want 0", got)
+	}
+}
+
 func TestWindowAcceptsBoundedLatePointAndRejectsExpiredPoint(t *testing.T) {
 	one := requirement(1, "1", 2, 3)
 	window, err := NewWindow([]LevelRequirement{one})
@@ -201,76 +239,6 @@ func TestWindowNilReceiverIsInternalInvariant(t *testing.T) {
 	var window *Window
 	if _, err := window.Apply(nil); !errors.Is(err, ErrStateInvariant) {
 		t.Fatalf("Apply() error = %v, want state invariant", err)
-	}
-}
-
-func TestWindowObserverAggregatesApplyAndSummaryOutcomes(t *testing.T) {
-	requirement := requirement(1, "1", 3, 3)
-	window, err := NewWindow([]LevelRequirement{requirement})
-	if err != nil {
-		t.Fatalf("NewWindow() error = %v", err)
-	}
-	observations := make([]Observation, 0, 6)
-	window.setObserver(ObserverFunc(func(_ context.Context, observation Observation) {
-		observations = append(observations, observation)
-	}))
-	ctx := context.Background()
-	history, _ := window.History(1)
-	if summary := history.SummarizeContext(ctx, 300, 3); summary.Completeness != HistoryWarming {
-		t.Fatalf("empty summary = %+v, want WARMING", summary)
-	}
-	if _, err := window.ApplyContext(ctx, []StatePoint{
-		point(180, "a", fact(requirement, LevelFactNormal)),
-		point(300, "b", fact(requirement, LevelFactAnomalous)),
-	}); err != nil {
-		t.Fatalf("ApplyContext(initial) error = %v", err)
-	}
-	if summary := history.SummarizeContext(ctx, 300, 3); summary.Completeness != HistoryGapped {
-		t.Fatalf("summary = %+v, want GAPPED", summary)
-	}
-	results, err := window.ApplyContext(ctx, []StatePoint{
-		point(240, "c", fact(requirement, LevelFactNormal)),
-		point(120, "d", fact(requirement, LevelFactNormal)),
-	})
-	if err != nil {
-		t.Fatalf("ApplyContext(late) error = %v", err)
-	}
-	assertPointStatuses(t, results, PointApplied, PointTerminal)
-	if summary := history.SummarizeContext(ctx, 300, 3); summary.Completeness != HistoryFull {
-		t.Fatalf("summary = %+v, want FULL", summary)
-	}
-
-	if len(observations) != 5 {
-		t.Fatalf("observations = %+v, want warming/apply/gapped/apply/full", observations)
-	}
-	if observations[0].Stage != StageDependencyLoaded || observations[0].Operation != OperationSample ||
-		observations[0].WarmingSummaries != 1 {
-		t.Fatalf("warming summary observation = %+v", observations[0])
-	}
-	if observations[1].Stage != StageDependencyLoaded || observations[1].Operation != OperationTransition ||
-		observations[1].AppliedPoints != 2 {
-		t.Fatalf("initial apply observation = %+v", observations[1])
-	}
-	if observations[2].Stage != StageDependencyLoaded || observations[2].Operation != OperationSample ||
-		observations[2].GappedSummaries != 1 {
-		t.Fatalf("gapped summary observation = %+v", observations[2])
-	}
-	if observations[3].LateAcceptedPoints != 1 || observations[3].LateOutOfWindowPoints != 1 ||
-		observations[3].TerminalPoints != 1 || observations[3].Result != OperationPartial {
-		t.Fatalf("late apply observation = %+v", observations[3])
-	}
-	if observations[4].FullSummaries != 1 {
-		t.Fatalf("full summary observation = %+v", observations[4])
-	}
-
-	drifted := requirement
-	drifted.DetectFingerprint = strings.Repeat("2", 64)
-	if _, err := window.ApplyContext(ctx, []StatePoint{point(360, "e", fact(drifted, LevelFactNormal))}); !errors.Is(err, ErrStateInvariant) {
-		t.Fatalf("ApplyContext(invariant) error = %v", err)
-	}
-	last := observations[len(observations)-1]
-	if last.Result != OperationFailed || last.InvariantViolations != 1 || last.ReasonCode != "" {
-		t.Fatalf("invariant observation = %+v", last)
 	}
 }
 

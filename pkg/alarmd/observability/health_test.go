@@ -12,7 +12,6 @@ package observability
 import (
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
@@ -72,10 +71,10 @@ func TestHealthSnapshotRejectsContradictoryReadyState(t *testing.T) {
 
 	got = NormalizeHealthSnapshot(HealthSnapshot{
 		State: HealthReady, ConfigLoaded: true, SchemaReady: true, AssignmentReady: true,
-		RuntimeStateReady: true, OutputSinkReady: true, ResourceState: ResourceHard,
+		RuntimeStateReady: true, OutputSinkReady: true,
 	})
 	if !got.Ready || got.State != HealthReady {
-		t.Fatalf("observe-only resource hard changed readiness: %#v", got)
+		t.Fatalf("health with every prerequisite = %#v, want ready", got)
 	}
 }
 
@@ -90,29 +89,17 @@ func TestHealthSnapshotPreservesKnownM0Reason(t *testing.T) {
 	}
 }
 
-func TestHealthSnapshotBoundsProgressFields(t *testing.T) {
-	t.Parallel()
-
-	now := time.Now()
-	tracker := NewHealthTracker(HealthSnapshot{
-		State:              HealthReady,
-		AssignedClaims:     -2,
-		InflightMessages:   -3,
-		WorkerQueueDepth:   -4,
-		WorkerQueueBytes:   -5,
-		ConsumerLagKnown:   true,
-		ConsumerLagRecords: -6,
-		LastProgressStage:  Stage("dynamic"),
-		LastProgressAt:     now,
-	})
-	got := tracker.HealthSnapshot()
-	if got.AssignedClaims != -1 || got.InflightMessages != -1 || got.WorkerQueueDepth != -1 || got.WorkerQueueBytes != -1 {
-		t.Fatalf("negative gauges were not normalized: %#v", got)
+func TestPhaseTwoHealthRequiresSnapshotAndExistingWorkerPrerequisites(t *testing.T) {
+	base := HealthSnapshot{
+		State: HealthReady, PhaseTwo: true,
+		ConfigLoaded: true, SchemaReady: true, AssignmentReady: true,
+		RuntimeStateReady: true, OutputSinkReady: true,
 	}
-	if got.ConsumerLagKnown || got.ConsumerLagRecords != -1 {
-		t.Fatalf("invalid lag was not normalized: %#v", got)
+	if got := NormalizeHealthSnapshot(base); got.Ready || got.State != HealthNotReady {
+		t.Fatalf("phase-two health without worker prerequisites = %#v", got)
 	}
-	if got.LastProgressStage != StageOther || !got.LastProgressAt.Equal(now) {
-		t.Fatalf("progress = %q/%v", got.LastProgressStage, got.LastProgressAt)
+	base.SnapshotReady = true
+	if got := NormalizeHealthSnapshot(base); !got.Ready || got.State != HealthReady {
+		t.Fatalf("phase-two health with worker prerequisites = %#v", got)
 	}
 }

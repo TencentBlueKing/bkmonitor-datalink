@@ -12,6 +12,7 @@ package collector
 import (
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/shirou/gopsutil/v3/cpu"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
@@ -26,6 +27,8 @@ type CpuReport struct {
 	TotalStat  cpu.TimesStat   `json:"total_stat"`
 }
 
+var errInvalidCPUStat = errors.New("invalid cpu stat sample")
+
 func GetCPUInfo(config configs.CpuConfig) (*CpuReport, error) {
 	var report CpuReport
 	var err error
@@ -33,6 +36,9 @@ func GetCPUInfo(config configs.CpuConfig) (*CpuReport, error) {
 	// 采样多次，取最大值
 	// 规定的采集时间和采集次数，优先达到的为准
 	var maxTotalUsage float64
+	var hasValidSample bool
+	var lastSampleErr error
+
 	count := config.StatTimes
 	ticker := time.NewTicker(config.StatPeriod)
 	defer ticker.Stop()
@@ -43,14 +49,19 @@ func GetCPUInfo(config configs.CpuConfig) (*CpuReport, error) {
 		var once CpuReport
 		err := getCPUStatUsage(&once)
 		if err != nil {
-			logger.Errorf("get cpu usage stat fail")
-			return nil, err
-		}
+			lastSampleErr = err
+			if errors.Is(err, errInvalidCPUStat) {
+				logger.Warn("CPU idle counter rollback, discard invalid sample")
+			} else {
+				logger.Errorf("get cpu usage stat fail: %v", err)
+			}
+		} else {
+			hasValidSample = true
 
-		// select max cpu total usage report
-		if once.TotalUsage >= maxTotalUsage {
-			report = once
-			maxTotalUsage = report.TotalUsage
+			if once.TotalUsage >= maxTotalUsage {
+				report = once
+				maxTotalUsage = once.TotalUsage
+			}
 		}
 
 		count--
@@ -61,6 +72,14 @@ func GetCPUInfo(config configs.CpuConfig) (*CpuReport, error) {
 		select {
 		case <-ticker.C:
 		}
+	}
+
+	// 无有效 CPU usage 返回错误
+	if !hasValidSample {
+		if lastSampleErr != nil {
+			return nil, lastSampleErr
+		}
+		return nil, errors.New("no valid CPU usage sample")
 	}
 
 	// collect once
@@ -101,4 +120,18 @@ func calcTimeState(t1, t2 cpu.TimesStat) cpu.TimesStat {
 		Guest:     t2.Guest - t1.Guest,
 		GuestNice: t2.GuestNice - t1.GuestNice,
 	}
+}
+
+// 判断 CPU 累计时间差是否有效
+func isValidCPUTimeState(state cpu.TimesStat) bool {
+	return state.User >= 0 &&
+		state.System >= 0 &&
+		state.Idle >= 0 &&
+		state.Nice >= 0 &&
+		state.Iowait >= 0 &&
+		state.Irq >= 0 &&
+		state.Softirq >= 0 &&
+		state.Steal >= 0 &&
+		state.Guest >= 0 &&
+		state.GuestNice >= 0
 }

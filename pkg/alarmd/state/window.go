@@ -84,8 +84,18 @@ type WindowSummary struct {
 	WindowStart    int64
 	WindowEnd      int64
 	ValidPositions uint32
-	AnomalyCount   uint32
-	AnomalyDigest  [32]byte
+	// RequiredPositions is the count ValidPositions was judged against. It is
+	// returned because the verdict alone cannot be read: WARMING says the
+	// window is short without saying by how much, and 8 of 9 points is a
+	// series that will converge on the next round while 2 of 9 is a series
+	// whose lifetime is shorter than the window and never will.
+	//
+	// Both readings produce the same WARMING on every round, so a reader
+	// holding only the verdict cannot tell a startup from a steady state, and
+	// the second one is not a startup at all.
+	RequiredPositions uint32
+	AnomalyCount      uint32
+	AnomalyDigest     [32]byte
 }
 
 type HistoryView struct {
@@ -163,65 +173,12 @@ func (window *Window) Align(requirements []LevelRequirement) error {
 	return nil
 }
 
-func (window *Window) setObserver(observer Observer) {
-	if window != nil {
-		window.observer = observer
-	}
-}
-
 func (window *Window) Apply(points []StatePoint) ([]PointResult, error) {
 	return window.ApplyContext(context.Background(), points)
 }
 
-// ApplyContext is the M4 observation callpoint used by M7. It emits one
-// aggregate result for the complete points slice and never emits per-point
-// logs or high-cardinality identities.
+// ApplyContext applies the points in order and returns one result per point.
 func (window *Window) ApplyContext(ctx context.Context, points []StatePoint) (results []PointResult, err error) {
-	started := time.Now()
-	var observer Observer
-	if window != nil {
-		observer = window.observer
-	}
-	defer func() {
-		observation := Observation{
-			Stage: StageDependencyLoaded, Operation: OperationTransition,
-			Result: OperationSucceeded, Codec: CodecNoneV1,
-			TouchedPoints: len(points), Duration: time.Since(started),
-		}
-		if err != nil {
-			observation.Result = OperationFailed
-			switch {
-			case errors.Is(err, ErrStateBudget):
-				observation.BudgetViolations = 1
-			default:
-				observation.InvariantViolations = 1
-			}
-		} else {
-			for _, result := range results {
-				switch result.Status {
-				case PointApplied:
-					observation.AppliedPoints++
-				case PointNoop:
-					observation.NoopPoints++
-				case PointUnavailable:
-					observation.UnavailablePoints++
-				case PointTerminal:
-					observation.TerminalPoints++
-				}
-				if result.Late && (result.Status == PointApplied || result.Status == PointNoop) {
-					observation.LateAcceptedPoints++
-				}
-				if result.ReasonCode == contract.ReasonLateOutOfWindow {
-					observation.LateOutOfWindowPoints++
-					observation.ReasonCode = contract.ReasonLateOutOfWindow
-				}
-			}
-			if observation.TerminalPoints > 0 || observation.UnavailablePoints > 0 {
-				observation.Result = OperationPartial
-			}
-		}
-		observeState(ctx, observer, observation)
-	}()
 	if window == nil {
 		return nil, fmt.Errorf("%w: nil window", ErrStateInvariant)
 	}
@@ -303,41 +260,89 @@ func (view HistoryView) Summarize(endTime int64, requiredPositions uint32) Windo
 // SummarizeContext is the M4 observation callpoint used by M6. One bounded
 // completeness counter is emitted per summary; Level and RuntimeKey identity
 // are intentionally absent.
-func (view HistoryView) SummarizeContext(ctx context.Context, endTime int64, requiredPositions uint32) (summary WindowSummary) {
-	started := time.Now()
-	defer func() {
-		observation := Observation{
-			Stage: StageDependencyLoaded, Operation: OperationSample,
-			Result: OperationSucceeded, Codec: CodecNoneV1,
-			Duration: time.Since(started),
-		}
-		switch summary.Completeness {
-		case HistoryFull:
-			observation.FullSummaries = 1
-		case HistoryGapped:
-			observation.GappedSummaries = 1
-		default:
-			observation.WarmingSummaries = 1
-		}
-		var observer Observer
-		if view.window != nil {
-			observer = view.window.observer
-		}
-		observeState(ctx, observer, observation)
-	}()
+func (view HistoryView) SummarizeContext(ctx context.Context, endTime int64, requiredPositions uint32) WindowSummary {
+	summary, _ := view.SummarizeHolesContext(ctx, endTime, requiredPositions, 0)
+	return summary
+}
+
+// WindowHoles is which positions of a window hold no valid point for its
+// Level: Missing are positions with no point at all -- no record of this
+// series was ever applied at that source time -- and Unusable are positions
+// with a point whose valid bit is off for the Level, a record that arrived and
+// the detection could not use. Both lists are oldest first and bounded by the
+// limit the walk was given; the totals count every such position whether
+// listed or not, and MissingTotal + UnusableTotal is the summary's shortfall
+// by construction -- one walk counts both.
+type WindowHoles struct {
+	Missing       []int64
+	MissingTotal  uint32
+	Unusable      []int64
+	UnusableTotal uint32
+}
+
+// SummarizeHoles is Summarize with the holes named: the same walk, returning
+// which positions it did not count as well as how many, listing at most limit
+// of each kind. Summarize answers how many; this answers which, which is the
+// question a reader of a short window has next -- whether the empty
+// positions are the same minutes on every round, whether they are the minutes
+// this process's own rounds did not run, and whether a point was ever there.
+// One walk rather than two, because the summary already visits every position
+// and classifies it, and a second walk over a day-long window doubles the
+// dearest read on the hot path for the windows most likely to be short.
+func (view HistoryView) SummarizeHoles(endTime int64, requiredPositions uint32, limit int) (WindowSummary, WindowHoles) {
+	return view.SummarizeHolesContext(context.Background(), endTime, requiredPositions, limit)
+}
+
+// SummarizeHolesContext is SummarizeHoles with the caller's context. A
+// request the walk refuses -- more positions than the Level retains, a window
+// reaching before the epoch -- yields the same WARMING summary as before and
+// no holes with zero totals, which a caller reads as "not walked", not "none".
+func (view HistoryView) SummarizeHolesContext(ctx context.Context, endTime int64, requiredPositions uint32, limit int) (summary WindowSummary, holes WindowHoles) {
 	if requiredPositions == 0 {
 		requiredPositions = view.requirement.RequiredPoints
 	}
 	interval := int64(view.requirement.EvaluationInterval / time.Second)
-	summary = WindowSummary{Completeness: HistoryWarming, WindowEnd: endTime}
+	summary = WindowSummary{Completeness: HistoryWarming, WindowEnd: endTime, RequiredPositions: requiredPositions}
+	// Both refusals below report exactly what a window that was walked and found
+	// empty reports: HISTORY_WARMING, no valid position. Downstream that is
+	// counted as an empty window and the page renders empty windows as data that
+	// stopped arriving -- go and check the metric, check collection.
+	//
+	// For one of these conditions that would be the wrong answer in the most
+	// expensive direction. Being asked for more positions than the Level retains
+	// is a configuration the store can never satisfy: it does not resolve, no
+	// amount of looking at the data helps, and the wording sends the reader
+	// somewhere with nothing to find. A permanent fault dressed as a transient
+	// symptom outlives every other kind.
+	//
+	// None of these can currently be reached, and the guarantees are not local:
+	// Align rejects a requirement whose retention is below its requirement, whose
+	// interval is not a positive whole number of seconds, or whose horizon would
+	// overflow -- so a window that exists satisfies all of that already; the
+	// compiler derives RetentionPoints from RequiredDetectHistoryPoints and
+	// never below it, so the two are ordered - equal for a Level the recovery
+	// slack does not reach, larger for one it does; and both callers pass the
+	// required number as the argument compared here. requiredPositions is
+	// normalised above, so the zero case cannot arrive either.
+	//
+	// Kept rather than deleted because a summary is not the right place to
+	// discover a broken requirement, and removing them would make the next caller
+	// that skips Align walk off the end of the window instead. What is not kept
+	// is the assumption: state/window_refusal_test.go and the evaluation package's
+	// counterpart fail if any of those three guarantees moves, rather than letting
+	// a dead branch quietly become a live one that misnames what it found.
 	if requiredPositions == 0 || requiredPositions > view.requirement.RetentionPoints || interval <= 0 || endTime < 0 ||
 		uint64(requiredPositions-1) > uint64(math.MaxInt64/interval) {
-		return summary
+		return summary, holes
 	}
 	offset := int64(requiredPositions-1) * interval
+	// The window would reach back past the epoch, which needs a record stamped
+	// within its own span of 1970. Unreachable for the same practical reason the
+	// rest are, and unlike them it is a record problem rather than a
+	// configuration one, so it would not want the same wording either.
 	if offset > endTime {
 		summary.WindowStart = 0
-		return summary
+		return summary, holes
 	}
 	summary.WindowStart = endTime - offset
 	seenValid := false
@@ -352,6 +357,18 @@ func (view HistoryView) SummarizeContext(ctx context.Context, endTime int64, req
 				hasGapAfterFirst = true
 			} else {
 				hasMissingBeforeFirst = true
+			}
+			// The hole, by kind, in the same visit that found it.
+			if !exists {
+				holes.MissingTotal++
+				if len(holes.Missing) < limit {
+					holes.Missing = append(holes.Missing, expected)
+				}
+			} else {
+				holes.UnusableTotal++
+				if len(holes.Unusable) < limit {
+					holes.Unusable = append(holes.Unusable, expected)
+				}
 			}
 		} else {
 			seenValid = true
@@ -375,7 +392,7 @@ func (view HistoryView) SummarizeContext(ctx context.Context, endTime int64, req
 	default:
 		summary.Completeness = HistoryFull
 	}
-	return summary
+	return summary, holes
 }
 
 func (view HistoryView) CountAnomalies(fromTime, untilTime int64) uint32 {
@@ -385,6 +402,19 @@ func (view HistoryView) CountAnomalies(fromTime, untilTime int64) uint32 {
 		return true
 	})
 	return count
+}
+
+// FirstAnomaly returns the earliest anomalous point in the range. The walk is
+// in ascending source time, so the first one visited is the earliest and the
+// rest of the range does not have to be read.
+func (view HistoryView) FirstAnomaly(fromTime, untilTime int64) (int64, bool) {
+	var first int64
+	found := false
+	view.ForEachAnomaly(fromTime, untilTime, func(sourceTime int64) bool {
+		first, found = sourceTime, true
+		return false
+	})
+	return first, found
 }
 
 func (view HistoryView) ForEachAnomaly(fromTime, untilTime int64, visit func(sourceTime int64) bool) {
@@ -573,6 +603,33 @@ func (window *Window) latestSourceTime() (int64, bool) {
 		return 0, false
 	}
 	return window.points[len(window.points)-1].sourceTime, true
+}
+
+// CountObserved reports how many positions in the range this Level actually
+// saw: a point exists there and its fact was usable for this Level.
+//
+// It answers "how much was seen here", which is a different question from
+// every other reader of this window. The anomaly reads ask what the data said
+// and return zero both for a range that was quiet and for a range nobody
+// observed; this one separates those two. Recovery rests on windows that were
+// observed and not anomalous, and a window nobody observed is evidence of
+// neither - so its holes have to be counted, not read as quiet.
+func (view HistoryView) CountObserved(fromTime, untilTime int64) uint32 {
+	if view.window == nil || fromTime > untilTime {
+		return 0
+	}
+	var count uint32
+	start := sort.Search(len(view.window.points), func(index int) bool { return view.window.points[index].sourceTime >= fromTime })
+	for index := start; index < len(view.window.points); index++ {
+		point := view.window.points[index]
+		if point.sourceTime > untilTime {
+			break
+		}
+		if bitSet(point.valid, view.levelIndex) {
+			count++
+		}
+	}
+	return count
 }
 
 func (view HistoryView) pointAt(sourceTime int64) (pointState, bool) {

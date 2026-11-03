@@ -1,0 +1,250 @@
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License.
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisatomic"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
+)
+
+// A process's exit leaves no trace a reader can reach once its Pod is gone:
+// the kubelet keeps the last termination only while the Pod lives, and a
+// rollout or an eviction deletes it. So every process writes a start and,
+// when it can, a stop with why it stopped, into a short list in the runtime
+// store. A stop never written -- OOM, SIGKILL -- shows as a start with no
+// stop after it, and a second start under the same replica name (the
+// container restarted in place) as an unclean exit between them.
+//
+// Best effort, bounded and on a connection of its own: the record must
+// never delay a start or a shutdown, and it is not read by anything that
+// decides.
+const (
+	lifecycleRecordEntries = 64
+	lifecycleRecordTTL     = 30 * 24 * time.Hour
+	lifecycleWriteTimeout  = 2 * time.Second
+	lifecycleErrorBytes    = 512
+)
+
+// The stop reasons, closed.
+const (
+	lifecycleStopSignal        = "signal"
+	lifecycleStopWorkerStopped = "worker_stopped"
+	lifecycleStopHTTPStopped   = "http_stopped"
+	lifecycleStopStartFailed   = "start_failed"
+)
+
+// lifecycleEntry is one start or stop.
+type lifecycleEntry struct {
+	Replica string    `json:"replica"`
+	Event   string    `json:"event"`
+	At      time.Time `json:"at"`
+	Build   string    `json:"build"`
+	Reason  string    `json:"reason,omitempty"`
+	Error   string    `json:"error,omitempty"`
+	// Drain is how a stop's wait for its running Slots ended: finished, or
+	// cancelled at the drain deadline, with how many were waited for and
+	// cancelled. A Slot cancelled there can have had its events acknowledged
+	// and not its State, and the next owner sends them again. Absent on a
+	// start, and on a stop whose process never ran its scheduler.
+	Drain *observability.SlotDrainFacts `json:"drain,omitempty"`
+}
+
+// lifecycleRecordWrite adds an entry, cuts the list to its bound and renews
+// its life, as one script rather than a MULTI/EXEC (see redisatomic for why).
+// One key, so it is in one slot on any deployment.
+var lifecycleRecordWrite = redisatomic.New(`
+redis.call('LPUSH', KEYS[1], ARGV[1])
+redis.call('LTRIM', KEYS[1], 0, tonumber(ARGV[2]))
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
+return 1
+`)
+
+type lifecycleRecord struct {
+	client  redis.UniversalClient
+	key     string
+	replica string
+	build   string
+	now     func() time.Time
+	// failed, when set, hears the reason of a write the store did not take.
+	failed func(reason string)
+}
+
+func lifecycleRecordKey(cfg config.Config) string {
+	return productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "lifecycle")
+}
+
+// newLifecycleRecord opens the record's own connection. Nil when there is
+// no runtime store to write to; every method is safe on nil.
+func newLifecycleRecord(cfg config.Config) *lifecycleRecord {
+	connection := cfg.RuntimeStoreRedis()
+	if connection.Address == "" && len(connection.SentinelAddress) == 0 {
+		return nil
+	}
+	options := observationRedisOptions(connection)
+	options.PoolSize, options.MinIdleConns = 1, 0
+	return &lifecycleRecord{client: redis.NewUniversalClient(options), key: lifecycleRecordKey(cfg),
+		replica: cfg.PhaseTwo.Worker.ID, build: version + "/" + commit, now: time.Now}
+}
+
+func (record *lifecycleRecord) start() {
+	record.write(lifecycleEntry{Event: "start"})
+}
+
+// stop records why the process stopped. err is the error it stops with,
+// when there is one, and drain how its running Slots drained, when it ran
+// any scheduler.
+func (record *lifecycleRecord) stop(reason string, err error, drain *observability.SlotDrainFacts) {
+	entry := lifecycleEntry{Event: "stop", Reason: reason, Drain: drain}
+	if err != nil {
+		text := err.Error()
+		if len(text) > lifecycleErrorBytes {
+			text = text[:lifecycleErrorBytes]
+		}
+		entry.Error = text
+	}
+	record.write(entry)
+}
+
+func (record *lifecycleRecord) write(entry lifecycleEntry) {
+	if record == nil {
+		return
+	}
+	entry.Replica, entry.Build, entry.At = record.replica, record.build, record.now().UTC()
+	encoded, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), lifecycleWriteTimeout)
+	defer cancel()
+	err = record.append(ctx, encoded)
+	// The write still costs the process nothing when it fails -- a start or
+	// stop goes on regardless -- but it is counted by why, since a record the
+	// store never took reads later as an unclean restart.
+	if err != nil && record.failed != nil {
+		record.failed(redisfailure.Reason(err))
+	}
+}
+
+// append adds one encoded entry to the record, bounded and with its life.
+func (record *lifecycleRecord) append(ctx context.Context, encoded []byte) error {
+	return lifecycleRecordWrite.Run(ctx, record.client, []string{record.key},
+		encoded, lifecycleRecordEntries-1, int64(lifecycleRecordTTL/time.Second))
+}
+
+func (record *lifecycleRecord) close() {
+	if record != nil {
+		_ = record.client.Close()
+	}
+}
+
+// lifecycleStopReason is why the application is stopping, from how its run
+// ended: the context it was given, or one of its components stopping on
+// its own.
+func lifecycleStopReason(signalled, bundleStoppedEarly, httpStoppedEarly bool) string {
+	switch {
+	case bundleStoppedEarly:
+		return lifecycleStopWorkerStopped
+	case httpStoppedEarly:
+		return lifecycleStopHTTPStopped
+	case signalled:
+		return lifecycleStopSignal
+	}
+	return lifecycleStopSignal
+}
+
+// lifecycleReplica sums one replica's entries: its last event, and the
+// exits it left no stop for.
+type lifecycleReplica struct {
+	Replica   string    `json:"replica"`
+	LastEvent string    `json:"last_event"`
+	LastAt    time.Time `json:"last_at"`
+	// UncleanRestarts counts starts that followed a start of the same
+	// replica name with no stop between: the process before it died without
+	// writing one (OOM, SIGKILL) and the container was started again.
+	UncleanRestarts int `json:"unclean_restarts"`
+	// Stops is how many stops were written, by reason.
+	Stops map[string]int `json:"stops,omitempty"`
+}
+
+type lifecycleReading struct {
+	Entries  []lifecycleEntry   `json:"entries"`
+	Replicas []lifecycleReplica `json:"replicas"`
+	// Unreadable counts entries that did not decode.
+	Unreadable int `json:"unreadable,omitempty"`
+}
+
+// readLifecycle reads the record, newest first, and sums it by replica.
+func readLifecycle(ctx context.Context, client redis.UniversalClient, key string) (lifecycleReading, error) {
+	raw, err := client.LRange(ctx, key, 0, lifecycleRecordEntries-1).Result()
+	if err != nil {
+		return lifecycleReading{}, err
+	}
+	reading := lifecycleReading{Entries: []lifecycleEntry{}, Replicas: []lifecycleReplica{}}
+	for _, text := range raw {
+		var entry lifecycleEntry
+		if json.Unmarshal([]byte(text), &entry) != nil {
+			reading.Unreadable++
+			continue
+		}
+		reading.Entries = append(reading.Entries, entry)
+	}
+	byReplica := map[string]*lifecycleReplica{}
+	var order []string
+	// Oldest first, so "a start after a start" reads in time order.
+	for i := len(reading.Entries) - 1; i >= 0; i-- {
+		entry := reading.Entries[i]
+		summary := byReplica[entry.Replica]
+		if summary == nil {
+			summary = &lifecycleReplica{Replica: entry.Replica}
+			byReplica[entry.Replica] = summary
+			order = append(order, entry.Replica)
+		}
+		if entry.Event == "start" && summary.LastEvent == "start" {
+			summary.UncleanRestarts++
+		}
+		if entry.Event == "stop" {
+			if summary.Stops == nil {
+				summary.Stops = map[string]int{}
+			}
+			summary.Stops[entry.Reason]++
+		}
+		summary.LastEvent, summary.LastAt = entry.Event, entry.At
+	}
+	for _, replica := range order {
+		reading.Replicas = append(reading.Replicas, *byReplica[replica])
+	}
+	return reading, nil
+}
+
+// changesOperation is changes.list over the channel's change receipts and
+// the lifecycle record, both in the runtime store: any replica answers it,
+// whether or not it hosts the channel that writes the receipts.
+func changesOperation(cfg config.Config, binding ChannelBinding, client redis.UniversalClient) obchannel.Operation {
+	options := obchannel.ChangesOptions{}
+	if client != nil {
+		options.Receipts = obchannel.NewSREReceipts(client, sreKeyPrefix(cfg, binding)+"receipts", nil, nil)
+		key := lifecycleRecordKey(cfg)
+		options.Lifecycle = func(ctx context.Context) (obchannel.LifecycleRead, error) {
+			reading, err := readLifecycle(ctx, client, key)
+			if err != nil {
+				return obchannel.LifecycleRead{}, err
+			}
+			read := obchannel.LifecycleRead{Cap: lifecycleRecordEntries, Retention: lifecycleRecordTTL, Undecoded: reading.Unreadable, Events: make([]obchannel.LifecycleEvent, 0, len(reading.Entries))}
+			for _, entry := range reading.Entries {
+				read.Events = append(read.Events, obchannel.LifecycleEvent{Replica: entry.Replica, Event: entry.Event, At: entry.At, Build: entry.Build, Reason: entry.Reason})
+			}
+			return read, nil
+		}
+	}
+	return obchannel.ChangesOperation(options)
+}

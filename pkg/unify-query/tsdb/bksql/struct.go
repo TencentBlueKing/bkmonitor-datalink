@@ -50,6 +50,9 @@ type Result struct {
 		Error   string `json:"error"`
 		QueryId string `json:"query_id"`
 	} `json:"errors"`
+	// Err 是请求本身失败（没有拿到应答）时的原始错误，不参与序列化；
+	// 调用方据此保留原因链，例如超时。
+	Err error `json:"-"`
 }
 
 type QueryAsyncData struct {

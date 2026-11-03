@@ -12,7 +12,10 @@ package consul
 import (
 	"context"
 
+	"github.com/spf13/viper"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul/base"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
@@ -34,43 +37,39 @@ func (s *Service) Start(ctx context.Context) {
 
 // Reload
 func (s *Service) Reload(ctx context.Context) {
-	// 关闭上一次的consul instance
-	if s.cancelFunc != nil {
-		s.cancelFunc()
-	}
-
-	log.Debugf(context.TODO(), "waiting for consul service close")
-	// 等待上一个注册彻底关闭
-	s.Wait()
+	s.Close()
 
 	// 更新上下文控制方法
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
 	log.Debugf(context.TODO(), "consul service context update success.")
 
-	err := consul.SetInstance(
-		s.ctx, KVBasePath, ServiceName, Address, []string{"unify-query"},
-		HTTPAddress, Port, TTL, CaFilePath, KeyFilePath, CertFilePath,
+	var auth *base.AuthConfig
+	if viper.GetBool("kms.enabled") {
+		auth = &base.AuthConfig{
+			Token:    viper.GetString("consul.token"),
+			Username: viper.GetString("consul.username"), Password: viper.GetString("consul.password"),
+			KeyPEM: []byte(viper.GetString("consul.tls.key_pem")), CertPEM: []byte(viper.GetString("consul.tls.cert_pem")),
+		}
+	}
+	err := consul.SetInstanceWithAuth(
+		s.ctx, KVBasePath, Address, CaFilePath, KeyFilePath, CertFilePath, auth,
 	)
 	if err != nil {
 		log.Errorf(context.TODO(), "consul service init failed for->[%s]", err)
 		return
 	}
-	err = consul.LoopAwakeService()
-	if err != nil {
-		log.Errorf(context.TODO(), "consul service loop awake failed for->[%s]", err)
-		return
-	}
 
-	log.Warnf(context.TODO(), "consul service reloaded or start success.")
+	log.Warnf(context.TODO(), "consul KV client initialized.")
 }
 
-// Wait
-func (s *Service) Wait() {
-	consul.Wait()
-}
+// Wait satisfies the service lifecycle; this client has no background registration.
+func (s *Service) Wait() {}
 
 // Close
 func (s *Service) Close() {
-	s.cancelFunc()
+	if s.cancelFunc != nil {
+		s.cancelFunc()
+	}
+	consul.Close()
 	log.Infof(context.TODO(), "consul service context cancel func called.")
 }

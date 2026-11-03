@@ -16,4 +16,5 @@ import (
 type LoadReport struct {
 	LoadAvg    *load.AvgStat `json:"load_avg"`
 	PerCpuLoad float64       `json:"per_cpu_load"`
+	CpuCores   int32         `json:"cpu_cores"`
 }

@@ -5,7 +5,7 @@ scenario: 蓝鲸监控，日志检索，应用性能监控等相关的数据. �
 category: official
 config_file: bk-collector.conf
 config_format: yaml
-launch_node: proxy
+launch_node: all
 auto_launch: 0
 is_binary: 1
 use_db: 0

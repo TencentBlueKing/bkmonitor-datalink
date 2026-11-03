@@ -11,6 +11,7 @@ package window
 
 import (
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -61,6 +62,158 @@ func TestMetricsHandleResult(t *testing.T) {
 		}
 		assert.Equal(t, expected, actual)
 	})
+}
+
+func TestDynamicRelationFlowMetric(t *testing.T) {
+	dataId := "12345"
+	p := initialProcessor(t, dataId, true)
+	p.metricProcessor.dynamicRelationFlowReportEnabled = true
+
+	actual := runMetricCase(p, "complex.json")
+	prefix := "__name__=" + storage.SystemFlow + ",from_bk_target_ip="
+	for _, request := range actual {
+		data, ok := request.Data.(storage.PrometheusStorageData)
+		if !ok || data.Kind != storage.PromRelationMetric {
+			continue
+		}
+		for _, label := range prometheusLabels(data.Value) {
+			if !strings.HasPrefix(label, prefix) {
+				continue
+			}
+			parts := strings.Split(label, ",")
+			if assert.Len(t, parts, 3) {
+				assert.NotEmpty(t, strings.TrimPrefix(parts[1], "from_bk_target_ip="))
+				assert.NotEmpty(t, strings.TrimPrefix(parts[2], "to_bk_target_ip="))
+			}
+			return
+		}
+	}
+	t.Fatalf("dynamic relation metric request not found")
+}
+
+func TestDynamicRelationPodToPodDoesNotEmitSystemEdges(t *testing.T) {
+	processor := &MetricProcessor{baseInfo: core.BaseInfo{AppName: "app"}}
+	labels := make([]string, 0)
+	metricCount := make(map[string]int)
+	pairs := [2]Node{
+		{
+			StandardSpan: StandardSpan{Collections: map[string]string{
+				core.K8sNamespace.DisplayKey(): "default",
+			}},
+		},
+		{
+			StandardSpan: StandardSpan{Collections: map[string]string{
+				core.K8sNamespace.DisplayKey(): "default",
+			}},
+		},
+	}
+
+	processor.addDynamicRelationFlowMetrics(
+		&labels,
+		metricCount,
+		pairs,
+		"caller",
+		"callee",
+		"BCS-K8S-00001",
+		"BCS-K8S-00001",
+		"caller-pod",
+		"callee-pod",
+		"192.0.2.1",
+		"192.0.2.2",
+	)
+
+	assert.Contains(t, labels, "__name__=pod_to_pod_flow,from_bcs_cluster_id=BCS-K8S-00001,from_namespace=default,from_pod=caller-pod,to_bcs_cluster_id=BCS-K8S-00001,to_namespace=default,to_pod=callee-pod")
+	assert.NotContains(t, metricCount, storage.PodToSystemFlow)
+	assert.NotContains(t, metricCount, storage.SystemToPodFlow)
+	assert.NotContains(t, metricCount, storage.SystemFlow)
+}
+
+func TestDynamicRelationIncompletePodDoesNotBecomeSystem(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		callerNamespace string
+		calleeNamespace string
+	}{
+		{name: "callee missing namespace", callerNamespace: "default"},
+		{name: "caller missing namespace", calleeNamespace: "default"},
+		{name: "both missing namespace"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			processor := &MetricProcessor{baseInfo: core.BaseInfo{AppName: "app"}}
+			labels := make([]string, 0)
+			metricCount := make(map[string]int)
+			pairs := [2]Node{
+				{StandardSpan: StandardSpan{Collections: map[string]string{core.K8sNamespace.DisplayKey(): tc.callerNamespace}}},
+				{StandardSpan: StandardSpan{Collections: map[string]string{core.K8sNamespace.DisplayKey(): tc.calleeNamespace}}},
+			}
+
+			processor.addDynamicRelationFlowMetrics(
+				&labels, metricCount, pairs, "caller", "callee",
+				"BCS-K8S-00001", "BCS-K8S-00001", "caller-pod", "callee-pod",
+				"192.0.2.1", "192.0.2.2",
+			)
+
+			assert.NotContains(t, metricCount, storage.PodToPodFlow)
+			assert.NotContains(t, metricCount, storage.PodToSystemFlow)
+			assert.NotContains(t, metricCount, storage.SystemToPodFlow)
+			assert.NotContains(t, metricCount, storage.SystemFlow)
+		})
+	}
+}
+
+func TestServiceInstanceSystemRelationHostIP(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		resourceIP any
+		hostIP     any
+		attrIP     any
+		kind       core.SpanKind
+		wantIP     string
+	}{
+		{name: "server attribute only", kind: core.KindServer, attrIP: "192.0.2.1", wantIP: "192.0.2.1"},
+		{name: "client attribute alone is not local host", kind: core.KindClient, attrIP: "192.0.2.1"},
+		{name: "resource wins", kind: core.KindServer, resourceIP: "192.0.2.2", attrIP: "192.0.2.1", wantIP: "192.0.2.2"},
+		{name: "client resource IP remains valid", kind: core.KindClient, resourceIP: "192.0.2.2", wantIP: "192.0.2.2"},
+		{name: "empty resource falls back", kind: core.KindServer, resourceIP: "", hostIP: "192.0.2.3", attrIP: "192.0.2.1", wantIP: "192.0.2.3"},
+		{name: "empty resource fields fall back to server attribute", kind: core.KindServer, resourceIP: "", hostIP: "", attrIP: "192.0.2.1", wantIP: "192.0.2.1"},
+		{name: "missing IP produces no system relation", kind: core.KindServer},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resource := map[string]any{"service.name": "service", "bk.instance.id": "instance"}
+			if tc.resourceIP != nil {
+				resource["net.host.ip"] = tc.resourceIP
+			}
+			if tc.hostIP != nil {
+				resource["host.ip"] = tc.hostIP
+			}
+			attributes := map[string]any{}
+			if tc.attrIP != nil {
+				attributes["net.host.ip"] = tc.attrIP
+			}
+			graph := NewDiGraph()
+			graph.AddNode(Node{StandardSpan: ToStandardSpan(Span{
+				TraceId: "trace", SpanId: "span", SpanName: "operation",
+				Resource: resource, Attributes: attributes, Kind: int(tc.kind),
+			})})
+			receiver := make(chan storage.SaveRequest, 1)
+			processor := MetricProcessor{baseInfo: core.BaseInfo{BkBizId: "2", AppName: "app"}}
+			processor.findSpanMetric(receiver, graph)
+			request := <-receiver
+			labels := request.Data.(storage.PrometheusStorageData).Value.([]string)
+			var systemRelation string
+			for _, label := range labels {
+				if strings.HasPrefix(label, "__name__="+storage.ApmServiceSystemRelation+",") {
+					systemRelation = label
+					break
+				}
+			}
+			if tc.wantIP == "" {
+				assert.Empty(t, systemRelation)
+			} else {
+				assert.Contains(t, systemRelation, "bk_target_ip="+tc.wantIP)
+			}
+		})
+	}
 }
 
 func runMetricCase(p Processor, traceFileName string) []storage.SaveRequest {

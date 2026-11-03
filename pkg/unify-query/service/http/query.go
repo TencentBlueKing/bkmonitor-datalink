@@ -65,6 +65,24 @@ func excludeElasticsearchIndexPrefixMissingQueries(ctx context.Context, queryRef
 	})
 }
 
+// filterRawRoutesForExactTotal keeps the existing warn-and-skip of ES routes without an index prefix, except when an
+// exact total was requested: then a skipped route would make the attested total cover only part of the data, so the
+// request fails instead.
+func filterRawRoutesForExactTotal(ctx context.Context, queryRef metadata.QueryReference, queryTs *structured.QueryTs) (metadata.QueryReference, error) {
+	if exactTotalRequested(queryTs) {
+		missing := false
+		queryRef.Range("", func(qry *metadata.Query) {
+			if qry.IsElasticsearchIndexPrefixMissing() {
+				missing = true
+			}
+		})
+		if missing {
+			return nil, fmt.Errorf("ES exact total route is missing an index prefix")
+		}
+	}
+	return excludeElasticsearchIndexPrefixMissingQueries(ctx, queryRef, metadata.MsgQueryRaw, nil), nil
+}
+
 func parseLookBackDelta(s string) (time.Duration, error) {
 	duration, err := model.ParseDuration(s)
 	if err == nil {
@@ -197,6 +215,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 	return resp, err
 }
 
+// queryRawWithInstance 执行本页 Raw 查询，统一汇总普通查询与 Batch 的数据、计数和分页状态。
 func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, routeInfo []metadata.RouteInfo, err error) {
 	ignoreDimensions := []string{metadata.KeyTableUUID}
 	list = make([]map[string]any, 0)
@@ -215,7 +234,9 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		errCh     = make(chan error)
 
 		errorMessage   strings.Builder
+		routeErrors    []error
 		successedPaths atomic.Uint32
+		skippedRoutes  atomic.Uint32
 		lock           sync.Mutex
 
 		allLabelMap  = make(map[string][]function.LabelMapValue)
@@ -224,27 +245,38 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		queryRef metadata.QueryReference
 	)
 
-	queryRef, err = queryTs.ToQueryReference(ctx)
+	plan, err := queryTs.ToRawQueryPlan(ctx)
 	if err != nil {
 		return total, list, resultTableOptions, routeInfo, err
 	}
-	queryRef = excludeElasticsearchIndexPrefixMissingQueries(ctx, queryRef, metadata.MsgQueryRaw, nil)
-	// IsSearchAfter is deliberately scoped to the raw execution path. QueryTs is
-	// also used by time-series/reference endpoints, where Doris must keep its
-	// normal aggregate/series query behavior.
-	if queryTs.IsSearchAfter {
-		queryRef.Range("", func(qry *metadata.Query) {
-			qry.IsSearchAfter = true
-		})
+	stats := newRawQueryTraceStats(plan)
+	defer func() {
+		stats.record(ctx, span)
+		succeeded := int(successedPaths.Load())
+		span.Set("raw.succeeded_query_count", succeeded)
+		// 未成功完成的逻辑查询包含实例构建、请求准备或执行失败。
+		span.Set("raw.failed_query_count", stats.readyQueries-succeeded)
+	}()
+	span.Set("raw.is_es_batch", queryTs.IsESBatch)
+	queryRef, err = filterRawRoutesForExactTotal(ctx, plan.Queries, queryTs)
+	if err != nil {
+		return total, list, resultTableOptions, routeInfo, err
 	}
 	// routeInfo 只描述本次解析出的路由范围，不能从返回行或分页状态反推。
-	routeInfo = queryRef.CollectRouteInfo()
+	routeInfo = plan.Routes.Filter(func(qry *metadata.Query) bool {
+		return !qry.IsElasticsearchIndexPrefixMissing()
+	}).CollectRouteInfo()
+	queryRef, skipped := prepareRawQueryExecutions(queryRef, queryTs)
+	skippedRoutes.Add(uint32(skipped))
+	stats.paginationSkippedQueries = skipped
+	stats.readyQueries = queryRef.Count()
 
 	receiveWg.Add(1)
 	go func() {
 		defer receiveWg.Done()
 		for e := range errCh {
 			errorMessage.WriteString(fmt.Sprintf("query error: %s ", e.Error()))
+			routeErrors = append(routeErrors, e)
 		}
 	}()
 
@@ -374,123 +406,87 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				)
 			})
 		}()
+	} else {
+		p, _ := ants.NewPool(QueryMaxRouting)
+		defer p.Release()
 
-		receiveWg.Wait()
-		if errorMessage.Len() > 0 {
-			partialDetail := strings.TrimSpace(errorMessage.String())
-			if successedPaths.Load() > 0 {
-				span.Set("partial_errors", partialDetail)
-				const warnPrefix = "查询原始数据部分失败: "
-				fullMsg := warnPrefix + partialDetail
-				if existing := metadata.GetStatus(ctx); existing != nil && existing.Message != "" {
-					fullMsg = existing.Message + "; " + fullMsg
-				}
-				metadata.SetStatus(ctx, metadata.QueryRawPartial, fullMsg)
-			} else {
-				err = metadata.NewMessage(
-					metadata.MsgQueryRaw,
-					"查询原始数据报错",
-				).Error(ctx, errors.New(partialDetail))
-			}
-		}
-		return total, list, resultTableOptions, routeInfo, err
-	}
+		go func() {
+			defer func() {
+				sendWg.Wait()
+				close(dataCh)
+				close(errCh)
+			}()
 
-	p, _ := ants.NewPool(QueryMaxRouting)
-	defer p.Release()
+			qb := metadata.GetQueryParams(ctx)
+			queryRef.Range("", func(qry *metadata.Query) {
+				localQry := *qry
 
-	go func() {
-		defer func() {
-			sendWg.Wait()
-			close(dataCh)
-			close(errCh)
-		}()
+				sendWg.Add(1)
 
-		qb := metadata.GetQueryParams(ctx)
-		queryRef.Range("", func(qry *metadata.Query) {
-			localQry := *qry
-			localQry.ResultTableOption = qry.ResultTableOption.Clone()
-			// SearchAfter 模式下，跳过已完成的 RT
-			// RT 不在 ResultTableOptions 中（nil）或 SearchAfter 为空，表示该 RT 数据已查完
-			if queryTs.IsSearchAfter && len(queryTs.ResultTableOptions) > 0 {
-				if localQry.ResultTableOption == nil || len(localQry.ResultTableOption.SearchAfter) == 0 {
-					return
-				}
-			}
-
-			sendWg.Add(1)
-
-			labelMap := function.LabelMap(ctx, &localQry)
-			// 合并 labelMap
-			lock.Lock()
-			for k, lm := range labelMap {
-				if _, ok := allLabelMap[k]; !ok {
-					allLabelMap[k] = make([]function.LabelMapValue, 0)
-				}
-
-				allLabelMap[k] = append(allLabelMap[k], lm...)
-			}
-			lock.Unlock()
-
-			// 如果是多数据合并，为了保证排序和Limit 的准确性，需要查询原始的所有数据，所以这里对 from 和 size 进行重写
-			if queryRef.Count() > 1 {
-				if !queryTs.IsMultiFrom {
-					localQry.Size += localQry.From
-					localQry.From = 0
-				}
-			}
-
-			_ = p.Submit(func() {
-				defer func() {
-					sendWg.Done()
-				}()
-
-				instance := prometheus.GetTsDbInstance(ctx, &localQry)
-				if instance == nil {
-					errCh <- metadata.NewMessage(
-						metadata.MsgQueryRaw,
-						"查询实例为空",
-					).Error(ctx, nil)
-					return
-				}
-
-				// 如果开启了高亮，收集字段映射信息用于判断大小写敏感性
-				if queryTs.HighLight != nil && queryTs.HighLight.Enable {
-					if fieldsMap, fmErr := instance.QueryFieldMap(ctx, &localQry, qb.Start, qb.End); fmErr == nil && fieldsMap != nil {
-						lock.Lock()
-						for k, v := range fieldsMap {
-							if _, ok := allFieldsMap[k]; !ok {
-								allFieldsMap[k] = v
-							}
-						}
-						lock.Unlock()
-					}
-				}
-
-				_, size, option, queryErr := instance.QueryRawData(ctx, &localQry, qb.Start, qb.End, dataCh)
-				if queryErr != nil {
-					errCh <- queryErr
-					return
-				}
-
-				successedPaths.Add(1)
-
-				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
+				labelMap := function.LabelMap(ctx, &localQry)
+				// 合并 labelMap
 				lock.Lock()
-				resultTableOptions.SetOption(localQry.TableUUID(), option)
+				for k, lm := range labelMap {
+					if _, ok := allLabelMap[k]; !ok {
+						allLabelMap[k] = make([]function.LabelMapValue, 0)
+					}
+
+					allLabelMap[k] = append(allLabelMap[k], lm...)
+				}
 				lock.Unlock()
 
-				atomic.AddInt64(&total, size)
+				_ = p.Submit(func() {
+					defer func() {
+						sendWg.Done()
+					}()
+
+					instance := prometheus.GetTsDbInstance(ctx, &localQry)
+					if instance == nil {
+						errCh <- metadata.NewMessage(
+							metadata.MsgQueryRaw,
+							"查询实例为空",
+						).Error(ctx, nil)
+						return
+					}
+
+					// 如果开启了高亮，收集字段映射信息用于判断大小写敏感性
+					if queryTs.HighLight != nil && queryTs.HighLight.Enable {
+						if fieldsMap, fmErr := instance.QueryFieldMap(ctx, &localQry, qb.Start, qb.End); fmErr == nil && fieldsMap != nil {
+							lock.Lock()
+							for k, v := range fieldsMap {
+								if _, ok := allFieldsMap[k]; !ok {
+									allFieldsMap[k] = v
+								}
+							}
+							lock.Unlock()
+						}
+					}
+
+					_, size, option, queryErr := instance.QueryRawData(ctx, &localQry, qb.Start, qb.End, dataCh)
+					if queryErr != nil {
+						errCh <- queryErr
+						return
+					}
+
+					successedPaths.Add(1)
+
+					// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
+					lock.Lock()
+					resultTableOptions.SetOption(localQry.TableUUID(), option)
+					lock.Unlock()
+
+					atomic.AddInt64(&total, size)
+				})
 			})
-		})
-	}()
+		}()
+	}
 
 	// 等待数据组装完毕
 	receiveWg.Wait()
 
 	if errorMessage.Len() > 0 {
 		partialDetail := strings.TrimSpace(errorMessage.String())
-		if successedPaths.Load() > 0 {
+		if successedPaths.Load() > 0 && !exactTotalRequested(queryTs) {
 			err = nil
 			span.Set("partial_errors", partialDetail)
 			const warnPrefix = "查询原始数据部分失败: "
@@ -503,13 +499,28 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			err = metadata.NewMessage(
 				metadata.MsgQueryRaw,
 				"查询原始数据报错",
-			).Error(ctx, errors.New(partialDetail))
+			).Error(ctx, metadata.ErrorWithCauses(partialDetail, routeErrors...))
 		}
+	}
+
+	// A total summed over routes is exact only if every route answered: a failed route, or a finished route that
+	// search_after skipped on this page, leaves its hits out of the total.
+	if err == nil && exactTotalRequested(queryTs) && skippedRoutes.Load() > 0 {
+		err = fmt.Errorf("ES exact total unavailable: %d route(s) were not queried on this page", skippedRoutes.Load())
 	}
 
 	return total, list, resultTableOptions, routeInfo, err
 }
 
+func hasRawPaginationCursor(option *metadata.ResultTableOption) bool {
+	return option != nil && ((option.From != nil && *option.From > 0) || len(option.SearchAfter) > 0)
+}
+
+func hasRawOffsetCursor(option *metadata.ResultTableOption) bool {
+	return option != nil && option.From != nil && *option.From > 0
+}
+
+// queryRawWithScroll 根据下载会话调度尚未完成的切片，并更新各切片的游标和重试状态。
 func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (int64, []map[string]any, metadata.ResultTableOptions, []metadata.RouteInfo, bool, error) {
 	var (
 		receiveWg sync.WaitGroup
@@ -539,14 +550,16 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 	list := make([]map[string]any, 0)
 
-	queryRef, err := queryTs.ToQueryReference(ctx)
+	plan, err := queryTs.ToRawQueryPlan(ctx)
 	if err != nil {
 		return 0, nil, nil, nil, true, metadata.NewMessage(
 			metadata.MsgQueryRawScroll,
 			"查询参数配置异常",
 		).Error(ctx, err)
 	}
-	queryRef = excludeElasticsearchIndexPrefixMissingQueries(ctx, queryRef, metadata.MsgQueryRawScroll, func(qry *metadata.Query) {
+	stats := newRawQueryTraceStats(plan)
+	defer func() { stats.record(ctx, span) }()
+	queryRef := excludeElasticsearchIndexPrefixMissingQueries(ctx, plan.Queries, metadata.MsgQueryRawScroll, func(qry *metadata.Query) {
 		for i := 0; i < session.SliceLength(); i++ {
 			sliceQry := *qry
 			sliceQry.SliceID = cast.ToString(i)
@@ -555,23 +568,30 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 			session.UpdateSliceStatus(sliceQry.TableUUID(), slice)
 		}
 	})
+	stats.readyQueries = queryRef.Count()
 	// scroll 每次只取部分分片，routeInfo 仍返回完整解析范围。
-	routeInfo = queryRef.CollectRouteInfo()
+	routeInfo = plan.Routes.Filter(func(qry *metadata.Query) bool {
+		return !qry.IsElasticsearchIndexPrefixMissing()
+	}).CollectRouteInfo()
 
 	receiveWg.Add(1)
 	go func() {
 		defer receiveWg.Done()
 
-		var msg strings.Builder
+		var (
+			msg    strings.Builder
+			causes []error
+		)
 		for e := range errCh {
 			msg.WriteString(e.Error())
+			causes = append(causes, e)
 		}
 
 		if msg.Len() > 0 {
 			err = metadata.NewMessage(
 				metadata.MsgQueryRawScroll,
 				"下载接口调用失败",
-			).Error(ctx, errors.New(msg.String()))
+			).Error(ctx, metadata.ErrorWithCauses(msg.String(), causes...))
 		}
 	}()
 
@@ -590,6 +610,8 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 		wg         sync.WaitGroup
 		optionLock sync.Mutex
 	)
+	sliceStats := rawScrollTraceStats{candidates: stats.readyQueries * session.SliceLength()}
+	defer sliceStats.record(span)
 
 	p, _ := ants.NewPool(QueryMaxRouting)
 	defer p.Release()
@@ -601,6 +623,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 			newQry := &metadata.Query{}
 			if copyErr := copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true}); copyErr != nil {
+				sliceStats.preparationFailed.Add(1)
 				errCh <- metadata.NewMessage(
 					metadata.MsgQueryRawScroll,
 					"查询失败",
@@ -627,6 +650,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				}()
 
 				if slice.Done() {
+					sliceStats.completed.Add(1)
 					return
 				}
 
@@ -641,6 +665,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 				instance := prometheus.GetTsDbInstance(ctx, localQry)
 				if instance == nil {
+					sliceStats.preparationFailed.Add(1)
 					errCh <- metadata.NewMessage(
 						metadata.MsgQueryRawScroll,
 						"查询实例为空",
@@ -648,8 +673,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					return
 				}
 
+				sliceStats.attempted.Add(1)
 				size, _, option, rawErr := instance.QueryRawData(ctx, localQry, qb.Start, qb.End, dataCh)
 				if rawErr != nil {
+					sliceStats.failed.Add(1)
 					slice.FailedNum++
 					// 只有重试次数超过了最大限制才把错误返回，否则正常往后执行
 					if slice.FailedNum >= slice.MaxFailedNum {
@@ -657,6 +684,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					}
 					return
 				}
+				sliceStats.succeeded.Add(1)
 
 				// 查询成功，更新 scroll 状态
 				if option != nil {
@@ -676,6 +704,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				resultTableOptions.SetOption(localQry.TableUUID(), option)
 				optionLock.Unlock()
 			}); submitErr != nil {
+				sliceStats.submissionFailed.Add(1)
 				errCh <- metadata.NewMessage(
 					metadata.MsgQueryRawScroll,
 					"提交查询任务失败",
@@ -768,10 +797,21 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		startTime = qb.Start
 	}
 
+	queryEnd := qb.End
 	if queryTs.Instant {
-		res, err = instance.DirectQuery(ctx, queryTs.MetricMerge, startTime)
-	} else {
-		res, isPartial, err = instance.DirectQueryRange(ctx, queryTs.MetricMerge, startTime, qb.End, qb.Step)
+		queryEnd = startTime
+	}
+	res, isPartial, releaseResult, err := executeQueryWithClose(
+		ctx,
+		instance,
+		queryTs.MetricMerge,
+		startTime,
+		queryEnd,
+		qb.Step,
+		queryTs.Instant,
+	)
+	if releaseResult != nil {
+		defer releaseResult()
 	}
 	if err != nil {
 		return nil, err
@@ -898,7 +938,11 @@ func queryTsToReference(ctx context.Context, queryTs *structured.QueryTs) (metad
 
 // queryTsToInstanceAndStmt query 结构体转换为 instance 以及 stmt
 func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) (instance tsdb.Instance, stmt string, routeInfo []metadata.RouteInfo, err error) {
-	var promExprOpt = &structured.PromExprOption{}
+	return queryTsToInstanceAndStmtWithCache(ctx, queryTs, nil)
+}
+
+func queryTsToInstanceAndStmtWithCache(ctx context.Context, queryTs *structured.QueryTs, selectorCache *prometheus.SelectorCache) (instance tsdb.Instance, stmt string, routeInfo []metadata.RouteInfo, err error) {
+	promExprOpt := &structured.PromExprOption{}
 
 	ctx, span := trace.NewSpan(ctx, "query-ts-to-instance")
 	defer func() {
@@ -934,6 +978,7 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 		instance = prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
 			QueryMaxRouting: QueryMaxRouting,
 			Timeout:         SingleflightTimeout,
+			SelectorCache:   selectorCache,
 		}, lookBackDelta, QueryMaxRouting)
 	}
 
@@ -985,10 +1030,17 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 	qb := metadata.GetQueryParams(ctx)
 	span.Set("query-params", qb)
 
-	if query.Instant {
-		res, err = instance.DirectQuery(ctx, stmt, qb.End)
-	} else {
-		res, isPartial, err = instance.DirectQueryRange(ctx, stmt, qb.AlignStart, qb.End, qb.Step)
+	res, isPartial, releaseResult, err := executeQueryWithClose(
+		ctx,
+		instance,
+		stmt,
+		qb.AlignStart,
+		qb.End,
+		qb.Step,
+		query.Instant,
+	)
+	if releaseResult != nil {
+		defer releaseResult()
 	}
 	if err != nil {
 		return nil, err
@@ -1129,14 +1181,19 @@ func queryTsNamedOutputs(ctx context.Context, queryTs *structured.QueryTs) (*Nam
 				if executionMode == uqMetric.NamedOutputsModeDirect {
 					directCalls++
 				}
-				if queryTs.Instant {
-					if statusAware, ok := instance.(tsdb.InstantQueryWithPartial); ok {
-						return statusAware.DirectQueryWithPartial(executeCtx, stmt, queryParams.End)
-					}
-					result, queryErr := instance.DirectQuery(executeCtx, stmt, queryParams.End)
-					return result, false, queryErr
+				result, partial, releaseResult, queryErr := executeQueryWithClose(
+					executeCtx,
+					instance,
+					stmt,
+					queryParams.AlignStart,
+					queryParams.End,
+					queryParams.Step,
+					queryTs.Instant,
+				)
+				if queryErr != nil {
+					return nil, partial, queryErr
 				}
-				return instance.DirectQueryRange(executeCtx, stmt, queryParams.AlignStart, queryParams.End, queryParams.Step)
+				return &ownedQueryResult{value: result, release: releaseResult}, partial, nil
 			},
 		)
 	}
@@ -1156,6 +1213,121 @@ func queryTsNamedOutputs(ctx context.Context, queryTs *structured.QueryTs) (*Nam
 	}
 	requestMetricResult = uqMetric.NamedOutputsRequestSuccess
 	return result, nil
+}
+
+func queryPromQLNamedOutputs(ctx context.Context, request *structured.QueryPromQL) (*NamedOutputsData, error) {
+	started := time.Now()
+	settings := getNamedOutputSettings()
+	ctx, cancel := context.WithTimeout(ctx, settings.Timeout)
+	defer cancel()
+	uqMetric.NamedOutputsRequestInc(ctx, uqMetric.NamedOutputsRequestReceived)
+	resultName := uqMetric.NamedOutputsRequestError
+	defer func() {
+		uqMetric.NamedOutputsRequestInc(ctx, resultName)
+		uqMetric.NamedOutputsDurationObserve(ctx, resultName, time.Since(started))
+	}()
+	if err := request.ValidateNamedOutputs(settings.MaxOutputs); err != nil {
+		uqMetric.NamedOutputsRejectInc(ctx, namedOutputsValidationRejectReason(err))
+		return nil, err
+	}
+	uqMetric.NamedOutputsOutputCountObserve(ctx, len(request.OutputList))
+
+	ctx, span := trace.NewSpan(ctx, "query-promql-named-outputs")
+	var err error
+	defer span.End(&err)
+
+	queries := make(map[string]*structured.QueryTs, len(request.OutputList))
+	for _, output := range request.OutputList {
+		outputRequest := *request
+		outputRequest.PromQL = output.Expression
+		queries[output.ReferenceName], err = promQLToStruct(ctx, &outputRequest)
+		if err != nil {
+			uqMetric.NamedOutputsRejectInc(ctx, uqMetric.NamedOutputsRejectValidation)
+			return nil, fmt.Errorf("output %s conversion failed: %w", output.ReferenceName, err)
+		}
+	}
+
+	selectorCache := prometheus.NewSelectorCache(prometheus.SelectorCacheLimits{
+		MaxSeries: settings.MaxSeries,
+		MaxPoints: settings.MaxPoints,
+		MaxBytes:  settings.MaxCacheBytes,
+	})
+	var routeInfo []metadata.RouteInfo
+	var outputMu sync.Mutex
+	currentRoutes := func() []metadata.RouteInfo {
+		outputMu.Lock()
+		defer outputMu.Unlock()
+		return append([]metadata.RouteInfo(nil), routeInfo...)
+	}
+	directCalls := 0
+	directOutputs := 0
+	engineOutputs := 0
+	defer func() {
+		if directOutputs > 0 {
+			uqMetric.NamedOutputsDownstreamCallsObserve(ctx, uqMetric.NamedOutputsModeDirect, directCalls)
+			uqMetric.NamedOutputsDownstreamAmplificationObserve(ctx, uqMetric.NamedOutputsModeDirect, directCalls, directOutputs)
+		}
+		if engineOutputs > 0 {
+			calls := int(selectorCache.Stats().Misses)
+			uqMetric.NamedOutputsDownstreamCallsObserve(ctx, uqMetric.NamedOutputsModePromEngine, calls)
+			uqMetric.NamedOutputsDownstreamAmplificationObserve(ctx, uqMetric.NamedOutputsModePromEngine, calls, engineOutputs)
+		}
+	}()
+
+	query := &structured.QueryTs{
+		LegacyOutputRef: request.LegacyOutputRef,
+		OutputList:      request.OutputList,
+		DownSampleRange: request.DownSampleRange,
+	}
+	execute := func(outputCtx context.Context, output structured.QueryOutput) (any, bool, error) {
+		queryTs := queries[output.ReferenceName]
+		// Routing storage types belong to this output, not a preceding PromQL output.
+		metadata.GetQueryParams(outputCtx).StorageType.Clean()
+		instance, stmt, outputRoutes, queryErr := queryTsToInstanceAndStmtWithCache(outputCtx, queryTs, selectorCache)
+		outputMu.Lock()
+		routeInfo = append(routeInfo, outputRoutes...)
+		outputMu.Unlock()
+		if queryErr != nil {
+			return nil, false, queryErr
+		}
+		if err := outputCtx.Err(); err != nil {
+			return nil, false, err
+		}
+		if metadata.GetQueryParams(outputCtx).IsDirectQuery() {
+			outputMu.Lock()
+			directOutputs++
+			directCalls++
+			outputMu.Unlock()
+		} else {
+			outputMu.Lock()
+			engineOutputs++
+			outputMu.Unlock()
+		}
+		params := metadata.GetQueryParams(outputCtx)
+		result, partial, release, queryErr := executeQueryWithClose(
+			outputCtx, instance, stmt, params.AlignStart, params.End, params.Step, queryTs.Instant,
+		)
+		if queryErr != nil {
+			return nil, partial, queryErr
+		}
+		return &ownedQueryResult{value: result, release: release}, partial, nil
+	}
+
+	data, executeErr := executeNamedOutputsWithRoutesMode(ctx, query, settings, currentRoutes, span.TraceID(), execute, true)
+	if executeErr != nil {
+		var outputLimit *namedOutputLimitError
+		var selectorLimit *prometheus.SelectorCacheLimitError
+		switch {
+		case errors.Is(executeErr, context.DeadlineExceeded), errors.Is(executeErr, context.Canceled):
+			uqMetric.NamedOutputsRejectInc(ctx, uqMetric.NamedOutputsRejectDeadline)
+		case errors.As(executeErr, &outputLimit), errors.As(executeErr, &selectorLimit):
+			uqMetric.NamedOutputsRejectInc(ctx, uqMetric.NamedOutputsRejectCapacity)
+		}
+		err = executeErr
+		return nil, err
+	}
+	resultName = uqMetric.NamedOutputsRequestSuccess
+	return data, nil
 }
 
 func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured.QueryPromQL, error) {

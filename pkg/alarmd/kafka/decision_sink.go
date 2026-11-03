@@ -17,8 +17,6 @@ import (
 	"sync/atomic"
 
 	"github.com/Shopify/sarama"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
 var (
@@ -69,28 +67,6 @@ type DecisionSink struct {
 	forcedErr    error
 }
 
-// OpenDecisionSink creates the only production DecisionSink implementation.
-// Topic existence, ACLs and broker-side limits remain deployment evidence.
-func OpenDecisionSink(coordinates DecisionSinkConfig) (*DecisionSink, error) {
-	config, err := NewDecisionProducerConfig(coordinates)
-	if err != nil {
-		return nil, err
-	}
-	client, err := sarama.NewClient(coordinates.Brokers, config)
-	if err != nil {
-		return nil, fmt.Errorf("kafka decision sink: open client: %w", err)
-	}
-	producer, err := newSyncProducerForOutput(client, coordinates.OutputTopic)
-	if err != nil {
-		return nil, errors.Join(fmt.Errorf("kafka decision sink: open producer: %w", err), client.Close())
-	}
-	sink, err := newDecisionSink(coordinates.OutputTopic, producer, client)
-	if err != nil {
-		return nil, errors.Join(err, producer.Close(), client.Close())
-	}
-	return sink, nil
-}
-
 func newDecisionSink(outputTopic string, producer syncMessageProducer, client closeableClient) (*DecisionSink, error) {
 	if err := validateKafkaTopicName("output_topic", outputTopic); err != nil {
 		return nil, err
@@ -108,41 +84,6 @@ func newDecisionSink(outputTopic string, producer syncMessageProducer, client cl
 	sink.producerResource.close = producer.Close
 	sink.clientResource.close = client.Close
 	return sink, nil
-}
-
-// WriteBatch returns success only after the synchronous producer reports the
-// broker acknowledgement. Once sending starts, context cancellation cannot
-// turn an unknown broker result into an early return.
-func (s *DecisionSink) WriteBatch(ctx context.Context, batch *contract.TriggerDecisionBatch) error {
-	if s == nil || s.producer == nil {
-		return ErrDecisionSinkClosed
-	}
-	if ctx == nil {
-		return errors.New("kafka decision sink: context is required")
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	payload, err := contract.EncodeTriggerDecisionBatch(batch)
-	if err != nil {
-		return fmt.Errorf("kafka decision sink: encode batch: %w", err)
-	}
-	key, err := batch.PartitionKey()
-	if err != nil {
-		return fmt.Errorf("kafka decision sink: derive partition key: %w", err)
-	}
-	return s.writeEncoded(ctx, key, payload)
-}
-
-func (s *DecisionSink) writeEncoded(ctx context.Context, key, payload []byte) error {
-	if s == nil || s.producer == nil {
-		return ErrDecisionSinkClosed
-	}
-	return s.writeMessages(ctx, []*sarama.ProducerMessage{{
-		Topic: s.outputTopic,
-		Key:   sarama.ByteEncoder(key),
-		Value: sarama.ByteEncoder(payload),
-	}})
 }
 
 func (s *DecisionSink) writeMessages(ctx context.Context, messages []*sarama.ProducerMessage) error {
@@ -171,7 +112,7 @@ func (s *DecisionSink) writeMessages(ctx context.Context, messages []*sarama.Pro
 
 	if batchProducer, ok := s.producer.(syncBatchMessageProducer); ok && len(messages) > 1 {
 		if err := batchProducer.SendMessages(messages); err != nil {
-			producerErr := fmt.Errorf("kafka decision sink: send batch: %w", err)
+			producerErr := fmt.Errorf("kafka decision sink: send batch: %w", describeBatchFailure(err, len(messages)))
 			if contextErr := ctx.Err(); contextErr != nil {
 				return errors.Join(contextErr, producerErr)
 			}
@@ -189,6 +130,23 @@ func (s *DecisionSink) writeMessages(ctx context.Context, messages []*sarama.Pro
 		}
 	}
 	return nil
+}
+
+// describeBatchFailure gives a batch failure the words of its cause. The
+// client reports a failed batch as a list of per-message errors whose own
+// text is only "Failed to deliver N messages." -- the cause is on each
+// element, and an error chain that stops at the list has lost it. On a live
+// deployment every event of six objects failed for a whole afternoon and
+// the row, the log line and the window record all said the count and not
+// the one sentence that decided it, which was on the first element. The
+// list stays in the chain (errors.Is and errors.As still find it); the first
+// element's cause is what the text now leads with, and the count follows.
+func describeBatchFailure(err error, attempted int) error {
+	var failures sarama.ProducerErrors
+	if !errors.As(err, &failures) || len(failures) == 0 || failures[0] == nil {
+		return err
+	}
+	return fmt.Errorf("%d of %d messages failed, first: %w (%w)", len(failures), attempted, failures[0], err)
 }
 
 // Shutdown prevents new writes and closes the producer before its dedicated

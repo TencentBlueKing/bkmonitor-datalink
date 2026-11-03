@@ -756,5 +756,11 @@ func infoParamsToQueryRef(ctx context.Context, params *Params) (queryRef metadat
 		Timezone:    params.Timezone,
 	}
 
-	return queryTs.ToQueryReference(ctx)
+	queryRef, err = queryTs.ToQueryReference(ctx)
+	if err != nil {
+		return queryRef, err
+	}
+	// 与 query/raw、raw_with_scroll 一致：db/dbs 都为空的 ES 结果表没有可读的索引，跳过并告警，
+	// 不让同一 data_label 下的其他结果表因它报错。
+	return excludeElasticsearchIndexPrefixMissingQueries(ctx, queryRef, metadata.MsgQueryInfo, nil), nil
 }

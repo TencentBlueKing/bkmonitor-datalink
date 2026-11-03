@@ -33,7 +33,13 @@ func NewClient(opt *Option) *Client {
 }
 
 func (c *Client) Query() (*Stat, error) {
-	return c.queryNtpd()
+	stat, _, err := c.QueryAll()
+	return stat, err
+}
+
+// QueryAll 查询本地 NTP 源，同时返回旧聚合统计和按地址明细。
+func (c *Client) QueryAll() (*Stat, []SourceResult, error) {
+	return c.queryNtpdDetailed()
 }
 
 func (c *Client) getTimeServer() ([]string, error) {
@@ -66,26 +72,41 @@ func (c *Client) getTimeServer() ([]string, error) {
 }
 
 func (c *Client) queryNtpd() (*Stat, error) {
+	stat, _, err := c.queryNtpdDetailed()
+	return stat, err
+}
+
+func (c *Client) queryNtpdDetailed() (*Stat, []SourceResult, error) {
 	stat := newStat("ntpd")
 
 	lst, err := c.getTimeServer()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
+	details := make([]SourceResult, 0, len(lst))
 	for _, server := range lst {
-		rsp, err := ntp.QueryWithOptions(server, ntp.QueryOptions{Timeout: c.opt.Timeout})
+		rsp, err := queryNTP(server, ntp.QueryOptions{Timeout: c.opt.Timeout})
 		if err != nil {
 			stat.Err++
+			details = append(details, SourceResult{Address: server, Target: "ntpd", Available: false})
 			continue
 		}
 
 		delay := rsp.ClockOffset.Seconds()
+		// 新增指标的时间戳取服务器应答里的发送时间。
+		details = append(details, SourceResult{
+			Address:       server,
+			Target:        "ntpd",
+			OffsetSeconds: ntpResponseOffsetSeconds(rsp),
+			Available:     true,
+			SourceTime:    rsp.Time,
+		})
 		if delay == 0 {
 			continue
 		}
 
 		stat.Add(delay)
 	}
-	return stat, nil
+	return stat, details, nil
 }

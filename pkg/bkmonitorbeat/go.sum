@@ -8,10 +8,12 @@ github.com/Shopify/toxiproxy v2.1.4+incompatible h1:TKdv8HiTLgE5wdJuEML90aBgNWso
 github.com/Shopify/toxiproxy v2.1.4+incompatible/go.mod h1:OXgGpZ6Cli1/URJOF1DMxUHB2q5Ap20/P/eIdh4G0pI=
 github.com/TencentBlueKing/beats v7.1.17-bk+incompatible h1:KsMFXnlBDdpgqkiLzfI57fMudfQThtJJS8ZUQ2n/Fe0=
 github.com/TencentBlueKing/beats v7.1.17-bk+incompatible/go.mod h1:ZMsX71rXxEo52YtXTamkUBNY4BmgxFY1NSZL1l1dNts=
+github.com/TencentBlueKing/beats v7.1.61-bk+incompatible h1:Ftv3moGyR9ncN3Hy0Y5MBxmjlxoQbsSVc5mD4MUyQLk=
+github.com/TencentBlueKing/beats v7.1.61-bk+incompatible/go.mod h1:ZMsX71rXxEo52YtXTamkUBNY4BmgxFY1NSZL1l1dNts=
 github.com/TencentBlueKing/bk-gse-sdk/go v0.0.3 h1:qR2sSybI2Sx/AFdje+L03mHIYlNvQ5Lqwx6+aEdCmXA=
 github.com/TencentBlueKing/bk-gse-sdk/go v0.0.3/go.mod h1:ocsvsjRwMLhVJlfty5Xwuywg8z6o1lfvzXgll9IlDS0=
-github.com/TencentBlueKing/gopsutil/v3 v3.26.8-bk h1:9Pe0GO0N7TS3DWZ4AuY+plnYmYbcCLnbr8yuMwsoCK8=
-github.com/TencentBlueKing/gopsutil/v3 v3.26.8-bk/go.mod h1:7hmCaBn+2ZwaZOr6jmPBZDfawwMGuo1id3C6aM8EDqQ=
+github.com/TencentBlueKing/gopsutil/v3 v3.26.9-bk h1:2sRH6VsfUTszP4+o1IaMJTx4wstTUI8r2AGrtm7QUp4=
+github.com/TencentBlueKing/gopsutil/v3 v3.26.9-bk/go.mod h1:7hmCaBn+2ZwaZOr6jmPBZDfawwMGuo1id3C6aM8EDqQ=
 github.com/TencentBlueKing/gosnmp v1.30.0-bk h1:BgXW4Vm1fr90L70lPKU+K+N3ckaz10o5a3uNDZ0yWHQ=
 github.com/TencentBlueKing/gosnmp v1.30.0-bk/go.mod h1:Ux0YzU4nV5yDET7dNIijd0VST0BCy8ijBf+gTVFQeaM=
 github.com/beevik/ntp v1.4.3 h1:PlbTvE5NNy4QHmA4Mg57n7mcFTmr1W1j3gcK7L1lqho=
@@ -294,7 +296,9 @@ github.com/tklauser/go-sysconf v0.3.12/go.mod h1:Ho14jnntGE1fpdOqQEEaiKRpvIavV0h
 github.com/tklauser/numcpus v0.6.1 h1:ng9scYS7az0Bk4OZLvrNXNSAO2Pxr1XXRAPyjhIx+Fk=
 github.com/tklauser/numcpus v0.6.1/go.mod h1:1XfjsgE2zo8GVw7POkMbHENHzVg3GzmoZ9fESEdAacY=
 github.com/urfave/cli v1.22.2/go.mod h1:Gos4lmkARVdJ6EkW0WaNv/tZAAMe9V7XWyB60NtXRu0=
+github.com/xdg/scram v0.0.0-20180814205039-7eeb5667e42c h1:u40Z8hqBAAQyv+vATcGgV0YCnDjqSL7/q/JyPhhJSPk=
 github.com/xdg/scram v0.0.0-20180814205039-7eeb5667e42c/go.mod h1:lB8K/P019DLNhemzwFU4jHLhdvlE6uDZjXFejJXr49I=
+github.com/xdg/stringprep v1.0.0 h1:d9X0esnoa3dFsV0FG35rAT0RIhYFlPq7MiP+DW89La0=
 github.com/xdg/stringprep v1.0.0/go.mod h1:Jhud4/sHMO4oL310DaZAKk9ZaJ08SJfe+sJh0HrGL1Y=
 github.com/xeipuuv/gojsonpointer v0.0.0-20180127040702-4e3ac2762d5f h1:J9EGpcZtP0E/raorCMxlFGSTBrsSlaDGf3jU/qvAE2c=
 github.com/xeipuuv/gojsonpointer v0.0.0-20180127040702-4e3ac2762d5f/go.mod h1:N2zxlSyiKSe5eX1tZViRH5QA0qijqEDrYZiPEAiq3wU=

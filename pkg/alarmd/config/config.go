@@ -10,23 +10,27 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
+	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/coordinator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/roles"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
-
-const ModeShadow = "shadow"
 
 type Duration time.Duration
 
@@ -44,175 +48,786 @@ func (d Duration) Duration() time.Duration {
 }
 
 type HTTPConfig struct {
+	// Listen carries health, metrics and the observability API. It is the only
+	// surface a host platform may route to.
 	Listen string `yaml:"listen"`
+	// DiagnosticsListen carries pprof on its own listener, defaulting to
+	// loopback so routing the query surface cannot expose it. An empty value
+	// serves no diagnostics at all; pprof is never folded back into Listen.
+	DiagnosticsListen string `yaml:"diagnostics_listen"`
+	// InternalListen carries /metrics, /healthz and /readyz for the cluster
+	// alone. A restricted public surface (PublicSurfaceRestrictionRequested,
+	// once the CLI is up) stops serving /metrics on Listen, so the scrape
+	// needs this port; without it the process still runs and reports that
+	// its metrics have no way out. Empty otherwise serves nothing extra: an
+	// unrestricted Listen still carries all three.
+	InternalListen string `yaml:"internal_listen"`
+}
+
+// CLIConfig is the deployment-operator evidence channel. AdminKey authorizes
+// grant issuance directly in alarmd; it is not a CLI session token or user identity.
+// The key must never be included in runtime configuration evidence.
+type CLIConfig struct {
+	EnvironmentID   string `yaml:"environment_id"`
+	EnvironmentName string `yaml:"environment_name"`
+	PublicBaseURL   string `yaml:"public_base_url"`
+	AdminKey        string `yaml:"admin_key" json:"-"`
+	// AdminKeyFile names a file holding AdminKey (resolveCredentials),
+	// cleared once read.
+	AdminKeyFile string `yaml:"admin_key_file" json:"-"`
+	// AdminKeySecret says where the deployment keeps AdminKey, so that the
+	// login page can show the one command that reads it. It is never read
+	// from the file; see resolveAdminKeySecret.
+	AdminKeySecret CLIAdminKeySecret `yaml:"-" json:"-"`
+}
+
+// Enabled is whether this process serves the CLI: it does exactly when an
+// administrator key is configured. The key is what makes a session
+// possible, so a second switch could only ever agree with it or open a
+// channel nobody can log in to.
+func (c CLIConfig) Enabled() bool { return c.AdminKey != "" }
+
+// CLIAdminKeySecret names the Secret that holds the administrator key:
+// the namespace, the Secret and the key inside it. Names only, never the
+// key's value. Any of them may be empty when the process could not learn
+// it; the login page then leaves that part of the command for the operator
+// to fill in rather than guessing it.
+type CLIAdminKeySecret struct {
+	Namespace string
+	Name      string
+	Key       string
+}
+
+// The Secret's name and key are handed over by the chart that references
+// the Secret, beside the key itself. alarmd has no other way to know them:
+// the key arrives as a value, not as a reference.
+const (
+	CLIAdminKeySecretNameEnvironment = "ALARMD_CLI_ADMIN_KEY_SECRET_NAME"
+	CLIAdminKeySecretKeyEnvironment  = "ALARMD_CLI_ADMIN_KEY_SECRET_KEY"
+	// PodNamespaceEnvironment is read only when the ServiceAccount's
+	// namespace file is not mounted.
+	PodNamespaceEnvironment = "POD_NAMESPACE"
+)
+
+// serviceAccountNamespacePath is the namespace file Kubernetes mounts in
+// every Pod with a ServiceAccount token. A variable so tests can point it
+// at a file of their own.
+var serviceAccountNamespacePath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+// ProcessNamespace is the namespace this process's Pod runs in: its
+// ServiceAccount's namespace file, or POD_NAMESPACE when the file is not
+// there; empty out of a cluster.
+func ProcessNamespace() string {
+	if raw, err := os.ReadFile(serviceAccountNamespacePath); err == nil {
+		if namespace := strings.TrimSpace(string(raw)); namespace != "" {
+			return namespace
+		}
+	}
+	return strings.TrimSpace(os.Getenv(PodNamespaceEnvironment))
+}
+
+// resolveAdminKeySecret fills AdminKeySecret: the namespace from the Pod's
+// own namespace file, or POD_NAMESPACE when the file is not there, and the
+// Secret's name and key from the environment. Nothing here can fail
+// startup; a name that cannot be read stays empty.
+func (c *CLIConfig) resolveAdminKeySecret() {
+	c.AdminKeySecret = CLIAdminKeySecret{
+		Namespace: ProcessNamespace(),
+		Name:      strings.TrimSpace(os.Getenv(CLIAdminKeySecretNameEnvironment)),
+		Key:       strings.TrimSpace(os.Getenv(CLIAdminKeySecretKeyEnvironment)),
+	}
+}
+
+// ObserveNamespacesEnvironment lists the other namespaces alarmd's
+// dependencies run in, separated by commas or spaces, as the chart renders
+// them beside the Role it grants alarmd in each. The workload read covers
+// them besides its own namespace and the ones its dependencies' addresses
+// name. It is read when asked, not decoded into the configuration: it is a
+// fact about where the deployment put things, handed over by the chart like
+// the administrator key's Secret.
+const ObserveNamespacesEnvironment = "ALARMD_OBSERVE_NAMESPACES"
+
+// ObservedNamespaces is ObserveNamespacesEnvironment split into names, in the
+// order given. Empty and repeated entries are dropped; a name that is not a
+// namespace name is kept, for the read to report it rather than skip it.
+func ObservedNamespaces() []string {
+	var names []string
+	seen := map[string]bool{}
+	for _, name := range strings.FieldsFunc(os.Getenv(ObserveNamespacesEnvironment), func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	}) {
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// CLIAdminKeyEnvironment carries the administrator key when the deployment
+// keeps it in a Secret of its own rather than in the rendered configuration:
+// a chart then references the Secret and the key never appears in values.
+const CLIAdminKeyEnvironment = "ALARMD_CLI_ADMIN_KEY"
+
+// resolveAdminKeyFromEnvironment fills the administrator key from the
+// environment. A key stated in both places is refused: two sources for one
+// secret is a deployment that can rotate one and keep using the other.
+func (c *CLIConfig) resolveAdminKeyFromEnvironment() error {
+	env, ok := os.LookupEnv(CLIAdminKeyEnvironment)
+	if !ok || env == "" {
+		return nil
+	}
+	if c.AdminKey != "" {
+		return errors.New("cli admin_key is set both in the file and in " + CLIAdminKeyEnvironment)
+	}
+	c.AdminKey = env
+	return nil
+}
+
+// DiagnosticsFact renders the diagnostics surface for startup logging. Every
+// runtime reports it through this one helper so the three of them cannot drift
+// into disagreeing about what an unset address means.
+func (c HTTPConfig) DiagnosticsFact() string {
+	if c.DiagnosticsListen == "" {
+		return "disabled"
+	}
+	return c.DiagnosticsListen
 }
 
 type KafkaOutputConfig struct {
-	Topic           string `yaml:"topic"`
-	MaxMessageBytes int    `yaml:"max_message_bytes"`
+	Topic string `yaml:"topic"`
+	// MaxMessageBytes is the largest message this output sends, the
+	// program's (defaultOutputMaxMessageBytes) and not a values key. It is
+	// not read from the topic's max.message.bytes either, though that is
+	// the limit it stands under: every message carries at most the trigger
+	// evidence bound (limits.trigger.max_evidence_bytes_per_event, checked
+	// against this at startup) and the fields beside it, well inside this,
+	// and this is under the broker's default topic limit of about a
+	// megabyte. A broker configured below it refuses at produce, which is
+	// named per message. Reading the limit would make starting depend on a
+	// describe-configs permission on the topic, for a case no message
+	// reaches.
+	MaxMessageBytes int `yaml:"-"`
 }
 
 type KafkaConfig struct {
-	Brokers             []string          `yaml:"brokers"`
-	InputTopic          string            `yaml:"input_topic"`
-	TriggerEvent        KafkaOutputConfig `yaml:"trigger_event"`
-	MessageReceipt      KafkaOutputConfig `yaml:"message_receipt"`
-	AllowedOutputTopics []string          `yaml:"allowed_output_topics"`
-	GroupID             string            `yaml:"group_id"`
-	ClientID            string            `yaml:"client_id"`
-	BrokerVersion       string            `yaml:"broker_version"`
-	InitialOffset       string            `yaml:"initial_offset"`
-}
-
-func (c KafkaConfig) ConsumerCoordinates() enginekafka.Config {
-	return enginekafka.Config{
-		Brokers:       append([]string(nil), c.Brokers...),
-		Topic:         c.InputTopic,
-		GroupID:       c.GroupID,
-		ClientID:      c.ClientID,
-		BrokerVersion: c.BrokerVersion,
-		InitialOffset: c.InitialOffset,
-	}
+	LegacyAdapter LegacyAdapterConfig `yaml:"legacy_adapter"`
+	Brokers       []string            `yaml:"brokers"`
+	TriggerEvent  KafkaOutputConfig   `yaml:"trigger_event"`
+	// ClientID and BrokerVersion identify this producer to the broker and fix
+	// the protocol it speaks. Neither is something a deployment knows better
+	// than the product: the identity is the product's name and the version is
+	// the oldest protocol that carries what the program sends
+	// (enginekafka.MinimumBrokerVersion: record headers, for the tenant on
+	// the standard RawEvent).
+	ClientID      string `yaml:"-"`
+	BrokerVersion string `yaml:"-"`
 }
 
 func (c KafkaConfig) TriggerEventCoordinates() enginekafka.DecisionSinkConfig {
 	return c.outputCoordinates(c.TriggerEvent)
 }
 
-func (c KafkaConfig) MessageReceiptCoordinates() enginekafka.DecisionSinkConfig {
-	return c.outputCoordinates(c.MessageReceipt)
-}
-
 func (c KafkaConfig) outputCoordinates(output KafkaOutputConfig) enginekafka.DecisionSinkConfig {
 	return enginekafka.DecisionSinkConfig{
-		Brokers:             append([]string(nil), c.Brokers...),
-		InputTopic:          c.InputTopic,
-		OutputTopic:         output.Topic,
-		AllowedOutputTopics: append([]string(nil), c.AllowedOutputTopics...),
-		ClientID:            c.ClientID,
-		BrokerVersion:       c.BrokerVersion,
-		MaxMessageBytes:     output.MaxMessageBytes,
+		Brokers:         append([]string(nil), c.Brokers...),
+		OutputTopic:     output.Topic,
+		ClientID:        c.ClientID,
+		BrokerVersion:   c.BrokerVersion,
+		MaxMessageBytes: output.MaxMessageBytes,
 	}
 }
 
+// DefaultStatePrefix is alarmd's own key space for its runtime state (catalog,
+// ownership, state, fleet, progress). The g2 and v1 segments are the program's
+// schema generation, which rises with the code when the persisted shape
+// changes; a deployment has no reason to state it, and one that does must
+// state this value.
+const DefaultStatePrefix = "alarmd:phase2:g2:runtime:v1"
+
 type RedisConfig struct {
-	Address       string   `yaml:"address"`
-	Username      string   `yaml:"username"`
-	Password      string   `yaml:"password"`
-	DB            int      `yaml:"db"`
-	DialTimeout   Duration `yaml:"dial_timeout"`
-	ReadTimeout   Duration `yaml:"read_timeout"`
-	WriteTimeout  Duration `yaml:"write_timeout"`
-	PoolSize      int      `yaml:"pool_size"`
-	StatePrefix   string   `yaml:"state_prefix"`
-	MinTTL        Duration `yaml:"min_ttl"`
-	MaxTTL        Duration `yaml:"max_ttl"`
-	RestartMargin Duration `yaml:"restart_margin"`
+	RedisConnectionConfig `yaml:",inline"`
+	// StatePrefix defaults to DefaultStatePrefix; it is a program fact, not
+	// an environment choice.
+	StatePrefix string `yaml:"state_prefix"`
+	// The state key lifetimes are the program's, not the deployment's; none
+	// of them is a values key any more.
+	//
+	// RestartMargin is how long past its Plan's retention a state key lives:
+	// the replay window (PhaseTwo.Scheduler.MaxReplayAge), since a replayed
+	// Slot recognises its own earlier write only while that key exists. It
+	// was a values key that had to be set to at least the replay window,
+	// which no values key sets, so the only valid setting was the program's
+	// own number.
+	//
+	// MinTTL is that same margin: every lifetime is a retention plus the
+	// margin, so no floor below it ever applied.
+	//
+	// MaxTTL is the longest any state key lives, StateMaxTTL; see there.
+	MinTTL        Duration `yaml:"-"`
+	MaxTTL        Duration `yaml:"-"`
+	RestartMargin Duration `yaml:"-"`
 }
 
-type DependencyRetryConfig struct {
-	MinDelay Duration `yaml:"min_delay"`
-	MaxDelay Duration `yaml:"max_delay"`
+// StateMaxTTL is the longest a state key lives, and with it the longest a
+// Plan's content is kept (phaseTwoObjectRetentionLimit): a Plan whose
+// retention needs longer is refused by name, as before. It is what bounds
+// how long the state of a series that went away keeps occupying the store,
+// a trade of store memory against the longest Plans that an operator is not
+// better placed to make than the program. It stays a number rather than a
+// derivation because nothing upstream bounds it: the compiler bounds a
+// Plan's points, not its cadence, so the longest retention a Plan may ask
+// for has no ceiling of its own to derive this from.
+const StateMaxTTL = 30 * 24 * time.Hour
+
+// PlatformCacheConfig names the platform's own caches that alarmd reads. They
+// are separate connections because the platform routes them separately: its
+// cache backend can be redirected per module, so the strategy cache and the
+// CMDB cache may each live somewhere other than the instance the rest of the
+// deployment points at. Reading them off one connection is correct only where
+// a deployment happens not to use that routing, and where it does, the reads
+// land on an instance nothing writes - which reads back as "no strategies" and
+// "no hosts" rather than as an error.
+//
+// Neither is alarmd's own storage. Top-level redis is, and these stay out of
+// it so that one key does not have to mean two different things.
+type PlatformCacheConfig struct {
+	// Strategy is where the platform writes the strategy cache alarmd reads.
+	Strategy *RedisConnectionConfig `yaml:"strategy,omitempty"`
+	// CMDB is where the platform writes the host cache the target filter and
+	// the host status filter decide on.
+	CMDB *RedisConnectionConfig `yaml:"cmdb,omitempty"`
+	// DynamicConfig is where the platform distributes its dynamic
+	// configuration: the instance and logical database of the platform's
+	// default Redis, rendered by the chart from the platform's own setting.
+	// Unlike the two above it has no fallback: absent means the deployment
+	// renders no distribution (the publisher is not deployed), and the
+	// platform settings copy says not_configured rather than reading the
+	// wrong instance as "nothing published".
+	DynamicConfig *RedisConnectionConfig `yaml:"dynamic_config,omitempty"`
+	// TargetGroup locates the dynamic target group cache. Prefix-only legacy
+	// configurations retain their historical CMDB connection.
+	TargetGroup *RedisConnectionConfig `yaml:"target_group,omitempty"`
+	// DynamicGroupKeyPrefix is the fork's own Redis key prefix, under which
+	// its dynamic group module writes "<prefix>dynamic_group:<id>" on the
+	// instance selected by TargetGroup (historically CMDB). It is a deployment
+	// coordinate rendered from the fork's setting, spelled exactly as the writer spells
+	// it, separator included; alarmd derives nothing from it and has no
+	// default for it. Absent means the deployment has no such writer and no
+	// group is read (every dynamic group selector resolves unavailable by
+	// name); present and empty is a rendering that went wrong and is
+	// refused rather than read as a prefix.
+	DynamicGroupKeyPrefix *string `yaml:"dynamic_group_key_prefix,omitempty"`
 }
 
-type ReceiptQueueConfig struct {
-	MaxQueuedMessages int `yaml:"max_queued_messages"`
-	MaxQueuedBytes    int `yaml:"max_queued_bytes"`
-}
-
-type EvaluationRunnerConfig struct {
-	MaxPreparationWorkers    int `yaml:"max_preparation_workers"`
-	MaxStatefulWorkers       int `yaml:"max_stateful_workers"`
-	MaxInflightMessages      int `yaml:"max_inflight_messages"`
-	MaxInflightBytes         int `yaml:"max_inflight_bytes"`
-	MaxRuntimeKeysPerMessage int `yaml:"max_runtime_keys_per_message"`
-	MaxPendingKeyRefs        int `yaml:"max_pending_key_refs"`
+// DynamicGroupKeyPrefix is the fork's key prefix for its dynamic group
+// cache, and whether the deployment renders one.
+func (c Config) DynamicGroupKeyPrefix() (string, bool) {
+	if c.PlatformCache.DynamicGroupKeyPrefix == nil {
+		return "", false
+	}
+	return *c.PlatformCache.DynamicGroupKeyPrefix, true
 }
 
 type Config struct {
-	Mode             string                 `yaml:"mode"`
-	HTTP             HTTPConfig             `yaml:"http"`
-	Kafka            KafkaConfig            `yaml:"kafka"`
-	Redis            RedisConfig            `yaml:"redis"`
-	Limits           LimitsConfig           `yaml:"limits"`
-	DependencyRetry  DependencyRetryConfig  `yaml:"dependency_retry"`
-	ReceiptQueue     ReceiptQueueConfig     `yaml:"receipt_queue"`
-	EvaluationRunner EvaluationRunnerConfig `yaml:"evaluation_runner"`
-	ShutdownTimeout  Duration               `yaml:"shutdown_timeout"`
+	// UnknownKeys names, with their lines, the keys the file carries that no
+	// field reads: retired keys and misspellings. They are ignored and named
+	// at startup and on /metrics, never a reason to refuse to start.
+	UnknownKeys []string `yaml:"-"`
+	// Roles is omitted for the default shared process. An explicit selection
+	// is validated before dependencies are checked.
+	Roles         roles.Set             `yaml:"roles,omitempty"`
+	HTTP          HTTPConfig            `yaml:"http"`
+	CLI           CLIConfig             `yaml:"cli"`
+	SRE           SREConfig             `yaml:"sre,omitempty"`
+	Kafka         KafkaConfig           `yaml:"kafka"`
+	Redis         RedisConfig           `yaml:"redis"`
+	PlatformCache PlatformCacheConfig   `yaml:"platform_cache"`
+	Limits        LimitsConfig          `yaml:"limits"`
+	PhaseTwo      PhaseTwoRuntimeConfig `yaml:"phase_two"`
+	// ShutdownTimeout is the drain deadline of a stop (design 02 section
+	// 6.6), and the lease releases after it get as long again: a stop takes
+	// up to 2 x ShutdownTimeout, plus the stop record's write (2 s); a Slot
+	// that ignores its cancellation is not waited for past that. The Pod's
+	// terminationGracePeriodSeconds must cover that, or the kubelet kills the
+	// process before its leases are released and its stop is recorded.
+	//
+	// It is derived from that grace and not a values key: the chart passes
+	// the grace it gives the Pod (TerminationGraceEnvironment), and the
+	// timeout is what fits in it (shutdownTimeoutWithin). A values key had
+	// to be kept in step with the grace by hand. Without the variable -- a
+	// process outside a chart that passes it -- it stays
+	// DefaultShutdownTimeout, which fits Kubernetes' default grace.
+	ShutdownTimeout Duration `yaml:"-"`
 }
 
+// TerminationGraceEnvironment is how the chart tells the process the
+// terminationGracePeriodSeconds it gave the Pod. The Downward API does not
+// expose it, and reading it from the API server would make every stop depend
+// on a permission to read the Pod.
+const TerminationGraceEnvironment = "ALARMD_TERMINATION_GRACE_SECONDS"
+
+// DefaultShutdownTimeout is the drain deadline when no grace is passed: it
+// fits Kubernetes' default 30 second grace with room to spare.
+const DefaultShutdownTimeout = 10 * time.Second
+
+// stopOverhead is what a stop is given beyond its two timeouts: the stop
+// record's write, which runs under its own two second timeout
+// (lifecycleWriteTimeout), and one second of slack. The stop waits for the
+// drain and the lease release only until their deadlines and then goes on --
+// a Slot that ignores its cancellation is left behind and its lease left to
+// expire, not waited for -- so the longest a stop can take, counted from when
+// the process sees the signal, is two timeouts and two seconds. The second
+// left over is what covers the time between the kubelet sending the signal
+// and the process acting on it, and the exit after the record.
+const stopOverhead = 3 * time.Second
+
+// shutdownTimeoutWithin is the longest drain deadline whose stop fits in the
+// grace: 2 x timeout + stopOverhead <= grace.
+func shutdownTimeoutWithin(grace time.Duration) (time.Duration, error) {
+	timeout := (grace - stopOverhead) / 2
+	if timeout <= 0 {
+		return 0, fmt.Errorf("%s %s leaves no time to drain: a stop needs %s beyond two drain deadlines",
+			TerminationGraceEnvironment, grace, stopOverhead)
+	}
+	return timeout, nil
+}
+
+// resolveShutdownTimeoutFromEnvironment derives the drain deadline from the
+// grace the chart passes, when it passes one. A value that is not a whole
+// positive number of seconds is refused rather than ignored: a chart that
+// passes the variable means the stop to fit the grace.
+func (c *Config) resolveShutdownTimeoutFromEnvironment() error {
+	value, ok := os.LookupEnv(TerminationGraceEnvironment)
+	if c == nil || !ok {
+		return nil
+	}
+	seconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil || seconds <= 0 {
+		return fmt.Errorf("%s %q must be a whole positive number of seconds", TerminationGraceEnvironment, value)
+	}
+	timeout, err := shutdownTimeoutWithin(time.Duration(seconds) * time.Second)
+	if err != nil {
+		return err
+	}
+	c.ShutdownTimeout = Duration(timeout)
+	return nil
+}
+
+// Default is the product configuration, and it is the same on every machine:
+// the capacity budgets describe ReferenceContainer, not whatever the process
+// happens to be running on. Load is where they follow the real container.
+// Reading the machine here would make a build agent's core count part of the
+// product default and every test's expectations a property of its host.
 func Default() Config {
-	runner := coordinator.DefaultConcurrentRunnerLimits()
-	return Config{
-		Mode: ModeShadow,
+	cfg := Config{
 		HTTP: HTTPConfig{
 			Listen: "127.0.0.1:8080",
+			// The pprof convention; kept off the query port so the two
+			// surfaces never share a mux.
+			DiagnosticsListen: "127.0.0.1:6060",
 		},
 		Kafka: KafkaConfig{
-			TriggerEvent:   KafkaOutputConfig{MaxMessageBytes: defaultOutputMaxMessageBytes},
-			MessageReceipt: KafkaOutputConfig{MaxMessageBytes: defaultOutputMaxMessageBytes},
+			ClientID: "alarmd", BrokerVersion: enginekafka.MinimumBrokerVersion,
+			TriggerEvent:  KafkaOutputConfig{Topic: "alarmd_event", MaxMessageBytes: defaultOutputMaxMessageBytes},
+			LegacyAdapter: LegacyAdapterConfig{Topic: "alarmd_0bkmonitor_backend_event"},
 		},
 		Redis: RedisConfig{
-			DialTimeout: Duration(3 * time.Second), ReadTimeout: Duration(3 * time.Second),
-			WriteTimeout: Duration(3 * time.Second), PoolSize: 16,
-			MinTTL: Duration(time.Minute), MaxTTL: Duration(30 * 24 * time.Hour), RestartMargin: Duration(10 * time.Minute),
+			RedisConnectionConfig: RedisConnectionConfig{Mode: RedisModeStandalone,
+				DialTimeout: Duration(3 * time.Second), ReadTimeout: Duration(3 * time.Second),
+				WriteTimeout: Duration(3 * time.Second), PoolSize: 0},
+			StatePrefix: DefaultStatePrefix,
+			MaxTTL:      Duration(StateMaxTTL),
 		},
-		Limits: defaultLimits(),
-		DependencyRetry: DependencyRetryConfig{
-			MinDelay: Duration(100 * time.Millisecond), MaxDelay: Duration(5 * time.Second),
-		},
-		ReceiptQueue: ReceiptQueueConfig{MaxQueuedMessages: 4096, MaxQueuedBytes: 16 << 20},
-		EvaluationRunner: EvaluationRunnerConfig{
-			MaxPreparationWorkers: runner.PreparationWorkers, MaxStatefulWorkers: runner.StatefulWorkers,
-			MaxInflightMessages: runner.MaxInflightMessages, MaxInflightBytes: runner.MaxInflightBytes,
-			MaxRuntimeKeysPerMessage: runner.MaxRuntimeKeysPerMessage, MaxPendingKeyRefs: runner.MaxPendingKeyRefs,
-		},
-		ShutdownTimeout: Duration(10 * time.Second),
+		Limits:          defaultLimits(),
+		PhaseTwo:        defaultPhaseTwoRuntime(),
+		ShutdownTimeout: Duration(DefaultShutdownTimeout),
 	}
+	cfg.Redis.RestartMargin = cfg.PhaseTwo.Scheduler.MaxReplayAge
+	cfg.Redis.MinTTL = cfg.Redis.RestartMargin
+	return cfg.withDerivedCapacity(ReferenceContainer())
+}
+
+// withDerivedCapacity sizes admission, queueing and the Coordinator budgets
+// from one container's memory.
+func (c Config) withDerivedCapacity(inputs CapacityInputs) Config {
+	derived := DeriveScheduler(inputs)
+	c.PhaseTwo.Scheduler.ActiveExecutionLimit = derived.ActiveExecutions
+	c.PhaseTwo.Scheduler.ActiveExecutionCeiling = derived.ActiveExecutionCeiling
+	c.PhaseTwo.Scheduler.ProcessQueryPermits = derived.ProcessQueryPermits
+	c.PhaseTwo.Scheduler.RecoveryQueryPermits = derived.RecoveryQueryPermits
+	c.PhaseTwo.Scheduler.ReadyQueueCapacity = derived.ReadyQueueCapacity
+	c.PhaseTwo.Scheduler.RecoveryQueueCapacity = derived.RecoveryQueueCapacity
+	c.PhaseTwo.Coordinator = DeriveCoordinator(
+		inputs, uint64(c.Limits.Store.MaxKeysPerBatch), c.chunkedStateApplyBudget(),
+	)
+	compileCache := DeriveCompileCache(inputs, c.Limits.Compiler.MaxCompiledPlanBytes)
+	c.Limits.Compiler.MaxCacheEntries = compileCache.MaxEntries
+	c.Limits.Compiler.MaxCacheBytes = compileCache.MaxBytes
+	return c
+}
+
+// WithContainerCapacity sizes the budgets for the container this process was
+// given. Load applies it; Default deliberately does not.
+func (c Config) WithContainerCapacity() Config {
+	return c.withDerivedCapacity(DetectCapacityInputs())
+}
+
+// chunkedStateApplyBudget is the most one Slot's State or Gap mutations can
+// carry: StateApplyMaxChunks successive Store calls of max_keys_per_batch
+// items each.
+func (c Config) chunkedStateApplyBudget() uint64 {
+	return uint64(c.Limits.Store.MaxKeysPerBatch) * execution.StateApplyMaxChunks
+}
+
+// deploymentProfile is the Worker's Ownership compatibility identity: Workers
+// registered under different profiles never take over one another's Query
+// Groups. It is persisted in every Worker registration, so the literal stays
+// what deployed Workers already wrote (it was the value of the retired
+// top-level mode key). It is not configurable: a deployment cannot opt out of
+// the takeover fence, and changing the value is the production-ownership
+// switch, which is a rollout of its own.
+const deploymentProfile = "shadow"
+
+// DeploymentProfile reports the persisted Ownership compatibility identity.
+func (c Config) DeploymentProfile() string {
+	return deploymentProfile
+}
+
+// AdmittedQueryConcurrency is the number of queries the scheduler may have in
+// flight at once. It bounds the query stage only; it is not the bound on Redis
+// concurrency, because the Slot source reads the control plane before a Slot
+// becomes eligible to query and holds no permit while doing so.
+func (c Config) AdmittedQueryConcurrency() int {
+	s := c.PhaseTwo.Scheduler
+	return s.ProcessQueryPermits + s.RecoveryQueryPermits
+}
+
+// redisPoolCapacityInputs is the container the pool derives from: the one this
+// process was given.
+func redisPoolCapacityInputs() CapacityInputs {
+	return DetectCapacityInputs()
+}
+
+// WithResolvedRedisPoolSize returns a copy whose Redis pool sizes are concrete
+// positive numbers, so the resolved value can be reported as a startup fact
+// rather than staying implicit in the client.
+func (c Config) WithResolvedRedisPoolSize() Config {
+	inputs := redisPoolCapacityInputs()
+	c.Redis.PoolSize = c.Redis.Connection().EffectivePoolSize(inputs)
+	for _, platform := range []**RedisConnectionConfig{&c.PlatformCache.Strategy, &c.PlatformCache.CMDB, &c.PlatformCache.DynamicConfig, &c.PlatformCache.TargetGroup} {
+		if *platform == nil {
+			continue
+		}
+		resolved := (*platform).clone()
+		resolved.PoolSize = resolved.EffectivePoolSize(inputs)
+		*platform = &resolved
+	}
+	return c
 }
 
 func (c Config) RedisBackendOptions() state.RedisBackendOptions {
 	return state.RedisBackendOptions{
 		Address: c.Redis.Address, Username: c.Redis.Username, Password: c.Redis.Password, DB: c.Redis.DB,
 		DialTimeout: c.Redis.DialTimeout.Duration(), ReadTimeout: c.Redis.ReadTimeout.Duration(),
-		WriteTimeout: c.Redis.WriteTimeout.Duration(), PoolSize: c.Redis.PoolSize,
+		WriteTimeout: c.Redis.WriteTimeout.Duration(),
+		// Resolve here as well as in the runtime path: WithResolvedRedisPoolSize
+		// carries the authoritative value into the startup facts, but options can
+		// also be built by paths that never ran it, and a zero must never reach a
+		// client. Both paths derive from the same container so they cannot disagree;
+		// passing the admitted concurrency here used to produce a different pool
+		// than the one the process reported.
+		PoolSize: c.Redis.Connection().EffectivePoolSize(redisPoolCapacityInputs()),
 	}
 }
 
-func (c Config) StateStoreOptions(codec *state.Codec, router state.StorageRouter, observer state.Observer) state.StoreOptions {
-	return state.StoreOptions{
-		Prefix: c.Redis.StatePrefix, Codec: codec, Router: router, Limits: c.StoreLimits(),
-		MinTTL: c.Redis.MinTTL.Duration(), MaxTTL: c.Redis.MaxTTL.Duration(),
-		RestartMargin: c.Redis.RestartMargin.Duration(), Observer: observer,
+func (c RedisConfig) Connection() RedisConnectionConfig {
+	return c.RedisConnectionConfig.clone()
+}
+
+// StrategySourceRedis is where the platform's strategy cache is read from.
+func (c Config) StrategySourceRedis() RedisConnectionConfig {
+	if c.PlatformCache.Strategy != nil {
+		return c.PlatformCache.Strategy.clone()
+	}
+	return c.Redis.Connection()
+}
+
+// PlatformKeyPrefix is the platform's own key prefix - the root every cache it
+// writes hangs off. Both the host cache this process reads and the strategy
+// snapshot the compatibility output writes are keyed under it.
+//
+// It is stated once, under the compatibility adapter, because that is where the
+// platform's key space was first needed. The field is misnamed for this second
+// use and the name is worth moving, but not by stating the same value twice:
+// two keys for one platform fact drift, and the failure of a drifted prefix is
+// a read that returns nothing rather than an error. This accessor exists so the
+// read sites say which fact they want instead of reaching into a neighbouring
+// feature's configuration.
+func (c Config) PlatformKeyPrefix() string {
+	return c.Kafka.LegacyAdapter.SnapshotPrefix
+}
+
+// OutputProtocol is the deployment's choice of wire format for published
+// events. It is resolved per strategy when a Plan is built, and frozen there.
+func (c Config) OutputProtocol() string {
+	return c.PhaseTwo.Output.protocol()
+}
+
+// NoDataTrackingHorizonSeconds is the horizon the deployment's values state,
+// and whether they state one at all.
+//
+// It is the values layer and nothing more. The effective platform horizon is
+// resolved by the platform settings copy: a dynamic value, else this one,
+// else the contract's one day. Absent here therefore no longer means "track
+// indefinitely" - that reading is withdrawn; the approved contract gives every
+// group a finite horizon by default. A strategy stating its own overrides all
+// three.
+func (c Config) NoDataTrackingHorizonSeconds() (int64, bool) {
+	if c.PhaseTwo.NoData.TrackingHorizonSeconds == nil {
+		return 0, false
+	}
+	return *c.PhaseTwo.NoData.TrackingHorizonSeconds, true
+}
+
+// NoDataMaxGroups is the deployment's no-data group bound, zero when the
+// values state none and the store's default applies.
+func (c Config) NoDataMaxGroups() int {
+	if c.PhaseTwo.NoData.MaxGroups == nil {
+		return 0
+	}
+	return *c.PhaseTwo.NoData.MaxGroups
+}
+
+// PlatformSettingsLayer is the deployment's layer of the platform settings:
+// the platform_settings group, and the no-data horizon from its own leaf.
+func (c Config) PlatformSettingsLayer() platformsettings.Layer {
+	layer := c.PhaseTwo.PlatformSettings.Layer()
+	if horizon, stated := c.NoDataTrackingHorizonSeconds(); stated {
+		layer.NoDataTrackingHorizonSeconds = &horizon
+	}
+	return layer
+}
+
+// CMDBCacheRedis is where the platform's host cache is read from.
+func (c Config) CMDBCacheRedis() RedisConnectionConfig {
+	if c.PlatformCache.CMDB != nil {
+		return c.PlatformCache.CMDB.clone()
+	}
+	return c.Redis.Connection()
+}
+
+// DynamicConfigRedis is where the platform distributes its dynamic
+// configuration, and whether the deployment renders it at all.
+func (c Config) DynamicConfigRedis() (RedisConnectionConfig, bool) {
+	if c.PlatformCache.DynamicConfig == nil {
+		return RedisConnectionConfig{}, false
+	}
+	return c.PlatformCache.DynamicConfig.clone(), true
+}
+
+// TargetGroupRedis returns the explicit location, or the historical CMDB
+// location for prefix-only configurations. Without a prefix no groups are read.
+func (c Config) TargetGroupRedis() (RedisConnectionConfig, bool) {
+	if c.PlatformCache.DynamicGroupKeyPrefix == nil {
+		return RedisConnectionConfig{}, false
+	}
+	if c.PlatformCache.TargetGroup != nil {
+		return c.PlatformCache.TargetGroup.clone(), true
+	}
+	return c.CMDBCacheRedis(), true
+}
+
+// resolvePlatformCacheRedis writes down which connection each platform cache
+// actually resolved to, rather than leaving it to be worked out again at every
+// call site. The resolved configuration is what a release check reads and what
+// an incident is reconstructed from, and "inherited" is not an answer to the
+// question of where a read went.
+func (c *Config) resolvePlatformCacheRedis() {
+	if c == nil {
+		return
+	}
+	for _, cache := range []**RedisConnectionConfig{&c.PlatformCache.Strategy, &c.PlatformCache.CMDB, &c.PlatformCache.DynamicConfig, &c.PlatformCache.TargetGroup} {
+		if *cache == nil {
+			if cache == &c.PlatformCache.DynamicConfig || cache == &c.PlatformCache.TargetGroup {
+				continue
+			}
+			resolved := c.Redis.Connection()
+			*cache = &resolved
+			continue
+		}
+		// A stated cache says where to read, not how long to wait for it.
+		// Timeouts and pool size are one operational setting for this process,
+		// so they are inherited rather than restated per location - the same
+		// choice the compatibility service Redis already makes, and for the
+		// same reason: a deployment that has to repeat them will eventually
+		// repeat them differently.
+		resolved := (*cache).clone()
+		if resolved.DialTimeout == 0 {
+			resolved.DialTimeout = c.Redis.DialTimeout
+		}
+		if resolved.ReadTimeout == 0 {
+			resolved.ReadTimeout = c.Redis.ReadTimeout
+		}
+		if resolved.WriteTimeout == 0 {
+			resolved.WriteTimeout = c.Redis.WriteTimeout
+		}
+		if resolved.PoolSize == 0 {
+			resolved.PoolSize = c.Redis.PoolSize
+		}
+		*cache = &resolved
 	}
 }
 
-func (c Config) DependencyRetryOptions() coordinator.DependencyRetryConfig {
-	return coordinator.DependencyRetryConfig{
-		MinDelay: c.DependencyRetry.MinDelay.Duration(), MaxDelay: c.DependencyRetry.MaxDelay.Duration(),
+// RuntimeStoreRedis is where alarmd's own runtime state lives: catalog,
+// ownership, state, fleet and progress. It is the top-level redis and nothing
+// else - there was once a second key that could move this connection on its
+// own, which left the prefix and the TTLs that parameterise these keys stated
+// under a different key from the connection they applied to. The way to put
+// alarmd's state somewhere of its own is externalRedis.alarmd, which moves
+// this whole section together.
+func (c Config) RuntimeStoreRedis() RedisConnectionConfig {
+	return c.Redis.Connection()
+}
+
+// resolveCompatibilityServiceTimeouts lets the compatibility service Redis
+// inherit the runtime Redis timeouts when it does not state its own. Timeouts
+// say how long to wait, not where to write, so inheriting them keeps one
+// operational setting instead of two; mode and address stay explicit because
+// they decide the destination and a wrong guess there writes a snapshot nobody
+// reads.
+// resolveCompatibilityPodCache fills in the Django cache coordinates the
+// deployment does not choose. Workload enrichment reads the same cache Python
+// reads, whose keys carry Django's cache version; the platform leaves that at
+// Django's default, so the version is the product's to know rather than one
+// more line for a values file to get wrong.
+func (c *Config) resolveCompatibilityPodCache() {
+	if c == nil || c.Kafka.LegacyAdapter.PodCache == nil {
+		return
+	}
+	cache := c.Kafka.LegacyAdapter.PodCache
+	if cache.Version <= 0 {
+		cache.Version = defaultDjangoCacheVersion
+	}
+	if cache.Connection.DialTimeout == 0 {
+		cache.Connection.DialTimeout = c.Redis.DialTimeout
+	}
+	if cache.Connection.ReadTimeout == 0 {
+		cache.Connection.ReadTimeout = c.Redis.ReadTimeout
+	}
+	if cache.Connection.WriteTimeout == 0 {
+		cache.Connection.WriteTimeout = c.Redis.WriteTimeout
 	}
 }
 
-func (c Config) ReceiptPublisherLimits() enginekafka.ReceiptPublisherLimits {
-	return enginekafka.ReceiptPublisherLimits{
-		MaxQueuedMessages: c.ReceiptQueue.MaxQueuedMessages, MaxQueuedBytes: c.ReceiptQueue.MaxQueuedBytes,
+func (c *Config) resolveCompatibilityServiceTimeouts() {
+	if c == nil {
+		return
+	}
+	runtimeRedis := c.Redis.Connection()
+	service := &c.Kafka.LegacyAdapter.ServiceRedis
+	if service.DialTimeout == 0 {
+		service.DialTimeout = runtimeRedis.DialTimeout
+	}
+	if service.ReadTimeout == 0 {
+		service.ReadTimeout = runtimeRedis.ReadTimeout
+	}
+	if service.WriteTimeout == 0 {
+		service.WriteTimeout = runtimeRedis.WriteTimeout
 	}
 }
 
-func (c Config) EvaluationRunnerLimits() coordinator.ConcurrentRunnerLimits {
-	return coordinator.ConcurrentRunnerLimits{
-		PreparationWorkers:       c.EvaluationRunner.MaxPreparationWorkers,
-		StatefulWorkers:          c.EvaluationRunner.MaxStatefulWorkers,
-		MaxInflightMessages:      c.EvaluationRunner.MaxInflightMessages,
-		MaxInflightBytes:         c.EvaluationRunner.MaxInflightBytes,
-		MaxRuntimeKeysPerMessage: c.EvaluationRunner.MaxRuntimeKeysPerMessage,
-		MaxPendingKeyRefs:        c.EvaluationRunner.MaxPendingKeyRefs,
+// decodeDocument decodes one YAML document onto cfg strictly: quoted
+// integers are refused, a value of the wrong type is refused, and a key no
+// field reads is ignored and recorded in cfg.UnknownKeys.
+func decodeDocument(raw []byte, cfg *Config) error {
+	var document yaml.Node
+	if err := yaml.Unmarshal(raw, &document); err != nil {
+		return fmt.Errorf("decode config: %w", err)
 	}
+	rewritten, err := strictIntegers(&document, reflect.TypeOf(*cfg), "")
+	if err != nil {
+		return fmt.Errorf("decode config: %w", err)
+	}
+	// Only a document with a quoted integer is re-encoded, so every other
+	// one is decoded from the bytes as written and its errors keep their
+	// lines.
+	if rewritten {
+		if raw, err = yaml.Marshal(&document); err != nil {
+			return fmt.Errorf("decode config: %w", err)
+		}
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(cfg); err != nil {
+		unknown, rest := splitUnknownKeys(err)
+		if rest != nil {
+			return fmt.Errorf("decode config: %w", rest)
+		}
+		cfg.UnknownKeys = unknown
+	}
+	// yaml.v3 decodes an explicit null as nil, just like omission. Preserve
+	// the declaration so roles: null cannot silently enable every role.
+	if cfg.Roles == nil && yamlRolesDeclared(&document) {
+		cfg.Roles = roles.Set{}
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("decode config: multiple YAML documents are not allowed")
+		}
+		return fmt.Errorf("decode config: %w", err)
+	}
+	return nil
 }
 
-func Load(path string) (Config, error) {
-	cfg := Default()
+var unknownKeyError = regexp.MustCompile(`^line \d+: field \S+ not found in type \S+$`)
+
+// splitUnknownKeys separates, in a decode error, the keys no field reads from
+// everything else. yaml.v3 goes on decoding past an unknown key, so the
+// configuration is whole when they are the only errors; any other error,
+// a value of the wrong type above all, is returned and refuses the load.
+func splitUnknownKeys(err error) ([]string, error) {
+	var typeErr *yaml.TypeError
+	if !errors.As(err, &typeErr) {
+		return nil, err
+	}
+	var unknown, rest []string
+	for _, message := range typeErr.Errors {
+		if unknownKeyError.MatchString(message) {
+			unknown = append(unknown, message)
+		} else {
+			rest = append(rest, message)
+		}
+	}
+	if len(rest) > 0 {
+		return nil, &yaml.TypeError{Errors: rest}
+	}
+	return unknown, nil
+}
+
+// LoadWithCredentials applies a CLI selection before validating
+// dependencies. A nil override keeps the file's selection; a non-nil empty
+// override is refused. credentials states how the credential references are
+// treated: see CredentialMode (CredentialsForRoles reads the ones the
+// selected roles use).
+func LoadWithCredentials(path string, override roles.Set, credentials CredentialMode) (Config, error) {
+	cfg := Default().WithContainerCapacity()
 	if path == "" {
+		if override != nil {
+			cfg.Roles = append(roles.Set{}, override...)
+		}
+		selected, err := roles.Resolve(cfg.Roles)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Roles = selected
+		cfg.resolvePlatformCacheRedis()
+		cfg.resolveCompatibilityServiceTimeouts()
+		cfg.resolveCompatibilityPodCache()
+		if err := cfg.resolveShutdownTimeoutFromEnvironment(); err != nil {
+			return Config{}, err
+		}
 		return cfg, cfg.Validate()
 	}
 
@@ -222,103 +837,282 @@ func Load(path string) (Config, error) {
 	}
 	defer file.Close()
 
-	decoder := yaml.NewDecoder(file)
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&cfg); err != nil {
-		return Config{}, fmt.Errorf("decode config: %w", err)
+	raw, err := io.ReadAll(file)
+	if err != nil {
+		return Config{}, fmt.Errorf("read config: %w", err)
 	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return Config{}, errors.New("decode config: multiple YAML documents are not allowed")
-		}
-		return Config{}, fmt.Errorf("decode config: %w", err)
+	if err := decodeDocument(raw, &cfg); err != nil {
+		return Config{}, err
 	}
 
+	if override != nil {
+		cfg.Roles = append(roles.Set{}, override...)
+	}
+	selected, err := roles.Resolve(cfg.Roles)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Roles = selected
+	// Before anything copies a connection: see resolveCredentials.
+	if err := cfg.resolveCredentials(credentials); err != nil {
+		return Config{}, err
+	}
+	cfg.resolvePlatformCacheRedis()
+	cfg.resolveCompatibilityServiceTimeouts()
+	cfg.resolveCompatibilityPodCache()
+	if err := cfg.resolveShutdownTimeoutFromEnvironment(); err != nil {
+		return Config{}, err
+	}
+	cfg.resolvePhaseTwoWorkerIDFromEnvironment()
+	if cfg.HasRole(roles.Channel) {
+		// Where the key is kept, for the login page; a pointer beside the
+		// key's one source, not a source of its own.
+		cfg.CLI.resolveAdminKeySecret()
+	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
 }
 
+func yamlRolesDeclared(node *yaml.Node) bool {
+	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+		return yamlRolesDeclared(node.Content[0])
+	}
+	if node.Kind == yaml.AliasNode {
+		return yamlRolesDeclared(node.Alias)
+	}
+	if node.Kind != yaml.MappingNode {
+		return false
+	}
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		if node.Content[index].Value == "roles" {
+			return true
+		}
+		if node.Content[index].Value == "<<" {
+			merged := node.Content[index+1]
+			if yamlRolesDeclared(merged) {
+				return true
+			}
+			if merged.Kind == yaml.SequenceNode {
+				for _, entry := range merged.Content {
+					if yamlRolesDeclared(entry) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// EffectiveRoles returns the resolved roles of a valid configuration without
+// exposing its backing slice. Invalid selections return no effective roles.
+func (c Config) EffectiveRoles() roles.Set {
+	selected, _ := roles.Resolve(c.Roles)
+	return selected
+}
+
+func (c Config) HasRole(role roles.Role) bool {
+	return c.EffectiveRoles().Has(role)
+}
+
+// PublicSurfaceRestrictionRequested is the configuration's half of the one
+// switch for the public surface: the process serves the CLI, which it does
+// with a deployment administrator key. The key is what makes a CLI session
+// available, and only then do the routes that carry deployment coordinates
+// have somewhere else to be read from. The other half is the runtime's: the
+// surface is restricted only once the CLI has actually come up, since
+// restricting without it would leave no way in. No separate setting exists,
+// so the two cannot disagree.
+func (c Config) PublicSurfaceRestrictionRequested() bool {
+	return c.HasRole(roles.Channel) && c.CLI.Enabled()
+}
+
 func (c Config) Validate() error {
-	if c.Mode != ModeShadow {
-		return fmt.Errorf("mode %q is not allowed before production ownership is implemented", c.Mode)
+	if _, err := roles.Resolve(c.Roles); err != nil {
+		return err
+	}
+	if err := c.validateCommon(); err != nil {
+		return err
+	}
+	if err := c.SRE.WithUQEndpoint(c.PhaseTwo.Access.UQEndpoint).Validate(); err != nil {
+		return err
 	}
 
-	host, port, err := net.SplitHostPort(c.HTTP.Listen)
+	return c.validateGoAccessRuntime()
+}
+
+func validateListenAddress(field, address string) error {
+	host, port, err := net.SplitHostPort(address)
 	if err != nil {
-		return fmt.Errorf("http listen %q: %w", c.HTTP.Listen, err)
+		return fmt.Errorf("%s %q: %w", field, address, err)
 	}
 	if host == "" {
-		return fmt.Errorf("http listen %q has empty host", c.HTTP.Listen)
+		return fmt.Errorf("%s %q has empty host", field, address)
 	}
 	portNumber, err := strconv.Atoi(port)
 	if err != nil || portNumber <= 0 || portNumber > 65535 {
-		return fmt.Errorf("http listen %q has invalid port", c.HTTP.Listen)
+		return fmt.Errorf("%s %q has invalid port", field, address)
+	}
+	return nil
+}
+
+// listenAddressesCollide reports whether two listen addresses would contend for
+// the same socket. Comparing the strings is not enough: the deployed query
+// surface binds a wildcard, so a diagnostics address on the same port with any
+// host still fails to bind. Catching it here turns a CrashLoop into a config
+// error. Host names beyond localhost are left to the bind, which fails loudly.
+func listenAddressesCollide(left, right string) bool {
+	leftHost, leftPort, err := net.SplitHostPort(left)
+	if err != nil {
+		return false
+	}
+	rightHost, rightPort, err := net.SplitHostPort(right)
+	if err != nil {
+		return false
+	}
+	if leftPort != rightPort {
+		return false
+	}
+	return isWildcardHost(leftHost) || isWildcardHost(rightHost) ||
+		normalizeListenHost(leftHost) == normalizeListenHost(rightHost)
+}
+
+func isWildcardHost(host string) bool {
+	return host == "" || host == "0.0.0.0" || host == "::"
+}
+
+func normalizeListenHost(host string) string {
+	if host == "localhost" {
+		return "127.0.0.1"
+	}
+	return host
+}
+
+func (c Config) validateCommon() error {
+	if err := validateListenAddress("http listen", c.HTTP.Listen); err != nil {
+		return err
+	}
+	// An empty diagnostics address serves no pprof, which is a supported
+	// choice; a set one must be a real address and must not collide with the
+	// query surface, or the split it exists to create would not happen.
+	if c.HTTP.DiagnosticsListen != "" {
+		if err := validateListenAddress("http diagnostics_listen", c.HTTP.DiagnosticsListen); err != nil {
+			return err
+		}
+		if listenAddressesCollide(c.HTTP.Listen, c.HTTP.DiagnosticsListen) {
+			return fmt.Errorf(
+				"http diagnostics_listen %q must differ from http listen %q",
+				c.HTTP.DiagnosticsListen, c.HTTP.Listen,
+			)
+		}
+	}
+
+	if c.HTTP.InternalListen != "" {
+		if err := validateListenAddress("http internal_listen", c.HTTP.InternalListen); err != nil {
+			return err
+		}
+		for _, other := range []struct{ field, address string }{{"http listen", c.HTTP.Listen}, {"http diagnostics_listen", c.HTTP.DiagnosticsListen}} {
+			if other.address != "" && listenAddressesCollide(c.HTTP.InternalListen, other.address) {
+				return fmt.Errorf("http internal_listen %q must differ from %s %q", c.HTTP.InternalListen, other.field, other.address)
+			}
+		}
 	}
 
 	if c.ShutdownTimeout.Duration() <= 0 {
 		return errors.New("shutdown_timeout must be positive")
 	}
-	if err := c.Kafka.ConsumerCoordinates().Validate(); err != nil {
-		return fmt.Errorf("consumer configuration: %w", err)
-	}
-	if c.Kafka.TriggerEvent.Topic == c.Kafka.MessageReceipt.Topic {
-		return errors.New("kafka trigger_event and message_receipt topics must differ")
-	}
-	if err := c.Kafka.TriggerEventCoordinates().Validate(); err != nil {
-		return fmt.Errorf("trigger event configuration: %w", err)
-	}
-	if err := c.Kafka.MessageReceiptCoordinates().Validate(); err != nil {
-		return fmt.Errorf("message receipt configuration: %w", err)
+	return nil
+}
+
+func (c Config) validateGoAccessRuntime() error {
+	selected := c.EffectiveRoles()
+	business := selected.Has(roles.Control) || selected.Has(roles.Worker)
+	if business {
+		// Control emits source-driven global closes; Worker emits execution
+		// results. Both therefore retain the output and alert-link contracts.
+		if err := c.PhaseTwo.Linkd.Validate(); err != nil {
+			return err
+		}
+		if err := validatePhaseTwoKafkaOutput(c.Kafka); err != nil {
+			return fmt.Errorf("trigger event configuration: %w", err)
+		}
+		if err := c.Kafka.validateCompatibilityOutput(); err != nil {
+			return fmt.Errorf("compatibility output configuration: %w", err)
+		}
 	}
 	if err := c.validateRedis(); err != nil {
 		return err
 	}
-	if err := c.Limits.validate(); err != nil {
+	if business {
+		if err := c.Limits.validate(); err != nil {
+			return err
+		}
+	}
+	if err := c.PhaseTwo.validateRoles(selected); err != nil {
 		return err
 	}
-	if c.Limits.Reader.MaxEnvelopeBytes > enginekafka.MaxConsumerRecordBytes() {
-		return errors.New("limits.reader.max_envelope_bytes exceeds Kafka consumer record fetch budget")
+	if !business {
+		return c.CLI.validateEnabled()
+	}
+	// Worker still reads legacy effective-time facts from the strategy
+	// connection even when it does not own strategy ingestion or compilation.
+	if err := c.StrategySourceRedis().validate("platform_cache.strategy"); err != nil {
+		return err
+	}
+	if selected.Has(roles.Worker) {
+		if err := c.CMDBCacheRedis().validate("platform_cache.cmdb"); err != nil {
+			return err
+		}
+	}
+	if prefix, rendered := c.DynamicGroupKeyPrefix(); rendered && strings.TrimSpace(prefix) == "" {
+		return errors.New("platform_cache.dynamic_group_key_prefix is rendered but empty; leave it out where no dynamic group cache is written")
+	}
+	if c.PlatformCache.TargetGroup != nil && c.PlatformCache.DynamicGroupKeyPrefix == nil {
+		return errors.New("platform_cache.target_group requires platform_cache.dynamic_group_key_prefix")
+	}
+	if selected.Has(roles.Worker) {
+		if connection, configured := c.TargetGroupRedis(); configured {
+			if err := connection.validate("platform_cache.target_group"); err != nil {
+				return err
+			}
+		}
+	}
+	if selected.Has(roles.Control) {
+		if err := validateRuntimePrefixIsolation(c.Redis.StatePrefix, c.PhaseTwo.Control.StrategyCachePrefix); err != nil {
+			return err
+		}
 	}
 	if c.Limits.Trigger.MaxEvidenceBytesPerEvent > c.Kafka.TriggerEvent.MaxMessageBytes {
 		return errors.New("trigger_event max_message_bytes cannot admit maximum trigger evidence")
 	}
-	if c.DependencyRetry.MinDelay.Duration() <= 0 || c.DependencyRetry.MaxDelay.Duration() < c.DependencyRetry.MinDelay.Duration() {
-		return errors.New("dependency_retry delay range is invalid")
+	if !selected.Has(roles.Worker) {
+		return nil
 	}
-	if c.ReceiptQueue.MaxQueuedMessages <= 0 || c.ReceiptQueue.MaxQueuedBytes <= 0 {
-		return errors.New("receipt_queue budgets must be positive")
+	// The restart margin is the replay window (RedisConfig.RestartMargin),
+	// so the state a replayed Slot needs to recognise its own write outlives
+	// the window by construction; there is nothing left here to check.
+	budget := c.PhaseTwo.Coordinator
+	// One Slot's State or Gap mutations are applied in successive Store calls
+	// of at most max_keys_per_batch items, up to StateApplyMaxChunks calls.
+	// A process budget above that product could admit a Slot no apply can
+	// ever carry, so it is rejected here rather than at runtime.
+	chunkedApplyBudget := c.chunkedStateApplyBudget()
+	if budget.MaxStateMutations > chunkedApplyBudget || budget.MaxGapMutations > chunkedApplyBudget {
+		return errors.New("phase_two mutation budgets exceed the chunked state store apply budget")
 	}
-	if c.ReceiptQueue.MaxQueuedBytes < c.Kafka.MessageReceipt.MaxMessageBytes {
-		return errors.New("receipt_queue max_queued_bytes cannot admit one maximum message receipt")
-	}
-	if c.EvaluationRunner.MaxPreparationWorkers <= 0 || c.EvaluationRunner.MaxStatefulWorkers <= 0 ||
-		c.EvaluationRunner.MaxInflightMessages <= 0 || c.EvaluationRunner.MaxInflightBytes <= 0 ||
-		c.EvaluationRunner.MaxRuntimeKeysPerMessage <= 0 || c.EvaluationRunner.MaxPendingKeyRefs <= 0 ||
-		c.EvaluationRunner.MaxRuntimeKeysPerMessage > c.EvaluationRunner.MaxPendingKeyRefs {
-		return errors.New("evaluation_runner budgets must be positive and internally consistent")
-	}
-	if c.EvaluationRunner.MaxRuntimeKeysPerMessage/c.Limits.Reader.MaxPlansPerMessage <
-		c.Limits.Reader.MaxRecordsPerMessage {
-		return errors.New("evaluation_runner max_runtime_keys_per_message cannot admit one maximum reader message")
-	}
-	if c.EvaluationRunner.MaxInflightBytes < c.Limits.Reader.MaxEnvelopeBytes {
-		return errors.New("evaluation_runner max_inflight_bytes cannot admit one maximum reader envelope")
+	if budget.MaxRetainedBytes > math.MaxInt64 {
+		return errors.New("phase_two provider budgets overflow production limits")
 	}
 	return nil
 }
 
 func (c Config) validateRedis() error {
-	if c.Redis.Address == "" || strings.TrimSpace(c.Redis.Address) != c.Redis.Address {
-		return errors.New("redis address must be non-empty canonical text")
+	if err := c.Redis.Connection().validate("redis"); err != nil {
+		return err
 	}
-	if c.Redis.DB < 0 || c.Redis.DialTimeout.Duration() <= 0 || c.Redis.ReadTimeout.Duration() <= 0 ||
-		c.Redis.WriteTimeout.Duration() <= 0 || c.Redis.PoolSize <= 0 {
-		return errors.New("redis db, timeouts and pool_size are invalid")
-	}
-	if strings.TrimSpace(c.Redis.StatePrefix) == "" || strings.TrimSpace(c.Redis.StatePrefix) != c.Redis.StatePrefix {
+	if !canonicalRedisPrefix(c.Redis.StatePrefix) {
 		return errors.New("redis state_prefix must be non-empty canonical text")
 	}
 	if c.Redis.MinTTL.Duration() <= 0 || c.Redis.MaxTTL.Duration() < c.Redis.MinTTL.Duration() || c.Redis.RestartMargin.Duration() < 0 {

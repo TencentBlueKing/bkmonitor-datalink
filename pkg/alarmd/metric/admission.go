@@ -1,0 +1,312 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License.
+
+package metric
+
+import (
+	"strconv"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/admission"
+)
+
+// Series admission is on the hot path - once per series per plan - so it is
+// counted directly rather than through an observation per decision. Only the
+// filter name, the outcome and a bounded reason are recorded; no host, plan or
+// strategy identity reaches the labels.
+var admissionResults = map[string]struct{}{"admitted": {}, "rejected": {}, "held": {}}
+
+// The reason vocabulary is closed on purpose: it is a metric label, and a
+// free-form reason turns one series into as many as there are strings.
+var admissionFilters = map[string]struct{}{"target_scope": {}, "target_plan": {}, "host_status": {}, "host_identity": {}, "none": {}}
+var admissionReasons = map[string]struct{}{
+	"in_scope": {}, "out_of_scope": {}, "scope_empty": {}, "none": {},
+	// Target scope on object identity: a record that built no identity is a
+	// defect on the writing or querying side every time, and an identity the
+	// target did not name is either a record outside the target or a target
+	// written in another representation than the data; the two are named
+	// apart from out_of_scope so the first is alertable and the second is
+	// readable against in_scope.
+	"object_identity_missing": {}, "object_identity_unmatched": {},
+	// Target scope on a dynamic group the Slot could not read: refused, as
+	// the group's unknown hosts are, and not known to be outside the target.
+	"dynamic_group_unavailable": {},
+	// Target plan: a record that carries no key is a defect on the writing or
+	// querying side, a record outside the resolved members is the filter
+	// working, and a target nobody resolved is this process not filtering -
+	// the third is structurally unreachable and alertable if it ever counts.
+	// A record outside the members of a resolution one of whose selectors
+	// could not answer is neither: target_selector_unavailable, refused as
+	// the contract says, and not known to be outside the target.
+	"in_target": {}, "target_key_missing": {}, "out_of_target": {}, "target_plan_unresolved": {},
+	"target_selector_unavailable": {},
+	// Host status: the reasons matter separately because they call for
+	// different actions - a disabled host is the filter working, an unknown
+	// host is a CMDB gap, and unavailable facts mean it is not filtering.
+	// The two indexes enrichment consults are written by different jobs, so
+	// each names its own unavailability.
+	"monitoring_disabled": {}, "host_unknown": {}, "host_identity_invalid": {},
+	"host_facts_unavailable": {}, "service_instance_facts_unavailable": {},
+	// Host identity: a host-placed series whose alert identity was read from
+	// the index past its bound (stale_index) or from the last index that held
+	// its host (last_populated_index), while the filters saw the facts
+	// unavailable; one held, its query failed and the Slot retried, until
+	// the store's first load returns (held_no_index, result held); and one
+	// emitted under its own address because that load held no host
+	// (raw_no_index).
+	admission.HostOverlayFromStaleIndex: {}, admission.HostOverlayFromLastPopulatedIndex: {}, admission.HostIdentityHeld: {},
+	admission.HostIdentityRawNoIndex: {}, admission.HostIdentityInstanceWithoutAddress: {},
+}
+
+// RecordSeriesAdmission counts one admission decision.
+func (r *Recorder) RecordSeriesAdmission(filter, result, reason string) {
+	if r == nil {
+		return
+	}
+	if _, known := admissionResults[result]; !known {
+		return
+	}
+	if filter == "" {
+		filter = "none"
+	}
+	if reason == "" {
+		reason = "none"
+	}
+	if _, known := admissionFilters[filter]; !known {
+		filter = "none"
+	}
+	if _, known := admissionReasons[reason]; !known {
+		reason = "none"
+	}
+	r.phaseTwo.seriesAdmission.WithLabelValues(filter, result, reason).Inc()
+}
+
+// RecordHostPlacement counts one admitted series a Plan read whose host CMDB
+// placed by id or agent, and, when its own address is not that host's, one
+// whose address differs, by how (admission.AddressCauses). The same address,
+// or a cause outside the set, counts as placed only.
+func (r *Recorder) RecordHostPlacement(groupedByTargetIP bool, cause string) {
+	if r == nil {
+		return
+	}
+	grouped := strconv.FormatBool(groupedByTargetIP)
+	r.phaseTwo.cmdbPlacedByHostID.WithLabelValues(grouped).Inc()
+	switch cause {
+	case admission.AddressDiffers, admission.AddressMissing, admission.AddressUndecodable:
+		r.phaseTwo.cmdbAddressDiffers.WithLabelValues(grouped, cause).Inc()
+	}
+}
+
+var cmdbIndexReasons = map[string]struct{}{
+	"none": {}, "never_loaded": {}, "index_stale": {}, "index_empty": {}, "no_store": {},
+}
+
+// SetCMDBHostIndex publishes what the target filter is currently deciding on.
+//
+// The numbers matter together: a filter deciding on an empty or long-stale
+// index is not filtering correctly, and without the age it is impossible to
+// tell a correct "out of scope" from one caused by a cache that stopped being
+// refreshed.
+//
+// The ages are by kind: index is how long ago alarmd read it; published, how
+// long ago the writer published what was read, which is what staleness is
+// judged on when the writer says (0 when it does not); source, another
+// writer's last full-pass attempt, shown and not judged on.
+func (r *Recorder) SetCMDBHostIndex(hosts int, ageSeconds, publishedAgeSeconds, sourceAgeSeconds float64, degraded bool, reason string) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.cmdbIndexHosts.Set(float64(hosts))
+	r.phaseTwo.cmdbIndexAge.WithLabelValues("index").Set(ageSeconds)
+	r.phaseTwo.cmdbIndexAge.WithLabelValues("published").Set(publishedAgeSeconds)
+	r.phaseTwo.cmdbIndexAge.WithLabelValues("source").Set(sourceAgeSeconds)
+	if reason == "" {
+		reason = "none"
+	}
+	value := 0.0
+	if degraded {
+		value = 1
+	}
+	if _, known := cmdbIndexReasons[reason]; !known {
+		reason = "none"
+	}
+	r.phaseTwo.cmdbIndexDegraded.Reset()
+	r.phaseTwo.cmdbIndexDegraded.WithLabelValues(reason).Set(value)
+}
+
+// SetCMDBHostIndexPublish publishes the published-staleness bound in force
+// and the longest recent publish gap it was derived from.
+func (r *Recorder) SetCMDBHostIndexPublish(boundSeconds, maxGapSeconds float64) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.cmdbIndexPublish.WithLabelValues("stale_bound").Set(boundSeconds)
+	r.phaseTwo.cmdbIndexPublish.WithLabelValues("max_gap").Set(maxGapSeconds)
+}
+
+// RecordCMDBIndexRead counts one refresh of the CMDB index by how it read
+// the cache: full, unchanged or failed. Any other word is counted as failed
+// rather than as a new series.
+func (r *Recorder) RecordCMDBIndexRead(result string) {
+	if r == nil {
+		return
+	}
+	switch result {
+	case "full", "unchanged", "failed":
+	default:
+		result = "failed"
+	}
+	r.phaseTwo.cmdbIndexReads.WithLabelValues(result).Inc()
+}
+
+// SetCMDBServiceInstanceIndex publishes how many service instances the index
+// holds. Zero beside a non-zero service_instance_facts_unavailable count is
+// the signature of an instance cache nobody writes.
+func (r *Recorder) SetCMDBServiceInstanceIndex(instances int) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.cmdbIndexServiceInstances.Set(float64(instances))
+}
+
+// CMDBBusinessMappings are the published business mappings the CMDB index
+// reads, and CMDBBusinessMappingStates the states of their gauge.
+var (
+	CMDBBusinessMappings      = []string{"bcs_cluster", "bcs_namespace"}
+	CMDBBusinessMappingStates = []string{"held", "refused", "truncated", "read_failed", "missing"}
+)
+
+// SetCMDBBusinessMapping publishes one business mapping the index holds,
+// what its load left out, and whether the latest load could not read it at
+// all (read_failed 1; the held count is then the last read's, kept until a
+// read succeeds) or found no hash under its key (missing 1; nothing is held).
+// A mapping outside CMDBBusinessMappings is dropped rather than creating a
+// series.
+func (r *Recorder) SetCMDBBusinessMapping(mapping string, held, refused, truncated int, readFailed, missing bool) {
+	if r == nil || r.phaseTwo.cmdbIndexBusinessMappings == nil || !knownLabel(CMDBBusinessMappings, mapping) {
+		return
+	}
+	gauge := r.phaseTwo.cmdbIndexBusinessMappings
+	gauge.WithLabelValues(mapping, "held").Set(float64(held))
+	gauge.WithLabelValues(mapping, "refused").Set(float64(refused))
+	gauge.WithLabelValues(mapping, "truncated").Set(float64(truncated))
+	failed := 0.0
+	if readFailed {
+		failed = 1
+	}
+	gauge.WithLabelValues(mapping, "read_failed").Set(failed)
+	absent := 0.0
+	if missing {
+		absent = 1
+	}
+	gauge.WithLabelValues(mapping, "missing").Set(absent)
+}
+
+// CMDBRefusedRecords are the kinds of record a CMDB index load counts as
+// refused.
+var CMDBRefusedRecords = []string{"host", "service_instance", "topo_node"}
+
+// SetCMDBRecordsRefused publishes how many records of one kind the latest
+// CMDB index load refused. A kind outside CMDBRefusedRecords is dropped
+// rather than creating a series.
+func (r *Recorder) SetCMDBRecordsRefused(record string, refused int) {
+	if r == nil || r.phaseTwo.cmdbIndexRecordsRefused == nil || !knownLabel(CMDBRefusedRecords, record) {
+		return
+	}
+	r.phaseTwo.cmdbIndexRecordsRefused.WithLabelValues(record).Set(float64(refused))
+}
+
+// SnapshotPublished records the size of the fleet snapshot this replica just
+// published; SnapshotsLoaded records one fleet view read and the bytes it
+// pulled. Together they make the fleet store's Redis traffic readable on
+// its own, apart from the state store's on the same connection.
+func (r *Recorder) SnapshotPublished(bytes int) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.fleetSnapshotBytes.Set(float64(bytes))
+}
+
+func (r *Recorder) SnapshotsLoaded(loaded int, bytes int) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.fleetViewSnapshotLoads.Inc()
+	r.phaseTwo.fleetViewSnapshotBytes.Add(float64(bytes))
+}
+
+// SummaryPublished records the size of the fleet summary this replica just
+// published beside its snapshot; SummariesLoaded and OwnedLoaded record one
+// summarized view's reads, of the summaries and of the owned lists it read
+// when the digests disagreed.
+func (r *Recorder) SummaryPublished(bytes int) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.fleetSummaryBytes.Set(float64(bytes))
+}
+
+func (r *Recorder) SummariesLoaded(loaded int, bytes int) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.fleetViewSummaryLoads.Inc()
+	r.phaseTwo.fleetViewSummaryBytes.Add(float64(bytes))
+}
+
+func (r *Recorder) OwnedLoaded(loaded int, bytes int) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.fleetViewOwnedLoads.Inc()
+	r.phaseTwo.fleetViewOwnedBytes.Add(float64(bytes))
+}
+
+// SetRetainedPeakCensus publishes the heartbeat census's size and how many
+// observations it has dropped for being full.
+func (r *Recorder) SetRetainedPeakCensus(groups int, overflow uint64) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.retainedPeakCensusGroups.Set(float64(groups))
+	r.phaseTwo.retainedPeakCensusOverflow.Set(float64(overflow))
+}
+
+// RecordUnmappedSeverity counts one event whose alert level had no name in
+// this build. The level is a small bounded number stated in strategy
+// configuration, so it is safe as a label; anything outside that is folded.
+func (r *Recorder) RecordUnmappedSeverity(level uint32) {
+	if r == nil {
+		return
+	}
+	name := "other"
+	if level <= 64 {
+		name = strconv.FormatUint(uint64(level), 10)
+	}
+	r.phaseTwo.unmappedSeverity.WithLabelValues(name).Inc()
+}
+
+// SetHostDisableMonitorStates publishes how many host states the access path
+// treats as not monitored. Zero means the filter is not installed.
+func (r *Recorder) SetHostDisableMonitorStates(states int) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.hostDisableMonitorStates.Set(float64(states))
+}
+
+// RecordDownstreamDistress counts one physical query whose answer said the
+// query service is overloaded or unreachable (access.DistressClasses), by
+// whether it had queued for its permit. A class outside the set is not
+// counted: the label set is closed.
+func (r *Recorder) RecordDownstreamDistress(class string, contended bool) {
+	if r == nil {
+		return
+	}
+	switch class {
+	case access.DistressTimeout, access.DistressThrottled, access.DistressUnavailable, access.DistressUnreachable:
+		r.phaseTwo.queryDownstreamDistress.WithLabelValues(class, strconv.FormatBool(contended)).Inc()
+	}
+}

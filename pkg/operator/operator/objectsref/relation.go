@@ -29,6 +29,7 @@ const (
 const (
 	relationNodeSystem           = "node_with_system_relation"
 	relationNodePod              = "node_with_pod_relation"
+	relationPodWorkload          = "pod_with_workload_relation"
 	relationJobPod               = "job_with_pod_relation"
 	relationPodReplicaset        = "pod_with_replicaset_relation"
 	relationPodStatefulset       = "pod_with_statefulset_relation"
@@ -369,6 +370,18 @@ func (oc *ObjectsController) WritePodRelations(w io.Writer) {
 					{Name: "pod", Value: pod.ID.Name},
 					{Name: "node", Value: pod.NodeName},
 					{Name: "container", Value: container.Name},
+				},
+			})
+		}
+
+		if workloadRef := LookupController(pod.ID, oc.podObjs, oc.objsMap()); workloadRef != nil {
+			promfmt.FmtBytes(w, promfmt.Metric{
+				Name: relationPodWorkload,
+				Labels: []promfmt.Label{
+					{Name: "namespace", Value: pod.ID.Namespace},
+					{Name: "pod", Value: pod.ID.Name},
+					{Name: "workload_kind", Value: workloadRef.Kind},
+					{Name: "workload_name", Value: workloadRef.Name},
 				},
 			})
 		}

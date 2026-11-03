@@ -12,6 +12,7 @@ package metadata
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -51,4 +52,21 @@ func TestSelectorStatusScopeIsolatesOutputWrites(t *testing.T) {
 
 	require.Equal(t, &Status{Code: QueryTsPartial, Message: "selector partial"}, GetStatus(selector))
 	require.Equal(t, &Status{Code: "ROUTE_PARTIAL", Message: "route partial"}, GetStatus(output))
+}
+
+func TestNamedOutputScopeKeepsRequestTimeAndIsolatesMutableMetadata(t *testing.T) {
+	InitMetadata()
+	ctx := InitHashID(context.Background())
+	GetQueryParams(ctx).SetTime(time.Unix(1, 0), time.Unix(1, 0), time.Unix(2, 0), time.Minute, "s", "UTC")
+	first := WithNamedOutputScope(ctx, 0)
+	second := WithNamedOutputScope(ctx, 1)
+
+	require.Equal(t, time.Minute, GetQueryParams(first).Step)
+	require.Equal(t, time.Minute, GetQueryParams(second).Step)
+	GetQueryParams(first).SetLookBackDelta(5 * time.Minute).SetStorageType(VictoriaMetricsStorageType)
+	SetExpand(first, &VmExpand{})
+	require.Zero(t, GetQueryParams(second).LookBackDelta)
+	require.False(t, GetQueryParams(second).IsDirectQuery())
+	require.Nil(t, GetExpand(second))
+	require.Nil(t, GetExpand(ctx))
 }

@@ -19,6 +19,15 @@ const (
 
 	ServiceNameConfigPath = "trace.service_name"
 	EnableConfigPath      = "trace.enable"
+	// SamplerConfigPath 采样器：always（默认，所有请求都记录，与之前一致）或 parent_based
+	// （带上游 traceparent 的请求按其 sampled 标志决定是否记录，没有上游的请求照旧全记录）
+	SamplerConfigPath = "trace.sampler"
+)
+
+// 采样器取值
+const (
+	SamplerAlways      = "always"
+	SamplerParentBased = "parent_based"
 )
 
 var (
@@ -32,4 +41,5 @@ var (
 
 	ServiceName string
 	Enable      bool
+	Sampler     string
 )

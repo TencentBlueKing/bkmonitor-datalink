@@ -231,7 +231,7 @@ func ifRejectServiceMonitor(monitor *promv1.ServiceMonitor) bool {
 		if !rule.Validate() {
 			continue
 		}
-		if utils.LowerEq(rule.Kind, monitor.Kind) && rule.Namespace == monitor.Namespace && rule.Name == monitor.Name {
+		if utils.LowerEq(rule.Kind, monitorKindServiceMonitor) && rule.Namespace == monitor.Namespace && rule.Name == monitor.Name {
 			return true
 		}
 	}

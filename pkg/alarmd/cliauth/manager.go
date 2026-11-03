@@ -1,0 +1,423 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2017-2026 Tencent. All rights reserved.
+// Licensed under the MIT License.
+
+// Package cliauth provides deployment-key authorization and short-lived CLI grants and sessions.
+package cliauth
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
+)
+
+const (
+	// ScopeReadonly is the one scope a session is granted: this deployment's
+	// operations session, for every operation the channel offers, execution
+	// and management included. The identifier is historical; sessions and
+	// pairings already stored carry it, and renaming it would mean migrating
+	// them for no difference in behaviour.
+	ScopeReadonly = "deployment_ops_readonly"
+	// requestedExecScope is what an alarmd-cli built after the execution
+	// scope was added and before 310f82cf7 may still ask the authorization
+	// page for; it is granted the one scope. No running deployment ever
+	// issued it, so no stored session or pairing carries it and none is read.
+	//
+	// Retire when: no alarmd-cli older than 310f82cf7 is supported - the
+	// CLI that stopped asking for it.
+	requestedExecScope = "deployment_ops_exec"
+	GrantLifetime      = 5 * time.Minute
+	SessionLifetime    = time.Hour
+	RenewalThreshold   = 10 * time.Minute
+	redisTimeout       = time.Second
+	// PairingIdleLifetime is how long a renewal credential lives unused. A
+	// credential is spent and replaced at every renewal, so this bounds only a
+	// device that stopped asking: a month covers a holiday and not a
+	// forgotten laptop.
+	PairingIdleLifetime = 30 * 24 * time.Hour
+	// MaxPairings bounds the renewal credentials one environment holds, a
+	// few hundred bytes of Redis each. Past it an exchange still logs in,
+	// without renewal, and says so.
+	MaxPairings = 1024
+	// AuthEventsPerMinute is each authorization route's rate per replica:
+	// grants, exchanges, renewals and named grants. The secrets are random
+	// and long, so the rate does not stand between them and a guess; it only
+	// stops a client looping without pause, at ten a second, far above
+	// people and agents logging in or renewing together.
+	AuthEventsPerMinute = 600
+)
+
+// ValidScope is whether an operation may require scope: there is one.
+func ValidScope(scope string) bool { return scope == ScopeReadonly }
+
+// AllowsScope is whether a session granted granted may run an operation
+// requiring required.
+func AllowsScope(granted, required string) bool {
+	return granted == ScopeReadonly && ValidScope(required)
+}
+
+// Options uses an independently budgeted Redis client supplied by the caller.
+// Now only controls the process-local HTTP rate window; all credentials use
+// Redis TIME, including issuance and expiry checks.
+type Options struct {
+	Redis           redis.UniversalClient
+	Prefix          string
+	EnvironmentID   string
+	EnvironmentName string
+	PublicBaseURL   string
+	AdminKey        string
+	Now             func() time.Time
+	// OnStoreFailure, when set, hears the reason of each store call that
+	// was not answered, or answered in a shape no script returns, and the
+	// error's own bounded text. The text never reaches an answer: this
+	// route is public, and the text can name an address.
+	OnStoreFailure func(reason, detail string)
+	// OnEvent, when set, hears every counted event (Counts) with how many;
+	// OnRosterApplied when a new roster was applied.
+	OnEvent         func(event string, n uint64)
+	OnRosterApplied func(at time.Time)
+}
+
+type Session struct {
+	ID            string    `json:"session_id"`
+	EnvironmentID string    `json:"environment_id"`
+	Scope         string    `json:"scope"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	Renewed       bool      `json:"renewed"`
+	// Operator is the admin user the session was issued to through the
+	// front surface; empty for one paired with the key on the /cli page.
+	Operator string `json:"operator,omitempty"`
+	// IssuedVia is the route that issued it: IssuedViaFront or
+	// IssuedViaAdminKey; empty on a session from before 0.4.
+	IssuedVia string `json:"issued_via,omitempty"`
+	// FallbackBaseURLs is the deployment's own address for a session issued
+	// through the admin (fallbackFor), carried on every channel answer so a
+	// session kept alive in-band learns it without a new login.
+	FallbackBaseURLs []string `json:"fallback_base_urls,omitempty"`
+	TokenHash        string   `json:"-"`
+	pairingID        string
+	publicBaseURL    string
+}
+
+// The routes a credential is issued through.
+const (
+	// IssuedViaFront is the front surface: the admin server, for a named user.
+	IssuedViaFront = "front"
+	// IssuedViaAdminKey is the authorization page, the key typed in: the
+	// deployment administrator.
+	IssuedViaAdminKey = "admin_key"
+)
+
+// Error contains a safe public message, never an underlying Redis error or a
+// credential. HTTPStatus is also available to the channel handler.
+type Error struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	// Reason is why the store did not answer, for auth_store_unavailable: a
+	// reason of redisfailure's, so an idle connection the network cut reads
+	// apart from a server that refused.
+	Reason     string `json:"reason,omitempty"`
+	HTTPStatus int    `json:"-"`
+}
+
+func (e *Error) Error() string { return e.Code + ": " + e.Message }
+
+func ErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	var authError *Error
+	if errors.As(err, &authError) {
+		return authError.Code
+	}
+	return "internal_error"
+}
+
+func failure(code, message string, status int) *Error {
+	return &Error{Code: code, Message: message, HTTPStatus: status}
+}
+
+func expired() *Error {
+	return failure("auth_expired_or_revoked", "The CLI session has expired or was revoked; authorize again from the authorization page.", 401)
+}
+
+func storeUnavailable(reason string) *Error {
+	unavailable := failure("auth_store_unavailable", "The authorization store is unavailable; exchange outcomes may be unknown. Obtain a new code instead of retrying an exchange.", 503)
+	unavailable.Reason = reason
+	return unavailable
+}
+
+// storeFailed is the store not answering, reported by its reason and text.
+func (m *Manager) storeFailed(reason, detail string) *Error {
+	if m.onStoreFailure != nil {
+		m.onStoreFailure(reason, detail)
+	}
+	return storeUnavailable(reason)
+}
+
+type Manager struct {
+	// linkdTokens is the token the front surface takes for the link's API;
+	// nil keeps none (ServeLinkdTokens).
+	linkdTokens     LinkdTokens
+	client          redis.UniversalClient
+	prefix          string
+	environmentID   string
+	environmentName string
+	publicBaseURL   string
+	origin          string
+	// crossOrigin logs, once per process, a fallback not declared because
+	// this deployment's address is on another origin than the admin entry.
+	crossOrigin      sync.Once
+	adminHash        [sha256.Size]byte
+	now              func() time.Time
+	limitMu          sync.Mutex
+	grantWindow      rateWindow
+	exchangeWindow   rateWindow
+	refreshWindow    rateWindow
+	frontGrantWindow rateWindow
+	counts           counters
+	onStoreFailure   func(reason, detail string)
+	onEvent          func(event string, n uint64)
+	onRosterApplied  func(at time.Time)
+}
+
+// New validates deployment coordinates without contacting Redis. An empty
+// administrator key disables issuance; it never enables anonymous authorization.
+func New(o Options) (*Manager, error) {
+	if o.Redis == nil {
+		return nil, errors.New("cliauth: Redis is required")
+	}
+	if !validText(o.Prefix, 256) || strings.ContainsAny(o.Prefix, "{}") {
+		return nil, errors.New("cliauth: Prefix must be nonempty and contain no braces or control characters")
+	}
+	if !validText(o.EnvironmentID, 256) || !validText(o.EnvironmentName, 256) {
+		return nil, errors.New("cliauth: environment identity and name are required, at most 256 bytes")
+	}
+	publicBaseURL, origin, err := canonicalBaseURL(o.PublicBaseURL)
+	if err != nil {
+		return nil, errors.New("cliauth: PublicBaseURL " + err.Error())
+	}
+	// The key is what makes a session possible, and the process serves the
+	// CLI exactly when one is configured: a manager without it could issue
+	// nothing, so it is not built.
+	if len(o.AdminKey) < 32 || len(o.AdminKey) > 256 || !validAdminKey(o.AdminKey) {
+		return nil, errors.New("cliauth: AdminKey must contain 32 to 256 printable ASCII bytes without spaces")
+	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
+	return &Manager{
+		onStoreFailure: o.OnStoreFailure, onEvent: o.OnEvent, onRosterApplied: o.OnRosterApplied,
+		client:        o.Redis,
+		prefix:        o.Prefix + ".cli:{" + digest(o.EnvironmentID) + "}:",
+		environmentID: o.EnvironmentID, environmentName: o.EnvironmentName,
+		publicBaseURL: publicBaseURL, origin: origin,
+		adminHash: sha256.Sum256([]byte(o.AdminKey)),
+		now:       o.Now,
+	}, nil
+}
+
+// canonicalBaseURL is the deployment URL a CLI is told to use, as the
+// configuration or the front surface gives it, with the origin a browser
+// sends for it.
+func canonicalBaseURL(raw string) (string, string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" {
+		return "", "", errors.New("must be an HTTP(S) URL without userinfo, query or fragment")
+	}
+	if strings.Contains(u.Path, "\\") {
+		return "", "", errors.New("path is invalid")
+	}
+	for _, segment := range strings.Split(u.Path, "/") {
+		if segment == "." || segment == ".." || strings.ContainsAny(segment, "\r\n\x00") {
+			return "", "", errors.New("path is invalid")
+		}
+	}
+	// Browsers serialize origins with lowercase hosts and without default ports.
+	u.Host = strings.ToLower(u.Host)
+	if (u.Scheme == "http" && u.Port() == "80") || (u.Scheme == "https" && u.Port() == "443") {
+		u.Host = u.Hostname()
+		if strings.Contains(u.Host, ":") {
+			u.Host = "[" + u.Host + "]"
+		}
+	}
+	u.Path = strings.TrimRight(u.Path, "/") + "/"
+	u.RawPath = ""
+	return u.String(), u.Scheme + "://" + u.Host, nil
+}
+
+func validAdminKey(key string) bool {
+	for i := 0; i < len(key); i++ {
+		if key[i] < 0x21 || key[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+func validText(value string, maxBytes int) bool {
+	if value == "" || len(value) > maxBytes || !utf8.ValidString(value) || strings.TrimSpace(value) != value {
+		return false
+	}
+	return !strings.ContainsFunc(value, unicode.IsControl)
+}
+
+func digest(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+func randomSecret() (string, error) {
+	var secret [32]byte
+	if _, err := rand.Read(secret[:]); err != nil {
+		return "", failure("internal_error", "Unable to generate a credential.", 500)
+	}
+	return base64.RawURLEncoding.EncodeToString(secret[:]), nil
+}
+
+func validSecret(secret string) bool {
+	if len(secret) != 43 {
+		return false
+	}
+	decoded, err := base64.RawURLEncoding.Strict().DecodeString(secret)
+	return err == nil && len(decoded) == 32
+}
+
+type storedRecord struct {
+	SessionID     string `json:"session_id,omitempty"`
+	EnvironmentID string `json:"environment_id"`
+	Scope         string `json:"scope"`
+	ExpiresAtMS   int64  `json:"expires_at_ms"`
+	// Epoch is the environment's revocation epoch the credential was made
+	// in; PairingID the renewal credential a session was issued with.
+	Epoch     int64  `json:"epoch,omitempty"`
+	PairingID string `json:"pairing_id,omitempty"`
+	// CodeChallenge is a grant's PKCE challenge when the CLI asked for one:
+	// the exchange must then carry the verifier. Never on a session.
+	CodeChallenge string `json:"code_challenge,omitempty"`
+	// Operator, IssuedVia and PublicBaseURL are set when a grant is issued
+	// and carried unchanged to its session, its pairing and every renewal.
+	// PublicBaseURL is set only for the front surface, whose CLI reaches the
+	// deployment through the admin; the others use the configured one.
+	Operator      string `json:"operator,omitempty"`
+	IssuedVia     string `json:"issued_via,omitempty"`
+	PublicBaseURL string `json:"public_base_url,omitempty"`
+	// IssuedAtMS is when a grant or session was made: an operator's
+	// revocation ends what was issued to them at or before it.
+	IssuedAtMS int64 `json:"issued_at_ms,omitempty"`
+}
+
+func (r storedRecord) session(hash string, renewed bool) Session {
+	return Session{ID: r.SessionID, EnvironmentID: r.EnvironmentID,
+		Scope: r.Scope, ExpiresAt: time.UnixMilli(r.ExpiresAtMS).UTC(), Renewed: renewed, TokenHash: hash, pairingID: r.PairingID,
+		Operator: r.Operator, IssuedVia: r.IssuedVia, publicBaseURL: r.PublicBaseURL}
+}
+
+func (m *Manager) run(ctx context.Context, script string, keys []string, args ...interface{}) ([]interface{}, error) {
+	ctx, cancel := context.WithTimeout(ctx, redisTimeout)
+	defer cancel()
+	// EVAL executes once rather than doing the EVALSHA/NOSCRIPT fallback round
+	// trip. The injected client must disable automatic retries for auth writes.
+	result, err := m.client.Eval(ctx, script, keys, args...).Slice()
+	if err != nil {
+		return nil, m.storeFailed(redisfailure.Reason(err), redisfailure.Detail(err))
+	}
+	return result, nil
+}
+
+func (m *Manager) resultRecord(result []interface{}) (storedRecord, bool, error) {
+	if len(result) < 1 {
+		return storedRecord{}, false, m.storeFailed(redisfailure.MalformedReply, "the store answered in a shape no script returns")
+	}
+	status, ok := result[0].(int64)
+	if !ok {
+		return storedRecord{}, false, m.storeFailed(redisfailure.MalformedReply, "the store answered in a shape no script returns")
+	}
+	if status == 0 {
+		return storedRecord{}, false, expired()
+	}
+	if len(result) < 3 || status != 1 {
+		return storedRecord{}, false, m.storeFailed(redisfailure.MalformedReply, "the store answered in a shape no script returns")
+	}
+	raw, ok := result[1].(string)
+	renewed, renewOK := result[2].(int64)
+	var record storedRecord
+	if !ok || !renewOK || json.Unmarshal([]byte(raw), &record) != nil {
+		return storedRecord{}, false, m.storeFailed(redisfailure.MalformedReply, "the store answered in a shape no script returns")
+	}
+	return record, renewed == 1, nil
+}
+
+// Authenticate checks a raw bearer token against shared storage without renewal.
+func (m *Manager) Authenticate(ctx context.Context, bearer string) (Session, error) {
+	if !validSecret(bearer) {
+		return Session{}, expired()
+	}
+	return m.sessionOperation(ctx, digest(bearer), "", "read")
+}
+
+// Admit must run after scope, input and execution budget checks, immediately
+// before invoking the handler. It rechecks shared storage so expiry or logout
+// between the initial authentication and admission cannot be bypassed.
+func (m *Manager) Admit(ctx context.Context, session Session, renew bool) (Session, error) {
+	if session.ID == "" || session.EnvironmentID != m.environmentID || len(session.TokenHash) != 64 {
+		return Session{}, expired()
+	}
+	if _, err := hex.DecodeString(session.TokenHash); err != nil {
+		return Session{}, expired()
+	}
+	action := "read"
+	if renew {
+		action = "renew"
+	}
+	return m.sessionOperation(ctx, session.TokenHash, session.ID, action)
+}
+
+func (m *Manager) sessionOperation(ctx context.Context, hash, expectedID, action string) (Session, error) {
+	result, err := m.run(ctx, sessionScript, []string{m.prefix + "session:" + hash, m.epochKey(), m.revokedKey()},
+		m.environmentID, expectedID, action, ScopeReadonly, SessionLifetime.Milliseconds(), RenewalThreshold.Milliseconds())
+	if err != nil {
+		return Session{}, err
+	}
+	record, renewed, err := m.resultRecord(result)
+	if err != nil {
+		return Session{}, err
+	}
+	session := record.session(hash, renewed)
+	session.FallbackBaseURLs = m.fallbackFor(record.PublicBaseURL)
+	return session, nil
+}
+
+type rateWindow struct {
+	minute int64
+	count  int
+}
+
+func (m *Manager) allow(window *rateWindow, limit int) bool {
+	m.limitMu.Lock()
+	defer m.limitMu.Unlock()
+	minute := m.now().Unix() / 60
+	if window.minute != minute {
+		*window = rateWindow{minute: minute}
+	}
+	if window.count >= limit {
+		return false
+	}
+	window.count++
+	return true
+}

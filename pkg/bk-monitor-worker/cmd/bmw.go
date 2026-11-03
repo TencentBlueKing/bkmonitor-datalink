@@ -39,7 +39,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(
 		&config.FilePath, "config", "./bmw.yaml", "path of project service config files",
 	)
-	rootCmd.AddCommand(apm.StartFromFileCmd())
+	rootCmd.AddCommand(apm.StartFromFileCmd(), apm.StartProfilingCmd())
 }
 
 func addFlag(configLoc string, flagName string, addVarFunc func()) {

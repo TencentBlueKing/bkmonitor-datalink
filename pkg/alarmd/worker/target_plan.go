@@ -1,0 +1,302 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License.
+
+package worker
+
+import (
+	"context"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/nodata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/targetplan"
+)
+
+// resolvedTarget is one Plan's target plan as this Slot resolved it: the
+// member set the admission filter asks about, the reduced view absence
+// reads, and the summary the round commits. All come out of one
+// resolution, which is the point of holding them together.
+type resolvedTarget struct {
+	absence nodata.TargetResolution
+	members map[string]struct{}
+	facts   execution.TargetResolutionSummary
+	// unresolved is true when nothing resolved the plan at all - no resolver
+	// on this worker. Failed inclusion selectors keep the known members;
+	// unresolved plans and failed exclusions admit nothing.
+	unresolved bool
+	// definitive is the resolution's own account of whether its members are
+	// the whole target; see Definitive.
+	definitive bool
+}
+
+// summary is what the round's completion carries for this Plan.
+func (target *resolvedTarget) summary(strategyID string) execution.TargetResolutionSummary {
+	summary := target.facts
+	summary.StrategyID = strategyID
+	return summary
+}
+
+// Contains is the admission filter's question.
+func (target *resolvedTarget) Contains(key string) bool {
+	if target == nil {
+		return false
+	}
+	_, found := target.members[key]
+	return found
+}
+
+// Definitive says whether "not a member" is the target's own answer: the
+// plan was resolved, every selector answered in full from current facts,
+// and no reference pointed at a node the topology cache does not list or
+// lists under another business. Anything less is a lower bound on the
+// target, which may filter a record for this Slot but must not close the
+// record's alert. See admission.DefinitelyOutside.
+func (target *resolvedTarget) Definitive() bool {
+	if target == nil || target.unresolved {
+		return false
+	}
+	return target.definitive
+}
+
+// Unavailable says a selector of the resolution could not answer this Slot,
+// nothing resolving it included: a key outside the members is then not known
+// to be outside the target, and the admission filter says so.
+func (target *resolvedTarget) Unavailable() bool {
+	return target != nil && target.absence.State == nodata.TargetResolutionUnavailable
+}
+
+// absenceView is what the no-data round reads; nil when nothing resolved.
+func (target *resolvedTarget) absenceView() *nodata.TargetResolution {
+	if target == nil {
+		return nil
+	}
+	view := target.absence
+	return &view
+}
+
+// ResolvedTargets hands the source what Begin resolved, so the records it
+// admits are filtered against the same members absence is judged against.
+//
+// Every resolution is handed over, whatever its state: a selector that
+// could not answer contributes no members, and the members the static list
+// and the other selectors did resolve still admit their records - "no
+// match" is per selector, and a group key gone missing must not stop the
+// static hosts beside it from being detected. Only a Plan nothing resolved
+// at all is left out; its filter then admits nothing, under the name that
+// says so.
+// An unavailable exclusion keeps its resolution but admits no members.
+func (stream *streamedExecution) ResolvedTargets() execution.TargetMemberships {
+	if len(stream.targetResolutions) == 0 {
+		return nil
+	}
+	targets := make(execution.TargetMemberships, len(stream.targetResolutions))
+	for identity, resolution := range stream.targetResolutions {
+		if resolution == nil || resolution.unresolved {
+			continue
+		}
+		targets[identity] = resolution
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	return targets
+}
+
+// resolveTargetPlans resolves every due Plan's target plan once for this
+// Slot, at Begin, so the records that arrive afterwards and the absence
+// judged at the end read one value. A Plan without a target plan is not
+// touched; a worker without a resolver resolves nothing, and every such
+// Plan is then unresolved by name on both sides.
+func (stream *streamedExecution) resolveTargetPlans(ctx context.Context) {
+	resolver := stream.coordinator.ports.Targets
+	for _, due := range stream.header.DuePlans {
+		plan := due.CompiledPlan.TargetPlan()
+		if plan == nil {
+			continue
+		}
+		if stream.targetResolutions == nil {
+			stream.targetResolutions = make(map[execution.PlanIdentity]*resolvedTarget)
+		}
+		var resolution *targetplan.Resolution
+		if resolver != nil {
+			interval := time.Duration(due.CompiledPlan.EvaluationSemantics().EvaluationInterval) * time.Second
+			resolution = resolver.ResolveFor(ctx, due.Identity.TenantID, plan, interval)
+		}
+		unresolved := resolution == nil
+		if unresolved {
+			// Nothing resolved it: unavailable by name, and the source is
+			// what is missing.
+			resolution = &targetplan.Resolution{Selectors: []targetplan.SelectorResult{{
+				Kind: targetplan.SelectorKindStatic, State: targetplan.SelectorUnavailable, Reason: targetplan.ReasonSourceUnwired}}}
+			resolution.Compose()
+		}
+		target := newResolvedTarget(resolution)
+		target.unresolved = unresolved
+		stream.targetResolutions[due.Identity] = target
+		stream.observeTargetResolution(ctx, due, resolution, false)
+	}
+}
+
+// ResolvedScopeGroups hands the source the dynamic groups Begin read, so a
+// target scope's group conditions are matched against one reading for the
+// whole Slot.
+func (stream *streamedExecution) ResolvedScopeGroups() execution.ScopeGroupMemberships {
+	if len(stream.scopeGroups) == 0 {
+		return nil
+	}
+	return stream.scopeGroups
+}
+
+// resolveScopeGroups reads, once for this Slot at Begin, every dynamic group
+// the due Plans' target scopes name: the platform keeps a dynamic group
+// target as the group ids, and Python reads the groups' hosts when it
+// matches. Each Plan's groups are reported as one resolution. A worker
+// without the reader reads none, and each is unavailable by name: its
+// condition admits no host, as a target plan nothing resolved admits none.
+func (stream *streamedExecution) resolveScopeGroups(ctx context.Context) {
+	reader := stream.coordinator.ports.ScopeGroups
+	for _, due := range stream.header.DuePlans {
+		ids := due.CompiledPlan.TargetScope().DynamicGroupIDs()
+		if len(ids) == 0 {
+			continue
+		}
+		if stream.scopeGroups == nil {
+			stream.scopeGroups = make(execution.ScopeGroupMemberships)
+		}
+		interval := time.Duration(due.CompiledPlan.EvaluationSemantics().EvaluationInterval) * time.Second
+		resolution := &targetplan.Resolution{Selectors: make([]targetplan.SelectorResult, 0, len(ids))}
+		for _, id := range ids {
+			selector := targetplan.SelectorResult{Kind: targetplan.SelectorKindGroup, ID: id,
+				State: targetplan.SelectorUnavailable, Reason: targetplan.ReasonSourceUnwired}
+			if reader != nil {
+				// Asked per Plan, not once per Slot: the store keeps a group
+				// for as long as the longest period that asks for it.
+				selector = reader.ResolveScopeGroup(ctx, due.Identity.TenantID, id, interval)
+			}
+			stream.scopeGroups[execution.ScopeGroupRef{TenantID: due.Identity.TenantID, GroupID: id}] = scopeGroupMembership(selector)
+			resolution.Selectors = append(resolution.Selectors, selector)
+		}
+		resolution.Compose()
+		stream.observeTargetResolution(ctx, due, resolution, true)
+	}
+}
+
+// scopeGroupMembership is one group's reading as the admission filter takes
+// it: its hosts, known only when it answered in full from current facts. A
+// group served past a failed refresh, or one some of whose members were
+// refused, still admits the hosts it holds; a host outside them is not then
+// known to be outside the target.
+func scopeGroupMembership(selector targetplan.SelectorResult) execution.ScopeGroupMembership {
+	membership := execution.ScopeGroupMembership{HostIDs: make([]string, 0, len(selector.Members)),
+		Known: (selector.State == targetplan.SelectorOK || selector.State == targetplan.SelectorOKEmpty) && selector.StaleAge == 0}
+	for host := range selector.Members {
+		membership.HostIDs = append(membership.HostIDs, host)
+	}
+	return membership
+}
+
+// newResolvedTarget projects one resolution into the two views the Slot
+// reads: the member set for admission (nil when unavailable, which the
+// filter reads as "admit nothing") and the reduced view for absence.
+func newResolvedTarget(resolution *targetplan.Resolution) *resolvedTarget {
+	target := &resolvedTarget{absence: nodata.TargetResolution{}}
+	switch resolution.State {
+	case targetplan.ResolutionComplete:
+		target.absence.State = nodata.TargetResolutionComplete
+	case targetplan.ResolutionIncomplete:
+		target.absence.State = nodata.TargetResolutionIncomplete
+	default:
+		target.absence.State = nodata.TargetResolutionUnavailable
+	}
+	target.absence.Members = resolution.Members()
+	// A topology reference to a node the topology cache does not list, or to
+	// one under another business, is a resolved, empty answer for that
+	// reference (decision-017 section 3.2): a node the full and fresh
+	// topology does not have is a fact about the topology, not a gap in it.
+	// It adds no member and takes none away, so the plan's other memberships
+	// are as definitive as they would be without it. Only facts that were not
+	// read in full and fresh hold the verdict back.
+	target.definitive = resolution.State == targetplan.ResolutionComplete && resolution.StaleAge == 0 &&
+		len(resolution.Failures) == 0
+	// One union, read twice: the absence view lists it and the filter
+	// indexes it, so the two cannot disagree about who the members are.
+	members := resolution.Members()
+	target.members = make(map[string]struct{}, len(members))
+	for _, key := range members {
+		target.members[key] = struct{}{}
+	}
+	target.facts = execution.TargetResolutionSummary{
+		State: string(resolution.State), NodesMissing: append([]string(nil), resolution.NodesMissing...),
+		NodesForeign: append([]string(nil), resolution.NodesForeign...), StaleAgeSeconds: int64(resolution.StaleAge.Seconds()),
+	}
+	for _, selector := range resolution.Selectors {
+		if selector.Kind == targetplan.SelectorKindExclude && selector.Reason == targetplan.ReasonExcludedAbsent {
+			target.facts.ExcludedAbsent += selector.Dropped
+		}
+	}
+	for _, failure := range resolution.Failures {
+		target.facts.Failures = append(target.facts.Failures, execution.TargetSelectorFailure{
+			Kind: failure.Kind, ID: failure.ID, Reason: failure.Reason, Dropped: failure.Dropped, Kept: failure.Kept,
+		})
+	}
+	return target
+}
+
+// observeTargetResolution writes the line and counters a
+// resolution leaves: the composed state, the stale age when a selector ate
+// old grain, and each selector by name.
+func (stream *streamedExecution) observeTargetResolution(ctx context.Context, due execution.DuePlan, resolution *targetplan.Resolution, scopeGroups bool) {
+	facts := &observability.TargetResolutionFacts{
+		StrategyID: due.Identity.StrategyID, State: string(resolution.State), ScopeGroups: scopeGroups,
+		StaleAgeSeconds: int64(resolution.StaleAge.Seconds()),
+		Selectors:       make([]observability.TargetSelectorFacts, 0, len(resolution.Selectors)),
+	}
+	for _, selector := range resolution.Selectors {
+		var named []string
+		for _, member := range selector.DroppedMembers {
+			named = append(named, member.ID+":"+member.Reason)
+		}
+		facts.Selectors = append(facts.Selectors, observability.TargetSelectorFacts{
+			Kind: selector.Kind, ID: selector.ID, State: string(selector.State), Reason: selector.Reason,
+			Kept: selector.Kept, Dropped: selector.Dropped, NodeMissing: selector.NodeMissing, NodeForeign: selector.NodeForeign,
+			DroppedMembers: named,
+		})
+	}
+	// A resolution short of complete says which, by name: the selectors
+	// beside it carry why and how many (members_dropped, kept and dropped).
+	result, reason := observability.Result(observability.ResultSuccess), observability.ReasonNone
+	switch resolution.State {
+	case targetplan.ResolutionComplete:
+	case targetplan.ResolutionIncomplete:
+		result, reason = observability.ResultDegraded, observability.ReasonCode(contract.ReasonTargetResolutionIncomplete)
+	default:
+		result, reason = observability.ResultDegraded, observability.ReasonCode(contract.ReasonTargetResolutionUnavailable)
+	}
+	stream.coordinator.emitObservation(ctx, observability.Observation{
+		Component: observability.ComponentAccess, Stage: observability.StageTargetResolved,
+		Operation: observability.Operation(stream.request.Operation),
+		Result:    result, ReasonCode: reason, TargetResolution: facts,
+	})
+}
+
+// targetSummaries reduces this Slot's resolutions to what the round's
+// completion carries, in Plan order so two commits of one round encode the
+// same bytes.
+func (stream *streamedExecution) targetSummaries() []execution.TargetResolutionSummary {
+	if len(stream.targetResolutions) == 0 {
+		return nil
+	}
+	summaries := make([]execution.TargetResolutionSummary, 0, len(stream.targetResolutions))
+	for _, due := range stream.header.DuePlans {
+		target, resolved := stream.targetResolutions[due.Identity]
+		if !resolved || target == nil {
+			continue
+		}
+		summaries = append(summaries, target.summary(due.Identity.StrategyID))
+	}
+	return summaries
+}

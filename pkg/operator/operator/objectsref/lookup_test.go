@@ -266,3 +266,110 @@ func TestLookupOnce(t *testing.T) {
 		assert.Equal(t, *c.Excepted, *parent)
 	}
 }
+
+func TestLookupController(t *testing.T) {
+	newPodMap := func(refs ...OwnerRef) *PodMap {
+		pods := NewPodMap()
+		pods.Set(PodObject{
+			ID:        ObjectID{Name: podName1, Namespace: namespaceDefault},
+			OwnerRefs: refs,
+		})
+		return pods
+	}
+	newObjects := func(kind, name string, refs ...OwnerRef) *Objects {
+		objects := NewObjects(kind)
+		objects.Set(Object{
+			ID:        ObjectID{Name: name, Namespace: namespaceDefault},
+			OwnerRefs: refs,
+		})
+		return objects
+	}
+	controller := func(kind, name string) OwnerRef {
+		return OwnerRef{Kind: kind, Name: name, Controller: true}
+	}
+
+	t.Run("follows controller chain to deployment", func(t *testing.T) {
+		pods := newPodMap(
+			OwnerRef{Kind: kindNonExistent, Name: noneExistentName1},
+			controller(kindReplicaSet, replicaSetName1),
+		)
+		replicaSets := newObjects(kindReplicaSet, replicaSetName1, controller(kindDeployment, deploymentName1))
+		deployments := newObjects(kindDeployment, deploymentName1)
+
+		actual := LookupController(
+			ObjectID{Name: podName1, Namespace: namespaceDefault},
+			pods,
+			map[string]*Objects{kindReplicaSet: replicaSets, kindDeployment: deployments},
+		)
+
+		assert.Equal(t, &OwnerRef{Kind: kindDeployment, Name: deploymentName1}, actual)
+	})
+
+	t.Run("stops at last known workload", func(t *testing.T) {
+		const jobName = "job-1"
+		pods := newPodMap(controller(kindJob, jobName))
+		jobs := newObjects(kindJob, jobName, controller("JobSet", "jobset-1"))
+
+		actual := LookupController(
+			ObjectID{Name: podName1, Namespace: namespaceDefault},
+			pods,
+			map[string]*Objects{kindJob: jobs},
+		)
+
+		assert.Equal(t, &OwnerRef{Kind: kindJob, Name: jobName}, actual)
+	})
+
+	t.Run("rejects broken known chain", func(t *testing.T) {
+		pods := newPodMap(controller(kindReplicaSet, replicaSetName1))
+		replicaSets := newObjects(kindReplicaSet, replicaSetName1, controller(kindDeployment, deploymentName1))
+
+		actual := LookupController(
+			ObjectID{Name: podName1, Namespace: namespaceDefault},
+			pods,
+			map[string]*Objects{kindReplicaSet: replicaSets, kindDeployment: NewObjects(kindDeployment)},
+		)
+
+		assert.Nil(t, actual)
+	})
+
+	t.Run("rejects non-controller owner", func(t *testing.T) {
+		pods := newPodMap(OwnerRef{Kind: kindReplicaSet, Name: replicaSetName1})
+
+		actual := LookupController(
+			ObjectID{Name: podName1, Namespace: namespaceDefault},
+			pods,
+			map[string]*Objects{kindReplicaSet: newObjects(kindReplicaSet, replicaSetName1)},
+		)
+
+		assert.Nil(t, actual)
+	})
+
+	t.Run("rejects multiple controller owners", func(t *testing.T) {
+		pods := newPodMap(
+			controller(kindReplicaSet, replicaSetName1),
+			controller(kindJob, "job-1"),
+		)
+
+		actual := LookupController(
+			ObjectID{Name: podName1, Namespace: namespaceDefault},
+			pods,
+			map[string]*Objects{},
+		)
+
+		assert.Nil(t, actual)
+	})
+
+	t.Run("rejects owner cycle", func(t *testing.T) {
+		pods := newPodMap(controller(kindReplicaSet, replicaSetName1))
+		replicaSets := newObjects(kindReplicaSet, replicaSetName1, controller(kindDeployment, deploymentName1))
+		deployments := newObjects(kindDeployment, deploymentName1, controller(kindReplicaSet, replicaSetName1))
+
+		actual := LookupController(
+			ObjectID{Name: podName1, Namespace: namespaceDefault},
+			pods,
+			map[string]*Objects{kindReplicaSet: replicaSets, kindDeployment: deployments},
+		)
+
+		assert.Nil(t, actual)
+	})
+}

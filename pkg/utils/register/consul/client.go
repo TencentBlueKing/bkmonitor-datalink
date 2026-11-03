@@ -10,8 +10,49 @@
 package consul
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/hashicorp/consul/api"
 )
+
+// ClientOptions supplies explicit in-memory authentication. A nil options value
+// retains the SDK's existing environment-based configuration.
+type ClientOptions struct {
+	Token     string
+	Username  string
+	Password  string
+	TLSConfig api.TLSConfig
+}
+
+// NewAPIClient is shared by registration and KV consumers.
+func NewAPIClient(address string, options *ClientOptions) (*api.Client, error) {
+	conf := api.DefaultConfig()
+	conf.Address = address
+	if options != nil {
+		// api.NewClient also reads defaults, including a token file. Reject these
+		// entrances rather than briefly rewriting process-wide environment values.
+		for _, key := range []string{"CONSUL_HTTP_TOKEN", "CONSUL_HTTP_TOKEN_FILE", "CONSUL_HTTP_AUTH", "CONSUL_CLIENT_KEY"} {
+			if os.Getenv(key) != "" {
+				return nil, fmt.Errorf("explicit consul authentication conflicts with %s", key)
+			}
+		}
+		conf.Token, conf.TokenFile = options.Token, ""
+		conf.HttpAuth = nil
+		if options.Username != "" || options.Password != "" {
+			conf.HttpAuth = &api.HttpBasicAuth{Username: options.Username, Password: options.Password}
+		}
+		conf.TLSConfig = options.TLSConfig
+		// Supplying HttpClient prevents NewClient from rebuilding TLS from its
+		// implicit defaults after memory-only key material was supplied.
+		var err error
+		conf.HttpClient, err = api.NewHttpClient(conf.Transport, conf.TLSConfig)
+		if err != nil {
+			return nil, fmt.Errorf("invalid explicit consul TLS configuration")
+		}
+	}
+	return api.NewClient(conf)
+}
 
 // Client client 封装了 consul 部分读写操作
 type Client struct {
@@ -21,13 +62,13 @@ type Client struct {
 
 // NewClient 传入的 address 应符合 IP:Port 的结构，例如: 127.0.0.1:8080
 func NewClient(address string) (*Client, error) {
+	return NewClientWithOptions(address, nil)
+}
+
+func NewClientWithOptions(address string, options *ClientOptions) (*Client, error) {
 	client := new(Client)
 	client.address = address
-
-	conf := api.DefaultConfig()
-	conf.Address = address
-
-	apiClient, err := api.NewClient(conf)
+	apiClient, err := NewAPIClient(address, options)
 	if err != nil {
 		return nil, err
 	}

@@ -48,6 +48,22 @@ type InstantQueryWithPartial interface {
 	DirectQueryWithPartial(ctx context.Context, qs string, end time.Time) (promql.Vector, bool, error)
 }
 
+// RangeQueryWithClose and InstantQueryWithClose transfer ownership of pooled
+// PromQL result slices. The caller must close only after it has consumed or
+// copied the returned result.
+type RangeQueryWithClose interface {
+	DirectQueryRangeWithClose(
+		ctx context.Context,
+		promql string,
+		start, end time.Time,
+		step time.Duration,
+	) (promql.Matrix, bool, func(), error)
+}
+
+type InstantQueryWithClose interface {
+	DirectQueryWithClose(ctx context.Context, qs string, end time.Time) (promql.Vector, bool, func(), error)
+}
+
 var _ Instance = &DefaultInstance{}
 
 type DefaultInstance struct{}

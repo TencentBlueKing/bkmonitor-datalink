@@ -1,0 +1,615 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package execution
+
+import (
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+)
+
+type ProviderRouteRef string
+type PhysicalQueryDigest string
+type ProviderResultRef string
+type ProviderKind string
+type DownSampleRange string
+
+const (
+	ProviderUQ     ProviderKind    = "uq"
+	DownSampleNone DownSampleRange = ""
+)
+
+// QueryWindow is always a half-open source-time range [Start, End).
+type QueryWindow struct {
+	Start int64
+	End   int64
+}
+
+func (window QueryWindow) Validate() error {
+	if window.Start >= window.End {
+		return errors.New("alarmd execution: query window must be a non-empty half-open range")
+	}
+	return nil
+}
+
+// PhysicalQuerySpec is the provider-neutral normalized request compiled by
+// Access. The UQ provider owns the small /query/ts wire DTO conversion.
+type PhysicalQuerySpec struct {
+	Digest          PhysicalQueryDigest
+	PlanFacts       QueryPlanFacts
+	LogicalWindow   QueryWindow
+	ProviderRange   QueryWindow
+	AcceptedRange   QueryWindow
+	RequiredColumns []string
+}
+
+func (spec PhysicalQuerySpec) Validate() error {
+	if spec.Digest == "" {
+		return errors.New("alarmd execution: complete physical query identity is required")
+	}
+	if err := spec.PlanFacts.Validate(); err != nil {
+		return err
+	}
+	for _, window := range []QueryWindow{spec.LogicalWindow, spec.ProviderRange, spec.AcceptedRange} {
+		if err := window.Validate(); err != nil {
+			return err
+		}
+	}
+	if spec.ProviderRange.Start > spec.LogicalWindow.Start || spec.ProviderRange.End < spec.LogicalWindow.End ||
+		spec.AcceptedRange.Start < spec.ProviderRange.Start || spec.AcceptedRange.End > spec.ProviderRange.End {
+		return errors.New("alarmd execution: physical query ranges are inconsistent")
+	}
+	if len(spec.RequiredColumns) == 0 {
+		return errors.New("alarmd execution: complete normalized physical query is required")
+	}
+	for _, column := range spec.RequiredColumns {
+		if column == "" {
+			return errors.New("alarmd execution: empty required column")
+		}
+	}
+	expected, err := DerivePhysicalQueryDigest(spec)
+	if err != nil {
+		return err
+	}
+	if spec.Digest != expected {
+		return errors.New("alarmd execution: physical query digest does not match normalized request fields")
+	}
+	return nil
+}
+
+func DerivePhysicalQueryDigest(spec PhysicalQuerySpec) (PhysicalQueryDigest, error) {
+	if err := spec.PlanFacts.Validate(); err != nil {
+		return "", errors.New("alarmd execution: cannot derive incomplete physical query identity")
+	}
+	spec.Digest = ""
+	digest, err := contract.DeriveCanonicalDigestV2("alarmd-physical-query-v1", spec)
+	if err != nil {
+		return "", fmt.Errorf("alarmd execution: derive physical query digest: %w", err)
+	}
+	return PhysicalQueryDigest(digest), nil
+}
+
+func BuildPhysicalQuerySpec(spec PhysicalQuerySpec) (PhysicalQuerySpec, error) {
+	if spec.Digest != "" {
+		return PhysicalQuerySpec{}, errors.New("alarmd execution: physical query builder owns the digest")
+	}
+	digest, err := DerivePhysicalQueryDigest(spec)
+	if err != nil {
+		return PhysicalQuerySpec{}, err
+	}
+	spec.Digest = digest
+	if err := spec.Validate(); err != nil {
+		return PhysicalQuerySpec{}, err
+	}
+	return spec, nil
+}
+
+// LegacyOutputOnly is the physical query asking for its own value alone,
+// under its own digest (QueryPlanFacts.WithoutNamedOutputs): the same
+// request but for the named outputs, so the same series identities and
+// record ids. The spec itself when it asks for none.
+func (spec PhysicalQuerySpec) LegacyOutputOnly() (PhysicalQuerySpec, error) {
+	if spec.PlanFacts.NamedOutputs == nil {
+		return spec, nil
+	}
+	facts, err := spec.PlanFacts.WithoutNamedOutputs()
+	if err != nil {
+		return PhysicalQuerySpec{}, err
+	}
+	spec.PlanFacts, spec.Digest = facts, ""
+	return BuildPhysicalQuerySpec(spec)
+}
+
+type RecoveryPermit struct {
+	PermitID           string
+	Slot               SlotIdentity
+	Operation          Operation
+	ExpiresAtUnixMilli int64
+}
+
+type QueryAttempt struct {
+	Spec              PhysicalQuerySpec
+	Slot              SlotIdentity
+	Operation         Operation
+	AttemptNo         uint32
+	DeadlineUnixMilli int64
+	RecoveryPermit    *RecoveryPermit
+
+	// BudgetStartUnixMilli is where the budget that ends at the deadline
+	// began: the Slot's evaluation time for a normal query, and the
+	// operation's arrival for a retry, replay or probe, whose deadline is
+	// counted from there. ReadyAtUnixMilli is when the query's window could
+	// first be read; up to it the budget is a settling wait by design. They
+	// only time a failure (see AttemptTiming); zero leaves it untimed.
+	BudgetStartUnixMilli int64
+	ReadyAtUnixMilli     int64
+
+	// Strategies are the strategy ids of the Plans the query serves, sorted
+	// and unique, for the provider to correlate its own logs with: they ride
+	// on a request header and decide nothing. Empty for a read that serves
+	// no Plan.
+	Strategies []string
+}
+
+func (attempt QueryAttempt) Validate() error {
+	if err := attempt.Spec.Validate(); err != nil {
+		return err
+	}
+	if attempt.Slot.QueryGroup == "" || attempt.Slot.EvaluationTime <= 0 {
+		return errors.New("alarmd execution: complete query attempt Slot is required")
+	}
+	if err := attempt.Operation.Validate(); err != nil {
+		return err
+	}
+	if attempt.AttemptNo == 0 || attempt.DeadlineUnixMilli <= 0 {
+		return errors.New("alarmd execution: complete query attempt execution facts are required")
+	}
+	if attempt.Operation == OperationNormal {
+		if attempt.RecoveryPermit != nil {
+			return errors.New("alarmd execution: normal query must not consume a recovery permit")
+		}
+	} else if attempt.RecoveryPermit == nil || attempt.RecoveryPermit.PermitID == "" ||
+		attempt.RecoveryPermit.Slot != attempt.Slot || attempt.RecoveryPermit.Operation != attempt.Operation ||
+		attempt.RecoveryPermit.ExpiresAtUnixMilli < attempt.DeadlineUnixMilli {
+		return errors.New("alarmd execution: retry, replay and probe require a matching live recovery permit")
+	}
+	return nil
+}
+
+type RouteAttemptResult string
+
+const (
+	RouteAttemptSucceeded RouteAttemptResult = "SUCCEEDED"
+	RouteAttemptFailed    RouteAttemptResult = "FAILED"
+)
+
+// RouteAttemptFact records one provider attempt. Detail is a bounded,
+// machine-readable failure detail ("http_status=503" or
+// "transport=connection_refused"); it never carries response bodies, URLs or
+// free error text, and it does not change completeness semantics.
+type RouteAttemptFact struct {
+	AttemptNo  uint32
+	Endpoint   string
+	Result     RouteAttemptResult
+	ReasonCode ReasonCode
+	Detail     string
+	// HTTPStatus is the status of a non-success HTTP answer, zero where the
+	// attempt got none. Detail spells the same status for a person to read;
+	// this is the number a reader decides on, so nothing parses the text.
+	HTTPStatus int
+	// Timing is when a failed attempt ran against the time it was given;
+	// nil where the attempt did not measure it.
+	Timing *AttemptTiming
+	// Rejection is what the backend said when it refused the query: nil
+	// where the attempt got no non-success answer.
+	Rejection *ProviderRejection `json:",omitempty"`
+	// Request is which deadline governed the attempt's request, which had
+	// expired when it ended, and what the provider answered; nil where no
+	// request was sent. An attempt the provider answered carries it whether
+	// the answer succeeded or not, so a degraded answer (partial, empty, a
+	// failing status) names the request it answered as a failed one does.
+	Request *RequestFacts `json:",omitempty"`
+	// Planned is the physical query's own plan: whose input it was and the
+	// deadlines access planned it under; nil until access annotates a
+	// failed attempt.
+	Planned *PlannedQueryFacts `json:",omitempty"`
+}
+
+// Which context's deadline governed a request, and which context had expired
+// when it failed (RequestFacts).
+const (
+	RequestDeadlineCaller  = "caller"
+	RequestDeadlineAttempt = "attempt"
+	RequestExpiredNone     = "none"
+	RequestExpiredBoth     = "both"
+)
+
+// RequestFacts is a failed request against its own deadline: the effective
+// deadline of the request's context at send (zero when it had none) and how
+// much of it was left just before the request was sent (-1 when there was no
+// deadline), whether the caller's context or the attempt's own deadline set
+// it, which of the two had expired when the request failed (none when
+// neither had: a transport's own timeout), the error as text, sanitized and
+// at most MaxRequestErrorBytes, and the Go types along its chain, at most
+// MaxRequestErrorTypes.
+type RequestFacts struct {
+	DeadlineUnixMilli  int64    `json:"deadline_ms"`
+	DeadlineLeftAtDoMs int64    `json:"deadline_left_at_do_ms"`
+	DeadlineSource     string   `json:"deadline_source"`
+	Expired            string   `json:"expired"`
+	ErrorChain         string   `json:"error_chain,omitempty"`
+	ErrorTypes         []string `json:"error_types,omitempty"`
+	// TraceID is the trace id of the traceparent the request was sent with,
+	// known at the send whether or not an answer came back.
+	TraceID string `json:"trace_id,omitempty"`
+	// AnswerStatus is the HTTP status the provider answered with, 200
+	// included; zero where no answer came back. AnsweredUnixMilli is when
+	// its headers arrived (zero where none did) and CompletedUnixMilli when
+	// the attempt ended: answered in full, or failed. A line is written
+	// after its round's work, so its own time is neither.
+	AnswerStatus       int   `json:"answer_status,omitempty"`
+	AnsweredUnixMilli  int64 `json:"answered_ms,omitempty"`
+	CompletedUnixMilli int64 `json:"completed_ms,omitempty"`
+	// TimeoutSource names which branch filed a timeout
+	// (observability.QueryTimeoutSources); empty for anything else.
+	TimeoutSource string `json:"timeout_source,omitempty"`
+	// Excerpt is the provider's own message from an answer's body,
+	// sanitized and bounded as a refusal's is. It can echo the query, so it
+	// is never serialized and never on a log line; it stays on the replica
+	// with the Query Group's kept refusal.
+	Excerpt string `json:"-"`
+}
+
+// MaxRequestErrorBytes bounds RequestFacts.ErrorChain, and
+// MaxRequestErrorTypes RequestFacts.ErrorTypes.
+const (
+	MaxRequestErrorBytes = 300
+	MaxRequestErrorTypes = 8
+)
+
+// PlannedQueryFacts is a physical query as access planned it: the role and
+// dataset of the input it serves (the primary one when it serves several),
+// its planned deadline, the deadline under the frozen reserve, the earliest
+// completion deadline of its consumers, and whether the live reserve left it
+// no time at its send so the frozen deadline replaced the planned one.
+type PlannedQueryFacts struct {
+	Role                        string `json:"role"`
+	Dataset                     string `json:"dataset"`
+	DeadlineUnixMilli           int64  `json:"deadline_ms"`
+	FrozenDeadlineUnixMilli     int64  `json:"frozen_deadline_ms"`
+	CompletionDeadlineUnixMilli int64  `json:"completion_deadline_ms"`
+	FellBack                    bool   `json:"fell_back"`
+}
+
+// ProviderRejection is a non-success answer as it may be kept: the class
+// the provider's body names (VM_SAMPLE_LIMIT, PROMQL_PARSE, ... or HTTP_<code>),
+// the provider's own trace id when the body carries one, and the start of the
+// body, sanitized - credential values, URLs and addresses replaced and cut
+// short - so an operator can read why without the request it may echo. It is
+// kept with the Query Group's last failure and never written to a log line:
+// a log keeps the class and the trace id only.
+type ProviderRejection struct {
+	Class   string `json:"class"`
+	TraceID string `json:"trace_id,omitempty"`
+	Excerpt string `json:"excerpt,omitempty"`
+}
+
+// AttemptTiming reads a query that did not come back against its budget,
+// all from timestamps the attempt already holds. The budget runs from the
+// attempt's budget start to its deadline (see QueryAttempt), and the numbers
+// split it at the moment the window could be read and the moment the
+// request went out:
+//
+//   - SettleMillis, from the budget start to when the window could be read:
+//     the settling wait the Plan puts in the budget by design, zero for a
+//     recovery that arrives after it;
+//   - StartLateMillis, from then to the request: the part of the budget
+//     lost before the query began - a queue, a permit, a Slot run late;
+//   - BudgetMillis, from the request to the deadline: what the query was
+//     given, zero or less when it began at or past its deadline;
+//   - ElapsedMillis, from the request to its failure: what it used;
+//   - LocalMillis, the part of that alarmd spent decoding and delivering
+//     what had arrived of the answer, zero for a failure before any answer.
+//     The rest of Elapsed was waiting on the backend.
+//
+// The first three add up to the whole budget exactly. Elapsed close to the
+// budget, with little lost before it and little of it local, is a backend
+// that did not answer in time; most of it local is alarmd's own delivery
+// that did not keep up; a large StartLate leaving a small budget is a query
+// begun late; and a small whole is a budget short to begin with.
+//
+// The deadline is the attempt's, not the caller's: a caller whose own
+// deadline runs out first ends the query as an error, not as a failed
+// attempt, so its deadline never times one.
+type AttemptTiming struct {
+	SettleMillis    int64
+	StartLateMillis int64
+	BudgetMillis    int64
+	ElapsedMillis   int64
+	LocalMillis     int64
+}
+
+const (
+	RouteDetailKindHTTPStatus = "http_status"
+	RouteDetailKindTransport  = "transport"
+	RouteDetailKindResponse   = "response"
+	// RouteDetailKindBody is a transport failure after the answer began: the
+	// response's status was read and its body did not arrive in full.
+	RouteDetailKindBody = "body"
+	// RouteDetailKindDelivery is a query whose deadline passed while alarmd
+	// was decoding and delivering what had arrived of the answer: the time
+	// ran out on this side, with the backend not the one being waited on.
+	RouteDetailKindDelivery = "delivery"
+	// DeliveryTimeoutRouteDetail is the one detail of that kind.
+	DeliveryTimeoutRouteDetail = RouteDetailKindDelivery + "=" + TransportFailureTimeout
+
+	ResponseFailureIsPartialMissing = "is_partial_missing"
+	// ResponseFailureOffRequestGrid is an unaligned query - a Plan detected
+	// more often than it aggregates - answered with buckets on a grid other
+	// than its request's.
+	ResponseFailureOffRequestGrid = "off_request_grid"
+	// ResponseFailureNamedOutputContract is a query with named outputs
+	// answered under a response contract other than the one asked for, or
+	// without its legacy output, or naming an output twice.
+	ResponseFailureNamedOutputContract = "named_output_contract"
+	// ResponseFailureNamedOutputDuplicateKey is a query with named outputs
+	// one of whose outputs answered two points at one time and labels,
+	// __name__ aside (contract.ReasonQueryNamedOutputDuplicateKey).
+	ResponseFailureNamedOutputDuplicateKey = "named_output_duplicate_key"
+	// ResponseFailureStatusPrefix precedes the lower-cased UQ status code of a
+	// 200 response whose status field reports a deterministic backend failure
+	// (for example "response=status_space_table_id_field_is_not_exists").
+	ResponseFailureStatusPrefix = "status_"
+	ResponseFailureStatusOther  = "other"
+	// The response limits a query's answer can be past: the whole body, one
+	// series, the series count and the record count. Each is a deterministic
+	// answer for the query, since the same query fetches the same answer
+	// again; none is a provider failure, and no retry makes the answer
+	// smaller.
+	ResponseFailureLimitResponseBytes  = "limit_response_bytes"
+	ResponseFailureLimitSeriesBytes    = "limit_series_bytes"
+	ResponseFailureLimitTotalSeries    = "limit_total_series"
+	ResponseFailureLimitTotalRecords   = "limit_total_records"
+	ResponseFailureLimitFrameBytes     = "limit_frame_bytes"
+	ResponseFailureLimitFrameSeries    = "limit_frame_series"
+	ResponseFailureLimitDictionary     = "limit_dictionary"
+	ResponseFailureFormatUnsupported   = "format_unsupported"
+	ResponseFailureFrameInvalid        = "frame_invalid"
+	ResponseFailureSchemaInvalid       = "schema_invalid"
+	ResponseFailureFooterMissing       = "footer_missing"
+	ResponseFailureFooterCountMismatch = "footer_count_mismatch"
+
+	TransportFailureTimeout           = "timeout"
+	TransportFailureConnectionRefused = "connection_refused"
+	TransportFailureConnectionReset   = "connection_reset"
+	TransportFailureDNS               = "dns"
+	TransportFailureTLS               = "tls"
+	TransportFailureEOF               = "eof"
+	TransportFailureOther             = "other"
+)
+
+// HTTPStatusRouteDetail encodes a non-success HTTP status as attempt detail.
+func HTTPStatusRouteDetail(status int) string {
+	if status <= 0 || status > 999 {
+		return RouteDetailKindHTTPStatus + "=other"
+	}
+	return RouteDetailKindHTTPStatus + "=" + strconv.Itoa(status)
+}
+
+// TransportRouteDetail encodes a classified transport failure as attempt detail.
+// Unknown classes collapse to "other" so the value stays a bounded enum.
+func TransportRouteDetail(class string) string {
+	switch class {
+	case TransportFailureTimeout, TransportFailureConnectionRefused, TransportFailureConnectionReset,
+		TransportFailureDNS, TransportFailureTLS, TransportFailureEOF:
+		return RouteDetailKindTransport + "=" + class
+	default:
+		return RouteDetailKindTransport + "=" + TransportFailureOther
+	}
+}
+
+// BodyRouteDetail encodes a transport failure while a response's body was
+// being read, in the same bounded classes as TransportRouteDetail.
+func BodyRouteDetail(class string) string {
+	return RouteDetailKindBody + strings.TrimPrefix(TransportRouteDetail(class), RouteDetailKindTransport)
+}
+
+// ResponseRouteDetail encodes a 200 response that violated the wire contract
+// (for example a missing is_partial flag) as attempt detail.
+func ResponseRouteDetail(class string) string {
+	switch class {
+	case ResponseFailureIsPartialMissing, ResponseFailureOffRequestGrid,
+		ResponseFailureNamedOutputContract, ResponseFailureNamedOutputDuplicateKey,
+		ResponseFailureLimitResponseBytes, ResponseFailureLimitSeriesBytes, ResponseFailureLimitTotalSeries, ResponseFailureLimitTotalRecords,
+		ResponseFailureLimitFrameBytes, ResponseFailureLimitFrameSeries, ResponseFailureLimitDictionary,
+		ResponseFailureFormatUnsupported, ResponseFailureFrameInvalid, ResponseFailureSchemaInvalid,
+		ResponseFailureFooterMissing, ResponseFailureFooterCountMismatch:
+		return RouteDetailKindResponse + "=" + class
+	default:
+		return RouteDetailKindResponse + "=other"
+	}
+}
+
+// ResponseStatusRouteDetail encodes a 200 response whose status.code names a
+// deterministic backend failure. UQ status codes are a bounded enum, so a code
+// matching the failure code grammar (^[A-Z][A-Z0-9_]{0,63}$) is kept, lower
+// cased, after the "status_" prefix; anything else (free text, URLs, message
+// bodies) collapses to "status_other" so the detail never carries request or
+// response content. The result fits the query failure detail grammar.
+func ResponseStatusRouteDetail(code string) string {
+	if !boundedStatusCode(code) {
+		return RouteDetailKindResponse + "=" + ResponseFailureStatusPrefix + ResponseFailureStatusOther
+	}
+	return RouteDetailKindResponse + "=" + ResponseFailureStatusPrefix + strings.ToLower(code)
+}
+
+const maxStatusCodeLength = 64
+
+func boundedStatusCode(code string) bool {
+	if code == "" || len(code) > maxStatusCodeLength {
+		return false
+	}
+	for index := 0; index < len(code); index++ {
+		char := code[index]
+		switch {
+		case char >= 'A' && char <= 'Z':
+		case index > 0 && (char >= '0' && char <= '9' || char == '_'):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// RouteDetailKind returns the detail kind prefix ("http_status", "transport"
+// or "response") or "" when the detail is empty or not one of the known shapes.
+func RouteDetailKind(detail string) string {
+	for _, kind := range []string{RouteDetailKindHTTPStatus, RouteDetailKindTransport, RouteDetailKindResponse} {
+		if strings.HasPrefix(detail, kind+"=") {
+			return kind
+		}
+	}
+	return ""
+}
+
+type ProviderRouteFacts struct {
+	ProviderRouteRef ProviderRouteRef
+	ResultTableIDs   []string
+	Attempts         []RouteAttemptFact
+	// Status is the backend status the response carried, when it carried one.
+	//
+	// It is a field rather than something recoverable from an attempt's detail
+	// string on purpose. The detail is assembled for a human to read, so a
+	// counter built by parsing it would be pinned to that assembly: change the
+	// prefix or the case and the counter silently reads zero, with nothing to
+	// say it stopped working. The decision about the status is made in the
+	// provider; this carries that decision as data to whoever reports it.
+	Status *ProviderStatusFact
+	// Truncation is an answer the provider may have cut without marking it:
+	// the query service returns at most a fixed number of groups per level
+	// of an Elasticsearch terms aggregation and drops the rest silently. The
+	// series it did return are whole and are read as they are; the groups
+	// it may have dropped are not known absent. Omitted when not suspected,
+	// so every other route encodes as it did.
+	Truncation *ProviderTruncationFact `json:",omitempty"`
+}
+
+// ProviderTruncationFact names a suspected cut: its kind (TruncationTermsCut),
+// the group-by dimension whose level held exactly the cap, the cap, and the
+// source the answer came from.
+type ProviderTruncationFact struct {
+	Kind            string
+	Dimension       string
+	Cap             int
+	SourceSemantics string
+}
+
+// TruncationTermsCut is a terms level of an Elasticsearch aggregation that
+// held exactly the query service's bucket cap.
+const TruncationTermsCut = "terms_cut_suspected"
+
+// ProviderStatusFact is a backend status code and what the provider did with
+// it. Allowed means the response was read for its series anyway, which is only
+// true for codes that describe the data rather than the health of the query.
+//
+// Both outcomes are recorded, not just the allowed one: with only the allowed
+// count, "this code started appearing" and "this code started being allowed"
+// are the same number, and those are exactly the two things that change at the
+// same moment when such a code is first allowed.
+type ProviderStatusFact struct {
+	Code    string
+	Allowed bool
+}
+
+// ProviderQualityFact is a physical query fact. It deliberately has no
+// Plan/Level impact scope; Access projects it onto a consumer binding.
+type ProviderQualityFact struct {
+	ReasonCode     ReasonCode
+	RecordID       string
+	SourceTime     int64
+	SeriesIdentity SeriesIdentityDigest
+}
+
+type ProviderRecordTerminal struct {
+	ReasonCode     ReasonCode
+	RecordID       string
+	SourceTime     int64
+	SeriesIdentity SeriesIdentityDigest
+}
+
+// InputQualityFact is the consumer-scoped projection produced by Access.
+type InputQualityFact struct {
+	ReasonCode     ReasonCode
+	ImpactScope    ImpactScope
+	RecordID       string
+	SourceTime     int64
+	SeriesIdentity SeriesIdentityDigest
+}
+
+// ProviderStats are log-only physical query facts. They are never digested or
+// compared, so adding a counter does not change any conservation proof.
+type ProviderStats struct {
+	ResponseCodec         string `json:",omitempty"`
+	SharedSchemaRequested bool   `json:",omitempty"`
+	Series                uint64
+	Records               uint64
+	Bytes                 uint64
+	QueryMillis           uint64
+	DecodeMillis          uint64
+	// NullIdentityFields counts (series, identity field) pairs whose declared
+	// identity dimension was absent from the provider series and was bound to
+	// JSON null, as Python binds an absent dimension to None. It is a bounded
+	// diagnostics marker ("identity_field_null"); it has no evaluation impact.
+	NullIdentityFields uint64
+}
+
+// PartialEvidence is a physical Provider fact. It does not itself authorize a
+// business result; Evaluation must match it with a compiled proof reference.
+type PartialEvidence struct {
+	Kind                  string
+	Version               uint32
+	EvidenceDigest        string
+	OmissionOnly          bool
+	ReturnedRecordsStable bool
+}
+
+func (evidence *PartialEvidence) Validate() error {
+	if evidence == nil || evidence.Kind != PartialEvidenceOmissionStable || evidence.Version == 0 ||
+		evidence.EvidenceDigest == "" || !evidence.OmissionOnly || !evidence.ReturnedRecordsStable {
+		return errors.New("alarmd execution: invalid typed PARTIAL evidence")
+	}
+	return nil
+}
+
+// Observed is request as a line renders it; nil for nil.
+func (request *RequestFacts) Observed() *observability.QueryRequestFacts {
+	if request == nil {
+		return nil
+	}
+	return &observability.QueryRequestFacts{DeadlineUnixMilli: request.DeadlineUnixMilli, DeadlineLeftAtDoMs: request.DeadlineLeftAtDoMs,
+		DeadlineSource: request.DeadlineSource, Expired: request.Expired, ErrorChain: request.ErrorChain,
+		ErrorTypes: append([]string(nil), request.ErrorTypes...), TraceID: request.TraceID,
+		AnswerStatus: request.AnswerStatus, AnsweredUnixMilli: request.AnsweredUnixMilli, CompletedUnixMilli: request.CompletedUnixMilli,
+		TimeoutSource: request.TimeoutSource, Excerpt: request.Excerpt}
+}
+
+// Observed is planned as a line renders it; nil for nil.
+func (planned *PlannedQueryFacts) Observed() *observability.QueryPlannedFacts {
+	if planned == nil {
+		return nil
+	}
+	return &observability.QueryPlannedFacts{Role: planned.Role, Dataset: planned.Dataset, DeadlineUnixMilli: planned.DeadlineUnixMilli,
+		FrozenDeadlineUnixMilli: planned.FrozenDeadlineUnixMilli, CompletionDeadlineUnixMilli: planned.CompletionDeadlineUnixMilli,
+		FellBack: planned.FellBack}
+}

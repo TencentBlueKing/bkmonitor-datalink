@@ -43,8 +43,9 @@ const (
 
 // OwnerRef 代表 Owner 对象引用信息
 type OwnerRef struct {
-	Kind string `json:"kind"`
-	Name string `json:"name"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	Controller bool   `json:"controller,omitempty"`
 }
 
 // Object 代表 workload 对象
@@ -997,8 +998,9 @@ func toRefs(refs []metav1.OwnerReference) []OwnerRef {
 	ret := make([]OwnerRef, 0, len(refs))
 	for _, ref := range refs {
 		ret = append(ret, OwnerRef{
-			Kind: ref.Kind,
-			Name: ref.Name,
+			Kind:       ref.Kind,
+			Name:       ref.Name,
+			Controller: ref.Controller != nil && *ref.Controller,
 		})
 	}
 	return ret

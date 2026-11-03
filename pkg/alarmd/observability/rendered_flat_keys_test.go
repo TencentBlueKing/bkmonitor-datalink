@@ -1,0 +1,264 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+
+package observability
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+// renderObservation returns the line the logger actually writes.
+//
+// renderTo writes the line the logger renders for an observation, whatever
+// lets it through: the renderer alone, after the normalization every
+// observation goes through. A workflow stage's routine success is counted and
+// not written, so a case about which keys a line carries reads the renderer,
+// and the policy's own cases read the policy.
+func renderTo(output *bytes.Buffer, observation Observation) {
+	New(ComponentScheduler, output).logObservation(context.Background(), NormalizeObservation(observation), LogAdmission{Allowed: true})
+}
+
+// rendererObserver writes every observation it is given through the
+// renderer (renderTo), for the cases that read the keys a sequence of lines
+// carries rather than which lines the policy lets through.
+type rendererObserver struct{ output *bytes.Buffer }
+
+func (r rendererObserver) Observe(_ context.Context, observation Observation) {
+	renderTo(r.output, observation)
+}
+
+// Every case in this file reads the rendered line rather than the fact
+// struct. A field can be set on the struct, carried all the way to the
+// observer, and never appear on any line -- the renderer here emits a chosen
+// list of keys, not the struct -- and that has now happened twice: the range
+// gate's two bounds were on the facts and on no line, and held_by rode inside
+// one cohort's nested bundle so the Query Groups that most needed it had no
+// cause on their completions. A case that asserts on the struct passes in
+// both of those states.
+func renderObservation(t *testing.T, observation Observation) map[string]any {
+	t.Helper()
+	var output bytes.Buffer
+	renderTo(&output, observation)
+	if output.Len() == 0 {
+		t.Fatal("the observation was not written at all")
+	}
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode log: %v: %s", err, output.String())
+	}
+	return event
+}
+
+// The range gate's two candidate bounds reach the line.
+//
+// They shipped on RangeGateFacts and were never rendered, so the reading that
+// went out said steps_below_one and could not say which of the two bounds held
+// the range below a single Slot -- the difference between a Query Group barely
+// past its window and one whose own deadline has only just passed.
+func TestTheRangeGateBoundsAreOnTheRenderedLine(t *testing.T) {
+	event := renderObservation(t, Observation{
+		Component: ComponentScheduler, Stage: StageRangeGateDecided, Result: ResultDegraded,
+		RangeGate: &RangeGateFacts{
+			Outcome: RangeGateStepsBelowOne, ProgressNextSlot: 600, ExpectedNextSlot: 600,
+			BoundsKnown: true, DistanceBound: 0, DeadlineBound: 2,
+		},
+	})
+	for key, want := range map[string]any{
+		"range_gate":                RangeGateStepsBelowOne,
+		"range_gate_bounds_known":   true,
+		"range_gate_distance_bound": float64(0),
+		"range_gate_deadline_bound": float64(2),
+	} {
+		if event[key] != want {
+			t.Fatalf("line[%q] = %#v, want %#v; line=%#v", key, event[key], want, event)
+		}
+	}
+}
+
+// A range given up on for distance says what sized it: how far behind the
+// head and past its own deadline, which bound held, how wide it was built,
+// from which Slot and at what interval, against how many Slots a replay may
+// cover. Each value is distinct so a key rendered from the wrong field shows.
+func TestTheRangeDistanceFactsAreOnTheRenderedLine(t *testing.T) {
+	event := renderObservation(t, Observation{
+		Component: ComponentScheduler, Stage: StageRangeDistanceExpired, Result: ResultDegraded,
+		RangeDistance: &RangeDistanceFacts{
+			HeadSteps: 41, DeadlineSteps: 3, Steps: 5, SlotCount: 6, FirstEvaluationTime: 1700000060,
+			IntervalSeconds: 15, MaxReplaySlots: 7, BoundBy: RangeBoundByDeadline,
+		},
+	})
+	for key, want := range map[string]any{
+		"range_bound_by":              RangeBoundByDeadline,
+		"range_head_steps":            float64(41),
+		"range_deadline_steps":        float64(3),
+		"range_steps":                 float64(5),
+		"range_slot_count":            float64(6),
+		"range_first_evaluation_time": float64(1700000060),
+		"range_interval_seconds":      float64(15),
+		"range_max_replay_slots":      float64(7),
+	} {
+		if event[key] != want {
+			t.Errorf("line[%q] = %#v, want %#v; line=%#v", key, event[key], want, event)
+		}
+	}
+}
+
+// A refusal that never computed the bounds does not print them.
+//
+// Zeroes here would be two numbers that do not exist, and a reader dividing
+// the refused population by which bound held would put part of it in a bucket
+// meaning "not applicable".
+func TestARangeGateRefusalWithoutBoundsPrintsNone(t *testing.T) {
+	event := renderObservation(t, Observation{
+		Component: ComponentScheduler, Stage: StageRangeGateDecided, Result: ResultDegraded,
+		RangeGate: &RangeGateFacts{Outcome: RangeGateNoRangeFlight, ProgressNextSlot: 600, ExpectedNextSlot: 600},
+	})
+	for _, key := range []string{"range_gate_bounds_known", "range_gate_distance_bound", "range_gate_deadline_bound"} {
+		if _, present := event[key]; present {
+			t.Fatalf("line carries %q for a refusal decided before either bound was computed: %#v", key, event)
+		}
+	}
+}
+
+// A completion line carries what held the previous round, on every cohort.
+//
+// The first version put it inside short_period_completion, which only the ten,
+// fifteen and thirty second Query Groups have. Production read twenty
+// GAP_SKIPPED completions and nineteen of them -- every Query Group on sixty
+// seconds or slower, which is the bulk of the ones being skipped -- carried no
+// cause at all. The fixture here is deliberately a Slot with no short-period
+// bundle.
+func TestASlowCohortCompletionCarriesHeldByAsFlatKeys(t *testing.T) {
+	event := renderObservation(t, Observation{
+		Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultSuccess,
+		HeldBy: &HeldByFacts{
+			Decision: "query_cooldown", AtUnixMilli: 1_700_000_031_200,
+			QueryCooldownFailures: 14, QueryCooldownUntilMilli: 1_700_000_240_000,
+		},
+	})
+	if _, bundled := event["short_period_completion"]; bundled {
+		t.Fatalf("this fixture is meant to have no short-period bundle: %#v", event)
+	}
+	for key, want := range map[string]any{
+		"held_by":                   "query_cooldown",
+		"held_by_at":                float64(1_700_000_031_200),
+		"held_by_cooldown_failures": float64(14),
+		"held_by_cooldown_until":    float64(1_700_000_240_000),
+	} {
+		if event[key] != want {
+			t.Fatalf("line[%q] = %#v, want %#v; line=%#v", key, event[key], want, event)
+		}
+	}
+}
+
+// "Nothing held it" is a word on the line, not an absent key.
+//
+// This is what production disproved: held_by never appeared with the value
+// none anywhere, because the reader returned nil for it and the key was simply
+// dropped. An absent key cannot be told apart from a build that does not
+// report held_by, and the share of Slots that nothing held is the denominator
+// the other words are read against.
+func TestHeldByNothingIsWrittenAsAWord(t *testing.T) {
+	event := renderObservation(t, Observation{
+		Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultSuccess,
+		HeldBy: &HeldByFacts{Decision: HeldByNothing, AtUnixMilli: 1_700_000_031_200},
+	})
+	if event["held_by"] != HeldByNothing {
+		t.Fatalf("line[held_by] = %#v, want the word %q; line=%#v", event["held_by"], HeldByNothing, event)
+	}
+	// And it carries neither the cooldown's numbers nor the readiness instant.
+	for _, key := range []string{"held_by_cooldown_failures", "held_by_cooldown_until", "held_by_ready_at"} {
+		if _, present := event[key]; present {
+			t.Fatalf("line carries %q beside the word for nothing: %#v", key, event)
+		}
+	}
+}
+
+// A lost round's completion line carries its divert decision and its binding
+// query budget as flat keys, readable by anything filtering the line.
+func TestALostRoundCompletionCarriesItsDecisionAndBudgetAsFlatKeys(t *testing.T) {
+	event := renderObservation(t, Observation{
+		Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultDegraded, ReasonCode: "QUERY_TIMEOUT",
+		DivertDecision: &DivertDecisionFacts{ClassifiedAtUnixMilli: 11, FrozenDeadlineUnixMilli: 12, LiveDeadlineUnixMilli: 13,
+			BoundMillis: 14, BoundSource: DivertBoundQueryDuration, RemainingMillis: 15},
+		QueryBudget: &QueryBudgetFacts{ConsumerDeadlineUnixMilli: 21, FrozenReserveMillis: 22, LiveReserveMillis: 23,
+			ReadyAtUnixMilli: 24, FrozenQueryDeadlineUnixMilli: 25, LiveQueryDeadlineUnixMilli: 26},
+	})
+	for key, want := range map[string]any{
+		"divert_classified_at_ms": float64(11), "divert_frozen_deadline_ms": float64(12), "divert_live_deadline_ms": float64(13),
+		"divert_bound_ms": float64(14), "divert_bound_source": DivertBoundQueryDuration, "divert_remaining_ms": float64(15),
+		"budget_consumer_deadline_ms": float64(21), "budget_frozen_reserve_ms": float64(22), "budget_live_reserve_ms": float64(23),
+		"budget_ready_at_ms": float64(24), "budget_frozen_query_deadline_ms": float64(25), "budget_live_query_deadline_ms": float64(26),
+	} {
+		if event[key] != want {
+			t.Fatalf("line[%q] = %#v, want %#v; line=%#v", key, event[key], want, event)
+		}
+	}
+}
+
+// A failed query's line says, as flat keys, which deadline was on its request
+// and which ran out, its transport detail, the error chain and its types, how
+// far the answer got, and the physical query's own plan: whose input it was
+// and the deadlines it was planned under. Its round's line carries the same
+// for the query that failed, with when the read was sent and the deadline it
+// ran under.
+func TestAFailedQuerysLineSaysWhichDeadlineAndWhichQuery(t *testing.T) {
+	request := &QueryRequestFacts{DeadlineUnixMilli: 31, DeadlineLeftAtDoMs: 32, DeadlineSource: "attempt", Expired: "none",
+		ErrorChain: "Post <url>: read tcp: i/o timeout", ErrorTypes: []string{"*url.Error", "*net.OpError"},
+		TraceID: "4bf92f3577b34da6a3ce929d0e0e4736"}
+	planned := &QueryPlannedFacts{Role: "ALGORITHM_DEPENDENCY", Dataset: "history_86400", DeadlineUnixMilli: 41, FrozenDeadlineUnixMilli: 42,
+		CompletionDeadlineUnixMilli: 43, FellBack: true}
+	event := renderObservation(t, Observation{
+		Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultDegraded, ReasonCode: "QUERY_TIMEOUT",
+		QueryFailure: &QueryFailureFacts{Stage: QueryFailureStageProvider, Category: QueryFailureCategoryProviderTransport, Code: "QUERY_TIMEOUT",
+			Detail: "transport=timeout", Request: request, Planned: planned, Volume: &QueryVolume{BytesRead: 51, SeriesDelivered: 52}},
+	})
+	for key, want := range map[string]any{
+		"transport_detail": "transport=timeout", "request_deadline_ms": float64(31), "deadline_left_at_do_ms": float64(32),
+		"deadline_source": "attempt", "expired": "none", "error_chain": "Post <url>: read tcp: i/o timeout",
+		"error_types": "*url.Error > *net.OpError", "query_role": "ALGORITHM_DEPENDENCY", "query_dataset": "history_86400",
+		"planned_deadline_ms": float64(41), "frozen_planned_deadline_ms": float64(42), "completion_deadline_ms": float64(43),
+		"fell_back": true, "failure_bytes_read": float64(51), "failure_series_delivered": float64(52),
+		"failure_provider_trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+	} {
+		if event[key] != want {
+			t.Fatalf("query line[%q] = %#v, want %#v; line=%#v", key, event[key], want, event)
+		}
+	}
+	slot := renderObservation(t, Observation{
+		Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultDegraded, ReasonCode: "QUERY_TIMEOUT",
+		QueryBudget: &QueryBudgetFacts{QueryDeadlineUnixMilli: 61, RecoveryBudgetMillis: 62, QueryStartedAtUnixMilli: 63,
+			FailedRequest: request, FailedPlanned: planned},
+	})
+	for key, want := range map[string]any{
+		"budget_query_deadline_ms": float64(61), "budget_recovery_budget_ms": float64(62), "budget_query_started_at_ms": float64(63),
+		"request_deadline_ms": float64(31), "error_types": "*url.Error > *net.OpError", "planned_deadline_ms": float64(41), "query_role": "ALGORITHM_DEPENDENCY",
+		"failure_provider_trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+	} {
+		if slot[key] != want {
+			t.Fatalf("slot line[%q] = %#v, want %#v; line=%#v", key, slot[key], want, slot)
+		}
+	}
+}
+
+// A refusal that names the provider's own trace id writes that one, once:
+// the request's trace id does not write the key a second time.
+func TestARejectionsTraceIDIsWrittenOnce(t *testing.T) {
+	var output bytes.Buffer
+	renderTo(&output, Observation{
+		Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultDegraded, ReasonCode: "QUERY_REJECTED",
+		QueryFailure: &QueryFailureFacts{Stage: QueryFailureStageProvider, Category: QueryFailureCategoryProviderTransport, Code: "QUERY_REJECTED",
+			Detail: "http_status=400", Rejection: &QueryRejection{Class: "QUERY_REJECTED", TraceID: "0af7651916cd43dd8448eb211c80319c"},
+			Request: &QueryRequestFacts{DeadlineSource: "attempt", Expired: "none", TraceID: "4bf92f3577b34da6a3ce929d0e0e4736"}},
+	})
+	if got := strings.Count(output.String(), `"failure_provider_trace_id"`); got != 1 ||
+		!strings.Contains(output.String(), `"failure_provider_trace_id":"0af7651916cd43dd8448eb211c80319c"`) {
+		t.Fatalf("written %d times, want the provider's own once: %s", got, output.String())
+	}
+}

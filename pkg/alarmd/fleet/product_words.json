@@ -1,0 +1,71 @@
+{
+  "state": {
+    "DATA_ABSENT": "数据没到",
+    "DEFECT": "程序缺陷",
+    "DEPENDENCY_UNANSWERED": "依赖没应答",
+    "DETECTING": "在检测",
+    "IDENTITY_MISMATCH": "数据身份对不上",
+    "NOT_DETECTING": "没在检测",
+    "RECOVERED": "已恢复",
+    "RESULT_UNTRUSTED": "检测结果不能采信",
+    "STRATEGY_INVALID": "策略定义有问题",
+    "UNKNOWN": "状态未知"
+  },
+  "state_order": [
+    "DETECTING",
+    "RESULT_UNTRUSTED",
+    "NOT_DETECTING",
+    "DATA_ABSENT",
+    "IDENTITY_MISMATCH",
+    "STRATEGY_INVALID",
+    "DEPENDENCY_UNANSWERED",
+    "DEFECT",
+    "RECOVERED"
+  ],
+  "action": {
+    "CACHE_WRITER_FILL": "缓存写入方补",
+    "DATA_CHECK": "数据负责人查",
+    "IDENTITY_ALIGN": "策略或采集方对齐身份标签",
+    "NONE": "不用处理",
+    "SERVICE_FIX": "本服务处理",
+    "STRATEGY_EDIT": "策略负责人改",
+    "WATCH": "等着看"
+  },
+  "action_order": [
+    "SERVICE_FIX",
+    "STRATEGY_EDIT",
+    "DATA_CHECK",
+    "IDENTITY_ALIGN",
+    "CACHE_WRITER_FILL",
+    "WATCH",
+    "NONE"
+  ],
+  "watch": {
+    "GUARD_MOVING": "保护在解除",
+    "NEXT_ROUND": "等后续轮次",
+    "WINDOW_FILLING": "窗口在补"
+  },
+  "since_basis": {
+    "AT_LEAST": "只会更久",
+    "AT_MOST": "只会更短",
+    "EXACT": "起点确切",
+    "REFUSED": "时间异常，请上报"
+  },
+  "health": {
+    "DEGRADED": "降级",
+    "HEALTHY": "正常",
+    "UNKNOWN": "证据不全"
+  },
+  "urgency": {
+    "ACTION_NEEDED": "需要处理",
+    "NONE": "无需处理",
+    "OPTIONAL": "可选优化",
+    "UNKNOWN": "状态未知"
+  },
+  "urgency_order": [
+    "ACTION_NEEDED",
+    "UNKNOWN",
+    "OPTIONAL",
+    "NONE"
+  ]
+}

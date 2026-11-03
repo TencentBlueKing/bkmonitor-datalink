@@ -22,17 +22,13 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	queryMod "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
 const (
@@ -101,7 +97,7 @@ type QueryTs struct {
 	// 增加公共限制
 	// Limit 点数限制数量
 	Limit int `json:"limit,omitempty" example:"0"`
-	// From 翻页开启数字，不能与 IsSearchAfter 同时使用
+	// From 翻页起始位置。Doris SearchAfter 在缺少稳定游标字段时会降级为 offset 分页。
 	From int `json:"from,omitempty" example:"0"`
 
 	// Scroll 是否启用 Scroll 查询
@@ -110,7 +106,7 @@ type QueryTs struct {
 	SliceMax int `json:"slice_max,omitempty"`
 	// IsMultiFrom 是否启用 MultiFrom 查询
 	IsMultiFrom bool `json:"is_multi_from,omitempty"`
-	// IsSearchAfter 是否启用 SearchAfter 查询。仅用于 /query/raw 原始查询：Elasticsearch 使用原生游标，Doris 使用 keyset pagination（支持 NULL 游标值）；不能与 from 或 scroll 同时使用。
+	// IsSearchAfter 是否启用 SearchAfter 查询。仅用于 /query/raw 原始查询：Elasticsearch 使用原生游标；Doris 优先使用 __unique_key__，缺少时尝试 dtEventTimeStamp、gseIndex、iterationIndex 组合游标，再缺少时降级为 offset 分页；不能与 scroll 同时使用。
 	IsSearchAfter bool `json:"is_search_after,omitempty"`
 	// ClearCache 是否强制清理已存在的缓存会话
 	ClearCache bool `json:"clear_cache,omitempty"`
@@ -259,15 +255,28 @@ func (q *QueryTs) ToTime(ctx context.Context) error {
 	return nil
 }
 
+// ToQueryReference 保留历史时间分段，生成查询列表。
 func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference, error) {
+	plan, err := q.toQueryPlan(ctx, timeSeriesQuery)
+	return plan.Queries, err
+}
+
+// toQueryPlan 继承请求参数，汇总各逻辑查询的执行列表、历史路由和规划统计。
+func (q *QueryTs) toQueryPlan(ctx context.Context, mode queryMode) (QueryPlan, error) {
 	// 优先解析 queryTs 里面的时间元素
 	err := q.ToTime(ctx)
 	if err != nil {
-		return nil, err
+		return QueryPlan{}, err
 	}
 
+	astBranchCount := queryASTBranchCount(q.MetricMerge, len(q.QueryList))
 	queryReference := make(metadata.QueryReference)
+	routeReference := make(metadata.QueryReference)
+	var stats QueryPlanStats
 	for _, query := range q.QueryList {
+		if query.ASTBranchCount == 0 {
+			query.ASTBranchCount = astBranchCount
+		}
 		// 兼容 SaaS 命名（bk_data / bk_log_search / bk_apm）-> 内部命名（bkdata / bklog / bkapm）
 		query.DataSource = normalizeDataSource(query.DataSource)
 
@@ -331,19 +340,40 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		}
 
 		tsDBs := q.TsDBMap[query.ReferenceName]
-		queryMetric, err := query.ToQueryMetric(ctx, q.SpaceUid, tsDBs)
+		metricPlan, err := query.toQueryMetricPlan(ctx, q.SpaceUid, tsDBs, mode)
 		if err != nil {
-			return nil, err
+			return QueryPlan{}, err
 		}
 		if _, ok := queryReference[query.ReferenceName]; !ok {
 			queryReference[query.ReferenceName] = make([]*metadata.QueryMetric, 0)
 		}
 
-		queryReference[query.ReferenceName] = append(queryReference[query.ReferenceName], queryMetric)
+		queryReference[query.ReferenceName] = append(queryReference[query.ReferenceName], metricPlan.queries)
+		routeReference[query.ReferenceName] = append(routeReference[query.ReferenceName], metricPlan.routes)
+		stats.ReusedTargets += metricPlan.stats.ReusedTargets
+		stats.MergedQueries += metricPlan.stats.MergedQueries
 	}
 
 	metadata.SetQueryReference(ctx, queryReference)
-	return queryReference, nil
+	return QueryPlan{Queries: queryReference, Routes: routeReference, Stats: stats}, nil
+}
+
+func queryASTBranchCount(expression string, fallback int) int {
+	expr, err := parser.ParseExpr(expression)
+	if err != nil {
+		return fallback
+	}
+	count := 0
+	parser.Inspect(expr, func(node parser.Node, _ []parser.Node) error {
+		if _, ok := node.(*parser.VectorSelector); ok {
+			count++
+		}
+		return nil
+	})
+	if count == 0 {
+		return fallback
+	}
+	return count
 }
 
 func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClusterMetric, error) {
@@ -601,6 +631,8 @@ type Query struct {
 	Limit int `json:"limit,omitempty" example:"0"`
 	// From 翻页开启数字
 	From int `json:"from,omitempty" example:"0"`
+	// ExactTotal 显式请求 ES 返回精确命中总数（track_total_hits）；默认关闭
+	ExactTotal bool `json:"exact_total,omitempty"`
 	// Timestamp @-modifier 标记
 	Timestamp *int64 `json:"timestamp,omitempty"`
 	// StartOrEnd @-modifier 标记，start or end
@@ -625,6 +657,8 @@ type Query struct {
 	TableIDConditions AllConditions `json:"table_id_conditions,omitempty"`
 	// KeepColumns 保留字段
 	KeepColumns KeepColumns `json:"keep_columns,omitempty" swaggerignore:"true"`
+	// ASTBranchCount records the selector branch count for observation only.
+	ASTBranchCount int `json:"-" swaggerignore:"true"`
 
 	// AlignInfluxdbResult 保留字段，无需配置，是否对齐influxdb的结果,该判断基于promql和influxdb查询原理的差异
 	AlignInfluxdbResult bool `json:"-"`
@@ -858,6 +892,12 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 
 // ToQueryMetric 通过 spaceUid 转换成可查询结构体
 func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs) (*metadata.QueryMetric, error) {
+	plan, err := q.toQueryMetricPlan(ctx, spaceUid, tsDBs, timeSeriesQuery)
+	return plan.queries, err
+}
+
+// toQueryMetricPlan 解析一个逻辑查询；Raw 按存储目标执行，时序查询按历史时间分段执行。
+func (q *Query) toQueryMetricPlan(ctx context.Context, spaceUid string, tsDBs TsDBs, mode queryMode) (queryMetricPlan, error) {
 	var (
 		referenceName = q.ReferenceName
 		metricName    = q.FieldName
@@ -872,11 +912,15 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 		ReferenceName: referenceName,
 		MetricName:    metricName,
 	}
+	plan := queryMetricPlan{queries: queryMetric, routes: queryMetric}
+	if mode == rawQuery {
+		plan.routes = &metadata.QueryMetric{ReferenceName: referenceName, MetricName: metricName}
+	}
 
 	var aggregates metadata.Aggregates
 	aggregates, err = q.Aggregates()
 	if err != nil {
-		return nil, err
+		return queryMetricPlan{}, err
 	}
 
 	// 注入时区和时区偏移，用于聚合处理
@@ -897,7 +941,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 
 	allConditions, err := q.Conditions.AnalysisConditions()
 	if err != nil {
-		return nil, err
+		return queryMetricPlan{}, err
 	}
 
 	// 如果 DataSource 为空，则自动补充
@@ -907,105 +951,9 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 
 	// 如果是 BkSql 查询无需获取 tsdb 路由关系
 	if q.DataSource == BkData {
-		// 判断空间跟业务是否匹配
-		isMatchBizID := func() bool {
-			space := strings.Split(spaceUid, "__")
-			if len(space) != 2 {
-				return false
-			}
-			// 只允许业务下查询
-			if space[0] != "bkcc" {
-				return false
-			}
-
-			if !strings.HasPrefix(string(tableID), space[1]+"_") {
-				return false
-			}
-			return true
-		}()
-
-		ff := featureFlag.GetBkDataTableIDCheck(ctx, string(tableID))
-		metric.BkDataRequestInc(ctx, spaceUid, string(tableID), fmt.Sprintf("%v", isMatchBizID), fmt.Sprintf("%v", ff))
-
-		// 特性开关是否，打开 bkdata tableid 校验
-		if ff {
-			// 增加 bkdata tableid 校验，只有业务开头的才有权限，防止越权
-			if !isMatchBizID {
-				return queryMetric, nil
-			}
-		}
-
-		route, bkDataErr := MakeRouteFromTableID(q.TableID)
-		if bkDataErr != nil {
-			err = bkDataErr
-			return nil, bkDataErr
-		}
-		if route.DB() == "" {
-			return nil, metadata.NewMessage(metadata.MsgQueryBKSQL,
-				"bkdata 的表名不能为空",
-			).Error(ctx, nil)
-		}
-
-		query := &metadata.Query{
-			StorageType:   metadata.BkSqlStorageType,
-			TableID:       string(tableID),
-			DataSource:    q.DataSource,
-			DB:            route.DB(),
-			Measurement:   route.Measurement(),
-			Field:         q.FieldName,
-			Aggregates:    aggregates,
-			AllConditions: allConditions.MetaDataAllConditions(),
-		}
-
-		query.SQL = q.SQL
-		query.QueryString = q.QueryString
-		query.IsPrefix = q.IsPrefix
-		query.Source = q.KeepColumns
-
-		query.Collapse = q.Collapse
-
-		query.Scroll = q.Scroll
-		query.DryRun = q.DryRun
-		query.IsMergeDB = q.IsMergeDB
-
-		query.Size = q.Limit
-		query.From = q.From
-
-		if query.SQL != "" {
-			const sqlPreviewMax = 512
-			preview := query.SQL
-			if len(preview) > sqlPreviewMax {
-				preview = preview[:sqlPreviewMax] + "...(truncated)"
-			}
-			span.Set("bkdata.metadata.sql.preview", preview)
-		}
-
-		if len(q.OrderBy) > 0 {
-			query.Orders = make(metadata.Orders, 0, len(q.OrderBy))
-			for _, o := range q.OrderBy {
-				if len(o) == 0 {
-					continue
-				}
-
-				asc := true
-				name := o
-
-				if strings.HasPrefix(name, "-") {
-					asc = false
-					name = name[1:]
-				}
-
-				query.Orders = append(query.Orders, metadata.Order{
-					Name: name,
-					Ast:  asc,
-				})
-			}
-		}
-
-		metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
-
-		queryMetric.QueryList = []*metadata.Query{query}
-		return queryMetric, nil
+		var metric *metadata.QueryMetric
+		metric, err = q.toBkDataQueryMetric(ctx, spaceUid, aggregates, allConditions)
+		return queryMetricPlan{queries: metric, routes: metric}, err
 	}
 
 	isSkipField := false
@@ -1025,7 +973,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			TableIDConditions: q.TableIDConditions,
 		})
 		if err != nil {
-			return nil, err
+			return queryMetricPlan{}, err
 		}
 	}
 
@@ -1034,7 +982,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	span.Set("tsdb-num", len(tsDBs))
 
 	// 构建 query map 使得相同的 storage 可以进行合并查询
-	queryMap := make(map[string]*metadata.Query)
+	queryMap := make(map[queryMergeTarget]*metadata.Query)
 	var queryMergePairs []string
 
 	// 查询路由匹配中的 tsDB 列表
@@ -1042,114 +990,39 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	routeLookback, routeLookForward := q.routeOverlapDuration(qp.LookBackDelta)
 	for _, tsDB := range tsDBs {
 		storageRanges := tsDB.GetStorageIDRangesWithDirectionalOverlap(routeBaseStart, routeBaseEnd, routeLookback, routeLookForward)
+		targets := make(map[rawStorageTarget]struct{})
 
 		for _, storageRange := range storageRanges {
-			query := q.BuildMetadataQuery(ctx, tsDB, allConditions)
+			query, buildErr := q.buildStorageQuery(ctx, tsDB, storageRange, aggregates, allConditions)
+			if buildErr != nil {
+				err = buildErr
+				return queryMetricPlan{}, err
+			}
 			if query == nil {
 				continue
 			}
 
-			query.Aggregates = aggregates.Copy()
-			query.Timezone = qp.Timezone
-			query.StorageID = storageRange.StorageID
-			// storageRange 是按时间段命中的完整路由信息；存在时必须覆盖外层 RT detail，
-			// 否则 ES + Doris 混合场景会用外层存储的 db/measurement 去查另一种存储。
-			if storageRange.StorageType != "" {
-				query.StorageType = storageRange.StorageType
-			}
-			if storageRange.StorageName != "" {
-				query.StorageName = storageRange.StorageName
-			}
-			if storageRange.ClusterName != "" {
-				query.ClusterName = storageRange.ClusterName
-			}
-			if storageRange.DB != "" {
-				query.DB = storageRange.DB
-			}
-			if storageRange.Measurement != "" {
-				query.Measurement = storageRange.Measurement
-				query.Measurements = []string{storageRange.Measurement}
-			}
-			if storageRange.HasSourceType {
-				query.SourceType = storageRange.SourceType
-			}
+			routedQuery := *query
 			if !storageRange.IsZero() {
-				query.RouteStart = storageRange.Start
-				query.RouteEnd = storageRange.End
-				query.RouteEndInclusive = storageRange.EndInclusive
+				routedQuery.RouteStart = storageRange.Start
+				routedQuery.RouteEnd = storageRange.End
+				routedQuery.RouteEndInclusive = storageRange.EndInclusive
 			}
 			if !storageRange.QueryIsZero() {
-				query.RouteQueryStart = storageRange.QueryStart
-				query.RouteQueryEnd = storageRange.QueryEnd
+				routedQuery.RouteQueryStart = storageRange.QueryStart
+				routedQuery.RouteQueryEnd = storageRange.QueryEnd
 			}
-			query.ResultTableOption = q.ResultTableOptions.GetOption(query.TableUUID())
-
-			// 如果没有指定查询类型，则通过 storageID 获取
-			if query.StorageType == "" {
-				stg, _ := tsdb.GetStorage(ctx, query.StorageID)
-				if stg != nil {
-					query.StorageType = stg.Type
+			if mode == rawQuery {
+				plan.routes.QueryList = append(plan.routes.QueryList, &routedQuery)
+				target := rawTarget(query)
+				if _, exists := targets[target]; exists {
+					plan.stats.ReusedTargets++
+					continue
 				}
+				targets[target] = struct{}{}
+			} else {
+				query = &routedQuery
 			}
-			if query.StorageType == "" {
-				return nil, fmt.Errorf("storageType is empty with %v", query.StorageID)
-			}
-
-			// 针对 vmRt 不为空的情况，进行 vm 判定
-			if query.VmRt != "" {
-				isVmQuery := func() bool {
-					dims := set.New[string]()
-					for _, a := range q.AggregateMethodList {
-						dims.Add(a.Dimensions...)
-					}
-
-					if query.CheckDruidQuery(ctx, dims) {
-						return true
-					}
-					if featureFlag.GetMustVmQueryFeatureFlag(ctx, tsDB.TableID) {
-						return true
-					}
-
-					return false
-				}()
-
-				if isVmQuery {
-					query.StorageType = metadata.VictoriaMetricsStorageType
-				} else {
-					query.StorageType = metadata.InfluxDBStorageType
-				}
-			}
-
-			// 只有 vm 类型才需要进行处理
-			if query.StorageType == metadata.VictoriaMetricsStorageType {
-				// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的函数都进行替换，例如 label_replace
-				for _, a := range q.AggregateMethodList {
-					switch a.Method {
-					// label_replace(v instant-vector, dst_label string, replacement string, src_label string, regex string)
-					case "label_replace":
-						if len(a.VArgsList) == 4 && a.VArgsList[2] == promql.MetricLabelName {
-							if strings.LastIndex(fmt.Sprintf("%s", a.VArgsList[3]), query.Field) < 0 {
-								a.VArgsList[3] = fmt.Sprintf("%s_%s", a.VArgsList[3], query.Field)
-							}
-						}
-					}
-				}
-
-				// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的条件都进行替换，也就是条件中使用 __name__ 的
-				for _, qc := range allConditions {
-					for _, c := range qc {
-						if c.DimensionName == promql.MetricLabelName {
-							for ci, cv := range c.Value {
-								if strings.LastIndex(cv, query.Field) < 0 {
-									c.Value[ci] = fmt.Sprintf("%s_%s", cv, query.Field)
-								}
-							}
-						}
-					}
-				}
-			}
-
-			metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 
 			// 判断是否跳过合并操作
 			if !query.GetMergeDBStatus() {
@@ -1157,19 +1030,20 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 				continue
 			}
 
-			storageUUID := query.StorageUUID()
-			if oq, ok := queryMap[storageUUID]; ok {
+			target := mergeTarget(query, mode)
+			if oq, ok := queryMap[target]; ok {
+				plan.stats.MergedQueries++
 				queryMergePairs = append(queryMergePairs, fmt.Sprintf("%s->%s", oq.TableID, query.TableID))
 				// merge db 只合并 DB 列表，主 query 固定选择 TableID 较小的记录，避免上游 tsDB 顺序变化导致结果不稳定。
 				if query.TableID < oq.TableID {
 					query.DBs = append(oq.DBs, query.DB)
-					queryMap[storageUUID] = query
+					queryMap[target] = query
 				} else {
 					oq.DBs = append(oq.DBs, query.DB)
 				}
 			} else {
 				query.DBs = []string{query.DB}
-				queryMap[storageUUID] = query
+				queryMap[target] = query
 			}
 		}
 	}
@@ -1180,14 +1054,97 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 
 	span.Set("query_map_length", len(queryMap))
 
-	for _, qry := range queryMap {
+	storageKeys := make([]queryMergeTarget, 0, len(queryMap))
+	for key := range queryMap {
+		storageKeys = append(storageKeys, key)
+	}
+	sort.Slice(storageKeys, func(i, j int) bool {
+		return compareMergeTargets(storageKeys[i], storageKeys[j]) < 0
+	})
+	for _, key := range storageKeys {
+		qry := queryMap[key]
 		sort.Strings(qry.DBs)
 		queryMetric.QueryList = append(queryMetric.QueryList, qry)
 	}
 
 	span.Set("query_metric_length", len(queryMetric.QueryList))
 
-	return queryMetric, nil
+	return plan, nil
+}
+
+func (q *Query) queryCostRangeProfile() (hasRangeFunction bool, window, step time.Duration) {
+	topLevelStep := queryCostDuration(q.Step)
+	if topLevelStep <= 0 {
+		topLevelStep = promql.GetDefaultStep()
+	}
+	step = topLevelStep
+
+	type rangeCandidate struct {
+		function   string
+		window     Window
+		isSubQuery bool
+		step       string
+	}
+	candidates := make([]rangeCandidate, 0, len(q.AggregateMethodList)+1)
+	candidates = append(candidates, rangeCandidate{
+		function:   q.TimeAggregation.Function,
+		window:     q.TimeAggregation.Window,
+		isSubQuery: q.TimeAggregation.IsSubQuery,
+		step:       q.TimeAggregation.Step,
+	})
+	for _, aggregate := range q.AggregateMethodList {
+		candidates = append(candidates, rangeCandidate{
+			function:   aggregate.Method,
+			window:     aggregate.Window,
+			isSubQuery: aggregate.IsSubQuery,
+			step:       aggregate.Step,
+		})
+	}
+
+	bestDensity := float64(-1)
+	enclosingStep := topLevelStep
+	// Range candidates are stored from inner to outer. Walk them backwards so
+	// an enclosing subquery step is applied to every range function inside it.
+	for i := len(candidates) - 1; i >= 0; i-- {
+		candidate := candidates[i]
+		if candidate.function == "" || candidate.window == "" {
+			continue
+		}
+		hasRangeFunction = true
+		parsedWindow := queryCostDuration(string(candidate.window))
+		if parsedWindow <= 0 {
+			continue
+		}
+		candidateStep := enclosingStep
+		if candidate.isSubQuery {
+			if candidate.step == "" || candidate.step == "0s" {
+				candidateStep = promql.GetDefaultStep()
+			} else {
+				candidateStep = queryCostDuration(candidate.step)
+			}
+		}
+		if candidateStep <= 0 {
+			continue
+		}
+		density := float64(parsedWindow) / float64(candidateStep)
+		if density > bestDensity {
+			bestDensity = density
+			window = parsedWindow
+			step = candidateStep
+		}
+		if candidate.isSubQuery {
+			enclosingStep = candidateStep
+		}
+	}
+	return hasRangeFunction, window, step
+}
+
+func queryCostDuration(value string) time.Duration {
+	duration, err := model.ParseDuration(value)
+	if err != nil {
+		return 0
+	}
+	return time.Duration(duration)
 }
 
 func (q *Query) BuildMetadataQuery(
@@ -1299,7 +1256,13 @@ func (q *Query) BuildMetadataQuery(
 	} else {
 		for _, filter := range tsDB.Filters {
 			cond := make([]ConditionField, 0, len(filter))
-			for k, v := range filter {
+			keys := make([]string, 0, len(filter))
+			for key := range filter {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				v := filter[k]
 				if v != "" {
 					cond = append(cond, ConditionField{
 						DimensionName: k,
@@ -1379,6 +1342,7 @@ func (q *Query) BuildMetadataQuery(
 
 	query.Size = q.Limit
 	query.From = q.From
+	query.ExactTotal = q.ExactTotal
 
 	if len(q.OrderBy) > 0 {
 		query.Orders = q.OrderBy.Orders()

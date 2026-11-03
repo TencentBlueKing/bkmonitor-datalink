@@ -1,0 +1,19 @@
+{
+  "method": "POST",
+  "path": "/query/ts/promql",
+  "headers": {
+    "Content-Type": "application/json",
+    "Bk-Query-Source": "golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__golden_vm_histogram",
+    "X-Bk-Tenant-Id": "tenant_golden"
+  },
+  "body": {
+    "promql": "histogram_quantile(0.9, sum by (le,dimension_1,dimension_filter,dimension_3,dimension_4) (irate(bkmonitor:request_duration_bucket{dimension_filter=~\"demo-service-.*\"}[1m])))/1000",
+    "start": "1792225515",
+    "end": "1792226385",
+    "step": "15s",
+    "timezone": "Asia/Shanghai",
+    "look_back_delta": "",
+    "instant": false
+  }
+}

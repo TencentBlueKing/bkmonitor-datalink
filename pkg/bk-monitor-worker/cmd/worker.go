@@ -103,6 +103,9 @@ func startWorker(cmd *cobra.Command, args []string) {
 	if err != nil {
 		logger.Fatalf(err.Error())
 	}
+	if err := daemon.EnsureActiveProfilingTask(ctx, config.WorkerQueues); err != nil {
+		logger.Fatalf("enqueue Active Profiling daemon task: %s", err)
+	}
 	go workerService.Run()
 
 	// 2. 启动常驻任务维护器

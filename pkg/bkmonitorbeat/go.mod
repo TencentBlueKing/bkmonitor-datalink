@@ -122,6 +122,8 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect
+	github.com/xdg/scram v0.0.0-20180814205039-7eeb5667e42c // indirect
+	github.com/xdg/stringprep v1.0.0 // indirect
 	github.com/xeipuuv/gojsonpointer v0.0.0-20180127040702-4e3ac2762d5f // indirect
 	github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect
 	go.opentelemetry.io/otel v1.19.0 // indirect
@@ -153,7 +155,7 @@ replace (
 	github.com/Sirupsen/logrus v1.6.0 => github.com/sirupsen/logrus v1.6.0
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v1.10.0 => ../libgse
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0 => ../utils
-	github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.17-bk+incompatible
+	github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.61-bk+incompatible
 	github.com/gosnmp/gosnmp v1.32.0 => github.com/TencentBlueKing/gosnmp v1.30.0-bk
 	github.com/shirou/gopsutil/v3 v3.23.4 => github.com/TencentBlueKing/gopsutil/v3 v3.26.9-bk
 )

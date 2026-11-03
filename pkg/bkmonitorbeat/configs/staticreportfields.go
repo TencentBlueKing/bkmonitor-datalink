@@ -42,6 +42,12 @@ const (
 	StaticReportFieldSystemPlatVer       = "system.platVer"
 	StaticReportFieldSystemSysType       = "system.sysType"
 	StaticReportFieldSystemKernelVersion = "system.kernelVersion"
+
+	StaticReportFieldHardware              = "hardware"
+	StaticReportFieldHardwareProductUUID   = "hardware.product_uuid"
+	StaticReportFieldHardwareProductName   = "hardware.product_name"
+	StaticReportFieldHardwareProductSerial = "hardware.product_serial"
+	StaticReportFieldHardwareUUIDStatus    = "hardware.uuid_status"
 )
 
 var staticReportFieldExpansions = map[string][]string{
@@ -90,6 +96,17 @@ var staticReportFieldExpansions = map[string][]string{
 	StaticReportFieldSystemPlatVer:       {StaticReportFieldSystemPlatVer},
 	StaticReportFieldSystemSysType:       {StaticReportFieldSystemSysType},
 	StaticReportFieldSystemKernelVersion: {StaticReportFieldSystemKernelVersion},
+
+	StaticReportFieldHardware: {
+		StaticReportFieldHardwareProductUUID,
+		StaticReportFieldHardwareProductName,
+		StaticReportFieldHardwareProductSerial,
+		StaticReportFieldHardwareUUIDStatus,
+	},
+	StaticReportFieldHardwareProductUUID:   {StaticReportFieldHardwareProductUUID},
+	StaticReportFieldHardwareProductName:   {StaticReportFieldHardwareProductName},
+	StaticReportFieldHardwareProductSerial: {StaticReportFieldHardwareProductSerial},
+	StaticReportFieldHardwareUUIDStatus:    {StaticReportFieldHardwareUUIDStatus},
 }
 
 // NormalizeStaticReportFields 将配置的字段路径展开为叶子字段集合。

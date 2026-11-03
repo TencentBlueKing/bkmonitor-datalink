@@ -208,3 +208,7 @@ func (set *globalTestSet) Holds(_ openalerts.StrategyKey, fingerprint string) (b
 }
 func (set *globalTestSet) ActiveAlerts(openalerts.StrategyKey) []openalerts.Alert { return set.alerts }
 func (set *globalTestSet) OwnEventSourceID() string                               { return "native" }
+func (set *globalTestSet) UnlistedMemberCount(openalerts.StrategyKey) (int, bool) { return 0, false }
+func (set *globalTestSet) UnlistedHolds(openalerts.StrategyKey, string) (bool, bool) {
+	return false, false
+}

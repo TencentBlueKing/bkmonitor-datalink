@@ -173,7 +173,8 @@ func (bundle *phaseTwoWorkerBundle) activationFleetFacts() *fleet.ActivationFact
 		// The same bound the source is held to: a publication the design
 		// accepts may be this stale, so an activation this far behind it is
 		// past the exposure the design accepts, whatever the reason.
-		facts.BehindBeyondBound = facts.Behind && now.Sub(state.failingSince) > controlplane.SourceStalenessBound
+		facts.FailingBeyondBound = now.Sub(state.failingSince) > controlplane.SourceStalenessBound
+		facts.BehindBeyondBound = facts.Behind && facts.FailingBeyondBound
 	}
 	return facts
 }

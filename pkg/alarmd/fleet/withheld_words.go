@@ -195,8 +195,8 @@ var withheldReasonWords = map[string]WithheldReasonWords{
 	// A global business strategy written in a form this build cannot run
 	// across businesses; the detail's reason= names which one.
 	"GLOBAL_STRATEGY_UNSUPPORTED": {Kind: WithheldBuildCapability,
-		What: "全局业务策略的这种写法本构建还不能按全局运行：详情里的 reason 说明是哪一条（旧写法的目标、非结构化时序查询、查询没写表或数据标签、输出兼容事件）",
-		Next: "一般要等支持该写法的构建。两种例外：reason 为 query_table 时，策略负责人给查询补上表或数据标签即可；reason 为 output_protocol 时，部署输出协议（phase_two.output.protocol）是 legacy 的改为 auto 或 native 即可（策略须带快照 revision），是 auto 的要等写方给策略补上快照 revision"},
+		What: "全局业务策略的这种写法本构建还不能按全局运行：详情里的 reason 说明是哪一条（旧写法的目标、非结构化时序查询、查询没写表或数据标签、输出兼容事件、PromQL 查询带了不生效的 agg_condition）",
+		Next: "一般要等支持该写法的构建。三种例外：reason 为 query_table 时，策略负责人给查询补上表或数据标签即可；reason 为 output_protocol 时，部署输出协议（phase_two.output.protocol）是 legacy 的改为 auto 或 native 即可（策略须带快照 revision），是 auto 的要等写方给策略补上快照 revision；reason 为 condition_ignored 时，PromQL 不读 agg_condition，按全局运行会读到租户下全部业务，要由写方（策略发布方）把 keys 列出的条件（多业务策略的 bk_biz_id 业务条件）写进 PromQL 本身"},
 	"UNSUPPORTED_MULTI_ITEM_STRATEGY": {Kind: WithheldBuildCapability,
 		What: "多 item 的策略本构建不支持",
 		Next: "等支持多 item 的构建；改部署参数没有用"},

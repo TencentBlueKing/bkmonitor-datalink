@@ -100,6 +100,11 @@ type AbsenceInput struct {
 	// full and may have been cut at the query service's group cap. Judged as
 	// a round that is not FULL (A1).
 	AnswerTruncated bool
+	// RosterUnresolved says the expected set could not be built in full this
+	// round: a target plan with a selector that did not answer, or members
+	// dropped in validation. Roster then holds the members that did resolve,
+	// a lower bound. Judged as a round that is not FULL (A1).
+	RosterUnresolved bool
 }
 
 // trackingExpired says whether an absence that began at firstAbsent has run
@@ -304,9 +309,11 @@ func evaluateAbsence(input AbsenceInput) AbsenceResult {
 	}
 
 	// A1. Not FULL, or full by its own account and possibly cut at the query
-	// service's group cap: an answer that may have left groups out is no
-	// evidence about the ones it left out, so every expected group that did
-	// not arrive is unavailable - no absence is raised, kept or aged on it.
+	// service's group cap, or judged against an expected set that did not
+	// resolve in full: an answer that may have left groups out is no evidence
+	// about the ones it left out, and a roster that may have left members out
+	// is no evidence that they left, so every expected group that did not
+	// arrive is unavailable - no absence is raised, kept, aged or closed on it.
 	// A group that did arrive is a different fact: its data is in the answer,
 	// and an answer cannot hold a series that was not sent. So it is judged
 	// present exactly as in a FULL round (judgePresent, and A6 for one in
@@ -316,7 +323,7 @@ func evaluateAbsence(input AbsenceInput) AbsenceResult {
 	// much data comes back. An absence the roster has stopped expecting is not
 	// closed here: the roster change is known, but that close is an absence
 	// verdict, and the next FULL round makes it.
-	if input.Completeness != execution.CompletenessFull || input.AnswerTruncated {
+	if input.Completeness != execution.CompletenessFull || input.AnswerTruncated || input.RosterUnresolved {
 		judgePresent(&result, input)
 		for key := range input.Roster.Groups {
 			if _, present := input.Present[key]; present {

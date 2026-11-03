@@ -208,6 +208,7 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 		}
 		event.WireFormat = request.Plan.WireFormat()
 		event.SignalType = request.Plan.SignalType()
+		event.StrategyFacts = request.Plan.StrategyFacts()
 		if identity := request.Plan.OutputIdentity(); identity != nil {
 			subject, remaining, subjectErr := contract.ProjectMonitorSubject(
 				request.RecordRef.Dimensions, *identity, request.Plan.SubjectFacts(),

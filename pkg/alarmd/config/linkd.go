@@ -22,8 +22,8 @@ type LinkdConfig struct {
 	// ConsoleURL is the root of the link's API, whole: alarmd appends only
 	// each operation's own path (strategy-index/..., alerts/...,
 	// event-sources/...). Where the link serves it is the deployment's to
-	// say - the admin's linkd module at <admin><base_path>/api/modules/linkd,
-	// or a Console of its own at <console>/local-api. A URL naming the server
+	// say - the admin's linkd module at <admin><base_path>/api/modules/linkd.
+	// A URL naming the server
 	// rather than this root is refused at startup discovery (the server's web
 	// page answers there), never read as an empty answer.
 	ConsoleURL string `yaml:"console_url"`
@@ -92,7 +92,7 @@ func (c LinkdConfig) Validate() error {
 	// operations at its own root, where its web page is.
 	if strings.Trim(u.Path, "/") == "" {
 		return errors.New("linkd console_url must name the link's API root, not the server: " +
-			"<admin><base_path>/api/modules/linkd, or <console>/local-api")
+			"<admin><base_path>/api/modules/linkd")
 	}
 	// A Basic pair is a Console's own credential. Without one the calls carry
 	// the token the admin hands over (linkdtoken): the admin serving the API

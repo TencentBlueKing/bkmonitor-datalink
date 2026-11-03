@@ -1097,6 +1097,10 @@ func (cache *Cache) indexContains(m member, now time.Time, count bool) bool {
 	entry := cache.index.entries[m.key]
 	answer := AnswerSelfMaintained
 	present := false
+	// unread is a set with no current read to answer from - past the stale
+	// bound, or never read - which the gate answers by the unavailable
+	// policy, as it does a set not trusted (indexGate).
+	unread := true
 	if entry != nil {
 		if !cache.calibrated(entry, now) {
 			entry.reconcileRequested = true
@@ -1108,6 +1112,7 @@ func (cache *Cache) indexContains(m member, now time.Time, count bool) bool {
 			answer = AnswerIndexStale
 			entry = nil
 		case !entry.indexReadAt.IsZero() || !entry.calibratedAt.IsZero():
+			unread = false
 			present = cache.setCarries(entry, m.fingerprint, now)
 			answer = AnswerIndexAbsent
 			if present {
@@ -1115,6 +1120,19 @@ func (cache *Cache) indexContains(m member, now time.Time, count bool) bool {
 			}
 		default:
 			present = cache.setCarries(entry, m.fingerprint, now)
+		}
+	}
+	// Under self-maintain an unread set lets an alert this process opened
+	// recover, as an untrusted set does: its send record may already be
+	// pruned by an earlier calibration that listed it open, and only the
+	// record of what this process opened still knows it. The gate still
+	// holds the recovery of an alert this process has no record of opening
+	// and no record of sending - one the consumer opened from another
+	// deployment's events, or one whose record was let go after its own
+	// recovery's grace - that the unread set does not carry.
+	if count && unread && cache.policy == PolicySelfMaintain {
+		if _, opened := cache.index.opened[m]; opened {
+			present = true
 		}
 	}
 	if added, ok := cache.added[m]; ok && (entry == nil || !cache.calibrated(entry, now) || now.Sub(added.at) <= cache.index.options.LocalRetention || !added.at.Before(entry.calibratedStarted)) {
@@ -1228,15 +1246,25 @@ func (cache *Cache) Holds(key StrategyKey, fingerprint string) (held, judged boo
 // question a caller asks once before asking Holds per fingerprint, so that
 // a strategy with nothing open costs one lookup rather than one per record.
 // A fingerprint this process sent and the set has not read yet is not
-// counted; the next read of the set carries it.
+// counted; the next read of the set carries it. After a truncated
+// calibration the count is the alerts that answer listed active - a floor,
+// since what it did not list may still be open - and judged only when it
+// lists some: a truncated answer never says a set is empty.
 func (cache *Cache) MemberCount(key StrategyKey) (count int, judged bool) {
 	if cache == nil {
 		return 0, false
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
+	now := cache.now()
 	entry := cache.index.entries[key]
-	if !cache.index.ready || !cache.trusted() || !cache.calibrated(entry, cache.now()) {
+	if !cache.index.ready || !cache.trusted() {
+		return 0, false
+	}
+	if !cache.calibrated(entry, now) {
+		if cache.partial(entry, now) && len(entry.partialListed) > 0 {
+			return len(entry.partialListed), true
+		}
 		return 0, false
 	}
 	return len(entry.index) + len(entry.missing), true
@@ -1267,8 +1295,20 @@ func (cache *Cache) OwnEventSourceID() string {
 }
 
 func (cache *Cache) ActiveAlerts(key StrategyKey) []Alert {
+	alerts, _ := cache.ListActiveAlerts(key)
+	return alerts
+}
+
+// ListActiveAlerts is ActiveAlerts with whether the strategy's alerts were
+// listed at all. listed is true for a set with a current calibration, its
+// alerts possibly none - nothing to close - and for a truncated calibration
+// that listed at least one alert. It is false for a set not calibrated, a
+// calibration past its age, a failed one, and a truncated one that listed
+// nothing: the alerts to close are not known, and an empty answer there is
+// not "none open".
+func (cache *Cache) ListActiveAlerts(key StrategyKey) (alerts []Alert, listed bool) {
 	if cache == nil {
-		return nil
+		return nil, false
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
@@ -1278,10 +1318,10 @@ func (cache *Cache) ActiveAlerts(key StrategyKey) []Alert {
 	// too large to be answered whole. A caller must not read an alert's
 	// absence here as closed.
 	if !cache.calibrated(entry, cache.now()) {
-		if cache.partial(entry, cache.now()) {
-			return append([]Alert(nil), entry.alerts...)
+		if cache.partial(entry, cache.now()) && len(entry.alerts) > 0 {
+			return append([]Alert(nil), entry.alerts...), true
 		}
-		return nil
+		return nil, false
 	}
 	result := make([]Alert, 0, len(entry.alerts))
 	for _, alert := range entry.alerts {
@@ -1289,7 +1329,7 @@ func (cache *Cache) ActiveAlerts(key StrategyKey) []Alert {
 			result = append(result, alert)
 		}
 	}
-	return result
+	return result, true
 }
 
 func (cache *Cache) indexStats() Stats {

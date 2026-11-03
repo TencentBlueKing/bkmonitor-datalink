@@ -1297,6 +1297,8 @@ func openProductionPhaseTwoBundleAssembly(
 		absentClose := newAbsentStrategyClose(bundle, reconciler, linkd.Console, events)
 		absentClose.documents, _ = strategySource.(controlplane.StrategyDocumentPresence)
 		absentClose.businesses = alertBusinesses
+		absentClose.edits = newEditStrategyClose(bundle, reconciler, linkd.Console, events)
+		recorder.SetEditCloseSource(absentClose.edits.Stats)
 		absentPage.bind(absentClose)
 		bundle.dependencies.RunAbsentClose = absentClose.run
 		recorder.SetAbsentCloseSource(absentClose.Stats, absentClose.Rounds, absentClose.Difference)

@@ -111,6 +111,9 @@ const (
 	closeOutcomeBusinessUnknown      = string(observability.EffectiveCloseBusinessUnknown)
 	closeOutcomeSourceLastKnown      = string(observability.EffectiveCloseSourceLastKnown)
 	closeOutcomeSourceUnknown        = string(observability.EffectiveCloseSourceUnknown)
+	closeOutcomeEvidenceUnavailable  = string(observability.EffectiveCloseEvidenceUnavailable)
+	closeOutcomeIndexSetAcked        = string(observability.EffectiveCloseIndexSetAcked)
+	closeOutcomeIndexSetDraining     = string(observability.EffectiveCloseIndexSetGroupDraining)
 )
 
 // maintenanceGroup is what the loop knows about one owned Query Group from
@@ -455,6 +458,18 @@ func (m *effectiveMaintenance) step(ctx context.Context) {
 			continue
 		}
 		m.refreshLegacy(ctx, qg, known.legacy)
+		// A close is judged only on Plans read under the lease the owner
+		// holds now. A lease that moved since the read is a timeline or
+		// content that changed: a strategy edited out of this Query Group
+		// retires its timeline, the read under the new lease finds no Plan
+		// (counted unavailable above), and the Plans of the old read are the
+		// edited strategy's previous revision, whose effective time is not
+		// the strategy's any more. They are judged again once a read under
+		// the current lease lands.
+		if scope, revision, accepting := runner.maintenanceLease(); !accepting ||
+			known.contentScope != scope || known.timelineRevision != revision {
+			continue
+		}
 		m.closeInactive(ctx, qg, runner, known.closable, deletions, sourceErr)
 	}
 }
@@ -754,15 +769,41 @@ func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.Q
 			continue
 		}
 		key := openalerts.StrategyKey{TenantID: plan.Identity.TenantID, StrategyID: plan.Identity.StrategyID}
-		alerts := m.cache.ActiveAlerts(key)
-		known := make(map[string]bool, len(alerts))
-		for _, alert := range alerts {
-			known[alert.Fingerprint] = true
-		}
-		for _, member := range m.cache.Members(key) {
-			if !known[member] {
-				m.requestCalibration(key, at)
-				break
+		alerts, listed := m.cache.ListActiveAlerts(key)
+		fromSet := false
+		if !listed {
+			// The set has no current calibration: its alerts to close are
+			// not listed, which is not "none open". Its members, read fresh,
+			// stand in for them (openalerts.UnlistedMembers); without them
+			// the Plan is counted once each step that finds it inactive,
+			// until a calibration lists its alerts.
+			m.requestCalibration(key, at)
+			members, fresh := m.cache.UnlistedMembers(key)
+			if !fresh {
+				m.observeTrace(ctx, observability.TraceFields{QueryGroupKey: string(qg), StrategyID: plan.Identity.StrategyID},
+					closeOutcomeEvidenceUnavailable, errInactiveAlertsUnlisted, 0)
+				continue
+			}
+			if m.currentAndDraining(qg) {
+				// The set stands in for alerts nobody listed, by this Plan's
+				// judgement alone; a Query Group current and draining at once
+				// may hold a revision the strategy has left. The listing path
+				// is the link's own answer and is not held here.
+				m.observeTrace(ctx, observability.TraceFields{QueryGroupKey: string(qg), StrategyID: plan.Identity.StrategyID},
+					closeOutcomeIndexSetDraining, errIndexSetGroupDraining, 0)
+				continue
+			}
+			alerts, fromSet = membersAsAlerts(members, m.sourceID), true
+		} else {
+			known := make(map[string]bool, len(alerts))
+			for _, alert := range alerts {
+				known[alert.Fingerprint] = true
+			}
+			for _, member := range m.cache.Members(key) {
+				if !known[member] {
+					m.requestCalibration(key, at)
+					break
+				}
 			}
 		}
 		if len(alerts) == 0 {
@@ -788,6 +829,12 @@ func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.Q
 		// they are about, and a close carries its alert's, read from the
 		// alert's record; every other Plan's carry the Plan's business.
 		global := plan.Compiled.GlobalBusiness()
+		if global && fromSet {
+			// A member has no record to read its business from.
+			m.observeTrace(ctx, observability.TraceFields{QueryGroupKey: string(qg), StrategyID: plan.Identity.StrategyID},
+				closeOutcomeBusinessUnknown, errSetMemberBusinessUnknown, len(alerts))
+			continue
+		}
 		batch := make([]linkdoutput.CloseRequest, 0, m.capacity.CloseBatch)
 		unknown := 0
 		for _, alert := range alerts {
@@ -823,7 +870,7 @@ func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.Q
 		if len(batch) == 0 {
 			continue
 		}
-		sent, err := m.sendClose(ctx, qg, runner, plan, key, batch)
+		sent, err := m.sendClose(ctx, qg, runner, plan, key, batch, fromSet)
 		if planRecheckRefused(err) {
 			continue
 		}
@@ -841,7 +888,7 @@ func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.Q
 // Each way it can not send is named: the flight busy, the owner check
 // refusing, the Plan's boundary having moved to active or its effective
 // time unreadable at the send, the producer failing.
-func (m *effectiveMaintenance) sendClose(ctx context.Context, qg execution.QueryGroupIdentity, runner maintenanceRunner, plan controlplane.MaintenancePlan, key openalerts.StrategyKey, batch []linkdoutput.CloseRequest) (int, error) {
+func (m *effectiveMaintenance) sendClose(ctx context.Context, qg execution.QueryGroupIdentity, runner maintenanceRunner, plan controlplane.MaintenancePlan, key openalerts.StrategyKey, batch []linkdoutput.CloseRequest, fromSet bool) (int, error) {
 	sent := 0
 	// Counted in flight on the Query Group's lifecycle, as a Slot is: a
 	// handover waits for the send before releasing the lease it is under.
@@ -889,6 +936,10 @@ func (m *effectiveMaintenance) sendClose(ctx context.Context, qg execution.Query
 		m.requestCalibration(key, now)
 		sent = len(batch)
 		m.observe(ctx, qg, closeOutcomeAcked, nil, sent)
+		if fromSet {
+			m.observeTrace(round, observability.TraceFields{QueryGroupKey: string(qg), StrategyID: plan.Identity.StrategyID},
+				closeOutcomeIndexSetAcked, nil, sent)
+		}
 		return nil
 	})
 	switch {
@@ -924,7 +975,34 @@ var (
 	// again, or not readable, at the send. Both are that Plan's alone.
 	errCloseBoundaryActive = errors.New("inactive close: the Plan is active again at the send")
 	errCloseTimeUnknown    = errors.New("inactive close: the Plan's effective time is unknown at the send")
+	// The Plan is inactive and the open-alert copy holds no current
+	// calibration of its strategy's set to list the alerts to close.
+	errInactiveAlertsUnlisted = errors.New("inactive close: the strategy's open alerts cannot be listed, its set has no current calibration")
+	// The Query Group is in the current active set and in the draining
+	// projection at once (productionPhaseTwoControl.CurrentAndDraining).
+	errIndexSetGroupDraining = errors.New("inactive close: the index set does not stand in for a Query Group that is current and draining at once")
+	// A global business Plan's close carries each alert's business, read
+	// from the alert's record; a member of the set has none to read.
+	errSetMemberBusinessUnknown = errors.New("inactive close: the alerts are addressed from the index set, which names no business for a global business Plan")
 )
+
+// membersAsAlerts addresses each member of a strategy's index set as an
+// alert of this deployment's source, its fingerprint standing in for the
+// instance id (linkdoutput.CloseRequest). The link resolves a close to the
+// active alert by tenant, this deployment's event source and fingerprint,
+// so a member that is another producer's alert, or no alert at all, is
+// closed by nothing there. A member that is not a native fingerprint is not
+// one a close can address and is left out, as an alert of another source
+// is.
+func membersAsAlerts(members []string, source string) []openalerts.Alert {
+	alerts := make([]openalerts.Alert, 0, len(members))
+	for _, member := range members {
+		if linkdoutput.NativeFingerprint(member) {
+			alerts = append(alerts, openalerts.Alert{AlertID: member, EventSourceID: source, Fingerprint: member})
+		}
+	}
+	return alerts
+}
 
 // planRecheckRefused reports a send the recheck of its own Plan refused:
 // counted, and the step goes on to the Query Group's next Plan, which has
@@ -1141,4 +1219,14 @@ func cliMaintenanceOperation(source *maintenanceSource) obchannel.Operation {
 				Limitations: []string{"Use meta.answered_by to identify this process: each replica maintains the Query Groups it owns, and another replica's outcomes are read by targeting it.",
 					"Counts and outcomes are this process's since it started: first_at is when this process first saw the Query Group under the word, not when the condition began. first_error is the text at first_at and error the latest, which has been the text since error_since: read a time only with its own text. At most 32 Query Groups are kept per word, the one seen longest ago giving way; each error's text is cut to 256 bytes."}}
 		}}
+}
+
+// currentAndDraining reports whether the bundle's Control last found the
+// Query Group in the current active set and in the draining projection at
+// once; false without a Control that says.
+func (m *effectiveMaintenance) currentAndDraining(qg execution.QueryGroupIdentity) bool {
+	control, ok := m.bundle.dependencies.Control.(interface {
+		CurrentAndDraining(execution.QueryGroupIdentity) bool
+	})
+	return ok && control.CurrentAndDraining(qg)
 }

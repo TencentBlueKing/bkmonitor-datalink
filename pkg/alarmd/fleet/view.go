@@ -2422,6 +2422,13 @@ type ActivationFacts struct {
 	// Behind is Published != Applied after the last attempt.
 	Behind            bool `json:"behind"`
 	BehindBeyondBound bool `json:"behind_beyond_bound"`
+	// FailingBeyondBound is the activation round having failed for longer
+	// than the same bound, whether or not a newer publication waits. A round
+	// that fails with nothing newer published leaves the fleet on the
+	// current publication, so Behind stays false, yet nothing the activation
+	// names is renewed while it fails, and when those keys expire the fleet
+	// stops detecting.
+	FailingBeyondBound bool `json:"failing_beyond_bound"`
 	// ConsecutiveFailures is how many attempts in a row have failed; zero
 	// after a success.
 	ConsecutiveFailures int `json:"consecutive_failures"`
@@ -2834,6 +2841,15 @@ const (
 	// those objects expire the fleet executes nothing. The text is the last
 	// rebuild's outcome.
 	DegradationActivationHeaderMissing DegradationKind = "ACTIVATION_HEADER_MISSING"
+	// DegradationActivationFailing: the control leader's activation round has
+	// been failing for longer than the staleness bound while the fleet is not
+	// behind - no newer publication waits, so ACTIVATION_BEHIND does not
+	// read it. Every round fails before anything the activation names is
+	// renewed, so the fleet executes as before until those keys expire, and
+	// then executes nothing. The bound is minutes and the catalog's life is
+	// hours, so this is said while there is time to act. The stage is the
+	// failed round's, the text its reason and failure.
+	DegradationActivationFailing DegradationKind = "ACTIVATION_FAILING"
 )
 
 // DegradationKinds is the closed set, for the page's wording table and the
@@ -2843,6 +2859,7 @@ var DegradationKinds = []DegradationKind{
 	DegradationOpenAlertSetStale, DegradationPlatformSettingsStale, DegradationSourceBlocked,
 	DegradationOutputNotReady, DegradationOpenAlertSetUnconfirmed, DegradationViewPublishFailing, DegradationViewStreamNoSessions, DegradationActivationBlocked,
 	DegradationMetricsUnexported, DegradationCLIAuthUnavailable, DegradationActivationHeaderMissing,
+	DegradationActivationFailing,
 }
 
 // endpointByRole is the entry under role in a replica's list, or nil.

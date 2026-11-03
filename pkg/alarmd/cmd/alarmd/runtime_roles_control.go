@@ -414,6 +414,8 @@ func openProductionControlRoleBundle(
 	if linkd.Console != nil {
 		closeLoop := newAbsentStrategyClose(bundle, core.Reconciler, linkd.Console, events)
 		closeLoop.documents, _ = core.StrategySource.(controlplane.StrategyDocumentPresence)
+		closeLoop.edits = newEditStrategyClose(bundle, core.Reconciler, linkd.Console, events)
+		recorder.SetEditCloseSource(closeLoop.edits.Stats)
 		absentPage.bind(closeLoop)
 		bundle.dependencies.RunAbsentClose = closeLoop.run
 		recorder.SetAbsentCloseSource(closeLoop.Stats, closeLoop.Rounds, closeLoop.Difference)

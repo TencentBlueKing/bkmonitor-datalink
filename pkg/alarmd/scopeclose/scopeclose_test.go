@@ -38,6 +38,9 @@ type fakeSet struct {
 	own       string
 	held      map[string]bool
 	alerts    []openalerts.Alert
+	// indexed, when set, is the index set read fresh, standing in for the
+	// alerts where the set cannot be judged (openalerts.UnlistedMembers).
+	indexed map[string]bool
 }
 
 func (set *fakeSet) Trusted() bool { return !set.untrusted }
@@ -66,6 +69,18 @@ func (set *fakeSet) ActiveAlerts(k openalerts.StrategyKey) []openalerts.Alert {
 	return set.alerts
 }
 func (set *fakeSet) OwnEventSourceID() string { return set.own }
+func (set *fakeSet) UnlistedMemberCount(k openalerts.StrategyKey) (int, bool) {
+	if set.indexed == nil || !set.unjudged || set.untrusted || k != key {
+		return 0, false
+	}
+	return len(set.indexed), true
+}
+func (set *fakeSet) UnlistedHolds(k openalerts.StrategyKey, fingerprint string) (bool, bool) {
+	if set.indexed == nil || !set.unjudged || set.untrusted || k != key {
+		return false, false
+	}
+	return set.indexed[fingerprint], true
+}
 
 // openSet holds each fingerprint as an open alert of the given source.
 func openSet(source string, fingerprints ...string) *fakeSet {

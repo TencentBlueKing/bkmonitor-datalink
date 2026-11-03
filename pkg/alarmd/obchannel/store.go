@@ -18,7 +18,8 @@ func StoreOperations(service *obevidence.Service) []Operation {
 	id := Field{Type: "string", Description: "策略ID。", Source: "用户输入或 strategy.get", Pattern: "^[1-9][0-9]*$", MaxLength: 20}
 	object := Field{Type: "string", Description: "运行对象ID。", Source: "strategy.get plans[].query_group", Pattern: "^[A-Za-z0-9_.:-]+$", MinLength: 1, MaxLength: 256}
 	fields := enumField("平台动态配置字段。", platformsettings.Fields)
-	limits := map[string]any{"max_commands": obevidence.MaxCommands, "max_document_bytes": obevidence.MaxDocumentBytes, "max_bytes": obevidence.MaxBytes, "deadline_ms": obevidence.ReadTimeout.Milliseconds()}
+	limits := map[string]any{"max_commands": obevidence.MaxCommands, "max_document_bytes": obevidence.MaxDocumentBytes, "max_bytes": obevidence.MaxBytes, "deadline_ms": obevidence.ReadTimeout.Milliseconds(),
+		"max_group_keys": obevidence.MaxGroupKeys, "max_group_key_bytes": obevidence.MaxGroupKeyBytes}
 	configFields := map[string]Field{
 		"view":        {Type: "string", Enum: []string{"source", "published"}, Description: "source 是当前源缓存；published 是指定不可变对象，不保证本 Slot 已采用。"},
 		"strategy_id": id, "query_group": object,
@@ -27,7 +28,7 @@ func StoreOperations(service *obevidence.Service) []Operation {
 		"business":      {Type: "string", MaxLength: 256, MinLength: 1, Description: "发布计划的业务筛选。", Source: "strategy.get plans[].business"},
 	}
 	storeFields := map[string]Field{
-		"family":      {Type: "string", Enum: []string{"source_strategy", "target_group", "dynamic_config", "query_progress", "query_cooldown", "gap_marker", "no_data_memory", "cmdb_host", "cmdb_service_instance"}, Description: "受支持的存储证据族；cmdb_host 和 cmdb_service_instance 是平台 CMDB 缓存里的一条主机或服务实例记录（主机按 host id 或 \"ip|云区域\"，服务实例按实例 id），返回写方写入的原文，以及 alarmd 能否解码、解码出什么——全量加载时解码不了的记录会被静默跳过，这里能看到它；键整体不在为 missing/key_absent，键在而这条不在为 missing/field_absent；query_cooldown 是运行对象在降级池里的持久记录（入池时间、失败次数、上次出池及原因、写入者任期，以及后端截断上限 ceiling_ms、最近正常轮的耗时 run_times_ms 和最近几次决定去留的探查 probes，每次探查带 rule 说明出池或留池按的是哪条比较），重启或换持有者后按它恢复；query_progress 的键里只有运行对象 ID 的 SHA-256（花括号内），结果的 key_identity 给出两者的对应；gap_marker 和 no_data_memory 是一个 Plan 的缺口标记和无数据记忆，按 strategy.get 给出的运行对象、发布对象摘要和策略读，返回每个键在不在、剩余寿命（毫秒）、大小（字符串字节数或哈希字段数）和头部的修订号、写入的 Slot；键名里的状态代际与分片取自发布对象。"},
+		"family":      {Type: "string", Enum: []string{"source_strategy", "target_group", "dynamic_config", "query_progress", "query_cooldown", "gap_marker", "no_data_memory", "cmdb_host", "cmdb_service_instance"}, Description: "受支持的存储证据族；cmdb_host 和 cmdb_service_instance 是平台 CMDB 缓存里的一条主机或服务实例记录（主机按 host id 或 \"ip|云区域\"，服务实例按实例 id），返回写方写入的原文，以及 alarmd 能否解码、解码出什么——全量加载时解码不了的记录会被静默跳过，这里能看到它；键整体不在为 missing/key_absent，键在而这条不在为 missing/field_absent；query_cooldown 是运行对象在降级池里的持久记录（入池时间、失败次数、上次出池及原因、写入者任期，以及后端截断上限 ceiling_ms、最近正常轮的耗时 run_times_ms 和最近几次决定去留的探查 probes，每次探查带 rule 说明出池或留池按的是哪条比较），重启或换持有者后按它恢复；query_progress 的键里只有运行对象 ID 的 SHA-256（花括号内），结果的 key_identity 给出两者的对应；gap_marker 和 no_data_memory 是一个 Plan 的缺口标记和无数据记忆，按 strategy.get 给出的运行对象、发布对象摘要和策略读，返回每个键在不在、剩余寿命（毫秒）、大小（字符串字节数或哈希字段数）和头部的修订号、写入的 Slot；键名里的状态代际与分片取自发布对象；no_data_memory 还在 group_keys 里列出组名：按字节序的前 max_group_keys 个组键（合计不超过 max_group_key_bytes 字节）与组总数 total，这是用 HSCAN 扫完整个哈希、在本次请求剩余的命令与字节预算内得出的，scan 不是 complete 时列出的只是已扫到字段里的前几个，不是全部组的前几个。"},
 		"strategy_id": id, "query_group": object,
 		"group_id": {Type: "string", Pattern: "^[^\\s\\x00-\\x1f\\x7f]+$", MinLength: 1, MaxLength: 512, Description: "目标组ID。", Source: "源策略 target 配置或既有目标组证据"},
 		"fields":   {Type: "array", MaxItems: len(platformsettings.Fields), UniqueItems: true, Items: &fields, Description: "动态配置字段；省略或空数组时读取全部字段。"},
@@ -144,10 +145,42 @@ func validateVariant(p Params, selector string, variants, required map[string][]
 	}
 	return nil
 }
+
+// groupKeyLimitations says, for each no-data memory whose group keys are not
+// all listed, how many are and of how many, and whether they are the first of
+// every group or only of the fields a stopped scan saw.
+func groupKeyLimitations(plans []obevidence.PlanRecords) []string {
+	var out []string
+	for _, plan := range plans {
+		for _, record := range plan.Records {
+			listing := record.GroupKeys
+			if listing == nil {
+				continue
+			}
+			shown := strconv.Itoa(len(listing.Keys))
+			total := strconv.FormatInt(listing.Total, 10)
+			if listing.UnknownFields > 0 {
+				out = append(out, record.Key+": "+strconv.Itoa(listing.UnknownFields)+" fields are neither the header nor a group; the runtime reads this record as corrupt.")
+			}
+			if listing.Scan != obevidence.GroupKeyScanComplete {
+				out = append(out, record.Key+": group_keys scan stopped at "+listing.Scan+" after "+strconv.FormatInt(listing.ScannedFields, 10)+" fields; the "+shown+" keys listed are the first of the fields seen, not of all "+total+" groups.")
+				continue
+			}
+			if int64(len(listing.Keys)) < listing.Total {
+				out = append(out, record.Key+": group_keys lists the first "+shown+" of "+total+" groups in byte order (cut by "+listing.CutBy+").")
+			}
+		}
+	}
+	return out
+}
+
 func storeOutcome(r obevidence.Result) Outcome {
 	out := Outcome{Value: r, Complete: r.Complete, Summary: r.Source + ": " + r.Status}
 	if !r.Complete {
 		out.Limitations = append(out.Limitations, "Store evidence status: "+r.Status+". Missing or unreadable evidence is not a healthy verdict.")
+	}
+	if plans, ok := r.Value.([]obevidence.PlanRecords); ok {
+		out.Limitations = append(out.Limitations, groupKeyLimitations(plans)...)
 	}
 	if len(r.Omitted) > 0 {
 		out.Limitations = append(out.Limitations, "Value is an allowlisted projection; omitted paths and reasons are in result.omitted.")

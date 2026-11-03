@@ -180,3 +180,40 @@ func TestAggregateNamesAnActivationHeaderTheLeaderCouldNotWriteBack(t *testing.T
 		t.Fatalf("header present, degradations = %+v", view.Degradations)
 	}
 }
+
+// An activation round failing past the bound with nothing newer published is
+// ACTIVATION_FAILING: not behind, so ACTIVATION_BEHIND does not read it, yet
+// nothing the activation names is renewed. Behind past the bound already
+// says the round fails and stays the one line; inside the bound neither.
+func TestAnActivationFailingPastTheBoundWithNothingNewerIsADegradation(t *testing.T) {
+	age := 420.0
+	stuck := &ActivationFacts{Applied: "bdc6ffcb", Published: "bdc6ffcb", FailingBeyondBound: true, ConsecutiveFailures: 7,
+		FailureStage: "activation_load", FailureClass: "dependency_io", LastFailure: "activation body cannot be rebuilt",
+		FailingSecondsThisProcess: &age}
+	aggregateWith := func(facts *ActivationFacts) View {
+		snapshots := []Snapshot{{Replica: "pod-a", TakenAt: now, Owned: 1, Determined: 1, Activation: facts}}
+		return Aggregate(Expectation{Known: true, QueryGroups: 1}, snapshots, []string{"pod-a"}, now, freshness)
+	}
+	view := aggregateWith(stuck)
+	if len(view.Degradations) != 1 || view.Health != HealthDegraded {
+		t.Fatalf("failing past the bound: health %s degradations %+v, want DEGRADED with one degradation", view.Health, view.Degradations)
+	}
+	got := view.Degradations[0]
+	if got.Kind != DegradationActivationFailing || got.Replica != "pod-a" || got.Stage != "activation_load" ||
+		got.AgeSeconds == nil || *got.AgeSeconds != age || !strings.Contains(got.Text, "7 rounds") ||
+		!strings.Contains(got.Text, "activation_load/dependency_io") || !strings.Contains(got.Text, "cannot be rebuilt") {
+		t.Fatalf("degradation = %+v, want ACTIVATION_FAILING on pod-a naming the rounds, the reason and the failure", got)
+	}
+
+	behind := *stuck
+	behind.Published, behind.Behind, behind.BehindBeyondBound = "e7a1b2c3", true, true
+	if view := aggregateWith(&behind); len(view.Degradations) != 1 || view.Degradations[0].Kind != DegradationActivationBehind {
+		t.Fatalf("behind past the bound: degradations %+v, want ACTIVATION_BEHIND alone", view.Degradations)
+	}
+
+	within := *stuck
+	within.FailingBeyondBound = false
+	if view := aggregateWith(&within); len(view.Degradations) != 0 || view.Health != HealthHealthy {
+		t.Fatalf("inside the bound: health %s degradations %+v, want HEALTHY and none", view.Health, view.Degradations)
+	}
+}

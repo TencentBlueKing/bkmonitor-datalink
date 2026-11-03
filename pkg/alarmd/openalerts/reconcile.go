@@ -42,10 +42,12 @@ type Reconciliation struct {
 	Truncated bool
 }
 
-// The caps on one reconciliation this reader keeps. An answer over either is
-// cut at a row boundary and marked Truncated rather than refused: refusing
-// it left a strategy with a flood of alerts with no close at all, while the
-// rows received are real and closing them is what shrinks the flood.
+// The caps on one reconciliation this reader keeps. They are the link's own
+// maxima: it reads at most 5000 members of the Redis set and 5000 active
+// alerts, so an answer has at most 10000 rows (the union) and 5000 alerts.
+// An answer past them is past the link's contract; it is cut at a row
+// boundary and marked Truncated rather than refused, as a cut answer is: the
+// rows received are real and closing them is what shrinks a flood.
 const (
 	maxReconcileRows   = 10000
 	maxReconcileAlerts = 5000
@@ -298,7 +300,7 @@ func (reader *HTTPReconciler) getPathAnswering(ctx context.Context, path string,
 // form the Console URL had before it named the root - reaches the page and
 // would otherwise read as a garbled answer.
 var ErrNotAPI = errors.New("alarmd openalerts: the Console URL answered with a web page, not the link's API; " +
-	"it must name the API root (the admin module's .../api/modules/linkd, or a Console's .../local-api)")
+	"it must name the API root (the admin module's .../api/modules/linkd)")
 
 // errObjectMissing is the link answering that the object a path names does
 // not exist. Both servers answer a path they have no route for with the same
@@ -517,6 +519,18 @@ func (reader *HTTPReconciler) reconcile(ctx context.Context, key StrategyKey) (R
 			if len(row.Alerts) != 0 {
 				return Reconciliation{}, ErrIncomplete
 			}
+		case "unknown":
+			// The link marks a row unknown when the other side of it was not
+			// read whole (its Redis set or its alert scan cut): it cannot
+			// confirm the row either way. Nothing is decided from it - not a
+			// member, not suppressed, its alerts not listed - and the answer
+			// is a cut one: the link only writes it on an answer it marks
+			// incomplete (already Truncated here), so one on an answer marked
+			// complete contradicts it.
+			if !truncated {
+				return Reconciliation{}, ErrIncomplete
+			}
+			continue
 		default:
 			return Reconciliation{}, ErrIncomplete
 		}
@@ -591,7 +605,7 @@ type statusError int
 func (code statusError) Error() string {
 	if int(code) == http.StatusNotFound {
 		return "alarmd openalerts: Console HTTP status 404 for an operation's path; the Console URL must name the API root " +
-			"(the admin module's .../api/modules/linkd, or a Console's .../local-api)"
+			"(the admin module's .../api/modules/linkd)"
 	}
 	return fmt.Sprintf("alarmd openalerts: Console HTTP status %d", int(code))
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -154,6 +155,13 @@ func optionalTime(value *string) (time.Time, error) {
 // under which business and revision. These are the labels the alert was
 // created with, which is the only place the identity of a strategy that no
 // longer exists is still written down.
+//
+// The link copies labels, dimensions and extra_data from the event that
+// opened the alert and never changes them, so Revision is the strategy
+// revision the alert was raised under and DimensionKeys and
+// EvaluationFamily are that event's, whatever later events of the same
+// fingerprint carried. Severity is the alert's current level, which the link
+// may raise after creation.
 type AlertRecord struct {
 	AlertID       string
 	TenantID      string
@@ -164,6 +172,19 @@ type AlertRecord struct {
 	StrategyID    string
 	BusinessID    int64
 	Revision      int64
+	// DimensionKeys are the names of the opening event's dimensions, sorted;
+	// DimensionsRead says the record carried a dimensions object at all, so
+	// an alert with no dimensions is told apart from a record without them.
+	DimensionKeys  []string
+	DimensionsRead bool
+	// EvaluationFamily is extra_data.evaluation_family as the opening event
+	// wrote it (metric_algorithm or no_data from this process), empty when
+	// the record names none.
+	EvaluationFamily string
+	// StrategyFacts is extra_data.strategy_facts as the opening event wrote
+	// it (contract.StrategyFactsV2), unparsed: nil when the record has none,
+	// and whether its schema is one this build reads is the reader's to say.
+	StrategyFacts json.RawMessage
 }
 
 // ErrAlertNotFound is the link answering that it has no such alert.
@@ -185,6 +206,11 @@ func (reader *HTTPReconciler) alertRecord(ctx context.Context, tenantID, alertID
 			Status        string                     `json:"status"`
 			Severity      string                     `json:"severity"`
 			Labels        map[string]json.RawMessage `json:"labels"`
+			Dimensions    map[string]json.RawMessage `json:"dimensions"`
+			ExtraData     struct {
+				EvaluationFamily string          `json:"evaluation_family"`
+				StrategyFacts    json.RawMessage `json:"strategy_facts"`
+			} `json:"extra_data"`
 		} `json:"payload"`
 	}
 	err := reader.getPath(ctx, "/alerts/"+url.PathEscape(alertID), url.Values{"bk_tenant_id": {tenantID}}, &response)
@@ -203,6 +229,18 @@ func (reader *HTTPReconciler) alertRecord(ctx context.Context, tenantID, alertID
 	record.StrategyID, _ = labelText(p.Labels["strategy_id"])
 	record.BusinessID, _ = labelInteger(p.Labels["bk_biz_id"])
 	record.Revision, _ = labelInteger(p.Labels["strategy_version"])
+	if p.Dimensions != nil {
+		record.DimensionsRead = true
+		record.DimensionKeys = make([]string, 0, len(p.Dimensions))
+		for name := range p.Dimensions {
+			record.DimensionKeys = append(record.DimensionKeys, name)
+		}
+		sort.Strings(record.DimensionKeys)
+	}
+	record.EvaluationFamily = p.ExtraData.EvaluationFamily
+	if facts := p.ExtraData.StrategyFacts; len(facts) > 0 && string(facts) != "null" {
+		record.StrategyFacts = facts
+	}
 	return record, nil
 }
 

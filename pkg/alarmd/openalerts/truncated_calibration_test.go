@@ -221,3 +221,28 @@ func TestACutCalibrationOnlyAddsToTheSets(t *testing.T) {
 		}
 	}
 }
+
+// A fresh cut answer that lists alerts counts them, judged: the floor of
+// what the set carries, so a caller that asks the count first goes on to ask
+// Holds of each record, and Holds judges the listed ones. A cut answer that
+// lists none, or one past its age, is not counted at all: an answer the link
+// marked incomplete never says a set is empty.
+func TestACutCalibrationCountsOnlyWhatItLists(t *testing.T) {
+	f := newTruncatedFixture(t)
+	f.answer = listedOnly()
+	f.recalibrate(f.options.CalibrationMaxAge + time.Second)
+	if count, judged := f.cache.MemberCount(keyA); count != 1 || !judged {
+		t.Fatalf("MemberCount after a cut answer listing one = %d, %v; want 1 judged", count, judged)
+	}
+	f.c.advance(f.options.CalibrationMaxAge + time.Second)
+	if _, judged := f.cache.MemberCount(keyA); judged {
+		t.Fatal("an aged cut calibration was still counted")
+	}
+
+	g := newTruncatedFixture(t)
+	g.answer = Reconciliation{EventSourceID: "source", Truncated: true, Suppressed: []string{"theirs"}}
+	g.recalibrate(g.options.CalibrationMaxAge + time.Second)
+	if count, judged := g.cache.MemberCount(keyA); judged {
+		t.Fatalf("a cut answer listing nothing was counted %d, judged; an incomplete answer said the set is empty", count)
+	}
+}

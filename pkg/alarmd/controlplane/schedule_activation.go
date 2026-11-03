@@ -320,6 +320,7 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 		}
 	}
 	carries := make(map[int]*execution.StateCarry)
+	noDataCarries := make(map[int]*execution.NoDataCarry)
 	for index := range records {
 		previousRecord, continuouslyActive := previousRecords[records[index].Fact.Key()]
 		if _, unread := unreadContinuing[records[index].Fact.Key()]; unread && !continuouslyActive {
@@ -336,6 +337,14 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 			if !compiledHere {
 				reconciler.observeStateCarry(ctx, StateCarryPreviousUnreadable)
 				continue
+			}
+			// The no-data state is decided on its own: a detection edit that
+			// warms the Plan up whole changes nothing about it.
+			if noData, outcome := reconciler.noDataCarry(ctx, previousRecord, previousContent, current); outcome != "" {
+				if noData != nil {
+					noDataCarries[index] = noData
+				}
+				reconciler.observeNoDataCarry(ctx, outcome)
 			}
 			carry, outcome := reconciler.stateCarry(ctx, previousRecord, previousContent, current)
 			if carry != nil {
@@ -367,6 +376,7 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 		}
 	}
 	carried, discontinuous := applyStateCarries(records, carries, returned)
+	applyNoDataCarries(records, noDataCarries, returned)
 	for ; carried > 0; carried-- {
 		reconciler.observeStateCarry(ctx, StateCarryCarried)
 	}
@@ -493,6 +503,7 @@ func (reconciler *ScheduleActivationReconciler) reactivateHeld(
 		record.Fact.Selected.ForceWarming = true
 		// Held and back: the hold is a hole, so nothing is carried across it.
 		record.Fact.Selected.Carry = nil
+		record.Fact.Selected.NoDataCarry = nil
 		next.Plans = append(next.Plans, record)
 	}
 	sort.Slice(next.Plans, func(i, j int) bool { return lessPlanIdentity(next.Plans[i].Fact.Plan, next.Plans[j].Fact.Plan) })

@@ -38,7 +38,8 @@ func newEffectiveCloseCollector() *effectiveCloseCollector {
 				"close_precheck_failed is the owner or content check refusing before a send; close_send_failed is "+
 				"the producer not acknowledging; maintenance_plan_uncompilable is an activated Plan the maintenance "+
 				"could not compile and so cannot judge; unavailable is a Query Group whose Plans could not be read "+
-				"or whose owner is not accepting - a Console that does not answer is not one; source_last_known is a "+
+				"or whose owner stopped accepting during the read - an owner not accepting when the step begins is a "+
+				"handover and is skipped uncounted, and a Console that does not answer is not one; source_last_known is a "+
 				"step whose read of the event source failed or was backed off and whose closes went on under the last "+
 				"source known, once per step; source_unknown is a step whose closes were deferred because no source "+
 				"has been known yet, once per step; effective_time_unknown, legacy_effective_time_unavailable and "+
@@ -48,8 +49,15 @@ func newEffectiveCloseCollector() *effectiveCloseCollector {
 				"name read deleted at once, a calendar source gone; close_boundary_active is a Plan the recheck just "+
 				"before a send found active again, its batch not sent while the Query Group's other Plans go on "+
 				"(effective_time_unknown counts the same recheck finding the time unreadable); close_business_unknown "+
-				"counts alerts of a global business Plan whose record names no business they were filed under, not "+
-				"closed that round. Every cell exists from the "+
+				"counts alerts of a global business Plan whose record names no business they were filed under, or that "+
+				"were addressed from the index set, which names none - not closed that round; evidence_unavailable is "+
+				"a Plan outside its effective time whose open alerts could not be listed because its set has no current "+
+				"calibration (never calibrated, past its age, failing, or truncated with nothing listed) and its index "+
+				"set was not read fresh either, once per Plan per step - a calibrated set with no alerts is not counted; "+
+				"index_set_close_acked counts, among close_acked, alerts closed by fingerprint from the index set's "+
+				"members because the set had no current calibration to list them; index_set_group_draining is such a "+
+				"Plan whose set was held back instead, its Query Group in the current active set and in the draining "+
+				"projection at once, once per Plan per step. Every cell exists from the "+
 				"start so a zero is a reading and not an absence.", []string{"outcome"}, nil),
 	}
 }

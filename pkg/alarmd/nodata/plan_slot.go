@@ -125,7 +125,8 @@ func EvaluatePlanSlot(input PlanSlotInput) (PlanSlotResult, error) {
 	}
 
 	slot := PlanSlotResult{Outcome: outcome, Facts: result.Facts}
-	partial := outcome == OutcomeSkippedQueryNotFull || outcome == OutcomeSkippedAnswerTruncated
+	partial := outcome == OutcomeSkippedQueryNotFull || outcome == OutcomeSkippedAnswerTruncated ||
+		outcome == OutcomeSkippedTargetSelectorUnavailable || outcome == OutcomeSkippedTargetMembersDropped
 	if outcome != OutcomeEvaluated && (!partial || !judgedPresent(result, input.EvaluationTime)) {
 		// A round that judged nothing writes nothing. The memory it would write
 		// is the memory it started with, and writing it back would burn a state

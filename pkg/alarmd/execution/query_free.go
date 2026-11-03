@@ -204,6 +204,44 @@ type ActivatedPlan struct {
 	// Worker still keeps a carried point only when its detect fingerprint is
 	// the new one.
 	Carry *StateCarry `json:",omitempty"`
+	// NoDataCarry names, on an activation whose state generation moved while
+	// the Plan stayed active, the generation whose no-data state the Plan
+	// reads when its own holds none: its no-data memory, its no-data end
+	// index, or both. It is decided apart from Carry, from the two versions
+	// of the Plan alone, and only for a move that left no-data's meaning as
+	// it was: a detection edit moves the generation and changes nothing about
+	// which groups the query returns or what their absence means. Nil
+	// everywhere else, and omitted.
+	NoDataCarry *NoDataCarry `json:",omitempty"`
+}
+
+// NoDataCarry is where an activation's no-data state may be carried from.
+// Memory carries the groups the no-data memory holds; Ends carries the
+// entries of the no-data end index.
+type NoDataCarry struct {
+	From   StateGeneration
+	Memory bool `json:",omitempty"`
+	Ends   bool `json:",omitempty"`
+}
+
+// Validate holds a no-data carry to the activation it is on: it comes from
+// another generation, only on an activation whose generation moved, and
+// carries something.
+func (carry *NoDataCarry) Validate(plan ActivatedPlan) error {
+	if carry == nil {
+		return nil
+	}
+	if carry.From == "" || carry.From == plan.StateGeneration || !plan.ForceWarming || (!carry.Memory && !carry.Ends) {
+		return errors.New("alarmd execution: a no-data carry needs a previous generation on a warming activation and something to carry")
+	}
+	return nil
+}
+
+func noDataCarriesEqual(left, right *NoDataCarry) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 // StateCarry is where an activation's Runtime State may be carried from.
@@ -267,7 +305,8 @@ func (plan ActivatedPlan) Equal(other ActivatedPlan) bool {
 	return plan.Identity == other.Identity && plan.StateGeneration == other.StateGeneration &&
 		plan.StateApplyEpoch == other.StateApplyEpoch && plan.ScheduleRevision == other.ScheduleRevision &&
 		plan.RequiredFullSlots == other.RequiredFullSlots && plan.ForceWarming == other.ForceWarming &&
-		ShardsEqual(plan.Shard, other.Shard) && carriesEqual(plan.Carry, other.Carry)
+		ShardsEqual(plan.Shard, other.Shard) && carriesEqual(plan.Carry, other.Carry) &&
+		noDataCarriesEqual(plan.NoDataCarry, other.NoDataCarry)
 }
 
 // IsZero reports an activation that selected nothing.
@@ -370,6 +409,9 @@ func (result PlanActivationResult) Validate(request PlanActivationRequest) error
 				return errors.New("alarmd execution: incomplete selected activation Plan")
 			}
 			if err := fact.Selected.Carry.Validate(fact.Selected); err != nil {
+				return err
+			}
+			if err := fact.Selected.NoDataCarry.Validate(fact.Selected); err != nil {
 				return err
 			}
 		default:

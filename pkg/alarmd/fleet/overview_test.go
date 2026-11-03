@@ -254,6 +254,13 @@ func TestTheOverviewRuntimeNamesWhatNeedsAPerson(t *testing.T) {
 	if len(overview.Runtime.Attention) != 1 || overview.Runtime.Attention[0].Kind != "config_behind" || !strings.Contains(overview.Runtime.Attention[0].Line, "4") {
 		t.Fatalf("attention = %+v, want the configuration behind named with its failures", overview.Runtime.Attention)
 	}
+	// Failing past the bound with nothing newer waiting is said as well, in
+	// its own words.
+	health.Activation = &ActivationFacts{FailingBeyondBound: true, ConsecutiveFailures: 9}
+	overview = overviewOf(health, nil, false, time.Now())
+	if len(overview.Runtime.Attention) != 1 || overview.Runtime.Attention[0].Kind != "activation_failing" || !strings.Contains(overview.Runtime.Attention[0].Line, "9") {
+		t.Fatalf("attention = %+v, want the failing activation named with its failures", overview.Runtime.Attention)
+	}
 }
 
 // The route answers the same verdict as the health route, from the same

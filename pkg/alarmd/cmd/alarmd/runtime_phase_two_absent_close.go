@@ -104,6 +104,11 @@ type absentStrategyClose struct {
 	// businesses answers, for a global business strategy, which business
 	// each of its alerts was filed under.
 	businesses *openalerts.AlertBusinesses
+	// edits is the edit close, run after each round over the roster that
+	// round read (lastRoster: nil before a round has read the link, and
+	// after the term ends). Nil where it is not wired.
+	edits      *editStrategyClose
+	lastRoster map[absentalerts.Key]int
 }
 
 // absentRoundSizes is what the last round read, beside what it decided on.
@@ -243,6 +248,9 @@ func (loop *absentStrategyClose) run(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		loop.step(ctx)
+		if loop.edits != nil {
+			loop.edits.step(ctx, loop.lastRoster)
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -268,6 +276,7 @@ func (loop *absentStrategyClose) step(ctx context.Context) {
 			loop.tracker.Forget()
 			loop.table.forget()
 			loop.walk, loop.walked = nil, nil
+			loop.lastRoster = nil
 		}
 		loop.wasLeader = false
 		loop.count(absentalerts.OutcomeNotLeader, 1)
@@ -295,6 +304,9 @@ func (loop *absentStrategyClose) step(ctx context.Context) {
 	var unreadable []absentalerts.Key
 	health, unreadable, sizes.rosterPages, sizes.rosterInvalid = loop.readRoster(ctx, &round)
 	sizes.rosterComplete, sizes.linkPending = round.RosterComplete, health.PendingCount
+	if round.LinkRead {
+		loop.lastRoster = round.Roster
+	}
 	if !health.LastSuccess.IsZero() {
 		sizes.linkAge = int(now.Sub(health.LastSuccess) / time.Second)
 	}

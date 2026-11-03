@@ -18,6 +18,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/absentalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/editclose"
 )
 
 type Component string
@@ -56,7 +57,10 @@ const (
 	// StageAbsentStrategyClose is the control leader's difference between the
 	// alert link's unrecovered alerts and the strategy snapshot, and the
 	// closes it pushes for strategies that no longer exist.
-	StageAbsentStrategyClose  = "absent_strategy_close"
+	StageAbsentStrategyClose = "absent_strategy_close"
+	// StageStrategyEditClose is the control leader's close of the alerts an
+	// edit of their strategy orphaned (package editclose).
+	StageStrategyEditClose    = "strategy_edit_close"
 	StageLegacyPodCache       = "legacy_pod_cache"
 	StageSnapshotRefreshed    = "snapshot_refreshed"
 	StageSnapshotUnavailable  = "snapshot_unavailable"
@@ -1388,7 +1392,10 @@ type StateGenerationSkewFacts struct {
 
 // StateCarryFacts count history carried across a moved state generation.
 // Scope is "plan" for the Control Leader's decision per activation and
-// "series" for a Worker's per series; Count is how many met Result.
+// "series" for a Worker's per series; "no_data_plan" is the Control Leader's
+// decision about the Plan's no-data state and "no_data_load" what a Worker
+// found when it read that state from the generation it moved from. Count is
+// how many met Result.
 type StateCarryFacts struct {
 	Scope  string
 	Result string
@@ -1398,10 +1405,14 @@ type StateCarryFacts struct {
 // StateCarryScopes and StateCarryResults are the closed vocabularies of
 // StateCarryFacts; a value outside them is reported as "other".
 var (
-	StateCarryScopes  = []string{"plan", "series"}
+	StateCarryScopes  = []string{"plan", "series", "no_data_plan", "no_data_load"}
 	StateCarryResults = map[string][]string{
 		"plan":   {"carried", "partial", "none_detect_changed", "none_previous_unreadable", "none_discontinuous"},
 		"series": {"carried", "nothing_kept", "skipped_active_guard", "old_missing"},
+		"no_data_plan": {"carried", "carried_ends_only", "not_carried_semantics_changed",
+			"not_carried_previous_unreadable"},
+		"no_data_load": {"memory_carried", "memory_previous_empty", "memory_previous_unreadable",
+			"ends_carried", "ends_previous_empty", "ends_previous_unreadable", "ends_previous_not_cleared"},
 	}
 )
 
@@ -3671,6 +3682,9 @@ var phaseTwoComponentStages = []ComponentStage{
 	// ninety more series for a loop that runs twelve times an hour on one
 	// replica and is fully answered by its own family.
 	{ComponentControlPlane, StageAbsentStrategyClose},
+	// The edit close, for the same reason: its own family
+	// (strategy_edit_close_total) has a cell per outcome.
+	{ComponentControlPlane, StageStrategyEditClose},
 	{ComponentControlPlane, StageSnapshotRefreshed}, {ComponentControlPlane, StageSnapshotUnavailable},
 	{ComponentControlPlane, StageActivationFailed},
 	// A failed write of the leader's control facts. It was written as
@@ -3845,6 +3859,27 @@ const (
 	// event source could not be read and none has been read yet, by this
 	// loop or by the open-alert copy. One per step.
 	EffectiveCloseSourceUnknown ReasonCode = "source_unknown"
+	// EffectiveCloseEvidenceUnavailable is a Plan outside its effective time
+	// whose open alerts could not be listed: its set in the open-alert copy
+	// has no current calibration - never calibrated, past its age, the
+	// calibration failing, or a truncated one that listed nothing. Not
+	// "nothing to close": a calibrated set with no alerts is not counted,
+	// and neither is a set whose members, read fresh, stand in for its
+	// alerts (index_set_close_acked). The absent-strategy close's word for
+	// the same condition. One per Plan, per step that finds it inactive.
+	EffectiveCloseEvidenceUnavailable ReasonCode = "evidence_unavailable"
+	// EffectiveCloseIndexSetAcked counts, among close_acked, the alerts
+	// closed from the strategy's index set: its alerts not listed (no
+	// current calibration), its members read fresh and standing in for them,
+	// each close addressed by fingerprint. Counts alerts.
+	EffectiveCloseIndexSetAcked ReasonCode = "index_set_close_acked"
+	// EffectiveCloseIndexSetGroupDraining is a Plan outside its effective
+	// time whose index set would stand in for its unlisted alerts, held
+	// because its Query Group is in the current active set and in the
+	// draining projection at once: an activation that left the Query Group
+	// with its timeline open, whose Plans may be a strategy's revision the
+	// current one replaced. One per Plan, per step that finds it inactive.
+	EffectiveCloseIndexSetGroupDraining ReasonCode = "index_set_group_draining"
 )
 
 // EffectiveCloseOutcomes is every outcome, for the metric to pre-create each
@@ -3855,6 +3890,7 @@ var EffectiveCloseOutcomes = []ReasonCode{
 	EffectiveCloseEffectiveTimeUnknown, EffectiveCloseLegacyUnavailable, EffectiveCloseUnavailable, EffectiveCloseUnsupportedRunner,
 	EffectiveCloseViewNotExecutable, EffectiveCloseCalendarDeletionUnsettled, EffectiveCloseBoundaryActive,
 	EffectiveCloseBusinessUnknown, EffectiveCloseSourceLastKnown, EffectiveCloseSourceUnknown,
+	EffectiveCloseEvidenceUnavailable, EffectiveCloseIndexSetAcked, EffectiveCloseIndexSetGroupDraining,
 }
 
 // Maintenance details are bounded log reasons, not new metric label dimensions.
@@ -3876,6 +3912,18 @@ func absentCloseReasons() []ReasonCode {
 			continue
 		}
 		reasons = append(reasons, ReasonCode(refusal))
+	}
+	return reasons
+}
+
+// EditCloseReasons is the edit close's vocabulary as observability reason
+// codes, declared where the decision is made (editclose.Outcomes).
+var EditCloseReasons = editCloseReasons()
+
+func editCloseReasons() []ReasonCode {
+	reasons := make([]ReasonCode, 0, len(editclose.Outcomes))
+	for _, outcome := range editclose.Outcomes {
+		reasons = append(reasons, ReasonCode(outcome))
 	}
 	return reasons
 }
@@ -3995,7 +4043,7 @@ var allResourceReasons = joinReasons(
 // allLogReasons is every reason NormalizeReason can return: the limiter keeps
 // a bucket for each, and refuses a reason it has none for, so a catalogue
 // NormalizeReason accepts and this list leaves out has its lines dropped.
-var allLogReasons = joinReasons(unclassifiedReasons, []ReasonCode{ReasonTraceExportFailed}, resourceOnlyReasons, activationFailureReasons, ViewStreamReasons, SchedulerDecisionReasons, SlotPathReasons, effectiveMaintenanceReasons, AbsentCloseReasons, CompletionAttributionReasons, AdmissionFailureReasons, NoDataStallReasons, contractClassReasons, []ReasonCode{ReasonHeldBySupplement, ReasonHeldByMaintenance, ReasonSlotCancelled}, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
+var allLogReasons = joinReasons(unclassifiedReasons, []ReasonCode{ReasonTraceExportFailed}, resourceOnlyReasons, activationFailureReasons, ViewStreamReasons, SchedulerDecisionReasons, SlotPathReasons, effectiveMaintenanceReasons, AbsentCloseReasons, EditCloseReasons, CompletionAttributionReasons, AdmissionFailureReasons, NoDataStallReasons, contractClassReasons, []ReasonCode{ReasonHeldBySupplement, ReasonHeldByMaintenance, ReasonSlotCancelled}, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
 
 var componentStageSet = makeComponentStageSet(allComponentStages)
 var metricComponentStageSet = makeComponentStageSet(metricComponentStages)
@@ -4010,6 +4058,7 @@ var viewStreamReasonSet = makeReasonSet(ViewStreamReasons)
 var schedulerDecisionReasonSet = makeReasonSet(SchedulerDecisionReasons)
 var effectiveMaintenanceReasonSet = makeReasonSet(effectiveMaintenanceReasons)
 var absentCloseReasonSet = makeReasonSet(AbsentCloseReasons)
+var editCloseReasonSet = makeReasonSet(EditCloseReasons)
 var contractObservationReasons, contractObservationReasonSet, contractObservationMetricReasonByCode = loadContractObservationReasons()
 
 func makeComponentStageSet(values []ComponentStage) map[ComponentStage]struct{} {

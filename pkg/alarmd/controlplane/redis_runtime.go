@@ -2394,6 +2394,7 @@ func (runtime *RedisCatalogRuntime) freezeSlotContract(ctx context.Context, requ
 		duePlans = append(duePlans, execution.DuePlan{Identity: plan.Identity, Shard: execution.ShardOf(plan.Shard), CompiledPlan: compiled,
 			StateGeneration: record.Fact.Selected.StateGeneration, StateApplyEpoch: record.Fact.Selected.StateApplyEpoch,
 			StateCarry:       record.Fact.Selected.Carry,
+			NoDataCarry:      record.Fact.Selected.NoDataCarry,
 			ScheduleRevision: plan.ScheduleRevision, ScheduleSpec: plan.ScheduleSpec,
 			CompletionDeadlineUnixMilli: deadline, PartialCapabilities: capabilities,
 			LevelContractRefs:          append([]execution.RuntimeLevelContractRef(nil), plan.LevelContractRefs...),

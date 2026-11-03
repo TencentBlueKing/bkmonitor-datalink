@@ -33,7 +33,7 @@ func newActivationRebuildCollector() *activationRebuildCollector {
 			"rebuilt_draining_unknown: rebuilt from the open Segments without that copy; the Plans are exact, "+
 			"and Query Groups a cutover removed that had not drained stop executing now rather than at their boundary. "+
 			"not_needed: the body was back or the header gone. conflict: another writer moved first; nothing written. "+
-			"timeline_missing, coverage_invalid, header_unparsable, header_pending: refused by name, nothing written, "+
+			"timeline_missing, timeline_unreadable, coverage_invalid, header_unparsable, header_pending: refused by name, nothing written, "+
 			"and the fleet stays without an activation until the cause is fixed.", []string{"outcome"}, nil)}
 }
 

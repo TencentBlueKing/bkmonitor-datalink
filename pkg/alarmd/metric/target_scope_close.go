@@ -28,7 +28,7 @@ func newTargetScopeCloseCollector() *targetScopeCloseCollector {
 				"closed. cache_unavailable counts rejections decided on facts that "+
 				"were not all read or current, which are never closed; not_member definitive rejections whose "+
 				"fingerprint is not an open alert; set_unavailable decisions refused because the open set could "+
-				"not be judged (not calibrated, disjoint, unavailable); producer_foreign open alerts of another "+
+				"not be judged (not calibrated and the index set not read fresh, disjoint, unavailable); producer_foreign open alerts of another "+
 				"source; send_failed closes the producer refused; close_identity_invalid closes whose request could "+
 				"not be built from the observation's facts (strategy id, business or revision unusable), nothing "+
 				"sent, the word the effective-time close uses for the same facts; memory_full first observations past the "+
@@ -40,7 +40,10 @@ func newTargetScopeCloseCollector() *targetScopeCloseCollector {
 				"whose second did not arrive within two of the strategy's periods plus its Slot's read offset (at least "+
 				"half an hour), forgotten - the strategies counted there are ones this close could not reach, named in "+
 				"its facts; business_unknown closes of a global business strategy's alerts whose record names no "+
-				"business they were filed under, kept for the next step; superseded_identity_close_sent counts, among close_sent, "+
+				"business they were filed under, or addressed from the index set, which names none, kept for the next "+
+				"step; index_set_close_sent counts, among close_sent, the closes addressed by fingerprint from the "+
+				"strategy's index set, read fresh, because the link's reconcile gave no rows to list the alert by; "+
+				"superseded_identity_close_sent counts, among close_sent, "+
 				"the closes of alerts a series opened under the fingerprint of its own address before its alert identity "+
 				"read CMDB's (reason superseded_identity). Such an offer is made for every series whose host overlay moves "+
 				"its fingerprint, every Slot; one that finds no open alert under the old fingerprint, or a set that cannot "+

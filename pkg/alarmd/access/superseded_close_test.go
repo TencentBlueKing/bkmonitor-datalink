@@ -53,6 +53,10 @@ func (set heldAlerts) ActiveAlerts(openalerts.StrategyKey) []openalerts.Alert {
 }
 func (heldAlerts) OwnEventSourceID() string { return "own" }
 
+// The set is listed whole, so nothing answers from the index set alone.
+func (heldAlerts) UnlistedMemberCount(openalerts.StrategyKey) (int, bool)    { return 0, false }
+func (heldAlerts) UnlistedHolds(openalerts.StrategyKey, string) (bool, bool) { return false, false }
+
 type recordedCloses struct{ sent []linkdoutput.CloseRequest }
 
 func (w *recordedCloses) WriteCloseBatch(_ context.Context, batch []linkdoutput.CloseRequest) error {

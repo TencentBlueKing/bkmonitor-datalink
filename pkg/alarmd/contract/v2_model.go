@@ -616,6 +616,13 @@ type EvaluationPlanV2 struct {
 	// TriggerEventV1.AttributedBusinessID). Omitted when false, so every
 	// other Plan keeps its bytes and its revision.
 	GlobalBusiness bool `json:"global_business,omitempty"`
+	// StrategyFacts is what this Plan's events say about the configuration
+	// they were decided under (StrategyFactsV2), derived from the item's
+	// query configs when the Plan is built. Only on a Plan that publishes a
+	// snapshot revision; nil on every other Plan, and on one whose query
+	// configs the platform's own comparison could not read, whose events
+	// then carry none.
+	StrategyFacts *StrategyFactsV2 `json:"strategy_facts,omitempty"`
 }
 
 // PublishesCompatibleProtocol reports whether this Plan's events go out as the
@@ -1066,7 +1073,11 @@ type TriggerEventV1 struct {
 	// it, so neither the event id nor its semantic digest moves with what is
 	// read beside the detection. Nil on the events of a strategy without
 	// named outputs.
-	DetectionSnapshot       json.RawMessage      `json:"-"`
+	DetectionSnapshot json.RawMessage `json:"-"`
+	// StrategyFacts is the Plan's (EvaluationPlanV2.StrategyFacts), for the
+	// output to carry (extra_data.strategy_facts): beside the event and not
+	// in it, like the signal type. Nil where the Plan has none.
+	StrategyFacts           *StrategyFactsV2     `json:"-"`
 	Schema                  Schema               `json:"schema"`
 	RequiredFeatures        []string             `json:"required_features"`
 	EventID                 string               `json:"event_id"`

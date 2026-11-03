@@ -117,6 +117,38 @@ func TestTheExistingCloseReasonsKeepTheirEventIDs(t *testing.T) {
 	}
 }
 
+// A strategy_changed close names the change in its content and is its own
+// event: the same alert closed as absent and as changed is two events.
+func TestAStrategyChangedCloseNamesTheChange(t *testing.T) {
+	request := CloseRequest{TenantID: "tenant-test", Fingerprint: "0123456789abcdef0123456789abcdef",
+		AlertInstanceID: "active-instance", StrategyID: 123, StrategyRevision: 4, BusinessID: 2,
+		OccurredAt: time.Unix(1800000000, 0), Reason: CloseReasonStrategyChanged, Detail: StrategyChangedLevel}
+	event, err := ConvertClose(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Title       string `json:"title"`
+		Content     string `json:"content"`
+		Evaluations []struct {
+			Action       string `json:"action"`
+			ActionReason string `json:"action_reason"`
+		} `json:"evaluations"`
+	}
+	if err := json.Unmarshal(event.Payload, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(wire.Content, " Change: level_removed.") || wire.Title != "Strategy was changed and no longer produces this alert" ||
+		len(wire.Evaluations) != 1 || wire.Evaluations[0].Action != ActionClosed || wire.Evaluations[0].ActionReason != "strategy_changed" {
+		t.Fatalf("event = %s, want a strategy_changed close naming level_removed", event.Payload)
+	}
+	request.Reason = CloseReasonAbsent
+	absent, err := ConvertClose(request)
+	if err != nil || absent.EventID == event.EventID {
+		t.Fatalf("absent close id %q err %v, want an id of its own", absent.EventID, err)
+	}
+}
+
 // The capability a close names is cut to closeDetailLimit bytes, and on a
 // rune boundary: a cut through a rune would reach the alert as U+FFFD.
 func TestACloseDetailIsCutOnARuneBoundary(t *testing.T) {

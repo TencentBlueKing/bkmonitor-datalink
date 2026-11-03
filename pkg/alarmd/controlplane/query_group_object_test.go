@@ -341,7 +341,10 @@ func TestPublishedPlanFieldsAreEachPlacedInOneDigest(t *testing.T) {
 			// event is filed under, read when the event is built. What it
 			// does to the query is QueryPlanFacts' GlobalBusiness, execution
 			// content in the Query Group's facts.
-			context: []string{"source_compatibility", "subject_facts", "legacy_output", "wire_format", "signal_type", "global_business"},
+			// strategy_facts too: it is what the event says about the
+			// configuration it was decided under, read only when the event is
+			// rendered.
+			context: []string{"source_compatibility", "subject_facts", "legacy_output", "wire_format", "signal_type", "global_business", "strategy_facts"},
 			split:   []string{"strategy_ref", "strategy_ir"},
 		},
 		reflect.TypeOf(contract.StrategyIRV2{}): {

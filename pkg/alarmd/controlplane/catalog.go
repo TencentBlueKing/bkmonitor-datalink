@@ -1347,7 +1347,7 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 	if err := validateQueryIdentity(source.Identity, facts); err != nil {
 		return candidate, err
 	}
-	if refusal, word := globalBusinessRefusal(source.SourceID, source.Identity, targetScope, facts); refusal != nil {
+	if refusal, word := globalBusinessRefusal(source.SourceID, source.Identity, targetScope, facts, querySource.QueryConfigs); refusal != nil {
 		candidate.dispositions = append(candidate.dispositions, *refusal)
 		candidate.globalRefusal = word
 		return candidate, errors.New(ReasonGlobalStrategyUnsupported + ": " + refusal.Detail)
@@ -2436,6 +2436,14 @@ func compilePlan(
 	if itemHasAlgorithm(item, strategy.DetectorKindProcPort) {
 		dimensionFields = []string{"bind_ip", "listen", "nonlisten", "not_accurate_listen", "protocol"}
 	}
+	// A global business PromQL Plan's records carry the labels its outermost
+	// aggregation groups by, and those are what its business is read from
+	// (admission.AttributeBusiness): bk_biz_id, else the cluster and
+	// namespace, else the Plan's own business. Ordinary PromQL Plans keep the
+	// empty list they had.
+	if identity.GlobalBusiness && inputs != nil && inputs.primary.PromQL != nil && len(dimensionFields) == 0 {
+		dimensionFields = promQLOutputGrouping(inputs.primary.PromQL.Expression)
+	}
 	projection := contract.InputProjectionV2{DynamicDimensions: dataset.DynamicDimensions, ValueFields: []string{"value"}, DimensionFields: dimensionFields, BusinessIdentityField: "bk_biz_id", MultiValueAlignment: "SINGLE_VALUE", DataUnit: unit, MissingValuePolicy: contract.MissingValuePolicyRequired}
 	detectByLevel := make(map[uint32]legacyDetect, len(source.Detects))
 	duplicateDetect := make(map[uint32]struct{})
@@ -2721,6 +2729,14 @@ func compilePlan(
 	if ref.SnapshotRevision > 0 {
 		plan.OutputIdentity = &contract.MonitorOutputIdentity{DynamicDimensions: dataset.DynamicDimensions, DimensionFields: append([]string{}, dataset.IdentityFields...)}
 		plan.SubjectFacts = frozenSubjectFacts(source, item)
+		// Nil when the query configs cannot be read the way the platform
+		// compares them: the events carry no facts, and the edit close names
+		// their alerts facts_missing rather than deciding on a guess.
+		grouping := contract.StrategyGrouping{Fields: dataset.IdentityFields, Dynamic: dataset.DynamicDimensions, NoData: plan.NoData != nil}
+		if plan.NoData != nil {
+			grouping.NoDataFields = plan.NoData.AggDimension
+		}
+		plan.StrategyFacts, _ = contract.DeriveStrategyFactsV2(item.QueryConfigs, grouping)
 	}
 	scheduleSpec, refusal, err := planScheduleSpec(sourceID, plan, step.Seconds)
 	if err != nil {

@@ -4215,6 +4215,14 @@ func (bundle *phaseTwoWorkerBundle) refreshAndReconcile(ctx context.Context, ref
 			result, err = bundle.dependencies.Control.Refresh(ctx)
 			if err == nil {
 				err = bundle.applyControlRefresh(ctx, result)
+			} else if result.Activation != nil {
+				// A round whose activation failed and whose last good one
+				// could not be read either - the body lost under its header -
+				// is not applied, but it did attempt the activation, and the
+				// standing is the one place that run of failures is counted.
+				bundle.mu.Lock()
+				bundle.noteActivationLocked(result.Activation)
+				bundle.mu.Unlock()
 			}
 		} else {
 			var result phaseTwoControlRefreshResult

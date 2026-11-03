@@ -46,13 +46,38 @@ func (c *maintenanceTestCatalog) CurrentPlans(ctx context.Context, _ execution.Q
 }
 
 // maintenanceTestIndex answers the copy's reads with alerts; own, when set,
-// is the source its calibration names as this deployment's.
+// is the source its calibration names as this deployment's. reconcileErr,
+// when set, fails every calibration: the set is read and never calibrated.
+// members, when set, is what a read of the set answers in place of the
+// alerts' fingerprints; readErr fails every read. trusted gives the copy a
+// Console that has confirmed the sets, so that they are read at all.
 type maintenanceTestIndex struct {
-	alerts []openalerts.Alert
-	own    string
+	alerts       []openalerts.Alert
+	own          string
+	reconcileErr error
+	members      []string
+	readErr      error
+	trusted      bool
 }
 
+// confirmedMaintenanceFacts is a Console that has confirmed where the sets
+// are and that they are keyed by our alert ids.
+type confirmedMaintenanceFacts struct{}
+
+func (confirmedMaintenanceFacts) LocationConfirmed() bool { return true }
+func (confirmedMaintenanceFacts) KeyedByAlertID() (bool, time.Time, bool) {
+	return true, time.Time{}, true
+}
+func (confirmedMaintenanceFacts) KeyingAsked() bool       { return true }
+func (confirmedMaintenanceFacts) Refresh(context.Context) {}
+
 func (s maintenanceTestIndex) ReadSet(context.Context, openalerts.StrategyKey) ([]string, error) {
+	if s.readErr != nil {
+		return nil, s.readErr
+	}
+	if s.members != nil {
+		return s.members, nil
+	}
 	var members []string
 	for _, a := range s.alerts {
 		members = append(members, a.Fingerprint)
@@ -60,6 +85,9 @@ func (s maintenanceTestIndex) ReadSet(context.Context, openalerts.StrategyKey) (
 	return members, nil
 }
 func (s maintenanceTestIndex) Reconcile(ctx context.Context, key openalerts.StrategyKey) (openalerts.Reconciliation, error) {
+	if s.reconcileErr != nil {
+		return openalerts.Reconciliation{}, s.reconcileErr
+	}
 	members, _ := s.ReadSet(ctx, key)
 	return openalerts.Reconciliation{EventSourceID: s.own, Members: members, Alerts: s.alerts}, nil
 }
@@ -161,7 +189,11 @@ func newMaintenanceTestFixtureFrom(t *testing.T, snapshot string, at time.Time, 
 	if !ok || compiled.Levels().Len() == 0 {
 		t.Fatalf("compile terminal=%+v levels=%+v", result.PlanTerminal(), result.LevelTerminals())
 	}
-	cache, err := openalerts.NewIndex(openalerts.IndexOptions{Source: source, Reconciler: source, Subscriber: source, Now: f.now,
+	var facts openalerts.ConsoleFacts
+	if source.trusted {
+		facts = confirmedMaintenanceFacts{}
+	}
+	cache, err := openalerts.NewIndex(openalerts.IndexOptions{Source: source, Reconciler: source, Subscriber: source, Facts: facts, Now: f.now,
 		MaxStrategies: 10, MaxMembers: 100, MaxBytes: 1 << 20, MaxLocalEntries: 100, ReadBatch: 2, ReconcileBatch: 1,
 		RefreshInterval: time.Hour, IndexInterval: time.Hour, ReconcileInterval: time.Hour, CalibrationMaxAge: 2 * time.Hour, LocalRetention: time.Minute, CycleTimeout: time.Second})
 	if err != nil {
@@ -176,9 +208,28 @@ func newMaintenanceTestFixtureFrom(t *testing.T, snapshot string, at time.Time, 
 	go func() { defer close(done); _ = cache.Run(ctx) }()
 	t.Cleanup(func() { cancel(); <-done })
 	deadline := testwait.Deadline(t)
-	for !cache.Snapshot(key).Calibrated {
+	// A failing calibration is waited for until it has failed once, and
+	// until a trusted copy has read the set, or failed to.
+	settled := func(snapshot openalerts.StrategySnapshot) bool {
+		if source.reconcileErr == nil {
+			return snapshot.Calibrated
+		}
+		if !source.trusted {
+			return snapshot.Reason == "calibration_failed"
+		}
+		// A failed read and a failed calibration are both counted a read
+		// error; with the reads answering, it is the calibration's.
+		failed := cache.Stats().Unavailable[openalerts.UnavailableReadError] > 0
+		return failed && (source.readErr != nil || snapshot.Loaded)
+	}
+	for snapshot := cache.Snapshot(key); !settled(snapshot); snapshot = cache.Snapshot(key) {
 		if time.Now().After(deadline) {
 			t.Fatal("cache did not calibrate")
+		}
+		if source.trusted {
+			// A read waits for the subscription; a round run here does not
+			// wait for the loop's next.
+			cache.Refresh(context.Background())
 		}
 		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}

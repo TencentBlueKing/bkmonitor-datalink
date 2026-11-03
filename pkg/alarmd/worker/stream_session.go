@@ -86,10 +86,13 @@ type streamedExecution struct {
 	noDataAbsenceStarts noDataAbsenceStarts
 	// noDataEnds is each Plan's no-data end index as this Slot read it.
 	noDataEnds map[execution.PlanIdentity]execution.NoDataEndLoaded
-	effective  map[execution.ConsumerRef]strategy.EffectiveTimeFact
-	evaluated  execution.EvaluationResult
-	delivered  []execution.SeriesDelivery
-	series     uint64
+	// noDataEndCarries is the entries each Plan's index took this Slot from
+	// the generation its activation carries it from.
+	noDataEndCarries map[execution.PlanIdentity]noDataEndCarry
+	effective        map[execution.ConsumerRef]strategy.EffectiveTimeFact
+	evaluated        execution.EvaluationResult
+	delivered        []execution.SeriesDelivery
+	series           uint64
 	// retainedByPhase is this execution's retained bytes split by what they
 	// were retained for. The total is the sum rather than a counter of its
 	// own: a sixth budget's worth of memory arriving with no phase attached
@@ -1271,6 +1274,7 @@ func (stream *streamedExecution) loadNoDataMemory(ctx context.Context) error {
 		observability.Counts{Keys: int64(len(stream.noData.Items))}, nil)
 	stream.observeNoDataRepresentations(ctx)
 	stream.observeNoDataRenewals(ctx)
+	stream.carryNoDataMemory(ctx, request)
 	if stream.supplement != nil {
 		// Read for what it recorded at the Slot, not to judge absence: a
 		// supplement's series are a subset, and every group outside it would

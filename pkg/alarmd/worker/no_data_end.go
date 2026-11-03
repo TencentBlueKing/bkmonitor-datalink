@@ -41,6 +41,9 @@ type noDataEndPlan struct {
 	loaded   execution.NoDataEndLoaded
 	complete bool
 	present  map[execution.SeriesIdentityDigest]struct{}
+	// carry is the entries the index took this round from the generation
+	// the Plan's activation carries it from, nil when none.
+	carry *noDataEndCarry
 }
 
 type noDataEndRound map[execution.PlanIdentity]noDataEndPlan
@@ -96,6 +99,7 @@ func (stream *streamedExecution) loadNoDataEnds(ctx context.Context) error {
 	for _, item := range loaded {
 		stream.noDataEnds[item.Key.Plan] = item
 	}
+	stream.carryNoDataEnds(ctx, index)
 	return nil
 }
 
@@ -124,6 +128,9 @@ func (stream *streamedExecution) noDataEndRound() noDataEndRound {
 			for _, outcome := range result.LevelOutcomes {
 				plan.present[outcome.SeriesIdentityDigest] = struct{}{}
 			}
+		}
+		if carry, carried := stream.noDataEndCarries[due.Identity]; carried {
+			plan.carry = &carry
 		}
 		round[due.Identity] = plan
 	}
@@ -277,6 +284,9 @@ func (coordinator *SlotExecutionCoordinator) applyPlanNoDataEnds(ctx context.Con
 			coordinator.observeNoDataEnds(ctx, request, due.Identity, observability.NoDataEndSendFailed, failed)
 		}
 	}
+	if plan.carry != nil {
+		write = withCarriedEnds(write, *plan.carry)
+	}
 	if len(write.Puts) == 0 && len(write.Deletes) == 0 {
 		return nil
 	}
@@ -287,6 +297,15 @@ func (coordinator *SlotExecutionCoordinator) applyPlanNoDataEnds(ctx context.Con
 		// Reported, not raised: what this round decided is already sent, and
 		// the next round that evaluates or walks these series writes again.
 		coordinator.observeNoDataEnds(ctx, request, due.Identity, observability.NoDataEndUnavailable, 1)
+		return nil
+	}
+	if plan.carry != nil {
+		// Only once the new generation holds them: an entry removed from
+		// the old index first and not written to the new one would be lost
+		// with the alert it ends.
+		if err := index.ApplyNoDataEnds(ctx, clearCarriedEnds(*plan.carry, write)); err != nil {
+			coordinator.observeNoDataCarry(ctx, request.Operation, NoDataCarryEndsPreviousNotCleared, 1)
+		}
 	}
 	return nil
 }

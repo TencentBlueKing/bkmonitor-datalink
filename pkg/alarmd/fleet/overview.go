@@ -552,6 +552,9 @@ func overviewOf(health HealthResponse, running map[StateWord]int, runningKnown b
 	if activation := health.Activation; activation != nil && activation.BehindBeyondBound {
 		overview.Runtime.Attention = append(overview.Runtime.Attention, OverviewNotice{Kind: "config_behind",
 			Line: fmt.Sprintf("已发布的策略配置还没在检测里生效：连续 %d 轮没有应用成功", activation.ConsecutiveFailures)})
+	} else if activation != nil && activation.FailingBeyondBound {
+		overview.Runtime.Attention = append(overview.Runtime.Attention, OverviewNotice{Kind: "activation_failing",
+			Line: fmt.Sprintf("激活连续 %d 轮失败：检测暂时照常，但生效中的配置不再续期，到期后停止检测", activation.ConsecutiveFailures)})
 	}
 	return overview
 }

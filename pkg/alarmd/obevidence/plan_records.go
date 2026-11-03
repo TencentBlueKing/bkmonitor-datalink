@@ -3,11 +3,13 @@ package obevidence
 import (
 	"context"
 	"errors"
+	"sort"
 
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
 
@@ -31,6 +33,30 @@ const (
 // planRecordCommands is what one record costs: TYPE, PTTL, and a size and a
 // header read by its kind (STRLEN and GETRANGE, or HLEN and HGET).
 const planRecordCommands = 4
+
+// A no-data memory's group keys are listed, not only counted: the first
+// MaxGroupKeys of them in byte order, together at most MaxGroupKeyBytes. The
+// whole hash is scanned to find them, groupKeyScanCount fields a page, within
+// what is left of the request's command and byte budget.
+const (
+	MaxGroupKeys      = 50
+	MaxGroupKeyBytes  = 16 << 10
+	groupKeyScanCount = 1000
+)
+
+// Group key scan outcomes beside a Redis failure reason: every field seen, or
+// the request budget that stopped the scan first.
+const (
+	GroupKeyScanComplete = "complete"
+	GroupKeyScanCommands = "commands"
+	GroupKeyScanBytes    = "bytes"
+)
+
+// Why a listing holds fewer keys than the scan saw.
+const (
+	GroupKeysCutByCount = "count"
+	GroupKeysCutByBytes = "bytes"
+)
 
 // PlanRecords is one Plan's records as the store holds them: the Plan and
 // the state generation and piece the keys are named for, from the published
@@ -63,10 +89,37 @@ type PlanRecord struct {
 	Bytes  *int64                    `json:"bytes,omitempty"`
 	Fields *int64                    `json:"fields,omitempty"`
 	Header *state.ObservedPlanRecord `json:"header,omitempty"`
-	Reason string                    `json:"reason,omitempty"`
+	// GroupKeys lists a no-data memory's groups by name; absent for a record
+	// that is not a hash.
+	GroupKeys *GroupKeyListing `json:"group_keys,omitempty"`
+	Reason    string           `json:"reason,omitempty"`
 	// ReasonText is the error's own text beside a reason for a read the
 	// server did not answer.
 	ReasonText string `json:"reason_text,omitempty"`
+}
+
+// GroupKeyListing is the first group keys of a no-data memory in byte order.
+// Keys are the first of every group only when Scan is complete; otherwise
+// they are the first of the ScannedFields fields the scan saw before Scan's
+// bound or failure, not of the record.
+type GroupKeyListing struct {
+	Keys []string `json:"keys"`
+	// Total is how many groups the record holds: its field count without the
+	// header field.
+	Total int64 `json:"total"`
+	// Limit and LimitBytes are the listing's own bounds; CutBy says which one
+	// left out keys the scan saw, empty when it listed all of them.
+	Limit      int    `json:"limit"`
+	LimitBytes int    `json:"limit_bytes"`
+	CutBy      string `json:"cut_by,omitempty"`
+	Scan       string `json:"scan"`
+	ScanText   string `json:"scan_text,omitempty"`
+	// ScannedFields counts the fields the scan returned, the header and any
+	// repeat a scan may return included.
+	ScannedFields int64 `json:"scanned_fields"`
+	// UnknownFields counts fields that are neither the header nor a group,
+	// which the runtime reads as a corrupt record.
+	UnknownFields int `json:"unknown_fields,omitempty"`
 }
 
 type planRecordRead struct {
@@ -153,8 +206,8 @@ func (service *Service) planRecords(ctx context.Context, request StoreRequest) R
 	r.TTLMS = nil
 	complete := true
 	if len(reads) > 0 {
-		r.Limits.Commands = commands
-		answered, bytesRead := readPlanRecords(ctx, binding, reads, plans)
+		answered, commandsUsed, bytesRead := readPlanRecords(ctx, binding, reads, plans, MaxCommands-commands, MaxBytes-r.Limits.Bytes)
+		r.Limits.Commands = commands + commandsUsed
 		r.Limits.Bytes += bytesRead
 		complete = answered
 	}
@@ -203,8 +256,10 @@ func planRecordReads(family, prefix string, plan controlplane.QueryGroupPlanObje
 // readPlanRecords is one bounded pipeline over every record: presence, life,
 // size and header of each read in one round trip, not as a point-in-time
 // snapshot (Limits.Consistency; readMany says why it is not a MULTI). It says whether every read
-// was answered and how many header bytes came back.
-func readPlanRecords(ctx context.Context, binding RedisBinding, reads []planRecordRead, plans []PlanRecords) (bool, int) {
+// was answered, and the commands and bytes it spent past the pipeline's own
+// commands: header bytes, and the group key scans within commandsLeft and
+// bytesLeft.
+func readPlanRecords(ctx context.Context, binding RedisBinding, reads []planRecordRead, plans []PlanRecords, commandsLeft, bytesLeft int) (bool, int, int) {
 	ctx, cancel := context.WithTimeout(ctx, ReadTimeout)
 	defer cancel()
 	limit := min(MaxDocumentBytes, MaxBytes/len(reads)-1)
@@ -223,7 +278,7 @@ func readPlanRecords(ctx context.Context, binding RedisBinding, reads []planReco
 		}
 		return nil
 	})
-	complete, bytesRead, unanswered := true, 0, ""
+	complete, commandsUsed, bytesRead, unanswered := true, 0, 0, ""
 	for _, read := range reads {
 		record := PlanRecord{Kind: read.kind, Key: read.key, Status: "dependency_unavailable"}
 		if read.typeCmd.Err() != nil || read.ttlCmd.Err() != nil {
@@ -264,6 +319,16 @@ func readPlanRecords(ctx context.Context, binding RedisBinding, reads []planReco
 		}
 		raw := []byte(header.Val())
 		bytesRead += len(raw)
+		if read.hash {
+			groups := size
+			if !errors.Is(header.Err(), redis.Nil) {
+				groups--
+			}
+			listing, used, scanned := scanGroupKeys(ctx, binding, read.key, groups, commandsLeft-commandsUsed, bytesLeft-bytesRead)
+			commandsUsed += used
+			bytesRead += scanned
+			record.GroupKeys = &listing
+		}
 		switch observed, named, err := read.matches(raw); {
 		case !read.hash && len(raw) > limit:
 			record.Status, record.Reason = "document_too_large", "document_bytes"
@@ -277,5 +342,81 @@ func readPlanRecords(ctx context.Context, binding RedisBinding, reads []planReco
 		plans[read.plan].Records = append(plans[read.plan].Records, record)
 	}
 	binding.failed(unanswered)
-	return complete, bytesRead
+	return complete, commandsUsed, bytesRead
+}
+
+// scanGroupKeys pages through one no-data memory's fields with HSCAN and
+// keeps the first MaxGroupKeys group keys in byte order. It stops before a
+// page the command budget has no room for, and after the page that spends
+// the last of the byte budget. It returns the listing, the commands it sent
+// and the bytes the pages carried.
+func scanGroupKeys(ctx context.Context, binding RedisBinding, key string, total int64, commandsLeft, bytesLeft int) (GroupKeyListing, int, int) {
+	listing := GroupKeyListing{Keys: []string{}, Total: total, Limit: MaxGroupKeys, LimitBytes: MaxGroupKeyBytes}
+	var first []string
+	cut := false
+	commands, bytesRead := 0, 0
+	cursor := uint64(0)
+	for {
+		if commands >= commandsLeft {
+			listing.Scan = GroupKeyScanCommands
+			break
+		}
+		if bytesRead >= bytesLeft {
+			listing.Scan = GroupKeyScanBytes
+			break
+		}
+		commands++
+		page, next, err := binding.Client.HScan(ctx, key, cursor, "", groupKeyScanCount).Result()
+		if err != nil {
+			listing.Scan, listing.ScanText = redisfailure.Reason(err), redisfailure.Detail(err)
+			binding.failed(listing.Scan)
+			break
+		}
+		for i := 0; i+1 < len(page); i += 2 {
+			field := page[i]
+			bytesRead += len(field) + len(page[i+1])
+			listing.ScannedFields++
+			if field == state.NoDataHeaderField {
+				continue
+			}
+			group, ok := state.ObservedNoDataGroupKey(field)
+			if !ok {
+				listing.UnknownFields++
+				continue
+			}
+			at := sort.SearchStrings(first, group)
+			if at < len(first) && first[at] == group {
+				continue
+			}
+			if at >= MaxGroupKeys {
+				cut = true
+				continue
+			}
+			first = append(first, "")
+			copy(first[at+1:], first[at:])
+			first[at] = group
+			if len(first) > MaxGroupKeys {
+				first = first[:MaxGroupKeys]
+				cut = true
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			listing.Scan = GroupKeyScanComplete
+			break
+		}
+	}
+	if cut {
+		listing.CutBy = GroupKeysCutByCount
+	}
+	listed := 0
+	for _, group := range first {
+		if listed+len(group) > MaxGroupKeyBytes {
+			listing.CutBy = GroupKeysCutByBytes
+			break
+		}
+		listed += len(group)
+		listing.Keys = append(listing.Keys, group)
+	}
+	return listing, commands, bytesRead
 }

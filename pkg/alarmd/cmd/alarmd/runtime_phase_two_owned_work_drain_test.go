@@ -227,7 +227,7 @@ func TestAnInactiveCloseIsCountedOnItsQueryGroupAndRefusedOnceItIsNotHeld(t *tes
 	delete(f.m.bundle.runners, queryGroup)
 	f.m.bundle.mu.Unlock()
 	sent, err := f.m.sendClose(context.Background(), queryGroup, f.runner, f.m.catalog.(*maintenanceTestCatalog).plans[0],
-		openalerts.StrategyKey{TenantID: "tenant-a", StrategyID: "123"}, nil)
+		openalerts.StrategyKey{TenantID: "tenant-a", StrategyID: "123"}, nil, false)
 	if sent != 0 || !errors.Is(err, errClosePrecheck) || !errors.Is(err, errCloseNotHeld) || len(f.writer.batches) != 1 {
 		t.Fatalf("a close for a Query Group no longer held: sent=%d err=%v batches=%d, want refused before the send",
 			sent, err, len(f.writer.batches))

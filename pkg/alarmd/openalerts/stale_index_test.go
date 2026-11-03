@@ -61,8 +61,8 @@ func staleBoundFor(keys int) time.Duration {
 // A set read once whose reads then keep failing answers from its last read
 // only while that read is younger than the bound the refresh cadence sets.
 // Past it the entry is stale and answers as one never read - the 09-14
-// answer for a set that cannot be read: only what this process sent
-// recently counts, and the pass-through policy lets everything go. A key
+// answer for a set that cannot be read: only what this process opened or
+// sent counts, and the pass-through policy lets everything go. A key
 // never read answers self-maintained, apart from stale, so a cold start is
 // told from a read outage.
 func TestASetUnreadPastTheBoundStopsAnsweringFromItsLastRead(t *testing.T) {
@@ -230,5 +230,89 @@ func TestCalibrationKeepsASetFreshAndAStaleCalibratedSetFallsBackWhole(t *testin
 	}
 	if !cache.Contains(tenant, keyA.StrategyID, "other") {
 		t.Fatal("a stale, calibrated set did not fall back to the pass-through policy")
+	}
+}
+
+// A trusted set past the stale bound, or never read where the reads now go,
+// answers the gate by the unavailable policy as an untrusted set does: under
+// self-maintain an alert this process opened recovers though its send record
+// was pruned by an earlier calibration, and an alert the last read carried
+// that this process neither opened nor sent stays held - the stale read is
+// not the consumer's word on it.
+func TestAStaleOrNeverReadTrustedSetLetsWhatThisProcessOpenedRecover(t *testing.T) {
+	c := &clock{at: time.Unix(1700000000, 0)}
+	options := indexOptions(c)
+	failing := false
+	options.Source = setReaderFunc(func(context.Context, StrategyKey) ([]string, error) {
+		if failing {
+			return nil, errors.New("read failed")
+		}
+		return []string{"ours", "theirs"}, nil
+	})
+	options.Reconciler = reconcilerFunc(func(context.Context, StrategyKey) (Reconciliation, error) {
+		if failing {
+			return Reconciliation{}, errors.New("calibration failed")
+		}
+		return Reconciliation{Members: []string{"ours", "theirs"}}, nil
+	})
+	cache := mustIndex(t, options)
+	if err := cache.SetTracked([]StrategyKey{keyA}); err != nil {
+		t.Fatal(err)
+	}
+	cache.Refresh(context.Background())
+	cache.Acknowledged([]contract.TriggerEventV1{abnormal(keyA, "ours")})
+	// A calibration past the local retention prunes the send record; the
+	// set lists "ours", so the record of what this process opened keeps it.
+	c.advance(3 * time.Minute)
+	cache.indexChanged(keyA)
+	cache.RequestReconcile(keyA)
+	cache.Refresh(context.Background())
+	ours := member{key: keyA, fingerprint: "ours"}
+	if _, sent := cache.added[ours]; sent {
+		t.Fatal("setup: the calibration did not prune the send record, so this proves nothing")
+	}
+	if _, opened := cache.index.opened[ours]; !opened {
+		t.Fatal("setup: the record of what this process opened lost an alert the set lists")
+	}
+	readAt := c.at
+	failing = true
+
+	c.at = readAt.Add(staleBoundFor(1) + time.Second)
+	cache.Refresh(context.Background())
+	if snapshot := cache.Snapshot(keyA); !snapshot.Stale {
+		t.Fatalf("setup: the set reads %+v, want stale", snapshot)
+	}
+	before := cache.Stats().Lookups[AnswerIndexStale]
+	if !cache.Contains(tenant, keyA.StrategyID, "ours") {
+		t.Fatal("a stale trusted set held the recovery of an alert this process opened")
+	}
+	if cache.Contains(tenant, keyA.StrategyID, "theirs") {
+		t.Fatal("a stale trusted set let go the recovery of an alert this process never opened nor sent")
+	}
+	if got := cache.Stats().Lookups[AnswerIndexStale] - before; got != 2 {
+		t.Fatalf("%d lookups answered stale, want two", got)
+	}
+	// The policy answers the gate only: the stale set's members are still
+	// nobody's word.
+	if got := cache.Members(keyA); len(got) != 0 {
+		t.Fatalf("a stale set lists members %v, want none", got)
+	}
+
+	// The reads move; the new place cannot be read, so every set is one
+	// never read there.
+	cache.LocationMoved()
+	cache.Refresh(context.Background())
+	if snapshot := cache.Snapshot(keyA); snapshot.Loaded || snapshot.Stale {
+		t.Fatalf("setup: after the move the set reads %+v, want never read", snapshot)
+	}
+	before = cache.Stats().Lookups[AnswerSelfMaintained]
+	if !cache.Contains(tenant, keyA.StrategyID, "ours") {
+		t.Fatal("a trusted set never read held the recovery of an alert this process opened")
+	}
+	if cache.Contains(tenant, keyA.StrategyID, "theirs") {
+		t.Fatal("a trusted set never read let go the recovery of an alert this process never opened nor sent")
+	}
+	if got := cache.Stats().Lookups[AnswerSelfMaintained] - before; got != 2 {
+		t.Fatalf("%d lookups answered self_maintained, want two", got)
 	}
 }

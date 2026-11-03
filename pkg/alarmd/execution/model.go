@@ -498,7 +498,10 @@ type DuePlan struct {
 	ScheduleSpec     ScheduleSpec
 	// StateCarry is what the Plan's activation carries over from the state
 	// generation it moved from (ActivatedPlan.Carry), nil when nothing.
-	StateCarry                  *StateCarry
+	StateCarry *StateCarry
+	// NoDataCarry is where the Plan's activation carries its no-data state
+	// from (ActivatedPlan.NoDataCarry), nil when nothing.
+	NoDataCarry                 *NoDataCarry
 	CompletionDeadlineUnixMilli int64
 	PartialCapabilities         []LevelPartialCapability
 	// LevelContractRefs are the Level contract references the Control

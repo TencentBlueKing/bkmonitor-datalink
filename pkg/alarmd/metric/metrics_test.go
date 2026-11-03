@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/cliauth"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/editclose"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/nodata"
@@ -462,6 +463,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 	expected["alarmd_log_lines_total"] = "variableLabels: {stage,admission}"
 	expected["alarmd_observer_panics_total"] = "variableLabels: {observer}"
 	expected["alarmd_absent_strategy_close_total"] = "variableLabels: {outcome}"
+	expected["alarmd_strategy_edit_close_total"] = "variableLabels: {outcome}"
 	expected["alarmd_target_scope_close_total"] = "variableLabels: {outcome}"
 	expected["alarmd_absent_strategy_difference"] = "variableLabels: {side}"
 	expected["alarmd_absent_strategy_round_total"] = "variableLabels: {disposition}"
@@ -1026,7 +1028,8 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("state_generation_skew_total"): len(observability.StateGenerationSkewKinds) + 1,
 		// Every (scope, result) pair of the closed vocabulary, plus the one
 		// the normalizer folds anything else into.
-		fqName("state_generation_carry_total"):        len(observability.StateCarryResults["plan"]) + len(observability.StateCarryResults["series"]) + 1,
+		fqName("state_generation_carry_total"): len(observability.StateCarryResults["plan"]) + len(observability.StateCarryResults["series"]) +
+			len(observability.StateCarryResults["no_data_plan"]) + len(observability.StateCarryResults["no_data_load"]) + 1,
 		fqName("undrained_draining_query_groups"):     1,
 		fqName("draining_cursor_pruned_query_groups"): 1,
 		fqName("rebalance_planned_moves"):             1,
@@ -1099,6 +1102,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("log_lines_total")] = 2 * len(observability.AllStages())
 	bounds[fqName("observer_panics_total")] = len(observability.ObserverNames)
 	bounds[fqName("absent_strategy_close_total")] = len(absentalerts.Outcomes)
+	bounds[fqName("strategy_edit_close_total")] = len(editclose.Outcomes)
 	bounds[fqName("target_scope_close_total")] = len(scopeclose.Outcomes)
 	bounds[fqName("absent_strategy_round_total")] = len(absentalerts.Refusals)
 	bounds[fqName("absent_strategy_difference")] = len(differenceSides)

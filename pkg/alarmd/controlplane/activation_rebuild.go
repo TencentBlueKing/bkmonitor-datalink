@@ -52,6 +52,10 @@ const (
 	// ActivationRebuildTimelineMissing: a Query Group of the current
 	// publication has no timeline, so its Plans cannot be recovered.
 	ActivationRebuildTimelineMissing ActivationRebuildOutcome = "timeline_missing"
+	// ActivationRebuildTimelineUnreadable: a Query Group of the current
+	// publication has a timeline that does not decode, so its Plans cannot be
+	// recovered either.
+	ActivationRebuildTimelineUnreadable ActivationRebuildOutcome = "timeline_unreadable"
 	// ActivationRebuildCoverageInvalid: the candidate body and the open
 	// Segments disagree. Nothing that disagrees with the Segments is written.
 	ActivationRebuildCoverageInvalid ActivationRebuildOutcome = "coverage_invalid"
@@ -67,8 +71,8 @@ const (
 // pre-creates them all.
 var ActivationRebuildOutcomes = []ActivationRebuildOutcome{
 	ActivationRebuilt, ActivationRebuiltDrainingUnknown, ActivationRebuildNotNeeded, ActivationRebuildConflict,
-	ActivationRebuildTimelineMissing, ActivationRebuildCoverageInvalid, ActivationRebuildHeaderUnparsable,
-	ActivationRebuildHeaderPending,
+	ActivationRebuildTimelineMissing, ActivationRebuildTimelineUnreadable, ActivationRebuildCoverageInvalid,
+	ActivationRebuildHeaderUnparsable, ActivationRebuildHeaderPending,
 }
 
 // ErrActivationRebuildRefused is the error of every outcome that wrote
@@ -235,6 +239,11 @@ func (repository *RedisCatalogRepository) RebuildActivationBody(ctx context.Cont
 		if errors.Is(err, ErrScheduleUnavailable) {
 			return ActivationRebuildTimelineMissing, fmt.Errorf("%w: Query Group %s of the current publication has no timeline",
 				ErrActivationRebuildRefused, identity)
+		}
+		var undecodable *DeterministicScheduleError
+		if errors.As(err, &undecodable) {
+			return ActivationRebuildTimelineUnreadable, fmt.Errorf("%w: the timeline of Query Group %s of the current publication does not decode: %v",
+				ErrActivationRebuildRefused, identity, err)
 		}
 		if err != nil {
 			return "", err

@@ -198,6 +198,19 @@ func TestARebuildThatCannotBeProvenWritesNothing(t *testing.T) {
 			t.Fatalf("err %v counts %v", err, f.repository.ActivationRebuildCounts())
 		}
 	})
+	t.Run("a Query Group of the publication whose timeline does not decode", func(t *testing.T) {
+		f := newRebuildFixture(t, "timeline-unreadable")
+		ctx := context.Background()
+		f.loseBody(t)
+		if err := f.client.Set(ctx, f.timelineKeys(t)[0], "{not a timeline", time.Hour).Err(); err != nil {
+			t.Fatal(err)
+		}
+		_, err := f.reconciler.Ensure(ctx, f.publication)
+		if !errors.Is(err, controlplane.ErrActivationRebuildRefused) || !f.bodyGone(t) ||
+			f.repository.ActivationRebuildCounts()[controlplane.ActivationRebuildTimelineUnreadable] != 1 {
+			t.Fatalf("err %v counts %v", err, f.repository.ActivationRebuildCounts())
+		}
+	})
 	t.Run("a remembered body the Segments disagree with", func(t *testing.T) {
 		f := newRebuildFixture(t, "coverage")
 		ctx := context.Background()

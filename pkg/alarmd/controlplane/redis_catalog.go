@@ -945,6 +945,9 @@ func validateActivationState(state ActivationState) error {
 		if err := selected.Carry.Validate(selected); err != nil {
 			return err
 		}
+		if err := selected.NoDataCarry.Validate(selected); err != nil {
+			return err
+		}
 		// The piece is repeated on the selection the way the identity is,
 		// and has to agree the same way.
 		if !execution.ShardsEqual(selected.Shard, record.Fact.Shard) {

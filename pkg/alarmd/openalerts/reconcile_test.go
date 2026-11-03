@@ -241,9 +241,9 @@ func TestAnAnswerPastTheCapsIsCutAtARowAndMarkedTruncated(t *testing.T) {
 // refuses it, as one in a complete answer does.
 func TestACutAnswerThatContradictsItselfIsStillRefused(t *testing.T) {
 	for name, bad := range map[string]map[string]any{
-		"mismatched fingerprint": {"fingerprint": "late", "status": "matched", "alerts": []Alert{{AlertID: "x", EventSourceID: "source", Fingerprint: "other"}}},
-		"duplicate fingerprint":  {"fingerprint": "f00000", "status": "matched", "alerts": []Alert{{AlertID: "x", EventSourceID: "source", Fingerprint: "f00000"}}},
-		"unknown status":         {"fingerprint": "late", "status": "unknown", "alerts": []Alert{}},
+		"mismatched fingerprint":           {"fingerprint": "late", "status": "matched", "alerts": []Alert{{AlertID: "x", EventSourceID: "source", Fingerprint: "other"}}},
+		"duplicate fingerprint":            {"fingerprint": "f00000", "status": "matched", "alerts": []Alert{{AlertID: "x", EventSourceID: "source", Fingerprint: "f00000"}}},
+		"a status the link does not write": {"fingerprint": "late", "status": "pending", "alerts": []Alert{}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			reader := reconcileServer(t, func() map[string]any {
@@ -264,6 +264,49 @@ func TestACutAnswerThatContradictsItselfIsStillRefused(t *testing.T) {
 	})
 	if _, err := reader.Reconcile(consoleCtx(), keyA); err == nil {
 		t.Fatal("a cut answer for another strategy was accepted")
+	}
+}
+
+// A row the link marks unknown - the other side of it was not read whole -
+// is not listed: not a member, not suppressed, its alerts not acted on; the
+// rows the link did confirm are, and the answer is a cut one. The link only
+// writes unknown on an answer it marks incomplete: on one marked complete it
+// contradicts the answer, which is refused.
+func TestAnUnknownRowIsNotListedAndMakesTheAnswerCut(t *testing.T) {
+	unknown := func(m map[string]any) {
+		m["rows"] = append(m["rows"].([]any),
+			map[string]any{"fingerprint": "unconfirmed-set", "status": "unknown", "alerts": []Alert{}},
+			map[string]any{"fingerprint": "unconfirmed-alert", "status": "unknown",
+				"alerts": []Alert{{AlertID: "u", EventSourceID: "source", Fingerprint: "unconfirmed-alert"}}})
+	}
+	reader := reconcileServer(t, func() map[string]any {
+		m := reconciliationJSON()
+		m["complete"], m["redis"] = false, map[string]any{"complete": false}
+		unknown(m)
+		return m
+	})
+	result, err := reader.Reconcile(consoleCtx(), keyA)
+	if err != nil || !result.Truncated {
+		t.Fatalf("result %+v err %v, want the confirmed rows read and the answer cut", result, err)
+	}
+	for _, list := range [][]string{result.Members, result.Missing, result.Suppressed} {
+		for _, value := range list {
+			if value == "unconfirmed-set" || value == "unconfirmed-alert" {
+				t.Fatalf("an unknown row was listed: %+v", result)
+			}
+		}
+	}
+	for _, alert := range result.Alerts {
+		if alert.Fingerprint == "unconfirmed-alert" {
+			t.Fatalf("an unknown row's alert was listed: %+v", result.Alerts)
+		}
+	}
+	if len(result.Members) != 2 || len(result.Missing) != 1 || len(result.Suppressed) != 1 || len(result.Alerts) != 2 {
+		t.Fatalf("the confirmed rows were not all kept: %+v", result)
+	}
+	complete := reconcileServer(t, func() map[string]any { m := reconciliationJSON(); unknown(m); return m })
+	if _, err := complete.Reconcile(consoleCtx(), keyA); err == nil {
+		t.Fatal("an unknown row on an answer marked complete was accepted")
 	}
 }
 

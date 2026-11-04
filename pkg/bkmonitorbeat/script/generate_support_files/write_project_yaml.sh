@@ -176,6 +176,19 @@ EOF
     file_path: etc/bkmonitorbeat
     format: yaml
     source_path: etc/bkmonitorbeat_prometheus_remote.conf.tpl
+EOF
+    # 主动 Profiling 一期只在 Linux 上采集；freebsd 包是预编译二进制，不含这个任务类型。
+    if [ "$system" = "linux" ] ;then
+      cat <<EOF >> "$path"
+  - plugin_version: "*"
+    name: bkmonitorbeat_active_profile.conf
+    version: 1
+    file_path: etc/bkmonitorbeat
+    format: yaml
+    source_path: etc/bkmonitorbeat_active_profile.conf.tpl
+EOF
+    fi
+    cat <<EOF >> "$path"
 control:
   start: "./start.sh bkmonitorbeat"
   stop: "./stop.sh bkmonitorbeat"

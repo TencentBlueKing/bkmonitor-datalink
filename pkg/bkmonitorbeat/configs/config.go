@@ -131,6 +131,8 @@ type Config struct {
 	TimeSyncTask       *TimeSyncConfig        `config:"timesync_task"`
 	DmesgTask          *DmesgConfig           `config:"dmesg_task"`
 	SelfStatsTask      *SelfStatsConfig       `config:"selfstats_task"`
+
+	ActiveProfileTask *ActiveProfileMetaConfig `config:"active_profile_task"`
 }
 
 // TenantDataIDResolverSetter is implemented by task configs using tenant DataIDs.
@@ -176,6 +178,7 @@ func NewConfig() *Config {
 	config.TimeSyncTask = NewTimeSyncConfig(config)
 	config.DmesgTask = NewDmesgConfig(config)
 	config.SelfStatsTask = NewSelfStatsConfig(config)
+	config.ActiveProfileTask = NewActiveProfileMetaConfig(config)
 
 	return config
 }

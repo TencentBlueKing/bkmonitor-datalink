@@ -12,6 +12,7 @@ debug.test
 .DS_Store
 /bkmonitorbeat
 /bkmonitorbeat.test
+/active_profile_out/
 *.pyc
 /vendor.orig
 /coverage

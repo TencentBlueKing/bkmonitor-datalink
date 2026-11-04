@@ -49,8 +49,10 @@ require (
 
 require (
 	github.com/TencentBlueKing/bk-gse-sdk/go v0.0.3
+	github.com/google/pprof v0.0.0-20230926050212-f7f687d19a98
 	github.com/nxadm/tail v1.4.11
 	github.com/prometheus/client_golang v1.18.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/tklauser/go-sysconf v0.3.12
 	golang.org/x/exp v0.0.0-20241108190413-2d47ceb2692f
 )
@@ -122,6 +124,8 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect
+	github.com/xdg/scram v0.0.0-20180814205039-7eeb5667e42c // indirect
+	github.com/xdg/stringprep v1.0.0 // indirect
 	github.com/xeipuuv/gojsonpointer v0.0.0-20180127040702-4e3ac2762d5f // indirect
 	github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect
 	go.opentelemetry.io/otel v1.19.0 // indirect
@@ -153,7 +157,7 @@ replace (
 	github.com/Sirupsen/logrus v1.6.0 => github.com/sirupsen/logrus v1.6.0
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v1.10.0 => ../libgse
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0 => ../utils
-	github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.17-bk+incompatible
+	github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.61-bk+incompatible
 	github.com/gosnmp/gosnmp v1.32.0 => github.com/TencentBlueKing/gosnmp v1.30.0-bk
 	github.com/shirou/gopsutil/v3 v3.23.4 => github.com/TencentBlueKing/gopsutil/v3 v3.26.9-bk
 )

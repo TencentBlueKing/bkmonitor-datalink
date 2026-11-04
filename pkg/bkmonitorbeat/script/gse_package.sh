@@ -60,7 +60,9 @@ make_package () {
         if [ ${operating_system} = "linux" ] || [ ${operating_system} = "windows" ] ; then
             #VERSION=$(cat VERSION).$(git describe --dirty="-dev" --always --match "NOT A TAG")
              #GO111MODULE=off
-            CGO_ENABLED=0 GO111MODULE=on GOOS=${operating_system} GOARCH=${go_arch} go build -tags "basetask basescheduler bkmonitorbeat" -ldflags=" -X main.BeatName=${plugin_name} -X main.Version=${plugin_version}" -o ${bin_dir}/${plugin_name}${suffix} main.go||exit 1
+            # 编译整个 main 包而不是单个 main.go：package main 中的其他文件（如
+            # Active Profiling 轻量 CLI 入口）必须一起参与编译。
+            CGO_ENABLED=0 GO111MODULE=on GOOS=${operating_system} GOARCH=${go_arch} go build -tags "basetask basescheduler bkmonitorbeat" -ldflags=" -X main.BeatName=${plugin_name} -X main.Version=${plugin_version}" -o ${bin_dir}/${plugin_name}${suffix} .||exit 1
         elif [ ${operating_system} = "freebsd" ]; then
             cp ${plugin_name}_${operating_system} ${bin_dir}/${plugin_name}${suffix}
         else

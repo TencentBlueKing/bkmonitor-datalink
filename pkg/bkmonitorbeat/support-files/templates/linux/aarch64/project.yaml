@@ -115,6 +115,12 @@ config_templates:
     file_path: etc/bkmonitorbeat
     format: yaml
     source_path: etc/bkmonitorbeat_prometheus_remote.conf.tpl
+  - plugin_version: "*"
+    name: bkmonitorbeat_active_profile.conf
+    version: 1
+    file_path: etc/bkmonitorbeat
+    format: yaml
+    source_path: etc/bkmonitorbeat_active_profile.conf.tpl
 control:
   start: "./start.sh bkmonitorbeat"
   stop: "./stop.sh bkmonitorbeat"

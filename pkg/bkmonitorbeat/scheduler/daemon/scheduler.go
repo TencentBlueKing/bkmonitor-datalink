@@ -67,7 +67,28 @@ func (s *Daemon) Add(task define.Task) {
 }
 
 func (s *Daemon) addJob(job Job) {
-	s.jobs.Push(job)
+	pushRunnableJob(s.jobs, job)
+}
+
+func pushRunnableJob(queue JobQueue, job Job) bool {
+	if job == nil || job.IsFinished() {
+		return false
+	}
+	queue.Push(job)
+	return true
+}
+
+func isGracefulReloadJob(job Job) bool {
+	task, ok := job.GetTask().(define.GracefulReloadTask)
+	return ok && task.GracefulReload()
+}
+
+func (s *Daemon) retireJob(job Job) {
+	s.waitgroup.Add(1)
+	go func() {
+		defer s.waitgroup.Done()
+		job.Retire()
+	}()
 }
 
 // Wait :
@@ -115,7 +136,9 @@ func (s *Daemon) Start(ctx context.Context) error {
 	}
 	state.taskLock.RUnlock()
 
-	s.jobs.Push(jobs...)
+	for _, job := range jobs {
+		s.addJob(job)
+	}
 
 	globalConfig := s.Config.(*configs.Config)
 	state.ticker = time.NewTicker(globalConfig.CheckInterval)
@@ -165,21 +188,36 @@ loop:
 				}
 				logger.Infof("scheduler ready to run %v jobs", jobLen)
 				for _, job := range jobs {
-					go func(job Job) {
+					scheduledAt := job.GetCheckTime()
+					// 只有平滑 reload 的任务计入退出等待，其余任务保持原有的退出行为
+					graceful := isGracefulReloadJob(job)
+					if graceful {
+						job.StartRun()
+						s.waitgroup.Add(1)
+					}
+					go func(job Job, scheduledAt time.Time, graceful bool) {
+						if graceful {
+							defer s.waitgroup.Done()
+							defer job.FinishRun()
+						}
 						task := job.GetTask()
 						taskID := task.GetTaskID()
 						defer utils.RecoverFor(func(err error) {
 							logger.Errorf("run task %v panic: %v", taskID, err)
 						})
 						logger.Debugf("scheduler running job: %v", taskID)
-						job.Run(state.EventChan)
-					}(job)
+						job.Run(state.EventChan, scheduledAt)
+					}(job, scheduledAt, graceful)
 				}
+				nextJobs := make([]Job, 0, len(jobs))
 				for _, job := range jobs {
 					// 计算任务的下一次执行时间
 					job.Next()
+					if !job.IsFinished() {
+						nextJobs = append(nextJobs, job)
+					}
 				}
-				jobsQ.Push(jobs...)
+				jobsQ.Push(nextJobs...)
 			})
 		}
 	}
@@ -222,23 +260,30 @@ func (s *Daemon) Reload(ctx context.Context, conf define.Config, tasks []define.
 			ident := conf.GetIdent()
 			task, ok := taskMaps.Get(ident)
 			if ok {
-				state.jobs.Push(s.reloadJobFromTask(job, task.(define.Task)))
+				pushRunnableJob(state.jobs, s.reloadJobFromTask(job, task.(define.Task)))
 				// 因为加入了旧任务，所以把同id的新任务删除
 				taskMaps.Remove(ident)
 			} else {
-				job.Stop()
+				if isGracefulReloadJob(job) {
+					s.retireJob(job)
+				} else {
+					job.Stop()
+				}
 			}
 		}
 	})
 
 	// 遍历剩余的新任务列表，加入到job中
+	pushed := 0
 	iter := taskMaps.Iterator()
 	for iter.Next() {
 		task := iter.Value().(define.Task)
-		state.jobs.Push(s.makeJobfromTask(task))
+		if pushRunnableJob(state.jobs, s.makeJobfromTask(task)) {
+			pushed++
+		}
 	}
 
-	logger.Infof("pushed %v new task into job queue", taskMaps.Size())
+	logger.Infof("pushed %v new task into job queue", pushed)
 
 	s.daemonState = state
 	logger.Debug("replaced state")

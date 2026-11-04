@@ -12,11 +12,13 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
-	"github.com/emirpasic/gods/utils"
+	godsutils "github.com/emirpasic/gods/utils"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	beatutils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -28,7 +30,11 @@ type Job interface {
 	GetCheckTime() time.Time
 	Init()
 	Next()
-	Run(e chan<- define.Event)
+	Run(e chan<- define.Event, scheduledAt time.Time)
+	StartRun()
+	FinishRun()
+	Retire()
+	IsFinished() bool
 	GetTask() define.Task
 	Reload()
 	Stop()
@@ -37,6 +43,16 @@ type Job interface {
 
 // NewJob :
 func NewJob(task define.Task, scheduler define.Scheduler) Job {
+	if schedule, ok := task.GetConfig().(define.ScheduledTaskConfig); ok {
+		job := &ScheduledJob{
+			IntervalJob: &IntervalJob{
+				task: task,
+			},
+			schedule: schedule,
+		}
+		job.SetScheduler(scheduler)
+		return job
+	}
 	job := &StroedIntervalJob{
 		IntervalJob: &IntervalJob{
 			task: task,
@@ -46,6 +62,94 @@ func NewJob(task define.Task, scheduler define.Scheduler) Job {
 	return job
 }
 
+// ScheduledJob runs calendar-based tasks and persists dispatched timestamps so
+// occurrences, including expired terminal notifications, are not repeated
+// after a reload or restart.
+type ScheduledJob struct {
+	*IntervalJob
+	schedule   define.ScheduledTaskConfig
+	storageKey string
+	expired    bool
+	finished   bool
+}
+
+func (j *ScheduledJob) Init() {
+	j.IntervalJob.Init()
+	j.finished = false
+	j.expired = false
+	conf := j.task.GetConfig()
+	scheduleIdent := j.schedule.GetScheduleIdent()
+	j.storageKey = fmt.Sprintf("scheduled_task_%s", beatutils.HashIt(scheduleIdent))
+	now := time.Now()
+	if expirable, ok := j.schedule.(define.ExpirableScheduledTaskConfig); ok {
+		j.expired = expirable.ScheduleExpired(now)
+	}
+	logger.Debugf(
+		"scheduled task init type=%s task_id=%d config_ident=%s schedule_ident=%s expired=%t storage_key=%s",
+		conf.GetType(),
+		conf.GetTaskID(),
+		conf.GetIdent(),
+		scheduleIdent,
+		j.expired,
+		j.storageKey,
+	)
+
+	if raw, err := storage.Get(j.storageKey); err == nil {
+		if last, parseErr := time.Parse(timeTemplate, raw); parseErr == nil {
+			next, ok := j.schedule.NextRunTime(last)
+			for ok && !next.After(now) {
+				next, ok = j.schedule.NextRunTime(next)
+			}
+			if ok {
+				j.checkTime = next
+				j.expired = false
+			} else {
+				j.finished = true
+			}
+			return
+		}
+	}
+
+	next, ok := j.schedule.InitialRunTime(now)
+	if !ok {
+		j.finished = true
+		return
+	}
+	j.checkTime = next
+}
+
+func (j *ScheduledJob) Run(e chan<- define.Event, scheduledAt time.Time) {
+	ctx := define.WithScheduledAt(j.ctx, scheduledAt)
+	if j.expired {
+		ctx = define.WithScheduleExpired(ctx)
+	}
+	j.task.Run(ctx, e)
+}
+
+func (j *ScheduledJob) IsFinished() bool {
+	return j.finished
+}
+
+func (j *ScheduledJob) Next() {
+	if j.finished {
+		return
+	}
+	if err := storage.Set(
+		j.storageKey,
+		j.checkTime.Format(timeTemplate),
+		10*365*24*time.Hour,
+	); err != nil {
+		logger.Errorf("save scheduled task time key=%s: %v", j.storageKey, err)
+	}
+
+	next, ok := j.schedule.NextRunTime(j.checkTime)
+	if !ok {
+		j.finished = true
+		return
+	}
+	j.checkTime = next
+}
+
 // IntervalJob :
 type IntervalJob struct {
 	ctx       context.Context
@@ -53,6 +157,7 @@ type IntervalJob struct {
 	scheduler *Daemon
 	task      define.Task
 	checkTime time.Time
+	runWG     sync.WaitGroup
 }
 
 // Init :
@@ -82,6 +187,26 @@ func (j *IntervalJob) Stop() {
 	j.task.Stop()
 }
 
+// Retire removes future executions while allowing already reserved runs to
+// finish. The scheduler calls StartRun before launching the goroutine, so Wait
+// cannot race ahead of a run which has already been selected.
+func (j *IntervalJob) Retire() {
+	j.runWG.Wait()
+	j.Stop()
+}
+
+func (j *IntervalJob) StartRun() {
+	j.runWG.Add(1)
+}
+
+func (j *IntervalJob) FinishRun() {
+	j.runWG.Done()
+}
+
+func (j *IntervalJob) IsFinished() bool {
+	return false
+}
+
 // SetScheduler :
 func (j *IntervalJob) SetScheduler(s define.Scheduler) {
 	scheduler := s.(*Daemon)
@@ -91,7 +216,7 @@ func (j *IntervalJob) SetScheduler(s define.Scheduler) {
 }
 
 // Run :
-func (j *IntervalJob) Run(e chan<- define.Event) {
+func (j *IntervalJob) Run(e chan<- define.Event, _ time.Time) {
 	j.task.Run(j.ctx, e)
 }
 
@@ -107,7 +232,7 @@ func (j *IntervalJob) GetTask() define.Task {
 
 // JobTimeComparator :
 func JobTimeComparator(job1 interface{}, job2 interface{}) int {
-	return utils.TimeComparator(job1.(Job).GetCheckTime(), job2.(Job).GetCheckTime())
+	return godsutils.TimeComparator(job1.(Job).GetCheckTime(), job2.(Job).GetCheckTime())
 }
 
 // StroedIntervalJob :

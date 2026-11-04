@@ -39,8 +39,9 @@ type DependencyMembership struct {
 	ObservedAt time.Time
 }
 
-// DependencyCandidateUpdate 用 Alert 自身 revision 防止后台回填复活较旧主状态。
-// Clear 用于失去主资格或终态；相同 revision 可补齐不同策略版本的后台回填。
+// DependencyCandidateUpdate 用 Alert 自身 revision 保护仍被维护的候选状态。
+// Clear 用于失去主资格或终态，删除索引而不保留历史墓碑；清理后的迟到回填可能重建旧候选，
+// 调用方选主时必须读取当前 Alert 重新判断资格。相同 revision 可补齐不同策略版本的后台回填。
 type DependencyCandidateUpdate struct {
 	TenantID     string
 	ConfigDigest string
@@ -102,6 +103,7 @@ func (s *Store) dependencyCandidateArgs(u DependencyCandidateUpdate) ([]string, 
 }
 
 // ApplyDependencyCandidates 原子更新一个 Alert 的主候选成员及反向索引。
+// 清理不保留终态水位，索引中的候选不能替代当前 Alert 的业务状态。
 func (s *Store) ApplyDependencyCandidates(ctx context.Context, u DependencyCandidateUpdate) error {
 	return s.ApplyDependencyCandidateBatch(ctx, []DependencyCandidateUpdate{u})
 }
@@ -141,7 +143,7 @@ func (s *Store) ApplyDependencyCandidateBatch(ctx context.Context, updates []Dep
 const applyDependencyCandidateScript = `
 local revision=tonumber(ARGV[1]);local clear=ARGV[2]=='1';local member=ARGV[3]
 local state=redis.call('HMGET',KEYS[2],'_revision','_cleared')
-local global=tonumber(state[1] or '0');local cleared=tonumber(state[2] or '0')
+local global=tonumber(state[1] or '0')
 if clear then
  if global>revision then return 0 end
  local owners=redis.call('HKEYS',KEYS[2])
@@ -152,10 +154,10 @@ if clear then
    redis.call('DEL',owner,owner..':times');redis.call('HDEL',KEYS[2],owner)
   end
  end
- redis.call('HSET',KEYS[2],'_revision',ARGV[1],'_cleared',ARGV[1]);redis.call('EXPIRE',KEYS[2],2592000)
+ -- 清理不存在的 Alert 不创建记录；重复清理也不留下或续期历史水位。
+ redis.call('DEL',KEYS[2])
  return 1
 end
-if cleared>=revision then return 0 end
 local previous=tonumber(redis.call('HGET',KEYS[1],'_revision') or '0')
 if previous>revision then return 0 end
 -- 在清任何旧成员之前检查依赖时间；CAS 较新不代表其 Worker 读取的目标事实也较新。
@@ -177,8 +179,9 @@ if advanced then
 end
 redis.call('HSET',KEYS[1],'_revision',ARGV[1])
 redis.call('HSET',KEYS[2],KEYS[1],'1','_revision',math.max(global,revision))
--- owner 从不设置 TTL；全局 owner 只在清理后重新获得资格时撤销清理 TTL。
-if cleared>0 and global==cleared then redis.call('PERSIST',KEYS[2]) end
+-- 存量清理水位被重新维护时移除旧标记和 TTL，避免当前 owner 随旧墓碑过期。
+-- 未触达的存量墓碑自然过期，不在热路径扫描或批量迁移。
+if state[2] then redis.call('HDEL',KEYS[2],'_cleared');redis.call('PERSIST',KEYS[2]) end
 for i=4,#KEYS do
  local stamp=ARGV[2*i-3];local localkey='_local:'..KEYS[i]
  -- 纯字段 false 在本 Alert revision 内不受外部快照替换，已见的源时间仍留作后续版本的 floor。

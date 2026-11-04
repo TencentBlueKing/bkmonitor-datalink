@@ -128,6 +128,7 @@ func (s *Shielder) dependencyMatch(ctx context.Context, f policy.FrozenPolicy, v
 
 // admittedMain 只读取跨 Worker 共享索引的最新合资格主，不在 Event 路径扫描活动告警。
 // 子条件留在选定主之后执行；最新主不匹配子时不能退选较旧主。
+// 清理后的迟到回填可能重建旧候选；必须复用当前 Alert 读取与资格判断剔除它，不能直接信任索引。
 func (s *Shielder) admittedMain(ctx context.Context, f policy.FrozenPolicy, targets policy.TargetReader, at time.Time, level func(string) (string, error)) (dependencyMain, bool, error) {
 	if s.Index == nil || s.CurrentAlert == nil {
 		return dependencyMain{}, false, processingerror.RetryableError{Err: ErrDependencyIndexNotReady}

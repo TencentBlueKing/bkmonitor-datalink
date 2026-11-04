@@ -1,5 +1,9 @@
 # Redis 请求、命令与存储容量评估
 
+> 2026-11-03 工作区实现调整：依赖候选清理不再新增或续期 30 天墓碑，改为删除清理状态并复用选主时的当前 Alert 校验。
+> 本文保留 2026-10-17 的采样、计数与容量模型，不将其改写成新版本结论；当前行为见
+> [依赖候选清理设计](../design/policy-runtime-scaling.md)。本次代码调整尚未部署，也未批量清理存量 key。
+
 ## 1. 基线与结论
 
 - 评估日期：2026-10-17，时间均为北京时间。
@@ -78,7 +82,7 @@ Signal 读/接管在空闲来源上也会发生。本窗口有 427 次 `XREADGRO
 | KAC 轻量变更入队 | 1 | 1 | `XADD`，不是完整 Alert |
 | **合计** | **10～11** | **D=0：23～24；D=1：25～26；D=2：26～27** | 不含下述增量项 |
 
-证据：[Scheduler](../../internal/lifecycle/scheduler/handler.go)、[Mailbox](../../internal/lifecycle/mailbox/store.go)、[lease](../../internal/lifecycle/scheduler/lock.go)、[缓存查询及索引更新](../../internal/lifecycle/processor.go)、[保存后缓存](../../internal/lifecycle/plan.go)、[Hook](../../internal/lifecycle/strategyhook/hook.go)、[KAC 入队](../../internal/alertqueue/queue.go)。
+证据：[Scheduler](../../internal/lifecycle/scheduler/handler.go)、[Mailbox](../../internal/lifecycle/mailbox/store.go)、[lease](../../internal/lifecycle/scheduler/lock.go)、[缓存查询及索引更新](../../internal/lifecycle/processor.go)、[保存后缓存](../../internal/lifecycle/plan.go)、历史 Hook 路径 `internal/lifecycle/strategyhook/hook.go`（当前已移除）、[KAC 入队](../../internal/alertqueue/queue.go)。
 
 需要额外加入：
 

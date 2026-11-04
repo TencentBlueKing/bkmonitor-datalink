@@ -56,10 +56,11 @@ func (m *memoryDependencyIndex) ApplyDependencyCandidates(ctx context.Context, u
 			}
 		}
 	}
-	m.revisions[owner] = u.Revision
 	if u.Clear {
+		delete(m.revisions, owner)
 		return nil
 	}
+	m.revisions[owner] = u.Revision
 	for _, v := range u.Memberships {
 		key := dependencyTestKey(u.TenantID, redisstate.DependencyIndexRef{PolicyVersion: v.Policy, ConfigDigest: u.ConfigDigest})
 		if m.entries[key] == nil {

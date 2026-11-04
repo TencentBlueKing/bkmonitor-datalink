@@ -156,11 +156,15 @@ func TestRedisDependencyCandidateRevisionProtectsLiveStateFromBackfill(t *testin
 	if err := s.ApplyDependencyCandidates(t.Context(), ended); err != nil {
 		t.Fatal(err)
 	}
+	if row, _, err := s.TopDependencyCandidate(t.Context(), "tenant", DependencyIndexRef{PolicyVersion: p}); err != nil || row.AlertID != "" {
+		t.Fatal("clear retained old candidate", row, err)
+	}
+	// 清理不留历史墓碑；迟到回填可重建旧候选，业务选主仍须读取当前 Alert 校验。
 	if err := s.ApplyDependencyCandidates(t.Context(), u); err != nil {
 		t.Fatal(err)
 	}
-	if row, _, err := s.TopDependencyCandidate(t.Context(), "tenant", DependencyIndexRef{PolicyVersion: p}); err != nil || row.AlertID != "" {
-		t.Fatal("late backfill resurrected terminal", row, err)
+	if row, _, err := s.TopDependencyCandidate(t.Context(), "tenant", DependencyIndexRef{PolicyVersion: p}); err != nil || row.AlertID != "main" || row.Revision != 2 {
+		t.Fatal("late backfill did not restore the indexed snapshot", row, err)
 	}
 	// 同 revision 的新版本回填可补齐成员，但不能丢掉另一个已求值版本。
 	u.Revision = 4
@@ -324,12 +328,13 @@ func TestRedisDependencyCandidateConfigNamespacesAndRetirement(t *testing.T) {
 	if err := s.ApplyDependencyCandidates(t.Context(), DependencyCandidateUpdate{TenantID: "tenant", AlertID: "main", Revision: 5, Clear: true}); err != nil {
 		t.Fatal(err)
 	}
-	write("old", 4)
-	write("current", 4)
 	for _, ref := range []DependencyIndexRef{old, current} {
 		if row, _, err := s.TopDependencyCandidate(t.Context(), "tenant", ref); err != nil || row.AlertID != "" {
 			t.Fatal("terminal did not clear all namespaces", ref, row, err)
 		}
+	}
+	if n, err := s.client.Exists(t.Context(), s.dependencyCandidateAllOwners("tenant", "main")).Result(); err != nil || n != 0 {
+		t.Fatal("terminal retained global owner history", n, err)
 	}
 }
 

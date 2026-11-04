@@ -165,7 +165,8 @@ func (s *Shielder) ObserveTerminalDependencyAlerts(ctx context.Context, alerts [
 }
 
 // RefreshDependencyIndex 仅后台对尚未就绪的规则回填，活动告警每租户只分页一次。
-// 先实时重读再按 revision 写索引；回填期间的较旧状态不能覆盖生命周期的新状态。
+// 先实时重读再按 revision 写索引，保护仍被维护的候选；终态清理不留墓碑，
+// 清理后迟到写入的旧候选由选主时的当前 Alert 读取剔除。
 func (s *Shielder) RefreshDependencyIndex(ctx context.Context, tenant string, at time.Time, level func(string) (string, error)) error {
 	return s.refreshDependencyIndex(ctx, tenant, at, level, false)
 }

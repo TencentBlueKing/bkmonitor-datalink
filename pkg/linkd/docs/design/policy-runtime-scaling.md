@@ -39,10 +39,26 @@
 
 实现入口：[Catalog](../../internal/policy/catalog.go)、[候选索引](../../internal/policy/candidate.go)、[Snapshotter](../../internal/policy/runtime/snapshot.go)、[条件求值](../../internal/policy/evaluate.go)、[共享依赖](../../internal/policy/runtime/dependencies.go)、[Worker 依赖读取](../../internal/policy/runtime/worker_dependencies.go)、[依赖主索引](../../internal/policy/runtime/dependency_index.go)、[合并执行](../../internal/merge/executor.go)。
 
-依赖主索引仍保留不匹配标记、Alert revision 和外部快照时间，保证后台旧回填不能恢复失效资格。
-revision 推进时整体替换当前成员 Hash，保留独立的源时间记录；纯字段不匹配不读取源时间，
-新 revision 不重复读取刚清理的成员，只有从清理状态恢复时才撤销全局 owner 的 TTL。
-这些调整减少 Redis 命令，不改变主资格或恢复协议；无匹配规则也不能直接跳过旧成员撤销。
+依赖主索引保留不匹配标记、Alert revision 和外部快照时间，保护仍被维护的当前成员，
+防止旧 revision 或旧源快照覆盖新资格。revision 推进时整体替换当前成员 Hash，保留独立的源时间记录；
+纯字段不匹配不读取源时间。无匹配规则也不能直接跳过旧成员撤销。
+
+### 依赖候选清理（2026-11-03）
+
+失去主资格或终态时，原子删除所有配置 namespace 的候选成员、owner、独立时间记录和全局 owner；
+不再创建 `_cleared` 水位或设置 30 天 TTL。清理从未登记的 Alert 和重复清理都不留下新 key。
+低版本 clear 仍不能删除当前已维护的更高版本 owner。
+
+清理后迟到回填可能重建旧索引项。索引只负责定位，业务选主复用 `admittedMain` 的当前 Alert 读取：
+确认仍活动、已放行且未被屏蔽或合并阻塞，再求值主条件；已失效候选被清理后继续找有效主，
+告警不存在时移除候选。读取失败仍返回错误，不能据索引放行，也不能把错误当作无主。
+沿用现有有界重试、取消、配置退役和 Ready 语义，不另加墓碑、租约或校验层。
+旧索引项在被选取时修复，本轮不新增后台全量扫描，也不承诺从未再次选取的旧索引项立即消失。
+
+本轮仅移除清理后的历史水位，活动索引需要的负向标记、revision 和外部快照时间 floor 继续维护。
+未触达的存量墓碑自然过期；再次 clear 时删除，转为活动维护时移除旧 `_cleared` 字段及 TTL，
+避免当前 owner 沿用历史过期时间。本轮不提供批量清理工具，不执行线上删除或部署。
+2026-10-17 容量评估中的 30 天清理水位是历史版本事实，不再代表本次实现的新增数据模型。
 
 以上为工作区实现范围，验证范围以第 10 节为准，不代表生产部署或大规模长期吞吐验收完成。
 

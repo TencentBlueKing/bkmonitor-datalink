@@ -82,12 +82,9 @@ func (Resource) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proces
 	values["model_inst_id"], _ = json.Marshal(primary.instance.InstanceID)
 	cmdbID := ""
 	if objectID := resourceModelObjectID(primary.model); objectID != "" {
-		field := cmdbInstanceAttribute(objectID)
-		if value, exists := primary.instance.Attributes[field]; exists {
-			id, valid := resourceCMDBID(value)
-			if !valid {
-				return resourceIdentityFailure(enrich.DiagnosticCodeInvalidField, []string{"instance.attributes." + field}), nil
-			}
+		// CMDB 同步把源主键保存为 model_inst_id，attributes 不保留 bk_inst_id。
+		// 仅从已命中的规范实例反投影；其他来源的非整数实例 ID 不冒充 CMDB 身份。
+		if id, valid := resourceCMDBID(primary.instance.InstanceID); valid {
 			values["bk_inst_id"], _ = json.Marshal(id)
 			cmdbID = id
 		}
@@ -200,13 +197,9 @@ func resolveResourceIdentity(ctx context.Context, scope *enrich.Scope, identity 
 		identity.system == "onemodel" && model.ModelCode != identity.model || identity.system == "cmdb" && resourceModelObjectID(model) != identity.model {
 		return resourceResolution{}, nil, fmt.Errorf("%w: resource model identity mismatch", enrich.ErrInvalidDataSourceResponse)
 	}
-	query := enrich.InstanceQuery{ModelCode: model.ModelCode}
-	if identity.system == "cmdb" {
-		number, _ := strconv.ParseInt(identity.instance, 10, 64)
-		query.AttributeFilters = []enrich.InstanceAttributeFilter{{Field: cmdbInstanceAttribute(identity.model), Type: enrich.InstanceAttributeLong, Value: number}}
-	} else {
-		query.InstanceID = identity.instance
-	}
+	// CMDB 同步以源实例主键的规范字符串写入 model_inst_id；模型映射确认后，
+	// 两种身份均按顶层实例 ID 定位，不能依赖已被写入端排除的 attributes.bk_inst_id。
+	query := enrich.InstanceQuery{ModelCode: model.ModelCode, InstanceID: identity.instance}
 	result.instance, found, err = scope.Instance(ctx, query)
 	if ctx.Err() != nil {
 		return result, nil, ctx.Err()
@@ -219,14 +212,8 @@ func resolveResourceIdentity(ctx context.Context, scope *enrich.Scope, identity 
 	}
 	instance := result.instance
 	if instance.TenantID != scope.Facts().BKTenantID || instance.ModelCode != model.ModelCode || !resourceIdentityText(instance.InstanceID, 1024) ||
-		instance.Fields["entity_uid"] != model.ModelCode+"|"+instance.InstanceID || identity.system == "onemodel" && instance.InstanceID != identity.instance {
+		instance.Fields["entity_uid"] != model.ModelCode+"|"+instance.InstanceID || instance.InstanceID != identity.instance {
 		return resourceResolution{}, nil, fmt.Errorf("%w: resource instance identity mismatch", enrich.ErrInvalidDataSourceResponse)
-	}
-	if identity.system == "cmdb" {
-		id, ok := resourceCMDBID(instance.Attributes[cmdbInstanceAttribute(identity.model)])
-		if !ok || id != identity.instance {
-			return resourceResolution{}, nil, fmt.Errorf("%w: CMDB instance identity mismatch", enrich.ErrInvalidDataSourceResponse)
-		}
 	}
 	return result, nil, nil
 }
@@ -248,17 +235,6 @@ func resourceModelName(model enrich.Model) string {
 func resourceModelObjectID(model enrich.Model) string {
 	object, _ := model.Fields["bk_cmdb_obj_id"].(string)
 	return object
-}
-
-func cmdbInstanceAttribute(objectID string) string {
-	switch objectID {
-	case "host", "biz", "set", "module":
-		return "bk_" + objectID + "_id"
-	case "service_instance":
-		return "service_instance_id"
-	default:
-		return "bk_inst_id"
-	}
 }
 
 func resourceCMDBID(value any) (string, bool) {

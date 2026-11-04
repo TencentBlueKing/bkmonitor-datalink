@@ -29,11 +29,12 @@ func TestResourceSubjectWithoutStrategy(t *testing.T) {
 }
 
 type subjectResourceReader struct {
-	modelError, instanceError                       error
-	missingModel, missingInstance                   bool
-	wrongTenant, wrongEntity, wrongModel, wrongCMDB bool
-	canonicalID                                     string
-	queries                                         []enrich.InstanceQuery
+	modelError, instanceError                           error
+	missingModel, missingInstance                       bool
+	wrongTenant, wrongEntity, wrongModel, wrongInstance bool
+	wrongInstanceTenant, wrongInstanceModel             bool
+	canonicalID                                         string
+	queries                                             []enrich.InstanceQuery
 }
 
 func (r *subjectResourceReader) GetModelByCode(_ context.Context, tenant, code string) (enrich.Model, bool, error) {
@@ -73,29 +74,31 @@ func (r *subjectResourceReader) FindInstance(_ context.Context, tenant string, q
 	if r.wrongEntity {
 		entity = "wrong"
 	}
-	cmdbID := 101
-	if r.wrongCMDB {
-		cmdbID = 102
+	if r.wrongInstance {
+		id, entity = "102", query.ModelCode+"|102"
 	}
-	attribute := "bk_host_id"
-	if len(query.AttributeFilters) != 0 {
-		attribute = query.AttributeFilters[0].Field
+	if r.wrongInstanceTenant {
+		tenant = "other-tenant"
 	}
-	return enrich.Instance{TenantID: tenant, ModelCode: query.ModelCode, InstanceID: id,
+	model := query.ModelCode
+	if r.wrongInstanceModel {
+		model = "other-model"
+	}
+	return enrich.Instance{TenantID: tenant, ModelCode: model, InstanceID: id,
 		Fields:     map[string]any{"entity_uid": entity, "display_name": "主机 101"},
-		Attributes: map[string]any{attribute: cmdbID}}, !r.missingInstance, r.instanceError
+		Attributes: map[string]any{}}, !r.missingInstance, r.instanceError
 }
 
 func TestResourceIdentityInputs(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, system, model, instance, root, raw string
-		wantAttribute, wantModel                 string
+		wantModel                                string
 		canonical                                bool
 	}{
 		{name: "CMDB subject", system: "cmdb", model: "host", instance: "101"},
-		{name: "CMDB custom object", system: "cmdb", model: "router", instance: "101", wantAttribute: "bk_inst_id", wantModel: "network-device"},
-		{name: "CMDB service instance", system: "cmdb", model: "service_instance", instance: "101", wantAttribute: "service_instance_id", wantModel: "cw-Service"},
+		{name: "CMDB custom object", system: "cmdb", model: "router", instance: "101", wantModel: "network-device"},
+		{name: "CMDB service instance", system: "cmdb", model: "service_instance", instance: "101", wantModel: "cw-Service"},
 		{name: "OneModel custom model", system: "onemodel", model: "custom-device", instance: "host|101"},
 		{name: "canonical labels", root: "labels", raw: `{"model_id":"cw-Host","model_inst_id":"host|101"}`, canonical: true},
 		{name: "canonical extra", root: "extra_data", raw: `{"model_id":"cw-Host","model_inst_id":"host|101"}`, canonical: true},
@@ -123,27 +126,25 @@ func TestResourceIdentityInputs(t *testing.T) {
 				}
 			}
 			before := event.Clone()
-			reader := &subjectResourceReader{canonicalID: "host|101"}
+			wantedID := "101"
+			if tc.canonical || tc.system == "onemodel" {
+				wantedID = "host|101"
+			}
+			reader := &subjectResourceReader{canonicalID: wantedID}
 			scope, err := enrich.NewScope(event, enrich.Sources{Model: reader, OneModel: reader})
 			if err != nil {
 				t.Fatal(err)
 			}
 			result, err := (Resource{}).Process(t.Context(), scope)
-			if err != nil || result.Status != domain.EnrichStatusSucceeded || string(result.Value["model_inst_id"]) != `"host|101"` || len(reader.queries) != 1 {
+			if err != nil || result.Status != domain.EnrichStatusSucceeded || string(result.Value["model_inst_id"]) != `"`+wantedID+`"` || len(reader.queries) != 1 {
 				t.Fatalf("result=%+v queries=%+v error=%v", result, reader.queries, err)
 			}
 			query := reader.queries[0]
 			if tc.wantModel != "" && string(result.Value["model_id"]) != `"`+tc.wantModel+`"` {
 				t.Fatalf("canonical model=%s", result.Value["model_id"])
 			}
-			if tc.system == "cmdb" || tc.root != "" && !tc.canonical {
-				attribute := tc.wantAttribute
-				if attribute == "" {
-					attribute = "bk_host_id"
-				}
-				if query.InstanceID != "" || len(query.AttributeFilters) != 1 || query.AttributeFilters[0].Field != attribute || query.AttributeFilters[0].Value != int64(101) {
-					t.Fatalf("CMDB query=%+v", query)
-				}
+			if query.InstanceID != wantedID || len(query.AttributeFilters) != 0 {
+				t.Fatalf("canonical instance query=%+v", query)
 			}
 			if tc.model == "custom-device" {
 				if _, found := result.Value["bk_obj_id"]; found {
@@ -223,7 +224,9 @@ func TestResourceDependenciesAndCancellation(t *testing.T) {
 		{name: "wrong tenant", reader: subjectResourceReader{wrongTenant: true}, wantError: true},
 		{name: "wrong model", reader: subjectResourceReader{wrongModel: true}, wantError: true},
 		{name: "wrong entity", reader: subjectResourceReader{wrongEntity: true}, wantError: true},
-		{name: "wrong CMDB ID", reader: subjectResourceReader{wrongCMDB: true}, wantError: true},
+		{name: "wrong returned instance ID", reader: subjectResourceReader{wrongInstance: true}, wantError: true},
+		{name: "wrong returned instance tenant", reader: subjectResourceReader{wrongInstanceTenant: true}, wantError: true},
+		{name: "wrong returned instance model", reader: subjectResourceReader{wrongInstanceModel: true}, wantError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			event := processorBaseTargetAlert(t, domain.DimensionMap{})

@@ -9,21 +9,24 @@
 
 package storage
 
+import "encoding/json"
+
 //go:generate goqueryset -in dorisstorage.go -out qs_dorisstorage_gen.go
 
 // DorisStorage Doris存储表
 // gen:qs
 type DorisStorage struct {
-	TableID            string `json:"table_id" gorm:"primary_key;size:128;comment:结果表ID"`
-	BkTenantID         string `json:"bk_tenant_id" gorm:"size:256;default:system;comment:租户ID"`
-	BkbaseTableID      string `json:"bkbase_table_id" gorm:"size:128;comment:bkbase表名"`
-	OriginTableId      string `json:"origin_table_id" gorm:"column:origin_table_id;size:128"`
-	SourceType         string `json:"source_type" gorm:"size:32;default:log;comment:数据源类型"`
-	IndexSet           string `json:"index_set" gorm:"type:text;comment:索引集"`
-	TableType          string `json:"table_type" gorm:"size:128;default:primary_table;comment:物理表类型"`
-	FieldConfigMapping string `json:"field_config_mapping" gorm:"type:text;comment:字段/分词配置"`
-	ExpireDays         *int   `json:"expire_days" gorm:"default:30;comment:过期天数"`
-	StorageClusterID   uint   `json:"storage_cluster_id" gorm:"comment:存储集群"`
+	TableID            string          `json:"table_id" gorm:"primary_key;size:128;comment:结果表ID"`
+	BkTenantID         string          `json:"bk_tenant_id" gorm:"size:256;default:system;comment:租户ID"`
+	BkbaseTableID      string          `json:"bkbase_table_id" gorm:"size:128;comment:bkbase表名"`
+	OriginTableId      string          `json:"origin_table_id" gorm:"column:origin_table_id;size:128"`
+	PhysicalTables     json.RawMessage `json:"physical_tables" gorm:"column:physical_tables;type:json"`
+	SourceType         string          `json:"source_type" gorm:"size:32;default:log;comment:数据源类型"`
+	IndexSet           string          `json:"index_set" gorm:"type:text;comment:索引集"`
+	TableType          string          `json:"table_type" gorm:"size:128;default:primary_table;comment:物理表类型"`
+	FieldConfigMapping string          `json:"field_config_mapping" gorm:"type:text;comment:字段/分词配置"`
+	ExpireDays         *int            `json:"expire_days" gorm:"default:30;comment:过期天数"`
+	StorageClusterID   uint            `json:"storage_cluster_id" gorm:"comment:存储集群"`
 }
 
 // TableName 用于设置表的别名

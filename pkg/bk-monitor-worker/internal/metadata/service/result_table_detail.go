@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 
@@ -392,17 +393,21 @@ func (s *SpacePusher) composeLogTableIdDetail(
 	var storageRecords []storage.ClusterRecord
 	// 历史分段按 origin 实体表读取全部未删除记录，再在内存中用完整时间精度和 ID 排序。
 	// queryset 未重生成，因此 ID 通过字段类型字面量选择，仅用于相同 enable_time 时稳定定序。
-	if err := storage.NewClusterRecordQuerySet(db).
-		Select(
-			storage.ClusterRecordDBSchemaField("id"),
-			storage.ClusterRecordDBSchema.TableID,
-			storage.ClusterRecordDBSchema.ClusterID,
-			storage.ClusterRecordDBSchema.EnableTime,
-		).
+	recordQuery := storage.NewClusterRecordQuerySet(db).
 		BkTenantIDEq(bkTenantId).
 		TableIDIn(sourceTableIDs...).
-		IsDeletedEq(false).
-		All(&storageRecords); err != nil {
+		IsDeletedEq(false)
+	recordFields := []storage.ClusterRecordDBSchemaField{
+		storage.ClusterRecordDBSchemaField("id"),
+		storage.ClusterRecordDBSchema.TableID,
+		storage.ClusterRecordDBSchema.ClusterID,
+		storage.ClusterRecordDBSchema.EnableTime,
+	}
+	err = recordQuery.Select(append(recordFields, storage.ClusterRecordDBSchemaField("physical_tables"))...).All(&storageRecords)
+	if isMissingPhysicalTablesColumn(err) {
+		err = recordQuery.Select(recordFields...).All(&storageRecords)
+	}
+	if err != nil {
 		return nil, nil, err
 	}
 	recordsByTableID := make(map[string][]storage.ClusterRecord)
@@ -432,7 +437,7 @@ func (s *SpacePusher) composeLogTableIdDetail(
 		esSourceType := firstNonEmpty(targetES.SourceType, originES.SourceType)
 		dorisDB := firstNonEmpty(targetDoris.BkbaseTableID, originDoris.BkbaseTableID)
 
-		// ClusterRecord 只记录集群与启用时间，db/source_type 等配置取自 origin 实体表。
+		// db/source_type 保持取自 origin 实体表，物理表只使用历史分段自身的快照。
 		// payload 只输出 enable_time；UQ 用下一分段的 enable_time 推导区间结束点，
 		// 因此这里有意不输出 disable_time。
 		history := make([]map[string]any, 0, len(recordsByTableID[sourceTableID]))
@@ -459,12 +464,16 @@ func (s *SpacePusher) composeLogTableIdDetail(
 					logger.Warnf("compose log history: Doris storage config missing, tenant [%s], table_id [%s], record_id [%d]", bkTenantId, tableID, record.ID)
 					continue
 				}
-				history = append(history, map[string]any{
+				detail := map[string]any{
 					"storage_id": record.ClusterID, "storage_type": models.StorageTypeBkSql,
 					"storage_name": cluster.ClusterName, "cluster_name": cluster.ClusterName,
 					"db": dorisDB, "measurement": models.DorisMeasurement,
 					"enable_time": storageRecordEnableTimestamp(record),
-				})
+				}
+				if physicalTables := parseDorisPhysicalTables(tableID, record.PhysicalTables); len(physicalTables) > 0 {
+					detail["physical_tables"] = physicalTables
+				}
+				history = append(history, detail)
 			}
 		}
 
@@ -520,6 +529,16 @@ func (s *SpacePusher) composeLogTableIdDetail(
 				"options": optionsMap[tableID], "storage_cluster_records": history,
 				"data_label": dataLabel,
 				"labels":     labels, "field_alias": fieldAlias,
+			}
+			var physicalTables map[string]string
+			if targetDoris.StorageClusterID == storageID {
+				physicalTables = parseDorisPhysicalTables(tableID, targetDoris.PhysicalTables)
+			}
+			if len(physicalTables) == 0 && originDoris.StorageClusterID == storageID {
+				physicalTables = parseDorisPhysicalTables(tableID, originDoris.PhysicalTables)
+			}
+			if len(physicalTables) > 0 {
+				result[tableID]["physical_tables"] = physicalTables
 			}
 		}
 	}
@@ -645,22 +664,44 @@ func loadDorisStorageMap(db *gorm.DB, bkTenantId string, tableIDs []string) (map
 		return result, nil
 	}
 	var rows []storage.DorisStorage
-	if err := storage.NewDorisStorageQuerySet(db).
-		Select(
-			storage.DorisStorageDBSchema.TableID,
-			storage.DorisStorageDBSchema.StorageClusterID,
-			storage.DorisStorageDBSchema.BkbaseTableID,
-			storage.DorisStorageDBSchema.OriginTableId,
-		).
+	query := storage.NewDorisStorageQuerySet(db).
 		BkTenantIDEq(bkTenantId).
-		TableIDIn(tableIDs...).
-		All(&rows); err != nil {
+		TableIDIn(tableIDs...)
+	fields := []storage.DorisStorageDBSchemaField{
+		storage.DorisStorageDBSchema.TableID,
+		storage.DorisStorageDBSchema.StorageClusterID,
+		storage.DorisStorageDBSchema.BkbaseTableID,
+		storage.DorisStorageDBSchema.OriginTableId,
+	}
+	err := query.Select(append(fields, storage.DorisStorageDBSchemaField("physical_tables"))...).All(&rows)
+	if isMissingPhysicalTablesColumn(err) {
+		err = query.Select(fields...).All(&rows)
+	}
+	if err != nil {
 		return nil, err
 	}
 	for _, row := range rows {
 		result[row.TableID] = row
 	}
 	return result, nil
+}
+
+// isMissingPhysicalTablesColumn 仅为尚未执行物理表字段迁移的数据库回退查询。
+func isMissingPhysicalTablesColumn(err error) bool {
+	var mysqlErr *mysqldriver.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1054 && strings.Contains(mysqlErr.Message, "physical_tables")
+}
+
+func parseDorisPhysicalTables(tableID string, value json.RawMessage) map[string]string {
+	if len(value) == 0 {
+		return nil
+	}
+	var tables map[string]string
+	if err := json.Unmarshal(value, &tables); err != nil {
+		logger.Errorf("parseDorisPhysicalTables: unmarshal failed, table_id [%s], err [%s]", tableID, err)
+		return nil
+	}
+	return tables
 }
 
 func loadResultTableOptions(

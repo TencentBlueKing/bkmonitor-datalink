@@ -2849,6 +2849,7 @@ func validGoAccessRuntimeConfig() config.Config {
 	cfg.PhaseTwo.Control.Timezone = "Asia/Shanghai"
 	cfg.PhaseTwo.Access.UQEndpoint = "http://unify-query.service"
 	cfg.PhaseTwo.Access.QuerySource = "alarmd"
+	cfg.PhaseTwo.Linkd.ControlPlane = sharedQuietLinkControlPlane()
 	return cfg
 }
 

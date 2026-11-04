@@ -241,6 +241,9 @@ type Options struct {
 	// ProbationRounds overrides ProbationRounds when positive; only a test
 	// sets it.
 	ProbationRounds int
+	// EdgeProbeSpan overrides EdgeProbeSpan when positive; only a test sets
+	// it.
+	EdgeProbeSpan time.Duration
 	// LastLowering is the Slot a Query Group's hold was last lowered at,
 	// while its last change was a lowering (readhold.Controller.LastLowering).
 	// A group this process has not seen a round of resumes the probation of

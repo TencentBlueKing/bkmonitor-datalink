@@ -11,6 +11,7 @@ package trigger
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -238,5 +239,141 @@ func TestOpenAlertSetDoesNotTouchAnAbnormalRecord(t *testing.T) {
 	}
 	if result.RecoveryGate != (RecoveryGateV2{}) || len(set.asked) != 0 {
 		t.Fatalf("gate = %+v asked = %v, want untouched", result.RecoveryGate, set.asked)
+	}
+}
+
+// openLevelSetFixture is an open alert set that also says which Levels of
+// the series' alert are open (contract.OpenLevelSet); known false is a set
+// that cannot say, as after a restart.
+type openLevelSetFixture struct {
+	openAlertSetFixture
+	open  []uint32
+	known bool
+}
+
+func (set *openLevelSetFixture) OpenLevels(string, string, string) ([]uint32, bool) {
+	return set.open, set.known
+}
+
+// The consumer keeps one alert per series, and Python recovers an alert
+// only at its own Level, the most severe it has open: a RECOVERY of any
+// other Level is an orphan at the consumer or a recovery Python never sends
+// (a warning RECOVERY beside an open info alert, seen many times an
+// hour). So a RECOVERY envelope carries only the current
+// Level's recovery, and is held when the record has none; where the set
+// cannot say which Levels are open, every Level goes as before.
+func TestARecoveryCarriesOnlyTheLevelsTheAlertHasOpen(t *testing.T) {
+	const source = int64(300)
+	identity := &contract.MonitorOutputIdentity{DimensionFields: []string{"host"}}
+	both := []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, nil), levelV2(2, 2, 1, 1, 1, nil)}
+	member := func(t *testing.T) map[string]bool {
+		t.Helper()
+		md5, err := contract.MonitorDedupeMD5("1001", "2", map[string]json.RawMessage{"host": json.RawMessage(`"127.0.0.1"`)}, *identity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return map[string]bool{"default/1001/" + md5: true}
+	}
+	recoveredLevels := func(event *contract.TriggerEventV1) []uint32 {
+		var ids []uint32
+		for _, result := range event.LevelResults {
+			if result.Result == contract.LevelResultRecovery {
+				ids = append(ids, result.LevelID)
+			}
+		}
+		return ids
+	}
+	for _, test := range []struct {
+		name string
+		// level1Unavailable recovers Level 2 alone: Level 1 is not decided.
+		level1Unavailable bool
+		// levels overrides the Plan's two Levels (their priorities).
+		levels        []contract.LevelIRV2
+		open          []uint32
+		known         bool
+		wantGate      string
+		wantRecovered []uint32
+	}{
+		{name: "both Levels open, both recover: the current Level's goes", open: []uint32{1, 2}, known: true,
+			wantGate: OpenAlertGatePassed, wantRecovered: []uint32{1}},
+		{name: "both Levels open, the lower recovers alone: held while the current one is open", level1Unavailable: true,
+			open: []uint32{1, 2}, known: true, wantGate: OpenAlertGateHeldLevelNotOpen},
+		{name: "only Level 1 open, both recover: Level 1's goes, Level 2's is left out", open: []uint32{1}, known: true,
+			wantGate: OpenAlertGatePassed, wantRecovered: []uint32{1}},
+		{name: "Level 2 recovers alone beside open Level 1: held, an orphan at the consumer", level1Unavailable: true,
+			open: []uint32{1}, known: true, wantGate: OpenAlertGateHeldLevelNotOpen},
+		{name: "Level 2 recovers alone and is the open one: it goes", level1Unavailable: true,
+			open: []uint32{2}, known: true, wantGate: OpenAlertGatePassed, wantRecovered: []uint32{2}},
+		{name: "a detect priority inverted against the Level ids: the lowest id is current, as the link and Python rank, Level 1's goes",
+			levels: []contract.LevelIRV2{levelV2(1, 2, 1, 1, 1, nil), levelV2(2, 1, 1, 1, 1, nil)}, open: []uint32{1, 2}, known: true,
+			wantGate: OpenAlertGatePassed, wantRecovered: []uint32{1}},
+		{name: "the open Levels are not known, as after a restart: every Level goes as before", open: nil, known: false,
+			wantGate: OpenAlertGatePassed, wantRecovered: []uint32{1, 2}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			planLevels := both
+			if test.levels != nil {
+				planLevels = test.levels
+			}
+			plan := nativePlanV2(t, planLevels, identity)
+			levels := plan.Levels().Copy()
+			facts := []DetectionFact{factV2(levels[0], DetectionNormal), factV2(levels[1], DetectionNormal)}
+			histories := []LevelHistory{
+				{LevelID: 1, View: pointHistory{step: 60, points: map[int64]bool{source: false}}},
+				{LevelID: 2, View: pointHistory{step: 60, points: map[int64]bool{source: false}}},
+			}
+			if test.level1Unavailable {
+				facts[0] = unavailableFactV2(levels[0], contract.ReasonRequiredValueMissing)
+				histories[0] = LevelHistory{LevelID: 1, View: pointHistory{step: 60, points: map[int64]bool{source - 60: true}}}
+			}
+			request := requestV2(t, plan, source, facts, histories, activeFactsV2(t, plan, source))
+			request.OpenAlerts = &openLevelSetFixture{openAlertSetFixture: openAlertSetFixture{members: member(t)}, open: test.open, known: test.known}
+			result, err := EvaluateV2(request)
+			if err != nil {
+				t.Fatalf("EvaluateV2() error = %v", err)
+			}
+			if result.RecordResult != contract.LevelResultRecovery || result.RecoveryGate.OpenAlertGate != test.wantGate {
+				t.Fatalf("record %q gate %+v, want RECOVERY gated %s", result.RecordResult, result.RecoveryGate, test.wantGate)
+			}
+			if test.wantGate == OpenAlertGateHeldLevelNotOpen {
+				if result.TriggerEvent != nil || !result.RecoveryGate.Held || result.RecoveryGate.Cause != RecoveryHeldLevelNotOpen {
+					t.Fatalf("held: envelope %+v gate %+v", result.TriggerEvent, result.RecoveryGate)
+				}
+				return
+			}
+			if result.TriggerEvent == nil || !slices.Equal(recoveredLevels(result.TriggerEvent), test.wantRecovered) {
+				t.Fatalf("envelope %+v, want RECOVERY of Levels %v", result.TriggerEvent, test.wantRecovered)
+			}
+		})
+	}
+}
+
+// After an edit that adds a Level, the carried history holds results for the
+// Levels both versions have and none for the new one (worker carryHistory):
+// the carried Level triggers on its carried window, and the new Level warms
+// up on its own, as a new series does, and decides nothing.
+func TestALevelAddedByAnEditWarmsUpOnItsOwnWindowBesideACarriedOne(t *testing.T) {
+	const source = int64(300)
+	identity := &contract.MonitorOutputIdentity{DimensionFields: []string{"host"}}
+	plan := nativePlanV2(t, []contract.LevelIRV2{levelV2(1, 1, 3, 2, 1, nil), levelV2(2, 2, 3, 2, 1, nil)}, identity)
+	levels := plan.Levels().Copy()
+	facts := []DetectionFact{factV2(levels[0], DetectionAnomalous), factV2(levels[1], DetectionAnomalous)}
+	histories := []LevelHistory{
+		// Level 1 carried a whole window, one anomaly before this round's.
+		{LevelID: 1, View: pointHistory{step: 60, points: map[int64]bool{source - 120: false, source - 60: true, source: true}}},
+		// Level 2 is new: only this round's point.
+		{LevelID: 2, View: pointHistory{step: 60, points: map[int64]bool{source: true}}},
+	}
+	request := requestV2(t, plan, source, facts, histories, activeFactsV2(t, plan, source))
+	request.SeriesSeenBefore = true
+	got, err := EvaluateV2(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LevelOutcomes[0].Result != contract.LevelResultAbnormal {
+		t.Fatalf("the carried Level decided %+v, want ABNORMAL on its carried window (2 of 3)", got.LevelOutcomes[0])
+	}
+	if outcome := got.LevelOutcomes[1]; outcome.Result != "" || outcome.UnavailableReason != historyReasonV2(HistoryWarming) {
+		t.Fatalf("the new Level decided %+v, want it warming on its own window", outcome)
 	}
 }

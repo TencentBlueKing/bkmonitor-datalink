@@ -132,6 +132,17 @@ func startCutoverFixtureOpened(
 	opened func(*phaseTwoWorkerBundle),
 ) *cutoverStallFixture {
 	t.Helper()
+	return openCutoverFixture(t, configure, logger, before, opened, nil)
+}
+
+// openCutoverFixture is startCutoverFixtureOpened with a hook on the
+// bundle's external dependencies before it opens, for what the
+// configuration does not set (startDescentFixture).
+func openCutoverFixture(
+	t *testing.T, configure func(*config.Config), logger *observability.Logger, before func(ctx context.Context, client *redis.Client, cfg config.Config),
+	opened func(*phaseTwoWorkerBundle), external func(*phaseTwoProductionExternalDependencies),
+) *cutoverStallFixture {
+	t.Helper()
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
 	installCutoverStallStrategies(t, ctx, redisClient, "system.mem", 1725000000)
@@ -222,16 +233,20 @@ func startCutoverFixtureOpened(
 		fixture.observations = append(fixture.observations, observation)
 	})
 	events := &recordingPhaseTwoEventSink{}
+	dependencies := phaseTwoProductionExternalDependencies{
+		Now: fixture.now, HTTPClient: uqServer.Client(), AdditionalObserver: additionalObserver,
+		PrepareEvents: preparedEvents(func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) { return events, nil }),
+	}
+	if external != nil {
+		external(&dependencies)
+	}
 	bundle, err := openProductionPhaseTwoBundleWithDependencies(
 		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), logger,
 		newPhaseTwoApplicationHealth(),
 		func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
 			return controlplane.NewLegacyRedisStrategySource(client, prefix)
 		},
-		phaseTwoProductionExternalDependencies{
-			Now: fixture.now, HTTPClient: uqServer.Client(), AdditionalObserver: additionalObserver,
-			PrepareEvents: preparedEvents(func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) { return events, nil }),
-		},
+		dependencies,
 	)
 	if err != nil {
 		t.Fatalf("openProductionPhaseTwoBundleWithDependencies() error = %v", err)

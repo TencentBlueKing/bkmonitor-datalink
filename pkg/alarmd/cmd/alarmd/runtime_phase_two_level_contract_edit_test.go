@@ -8,7 +8,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -48,7 +52,9 @@ func TestProductionPhaseTwoStateGenerationEditRewarmsAndResumes(t *testing.T) {
 				}
 			})
 		}},
-		{name: "threshold", install: func(t *testing.T, ctx context.Context, fixture *cutoverStallFixture) {
+		// A threshold edit carries too: the results the old threshold decided
+		// stand as decided, as Python's check results do.
+		{name: "threshold", carries: true, requiredPoints: uint32(cutoverStallTriggerWindow), install: func(t *testing.T, ctx context.Context, fixture *cutoverStallFixture) {
 			installEditedStrategies(t, ctx, fixture.redisClient, 1725000600, func(first map[string]any) {
 				item := first["items"].([]any)[0].(map[string]any)
 				for _, algorithm := range item["algorithms"].([]any) {
@@ -167,6 +173,90 @@ func TestProductionPhaseTwoACarriedEditResumesWithinOneWarmingSlot(t *testing.T)
 	previousWindow := cutoverStallTriggerWindow
 	cutoverStallTriggerWindow = 3
 	t.Cleanup(func() { cutoverStallTriggerWindow = previousWindow })
+	thresholdAt := func(value int) func(first map[string]any) {
+		return func(first map[string]any) {
+			item := first["items"].([]any)[0].(map[string]any)
+			for _, algorithm := range item["algorithms"].([]any) {
+				for _, group := range algorithm.(map[string]any)["config"].([]any) {
+					for _, condition := range group.([]any) {
+						condition.(map[string]any)["threshold"] = value
+					}
+				}
+			}
+		}
+	}
+	threshold := thresholdAt(81)
+	// renumber moves every Level to id 2: no Level is common to both
+	// versions, so the Plan warms up whole under its activation's guard
+	// (none_no_common_level).
+	renumber := func(first map[string]any) {
+		for _, algorithm := range first["items"].([]any)[0].(map[string]any)["algorithms"].([]any) {
+			algorithm.(map[string]any)["level"] = 2
+		}
+		for _, detect := range first["detects"].([]any) {
+			detect.(map[string]any)["level"] = 2
+		}
+	}
+	both := func(edits ...func(first map[string]any)) func(first map[string]any) {
+		return func(first map[string]any) {
+			for _, edit := range edits {
+				edit(first)
+			}
+		}
+	}
+	for _, edit := range []struct {
+		name string
+		// outcome is the series carry outcome the edit's series report.
+		outcome string
+		change  func(first map[string]any)
+		// fullsBefore is how many FULL Slots run before the edit; the window
+		// fills on the cutoverStallTriggerWindow-th.
+		fullsBefore int
+		// preludes are edits made, in order, before the edit, each followed
+		// by its FULL Slots; every later change includes the earlier ones.
+		preludes []editStep
+	}{
+		{name: "trigger count", outcome: "carried", fullsBefore: cutoverStallTriggerWindow, change: func(first map[string]any) {
+			for _, detect := range first["detects"].([]any) {
+				detect.(map[string]any)["trigger_config"].(map[string]any)["count"] = 2
+			}
+		}},
+		// The results the old threshold decided stand as decided and are
+		// carried, as Python's are.
+		{name: "threshold", outcome: "carried_across_detect", fullsBefore: cutoverStallTriggerWindow, change: threshold},
+		// The window had not filled when the edit landed: its Level was
+		// WARMING for its own holes, which come along as holes, and what it
+		// had decided is kept. Skipping it started the series over and made
+		// the edit wait a whole window more (as for a
+		// probe edited minutes after it first alerted).
+		{name: "threshold before the window filled", outcome: "carried_across_detect", fullsBefore: cutoverStallTriggerWindow - 1, change: threshold},
+		// A Plan an activation warmed up whole is held by that activation's
+		// own guard (CONFIG_DRIFT) until its trigger and recovery windows
+		// converge, not by its own holes: the positions it guards are before
+		// the Plan ran, absent points. An edit inside that stretch keeps what
+		// the Plan had decided, as Python does (as for a
+		// probe edited minutes after it was created).
+		{name: "threshold inside an activation's warming", outcome: "carried_across_detect", fullsBefore: cutoverStallTriggerWindow,
+			preludes: []editStep{{change: renumber, fulls: 1}}, change: both(renumber, threshold)},
+		// Two edits inside it: the second activation's guard holds the
+		// window again, and the third version still carries.
+		{name: "two threshold edits inside an activation's warming", outcome: "carried_across_detect", fullsBefore: cutoverStallTriggerWindow,
+			preludes: []editStep{{change: renumber, fulls: 1}, {change: both(renumber, threshold), fulls: 1}}, change: both(renumber, thresholdAt(82))},
+	} {
+		t.Run(edit.name, func(t *testing.T) {
+			carriedEditResumesWithinOneWarmingSlot(t, edit.change, edit.outcome, edit.fullsBefore, edit.preludes...)
+		})
+	}
+}
+
+// editStep is one edit made before the measured one, and the FULL Slots run
+// after it.
+type editStep struct {
+	change func(first map[string]any)
+	fulls  int
+}
+
+func carriedEditResumesWithinOneWarmingSlot(t *testing.T, change func(first map[string]any), outcome string, fullsBefore int, preludes ...editStep) {
 	fixture := startCutoverFixture(t, nil)
 	ctx := context.Background()
 	idle := false
@@ -199,23 +289,42 @@ func TestProductionPhaseTwoACarriedEditResumesWithinOneWarmingSlot(t *testing.T)
 	full := func(result execution.SlotExecutionResult) bool {
 		return result.CompletionKind == execution.CompletionFull
 	}
-	// A full window of history, then one more FULL Slot on it.
+	// fullsBefore FULL Slots of history: a full window, or one short of it.
 	fulls := 0
 	if !drive(40, func(result execution.SlotExecutionResult) bool {
 		if full(result) {
 			fulls++
 		}
-		return fulls >= cutoverStallTriggerWindow
+		return fulls >= fullsBefore
 	}) {
-		t.Fatal("the Plan did not reach a full window before the edit")
+		t.Fatalf("the Plan did not reach %d FULL Slots before the edit", fullsBefore)
+	}
+	for index, step := range preludes {
+		installEditedStrategies(t, ctx, fixture.redisClient, 1725000300+int64(index)*60, step.change)
+		fixture.clock.Store((fixture.now().Unix()/60*60 + 59) * 1000)
+		for attempt := 0; attempt < 2; attempt++ {
+			if err := fixture.bundle.refreshAndReconcile(ctx, true); err != nil {
+				t.Fatalf("prelude %d refresh %d error = %v", index+1, attempt+1, err)
+			}
+		}
+		idle, fulls = false, 0
+		if !drive(16, func(result execution.SlotExecutionResult) bool {
+			if full(result) {
+				fulls++
+			}
+			return fulls >= step.fulls
+		}) {
+			t.Fatalf("the Plan did not run %d FULL Slots after prelude %d", step.fulls, index+1)
+		}
 	}
 
 	before := len(fixture.observed())
-	installEditedStrategies(t, ctx, fixture.redisClient, 1725000600, func(first map[string]any) {
-		for _, detect := range first["detects"].([]any) {
-			detect.(map[string]any)["trigger_config"].(map[string]any)["count"] = 2
-		}
-	})
+	activationBefore, err := fixture.repository.LoadActivation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generationBefore := activationGenerationOf(t, activationBefore.Plans, "1001")
+	installEditedStrategies(t, ctx, fixture.redisClient, 1725000600, change)
 	boundary := fixture.now().Unix()/60*60 + 59
 	fixture.clock.Store(boundary * 1000)
 	for attempt := 0; attempt < 2; attempt++ {
@@ -227,9 +336,13 @@ func TestProductionPhaseTwoACarriedEditResumesWithinOneWarmingSlot(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	var carriedLevels []uint32
 	for _, record := range activation.Plans {
 		if record.Fact.Plan.StrategyID == "1001" && (record.Fact.Selected.Carry == nil || record.Fact.Selected.RequiredFullSlots != 1) {
-			t.Fatalf("a trigger count edit did not carry: %+v", record.Fact.Selected)
+			t.Fatalf("the edit did not carry: %+v", record.Fact.Selected)
+		}
+		if record.Fact.Plan.StrategyID == "1001" {
+			carriedLevels = record.Fact.Selected.Carry.Levels
 		}
 	}
 	idle = false
@@ -248,7 +361,10 @@ func TestProductionPhaseTwoACarriedEditResumesWithinOneWarmingSlot(t *testing.T)
 	// series that had started over would hold this Slot's one point alone.
 	carried, summarised := 0, 0
 	for _, observation := range fixture.observed()[before:] {
-		if facts := observation.StateCarry; facts != nil && facts.Scope == "series" && facts.Result == "carried" {
+		if facts := observation.StateCarry; facts != nil && facts.Scope == "series" {
+			if facts.Result != outcome {
+				t.Fatalf("a series carried as %s, want %s", facts.Result, outcome)
+			}
 			carried += facts.Count
 		}
 		if coverage := observation.HistoryCoverage; coverage != nil && coverage.Levels > 0 {
@@ -260,6 +376,47 @@ func TestProductionPhaseTwoACarriedEditResumesWithinOneWarmingSlot(t *testing.T)
 	}
 	if carried == 0 || summarised == 0 {
 		t.Fatalf("carried=%d series, summarised=%d windows after the edit: want the series to carry and their windows to be read", carried, summarised)
+	}
+	// object.get names where the Plan's state comes from: the generation
+	// before the edit, found in the timeline, and since when the new one runs.
+	// The fixture's strategies carry no snapshot revision.
+	generationAfter := activationGenerationOf(t, activation.Plans, "1001")
+	var found *controlplane.PlanCarryFact
+	var foundIn execution.QueryGroupIdentity
+	groups := fixture.bundle.ownedQueryGroups()
+	for _, group := range groups {
+		recorder := httptest.NewRecorder()
+		fixture.bundle.dependencies.FleetAPI.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/objects/"+string(group), nil))
+		var body struct {
+			PlanCarries *controlplane.PlanCarriesReading `json:"plan_carries"`
+			Unavailable string                           `json:"plan_carries_unavailable"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode the object detail: %v (%s)", err, recorder.Body.String())
+		}
+		if body.PlanCarries == nil {
+			t.Fatalf("object %s names no plan carries (unavailable %q)", group, body.Unavailable)
+		}
+		for index, plan := range body.PlanCarries.Plans {
+			if plan.Plan.StrategyID == "1001" {
+				found, foundIn = &body.PlanCarries.Plans[index], group
+			}
+		}
+	}
+	if found == nil || found.StateGeneration != generationAfter || found.ActivatedAt < execution.EvaluationTime(boundary) ||
+		found.CarriedFrom == nil || found.CarriedFrom.StateGeneration != generationBefore || !found.CarriedFrom.Found ||
+		len(carriedLevels) != 1 || !slices.Equal(found.CarriedFrom.Levels, carriedLevels) {
+		t.Fatalf("object.get says %+v (carried from %+v), want generation %s activated at or after %d, carried from %s and found, Levels %v",
+			found, found.CarriedFrom, generationAfter, boundary, generationBefore, carriedLevels)
+	}
+	// slot.query reads the same source as object.get, not a reading of its
+	// own.
+	reading, err := cliPlanCarries(fixture.repository)(context.Background(), foundIn)
+	if err != nil || !slices.ContainsFunc(reading.Plans, func(fact controlplane.PlanCarryFact) bool { return reflect.DeepEqual(fact, *found) }) {
+		t.Fatalf("slot.query's plan carries read %+v (%v), want the Plan object.get names, %+v", reading, err, *found)
+	}
+	if got := counterValue(t, fixture.bundle.dependencies.Recorder, "alarmd_fleet_plan_carries_reads_total", map[string]string{"result": "read"}); got != float64(len(groups)) {
+		t.Fatalf("plan carries reads counted %v, want one read for each of the %d objects asked", got, len(groups))
 	}
 }
 

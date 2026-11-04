@@ -107,6 +107,13 @@ const (
 	// same empty answer is a group at rest and a group whose data stopped,
 	// and the row does not claim either.
 	KindLogCountEmpty = "LOG_COUNT_EMPTY"
+	// KindFilteredEmpty: a primary whose expression filters its values (an
+	// OsRestart's "a <= 3600") came back filtered empty for as long as the
+	// data lines above wait, while the unfiltered witness of the same source
+	// had data in its latest round: the data is there and nothing passed the
+	// filter. Detecting, like quiet; a witness without data leaves the row
+	// on the data line it was on.
+	KindFilteredEmpty = "FILTERED_EMPTY"
 	// KindIdentityUnmatched: an object whose rounds come back empty because
 	// every series its query returned was one the target's identity could
 	// not read -- the key's dimensions were missing or its model gate did
@@ -405,7 +412,16 @@ type queryGroupState struct {
 	// unfilled is whether the latest empty round was a grouped count its
 	// provider does not zero-fill (KindLogCountEmpty), read like quiet.
 	unfilled bool
-	sawData  bool
+	// filtered is whether the latest empty round was filtered empty with its
+	// unfiltered witness answering data (KindFilteredEmpty), valueFiltered
+	// whether its primary filters at all. witnessData and witnessMissing
+	// count the run's empty rounds whose witness answered with data and
+	// without: both above zero is a row that went back and forth.
+	filtered       bool
+	valueFiltered  bool
+	witnessData    uint32
+	witnessMissing uint32
+	sawData        bool
 	// emptySinceSlot and lastEmptySlot bound the run of empty completions on
 	// the source's own clock: the Slot of the first empty round of the run and
 	// of the latest. The "every round" line gates on their distance, Slot to
@@ -527,6 +543,15 @@ type queryGroupState struct {
 	// anchor a restart's catch-up is judged from on the skip record, since a
 	// replica starts working an object well after its process starts.
 	firstSeenAt time.Time
+	// catchUpSkipAt is when this process first gave up a Slot of the object
+	// within RestartCatchUpGrace of its own start or of first seeing the
+	// object, with no cooldown holding the Slot: the restart's or the
+	// takeover's catch-up, the same judgment the skip record's loss makes
+	// (AFTER_RESTART). A gap guard that skip raised is this process's own
+	// doing, and the window it holds refills by itself (Rewarm). Cleared by
+	// the first completed round whose window no guard holds short, so it
+	// speaks only for the guard the catch-up raised.
+	catchUpSkipAt time.Time
 	// reasonKey names the current result and reason as one string, reasonSince
 	// is when that pair first held and reasonRuns how many consecutive rounds
 	// it has held for. It is the object's own clock for "how long has it been
@@ -564,6 +589,9 @@ type queryGroupState struct {
 	// truncation is the suspected cut of the latest answered query, nil when
 	// it named none (KindAnswerTruncated).
 	truncation *AnswerTruncation
+	// sourceHeld is, per strategy, the Levels whose no-data end its process
+	// holds on a source that cannot be shown alive (KindSourceUnknownHeld).
+	sourceHeld map[StrategyRef]SourceUnknownHeld
 	// queryRanges is what the latest round's primary queries were sent
 	// asking for, nil before any round named it (QueryRanges).
 	queryRanges *QueryRanges
@@ -963,6 +991,10 @@ type Tracker struct {
 	emptyEveryRoundAfter time.Duration
 	noDataAfter          time.Duration
 	maxTracked           int
+	// newOpens is, per strategy, its clock hours past the report floor as
+	// this process counted them (KindNewAlertsBurst): per strategy, not per
+	// object, as the count is.
+	newOpens map[StrategyRef]newOpensAccount
 	// dropped counts the observations, truncation and range facts lost
 	// because the table was full, by what; droppedRecent names the latest
 	// objects lost so, newest last, at most MaxTrackerDroppedNamed.
@@ -1181,6 +1213,14 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 	if observation.Stage == observability.StageQueryCompleted {
 		tracker.noteAnswerTruncation(queryGroup, observation, trace.EvaluationTime)
 		tracker.noteQueryRanges(queryGroup, observation, trace.EvaluationTime)
+	}
+	if observation.Stage == observability.StageSourceLiveness {
+		tracker.noteSourceHeld(queryGroup, trace, observation.SourceLivenessHeld)
+		return
+	}
+	if observation.Stage == observability.StageNewOpens {
+		tracker.noteNewOpens(queryGroup, trace, observation.NewOpens)
+		return
 	}
 
 	completion := observation.ProgressCompletionKind
@@ -1505,6 +1545,8 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 	if completion == snapshotUnavailableCompletion && observation.ProgressCompletionCause == string(model.CauseExpiredReplay) {
 		tracker.extendSkipSpan(state, trace.EvaluationTime, trace.EvaluationTime, 1, true, at)
 		state.gapSkip.HeldBy = heldByOf(observation)
+		tracker.noteCatchUpSkip(state, at)
+		noteCooldownFailure(state)
 		tracker.noteSkipEvidence(queryGroup, state, at)
 		recordStrategy(state.strategies, StrategyRef{StrategyID: trace.StrategyID, BusinessID: trace.BusinessID})
 		return
@@ -1515,6 +1557,8 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		// the record's own fact, read for the loss ahead of where the object
 		// sits when the record is read.
 		state.gapSkip.HeldBy = heldByOf(observation)
+		tracker.noteCatchUpSkip(state, at)
+		noteCooldownFailure(state)
 		tracker.noteSkipEvidence(queryGroup, state, at)
 		// The last step before the skip, when it was this Slot's: a permit
 		// deadline missed says the retry came too late, a budget rejection
@@ -1784,6 +1828,12 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		state.configChanged = state.completedRevisions.known() && state.seenRevisions.known() &&
 			state.seenRevisions != state.completedRevisions
 		state.completedRevisions = state.seenRevisions
+		// The catch-up skip's rewarm ends with the first round whose window
+		// no guard holds short: a later guard, from a later gap, is not the
+		// restart's whatever reason it carries. A skip is not such a round.
+		if facts := observation.HistoryCoverage; completion != "GAP_SKIPPED" && (facts == nil || facts.Guarded == 0 || facts.Short == 0) {
+			state.catchUpSkipAt = time.Time{}
+		}
 		tracker.noteReason(state, completion+"/"+roundReason, at)
 		// The no-data run is kept apart from the anomaly run: an empty
 		// completion is healthy for the equation and ends any anomaly run, and
@@ -1798,6 +1848,22 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 			}
 			state.quiet = observation.PrimaryInput != nil && observation.PrimaryInput.QuietWhenEmpty
 			state.unfilled = observation.PrimaryInput != nil && observation.PrimaryInput.UnfilledWhenEmpty
+			state.filtered = observation.PrimaryInput != nil && observation.PrimaryInput.FilteredWhenEmpty
+			state.valueFiltered = observation.PrimaryInput != nil && observation.PrimaryInput.ValueFiltered
+			// The run's witness counts are under one configuration, as the
+			// progress record keeps them under one content: a round under
+			// other revisions begins them again. The observation carries the
+			// revisions, not the content digest, so the triple stands for it.
+			if state.configChanged {
+				state.witnessData, state.witnessMissing = 0, 0
+			}
+			if observation.PrimaryInput != nil && observation.PrimaryInput.WitnessData != "" {
+				if observation.PrimaryInput.WitnessData == "DATA" {
+					state.witnessData = saturatingAdd(state.witnessData)
+				} else {
+					state.witnessMissing = saturatingAdd(state.witnessMissing)
+				}
+			}
 			if state.emptyRuns == 0 {
 				state.emptySince = at
 				state.emptySinceFrom = SinceSnapshotContinuity
@@ -1870,6 +1936,7 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		} else {
 			state.emptyRuns = 0
 			state.identityRounds, state.identity = 0, nil
+			state.witnessData, state.witnessMissing = 0, 0
 			if completion == "FULL_COMPLETED" {
 				// Seen retires the Slot run for good: the line asks for no
 				// round known to have had records, and never reads the
@@ -2451,6 +2518,7 @@ func (tracker *Tracker) rowOf(queryGroup string, state *queryGroupState) Anomaly
 	anomaly.NoDataTracking = noDataTrackingRows(state, tracker.replica, tracker.startedAt)
 	anomaly.WireFormats = wireFormatRows(state)
 	anomaly.MemoryGap = memoryGapOf(state)
+	anomaly.Rewarm = rewarmOf(state)
 	// Set only by a blocked round and cleared wherever a blocked run ends,
 	// so a row with a wait is a blocked run.
 	if !state.awaitingViewSince.IsZero() {
@@ -2497,6 +2565,43 @@ func (tracker *Tracker) rowOf(queryGroup string, state *queryGroupState) Anomaly
 	}
 	sortStrategies(anomaly.Strategies)
 	return anomaly
+}
+
+// noteCatchUpSkip keeps when this process's own catch-up first gave up a
+// Slot of the object: a skip within RestartCatchUpGrace of the tracker's
+// start or of the object's first sighting here, that no cooldown held. The
+// first such skip is kept; a later one does not move it. Called with the
+// lock held, after the span's HeldBy is set.
+func (tracker *Tracker) noteCatchUpSkip(state *queryGroupState, at time.Time) {
+	if !state.catchUpSkipAt.IsZero() || state.gapSkip == nil || state.gapSkip.HeldBy == heldByCooldown {
+		return
+	}
+	inGrace := func(anchor time.Time) bool {
+		return !anchor.IsZero() && !at.Before(anchor) && at.Sub(anchor) <= RestartCatchUpGrace
+	}
+	if inGrace(tracker.startedAt) || inGrace(state.firstSeenAt) {
+		state.catchUpSkipAt = at
+	}
+}
+
+// noteCooldownFailure keeps on the skip record the failure the cooldown
+// that held its Slot was for, in the bounded fields a row carries: the
+// record is that failure's consequence, and once the object leaves the pool
+// the record is the only place left that says so. Cleared on a skip no
+// cooldown held, like HeldBy. Called with the lock held, after HeldBy.
+func noteCooldownFailure(state *queryGroupState) {
+	span := state.gapSkip
+	if span == nil {
+		return
+	}
+	span.HeldByFailure = nil
+	if span.HeldBy != heldByCooldown {
+		return
+	}
+	if failure := rowFailure(state); failure != nil {
+		span.HeldByFailure = &FailureRef{Stage: failure.Stage, Category: failure.Category, Code: failure.Code,
+			Source: failure.Source, Detail: failure.Detail, HTTPStatus: failure.HTTPStatus, Rejection: failure.Rejection}
+	}
 }
 
 // extendSkipSpan records Slots never evaluated, from any of the three paths
@@ -3123,6 +3228,20 @@ func (tracker *Tracker) NoData() []Anomaly {
 		if state.unfilled && (anomaly.Kind == KindNoData || anomaly.Kind == KindEmptyEveryRound && !state.emptiedByTarget) {
 			anomaly.Kind, anomaly.EmptyEveryRound = KindLogCountEmpty, nil
 		}
+		// A filtered primary whose witness answered data is filtered empty,
+		// not missing: same clock, its own line. A witness without data
+		// leaves the row where it was, and data the target turned away is
+		// still the target's.
+		if state.filtered && (anomaly.Kind == KindNoData || anomaly.Kind == KindEmptyEveryRound && !state.emptiedByTarget) {
+			anomaly.Kind, anomaly.EmptyEveryRound = KindFilteredEmpty, nil
+		}
+		if state.witnessData > 0 || state.witnessMissing > 0 {
+			anomaly.Witness = &WitnessFacts{DataRounds: state.witnessData, MissingRounds: state.witnessMissing}
+		} else if state.valueFiltered {
+			// No witness can speak for this empty answer: the row says
+			// the filter is there, and stays on its data line.
+			anomaly.ValueFiltered = true
+		}
 		for strategy := range state.strategies {
 			anomaly.Strategies = append(anomaly.Strategies, strategy)
 		}
@@ -3145,6 +3264,11 @@ func (tracker *Tracker) NoData() []Anomaly {
 		sortStrategies(anomaly.Strategies)
 		anomalies = append(anomalies, anomaly)
 	}
+	// The objects with a Level whose no-data end is held past its bound on
+	// a source that cannot be shown alive.
+	anomalies = append(anomalies, tracker.sourceHeldAnomalies()...)
+	// The strategies that opened more alerts in an hour than the threshold.
+	anomalies = append(anomalies, tracker.newAlertsBurstAnomalies()...)
 	sort.Slice(anomalies, func(left, right int) bool {
 		if anomalies[left].Since.Equal(anomalies[right].Since) {
 			return anomalies[left].QueryGroup < anomalies[right].QueryGroup
@@ -3575,4 +3699,12 @@ func (tracker *Tracker) LocalRejection(queryGroup string) (KeptRejection, bool) 
 	defer tracker.mu.Unlock()
 	kept, ok := tracker.rejections[queryGroup]
 	return kept, ok
+}
+
+// saturatingAdd adds one, staying at the largest count once there.
+func saturatingAdd(count uint32) uint32 {
+	if count == ^uint32(0) {
+		return count
+	}
+	return count + 1
 }

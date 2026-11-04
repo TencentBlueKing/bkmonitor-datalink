@@ -86,10 +86,13 @@ type streamedExecution struct {
 	noDataAbsenceStarts noDataAbsenceStarts
 	// noDataEnds is each Plan's no-data end index as this Slot read it.
 	noDataEnds map[execution.PlanIdentity]execution.NoDataEndLoaded
-	effective  map[execution.ConsumerRef]strategy.EffectiveTimeFact
-	evaluated  execution.EvaluationResult
-	delivered  []execution.SeriesDelivery
-	series     uint64
+	// noDataEndCarries is the entries each Plan's index took this Slot from
+	// the generation its activation carries it from.
+	noDataEndCarries map[execution.PlanIdentity]noDataEndCarry
+	effective        map[execution.ConsumerRef]strategy.EffectiveTimeFact
+	evaluated        execution.EvaluationResult
+	delivered        []execution.SeriesDelivery
+	series           uint64
 	// retainedByPhase is this execution's retained bytes split by what they
 	// were retained for. The total is the sum rather than a counter of its
 	// own: a sixth budget's worth of memory arriving with no phase attached
@@ -1271,6 +1274,7 @@ func (stream *streamedExecution) loadNoDataMemory(ctx context.Context) error {
 		observability.Counts{Keys: int64(len(stream.noData.Items))}, nil)
 	stream.observeNoDataRepresentations(ctx)
 	stream.observeNoDataRenewals(ctx)
+	stream.carryNoDataMemory(ctx, request)
 	if stream.supplement != nil {
 		// Read for what it recorded at the Slot, not to judge absence: a
 		// supplement's series are a subset, and every group outside it would
@@ -2004,7 +2008,8 @@ func (stream *streamedExecution) observeEvaluationFailure(ctx context.Context, s
 // openAlertGateFacts carries what the open alert gate did with the
 // Plan's RECOVERY records, one fact per outcome that counted something.
 // levelOutcomeFacts is what the evaluation concluded per Level outcome and,
-// for the outcomes that carry one, per reason: the line's own reason is the
+// for the outcomes that carry one, per reason (a withheld recovery's, on
+// NORMAL): the line's own reason is the
 // Plan's fold, one word for the worst Level, so a Level suppressed by its
 // effective time or held on a warming window had no name on the line unless
 // it was that word. Sorted by outcome then reason so the line is stable.
@@ -2017,20 +2022,34 @@ func levelOutcomeFacts(due execution.DuePlan, evaluated execution.EvaluationResu
 		carried         bool
 	}
 	counts := make(map[cell]uint64)
+	omitted := make(map[cell]uint64)
 	for _, outcome := range evaluated.Plans[0].LevelOutcomes {
 		key := cell{outcome: string(outcome.Outcome)}
 		if outcome.Outcome == execution.LevelOutcomeUnknown || outcome.Outcome == execution.LevelOutcomeTerminal {
 			key.reason = string(outcome.ReasonCode)
+		}
+		// A NORMAL that met its recovery windows and was held NORMAL is
+		// counted under why: without it a zero holding alerts open moved
+		// counts from RECOVERY to NORMAL with nothing on the family to say
+		// which rule did it.
+		if outcome.Outcome == execution.LevelOutcomeNormal && outcome.RecoveryWithheld != execution.RecoveryWithheldNone {
+			key.reason = outcome.RecoveryWithheld.Reason()
 		}
 		// A stored guard's reason repeated on this round is its own cell:
 		// QUERY_TIMEOUT carried from the round that timed out is not this
 		// round timing out.
 		key.carried = outcome.Outcome == execution.LevelOutcomeUnknown && outcome.ReasonCarried
 		counts[key]++
+		// A RECOVERY its record's envelope left out (the alert is at another
+		// Level) is still a RECOVERY of its Level; the cell says how many.
+		if outcome.Outcome == execution.LevelOutcomeRecovery && outcome.EventOmitted {
+			omitted[key]++
+		}
 	}
 	facts := make([]observability.LevelOutcomeFact, 0, len(counts))
 	for key, count := range counts {
-		facts = append(facts, observability.LevelOutcomeFact{Outcome: key.outcome, Reason: key.reason, Carried: key.carried, Count: count})
+		facts = append(facts, observability.LevelOutcomeFact{Outcome: key.outcome, Reason: key.reason, Carried: key.carried, Count: count,
+			OmittedRecoveries: omitted[key]})
 	}
 	sort.Slice(facts, func(i, j int) bool {
 		if facts[i].Outcome != facts[j].Outcome {
@@ -2055,6 +2074,7 @@ func openAlertGateFacts(due execution.DuePlan, evaluated execution.EvaluationRes
 		{Outcome: observability.OpenAlertGatePassedOneTimeClose, Records: gate.PassedOneTimeClose},
 		{Outcome: observability.OpenAlertGateHeldNoOpenAlert, Records: gate.HeldNoOpenAlert},
 		{Outcome: observability.OpenAlertGateHeldFingerprintUnknown, Records: gate.HeldFingerprintUnknown},
+		{Outcome: observability.OpenAlertGateHeldLevelNotOpen, Records: gate.HeldLevelNotOpen},
 		{Outcome: observability.OpenAlertGateNotConfigured, Records: gate.NotConfigured},
 		{Outcome: observability.OpenAlertGateProtocolNotGated, Records: gate.ProtocolNotGated},
 	} {

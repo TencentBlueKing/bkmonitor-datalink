@@ -223,7 +223,11 @@ type probeResume struct {
 func (engine *Engine) probeRounds(probe *floorProbeState) int {
 	rounds := engine.probationRounds()
 	if probe.edge && probe.period > 0 {
-		rounds = max(rounds, int((EdgeProbeSpan+probe.period-1)/probe.period))
+		span := EdgeProbeSpan
+		if engine.options.EdgeProbeSpan > 0 {
+			span = engine.options.EdgeProbeSpan
+		}
+		rounds = max(rounds, int((span+probe.period-1)/probe.period))
 	}
 	return rounds
 }

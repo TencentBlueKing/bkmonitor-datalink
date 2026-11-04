@@ -20,7 +20,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/evidenceroute"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdtoken"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
@@ -53,6 +52,9 @@ type ChannelBinding struct {
 	// SREReceiptWritten hears whether each receipt write landed; nil hears
 	// none.
 	SREReceiptWritten func(ok bool)
+	// FrontRefused hears each refused front read: its code and the operation
+	// it asked for. Optional.
+	FrontRefused func(code, operation string)
 }
 
 type roleChannelRuntime struct {
@@ -66,6 +68,9 @@ type roleChannelRuntime struct {
 	Ready func(context.Context) error
 	Bind  func(ChannelBinding)
 	Close func() error
+	// FrontRefusals is the front surface's refusals by code; nil without a
+	// channel.
+	FrontRefusals func() map[string]uint64
 }
 
 type channelProviders struct {
@@ -237,14 +242,9 @@ func openProductionRoleChannel(cfg config.Config, binding ChannelBinding) (_ *ro
 		}
 		return cliMaintenanceOperation(current.Control.Maintenance)
 	}))
-	ops = append(ops, dynamicChannelOperation(cliLinkdAlertsOperation(nil), func() obchannel.Operation {
-		return cliLinkdAlertsOperation(linkdConsoleOf(providers.read().Control.LinkdConsole))
-	}))
-	ops = append(ops, dynamicChannelOperation(cliLinkdReconcileOperation(nil), func() obchannel.Operation {
-		if console := providers.read().Control.LinkdConsole; console != nil {
-			return cliLinkdReconcileOperation(console)
-		}
-		return cliLinkdReconcileOperation(nil)
+	ops = append(ops, dynamicChannelOperation(cliLinkdAlertsOperation(nil, ""), func() obchannel.Operation {
+		control := providers.read().Control
+		return cliLinkdAlertsOperation(linkdSearchOf(control.LinkdSearch), control.LinkdSource)
 	}))
 	ops = append(ops, cliLifecycleOperation(diagnosticRuntime, lifecycleRecordKey(cfg)))
 	ops = append(ops, changesOperation(cfg, binding, diagnosticRuntime))
@@ -259,7 +259,7 @@ func openProductionRoleChannel(cfg config.Config, binding ChannelBinding) (_ *ro
 			return obchannel.MetricsOperations(providers.read().Control.Metrics)[index]
 		}))
 	}
-	ops = append(ops, obchannel.SlotOperations(obchannel.SlotOptions{Resolve: newCLISlotResolver(cfg, diagnosticRuntime), Evidence: newCLISlotEvidenceReader(cfg, diagnosticRuntime), UQ: queryClient, LatestPublication: cliLatestPublication(catalog)})...)
+	ops = append(ops, obchannel.SlotOperations(obchannel.SlotOptions{Resolve: newCLISlotResolver(cfg, diagnosticRuntime), Evidence: newCLISlotEvidenceReader(cfg, diagnosticRuntime), UQ: queryClient, LatestPublication: cliLatestPublication(catalog), PlanCarries: cliPlanCarries(catalog)})...)
 	if binding.Roles.Has(roles.Channel) {
 		var sreOps []obchannel.Operation
 		sreOps, closeSRE, err = channelSREOperations(cfg, binding, clientFor("sre")(cfg.RuntimeStoreRedis()))
@@ -350,15 +350,6 @@ func openProductionRoleChannel(cfg config.Config, binding ChannelBinding) (_ *ro
 	if authErr != nil {
 		return runtime, nil
 	}
-	// A link read through the admin is read with the token the admin hands
-	// over here; the Workers and the Control read it from the same key.
-	if linkdTokenMode(cfg) {
-		tokens, err := linkdtoken.New(authClient, cfg.Redis.StatePrefix, nil)
-		if err != nil {
-			return nil, err
-		}
-		manager.ServeLinkdTokens(tokens)
-	}
 	options := obchannel.Options{Auth: manager, EnvironmentID: binding.EnvironmentID, Replica: binding.InstanceID, Incarnation: binding.Control.Incarnation,
 		Build: version + "/" + commit, Executor: executor, RouteControlDefaults: !binding.Roles.Has(roles.Worker)}
 	if !binding.Roles.Has(roles.Worker) {
@@ -367,6 +358,7 @@ func openProductionRoleChannel(cfg config.Config, binding ChannelBinding) (_ *ro
 	if router != nil {
 		options.Route = router.Invoke
 	}
+	options.OnFrontRefused = binding.FrontRefused
 	channel, err := obchannel.New(options)
 	if err != nil {
 		return nil, err
@@ -375,6 +367,7 @@ func openProductionRoleChannel(cfg config.Config, binding ChannelBinding) (_ *ro
 		restrictPublic()
 	}
 	runtime.Handler = composeCLI(publicNative, channel, manager.Handler(), frontSurface(channel, manager))
+	runtime.FrontRefusals = channel.FrontRefusals
 	runtime.HTTPConfigured = true
 	runtime.Ready = func(ctx context.Context) error {
 		// ActivePairings uses the auth pool's real Lua/read contract within

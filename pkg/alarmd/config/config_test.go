@@ -352,8 +352,10 @@ func TestRetiredKeysAreIgnoredAndNamed(t *testing.T) {
 		{"kafka:\n  initial_offset: \"\"\n", "initial_offset"},
 		{"limits:\n  reader:\n    max_envelope_bytes: 1\n", "reader"},
 		{"phase_two:\n  linkd:\n    absent_close_send: true\n", "absent_close_send"},
-		// The link's coordinates come from its Console; values keep only the
-		// Console's address and credentials.
+		// The link is reached only by its control plane: no sets, no Console.
+		{"phase_two:\n  linkd:\n    console_url: https://console.example.test/api\n", "console_url"},
+		{"phase_two:\n  linkd:\n    username: reader\n", "username"},
+		{"phase_two:\n  linkd:\n    password_file: /secret\n", "password_file"},
 		{"phase_two:\n  linkd:\n    connection:\n      address: stated:6379\n", "connection"},
 		{"phase_two:\n  linkd:\n    key_prefix: stated\n", "key_prefix"},
 		{"phase_two:\n  linkd:\n    event_source_id: \"42\"\n", "event_source_id"},
@@ -424,12 +426,36 @@ func validGoAccessConfigObject() Config {
 	cfg.PhaseTwo.Control.Timezone = "Asia/Shanghai"
 	cfg.PhaseTwo.Access.UQEndpoint = "http://unify-query.service"
 	cfg.PhaseTwo.Access.QuerySource = "alarmd"
+	withLinkdControlPlane(&cfg)
 	return cfg
+}
+
+// linkdControlPlaneYAML is the link's control plane every business fixture
+// states, under phase_two: the fixtures are a deployment that sends its
+// alerts to the link, and a stated link does not load without its plane
+// (ErrLinkdControlPlaneRequired). writeConfig puts
+// a secret file where linkdJWTSecretFilePlaceholder stands.
+const linkdControlPlaneYAML = "  linkd:\n    control_plane:\n      url: http://192.0.2.10:8090\n      jwt_secret_file: " +
+	linkdJWTSecretFilePlaceholder + "\n"
+
+const linkdJWTSecretFilePlaceholder = "/linkd-jwt-secret-file-placeholder"
+
+// withLinkdControlPlane states the link's control plane on a fixture
+// object, as a loaded secret file leaves it.
+func withLinkdControlPlane(cfg *Config) {
+	cfg.PhaseTwo.Linkd.ControlPlane = LinkdControlPlaneConfig{URL: "http://192.0.2.10:8090", JWTSecret: "example-secret"}
 }
 
 func writeConfig(t *testing.T, contents string) string {
 	t.Helper()
 
+	if strings.Contains(contents, linkdJWTSecretFilePlaceholder) {
+		secret := filepath.Join(t.TempDir(), "linkd-jwt-secret")
+		if err := os.WriteFile(secret, []byte("example-secret\n"), 0o600); err != nil {
+			t.Fatalf("write the link's secret: %v", err)
+		}
+		contents = strings.ReplaceAll(contents, linkdJWTSecretFilePlaceholder, secret)
+	}
 	path := filepath.Join(t.TempDir(), "alarmd.yaml")
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -593,7 +619,7 @@ redis:
   db: 8
   state_prefix: alarmd:phase-two:g1:v1` + platformCache + `
 phase_two:
-  worker:
+` + linkdControlPlaneYAML + `  worker:
     id: alarmd-worker-0
   control:
     strategy_cache_prefix: alarm-config

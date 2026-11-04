@@ -13,6 +13,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access/uq"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
@@ -26,6 +27,9 @@ type SlotOptions struct {
 	// strategy.get reports, so a Slot's older snapshot_revision is read
 	// beside it rather than taken for a fault.
 	LatestPublication func(context.Context) (SlotPublication, error)
+	// PlanCarries, when set, reads where the Query Group's Plans' Runtime
+	// State comes from, the read object.get's plan_carries is.
+	PlanCarries func(context.Context, execution.QueryGroupIdentity) (controlplane.PlanCarriesReading, error)
 }
 
 // SlotPublication is a publication by its content revision and epoch.
@@ -98,6 +102,14 @@ type SlotQueryResult struct {
 	PhysicalQueryDigest execution.PhysicalQueryDigest `json:"physical_query_digest"`
 	QueriedAt           time.Time                     `json:"queried_at"`
 	Query               uq.DiagnosticResult           `json:"query"`
+	// PlanCarries are the Plans whose current activation carried history
+	// across a detection edit and is in force at this Slot: a series point
+	// whose source time is before a Plan's activated_at was decided under
+	// its carried_from, not under this Slot's content. Absent when no Plan
+	// in force at the Slot carried; PlanCarriesUnavailable names why it
+	// could not be read (no_open_segment, read_failed).
+	PlanCarries            []controlplane.PlanCarryFact `json:"plan_carries,omitempty"`
+	PlanCarriesUnavailable string                       `json:"plan_carries_unavailable,omitempty"`
 }
 
 const slotBoundary = "Reconstructed with this build from a retained contract. A query now can contain late data; it is not the original response or a replay of detection, state, progress or events. The answering process is not necessarily the historical producer."
@@ -243,7 +255,9 @@ func SlotOperations(options SlotOptions) []Operation {
 		at := time.Now().UTC()
 		data, err := options.UQ.Query(ctx, selected.Spec, uq.DiagnosticSelection{SeriesDigest: p.String("series_digest"), Offset: p.Int("series_offset", 0),
 			MaxSeries: p.Int("max_series", 5), MaxPoints: p.Int("max_points", 100)}, requeryBudget(*selected))
-		out := Outcome{Value: SlotQueryResult{Kind: "requery_now", Slot: slot, PhysicalQueryDigest: selected.Spec.Digest, QueriedAt: at, Query: data}, Complete: data.Complete, Limitations: append([]string{slotBoundary}, data.Limitations...)}
+		result := SlotQueryResult{Kind: "requery_now", Slot: slot, PhysicalQueryDigest: selected.Spec.Digest, QueriedAt: at, Query: data}
+		result.PlanCarries, result.PlanCarriesUnavailable = slotPlanCarries(ctx, options, slot)
+		out := Outcome{Value: result, Complete: data.Complete, Limitations: append([]string{slotBoundary}, data.Limitations...)}
 		if data.NextOffset > 0 && err == nil {
 			next := Params{}
 			for key, value := range p {
@@ -276,6 +290,30 @@ const requeryMargin = 5 * time.Second
 func requeryBudget(query access.PlannedQuery) time.Duration {
 	frozen := time.Duration(query.DeadlineUnixMilli-query.ReadyAtUnixMilli) * time.Millisecond
 	return min(MaxExecutionTimeout-requeryMargin, max(0, frozen)+requeryMargin)
+}
+
+// slotPlanCarries is the Plans of the Slot's Query Group whose activation
+// carried history and is in force at the Slot. The reading is of the open
+// Segment; a Slot before a Plan's activation ran an earlier activation the
+// reading does not describe, so that Plan is left out.
+func slotPlanCarries(ctx context.Context, options SlotOptions, slot SlotContext) ([]controlplane.PlanCarryFact, string) {
+	if options.PlanCarries == nil {
+		return nil, ""
+	}
+	reading, err := options.PlanCarries(ctx, slot.QueryGroup)
+	switch {
+	case errors.Is(err, controlplane.ErrScheduleUnavailable):
+		return nil, "no_open_segment"
+	case err != nil:
+		return nil, "read_failed"
+	}
+	var carried []controlplane.PlanCarryFact
+	for _, fact := range reading.Plans {
+		if fact.CarriedFrom != nil && fact.ActivatedAt <= slot.EvaluationTime {
+			carried = append(carried, fact)
+		}
+	}
+	return carried, ""
 }
 
 func resolveSlot(ctx context.Context, options SlotOptions, p Params) (SlotPlan, *Failure) {

@@ -318,15 +318,17 @@ func (repository *RedisCatalogRepository) observeCutover(ctx context.Context, fa
 			largest = size
 		}
 	}
+	elapsed := time.Since(facts.started)
 	repository.observe(ctx, observability.Observation{
 		Component: observability.ComponentControlPlane, Stage: observability.StageScheduleCutover,
 		Result: factsTextResult(result), Err: err, ScheduleCutover: &observability.ScheduleCutoverFacts{
 			Result: result, Reason: reason, QueryGroup: facts.group,
 			Timelines: len(facts.timelineBytes), PayloadBytes: facts.payloadBytes,
 			MaxTimelineBytes: largest, TimelineBytes: facts.timelineBytes, SegmentsPruned: facts.pruned,
-			PrunesSkipped: facts.skipped, Duration: time.Since(facts.started),
+			PrunesSkipped: facts.skipped, Duration: elapsed,
 			QueryGroups: facts.decisions, ReadHoldLinks: facts.readHoldLinks, TimelinesRead: facts.read, RevisionsFolded: facts.revisionsFolded,
 			ContentSource: facts.contentSource,
 		},
+		Duration: elapsed, DurationKnown: true,
 	})
 }

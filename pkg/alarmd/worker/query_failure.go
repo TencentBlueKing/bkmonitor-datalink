@@ -188,7 +188,7 @@ func (coordinator *SlotExecutionCoordinator) observeQueryFailure(ctx context.Con
 	if errors.As(err, &timed) {
 		facts.Timing = queryTimingOf(timed.QueryFailureTiming())
 	}
-	observation := observability.Observation{Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted, Result: observability.ResultFailed, Operation: observability.Operation(operation), ReasonCode: reason, Duration: time.Since(started), Err: err, QueryFailure: &facts,
+	observation := observability.Observation{Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted, Result: observability.ResultFailed, Operation: observability.Operation(operation), ReasonCode: reason, Duration: time.Since(started), DurationKnown: true, Err: err, QueryFailure: &facts,
 		// A failed query explains itself as a lost round does: the decision
 		// that let it run as a normal round and the budget it ran under.
 		DivertDecision: observability.DivertDecisionWithBudget(ctx, observability.BudgetCaptureFromContext(ctx)),
@@ -234,7 +234,7 @@ func (coordinator *SlotExecutionCoordinator) observeQueryCompleted(
 	observation := observability.Observation{
 		Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted, Result: result,
 		Operation:  observability.Operation(operation),
-		ReasonCode: reason, Duration: time.Since(started),
+		ReasonCode: reason, Duration: time.Since(started), DurationKnown: true,
 		QueryFailure: facts, QueryStatus: providerStatusFacts(completion), QueryCodec: providerCodecFacts(completion),
 		QueryUnavailable: providerUnavailableFacts(completion), QueryTruncation: providerTruncationFacts(completion),
 		QueryRanges:      providerRangeFacts(completion),

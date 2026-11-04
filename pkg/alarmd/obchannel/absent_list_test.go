@@ -32,39 +32,12 @@ func TestAbsentListReadsThePageAndSaysWhatItCannot(t *testing.T) {
 			op = candidate
 		}
 	}
-	if strings.Join(op.Fields["outcome"].Enum, ",") != strings.Join(fleet.AbsentOutcomes, ",") ||
-		strings.Join(op.Fields["execution"].Enum, ",") != strings.Join(fleet.AbsentExecutions, ",") {
+	if strings.Join(op.Fields["outcome"].Enum, ",") != strings.Join(fleet.AbsentOutcomes, ",") || len(op.Fields["execution"].Enum) != 0 {
 		t.Fatalf("the filters are not the page's words: %+v", op.Fields)
 	}
 	for _, limit := range []string{"拆分前的旧策略表", "⌈候选数/8⌉ 轮 × 5 分钟", "source_now=document 只说明文档键还在", "table.at 早于 last_round.at"} {
 		if !strings.Contains(op.Summary, limit) {
 			t.Fatalf("the description does not say %q: %s", limit, op.Summary)
 		}
-	}
-}
-
-// fleet.get points to the page where the deployment has the Console, and
-// nowhere else.
-func TestFleetGetPointsToTheCandidatePageWhereTheConsoleIs(t *testing.T) {
-	for name, tc := range map[string]struct {
-		body string
-		next bool
-	}{
-		"configured":     {`{"linkd_console":{"needed":true,"state":"healthy"}}`, true},
-		"not configured": {`{"linkd_console":{"needed":false,"state":"not_configured"}}`, false},
-		"no standing":    {`{}`, false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			native := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(tc.body)) })
-			c := testChannel(t, &testAuth{}, NativeOperations(native)...)
-			_, out := call(t, c, envelope(c, "invoke", "fleet.get", Params{}))
-			found := false
-			for _, next := range out.Next {
-				found = found || next.Operation == "absent.list"
-			}
-			if found != tc.next {
-				t.Fatalf("next calls %+v, want absent.list %v", out.Next, tc.next)
-			}
-		})
 	}
 }

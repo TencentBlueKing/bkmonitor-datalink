@@ -158,14 +158,14 @@ func TestTheRolloutSinkWritesALineAndCountsTheEnd(t *testing.T) {
 }
 
 // The credentials the deployment holds are the redaction's literal secrets:
-// the CLI administrator key, the link Console password, and every Redis
+// the CLI administrator key, the link control plane JWT secret, and every Redis
 // connection's password and Sentinel password - the runtime store, each
 // platform cache on a Redis of its own (strategy, CMDB, dynamic config,
 // target groups) and the compatibility service Redis.
 func TestTheRedactionKnowsEveryCredentialTheDeploymentHolds(t *testing.T) {
 	cfg := config.Default()
 	cfg.CLI.AdminKey = "fixture-admin-key"
-	cfg.PhaseTwo.Linkd.Password = "fixture-linkd-password"
+	cfg.PhaseTwo.Linkd.ControlPlane.JWTSecret = "fixture-linkd-secret"
 	cfg.Redis.Password = "fixture-redis-password"
 	cfg.Redis.SentinelPassword = "fixture-sentinel-password"
 	// Every platform cache on a Redis of its own, and the compatibility
@@ -183,7 +183,7 @@ func TestTheRedactionKnowsEveryCredentialTheDeploymentHolds(t *testing.T) {
 	for _, value := range sreDeploymentSecrets(cfg) {
 		known[value] = true
 	}
-	want := []string{"fixture-admin-key", "fixture-linkd-password", "fixture-redis-password", "fixture-sentinel-password"}
+	want := []string{"fixture-admin-key", "fixture-linkd-secret", "fixture-redis-password", "fixture-sentinel-password"}
 	for _, name := range []string{"strategy", "cmdb", "dynamic", "group", "service", "pods"} {
 		want = append(want, "fixture-"+name+"-password", "fixture-"+name+"-sentinel")
 	}

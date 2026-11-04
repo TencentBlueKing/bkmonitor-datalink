@@ -14,7 +14,6 @@ import (
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 )
 
 // The service instance the case's series names: instance 7 of host 720002,
@@ -113,8 +112,8 @@ func TestAnInstancePlacedAlertIsFiledUnderTheInstancesAddress(t *testing.T) {
 	step(3)
 	fixture.sink.mu.Lock()
 	written := append([]contract.TriggerEventV1(nil), fixture.sink.written...)
-	closes := append([]linkdoutput.CloseRequest(nil), fixture.sink.closes...)
 	fixture.sink.mu.Unlock()
+	closes := fixture.linkCloses()
 	if len(written) == 0 {
 		t.Fatal("no event was written")
 	}
@@ -129,9 +128,10 @@ func TestAnInstancePlacedAlertIsFiledUnderTheInstancesAddress(t *testing.T) {
 			t.Fatalf("the alert reads bk_target_cloud_id %s, want the number 0", got)
 		}
 	}
-	if len(closes) != 1 || closes[0].Fingerprint != old || closes[0].Reason != linkdoutput.CloseReasonSupersededIdentity {
-		t.Fatalf("closes %+v, want the alert under the record's own fingerprint %s closed once as %s",
-			closes, old, linkdoutput.CloseReasonSupersededIdentity)
+	if len(closes) != 1 || !strings.Contains(closes[0], `"`+old+`"`) || strings.Contains(closes[0], current) ||
+		!strings.Contains(closes[0], "superseded_identity") {
+		t.Fatalf("closes by filter %v, want the alert under the record's own fingerprint %s closed once as superseded_identity",
+			closes, old)
 	}
 }
 

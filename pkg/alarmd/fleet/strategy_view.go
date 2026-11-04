@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 )
 
@@ -113,9 +114,17 @@ type ExpectedDetection struct {
 // ExpectedItem is one monitored item's configuration, in words. Two plans of
 // one strategy with the same words are one item.
 type ExpectedItem struct {
-	Interval      string   `json:"interval"`
-	DataSource    string   `json:"data_source"`
-	Algorithms    []string `json:"algorithms"`
+	Interval   string `json:"interval"`
+	DataSource string `json:"data_source"`
+	// DataUnit is the unit values and thresholds are compared in, in words;
+	// Comparison is how they are compared and why, one entry for the Plan
+	// and one for each Level that compares otherwise.
+	DataUnit   string   `json:"data_unit"`
+	Comparison []string `json:"comparison"`
+	Algorithms []string `json:"algorithms"`
+	// Recovery is each level's recovery: whether the alert recovers on its
+	// own, after how many periods, and how it ends.
+	Recovery      []string `json:"recovery"`
 	NoData        string   `json:"no_data"`
 	Target        string   `json:"target"`
 	EffectiveTime string   `json:"effective_time"`
@@ -196,7 +205,8 @@ func ExpectedOf(standing *StrategyStanding) ExpectedDetection {
 		}
 		for _, config := range plan.Config.Items {
 			item := expectedItemOf(config)
-			key := strings.Join([]string{item.Interval, item.DataSource, strings.Join(item.Algorithms, "|"), item.NoData, item.Target, item.EffectiveTime}, "\n")
+			key := strings.Join([]string{item.Interval, item.DataSource, item.DataUnit, strings.Join(item.Comparison, "|"), strings.Join(item.Algorithms, "|"), strings.Join(item.Recovery, "|"),
+				item.NoData, item.Target, item.EffectiveTime}, "\n")
 			if !seen[key] {
 				seen[key] = true
 				expected.Items = append(expected.Items, item)
@@ -214,9 +224,57 @@ func ExpectedOf(standing *StrategyStanding) ExpectedDetection {
 	return expected
 }
 
+// The words for the unit a Plan compares in when there is none.
+const (
+	DataUnitNone        = "无"
+	DataUnitMultiMetric = "无（多指标计算）"
+)
+
+// dataUnitWord says the unit a Plan compares in.
+func dataUnitWord(config StrategyPlanConfig) string {
+	switch {
+	case config.DataUnitBasis == controlplane.DataUnitBasisMultiQueryRaw:
+		return DataUnitMultiMetric
+	case config.DataUnit == "":
+		return DataUnitNone
+	}
+	return config.DataUnit
+}
+
+// comparisonWords say how the Plan's values are compared and why: one entry
+// for the Plan, then one for each Level that compares otherwise.
+func comparisonWords(config StrategyPlanConfig) []string {
+	words := []string{}
+	switch {
+	case config.DataUnitBasis == controlplane.DataUnitBasisExpressionUnit && config.DataUnit != "":
+		words = append(words, "按表达式声明的单位 "+config.DataUnit+" 比较，阈值按所选的阶换算")
+	case config.DataUnitBasis == controlplane.DataUnitBasisExpressionUnit:
+		words = append(words, "按原始数值比较，表达式声明了没有单位")
+	case config.DataUnitBasis == controlplane.DataUnitBasisMultiQueryRaw:
+		words = append(words, "按原始数值比较，多指标计算的结果没有单位，表达式也没有声明单位")
+	case config.DataUnit == "":
+		words = append(words, "按原始数值比较，指标没有单位")
+	default:
+		words = append(words, "按指标单位 "+config.DataUnit+" 比较，表达式没有声明单位，取查询的单位；阈值没选单位时按最小单位")
+	}
+	for _, level := range config.RawUnitLevels {
+		switch level.Reason {
+		case controlplane.ReasonDataUnitUnknownComparedRaw:
+			words = append(words, levelWord(level.LevelID)+"按原始数值比较，单位 "+level.Unit+" 不在单位表里")
+		case controlplane.ReasonUnitPrefixOutsideStepsReadAsSmallest:
+			words = append(words, levelWord(level.LevelID)+"的阈值单位 "+level.Prefix+" 和数据单位 "+level.Unit+" 不是同一类，按没选单位处理，阈值按最小阶读")
+		case controlplane.ReasonUnitPrefixIgnoredNoUnit:
+			words = append(words, levelWord(level.LevelID)+"的阈值单位 "+level.Prefix+" 不起作用，数据没有单位")
+		default:
+			words = append(words, levelWord(level.LevelID)+"按原始数值比较")
+		}
+	}
+	return words
+}
+
 func expectedItemOf(config StrategyPlanConfig) ExpectedItem {
 	item := ExpectedItem{Interval: intervalWord(config.Schedule.IntervalSeconds), DataSource: sourceWord(config.Query.SourceSemantics),
-		Algorithms: []string{}, NoData: "不检测无数据", Target: targetWord(config.Target), EffectiveTime: "全天生效"}
+		DataUnit: dataUnitWord(config), Comparison: comparisonWords(config), Algorithms: []string{}, Recovery: []string{}, NoData: "不检测无数据", Target: targetWord(config.Target), EffectiveTime: "全天生效"}
 	for _, level := range config.Levels {
 		names := make([]string, 0, len(level.Algorithms))
 		for _, algorithm := range level.Algorithms {
@@ -234,6 +292,7 @@ func expectedItemOf(config StrategyPlanConfig) ExpectedItem {
 			joiner = " 或 "
 		}
 		item.Algorithms = append(item.Algorithms, levelWord(level.LevelID)+"："+strings.Join(names, joiner))
+		item.Recovery = append(item.Recovery, levelWord(level.LevelID)+"："+recoveryWord(level.Recovery, level.Trigger, config.Schedule.IntervalSeconds))
 	}
 	if config.NoData != nil {
 		item.NoData = fmt.Sprintf("连续 %d 个周期无数据时告警（%s）", config.NoData.Continuous, levelWord(config.NoData.Level))
@@ -242,6 +301,52 @@ func expectedItemOf(config StrategyPlanConfig) ExpectedItem {
 		item.EffectiveTime = "只在配置的生效时段内检测"
 	}
 	return item
+}
+
+// recoveryWord is a level's recovery plan in words: off, or the R periods
+// without a trigger that end the alert and how it ends (status_setter), as
+// periods and as a duration. A -nodata setter adds the other way the alert
+// ends, which is not part of R: (R+T+1) periods since the group's last real
+// point, T the level's trigger window (the product specs
+// alarmd-recovery-and-missing-data.md §1, alarmd-strategy-capabilities.md
+// §2.3). A plan with a key or a value this build does not read - an end word
+// it does not know - is unknown rather than read as recovering, and so is a
+// -nodata end whose trigger window is not known.
+func recoveryWord(recovery, trigger StrategyTypedPlanConfig, intervalSeconds int64) string {
+	if recovery.Undecodable || recovery.UnknownKeys > 0 ||
+		recovery.Enabled == nil || recovery.ConsecutiveWindows == nil && *recovery.Enabled {
+		return "未知"
+	}
+	if !*recovery.Enabled {
+		return "不自动恢复"
+	}
+	ends := "恢复告警"
+	if recovery.End == contract.RecoveryEndClose {
+		ends = "关闭告警"
+	}
+	windows := int64(*recovery.ConsecutiveWindows)
+	word := fmt.Sprintf("连续 %d 个周期不满足触发条件时%s%s", windows, ends, periodsDuration(windows, intervalSeconds))
+	if recovery.MissingData != contract.RecoveryMissingDataEvaluateAsZero {
+		return word
+	}
+	if trigger.WindowSize == nil {
+		return "未知"
+	}
+	absent := windows + int64(*trigger.WindowSize) + 1
+	return word + fmt.Sprintf("；无数据满 %d 个周期%s也结束", absent, periodsDuration(absent, intervalSeconds))
+}
+
+// periodsDuration is a count of periods as a duration, "（约 3 分钟）", or
+// nothing where the period is not known.
+func periodsDuration(periods, intervalSeconds int64) string {
+	if intervalSeconds <= 0 {
+		return ""
+	}
+	seconds := periods * intervalSeconds
+	if seconds%60 == 0 {
+		return fmt.Sprintf("（约 %d 分钟）", seconds/60)
+	}
+	return fmt.Sprintf("（约 %d 秒）", seconds)
 }
 
 func intervalWord(seconds int64) string {
@@ -333,12 +438,11 @@ func targetWord(target StrategyTargetConfig) string {
 }
 
 // ActualDetection is what the strategy does detect: how punctual, its objects
-// by punctuality, and its open alerts on alarmd's copy.
+// by punctuality.
 type ActualDetection struct {
 	Punctuality     Punctuality `json:"punctuality"`
 	PunctualityWord string      `json:"punctuality_word"`
 	Objects         ViewObjects `json:"objects"`
-	OpenAlerts      *BoardCount `json:"open_alerts,omitempty"`
 	// LateWaits is what the late and overdue objects waited on, grouped.
 	LateWaits []LateWaitGroup `json:"late_waits,omitempty"`
 }
@@ -364,6 +468,6 @@ func ComposeStrategyView(actual StrategyViewActual, standing *StrategyStanding) 
 	return StrategyView{GeneratedAt: actual.GeneratedAt, MaxAgeSeconds: actual.MaxAgeSeconds, Conclusion: actual.Row,
 		Expected: ExpectedOf(standing),
 		Actual: ActualDetection{Punctuality: actual.Row.Punctuality, PunctualityWord: PunctualityWords[actual.Row.Punctuality],
-			Objects: actual.Objects, OpenAlerts: actual.Row.OpenAlerts, LateWaits: actual.LateWaits},
+			Objects: actual.Objects, LateWaits: actual.LateWaits},
 		StoreOutages: actual.StoreOutages, Check: actual.Check, KBAnchor: actual.Row.KBAnchor}
 }

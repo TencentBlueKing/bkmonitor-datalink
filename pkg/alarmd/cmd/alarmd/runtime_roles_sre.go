@@ -207,7 +207,7 @@ func sreRolloutSink(logger *observability.Logger, recorder *metric.Recorder) fun
 }
 
 func sreDeploymentSecrets(cfg config.Config) []string {
-	values := []string{cfg.CLI.AdminKey, cfg.PhaseTwo.Linkd.Password, cfg.Redis.Password, cfg.Redis.SentinelPassword}
+	values := []string{cfg.CLI.AdminKey, cfg.PhaseTwo.Linkd.ControlPlane.JWTSecret, cfg.Redis.Password, cfg.Redis.SentinelPassword}
 	for _, connection := range []config.RedisConnectionConfig{cfg.RuntimeStoreRedis(), cfg.StrategySourceRedis(), cfg.CMDBCacheRedis(), cfg.Kafka.LegacyAdapter.ServiceRedis} {
 		values = append(values, connection.Password, connection.SentinelPassword)
 	}

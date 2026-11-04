@@ -900,8 +900,10 @@ func TestARejectedQuerysRowNamesTheRefusalButNotItsWords(t *testing.T) {
 	if !ok || kept.Excerpt != excerpt || kept.HTTPStatus != 400 || kept.Class != "VM_SAMPLE_LIMIT" {
 		t.Fatalf("kept %+v (%v), want the excerpt on this replica", kept, ok)
 	}
-	if rows[0].Finding.Check != CheckQueryRefused {
-		t.Fatalf("finding %+v, want the query refused", rows[0].Finding)
+	// The provider classed it as the query's sample limit: the strategy's
+	// query as written (refusalNamesStrategyQuery).
+	if rows[0].Finding.Check != CheckPlanUnevaluable {
+		t.Fatalf("finding %+v, want the strategy's query refused as unevaluable", rows[0].Finding)
 	}
 	if code, known := failureFacets["QUERY_REJECTED"]; !known || code.class != ClassRefused {
 		t.Fatalf("QUERY_REJECTED blocked as %+v (known %v), want refused", code, known)

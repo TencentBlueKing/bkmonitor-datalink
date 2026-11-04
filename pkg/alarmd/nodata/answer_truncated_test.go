@@ -134,8 +134,13 @@ func TestAnExpectedSetThatCouldNotBeBuiltOutranksACutAnswer(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if outcome != test.want || len(result.Verdicts) != 0 {
-				t.Fatalf("outcome = %q with %d verdicts, want %q and none", outcome, len(result.Verdicts), test.want)
+			if outcome != test.want {
+				t.Fatalf("outcome = %q, want %q", outcome, test.want)
+			}
+			for key, verdict := range result.Verdicts {
+				if verdict != VerdictUnavailable {
+					t.Fatalf("verdict %q for %s, want no absence judged", verdict, key)
+				}
 			}
 		})
 	}

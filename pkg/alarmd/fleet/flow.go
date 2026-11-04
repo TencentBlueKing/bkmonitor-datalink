@@ -35,6 +35,15 @@ type FlowFacts struct {
 	StateWrites   uint64        `json:"state_writes"`
 	StateFailures uint64        `json:"state_failures"`
 	RuntimeRedis  FlowHistogram `json:"runtime_redis"`
+	// SeriesRejected are the series a Plan's admission refused before
+	// detection (series_admission_total{result="rejected"}): read beside
+	// StateWrites, the series a Plan judged, they are what came back from the
+	// queries and was not judged.
+	//
+	// A pointer so absent and zero differ: a replica of a build before it
+	// leaves it out, and the fleet's rejected rate is then a lower bound
+	// (OverviewThroughput.RejectedPerMinute AtLeast), not a measurement.
+	SeriesRejected *uint64 `json:"series_rejected,omitempty"`
 	// EventsEmitted are output_events_by_kind_total, EventsRejected
 	// output_events_rejected_all_total.
 	EventsEmitted  uint64 `json:"events_emitted"`

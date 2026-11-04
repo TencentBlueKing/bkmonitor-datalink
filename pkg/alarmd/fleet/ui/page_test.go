@@ -12,11 +12,9 @@ package ui
 import (
 	"reflect"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/absentalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/targetplan"
 	"regexp"
 	"strings"
@@ -894,54 +892,13 @@ func stringsOf[T ~string](values []T) []string {
 	return out
 }
 
-// Every answer the recovery gate can give has a word on the page.
-//
-// The page's answer table is hand-listed and the renderer counts only the
-// keys in it, so an answer missing here is not merely unworded: it does not
-// count towards the total, and the row then says the gate has not been asked
-// at all. That shipped -- a deployment whose every lookup came back under the
-// index protocol's answer read as "the recovery gate has not been asked yet"
-// while it was holding a hundred and sixty-eight recoveries, because the two
-// index answers were added to the server and not to the table.
-//
-// Pinned against the closed list rather than against the two that were
-// missing, so the next answer added in Go fails here instead of on a
-// deployment.
-func TestThePageHasWordingForEveryOpenAlertGateAnswer(t *testing.T) {
-	if len(openalerts.Answers) == 0 {
-		t.Fatal("no gate answers declared in Go; the check would pass vacuously")
-	}
-	found := regexp.MustCompile(`var OPEN_ALERT_ANSWER = \{([\s\S]*?)\};`).FindStringSubmatch(string(page))
-	if found == nil {
-		t.Fatal("the page no longer declares OPEN_ALERT_ANSWER")
-	}
-	for _, answer := range openalerts.Answers {
-		if !regexp.MustCompile(`\b` + string(answer) + `:`).MatchString(found[1]) {
-			t.Errorf("the recovery gate can answer %q and the page has no word for it: the row will not count it, "+
-				"and with only such answers it reads as though the gate was never asked", answer)
-		}
-	}
-}
-
-// The dependency table's role words, the Console's states, its operations
-// and the link's own health words are each hand-listed on the page, and the
-// Go side says each list is closed and the page is held to it. Nothing held
-// it: a role or a state added in Go reaches the page as its raw word, and
-// the first-screen Console sentence drops the part it has no word for.
-func TestThePageHasWordingForEveryDependencyRoleAndConsoleReading(t *testing.T) {
-	var unhealthy []string
-	for _, word := range absentalerts.LinkHealthWords {
-		if word != absentalerts.LinkHealthy {
-			unhealthy = append(unhealthy, word)
-		}
-	}
+// The dependency table's role words and the timeline's loss reasons are
+// each hand-listed on the page, and the Go side says each list is closed and
+// the page is held to it. Nothing held it: a role added in Go reaches the
+// page as its raw word.
+func TestThePageHasWordingForEveryDependencyRole(t *testing.T) {
 	tables := map[string][]string{
-		"ENDPOINT":              fleet.EndpointRoles,
-		"CONSOLE_STATE":         fleet.LinkdConsoleStates,
-		"CONSOLE_OP":            openalerts.ConsoleOps,
-		"LINK_HEALTH":           unhealthy,
-		"LINKD_DISCOVERY":       fleet.LinkdDiscoveryOutcomes,
-		"CONSOLE_FAILURE_CLASS": openalerts.ConsoleFailureClasses,
+		"ENDPOINT": fleet.EndpointRoles,
 		// Why an object has a span nothing evaluated: each reason its own
 		// cause and next step on the deployment line.
 		"TIMELINE_LOSS": {contract.ReasonSchedulePruned, contract.ReasonScheduleRepaired, contract.ReasonScheduleReopened},
@@ -959,20 +916,6 @@ func TestThePageHasWordingForEveryDependencyRoleAndConsoleReading(t *testing.T) 
 				t.Errorf("%s has no word for %q", table, word)
 			}
 		}
-	}
-}
-
-// The first-screen Console line is shown from the server's decision and
-// nothing else: a page that decided from the state alone would put a
-// permanently true sentence on every deployment whose events all go the
-// Python-compatible way.
-func TestTheFirstScreenConsoleLineReadsTheServersAttention(t *testing.T) {
-	body := regexp.MustCompile(`function consoleBrief\(standing, deployment\) \{\n  if \(!standing \|\| !standing\.attention\) return '';`)
-	if !body.MatchString(string(page)) {
-		t.Fatal("consoleBrief no longer returns nothing unless the server set attention")
-	}
-	if !strings.Contains(string(page), "consoleBrief(deployment.linkd_console, deployment)") {
-		t.Fatal("the brief no longer renders the Console line from deployment.linkd_console")
 	}
 }
 
@@ -995,18 +938,6 @@ func TestThePageHasWordingForEveryDependencyEvidence(t *testing.T) {
 	for _, word := range fleet.DependencyEvidences {
 		if !worded[word] {
 			t.Errorf("DEPENDENCY_EVIDENCE has no words for %s", word)
-		}
-	}
-}
-
-// The Console's listing reaches the first-screen Console sentence when the
-// link lists several targets: the count and the names the discovery carries,
-// not only the error that refused them.
-func TestTheConsoleSentenceNamesTheTargetsTheLinkListed(t *testing.T) {
-	text := string(page)
-	for _, field := range []string{"d.target_count", "d.target_names"} {
-		if !strings.Contains(text, field) {
-			t.Errorf("the Console sentence does not read %s", field)
 		}
 	}
 }

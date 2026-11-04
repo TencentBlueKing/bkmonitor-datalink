@@ -33,7 +33,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/roles"
@@ -226,7 +225,7 @@ func runPhaseTwoApplicationWithDependencies(
 	// The collector budget rides on the same line. Nothing outside the process
 	// can set it, so this and the facts table are the only two places anyone
 	// reading a running Pod can find out what the collector was told.
-	logger.Info(observability.StageStartup, observability.ResultStarted, 0, 0,
+	logger.InfoEvent(observability.StageStartup, observability.ResultStarted, 0,
 		slog.String("diagnostics_listen", cfg.HTTP.DiagnosticsFact()),
 		slog.Int64("go_memory_limit_bytes", profile.Capacity.GoMemoryLimitBytes),
 		slog.Int("go_gc_percent", profile.Capacity.GoGCPercent),
@@ -235,7 +234,7 @@ func runPhaseTwoApplicationWithDependencies(
 	// from the generic one: counted on canonical_encoding_records_shadow_total
 	// and said here at most once a minute. The generic digest was returned.
 	contract.SetRecordsDigestDivergenceReporter(func(divergence contract.RecordsDigestDivergence) {
-		logger.Warn("canonical_encoder", "records_digest_differed", divergence.Records, 0,
+		logger.WarnEvent("canonical_encoder", "records_digest_differed", divergence.Records,
 			slog.String("domain", divergence.Domain), slog.String("served", divergence.Served),
 			slog.String("established", divergence.Established))
 	})
@@ -247,7 +246,7 @@ func runPhaseTwoApplicationWithDependencies(
 		if errors.Is(err, clirelease.ErrInvalid) {
 			result = "invalid"
 		}
-		logger.Warn("cli_release", result, 0, 0, slog.String("error", err.Error()))
+		logger.WarnEvent("cli_release", result, 0, slog.String("error", err.Error()))
 	}
 	server, err := dependencies.newHTTP(recorder, application, httpSurfaceOf(cfg))
 	if err != nil {
@@ -298,7 +297,8 @@ func runPhaseTwoApplicationWithDependencies(
 		server.SetAPI(bundle.dependencies.FleetAPI)
 	}
 	if err == nil && bundle != nil && bundle.dependencies.NoDataCloseAPI != nil {
-		server.SetInternalAPI(bundle.dependencies.NoDataCloseAPI)
+		bindNoDataCloseAPI(bundle.dependencies.NoDataCloseAPI, bundle.dependencies.Config.HTTP.InternalListen, bundle.dependencies.Recorder,
+			logger, server.SetInternalAPI)
 	}
 	if err == nil && bundle != nil && bundle.dependencies.ControlStream != nil {
 		// The same for the control stream: a Worker that connects before
@@ -385,9 +385,9 @@ func runPhaseTwoApplicationWithDependencies(
 		normalizeRuntimeShutdownError(httpErr, httpStoppedEarly),
 	)
 	if result == nil {
-		logger.Info(observability.StageShutdown, observability.ResultSuccess, 0, 0)
+		logger.InfoEvent(observability.StageShutdown, observability.ResultSuccess, 0)
 	} else {
-		logger.Error(observability.StageShutdown, observability.ResultFailed, 0, 0)
+		logger.ErrorEvent(observability.StageShutdown, observability.ResultFailed, 0)
 	}
 	return result
 }
@@ -654,11 +654,8 @@ type phaseTwoWorkerBundleDependencies struct {
 	Recorder    *metric.Recorder
 	Observer    observability.Observer
 	TargetFlow  *observability.TargetFlow
-	// FleetAPI serves the object facts once this runtime is open, and
-	// RefreshOpenAlerts reads the consumer's open alert publication into the
-	// process copy; run once at start and then on its own cadence.
-	RefreshOpenAlerts func(context.Context)
-	// RunOpenAlerts owns subscription/reconciliation for the current protocol.
+	// RunOpenAlerts runs the refresh passes of alarmd's own copy of the
+	// link's active alerts (activecopy.Copy.Run).
 	RunOpenAlerts    func(context.Context) error
 	RunEffectiveTime func(context.Context)
 	// RunAbsentClose is the control leader's difference against the
@@ -666,9 +663,8 @@ type phaseTwoWorkerBundleDependencies struct {
 	// goroutine for the process, which decides per round whether it is the
 	// leader.
 	RunAbsentClose func(context.Context)
-	// RunTargetScopeClose decides the closes of alerts whose target left
-	// the strategy's scope, from what this replica's own admission step
-	// turned away. Every replica runs its own.
+	// RunTargetScopeClose decides the superseded-identity closes, from what
+	// this replica's own admission step offered. Every replica runs its own.
 	RunTargetScopeClose func(context.Context)
 	// Lookback is the late-data lookback on the query path, nil when this
 	// process does not run it. The bundle runs its rechecks and drops the
@@ -684,7 +680,7 @@ type phaseTwoWorkerBundleDependencies struct {
 	// NoDataCloseAPI records manual closes of no-data alerts (decision-024),
 	// served on the cluster-only listener; nil for a process without the
 	// control role.
-	NoDataCloseAPI http.Handler
+	NoDataCloseAPI *noDataCloseAPI
 	// PublicSurfaceRestricted is whether the listener's public surface is
 	// restricted: asked for by the configuration and the CLI came up.
 	PublicSurfaceRestricted bool
@@ -738,7 +734,10 @@ type phaseTwoWorkerBundle struct {
 	targetScopeClose *scopeclose.Closer
 	// cmdbIndex is the CMDB host index of every tenant the admission step
 	// reads. Kept so a test can refresh it rather than wait for its loop.
-	cmdbIndex     *cmdbcache.TenantStores
+	cmdbIndex *cmdbcache.TenantStores
+	// maintenance is the effective-time maintenance loop, once bound. Kept
+	// so a test can tell a whole step ran rather than wait a fixed time.
+	maintenance   *maintenanceSource
 	runtimeConfig *observability.RuntimeConfigFacts
 	dependencies  phaseTwoWorkerBundleDependencies
 	// liveness is what the liveness probe judges; see phaseTwoLiveness.
@@ -3094,10 +3093,6 @@ func (bundle *phaseTwoWorkerBundle) startMaintenance() {
 		bundle.maintenanceWG.Add(1)
 		go bundle.publishFleetSnapshots()
 	}
-	if bundle.dependencies.RefreshOpenAlerts != nil {
-		bundle.maintenanceWG.Add(1)
-		go bundle.refreshOpenAlerts()
-	}
 	if bundle.dependencies.RefreshPlatformSettings != nil {
 		bundle.maintenanceWG.Add(1)
 		go bundle.refreshPlatformSettings()
@@ -3148,27 +3143,6 @@ func (bundle *phaseTwoWorkerBundle) refreshPlatformSettings() {
 			return
 		case <-ticker.C:
 			bundle.dependencies.RefreshPlatformSettings(bundle.maintenanceCtx)
-		}
-	}
-}
-
-// refreshOpenAlerts keeps the process copy of the consumer's open alert set
-// current. The first read is immediate rather than a cycle away, so the
-// first evaluations after a start are not answered from an empty copy when
-// the publication is there to read. A read that fails is the copy's own
-// state to report (it goes self-maintained and says why); nothing here
-// retries or stops the pipeline over it.
-func (bundle *phaseTwoWorkerBundle) refreshOpenAlerts() {
-	defer bundle.maintenanceWG.Done()
-	bundle.dependencies.RefreshOpenAlerts(bundle.maintenanceCtx)
-	ticker := time.NewTicker(openalerts.RefreshInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-bundle.maintenanceCtx.Done():
-			return
-		case <-ticker.C:
-			bundle.dependencies.RefreshOpenAlerts(bundle.maintenanceCtx)
 		}
 	}
 }
@@ -4215,6 +4189,14 @@ func (bundle *phaseTwoWorkerBundle) refreshAndReconcile(ctx context.Context, ref
 			result, err = bundle.dependencies.Control.Refresh(ctx)
 			if err == nil {
 				err = bundle.applyControlRefresh(ctx, result)
+			} else if result.Activation != nil {
+				// A round whose activation failed and whose last good one
+				// could not be read either - the body lost under its header -
+				// is not applied, but it did attempt the activation, and the
+				// standing is the one place that run of failures is counted.
+				bundle.mu.Lock()
+				bundle.noteActivationLocked(result.Activation)
+				bundle.mu.Unlock()
 			}
 		} else {
 			var result phaseTwoControlRefreshResult
@@ -4549,7 +4531,8 @@ func phaseTwoRuntimeObserver(observer observability.Observer) observability.Obse
 		observeRuntime(ctx, observer, observability.Observation{
 			Component: observability.ComponentOwnership, Stage: observability.StageFenceChecked,
 			Result: observation.Result, Operation: observation.Operation,
-			ReasonCode: observation.ReasonCode, Duration: observation.Duration, Trace: observation.Trace, Err: observation.Err,
+			ReasonCode: observation.ReasonCode, Duration: observation.Duration, DurationKnown: observation.DurationKnown,
+			Trace: observation.Trace, Err: observation.Err,
 		})
 	})
 }

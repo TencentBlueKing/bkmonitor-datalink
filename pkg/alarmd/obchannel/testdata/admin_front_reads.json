@@ -1,0 +1,12 @@
+{
+ "source": "the admin page's FRONT_READ_OPERATIONS (front-reads.ts) at be08d1f13c",
+ "operations": [
+  "changes.list",
+  "overview.get",
+  "runtime.get",
+  "strategy.board",
+  "strategy.config",
+  "strategy.view",
+  "trends.get"
+ ]
+}

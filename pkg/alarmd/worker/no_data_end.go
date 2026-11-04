@@ -12,12 +12,14 @@ package worker
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/sourceliveness"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/trigger"
 )
 
@@ -41,6 +43,40 @@ type noDataEndPlan struct {
 	loaded   execution.NoDataEndLoaded
 	complete bool
 	present  map[execution.SeriesIdentityDigest]struct{}
+	// carry is the entries the index took this round from the generation
+	// the Plan's activation carries it from, nil when none.
+	carry *noDataEndCarry
+	// source asks whether the Plan's source is alive before an absent
+	// series ends on no data; nil ends it as configured.
+	source *noDataEndSource
+}
+
+// noDataEndSource is the source liveness judge for one Plan's absent ends:
+// its primary query's facts, as the Slot's Access resolved them, at the
+// period the round judged.
+type noDataEndSource struct {
+	judge  sourceliveness.Judge
+	facts  execution.QueryPlanFacts
+	found  bool
+	plan   execution.PlanIdentity
+	judged int64
+}
+
+// alive is whether entry's no-data end goes ahead.
+func (source *noDataEndSource) alive(entry execution.NoDataEndEntry, spanSeconds int64) bool {
+	// The span's first empty period is the one after the entry's last real
+	// point (noDataEndDue times the end from it); the probe reads from there
+	// on, never the last period with data.
+	return source.judge.Judge(sourceliveness.Subject{Plan: source.plan, LevelID: entry.LevelID, Series: entry.Series,
+		NoDataSpanSeconds: spanSeconds, LastRealPoint: entry.LastRealPoint}, source.facts, source.judged).Ends()
+}
+
+// dueNext starts the probe a round whose end is due will read, over entry's
+// span.
+func (source *noDataEndSource) dueNext(entry execution.NoDataEndEntry, spanSeconds int64) {
+	if source.found {
+		source.judge.Ahead(source.facts, entry.LastRealPoint, source.judged, spanSeconds)
+	}
 }
 
 type noDataEndRound map[execution.PlanIdentity]noDataEndPlan
@@ -96,7 +132,16 @@ func (stream *streamedExecution) loadNoDataEnds(ctx context.Context) error {
 	for _, item := range loaded {
 		stream.noDataEnds[item.Key.Plan] = item
 	}
+	stream.carryNoDataEnds(ctx, index)
 	return nil
+}
+
+// sourceLiveness is the coordinator's source liveness judge, nil without one.
+func (stream *streamedExecution) sourceLiveness() sourceliveness.Judge {
+	if stream.coordinator == nil {
+		return nil
+	}
+	return stream.coordinator.ports.SourceLiveness
 }
 
 // noDataEndRound is what the commit's absent walk decides on, per Plan whose
@@ -125,6 +170,14 @@ func (stream *streamedExecution) noDataEndRound() noDataEndRound {
 				plan.present[outcome.SeriesIdentityDigest] = struct{}{}
 			}
 		}
+		if carry, carried := stream.noDataEndCarries[due.Identity]; carried {
+			plan.carry = &carry
+		}
+		if judge := stream.sourceLiveness(); judge != nil {
+			facts, found := stream.header.PrimaryQueryFacts(due.Identity)
+			plan.source = &noDataEndSource{judge: judge, facts: facts, found: found, plan: due.Identity,
+				judged: judgedSourceTime(stream.header, due)}
+		}
 		round[due.Identity] = plan
 	}
 	return round
@@ -151,27 +204,109 @@ func (coordinator *SlotExecutionCoordinator) applyNoDataEnds(ctx context.Context
 	}
 	sort.Slice(plans, func(i, j int) bool { return lessPlanIdentity(plans[i], plans[j]) })
 	for _, identity := range plans {
+		plan := round[identity]
 		if _, skip := withheld[identity]; skip {
+			// The output did not land, so nothing is decided on the index;
+			// the held Levels are still held, and still said.
+			coordinator.keepSourceHeld(ctx, request, identity)
 			continue
 		}
 		due, ok := duePlan(header.DuePlans, identity)
 		if !ok {
 			continue
 		}
-		plan := round[identity]
 		if plan.loaded.Undecodable > 0 {
 			coordinator.observeNoDataEnds(ctx, request, identity, observability.NoDataEndUndecodable, plan.loaded.Undecodable)
 		}
 		if plan.loaded.Unavailable {
 			coordinator.observeNoDataEnds(ctx, request, identity, observability.NoDataEndUnavailable, 1)
+			// An index that cannot be read says nothing about the Levels
+			// it holds: they stay held, their clocks running, and their
+			// line stays up however long the index is unreadable.
+			coordinator.keepSourceHeld(ctx, request, identity)
 			continue
 		}
 		judged := judgedSourceTime(header, due)
 		if err := coordinator.applyPlanNoDataEnds(ctx, request, header.ExecutionID, judged, due, plan, updatesOf(evaluated, identity), index); err != nil {
 			return err
 		}
+		if !plan.complete {
+			// Nor does a round whose answer cannot say who is absent.
+			coordinator.keepSourceHeld(ctx, request, identity)
+			continue
+		}
+		coordinator.observeSourceHeld(ctx, request, identity)
 	}
 	return nil
+}
+
+// keepSourceHeld keeps the Plan's held Levels held through a round that
+// could not ask about them - its index unreadable, its answer incomplete,
+// its output withheld - and writes their account. A Level not asked about
+// is otherwise let go after two spans (sourceliveness heldStaleAfter), and
+// its line would leave the page while it is still held.
+func (coordinator *SlotExecutionCoordinator) keepSourceHeld(ctx context.Context, request execution.SlotExecutionRequest, plan execution.PlanIdentity) {
+	if reporter, ok := coordinator.ports.SourceLiveness.(SourceHeldReporter); ok {
+		reporter.Keep(plan)
+	}
+	coordinator.observeSourceHeld(ctx, request, plan)
+}
+
+// observeSourceHeldUnindexed writes the held account of every due Plan
+// written to end on no data whose no-data end index this round did not
+// read - a deployment that keeps none, or a Plan naming no alert identity.
+// Its present series' ends are held by the evaluator all the same, and the
+// account is this process's, not the index's: without this the holds would
+// reach no line and be let go unseen.
+func (coordinator *SlotExecutionCoordinator) observeSourceHeldUnindexed(ctx context.Context, request execution.SlotExecutionRequest,
+	header execution.InternalExecutionHeader) {
+	if coordinator.ports.SourceLiveness == nil {
+		return
+	}
+	round := noDataEndsFrom(ctx)
+	for _, due := range header.DuePlans {
+		if _, indexed := round[due.Identity]; indexed || !planEndsOnNoData(due) {
+			continue
+		}
+		coordinator.observeSourceHeld(ctx, request, due.Identity)
+	}
+}
+
+// SourceHeldReporter is a source liveness judge that also says which of a
+// Plan's Levels it holds (sourceliveness.Checker).
+type SourceHeldReporter interface {
+	Held(plan execution.PlanIdentity) (sourceliveness.HeldReport, bool)
+	// Keep keeps the Plan's held Levels held through a round that could not
+	// ask about them.
+	Keep(plan execution.PlanIdentity)
+}
+
+// observeSourceHeld writes the Plan's Levels held on a source that cannot be
+// shown alive, while any is held and once more when none is: what the
+// fleet's SOURCE_UNKNOWN_HELD line reads. Nothing when the judge keeps no
+// such account.
+func (coordinator *SlotExecutionCoordinator) observeSourceHeld(ctx context.Context, request execution.SlotExecutionRequest, plan execution.PlanIdentity) {
+	reporter, ok := coordinator.ports.SourceLiveness.(SourceHeldReporter)
+	if !ok {
+		return
+	}
+	report, say := reporter.Held(plan)
+	if !say {
+		return
+	}
+	fact := observability.SourceLivenessHeldFact{Levels: report.Levels, PastBound: report.PastBound,
+		SourceKind: string(report.Kind), TableID: report.TableID, LastResult: string(report.Last.Result),
+		LastReason: string(report.Last.Reason), BoundSeconds: int64(report.Bound / time.Second)}
+	if !report.FirstHeld.IsZero() {
+		fact.FirstHeldUnix = report.FirstHeld.Unix()
+	}
+	ctx = observability.ContextWithTraceFields(ctx, observability.TraceFields{StrategyID: plan.StrategyID, BusinessID: plan.BusinessID})
+	coordinator.emitObservation(ctx, observability.Observation{
+		Component: observability.ComponentState, Stage: observability.StageSourceLiveness, Result: observability.ResultSuccess,
+		ReasonCode: observability.ReasonNone, Operation: observability.Operation(request.Operation),
+		Counts: observability.Counts{Keys: int64(report.Levels)}, SourceLivenessHeld: &fact,
+		Trace: observability.TraceFields{StrategyID: plan.StrategyID, BusinessID: plan.BusinessID},
+	})
 }
 
 func updatesOf(evaluated execution.EvaluationResult, plan execution.PlanIdentity) []execution.NoDataEndUpdate {
@@ -190,6 +325,10 @@ type noDataEndDecision struct {
 	write                       execution.NoDataEndWrite
 	ends                        map[execution.SeriesIdentityDigest][]execution.NoDataEndEntry
 	overflow, notOpen, unjudged int
+	// sourceUnknown counts the due ends held because the source could not
+	// be shown alive: the entry stays, nothing is sent, and a later round
+	// asks again.
+	sourceUnknown int
 }
 
 // decideNoDataEnds decides a Plan's index for one round, without I/O. First
@@ -249,7 +388,15 @@ func decideNoDataEnds(due execution.DuePlan, plan noDataEndPlan, updates []execu
 			decision.write.Deletes = append(decision.write.Deletes, key)
 			decision.notOpen++
 		case noDataEndDue(due, entry, judgedAt):
+			// Before no data ends it, the source itself: no data from a
+			// source that may be down is not "it stopped happening".
+			if plan.source != nil && !plan.source.alive(entry, noDataEndSpan(due, entry.LevelID)) {
+				decision.sourceUnknown++
+				continue
+			}
 			decision.ends[key.Series] = append(decision.ends[key.Series], entry)
+		case plan.source != nil && noDataEndDue(due, entry, judgedAt+noDataEndStep(due, entry.LevelID)):
+			plan.source.dueNext(entry, noDataEndSpan(due, entry.LevelID))
 		}
 	}
 	return decision
@@ -262,20 +409,27 @@ func (coordinator *SlotExecutionCoordinator) applyPlanNoDataEnds(ctx context.Con
 	write := decision.write
 	write.TTL = noDataEndTTL(due)
 	for outcome, count := range map[string]int{observability.NoDataEndOverflow: decision.overflow,
-		observability.NoDataEndNotOpen: decision.notOpen, observability.NoDataEndUnjudged: decision.unjudged} {
+		observability.NoDataEndNotOpen: decision.notOpen, observability.NoDataEndUnjudged: decision.unjudged,
+		observability.NoDataEndSourceUnknown: decision.sourceUnknown} {
 		if count > 0 {
 			coordinator.observeNoDataEnds(ctx, request, due.Identity, outcome, count)
 		}
 	}
 	if len(decision.ends) > 0 {
-		sent, failed := coordinator.sendNoDataEnds(ctx, request, executionID, judgedAt, due, decision.ends)
-		write.Deletes = append(write.Deletes, sent...)
+		sent, held, failed := coordinator.sendNoDataEnds(ctx, request, executionID, judgedAt, due, decision.ends)
+		write.Deletes = append(append(write.Deletes, sent...), held...)
 		if len(sent) > 0 {
 			coordinator.observeNoDataEnds(ctx, request, due.Identity, observability.NoDataEndSent, len(sent))
+		}
+		if len(held) > 0 {
+			coordinator.observeNoDataEnds(ctx, request, due.Identity, observability.NoDataEndLevelNotOpen, len(held))
 		}
 		if failed > 0 {
 			coordinator.observeNoDataEnds(ctx, request, due.Identity, observability.NoDataEndSendFailed, failed)
 		}
+	}
+	if plan.carry != nil {
+		write = withCarriedEnds(write, *plan.carry)
 	}
 	if len(write.Puts) == 0 && len(write.Deletes) == 0 {
 		return nil
@@ -287,6 +441,15 @@ func (coordinator *SlotExecutionCoordinator) applyPlanNoDataEnds(ctx context.Con
 		// Reported, not raised: what this round decided is already sent, and
 		// the next round that evaluates or walks these series writes again.
 		coordinator.observeNoDataEnds(ctx, request, due.Identity, observability.NoDataEndUnavailable, 1)
+		return nil
+	}
+	if plan.carry != nil {
+		// Only once the new generation holds them: an entry removed from
+		// the old index first and not written to the new one would be lost
+		// with the alert it ends.
+		if err := index.ApplyNoDataEnds(ctx, clearCarriedEnds(*plan.carry, write)); err != nil {
+			coordinator.observeNoDataCarry(ctx, request.Operation, NoDataCarryEndsPreviousNotCleared, 1)
+		}
 	}
 	return nil
 }
@@ -334,6 +497,32 @@ func noDataEndDue(due execution.DuePlan, entry execution.NoDataEndEntry, now int
 	return false
 }
 
+// noDataEndSpan is how long an entry's level waits on no data before it
+// ends, in seconds: (R + T + 1) periods; zero for a level not written so.
+func noDataEndSpan(due execution.DuePlan, levelID uint32) int64 {
+	for _, level := range due.CompiledPlan.Levels().All() {
+		if level.Definition().LevelID != levelID {
+			continue
+		}
+		recovery, triggerPlan := level.Recovery(), level.Trigger()
+		if recovery.MissingData != contract.RecoveryMissingDataEvaluateAsZero {
+			return 0
+		}
+		return (int64(recovery.ConsecutiveWindows) + int64(triggerPlan.WindowSize) + 1) * int64(triggerPlan.StepSeconds)
+	}
+	return 0
+}
+
+// noDataEndStep is an entry's level's period, in seconds.
+func noDataEndStep(due execution.DuePlan, levelID uint32) int64 {
+	for _, level := range due.CompiledPlan.Levels().All() {
+		if level.Definition().LevelID == levelID {
+			return int64(level.Trigger().StepSeconds)
+		}
+	}
+	return 0
+}
+
 // noDataEndTTL is how long a Plan's index lives without a write: twice the
 // longest no-data span of its levels, and a day at least, so an absent
 // series' entry outlives the wait for its end.
@@ -351,17 +540,18 @@ func noDataEndTTL(due execution.DuePlan) time.Duration {
 }
 
 // sendNoDataEnds sends each absent series' end, one event per series for its
-// due levels, and returns the entries whose end the sink took and how many
-// series it did not.
+// due levels, and returns the entries whose end the sink took, the entries of
+// series held because none of their due levels is the one the alert is at,
+// and how many series the sink did not take.
 func (coordinator *SlotExecutionCoordinator) sendNoDataEnds(ctx context.Context, request execution.SlotExecutionRequest,
-	executionID string, sourceTime int64, due execution.DuePlan, ends map[execution.SeriesIdentityDigest][]execution.NoDataEndEntry) ([]execution.NoDataEndEntryKey, int) {
+	executionID string, sourceTime int64, due execution.DuePlan, ends map[execution.SeriesIdentityDigest][]execution.NoDataEndEntry) ([]execution.NoDataEndEntryKey, []execution.NoDataEndEntryKey, int) {
 	series := make([]execution.SeriesIdentityDigest, 0, len(ends))
 	for digest := range ends {
 		series = append(series, digest)
 	}
 	sort.Slice(series, func(i, j int) bool { return series[i] < series[j] })
 	now := int64(request.Contract.Slot.EvaluationTime)
-	var sent []execution.NoDataEndEntryKey
+	var sent, held []execution.NoDataEndEntryKey
 	failed := 0
 	for _, digest := range series {
 		entries := ends[digest]
@@ -370,6 +560,13 @@ func (coordinator *SlotExecutionCoordinator) sendNoDataEnds(ctx context.Context,
 			levels = append(levels, entry.LevelID)
 		}
 		sort.Slice(levels, func(i, j int) bool { return levels[i] < levels[j] })
+		levels, ended := currentLevelEnds(coordinator.ports.OpenAlerts, due.Identity, entries[0].Fingerprint, levels)
+		if !ended {
+			for _, entry := range entries {
+				held = append(held, entry.Key())
+			}
+			continue
+		}
 		event, err := trigger.BuildAbsentNoDataEndV1(trigger.AbsentNoDataEndV1{
 			TenantID: due.Identity.TenantID, BusinessID: due.Identity.BusinessID, Plan: due.CompiledPlan,
 			DimensionIdentityDigest: string(digest), Dimensions: entries[0].Dimensions, DedupeMD5: entries[0].Fingerprint,
@@ -384,14 +581,33 @@ func (coordinator *SlotExecutionCoordinator) sendNoDataEnds(ctx context.Context,
 			failed++
 			continue
 		}
-		if coordinator.ports.OpenAlerts != nil {
-			coordinator.ports.OpenAlerts.Acknowledged([]contract.TriggerEventV1{*event})
-		}
+		// writeEvents told the copy of the acknowledged end; told again, the
+		// open-episode record and the open count heard it twice.
 		for _, entry := range entries {
 			sent = append(sent, entry.Key())
 		}
 	}
-	return sent, failed
+	return sent, held, failed
+}
+
+// currentLevelEnds is the due levels an absent series' end carries: only
+// the Level the alert is at - the lowest open Level id, as the open-alert
+// gate takes it (trigger openLevelResultsV2) - when the set knows the
+// series' open Levels; every due level otherwise, as before it could tell.
+// ended is false when none of them is that Level.
+func currentLevelEnds(set any, plan execution.PlanIdentity, fingerprint string, levels []uint32) ([]uint32, bool) {
+	levelSet, ok := set.(contract.OpenLevelSet)
+	if !ok {
+		return levels, true
+	}
+	open, known := levelSet.OpenLevels(plan.TenantID, plan.StrategyID, fingerprint)
+	if !known {
+		return levels, true
+	}
+	if len(open) == 0 || !slices.Contains(levels, slices.Min(open)) {
+		return nil, false
+	}
+	return []uint32{slices.Min(open)}, true
 }
 
 // observeNoDataEnds reports one outcome of a Plan's index, counted.

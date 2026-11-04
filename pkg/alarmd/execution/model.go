@@ -498,7 +498,10 @@ type DuePlan struct {
 	ScheduleSpec     ScheduleSpec
 	// StateCarry is what the Plan's activation carries over from the state
 	// generation it moved from (ActivatedPlan.Carry), nil when nothing.
-	StateCarry                  *StateCarry
+	StateCarry *StateCarry
+	// NoDataCarry is where the Plan's activation carries its no-data state
+	// from (ActivatedPlan.NoDataCarry), nil when nothing.
+	NoDataCarry                 *NoDataCarry
 	CompletionDeadlineUnixMilli int64
 	PartialCapabilities         []LevelPartialCapability
 	// LevelContractRefs are the Level contract references the Control
@@ -1826,8 +1829,11 @@ type OpenAlertGateCounts struct {
 	PassedOneTimeClose     uint64
 	HeldNoOpenAlert        uint64
 	HeldFingerprintUnknown uint64
-	NotConfigured          uint64
-	ProtocolNotGated       uint64
+	// HeldLevelNotOpen is a RECOVERY of Levels none of which the series'
+	// open alert has open: held, no envelope.
+	HeldLevelNotOpen uint64
+	NotConfigured    uint64
+	ProtocolNotGated uint64
 }
 
 type PlanEvaluationResult struct {
@@ -3403,7 +3409,42 @@ type PrimaryInputFact struct {
 	// answer is empty, and a quiet group and a missing one look the same.
 	// Set by the worker the same way, observation only.
 	UnfilledWhenEmpty bool
+	// FilteredWhenEmpty says a FULL, EMPTY primary whose expression filters
+	// its values (DataRequirement.ValueFiltered) was filtered empty: the
+	// unfiltered witness of the same source (DataRequirement.
+	// UnfilteredWitness) answered FULL with data in the same round. Set by
+	// the worker, observation only.
+	FilteredWhenEmpty bool
+	// ValueFiltered says the round's primary filters its values
+	// (DataRequirement.ValueFiltered), whatever it answered: a row whose
+	// empty answer no witness can speak for says so beside its data-absent
+	// line. Set by the worker, observation only, not kept for a restart.
+	ValueFiltered bool
+	// WitnessData is what the round's unfiltered witness answered
+	// (WitnessDataWords); WitnessNone when the primary has none. Set by the
+	// worker on every round, observation only.
+	WitnessData WitnessData
 }
+
+// WitnessData is what an unfiltered witness answered in a round.
+type WitnessData string
+
+const (
+	// WitnessNone: no requirement of the round is an unfiltered witness.
+	WitnessNone WitnessData = ""
+	// WitnessDataFull: every witness answered FULL with data.
+	WitnessDataFull WitnessData = "DATA"
+	// WitnessEmpty: a witness answered FULL and empty.
+	WitnessEmpty WitnessData = "EMPTY"
+	// WitnessNotFull: a witness answered, not FULL.
+	WitnessNotFull WitnessData = "NOT_FULL"
+	// WitnessUnbound: a witness of the round has no binding.
+	WitnessUnbound WitnessData = "UNBOUND"
+)
+
+// WitnessDataWords is every word but WitnessNone, the worst first: a round
+// with several witnesses says the worst of them.
+var WitnessDataWords = []WitnessData{WitnessUnbound, WitnessNotFull, WitnessEmpty, WitnessDataFull}
 
 func DerivePrimaryInputFact(input InternalExecution) (PrimaryInputFact, error) {
 	return derivePrimaryInputFact(input, nil)
@@ -4213,6 +4254,16 @@ type EmptyRoundSummary struct {
 	// any other empty round. Kept so a restart resumes the count rather
 	// than starting it again.
 	IdentityRounds uint32 `json:"identity_rounds,omitempty"`
+	// Filtered is PrimaryInputFact.FilteredWhenEmpty, kept for the row a
+	// restarted replica restores, like Unfilled.
+	Filtered bool `json:"filtered,omitempty"`
+	// WitnessDataRounds and WitnessMissingRounds are how many rounds of this
+	// run of empty rounds, this one included, the unfiltered witness
+	// answered with data (WitnessDataFull) and without (any other word but
+	// WitnessNone), under this content: both above zero says the row went
+	// back and forth between filtered empty and data absent. Saturating.
+	WitnessDataRounds    uint32 `json:"witness_data_rounds,omitempty"`
+	WitnessMissingRounds uint32 `json:"witness_missing_rounds,omitempty"`
 }
 
 type UnfinishedSlotProjection struct {

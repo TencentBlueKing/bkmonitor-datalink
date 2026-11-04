@@ -28,7 +28,7 @@ import (
 // per strategy: first and last seen, how many times, and the latest error,
 // cut on a rune to 256 bytes. One repeating on every tick moves its last time
 // and count and pushes nobody out; past 32 of a word the one seen longest ago
-// gives way. An acknowledged close is counted and not kept; every other word
+// gives way. A close done is counted and not kept; every other word
 // is listed, empty when none came, the most recently seen first.
 func TestTheMaintenanceKeepsTheQueryGroupsItCouldNotComplete(t *testing.T) {
 	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), nil)
@@ -53,12 +53,12 @@ func TestTheMaintenanceKeepsTheQueryGroupsItCouldNotComplete(t *testing.T) {
 		closeOutcomeDeletionUnsettled, errors.New("calendar 8"), 0)
 	long := strings.Repeat("计划读不出", 40)
 	f.m.observeTrace(context.Background(), observability.TraceFields{QueryGroupKey: "qg-send", StrategyID: "4101", BusinessID: "2"},
-		closeOutcomeSendFailed, errors.New(long), 3)
-	f.m.observe(context.Background(), "qg-acked", closeOutcomeAcked, nil, 5)
+		closeOutcomeNotSettled, errors.New(long), 3)
+	f.m.observe(context.Background(), "qg-done", closeOutcomeDone, nil, 5)
 	// Served as every error is: a URL's credentials never reach a reader.
 	f.advance(time.Second)
-	f.m.observe(context.Background(), "qg-console", closeOutcomeSendFailed,
-		errors.New("console refused: https://user:secret@example.test/api/close"), 1)
+	f.m.observe(context.Background(), "qg-link", closeOutcomeNotSettled,
+		errors.New("link refused: https://user:secret@example.test/api/close"), 1)
 
 	reading := f.m.Reading()
 	unavailable := reading.Recent[closeOutcomeUnavailable]
@@ -77,24 +77,24 @@ func TestTheMaintenanceKeepsTheQueryGroupsItCouldNotComplete(t *testing.T) {
 		deletion[0].StrategyID != "4101" || !strings.Contains(deletion[0].Error, "tick 99") {
 		t.Fatalf("held close kept %+v, want it once, counted 100, since its first tick, with the latest error", deletion)
 	}
-	sent := reading.Recent[closeOutcomeSendFailed]
-	if len(sent) != 2 || sent[0].QueryGroup != "qg-console" || strings.Contains(sent[0].Error, "secret") ||
-		strings.Contains(sent[0].Error, "user:") || !strings.Contains(sent[0].Error, "console refused") {
-		t.Fatalf("send_failed kept %+v, want the console's URL redacted and the rest of the error kept", sent)
+	sent := reading.Recent[closeOutcomeNotSettled]
+	if len(sent) != 2 || sent[0].QueryGroup != "qg-link" || strings.Contains(sent[0].Error, "secret") ||
+		strings.Contains(sent[0].Error, "user:") || !strings.Contains(sent[0].Error, "link refused") {
+		t.Fatalf("not_settled kept %+v, want the link URL redacted and the rest of the error kept", sent)
 	}
 	sent = sent[1:]
 	if sent[0].StrategyID != "4101" || sent[0].BusinessID != "2" || len(sent[0].Error) > maintenanceErrorBytes ||
 		!utf8.ValidString(sent[0].Error) || !strings.HasPrefix(long, sent[0].Error) || len(sent[0].Error) < maintenanceErrorBytes-3 {
-		t.Fatalf("send_failed kept %+v, want the strategy and the error cut on a rune to %d bytes", sent, maintenanceErrorBytes)
+		t.Fatalf("not_settled kept %+v, want the strategy and the error cut on a rune to %d bytes", sent, maintenanceErrorBytes)
 	}
-	if _, kept := reading.Recent[closeOutcomeAcked]; kept || len(f.m.recent[closeOutcomeAcked]) != 0 || reading.Counts[closeOutcomeAcked] != 5 ||
-		reading.Counts[closeOutcomeUnavailable] != uint64(maintenanceRecentKept+8) || reading.Counts[closeOutcomeSendFailed] != 4 ||
+	if _, kept := reading.Recent[closeOutcomeDone]; kept || len(f.m.recent[closeOutcomeDone]) != 0 || reading.Counts[closeOutcomeDone] != 5 ||
+		reading.Counts[closeOutcomeUnavailable] != uint64(maintenanceRecentKept+8) || reading.Counts[closeOutcomeNotSettled] != 4 ||
 		reading.Counts[closeOutcomeDeletionUnsettled] != 101 {
-		t.Fatalf("counts %v recent words %d; want close_acked counted and not kept", reading.Counts, len(reading.Recent))
+		t.Fatalf("counts %v recent words %d; want close_done counted and not kept", reading.Counts, len(reading.Recent))
 	}
 	for _, outcome := range observability.EffectiveCloseOutcomes {
-		if list, listed := reading.Recent[string(outcome)]; string(outcome) != closeOutcomeAcked && (!listed || list == nil) {
-			t.Errorf("%s not listed, want every word but close_acked present", outcome)
+		if list, listed := reading.Recent[string(outcome)]; string(outcome) != closeOutcomeDone && (!listed || list == nil) {
+			t.Errorf("%s not listed, want every word but close_done present", outcome)
 		}
 	}
 	// A copy: what the loop keeps next does not reach a reading given out.
@@ -141,20 +141,20 @@ func TestAMaintenanceRunWhoseErrorChangesKeepsBothTexts(t *testing.T) {
 	from := f.now().Add(time.Second)
 	for tick := 0; tick < 5; tick++ {
 		f.advance(time.Second)
-		f.m.observe(context.Background(), "qg-console", closeOutcomeSourceUnknown, errors.New("context deadline exceeded"), 0)
+		f.m.observe(context.Background(), "qg-link", closeOutcomeNotSettled, errors.New("context deadline exceeded"), 0)
 	}
 	changed := f.now().Add(time.Second)
 	for tick := 0; tick < 3; tick++ {
 		f.advance(time.Second)
-		f.m.observe(context.Background(), "qg-console", closeOutcomeSourceUnknown, errors.New("console answered 502"), 0)
+		f.m.observe(context.Background(), "qg-link", closeOutcomeNotSettled, errors.New("link answered 502"), 0)
 	}
-	kept := f.m.Reading().Recent[closeOutcomeSourceUnknown]
+	kept := f.m.Reading().Recent[closeOutcomeNotSettled]
 	if len(kept) != 1 {
 		t.Fatalf("kept %+v, want the run once", kept)
 	}
 	entry := kept[0]
 	if entry.FirstError != "context deadline exceeded" || !entry.FirstAt.Equal(from) ||
-		entry.Error != "console answered 502" || !entry.ErrorSince.Equal(changed) || entry.Count != 8 || !entry.LastAt.Equal(changed.Add(2*time.Second)) {
+		entry.Error != "link answered 502" || !entry.ErrorSince.Equal(changed) || entry.Count != 8 || !entry.LastAt.Equal(changed.Add(2*time.Second)) {
 		t.Fatalf("run kept %+v, want the timeouts from %s and the 502 since %s", entry, from, changed)
 	}
 }

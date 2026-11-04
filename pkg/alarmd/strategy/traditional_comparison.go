@@ -53,10 +53,10 @@ type TraditionalComparisonConfig struct {
 	Precision            int    `json:"precision"`
 	MissingHistoryAsZero bool   `json:"missing_history_as_zero,omitempty"`
 	// AggregationInterval is the step between the history points the
-	// algorithm keys: the evaluation step. The name and its encoding predate
-	// detect_interval, when the step was always the aggregation interval;
-	// they are kept so a configuration compiled without the field keeps its
-	// bytes.
+	// algorithm keys: RingHistoryInterval, the aggregation interval unless
+	// the item is detected less often. The name and its encoding predate
+	// detect_interval; they are kept so a configuration compiled without
+	// the field keeps its bytes.
 	AggregationInterval int64                    `json:"aggregation_interval"`
 	DataConversion      ComparisonUnitConversion `json:"data_conversion"`
 	AlgorithmConversion ComparisonUnitConversion `json:"algorithm_conversion"`
@@ -115,6 +115,23 @@ func (plan CompiledAlgorithmPlan) TraditionalComparisonConfig() (TraditionalComp
 	}
 	c.Floor, c.Ceil, c.Ratio, c.Shock, c.Threshold = clone(c.Floor), clone(c.Ceil), clone(c.Ratio), clone(c.Shock), clone(c.Threshold)
 	return c, true
+}
+
+// RingHistoryInterval is how far back a ring comparison's previous point is:
+// the previous aggregation window, as the Python detector reads it
+// (simple_ring_ratio.py get_history_offsets, year_round_amplitude.py), so an
+// item detected more often than it aggregates compares windows that do not
+// overlap. An item detected less often keeps its previous detection.
+func RingHistoryInterval(evaluation, aggregation int64) int64 {
+	return max(evaluation, aggregation)
+}
+
+// OsRestartHistoryOffsets are the uptime points OsRestart compares with:
+// the previous point, as a ring comparison reads it (os_restart.py
+// get_history_offsets [agg_interval]), and the points 10 and 25 minutes
+// back, farthest last.
+func OsRestartHistoryOffsets(evaluation, aggregation int64) []int64 {
+	return []int64{RingHistoryInterval(evaluation, aggregation), 600, 1500}
 }
 
 func TraditionalHistoryOffsets(kind string, c TraditionalComparisonParameters, interval int64) ([]int64, error) {
@@ -278,10 +295,8 @@ func (compiler traditionalComparisonCompiler) Compile(_ context.Context, ctx Alg
 	if uint64(count) > uint64(ctx.Limits.MaxRequiredHistoryPoints) {
 		return AlgorithmCompileResult{}, configErrorf("history point budget exceeded")
 	}
-	// Offsets count detections, an evaluation step each; windows are an
-	// aggregation interval long. The two are one number unless the item
-	// configures a detect_interval.
-	offsets, err := TraditionalHistoryOffsets(raw.Type, params, int64(ctx.ExecutionSemantics.EvaluationInterval))
+	ring := RingHistoryInterval(int64(ctx.ExecutionSemantics.EvaluationInterval), int64(ctx.ExecutionSemantics.AggregationInterval))
+	offsets, err := TraditionalHistoryOffsets(raw.Type, params, ring)
 	if err != nil {
 		return AlgorithmCompileResult{}, configErrorf("%v", err)
 	}
@@ -365,7 +380,7 @@ func (compiler traditionalComparisonCompiler) Compile(_ context.Context, ctx Alg
 			return AlgorithmCompileResult{}, configErrorf("invalid comparison method")
 		}
 	}
-	config := &TraditionalComparisonConfig{TraditionalComparisonParameters: params, ValueField: wire.InputProjection.ValueFields[0], DataUnit: wire.DataUnit, AlgorithmUnit: wire.AlgorithmUnit, Precision: wire.Precision, AggregationInterval: int64(ctx.ExecutionSemantics.EvaluationInterval), DataConversion: dataConversion, AlgorithmConversion: algorithmConversion, ThresholdConversion: thresholdConversion}
+	config := &TraditionalComparisonConfig{TraditionalComparisonParameters: params, ValueField: wire.InputProjection.ValueFields[0], DataUnit: wire.DataUnit, AlgorithmUnit: wire.AlgorithmUnit, Precision: wire.Precision, AggregationInterval: ring, DataConversion: dataConversion, AlgorithmConversion: algorithmConversion, ThresholdConversion: thresholdConversion}
 	config.MissingHistoryAsZero = wire.MissingHistoryAsZero
 	return g4CompileResult(compiledAlgorithmConfig{TraditionalComparison: config}, wire.InputProjection, requirements, "traditional-comparison-compiler-v1", "python-ordered-history-v1", len(offsets)+1), nil
 }

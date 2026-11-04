@@ -103,7 +103,7 @@ func TestChannelOnlyRequiresPublicRuntimeDependencies(t *testing.T) {
 	cfg.PlatformCache.Strategy = &RedisConnectionConfig{}
 	cfg.PlatformCache.CMDB = &RedisConnectionConfig{}
 	cfg.PlatformCache.TargetGroup = &RedisConnectionConfig{}
-	cfg.PhaseTwo.Linkd.ConsoleURL = "invalid"
+	cfg.PhaseTwo.Linkd.ControlPlane.URL = "invalid"
 	cfg.PhaseTwo.Scheduler = PhaseTwoSchedulerConfig{}
 	cfg.Limits = LimitsConfig{}
 	if err := cfg.Validate(); err != nil {
@@ -159,7 +159,7 @@ func TestRoleSpecificBusinessDependenciesAndLeaseBudgets(t *testing.T) {
 		{"Control strategy Redis", control, func(c *Config) { c.PlatformCache.Strategy = &RedisConnectionConfig{} }, "platform_cache.strategy"},
 		{"Control compiler", control, func(c *Config) { c.Limits.Compiler.MaxPlanBytes = 0 }, "limits.compiler"},
 		{"Control global-close Kafka", control, func(c *Config) { c.Kafka.Brokers = nil }, "broker"},
-		{"Control global-close Linkd", control, func(c *Config) { c.PhaseTwo.Linkd.ConsoleURL = "invalid" }, "linkd"},
+		{"Control global-close Linkd", control, func(c *Config) { c.PhaseTwo.Linkd.ControlPlane.URL = "invalid" }, "linkd"},
 		// A control process reads trends through the UQ endpoint when one is
 		// set, so the coordinates are checked here, not at startup.
 		{"Control trends query source", control, func(c *Config) {
@@ -187,7 +187,6 @@ func TestRoleSpecificBusinessDependenciesAndLeaseBudgets(t *testing.T) {
 }
 
 func TestUnusedRoleCredentialsDoNotBlockLoad(t *testing.T) {
-	t.Setenv(LinkdConsoleUsernameEnvironment, "")
 	t.Setenv(CLIAdminKeyEnvironment, "from-environment")
 	contents := validGoAccessRuntimeConfigYAML("instance") + `cli:
   admin_key: from-file
@@ -202,10 +201,10 @@ phase_two:
   worker:
     id: channel
   linkd:
-    username: from-file
+    control_plane:
+      jwt_secret_file: /absent/secret
 `
 	t.Setenv(CLIAdminKeyEnvironment, "")
-	t.Setenv(LinkdConsoleUsernameEnvironment, "from-environment")
 	if _, err := LoadWithRoles(writeConfig(t, channel), nil); err != nil {
 		t.Fatalf("unused Linkd credentials blocked channel: %v", err)
 	}

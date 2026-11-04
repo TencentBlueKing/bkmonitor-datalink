@@ -32,15 +32,18 @@ import (
 // the publication, the Plans with their revisions and digests, every
 // disposition with its scope, level, reason, field and the compiler's words
 // -- the three booleans that tell the standings apart, and whether the
-// source marks the strategy global; and each Plan's source and grouping.
+// source marks the strategy global; and each Plan's source, grouping and
+// how its values are compared.
 func TestTheStrategyLookupReachesTheFleetFieldForField(t *testing.T) {
+	unitFacts := &controlplane.DataUnitFacts{Basis: controlplane.DataUnitBasisMultiQueryRaw}
 	lookup := controlplane.StrategyLookup{
 		Available: true, Found: true, Retained: true, Global: true,
 		Publication: controlplane.SnapshotPublicationRef{SnapshotRevision: "s1", PublicationEpoch: 7},
 		Plans: []controlplane.StrategyPlanRef{{
 			Plan:       execution.PlanIdentity{TenantID: "default", BusinessID: "2", StrategyID: "4101"},
 			QueryGroup: "qg-a", ObjectDigest: "d-a", SnapshotRevision: "s1", QueryRevision: "q1", ScheduleRevision: "r1",
-			SourceSemantics: []string{"custom/event"}, GroupBy: []string{"namespace", "pod"}, GroupByTotal: 3, PromQL: true}},
+			SourceSemantics: []string{"custom/event"}, GroupBy: []string{"namespace", "pod"}, GroupByTotal: 3, PromQL: true,
+			DataUnitFacts: unitFacts}},
 		Dispositions: []controlplane.ObjectDisposition{
 			{SourceID: "4101", Scope: "PLAN", Disposition: controlplane.DispositionStaleConfig, Reason: "QUERY_CONFIG_INVALID", FieldPath: "items[0].query_configs[0]",
 				Detail: "query interval is invalid"},
@@ -52,7 +55,8 @@ func TestTheStrategyLookupReachesTheFleetFieldForField(t *testing.T) {
 		Available: true, Found: true, Retained: true, Global: true, Publication: fleet.StrategyPublication{SnapshotRevision: "s1", Epoch: 7},
 		Plans: []fleet.StrategyPlanRef{{Tenant: "default", Business: "2", QueryGroup: "qg-a", ObjectDigest: "d-a",
 			SnapshotRevision: "s1", QueryRevision: "q1", ScheduleRevision: "r1",
-			SourceSemantics: []string{"custom/event"}, GroupBy: []string{"namespace", "pod"}, GroupByTotal: 3, PromQL: true}},
+			SourceSemantics: []string{"custom/event"}, GroupBy: []string{"namespace", "pod"}, GroupByTotal: 3, PromQL: true,
+			DataUnitFacts: unitFacts}},
 		Dispositions: []fleet.StrategyDisposition{
 			{Scope: "PLAN", Disposition: "STALE_CONFIG", Reason: "QUERY_CONFIG_INVALID", FieldPath: "items[0].query_configs[0]", Detail: "query interval is invalid"},
 			{Scope: "PLAN", Disposition: string(controlplane.DispositionUnsupported), Reason: "UNSUPPORTED_TARGET_SCOPE", FieldPath: "items[0].target",

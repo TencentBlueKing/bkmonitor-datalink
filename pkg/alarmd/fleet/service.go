@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 )
 
 // GapRegistryUnavailable means the set of replicas that should have published
@@ -89,12 +91,15 @@ type Service struct {
 	// localQueryRanges is this replica's account of an object's latest asked
 	// ranges, set the same way (SetLocalQueryRanges).
 	localQueryRanges func(queryGroup string) (QueryRanges, bool)
-	expectations     ExpectationSource
-	registry         ReplicaRegistry
-	snapshots        SnapshotReader
-	control          ControlFactsSource
-	freshness        time.Duration
-	now              func() time.Time
+	// planCarries reads where an object's Plans' Runtime State comes from
+	// (controlplane PlanCarries), set once at wiring (SetPlanCarries).
+	planCarries  func(ctx context.Context, queryGroup string) (controlplane.PlanCarriesReading, error)
+	expectations ExpectationSource
+	registry     ReplicaRegistry
+	snapshots    SnapshotReader
+	control      ControlFactsSource
+	freshness    time.Duration
+	now          func() time.Time
 
 	// The denominator and the replica list are read from the control plane on
 	// the same Redis the pipeline depends on, and reading the active object set
@@ -583,6 +588,23 @@ func (service *Service) SetLocalQueryRanges(ranges func(queryGroup string) (Quer
 	if service != nil {
 		service.localQueryRanges = ranges
 	}
+}
+
+// SetPlanCarries binds the read of where an object's Plans' Runtime State
+// comes from, for the object detail.
+func (service *Service) SetPlanCarries(read func(ctx context.Context, queryGroup string) (controlplane.PlanCarriesReading, error)) {
+	if service != nil {
+		service.planCarries = read
+	}
+}
+
+// PlanCarries is that read, when one is bound.
+func (service *Service) PlanCarries(ctx context.Context, queryGroup string) (controlplane.PlanCarriesReading, bool, error) {
+	if service == nil || service.planCarries == nil {
+		return controlplane.PlanCarriesReading{}, false, nil
+	}
+	reading, err := service.planCarries(ctx, queryGroup)
+	return reading, true, err
 }
 
 // LocalQueryRanges is this replica's account of the object's latest asked

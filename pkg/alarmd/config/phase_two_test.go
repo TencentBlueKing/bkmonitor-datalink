@@ -57,11 +57,11 @@ func TestDefaultPhaseTwoRuntimeHasBoundedLifecycleBudgets(t *testing.T) {
 	// at all. It has to leave room above the permit budget it keeps fed and
 	// stay inside the ready queue, which is the pair a hand-written combination
 	// could put in either wrong order.
-	if cfg.Scheduler.ActiveExecutionLimit <= cfg.Scheduler.ProcessQueryPermits+cfg.Scheduler.RecoveryQueryPermits ||
+	if cfg.Scheduler.ActiveExecutionLimit <= cfg.Scheduler.ProcessQueryPermits ||
 		cfg.Scheduler.ActiveExecutionLimit > cfg.Scheduler.ReadyQueueCapacity {
 		t.Fatalf("active execution limit = %d, want between the %d permits it feeds and the %d ready queue",
 			cfg.Scheduler.ActiveExecutionLimit,
-			cfg.Scheduler.ProcessQueryPermits+cfg.Scheduler.RecoveryQueryPermits, cfg.Scheduler.ReadyQueueCapacity)
+			cfg.Scheduler.ProcessQueryPermits, cfg.Scheduler.ReadyQueueCapacity)
 	}
 	if cfg.Scheduler.ProcessQueryPermits <= cfg.Scheduler.RecoveryQueryPermits ||
 		cfg.Scheduler.RecoveryQueryPermits <= 0 || cfg.Scheduler.ReadyQueueCapacity <= 0 ||
@@ -303,7 +303,7 @@ redis:
   address: redis.test:6379
   state_prefix: alarmd:phase-two:g2:v1
 phase_two:
-  worker:
+%s  worker:
     id: %s
   control:
     strategy_cache_prefix: alarm-config
@@ -311,7 +311,7 @@ phase_two:
   access:
     uq_endpoint: http://unify-query.service
     query_source: alarmd
-`, workerID)
+`, linkdControlPlaneYAML, workerID)
 }
 
 // The state key lifetimes are the program's: the restart margin is the

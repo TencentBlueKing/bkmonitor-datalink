@@ -13,26 +13,28 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
 type maintenanceTestCatalog struct {
-	plans        []controlplane.MaintenancePlan
+	plans []controlplane.MaintenancePlan
+	// byGroup, where it names a Query Group, is that one's Plans in place
+	// of plans.
+	byGroup      map[execution.QueryGroupIdentity][]controlplane.MaintenancePlan
 	uncompilable int
-	reads        int
-	err          error
+	// until is the end of the Segment the Plans are read from, zero open.
+	until execution.EvaluationTime
+	reads int
+	err   error
 	// took, when set, is the read's cost, answered against the caller's
 	// deadline.
 	took func(context.Context) error
 }
 
-func (c *maintenanceTestCatalog) CurrentPlans(ctx context.Context, _ execution.QueryGroupIdentity, _ execution.EvaluationTime) (controlplane.MaintenancePlans, error) {
+func (c *maintenanceTestCatalog) CurrentPlans(ctx context.Context, qg execution.QueryGroupIdentity, _ execution.EvaluationTime) (controlplane.MaintenancePlans, error) {
 	c.reads++
 	if c.took != nil {
 		if err := c.took(ctx); err != nil {
@@ -42,46 +44,11 @@ func (c *maintenanceTestCatalog) CurrentPlans(ctx context.Context, _ execution.Q
 	if c.err != nil {
 		return controlplane.MaintenancePlans{}, c.err
 	}
-	return controlplane.MaintenancePlans{Plans: c.plans, Uncompilable: c.uncompilable}, nil
-}
-
-// maintenanceTestIndex answers the copy's reads with alerts; own, when set,
-// is the source its calibration names as this deployment's.
-type maintenanceTestIndex struct {
-	alerts []openalerts.Alert
-	own    string
-}
-
-func (s maintenanceTestIndex) ReadSet(context.Context, openalerts.StrategyKey) ([]string, error) {
-	var members []string
-	for _, a := range s.alerts {
-		members = append(members, a.Fingerprint)
+	plans := c.plans
+	if own, named := c.byGroup[qg]; named {
+		plans = own
 	}
-	return members, nil
-}
-func (s maintenanceTestIndex) Reconcile(ctx context.Context, key openalerts.StrategyKey) (openalerts.Reconciliation, error) {
-	members, _ := s.ReadSet(ctx, key)
-	return openalerts.Reconciliation{EventSourceID: s.own, Members: members, Alerts: s.alerts}, nil
-}
-func (s maintenanceTestIndex) Watch(ctx context.Context, ready func(bool), _ func(openalerts.StrategyKey), _ func(openalerts.NoticeRefusal)) error {
-	ready(true)
-	<-ctx.Done()
-	return ctx.Err()
-}
-
-type maintenanceTestWriter struct {
-	batches [][]linkdoutput.CloseRequest
-	err     error
-	// onWrite, when set, runs as a batch is sent.
-	onWrite func()
-}
-
-func (w *maintenanceTestWriter) WriteCloseBatch(_ context.Context, requests []linkdoutput.CloseRequest) error {
-	if w.onWrite != nil {
-		w.onWrite()
-	}
-	w.batches = append(w.batches, append([]linkdoutput.CloseRequest(nil), requests...))
-	return w.err
+	return controlplane.MaintenancePlans{Plans: plans, Uncompilable: c.uncompilable, Until: c.until}, nil
 }
 
 type maintenanceTestRunner struct {
@@ -115,9 +82,11 @@ func (r *maintenanceTestRunner) maintenanceLease() (string, uint64, bool) {
 type maintenanceTestFixture struct {
 	m      *effectiveMaintenance
 	runner *maintenanceTestRunner
-	writer *maintenanceTestWriter
-	mu     sync.Mutex
-	at     time.Time
+	// stub is the link's control plane the inactive closes reach, through
+	// the production closer.
+	stub *stubControlPlane
+	mu   sync.Mutex
+	at   time.Time
 }
 
 func (f *maintenanceTestFixture) now() time.Time { f.mu.Lock(); defer f.mu.Unlock(); return f.at }
@@ -127,16 +96,36 @@ func (f *maintenanceTestFixture) advance(d time.Duration) {
 	f.at = f.at.Add(d)
 }
 
-func newMaintenanceTestFixture(t *testing.T, snapshot string, at time.Time, alerts []openalerts.Alert, mutate ...func(*contract.EvaluationPlanV2)) *maintenanceTestFixture {
-	t.Helper()
-	return newMaintenanceTestFixtureFrom(t, snapshot, at, maintenanceTestIndex{alerts: alerts}, mutate...)
+// closed is the bodies of the closes the link received that were not dry
+// runs: one per inactive close that found alerts.
+func (f *maintenanceTestFixture) closed() []string {
+	var closes []string
+	for _, body := range f.stub.requests("/api/v1/alerts/close") {
+		if !strings.Contains(body, `"dry_run":true`) {
+			closes = append(closes, body)
+		}
+	}
+	return closes
 }
 
-// newMaintenanceTestFixtureFrom is newMaintenanceTestFixture with the copy's
-// index given whole.
-func newMaintenanceTestFixtureFrom(t *testing.T, snapshot string, at time.Time, source maintenanceTestIndex, mutate ...func(*contract.EvaluationPlanV2)) *maintenanceTestFixture {
+// matchAgain makes the link match the alerts again, as a new ABNORMAL in
+// the strategy's version would.
+func (f *maintenanceTestFixture) matchAgain(ids ...string) {
+	f.stub.mu.Lock()
+	defer f.stub.mu.Unlock()
+	f.stub.matches = append([]string(nil), ids...)
+}
+
+// maintenanceMatches is one open alert of the strategy's version at the link.
+var maintenanceMatches = []string{"instance"}
+
+// newMaintenanceTestFixture is the loop over one Query Group of one Plan on a
+// 09:00-17:00 schedule, whose closes go through the production filter
+// closer to a stub of the link that matches the alerts given.
+func newMaintenanceTestFixture(t *testing.T, snapshot string, at time.Time, matches []string, mutate ...func(*contract.EvaluationPlanV2)) *maintenanceTestFixture {
 	t.Helper()
-	f := &maintenanceTestFixture{at: at, writer: &maintenanceTestWriter{}, runner: &maintenanceTestRunner{check: func(context.Context) error { return nil }, scope: "obj-a", revision: 1}}
+	f := &maintenanceTestFixture{at: at, stub: &stubControlPlane{bodies: map[string][]string{}, matches: append([]string(nil), matches...)},
+		runner: &maintenanceTestRunner{check: func(context.Context) error { return nil }, scope: "obj-a", revision: 1}}
 	catalog := productionG4Catalog(t, 123, "Threshold", "usage", "system.cpu", []string{"host"}, [][]map[string]any{{{"method": "gte", "threshold": 50}}})
 	group := catalog.QueryGroups[0]
 	p := group.Plans[0]
@@ -161,63 +150,93 @@ func newMaintenanceTestFixtureFrom(t *testing.T, snapshot string, at time.Time, 
 	if !ok || compiled.Levels().Len() == 0 {
 		t.Fatalf("compile terminal=%+v levels=%+v", result.PlanTerminal(), result.LevelTerminals())
 	}
-	cache, err := openalerts.NewIndex(openalerts.IndexOptions{Source: source, Reconciler: source, Subscriber: source, Now: f.now,
-		MaxStrategies: 10, MaxMembers: 100, MaxBytes: 1 << 20, MaxLocalEntries: 100, ReadBatch: 2, ReconcileBatch: 1,
-		RefreshInterval: time.Hour, IndexInterval: time.Hour, ReconcileInterval: time.Hour, CalibrationMaxAge: 2 * time.Hour, LocalRetention: time.Minute, CycleTimeout: time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	key := openalerts.StrategyKey{TenantID: p.Identity.TenantID, StrategyID: p.Identity.StrategyID}
-	if err := cache.TrackOwned(key); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { defer close(done); _ = cache.Run(ctx) }()
-	t.Cleanup(func() { cancel(); <-done })
-	deadline := testwait.Deadline(t)
-	for !cache.Snapshot(key).Calibrated {
-		if time.Now().After(deadline) {
-			t.Fatal("cache did not calibrate")
-		}
-		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
-	}
 	bundle := &phaseTwoWorkerBundle{dependencies: phaseTwoWorkerBundleDependencies{Now: f.now, Observer: observability.NopObserver{}}, runners: map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle{group.Identity: {runner: f.runner}}}
-	f.m = &effectiveMaintenance{bundle: bundle, catalog: &maintenanceTestCatalog{plans: []controlplane.MaintenancePlan{{Identity: p.Identity, Compiled: compiled}}}, cache: cache, writer: f.writer, sourceID: "native", capacity: config.LinkdCapacity{GroupBatch: 2, CloseBatch: 5, LocalEntries: 100}}
+	f.m = &effectiveMaintenance{bundle: bundle, catalog: &maintenanceTestCatalog{plans: []controlplane.MaintenancePlan{{Identity: p.Identity, Compiled: compiled}}},
+		filter: newStubFilterRoute(t, f.stub), capacity: config.LinkdCapacity{GroupBatch: 2, CloseBatch: 5, LocalEntries: 100}}
 	return f
 }
 
 const maintenanceReadySnapshot = `{"schema_version":1,"status":"READY","business_timezone":"UTC","calendars":[]}`
 
-func maintenanceAlert(source, severity string) openalerts.Alert {
-	return openalerts.Alert{AlertID: "instance", EventSourceID: source, Severity: severity, Fingerprint: strings.Repeat("a", 32)}
-}
 func maintenanceTime(hour, minute int) time.Time {
 	return time.Date(2026, 9, 22, hour, minute, 0, 0, time.UTC)
 }
 
-func TestEffectiveMaintenanceOnlyClosesCurrentInactiveNativeAlerts(t *testing.T) {
+// A Plan outside its effective time closes, through the link's filter, the
+// active alerts of its strategy's current version from this deployment's
+// event source; an active Plan, or one whose effective time is unknown,
+// sends nothing.
+func TestEffectiveMaintenanceClosesTheInactiveVersionThroughTheLinksFilter(t *testing.T) {
 	for _, tc := range []struct {
-		name, snapshot, source, severity string
-		at                               time.Time
-		want                             int
+		name, snapshot string
+		at             time.Time
+		want           int
 	}{
-		{"inactive", maintenanceReadySnapshot, "native", "critical", maintenanceTime(8, 0), 1},
-		{"active", maintenanceReadySnapshot, "native", "critical", maintenanceTime(10, 0), 0},
-		{"unknown", "", "native", "critical", maintenanceTime(8, 0), 0},
-		{"foreign-source", maintenanceReadySnapshot, "other", "critical", maintenanceTime(8, 0), 0},
-		{"level-not-reported", maintenanceReadySnapshot, "native", "", maintenanceTime(8, 0), 1},
+		{"inactive", maintenanceReadySnapshot, maintenanceTime(8, 0), 1},
+		{"active", maintenanceReadySnapshot, maintenanceTime(10, 0), 0},
+		{"unknown", "", maintenanceTime(8, 0), 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newMaintenanceTestFixture(t, tc.snapshot, tc.at, []openalerts.Alert{maintenanceAlert(tc.source, tc.severity)})
+			f := newMaintenanceTestFixture(t, tc.snapshot, tc.at, maintenanceMatches)
 			f.m.step(context.Background())
-			if f.runner.lastErr != nil || len(f.writer.batches) != tc.want {
-				t.Fatalf("err=%v batches=%v", f.runner.lastErr, f.writer.batches)
+			closes := f.closed()
+			if f.runner.lastErr != nil || len(closes) != tc.want {
+				t.Fatalf("err=%v closes=%v", f.runner.lastErr, closes)
 			}
-			if tc.want == 1 {
-				r := f.writer.batches[0][0]
-				if r.StrategyID != 123 || r.StrategyRevision != 4 || r.BusinessID != 2 || r.TenantID != "tenant-a" || r.AlertInstanceID != "instance" || !r.OccurredAt.Equal(tc.at) {
-					t.Fatalf("request=%+v", r)
+			if tc.want == 0 {
+				if requests := f.stub.requests("/api/v1/alerts/close"); len(requests) != 0 {
+					t.Fatalf("asked the link %v for a Plan that is not inactive", requests)
+				}
+				return
+			}
+			for _, field := range []string{`"bk_tenant_id":"tenant-a"`, `"event_source_id":"built_in_bk"`, `"labels.strategy_id":"123"`, `"labels.strategy_version":"4"`} {
+				if !strings.Contains(closes[0], field) {
+					t.Fatalf("close %s does not carry %s", closes[0], field)
+				}
+			}
+			if f.m.Stats()[closeOutcomeDone] != 1 {
+				t.Fatalf("stats %v, want one close_done", f.m.Stats())
+			}
+		})
+	}
+}
+
+// Every close sent writes one line naming the strategy, its version and the
+// Query Group with the outcome; a Plan that is not closed writes none.
+func TestEffectiveMaintenanceWritesALinePerCloseSent(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		at    time.Time
+		lines int
+	}{
+		{"inactive", maintenanceTime(8, 0), 1},
+		{"active", maintenanceTime(10, 0), 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, tc.at, maintenanceMatches)
+			var out strings.Builder
+			f.m.logger = observability.New("alarmd", &out)
+			f.m.step(context.Background())
+			var lines []map[string]any
+			for _, raw := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+				var line map[string]any
+				if raw == "" {
+					continue
+				}
+				if err := json.Unmarshal([]byte(raw), &line); err != nil {
+					t.Fatalf("line %q: %v", raw, err)
+				}
+				lines = append(lines, line)
+			}
+			if len(lines) != tc.lines {
+				t.Fatalf("lines %v, want %d", lines, tc.lines)
+			}
+			for qg := range f.m.bundle.runners {
+				for _, line := range lines {
+					if line["level"] != "INFO" || line["stage"] != "effective_close" || line["result"] != "close_done" ||
+						line["query_group_key"] != string(qg) || line["strategy_id"] != "123" || line["revision"] != float64(4) {
+						t.Fatalf("line %v, want close_done for strategy 123 version 4 on %s", line, qg)
+					}
 				}
 			}
 		})
@@ -227,7 +246,7 @@ func TestEffectiveMaintenanceOnlyClosesCurrentInactiveNativeAlerts(t *testing.T)
 func TestEffectiveMaintenanceRechecksFenceAndActiveBoundaryBeforeClose(t *testing.T) {
 	for _, boundary := range []bool{false, true} {
 		t.Run(map[bool]string{false: "fence-rejected", true: "became-active"}[boundary], func(t *testing.T) {
-			f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 59), []openalerts.Alert{maintenanceAlert("native", "critical")})
+			f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 59), maintenanceMatches)
 			checkErr := errors.New("owner lost")
 			f.runner.check = func(context.Context) error {
 				if boundary {
@@ -237,8 +256,8 @@ func TestEffectiveMaintenanceRechecksFenceAndActiveBoundaryBeforeClose(t *testin
 				return checkErr
 			}
 			f.m.step(context.Background())
-			if len(f.writer.batches) != 0 {
-				t.Fatal("close escaped final check")
+			if requests := f.stub.requests("/api/v1/alerts/close"); len(requests) != 0 {
+				t.Fatalf("close escaped final check: %v", requests)
 			}
 			if !boundary && !errors.Is(f.runner.lastErr, checkErr) {
 				t.Fatalf("err=%v", f.runner.lastErr)
@@ -247,29 +266,109 @@ func TestEffectiveMaintenanceRechecksFenceAndActiveBoundaryBeforeClose(t *testin
 	}
 }
 
-func TestEffectiveMaintenanceACKDedupExpiresAndFailedWritesRetry(t *testing.T) {
-	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), []openalerts.Alert{maintenanceAlert("native", "critical")})
+// One inactive period costs one close and one confirming pass after
+// inactiveConfirmAfter, then nothing until the Plan is active again; a
+// period that starts after an active one closes again. A close the link
+// did not settle (busy) is not remembered and runs again on the next step.
+func TestEffectiveMaintenanceClosesOncePerInactivePeriodAndConfirmsOnce(t *testing.T) {
+	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), maintenanceMatches)
 	f.m.step(context.Background())
-	f.advance(59 * time.Second)
+	f.matchAgain("late")
+	f.advance(inactiveConfirmAfter - time.Second)
 	f.m.step(context.Background())
-	if len(f.writer.batches) != 1 {
-		t.Fatal("ACK not deduplicated for a minute")
+	if closes := f.closed(); len(closes) != 1 {
+		t.Fatalf("closes %d before the confirming pass is due, want 1", len(closes))
 	}
 	f.advance(time.Second)
 	f.m.step(context.Background())
-	if len(f.writer.batches) != 2 {
-		t.Fatal("unconfirmed active alert never retried")
+	if closes := f.closed(); len(closes) != 2 {
+		t.Fatalf("closes %d at the confirming pass, want 2: the alert opened at the boundary stays open", len(closes))
 	}
-	f.advance(time.Minute)
-	f.writer.err = errors.New("producer unavailable")
+	f.matchAgain("later")
+	f.advance(10 * time.Minute)
 	f.m.step(context.Background())
-	if f.runner.lastErr == nil {
-		t.Fatal("write error lost")
+	// Two passes, each a dry run and the close.
+	if requests := f.stub.requests("/api/v1/alerts/close"); len(f.closed()) != 2 || len(requests) != 4 {
+		t.Fatalf("requests %d (closes %d) after the confirming pass, want the version left alone", len(requests), len(f.closed()))
 	}
-	f.writer.err = nil
+	// Active again, then inactive: a new period.
+	f.at = maintenanceTime(10, 0)
 	f.m.step(context.Background())
-	if len(f.writer.batches) != 4 {
-		t.Fatal("failed write incorrectly recorded as ACK")
+	f.at = maintenanceTime(18, 0)
+	f.m.step(context.Background())
+	closes := f.closed()
+	if len(closes) != 3 {
+		t.Fatalf("closes %d in the next inactive period, want 3", len(closes))
+	}
+	// Each period is its own decision: the next period's close is its own
+	// command, not the first period's with its effective_at (the stored
+	// command outlives the fake clock's hours in the test Redis, as it
+	// would a second window inside the command's life).
+	type command struct {
+		OperationID string `json:"operation_id"`
+	}
+	var first, confirming, next command
+	_ = json.Unmarshal([]byte(closes[0]), &first)
+	_ = json.Unmarshal([]byte(closes[1]), &confirming)
+	_ = json.Unmarshal([]byte(closes[2]), &next)
+	if first.OperationID == "" || confirming.OperationID != first.OperationID || next.OperationID == first.OperationID {
+		t.Fatalf("commands: first %+v, confirming %+v, next period %+v", first, confirming, next)
+	}
+
+	g := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), maintenanceMatches)
+	g.stub.busy = true
+	g.m.step(context.Background())
+	if g.m.Stats()[closeOutcomeNotSettled] != 1 || len(g.closed()) != 0 {
+		t.Fatalf("stats %v closes %v, want the busy link counted not settled", g.m.Stats(), g.closed())
+	}
+	// Not settled, and not sent again at the step's pace either: a busy
+	// link waits inactiveRefusedRetry (filterclose.NextTransient), then
+	// the close is sent again.
+	g.stub.busy = false
+	g.advance(time.Second)
+	g.m.step(context.Background())
+	if len(g.closed()) != 0 {
+		t.Fatal("a close the busy link answered was sent again the next step")
+	}
+	g.advance(inactiveRefusedRetry)
+	g.m.step(context.Background())
+	if len(g.closed()) != 1 {
+		t.Fatal("a close the link did not settle was remembered as done")
+	}
+
+	// A close whose items came back certainly not closed (429 each) is a
+	// close sent but not settled: the next step runs it again.
+	h := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), maintenanceMatches)
+	h.stub.itemBusy = true
+	h.m.step(context.Background())
+	if h.m.Stats()[closeOutcomeDone] != 1 || len(h.closed()) != 1 {
+		t.Fatalf("stats %v closes %v, want the rederived close counted as sent", h.m.Stats(), h.closed())
+	}
+	h.stub.itemBusy = false
+	h.advance(time.Second)
+	h.m.step(context.Background())
+	if len(h.closed()) != 2 {
+		t.Fatalf("closes %d: a close whose items came back rederived was remembered as settled", len(h.closed()))
+	}
+}
+
+// A link that cannot close by filter (501) is counted unsupported and the
+// Plan's alerts are not closed any other way.
+func TestEffectiveMaintenanceCountsALinkThatCannotCloseByFilter(t *testing.T) {
+	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), maintenanceMatches)
+	f.stub.unsupported = true
+	f.m.step(context.Background())
+	if f.m.Stats()[closeOutcomeUnsupported] != 1 || len(f.closed()) != 0 {
+		t.Fatalf("stats %v closes %v, want close_unsupported and nothing closed", f.m.Stats(), f.closed())
+	}
+	// Held as any close that got nowhere (inactiveRefusedRetry): the next
+	// step past the hold, without the link's control plane, counts it
+	// unrouted.
+	f.m.filter = nil
+	f.advance(inactiveRefusedRetry)
+	f.m.step(context.Background())
+	if f.m.Stats()[closeOutcomeUnrouted] != 1 {
+		t.Fatalf("stats %v, want close_unrouted without the link's control plane", f.m.Stats())
 	}
 }
 
@@ -339,67 +438,6 @@ func TestEffectiveMaintenanceRealSessionRejectsLostFenceAndChangedTimeline(t *te
 	}
 }
 
-func TestEffectiveMaintenanceSharesExecutionTrackingWithoutLosingACK(t *testing.T) {
-	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), nil)
-	plan := f.m.catalog.(*maintenanceTestCatalog).plans[0].Identity
-	var qg execution.QueryGroupIdentity
-	for id := range f.m.bundle.runners {
-		qg = id
-	}
-	key := openalerts.StrategyKey{TenantID: plan.TenantID, StrategyID: plan.StrategyID}
-	f.m.cache.Untrack(key)
-	// Detection can emit before the first maintenance round has run.
-	f.m.registerExecutedPlans(qg, []execution.PlanIdentity{plan})
-	fingerprint := strings.Repeat("b", 32)
-	f.m.cache.Acknowledged([]contract.TriggerEventV1{{EventKind: contract.TriggerEventAbnormal, TenantID: plan.TenantID, DedupeMD5: fingerprint,
-		PlanRef: contract.RuntimePlanRefV1{StrategyID: plan.StrategyID}, StrategyRef: &contract.StrategySnapshotRef{TenantID: plan.TenantID, BusinessID: 2, StrategyID: 123, Revision: 4},
-		LevelResults: []contract.LevelResultV1{{LevelID: 1, Priority: 1, Result: contract.LevelResultAbnormal}}}})
-	if !f.m.cache.Contains(plan.TenantID, plan.StrategyID, fingerprint) {
-		t.Fatal("first ACK was lost before maintenance tracking")
-	}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for i := 0; i < 100; i++ {
-			f.m.registerExecutedPlans(qg, []execution.PlanIdentity{plan})
-		}
-	}()
-	for i := 0; i < 100; i++ {
-		f.m.step(context.Background())
-	}
-	<-done
-	if f.m.refs[key] != 1 || !f.m.cache.Contains(plan.TenantID, plan.StrategyID, fingerprint) {
-		t.Fatal("repeated/concurrent registration lost member or duplicated references")
-	}
-	f.m.bundle.mu.Lock()
-	delete(f.m.bundle.runners, qg)
-	f.m.bundle.mu.Unlock()
-	f.m.step(context.Background())
-	if f.m.cache.Stats().Tracked != 0 || len(f.m.refs) != 0 {
-		t.Fatal("released group retained execution-registered cache entries")
-	}
-}
-
-// Which alerts are this deployment's comes from the target the link's
-// Console lists when the source is not configured; a Console that cannot say
-// closes nothing and says so.
-func TestEffectiveMaintenanceTakesItsSourceFromTheLinksTarget(t *testing.T) {
-	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), []openalerts.Alert{maintenanceAlert("native", "")})
-	f.m.sourceID = ""
-	f.m.sourceOf = func(context.Context) (string, error) { return "native", nil }
-	f.m.step(context.Background())
-	if len(f.writer.batches) != 1 {
-		t.Fatalf("the source read from the link's target was not used: %v", f.writer.batches)
-	}
-	g := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), []openalerts.Alert{maintenanceAlert("native", "")})
-	g.m.sourceID = ""
-	g.m.sourceOf = func(context.Context) (string, error) { return "", errors.New("console unreachable") }
-	g.m.step(context.Background())
-	if len(g.writer.batches) != 0 || g.m.Stats()["source_unknown"] != 1 {
-		t.Fatalf("a Console that could not name the source, with none read before, still closed or said nothing: %v %v", g.writer.batches, g.m.Stats())
-	}
-}
-
 // slowStore spends time against the caller's deadline without sleeping: a
 // call of cost d fails as a deadline would when the caller has less than
 // what was spent so far plus d left, and otherwise counts d as spent.
@@ -421,7 +459,7 @@ func (s *slowStore) take(d time.Duration) func(context.Context) error {
 }
 
 // Each call the loop makes is bounded by its own client (the Redis
-// command by the configured timeouts, the Kafka write by the producer's), so
+// command by the configured timeouts, the link's close by its HTTP client), so
 // a store slow on every call but answering each one inside its timeout still
 // closes: a Plans read and an owner check that together outlast the five
 // seconds the whole step used to have, and either one alone outlasting the
@@ -437,102 +475,14 @@ func TestEffectiveMaintenanceClosesWhenItsCallsTogetherOutlastTheOldStepBudget(t
 		{"check-alone", 0, 5500 * time.Millisecond},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), []openalerts.Alert{maintenanceAlert("native", "critical")})
+			f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), maintenanceMatches)
 			store := &slowStore{}
 			f.m.catalog.(*maintenanceTestCatalog).took = store.take(tc.read)
 			f.runner.check = store.take(tc.check)
 			f.m.step(context.Background())
-			if f.runner.lastErr != nil || len(f.writer.batches) != 1 {
-				t.Fatalf("err=%v batches=%v spent=%s", f.runner.lastErr, f.writer.batches, store.spent)
+			if f.runner.lastErr != nil || len(f.closed()) != 1 {
+				t.Fatalf("err=%v closes=%v spent=%s", f.runner.lastErr, f.closed(), store.spent)
 			}
 		})
-	}
-}
-
-// The source the closes are for is read once a step: with no step deadline
-// any more, a Console that does not answer would otherwise be waited on once
-// for every owned group in turn, and its failure is one count for the step,
-// not one for every group it holds back.
-func TestEffectiveMaintenanceReadsTheSourceOnceAStep(t *testing.T) {
-	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), []openalerts.Alert{maintenanceAlert("native", "")})
-	for _, qg := range []execution.QueryGroupIdentity{"query-group-b", "query-group-c"} {
-		f.m.bundle.runners[qg] = &phaseTwoQueryGroupLifecycle{runner: f.runner}
-	}
-	f.m.capacity.GroupBatch = 3
-	f.m.sourceID = ""
-	asked := 0
-	f.m.sourceOf = func(context.Context) (string, error) { asked++; return "", errors.New("console unreachable") }
-	f.m.step(context.Background())
-	if asked != 1 || len(f.writer.batches) != 0 || f.m.Stats()["source_unknown"] != 1 || f.m.Stats()["unavailable"] != 0 {
-		t.Fatalf("asked=%d batches=%v stats=%v, want one read, no close, one source_unknown for the step", asked, f.writer.batches, f.m.Stats())
-	}
-}
-
-// A Console that fails does not stop the closes once this deployment's
-// source has been read: the source is a deployment property, used as a
-// filter, and the closes go on with the one last read, counted once a step
-// as source_last_known. The failed read waits out its back-off rather than
-// being asked again every step.
-func TestEffectiveMaintenanceClosesOnTheLastReadSourceWhileTheConsoleFails(t *testing.T) {
-	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), []openalerts.Alert{maintenanceAlert("native", "")})
-	asked := 0
-	f.m.sourceOf = func(context.Context) (string, error) { asked++; return "", errors.New("console unreachable") }
-	f.m.step(context.Background())
-	if asked != 1 || len(f.writer.batches) != 1 || f.m.Stats()["source_last_known"] != 1 {
-		t.Fatalf("asked=%d batches=%v stats=%v, want the close sent on the source last read", asked, f.writer.batches, f.m.Stats())
-	}
-	f.m.step(context.Background())
-	if asked != 1 {
-		t.Fatalf("the Console was asked again %d times inside its back-off", asked-1)
-	}
-}
-
-// With no source read by this loop, the open-alert copy's own - the source
-// its last calibration named - is the one last read.
-func TestEffectiveMaintenanceFallsBackToTheCopysOwnSource(t *testing.T) {
-	f := newMaintenanceTestFixtureFrom(t, maintenanceReadySnapshot, maintenanceTime(8, 0),
-		maintenanceTestIndex{alerts: []openalerts.Alert{maintenanceAlert("native", "")}, own: "native"})
-	f.m.sourceID = ""
-	f.m.sourceOf = func(context.Context) (string, error) { return "", errors.New("console unreachable") }
-	f.m.step(context.Background())
-	if len(f.writer.batches) != 1 || f.m.Stats()["source_last_known"] != 1 || f.m.sourceID != "native" {
-		t.Fatalf("batches=%v stats=%v source=%q, want the close sent on the copy's own source", f.writer.batches, f.m.Stats(), f.m.sourceID)
-	}
-}
-
-// A failed source read backs off from one step, doubling up to the
-// coverage, and a read that answers again resets it and is used.
-func TestEffectiveMaintenanceSourceReadBacksOffAndRecovers(t *testing.T) {
-	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), []openalerts.Alert{maintenanceAlert("native", "")})
-	f.m.sourceID = ""
-	failing, asked := true, 0
-	f.m.sourceOf = func(context.Context) (string, error) {
-		asked++
-		if failing {
-			return "", errors.New("console unreachable")
-		}
-		return "native", nil
-	}
-	f.m.step(context.Background())
-	if asked != 1 || f.m.sourceBackoff != effectiveSourceRetryFloor || len(f.writer.batches) != 0 {
-		t.Fatalf("asked=%d backoff=%s batches=%v after the first failure", asked, f.m.sourceBackoff, f.writer.batches)
-	}
-	for want := 2 * effectiveSourceRetryFloor; want <= effectiveSourceCoverage; want *= 2 {
-		f.advance(f.m.sourceBackoff)
-		f.m.step(context.Background())
-		if f.m.sourceBackoff != min(want, effectiveSourceCoverage) {
-			t.Fatalf("backoff %s after %d reads, want %s", f.m.sourceBackoff, asked, min(want, effectiveSourceCoverage))
-		}
-	}
-	f.advance(f.m.sourceBackoff)
-	f.m.step(context.Background())
-	if f.m.sourceBackoff != effectiveSourceCoverage {
-		t.Fatalf("backoff %s, want it held at the coverage %s", f.m.sourceBackoff, effectiveSourceCoverage)
-	}
-	failing = false
-	f.advance(f.m.sourceBackoff)
-	f.m.step(context.Background())
-	if f.m.sourceBackoff != 0 || f.m.sourceID != "native" || len(f.writer.batches) != 1 {
-		t.Fatalf("backoff=%s source=%q batches=%v once the Console answered, want reset and the close sent", f.m.sourceBackoff, f.m.sourceID, f.writer.batches)
 	}
 }

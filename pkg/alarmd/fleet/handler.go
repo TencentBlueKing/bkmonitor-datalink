@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategycache"
 )
 
@@ -348,9 +349,6 @@ type HealthResponse struct {
 	Dependencies         []Endpoint `json:"dependencies"`
 	DependenciesReplica  string     `json:"dependencies_replica,omitempty"`
 	DependenciesReplicas int        `json:"dependencies_replicas"`
-	// LinkdConsole is the alert link's Console read against whether the
-	// deployment needs it; see LinkdConsoleStanding.
-	LinkdConsole *LinkdConsoleStanding `json:"linkd_console,omitempty"`
 	// ReplicasNotReady is how many counted replicas answer their own
 	// readiness probe with no; which bit, on each per_replica row.
 	ReplicasNotReady int `json:"replicas_not_ready"`
@@ -873,6 +871,13 @@ type DetailResponse struct {
 	// count that does not recover is read against its strategy's windows
 	// here: it asks N + R periods and accepts one.
 	LastQueryRanges *QueryRanges `json:"last_query_ranges,omitempty"`
+	// PlanCarries is where each of the object's Plans' Runtime State comes
+	// from: the generation it runs under and since when, and the generation
+	// and strategy revision an edit carried history from.
+	// A series point before a Plan's activated_at was decided under its
+	// carried_from. PlanCarriesUnavailable names why it could not be read.
+	PlanCarries            *controlplane.PlanCarriesReading `json:"plan_carries,omitempty"`
+	PlanCarriesUnavailable string                           `json:"plan_carries_unavailable,omitempty"`
 	// TrackedBy is the replica whose latest snapshot lists the object as
 	// owned, when the answering replica does not track it, and
 	// TrackedByAsOf that snapshot's time. Best effort: right after the
@@ -1078,7 +1083,7 @@ func healthOf(view *View, part ReplicaPart, at time.Time) HealthResponse {
 		Source: view.Source, SourceReplica: view.SourceReplica, SourceStanding: view.SourceStanding, ControlFacts: view.ControlFacts,
 		NoDataTracking: view.NoDataTracking,
 		Dependencies:   dependencyList(view.Dependencies), DependenciesReplica: view.DependenciesReplica,
-		DependenciesReplicas: view.DependenciesReplicas, LinkdConsole: view.LinkdConsole, ReplicasNotReady: view.ReplicasNotReady,
+		DependenciesReplicas: view.DependenciesReplicas, ReplicasNotReady: view.ReplicasNotReady,
 		Overdue: view.Overdue, Dispatch: view.Dispatch, Schedule: view.Schedule, AddressDiffers: view.AddressDiffers, TrackerDropped: view.TrackerDropped,
 		EffectiveTimeUnread: view.EffectiveTimeUnread, EffectiveTimeUnreadTotal: view.EffectiveTimeUnreadTotal,
 		AwaitingFirstRound: view.AwaitingFirstRound, Undetermined: view.Undetermined, UndeterminedTotal: view.UndeterminedTotal,
@@ -1435,6 +1440,16 @@ func objectDetail(response http.ResponseWriter, request *http.Request, service *
 	}
 	if ranges, known := service.LocalQueryRanges(queryGroup); known {
 		body.LastQueryRanges = &ranges
+	}
+	if carries, bound, err := service.PlanCarries(request.Context(), queryGroup); bound {
+		switch {
+		case errors.Is(err, controlplane.ErrScheduleUnavailable):
+			body.PlanCarriesUnavailable = "no_open_segment"
+		case err != nil:
+			body.PlanCarriesUnavailable = "read_failed"
+		default:
+			body.PlanCarries = &carries
+		}
 	}
 	// A healthy object has a row in no snapshot. The replica that tracks it
 	// builds one on request; another replica says which one does.

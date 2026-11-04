@@ -18,6 +18,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/absentalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/editclose"
 )
 
 type Component string
@@ -56,7 +57,14 @@ const (
 	// StageAbsentStrategyClose is the control leader's difference between the
 	// alert link's unrecovered alerts and the strategy snapshot, and the
 	// closes it pushes for strategies that no longer exist.
-	StageAbsentStrategyClose  = "absent_strategy_close"
+	StageAbsentStrategyClose = "absent_strategy_close"
+	// StageStrategyEditClose is the control leader's close of the alerts an
+	// edit of their strategy orphaned (package editclose).
+	StageStrategyEditClose = "strategy_edit_close"
+	// StageStrategyScopeClose is the control leader's close of a strategy's
+	// alerts outside its current target scope, on its start and on each
+	// change of the scope.
+	StageStrategyScopeClose   = "strategy_scope_close"
 	StageLegacyPodCache       = "legacy_pod_cache"
 	StageSnapshotRefreshed    = "snapshot_refreshed"
 	StageSnapshotUnavailable  = "snapshot_unavailable"
@@ -138,6 +146,16 @@ const (
 	// StageNoDataEnd names what one Plan's no-data end index did this round,
 	// one outcome a line (NoDataEndOutcomes), counted in Keys.
 	StageNoDataEnd = "no_data_end"
+	// StageSourceLiveness names one Plan's Levels whose no-data end is held
+	// because their source could not be shown alive (sourceliveness), as
+	// this process holds them: written while any is held, and once more
+	// when none is, so the line that named them clears.
+	StageSourceLiveness = "source_liveness"
+	// StageNewOpens names one strategy's alerts this process opened in a
+	// clock hour past the report floor (newopens.ReportFloor) and its
+	// dimension with the most distinct values: written while one is past,
+	// and once more when none is, so the fleet's sum for it clears.
+	StageNewOpens = "new_opens"
 	// StageTargetResolved names what one Plan's target plan resolved to in
 	// one Slot: the state the admission filter and the absence judgement
 	// both read, and each selector's answer by name (decision-017).
@@ -1388,7 +1406,10 @@ type StateGenerationSkewFacts struct {
 
 // StateCarryFacts count history carried across a moved state generation.
 // Scope is "plan" for the Control Leader's decision per activation and
-// "series" for a Worker's per series; Count is how many met Result.
+// "series" for a Worker's per series; "no_data_plan" is the Control Leader's
+// decision about the Plan's no-data state and "no_data_load" what a Worker
+// found when it read that state from the generation it moved from. Count is
+// how many met Result.
 type StateCarryFacts struct {
 	Scope  string
 	Result string
@@ -1398,10 +1419,15 @@ type StateCarryFacts struct {
 // StateCarryScopes and StateCarryResults are the closed vocabularies of
 // StateCarryFacts; a value outside them is reported as "other".
 var (
-	StateCarryScopes  = []string{"plan", "series"}
+	StateCarryScopes  = []string{"plan", "series", "no_data_plan", "no_data_load"}
 	StateCarryResults = map[string][]string{
-		"plan":   {"carried", "partial", "none_detect_changed", "none_previous_unreadable", "none_discontinuous"},
-		"series": {"carried", "nothing_kept", "skipped_active_guard", "old_missing"},
+		"plan": {"carried", "carried_detect_changed", "none_group_changed", "none_no_common_level", "none_previous_unreadable", "none_discontinuous"},
+		"series": {"carried", "carried_across_detect", "nothing_kept", "skipped_active_guard", "skipped_guard_warming",
+			"skipped_guard_gapped", "old_missing"},
+		"no_data_plan": {"carried", "carried_ends_only", "not_carried_semantics_changed",
+			"not_carried_previous_unreadable"},
+		"no_data_load": {"memory_carried", "memory_previous_empty", "memory_previous_unreadable",
+			"ends_carried", "ends_previous_empty", "ends_previous_unreadable", "ends_previous_not_cleared"},
 	}
 )
 
@@ -2221,11 +2247,16 @@ const RecoveryWithheldZeroCount RecoveryWithheldReason = contract.RecoveryWithhe
 
 // RecoveryWithheldReasons lists every reason, for the metric that
 // pre-creates them all.
-var RecoveryWithheldReasons = []RecoveryWithheldReason{RecoveryWithheldZeroCount, RecoveryWithheldNoDataLastPointUnknown}
+var RecoveryWithheldReasons = []RecoveryWithheldReason{RecoveryWithheldZeroCount, RecoveryWithheldNoDataLastPointUnknown,
+	RecoveryWithheldSourceUnknown}
 
 // RecoveryWithheldNoDataLastPointUnknown: as zero_count, on a Level written to
 // end on no data whose last real point is not known, so no data ends nothing.
 const RecoveryWithheldNoDataLastPointUnknown RecoveryWithheldReason = contract.RecoveryWithheldNoDataLastPointUnknown
+
+// RecoveryWithheldSourceUnknown: a Level written to end on no data was due to
+// end and its source could not be shown alive, so it stays open.
+const RecoveryWithheldSourceUnknown RecoveryWithheldReason = contract.RecoveryWithheldSourceUnknown
 
 // The outcomes of the no-data end index (worker), closed: a metric label.
 const (
@@ -2254,11 +2285,54 @@ const (
 	// after a handover, or no Console to read it from; nothing is sent or
 	// removed, and the next round with a judged set decides.
 	NoDataEndUnjudged = "unjudged"
+	// NoDataEndSourceUnknown counts absent entries whose end was due and was
+	// held because the source could not be shown alive (sourceliveness): the
+	// entry stays, nothing is sent, and the next round asks again.
+	NoDataEndSourceUnknown = "source_unknown"
+	// NoDataEndLevelNotOpen counts absent series whose due Levels are none of
+	// them the Level the alert is at (contract.OpenLevelSet): the consumer
+	// ends an alert only on its own Level, as Python does, so nothing is
+	// sent and the entries are removed, as a sent end's are.
+	NoDataEndLevelNotOpen = "level_not_open"
 )
+
+// SourceLivenessHeldFact is one Plan's Levels whose no-data end is held
+// because their source could not be shown alive, as one process holds them:
+// how many, how many longer than their bound (sourceliveness.HeldBound), and
+// the oldest one's source kind, table, first held time (Unix seconds), last
+// verdict and bound. Levels zero says none is held any more.
+type SourceLivenessHeldFact struct {
+	Levels        int    `json:"levels"`
+	PastBound     int    `json:"past_bound"`
+	SourceKind    string `json:"source_kind,omitempty"`
+	TableID       string `json:"table_id,omitempty"`
+	FirstHeldUnix int64  `json:"first_held,omitempty"`
+	LastResult    string `json:"last_result,omitempty"`
+	LastReason    string `json:"last_reason,omitempty"`
+	BoundSeconds  int64  `json:"bound_seconds,omitempty"`
+}
+
+// NewOpensFact is one strategy's clock hours past the report floor, as
+// this process counted them; none says no hour is any more.
+type NewOpensFact struct {
+	Hours []NewOpensHourFact `json:"hours,omitempty"`
+}
+
+// NewOpensHourFact is one clock hour (Unix seconds of its start): the
+// alerts opened in it here and the dimension with the most distinct values
+// among them.
+type NewOpensHourFact struct {
+	StartUnix         int64  `json:"start"`
+	Opened            int    `json:"opened"`
+	Dimension         string `json:"dimension,omitempty"`
+	Distinct          int    `json:"distinct,omitempty"`
+	DistinctCapped    bool   `json:"distinct_capped,omitempty"`
+	DimensionsDropped int    `json:"dimensions_dropped,omitempty"`
+}
 
 // NoDataEndOutcomes is the closed list.
 var NoDataEndOutcomes = []string{NoDataEndSent, NoDataEndNotOpen, NoDataEndOverflow, NoDataEndUnavailable,
-	NoDataEndSendFailed, NoDataEndUndecodable, NoDataEndUnjudged}
+	NoDataEndSendFailed, NoDataEndUndecodable, NoDataEndUnjudged, NoDataEndSourceUnknown, NoDataEndLevelNotOpen}
 
 // RecoveryWithheldFact counts, for one evaluation, the Level outcomes whose
 // recovery was withheld for one reason.
@@ -2268,9 +2342,10 @@ type RecoveryWithheldFact struct {
 }
 
 // LevelOutcomeFact is one cell of an evaluation's Level outcomes: the
-// outcome kind, the reason for an UNKNOWN or TERMINAL one (empty for the
-// business outcomes, which carry none), and how many Level outcomes fell in
-// it. LevelOutcomeKinds is the closed list of kinds; the reason is bounded
+// outcome kind, the reason for an UNKNOWN or TERMINAL one, the reason a
+// NORMAL one met its recovery windows and was held NORMAL
+// (RecoveryWithheldReasons; empty for every other business outcome), and
+// how many Level outcomes fell in it. LevelOutcomeKinds is the closed list of kinds; the reason is bounded
 // by the observation reason catalog, and one outside it is reported as
 // other so the cell count stays bounded.
 type LevelOutcomeFact struct {
@@ -2281,6 +2356,11 @@ type LevelOutcomeFact struct {
 	// ReasonCarried). Only an UNKNOWN outcome's reason can be.
 	Carried bool   `json:"carried,omitempty"`
 	Count   uint64 `json:"count"`
+	// OmittedRecoveries is, of a RECOVERY cell's count, how many its record's
+	// envelope left out because the alert is at another Level
+	// (execution.LevelOutcome.EventOmitted): the Level recovered in the state
+	// and its message did not go. Zero on every other outcome; at most Count.
+	OmittedRecoveries uint64 `json:"omitted_recoveries,omitempty"`
 }
 
 // LevelOutcomeKinds is every Level outcome kind, in the execution's words.
@@ -2322,6 +2402,35 @@ func LevelOutcomeReasonLabel(reason string) string {
 	return LevelOutcomeReasonOther
 }
 
+// levelOutcomeWithheldReason says whether reason is one a NORMAL outcome
+// carries: why its recovery was withheld.
+func levelOutcomeWithheldReason(reason string) bool {
+	for _, known := range RecoveryWithheldReasons {
+		if string(known) == reason {
+			return true
+		}
+	}
+	return false
+}
+
+// LevelOutcomeLabels is a fact's reason and origin labels on
+// level_outcome_total. UNKNOWN and TERMINAL carry their reason folded to
+// the coverage list (LevelOutcomeReasonLabel), with the reason's origin. A
+// NORMAL whose recovery was withheld carries the withheld reason, derived:
+// the zero it was held on is alarmd's reading of the strategy's source
+// (a count of zero is no observation), not something the round met. Every
+// other business outcome carries none, physical.
+func LevelOutcomeLabels(fact LevelOutcomeFact) (reason, origin string) {
+	switch {
+	case fact.Outcome == "UNKNOWN" || fact.Outcome == "TERMINAL":
+		reason = LevelOutcomeReasonLabel(fact.Reason)
+		return reason, ReasonOriginOf(ReasonCode(reason), fact.Outcome == "UNKNOWN" && fact.Carried)
+	case fact.Outcome == "NORMAL" && levelOutcomeWithheldReason(fact.Reason):
+		return fact.Reason, ReasonOriginDerived
+	}
+	return "", ReasonOriginPhysical
+}
+
 func normalizeLevelOutcomeFacts(observation Observation) []LevelOutcomeFact {
 	if observation.Component != ComponentEvaluation || observation.Stage != StageEvaluationCompleted {
 		return nil
@@ -2338,16 +2447,22 @@ func normalizeLevelOutcomeFacts(observation Observation) []LevelOutcomeFact {
 		if !known {
 			continue
 		}
-		if fact.Outcome == "UNKNOWN" || fact.Outcome == "TERMINAL" {
+		switch {
+		case fact.Outcome == "UNKNOWN" || fact.Outcome == "TERMINAL":
 			if fact.Reason == "" {
 				fact.Reason = LevelOutcomeReasonOther
 			}
-		} else {
+		case fact.Outcome == "NORMAL" && levelOutcomeWithheldReason(fact.Reason):
+		default:
 			fact.Reason = ""
 		}
 		if fact.Outcome != "UNKNOWN" {
 			fact.Carried = false
 		}
+		if fact.Outcome != "RECOVERY" {
+			fact.OmittedRecoveries = 0
+		}
+		fact.OmittedRecoveries = min(fact.OmittedRecoveries, fact.Count)
 		facts = append(facts, fact)
 	}
 	if len(facts) == 0 {
@@ -2376,6 +2491,10 @@ const (
 	// keys alerts by could not be built; held and named rather than read as
 	// absent.
 	OpenAlertGateHeldFingerprintUnknown OpenAlertGateOutcome = "held_fingerprint_unknown"
+	// OpenAlertGateHeldLevelNotOpen: every Level the record recovers is one
+	// the series' open alert does not have open; an orphan at the consumer,
+	// held.
+	OpenAlertGateHeldLevelNotOpen OpenAlertGateOutcome = "held_level_not_open"
 	// OpenAlertGateNotConfigured: the evaluation ran without a set; the
 	// envelope went as before the gate existed. On a production worker this
 	// counting is the wiring having come apart.
@@ -2389,7 +2508,7 @@ const (
 // them all.
 var OpenAlertGateOutcomes = []OpenAlertGateOutcome{
 	OpenAlertGatePassed, OpenAlertGatePassedOneTimeClose, OpenAlertGateHeldNoOpenAlert, OpenAlertGateHeldFingerprintUnknown,
-	OpenAlertGateNotConfigured, OpenAlertGateProtocolNotGated,
+	OpenAlertGateNotConfigured, OpenAlertGateProtocolNotGated, OpenAlertGateHeldLevelNotOpen,
 }
 
 // OpenAlertGateFact counts, for one evaluation, the records the open alert
@@ -2694,7 +2813,11 @@ type Observation struct {
 	RecoveryGates        []RecoveryGateFact
 	RecoveryWithheld     []RecoveryWithheldFact
 	// NoDataEnd is the outcome of a no_data_end line (NoDataEndOutcomes).
-	NoDataEnd      string `json:"no_data_end,omitempty"`
+	NoDataEnd string `json:"no_data_end,omitempty"`
+	// SourceLivenessHeld is a source_liveness line's held Levels.
+	SourceLivenessHeld *SourceLivenessHeldFact `json:"source_liveness_held,omitempty"`
+	// NewOpens is a new_opens line's count.
+	NewOpens       *NewOpensFact `json:"new_opens,omitempty"`
 	OpenAlertGates []OpenAlertGateFact
 	// LevelOutcomes is what the evaluation concluded per Level outcome and
 	// reason, on an evaluation_completed line: how many Level outcomes were
@@ -2712,6 +2835,17 @@ type Observation struct {
 	DurationKnown          bool
 	EvaluationOwner        CostPlanIdentity
 	EvaluationRecordsKnown bool
+}
+
+// Timed reports whether the observation carries a measured Duration: its
+// producer set DurationKnown (a measured zero included), or, as
+// DurationKnown's comment allows for older producers, its Duration is
+// positive. One that is neither is a point event - a lease renewed, a view
+// published, a no-data judgement - which took no time anyone measured, and
+// its log line carries no duration_ms rather than a 0 that reads as zero
+// milliseconds.
+func (observation Observation) Timed() bool {
+	return observation.DurationKnown || observation.Duration > 0
 }
 
 type Observer interface {
@@ -2840,6 +2974,12 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.RecoveryWithheld = normalizeRecoveryWithheldFacts(observation)
 	if observation.Stage != StageNoDataEnd || !slices.Contains(NoDataEndOutcomes, observation.NoDataEnd) {
 		observation.NoDataEnd = ""
+	}
+	if observation.Stage != StageSourceLiveness {
+		observation.SourceLivenessHeld = nil
+	}
+	if observation.Stage != StageNewOpens {
+		observation.NewOpens = nil
 	}
 	observation.LevelOutcomes = normalizeLevelOutcomeFacts(observation)
 	observation.OpenAlertGates = normalizeOpenAlertGateFacts(observation)
@@ -3069,7 +3209,7 @@ func normalizeOpenAlertGateFacts(observation Observation) []OpenAlertGateFact {
 		}
 		switch fact.Outcome {
 		case OpenAlertGatePassed, OpenAlertGatePassedOneTimeClose, OpenAlertGateHeldNoOpenAlert, OpenAlertGateHeldFingerprintUnknown,
-			OpenAlertGateNotConfigured, OpenAlertGateProtocolNotGated:
+			OpenAlertGateNotConfigured, OpenAlertGateProtocolNotGated, OpenAlertGateHeldLevelNotOpen:
 			facts = append(facts, fact)
 		}
 	}
@@ -3671,6 +3811,11 @@ var phaseTwoComponentStages = []ComponentStage{
 	// ninety more series for a loop that runs twelve times an hour on one
 	// replica and is fully answered by its own family.
 	{ComponentControlPlane, StageAbsentStrategyClose},
+	// The edit close, for the same reason: its own family
+	// (strategy_edit_close_total) has a cell per outcome.
+	{ComponentControlPlane, StageStrategyEditClose},
+	// The strategy scope close, for the same reason: strategy_scope_close_total.
+	{ComponentControlPlane, StageStrategyScopeClose},
 	{ComponentControlPlane, StageSnapshotRefreshed}, {ComponentControlPlane, StageSnapshotUnavailable},
 	{ComponentControlPlane, StageActivationFailed},
 	// A failed write of the leader's control facts. It was written as
@@ -3725,6 +3870,8 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentState, StageGapGuardProgress},
 	{ComponentEvaluation, StageNoDataDecided},
 	{ComponentState, StageNoDataEnd},
+	{ComponentState, StageSourceLiveness},
+	{ComponentOutput, StageNewOpens},
 	{ComponentAccess, StageTargetResolved},
 	{ComponentProgress, StageExecutionEvidenceWritten},
 	{ComponentState, StageNoDataMemoryRead},
@@ -3786,14 +3933,27 @@ const ReasonTraceExportFailed ReasonCode = "trace_export_failed"
 // existed the whole close chain normalized to reason_code=other on the
 // metrics side and had no cell of its own.
 const (
-	// EffectiveCloseAcked counts alerts closed, one per alert the broker
-	// acknowledged.
-	EffectiveCloseAcked ReasonCode = "close_acked"
+	// EffectiveCloseDone counts inactive closes the link's filter ran: one
+	// per Plan and version, done or carried on by the next step
+	// (filterclose job_done, job_incomplete). The alerts are counted by the
+	// filter close's own items (linkd filter close metric).
+	EffectiveCloseDone ReasonCode = "close_done"
+	// EffectiveCloseNothingMatched is an inactive close whose dry run
+	// matched no active alert of the Plan's version.
+	EffectiveCloseNothingMatched ReasonCode = "close_nothing_matched"
+	// EffectiveCloseNotSettled is an inactive close the link did not settle
+	// this step - busy, failed, refused, past its expectation - tried again
+	// by the next step; the filter close's metric names which.
+	EffectiveCloseNotSettled ReasonCode = "close_not_settled"
+	// EffectiveCloseUnsupported is filtered close unsupported: the link
+	// answered 501, 404 or 405, and nothing closes the Plan's alerts.
+	EffectiveCloseUnsupported ReasonCode = "filter_close_unsupported"
+	// EffectiveCloseUnrouted is an inactive Plan on a deployment that names
+	// no link control plane: nothing closes its alerts.
+	EffectiveCloseUnrouted ReasonCode = "close_unrouted"
 	// EffectiveClosePrecheckFailed is the owner and content check before a
 	// send refusing: the fence, the content scope or the timeline moved.
 	EffectiveClosePrecheckFailed ReasonCode = "close_precheck_failed"
-	// EffectiveCloseSendFailed is the producer not acknowledging a batch.
-	EffectiveCloseSendFailed ReasonCode = "close_send_failed"
 	// EffectiveCloseMaintenanceBusy is a close that could not take the Query
 	// Group's flight because a Slot was executing. Once is nothing; on every
 	// tick it is a Query Group whose close never happens, which used to be
@@ -3818,6 +3978,14 @@ const (
 	// replica starts - and not a store failure, which is what "unavailable"
 	// read as when the two were one word.
 	EffectiveCloseViewNotExecutable ReasonCode = "view_not_executable"
+	// EffectiveCloseGroupRetiring is a Query Group whose Plans the loop
+	// could not read because it is leaving the catalog: its timeline retired
+	// - the publication dropped it, or its lease moved away
+	// (controlplane.ErrQueryGroupRetiring). Read once per lease, not every
+	// second: the same read answers the same way until the lease moves.
+	// Before it these were "unavailable", every second for about a minute,
+	// and could not be told from a store that did not answer.
+	EffectiveCloseGroupRetiring ReasonCode = "group_retiring"
 	// EffectiveCloseCalendarDeletionUnsettled is a close held back for a
 	// Plan that reads a calendar deleted before the deletion settled: the
 	// calendar has not read deleted in every snapshot that names it for
@@ -3830,31 +3998,27 @@ const (
 	// time its batch was ready. The batch is not sent, and the step goes on
 	// to the Query Group's next Plan.
 	EffectiveCloseBoundaryActive ReasonCode = "close_boundary_active"
-	// EffectiveCloseBusinessUnknown is an alert of a global business Plan
-	// whose record could not be read or names no business. Such a Plan's
-	// alerts are each filed under the business they are about, and a close
-	// must carry it; the alert is not closed this round. Counts alerts.
-	EffectiveCloseBusinessUnknown ReasonCode = "close_business_unknown"
-	// EffectiveCloseSourceLastKnown is a step whose read of this
-	// deployment's event source failed, or waited out its back-off, and
-	// whose closes were decided on the source last read: a deployment
-	// property that an outage of the alert link's Console does not change.
-	// One per step, not per Query Group.
-	EffectiveCloseSourceLastKnown ReasonCode = "source_last_known"
-	// EffectiveCloseSourceUnknown is a step whose closes were deferred: the
-	// event source could not be read and none has been read yet, by this
-	// loop or by the open-alert copy. One per step.
-	EffectiveCloseSourceUnknown ReasonCode = "source_unknown"
+	// EffectiveCloseBoundaryNear is an inactive close not started: the Plan
+	// may be active again in less than one request's budget, so no request
+	// to the link could start before then. The next step past the boundary
+	// rechecks first. Apart from the filter close's round_spent, which is a
+	// close that started and ran out of its own time.
+	EffectiveCloseBoundaryNear ReasonCode = "close_boundary_near"
+	// EffectiveCloseStepSpent is a maintenance step whose inactive closes
+	// used their shared time down to less than one request's budget: the
+	// closes after it are not started in this step, and the next step goes
+	// on. Once a step.
+	EffectiveCloseStepSpent ReasonCode = "close_step_spent"
 )
 
 // EffectiveCloseOutcomes is every outcome, for the metric to pre-create each
 // cell and for a reader to bound the family by.
 var EffectiveCloseOutcomes = []ReasonCode{
-	EffectiveCloseAcked, EffectiveClosePrecheckFailed, EffectiveCloseSendFailed,
-	EffectiveCloseMaintenanceBusy, EffectiveClosePlanUncompilable, EffectiveCloseIdentityInvalid,
+	EffectiveCloseDone, EffectiveCloseNothingMatched, EffectiveCloseNotSettled, EffectiveCloseUnsupported, EffectiveCloseUnrouted,
+	EffectiveClosePrecheckFailed, EffectiveCloseMaintenanceBusy, EffectiveClosePlanUncompilable, EffectiveCloseIdentityInvalid,
 	EffectiveCloseEffectiveTimeUnknown, EffectiveCloseLegacyUnavailable, EffectiveCloseUnavailable, EffectiveCloseUnsupportedRunner,
 	EffectiveCloseViewNotExecutable, EffectiveCloseCalendarDeletionUnsettled, EffectiveCloseBoundaryActive,
-	EffectiveCloseBusinessUnknown, EffectiveCloseSourceLastKnown, EffectiveCloseSourceUnknown,
+	EffectiveCloseGroupRetiring, EffectiveCloseBoundaryNear, EffectiveCloseStepSpent,
 }
 
 // Maintenance details are bounded log reasons, not new metric label dimensions.
@@ -3879,6 +4043,23 @@ func absentCloseReasons() []ReasonCode {
 	}
 	return reasons
 }
+
+// EditCloseReasons is the edit close's vocabulary as observability reason
+// codes, declared where the decision is made (editclose.Outcomes).
+var EditCloseReasons = editCloseReasons()
+
+func editCloseReasons() []ReasonCode {
+	reasons := make([]ReasonCode, 0, len(editclose.Outcomes))
+	for _, outcome := range editclose.Outcomes {
+		reasons = append(reasons, ReasonCode(outcome))
+	}
+	return reasons
+}
+
+// StrategyScopeCloseReasons are the words the control leader's strategy
+// scope close writes its lines with (StageStrategyScopeClose).
+var StrategyScopeCloseReasons = []ReasonCode{"snapshot_unavailable", "link_unavailable", "publication_unavailable",
+	"member_unreadable", "scope_empty", "target_list_too_large", "close_run", "send_failed"}
 
 var contractClassReasons = []ReasonCode{
 	ReasonContractDeterministic, ReasonContractRetryable, ReasonContractCoverage,
@@ -3995,7 +4176,7 @@ var allResourceReasons = joinReasons(
 // allLogReasons is every reason NormalizeReason can return: the limiter keeps
 // a bucket for each, and refuses a reason it has none for, so a catalogue
 // NormalizeReason accepts and this list leaves out has its lines dropped.
-var allLogReasons = joinReasons(unclassifiedReasons, []ReasonCode{ReasonTraceExportFailed}, resourceOnlyReasons, activationFailureReasons, ViewStreamReasons, SchedulerDecisionReasons, SlotPathReasons, effectiveMaintenanceReasons, AbsentCloseReasons, CompletionAttributionReasons, AdmissionFailureReasons, NoDataStallReasons, contractClassReasons, []ReasonCode{ReasonHeldBySupplement, ReasonHeldByMaintenance, ReasonSlotCancelled}, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
+var allLogReasons = joinReasons(unclassifiedReasons, []ReasonCode{ReasonTraceExportFailed}, resourceOnlyReasons, activationFailureReasons, ViewStreamReasons, SchedulerDecisionReasons, SlotPathReasons, effectiveMaintenanceReasons, AbsentCloseReasons, EditCloseReasons, StrategyScopeCloseReasons, CompletionAttributionReasons, AdmissionFailureReasons, NoDataStallReasons, contractClassReasons, []ReasonCode{ReasonHeldBySupplement, ReasonHeldByMaintenance, ReasonSlotCancelled}, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
 
 var componentStageSet = makeComponentStageSet(allComponentStages)
 var metricComponentStageSet = makeComponentStageSet(metricComponentStages)
@@ -4010,6 +4191,8 @@ var viewStreamReasonSet = makeReasonSet(ViewStreamReasons)
 var schedulerDecisionReasonSet = makeReasonSet(SchedulerDecisionReasons)
 var effectiveMaintenanceReasonSet = makeReasonSet(effectiveMaintenanceReasons)
 var absentCloseReasonSet = makeReasonSet(AbsentCloseReasons)
+var editCloseReasonSet = makeReasonSet(EditCloseReasons)
+var strategyScopeCloseReasonSet = makeReasonSet(StrategyScopeCloseReasons)
 var contractObservationReasons, contractObservationReasonSet, contractObservationMetricReasonByCode = loadContractObservationReasons()
 
 func makeComponentStageSet(values []ComponentStage) map[ComponentStage]struct{} {
@@ -4137,6 +4320,6 @@ func ObserveSlotWait(
 	defer func() { _ = recover() }()
 	observer.Observe(ctx, Observation{
 		Component: ComponentScheduler, Stage: StageSlotWait, Result: result, ReasonCode: reason, Operation: operation,
-		Duration: elapsed, SlotWait: &SlotWaitFacts{Wait: wait},
+		Duration: elapsed, DurationKnown: true, SlotWait: &SlotWaitFacts{Wait: wait},
 	})
 }

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/editclose"
 )
 
 // warnReasons are the reasons a result that is not a failure is written at
@@ -104,11 +105,11 @@ var warnSlotPathReasons = makeReasonSet([]ReasonCode{ReasonSlotWaitSlow})
 var warnDecisionReasons = makeReasonSet([]ReasonCode{"unexplained", "freeze_failed", "proof_too_large"})
 
 // warnMaintenanceReasons are effective-time maintenance outcomes that are a
-// close or a plan failing; the others are a close acknowledged, contention
-// or a wait.
+// close or a plan failing, or a link that closes nothing; the others are a
+// close run or settled later, contention or a wait.
 var warnMaintenanceReasons = makeReasonSet([]ReasonCode{
-	"close_precheck_failed", "close_send_failed", "maintenance_plan_uncompilable",
-	"close_identity_invalid", "unavailable", "unsupported_runner",
+	"close_precheck_failed", "maintenance_plan_uncompilable", "close_identity_invalid",
+	"unavailable", "unsupported_runner", "filter_close_unsupported",
 })
 
 // warnAbsentCloseReasons are absent-strategy close outcomes that could not
@@ -119,6 +120,16 @@ var warnAbsentCloseReasons = makeReasonSet([]ReasonCode{
 	"snapshot_unusable", "snapshot_empty", "snapshot_stale",
 })
 
+// warnEditCloseReasons are edit close outcomes that could not read, could
+// not send or ran out of memory (editclose.Failures).
+var warnEditCloseReasons = func() map[ReasonCode]struct{} {
+	reasons := make([]ReasonCode, 0, len(editclose.Failures))
+	for _, failure := range editclose.Failures {
+		reasons = append(reasons, ReasonCode(failure))
+	}
+	return makeReasonSet(reasons)
+}()
+
 // ReasonLogLevel is the level a result that is neither a success nor a
 // failure is written at for its reason.
 func ReasonLogLevel(reason ReasonCode) slog.Level {
@@ -127,7 +138,8 @@ func ReasonLogLevel(reason ReasonCode) slog.Level {
 		return slog.LevelInfo
 	case inReasonSet(warnReasons, reason), inReasonSet(warnViewStreamReasons, reason), inReasonSet(warnDecisionReasons, reason),
 		inReasonSet(warnRunOutcomes, reason), inReasonSet(warnCursorRefusals, reason), inReasonSet(warnSlotPathReasons, reason),
-		inReasonSet(warnMaintenanceReasons, reason), inReasonSet(warnAbsentCloseReasons, reason):
+		inReasonSet(warnMaintenanceReasons, reason), inReasonSet(warnAbsentCloseReasons, reason),
+		inReasonSet(warnEditCloseReasons, reason), inReasonSet(strategyScopeCloseReasonSet, reason):
 		return slog.LevelWarn
 	case inReasonSet(activationFailureReasonSet, reason):
 		if _, kind, ok := strings.Cut(string(reason), "/"); ok && infoActivationKinds[kind] {

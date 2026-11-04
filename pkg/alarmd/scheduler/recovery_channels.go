@@ -40,7 +40,7 @@ func (coordinator *FlightCoordinator) AcquireQueryPermit(ctx context.Context, sl
 		result, reason := permitWaitOutcome(err)
 		coordinator.observer.Observe(ctx, observability.Observation{
 			Component: observability.ComponentScheduler, Stage: observability.StageQueryPermitWait, Result: result, ReasonCode: reason,
-			Duration: time.Since(started), PermitWait: &observability.PermitWaitFacts{Recovery: operation != execution.OperationNormal},
+			Duration: time.Since(started), DurationKnown: true, PermitWait: &observability.PermitWaitFacts{Recovery: operation != execution.OperationNormal},
 		})
 	}()
 	if operation == execution.OperationNormal {
@@ -70,7 +70,7 @@ func (coordinator *FlightCoordinator) AcquireRecoveryChannels(ctx context.Contex
 		result, reason := permitWaitOutcome(err)
 		coordinator.observer.Observe(ctx, observability.Observation{
 			Component: observability.ComponentScheduler, Stage: observability.StageQueryPermitWait, Result: result, ReasonCode: reason,
-			Duration: time.Since(started), PermitWait: &observability.PermitWaitFacts{Recovery: true},
+			Duration: time.Since(started), DurationKnown: true, PermitWait: &observability.PermitWaitFacts{Recovery: true},
 		})
 	}()
 	return coordinator.acquireRecoveryChannels(ctx, slot, operation, deadline, maximum, beforeWait...)
@@ -217,7 +217,7 @@ func (channels *RecoveryChannels) AcquireQueryPermit(ctx context.Context, slot e
 		result, reason := permitWaitOutcome(err)
 		coordinator.observer.Observe(ctx, observability.Observation{
 			Component: observability.ComponentScheduler, Stage: observability.StageQueryPermitWait, Result: result, ReasonCode: reason,
-			Duration: time.Since(started), PermitWait: &observability.PermitWaitFacts{Recovery: operation != execution.OperationNormal},
+			Duration: time.Since(started), DurationKnown: true, PermitWait: &observability.PermitWaitFacts{Recovery: operation != execution.OperationNormal},
 		})
 	}()
 	return channels.acquireQueryPermit(ctx, slot, operation, deadline)

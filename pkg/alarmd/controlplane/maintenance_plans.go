@@ -28,6 +28,13 @@ type MaintenancePlan struct {
 type MaintenancePlans struct {
 	Plans        []MaintenancePlan
 	Uncompilable int
+	// Until is the end of the Segment the Plans were read from, zero while
+	// it is open: past it they are not the Query Group's Plans any more,
+	// whether or not anything else about the Query Group moved. A Segment a
+	// cutover closes at a boundary still ahead of the reader's clock - the
+	// Leader's clock ahead of it, or a cutover moved past an open Segment -
+	// is read before its end and must not be judged after it.
+	Until execution.EvaluationTime
 }
 
 func (runtime *RedisCatalogRuntime) CurrentPlans(ctx context.Context, qg execution.QueryGroupIdentity, at execution.EvaluationTime) (MaintenancePlans, error) {
@@ -48,6 +55,9 @@ func (runtime *RedisCatalogRuntime) CurrentPlans(ctx context.Context, qg executi
 		active[record.Fact.Plan] = record
 	}
 	result := MaintenancePlans{Plans: make([]MaintenancePlan, 0, len(group.Plans))}
+	if s.End != nil {
+		result.Until = *s.End
+	}
 	for _, plan := range group.Plans {
 		record, ok := active[plan.Identity]
 		if !ok || record.Fact.Selected.ScheduleRevision != plan.ScheduleRevision {

@@ -89,6 +89,11 @@ type roundsOptions struct {
 	address string
 	client  *redis.Client
 	base    int64
+	// configure edits the configuration last, on the fixture's redis-server.
+	configure func(cfg *config.Config, address string)
+	// unrevisioned installs the strategy without a strategy_revision, as a
+	// source that publishes none does.
+	unrevisioned bool
 }
 
 type roundsFixture struct {
@@ -115,11 +120,30 @@ func startRoundsFixture(t *testing.T, options roundsOptions) *roundsFixture {
 	}
 	ctx := context.Background()
 	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Linkd.ControlPlane = quietLinkControlPlane(t)
 	if options.hosts {
 		followsSeedHosts(t, ctx, redisClient, cfg.PlatformKeyPrefix())
 	}
 	if options.client == nil {
 		installRoundsStrategy(t, ctx, redisClient, 7, options.item)
+		if options.unrevisioned {
+			key := "alarm-config.strategy_" + followsStrategyID
+			raw, err := redisClient.Get(ctx, key).Bytes()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var document map[string]any
+			if err := json.Unmarshal(raw, &document); err != nil {
+				t.Fatal(err)
+			}
+			delete(document, "strategy_revision")
+			if raw, err = json.Marshal(document); err != nil {
+				t.Fatal(err)
+			}
+			if err := redisClient.Set(ctx, key, raw, 0).Err(); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 
 	const interval = int64(60)
@@ -182,6 +206,9 @@ func startRoundsFixture(t *testing.T, options roundsOptions) *roundsFixture {
 	if options.groupPrefix != "" {
 		prefix := options.groupPrefix
 		cfg.PlatformCache.DynamicGroupKeyPrefix = &prefix
+	}
+	if options.configure != nil {
+		options.configure(&cfg, address)
 	}
 	fixture.prefix = cfg.Redis.StatePrefix
 	fixture.retry = cfg.PhaseTwo.Scheduler.RetryMinDelay.Duration()

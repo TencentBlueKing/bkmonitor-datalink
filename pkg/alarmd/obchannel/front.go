@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,20 +21,17 @@ import (
 // alarmd's own data and nothing of the cluster's, no raw store read, no
 // re-query and no write.
 var FrontReads = map[string]bool{
-	"overview.get":   true,
-	"trends.get":     true,
-	"fleet.get":      true,
-	"strategy.list":  true,
-	"strategy.get":   true,
-	"strategy.board": true,
-	"strategy.view":  true,
-	// The drawer's Linkd block: Linkd's read, bounded by its own time and
-	// one in flight per replica (strategy.linkd_reconcile).
-	"strategy.linkd_reconcile": true,
-	"object.list":              true,
-	"object.get":               true,
-	"diagnose.environment":     true,
-	"runtime.get":              true,
+	"overview.get":         true,
+	"trends.get":           true,
+	"fleet.get":            true,
+	"strategy.list":        true,
+	"strategy.get":         true,
+	"strategy.board":       true,
+	"strategy.view":        true,
+	"object.list":          true,
+	"object.get":           true,
+	"diagnose.environment": true,
+	"runtime.get":          true,
 	// The changes page: the channel's change receipts and alarmd's starts
 	// and stops, by name only (changes.list).
 	"changes.list": true,
@@ -82,7 +80,9 @@ func (c *Channel) FrontReadHandler(authorize func(*http.Request) error) http.Han
 
 func (c *Channel) serveFront(w http.ResponseWriter, r *http.Request, authorize func(*http.Request) error) {
 	meta := c.localMeta("")
+	operation := ""
 	fail := func(status int, code, message string) {
+		c.frontRefused(code, operation)
 		c.write(w, status, Response{Status: "error", Summary: message, Error: &Failure{Code: code, Message: message}, Meta: meta})
 	}
 	controller := http.NewResponseController(w)
@@ -121,6 +121,7 @@ func (c *Channel) serveFront(w http.ResponseWriter, r *http.Request, authorize f
 		fail(400, "unsupported_channel_version", "This server supports "+Version)
 		return
 	}
+	operation = req.Operation
 	if req.Mode != "invoke" {
 		fail(400, "invalid_mode", "The front read takes invoke only.")
 		return
@@ -197,4 +198,48 @@ func (c *Channel) serveFront(w http.ResponseWriter, r *http.Request, authorize f
 		code = 502
 	}
 	c.write(w, code, out)
+}
+
+// FrontRefusalCodes are the codes the front read is refused with, the cells
+// of FrontRefusals; FrontRefusalOther counts a code not among them.
+var FrontRefusalCodes = []string{"method_not_allowed", "admin_unauthorized", "invalid_input", "unsupported_channel_version",
+	"invalid_mode", "op_not_permitted_for_front", "unknown_operation", "catalog_changed", "front_target_not_allowed",
+	"target_routing_unavailable", "operation_unavailable", "front_answer_unshaped", FrontRefusalOther}
+
+const FrontRefusalOther = "_other"
+
+// frontRefused counts one refused front read and tells OnFrontRefused. A
+// refusal used to be the page's own business: when a build stopped serving
+// an operation the admin page still called, the page went blank with a 403
+// and nothing on alarmd's side counted or said so.
+func (c *Channel) frontRefused(code, operation string) {
+	if !slices.Contains(FrontRefusalCodes, code) {
+		code = FrontRefusalOther
+	}
+	c.frontMu.Lock()
+	if c.frontCounts == nil {
+		c.frontCounts = map[string]uint64{}
+	}
+	c.frontCounts[code]++
+	c.frontMu.Unlock()
+	if c.options.OnFrontRefused != nil {
+		c.options.OnFrontRefused(code, operation)
+	}
+}
+
+// FrontRefusals is each refusal code's count, every code present.
+func (c *Channel) FrontRefusals() map[string]uint64 {
+	counts := make(map[string]uint64, len(FrontRefusalCodes))
+	for _, code := range FrontRefusalCodes {
+		counts[code] = 0
+	}
+	if c == nil {
+		return counts
+	}
+	c.frontMu.Lock()
+	defer c.frontMu.Unlock()
+	for code, n := range c.frontCounts {
+		counts[code] = n
+	}
+	return counts
 }

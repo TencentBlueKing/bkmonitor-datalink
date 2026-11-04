@@ -11,19 +11,19 @@ this file and the CLI's metrics.list carry the whole Help.
 
 Labels: `outcome`
 
-What the control leader's difference against disabled or deleted strategies decided, by outcome. Counted per strategy except close_sent, send_failed, producer_foreign, producer_unknown and business_unknown, which count alerts. close_decided counts decisions and close_sent counts what went out, acknowledged by the broker; neither says the link closed anything, which absent.list reads per strategy as the alerts its reconcile still lists active after an earlier send. identity_unknown and revision_unknown are strategies decided and not sent because no business or revision could be found for them; business_unknown are alerts of a global business strategy not closed that round because their record names no business they were filed under. evidence_truncated is a strategy whose alerts the link answered incomplete or past 10000 rows / 5000 active alerts: the alerts it listed are closed as usual and the rest wait for a later round. Why a whole round decided nothing is absent_strategy_round_total, not a cell here. Every cell exists from the start so a zero is a reading and not an absence.
+What the control leader's difference against disabled or deleted strategies decided, by outcome. Counted per strategy. close_decided counts decisions and close_sent counts, once per strategy's close decision, a decision that sent at least one real close whose items the link answered (closed, refused or busy, item by item), so a strategy the link refuses every round is sent every round; neither says the link closed anything, which is read per alert on the link (linkd.alerts); a strategy whose absent.list sends keep growing while its row stays is one the link is sent and does not close. identity_unknown is a strategy decided and not sent: its id is not a positive integer, or there is no link to close through. revision_unknown, business_unknown, evidence_unavailable, evidence_truncated, send_failed, producer_foreign and producer_unknown name the close as first designed, which read the strategy's alerts and sent through the event producer; the filtered close counts none of them, and they stay zero. Two paths are counted apart: a strategy with no mark is within_grace until three rounds found it missing (rounds, not time), unconfirmed until two observations did, then close_decided; one the strategy list's writer marked disabled or deleted (departed_strategies) is departed_waiting on its first round under that mark, then departed_close_decided, and is re-checked just before its own close: departed_reappeared (listed again) or departed_mark_changed (the mark gone or moved) is not closed. marks_unreadable (once a round, the round's read or a re-check's; the implicit path then) and mark_invalid (per mark: not decoded, or naming another tenant) are the marks' reads. The candidates are kept across leader terms under the Control Leader's lease: memory_load_failed (per term: the term starts from nothing), memory_invalid (per kept candidate that did not decode), memory_save_failed (per round), and memory_fenced (the lease is gone; that round sends nothing). In a new term both paths wait for the term's own second round, and a kept candidate is confirmed again under two observations of the term's own. Why a whole round decided nothing is absent_strategy_round_total, not a cell here. Every cell exists from the start so a zero is a reading and not an absence.
 
 ## alarmd_absent_strategy_difference
 
 Labels: `side`
 
-The sizes the last round decided on: roster_strategies is the strategies the alert link listed with an unrecovered alert, roster_unreadable the ones it listed and could not read, roster_invalid the rows its walk skipped as naming no strategy of this binding (a smaller roster, never a failed page), roster_pages and roster_complete how far the walk of its roster got, candidates the difference itself, snapshot_strategies the strategy cache it was judged against, remembered_identities the strategies the catalog let go and still knows the business of. Each age is reported beside its bound - snapshot_age_seconds beside max_snapshot_age_seconds, link_health_age_seconds (since the link's last successful discovery) beside max_link_health_age_seconds, past which the health page calls the link's maintenance stale - so a refused round, or a roster that stopped growing, can be read as the side falling behind rather than as a bound that does not fit. The link's age never refuses a round: an old roster can only miss a strategy. link_pending is the link's own refresh backlog.
+The sizes the last round decided on: found_strategies is the strategies the alert link's search found with an active alert outside the running set, discovery_searches and discovery_tenants the searches that took and the tenants walked, discovery_complete whether every tenant was walked (1) or a search failed (0), candidates the difference itself, snapshot_strategies the strategy cache it was judged against, remembered_identities the strategies the catalog let go and still knows the business of. snapshot_age_seconds is reported beside its bound max_snapshot_age_seconds, so a refused round can be read as the source falling behind rather than as a bound that does not fit.
 
 ## alarmd_absent_strategy_round_total
 
 Labels: `disposition`
 
-How each round of the difference ended: none is a round that decided, and the rest name the fact that was not good enough to decide on - link_unavailable (the alert link's roster could not be read), snapshot_unusable (the source was not observed this round), snapshot_empty and snapshot_stale. Rounds, not strategies. none is the denominator the outcome family is read against.
+How each round of the difference ended: none is a round that decided, and the rest name the fact that was not good enough to decide on - link_unavailable (the alert link's search could not be read or its control plane is not named), snapshot_unusable (the source was not observed this round), snapshot_empty, snapshot_stale and writer_unstated (the strategy list's writer made no publication_semantics statement about this list: a strategy missing from it is not known to be gone, so nothing is closed). Rounds, not strategies. none is the denominator the outcome family is read against.
 
 ## alarmd_access_inplace_held_input_bytes
 
@@ -43,7 +43,7 @@ Each physical query a Slot runs, every attempt including retries, by the time it
 
 Labels: `reason`
 
-Physical queries that did not answer, by what their last failed attempt says: timeout, refused (the backend answered no), not_found (its status names something that does not exist), transport, decode (the answer broke the wire contract), other. Closed set.
+Physical queries that did not answer, by what their last failed attempt says: timeout, refused (the backend answered no), not_found (its status names something that does not exist), transport, decode (the answer broke the wire contract), other, sample_limit (the backend refused the query as reading more samples than it serves in one query, VM_SAMPLE_LIMIT; which Query Group it was is on the fleet's page). Closed set.
 
 ## alarmd_access_response_codec_total
 
@@ -97,7 +97,13 @@ Query Groups the publication brings back from retirement that have not drained a
 
 Labels: `outcome`
 
-Activation bodies the Control Leader rebuilt under a header present without its body, by outcome. rebuilt: written back byte for byte from the copy last read under the same header. rebuilt_draining_unknown: rebuilt from the open Segments without that copy; the Plans are exact, and Query Groups a cutover removed that had not drained stop executing now rather than at their boundary. not_needed: the body was back or the header gone. conflict: another writer moved first; nothing written. timeline_missing, coverage_invalid, header_unparsable, header_pending: refused by name, nothing written, and the fleet stays without an activation until the cause is fixed.
+Activation bodies the Control Leader rebuilt under a header present without its body, by outcome. rebuilt: written back byte for byte from the copy last read under the same header. rebuilt_draining_unknown: rebuilt from the open Segments without that copy; the Plans are exact, and Query Groups a cutover removed that had not drained stop executing now rather than at their boundary. not_needed: the body was back or the header gone. conflict: another writer moved first; nothing written. Either rebuilt outcome may keep Query Groups whose timeline it could not read; they are counted in alarmd_activation_rebuild_unread_query_groups_total. coverage_invalid, header_unparsable, header_pending: refused by name, nothing written, and the fleet stays without an activation until the cause is fixed.
+
+## alarmd_activation_rebuild_unread_query_groups_total
+
+Labels: `reason`
+
+Query Groups of the current publication an activation body rebuild wrote without reading their timeline, by reason (absent: no key; undecodable: bytes that do not decode; newer_format: a timeline of a later schema). Each keeps its place in the active set, or in Draining where the copy last read held it, so no reader takes it for a Query Group that left; every other Query Group's body is written back. The activation reconciler then repairs absent and undecodable ones (alarmd_timeline_repairs_total).
 
 ## alarmd_activation_renewal_conflict_total
 
@@ -114,6 +120,28 @@ Timelines a cutover opened again because their key was gone. This used to fail e
 Labels: `reason`
 
 Schedule timelines the Control Leader left out when it read the activation's Plan records back from the open Segments, by why: one per Query Group per activation it read. The rest of the activation loads and is cut over as usual. undecodable: the bytes do not decode; the Leader rebuilds that Query Group's records from the publication it runs and rewrites the timeline (timeline_repairs_total). newer_format: the bytes are a timeline of another schema version, written by a build that reads them, and are left alone. absent: the key is not there at all; the Leader rebuilds that Query Group's records and opens the timeline again (timeline_repairs_total{reopened}). A read that fails is never counted here: it fails the activation read as before. The fleet's activation row names the Query Groups. Counted by the Leader; read it summed over replicas. Reader: the release acceptance, from /metrics after each deploy.
+
+## alarmd_active_copy_entries
+
+Labels: `kind`
+
+What the copy holds: known (fingerprints with a word) and queued (waiting for a pass).
+
+## alarmd_active_copy_link_unsupported
+
+1 while the link answers that it cannot search (501, 404 or 405), until a search is answered again.
+
+## alarmd_active_copy_lookup_total
+
+Labels: `answer`
+
+The recovery gate's and the no-data end's lookups by how the copy answered: own_sent (this process's acknowledged ABNORMAL), search_hit (an active alert the link's search found within 5 minutes), search_miss (two misses at least 2 minutes apart, within an hour), young_miss (one run of misses shorter than that: held, not judged), unknown (no current word: queued for the next pass, held meanwhile), full (unknown and not queued, the copy at its bound), link_unsupported (unknown while the link answers it cannot search: queued for the retry, held meanwhile).
+
+## alarmd_active_copy_pass_total
+
+Labels: `outcome`
+
+The refresh passes' requests and results: request (a search of at most 500 fingerprints, tenant + event source + status active, across strategies), link_busy (429: the pass stopped, the fingerprints stay queued and held), link_unsupported (501/404/405: the pass stopped, asked again after 1 minute doubling to 10 while it lasts; warned once an episode), fingerprint_refused (a queued fingerprint that is not native, taken out of its batch unasked; per fingerprint), link_refused (401/403: the credential was refused; the pass stopped, the fingerprints stay queued and held; warned once an episode), read_failed (any other failure: held), hit and miss (fingerprints answered), foreign_item (an item that is not an active alert of a queued fingerprint, this source and its strategy), dropped (forgotten when a strategy came back after 10 minutes untracked).
 
 ## alarmd_active_qg_set_object_bytes
 
@@ -245,7 +273,7 @@ Strategies the source marks global (is_global_strategy) in the Catalog the leade
 
 Labels: `reason`, `source_semantics`
 
-The global_unsupported strategies of catalog_global_strategies by the word they were refused for (query_kind, query_table, legacy_target, output_protocol) and the source their query reads (the catalog_plans source_semantics label, or promql); the pairs add up to that outcome. This is what decides which query source alarmd learns to run globally next. Both labels are closed sets, and only the pairs a round produced are published. Reported by the leader only.
+The global_unsupported strategies of catalog_global_strategies by the word they were refused for (query_kind, query_table, legacy_target, output_protocol, condition_ignored, business_dimension) and the source their query reads (the catalog_plans source_semantics label, or promql); the pairs add up to that outcome. This is what decides which query source alarmd learns to run globally next. Both labels are closed sets, and only the pairs a round produced are published. Reported by the leader only.
 
 ## alarmd_catalog_inert_plans
 
@@ -378,6 +406,12 @@ Cumulative CFS throttling. It separates 'busy' from 'not allowed to run', which 
 Labels: `source`
 
 The memory limit every budget above was derived from, labelled with where it was read. A source of fallback_default means no container limit was found and the budgets describe a guess rather than this deployment.
+
+## alarmd_container_memory_stat_bytes
+
+Labels: `kind`
+
+The container cgroup's charge by kind (memory.stat): anon is process memory (anon in cgroup v2, rss in v1), file is page cache (file in v2, cache in v1), which the kernel reclaims under pressure before it kills. anon plus file is about container_memory_used_bytes. Absent where memory.stat cannot be read.
 
 ## alarmd_container_memory_used_bytes
 
@@ -591,7 +625,7 @@ Activation header comparisons the due index made, by outcome; unchanged growing 
 
 Labels: `outcome`
 
-What the effective-time maintenance did, by outcome. close_acked counts alerts, one per alert the broker acknowledged a close for: the close was sent, at every level of the strategy (__ALL__); whether the alert closed is the consumer's to say. The others count events: maintenance_busy is a close that could not take the Query Group's flight because a Slot was executing (one is nothing, a steady rate is a Query Group whose close never happens); close_precheck_failed is the owner or content check refusing before a send; close_send_failed is the producer not acknowledging; maintenance_plan_uncompilable is an activated Plan the maintenance could not compile and so cannot judge; unavailable is a Query Group whose Plans could not be read or whose owner is not accepting - a Console that does not answer is not one; source_last_known is a step whose read of the event source failed or was backed off and whose closes went on under the last source known, once per step; source_unknown is a step whose closes were deferred because no source has been known yet, once per step; effective_time_unknown, legacy_effective_time_unavailable and close_identity_invalid name the judgement that could not be made; calendar_deletion_unsettled is a close held back because a calendar the strategy reads deleted has not settled as a deletion: read deleted for too short a time, read present elsewhere, or every calendar this replica's strategies name read deleted at once, a calendar source gone; close_boundary_active is a Plan the recheck just before a send found active again, its batch not sent while the Query Group's other Plans go on (effective_time_unknown counts the same recheck finding the time unreadable); close_business_unknown counts alerts of a global business Plan whose record names no business they were filed under, not closed that round. Every cell exists from the start so a zero is a reading and not an absence.
+What the effective-time maintenance did, by outcome. An inactive Plan's alerts are closed by the link's filter close, one close per Plan and version: close_done is one the filter ran (done, or carried on by the next step), close_nothing_matched one whose dry run matched no active alert of the Plan's version, close_not_settled one the link did not settle this step (busy, failed, refused, past its expectation; the linkd filter close metric names which), tried again by the next step; the alerts themselves are counted by the filter close's items. filter_close_unsupported is the link answering 501, 404 or 405 to a filtered close, and close_unrouted an inactive Plan on a deployment that names no link control plane: in both nothing closes the Plan's alerts. The others count events: close_precheck_failed is the owner and content check refusing before a send (the fence, the content scope or the timeline moved); maintenance_busy is a close that could not take the Query Group's flight because a Slot was executing (one is nothing, a steady rate is a Query Group whose close never happens); maintenance_plan_uncompilable is an activated Plan the maintenance could not compile and so cannot judge; unavailable is a Query Group whose Plans could not be read or whose owner stopped accepting during the read - an owner not accepting when the step begins is a handover and is skipped uncounted; view_not_executable is a Query Group whose Plans the executable view does not allow reading yet (not installed, or the lease behind it), a rollout's shape rather than a store failure; group_retiring is a Query Group leaving the catalog (its timeline retired), read once per lease rather than every second; unsupported_runner is a Query Group whose owner runner cannot run the maintenance; effective_time_unknown, legacy_effective_time_unavailable and close_identity_invalid name the judgement that could not be made; calendar_deletion_unsettled is a close held back because a calendar the strategy reads deleted has not settled as a deletion: read deleted for too short a time, read present elsewhere, or every calendar this replica's strategies name read deleted at once, a calendar source gone; close_boundary_active is a Plan the recheck just before a send found active again, its close not sent while the Query Group's other Plans go on (effective_time_unknown counts the same recheck finding the time unreadable); close_boundary_near is an inactive close not started because the Plan may be active again in less than one request's budget (the filter close's round_spent is a close that started and ran out of time); close_step_spent is a maintenance step whose inactive closes, which share one step's time, left less than one request's budget, so its further closes start in the next step (once a step). Every cell exists from the start so a zero is a reading and not an absence.
 
 ## alarmd_effective_time_refresh_total
 
@@ -727,6 +761,12 @@ Labels: `column`
 
 Objects by which column of the split they are in. Unlike fleet_objects these DO add up: healthy, anomalous, demoted, undecidable, by_design and unknown partition the deployment, every object is in exactly one, and their sum is covered. That is what the family is for -- a change that moves objects between columns shows as one falling and another rising by the same amount in the same scrape, and drift moves both sides and leaves the difference alone. A before-and-after on the anomaly count alone attributes nothing, which is why this exists. It is a separate family from fleet_objects precisely because these add up and those do not: summing a family where some members overlap and others partition gives a number that looks plausible and means nothing. While a rollout is in progress these under-count: a replica on an older build does not publish the columns and its objects stay in anomalous. Compare within one pod and one build, never across a rollout -- an attribution made across one had to be retracted, which is the reason this family was added.
 
+## alarmd_fleet_plan_carries_reads_total
+
+Labels: `result`
+
+Reads of where an object's Plans' Runtime State comes from (plan_carries on an object detail), from the Query Group's timeline, by result: read; no_open_segment (the timeline holds no open Segment, so the object runs no Plan here now); failed (the timeline or an output context it names did not read back: the detail answers plan_carries_unavailable read_failed). Made on request only.
+
 ## alarmd_fleet_query_cooldown_objects
 
 Visible objects isolated by external source_backend query cooldown, including expired permits awaiting a real query; demoted objects are counted, since holding a cooldown is what demotes an object. Lower bound when the anomaly or demoted list is truncated or fleet coverage is incomplete.
@@ -816,6 +856,20 @@ Fleet summary reads this replica made to build a summarized fleet view: the heal
 Labels: `state`
 
 Replicas the fleet view counted, by whether they have applied the Activation the control plane published: acked, lagging or unknown. Unknown is a replica that reported no version or a published version that could not be read; it is never folded into acked. The three sum to the counted replicas. Written by every replica from the same shared facts, so aggregate with max, not sum.
+
+## alarmd_front_refused_total
+
+Labels: `outcome`
+
+Front reads (the admin page's calls through the front surface) alarmd refused, by the code it answered with: method_not_allowed, admin_unauthorized, invalid_input, unsupported_channel_version, invalid_mode, op_not_permitted_for_front (an operation or a parameter the front surface does not serve: a page calling what this build no longer serves it), unknown_operation, catalog_changed, front_target_not_allowed, target_routing_unavailable, operation_unavailable, front_answer_unshaped, _other. Every cell exists from the start so a zero is a reading and not an absence.
+
+## alarmd_go_heap_idle_bytes
+
+Go heap spans holding no objects (runtime/metrics heap free plus released). The part not yet released (minus go_heap_released_bytes) is resident and charged to the container: a high process_resident_bytes with a high idle-minus-released is the runtime keeping memory it no longer uses, not a leak.
+
+## alarmd_go_heap_released_bytes
+
+Go heap spans handed back to the operating system (runtime/metrics heap released): no longer resident, not charged.
 
 ## alarmd_handover_drain_seconds
 
@@ -907,31 +961,19 @@ Level verdicts of ABNORMAL, by whether the detection window they were reached on
 
 Labels: `outcome`, `reason`, `origin`
 
-Level outcomes the evaluation concluded, by outcome kind and, for UNKNOWN and TERMINAL, by reason. NORMAL, ABNORMAL and RECOVERY carry no reason. UNKNOWN by reason is the reading for a Level that was not judged: EFFECTIVE_TIME_INACTIVE is its configured hours, EFFECTIVE_TIME_UNKNOWN a schedule that could not be resolved, HISTORY_WARMING a window not yet full, GAP_* a guard. This counts Level outcomes per series per evaluation, not alerts and not strategies; read a reason against level_outcome_total summed over every cell for its share. origin says whose the reason is: physical for what this round met itself, carried for a stored guard's reason repeated on a later round (an UNKNOWN Level held by a guard an earlier round raised; the origin Slot is on the evaluation_completed line), derived for alarmd's own judgement from configuration, schedule or State (EFFECTIVE_TIME_INACTIVE, HISTORY_WARMING, ...). Only UNKNOWN is ever carried.
+Level outcomes the evaluation concluded, by outcome kind and, for UNKNOWN and TERMINAL, by reason. ABNORMAL and RECOVERY carry no reason. NORMAL carries one only where the Level met its recovery windows and was held NORMAL on an open alert: the trigger_recovery_withheld_total reason (zero_count, no_data_last_point_unknown, source_unknown), origin derived, so a shift from RECOVERY to NORMAL is read on this family by the rule that made it; every other NORMAL has reason empty. A reason on NORMAL is not an unjudged Level: read UNKNOWN by outcome="UNKNOWN", never by reason!="". UNKNOWN by reason is the reading for a Level that was not judged: EFFECTIVE_TIME_INACTIVE is its configured hours, EFFECTIVE_TIME_UNKNOWN a schedule that could not be resolved, HISTORY_WARMING a window not yet full, GAP_* a guard. This counts Level outcomes per series per evaluation, not alerts and not strategies; read a reason against level_outcome_total summed over every cell for its share. origin says whose the reason is: physical for what this round met itself, carried for a stored guard's reason repeated on a later round (an UNKNOWN Level held by a guard an earlier round raised; the origin Slot is on the evaluation_completed line), derived for alarmd's own judgement from configuration, schedule or State (EFFECTIVE_TIME_INACTIVE, HISTORY_WARMING, a withheld recovery's reason, ...). Only UNKNOWN is ever carried.
 
-## alarmd_linkd_calibration_coverage
+## alarmd_linkd_filter_close_request_seconds
 
-Labels: `state`
+Labels: `mode`, `result`
 
-Tracked strategies by whether calibration at the Console's measured pace reaches them within the calibration interval: covered, or short. A round calibrates enough strategies to cover every tracked one with a quarter to spare, bounded by how many calls the Console answers in half a refresh cycle (from the latest calls' p90); short is the strategies an interval at that bound cannot reach, whose open-alert sets go unjudged and so unclosed. fleet.get names the strategies past their calibration age. Absent without a Console.
+How long one request of the strategy closes' filtered close (package filterclose) to the alert link took, from sent to answered or given up, by mode (dry_run: the count and the candidates before a close; close: the real close of the ids its dry run read, as many as the link's own budget allows) and result. Not answered: timeout (the request's own budget ran out: the closes the link made before stay saved), canceled (the round ended first), busy (429), unavailable (503), http_4xx, http_5xx, transport (no status: the link was not reached or did not answer); invalid_response (a 200 whose body could not be read - it broke off or did not decode, and the link may have acted on it - or a request alarmd could not build and did not send: its command not a JSON object, its query invalid, its body past the link's bound); answer_too_large (a 200 past the client's bound). Answered with a top-level error code: query_failed (a later candidate query failed; the items read are answered), error_unknown (a code alarmd does not know). Answered: ok (no item failed; every dry run); a real close whose items all failed, by their one status, items_busy (429 or 504 not_attempted), items_unavailable (503), items_5xx (another 5xx), items_failed (mixed or another); items_partial when only some failed. Every cell exists from the start.
 
-## alarmd_linkd_console_calls_total
+## alarmd_linkd_filter_close_total
 
-Labels: `op`, `result`
+Labels: `outcome`
 
-Calls this replica made to the alert link's Console, by operation (roster, reconcile, alert_record) and result (ok, failed). Only the control leader walks the roster. An alert_record answered with 'no such alert' is ok. Every cell exists once the source is bound, so a zero is a reading.
-
-## alarmd_linkd_console_failures_total
-
-Labels: `op`, `class`
-
-Failed calls to the alert link's Console, by operation and class: the transport's word for a request that got no answer (cancelled - the caller let go, timeout, connection_refused, connection_reset, dns, tls, eof, other - the same words a query provider's route detail uses), status (an answer other than 200) and incomplete (a body not read whole or not decoded). The classes of one operation add up to its result="failed" cell of linkd_console_calls_total; the latest one, with when, is the Console row's last_failure_class on the deployment's dependencies, and its start and every change of class write one console_call_failed line. Every cell exists once the source is bound. Reader: the release acceptance, from /metrics after each deploy.
-
-## alarmd_linkd_console_state
-
-Labels: `state`
-
-The alert link's Console as this replica last saw it, one cell per state and 1 on the current one: not_configured (the deployment names no Console, so neither the open alert set's calibration nor the close of disabled or deleted strategies' alerts runs; by design on a deployment whose events all go the Python-compatible way), not_called, unreadable (the latest call of some operation failed), link_unhealthy (the Console answered and the link says its own set maintenance is failing, never succeeded or is behind; its roster may then miss strategies the close would take, and the close still runs on what it lists), reachable, and off_role, a cell on every process: 1 on one with neither the control nor the worker role (the rest 0), else 0.
+The strategy closes alarmd runs through the alert link's search and close by filter (package filterclose), by outcome. Per job (one decision's filter in one round): job_done, job_done_refused (the filter ran out with items the link refused and left open - 400, 403, 409 source_unpublished, item_conflict_unknown, item_refused: not settled, the record kept), job_done_rederived (the filter ran out but items came back certainly not closed: not settled, run again), job_incomplete (the round ended or the dry run's count was spent), nothing_matched, expect_exceeded (the dry run matched more than the independent expectation allows; nothing closed), filter_close_unsupported (501/404/405: nothing closes the decision), link_busy (429), link_refused (another 4xx), link_failed (timeout, 5xx, transport), link_answer_too_large (a 200 past the client's bound: a dry run of more ids than it reads; nothing decided), command_unavailable, filter_refused, target_list_too_large (a scope close whose current targets do not fit one request: not sent, never cut), page_lost (a real close request whose answer was lost: the ids it was narrowed to, read by its dry run just before, are kept to retry by id); where the job's expectation came from: expect_own_record (alarmd's own record of the episodes it opened), expect_decided_ids; the record's: record_missing (no record, or none with a start: decided alert by alert; the alerts opened before a record's start always are), record_truncated, record_unavailable (read failed: nothing decided), record_pruned (entries removed after their decision found nothing), record_prune_failed. Per item: item_closed, item_already_closed, item_ended_otherwise (409 invalid_transition), item_source_unpublished, item_conflict_unknown, item_rederived (429, 504 not_attempted, 409 version_conflict: found again by the filter), item_unavailable (503: the link refused before the close ran; found again next round), item_not_found (404: enumerated, then gone before its close), item_invalid_command (400) and item_tenant_mismatch (403): refused, not retried, item_pending (another 5xx: kept to retry by id), item_pending_full, item_pending_lost, item_refused. Per retry of a kept item: pending_closed, pending_already_closed, pending_ended_otherwise, pending_left_decision (the decision's filter no longer names the alert: dropped, not closed), pending_not_found, pending_retry_failed, pending_given_up, pending_refused, pending_unreadable, pending_unavailable. The edit close's own: buckets_truncated, digest_mismatch, family_mismatch (a sample whose no-data tag and evaluation_family disagree: no decision), sample_unreadable, and edit_<word> for each edit decision and note - edit_revision_incomparable, beside its decision, an alert whose strategy_version is of the other revision scheme than the current Plans' (a microsecond time against a count), judged from its own record; alerts_read, alerts_truncated, alert_decided_close are the edit close's and the alert-by-alert close's of a strategy with no record; absent_truncated (a tenant's discovery stopped at its per-round bound). The filtered close takes no page: a job sends requests while there is more, each a dry run of the same filter and then a real close narrowed to the ids that dry run read, so a job never closes more than its expectation allows; close_cap_reached is a job stopped because its next dry run matched more than its closes so far left of the expectation; round_spent is a job ended before its next request because the round had less than one request's budget left; link_query_failed is a 200 whose later candidate query failed (error_code query_failed), link_error_unknown a 200 with a top-level error code alarmd does not know; job_again counts a job run again within its round because it was not settled and its last run closed something. Every cell exists from the start so a zero is a reading and not an absence.
 
 ## alarmd_live_query_reserve_seconds
 
@@ -1209,11 +1251,23 @@ Labels: `loop`
 
 How long one turn of a long-running loop took, by loop, failed turns included. control is the refresh and reconcile loop; dispatch is the scheduler's queue loop, measured up to the wait. The liveness bound on a loop is judged against the longest turn this shows.
 
+## alarmd_new_opens_total
+
+Labels: `outcome`
+
+Alerts this process opened (an ABNORMAL the open-alert copy says is its episode's first, standard protocol only), as the per-strategy hourly count behind the fleet's NEW_ALERTS_BURST line hears them, by outcome: counted, untracked (its strategy not counted: the count holds its bound of strategies already, so that strategy cannot be named). Every cell exists from the start.
+
+## alarmd_no_data_close_requests_total
+
+Labels: `outcome`
+
+The alert link's calls of the no-data close route (/internal/v1/no-data-closures), by outcome: recorded; full_skipped, answered 200 and not recorded because the strategy's close hash is at its bound (a refusal would stop the user's close at the link; skipped, alarmd may raise the absence again); store_unavailable (503, the link retries); the refusals method_not_allowed (405), body_unreadable, body_not_object and identity_invalid (400). internal_listen_off is 1 when the process serves the route with no http.internal_listen, so the route is served nowhere. Every cell exists from the start so a zero is a reading and not an absence.
+
 ## alarmd_no_data_end_total
 
 Labels: `outcome`
 
-What the no-data end index did, by outcome: sent (series whose alert a level written to end on no data ended while the series was absent from complete answers through the recovery span), not_open (entries removed because the consumer no longer holds their alert - closed by hand, by effective time, by the absent or superseded-identity close - nothing sent), overflow (open alerts not indexed, the Plan's index full; they stay open while their group is absent), unavailable (Plans whose index could not be read or written that round; nothing decided on it), send_failed (series whose end the sink did not take; sent again on the next complete round), undecodable (entries this build could not read, left to the alert's own end), unjudged (absent entries a complete round could not decide on because the consumer's set could not be judged - not read yet after a handover, or no Console; nothing sent or removed). Counted in series or entries, per round. Every outcome exists from start.
+What the no-data end index did, by outcome: sent (series whose end event the sink took, for a level written to end on no data, the series absent from complete answers through the recovery span - taken by the broker, not ended by the link, which finds no active alert for one already closed), not_open (entries removed because the consumer no longer holds their alert - closed by hand, by effective time, by the absent or superseded-identity close - nothing sent), overflow (open alerts not indexed, the Plan's index full; they stay open while their group is absent), unavailable (Plans whose index could not be read or written that round; nothing decided on it), send_failed (series whose end the sink did not take; sent again on the next complete round), undecodable (entries this build could not read, left to the alert's own end), unjudged (absent entries a complete round could not decide on because the consumer's set could not be judged - not read yet after a handover, or no Console; nothing sent or removed), source_unknown (absent entries whose end was due and was held because the source could not be shown alive; the entry stays, nothing is sent, the next round asks again), level_not_open (absent series none of whose due levels is the level the alert is at, the lowest open level id: the consumer ends an alert only on its own level, so nothing is sent and the entries are removed). Counted in series or entries, per round. Every outcome exists from start.
 
 ## alarmd_no_data_plans_by_hop_total
 
@@ -1229,7 +1283,7 @@ The catalog object cache's objects sized by their structure against the stored b
 
 ## alarmd_object_cache_decoded_samples_total
 
-Objects the reading above has sized.
+Catalog objects the object cache has sized by their structure, one in 64 stored, since the cache was configured: the sample behind object_cache_decoded_ratio. Zero means that ratio has nothing behind it yet.
 
 ## alarmd_object_catalog_manifest_bytes
 
@@ -1315,47 +1369,11 @@ Labels: `observer`
 
 Panics an observer raised and the fan-out recovered, by observer; every other observer still received the observation. entry is a panic before any member. Any count is a defect. Reader: the release acceptance, at +5 and +15 minutes after each deploy (its observer_panics column).
 
-## alarmd_open_alert_set_authoritative_age_seconds
+## alarmd_open_episode_record_total
 
-Seconds since the oldest calibration among the tracked strategies' sets completed: a full read of the consumer's open alerts for a strategy, reconciled against its index. Absent until one has.
+Labels: `outcome`
 
-## alarmd_open_alert_set_entries
-
-Labels: `kind`
-
-What the copy holds: member is fingerprints from the last publication, sent_open those this process sent ABNORMAL for within the local retention.
-
-## alarmd_open_alert_set_evictions_total
-
-Fingerprints this process sent that were dropped from the copy to stay inside its bound, oldest first.
-
-## alarmd_open_alert_set_lookup_total
-
-Labels: `answer`
-
-Lookups by how they were answered. index_member and index_absent are the consumer's index; recently_sent is a fingerprint the index does not carry yet that this process sent ABNORMAL for within its lag, the copy's word and not the consumer's; self_maintained and passed_through are the unavailable policy answering, and which of the two appears is the policy in force. index_stale is a set read once whose last successful read or calibration (complete or truncated) is older than 3 x (the index interval + ceil(tracked strategies / read batch) x the refresh interval), answered by the same policy as a set never read; the bound grows with the strategies tracked, so it differs between deployments.
-
-## alarmd_open_alert_set_notices_refused_total
-
-Labels: `reason`
-
-Change notices on the link's channel this process dropped, by why: oversized (past 64 KiB), undecodable (not a notice under the strict shape: a field this build does not know, a wrong type, content after it), invalid_key (the tenant or strategy it names is not a valid one). A dropped notice costs delay only: the strategy is read on the next periodic read. A steady rate is the link publishing a notice this build does not read. Read with alarmd-cli invoke metrics.get.
-
-## alarmd_open_alert_set_refresh_total
-
-Labels: `result`
-
-Refreshes by result: index (a strategy's index read), authoritative (a calibration completed), truncated (a calibration whose answer the link marked incomplete or that passed this process's caps of 10000 rows or 5000 active alerts: what it listed is added and its alerts are closed where due, nothing unlisted is taken as gone, and it is asked again on the calibration cadence), unavailable (either failed). A flat line is the refresh loop not running.
-
-## alarmd_open_alert_set_tracked_strategies
-
-Strategies the copy reads on each refresh: those evaluated by this worker within the tracking window. Read against worker_owned_query_groups; well above it is strategies this worker lost still inside the window.
-
-## alarmd_open_alert_set_unavailable_total
-
-Labels: `reason`
-
-Why the copy could not answer from the consumer's sets: read_error (an index read or a calibration failed, each time), too_large (a strategy's set larger than this process's read budget - members or bytes, from its memory - each time, refused before it is scanned once a member's weight is known; fleet.get names these strategies), location_unconfirmed (the link's Console has not named where the sets are) and keying_unconfirmed (it has not said they are keyed by the alert ids this process sends), each counted once on entering the state; fleet health degrades with OPEN_ALERT_SET_UNCONFIRMED while either lasts. A deployment without the Console counts nothing here.
+Writes to alarmd's own record of the alert episodes it opened (package openepisodes), the expectation the strategy-wide closes check a dry run against, by outcome: opened (an entry written for an ABNORMAL the process had no own send of), ended (an entry removed for a RECOVERY), refreshed (a hash's life set again for a strategy that only repeats its ABNORMALs), queue_full (a change dropped: the ACK path never waits), write_failed (a change in a pipeline the Redis did not take), reensured (an entry written again, set-if-absent, for an episode the process had an own send of, at most once an hour per series: it restores an entry a close pruned or a lost write left out), ensured_full (a series not remembered because the writer remembers its bound already: written only on the copy's word). Counted per change; every cell exists from the start.
 
 ## alarmd_operation_total
 
@@ -1427,7 +1445,7 @@ Reads on which the effective value of a field changed, by field: what one edit o
 
 Labels: `mode`
 
-Which state the process copy of the platform's settings (host_disable_monitor_states, is_access_bk_data, bkdata_cmdb_level_tables, file_system_type_ignore) is in, 1 on the current one and 0 on the others; read each scrape from the copy's state. off_role is a cell on every process: 1 on one with neither the control nor the worker role, which keeps no copy (the rest 0), else 0. not_configured: the deployment renders no distribution source, the copy answers from its own configuration and the platform's code defaults, which is what alarmd did before it could read the platform, and is not a fault. never_loaded: a source is configured and no read has found a publication since the process started. authoritative: the last read found a publication and every field decoded. stale: there was a publication once and the last read did not yield one; the copy answers from the last publication, and past the staleness bound fleet health degrades.
+Which state the process copy of the platform's settings (host_disable_monitor_states, is_access_bk_data, bkdata_cmdb_level_tables, file_system_type_ignore, no_data_tracking_horizon_seconds) is in, 1 on the current one and 0 on the others; read each scrape from the copy's state. off_role is a cell on every process: 1 on one with neither the control nor the worker role, which keeps no copy (the rest 0), else 0. not_configured: the deployment renders no distribution source, the copy answers from its own configuration and the platform's code defaults, which is what alarmd did before it could read the platform, and is not a fault. never_loaded: a source is configured and no read has found a publication since the process started. authoritative: the last read found a publication and every field decoded. stale: there was a publication once and the last read did not yield one; the copy answers from the last publication, and past the staleness bound fleet health degrades.
 
 ## alarmd_platform_settings_read_retry_total
 
@@ -1444,6 +1462,16 @@ Reads of the distribution by result: authoritative (a publication, every field d
 Labels: `reason`
 
 Reads that yielded no publication, by why: read_error (the read did not happen), revision_moved (the store answered and the revision changed during the read on both tries, so the fields may be of two publications and are not used -- a publisher writing faster than a round trip, not the store being down), unpublished (the revision key is absent -- nothing was ever published, and the field keys beside it are not read as no override), decode_error (a field is not of its declared type; the whole publication is refused rather than half of it, and the log line names the field and the value).
+
+## alarmd_process_memory_read_failed_total
+
+Labels: `source`
+
+Collections in which a source of the memory gauges could not be read or parsed, by source: statm (/proc/self/statm, process_resident_bytes) and memory_stat (cgroup v2 then v1 memory.stat, container_memory_stat_bytes), whether the file is missing, refused or not parsable. It rises at each scrape while its gauge is absent.
+
+## alarmd_process_resident_bytes
+
+The process's resident set (/proc/self/statm). It holds the Go heap in use, the heap the runtime keeps idle and has not handed back (go_heap_idle_bytes minus go_heap_released_bytes), stacks and the runtime's own memory. container_memory_used_bytes above it is page cache and the container's other processes: read container_memory_stat_bytes{kind="file"} for the first. Absent where it cannot be read, which is not zero.
 
 ## alarmd_progress_completed_total
 
@@ -1865,6 +1893,30 @@ Labels: `result`
 
 Strategies a source refresh round asked the compiler about, by whether they were compiled or taken from an earlier round's compilation of the same document; the two add up to the strategies of the round, and a round whose source did not change is all reused.
 
+## alarmd_source_liveness_answers_evicted_total
+
+Source liveness answers dropped from the process's cache to keep a newer source's, the cache holding its bound of them (sourceliveness.MaxAnswers, 4096 sources): the oldest goes, the one whose window ends first. Its source is probed again when next asked. Above zero is more sources due at once than the cache holds.
+
+## alarmd_source_liveness_check_seconds
+
+Labels: `source_kind`
+
+How long each source liveness probe took, by source kind: one per source and period, whichever Levels asked, run beside the round. Bounded by the probe's own 20 s, inside the query service's 30 s; a probe at the top bucket is one that timed out.
+
+## alarmd_source_liveness_checks_total
+
+Labels: `source_kind`, `result`, `reason`
+
+Verdicts on the source of a Level written to end on no data, asked on the round its end is due and on no other, by source kind (log, event, time_series), result and reason. alive: the source - the same table in the same space, the strategy's conditions removed - has data within the Level's no-data span, read from a period after its first empty one to the judged period, at most the span, and never over the last period with data; the Level ends as configured. unknown: it could not be shown alive, and the Level stays open: status (the answer carried a status, such as a table, field or space the query service does not know), partial (a route failed), timeout (no answer in time: past the probe's own bound, or not yet back when the round asked - a probe runs beside the round, never inside it; this includes probes not started because the in-flight cap was full, source_liveness_probe_deferred_total), error (transport, an HTTP status, an answer that does not decode or lacks is_partial, or no query facts to probe from), empty_without_status (answered whole with no data and no status; the shape a source that stopped should have, not yet confirmed by a real sample, so not called silent). unsupported: no probe is expressed for this source in this version, and the Level ends as it did before: promql, bkdata, apm, multi_table, data_label, event_sparse (an event source: a quiet event table and a broken one answer the probe alike). Counted per Level per round, so a probe that serves many Levels counts once for each; probes themselves are source_liveness_check_seconds. A Level held unknown for longer than its bound is on the fleet's SOURCE_UNKNOWN_HELD line. Every cell exists from start.
+
+## alarmd_source_liveness_held_evicted_total
+
+Held Levels - no-data ends held on a source that could not be shown alive - the process stopped remembering to keep a newer one, its account holding its bound of them (sourceliveness.MaxHeldLevels, 4096): the one asked about least recently goes. Its end stays held; only the fleet's SOURCE_UNKNOWN_HELD line no longer counts it until it is asked about again. Above zero is more held Levels than the account holds.
+
+## alarmd_source_liveness_probe_deferred_total
+
+Source liveness probes not started because the process already ran its in-flight cap of them (sourceliveness.MaxInFlight, 16): many distinct sources due at once. Each one's round reads unknown by timeout in source_liveness_checks_total, though no probe was sent, and the next round asks again. Above zero is the cap being reached.
+
 ## alarmd_source_observation_total
 
 Labels: `source_kind`, `result`, `reason_class`
@@ -1937,7 +1989,7 @@ Runtime State mutations found already on disk, by where that was decided and how
 
 Labels: `scope`, `result`
 
-History carried across a state generation that moved while its Plan stayed active. scope=plan: the Control Leader's decision per activation (carried: every Level's detection is unchanged, the Plan warms up for one full Slot and its series keep their results; partial and none_*: the Plan warms up whole, as before). scope=series: what a Worker did for each series with no record under the new generation (carried: results with the new detect fingerprint kept; nothing_kept: none were; skipped_active_guard: the old record still guarded holes and the series starts over; old_missing: the old generation held nothing).
+History carried across a state generation that moved while its Plan stayed active. scope=plan: the Control Leader's decision per activation that commits, counted once its cutover commits (carried: every Level both versions have is carried and none's detection changed, the Plan warms up for one full Slot and its series keep their results; carried_detect_changed: the same, and some Level's detection changed, its results kept as they were decided, as Python keeps its check results across an edit; none_group_changed: the edit moved the Plan to another Query Group - its query facts changed: the query, its delay, the detection step (detect_interval), shard, named outputs, normalization or global business scope - so its old results are about other data and the Plan warms up whole; none_no_common_level: the previous version was read and shares no Level id with the new one; none_previous_unreadable: the previous version could not be read back or compiled; none_discontinuous: the Query Group is back from retirement; every none_* warms the Plan up whole). scope=series: what a Worker did on each evaluation of a series with no record under the new generation yet - counted per evaluation, not per series: a series is counted again on every evaluation until its first record under the new generation is written, so one series usually counts more than once (carried: the carried Levels' results kept; carried_across_detect: kept, some decided by the Level's previous detection; nothing_kept: none were; skipped_active_guard: the old record held a series guard; skipped_guard_warming and skipped_guard_gapped: a guard other than the activation's own drift guard held a carried Level of the old record WARMING, or GAPPED; each of the three starts the series over - a Level WARMING or GAPPED for its window's own holes, or under its activation's drift guard (CONFIG_DRIFT), is carried, its holes with it; old_missing: the old generation held nothing). scope=no_data_plan: the Control Leader's decision about the Plan's no-data memory and no-data end index, from the two versions of the Plan (carried: the same query, projection and alert identity, and for the memory the same no-data section, so both are read from the old generation while the new one holds none; carried_ends_only: the end index is, the memory is not because the no-data section changed; not_carried_semantics_changed: the query, projection or alert identity changed, or the edit moved the Plan to another Query Group, and the edit decides what the open alerts become; not_carried_previous_unreadable: the previous version could not be read back). scope=no_data_load: what a Worker found reading that state from the old generation (memory_carried and ends_carried: something was read; *_previous_empty: the old generation held nothing; *_previous_unreadable: it could not be read, and the Plan runs on the new generation's own state; ends_previous_not_cleared: carried entries could not be removed from the old index after they were written to the new one).
 
 ## alarmd_state_generation_skew_total
 
@@ -2007,6 +2059,18 @@ Labels: `client`
 
 When the latest census of the store was taken.
 
+## alarmd_strategy_edit_close_total
+
+Labels: `outcome`
+
+What the control leader's close of alerts orphaned by an edit of their strategy came to, by outcome. Per round: not_leader, roster_unavailable, evidence_unavailable (no link to close through) and publication_unavailable. Per strategy, not examined: strategy_unpublished, plan_unrevisioned, plan_retained and plans_disagree; remembered is a strategy passed over because a round found none of its alerts at another version and its revision has not changed since. What an examined strategy's buckets decided and what their closes did is counted on linkd_filter_close_total: each decision and note as edit_<word>, each job by its word, each item the link answered as item_<word>. The other cells name the close as first designed, which read and decided each listed alert and sent its close through the event producer; the filtered close counts none of them here, and they stay zero: current_revision (raised under the strategy's current revision, not a candidate), revision_ahead, revision_unknown, family_unknown, kept (a candidate every decidable rule keeps), levels_partial, severity_unmapped and no_data_suspended (a rule could not decide it; not closed), and the closes decided - metric_changed, condition_changed, dimensions_changed, level_removed, no_data_disabled; remembered counts, among those, the ones taken from memory without reading the record again. Beside a decision, facts_missing, facts_unknown_schema and plan_facts_missing count candidates the metric and condition rules could not judge: the alert's opening event carried no strategy facts (every alert opened before events carried them), carried a schema this build does not read, or the current Plans have none; without facts a grouping is judged only for a dimension removed or renamed. condition_rule_held counts no-data candidates whose condition digest changed while the condition rule is held (it closes nothing until the publisher states what a catalog metric's snapshot conditions are), snapshot_unreadable those whose digest was taken beside a metric snapshot whose conditions could not be read; close_sent and send_failed closes sent or refused, business_unknown closes not sent for want of a business, record_unreadable alerts whose record could not be read (read again later), read_deferred alerts not read because the round's reads were spent, producer_foreign and producer_unknown alerts of another source or none. Per strategy: strategy_unpublished, plan_retained, plans_disagree, plan_unrevisioned, evidence_unavailable, evidence_truncated. Per round: not_leader, publication_unavailable, roster_unavailable. memory_full counts drops of the decision memory. reopened_since_read and recovery_unknown count closes held back before the send: a recovery of the fingerprint was sent after the listing began and an ABNORMAL of it after that, or the record of reopens could not be read. Every cell exists from the start so a zero is a reading and not an absence.
+
+## alarmd_strategy_scope_close_total
+
+Labels: `outcome`
+
+The control leader's strategy scope close (on its start and on each change of a strategy's target scope, one close by filter of the strategy's alerts outside its current targets), by outcome: not_leader, publication_unavailable, snapshot_unavailable, link_unavailable (no link control plane or no target resolver), plans_disagree (the strategy's Plans carry different target plans), resolution_incomplete (the target did not resolve Complete with its exclusions: nothing closed), resolution_stale (the target resolved from a snapshot kept past its refresh: nothing closed, not a read of the scope), member_unreadable, scope_empty (resolved Complete with no member: nothing closed), scope_unconfirmed (a scope read once: it closes when the next round reads the same), scope_unchanged, refused_backoff (a strategy whose close was refused past its record waiting a few rounds before the next try), round_full (past the round's strategies), close_run, scope_settled (the close's word ends the decision until the scope changes). The close's own word is in linkd_filter_close_total. Every cell exists from the start.
+
 ## alarmd_target_excluded_absent_members_total
 
 Excluded members absent from a complete current host snapshot, counted per member per Plan per Slot. These exclusions are normal no-ops and do not make the target unavailable.
@@ -2031,7 +2095,7 @@ Target plans resolved, once per Plan per Slot, by the composed state the admissi
 
 Labels: `outcome`
 
-What the close of alerts whose target left the strategy's monitoring scope decided, by outcome. unconfirmed is a fingerprint of an open alert turned away by one Slot, waiting for a second; close_sent counts alerts a close was sent for, acknowledged by the broker, not alerts the link closed. cache_unavailable counts rejections decided on facts that were not all read or current, which are never closed; not_member definitive rejections whose fingerprint is not an open alert; set_unavailable decisions refused because the open set could not be judged (not calibrated, disjoint, unavailable); producer_foreign open alerts of another source; send_failed closes the producer refused; close_identity_invalid closes whose request could not be built from the observation's facts (strategy id, business or revision unusable), nothing sent, the word the effective-time close uses for the same facts; memory_full first observations past the table's bound; fingerprint_unsupported definitive rejections of Plans fed by several inputs, whose alert fingerprint no single series carries; stale_deferred closes held back because the last observation was older than the freshness bound; indefinite rejections that are not a verdict on the record's place at all (a key or object identity that could not be built), apart from cache_unavailable, which is a verdict reached without its facts; observation_expired first observations whose second did not arrive within two of the strategy's periods plus its Slot's read offset (at least half an hour), forgotten - the strategies counted there are ones this close could not reach, named in its facts; business_unknown closes of a global business strategy's alerts whose record names no business they were filed under, kept for the next step; superseded_identity_close_sent counts, among close_sent, the closes of alerts a series opened under the fingerprint of its own address before its alert identity read CMDB's (reason superseded_identity). Such an offer is made for every series whose host overlay moves its fingerprint, every Slot; one that finds no open alert under the old fingerprint, or a set that cannot say, counts nothing, so not_member and set_unavailable at an offer stay target rejections; one the consumer holds is decided and counted as a target close is. Every cell exists from the start so a zero is a reading and not an absence.
+What the close of alerts a series opened under the fingerprint of its own address, before its alert identity read CMDB's (reason superseded_identity), decided, by outcome. The admission step offers the old fingerprint of every admitted series whose host overlay moves it, every Slot, for a strategy alarmd's copy of the link's active alerts knows an open alert of; an offer the copy has no word on or judges not open counts nothing. unconfirmed is an old fingerprint of an open alert offered by one Slot, waiting for a second; close_sent counts, one per old fingerprint, closes the link's filtered close settled: it closed the alert or found nothing active of it (one already ended counts too), so it is not a count of alerts closed; superseded_identity_close_sent counts the same closes by their reason; send_failed closes the link did not settle but may (busy, failing, items to be found again), kept for the next step; close_refused closes the same command would be answered the same way (items or the request refused, past the expectation or the client's answer bound, a filter that cannot be built), kept and not sent again for five minutes; filter_close_unsupported closes the link cannot run (501, 404, 405); unrouted confirmed closes on a replica with no link to close through; close_identity_invalid closes whose request could not be built from the observation's facts (strategy id or revision unusable), nothing sent, the word the effective-time close uses for the same facts; memory_full first observations past the table's bound; stale_deferred closes held back because the last observation was older than the freshness bound; observation_expired first observations whose second did not arrive within two of the strategy's periods plus its Slot's read offset (at least half an hour), forgotten. Alerts whose target left the strategy's scope are closed by the control leader, per strategy (strategy_scope_close_total). Every cell exists from the start so a zero is a reading and not an absence.
 
 ## alarmd_target_selector_resolutions_total
 
@@ -2071,7 +2135,7 @@ Spans of sampled Slots that were not exported, by why: queue_full (the export qu
 
 Labels: `outcome`
 
-RECOVERY records, by what the consumer's open alert set decided: passed (an open alert on the series; the envelope went), passed_one_time_close (the one close of a group the target dropped, let through without the consumer's copy vouching for it: about one per dropped group, more only when that round's no-data memory write failed and the round ran again; an orphan at the consumer where it holds no such alert), held_no_open_alert (none; nothing to resolve, no envelope), held_fingerprint_unknown (the series identity the consumer keys alerts by could not be built; held and named rather than read as absent), not_configured (the evaluation ran without a set; the envelope went as before the gate -- on a production worker this is a wiring fault), protocol_not_gated (the Plan publishes the compatibility protocol, which has no RECOVERY message: the set was not asked and the envelope is not built; output_events_without_message_total counts it). It counts records per evaluation, not alerts. Which of passed and held_no_open_alert dominates says nothing on its own; read it against open_alert_set_lookup_total, whose self_maintained and passed_through answers are this process's own knowledge, not the consumer's.
+RECOVERY records, by what alarmd's copy of the consumer's active alerts decided: passed (an open alert on the series; the envelope went), passed_one_time_close (the one close of a group the target dropped, let through without the consumer's copy vouching for it: about one per dropped group, more only when that round's no-data memory write failed and the round ran again; an orphan at the consumer where it holds no such alert), held_no_open_alert (none; nothing to resolve, no envelope), held_fingerprint_unknown (the series identity the consumer keys alerts by could not be built; held and named rather than read as absent), held_level_not_open (every Level the record recovers is one the series' open alert does not have open, so the consumer would drop it as an orphan; held, no envelope), not_configured (the evaluation ran without a set; the envelope went as before the gate -- on a production worker this is a wiring fault), protocol_not_gated (the Plan publishes the compatibility protocol, which has no RECOVERY message: the set was not asked and the envelope is not built; output_events_without_message_total counts it). It counts records per evaluation, not alerts. Which of passed and held_no_open_alert dominates says nothing on its own; read it against active_copy_lookup_total, whose own_sent answers are this process's own knowledge, not the consumer's.
 
 ## alarmd_trigger_recovery_beside_level_total
 
@@ -2083,7 +2147,7 @@ RECOVERY records decided while another Level of the same record was in the named
 
 Labels: `reason`
 
-Level outcomes that met their recovery windows and stayed NORMAL while the consumer holds an open alert on the series, by why: zero_count (the round's own value was a count of zero from an event count, or a log count with no grouping, whose zero is no observation; the alert recovers on a round with a count above zero, or ends by -nodata or close), no_data_last_point_unknown (the same, on a Level written to end on no data whose last real point is not known - opened on a build that did not keep it - so no data ends nothing until the next real point). Counted per Level per evaluation, so one alert held open adds one each round it stays open; a quiet series with no open alert is not counted, though its decision window still carries recovery.withheld. A round whose window is not whole is unavailable with its history reason instead, and not counted here. A zero here is a reading: every reason exists from start.
+Level outcomes that met their recovery windows and stayed NORMAL while the consumer holds an open alert on the series, by why: zero_count (the round's own value was a count of zero from an event count, or a log count with no grouping, whose zero is no observation; the alert recovers on a round with a count above zero, or ends by -nodata or close), no_data_last_point_unknown (the same, on a Level written to end on no data whose last real point is not known - opened on a build that did not keep it - so no data ends nothing until the next real point), source_unknown (a Level written to end on no data was due to end, and the probe of its source - the same table in the same space, the strategy's conditions removed - could not show the source alive: an answer with a status, partial, failed, not in time, or empty without a status; the alert stays open, and the quiet-group zero count path is never probed). Counted per Level per evaluation, so one alert held open adds one each round it stays open; a quiet series with no open alert is not counted, though its decision window still carries recovery.withheld. A round whose window is not whole is unavailable with its history reason instead, and not counted here. A zero here is a reading: every reason exists from start.
 
 ## alarmd_undrained_draining_query_groups
 
@@ -2315,7 +2379,7 @@ Process-wide physical query permit admission outcomes by fixed operation and res
 
 Labels: `queue`
 
-The configured permit ceiling, exported beside the occupancy so a reader does not need the deployment's configuration to know what the occupancy is out of.
+The configured permit ceiling, exported beside the occupancy so a reader does not need the deployment's configuration to know what the occupancy is out of. queue=normal is the process's whole ceiling, recovery queries included, not a share for normal queries alone; queue=recovery is the smaller ceiling recovery queries are held to within it.
 
 ## alarmd_worker_query_permit_seconds_total
 

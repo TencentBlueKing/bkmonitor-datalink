@@ -146,7 +146,12 @@ const (
 	// storage the query service routed the table to does not read unaligned
 	// windows. Its points cover partial buckets at the wrong times, so the
 	// query is not used. Like QUERY_TARGET_MISSING it stays until the
-	// strategy changes - here, until its detect_interval is removed.
+	// strategy changes - here, until its detect_interval is removed. A
+	// Plan detected more often than it aggregates is asked a step apart
+	// (QueryPlanFacts.QueryStepMillis), a step below its window, which the
+	// query service computes itself from where the request starts, so this
+	// is not expected of it; it is kept as the guard. A Plan detected less
+	// often is asked its aggregation interval and can still meet it.
 	ReasonDetectIntervalStorageNotSliding = "DETECT_INTERVAL_STORAGE_NOT_SLIDING"
 	// ReasonQueryNamedOutputDuplicateKey names a query with named outputs
 	// one of whose outputs answered two points at the same time under the
@@ -616,6 +621,13 @@ type EvaluationPlanV2 struct {
 	// TriggerEventV1.AttributedBusinessID). Omitted when false, so every
 	// other Plan keeps its bytes and its revision.
 	GlobalBusiness bool `json:"global_business,omitempty"`
+	// StrategyFacts is what this Plan's events say about the configuration
+	// they were decided under (StrategyFactsV2), derived from the item's
+	// query configs when the Plan is built. Only on a Plan that publishes a
+	// snapshot revision; nil on every other Plan, and on one whose query
+	// configs the platform's own comparison could not read, whose events
+	// then carry none.
+	StrategyFacts *StrategyFactsV2 `json:"strategy_facts,omitempty"`
 }
 
 // PublishesCompatibleProtocol reports whether this Plan's events go out as the
@@ -992,8 +1004,17 @@ const RecoveryWithheldZeroCount = "zero_count"
 // timed and ends nothing. The next real point starts the clock.
 const RecoveryWithheldNoDataLastPointUnknown = "no_data_last_point_unknown"
 
+// RecoveryWithheldSourceUnknown: a Level written to end on no data reached
+// its end, and the probe of its source - the same table in the same space,
+// the strategy's own conditions removed - could not say the source is alive:
+// the answer carried a status or was partial, the probe failed or timed out,
+// or it came back empty without a status. No data from a source that may
+// itself be down is not "it stopped happening", so the alert stays open.
+// Only ever on a no-data end; the quiet-group zero count path is not probed.
+const RecoveryWithheldSourceUnknown = "source_unknown"
+
 // RecoveryWithheldReasons is the closed list.
-var RecoveryWithheldReasons = []string{RecoveryWithheldZeroCount, RecoveryWithheldNoDataLastPointUnknown}
+var RecoveryWithheldReasons = []string{RecoveryWithheldZeroCount, RecoveryWithheldNoDataLastPointUnknown, RecoveryWithheldSourceUnknown}
 
 type WindowEvidenceV1 struct {
 	AnomalyTimestampsDigest string `json:"anomaly_timestamps_digest"`
@@ -1066,7 +1087,17 @@ type TriggerEventV1 struct {
 	// it, so neither the event id nor its semantic digest moves with what is
 	// read beside the detection. Nil on the events of a strategy without
 	// named outputs.
-	DetectionSnapshot       json.RawMessage      `json:"-"`
+	DetectionSnapshot json.RawMessage `json:"-"`
+	// StrategyFacts is the Plan's (EvaluationPlanV2.StrategyFacts), for the
+	// output to carry (extra_data.strategy_facts): beside the event and not
+	// in it, like the signal type. Nil where the Plan has none.
+	StrategyFacts *StrategyFactsV2 `json:"-"`
+	// TargetDimensions is the Plan's target identity dimensions
+	// (TargetPlanIdentityV1.Dimensions), beside the event like the facts:
+	// alarmd's record of the episodes it opened (package openepisodes)
+	// keeps the series' values of them, which a scope close compares with
+	// the current targets. Nil where the Plan names no target plan.
+	TargetDimensions        []string             `json:"-"`
 	Schema                  Schema               `json:"schema"`
 	RequiredFeatures        []string             `json:"required_features"`
 	EventID                 string               `json:"event_id"`

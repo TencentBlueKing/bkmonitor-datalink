@@ -233,6 +233,20 @@ type DataRequirement struct {
 	// Derived from the query each time, like UnfilledCounts, and never part
 	// of the requirement's identity.
 	ZeroIsNoObservation bool `json:"-"`
+	// ValueFiltered says the primary's expression compares its values - a
+	// filter such as OsRestart's "a <= 3600" - so a FULL, EMPTY answer may be
+	// every series filtered out, not data missing. On a primary only.
+	// Observation only, like UnfilledCounts: derived from the query each
+	// time, never part of the requirement's identity.
+	ValueFiltered bool `json:"-"`
+	// UnfilteredWitness says this algorithm dependency reads the same source
+	// as the primary of every Level it serves, through another query that
+	// filters nothing: when the primary comes back filtered empty and this
+	// one has data, the data is there and nothing passed the filter
+	// (PrimaryInputFact.FilteredWhenEmpty). On a dependency only; derived
+	// where the requirement is bound, never part of its identity or its
+	// frozen template.
+	UnfilteredWitness bool `json:"-"`
 }
 
 func (requirement DataRequirement) Validate(plans map[PlanIdentity]DuePlan) error {
@@ -252,6 +266,10 @@ func (requirement DataRequirement) Validate(plans map[PlanIdentity]DuePlan) erro
 		requirement.ProviderLeadSeconds > 0 && requirement.Role != InputRolePrimary ||
 		(requirement.UnfilledCounts || requirement.ZeroIsNoObservation) && requirement.Role != InputRolePrimary {
 		return errors.New("alarmd execution: a provider lead is a whole number of steps, on a primary requirement")
+	}
+	if requirement.ValueFiltered && requirement.Role != InputRolePrimary ||
+		requirement.UnfilteredWitness && requirement.Role != InputRoleAlgorithmDependency {
+		return errors.New("alarmd execution: a value filter is a primary's word, an unfiltered witness a dependency's")
 	}
 	if requirement.ReadinessClass != ReadinessEager && requirement.ReadinessClass != ReadinessFinalizedRequired {
 		return errors.New("alarmd execution: invalid DataRequirement readiness class")

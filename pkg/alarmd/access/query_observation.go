@@ -31,10 +31,16 @@ const (
 	QueryFailureTransport = "transport"
 	QueryFailureDecode    = "decode"
 	QueryFailureOther     = "other"
+	// QueryFailureSampleLimit is a refusal the backend named as the query
+	// reading more samples than it serves in one query
+	// (execution.RejectionClassVMSampleLimit): the strategy's own query,
+	// counted apart from every other refusal. Which Query Group it was is
+	// on the fleet's page with the group's last failure.
+	QueryFailureSampleLimit = "sample_limit"
 )
 
 // QueryFailures is the closed list.
-var QueryFailures = []string{QueryFailureTimeout, QueryFailureRefused, QueryFailureNotFound, QueryFailureTransport, QueryFailureDecode, QueryFailureOther}
+var QueryFailures = []string{QueryFailureTimeout, QueryFailureRefused, QueryFailureNotFound, QueryFailureTransport, QueryFailureDecode, QueryFailureOther, QueryFailureSampleLimit}
 
 // queryFailureOf is how a physical query failed, or "" when it answered,
 // wholly or in part. A query that failed after its answer began comes back
@@ -64,6 +70,9 @@ func queryFailureOf(completion execution.ProviderCompletion, err error) string {
 		attempt := attempts[index]
 		if attempt.Result != execution.RouteAttemptFailed && attempt.ReasonCode == "" {
 			continue
+		}
+		if attempt.Rejection != nil && attempt.Rejection.Class == execution.RejectionClassVMSampleLimit {
+			return QueryFailureSampleLimit
 		}
 		return failureOfDetail(attempt.ReasonCode, attempt.Detail)
 	}

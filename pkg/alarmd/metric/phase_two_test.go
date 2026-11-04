@@ -315,8 +315,12 @@ func TestCapacityMetricRequiresExplicitBoundedBudget(t *testing.T) {
 		Component: observability.ComponentResource, Stage: observability.StageResourceHard,
 		Result: observability.ResultPaused, ReasonCode: observability.ReasonContractDeterministic,
 	})
-	if got, err := testutil.GatherAndCount(recorder.Gatherer(), "alarmd_capacity_transition_total"); err != nil || got != 0 {
-		t.Fatalf("capacity metric families without budget = %v, error = %v", got, err)
+	for _, budget := range phaseTwoBudgets {
+		for _, result := range phaseTwoCapacityResults {
+			if got := testutil.ToFloat64(recorder.phaseTwo.capacity.WithLabelValues(budget, result)); got != 0 {
+				t.Fatalf("capacity %s/%s without budget = %v, want 0", budget, result, got)
+			}
+		}
 	}
 	recorder.Observe(context.Background(), observability.Observation{
 		Component: observability.ComponentResource, Stage: observability.StageResourceHard,
@@ -325,6 +329,41 @@ func TestCapacityMetricRequiresExplicitBoundedBudget(t *testing.T) {
 	})
 	if got := testutil.ToFloat64(recorder.phaseTwo.capacity.WithLabelValues("events", "rejected")); got != 1 {
 		t.Fatalf("events rejection = %v, want 1", got)
+	}
+}
+
+// Every budget and result is published at zero from the first scrape, so a
+// budget that never rejected reads as zero rather than as missing.
+func TestCapacityTransitionPublishesEveryCellAtZero(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	families, err := recorder.Gatherer().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]float64{}
+	for _, family := range families {
+		if family.GetName() != "alarmd_capacity_transition_total" {
+			continue
+		}
+		for _, sample := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, pair := range sample.GetLabel() {
+				labels[pair.GetName()] = pair.GetValue()
+			}
+			seen[labels["budget"]+"/"+labels["result"]] = sample.GetCounter().GetValue()
+		}
+	}
+	budgets := append(observability.CapacityBudgets(), observability.CapacityBudgetOther)
+	results := []string{"admitted", "rejected", "other"}
+	if len(seen) != len(budgets)*len(results) {
+		t.Fatalf("series = %v, want %d", seen, len(budgets)*len(results))
+	}
+	for _, budget := range budgets {
+		for _, result := range results {
+			if value, ok := seen[string(budget)+"/"+result]; !ok || value != 0 {
+				t.Fatalf("%s/%s = %v present %v, want 0 present", budget, result, value, ok)
+			}
+		}
 	}
 }
 

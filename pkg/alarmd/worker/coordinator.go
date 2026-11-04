@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/sourceliveness"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/targetplan"
 )
@@ -54,6 +55,12 @@ type Ports struct {
 	// Optional: without it a level written to end on no data ends only while
 	// its group is in the answer.
 	NoDataEnds execution.NoDataEndIndex
+	// SourceLiveness is asked, before a Level written to end on no data ends
+	// an absent series' alert, whether the Plan's source is alive
+	// (sourceliveness): not shown alive, the end is held and the entry kept.
+	// The Evaluator asks the same judge for a present series. Optional: nil
+	// ends on no data as configured.
+	SourceLiveness sourceliveness.Judge
 	// Hosts resolves which business a host belongs to, which decides both what
 	// a no-data roster expects and which of its groups have left. Required for
 	// the same reason: without it every declared host would read as unknown, so
@@ -460,7 +467,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 				Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted,
 				Result: observability.ResultRetrying, Operation: observability.Operation(request.Operation),
 				ReasonCode: observability.ReasonCode(contract.ReasonQueryNotReady),
-				Duration:   time.Since(started), ReadinessDeferral: readinessDeferralOf(err),
+				Duration:   time.Since(started), DurationKnown: true, ReadinessDeferral: readinessDeferralOf(err),
 			})
 		} else {
 			coordinator.observeQueryFailure(ctx, request.Operation, started, "execute", err)
@@ -1474,7 +1481,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 				coordinator.emitObservation(ctx, observability.Observation{
 					Component: observability.ComponentState, Stage: observability.StageMutationCompared,
 					Operation:  observability.Operation(request.Operation),
-					ReasonCode: observability.ReasonCode(reason), Duration: time.Since(started), Err: err,
+					ReasonCode: observability.ReasonCode(reason), Duration: time.Since(started), DurationKnown: true, Err: err,
 					StateVersionConflict: conflicts,
 				})
 				return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: %w", err)
@@ -1666,6 +1673,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	if err := coordinator.applyNoDataEnds(ctx, request, header, evaluated, withheldNoData); err != nil {
 		return execution.SlotExecutionResult{}, err
 	}
+	coordinator.observeSourceHeldUnindexed(ctx, request, header)
 	if retryPendingReason != "" {
 		return execution.SlotExecutionResult{
 			Completed: false, Result: observability.ResultRetrying, ReasonCode: retryPendingReason,
@@ -1679,6 +1687,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	primary.Identity = query.identityEvidence(primary)
 	primary.QuietWhenEmpty = query.quietWhenEmpty(primary, header.Requirements)
 	primary.UnfilledWhenEmpty = query.unfilledWhenEmpty(primary, header.Requirements)
+	query.labelFiltered(&primary, header.Requirements, bindings)
 	completion := execution.SlotCompletion{Contract: request.Contract, Primary: &primary, TargetResolutions: targets}
 	// Observation only. The cause is deliberately not put on
 	// completion.ReasonCode, which is persisted and decides how consecutive gaps
@@ -2032,7 +2041,7 @@ func (coordinator *SlotExecutionCoordinator) writeEvents(
 	coordinator.emitObservation(ctx, observability.Observation{
 		Component: observability.ComponentOutput, Stage: observability.StageEventACKed,
 		Operation:  observability.Operation(operation),
-		ReasonCode: observability.ReasonCode(reason), Duration: time.Since(started),
+		ReasonCode: observability.ReasonCode(reason), Duration: time.Since(started), DurationKnown: true,
 		Counts: observability.Counts{Events: int64(len(events) + len(withoutMessage))}, Err: err, OutputRejection: rejection,
 		OutputFailureKind: failureKind,
 		OutputWrite:       written, OutputWireFormats: formats, OutputEventKinds: kinds,
@@ -2056,6 +2065,7 @@ func (coordinator *SlotExecutionCoordinator) writeEvents(
 	// requires the port; the guard is for tests that build the struct.
 	if coordinator.ports.OpenAlerts != nil && len(acked) > 0 {
 		coordinator.ports.OpenAlerts.Acknowledged(acked)
+		coordinator.observeNewOpens(ctx, operation, plan)
 	}
 	if err != nil {
 		return fmt.Errorf("alarmd worker: acknowledge events: %w", err)
@@ -2565,7 +2575,7 @@ func (coordinator *SlotExecutionCoordinator) observeWithCounts(
 	coordinator.emitObservation(ctx, observability.Observation{
 		Component: component, Stage: stage, Result: result,
 		Operation:  observability.Operation(operation),
-		ReasonCode: reason, Duration: time.Since(started), Counts: counts, Err: err,
+		ReasonCode: reason, Duration: time.Since(started), DurationKnown: true, Counts: counts, Err: err,
 	})
 }
 
@@ -2876,7 +2886,7 @@ func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx contex
 	coordinator.ports.Observer.Observe(ctx, observability.Observation{
 		Component: observability.ComponentProgress, Stage: observability.StageProgressCommitted,
 		Operation: observability.Operation(operation),
-		Result:    result, ReasonCode: reason, Duration: time.Since(started), ProgressCompletionKind: kind,
+		Result:    result, ReasonCode: reason, Duration: time.Since(started), DurationKnown: true, ProgressCompletionKind: kind,
 		ProgressCompletionCause: cause, ProgressCompletionReason: causeReason, ProgressCompletionScope: scope,
 		CarriedReason:   carried,
 		HistoryCoverage: coverageFacts, ExecutionEvidence: executionEvidenceFacts(evidence),
@@ -2971,6 +2981,7 @@ func primaryInputFacts(primary *execution.PrimaryInputFact) *observability.Prima
 	}
 	return &observability.PrimaryInputFacts{Completeness: string(primary.Completeness), DataState: string(primary.DataState),
 		EmptiedByTarget: primary.EmptiedByTarget, QuietWhenEmpty: primary.QuietWhenEmpty, UnfilledWhenEmpty: primary.UnfilledWhenEmpty,
+		FilteredWhenEmpty: primary.FilteredWhenEmpty, ValueFiltered: primary.ValueFiltered, WitnessData: string(primary.WitnessData),
 		Identity: identityFacts(primary.Identity)}
 }
 

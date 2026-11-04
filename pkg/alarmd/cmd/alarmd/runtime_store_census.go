@@ -87,7 +87,7 @@ func censusStoresOf(cfg config.Config, source, runtime, compatOutput redis.Unive
 // and every key prefix the deployment configures, which are its and not data.
 func censusVocabulary(cfg config.Config) *storecensus.Vocabulary {
 	prefixes := []string{cfg.Redis.StatePrefix, cfg.PhaseTwo.Control.StrategyCachePrefix,
-		cfg.Kafka.LegacyAdapter.SnapshotPrefix, cfg.PhaseTwo.PlatformSettings.RedisKeyPrefix, cfg.PhaseTwo.Linkd.Prefix()}
+		cfg.Kafka.LegacyAdapter.SnapshotPrefix, cfg.PhaseTwo.PlatformSettings.RedisKeyPrefix}
 	if prefix, found := cfg.DynamicGroupKeyPrefix(); found {
 		prefixes = append(prefixes, prefix)
 	}

@@ -81,10 +81,10 @@ const (
 	RolloutBasisPod        = "pod"
 )
 
-// Dependency is an address alarmd already connects to, named by what it is
-// (uq, linkd_console, redis:<role>, kafka). The workload read derives a
-// namespace from it and nothing else: it adds no configuration and connects
-// to nothing new.
+// Dependency is an address alarmd already connects to, named by its role in
+// the endpoint list (query_backend, state_redis, output_kafka, ...). The
+// workload read derives a namespace from it and nothing else: it adds no
+// configuration and connects to nothing new.
 type Dependency struct {
 	Name    string `json:"name"`
 	Address string `json:"address"`

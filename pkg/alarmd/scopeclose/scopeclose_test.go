@@ -1,748 +1,417 @@
 // Tencent is pleased to support the open source community by making
 // 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2017-2025 Tencent. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (C) 2017-2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
 
 package scopeclose
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/filterclose"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdmanage"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openepisodes"
 )
+
+// closeRequest is one request the fake link received on its filtered close
+// route, as the link's API documents it.
+type closeRequest struct {
+	Filter json.RawMessage `json:"filter"`
+	DryRun bool            `json:"dry_run"`
+}
+
+// scopeLink is the link's filtered close route. Each request matches
+// `active` alerts, all within the link's budget (no page: alert-close.md,
+// Linkd c5e2443a3); a real close closes them. status, when set, answers every request with that status
+// instead.
+type scopeLink struct {
+	mu     sync.Mutex
+	active int
+	status int
+	// itemStatus, when set, answers each item of a real close with it:
+	// nothing is closed.
+	itemStatus int
+	requests   []closeRequest
+}
+
+func (link *scopeLink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	link.mu.Lock()
+	defer link.mu.Unlock()
+	if r.URL.Path != linkdmanage.RouteCloseFilter {
+		http.NotFound(w, r)
+		return
+	}
+	var request closeRequest
+	_ = json.Unmarshal(body, &request)
+	link.requests = append(link.requests, request)
+	if link.status != 0 {
+		http.Error(w, "refused", link.status)
+		return
+	}
+	n := link.active
+	items := make([]map[string]any, 0, n)
+	status := http.StatusOK
+	if !request.DryRun && link.itemStatus != 0 {
+		status = link.itemStatus
+	}
+	for i := 0; i < n; i++ {
+		items = append(items, map[string]any{"alert_id": fmt.Sprintf("alert-%d", i), "status": status})
+	}
+	if !request.DryRun && status == http.StatusOK {
+		link.active -= n
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "has_more": false, "dry_run": request.DryRun, "closed": n})
+}
+
+func (link *scopeLink) set(active, status int) {
+	link.mu.Lock()
+	link.active, link.status = active, status
+	link.mu.Unlock()
+}
+
+func (link *scopeLink) sent() (dry, real []closeRequest) {
+	link.mu.Lock()
+	defer link.mu.Unlock()
+	for _, request := range link.requests {
+		if request.DryRun {
+			dry = append(dry, request)
+		} else {
+			real = append(real, request)
+		}
+	}
+	return dry, real
+}
+
+// knownSet is the copy's word per fingerprint; a fingerprint not listed is
+// judged not held.
+type knownSet map[string]bool
+
+func (set knownSet) KnowsOpen(string, string) bool { return true }
+
+func (set knownSet) Known(_, _, fingerprint string) (bool, bool) {
+	return set[fingerprint], true
+}
+
+// unjudged is a copy with no word on anything.
+type unjudged struct{}
+
+func (unjudged) KnowsOpen(string, string) bool             { return true }
+func (unjudged) Known(string, string, string) (bool, bool) { return false, false }
 
 const (
-	tenant   = "tenant-test"
-	strategy = "42"
-	business = "2"
-	ownSrc   = "source-own"
-	otherSrc = "source-other"
+	testTenant   = "system"
+	testSource   = "source-a"
+	testStrategy = "42"
 )
 
-var key = openalerts.StrategyKey{TenantID: tenant, StrategyID: strategy}
-
-func fp(n int) string { return fmt.Sprintf("%032x", n) }
-
-// fakeSet is the open alert copy as the close sees it: which fingerprints
-// the strategy's set holds, which alerts calibration listed, whether it can
-// be judged at all.
-type fakeSet struct {
-	untrusted bool
-	unjudged  bool
-	own       string
-	held      map[string]bool
-	alerts    []openalerts.Alert
-}
-
-func (set *fakeSet) Trusted() bool { return !set.untrusted }
-func (set *fakeSet) MemberCount(k openalerts.StrategyKey) (int, bool) {
-	if set.unjudged || set.untrusted || k != key {
-		return 0, false
-	}
-	n := 0
-	for _, held := range set.held {
-		if held {
-			n++
-		}
-	}
-	return n, true
-}
-func (set *fakeSet) Holds(k openalerts.StrategyKey, fingerprint string) (bool, bool) {
-	if set.unjudged || set.untrusted || k != key {
-		return false, false
-	}
-	return set.held[fingerprint], true
-}
-func (set *fakeSet) ActiveAlerts(k openalerts.StrategyKey) []openalerts.Alert {
-	if k != key {
-		return nil
-	}
-	return set.alerts
-}
-func (set *fakeSet) OwnEventSourceID() string { return set.own }
-
-// openSet holds each fingerprint as an open alert of the given source.
-func openSet(source string, fingerprints ...string) *fakeSet {
-	set := &fakeSet{own: ownSrc, held: map[string]bool{}}
-	for i, f := range fingerprints {
-		set.held[f] = true
-		set.alerts = append(set.alerts, openalerts.Alert{AlertID: fmt.Sprintf("alert-%d", i), EventSourceID: source, Fingerprint: f})
-	}
-	return set
-}
-
-type recordingWriter struct {
-	batches [][]linkdoutput.CloseRequest
-	fail    error
-}
-
-func (w *recordingWriter) WriteCloseBatch(_ context.Context, batch []linkdoutput.CloseRequest) error {
-	if w.fail != nil {
-		return w.fail
-	}
-	w.batches = append(w.batches, append([]linkdoutput.CloseRequest(nil), batch...))
-	return nil
-}
-
-func (w *recordingWriter) sent() []linkdoutput.CloseRequest {
-	var all []linkdoutput.CloseRequest
-	for _, batch := range w.batches {
-		all = append(all, batch...)
-	}
-	return all
-}
-
-type clock struct{ at time.Time }
-
-func (c *clock) now() time.Time { return c.at }
-
-func drop(fingerprint string, round int64) Drop {
-	return Drop{TenantID: tenant, BusinessID: business, StrategyID: strategy, Fingerprint: fingerprint,
-		StrategyRevision: 7, Round: round}
-}
-
-type fixture struct {
-	clock  *clock
-	set    *fakeSet
-	writer *recordingWriter
-	closer *Closer
-}
-
-func newFixture(set *fakeSet, mutate func(*Options)) *fixture {
-	c := &clock{at: time.Unix(1700000000, 0)}
-	options := Options{Now: c.now, MaxEntries: 16, Batch: 8, ObservationTTL: 30 * time.Minute}
-	if mutate != nil {
-		mutate(&options)
-	}
-	f := &fixture{clock: c, set: set, writer: &recordingWriter{}, closer: New(options)}
-	f.closer.Bind(set, f.writer)
-	return f
-}
-
-// slot is one Slot turning the drops away, as the access path hands them
-// over - Screen once, then each drop one by one or in bulk - and the
-// close's step after it.
-func (f *fixture) slot(round int64, drops ...Drop) {
-	screens := map[openalerts.StrategyKey]string{}
-	bulk := map[openalerts.StrategyKey]map[string]int{}
-	defer func() {
-		for k, words := range bulk {
-			for word, count := range words {
-				f.closer.Count(k, "group", round, word, count)
-			}
-		}
-		f.closer.Step(context.Background())
-		f.clock.at = f.clock.at.Add(time.Minute)
-	}()
-	for _, d := range drops {
-		d.Round = round
-		k := openalerts.StrategyKey{TenantID: d.TenantID, StrategyID: d.StrategyID}
-		screen, done := screens[k]
-		if !done {
-			screen = f.closer.Screen(k)
-			screens[k] = screen
-		}
-		if screen != "" {
-			if bulk[k] == nil {
-				bulk[k] = map[string]int{}
-			}
-			bulk[k][screen]++
-			continue
-		}
-		f.closer.Observe(d)
-	}
-}
-
-func (f *fixture) want(t *testing.T, name string, want map[string]uint64) {
+// newScopeHarness is the production closer (filterclose over the link's
+// management client and a real Redis) behind a scope close bound to set.
+func newScopeHarness(t *testing.T, set OpenSet) (*Closer, *scopeLink, *time.Time) {
 	t.Helper()
-	got := f.closer.Stats()
-	for _, outcome := range Outcomes {
-		if got[outcome] != want[outcome] {
-			t.Errorf("%s: %s = %d, want %d (all: %v)", name, outcome, got[outcome], want[outcome], got)
-		}
+	server := redistest.Start(t)
+	if server == nil {
+		t.Skip("no redis-server")
 	}
-}
-
-// The scenarios the close exists for and every way it must refuse, one row
-// each: which drops two Slots saw, what the copy said, and what was
-// decided. Every outcome is asserted in every row, zeros included, so a
-// refusal counted under the wrong word fails the row.
-func TestTargetScopeCloseDecisions(t *testing.T) {
-	member := fp(1)
-	cases := []struct {
-		name  string
-		set   *fakeSet
-		drops []Drop
-		want  map[string]uint64
-		sent  int
-	}{
-		{name: "an open alert of ours turned away by two Slots is closed", set: openSet(ownSrc, member),
-			drops: []Drop{drop(member, 0)}, want: map[string]uint64{OutcomeUnconfirmed: 1, OutcomeCloseSent: 1}, sent: 1},
-		{name: "a strategy with no open alert is counted in bulk", set: openSet(ownSrc),
-			drops: []Drop{drop(member, 0), drop(fp(2), 0)}, want: map[string]uint64{OutcomeNotMember: 4}},
-		{name: "a fingerprint the set does not hold is not closed", set: openSet(ownSrc, member),
-			drops: []Drop{drop(fp(2), 0)}, want: map[string]uint64{OutcomeNotMember: 2}},
-		{name: "a record with no fingerprint is not closed", set: openSet(ownSrc, member),
-			drops: []Drop{drop("", 0)}, want: map[string]uint64{OutcomeNotMember: 2}},
-		{name: "an open alert of another source is not closed", set: openSet(otherSrc, member),
-			drops: []Drop{drop(member, 0)}, want: map[string]uint64{OutcomeUnconfirmed: 1, OutcomeProducerForeign: 1}},
-		{name: "a strategy whose set cannot be judged (uncalibrated) is not acted on",
-			set:   func() *fakeSet { s := openSet(ownSrc, member); s.unjudged = true; return s }(),
-			drops: []Drop{drop(member, 0)}, want: map[string]uint64{OutcomeSetUnavailable: 2}},
-		{name: "sets the Console has not confirmed are not acted on",
-			set:   func() *fakeSet { s := openSet(ownSrc, member); s.untrusted = true; return s }(),
-			drops: []Drop{drop(member, 0)}, want: map[string]uint64{OutcomeSetUnavailable: 2}},
-		{name: "a copy that has not learned its own source is not acted on",
-			set:   func() *fakeSet { s := openSet(ownSrc, member); s.own = ""; return s }(),
-			drops: []Drop{drop(member, 0)}, want: map[string]uint64{OutcomeSetUnavailable: 2}},
-	}
-	for _, c := range cases {
-		f := newFixture(c.set, nil)
-		f.slot(1700000000, c.drops...)
-		f.slot(1700000060, c.drops...)
-		f.want(t, c.name, c.want)
-		if got := len(f.writer.sent()); got != c.sent {
-			t.Errorf("%s: sent %d closes, want %d", c.name, got, c.sent)
-		}
-	}
-}
-
-// One Slot is one observation however often it turns the series away: a
-// retried Slot, or two queries of one Slot delivering the same series,
-// share one evaluation time. The close waits for a second Slot.
-func TestOneSlotIsOneObservation(t *testing.T) {
-	member := fp(1)
-	f := newFixture(openSet(ownSrc, member), nil)
-	f.slot(1700000000, drop(member, 0), drop(member, 0))
-	f.slot(1700000000, drop(member, 0))
-	f.want(t, "the same Slot three times", map[string]uint64{OutcomeUnconfirmed: 1})
-	if len(f.writer.sent()) != 0 {
-		t.Fatal("closed on one Slot's observation")
-	}
-	f.slot(1700000060, drop(member, 0))
-	f.want(t, "a second Slot", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeCloseSent: 1})
-}
-
-// What is sent is the same close every other close is: one evaluation at
-// every level, action closed, under this close's own reason, for the alert
-// the calibration listed, with the strategy's frozen revision.
-func TestTheCloseIsTheSharedCloseWithItsOwnReason(t *testing.T) {
-	member := fp(1)
-	f := newFixture(openSet(ownSrc, member), nil)
-	f.slot(1700000000, drop(member, 0))
-	f.slot(1700000060, drop(member, 0))
-	sent := f.writer.sent()
-	if len(sent) != 1 {
-		t.Fatalf("sent %d, want 1", len(sent))
-	}
-	request := sent[0]
-	if request.Reason != "target_out_of_scope" || request.AlertInstanceID != "alert-0" || request.Fingerprint != member ||
-		request.StrategyID != 42 || request.BusinessID != 2 || request.StrategyRevision != 7 || request.TenantID != tenant {
-		t.Fatalf("request = %+v", request)
-	}
-	event, err := linkdoutput.ConvertClose(request)
+	link := &scopeLink{}
+	plane := httptest.NewServer(link)
+	t.Cleanup(plane.Close)
+	client, err := linkdmanage.New(linkdmanage.Options{BaseURL: plane.URL, Secret: "example-secret", Username: "alarmd", Client: plane.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+	commands, err := filterclose.NewCommands(server.Client(), "alarmd-test")
+	if err != nil {
 		t.Fatal(err)
 	}
-	var evaluations []map[string]string
-	if err := json.Unmarshal(payload["evaluations"], &evaluations); err != nil {
+	pending, err := filterclose.NewPending(server.Client(), "alarmd-test", filterclose.MaxPending)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(evaluations) != 1 || evaluations[0]["severity"] != "__ALL__" || evaluations[0]["action"] != "closed" ||
-		evaluations[0]["action_reason"] != "target_out_of_scope" {
-		t.Fatalf("evaluations = %v", evaluations)
+	now := time.Unix(1_800_000_000, 0)
+	clock := func() time.Time { return now }
+	record, err := openepisodes.NewStore(server.Client(), "alarmd-test")
+	if err != nil {
+		t.Fatal(err)
 	}
+	link2, err := filterclose.New(filterclose.Options{Link: client, Commands: commands, Pending: pending, Record: record, Now: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closer := New(Options{Now: clock})
+	closer.Bind(set, link2, testSource)
+	return closer, link, &now
 }
 
-// A closed fingerprint is not closed again while the Slots keep turning it
-// away before the link takes the alert out of the set: closed counts
-// alerts, not Slots, and the alert is sent once.
-func TestAClosedAlertIsSentOnce(t *testing.T) {
-	member := fp(1)
-	f := newFixture(openSet(ownSrc, member), nil)
-	for i := int64(0); i < 10; i++ {
-		f.slot(1700000000+60*i, drop(member, 0))
-	}
-	f.want(t, "ten Slots", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeCloseSent: 1})
-	if len(f.writer.batches) != 1 || len(f.writer.sent()) != 1 {
-		t.Fatalf("sent %v, want one close in one batch", f.writer.batches)
-	}
+// confirm observes the offer in two different Slots: a confirmed entry.
+func confirm(closer *Closer, offer Offer) {
+	offer.TenantID, offer.StrategyID, offer.StrategyRevision = testTenant, testStrategy, 3
+	offer.Round = 600
+	closer.Observe(offer)
+	offer.Round = 660
+	closer.Observe(offer)
 }
 
-// A refused send is kept and retried; a set that could not be judged at the
-// step keeps the observation for when it can.
-func TestARefusedStepKeepsTheObservation(t *testing.T) {
-	member := fp(1)
-	f := newFixture(openSet(ownSrc, member), nil)
-	f.writer.fail = errors.New("broker down")
-	f.slot(1700000000, drop(member, 0))
-	f.slot(1700000060, drop(member, 0))
-	f.want(t, "send refused", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeSendFailed: 1})
-	f.writer.fail = nil
-	f.set.untrusted = true
-	f.slot(1700000120, drop(member, 0))
-	f.want(t, "copy unconfirmed", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeSendFailed: 1, OutcomeSetUnavailable: 2})
-	f.set.untrusted = false
-	f.slot(1700000180, drop(member, 0))
-	f.want(t, "retried", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeSendFailed: 1, OutcomeSetUnavailable: 2, OutcomeCloseSent: 1})
-}
-
-// At most Batch closes per step, and the next step starts after the last
-// one decided rather than at the head again.
-func TestClosesAreBoundedPerStepAndRotate(t *testing.T) {
-	fingerprints := []string{fp(1), fp(2), fp(3)}
-	f := newFixture(openSet(ownSrc, fingerprints...), func(o *Options) { o.Batch = 2 })
-	drops := []Drop{drop(fingerprints[0], 0), drop(fingerprints[1], 0), drop(fingerprints[2], 0)}
-	f.slot(1700000000, drops...)
-	f.slot(1700000060, drops...)
-	if len(f.writer.batches) != 1 || len(f.writer.batches[0]) != 2 {
-		t.Fatalf("first step sent %v, want one batch of two", f.writer.batches)
+// termsOf lists every term and terms clause of a filter as "field=value"
+// texts, and every bool.filter group of terms as one joined text.
+func termsOf(t *testing.T, raw json.RawMessage) (fields map[string]bool, groups []string) {
+	t.Helper()
+	var root any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		t.Fatalf("filter %s: %v", raw, err)
 	}
-	f.slot(1700000120, drops...)
-	if len(f.writer.batches) != 2 || len(f.writer.batches[1]) != 1 || f.writer.batches[1][0].Fingerprint != fingerprints[2] {
-		t.Fatalf("second step sent %v, want the one left", f.writer.batches)
-	}
-}
-
-// The observation table is bounded; a fingerprint past the bound is named
-// and waits for a later Slot. An observation that waited longer than its
-// TTL for a second is forgotten and starts over.
-func TestTheObservationsAreBoundedAndExpire(t *testing.T) {
-	f := newFixture(openSet(ownSrc, fp(1), fp(2)), func(o *Options) { o.MaxEntries = 1 })
-	f.slot(1700000000, drop(fp(1), 0), drop(fp(2), 0))
-	f.want(t, "past the bound", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeMemoryFull: 1})
-
-	g := newFixture(openSet(ownSrc, fp(1)), nil)
-	g.slot(1700000000, drop(fp(1), 0))
-	g.clock.at = g.clock.at.Add(30 * time.Minute)
-	g.slot(1700003600, drop(fp(1), 0))
-	g.want(t, "second observation after the TTL", map[string]uint64{OutcomeUnconfirmed: 2, OutcomeObservationExpired: 1})
-	if len(g.writer.sent()) != 0 {
-		t.Fatal("closed on two observations further apart than the TTL")
-	}
-}
-
-// Nothing bound yet: the screen and every observation that needs the copy
-// are refused by name.
-func TestAnUnboundCloserRefuses(t *testing.T) {
-	closer := New(Options{})
-	if screen := closer.Screen(key); screen != OutcomeSetUnavailable {
-		t.Fatalf("Screen = %q, want set_unavailable", screen)
-	}
-	closer.Observe(drop(fp(1), 1))
-	closer.Step(context.Background())
-	if got := closer.Stats()[OutcomeSetUnavailable]; got != 1 {
-		t.Fatalf("set_unavailable = %d, want 1", got)
-	}
-}
-
-// The facts carry per-strategy counts and at most three prefixes of each
-// list, never a whole fingerprint.
-func TestFactsAreBoundedPrefixes(t *testing.T) {
-	fingerprints := []string{fp(1), fp(2), fp(3), fp(4)}
-	f := newFixture(openSet(ownSrc, fingerprints...), nil)
-	var drops []Drop
-	for _, value := range fingerprints {
-		drops = append(drops, drop(value, 0))
-	}
-	f.slot(1700000000, drops...)
-	facts := f.closer.Facts()
-	if len(facts.Strategies) != 1 {
-		t.Fatalf("strategies = %+v", facts.Strategies)
-	}
-	row := facts.Strategies[0]
-	if row.Pending != 4 || len(row.PendingSample) != 3 || row.Outcomes[OutcomeUnconfirmed] != 4 || facts.Pending != 4 {
-		t.Fatalf("facts = %+v", facts)
-	}
-	for _, sample := range row.PendingSample {
-		if len(sample) != 8 {
-			t.Fatalf("sample %q is not an 8-character prefix", sample)
-		}
-	}
-	f.slot(1700000060, drops...)
-	facts = f.closer.Facts()
-	row = facts.Strategies[0]
-	if row.Outcomes[OutcomeCloseSent] != 4 || len(row.DecidedSample) != 3 || facts.Outcomes[OutcomeCloseSent] != 4 {
-		t.Fatalf("facts after the decision = %+v", facts)
-	}
-}
-
-// Rotation is what keeps one stuck close from starving the rest: a close
-// that failed stays for the next step, and the next step starts after it
-// rather than at the head again.
-func TestTheNextStepStartsAfterTheLastDecided(t *testing.T) {
-	first, second := fp(1), fp(2)
-	f := newFixture(openSet(ownSrc, first, second), func(o *Options) { o.Batch = 1 })
-	f.writer.fail = errors.New("broker down")
-	f.slot(1700000000, drop(first, 0), drop(second, 0))
-	f.slot(1700000060, drop(first, 0), drop(second, 0))
-	f.writer.fail = nil
-	f.slot(1700000120, drop(first, 0), drop(second, 0))
-	sent := f.writer.sent()
-	if len(sent) != 1 || sent[0].Fingerprint != second {
-		t.Fatalf("sent %v, want the one after the failed head", sent)
-	}
-}
-
-// observeAt is one Slot's rejection at a given instant, without a step.
-func (f *fixture) observeAt(at time.Time, round int64, fingerprint string) {
-	f.clock.at = at
-	f.closer.Observe(drop(fingerprint, round))
-}
-
-// The observation TTL, both sides: a second observation 29m59s after the
-// first confirms; one 30m after starts over.
-func TestTheObservationTTLBoundary(t *testing.T) {
-	for _, c := range []struct {
-		gap  time.Duration
-		want map[string]uint64
-		sent int
-	}{
-		{30*time.Minute - time.Second, map[string]uint64{OutcomeUnconfirmed: 1, OutcomeCloseSent: 1}, 1},
-		{30 * time.Minute, map[string]uint64{OutcomeUnconfirmed: 2, OutcomeObservationExpired: 1}, 0},
-	} {
-		f := newFixture(openSet(ownSrc, fp(1)), nil)
-		start := f.clock.at
-		f.observeAt(start, 1700000000, fp(1))
-		f.observeAt(start.Add(c.gap), 1700001800, fp(1))
-		f.closer.Step(context.Background())
-		f.want(t, c.gap.String(), c.want)
-		if len(f.writer.sent()) != c.sent {
-			t.Errorf("%s: sent %d, want %d", c.gap, len(f.writer.sent()), c.sent)
-		}
-	}
-}
-
-// The dedupe window, both sides: a decided fingerprint turned away again
-// 29m59s later is not observed; 30m later it is a first observation again.
-func TestTheDedupeTTLBoundary(t *testing.T) {
-	for _, c := range []struct {
-		gap         time.Duration
-		unconfirmed uint64
-	}{
-		{30*time.Minute - time.Second, 1},
-		{30 * time.Minute, 2},
-	} {
-		f := newFixture(openSet(ownSrc, fp(1)), nil)
-		start := f.clock.at
-		f.observeAt(start, 1700000000, fp(1))
-		f.observeAt(start.Add(time.Minute), 1700000060, fp(1))
-		f.closer.Step(context.Background())
-		if f.closer.Stats()[OutcomeCloseSent] != 1 {
-			t.Fatalf("%s: fixture did not decide", c.gap)
-		}
-		f.observeAt(start.Add(time.Minute+c.gap), 1700009999, fp(1))
-		if got := f.closer.Stats()[OutcomeUnconfirmed]; got != c.unconfirmed {
-			t.Errorf("%s after the decision: unconfirmed = %d, want %d", c.gap, got, c.unconfirmed)
-		}
-	}
-}
-
-// Freshness, both sides: a confirmed close is sent while its last
-// observation is at most 60 s old, and held back one second past that -
-// the target may be back in scope, and only a fresh rejection says it is
-// not. A fresh observation releases it.
-func TestTheFreshnessBoundary(t *testing.T) {
-	for _, c := range []struct {
-		age  time.Duration
-		sent int
-	}{
-		{time.Minute, 1},
-		{time.Minute + time.Second, 0},
-	} {
-		f := newFixture(openSet(ownSrc, fp(1)), nil)
-		start := f.clock.at
-		f.observeAt(start, 1700000000, fp(1))
-		f.observeAt(start.Add(time.Minute), 1700000060, fp(1))
-		f.clock.at = start.Add(time.Minute + c.age)
-		f.closer.Step(context.Background())
-		if len(f.writer.sent()) != c.sent {
-			t.Errorf("age %s: sent %d, want %d", c.age, len(f.writer.sent()), c.sent)
-		}
-		if c.sent == 0 {
-			f.want(t, "stale", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeStaleDeferred: 1})
-			f.observeAt(f.clock.at, 1700000180, fp(1))
-			f.closer.Step(context.Background())
-			if len(f.writer.sent()) != 1 {
-				t.Errorf("a fresh observation did not release the deferred close")
+	fields = map[string]bool{}
+	var walk func(node any)
+	walk = func(node any) {
+		switch value := node.(type) {
+		case map[string]any:
+			for key, child := range value {
+				switch key {
+				case "term":
+					for field, v := range child.(map[string]any) {
+						fields[fmt.Sprintf("%s=%v", field, v)] = true
+					}
+				case "terms":
+					for field, v := range child.(map[string]any) {
+						for _, one := range v.([]any) {
+							fields[fmt.Sprintf("%s=%v", field, one)] = true
+						}
+					}
+				case "filter":
+					if list, ok := child.([]any); ok {
+						var group []string
+						for _, clause := range list {
+							if term, ok := clause.(map[string]any)["term"].(map[string]any); ok {
+								for field, v := range term {
+									group = append(group, fmt.Sprintf("%s=%v", field, v))
+								}
+							}
+						}
+						groups = append(groups, strings.Join(group, ","))
+					}
+				}
+				walk(child)
+			}
+		case []any:
+			for _, child := range value {
+				walk(child)
 			}
 		}
 	}
+	walk(root)
+	return fields, groups
 }
 
-// Screen is per strategy: a strategy with open alerts is cleared while
-// another whose set is not calibrated is not, and an empty set is
-// not_member without any per-record work.
-func TestScreenJudgesPerStrategy(t *testing.T) {
-	f := newFixture(openSet(ownSrc, fp(1)), nil)
-	if screen := f.closer.Screen(key); screen != "" {
-		t.Fatalf("Screen(open strategy) = %q, want cleared", screen)
+// A confirmed offer is closed by its old fingerprint, under the
+// superseded-identity decision: the filter names the strategy's tenant, this
+// source, the strategy and the fingerprint, and no dimension.
+func TestAConfirmedOfferIsClosedByItsOldFingerprint(t *testing.T) {
+	closer, link, _ := newScopeHarness(t, knownSet{"fp-old": true})
+	link.set(1, 0)
+	confirm(closer, Offer{Fingerprint: "fp-old"})
+	closer.Step(context.Background())
+	_, real := link.sent()
+	if len(real) != 1 {
+		t.Fatalf("closes %d, want 1", len(real))
 	}
-	if screen := f.closer.Screen(openalerts.StrategyKey{TenantID: tenant, StrategyID: "other"}); screen != OutcomeSetUnavailable {
-		t.Fatalf("Screen(uncalibrated strategy) = %q, want set_unavailable", screen)
+	fields, _ := termsOf(t, real[0].Filter)
+	for _, want := range []string{"bk_tenant_id=" + testTenant, "event_source_id=" + testSource, "labels.strategy_id=" + testStrategy,
+		"fingerprint=fp-old"} {
+		if !fields[want] {
+			t.Fatalf("close filter %s lacks %s", real[0].Filter, want)
+		}
 	}
-	empty := newFixture(openSet(ownSrc), nil)
-	if screen := empty.closer.Screen(key); screen != OutcomeNotMember {
-		t.Fatalf("Screen(empty set) = %q, want not_member", screen)
+	for field := range fields {
+		if strings.HasPrefix(field, "dimensions.") {
+			t.Fatalf("a fingerprint close names a dimension: %s", real[0].Filter)
+		}
 	}
-}
-
-// countingUnconfirmedSet is a copy whose sets the Console has not confirmed
-// and whose per strategy answers do not know it: the whole-copy gate is what
-// refuses.
-type countingUnconfirmedSet struct{ fakeSet }
-
-func (set *countingUnconfirmedSet) MemberCount(openalerts.StrategyKey) (int, bool) { return 1, true }
-
-// Unconfirmed sets refuse the screen on their own, whatever a strategy's
-// count says.
-func TestScreenRefusesUnconfirmedSets(t *testing.T) {
-	set := &countingUnconfirmedSet{fakeSet: *openSet(ownSrc, fp(1))}
-	set.untrusted = true
-	closer := New(Options{})
-	closer.Bind(set, nil)
-	if screen := closer.Screen(key); screen != OutcomeSetUnavailable {
-		t.Fatalf("Screen = %q, want set_unavailable on unconfirmed sets", screen)
+	if stats := closer.Stats(); stats[OutcomeCloseSent] != 1 || stats[OutcomeSupersededCloseSent] != 1 {
+		t.Fatalf("stats %v", stats)
 	}
-}
-
-// A retried Slot reports its round again: counted once, at the largest
-// total any attempt reported. A new round counts afresh.
-func TestARetriedRoundIsCountedOnce(t *testing.T) {
-	closer := New(Options{})
-	closer.Count(key, "group", 1700000000, OutcomeNotMember, 3) // an attempt that failed halfway
-	closer.Count(key, "group", 1700000000, OutcomeNotMember, 5) // the retry that completed
-	closer.Count(key, "group", 1700000000, OutcomeNotMember, 5) // a retry after that
-	if got := closer.Stats()[OutcomeNotMember]; got != 5 {
-		t.Fatalf("not_member = %d after three attempts of one round, want 5", got)
-	}
-	closer.Count(key, "group", 1700000060, OutcomeNotMember, 2)
-	if got := closer.Stats()[OutcomeNotMember]; got != 7 {
-		t.Fatalf("not_member = %d after the next round, want 7", got)
+	// Decided: the Slots that keep offering it do not close it again.
+	confirm(closer, Offer{Fingerprint: "fp-old"})
+	closer.Step(context.Background())
+	if _, real := link.sent(); len(real) != 1 || closer.Stats()[OutcomeCloseSent] != 1 {
+		t.Fatalf("closes %d after the decision, stats %v", len(real), closer.Stats())
 	}
 }
 
-// Several Plans of one strategy - another business, another shard, another
-// Query Group - report the same round: those are summed, while each one's
-// own retries are still counted once.
-func TestReportersOfOneStrategyAreSummedAndTheirRetriesAreNot(t *testing.T) {
-	closer := New(Options{})
-	closer.Count(key, "group-a|business-2", 1700000000, OutcomeNotMember, 3)
-	closer.Count(key, "group-b|business-2", 1700000000, OutcomeNotMember, 4)
-	closer.Count(key, "group-a|business-3", 1700000000, OutcomeNotMember, 5)
-	closer.Count(key, "group-b|business-2", 1700000000, OutcomeNotMember, 4) // a retry
-	if got := closer.Stats()[OutcomeNotMember]; got != 12 {
-		t.Fatalf("not_member = %d, want 3+4+5 = 12", got)
+// A link that is busy or fails holds the entry: it is counted send_failed
+// and closed on a later step once the link answers. 501 is counted as
+// filtered close unsupported, not closed.
+func TestAFailedCloseIsHeldAndRetried(t *testing.T) {
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusInternalServerError} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			closer, link, _ := newScopeHarness(t, knownSet{"fp-1": true})
+			link.set(1, status)
+			confirm(closer, Offer{Fingerprint: "fp-1"})
+			closer.Step(context.Background())
+			if _, real := link.sent(); len(real) != 0 {
+				t.Fatalf("closes %d while the link answers %d", len(real), status)
+			}
+			if stats := closer.Stats(); stats[OutcomeSendFailed] != 1 || stats[OutcomeCloseSent] != 0 {
+				t.Fatalf("stats %v", stats)
+			}
+			link.set(1, 0)
+			closer.Step(context.Background())
+			if _, real := link.sent(); len(real) != 1 {
+				t.Fatalf("the held entry was not closed after the link recovered: closes %d", len(real))
+			}
+			if stats := closer.Stats(); stats[OutcomeCloseSent] != 1 {
+				t.Fatalf("stats %v", stats)
+			}
+		})
 	}
-	if got := closer.Facts().Strategies[0].Outcomes[OutcomeNotMember]; got != 12 {
-		t.Fatalf("the strategy's own count = %d, want 12", got)
+	// Items the link certainly did not close (429 each): the batch is not
+	// settled, the entry is kept and closed on the next step.
+	closer, link, _ := newScopeHarness(t, knownSet{"fp-1": true})
+	link.set(1, 0)
+	link.itemStatus = http.StatusTooManyRequests
+	confirm(closer, Offer{Fingerprint: "fp-1"})
+	closer.Step(context.Background())
+	if stats := closer.Stats(); stats[OutcomeSendFailed] != 1 || stats[OutcomeCloseSent] != 0 {
+		t.Fatalf("stats %v, want the rederived batch kept", stats)
+	}
+	link.mu.Lock()
+	link.itemStatus = 0
+	link.mu.Unlock()
+	closer.Step(context.Background())
+	if stats := closer.Stats(); stats[OutcomeCloseSent] != 1 {
+		t.Fatalf("stats %v, want the kept entry closed", stats)
+	}
+
+	closer, link, _ = newScopeHarness(t, knownSet{"fp-1": true})
+	link.set(1, http.StatusNotImplemented)
+	confirm(closer, Offer{Fingerprint: "fp-1"})
+	closer.Step(context.Background())
+	if stats := closer.Stats(); stats[OutcomeUnsupported] != 1 || stats[OutcomeCloseSent] != 0 {
+		t.Fatalf("stats %v", stats)
 	}
 }
 
-// A close whose request cannot be built - the strategy's revision not
-// positive, or its business zero - is counted as close_identity_invalid,
-// the word the effective-time close uses for the same facts, and not as a
-// send that failed: nothing was sent. It is forgotten, as before: those
-// facts change only when the writer's data does.
-func TestACloseWhoseIdentityCannotBeBuiltIsNamedNotSendFailed(t *testing.T) {
-	for name, mutate := range map[string]func(*Drop){
-		"revision not positive": func(d *Drop) { d.StrategyRevision = 0 },
-		"business zero":         func(d *Drop) { d.BusinessID = "0" },
+// A close the same command would be answered the same way - items
+// refused (400 each: job_done_refused), the request refused (400:
+// link_refused) - is counted close_refused and held: the steps within
+// RefusedRetry send nothing, the first past it sends the close again. An
+// offer under another revision is another decision and is not held.
+func TestARefusedCloseWaitsBeforeItIsSentAgain(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		status, itemStatus int
+	}{
+		{"items refused", 0, http.StatusBadRequest},
+		{"request refused", http.StatusBadRequest, 0},
 	} {
-		t.Run(name, func(t *testing.T) {
-			member := fp(1)
-			f := newFixture(openSet(ownSrc, member), nil)
-			d := drop(member, 0)
-			mutate(&d)
-			f.slot(1700000000, d)
-			f.slot(1700000060, d)
-			f.want(t, name, map[string]uint64{OutcomeUnconfirmed: 1, OutcomeIdentityInvalid: 1})
-			if len(f.writer.batches) != 0 {
-				t.Fatalf("sent %v, want nothing", f.writer.batches)
+		t.Run(tc.name, func(t *testing.T) {
+			closer, link, now := newScopeHarness(t, knownSet{"fp-1": true})
+			link.set(1, tc.status)
+			link.mu.Lock()
+			link.itemStatus = tc.itemStatus
+			link.mu.Unlock()
+			sent := func() int {
+				link.mu.Lock()
+				defer link.mu.Unlock()
+				return len(link.requests)
+			}
+			confirm(closer, Offer{Fingerprint: "fp-1"})
+			closer.Step(context.Background())
+			first := sent()
+			if stats := closer.Stats(); first == 0 || stats[OutcomeRefused] != 1 || stats[OutcomeSendFailed] != 0 {
+				t.Fatalf("%d requests, stats %v: want the close sent and counted close_refused", first, stats)
+			}
+			for _, d := range []time.Duration{30 * time.Second, RefusedRetry - 31*time.Second} {
+				*now = now.Add(d)
+				confirm(closer, Offer{Fingerprint: "fp-1"})
+				closer.Step(context.Background())
+				if n := sent(); n != first {
+					t.Fatalf("%d requests within %s of the refusal, want none", n-first, RefusedRetry)
+				}
+			}
+			*now = now.Add(time.Second)
+			confirm(closer, Offer{Fingerprint: "fp-1"})
+			closer.Step(context.Background())
+			if n := sent(); n != 2*first || closer.Stats()[OutcomeRefused] != 2 {
+				t.Fatalf("%d requests, stats %v at %s: want the close sent once more", n-first, closer.Stats(), RefusedRetry)
+			}
+			// Another revision: sent at once.
+			for _, round := range []int64{720, 780} {
+				closer.Observe(Offer{TenantID: testTenant, StrategyID: testStrategy, StrategyRevision: 4, Round: round, Fingerprint: "fp-1"})
+			}
+			closer.Step(context.Background())
+			if n := sent(); n != 3*first {
+				t.Fatalf("%d requests after an offer under another revision, want it sent", n-2*first)
 			}
 		})
 	}
 }
 
-// An observation waits two of its strategy's periods plus its Slot's read
-// offset for the second, at least ObservationTTL, and both sides of that are
-// held: an hourly strategy turned away an hour apart closes, which a fixed
-// half hour never let it; past two hours plus its read offset the first is
-// forgotten and counted as expired. A strategy whose Slots are read eight
-// minutes after their grid point, every twenty minutes, closes on a second
-// observation 45 minutes on - past two periods, not past two periods and its
-// read offset.
-func TestAnObservationLivesTwoPeriodsPlusItsReadOffset(t *testing.T) {
-	observe := func(f *fixture, at time.Time, round, interval int64, offset time.Duration) {
-		f.clock.at = at
-		d := drop(fp(1), round)
-		d.IntervalSeconds, d.ReadOffset = interval, offset
-		f.closer.Observe(d)
-	}
-	for _, c := range []struct {
-		name     string
-		interval int64
-		offset   time.Duration
-		gap      time.Duration
-		want     map[string]uint64
-		sent     int
-	}{
-		{"hourly, an hour apart", 3600, time.Minute, time.Hour, map[string]uint64{OutcomeUnconfirmed: 1, OutcomeCloseSent: 1}, 1},
-		{"hourly, just inside two hours and the offset", 3600, time.Minute, 2*time.Hour + time.Minute - time.Second, map[string]uint64{OutcomeUnconfirmed: 1, OutcomeCloseSent: 1}, 1},
-		{"hourly, at two hours and the offset", 3600, time.Minute, 2*time.Hour + time.Minute, map[string]uint64{OutcomeUnconfirmed: 2, OutcomeObservationExpired: 1}, 0},
-		{"held 8 min every 20 min, 45 min apart", 1200, 8 * time.Minute, 45 * time.Minute, map[string]uint64{OutcomeUnconfirmed: 1, OutcomeCloseSent: 1}, 1},
-		{"a minute strategy keeps the half-hour floor", 60, 30 * time.Second, 30 * time.Minute, map[string]uint64{OutcomeUnconfirmed: 2, OutcomeObservationExpired: 1}, 0},
-	} {
-		f := newFixture(openSet(ownSrc, fp(1)), nil)
-		start := f.clock.at
-		observe(f, start, 1700000000, c.interval, c.offset)
-		observe(f, start.Add(c.gap), 1700000000+c.interval, c.interval, c.offset)
-		f.closer.Step(context.Background())
-		f.want(t, c.name, c.want)
-		if len(f.writer.sent()) != c.sent {
-			t.Errorf("%s: sent %d, want %d", c.name, len(f.writer.sent()), c.sent)
+// Nothing is closed on the copy's silence or on a single Slot: an offer of
+// a fingerprint the copy has no word on, or judges not open, is nothing
+// this close holds and counts nothing; one observation waits for a second.
+func TestNoCloseWithoutTheCopysWordAndASecondSlot(t *testing.T) {
+	quiet := func(t *testing.T, closer *Closer) {
+		t.Helper()
+		for outcome, n := range closer.Stats() {
+			if n != 0 {
+				t.Fatalf("an offer the close does not hold counted %s %d", outcome, n)
+			}
 		}
 	}
-}
-
-// An observation left waiting expires at the step too, and is counted.
-func TestAnObservationExpiringAtTheStepIsCounted(t *testing.T) {
-	f := newFixture(openSet(ownSrc, fp(1)), nil)
-	d := drop(fp(1), 1700000000)
-	d.IntervalSeconds = 3600
-	f.closer.Observe(d)
-	f.clock.at = f.clock.at.Add(2*time.Hour + time.Second)
-	f.closer.Step(context.Background())
-	f.want(t, "expired at the step", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeObservationExpired: 1})
-}
-
-// alertBusinesses is the link's record of which business each alert was
-// filed under, counting the reads.
-type alertBusinesses struct {
-	byAlert map[string]int64
-	reads   int
-}
-
-func (b *alertBusinesses) of(_ context.Context, tenantID, source, strategyID, alertID string) (int64, error) {
-	b.reads++
-	business, ok := b.byAlert[alertID]
-	if !ok || tenantID != tenant || source != ownSrc || strategyID != strategy {
-		return 0, openalerts.ErrAlertBusinessUnknown
+	closer, link, _ := newScopeHarness(t, unjudged{})
+	link.set(1, 0)
+	confirm(closer, Offer{Fingerprint: "fp-1"})
+	closer.Step(context.Background())
+	quiet(t, closer)
+	if len(link.requests) != 0 {
+		t.Fatalf("unjudged: requests %d", len(link.requests))
 	}
-	return business, nil
-}
 
-func globalDrop(fingerprint string) Drop {
-	d := drop(fingerprint, 0)
-	d.BusinessID, d.GlobalBusiness = "9", true
-	return d
-}
-
-// A global business strategy files each alert under the business it is
-// about, and the close of each carries that one, read from the alert's
-// record - not the strategy's own. An alert whose record names none is not
-// closed and is tried again at the next step; the others go out.
-func TestAGlobalStrategysCloseCarriesEachAlertsBusiness(t *testing.T) {
-	f := newFixture(openSet(ownSrc, fp(1), fp(2), fp(3)), nil)
-	records := &alertBusinesses{byAlert: map[string]int64{"alert-0": 2, "alert-1": 3}}
-	f.closer.BindAlertBusiness(records.of)
-	f.slot(1700000000, globalDrop(fp(1)), globalDrop(fp(2)), globalDrop(fp(3)))
-	f.slot(1700000060, globalDrop(fp(1)), globalDrop(fp(2)), globalDrop(fp(3)))
-	got := map[string]int64{}
-	for _, request := range f.writer.sent() {
-		got[request.AlertInstanceID] = request.BusinessID
-	}
-	if len(got) != 2 || got["alert-0"] != 2 || got["alert-1"] != 3 {
-		t.Fatalf("closes carried %v, want alert-0 under 2 and alert-1 under 3, alert-2 not sent", got)
-	}
-	if f.closer.Stats()[OutcomeBusinessUnknown] != 1 {
-		t.Fatalf("the alert with no business on its record was not counted: %v", f.closer.Stats())
-	}
-	records.byAlert["alert-2"] = 4
-	f.slot(1700000120, globalDrop(fp(3)))
-	sent := f.writer.sent()
-	if last := sent[len(sent)-1]; last.AlertInstanceID != "alert-2" || last.BusinessID != 4 {
-		t.Fatalf("the kept close was not sent once its record named a business: %+v", last)
+	closer, link, _ = newScopeHarness(t, knownSet{"fp-1": false, "fp-2": true})
+	link.set(1, 0)
+	confirm(closer, Offer{Fingerprint: "fp-1"})
+	quiet(t, closer)
+	closer.Observe(Offer{TenantID: testTenant, StrategyID: testStrategy, StrategyRevision: 3, Round: 600, Fingerprint: "fp-2"})
+	closer.Step(context.Background())
+	if stats := closer.Stats(); stats[OutcomeUnconfirmed] != 1 || len(link.requests) != 0 {
+		t.Fatalf("not held / one Slot: stats %v, requests %d", stats, len(link.requests))
 	}
 }
 
-// Every other strategy's alerts are filed under the strategy's business:
-// its close carries that and reads no record.
-func TestAnOrdinaryStrategysCloseReadsNoRecord(t *testing.T) {
-	f := newFixture(openSet(ownSrc, fp(1), fp(2)), nil)
-	records := &alertBusinesses{byAlert: map[string]int64{"alert-0": 5, "alert-1": 6}}
-	f.closer.BindAlertBusiness(records.of)
-	f.slot(1700000000, drop(fp(1), 0), drop(fp(2), 0))
-	f.slot(1700000060, drop(fp(1), 0), drop(fp(2), 0))
-	sent := f.writer.sent()
-	if len(sent) != 2 || sent[0].BusinessID != 2 || sent[1].BusinessID != 2 || records.reads != 0 {
-		t.Fatalf("sent %+v with %d record reads, want both under the strategy's business and no read", sent, records.reads)
-	}
-}
-
-// A superseded-identity observation is closed under the same rules as a
-// target rejection - two Slots, once, the alert's own id - and carries its
-// own reason; it is counted apart among the closes sent. A target rejection
-// of another alert beside it keeps its reason.
-func TestASupersededIdentityCloseCarriesItsReason(t *testing.T) {
-	superseded, target := fp(1), fp(2)
-	f := newFixture(openSet(ownSrc, superseded, target), nil)
-	moved := drop(superseded, 0)
-	moved.CloseReason = linkdoutput.CloseReasonSupersededIdentity
-	for i := int64(0); i < 4; i++ {
-		f.slot(1700000000+60*i, moved, drop(target, 0))
-	}
-	f.want(t, "four Slots", map[string]uint64{OutcomeUnconfirmed: 2, OutcomeCloseSent: 2, OutcomeSupersededCloseSent: 1})
-	reasons := map[string]string{}
-	for _, request := range f.writer.sent() {
-		reasons[request.Fingerprint] = request.Reason
-	}
-	if len(f.writer.sent()) != 2 || reasons[superseded] != linkdoutput.CloseReasonSupersededIdentity ||
-		reasons[target] != linkdoutput.CloseReasonTargetOutOfScope {
-		t.Fatalf("sent %+v, want one close of each alert under its own reason", f.writer.sent())
-	}
-	event, err := linkdoutput.ConvertClose(f.writer.sent()[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if event.Action != linkdoutput.ActionClosed {
-		t.Fatalf("event %+v is not a close", event)
-	}
-}
-
-// A superseded-identity offer whose old fingerprint the consumer does not
-// hold - most overlaid series, every Slot - counts nothing, nor does one the
-// set cannot answer; a target rejection of the same kind still counts.
-func TestASupersededOfferWithNothingToCloseCountsNothing(t *testing.T) {
-	f := newFixture(openSet(ownSrc, fp(9)), nil)
-	offer := drop(fp(1), 0)
-	offer.CloseReason = linkdoutput.CloseReasonSupersededIdentity
-	for i := int64(0); i < 5; i++ {
-		offer.Round = 1700000000 + 60*i
-		f.closer.Observe(offer)
-		f.closer.Step(context.Background())
-		f.clock.at = f.clock.at.Add(time.Minute)
-	}
-	f.want(t, "five offers, none held", map[string]uint64{})
-	unbound := New(Options{})
-	unbound.Observe(offer)
-	if got := unbound.Stats()[OutcomeSetUnavailable]; got != 0 {
-		t.Fatalf("an offer to an unbound close counted set_unavailable %d, want nothing", got)
-	}
-	target := drop(fp(2), 1700000300)
-	f.closer.Observe(target)
-	f.want(t, "a target rejection", map[string]uint64{OutcomeNotMember: 1})
-	if len(f.writer.sent()) != 0 {
-		t.Fatalf("sent %+v, want nothing", f.writer.sent())
+// The close is bounded to the alerts opened by the moment the entry was
+// last observed rejected, the moment its decision was read; not the
+// moment the step sends it.
+func TestTheCloseIsBoundedToTheLastObservation(t *testing.T) {
+	for _, offer := range []Offer{{Fingerprint: "fp-1"}, {Fingerprint: "fp-2"}} {
+		closer, link, now := newScopeHarness(t, knownSet{offer.Fingerprint: true})
+		link.set(1, 0)
+		observed := *now
+		confirm(closer, offer)
+		*now = now.Add(time.Second)
+		closer.Step(context.Background())
+		dry, real := link.sent()
+		if len(dry) == 0 || len(real) != 1 {
+			t.Fatalf("dry runs %d, closes %d", len(dry), len(real))
+		}
+		want := `{"range":{"create_at":{"lte":"` + observed.UTC().Format(time.RFC3339Nano) + `"}}}`
+		for _, request := range append(dry, real...) {
+			if !strings.Contains(string(request.Filter), want) {
+				t.Fatalf("filter %s does not carry %s", request.Filter, want)
+			}
+		}
 	}
 }

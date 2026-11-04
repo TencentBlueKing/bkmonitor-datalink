@@ -123,19 +123,20 @@ func TestEveryCutoverReasonIsListed(t *testing.T) {
 		t.Fatal("no reasons were found in the source, so this guard scans nothing")
 	}
 	byName := map[string]string{
-		"CutoverReasonActivationRecordMissing": CutoverReasonActivationRecordMissing,
-		"CutoverReasonTimelineMissing":         CutoverReasonTimelineMissing,
-		"CutoverReasonOpenSegmentClosed":       CutoverReasonOpenSegmentClosed,
-		"CutoverReasonOpenDigestMismatch":      CutoverReasonOpenDigestMismatch,
-		"CutoverReasonSegmentContentMismatch":  CutoverReasonSegmentContentMismatch,
-		"CutoverReasonSegmentConflict":         CutoverReasonSegmentConflict,
-		"CutoverReasonDigestMismatch":          CutoverReasonDigestMismatch,
-		"CutoverReasonObjectNewer":             CutoverReasonObjectNewer,
-		"CutoverReasonConflict":                CutoverReasonConflict,
-		"CutoverReasonUnavailable":             CutoverReasonUnavailable,
-		"CutoverReasonInvalidRequest":          CutoverReasonInvalidRequest,
-		"CutoverReasonIO":                      CutoverReasonIO,
-		"CutoverReasonOther":                   CutoverReasonOther,
+		"CutoverReasonActivationRecordMissing":   CutoverReasonActivationRecordMissing,
+		"CutoverReasonTimelineMissing":           CutoverReasonTimelineMissing,
+		"CutoverReasonOpenSegmentClosed":         CutoverReasonOpenSegmentClosed,
+		"CutoverReasonBoundaryBehindOpenSegment": CutoverReasonBoundaryBehindOpenSegment,
+		"CutoverReasonOpenDigestMismatch":        CutoverReasonOpenDigestMismatch,
+		"CutoverReasonSegmentContentMismatch":    CutoverReasonSegmentContentMismatch,
+		"CutoverReasonSegmentConflict":           CutoverReasonSegmentConflict,
+		"CutoverReasonDigestMismatch":            CutoverReasonDigestMismatch,
+		"CutoverReasonObjectNewer":               CutoverReasonObjectNewer,
+		"CutoverReasonConflict":                  CutoverReasonConflict,
+		"CutoverReasonUnavailable":               CutoverReasonUnavailable,
+		"CutoverReasonInvalidRequest":            CutoverReasonInvalidRequest,
+		"CutoverReasonIO":                        CutoverReasonIO,
+		"CutoverReasonOther":                     CutoverReasonOther,
 	}
 	for name := range declared {
 		if name == "CutoverReasons" {

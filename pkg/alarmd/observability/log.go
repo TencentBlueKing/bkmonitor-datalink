@@ -217,16 +217,35 @@ func Discard(component string) *Logger {
 	return New(component, io.Discard)
 }
 
+// Info, Warn and Error write a timed event: what the line is about took
+// duration, which the line carries as duration_ms, a measured zero
+// included. An event nothing timed is written with InfoEvent, WarnEvent or
+// ErrorEvent instead.
 func (l *Logger) Info(stage, result string, records int, duration time.Duration, attrs ...slog.Attr) {
-	l.log(slog.LevelInfo, stage, result, records, duration, attrs...)
+	l.log(slog.LevelInfo, stage, result, records, duration, true, attrs...)
 }
 
 func (l *Logger) Warn(stage, result string, records int, duration time.Duration, attrs ...slog.Attr) {
-	l.log(slog.LevelWarn, stage, result, records, duration, attrs...)
+	l.log(slog.LevelWarn, stage, result, records, duration, true, attrs...)
 }
 
 func (l *Logger) Error(stage, result string, records int, duration time.Duration, attrs ...slog.Attr) {
-	l.log(slog.LevelError, stage, result, records, duration, attrs...)
+	l.log(slog.LevelError, stage, result, records, duration, true, attrs...)
+}
+
+// InfoEvent, WarnEvent and ErrorEvent write a point event, one nothing
+// timed - a process starting, a request refused, a probe begun: its line
+// carries no duration_ms, where a 0 would read as zero milliseconds.
+func (l *Logger) InfoEvent(stage, result string, records int, attrs ...slog.Attr) {
+	l.log(slog.LevelInfo, stage, result, records, 0, false, attrs...)
+}
+
+func (l *Logger) WarnEvent(stage, result string, records int, attrs ...slog.Attr) {
+	l.log(slog.LevelWarn, stage, result, records, 0, false, attrs...)
+}
+
+func (l *Logger) ErrorEvent(stage, result string, records int, attrs ...slog.Attr) {
+	l.log(slog.LevelError, stage, result, records, 0, false, attrs...)
 }
 
 func (l *LoggingObserver) Observe(ctx context.Context, observation Observation) {
@@ -290,7 +309,10 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 		slog.String("result", string(observation.Result)),
 		slog.String("reason_code", string(observation.ReasonCode)),
 		slog.String("operation", string(observation.Operation)),
-		slog.Int64("duration_ms", observation.Duration.Milliseconds()),
+	}
+	// Only a measured duration (Timed): a point event's line has none.
+	if observation.Timed() {
+		attributes = append(attributes, slog.Int64("duration_ms", observation.Duration.Milliseconds()))
 	}
 	if f := observation.GapExtensions; len(f) > 0 {
 		attributes = append(attributes, slog.Any("gap_extensions", f))
@@ -1096,6 +1118,13 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 	if len(observation.RecoveryWithheld) > 0 {
 		attributes = append(attributes, slog.Any("recovery_withheld", observation.RecoveryWithheld))
 	}
+	// Which source holds a Plan's no-data ends open, since when, on what.
+	if observation.SourceLivenessHeld != nil {
+		attributes = append(attributes, slog.Any("source_liveness_held", *observation.SourceLivenessHeld))
+	}
+	if observation.NewOpens != nil {
+		attributes = append(attributes, slog.Any("new_opens", *observation.NewOpens))
+	}
 	if observation.Err != nil {
 		attributes = append(attributes,
 			slog.String("error_type", fmt.Sprintf("%T", observation.Err)),
@@ -1137,6 +1166,7 @@ func (l *Logger) log(
 	stage, result string,
 	records int,
 	duration time.Duration,
+	timed bool,
 	attrs ...slog.Attr,
 ) {
 	if l == nil || l.next == nil {
@@ -1150,7 +1180,9 @@ func (l *Logger) log(
 		slog.String("stage", stage),
 		slog.String("result", result),
 		slog.Int("records", records),
-		slog.Int64("duration_ms", duration.Milliseconds()),
+	}
+	if timed {
+		fixed = append(fixed, slog.Int64("duration_ms", duration.Milliseconds()))
 	}
 	l.next.LogAttrs(context.Background(), level, "alarmd event", append(fixed, attrs...)...)
 }

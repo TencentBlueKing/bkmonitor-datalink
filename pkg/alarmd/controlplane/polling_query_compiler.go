@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"html"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -159,13 +160,13 @@ func monitorEventField(field string) string {
 	return "dimensions." + field
 }
 
-func (compiler *LegacyPrimaryQueryCompiler) compilePollingQueryConfig(c legacyQueryConfig, business string) ([]execution.QueryClause, error) {
+func (compiler *LegacyPrimaryQueryCompiler) compilePollingQueryConfig(c legacyQueryConfig, business string, global bool) ([]execution.QueryClause, error) {
 	c.AggDimensions = append([]string{}, c.AggDimensions...)
 	c.AggConditions = append([]legacyCondition{}, c.AggConditions...)
 	if c.AggInterval > (1<<63-1)/1000 {
 		return nil, queryConfigRejected("QUERY_INTERVAL_INVALID", nil)
 	}
-	if c.DataSourceLabel != "bk_log_search" && c.DataTypeLabel == "time_series" {
+	if metricQuerySource(c.DataSourceLabel, c.DataTypeLabel) {
 		if c.DataSourceLabel == "bk_data" && c.TimeField == "" {
 			c.TimeField = "dtEventTimeStamp"
 		}
@@ -232,6 +233,25 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePollingQueryConfig(c legacyQu
 				filters = append(filters, scalarCondition("event_name", "eq", c.CustomEventName))
 			}
 			filters = append(filters, scalarCondition("dimensions.event_type", "neq", "recovery"))
+			if global && slices.Contains(c.AggDimensions, monitorEventField(contract.BusinessDimension)) {
+				// A global strategy grouped by bk_biz_id reads only events that
+				// carry a business: an event without one is left out of
+				// detection rather than filed under the global business, as the
+				// user ruled on 10-28 (no fallback for events without a business
+				// id). Both conditions are needed: on a keyword field UQ sends
+				// ne "" as must_not match_phrase "", which keeps documents
+				// missing the field, and existed alone keeps an empty value.
+				//
+				// A value that is present is not checked further: the platform's
+				// stream processor fills it per host from the CMDB, and over
+				// a deployment's whole retention of system event indices it took
+				// 5 distinct values, every one a positive integer, with no
+				// value left uncounted. A value that is not one would still
+				// fall back to the global business (admission.canonicalBusiness).
+				filters = append(filters,
+					scalarCondition(monitorEventField(contract.BusinessDimension), "exists", ""),
+					scalarCondition(monitorEventField(contract.BusinessDimension), "neq", ""))
+			}
 			multiGroup := false
 			for index, condition := range c.AggConditions {
 				multiGroup = multiGroup || (index > 0 && condition.Connector == "or")

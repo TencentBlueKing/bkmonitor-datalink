@@ -367,23 +367,35 @@ func TestAProbeNearAFailedFloorPassesOnMoreRounds(t *testing.T) {
 }
 
 // Near a floor a probe failed at, a probe needs eight hours of its rounds, the last one begun counting, and never fewer
-// than ProbationRounds: 960 half a minute apart, 480 a minute apart, 412 seventy seconds apart, 160 three minutes
-// apart, ProbationRounds from four minutes on. Elsewhere it needs ProbationRounds at any period.
+// than the probation's 120: 960 half a minute apart, 480 a minute apart, 412 seventy seconds apart, 160 three minutes
+// apart, 120 from four minutes on. Elsewhere it needs 120 at any period. The numbers are literals, so production's
+// probation drifting from 120 fails here rather than moving the expectation with it.
 func TestAProbeNearAFailedFloorNeedsEightHoursOfItsRounds(t *testing.T) {
+	if ProbationRounds != 120 {
+		t.Fatalf("production's probation is %d rounds, want 120", ProbationRounds)
+	}
 	engine := newFixture(t).engine
 	for _, c := range []struct {
 		period time.Duration
 		edge   int
 	}{
 		{30 * time.Second, 960}, {time.Minute, 480}, {70 * time.Second, 412}, {3 * time.Minute, 160},
-		{4 * time.Minute, ProbationRounds}, {5 * time.Minute, ProbationRounds}, {20 * time.Minute, ProbationRounds},
+		{4 * time.Minute, 120}, {5 * time.Minute, 120}, {20 * time.Minute, 120},
 	} {
 		if got := engine.probeRounds(&floorProbeState{edge: true, period: c.period}); got != c.edge {
 			t.Fatalf("near a failed floor, %v apart: %d rounds, want %d", c.period, got, c.edge)
 		}
-		if got := engine.probeRounds(&floorProbeState{period: c.period}); got != ProbationRounds {
-			t.Fatalf("elsewhere, %v apart: %d rounds, want %d", c.period, got, ProbationRounds)
+		if got := engine.probeRounds(&floorProbeState{period: c.period}); got != 120 {
+			t.Fatalf("elsewhere, %v apart: %d rounds, want 120", c.period, got)
 		}
+	}
+	// A span and a probation of the options' own are what it reads instead.
+	engine.options.EdgeProbeSpan, engine.options.ProbationRounds = time.Hour, 20
+	if got := engine.probeRounds(&floorProbeState{edge: true, period: time.Minute}); got != 60 {
+		t.Fatalf("near a failed floor on an hour's span, a minute apart: %d rounds, want 60", got)
+	}
+	if got := engine.probeRounds(&floorProbeState{edge: true, period: 4 * time.Minute}); got != 20 {
+		t.Fatalf("near a failed floor on an hour's span, four minutes apart: %d rounds, want the probation's 20", got)
 	}
 }
 

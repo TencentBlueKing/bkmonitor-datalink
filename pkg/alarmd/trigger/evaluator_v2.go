@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -120,6 +121,17 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 			if result.RecoveryGate.Held {
 				return result, nil
 			}
+			if result.RecoveryGate.OpenAlertGate == OpenAlertGatePassed {
+				var held bool
+				var omitted []uint32
+				levelResults, omitted, held = openLevelResultsV2(request, ref.StrategyID, dedupeMD5, levelResults)
+				if held {
+					result.RecoveryGate.Held, result.RecoveryGate.Cause = true, RecoveryHeldLevelNotOpen
+					result.RecoveryGate.OpenAlertGate = OpenAlertGateHeldLevelNotOpen
+					return result, nil
+				}
+				result.OmittedRecoveryLevels = omitted
+			}
 		}
 		// An event the Plan's protocol has no message for is decided and not
 		// built: under the compatibility protocol that is every RECOVERY, one
@@ -208,6 +220,10 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 		}
 		event.WireFormat = request.Plan.WireFormat()
 		event.SignalType = request.Plan.SignalType()
+		event.StrategyFacts = request.Plan.StrategyFacts()
+		if target := request.Plan.TargetPlan(); target != nil {
+			event.TargetDimensions = target.Identity.Dimensions
+		}
 		if identity := request.Plan.OutputIdentity(); identity != nil {
 			subject, remaining, subjectErr := contract.ProjectMonitorSubject(
 				request.RecordRef.Dimensions, *identity, request.Plan.SubjectFacts(),
@@ -572,7 +588,27 @@ func evaluateLevelV2(
 				withheld = contract.RecoveryWithheldNoDataLastPointUnknown
 			}
 		case noDataEndDueV2(request.Record.SourceTime, last, triggerPlan, recoveryPlan):
+			// Before no data ends it, the source itself is asked whether
+			// it is alive: no data from a source that may be down is not
+			// "it stopped happening". Not known, the Level stays as it is,
+			// saying why where the windows were met.
+			// The span's first empty period is the one after last
+			// (noDataEndDueV2 times the end from it), and the probe reads
+			// from there on, never the last period with data.
+			if source := request.NoDataEndSource; source != nil && !source.SourceAlive(definition.LevelID, noDataSpanV2(triggerPlan, recoveryPlan), last) {
+				if withheld != "" {
+					withheld = contract.RecoveryWithheldSourceUnknown
+				}
+				break
+			}
 			result, end, endedBy, withheld = contract.LevelResultRecovery, recoveryPlan.End, contract.RecoveryEndedByNoData, ""
+		default:
+			// Due on the next round if no real point comes: its source is
+			// probed now, so that round has an answer to end on.
+			if source := request.NoDataEndSource; source != nil &&
+				noDataEndDueV2(request.Record.SourceTime+int64(triggerPlan.StepSeconds), last, triggerPlan, recoveryPlan) {
+				source.DueNext(definition.LevelID, last, noDataSpanV2(triggerPlan, recoveryPlan))
+			}
 		}
 	}
 	if result == "" {
@@ -616,8 +652,14 @@ func evaluateLevelV2(
 // no real point through (R + T + 1) periods at source time now: the recovery
 // windows, the trigger window and one period more.
 func noDataEndDueV2(now, last int64, triggerPlan strategy.TriggerPlan, recoveryPlan strategy.RecoveryPlan) bool {
+	return now-last >= noDataSpanV2(triggerPlan, recoveryPlan)
+}
+
+// noDataSpanV2 is how long a Level waits on no data before it ends, in
+// seconds: (R + T + 1) periods.
+func noDataSpanV2(triggerPlan strategy.TriggerPlan, recoveryPlan strategy.RecoveryPlan) int64 {
 	periods := int64(recoveryPlan.ConsecutiveWindows) + int64(triggerPlan.WindowSize) + 1
-	return now-last >= periods*int64(triggerPlan.StepSeconds)
+	return periods * int64(triggerPlan.StepSeconds)
 }
 
 // zeroCountV2 says a Level's normalized value is a count of zero.
@@ -857,6 +899,50 @@ func openAlertGateV2(gate RecoveryGateV2, request EvaluationRequestV2, strategyI
 		gate.OpenAlertGate = OpenAlertGatePassed
 	}
 	return gate
+}
+
+// openLevelResultsV2 is a RECOVERY record's Level results as the envelope
+// carries them: only the RECOVERY of the alert's current Level is kept, as
+// Python recovers an alert only at its own Level; a RECOVERY of any other
+// Level is left out. The current Level is the most severe open one by Level
+// id, the lowest, as the link (its severity table) and Python rank Levels,
+// not by the Plan's detect priority, which a strategy may set against the
+// ids. omitted is the Levels whose RECOVERY was left out, for the
+// decomposition to say so (execution.LevelOutcome.EventOmitted); held is no
+// RECOVERY left, and then omitted is nil: the whole record is held. Where the
+// set does not know the series' open Levels, every result stays, as before it
+// could tell.
+func openLevelResultsV2(request EvaluationRequestV2, strategyID, dedupeMD5 string,
+	results []contract.LevelResultV1) ([]contract.LevelResultV1, []uint32, bool) {
+	set, ok := request.OpenAlerts.(contract.OpenLevelSet)
+	if !ok {
+		return results, nil, false
+	}
+	open, known := set.OpenLevels(request.TenantID, strategyID, dedupeMD5)
+	if !known {
+		return results, nil, false
+	}
+	if len(open) == 0 {
+		return nil, nil, true
+	}
+	current := slices.Min(open)
+	kept := make([]contract.LevelResultV1, 0, len(results))
+	var omitted []uint32
+	recovering := false
+	for _, result := range results {
+		if result.Result == contract.LevelResultRecovery {
+			if result.LevelID != current {
+				omitted = append(omitted, result.LevelID)
+				continue
+			}
+			recovering = true
+		}
+		kept = append(kept, result)
+	}
+	if !recovering {
+		return kept, nil, true
+	}
+	return kept, omitted, false
 }
 
 // oneTimeClose is whether the set answers for the one close of a dropped

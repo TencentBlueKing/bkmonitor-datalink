@@ -109,12 +109,11 @@ type RuntimeRetentionFacts struct {
 }
 
 // RuntimeLinkdFacts is what the alert link's configuration switches on: the
-// Console configured or not, the event source and hook the link's target is
-// narrowed to. With the Console configured, the closes of alerts of
-// strategies that no longer exist and of targets that left a strategy's
-// scope send. No address, username or password.
+// link's control plane named with its secret or not. With it, the recovery
+// gate's copy is refreshed and every close is sent; without it neither. No
+// address or secret.
 type RuntimeLinkdFacts struct {
-	ConsoleConfigured bool `json:"console_configured"`
+	ControlPlaneConfigured bool `json:"control_plane_configured"`
 }
 
 type RuntimeStorageFacts struct {

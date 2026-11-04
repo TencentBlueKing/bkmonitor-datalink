@@ -15,8 +15,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scopeclose"
 )
 
 type definitiveSet struct {
@@ -26,22 +24,17 @@ type definitiveSet struct {
 
 func (set definitiveSet) Definitive() bool { return set.definitive }
 
-// recordingSink is the close as the access path sees it: what Screen
-// answers, and every call it received.
+// recordingSink is the superseded-identity close as the access path sees
+// it: what Screen answers, and every call it received.
 type recordingSink struct {
-	screen   string
+	screen   bool
 	screens  int
-	observed []ScopeDrop
-	counts   map[string]int
+	observed []SupersededOffer
 }
 
-func (sink *recordingSink) Screen(execution.PlanIdentity) string { sink.screens++; return sink.screen }
-func (sink *recordingSink) Observe(drop ScopeDrop)               { sink.observed = append(sink.observed, drop) }
-func (sink *recordingSink) Count(_ ScopeDropReporter, word string, n int) {
-	if sink.counts == nil {
-		sink.counts = map[string]int{}
-	}
-	sink.counts[word] += n
+func (sink *recordingSink) Screen(execution.PlanIdentity) bool { sink.screens++; return sink.screen }
+func (sink *recordingSink) Observe(offer SupersededOffer) {
+	sink.observed = append(sink.observed, offer)
 }
 
 var scopeOutput = planOutput{strategyID: "42", revision: 3,
@@ -61,7 +54,7 @@ func scopeDropAdapter(t *testing.T, chain *admission.Chain, context admission.Pl
 	context.StrategyID = plan.StrategyID
 	return &seriesAdapter{
 		consumer: &admissionConsumer{}, query: plannedQueryForTest(requirement), attemptNo: 1,
-		admission: chain, scopes: planScopes{plan: context}, scopeSink: sink,
+		admission: chain, scopes: planScopes{plan: context}, supersededSink: sink,
 		outputs: planOutputs{plan: output}, round: 1700000060,
 	}, plan
 }
@@ -102,85 +95,6 @@ func hostDims(id string) map[string]json.RawMessage {
 	return map[string]json.RawMessage{"bk_host_id": json.RawMessage(`"` + id + `"`), "device": json.RawMessage(`"sda"`)}
 }
 
-// A definitive target-plan rejection of a strategy the close cleared
-// reaches it with the fingerprint the evaluator would have given the
-// record: the monitor dedupe identity of the frozen strategy, the Plan's
-// business and the record's own dimensions under the Plan's output
-// identity.
-func TestADefinitiveRejectionCarriesTheEvaluatorsFingerprint(t *testing.T) {
-	sink := &recordingSink{}
-	adapter, plan := scopeDropAdapter(t, targetChain(), hostPlanContext(true), sink, scopeOutput)
-	deliverSeries(t, adapter, hostDims("101"))
-	deliverSeries(t, adapter, hostDims("102"))
-	flushScopeDrops(adapter.scopeSink, []*seriesAdapter{adapter}, execution.SlotIdentity{QueryGroup: unphasedQueryGroup, EvaluationTime: execution.EvaluationTime(adapter.round)}, adapter.outputs)
-
-	want, err := contract.MonitorDedupeMD5("42", plan.BusinessID, hostDims("102"),
-		contract.MonitorOutputIdentity{DimensionFields: []string{"bk_host_id", "device"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(sink.observed) != 1 || len(sink.counts) != 0 {
-		t.Fatalf("observed %+v counted %v, want only the out-of-target series observed", sink.observed, sink.counts)
-	}
-	drop := sink.observed[0]
-	if drop.Fingerprint != want || drop.Filter != "target_plan" || drop.Reason != admission.TargetPlanReasonOutOfTarget ||
-		drop.Plan != plan || drop.StrategyRevision != 3 || drop.Round != 1700000060 {
-		t.Fatalf("drop = %+v, want out_of_target with fingerprint %s, revision 3, round 1700000060", drop, want)
-	}
-}
-
-// Every other rejection is counted in bulk, once per word, when the query
-// ends: the indefinite ones, a Plan fed by several inputs, a Plan with no
-// fingerprinted output, and whatever Screen turned away.
-func TestRejectionsTheCloseCannotUseAreCountedInBulk(t *testing.T) {
-	cases := []struct {
-		name    string
-		context admission.PlanContext
-		output  planOutput
-		screen  string
-		word    string
-		screens int
-	}{
-		{"not resolved in full", hostPlanContext(false), scopeOutput, "", ScopeDropCacheUnavailable, 1},
-		{"multi-input", hostPlanContext(true), func() planOutput { o := scopeOutput; o.multiInput = true; return o }(), "", ScopeDropFingerprintUnsupported, 1},
-		// A set that cannot be judged answers first, before the
-		// rejection's standing or the Plan's inputs are looked at.
-		{"set unavailable before multi-input", hostPlanContext(true), func() planOutput { o := scopeOutput; o.multiInput = true; return o }(), "set_unavailable", "set_unavailable", 1},
-		{"set unavailable before standing", hostPlanContext(false), scopeOutput, "set_unavailable", "set_unavailable", 1},
-		{"no frozen revision", hostPlanContext(true), planOutput{strategyID: "42", identity: scopeOutput.identity}, "", ScopeDropNoFingerprint, 1},
-		{"screened out", hostPlanContext(true), scopeOutput, "not_member", "not_member", 1},
-	}
-	for _, c := range cases {
-		sink := &recordingSink{screen: c.screen}
-		adapter, _ := scopeDropAdapter(t, targetChain(), c.context, sink, c.output)
-		for _, id := range []string{"102", "103", "104"} {
-			deliverSeries(t, adapter, hostDims(id))
-		}
-		if len(sink.counts) != 0 {
-			t.Fatalf("%s: counted before the query ended: %v", c.name, sink.counts)
-		}
-		flushScopeDrops(adapter.scopeSink, []*seriesAdapter{adapter}, execution.SlotIdentity{QueryGroup: unphasedQueryGroup, EvaluationTime: execution.EvaluationTime(adapter.round)}, adapter.outputs)
-		if len(sink.observed) != 0 || sink.counts[c.word] != 3 || len(sink.counts) != 1 || sink.screens != c.screens {
-			t.Errorf("%s: observed %d counts %v screens %d, want 3 under %q and %d screens", c.name, len(sink.observed), sink.counts, sink.screens, c.word, c.screens)
-		}
-	}
-}
-
-// A host turned away by the host status filter is still inside its target;
-// the close does not hear about it at all.
-func TestAHostStatusRejectionIsNotReported(t *testing.T) {
-	filter := admission.NewHostStatusFilter([]string{"spare"})
-	chain := admission.NewChain([]admission.Fuller{admission.IdentityFuller{}, stateFuller{state: "spare"}},
-		[]admission.Filter{filter, admission.TargetScopeFilter{}})
-	sink := &recordingSink{}
-	adapter, _ := scopeDropAdapter(t, chain, admission.PlanContext{TargetScope: hostScope("7")}, sink, scopeOutput)
-	deliverSeries(t, adapter, map[string]json.RawMessage{"bk_host_id": json.RawMessage(`"7"`)})
-	flushScopeDrops(adapter.scopeSink, []*seriesAdapter{adapter}, execution.SlotIdentity{QueryGroup: unphasedQueryGroup, EvaluationTime: execution.EvaluationTime(adapter.round)}, adapter.outputs)
-	if len(sink.observed) != 0 || len(sink.counts) != 0 || sink.screens != 0 {
-		t.Fatalf("sink = %+v, want the host status rejection unreported", sink)
-	}
-}
-
 // stateFuller resolves every host into one operational state, standing in
 // for the host cache.
 type stateFuller struct{ state string }
@@ -215,262 +129,82 @@ func TestPlanOutputsFollowTheFrozenPlan(t *testing.T) {
 	}
 }
 
-// The zero-member path - the strategy has no open alert, the common case
-// on a filtered wide table - must cost nothing per record: no hash, no
-// allocation, no call into the sink (and so no lock). One Screen per Plan
-// per query, one Count when the query ends.
-func TestTheZeroMemberPathDoesNoPerRecordWork(t *testing.T) {
-	sink := &recordingSink{screen: "not_member"}
-	identity := execution.PlanIdentity{TenantID: "t", BusinessID: "2", StrategyID: "42"}
-	adapter := &seriesAdapter{scopeSink: sink, outputs: planOutputs{identity: scopeOutput}}
-	facts := admission.Facts{Dimensions: hostDims("102")}
-	plan := admission.PlanContext{TargetScope: &admission.TargetScope{}}
-	reject := func() {
-		adapter.reportScopeDrop(identity, plan, &facts, "target_scope", contract.TargetScopeReasonOutOfScope)
+// A target rejection is a rejection and nothing more: the series is not
+// evaluated, counted rejected by its filter, withheld as outside the target,
+// and nothing is offered to any close - not under the fingerprint its alert
+// reads, and not under its own for a host CMDB overlays. The alerts of a
+// target that left the scope are the control leader's to close, per
+// strategy.
+func TestATargetRejectionOffersNothingAndIsStillRejected(t *testing.T) {
+	sink := &recordingSink{screen: true}
+	output := planOutput{strategyID: "42", revision: 3,
+		identity: &contract.MonitorOutputIdentity{DimensionFields: []string{"bk_host_id", "bk_target_ip", "bk_target_cloud_id"}}}
+	chain := admission.NewChain([]admission.Fuller{admission.IdentityFuller{}, targetOverlayFuller{}},
+		[]admission.Filter{admission.TargetScopeFilter{}, admission.TargetPlanFilter{}})
+	adapter, _ := scopeDropAdapter(t, chain, hostPlanContext(true), sink, output)
+	var observed []string
+	adapter.observe = func(filter, result, reason string) { observed = append(observed, filter+"/"+result+"/"+reason) }
+	record := map[string]json.RawMessage{"bk_host_id": json.RawMessage(`"102"`), "bk_target_ip": json.RawMessage(`"198.51.100.9"`),
+		"bk_target_cloud_id": json.RawMessage(`"0"`)}
+	deliverSeries(t, adapter, record)
+	if sink.screens != 0 || len(sink.observed) != 0 || adapter.supersededScreens != nil {
+		t.Fatalf("screens %d observed %+v, want nothing offered for a target rejection", sink.screens, sink.observed)
 	}
-	reject()
-	if allocs := testing.AllocsPerRun(1000, reject); !racedetector.Enabled && allocs != 0 {
-		t.Fatalf("zero-member path allocates %.1f per record, want 0", allocs)
+	want := "target_plan/rejected/" + admission.TargetPlanReasonOutOfTarget
+	if len(observed) != 1 || observed[0] != want {
+		t.Fatalf("admission observed %v, want only %s", observed, want)
+	}
+	completion := adapter.reconcileCompletion(execution.ProviderCompletion{Completeness: execution.CompletenessFull, DataState: execution.DataStateData})
+	if completion.DataState != execution.DataStateEmpty || completion.Withheld != 1 || completion.WithheldOutsideTarget != 1 {
+		t.Fatalf("completion %+v, want the series withheld as outside the target", completion)
+	}
+}
+
+// A Plan the close screens out - its strategy has no open alert, the common
+// case - costs nothing per record: no hash, no allocation, no call into the
+// sink past one Screen per Plan per query.
+func TestAScreenedOutPlanDoesNoPerRecordWork(t *testing.T) {
+	sink := &recordingSink{}
+	identity := execution.PlanIdentity{TenantID: "t", BusinessID: "2", StrategyID: "42"}
+	adapter := &seriesAdapter{supersededSink: sink, outputs: planOutputs{identity: scopeOutput}}
+	facts := admission.Facts{Dimensions: hostDims("102"), HostOverlay: map[string]json.RawMessage{"device": json.RawMessage(`"sdb"`)}}
+	offer := func() { adapter.reportSuperseded(identity, &facts) }
+	offer()
+	if allocs := testing.AllocsPerRun(1000, offer); !racedetector.Enabled && allocs != 0 {
+		t.Fatalf("a screened-out Plan allocates %.1f per record, want 0", allocs)
 	}
 	if sink.screens != 1 || len(sink.observed) != 0 {
-		t.Fatalf("screens %d observed %d, want one screen and no observation", sink.screens, len(sink.observed))
-	}
-	flushScopeDrops(adapter.scopeSink, []*seriesAdapter{adapter}, execution.SlotIdentity{QueryGroup: unphasedQueryGroup, EvaluationTime: execution.EvaluationTime(adapter.round)}, adapter.outputs)
-	if sink.counts["not_member"] != 1002 {
-		t.Fatalf("counts = %v, want all 1002 rejections in one bulk count", sink.counts)
+		t.Fatalf("screens %d observed %d, want one screen and no offer", sink.screens, len(sink.observed))
 	}
 }
 
-// BenchmarkReportScopeDrop measures one definitive rejection: zero_members
-// is the path almost every rejection takes, members the path of a strategy
-// with open alerts (hash plus the sink's lookup).
-func BenchmarkReportScopeDrop(b *testing.B) {
-	identity := execution.PlanIdentity{TenantID: "t", BusinessID: "2", StrategyID: "42"}
-	facts := admission.Facts{Dimensions: map[string]json.RawMessage{"bk_host_id": json.RawMessage(`"102"`),
-		"device": json.RawMessage(`"sda"`), "mount": json.RawMessage(`"/data"`)}}
-	plan := admission.PlanContext{TargetScope: &admission.TargetScope{}}
-	output := planOutput{strategyID: "42", revision: 3,
-		identity: &contract.MonitorOutputIdentity{DimensionFields: []string{"bk_host_id", "device", "mount"}}}
-	for _, c := range []struct{ name, screen string }{{"zero_members", "not_member"}, {"members", ""}} {
-		b.Run(c.name, func(b *testing.B) {
-			adapter := &seriesAdapter{scopeSink: &discardSink{screen: c.screen}, outputs: planOutputs{identity: output}}
-			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
-				adapter.reportScopeDrop(identity, plan, &facts, "target_scope", contract.TargetScopeReasonOutOfScope)
-			}
-		})
-	}
-}
-
-type discardSink struct{ screen string }
-
-func (sink *discardSink) Screen(execution.PlanIdentity) string { return sink.screen }
-func (sink *discardSink) Observe(ScopeDrop)                    {}
-func (sink *discardSink) Count(ScopeDropReporter, string, int) {}
-
-// Through Source.Execute: the query's bulk counts reach the sink when the
-// query ends. A rejection counted here and never handed over would read as
-// "the target turned nothing away".
-func TestTheQuerysBulkCountsReachTheSinkWhenItEnds(t *testing.T) {
-	contractRef, frozen := frozenExecution(t)
-	frozen.DuePlans[0].CompiledPlan = compilePlanForStrategy(t, "1001", hostScopeContract("192.0.2.10|0"))
-	contractRef = bindFrozenDueDigest(t, contractRef, frozen)
-	sink := &recordingSink{}
-	source, err := NewSource(staticFrozenPlan{plan: frozen}, &hostStreamingProvider{hosts: []string{"192.0.2.10", "192.0.2.98", "192.0.2.99"}},
-		&recordingQueryPermits{}, Config{MinReadyDelay: time.Second, Admission: scopedChain(), ScopeDrops: sink})
-	if err != nil {
-		t.Fatal(err)
-	}
-	source.now = func() time.Time { return time.UnixMilli(2_000_000_000_000) }
-	source.wait = func(context.Context, time.Duration) error { return nil }
-	if _, err := source.Execute(context.Background(), execution.QueryExecutionRequest{
-		Contract: contractRef, Operation: execution.OperationNormal, AttemptNo: 1,
-	}, &recordingConsumer{}); err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	// The two hosts outside the target name themselves by address and no
-	// host cache resolved them, so the rejection is not definitive.
-	if sink.counts[ScopeDropCacheUnavailable] != 2 || len(sink.observed) != 0 {
-		t.Fatalf("counts %v observed %d, want both rejections counted as cache_unavailable", sink.counts, len(sink.observed))
-	}
-}
-
-// closerSink hands the access path's counts to a real close, as the
-// production sink does, with the words taken as they are.
-type closerSink struct {
-	closer *scopeclose.Closer
-	calls  int
-}
-
-func (sink *closerSink) Screen(execution.PlanIdentity) string { return "" }
-func (sink *closerSink) Observe(ScopeDrop)                    {}
-func (sink *closerSink) Count(reporter ScopeDropReporter, word string, n int) {
-	sink.calls++
-	sink.closer.Count(openalerts.StrategyKey{TenantID: reporter.Plan.TenantID, StrategyID: reporter.Plan.StrategyID},
-		reporter.Instance(), int64(reporter.Slot.EvaluationTime), word, n)
-}
-
-// A retried Slot runs Execute again for the same round. Each attempt hands
-// over its counts once, after all its queries ended, and the close counts
-// the round once: the two rejected hosts are two, not four.
-func TestARetriedQueryCountsItsRejectionsOnce(t *testing.T) {
-	contractRef, frozen := frozenExecution(t)
-	frozen.DuePlans[0].CompiledPlan = compilePlanForStrategy(t, "1001", hostScopeContract("192.0.2.10|0"))
-	contractRef = bindFrozenDueDigest(t, contractRef, frozen)
-	sink := &closerSink{closer: scopeclose.New(scopeclose.Options{})}
-	source, err := NewSource(staticFrozenPlan{plan: frozen}, &hostStreamingProvider{hosts: []string{"192.0.2.10", "192.0.2.98", "192.0.2.99"}},
-		&recordingQueryPermits{}, Config{MinReadyDelay: time.Second, Admission: scopedChain(), ScopeDrops: sink})
-	if err != nil {
-		t.Fatal(err)
-	}
-	source.now = func() time.Time { return time.UnixMilli(2_000_000_000_000) }
-	source.wait = func(context.Context, time.Duration) error { return nil }
-	for attempt := uint32(1); attempt <= 2; attempt++ {
-		if _, err := source.Execute(context.Background(), execution.QueryExecutionRequest{
-			Contract: contractRef, Operation: execution.OperationNormal, AttemptNo: attempt,
-		}, &recordingConsumer{}); err != nil {
-			t.Fatalf("attempt %d: %v", attempt, err)
-		}
-	}
-	if sink.calls != 2 {
-		t.Fatalf("Count called %d times over two attempts, want once per attempt", sink.calls)
-	}
-	if got := sink.closer.Stats()[ScopeDropCacheUnavailable]; got != 2 {
-		t.Fatalf("cache_unavailable = %d after a retried round, want 2", got)
-	}
-}
-
-// An attempt with several queries feeding one Plan hands over one sum per
-// Plan and word: the close keeps the largest total per round, so two
-// per-query reports of one round would count only the larger of them.
-func TestAnAttemptHandsOverOneSumPerPlanAndWord(t *testing.T) {
-	plan := execution.PlanIdentity{TenantID: "t", BusinessID: "2", StrategyID: "42"}
-	first, second := &seriesAdapter{}, &seriesAdapter{}
-	first.tallyScopeDrop(plan, ScopeDropCacheUnavailable)
-	first.tallyScopeDrop(plan, ScopeDropCacheUnavailable)
-	second.tallyScopeDrop(plan, ScopeDropCacheUnavailable)
-	sink := &recordingSink{}
-	flushScopeDrops(sink, []*seriesAdapter{first, nil, second}, execution.SlotIdentity{QueryGroup: unphasedQueryGroup, EvaluationTime: 1700000000}, nil)
-	if sink.counts[ScopeDropCacheUnavailable] != 3 || len(sink.counts) != 1 {
-		t.Fatalf("counts = %v, want one sum of 3", sink.counts)
-	}
-	flushScopeDrops(sink, []*seriesAdapter{first, second}, execution.SlotIdentity{QueryGroup: unphasedQueryGroup, EvaluationTime: 1700000000}, nil)
-	if sink.counts[ScopeDropCacheUnavailable] != 3 {
-		t.Fatalf("a second flush handed the same tallies over again: %v", sink.counts)
-	}
-}
-
-// Two physical queries feed the same Plan in one attempt: each rejects two
-// of its three hosts, so the attempt rejected four. Handed over per query,
-// the second report of the same reporter and round would read as a retry
-// and the close would keep two; handed over once per attempt it keeps
-// four, and a retry of the whole attempt still reads four.
-func TestTwoQueriesOfOnePlanAreSummedAndRetriesAreNot(t *testing.T) {
-	contractRef, frozen := frozenExecution(t)
-	frozen.DuePlans[0].CompiledPlan = compilePlanForStrategy(t, "1001", hostScopeContract("192.0.2.10|0"))
-	second := frozen.Requirements[0]
-	second.RequirementID, second.DatasetName = "secondary", "secondary"
-	second.RelativeWindow.StartOffsetSeconds = -120
-	frozen.Requirements = append(frozen.Requirements, second)
-	contractRef = bindFrozenDueDigest(t, contractRef, frozen)
-	sink := &closerSink{closer: scopeclose.New(scopeclose.Options{})}
-	source, err := NewSource(staticFrozenPlan{plan: frozen}, &hostStreamingProvider{hosts: []string{"192.0.2.10", "192.0.2.98", "192.0.2.99"}},
-		&recordingQueryPermits{}, Config{MinReadyDelay: time.Second, Admission: scopedChain(), ScopeDrops: sink})
-	if err != nil {
-		t.Fatal(err)
-	}
-	source.now = func() time.Time { return time.UnixMilli(2_000_000_000_000) }
-	source.wait = func(context.Context, time.Duration) error { return nil }
-	for attempt := uint32(1); attempt <= 2; attempt++ {
-		completion, err := source.Execute(context.Background(), execution.QueryExecutionRequest{
-			Contract: contractRef, Operation: execution.OperationNormal, AttemptNo: attempt,
-		}, &recordingConsumer{})
-		if err != nil {
-			t.Fatalf("attempt %d: %v", attempt, err)
-		}
-		if len(completion.PhysicalQueries) != 2 {
-			t.Fatalf("fixture ran %d physical queries, want 2", len(completion.PhysicalQueries))
-		}
-		if got := sink.closer.Stats()[ScopeDropCacheUnavailable]; got != 4 {
-			t.Fatalf("after attempt %d cache_unavailable = %d, want 4", attempt, got)
-		}
-	}
-}
-
-// The reporter instance tells apart the Query Group, the business and the
-// shard, and nothing else: the round and the strategy travel beside it.
-func TestTheReporterInstanceNamesQueryGroupBusinessAndShard(t *testing.T) {
-	base := ScopeDropReporter{Slot: execution.SlotIdentity{QueryGroup: unphasedQueryGroup, EvaluationTime: 1700000000},
-		Plan: execution.PlanIdentity{TenantID: "t", BusinessID: "2", StrategyID: "42"}}
-	retry := base
-	retry.Slot.EvaluationTime = 1700000060
-	if base.Instance() != retry.Instance() {
-		t.Fatal("the round changed the instance")
-	}
-	for name, mutate := range map[string]func(*ScopeDropReporter){
-		"query group": func(r *ScopeDropReporter) { r.Slot.QueryGroup = "other" },
-		"business":    func(r *ScopeDropReporter) { r.Plan.BusinessID = "3" },
-		"shard":       func(r *ScopeDropReporter) { r.Shard = execution.ShardRef{Dimension: "host", Index: 1, Count: 2} },
-	} {
-		other := base
-		mutate(&other)
-		if other.Instance() == base.Instance() {
-			t.Errorf("another %s reads as the same reporter", name)
-		}
-	}
-}
-
-// With no sink the admission step reports nothing and keeps nothing: no
-// screen, no tally, whatever the target turned away.
+// With no sink the admission step offers nothing and keeps nothing.
 func TestWithoutASinkTheAdmissionStepKeepsNothing(t *testing.T) {
-	adapter, _ := scopeDropAdapter(t, targetChain(), hostPlanContext(true), &recordingSink{}, scopeOutput)
-	adapter.scopeSink = nil
-	for _, id := range []string{"102", "103"} {
-		deliverSeries(t, adapter, hostDims(id))
-	}
-	if adapter.scopeScreens != nil || adapter.scopeTallies != nil {
-		t.Fatalf("screens %v tallies %v, want none without a sink", adapter.scopeScreens, adapter.scopeTallies)
+	chain := admission.NewChain([]admission.Fuller{admission.IdentityFuller{}, overlayFuller{}}, nil)
+	adapter, _ := scopeDropAdapter(t, chain, admission.PlanContext{}, nil, supersededOutput)
+	adapter.supersededSink = nil
+	deliverSeries(t, adapter, supersededRecord)
+	if adapter.supersededScreens != nil {
+		t.Fatalf("screens %v, want none without a sink", adapter.supersededScreens)
 	}
 }
 
-// A drop carries when its strategy's next observation can come: the Plan's
-// period, and how long after its round the Slot was frozen to read - the
-// close waits that long for the second, not a fixed half hour.
-func TestADropCarriesThePeriodAndTheReadOffset(t *testing.T) {
-	sink := &recordingSink{}
-	output := scopeOutput
+// An offer carries when its strategy's next observation can come: the
+// Plan's period, and how long after its round the Slot was frozen to read -
+// the close waits that long for the second, not a fixed half hour.
+func TestAnOfferCarriesThePeriodAndTheReadOffset(t *testing.T) {
+	sink := &recordingSink{screen: true}
+	output := supersededOutput
 	output.intervalSeconds = 1200
-	adapter, _ := scopeDropAdapter(t, targetChain(), hostPlanContext(true), sink, output)
+	chain := admission.NewChain([]admission.Fuller{admission.IdentityFuller{}, overlayFuller{}}, nil)
+	adapter, plan := scopeDropAdapter(t, chain, admission.PlanContext{}, sink, output)
 	adapter.query.ReadyAtUnixMilli = (adapter.round + 8*60) * 1000
-	deliverSeries(t, adapter, hostDims("102"))
-	if len(sink.observed) != 1 || sink.observed[0].IntervalSeconds != 1200 || sink.observed[0].ReadOffset != 8*time.Minute {
-		t.Fatalf("observed %+v, want the 20 min period and an 8 min read offset", sink.observed)
-	}
-}
-
-// A global business Plan files each record under the business it is about,
-// so the close its rejection leads to must carry the alert's business, not
-// the Plan's: the drop says which kind of Plan it came from, and the frozen
-// Plan is where that is read.
-func TestADropSaysWhetherItsPlanIsAGlobalBusinessOne(t *testing.T) {
-	for _, global := range []bool{false, true} {
-		sink := &recordingSink{}
-		output := scopeOutput
-		output.globalBusiness = global
-		adapter, _ := scopeDropAdapter(t, targetChain(), hostPlanContext(true), sink, output)
-		deliverSeries(t, adapter, hostDims("102"))
-		if len(sink.observed) != 1 || sink.observed[0].GlobalBusiness != global {
-			t.Fatalf("global=%v: observed %+v", global, sink.observed)
-		}
-	}
-	identity := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "2002"}
-	plan := evaluationPlanForStrategy("2002")
-	plan.GlobalBusiness = true
-	compiled := compileEvaluationPlan(t, plan)
-	if !buildPlanOutputs([]execution.DuePlan{{Identity: identity, CompiledPlan: compiled}}, nil)[identity].globalBusiness {
-		t.Fatal("a global business Plan's output did not say so")
-	}
-	if buildPlanOutputs([]execution.DuePlan{{Identity: identity, CompiledPlan: compilePlanWithTargetPlan(t, "2002", nil)}}, nil)[identity].globalBusiness {
-		t.Fatal("an ordinary Plan's output said it was a global business one")
+	deliverSeries(t, adapter, supersededRecord)
+	own := output.fingerprint(plan.BusinessID, supersededRecord)
+	if len(sink.observed) != 1 || sink.observed[0].Fingerprint != own || sink.observed[0].Plan != plan ||
+		sink.observed[0].StrategyRevision != 3 || sink.observed[0].Round != 1700000060 ||
+		sink.observed[0].IntervalSeconds != 1200 || sink.observed[0].ReadOffset != 8*time.Minute {
+		t.Fatalf("observed %+v, want the record's own fingerprint %s, revision 3, round 1700000060, the 20 min period and an 8 min read offset",
+			sink.observed, own)
 	}
 }

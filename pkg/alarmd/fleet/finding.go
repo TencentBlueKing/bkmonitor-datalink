@@ -176,8 +176,14 @@ func checkOnCounts(anomaly Anomaly, schedule Schedule) (check Check, under bool,
 		return CheckQuiet, true, false
 	case anomaly.Kind == KindLogCountEmpty:
 		return CheckLogCountEmpty, true, false
+	case anomaly.Kind == KindFilteredEmpty:
+		return CheckFilteredEmpty, true, false
 	case anomaly.Kind == KindAnswerTruncated:
 		return CheckAnswerTruncated, true, false
+	case anomaly.Kind == KindSourceUnknownHeld:
+		return CheckSourceUnknownHeld, true, false
+	case anomaly.Kind == KindNewAlertsBurst:
+		return CheckNewAlertsBurst, true, false
 	case anomaly.Kind == KindNoDataMemoryRefused:
 		return CheckNoDataMemoryRefused, true, false
 	case anomaly.Kind == KindRetainedShareApproaching:
@@ -208,17 +214,7 @@ func checkOnCounts(anomaly Anomaly, schedule Schedule) (check Check, under bool,
 		// the next probe and out again on the next skip. The failure is read
 		// whatever Slot it was seen on, because the holder says the skip is
 		// its doing.
-		if queryRejected(anomaly.Failure) {
-			return refusalCheck(anomaly.Failure), true, false
-		}
-		// The pool's reason, read from its record or its last probe: a code
-		// with no response detail, so it is read by the code.
-		if failure := anomaly.Failure; failure != nil && failure.Source == FailureFromPoolRecord {
-			if landing, known := codeChecks[failure.Code]; known && !landing.normal {
-				return landing.check, true, false
-			}
-		}
-		return CheckBackendNotAnswering, true, false
+		return cooldownLine(anomaly.Failure), true, false
 	}
 	// The window counts and the guard describe the last round that
 	// completed. A round that failed since is read by its own facts, below:
@@ -255,6 +251,12 @@ func checkOnCounts(anomaly Anomaly, schedule Schedule) (check Check, under bool,
 				// it. Not a line, and not a configuration question either.
 				return "", false, false
 			}
+			// A guard this process's own state change raised, on a window
+			// still within the rounds refilling it takes: alarmd's doing,
+			// and it ends by itself.
+			if selfRewarming(anomaly) {
+				return CheckWindowRewarming, true, false
+			}
 			return CheckWindowUndecided, true, false
 		}
 	}
@@ -268,6 +270,24 @@ func checkOnCounts(anomaly Anomaly, schedule Schedule) (check Check, under bool,
 		return CheckObservationGap, true, false
 	}
 	return CheckDefect, true, true
+}
+
+// cooldownLine is the line a query cooldown's failure puts its object on:
+// the refusal's when the backend answered and refused, the pool's reason
+// read by its code when that is all there is, the backend not answering
+// otherwise. A skip the cooldown held is that line's consequence too.
+func cooldownLine(failure *FailureRef) Check {
+	if queryRejected(failure) {
+		return refusalCheck(failure)
+	}
+	// The pool's reason, read from its record or its last probe: a code
+	// with no response detail, so it is read by the code.
+	if failure != nil && failure.Source == FailureFromPoolRecord {
+		if landing, known := codeChecks[failure.Code]; known && !landing.normal {
+			return landing.check
+		}
+	}
+	return CheckBackendNotAnswering
 }
 
 // codeVerdict is what the code table says about the row's codes, read in
@@ -296,7 +316,7 @@ func codeVerdict(anomaly Anomaly) (check Check, decided bool) {
 		if verdict.normal {
 			return "", true
 		}
-		if verdict.check == CheckBackendNotAnswering && queryRejected(anomaly.Failure) {
+		if (verdict.check == CheckBackendNotAnswering && queryRejected(anomaly.Failure)) || verdict.check == CheckQueryRefused {
 			return refusalCheck(anomaly.Failure), true
 		}
 		if verdict.check == CheckDetectionAbandoned && fullyExecuted(anomaly) {
@@ -433,11 +453,31 @@ func guardHeld(anomaly Anomaly) (held bool, line bool) {
 // A substring rule over an open vocabulary, deliberately in the safe
 // direction: a status it does not recognise stays on this deployment's side
 // of the page rather than being handed to the strategy owner.
+//
+// A refusal the provider classed as the storage's per-query sample limit
+// is the strategy's query as written asking for more than one query may
+// read: the strategy cannot be evaluated until its owner narrows it, or the
+// storage's limit is raised (PLAN_UNEVALUABLE). A PromQL parse error is not
+// filed the same way. It is the strategy's text only where the PromQL is the
+// owner's as written; a multi-query expression is text alarmd composes
+// from the owner's queries (compilePromQLExpression), and a parse error
+// there may be alarmd's own. Nothing on the failure says which of the two
+// the query was, and no Plan carries it without moving its query revision,
+// so a parse error stays on the undetermined refusal line.
 func refusalCheck(failure *FailureRef) Check {
 	if refusalNamesMissingTarget(failure) {
 		return CheckQueryTargetMissing
 	}
+	if refusalNamesStrategyQuery(failure) {
+		return CheckPlanUnevaluable
+	}
 	return CheckQueryRefused
+}
+
+// refusalNamesStrategyQuery says the provider classed the refusal as the
+// query's sample limit (routedetail.RejectionClassVMSampleLimit).
+func refusalNamesStrategyQuery(failure *FailureRef) bool {
+	return failure != nil && failure.Rejection != nil && failure.Rejection.Class == routedetail.RejectionClassVMSampleLimit
 }
 
 // refusalNamesMissingTarget is a substring rule over the provider's status

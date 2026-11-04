@@ -24,6 +24,7 @@ import (
 // An object whose reads are held longer than its period is overdue every
 // Slot by design, at INFO; one overdue with no hold, or a hold not known, has
 // nothing to explain it and is WARN. Each beginning is counted either way.
+// Either line is a point event and carries no duration_ms.
 func TestAnOverdueEpisodeHeldByItsReadHoldIsInfoAndAnUnexplainedOneIsWarn(t *testing.T) {
 	t.Parallel()
 
@@ -54,6 +55,9 @@ func TestAnOverdueEpisodeHeldByItsReadHoldIsInfoAndAnUnexplainedOneIsWarn(t *tes
 				}
 				if line["level"] != tc.level || line["hold"] != episode.HoldClass() {
 					t.Fatalf("line=%v, want %s with hold %s", line, tc.level, episode.HoldClass())
+				}
+				if _, timed := line["duration_ms"]; timed {
+					t.Fatalf("line=%v carries duration_ms: an episode's line is a point event, nothing timed", line)
 				}
 			}
 		})

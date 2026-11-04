@@ -634,6 +634,59 @@ func TestAnUnnamedSignalTypeIsOmittedRatherThanGuessed(t *testing.T) {
 	}
 }
 
+// The strategy facts are written as the Plan froze them, under
+// extra_data.strategy_facts; an event without them writes none.
+func TestTheStrategyFactsAreWrittenInExtraData(t *testing.T) {
+	facts := contract.StrategyFactsV2{Schema: "v2", MetricDigest: "3815df5a36678b1d738aa6f9a1522549", ConditionMD5: "92811130e44a4e5eb434d4dd5acbfdaa",
+		ConditionBasis: "snapshot_user"}
+	message := convert(t, decision(func(e *contract.TriggerEventV1) { e.StrategyFacts = &facts }))
+	var extra map[string]json.RawMessage
+	if err := json.Unmarshal(message["extra_data"], &extra); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"schema":"v2","metric_digest":"3815df5a36678b1d738aa6f9a1522549","condition_md5":"92811130e44a4e5eb434d4dd5acbfdaa","condition_basis":"snapshot_user"}`
+	if string(extra["strategy_facts"]) != want {
+		t.Fatalf("extra_data.strategy_facts = %s, want %s", extra["strategy_facts"], want)
+	}
+	bare := convert(t, decision(nil))
+	var bareExtra map[string]json.RawMessage
+	if err := json.Unmarshal(bare["extra_data"], &bareExtra); err != nil {
+		t.Fatal(err)
+	}
+	if _, written := bareExtra["strategy_facts"]; written {
+		t.Fatalf("extra_data = %v, want no strategy facts on an event without them", bareExtra)
+	}
+}
+
+// An event writes the grouping of its own series: the Plan's for a
+// threshold event, the no-data one for a no-data event, and never both.
+func TestAnEventWritesTheGroupingOfItsOwnSeries(t *testing.T) {
+	facts := contract.StrategyFactsV2{Schema: "v2", MetricDigest: "m", ConditionMD5: "c", ConditionBasis: "query",
+		DimensionDigest: "threshold", NoDataDimensionDigest: "no-data"}
+	for _, noData := range []bool{false, true} {
+		message := convert(t, decision(func(e *contract.TriggerEventV1) {
+			e.StrategyFacts = &facts
+			if noData {
+				e.RecordRef.Dimensions[contract.NoDataDimensionTag] = json.RawMessage("true")
+				e.Observed = contract.TriggerObservedV1{Values: map[string]json.RawMessage{contract.NoDataPeriodFactField: json.RawMessage("5")}}
+			}
+		}))
+		var extra struct {
+			StrategyFacts map[string]string `json:"strategy_facts"`
+		}
+		if err := json.Unmarshal(message["extra_data"], &extra); err != nil {
+			t.Fatal(err)
+		}
+		want := "threshold"
+		if noData {
+			want = "no-data"
+		}
+		if extra.StrategyFacts["dimension_digest"] != want || len(extra.StrategyFacts) != 5 {
+			t.Fatalf("no-data %v: strategy_facts = %v, want dimension_digest %s and no other grouping", noData, extra.StrategyFacts, want)
+		}
+	}
+}
+
 // A decision over several values has no single observed value; none is
 // written rather than one picked.
 func TestSeveralObservedValuesWriteNoValue(t *testing.T) {
@@ -643,6 +696,26 @@ func TestSeveralObservedValuesWriteNoValue(t *testing.T) {
 	assertAbsent(t, message, "values")
 	if !strings.Contains(string(message["content"]), "other=1%") {
 		t.Fatalf("content = %s, want every value stated", message["content"])
+	}
+}
+
+// The observed value goes out as the record wrote it: 2^53+1 has no float64,
+// and read through one it would come out as 2^53. A value that is not a
+// finite number token is still no value.
+func TestTheObservedValueIsWrittenAsCarried(t *testing.T) {
+	for _, written := range []string{`9007199254740993`, `0.1000000000000000055511151231257827`, `-1.5e-7`} {
+		message := convert(t, decision(func(e *contract.TriggerEventV1) {
+			e.Observed.Values = map[string]json.RawMessage{"value": json.RawMessage(written)}
+		}))
+		if got, want := string(message["values"]), `{"value":`+written+`}`; got != want {
+			t.Fatalf("values = %s, want %s", got, want)
+		}
+	}
+	for _, refused := range []string{`1e999`, `"5"`, `null`, `true`} {
+		message := convert(t, decision(func(e *contract.TriggerEventV1) {
+			e.Observed.Values = map[string]json.RawMessage{"value": json.RawMessage(refused)}
+		}))
+		assertAbsent(t, message, "values")
 	}
 }
 

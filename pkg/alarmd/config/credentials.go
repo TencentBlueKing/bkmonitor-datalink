@@ -213,8 +213,8 @@ func (c *Config) credentialGroups() []credentialGroup {
 		output = append(output, redisCredentialReferences("kafka.legacy_adapter.pod_cache.connection", &cache.Connection)...)
 	}
 	linkd := []credentialReference{
-		{field: "phase_two.linkd.username", value: &c.PhaseTwo.Linkd.Username, file: &c.PhaseTwo.Linkd.UsernameFile, environment: LinkdConsoleUsernameEnvironment},
-		{field: "phase_two.linkd.password", value: &c.PhaseTwo.Linkd.Password, file: &c.PhaseTwo.Linkd.PasswordFile, environment: LinkdConsolePasswordEnvironment},
+		// By file only: the secret has no inline field.
+		{field: "phase_two.linkd.control_plane.jwt_secret", value: &c.PhaseTwo.Linkd.ControlPlane.JWTSecret, file: &c.PhaseTwo.Linkd.ControlPlane.JWTSecretFile},
 	}
 	// The span export's token: the Worker sends the spans of the Slots it runs.
 	tracing := []credentialReference{
@@ -279,9 +279,6 @@ func (c *Config) resolveCredentials(mode CredentialMode) error {
 	}
 	selected := c.EffectiveRoles()
 	if mode == CredentialsAll || selected.Has(roles.Control) || selected.Has(roles.Worker) {
-		if err := c.PhaseTwo.Linkd.resolveCredentialsFromEnvironment(); err != nil {
-			return err
-		}
 	}
 	if mode == CredentialsAll || selected.Has(roles.Channel) {
 		if err := c.CLI.resolveAdminKeyFromEnvironment(); err != nil {

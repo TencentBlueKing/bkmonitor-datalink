@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
@@ -382,4 +383,82 @@ func withWireIdentity(t *testing.T, document json.RawMessage, tenantID, spaceUID
 		t.Fatal(err)
 	}
 	return payload
+}
+
+// The marks are read as the writer stores them (runtime_cache_contract
+// encode_departed_strategy, 650d1d94a8: compact JSON, keys sorted, one field
+// per strategy id). A field that does not decode under that contract is
+// skipped and counted, never guessed; no key is no marks; a hash past the
+// read bound is refused whole.
+func TestLegacyRedisStrategySourceReadsTheWritersDepartureMarks(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if marks, invalid, err := source.DepartedMarks(ctx); err != nil || len(marks) != 0 || invalid != 0 {
+		t.Fatalf("no key: marks=%v invalid=%d err=%v, want none", marks, invalid, err)
+	}
+	if source.DepartedMarksKey() != "bkmonitor.cache.departed_strategies" {
+		t.Fatalf("key %s", source.DepartedMarksKey())
+	}
+	fields := map[string]string{
+		"304":  `{"bk_tenant_id":"system","departed_at":1793261928,"record_revision":3,"state":"disabled","version":1}`,
+		"330":  `{"bk_tenant_id":"system","departed_at":1793283630,"record_revision":2,"state":"deleted","version":1}`,
+		"0331": `{"bk_tenant_id":"system","departed_at":1793283630,"record_revision":2,"state":"deleted","version":1}`,
+		"332":  `{"bk_tenant_id":"system","departed_at":1793283630,"record_revision":2,"state":"archived","version":1}`,
+		"333":  `{"bk_tenant_id":"system","departed_at":1793283630,"record_revision":2,"state":"deleted","version":2}`,
+		"334":  `{"bk_tenant_id":"","departed_at":1793283630,"record_revision":2,"state":"deleted","version":1}`,
+		"335":  `{"departed_at":1793283630,"record_revision":2,"state":"deleted","version":1}`,
+		"336":  `{"bk_tenant_id":"system","departed_at":1793283630,"record_revision":-1,"state":"deleted","version":1}`,
+		"337":  `not json`,
+	}
+	for field, value := range fields {
+		if err := client.HSet(ctx, "bkmonitor.cache.departed_strategies", field, value).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	marks, invalid, err := source.DepartedMarks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invalid != 7 || len(marks) != 2 {
+		t.Fatalf("marks=%v invalid=%d, want 304 and 330 and seven skipped", marks, invalid)
+	}
+	if got := marks["304"]; got.TenantID != "system" || got.State != "disabled" || got.Revision != 3 || got.DepartedAt.Unix() != 1793261928 {
+		t.Fatalf("304 = %+v", got)
+	}
+	if got := marks["330"]; got.State != "deleted" || got.Revision != 2 {
+		t.Fatalf("330 = %+v", got)
+	}
+	for i := 0; i <= controlplane.MaxDepartedMarks; i++ {
+		client.HSet(ctx, "bkmonitor.cache.departed_strategies", strconv.Itoa(100000+i), fields["304"])
+	}
+	if _, _, err := source.DepartedMarks(ctx); !errors.Is(err, controlplane.ErrDepartedMarksTooMany) {
+		t.Fatalf("a hash past the bound: %v, want ErrDepartedMarksTooMany", err)
+	}
+}
+
+// The re-check before a close reads one mark: found as written, not found
+// when the writer holds none, and an error - not "none" - when it does not
+// decode.
+func TestLegacyRedisStrategySourceReadsOneDepartureMark(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.HSet(ctx, "bkmonitor.cache.departed_strategies", "304",
+		`{"bk_tenant_id":"system","departed_at":1793261928,"record_revision":3,"state":"disabled","version":1}`, "305", `not json`)
+	if mark, found, err := source.DepartedMark(ctx, "304"); err != nil || !found || mark.State != "disabled" || mark.Revision != 3 || mark.TenantID != "system" {
+		t.Fatalf("304: %+v found=%v err=%v", mark, found, err)
+	}
+	if _, found, err := source.DepartedMark(ctx, "306"); err != nil || found {
+		t.Fatalf("306: found=%v err=%v, want none", found, err)
+	}
+	if _, found, err := source.DepartedMark(ctx, "305"); err == nil || found {
+		t.Fatalf("305: found=%v err=%v, want an error for a mark that does not decode", found, err)
+	}
 }

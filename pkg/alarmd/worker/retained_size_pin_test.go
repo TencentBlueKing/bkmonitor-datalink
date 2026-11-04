@@ -65,8 +65,14 @@ func TestThePerSeriesRetainedStructsKeepTheirSize(t *testing.T) {
 		{"GapScopeState", unsafe.Sizeof(execution.GapScopeState{}), 72},
 		{"EvaluationResult", unsafe.Sizeof(execution.EvaluationResult{}), 192},
 		// 424 until NoDataEnds, a slice header a Plan: the index updates of
-		// a Plan written to end on no data, empty for every other.
-		{"PlanEvaluationResult", unsafe.Sizeof(execution.PlanEvaluationResult{}), 448},
+		// a Plan written to end on no data, empty for every other. 448 until
+		// OpenAlertGateCounts.HeldLevelNotOpen, eight bytes a Plan in the
+		// Slot's packed result slice: 800 KB for 100k Plans in flight, and
+		// nothing a series - the output charge below does not move. A
+		// one-Plan slice built per evaluation moves from the 448-byte size
+		// class to the 480 one, 32 bytes more an allocation; transient, not
+		// retained.
+		{"PlanEvaluationResult", unsafe.Sizeof(execution.PlanEvaluationResult{}), 456},
 	} {
 		if pinned.got != pinned.want {
 			t.Errorf("%s is %d bytes, pinned at %d", pinned.name, pinned.got, pinned.want)

@@ -160,13 +160,12 @@ var redisCommandNames = map[string]struct{}{
 	// The rest of what the code issues, which read as "other" until a scan
 	// of every call held the list to them (TestEveryRedisCommandTheCodeIssuesIsNamed):
 	// the store census's draw, weighing and count; the ownership registry's
-	// pruning and counting; first-writer-wins writes; the open alert index's
-	// set reads; the diagnostic reads of a key's type and a field; and the
-	// rollout store's newest-first read.
+	// pruning and counting; first-writer-wins writes; the diagnostic reads
+	// of a key's type and a field; and the rollout store's newest-first
+	// read.
 	"randomkey": {}, "memory": {}, "dbsize": {},
 	"zremrangebyscore": {}, "zcount": {}, "zrevrange": {},
 	"setnx": {}, "hsetnx": {},
-	"scard": {}, "sscan": {},
 	"type": {}, "hexists": {}, "hstrlen": {}, "hkeys": {},
 }
 

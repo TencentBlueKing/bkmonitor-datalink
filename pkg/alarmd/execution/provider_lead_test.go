@@ -54,3 +54,35 @@ func TestAProviderLeadWidensOnlyTheRangeAskedInWholeSteps(t *testing.T) {
 		}
 	}
 }
+
+// A value filter is a primary's word and an unfiltered witness a
+// dependency's: each is refused on the other role.
+func TestAValueFilterIsAPrimarysWordAndAWitnessADependencys(t *testing.T) {
+	plans, requirements := baseDuePlanAndRequirements()
+	byPlan := map[execution.PlanIdentity]execution.DuePlan{}
+	for _, plan := range plans {
+		byPlan[plan.Identity] = plan
+	}
+	primary := requirements[0]
+	primary.ValueFiltered = true
+	if err := primary.Validate(byPlan); err != nil {
+		t.Fatalf("a filtered primary refused: %v", err)
+	}
+	dependency := requirements[0]
+	dependency.Role, dependency.UnfilteredWitness = execution.InputRoleAlgorithmDependency, true
+	if err := dependency.Validate(byPlan); err != nil {
+		t.Fatalf("a witnessing dependency refused: %v", err)
+	}
+	for name, mutate := range map[string]func(*execution.DataRequirement){
+		"a witness on a primary": func(r *execution.DataRequirement) { r.UnfilteredWitness = true },
+		"a filter on a dependency": func(r *execution.DataRequirement) {
+			r.Role, r.ValueFiltered = execution.InputRoleAlgorithmDependency, true
+		},
+	} {
+		bad := requirements[0]
+		mutate(&bad)
+		if err := bad.Validate(byPlan); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

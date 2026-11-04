@@ -312,7 +312,16 @@ func TestPublishedPlanFieldsAreEachPlacedInOneDigest(t *testing.T) {
 			// they were derived with: a Worker holds the Plan's records to
 			// them. Nil, and so absent from the digest, for an object
 			// published before the field.
-			execution: []string{"Identity", "StateGeneration", "ScheduleSpec", "ScheduleRevision", "RequirementTemplates", "QueryPlans", "Shard", "LevelContractRefs", "NoDataLevelContractRefs"},
+			// DataUnitFacts is in the object so a reader of a published Plan
+			// sees how its values are compared; no Worker reads it. It is
+			// placed with the execution content because it is in the object
+			// digest, and it moves almost only with the algorithm configs it
+			// describes. The exception is a strategy whose writer starts
+			// declaring expression_unit for the unit it already compiled with:
+			// one digest move, no state reset (state generation is derived
+			// from the detect fingerprints, not the object digest). Nil, and
+			// so absent, for every Plan whose unit is its one query's.
+			execution: []string{"Identity", "StateGeneration", "ScheduleSpec", "ScheduleRevision", "RequirementTemplates", "QueryPlans", "Shard", "LevelContractRefs", "NoDataLevelContractRefs", "DataUnitFacts"},
 			split:     []string{"Plan"},
 			// PlanRevision digests the whole EvaluationPlanV2, update_time and
 			// source document included, and nothing reads it.
@@ -341,7 +350,10 @@ func TestPublishedPlanFieldsAreEachPlacedInOneDigest(t *testing.T) {
 			// event is filed under, read when the event is built. What it
 			// does to the query is QueryPlanFacts' GlobalBusiness, execution
 			// content in the Query Group's facts.
-			context: []string{"source_compatibility", "subject_facts", "legacy_output", "wire_format", "signal_type", "global_business"},
+			// strategy_facts too: it is what the event says about the
+			// configuration it was decided under, read only when the event is
+			// rendered.
+			context: []string{"source_compatibility", "subject_facts", "legacy_output", "wire_format", "signal_type", "global_business", "strategy_facts"},
 			split:   []string{"strategy_ref", "strategy_ir"},
 		},
 		reflect.TypeOf(contract.StrategyIRV2{}): {

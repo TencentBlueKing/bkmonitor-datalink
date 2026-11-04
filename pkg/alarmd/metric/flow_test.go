@@ -80,6 +80,20 @@ func observabilityRejectedWrite(n int) observability.Observation {
 		Result: observability.ResultSuccess, OutputWrite: write}
 }
 
+// The refused series are the admission decisions that rejected one; an
+// admitted, held or host-identity record is not a refusal.
+func TestTheRefusedSeriesAreTheRejectedAdmissions(t *testing.T) {
+	r := NewRecorder(BuildInfo{})
+	r.RecordSeriesAdmission("target_scope", "admitted", "in_scope")
+	r.RecordSeriesAdmission("target_scope", "rejected", "out_of_scope")
+	r.RecordSeriesAdmission("host_status", "rejected", "monitoring_disabled")
+	r.RecordSeriesAdmission("host_identity", "held", "")
+	r.RecordSeriesAdmission("host_identity", "admitted", "")
+	if got := r.FlowCounters().SeriesRejected; got != 2 {
+		t.Fatalf("refused series = %d, want the two rejections", got)
+	}
+}
+
 // A Slot booked without a decision -- skipped, or without its snapshot --
 // is not a detection.
 func TestASlotBookedWithoutADecisionIsNotADetection(t *testing.T) {

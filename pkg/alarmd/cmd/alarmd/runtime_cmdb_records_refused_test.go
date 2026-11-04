@@ -83,7 +83,7 @@ func TestWhatACMDBIndexLoadRefusedIsPublishedAsThatLoadsCounts(t *testing.T) {
 			t.Fatalf("gauge = %v, want host %d, service_instance %d, topo_node %d", cells, host, instance, node)
 		}
 		endpoints := endpointFactsSource(cfg, endpointSharing{}, recorder, store, nil,
-			func() *fleet.SourceFacts { return nil }, nil, nil, time.Now)()
+			func() *fleet.SourceFacts { return nil }, nil, time.Now)()
 		for _, entry := range endpoints {
 			if entry.Role != fleet.EndpointCMDBCache {
 				continue
@@ -136,7 +136,7 @@ func TestTheCMDBWriterEvidenceNamesNoRefusalsBeforeAFirstLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 	endpoints := endpointFactsSource(cfg, endpointSharing{}, metric.NewRecorder(metric.BuildInfo{}), store, nil,
-		func() *fleet.SourceFacts { return nil }, nil, nil, time.Now)()
+		func() *fleet.SourceFacts { return nil }, nil, time.Now)()
 	for _, entry := range endpoints {
 		if entry.Role == fleet.EndpointCMDBCache {
 			if entry.Writer == nil || entry.Writer.Present || entry.Writer.Refused != nil {

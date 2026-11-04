@@ -85,6 +85,14 @@ type StrategyPlanRef struct {
 	GroupBy         []string
 	GroupByTotal    int
 	PromQL          bool
+	// DataUnitFacts is how the Plan's values are compared (FrozenPlan
+	// DataUnitFacts), nil for a Plan whose unit is its one query's and whose
+	// Levels all read it. A reader's fact, so it rides here and not on the
+	// Query Group object a Worker decodes and caches: there it took
+	// QueryGroupPlanObject from 760 to 768 bytes, past the 768-byte size
+	// class with the allocator's 8-byte header, and about 10% more decoded
+	// heap per Plan than the object cache charges (gate on 5881a3eb5).
+	DataUnitFacts *DataUnitFacts
 }
 
 // planGroupByBound and planGroupByNameBound bound a Plan's grouping as a
@@ -218,7 +226,7 @@ func (index *strategyIndex) lookup(strategyID string) StrategyLookup {
 		plan := &group.Plans[at.plan]
 		ref := StrategyPlanRef{Plan: plan.Identity, QueryGroup: group.Identity, SnapshotRevision: index.publication.SnapshotRevision,
 			QueryRevision: group.QueryPlan.QueryRevision, ScheduleRevision: group.ScheduleRevision,
-			SourceSemantics: querySources(group.QueryPlan), PromQL: group.QueryPlan.PromQL != nil}
+			SourceSemantics: querySources(group.QueryPlan), PromQL: group.QueryPlan.PromQL != nil, DataUnitFacts: plan.DataUnitFacts}
 		ref.GroupBy, ref.GroupByTotal = planGroupBy(group.QueryPlan)
 		// The digest of the object this Plan is read from. It cannot fail on
 		// a group that was published; if it does the ref goes out without it

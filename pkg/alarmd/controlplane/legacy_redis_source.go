@@ -61,6 +61,7 @@ type LegacyRedisStrategySource struct {
 	strategyKeyStem         string
 	lastUpdatedKey          string
 	publicationSemanticsKey string
+	departedStrategiesKey   string
 }
 
 // publicationSemantics is the writer's statement under
@@ -88,6 +89,7 @@ func NewLegacyRedisStrategySource(client redis.Cmdable, cachePrefix string) (*Le
 		strategyKeyStem:         cachePrefix + ".strategy_",
 		lastUpdatedKey:          cachePrefix + ".last_updated",
 		publicationSemanticsKey: cachePrefix + ".publication_semantics",
+		departedStrategiesKey:   cachePrefix + ".departed_strategies",
 	}, nil
 }
 
@@ -187,6 +189,18 @@ var ErrStrategyDocumentPresenceUnsupported = errors.New("alarmd controlplane: st
 
 // StrategyDocumentPresence is a source that can say whether a strategy's
 // document is stored, whatever its active set says.
+// PublicationStatementKey is the key a source reads its writer's
+// publication statement from, for a line that names it.
+func (source *LegacyRedisStrategySource) PublicationStatementKey() string {
+	return source.publicationSemanticsKey
+}
+
+// PublicationStatementSource is a source that names where its writer's
+// statement is read from.
+type PublicationStatementSource interface {
+	PublicationStatementKey() string
+}
+
 type StrategyDocumentPresence interface {
 	StrategyDocumentsPresent(context.Context, []string) ([]bool, error)
 }
@@ -390,6 +404,131 @@ func lowercaseSHA256Hex(text string) bool {
 		}
 	}
 	return true
+}
+
+// DepartedMark is the writer's mark that a strategy left the active set
+// because its record was disabled or deleted, under
+// <prefix>.departed_strategies (the writer's runtime_cache_contract
+// encode_departed_strategy, strategy-direct-cache-publication.md). Revision
+// is the strategy record's record_revision when the mark was written; it is
+// not the executed content's strategy_revision a Plan carries.
+type DepartedMark struct {
+	TenantID   string
+	State      string
+	Revision   int64
+	DepartedAt time.Time
+}
+
+// MaxDepartedMarks bounds one read of the marks: a writer holding more is
+// read as unreadable rather than in one reply of unbounded size. The writer
+// keeps a mark seven days, so this is weeks of departures at the scale the
+// absent close remembers (MaxDepartedStrategies).
+const MaxDepartedMarks = MaxDepartedStrategies
+
+// ErrDepartedMarksTooMany is a marks hash past MaxDepartedMarks.
+var ErrDepartedMarksTooMany = errors.New("alarmd controlplane: departed strategy marks exceed the read bound")
+
+// ErrDepartedMarksUnsupported is a client that cannot read a hash.
+var ErrDepartedMarksUnsupported = errors.New("alarmd controlplane: departed strategy marks need a hash-reading client")
+
+type legacyRedisHashReader interface {
+	HLen(context.Context, string) *redis.IntCmd
+	HGetAll(context.Context, string) *redis.StringStringMapCmd
+}
+
+// DepartedMarksKey is where the marks are read from, for a line that names
+// it.
+func (source *LegacyRedisStrategySource) DepartedMarksKey() string {
+	return source.departedStrategiesKey
+}
+
+// DepartedMarks reads every mark, by strategy id, and how many fields did
+// not decode under the contract (version 1, a canonical strategy id, a
+// known state, a non-negative record_revision, a positive departed_at and a
+// tenant): those are skipped and counted, not guessed. No key is no marks,
+// which is what a writer that does not keep them leaves. A failed read is an
+// error, and the caller decides on no marks.
+func (source *LegacyRedisStrategySource) DepartedMarks(ctx context.Context) (map[string]DepartedMark, int, error) {
+	if source == nil || source.client == nil {
+		return nil, 0, errors.New("alarmd controlplane: legacy Redis strategy source is required")
+	}
+	reader, ok := source.client.(legacyRedisHashReader)
+	if !ok {
+		return nil, 0, ErrDepartedMarksUnsupported
+	}
+	size, err := reader.HLen(ctx, source.departedStrategiesKey).Result()
+	if err != nil {
+		return nil, 0, fmt.Errorf("alarmd controlplane: read departed strategy marks: %w", err)
+	}
+	if size > MaxDepartedMarks {
+		return nil, 0, fmt.Errorf("%w: %d fields, at most %d", ErrDepartedMarksTooMany, size, MaxDepartedMarks)
+	}
+	if size == 0 {
+		return map[string]DepartedMark{}, 0, nil
+	}
+	fields, err := reader.HGetAll(ctx, source.departedStrategiesKey).Result()
+	if err != nil {
+		return nil, 0, fmt.Errorf("alarmd controlplane: read departed strategy marks: %w", err)
+	}
+	marks := make(map[string]DepartedMark, len(fields))
+	invalid := 0
+	for id, value := range fields {
+		mark, ok := decodeDepartedMark(id, value)
+		if !ok {
+			invalid++
+			continue
+		}
+		marks[id] = mark
+	}
+	return marks, invalid, nil
+}
+
+// DepartedMark reads one strategy's mark (one HGET), for the re-check just
+// before its close. Found is false when the writer holds none for it; a mark
+// that does not decode under the contract is an error, not "none".
+func (source *LegacyRedisStrategySource) DepartedMark(ctx context.Context, id string) (DepartedMark, bool, error) {
+	if source == nil || source.client == nil {
+		return DepartedMark{}, false, errors.New("alarmd controlplane: legacy Redis strategy source is required")
+	}
+	reader, ok := source.client.(interface {
+		HGet(context.Context, string, string) *redis.StringCmd
+	})
+	if !ok {
+		return DepartedMark{}, false, ErrDepartedMarksUnsupported
+	}
+	value, err := reader.HGet(ctx, source.departedStrategiesKey, id).Result()
+	if errors.Is(err, redis.Nil) {
+		return DepartedMark{}, false, nil
+	}
+	if err != nil {
+		return DepartedMark{}, false, fmt.Errorf("alarmd controlplane: read departed strategy mark: %w", err)
+	}
+	mark, ok := decodeDepartedMark(id, value)
+	if !ok {
+		return DepartedMark{}, false, errors.New("alarmd controlplane: departed strategy mark does not decode")
+	}
+	return mark, true, nil
+}
+
+func decodeDepartedMark(id, value string) (DepartedMark, bool) {
+	if !CanonicalStrategyID(id) {
+		return DepartedMark{}, false
+	}
+	var payload struct {
+		TenantID   *string `json:"bk_tenant_id"`
+		DepartedAt *int64  `json:"departed_at"`
+		Revision   *int64  `json:"record_revision"`
+		State      *string `json:"state"`
+		Version    *int    `json:"version"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(value))
+	if decoder.Decode(&payload) != nil || payload.Version == nil || *payload.Version != 1 || payload.State == nil ||
+		(*payload.State != "disabled" && *payload.State != "deleted") || payload.Revision == nil || *payload.Revision < 0 ||
+		payload.DepartedAt == nil || *payload.DepartedAt <= 0 || payload.TenantID == nil || *payload.TenantID == "" {
+		return DepartedMark{}, false
+	}
+	return DepartedMark{TenantID: *payload.TenantID, State: *payload.State, Revision: *payload.Revision,
+		DepartedAt: time.Unix(*payload.DepartedAt, 0).UTC()}, true
 }
 
 // missingIdentityFieldPath names the identity field or fields a document did

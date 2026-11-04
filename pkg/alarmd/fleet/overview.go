@@ -313,29 +313,22 @@ type OverviewDependency struct {
 	LastFailure           string          `json:"last_failure,omitempty"`
 	LatencyP95MS          *OverviewNumber `json:"latency_p95_ms,omitempty"`
 	FailuresPerMinute     *OverviewNumber `json:"failures_per_minute,omitempty"`
-	// ConsoleState is the Console's own word, on the Console only
-	// (LinkdConsoleStates), and EventSourceID how the link names this
-	// deployment's event source, as its Console last answered.
-	ConsoleState  string `json:"console_state,omitempty"`
-	EventSourceID string `json:"event_source_id,omitempty"`
 }
 
 // overviewDependencyOf is one endpoint as the overview shows it.
 func overviewDependencyOf(endpoint Endpoint) OverviewDependency {
 	dependency := OverviewDependency{Name: endpoint.Role, State: endpointState(endpoint), Address: endpoint.Address, SharedWith: endpoint.SharedWith,
 		LastSuccessAgeSeconds: endpoint.LastSuccessAgeSeconds, LastFailureAgeSeconds: endpoint.LastFailureAgeSeconds, LastFailure: endpoint.LastFailure}
-	if console := endpoint.Console; console != nil {
-		dependency.ConsoleState = console.State
-		if console.EventSource != nil {
-			dependency.EventSourceID = console.EventSource.EventSourceID
-		}
-	}
 	return dependency
 }
 
 type OverviewResources struct {
-	Scale    OverviewScale             `json:"scale"`
-	Replicas []OverviewReplicaResource `json:"replicas"`
+	Scale OverviewScale `json:"scale"`
+	// Throughput is how many series the fleet judged a minute and how many
+	// its admission refused, both per series per Plan, from the same two
+	// readings as the flow.
+	Throughput OverviewThroughput        `json:"throughput"`
+	Replicas   []OverviewReplicaResource `json:"replicas"`
 	// Fleet is the replicas' memory and query permits added up, as shares of
 	// their limits added up; MostConstrained the replica closest to a limit
 	// past the line the overview names one at, and Line the sentence for
@@ -346,6 +339,16 @@ type OverviewResources struct {
 	// Constraint is the load judgment's bottleneck, as the health route
 	// decides it.
 	Constraint string `json:"constraint"`
+}
+
+type OverviewThroughput struct {
+	// SeriesPerMinute are the series a Plan judged and wrote state for
+	// (worker_work_total{work_kind="state_apply"}), the state stage's volume
+	// per minute.
+	SeriesPerMinute OverviewNumber `json:"series_per_minute"`
+	// RejectedPerMinute are the series a Plan's admission refused
+	// (series_admission_total{result="rejected"}).
+	RejectedPerMinute OverviewNumber `json:"rejected_per_minute"`
 }
 
 type OverviewScale struct {
@@ -437,14 +440,13 @@ var overviewStageOf = map[string]string{
 	"query_backend": "pull", "cmdb_cache": "pull",
 	"strategy_cache": "evaluate", "dynamic_config": "evaluate", "target_group": "evaluate",
 	"state_redis":  "state",
-	"output_kafka": "output", "compat_output_redis": "output", "linkd_console": "output", "open_alert_set": "output",
+	"output_kafka": "output", "compat_output_redis": "output",
 }
 
 // overviewDegradationStage is the stage each degradation is about; one not
 // listed is the evaluation's, which every other one ends up holding back.
 var overviewDegradationStage = map[DegradationKind]string{
-	DegradationOpenAlertSetStale:       "output",
-	DegradationOpenAlertSetUnconfirmed: "output",
+	DegradationActiveCopyUnsupported: "output",
 }
 
 // overviewOf projects the health route's answer, and the replicas'
@@ -510,7 +512,8 @@ func overviewOf(health HealthResponse, running map[StateWord]int, runningKnown b
 	}
 
 	overview.Resources = OverviewResources{Constraint: string(health.Load.Bottleneck.Resource), Replicas: []OverviewReplicaResource{},
-		Scale: OverviewScale{Strategies: overviewUnmeasured("strategies"), MergedQueries: overviewUnmeasured("merged_queries"), Series: overviewUnmeasured("series"), Hosts: overviewUnmeasured("hosts")}}
+		Scale:      OverviewScale{Strategies: overviewUnmeasured("strategies"), MergedQueries: overviewUnmeasured("merged_queries"), Series: overviewUnmeasured("series"), Hosts: overviewUnmeasured("hosts")},
+		Throughput: OverviewThroughput{SeriesPerMinute: overviewUnmeasured("per_minute"), RejectedPerMinute: overviewUnmeasured("per_minute")}}
 	if health.SourceStanding != nil {
 		overview.Resources.Scale.Strategies = overviewMeasured(float64(health.SourceStanding.Accepted), "strategies")
 	}
@@ -552,6 +555,9 @@ func overviewOf(health HealthResponse, running map[StateWord]int, runningKnown b
 	if activation := health.Activation; activation != nil && activation.BehindBeyondBound {
 		overview.Runtime.Attention = append(overview.Runtime.Attention, OverviewNotice{Kind: "config_behind",
 			Line: fmt.Sprintf("已发布的策略配置还没在检测里生效：连续 %d 轮没有应用成功", activation.ConsecutiveFailures)})
+	} else if activation != nil && activation.FailingBeyondBound {
+		overview.Runtime.Attention = append(overview.Runtime.Attention, OverviewNotice{Kind: "activation_failing",
+			Line: fmt.Sprintf("激活连续 %d 轮失败：检测暂时照常，但生效中的配置不再续期，到期后停止检测", activation.ConsecutiveFailures)})
 	}
 	return overview
 }
@@ -629,11 +635,6 @@ func endpointState(endpoint Endpoint) string {
 	switch {
 	case !endpoint.Configured:
 		return OverviewNotConfigured
-	case endpoint.Console != nil && (endpoint.Console.State == LinkdConsoleUnreadable || endpoint.Console.State == LinkdConsoleLinkUnhealthy):
-		// The Console's own word: an operation whose latest call failed
-		// fails a close whatever answered last, and a link that says it is
-		// behind lists a roster that may miss strategies.
-		return OverviewAttention
 	case endpoint.LastFailureAgeSeconds != nil && (endpoint.LastSuccessAgeSeconds == nil || *endpoint.LastFailureAgeSeconds < *endpoint.LastSuccessAgeSeconds):
 		return OverviewAttention
 	case endpoint.LastSuccessAgeSeconds != nil || (endpoint.Ready != nil && *endpoint.Ready):
@@ -794,10 +795,13 @@ func newOverviewFlows() *overviewFlows {
 // flowContribution is one replica's rates and histogram differences between
 // two of its readings.
 type flowContribution struct {
-	queries, detections, stateWrites, stateFailures, emitted, rejected float64
-	failures                                                           map[string]float64
-	queryBuckets, lagBuckets, redisBuckets                             []uint64
-	queryCount, lagCount, redisCount                                   uint64
+	queries, detections, stateWrites, stateFailures, emitted, rejected, seriesRejected float64
+	failures                                                                           map[string]float64
+	queryBuckets, lagBuckets, redisBuckets                                             []uint64
+	queryCount, lagCount, redisCount                                                   uint64
+	// seriesRejectedMissing is a reading pair one side of which carries no
+	// series_rejected: a replica of an earlier build, counted as none.
+	seriesRejectedMissing bool
 }
 
 type flowSum struct {
@@ -893,6 +897,13 @@ func (flows *overviewFlows) apply(overview *Overview, health HealthResponse, at 
 		overview.Resources.Scale.Hosts = overviewMeasured(float64(hosts), "hosts")
 	}
 	overviewSummarize(overview, health)
+	if sum.contributed {
+		overview.Resources.Throughput = OverviewThroughput{SeriesPerMinute: overviewMeasured(sum.stateWrites*60, "per_minute"),
+			RejectedPerMinute: overviewMeasured(sum.seriesRejected, "per_minute")}
+		// A replica of an earlier build publishes no rejected count, and is
+		// counted as none: the sum is what the others refused, at least.
+		overview.Resources.Throughput.RejectedPerMinute.AtLeast = sum.seriesRejectedMissing
+	}
 	for index := range overview.Flow {
 		stage := &overview.Flow[index]
 		stage.Basis = overviewStageBasis[stage.Stage]
@@ -957,7 +968,7 @@ func overviewDependencyNumbers(stage *OverviewStage, role string, latency, failu
 }
 
 // overviewQueryFailureOrder is the order the pull stage lists causes in.
-var overviewQueryFailureOrder = []string{"timeout", "refused", "not_found", "transport", "decode", "other"}
+var overviewQueryFailureOrder = []string{"timeout", "refused", "not_found", "transport", "decode", "other", "sample_limit"}
 
 // sameLayout says a replica's flow histograms have one bucket per bound of
 // this process's: the only layout whose buckets can be added to this
@@ -987,6 +998,11 @@ func contributionOf(previous, current overviewReading) (flowContribution, bool) 
 	contribution.emitted = float64(now.EventsEmitted-was.EventsEmitted) / elapsed
 	contribution.stateFailures = float64(subtract(now.StateFailures, was.StateFailures)) / elapsed * 60
 	contribution.rejected = float64(subtract(now.EventsRejected, was.EventsRejected)) / elapsed * 60
+	if now.SeriesRejected != nil && was.SeriesRejected != nil {
+		contribution.seriesRejected = float64(subtract(*now.SeriesRejected, *was.SeriesRejected)) / elapsed * 60
+	} else {
+		contribution.seriesRejectedMissing = true
+	}
 	for cause, count := range now.QueryFailures {
 		contribution.failures[cause] = float64(subtract(count, was.QueryFailures[cause])) / elapsed * 60
 	}
@@ -1004,6 +1020,8 @@ func (sum *flowSum) add(contribution flowContribution) {
 	sum.emitted += contribution.emitted
 	sum.stateFailures += contribution.stateFailures
 	sum.rejected += contribution.rejected
+	sum.seriesRejected += contribution.seriesRejected
+	sum.seriesRejectedMissing = sum.seriesRejectedMissing || contribution.seriesRejectedMissing
 	for cause, count := range contribution.failures {
 		sum.failures[cause] += count
 	}

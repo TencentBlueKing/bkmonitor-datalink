@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -29,7 +30,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/roles"
 )
@@ -38,12 +38,18 @@ import (
 // process opens its own role runtime, which writes the instance record the
 // others read, and its own bundle, which contends for the lease on its
 // reconcile tick. Leases are judged on the Redis server's clock, so the lease
-// TTLs are scaled to real seconds (3 s TTL, 1 s renewal, a tenth of
-// production); instance records are judged on the injected clock and keep the
-// production 60 s TTL, which is both T and the handback window. The test
-// drives every reconcile tick itself.
+// TTLs are scaled to real seconds (3 s, a tenth of production); instance
+// records are judged on the injected clock and keep the production 60 s TTL,
+// which is both T and the handback window. The test drives every reconcile
+// tick itself.
 
 const electionPeriod = int64(300)
+
+// electionRenewInterval is the lease renewals' real-clock cadence. Each round
+// moves the injected clock past the leases' deadlines and waits for the
+// renewals to restate them (awaitRenewals), so a round costs up to one
+// interval of real time; the 3 s TTLs still outlast many missed renewals.
+const electionRenewInterval = 100 * time.Millisecond
 
 // electionProcess is one process of the fixture: its role runtime, its bundle
 // and what it counts.
@@ -139,8 +145,8 @@ func (fixture *electionFixture) advance(step time.Duration) {
 // leasesRunPastNow reports whether every lease a live process holds runs past
 // the injected clock by its own reckoning: the Control Leader's authority,
 // and each Query Group session that still admits work. Those deadlines are
-// what the processes check, and their renewal loops restate them each second
-// of real time from the injected clock.
+// what the processes check, and their renewal loops restate them every
+// electionRenewInterval of real time from the injected clock.
 func (fixture *electionFixture) leasesRunPastNow() bool {
 	now := fixture.now()
 	for _, process := range fixture.alive() {
@@ -179,19 +185,54 @@ func (fixture *electionFixture) awaitRenewals() {
 	testwait.Until(fixture.t, "every held lease restated past the moved clock by its renewal", fixture.leasesRunPastNow)
 }
 
-// awaitControlLeaseFree waits for a dead Control Leader's lease to run out on
-// the Redis server's clock, which the fixture cannot move: the free lease is
-// what the case goes on to contend for.
+// awaitControlLeaseFree lets a dead Control Leader's lease run out on the
+// Redis server's clock: the free lease is what the case goes on to contend
+// for. A real redis-server has no clock a test can set, so, as the ownership
+// package's elapseOnRedis does, the lease's deadline is moved back to the
+// server's now; the owner and epoch stay, so the next Leader still comes
+// under the next epoch. A renewal the dead process had in flight can restate
+// the deadline once more, so it is moved again until the lease reads free.
 func (fixture *electionFixture) awaitControlLeaseFree() {
 	fixture.t.Helper()
-	store, err := ownership.NewRedisStoreWithClient(fixture.redis, productionPhaseTwoPrefix(fixture.prefix, "ownership"))
+	prefix := productionPhaseTwoPrefix(fixture.prefix, "ownership")
+	store, err := ownership.NewRedisStoreWithClient(fixture.redis, prefix)
 	if err != nil {
 		fixture.t.Fatal(err)
 	}
+	lease := prefix + ":{" + ownership.ControlHashTag(ownership.ControlLeaderIdentity) + "}:ownership"
 	testwait.Until(fixture.t, "the dead Control Leader's lease running out on the Redis clock", func() bool {
-		_, live, err := store.ReadActiveControlLeader(fixture.ctx)
-		return err == nil && !live
+		owner, live, err := store.ReadActiveControlLeader(fixture.ctx)
+		if err != nil {
+			return false
+		}
+		if live {
+			fixture.moveControlLeaseDeadlineBack(lease, owner.Deadline.Sub(owner.ObservedAt))
+		}
+		return !live
 	})
+}
+
+// moveControlLeaseDeadlineBack moves the live Control Leader lease's
+// deadline back by remaining. The field has to be there: a key or field name
+// that drifted from the store's would otherwise be created by HINCRBY at a
+// negative deadline, and the wait would fall back to the real TTL without
+// saying so.
+func (fixture *electionFixture) moveControlLeaseDeadlineBack(lease string, remaining time.Duration) {
+	fixture.t.Helper()
+	present, err := fixture.redis.HExists(fixture.ctx, lease, "deadline_ms").Result()
+	if err != nil {
+		fixture.t.Fatalf("HEXISTS %s deadline_ms: %v", lease, err)
+	}
+	if !present {
+		fixture.t.Fatalf("the live Control Leader lease has no deadline_ms at %s: the key format drifted from the ownership store's", lease)
+	}
+	moved, err := fixture.redis.HIncrBy(fixture.ctx, lease, "deadline_ms", -remaining.Milliseconds()).Result()
+	if err != nil {
+		fixture.t.Fatalf("HINCRBY %s deadline_ms: %v", lease, err)
+	}
+	if moved <= 0 {
+		fixture.t.Fatalf("the Control Leader lease's deadline moved to %d ms, not an instant on the Redis clock", moved)
+	}
 }
 
 func (fixture *electionFixture) observer() observability.Observer {
@@ -237,9 +278,9 @@ func (fixture *electionFixture) configFor(name string, selected roles.Set) confi
 	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(60 * time.Second)
 	cfg.PhaseTwo.Worker.RegistrationRenewInterval = config.Duration(time.Second)
 	cfg.PhaseTwo.Ownership.ControlLeaderTTL = config.Duration(fixture.controlLeaderTTL)
-	cfg.PhaseTwo.Ownership.ControlLeaderRenewInterval = config.Duration(time.Second)
+	cfg.PhaseTwo.Ownership.ControlLeaderRenewInterval = config.Duration(electionRenewInterval)
 	cfg.PhaseTwo.Ownership.LeaseTTL = config.Duration(3 * time.Second)
-	cfg.PhaseTwo.Ownership.LeaseRenewInterval = config.Duration(time.Second)
+	cfg.PhaseTwo.Ownership.LeaseRenewInterval = config.Duration(electionRenewInterval)
 	if !selected.Has(roles.Worker) && len(selected) != 0 {
 		cfg.PhaseTwo.Coordinator.MaxEvents++ // a control process's resources differ from a Worker's
 	}
@@ -931,36 +972,45 @@ func TestTheDefaultFormElectsAsBeforeButNeverAProcessThatIsStartingOrStopping(t 
 }
 
 // TestAWorkerLeadingAsTheFallbackRunsTheDeletedStrategyClose configures the
-// alert link's Console on two Workers and no control process. Closing the
-// alerts of a deleted strategy is core control, so both Workers wire the loop;
-// the one that holds the lease runs its rounds as the Leader - it reads the
-// link's roster and decides on the deleted strategy the roster still lists -
-// and the other counts its rounds as not_leader.
+// alert link's control plane on two Workers and no control process. Closing
+// the alerts of a deleted strategy is core control, so both Workers wire the
+// loop; the one that holds the lease runs its rounds as the Leader - it asks
+// the link's search for strategies with active alerts outside the running
+// set and decides on the deleted strategy the search finds - and the other
+// counts its rounds as not_leader.
 func TestAWorkerLeadingAsTheFallbackRunsTheDeletedStrategyClose(t *testing.T) {
 	fixture := newElectionFixture(t, 2, "alarmd:phase-two:election-absent-close")
-	// The lifecycle fixture's Console, naming the runtime redis-server as
-	// the link's target, with the one route it does not answer: the roster,
-	// which lists a strategy the strategy cache no longer has.
-	link := lifecycleConsole(fixture.address, fixture.redis)
-	target := openalerts.TargetBinding{EventSourceID: "source", HookName: "active", KeyPrefix: lifecycleLinkPrefix,
-		Address: fixture.address, Database: 0, Sources: []string{"source"}}
-	const deletedTenant, deletedStrategy = "system", "9999"
-	var rosterReads atomic.Int64
-	console := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/modules/linkd/strategy-index/browse" {
-			link(w, r)
-			return
+	// The lifecycle fixture's link over the runtime redis-server, holding
+	// one active alert of a strategy the strategy cache no longer has, under
+	// the tenant the running strategies are in (the search walks the tenants
+	// the snapshot names).
+	link := lifecycleLink(fixture.redis)
+	const deletedTenant, deletedStrategy = "tenant-a", "9999"
+	if err := fixture.redis.SAdd(context.Background(), lifecycleLinkPrefix+":"+deletedTenant+":"+deletedStrategy,
+		"0123456789abcdef0123456789abcdef").Err(); err != nil {
+		t.Fatal(err)
+	}
+	var searches atomic.Int64
+	plane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/alerts/search" {
+			searches.Add(1)
 		}
-		rosterReads.Add(1)
-		_ = json.NewEncoder(w).Encode(map[string]any{"target": target, "nextCursor": nil, "phase": "sets",
-			"health": map[string]any{"lastSuccess": fixture.now().Format(time.RFC3339Nano), "lastAttempt": nil, "error": nil, "pendingCount": 0},
-			"rows": []any{map[string]any{"tenantId": deletedTenant, "strategyId": deletedStrategy,
-				"key": lifecycleLinkPrefix + ":" + deletedTenant + ":" + deletedStrategy, "members": 1}}})
+		link(w, r)
 	}))
-	t.Cleanup(console.Close)
+	t.Cleanup(plane.Close)
 	fixture.configure = func(cfg *config.Config) {
-		cfg.PhaseTwo.Linkd.ConsoleURL = console.URL + testLinkdAPIRoot
-		cfg.PhaseTwo.Linkd.Username, cfg.PhaseTwo.Linkd.Password = "user", "secret"
+		cfg.PhaseTwo.Linkd.ControlPlane = config.LinkdControlPlaneConfig{URL: plane.URL, JWTSecret: "example-secret"}
+	}
+	// The strategy cache's writer states its publication about the list it
+	// wrote: without the statement no round decides (writer_unstated).
+	ids, err := fixture.redis.Get(context.Background(), "alarm-config.strategy_ids").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.redis.Set(context.Background(), "alarm-config.publication_semantics", fmt.Sprintf(
+		`{"hold_last_good":true,"last_updated":%d,"strategy_ids_sha256":"%x","version":1}`,
+		fixture.base-electionPeriod, sha256.Sum256([]byte(ids))), 0).Err(); err != nil {
+		t.Fatal(err)
 	}
 	leading := fixture.open("absent-worker-1", roles.Set{roles.Worker}, true)
 	following := fixture.open("absent-worker-2", roles.Set{roles.Worker}, true)
@@ -969,7 +1019,7 @@ func TestAWorkerLeadingAsTheFallbackRunsTheDeletedStrategyClose(t *testing.T) {
 	}
 	for _, process := range []*electionProcess{leading, following} {
 		if process.bundle.dependencies.RunAbsentClose == nil {
-			t.Fatalf("%s, a fallback candidate with the Console configured, has no deleted-strategy close loop", process.name)
+			t.Fatalf("%s, a fallback candidate with the control plane configured, has no deleted-strategy close loop", process.name)
 		}
 	}
 	outcome := func(process *electionProcess, word string) float64 {
@@ -990,11 +1040,11 @@ func TestAWorkerLeadingAsTheFallbackRunsTheDeletedStrategyClose(t *testing.T) {
 	if got := outcome(leading, absentalerts.OutcomeNotLeader); got != 0 {
 		t.Fatalf("the fallback Leader counted %v rounds as not_leader", got)
 	}
-	if rosterReads.Load() == 0 {
-		t.Fatal("the fallback Leader's round never read the link's roster")
+	if searches.Load() == 0 {
+		t.Fatal("the fallback Leader's round never asked the link's search")
 	}
-	if got := counterValue(t, leading.recorder, "alarmd_absent_strategy_difference", map[string]string{"side": "roster_strategies"}); got != 1 {
-		t.Fatalf("roster strategies the Leader's round read = %v, want the deleted strategy", got)
+	if got := counterValue(t, leading.recorder, "alarmd_absent_strategy_difference", map[string]string{"side": "found_strategies"}); got != 1 {
+		t.Fatalf("strategies the Leader's round found = %v, want the deleted strategy", got)
 	}
 	if decided := outcome(leading, absentalerts.OutcomeWithinGrace) + outcome(leading, absentalerts.OutcomeCloseDecided); decided < 1 {
 		t.Fatalf("the deleted strategy was not decided on by the Leader's round: round %v, within_grace %v, close_decided %v",

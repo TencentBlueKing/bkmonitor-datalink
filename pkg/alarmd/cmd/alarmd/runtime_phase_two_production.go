@@ -1833,7 +1833,7 @@ func (runtime *productionPhaseTwoOwnership) sweepRetiredAssignments(
 		runtime.mu.Unlock()
 		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
 			Component: observability.ComponentOwnership, Stage: observability.StageAssignmentSwept,
-			Result: observability.ResultFailed, Operation: observability.OperationWrite, Duration: sweep.Duration,
+			Result: observability.ResultFailed, Operation: observability.OperationWrite, Duration: sweep.Duration, DurationKnown: true,
 			ReasonCode: reason, Err: err, AssignmentSweep: facts,
 		})
 		return
@@ -1847,7 +1847,7 @@ func (runtime *productionPhaseTwoOwnership) sweepRetiredAssignments(
 	runtime.mu.Unlock()
 	observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
 		Component: observability.ComponentOwnership, Stage: observability.StageAssignmentSwept,
-		Result: observability.ResultSuccess, Operation: observability.OperationWrite, Duration: sweep.Duration,
+		Result: observability.ResultSuccess, Operation: observability.OperationWrite, Duration: sweep.Duration, DurationKnown: true,
 		AssignmentSweep: facts,
 	})
 }
@@ -2550,6 +2550,19 @@ func (runtime *productionPhaseTwoOwnership) MaintainControlLeader(
 	}
 }
 
+// ControlFence is the Control Leader lease this process holds now, for a
+// write that must land only while it does (ownership.FencedHashUpdate). False
+// when it holds none, or its deadline has passed by this process's clock;
+// the write's own script judges the lease again on Redis's.
+func (runtime *productionPhaseTwoOwnership) ControlFence() (execution.OwnerFence, bool) {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.authority.Fence.QueryGroup == "" || !runtime.authority.Deadline.After(runtime.dependencies.Now()) {
+		return execution.OwnerFence{}, false
+	}
+	return runtime.authority.Fence, true
+}
+
 func (runtime *productionPhaseTwoOwnership) clearControlAuthority(authority ownership.PublicationAuthority) {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
@@ -2994,7 +3007,7 @@ func (executor observedProductionSlotExecutor) Execute(
 		ReadinessDeferral:    readiness,
 		ExecuteOutcome:       executeReturnOutcome(result, err),
 		Result:               observedResult, ReasonCode: reason,
-		Duration: time.Since(started), Trace: trace, Err: observedErr,
+		Duration: time.Since(started), DurationKnown: true, Trace: trace, Err: observedErr,
 		SlotBudgetUsage: slotBudgetUsageFacts(result.Usage),
 		SlotTiming:      slotTimingFacts(result.Timing),
 		InPlaceWait:     inPlaceWaitFacts(result.InPlaceWait),

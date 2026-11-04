@@ -18,14 +18,20 @@ import (
 )
 
 // checkStandardPayload is the consumer's acceptance of a standard event,
-// transcribed rule by rule from pkg/linkd at feat/linkd-dev 949f77b2:
-// internal/cleaner/raw_event.go (StandardCleaner.Clean,
-// validateAdditionalDimensions, validateJSONObject), internal/domain/value.go
-// (Scalar.UnmarshalJSON, DimensionMap.Validate), internal/domain/values.go
+// transcribed rule by rule from pkg/linkd at feat/linkd-dev ec55128e7
+// (refreshed from 949f77b2 on 2026-10-27): internal/cleaner/raw_event.go
+// (StandardCleaner.Clean, validateAdditionalDimensions,
+// validateJSONObject), internal/domain/value.go (Scalar.UnmarshalJSON,
+// DimensionMap.Validate), internal/domain/values.go
 // (EventValues.UnmarshalJSON), internal/domain/evaluation.go
-// (ValidateEvaluations), internal/domain/event.go (Event.validate lengths),
-// and the three labels internal/lifecycle/enrich requires as positive
-// integers.
+// (ValidateEvaluations: __ALL__ only with closed), internal/domain/event.go
+// (Event.Normalize truncating title and subject_name to 2000 characters,
+// Event.validate lengths), internal/domain/display_text.go, the three
+// labels internal/lifecycle/enrich requires as positive integers, and the
+// no-data identity and evidence the description resolver requires
+// (internal/enrich/description/resolver.go:84-95,210-231; a breach there
+// is an invalid description, not a refusal, and is refused here all the
+// same: the alert would show no description).
 //
 // It exists because there is no consumer in the environment the tests run
 // in, and the consumer refuses a message whole and quietly: a rule this side
@@ -79,6 +85,9 @@ func checkStandardPayload(payload []byte) error {
 			return errors.New("evaluations contain duplicate severity")
 		}
 		seen[evaluation.Severity] = true
+		if evaluation.Severity == "__ALL__" && evaluation.Action != "closed" {
+			return errors.New(`evaluation severity "__ALL__" requires closed action`)
+		}
 		if len(evaluation.ActionReason) > 256 {
 			return errors.New("action_reason exceeds 256 bytes")
 		}
@@ -130,12 +139,12 @@ func checkStandardPayload(payload []byte) error {
 		max   int
 	}{
 		{"bk_tenant_id", message.TenantID, 1, 64},
-		{"title", message.Title, 0, 256},
+		{"title", truncateDisplayText(message.Title), 0, 2000 * 4},
 		{"content", message.Content, 0, 1 << 20},
 		{"subject_system", message.Subject.System, 0, 32},
 		{"subject_type", message.Subject.Type, 0, 128},
 		{"subject_id", message.Subject.ID, 0, 256},
-		{"subject_name", message.Subject.Name, 0, 256},
+		{"subject_name", truncateDisplayText(message.Subject.Name), 0, 2000 * 4},
 		{"source_event_id", message.EventID, 0, 256},
 		{"source_alert_id", message.AlertID, 0, 256},
 	} {
@@ -173,6 +182,74 @@ func checkStandardPayload(payload []byte) error {
 		value, err := number.Int64()
 		if err != nil || value <= 0 {
 			return fmt.Errorf("labels.%s invalid_field: %s", name, raw)
+		}
+	}
+	return checkNoDataIdentity(message.Dimensions, message.ExtraData, message.Evaluations)
+}
+
+// truncateDisplayText is domain.TruncateDisplayText: the first 2000
+// characters.
+func truncateDisplayText(text string) string {
+	count := 0
+	for offset := range text {
+		if count == 2000 {
+			return text[:offset]
+		}
+		count++
+	}
+	return text
+}
+
+// checkNoDataIdentity is the description resolver's no-data rules: a
+// provided no-data tag (a non-empty string, a non-zero number, true) and
+// extra_data.evaluation_family "no_data" come together or not at all; a
+// family, when written, is a non-empty word the resolver knows; a
+// triggering no-data event carries no_data_periods as an integer in
+// [1, 1000000].
+func checkNoDataIdentity(dimensions, extra map[string]json.RawMessage, evaluations []struct {
+	Severity     string `json:"severity"`
+	Action       string `json:"action"`
+	ActionReason string `json:"action_reason"`
+}) error {
+	family := ""
+	if raw, present := extra["evaluation_family"]; present {
+		if json.Unmarshal(raw, &family) != nil || family == "" {
+			return errors.New("detection_evidence_missing")
+		}
+	}
+	tagged := false
+	if raw, present := dimensions["__NO_DATA_DIMENSION__"]; present {
+		var value any
+		_ = json.Unmarshal(raw, &value)
+		switch v := value.(type) {
+		case string:
+			tagged = v != ""
+		case float64:
+			tagged = v != 0
+		case bool:
+			tagged = v
+		}
+	}
+	if !tagged && family != "no_data" {
+		if family != "" && family != "metric_algorithm" {
+			return errors.New("detection_evidence_missing")
+		}
+		return nil
+	}
+	if !tagged || family != "no_data" {
+		return errors.New("nodata_identity_invalid")
+	}
+	for _, evaluation := range evaluations {
+		if evaluation.Action != "triggered" {
+			continue
+		}
+		var periods int64
+		raw, present := extra["no_data_periods"]
+		if !present {
+			return errors.New("nodata_evidence_missing")
+		}
+		if json.Unmarshal(raw, &periods) != nil || periods <= 0 || periods > 1_000_000 {
+			return errors.New("nodata_evidence_invalid")
 		}
 	}
 	return nil
@@ -290,20 +367,24 @@ func TestTheTranscribedAcceptanceRefusesWhatTheConsumerRefuses(t *testing.T) {
 		t.Fatalf("fixture: %v", err)
 	}
 	for name, broken := range map[string][]byte{
-		"no evaluations":                bytes.Replace(accepted, []byte(`"evaluations":[{"severity":"warning","action":"triggered","action_reason":""}]`), []byte(`"evaluations":[]`), 1),
-		"an unknown action":             bytes.Replace(accepted, []byte(`"action":"triggered"`), []byte(`"action":"recovered"`), 1),
-		"a null dimension":              bytes.Replace(accepted, []byte(`"device":"sda"`), []byte(`"device":null`), 1),
-		"a string label":                bytes.Replace(accepted, []byte(`"strategy_id":123`), []byte(`"strategy_id":"123"`), 1),
-		"a zero label":                  bytes.Replace(accepted, []byte(`"strategy_version":7`), []byte(`"strategy_version":0`), 1),
-		"a missing label":               bytes.Replace(accepted, []byte(`"bk_biz_id":2`), []byte(`"biz":2`), 1),
-		"a textual value":               bytes.Replace(accepted, []byte(`"values":{"value":92.5}`), []byte(`"values":{"value":"92.5"}`), 1),
-		"a duplicated additional key":   bytes.Replace(accepted, []byte(`"extra_data":{`), []byte(`"extra_data":{"additional_dimensions":{"device":"sdb"},`), 1),
-		"a duplicate severity":          bytes.Replace(accepted, []byte(`"evaluations":[{"severity":"warning","action":"triggered","action_reason":""}]`), []byte(`"evaluations":[{"severity":"warning","action":"triggered","action_reason":""},{"severity":"warning","action":"resolved","action_reason":""}]`), 1),
-		"a top-level duplicate key":     bytes.Replace(accepted, []byte(`"title":`), []byte(`"title":"x","title":`), 1),
-		"trailing data":                 append(append([]byte{}, accepted...), '{', '}'),
-		"an unreadable occurred_at":     bytes.Replace(accepted, []byte(`"occurred_at":"2025-09-01T00:00:00Z"`), []byte(`"occurred_at":"1756684800"`), 1),
-		"an empty tenant":               bytes.Replace(accepted, []byte(`"bk_tenant_id":"tenant-a"`), []byte(`"bk_tenant_id":""`), 1),
-		"a title over the length bound": bytes.Replace(accepted, []byte(`"title":"Strategy 123 level 2 triggered"`), append(append([]byte(`"title":"`), bytes.Repeat([]byte("t"), 257)...), '"'), 1),
+		"no evaluations":               bytes.Replace(accepted, []byte(`"evaluations":[{"severity":"warning","action":"triggered","action_reason":""}]`), []byte(`"evaluations":[]`), 1),
+		"an unknown action":            bytes.Replace(accepted, []byte(`"action":"triggered"`), []byte(`"action":"recovered"`), 1),
+		"a null dimension":             bytes.Replace(accepted, []byte(`"device":"sda"`), []byte(`"device":null`), 1),
+		"a string label":               bytes.Replace(accepted, []byte(`"strategy_id":123`), []byte(`"strategy_id":"123"`), 1),
+		"a zero label":                 bytes.Replace(accepted, []byte(`"strategy_version":7`), []byte(`"strategy_version":0`), 1),
+		"a missing label":              bytes.Replace(accepted, []byte(`"bk_biz_id":2`), []byte(`"biz":2`), 1),
+		"a textual value":              bytes.Replace(accepted, []byte(`"values":{"value":92.5}`), []byte(`"values":{"value":"92.5"}`), 1),
+		"a duplicated additional key":  bytes.Replace(accepted, []byte(`"extra_data":{`), []byte(`"extra_data":{"additional_dimensions":{"device":"sdb"},`), 1),
+		"a duplicate severity":         bytes.Replace(accepted, []byte(`"evaluations":[{"severity":"warning","action":"triggered","action_reason":""}]`), []byte(`"evaluations":[{"severity":"warning","action":"triggered","action_reason":""},{"severity":"warning","action":"resolved","action_reason":""}]`), 1),
+		"a top-level duplicate key":    bytes.Replace(accepted, []byte(`"title":`), []byte(`"title":"x","title":`), 1),
+		"trailing data":                append(append([]byte{}, accepted...), '{', '}'),
+		"an unreadable occurred_at":    bytes.Replace(accepted, []byte(`"occurred_at":"2025-09-01T00:00:00Z"`), []byte(`"occurred_at":"1756684800"`), 1),
+		"an empty tenant":              bytes.Replace(accepted, []byte(`"bk_tenant_id":"tenant-a"`), []byte(`"bk_tenant_id":""`), 1),
+		"__ALL__ triggered":            bytes.Replace(accepted, []byte(`"severity":"warning"`), []byte(`"severity":"__ALL__"`), 1),
+		"a no-data tag without family": bytes.Replace(accepted, []byte(`"device":"sda"`), []byte(`"device":"sda","__NO_DATA_DIMENSION__":true`), 1),
+		"an unknown family":            bytes.Replace(accepted, []byte(`"evaluation_family":"metric_algorithm"`), []byte(`"evaluation_family":"other"`), 1),
+		"an empty family":              bytes.Replace(accepted, []byte(`"evaluation_family":"metric_algorithm"`), []byte(`"evaluation_family":""`), 1),
+		"a no-data family without tag": bytes.Replace(accepted, []byte(`"evaluation_family":"metric_algorithm"`), []byte(`"evaluation_family":"no_data"`), 1),
 	} {
 		if bytes.Equal(broken, accepted) {
 			t.Fatalf("%s: the fixture was not changed; the rule is not being exercised", name)
@@ -311,5 +392,35 @@ func TestTheTranscribedAcceptanceRefusesWhatTheConsumerRefuses(t *testing.T) {
 		if err := checkStandardPayload(broken); err == nil {
 			t.Errorf("%s was accepted", name)
 		}
+	}
+}
+
+// The no-data rules of the transcription (Linkd ec55128e7
+// internal/enrich/description/resolver.go:84-95,224-231): a no-data
+// trigger passes with its period count, and is refused without one, with
+// one out of [1, 1000000], or with the tag but another family. A title past
+// 2000 characters is truncated by the link, not refused.
+func TestTheTranscribedNoDataAndTitleRules(t *testing.T) {
+	accepted := convertRaw(t, noDataDecision()).Payload
+	if err := checkStandardPayload(accepted); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	for name, broken := range map[string][]byte{
+		"no period count":          bytes.Replace(accepted, []byte(`"no_data_periods":5`), []byte(`"no_data_period":5`), 1),
+		"a zero period count":      bytes.Replace(accepted, []byte(`"no_data_periods":5`), []byte(`"no_data_periods":0`), 1),
+		"a period count past 1e6":  bytes.Replace(accepted, []byte(`"no_data_periods":5`), []byte(`"no_data_periods":1000001`), 1),
+		"a fractional period":      bytes.Replace(accepted, []byte(`"no_data_periods":5`), []byte(`"no_data_periods":1.5`), 1),
+		"the tag with a threshold": bytes.Replace(accepted, []byte(`"evaluation_family":"no_data"`), []byte(`"evaluation_family":"metric_algorithm"`), 1),
+	} {
+		if bytes.Equal(broken, accepted) {
+			t.Fatalf("%s: the fixture was not changed; the rule is not being exercised", name)
+		}
+		if err := checkStandardPayload(broken); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	long := bytes.Replace(accepted, []byte(`"title":"`), append([]byte(`"title":"`), bytes.Repeat([]byte("t"), 3000)...), 1)
+	if err := checkStandardPayload(long); err != nil {
+		t.Fatalf("a long title is truncated by the link, not refused: %v", err)
 	}
 }

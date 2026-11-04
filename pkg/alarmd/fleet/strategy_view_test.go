@@ -19,6 +19,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 )
 
 // A strategy's drawer counts its objects by punctuality, each from its own
@@ -29,7 +32,7 @@ func TestAStrategyViewCountsItsObjectsByPunctuality(t *testing.T) {
 	decided := rows["2"]
 	decided.Check = CheckSlotsOverdue
 	rows["2"] = decided
-	index := buildBoard("c1", time.Unix(10_000, 0), "digest-1", universe, func(id string) DiagnosisRow { return rows[id] }, nil, due, census, nil, nil)
+	index := buildBoard("c1", time.Unix(10_000, 0), "digest-1", universe, func(id string) DiagnosisRow { return rows[id] }, nil, due, census, nil)
 	want := map[string]map[Punctuality]int{
 		"1": {PunctualityOverdue: 1, PunctualityOnTime: 1},
 		"2": {PunctualityLate: 1, PunctualityNotStarted: 1},
@@ -61,6 +64,11 @@ func TestAStrategyViewCountsItsObjectsByPunctuality(t *testing.T) {
 	}
 }
 
+// viewRecovery is a level's recovery plan as the catalog writes it.
+func viewRecovery(config string) StrategyTypedPlanConfig {
+	return typedPlanConfigOf(contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1, Config: json.RawMessage(config)})
+}
+
 func viewStanding() *StrategyStanding {
 	one := uint32(1)
 	return &StrategyStanding{StrategyID: "77", Plans: []StrategyPlanStanding{
@@ -73,9 +81,11 @@ func viewStanding() *StrategyStanding {
 				{Group: 0, Field: "HOST", Method: "EQ", Keys: 3}, {Group: 0, Field: "TOPO_NODE", Method: "NEQ", Keys: 1}}}},
 			NoData: &StrategyNoDataConfig{Continuous: 5, Level: 2},
 			Levels: []StrategyLevelConfig{
-				{LevelID: 1, Connector: "and", Algorithms: []StrategyAlgorithmInfo{{Type: "Threshold"}, {Type: "SimpleRingRatio"}}, Trigger: StrategyTypedPlanConfig{WindowSize: &one}},
-				{LevelID: 3, Algorithms: []StrategyAlgorithmInfo{{Type: "Threshold"}}},
+				{LevelID: 1, Connector: "and", Algorithms: []StrategyAlgorithmInfo{{Type: "Threshold"}, {Type: "SimpleRingRatio"}}, Trigger: StrategyTypedPlanConfig{WindowSize: &one}, Recovery: viewRecovery(`{"enabled":true,"consecutive_windows":5}`)},
+				{LevelID: 3, Algorithms: []StrategyAlgorithmInfo{{Type: "Threshold"}}, Recovery: viewRecovery(`{"enabled":false,"consecutive_windows":0}`)},
 			},
+			DataUnit: "percent", DataUnitBasis: controlplane.DataUnitBasisQueryUnit,
+			RawUnitLevels:           []controlplane.DataUnitRawLevel{{LevelID: 3, Reason: controlplane.ReasonUnitPrefixOutsideStepsReadAsSmallest, Unit: "percent", Prefix: "Gi"}},
 			EffectiveTimeConfigured: true,
 		}}}},
 		// A second plan of the same item, on another shard: one item.
@@ -86,9 +96,11 @@ func viewStanding() *StrategyStanding {
 				{Group: 0, Field: "HOST", Method: "EQ", Keys: 3}, {Group: 0, Field: "TOPO_NODE", Method: "NEQ", Keys: 1}}}},
 			NoData: &StrategyNoDataConfig{Continuous: 5, Level: 2},
 			Levels: []StrategyLevelConfig{
-				{LevelID: 1, Connector: "and", Algorithms: []StrategyAlgorithmInfo{{Type: "Threshold"}, {Type: "SimpleRingRatio"}}},
-				{LevelID: 3, Algorithms: []StrategyAlgorithmInfo{{Type: "Threshold"}}},
+				{LevelID: 1, Connector: "and", Algorithms: []StrategyAlgorithmInfo{{Type: "Threshold"}, {Type: "SimpleRingRatio"}}, Recovery: viewRecovery(`{"enabled":true,"consecutive_windows":5}`)},
+				{LevelID: 3, Algorithms: []StrategyAlgorithmInfo{{Type: "Threshold"}}, Recovery: viewRecovery(`{"enabled":false,"consecutive_windows":0}`)},
 			},
+			DataUnit: "percent", DataUnitBasis: controlplane.DataUnitBasisQueryUnit,
+			RawUnitLevels:           []controlplane.DataUnitRawLevel{{LevelID: 3, Reason: controlplane.ReasonUnitPrefixOutsideStepsReadAsSmallest, Unit: "percent", Prefix: "Gi"}},
 			EffectiveTimeConfigured: true,
 		}}}},
 	}}
@@ -101,7 +113,11 @@ func TestExpectedDetectionIsTheFrozenConfigInWords(t *testing.T) {
 	got := ExpectedOf(viewStanding())
 	want := ExpectedDetection{Known: true, Items: []ExpectedItem{{
 		Interval: "每 1 分钟", DataSource: "监控平台时序数据",
+		DataUnit: "percent",
+		Comparison: []string{"按指标单位 percent 比较，表达式没有声明单位，取查询的单位；阈值没选单位时按最小单位",
+			"提醒的阈值单位 Gi 和数据单位 percent 不是同一类，按没选单位处理，阈值按最小阶读"},
 		Algorithms: []string{"致命：静态阈值 且 简易环比", "提醒：静态阈值"},
+		Recovery:   []string{"致命：连续 5 个周期不满足触发条件时恢复告警（约 5 分钟）", "提醒：不自动恢复"},
 		NoData:     "连续 5 个周期无数据时告警（预警）", Target: "包含 3 个主机，排除 1 个拓扑节点",
 		EffectiveTime: "只在配置的生效时段内检测",
 	}}}
@@ -117,6 +133,52 @@ func TestExpectedDetectionIsTheFrozenConfigInWords(t *testing.T) {
 	planned := StrategyTargetConfig{Kind: TargetKindPlan, Plan: &StrategyTargetPlanConfig{Rule: "k8s_workload", StaticMembers: 4, DynamicGroups: 2, ExcludeMembers: 1}}
 	if word := targetWord(planned); word != "按K8s 工作负载：4 个，2 个动态分组，排除 1 个" {
 		t.Fatalf("planned target %q", word)
+	}
+}
+
+// A level's recovery is said with its window and how the alert ends
+// (status_setter close or recovery), in periods and as a duration. A -nodata
+// setter adds its own end, which R does not count: (R+T+1) periods since the
+// group's last real point, T the trigger window (the product specs
+// alarmd-recovery-and-missing-data.md §1, the recovery-nodata and close-nodata
+// rows; alarmd-strategy-capabilities.md §2.3, §2.4). Here R=3, T=5 and the
+// period is 60 s: 3 minutes, and 9 periods, 9 minutes. A plan the projection
+// could not read in full is unknown. A Plan written to close and one written
+// to recover are two items.
+func TestExpectedDetectionSaysEachLevelsRecovery(t *testing.T) {
+	trigger := typedPlanConfigOf(contract.TypedPlanV1{Type: "N_OF_M", Version: 1,
+		Config: json.RawMessage(`{"window_size":5,"required_anomalies":2,"step_seconds":60}`)})
+	for config, want := range map[string]string{
+		`{"enabled":true,"consecutive_windows":3}`:                                                 "预警：连续 3 个周期不满足触发条件时恢复告警（约 3 分钟）",
+		`{"enabled":true,"consecutive_windows":3,"end":"close"}`:                                   "预警：连续 3 个周期不满足触发条件时关闭告警（约 3 分钟）",
+		`{"enabled":true,"consecutive_windows":3,"missing_data":"evaluate_as_zero"}`:               "预警：连续 3 个周期不满足触发条件时恢复告警（约 3 分钟）；无数据满 9 个周期（约 9 分钟）也结束",
+		`{"enabled":true,"consecutive_windows":3,"end":"close","missing_data":"evaluate_as_zero"}`: "预警：连续 3 个周期不满足触发条件时关闭告警（约 3 分钟）；无数据满 9 个周期（约 9 分钟）也结束",
+		`{"enabled":false,"consecutive_windows":0}`:                                                "预警：不自动恢复",
+		`{"consecutive_windows":3}`:                                                                "预警：未知",
+		`{"enabled":true,"consecutive_windows":3,"end":"archive"}`:                                 "预警：未知",
+		`{"enabled":true,"consecutive_windows":3,"missing_data":"skip"}`:                           "预警：未知",
+		`{"enabled":true,"consecutive_windows":3,"by":"host"}`:                                     "预警：未知",
+		`[1]`: "预警：未知",
+	} {
+		plan := StrategyPlanConfig{Schedule: StrategyScheduleConfig{IntervalSeconds: 60}, Target: StrategyTargetConfig{Kind: TargetKindNone},
+			Levels: []StrategyLevelConfig{{LevelID: 2, Algorithms: []StrategyAlgorithmInfo{{Type: "Threshold"}}, Trigger: trigger, Recovery: viewRecovery(config)}}}
+		if item := expectedItemOf(plan); !reflect.DeepEqual(item.Recovery, []string{want}) {
+			t.Errorf("%s: recovery %q, want %q", config, item.Recovery, want)
+		}
+	}
+	// -nodata with no trigger window known has no (R+T+1) to say.
+	noTrigger := StrategyPlanConfig{Schedule: StrategyScheduleConfig{IntervalSeconds: 60}, Levels: []StrategyLevelConfig{{LevelID: 2,
+		Recovery: viewRecovery(`{"enabled":true,"consecutive_windows":3,"missing_data":"evaluate_as_zero"}`)}}}
+	if item := expectedItemOf(noTrigger); !reflect.DeepEqual(item.Recovery, []string{"预警：未知"}) {
+		t.Errorf("-nodata without a trigger window: %q, want unknown", item.Recovery)
+	}
+	resolve, closing := viewStanding(), viewStanding()
+	closing.Plans[1].Config.Items[0].Levels[0].Recovery = viewRecovery(`{"enabled":true,"consecutive_windows":5,"end":"close"}`)
+	if got := len(ExpectedOf(resolve).Items); got != 1 {
+		t.Fatalf("two Plans with one recovery are %d items, want 1", got)
+	}
+	if got := len(ExpectedOf(closing).Items); got != 2 {
+		t.Fatalf("a Plan that closes and one that recovers are %d items, want 2", got)
 	}
 }
 
@@ -190,7 +252,6 @@ func TestExpectedDetectionHasAWordForEveryKnownKind(t *testing.T) {
 func TestStrategyViewCarriesNoDeveloperCoordinates(t *testing.T) {
 	index := boardOf(t, false)
 	actual, _ := index.view("1", DiagnosisSummaryFreshFor)
-	actual.Row.OpenAlerts = &BoardCount{Value: 3, AtLeast: true}
 	view := ComposeStrategyView(actual, viewStanding())
 	encoded, err := json.Marshal(view)
 	if err != nil {
@@ -213,7 +274,7 @@ func TestStrategyViewCarriesNoDeveloperCoordinates(t *testing.T) {
 	}
 	if view.Actual.Punctuality != PunctualityOverdue || view.Actual.PunctualityWord != "超期" || view.Actual.Objects.Total != 2 ||
 		view.KBAnchor != actual.Row.KBAnchor || view.Conclusion.Line == "" || !view.Expected.Known ||
-		!reflect.DeepEqual(view.Actual.OpenAlerts, &BoardCount{Value: 3, AtLeast: true}) || view.MaxAgeSeconds != actual.MaxAgeSeconds {
+		view.MaxAgeSeconds != actual.MaxAgeSeconds {
 		t.Fatalf("view %+v", view)
 	}
 }

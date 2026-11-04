@@ -1453,7 +1453,15 @@ type recordingPorts struct {
 	// withheld, when set, makes the primary answer FULL and EMPTY with these
 	// two counts: the series the query returned that every Plan refused,
 	// and those it refused as outside the target.
-	withheld                        *[2]uint64
+	withheld *[2]uint64
+	// shapeRequirements, when set, rewrites the round's requirements before
+	// the header is begun: the observation-only words a requirement carries,
+	// or a requirement added beside the primary.
+	shapeRequirements func([]execution.DataRequirement) []execution.DataRequirement
+	// witness, with withheld, streams one series for every requirement other
+	// than the primary - an unfiltered witness - each on its own physical
+	// query, before the primary's empty completion.
+	witness                         bool
 	stateAdmissionDeterministic     bool
 	stateApplyDeterministic         bool
 	stateAdmissionDeterministicLast bool
@@ -1522,6 +1530,9 @@ func (ports *recordingPorts) Execute(ctx context.Context, request execution.Quer
 	}
 	input := validInternalExecution()
 	input.Contract = request.Contract
+	if ports.shapeRequirements != nil {
+		input.Requirements = ports.shapeRequirements(input.Requirements)
+	}
 	if ports.unboundEffectiveTimeFacts {
 		for index := range input.EffectiveTimeFacts {
 			input.EffectiveTimeFacts[index].SeriesIdentity = ""
@@ -1583,6 +1594,13 @@ func (ports *recordingPorts) Execute(ctx context.Context, request execution.Quer
 			Digest: "physical-query-1", QueryRevision: queryRevision,
 		}}, DeadlineUnixMilli: 1_788_000_030_000,
 	}
+	if ports.witness {
+		for _, requirement := range input.Requirements[1:] {
+			header.RequiredPhysicalQueries = append(header.RequiredPhysicalQueries, execution.PlannedPhysicalQueryRef{
+				Digest: execution.PhysicalQueryDigest("physical-" + string(requirement.RequirementID)), QueryRevision: execution.QueryRevision(requirement.LogicalQueryRef),
+			})
+		}
+	}
 	if err := consumer.Begin(ctx, header); err != nil {
 		return execution.QueryExecutionCompletion{}, err
 	}
@@ -1597,12 +1615,45 @@ func (ports *recordingPorts) Execute(ctx context.Context, request execution.Quer
 		binding.Dataset = execution.NewDataset(nil)
 		binding.View, _ = execution.NewDatasetView(binding.Dataset, []uint32{})
 		binding.Completeness, binding.DataState, binding.Disposition = execution.CompletenessFull, execution.DataStateEmpty, execution.AccessAvailable
-		return execution.QueryExecutionCompletion{AllRequiredCompleted: true, CompletionBindings: []execution.NamedInputBinding{binding},
+		completion := execution.QueryExecutionCompletion{AllRequiredCompleted: true, CompletionBindings: []execution.NamedInputBinding{binding},
 			PhysicalQueries: []execution.PhysicalQueryCompletion{{
 				Ref: "provider-result-1", PhysicalQuery: "physical-query-1", QueryRevision: queryRevision,
 				Completeness: execution.CompletenessFull, DataState: execution.DataStateEmpty,
 				Withheld: ports.withheld[0], WithheldOutsideTarget: ports.withheld[1],
-			}}}, nil
+			}}}
+		if ports.witness {
+			for _, requirement := range input.Requirements[1:] {
+				physical := execution.PhysicalQueryDigest("physical-" + string(requirement.RequirementID))
+				ref := execution.ProviderResultRef("provider-" + string(requirement.RequirementID))
+				revision := execution.QueryRevision(requirement.LogicalQueryRef)
+				dataset := input.Inputs[0].Dataset
+				view, _ := execution.NewDatasetView(dataset, []uint32{0})
+				witness := input.Inputs[0]
+				witness.RequirementID, witness.DatasetName, witness.Role = requirement.RequirementID, requirement.DatasetName, requirement.Role
+				witness.ProviderResult, witness.Provenance = ref, execution.InputProvenance{PhysicalQuery: physical, AttemptNo: 1}
+				witness.Dataset, witness.View = dataset, view
+				delivery := execution.SeriesDelivery{PhysicalQuery: physical, QueryRevision: revision, Series: 1, Records: 1, Digest: "delivery-" + string(requirement.RequirementID)}
+				if err := consumer.ConsumeSeries(ctx, execution.SeriesExecutionBatch{
+					PhysicalQuery: physical, QueryRevision: revision, CompletionRef: ref, Dataset: dataset,
+					Inputs: []execution.NamedInputBinding{witness}, Delivery: delivery,
+				}); err != nil {
+					return execution.QueryExecutionCompletion{}, err
+				}
+				// The completion's share for the witness, as the production
+				// source projects it (access completionBindings): never records,
+				// EMPTY for a FULL query that delivered its series streamed.
+				completed := witness
+				completed.Dataset = execution.NewDataset(nil)
+				completed.View, _ = execution.NewDatasetView(completed.Dataset, []uint32{})
+				completed.DataState = execution.DataStateEmpty
+				completion.CompletionBindings = append(completion.CompletionBindings, completed)
+				completion.PhysicalQueries = append(completion.PhysicalQueries, execution.PhysicalQueryCompletion{
+					Ref: ref, PhysicalQuery: physical, QueryRevision: revision,
+					Completeness: execution.CompletenessFull, DataState: execution.DataStateData, Delivery: delivery,
+				})
+			}
+		}
+		return completion, nil
 	}
 	if !ports.ready {
 		binding := input.Inputs[0]

@@ -251,6 +251,27 @@ type EvaluationRequestV2 struct {
 	// not trigger, so the alert recovers on the first round with a count
 	// above zero.
 	ZeroCountIsNoObservation bool
+	// NoDataEndSource is asked about a Level this record would end on no
+	// data (status_setter -nodata), and only there: whether the source the
+	// Plan reads is alive. Not alive, the Level does not end; it is NORMAL,
+	// withheld for contract.RecoveryWithheldSourceUnknown where the windows
+	// were met. It is told of a Level whose end is due on the next round, so
+	// that round's answer is ready. Nil ends on no data as configured.
+	NoDataEndSource NoDataEndSource
+}
+
+// NoDataEndSource is EvaluationRequestV2.NoDataEndSource. Neither call may
+// wait on the source: the evaluation is inside the round's deadline.
+type NoDataEndSource interface {
+	// SourceAlive is whether the Level's no-data end goes ahead. spanSeconds
+	// is how long the Level waits on no data, (R + T + 1) periods, and
+	// lastRealPoint the source time of its series' last real point: its
+	// no-data span begins one period after it, and the source is read from
+	// there and never before.
+	SourceAlive(levelID uint32, spanSeconds, lastRealPoint int64) bool
+	// DueNext says the Level's no-data end is due on the next round, its
+	// series' last real point at lastRealPoint, its span spanSeconds.
+	DueNext(levelID uint32, lastRealPoint, spanSeconds int64)
 }
 
 type LevelOutcomeV2 struct {
@@ -313,6 +334,13 @@ const (
 	// member": an unknown read as absent would hold this Plan's recoveries
 	// for good and leave no trace.
 	RecoveryHeldFingerprintUnknown = "fingerprint_unknown"
+	// RecoveryHeldLevelNotOpen: the record recovers none of the alert's
+	// current Level - the most severe the series' open alert has open
+	// (contract.OpenLevelSet) - only Levels below it or never alerted. The
+	// consumer keeps one alert per series, and Python recovers an alert only
+	// at its own Level; such an envelope would be an orphan or a recovery
+	// Python never sends.
+	RecoveryHeldLevelNotOpen = "level_not_open"
 )
 
 // The outcomes of the recovery gate, the open alert set. The set is
@@ -332,6 +360,8 @@ const (
 	OpenAlertGateHeldNoOpenAlert = "held_no_open_alert"
 	// OpenAlertGateHeldFingerprintUnknown: see RecoveryHeldFingerprintUnknown.
 	OpenAlertGateHeldFingerprintUnknown = "held_fingerprint_unknown"
+	// OpenAlertGateHeldLevelNotOpen: see RecoveryHeldLevelNotOpen.
+	OpenAlertGateHeldLevelNotOpen = "held_level_not_open"
 	// OpenAlertGateNotConfigured: the caller passed no set. The envelope goes
 	// as it did before the gate existed. A production worker always passes a
 	// set, so this outcome counting there is the wiring having come apart.
@@ -372,6 +402,10 @@ type EvaluationResultV2 struct {
 	// leaves TriggerEvent nil while RecordResult stays RECOVERY. Held is the
 	// union of both gates; Cause says which.
 	RecoveryGate RecoveryGateV2
+	// OmittedRecoveryLevels is the Levels whose RECOVERY the envelope left
+	// out because the alert is at another Level (openLevelResultsV2); empty
+	// when the record is held whole, which RecoveryGate says instead.
+	OmittedRecoveryLevels []uint32
 	// Snapshot is what the event's detection snapshot came to, for its
 	// counters; nil for an event that carries none.
 	Snapshot *DetectionSnapshotFacts

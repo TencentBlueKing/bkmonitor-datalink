@@ -75,7 +75,7 @@ func logNoDataGroupBound(logger *observability.Logger, cfg config.Config) {
 	if cfg.NoDataMaxGroups() <= contract.DefaultMaxNoDataGroups {
 		return
 	}
-	logger.Warn("no_data_group_bound_above_default", "noted", 0, 0,
+	logger.WarnEvent("no_data_group_bound_above_default", "noted", 0,
 		slog.Int("max_groups", cfg.NoDataMaxGroups()), slog.Int("default", contract.DefaultMaxNoDataGroups),
 		slog.String("first_write_cost", contract.NoDataGroupFirstWriteCost))
 }

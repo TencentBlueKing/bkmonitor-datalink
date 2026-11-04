@@ -24,12 +24,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/k8sread"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdmanage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obevidence"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
@@ -77,9 +77,11 @@ type cliControlBinding struct {
 	// Maintenance is the effective-time maintenance, bound once the loop is
 	// built; read by maintenance.get.
 	Maintenance *maintenanceSource
-	// LinkdConsole is the process's linkd Console client, read by
-	// linkd.alerts; nil without a Console.
-	LinkdConsole *openalerts.HTTPReconciler
+	// LinkdSearch is the process's link management client, read by
+	// linkd.alerts, and LinkdSource the event source it reads; nil without
+	// the link's control plane.
+	LinkdSearch *linkdmanage.Client
+	LinkdSource string
 }
 
 // cliAuthEvents counts the CLI authorization's events, every cell created
@@ -205,6 +207,9 @@ func deploymentReads(cfg config.Config, catalog *controlplane.RedisCatalogReposi
 	}
 	// The pool records sit in the same runtime store, under their own prefix.
 	options.QueryCooldown = obevidence.RedisBinding{Client: diagnosticRuntime, Location: obevidence.Location{Role: "runtime", Address: redisAddress(runtimeConnection), Mode: runtimeConnection.Mode, DB: runtimeConnection.DB, Prefix: queryCooldownPrefix(cfg)}}
+	// alarmd's record of the episodes it opened sits in the same runtime
+	// store, under the state prefix the episode writer uses.
+	options.OpenEpisodes = obevidence.RedisBinding{Client: diagnosticRuntime, Location: obevidence.Location{Role: "runtime", Address: redisAddress(runtimeConnection), Mode: runtimeConnection.Mode, DB: runtimeConnection.DB, Prefix: cfg.Redis.StatePrefix}}
 	if connection, configured := cfg.TargetGroupRedis(); configured {
 		options.TargetGroup = bind("target_group", connection, targetGroupPrefix(cfg))
 	}
@@ -218,7 +223,7 @@ func deploymentReads(cfg config.Config, catalog *controlplane.RedisCatalogReposi
 	podName, _ := os.Hostname()
 	// Every binding reports an unanswered read by its reason.
 	for _, binding := range []*obevidence.RedisBinding{&options.SourceStrategy, &options.CMDBCache, &options.Published,
-		&options.QueryProgress, &options.QueryCooldown, &options.TargetGroup, &options.DynamicConfig} {
+		&options.QueryProgress, &options.QueryCooldown, &options.OpenEpisodes, &options.TargetGroup, &options.DynamicConfig} {
 		binding.OnFailure = failed
 	}
 	return obchannel.StoreOperations(obevidence.New(options)),
@@ -275,12 +280,12 @@ func publicSurfaceStandingOf(cfg config.Config, restricted bool) publicSurfaceSt
 
 func (standing publicSurfaceStanding) warn(logger *observability.Logger) {
 	if standing.MetricsUnexported {
-		logger.Warn(observability.StageStartup, observability.ResultDegraded, 0, 0,
+		logger.WarnEvent(observability.StageStartup, observability.ResultDegraded, 0,
 			slog.String("reason_code", string(fleet.DegradationMetricsUnexported)),
 			slog.String("detail", "the public listener is restricted and http.internal_listen is not set: /metrics is served nowhere"))
 	}
 	if standing.CLIUnavailable {
-		logger.Warn(observability.StageStartup, observability.ResultDegraded, 0, 0,
+		logger.WarnEvent(observability.StageStartup, observability.ResultDegraded, 0,
 			slog.String("reason_code", string(fleet.DegradationCLIAuthUnavailable)),
 			slog.String("detail", "a CLI admin key is configured and the CLI did not come up: the public surface stays unrestricted"))
 	}

@@ -66,7 +66,7 @@ func (spec PhysicalQuerySpec) Validate() error {
 			return err
 		}
 	}
-	if spec.ProviderRange.Start > spec.LogicalWindow.Start || spec.ProviderRange.End < spec.LogicalWindow.End ||
+	if spec.ProviderRange.Start > spec.LogicalWindow.Start || spec.ProviderRange.End < spec.PlanFacts.RequestRange(spec.LogicalWindow).End ||
 		spec.AcceptedRange.Start < spec.ProviderRange.Start || spec.AcceptedRange.End > spec.ProviderRange.End {
 		return errors.New("alarmd execution: physical query ranges are inconsistent")
 	}
@@ -299,6 +299,18 @@ type PlannedQueryFacts struct {
 // short - so an operator can read why without the request it may echo. It is
 // kept with the Query Group's last failure and never written to a log line:
 // a log keeps the class and the trace id only.
+// The rejection classes a provider's refusal is named by when its body says
+// what it was about (HTTP_<status> otherwise). One decides whose a refusal
+// is on the fleet's page: a sample limit is the strategy's query asking for
+// more than the storage serves in one query. A parse error stays a
+// diagnostic: the PromQL may be text alarmd composed from the strategy's
+// queries. The others stay diagnostics too.
+const (
+	RejectionClassVMSampleLimit = "VM_SAMPLE_LIMIT"
+	RejectionClassPromQLParse   = "PROMQL_PARSE"
+	RejectionClassInvalidQuery  = "INVALID_QUERY"
+)
+
 type ProviderRejection struct {
 	Class   string `json:"class"`
 	TraceID string `json:"trace_id,omitempty"`

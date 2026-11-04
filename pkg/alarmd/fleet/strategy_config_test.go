@@ -372,3 +372,41 @@ func TestStrategyConfigSaysWhetherAnEffectiveTimeIsConfigured(t *testing.T) {
 		}
 	}
 }
+
+// How a Plan's values are compared comes from the publication's frozen
+// Plan, through the lookup, not from the object a Worker runs: a Plan whose
+// lookup names an expression unit and a Level compared raw is read so under
+// include=config; one whose lookup names nothing reads as comparing in its
+// one query's unit.
+func TestIncludeConfigReadsTheUnitFactsFromTheLookup(t *testing.T) {
+	facts := &controlplane.DataUnitFacts{Basis: controlplane.DataUnitBasisExpressionUnit,
+		RawLevels: []controlplane.DataUnitRawLevel{{LevelID: 2, Reason: controlplane.ReasonDataUnitUnknownComparedRaw, Unit: "furlongs"}}}
+	for _, test := range []struct {
+		name      string
+		facts     *controlplane.DataUnitFacts
+		wantBasis string
+		wantRaw   int
+	}{
+		{name: "the lookup names facts", facts: facts, wantBasis: controlplane.DataUnitBasisExpressionUnit, wantRaw: 1},
+		{name: "the lookup names none", wantBasis: controlplane.DataUnitBasisQueryUnit},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			loader := &configLoader{objects: map[string]controlplane.QueryGroupObject{"d-a": configObject()}}
+			plan := planA
+			plan.DataUnitFacts = test.facts
+			handler := configHandler(t, map[string]StrategyLookupFacts{"4101": {Available: true, Found: true, Plans: plans(plan)}}, loader.load)
+			_, body := get(t, handler, "/api/strategies/4101?include=config")
+			items, _ := body["plans"].([]any)[0].(map[string]any)["config"].(map[string]any)["items"].([]any)
+			if len(items) == 0 {
+				t.Fatalf("no items: %v", body)
+			}
+			for _, raw := range items {
+				item := raw.(map[string]any)
+				levels, _ := item["raw_unit_levels"].([]any)
+				if item["data_unit_basis"] != test.wantBasis || len(levels) != test.wantRaw {
+					t.Fatalf("item basis %v raw levels %v, want %s and %d", item["data_unit_basis"], levels, test.wantBasis, test.wantRaw)
+				}
+			}
+		})
+	}
+}

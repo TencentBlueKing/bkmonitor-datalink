@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -9,141 +10,96 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scopeclose"
 )
 
-// scopeCloseIndex is the link as the copy reads it: one strategy's set,
-// calibrated with its alerts and this deployment's source.
-type scopeCloseIndex struct {
-	source string
-	alerts []openalerts.Alert
-}
-
-func (s scopeCloseIndex) ReadSet(context.Context, openalerts.StrategyKey) ([]string, error) {
-	members := make([]string, 0, len(s.alerts))
-	for _, alert := range s.alerts {
-		members = append(members, alert.Fingerprint)
+// Through the production pieces: the copy and the closer the bundle builds
+// from configuration against a stub of the link's control plane, bound as
+// the bundle binds them; the admission step's superseded-identity offers
+// reach the close through the sink the bundle installs. Only the old
+// fingerprint the copy knows open - this process's own acknowledged
+// ABNORMAL - is closed, by that fingerprint, under its reason, and only
+// after two Slots; an old fingerprint the copy has no word on counts
+// nothing.
+func TestSupersededCloseThroughTheProductionWiring(t *testing.T) {
+	server := redistest.Start(t)
+	if server == nil {
+		t.Skip("no redis-server")
 	}
-	return members, nil
-}
-
-func (s scopeCloseIndex) Reconcile(ctx context.Context, key openalerts.StrategyKey) (openalerts.Reconciliation, error) {
-	members, _ := s.ReadSet(ctx, key)
-	return openalerts.Reconciliation{EventSourceID: s.source, Members: members, Alerts: s.alerts}, nil
-}
-
-func (s scopeCloseIndex) Watch(ctx context.Context, ready func(bool), _ func(openalerts.StrategyKey), _ func(openalerts.NoticeRefusal)) error {
-	ready(true)
-	<-ctx.Done()
-	return ctx.Err()
-}
-
-// calibratedCopy is a real index copy, running, calibrated for one strategy.
-// confirmedConsole is a link Console that has confirmed both facts the sets
-// are trusted on, the state a deployment's close reads them in.
-type confirmedConsole struct{}
-
-func (confirmedConsole) LocationConfirmed() bool { return true }
-func (confirmedConsole) KeyedByAlertID() (bool, time.Time, bool) {
-	return true, time.Unix(1700000000, 0), true
-}
-func (confirmedConsole) KeyingAsked() bool       { return true }
-func (confirmedConsole) Refresh(context.Context) {}
-
-func calibratedCopy(t *testing.T, key openalerts.StrategyKey, index scopeCloseIndex) *openalerts.Cache {
-	t.Helper()
-	cache, err := openalerts.NewIndex(openalerts.IndexOptions{Source: index, Reconciler: index, Subscriber: index, Facts: confirmedConsole{},
-		MaxStrategies: 10, MaxMembers: 100, MaxBytes: 1 << 20, MaxLocalEntries: 100, ReadBatch: 2, ReconcileBatch: 1,
-		RefreshInterval: time.Hour, IndexInterval: time.Hour, ReconcileInterval: time.Hour, CalibrationMaxAge: 2 * time.Hour,
-		LocalRetention: time.Minute, CycleTimeout: time.Second})
+	stub := &stubControlPlane{bodies: map[string][]string{}, matches: []string{"instance-ours"}}
+	plane := httptest.NewServer(stub)
+	t.Cleanup(plane.Close)
+	cfg := config.Default()
+	cfg.Redis.StatePrefix = "alarmd-test"
+	cfg.PhaseTwo.Linkd.ControlPlane = config.LinkdControlPlaneConfig{URL: plane.URL, JWTSecret: "example-secret"}
+	link, err := newLinkdManage(cfg, time.Now)
+	if err != nil || link == nil {
+		t.Fatalf("link client %v (%v)", link, err)
+	}
+	copy, err := newActiveCopy(cfg, link, time.Now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cache.TrackOwned(key); err != nil {
+	filter, err := newFilterCloser(cfg, link, server.Client(), time.Now, nil, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { defer close(done); _ = cache.Run(ctx) }()
-	t.Cleanup(func() { cancel(); <-done })
-	// The close reads the set through MemberCount and Holds, which also
-	// need the change subscription ready. Calibration does not wait for it:
-	// TrackOwned's wake can calibrate before the Watch goroutine has called
-	// ready(true), so waiting on Calibrated alone races the subscription.
-	deadline := testwait.Deadline(t)
-	for {
-		_, judged := cache.MemberCount(key)
-		if judged && cache.Snapshot(key).Calibrated {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("copy did not calibrate with its subscription ready")
-		}
-		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
-	}
-	return cache
-}
+	closer, sink := targetScopeCloseFor(cfg, time.Now)
+	bundle := &phaseTwoWorkerBundle{}
+	bindTargetScopeClose(bundle, closer, copy, newFilterRoute(cfg, filter), metric.NewRecorder(metric.BuildInfo{}))
 
-// Through the production pieces: the admission step's rejections reach the
-// close through the observer the bundle installs, are judged against a real
-// calibrated copy, and the close goes out through the writer as the shared
-// close. Only this deployment's alert is closed, and only after two Slots.
-func TestTargetScopeCloseThroughTheProductionWiring(t *testing.T) {
 	plan := execution.PlanIdentity{TenantID: "tenant-a", BusinessID: "2", StrategyID: "123"}
-	key := openalerts.StrategyKey{TenantID: plan.TenantID, StrategyID: plan.StrategyID}
 	ours, theirs := strings.Repeat("a", 32), strings.Repeat("b", 32)
-	cache := calibratedCopy(t, key, scopeCloseIndex{source: "native", alerts: []openalerts.Alert{
-		{AlertID: "instance-ours", EventSourceID: "native", Fingerprint: ours},
-		{AlertID: "instance-theirs", EventSourceID: "elsewhere", Fingerprint: theirs},
-	}})
-	closer := scopeclose.New(scopeclose.Options{})
-	writer := &maintenanceTestWriter{}
-	closer.Bind(scopeclose.CacheSet(cache), writer)
-	sink := scopeDropSink{closer: closer}
-	// One Slot as the access path hands it over: a screen per Plan, the
-	// cleared Plan's definitive rejections one by one, and the bulk counts.
+	copy.Acknowledged([]contract.TriggerEventV1{{EventKind: contract.TriggerEventAbnormal, TenantID: plan.TenantID, DedupeMD5: ours,
+		PlanRef: contract.RuntimePlanRefV1{StrategyID: plan.StrategyID}, StrategyRef: &contract.StrategySnapshotRef{TenantID: plan.TenantID, BusinessID: 2, StrategyID: 123, Revision: 4}}})
+	// One Slot as the access path hands it over: a screen per Plan, then
+	// the cleared Plan's offers one by one.
 	slot := func(round int64) {
-		if screen := sink.Screen(plan); screen != "" {
-			t.Fatalf("Screen = %q for a strategy with open alerts", screen)
+		if !sink.Screen(plan) {
+			t.Fatal("Screen refused a strategy with an open alert")
 		}
 		for _, fingerprint := range []string{ours, theirs} {
-			sink.Observe(access.ScopeDrop{Plan: plan, Filter: "target_plan", Reason: "out_of_target",
-				Fingerprint: fingerprint, StrategyRevision: 4, Round: round})
+			sink.Observe(access.SupersededOffer{Plan: plan, Fingerprint: fingerprint, StrategyRevision: 4, Round: round})
 		}
-		sink.Count(access.ScopeDropReporter{Slot: execution.SlotIdentity{QueryGroup: "group", EvaluationTime: execution.EvaluationTime(round)}, Plan: plan}, access.ScopeDropIndefinite, 1)
-		sink.Count(access.ScopeDropReporter{Slot: execution.SlotIdentity{QueryGroup: "group", EvaluationTime: execution.EvaluationTime(round)}, Plan: plan}, access.ScopeDropCacheUnavailable, 1)
-		sink.Count(access.ScopeDropReporter{Slot: execution.SlotIdentity{QueryGroup: "group", EvaluationTime: execution.EvaluationTime(round)}, Plan: plan}, access.ScopeDropFingerprintUnsupported, 2)
-		sink.Count(access.ScopeDropReporter{Slot: execution.SlotIdentity{QueryGroup: "group", EvaluationTime: execution.EvaluationTime(round)}, Plan: plan}, access.ScopeDropNoFingerprint, 3)
 		closer.Step(context.Background())
 	}
 	slot(1700000000)
-	if len(writer.batches) != 0 {
-		t.Fatalf("closed after one Slot: %v", writer.batches)
+	if requests := stub.requests("/api/v1/alerts/close"); len(requests) != 0 {
+		t.Fatalf("asked the link to close after one Slot: %v", requests)
 	}
 	slot(1700000060)
-	if len(writer.batches) != 1 || len(writer.batches[0]) != 1 {
-		t.Fatalf("batches = %v, want one close", writer.batches)
+	var closes []string
+	for _, body := range stub.requests("/api/v1/alerts/close") {
+		if !strings.Contains(body, `"dry_run":true`) {
+			closes = append(closes, body)
+		}
 	}
-	request := writer.batches[0][0]
-	if request.AlertInstanceID != "instance-ours" || request.Fingerprint != ours || request.Reason != linkdoutput.CloseReasonTargetOutOfScope ||
-		request.StrategyID != 123 || request.StrategyRevision != 4 || request.BusinessID != 2 || request.TenantID != "tenant-a" {
-		t.Fatalf("request = %+v", request)
+	if len(closes) != 1 {
+		t.Fatalf("closes = %v, want one", closes)
 	}
-	stats := closer.Stats()
-	if stats[scopeclose.OutcomeCloseSent] != 1 || stats[scopeclose.OutcomeProducerForeign] != 1 || stats[scopeclose.OutcomeCacheUnavailable] != 2 || stats[scopeclose.OutcomeIndefinite] != 2 ||
-		stats[scopeclose.OutcomeFingerprintUnsupported] != 4 || stats[scopeclose.OutcomeNotMember] != 6 {
-		t.Fatalf("stats = %v", stats)
+	for _, field := range []string{`"bk_tenant_id":"tenant-a"`, `"labels.strategy_id":"123"`, ours} {
+		if !strings.Contains(closes[0], field) {
+			t.Fatalf("close %s does not carry %s", closes[0], field)
+		}
+	}
+	if strings.Contains(closes[0], theirs) || strings.Contains(closes[0], "dimensions.") {
+		t.Fatalf("close %s names more than the old fingerprint the copy holds", closes[0])
+	}
+	want := map[string]uint64{scopeclose.OutcomeUnconfirmed: 1, scopeclose.OutcomeCloseSent: 1, scopeclose.OutcomeSupersededCloseSent: 1}
+	for outcome, n := range closer.Stats() {
+		if n != want[outcome] {
+			t.Fatalf("stats = %v, want %v", closer.Stats(), want)
+		}
 	}
 }
 
 // Every field of the close's facts reaches the replica's facts, and they sit
-// on the open set's facts: a field dropped on the way would read as zero,
+// on the active copy's facts: a field dropped on the way would read as zero,
 // which here is a reading.
 func TestTheTargetScopeCloseFactsAreCarriedFieldForField(t *testing.T) {
 	facts := targetScopeCloseFacts(scopeclose.Facts{Pending: 1, Confirmed: 2, MaxEntries: 3,
@@ -177,31 +133,31 @@ func TestTheTargetScopeCloseFactsAreCarriedFieldForField(t *testing.T) {
 	zero("target_scope_close", reflect.ValueOf(facts))
 
 	closer := scopeclose.New(scopeclose.Options{})
-	source := withTargetScopeClose(func() *fleet.OpenAlertSetFacts { return &fleet.OpenAlertSetFacts{} }, closer)
+	source := withTargetScopeClose(func() *fleet.ActiveCopyFacts { return &fleet.ActiveCopyFacts{} }, closer)
 	carried := source()
 	if carried.TargetScopeClose == nil || len(carried.TargetScopeClose.Outcomes) != len(scopeclose.Outcomes) {
-		t.Fatalf("open set facts = %+v, want the close beside them with every outcome", carried)
+		t.Fatalf("active copy facts = %+v, want the close beside them with every outcome", carried)
 	}
 }
 
-// A deployment without the alert link's Console has nothing the close could
-// act on, so nothing of it is wired: no sink on the admission step (and so
-// no Screen or Count), no loop, and the outcome counters stay at zero on
-// /metrics. With the Console, all three are there.
-func TestTheTargetScopeCloseIsNotWiredWithoutTheLinkConsole(t *testing.T) {
+// A deployment without the link's control plane has nothing the close
+// could act on, so nothing of it is wired: no sink on the admission step
+// (and so no Screen), no loop, and the outcome counters stay at
+// zero on /metrics. With the control plane, all three are there.
+func TestTheTargetScopeCloseIsNotWiredWithoutTheLinksControlPlane(t *testing.T) {
 	cfg := config.Default()
-	cfg.PhaseTwo.Linkd.ConsoleURL = ""
+	cfg.PhaseTwo.Linkd.ControlPlane = config.LinkdControlPlaneConfig{}
 	closer, sink := targetScopeCloseFor(cfg, time.Now)
 	// The sink must be a nil interface, not a typed nil: the access path
-	// tests the interface, and a typed nil would be screened and counted.
+	// tests the interface, and a typed nil would be screened.
 	if closer != nil || sink != nil {
-		t.Fatalf("without a Console: closer %v sink %v, want neither", closer, sink)
+		t.Fatalf("without the control plane: closer %v sink %v, want neither", closer, sink)
 	}
 	recorder := metric.NewRecorder(metric.BuildInfo{})
 	bundle := &phaseTwoWorkerBundle{}
-	bindTargetScopeClose(bundle, closer, nil, &maintenanceTestWriter{}, nil, recorder)
+	bindTargetScopeClose(bundle, closer, nil, nil, recorder)
 	if bundle.dependencies.RunTargetScopeClose != nil {
-		t.Fatal("a loop was wired without a Console")
+		t.Fatal("a loop was wired without the control plane")
 	}
 	families, err := recorder.Gatherer().Gather()
 	if err != nil {
@@ -215,7 +171,7 @@ func TestTheTargetScopeCloseIsNotWiredWithoutTheLinkConsole(t *testing.T) {
 		for _, m := range family.GetMetric() {
 			found++
 			if m.GetCounter().GetValue() != 0 {
-				t.Errorf("%v = %v without a Console, want 0", m.GetLabel(), m.GetCounter().GetValue())
+				t.Errorf("%v = %v without the control plane, want 0", m.GetLabel(), m.GetCounter().GetValue())
 			}
 		}
 	}
@@ -223,13 +179,13 @@ func TestTheTargetScopeCloseIsNotWiredWithoutTheLinkConsole(t *testing.T) {
 		t.Fatalf("%d outcome cells on /metrics, want every one of %d pre-registered", found, len(scopeclose.Outcomes))
 	}
 
-	cfg.PhaseTwo.Linkd.ConsoleURL = "https://console.example.test/local-api"
+	cfg.PhaseTwo.Linkd.ControlPlane = config.LinkdControlPlaneConfig{URL: "https://link.example.test", JWTSecret: "example-secret"}
 	closer, sink = targetScopeCloseFor(cfg, time.Now)
 	if closer == nil || sink == nil {
-		t.Fatal("with a Console the close was not built")
+		t.Fatal("with the control plane the close was not built")
 	}
-	bindTargetScopeClose(bundle, closer, nil, &maintenanceTestWriter{}, nil, recorder)
+	bindTargetScopeClose(bundle, closer, nil, nil, recorder)
 	if bundle.dependencies.RunTargetScopeClose == nil {
-		t.Fatal("with a Console no loop was wired")
+		t.Fatal("with the control plane no loop was wired")
 	}
 }

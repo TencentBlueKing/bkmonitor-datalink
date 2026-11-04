@@ -398,36 +398,6 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			Prefix: "bk_monitorv3.ee.cache", Configured: true, SharedWith: fleet.EndpointStrategyCache, LastSuccessAgeSeconds: &successAge,
 			Writer: &fleet.WriterEvidence{Present: true, Count: 47788, AgeSeconds: &cmdbAge, State: "loaded"}},
 		{Role: fleet.EndpointDynamicConfig, Kind: "redis"},
-		// The consumer's sets: read 200 s ago, the latest refresh failed and
-		// the calibration past its bound, the gate answering on the copy's
-		// own record for the last question.
-		{Role: fleet.EndpointOpenAlertSet, Kind: "redis", Address: "monitor@sentinel-0.example:26379,sentinel-1.example:26379", Mode: "sentinel", DB: &stateDB,
-			Prefix: "alarmd:open_alerts:", Configured: true, SharedWith: fleet.EndpointStateRedis, LastSuccessAgeSeconds: &successAge,
-			OpenAlertSet: &fleet.OpenAlertSetFacts{Configured: true, LocationConfirmed: true, KeyedByAlertID: ptrBool(true),
-				SubscriptionReady: true, CalibrationConfigured: true, IndexReadAgeSeconds: ptrFloat(200),
-				StaleBeyondBound: true, AuthoritativeAgeSeconds: ptrFloat(190), Available: false, UnavailableReason: "read_error",
-				TrackedSets: 6, LoadedSets: 6, Members: 517,
-				Lookups: map[string]uint64{"index_member": 3, "index_absent": 12, "self_maintained": 1}}},
-		// The same dependency under the index protocol, which has no heartbeat:
-		// configured, subscribed, read seconds ago, covering every strategy --
-		// and holding nothing, with every lookup coming back "not in it". The
-		// row read as "no publication at all, and the gate has not been asked"
-		// on a live deployment of exactly this shape.
-		{Role: fleet.EndpointOpenAlertSet, Kind: "redis", Address: "monitor@sentinel-0.example:26379", Mode: "sentinel", DB: &stateDB,
-			Prefix: "alarmd:open_alerts", Configured: true, SharedWith: fleet.EndpointStateRedis,
-			OpenAlertSet: &fleet.OpenAlertSetFacts{SubscriptionReady: true,
-				CalibrationConfigured: false, IndexReadAgeSeconds: ptrFloat(27), MemberBytes: 15899,
-				Available: true, StaleBeyondBound: false,
-				TrackedSets: 60, LoadedSets: 60, Members: 0,
-				Lookups: map[string]uint64{"index_absent": 168},
-				// The Console's two facts: the location confirmed, the keying
-				// not yet read, which the page states as not read.
-				Configured: true, LocationConfirmed: true,
-				// The target-scope close: its samples stay in the API.
-				TargetScopeClose: &fleet.TargetScopeCloseFacts{Pending: 2, Confirmed: 1, MaxEntries: 1024,
-					Outcomes: map[string]uint64{"close_sent": 3, "unconfirmed": 5, "cache_unavailable": 7},
-					Strategies: []fleet.TargetScopeCloseStrategy{{TenantID: "tenant-test", StrategyID: "1001", Pending: 2, Confirmed: 1,
-						PendingSample: []string{"feedf00d"}, DecidedSample: []string{"beadcafe"}}}}}},
 		{Role: fleet.EndpointQueryBackend, Kind: "http", Address: "http://unify-query.example:10205", Configured: true},
 		// The output sink's own record: open, since sixteen minutes, on the
 		// first attempt.
@@ -438,7 +408,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	}
 	degradations := []fleet.Degradation{
 		{Kind: fleet.DegradationActivationBehind, Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde"},
-		{Kind: fleet.DegradationOpenAlertSetStale, Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-fghij"},
+		{Kind: fleet.DegradationActiveCopyUnsupported, Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-fghij"},
 		// The stale source with the failure behind it: a catalogue that would
 		// not validate because one plan asks for more retention than the
 		// deployment keeps. The line says that, not the kind name.
@@ -449,7 +419,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// own -- since its start, the attempts, the last failure -- and the
 		// line says them of this replica by name.
 		{Kind: fleet.DegradationOutputNotReady, Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-fghij", Stage: "output",
-			Text: "kafka: dial tcp 10.0.0.1:9092: i/o timeout", AgeSeconds: ptrFloat(300), Attempts: ptrInt(12)},
+			Text: "kafka: dial tcp 192.0.2.1:9092: i/o timeout", AgeSeconds: ptrFloat(300), Attempts: ptrInt(12)},
 		// The blocked source, last, as Aggregate appends it after the replica
 		// loop: one fact about the deployment, decided on the newest round.
 		{Kind: fleet.DegradationSourceBlocked, Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde", Stage: "catalog",
@@ -838,7 +808,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	if line := lineStarting(text, "STRATEGIES ::"); !strings.Contains(line, "11 条策略，合成 6 个查询组") {
 		t.Errorf("strategy count = %q, want eleven strategies made up into six Query Groups", line)
 	}
-	if line := lineStarting(text, "STRATEGY STATES ::"); !strings.Contains(line, "按策略的状态：在检测 4 · 检测结果不能采信 6 · 数据没到 1") ||
+	if line := lineStarting(text, "STRATEGY STATES ::"); !strings.Contains(line, "按策略的状态：在检测 4，检测结果不能采信 6，数据没到 1") ||
 		strings.Contains(line, "状态未知") {
 		t.Errorf("strategy states = %q, want the three non-zero words in the server's order and nothing else", line)
 	}
@@ -1008,8 +978,8 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		{"CHECKS ::", "6 个对象命中程序缺陷（3 种），上报"},
 		// The line's problems before it is opened: each fold as where, talking
 		// to what, what kind, how many, and whether it is still happening.
-		{"CHECKS ::", "6 个对象命中程序缺陷（3 种），上报——环节待定位 · 依赖待定位 · 类型待定位（COMPLETED_WITH_UNAVAILABLE 3、error 1）：4 个，已恢复 12 个，仍然受阻，最近失败 17:59:30；"},
-		{"CHECKS ::", "alarmd 自己的依赖没答，1 个对象受影响（1 种）——配置获取 · 依赖待定位 · 不可用（source_blocked 1）：1 个，仍然受阻，最近失败 17:59:30"},
+		{"CHECKS ::", "6 个对象命中程序缺陷（3 种），上报——环节待定位，依赖待定位，类型待定位（COMPLETED_WITH_UNAVAILABLE 3、error 1）：4 个，已恢复 12 个，仍然受阻，最近失败 17:59:30；"},
+		{"CHECKS ::", "alarmd 自己的依赖没答，1 个对象受影响（1 种）——配置获取，依赖待定位，不可用（source_blocked 1）：1 个，仍然受阻，最近失败 17:59:30"},
 		{"CHECKS ::", "；GAP_SCOPE_REASON_CONFLICT（内部错误，第二事实）：1 个，仍然受阻"},
 		{"GOV ::", "2 个对象的查询被后端回\"表或字段不存在\""},
 		// A bare refusal does not say whose it is: 待确认, beside the provider
@@ -1061,10 +1031,10 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// and -- the verdict here is UNKNOWN for a coverage gap -- that the
 		// verdict is about the second clause. Same words whichever response
 		// rendered last.
-		{"BLOCKED SENTENCE ::", "受阻：环节待定位 · 依赖待定位 · 类型待定位（COMPLETED_WITH_UNAVAILABLE 3、error 1） 4 个，仍然受阻；数据查询 · 依赖待定位 · 超时（QUERY_TIMEOUT 4） 4 个，正在恢复；配置获取 · 依赖待定位 · 不可用（source_blocked 1） 1 个，仍然受阻；另 4 组共 4 个，见各行"},
+		{"BLOCKED SENTENCE ::", "受阻：环节待定位，依赖待定位，类型待定位（COMPLETED_WITH_UNAVAILABLE 3、error 1） 4 个，仍然受阻；数据查询，依赖待定位，超时（QUERY_TIMEOUT 4） 4 个，正在恢复；配置获取，依赖待定位，不可用（source_blocked 1） 1 个，仍然受阻；另 4 组共 4 个，见各行"},
 		{"BLOCKED SENTENCE ::", "；待确认：8 个对象说不出结论（没留下成因，各自再跑完一轮就补上）；判定停在 UNKNOWN 说的是这一句，不抵消前一句"},
 		{"BLOCKED SENTENCE BEFORE HEALTH ::", "另 4 组共 4 个，见各行"},
-		{"BLOCKED SENTENCE AFTER HEALTH ::", "受阻：环节待定位 · 依赖待定位 · 类型待定位（COMPLETED_WITH_UNAVAILABLE 3、error 1） 4 个，仍然受阻；数据查询 · 依赖待定位 · 超时（QUERY_TIMEOUT 4） 4 个，正在恢复；"},
+		{"BLOCKED SENTENCE AFTER HEALTH ::", "受阻：环节待定位，依赖待定位，类型待定位（COMPLETED_WITH_UNAVAILABLE 3、error 1） 4 个，仍然受阻；数据查询，依赖待定位，超时（QUERY_TIMEOUT 4） 4 个，正在恢复；"},
 		{"BLOCKED SENTENCE AFTER HEALTH ::", "；待确认：8 个对象说不出结论"},
 		// The problems that recovered within the hour, on the history side:
 		// the count over the lines, and the line with nothing current said
@@ -1074,7 +1044,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// The recovered fold of a line that still has objects rides on the
 		// line: in the expanded groups with its count and clocks, and not in
 		// the first-screen sentence, which is about the objects there now.
-		{"GROUPS BLOCKED ::", "结果提交 · Redis（控制面与状态存储） · 不可用 · 已恢复（这一组的对象都在之后成功完成过，现在没有对象在这一组；对象数是各副本观察到的合计） · 已恢复 86 个（各副本合计），最近一次确认恢复 17:49:00 · 首次 17:35:00 · 最后一次 17:47:00 · 最近一次成功 17:49:00"},
+		{"GROUPS BLOCKED ::", "结果提交，Redis（控制面与状态存储），不可用，已恢复（这一组的对象都在之后成功完成过，现在没有对象在这一组；对象数是各副本观察到的合计），已恢复 86 个（各副本合计），最近一次确认恢复 17:49:00，首次 17:35:00，最后一次 17:47:00，最近一次成功 17:49:00"},
 		// The refusal line carries what its demoted object lost there, as the
 		// refusal's consequence and not as capacity.
 		{"GOV ::", "2 个对象的查询被后端回\"表或字段不存在\"（1 种回答，1 条策略，1 个业务）——按策略引用核，未逐个核过实际请求与元数据前不认定是策略写错；其中 1 个已降级，不再反复查；其中 1 个在被拒期间还跳过了检测（最近 10 分钟内 1 个）——冷却让旧轮次超出重放范围，首要原因是查询不可用，扩容无用"},
@@ -1087,10 +1057,10 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// clock: a loss in progress is still blocked, a stopped one is
 		// history, and a record fold does not claim this process never saw
 		// its objects succeed -- that is not the record's question.
-		{"GROUPS LOSS ::", "ONGOING（仍在发生（最近 10 分钟内跳过，且不是冷却、不是滚动追赶）） · 1 个对象 · 仍然受阻（最近窗口内还在失败） · 首次 17:57:00 · 最近失败 17:57:00 · 1 条策略 · 1 个业务"},
-		{"GROUPS LOSS ::", "HISTORICAL（已停止（10 分钟以上没有再跳过）） · 2 个对象 · 留有历史影响（历史检测缺口，那段未检测的时间不补） · 首次 16:50:00 · 最后一次 17:00:00"},
-		{"GROUPS LOSS ::", "HISTORICAL（已停止（10 分钟以上没有再跳过）） · 2 个对象"},
-		{"GROUPS LOSS ::", "AFTER_RESTART（滚动后的追赶（副本启动或首次接手该对象 5 分钟内跳过；每次滚动都有，通常几分钟内结束——是否结束看这一组还有没有新增）） · 1 个对象"},
+		{"GROUPS LOSS ::", "ONGOING（仍在发生（最近 10 分钟内跳过，且不是冷却、不是滚动追赶）），1 个对象，仍然受阻（最近窗口内还在失败），首次 17:57:00，最近失败 17:57:00，1 条策略，1 个业务"},
+		{"GROUPS LOSS ::", "HISTORICAL（已停止（10 分钟以上没有再跳过）），2 个对象，留有历史影响（历史检测缺口，那段未检测的时间不补），首次 16:50:00，最后一次 17:00:00"},
+		{"GROUPS LOSS ::", "HISTORICAL（已停止（10 分钟以上没有再跳过）），2 个对象"},
+		{"GROUPS LOSS ::", "AFTER_RESTART（滚动后的追赶（副本启动或首次接手该对象 5 分钟内跳过；每次滚动都有，通常几分钟内结束——是否结束看这一组还有没有新增）），1 个对象"},
 		{"SKIP qg-restart-catchup ::", "，10 秒周期。滚动后的追赶（副本启动或首次接手该对象 5 分钟内跳过；每次滚动都有，通常几分钟内结束——是否结束看这一组还有没有新增）"},
 		{"SKIP qg-demoted-rejected ::", "3 个 Slot，记录于 "},
 		{"SKIP qg-demoted-rejected ::", "。在被拒期间跳过（冷却让旧轮次超出重放范围，首要原因是查询不可用）"},
@@ -1144,38 +1114,26 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	// refusal as its largest group, a sample cut at twenty, a level-scoped
 	// compiler refusal with its field, and a stale one said to be running.
 	for _, want := range []struct{ line, says string }{
-		{"GROUPS SOURCE ::", "SOURCE_IDENTITY_UNAVAILABLE · 59 条策略，处置 SOURCE_INCOMPLETE，没有对象（没进入检测）策略样本（按 ID 升序，最多 20 条，另有 39 条没列）：策略 9策略 81策略 200"},
-		{"GROUPS SOURCE ::", "SOURCE_OBJECT_INCOMPLETE · 1 条策略，处置 SOURCE_INCOMPLETE，没有对象（没进入检测）策略样本（按 ID 升序，最多 1 条）：策略 120"},
-		{"GROUPS REJECTED ::", "LEVEL_INVALID · 1 条策略，处置 CONFIG_REJECTED，没有对象（没进入检测）策略样本（按 ID 升序，最多 1 条）：策略 77　级别 2 · 字段 items[0].algorithms[0].config"},
-		{"GROUPS REJECTED ::", "STALE_CONFIG/LEVEL_INVALID · 1 条策略，处置 STALE_CONFIG，仍按上一版配置在检测，新配置没生效"},
+		{"GROUPS SOURCE ::", "SOURCE_IDENTITY_UNAVAILABLE，59 条策略，处置 SOURCE_INCOMPLETE，没有对象（没进入检测）策略样本（按 ID 升序，最多 20 条，另有 39 条没列）：策略 9策略 81策略 200"},
+		{"GROUPS SOURCE ::", "SOURCE_OBJECT_INCOMPLETE，1 条策略，处置 SOURCE_INCOMPLETE，没有对象（没进入检测）策略样本（按 ID 升序，最多 1 条）：策略 120"},
+		{"GROUPS REJECTED ::", "LEVEL_INVALID，1 条策略，处置 CONFIG_REJECTED，没有对象（没进入检测）策略样本（按 ID 升序，最多 1 条）：策略 77　级别 2，字段 items[0].algorithms[0].config"},
+		{"GROUPS REJECTED ::", "STALE_CONFIG/LEVEL_INVALID，1 条策略，处置 STALE_CONFIG，仍按上一版配置在检测，新配置没生效"},
 		{"EXPECTED HINT ::", "策略缓存列出 62 条，接受 0 条；扣住 59 条 SOURCE_INCOMPLETE/SOURCE_IDENTITY_UNAVAILABLE、1 条 CONFIG_REJECTED/LEVEL_INVALID、1 条 SOURCE_INCOMPLETE/SOURCE_OBJECT_INCOMPLETE、1 条 STALE_CONFIG/LEVEL_INVALID；不是没负载，是全部被扣在配置获取环节——看首屏第一行；写入方标记 last_updated 于 1 分 35 秒前更新"},
 		{"EXPECTED HINT nosource ::", "策略缓存的读数没有发布（旧构建，或还没有 leader 跑过一轮），说不出这个 0 是没策略还是全被扣住"},
 		{"EXPECTED HINT empty ::", "策略缓存列出 0 条，接受 0 条；写入方没有留 last_updated 标记"},
 		{"EXPECTED HINT noted ::", "扣住 1 条 CONFIG_REJECTED/LEVEL_INVALID；配置有提示、在检测 2 条 CONFIG_NOTED/EFFECTIVE_TIME_RANGE_INVALID（不是被扣）"},
-		{"DEPS ::", "策略缓存（平台写、alarmd 读）redis standalone redis.example:6379 · db 0 · bk_monitorv3.ee.cache成功 3 秒前；失败 1 小时 0 分前：dial tcp: i/o timeout有：列出 62 条策略；写入方标记 last_updated 于 1 分 35 秒前更新"},
-		{"DEPS ::", "CMDB 主机缓存（平台写、alarmd 读）redis standalone redis.example:6379 · db 0 · bk_monitorv3.ee.cache · 与 strategy_cache 共用连接成功 3 秒前有：47788 台主机，来源刷新于 4 分 0 秒前"},
+		{"DEPS ::", "策略缓存（平台写、alarmd 读）redis standalone redis.example:6379，db 0，bk_monitorv3.ee.cache成功 3 秒前；失败 1 小时 0 分前：dial tcp: i/o timeout有：列出 62 条策略；写入方标记 last_updated 于 1 分 35 秒前更新"},
+		{"DEPS ::", "CMDB 主机缓存（平台写、alarmd 读）redis standalone redis.example:6379，db 0，bk_monitorv3.ee.cache，与 strategy_cache 共用连接成功 3 秒前有：47788 台主机，来源刷新于 4 分 0 秒前"},
 		{"DEPS ::", "平台动态配置（平台写、alarmd 读）未配置"},
-		{"DEPS ::", "未恢复时序指纹集合（告警消费方写、alarmd 读；恢复门据此判有没有可恢复的告警）redis sentinel 主节点名 monitor，哨兵 sentinel-0.example:26379,sentinel-1.example:26379 · db 8 · alarmd:open_alerts: · 与 state_redis 共用连接成功 3 秒前有：消费方按索引协议发布，本端 3 分 20 秒前读到；跟踪 6 条策略、索引覆盖 6 条、未恢复指纹 517 个；Console 确认：写入位置已确认、按告警 ID 建键是；当前不可用：读不到（索引读取或校准失败）；校准已超过设计的暴露时长；恢复门查过 16 次：索引里有 3、索引里没有 12、按本副本记录 1"},
 		// The sentinel address in words -- master name, then sentinels -- so
 		// the one '@' an address legitimately carries never reads as an account.
-		{"DEPS ::", "alarmd 自己的状态（目录、归属、进度、舰队）redis sentinel 主节点名 monitor，哨兵 sentinel-0.example:26379,sentinel-1.example:26379 · db 8 · alarmd:phase2:g2:runtime:v1成功 3 秒前"},
+		{"DEPS ::", "alarmd 自己的状态（目录、归属、进度、舰队）redis sentinel 主节点名 monitor，哨兵 sentinel-0.example:26379,sentinel-1.example:26379，db 8，alarmd:phase2:g2:runtime:v1成功 3 秒前"},
 		// The output sink says open-for-how-long, not last-message-succeeded.
-		{"DEPS ::", "告警输出 Kafka（topic 在前缀列）kafka kafka-0.example:9092,kafka-1.example:9092 · 0bkmonitor_backend_event就绪，已开 16 分 20 秒"},
+		{"DEPS ::", "告警输出 Kafka（topic 在前缀列）kafka kafka-0.example:9092,kafka-1.example:9092，0bkmonitor_backend_event就绪，已开 16 分 20 秒"},
 		{"DEPS ::", "告警输出那一行记的是连接层（producer 开着没开、开了多久），不按每条消息计"},
 		// The shown list is one of two: the basis says so and where the others are.
 		{"DEPS ::", "副本 abcde 解析到的坐标（2 个副本都发布了，这里显示最新发布的这一份；各副本自己的连接记录在 /api/health 的 per_replica[].dependencies）"},
-		{"DEPS ::", "兼容输出用的服务 Redis（策略快照）redis standalone redis.example:6379 · db 8 · bk_monitorv3.ee.cache本进程还没对它发过命令"},
-		// The index read and the answer it gives have to be counted, or the
-		// row says the gate was never asked.
-		{"DEPS ::", "有：消费方按索引协议发布，本端 27 秒前读到"},
-		{"DEPS ::", "跟踪 60 条策略、索引覆盖 60 条、未恢复指纹 0 个（未配校准）"},
-		{"DEPS ::", "恢复门查过 168 次：索引里没有 168"},
-		{"DEPS ::", "目标移出范围关闭：等第二轮确认 2 个、已确认待关 1 个；累计发出关闭 3（发出不等于 linkd 已关）、首次观测 5、目标缓存不确定未判 7、不在集合 0、集合不可判 0、他源告警 0、发送失败 0、观测表满 0、多输入无法算指纹 0、观测过旧暂缓 0、拒绝本身不确定 0"},
-		// The Console's two facts, the keying not read yet said as such.
-		{"DEPS ::", "Console 确认：写入位置已确认、按告警 ID 建键还没读到"},
-		// The consequence, said once rather than left for the reader to derive
-		// from a row that also says "available" and "not stale", both true.
-		{"DEPS ::", "这套部署现在发不出恢复：集合装载了但一条未恢复指纹都没有，168 次全部落空、恢复被扣住"},
+		{"DEPS ::", "兼容输出用的服务 Redis（策略快照）redis standalone redis.example:6379，db 8，bk_monitorv3.ee.cache本进程还没对它发过命令"},
 		{"VAR degraded why ::", "策略缓存里有策略，但这一轮一条都没接受，且没有任何对象在检测——整个部署没有在检测任何东西；不是没负载，是全部被扣在配置获取环节（副本 abcde）"},
 		{"NOTHING-RUNNING CHECKS ::", "5 条策略这个部署跑不了（1 种原因）——本构建不支持 5 条；处理办法按原因组看"},
 		{"NOTHING-RUNNING GROUPS ::", "这是什么：该检测算法还没迁到 Go 侧，本构建不评估它。谁处理：本构建能力（等新构建，改参数没有用）。下一步：等带该算法的构建；改部署参数没有用"},
@@ -1210,19 +1168,19 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	}
 	// Opening a standing's line names its replicas, not objects.
 	for _, want := range []struct{ line, says string }{
-		{"GROUPS CUTOVER ::", "schedule_cutover/schedule_conflict · 副本 abcde，没有可列的对象"},
+		{"GROUPS CUTOVER ::", "schedule_cutover/schedule_conflict，副本 abcde，没有可列的对象"},
 		// The guard-held fold names the trigger and that the window is still
 		// short; the reader is not sent to edit a strategy.
 		// A window fold: rounds end (with results nobody can use), so the
 		// problem is recovering, and the clock is the latest round, not a
 		// failure.
-		{"GROUPS WINDOW ::", "保护未解除（最初触发 CONFIG_DRIFT） · 1 个对象 · 正在恢复（窗口内没有新失败；轮次在结束或只是迟到，结果还没补齐） · 首次 17:00:00 · 最近一轮 17:59:30 · 本进程没见过这些对象成功完成 · 1 条策略 · 1 个业务"},
+		{"GROUPS WINDOW ::", "保护未解除（最初触发 CONFIG_DRIFT），1 个对象，正在恢复（窗口内没有新失败；轮次在结束或只是迟到，结果还没补齐），首次 17:00:00，最近一轮 17:59:30，本进程没见过这些对象成功完成，1 条策略，1 个业务"},
 		{"BASIS CUTOVER ::", "最近一次激活失败：alarmd controlplane: schedule activation conflict（副本 abcde）。伴随证据：segment_content_freshness_total{stale}"},
-		{"GROUPS DEGRADED ::", "OPEN_ALERT_SET_STALE（已开告警集合的副本超过设计允许的时间没拿到消费者的发布，恢复门在用旧知识） · 副本 fghij，没有可列的对象"},
-		{"GROUPS DEGRADED ::", "CONTROL_SOURCE_STALE（策略源超过设计允许的时间没有刷新成功，跑的是上一份好的目录——最近一次失败于 validate_catalog：plan retention 60h13m exceeds catalog retention 24h13m） · 副本 abcde，没有可列的对象"},
+		{"GROUPS DEGRADED ::", "ACTIVE_COPY_UNSUPPORTED（linkd 回答不支持检索（501/404/405）：期间本副本的活动告警副本不刷新，恢复门只放行本副本自己发过异常的告警（其余计入 link_unsupported 并暂缓），按退避（1 分钟起、最长 10 分钟）重试，检索恢复即解除），副本 fghij，没有可列的对象"},
+		{"GROUPS DEGRADED ::", "CONTROL_SOURCE_STALE（策略源超过设计允许的时间没有刷新成功，跑的是上一份好的目录——最近一次失败于 validate_catalog：plan retention 60h13m exceeds catalog retention 24h13m），副本 abcde，没有可列的对象"},
 		// The failure's own words stay on the expanded group; the first
 		// screen says which replica, for how long and how many tries.
-		{"GROUPS DEGRADED ::", "OUTPUT_NOT_READY（副本连不上告警输出：进程活着但不就绪，不接检测任务，由其余副本顶着——少一个副本的容量——最近一次失败于 output：kafka: dial tcp 10.0.0.1:9092: i/o timeout） · 副本 fghij，没有可列的对象"},
+		{"GROUPS DEGRADED ::", "OUTPUT_NOT_READY（副本连不上告警输出：进程活着但不就绪，不接检测任务，由其余副本顶着——少一个副本的容量——最近一次失败于 output：kafka: dial tcp 192.0.2.1:9092: i/o timeout），副本 fghij，没有可列的对象"},
 	} {
 		if line := lineStarting(text, want.line); !strings.Contains(line, want.says) {
 			t.Errorf("%s does not say %q:\n%s", want.line, want.says, line)
@@ -1274,8 +1232,8 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	// Opening a check lists its folds with their counts; a fold with no objects
 	// says so rather than offering an empty table.
 	groups := lineStarting(text, "GROUPS ::")
-	for _, want := range []string{"UNDETERMINED · 3 个对象", "RESTORED_WITHOUT_CAUSE · 2 个对象",
-		"SNAPSHOT_STALE · 副本级缺口，没有可列的对象"} {
+	for _, want := range []string{"UNDETERMINED，3 个对象", "RESTORED_WITHOUT_CAUSE，2 个对象",
+		"SNAPSHOT_STALE，副本级缺口，没有可列的对象"} {
 		if !strings.Contains(groups, want) {
 			t.Errorf("the groups of OBSERVATION_GAP do not say %q:\n%s", want, groups)
 		}
@@ -1285,25 +1243,25 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	// decides anything; the row says what the object is doing, how its last
 	// round ended, since when, and what its windows hold.
 	for _, want := range []struct{ object, now, result, window string }{
-		{"qg-stalled", "轮次不结束", "完成 · COMPLETED_WITH_UNAVAILABLE", "—"},
-		{"qg-two-clocks", "—", "完成 · QUERY_TIMEOUT", "—"},
-		{"qg-cooldown", "冷却中", "失败 · QUERY_UNAVAILABLE", "—"},
-		{"qg-rejected", "冷却中", "被拒绝 · QUERY_UNAVAILABLE", "—"},
-		{"qg-blocked", "—", "失败 · source_blocked", "—"},
-		{"qg-offhours", "生效时段外", "完成 · EFFECTIVE_TIME_INACTIVE", "—"},
+		{"qg-stalled", "轮次不结束", "完成，COMPLETED_WITH_UNAVAILABLE", "—"},
+		{"qg-two-clocks", "—", "完成，QUERY_TIMEOUT", "—"},
+		{"qg-cooldown", "冷却中", "失败，QUERY_UNAVAILABLE", "—"},
+		{"qg-rejected", "冷却中", "被拒绝，QUERY_UNAVAILABLE", "—"},
+		{"qg-blocked", "—", "失败，source_blocked", "—"},
+		{"qg-offhours", "生效时段外", "完成，EFFECTIVE_TIME_INACTIVE", "—"},
 		// The window's progress on the cell: not moving for twelve rounds, or
 		// one more point than last round.
-		{"qg-window-churn", "—", "完成 · HISTORY_WARMING", "9 个窗口 · 短 4 · 空 0 · 新 4 · 连续 40 轮 · 最差 2/9（上一轮 2，连续 12 轮没进展） · 不完整窗口上报了 3 个异常"},
-		{"qg-window-stale-data", "—", "完成 · HISTORY_WARMING", "9 个窗口 · 短 4 · 空 0 · 新 0 · 连续 40 轮 · 最差 2/9（上一轮 1，在补）"},
-		{"qg-window-starved", "—", "完成 · HISTORY_WARMING", "3 个窗口 · 短 2 · 空 2 · 新 0 · 连续 40 轮 · 最差 0/14 · 检测用不了 2 个：REQUIRED_VALUE_MISSING"},
-		{"qg-no-data", "—", "无数据 · FULL_EMPTY_COMPLETED", "—"},
-		{"qg-plain", "—", "完成 · COMPLETED_WITH_UNAVAILABLE", "—"},
-		{"qg-guard-held", "—", "完成 · CONFIG_DRIFT（保护沿用，非本轮）", "3 个窗口 · 短 1 · 空 0 · 新 0 · 连续 29 轮 · 最差 5/9（持久化保护要求的，可大于策略配置）"},
-		{"qg-stuck-slot", "— · 卡在 " + at.Add(-3*time.Minute).In(time.FixedZone("UTC+8", 8*60*60)).Format("15:04:05") + " 这个 Slot，第 3 次失败", "失败 · error", "—"},
-		{"qg-late", "迟到 12 秒", "完成 · HISTORY_WARMING", "—"},
-		{"qg-missed-turn", "超期 4 分 0 秒", "完成 · QUERY_TIMEOUT", "—"},
-		{"qg-never", "接管后未跑", "完成 · COMPLETED_WITH_UNAVAILABLE", "—"},
-		{"qg-skipped-hour-ago", "—", "— · GAP_SKIPPED", "—"},
+		{"qg-window-churn", "—", "完成，HISTORY_WARMING", "9 个窗口，短 4，空 0，新 4，连续 40 轮，最差 2/9（上一轮 2，连续 12 轮没进展），不完整窗口上报了 3 个异常"},
+		{"qg-window-stale-data", "—", "完成，HISTORY_WARMING", "9 个窗口，短 4，空 0，新 0，连续 40 轮，最差 2/9（上一轮 1，在补）"},
+		{"qg-window-starved", "—", "完成，HISTORY_WARMING", "3 个窗口，短 2，空 2，新 0，连续 40 轮，最差 0/14，检测用不了 2 个：REQUIRED_VALUE_MISSING"},
+		{"qg-no-data", "—", "无数据，FULL_EMPTY_COMPLETED", "—"},
+		{"qg-plain", "—", "完成，COMPLETED_WITH_UNAVAILABLE", "—"},
+		{"qg-guard-held", "—", "完成，CONFIG_DRIFT（保护沿用，非本轮）", "3 个窗口，短 1，空 0，新 0，连续 29 轮，最差 5/9（持久化保护要求的，可大于策略配置）"},
+		{"qg-stuck-slot", "—，卡在 " + at.Add(-3*time.Minute).In(time.FixedZone("UTC+8", 8*60*60)).Format("15:04:05") + " 这个 Slot，第 3 次失败", "失败，error", "—"},
+		{"qg-late", "迟到 12 秒", "完成，HISTORY_WARMING", "—"},
+		{"qg-missed-turn", "超期 4 分 0 秒", "完成，QUERY_TIMEOUT", "—"},
+		{"qg-never", "接管后未跑", "完成，COMPLETED_WITH_UNAVAILABLE", "—"},
+		{"qg-skipped-hour-ago", "—", "—，GAP_SKIPPED", "—"},
 	} {
 		line := lineStarting(text, "ROW "+want.object+" ::")
 		if line == "" {
@@ -1324,8 +1282,8 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	// The third clock. An object saying its reason for less time than it has
 	// been anomalous says both; one saying it since the start says the count.
 	for _, want := range []struct{ object, since string }{
-		{"qg-two-clocks", "1 小时 0 分 · 当前原因 12 分钟，连续 12 轮"},
-		{"qg-one-clock", "1 小时 0 分 · 当前原因 连续 60 轮"},
+		{"qg-two-clocks", "1 小时 0 分，当前原因 12 分钟，连续 12 轮"},
+		{"qg-one-clock", "1 小时 0 分，当前原因 连续 60 轮"},
 		{"qg-plain", "1 小时 0 分"},
 	} {
 		line := lineStarting(text, "ROW "+want.object+" ::")
@@ -1336,7 +1294,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	}
 	// The waiting object names the moment it is next due; the wall-clock
 	// rendering is the harness's locale, so only the shape is pinned.
-	if line := lineStarting(text, "ROW qg-waiting ::"); !strings.Contains(line, "等下次 · 预计 ") {
+	if line := lineStarting(text, "ROW qg-waiting ::"); !strings.Contains(line, "等下次，预计 ") {
 		t.Errorf("qg-waiting renders %q, want it to say when it is next due", line)
 	}
 	// The retained skip carries its span in the evidence.
@@ -1475,7 +1433,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			"健康且没有覆盖缺口时不能还说证据不全"},
 		{"VAR degraded why ::", "副本级运行状态超出设计界：控制面变更没有生效", "容量或架构",
 			"副本级 standing 决定的 DEGRADED 要点名 standing，不能说成对象列表的容量或架构问题"},
-		{"VAR degraded why ::", "（副本 abcde）；已开告警集合", "",
+		{"VAR degraded why ::", "（副本 abcde）；linkd 回答不支持检索", "",
 			"两种 standing 各说一次并带副本"},
 		{"VAR degraded-objects why ::", "存在 alarmd 自己该负责的异常", "超出设计界",
 			"没有 standing 时 DEGRADED 才是对象列表决定的"},

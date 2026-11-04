@@ -140,10 +140,18 @@ func TestACarriedReadIsRefusedAtTheFirstSeriesItsSlotHasNoRoomFor(t *testing.T) 
 					flusher.Flush()
 					written.Add(1)
 					if index == 0 {
+						// The refusal closes refused before the read ends and
+						// cancels this request, so both may be ready by the
+						// time the handler looks; a select picks either, and
+						// refused is asked again after it.
+						select {
+						case <-pool.refused:
+						case <-request.Context().Done():
+						}
 						select {
 						case <-pool.refused:
 							writtenAtRefusal = written.Load()
-						case <-request.Context().Done():
+						default:
 						}
 					}
 				}

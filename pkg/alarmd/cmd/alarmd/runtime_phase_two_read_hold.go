@@ -157,7 +157,7 @@ func (holds *productionReadHolds) limitCut(cut readhold.LimitCut) {
 	if ok && logged == cut.To {
 		return
 	}
-	holds.logger.Warn("read_hold", "limit_cut", 0, 0, slog.String("query_group", string(cut.QueryGroup)),
+	holds.logger.WarnEvent("read_hold", "limit_cut", 0, slog.String("query_group", string(cut.QueryGroup)),
 		slog.Int64("slot", int64(cut.Slot)), slog.Int64("from_hold_ms", cut.From.Milliseconds()), slog.Int64("to_hold_ms", cut.To.Milliseconds()),
 		slog.Int64("period_s", int64(cut.Period/time.Second)), slog.Int64("max_replay_slots", maxReplay),
 		slog.Int64("expected_skipped_slots", steps-maxReplay))
@@ -873,7 +873,7 @@ func (holds *productionReadHolds) RetireCloseFailed(err error) {
 
 func (holds *productionReadHolds) report(reason string, qg execution.QueryGroupIdentity, err error) {
 	if err != nil && holds.logger != nil {
-		holds.logger.Warn("read_hold", reason, 0, 0, slog.String("query_group", string(qg)), slog.String("error", err.Error()))
+		holds.logger.WarnEvent("read_hold", reason, 0, slog.String("query_group", string(qg)), slog.String("error", err.Error()))
 	}
 }
 
@@ -949,7 +949,7 @@ func (holds *productionReadHolds) bindLookback(options *lookback.Options) {
 		if holds.logger == nil {
 			return
 		}
-		holds.logger.Info("lookback", "window_read_early", 0, 0, holds.readEarlyAttrs(e)...)
+		holds.logger.InfoEvent("lookback", "window_read_early", 0, holds.readEarlyAttrs(e)...)
 	}
 	// One line per probe start: resumed_from is the clean rounds it went on
 	// from, kept by the process that ran it before, 0 for a fresh one.
@@ -957,7 +957,7 @@ func (holds *productionReadHolds) bindLookback(options *lookback.Options) {
 		if holds.logger == nil {
 			return
 		}
-		holds.logger.Info("lookback", "floor_probe_started", 0, 0, slog.String("query_group", string(e.Contract.Slot.QueryGroup)),
+		holds.logger.InfoEvent("lookback", "floor_probe_started", 0, slog.String("query_group", string(e.Contract.Slot.QueryGroup)),
 			slog.Int64("slot", int64(e.Contract.Slot.EvaluationTime)), slog.String("source", e.Source), slog.String("kind", e.Kind),
 			slog.Int64("probe_ms", e.Floor.Milliseconds()), slog.Int64("read_hold_ms", e.Hold.Milliseconds()),
 			slog.Int("rounds_required", e.Rounds), slog.Int64("started_slot", int64(e.Started)), slog.Int("resumed_from", e.ResumedFrom))
@@ -988,7 +988,7 @@ func (holds *productionReadHolds) bindLookback(options *lookback.Options) {
 					attrs = append(attrs, slog.Int(change, e.Changes[change]))
 				}
 			}
-			holds.logger.Info("lookback", "floor_probe_ended", 0, 0, attrs...)
+			holds.logger.InfoEvent("lookback", "floor_probe_ended", 0, attrs...)
 		}
 		if e.Event != lookback.FloorProbePassed && e.Event != lookback.FloorProbeFailed {
 			return
@@ -1026,7 +1026,7 @@ func (holds *productionReadHolds) bindLookback(options *lookback.Options) {
 			attrs = append(attrs, slog.Int64("reserved_hold_ms", e.ReservedHold.Milliseconds()),
 				slog.Int64("frozen_hold_ms", e.FrozenHold.Milliseconds()), slog.Int64("pending_hold_ms", pending))
 		}
-		holds.logger.Info("lookback", "earlier_trial", 0, 0, attrs...)
+		holds.logger.InfoEvent("lookback", "earlier_trial", 0, attrs...)
 	}
 	options.OnReadHoldIgnored = func(e lookback.ReadHoldEvidence, reason string) {
 		inspection := holds.controller.Inspect(e.Contract.Slot.QueryGroup)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/admission"
@@ -13,6 +14,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/sourceliveness"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/trigger"
@@ -45,6 +47,19 @@ type Evaluator struct {
 	// configuration may, because production setting it would put the second
 	// window build back and gain nothing.
 	rebuildGuardWindow bool
+	// liveness is asked, before a Level ends on no data, whether its source
+	// is alive (WithSourceLiveness); nil ends on no data as configured.
+	liveness sourceliveness.Judge
+}
+
+// WithSourceLiveness is the Evaluator asking judge, before a Level of a
+// present series ends on no data, whether the Plan's source is alive. The
+// worker asks the same judge for an absent series' end.
+func (e *Evaluator) WithSourceLiveness(judge sourceliveness.Judge) *Evaluator {
+	if e != nil {
+		e.liveness = judge
+	}
+	return e
 }
 
 // WithBusinessAttribution gives the evaluator what a global business Plan's
@@ -258,6 +273,8 @@ func countOpenAlertGate(counts *execution.OpenAlertGateCounts, gate trigger.Reco
 		counts.HeldNoOpenAlert++
 	case trigger.OpenAlertGateHeldFingerprintUnknown:
 		counts.HeldFingerprintUnknown++
+	case trigger.OpenAlertGateHeldLevelNotOpen:
+		counts.HeldLevelNotOpen++
 	case trigger.OpenAlertGateNotConfigured:
 		counts.NotConfigured++
 	case trigger.OpenAlertGateProtocolNotGated:
@@ -498,7 +515,8 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 		return string(folded), proposed
 	}
 	tr, err := trigger.EvaluateV2(trigger.EvaluationRequestV2{TenantID: due.Identity.TenantID, BusinessID: due.Identity.BusinessID, Plan: due.CompiledPlan, Record: trigger.DetectionRecord{RecordID: record.RecordID(), SourceTime: record.SourceTime(), ProjectedValues: tvalues, LevelFacts: tfacts}, RecordRef: contract.TriggerRecordRefV1{RecordID: record.RecordID(), SourceTime: record.SourceTime(), DimensionIdentityDigest: string(series), Dimensions: alertDimensions(record.Dimensions(), request.HostOverlay)}, Observed: contract.TriggerObservedV1{Values: record.Values()}, Histories: histories, EffectiveTimeFacts: effective, EvaluationTime: int64(request.Header.Contract.Slot.EvaluationTime), DecisionTime: request.Header.DecisionTime, ReadHoldMillis: request.Header.Contract.ReadHoldMillis, ReadEnd: primaryReadEnd(request.Header, due.Identity), SeriesSeenBefore: !fresh, ExecutionID: request.Header.ExecutionID, Limits: e.limits.Trigger, OpenAlerts: request.OpenAlerts, HoldRecovery: holdRecovery, NamedOutputs: request.NamedOutputs,
-		ZeroCountIsNoObservation: zeroCountIsNoObservation(request.Header.Requirements, due.Identity)})
+		ZeroCountIsNoObservation: zeroCountIsNoObservation(request.Header.Requirements, due.Identity),
+		NoDataEndSource:          e.noDataEndSource(request.Header, due.Identity, series, record.SourceTime())})
 	if err != nil {
 		return recordResult{}, err
 	}
@@ -583,6 +601,12 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 			// business outcome. A record the recovery gate held has RECOVERY
 			// outcomes and no envelope, and says so on each of them.
 			EnvelopeHeld: tr.RecoveryGate.Held && kind == execution.LevelOutcomeRecovery,
+			// A RECOVERY the envelope left out because the alert is at
+			// another Level: the Level still recovers in the state, and the
+			// contract does not look for it in the event. No reason: a
+			// successful RECOVERY carries none, and its readers read the
+			// outcome.
+			EventOmitted: kind == execution.LevelOutcomeRecovery && slices.Contains(tr.OmittedRecoveryLevels, o.LevelID),
 			GuardTail:    guardTail, ReasonCarried: carried,
 			RecoveryWithheld: normalWithheld(kind, o, alertOpen)}.WithReasonOrigin(origin)
 	}
@@ -1666,4 +1690,36 @@ func alertDimensions(dimensions map[string]json.RawMessage, overlay map[string]j
 		merged[key] = value
 	}
 	return merged
+}
+
+// noDataEndSource is the trigger's view of the source liveness judge for one
+// record: nil without a judge, else the Plan's primary source at the
+// record's period.
+func (e *Evaluator) noDataEndSource(header execution.InternalExecutionHeader, plan execution.PlanIdentity,
+	series execution.SeriesIdentityDigest, judged int64) trigger.NoDataEndSource {
+	if e.liveness == nil {
+		return nil
+	}
+	return recordSource{judge: e.liveness, header: header, plan: plan, series: series, judged: judged}
+}
+
+type recordSource struct {
+	judge  sourceliveness.Judge
+	header execution.InternalExecutionHeader
+	plan   execution.PlanIdentity
+	series execution.SeriesIdentityDigest
+	judged int64
+}
+
+func (source recordSource) SourceAlive(levelID uint32, spanSeconds, lastRealPoint int64) bool {
+	facts, _ := source.header.PrimaryQueryFacts(source.plan)
+	verdict := source.judge.Judge(sourceliveness.Subject{Plan: source.plan, LevelID: levelID, Series: source.series,
+		NoDataSpanSeconds: spanSeconds, LastRealPoint: lastRealPoint}, facts, source.judged)
+	return verdict.Ends()
+}
+
+func (source recordSource) DueNext(_ uint32, lastRealPoint, spanSeconds int64) {
+	if facts, found := source.header.PrimaryQueryFacts(source.plan); found {
+		source.judge.Ahead(facts, lastRealPoint, source.judged, spanSeconds)
+	}
 }

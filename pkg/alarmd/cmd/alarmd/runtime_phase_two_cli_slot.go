@@ -473,6 +473,17 @@ func cliSlotReadError(err error, reader *cliSlotRedis) error {
 // cliLatestPublication reads the newest publication from the catalog, the
 // one strategy.get reports, for slot.get to set beside a Slot's own. Nil
 // without a catalog, and slot.get then carries no latest publication.
+// cliPlanCarries is slot.query's read of where a Query Group's Plans' Runtime
+// State comes from, the same read object.get's plan_carries is.
+func cliPlanCarries(catalog *controlplane.RedisCatalogRepository) func(context.Context, execution.QueryGroupIdentity) (controlplane.PlanCarriesReading, error) {
+	if catalog == nil {
+		return nil
+	}
+	return func(ctx context.Context, queryGroup execution.QueryGroupIdentity) (controlplane.PlanCarriesReading, error) {
+		return catalog.PlanCarries(ctx, queryGroup, controlplane.MaxPlanCarries)
+	}
+}
+
 func cliLatestPublication(catalog *controlplane.RedisCatalogRepository) func(context.Context) (obchannel.SlotPublication, error) {
 	if catalog == nil {
 		return nil

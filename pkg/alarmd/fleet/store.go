@@ -437,14 +437,6 @@ func (store *RedisStore) written(snapshot Snapshot) (Snapshot, error) {
 		due.Late, due.Overdue, due.Never = late, overdue, never
 		snapshot.Due = &due
 	}
-	// The open-alert counts likewise, on a copy, each list its own budget.
-	if snapshot.OpenAlerts != nil {
-		open := *snapshot.OpenAlerts
-		counts, unknown := withinCountBudget(open.Counts, store.maxAnomalyBytes), withinObjectBudget(open.Unknown, store.maxAnomalyBytes)
-		open.Cut = open.Cut || len(counts) < len(open.Counts) || len(unknown) < len(open.Unknown)
-		open.Counts, open.Unknown = counts, unknown
-		snapshot.OpenAlerts = &open
-	}
 	held := withinReadHoldBudget(snapshot.ReadHolds, store.maxAnomalyBytes)
 	snapshot.ReadHoldsCut = snapshot.ReadHoldsCut || len(held) < len(snapshot.ReadHolds)
 	snapshot.ReadHolds = held

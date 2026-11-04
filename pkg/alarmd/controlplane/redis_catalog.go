@@ -268,9 +268,11 @@ func (repository *RedisCatalogRepository) RenewCurrentActivationObjects(ctx cont
 	metricResult := "failure"
 	queryGroups, objectBytes := 0, 0
 	defer func() {
+		renewed := time.Since(started)
 		repository.observe(ctx, observability.Observation{Component: observability.ComponentControlPlane, Stage: observability.StageActiveQGSet,
 			Result: factsTextResult(metricResult), ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "renew", Result: metricResult,
-				QueryGroups: queryGroups, ObjectBytes: objectBytes, Duration: time.Since(started)}})
+				QueryGroups: queryGroups, ObjectBytes: objectBytes, Duration: renewed},
+			Duration: renewed, DurationKnown: true})
 	}()
 	state, err := repository.LoadActivationHead(ctx)
 	if err != nil {
@@ -943,6 +945,9 @@ func validateActivationState(state ActivationState) error {
 			return errors.New("alarmd controlplane: incomplete activated Plan")
 		}
 		if err := selected.Carry.Validate(selected); err != nil {
+			return err
+		}
+		if err := selected.NoDataCarry.Validate(selected); err != nil {
 			return err
 		}
 		// The piece is repeated on the selection the way the identity is,

@@ -171,9 +171,6 @@ func (m *Manager) storeFailed(reason, detail string) *Error {
 }
 
 type Manager struct {
-	// linkdTokens is the token the front surface takes for the link's API;
-	// nil keeps none (ServeLinkdTokens).
-	linkdTokens     LinkdTokens
 	client          redis.UniversalClient
 	prefix          string
 	environmentID   string

@@ -466,7 +466,7 @@ func (s *SpacePusher) composeLogTableIdDetail(
 					"db": dorisDB, "measurement": models.DorisMeasurement,
 					"enable_time": storageRecordEnableTimestamp(record),
 				}
-				if physicalTables := parseDorisPhysicalTables(tableID, record.PhysicalTables); len(physicalTables) > 0 {
+				if physicalTables := parseDorisPhysicalTables(record.TableID, record.PhysicalTables); len(physicalTables) > 0 {
 					detail["physical_tables"] = physicalTables
 				}
 				history = append(history, detail)
@@ -528,10 +528,10 @@ func (s *SpacePusher) composeLogTableIdDetail(
 			}
 			var physicalTables map[string]string
 			if targetDoris.StorageClusterID == storageID {
-				physicalTables = parseDorisPhysicalTables(tableID, targetDoris.PhysicalTables)
+				physicalTables = parseDorisPhysicalTables(targetDoris.TableID, targetDoris.PhysicalTables)
 			}
 			if len(physicalTables) == 0 && originDoris.StorageClusterID == storageID {
-				physicalTables = parseDorisPhysicalTables(tableID, originDoris.PhysicalTables)
+				physicalTables = parseDorisPhysicalTables(originDoris.TableID, originDoris.PhysicalTables)
 			}
 			if len(physicalTables) > 0 {
 				result[tableID]["physical_tables"] = physicalTables

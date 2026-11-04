@@ -78,6 +78,7 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 	t.ClusterName = d.ClusterName
 	t.TagsKey = d.TagsKey
 	t.DB = d.DB
+	t.PhysicalTables = d.PhysicalTables
 	t.Measurement = d.Measurement
 	t.VmRt = d.VmRt
 	t.CmdbLevelVmRt = d.CmdbLevelVmRt
@@ -96,14 +97,15 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 
 	for _, record := range d.StorageClusterRecords {
 		t.StorageClusterRecords = append(t.StorageClusterRecords, query.Record{
-			StorageID:   strconv.Itoa(int(record.StorageID)),
-			StorageType: record.StorageType,
-			StorageName: record.StorageName,
-			ClusterName: record.ClusterName,
-			DB:          record.DB,
-			Measurement: record.Measurement,
-			SourceType:  record.SourceType,
-			EnableTime:  record.EnableTime,
+			PhysicalTables: record.PhysicalTables,
+			StorageID:      strconv.Itoa(int(record.StorageID)),
+			StorageType:    record.StorageType,
+			StorageName:    record.StorageName,
+			ClusterName:    record.ClusterName,
+			DB:             record.DB,
+			Measurement:    record.Measurement,
+			SourceType:     record.SourceType,
+			EnableTime:     record.EnableTime,
 		})
 	}
 

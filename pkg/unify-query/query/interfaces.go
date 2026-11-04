@@ -28,6 +28,7 @@ type Filter map[string]string
 // Record 表示 storage_cluster_records 中的一条时间分段路由。
 // 当一个 RT 在不同时间段写入不同存储（例如 ES + Doris）时，UQ 会用这里的字段覆盖外层 result_table_detail。
 type Record struct {
+	PhysicalTables map[string]metadata.PhysicalTable `json:"physical_tables,omitempty"`
 	// StorageID 是该时间段命中的存储集群 ID，用于定位底层存储实例。
 	StorageID string `json:"storage_id,omitempty"`
 	// StorageType 是该时间段应查询的存储类型；Doris 在查询侧统一表达为 bk_sql。
@@ -47,6 +48,8 @@ type Record struct {
 type StorageClusterRecords []Record
 
 type StorageIDRange struct {
+	PhysicalTables map[string]metadata.PhysicalTable
+
 	StorageID     string
 	StorageType   string
 	StorageName   string
@@ -72,13 +75,14 @@ func (r StorageIDRange) QueryIsZero() bool {
 
 // TsDBV2 适配查询语句的结构体，以 TableID + MetricName 为条件，检索出 RT 基本信息和存储信息
 type TsDBV2 struct {
-	TableID         string              `json:"table_id"`
-	Field           []string            `json:"field,omitempty"`
-	FieldAlias      metadata.FieldAlias `json:"field_alias,omitempty"`
-	MeasurementType string              `json:"measurement_type,omitempty"`
-	Filters         []Filter            `json:"filters,omitempty"`
-	SegmentedEnable bool                `json:"segmented_enable,omitempty"`
-	DataLabel       string              `json:"data_label,omitempty"`
+	PhysicalTables  map[string]metadata.PhysicalTable `json:"physical_tables,omitempty"`
+	TableID         string                            `json:"table_id"`
+	Field           []string                          `json:"field,omitempty"`
+	FieldAlias      metadata.FieldAlias               `json:"field_alias,omitempty"`
+	MeasurementType string                            `json:"measurement_type,omitempty"`
+	Filters         []Filter                          `json:"filters,omitempty"`
+	SegmentedEnable bool                              `json:"segmented_enable,omitempty"`
+	DataLabel       string                            `json:"data_label,omitempty"`
 	// 将存储信息合并在 TsDB 中
 	StorageID   string `json:"storage_id,omitempty"`
 	StorageName string `json:"storage_name,omitempty"`
@@ -125,10 +129,10 @@ func (z *TsDBV2) validateStorageRouteRecord(record Record) (Record, bool, string
 		storageType = z.StorageType
 	}
 	hasExplicitStorageType := record.StorageType != ""
-	requiresBkSQLRouteFields := record.StorageType == metadata.BkSqlStorageType
+	requiresBkSQLRouteFields := record.StorageType == metadata.BkSqlStorageType && record.PhysicalTables["main"].Table == ""
 	// 显式声明 storage_type 的新格式 route 必须自带目标物理表字段，不能从外层 RT 逐字段 fallback。
 	// 切到 BKSQL 时还必须携带 cluster_name，用于 BKBase query_sync 的 properties.cluster_name。
-	if hasExplicitStorageType && (record.DB == "" || record.Measurement == "" || (requiresBkSQLRouteFields && record.ClusterName == "")) {
+	if hasExplicitStorageType && ((record.DB == "" && record.PhysicalTables["main"].Table == "") || record.Measurement == "" || (requiresBkSQLRouteFields && record.ClusterName == "")) {
 		missingFields := make([]string, 0, 3)
 		if record.DB == "" {
 			missingFields = append(missingFields, "db")
@@ -169,14 +173,15 @@ func (z *TsDBV2) validateStorageRouteRecord(record Record) (Record, bool, string
 		sourceType = z.SourceType
 	}
 	return Record{
-		StorageID:   record.StorageID,
-		StorageType: storageType,
-		StorageName: storageName,
-		ClusterName: clusterName,
-		DB:          db,
-		Measurement: measurement,
-		SourceType:  sourceType,
-		EnableTime:  record.EnableTime,
+		PhysicalTables: record.PhysicalTables,
+		StorageID:      record.StorageID,
+		StorageType:    storageType,
+		StorageName:    storageName,
+		ClusterName:    clusterName,
+		DB:             db,
+		Measurement:    measurement,
+		SourceType:     sourceType,
+		EnableTime:     record.EnableTime,
 	}, true, ""
 }
 
@@ -250,16 +255,17 @@ func (z *TsDBV2) GetStorageIDRangesWithDirectionalOverlap(start, end time.Time, 
 		routeStart := maxTime(routeCheckStart, recordStart)
 		routeEnd := minTime(routeCheckEnd, recordEnd)
 		storageRange := StorageIDRange{
-			StorageID:     route.StorageID,
-			StorageType:   route.StorageType,
-			StorageName:   route.StorageName,
-			ClusterName:   route.ClusterName,
-			DB:            route.DB,
-			Measurement:   route.Measurement,
-			SourceType:    route.SourceType,
-			HasSourceType: record.StorageType == metadata.ElasticsearchStorageType,
-			QueryStart:    queryStart,
-			QueryEnd:      queryEnd,
+			PhysicalTables: route.PhysicalTables,
+			StorageID:      route.StorageID,
+			StorageType:    route.StorageType,
+			StorageName:    route.StorageName,
+			ClusterName:    route.ClusterName,
+			DB:             route.DB,
+			Measurement:    route.Measurement,
+			SourceType:     route.SourceType,
+			HasSourceType:  record.StorageType == metadata.ElasticsearchStorageType,
+			QueryStart:     queryStart,
+			QueryEnd:       queryEnd,
 		}
 		if routeStart.Before(routeEnd) {
 			storageRange.Start = routeStart

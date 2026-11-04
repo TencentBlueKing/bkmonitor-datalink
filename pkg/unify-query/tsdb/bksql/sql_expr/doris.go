@@ -72,6 +72,7 @@ const (
 )
 
 type DorisSQLExpr struct {
+	nativeDoris bool
 	DefaultSQLExpr
 
 	encodeFunc func(string) string
@@ -982,12 +983,23 @@ func (d *DorisSQLExpr) physicalFieldName(s string) string {
 	return s
 }
 
+// WithNativeDoris 承接 BKBase 执行前对平台虚拟时间字段的转换。
+func (d *DorisSQLExpr) WithNativeDoris() { d.nativeDoris = true }
+
 func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	if isIgnoreValueField(s) {
 		return ns, as
 	}
 
 	ns = normalizeDorisFieldName(s)
+	if d.nativeDoris && !d.fieldsMap.Field(ns).Existed() {
+		lower := strings.ToLower(ns)
+		if strings.HasPrefix(lower, "minute") {
+			if n, err := strconv.ParseInt(strings.TrimPrefix(lower, "minute"), 10, 32); err == nil && n > 0 {
+				return fmt.Sprintf("FROM_UNIXTIME((`dtEventTimeStamp` - (`dtEventTimeStamp` %% %d)) / 1000, '%%Y%%m%%d%%H%%i')", n*60000), ns
+			}
+		}
+	}
 	if alias, ok := d.fieldAlias[ns]; ok {
 		as = ns
 		ns = alias

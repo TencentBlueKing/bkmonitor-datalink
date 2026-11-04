@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/doris"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
@@ -55,7 +56,14 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 	span.Set("storage-type", qry.StorageType)
 	curlGet := &curl.HttpCurl{}
 
-	switch qry.StorageType {
+	storageType := qry.StorageType
+	// 后端由公共查询计划决定；实例工厂不重新解析 Header，避免分页或子查询选路变化。
+	if qry.QueryBackend != "" {
+		storageType = qry.QueryBackend
+	}
+	span.Set("query-backend", storageType)
+
+	switch storageType {
 	case metadata.InfluxDBStorageType:
 		opt := &influxdb.Options{
 			Timeout:        tsDBService.InfluxDBTimeout,
@@ -119,6 +127,22 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			opt.HealthCheck = false
 		}
 		instance, err = elasticsearch.NewInstance(ctx, opt)
+	case metadata.DorisStorageType:
+		stg, storageErr := tsdb.GetStorage(ctx, qry.StorageID)
+		if storageErr != nil {
+			err = storageErr
+			return nil
+		}
+		if stg == nil {
+			err = fmt.Errorf("doris storage %s not configured", qry.StorageID)
+			return nil
+		}
+		var client *doris.Client
+		client, err = doris.NewClient(qry.StorageID, stg.Address, stg.Username, stg.Password, tsDBService.BkSqlTimeout, qry.DorisTables())
+		if err != nil {
+			return nil
+		}
+		instance, err = bksql.NewInstance(ctx, &bksql.Options{Client: client, Timeout: tsDBService.BkSqlTimeout, MaxLimit: tsDBService.BkSqlLimit, Tolerance: tsDBService.BkSqlTolerance, SliceLimit: qry.Size})
 	case metadata.BkSqlStorageType:
 		instance, err = bksql.NewInstance(ctx, &bksql.Options{
 			Address: bkapi.GetBkDataAPI().QueryUrl(user.SpaceUID),

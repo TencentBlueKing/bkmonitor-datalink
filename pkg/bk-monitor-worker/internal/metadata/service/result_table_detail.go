@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 
@@ -393,21 +392,18 @@ func (s *SpacePusher) composeLogTableIdDetail(
 	var storageRecords []storage.ClusterRecord
 	// 历史分段按 origin 实体表读取全部未删除记录，再在内存中用完整时间精度和 ID 排序。
 	// queryset 未重生成，因此 ID 通过字段类型字面量选择，仅用于相同 enable_time 时稳定定序。
-	recordQuery := storage.NewClusterRecordQuerySet(db).
+	if err := storage.NewClusterRecordQuerySet(db).
+		Select(
+			storage.ClusterRecordDBSchemaField("id"),
+			storage.ClusterRecordDBSchema.TableID,
+			storage.ClusterRecordDBSchema.ClusterID,
+			storage.ClusterRecordDBSchema.EnableTime,
+			storage.ClusterRecordDBSchemaField("physical_tables"),
+		).
 		BkTenantIDEq(bkTenantId).
 		TableIDIn(sourceTableIDs...).
-		IsDeletedEq(false)
-	recordFields := []storage.ClusterRecordDBSchemaField{
-		storage.ClusterRecordDBSchemaField("id"),
-		storage.ClusterRecordDBSchema.TableID,
-		storage.ClusterRecordDBSchema.ClusterID,
-		storage.ClusterRecordDBSchema.EnableTime,
-	}
-	err = recordQuery.Select(append(recordFields, storage.ClusterRecordDBSchemaField("physical_tables"))...).All(&storageRecords)
-	if isMissingPhysicalTablesColumn(err) {
-		err = recordQuery.Select(recordFields...).All(&storageRecords)
-	}
-	if err != nil {
+		IsDeletedEq(false).
+		All(&storageRecords); err != nil {
 		return nil, nil, err
 	}
 	recordsByTableID := make(map[string][]storage.ClusterRecord)
@@ -664,32 +660,23 @@ func loadDorisStorageMap(db *gorm.DB, bkTenantId string, tableIDs []string) (map
 		return result, nil
 	}
 	var rows []storage.DorisStorage
-	query := storage.NewDorisStorageQuerySet(db).
+	if err := storage.NewDorisStorageQuerySet(db).
+		Select(
+			storage.DorisStorageDBSchema.TableID,
+			storage.DorisStorageDBSchema.StorageClusterID,
+			storage.DorisStorageDBSchema.BkbaseTableID,
+			storage.DorisStorageDBSchema.OriginTableId,
+			storage.DorisStorageDBSchemaField("physical_tables"),
+		).
 		BkTenantIDEq(bkTenantId).
-		TableIDIn(tableIDs...)
-	fields := []storage.DorisStorageDBSchemaField{
-		storage.DorisStorageDBSchema.TableID,
-		storage.DorisStorageDBSchema.StorageClusterID,
-		storage.DorisStorageDBSchema.BkbaseTableID,
-		storage.DorisStorageDBSchema.OriginTableId,
-	}
-	err := query.Select(append(fields, storage.DorisStorageDBSchemaField("physical_tables"))...).All(&rows)
-	if isMissingPhysicalTablesColumn(err) {
-		err = query.Select(fields...).All(&rows)
-	}
-	if err != nil {
+		TableIDIn(tableIDs...).
+		All(&rows); err != nil {
 		return nil, err
 	}
 	for _, row := range rows {
 		result[row.TableID] = row
 	}
 	return result, nil
-}
-
-// isMissingPhysicalTablesColumn 仅为尚未执行物理表字段迁移的数据库回退查询。
-func isMissingPhysicalTablesColumn(err error) bool {
-	var mysqlErr *mysqldriver.MySQLError
-	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1054 && strings.Contains(mysqlErr.Message, "physical_tables")
 }
 
 func parseDorisPhysicalTables(tableID string, value json.RawMessage) map[string]string {

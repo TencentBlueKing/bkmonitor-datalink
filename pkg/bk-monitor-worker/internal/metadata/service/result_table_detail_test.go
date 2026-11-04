@@ -11,7 +11,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -528,100 +527,6 @@ func TestComposeLogTableIdDetailESCurrentWithDorisPhysicalHistory(t *testing.T) 
 	require.Len(t, history, 2)
 	assert.NotContains(t, history[0], "physical_tables")
 	assert.Equal(t, map[string]string{"main": "db.old_*"}, history[1]["physical_tables"])
-}
-
-func TestPushTableIdDetailWithoutPhysicalTablesColumns(t *testing.T) {
-	for _, tt := range []struct {
-		name           string
-		missingCurrent bool
-		missingHistory bool
-	}{
-		{name: "current column missing", missingCurrent: true},
-		{name: "history column missing", missingHistory: true},
-		{name: "both columns missing", missingCurrent: true, missingHistory: true},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			db := setupResultTableDetailMySQL(t)
-			setupStorageRedisForTest(t)
-			setMultiTenantModeForTest(t, true)
-			const tenantID = "tenant-old-schema"
-			const tableID = "2_bklog.old_schema"
-			seedMixedLogRoute(t, db, tenantID, tableID, models.StorageTypeDoris)
-			execResultTableDetailSQL(t, db,
-				`UPDATE metadata_dorisstorage SET physical_tables = ? WHERE table_id = ?`,
-				`{"sample":"db.samples","label":"db.labels"}`, tableID,
-			)
-			execResultTableDetailSQL(t, db,
-				`UPDATE metadata_storageclusterrecord SET physical_tables = ? WHERE table_id = ?`,
-				`{"main":"db.old_*"}`, tableID,
-			)
-			if tt.missingCurrent {
-				execResultTableDetailSQL(t, db, `ALTER TABLE metadata_dorisstorage DROP COLUMN physical_tables`)
-			}
-			if tt.missingHistory {
-				execResultTableDetailSQL(t, db, `ALTER TABLE metadata_storageclusterrecord DROP COLUMN physical_tables`)
-			}
-
-			queryCount := 0
-			db.Callback().Query().Before("gorm:query").Register("test:count_optional_physical_queries", func(*gorm.Scope) {
-				queryCount++
-			})
-			require.NoError(t, NewSpacePusher().PushTableIdDetail(tenantID, []string{tableID}, false))
-			expectedQueries := 7 // ClusterInfo 一次，加原有批次内的六次查询。
-			if tt.missingCurrent {
-				expectedQueries++
-			}
-			if tt.missingHistory {
-				expectedQueries++
-			}
-			assert.Equal(t, expectedQueries, queryCount)
-			var detail map[string]any
-			require.NoError(t, json.Unmarshal([]byte(redis.GetStorageRedisInstance().HGet(cfg.ResultTableDetailKey, tableID+"|"+tenantID)), &detail))
-			assert.Equal(t, "mixed_doris_table", detail["db"])
-			if tt.missingCurrent {
-				assert.NotContains(t, detail, "physical_tables")
-			} else {
-				assert.Equal(t, map[string]any{"sample": "db.samples", "label": "db.labels"}, detail["physical_tables"])
-			}
-			history := detail["storage_cluster_records"].([]any)
-			require.Len(t, history, 2)
-			if tt.missingHistory {
-				assert.NotContains(t, history[1], "physical_tables")
-			} else {
-				assert.Equal(t, map[string]any{"main": "db.old_*"}, history[1].(map[string]any)["physical_tables"])
-			}
-
-			// 迁移后下一次刷新即可读取新列，不需要重启或清理缓存。
-			if tt.missingCurrent {
-				execResultTableDetailSQL(t, db, `ALTER TABLE metadata_dorisstorage ADD COLUMN physical_tables JSON`)
-			}
-			if tt.missingHistory {
-				execResultTableDetailSQL(t, db, `ALTER TABLE metadata_storageclusterrecord ADD COLUMN physical_tables JSON`)
-			}
-			execResultTableDetailSQL(t, db,
-				`UPDATE metadata_dorisstorage SET physical_tables = ? WHERE table_id = ?`,
-				`{"sample":"db.samples","label":"db.labels"}`, tableID,
-			)
-			queryCount = 0
-			require.NoError(t, NewSpacePusher().PushTableIdDetail(tenantID, []string{tableID}, false))
-			assert.Equal(t, 7, queryCount)
-			detail = nil
-			require.NoError(t, json.Unmarshal([]byte(redis.GetStorageRedisInstance().HGet(cfg.ResultTableDetailKey, tableID+"|"+tenantID)), &detail))
-			assert.Equal(t, map[string]any{"sample": "db.samples", "label": "db.labels"}, detail["physical_tables"])
-		})
-	}
-
-	t.Run("other missing columns still return errors", func(t *testing.T) {
-		db := setupResultTableDetailMySQL(t)
-		const tenantID = "tenant-required-column"
-		const tableID = "2_bklog.required_column"
-		seedMixedLogRoute(t, db, tenantID, tableID, models.StorageTypeDoris)
-		execResultTableDetailSQL(t, db, `ALTER TABLE metadata_dorisstorage DROP COLUMN bkbase_table_id`)
-		_, _, err := NewSpacePusher().composeLogTableIdDetail(
-			tenantID, []string{tableID}, loadRouteClustersForTest(t, db, tenantID),
-		)
-		require.ErrorContains(t, err, "bkbase_table_id")
-	})
 }
 
 func TestAccessVMRecordAndRecordRulePayloadsRemainCompatible(t *testing.T) {

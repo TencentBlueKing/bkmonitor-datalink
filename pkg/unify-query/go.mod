@@ -5,8 +5,10 @@ go 1.24.0
 toolchain go1.24.4
 
 require (
-	github.com/TencentBlueKing/bk-kms-sdk/go v1.0.0
+	github.com/DATA-DOG/go-sqlmock v1.5.2
+	github.com/go-sql-driver/mysql v1.9.3
 	github.com/Knetic/govaluate v3.0.0+incompatible
+	github.com/TencentBlueKing/bk-kms-sdk/go v1.0.0
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
 	github.com/VictoriaMetrics/metricsql v0.69.0
 	github.com/alicebob/miniredis/v2 v2.35.0
@@ -66,6 +68,7 @@ require (
 
 require (
 	cloud.google.com/go/storage v1.57.2 // indirect
+	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/BurntSushi/toml v1.2.1 // indirect
 	github.com/KyleBanks/depth v1.2.1 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect

@@ -81,6 +81,7 @@ func (s *Service) Reload(ctx context.Context) {
 			SlowQueryThreshold: SlowQueryThreshold,
 		}),
 		middleware.JwtAuthMiddleware(JwtEnabled, JwtPublicKey, JwtBkAppCodeSpaces),
+		middleware.QueryFlags(),
 	)
 
 	publicRegisterHandler := endpoint.NewRegisterHandler(ctx, public)

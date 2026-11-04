@@ -66,6 +66,8 @@ func (q *QueryTs) ToRawQueryPlan(ctx context.Context) (plan QueryPlan, err error
 // rawStorageTarget 只在同一个逻辑查询和同一个结果表的历史展开中使用。
 // 查询条件、投影和分页属于该逻辑查询；历史记录只改变这里的存储定位信息。
 type rawStorageTarget struct {
+	backend     string
+	physical    string
 	storageType string
 	storageID   string
 	storageName string
@@ -77,7 +79,12 @@ type rawStorageTarget struct {
 
 // rawTarget 提取已完成默认值补齐和历史覆盖的存储定位字段。
 func rawTarget(query *metadata.Query) rawStorageTarget {
+	physical := ""
+	if query.QueryBackend == metadata.DorisStorageType {
+		physical = metadata.PhysicalTableSQL(query.PhysicalTables["main"])
+	}
 	return rawStorageTarget{
+		backend: query.QueryBackend, physical: physical,
 		storageType: query.StorageType,
 		storageID:   query.StorageID,
 		storageName: query.StorageName,
@@ -89,6 +96,7 @@ func rawTarget(query *metadata.Query) rawStorageTarget {
 }
 
 type queryMergeTarget struct {
+	backend     string
 	storageUUID string
 	clusterName string
 	measurement string
@@ -97,7 +105,7 @@ type queryMergeTarget struct {
 
 // mergeTarget 生成 DB 合并分组键，Raw 查询同时区分集群、Measurement 和 SourceType。
 func mergeTarget(query *metadata.Query, mode queryMode) queryMergeTarget {
-	target := queryMergeTarget{storageUUID: query.StorageUUID()}
+	target := queryMergeTarget{storageUUID: query.StorageUUID(), backend: query.QueryBackend}
 	if mode == rawQuery {
 		target.clusterName = query.ClusterName
 		target.measurement = query.Measurement
@@ -108,6 +116,7 @@ func mergeTarget(query *metadata.Query, mode queryMode) queryMergeTarget {
 
 func compareMergeTargets(left, right queryMergeTarget) int {
 	return cmp.Or(
+		cmp.Compare(left.backend, right.backend),
 		cmp.Compare(left.storageUUID, right.storageUUID),
 		cmp.Compare(left.clusterName, right.clusterName),
 		cmp.Compare(left.measurement, right.measurement),

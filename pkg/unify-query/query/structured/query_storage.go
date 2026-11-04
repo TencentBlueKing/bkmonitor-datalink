@@ -47,6 +47,13 @@ func (q *Query) buildStorageQuery(
 	if route.ClusterName != "" {
 		query.ClusterName = route.ClusterName
 	}
+	if len(tsDB.StorageClusterRecords) > 0 {
+		query.PhysicalTables = route.PhysicalTables
+		// 历史记录不得继承当前表的 BKBase ID。
+		if route.PhysicalTables != nil {
+			query.DB = route.DB
+		}
+	}
 	if route.DB != "" {
 		query.DB = route.DB
 	}
@@ -57,6 +64,7 @@ func (q *Query) buildStorageQuery(
 	if route.HasSourceType {
 		query.SourceType = route.SourceType
 	}
+	// 先以旧标识查找游标，随后按本次选定的后端和物理目标查找。
 	query.ResultTableOption = q.ResultTableOptions.GetOption(query.TableUUID())
 
 	if query.StorageType == "" {
@@ -106,6 +114,58 @@ func (q *Query) buildStorageQuery(
 				}
 			}
 		}
+	}
+	// 后续页保留首次选择的后端，不因 Header 改变而重用另一种游标。
+	if query.Measurement == metadata.DorisStorageType {
+		if query.ResultTableOption == nil && len(query.PhysicalTables) > 0 {
+			direct := *query
+			direct.QueryBackend = metadata.DorisStorageType
+			direct.DirectTables = direct.DorisTables()
+			query.ResultTableOption = q.ResultTableOptions.GetOption(direct.TableUUID())
+		}
+		// 合并查询的游标列出了多个目标，仅用它匹配当前授权路由；不能从游标构造物理 SQL 目标。
+		if query.ResultTableOption == nil {
+			target := query.PhysicalTables["main"]
+			prefix := query.TableUUID() + "|doris|"
+			for key, option := range q.ResultTableOptions {
+				if option == nil || option.QueryBackend != metadata.DorisStorageType || !strings.HasPrefix(key, prefix) {
+					continue
+				}
+				for _, saved := range option.DirectTables {
+					if target.Database != "" && target.Database == saved.Database && target.Table == saved.Table {
+						query.ResultTableOption = option
+						break
+					}
+				}
+				if query.ResultTableOption != nil {
+					break
+				}
+			}
+		}
+		if option := query.ResultTableOption; option != nil && option.QueryBackend != "" {
+			switch option.QueryBackend {
+			case metadata.DorisStorageType:
+				t := query.PhysicalTables["main"]
+				if t.Database == "" || t.Table == "" {
+					return nil, fmt.Errorf("Doris pagination target is no longer configured")
+				}
+				query.QueryBackend = metadata.DorisStorageType
+				query.DirectTables = []metadata.PhysicalTable{t}
+			case metadata.BkSqlStorageType:
+				if query.DB == "" {
+					return nil, fmt.Errorf("BKBase pagination target is no longer configured")
+				}
+				query.QueryBackend = metadata.BkSqlStorageType
+			default:
+				return nil, fmt.Errorf("unknown pagination backend %q", option.QueryBackend)
+			}
+		}
+	}
+	if err := query.ResolveDorisBackend(ctx); err != nil {
+		return nil, err
+	}
+	if option := q.ResultTableOptions.GetOption(query.TableUUID()); option != nil {
+		query.ResultTableOption = option
 	}
 	metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 	return query, nil

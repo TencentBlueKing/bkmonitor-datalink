@@ -57,12 +57,19 @@ type Instance struct {
 	tolerance  int
 	sliceLimit int
 
-	client *Client
+	client QueryClient
 }
 
 var _ tsdb.Instance = (*Instance)(nil)
 
+// QueryClient 让原生 Doris 执行复用 BKSQL 的查询与格式化逻辑。
+type QueryClient interface {
+	QuerySync(context.Context, QuerySyncRequest, *trace.Span) *Result
+}
+
 type Options struct {
+	Client QueryClient
+
 	Address string
 	Headers map[string]string
 
@@ -75,7 +82,7 @@ type Options struct {
 }
 
 func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
-	if opt.Address == "" {
+	if opt.Client == nil && opt.Address == "" {
 		return nil, fmt.Errorf("address is empty")
 	}
 	instance := &Instance{
@@ -85,6 +92,9 @@ func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 		tolerance:  opt.Tolerance,
 		sliceLimit: opt.SliceLimit,
 		client:     (&Client{}).WithUrl(opt.Address).WithHeader(opt.Headers).WithCurl(opt.Curl),
+	}
+	if opt.Client != nil {
+		instance.client = opt.Client
 	}
 	return instance, nil
 }
@@ -241,18 +251,22 @@ func queryPhysicalTables(query *metadata.Query) []string {
 	if query == nil {
 		return nil
 	}
-
+	if query.QueryBackend == metadata.DorisStorageType {
+		var tables []string
+		for _, t := range query.DorisTables() {
+			tables = append(tables, metadata.PhysicalTableSQL(t))
+		}
+		return tables
+	}
 	dbs := query.DBs
 	if len(dbs) == 0 && query.DB != "" {
 		dbs = []string{query.DB}
 	}
-
-	tables := make([]string, 0, len(dbs))
+	var tables []string
 	for _, db := range dbs {
-		if db == "" {
-			continue
+		if db != "" {
+			tables = append(tables, formatPhysicalTableName(db, query.Measurement))
 		}
-		tables = append(tables, formatPhysicalTableName(db, query.Measurement))
 	}
 	return tables
 }
@@ -346,7 +360,7 @@ func (i *Instance) queryFieldMaps(ctx context.Context, query *metadata.Query, st
 		dbs = []string{query.DB}
 	}
 
-	if len(dbs) == 0 {
+	if len(dbs) == 0 && query.QueryBackend != metadata.DorisStorageType {
 		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
 		return nil, nil, err
 	}
@@ -360,15 +374,21 @@ func (i *Instance) queryFieldMaps(ctx context.Context, query *metadata.Query, st
 	)
 
 	// 多表的字段进行合并查询，进行倒序遍历
-	for idx := len(dbs) - 1; idx >= 0; idx-- {
-		db := dbs[idx]
-		table := formatPhysicalTableName(db, f.query.Measurement)
+	tables := queryPhysicalTables(query)
+	for idx := len(tables) - 1; idx >= 0; idx-- {
+		table := tables[idx]
 		fieldMapTables = append(fieldMapTables, table)
 
 		sql := f.expr.DescribeTableSQL(table)
+		if query.QueryBackend == metadata.DorisStorageType {
+			sql = "DESC " + table
+		}
 		res, err := i.getFieldsMap(ctx, newQuerySyncRequest(sql, query))
 		if err != nil {
 			lastFieldMapErr = err
+			if query.QueryBackend == metadata.DorisStorageType {
+				return nil, nil, err
+			}
 			continue
 		}
 		normalized := normalizeFieldsMap(res, query.FieldAlias)
@@ -429,6 +449,13 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		option = &metadata.ResultTableOption{}
 	}
 
+	if len(query.PhysicalTables) > 0 && query.IsSearchAfter {
+		option.DirectTables = append([]metadata.PhysicalTable(nil), query.DirectTables...)
+		option.QueryBackend = query.QueryBackend
+		if option.QueryBackend == "" {
+			option.QueryBackend = metadata.BkSqlStorageType
+		}
+	}
 	ctx, span := trace.NewSpan(ctx, "bk-sql-query-raw")
 	defer span.End(&err)
 
@@ -502,6 +529,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		newData := queryFactory.ReloadListData(list, false)
 		query.FieldAlias.AddAliasKeysWhenOriginalFieldPresent(newData)
 		newData[metadata.KeyIndex] = query.DB
+		if query.QueryBackend == metadata.DorisStorageType && query.DB == "" {
+			newData[metadata.KeyIndex] = query.TableID
+		}
 		// 注入原始数据需要的字段
 		query.DataReload(newData)
 		dataCh <- newData

@@ -139,6 +139,11 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 		WithEncode(metadata.GetFieldFormat(ctx).EncodeFunc()).
 		WithFieldAlias(query.FieldAlias)
 
+	if query.QueryBackend == metadata.DorisStorageType {
+		if expr, ok := f.expr.(*sql_expr.DorisSQLExpr); ok {
+			expr.WithNativeDoris()
+		}
+	}
 	return f
 }
 
@@ -505,6 +510,15 @@ func (f *QueryFactory) FormatDataToQueryResult(
 	return res, nil
 }
 
+func (f *QueryFactory) nativeHasColumn(name string) bool {
+	for _, table := range f.Tables() {
+		if !f.tableFieldsMap[table].Field(name).Existed() {
+			return false
+		}
+	}
+	return len(f.Tables()) > 0
+}
+
 func (f *QueryFactory) getTheDateIndexFilters() (string, error) {
 	var conditions []string
 
@@ -517,9 +531,14 @@ func (f *QueryFactory) getTheDateIndexFilters() (string, error) {
 	start := f.start.In(loc)
 	end := f.end.In(loc)
 
-	conditions = append(conditions, fmt.Sprintf("`%s` >= '%s'", dtEventTime, start.Format(dtEventTimeFormat)))
-	// 为了兼容毫秒纳秒等单位，需要+1s
-	conditions = append(conditions, fmt.Sprintf("`%s` <= '%s'", dtEventTime, end.Add(time.Second).Format(dtEventTimeFormat)))
+	if f.query.QueryBackend != metadata.DorisStorageType || f.nativeHasColumn(dtEventTime) {
+		conditions = append(conditions, fmt.Sprintf("`%s` >= '%s'", dtEventTime, start.Format(dtEventTimeFormat)))
+		// 为了兼容毫秒纳秒等单位，需要+1s
+		conditions = append(conditions, fmt.Sprintf("`%s` <= '%s'", dtEventTime, end.Add(time.Second).Format(dtEventTimeFormat)))
+	}
+	if f.query.QueryBackend == metadata.DorisStorageType && !f.nativeHasColumn(theDate) {
+		return strings.Join(conditions, " AND "), nil
+	}
 
 	dates := function.RangeDateWithUnit("day", start, end, 1)
 
@@ -759,6 +778,9 @@ func (f *QueryFactory) searchAfterSelectFields() ([]string, error) {
 }
 
 func (f *QueryFactory) Tables() []string {
+	if f.query.QueryBackend == metadata.DorisStorageType {
+		return queryPhysicalTables(f.query)
+	}
 	dbs := f.query.DBs
 	if len(dbs) == 0 {
 		dbs = []string{f.query.DB}

@@ -1036,9 +1036,11 @@ func (q *Query) toQueryMetricPlan(ctx context.Context, spaceUid string, tsDBs Ts
 				queryMergePairs = append(queryMergePairs, fmt.Sprintf("%s->%s", oq.TableID, query.TableID))
 				// merge db 只合并 DB 列表，主 query 固定选择 TableID 较小的记录，避免上游 tsDB 顺序变化导致结果不稳定。
 				if query.TableID < oq.TableID {
+					query.DirectTables = append(append([]metadata.PhysicalTable(nil), oq.DirectTables...), query.DirectTables...)
 					query.DBs = append(oq.DBs, query.DB)
 					queryMap[target] = query
 				} else {
+					oq.DirectTables = append(oq.DirectTables, query.DirectTables...)
 					oq.DBs = append(oq.DBs, query.DB)
 				}
 			} else {
@@ -1064,6 +1066,9 @@ func (q *Query) toQueryMetricPlan(ctx context.Context, spaceUid string, tsDBs Ts
 	for _, key := range storageKeys {
 		qry := queryMap[key]
 		sort.Strings(qry.DBs)
+		if opt := q.ResultTableOptions.GetOption(qry.TableUUID()); opt != nil {
+			qry.ResultTableOption = opt
+		}
 		queryMetric.QueryList = append(queryMetric.QueryList, qry)
 	}
 
@@ -1317,6 +1322,7 @@ func (q *Query) BuildMetadataQuery(
 	query.ClusterName = tsDB.ClusterName
 	query.TagsKey = tsDB.TagsKey
 	query.DB = tsDB.DB
+	query.PhysicalTables = tsDB.PhysicalTables
 	query.VmRt = tsDB.VmRt
 	query.CmdbLevelVmRt = tsDB.CmdbLevelVmRt
 	query.StorageName = tsDB.StorageName

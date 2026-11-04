@@ -14,6 +14,7 @@ import (
 	"linkd/internal/lifecycle"
 	"linkd/internal/lifecycle/kachook"
 	"linkd/internal/store/memory"
+	"linkd/internal/telemetry"
 )
 
 // 验证真实 Router、生命周期、权限收尾与 KAC 投影；没有配置任何监控策略 Reader。
@@ -22,9 +23,13 @@ func TestRESTSubjectReachesKACModelAndInstance(t *testing.T) {
 	for _, system := range []string{"cmdb", "onemodel"} {
 		t.Run(system, func(t *testing.T) {
 			reader := restResourceReader{}
+			observability, err := telemetry.Start(t.Context(), config.TelemetryConfig{}, telemetry.RoleLifecycle, "test")
+			if err != nil {
+				t.Fatal(err)
+			}
 			router, err := NewRouter([]config.EventSource{{EventSourceID: "built_in_rest", Version: 1,
 				Enrich: config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "resource"}, {Type: "cmdb-access"}}},
-			}}, enrich.Sources{Model: reader, OneModel: reader, DynamicGroup: reader})
+			}}, observability.ObserveEnrichSources(enrich.Sources{Model: reader, OneModel: reader, DynamicGroup: reader}))
 			if err != nil {
 				t.Fatal(err)
 			}

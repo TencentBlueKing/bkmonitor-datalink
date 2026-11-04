@@ -49,7 +49,13 @@ func (r *Runtime) ObserveEnrichSources(sources enrich.Sources) enrich.Sources {
 		sources.Metric = &observedMetricReader{next: sources.Metric, metrics: r.metrics}
 	}
 	if sources.Model != nil {
-		sources.Model = &observedModelReader{next: sources.Model, metrics: r.metrics}
+		observed := &observedModelReader{next: sources.Model, metrics: r.metrics}
+		// resource 按可选接口判断 CMDB 映射能力；监控包装必须保留原 Reader 的能力集合。
+		if reader, ok := sources.Model.(enrich.CMDBModelReader); ok {
+			sources.Model = &observedCMDBModelReader{observedModelReader: observed, cmdb: reader}
+		} else {
+			sources.Model = observed
+		}
 	}
 	if sources.AlarmSource != nil {
 		sources.AlarmSource = &observedAlarmSourceReader{next: sources.AlarmSource, metrics: r.metrics}
@@ -165,6 +171,18 @@ func (r *observedModelReader) GetModelByCode(ctx context.Context, tenantID, mode
 	startedAt := time.Now()
 	value, found, err := r.next.GetModelByCode(ctx, tenantID, modelCode)
 	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceModel, "get_model_by_code", startedAt, found, err)
+	return value, found, err
+}
+
+type observedCMDBModelReader struct {
+	*observedModelReader
+	cmdb enrich.CMDBModelReader
+}
+
+func (r *observedCMDBModelReader) GetModelByCMDBObjectID(ctx context.Context, tenantID, objectID string) (enrich.Model, bool, error) {
+	startedAt := time.Now()
+	value, found, err := r.cmdb.GetModelByCMDBObjectID(ctx, tenantID, objectID)
+	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceModel, "get_model_by_cmdb_object_id", startedAt, found, err)
 	return value, found, err
 }
 

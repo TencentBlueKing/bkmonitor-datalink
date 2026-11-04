@@ -14,6 +14,7 @@ import (
 	"linkd/internal/lifecycle"
 	"linkd/internal/lifecycle/kachook"
 	"linkd/internal/store/memory"
+	"linkd/internal/telemetry"
 )
 
 // TestCMDBCapturedIdentityReplay 在本地重算抓取的原 Event，并重放到 KAC 输出边界。
@@ -37,7 +38,11 @@ func TestCMDBCapturedIdentityReplay(t *testing.T) {
 			reader := cmdbIdentityReplayReader{sample: sample}
 			source := config.EventSource{EventSourceID: sample.Event.EventSourceID, Version: sample.Event.EventSourceVersion,
 				Enrich: config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "resource"}}}}
-			router, err := NewRouter([]config.EventSource{source}, enrich.Sources{Model: reader, OneModel: reader})
+			observability, err := telemetry.Start(t.Context(), config.TelemetryConfig{}, telemetry.RoleLifecycle, "test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			router, err := NewRouter([]config.EventSource{source}, observability.ObserveEnrichSources(enrich.Sources{Model: reader, OneModel: reader}))
 			if err != nil {
 				t.Fatal(err)
 			}

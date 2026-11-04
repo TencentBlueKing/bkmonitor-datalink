@@ -12,6 +12,7 @@ package telemetry
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	settings "linkd/internal/config"
@@ -82,6 +83,73 @@ func TestEnrichDataSourceOutcome(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestObserveEnrichSourcesPreservesCMDBModelReader(t *testing.T) {
+	t.Parallel()
+	wantErr := errors.New("CMDB directory unavailable")
+	for _, test := range []struct {
+		name  string
+		found bool
+		err   error
+	}{
+		{name: "found", found: true},
+		{name: "not found"},
+		{name: "failure", err: wantErr},
+		{name: "canceled", err: context.Canceled},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime, err := Start(t.Context(), settings.TelemetryConfig{}, RoleLifecycle, "test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := enrich.Model{TenantID: "tenant", ModelID: "17", ModelCode: "cw-MySQL", Fields: map[string]any{"bk_cmdb_obj_id": "mysql"}}
+			ctx := t.Context()
+			if errors.Is(test.err, context.Canceled) {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			calls := 0
+			backend := testCMDBModelReader{lookup: func(gotCtx context.Context, tenant, objectID string) (enrich.Model, bool, error) {
+				calls++
+				if gotCtx != ctx || tenant != "tenant" || objectID != "mysql" {
+					t.Fatalf("lookup context=%v tenant=%q object=%q", gotCtx, tenant, objectID)
+				}
+				return want, test.found, test.err
+			}}
+			sources := runtime.ObserveEnrichSources(enrich.Sources{Model: backend})
+			reader, ok := sources.Model.(enrich.CMDBModelReader)
+			if !ok {
+				t.Fatal("telemetry wrapper dropped CMDBModelReader")
+			}
+			got, found, err := reader.GetModelByCMDBObjectID(ctx, "tenant", "mysql")
+			if !reflect.DeepEqual(got, want) || found != test.found || !errors.Is(err, test.err) || calls != 1 {
+				t.Fatalf("model=%#v found=%t err=%v calls=%d", got, found, err, calls)
+			}
+		})
+	}
+}
+
+func TestObserveEnrichSourcesDoesNotInventCMDBModelReader(t *testing.T) {
+	t.Parallel()
+	runtime, err := Start(t.Context(), settings.TelemetryConfig{}, RoleLifecycle, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources := runtime.ObserveEnrichSources(enrich.Sources{Model: testModelReader{}})
+	if _, ok := sources.Model.(enrich.CMDBModelReader); ok {
+		t.Fatal("telemetry wrapper added unsupported CMDBModelReader")
+	}
+}
+
+type testCMDBModelReader struct {
+	testModelReader
+	lookup func(context.Context, string, string) (enrich.Model, bool, error)
+}
+
+func (r testCMDBModelReader) GetModelByCMDBObjectID(ctx context.Context, tenant, objectID string) (enrich.Model, bool, error) {
+	return r.lookup(ctx, tenant, objectID)
 }
 
 type testCWStrategyReader struct{ err error }

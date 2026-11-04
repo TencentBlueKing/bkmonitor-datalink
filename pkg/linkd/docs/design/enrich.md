@@ -1160,7 +1160,7 @@ Kingeye / OneModel / 其他来源
 字段位置按有效视图的 `labels`、`extra_data`、`dimensions` 排序，不跨位置拼接。已经声明但不完整、非法、查询失败的身份不得降级换对象。
 完整声明解析后冲突时记录诊断，不提交新资源身份。只有 `subject.name` 不构成身份声明。
 OneModel subject 的 type 是模型编码；CMDB subject 的 type 按同租户 `bk_cmdb_obj_id` 反查唯一模型。
-实例统一走 OneModel，CMDB 主机/业务/集群/模块按各自 CMDB 主键属性查询，其余 CMDB 对象按 `bk_inst_id` 查询。
+实例统一走 OneModel。CMDB 身份先按租户目录映射模型，再以源主键的规范字符串查询实例顶层 `model_inst_id`；不按 `attributes.bk_inst_id` 等旧身份属性查询。响应须校验租户、模型、实例 ID 和 `entity_uid`；查到后才反投影 `bk_inst_id`。此规则于 2026-11-04 对齐 Kingeye 的 CMDB 规范写入协议。
 模型和实例返回后复核租户、模型、实例及 entity_uid，不猜模型名、不将未查到的来源 ID 当成定位结果。
 模型已确认而实例未命中时仅提交已确认模型字段并记录部分成功；来源 subject 和原始数据保持不变。
 

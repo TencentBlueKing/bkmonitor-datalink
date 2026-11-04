@@ -4,6 +4,7 @@
 
 代码基线：2026-11-01，主仓 `feat/linkd-dev`，`b6fa6420f75fc53b702071e61ca5c8721615c962`。
 本文描述该版本的实现，不表示已部署或已通过线上验收；后续修改相关行为时应同步本文。
+2026-11-04 更新通用 `resource` 的 CMDB 实例查询和 `bk_inst_id` 输出规则；其余章节仍按上述基线描述。
 Enrich 的执行、补丁和保存规则见[丰富设计](enrich.md)，自定义规则的完整配置见[自定义丰富规格](custom-enrichment.md)。
 
 ## 1. 先区分这些字段
@@ -18,7 +19,7 @@ Enrich 的执行、补丁和保存规则见[丰富设计](enrich.md)，自定义
 | `object_model_code` | 策略投影中的模型代码 | 可为监控场景提供模型，但不能与模型表数字主键混淆 |
 | `model_name` | 模型名称 | 通常来自 `object_model_v2.model_name`；云资源分支有例外，见第 5.7 节 |
 | `bk_obj_id` | CMDB 对象代码，例如 `host` | 通过同租户 `object_model_v2.bk_cmdb_obj_id` 映射到 `model_id` |
-| `bk_inst_id` | CMDB 实例 ID | 与 `model_inst_id` 含义不同；相同数值不代表可直接互换 |
+| `bk_inst_id` | CMDB 实例 ID | CMDB 同步实例以此源主键的字符串作为 `model_inst_id`；须先确认同租户模型映射并查到实例，不能将此规则推广到所有 OneModel 来源 |
 | `bk_host_id`、`bk_host_name` | 关联主机的信息 | 非主机告警也可有这两个字段，不意味着告警对象变成主机 |
 
 代码中有一个容易误读的命名：`enrich.Model.ModelID` 保存模型表的 `object_model_id`，
@@ -110,7 +111,7 @@ Doris 将相同条件转换为类型明确的属性查询。
 
 **输出字段**
 
-- `model_id`、`model_inst_id`、`model_name`；有 CMDB 映射时补 `bk_obj_id`，实例属性有对应 CMDB 主键时补 `bk_inst_id`。
+- `model_id`、`model_inst_id`、`model_name`；有 CMDB 映射时补 `bk_obj_id`，已命中的 `model_inst_id` 为规范正整数字符串时反投影 `bk_inst_id`，不依赖实例 attributes 中的旧身份字段。
 - `subject_name` 为空时可使用实例的 `display_name`。
 - 不在此步骤自动补监控拓扑、主机信息或动态分组。
 
@@ -127,23 +128,16 @@ Doris 将相同条件转换为类型明确的属性查询。
 **查询规则**
 
 - OneModel Subject 直接按模型代码和实例 ID 查询。
-- CMDB Subject/字段先映射模型，再按以下实例属性查询；CMDB ID 必须是正整数。
-
-| bk_obj_id / subject_type | OneModel 查询属性 |
-| --- | --- |
-| `host` | `attributes.bk_host_id` |
-| `biz` | `attributes.bk_biz_id` |
-| `set` | `attributes.bk_set_id` |
-| `module` | `attributes.bk_module_id` |
-| `service_instance` | `attributes.service_instance_id` |
-| 其他 CMDB 对象 | `attributes.bk_inst_id` |
+- CMDB Subject/字段先通过同租户 `bk_cmdb_obj_id` 映射模型，再按实例顶层 `model_inst_id` 查询；CMDB ID 必须是正整数，并规范为字符串。
+- Kingeye 的 CMDB 同步将源主键写入 `model_inst_id`：主机、业务、集群、模块分别取 `bk_host_id`、`bk_biz_id`、`bk_set_id`、`bk_module_id`，普通对象取 `bk_inst_id`。规范 attributes 排除 `bk_inst_id`，不再按此属性查找或验证实例。
+- 查询响应的租户、模型、实例 ID 和 `entity_uid` 必须与请求身份一致；实例不存在时仅保留已确认模型，不能复制请求 ID 冒充查询命中。
 
 **输出字段**
 
 - 与第 5.1 节一致。`model_inst_id` 取 OneModel 返回值，不能直接复制输入的 CMDB ID 冒充实例命中。
 - 同时有 `model_id`、`model_inst_id` 时仍须通过一致性校验。这里与“只认这两个字段”的目标还有差距。
 
-依据：[CMDB 映射和属性选择](../../internal/enrich/processors/resource.go)。
+依据：[CMDB 映射和规范实例查询](../../internal/enrich/processors/resource.go)。
 
 ### 5.3 监控目标：普通对象、CMDB 服务实例、无数据
 

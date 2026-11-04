@@ -104,8 +104,8 @@ func TestRESTCapturedAlertWithRealHostReachesKAC(t *testing.T) {
 				t.Fatalf("instance queries=%d", len(reader.queries))
 			}
 			query := reader.queries[0]
-			if sample.Mode == "onemodel" && query.InstanceID != "10" || sample.Mode != "onemodel" && len(query.AttributeFilters) != 1 {
-				t.Fatal("resource lookup did not use the declared namespace")
+			if query.InstanceID != "10" || len(query.AttributeFilters) != 0 {
+				t.Fatal("resource lookup did not use canonical instance identity")
 			}
 			wire, err := kachook.CompatibilityPayload(alert, func(string) (string, error) { return "warning", nil })
 			if err != nil {

@@ -55,7 +55,6 @@ type AlarmMessage struct {
 	AnomalyBeginTime *string        `json:"anomaly_begin_time"`
 	CloseTime        *string        `json:"close_time,omitempty"`
 	CloseReason      *string        `json:"close_reason,omitempty"`
-	MetricUniqueID   string         `json:"metric_unique_id"`
 	ResultTableID    string         `json:"result_table_id"`
 	Namespace        string         `json:"Namespace"`
 	TimeInterval     string         `json:"time_interval"`

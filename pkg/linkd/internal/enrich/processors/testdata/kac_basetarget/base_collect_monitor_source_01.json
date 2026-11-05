@@ -345,11 +345,6 @@
             },
             {
               "op": "set",
-              "path": "$[\"labels\"][\"metric_unique_id\"]",
-              "value": "hardware_plugin_snmp_snmp_test.group_5.ifAdminStatus"
-            },
-            {
-              "op": "set",
               "path": "$[\"labels\"][\"result_table_id\"]",
               "value": "hardware_plugin_snmp_snmp_test.group_5"
             },

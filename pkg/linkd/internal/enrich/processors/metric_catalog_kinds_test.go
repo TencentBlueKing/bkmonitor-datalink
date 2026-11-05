@@ -25,7 +25,7 @@ func TestMetricCatalogDefinitionKinds(t *testing.T) {
 		{name: "bound predefined", kind: "predefined", table: "system.cpu", field: "usage"},
 		{name: "unbound predefined", kind: "predefined", failed: true},
 		{name: "inline derived", kind: "derived"},
-		{name: "inline derived keeps legacy identity", kind: "derived", legacyTag: true},
+		{name: "inline derived resolves existing derived tag", kind: "derived", legacyTag: true},
 		{name: "derived with physical reference rejected", kind: "derived", table: "record_rule.result", field: "result_usage", failed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -35,7 +35,7 @@ func TestMetricCatalogDefinitionKinds(t *testing.T) {
 			r.strategy.Spec.TableID = ""
 			r.strategy.Spec.StrategyItem.QueryConfigs = []models.StrategyQueryConfig{{MetricRefID: 42, QueryConfigType: "catalog", Alias: "a"}}
 			r.strategy.Spec.StrategyItem.Expression = "a"
-			r.strategy.FirstExecutionQuery = &models.StrategyQueryConfig{ResultTableID: "system.cpu", MetricField: "usage"}
+
 			if tc.legacyTag {
 				r.strategy.Spec.FieldTag = models.CWStrategyFieldTagDerivedMetric
 				r.strategy.Spec.FieldName = "stale_name"
@@ -65,12 +65,8 @@ func TestMetricCatalogDefinitionKinds(t *testing.T) {
 			if values.ResultTableID != tc.table || values.Unit != "percent" {
 				t.Fatalf("values=%+v", values)
 			}
-			wantUnique := tc.table + "." + tc.field
-			if tc.legacyTag {
-				wantUnique = "system.cpu.usage"
-			}
-			if tc.table != "" && values.MetricUniqueID != wantUnique {
-				t.Fatalf("physical identity lost: %+v", values)
+			if _, exists := result.Value["metric_unique_id"]; exists {
+				t.Fatal("removed metric identity was generated")
 			}
 			if tc.legacyTag && values.MetricName != "result_usage" {
 				t.Fatalf("stale definition name used: %+v", values)

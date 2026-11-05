@@ -68,7 +68,7 @@ func TestCatalogDerivedMetricWithoutLegacyFieldTag(t *testing.T) {
 			reader := &metricLocationReader{metadata: models.MetricMetadata{Kind: "derived", ObjectModelCode: "cw-K8s_Container", ModelIDs: []string{"cw-K8s_Container"}, FieldName: "container_memory_resource_limits_ratio", FieldCNName: "限制内存使用率", Unit: "percent"}}
 			reader.strategy = reader.strategyForTest()
 			reader.strategy.Spec.TableID = ""
-			reader.strategy.FirstExecutionQuery = &models.StrategyQueryConfig{ResultTableID: "k8s", MetricField: "container_memory_rss"}
+
 			reader.strategy.Spec.FieldName = "stale_name"
 			reader.strategy.Spec.StrategyItem.Expression = tc.expression
 			reader.strategy.Spec.StrategyItem.Functions = tc.functions
@@ -88,7 +88,7 @@ func TestCatalogDerivedMetricWithoutLegacyFieldTag(t *testing.T) {
 			if err := json.Unmarshal(mustRawObject(t, got.Value), &values); err != nil {
 				t.Fatal(err)
 			}
-			if values.MetricName != reader.metadata.FieldName || values.Unit != "percent" || values.ResultTableID != "" || values.MetricUniqueID != "k8s.container_memory_rss" {
+			if values.MetricName != reader.metadata.FieldName || values.Unit != "percent" || values.ResultTableID != "" {
 				t.Fatalf("values=%+v", values)
 			}
 			after, _ := json.Marshal(reader.strategy)

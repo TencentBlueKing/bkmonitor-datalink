@@ -39,7 +39,7 @@ type FieldCatalog map[string]FieldKind
 // KACFields 返回内置字段目录的独立副本。依赖 KAC 处置态/标签目录的字段不在默认目录中。
 func KACFields() FieldCatalog {
 	result := FieldCatalog{}
-	for _, field := range strings.Fields("name content object item bk_set_name bk_module_name bk_cloud_name meta_info strategy strategy_id dimension_info model_id model_inst_id model_name metric_unique_id") {
+	for _, field := range strings.Fields("name content object item bk_set_name bk_module_name bk_cloud_name meta_info strategy strategy_id dimension_info model_id model_inst_id model_name") {
 		result[field] = FieldText
 	}
 	for _, field := range strings.Fields("source_id source_name level action bk_biz_name bk_set_id bk_module_id bk_obj_id bk_inst_id source_alarm_status bk_tenant_id cw_labels dynamic_group_id entity_uid fingerprint") {

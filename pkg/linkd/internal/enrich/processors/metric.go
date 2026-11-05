@@ -94,25 +94,11 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyMetricCatalog)
 	}
 	whereCondition := cleanWhereCondition(queryDimensions)
-	resultTableID, metricField := metricIdentity(query)
-	uniqueID := metricUniqueID(resultTableID, metricField)
-	if strategy.Kind != models.CWStrategyKindCloud && strategy.Spec.FieldTag == models.CWStrategyFieldTagDerivedMetric {
-		if strategy.FirstExecutionQuery == nil {
-			return enrich.ProcessorResult{}, fmt.Errorf("%w: kingeye_strategy items[0].query_configs[0] is missing or invalid", enrich.ErrInvalidDataSourceResponse)
-		}
-		table, field := metricIdentity(*strategy.FirstExecutionQuery)
-		if field == "" {
-			return enrich.ProcessorResult{}, fmt.Errorf("%w: kingeye_strategy first execution query has no identifiable metric field", enrich.ErrInvalidDataSourceResponse)
-		}
-		// 沿用 KAC develop/4.5.16 的首查询身份，包括空表名产生的前导点。
-		// 这是兼容输出，不能据此改写衍生父指标声明或 metric_query_params。
-		uniqueID = table + "." + field
-	}
+	resultTableID, _ := metricIdentity(query)
 	values.DisplayName = displayName
 	values.MetricName = metricName
 	values.Unit = unit
 	values.ResultTableID = resultTableID
-	values.MetricUniqueID = uniqueID
 	values.AggregateFunc = aggregateFunc
 	values.TimeInterval = timeInterval
 	values.WhereCondition = whereCondition
@@ -124,22 +110,13 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 	return enrich.ProcessorResult{Status: status, Value: value, Diagnostics: diagnostics}, nil
 }
 
-// metricIdentity 返回冻结指标身份使用的结果表与字段。
+// metricIdentity 返回当前声明查询的结果表与字段。
 // PromQL 查询的结果表可能来自冒号段规则，不再直接使用空的发布表名。
 func metricIdentity(query models.StrategyQueryConfig) (string, string) {
 	if query.IsPromQL() {
 		return promQLMetricIdentity(query)
 	}
 	return query.ResultTableID, query.MetricField
-}
-
-// metricUniqueID 仅在结果表和字段都可确定时生成可反解的指标标识。
-// 残缺拼接会得到 ".usage" 或 "table." 这类无法反解的值。
-func metricUniqueID(table, field string) string {
-	if table == "" || field == "" {
-		return ""
-	}
-	return table + "." + field
 }
 
 // 指标目录策略只冻结目录身份，resolved 策略中的物理表可以为空或过期。

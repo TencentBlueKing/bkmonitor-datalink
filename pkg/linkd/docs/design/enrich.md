@@ -403,7 +403,6 @@ display_name
 metric_name
 unit
 result_table_id
-metric_unique_id
 aggregate_func
 time_interval
 where_condition
@@ -485,7 +484,7 @@ Namespace、Cluster、模型元数据或动态分组仍失败时继续 `partial`
 - APM 来源识别优先使用目录 `ref_metricset_code`，没有主引用时使用定义来源；识别 `apm` 和 `apm_application.<标识>`，旧的无目录 ID 查询保留表名识别。APM 与其他来源混合、或多个不同单应用来源的输入不能选择首条定位应用。应用/服务/服务实例在策略和 Event 的明确上下文、适用集合约束下定位；`cw-interface` 仅接收并校验完整标准身份，不从 `span_name` 猜测缺少 category/span_kind 的接口实例 ID。K8s 的重复模型声明必须一致，原生维度查出的实例不得覆盖显式声明的另一实例。
 
 - 定义查询不按 `enabled/ref_status` 过滤，已触发告警仍可展示停用或失效指标的定义。时序取数继续使用已发布的检测语义；已有参数继续插件协议，无参数内置告警由 KAC 按准确 Event 与执行历史重建，外部来源由所属插件承接。
-- 显式目录 ID 不要求来源业务。`native`、已绑定的 `predefined` 按有效主引用保留物理表、别名和字段；引用不完整时失败。`derived` 只支持现场展开的计算配方，使用父定义名和单位，不能把执行面的成员位置当作父指标主引用；目录中的 `derived` 若仍带物理主引用则失败。目录 `kind=derived` 的兼容标识仍按下述规则处理；`metric_unique_id` 对齐 KAC `develop/4.5.16` 的首查询行为，从事件租户、策略 ID 与版本定位的同一不可变快照中读取 `items[0].query_configs[0]`，按 `result_table_id + "." + metric_field` 输出，空表名保留前导点。PromQL 查询缺少定位字段时沿用现有身份解析；首查询缺失、非法或无法确定字段时 Metric 失败，不改用父指标名、后续查询或当前配方。该兼容字段不代表衍生父指标的目录身份，也不改变 `result_table_id`、父定义、取数参数或其他指标的生成规则。声明未携带 `field_tag` 时，同一历史执行快照中一致绑定的 `metric_snapshot.parent_metric_id + derived.metric_id` 可证明父指标的衍生类型，用于描述生成；不能把展开成员的 ID、表达式或过滤条件覆盖回声明。单 catalog 查询的无函数恒等别名可省略外层表达式，实际计算与函数仍保留。
+- 显式目录 ID 不要求来源业务。`native`、已绑定的 `predefined` 按有效主引用保留物理表、别名和字段；引用不完整时失败。`derived` 只支持现场展开的计算配方，使用父定义名和单位，不能把执行面成员位置当父指标主引用；带物理主引用的 derived 定义仍失败。2026-11-05 移除 `metric_unique_id` 及专用首执行查询位置读取，不新增同义字段，也不再仅因该位置缺失或非法使 Metric 失败。准确执行版本、父身份和声明校验仍保留。声明未携带 `field_tag` 时，同一历史执行快照中一致绑定的 `metric_snapshot.parent_metric_id + derived.metric_id` 可证明父指标的衍生类型，用于描述生成；不能把展开成员的 ID、表达式或过滤条件覆盖回声明。单 catalog 查询的无函数恒等别名可省略外层表达式，实际计算与函数仍保留。
 - 历史 `query_config_type=dataset` 声明按同一不可变执行快照中的唯一别名、`dataset_code` 和 `dataset_semantic.metric_field` 绑定物理表/字段，再按既有租户、空间和模型条件反查指标目录，不猜目录 ID，也不查询当前数据集配置。当前只支持 `bk_monitor/time_series` 且维度、条件无需改名的直接映射；声明、语义绑定与执行查询的维度及条件必须一致，执行查询不能额外携带 `filter_dict`、未绑定或无效来源。缺少、歧义或无法证明等价的绑定返回 `strategy_revision_dataset_binding_invalid`。只改写读取视图中的物理定位与来源类型，保留原声明、表达式、函数、过滤条件及原始快照。
 - Scope 强制事件租户，按指标 ID 或完整反查条件复用单次丰富结果；Client 使用 5 秒超时、两条候选上限，两个 JSON 列分别限 1 MiB，并精确复核返回身份。NULL、畸形或超限 JSON 按 `metric_catalog` 依赖失败处理。
 

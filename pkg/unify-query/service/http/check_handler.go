@@ -159,7 +159,8 @@ func checkQueryTsData(ctx context.Context, q *structured.QueryTs) (data []any, r
 	routeInfo = qr.CollectRouteInfo()
 
 	if metadata.GetQueryParams(ctx).IsDirectQuery() {
-		// 与 queryTsToInstanceAndStmt 直查分支一致：ToVmExpand + SetExpand，后续与 DirectQuery 同源读 GetExpand。
+		// 预览保留全部声明引用用于路由诊断；实际执行另按当前表达式收敛。
+		// 后续与 DirectQuery 同源读取 GetExpand。
 		vmExpand := query.ToVmExpand(ctx, qr)
 		metadata.SetExpand(ctx, vmExpand)
 

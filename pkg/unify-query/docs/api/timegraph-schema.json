@@ -1,0 +1,916 @@
+{
+  "resources": [
+    {
+      "namespace": "__all__",
+      "name": "system",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bk_target_ip",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "datasource",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bk_data_id",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "node",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bcs_cluster_id",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "node",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "container",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bcs_cluster_id",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "namespace",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "pod",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "container",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "version",
+          "required": false
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "pod",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bcs_cluster_id",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "namespace",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "pod",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "job",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bcs_cluster_id",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "namespace",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "job",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "replicaset",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bcs_cluster_id",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "namespace",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "replicaset",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "deployment",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bcs_cluster_id",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "namespace",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "deployment",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "daemonset",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bcs_cluster_id",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "namespace",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "daemonset",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "statefulset",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bcs_cluster_id",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "namespace",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "statefulset",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "service",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bcs_cluster_id",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "namespace",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "service",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "ingress",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bcs_cluster_id",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "namespace",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "ingress",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "k8s_address",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bcs_cluster_id",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "address",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "domain",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bcs_cluster_id",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "domain",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "apm_service",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "apm_application_name",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "apm_service_name",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "apm_service_instance",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "apm_application_name",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "apm_service_name",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "apm_service_instance_name",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "bklogconfig",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bklogconfig_namespace",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "bklogconfig_name",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "business",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bk_biz_id",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "biz",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bk_biz_id",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "set",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bk_set_id",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "module",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bk_module_id",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "app_version",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "app_name",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "version",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "git_commit",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "git_repo",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "commit_id",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "p4_changelist",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "p4_port",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "changelist_id",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "svn_revision",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "svn_repo",
+          "required": true
+        },
+        {
+          "namespace": "",
+          "name": "revision",
+          "required": true
+        }
+      ],
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "host",
+      "fields": [
+        {
+          "namespace": "",
+          "name": "bk_host_id",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "namespace": "",
+          "name": "version",
+          "required": false
+        },
+        {
+          "namespace": "",
+          "name": "env_name",
+          "required": false
+        },
+        {
+          "namespace": "",
+          "name": "env_type",
+          "required": false
+        },
+        {
+          "namespace": "",
+          "name": "service_version",
+          "required": false
+        },
+        {
+          "namespace": "",
+          "name": "service_type",
+          "required": false
+        }
+      ],
+      "labels": null,
+      "spec": null
+    }
+  ],
+  "relations": [
+    {
+      "namespace": "__all__",
+      "name": "node_with_system",
+      "from_resource": "node",
+      "to_resource": "system",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "node_with_pod",
+      "from_resource": "node",
+      "to_resource": "pod",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "job_with_pod",
+      "from_resource": "job",
+      "to_resource": "pod",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "container_with_pod",
+      "from_resource": "container",
+      "to_resource": "pod",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "pod_with_replicaset",
+      "from_resource": "pod",
+      "to_resource": "replicaset",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "pod_with_statefulset",
+      "from_resource": "pod",
+      "to_resource": "statefulset",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "daemonset_with_pod",
+      "from_resource": "daemonset",
+      "to_resource": "pod",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "deployment_with_replicaset",
+      "from_resource": "deployment",
+      "to_resource": "replicaset",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "pod_with_service",
+      "from_resource": "pod",
+      "to_resource": "service",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "datasource_with_pod",
+      "from_resource": "datasource",
+      "to_resource": "pod",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "datasource_with_node",
+      "from_resource": "datasource",
+      "to_resource": "node",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "ingress_with_service",
+      "from_resource": "ingress",
+      "to_resource": "service",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "k8s_address_with_service",
+      "from_resource": "k8s_address",
+      "to_resource": "service",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "domain_with_service",
+      "from_resource": "domain",
+      "to_resource": "service",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "apm_service_instance_with_system",
+      "from_resource": "apm_service_instance",
+      "to_resource": "system",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "apm_service_instance_with_pod",
+      "from_resource": "apm_service_instance",
+      "to_resource": "pod",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "apm_service_with_apm_service_instance",
+      "from_resource": "apm_service",
+      "to_resource": "apm_service_instance",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "bklogconfig_with_datasource",
+      "from_resource": "bklogconfig",
+      "to_resource": "datasource",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "business_with_set",
+      "from_resource": "business",
+      "to_resource": "set",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "biz_with_set",
+      "from_resource": "biz",
+      "to_resource": "set",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "module_with_set",
+      "from_resource": "module",
+      "to_resource": "set",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "host_with_module",
+      "from_resource": "host",
+      "to_resource": "module",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "host_with_system",
+      "from_resource": "host",
+      "to_resource": "system",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "app_version_with_host",
+      "from_resource": "app_version",
+      "to_resource": "host",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "app_version_with_container",
+      "from_resource": "app_version",
+      "to_resource": "container",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "app_version_with_git_commit",
+      "from_resource": "app_version",
+      "to_resource": "git_commit",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "app_version_with_p4_changelist",
+      "from_resource": "app_version",
+      "to_resource": "p4_changelist",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "app_version_with_svn_revision",
+      "from_resource": "app_version",
+      "to_resource": "svn_revision",
+      "category": "",
+      "is_directional": false,
+      "is_belongs_to": false,
+      "labels": null,
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "pod_to_pod",
+      "from_resource": "pod",
+      "to_resource": "pod",
+      "category": "dynamic",
+      "is_directional": true,
+      "is_belongs_to": false,
+      "labels": {
+        "metric_name": "pod_to_pod_flow"
+      },
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "pod_to_system",
+      "from_resource": "pod",
+      "to_resource": "system",
+      "category": "dynamic",
+      "is_directional": true,
+      "is_belongs_to": false,
+      "labels": {
+        "metric_name": "pod_to_system_flow"
+      },
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "system_to_pod",
+      "from_resource": "system",
+      "to_resource": "pod",
+      "category": "dynamic",
+      "is_directional": true,
+      "is_belongs_to": false,
+      "labels": {
+        "metric_name": "system_to_pod_flow"
+      },
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "system_to_system",
+      "from_resource": "system",
+      "to_resource": "system",
+      "category": "dynamic",
+      "is_directional": true,
+      "is_belongs_to": false,
+      "labels": {
+        "metric_name": "system_to_system_flow"
+      },
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "service_to_service",
+      "from_resource": "service",
+      "to_resource": "service",
+      "category": "dynamic",
+      "is_directional": true,
+      "is_belongs_to": false,
+      "labels": {
+        "metric_name": "service_to_service_flow"
+      },
+      "spec": null
+    },
+    {
+      "namespace": "__all__",
+      "name": "apm_service_to_apm_service",
+      "from_resource": "apm_service",
+      "to_resource": "apm_service",
+      "category": "dynamic",
+      "is_directional": true,
+      "is_belongs_to": false,
+      "labels": {
+        "metric_name": "apm_service_to_apm_service_flow"
+      },
+      "spec": null
+    }
+  ]
+}

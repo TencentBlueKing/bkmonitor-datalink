@@ -542,10 +542,9 @@ func executeNamedOutputsWithRoutesMode(
 			index = outputResult.index
 			outputCtx, result, isPartial, executeErr = outputResult.ctx, outputResult.result, outputResult.partial, outputResult.err
 		} else {
-			outputCtx = metadata.WithStatusScope(ctx, index)
-			if parallelOptional {
-				outputCtx = metadata.WithStatusScope(metadata.WithNamedOutputScope(ctx, index), index)
-			}
+			// Serial outputs also own mutable routing metadata. Status isolation
+			// alone would leave their VM expansion in the parent request.
+			outputCtx = metadata.WithStatusScope(metadata.WithNamedOutputScope(ctx, index), index)
 			result, isPartial, executeErr = execute(outputCtx, query.OutputList[index])
 		}
 		output := query.OutputList[index]

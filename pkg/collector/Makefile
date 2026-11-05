@@ -10,7 +10,7 @@ BUILDTAGS ?= $(JSON_LIB)
 # 构建二进制
 BIN = $(RELEASE_PATH)/bk-collector
 
-# 节点管理 V3 插件包输出目录，顶层 Makefile 会指定为 dist 根目录
+# 节点管理 V3 插件包输出目录，默认与 V2 插件包放在同一目录
 RELEASE_PATH_V3 ?= $(RELEASE_PATH)
 # 节点管理不校验插件包文件名（插件名与版本取自包内 project.yaml），加上 nodeman-v3 以区分 V2 包
 PACKAGE_V3 = bk-collector-nodeman-v3-$(VERSION).tgz
@@ -44,11 +44,13 @@ test:
 encode:
 	./control.sh encode
 
+# 同时产出 V2、V3 插件包；V3 须在 V2 打包（tar -C . *）之后生成，否则会被打进 V2 插件包
 .PHONY: build
 build:
 	cd $(RELEASE_PATH) && ls -lh && rm -rf *
 	JSON_LIB=$(JSON_LIB) ./control.sh package linux amd64 x86_64 $(VERSION) $(RELEASE_PATH)
 	cd $(RELEASE_PATH) && ls -lh && tar -zcvf bk-collector-$(VERSION).tgz --remove-files -C . * && cp bk-collector-$(VERSION).tgz bk-collector.tgz
+	$(MAKE) build-v3
 	JSON_LIB=$(JSON_LIB) ./control.sh sidecar $(VERSION) $(RELEASE_PATH) && ls -lh $(RELEASE_PATH)
 
 # 节点管理 V3 插件包：$(RELEASE_PATH_V3)/$(PACKAGE_V3)，包内顶层目录为 bk-collector/

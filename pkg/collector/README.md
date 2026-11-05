@@ -141,16 +141,15 @@ processor 数据流动通过 channel 来通信。
 $ make build
 ```
 
-构建节点管理 V3 插件包（输出到 `$(RELEASE_PATH)/bk-collector-nodeman-v3-<version>.tgz`，包内顶层目录为 `bk-collector/`）：
+`make build` 会在 `$(RELEASE_PATH)` 下同时产出两种插件包：
+
+- `bk-collector-<version>.tgz` / `bk-collector.tgz`：节点管理 V2 插件包
+- `bk-collector-nodeman-v3-<version>.tgz`：节点管理 V3 插件包，包内顶层目录为 `bk-collector/`
+
+仅构建 V3 插件包：
 
 ```shell
 $ make build-v3
-```
-
-流水线在仓库根目录执行，需放在 `make collector` 之后（V2 的 build 会清空模块产物目录），产物位于 `dist/` 根目录，不会被打进 V2 交付包：
-
-```shell
-$ make BUILD_NO=${BUILD_NO} MODULE=collector build-v3
 ```
 
 打包相关文件：

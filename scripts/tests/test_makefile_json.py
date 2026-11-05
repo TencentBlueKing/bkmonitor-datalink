@@ -72,21 +72,17 @@ class CollectorNodemanV3BuildTest(unittest.TestCase):
             check=True,
         ).stdout
 
-    def test_root_passes_pipeline_version_and_release_root(self):
-        version = self.make("MODULE=collector", "BUILD_NO=7", "version").strip()
-        commands = self.make("-n", "MODULE=collector", "BUILD_NO=7", "build-v3")
-
-        self.assertIn(f"RELEASE_PATH_V3={ROOT / 'dist'} VERSION={version} ", commands)
-        # 产物不能进入 dist/collector，否则会被流水线打进 V2 交付包
-        self.assertNotIn(str(ROOT / "dist" / "collector"), commands)
-
-    def test_collector_writes_package_to_release_root(self):
+    def test_build_outputs_v2_and_v3_packages_to_release_path(self):
         commands = self.make(
-            "-n", "RELEASE_PATH_V3=/release", "VERSION=1.2.3", "build-v3", cwd=ROOT / "pkg" / "collector"
+            "-n", "RELEASE_PATH=/release", "VERSION=1.2.3", "build", cwd=ROOT / "pkg" / "collector"
         )
 
-        self.assertIn("tar -zcvf /release/bk-collector-nodeman-v3-1.2.3.tgz -C ", commands)
-        self.assertIn("./control.sh package_v3 linux amd64 x86_64 1.2.3 ", commands)
+        v2_tar = commands.index("tar -zcvf bk-collector-1.2.3.tgz --remove-files -C . *")
+        v3_package = commands.index("./control.sh package_v3 linux amd64 x86_64 1.2.3 ")
+        v3_tar = commands.index("tar -zcvf /release/bk-collector-nodeman-v3-1.2.3.tgz -C ")
+        # V3 须在 V2 打包之后生成，否则会被打进 V2 插件包
+        self.assertLess(v2_tar, v3_package)
+        self.assertLess(v3_package, v3_tar)
 
 
 if __name__ == "__main__":

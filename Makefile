@@ -37,14 +37,6 @@ build: .check_module_vars
 	@echo make module: $(MODULE) BUILD_NO: $(BUILD_NO) COMMIT_ID: $(COMMIT_ID)
 	cd $(PWD)/pkg/$(MODULE) && make RELEASE_PATH=$(RELEASE_PATH)/$(MODULE) VERSION=$(VERSION) BUILD_NO=$(BUILD_NO) COMMIT_ID=$(COMMIT_ID) JSON_LIB=$(JSON_LIB) build
 
-# 节点管理 V3 插件包（目前仅 collector 支持），需在 build 之后执行：build 会清空 $(RELEASE_PATH)/$(MODULE)
-# 产物直接放在 $(RELEASE_PATH) 根目录，不进入模块目录，避免被流水线打进 V2 交付包
-.PHONY: build-v3
-build-v3: .check_module_vars
-	mkdir -p $(RELEASE_PATH)
-	@echo make module: $(MODULE) BUILD_NO: $(BUILD_NO) COMMIT_ID: $(COMMIT_ID)
-	cd $(PWD)/pkg/$(MODULE) && make RELEASE_PATH_V3=$(RELEASE_PATH) VERSION=$(VERSION) BUILD_NO=$(BUILD_NO) COMMIT_ID=$(COMMIT_ID) JSON_LIB=$(JSON_LIB) build-v3
-
 .PHONY: bkmonitorbeat
 bkmonitorbeat:
 	$(MAKE) MODULE=bkmonitorbeat build

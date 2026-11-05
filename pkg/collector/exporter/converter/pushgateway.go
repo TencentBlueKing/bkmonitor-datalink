@@ -291,7 +291,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				if value.OriginalType == "summary" && metric == base {
 					value.Type, value.Temporality, value.Usage = "gauge", "delta", "last"
 				}
-				observeMetadata(c.metadata, dataId, pm.Dimensions, metric, value)
+				observeMetadata(c.metadata, token.BizId, dataId, pm.Dimensions, metric, value)
 			}
 		}
 		events = append(events, c.ToEvent(token, dataId, pm.AsMapStr()))

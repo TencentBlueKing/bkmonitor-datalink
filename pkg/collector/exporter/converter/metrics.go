@@ -73,7 +73,7 @@ func (c metricsConverter) Convert(record *define.Record, f define.GatherFunc) {
 						for name := range dp["metrics"].(map[string]float64) {
 							if value, ok := otlpMetadata(metric, originalName, name); ok {
 								scope := scopeCache.scopeFor(dp["dimension"].(map[string]string))
-								c.metadata.Observe(metricmeta.NewKey(dataId, scope, name), value)
+								c.metadata.Observe(metadataKey(record.Token.BizId, dataId, scope, name), value)
 							} else {
 								metadataDropped.WithLabelValues("unknown_semantics").Inc()
 							}

@@ -267,6 +267,7 @@ func (e TarsEvent) RecordType() define.RecordType {
 }
 
 type statPK struct {
+	bizID  int32
 	dataID int32
 	hash   uint64
 }
@@ -309,7 +310,7 @@ func (s *stat) GetDataID() int32 {
 
 // PK 返回 stat 的哈希值
 func (s *stat) PK() statPK {
-	return statPK{s.GetDataID(), labels.HashFromMap(s.dimensions)}
+	return statPK{s.token.BizId, s.GetDataID(), labels.HashFromMap(s.dimensions)}
 }
 
 // Copy 创建一个新的 stat 实例，并复制当前实例的内容
@@ -416,7 +417,7 @@ func (s *stat) ToEvents(metricPrefix string) []define.Event {
 				if s.metadataInterval > 0 {
 					value.Interval, value.Present = s.metadataInterval.Milliseconds(), value.Present|metricmeta.PresentInterval
 				}
-				observeMetadata(s.metadata, s.GetDataID(), pm.Dimensions, metric, value)
+				observeMetadata(s.metadata, s.token.BizId, s.GetDataID(), pm.Dimensions, metric, value)
 			}
 		}
 		events = append(events, TarsEvent{define.NewCommonEvent(s.token, s.GetDataID(), pm.AsMapStr())})
@@ -534,7 +535,7 @@ func newTarsConverter(config *TarsConfig) EventConverter {
 	return newTarsConverterWithMetadata(config, nil)
 }
 
-func newTarsConverterWithMetadata(config *TarsConfig, observer metricmeta.Observer) EventConverter {
+func newTarsConverterWithMetadata(config *TarsConfig, observer metricmeta.Observer) tarsConverter {
 	if config == nil {
 		config = &TarsConfig{}
 	}
@@ -692,7 +693,7 @@ func (c tarsConverter) handleProp(token define.Token, dataID int32, ip string, d
 		if c.metadata != nil {
 			for metric := range pm.Metrics {
 				value := tarsPropertyMetadata(pm.Dimensions[propertyTagPropertyName], pm.Dimensions[propertyTagPropertyPolicy])
-				observeMetadata(c.metadata, dataID, pm.Dimensions, metric, value)
+				observeMetadata(c.metadata, token.BizId, dataID, pm.Dimensions, metric, value)
 			}
 		}
 		events = append(events, c.ToEvent(token, dataID, pm.AsMapStr()))

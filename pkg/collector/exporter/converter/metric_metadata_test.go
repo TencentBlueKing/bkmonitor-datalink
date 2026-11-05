@@ -47,7 +47,6 @@ func BenchmarkMetadataOTLP(b *testing.B) {
 			var conv metricsConverter
 			if enabled {
 				cfg := metricmeta.DefaultConfig()
-				cfg.DebounceInterval = 0
 				exporter, err := metricmeta.NewExporter(cfg, func(context.Context, []byte) error { return nil })
 				if err != nil {
 					b.Fatal(err)

@@ -10,57 +10,71 @@
 package exporter
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
+	"strconv"
 	"sync/atomic"
+	"time"
 
+	"github.com/elastic/beats/libbeat/common"
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/queue"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/metricmeta"
 )
 
-func newMetricMetadataExporter(config MetricMetadataConfig) (*metricmeta.Exporter, error) {
-	if config.Endpoint == "" {
-		if config.InfoRetention <= 0 {
-			return nil, fmt.Errorf("metric_metadata.info_retention must be positive")
-		}
-		info := newMetadataInfoCollector(config.MaxPendingEntries, config.InfoRetention)
-		exp, err := metricmeta.NewExporter(config.Config, info.Export)
-		if err != nil {
-			return nil, err
-		}
-		metadataInfo.Store(info)
-		return exp, nil
-	}
-	endpoint, err := url.Parse(config.Endpoint)
-	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.User != nil {
-		return nil, fmt.Errorf("metric_metadata.endpoint must be an HTTP(S) URL without userinfo")
-	}
-	client := &http.Client{
-		Timeout:       config.ExportTimeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	return metricmeta.NewExporter(config.Config, func(ctx context.Context, body []byte) error {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, config.Endpoint, bytes.NewReader(body))
-		if err != nil {
+const metadataMetricName = "bk_collector_metric_metadata_info"
+
+// sendMetadata 提交标准时序批次；成功表示本地发送客户端接纳，不代表已入库。
+func sendMetadata(ctx context.Context, dataID int32, rows []metricmeta.Entry) error {
+	points := make([]common.MapStr, 0, len(rows))
+	now := time.Now().UnixMilli()
+	for _, row := range rows {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := client.Do(req)
-		if err != nil {
-			return err
+		k, v := row.Key, row.Value
+		if v.Present&metricmeta.PresentDescription == 0 {
+			v.Description = ""
 		}
-		defer resp.Body.Close()
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("metric metadata export returned HTTP %d", resp.StatusCode)
+		if v.Present&metricmeta.PresentUnit == 0 {
+			v.Unit = ""
 		}
-		return nil
-	})
+		if v.Present&metricmeta.PresentUsage == 0 {
+			v.Usage = ""
+		}
+		interval := ""
+		if v.Present&metricmeta.PresentInterval != 0 {
+			interval = strconv.FormatInt(v.Interval, 10)
+		}
+		points = append(points, common.MapStr{
+			"metrics":   map[string]float64{metadataMetricName: 1},
+			"timestamp": now,
+			"dimension": map[string]string{
+				"bk_biz_id":     strconv.FormatInt(int64(k.BizID), 10),
+				"dataid":        strconv.FormatInt(int64(k.DataID), 10),
+				"scope_type":    string(k.ScopeType),
+				"scope":         k.Scope,
+				"metric":        k.Metric,
+				"name":          v.Name,
+				"description":   v.Description,
+				"unit":          v.Unit,
+				"temporality":   v.Temporality,
+				"interval":      interval,
+				"original_type": v.OriginalType,
+				"type":          v.Type,
+				"usage":         v.Usage,
+				"present":       strconv.Itoa(int(v.Present)),
+			},
+		})
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !SentFunc(queue.NewMetricsMapStr(dataID, points)) {
+		return fmt.Errorf("metric metadata: output DataID %d unavailable", dataID)
+	}
+	return nil
 }
 
 var metadataStats atomic.Pointer[metricmeta.Store]
@@ -68,7 +82,7 @@ var metadataStats atomic.Pointer[metricmeta.Store]
 type metadataCollector struct{ descriptors map[string]*prometheus.Desc }
 
 func init() {
-	names := []string{"pending_entries", "bloom_versions", "bloom_rotations_total", "cleans_total", "forced_entries_total", "export_entries_total", "suppressed_total", "debounced_total", "export_failures_total", "dropped_total", "flush_duration_seconds"}
+	names := []string{"pending_entries", "bloom_versions", "bloom_rotations_total", "cleans_total", "forced_entries_total", "export_entries_total", "suppressed_total", "export_failures_total", "dropped_total", "flush_duration_seconds"}
 	c := metadataCollector{descriptors: make(map[string]*prometheus.Desc)}
 	for _, name := range names {
 		var labels []string
@@ -77,7 +91,7 @@ func init() {
 		}
 		c.descriptors[name] = prometheus.NewDesc("bk_collector_metric_metadata_"+name, "Metric metadata "+name, labels, nil)
 	}
-	prometheus.MustRegister(c, metadataInfoProxy{})
+	prometheus.MustRegister(c)
 }
 
 func (c metadataCollector) Describe(ch chan<- *prometheus.Desc) {
@@ -98,7 +112,7 @@ func (c metadataCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 	for name, value := range map[string]uint64{
 		"bloom_rotations_total": s.Rotations, "cleans_total": s.Cleans, "forced_entries_total": s.Forced,
-		"export_entries_total": s.Exported, "suppressed_total": s.Suppressed, "debounced_total": s.Debounced, "export_failures_total": s.Failures,
+		"export_entries_total": s.Exported, "suppressed_total": s.Suppressed, "export_failures_total": s.Failures,
 	} {
 		ch <- prometheus.MustNewConstMetric(c.descriptors[name], prometheus.CounterValue, float64(value))
 	}

@@ -190,3 +190,5 @@ replace (
 	// A replace directive is needed for github.com/prometheus/prometheus to ensure running against the latest version of prometheus.
 	github.com/prometheus/prometheus => github.com/prometheus/prometheus v0.38.0
 )
+
+replace github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils => ../utils

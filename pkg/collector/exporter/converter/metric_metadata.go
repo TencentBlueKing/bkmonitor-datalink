@@ -50,9 +50,15 @@ func metadataScope(dimensions map[string]string) metricmeta.Scope {
 	return metricmeta.Scope{Type: metricmeta.ScopeAPM, Name: escape(service) + "-" + escape(scope)}
 }
 
-func observeMetadata(observer metricmeta.Observer, dataID int32, dims map[string]string, metric string, value metricmeta.Value) {
+func metadataKey(bizID, dataID int32, scope metricmeta.Scope, name string) metricmeta.Key {
+	key := metricmeta.NewKey(dataID, scope, name)
+	key.BizID = bizID
+	return key
+}
+
+func observeMetadata(observer metricmeta.Observer, bizID, dataID int32, dims map[string]string, metric string, value metricmeta.Value) {
 	if observer != nil {
-		observer.Observe(metricmeta.NewKey(dataID, metadataScope(dims), metric), value)
+		observer.Observe(metadataKey(bizID, dataID, metadataScope(dims), metric), value)
 	}
 }
 

@@ -61,7 +61,7 @@ func (c remoteWriteConverter) Convert(record *define.Record, f define.GatherFunc
 				continue
 			}
 			if c.metadata != nil && aligned && !registered && rwData.MetricDescriptors[i] != nil {
-				observeMetadata(c.metadata, dataId, dims, name, *rwData.MetricDescriptors[i])
+				observeMetadata(c.metadata, record.Token.BizId, dataId, dims, name, *rwData.MetricDescriptors[i])
 				registered = true
 			}
 

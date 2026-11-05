@@ -12,6 +12,7 @@ package exporter
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
@@ -40,8 +41,9 @@ type Exporter struct {
 	wg              sync.WaitGroup
 	converter       converter.Converter
 	queue           queue.Queue
-	cfg             *Config
-	batches         map[string]queue.Config // 无并发读写 无需锁保护
+	outputDataID    int32
+	batches         atomic.Value // map[string]queue.Config，重载时整表替换。
+	store           atomic.Pointer[metricmeta.Store]
 }
 
 var globalRecords = define.NewRecordQueue(define.PushModeGuarantee)
@@ -59,48 +61,33 @@ func PublishEvents(events ...define.Event) {
 var SentFunc = beat.Send
 
 func New(conf *confengine.Config) (*Exporter, error) {
-	c := &Config{MetricMetadata: MetricMetadataConfig{Config: metricmeta.DefaultConfig(), InfoRetention: 2 * time.Minute}}
-	if err := conf.UnpackChild(define.ConfigFieldExporter, c); err != nil {
+	c, err := loadExporterConfig(conf)
+	if err != nil {
 		return nil, err
 	}
-	c.Validate()
-	logger.Infof("exporter config: %+v", c)
 
 	// 注册 gse output hook
+	maxMessageBytes := c.MaxMessageBytes
 	gse.RegisterSendHook(func(dataID int32, n float64) bool {
 		DefaultMetricMonitor.ObserveBeatSentBytes(dataID, n)
-		return n < float64(c.MaxMessageBytes)
+		return n < float64(maxMessageBytes)
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	var metadata *metricmeta.Exporter
-	var observer metricmeta.Observer
-	if c.MetricMetadata.Enabled {
-		var err error
-		metadata, err = newMetricMetadataExporter(c.MetricMetadata)
-		if err != nil {
-			cancel()
-			return nil, err
+	exp := &Exporter{ctx: ctx, cancel: cancel}
+	if err := exp.applyMetadata(c.MetricMetadata); err != nil {
+		cancel()
+		return nil, err
+	}
+	exp.converter = converter.NewCommonConverterWithMetadata(&c.Converter, func() metricmeta.Observer {
+		if store := exp.store.Load(); store != nil {
+			return store
 		}
-		observer = metadata.Store()
-		metadataStats.Store(metadata.Store())
-	}
-	if metadata == nil {
-		metadataStats.Store(nil)
-	}
-	if !c.MetricMetadata.Enabled || c.MetricMetadata.Endpoint != "" {
-		metadataInfo.Store(nil)
-	}
-	exp := &Exporter{
-		ctx:            ctx,
-		cancel:         cancel,
-		converter:      converter.NewCommonConverterWithMetadata(&c.Converter, observer),
-		metricMetadata: metadata,
-		cfg:            c,
-		batches:        LoadConfigFrom(conf),
-	}
+		return nil
+	})
+	exp.batches.Store(c.batches)
 	exp.queue = queue.NewBatchQueue(c.Queue, func(s string) queue.Config {
-		return exp.batches[s]
+		return exp.batches.Load().(map[string]queue.Config)[s]
 	})
 	return exp, nil
 }
@@ -134,8 +121,56 @@ func (e *Exporter) Start() error {
 	return nil
 }
 
-func (e *Exporter) Reload(conf *confengine.Config) {
-	e.batches = LoadConfigFrom(conf)
+// applyMetadata 在启动或 lifecycleMu 保护下运行；仅目标变化才替换实例。
+func (e *Exporter) applyMetadata(m MetricMetadataConfig) error {
+	if m.Enabled && e.metricMetadata != nil && e.outputDataID == m.OutputDataID {
+		return e.metricMetadata.Reload(m.Config)
+	}
+	var next *metricmeta.Exporter
+	if m.Enabled {
+		var err error
+		outputDataID := m.OutputDataID
+		next, err = metricmeta.NewBatchExporter(m.Config, func(ctx context.Context, entries []metricmeta.Entry) error {
+			return sendMetadata(ctx, outputDataID, entries)
+		})
+		if err != nil {
+			return err
+		}
+		if e.started {
+			if err = next.Start(); err != nil {
+				return err
+			}
+		}
+	}
+	if e.metricMetadata != nil {
+		e.metricMetadata.Discard()
+	}
+	var store *metricmeta.Store
+	if next != nil {
+		store = next.Store()
+	}
+	e.metricMetadata = next
+	e.outputDataID = m.OutputDataID
+	e.store.Store(store)
+	metadataStats.Store(store)
+	return nil
+}
+
+func (e *Exporter) Reload(conf *confengine.Config) error {
+	cfg, err := loadExporterConfig(conf)
+	if err != nil {
+		return err
+	}
+	e.lifecycleMu.Lock()
+	defer e.lifecycleMu.Unlock()
+	if e.closed {
+		return metricmeta.ErrClosed
+	}
+	if err := e.applyMetadata(cfg.MetricMetadata); err != nil {
+		return err
+	}
+	e.batches.Store(cfg.batches)
+	return nil
 }
 
 func (e *Exporter) consumeEvents() {

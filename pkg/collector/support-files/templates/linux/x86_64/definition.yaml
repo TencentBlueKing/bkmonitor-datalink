@@ -1,0 +1,64 @@
+# 节点管理 V3 插件包的平台定义文件，打包时放到 bk-collector/plugins_linux_x86_64/definition.yaml（control.sh package_v3）
+#
+# - sourcePath 相对 plugins_linux_x86_64 目录；模板与 V2 共用 etc/*.conf.tpl，打包时改名为 templates/*.conf.template
+# - filePath 由节点管理强制校验：主配置必须为 etc，子配置必须为 etc/bk-collector
+# - 子配置由监控通过部署策略下发，实际文件名为 <模板名>_deploy_<部署策略ID>.conf，仍能命中主配置中的
+#   bk-collector-*.conf / bkmonitorproxy_*.conf 加载规则
+# - V2 的 bk-collector-example 放在 etc 目录且不是主配置，V3 不允许，且监控未使用，因此不再注册
+configTemplates:
+  - name: bk-collector.conf
+    isMainConfig: true
+    filePath: etc
+    sourcePath: templates/bk-collector-main.conf.template
+    variables:
+      - title: extra_vars
+        type: object
+        required: false
+        description: 额外配置
+        descriptionEn: Extra variables
+        properties:
+          - title: http_max_bytes
+            type: string
+            default: ""
+            required: false
+            description: HTTP 服务单次请求体大小上限（字节），为空时使用 209715200
+            descriptionEn: Max request body size of the HTTP server in bytes, 209715200 if empty
+          - title: grpc_max_bytes
+            type: string
+            default: ""
+            required: false
+            description: gRPC 服务单次请求体大小上限（字节），为空时使用 8388608
+            descriptionEn: Max request body size of the gRPC server in bytes, 8388608 if empty
+
+  - name: bk-collector-platform.conf
+    isMainConfig: false
+    filePath: etc/bk-collector
+    sourcePath: templates/bk-collector-platform.conf.template
+
+  - name: bk-collector-application.conf
+    isMainConfig: false
+    filePath: etc/bk-collector
+    sourcePath: templates/bk-collector-application.conf.template
+
+  - name: bk-collector-report-v2.conf
+    isMainConfig: false
+    filePath: etc/bk-collector
+    sourcePath: templates/bk-collector-report-v2.conf.template
+
+  - name: bkmonitorproxy_ping.conf
+    isMainConfig: false
+    filePath: etc/bk-collector
+    sourcePath: templates/bkmonitorproxy_ping.conf.template
+
+  - name: bkmonitorproxy_report.conf
+    isMainConfig: false
+    filePath: etc/bk-collector
+    sourcePath: templates/bkmonitorproxy_report.conf.template
+
+# 启停脚本由节点管理随 V3 插件包注入 bin 目录，主配置固定读取 ../etc/bk-collector.conf
+control:
+  start: "./start.sh bk-collector"
+  stop: "./stop.sh bk-collector"
+  restart: "./restart.sh bk-collector"
+  reload: "./reload.sh bk-collector"
+  version: "./bk-collector -v"

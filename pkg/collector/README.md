@@ -141,6 +141,20 @@ processor 数据流动通过 channel 来通信。
 $ make build
 ```
 
+构建节点管理 V3 插件包（输出到 `$(RELEASE_PATH)/bk-collector-nodeman-v3-<version>.tgz`，包内顶层目录为 `bk-collector/`）：
+
+```shell
+$ make build-v3
+```
+
+流水线在仓库根目录执行，需放在 `make collector` 之后（V2 的 build 会清空模块产物目录），产物位于 `dist/` 根目录，不会被打进 V2 交付包：
+
+```shell
+$ make BUILD_NO=${BUILD_NO} MODULE=collector build-v3
+```
+
+V3 插件包与 V2 插件包共用 `support-files/templates/linux/x86_64/etc/*.tpl` 配置模板，插件信息与平台定义分别见 [project-v3.yaml](./support-files/templates/project-v3.yaml) 和 [definition.yaml](./support-files/templates/linux/x86_64/definition.yaml)。
+
 ## 📝 使用
 
 ### Processor

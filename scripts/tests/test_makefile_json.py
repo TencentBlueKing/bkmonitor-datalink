@@ -59,5 +59,35 @@ class ModuleJSONBuildTest(unittest.TestCase):
         self.assertEqual(self.build_arguments("transfer"), "")
 
 
+class CollectorNodemanV3BuildTest(unittest.TestCase):
+    def make(self, *arguments, cwd=ROOT):
+        env = os.environ.copy()
+        env.pop("JSON_LIB", None)
+        return subprocess.run(
+            ["make", "--no-print-directory", *arguments],
+            cwd=cwd,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout
+
+    def test_root_passes_pipeline_version_and_release_root(self):
+        version = self.make("MODULE=collector", "BUILD_NO=7", "version").strip()
+        commands = self.make("-n", "MODULE=collector", "BUILD_NO=7", "build-v3")
+
+        self.assertIn(f"RELEASE_PATH_V3={ROOT / 'dist'} VERSION={version} ", commands)
+        # 产物不能进入 dist/collector，否则会被流水线打进 V2 交付包
+        self.assertNotIn(str(ROOT / "dist" / "collector"), commands)
+
+    def test_collector_writes_package_to_release_root(self):
+        commands = self.make(
+            "-n", "RELEASE_PATH_V3=/release", "VERSION=1.2.3", "build-v3", cwd=ROOT / "pkg" / "collector"
+        )
+
+        self.assertIn("tar -zcvf /release/bk-collector-nodeman-v3-1.2.3.tgz -C ", commands)
+        self.assertIn("./control.sh package_v3 linux amd64 x86_64 1.2.3 ", commands)
+
+
 if __name__ == "__main__":
     unittest.main()

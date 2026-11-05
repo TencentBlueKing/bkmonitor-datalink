@@ -64,6 +64,59 @@ function package() {
   cp -R ./support-files/templates/${goos}/${arch}/etc ${dir}
 }
 
+# 节点管理 V3 插件包，结构遵循节点管理 V3 插件包规范：
+#   ${dist}/bk-collector/project.yaml
+#   ${dist}/bk-collector/plugins_${goos}_${arch}/definition.yaml
+#   ${dist}/bk-collector/plugins_${goos}_${arch}/bin/bk-collector
+#   ${dist}/bk-collector/plugins_${goos}_${arch}/templates/*.conf.template
+# 配置模板与 V2 包共用 support-files/templates/${goos}/${arch}/etc/*.tpl，仅调整目录与后缀，保证两种包渲染出的配置一致
+function package_v3() {
+  # 变量声明
+  local goos=${1:-'linux'}
+  local goarch=${2:-'amd64'}
+  local arch=${3:-'x86_64'}
+  local version=${4:-'v0.0.0'}
+  local dist=${5:-'./dist'}
+
+  local src=./support-files/templates
+  local root=${dist}/${MODULE}
+  local dir=${root}/plugins_${goos}_${arch}
+
+  # 只清理当前平台目录，多个平台可依次打进同一个插件包
+  [ -e ${dir} ] && rm -rf ${dir}
+  mkdir -p ${dir}/{bin,templates}
+
+  # 构建二进制
+  go mod tidy
+  JSON_LIB=${JSON_LIB:-jsonsonic}
+  GOOS=${goos} GOARCH=${goarch} \
+    go build -tags "${JSON_LIB}" -ldflags " \
+    -s -w \
+    -X main.version=${version} \
+    -X main.buildTime=$(date -u '+%Y-%m-%d_%I:%M:%S%p') \
+    -X main.gitHash=$(git rev-parse HEAD)" \
+    -o ${dir}/bin/${MODULE} ./cmd/collector
+
+  # 插件信息与平台定义
+  sed "/^version:/s/.*/version: ${version}/" ${src}/project-v3.yaml > ${root}/project.yaml
+  cp ${src}/${goos}/${arch}/definition.yaml ${dir}/definition.yaml
+
+  # 配置模板：etc/xxx.conf.tpl -> templates/xxx.conf.template
+  local tpl
+  for tpl in ${src}/${goos}/${arch}/etc/*.tpl; do
+    cp ${tpl} ${dir}/templates/$(basename ${tpl} .tpl).template
+  done
+
+  # 节点管理导入时找不到 sourcePath 对应文件不会报错，只会得到空模板，这里提前校验
+  local source_path
+  for source_path in $(sed -n 's/^[[:space:]]*sourcePath:[[:space:]]*//p' ${dir}/definition.yaml); do
+    if [ ! -s "${dir}/${source_path}" ]; then
+      echo "config template not found or empty: ${dir}/${source_path}"
+      exit 1
+    fi
+  done
+}
+
 function sidecar() {
     local version=${1:-'v0.0.0'}
     local dist=${2:-'./dist'}
@@ -91,6 +144,8 @@ function encode() {
 
 if [ "$1" == "package" ]; then
   package $2 $3 $4 $5 $6
+elif [ "$1" == "package_v3" ]; then
+  package_v3 $2 $3 $4 $5 $6
 elif [ "$1" == "sidecar" ]; then
   sidecar $2 $3
 elif [ "$1" == "test" ]; then

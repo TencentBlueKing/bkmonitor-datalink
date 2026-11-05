@@ -1,6 +1,7 @@
-# 节点管理 V3 插件包的平台定义文件，打包时放到 bk-collector/plugins_linux_x86_64/definition.yaml（control.sh package_v3）
+# 节点管理 V3 插件包的平台定义文件，打包时原样放入插件包（control.sh package_v3）
 #
-# - sourcePath 相对 plugins_linux_x86_64 目录；模板与 V2 共用 etc/*.conf.tpl，打包时改名为 templates/*.conf.template
+# - sourcePath 相对 plugins_linux_x86_64 目录；templates/*.conf.template 须与 V2 同名模板
+#   support-files/templates/linux/x86_64/etc/*.conf.tpl 保持一致（打包时校验）
 # - filePath 由节点管理强制校验：主配置必须为 etc，子配置必须为 etc/bk-collector
 # - 子配置由监控通过部署策略下发，实际文件名为 <模板名>_deploy_<部署策略ID>.conf，仍能命中主配置中的
 #   bk-collector-*.conf / bkmonitorproxy_*.conf 加载规则

@@ -64,12 +64,12 @@ function package() {
   cp -R ./support-files/templates/${goos}/${arch}/etc ${dir}
 }
 
-# 节点管理 V3 插件包，结构遵循节点管理 V3 插件包规范：
-#   ${dist}/bk-collector/project.yaml
-#   ${dist}/bk-collector/plugins_${goos}_${arch}/definition.yaml
-#   ${dist}/bk-collector/plugins_${goos}_${arch}/bin/bk-collector
-#   ${dist}/bk-collector/plugins_${goos}_${arch}/templates/*.conf.template
-# 配置模板与 V2 包共用 support-files/templates/${goos}/${arch}/etc/*.tpl，仅调整目录与后缀，保证两种包渲染出的配置一致
+# 节点管理 V3 插件包
+# 源目录 support-files/v3 与插件包内 bk-collector/ 下的结构一致，打包时整体拷贝，再补充二进制和版本号：
+#   bk-collector/project.yaml
+#   bk-collector/plugins_${goos}_${arch}/definition.yaml
+#   bk-collector/plugins_${goos}_${arch}/templates/*.conf.template
+#   bk-collector/plugins_${goos}_${arch}/bin/bk-collector               <- 打包时编译
 function package_v3() {
   # 变量声明
   local goos=${1:-'linux'}
@@ -78,15 +78,39 @@ function package_v3() {
   local version=${4:-'v0.0.0'}
   local dist=${5:-'./dist'}
 
-  local src=./support-files/templates
+  local src=./support-files/v3
+  local v2_src=./support-files/templates/${goos}/${arch}
   local root=${dist}/${MODULE}
   local dir=${root}/plugins_${goos}_${arch}
 
-  # 只清理当前平台目录，多个平台可依次打进同一个插件包
+  # 节点管理导入时找不到 sourcePath 对应文件不会报错，只会得到空模板，这里提前校验
+  local source_path
+  for source_path in $(sed -n 's/^[[:space:]]*sourcePath:[[:space:]]*//p' ${src}/plugins_${goos}_${arch}/definition.yaml); do
+    if [ ! -s "${src}/plugins_${goos}_${arch}/${source_path}" ]; then
+      echo "config template not found or empty: ${src}/plugins_${goos}_${arch}/${source_path}"
+      exit 1
+    fi
+  done
+
+  # V3 模板目前须与 V2 同名模板（etc/xxx.conf.tpl）保持一致，保证两种插件包下发的配置相同；
+  # 修改模板时两边需同步，确需不同时再调整此校验
+  local tpl v2_tpl
+  for tpl in ${src}/plugins_${goos}_${arch}/templates/*.template; do
+    v2_tpl=${v2_src}/etc/$(basename ${tpl} .template).tpl
+    if ! cmp -s ${tpl} ${v2_tpl}; then
+      echo "v3 config template differs from v2: ${tpl} ${v2_tpl}"
+      exit 1
+    fi
+  done
+
+  # 拷贝插件包源目录；只清理当前平台目录，多个平台可依次打进同一个插件包
   [ -e ${dir} ] && rm -rf ${dir}
-  mkdir -p ${dir}/{bin,templates}
+  mkdir -p ${root}
+  cp -R ${src}/. ${root}/
+  sed -i.bak "/^version:/s/.*/version: ${version}/" ${root}/project.yaml && rm -f ${root}/project.yaml.bak
 
   # 构建二进制
+  mkdir -p ${dir}/bin
   go mod tidy
   JSON_LIB=${JSON_LIB:-jsonsonic}
   GOOS=${goos} GOARCH=${goarch} \
@@ -96,25 +120,6 @@ function package_v3() {
     -X main.buildTime=$(date -u '+%Y-%m-%d_%I:%M:%S%p') \
     -X main.gitHash=$(git rev-parse HEAD)" \
     -o ${dir}/bin/${MODULE} ./cmd/collector
-
-  # 插件信息与平台定义
-  sed "/^version:/s/.*/version: ${version}/" ${src}/project-v3.yaml > ${root}/project.yaml
-  cp ${src}/${goos}/${arch}/definition.yaml ${dir}/definition.yaml
-
-  # 配置模板：etc/xxx.conf.tpl -> templates/xxx.conf.template
-  local tpl
-  for tpl in ${src}/${goos}/${arch}/etc/*.tpl; do
-    cp ${tpl} ${dir}/templates/$(basename ${tpl} .tpl).template
-  done
-
-  # 节点管理导入时找不到 sourcePath 对应文件不会报错，只会得到空模板，这里提前校验
-  local source_path
-  for source_path in $(sed -n 's/^[[:space:]]*sourcePath:[[:space:]]*//p' ${dir}/definition.yaml); do
-    if [ ! -s "${dir}/${source_path}" ]; then
-      echo "config template not found or empty: ${dir}/${source_path}"
-      exit 1
-    fi
-  done
 }
 
 function sidecar() {

@@ -1,8 +1,8 @@
-# 节点管理 V3 插件包的 project.yaml，打包时放到 bk-collector/project.yaml（control.sh package_v3）
-# V2 插件包仍使用 linux/x86_64/project.yaml，两者互不影响
+# 节点管理 V3 插件包的 project.yaml，打包时原样放入插件包，version 由 control.sh package_v3 替换为构建版本
+# V2 插件包仍使用 support-files/templates/linux/x86_64/project.yaml，两者互不影响
 #
 # - name 必须与插件包顶层目录名一致
-# - templateRenderer 使用 jinja2：与 V2 共用同一份配置模板，监控下发的模板上下文也无需调整
+# - templateRenderer 使用 jinja2：配置模板与 V2 保持一致，监控下发的模板上下文也无需调整
 # - legacyConflict 为 true：通过插件 Install API 安装时，若主机上仍有运行中的 V2 bk-collector（nodeman 运行空间）则阻断，
 #   避免新旧进程争抢 4317/4318 等固定端口；该检查不会自动停止 V2 实例
 name: bk-collector

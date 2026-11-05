@@ -153,7 +153,21 @@ $ make build-v3
 $ make BUILD_NO=${BUILD_NO} MODULE=collector build-v3
 ```
 
-V3 插件包与 V2 插件包共用 `support-files/templates/linux/x86_64/etc/*.tpl` 配置模板，插件信息与平台定义分别见 [project-v3.yaml](./support-files/templates/project-v3.yaml) 和 [definition.yaml](./support-files/templates/linux/x86_64/definition.yaml)。
+打包相关文件：
+
+```
+support-files/
+├── templates/linux/x86_64/          # V2 插件包
+│   ├── project.yaml
+│   └── etc/
+└── v3/                              # V3 插件包，对应插件包内 bk-collector/ 目录
+    ├── project.yaml
+    └── plugins_linux_x86_64/
+        ├── definition.yaml
+        └── templates/*.conf.template
+```
+
+V3 打包时把 `v3/` 整体拷贝为插件包内的 `bk-collector/`，再编译 `plugins_linux_x86_64/bin/bk-collector` 并替换 `project.yaml` 中的版本号。目前 V3 模板须与 V2 同名模板 `etc/*.conf.tpl` 保持一致（打包时会校验），修改模板时请两边同步。
 
 ## 📝 使用
 

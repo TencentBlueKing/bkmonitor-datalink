@@ -11,6 +11,8 @@ package metricmeta
 
 import (
 	"context"
+	"encoding/json"
+	"maps"
 	"sync"
 	"time"
 )
@@ -20,23 +22,41 @@ type ExportFunc func(ctx context.Context, body []byte) error
 
 // Exporter 串行发送待发快照，确认后登记 Bloom，失败时恢复未确认项。
 type Exporter struct {
-	store       *Store
-	export      ExportFunc
-	config      Config
-	flushMu     sync.Mutex
-	lifecycleMu sync.Mutex
-	started     bool
-	closed      bool
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
-	stopOnce    sync.Once
-	stopErr     error
-	lastStart   time.Time
+	store    *Store
+	export   func(context.Context, []Entry) error
+	sending  chan struct{} // 串行化发送与配置重载，等待发送时可取消。
+	ticker   *time.Ticker
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	stopOnce sync.Once
+	stopErr  error
 }
 
-// NewExporter 校验配置并创建实例，调用 Start 后才启动后台发送。
+// NewExporter 将每个批次编码为 JSON 数组后调用 export。调用 Start 后才启动后台发送。
 func NewExporter(config Config, export ExportFunc) (*Exporter, error) {
+	if export == nil {
+		return nil, ErrUnconfigured
+	}
+	return NewBatchExporter(config, func(ctx context.Context, entries []Entry) error {
+		rows := make([]wireEntry, len(entries))
+		for i, entry := range entries {
+			rows[i] = entry.wire()
+		}
+		body, err := json.Marshal(rows)
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return export(ctx, body)
+	})
+}
+
+// NewBatchExporter 创建按批发送元信息的实例。回调同步执行，须响应 ctx 并只读使用 entries。
+// 切片仅在回调期间有效。如需异步保留，须先复制。返回 nil 表示确认整批。
+func NewBatchExporter(config Config, export func(ctx context.Context, entries []Entry) error) (*Exporter, error) {
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
@@ -44,31 +64,65 @@ func NewExporter(config Config, export ExportFunc) (*Exporter, error) {
 		return nil, ErrUnconfigured
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Exporter{store: newStore(config), config: config, export: export, ctx: ctx, cancel: cancel}, nil
+	config.Limits.ByDataID = maps.Clone(config.Limits.ByDataID)
+	return &Exporter{store: newStore(config), export: export, sending: make(chan struct{}, 1), ctx: ctx, cancel: cancel}, nil
 }
 
 // Store 返回可并发观察元信息的存储实例。
 func (e *Exporter) Store() *Store { return e.store }
 
-// Start 幂等启动后台发送，关闭后的实例不可重启。
-func (e *Exporter) Start() error {
-	e.lifecycleMu.Lock()
-	defer e.lifecycleMu.Unlock()
-	if e.closed {
+// Reload 应用完整配置，保留待发值、已发送版本和当前窗口计数。
+func (e *Exporter) Reload(config Config) error {
+	if err := config.validate(); err != nil {
+		return err
+	}
+	config.Limits.ByDataID = maps.Clone(config.Limits.ByDataID)
+	// 与发送快照串行，返回时旧快照不会再送出已禁止来源。
+	e.sending <- struct{}{}
+	defer func() { <-e.sending }()
+	s := e.store
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
 		return ErrClosed
 	}
-	if e.started {
+	if e.ticker != nil && config.Exporter.Interval != s.config.Exporter.Interval {
+		e.ticker.Reset(config.Exporter.Interval)
+	}
+	s.config = config
+	for _, limit := range config.Limits.ByDataID {
+		if limit != 0 {
+			continue
+		}
+		for k := range s.pending {
+			if n, ok := config.Limits.ByDataID[k.DataID]; ok && n == 0 {
+				delete(s.pending, k)
+				s.drop("blacklist")
+			}
+		}
+		break
+	}
+	return nil
+}
+
+// Start 幂等启动后台发送，关闭后的实例不可重启。
+func (e *Exporter) Start() error {
+	e.store.mu.Lock()
+	defer e.store.mu.Unlock()
+	if e.store.closed {
+		return ErrClosed
+	}
+	if e.ticker != nil {
 		return nil
 	}
-	e.started = true
+	e.ticker = time.NewTicker(e.store.config.Exporter.Interval)
 	e.wg.Add(1)
 	go func() {
 		defer e.wg.Done()
-		ticker := time.NewTicker(e.config.FlushInterval)
-		defer ticker.Stop()
+		defer e.ticker.Stop()
 		for {
 			select {
-			case <-ticker.C:
+			case <-e.ticker.C:
 				_ = e.flush(e.ctx, false)
 			case <-e.ctx.Done():
 				return
@@ -83,68 +137,53 @@ func (e *Exporter) Flush(ctx context.Context) error {
 	return e.flush(ctx, false)
 }
 
-func waitContext(ctx context.Context, delay time.Duration) error {
-	if delay <= 0 {
-		return ctx.Err()
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
 func (e *Exporter) flush(parent context.Context, final bool) error {
 	start := time.Now()
 	defer func() { e.store.observeFlush(time.Since(start)) }()
-	ctx, cancel := context.WithTimeout(parent, e.config.ExportTimeout)
+	e.store.mu.Lock()
+	timeout := e.store.config.Exporter.Timeout
+	e.store.mu.Unlock()
+	ctx, cancel := context.WithDeadline(parent, start.Add(timeout))
 	defer cancel()
-	e.flushMu.Lock()
-	defer e.flushMu.Unlock()
-	e.lifecycleMu.Lock()
-	closed := e.closed
-	e.lifecycleMu.Unlock()
+	select {
+	case e.sending <- struct{}{}:
+		defer func() { <-e.sending }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	e.store.mu.Lock()
+	closed, batchSize := e.store.closed, e.store.config.Exporter.BatchSize
+	e.store.mu.Unlock()
 	if closed && !final {
 		return ErrClosed
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	current := e.store.take(final)
+	current := e.store.take()
 	if len(current.items) == 0 {
 		return nil
 	}
 	defer e.store.restore(current.items)
-	batch := make([]Key, 0, min(e.config.ExportBatchSize, len(current.items)))
-	body := make([]byte, 1, min(e.config.ExportBatchBytes, 16*1024))
-	body[0] = '['
-	remaining := e.store.remainingVersions()
+	batch := make([]Entry, 0, min(batchSize, len(current.items)))
 	send := func() error {
 		if len(batch) == 0 {
 			return nil
 		}
-		if err := waitContext(ctx, time.Until(e.lastStart.Add(e.config.ExportMinInterval))); err != nil {
-			return err
-		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		e.lastStart = time.Now()
-		if err := e.export(ctx, append(body, ']')); err != nil {
+		if err := e.export(ctx, batch); err != nil {
 			e.store.mu.Lock()
 			e.store.stats.Failures++
 			e.store.mu.Unlock()
 			return err
 		}
-		for _, key := range batch {
-			e.store.ack(key, current.items[key], current.generation)
-			delete(current.items, key)
+		for _, entry := range batch {
+			e.store.ack(entry.Key, current.items[entry.Key], current.generation)
+			delete(current.items, entry.Key)
 		}
-		batch, body = batch[:0], body[:1]
-		remaining = e.store.remainingVersions()
+		batch = batch[:0]
 		return nil
 	}
 	for key, item := range current.items {
@@ -155,51 +194,32 @@ func (e *Exporter) flush(parent context.Context, final bool) error {
 			delete(current.items, key)
 			continue
 		}
-		if remaining == 0 {
-			return nil
-		}
-		encoded, err := (Entry{key, item.Value}).MarshalJSON()
-		if err != nil {
-			return err
-		}
-		if len(encoded)+2 > e.config.ExportBatchBytes {
-			e.store.mu.Lock()
-			e.store.drop("batch_bytes")
-			e.store.mu.Unlock()
-			delete(current.items, key)
-			continue
-		}
-		comma := 0
-		if len(batch) > 0 {
-			comma = 1
-		}
-		if len(batch) == e.config.ExportBatchSize || len(batch) == remaining || len(body)+comma+len(encoded)+1 > e.config.ExportBatchBytes {
+		batch = append(batch, Entry{Key: key, Value: item.Value})
+		if len(batch) == batchSize {
 			if err := send(); err != nil {
 				return err
 			}
-			if remaining == 0 {
-				return nil
-			}
 		}
-		if len(batch) > 0 {
-			body = append(body, ',')
-		}
-		body = append(body, encoded...)
-		batch = append(batch, key)
 	}
 	return send()
 }
 
 // Stop 拒收新值、取消后台发送，并以独立期限发送最后一轮。
-func (e *Exporter) Stop() error {
+func (e *Exporter) Stop() error { return e.stop(true) }
+
+// Discard 关闭已撤销的目标，不再向该目标刷新待发数据。
+func (e *Exporter) Discard() { _ = e.stop(false) }
+
+func (e *Exporter) stop(final bool) error {
 	e.stopOnce.Do(func() {
-		e.lifecycleMu.Lock()
-		e.closed = true
 		e.store.seal()
 		e.cancel()
-		e.lifecycleMu.Unlock()
 		e.wg.Wait()
-		e.stopErr = e.flush(context.Background(), true)
+		if final {
+			e.stopErr = e.flush(context.Background(), true)
+		}
+		e.sending <- struct{}{}
+		defer func() { <-e.sending }()
 		e.store.release()
 	})
 	return e.stopErr

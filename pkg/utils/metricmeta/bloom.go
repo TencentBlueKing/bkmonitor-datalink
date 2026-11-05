@@ -15,6 +15,14 @@ import (
 	"math"
 )
 
+const bloomDesignLoad = 100_000 // 每代位图按这个不同版本数分配空间，超过后仍继续写入。
+
+// 两代合计的目标误判率约为百万分之一，每代分配一半。
+func newBloomPair(designLoad int) [2]bloomFilter {
+	const probability = 5e-7
+	return [2]bloomFilter{newBloom(designLoad, probability), newBloom(designLoad, probability)}
+}
+
 type fingerprint [32]byte
 
 func digest(e Entry) fingerprint {
@@ -25,7 +33,8 @@ func digest(e Entry) fingerprint {
 		_, _ = h.Write(b[:])
 		_, _ = h.Write([]byte(value))
 	}
-	binary.LittleEndian.PutUint64(b[:], uint64(e.Key.DataID))
+	binary.LittleEndian.PutUint32(b[:4], uint32(e.Key.BizID))
+	binary.LittleEndian.PutUint32(b[4:], uint32(e.Key.DataID))
 	_, _ = h.Write(b[:])
 	for _, value := range []string{
 		string(e.Key.ScopeType), e.Key.Scope, e.Key.Metric, e.Value.Name,

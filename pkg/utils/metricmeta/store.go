@@ -10,16 +10,15 @@
 package metricmeta
 
 import (
+	"maps"
 	"sync"
 	"time"
 )
 
 type pendingEntry struct {
-	Value   Value
-	Digest  fingerprint
-	First   time.Time
-	Changed time.Time
-	Force   bool
+	Value  Value
+	Digest fingerprint
+	Force  bool
 }
 
 type snapshot struct {
@@ -29,16 +28,16 @@ type snapshot struct {
 
 // Stats 不携带 DataID、指标名等高基数标签，返回值为独立快照。
 type Stats struct {
-	Pending, BloomVersions                  int
-	Exported, Suppressed, Debounced, Forced uint64
-	Rotations, Cleans, Failures             uint64
-	Dropped                                 map[string]uint64
-	FlushCount                              uint64
-	FlushSeconds                            float64
-	FlushBuckets                            map[float64]uint64
+	Pending, BloomVersions       int
+	Exported, Suppressed, Forced uint64
+	Rotations, Cleans, Failures  uint64
+	Dropped                      map[string]uint64
+	FlushCount                   uint64
+	FlushSeconds                 float64
+	FlushBuckets                 map[float64]uint64
 }
 
-// Store 以有界待发集合和双 Bloom 实现并发观察、去重及防抖。
+// Store 以有界待发集合和双 Bloom 实现并发观察、同键合并和去重。
 type Store struct {
 	mu            sync.Mutex
 	config        Config
@@ -49,8 +48,6 @@ type Store struct {
 	generation    uint64
 	forceNext     bool
 	closed        bool
-	blocked       map[int32]bool
-	limits        map[int32]int
 	windowStart   time.Time
 	updates       int
 	dataIDUpdates map[int32]int
@@ -59,19 +56,18 @@ type Store struct {
 }
 
 func newStore(config Config) *Store {
-	s := &Store{
-		config: config, pending: make(map[Key]pendingEntry),
-		filters: [2]bloomFilter{newBloom(config.BloomCapacity, config.BloomErrorRate/2), newBloom(config.BloomCapacity, config.BloomErrorRate/2)},
-		blocked: make(map[int32]bool), limits: make(map[int32]int), dataIDUpdates: make(map[int32]int),
-		stats: Stats{Dropped: make(map[string]uint64), FlushBuckets: map[float64]uint64{0.01: 0, 0.05: 0, 0.1: 0, 0.5: 0, 1: 0, 5: 0, 10: 0}}, now: time.Now, forceNext: true,
+	return &Store{
+		config:        config,
+		pending:       make(map[Key]pendingEntry),
+		filters:       newBloomPair(bloomDesignLoad),
+		dataIDUpdates: make(map[int32]int),
+		stats: Stats{
+			Dropped:      make(map[string]uint64),
+			FlushBuckets: map[float64]uint64{0.01: 0, 0.05: 0, 0.1: 0, 0.5: 0, 1: 0, 5: 0, 10: 0},
+		},
+		now:       time.Now,
+		forceNext: true,
 	}
-	for _, id := range config.BlockedDataIDs {
-		s.blocked[id] = true
-	}
-	for _, item := range config.DataIDLimits {
-		s.limits[item.DataID] = item.Limit
-	}
-	return s
 }
 
 func (s *Store) drop(reason string) bool {
@@ -84,7 +80,7 @@ func (s *Store) rotate(now time.Time) {
 		s.lastRotation = now
 		return
 	}
-	interval := s.config.FullReportInterval / 2
+	interval := s.config.Dedup.MaxAge / 2
 	steps := now.Sub(s.lastRotation) / interval
 	if steps <= 0 {
 		return
@@ -105,15 +101,15 @@ func (s *Store) contains(d fingerprint) bool {
 }
 
 func (s *Store) allowUpdate(dataID int32, now time.Time) string {
-	if s.windowStart.IsZero() || now.Sub(s.windowStart) >= s.config.CircuitWindow {
+	if s.windowStart.IsZero() || now.Sub(s.windowStart) >= time.Minute {
 		s.windowStart, s.updates = now, 0
 		clear(s.dataIDUpdates)
 	}
-	if s.updates >= s.config.MaxUpdates {
+	if s.updates >= s.config.Limits.Instance {
 		return "global_circuit"
 	}
-	limit := s.config.MaxUpdatesPerDataID
-	if configured, ok := s.limits[dataID]; ok {
+	limit := s.config.Limits.DefaultSource
+	if configured, ok := s.config.Limits.ByDataID[dataID]; ok {
 		limit = configured
 	}
 	if s.dataIDUpdates[dataID] >= limit {
@@ -131,19 +127,16 @@ func (s *Store) Observe(key Key, value Value) bool {
 	if s.closed {
 		return s.drop("closed")
 	}
-	if s.blocked[key.DataID] {
+	if n, ok := s.config.Limits.ByDataID[key.DataID]; ok && n == 0 {
 		return s.drop("blacklist")
 	}
-	entry := Entry{key, value}
-	if entry.size() > s.config.MaxEntryBytes {
-		return s.drop("entry_bytes")
-	}
-	now := s.now()
-	s.rotate(now)
 	old, exists := s.pending[key]
 	if exists && old.Value == value {
 		return true
 	}
+	entry := Entry{key, value}
+	now := s.now()
+	s.rotate(now)
 	if !entry.valid() {
 		return s.drop("invalid")
 	}
@@ -152,11 +145,7 @@ func (s *Store) Observe(key Key, value Value) bool {
 		s.stats.Suppressed++
 		return true
 	}
-	if s.filters[s.current].count >= s.config.BloomCapacity {
-		delete(s.pending, key)
-		return s.drop("bloom_capacity")
-	}
-	if !exists && len(s.pending) >= s.config.MaxPendingEntries {
+	if !exists && len(s.pending) >= s.config.Exporter.QueueSize {
 		return s.drop("pending_capacity")
 	}
 	if reason := s.allowUpdate(key.DataID, now); reason != "" {
@@ -164,13 +153,7 @@ func (s *Store) Observe(key Key, value Value) bool {
 		return s.drop(reason)
 	}
 	entry = entry.clone()
-	first := old.First
-	if !exists {
-		first = now
-	} else {
-		s.stats.Debounced++
-	}
-	s.pending[entry.Key] = pendingEntry{Value: entry.Value, Digest: d, First: first, Changed: now, Force: old.Force}
+	s.pending[entry.Key] = pendingEntry{Value: entry.Value, Digest: d, Force: old.Force}
 	return true
 }
 
@@ -189,21 +172,20 @@ func (s *Store) Clean() error {
 	return nil
 }
 
-func (s *Store) take(final bool) snapshot {
+func (s *Store) take() snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := s.now()
-	s.rotate(now)
+	s.rotate(s.now())
+	if len(s.pending) == 0 {
+		return snapshot{}
+	}
 	items := s.pending
 	s.pending = make(map[Key]pendingEntry)
-	for key, item := range items {
-		item.Force = item.Force || s.forceNext
-		if !final && now.Sub(item.Changed) < s.config.DebounceInterval && now.Sub(item.First) < s.config.DebounceMaxWait {
-			s.pending[key] = item
-			delete(items, key)
-			continue
+	if s.forceNext {
+		for key, item := range items {
+			item.Force = true
+			items[key] = item
 		}
-		items[key] = item
 	}
 	s.forceNext = false
 	return snapshot{items, s.generation}
@@ -219,20 +201,13 @@ func (s *Store) suppressed(item pendingEntry) bool {
 	return false
 }
 
-func (s *Store) remainingVersions() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.rotate(s.now())
-	return s.config.BloomCapacity - s.filters[s.current].count
-}
-
 func (s *Store) ack(key Key, item pendingEntry, generation uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// 时间轮换期间完成的请求按确认时刻登记；Clean 则让旧快照失效。
 	s.rotate(s.now())
 	filter := &s.filters[s.current]
-	if generation == s.generation && filter.count < s.config.BloomCapacity && !filter.contains(item.Digest) {
+	if generation == s.generation && !filter.contains(item.Digest) {
 		filter.add(item.Digest)
 	}
 	s.stats.Exported++
@@ -251,11 +226,8 @@ func (s *Store) restore(items map[Key]pendingEntry) {
 	for key, item := range items {
 		if newer, ok := s.pending[key]; ok {
 			newer.Force = newer.Force || item.Force
-			if item.First.Before(newer.First) {
-				newer.First = item.First
-			}
 			s.pending[key] = newer
-		} else if len(s.pending) < s.config.MaxPendingEntries {
+		} else if len(s.pending) < s.config.Exporter.QueueSize {
 			s.pending[key] = item
 		} else {
 			s.drop("restore_capacity")
@@ -270,14 +242,8 @@ func (s *Store) Stats() Stats {
 	result := s.stats
 	result.Pending = len(s.pending)
 	result.BloomVersions = s.filters[0].count + s.filters[1].count
-	result.Dropped = make(map[string]uint64, len(s.stats.Dropped))
-	for reason, count := range s.stats.Dropped {
-		result.Dropped[reason] = count
-	}
-	result.FlushBuckets = make(map[float64]uint64, len(s.stats.FlushBuckets))
-	for bound, count := range s.stats.FlushBuckets {
-		result.FlushBuckets[bound] = count
-	}
+	result.Dropped = maps.Clone(s.stats.Dropped)
+	result.FlushBuckets = maps.Clone(s.stats.FlushBuckets)
 	return result
 }
 

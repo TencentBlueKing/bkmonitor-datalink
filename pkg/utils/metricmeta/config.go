@@ -11,7 +11,6 @@ package metricmeta
 
 import (
 	"errors"
-	"math"
 	"time"
 )
 
@@ -21,71 +20,60 @@ var (
 	ErrUnconfigured = errors.New("metricmeta: export callback required")
 )
 
-// Config 配置轮转、防抖和出口上限，使用 DefaultConfig 初始化。
+// Config 配置指标元信息的去重、限流和发送。使用 DefaultConfig 初始化。
 type Config struct {
-	FlushInterval       time.Duration `config:"flush_interval"`
-	FullReportInterval  time.Duration `config:"full_report_interval"`
-	BloomCapacity       int           `config:"bloom_capacity"`
-	BloomErrorRate      float64       `config:"bloom_error_rate"`
-	MaxPendingEntries   int           `config:"max_pending_entries"`
-	MaxEntryBytes       int           `config:"max_entry_bytes"`
-	ExportBatchSize     int           `config:"export_batch_size"`
-	ExportBatchBytes    int           `config:"export_batch_bytes"`
-	ExportMinInterval   time.Duration `config:"export_min_interval"`
-	ExportTimeout       time.Duration `config:"export_timeout"`
-	DebounceInterval    time.Duration `config:"debounce_interval"`
-	DebounceMaxWait     time.Duration `config:"debounce_max_wait"`
-	CircuitWindow       time.Duration `config:"circuit_window"`
-	MaxUpdates          int           `config:"max_updates"`
-	MaxUpdatesPerDataID int           `config:"max_updates_per_dataid"`
-	DataIDLimits        []DataIDLimit `config:"dataid_limits"`
-	BlockedDataIDs      []int32       `config:"blocked_dataids"`
+	Dedup    DedupConfig    `config:"-"`          // 控制同一指标的相同元信息在多久内只上报一次。
+	Exporter ExporterConfig `config:"exporter"`   // 控制待发队列和批量发送。
+	Limits   Limits         `config:"rate_limit"` // 控制本实例及每个来源每分钟可接受的更新次数。
 }
 
-// DataIDLimit 覆盖单个 DataID 的窗口更新配额，零表示禁用。
-type DataIDLimit struct {
-	DataID int32 `config:"dataid"`
-	Limit  int   `config:"max_updates"`
+// DedupConfig 控制成功版本去重。
+type DedupConfig struct {
+	MaxAge time.Duration // 已上报版本的最长去重时间。默认 2 h，每半个周期轮换一次。
 }
 
-// DefaultConfig 返回两小时去重窗口和有界发送的默认配置。
+// ExporterConfig 控制一个实例如何缓存并发送元信息。
+type ExporterConfig struct {
+	Interval  time.Duration `config:"interval"`   // 每隔多久开始一轮发送。
+	Timeout   time.Duration `config:"timeout"`    // 一轮发送的总时限，所有批次共用。
+	BatchSize int           `config:"batch_size"` // 每个发送批次最多包含多少条元信息。
+	QueueSize int           `config:"queue_size"` // 待发队列最多容纳多少个不同指标，同键更新只占一条。
+}
+
+// Limits 是固定一分钟窗口内的准入额度。
+type Limits struct {
+	ByDataID      map[int32]int `config:"-"`                   // 可见来源的单独额度，零表示禁止。
+	Instance      int           `config:"instance_per_minute"` // 每个 collector 每分钟最多处理多少次元信息新增或变化，所有来源合计。
+	DefaultSource int           `config:"dataid_per_minute"`   // 同一 collector 内，每个来源 DataID 每分钟最多处理多少次元信息新增或变化，可单独覆盖。
+}
+
+// DefaultConfig 返回默认的去重、限流和发送配置。
 func DefaultConfig() Config {
 	return Config{
-		FlushInterval: time.Minute, FullReportInterval: 2 * time.Hour,
-		BloomCapacity: 100000, BloomErrorRate: 1e-6,
-		MaxPendingEntries: 100000, MaxEntryBytes: 4096,
-		ExportBatchSize: 1000, ExportBatchBytes: 256 * 1024,
-		ExportMinInterval: 100 * time.Millisecond, ExportTimeout: 5 * time.Second,
-		DebounceInterval: time.Minute, DebounceMaxWait: 10 * time.Minute,
-		CircuitWindow: time.Minute, MaxUpdates: 100000, MaxUpdatesPerDataID: 10000,
+		Exporter: ExporterConfig{Interval: time.Minute, Timeout: 5 * time.Second, BatchSize: 1000, QueueSize: 100_000},
+		Dedup:    DedupConfig{MaxAge: 2 * time.Hour},
+		Limits:   Limits{Instance: 100000, DefaultSource: 10000},
 	}
 }
 
 func (c Config) validate() error {
-	if c.FlushInterval <= 0 || c.FullReportInterval/2 <= c.FlushInterval ||
-		c.BloomCapacity <= 0 || math.IsNaN(c.BloomErrorRate) || c.BloomErrorRate <= 0 || c.BloomErrorRate >= 1 ||
-		c.MaxPendingEntries <= 0 || c.MaxEntryBytes <= 0 || c.ExportBatchSize <= 0 || c.ExportBatchSize > c.MaxPendingEntries ||
-		c.ExportBatchBytes < 2 || c.ExportMinInterval <= 0 || c.ExportTimeout <= c.ExportMinInterval || c.ExportTimeout >= c.FlushInterval ||
-		c.DebounceInterval < 0 || c.DebounceMaxWait < c.DebounceInterval || c.DebounceMaxWait <= 0 ||
-		c.CircuitWindow <= 0 || c.MaxUpdates <= 0 || c.MaxUpdatesPerDataID <= 0 {
-		return errors.New("metricmeta: invalid configuration")
+	if c.Dedup.MaxAge/2 <= 0 || c.Limits.Instance <= 0 || c.Limits.DefaultSource <= 0 {
+		return errors.New("metricmeta: invalid dedup or limits configuration")
 	}
-	seen := make(map[int32]bool, len(c.DataIDLimits))
-	for _, item := range c.DataIDLimits {
-		if item.DataID <= 0 || item.Limit < 0 || seen[item.DataID] {
-			return errors.New("metricmeta: invalid dataid limit")
-		}
-		seen[item.DataID] = true
-	}
-	for _, id := range c.BlockedDataIDs {
-		if id <= 0 {
-			return errors.New("metricmeta: invalid blocked dataid")
+	for id, n := range c.Limits.ByDataID {
+		if id <= 0 || n < 0 {
+			return errors.New("metricmeta: invalid source limit")
 		}
 	}
-	// 每个过滤器最多 512 MiB，避免错误配置导致整数溢出或无界分配。
-	bits := -float64(c.BloomCapacity) * math.Log(c.BloomErrorRate/2) / (math.Ln2 * math.Ln2)
-	if math.IsInf(bits, 0) || bits > 512*1024*1024*8 {
-		return errors.New("metricmeta: bloom capacity too large")
+	switch {
+	case c.Exporter.Interval <= 0:
+		return errors.New("metricmeta: exporter.interval must be positive")
+	case c.Exporter.Timeout <= 0:
+		return errors.New("metricmeta: exporter.timeout must be positive")
+	case c.Exporter.BatchSize <= 0:
+		return errors.New("metricmeta: exporter.batch_size must be positive")
+	case c.Exporter.QueueSize <= 0:
+		return errors.New("metricmeta: exporter.queue_size must be positive")
 	}
 	return nil
 }

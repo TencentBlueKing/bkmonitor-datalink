@@ -13,18 +13,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestEntryLimitsAndRestoreCapacity(t *testing.T) {
-	e := testExporter(t, func(context.Context, []byte) error { return nil })
-	e.store.config.MaxPendingEntries = 1
+	config := DefaultConfig()
+	config.Exporter.QueueSize = 1
+	e, err := NewExporter(config, func(context.Context, []byte) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
 	entry := testEntry()
 	observe(t, e, entry)
-	old := e.store.take(false)
+	old := e.store.take()
 	newer := entry
 	newer.Key.Metric = "new"
 	observe(t, e, newer)
@@ -34,10 +37,6 @@ func TestEntryLimitsAndRestoreCapacity(t *testing.T) {
 	}
 	if e.store.Observe(entry.Key, entry.Value) {
 		t.Fatal("pending capacity")
-	}
-	newer.Value.Description = strings.Repeat("x", e.config.MaxEntryBytes)
-	if e.store.Observe(newer.Key, newer.Value) {
-		t.Fatal("entry bytes")
 	}
 	newer = entry
 	newer.Key.DataID = 0
@@ -49,10 +48,14 @@ func TestEntryLimitsAndRestoreCapacity(t *testing.T) {
 	if e.store.Observe(newer.Key, newer.Value) {
 		t.Fatal("invalid interval")
 	}
-	e.config.ExportBatchBytes = 2
+	newer = entry
+	newer.Key.Metric = "new"
+	newer.Value.Description = strings.Repeat("x", 8192)
+	newer.Value.Present |= PresentDescription
+	observe(t, e, newer)
 	flush(t, e)
-	if e.store.Stats().Dropped["batch_bytes"] != 1 || e.store.Stats().Exported != 0 {
-		t.Fatal("oversized JSON must be counted and discarded")
+	if e.store.Stats().Exported != 1 {
+		t.Fatal(e.store.Stats())
 	}
 }
 
@@ -88,14 +91,12 @@ func TestNewerValueInFlightAndTargetIsolation(t *testing.T) {
 }
 
 func TestStopCancelsBackgroundAndUsesIndependentFinalDeadline(t *testing.T) {
-	c := DefaultConfig()
-	c.FlushInterval = 20 * time.Millisecond
-	c.ExportTimeout = 10 * time.Millisecond
-	c.ExportMinInterval = time.Microsecond
-	c.DebounceInterval = 0
 	entered := make(chan struct{}, 1)
 	calls := 0
-	e, err := NewExporter(c, func(ctx context.Context, _ []byte) error {
+	config := DefaultConfig()
+	config.Exporter.Interval = 20 * time.Millisecond
+	config.Exporter.Timeout = 10 * time.Millisecond
+	e, err := NewExporter(config, func(ctx context.Context, _ []byte) error {
 		calls++
 		if calls == 1 {
 			entered <- struct{}{}
@@ -126,11 +127,12 @@ func TestStopCancelsBackgroundAndUsesIndependentFinalDeadline(t *testing.T) {
 
 func TestConfigurationValidation(t *testing.T) {
 	for _, change := range []func(*Config){
-		func(c *Config) { c.BloomErrorRate = math.NaN() }, func(c *Config) { c.BloomErrorRate = math.Inf(1) },
-		func(c *Config) { c.BloomCapacity = math.MaxInt }, func(c *Config) { c.FullReportInterval = c.FlushInterval },
-		func(c *Config) { c.ExportTimeout = c.FlushInterval }, func(c *Config) { c.ExportBatchSize = c.MaxPendingEntries + 1 },
-		func(c *Config) { c.DebounceMaxWait = 0 }, func(c *Config) { c.MaxUpdatesPerDataID = 0 },
-		func(c *Config) { c.DataIDLimits = []DataIDLimit{{1, -1}} }, func(c *Config) { c.DataIDLimits = []DataIDLimit{{1, 1}, {1, 2}} },
+		func(c *Config) { c.Dedup.MaxAge = 0 },
+		func(c *Config) { c.Limits.DefaultSource = 0 },
+		func(c *Config) { c.Exporter.Interval = 0 },
+		func(c *Config) { c.Exporter.Timeout = -1 },
+		func(c *Config) { c.Exporter.BatchSize = 0 },
+		func(c *Config) { c.Exporter.QueueSize = -1 },
 	} {
 		c := DefaultConfig()
 		change(&c)
@@ -203,7 +205,6 @@ func BenchmarkBloomContains(b *testing.B) {
 
 func BenchmarkObserveSent(b *testing.B) {
 	c := DefaultConfig()
-	c.DebounceInterval = 0
 	e, _ := NewExporter(c, func(context.Context, []byte) error { return nil })
 	entry := testEntry()
 	e.store.Observe(entry.Key, entry.Value)
@@ -239,23 +240,36 @@ func TestFalsePositiveExpiresWithoutRefresh(t *testing.T) {
 	}
 }
 
-func TestBloomSaturationDefersAcceptedBacklogUntilRotation(t *testing.T) {
-	e := testExporter(t, func(context.Context, []byte) error { return nil })
-	e.store.config.BloomCapacity = 1
-	now := time.Now()
+func TestBloomContinuesPastDesignLoadAndRotatesHourly(t *testing.T) {
+	e, err := NewExporter(DefaultConfig(), func(context.Context, []byte) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Discard()
+	e.store.filters = newBloomPair(100)
+	now := time.Unix(1, 0)
 	e.store.now = func() time.Time { return now }
 	entry := testEntry()
-	for _, name := range []string{"first", "second", "third"} {
-		entry.Key.Metric = name
+	for i := 0; i < 101; i++ {
+		entry.Key.Metric = fmt.Sprint(i)
 		observe(t, e, entry)
 	}
 	flush(t, e)
-	if s := e.store.Stats(); s.Exported != 1 || s.Pending != 2 || s.BloomVersions != 1 {
+	entry.Key.Metric = "after-design-load"
+	observe(t, e, entry)
+	flush(t, e)
+	if s := e.store.Stats(); s.Exported != 102 || s.BloomVersions != 102 || s.Pending != 0 || s.Rotations != 0 {
 		t.Fatal(s)
 	}
 	now = now.Add(time.Hour)
+	observe(t, e, entry)
+	if s := e.store.Stats(); s.Suppressed != 1 || s.Rotations != 1 {
+		t.Fatal(s)
+	}
+	now = now.Add(time.Hour)
+	observe(t, e, entry)
 	flush(t, e)
-	if s := e.store.Stats(); s.Exported != 2 || s.Pending != 1 || s.BloomVersions != 2 {
+	if s := e.store.Stats(); s.Exported != 103 || s.BloomVersions != 1 || s.Rotations != 2 {
 		t.Fatal(s)
 	}
 }
@@ -266,5 +280,28 @@ func BenchmarkClean(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = e.store.Clean()
+	}
+}
+
+func TestSourceBusinessIsPartOfSuccessfulVersion(t *testing.T) {
+	e := testExporter(t, func(context.Context, []byte) error { return nil })
+	defer e.Discard()
+	entry := testEntry()
+	for _, biz := range []int32{73, -73, 73} {
+		entry.Key.BizID = biz
+		observe(t, e, entry)
+		flush(t, e)
+	}
+	if got := e.Store().Stats(); got.Exported != 2 || got.BloomVersions != 2 || got.Suppressed != 1 {
+		t.Fatal(got)
+	}
+	config := DefaultConfig()
+	config.Limits = Limits{Instance: 3, DefaultSource: 1}
+	if err := e.Reload(config); err != nil {
+		t.Fatal(err)
+	}
+	observe(t, e, entry)
+	if s := e.Store().Stats(); s.BloomVersions != 2 || s.Suppressed != 2 {
+		t.Fatal("quota reload reset dedup", s)
 	}
 }

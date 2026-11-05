@@ -29,16 +29,17 @@ const (
 
 // Scope 由使用方提供稳定名称，用于隔离服务或采集分组。
 type Scope struct {
-	Type ScopeType
-	Name string
+	Type ScopeType // 范围来源，如 APM 或插件。
+	Name string    // 服务与分组生成的稳定范围名称。
 }
 
 // Key 唯一标识鉴权 DataID 和业务范围内的实际输出指标。
 type Key struct {
-	DataID    int32
-	ScopeType ScopeType
-	Scope     string
-	Metric    string
+	BizID     int32     // 来源业务或空间，不是采集器所在业务。
+	DataID    int32     // 鉴权后的来源指标 DataID。
+	ScopeType ScopeType // 指标所属范围类型。
+	Scope     string    // 同一数据源内区分服务和分组。
+	Metric    string    // 数值链路实际输出的指标名。
 }
 
 // NewKey 使用最终 DataID、范围和输出指标名构造主键。
@@ -93,20 +94,14 @@ func (e Entry) valid() bool {
 			return false
 		}
 	}
-	for _, field := range []string{string(k.ScopeType), k.Scope, k.Metric, v.Name, v.Unit, v.Description, v.Type, v.OriginalType, v.Temporality, v.Usage} {
+	for _, field := range []string{string(k.ScopeType), k.Scope, k.Metric, v.Name, v.Unit, v.Description, v.Usage} {
 		if !utf8.ValidString(field) {
 			return false
 		}
 	}
 	return k.DataID > 0 && k.ScopeType != "" && k.Metric != "" && v.Name != "" &&
-		v.Type != "" && v.OriginalType != "" && (v.Temporality == "delta" || v.Temporality == "cumulative") &&
+		(v.Temporality == "delta" || v.Temporality == "cumulative") &&
 		(v.Present&PresentInterval == 0 || v.Interval > 0) && v.Present & ^uint8(15) == 0
-}
-
-func (e Entry) size() int {
-	k, v := e.Key, e.Value
-	return len(k.ScopeType) + len(k.Scope) + len(k.Metric) + len(v.Name) + len(v.Unit) +
-		len(v.Description) + len(v.Type) + len(v.OriginalType) + len(v.Temporality) + len(v.Usage)
 }
 
 // clone 防止缓存引用解码器大缓冲区中的子串。
@@ -128,6 +123,7 @@ func knownString(value string, present bool) *string {
 }
 
 type wireEntry struct {
+	BizID        int32     `json:"bk_biz_id"`
 	DataID       int32     `json:"dataid"`
 	ScopeType    ScopeType `json:"__scope_type"`
 	Scope        string    `json:"__scope"`
@@ -143,18 +139,20 @@ type wireEntry struct {
 }
 
 // MarshalJSON 将未知可选字段编码为 null。
-func (e Entry) MarshalJSON() ([]byte, error) {
+func (e Entry) MarshalJSON() ([]byte, error) { return json.Marshal(e.wire()) }
+
+func (e Entry) wire() wireEntry {
 	k, v := e.Key, e.Value
 	var interval *int64
 	if v.Present&PresentInterval != 0 {
 		interval = &v.Interval
 	}
-	return json.Marshal(wireEntry{
-		k.DataID, k.ScopeType, k.Scope, k.Metric, v.Name,
+	return wireEntry{
+		k.BizID, k.DataID, k.ScopeType, k.Scope, k.Metric, v.Name,
 		knownString(v.Description, v.Present&PresentDescription != 0),
 		knownString(v.Unit, v.Present&PresentUnit != 0), v.Temporality, interval,
 		v.OriginalType, v.Type, knownString(v.Usage, v.Present&PresentUsage != 0),
-	})
+	}
 }
 
 // UnmarshalJSON 恢复可空字段的存在标记，避免未知值被误当作空字符串。
@@ -164,7 +162,7 @@ func (e *Entry) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	entry := Entry{
-		Key:   Key{DataID: w.DataID, ScopeType: w.ScopeType, Scope: w.Scope, Metric: w.Metric},
+		Key:   Key{BizID: w.BizID, DataID: w.DataID, ScopeType: w.ScopeType, Scope: w.Scope, Metric: w.Metric},
 		Value: Value{Name: w.Name, Type: w.Type, OriginalType: w.OriginalType, Temporality: w.Temporality},
 	}
 	for _, field := range []struct {

@@ -29,10 +29,7 @@ func testEntry() Entry {
 
 func testExporter(t *testing.T, export ExportFunc) *Exporter {
 	t.Helper()
-	c := DefaultConfig()
-	c.DebounceInterval = 0
-	c.ExportMinInterval = time.Microsecond
-	e, err := NewExporter(c, export)
+	e, err := NewExporter(DefaultConfig(), export)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +133,7 @@ func TestHourlyRotationAndFallback(t *testing.T) {
 	}
 }
 
-func TestDebounceLatestAndMaxWait(t *testing.T) {
+func TestFlushLatestValuePerKey(t *testing.T) {
 	var descriptions []string
 	e := testExporter(t, func(_ context.Context, body []byte) error {
 		var rows []map[string]any
@@ -148,43 +145,32 @@ func TestDebounceLatestAndMaxWait(t *testing.T) {
 		}
 		return nil
 	})
-	e.store.config.DebounceInterval = time.Minute
-	e.store.config.DebounceMaxWait = 3 * time.Minute
-	now := time.Now()
-	e.store.now = func() time.Time { return now }
 	entry := testEntry()
 	entry.Value.Present = PresentDescription
-	for i := 0; i < 7; i++ {
-		entry.Value.Description = fmt.Sprint(i)
+	for _, desc := range []string{"A", "B", "C", "C"} {
+		entry.Value.Description = desc
 		observe(t, e, entry)
-		flush(t, e)
-		now = now.Add(30 * time.Second)
 	}
-	if !reflect.DeepEqual(descriptions, []string{"6"}) {
-		t.Fatalf("max wait: %v", descriptions)
-	}
-	entry.Value.Description = "stable"
+	flush(t, e)
+	entry.Value.Description = "D"
 	observe(t, e, entry)
 	flush(t, e)
-	now = now.Add(time.Minute)
-	observe(t, e, entry) // 相同值不推迟稳定时间。
+	observe(t, e, entry)
 	flush(t, e)
-	if !reflect.DeepEqual(descriptions, []string{"6", "stable"}) {
-		t.Fatalf("quiet window: %v", descriptions)
+	if !reflect.DeepEqual(descriptions, []string{"C", "D"}) {
+		t.Fatalf("exported %v, stats %+v", descriptions, e.store.Stats())
 	}
 }
 
 func TestBlacklistCircuitCapacityAndRecovery(t *testing.T) {
 	c := DefaultConfig()
-	c.BlockedDataIDs = []int32{9}
-	c.DataIDLimits = []DataIDLimit{{2, 1}, {3, 0}}
-	c.MaxUpdates = 3
-	c.BloomCapacity = 2
-	c.DebounceInterval = 0
+	c.Limits.Instance = 3
+	c.Limits.ByDataID = map[int32]int{9: 0, 2: 1, 3: 0}
 	e, err := NewExporter(c, func(context.Context, []byte) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	now := time.Now()
 	e.store.now = func() time.Time { return now }
 	entry := testEntry()
@@ -210,21 +196,10 @@ func TestBlacklistCircuitCapacityAndRecovery(t *testing.T) {
 	if e.store.Observe(entry.Key, entry.Value) {
 		t.Fatal("global circuit")
 	}
-	now = now.Add(c.CircuitWindow)
+	now = now.Add(time.Minute)
 	observe(t, e, entry)
 	flush(t, e)
-	entry.Key.Metric = "second"
-	observe(t, e, entry)
-	flush(t, e)
-	entry.Key.Metric = "third"
-	if e.store.Observe(entry.Key, entry.Value) {
-		t.Fatal("saturated Bloom must reject, not reset")
-	}
-	if e.store.Stats().Rotations != 0 {
-		t.Fatal("capacity must not trigger rotation")
-	}
-	now = now.Add(time.Hour)
-	observe(t, e, entry)
+
 }
 
 func TestRetryPreservesNewerAndClean(t *testing.T) {
@@ -268,27 +243,30 @@ func TestSuccessfulInFlightCleanCannotRepopulateBloom(t *testing.T) {
 }
 
 func TestBatchLimitsTimeoutAndRetry(t *testing.T) {
-	var starts []time.Time
 	total := 0
-	e := testExporter(t, func(_ context.Context, body []byte) error {
-		if len(body) > 650 {
-			t.Fatalf("oversized batch: %d", len(body))
+	stall := true
+	config := DefaultConfig()
+	config.Exporter.BatchSize = 2
+	config.Exporter.Timeout = 25 * time.Millisecond
+	e, err := NewExporter(config, func(ctx context.Context, body []byte) error {
+		if total == 2 && stall {
+			stall = false
+			<-ctx.Done()
+			return ctx.Err()
 		}
 		var rows []map[string]any
 		if err := json.Unmarshal(body, &rows); err != nil {
 			return err
 		}
-		if len(rows) > 2 {
+		if len(rows) != 2 {
 			t.Fatal("item limit")
 		}
-		starts = append(starts, time.Now())
 		total += len(rows)
 		return nil
 	})
-	e.config.ExportBatchSize = 2
-	e.config.ExportBatchBytes = 650
-	e.config.ExportMinInterval = 10 * time.Millisecond
-	e.config.ExportTimeout = 25 * time.Millisecond
+	if err != nil {
+		t.Fatal(err)
+	}
 	entry := testEntry()
 	for i := 0; i < 10; i++ {
 		entry.Key.Metric = fmt.Sprint(i)
@@ -297,16 +275,15 @@ func TestBatchLimitsTimeoutAndRetry(t *testing.T) {
 	if !errors.Is(e.Flush(context.Background()), context.DeadlineExceeded) {
 		t.Fatal("missing whole-flush timeout")
 	}
-	e.config.ExportTimeout = time.Second
+	config.Exporter.Timeout = time.Second
+	if err := e.Reload(config); err != nil {
+		t.Fatal(err)
+	}
 	flush(t, e)
 	if total != 10 || e.store.Stats().Pending != 0 {
 		t.Fatalf("total=%d stats=%+v", total, e.store.Stats())
 	}
-	for i := 1; i < len(starts); i++ {
-		if starts[i].Sub(starts[i-1]) < 10*time.Millisecond {
-			t.Fatal("min interval violated")
-		}
-	}
+
 }
 
 func TestConcurrentLifecycle(t *testing.T) {
@@ -330,11 +307,61 @@ func TestConcurrentLifecycle(t *testing.T) {
 	if !errors.Is(e.Start(), ErrClosed) || !errors.Is(e.store.Clean(), ErrClosed) || e.store.Observe(testEntry().Key, testEntry().Value) {
 		t.Fatal("closed exporter accepted work")
 	}
-	// 未 Start 的实例也发送最后一轮，并跳过防抖。
+	// 未 Start 的实例也发送最后一轮。
 	other := testExporter(t, func(context.Context, []byte) error { return nil })
-	other.store.config.DebounceInterval = time.Hour
 	observe(t, other, testEntry())
 	if err := other.Stop(); err != nil || other.store.Stats().Exported != 1 {
 		t.Fatal("stop-before-start lost final flush", err)
+	}
+}
+
+func TestFlushDeadlineWhileAnotherBatchIsSending(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	exp, err := NewBatchExporter(DefaultConfig(), func(ctx context.Context, entries []Entry) error {
+		close(entered)
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exp.Discard()
+	defer close(release)
+	observe(t, exp, testEntry())
+	first := make(chan error, 1)
+	go func() { first <- exp.Flush(context.Background()) }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("first batch did not start")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	second := make(chan error, 1)
+	go func() { second <- exp.Flush(ctx) }()
+	select {
+	case err := <-second:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("waiting flush: %v", err)
+		}
+	case err := <-first:
+		t.Fatalf("waiting flush outlived first batch: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("waiting flush ignored caller cancellation")
+	}
+}
+
+func TestEmptyFlushPreservesForcedSnapshot(t *testing.T) {
+	exp := testExporter(t, func(context.Context, []byte) error { return nil })
+	flush(t, exp)
+	observe(t, exp, testEntry())
+	flush(t, exp)
+	if got := exp.Store().Stats().Forced; got != 1 {
+		t.Fatalf("forced entries after idle flush = %d", got)
 	}
 }

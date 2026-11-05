@@ -72,7 +72,7 @@ func TestMetricCatalogQueryLocation(t *testing.T) {
 			if wantTable == "" {
 				wantTable = tc.label
 			}
-			if got.Status != domain.EnrichStatusSucceeded || value.ResultTableID != wantTable || value.MetricName != tc.physical || value.MetricUniqueID != wantTable+"."+tc.physical {
+			if got.Status != domain.EnrichStatusSucceeded || value.ResultTableID != wantTable || value.MetricName != tc.physical {
 				t.Fatalf("metric=%#v status=%s", value, got.Status)
 			}
 			if len(reader.queries) != 1 || reader.queries[0].TenantID != event.BKTenantID || reader.queries[0].MetricID != 1216 {
@@ -105,8 +105,11 @@ func TestMetricQueryOwnershipPreservesFactsForAllSources(t *testing.T) {
 			if err := json.Unmarshal(mustRawObject(t, got.Value), &values); err != nil {
 				t.Fatal(err)
 			}
-			if got.Status != domain.EnrichStatusSucceeded || values.MetricUniqueID == "" {
+			if got.Status != domain.EnrichStatusSucceeded || values.MetricName == "" || values.ResultTableID == "" {
 				t.Fatalf("lost matching facts: %#v", got)
+			}
+			if _, exists := got.Value["metric_unique_id"]; exists {
+				t.Fatal("removed identity was generated")
 			}
 			_, emitted := got.Value["metric_query_params"]
 			if emitted {

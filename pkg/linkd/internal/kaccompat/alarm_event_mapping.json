@@ -273,17 +273,6 @@
         }
       }
     },
-    "metric_unique_id": {
-      "type": "text",
-      "analyzer": "split_by_whitespace_analyzer",
-      "norms": false,
-      "fields": {
-        "keyword": {
-          "type": "keyword",
-          "ignore_above": 8191
-        }
-      }
-    },
     "source_alarm_status": {
       "type": "keyword"
     },

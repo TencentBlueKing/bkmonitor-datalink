@@ -413,11 +413,6 @@
               },
               {
                 "op": "set",
-                "path": "$[\"labels\"][\"metric_unique_id\"]",
-                "value": ""
-              },
-              {
-                "op": "set",
                 "path": "$[\"labels\"][\"result_table_id\"]",
                 "value": ""
               },
@@ -883,11 +878,6 @@
                         },
                         "field_tag": "derived_metric"
                       }
-                    },
-                    {
-                      "op": "set",
-                      "path": "$[\"labels\"][\"metric_unique_id\"]",
-                      "value": ""
                     },
                     {
                       "op": "set",

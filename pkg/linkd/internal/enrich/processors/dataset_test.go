@@ -43,7 +43,7 @@ func TestExternalMetricBoundDatasetPreservesFacts(t *testing.T) {
 			if json.Unmarshal(mustRawObject(t, result.Value), &values) != nil {
 				t.Fatal("invalid metric values")
 			}
-			if values.MetricName != "usage" || values.DisplayName != "CPU使用率" || values.Unit != "percent" || values.MetricUniqueID != "system.cpu_summary.usage" {
+			if values.MetricName != "usage" || values.DisplayName != "CPU使用率" || values.Unit != "percent" {
 				t.Fatalf("wrong dataset output: %+v", values)
 			}
 			if len(reader.queries) != 1 || reader.queries[0].TableID != "system.cpu_summary" || reader.queries[0].FieldName != "usage" || reader.queries[0].TenantID != event.BKTenantID {

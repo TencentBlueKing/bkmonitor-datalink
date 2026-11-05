@@ -149,7 +149,6 @@ KAC `AlarmEvent` ES 模型已声明 `bk_tenant_id`，见
   "model_id": "cw-Host",
   "model_name": "主机",
   "anomaly_begin_time": "2026-09-01T00:00:00Z",
-  "metric_unique_id": "system.cpu.usage",
   "result_table_id": "system.cpu",
   "Namespace": "",
   "time_interval": "60",
@@ -296,7 +295,6 @@ KAC converter 先调用 `enrich.DecodePayload(Alert.Enrich)`，再按 Processor 
 | `metric_name` | `metric.metric_name` | 字符串 |
 | `unit` | `metric.unit` | 字符串 |
 | `result_table_id` | `metric.result_table_id` | 字符串 |
-| `metric_unique_id` | `metric.metric_unique_id` | 字符串 |
 | `aggregate_func` | `metric.aggregate_func` | 字符串 |
 | `time_interval` | `metric.time_interval` | 标量转稳定文本，null 转空字符串 |
 | `where_condition` | `metric.where_condition` | 字符串 |

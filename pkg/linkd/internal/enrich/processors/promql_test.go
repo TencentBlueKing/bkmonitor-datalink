@@ -297,8 +297,7 @@ func TestPromQLPublishedSnapshotEnrichChain(t *testing.T) {
 	if err := json.Unmarshal(mustRawObject(t, metric.Value), &metricValues); err != nil {
 		t.Fatal(err)
 	}
-	if metricValues.Unit != "percent" || metricValues.MetricName != "usage" || metricValues.ResultTableID != "system.cpu_summary" ||
-		metricValues.MetricUniqueID != "system.cpu_summary.usage" || metricValues.DisplayName != "CPU使用率" ||
+	if metricValues.Unit != "percent" || metricValues.MetricName != "usage" || metricValues.ResultTableID != "system.cpu_summary" || metricValues.DisplayName != "CPU使用率" ||
 		metricValues.TimeInterval != float64(60) {
 		t.Fatalf("metric=%#v", metricValues)
 	}
@@ -384,7 +383,7 @@ func TestPromQLWithoutCatalogKeepsDeclaredIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if metric.Status != domain.EnrichStatusSucceeded || metricValues.Unit != "" ||
-		metricValues.ResultTableID != "system.cpu_summary" || metricValues.MetricUniqueID != "system.cpu_summary.usage" ||
+		metricValues.ResultTableID != "system.cpu_summary" ||
 		metricValues.DisplayName != fixture.RuntimeConfig.Spec.Name {
 		t.Fatalf("metric=%#v values=%#v", metric, metricValues)
 	}
@@ -574,7 +573,7 @@ func TestPromQLMixedSeriesEnrich(t *testing.T) {
 	if err := json.Unmarshal(mustRawObject(t, payload.Processors[3][rules.MetricProcessor].Value), &metric); err != nil {
 		t.Fatal(err)
 	}
-	if metric.Unit != "" || metric.MetricName != "" || metric.ResultTableID != "" || metric.MetricUniqueID != "" || metric.DisplayName != strategy.Spec.Name || len(reader.metricQueries) != 0 {
+	if metric.Unit != "" || metric.MetricName != "" || metric.ResultTableID != "" || metric.DisplayName != strategy.Spec.Name || len(reader.metricQueries) != 0 {
 		t.Fatalf("metric=%#v catalog=%#v", metric, reader.metricQueries)
 	}
 	var display models.DisplayValues

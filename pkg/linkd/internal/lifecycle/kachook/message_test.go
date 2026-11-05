@@ -488,7 +488,7 @@ func testAlert() domain.Alert {
 			{"strategy":{"status":"succeeded","value":{"strategy_id":123,"strategy_version":1,"monitor_template_id":7,"strategy_config_id":"cfg","strategy_name":"CPU","url":"/strategy/7","data_source":"system"}}},
 			{"resource":{"status":"succeeded","value":{"bk_obj_id":"host","bk_inst_id":101,"model_id":"cw-Host","model_inst_id":"101","model_name":"主机","bk_biz_id":2,"bk_biz_name":"业务2","bk_set_id":null,"bk_set_name":"","bk_module_id":null,"bk_module_name":"","bk_cloud_id":0,"bk_cloud_name":"默认区域","cloud_plat_id":null,"dynamic_group_id":[],"cw_labels":[]}}},
 			{"display":{"status":"succeeded","value":{"title":"CPU 使用率过高","content":"CPU reached 92.5%","object":"host-101","dimensions":[],"dimension_text":"host=101"}}},
-			{"metric":{"status":"succeeded","value":{"display_name":"CPU 使用率","metric_name":"usage","unit":"percent","result_table_id":"system.cpu","metric_unique_id":"system.cpu.usage","aggregate_func":"avg","time_interval":60,"where_condition":"host='101'","metric_query_params":{"expression":"A"},"anomaly_begin_time":"2026-09-01T00:00:00Z"}}},
+			{"metric":{"status":"succeeded","value":{"display_name":"CPU 使用率","metric_name":"usage","unit":"percent","result_table_id":"system.cpu","aggregate_func":"avg","time_interval":60,"where_condition":"host='101'","metric_query_params":{"expression":"A"},"anomaly_begin_time":"2026-09-01T00:00:00Z"}}},
 			{"source":{"status":"succeeded","value":{"source_id":"built_in_bk","source_name":"ignored","meta_info":"source-event-1"}}}
 		]}`),
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -327,6 +328,12 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 	}
 	ctx = withTimeGraphTargetInfoShow(ctx, req.TargetInfoShow)
 	ctx = context.WithValue(ctx, timeGraphLegacyCompatibilityKey{}, true)
+	// The old instant query is a bare selector, so an omitted value means the
+	// query engine's lookback. The TimeGraph default observes a much longer span
+	// and would also return endpoints the source has already left.
+	if lookBackDelta == "" {
+		lookBackDelta = promql.GetDefaultLookbackDelta().String()
+	}
 
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
 	result.candidatePathCount = len(candidatePaths)

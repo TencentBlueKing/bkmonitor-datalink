@@ -185,7 +185,7 @@ type RelationMultiResourceRequest struct {
 
 		// Optional legacy resource-type path; preserve the old target/path response contract.
 		PathResource []Resource `json:"path_resource,omitempty"`
-		// Positive Go duration; empty uses configured lookback (built-in 24h), independent of range step.
+		// Positive Go duration; empty uses the query engine lookback (built-in 5m), like the legacy instant selector.
 		LookBackDelta string `json:"look_back_delta,omitempty"`
 	} `json:"query_list"`
 }
@@ -233,7 +233,7 @@ type RelationMultiResourceRangeRequest struct {
 
 		// Optional legacy resource-type path; preserve the old target/path response contract.
 		PathResource []Resource `json:"path_resource,omitempty"`
-		// Positive Go duration; empty uses configured lookback (built-in 24h), independent of range step.
+		// Positive Go duration, validated only; each bucket observes one step, independent of this value.
 		LookBackDelta string `json:"look_back_delta,omitempty"`
 	} `json:"query_list"`
 }

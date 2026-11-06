@@ -29,7 +29,7 @@ func TestClearScrollRequiresExplicitIDs(testContext *testing.T) {
 }
 
 func TestClearScrollResponses(t *testing.T) {
-	// Legacy tests leave the global mock transport active; these cases verify real HTTP requests.
+	// 旧测试可能遗留全局 mock transport；这里临时恢复真实 HTTP 传输，以校验请求路径、鉴权和响应。
 	if http.DefaultTransport == httpmock.DefaultTransport {
 		httpmock.Deactivate()
 		t.Cleanup(httpmock.Activate)

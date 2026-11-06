@@ -9,6 +9,8 @@ import (
 )
 
 func TestScrollSessionTerminalBoundary(testContext *testing.T) {
+	// 重试次数恰好达到上限时，session.Done() 为 true，但 slice.Done() 仍可能为 false。
+	// 同时覆盖存在未完成分片的情况，确认清理以整个会话的结束状态为准。
 	testCases := []struct {
 		name            string
 		status          string

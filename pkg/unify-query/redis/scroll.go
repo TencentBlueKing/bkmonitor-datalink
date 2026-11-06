@@ -46,6 +46,8 @@ type SliceStatus struct {
 	ScrollTarget *ElasticsearchScrollTarget `json:"scroll_target,omitempty"`
 }
 
+// ElasticsearchScrollTarget 随分片保存清理所需的存储、来源和空间信息，供后续请求恢复原路由。
+// 这里只保存路由标识；连接地址和鉴权凭据由存储层按当前配置获取。
 type ElasticsearchScrollTarget struct {
 	StorageID  string `json:"storage_id"`
 	SourceType string `json:"source_type"`
@@ -103,6 +105,8 @@ func (s *ScrollSession) SliceLength() int {
 	return s.MaxSlice
 }
 
+// Slices 返回全部已保存分片的独立快照，供清理逻辑在释放锁后遍历。
+// ScrollTarget 也需要复制，避免修改快照时影响会话中的路由信息。
 func (session *ScrollSession) Slices() []SliceStatus {
 	session.mu.RLock()
 	defer session.mu.RUnlock()
@@ -159,6 +163,7 @@ func (s *ScrollSession) Start(ctx context.Context) error {
 	return nil
 }
 
+// Stop 在每页查询退出时收尾：按会话状态清理 ES 游标、保存会话，最后释放锁。
 func (s *ScrollSession) Stop(ctx context.Context, clearScroll ClearScrollFunc) error {
 	defer func() {
 		err := s.unlock(ctx)
@@ -169,6 +174,7 @@ func (s *ScrollSession) Stop(ctx context.Context, clearScroll ClearScrollFunc) e
 		}
 	}()
 
+	// ES 资源回收不删除 Redis 会话；仍按原有窗口更新状态和 TTL，并保留 Update 的错误。
 	s.clearCompletedScrolls(ctx, clearScroll)
 	return s.Update(ctx)
 }
@@ -181,6 +187,8 @@ func (s *ScrollSession) UnmarshalBinary(data []byte) error {
 	return json.Unmarshal(data, s)
 }
 
+// Done 以所有分片完成或耗尽重试次数为会话结束条件。
+// FailedNum 恰好达到上限时，分片可能仍为 pending，因此不能用各分片的 Done 代替。
 func (s *ScrollSession) Done() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

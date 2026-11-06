@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDefaultStaticProviderConfigKeepsBusinessAlias(t *testing.T) {
+func TestDefaultStaticProviderConfigBusinessRelationName(t *testing.T) {
 	config := DefaultStaticProviderConfig()
 
 	assert.Equal(t, []string{"bk_biz_id"}, config.ResourcePrimaryKeys["business"])
@@ -27,10 +27,15 @@ func TestDefaultStaticProviderConfigKeepsBusinessAlias(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"bk_biz_id"}, business.GetPrimaryKeys())
 
-	relationDef, err := provider.GetRelationDefinition(NamespaceAll, "business_set")
+	relationDef, err := provider.GetRelationDefinition(NamespaceAll, "business_with_set")
 	require.NoError(t, err)
 	assert.Equal(t, "business", relationDef.FromResource)
 	assert.Equal(t, "set", relationDef.ToResource)
+	assert.Equal(t, "business_with_set", relationDef.Name)
+	assert.Equal(t, "business_with_set_relation", relationDef.GetRelationName())
+
+	_, err = provider.GetRelationDefinition(NamespaceAll, "business_set")
+	assert.ErrorIs(t, err, ErrRelationDefinitionNotFound)
 }
 
 func TestDefaultStaticProviderConfigKeepsInfoFields(t *testing.T) {
@@ -45,4 +50,46 @@ func TestDefaultStaticProviderConfigKeepsInfoFields(t *testing.T) {
 	host, err := provider.GetResourceDefinition(NamespaceAll, "host")
 	require.NoError(t, err)
 	assert.Contains(t, host.Fields, FieldDefinition{Name: "env_name", Required: false})
+}
+
+func TestDefaultStaticProviderConfigKeepsRelationMetricName(t *testing.T) {
+	config := DefaultStaticProviderConfig()
+	for _, schema := range config.RelationSchemas {
+		if schema.RelationName == "pod_to_system" {
+			assert.Equal(t, "pod_to_system_flow", schema.MetricName)
+			return
+		}
+	}
+	t.Fatal("pod_to_system relation schema not found")
+}
+
+func TestStaticProviderRelationMetricRoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		metric string
+		labels map[string]string
+	}{
+		{name: "default metric", labels: map[string]string{}},
+		{name: "explicit metric", metric: "calls_flow", labels: map[string]string{"metric_name": "calls_flow"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := NewStaticSchemaProvider(StaticProviderConfig{RelationSchemas: []RelationSchema{{
+				RelationName: "calls", FromType: "service", ToType: "service", MetricName: tc.metric,
+			}}})
+			definition, err := provider.GetRelationDefinition(NamespaceAll, "calls")
+			require.NoError(t, err)
+			require.Equal(t, tc.labels, definition.Labels)
+			schema, err := provider.GetRelationSchema("calls")
+			require.NoError(t, err)
+			require.Equal(t, tc.metric, schema.MetricName)
+		})
+	}
+}
+
+func TestRelationSchemaWithoutMetricLabels(t *testing.T) {
+	for _, labels := range []map[string]string{nil, {}, {"unrelated": "value"}} {
+		schema := ToRelationSchema(&RelationDefinition{Name: "calls", Labels: labels})
+		require.Empty(t, schema.MetricName)
+		require.Equal(t, RelationName("calls"), schema.RelationName)
+	}
 }

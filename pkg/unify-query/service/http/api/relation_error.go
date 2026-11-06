@@ -9,18 +9,27 @@
 
 package api
 
-import "errors"
+import (
+	"context"
+	"errors"
 
-// truncationError 由可向调用方暴露稳定截断原因的错误实现。
-type truncationError interface {
-	TruncationReason() string
-}
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+)
 
-// relationTruncationMetadata 从包装后的错误链中提取截断标记及机器可读原因。
-func relationTruncationMetadata(err error) (bool, string) {
-	var limitErr truncationError
-	if !errors.As(err, &limitErr) {
-		return false, ""
+// Keep quality observable without extending the legacy instant/range wire format.
+func observeLegacyRelationQuality(ctx context.Context, span *trace.Span, mode string, err error) {
+	if status := metadata.GetStatus(ctx); status != nil && status.Code == metadata.QueryTsPartial {
+		span.Set("relation-partial", true)
+		span.Set("relation-partial-reason", status.Message)
+		metric.CMDBRelationQualityInc(ctx, mode, "partial", status.Message)
 	}
-	return true, limitErr.TruncationReason()
+	var limitErr interface{ TruncationReason() string }
+	if errors.As(err, &limitErr) {
+		reason := limitErr.TruncationReason()
+		span.Set("relation-truncated", true)
+		span.Set("relation-truncated-reason", reason)
+		metric.CMDBRelationQualityInc(ctx, mode, "truncated", reason)
+	}
 }

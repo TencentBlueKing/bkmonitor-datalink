@@ -17,6 +17,44 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
+type strictQueryFailuresKey struct{}
+
+// WithStrictQueryFailures includes physical instance setup failures in query
+// errors and partial results. Ordinary queries retain their existing behavior.
+func WithStrictQueryFailures(ctx context.Context) context.Context {
+	return context.WithValue(ctx, strictQueryFailuresKey{}, true)
+}
+
+func IsStrictQueryFailures(ctx context.Context) bool {
+	strict, _ := ctx.Value(strictQueryFailuresKey{}).(bool)
+	return strict
+}
+
+type exactTimeGridKey struct{}
+
+// WithExactTimeGrid 要求查询严格保留评估网格，禁止查询层或后端缓存重新对齐。
+func WithExactTimeGrid(ctx context.Context) context.Context {
+	return context.WithValue(ctx, exactTimeGridKey{}, true)
+}
+
+// IsExactTimeGrid 表示调用方按精确时间戳消费结果，不能接受采样点偏移。
+func IsExactTimeGrid(ctx context.Context) bool {
+	exact, _ := ctx.Value(exactTimeGridKey{}).(bool)
+	return exact
+}
+
+type leftOpenTimeWindowKey struct{}
+
+// WithLeftOpenTimeWindow preserves (start, end] bucket semantics in the local engine.
+func WithLeftOpenTimeWindow(ctx context.Context) context.Context {
+	return context.WithValue(ctx, leftOpenTimeWindowKey{}, true)
+}
+
+func IsLeftOpenTimeWindow(ctx context.Context) bool {
+	leftOpen, _ := ctx.Value(leftOpenTimeWindowKey{}).(bool)
+	return leftOpen
+}
+
 type namedOutputScopeContextKey struct{}
 
 // WithNamedOutputScope isolates mutable query metadata while retaining request metadata.

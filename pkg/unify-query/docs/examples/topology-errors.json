@@ -1,0 +1,51 @@
+[
+  {
+    "name": "invalid-json",
+    "http_status": 400,
+    "response": {
+      "error": "\"Syntax error at index 1: eof\\n\\n\\t{\\n\\t^\\n\""
+    }
+  },
+  {
+    "name": "request-bytes",
+    "http_status": 400,
+    "response": {
+      "error": "topology request exceeds maximum size of 8 bytes: topology resource limit exceeded: max_topology_request_bytes (9 \u003e 8)"
+    }
+  },
+  {
+    "name": "query-count",
+    "http_status": 400,
+    "response": {
+      "error": "topology resource limit exceeded: max_topology_queries (2 \u003e 1)"
+    }
+  },
+  {
+    "name": "memory-reservation",
+    "http_status": 400,
+    "response": {
+      "error": "topology resource limit exceeded: max_topology_reserved_bytes (6291456 \u003e 1)"
+    }
+  },
+  {
+    "name": "queue-timeout",
+    "http_status": 400,
+    "response": {
+      "error": "context deadline exceeded"
+    }
+  },
+  {
+    "name": "queue-full",
+    "http_status": 400,
+    "response": {
+      "error": "topology resource limit exceeded: max_topology_admission_waiters (2 \u003e 1)"
+    }
+  },
+  {
+    "name": "canceled-before-query-writable-transport",
+    "http_status": 400,
+    "response": {
+      "error": "context canceled"
+    }
+  }
+]

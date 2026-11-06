@@ -1,5 +1,7 @@
 # API 接口文档
 
+TimeGraph 新旧关系接口选择、完整参数、双格式与失败合同见 [关系查询接入指南](timegraph.md)，资源字段见 [默认 Schema 目录](timegraph-schema.md)。
+
 本文档详细说明 Unify-Query 提供的所有 HTTP API 接口。
 
 ## 目录

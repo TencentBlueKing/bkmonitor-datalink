@@ -252,7 +252,7 @@ var defaultRelationDefinitions = []*RelationDefinition{
 	{Namespace: NamespaceAll, Name: "apm_service_instance_with_pod", FromResource: "apm_service_instance", ToResource: "pod"},
 	{Namespace: NamespaceAll, Name: "apm_service_with_apm_service_instance", FromResource: "apm_service", ToResource: "apm_service_instance"},
 	{Namespace: NamespaceAll, Name: "bklogconfig_with_datasource", FromResource: "bklogconfig", ToResource: "datasource"},
-	{Namespace: NamespaceAll, Name: "business_set", FromResource: "business", ToResource: "set"},
+	{Namespace: NamespaceAll, Name: "business_with_set", FromResource: "business", ToResource: "set"},
 	{Namespace: NamespaceAll, Name: "biz_with_set", FromResource: "biz", ToResource: "set"},
 	{Namespace: NamespaceAll, Name: "module_with_set", FromResource: "module", ToResource: "set"},
 	{Namespace: NamespaceAll, Name: "host_with_module", FromResource: "host", ToResource: "module"},
@@ -286,13 +286,18 @@ func DefaultStaticProviderConfig() StaticProviderConfig {
 
 	relationSchemas := make([]RelationSchema, 0, len(defaultRelationDefinitions))
 	for _, rd := range defaultRelationDefinitions {
+		schema := ToRelationSchema(rd)
 		relationSchemas = append(relationSchemas, RelationSchema{
+			// Keep the static provider's historical lookup key. Namespace is
+			// selected by the provider map, while RelationName is the bare
+			// relation name in the default config.
 			RelationName:  RelationName(rd.Name),
-			Category:      ToRelationCategory(rd.Category),
-			FromType:      ResourceType(rd.FromResource),
-			ToType:        ResourceType(rd.ToResource),
-			IsDirectional: rd.IsDirectional,
-			IsBelongsTo:   rd.IsBelongsTo,
+			Category:      schema.Category,
+			FromType:      schema.FromType,
+			ToType:        schema.ToType,
+			IsDirectional: schema.IsDirectional,
+			IsBelongsTo:   schema.IsBelongsTo,
+			MetricName:    schema.MetricName,
 		})
 	}
 

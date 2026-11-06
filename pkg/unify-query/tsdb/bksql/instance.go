@@ -124,6 +124,9 @@ func (i *Instance) sqlQuery(ctx context.Context, req QuerySyncRequest) (*QuerySy
 
 	// 发起异步查询
 	res := i.client.QuerySync(ctx, req, span)
+	if metadata.IsStrictQueryFailures(ctx) && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if res == nil {
 		return nil, nil
 	}

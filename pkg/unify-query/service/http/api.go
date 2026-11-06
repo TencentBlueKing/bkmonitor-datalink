@@ -97,7 +97,7 @@ func HandlerFieldKeys(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, paramsStr,
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), paramsStr,
 	).Info(ctx)
 
 	queryRef, err := infoParamsToQueryRef(ctx, params)
@@ -178,7 +178,7 @@ func HandlerTagKeys(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, paramsStr,
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), paramsStr,
 	).Info(ctx)
 
 	queryRef, err := infoParamsToQueryRef(ctx, params)
@@ -262,7 +262,7 @@ func HandlerTagValues(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, string(paramsStr),
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), string(paramsStr),
 	).Info(ctx)
 
 	queryRef, err := infoParamsToQueryRef(ctx, params)
@@ -365,7 +365,7 @@ func HandlerTimeSeries(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, paramsStr,
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), paramsStr,
 	).Info(ctx)
 
 	data := &InfoData{}
@@ -412,7 +412,7 @@ func HandlerSeries(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, paramsStr,
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), paramsStr,
 	).Info(ctx)
 
 	queryRef, err := infoParamsToQueryRef(ctx, params)
@@ -577,7 +577,7 @@ func HandlerLabelValues(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v",
-		c.Request.URL.String(), c.Request.Header,
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header),
 	).Info(ctx)
 
 	if len(matches) != 1 {
@@ -661,7 +661,7 @@ func HandlerFieldMap(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, string(paramsStr),
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), string(paramsStr),
 	).Info(ctx)
 
 	queryRef, err := infoParamsToQueryRef(ctx, params)

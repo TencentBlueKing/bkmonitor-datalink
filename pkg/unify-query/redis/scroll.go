@@ -26,6 +26,8 @@ const (
 
 const (
 	DefaultSliceMaxFailedNum = 3
+	// scrollStateTimeout 分别限制完成状态保存和解锁的耗时。
+	scrollStateTimeout = 2 * time.Second
 )
 
 const (
@@ -35,14 +37,24 @@ const (
 )
 
 type SliceStatus struct {
-	SliceKey     string `json:"slice_key"`
-	SliceMax     int    `json:"slice_max"`
-	ScrollID     string `json:"scroll_id"`
-	Offset       int    `json:"offset"`
-	Status       string `json:"status"`
-	FailedNum    int    `json:"failed_num"`
-	MaxFailedNum int    `json:"max_failed_num"`
-	Limit        int    `json:"limit"`
+	SliceKey     string                     `json:"slice_key"`
+	SliceMax     int                        `json:"slice_max"`
+	ScrollID     string                     `json:"scroll_id"`
+	Offset       int                        `json:"offset"`
+	Status       string                     `json:"status"`
+	FailedNum    int                        `json:"failed_num"`
+	MaxFailedNum int                        `json:"max_failed_num"`
+	Limit        int                        `json:"limit"`
+	ScrollTarget *ElasticsearchScrollTarget `json:"scroll_target,omitempty"`
+}
+
+// ElasticsearchScrollTarget 随分片保存清理所需的存储、来源和空间信息，供后续请求恢复原路由。
+// 这里只保存路由标识；连接地址和鉴权凭据由存储层按当前配置获取。
+type ElasticsearchScrollTarget struct {
+	StorageID  string `json:"storage_id"`
+	SourceType string `json:"source_type"`
+	SpaceUID   string `json:"space_uid"`
+	TenantID   string `json:"tenant_id"`
 }
 
 func (s *SliceStatus) Done() bool {
@@ -95,6 +107,24 @@ func (s *ScrollSession) SliceLength() int {
 	return s.MaxSlice
 }
 
+// Slices 返回全部已保存分片的独立快照，供清理逻辑在释放锁后遍历。
+// ScrollTarget 也需要复制，避免修改快照时影响会话中的路由信息。
+func (session *ScrollSession) Slices() []SliceStatus {
+	session.mu.RLock()
+	defer session.mu.RUnlock()
+
+	slices := make([]SliceStatus, 0, len(session.SlicesMap))
+	for _, slice := range session.SlicesMap {
+		snapshot := *slice
+		if slice.ScrollTarget != nil {
+			target := *slice.ScrollTarget
+			snapshot.ScrollTarget = &target
+		}
+		slices = append(slices, snapshot)
+	}
+	return slices
+}
+
 func (s *ScrollSession) UpdateSliceStatus(key string, value *SliceStatus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -135,9 +165,13 @@ func (s *ScrollSession) Start(ctx context.Context) error {
 	return nil
 }
 
-func (s *ScrollSession) Stop(ctx context.Context) error {
+// Stop 在每页查询退出时保存会话，再清理完成会话的 ES 游标，最后释放锁。
+func (s *ScrollSession) Stop(ctx context.Context, clearScroll ClearScrollFunc) error {
 	defer func() {
-		err := s.unlock(ctx)
+		// 解锁单独计时，避免请求取消或前面的清理超时影响锁释放。
+		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), scrollStateTimeout)
+		defer cancel()
+		err := s.unlock(unlockCtx)
 		if err != nil {
 			_ = metadata.NewMessage(metadata.MsgRedisLock,
 				"redis unlock failed",
@@ -145,7 +179,18 @@ func (s *ScrollSession) Stop(ctx context.Context) error {
 		}
 	}()
 
-	return s.Update(ctx)
+	updateCtx := ctx
+	if s.Done() {
+		// EOF 后客户端可能已经断开；完成状态必须保存成功，才能删除缓存引用的游标。
+		var cancel context.CancelFunc
+		updateCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), scrollStateTimeout)
+		defer cancel()
+	}
+	if err := s.Update(updateCtx); err != nil {
+		return err
+	}
+	s.clearCompletedScrolls(ctx, clearScroll)
+	return nil
 }
 
 func (s *ScrollSession) MarshalBinary() ([]byte, error) {
@@ -156,6 +201,8 @@ func (s *ScrollSession) UnmarshalBinary(data []byte) error {
 	return json.Unmarshal(data, s)
 }
 
+// Done 以所有分片完成或耗尽重试次数为会话结束条件。
+// FailedNum 恰好达到上限时，分片可能仍为 pending，因此不能用各分片的 Done 代替。
 func (s *ScrollSession) Done() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

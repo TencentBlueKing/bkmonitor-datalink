@@ -545,7 +545,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 		).Error(ctx, err)
 	}
 	defer func() {
-		_ = session.Stop(ctx)
+		_ = session.Stop(ctx, prometheus.ClearScroll)
 	}()
 
 	list := make([]map[string]any, 0)
@@ -648,6 +648,8 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				defer func() {
 					session.UpdateSliceStatus(localQry.TableUUID(), slice)
 				}()
+				// 在完成判断前补齐旧会话的清理目标，让已完成且即将跳过的分片也能被回收。
+				setScrollTarget(ctx, slice, localQry)
 
 				if slice.Done() {
 					sliceStats.completed.Add(1)
@@ -688,6 +690,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 				// 查询成功，更新 scroll 状态
 				if option != nil {
+					// ES 翻页可能返回新游标；EOF 未返回游标时保留最后一个有效 ID，供会话结束时清理。
 					if option.ScrollID != "" {
 						slice.ScrollID = option.ScrollID
 					}

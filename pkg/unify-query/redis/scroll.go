@@ -35,14 +35,22 @@ const (
 )
 
 type SliceStatus struct {
-	SliceKey     string `json:"slice_key"`
-	SliceMax     int    `json:"slice_max"`
-	ScrollID     string `json:"scroll_id"`
-	Offset       int    `json:"offset"`
-	Status       string `json:"status"`
-	FailedNum    int    `json:"failed_num"`
-	MaxFailedNum int    `json:"max_failed_num"`
-	Limit        int    `json:"limit"`
+	SliceKey     string                     `json:"slice_key"`
+	SliceMax     int                        `json:"slice_max"`
+	ScrollID     string                     `json:"scroll_id"`
+	Offset       int                        `json:"offset"`
+	Status       string                     `json:"status"`
+	FailedNum    int                        `json:"failed_num"`
+	MaxFailedNum int                        `json:"max_failed_num"`
+	Limit        int                        `json:"limit"`
+	ScrollTarget *ElasticsearchScrollTarget `json:"scroll_target,omitempty"`
+}
+
+type ElasticsearchScrollTarget struct {
+	StorageID  string `json:"storage_id"`
+	SourceType string `json:"source_type"`
+	SpaceUID   string `json:"space_uid"`
+	TenantID   string `json:"tenant_id"`
 }
 
 func (s *SliceStatus) Done() bool {
@@ -95,6 +103,22 @@ func (s *ScrollSession) SliceLength() int {
 	return s.MaxSlice
 }
 
+func (session *ScrollSession) Slices() []SliceStatus {
+	session.mu.RLock()
+	defer session.mu.RUnlock()
+
+	slices := make([]SliceStatus, 0, len(session.SlicesMap))
+	for _, slice := range session.SlicesMap {
+		snapshot := *slice
+		if slice.ScrollTarget != nil {
+			target := *slice.ScrollTarget
+			snapshot.ScrollTarget = &target
+		}
+		slices = append(slices, snapshot)
+	}
+	return slices
+}
+
 func (s *ScrollSession) UpdateSliceStatus(key string, value *SliceStatus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -135,7 +159,7 @@ func (s *ScrollSession) Start(ctx context.Context) error {
 	return nil
 }
 
-func (s *ScrollSession) Stop(ctx context.Context) error {
+func (s *ScrollSession) Stop(ctx context.Context, clearScroll ClearScrollFunc) error {
 	defer func() {
 		err := s.unlock(ctx)
 		if err != nil {
@@ -145,6 +169,7 @@ func (s *ScrollSession) Stop(ctx context.Context) error {
 		}
 	}()
 
+	s.clearCompletedScrolls(ctx, clearScroll)
 	return s.Update(ctx)
 }
 

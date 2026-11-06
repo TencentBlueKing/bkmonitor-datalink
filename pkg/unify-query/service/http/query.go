@@ -545,7 +545,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 		).Error(ctx, err)
 	}
 	defer func() {
-		_ = session.Stop(ctx)
+		_ = session.Stop(ctx, prometheus.ClearScroll)
 	}()
 
 	list := make([]map[string]any, 0)
@@ -648,6 +648,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				defer func() {
 					session.UpdateSliceStatus(localQry.TableUUID(), slice)
 				}()
+				setScrollTarget(ctx, slice, localQry)
 
 				if slice.Done() {
 					sliceStats.completed.Add(1)

@@ -205,6 +205,9 @@ func (s *streamSeriesSet) handleErr(err error, done chan struct{}) {
 	).Error(s.ctx, err)
 
 	s.err = nil
+	if metadata.IsStrictQueryFailures(s.ctx) {
+		s.err = err
+	}
 	s.errMtx.Unlock()
 }
 

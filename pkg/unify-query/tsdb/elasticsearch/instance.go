@@ -853,6 +853,9 @@ func (i *Instance) QuerySeriesSet(
 			"字段查询异常: %v",
 			err,
 		).Warn(ctx)
+		if metadata.IsStrictQueryFailures(ctx) {
+			return storage.ErrSeriesSet(err)
+		}
 		return storage.EmptySeriesSet()
 	}
 	qo.physicalIndexes = physicalIndexes

@@ -568,6 +568,38 @@ func spanAttrStringSlice(attrs []attribute.KeyValue, key string) ([]string, bool
 	return nil, false
 }
 
+func TestMatrixFormatRecordsBackendTimetaken(t *testing.T) {
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	prevTP := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+		otel.SetTracerProvider(prevTP)
+	})
+
+	ctx, span := uqtrace.NewSpan(context.Background(), "matrix-backend-timing-test")
+	resp := &VmResponse{Result: true, Code: OK}
+	resp.Data.Timetaken = 1.25
+	resp.Data.BksqlCallElapsedTime = 0
+	_, _, err := (&Instance{}).matrixFormat(ctx, resp, span)
+	span.End(&err)
+	require.NoError(t, err)
+
+	for _, ended := range rec.Ended() {
+		if ended.Name() != "matrix-backend-timing-test" {
+			continue
+		}
+		for _, kv := range ended.Attributes() {
+			if string(kv.Key) == "vm-data-timetaken" {
+				assert.Equal(t, 1.25, kv.Value.AsFloat64())
+				return
+			}
+		}
+	}
+	t.Fatal("vm-data-timetaken attribute not recorded")
+}
+
 func TestSpanSetVmQueryClusterIfPresent(t *testing.T) {
 	rec := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
@@ -702,6 +734,21 @@ func TestSpanSetStorageListDiff(t *testing.T) {
 			responseVMClusterList: nil,
 			wantStatus:            "match",
 			wantMissing:           "",
+		},
+		"unknown request storage is not a proven match": {
+			rtDetail:              map[string]metadata.RtDetail{"rt_vm_1": {TableID: "rt_1"}},
+			responseVMClusterList: []string{},
+			wantStatus:            "unknown",
+			wantReason:            "unknown_request_storage",
+		},
+		"known missing storage takes precedence over unknown request storage": {
+			rtDetail: map[string]metadata.RtDetail{
+				"rt_vm_1": {TableID: "rt_1", StorageName: "vm_op_1"},
+				"rt_vm_2": {TableID: "rt_2"},
+			},
+			responseVMClusterList: []string{},
+			wantStatus:            "mismatch",
+			wantMissing:           `[{"cluster":"vm_op_1","vm_rt_list":["rt_vm_1"],"table_id_list":["rt_1"]}]`,
 		},
 	}
 

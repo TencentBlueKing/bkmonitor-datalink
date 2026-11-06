@@ -254,8 +254,14 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 			return err
 		}
 		defer projectionSender.Close()
-		sender := kaccompat.NewHTTPSender(*cfg.Plugins.KAC)
-		defer sender.Close()
+		var sender kaccompat.ActionSender
+		if cfg.Plugins.KAC.RabbitMQ != nil {
+			sender = kaccompat.NewRabbitMQSender(*cfg.Plugins.KAC.RabbitMQ)
+		} else {
+			httpSender := kaccompat.NewHTTPSender(*cfg.Plugins.KAC)
+			defer httpSender.Close()
+			sender = httpSender
+		}
 		kacRuntime = kaccompat.NewRuntime(cfg.Plugins.KAC.Delivery, queryRedis, alertqueue.Stream(d.Deployment), kacAlertReader{queryRepository.Repository}, projectionSender, sender, metrics, logger)
 		closeProjection = kacRuntime
 	}

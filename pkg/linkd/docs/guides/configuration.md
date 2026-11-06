@@ -462,10 +462,23 @@ ES 认证可选 `api_key` 或 `basic_auth`，不能同时配置。
 | elasticsearch.max_result_window | 首次创建模板时默认 50000，范围 1..1000000 |
 | elasticsearch.total_fields_limit | 首次创建模板时默认 5000，范围 1..100000 |
 | action_endpoint | 完整 HTTP(S) 动作 V3 接口，不接受 userinfo、query、fragment，不使用旧 KAC pipeline |
-| jwt.secret_key | 必填，与 KAC 的 `BKAPP_JWT_SECRET_KEY` 相同，非空白且最多 16384 字节；拒绝脱敏占位值；填写签名密钥，不填写 JWT 或 Bearer 前缀 |
+| rabbitmq.url | 可选，配置后直接发布 Celery 消息，使用 `amqp://` 或 `amqps://` URL，包含 KAC Broker 的凭据和 vhost；整项脱敏 |
+| rabbitmq.queue | 已存在的 KAC 动作队列，默认 `kac_alarm_execute`；不由 Linkd 创建 |
+| jwt.secret_key | HTTP 方式必填，与 KAC 的 `BKAPP_JWT_SECRET_KEY` 相同，非空白且最多 16384 字节；拒绝脱敏占位值；填写签名密钥，不填写 JWT 或 Bearer 前缀 |
 | jwt.username | 签发的内部调用身份，默认 `admin`，非空白且最多 256 字节；不替代动作租户或业务操作人 |
 
-每次动作请求通过公共签发器生成 HS256 JWT，使用 `Internal-Token: Bearer <JWT>`；凭据只在配置和请求头中。
+HTTP 方式每次动作请求通过公共签发器生成 HS256 JWT，使用 `Internal-Token: Bearer <JWT>`；凭据只在配置和请求头中。
+RabbitMQ 方式可将上述 `action_endpoint`、`jwt` 替换为：
+
+```yaml
+rabbitmq:
+  url: amqp://linkd:replace-with-broker-secret@rabbitmq.example.com:5672/kingeye
+  queue: kac_alarm_execute
+```
+
+配置 RabbitMQ 后不调用或回退 HTTP；两个方式都先完成 KAC ES 投影和 refresh。
+直投使用 Celery V2 JSON、持久化消息和 Broker 确认，成功只表示队列接受，不代表处置成功。
+失败不重试、不新建动作受理表，确认结果未知时仍可能已经投递；协议见[动作投递 V3](../reference/contracts/kac-action-delivery-v3.md#rabbitmq-直投)。
 控制面负责原 KAC 模板、ILM、alias、mapping 和索引维护；已有索引不重建，已有模板运维参数保留。
 位置缓存仅在内存中，原处置态保存在 KAC 告警的 `linkd_disposal_status` 字段；无同步元数据索引。
 

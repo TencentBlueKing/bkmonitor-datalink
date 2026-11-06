@@ -27,7 +27,7 @@ type ActionRequest struct {
 	domain.AlertAction
 }
 
-// ActionSender 执行一次 HTTP 调用，失败不生成新任务。
+// ActionSender 执行一次动作投递，失败不生成新任务。
 type ActionSender interface {
 	Send(context.Context, ActionRequest) error
 }

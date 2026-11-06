@@ -38,8 +38,26 @@ type KACPluginConfig struct {
 	AlarmEventIndex string `yaml:"alarm_event_index" json:"alarm_event_index"`
 	// ActionEndpoint 使用轻量 V3 动作协议，不得指向旧告警 pipeline。
 	ActionEndpoint string `yaml:"action_endpoint" json:"action_endpoint"`
+	// RabbitMQ 配置后直接发布 Celery V2 消息，不再调用 ActionEndpoint。
+	RabbitMQ *KACRabbitMQConfig `yaml:"rabbitmq,omitempty" json:"rabbitmq,omitempty"`
 	// JWT 保存 KAC 的签名密钥与调用身份；每次投递重新签发，不保存已签发 Token。
 	JWT JWTConfig `yaml:"jwt" json:"jwt"`
+}
+
+// KACRabbitMQConfig 是 KAC Celery Broker 的部署级连接，不声明或修改目标队列。
+type KACRabbitMQConfig struct {
+	// URL 包含 amqp/amqps 连接、凭据与 vhost，公共配置输出整项脱敏。
+	URL string `yaml:"url" json:"url"`
+	// Queue 是已有的 KAC 动作队列，默认 kac_alarm_execute。
+	Queue string `yaml:"queue,omitempty" json:"queue,omitempty"`
+}
+
+// WithDefaults 补齐 KAC 当前消费的动作队列。
+func (c KACRabbitMQConfig) WithDefaults() KACRabbitMQConfig {
+	if c.Queue == "" {
+		c.Queue = "kac_alarm_execute"
+	}
+	return c
 }
 
 // KACElasticsearchConfig 保存兼容索引连接和与 KAC 对齐的新建索引参数。
@@ -69,6 +87,10 @@ func (c PluginsConfig) KACEnabled() bool { return c.KAC != nil && c.KAC.Enabled 
 // WithDefaults 使用 KAC 源码的索引默认参数；连接和 alias 必须由部署显式提供。
 func (c KACPluginConfig) WithDefaults() KACPluginConfig {
 	c.Delivery = c.Delivery.WithDefaults()
+	if c.RabbitMQ != nil {
+		rabbit := c.RabbitMQ.WithDefaults()
+		c.RabbitMQ = &rabbit
+	}
 	if c.JWT.Username == "" {
 		c.JWT.Username = "admin"
 	}
@@ -116,14 +138,24 @@ func (c PluginsConfig) Validate() error {
 	if es.NumberOfShards < 1 || es.NumberOfShards > 1024 || *es.NumberOfReplicas < 0 || *es.NumberOfReplicas > 10 || es.MaxResultWindow < 1 || es.MaxResultWindow > 1000000 || es.TotalFieldsLimit < 1 || es.TotalFieldsLimit > 100000 {
 		return fmt.Errorf("plugins.kac.elasticsearch index settings are invalid")
 	}
-	if _, err := kacEndpointOrigin(v.ActionEndpoint, false); err != nil {
-		return fmt.Errorf("plugins.kac.action_endpoint is invalid")
-	}
-	if strings.TrimSpace(v.JWT.SecretKey) == "" || len(v.JWT.SecretKey) > 16<<10 || v.JWT.SecretKey == redactedSecret {
-		return fmt.Errorf("plugins.kac.jwt.secret_key is invalid")
-	}
-	if strings.TrimSpace(v.JWT.Username) == "" || len(v.JWT.Username) > 256 {
-		return fmt.Errorf("plugins.kac.jwt.username is invalid")
+	if v.RabbitMQ != nil {
+		u, err := url.Parse(v.RabbitMQ.URL)
+		if err != nil || u.Hostname() == "" || (u.Scheme != "amqp" && u.Scheme != "amqps") {
+			return fmt.Errorf("plugins.kac.rabbitmq.url is invalid")
+		}
+		if strings.TrimSpace(v.RabbitMQ.Queue) == "" {
+			return fmt.Errorf("plugins.kac.rabbitmq.queue is invalid")
+		}
+	} else {
+		if _, err := kacEndpointOrigin(v.ActionEndpoint, false); err != nil {
+			return fmt.Errorf("plugins.kac.action_endpoint is invalid")
+		}
+		if strings.TrimSpace(v.JWT.SecretKey) == "" || len(v.JWT.SecretKey) > 16<<10 || v.JWT.SecretKey == redactedSecret {
+			return fmt.Errorf("plugins.kac.jwt.secret_key is invalid")
+		}
+		if strings.TrimSpace(v.JWT.Username) == "" || len(v.JWT.Username) > 256 {
+			return fmt.Errorf("plugins.kac.jwt.username is invalid")
+		}
 	}
 	return nil
 }
@@ -134,6 +166,9 @@ func (c PluginsConfig) Redacted() PluginsConfig {
 		return c
 	}
 	v := c.KAC.WithDefaults()
+	if v.RabbitMQ != nil && v.RabbitMQ.URL != "" {
+		v.RabbitMQ.URL = redactedSecret
+	}
 	if v.JWT.SecretKey != "" {
 		v.JWT.SecretKey = redactedSecret
 	}

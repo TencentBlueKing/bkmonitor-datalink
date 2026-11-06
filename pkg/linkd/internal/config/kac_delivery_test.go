@@ -115,3 +115,35 @@ func TestKACJWTSigningKeyAndUsernameBudgets(t *testing.T) {
 		}
 	}
 }
+
+func TestKACRabbitMQConfiguration(t *testing.T) {
+	const brokerURL = "amqp://linkd:private-broker@localhost:5672/kingeye" //nolint:gosec // G101: 仅用于验证配置脱敏的测试凭据。
+	cfg := kacPluginFixture()
+	cfg.KAC.ActionEndpoint = ""
+	cfg.KAC.JWT = JWTConfig{}
+	cfg.KAC.RabbitMQ = &KACRabbitMQConfig{URL: brokerURL}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal("RabbitMQ mode still requires HTTP credentials", err)
+	}
+	if cfg.KAC.WithDefaults().RabbitMQ.Queue != "kac_alarm_execute" {
+		t.Fatal("default KAC queue lost")
+	}
+	raw, err := json.Marshal(cfg.Redacted())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "private-") || cfg.KAC.RabbitMQ.URL != brokerURL {
+		t.Fatal("broker credential leaked or source mutated")
+	}
+	for _, address := range []string{"", "http://localhost", "amqp://", "://private-broker", redactedSecret} {
+		copy := *cfg.KAC
+		copy.RabbitMQ = &KACRabbitMQConfig{URL: address}
+		if err := (PluginsConfig{KAC: &copy}).Validate(); err == nil || strings.Contains(err.Error(), "private-broker") {
+			t.Fatal("invalid URL accepted or leaked", err)
+		}
+	}
+	cfg.KAC.RabbitMQ.Queue = " \n"
+	if cfg.Validate() == nil {
+		t.Fatal("blank queue accepted")
+	}
+}

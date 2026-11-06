@@ -41,6 +41,26 @@ KAC 业务处理继续读取当前 ES 告警，租户显式传给 Celery。重�
 
 ## 并发、失败与重启
 
+### RabbitMQ 直投
+
+配置 `plugins.kac.rabbitmq` 后，控制面直接向 KAC Broker 发布 Celery V2 JSON 消息，
+不调用 HTTP 动作接口，也不在失败后回退到 HTTP。未配置时沿用上述 HTTP 协议。
+连接 URL 包含凭据与 vhost；队列默认 `kac_alarm_execute`，必须由 KAC 部署预先创建。
+Linkd 使用默认 exchange（空字符串）、队列名 routing key、`mandatory=true`、持久化消息和 publisher confirms，
+不声明、修改或清理队列。Broker ACK 且没有 basic.return 才算投递成功，不表示动作执行完成。
+
+任务名为 `kingeye.kac.alarm.celery_tasks.alarm_process`，body 为
+`[[], {"action": <V3 参数与 alarm_id>}, {"callbacks":null,"errbacks":null,"chain":null,"chord":null}]`。
+`alarm_id` 等于 `linkd_alert_id`；headers 带 `bk_tenant_id`、`linkd_action_id`，
+Celery `id`、`root_id` 与 AMQP `correlation_id` 沿用原 `action_id`。
+此身份用于关联，不提供 Celery 消费或外部副作用的自动去重保证。
+
+每次发送使用独立连接，在既有动作并发预算内运行，连接、握手、发布与确认共用 10 秒期限；
+取消会关闭本次 socket，不影响其他动作。确认丢失或断连可能已经入队，失败只记日志及指标，
+结束当前消息，不自动重试或新增动作受理存储。切换方式时仍需排空旧控制面，避免并行消费同一 Stream。
+
+### 通用运行语义
+
 投影和动作使用独立并发；默认均为 64，动作缓冲 10,000 条。发送前按批次集中 refresh 涉及的物理索引，随后并发调用 KAC。
 投影线程只投递到内存动作队列，不等待动作接口。队列满、refresh 或发送失败均记录明确阶段/租户/Alert/动作日志及失败指标，结束当前消息，不建立失败任务。
 ES `_bulk` 部分失败只结束失败项，成功项仍可进入动作发送。普通投影、动作调用有 10 秒超时。

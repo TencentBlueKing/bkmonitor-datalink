@@ -57,7 +57,7 @@ func (session *ScrollSession) clearCompletedScrolls(ctx context.Context, clearSc
 	close(work)
 
 	var workers sync.WaitGroup
-	// 限制同时清理的目标数，并等待本轮清理收尾后再保存会话、释放会话锁。
+	// 限制同时清理的目标数，并等待本轮清理收尾后释放会话锁。
 	for range min(4, len(groups)) {
 		workers.Add(1)
 		go func() {

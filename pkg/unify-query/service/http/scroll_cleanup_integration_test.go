@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -57,9 +58,10 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	prefix := fmt.Sprintf("uq_scroll_cleanup_%d", time.Now().UnixNano())
-	require.NoError(testContext, redisUtil.SetInstance(ctx, prefix, prefix, &goRedis.UniversalOptions{
+	redisOptions := &goRedis.UniversalOptions{
 		Addrs: []string{redisAddr}, DialTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second,
-	}))
+	}
+	require.NoError(testContext, redisUtil.SetInstance(ctx, prefix, prefix, redisOptions))
 	testContext.Cleanup(redisUtil.Close)
 	require.NoError(testContext, redisUtil.Client().Ping(ctx).Err())
 	oldTimeout, oldMaxSize, oldRouting := tsdbService.EsTimeout, tsdbService.EsMaxSize, QueryMaxRouting
@@ -194,6 +196,21 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 		slice.ScrollTarget = &redisUtil.ElasticsearchScrollTarget{StorageID: clusters[clusterIndex].storageID, SpaceUID: "bkcc__2"}
 		session.UpdateSliceStatus(key, slice)
 	}
+	completeScroll := func(testContext *testing.T, slice *redisUtil.SliceStatus, clusterIndex int) {
+		testContext.Helper()
+		// 读到 ES 返回 EOF，保留最后一个游标，重现下载结束时内存与上一页缓存的状态差异。
+		for {
+			result, err := clusters[clusterIndex].client.Scroll().ScrollId(slice.ScrollID).Scroll("5m").Do(ctx)
+			if result != nil && result.ScrollId != "" {
+				slice.ScrollID = result.ScrollId
+			}
+			if errors.Is(err, io.EOF) {
+				slice.Status = redisUtil.StatusCompleted
+				return
+			}
+			require.NoError(testContext, err)
+		}
+	}
 	execute := func(testContext *testing.T, session *redisUtil.ScrollSession, query *structured.QueryTs) ([]map[string]any, bool, error) {
 		total, list, _, _, done, err := queryRawWithScroll(queryContext(), query, session)
 		require.EqualValues(testContext, len(list), total)
@@ -225,39 +242,74 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 	}
 
 	testContext.Run("stop_clears_and_preserves_state_ttl_and_unlock", func(testContext *testing.T) {
-		session := newSession(testContext, "stop-lifecycle")
-		for clusterIndex := range clusters {
-			completedSlice(session, clusters[clusterIndex].storageID, clusterIndex, createScroll(testContext, clusterIndex, "5m"))
+		testCases := []struct {
+			name         string
+			contextError error
+		}{
+			{name: "active_request"},
+			{name: "cancelled_request", contextError: context.Canceled},
+			{name: "expired_request", contextError: context.DeadlineExceeded},
 		}
-		require.NoError(testContext, session.Start(queryContext()))
-		require.EqualValues(testContext, 1, redisUtil.Client().Exists(ctx, session.LockKey).Val())
-		require.NoError(testContext, session.Stop(queryContext(), prometheus.ClearScroll))
-		assertNoScrolls(testContext)
-		require.Zero(testContext, redisUtil.Client().Exists(ctx, session.LockKey).Val())
-		stored, err := redisUtil.Client().Get(ctx, session.SessionKey).Bytes()
-		require.NoError(testContext, err)
-		var restored redisUtil.ScrollSession
-		require.NoError(testContext, restored.UnmarshalBinary(stored))
-		require.True(testContext, restored.Done())
-		require.ElementsMatch(testContext, session.Slices(), restored.Slices())
-		ttl, err := redisUtil.Client().TTL(ctx, session.SessionKey).Result()
-		require.NoError(testContext, err)
-		require.InDelta(testContext, 300, ttl.Seconds(), 3)
-		require.NoError(testContext, restored.Stop(queryContext(), prometheus.ClearScroll))
-		assertNoScrolls(testContext)
+		for _, testCase := range testCases {
+			testContext.Run(testCase.name, func(testContext *testing.T) {
+				session := newSession(testContext, "stop-lifecycle-"+testCase.name)
+				for clusterIndex, cluster := range clusters {
+					completedSlice(session, cluster.storageID, clusterIndex, createScroll(testContext, clusterIndex, "5m"))
+					session.Slice(cluster.storageID).Status = redisUtil.StatusPending
+				}
+				// 缓存先保存上一页的 pending 状态，随后本页查询读到 EOF。
+				require.NoError(testContext, session.Update(ctx))
+				require.NoError(testContext, session.Start(queryContext()))
+				for clusterIndex, cluster := range clusters {
+					completeScroll(testContext, session.Slice(cluster.storageID), clusterIndex)
+				}
+				stopCtx := queryContext()
+				switch testCase.contextError {
+				case context.Canceled:
+					var cancel context.CancelFunc
+					stopCtx, cancel = context.WithCancel(stopCtx)
+					cancel()
+				case context.DeadlineExceeded:
+					var cancel context.CancelFunc
+					stopCtx, cancel = context.WithDeadline(stopCtx, time.Now().Add(-time.Second))
+					defer cancel()
+				}
+				require.NoError(testContext, session.Stop(stopCtx, prometheus.ClearScroll))
+				assertNoScrolls(testContext)
+				require.Zero(testContext, redisUtil.Client().Exists(ctx, session.LockKey).Val())
+				stored, err := redisUtil.Client().Get(ctx, session.SessionKey).Bytes()
+				require.NoError(testContext, err)
+				var restored redisUtil.ScrollSession
+				require.NoError(testContext, restored.UnmarshalBinary(stored))
+				require.True(testContext, restored.Done())
+				require.ElementsMatch(testContext, session.Slices(), restored.Slices())
+				ttl, err := redisUtil.Client().TTL(ctx, session.SessionKey).Result()
+				require.NoError(testContext, err)
+				require.InDelta(testContext, 300, ttl.Seconds(), 3)
+				require.NoError(testContext, restored.Stop(queryContext(), prometheus.ClearScroll))
+				assertNoScrolls(testContext)
+				// 保留完成会话再次请求时创建新下载的行为，不能复用引用已清理游标的 pending 缓存。
+				next, err := redisUtil.GetOrCreateScrollSession(ctx, strings.TrimPrefix(session.SessionKey, redisUtil.SessionKeyPrefix), "5m", "10s", 2, 2)
+				require.NoError(testContext, err)
+				require.False(testContext, next.Cache)
+				require.Empty(testContext, next.Slices())
+			})
+		}
 	})
 
 	testContext.Run("stop_preserves_incomplete_contexts", func(testContext *testing.T) {
 		testCases := []struct {
-			name        string
-			status      string
-			failedNum   int
-			pendingPeer bool
+			name          string
+			status        string
+			failedNum     int
+			pendingPeer   bool
+			cancelRequest bool
 		}{
 			{name: "pending", status: redisUtil.StatusPending},
 			{name: "retryable", status: redisUtil.StatusPending, failedNum: redisUtil.DefaultSliceMaxFailedNum - 1},
 			{name: "completed_with_pending_peer", status: redisUtil.StatusCompleted, pendingPeer: true},
 			{name: "exhausted_with_pending_peer", status: redisUtil.StatusPending, failedNum: redisUtil.DefaultSliceMaxFailedNum, pendingPeer: true},
+			{name: "cancelled_pending", status: redisUtil.StatusPending, cancelRequest: true},
 		}
 		for _, testCase := range testCases {
 			testContext.Run(testCase.name, func(testContext *testing.T) {
@@ -269,8 +321,19 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 					session.Slice("pending-peer")
 				}
 				require.False(testContext, session.Done())
+				require.NoError(testContext, session.Update(ctx))
 				require.NoError(testContext, session.Start(queryContext()))
-				require.NoError(testContext, session.Stop(queryContext(), prometheus.ClearScroll))
+				stopCtx, cancel := context.WithCancel(queryContext())
+				defer cancel()
+				if testCase.cancelRequest {
+					cancel()
+				}
+				stopErr := session.Stop(stopCtx, prometheus.ClearScroll)
+				if testCase.cancelRequest {
+					require.ErrorIs(testContext, stopErr, context.Canceled)
+				} else {
+					require.NoError(testContext, stopErr)
+				}
 				require.EqualValues(testContext, 1, scrollCount(testContext, 0))
 				require.Zero(testContext, redisUtil.Client().Exists(ctx, session.LockKey).Val())
 				for _, saved := range session.Slices() {
@@ -282,32 +345,31 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 		}
 	})
 
-	testContext.Run("stop_preserves_redis_error_on_cleanup_failure", func(testContext *testing.T) {
-		unauthorizedServer := newScrollCleanupUnauthorizedServer(testContext)
+	testContext.Run("stop_preserves_scroll_on_redis_error", func(testContext *testing.T) {
 		session := newSession(testContext, "stop-redis-error")
-		completedSlice(session, "forbidden", 0, createScroll(testContext, 0, "5m"))
-		storageID := prefix + "_stop_forbidden"
-		tsdb.SetStorage(storageID, &tsdb.Storage{
-			Type: metadata.ElasticsearchStorageType, Address: unauthorizedServer.URL,
-		})
-		session.Slice("forbidden").ScrollTarget.StorageID = storageID
-		queryCtx := queryContext()
-		require.NoError(testContext, session.Start(queryCtx))
-		cancelledCtx, cleanupCancel := context.WithCancel(queryCtx)
-		cleanupCancel()
-		var output scrollCleanupLogBuffer
-		log.SetOutput(&output)
-		log.InitTestLogger()
-		defer func() { log.SetOutput(nil); log.InitTestLogger() }()
-		require.ErrorIs(testContext, session.Stop(cancelledCtx, prometheus.ClearScroll), context.Canceled)
-		require.Contains(testContext, output.String(), "scroll cleanup failed: session=")
-		require.Contains(testContext, output.String(), "storage_id="+storageID)
-		require.Contains(testContext, output.String(), "401")
+		completedSlice(session, "pending", 0, createScroll(testContext, 0, "5m"))
+		session.Slice("pending").Status = redisUtil.StatusPending
+		require.NoError(testContext, session.Update(ctx))
+		require.NoError(testContext, session.Start(queryContext()))
+		completeScroll(testContext, session.Slice("pending"), 0)
+		var stopErr error
+		func() {
+			// 关闭连接池产生 Redis 写入错误，恢复连接后检查缓存和 ES 游标。
+			redisUtil.Close()
+			defer func() {
+				require.NoError(testContext, redisUtil.SetInstance(ctx, prefix, prefix, redisOptions))
+			}()
+			stopErr = session.Stop(queryContext(), prometheus.ClearScroll)
+		}()
+		require.ErrorIs(testContext, stopErr, goRedis.ErrClosed)
 		require.EqualValues(testContext, 1, scrollCount(testContext, 0))
-		require.Zero(testContext, redisUtil.Client().Exists(ctx, session.SessionKey).Val())
-		require.EqualValues(testContext, 1, redisUtil.Client().Exists(ctx, session.LockKey).Val())
-		session.Slice("forbidden").ScrollTarget.StorageID = clusters[0].storageID
-		require.NoError(testContext, session.Stop(queryContext(), prometheus.ClearScroll))
+		restored, err := redisUtil.GetOrCreateScrollSession(ctx, strings.TrimPrefix(session.SessionKey, redisUtil.SessionKeyPrefix), "5m", "10s", 2, 2)
+		require.NoError(testContext, err)
+		require.True(testContext, restored.Cache)
+		require.False(testContext, restored.Done())
+		// 保存失败后，缓存中的旧游标仍能读到 EOF；重试收尾成功后再清理。
+		completeScroll(testContext, restored.Slice("pending"), 0)
+		require.NoError(testContext, restored.Stop(queryContext(), prometheus.ClearScroll))
 		assertNoScrolls(testContext)
 		require.Zero(testContext, redisUtil.Client().Exists(ctx, session.LockKey).Val())
 	})
@@ -597,6 +659,9 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 
 	testContext.Run("global_deadline_with_real_network_delay", func(testContext *testing.T) {
 		session := newSession(testContext, "deadline")
+		queryCtx, cancelQuery := context.WithCancel(queryContext())
+		defer cancelQuery()
+		savedBeforeCleanup := make(chan bool, len(clusters))
 		var delayedRequests atomic.Int64
 		for clusterIndex, cluster := range clusters {
 			scrollID := createScroll(testContext, clusterIndex, "5m")
@@ -607,6 +672,17 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				if request.Method == http.MethodDelete && strings.Contains(request.URL.Path, "_search/scroll") {
 					delayedRequests.Add(1)
+					// 清理开始时断开原请求，同时检查完成状态已保存。
+					cancelQuery()
+					stored, stateErr := redisUtil.Client().Get(ctx, session.SessionKey).Bytes()
+					var saved redisUtil.ScrollSession
+					if stateErr == nil {
+						stateErr = saved.UnmarshalBinary(stored)
+					}
+					if stateErr != nil {
+						testContext.Error(stateErr)
+					}
+					savedBeforeCleanup <- saved.Done()
 					body, readErr := io.ReadAll(request.Body)
 					if readErr != nil {
 						return
@@ -633,7 +709,7 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 			}
 		}
 		started := time.Now()
-		list, done, err := execute(testContext, session, newQuery())
+		_, list, _, _, done, err := queryRawWithScroll(queryCtx, newQuery(), session)
 		duration := time.Since(started)
 		require.NoError(testContext, err)
 		require.True(testContext, done)
@@ -641,6 +717,11 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 		require.GreaterOrEqual(testContext, duration, redisUtil.ScrollCleanupTimeout-100*time.Millisecond)
 		require.Less(testContext, duration, redisUtil.ScrollCleanupTimeout+time.Second)
 		require.EqualValues(testContext, 2, delayedRequests.Load())
+		for range clusters {
+			require.True(testContext, <-savedBeforeCleanup, "completion must be saved before clearing ES")
+		}
+		require.ErrorIs(testContext, queryCtx.Err(), context.Canceled)
+		require.Zero(testContext, redisUtil.Client().Exists(ctx, session.LockKey).Val())
 		require.EqualValues(testContext, 1, scrollCount(testContext, 0))
 		require.EqualValues(testContext, 1, scrollCount(testContext, 1))
 		testContext.Logf("two_cluster_cleanup_duration=%s", duration)
@@ -649,15 +730,6 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 			require.NoError(testContext, err)
 			require.Zero(testContext, scrollCount(testContext, clusterIndex))
 		}
-	})
-
-	testContext.Run("completed_cleanup_survives_client_cancellation", func(testContext *testing.T) {
-		session := newSession(testContext, "cancelled")
-		completedSlice(session, "cancelled", 0, createScroll(testContext, 0, "5m"))
-		cancelledCtx, cleanupCancel := context.WithCancel(queryContext())
-		cleanupCancel()
-		require.ErrorIs(testContext, session.Stop(cancelledCtx, prometheus.ClearScroll), context.Canceled)
-		assertNoScrolls(testContext)
 	})
 
 	testContext.Run("continuous_short_downloads", func(testContext *testing.T) {

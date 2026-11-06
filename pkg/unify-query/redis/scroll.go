@@ -26,6 +26,8 @@ const (
 
 const (
 	DefaultSliceMaxFailedNum = 3
+	// scrollStateTimeout 分别限制完成状态保存和解锁的耗时。
+	scrollStateTimeout = 2 * time.Second
 )
 
 const (
@@ -163,10 +165,13 @@ func (s *ScrollSession) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop 在每页查询退出时收尾：按会话状态清理 ES 游标、保存会话，最后释放锁。
+// Stop 在每页查询退出时保存会话，再清理完成会话的 ES 游标，最后释放锁。
 func (s *ScrollSession) Stop(ctx context.Context, clearScroll ClearScrollFunc) error {
 	defer func() {
-		err := s.unlock(ctx)
+		// 解锁单独计时，避免请求取消或前面的清理超时影响锁释放。
+		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), scrollStateTimeout)
+		defer cancel()
+		err := s.unlock(unlockCtx)
 		if err != nil {
 			_ = metadata.NewMessage(metadata.MsgRedisLock,
 				"redis unlock failed",
@@ -174,9 +179,18 @@ func (s *ScrollSession) Stop(ctx context.Context, clearScroll ClearScrollFunc) e
 		}
 	}()
 
-	// ES 资源回收不删除 Redis 会话；仍按原有窗口更新状态和 TTL，并保留 Update 的错误。
+	updateCtx := ctx
+	if s.Done() {
+		// EOF 后客户端可能已经断开；完成状态必须保存成功，才能删除缓存引用的游标。
+		var cancel context.CancelFunc
+		updateCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), scrollStateTimeout)
+		defer cancel()
+	}
+	if err := s.Update(updateCtx); err != nil {
+		return err
+	}
 	s.clearCompletedScrolls(ctx, clearScroll)
-	return s.Update(ctx)
+	return nil
 }
 
 func (s *ScrollSession) MarshalBinary() ([]byte, error) {

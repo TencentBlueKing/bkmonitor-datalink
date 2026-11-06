@@ -1,8 +1,11 @@
 package redis
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestScrollSessionTerminalBoundary(testContext *testing.T) {
@@ -29,6 +32,7 @@ func TestScrollSessionTerminalBoundary(testContext *testing.T) {
 			session := NewScrollSession(testCase.name, time.Minute, time.Second, 1, DefaultSliceMaxFailedNum, 2)
 			slice := session.Slice("table|cluster|0")
 			slice.ScrollID = "latest-scroll-id"
+			slice.ScrollTarget = &ElasticsearchScrollTarget{StorageID: "cluster"}
 			slice.Status = testCase.status
 			slice.FailedNum = testCase.failedNum
 			session.UpdateSliceStatus(slice.SliceKey, slice)
@@ -44,6 +48,19 @@ func TestScrollSessionTerminalBoundary(testContext *testing.T) {
 			}
 			if got := session.Slice(slice.SliceKey).ScrollID; got != "latest-scroll-id" {
 				testContext.Fatalf("saved scroll ID = %q, want latest-scroll-id", got)
+			}
+
+			var clearedIDs []string
+			var clearedTarget ElasticsearchScrollTarget
+			session.clearCompletedScrolls(context.Background(), func(_ context.Context, target ElasticsearchScrollTarget, scrollIDs []string) error {
+				clearedTarget, clearedIDs = target, scrollIDs
+				return nil
+			})
+			if testCase.wantSessionDone {
+				require.Equal(testContext, *slice.ScrollTarget, clearedTarget)
+				require.Equal(testContext, []string{slice.ScrollID}, clearedIDs)
+			} else {
+				require.Empty(testContext, clearedIDs, "unfinished sessions must preserve their scrolls")
 			}
 		})
 	}

@@ -3,9 +3,11 @@ package elasticsearch
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	elastic "github.com/olivere/elastic/v7"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -30,17 +32,27 @@ func (instance *Instance) ClearScroll(ctx context.Context, scrollIDs ...string) 
 	}
 	defer client.Stop()
 
-	result, err := client.ClearScroll().ScrollId(scrollIDs...).Do(ctx)
-	if elastic.IsNotFound(err) {
+	// ES also returns 404 when every node fails to clear its contexts; inspect succeeded before treating it as idempotent.
+	response, err := client.PerformRequest(ctx, elastic.PerformRequestOptions{
+		Method:       http.MethodDelete,
+		Path:         "/_search/scroll/",
+		Body:         map[string][]string{"scroll_id": scrollIDs},
+		IgnoreErrors: []int{http.StatusNotFound},
+	})
+	if err != nil {
+		return err
+	}
+	var result elastic.ClearScrollResponse
+	if err := json.Unmarshal(response.Body, &result); err != nil {
+		return fmt.Errorf("decode scroll cleanup response: %w", err)
+	}
+	span.Set("num-freed", result.NumFreed)
+	span.Set("succeeded", result.Succeeded)
+	if !result.Succeeded {
+		return fmt.Errorf("scroll cleanup failed: status=%d num_freed=%d", response.StatusCode, result.NumFreed)
+	}
+	if result.NumFreed == 0 {
 		span.Set("already-cleared", true)
-		return nil
 	}
-	if err == nil {
-		span.Set("num-freed", result.NumFreed)
-		span.Set("succeeded", result.Succeeded)
-		if !result.Succeeded && result.NumFreed > 0 {
-			return fmt.Errorf("scroll cleanup partially failed: num_freed=%d", result.NumFreed)
-		}
-	}
-	return err
+	return nil
 }

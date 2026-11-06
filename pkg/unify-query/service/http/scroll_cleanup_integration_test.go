@@ -45,6 +45,7 @@ type scrollCleanupCluster struct {
 	client    *elastic.Client
 }
 
+// Basic Auth 环境变量可选；鉴权失败由本地 HTTP 服务注入，兼容未开启认证的 ES。
 func TestScrollCleanupIntegration(testContext *testing.T) {
 	firstURL, secondURL, redisAddr := os.Getenv("BKMONITOR_TEST_ES_URL"), os.Getenv("BKMONITOR_TEST_ES_SECOND_URL"), os.Getenv("BKMONITOR_TEST_REDIS_ADDR")
 	if firstURL == "" || secondURL == "" || redisAddr == "" {
@@ -282,12 +283,12 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 	})
 
 	testContext.Run("stop_preserves_redis_error_on_cleanup_failure", func(testContext *testing.T) {
+		unauthorizedServer := newScrollCleanupUnauthorizedServer(testContext)
 		session := newSession(testContext, "stop-redis-error")
 		completedSlice(session, "forbidden", 0, createScroll(testContext, 0, "5m"))
 		storageID := prefix + "_stop_forbidden"
 		tsdb.SetStorage(storageID, &tsdb.Storage{
-			Type: metadata.ElasticsearchStorageType, Address: firstURL,
-			Username: prefix + "_unprovisioned", Password: clusters[0].password,
+			Type: metadata.ElasticsearchStorageType, Address: unauthorizedServer.URL,
 		})
 		session.Slice("forbidden").ScrollTarget.StorageID = storageID
 		queryCtx := queryContext()
@@ -493,13 +494,13 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 	})
 
 	testContext.Run("cleanup_authentication_error_preserves_results", func(testContext *testing.T) {
-		username := prefix + "_unprovisioned"
+		unauthorizedServer := newScrollCleanupUnauthorizedServer(testContext)
 		session := newSession(testContext, "permission")
 		scrollID := createScroll(testContext, 0, "5m")
 		completedSlice(session, "forbidden", 0, scrollID)
 		completedSlice(session, "healthy", 1, createScroll(testContext, 1, "5m"))
 		storageID := prefix + "_forbidden"
-		tsdb.SetStorage(storageID, &tsdb.Storage{Type: metadata.ElasticsearchStorageType, Address: firstURL, Username: username, Password: clusters[0].password})
+		tsdb.SetStorage(storageID, &tsdb.Storage{Type: metadata.ElasticsearchStorageType, Address: unauthorizedServer.URL})
 		session.Slice("forbidden").ScrollTarget.StorageID = storageID
 		for _, clusterIndex := range []int{0, 1} {
 			for sliceIndex := range session.SliceLength() {
@@ -667,6 +668,17 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 			assertNoScrolls(testContext)
 		}
 	})
+}
+
+func newScrollCleanupUnauthorizedServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		response.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(response, `{"error":{"type":"security_exception","reason":"test denial"},"status":401}`)
+	}))
+	t.Cleanup(server.Close)
+	return server
 }
 
 type scrollCleanupLogBuffer struct {

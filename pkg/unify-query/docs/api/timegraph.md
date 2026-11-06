@@ -27,6 +27,8 @@ UQ 按 URL 固定选择引擎。v1beta3 的查询错误直接返回调用方。�
 
 兼容即时查询省略 `look_back_delta` 时沿用旧裸选择器的窗口，即查询引擎默认回看（内置 `5m`），已迁走或已消失的关系不再返回；显式传值时按传入窗口观测。兼容范围查询每个时间桶按 `step` 观测，只校验 `look_back_delta` 的格式。两者都独立于 topology 省略时的配置值（内置 `24h`）。
 
+两个兼容入口响应里的 `source_info` 只回显请求 `source_info` 中的源资源主键，`source_expand_info` 只参与过滤；即时入口失败时与旧入口一样不返回 `source_info`。空间为空时逐项返回 400 `space uid is empty`，源类型推断失败优先于这个校验；topology 入口不受影响。
+
 ### 鉴权、空间与封装
 
 - 发送 `Content-Type: application/json` 和调用者有权限的 `X-Bk-Scope-Space-Uid`。空间从请求头写入请求上下文，不从 topology 单项的 JSON `space_uid` 读取；没有内置的 `bkcc__2` 请求头默认值。

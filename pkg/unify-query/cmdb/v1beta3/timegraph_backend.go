@@ -89,6 +89,10 @@ func (m *Model) buildTimeGraphRequest(
 		}
 		req.SourceType = inferred
 	}
+	// Same order as the old engine: source inference first, then the space.
+	if spaceUID == "" {
+		return nil, nil, errors.New("space uid is empty")
+	}
 	req.Normalize()
 
 	provider := m.getSchemaProvider()
@@ -133,6 +137,14 @@ func (m *Model) buildTimeGraphRequest(
 		req.MaxHops = max(req.MaxHops, len(path.Steps)-1)
 	}
 	return req, sortPathsForQuery(paths), nil
+}
+
+// legacySourceMatcher is the source_info of the old response: the source's primary
+// keys present in the request's source_info. source_expand_info only filters.
+func (m *Model) legacySourceMatcher(req *QueryRequest, indexMatcher cmdb.Matcher) cmdb.Matcher {
+	return cmdb.Matcher(sourcePrimaryKeySubset(
+		indexMatcher.Rename(), m.getSchemaProvider().GetResourcePrimaryKeys(req.SchemaNamespace(), req.SourceType),
+	))
 }
 
 func sortPathsForQuery(paths []resourcePath) []resourcePath {
@@ -392,7 +404,7 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 
 	result = timeGraphLegacyResult{
 		source:             cmdb.Resource(req.SourceType),
-		sourceMatcher:      cmdb.Matcher(req.SourceInfo),
+		sourceMatcher:      m.legacySourceMatcher(req, indexMatcher),
 		paths:              selectedPath,
 		target:             cmdb.Resource(req.TargetType),
 		matchers:           matchers,
@@ -425,9 +437,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	req, paths, err := m.buildTimeGraphRequest(ctx, spaceUID, target, source, indexMatcher, expandMatcher, expandShow, pathResource)
 	if req != nil {
 		result.source = cmdb.Resource(req.SourceType)
-		result.sourceMatcher = cmdb.Matcher(sourcePrimaryKeySubset(
-			indexMatcher.Rename(), m.getSchemaProvider().GetResourcePrimaryKeys(req.SchemaNamespace(), req.SourceType),
-		))
+		result.sourceMatcher = m.legacySourceMatcher(req, indexMatcher)
 		result.target = cmdb.Resource(req.TargetType)
 	}
 	if err != nil {
@@ -566,7 +576,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 
 	result = timeGraphRangeResult{
 		source:             cmdb.Resource(req.SourceType),
-		sourceMatcher:      cmdb.Matcher(req.SourceInfo),
+		sourceMatcher:      m.legacySourceMatcher(req, indexMatcher),
 		paths:              selectedPath,
 		target:             cmdb.Resource(req.TargetType),
 		matchers:           series,

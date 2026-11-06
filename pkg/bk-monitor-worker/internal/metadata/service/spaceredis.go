@@ -344,6 +344,19 @@ func (s *SpacePusher) PushDataLabelTableIds(bkTenantId string, tableIdList []str
 
 	}
 
+	return s.pushDataLabelMappings(dlRtsMap)
+}
+
+// PushNamedDataLabels rebuilds the complete RT mapping for each requested label.
+func (s *SpacePusher) PushNamedDataLabels(tenantID string, labels []string) error {
+	mappings, err := s.getDataLabelTableIdMap(tenantID, labels)
+	if err != nil {
+		return err
+	}
+	return s.pushDataLabelMappings(mappings)
+}
+
+func (s *SpacePusher) pushDataLabelMappings(dlRtsMap map[string][]string) error {
 	// 打印结束日志
 	defer logger.Infof("PushDataLabelTableIds: push data_label table_id data successfully")
 

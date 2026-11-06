@@ -20,6 +20,7 @@ func NewHTTPService() *gin.Engine {
 
 	// 路由配置
 	bmwRouter := svr.Group(RouterPrefix)
+	registerRouteRefresh(bmwRouter)
 	taskRouter := bmwRouter.Group(TaskRouterPrefix)
 	{
 		taskRouter.GET("", ListTask)

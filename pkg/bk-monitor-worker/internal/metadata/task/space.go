@@ -11,10 +11,12 @@ package task
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/jinzhu/gorm"
 	ants "github.com/panjf2000/ants/v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
@@ -33,39 +35,59 @@ const (
 	recordRuleV4DeletedRetentionDays = 180
 )
 
+var ErrSpaceNotFound = errors.New("space not found")
+
+// RefreshSpaceRoute rebuilds one complete space route using the same prefetch order as the periodic task.
+func RefreshSpaceRoute(tenantID, spaceType, spaceID string) error {
+	db := mysql.GetDBSession().DB.Where("bk_tenant_id = ?", tenantID)
+	var sp space.Space
+	if err := db.Where("space_type_id = ? AND space_id = ?", spaceType, spaceID).First(&sp).Error; err != nil {
+		if gorm.IsRecordNotFoundError(err) {
+			return ErrSpaceNotFound
+		}
+		return err
+	}
+	values, err := preFetchSpaceTableIds(db, []space.Space{sp})
+	if err != nil {
+		return err
+	}
+	key := service.SpaceRouteKeyWithTenant(tenantID, spaceType, spaceID)
+	return service.NewSpacePusher().PushSpaceTableIds(tenantID, spaceType, spaceID, values[key])
+}
+
 // preFetchSpaceTableIds 提前获取部分空间路由信息，减少后续的查询次数
 // 1. 预计算表路由 2. VM 短链路表路由 3. APM 全局表路由 4. ES/Doris 日志全局表路由
-func preFetchSpaceTableIds(ctx context.Context, t *t.Task, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
+func preFetchSpaceTableIds(db *gorm.DB, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
 	logger.Info("start pre fetch space table ids task")
 
 	pusher := service.NewSpacePusher()
 	prefetchedValuesBySpace := make(service.SpaceTableIdValuesBySpace)
 
-	recordRuleValuesBySpace, err := preFetchRecordRuleTableIdValues(pusher)
+	recordRuleValuesBySpace, err := preFetchRecordRuleTableIdValues(db, pusher)
 	if err != nil {
 		return nil, err
 	}
 	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, recordRuleValuesBySpace)
 
-	recordRuleV4ValuesBySpace, err := preFetchRecordRuleV4TableIdValues(pusher)
+	recordRuleV4ValuesBySpace, err := preFetchRecordRuleV4TableIdValues(db, pusher)
 	if err != nil {
 		return nil, err
 	}
 	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, recordRuleV4ValuesBySpace)
 
-	shortLinkValuesBySpace, err := preFetchVMShortLinkTableIdValues(pusher, spaceList)
+	shortLinkValuesBySpace, err := preFetchVMShortLinkTableIdValues(db, pusher, spaceList)
 	if err != nil {
 		return nil, err
 	}
 	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, shortLinkValuesBySpace)
 
-	apmValuesBySpace, err := preFetchApmAllTypeTableIdValues(pusher, spaceList)
+	apmValuesBySpace, err := preFetchApmAllTypeTableIdValues(db, pusher, spaceList)
 	if err != nil {
 		return nil, err
 	}
 	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, apmValuesBySpace)
 
-	logGlobalValuesBySpace, err := preFetchLogGlobalTableIdValues(pusher, spaceList)
+	logGlobalValuesBySpace, err := preFetchLogGlobalTableIdValues(db, pusher, spaceList)
 	if err != nil {
 		return nil, err
 	}
@@ -76,8 +98,7 @@ func preFetchSpaceTableIds(ctx context.Context, t *t.Task, spaceList []space.Spa
 	return prefetchedValuesBySpace, nil
 }
 
-func preFetchRecordRuleTableIdValues(pusher *service.SpacePusher) (service.SpaceTableIdValuesBySpace, error) {
-	db := mysql.GetDBSession().DB
+func preFetchRecordRuleTableIdValues(db *gorm.DB, pusher *service.SpacePusher) (service.SpaceTableIdValuesBySpace, error) {
 	var recordRuleList []recordrule.RecordRule
 	if err := recordrule.NewRecordRuleQuerySet(db).
 		Select(
@@ -96,8 +117,7 @@ func preFetchRecordRuleTableIdValues(pusher *service.SpacePusher) (service.Space
 	return valuesBySpace, nil
 }
 
-func preFetchRecordRuleV4TableIdValues(pusher *service.SpacePusher) (service.SpaceTableIdValuesBySpace, error) {
-	db := mysql.GetDBSession().DB
+func preFetchRecordRuleV4TableIdValues(db *gorm.DB, pusher *service.SpacePusher) (service.SpaceTableIdValuesBySpace, error) {
 	tableName := recordrule.RecordRuleV4{}.TableName()
 	if !db.HasTable(tableName) {
 		logger.Warnf("pre fetch record rule v4 table ids skipped, table [%s] not exists", tableName)
@@ -119,8 +139,7 @@ func preFetchRecordRuleV4TableIdValues(pusher *service.SpacePusher) (service.Spa
 	return valuesBySpace, nil
 }
 
-func preFetchVMShortLinkTableIdValues(pusher *service.SpacePusher, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
-	db := mysql.GetDBSession().DB
+func preFetchVMShortLinkTableIdValues(db *gorm.DB, pusher *service.SpacePusher, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
 	var shortLinkRecords []space.VMShortLinkRecord
 	if !db.HasTable(&space.VMShortLinkRecord{}) {
 		logger.Warnf("pre fetch vm short link table ids skipped, table [%s] not exists", space.VMShortLinkRecord{}.TableName())
@@ -141,8 +160,7 @@ func preFetchVMShortLinkTableIdValues(pusher *service.SpacePusher, spaceList []s
 	return valuesBySpace, nil
 }
 
-func preFetchApmAllTypeTableIdValues(pusher *service.SpacePusher, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
-	db := mysql.GetDBSession().DB
+func preFetchApmAllTypeTableIdValues(db *gorm.DB, pusher *service.SpacePusher, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
 	var rtList []resulttable.ResultTable
 	if err := resulttable.NewResultTableQuerySet(db).
 		Select(
@@ -169,8 +187,7 @@ func preFetchApmAllTypeTableIdValues(pusher *service.SpacePusher, spaceList []sp
 	return valuesBySpace, nil
 }
 
-func preFetchLogGlobalTableIdValues(pusher *service.SpacePusher, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
-	db := mysql.GetDBSession().DB
+func preFetchLogGlobalTableIdValues(db *gorm.DB, pusher *service.SpacePusher, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
 	var options []resulttable.ResultTableOption
 	if err := db.Model(&resulttable.ResultTableOption{}).
 		Select("bk_tenant_id, table_id, value, value_type").
@@ -280,7 +297,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	}
 
 	// 预获取空间路由信息
-	prefetchedValuesBySpace, preFetchErr := preFetchSpaceTableIds(ctx, t, spaceList)
+	prefetchedValuesBySpace, preFetchErr := preFetchSpaceTableIds(db, spaceList)
 	if preFetchErr != nil {
 		logger.Errorf("PushAndPublishSpaceRouterInfo pre fetch space table ids failed, err: %s", preFetchErr)
 		return preFetchErr

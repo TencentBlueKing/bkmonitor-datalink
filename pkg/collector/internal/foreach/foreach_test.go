@@ -74,6 +74,40 @@ func TestTraces(t *testing.T) {
 	spans := g.Generate()
 	SpansRemoveIf(spans, func(span ptrace.Span) bool { return true })
 	assert.Equal(t, 0, spans.ResourceSpans().Len())
+
+	traces := ptrace.NewTraces()
+
+	dropResource := traces.ResourceSpans().AppendEmpty()
+	dropResource.Resource().Attributes().UpsertString("service.name", "drop-service")
+	dropSpans := dropResource.ScopeSpans().AppendEmpty().Spans()
+	dropSpans.AppendEmpty().SetName("drop-resource-1")
+	dropSpans.AppendEmpty().SetName("drop-resource-2")
+
+	keepResource := traces.ResourceSpans().AppendEmpty()
+	keepResource.Resource().Attributes().UpsertString("service.name", "keep-service")
+	keepResource.ScopeSpans().AppendEmpty().Spans().AppendEmpty().SetName("keep-span")
+	keepResource.ScopeSpans().AppendEmpty().Spans().AppendEmpty().SetName("drop-scope-only")
+
+	visited := map[string][]string{}
+	SpansWithResourceRemoveIf(traces, func(rs pcommon.Map, span ptrace.Span) bool {
+		serviceName, ok := rs.Get("service.name")
+		assert.True(t, ok)
+		visited[serviceName.AsString()] = append(visited[serviceName.AsString()], span.Name())
+		return serviceName.AsString() == "drop-service" || span.Name() == "drop-scope-only"
+	})
+
+	assert.Equal(t, []string{"drop-resource-1", "drop-resource-2"}, visited["drop-service"])
+	assert.Equal(t, []string{"keep-span", "drop-scope-only"}, visited["keep-service"])
+	assert.Equal(t, 1, traces.ResourceSpans().Len())
+	assert.Equal(t, 1, traces.SpanCount())
+
+	remainingResource := traces.ResourceSpans().At(0)
+	serviceName, ok := remainingResource.Resource().Attributes().Get("service.name")
+	assert.True(t, ok)
+	assert.Equal(t, "keep-service", serviceName.AsString())
+	assert.Equal(t, 1, remainingResource.ScopeSpans().Len())
+	assert.Equal(t, 1, remainingResource.ScopeSpans().At(0).Spans().Len())
+	assert.Equal(t, "keep-span", remainingResource.ScopeSpans().At(0).Spans().At(0).Name())
 }
 
 func TestLogs(t *testing.T) {

@@ -207,3 +207,29 @@ func TestRelationCompatInferenceReadsOnlySourceInfo(t *testing.T) {
 		}
 	}
 }
+
+func TestRelationCompatExpandConflictOnlyOnPrimaryKeys(t *testing.T) {
+	useRelationParityEnvironment(t)
+	const primaryKeys = `"bcs_cluster_id":"c","namespace":"ns","pod":"p","container":"x"`
+	for _, entry := range relationParityEntries {
+		for _, source := range []string{`"source_type":"container",`, ""} {
+			conflict := "{" + entry.timeFields + "," + source + `"target_type":"pod","source_info":{` + primaryKeys + `},"source_expand_info":{"pod":"p2"}}`
+			attribute := "{" + entry.timeFields + "," + source + `"target_type":"pod","source_info":{` + primaryKeys + `,"version":"v1"},"source_expand_info":{"version":"v2"}}`
+
+			t.Run(entry.name+"/primary key/"+source, func(t *testing.T) {
+				legacy := relationParityItem(t, entry.legacy, "relation-parity-no-route", conflict)
+				require.Equal(t, float64(http.StatusOK), legacy["code"], legacy["message"])
+				require.Empty(t, legacy["target_list"])
+				got := relationParityItem(t, entry.v3, "relation-parity-no-route", conflict)
+				require.Equal(t, float64(http.StatusBadRequest), got["code"])
+				require.Contains(t, got["message"], `source_expand_info conflicts with source_info for field "pod"`)
+			})
+			t.Run(entry.name+"/attribute/"+source, func(t *testing.T) {
+				require.Equal(t,
+					relationParityItem(t, entry.legacy, "relation-parity-no-route", attribute),
+					relationParityItem(t, entry.v3, "relation-parity-no-route", attribute),
+				)
+			})
+		}
+	}
+}

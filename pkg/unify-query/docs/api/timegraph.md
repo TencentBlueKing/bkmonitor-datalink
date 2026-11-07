@@ -29,6 +29,17 @@ UQ 按 URL 固定选择引擎。v1beta3 的查询错误直接返回调用方。�
 
 两个兼容入口省略 `source_type` 时只按 `source_info` 推断源类型。响应里的 `source_info` 只回显请求 `source_info` 中的源资源主键，`source_expand_info` 只参与过滤；即时入口失败时与旧入口一样不返回 `source_info`。空间为空时逐项返回 400 `space uid is empty`，源类型推断失败优先于这个校验；topology 入口不受影响。
 
+下列差异是迁移时有意保留的合同，不提供开关。其余场景以旧入口为准。
+
+| 场景 | 旧入口 | 兼容入口 |
+| --- | --- | --- |
+| 显式 `look_back_delta` | VM 路径上被忽略 | 生效 |
+| `target_info_show` 时目标定义了 Info 字段但没有 info 数据 | 连接时丢弃目标 | 保留目标：关系确认目标，info 只补充展示 |
+| 候选路径部分失败且没有路径命中 | 200 空结果 | 逐项 400：此时无法确认目标不存在 |
+| 多个资源并列命中最长主键 | 顺序随进程变化 | 按资源名字典序 |
+| `source_info` 与 `source_expand_info` 对同一源主键指定不同值 | 200 空结果 | 逐项 400；非主键字段不做这项校验 |
+| 单桶目标数或图规模超过执行预算 | 无上限 | 逐项报错，不静默截断 |
+
 ### 鉴权、空间与封装
 
 - 发送 `Content-Type: application/json` 和调用者有权限的 `X-Bk-Scope-Space-Uid`。空间从请求头写入请求上下文，不从 topology 单项的 JSON `space_uid` 读取；没有内置的 `bkcc__2` 请求头默认值。

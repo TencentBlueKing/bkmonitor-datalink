@@ -53,6 +53,8 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 		// Group=monitoring.bk.tencent.com, Version=v1beta1
 	case v1beta1.SchemeGroupVersion.WithResource("dataids"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Monitoring().V1beta1().DataIDs().Informer()}, nil
+	case v1beta1.SchemeGroupVersion.WithResource("processmonitors"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Monitoring().V1beta1().ProcessMonitors().Informer()}, nil
 	case v1beta1.SchemeGroupVersion.WithResource("qcloudmonitors"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Monitoring().V1beta1().QCloudMonitors().Informer()}, nil
 

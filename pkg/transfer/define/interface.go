@@ -75,6 +75,8 @@ type DataProcessor interface {
 	Finish(outputChan chan<- Payload, killChan chan<- error)
 	SetIndex(i int)
 	Index() int
+	Poll() time.Duration
+	SetPoll(t time.Duration)
 }
 
 // Frontend : Processor to pull data
@@ -90,6 +92,7 @@ type Backend interface {
 	Stringer
 	SavePoint
 	Push(d Payload, killChan chan<- error)
+	SetETLRecordFields(f *ETLRecordFields)
 }
 
 // Pipeline : pipeline to process data

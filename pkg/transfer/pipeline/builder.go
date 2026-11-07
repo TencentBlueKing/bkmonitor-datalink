@@ -18,6 +18,7 @@ import (
 
 	"github.com/emirpasic/gods/lists/doublylinkedlist"
 	"github.com/emirpasic/gods/sets/hashset"
+	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
@@ -460,8 +461,8 @@ func (b *ConfigBuilder) SetupFrontend() *ConfigBuilder {
 	return b
 }
 
-// GetBackendByContext : 按照context中的结果表shipper配置，得到该结果表的写入后端processor
-func (b *ConfigBuilder) GetBackendByContext(ctx context.Context) (Node, error) {
+// GetBackendByContextFields : 按照context中的结果表shipper配置，得到该结果表的写入后端processor
+func (b *ConfigBuilder) GetBackendByContextFields(ctx context.Context, f *define.ETLRecordFields) (Node, error) {
 	rt := config.ResultTableConfigFromContext(ctx)
 	processors := make([]Node, 0, len(rt.ShipperList))
 	for _, s := range rt.ShipperList {
@@ -473,6 +474,9 @@ func (b *ConfigBuilder) GetBackendByContext(ctx context.Context) (Node, error) {
 		backend, err := define.NewBackend(shipperCtx, s.ClusterType)
 		if err != nil {
 			return nil, errors.Wrapf(err, "create backend by type %v", s.ClusterType)
+		}
+		if f != nil {
+			backend.SetETLRecordFields(f)
 		}
 
 		ctx, cancel := context.WithCancel(ctx)
@@ -488,6 +492,11 @@ func (b *ConfigBuilder) GetBackendByContext(ctx context.Context) (Node, error) {
 	default:
 		return NewChainConnector(ctx, processors), nil
 	}
+}
+
+// GetBackendByContext : 按照context中的结果表shipper配置，得到该结果表的写入后端processor
+func (b *ConfigBuilder) GetBackendByContext(ctx context.Context) (Node, error) {
+	return b.GetBackendByContextFields(ctx, nil)
 }
 
 // DataProcessor :
@@ -613,4 +622,146 @@ func (b *ConfigBuilder) BuildBranching(from Node, allowGluttonous bool, callback
 
 	logging.Debugf("pipeline %v layout: %v", pipeConfig.DataID, b)
 	return b.Finish() // 返回一个 NewPipeline(b.context, b.name, exists)
+}
+
+type BackendFields struct {
+	RawES     define.ETLRecordFields `json:"raw_es" mapstructure:"raw_es"`
+	PatternES define.ETLRecordFields `json:"pattern_es" mapstructure:"pattern_es"`
+}
+
+// getBackendFields 调用方需要自行判断其属性是否为空
+func (b *ConfigBuilder) getBackendFields(rtOpts map[string]interface{}) BackendFields {
+	var conf BackendFields
+	v, ok := rtOpts[config.PipelineConfigOptLogClusterConfig]
+	if !ok {
+		return conf
+	}
+	obj, ok := v.(map[string]interface{})
+	if !ok {
+		return conf
+	}
+
+	_ = mapstructure.Decode(obj[config.PipelineConfigOptBackendFields], &conf)
+	return conf
+}
+
+func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...ContextBuilderBranchingCallback) (*Pipeline, error) {
+	ctx := b.ctx
+
+	// 当关闭日志聚类时 回退到正常的日志清洗分支
+	// callbacks[0] : bk_flat_batch
+	// callbacks[1] : bk_log_cluster
+	pipeConfig := config.PipelineConfigFromContext(ctx)
+	pipeOpts := utils.NewMapHelper(pipeConfig.Option)
+	isLogCluster, _ := pipeOpts.GetBool(config.PipelineConfigOptIsLogCluster)
+	if !isLogCluster {
+		pipeConfig.ResultTableList = pipeConfig.ResultTableList[:1] // 避免写入两个 ES
+		config.PipelineConfigIntoContext(b.ctx, pipeConfig)
+		return b.BuildBranching(from, true, callbacks[0])
+	}
+
+	conf := config.FromContext(ctx)
+	strictMode := conf.GetBool(define.ConfPipelineStrictMode)
+	fields := b.getBackendFields(pipeConfig.Option)
+
+	// 日志聚类会从单个数据源派生出多个分支
+	// 但此流程只会在内部处理 共用同一个数据源
+	if from == nil {
+		if b.frontend == nil {
+			b.SetupFrontend()
+		}
+		from = b.frontend
+	}
+
+	if len(pipeConfig.ResultTableList) == 0 {
+		return nil, errors.Wrapf(define.ErrOperationForbidden, "result table is empty")
+	}
+
+	// 日志聚类必须保证两个 ES backend (raw/pattern)
+	if len(pipeConfig.ResultTableList) != 2 {
+		return nil, errors.Wrapf(define.ErrOperationForbidden, "result table missing")
+	}
+
+	// 初始化 pipeline 配置
+	if b.PipeConfigInitFn != nil {
+		b.PipeConfigInitFn(pipeConfig)
+	}
+
+	buildBackend := func(subCtx context.Context, f *define.ETLRecordFields) (Node, error) {
+		rt := config.ResultTableConfigFromContext(subCtx)
+		backend, err := b.GetBackendByContextFields(subCtx, f)
+		if err != nil {
+			if strictMode {
+				return nil, errors.Wrapf(err, "get result table %s backend failed", rt.ResultTable)
+			}
+			logging.Warnf("get result table %s backend error %v", rt.ResultTable, err)
+			return nil, nil // 非严格模式下忽略此错误
+		}
+		return backend, nil
+	}
+
+	chainNode := func(subCtx context.Context, cb ContextBuilderBranchingCallback, backend Node) error {
+		var passer Node
+		var err error
+
+		rt := config.ResultTableConfigFromContext(subCtx)
+		multiNum := defaultPipelineNums
+		opts := utils.NewMapHelper(rt.Option)
+		n, _ := opts.GetInt("multi_num")
+		if n > 0 {
+			multiNum = n
+		}
+
+		if multiNum > 1 {
+			passer, err = b.DataProcessor(subCtx, "passer")
+			if err != nil {
+				return err
+			}
+			passer.SetNoCopy(true)
+			b.Connect(from, passer)
+			backend = NewFanInConnector(subCtx, backend)
+		} else {
+			passer = from
+		}
+
+		for index := 0; index < multiNum; index++ {
+			runtimeConfig := new(config.RuntimeConfig)
+			runtimeConfig.PipelineCount = index
+			runtimeCtx := config.RuntimeConfigIntoContext(subCtx, runtimeConfig)
+
+			err = cb(runtimeCtx, passer, backend)
+			if err != nil {
+				if strictMode {
+					return errors.Wrapf(err, "create branching by %s failed", rt.ResultTable)
+				}
+				// 非严格模式下忽略此错误
+				logging.Warnf("create etl data processor %s error %v", rt.ResultTable, err)
+			}
+		}
+		return nil
+	}
+
+	rt0 := pipeConfig.ResultTableList[0]
+	ctx0 := config.ResultTableConfigIntoContext(ctx, rt0)
+	backend0, err := buildBackend(ctx0, &fields.RawES)
+	if err != nil {
+		return nil, err
+	}
+
+	rt1 := pipeConfig.ResultTableList[1]
+	rt1.FieldList = rt0.FieldList // 复用 rt0 的 fieldslist 因为 pattern 是依附于 raw 而存在的
+	ctx1 := config.ResultTableConfigIntoContext(ctx, rt1)
+	backend1, err := buildBackend(ctx1, &fields.PatternES)
+	if err != nil {
+		return nil, err
+	}
+
+	// 统一使用 rt0 的配置
+	// 使用 chainConnector 构建成多端 backend 具体处理差异由 backend 自行处理 不在 processor 体现
+	if err := chainNode(ctx0, callbacks[1], NewChainConnector(ctx, []Node{backend0, backend1})); err != nil {
+		return nil, err
+	}
+
+	logging.Debugf("pipeline %v layout: %v", pipeConfig.DataID, b)
+	return b.Finish()
 }

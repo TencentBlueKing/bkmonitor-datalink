@@ -91,6 +91,7 @@ type BulkHandler interface {
 	SetManager(manager BulkManager)
 	Handle(ctx context.Context, payload define.Payload, killChan chan<- error) (result interface{}, at time.Time, ok bool)
 	Flush(ctx context.Context, results []interface{}) (int, error)
+	SetETLRecordFields(f *define.ETLRecordFields)
 	Close() error
 }
 
@@ -243,6 +244,12 @@ func (b *BulkBackendAdapter) add(result interface{}) {
 	b.buffer = append(b.buffer, result)
 	if b.isFull() {
 		b.flush()
+	}
+}
+
+func (b *BulkBackendAdapter) SetETLRecordFields(f *define.ETLRecordFields) {
+	if b.handler != nil {
+		b.handler.SetETLRecordFields(f)
 	}
 }
 

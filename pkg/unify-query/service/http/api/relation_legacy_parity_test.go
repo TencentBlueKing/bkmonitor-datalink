@@ -243,3 +243,63 @@ func TestRelationCompatReversedRangeWindow(t *testing.T) {
 	require.Equal(t, float64(http.StatusBadRequest), got["code"])
 	require.Contains(t, got["message"], "start_time must be less than or equal to end_time")
 }
+
+// Dimensions can name several resources with equally long primary keys. Both
+// engines must pick the same one, and for every process.
+func TestRelationCompatInferenceTies(t *testing.T) {
+	useRelationParityEnvironment(t)
+	pod := `"bcs_cluster_id":"c","namespace":"ns","pod":"p"`
+	for _, entry := range relationParityEntries {
+		for _, tc := range []struct{ name, sourceInfo, want, target string }{
+			{"pod and a job label", pod + `,"job":"kubelet"`, "pod", ""},
+			{"pod and a service label", pod + `,"service":"kubelet"`, "pod", ""},
+			{"pod and its deployment", pod + `,"deployment":"d"`, "pod", ""},
+			{"pod and its daemonset", pod + `,"daemonset":"d"`, "pod", ""},
+			{"pod and its statefulset", pod + `,"statefulset":"s"`, "pod", ""},
+			{"pod and its replicaset", pod + `,"replicaset":"r"`, "pod", ""},
+			{"pod with every owner", pod + `,"job":"j","service":"s","deployment":"d","daemonset":"d","statefulset":"s","replicaset":"r"`, "pod", ""},
+			{"owners without a pod", `"bcs_cluster_id":"c","namespace":"ns","deployment":"d","service":"s"`, "deployment", ""},
+			{"container keeps the longest key", pod + `,"container":"x","job":"j"`, "container", ""},
+			{"machine and host", `"bk_target_ip":"1.1.1.1","bk_host_id":"1"`, "system", "node"},
+			{"machine and business", `"bk_target_ip":"1.1.1.1","bk_biz_id":"2"`, "system", "node"},
+			{"module, set and business", `"bk_module_id":"1","bk_set_id":"2","bk_biz_id":"3"`, "module", "host"},
+			{"business aliases", `"bk_biz_id":"2"`, "biz", "set"},
+		} {
+			t.Run(entry.name+"/"+tc.name, func(t *testing.T) {
+				target := `"target_type":"system","path_resource":["node"]`
+				if tc.target != "" {
+					target = `"target_type":"` + tc.target + `"`
+				}
+				query := "{" + entry.timeFields + "," + target + `,"source_info":{` + tc.sourceInfo + "}}"
+				legacy := relationParityItem(t, entry.legacy, "relation-parity-no-route", query)
+				require.Equal(t, tc.want, legacy["source_type"], legacy["message"])
+				got := relationParityItem(t, entry.v3, "relation-parity-no-route", query)
+				require.Equal(t, legacy, got)
+			})
+		}
+	}
+}
+
+// The old engine plans simple paths only. A resource has no path back to itself
+// through other resources, so these must not become long cycles on the new URL.
+func TestRelationCompatSourceEqualsTarget(t *testing.T) {
+	useRelationParityEnvironment(t)
+	sources := map[string]string{
+		"system":    `"bk_target_ip":"1.1.1.1"`,
+		"pod":       `"bcs_cluster_id":"c","namespace":"ns","pod":"p"`,
+		"container": `"bcs_cluster_id":"c","namespace":"ns","pod":"p","container":"x"`,
+		"host":      `"bk_host_id":"1"`,
+	}
+	for _, entry := range relationParityEntries {
+		for source, info := range sources {
+			for _, path := range []string{`["node"]`, `["pod"]`, `["system"]`, `["` + source + `"]`, `["` + source + `","node"]`, `[""]`} {
+				t.Run(entry.name+"/"+source+"/"+path, func(t *testing.T) {
+					query := "{" + entry.timeFields + `,"source_type":"` + source + `","target_type":"` + source + `","path_resource":` + path + `,"source_info":{` + info + "}}"
+					legacy := relationParityItem(t, entry.legacy, "relation-parity-no-route", query)
+					require.Equal(t, float64(http.StatusBadRequest), legacy["code"])
+					require.Equal(t, legacy, relationParityItem(t, entry.v3, "relation-parity-no-route", query))
+				})
+			}
+		}
+	}
+}

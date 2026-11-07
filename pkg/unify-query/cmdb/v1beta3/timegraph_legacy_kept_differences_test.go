@@ -97,17 +97,6 @@ func TestLegacyKeptDifferencePartialPathFailure(t *testing.T) {
 	}
 }
 
-func TestLegacyKeptDifferenceSourceTypeTie(t *testing.T) {
-	model := &Model{schemaProvider: contractSchemaProvider{
-		resources: []ResourceType{"beta", "alpha"},
-		primary:   map[ResourceType][]string{"alpha": {"id"}, "beta": {"id"}},
-		fields:    map[ResourceType][]string{"alpha": {"id"}, "beta": {"id"}},
-	}}
-	req, _, err := model.buildTimeGraphRequest(context.Background(), "space", "", "", cmdb.Matcher{"id": "x"}, nil, false, nil)
-	require.NoError(t, err)
-	require.Equal(t, ResourceType("alpha"), req.SourceType)
-}
-
 func TestLegacyKeptDifferenceEmptyRangeStep(t *testing.T) {
 	model := legacyRegressionModel(publicSourceExpandProvider())
 	var calls []string

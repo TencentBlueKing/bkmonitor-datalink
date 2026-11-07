@@ -82,11 +82,8 @@ func (loader *timeGraphMatrixLoader) loadLegacyPath(ctx context.Context, space s
 					return queries, err
 				}
 			} else {
-				for offset := 0; offset < len(identities); offset += timeGraphFrontierBatchSize {
-					end := min(offset+timeGraphFrontierBatchSize, len(identities))
-					if err := loader.loadFrontierBatch(relationCtx, space, relation, false, identities[offset:end], apply, &queries); err != nil {
-						return queries, err
-					}
+				if err := loader.loadFrontier(relationCtx, space, relation, identities, apply, &queries); err != nil {
+					return queries, err
 				}
 			}
 		}

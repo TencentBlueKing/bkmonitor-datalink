@@ -216,8 +216,8 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 					continue
 				}
 				candidates := first[relation.V[1]]
-				// 129 只是切换宽读取的哨兵，不截断结果；取回的序列始终全部写入图。
-				if len(candidates) <= 2*timeGraphFrontierBatchSize {
+				// 超过阈值的一个候选只是切换宽读取的哨兵，不截断结果；取回的序列始终全部写入图。
+				if len(candidates) <= timeGraphWideFrontierThreshold {
 					candidates[q.primaryMatcherKey(relation.V[1], info)] = q.primaryMatcher(relation.V[1], info)
 				}
 			}
@@ -238,7 +238,7 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 				candidates, ok = first[relation.V[1]]
 				targetAnchor = true
 			}
-			if !ok || len(candidates) > 2*timeGraphFrontierBatchSize {
+			if !ok || len(candidates) > timeGraphWideFrontierThreshold {
 				inputs = append(inputs, topologyFetchInput{relation: relation, filter: filters[timeGraphRelationKeyFor(relation)]})
 				continue
 			}

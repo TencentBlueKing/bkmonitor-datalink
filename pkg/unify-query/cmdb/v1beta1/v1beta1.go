@@ -197,9 +197,12 @@ func newModel(ctx context.Context, cfg *Config) (*model, error) {
 	// 初始化资源 map 配置
 	m := make(map[cmdb.Resource]cmdb.Index, len(cfg.Resource))
 
-	// 按照 index 数量倒序，用于判断资源归属
+	// 按照 index 数量倒序，用于判断资源归属；数量相同时顺序与进程无关
 	sort.SliceStable(cfg.Resource, func(i, j int) bool {
-		return len(cfg.Resource[i].Index) > len(cfg.Resource[j].Index)
+		if left, right := len(cfg.Resource[i].Index), len(cfg.Resource[j].Index); left != right {
+			return left > right
+		}
+		return relation.SourceInferenceLess(string(cfg.Resource[i].Name), string(cfg.Resource[j].Name))
 	})
 
 	for _, r := range cfg.Resource {

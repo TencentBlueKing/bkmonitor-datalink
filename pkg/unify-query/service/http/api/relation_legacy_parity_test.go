@@ -233,3 +233,13 @@ func TestRelationCompatExpandConflictOnlyOnPrimaryKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestRelationCompatReversedRangeWindow(t *testing.T) {
+	useRelationParityEnvironment(t)
+	query := `{"start_time":1700000060,"end_time":1700000000,"step":"60s","source_type":"pod","target_type":"node","source_info":{"bcs_cluster_id":"c","namespace":"ns","pod":"p"}}`
+	legacy := relationParityItem(t, HandlerAPIRelationMultiResourceRange, "relation-parity-no-route", query)
+	require.Equal(t, float64(http.StatusOK), legacy["code"], legacy["message"])
+	got := relationParityItem(t, HandlerAPIRelationV1Beta3MultiResourceRange, "relation-parity-no-route", query)
+	require.Equal(t, float64(http.StatusBadRequest), got["code"])
+	require.Contains(t, got["message"], "start_time must be less than or equal to end_time")
+}

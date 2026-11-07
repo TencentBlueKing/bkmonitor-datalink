@@ -274,18 +274,12 @@ func validateSourceExpandInfoFields(req *QueryRequest, provider SchemaProvider) 
 // inferSourceTypeFromInfo 保留 v1beta3 旧契约：允许省略 source type，并根据
 // source_info 中的主键元组推断资源类型。优先选择主键匹配最完整的候选；在常见
 // 情况下结果是确定的，也能兼容同一 namespace 中主键结构不同的旧客户端。
+// 与旧引擎一致，source_expand_info 只过滤已确定的源资源，不参与推断。
 func inferSourceTypeFromInfo(req *QueryRequest, provider SchemaProvider) (ResourceType, error) {
 	if req == nil || provider == nil {
 		return "", fmt.Errorf("cannot infer source type without schema provider")
 	}
-	info := make(map[string]string, len(req.SourceInfo)+len(req.SourceExpandInfo))
-	for key, value := range req.SourceInfo {
-		info[key] = value
-	}
-	for key, value := range req.SourceExpandInfo {
-		info[key] = value
-	}
-	if len(info) == 0 {
+	if len(req.SourceInfo) == 0 {
 		return "", fmt.Errorf("source type cannot be inferred from empty source_info")
 	}
 	known := make(map[ResourceType]struct{})
@@ -310,7 +304,7 @@ func inferSourceTypeFromInfo(req *QueryRequest, provider SchemaProvider) (Resour
 		}
 		matched := 0
 		for _, key := range keys {
-			if _, ok := info[key]; ok {
+			if _, ok := req.SourceInfo[key]; ok {
 				matched++
 			}
 		}

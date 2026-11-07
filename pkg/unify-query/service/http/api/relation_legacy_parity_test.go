@@ -161,3 +161,49 @@ func TestRelationCompatSourceInfoHoldsOnlyPrimaryKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestRelationCompatInferenceReadsOnlySourceInfo(t *testing.T) {
+	useRelationParityEnvironment(t)
+	for _, entry := range relationParityEntries {
+		for _, tc := range []struct {
+			name, fields, wantType string
+			wantCode               int
+		}{
+			{
+				name:     "expand completes a longer primary key",
+				fields:   `"target_type":"system","source_info":{"bk_host_id":"1","app_name":"a"},"source_expand_info":{"version":"v1"}`,
+				wantType: "host", wantCode: http.StatusOK,
+			},
+			{
+				name:     "expand completes the only primary key",
+				fields:   `"target_type":"system","source_info":{"app_name":"a"},"source_expand_info":{"version":"v1"}`,
+				wantCode: http.StatusBadRequest,
+			},
+			{
+				name:     "expand holds the whole primary key",
+				fields:   `"target_type":"system","source_expand_info":{"bk_host_id":"1"}`,
+				wantCode: http.StatusBadRequest,
+			},
+			// The longer key still wins when source_info holds it.
+			{
+				name:     "source_info holds the longer primary key",
+				fields:   `"target_type":"system","source_info":{"bk_host_id":"1","app_name":"a","version":"v1"}`,
+				wantType: "app_version", wantCode: http.StatusOK,
+			},
+			// node sorts first, so this one tells the longest key from the first match.
+			{
+				name:     "longer primary key sorts after a shorter one",
+				fields:   `"target_type":"system","source_info":{"bcs_cluster_id":"c","node":"n","namespace":"ns","pod":"p"}`,
+				wantType: "pod", wantCode: http.StatusOK,
+			},
+		} {
+			t.Run(entry.name+"/"+tc.name, func(t *testing.T) {
+				query := "{" + entry.timeFields + "," + tc.fields + "}"
+				legacy := relationParityItem(t, entry.legacy, "relation-parity-no-route", query)
+				require.Equal(t, float64(tc.wantCode), legacy["code"], legacy["message"])
+				require.Equal(t, tc.wantType, legacy["source_type"])
+				require.Equal(t, legacy, relationParityItem(t, entry.v3, "relation-parity-no-route", query))
+			})
+		}
+	}
+}

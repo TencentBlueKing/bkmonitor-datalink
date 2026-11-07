@@ -85,6 +85,7 @@ var Refresh = func() error {
 	flowLog.Debugf("route refresh start")
 	info, err := consul.GetAllRoutesData()
 	if err != nil {
+		metricError("route refresh", RouteRefreshCountInc("failure", "consul"), flowLog)
 		flowLog.Errorf("refresh route failed,error:%s", err)
 		return err
 	}
@@ -213,6 +214,7 @@ func (m *Manager) GetClusterByRoute(flow uint64, path string) (cluster.Cluster, 
 	// 拼接成指定路由格式,匹配对应的集群
 	// routeMap直接映射了实际集群，所以这里直接取值返回
 	if cluster, ok = m.routeMap[path]; ok {
+		metricError("route lookup", RouteLookupCountInc("success", "exact"), flowLog)
 		return cluster, nil
 	}
 
@@ -223,6 +225,7 @@ func (m *Manager) GetClusterByRoute(flow uint64, path string) (cluster.Cluster, 
 		db := list[0]
 		path = db + "." + DefaultTable
 		if cluster, ok = m.routeMap[path]; ok {
+			metricError("route lookup", RouteLookupCountInc("success", "db_default"), flowLog)
 			return cluster, nil
 		}
 	}
@@ -230,8 +233,10 @@ func (m *Manager) GetClusterByRoute(flow uint64, path string) (cluster.Cluster, 
 	// 最后取全局默认路由，是针对非监控场景的方案
 	cluster, err := m.getDefaultCluster(flowLog)
 	if err == nil {
+		metricError("route lookup", RouteLookupCountInc("success", "global_default"), flowLog)
 		return cluster, nil
 	}
+	metricError("route lookup", RouteLookupCountInc("failure", "none"), flowLog)
 	flowLog.Errorf("unable to get cluster by input path:%s and default DB path:%s,cluster match failed,error:%s", originPath, path, err)
 	return nil, ErrGetClusterFailed
 }
@@ -324,16 +329,27 @@ func (m *Manager) refreshRoutes(data map[string]*Info) error {
 	flowLog.Debugf("route start refresh")
 	routeMap := make(map[string]cluster.Cluster)
 	tagMap := make(map[string][]string)
+	missingClusterCount := 0
 	for k, v := range data {
+		if v == nil {
+			missingClusterCount++
+			flowLog.Errorf("route->[%s] has empty route info", k)
+			continue
+		}
 		clusterName := v.Cluster
 		cluster, err := cluster.GetCluster(clusterName)
 		if err != nil {
+			missingClusterCount++
 			flowLog.Errorf("cluster->[%s] not found, please check backend cluster of route from metadata", clusterName)
 			continue
 		}
 		routeMap[k] = cluster
 		tagMap[k] = v.PartitionTag
 		flowLog.Tracef("route->[%s] added,cluster:%s", k, cluster)
+	}
+	if missingClusterCount != 0 {
+		metricError("route refresh", RouteRefreshCountInc("failure", "cluster_not_found"), flowLog)
+		return fmt.Errorf("route refresh canceled: %d route entries have no available cluster", missingClusterCount)
 	}
 	// 替换旧信息
 	m.lock.Lock()
@@ -342,9 +358,14 @@ func (m *Manager) refreshRoutes(data map[string]*Info) error {
 		m.lock.Unlock()
 		flowLog.Tracef("route manager refreshRoutes:release lock")
 	}()
+	if len(data) == 0 && len(m.routeMap) != 0 {
+		metricError("route refresh", RouteRefreshCountInc("failure", "empty_route"), flowLog)
+		return fmt.Errorf("route refresh canceled: received empty route data")
+	}
 	m.usingRouteInfo = data
 	m.routeMap = routeMap
 	m.tagMap = tagMap
+	metricError("route refresh", RouteRefreshCountInc("success", "complete"), flowLog)
 	flowLog.Debugf("route refresh finished")
 	return nil
 }

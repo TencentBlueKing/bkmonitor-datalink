@@ -138,7 +138,8 @@ func (loader *timeGraphMatrixLoader) loadFrontier(ctx context.Context, space str
 		}
 		if ts != nil {
 			*queries = *queries + 1
-			budgeted := metadata.WithBackendResponseLimit(ctx, int64(effectiveTimeGraphLimit(MaxSharedTopologyBackendBytes, 16*1024*1024)))
+			// 独立子查询：被拒收的读取留下的质量状态不能影响替代它的分批读取。
+			budgeted := metadata.WithBackendResponseLimit(frontierSubqueryContext(ctx), int64(effectiveTimeGraphLimit(MaxSharedTopologyBackendBytes, 16*1024*1024)))
 			matrix, _, err := loader.query(budgeted, ts)
 			if err == nil {
 				return apply(ctx, matrix)
@@ -155,6 +156,13 @@ func (loader *timeGraphMatrixLoader) loadFrontier(ctx context.Context, space str
 		}
 	}
 	return nil
+}
+
+// frontierSubqueryContext 给一次前沿读取独立的 metadata，保留当前查询阶段。
+func frontierSubqueryContext(ctx context.Context) context.Context {
+	child := newTimeGraphSubqueryContext(ctx)
+	metadata.GetQueryParams(child).SetIsSkipK8s(true)
+	return withTimeGraphQueryStage(child, timeGraphQueryStage(ctx))
 }
 
 func isBackendResponseTooLarge(err error) bool {
@@ -184,13 +192,8 @@ func (loader *timeGraphMatrixLoader) loadFrontierBatch(ctx context.Context, spac
 		return err
 	}
 	middle := len(identities) / 2
-	child := func() context.Context {
-		childCtx := newTimeGraphSubqueryContext(ctx)
-		metadata.GetQueryParams(childCtx).SetIsSkipK8s(true)
-		return withTimeGraphQueryStage(childCtx, timeGraphQueryStage(ctx))
-	}
-	if err = loader.loadFrontierBatch(child(), space, relation, targetAnchor, identities[:middle], apply, queries); err != nil {
+	if err = loader.loadFrontierBatch(frontierSubqueryContext(ctx), space, relation, targetAnchor, identities[:middle], apply, queries); err != nil {
 		return err
 	}
-	return loader.loadFrontierBatch(child(), space, relation, targetAnchor, identities[middle:], apply, queries)
+	return loader.loadFrontierBatch(frontierSubqueryContext(ctx), space, relation, targetAnchor, identities[middle:], apply, queries)
 }

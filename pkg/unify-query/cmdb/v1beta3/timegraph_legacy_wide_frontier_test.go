@@ -345,3 +345,59 @@ func TestLegacyWideFrontierFiltersTheNextFrontier(t *testing.T) {
 	}
 	require.ElementsMatch(t, []string{"leaf-t0", "leaf-t1", "leaf-t2", "leaf-late"}, got)
 }
+
+// The quality of a rejected read belongs to that read. An aggregating backend can
+// report one route over the budget and the others complete, which leaves a partial
+// status behind.
+func TestLegacyWideFrontierRejectedReadKeepsNoQuality(t *testing.T) {
+	b := wideFrontierScenario(300, 3, 2)
+	b.rejectWide = func(ctx context.Context) error {
+		metadata.SetStatus(ctx, metadata.QueryTsPartial, "backend_partial")
+		metadata.MarkBackendResponseLimitExceeded(ctx)
+		return nil
+	}
+	model := legacyRegressionModel(wideFrontierProvider())
+	model.timeGraphVMQuery = b.query(t)
+	ctx := initTimeGraphQueryTestEnvironment()
+	_, _, _, _, buckets, err := model.QueryResourceMatcherRange(ctx, "", "space", "1m", "1700000040", "1700000100", "target", "root", cmdb.Matcher{"root_id": "r1"}, nil, false, nil)
+	require.NoError(t, err)
+	require.Len(t, b.hopQueries, 1+5)
+	require.NotEmpty(t, buckets)
+	require.Nil(t, metadata.GetStatus(ctx), "the batches that replaced it were complete")
+}
+
+func TestLegacyWideFrontierKeepsRealQuality(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		failWide     bool
+		wantHopReads int
+	}{
+		{"a wide read that was used", false, 1},
+		{"a batch after the fallback", true, 1 + 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := wideFrontierScenario(300, 3, 2)
+			backend := b.query(t)
+			model := legacyRegressionModel(wideFrontierProvider())
+			model.timeGraphVMQuery = func(ctx context.Context, q *structured.QueryTs, expr string, instant bool, start, end time.Time, step time.Duration) (pl.Matrix, error) {
+				if q.QueryList[0].FieldName == "pod_to_target_flow" {
+					wide := metadata.BackendResponseLimit(ctx) > 0
+					if wide && tc.failWide {
+						b.hopQueries = append(b.hopQueries, q.QueryList[0].Conditions)
+						return nil, metadata.ErrBackendResponseTooLarge
+					}
+					metadata.SetStatus(ctx, metadata.QueryTsPartial, "backend_partial")
+				}
+				return backend(ctx, q, expr, instant, start, end, step)
+			}
+			ctx := initTimeGraphQueryTestEnvironment()
+			_, _, _, _, _, err := model.QueryResourceMatcherRange(ctx, "", "space", "1m", "1700000040", "1700000100", "target", "root", cmdb.Matcher{"root_id": "r1"}, nil, false, nil)
+			require.NoError(t, err)
+			require.Len(t, b.hopQueries, tc.wantHopReads)
+			status := metadata.GetStatus(ctx)
+			require.NotNil(t, status)
+			require.Equal(t, metadata.QueryTsPartial, status.Code)
+			require.Contains(t, status.Message, "backend_partial")
+		})
+	}
+}

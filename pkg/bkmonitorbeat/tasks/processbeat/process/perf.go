@@ -132,11 +132,6 @@ func (p *procPerfMgr) getMem(pid int32) (*define.MemStat, error) {
 	}, nil
 }
 
-func (p *procPerfMgr) mem(pid int32) (gosigar.ProcMem, error) {
-	g := gosigar.ProcMem{}
-	return g, g.Get(int(pid))
-}
-
 func (p *procPerfMgr) getCPU(pid int32) (*define.CPUStat, error) {
 	p.mut.Lock()
 	defer p.mut.Unlock()

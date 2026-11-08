@@ -9,6 +9,11 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jarcoal/httpmock"
+	"github.com/spf13/viper"
+	"github.com/stretchr/testify/require"
+	ffclient "github.com/thomaspoignant/go-feature-flag"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/memcache"
@@ -17,9 +22,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
-	"github.com/spf13/viper"
-	"github.com/stretchr/testify/require"
-	ffclient "github.com/thomaspoignant/go-feature-flag"
 )
 
 func TestQueryTsVMCoverageUsesExecutedReferences(t *testing.T) {
@@ -149,6 +151,41 @@ func TestQueryTsVMCoverageUsesExecutedReferences(t *testing.T) {
 				require.Equal(t, backendPartial, response.IsPartial)
 			})
 		}
+		t.Run(fmt.Sprintf("missing binding/instant=%t", instant), func(t *testing.T) {
+			ctx := metadata.InitHashID(context.Background())
+			metadata.SetUser(ctx, &metadata.User{Key: "username:test", SpaceUID: "bkcc__2", SkipSpace: "true"})
+			end, key := "1700000060", "query_range:1700000000170000006060a"
+			data := `{"resultType":"matrix","result":[{"metric":{"service":"api"},"values":[[1700000000,"7"],[1700000060,"8"]]}]}`
+			if instant {
+				end, key = "1700000000", "query:1700000000a"
+				data = `{"resultType":"vector","result":[{"metric":{"service":"api"},"value":[1700000000,"7"]}]}`
+			}
+			mock.Vm.Set(map[string]any{key: `{"result":true,"code":"00","data":{"vm_query_cluster":{"storage_cluster_list":["storage-a"]},"list":[{"status":"success","data":` + data + `}]}}`})
+			q := &structured.QueryTs{SpaceUid: "bkcc__2", Start: "1700000000", End: end, Step: "60s", Instant: instant, NotTimeAlign: true, MetricMerge: "a or b", QueryList: []*structured.Query{
+				{TableID: "coverage_a.__default__", FieldName: "up", ReferenceName: "a"},
+				{TableID: "coverage_missing.__default__", FieldName: "up", ReferenceName: "b", IsRegexp: true},
+			}}
+
+			calls := httpmock.GetCallCountInfo()["POST "+mock.BkBaseUrl]
+			_, err := queryTsWithPromEngine(ctx, q)
+			require.Equal(t, calls, httpmock.GetCallCountInfo()["POST "+mock.BkBaseUrl], "an incomplete expression must not reach the VM gateway")
+			require.ErrorContains(t, err, `no storage binding for reference "b"`)
+
+			q.ResponseContract = structured.NamedOutputsV1
+			q.LegacyOutputRef = "A"
+			q.OutputList = []structured.QueryOutput{{ReferenceName: "A", Expression: "a or b"}, {ReferenceName: "B", Expression: "a"}, {ReferenceName: "C", Expression: "b"}}
+			result, err := queryTsNamedOutputs(ctx, q)
+			require.NoError(t, err)
+			require.Len(t, result.Outputs, 3)
+			require.Equal(t, OutputStateError, result.Outputs[0].State)
+			require.Contains(t, result.Outputs[0].Status.Message, `no storage binding for reference "b"`)
+			// Existing request-level routing diagnostics are inherited by each output.
+			require.Equal(t, metadata.SpaceTableIDFieldIsNotExists, result.Outputs[1].Status.Code)
+			require.NotEmpty(t, result.Outputs[1].Tables)
+			require.Equal(t, metadata.SpaceTableIDFieldIsNotExists, result.Outputs[2].Status.Code)
+			require.Empty(t, result.Outputs[2].Tables)
+			require.Equal(t, calls+1, httpmock.GetCallCountInfo()["POST "+mock.BkBaseUrl], "only the bound output should reach the VM gateway")
+		})
 	}
 	t.Run("optional error does not taint following output", func(t *testing.T) {
 		ctx := metadata.InitHashID(context.Background())

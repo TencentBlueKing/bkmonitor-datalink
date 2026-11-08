@@ -969,8 +969,11 @@ func queryTsToInstanceAndStmtWithCache(ctx context.Context, queryTs *structured.
 	}
 
 	if directQuery {
-		// 判断是否是直查
-		vmExpand := query.ToVmExpandForExpression(ctx, queryRef, expr)
+		var vmExpand *metadata.VmExpand
+		vmExpand, err = query.ToVmExpandForExpression(ctx, queryRef, expr)
+		if err != nil {
+			return instance, stmt, routeInfo, err
+		}
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
 			// 兼容 storage 结构体，用于单元测试
@@ -1175,10 +1178,15 @@ func queryTsNamedOutputs(ctx context.Context, queryTs *structured.QueryTs) (*Nam
 			outputCtx,
 			func() (fmt.Stringer, error) {
 				expr, err := queryTs.ToPromExprFor(outputCtx, output.Expression, promExprOption)
-				if err == nil && executionMode == uqMetric.NamedOutputsModeDirect {
-					metadata.SetExpand(outputCtx, query.ToVmExpandForExpression(outputCtx, queryRef, expr))
+				if err != nil || executionMode != uqMetric.NamedOutputsModeDirect {
+					return expr, err
 				}
-				return expr, err
+				vmExpand, err := query.ToVmExpandForExpression(outputCtx, queryRef, expr)
+				if err != nil {
+					return nil, err
+				}
+				metadata.SetExpand(outputCtx, vmExpand)
+				return expr, nil
 			},
 			func(executeCtx context.Context, stmt string) (any, bool, error) {
 				if executionMode == uqMetric.NamedOutputsModeDirect {

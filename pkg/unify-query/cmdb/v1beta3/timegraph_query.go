@@ -121,14 +121,24 @@ func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured
 	if timeGraphQueryStage(ctx) == "source-info" && queryRef.Count() == 0 {
 		metadata.SetStatus(ctx, metadata.QueryTsPartial, "source_info_no_route")
 	}
-	metadata.SetExpand(ctx, query.ToVmExpand(ctx, queryRef))
-
 	expr, err := queryTs.ToPromExpr(ctx, nil)
 	if err != nil {
 		return "", nil, errors.WithMessage(err, "to prom expr")
 	}
-	span.Set("query-expression-length", len(expr.String()))
-	return expr.String(), metadata.GetQueryParams(ctx), nil
+	params := metadata.GetQueryParams(ctx)
+	if params.IsDirectQuery() {
+		var vmExpand *metadata.VmExpand
+		vmExpand, err = query.ToVmExpandForExpression(ctx, queryRef, expr)
+		if err != nil {
+			return "", nil, err
+		}
+		metadata.SetExpand(ctx, vmExpand)
+	} else {
+		metadata.SetExpand(ctx, query.ToVmExpand(ctx, queryRef))
+	}
+	statement := expr.String()
+	span.Set("query-expression-length", len(statement))
+	return statement, params, nil
 }
 
 func validateTimeGraphPrecision(start, end time.Time, step time.Duration) error {

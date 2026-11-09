@@ -471,6 +471,10 @@ func (i *Instance) executeESQuery(
 	}
 	defer client.Stop()
 	opt := qb.ResultTableOption
+	search := client.Search().Index(qo.indexes...).SearchSource(source)
+	if partialShardResults(ctx) != nil {
+		search.AllowPartialSearchResults(true)
+	}
 	var res *elastic.SearchResult
 	func() {
 		defer func() {
@@ -491,7 +495,7 @@ func (i *Instance) executeESQuery(
 			}
 			if len(opt.SearchAfter) > 0 {
 				span.Set("query-search-after", opt.SearchAfter)
-				res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
+				res, err = search.Do(ctx)
 				return
 			}
 		}
@@ -512,7 +516,7 @@ func (i *Instance) executeESQuery(
 			res, err = scroll.Do(ctx)
 		} else {
 			span.Set("query-from", qb.From)
-			res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
+			res, err = search.Do(ctx)
 		}
 	}()
 
@@ -559,6 +563,7 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 	}
 
 	if sr == nil || sr.Aggregations == nil {
+		recordPartialShardResult(ctx, sr)
 		return storage.EmptySeriesSet()
 	}
 
@@ -569,6 +574,7 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 	}
 
 	span.Set("time-series-length", len(qr.Timeseries))
+	recordPartialShardResult(ctx, sr)
 
 	return remote.FromQueryResult(true, qr)
 }
@@ -775,9 +781,7 @@ func (i *Instance) QueryPreparedRawData(
 	if err != nil {
 		return size, total, option, err
 	}
-	if count := rawPartialShardResults(ctx); count != nil && canAcceptRawPartialShardResult(sr) {
-		count.Add(1)
-	}
+	recordPartialShardResult(ctx, sr)
 	if sr != nil && sr.Hits != nil {
 		span.Set("instance-out-list-size", len(sr.Hits.Hits))
 	}

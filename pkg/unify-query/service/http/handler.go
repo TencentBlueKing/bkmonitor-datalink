@@ -860,6 +860,10 @@ func validateQueryTsRawOptions(queryTs *structured.QueryTs) error {
 	if err := validateQueryTsRawPagination(queryTs); err != nil {
 		return err
 	}
+	return validatePartialESResults(queryTs)
+}
+
+func validatePartialESResults(queryTs *structured.QueryTs) error {
 	if queryTs == nil || !queryTs.AllowPartialESResults {
 		return nil
 	}

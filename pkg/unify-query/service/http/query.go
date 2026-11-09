@@ -231,7 +231,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 	var partialESResults *atomic.Uint32
 	if queryTs.AllowPartialESResults {
-		ctx, partialESResults = elasticsearch.WithRawPartialShardResults(ctx)
+		ctx, partialESResults = elasticsearch.WithPartialShardResults(ctx)
 	}
 
 	var (
@@ -743,8 +743,27 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		isPartial bool
 	)
 
+	if err = validatePartialESResults(queryTs); err != nil {
+		return nil, err
+	}
+	var partialESResults *atomic.Uint32
+	if queryTs.AllowPartialESResults {
+		ctx, partialESResults = elasticsearch.WithPartialShardResults(ctx)
+	}
 	ctx, span := trace.NewSpan(ctx, "query-reference-with-prom-engine")
 	defer func() {
+		if err == nil && partialESResults != nil {
+			if count := partialESResults.Load(); count > 0 {
+				message := fmt.Sprintf("Elasticsearch 有 %d 路查询返回了部分分片结果", count)
+				if existing := metadata.GetStatus(ctx); existing != nil && existing.Message != "" {
+					message = existing.Message + "; " + message
+				}
+				metadata.SetStatus(ctx, metadata.QueryTsPartial, message)
+			}
+			if status := metadata.GetStatus(ctx); status != nil && status.Code == metadata.QueryTsPartial {
+				resp.IsPartial = true
+			}
+		}
 		resp.TraceID = span.TraceID()
 		resp.Status = metadata.GetStatus(ctx)
 		span.End(&err)

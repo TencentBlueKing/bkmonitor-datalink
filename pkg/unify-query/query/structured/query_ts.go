@@ -125,7 +125,7 @@ type QueryTs struct {
 	// IsESBatch 是否启用 query_raw 的 ES 批量查询
 	IsESBatch bool `json:"is_es_batch,omitempty"`
 
-	// AllowPartialESResults 仅在 /query/ts/raw 接纳 ES 返回的部分分片结果。
+	// AllowPartialESResults 仅在 /query/ts/raw 和 /query/ts/reference 接纳 ES 部分分片结果。
 	AllowPartialESResults bool `json:"allow_partial_es_results,omitempty"`
 
 	// AddDimensions 额外添加的聚合维度，会与每个 function.dimensions 合并

@@ -10,6 +10,7 @@
 package http
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -30,7 +31,7 @@ import (
 
 const (
 	rawESHealthyShards = `{"total":1,"successful":1,"failed":0}`
-	rawESPartialShards = `{"total":3,"successful":2,"skipped":1,"failed":1,"failures":[{"shard":2,"reason":{"type":"node_not_connected_exception","reason":"test shard unavailable"}}]}`
+	rawESPartialShards = `{"total":98,"successful":90,"skipped":0,"failed":8,"failures":[{"shard":2,"reason":{"type":"node_not_connected_exception","reason":"test shard unavailable"}}]}`
 )
 
 func runRawESPartialRequest(t *testing.T, query *structured.QueryTs, allowPartial *bool) *httptest.ResponseRecorder {
@@ -66,6 +67,7 @@ func TestQueryRawESPartialShardResults(t *testing.T) {
 		empty       bool
 		wantPartial bool
 		wantError   bool
+		decodeError bool
 	}{
 		{name: "omitted", shards: rawESPartialShards, wantError: true},
 		{name: "disabled", allow: &disabled, shards: rawESPartialShards, wantError: true},
@@ -77,6 +79,9 @@ func TestQueryRawESPartialShardResults(t *testing.T) {
 		{name: "all shards failed", allow: &enabled, shards: `{"total":1,"successful":0,"failed":1}`, wantError: true},
 		{name: "only skipped shards succeeded", allow: &enabled, shards: `{"total":2,"successful":1,"skipped":1,"failed":1}`, wantError: true},
 		{name: "timed out with failed shards", allow: &enabled, shards: rawESPartialShards, timedOut: true, wantError: true},
+		{name: "timed out without failed shards", allow: &enabled, shards: rawESHealthyShards, timedOut: true, wantError: true},
+		{name: "legacy timeout", shards: rawESHealthyShards, timedOut: true},
+		{name: "malformed partial hit", allow: &enabled, shards: rawESPartialShards, decodeError: true, wantError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hits := `[{"_id":"partial-hit","_source":{"start_time":1700000000100},"sort":[1700000000100]}]`
@@ -84,7 +89,11 @@ func TestQueryRawESPartialShardResults(t *testing.T) {
 			if tc.empty {
 				hits, total = "[]", 0
 			}
+			if tc.decodeError {
+				hits = `[{"_id":"partial-hit","_source":"invalid log object"}]`
+			}
 			httpmock.RegisterResponder(http.MethodPost, esURL+"/"+index+"/_search", func(req *http.Request) (*http.Response, error) {
+				assertPartialESNativeParameter(t, req, tc.allow != nil && *tc.allow)
 				var body map[string]json.RawMessage
 				assert.NoError(t, json.NewDecoder(req.Body).Decode(&body))
 				if tc.searchAfter {
@@ -156,11 +165,10 @@ func TestQueryRawESBatchPartialShardResults(t *testing.T) {
 		maxMembers: 16, maxBodyBytes: 1 << 20, maxConcurrentSearches: 4,
 	})
 	t.Cleanup(func() { queryRawESBatchSettingsSnapshot.Store(oldSettings) })
-	httpmock.RegisterResponder(http.MethodGet, esURL+"/_msearch?max_concurrent_searches=4",
-		httpmock.NewStringResponder(http.StatusOK, `{"responses":[`+
-			`{"status":200,"_shards":`+rawESHealthyShards+`,"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_id":"healthy-hit","_source":{"start_time":1700000000100}}]}},`+
-			`{"status":200,"_shards":`+rawESPartialShards+`,"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_id":"partial-hit","_source":{"start_time":1700000000200}}]}},`+
-			`{"status":503,"_shards":`+rawESPartialShards+`,"error":{"type":"search_phase_execution_exception"}}]}`))
+	batchResponse := `{"responses":[` +
+		`{"status":200,"_shards":` + rawESHealthyShards + `,"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_id":"healthy-hit","_source":{"start_time":1700000000100}}]}},` +
+		`{"status":200,"_shards":` + rawESPartialShards + `,"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_id":"partial-hit","_source":{"start_time":1700000000200}}]}},` +
+		`{"status":503,"_shards":` + rawESPartialShards + `,"error":{"type":"search_phase_execution_exception"}}]}`
 
 	query := rawESBatchIntegrationQuery(storageID, "synthetic-trace", routes...)
 	query.IsESBatch = true
@@ -174,6 +182,11 @@ func TestQueryRawESBatchPartialShardResults(t *testing.T) {
 		{name: "enabled", allow: &enabled, wantHits: []string{"healthy-hit", "partial-hit"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			httpmock.RegisterResponder(http.MethodGet, esURL+"/_msearch?max_concurrent_searches=4",
+				func(req *http.Request) (*http.Response, error) {
+					assertPartialESBatchNativeParameter(t, req, tc.allow != nil && *tc.allow)
+					return httpmock.NewStringResponse(http.StatusOK, batchResponse), nil
+				})
 			recorder := runRawESPartialRequest(t, query, tc.allow)
 			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 			var response ListData
@@ -194,6 +207,35 @@ func TestQueryRawESBatchPartialShardResults(t *testing.T) {
 	}
 }
 
+func assertPartialESNativeParameter(t *testing.T, req *http.Request, enabled bool) {
+	t.Helper()
+	if enabled {
+		assert.Equal(t, "true", req.URL.Query().Get("allow_partial_search_results"))
+	} else {
+		assert.NotContains(t, req.URL.Query(), "allow_partial_search_results")
+	}
+}
+
+func assertPartialESBatchNativeParameter(t *testing.T, req *http.Request, enabled bool) {
+	t.Helper()
+	scanner := bufio.NewScanner(req.Body)
+	line := 0
+	for scanner.Scan() {
+		if line%2 == 0 {
+			var header map[string]any
+			assert.NoError(t, json.Unmarshal(scanner.Bytes(), &header))
+			if enabled {
+				assert.Equal(t, true, header["allow_partial_search_results"])
+			} else {
+				assert.NotContains(t, header, "allow_partial_search_results")
+			}
+		}
+		line++
+	}
+	assert.NoError(t, scanner.Err())
+	assert.Greater(t, line, 0)
+}
+
 func TestQueryRawESPartialShardResultsRejectConflicts(t *testing.T) {
 	mock.Init()
 	enabled := true
@@ -209,6 +251,68 @@ func TestQueryRawESPartialShardResultsRejectConflicts(t *testing.T) {
 			recorder := runRawESPartialRequest(t, tc.query, &enabled)
 			assert.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
 			assert.Contains(t, recorder.Body.String(), "allow_partial_es_results cannot be combined with")
+		})
+	}
+}
+
+func TestQueryRawESBatchPartialShardResultsTimeoutAndDecodeErrors(t *testing.T) {
+	mock.Init()
+	const (
+		esURL       = "http://127.0.0.1:93055"
+		storageID   = "raw-es-partial-timeout"
+		firstIndex  = "raw_es_timeout_first"
+		secondIndex = "raw_es_timeout_second"
+	)
+	tsdb.SetStorage(storageID, &tsdb.Storage{Type: metadata.ElasticsearchStorageType, Address: esURL})
+	registerRawESBatchMappingResponder(t, esURL, firstIndex)
+	registerRawESBatchMappingResponder(t, esURL, secondIndex)
+	oldSettings := queryRawESBatchSettingsSnapshot.Swap(&queryRawESBatchSettings{
+		maxMembers: 16, maxBodyBytes: 1 << 20, maxConcurrentSearches: 4,
+	})
+	t.Cleanup(func() { queryRawESBatchSettingsSnapshot.Store(oldSettings) })
+	healthy := `{"status":200,"_shards":` + rawESHealthyShards + `,"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_id":"healthy-hit","_source":{"start_time":1700000000100}}]}}`
+	timeout := `{"status":200,"timed_out":true,"_shards":` + rawESHealthyShards + `,"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_id":"timeout-hit","_source":{"start_time":1700000000200}}]}}`
+	malformed := `{"status":200,"_shards":` + rawESPartialShards + `,"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_id":"malformed-hit","_source":"invalid log object"}]}}`
+	enabled := true
+	for _, tc := range []struct {
+		name          string
+		allow         *bool
+		first, second string
+		wantHits      int
+		wantError     bool
+		wantMessage   string
+	}{
+		{name: "legacy timeout", first: healthy, second: timeout, wantHits: 2},
+		{name: "timed out sibling", allow: &enabled, first: healthy, second: timeout, wantHits: 1, wantMessage: "timeout"},
+		{name: "all timed out", allow: &enabled, first: timeout, second: timeout, wantError: true},
+		{name: "malformed partial sibling", allow: &enabled, first: healthy, second: malformed, wantHits: 1, wantMessage: "decode_error"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			httpmock.RegisterResponder(http.MethodGet, esURL+"/_msearch?max_concurrent_searches=4",
+				func(req *http.Request) (*http.Response, error) {
+					assertPartialESBatchNativeParameter(t, req, tc.allow != nil && *tc.allow)
+					return httpmock.NewStringResponse(http.StatusOK, `{"responses":[`+tc.first+","+tc.second+"]}"), nil
+				})
+			query := rawESBatchExplicitTraceQuery(storageID, firstIndex, secondIndex, "synthetic-trace")
+			query.IsESBatch = true
+			recorder := runRawESPartialRequest(t, query, tc.allow)
+			if tc.wantError {
+				assert.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+				return
+			}
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			var response ListData
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+			assert.Len(t, response.List, tc.wantHits)
+			assert.EqualValues(t, tc.wantHits, response.Total)
+			if tc.wantMessage != "" {
+				require.NotNil(t, response.Status)
+				assert.Equal(t, metadata.QueryRawPartial, response.Status.Code)
+				assert.Contains(t, response.Status.Message, tc.wantMessage)
+				assert.NotContains(t, response.Status.Message, "部分分片结果")
+			} else {
+				assert.Nil(t, response.Status)
+			}
 		})
 	}
 }

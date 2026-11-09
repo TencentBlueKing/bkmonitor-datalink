@@ -15,7 +15,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -25,34 +24,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
-
-type rawPartialShardResultsKey struct{}
-
-// WithRawPartialShardResults enables accepting partial shard responses and
-// counts successfully decoded partial results across one raw request.
-func WithRawPartialShardResults(ctx context.Context) (context.Context, *atomic.Uint32) {
-	count := &atomic.Uint32{}
-	return context.WithValue(ctx, rawPartialShardResultsKey{}, count), count
-}
-
-func rawPartialShardResults(ctx context.Context) *atomic.Uint32 {
-	count, _ := ctx.Value(rawPartialShardResultsKey{}).(*atomic.Uint32)
-	return count
-}
-
-func hasFailedSearchShards(result *elastic.SearchResult) bool {
-	return result != nil && result.Shards != nil && (result.Shards.Failed > 0 || len(result.Shards.Failures) > 0)
-}
-
-func canAcceptRawPartialShardResult(result *elastic.SearchResult) bool {
-	if !hasFailedSearchShards(result) || result.Error != nil || result.TimedOut {
-		return false
-	}
-	// A successful search can omit the status field.
-	successfulStatus := result.Status == 0 || (result.Status >= http.StatusOK && result.Status < http.StatusMultipleChoices)
-	// ES includes skipped shards in successful, even though they did not execute.
-	return successfulStatus && result.Shards.Successful > result.Shards.Skipped
-}
 
 // PreparedFieldMetadata is an immutable, member-scoped snapshot of the index
 // targets and mapping-derived fields required to prepare one raw query.
@@ -77,15 +48,16 @@ func (p *PreparedFieldMetadata) FieldsMap() metadata.FieldsMap {
 // PreparedRawQuery owns all mutable query and formatter state for one logical
 // result-table member. It must not be shared by multiple terminal schedulers.
 type PreparedRawQuery struct {
-	query         *metadata.Query
-	queryOption   *queryOption
-	fieldMetadata *PreparedFieldMetadata
-	fact          *FormatFactory
-	source        *elastic.SearchSource
-	countQuery    elastic.Query
-	body          string
-	connectionKey RawBatchConnectionKey
-	claimed       atomic.Bool
+	query               *metadata.Query
+	queryOption         *queryOption
+	fieldMetadata       *PreparedFieldMetadata
+	fact                *FormatFactory
+	source              *elastic.SearchSource
+	countQuery          elastic.Query
+	body                string
+	connectionKey       RawBatchConnectionKey
+	claimed             atomic.Bool
+	allowPartialResults bool
 }
 
 // FieldsMap returns a deep copy so highlight collection cannot mutate the
@@ -210,14 +182,15 @@ func (i *Instance) PrepareRawQuery(
 	}
 
 	return &PreparedRawQuery{
-		query:         rawQuery,
-		queryOption:   qo,
-		fieldMetadata: fieldMetadata,
-		fact:          fact,
-		source:        source,
-		countQuery:    countQuery,
-		body:          body,
-		connectionKey: i.RawBatchConnectionKey(ctx),
+		query:               rawQuery,
+		queryOption:         qo,
+		fieldMetadata:       fieldMetadata,
+		fact:                fact,
+		source:              source,
+		countQuery:          countQuery,
+		body:                body,
+		connectionKey:       i.RawBatchConnectionKey(ctx),
+		allowPartialResults: partialShardResults(ctx) != nil,
 	}, nil
 }
 

@@ -47,7 +47,7 @@ func RefreshSpaceRoute(tenantID, spaceType, spaceID string) error {
 		}
 		return err
 	}
-	values, err := preFetchSpaceTableIds(db, []space.Space{sp})
+	values, err := preFetchSpaceTableIds(db, []space.Space{sp}, &sp)
 	if err != nil {
 		return err
 	}
@@ -57,35 +57,42 @@ func RefreshSpaceRoute(tenantID, spaceType, spaceID string) error {
 
 // preFetchSpaceTableIds 提前获取部分空间路由信息，减少后续的查询次数
 // 1. 预计算表路由 2. VM 短链路表路由 3. APM 全局表路由 4. ES/Doris 日志全局表路由
-func preFetchSpaceTableIds(db *gorm.DB, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
+func preFetchSpaceTableIds(db *gorm.DB, spaceList []space.Space, target *space.Space) (service.SpaceTableIdValuesBySpace, error) {
 	logger.Info("start pre fetch space table ids task")
 
 	pusher := service.NewSpacePusher()
 	prefetchedValuesBySpace := make(service.SpaceTableIdValuesBySpace)
 
-	recordRuleValuesBySpace, err := preFetchRecordRuleTableIdValues(db, pusher)
+	recordDB, shortLinkDB := db, db
+	if target != nil {
+		recordDB = db.Where("space_type = ? AND space_id = ?", target.SpaceTypeId, target.SpaceId)
+		shortLinkDB = db.Where("is_global = ? OR (space_type = ? AND space_id = ?)", true, target.SpaceTypeId, target.SpaceId)
+	}
+	recordRuleValuesBySpace, err := preFetchRecordRuleTableIdValues(recordDB, pusher)
 	if err != nil {
 		return nil, err
 	}
 	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, recordRuleValuesBySpace)
 
-	recordRuleV4ValuesBySpace, err := preFetchRecordRuleV4TableIdValues(db, pusher)
+	recordRuleV4ValuesBySpace, err := preFetchRecordRuleV4TableIdValues(recordDB, pusher)
 	if err != nil {
 		return nil, err
 	}
 	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, recordRuleV4ValuesBySpace)
 
-	shortLinkValuesBySpace, err := preFetchVMShortLinkTableIdValues(db, pusher, spaceList)
+	shortLinkValuesBySpace, err := preFetchVMShortLinkTableIdValues(shortLinkDB, pusher, spaceList)
 	if err != nil {
 		return nil, err
 	}
 	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, shortLinkValuesBySpace)
 
-	apmValuesBySpace, err := preFetchApmAllTypeTableIdValues(db, pusher, spaceList)
-	if err != nil {
-		return nil, err
+	if target == nil || target.SpaceTypeId == models.SpaceTypeBKCI || target.SpaceTypeId == models.SpaceTypeBKSAAS {
+		apmValuesBySpace, err := preFetchApmAllTypeTableIdValues(db, pusher, spaceList)
+		if err != nil {
+			return nil, err
+		}
+		mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, apmValuesBySpace)
 	}
-	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, apmValuesBySpace)
 
 	logGlobalValuesBySpace, err := preFetchLogGlobalTableIdValues(db, pusher, spaceList)
 	if err != nil {
@@ -297,7 +304,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	}
 
 	// 预获取空间路由信息
-	prefetchedValuesBySpace, preFetchErr := preFetchSpaceTableIds(db, spaceList)
+	prefetchedValuesBySpace, preFetchErr := preFetchSpaceTableIds(db, spaceList, nil)
 	if preFetchErr != nil {
 		logger.Errorf("PushAndPublishSpaceRouterInfo pre fetch space table ids failed, err: %s", preFetchErr)
 		return preFetchErr
@@ -305,6 +312,9 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 
 	goroutineCount := GetGoroutineLimit("push_and_publish_space_router_info")
 	pusher := service.NewSpacePusher()
+	if err := pusher.PreloadSpaceDependencies(spaceList); err != nil {
+		return err
+	}
 	// 存放结果表数据
 
 	t0 := time.Now()

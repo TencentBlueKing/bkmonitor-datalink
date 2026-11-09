@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package service
+package routefixture
 
 // 本文件只负责测试环境与共享源表数据初始化；行为断言位于 route_refresh_test.go。
 // 显式 DSN、连接级临时表；不读取 bmw_test.yaml，不修改生产刷新逻辑。
@@ -38,13 +38,13 @@ import (
 	redisutils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
 )
 
-type routeFixture struct {
-	db     *gorm.DB
-	server *miniredis.Miniredis
-	redis  *redis.Instance
+type Fixture struct {
+	DB     *gorm.DB
+	Server *miniredis.Miniredis
+	Redis  *redis.Instance
 }
 
-func newRouteFixture(t *testing.T) *routeFixture {
+func New(t *testing.T) *Fixture {
 	t.Helper()
 	dsn := os.Getenv("BMW_ROUTE_FIXTURE_DSN")
 	if dsn == "" {
@@ -102,6 +102,7 @@ func newRouteFixture(t *testing.T) *routeFixture {
 	}
 	seedRouteCoreTables(t, db)
 	seedRouteFeatureTables(t, db)
+	seedUnrelatedRouteTables(t, db)
 
 	server := miniredis.RunT(t)
 	port, err := strconv.Atoi(server.Port())
@@ -126,13 +127,15 @@ func newRouteFixture(t *testing.T) *routeFixture {
 	patches.ApplyGlobalVar(&cfg.EnableMultiTenantMode, false)
 	patches.ApplyGlobalVar(&cfg.QueryDbBatchSize, 2)
 	patches.ApplyGlobalVar(&cfg.QueryDbBatchDelay, time.Duration(0))
+	// MySQL information_schema omits session-local temporary tables. The fixture has created both optional route tables.
+	patches.ApplyMethodReturn(db, "HasTable", true)
 	t.Cleanup(patches.Reset)
-	return &routeFixture{db: db, server: server, redis: r}
+	return &Fixture{DB: db, Server: server, Redis: r}
 }
 
-func (f *routeFixture) resetOutput(t *testing.T) {
+func (f *Fixture) ResetOutput(t *testing.T) {
 	t.Helper()
-	f.server.FlushAll()
+	f.Server.FlushAll()
 	cache, err := memcache.NewRistretto()
 	require.NoError(t, err)
 	patch := gomonkey.ApplyFunc(memcache.GetMemCache, func() (*memcache.Ristretto, error) { return cache, nil })
@@ -349,4 +352,65 @@ func seedRouteFeatureTables(t *testing.T, db *gorm.DB) {
 		exec(`INSERT INTO metadata_esstorage(table_id,bk_tenant_id,storage_cluster_id,source_type,index_set,origin_table_id) VALUES (?,'batch',230,'log','batch-*','')`, id)
 	}
 	exec(`INSERT INTO metadata_clusterinfo(cluster_id,bk_tenant_id,cluster_name,cluster_type) VALUES (230,'batch','batch-es','elasticsearch')`)
+}
+
+// Large unrelated populations make query-scope regressions observable without timing assertions.
+func seedUnrelatedRouteTables(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		id := 10000 + i
+		require.NoError(t, db.Exec(`INSERT INTO metadata_clusterinfo(cluster_id,bk_tenant_id,cluster_name,cluster_type) VALUES (?,'system',?,'victoria_metrics')`, id, fmt.Sprintf("unrelated-%d", i)).Error)
+		require.NoError(t, db.Exec(`INSERT INTO metadata_recordrule(bk_tenant_id,space_type,space_id,table_id,vm_cluster_id,dst_vm_table_id,rule_metrics) VALUES ('system','bkcc','999',?,?,?,'{}')`, fmt.Sprintf("unrelated.rule%d", i), id, fmt.Sprintf("vm_unrelated_%d", i)).Error)
+		require.NoError(t, db.Exec(`INSERT INTO metadata_recordrulev4(bk_tenant_id,space_type,space_id,table_id,conditions,deleted_at) VALUES ('system','bkcc','999',?,'[]',NULL)`, fmt.Sprintf("unrelated.v4_%d", i)).Error)
+		require.NoError(t, db.Exec(`INSERT INTO metadata_vmshortlinkrecord(bk_tenant_id,space_type,space_id,table_id,is_global,query_router_config,is_enabled,is_deleted) VALUES ('system','bkcc','999',?,0,'{}',1,0)`, fmt.Sprintf("unrelated.short%d", i)).Error)
+		require.NoError(t, db.Exec(`INSERT INTO metadata_bcsclusterinfo(cluster_id,bk_tenant_id,K8sMetricDataID,CustomMetricDataID) VALUES (?,'system',?,?)`, fmt.Sprintf("BCS-unrelated-%d", i), uint(id), uint(id+10000)).Error)
+	}
+	for i := 0; i < 100; i++ {
+		id := fmt.Sprintf("unrelated.rt%d", i)
+		require.NoError(t, db.Exec(`INSERT INTO metadata_resulttable(table_id,bk_tenant_id,default_storage,is_enable,is_deleted,data_label) VALUES (?,'system','victoria_metrics',1,0,?)`, id, fmt.Sprintf("unrelated_label_%d", i)).Error)
+		require.NoError(t, db.Exec(`INSERT INTO metadata_resulttableoption(bk_tenant_id,table_id,name,value_type,value) VALUES ('system',?,'data_label_aliases','list',?)`, id, fmt.Sprintf(`["unrelated_alias_%d"]`, i)).Error)
+	}
+
+	require.NoError(t, db.Exec(`INSERT INTO metadata_recordrule(bk_tenant_id,space_type,space_id,table_id,vm_cluster_id,dst_vm_table_id,rule_metrics) VALUES
+ ('system','bkcc','1','dual.metric',20,'rule_override','{"expression":"rule_metric"}'),
+ ('system','bkcc','1','broken.logs',20,'forbidden_log_override','{}'),
+ ('other','bkcc','20','rule.cpu',120,'other_rule','{}')`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO metadata_accessvmrecord(bk_tenant_id,result_table_id,vm_cluster_id,vm_result_table_id) VALUES ('system','orphan.second',999,'orphan_second')`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO metadata_spacedatasource(space_type_id,space_id,bk_data_id,from_authorization) VALUES ('bkci','project',201,0),('bkci','project',102,0),('bksaas','app',202,0)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO metadata_resulttable(table_id,bk_tenant_id,default_storage,schema_type,is_enable,is_deleted,bk_biz_id,data_label) VALUES ('system.cpu','system','victoria_metrics','fixed',1,0,1,'host')`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO metadata_recordrulev4(bk_tenant_id,space_type,space_id,table_id,conditions,deleted_at) VALUES
+ ('system','bkcc','1','rule.v4_recent','[]',?),('system','bkcc','1','rule.v4_expired','[]',?)`, time.Now().AddDate(0, 0, -1), time.Now().AddDate(0, 0, -200)).Error)
+}
+
+// QueryLog captures executed SQL and returned row counts using GORM's test logger.
+type Query struct {
+	SQL  string
+	Rows int64
+}
+
+type QueryLog struct{ Entries []Query }
+
+func (q *QueryLog) Print(values ...interface{}) {
+	if len(values) >= 6 && values[0] == "sql" {
+		q.Entries = append(q.Entries, Query{SQL: values[3].(string), Rows: values[5].(int64)})
+	}
+}
+
+func (q *QueryLog) ForTable(table string) []Query {
+	result := []Query{}
+	for _, entry := range q.Entries {
+		if strings.Contains(entry.SQL, "`"+table+"`") || strings.Contains(entry.SQL, "FROM "+table+" ") {
+			result = append(result, entry)
+		}
+	}
+	return result
+}
+
+func (f *Fixture) ObserveQueries(t *testing.T) *QueryLog {
+	t.Helper()
+	queries := &QueryLog{}
+	f.DB.SetLogger(queries)
+	f.DB.LogMode(true)
+	t.Cleanup(func() { f.DB.LogMode(false) })
+	return queries
 }

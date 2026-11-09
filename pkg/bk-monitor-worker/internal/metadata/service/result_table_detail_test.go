@@ -12,6 +12,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -30,10 +31,18 @@ import (
 
 func setupResultTableDetailMySQL(t *testing.T) *gorm.DB {
 	t.Helper()
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	session := &mysql.DBSession{}
-	require.NoError(t, session.Open())
-	db := session.DB
+	var db *gorm.DB
+	if dsn := os.Getenv("BMW_ROUTE_FIXTURE_DSN"); dsn != "" {
+		var err error
+		db, err = gorm.Open("mysql", dsn)
+		require.NoError(t, err)
+	} else {
+		mocker.InitTestDBConfig("../../../bmw_test.yaml")
+		session := &mysql.DBSession{}
+		require.NoError(t, session.Open())
+		db = session.DB
+	}
+
 	// 每个测试使用单独连接及临时表：既复用真实 MySQL 行为，又不会读写
 	// bmw_test 的持久表；连接关闭后临时表和夹具会由 MySQL 自动清理。
 	db.DB().SetMaxOpenConns(1)
@@ -68,7 +77,7 @@ func setupResultTableDetailMySQL(t *testing.T) *gorm.DB {
 	})
 	t.Cleanup(func() {
 		patches.Reset()
-		require.NoError(t, session.Close())
+		require.NoError(t, db.Close())
 	})
 	return db
 }
@@ -145,11 +154,11 @@ func insertClusterRecord(t *testing.T, db *gorm.DB, id uint, tableID, tenantID s
 	)
 }
 
-func loadRouteClustersForTest(t *testing.T, db *gorm.DB, tenantID string) map[uint]storage.ClusterInfo {
+func loadRouteClustersForTest(t *testing.T, db *gorm.DB, tenantID string) *routeDetailClusters {
 	t.Helper()
 	clusterMap, err := loadResultTableDetailClusterMap(db, tenantID)
 	require.NoError(t, err)
-	return clusterMap
+	return &routeDetailClusters{values: clusterMap, all: true}
 }
 
 func seedMixedLogRoute(t *testing.T, db *gorm.DB, tenantID, tableID, defaultStorage string) {
@@ -611,7 +620,7 @@ func TestAccessVMRecordAndRecordRulePayloadsRemainCompatible(t *testing.T) {
 		)
 
 		clusterMap := loadRouteClustersForTest(t, db, tenantID)
-		details, err := NewSpacePusher().composeRecordRuleTableIdDetail(tenantID, clusterMap)
+		details, err := NewSpacePusher().composeRecordRuleTableIdDetail(tenantID, clusterMap, nil)
 
 		require.NoError(t, err)
 		assert.Equal(t, map[string]map[string]any{
@@ -681,7 +690,7 @@ func TestComposeLogTableIdDetailRequiresResultTableAndKeepsClaimedFallback(t *te
 		})
 
 		details, claimed, err := NewSpacePusher().composeLogTableIdDetail(
-			tenantID, []string{tableID}, map[uint]storage.ClusterInfo{},
+			tenantID, []string{tableID}, &routeDetailClusters{all: true},
 		)
 		require.NoError(t, err)
 		assert.Empty(t, claimed)
@@ -723,7 +732,7 @@ func TestComposeLogTableIdDetailRequiresResultTableAndKeepsClaimedFallback(t *te
 			insertESStorage(t, db, tt.tableID, tenantID, 1, "inactive-index", "log", "")
 
 			details, claimed, err := NewSpacePusher().composeLogTableIdDetail(
-				tenantID, []string{tt.tableID}, map[uint]storage.ClusterInfo{},
+				tenantID, []string{tt.tableID}, &routeDetailClusters{all: true},
 			)
 
 			require.NoError(t, err)

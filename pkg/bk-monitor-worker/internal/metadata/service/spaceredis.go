@@ -122,8 +122,7 @@ var BaseReportSources = []string{
 }
 
 const (
-	CachedClusterDataIdKey = "bmw_cached_cluster_data_id_list"
-	CachedSpaceBizIdKey    = "bmw_cached_space_biz_id"
+	CachedSpaceBizIdKey = "bmw_cached_space_biz_id"
 )
 
 // RTFBatchQueryConfig ResultTableField 分批查询配置
@@ -202,6 +201,9 @@ func NewSpaceRedisSvc(goroutineLimit int) SpaceRedisSvc {
 type SpacePusher struct {
 	mut  sync.Mutex
 	once sync.Once
+	// Populated before a periodic task shares this pusher across spaces. Read-only during refresh.
+	clusterDataIDs  map[uint]struct{}
+	bkciBizTableIDs []string
 }
 
 // SpaceTableIdValues stores redis values keyed by result table ID.
@@ -689,11 +691,11 @@ func (s *SpacePusher) refineTableIds(bkTenantId string, tableIdList []string) ([
 func (s *SpacePusher) composeMetricTableIdDetail(
 	bkTenantId string,
 	tableIdList []string,
-	clusterMap map[uint]storage.ClusterInfo,
+	clusters *routeDetailClusters,
 ) (map[string]map[string]any, error) {
 	logger.Infof("PushTableIdDetail: start to push table_id detail data")
 
-	tableIdDetail, err := s.getTableInfoForAccessVMRecord(bkTenantId, tableIdList, clusterMap)
+	tableIdDetail, err := s.getTableInfoForAccessVMRecord(bkTenantId, tableIdList, clusters)
 	logger.Infof("PushTableIdDetail: got table info from access vm records, tenant [%s], count [%d]", bkTenantId, len(tableIdDetail))
 	if err != nil {
 		return nil, err
@@ -935,16 +937,32 @@ func parseRecordRuleMetricValues(ruleMetrics string) ([]string, error) {
 // composeRecordRuleTableIdDetail 使用租户刷新入口预加载的 ClusterInfo 组装 RecordRule。
 // 引用的集群缺失或不是 VM 时仍保留规则路由，只让兼容字段 storage_name 为空。
 func (s *SpacePusher) composeRecordRuleTableIdDetail(
-	bkTenantId string, clusterMap map[uint]storage.ClusterInfo,
+	bkTenantId string, clusters *routeDetailClusters, tableIDs []string,
 ) (map[string]map[string]any, error) {
 	logger.Infof("composeRecordRuleTableIdDetail:start to compose record rule table detail, bk_tenant_id [%s]", bkTenantId)
 
 	db := mysql.GetDBSession().DB
 	var recordRuleList []recordRuleTableIdDetailRow
-	if err := db.Table(recordrule.RecordRule{}.TableName()).
-		Select("table_id, vm_cluster_id, dst_vm_table_id, rule_metrics").
-		Where("bk_tenant_id = ?", bkTenantId).
-		Scan(&recordRuleList).Error; err != nil {
+	batches := chunkResultTableIDs(tableIDs)
+	if len(tableIDs) == 0 {
+		batches = [][]string{nil}
+	}
+	for _, batch := range batches {
+		query := db.Table(recordrule.RecordRule{}.TableName()).Select("table_id, vm_cluster_id, dst_vm_table_id, rule_metrics").Where("bk_tenant_id = ?", bkTenantId)
+		if len(batch) > 0 {
+			query = query.Where("table_id IN (?)", batch)
+		}
+		var rows []recordRuleTableIdDetailRow
+		if err := query.Scan(&rows).Error; err != nil {
+			return nil, err
+		}
+		recordRuleList = append(recordRuleList, rows...)
+	}
+	clusterIDs := make([]uint, 0, len(recordRuleList))
+	for _, rule := range recordRuleList {
+		clusterIDs = append(clusterIDs, uint(rule.VmClusterId))
+	}
+	if err := clusters.load(clusterIDs); err != nil {
 		return nil, err
 	}
 
@@ -956,7 +974,7 @@ func (s *SpacePusher) composeRecordRuleTableIdDetail(
 		}
 		storageName := ""
 		if recordRule.VmClusterId > 0 {
-			if cluster, exists := clusterMap[uint(recordRule.VmClusterId)]; exists && cluster.ClusterType == models.StorageTypeVM {
+			if cluster, exists := clusters.values[uint(recordRule.VmClusterId)]; exists && cluster.ClusterType == models.StorageTypeVM {
 				storageName = cluster.ClusterName
 			}
 		}
@@ -987,7 +1005,7 @@ func (s *SpacePusher) composeRecordRuleTableIdDetail(
 func (s *SpacePusher) getTableInfoForAccessVMRecord(
 	bkTenantId string,
 	tableIdList []string,
-	clusterMap map[uint]storage.ClusterInfo,
+	clusters *routeDetailClusters,
 ) (map[string]map[string]any, error) {
 	logger.Debugf("get table info from access vm records, table_id_list->[%v]", tableIdList)
 	if len(tableIdList) == 0 {
@@ -1005,6 +1023,14 @@ func (s *SpacePusher) getTableInfoForAccessVMRecord(
 		BkTenantIdEq(bkTenantId).
 		ResultTableIdIn(tableIdList...).
 		All(&vmRecordList); err != nil {
+		return nil, err
+	}
+
+	clusterIDs := make([]uint, 0, len(vmRecordList))
+	for _, record := range vmRecordList {
+		clusterIDs = append(clusterIDs, record.VmClusterId)
+	}
+	if err := clusters.load(clusterIDs); err != nil {
 		return nil, err
 	}
 
@@ -1035,7 +1061,7 @@ func (s *SpacePusher) getTableInfoForAccessVMRecord(
 	tableIdInfo := make(map[string]map[string]any, len(vmRecordList))
 	for _, record := range vmRecordList {
 		storageName := ""
-		if cluster, exists := clusterMap[record.VmClusterId]; exists && cluster.ClusterType == models.StorageTypeVM {
+		if cluster, exists := clusters.values[record.VmClusterId]; exists && cluster.ClusterType == models.StorageTypeVM {
 			storageName = cluster.ClusterName
 		}
 		cmdbLevelVmrt := cmdbLevelVmrtMap[record.ResultTableId]
@@ -2710,30 +2736,26 @@ func (s *SpacePusher) composeBcsSpaceBizTableIds(spaceType, spaceId string) (map
 	if sr.ResourceId != nil {
 		bizIdStr = *sr.ResourceId
 	}
-	// 现阶段支持主机和部分插件授权给蓝盾使用
-	var rtList []resulttable.ResultTable
-	likeTableIds := []string{fmt.Sprintf("%s%%", models.SystemTableIdPrefix)}
-
-	// 特殊授权逻辑,读取环境配置,将部分业务RT授权给CI空间访问
-	for _, tableId := range cfg.BkciSpaceAccessPlugins {
-		logger.Infof("composeBcsSpaceBizTableIds: try to add table_id->[%s] to router for space_type->[%s],space_id->[%s]", tableId, spaceType, spaceId)
-		likeTableIds = append(likeTableIds, fmt.Sprintf("%s%%", tableId))
+	tableIDs := s.bkciBizTableIDs
+	if tableIDs == nil {
+		var err error
+		tableIDs, err = loadBkciBizTableIDs()
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).TableIdsLike(likeTableIds).All(&rtList); err != nil {
-		return nil, err
-	}
-	for _, rt := range rtList {
-		// dataValues[rt.TableId] = map[string]interface{}{"filters": []map[string]interface{}{{"bk_biz_id": bizIdStr}}}
+	for _, tableID := range tableIDs {
+		// dataValues[tableID] = map[string]interface{}{"filters": []map[string]interface{}{{"bk_biz_id": bizIdStr}}}
 		options := FilterBuildContext{
 			SpaceType:   spaceType,
 			SpaceId:     spaceId,
-			TableId:     rt.TableId,
+			TableId:     tableID,
 			BkBizId:     bizIdStr,    // 归属的业务ID
 			FilterAlias: "bk_biz_id", // 过滤条件的别名
 		}
 		filters := s.buildFiltersByUsage(options, UsageComposeBcsSpaceBizTableIds)
-		dataValues[rt.TableId] = map[string]any{"filters": filters}
+		dataValues[tableID] = map[string]any{"filters": filters}
 	}
 
 	// 二段式校验&补充
@@ -3089,17 +3111,15 @@ func (s *SpacePusher) composeBkciLevelTableIds(bkTenantId, spaceType, spaceId st
 // composeBkciOtherTableIds 组装BKCI级别结果表
 func (s *SpacePusher) composeBkciOtherTableIds(bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
 	logger.Infof("start to push bkci other table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
-	// 针对集群缓存对应的数据源，避免频繁的访问db
-	excludeDataIdList, err := s.getCachedClusterDataIdList()
-	if err != nil {
-		logger.Errorf("composeBkciOtherTableIds get cached cluster data id list error, %s", err)
-		return nil, err
-	}
 	options := optionx.NewOptions(map[string]any{"includePlatformDataId": false, "fromAuthorization": false})
-	tableIdDataIdMap, err := s.GetSpaceTableIdDataId(bkTenantId, spaceType, spaceId, nil, excludeDataIdList, options)
+	tableIdDataIdMap, err := s.GetSpaceTableIdDataId(bkTenantId, spaceType, spaceId, nil, nil, options)
 	if err != nil {
 		return nil, err
 	}
+	if err := s.excludeClusterDataSources(tableIdDataIdMap); err != nil {
+		return nil, err
+	}
+
 	dataValues := make(map[string]map[string]any)
 	if len(tableIdDataIdMap) == 0 {
 		logger.Errorf("space_type [%s], space_id [%s] not found table_id and data_id", spaceType, spaceId)
@@ -3186,50 +3206,96 @@ func (s *SpacePusher) composeBkciCrossTableIds(bkTenantId, spaceType, spaceId st
 	return dataValuesToRedis, nil
 }
 
-// 获取缓存的集群对应的数据源 ID
-func (s *SpacePusher) getCachedClusterDataIdList() ([]uint, error) {
-	cache, cacheErr := memcache.GetMemCache()
-	// 存放
-	ok := false
-	var data any
-	if cacheErr == nil {
-		data, ok = cache.Get(CachedClusterDataIdKey)
-		if ok {
-			return data.([]uint), nil
+// PreloadSpaceDependencies loads shared candidates once before the full-refresh workers start.
+func (s *SpacePusher) PreloadSpaceDependencies(spaces []space.Space) error {
+	needClusters, needBkci := false, false
+	for _, sp := range spaces {
+		needClusters = needClusters || sp.SpaceTypeId == models.SpaceTypeBKCI || sp.SpaceTypeId == models.SpaceTypeBKSAAS
+		needBkci = needBkci || sp.SpaceTypeId == models.SpaceTypeBKCI
+	}
+	if needClusters {
+		var rows []bcs.BCSClusterInfo
+		if err := bcs.NewBCSClusterInfoQuerySet(mysql.GetDBSession().DB).
+			Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.CustomMetricDataID).All(&rows); err != nil {
+			return err
+		}
+		s.clusterDataIDs = make(map[uint]struct{}, len(rows)*2)
+		for _, row := range rows {
+			s.clusterDataIDs[row.K8sMetricDataID] = struct{}{}
+			s.clusterDataIDs[row.CustomMetricDataID] = struct{}{}
 		}
 	}
-	// 从 db 中获取数据
-	var clusterDataIdList []uint
-	var clusters []bcs.BCSClusterInfo
-	if err := bcs.NewBCSClusterInfoQuerySet(mysql.GetDBSession().DB).All(&clusters); err != nil {
+	if needBkci {
+		var err error
+		s.bkciBizTableIDs, err = loadBkciBizTableIDs()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func loadBkciBizTableIDs() ([]string, error) {
+	patterns := []string{models.SystemTableIdPrefix + "%"}
+	for _, prefix := range cfg.BkciSpaceAccessPlugins {
+		patterns = append(patterns, prefix+"%")
+	}
+	var rows []resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(mysql.GetDBSession().DB).
+		Select(resulttable.ResultTableDBSchema.TableId).TableIdsLike(patterns).All(&rows); err != nil {
 		return nil, err
 	}
-	for _, c := range clusters {
-		clusterDataIdList = append(clusterDataIdList, c.K8sMetricDataID)
-		clusterDataIdList = append(clusterDataIdList, c.CustomMetricDataID)
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.TableId)
 	}
+	return ids, nil
+}
 
-	// 把数据添加到缓存中, 设置超时时间为60min
-	if cacheErr == nil {
-		cache.PutWithTTL(CachedClusterDataIdKey, clusterDataIdList, 0, 60*time.Minute)
+func (s *SpacePusher) excludeClusterDataSources(tableDataIDs map[string]uint) error {
+	if len(tableDataIDs) == 0 {
+		return nil
 	}
-	return clusterDataIdList, nil
+	excluded := s.clusterDataIDs
+	if excluded == nil {
+		ids := make([]uint, 0, len(tableDataIDs))
+		for _, id := range tableDataIDs {
+			ids = append(ids, id)
+		}
+		ids = slicex.RemoveDuplicate(&ids)
+		excluded = make(map[uint]struct{})
+		for _, batch := range slicex.ChunkSlice(ids, cfg.DefaultDBFilterSize) {
+			var rows []bcs.BCSClusterInfo
+			if err := mysql.GetDBSession().DB.Model(&bcs.BCSClusterInfo{}).
+				Select("K8sMetricDataID, CustomMetricDataID").Where("K8sMetricDataID IN (?) OR CustomMetricDataID IN (?)", batch, batch).Find(&rows).Error; err != nil {
+				return err
+			}
+			for _, row := range rows {
+				excluded[row.K8sMetricDataID] = struct{}{}
+				excluded[row.CustomMetricDataID] = struct{}{}
+			}
+		}
+	}
+	for tableID, dataID := range tableDataIDs {
+		if _, exists := excluded[dataID]; exists {
+			delete(tableDataIDs, tableID)
+		}
+	}
+	return nil
 }
 
 // composeBksaasOtherTableIds 组装蓝鲸应用非集群数据
 func (s *SpacePusher) composeBksaasOtherTableIds(bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
 	logger.Infof("start to push bksaas other table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
-	// 针对集群缓存对应的数据源，避免频繁的访问db
-	excludeDataIdList, err := s.getCachedClusterDataIdList()
-	if err != nil {
-		logger.Errorf("composeBksaasOtherTableIds get cached cluster data id list error, %s", err)
-		return nil, err
-	}
 	options := optionx.NewOptions(map[string]any{"includePlatformDataId": false})
-	tableIdDataIdMap, err := s.GetSpaceTableIdDataId(bkTenantId, spaceType, spaceId, nil, excludeDataIdList, options)
+	tableIdDataIdMap, err := s.GetSpaceTableIdDataId(bkTenantId, spaceType, spaceId, nil, nil, options)
 	if err != nil {
 		return nil, err
 	}
+	if err := s.excludeClusterDataSources(tableIdDataIdMap); err != nil {
+		return nil, err
+	}
+
 	dataValues := make(map[string]map[string]any)
 	if len(tableIdDataIdMap) == 0 {
 		logger.Errorf("space_type [%s], space_id [%s] not found table_id and data_id", spaceType, spaceId)

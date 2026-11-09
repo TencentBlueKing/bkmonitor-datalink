@@ -25,7 +25,7 @@ go test -gcflags=all=-l ./internal/metadata/service -run '^TestRouteRefresh$' -c
 
 ## 文件职责
 
-- `../../route_refresh_fixture_test.go`：环境初始化、临时表定义、`seedRouteCoreTables` 与 `seedRouteFeatureTables`。这是整套共享 mock 源数据的定义。
+- `../../../testutil/routefixture/fixture.go`：环境初始化、临时表定义、`seedRouteCoreTables`、`seedRouteFeatureTables` 与 `seedUnrelatedRouteTables`。这是整套共享 mock 源数据的定义。
 - `../../route_refresh_test.go`：行为断言，源数据初始化与单测分离。
 - 本文件：数据关系、覆盖范围、现状问题及运行说明。
 
@@ -33,7 +33,7 @@ go test -gcflags=all=-l ./internal/metadata/service -run '^TestRouteRefresh$' -c
 
 ## 数据组合
 
-共 26 张临时表，3 个租户，528 条 RT 记录，其中 501 条属于独立的 batch 租户。
+共 26 张临时表，3 个租户，629 条 RT 记录，其中 501 条属于独立的 batch 租户。
 
 | 主题 | 核心组合 |
 | --- | --- |
@@ -49,7 +49,7 @@ go test -gcflags=all=-l ./internal/metadata/service -run '^TestRouteRefresh$' -c
 | 日志与指标冲突 | 残缺 Doris RT 同时有 VM 绑定，日志认领后不得回退成指标路由 |
 | 字段/选项 | 查询选项白名单、字段别名继承、删除别名、外租户同名别名 |
 | 容器 | 独占集群、共享多 namespace、共享空 namespace、非法/缺失资源、SaaS namespace |
-| 预计算 | 旧 RecordRule 及 V4 预计算空间分组；普通指标部分刷新附带租户预计算详情 |
+| 预计算 | 旧 RecordRule 及 V4 预计算空间分组；部分刷新限定目标和同名规则，支持独立规则及日志认领优先级 |
 | VM 短链 | 本空间、全局 all、指定 bkci + project 过滤、自定义 filter_key/filter_value、非法配置回退、停用/删除记录 |
 | 日志全局路由 | all 与 bkci 扩展、所属业务不覆盖普通无过滤路由、数字业务/负空间 ID 字符串过滤、非法配置与停用 RT 排除 |
 | APM | 全局表只扩展同租户 bkci/bksaas，使用 bk_biz_id_alias；独占应用归属、共享数据源、外租户候选、歧义归属不猜测 |
@@ -58,9 +58,9 @@ go test -gcflags=all=-l ./internal/metadata/service -run '^TestRouteRefresh$' -c
 
 ## 断言范围
 
-69 个子用例覆盖选表、payload、Redis field、租户后缀、存储选型、标签展开、全量/部分结果、未选字段保留、预取合并优先级、发布开关、重复发布、清理和故障传播。
+78 个服务子用例覆盖选表、payload、Redis field、租户后缀、存储选型、标签展开、全量/部分结果、未选字段保留、预取合并优先级、发布开关、重复发布、清理和故障传播。
 
-预取测试从共享源表读取记录后执行生产的 `Compose*BySpace`，再验证传给 `PushSpaceTableIds` 的预取数据优先于普通路由。这里没有复制整套调度器，也不声称覆盖周期任务的并发、调度及所有前置查询。
+新增 `task/space_partial_refresh_test.go` 直接执行真实预取查询和周期刷新任务，对照三个空间的部分刷新 payload。`http/route_refresh_integration_test.go` 通过正常 HTTP 注册入口复用同一数据集验证三个 API。
 
 ## 当前结论
 
@@ -77,12 +77,35 @@ go test -gcflags=all=-l ./internal/metadata/service -run '^TestRouteRefresh$' -c
 - `details/whitelist_current_fields_lost`：仅刷新白名单 RT 时，`composeTableIdFields` 剔除白名单后列表为空，返回空 map，字段缺失仍存在。后续修复时应修改这一现状断言。
 - `failure/label_publish_retry_current_no_republish`：标签 HSET 成功、Publish 失败后，重试因值相同返回成功，不补发。
 - `failure/log_write_error_is_tolerated_metric_write_error_returned`：日志批次 Redis 写失败按现有容错语义继续并返回成功，指标写失败返回错误。同步接口设计需明确这一差异。
-- `record_rule/partial_metric_refresh_includes_tenant_rules`：普通指标部分刷新会附带当前租户全部旧版 RecordRule 详情，不能假定只写入传入的 RT。
+- 部分详情刷新现已限定指定 RT 与同名 RecordRule。`record_rule/standalone_same_name_override_and_log_ownership` 验证规则独立刷新、同名覆盖与日志认领优先级。
 
 上面是本地基于当前 master 的测试结论，不能沿用旧工作区版本的问题清单。
 
 ## 验证与限制
 
-69 个子用例通过。覆盖率：`spaceredis.go` 73.9%、`result_table_detail.go` 86.6%、`apm_application_route.go` 93.0%。这是逐文件语句覆盖率，不是全系统覆盖率。
+78 个服务子用例、5 个空间查询/全量对照子用例和 HTTP 测试通过。另运行现有日志物理表、历史分段、VM/RecordRule payload 与相关查询计数测试，均通过。
 
 不覆盖 Consul 路由、Python Metadata、尚未实现的 HTTP 刷新服务、真实 Redis 集群故障/性能、分布式同时刷新以及生产数据库索引约束。时间相关数据初始化时相对当前时间设置，避免固定日期导致指标自动过期。
+
+## 部分/全量查询验收
+
+共享数据额外包含各 100 条无关集群、旧/V4 预计算、非全局短链、BCS 集群、RT 与别名。通过 GORM logger 记录实际 SQL 和返回行数，验证输出相同的同时减少加载量。
+
+- 单 `cpu.used` 刷新只查询相关集群，ClusterInfo 返回 1 行；规则查询带 RT 条件并返回 0 行。
+- 无依赖的缺失/未绑定表不查询 ClusterInfo；同请求不同批次复用已查及缺失集群 ID。
+- 虚拟日志表复用当前、origin、历史集群依赖，ClusterInfo 返回 3 行。
+- 501 张日志 RT 分成两批，全量 ClusterInfo 仅查一次；系统租户全量的日志、指标和规则共享同一次集群查询。
+- 单空间的预计算 SQL 带空间条件，短链限定“本空间或全局”，加载行数不随其他空间 100 条专属记录增加。
+- 单空间 BCS 排除集合按候选 DataID 查询；全量先加载 BCS 集合和前缀 RT，后续空间复用。
+- DataLabel 按指定 RT 展开相关标签，再重建完整映射，返回行数限定在命中集合。
+
+运行全部共享数据验收：
+
+```sh
+go test -gcflags=all=-l ./http ./internal/metadata/service ./internal/metadata/task \
+  -run '^(TestRouteRefresh|TestPartialSpaceRefreshQueries|TestRouteRefreshAPIIntegration|TestPartialRouteRefreshRequiresTargets|TestRefreshResultTablePublishAndExecutionError|TestRefreshSpaceReportsLookupAndRefreshErrors|TestRouteRefreshRejectsBlankTargets)$' -count=1
+```
+
+MySQL `EXPLAIN FORMAT=TRADITIONAL` 在无生产索引的临时表上，`FIND_IN_SET` 与 JSON 别名查询均为 `ALL`，本次估算扫描约 670/114 行。估算会随统计信息变化；功能查询只返回相关记录，不代表数据库只扫描这些记录。这份结果用于明确残留扫描成本，不能据此推断线上索引效果。
+
+临时表不出现在 MySQL information_schema，共享 fixture 仅在测试期间模拟已创建表的 `HasTable` 结果，让 V4 规则和短链预取执行真实 SQL。源码没有新增数据库迁移或跨请求依赖缓存。

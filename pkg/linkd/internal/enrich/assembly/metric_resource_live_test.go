@@ -176,7 +176,7 @@ func TestMetricResourceLiveReplay(t *testing.T) {
 					entry := map[string]any{"status": output.Status, "diagnostics": output.Diagnostics}
 					if name == "metric" {
 						values := domain.JSONObject{}
-						for _, key := range []string{"metric_name", "unit", "result_table_id", "metric_unique_id"} {
+						for _, key := range []string{"metric_name", "unit", "result_table_id"} {
 							if value, ok := output.Value[key]; ok {
 								values[key] = value
 							}

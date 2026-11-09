@@ -89,7 +89,6 @@ type MetricValues struct {
 	MetricName       string  `json:"metric_name"`
 	Unit             string  `json:"unit"`
 	ResultTableID    string  `json:"result_table_id"`
-	MetricUniqueID   string  `json:"metric_unique_id"`
 	AggregateFunc    string  `json:"aggregate_func"`
 	TimeInterval     any     `json:"time_interval"`
 	WhereCondition   string  `json:"where_condition"`

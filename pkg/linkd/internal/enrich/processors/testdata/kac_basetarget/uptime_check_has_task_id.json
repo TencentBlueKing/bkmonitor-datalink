@@ -392,11 +392,6 @@
             },
             {
               "op": "set",
-              "path": "$[\"labels\"][\"metric_unique_id\"]",
-              "value": "uptimecheck.icmp.available"
-            },
-            {
-              "op": "set",
               "path": "$[\"labels\"][\"result_table_id\"]",
               "value": "uptimecheck.icmp"
             },

@@ -464,11 +464,6 @@
             },
             {
               "op": "set",
-              "path": "$[\"labels\"][\"metric_unique_id\"]",
-              "value": "sql_test_ob_mysql_platform.sql1.mysql_db_data_length"
-            },
-            {
-              "op": "set",
               "path": "$[\"labels\"][\"result_table_id\"]",
               "value": "sql_test_ob_mysql_platform.sql1"
             },

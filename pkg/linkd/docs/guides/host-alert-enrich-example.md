@@ -575,7 +575,6 @@ Strategy 输出沿用 Kafka labels 中的策略身份字段名：
   "metric_name": "usage",
   "unit": "percent",
   "result_table_id": "system.cpu",
-  "metric_unique_id": "system.cpu.usage",
   "aggregate_func": "avg",
   "time_interval": 60,
   "where_condition": "bk_inst_id='101' and bk_target_cloud_id='0' and bk_target_ip='10.0.0.1'",

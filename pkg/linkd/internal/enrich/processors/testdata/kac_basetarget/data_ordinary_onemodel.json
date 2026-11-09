@@ -94,7 +94,9 @@
   },
   "metric": {
     "ObjectModelCode": "cw-MySQL",
-    "ModelIDs": ["cw-MySQL"],
+    "ModelIDs": [
+      "cw-MySQL"
+    ],
     "FieldName": "requests",
     "FieldCNName": "请求量",
     "Description": "",
@@ -418,11 +420,6 @@
                   }
                 ]
               }
-            },
-            {
-              "op": "set",
-              "path": "$[\"labels\"][\"metric_unique_id\"]",
-              "value": "service.metric.requests"
             },
             {
               "op": "set",

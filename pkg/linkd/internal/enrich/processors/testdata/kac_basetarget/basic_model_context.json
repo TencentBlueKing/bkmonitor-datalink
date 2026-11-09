@@ -343,11 +343,6 @@
             },
             {
               "op": "set",
-              "path": "$[\"labels\"][\"metric_unique_id\"]",
-              "value": "system.disk.disk_io"
-            },
-            {
-              "op": "set",
               "path": "$[\"labels\"][\"result_table_id\"]",
               "value": "system.disk"
             },

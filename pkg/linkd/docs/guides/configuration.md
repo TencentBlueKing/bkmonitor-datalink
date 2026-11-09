@@ -17,6 +17,27 @@ telemetry:
 监听地址必须是 IP 回环地址；配置非回环地址会使进程在接管消息前启动失败。block/mutex 采样
 存在运行时开销，普通运行不要配置这些字段。不同常驻角色需要使用不同端口。
 
+## Kafka 数据丢失通知与消费恢复
+
+franz-go 检测到消费位置对应的日志历史发生截断时，可能返回 `kgo.ErrDataLoss`。
+SDK 会调整当前 Client 的消费位置；Linkd 记录包含 Topic、partition、原/新 offset 和
+leader epoch 的 WARN，继续使用该 Client，并处理同次 Poll 返回的有效消息。
+这种恢复只表示继续消费，不表示丢失的数据已找回；其他拉取错误仍返回给运行时处理。
+
+该处理不修改消费组提交位点，不改变现有 `ConsumeStartOffset` / `ConsumeResetOffset`
+从尾部开始的策略。提交位点越界、历史日志缺失或 Topic 被重建时，仍需核对可用数据范围，
+按环境恢复方案决定是否重置消费组；不能以恢复后 lag 为零证明历史消息全部处理完成。
+
+真实 Kafka 定向回归只接受独立实例的数字回环地址，显式运行：
+
+```bash
+LINKD_TEST_KAFKA_DATA_LOSS_BROKER=127.0.0.1:29093 go test -race ./internal/consume/kafka -run '^TestKafkaDataLossRecovery$' -count=3 -v
+```
+
+测试创建并清理专用 Topic 和消费组，写入少量合成消息，再提交高于日志末尾且带真实
+leader epoch 的历史位点，触发 Kafka/SDK 的 `ErrDataLoss`。它验证通知后同一 Client
+继续消费、真实提交位点推进及 Session 重启接续，不模拟 Broker 磁盘损坏或多副本选主故障。
+
 ## Kafka 分区恢复延迟
 
 Cleaner 的组批等待仅在批次尚未执行、存在空闲执行槽位且期限尚未到达时驱动定时唤醒。

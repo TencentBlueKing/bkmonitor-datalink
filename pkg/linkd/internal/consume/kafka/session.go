@@ -35,6 +35,11 @@ type kafkaClient interface {
 	Close()
 }
 
+// Logger 记录 Kafka 自动恢复消费位置时的数据丢失通知。
+type Logger interface {
+	WarnContext(ctx context.Context, message string, args ...any)
+}
+
 type receiptData struct {
 	record *kgo.Record
 	lane   string
@@ -60,6 +65,7 @@ type Session struct {
 	client kafkaClient
 	config Config
 	issuer *consume.ReceiptIssuer
+	logger Logger
 
 	mu           sync.Mutex
 	receipts     map[uint64]receiptData
@@ -71,8 +77,9 @@ type Session struct {
 	cancelClient context.CancelFunc
 }
 
-// NewSession 创建并验证 Kafka consumer。调用方负责在 Runtime 结束时关闭 Session。
-func NewSession(config Config) (*Session, error) {
+// NewSession 创建并验证 Kafka consumer，logger 可为 nil。
+// 调用方负责在 Runtime 结束时关闭 Session。
+func NewSession(config Config, logger Logger) (*Session, error) {
 	config = config.WithDefaults()
 	if err := config.validateStatic(); err != nil {
 		return nil, fmt.Errorf("create kafka session: %w", err)
@@ -93,6 +100,7 @@ func NewSession(config Config) (*Session, error) {
 	session := newSession(config, client)
 	session.ownership = ownership
 	session.cancelClient = cancelClient
+	session.logger = logger
 	return session, nil
 }
 
@@ -170,13 +178,26 @@ func (s *Session) Receive(ctx context.Context, limits consume.ReceiveLimits) ([]
 		sort.Strings(lanes)
 		consume.ReportPartitions(ctx, lanes)
 	}
-	if fetchErrors := fetches.Errors(); len(fetchErrors) > 0 {
-		if paused && errors.Is(fetchErrors[0].Err, context.DeadlineExceeded) && ctx.Err() == nil {
-			s.allowRebalanceIfIdle()
-			return nil, nil
+	for _, fetchError := range fetches.Errors() {
+		var dataLoss *kgo.ErrDataLoss
+		if errors.As(fetchError.Err, &dataLoss) {
+			// franz-go 已调整当前 Client 的消费位置；重建 Client 会重新加载旧提交位点，
+			// 导致同一通知反复使任务退出。这里只记录，不丢弃同次 Poll 的有效 records。
+			if s.logger != nil {
+				s.logger.WarnContext(ctx, "Kafka data loss detected; continuing with reset offset",
+					"module", "consume", "operation", "receive", "error", fetchError.Err,
+					"topic", fetchError.Topic, "partition", fetchError.Partition,
+					"consumer_group", s.config.ConsumerGroup, "client_id", s.config.ClientID,
+					"consumed_to", dataLoss.ConsumedTo, "consumed_to_epoch", dataLoss.ConsumedToEpoch,
+					"reset_to", dataLoss.ResetTo, "reset_to_epoch", dataLoss.ResetToEpoch)
+			}
+			continue
+		}
+		if paused && errors.Is(fetchError.Err, context.DeadlineExceeded) && ctx.Err() == nil {
+			continue
 		}
 		s.allowRebalanceIfIdle()
-		return nil, fmt.Errorf("kafka poll: topic=%q partition=%d: %w", fetchErrors[0].Topic, fetchErrors[0].Partition, fetchErrors[0].Err)
+		return nil, fmt.Errorf("kafka poll: topic=%q partition=%d: %w", fetchError.Topic, fetchError.Partition, fetchError.Err)
 	}
 	records := fetches.Records()
 	if len(records) == 0 {

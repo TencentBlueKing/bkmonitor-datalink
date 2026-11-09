@@ -130,7 +130,7 @@ func testPartitionTail(t *testing.T, brokers []string, wait time.Duration) {
 	if len(committed.Topics) != 1 || len(committed.Topics[0].Partitions) != 1 || committed.Topics[0].Partitions[0].ErrorCode != 0 {
 		t.Fatalf("seed committed offset: %+v", committed.Topics)
 	}
-	s, err := NewSession(Config{Brokers: brokers, Topic: topic, ConsumerGroup: topic, FetchMaxWait: wait})
+	s, err := NewSession(Config{Brokers: brokers, Topic: topic, ConsumerGroup: topic, FetchMaxWait: wait}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

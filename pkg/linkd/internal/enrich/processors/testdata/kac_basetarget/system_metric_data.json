@@ -468,11 +468,6 @@
             },
             {
               "op": "set",
-              "path": "$[\"labels\"][\"metric_unique_id\"]",
-              "value": "system.cpu_summary.usage"
-            },
-            {
-              "op": "set",
               "path": "$[\"labels\"][\"result_table_id\"]",
               "value": "system.cpu_summary"
             },

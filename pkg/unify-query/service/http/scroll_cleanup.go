@@ -2,27 +2,25 @@ package http
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
 
-// scrollSessionKey 将用户、租户与空间共同纳入会话身份，摘要避免在 Redis 键中保存查询正文。
+// 保持已发布版本的会话键，升级和回滚后仍能读取同一次下载的最新游标。
+// query 是 JSON 对象，会话与锁的首个 Redis hash tag 相同。
 func scrollSessionKey(user *metadata.User, query string) string {
-	identity, _ := json.Marshal([]string{user.Name, user.TenantID, user.SpaceUID, query})
-	// 会话与锁使用同一个 Redis Cluster hash tag，供原子保存同时访问两个键。
-	return fmt.Sprintf("{%x}", sha256.Sum256(identity))
+	return fmt.Sprintf("%s:%s", user.Name, query)
 }
 
-// BkData 使用独立网关；即使表和 StorageID 相同，也不能复用原生 ES 的游标。
-// 响应中的 TableUUID 保持原格式，这个标识只用于会话内部保存分支。
-func scrollSliceKey(query *metadata.Query) string {
+// 普通路由保留旧版分支键；只有同表、同 StorageID 同时访问两种 ES 来源时才区分游标。
+func scrollSliceKey(query *metadata.Query, nativeESRoutes map[string]bool) string {
 	key := query.TableUUID()
-	if query.StorageType == metadata.ElasticsearchStorageType && query.SourceType == structured.BkData {
+	route := *query
+	route.SliceID = ""
+	if query.StorageType == metadata.ElasticsearchStorageType && query.SourceType == structured.BkData && nativeESRoutes[route.TableUUID()] {
 		key += "|bkdata"
 	}
 	return key

@@ -41,13 +41,13 @@ func TestScrollSessionKey(testContext *testing.T) {
 		same  bool
 	}{
 		{name: "same_identity", user: user, query: "query", same: true},
-		{name: "different_tenant", user: metadata.User{Name: user.Name, TenantID: "tenant-b", SpaceUID: user.SpaceUID}, query: "query"},
-		{name: "different_space", user: metadata.User{Name: user.Name, TenantID: user.TenantID, SpaceUID: "space-b"}, query: "query"},
+		{name: "legacy_tenant_key", user: metadata.User{Name: user.Name, TenantID: "tenant-b", SpaceUID: user.SpaceUID}, query: "query", same: true},
 		{name: "different_user", user: metadata.User{Name: "other", TenantID: user.TenantID, SpaceUID: user.SpaceUID}, query: "query"},
 		{name: "different_query", user: user, query: "other-query"},
 	} {
 		testContext.Run(testCase.name, func(testContext *testing.T) {
 			require.Equal(testContext, testCase.same, key == scrollSessionKey(&testCase.user, testCase.query))
+			require.Equal(testContext, testCase.user.Name+":"+testCase.query, scrollSessionKey(&testCase.user, testCase.query))
 		})
 	}
 }
@@ -57,16 +57,19 @@ func TestScrollSliceKey(testContext *testing.T) {
 		name       string
 		storage    string
 		source     string
+		nativePeer bool
 		wantSuffix string
 	}{
 		{name: "native_es", storage: metadata.ElasticsearchStorageType, source: structured.BkLog},
 		{name: "default_es", storage: metadata.ElasticsearchStorageType},
-		{name: "bkdata_es", storage: metadata.ElasticsearchStorageType, source: structured.BkData, wantSuffix: "|bkdata"},
+		{name: "bkdata_es_legacy_key", storage: metadata.ElasticsearchStorageType, source: structured.BkData},
+		{name: "bkdata_es_native_peer", storage: metadata.ElasticsearchStorageType, source: structured.BkData, nativePeer: true, wantSuffix: "|bkdata"},
 		{name: "doris", storage: metadata.BkSqlStorageType, source: structured.BkData},
 	} {
 		testContext.Run(testCase.name, func(testContext *testing.T) {
 			query := &metadata.Query{TableID: "same-table", StorageID: "same-storage", SliceID: "0", StorageType: testCase.storage, SourceType: testCase.source}
-			require.Equal(testContext, query.TableUUID()+testCase.wantSuffix, scrollSliceKey(query))
+			nativeRoutes := map[string]bool{"same-table|same-storage": testCase.nativePeer}
+			require.Equal(testContext, query.TableUUID()+testCase.wantSuffix, scrollSliceKey(query, nativeRoutes))
 		})
 	}
 }

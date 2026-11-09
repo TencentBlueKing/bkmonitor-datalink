@@ -43,6 +43,7 @@ const (
 var (
 	ErrScrollSessionLocked   = errors.New("scroll session is already locked")
 	ErrScrollSessionLockLost = errors.New("scroll session lock expired or changed owner")
+	ErrScrollSessionTenant   = errors.New("scroll session belongs to another tenant")
 )
 
 type SliceStatus struct {
@@ -80,7 +81,8 @@ type ScrollSession struct {
 	SliceMaxFailedNum   int           `json:"slice_max_failed_num"`
 	Limit               int           `json:"limit"`
 
-	Cache bool `json:"cache"`
+	Cache    bool    `json:"cache"`
+	TenantID *string `json:"tenant_id,omitempty"`
 
 	SlicesMap map[string]*SliceStatus `json:"slices_map"`
 
@@ -326,10 +328,19 @@ func GetOrCreateScrollSession(ctx context.Context, queryTsStr string, scrollWind
 	if err := session.Start(ctx); err != nil {
 		return nil, err
 	}
+	user := metadata.GetUser(ctx)
+	tenantID := user.TenantID
 	if session.Cache && !session.Done() {
+		if session.TenantID != nil && *session.TenantID != tenantID {
+			session.release(ctx)
+			return nil, ErrScrollSessionTenant
+		}
+		// 空间已包含在查询正文中。旧版未保存租户，首次续页时补充，游标和进度保持不变。
+		session.TenantID = &tenantID
 		log.Debugf(ctx, "session cache")
 		return session, nil
 	}
+	session.TenantID = &tenantID
 
 	// 完成会话再次请求时开始新下载；状态替换与读取都在同一把锁内。
 	if err = session.Reset(ctx); err != nil {

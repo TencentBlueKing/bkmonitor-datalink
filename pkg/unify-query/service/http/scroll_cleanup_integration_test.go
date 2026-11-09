@@ -472,7 +472,20 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 		}
 	})
 
-	testContext.Run("tenant_isolated_handler_sessions", func(testContext *testing.T) {
+	testContext.Run("version_handoff_native_es", func(testContext *testing.T) {
+		query := newQuery()
+		query.QueryList = query.QueryList[:1]
+		testScrollVersionHandoff(testContext, ctx, query, clusters, expectedEventIDs[:3], nil)
+		assertNoScrolls(testContext)
+	})
+	testContext.Run("page_save_failure", func(testContext *testing.T) {
+		query := newQuery()
+		query.QueryList = query.QueryList[:1]
+		testScrollPageSaveFailure(testContext, ctx, query, clusters[0], expectedEventIDs[:3])
+		assertNoScrolls(testContext)
+	})
+
+	testContext.Run("tenant_conflict_preserves_handler_session", func(testContext *testing.T) {
 		oldWindow, oldLock := ScrollWindowTimeout, ScrollSessionLockTimeout
 		ScrollWindowTimeout, ScrollSessionLockTimeout = "5m", "10s"
 		testContext.Cleanup(func() { ScrollWindowTimeout, ScrollSessionLockTimeout = oldWindow, oldLock })
@@ -480,34 +493,44 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 		query.Limit, query.SliceMax = 2, 2
 		body, err := json.Marshal(query)
 		require.NoError(testContext, err)
-		request := func(tenant string) ListData {
+		request := func(tenant, space string, status int) ListData {
 			queryCtx := queryContext()
-			metadata.SetUser(queryCtx, &metadata.User{Key: "backend:" + prefix, TenantID: tenant, SpaceUID: "bkcc__2"})
+			metadata.SetUser(queryCtx, &metadata.User{Key: "backend:" + prefix, TenantID: tenant, SpaceUID: space})
 			response := httptest.NewRecorder()
 			ginContext, _ := gin.CreateTestContext(response)
 			ginContext.Request = httptest.NewRequest(http.MethodPost, "/query/ts/raw_with_scroll/", bytes.NewReader(body)).WithContext(queryCtx)
 			HandlerQueryRawWithScroll(ginContext)
-			require.Equal(testContext, http.StatusOK, response.Code, response.Body.String())
+			require.Equal(testContext, status, response.Code, response.Body.String())
 			var result struct {
 				ListData
 				Error string `json:"error"`
 			}
 			require.NoError(testContext, json.Unmarshal(response.Body.Bytes(), &result))
+			if status != http.StatusOK {
+				require.Contains(testContext, result.Error, redisUtil.ErrScrollSessionTenant.Error())
+				require.Empty(testContext, result.List)
+				return result.ListData
+			}
 			require.Empty(testContext, result.Error)
 			return result.ListData
 		}
-		firstA, firstB := request("tenant-a"), request("tenant-b")
+		firstA := request("tenant-a", "", http.StatusOK)
 		require.False(testContext, firstA.Done)
-		require.False(testContext, firstB.Done)
 		require.NotEmpty(testContext, firstA.List)
-		// 同名、同空间和同查询在两个租户各自从第一页开始，A 完成后 B 仍能续页。
-		require.ElementsMatch(testContext, firstA.List, firstB.List)
+		sessionKey := redisUtil.SessionKeyPrefix + prefix + ":" + string(body)
+		saved := redisUtil.Client().Get(ctx, sessionKey).Val()
+		request("tenant-b", "bkcc__2", http.StatusBadRequest)
+		require.Equal(testContext, saved, redisUtil.Client().Get(ctx, sessionKey).Val())
+		// 冲突请求不能读取或清理 A 的游标；A 完成后同名的新下载可由 B 创建。
 		for _, testCase := range []struct {
 			tenant string
 			first  ListData
-		}{{tenant: "tenant-a", first: firstA}, {tenant: "tenant-b", first: firstB}} {
+		}{{tenant: "tenant-a", first: firstA}, {tenant: "tenant-b"}} {
 			var eventIDs []string
 			page := testCase.first
+			if testCase.tenant == "tenant-b" {
+				page = request(testCase.tenant, "bkcc__2", http.StatusOK)
+			}
 			for count := 0; ; count++ {
 				for _, event := range page.List {
 					eventIDs = append(eventIDs, event["event_id"].(string))
@@ -516,11 +539,12 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 					break
 				}
 				require.Less(testContext, count, 40)
-				page = request(testCase.tenant)
+				page = request(testCase.tenant, "bkcc__2", http.StatusOK)
 			}
 			require.ElementsMatch(testContext, expectedEventIDs, eventIDs)
 		}
 		assertNoScrolls(testContext)
+		require.NoError(testContext, redisUtil.Client().Del(ctx, sessionKey).Err())
 	})
 
 	testContext.Run("EOF_all_saved_branches_and_clusters", func(testContext *testing.T) {
@@ -765,10 +789,14 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 		require.NoError(testContext, err)
 		proxy := httputil.NewSingleHostReverseProxy(backendURL)
 		director := proxy.Director
-		requestHeaders := make(chan http.Header, 128)
-		requestPaths := make(chan string, 128)
+		requestHeaders := make(chan http.Header, 1024)
+		requestPaths := make(chan string, 1024)
+		var initialQueries atomic.Int64
 		var gatewayPath string
 		proxy.Director = func(request *http.Request) {
+			if strings.HasSuffix(strings.TrimSuffix(request.URL.Path, "/"), "/_search") {
+				initialQueries.Add(1)
+			}
 			requestHeaders <- request.Header.Clone()
 			requestPaths <- request.URL.Path
 			director(request)
@@ -808,6 +836,15 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 		default:
 			testContext.Fatal("BkData cleanup did not reach the real ES forwarding gateway")
 		}
+
+		testContext.Run("version_handoff_bkdata_es", func(testContext *testing.T) {
+			query := newQuery()
+			query.SpaceUid = "bkcc__saved"
+			query.QueryList = query.QueryList[1:]
+			query.TsDBMap["1"][0].SourceType = structured.BkData
+			testScrollVersionHandoff(testContext, ctx, query, clusters, expectedEventIDs[3:], &initialQueries)
+			assertNoScrolls(testContext)
+		})
 
 		testContext.Run("same_table_and_storage_across_sources", func(testContext *testing.T) {
 			query := newQuery()

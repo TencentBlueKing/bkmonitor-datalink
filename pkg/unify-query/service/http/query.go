@@ -521,17 +521,13 @@ func hasRawOffsetCursor(option *metadata.ResultTableOption) bool {
 }
 
 // queryRawWithScroll 根据下载会话调度尚未完成的切片，并更新各切片的游标和重试状态。
-func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (int64, []map[string]any, metadata.ResultTableOptions, []metadata.RouteInfo, bool, error) {
+func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, routeInfo []metadata.RouteInfo, done bool, err error) {
 	var (
 		receiveWg sync.WaitGroup
 		dataCh    = make(chan map[string]any)
 		errCh     = make(chan error)
-
-		total              int64
-		err                error
-		resultTableOptions = make(metadata.ResultTableOptions)
-		routeInfo          []metadata.RouteInfo
 	)
+	resultTableOptions = make(metadata.ResultTableOptions)
 
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
 	defer span.End(&err)
@@ -545,10 +541,16 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 		).Error(ctx, err)
 	}
 	defer func() {
-		_ = session.Stop(ctx, prometheus.ClearScroll)
+		if stopErr := session.Stop(ctx, prometheus.ClearScroll); stopErr != nil {
+			stopErr = metadata.NewMessage(metadata.MsgQueryRawScroll, "保存下载会话失败").Error(ctx, stopErr)
+			// 未保存的分页不能确认成功，否则调用方追加数据后会在续页时重复读取。
+			if err == nil {
+				err = stopErr
+			}
+		}
 	}()
 
-	list := make([]map[string]any, 0)
+	list = make([]map[string]any, 0)
 
 	plan, err := queryTs.ToRawQueryPlan(ctx)
 	if err != nil {
@@ -559,11 +561,17 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 	}
 	stats := newRawQueryTraceStats(plan)
 	defer func() { stats.record(ctx, span) }()
+	nativeESRoutes := make(map[string]bool)
+	plan.Queries.Range("", func(query *metadata.Query) {
+		if query.StorageType == metadata.ElasticsearchStorageType && query.SourceType != structured.BkData {
+			nativeESRoutes[query.TableUUID()] = true
+		}
+	})
 	queryRef := excludeElasticsearchIndexPrefixMissingQueries(ctx, plan.Queries, metadata.MsgQueryRawScroll, func(qry *metadata.Query) {
 		for i := 0; i < session.SliceLength(); i++ {
 			sliceQry := *qry
 			sliceQry.SliceID = cast.ToString(i)
-			sliceKey := scrollSliceKey(&sliceQry)
+			sliceKey := scrollSliceKey(&sliceQry, nativeESRoutes)
 			slice := session.Slice(sliceKey)
 			slice.Status = redisUtil.StatusCompleted
 			session.UpdateSliceStatus(sliceKey, slice)
@@ -645,7 +653,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				localQry.SliceID = cast.ToString(localSliceIndex)
 
 				// slice info
-				sliceKey := scrollSliceKey(localQry)
+				sliceKey := scrollSliceKey(localQry, nativeESRoutes)
 				slice := session.Slice(sliceKey)
 				defer func() {
 					session.UpdateSliceStatus(sliceKey, slice)

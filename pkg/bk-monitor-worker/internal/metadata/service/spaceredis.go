@@ -306,7 +306,8 @@ func (s *SpacePusher) GetSpaceTableIdDataId(bkTenantId string, spaceType, spaceI
 	return dataMap, nil
 }
 
-// PushDataLabelTableIds 推送 data_label 及对应的结果表
+// PushDataLabelTableIds 推送 data_label 及对应的结果表。
+// isPublish 为兼容既有调用保留；沿用 BMW 根据映射变化决定是否发布的行为，此参数不控制发布。
 func (s *SpacePusher) PushDataLabelTableIds(bkTenantId string, tableIdList []string, isPublish bool) error {
 	logger.Infof("PushDataLabelTableIds:start to push data_label table_id data")
 

@@ -16,7 +16,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
 	metadataTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
 )
@@ -42,6 +41,10 @@ func refreshResultTable(c *gin.Context) {
 		BadReqResponse(c, "bk_tenant_id is required")
 		return
 	}
+	if hasBlankRouteTarget(req.TableIDs) {
+		BadReqResponse(c, "table_ids must not contain blank values")
+		return
+	}
 	publish := req.IsPublish == nil || *req.IsPublish
 	err := service.NewSpacePusher().PushTableIdDetail(req.TenantID, req.TableIDs, publish)
 	finishRouteRefresh(c, err)
@@ -59,6 +62,10 @@ func refreshDataLabel(c *gin.Context) {
 	}
 	if strings.TrimSpace(req.TenantID) == "" || (len(req.TableIDs) > 0) == (len(req.DataLabels) > 0) {
 		BadReqResponse(c, "provide bk_tenant_id and exactly one non-empty list: table_ids or data_labels")
+		return
+	}
+	if hasBlankRouteTarget(req.TableIDs) || hasBlankRouteTarget(req.DataLabels) {
+		BadReqResponse(c, "table_ids and data_labels must not contain blank values")
 		return
 	}
 	p := service.NewSpacePusher()
@@ -83,9 +90,13 @@ func refreshSpace(c *gin.Context) {
 		BadReqResponse(c, "bk_tenant_id is required")
 		return
 	}
+	if strings.TrimSpace(req.SpaceID) == "" {
+		BadReqResponse(c, "space_id is required")
+		return
+	}
 	err := metadataTask.RefreshSpaceRoute(req.TenantID, req.SpaceType, req.SpaceID)
 	if errors.Is(err, metadataTask.ErrSpaceNotFound) {
-		c.JSON(http.StatusNotFound, gin.H{"result": false, "code": common.ParamsError, "message": "space not found", "data": nil})
+		c.JSON(http.StatusNotFound, gin.H{"result": false, "code": http.StatusNotFound, "message": "space not found", "data": nil})
 		return
 	}
 	finishRouteRefresh(c, err)
@@ -93,8 +104,18 @@ func refreshSpace(c *gin.Context) {
 
 func finishRouteRefresh(c *gin.Context, err error) {
 	if err != nil {
-		ServerErrResponse(c, "refresh route: %s", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"result": false, "code": http.StatusInternalServerError, "message": "refresh route: " + err.Error(), "data": nil})
 		return
 	}
 	Response(c, nil)
+}
+
+// hasBlankRouteTarget only validates input; valid identifiers are passed through unchanged.
+func hasBlankRouteTarget(values []string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			return true
+		}
+	}
+	return false
 }

@@ -10,6 +10,7 @@
 package http
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http/httptest"
 	"strings"
@@ -68,6 +69,18 @@ func TestRefreshResultTablePublishAndExecutionError(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, httptest.NewRequest("POST", "/bmw/metadata/routes/result-table/refresh", strings.NewReader(tc.body)))
 			require.Equal(t, tc.status, w.Code)
+			var response struct {
+				Code   int  `json:"code"`
+				Result bool `json:"result"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+			if tc.status >= 400 {
+				require.Equal(t, tc.status, response.Code)
+				require.False(t, response.Result)
+			} else {
+				require.Zero(t, response.Code)
+				require.True(t, response.Result)
+			}
 			require.True(t, called)
 		})
 	}
@@ -86,6 +99,52 @@ func TestRefreshSpaceReportsLookupAndRefreshErrors(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, httptest.NewRequest("POST", "/bmw/metadata/routes/space/refresh", strings.NewReader(`{"bk_tenant_id":"system","space_type":"bkcc","space_id":"2"}`)))
 			require.Equal(t, tc.status, w.Code)
+			var response struct {
+				Code   int  `json:"code"`
+				Result bool `json:"result"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+			if tc.status >= 400 {
+				require.Equal(t, tc.status, response.Code)
+				require.False(t, response.Result)
+			} else {
+				require.Zero(t, response.Code)
+				require.True(t, response.Result)
+			}
+		})
+	}
+}
+
+func TestRouteRefreshRejectsBlankTargets(t *testing.T) {
+	router := gin.New()
+	registerRouteRefresh(router.Group(RouterPrefix))
+	// Invalid input must be rejected before any refresh method is invoked.
+	patches := gomonkey.NewPatches()
+	patches.ApplyMethodReturn(&service.SpacePusher{}, "PushTableIdDetail", errors.New("unexpected refresh"))
+	patches.ApplyMethodReturn(&service.SpacePusher{}, "PushDataLabelTableIds", errors.New("unexpected refresh"))
+	patches.ApplyMethodReturn(&service.SpacePusher{}, "PushNamedDataLabels", errors.New("unexpected refresh"))
+	patches.ApplyFuncReturn(metadataTask.RefreshSpaceRoute, errors.New("unexpected refresh"))
+	defer patches.Reset()
+	for _, tc := range []struct{ name, path, body string }{
+		{"blank RT", "result-table", `{"bk_tenant_id":"system","table_ids":[" "]}`},
+		{"mixed RT", "result-table", `{"bk_tenant_id":"system","table_ids":["x.y"," "]}`},
+		{"blank label RT", "data-label", `{"bk_tenant_id":"system","table_ids":["\t"]}`},
+		{"mixed label RT", "data-label", `{"bk_tenant_id":"system","table_ids":["x.y","\n"]}`},
+		{"blank label", "data-label", `{"bk_tenant_id":"system","data_labels":["　"]}`},
+		{"mixed labels", "data-label", `{"bk_tenant_id":"system","data_labels":["system"," "]}`},
+		{"blank space", "space", `{"bk_tenant_id":"system","space_type":"bkcc","space_id":" \t\n"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest("POST", "/bmw/metadata/routes/"+tc.path+"/refresh", strings.NewReader(tc.body)))
+			require.Equal(t, 400, w.Code, w.Body.String())
+			var response struct {
+				Code   int  `json:"code"`
+				Result bool `json:"result"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+			require.Equal(t, 400, response.Code)
+			require.False(t, response.Result)
 		})
 	}
 }

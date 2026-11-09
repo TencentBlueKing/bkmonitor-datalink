@@ -31,6 +31,7 @@ type kafkaClient interface {
 	ResumeFetchPartitions(topicPartitions map[string][]int32)
 	PauseFetchTopics(topics ...string) []string
 	ResumeFetchTopics(topics ...string)
+	LeaveGroupContext(context.Context) error
 	Close()
 }
 
@@ -60,13 +61,14 @@ type Session struct {
 	config Config
 	issuer *consume.ReceiptIssuer
 
-	mu         sync.Mutex
-	receipts   map[uint64]receiptData
-	laneTokens map[string][]uint64
-	laneParts  map[string]map[string][]int32
-	flowPaused bool
-	closed     bool
-	ownership  *ownershipBridge
+	mu           sync.Mutex
+	receipts     map[uint64]receiptData
+	laneTokens   map[string][]uint64
+	laneParts    map[string]map[string][]int32
+	flowPaused   bool
+	closed       bool
+	ownership    *ownershipBridge
+	cancelClient context.CancelFunc
 }
 
 // NewSession 创建并验证 Kafka consumer。调用方负责在 Runtime 结束时关闭 Session。
@@ -81,12 +83,16 @@ func NewSession(config Config) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create kafka session options: %w", err)
 	}
-	client, err := kgo.NewClient(options...)
+	// 客户端生命周期独立于单次 Receive；关闭超时才取消其网络请求。
+	clientCtx, cancelClient := context.WithCancel(context.Background())
+	client, err := kgo.NewClient(append(options, kgo.WithContext(clientCtx))...)
 	if err != nil {
+		cancelClient()
 		return nil, fmt.Errorf("create kafka client: %w", err)
 	}
 	session := newSession(config, client)
 	session.ownership = ownership
+	session.cancelClient = cancelClient
 	return session, nil
 }
 
@@ -359,7 +365,9 @@ func (s *Session) OwnershipEvents() <-chan consume.OwnershipEvent {
 
 func (s *Session) AllowOwnershipChanges() { s.client.AllowRebalance() }
 
-// Close 关闭 consumer group Session，未确认 offset 将由后续 owner 重放。
+// Close 有界等待退组和客户端关闭，未确认 offset 将由后续 owner 重放。
+// 超时或退组失败返回的 StopIncompleteError 保留最终关闭信号，调用方必须
+// 等待该信号再释放任务占位；远端退组失败不能跳过本地连接和 goroutine 回收。
 func (s *Session) Close(ctx context.Context) error {
 	s.mu.Lock()
 	if s.closed {
@@ -374,14 +382,29 @@ func (s *Session) Close(ctx context.Context) error {
 		s.ownership.closeOnce.Do(func() { close(s.ownership.closed) })
 	}
 	done := make(chan struct{})
+	var leaveErr error
 	go func() {
+		if s.cancelClient != nil {
+			// LeaveGroupContext 在等待取消时可能先返回，客户端内部退组仍在
+			// 排队。取消客户端请求，避免随后的 Close 又无限等待 broker。
+			stopCancel := context.AfterFunc(ctx, s.cancelClient)
+			defer stopCancel()
+			defer s.cancelClient()
+		}
+		// franz-go 的 Close 默认无限等待退组。先使用关闭期限退出消费组，
+		// 即使 broker 不响应也继续关闭本地资源；不能并发反复创建新客户端。
+		leaveErr = s.client.LeaveGroupContext(ctx)
 		s.client.Close()
 		close(done)
 	}()
 	select {
 	case <-ctx.Done():
-		return fmt.Errorf("%w: %w", consume.ErrStopIncomplete, ctx.Err())
+		return &consume.StopIncompleteError{Cause: ctx.Err(), Done: done}
 	case <-done:
+		if leaveErr != nil {
+			// 保留退组错误供任务边界记录；Done 已关闭，调度可立即完成停止。
+			return &consume.StopIncompleteError{Cause: leaveErr, Done: done}
+		}
 		return nil
 	}
 }

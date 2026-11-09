@@ -403,3 +403,94 @@ func TestOwnershipCallbacksDoNotBlockAfterRuntimeStops(t *testing.T) {
 		t.Fatal("Kafka close callback waits for an exited runtime")
 	}
 }
+
+// 模拟 broker 退组不响应，超时后本地关闭仍需等待；不能把超时当作关闭完成。
+func TestSessionCloseReportsLateCompletion(t *testing.T) {
+	client := &delayedCloseClient{closeStarted: make(chan struct{}), finish: make(chan struct{})}
+	var once sync.Once
+	finish := func() { once.Do(func() { close(client.finish) }) }
+	defer finish()
+	session := newSession(testConfig(), client)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	err := session.Close(ctx)
+	var incomplete *consume.StopIncompleteError
+	if !errors.As(err, &incomplete) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Close() = %v", err)
+	}
+	select {
+	case <-client.closeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("close did not continue after leave timeout")
+	}
+	select {
+	case <-incomplete.Done:
+		t.Fatal("close reported completion before resources were released")
+	default:
+	}
+	if err := session.Close(t.Context()); !errors.Is(err, consume.ErrSessionClosed) {
+		t.Fatalf("second Close() = %v", err)
+	}
+	finish()
+	select {
+	case <-incomplete.Done:
+	case <-time.After(time.Second):
+		t.Fatal("late completion was not reported")
+	}
+}
+
+type delayedCloseClient struct {
+	fakeKafkaClient
+	closeStarted chan struct{}
+	finish       chan struct{}
+}
+
+func (c *delayedCloseClient) LeaveGroupContext(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (c *delayedCloseClient) Close() {
+	close(c.closeStarted)
+	<-c.finish
+	c.fakeKafkaClient.Close()
+}
+
+func (c *fakeKafkaClient) LeaveGroupContext(context.Context) error { return nil }
+
+func TestSessionCloseCompletesNormally(t *testing.T) {
+	client := &fakeKafkaClient{}
+	session := newSession(testConfig(), client)
+	if err := session.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if !client.closed {
+		t.Fatal("Close returned before client closed")
+	}
+}
+
+func TestSessionCloseCancelsStalledClientRequests(t *testing.T) {
+	client := &delayedCloseClient{closeStarted: make(chan struct{}), finish: make(chan struct{})}
+	session := newSession(testConfig(), client)
+	var once sync.Once
+	session.cancelClient = func() { once.Do(func() { close(client.finish) }) }
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err := session.Close(ctx)
+	var incomplete *consume.StopIncompleteError
+	if !errors.As(err, &incomplete) {
+		t.Fatalf("Close()=%v", err)
+	}
+	select {
+	case <-incomplete.Done:
+	case <-time.After(time.Second):
+		t.Fatal("close did not cancel stalled client requests")
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if !client.closed {
+		t.Fatal("completion published before client closed")
+	}
+}

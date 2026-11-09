@@ -30,6 +30,26 @@ var (
 	ErrInvalidDelivery = errors.New("invalid message delivery")
 )
 
+// StopIncompleteError 保留退组或关闭等待失败的原因以及最终资源释放信号。
+// Done 可能在返回时已关闭；只有收到该信号才能将任务报告为 stopped，
+// 该信号不表示未确认消息已提交。
+type StopIncompleteError struct {
+	// Cause 保留等待关闭失败的原因。
+	Cause error
+	// Done 仅在消费客户端的所有关闭工作完成后关闭。
+	Done <-chan struct{}
+}
+
+// Error 返回关闭未完成及其原因。
+func (e *StopIncompleteError) Error() string {
+	return fmt.Sprintf("%s: %v", ErrStopIncomplete, e.Cause)
+}
+
+// Unwrap 保留错误分类和底层取消或超时原因。
+func (e *StopIncompleteError) Unwrap() []error {
+	return []error{ErrStopIncomplete, e.Cause}
+}
+
 // SettlementMode 描述 Broker 的确认进度是逐条独立还是按 lane 累计推进。
 type SettlementMode uint8
 

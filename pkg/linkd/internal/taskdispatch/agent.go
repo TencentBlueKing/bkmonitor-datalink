@@ -60,6 +60,7 @@ type localTask struct {
 	phase      string
 	cancel     context.CancelFunc
 	done       chan struct{}
+	stopDone   <-chan struct{}
 	deadline   time.Time
 	stopAt     time.Time
 	err        string
@@ -137,10 +138,24 @@ func (a *Agent) Run(ctx context.Context) error {
 				}
 				force := false
 				for _, t := range locals {
+					if t.phase == "stopping" && t.stopDone != nil {
+						select {
+						case <-t.stopDone:
+							// Runner 已返回且底层客户端确已关闭，才释放占位。
+							// 原故障仍随 stopped 报告，交给现有调度退避重建。
+							t.phase = "stopped"
+							t.stopDone = nil
+							observer.Transition(observationCtx, "worker", t.task.Role, "stopping", "stopped", "cleanup_completed", now.Sub(t.stopAt))
+						default:
+						}
+					}
 					if (t.phase == "running" || t.phase == "prepared") && !t.deadline.IsZero() && now.Add(DrainTimeout+5*time.Second).After(t.deadline) {
 						stopTask(t, "authorization_deadline")
 					}
-					if t.phase == "stopping" && now.Sub(t.stopAt) > DrainTimeout+5*time.Second {
+					// Cleaner 的来源可能卡在 broker 退组或连接关闭，不能因此杀死
+					// 同进程其他来源。保留 stopping 和预算占位，禁止原任务续跑
+					// 或在本进程启动其新代次；只有进程关闭才升级为强制退出。
+					if t.phase == "stopping" && (t.task.Role != "cleaner" || stopping) && now.Sub(t.stopAt) > DrainTimeout+5*time.Second {
 						force = true
 					}
 				}
@@ -331,6 +346,7 @@ func (a *Agent) Run(ctx context.Context) error {
 					t.phase = "running"
 					taskCopy, specCopy := t.task, t.spec
 					go func(local *localTask) {
+						defer cancelTask()
 						runStarted := time.Now()
 						err := a.runTask(work, taskCopy, specCopy)
 						mu.Lock()
@@ -339,6 +355,10 @@ func (a *Agent) Run(ctx context.Context) error {
 						if errors.Is(err, consume.ErrStopIncomplete) {
 							local.phase = "stopping"
 							local.admission.Store(false)
+							var incomplete *consume.StopIncompleteError
+							if local.task.Role == "cleaner" && errors.As(err, &incomplete) {
+								local.stopDone = incomplete.Done
+							}
 							if local.stopAt.IsZero() {
 								local.stopAt = time.Now()
 							}

@@ -289,7 +289,8 @@ func TestRuntimeReportsIncompleteSessionCloseAfterRequestedShutdown(t *testing.T
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	session := newRuntimeTestSession(nil)
-	session.closeErr = context.DeadlineExceeded
+	closed := make(chan struct{})
+	session.closeErr = &consume.StopIncompleteError{Cause: context.DeadlineExceeded, Done: closed}
 	runtime, err := NewRuntime(
 		config.DefaultCleanerRuntimeConfig(),
 		session,
@@ -302,9 +303,12 @@ func TestRuntimeReportsIncompleteSessionCloseAfterRequestedShutdown(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runtime.Run(ctx); !errors.Is(err, consume.ErrStopIncomplete) {
-		t.Fatalf("Run() error = %v", err)
+	runErr := runtime.Run(ctx)
+	var incomplete *consume.StopIncompleteError
+	if !errors.Is(runErr, consume.ErrStopIncomplete) || !errors.As(runErr, &incomplete) || incomplete.Done != closed {
+		t.Fatalf("Run() lost close completion: %v", runErr)
 	}
+	close(closed)
 	if !session.closed {
 		t.Fatal("session was not closed")
 	}

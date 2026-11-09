@@ -93,7 +93,7 @@ func (f *Factory) NewFlow(ctx context.Context, source config.EventSource) (Flow,
 	if err != nil {
 		return nil, err
 	}
-	session, err := consumekafka.NewSession(kafkaConfig(source))
+	session, err := consumekafka.NewSession(kafkaConfig(source), f.logger)
 	if err != nil {
 		return nil, fmt.Errorf("create cleaner Kafka session for source %q: %w", source.EventSourceID, err)
 	}

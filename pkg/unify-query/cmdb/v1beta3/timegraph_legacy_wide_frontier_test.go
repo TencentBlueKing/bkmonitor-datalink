@@ -180,6 +180,23 @@ func wideFrontierRange(t *testing.T, b *wideFrontierBackend) map[int64][]string 
 	return got
 }
 
+func wideFrontierInstant(t *testing.T, b *wideFrontierBackend) []string {
+	t.Helper()
+	model := legacyRegressionModel(wideFrontierProvider())
+	model.timeGraphVMQuery = b.query(t)
+	_, _, _, _, targets, err := model.QueryResourceMatcher(
+		initTimeGraphQueryTestEnvironment(), "1m", "space", "1700000040",
+		"target", "root", cmdb.Matcher{"root_id": "r1"}, nil, false, nil,
+	)
+	require.NoError(t, err)
+	got := make([]string, 0, len(targets))
+	for _, target := range targets {
+		got = append(got, target["target_id"])
+	}
+	sort.Strings(got)
+	return got
+}
+
 func wideFrontierWant(count int) map[int64][]string {
 	all := make([]string, 0, count)
 	for i := 0; i < count; i++ {
@@ -241,60 +258,90 @@ func TestLegacyWideFrontierThreshold(t *testing.T) {
 	}
 }
 
+// An oversized response, from the gateway or from the request budget, falls back
+// to the batches on both entries with the same input.
 func TestLegacyWideFrontierFallsBackToBatches(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		reject func(ctx context.Context) error
 	}{
-		{"storage reports too large", func(context.Context) error { return metadata.ErrBackendResponseTooLarge }},
+		{"gateway reports too large", func(context.Context) error {
+			return &metadata.BackendResponseTooLargeError{Message: "Response body size exceeds 100 MB, estimatedSize: 135 MB"}
+		}},
 		{"budget marked exceeded", func(ctx context.Context) error {
 			metadata.MarkBackendResponseLimitExceeded(ctx)
 			return nil
 		}},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			b := wideFrontierScenario(300, 3, 2)
-			b.rejectWide = tc.reject
-			require.Equal(t, wideFrontierWant(300), wideFrontierRange(t, b))
-			require.Equal(t, 1, b.wideQueries)
-			// 301 identities in batches of 64, without a budget of their own.
-			require.Len(t, b.hopQueries, 1+5)
-			for _, budget := range b.hopBudgets[1:] {
-				require.Zero(t, budget)
-			}
-		})
+		for _, entry := range []struct {
+			name string
+			run  func(t *testing.T, b *wideFrontierBackend)
+		}{
+			{"range", func(t *testing.T, b *wideFrontierBackend) {
+				require.Equal(t, wideFrontierWant(300), wideFrontierRange(t, b))
+			}},
+			{"instant", func(t *testing.T, b *wideFrontierBackend) {
+				require.Equal(t, wideFrontierWant(300)[wideFrontierFirstMS], wideFrontierInstant(t, b))
+			}},
+		} {
+			t.Run(tc.name+"/"+entry.name, func(t *testing.T) {
+				b := wideFrontierScenario(300, 3, 2)
+				b.rejectWide = tc.reject
+				entry.run(t, b)
+				require.Equal(t, 1, b.wideQueries)
+				// 301 identities in batches of 64, without a budget of their own.
+				require.Len(t, b.hopQueries, 1+5)
+				for _, budget := range b.hopBudgets[1:] {
+					require.Zero(t, budget)
+				}
+			})
+		}
 	}
 }
 
 func TestLegacyWideFrontierPropagatesOtherFailures(t *testing.T) {
-	b := wideFrontierScenario(300, 3, 2)
-	b.rejectWide = func(context.Context) error { return fmt.Errorf("backend failed") }
-	model := legacyRegressionModel(wideFrontierProvider())
-	model.timeGraphVMQuery = b.query(t)
-	_, _, _, _, _, err := model.QueryResourceMatcher(
-		initTimeGraphQueryTestEnvironment(), "1m", "space", "1700000040",
-		"target", "root", cmdb.Matcher{"root_id": "r1"}, nil, false, nil,
-	)
-	require.Error(t, err)
-	require.True(t, strings.Contains(err.Error(), "backend failed"), err.Error())
-	require.Len(t, b.hopQueries, 1, "only an oversized response falls back")
+	for _, tc := range []struct {
+		name   string
+		reject func(cancel context.CancelFunc) error
+		want   func(t *testing.T, err error)
+	}{
+		{"storage failed", func(context.CancelFunc) error { return fmt.Errorf("backend failed") }, func(t *testing.T, err error) {
+			require.ErrorContains(t, err, "backend failed")
+		}},
+		{"read timed out", func(context.CancelFunc) error { return fmt.Errorf("query: %w", context.DeadlineExceeded) }, func(t *testing.T, err error) {
+			require.ErrorContains(t, err, "context deadline exceeded")
+		}},
+		{"request canceled", func(cancel context.CancelFunc) error {
+			cancel()
+			return context.Canceled
+		}, func(t *testing.T, err error) {
+			require.ErrorIs(t, err, context.Canceled)
+		}},
+	} {
+		for _, instant := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/instant=%t", tc.name, instant), func(t *testing.T) {
+				ctx, cancel := context.WithCancel(initTimeGraphQueryTestEnvironment())
+				defer cancel()
+				b := wideFrontierScenario(300, 3, 2)
+				b.rejectWide = func(context.Context) error { return tc.reject(cancel) }
+				model := legacyRegressionModel(wideFrontierProvider())
+				model.timeGraphVMQuery = b.query(t)
+				var err error
+				if instant {
+					_, _, _, _, _, err = model.QueryResourceMatcher(ctx, "1m", "space", "1700000040", "target", "root", cmdb.Matcher{"root_id": "r1"}, nil, false, nil)
+				} else {
+					_, _, _, _, _, err = model.QueryResourceMatcherRange(ctx, "", "space", "1m", "1700000040", "1700000100", "target", "root", cmdb.Matcher{"root_id": "r1"}, nil, false, nil)
+				}
+				tc.want(t, err)
+				require.Len(t, b.hopQueries, 1, "only an oversized response falls back")
+			})
+		}
+	}
 }
 
 func TestLegacyWideFrontierInstant(t *testing.T) {
 	b := wideFrontierScenario(300, 3, 2)
-	model := legacyRegressionModel(wideFrontierProvider())
-	model.timeGraphVMQuery = b.query(t)
-	_, _, _, _, targets, err := model.QueryResourceMatcher(
-		initTimeGraphQueryTestEnvironment(), "1m", "space", "1700000040",
-		"target", "root", cmdb.Matcher{"root_id": "r1"}, nil, false, nil,
-	)
-	require.NoError(t, err)
-	got := make([]string, 0, len(targets))
-	for _, target := range targets {
-		got = append(got, target["target_id"])
-	}
-	sort.Strings(got)
-	require.Equal(t, wideFrontierWant(300)[wideFrontierFirstMS], got)
+	require.Equal(t, wideFrontierWant(300)[wideFrontierFirstMS], wideFrontierInstant(t, b))
 	require.Len(t, b.hopQueries, 1)
 }
 

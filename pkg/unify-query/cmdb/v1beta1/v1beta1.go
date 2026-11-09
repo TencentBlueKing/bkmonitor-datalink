@@ -603,9 +603,22 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 
 	qb := metadata.GetQueryParams(ctx)
 
-	if qb.IsDirectQuery() {
-		vmExpand := query.ToVmExpand(ctx, queryReference)
+	realPromQL, err := queryTs.ToPromQL(ctx)
+	if err == nil {
+		span.Set("query-promql", realPromQL)
+	}
 
+	promQL, err := queryTs.ToPromExpr(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("query ts to prom expr error: %s", err)
+	}
+
+	if qb.IsDirectQuery() {
+		var vmExpand *metadata.VmExpand
+		vmExpand, err = query.ToVmExpandForExpression(ctx, queryReference, promQL)
+		if err != nil {
+			return nil, err
+		}
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
 			StorageType: metadata.VictoriaMetricsStorageType,
@@ -619,16 +632,6 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 			QueryMaxRouting: QueryMaxRouting,
 			Timeout:         Timeout,
 		}, lookBackDelta, QueryMaxRouting)
-	}
-
-	realPromQL, err := queryTs.ToPromQL(ctx)
-	if err == nil {
-		span.Set("query-promql", realPromQL)
-	}
-
-	promQL, err := queryTs.ToPromExpr(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("query ts to prom expr error: %s", err)
 	}
 
 	statement := promQL.String()

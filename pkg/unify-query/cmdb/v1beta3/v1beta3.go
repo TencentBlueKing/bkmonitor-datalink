@@ -17,6 +17,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
 var (
@@ -273,7 +274,8 @@ func validateSourceExpandInfoFields(req *QueryRequest, provider SchemaProvider) 
 
 // inferSourceTypeFromInfo 保留 v1beta3 旧契约：允许省略 source type，并根据
 // source_info 中的主键元组推断资源类型。优先选择主键匹配最完整的候选；在常见
-// 情况下结果是确定的，也能兼容同一 namespace 中主键结构不同的旧客户端。
+// 情况下结果是确定的，也能兼容同一 namespace 中主键结构不同的旧客户端。主键
+// 字段数相同时按 relation.SourceInferenceLess 取舍，与旧引擎共用同一规则。
 // 与旧引擎一致，source_expand_info 只过滤已确定的源资源，不参与推断。
 func inferSourceTypeFromInfo(req *QueryRequest, provider SchemaProvider) (ResourceType, error) {
 	if req == nil || provider == nil {
@@ -294,7 +296,9 @@ func inferSourceTypeFromInfo(req *QueryRequest, provider SchemaProvider) (Resour
 	for candidate := range known {
 		candidates = append(candidates, candidate)
 	}
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i] < candidates[j] })
+	sort.Slice(candidates, func(i, j int) bool {
+		return relation.SourceInferenceLess(string(candidates[i]), string(candidates[j]))
+	})
 	var best ResourceType
 	bestScore := -1
 	for _, candidate := range candidates {

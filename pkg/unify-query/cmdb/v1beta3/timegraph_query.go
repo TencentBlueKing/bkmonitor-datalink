@@ -425,7 +425,7 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 }
 
 func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, queryTs *structured.QueryTs, applyQuality bool) (matrix pl.Matrix, partial bool, err error) {
-	if loader.topology && metadata.BackendResponseLimit(queryCtx) > 0 {
+	if metadata.BackendResponseLimit(queryCtx) > 0 {
 		// 一次物理响应的聚合子查询共用拒收标记，防止预算超限被误判为 partial；
 		// 不同身份分片各有标记，先前的大分片失败不会污染后续小分片。
 		queryCtx = metadata.WithBackendResponseLimit(queryCtx, metadata.BackendResponseLimit(queryCtx))
@@ -710,7 +710,7 @@ func (loader *timeGraphMatrixLoader) validateMatrix(queryCtx context.Context, ma
 		span.Set("matrix-cumulative-point-count", loader.pointCount)
 	}()
 	startMillis, endMillis, stepMillis := loader.start.UnixMilli(), loader.end.UnixMilli(), loader.step.Milliseconds()
-	if loader.topology && metadata.BackendResponseLimitExceeded(queryCtx) {
+	if metadata.BackendResponseLimitExceeded(queryCtx) {
 		err = &ResultLimitError{Reason: "max_response_bytes", Count: int(metadata.BackendResponseLimit(queryCtx)) + 1, Limit: int(metadata.BackendResponseLimit(queryCtx))}
 	}
 	pointCount = 0

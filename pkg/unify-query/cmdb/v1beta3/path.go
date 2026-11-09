@@ -142,6 +142,10 @@ func (pf *PathFinder) FindAllPathsContext(ctx context.Context, source, target Re
 	visited := make(map[ResourceType]bool)
 	currentPath := []resourcePathStep{{ResourceType: string(source)}}
 	visited[source] = true
+	// The only simple path from a resource to itself is the resource alone.
+	if pf.legacyConstraints && source == target && !directOnly && pf.satisfiesPathConstraint(currentPath, pathConstraint) {
+		return []resourcePath{{Steps: currentPath}}, nil
+	}
 
 	if err := pf.dfs(ctx, source, target, pathConstraint, visited, currentPath, &results); err != nil {
 		return nil, err
@@ -258,7 +262,9 @@ func (pf *PathFinder) dfs(
 		// nextType == target 时允许“访问已访问过的终点”来保留
 		// source -> ... -> target 这种显式闭环；递归开头会在命中 target 后直接 return，
 		// 因此不会继续从 target 扩散成无限环路。
-		if wasVisited && nextType != target {
+		// The old engine only knows simple paths, so a legacy path has no way back
+		// to a resource it already passed, including its own source.
+		if wasVisited && (nextType != target || pf.legacyConstraints) {
 			continue
 		}
 

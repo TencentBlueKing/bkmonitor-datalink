@@ -97,13 +97,19 @@ func TestLegacyKeptDifferencePartialPathFailure(t *testing.T) {
 	}
 }
 
-func TestLegacyKeptDifferenceSourceTypeTie(t *testing.T) {
-	model := &Model{schemaProvider: contractSchemaProvider{
-		resources: []ResourceType{"beta", "alpha"},
-		primary:   map[ResourceType][]string{"alpha": {"id"}, "beta": {"id"}},
-		fields:    map[ResourceType][]string{"alpha": {"id"}, "beta": {"id"}},
-	}}
-	req, _, err := model.buildTimeGraphRequest(context.Background(), "space", "", "", cmdb.Matcher{"id": "x"}, nil, false, nil)
+func TestLegacyKeptDifferenceEmptyRangeStep(t *testing.T) {
+	model := legacyRegressionModel(publicSourceExpandProvider())
+	var calls []string
+	model.timeGraphVMQuery = func(_ context.Context, q *structured.QueryTs, expr string, _ bool, _, _ time.Time, step time.Duration) (pl.Matrix, error) {
+		require.Equal(t, time.Minute, step)
+		require.Equal(t, structured.Window("1m0s"), q.QueryList[0].TimeAggregation.Window)
+		require.Contains(t, expr, "count_over_time")
+		calls = append(calls, q.QueryList[0].FieldName)
+		return nil, nil
+	}
+	_, _, _, _, _, err := model.QueryResourceMatcherRange(
+		initTimeGraphQueryTestEnvironment(), "10m", "space", "", "1700000040", "1700000100", "middle", "node", cmdb.Matcher{"node_id": "n1"}, nil, false, nil,
+	)
 	require.NoError(t, err)
-	require.Equal(t, ResourceType("alpha"), req.SourceType)
+	require.NotEmpty(t, calls)
 }

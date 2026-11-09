@@ -47,6 +47,49 @@ func runRawESPartialRequest(t *testing.T, query *structured.QueryTs, allowPartia
 	return runCheckHandler(t, request, HandlerQueryRaw)
 }
 
+func TestHandlerQueryRawWithScrollRejectsPartialESResults(t *testing.T) {
+	mock.Init()
+	originalWindowTimeout := ScrollWindowTimeout
+	// Session setup parses this value before accessing Redis.
+	ScrollWindowTimeout = "invalid-session-window"
+	t.Cleanup(func() { ScrollWindowTimeout = originalWindowTimeout })
+
+	for _, tc := range []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{
+			name:    "enabled without scroll",
+			body:    `{"allow_partial_es_results":true}`,
+			wantErr: "allow_partial_es_results is not supported by query_raw_with_scroll",
+		},
+		{
+			name:    "enabled with scroll",
+			body:    `{"allow_partial_es_results":true,"scroll":"1m"}`,
+			wantErr: "allow_partial_es_results is not supported by query_raw_with_scroll",
+		},
+		{
+			name:    "disabled keeps session setup",
+			body:    `{"allow_partial_es_results":false}`,
+			wantErr: "invalid-session-window",
+		},
+		{
+			name:    "omitted keeps session setup",
+			body:    `{}`,
+			wantErr: "invalid-session-window",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := metadata.InitHashID(context.Background())
+			request := httptest.NewRequest(http.MethodPost, "/query/ts/raw_with_scroll", bytes.NewBufferString(tc.body)).WithContext(ctx)
+			response := runCheckHandler(t, request, HandlerQueryRawWithScroll)
+			assert.Equal(t, http.StatusBadRequest, response.Code)
+			assert.Contains(t, response.Body.String(), tc.wantErr)
+		})
+	}
+}
+
 func TestQueryRawESPartialShardResults(t *testing.T) {
 	mock.Init()
 	const (

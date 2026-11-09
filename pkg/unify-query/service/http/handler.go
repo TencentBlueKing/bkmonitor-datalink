@@ -414,6 +414,10 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 		err = fmt.Errorf("exact_total is not supported by query_raw_with_scroll")
 		return
 	}
+	if queryTs.AllowPartialESResults {
+		err = fmt.Errorf("allow_partial_es_results is not supported by query_raw_with_scroll")
+		return
+	}
 
 	if queryTs.Scroll == "" {
 		queryTs.Scroll = ScrollWindowTimeout

@@ -45,28 +45,41 @@ func TestVMRequestPropagatesResponseBudget(t *testing.T) {
 	}
 }
 
-func TestMatrixFormatClassifiesBackendResponseSizeLimit(t *testing.T) {
+// An instant and a range query get the same rejection from the gateway, and callers
+// that split an oversized read rely on recognising it either way.
+func TestFormatsClassifyBackendResponseSizeLimit(t *testing.T) {
 	mock.Init()
-	ctx := metadata.InitHashID(context.Background())
-	ctx, span := trace.NewSpan(ctx, "response-size-limit-test")
-	response := &VmResponse{Message: "Response body size exceeds 100 MB, estimatedSize: 135 MB", Code: "400"}
-	_, _, err := (&Instance{}).matrixFormat(ctx, response, span)
-	span.End(&err)
-	require.ErrorIs(t, err, metadata.ErrBackendResponseTooLarge)
-	require.ErrorContains(t, err, "estimatedSize: 135 MB")
+	formats := map[string]func(context.Context, *VmResponse, *trace.Span) error{
+		"range": func(ctx context.Context, resp *VmResponse, span *trace.Span) error {
+			_, _, err := (&Instance{}).matrixFormat(ctx, resp, span)
+			return err
+		},
+		"instant": func(ctx context.Context, resp *VmResponse, span *trace.Span) error {
+			_, err := (&Instance{}).vectorFormat(ctx, resp, span)
+			return err
+		},
+	}
+	for name, format := range formats {
+		t.Run(name, func(t *testing.T) {
+			run := func(response *VmResponse) error {
+				ctx := metadata.InitHashID(context.Background())
+				ctx, span := trace.NewSpan(ctx, "response-size-limit-test")
+				err := format(ctx, response, span)
+				span.End(&err)
+				return err
+			}
 
-	response = &VmResponse{Code: "400"}
-	response.Errors.Error = "response body size exceeds backend limit"
-	ctx = metadata.InitHashID(context.Background())
-	ctx, span = trace.NewSpan(ctx, "response-size-limit-errors-field-test")
-	_, _, err = (&Instance{}).matrixFormat(ctx, response, span)
-	span.End(&err)
-	require.ErrorIs(t, err, metadata.ErrBackendResponseTooLarge)
+			err := run(&VmResponse{Message: "Response body size exceeds 100 MB, estimatedSize: 135 MB", Code: "400"})
+			require.ErrorIs(t, err, metadata.ErrBackendResponseTooLarge)
+			require.ErrorContains(t, err, "estimatedSize: 135 MB")
 
-	response = &VmResponse{Message: "query timed out", Code: "400"}
-	ctx = metadata.InitHashID(context.Background())
-	ctx, span = trace.NewSpan(ctx, "response-size-limit-non-match-test")
-	_, _, err = (&Instance{}).matrixFormat(ctx, response, span)
-	span.End(&err)
-	require.NotErrorIs(t, err, metadata.ErrBackendResponseTooLarge)
+			response := &VmResponse{Code: "400"}
+			response.Errors.Error = "response body size exceeds backend limit"
+			require.ErrorIs(t, run(response), metadata.ErrBackendResponseTooLarge)
+
+			err = run(&VmResponse{Message: "query timed out", Code: "400"})
+			require.Error(t, err)
+			require.NotErrorIs(t, err, metadata.ErrBackendResponseTooLarge)
+		})
+	}
 }

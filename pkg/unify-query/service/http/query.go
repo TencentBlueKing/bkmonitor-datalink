@@ -563,9 +563,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 		for i := 0; i < session.SliceLength(); i++ {
 			sliceQry := *qry
 			sliceQry.SliceID = cast.ToString(i)
-			slice := session.Slice(sliceQry.TableUUID())
+			sliceKey := scrollSliceKey(&sliceQry)
+			slice := session.Slice(sliceKey)
 			slice.Status = redisUtil.StatusCompleted
-			session.UpdateSliceStatus(sliceQry.TableUUID(), slice)
+			session.UpdateSliceStatus(sliceKey, slice)
 		}
 	})
 	stats.readyQueries = queryRef.Count()
@@ -644,9 +645,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				localQry.SliceID = cast.ToString(localSliceIndex)
 
 				// slice info
-				slice := session.Slice(localQry.TableUUID())
+				sliceKey := scrollSliceKey(localQry)
+				slice := session.Slice(sliceKey)
 				defer func() {
-					session.UpdateSliceStatus(localQry.TableUUID(), slice)
+					session.UpdateSliceStatus(sliceKey, slice)
 				}()
 				// 在完成判断前补齐旧会话的清理目标，让已完成且即将跳过的分片也能被回收。
 				setScrollTarget(ctx, slice, localQry)

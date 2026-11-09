@@ -541,7 +541,9 @@ func (i *Instance) executeRawBatchMember(
 			child = fallbackChild
 		}
 	}
-	if childErr := rawBatchChildError(child); childErr != nil {
+	partialCount := rawPartialShardResults(ctx)
+	acceptPartial := partialCount != nil && canAcceptRawPartialShardResult(child)
+	if childErr := rawBatchChildError(child); childErr != nil && !acceptPartial {
 		result.Err = childErr
 		return result
 	}
@@ -557,6 +559,9 @@ func (i *Instance) executeRawBatchMember(
 	if decodeErr != nil {
 		result.Err = &RawBatchChildError{Type: "decode_error"}
 		return result
+	}
+	if acceptPartial {
+		partialCount.Add(1)
 	}
 	rows := make([]map[string]any, 0, rowCapacity)
 	for row := range dataCh {
@@ -619,7 +624,7 @@ func rawBatchChildError(result *elastic.SearchResult) error {
 			Type:   "http_status",
 		}
 	}
-	if result.Shards != nil && (result.Shards.Failed > 0 || len(result.Shards.Failures) > 0) {
+	if hasFailedSearchShards(result) {
 		return &RawBatchChildError{
 			Status: result.Status,
 			Type:   "shard_failure",

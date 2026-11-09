@@ -775,6 +775,9 @@ func (i *Instance) QueryPreparedRawData(
 	if err != nil {
 		return size, total, option, err
 	}
+	if count := rawPartialShardResults(ctx); count != nil && canAcceptRawPartialShardResult(sr) {
+		count.Add(1)
+	}
 	if sr != nil && sr.Hits != nil {
 		span.Set("instance-out-list-size", len(sr.Hits.Hits))
 	}

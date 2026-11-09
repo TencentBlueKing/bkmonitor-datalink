@@ -28,3 +28,24 @@ func TestInferSourceTypeTieDependsOnlyOnTheNames(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ResourceType("system"), req.SourceType, "built-in resources come before custom ones")
 }
+
+// Alert enrichment passes kube-state-metrics dimensions as source_info, where a
+// Job is job_name and job may be the scrape job.
+func TestInferSourceTypeFromJobName(t *testing.T) {
+	primary := map[ResourceType][]string{
+		"job": {"bcs_cluster_id", "namespace", "job"},
+		"pod": {"bcs_cluster_id", "namespace", "pod"},
+	}
+	model := &Model{schemaProvider: contractSchemaProvider{resources: []ResourceType{"job", "pod"}, primary: primary, fields: primary}}
+	for name, matcher := range map[string]cmdb.Matcher{
+		"job_name only":       {"bcs_cluster_id": "c", "namespace": "ns", "job_name": "migrate-1"},
+		"with the scrape job": {"bcs_cluster_id": "c", "namespace": "ns", "job_name": "migrate-1", "job": "kube-state-metrics"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			req, _, err := model.buildTimeGraphRequest(context.Background(), "space", "", "", matcher, nil, false, nil)
+			require.NoError(t, err)
+			require.Equal(t, ResourceType("job"), req.SourceType)
+			require.Equal(t, "migrate-1", req.SourceInfo["job"])
+		})
+	}
+}

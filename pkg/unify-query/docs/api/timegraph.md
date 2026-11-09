@@ -29,7 +29,7 @@ UQ 按 URL 固定选择引擎。v1beta3 的查询错误直接返回调用方。�
 
 兼容即时查询省略 `look_back_delta` 时沿用旧裸选择器的窗口，即查询引擎默认回看（内置 `5m`），已迁走或已消失的关系不再返回；显式传值时按传入窗口观测。兼容范围查询每个时间桶按 `step` 观测，只校验 `look_back_delta` 的格式。两者都独立于 topology 省略时的配置值（内置 `24h`）。
 
-两个兼容入口和旧入口省略 `source_type` 时，都只按 `source_info` 推断源类型：取完整命中且主键字段最多的资源，字段数相同时取粒度更细的内置资源（例如 `pod` 优于 `job`、`service`、`deployment`，`module` 优于 `set`），内置资源优先于业务自定义资源，后者按名称排序。响应里的 `source_info` 只回显请求 `source_info` 中的源资源主键，`source_expand_info` 只参与过滤；即时入口失败时与旧入口一样不返回 `source_info`。空间为空时逐项返回 400 `space uid is empty`，源类型推断失败优先于这个校验；topology 入口不受影响。
+三个入口都先把 `source_info` 中的采集侧别名改成资源主键：`pod_name` 改为 `pod`，`container_name` 改为 `container`，`job_name` 改为 `job`（kube-state-metrics 的 Job 标签，`job` 常是采集任务）；别名与主键同时出现时以别名为准，空值丢弃。两个兼容入口和旧入口省略 `source_type` 时，都只按 `source_info` 推断源类型：取完整命中且主键字段最多的资源，字段数相同时取粒度更细的内置资源（例如 `pod` 优于 `job`、`service`、`deployment`，`module` 优于 `set`），内置资源优先于业务自定义资源，后者按名称排序。响应里的 `source_info` 只回显请求 `source_info` 中的源资源主键，`source_expand_info` 只参与过滤；即时入口失败时与旧入口一样不返回 `source_info`。空间为空时逐项返回 400 `space uid is empty`，源类型推断失败优先于这个校验；topology 入口不受影响。
 
 下列差异是迁移时有意保留的合同，不提供开关。其余场景以旧入口为准。
 

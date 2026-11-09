@@ -33,7 +33,7 @@ go test -gcflags=all=-l ./internal/metadata/service -run '^TestRouteRefresh$' -c
 
 ## 数据组合
 
-共 26 张临时表，3 个租户，629 条 RT 记录，其中 501 条属于独立的 batch 租户。
+共 26 张临时表，3 个租户，630 条 RT 记录，其中 501 条属于独立的 batch 租户。
 
 | 主题 | 核心组合 |
 | --- | --- |
@@ -58,7 +58,7 @@ go test -gcflags=all=-l ./internal/metadata/service -run '^TestRouteRefresh$' -c
 
 ## 断言范围
 
-78 个服务子用例覆盖选表、payload、Redis field、租户后缀、存储选型、标签展开、全量/部分结果、未选字段保留、预取合并优先级、发布开关、重复发布、清理和故障传播。
+79 个服务子用例覆盖选表、payload、Redis field、租户后缀、存储选型、标签展开、全量/部分结果、未选字段保留、预取合并优先级、发布开关、重复发布、清理和故障传播。
 
 新增 `task/space_partial_refresh_test.go` 直接执行真实预取查询和周期刷新任务，对照三个空间的部分刷新 payload。`http/route_refresh_integration_test.go` 通过正常 HTTP 注册入口复用同一数据集验证三个 API。
 
@@ -83,7 +83,7 @@ go test -gcflags=all=-l ./internal/metadata/service -run '^TestRouteRefresh$' -c
 
 ## 验证与限制
 
-78 个服务子用例、5 个空间查询/全量对照子用例和 HTTP 测试通过。另运行现有日志物理表、历史分段、VM/RecordRule payload 与相关查询计数测试，均通过。
+79 个服务子用例、5 个空间查询/全量对照子用例和 HTTP 测试通过。另运行现有日志物理表、历史分段、VM/RecordRule payload 与相关查询计数测试，均通过。
 
 不覆盖 Consul 路由、Python Metadata、尚未实现的 HTTP 刷新服务、真实 Redis 集群故障/性能、分布式同时刷新以及生产数据库索引约束。时间相关数据初始化时相对当前时间设置，避免固定日期导致指标自动过期。
 
@@ -96,7 +96,7 @@ go test -gcflags=all=-l ./internal/metadata/service -run '^TestRouteRefresh$' -c
 - 虚拟日志表复用当前、origin、历史集群依赖，ClusterInfo 返回 3 行。
 - 501 张日志 RT 分成两批，全量 ClusterInfo 仅查一次；系统租户全量的日志、指标和规则共享同一次集群查询。
 - 单空间的预计算 SQL 带空间条件，短链限定“本空间或全局”，加载行数不随其他空间 100 条专属记录增加。
-- 单空间 BCS 排除集合按候选 DataID 查询；全量先加载 BCS 集合和前缀 RT，后续空间复用。
+- 单空间 BCS 排除集合按候选 DataID 查询；全量先加载 BCS 集合和前缀 RT，后续空间复用。过滤发生在 RT/DataID 关联记录合并之前，同一 RT 同时有集群和普通数据源时保留普通关联。
 - DataLabel 按指定 RT 展开相关标签，再重建完整映射，返回行数限定在命中集合。
 
 运行全部共享数据验收：

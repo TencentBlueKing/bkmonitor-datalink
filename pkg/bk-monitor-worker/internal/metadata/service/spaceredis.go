@@ -286,6 +286,16 @@ func (s *SpacePusher) GetSpaceTableIdDataId(bkTenantId string, spaceType, spaceI
 		dataIdSet = dataIdSet.Union(slicex.UintList2Set(dataIds))
 	}
 
+	// Apply cluster exclusions before collapsing DataSourceResultTable rows into a map.
+	// One RT can have multiple DataIDs during migration, so a non-cluster relation must survive.
+	if excludeClusters, _ := options.GetBool("excludeClusterDataIDs"); excludeClusters {
+		clusterDataIDs, err := s.findClusterDataIDs(slicex.UintSet2List(dataIdSet))
+		if err != nil {
+			return nil, err
+		}
+		excludeDataIdList = append(excludeDataIdList, clusterDataIDs...)
+	}
+
 	// 排除元素
 	if len(excludeDataIdList) != 0 {
 		dataIdSet = dataIdSet.Difference(slicex.UintList2Set(excludeDataIdList))
@@ -3111,12 +3121,9 @@ func (s *SpacePusher) composeBkciLevelTableIds(bkTenantId, spaceType, spaceId st
 // composeBkciOtherTableIds 组装BKCI级别结果表
 func (s *SpacePusher) composeBkciOtherTableIds(bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
 	logger.Infof("start to push bkci other table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
-	options := optionx.NewOptions(map[string]any{"includePlatformDataId": false, "fromAuthorization": false})
+	options := optionx.NewOptions(map[string]any{"includePlatformDataId": false, "excludeClusterDataIDs": true, "fromAuthorization": false})
 	tableIdDataIdMap, err := s.GetSpaceTableIdDataId(bkTenantId, spaceType, spaceId, nil, nil, options)
 	if err != nil {
-		return nil, err
-	}
-	if err := s.excludeClusterDataSources(tableIdDataIdMap); err != nil {
 		return nil, err
 	}
 
@@ -3252,23 +3259,18 @@ func loadBkciBizTableIDs() ([]string, error) {
 	return ids, nil
 }
 
-func (s *SpacePusher) excludeClusterDataSources(tableDataIDs map[string]uint) error {
-	if len(tableDataIDs) == 0 {
-		return nil
+func (s *SpacePusher) findClusterDataIDs(ids []uint) ([]uint, error) {
+	if len(ids) == 0 {
+		return nil, nil
 	}
 	excluded := s.clusterDataIDs
 	if excluded == nil {
-		ids := make([]uint, 0, len(tableDataIDs))
-		for _, id := range tableDataIDs {
-			ids = append(ids, id)
-		}
-		ids = slicex.RemoveDuplicate(&ids)
 		excluded = make(map[uint]struct{})
 		for _, batch := range slicex.ChunkSlice(ids, cfg.DefaultDBFilterSize) {
 			var rows []bcs.BCSClusterInfo
 			if err := mysql.GetDBSession().DB.Model(&bcs.BCSClusterInfo{}).
 				Select("K8sMetricDataID, CustomMetricDataID").Where("K8sMetricDataID IN (?) OR CustomMetricDataID IN (?)", batch, batch).Find(&rows).Error; err != nil {
-				return err
+				return nil, err
 			}
 			for _, row := range rows {
 				excluded[row.K8sMetricDataID] = struct{}{}
@@ -3276,23 +3278,21 @@ func (s *SpacePusher) excludeClusterDataSources(tableDataIDs map[string]uint) er
 			}
 		}
 	}
-	for tableID, dataID := range tableDataIDs {
-		if _, exists := excluded[dataID]; exists {
-			delete(tableDataIDs, tableID)
+	result := make([]uint, 0)
+	for _, id := range ids {
+		if _, exists := excluded[id]; exists {
+			result = append(result, id)
 		}
 	}
-	return nil
+	return result, nil
 }
 
 // composeBksaasOtherTableIds 组装蓝鲸应用非集群数据
 func (s *SpacePusher) composeBksaasOtherTableIds(bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
 	logger.Infof("start to push bksaas other table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
-	options := optionx.NewOptions(map[string]any{"includePlatformDataId": false})
+	options := optionx.NewOptions(map[string]any{"includePlatformDataId": false, "excludeClusterDataIDs": true})
 	tableIdDataIdMap, err := s.GetSpaceTableIdDataId(bkTenantId, spaceType, spaceId, nil, nil, options)
 	if err != nil {
-		return nil, err
-	}
-	if err := s.excludeClusterDataSources(tableIdDataIdMap); err != nil {
 		return nil, err
 	}
 

@@ -553,6 +553,17 @@ func TestRouteRefresh(t *testing.T) {
 		}
 		require.Empty(t, queries.ForTable("metadata_resulttable"))
 	})
+	run("space/multi_source_rt_keeps_noncluster_relation", func(t *testing.T) {
+		p := NewSpacePusher()
+		partial, err := p.composeBkciOtherTableIds("system", "bkci", "migration")
+		require.NoError(t, err)
+		routeJSON(t, `{"migration.metric":{"filters":[]}}`, partial)
+		require.NoError(t, p.PreloadSpaceDependencies([]space.Space{{SpaceTypeId: "bkci"}}))
+		full, err := p.composeBkciOtherTableIds("system", "bkci", "migration")
+		require.NoError(t, err)
+		require.Equal(t, partial, full)
+	})
+
 	run("labels/query_scope_filters_and_mysql_explain", func(t *testing.T) {
 		queries := f.ObserveQueries(t)
 		require.NoError(t, NewSpacePusher().PushDataLabelTableIds("system", []string{"cpu.used"}, true))

@@ -376,6 +376,13 @@ func seedUnrelatedRouteTables(t *testing.T, db *gorm.DB) {
  ('system','bkcc','1','broken.logs',20,'forbidden_log_override','{}'),
  ('other','bkcc','20','rule.cpu',120,'other_rule','{}')`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO metadata_accessvmrecord(bk_tenant_id,result_table_id,vm_cluster_id,vm_result_table_id) VALUES ('system','orphan.second',999,'orphan_second')`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO metadata_space(id,space_type_id,space_id,bk_tenant_id) VALUES (22,'bkci','migration','system')`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO metadata_resulttable(table_id,bk_tenant_id,default_storage,schema_type,is_enable,is_deleted,bk_biz_id) VALUES ('migration.metric','system','victoria_metrics','fixed',1,0,-22)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO metadata_datasource(bk_data_id,bk_tenant_id,data_name,space_type_id,space_uid,is_platform_data_id,is_enable) VALUES (9000,'system','migration-normal','bkci','bkci__migration',0,1),(10000,'system','migration-cluster','bkci','bkci__migration',0,1)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO metadata_datasourceresulttable(bk_tenant_id,bk_data_id,table_id) VALUES ('system',9000,'migration.metric'),('system',10000,'migration.metric')`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO metadata_spacedatasource(space_type_id,space_id,bk_data_id,from_authorization) VALUES ('bkci','migration',9000,0),('bkci','migration',10000,0)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO metadata_accessvmrecord(bk_tenant_id,result_table_id,vm_cluster_id,vm_result_table_id) VALUES ('system','migration.metric',20,'migration_vm')`).Error)
+
 	require.NoError(t, db.Exec(`INSERT INTO metadata_spacedatasource(space_type_id,space_id,bk_data_id,from_authorization) VALUES ('bkci','project',201,0),('bkci','project',102,0),('bksaas','app',202,0)`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO metadata_resulttable(table_id,bk_tenant_id,default_storage,schema_type,is_enable,is_deleted,bk_biz_id,data_label) VALUES ('system.cpu','system','victoria_metrics','fixed',1,0,1,'host')`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO metadata_recordrulev4(bk_tenant_id,space_type,space_id,table_id,conditions,deleted_at) VALUES

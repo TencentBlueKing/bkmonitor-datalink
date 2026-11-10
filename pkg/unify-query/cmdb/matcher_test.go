@@ -10,6 +10,7 @@
 package cmdb
 
 import (
+	"maps"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -31,6 +32,10 @@ func TestMatcherRename(t *testing.T) {
 			in:   Matcher{"pod": "other", "pod_name": "p-1"},
 			want: Matcher{"pod": "p-1"},
 		},
+		"container_name wins over container": {
+			in:   Matcher{"container": "other", "container_name": "main"},
+			want: Matcher{"container": "main"},
+		},
 		"an empty alias leaves the key as it is": {
 			in:   Matcher{"job": "j", "job_name": ""},
 			want: Matcher{"job": "j"},
@@ -41,10 +46,12 @@ func TestMatcherRename(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			original := maps.Clone(c.in)
 			// Map iteration order varies, so the result must not depend on it.
 			for range 50 {
 				require.Equal(t, c.want, c.in.Rename())
 			}
+			require.Equal(t, original, c.in, "Rename must not change the caller's matcher")
 		})
 	}
 }

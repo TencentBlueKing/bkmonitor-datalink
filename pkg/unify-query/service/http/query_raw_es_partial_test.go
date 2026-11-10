@@ -189,6 +189,73 @@ func TestQueryRawESPartialShardResults(t *testing.T) {
 	}
 }
 
+func TestQueryRawESPartialShardDecodeFailureDiscardsRoute(t *testing.T) {
+	mock.Init()
+	const (
+		esURL        = "http://127.0.0.1:93056"
+		storageID    = "raw-es-partial-decode-failure"
+		failedIndex  = "raw_es_partial_decode_failed"
+		healthyIndex = "raw_es_partial_decode_healthy"
+	)
+	tsdb.SetStorage(storageID, &tsdb.Storage{Type: metadata.ElasticsearchStorageType, Address: esURL})
+	registerRawESBatchMappingResponder(t, esURL, failedIndex)
+	registerRawESBatchMappingResponder(t, esURL, healthyIndex)
+
+	enabled, disabled := true, false
+	for _, tc := range []struct {
+		name        string
+		allow       *bool
+		searchAfter bool
+		shards      string
+	}{
+		{name: "omitted partial shards", shards: rawESPartialShards},
+		{name: "disabled partial shards", allow: &disabled, shards: rawESPartialShards},
+		{name: "omitted malformed hit", shards: rawESHealthyShards},
+		{name: "disabled malformed hit", allow: &disabled, shards: rawESHealthyShards},
+		{name: "enabled", allow: &enabled, shards: rawESPartialShards},
+		{name: "search after", allow: &enabled, searchAfter: true, shards: rawESPartialShards},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			httpmock.RegisterResponder(http.MethodPost, esURL+"/"+failedIndex+"/_search", func(req *http.Request) (*http.Response, error) {
+				assertPartialESNativeParameter(t, req, tc.allow != nil && *tc.allow)
+				return httpmock.NewStringResponse(http.StatusOK, `{"_shards":`+tc.shards+`,"hits":{"total":{"value":2,"relation":"eq"},"hits":[{"_id":"discarded-hit","_source":{"start_time":1700000000200},"sort":[1700000000200]},{"_id":"missing-source"}]}}`), nil
+			})
+			httpmock.RegisterResponder(http.MethodPost, esURL+"/"+healthyIndex+"/_search", func(req *http.Request) (*http.Response, error) {
+				assertPartialESNativeParameter(t, req, tc.allow != nil && *tc.allow)
+				return httpmock.NewStringResponse(http.StatusOK, `{"_shards":`+rawESHealthyShards+`,"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_id":"healthy-hit","_source":{"start_time":1700000000100},"sort":[1700000000100]}]}}`), nil
+			})
+			query := rawESBatchExplicitTraceQuery(storageID, failedIndex, healthyIndex, "synthetic-trace")
+			failedTable := "trace.first|" + storageID
+			healthyTable := "trace.second|" + storageID
+			if tc.searchAfter {
+				query.IsSearchAfter = true
+				query.ResultTableOptions = metadata.ResultTableOptions{
+					failedTable:  {SearchAfter: []any{1700000000300}},
+					healthyTable: {SearchAfter: []any{1700000000300}},
+				}
+			}
+
+			recorder := runRawESPartialRequest(t, query, tc.allow)
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			var response ListData
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+			assert.EqualValues(t, 1, response.Total)
+			require.Len(t, response.List, 1)
+			assert.Equal(t, "healthy-hit", response.List[0][metadata.KeyDocID])
+			require.NotNil(t, response.Status)
+			assert.Equal(t, metadata.QueryRawPartial, response.Status.Code)
+			if tc.shards == rawESHealthyShards || tc.allow != nil && *tc.allow {
+				assert.Contains(t, response.Status.Message, "EOF")
+			}
+			assert.NotContains(t, response.ResultTableOptions, failedTable)
+			if tc.searchAfter {
+				require.NotNil(t, response.ResultTableOptions[healthyTable])
+				assert.Equal(t, []any{float64(1700000000100)}, response.ResultTableOptions[healthyTable].SearchAfter)
+			}
+		})
+	}
+}
+
 func TestQueryRawESBatchPartialShardResults(t *testing.T) {
 	mock.Init()
 	const (

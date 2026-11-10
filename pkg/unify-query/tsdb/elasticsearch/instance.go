@@ -777,9 +777,19 @@ func (i *Instance) QueryPreparedRawData(
 		).Error(ctx, err)
 	}
 
-	size, total, option, err = decodePreparedRawResult(prepared, sr, dataCh)
+	// Publish the route only after decoding succeeds, so its rows, total, and cursor stay consistent.
+	rowCapacity := 0
+	if sr != nil && sr.Hits != nil {
+		rowCapacity = len(sr.Hits.Hits)
+	}
+	rows := make(chan map[string]any, rowCapacity)
+	size, total, option, err = decodePreparedRawResult(prepared, sr, rows)
+	close(rows)
 	if err != nil {
 		return size, total, option, err
+	}
+	for row := range rows {
+		dataCh <- row
 	}
 	recordPartialShardResult(ctx, sr)
 	if sr != nil && sr.Hits != nil {

@@ -31,6 +31,11 @@ func partialShardResults(ctx context.Context) *atomic.Uint32 {
 	return count
 }
 
+// PartialShardResultsEnabled reports whether this request accepts partial ES responses.
+func PartialShardResultsEnabled(ctx context.Context) bool {
+	return partialShardResults(ctx) != nil
+}
+
 func hasFailedSearchShards(result *elastic.SearchResult) bool {
 	return result != nil && result.Shards != nil && (result.Shards.Failed > 0 || len(result.Shards.Failures) > 0)
 }

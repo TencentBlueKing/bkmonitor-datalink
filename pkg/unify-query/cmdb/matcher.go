@@ -17,6 +17,7 @@ func (m Matcher) Rename() Matcher {
 	nameMap := map[string]string{
 		"pod_name":       "pod",
 		"container_name": "container",
+		"job_name":       "job",
 	}
 	newMatcher := make(Matcher, len(m))
 	for k, v := range m {
@@ -33,6 +34,10 @@ func (m Matcher) Rename() Matcher {
 			nk = k
 		}
 		newMatcher[nk] = v
+	}
+	// job_name 明确表示 Kubernetes Job 名称，优先于可能表示采集任务的 job 标签。
+	if jobName := m["job_name"]; jobName != "" {
+		newMatcher["job"] = jobName
 	}
 	return newMatcher
 }

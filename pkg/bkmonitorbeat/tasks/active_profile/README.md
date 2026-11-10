@@ -254,10 +254,20 @@ Golang 采集会清零，不进入 Event 配置快照。
 
 运行目录本身仍然会创建：取消标记 `cancel.request` 依赖它。
 
-产物标签与 perf 路径完全一致：`pid/comm` 由 endpoint 端口反查
-监听进程得到，是**尽力而为**的——权限不足、endpoint 由其他网络命名空间提供、或端口被多个
-进程以 `SO_REUSEPORT` 共享时都拿不到唯一结果，此时只告警，`pid/comm` 两个标签保持不存在、
-Event `processes` 为空，采集本身仍然成功。不写占位值。
+产物标签与 perf 路径完全一致：`pid/comm` 由 endpoint 的监听地址与端口在**执行采集的主机上**
+反查监听进程得到，是**尽力而为**的：
+
+- 只在 endpoint 指向本机时反查：`ip_address` 是回环地址、未指定地址或本机网卡地址；填主机名
+  时解析结果必须全部是本机地址。跨主机采集（Beat 在 B、进程在 A）直接跳过，否则会把 B 上
+  恰好监听同端口的无关进程标进产物。
+- 只认能接收发往 `ip_address` 连接的监听 socket：绑在该地址或通配地址上，同端口绑在其他
+  本机地址上的进程不算。
+- 权限不足、endpoint 由其他网络命名空间提供、或端口被多个进程以 `SO_REUSEPORT` 共享时同样
+  拿不到唯一结果。
+
+拿不到时 `pid/comm` 两个标签保持不存在、Event `processes` 为空，采集本身仍然成功。不写占位值。
+跨主机时不改用 `/debug/pprof/cmdline` 补进程名：它拿不到 PID，而 Event `processes` 的每一项
+都要求 `pid` 与 `process_name` 同时存在，SaaS 的 PID 候选与筛选都依赖 `pid`。
 
 ## 资源保护
 

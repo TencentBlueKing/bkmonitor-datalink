@@ -118,7 +118,7 @@ func collect(
 	var processes []ProcessResult
 	var err error
 	if conf.IsGolang() {
-		processes = resolveGoEndpointProcess(ctx, conf.CollectorConfig.Port)
+		processes = resolveGoEndpointProcess(ctx, conf.CollectorConfig.IPAddress, conf.CollectorConfig.Port)
 	} else {
 		processes, err = resolveProcesses(&conf.ProcessSelector)
 		if err != nil {

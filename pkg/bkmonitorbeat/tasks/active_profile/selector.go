@@ -10,10 +10,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/netip"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	shiroupsnet "github.com/shirou/gopsutil/v3/net"
 	shiroups "github.com/shirou/gopsutil/v3/process"
@@ -62,12 +65,37 @@ func resolveProcesses(selector *configs.ActiveProfileProcessSelector) ([]Process
 	}
 }
 
-// resolveGoEndpointProcess 按 pprof endpoint 的监听端口反查进程，用于补齐 Go 产物的
-// pid/comm 标签与 finished Event 的 processes。Go 的 pprof 响应不携带进程信息，这是
-// 唯一来源，而反查依赖读取本机全部 socket 的归属进程，权限不足、endpoint 由其他网络
-// 命名空间提供、或端口被多个进程以 SO_REUSEPORT 共享时都拿不到唯一结果。协议约定
-// 这里是尽力而为，因此任何一种拿不到的情况都只告警，不影响采集本身。
-func resolveGoEndpointProcess(ctx context.Context, port int) []ProcessResult {
+// endpointLookupTimeout 是 ip_address 填主机名时解析它的时间预算。解析只服务于判断
+// endpoint 是否在本机，不能拖慢采集本身。
+const endpointLookupTimeout = 3 * time.Second
+
+// listInterfaceAddrs 与 lookupEndpointHost 是本机地址判定的两个外部依赖，测试里替换。
+var (
+	listInterfaceAddrs = net.InterfaceAddrs
+	lookupEndpointHost = net.DefaultResolver.LookupNetIP
+)
+
+// resolveGoEndpointProcess 按 pprof endpoint 的监听地址与端口反查进程，用于补齐 Go
+// 产物的 pid/comm 标签与 finished Event 的 processes。Go 的 pprof 响应不携带进程信息，
+// 这是唯一来源。
+//
+// 反查读的是执行这次采集的主机上的 socket，只有 endpoint 指向本机时结果才有意义：
+// ip_address 指向其他主机时，本机同端口上的监听进程与被采集的进程毫无关系，按端口
+// 反查只会把无关进程标进产物。因此先判定 endpoint 是否在本机，不在就直接跳过。
+//
+// 即使在本机，权限不足、endpoint 由其他网络命名空间提供、或端口被多个进程以
+// SO_REUSEPORT 共享时也拿不到唯一结果。协议约定这里是尽力而为，任何一种拿不到的
+// 情况都不影响采集本身。
+func resolveGoEndpointProcess(ctx context.Context, address string, port int) []ProcessResult {
+	targets, local := localEndpointAddrs(ctx, address)
+	if !local {
+		logger.Infof(
+			"[active_profile] pprof endpoint %s is not on this host; go profile will carry no pid/comm label",
+			net.JoinHostPort(address, strconv.Itoa(port)),
+		)
+		return nil
+	}
+
 	connections, err := shiroupsnet.ConnectionsWithoutUidsWithContext(ctx, "tcp")
 	if err != nil {
 		logger.Warnf("[active_profile] list host tcp sockets for pprof endpoint port %d failed: %v", port, err)
@@ -77,6 +105,10 @@ func resolveGoEndpointProcess(ctx context.Context, port int) []ProcessResult {
 	seen := make(map[int32]struct{}, 1)
 	for _, connection := range connections {
 		if connection.Status != socketStatusListen || int(connection.Laddr.Port) != port || connection.Pid <= 0 {
+			continue
+		}
+		// 同一端口可以分别绑在不同地址上，只认能接收发往 endpoint 地址连接的那个。
+		if !listenerServes(connection.Laddr.IP, targets) {
 			continue
 		}
 		if _, exists := seen[connection.Pid]; exists {
@@ -104,6 +136,114 @@ func resolveGoEndpointProcess(ctx context.Context, port int) []ProcessResult {
 		logger.Warnf("[active_profile] read process name of pid %d failed: %v", pid, err)
 	}
 	return []ProcessResult{{PID: pid, ProcessName: name}}
+}
+
+// localEndpointAddrs 解析 endpoint 地址，只有全部解析结果都指向本机时才返回它们。
+// ip_address 可以是主机名，一个名字可能同时解析到本机与外部地址，HTTP 客户端连到
+// 哪个不可预知，这种情况同样按不在本机处理，宁可不标也不误标。
+func localEndpointAddrs(ctx context.Context, address string) ([]netip.Addr, bool) {
+	targets, err := endpointAddrs(ctx, address)
+	if err != nil {
+		logger.Warnf("[active_profile] resolve pprof endpoint address %q failed: %v", address, err)
+		return nil, false
+	}
+	interfaceAddrs, err := listInterfaceAddrs()
+	if err != nil {
+		logger.Warnf("[active_profile] list host interface addresses failed: %v", err)
+		return nil, false
+	}
+	locals := make(map[netip.Addr]struct{}, len(interfaceAddrs))
+	for _, interfaceAddr := range interfaceAddrs {
+		if addr, ok := interfaceIP(interfaceAddr); ok {
+			locals[addr] = struct{}{}
+		}
+	}
+	for _, target := range targets {
+		if !isLocalAddr(target, locals) {
+			return nil, false
+		}
+	}
+	return targets, true
+}
+
+// interfaceIP 取网卡地址里的 IP。各平台的 InterfaceAddrs 返回 *net.IPNet 或 *net.IPAddr。
+func interfaceIP(interfaceAddr net.Addr) (netip.Addr, bool) {
+	var ip net.IP
+	switch value := interfaceAddr.(type) {
+	case *net.IPNet:
+		ip = value.IP
+	case *net.IPAddr:
+		ip = value.IP
+	default:
+		return netip.Addr{}, false
+	}
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return netip.Addr{}, false
+	}
+	return addr.Unmap(), true
+}
+
+// endpointAddrs 把 ip_address 解析成地址列表：IP 字面量直接使用（去掉 IPv6 zone，
+// 比较本机地址时不区分网卡），否则按主机名解析。
+func endpointAddrs(ctx context.Context, address string) ([]netip.Addr, error) {
+	if addr, err := netip.ParseAddr(address); err == nil {
+		return []netip.Addr{addr.WithZone("").Unmap()}, nil
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, endpointLookupTimeout)
+	defer cancel()
+	resolved, err := lookupEndpointHost(lookupCtx, "ip", address)
+	if err != nil {
+		return nil, err
+	}
+	if len(resolved) == 0 {
+		return nil, fmt.Errorf("host %q resolved to no address", address)
+	}
+	targets := make([]netip.Addr, 0, len(resolved))
+	for _, addr := range resolved {
+		targets = append(targets, addr.WithZone("").Unmap())
+	}
+	return targets, nil
+}
+
+// isLocalAddr 判断连接 addr 是否会落到本机：回环地址、未指定地址（Linux 把发往
+// 0.0.0.0/:: 的连接投递给本机）以及本机网卡上配置的地址。
+func isLocalAddr(addr netip.Addr, locals map[netip.Addr]struct{}) bool {
+	if addr.IsLoopback() || addr.IsUnspecified() {
+		return true
+	}
+	_, exists := locals[addr]
+	return exists
+}
+
+// listenerServes 判断绑定在 listenIP 上的监听 socket 能否接收发往任一 targets 的连接。
+// 0.0.0.0 接收全部 IPv4；:: 在默认的 bindv6only=0 下同时接收 IPv4 与 IPv6，Go 的
+// net.Listen(":port") 正是这种形态。endpoint 本身写成未指定地址时连接的落点取决于
+// 内核选择的本机地址，无法从地址上区分，退化为只按端口匹配。
+func listenerServes(listenIP string, targets []netip.Addr) bool {
+	listenAddr, err := netip.ParseAddr(listenIP)
+	if err != nil {
+		return false
+	}
+	listenAddr = listenAddr.WithZone("")
+	if listenAddr.IsUnspecified() {
+		if listenAddr.Is6() {
+			return true
+		}
+		for _, target := range targets {
+			if target.Is4() {
+				return true
+			}
+		}
+		return false
+	}
+	listenAddr = listenAddr.Unmap()
+	for _, target := range targets {
+		if target.IsUnspecified() || target == listenAddr {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveByCommand 与现有进程采集保持同样的两段判断：先按可选排除正则跳过，再判断

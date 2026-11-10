@@ -51,49 +51,8 @@ const (
 	ResourceTypeEnvironment ResourceType = "environment"
 )
 
+// RelationType 是关系定义名（不含 namespace 前缀），取值以 schema provider 中的定义为准。
 type RelationType string
-
-const (
-	RelationNodeWithSystem           RelationType = "node_with_system"
-	RelationNodeWithPod              RelationType = "node_with_pod"
-	RelationJobWithPod               RelationType = "job_with_pod"
-	RelationPodWithReplicaSet        RelationType = "pod_with_replicaset"
-	RelationPodWithStatefulSet       RelationType = "pod_with_statefulset"
-	RelationDaemonSetWithPod         RelationType = "daemonset_with_pod"
-	RelationDeploymentWithReplicaSet RelationType = "deployment_with_replicaset"
-	RelationPodWithService           RelationType = "pod_with_service"
-	RelationIngressWithService       RelationType = "ingress_with_service"
-
-	RelationK8sAddressWithService RelationType = "k8s_address_with_service"
-	RelationDomainWithService     RelationType = "domain_with_service"
-
-	RelationAPMServiceInstanceWithPod        RelationType = "apm_service_instance_with_pod"
-	RelationAPMServiceInstanceWithSystem     RelationType = "apm_service_instance_with_system"
-	RelationAPMServiceWithAPMServiceInstance RelationType = "apm_service_with_apm_service_instance"
-
-	RelationContainerWithPod RelationType = "container_with_pod"
-
-	RelationDataSourceWithPod         RelationType = "datasource_with_pod"
-	RelationDataSourceWithNode        RelationType = "datasource_with_node"
-	RelationBKLogConfigWithDataSource RelationType = "bklogconfig_with_datasource"
-
-	RelationBizWithSet     RelationType = "biz_with_set"
-	RelationModuleWithSet  RelationType = "module_with_set"
-	RelationHostWithModule RelationType = "host_with_module"
-	RelationHostWithSystem RelationType = "host_with_system"
-
-	RelationAppVersionWithContainer  RelationType = "app_version_with_container"
-	RelationAppVersionWithSystem     RelationType = "app_version_with_system"
-	RelationContainerWithEnvironment RelationType = "container_with_environment"
-	RelationEnvironmentWithSystem    RelationType = "environment_with_system"
-	RelationAppVersionWithGitCommit  RelationType = "app_version_with_git_commit"
-
-	RelationPodToPod         RelationType = "pod_to_pod"
-	RelationPodToSystem      RelationType = "pod_to_system"
-	RelationSystemToPod      RelationType = "system_to_pod"
-	RelationSystemToSystem   RelationType = "system_to_system"
-	RelationServiceToService RelationType = "service_to_service"
-)
 
 type RelationCategory string
 

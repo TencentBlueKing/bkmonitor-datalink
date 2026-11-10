@@ -216,7 +216,6 @@ func (ce *BaseConfigEngine) GetChildTask(file os.DirEntry, basePath string) (*co
 		logger.Errorf("read file content failed,error:%v", err)
 		return nil, getTaskFailError
 	}
-	logger.Debugf("child yaml content:%v", string(buf))
 	ucfgConfig, err := ce.ParseToUcfg(buf)
 	if err != nil {
 		logger.Errorf("parse file content to ucfg failed,error:%v", err)

@@ -35,7 +35,7 @@ tasks:
     period: {{ period }}s
     # 超时
     timeout: {{ timeout | default(60, true) }}s
-    user_env: {}
+    user_env: {{ user_env | default({}, true) | tojson }}
     dataid: {{ dataid }}
     command: {{ command }}
     {% if labels %}labels:

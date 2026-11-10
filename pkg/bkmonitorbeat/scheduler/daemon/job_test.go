@@ -10,11 +10,56 @@
 package daemon
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	"github.com/elastic/go-ucfg/yaml"
+	"github.com/stretchr/testify/require"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/script"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/test/mock"
 )
+
+func TestReloadKeepsUnchangedScriptJob(t *testing.T) {
+	root := configs.NewConfig()
+	load := func(env string) define.Task {
+		cfg, err := yaml.NewConfig([]byte(`type: script
+name: test
+version: "1.0"
+dataid: 1
+tasks:
+  - task_id: 1
+    period: 60s
+    command: test-script
+    user_env: ` + env))
+		require.NoError(t, err)
+		meta := configs.NewScriptTaskMetaConfig(root)
+		child := &configs.ChildTaskMetaConfig{TaskMetaConfig: meta}
+		require.NoError(t, cfg.Unpack(child))
+		require.NoError(t, child.Clean())
+		return script.New(root, meta.Tasks[0])
+	}
+
+	s := &Daemon{daemonState: newDaemonState()}
+	s.ctx = context.Background()
+	job := &IntervalJob{task: load("{A: one, B: two, C: three}")}
+	job.SetScheduler(s)
+	defer job.cancel()
+	s.jobs.Push(job)
+	ident := job.task.GetConfig().GetIdent()
+	for i := 0; i < 32; i++ {
+		task := load("{C: three, A: one, B: two}")
+		require.Equal(t, ident, task.GetConfig().GetIdent())
+		require.NoError(t, s.Reload(s.ctx, root, []define.Task{task}))
+		require.Same(t, job, s.jobs.First())
+		require.NoError(t, job.ctx.Err())
+	}
+	require.NotEqual(t, ident, load("{A: one, B: changed, C: three}").GetConfig().GetIdent())
+	require.NotEqual(t, ident, load("{A: one, B: two}").GetConfig().GetIdent())
+}
 
 func TestIntervalJob(t *testing.T) {
 	now := time.Now()

@@ -427,7 +427,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	queryTs.ClearCache = false
 	queryByte, _ := json.Marshal(queryTs)
 	queryStr := string(queryByte)
-	queryStrWithUserName := fmt.Sprintf("%s:%s", user.Name, queryStr)
+	queryStrWithUserName := scrollSessionKey(user, queryStr)
 	session, err = redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollSessionLockTimeout, queryTs.SliceMax, queryTs.Limit)
 	if err != nil {
 		return
@@ -437,13 +437,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 
 	if clearCache {
 		span.Set("clear-cache", "true")
-		err = session.Clear(ctx)
-		if err != nil {
-			return
-		}
-		// 清理后需要重新初始化 session，确保从头开始查询
-		// 重新创建一个新的 session 来替换被清理的 session
-		session, err = redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollSessionLockTimeout, queryTs.SliceMax, queryTs.Limit)
+		err = session.Reset(ctx)
 		if err != nil {
 			return
 		}

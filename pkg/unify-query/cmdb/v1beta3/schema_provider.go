@@ -81,42 +81,6 @@ func GetSchemaProvider() SchemaProvider {
 	return defaultSchemaProvider
 }
 
-var relationSchemaOrder = map[RelationType]int{
-	RelationNodeWithSystem:                     0,
-	RelationNodeWithPod:                        1,
-	RelationJobWithPod:                         2,
-	RelationPodWithReplicaSet:                  3,
-	RelationPodWithStatefulSet:                 4,
-	RelationDaemonSetWithPod:                   5,
-	RelationDeploymentWithReplicaSet:           6,
-	RelationPodWithService:                     7,
-	RelationIngressWithService:                 8,
-	RelationK8sAddressWithService:              9,
-	RelationDomainWithService:                  10,
-	RelationAPMServiceInstanceWithPod:          11,
-	RelationAPMServiceInstanceWithSystem:       12,
-	RelationAPMServiceWithAPMServiceInstance:   13,
-	RelationContainerWithPod:                   14,
-	RelationDataSourceWithPod:                  15,
-	RelationDataSourceWithNode:                 16,
-	RelationBKLogConfigWithDataSource:          17,
-	RelationBizWithSet:                         18,
-	RelationModuleWithSet:                      19,
-	RelationHostWithModule:                     20,
-	RelationHostWithSystem:                     21,
-	RelationAppVersionWithContainer:            22,
-	RelationAppVersionWithSystem:               23,
-	RelationContainerWithEnvironment:           24,
-	RelationEnvironmentWithSystem:              25,
-	RelationAppVersionWithGitCommit:            26,
-	RelationPodToPod:                           27,
-	RelationPodToSystem:                        28,
-	RelationSystemToPod:                        29,
-	RelationSystemToSystem:                     30,
-	RelationServiceToService:                   31,
-	RelationType("apm_service_to_apm_service"): 32,
-}
-
 var defaultResourceFieldTypes = buildDefaultResourceFieldTypes()
 
 func buildDefaultResourceFieldTypes() map[ResourceType]map[string]string {
@@ -235,8 +199,7 @@ func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas(namespace string) []R
 		return nil
 	}
 	if len(definitions) == 0 && ns != relation.NamespaceAll {
-		// 空的 space schema 不应让 v1beta3 直接变成无路径；
-		// 回退到 __all__ 后仍按下方稳定顺序输出，保证路径优先级可预测。
+		// 空的 space schema 不应让 v1beta3 直接变成无路径，回退到 __all__。
 		definitions, err = a.provider.ListRelationDefinitions(relation.NamespaceAll)
 		if err != nil {
 			definitions = nil
@@ -262,16 +225,20 @@ func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas(namespace string) []R
 			MetricName:    schema.MetricName,
 		}
 	}
+	// 路径和拓扑在输出前都会按资源与关系名重新排序，这里的顺序不决定优先级，
+	// 只需与 provider 的列举顺序无关（Redis 定义的顺序不固定）。
 	sort.SliceStable(result, func(i, j int) bool {
-		leftOrder, leftOK := relationSchemaOrder[result[i].RelationType]
-		rightOrder, rightOK := relationSchemaOrder[result[j].RelationType]
-		if leftOK && rightOK {
-			return leftOrder < rightOrder
+		left, right := result[i], result[j]
+		if left.RelationType != right.RelationType {
+			return left.RelationType < right.RelationType
 		}
-		if leftOK != rightOK {
-			return leftOK
+		if left.FromType != right.FromType {
+			return left.FromType < right.FromType
 		}
-		return result[i].RelationType < result[j].RelationType
+		if left.ToType != right.ToType {
+			return left.ToType < right.ToType
+		}
+		return left.Category < right.Category
 	})
 	return result
 }

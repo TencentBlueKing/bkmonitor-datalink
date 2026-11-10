@@ -777,19 +777,36 @@ func (i *Instance) QueryPreparedRawData(
 		).Error(ctx, err)
 	}
 
-	// Publish the route only after decoding succeeds, so its rows, total, and cursor stay consistent.
-	rowCapacity := 0
-	if sr != nil && sr.Hits != nil {
-		rowCapacity = len(sr.Hits.Hits)
+	// Match executeESQuery's cursor precedence: ScrollID, SearchAfter, then Scroll.
+	isScroll := rawQuery.Scroll != ""
+	if option != nil {
+		if option.ScrollID != "" {
+			isScroll = true
+		} else if len(option.SearchAfter) > 0 {
+			isScroll = false
+		}
 	}
-	rows := make(chan map[string]any, rowCapacity)
-	size, total, option, err = decodePreparedRawResult(prepared, sr, rows)
-	close(rows)
+
+	// Scroll keeps its existing streaming behavior; other queries publish only a fully decoded route.
+	destination := dataCh
+	var rows chan map[string]any
+	if !isScroll {
+		rowCapacity := 0
+		if sr != nil && sr.Hits != nil {
+			rowCapacity = len(sr.Hits.Hits)
+		}
+		rows = make(chan map[string]any, rowCapacity)
+		destination = rows
+	}
+	size, total, option, err = decodePreparedRawResult(prepared, sr, destination)
 	if err != nil {
 		return size, total, option, err
 	}
-	for row := range rows {
-		dataCh <- row
+	if rows != nil {
+		close(rows)
+		for row := range rows {
+			dataCh <- row
+		}
 	}
 	recordPartialShardResult(ctx, sr)
 	if sr != nil && sr.Hits != nil {

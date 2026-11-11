@@ -22,6 +22,54 @@ func directTables(name string) map[string]metadata.PhysicalTable {
 	return map[string]metadata.PhysicalTable{"main": {Database: "logs", Table: name, AnalyzedFields: []string{"log"}}}
 }
 
+func TestBKBasePaginationCompatibility(t *testing.T) {
+	for _, mode := range []string{"merged", "legacy_search_after", "legacy_offset"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, req, table := rawPlanFixture()
+			enabled := false
+			ctx = metadata.WithQueryFlags(ctx, metadata.QueryFlags{DorisDirectQuery: &enabled})
+			table.StorageType = metadata.BkSqlStorageType
+			table.Measurement = metadata.DorisStorageType
+			table.TableID, table.DB = "a", "1001_a"
+			table.PhysicalTables = directTables("a")
+			table.StorageClusterRecords = nil
+			req.IsSearchAfter = true
+			option := &metadata.ResultTableOption{SearchAfter: []any{42}}
+			if mode == "merged" {
+				second := *table
+				second.TableID, second.DB = "b", "1001_b"
+				second.PhysicalTables = directTables("b")
+				req.TsDBMap["A"] = TsDBs{&second, table}
+				req.IsMergeDB = true
+				option.QueryBackend = metadata.BkSqlStorageType
+			} else if mode == "legacy_offset" {
+				from := 20
+				option = &metadata.ResultTableOption{From: &from}
+			}
+			plan, err := req.ToRawQueryPlan(ctx)
+			require.NoError(t, err)
+			require.Equal(t, 1, plan.Queries.Count())
+			req.ResultTableOptions = metadata.ResultTableOptions{}
+			plan.Queries.Range("", func(q *metadata.Query) {
+				req.ResultTableOptions[q.TableUUID()] = option
+			})
+			enabled = mode != "merged"
+			ctx = metadata.WithQueryFlags(ctx, metadata.QueryFlags{DorisDirectQuery: &enabled})
+			plan, err = req.ToRawQueryPlan(ctx)
+			require.NoError(t, err)
+			require.Equal(t, 1, plan.Queries.Count())
+			plan.Queries.Range("", func(q *metadata.Query) {
+				require.Equal(t, metadata.BkSqlStorageType, q.QueryBackend)
+				require.Empty(t, q.DirectTables)
+				require.Equal(t, option, q.ResultTableOption)
+				if mode == "merged" {
+					require.Equal(t, []string{"1001_a", "1001_b"}, q.DBs)
+				}
+			})
+		})
+	}
+}
+
 func TestDorisPhysicalRouteSelection(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		ctx, req, table := rawPlanFixture()

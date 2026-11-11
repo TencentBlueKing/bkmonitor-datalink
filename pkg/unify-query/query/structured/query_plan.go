@@ -106,6 +106,10 @@ type queryMergeTarget struct {
 // mergeTarget 生成 DB 合并分组键，Raw 查询同时区分集群、Measurement 和 SourceType。
 func mergeTarget(query *metadata.Query, mode queryMode) queryMergeTarget {
 	target := queryMergeTarget{storageUUID: query.StorageUUID(), backend: query.QueryBackend}
+	// 未显式选后端时执行器使用 StorageType，续页的显式标记不应拆分同一组查询。
+	if target.backend == "" {
+		target.backend = query.StorageType
+	}
 	if mode == rawQuery {
 		target.clusterName = query.ClusterName
 		target.measurement = query.Measurement

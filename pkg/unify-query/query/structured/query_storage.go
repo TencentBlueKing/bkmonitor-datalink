@@ -142,7 +142,7 @@ func (q *Query) buildStorageQuery(
 				}
 			}
 		}
-		if option := query.ResultTableOption; option != nil && option.QueryBackend != "" {
+		if option := query.ResultTableOption; option != nil {
 			switch option.QueryBackend {
 			case metadata.DorisStorageType:
 				t := query.PhysicalTables["main"]
@@ -151,7 +151,8 @@ func (q *Query) buildStorageQuery(
 				}
 				query.QueryBackend = metadata.DorisStorageType
 				query.DirectTables = []metadata.PhysicalTable{t}
-			case metadata.BkSqlStorageType:
+			case "", metadata.BkSqlStorageType:
+				// 升级前的游标没有后端标记，必须继续使用生成它的 BKBase。
 				if query.DB == "" {
 					return nil, fmt.Errorf("BKBase pagination target is no longer configured")
 				}

@@ -233,19 +233,21 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		case failedQueryCount > 0 || partialQueryCount > 0:
 			requestResult = metric.CMDBRelationResultPartial
 		}
-		// 写出失败由 ResponseWriteError 带回请求终态。
-		_ = stream.close()
+		// 写出失败另由 ResponseWriteError 带回请求终态；API 请求计数与它使用同一个错误。
+		if closeErr := stream.close(); abortErr == nil {
+			abortErr = closeErr
+		}
 		resp.streamed(ctx, abortErr)
 	}
-	// abort 处理批次中途的请求级失败（期限、取消、编码失败）。尚未写出时整个请求失败；
-	// 已开始写出时 HTTP 200 和前面的项已经发出，当前项及其后各项按单项失败写出，响应仍是完整 JSON。
+	// abort 处理批次中途的请求级失败（期限、取消、编码失败），只在项之间调用。尚未写出时整个
+	// 请求失败；已开始写出时 HTTP 200 和前面的项已经完整发出，当前项及其后各项按单项失败写出，
+	// 响应仍是完整 JSON。写出本身不受取消约束，只因传输错误停止。
 	abort := func(from int, failure error) {
 		handlerErr = failure
 		if !stream.started() {
 			fail(ctx, failure)
 			return
 		}
-		stream.detach()
 		message := truncateTopologyErrorMessage(failure.Error(), topologyErrorMessageMaxBytes)
 		for index := from; index < len(request.QueryList); index++ {
 			failedQueryCount++
@@ -330,14 +332,15 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		}
 		v1beta3.SetTimeGraphLimitTrace(querySpan, queryErr)
 		querySpan.End(&queryErr)
-		// 编码完但尚未写出时请求被取消或到达期限：与批次中途的失败一样处理，尚未开始写出时
-		// 整个请求失败，已开始写出时这一项按单项失败写出。
+		// 取消与期限只在项之间检查：编码完但尚未写出时请求被取消或到达期限，与批次中途的失败
+		// 一样处理，尚未开始写出时整个请求失败，已开始写出时这一项按单项失败写出。一项开始写出
+		// 后写完它的全部片段，期间到达的取消由下一项的检查处理。
 		if err := ctx.Err(); err != nil {
 			abort(index, err)
 			return
 		}
 		if err := stream.item(encoded.parts); err != nil {
-			// 客户端已不可写：停止批次，写出错误由 ResponseWriteError 带回。
+			// 传输错误：客户端已不可写，停止批次，写出错误由 ResponseWriteError 与请求计数带回。
 			finish(nil)
 			return
 		}

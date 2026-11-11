@@ -56,6 +56,3 @@ func (s *topologyResponseStream) close() error {
 }
 
 func (s *topologyResponseStream) started() bool { return s.stream.Started() }
-
-// detach 让已开始的响应在请求取消后仍能写完有界的失败项。
-func (s *topologyResponseStream) detach() { s.stream.Detach() }

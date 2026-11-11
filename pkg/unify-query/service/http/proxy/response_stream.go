@@ -25,7 +25,8 @@ var (
 
 // JSONStream 按顺序写出一个成功 JSON 响应的片段：调用方编码完一段就写出一段，不在内存中
 // 拼出整份响应。首次写出时发送 200 和 JSON 内容类型；代理路径另加与 apiGwResponse 相同的
-// 外层，代理不再重复写出。写出受请求取消约束，失败记入 ResponseWriteError。
+// 外层，代理不再重复写出。片段已在内存中，开始写出的片段总是写完，只因传输错误停止；请求
+// 取消由调用方在片段之间的边界（如批次的项之间）检查。写出失败记入 ResponseWriteError。
 type JSONStream struct {
 	ctx       context.Context
 	c         *gin.Context
@@ -45,9 +46,6 @@ func NewJSONStream(ctx context.Context, c *gin.Context) *JSONStream {
 
 // Started 表示是否已开始写出；开始后响应状态和成功外层都不能再改。
 func (s *JSONStream) Started() bool { return s.started }
-
-// Detach 让后续写出不再受请求取消约束，只用于有界的失败收尾，使已开始的响应仍是完整 JSON。
-func (s *JSONStream) Detach() { s.ctx = context.WithoutCancel(s.ctx) }
 
 func (s *JSONStream) start() {
 	if s.started {
@@ -71,9 +69,6 @@ func (s *JSONStream) start() {
 	var encodeErr error
 	encodeSpan.End(&encodeErr)
 	_, s.writeSpan = trace.NewSpan(spanCtx, "http-response-write")
-	if s.err = s.ctx.Err(); s.err != nil {
-		return
-	}
 	s.c.Status(http.StatusOK)
 	render.JSON{}.WriteContentType(s.c.Writer)
 	if len(prefix) > 0 {
@@ -83,9 +78,6 @@ func (s *JSONStream) start() {
 
 func (s *JSONStream) write(part []byte) {
 	if s.err != nil || len(part) == 0 {
-		return
-	}
-	if s.err = s.ctx.Err(); s.err != nil {
 		return
 	}
 	n, err := s.c.Writer.Write(part)

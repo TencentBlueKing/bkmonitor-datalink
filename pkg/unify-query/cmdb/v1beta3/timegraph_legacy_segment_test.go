@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"testing"
 	"time"
@@ -44,12 +45,22 @@ func localPrometheusLegacyModel(t *testing.T, ctx context.Context, samples map[s
 	db, err := promtsdb.Open(t.TempDir(), kitlog.NewNopLogger(), nil, promtsdb.DefaultOptions(), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	appender := db.Appender(ctx)
+	// 按时间顺序写入：空 TSDB 以首个样本定下可写窗口，乱序写入早一小时以上的样本会越界。
+	type sample struct {
+		target string
+		at     int64
+	}
+	var ordered []sample
 	for target, times := range samples {
 		for _, at := range times {
-			_, err = appender.Append(0, labels.FromStrings("__name__", "a", "source_id", "a", "target_id", target), at*1000, 1)
-			require.NoError(t, err)
+			ordered = append(ordered, sample{target, at})
 		}
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].at < ordered[j].at })
+	appender := db.Appender(ctx)
+	for _, item := range ordered {
+		_, err = appender.Append(0, labels.FromStrings("__name__", "a", "source_id", "a", "target_id", item.target), item.at*1000, 1)
+		require.NoError(t, err)
 	}
 	require.NoError(t, appender.Commit())
 	instance := localprom.NewInstance(ctx, pl.NewEngine(pl.EngineOpts{Timeout: 5 * time.Second, MaxSamples: 100000}), db, time.Minute, 2)

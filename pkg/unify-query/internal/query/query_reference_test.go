@@ -11,6 +11,8 @@ package query
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/prometheus/promql/parser"
@@ -19,6 +21,48 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
+
+func BenchmarkToVmExpandForExpression(b *testing.B) {
+	for _, tc := range []struct {
+		name               string
+		selectors, outputs int
+	}{
+		{"single", 1, 1},
+		{"18-selectors", 18, 1},
+		{"four-outputs", 18, 4},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			ctx := context.Background()
+			qr := make(metadata.QueryReference, tc.selectors)
+			parts := make([]string, tc.selectors)
+			for i := range parts {
+				ref := "m" + strconv.Itoa(i)
+				parts[i] = `count_over_time({__name__=~"` + ref + `"}[1h])`
+				qr[ref] = []*metadata.QueryMetric{{QueryList: metadata.QueryList{{VmRt: "rt-" + ref, StorageName: "storage", VmCondition: metadata.VmCondition(`result_table_id="rt-` + ref + `"`)}}}}
+			}
+			expressions := make([]parser.Expr, tc.outputs)
+			for i := range expressions {
+				// Named outputs have one full expression and optional single-reference outputs.
+				expression := parts[i]
+				if i == 0 {
+					expression = strings.Join(parts, " or ")
+				}
+				var err error
+				expressions[i], err = parser.ParseExpr(expression)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				for _, expr := range expressions {
+					ToVmExpandForExpression(ctx, qr, expr)
+				}
+			}
+		})
+	}
+}
 
 func TestVmExpandUsesOnlyExpressionSelectors(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
@@ -44,7 +88,8 @@ func TestVmExpandUsesOnlyExpressionSelectors(t *testing.T) {
 		t.Run(tc.expr, func(t *testing.T) {
 			expr, err := parser.ParseExpr(tc.expr)
 			require.NoError(t, err)
-			expand := ToVmExpandForExpression(ctx, qr, expr)
+			expand, err := ToVmExpandForExpression(ctx, qr, expr)
+			require.NoError(t, err)
 			require.NotNil(t, expand)
 			if tc.refs == nil {
 				require.Equal(t, []string{"rt-a", "rt-b"}, expand.ResultTableList)
@@ -87,12 +132,41 @@ func TestVmExpandDoesNotResolveUnrelatedSelectors(t *testing.T) {
 		t.Run(expression, func(t *testing.T) {
 			expr, err := parser.ParseExpr(expression)
 			require.NoError(t, err)
-			require.Nil(t, ToVmExpandForExpression(ctx, qr, expr))
+			expand, err := ToVmExpandForExpression(ctx, qr, expr)
+			require.NoError(t, err)
+			require.Nil(t, expand)
 		})
 	}
 	expr, err := parser.ParseExpr("vector(1)")
 	require.NoError(t, err)
-	require.Nil(t, ToVmExpandForExpression(ctx, nil, expr))
+	expand, err := ToVmExpandForExpression(ctx, nil, expr)
+	require.NoError(t, err)
+	require.Nil(t, expand)
+}
+
+func TestVmExpandRejectsPartiallyBoundExpression(t *testing.T) {
+	ctx := context.Background()
+	qr := metadata.QueryReference{
+		"a":     {{QueryList: metadata.QueryList{{VmRt: "rt-a", VmCondition: `result_table_id="rt-a"`}}}},
+		"b":     {{QueryList: metadata.QueryList{{}}}},
+		"empty": {{QueryList: metadata.QueryList{{VmRt: "rt-empty"}}}},
+		"":      {{QueryList: metadata.QueryList{{VmRt: "rt-other", VmCondition: `result_table_id="rt-other"`}}}},
+	}
+	for _, tc := range []struct{ expr, missing string }{
+		{`a or count_over_time({__name__=~"b"}[5m])`, "b"},
+		{"topk(scalar(c), a)", "c"},
+		{"a or empty", "empty"},
+		{"empty", "empty"},
+		{`a or {job="api"}`, ""},
+	} {
+		t.Run(tc.expr, func(t *testing.T) {
+			expr, err := parser.ParseExpr(tc.expr)
+			require.NoError(t, err)
+			expand, err := ToVmExpandForExpression(ctx, qr, expr)
+			require.ErrorContains(t, err, "no storage binding for reference "+strconv.Quote(tc.missing))
+			require.Nil(t, expand)
+		})
+	}
 }
 
 func TestVmExpand(t *testing.T) {

@@ -13,26 +13,32 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 )
 
+// matcherAliases 把采集侧的标签名映射到资源主键名，例如 kube-state-metrics 用 job_name 表示 Job，
+// 因为 job 已是 Prometheus 的采集任务标签。
+var matcherAliases = map[string]string{
+	"pod_name":       "pod",
+	"container_name": "container",
+	"job_name":       "job",
+}
+
+// Rename 把别名改成资源主键名并丢弃空值。别名与主键名同时出现时以别名为准：
+// 别名明确指资源，同名的主键名可能是别的含义（如采集任务 job）。
 func (m Matcher) Rename() Matcher {
-	nameMap := map[string]string{
-		"pod_name":       "pod",
-		"container_name": "container",
-	}
 	newMatcher := make(Matcher, len(m))
 	for k, v := range m {
 		// 值为空会导致查询扩散，所以需要跳过
 		if v == "" {
 			continue
 		}
-
-		var (
-			nk string
-			ok bool
-		)
-		if nk, ok = nameMap[k]; !ok {
-			nk = k
+		if _, ok := matcherAliases[k]; ok {
+			continue
 		}
-		newMatcher[nk] = v
+		newMatcher[k] = v
+	}
+	for alias, name := range matcherAliases {
+		if v := m[alias]; v != "" {
+			newMatcher[name] = v
+		}
 	}
 	return newMatcher
 }

@@ -286,7 +286,7 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 			metadata.MsgQueryVictoriaMetrics,
 			"查询异常 %s",
 			resp.Message,
-		).Error(ctx, errors.New(resp.Errors.Error))
+		).Error(ctx, responseError(resp))
 	}
 
 	prefix := "response-"
@@ -351,15 +351,11 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 	defer formatSpan.End(&err)
 	defer func() { formatSpan.Set("output-series-count", len(result)) }()
 	if !resp.Result || resp.Code != OK {
-		cause := errors.New(resp.Errors.Error)
-		if isResponseBodyTooLarge(resp.Message) || isResponseBodyTooLarge(resp.Errors.Error) {
-			cause = &metadata.BackendResponseTooLargeError{Message: resp.Message}
-		}
 		return nil, false, metadata.NewMessage(
 			metadata.MsgQueryVictoriaMetrics,
 			"查询异常 %s",
 			resp.Message,
-		).Error(ctx, cause)
+		).Error(ctx, responseError(resp))
 	}
 
 	prefix := "vm-data"
@@ -437,6 +433,14 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 	}
 
 	return nil, false, nil
+}
+
+// responseError 让即时查询和区间查询把同一种后端拒收归为同一类错误。
+func responseError(resp *VmResponse) error {
+	if isResponseBodyTooLarge(resp.Message) || isResponseBodyTooLarge(resp.Errors.Error) {
+		return &metadata.BackendResponseTooLargeError{Message: resp.Message}
+	}
+	return errors.New(resp.Errors.Error)
 }
 
 func isResponseBodyTooLarge(message string) bool {

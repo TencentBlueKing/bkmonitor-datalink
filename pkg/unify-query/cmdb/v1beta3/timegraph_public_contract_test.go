@@ -731,7 +731,7 @@ func TestTimeGraphPublicSourceExpandAndTargetInfoCases(t *testing.T) {
 			)
 			require.NoError(t, err)
 			require.Equal(t, cmdb.Resource("node"), source)
-			require.Equal(t, cmdb.Matcher{"node_id": "n1", "zone": tc.sourceExpandInfo["zone"]}, sourceMatcher)
+			require.Equal(t, cmdb.Matcher{"node_id": "n1"}, sourceMatcher)
 			require.Equal(t, []string{"node", "middle"}, paths)
 			require.Equal(t, cmdb.Resource("middle"), target)
 			require.Equal(t, tc.wantMatchers, matchers)

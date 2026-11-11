@@ -932,7 +932,7 @@ TimeGraph 新旧关系接口选择、完整参数、双格式与失败合同见 
 | `query_list[].target_type`        | string | 是   | 目标资源类型，如 `system`                                                                               |
 | `query_list[].target_info_show`   | bool   | 否   | 是否显示目标资源信息                                                                                    |
 | `query_list[].path_resource`      | array  | 否   | 关联路径资源类型列表                                                                                    |
-| `query_list[].look_back_delta`    | string | 否   | 偏移量，如 `5m`                                                                                         |
+| `query_list[].look_back_delta`    | string | 否   | 回看窗口，如 `5m`；省略时用查询引擎的默认回看（内置 `5m`）                                              |
 
 **响应示例**:
 
@@ -1019,7 +1019,7 @@ TimeGraph 新旧关系接口选择、完整参数、双格式与失败合同见 
 | `query_list[].target_type`        | string | 是   | 目标资源类型                  |
 | `query_list[].target_info_show`   | bool   | 否   | 是否显示目标资源信息          |
 | `query_list[].path_resource`      | array  | 否   | 关联路径资源类型列表          |
-| `query_list[].look_back_delta`    | string | 否   | 偏移量，如 `5m`               |
+| `query_list[].look_back_delta`    | string | 否   | 只校验格式；每个时间桶按 `step` 观测 |
 
 **响应示例**:
 

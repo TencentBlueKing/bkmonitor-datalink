@@ -121,14 +121,24 @@ func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured
 	if timeGraphQueryStage(ctx) == "source-info" && queryRef.Count() == 0 {
 		metadata.SetStatus(ctx, metadata.QueryTsPartial, "source_info_no_route")
 	}
-	metadata.SetExpand(ctx, query.ToVmExpand(ctx, queryRef))
-
 	expr, err := queryTs.ToPromExpr(ctx, nil)
 	if err != nil {
 		return "", nil, errors.WithMessage(err, "to prom expr")
 	}
-	span.Set("query-expression-length", len(expr.String()))
-	return expr.String(), metadata.GetQueryParams(ctx), nil
+	params := metadata.GetQueryParams(ctx)
+	if params.IsDirectQuery() {
+		var vmExpand *metadata.VmExpand
+		vmExpand, err = query.ToVmExpandForExpression(ctx, queryRef, expr)
+		if err != nil {
+			return "", nil, err
+		}
+		metadata.SetExpand(ctx, vmExpand)
+	} else {
+		metadata.SetExpand(ctx, query.ToVmExpand(ctx, queryRef))
+	}
+	statement := expr.String()
+	span.Set("query-expression-length", len(statement))
+	return statement, params, nil
 }
 
 func validateTimeGraphPrecision(start, end time.Time, step time.Duration) error {
@@ -415,7 +425,7 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 }
 
 func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, queryTs *structured.QueryTs, applyQuality bool) (matrix pl.Matrix, partial bool, err error) {
-	if loader.topology && metadata.BackendResponseLimit(queryCtx) > 0 {
+	if metadata.BackendResponseLimit(queryCtx) > 0 {
 		// 一次物理响应的聚合子查询共用拒收标记，防止预算超限被误判为 partial；
 		// 不同身份分片各有标记，先前的大分片失败不会污染后续小分片。
 		queryCtx = metadata.WithBackendResponseLimit(queryCtx, metadata.BackendResponseLimit(queryCtx))
@@ -700,7 +710,7 @@ func (loader *timeGraphMatrixLoader) validateMatrix(queryCtx context.Context, ma
 		span.Set("matrix-cumulative-point-count", loader.pointCount)
 	}()
 	startMillis, endMillis, stepMillis := loader.start.UnixMilli(), loader.end.UnixMilli(), loader.step.Milliseconds()
-	if loader.topology && metadata.BackendResponseLimitExceeded(queryCtx) {
+	if metadata.BackendResponseLimitExceeded(queryCtx) {
 		err = &ResultLimitError{Reason: "max_response_bytes", Count: int(metadata.BackendResponseLimit(queryCtx)) + 1, Limit: int(metadata.BackendResponseLimit(queryCtx))}
 	}
 	pointCount = 0

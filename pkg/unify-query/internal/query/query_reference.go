@@ -11,6 +11,7 @@ package query
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -24,12 +25,12 @@ import (
 // ToVmExpandForExpression limits routing and coverage to the selectors actually
 // executed. A named output must not inherit another output's physical tables.
 // The expression must be rendered with reference names, as in QueryTs direct queries.
-func ToVmExpandForExpression(ctx context.Context, qr metadata.QueryReference, expr parser.Expr) *metadata.VmExpand {
+// With no routed selector the query stays empty; with partial bindings it is
+// unsafe to dispatch the expression, since the gateway can expand an unbound alias.
+func ToVmExpandForExpression(ctx context.Context, qr metadata.QueryReference, expr parser.Expr) (*metadata.VmExpand, error) {
 	used := make(metadata.QueryReference)
-	selectors := 0
 	parser.Inspect(expr, func(node parser.Node, _ []parser.Node) error {
 		if selector, ok := node.(*parser.VectorSelector); ok {
-			selectors++
 			name := selector.Name
 			if name == "" {
 				// Query.IsRegexp renders its reference as {__name__=~"a"}.
@@ -41,13 +42,15 @@ func ToVmExpandForExpression(ctx context.Context, qr metadata.QueryReference, ex
 					}
 				}
 			}
-			if references, exists := qr[name]; exists {
-				used[name] = references
+			if name == "" {
+				used[name] = nil
+			} else {
+				used[name] = qr[name]
 			}
 		}
 		return nil
 	})
-	if selectors == 0 {
+	if len(used) == 0 {
 		// Keep the existing VM execution envelope for constants such as vector(1),
 		// which still require a table to dispatch through the gateway. They read no
 		// physical metric, so those dispatch tables are not coverage requirements.
@@ -55,9 +58,23 @@ func ToVmExpandForExpression(ctx context.Context, qr metadata.QueryReference, ex
 		if expand != nil {
 			expand.RtDetailList = nil
 		}
-		return expand
+		return expand, nil
 	}
-	return ToVmExpand(ctx, used)
+	expand := ToVmExpand(ctx, used)
+	if expand == nil {
+		return nil, nil
+	}
+	var missing string
+	unbound := false
+	for ref := range used {
+		if expand.MetricFilterCondition[ref] == "" && (!unbound || ref < missing) {
+			missing, unbound = ref, true
+		}
+	}
+	if unbound {
+		return nil, fmt.Errorf("VM direct query has no storage binding for reference %q", missing)
+	}
+	return expand, nil
 }
 
 func ToVmExpand(ctx context.Context, qr metadata.QueryReference) *metadata.VmExpand {

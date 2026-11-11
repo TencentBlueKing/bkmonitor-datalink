@@ -1576,7 +1576,7 @@ const docTemplate = `{
                                 "type": "integer"
                             },
                             "look_back_delta": {
-                                "description": "Positive Go duration; empty uses configured lookback (built-in 24h), independent of range step.",
+                                "description": "Positive Go duration, validated only; each bucket observes one step, independent of this value.",
                                 "type": "string"
                             },
                             "path_resource": {
@@ -1682,7 +1682,7 @@ const docTemplate = `{
                         "type": "object",
                         "properties": {
                             "look_back_delta": {
-                                "description": "Positive Go duration; empty uses configured lookback (built-in 24h), independent of range step.",
+                                "description": "Positive Go duration; empty uses the query engine lookback (built-in 5m), like the legacy instant selector.",
                                 "type": "string"
                             },
                             "path_resource": {

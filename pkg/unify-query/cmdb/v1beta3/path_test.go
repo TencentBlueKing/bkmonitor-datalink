@@ -231,7 +231,8 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 			}
 
 			assert.NoError(t, err)
-			assert.Equal(t, tc.Expected, paths)
+			// 枚举顺序不是合同，查询前由 sortPathsForQuery 排序。
+			assert.ElementsMatch(t, tc.Expected, paths)
 		})
 	}
 }

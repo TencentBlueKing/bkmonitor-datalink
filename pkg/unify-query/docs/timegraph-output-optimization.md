@@ -134,7 +134,11 @@ Admission is a wait-only gate. At most the configured number of requests
 execute; the others wait in FIFO order, without a queue length cap, bounded
 only by their own deadline or cancellation. Waiting shares the original request
 deadline. A waiting HTTP request reads only its bounded body; peer closure,
-cancellation and body errors remove its queued state. Nested model calls reuse
+cancellation and body errors remove its queued state. A waiter that is still
+reading its body keeps its position but does not hold a free slot: the slot goes
+to the earliest waiter that has finished reading, and a new arrival may take a
+free slot when no such waiter is ahead. Each waiter has its own wake channel, so
+a released slot wakes exactly the waiter that receives it. Nested model calls reuse
 the request lease. Direct model calls acquire and release their own lease.
 
 The lease lasts through HTTP or proxy response writing and write failure

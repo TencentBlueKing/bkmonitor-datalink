@@ -14,12 +14,14 @@ import (
 
 // topologyAdmission 是进程内的执行槽。执行中的请求数不超过
 // max_shared_topology_concurrent_requests；其余请求按到达顺序等待，只受各自的
-// 期限和取消约束，不因排队人数或内存估算被拒绝。
+// 期限和取消约束，不因排队人数或内存估算被拒绝。每个等待者有自己的唤醒通道，
+// 执行槽空出时只唤醒下一个可执行的等待者，不广播给所有等待者。
 var topologyAdmission struct {
 	sync.Mutex
 	active  int
 	waiters []*topologyWaiter
-	changed chan struct{}
+	// wakeups 统计等待者被唤醒的次数，供测试确认没有广播式唤醒。
+	wakeups int
 }
 
 type topologyAdmissionKey struct{}
@@ -28,7 +30,13 @@ type topologyLease struct {
 	released bool
 }
 
-type topologyWaiter struct{ _ byte }
+// topologyWaiter 是一个排队位置。ready 表示排队准备（读取请求体）已完成，可以接收执行槽；
+// granted 表示执行槽已经分配给它并计入 active，wake 只在分配时发送一次。
+type topologyWaiter struct {
+	ready   bool
+	granted bool
+	wake    chan struct{}
+}
 
 // AcquireSharedTopology covers the complete HTTP response lifetime. A request
 // waits for an execution slot within its own deadline; nested calls reuse the
@@ -78,13 +86,10 @@ func acquireSharedTopology(ctx context.Context, prepare func(context.Context) er
 		span.Set("admission-active", topologyAdmission.active)
 		span.Set("admission-waiters", len(topologyAdmission.waiters))
 	}()
-	limit := effectiveTimeGraphLimit(MaxSharedTopologyConcurrent, 8)
-	if err = waitTopologySlotLocked(ctx, limit, span, prepare); err != nil {
+	if err = waitTopologySlotLocked(ctx, span, prepare); err != nil {
 		lease.released = true
 		return ctx, nil, err
 	}
-	topologyAdmission.active++
-	notifyTopologyWaitersLocked()
 	var once sync.Once
 	release := func() {
 		once.Do(func() {
@@ -96,7 +101,7 @@ func acquireSharedTopology(ctx context.Context, prepare func(context.Context) er
 			defer topologyAdmission.Unlock()
 			topologyAdmission.active--
 			lease.released = true
-			notifyTopologyWaitersLocked()
+			grantTopologySlotsLocked()
 			releaseSpan.Set("admission-active", topologyAdmission.active)
 			metric.CMDBTopologyAdmissionSet(topologyAdmission.active)
 		})
@@ -104,80 +109,106 @@ func acquireSharedTopology(ctx context.Context, prepare func(context.Context) er
 	return ctx, release, nil
 }
 
-// notifyTopologyWaitersLocked broadcasts state changes. Waiters recheck the
-// execution count and FIFO head under the same mutex before obtaining a lease.
-func notifyTopologyWaitersLocked() {
-	metric.CMDBTopologyWaitersSet(len(topologyAdmission.waiters))
-	if topologyAdmission.changed != nil {
-		close(topologyAdmission.changed)
+func topologyAdmissionLimit() int { return effectiveTimeGraphLimit(MaxSharedTopologyConcurrent, 8) }
+
+// firstReadyTopologyWaiterLocked 返回最早到达且已完成准备的等待者下标；仍在读取请求体的
+// 等待者保留排队位置，但不占用空闲执行槽。
+func firstReadyTopologyWaiterLocked() int {
+	for index, waiter := range topologyAdmission.waiters {
+		if waiter.ready {
+			return index
+		}
 	}
-	topologyAdmission.changed = make(chan struct{})
+	return -1
+}
+
+// grantTopologySlotsLocked 把空闲执行槽依次分配给最早就绪的等待者：执行槽在这里计入 active，
+// 只唤醒拿到执行槽的等待者。
+func grantTopologySlotsLocked() {
+	limit := topologyAdmissionLimit()
+	for topologyAdmission.active < limit {
+		index := firstReadyTopologyWaiterLocked()
+		if index < 0 {
+			break
+		}
+		waiter := topologyAdmission.waiters[index]
+		removeTopologyWaiterAtLocked(index)
+		waiter.granted = true
+		topologyAdmission.active++
+		waiter.wake <- struct{}{}
+	}
+	metric.CMDBTopologyWaitersSet(len(topologyAdmission.waiters))
+}
+
+func removeTopologyWaiterAtLocked(index int) {
+	waiters := topologyAdmission.waiters
+	copy(waiters[index:], waiters[index+1:])
+	waiters[len(waiters)-1] = nil
+	topologyAdmission.waiters = waiters[:len(waiters)-1]
 }
 
 func removeTopologyWaiterLocked(target *topologyWaiter) {
-	for i, w := range topologyAdmission.waiters {
-		if w != target {
-			continue
+	for index, waiter := range topologyAdmission.waiters {
+		if waiter == target {
+			removeTopologyWaiterAtLocked(index)
+			metric.CMDBTopologyWaitersSet(len(topologyAdmission.waiters))
+			return
 		}
-		copy(topologyAdmission.waiters[i:], topologyAdmission.waiters[i+1:])
-		topologyAdmission.waiters[len(topologyAdmission.waiters)-1] = nil
-		topologyAdmission.waiters = topologyAdmission.waiters[:len(topologyAdmission.waiters)-1]
-		metric.CMDBTopologyWaitersSet(len(topologyAdmission.waiters))
-		return
 	}
 }
 
-// waitTopologySlotLocked returns with the lock held. Waiters are admitted in
-// FIFO order; the queue has no length cap, so a waiter leaves it only when a
-// slot opens or its own deadline/cancellation fires. Resource growth after
-// admission never waits here; queued requests share the original deadline.
-func waitTopologySlotLocked(ctx context.Context, limit int, span *trace.Span, prepare func(context.Context) error) error {
-	var waiter *topologyWaiter
+// waitTopologySlotLocked 在持锁时进入并返回；成功返回时本请求已占用一个执行槽。有空闲执行槽且
+// 没有已就绪的等待者排在前面时直接执行；否则排队，排队后在锁外完成准备。就绪等待者按到达顺序
+// 接收执行槽；队列不设长度，等待者只因执行槽分配、自己的期限或取消离开队列。准入之后的资源
+// 增长不在这里等待，排队与执行共用原请求期限。
+func waitTopologySlotLocked(ctx context.Context, span *trace.Span, prepare func(context.Context) error) error {
 	started := time.Now()
 	defer func() { span.Set("admission-wait-seconds", time.Since(started).Seconds()) }()
-	for {
-		if err := ctx.Err(); err != nil {
-			if waiter != nil {
-				removeTopologyWaiterLocked(waiter)
-				notifyTopologyWaitersLocked()
-			}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if topologyAdmission.active < topologyAdmissionLimit() && firstReadyTopologyWaiterLocked() < 0 {
+		topologyAdmission.active++
+		return nil
+	}
+	waiter := &topologyWaiter{ready: prepare == nil, wake: make(chan struct{}, 1)}
+	topologyAdmission.waiters = append(topologyAdmission.waiters, waiter)
+	metric.CMDBTopologyWaitersSet(len(topologyAdmission.waiters))
+	if prepare != nil {
+		// 先取得排队位置再读取请求体；读取期间其他请求可以释放、取消或取得执行槽。
+		topologyAdmission.Unlock()
+		err := prepare(ctx)
+		topologyAdmission.Lock()
+		if err == nil {
+			err = ctx.Err()
+		}
+		if err != nil {
+			// 准备中的等待者不会被分配执行槽，直接离开队列。
+			removeTopologyWaiterLocked(waiter)
 			return err
 		}
-		turn := len(topologyAdmission.waiters) == 0 || waiter != nil && topologyAdmission.waiters[0] == waiter
-		if topologyAdmission.active < limit && turn {
-			if waiter != nil {
-				removeTopologyWaiterLocked(waiter)
-			}
-			return nil
-		}
-		if waiter == nil {
-			waiter = &topologyWaiter{}
-			topologyAdmission.waiters = append(topologyAdmission.waiters, waiter)
-			metric.CMDBTopologyWaitersSet(len(topologyAdmission.waiters))
-			if prepare != nil {
-				// The queue position is taken before reading any body. Other
-				// requests can release/cancel/acquire the mutex while this I/O runs.
-				topologyAdmission.Unlock()
-				err := prepare(ctx)
-				topologyAdmission.Lock()
-				if err != nil {
-					removeTopologyWaiterLocked(waiter)
-					notifyTopologyWaitersLocked()
-					return err
-				}
-				// Slots may have opened during preparation; recheck immediately.
-				continue
-			}
-		}
-		if topologyAdmission.changed == nil {
-			topologyAdmission.changed = make(chan struct{})
-		}
-		changed := topologyAdmission.changed
+		waiter.ready = true
+		// 准备期间可能已有执行槽空出。
+		grantTopologySlotsLocked()
+	}
+	for !waiter.granted {
 		topologyAdmission.Unlock()
 		select {
 		case <-ctx.Done():
-		case <-changed:
+		case <-waiter.wake:
 		}
 		topologyAdmission.Lock()
+		topologyAdmission.wakeups++
+		if !waiter.granted {
+			removeTopologyWaiterLocked(waiter)
+			return ctx.Err()
+		}
 	}
+	if err := ctx.Err(); err != nil {
+		// 取消与分配同时发生：交还执行槽，由下一个就绪等待者使用。
+		topologyAdmission.active--
+		grantTopologySlotsLocked()
+		return err
+	}
+	return nil
 }

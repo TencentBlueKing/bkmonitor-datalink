@@ -16,6 +16,8 @@ const (
 	MaxSharedTopologyPointsConfigPath       = "cmdb.v1beta3.max_shared_topology_points"
 	MaxSharedTopologyRequestBytesConfigPath = "cmdb.v1beta3.max_shared_topology_request_bytes"
 	MaxSharedTopologyQueriesConfigPath      = "cmdb.v1beta3.max_shared_topology_queries"
+	MaxRelationRequestBytesConfigPath       = "cmdb.v1beta3.max_relation_request_bytes"
+	MaxRelationQueriesConfigPath            = "cmdb.v1beta3.max_relation_queries"
 	SharedTopologyReuseMatrixConfigPath     = "cmdb.v1beta3.shared_topology_reuse_matrix"
 	SharedTopologyPlanCandidatesConfigPath  = "cmdb.v1beta3.shared_topology_plan_candidates"
 	MaxSharedTopologyConcurrentConfigPath   = "cmdb.v1beta3.max_shared_topology_concurrent_requests"
@@ -32,10 +34,14 @@ var (
 	MaxSharedTopologyPoints       = 60
 	MaxSharedTopologyRequestBytes = 1024 * 1024
 	MaxSharedTopologyQueries      = 16
-	SharedTopologyReuseMatrix     = true
-	SharedTopologyPlanCandidates  = true
-	MaxSharedTopologyConcurrent   = 8
-	DefaultLookBackDelta          = int64(86400000) // 24小时（毫秒）
+	// 兼容入口 multi_resource / multi_resource_range 的请求体与批次条数。调用方按业务一次
+	// 提交整批告警等目标查询，规格比 topology 的批次大；仍是原始输入的上限，不约束内部量。
+	MaxRelationRequestBytes      = 16 * 1024 * 1024
+	MaxRelationQueries           = 10000
+	SharedTopologyReuseMatrix    = true
+	SharedTopologyPlanCandidates = true
+	MaxSharedTopologyConcurrent  = 8
+	DefaultLookBackDelta         = int64(86400000) // 24小时（毫秒）
 )
 
 func effectiveMaxRangePoints() int {
@@ -61,3 +67,11 @@ func TopologyRequestByteLimit() int {
 }
 
 func TopologyQueryLimit() int { return effectiveTimeGraphLimit(MaxSharedTopologyQueries, 16) }
+
+// RelationRequestByteLimit 是兼容入口的请求体上限，非正配置回退到内置值。
+func RelationRequestByteLimit() int {
+	return effectiveTimeGraphLimit(MaxRelationRequestBytes, 16*1024*1024)
+}
+
+// RelationQueryLimit 是兼容入口单个 HTTP 批次的查询条数上限，非正配置回退到内置值。
+func RelationQueryLimit() int { return effectiveTimeGraphLimit(MaxRelationQueries, 10000) }

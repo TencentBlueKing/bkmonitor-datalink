@@ -110,7 +110,8 @@ instance memory is sized for them.
 ## Resource Protection
 
 Requests are rejected only for out-of-spec raw inputs: request body bytes, batch
-query count, grid points and hops. Internal quantities (graph nodes, edges,
+query count, grid points and hops for topology; request body bytes, batch query
+count and range points for the two legacy-compatible entries. Internal quantities (graph nodes, edges,
 attribute versions, targets, memory estimates, encoded bytes, waiter count) are
 never a rejection reason. The working set is bounded by sequential fetches, one
 retained Matrix, the backend batch boundary and chunked encoding; instance

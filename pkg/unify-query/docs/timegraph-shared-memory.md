@@ -20,6 +20,9 @@
 | `max_shared_topology_points` | 60 | 网格点数，可调低；非正或大于 60 的配置回退到 60 |
 | `max_shared_topology_request_bytes` | 1048576（1 MiB） | topology 请求体上限；代理路径按 `data` 内层载荷计 |
 | `max_shared_topology_queries` | 16 | 单个 HTTP 批次查询条数 |
+| `max_range_points` | 11000 | 兼容区间入口 `multi_resource_range` 的评估点数 |
+| `max_relation_request_bytes` | 16777216（16 MiB） | 两个兼容入口的请求体上限；代理路径按 `data` 内层载荷计 |
+| `max_relation_queries` | 10000 | 两个兼容入口单个 HTTP 批次的查询条数 |
 | `max_shared_topology_concurrent_requests` | 8 | 进程内同时执行的请求数；其余请求排队等待，不设队列长度 |
 
 上限类配置非正时使用内置默认值。查询内部期限内置 60 秒，较短的父 context 期限优先。
@@ -46,7 +49,8 @@
 
 响应逐项编码并分块写出，累计字节只用于 trace 和负载指标。
 
-请求体或批次数量超限使 HTTP 批次失败；单项模型失败通过该项 code/message 返回。单次后端
+请求体或批次数量超限使 HTTP 批次失败（topology 原因为 `max_topology_request_bytes`、
+`max_topology_queries`，兼容入口为 `max_relation_request_bytes`、`max_relation_queries`）；单项模型失败通过该项 code/message 返回。单次后端
 响应无法再拆分时返回 `max_response_bytes`，沿聚合子查询传播，不能被转成成功空图。
 普通后端 partial 保留在结果中。
 

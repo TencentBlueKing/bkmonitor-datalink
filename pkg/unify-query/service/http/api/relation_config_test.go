@@ -82,6 +82,8 @@ func relationRuntimeConfig() map[string]any {
 		v1beta3.MaxSharedTopologyPointsConfigPath:       v1beta3.MaxSharedTopologyPoints,
 		v1beta3.MaxSharedTopologyRequestBytesConfigPath: v1beta3.MaxSharedTopologyRequestBytes,
 		v1beta3.MaxSharedTopologyQueriesConfigPath:      v1beta3.MaxSharedTopologyQueries,
+		v1beta3.MaxRelationRequestBytesConfigPath:       v1beta3.MaxRelationRequestBytes,
+		v1beta3.MaxRelationQueriesConfigPath:            v1beta3.MaxRelationQueries,
 		v1beta3.SharedTopologyReuseMatrixConfigPath:     v1beta3.SharedTopologyReuseMatrix,
 		v1beta3.SharedTopologyPlanCandidatesConfigPath:  v1beta3.SharedTopologyPlanCandidates,
 		v1beta3.MaxSharedTopologyConcurrentConfigPath:   v1beta3.MaxSharedTopologyConcurrent,

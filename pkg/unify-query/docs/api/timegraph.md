@@ -27,6 +27,8 @@ UQ 按 URL 固定选择引擎。v1beta3 的查询错误直接返回调用方。�
 
 兼容查询逐跳读取。下一跳的实体不超过 128 个时按完整身份分批查询；超过后改为一次读取，取值不超过 64 个的主键字段收窄到取值列表，再按身份和时间过滤结果，所以读取方式不影响结果。这次读取以 16 MiB 为单次响应的分批边界（程序常量，不是能力上限），超过时退回分批。兼容范围查询按自适应段读取网格；某段的后端响应过大时把该段按时间对半重查，直到每段 2 点，2 点的段仍过大时返回错误。
 
+兼容入口只按原始输入规格拒绝：请求体内置 16 MiB（`max_relation_request_bytes`）、批次 10000 条（`max_relation_queries`），范围查询另有 11000 个评估点（`max_range_points`）。请求体或批次超限时整个请求返回 400，`message` 带 `max_relation_request_bytes` 或 `max_relation_queries`；点数超限按单项 400 返回。兼容入口的批次规格大于 topology，调用方按业务成批提交的目标查询不受 topology 批次 16 条的约束。
+
 兼容即时查询省略 `look_back_delta` 时沿用旧裸选择器的窗口，即查询引擎默认回看（内置 `5m`），已迁走或已消失的关系不再返回；显式传值时按传入窗口观测。兼容范围查询每个时间桶按 `step` 观测，只校验 `look_back_delta` 的格式。两者都独立于 topology 省略时的配置值（内置 `24h`）。
 
 三个入口都先把 `source_info` 中的采集侧别名改成资源主键：`pod_name` 改为 `pod`，`container_name` 改为 `container`，`job_name` 改为 `job`（kube-state-metrics 的 Job 标签，`job` 常是采集任务）；别名与主键同时出现时以别名为准，空值丢弃。两个兼容入口和旧入口省略 `source_type` 时，都只按 `source_info` 推断源类型：取完整命中且主键字段最多的资源，字段数相同时取粒度更细的内置资源（例如 `pod` 优于 `job`、`service`、`deployment`，`module` 优于 `set`），内置资源优先于业务自定义资源，后者按名称排序。响应里的 `source_info` 只回显请求 `source_info` 中的源资源主键，`source_expand_info` 只参与过滤；即时入口失败时与旧入口一样不返回 `source_info`。空间为空时逐项返回 400 `space uid is empty`，源类型推断失败优先于这个校验；topology 入口不受影响。

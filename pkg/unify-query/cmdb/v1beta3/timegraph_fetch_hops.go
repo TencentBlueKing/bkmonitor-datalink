@@ -20,11 +20,11 @@ import (
 // errTopologyHopIncompleteIdentity 表示到达的节点缺少完整主键，无法写成身份条件。
 var errTopologyHopIncompleteIdentity = errors.New("reached topology node has incomplete primary fields")
 
-// topologyHopFetchEligible 判断逐跳取数能否给出与整条读取关系分量相同的答案。
-// 投影只含可见端点的主键时，节点属性与读到哪些边无关；根条件只含源类型主键时，
-// 按条件读取根的关联关系即读入每个可能成为根的节点的全部关联边。
-func (q *TimeGraph) topologyHopFetchEligible(source cmdb.Resource, identity cmdb.Matcher, relations []cmdb.Relation, visible map[cmdb.Resource]bool) bool {
-	if len(identity) == 0 || len(relations) == 0 || !q.topologyProjectionCompatible(relations, visible) {
+// topologyHopFetchEligible 判断逐跳取数能否给出与整条读取关系分量相同的答案：根条件只含
+// 源类型主键时，按条件读取根的关联关系即读入每个可能成为根的节点的全部关联边。属性投影
+// 冲突不影响资格，由取数后的属性补读处理（见 readProjectedAttributes）。
+func (q *TimeGraph) topologyHopFetchEligible(source cmdb.Resource, identity cmdb.Matcher, relations []cmdb.Relation) bool {
+	if len(identity) == 0 || len(relations) == 0 {
 		return false
 	}
 	primary := q.nodeBuilder.resourceIndexes(source)
@@ -72,26 +72,30 @@ type topologyHopFetch struct {
 	reverse map[timeGraphRelationKey]cmdb.Relation
 	// whole 是已整条读入的关系，之后不再按身份读取。
 	whole map[timeGraphRelationKey]bool
-	// expanded 是全部出边（及成对反向关系的入边）已读入的节点。
-	expanded map[uint64]bool
+	// expanded 是全部出边（及成对反向关系的入边）已读入的节点；expandedKeys 按类型记录它们的身份键。
+	expanded     map[uint64]bool
+	expandedKeys map[cmdb.Resource]map[string]bool
 	// roots 缓存源类型节点是否命中根条件。
-	roots   map[uint64]bool
-	queries *int
-	reads   int
+	roots          map[uint64]bool
+	queries        *int
+	reads          int
+	attributeReads int
 }
 
 // loadTopologyHops 从根逐跳读取实际到达的候选：首跳按根条件读取根的全部关联关系，
 // 之后每跳只读取上一跳到达节点的出边，H 跳后补读两端都已到达、尚未读入的诱导边。
 // 取数选择器使用整个评估网格上的身份并集，每帧是否可达仍由共享图的时间位决定。
 // 每次读取沿用前沿分批：超过阈值时按字段收窄宽读取，响应超过分批边界再按身份对半拆分。
-func (loader *timeGraphMatrixLoader) loadTopologyHops(ctx context.Context, space string, source cmdb.Resource, identity cmdb.Matcher, relations []cmdb.Relation, wideGroups []topologyFetchGroup, hops int, reorder bool, queries *int) (err error) {
+// attributes 是把非主键属性投影到可见类型的关系分量内关系；逐跳取数后按到达节点补读，
+// 使到达节点的属性与读取整个关系分量相同。
+func (loader *timeGraphMatrixLoader) loadTopologyHops(ctx context.Context, space string, source cmdb.Resource, identity cmdb.Matcher, relations []cmdb.Relation, wideGroups []topologyFetchGroup, hops int, reorder bool, attributes []topologyAttributeRead, queries *int) (err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-hop-fetch")
 	defer span.End(&err)
 	q := loader.graph
 	fetch := &topologyHopFetch{
 		loader: loader, space: space, source: source, identity: identity,
 		reverse: map[timeGraphRelationKey]cmdb.Relation{}, whole: map[timeGraphRelationKey]bool{},
-		expanded: map[uint64]bool{}, roots: map[uint64]bool{}, queries: queries,
+		expanded: map[uint64]bool{}, expandedKeys: map[cmdb.Resource]map[string]bool{}, roots: map[uint64]bool{}, queries: queries,
 	}
 	levels := []int64{}
 	defer func() {
@@ -99,6 +103,7 @@ func (loader *timeGraphMatrixLoader) loadTopologyHops(ctx context.Context, space
 		span.Set("hop-read-count", fetch.reads)
 		span.Set("hop-expanded-node-count", len(fetch.expanded))
 		span.Set("hop-whole-relation-count", len(fetch.whole))
+		span.Set("hop-attribute-read-count", fetch.attributeReads)
 	}()
 
 	// 缺物理路由的关系不访问后端，先按已读且无数据标记 partial：即使逐跳取数从未到达
@@ -172,12 +177,117 @@ func (loader *timeGraphMatrixLoader) loadTopologyHops(ctx context.Context, space
 	if err == nil {
 		err = fetch.induce(ctx, reachable)
 	}
+	if err == nil {
+		err = fetch.readProjectedAttributes(ctx, reachable, attributes, unrouted)
+	}
 	if errors.Is(err, errTopologyHopIncompleteIdentity) {
-		// 已读入的边都属于整条读取的结果，补齐整条读取后答案不变。
+		// 到达的节点缺少完整主键时无法按身份读取。已读入的边都属于整条读取的结果，改为整条
+		// 读取后答案不变；这些读取同样受单次响应边界约束，超过时按时间拆分，单个评估点仍过大
+		// 时返回 max_response_bytes。
 		span.Set("fetch-mode", "hop-then-bulk")
 		return loader.fetchTopologyGroups(wideGroups, space, queries, nil)
 	}
 	return err
+}
+
+// topologyAttributeRead 是一条会把非主键属性投影到可见端点的关系及该端点所在的一侧。
+type topologyAttributeRead struct {
+	relation     cmdb.Relation
+	targetAnchor bool
+}
+
+// topologyAttributeReads 列出关系分量中把可见端点的非主键属性投影进查询维度的关系及端点一侧。
+// 宽读取时这些关系的每条序列都会给端点合并属性；逐跳取数只读到达范围内的边，需要补读。
+func (q *TimeGraph) topologyAttributeReads(relations []cmdb.Relation, visible map[cmdb.Resource]bool) []topologyAttributeRead {
+	var reads []topologyAttributeRead
+	for _, relation := range relations {
+		if len(relation.V) != 2 {
+			continue
+		}
+		sourcePrefix, targetPrefix := q.relationEndpointPrefixes(relation, relation.V[0], relation.V[1])
+		dynamic := relation.Category == string(RelationCategoryDynamic)
+		fields, _ := q.relationQueryFields(nil, relation.V[0], relation.V[1], sourcePrefix, targetPrefix, dynamic)
+		projected := make(map[string]bool, len(fields))
+		for _, field := range fields {
+			projected[field] = true
+		}
+		for side, endpoint := range relation.V {
+			if !visible[endpoint] {
+				continue
+			}
+			prefix := sourcePrefix
+			if side == 1 {
+				prefix = targetPrefix
+			}
+			primary := q.nodeBuilder.resourceIndexes(endpoint)
+			for _, field := range q.nodeBuilder.resourceInfoFields(endpoint) {
+				if !slices.Contains(primary, field) && (projected[field] || (dynamic && projected[prefix+field])) {
+					reads = append(reads, topologyAttributeRead{relation: relation, targetAnchor: side == 1})
+					break
+				}
+			}
+		}
+	}
+	return reads
+}
+
+// readProjectedAttributes 对每条投影可见端点属性的关系，按到达的该类型节点的身份读取以它们为
+// 该端点的全部序列。属性冲突在节点构建和逐帧版本中都取字典序较大的值，与读取顺序无关，
+// 补读后到达节点在各帧的属性与读取整个关系分量相同。补读只增加整条读取本来也有的边：
+// 只有最后一层节点的出边会通向新节点，它们超出 H 跳，可达和诱导边都不变。已由根条件或
+// 展开读入的端点不再重复读取。
+func (fetch *topologyHopFetch) readProjectedAttributes(ctx context.Context, reachable map[uint64]timeBitmap, attributes []topologyAttributeRead, unrouted map[timeGraphRelationKey]bool) error {
+	if len(attributes) == 0 {
+		return nil
+	}
+	q := fetch.loader.graph
+	reached := map[cmdb.Resource][]uint64{}
+	for node := range reachable {
+		resource := q.nodeBuilder.resourceName(node)
+		reached[resource] = append(reached[resource], node)
+	}
+	planned := make(map[timeGraphRelationKey]bool, len(fetch.relations))
+	for _, relation := range fetch.relations {
+		planned[timeGraphRelationKeyFor(relation)] = true
+	}
+	for _, read := range attributes {
+		key := timeGraphRelationKeyFor(read.relation)
+		if unrouted[key] || fetch.whole[key] {
+			continue
+		}
+		side := 0
+		if read.targetAnchor {
+			side = 1
+		}
+		// 展开节点时按它读取过的关系：作为源端读取本关系，或作为目标端时读取共用物理序列的反向关系。
+		expandedWith := planned[key] && side == 0
+		if side == 1 {
+			for _, relation := range fetch.relations {
+				if topologyReverseRelation(read.relation, relation) && !fetch.whole[timeGraphRelationKeyFor(relation)] {
+					expandedWith = true
+				}
+			}
+		}
+		var nodes []uint64
+		for _, node := range reached[read.relation.V[side]] {
+			if fetch.rootCovered(node) || (expandedWith && fetch.expanded[node]) {
+				continue
+			}
+			nodes = append(nodes, node)
+		}
+		if len(nodes) == 0 {
+			continue
+		}
+		identities, err := fetch.identitiesByType(nodes)
+		if err != nil {
+			return err
+		}
+		fetch.attributeReads++
+		if err := fetch.read(ctx, read.relation, read.targetAnchor, identities[read.relation.V[side]]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // rootInputs 按根条件读取以源类型为任一端的候选关系。入边按目标端条件读取，
@@ -283,17 +393,74 @@ func (fetch *topologyHopFetch) expand(ctx context.Context, frontier map[uint64]t
 		return err
 	}
 	for _, relation := range fetch.relations {
-		if len(identities[relation.V[0]]) == 0 || fetch.whole[timeGraphRelationKeyFor(relation)] {
+		anchors := identities[relation.V[0]]
+		if len(anchors) == 0 || fetch.whole[timeGraphRelationKeyFor(relation)] {
 			continue
 		}
-		if err := fetch.read(ctx, relation, false, identities[relation.V[0]]); err != nil {
+		if fetch.parentDetermined(relation) {
+			anchors = fetch.withoutReadParents(relation, anchors)
+			if len(anchors) == 0 {
+				continue
+			}
+		}
+		if err := fetch.read(ctx, relation, false, anchors); err != nil {
 			return err
 		}
 	}
+	q := fetch.loader.graph
 	for _, node := range nodes {
 		fetch.expanded[node] = true
+		resource, info := q.nodeBuilder.Info(node)
+		if fetch.expandedKeys[resource] == nil {
+			fetch.expandedKeys[resource] = map[string]bool{}
+		}
+		fetch.expandedKeys[resource][q.primaryMatcherKey(resource, info)] = true
 	}
 	return nil
+}
+
+// parentDetermined 表示静态关系另一端的主键都在锚点的主键内（如容器到 Pod）：锚点的每条序列
+// 都指向由它的身份确定的同一个另一端节点。要求反向关系与它成对读取，另一端展开时才会一并
+// 写入这条边。
+func (fetch *topologyHopFetch) parentDetermined(relation cmdb.Relation) bool {
+	if relation.Category != string(RelationCategoryStatic) || relation.V[0] == relation.V[1] {
+		return false
+	}
+	if _, paired := fetch.reverse[timeGraphRelationKeyFor(relation)]; !paired {
+		return false
+	}
+	q := fetch.loader.graph
+	anchor, parent := q.nodeBuilder.resourceIndexes(relation.V[0]), q.nodeBuilder.resourceIndexes(relation.V[1])
+	if len(parent) == 0 {
+		return false
+	}
+	for _, field := range parent {
+		if !slices.Contains(anchor, field) {
+			return false
+		}
+	}
+	return true
+}
+
+// withoutReadParents 去掉另一端已由根条件或展开读入的锚点：这些锚点通向另一端的唯一一条边
+// 已随成对的反向读取写入图，按锚点再读一次只会读到同一组序列。
+func (fetch *topologyHopFetch) withoutReadParents(relation cmdb.Relation, anchors []cmdb.Matcher) []cmdb.Matcher {
+	q := fetch.loader.graph
+	parentType := relation.V[1]
+	fields := q.nodeBuilder.resourceIndexes(parentType)
+	kept := anchors[:0:0]
+	for _, anchor := range anchors {
+		parent := make(cmdb.Matcher, len(fields))
+		for _, field := range fields {
+			parent[field] = anchor[field]
+		}
+		read := fetch.expandedKeys[parentType][q.primaryMatcherKey(parentType, parent)] ||
+			(parentType == fetch.source && q.matchesPartial(parent, fetch.identity))
+		if !read {
+			kept = append(kept, anchor)
+		}
+	}
+	return kept
 }
 
 // induce 补读两端都已到达、尚未读入的诱导边。起点只剩最后一层未展开的节点；

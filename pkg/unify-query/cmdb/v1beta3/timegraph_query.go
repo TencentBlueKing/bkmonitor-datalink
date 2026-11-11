@@ -406,6 +406,8 @@ type timeGraphMatrixLoader struct {
 	physicalQueryCount     int
 	reusedQueryCount       int
 	lastMatrix             timeGraphMatrixSlot
+	// tooLargeScopes 记录本请求内已超过单次响应边界的前沿宽读取（按关系、锚点一侧和收窄条件）。
+	tooLargeScopes map[string]bool
 }
 
 func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *structured.QueryTs) (pl.Matrix, bool, error) {

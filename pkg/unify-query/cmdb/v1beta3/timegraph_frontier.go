@@ -5,6 +5,7 @@ package v1beta3
 
 import (
 	"context"
+	"fmt"
 	"sort"
 
 	"github.com/pkg/errors"
@@ -143,7 +144,12 @@ func (loader *timeGraphMatrixLoader) loadFrontier(ctx context.Context, space str
 		if err != nil {
 			return false, err
 		}
+		// 同一关系、同一锚点一侧、同一收窄范围的宽读取已经过大时直接分批，不在每一层先失败一次。
+		scope := ""
 		if ts != nil {
+			scope = fmt.Sprintf("%+v|%t|%+v", timeGraphRelationKeyFor(relation), targetAnchor, ts.QueryList[0].Conditions)
+		}
+		if ts != nil && !loader.tooLargeScopes[scope] {
 			*queries = *queries + 1
 			// 独立子查询：被拒收的读取留下的质量状态不能影响替代它的分批读取。
 			budgeted := metadata.WithBackendResponseLimit(frontierSubqueryContext(ctx), timeGraphBackendResponseBytes)
@@ -157,6 +163,10 @@ func (loader *timeGraphMatrixLoader) loadFrontier(ctx context.Context, space str
 			if !isBackendResponseTooLarge(err) {
 				return false, err
 			}
+			if loader.tooLargeScopes == nil {
+				loader.tooLargeScopes = map[string]bool{}
+			}
+			loader.tooLargeScopes[scope] = true
 		}
 	}
 	for offset := 0; offset < len(identities); offset += timeGraphFrontierBatchSize {

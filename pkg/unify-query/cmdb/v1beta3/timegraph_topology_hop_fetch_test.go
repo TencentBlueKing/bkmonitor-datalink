@@ -402,3 +402,85 @@ func TestTopologyHopFetchReadsInducedEdgesBetweenLastLayerNodes(t *testing.T) {
 		})
 	}
 }
+
+// 静态关系另一端的主键都在锚点主键内（容器到 Pod）时，展开容器不再按容器读回它的 Pod：
+// 那条唯一的边已随 Pod 一侧的成对读取写入图。答案与整条读取相同。
+func TestTopologyHopFetchSkipsDeterminedParentEdges(t *testing.T) {
+	oldPlan, oldReuse := SharedTopologyPlanCandidates, SharedTopologyReuseMatrix
+	t.Cleanup(func() { SharedTopologyPlanCandidates, SharedTopologyReuseMatrix = oldPlan, oldReuse })
+	frames := hopFetchFrames()
+	for seed := int64(0); seed < 4; seed++ {
+		data := randomHopFetchFixture(rand.New(rand.NewSource(seed)), frames)
+		for _, hops := range []int{2, 3} {
+			t.Run(fmt.Sprintf("seed-%d/H%d", seed, hops), func(t *testing.T) {
+				request := cmdb.SharedTopologyQuery{
+					SpaceUID: "space", SourceType: "pod", SourceInfo: cmdb.Matcher{"cluster": "c0", "pod": "p0"},
+					StartTime: frames[0] / 1000, EndTime: frames[len(frames)-1] / 1000, Step: "60s", MaxHops: hops,
+				}
+				SharedTopologyPlanCandidates, SharedTopologyReuseMatrix = false, true
+				_, wantSnapshots, wantCompact := queryHopFetchTopology(t, hopFetchProvider(), &hopFetchBackend{t: t, data: data}, request)
+				SharedTopologyPlanCandidates = true
+				backend := &hopFetchBackend{t: t, data: data}
+				_, gotSnapshots, gotCompact := queryHopFetchTopology(t, hopFetchProvider(), backend, request)
+				require.Equal(t, wantSnapshots, gotSnapshots)
+				require.Equal(t, wantCompact, gotCompact)
+				for _, call := range backend.calls {
+					if call.metric != "container_with_pod" {
+						continue
+					}
+					for _, field := range call.conditions.FieldList {
+						require.False(t, field.DimensionName == "name" && field.Operator == structured.ConditionEqual,
+							"a container's pod edge is not read again by the container: %+v", call.conditions)
+					}
+				}
+			})
+		}
+	}
+}
+
+// 同一关系、同一锚点一侧、同一收窄范围的前沿宽读取超过单次响应边界后，本请求内后续各层
+// 直接按身份分批，不再先失败一次；答案与整条读取相同。
+func TestTopologyHopFetchRemembersTooLargeScopes(t *testing.T) {
+	oldPlan, oldReuse := SharedTopologyPlanCandidates, SharedTopologyReuseMatrix
+	t.Cleanup(func() { SharedTopologyPlanCandidates, SharedTopologyReuseMatrix = oldPlan, oldReuse })
+	provider := contractSchemaProvider{
+		resources: []ResourceType{"r", "c"},
+		primary:   map[ResourceType][]string{"r": {"r_id"}, "c": {"c_id"}},
+		fields:    map[ResourceType][]string{"r": {"r_id"}, "c": {"c_id"}},
+		schemas: []RelationSchema{
+			{RelationType: "rc", Category: RelationCategoryStatic, FromType: "r", ToType: "c", IsDirectional: true, MetricName: "rc"},
+			{RelationType: "peer", Category: RelationCategoryDynamic, FromType: "c", ToType: "c", IsDirectional: true, MetricName: "peer"},
+		},
+	}
+	frames := hopFetchFrames()[:2]
+	fixture := newHopFetchFixture()
+	const width = timeGraphWideFrontierThreshold + 2
+	for i := 0; i < width; i++ {
+		fixture.add("rc", map[string]string{"r_id": "root", "c_id": fmt.Sprintf("a%03d", i)}, frames...)
+		fixture.add("peer", map[string]string{"from_c_id": fmt.Sprintf("a%03d", i), "to_c_id": fmt.Sprintf("b%03d", i)}, frames...)
+		fixture.add("peer", map[string]string{"from_c_id": fmt.Sprintf("b%03d", i), "to_c_id": fmt.Sprintf("d%03d", i)}, frames...)
+	}
+	request := cmdb.SharedTopologyQuery{
+		SpaceUID: "space", SourceType: "r", SourceInfo: cmdb.Matcher{"r_id": "root"}, DynamicRelationDirection: "outbound",
+		StartTime: frames[0] / 1000, EndTime: frames[len(frames)-1] / 1000, Step: "60s", MaxHops: 3,
+	}
+	SharedTopologyPlanCandidates, SharedTopologyReuseMatrix = false, true
+	_, wantSnapshots, wantCompact := queryHopFetchTopology(t, provider, &hopFetchBackend{t: t, data: fixture.data}, request)
+	SharedTopologyPlanCandidates = true
+	// 整条 peer 关系有 2*width 条序列，超过上限；按 64 个身份分批的读取不超过。
+	backend := &hopFetchBackend{t: t, data: fixture.data, limit: width + 10}
+	_, gotSnapshots, gotCompact := queryHopFetchTopology(t, provider, backend, request)
+	require.Equal(t, wantSnapshots, gotSnapshots)
+	require.Equal(t, wantCompact, gotCompact)
+	wide := map[string]int{}
+	for _, call := range backend.calls {
+		if call.metric == "peer" && !hopFetchNarrowed(call.conditions) {
+			wide[fmt.Sprintf("%+v", call.conditions)]++
+		}
+	}
+	require.NotEmpty(t, wide, "the fixture must exercise an oversized wide read")
+	for scope, count := range wide {
+		// 快照和紧凑格式各是一次请求，各自最多尝试一次。
+		require.LessOrEqual(t, count, 2, "an oversized scope is tried at most once per request: %s", scope)
+	}
+}

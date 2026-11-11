@@ -147,13 +147,18 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 	ctx, span := trace.NewSpan(ctx, "timegraph-select-fetch")
 	defer span.End(&err)
 	q := loader.graph
-	// H 跳边界外的关系也可能给保留节点提供属性。无法证明投影独立时，
-	// 在按资源类型裁剪之前恢复原有有序宽读取，维持属性覆盖顺序。
+	// H 跳边界外的关系也可能给保留节点提供属性。无法证明投影独立时，宽读取在按资源类型
+	// 裁剪之前恢复整个关系分量；逐跳取数仍只读计划内的关系，之后按到达节点补读投影可见
+	// 端点属性的关系，答案相同，不因属性投影冲突退回宽读取。
 	allowedComponent := topologyRelationComponent(source, plan.allowed)
 	visible := topologyReachableTypes(source, plan.hops, plan.allowed)
+	planned := relations
+	var attributes []topologyAttributeRead
 	if !q.topologyProjectionCompatible(allowedComponent, visible) {
 		relations = allowedComponent
+		attributes = q.topologyAttributeReads(allowedComponent, visible)
 	}
+	span.Set("attribute-relation-count", len(attributes))
 	mode, component := q.topologyFetchMode(source, identity, relations, plan)
 	span.Set("fetch-mode", mode)
 	span.Set("max-hops", plan.hops)
@@ -189,10 +194,10 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 		return queries, err
 	}
 	// 其余有根条件的多跳计划从根逐跳读取实际到达的候选，不再整条读取关系分量。
-	hopEligible := q.topologyHopFetchEligible(source, identity, relations, visible)
+	hopEligible := q.topologyHopFetchEligible(source, identity, planned)
 	if mode == "bulk" && hopEligible {
 		span.Set("fetch-mode", "hop")
-		err = loader.loadTopologyHops(ctx, space, source, identity, relations, wideGroups, plan.hops, reorder, &queries)
+		err = loader.loadTopologyHops(ctx, space, source, identity, planned, wideGroups, plan.hops, reorder, attributes, &queries)
 		return queries, err
 	}
 
@@ -259,7 +264,7 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 		}
 		if (q.backendPartial() || large) && hopEligible {
 			span.Set("fetch-mode", "bipartite-then-hop")
-			err = loader.loadTopologyHops(ctx, space, source, identity, relations, wideGroups, plan.hops, reorder, &queries)
+			err = loader.loadTopologyHops(ctx, space, source, identity, relations, wideGroups, plan.hops, reorder, nil, &queries)
 			return queries, err
 		}
 	}

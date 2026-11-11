@@ -50,10 +50,24 @@ an H-hop resource-type upper bound, retaining relations within that bound and
 root observations. `target_types` filters the final output only.
 
 Complete identities and compatible static bidirectional schemas allow bounded
-instance reads for H1 star and H2 bipartite components. Other shapes and deeper
-queries use bulk reads with safe root/range filters. Root probes can stop an
-empty query; incomplete identities or a large candidate frontier use the wider
-read. The 128-candidate transition changes the fetch plan, not the answer size.
+instance reads for H1 star and H2 bipartite components. Other rooted shapes and
+deeper queries whose root condition uses only source primary keys are fetched
+hop by hop: the root's relations by the root condition, then each layer's
+outgoing relations by the reached identities, then the induced edges between
+reached nodes. A bipartite plan whose first stage is backend-partial, or whose
+first hop exceeds 128 candidates, switches to the same hop-by-hop fetch. Root
+probes stop an empty query; a missing physical route does not prevent it.
+
+Some schemas project a non-primary attribute of a visible type through another
+relation, for example the default `version` of `container` and `host`, which is
+part of the `app_version` primary key. Such conflicts no longer force a
+whole-component read: after the hop-by-hop fetch, every such relation is read
+again by the reached nodes' identities, so each reached node merges the same
+series as a whole-component read. Attribute conflicts resolve to the
+lexicographically larger value regardless of read order, so the answer is
+unchanged. Unrooted queries and root conditions on non-primary fields still use
+bulk reads with safe root/range filters. The 128-candidate transition changes
+the fetch plan, not the answer size.
 
 Identity batches contain up to 64 complete primary-key tuples joined by OR;
 each tuple remains an AND of its fields. One backend response is bounded by a

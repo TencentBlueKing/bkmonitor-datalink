@@ -9,29 +9,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestQueryRequestNormalizeExplicitLimitPolicy(t *testing.T) {
+func TestQueryRequestNormalizeHopPolicy(t *testing.T) {
 	oldMax := MaxAllowedHops
 	t.Cleanup(func() { MaxAllowedHops = oldMax })
 	MaxAllowedHops = 6
 	for _, test := range []struct {
-		name      string
-		disabled  bool
-		limit     int
-		hops      int
-		wantLimit int
-		wantHops  int
+		name     string
+		hops     int
+		wantHops int
 	}{
-		{"default", false, 0, 1, DefaultLimit, 1},
-		{"negative default", false, -1, 5, DefaultLimit, 5},
-		{"explicit", false, 7, 7, 7, 6},
-		{"disabled", true, 0, 1, 0, 1},
-		{"disabled negative", true, -1, 1, -1, 1},
-		{"disabled explicit", true, 7, 1, 7, 1},
+		{"default", 0, DefaultMaxHops},
+		{"negative default", -1, DefaultMaxHops},
+		{"explicit", 5, 5},
+		{"clamped", 7, 6},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			request := QueryRequest{Limit: test.limit, DisableRootLimit: test.disabled, MaxHops: test.hops}
+			request := QueryRequest{MaxHops: test.hops}
 			request.Normalize()
-			require.Equal(t, test.wantLimit, request.Limit)
 			require.Equal(t, test.wantHops, request.MaxHops)
 		})
 	}

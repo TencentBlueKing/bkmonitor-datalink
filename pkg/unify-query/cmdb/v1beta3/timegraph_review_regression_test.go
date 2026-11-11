@@ -90,7 +90,7 @@ func TestLegacyTimeGraphPrefersShortestPath(t *testing.T) {
 }
 
 func TestTopologySixtyPointGridKeepsAllPoints(t *testing.T) {
-	timestamps := sharedGraphTestTimes(60)
+	timestamps := sharedTopologyTestTimes(60)
 	m := sharedTopologyQueryModel(map[string]pl.Matrix{
 		"source_info_relation": contractMatrix(map[string]string{"source_id": "a"}, timestamps...),
 		"source_middle_flow":   contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, timestamps...),

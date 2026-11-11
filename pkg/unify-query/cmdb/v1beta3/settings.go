@@ -10,67 +10,36 @@
 package v1beta3
 
 const (
-	MaxHopsConfigPath                        = "cmdb.v1beta3.max_hops"
-	MaxAllowedHopsConfigPath                 = "cmdb.v1beta3.max_allowed_hops"
-	DefaultLimitConfigPath                   = "cmdb.v1beta3.default_limit"
-	MaxRangePointsConfigPath                 = "cmdb.v1beta3.max_range_points"
-	MaxTargetsConfigPath                     = "cmdb.v1beta3.max_targets"
-	MaxGraphNodesConfigPath                  = "cmdb.v1beta3.max_graph_nodes"
-	MaxGraphEdgesConfigPath                  = "cmdb.v1beta3.max_graph_edges"
-	MaxGraphNodeInfosConfigPath              = "cmdb.v1beta3.max_graph_node_infos"
-	MaxSharedTopologyPointsConfigPath        = "cmdb.v1beta3.max_shared_topology_points"
-	MaxSharedTopologyBackendBytesConfigPath  = "cmdb.v1beta3.max_shared_topology_backend_bytes"
-	MaxSharedTopologyOutputBytesConfigPath   = "cmdb.v1beta3.max_shared_topology_output_bytes"
-	MaxSharedTopologyRequestBytesConfigPath  = "cmdb.v1beta3.max_shared_topology_request_bytes"
-	MaxSharedTopologyQueriesConfigPath       = "cmdb.v1beta3.max_shared_topology_queries"
-	SharedTopologyReuseMatrixConfigPath      = "cmdb.v1beta3.shared_topology_reuse_matrix"
-	SharedTopologyPlanCandidatesConfigPath   = "cmdb.v1beta3.shared_topology_plan_candidates"
-	MaxSharedTopologyConcurrentConfigPath    = "cmdb.v1beta3.max_shared_topology_concurrent_requests"
-	MaxSharedTopologyReservedBytesConfigPath = "cmdb.v1beta3.max_shared_topology_reserved_bytes"
-	SharedTopologyMemoryHeadroomConfigPath   = "cmdb.v1beta3.shared_topology_memory_headroom_bytes"
-	DefaultLookBackDeltaConfigPath           = "cmdb.v1beta3.look_back_delta"
+	MaxHopsConfigPath                       = "cmdb.v1beta3.max_hops"
+	MaxAllowedHopsConfigPath                = "cmdb.v1beta3.max_allowed_hops"
+	MaxRangePointsConfigPath                = "cmdb.v1beta3.max_range_points"
+	MaxSharedTopologyPointsConfigPath       = "cmdb.v1beta3.max_shared_topology_points"
+	MaxSharedTopologyRequestBytesConfigPath = "cmdb.v1beta3.max_shared_topology_request_bytes"
+	MaxSharedTopologyQueriesConfigPath      = "cmdb.v1beta3.max_shared_topology_queries"
+	SharedTopologyReuseMatrixConfigPath     = "cmdb.v1beta3.shared_topology_reuse_matrix"
+	SharedTopologyPlanCandidatesConfigPath  = "cmdb.v1beta3.shared_topology_plan_candidates"
+	MaxSharedTopologyConcurrentConfigPath   = "cmdb.v1beta3.max_shared_topology_concurrent_requests"
+	DefaultLookBackDeltaConfigPath          = "cmdb.v1beta3.look_back_delta"
 )
 
+// 配置只约束请求的原始输入（跳数、点数、请求体、批次条数）和运维比程序更清楚的
+// 部署参数（并发执行槽、开关）。构图、取数和输出的内部规模不是拒绝理由：
+// 工作集由分批、分段和流式编码约束，容量按规格表配置实例资源。
 var (
-	DefaultMaxHops                 = 2
-	MaxAllowedHops                 = 6
-	DefaultLimit                   = 100
-	MaxRangePoints                 = 11000
-	MaxTargets                     = 5000
-	MaxGraphNodes                  = 100000
-	MaxGraphEdges                  = 200000
-	MaxGraphNodeInfos              = 1000000
-	MaxSharedTopologyPoints        = 60
-	MaxSharedTopologyBackendBytes  = 16 * 1024 * 1024
-	MaxSharedTopologyOutputBytes   = 64 * 1024 * 1024
-	MaxSharedTopologyRequestBytes  = 1024 * 1024
-	MaxSharedTopologyQueries       = 16
-	SharedTopologyReuseMatrix      = true
-	SharedTopologyPlanCandidates   = true
-	MaxSharedTopologyConcurrent    = 8
-	MaxSharedTopologyReservedBytes = 4 * 1024 * 1024 * 1024
-	SharedTopologyMemoryHeadroom   = 512 * 1024 * 1024
-	DefaultLookBackDelta           = int64(86400000) // 24小时（毫秒）
+	DefaultMaxHops                = 2
+	MaxAllowedHops                = 6
+	MaxRangePoints                = 11000
+	MaxSharedTopologyPoints       = 60
+	MaxSharedTopologyRequestBytes = 1024 * 1024
+	MaxSharedTopologyQueries      = 16
+	SharedTopologyReuseMatrix     = true
+	SharedTopologyPlanCandidates  = true
+	MaxSharedTopologyConcurrent   = 8
+	DefaultLookBackDelta          = int64(86400000) // 24小时（毫秒）
 )
 
 func effectiveMaxRangePoints() int {
 	return effectiveTimeGraphLimit(MaxRangePoints, 11000)
-}
-
-func effectiveMaxTargets() int {
-	return effectiveTimeGraphLimit(MaxTargets, 5000)
-}
-
-func effectiveMaxGraphNodes() int {
-	return effectiveTimeGraphLimit(MaxGraphNodes, 100000)
-}
-
-func effectiveMaxGraphEdges() int {
-	return effectiveTimeGraphLimit(MaxGraphEdges, 200000)
-}
-
-func effectiveMaxGraphNodeInfos() int {
-	return effectiveTimeGraphLimit(MaxGraphNodeInfos, 1000000)
 }
 
 func effectiveMaxSharedTopologyPoints() int {

@@ -361,12 +361,7 @@ func TestTopologyDocumentedFailures(t *testing.T) {
 		defer func() { v1beta3.MaxSharedTopologyQueries = old }()
 		check(t, "query-count", `{"query_list":[{},{}]}`, "max_topology_queries", context.Background())
 	})
-	t.Run("memory-reservation", func(t *testing.T) {
-		old := v1beta3.MaxSharedTopologyReservedBytes
-		v1beta3.MaxSharedTopologyReservedBytes = 1
-		defer func() { v1beta3.MaxSharedTopologyReservedBytes = old }()
-		check(t, "memory-reservation", `{"query_list":[]}`, "max_topology_reserved_bytes", context.Background())
-	})
+	// 排队请求只受自己的期限约束；等待人数和内存估算不是拒绝理由。
 	t.Run("queue", func(t *testing.T) {
 		old := v1beta3.MaxSharedTopologyConcurrent
 		v1beta3.MaxSharedTopologyConcurrent = 1
@@ -377,23 +372,6 @@ func TestTopologyDocumentedFailures(t *testing.T) {
 		deadline, cancelDeadline := context.WithTimeout(context.Background(), 20*time.Millisecond)
 		defer cancelDeadline()
 		check(t, "queue-timeout", `{"query_list":[]}`, "deadline exceeded", deadline)
-		waitCtx, cancelWait := context.WithCancel(context.Background())
-		var waiting sync.WaitGroup
-		waiting.Add(1)
-		defer func() { cancelWait(); waiting.Wait() }()
-		done := make(chan error, 1)
-		go func() {
-			defer waiting.Done()
-			_, free, err := v1beta3.AcquireSharedTopology(waitCtx)
-			if free != nil {
-				free()
-			}
-			done <- err
-		}()
-		require.Eventually(t, func() bool { return topologyTestAdmissionState(t)["waiters"] == 1 }, time.Second, time.Millisecond)
-		check(t, "queue-full", `{"query_list":[]}`, "max_topology_admission_waiters", context.Background())
-		cancelWait()
-		require.ErrorIs(t, <-done, context.Canceled)
 	})
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -403,5 +381,5 @@ func TestTopologyDocumentedFailures(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile("../../../docs/examples/topology-errors.json", append(data, '\n'), 0o644))
 	}
-	require.Equal(t, map[string]int64{"active": 0, "waiters": 0, "reserved": 0, "materialized": 0}, topologyTestAdmissionState(t))
+	require.Equal(t, map[string]int64{"active": 0, "waiters": 0}, topologyTestAdmissionState(t))
 }

@@ -35,14 +35,9 @@ func (b *topologySnapshotChunkBuilder) append(part []byte, boundary uint64) erro
 		for next < need {
 			next *= 2
 		}
-		b.meter.working = int64(next + cap(b.work))
-		if err := b.meter.reserve(); err != nil {
-			return err
-		}
 		owned := make([]byte, len(b.work), next)
 		copy(owned, b.work)
 		b.work = owned
-		b.meter.working = int64(cap(b.work))
 	}
 	b.size += len(part)
 	b.work = append(b.work, part...)
@@ -58,10 +53,6 @@ func (b *topologySnapshotChunkBuilder) flush() error {
 	if len(b.work) == 0 {
 		return nil
 	}
-	b.meter.container += 3 * 24
-	if err := b.meter.reserve(); err != nil {
-		return err
-	}
 	hash := xxhash.Sum64(b.work)
 	for _, owned := range b.byHash[hash] {
 		if bytes.Equal(owned, b.work) {
@@ -72,10 +63,6 @@ func (b *topologySnapshotChunkBuilder) flush() error {
 	}
 	// Copy the used bytes: retaining a full working-buffer capacity per small block
 	// would increase memory for changing snapshots. Cached blocks are immutable.
-	b.meter.container += 128
-	if err := b.meter.retain(int64(len(b.work))); err != nil {
-		return err
-	}
 	owned := make([]byte, len(b.work))
 	copy(owned, b.work)
 	b.byHash[hash] = append(b.byHash[hash], owned)
@@ -137,13 +124,6 @@ func marshalTopologySnapshotFrames(meter *topologyEncodeMeter, snapshots []cmdb.
 					if e != nil {
 						return nil, e
 					}
-					charge := int64(cap(encoded) - cap(cached.encoded))
-					if !exists {
-						charge += 128
-					}
-					if e = b.meter.cache(charge); e != nil {
-						return nil, e
-					}
 					cached = topologyCachedNode{node: node, encoded: encoded, boundary: xxhash.Sum64(encoded)}
 					nodes[node.ID] = cached
 				}
@@ -182,9 +162,6 @@ func marshalTopologySnapshotFrames(meter *topologyEncodeMeter, snapshots []cmdb.
 				if !exists {
 					encoded, e := b.meter.marshal(edge)
 					if e != nil {
-						return nil, e
-					}
-					if e = b.meter.cache(int64(cap(encoded)) + 192); e != nil {
 						return nil, e
 					}
 					cached = topologyCachedEdge{encoded: encoded, boundary: xxhash.Sum64(encoded)}

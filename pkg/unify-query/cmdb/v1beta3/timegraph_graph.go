@@ -35,19 +35,14 @@ type TimeGraph struct {
 	shared *sharedTimeGraph // 拓扑入口直接保存时间位，不创建逐桶图。
 	lock   sync.RWMutex     // 读写锁，保证并发安全
 
-	nodeBuilder     *NodeBuilder                          // 节点构建器，负责节点的创建和去重
-	timeGraph       map[int64]graph.Graph[uint64, uint64] // 时间分片图，key为时间戳，value为对应的图结构
-	edgeTypes       map[int64]map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{}
-	nodeInfos       map[int64]map[uint64]cmdb.Matcher // timestamp -> node -> time-specific dimensions
-	partialTimes    map[int64]string                  // 时间点 -> 数据不完整原因
-	residency       *graphResidency
-	matrixResidency *matrixResidency
-	maxNodes        int
-	maxEdges        int
-	maxNodeInfos    int
-	edgeCount       int
-	nodeInfoCount   int
-	relations       []TimeGraphRelationConfig
+	nodeBuilder   *NodeBuilder                          // 节点构建器，负责节点的创建和去重
+	timeGraph     map[int64]graph.Graph[uint64, uint64] // 时间分片图，key为时间戳，value为对应的图结构
+	edgeTypes     map[int64]map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{}
+	nodeInfos     map[int64]map[uint64]cmdb.Matcher // timestamp -> node -> time-specific dimensions
+	partialTimes  map[int64]string                  // 时间点 -> 数据不完整原因
+	edgeCount     int
+	nodeInfoCount int
+	relations     []TimeGraphRelationConfig
 }
 
 type timeGraphEdgeKey struct {
@@ -78,27 +73,16 @@ func NewTimeGraphWithConfig(cfg *TimeGraphConfig) *TimeGraph {
 	return q
 }
 
+// 图规模不设上限：规模由请求输入决定，区间查询再按段控制时间分桶图的工作集，
+// 容量按规格表配置实例资源。
 func newTimeGraphWithConfig(cfg *TimeGraphConfig) *TimeGraph {
-	maxNodes, maxEdges, maxNodeInfos := effectiveMaxGraphNodes(), effectiveMaxGraphEdges(), effectiveMaxGraphNodeInfos()
 	var relations []TimeGraphRelationConfig
 	if cfg != nil {
-		if cfg.MaxNodes > 0 {
-			maxNodes = cfg.MaxNodes
-		}
-		if cfg.MaxEdges > 0 {
-			maxEdges = cfg.MaxEdges
-		}
-		if cfg.MaxNodeInfos > 0 {
-			maxNodeInfos = cfg.MaxNodeInfos
-		}
 		relations = append(relations, cfg.Relation...)
 	}
 	return &TimeGraph{
 		nodeBuilder:  newNodeBuilder(cfg),
 		partialTimes: make(map[int64]string),
-		maxNodes:     maxNodes,
-		maxEdges:     maxEdges,
-		maxNodeInfos: maxNodeInfos,
 		relations:    relations,
 	}
 }
@@ -139,8 +123,6 @@ func (q *TimeGraph) Clean(ctx context.Context) {
 	}
 	q.edgeCount = 0
 	q.nodeInfoCount = 0
-	q.residency.clear()
-	q.matrixResidency.clear()
 }
 
 func (q *TimeGraph) markPartialRange(start, end time.Time, step time.Duration, reason string) {
@@ -262,15 +244,13 @@ func (q *TimeGraph) AddTimeNode(ctx context.Context, resource cmdb.Resource, inf
 
 	q.lock.Lock()
 	defer q.lock.Unlock()
-	if (q.shared == nil || q.residency == nil) && q.maxNodes > 0 && q.nodeBuilder.Length() > q.maxNodes {
-		return &ResultLimitError{Reason: "max_graph_nodes", Count: q.nodeBuilder.Length(), Limit: q.maxNodes}
-	}
 	if q.shared != nil {
 		active, err := q.shared.timeBits(timestamps)
 		if err != nil {
 			return err
 		}
-		return q.setSharedNodeInfo(node, info, active)
+		q.setSharedNodeInfo(node, info, active)
+		return nil
 	}
 	for _, timestamp := range timestamps {
 		if err := ctx.Err(); err != nil {
@@ -285,9 +265,7 @@ func (q *TimeGraph) AddTimeNode(ctx context.Context, resource cmdb.Resource, inf
 		if q.nodeInfos[timestamp] == nil {
 			q.nodeInfos[timestamp] = make(map[uint64]cmdb.Matcher)
 		}
-		if err = q.setNodeInfo(timestamp, node, mergeMatcher(q.nodeInfos[timestamp][node], info)); err != nil {
-			return err
-		}
+		q.setNodeInfo(timestamp, node, mergeMatcher(q.nodeInfos[timestamp][node], info))
 		if err = q.timeGraph[timestamp].AddVertex(node); err != nil && !errors.Is(err, graph.ErrVertexAlreadyExists) {
 			return err
 		}
@@ -347,9 +325,6 @@ func (q *TimeGraph) addTimeRelationWithEndpointBuffers(ctx context.Context, rela
 
 	q.lock.Lock()
 	defer q.lock.Unlock()
-	if (q.shared == nil || q.residency == nil) && q.maxNodes > 0 && q.nodeBuilder.Length() > q.maxNodes {
-		return &ResultLimitError{Reason: "max_graph_nodes", Count: q.nodeBuilder.Length(), Limit: q.maxNodes}
-	}
 
 	if q.shared != nil {
 		return q.addSharedRelation(ctx, relation, direction, sourceNode, targetNode, sourceInfo, targetInfo, timestamps)
@@ -376,12 +351,8 @@ func (q *TimeGraph) addTimeRelationWithEndpointBuffers(ctx context.Context, rela
 			return err
 		}
 		g := q.timeGraph[timestamp]
-		if err = q.setNodeInfo(timestamp, sourceNode, mergeMatcher(q.nodeInfos[timestamp][sourceNode], sourceInfo)); err != nil {
-			return err
-		}
-		if err = q.setNodeInfo(timestamp, targetNode, mergeMatcher(q.nodeInfos[timestamp][targetNode], targetInfo)); err != nil {
-			return err
-		}
+		q.setNodeInfo(timestamp, sourceNode, mergeMatcher(q.nodeInfos[timestamp][sourceNode], sourceInfo))
+		q.setNodeInfo(timestamp, targetNode, mergeMatcher(q.nodeInfos[timestamp][targetNode], targetInfo))
 
 		// 添加源节点，忽略已存在的节点
 		if err = g.AddVertex(sourceNode); err != nil && !errors.Is(err, graph.ErrVertexAlreadyExists) {
@@ -399,9 +370,6 @@ func (q *TimeGraph) addTimeRelationWithEndpointBuffers(ctx context.Context, rela
 		}
 		edgeKey := timeGraphEdgeKey{source: sourceNode, target: targetNode}
 		if _, exists := q.edgeTypes[timestamp][edgeKey]; !exists {
-			if q.maxEdges > 0 && q.edgeCount >= q.maxEdges {
-				return &ResultLimitError{Reason: "max_graph_edges", Count: q.edgeCount + 1, Limit: q.maxEdges}
-			}
 			q.edgeTypes[timestamp][edgeKey] = make(map[timeGraphEdgeRelation]struct{})
 			q.edgeCount++
 		}
@@ -501,18 +469,14 @@ func (q *TimeGraph) relationEndpointPrefixes(relation cmdb.Relation, source, tar
 	return timeGraphFromPrefix, timeGraphToPrefix
 }
 
-func (q *TimeGraph) setNodeInfo(timestamp int64, node uint64, info cmdb.Matcher) error {
+func (q *TimeGraph) setNodeInfo(timestamp int64, node uint64, info cmdb.Matcher) {
 	if q.nodeInfos[timestamp] == nil {
 		q.nodeInfos[timestamp] = make(map[uint64]cmdb.Matcher)
 	}
 	if _, exists := q.nodeInfos[timestamp][node]; !exists {
-		if q.maxNodeInfos > 0 && q.nodeInfoCount >= q.maxNodeInfos {
-			return &ResultLimitError{Reason: "max_graph_node_infos", Count: q.nodeInfoCount + 1, Limit: q.maxNodeInfos}
-		}
 		q.nodeInfoCount++
 	}
 	q.nodeInfos[timestamp][node] = cloneMatcher(info)
-	return nil
 }
 
 // MakeQueryTs 根据关系定义构造时序查询。未配置 MetricName 时，按两端资源

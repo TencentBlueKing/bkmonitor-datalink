@@ -63,11 +63,8 @@ func TestSharedTopologyPipelineProbe(t *testing.T) {
 	httpmock.Deactivate()
 	t.Cleanup(httpmock.Activate)
 	initTimeGraphQueryTestEnvironment()
-	// A/B 只改变构图方式。放宽输出预算用于测量同样的大响应，不更改生产默认值。
-	oldBytes := MaxSharedTopologyOutputBytes
-	MaxSharedTopologyOutputBytes = 256 * 1024 * 1024
-	t.Cleanup(func() { ; MaxSharedTopologyOutputBytes = oldBytes })
-	times := sharedGraphTestTimes(k)
+	// A/B 只改变构图方式。
+	times := sharedTopologyTestTimes(k)
 	grid, err := NewTopologyGrid(times)
 	require.NoError(t, err)
 	fixture := filepath.Join(t.TempDir(), "response.json")
@@ -242,7 +239,7 @@ func TestSharedTopologyPipelineProbe(t *testing.T) {
 	outputs = nil
 	runtime.GC()
 	after := pipelineMem()
-	record := map[string]any{"mode": mode, "edges": n, "points": k, "concurrency": concurrency, "fixture_bytes": stat.Size(), "go": runtime.Version(), "gomaxprocs": runtime.GOMAXPROCS(0), "wall_ms": float64(elapsed.Microseconds()) / 1000, "base_heap": base.HeapAlloc, "sampled_peak_heap": peak.Load(), "held_heap": held.HeapAlloc, "retained_output_heap": retained.HeapAlloc, "post_gc_heap": after.HeapAlloc, "total_alloc_delta": held.TotalAlloc - base.TotalAlloc, "gc_count": held.NumGC - base.NumGC, "gc_pause_ns": held.PauseTotalNs - base.PauseTotalNs, "workers": rows, "output_byte_limit": MaxSharedTopologyOutputBytes}
+	record := map[string]any{"mode": mode, "edges": n, "points": k, "concurrency": concurrency, "fixture_bytes": stat.Size(), "go": runtime.Version(), "gomaxprocs": runtime.GOMAXPROCS(0), "wall_ms": float64(elapsed.Microseconds()) / 1000, "base_heap": base.HeapAlloc, "sampled_peak_heap": peak.Load(), "held_heap": held.HeapAlloc, "retained_output_heap": retained.HeapAlloc, "post_gc_heap": after.HeapAlloc, "total_alloc_delta": held.TotalAlloc - base.TotalAlloc, "gc_count": held.NumGC - base.NumGC, "gc_pause_ns": held.PauseTotalNs - base.PauseTotalNs, "workers": rows}
 
 	record["fixture_sha256"] = fmt.Sprintf("%x", fixtureHash.Sum(nil))
 	encoded, err := json.Marshal(record)

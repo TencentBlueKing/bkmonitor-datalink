@@ -220,12 +220,9 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		TraceID: span.TraceID(),
 		Data:    make([]stdjson.RawMessage, len(request.QueryList)),
 	}
-	responseBytes := 1024
-	responseOwnedBytes := topologyEncodedOwnership{}
-	defer func() {
-		span.Set("response-budget-bytes-used", responseBytes)
-		span.Set("response-budget-bytes-limit", v1beta3.TopologyOutputByteLimit())
-	}()
+	// 批次按项编码并分段写出，累计字节只用于观测，不是拒绝理由。
+	responseBytes := 0
+	defer func() { span.Set("response-encoded-bytes", responseBytes) }()
 	failedQueryCount := 0
 	partialQueryCount := 0
 	itemSpanName := "handler-api-relation-v1beta3-topology-item"
@@ -302,7 +299,6 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 			querySpan.Set("node-version-count", len(result.Compact.Nodes))
 			querySpan.Set("edge-version-count", len(result.Compact.Edges))
 		}
-		// 批次内结果累计也必须有界，不能用 query_list 倍增单查询预算。
 		item.Message = truncateTopologyErrorMessage(item.Message, topologyErrorMessageMaxBytes)
 		_, encodeSpan := trace.NewSpan(queryCtx, "timegraph-encode-topology-item")
 		encodeStarted := time.Now()
@@ -319,7 +315,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 				Compact:        result.Compact,
 			}
 		}
-		chunks, encodedBytes, itemOwnedBytes, encodeErr := marshalTopologyBounded(queryCtx, payload, v1beta3.TopologyOutputByteLimit()-responseBytes, responseOwnedBytes)
+		chunks, encodedBytes, encodeErr := marshalTopologyItem(queryCtx, payload)
 		encodeSpan.Set("encoded-item-bytes", encodedBytes)
 		encodeSpan.Set("segmented", len(chunks) > 0)
 		encodeSpan.End(&encodeErr)
@@ -332,23 +328,11 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 			fail(ctx, encodeErr)
 			return
 		}
-		if limit := v1beta3.TopologyOutputByteLimit(); limit > 0 && encodedBytes > limit-responseBytes {
-			queryErr = &v1beta3.ResultLimitError{Reason: "max_topology_output_bytes", Count: responseBytes + encodedBytes, Limit: v1beta3.TopologyOutputByteLimit()}
-			v1beta3.SetTimeGraphLimitTrace(querySpan, queryErr)
-			querySpan.End(&queryErr)
-			handlerErr = queryErr
-			requestResult = metric.CMDBRelationResultRejected
-			metric.CMDBTopologyRejectInc(ctx, queryMode, "max_topology_output_bytes")
-			fail(ctx, queryErr)
-			return
-		}
-		responseBytes += encodedBytes + 1
+		responseBytes += encodedBytes
+		// 编码后的片段已持有输出，提前释放 DTO，批次内只保留已编码的项。
 		item.Snapshots = nil
 		result.Snapshots = nil
 		result.Compact = nil
-		_ = v1beta3.ReserveTopologyStage(ctx, "output", 0)
-		responseOwnedBytes.reserved += itemOwnedBytes.reserved
-		responseOwnedBytes.materialized += itemOwnedBytes.materialized
 		querySpan.Set("query-index", index)
 		querySpan.Set("point-count", item.PointCount)
 		querySpan.Set("response-code", item.Code)

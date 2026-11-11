@@ -165,7 +165,7 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		return cmdb.SharedTopologyResult{}, err
 	}
 	defer release()
-	queryCtx = metadata.WithBackendResponseLimit(queryCtx, int64(effectiveTimeGraphLimit(MaxSharedTopologyBackendBytes, 16*1024*1024)))
+	queryCtx = metadata.WithBackendResponseLimit(queryCtx, timeGraphBackendResponseBytes)
 	span.Set("backend-response-byte-limit", metadata.BackendResponseLimit(queryCtx))
 
 	graph, err := m.buildTimeGraph(
@@ -188,11 +188,6 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "build shared topology")
 	}
 	defer graph.Clean(queryCtx)
-	queryCtx, releaseTraversal, err := graph.withTraversalReservation(queryCtx)
-	if err != nil {
-		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "reserve topology traversal")
-	}
-	defer releaseTraversal()
 
 	topologyQuery := SharedTopologyQuery{
 		SourceType:           request.SourceType,

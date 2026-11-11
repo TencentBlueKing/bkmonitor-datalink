@@ -15,10 +15,11 @@ import (
 )
 
 // Draining a queued HTTP/1 body enables net/http's EOF background read, which
-// observes a disconnected peer and cancels Request.Context. Only request-buffer
-// reservation is held here; no graph work or execution slot is acquired.
+// observes a disconnected peer and cancels Request.Context. No graph work or
+// execution slot is acquired here.
 func readTopologyRequestBody(ctx context.Context, body io.Reader, writer http.ResponseWriter, maxBytes int) (data []byte, err error) {
-	if err = v1beta3.ReserveTopologyStage(ctx, "request", int64(maxBytes)*6); err != nil {
+	// 已取消或已释放的请求不再读取请求体。
+	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
 	_, span := trace.NewSpan(ctx, "topology-read-request-body")

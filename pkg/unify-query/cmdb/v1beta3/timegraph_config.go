@@ -26,11 +26,8 @@ type TimeGraphRelationConfig struct {
 // TimeGraphConfig 是 TimeGraph 使用的命名空间级配置快照。
 // 单次查询内保持不变，避免并发 schema 重载在查询中途改变节点身份规则。
 type TimeGraphConfig struct {
-	Resource     []TimeGraphResourceConfig
-	Relation     []TimeGraphRelationConfig
-	MaxNodes     int
-	MaxEdges     int
-	MaxNodeInfos int
+	Resource []TimeGraphResourceConfig
+	Relation []TimeGraphRelationConfig
 }
 
 func (m *Model) timeGraphConfig(namespace string) *TimeGraphConfig {
@@ -38,11 +35,7 @@ func (m *Model) timeGraphConfig(namespace string) *TimeGraphConfig {
 }
 
 func buildTimeGraphConfig(provider SchemaProvider, namespace string) *TimeGraphConfig {
-	config := &TimeGraphConfig{
-		MaxNodes:     effectiveMaxGraphNodes(),
-		MaxEdges:     effectiveMaxGraphEdges(),
-		MaxNodeInfos: effectiveMaxGraphNodeInfos(),
-	}
+	config := &TimeGraphConfig{}
 
 	for _, resourceType := range provider.ListResourceTypes(namespace) {
 		primaryKeys := provider.GetResourcePrimaryKeys(namespace, resourceType)

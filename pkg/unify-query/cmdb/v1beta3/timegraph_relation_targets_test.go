@@ -632,6 +632,72 @@ func TestLegacyRangeQuerySegmentsKeepBucketAnswer(t *testing.T) {
 	}
 }
 
+// 单次后端响应过大时把该段按时间对半重查：答案与不拆分时相同，每次被接受的读取都在
+// 后端接受的点数内，拆分后的段至少两点；两点的段无法再拆分时返回原错误。
+func TestLegacyRangeHalvesTooLargeSegments(t *testing.T) {
+	start := time.Unix(1700000040, 0)
+	query := func(model *Model, points int) ([]string, []cmdb.MatchersWithTimestamp, error) {
+		end := start.Add(time.Duration(points-1) * time.Minute)
+		_, _, path, _, buckets, err := model.QueryResourceMatcherRange(
+			initTimeGraphQueryTestEnvironment(), "", "space", "1m",
+			strconv.FormatInt(start.Unix(), 10), strconv.FormatInt(end.Unix(), 10),
+			"middle", "source", cmdb.Matcher{"source_id": "a"}, nil, false, nil,
+		)
+		return path, buckets, err
+	}
+	// 后端拒收超过 maxPoints 点的读取，其余读取按 fixture 返回。
+	limitedModel := func(maxPoints int, accepted, rejected *[]legacyRangeSegment) *Model {
+		model := legacySegmentModel()
+		backend := legacySegmentVM(t, start, accepted)
+		model.timeGraphVMQuery = func(ctx context.Context, q *structured.QueryTs, expr string, instant bool, queryStart, queryEnd time.Time, step time.Duration) (pl.Matrix, error) {
+			if points := len(legacyRangeGridPoints(queryStart, queryEnd, step)); points > maxPoints {
+				*rejected = append(*rejected, legacyRangeSegment{start: queryStart, end: queryEnd, points: points})
+				return nil, &metadata.BackendResponseTooLargeError{Message: "response body size exceeds the configured limit"}
+			}
+			return backend(ctx, q, expr, instant, queryStart, queryEnd, step)
+		}
+		return model
+	}
+	for _, tc := range []struct{ points, maxPoints int }{
+		{points: 65, maxPoints: 20},
+		{points: 200, maxPoints: 33},
+		{points: 130, maxPoints: 2},
+	} {
+		t.Run(fmt.Sprintf("%d_points_max_%d", tc.points, tc.maxPoints), func(t *testing.T) {
+			var unsplit []legacyRangeSegment
+			reference := legacySegmentModel()
+			reference.timeGraphVMQuery = legacySegmentVM(t, start, &unsplit)
+			_, want, err := query(reference, tc.points)
+			require.NoError(t, err)
+
+			var accepted, rejected []legacyRangeSegment
+			path, buckets, err := query(limitedModel(tc.maxPoints, &accepted, &rejected), tc.points)
+			require.NoError(t, err)
+			require.Equal(t, []string{"source", "middle"}, path)
+			require.Equal(t, want, buckets)
+			require.Equal(t, legacySegmentBuckets(start, legacyRangeGridPoints(start, start.Add(time.Duration(tc.points-1)*time.Minute), time.Minute)), buckets)
+			require.NotEmpty(t, rejected, "the fixture must exercise the split")
+			covered := make(map[int64]struct{})
+			for _, call := range accepted {
+				require.LessOrEqual(t, call.points, tc.maxPoints, "every accepted read stays within the backend size")
+				require.GreaterOrEqual(t, call.points, 2, "a split segment must not degrade into an instant query")
+				for _, at := range legacyRangeGridPoints(call.start, call.end, time.Minute) {
+					covered[at.UnixMilli()] = struct{}{}
+				}
+			}
+			require.Len(t, covered, tc.points, "accepted reads cover the whole grid")
+		})
+	}
+	t.Run("two_point_segment_returns_error", func(t *testing.T) {
+		var accepted, rejected []legacyRangeSegment
+		_, buckets, err := query(limitedModel(1, &accepted, &rejected), 2)
+		require.ErrorIs(t, err, metadata.ErrBackendResponseTooLarge)
+		require.Empty(t, buckets)
+		require.Empty(t, accepted)
+		require.Equal(t, legacyGridSegments(start, time.Minute, 2), rejected)
+	})
+}
+
 // 路由按时段生效：没有物理路由的段不读数并标记不完整，其它段照常返回；
 // 所有段都没有路由时，该候选按无路由处理，由候选循环记录原因并换下一条。
 func TestLegacyRangeNoRouteSegments(t *testing.T) {

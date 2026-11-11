@@ -11,7 +11,6 @@ package v1beta3
 
 import (
 	"fmt"
-	"strings"
 )
 
 // topologyGridLimitError 保留原有错误文案，同时提供稳定的超限指标分类。
@@ -28,24 +27,17 @@ func (e *topologyGridLimitError) TruncationReason() string {
 	return "max_shared_topology_points"
 }
 
-// ResultLimitError 表示查询结果触发服务端安全上限。
-// Count 和 Limit 用于记录实际数量与允许上限，Path 用于定位发生边扩散的关系字段。
+// ResultLimitError 表示请求超出原始输入规格（请求体、批次条数），或单次后端响应
+// 超出分批边界且无法再拆分。Count 和 Limit 记录实际数量与允许上限。
 type ResultLimitError struct {
 	Reason string
 	Count  int
 	Limit  int
-	Path   string
 }
 
 // Error 返回可直接用于接口错误消息的超限说明。
 func (e *ResultLimitError) Error() string {
-	if strings.HasPrefix(e.Reason, "max_topology_") || e.Reason == "max_response_bytes" {
-		return fmt.Sprintf("topology resource limit exceeded: %s (%d > %d)", e.Reason, e.Count, e.Limit)
-	}
-	if e.Path != "" {
-		return fmt.Sprintf("result limit exceeded: %s returned %d items, maximum is %d", e.Path, e.Count, e.Limit)
-	}
-	return fmt.Sprintf("result limit exceeded: query returned %d targets, maximum is %d", e.Count, e.Limit)
+	return fmt.Sprintf("topology resource limit exceeded: %s (%d > %d)", e.Reason, e.Count, e.Limit)
 }
 
 // TruncationReason 返回稳定的超限原因，供 HTTP 层记录指标和 trace。

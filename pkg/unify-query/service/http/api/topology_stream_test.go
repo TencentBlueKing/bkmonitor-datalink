@@ -83,9 +83,13 @@ func TestBoundedTopologyEncodingPreservesStringsAndUint64(t *testing.T) {
 			} {
 				want, err := stdjson.Marshal(payload)
 				require.NoError(t, err)
-				// Exact quota also exercises compact's bounded per-row encoding.
-				for _, limit := range []int{math.MaxInt, len(want)} {
-					chunks, size, _, err := marshalTopologyBounded(context.Background(), payload, limit, topologyEncodedOwnership{})
+				// The default bound selects whole-item encoding; a zero bound forces
+				// compact's per-row encoding. Both produce the same bytes.
+				for _, wholeItemBytes := range []int64{topologyCompactWholeItemBytes, 0} {
+					previous := topologyCompactWholeItemBytes
+					topologyCompactWholeItemBytes = wholeItemBytes
+					chunks, size, err := marshalTopologyItem(context.Background(), payload)
+					topologyCompactWholeItemBytes = previous
 					require.NoError(t, err)
 					encoded := bytes.Join(chunks, nil)
 					require.Equal(t, len(want), size)

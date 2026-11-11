@@ -8,73 +8,30 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"unsafe"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta3"
 )
 
+// topologyEncodeMeter 累计一项实际编码的字节数，供 trace 和负载指标使用。
+// 编码按行分块输出，字节数不是拒绝理由。
 type topologyEncodeMeter struct {
-	ctx                                               context.Context
-	limit, wire                                       int
-	prior, owned, working, cached, scratch, container int64
-	reserved                                          int64
+	ctx  context.Context
+	wire int
 }
 
-func (m *topologyEncodeMeter) checkWire(n int) error {
+func (m *topologyEncodeMeter) wirePart(n int) error {
 	if err := m.ctx.Err(); err != nil {
 		return err
 	}
 	if n < 0 || n > math.MaxInt-m.wire {
 		return fmt.Errorf("topology encoded size overflows")
 	}
-	if n > m.limit-m.wire {
-		return &v1beta3.ResultLimitError{Reason: "max_topology_output_bytes", Count: m.wire + n, Limit: m.limit}
-	}
-	return nil
-}
-
-func (m *topologyEncodeMeter) wirePart(n int) error {
-	if err := m.checkWire(n); err != nil {
-		return err
-	}
 	m.wire += n
 	return nil
 }
 
-func (m *topologyEncodeMeter) reserve() error {
-	if err := m.ctx.Err(); err != nil {
-		return err
-	}
-	// Owned chunks and prior items stay live. Working/cached/scratch are current
-	// encoder allocations; metadata coefficients cover Go map and slice growth.
-	want := m.prior + m.owned + m.working + m.cached + m.scratch + m.container
-	const block int64 = 4 * 1024 * 1024
-	if want < 0 || want > math.MaxInt64-block+1 {
-		return fmt.Errorf("topology encoder memory estimate overflows")
-	}
-	want = (want + block - 1) / block * block
-	if want > m.reserved {
-		if err := v1beta3.ReserveTopologyStage(m.ctx, "encoded", want); err != nil {
-			return err
-		}
-		m.reserved = want
-	}
-	return nil
-}
-
-func (m *topologyEncodeMeter) retain(n int64) error {
-	m.owned += n
-	return m.reserve()
-}
-
-func (m *topologyEncodeMeter) cache(n int64) error {
-	m.cached += n
-	return m.reserve()
-}
-
-// These DTO bounds reserve encoder scratch and select the compact fast path.
-// They never reject an answer by treating a conservative bound as wire bytes.
+// These conservative DTO bounds only select the compact fast path; they never
+// reject an answer.
 type topologyResponseHeader struct {
 	Code   int    `json:"code"`
 	Start  int64  `json:"start_time"`
@@ -162,29 +119,20 @@ func (m *topologyEncodeMeter) marshal(value any) ([]byte, error) {
 	if err := m.ctx.Err(); err != nil {
 		return nil, err
 	}
-	bound, err := topologyDTOEncoderBound(value)
-	if err != nil {
-		return nil, err
-	}
-	if bound < 0 || bound > (math.MaxInt64-3)/3 {
-		return nil, fmt.Errorf("topology encoder memory estimate overflows")
-	}
-	m.scratch = 3 * (bound + 1)
-	if err = m.reserve(); err != nil {
-		return nil, err
-	}
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		return nil, err
-	}
-	if err = m.checkWire(len(encoded)); err != nil {
 		return nil, err
 	}
 	return encoded, m.ctx.Err()
 }
 
+// topologyCompactWholeItemBytes 是 compact 项整体编码的保守上界。更大的项按行分块
+// 编码，最大的单次分配保持在块大小，避免整项缓冲及 json.Marshal 的复制随项增长。
+// 两种编码输出相同的字节。
+var topologyCompactWholeItemBytes int64 = 64 * topologyChunkTargetBytes
+
 // Stop once whole-item encoding is no longer proved to fit. The fallback still
-// returns the complete answer, with resource reservations and actual byte checks.
+// returns the complete answer.
 func topologyCompactEncoderBound(ctx context.Context, item cmdb.CompactTopologyResponseData, stop int64) (int64, error) {
 	n := int64(1024) + topologyJSONStringBound(item.Step) + topologyJSONStringBound(item.ResponseFormat) + topologyJSONStringBound(item.Message)
 	if item.Compact == nil {
@@ -216,45 +164,22 @@ func topologyCompactEncoderBound(ctx context.Context, item cmdb.CompactTopologyR
 	return n + v, nil
 }
 
-type topologyEncodedOwnership struct {
-	reserved, materialized int64
-}
-
-func topologyOwnedParts(parts [][]byte) topologyEncodedOwnership {
-	// The request owns these immutable buffers. Unused capacity stays pending;
-	// only initialized slice headers and written bytes are materialized credit.
-	seen := make(map[*byte]bool, len(parts))
-	owned := topologyEncodedOwnership{reserved: int64(cap(parts)) * int64(unsafe.Sizeof([]byte{})), materialized: int64(len(parts)) * int64(unsafe.Sizeof([]byte{}))}
-	for _, p := range parts {
-		if len(p) > 0 && !seen[unsafe.SliceData(p)] {
-			seen[unsafe.SliceData(p)] = true
-			owned.reserved += int64(cap(p))
-			owned.materialized += int64(len(p))
-		}
-	}
-	return owned
-}
-
-type topologyBoundedEncoder struct {
+type topologyItemEncoder struct {
 	ctx   context.Context
 	meter *topologyEncodeMeter
 	parts [][]byte
 }
 
-func (enc *topologyBoundedEncoder) own(raw []byte) error {
+// own 追加本项独占的编码片段；片段编码后不再修改。
+func (enc *topologyItemEncoder) own(raw []byte) error {
 	if err := enc.meter.wirePart(len(raw)); err != nil {
 		return err
 	}
-	if err := enc.meter.retain(int64(len(raw))*2 + int64(unsafe.Sizeof([]byte{}))); err != nil {
-		return err
-	}
-	owned := make([]byte, len(raw))
-	copy(owned, raw)
-	enc.parts = append(enc.parts, owned)
+	enc.parts = append(enc.parts, raw)
 	return nil
 }
-func (enc *topologyBoundedEncoder) raw(s string) error { return enc.own([]byte(s)) }
-func (enc *topologyBoundedEncoder) value(v any) error {
+func (enc *topologyItemEncoder) raw(s string) error { return enc.own([]byte(s)) }
+func (enc *topologyItemEncoder) value(v any) error {
 	encoded, err := enc.meter.marshal(v)
 	if err != nil {
 		return err
@@ -262,9 +187,10 @@ func (enc *topologyBoundedEncoder) value(v any) error {
 	return enc.own(encoded)
 }
 
-func marshalTopologyBounded(ctx context.Context, payload any, remaining int, priorOwned topologyEncodedOwnership) ([][]byte, int, topologyEncodedOwnership, error) {
-	m := &topologyEncodeMeter{ctx: ctx, limit: max(0, remaining), prior: priorOwned.reserved}
-	enc := &topologyBoundedEncoder{ctx: ctx, meter: m}
+// marshalTopologyItem 把一项编码为有序片段，返回片段和实际编码字节数。
+func marshalTopologyItem(ctx context.Context, payload any) ([][]byte, int, error) {
+	m := &topologyEncodeMeter{ctx: ctx}
+	enc := &topologyItemEncoder{ctx: ctx, meter: m}
 	var err error
 	switch item := payload.(type) {
 	case cmdb.SharedTopologyResponseData:
@@ -272,26 +198,18 @@ func marshalTopologyBounded(ctx context.Context, payload any, remaining int, pri
 	case cmdb.CompactTopologyResponseData:
 		err = enc.compact(item)
 	default:
-		err = fmt.Errorf("unsupported bounded topology payload %T", payload)
+		err = fmt.Errorf("unsupported topology payload %T", payload)
+	}
+	if err == nil {
+		err = ctx.Err()
 	}
 	if err != nil {
-		return nil, 0, topologyEncodedOwnership{}, err
+		return nil, 0, err
 	}
-	owned := topologyOwnedParts(enc.parts)
-	// Prior encoded items and the current DTO remain live in separate stages.
-	if err := v1beta3.ReserveTopologyStage(ctx, "encoded", priorOwned.reserved+owned.reserved); err != nil {
-		return nil, 0, topologyEncodedOwnership{}, err
-	}
-	if err := v1beta3.CommitTopologyStage(ctx, "encoded", priorOwned.materialized+owned.materialized); err != nil {
-		return nil, 0, topologyEncodedOwnership{}, err
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, 0, topologyEncodedOwnership{}, err
-	}
-	return enc.parts, m.wire, owned, nil
+	return enc.parts, m.wire, nil
 }
 
-func (enc *topologyBoundedEncoder) snapshots(item cmdb.SharedTopologyResponseData) error {
+func (enc *topologyItemEncoder) snapshots(item cmdb.SharedTopologyResponseData) error {
 	m := enc.meter
 
 	header, err := m.marshal(topologyResponseHeader{item.Code, item.StartTime, item.EndTime, item.Step, item.PointCount})
@@ -326,20 +244,16 @@ func (enc *topologyBoundedEncoder) snapshots(item cmdb.SharedTopologyResponseDat
 	return nil
 }
 
-func (enc *topologyBoundedEncoder) compact(item cmdb.CompactTopologyResponseData) error {
+func (enc *topologyItemEncoder) compact(item cmdb.CompactTopologyResponseData) error {
 	ctx, m := enc.ctx, enc.meter
 
-	bound, err := topologyCompactEncoderBound(ctx, item, int64(m.limit-m.wire))
+	bound, err := topologyCompactEncoderBound(ctx, item, topologyCompactWholeItemBytes)
 	if err != nil {
 		return err
 	}
-	if bound <= int64(m.limit-m.wire) {
+	if bound <= topologyCompactWholeItemBytes {
 		// Existing compact payloads are small: retain the standard fast encoder
-		// when its conservative bound already proves it fits the actual quota.
-		m.scratch = 3 * (bound + 1)
-		if err = m.reserve(); err != nil {
-			return err
-		}
+		// when its conservative bound proves the whole item stays small.
 		encoded, e := json.Marshal(item)
 		if e != nil {
 			return e

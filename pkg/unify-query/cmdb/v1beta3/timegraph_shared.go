@@ -138,7 +138,7 @@ func appendSharedNodeInfo(versions []sharedNodeInfo, active timeBitmap, info cmd
 	return append(versions, sharedNodeInfo{activeBits: active, dimensions: info})
 }
 
-func (q *TimeGraph) setSharedNodeInfo(node uint64, info cmdb.Matcher, active timeBitmap) (err error) {
+func (q *TimeGraph) setSharedNodeInfo(node uint64, info cmdb.Matcher, active timeBitmap) {
 	g := q.shared
 	previous := g.nodeInfos[node]
 	if len(previous) == 1 && active.isSubsetOf(previous[0].activeBits) {
@@ -151,24 +151,10 @@ func (q *TimeGraph) setSharedNodeInfo(node uint64, info cmdb.Matcher, active tim
 			}
 		}
 		if unchanged {
-			if q.maxNodeInfos > 0 && g.nodeInfoVersionCount > q.maxNodeInfos {
-				return &ResultLimitError{Reason: "max_graph_node_infos", Count: g.nodeInfoVersionCount, Limit: q.maxNodeInfos}
-			}
-			return nil
+			return
 		}
 	}
 	newPoints := active.subtract(g.nodeBits[node]).count()
-	if q.residency != nil {
-		reservation, reserveErr := q.reserveInfoChange(node, info, active)
-		if reserveErr != nil {
-			return reserveErr
-		}
-		defer func() {
-			if settleErr := reservation.settle(g.nodeInfos[node], err == nil); err == nil {
-				err = settleErr
-			}
-		}()
-	}
 	versions := make([]sharedNodeInfo, 0, len(previous)+1)
 	remaining := active
 	for _, version := range previous {
@@ -190,15 +176,10 @@ func (q *TimeGraph) setSharedNodeInfo(node uint64, info cmdb.Matcher, active tim
 		}
 		versions = appendSharedNodeInfo(versions, remaining, owned)
 	}
-	versionCount := g.nodeInfoVersionCount + len(versions) - len(previous)
-	if q.maxNodeInfos > 0 && versionCount > q.maxNodeInfos {
-		return &ResultLimitError{Reason: "max_graph_node_infos", Count: versionCount, Limit: q.maxNodeInfos}
-	}
-	g.nodeInfoVersionCount = versionCount
+	g.nodeInfoVersionCount += len(versions) - len(previous)
 	g.nodeInfos[node] = versions
 	g.nodeBits[node] = g.nodeBits[node].union(active)
 	q.nodeInfoCount += newPoints
-	return nil
 }
 
 func (q *TimeGraph) addSharedRelation(ctx context.Context, relation cmdb.Relation, direction string, source, target uint64, sourceInfo, targetInfo cmdb.Matcher, timestamps []int64) error {
@@ -214,29 +195,14 @@ func (q *TimeGraph) addSharedRelation(ctx context.Context, relation cmdb.Relatio
 		return nil
 	}
 	pair := timeGraphEdgeKey{source: source, target: target}
-	// 存储上限按完整关系身份计数；出现次数、输入点、内存、时间及遍历上限独立计量。
+	// 关系按完整身份存一份，出现次数按节点对的时间位累计。
 	newEdges := active.subtract(g.edgePairBits[pair]).count()
 	key := timeGraphTopologyEdgeKey{source: source, target: target, relation: timeGraphEdgeRelation{
 		relationType: relation.RelationType, metricName: relation.MetricName,
 		category: relation.Category, direction: direction,
 	}}
-	if err := q.reserveSharedEdge(key, pair); err != nil {
-		return err
-	}
-	// A membership lookup is only needed at the configured edge limit. Below
-	// it (or with no limit), inserting or updating a relation is always allowed.
-	if q.residency == nil && q.maxEdges > 0 && g.edgeCount() >= q.maxEdges {
-		_, exists := g.edgeBits[key]
-		if !exists {
-			return &ResultLimitError{Reason: "max_graph_edges", Count: g.edgeCount() + 1, Limit: q.maxEdges}
-		}
-	}
-	if err := q.setSharedNodeInfo(source, sourceInfo, active); err != nil {
-		return err
-	}
-	if err := q.setSharedNodeInfo(target, targetInfo, active); err != nil {
-		return err
-	}
+	q.setSharedNodeInfo(source, sourceInfo, active)
+	q.setSharedNodeInfo(target, targetInfo, active)
 	g.relationNodeBits[source] = g.relationNodeBits[source].union(active)
 	g.relationNodeBits[target] = g.relationNodeBits[target].union(active)
 	g.edgeBits[key] = g.edgeBits[key].union(active)

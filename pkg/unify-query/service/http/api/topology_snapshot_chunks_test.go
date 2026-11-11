@@ -5,7 +5,6 @@ import (
 	"context"
 	stdjson "encoding/json"
 	"fmt"
-	"math"
 	"strings"
 	"testing"
 
@@ -84,7 +83,7 @@ func TestRepeatedTopologySnapshotChunksMatchStandardJSON(t *testing.T) {
 func TestTopologyChunkCacheOwnsBytesAndVerifiesCollisions(t *testing.T) {
 	correct := []byte("same complete block")
 	hash := xxhash.Sum64(correct)
-	b := topologySnapshotChunkBuilder{meter: &topologyEncodeMeter{ctx: context.Background(), limit: math.MaxInt}, work: make([]byte, 0, topologyChunkTargetBytes), byHash: map[uint64][][]byte{hash: {[]byte("different collision")}}}
+	b := topologySnapshotChunkBuilder{meter: &topologyEncodeMeter{ctx: context.Background()}, work: make([]byte, 0, topologyChunkTargetBytes), byHash: map[uint64][][]byte{hash: {[]byte("different collision")}}}
 	require.NoError(t, b.append(correct, 1))
 	require.NoError(t, b.flush())
 	require.Equal(t, correct, b.parts[0])

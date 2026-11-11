@@ -68,18 +68,12 @@ func newBuildCleanupObserver(t *testing.T) *buildCleanupObserver {
 
 func TestBuildTimeGraphCleansFailedStorage(t *testing.T) {
 	for _, shared := range []bool{false, true} {
-		for _, mode := range []string{"backend-first", "backend-after-first", "cancel-backend", "cancel-after-first", "ordinary-graph-budget", "success"} {
+		for _, mode := range []string{"backend-first", "backend-after-first", "cancel-backend", "cancel-after-first", "success"} {
 			storage := "legacy"
 			if shared {
 				storage = "shared"
 			}
 			t.Run(storage+"/"+mode, func(t *testing.T) {
-				oldEdges := MaxGraphNodeInfos
-				t.Cleanup(func() { MaxGraphNodeInfos = oldEdges })
-
-				if mode == "ordinary-graph-budget" {
-					MaxGraphNodeInfos = 2
-				}
 				observer := newBuildCleanupObserver(t)
 				parent, cancel := context.WithCancel(initTimeGraphQueryTestEnvironment())
 				defer cancel()
@@ -145,15 +139,11 @@ func TestBuildTimeGraphCleansFailedStorage(t *testing.T) {
 					case "cancel-backend", "cancel-after-first":
 						require.ErrorIs(t, err, context.Canceled)
 						require.ErrorIs(t, parent.Err(), context.Canceled)
-					case "ordinary-graph-budget":
-						var limit *ResultLimitError
-						require.ErrorAs(t, err, &limit)
-						require.Equal(t, "max_graph_node_infos", limit.Reason)
 					}
 					require.Equal(t, codes.Error, observer.status["build-time-graph-from-relations"])
 				}
 				t.Logf("created=%d clean_started=%d clean_ended=%d completed_applies=%d backend_calls=%d", observer.ended["timegraph-create-storage"], observer.started["timegraph-clean"], observer.ended["timegraph-clean"], observer.applied, calls)
-				if mode == "backend-after-first" || mode == "cancel-after-first" || mode == "ordinary-graph-budget" {
+				if mode == "backend-after-first" || mode == "cancel-after-first" {
 					require.Equal(t, 1, observer.applied, "must fail after one matrix was actually applied")
 					// Build diagnostics must be captured before cleanup clears the graph.
 					require.GreaterOrEqual(t, observer.attributes["build-time-graph-from-relations"]["graph-node-count"].(int64), int64(2))

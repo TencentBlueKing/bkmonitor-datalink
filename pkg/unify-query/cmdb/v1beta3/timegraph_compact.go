@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"time"
-	"unsafe"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -30,8 +29,7 @@ func compactTimeMask(bits timeBitmap) []string {
 }
 
 // FindCompactTopology 传播后直接导出自有的节点、关系版本及时间 mask，
-// 避免按 K 个时间点分配完整快照。输出预算按实际存储版本收费，
-// 展开后的出现次数仍供调用方和负载观测使用。
+// 避免按 K 个时间点分配完整快照。展开后的出现次数仍供调用方和负载观测使用。
 func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, targets []cmdb.Resource) (result *cmdb.CompactTopology, err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-compact-topology")
 	defer finishTimeGraphStage(ctx, span, "topology-materialize", time.Now(), &err)
@@ -43,11 +41,6 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 	if q.shared == nil {
 		return nil, fmt.Errorf("compact topology requires shared storage")
 	}
-	ctx, releaseTraversal, err := q.withTraversalReservation(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer releaseTraversal()
 	nodeBits, edges, err := q.sharedTopologyState(ctx, grid, query)
 	if err != nil {
 		return nil, err
@@ -57,18 +50,6 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 		return nil, err
 	}
 	span.Set("source-match-node-count", seeds)
-	budget := newTopologyOutputBudget(grid, query.PartialTimestamps)
-	budget.ctx = ctx
-	defer func() {
-		span.Set("expanded-budget-elements", budget.elements)
-		span.Set("expanded-budget-bytes", budget.bytes)
-	}()
-	if err := budget.addCharge(int64(unsafe.Sizeof(cmdb.CompactTopology{}))+int64(len(grid.timestamps))*8+int64(len(query.PartialTimestamps))*int64(unsafe.Sizeof(cmdb.CompactTopologyPartial{})), 0); err != nil {
-		return nil, err
-	}
-	if err := budget.checkBytes(0); err != nil {
-		return nil, err
-	}
 	result = &cmdb.CompactTopology{
 		Version: 1, Timestamps: append([]int64(nil), grid.timestamps...),
 		Nodes: make([]cmdb.CompactTopologyNode, 0), Edges: make([]cmdb.CompactTopologyEdge, 0),
@@ -78,9 +59,6 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 		if reason, ok := query.PartialTimestamps[ts]; ok {
 			result.Partial = append(result.Partial, cmdb.CompactTopologyPartial{Index: i, Reason: reason})
 		}
-	}
-	if err := budget.addCharge(int64(len(reachable))*(8+48)+128, 0); err != nil {
-		return nil, err
 	}
 	ids := make([]uint64, 0, len(reachable))
 	for id := range reachable {
@@ -97,44 +75,29 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 		keep := len(targets) == 0 || resource == query.SourceType || slices.Contains(targets, resource)
 		kept[id] = keep
 		remaining := reachable[id]
-		appendVersion := func(bits timeBitmap, dimensions cmdb.Matcher) error {
+		appendVersion := func(bits timeBitmap, dimensions cmdb.Matcher) {
 			count := bits.count()
-			if count == 0 {
-				return nil
+			if count == 0 || !keep {
+				return
 			}
-			if keep {
-				if err := budget.retainMatcher(resource, dimensions); err != nil {
-					return err
-				}
-				charge := 3*int64(unsafe.Sizeof(cmdb.CompactTopologyNode{})) + topologyMatcherMemory(len(dimensions)) + 20 + 16 + int64(unsafe.Sizeof(""))
-				if err := budget.addCharge(charge, 1); err != nil {
-					return err
-				}
-				result.Nodes = append(result.Nodes, cmdb.CompactTopologyNode{
-					ID:           strconv.FormatUint(id, 10),
-					ResourceType: resource,
-					Dimensions:   cloneMatcher(dimensions),
-					Mask:         compactTimeMask(bits),
-				})
-				result.NodeOccurrences += count
-			}
-			return nil
+			result.Nodes = append(result.Nodes, cmdb.CompactTopologyNode{
+				ID:           strconv.FormatUint(id, 10),
+				ResourceType: resource,
+				Dimensions:   cloneMatcher(dimensions),
+				Mask:         compactTimeMask(bits),
+			})
+			result.NodeOccurrences += count
 		}
 		for _, version := range q.shared.nodeInfos[id] {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
 			bits := remaining.intersect(version.activeBits)
-			if err := appendVersion(bits, version.dimensions); err != nil {
-				return nil, err
-			}
+			appendVersion(bits, version.dimensions)
 			remaining = remaining.subtract(bits)
 		}
 		if !remaining.empty() {
-			fallback := q.topologyBorrowedNodeInfo(id)
-			if err := appendVersion(remaining, fallback); err != nil {
-				return nil, err
-			}
+			appendVersion(remaining, q.topologyBorrowedNodeInfo(id))
 		}
 	}
 	sort.Slice(edges, func(i, j int) bool { return lessTopologyEdgeKey(edges[i].key, edges[j].key) })
@@ -149,13 +112,6 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 		}
 		if !kept[edge.key.source] || !kept[edge.key.target] {
 			continue
-		}
-		if err := budget.retainEdge(edge.key); err != nil {
-			return nil, err
-		}
-		charge := 3*int64(unsafe.Sizeof(cmdb.CompactTopologyEdge{})) + 40 + 16 + int64(unsafe.Sizeof(""))
-		if err := budget.addCharge(charge, 1); err != nil {
-			return nil, err
 		}
 		key := edge.key
 		result.Edges = append(result.Edges, cmdb.CompactTopologyEdge{
@@ -173,9 +129,6 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 	span.Set("edge-version-count", len(result.Edges))
 	span.Set("snapshot-node-count", result.NodeOccurrences)
 	span.Set("snapshot-edge-count", result.EdgeOccurrences)
-	if err := commitTopologyOutput(ctx, func() int64 { return topologyCompactOwnedLowerBound(result) }); err != nil {
-		return nil, err
-	}
 	return result, ctx.Err()
 }
 

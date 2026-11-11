@@ -371,23 +371,6 @@ func filterTargetMatcher(
 	return matcher
 }
 
-func validateTargetCount(count int) error {
-	limit := effectiveMaxTargets()
-	if limit <= 0 || count <= limit {
-		return nil
-	}
-	return &ResultLimitError{Reason: "max_targets", Count: count, Limit: limit}
-}
-
-func validateRangeTargetCounts(result []cmdb.MatchersWithTimestamp) (int64, error) {
-	for _, bucket := range result {
-		if err := validateTargetCount(len(bucket.Matchers)); err != nil {
-			return bucket.Timestamp, err
-		}
-	}
-	return 0, nil
-}
-
 func matcherToMap(matcher cmdb.Matcher) map[string]string {
 	if matcher == nil {
 		return nil

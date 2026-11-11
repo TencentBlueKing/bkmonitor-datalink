@@ -8,7 +8,6 @@ package v1beta3
 import (
 	"context"
 	"encoding/json"
-	"math"
 	"testing"
 	"time"
 
@@ -147,16 +146,14 @@ func TestSourceInfoQualityRetainedByLegacyAndTopology(t *testing.T) {
 	}
 }
 
-func TestSharedStorageBudgetsCountStoredVersions(t *testing.T) {
+// 共享存储按关系身份和属性版本计数；超过旧的计数上限时照常写入。
+func TestSharedStorageCountsStoredVersions(t *testing.T) {
 	ctx := context.Background()
-	times := sharedGraphTestTimes(60)
+	times := sharedTopologyTestTimes(60)
 	grid, err := NewTopologyGrid(times)
 	require.NoError(t, err)
-	cfg := sharedGraphTestConfig()
-	cfg.MaxEdges = 1
-	cfg.MaxNodeInfos = 2
-	g := newSharedTimeGraph(cfg, grid)
-	relation := sharedGraphTestRelation("calls")
+	g := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
+	relation := sharedTopologyTestRelation("calls")
 	info := cmdb.Matcher{"from_id": "a", "to_id": "b"}
 	require.NoError(t, g.AddTimeRelationWithRelation(ctx, relation, info, times...))
 	require.NoError(t, g.AddTimeRelationWithRelation(ctx, relation, info, times...))
@@ -165,23 +162,19 @@ func TestSharedStorageBudgetsCountStoredVersions(t *testing.T) {
 	require.Equal(t, 2, g.shared.nodeInfoVersionCount)
 	other := relation
 	other.MetricName = "other_flow"
-	var limit *ResultLimitError
-	require.ErrorAs(t, g.AddTimeRelationWithRelation(ctx, other, info, times...), &limit)
-	require.Equal(t, "max_graph_edges", limit.Reason)
-	require.ErrorAs(t, g.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": "a", "version": "v2"}, times[0]), &limit)
-	require.Equal(t, "max_graph_node_infos", limit.Reason)
+	require.NoError(t, g.AddTimeRelationWithRelation(ctx, other, info, times...))
+	require.Equal(t, 2, g.shared.edgeCount())
+	require.Equal(t, 60, g.edgeCount, "occurrences count node pairs per frame")
+	require.NoError(t, g.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": "a", "version": "v2"}, times[0]))
+	require.Equal(t, 3, g.shared.nodeInfoVersionCount)
 }
 
-func TestCompactBudgetsRepresentationAndIntegerSafety(t *testing.T) {
-	oldBytes := MaxSharedTopologyOutputBytes
-	t.Cleanup(func() { MaxSharedTopologyOutputBytes = oldBytes })
-
-	MaxSharedTopologyOutputBytes = 16000
-	times := sharedGraphTestTimes(60)
+func TestCompactRepresentationMatchesSnapshots(t *testing.T) {
+	times := sharedTopologyTestTimes(60)
 	grid, err := NewTopologyGrid(times)
 	require.NoError(t, err)
-	g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
-	require.NoError(t, g.AddTimeRelationWithRelation(context.Background(), sharedGraphTestRelation("calls"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, times...))
+	g := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
+	require.NoError(t, g.AddTimeRelationWithRelation(context.Background(), sharedTopologyTestRelation("calls"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, times...))
 	query := SharedTopologyQuery{SourceType: "entity", SourceMatcher: cmdb.Matcher{"id": "a"}, MaxHops: 1}
 	compact, err := g.FindCompactTopology(context.Background(), grid, query, nil)
 	require.NoError(t, err)
@@ -197,9 +190,6 @@ func TestCompactBudgetsRepresentationAndIntegerSafety(t *testing.T) {
 		require.Len(t, frame.Nodes, 2)
 		require.Len(t, frame.Edges, 1)
 	}
-	b := &topologyOutputBudget{}
-	require.Error(t, b.addCharge(-1, 1))
-	require.Error(t, b.addCharge(1, -1))
 }
 
 func TestSourceInfoMissingRouteRealLocalEngine(t *testing.T) {
@@ -258,62 +248,28 @@ func TestExpandedPrimaryKeyIsUsedInTopology(t *testing.T) {
 	}
 }
 
-func TestSharedEmptyEdgesAndVersionBudgetRelease(t *testing.T) {
-	times := sharedGraphTestTimes(60)
+func TestSharedEmptyEdgesAndVersionMerge(t *testing.T) {
+	times := sharedTopologyTestTimes(60)
 	grid, err := NewTopologyGrid(times)
 	require.NoError(t, err)
-	cfg := sharedGraphTestConfig()
-	cfg.MaxEdges = 1
-	cfg.MaxNodeInfos = 2
-	g := newSharedTimeGraph(cfg, grid)
+	g := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
 	for _, kind := range []string{"a", "b", "c"} {
-		require.NoError(t, g.AddTimeRelationWithRelation(context.Background(), sharedGraphTestRelation(kind), cmdb.Matcher{"from_id": "a", "to_id": "b"}))
+		require.NoError(t, g.AddTimeRelationWithRelation(context.Background(), sharedTopologyTestRelation(kind), cmdb.Matcher{"from_id": "a", "to_id": "b"}))
 	}
 	require.Empty(t, g.shared.edgeBits)
 
 	require.NoError(t, g.AddTimeNode(context.Background(), "entity", cmdb.Matcher{"id": "a", "version": "v1"}, times...))
 	require.NoError(t, g.AddTimeNode(context.Background(), "entity", cmdb.Matcher{"id": "a", "version": "v2"}, times[0]))
 	require.Equal(t, 2, g.shared.nodeInfoVersionCount)
-	var limit *ResultLimitError
-	require.ErrorAs(t, g.AddTimeNode(context.Background(), "entity", cmdb.Matcher{"id": "a", "version": "v3"}, times[1]), &limit)
-	require.Equal(t, 2, g.shared.nodeInfoVersionCount)
+	require.NoError(t, g.AddTimeNode(context.Background(), "entity", cmdb.Matcher{"id": "a", "version": "v3"}, times[1]))
+	require.Equal(t, 3, g.shared.nodeInfoVersionCount)
+	// 覆盖全部时间点的更新把各版本合并为一份。
 	require.NoError(t, g.AddTimeNode(context.Background(), "entity", cmdb.Matcher{"id": "a", "version": "v3"}, times...))
 	require.Equal(t, 1, g.shared.nodeInfoVersionCount)
 }
 
-func TestOutputChargesDoNotMutateOnOverflowOrReservationFailure(t *testing.T) {
-	cases := []*topologyOutputBudget{
-		{bytes: math.MaxInt64},
-		{elements: math.MaxInt},
-	}
-	for _, b := range cases {
-		bytes, elements := b.bytes, b.elements
-		require.Error(t, b.addCharge(512*1024*1024, 1))
-		require.Equal(t, bytes, b.bytes)
-		require.Equal(t, elements, b.elements)
-	}
-	ctx, release, err := AcquireSharedTopology(context.Background())
-	require.NoError(t, err)
-	b := &topologyOutputBudget{ctx: ctx}
-	require.Error(t, b.addCharge(math.MaxInt64/2, 1))
-	require.Zero(t, b.bytes)
-	require.Zero(t, b.elements)
-	old := MaxSharedTopologyReservedBytes
-	t.Cleanup(func() { MaxSharedTopologyReservedBytes = old; release() })
-	MaxSharedTopologyReservedBytes = 1
-	require.Error(t, b.addCharge(512*1024*1024, 1))
-	require.Zero(t, b.bytes)
-	require.Zero(t, b.elements)
-	MaxSharedTopologyReservedBytes = old
-	release()
-	topologyAdmission.Lock()
-	defer topologyAdmission.Unlock()
-	require.Zero(t, topologyAdmission.active)
-	require.Zero(t, topologyAdmission.reserved)
-}
-
 func TestPartialReasonsStableAndCompleteEmptyUnmarked(t *testing.T) {
-	q := NewTimeGraphWithConfig(sharedGraphTestConfig())
+	q := NewTimeGraphWithConfig(sharedTopologyTestConfig())
 	now := time.Unix(1700000000, 0)
 	for _, reason := range []string{"source_info_no_route", "backend_partial", "source_info_no_route"} {
 		q.markPartialRange(now, now, time.Minute, reason)

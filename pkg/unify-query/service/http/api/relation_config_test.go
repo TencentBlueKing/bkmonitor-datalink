@@ -52,13 +52,13 @@ func TestRelationConfigRestoresOverridesAndRuntime(t *testing.T) {
 	viper.Set("review.unrelated", "preserved")
 	v1beta3.LoadConfig()
 	// 模块运行值可以与 Viper 配置不同，两者均需独立恢复。
-	v1beta3.DefaultLimit = 37
+	v1beta3.MaxRangePoints = 37
 	before := relationRuntimeConfig()
 	beforeSettings := viper.AllSettings()
 	require.True(t, t.Run("isolated_defaults", func(t *testing.T) {
 		useRelationTestConfig(t)
 		require.Equal(t, 6, v1beta3.MaxAllowedHops)
-		require.Equal(t, 100, v1beta3.DefaultLimit)
+		require.Equal(t, 11000, v1beta3.MaxRangePoints)
 		require.Equal(t, "preserved", viper.GetString("review.unrelated"))
 		for key, value := range relationRuntimeConfig() {
 			switch value.(type) {
@@ -76,24 +76,15 @@ func TestRelationConfigRestoresOverridesAndRuntime(t *testing.T) {
 
 func relationRuntimeConfig() map[string]any {
 	return map[string]any{
-		v1beta3.MaxHopsConfigPath:                        v1beta3.DefaultMaxHops,
-		v1beta3.MaxAllowedHopsConfigPath:                 v1beta3.MaxAllowedHops,
-		v1beta3.DefaultLimitConfigPath:                   v1beta3.DefaultLimit,
-		v1beta3.MaxRangePointsConfigPath:                 v1beta3.MaxRangePoints,
-		v1beta3.MaxTargetsConfigPath:                     v1beta3.MaxTargets,
-		v1beta3.MaxGraphNodesConfigPath:                  v1beta3.MaxGraphNodes,
-		v1beta3.MaxGraphEdgesConfigPath:                  v1beta3.MaxGraphEdges,
-		v1beta3.MaxGraphNodeInfosConfigPath:              v1beta3.MaxGraphNodeInfos,
-		v1beta3.MaxSharedTopologyPointsConfigPath:        v1beta3.MaxSharedTopologyPoints,
-		v1beta3.MaxSharedTopologyBackendBytesConfigPath:  v1beta3.MaxSharedTopologyBackendBytes,
-		v1beta3.MaxSharedTopologyOutputBytesConfigPath:   v1beta3.MaxSharedTopologyOutputBytes,
-		v1beta3.MaxSharedTopologyRequestBytesConfigPath:  v1beta3.MaxSharedTopologyRequestBytes,
-		v1beta3.MaxSharedTopologyQueriesConfigPath:       v1beta3.MaxSharedTopologyQueries,
-		v1beta3.SharedTopologyReuseMatrixConfigPath:      v1beta3.SharedTopologyReuseMatrix,
-		v1beta3.SharedTopologyPlanCandidatesConfigPath:   v1beta3.SharedTopologyPlanCandidates,
-		v1beta3.MaxSharedTopologyConcurrentConfigPath:    v1beta3.MaxSharedTopologyConcurrent,
-		v1beta3.MaxSharedTopologyReservedBytesConfigPath: v1beta3.MaxSharedTopologyReservedBytes,
-		v1beta3.SharedTopologyMemoryHeadroomConfigPath:   v1beta3.SharedTopologyMemoryHeadroom,
-		v1beta3.DefaultLookBackDeltaConfigPath:           v1beta3.DefaultLookBackDelta,
+		v1beta3.MaxHopsConfigPath:                       v1beta3.DefaultMaxHops,
+		v1beta3.MaxAllowedHopsConfigPath:                v1beta3.MaxAllowedHops,
+		v1beta3.MaxRangePointsConfigPath:                v1beta3.MaxRangePoints,
+		v1beta3.MaxSharedTopologyPointsConfigPath:       v1beta3.MaxSharedTopologyPoints,
+		v1beta3.MaxSharedTopologyRequestBytesConfigPath: v1beta3.MaxSharedTopologyRequestBytes,
+		v1beta3.MaxSharedTopologyQueriesConfigPath:      v1beta3.MaxSharedTopologyQueries,
+		v1beta3.SharedTopologyReuseMatrixConfigPath:     v1beta3.SharedTopologyReuseMatrix,
+		v1beta3.SharedTopologyPlanCandidatesConfigPath:  v1beta3.SharedTopologyPlanCandidates,
+		v1beta3.MaxSharedTopologyConcurrentConfigPath:   v1beta3.MaxSharedTopologyConcurrent,
+		v1beta3.DefaultLookBackDeltaConfigPath:          v1beta3.DefaultLookBackDelta,
 	}
 }

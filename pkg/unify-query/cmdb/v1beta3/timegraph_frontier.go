@@ -22,6 +22,10 @@ const timeGraphFrontierBatchSize = 64
 // 查询，耗时随身份数线性增长；超过这个规模后一次宽读取的总代价更低。
 const timeGraphWideFrontierThreshold = 2 * timeGraphFrontierBatchSize
 
+// timeGraphBackendResponseBytes 是单次后端响应解压后的分批边界，不是能力上限：
+// 超过它的读取按身份对半拆分（区间兼容入口另按时间对半拆分），总读取量可以大于它。
+const timeGraphBackendResponseBytes int64 = 16 * 1024 * 1024
+
 type timeGraphFrontier map[cmdb.Resource]map[string]cmdb.Matcher
 
 func (q *TimeGraph) completeFrontierIdentity(resource cmdb.Resource, info cmdb.Matcher) bool {
@@ -128,8 +132,8 @@ func (loader *timeGraphMatrixLoader) frontierScopeQuery(ctx context.Context, spa
 	return ts, nil
 }
 
-// loadFrontier 读取路径下一跳。规模超过阈值时先尝试一次宽读取，响应超过预算再退回
-// 分批：预算限制的是单次响应，分批读取的总量仍可以大于它。
+// loadFrontier 读取路径下一跳。规模超过阈值时先尝试一次宽读取，响应超过分批边界再
+// 退回分批：边界限制的是单次响应，分批读取的总量仍可以大于它。
 func (loader *timeGraphMatrixLoader) loadFrontier(ctx context.Context, space string, relation cmdb.Relation, identities []cmdb.Matcher, apply func(context.Context, pl.Matrix) error, queries *int) error {
 	if len(identities) > timeGraphWideFrontierThreshold {
 		ts, err := loader.frontierScopeQuery(ctx, space, relation, identities)
@@ -139,7 +143,7 @@ func (loader *timeGraphMatrixLoader) loadFrontier(ctx context.Context, space str
 		if ts != nil {
 			*queries = *queries + 1
 			// 独立子查询：被拒收的读取留下的质量状态不能影响替代它的分批读取。
-			budgeted := metadata.WithBackendResponseLimit(frontierSubqueryContext(ctx), int64(effectiveTimeGraphLimit(MaxSharedTopologyBackendBytes, 16*1024*1024)))
+			budgeted := metadata.WithBackendResponseLimit(frontierSubqueryContext(ctx), timeGraphBackendResponseBytes)
 			matrix, _, err := loader.query(budgeted, ts)
 			if err == nil {
 				return apply(ctx, matrix)

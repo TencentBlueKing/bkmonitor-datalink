@@ -117,7 +117,6 @@ func TestTopologyFullHTTPTraceLifecycle(t *testing.T) {
 					require.NotNil(t, spans["timegraph-encode-topology-item"])
 				}
 				require.Zero(t, topologyObservation(t, "cmdb_topology_admission_active", nil).GetGauge().GetValue())
-				require.Zero(t, topologyObservation(t, "cmdb_topology_reserved_bytes", nil).GetGauge().GetValue())
 			})
 		}
 	}

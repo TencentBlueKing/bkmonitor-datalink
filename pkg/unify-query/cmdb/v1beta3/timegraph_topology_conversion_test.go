@@ -47,10 +47,10 @@ func TestDirectTopologyDTOFrameContentsAndOwnership(t *testing.T) {
 	for _, points := range []int{3, 60} {
 		t.Run(fmt.Sprintf("points=%d", points), func(t *testing.T) {
 			ctx := context.Background()
-			times := sharedGraphTestTimes(points)
+			times := sharedTopologyTestTimes(points)
 			grid, err := NewTopologyGrid(times)
 			require.NoError(t, err)
-			g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
+			g := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
 			ids := make(map[string]uint64)
 			for _, id := range []string{"a", "b", "c"} {
 				info := cmdb.Matcher{"id": id, "version": "old"}
@@ -59,9 +59,9 @@ func TestDirectTopologyDTOFrameContentsAndOwnership(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.NoError(t, g.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": "b", "version": "z"}, times[len(times)-1]))
-			require.NoError(t, g.AddTimeRelationWithRelation(ctx, sharedGraphTestRelation("calls"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, times...))
-			require.NoError(t, g.AddTimeRelationWithRelation(ctx, sharedGraphTestRelation("other"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, times...))
-			require.NoError(t, g.AddTimeRelationWithRelation(ctx, sharedGraphTestRelation("calls"), cmdb.Matcher{"from_id": "b", "to_id": "c"}, times[1:]...))
+			require.NoError(t, g.AddTimeRelationWithRelation(ctx, sharedTopologyTestRelation("calls"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, times...))
+			require.NoError(t, g.AddTimeRelationWithRelation(ctx, sharedTopologyTestRelation("other"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, times...))
+			require.NoError(t, g.AddTimeRelationWithRelation(ctx, sharedTopologyTestRelation("calls"), cmdb.Matcher{"from_id": "b", "to_id": "c"}, times[1:]...))
 			query := SharedTopologyQuery{SourceType: "entity", SourceMatcher: cmdb.Matcher{"id": "a"}, MaxHops: 2, PartialTimestamps: map[int64]string{times[1]: "missing source"}}
 			got, err := g.findSharedTopologyDTO(ctx, grid, query)
 			require.NoError(t, err)

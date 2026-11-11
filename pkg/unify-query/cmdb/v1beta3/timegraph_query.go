@@ -184,9 +184,6 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	configSpan.Set("space-uid", spaceUID)
 	configSpan.Set("resource-config-count", len(config.Resource))
 	configSpan.Set("relation-config-count", len(config.Relation))
-	configSpan.Set("max-graph-nodes", config.MaxNodes)
-	configSpan.Set("max-graph-edges", config.MaxEdges)
-	configSpan.Set("max-graph-node-infos", config.MaxNodeInfos)
 	var configErr error
 	configSpan.End(&configErr)
 	_, storageSpan := trace.NewSpan(ctx, "timegraph-create-storage")
@@ -196,13 +193,9 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	} else {
 		tg = NewTimeGraphWithConfig(config)
 	}
-	err = tg.enableResidency(ctx)
 	storageSpan.Set("shared", tg.shared != nil)
-	storageSpan.End(&err)
-	if err != nil {
-		tg.Clean(ctx)
-		return nil, err
-	}
+	var storageErr error
+	storageSpan.End(&storageErr)
 	// 成功时由调用方持有图；失败时必须释放已构建的存储。
 	// 先注册清理，再注册构建观察器，使失败计数在清理前可见。
 	defer func() {
@@ -213,20 +206,9 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 
 	sourceInfoQueryCount, relationEdgeQueryCount, targetInfoQueryCount := 0, 0, 0
 	loader := &timeGraphMatrixLoader{model: m, graph: tg, start: start, end: end, step: step, override: matrixQuery, topology: topologyGrid != nil}
-	defer func() {
-		loader.lastMatrix = timeGraphMatrixSlot{}
-		tg.matrixResidency.clear()
-	}()
+	defer func() { loader.lastMatrix = timeGraphMatrixSlot{} }()
 	defer func() {
 		observeTimeGraphBuild(ctx, span, tg, loader, started, err)
-		graphMemory := graphResidencyState(tg)
-		span.Set("graph-structural-estimated-bytes", graphMemory.EstimatedBytes)
-		span.Set("graph-structural-reserved-bytes", graphMemory.ReservedBytes)
-		span.Set("graph-structural-owned-lower-bound-bytes", graphMemory.MaterializedLowerBoundBytes)
-		matrixMemory := matrixResidencyState(tg)
-		span.Set("matrix-receiving-bytes", matrixMemory.ReceivingBytes)
-		span.Set("matrix-resident-bytes", matrixMemory.ResidentBytes)
-		span.Set("matrix-residency-peak-bytes", matrixMemory.PeakTotalBytes)
 		span.Set("source-info-query-count", sourceInfoQueryCount)
 		span.Set("relation-edge-query-count", relationEdgeQueryCount)
 		span.Set("target-info-query-count", targetInfoQueryCount)
@@ -236,8 +218,6 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	} else {
 		span.Set("graph-storage-mode", "time-buckets")
 	}
-	span.Set("graph-max-nodes", tg.maxNodes)
-	span.Set("graph-max-edges", tg.maxEdges)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -254,7 +234,6 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		lookBack = time.Duration(DefaultLookBackDelta) * time.Millisecond
 	}
 	span.Set("query-lookback-seconds", lookBack.Seconds())
-	span.Set("graph-max-node-infos", tg.maxNodeInfos)
 
 	// step 只控制 range 查询的采样间隔，lookBack 只控制 count_over_time 的
 	// 回溯窗口；两者必须分开，否则稀疏的 range 查询会产生错误的采样结果。
@@ -412,7 +391,7 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	return tg, nil
 }
 
-// timeGraphMatrixLoader 统一取数、网格校验和完整性状态，并按请求累计 Matrix 预算。
+// timeGraphMatrixLoader 统一取数、网格校验和完整性状态，并按请求累计 Matrix 规模。
 // 构图器只负责把已校验的序列写入所选存储。
 type timeGraphMatrixLoader struct {
 	model                  *Model
@@ -434,7 +413,7 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 
 func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, queryTs *structured.QueryTs, applyQuality bool) (matrix pl.Matrix, partial bool, err error) {
 	if metadata.BackendResponseLimit(queryCtx) > 0 {
-		// 一次物理响应的聚合子查询共用拒收标记，防止预算超限被误判为 partial；
+		// 一次物理响应的聚合子查询共用拒收标记，防止响应超过分批边界被误判为 partial；
 		// 不同身份分片各有标记，先前的大分片失败不会污染后续小分片。
 		queryCtx = metadata.WithBackendResponseLimit(queryCtx, metadata.BackendResponseLimit(queryCtx))
 	}
@@ -499,10 +478,7 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 		span.Set("query-source", "test-matrix")
 		loader.lastMatrix = timeGraphMatrixSlot{}
 		loader.physicalQueryCount++
-		matrix, partial, err = loader.fetchResident(queryCtx, func() (pl.Matrix, bool, error) {
-			value, queryErr := matrixQuery(queryCtx, queryTs)
-			return value, false, queryErr
-		})
+		matrix, err = matrixQuery(queryCtx, queryTs)
 	case m.timeGraphVMQueryWithPartial != nil:
 		span.Set("query-source", "test-vm-with-partial")
 		var expr string
@@ -586,7 +562,7 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 		partialReason = reason
 		span.Set("relation-no-physical-route", true)
 	}
-	// 校验可能清空命名返回值；先记录已返回的 Matrix，预算拒收也要计入输入成本。
+	// 校验可能清空命名返回值；先记录已返回的 Matrix，超过分批边界的拒收也要计入输入成本。
 	if err == nil && loader.reusedQueryCount == reuseBefore {
 		loadSize = timeGraphReturnedMatrixSize(matrix)
 	}

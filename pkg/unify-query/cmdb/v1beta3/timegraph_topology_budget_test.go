@@ -23,19 +23,13 @@ import (
 func TestSharedTopologyResourcesAndBackendLimit(t *testing.T) {
 	for _, test := range []struct {
 		name, reason string
-		bytes        int
 		backendLimit bool
 	}{
-		{name: "输出字节预算由 HTTP 编码执行", bytes: 16},
+		{name: "模型返回完整拓扑"},
 		{name: "聚合后端不能吞掉容量拒绝", backendLimit: true, reason: "max_response_bytes"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := initTimeGraphQueryTestEnvironment()
-			oldBytes := MaxSharedTopologyOutputBytes
-			t.Cleanup(func() { MaxSharedTopologyOutputBytes = oldBytes })
-			if test.bytes > 0 {
-				MaxSharedTopologyOutputBytes = test.bytes
-			}
 			stamp := int64(1700000000000)
 			relationStamps := []int64{stamp}
 			request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: stamp / 1000, MaxHops: 1}
@@ -66,9 +60,6 @@ func TestSharedTopologyResourcesAndBackendLimit(t *testing.T) {
 }
 
 func TestSharedTopologyConcurrentLoadingAndRecovery(t *testing.T) {
-	oldHeadroom := topologyMemoryHeadroom
-	topologyMemoryHeadroom = func() (int64, bool) { return 16 * 1024 * 1024 * 1024, true }
-	t.Cleanup(func() { topologyMemoryHeadroom = oldHeadroom })
 	for _, outcome := range []string{"success", "canceled", "backend failure"} {
 		t.Run(outcome, func(t *testing.T) {
 			initTimeGraphQueryTestEnvironment()
@@ -168,9 +159,9 @@ func TestTopologyHardSixtyPoints(t *testing.T) {
 	t.Cleanup(func() { MaxSharedTopologyPoints = old })
 	for _, configured := range []int{0, -1, 60, 61, 64, 1000} {
 		MaxSharedTopologyPoints = configured
-		_, err := NewTopologyGrid(sharedGraphTestTimes(60))
+		_, err := NewTopologyGrid(sharedTopologyTestTimes(60))
 		require.NoError(t, err)
-		_, err = NewTopologyGrid(sharedGraphTestTimes(61))
+		_, err = NewTopologyGrid(sharedTopologyTestTimes(61))
 		require.Error(t, err)
 	}
 }

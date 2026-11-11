@@ -80,7 +80,6 @@ func (m *Model) buildTimeGraphRequest(
 		TargetInfoShow:      expandShow,
 		PathResource:        toResourceTypes(pathResource),
 		LegacyCompatibility: true,
-		DisableRootLimit:    true,
 	}
 	if req.SourceType == "" {
 		inferred, err := inferSourceTypeFromInfo(req, m.getSchemaProvider())
@@ -374,9 +373,6 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 	sort.SliceStable(matchers, func(i, j int) bool {
 		return fmt.Sprint(matchers[i]) < fmt.Sprint(matchers[j])
 	})
-	if err := validateTargetCount(len(matchers)); err != nil {
-		return timeGraphLegacyResult{}, err
-	}
 
 	selectedPath := legacySelectedPath(paths, lastSuccess)
 
@@ -487,7 +483,9 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 			routed      bool
 		)
 		segments := newLegacyRangeSegmenter(pathStart, pathEnd, stepDuration)
-		for segment, ok := segments.next(); ok; segment, ok = segments.next() {
+		// querySegment 返回用于估算下一段的已完成段及其图规模。
+		var querySegment func(segment legacyRangeSegment) (legacyRangeSegment, int, error)
+		querySegment = func(segment legacyRangeSegment) (legacyRangeSegment, int, error) {
 			segmentResults, graphPoints, queryErr := m.queryRelationTargets(
 				ctx, lookBackDelta, spaceUID, segment.start, segment.end, stepDuration,
 				cmdb.Resource(req.SourceType), []cmdb.Resource{cmdb.Resource(req.TargetType)},
@@ -502,15 +500,38 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 					noRouteErr = queryErr
 				}
 				addTimeGraphPartialReason(ctx, "relation_no_physical_route:"+routeErr.metric)
-				segments.observe(segment, 0)
-				continue
+				return segment, 0, nil
+			}
+			// 单次后端响应过大时按时间对半重查，不把分段的工作集边界变成拒绝。
+			// 各点按自己的窗口独立计算，拆分不改变答案；两点的段不再拆分。
+			if first, second, ok := segment.halves(stepDuration); ok && isBackendResponseTooLarge(queryErr) {
+				segments.rejected(segment)
+				done, donePoints, err := querySegment(first)
+				if err != nil {
+					return segment, 0, err
+				}
+				other, otherPoints, err := querySegment(second)
+				if err != nil {
+					return segment, 0, err
+				}
+				if other.points > done.points {
+					done, donePoints = other, otherPoints
+				}
+				return done, donePoints, nil
 			}
 			if queryErr != nil {
-				return nil, queryErr
+				return segment, 0, queryErr
 			}
 			routed = true
 			pathResults = append(pathResults, segmentResults...)
-			segments.observe(segment, graphPoints)
+			return segment, graphPoints, nil
+		}
+		for segment, ok := segments.next(); ok; segment, ok = segments.next() {
+			done, graphPoints, err := querySegment(segment)
+			if err != nil {
+				return nil, err
+			}
+			segments.observe(done, graphPoints)
 		}
 		if !routed && noRouteErr != nil {
 			return nil, noRouteErr
@@ -554,9 +575,6 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 		series = append(series, cmdb.MatchersWithTimestamp{Timestamp: timestamp, Matchers: matchers})
 	}
 	sort.SliceStable(series, func(i, j int) bool { return series[i].Timestamp < series[j].Timestamp })
-	if _, err := validateRangeTargetCounts(series); err != nil {
-		return result, err
-	}
 
 	selectedPath := legacySelectedPath(paths, lastSuccess)
 
@@ -601,6 +619,19 @@ type legacyRangeSegment struct {
 	points     int
 }
 
+// halves 把至少三点的段拆成两段各 ⌈n/2⌉ 点：前段从原起点开始，后段沿用原终点。
+// 奇数点时两段共享中间一点，结果按时间桶和身份去重，答案不变；任一段都不退化
+// 为即时查询。
+func (s legacyRangeSegment) halves(step time.Duration) (legacyRangeSegment, legacyRangeSegment, bool) {
+	if s.points < 3 || step <= 0 {
+		return legacyRangeSegment{}, legacyRangeSegment{}, false
+	}
+	size := (s.points + 1) / 2
+	first := legacyRangeSegment{start: s.start, end: s.start.Add(time.Duration(size-1) * step), points: size}
+	second := legacyRangeSegment{start: s.start.Add(time.Duration(s.points-size) * step), end: s.end, points: size}
+	return first, second, true
+}
+
 // legacyRangeSegmenter 把同一网格切成连续段：段的起点都落在网格上，最后一段沿用
 // 原终点；末段只剩一个网格点时并入前段，避免把区间查询退化为即时查询。
 type legacyRangeSegmenter struct {
@@ -608,6 +639,7 @@ type legacyRangeSegmenter struct {
 	step       time.Duration
 	remaining  int
 	size       int
+	ceiling    int // 后端拒收后允许的最长段，0 表示不限
 }
 
 func newLegacyRangeSegmenter(start, end time.Time, step time.Duration) *legacyRangeSegmenter {
@@ -639,14 +671,25 @@ func (s *legacyRangeSegmenter) next() (legacyRangeSegment, bool) {
 	return segment, true
 }
 
-// observe 按刚完成一段的图规模决定下一段长度：至多翻倍，且不超过规模预算。
+// observe 按刚完成一段的图规模决定下一段长度：至多翻倍，不超过规模预算，
+// 后端拒收过之后也不超过拒收段的一半。
 func (s *legacyRangeSegmenter) observe(segment legacyRangeSegment, graphPoints int) {
 	next := 2 * max(segment.points, 1)
 	if graphPoints > 0 {
 		perPoint := (graphPoints + segment.points - 1) / segment.points
 		next = min(next, legacyRangeSegmentGraphPoints/perPoint)
 	}
+	if s.ceiling > 0 {
+		next = min(next, s.ceiling)
+	}
 	s.size = max(next, 2)
+}
+
+// rejected 记录后端因响应过大拒收了一段：后续段不再超过它的一半，避免每段都先失败一次。
+func (s *legacyRangeSegmenter) rejected(segment legacyRangeSegment) {
+	if half := (segment.points + 1) / 2; s.ceiling == 0 || half < s.ceiling {
+		s.ceiling = half
+	}
 }
 
 // addTimeGraphPartialReason 把一个不完整原因并入当前查询的质量状态。

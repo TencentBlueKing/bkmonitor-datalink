@@ -78,8 +78,7 @@ func TestTopologyReasonMetricsKeepKnownReasonsAndDeduplicate(t *testing.T) {
 	ctx := context.Background()
 	for _, reason := range []string{
 		"backend_partial", "vm_storage_coverage_mismatch", "relation_no_physical_route", "source_info_no_route",
-		"target_info_failed", "max_targets", "max_response_bytes", "max_graph_nodes",
-		"max_graph_edges", "max_graph_node_infos", "max_shared_topology_points", "other",
+		"target_info_failed", "max_response_bytes", "max_shared_topology_points", "other",
 	} {
 		t.Run("quality/"+reason, func(t *testing.T) {
 			counter := cmdbRelationQualityTotal.WithLabelValues("instant", "partial", reason)
@@ -92,13 +91,25 @@ func TestTopologyReasonMetricsKeepKnownReasonsAndDeduplicate(t *testing.T) {
 		CMDBRelationQualityInc(ctx, "range", "partial", "unknown-one:private;unknown-two:private")
 	})
 	for _, reason := range []string{
-		"invalid_request", "max_shared_topology_points", "max_graph_nodes", "max_graph_edges", "max_graph_node_infos",
-		"max_targets", "max_response_bytes", "max_topology_output_bytes", "max_topology_queries", "max_topology_request_bytes",
-		"max_topology_admission_waiters", "max_topology_reserved_bytes", "max_topology_memory_headroom",
+		"invalid_request", "max_shared_topology_points", "max_response_bytes", "max_topology_queries", "max_topology_request_bytes",
 	} {
 		t.Run("rejection/"+reason, func(t *testing.T) {
 			requireCounterIncrease(t, cmdbTopologyRejectionsTotal.WithLabelValues("range", reason), 1, func() {
 				CMDBTopologyRejectInc(ctx, "range", reason)
+			})
+		})
+	}
+	// 内部规模不再是拒绝原因，旧原因名不占独立标签。
+	for _, reason := range []string{
+		"max_targets", "max_graph_nodes", "max_graph_edges", "max_graph_node_infos", "max_topology_output_bytes",
+		"max_topology_admission_waiters", "max_topology_reserved_bytes", "max_topology_memory_headroom",
+	} {
+		t.Run("removed/"+reason, func(t *testing.T) {
+			requireCounterIncrease(t, cmdbTopologyRejectionsTotal.WithLabelValues("range", "other"), 1, func() {
+				CMDBTopologyRejectInc(ctx, "range", reason)
+			})
+			requireCounterIncrease(t, cmdbRelationQualityTotal.WithLabelValues("range", "truncated", "other"), 1, func() {
+				CMDBRelationQualityInc(ctx, "range", "truncated", reason)
 			})
 		})
 	}

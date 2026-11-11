@@ -20,7 +20,7 @@ import (
 func TestSharedTopologySixHopsAtSixtyPoints(t *testing.T) {
 	require.Equal(t, 2, DefaultMaxHops)
 	require.Equal(t, 6, MaxAllowedHops)
-	timestamps := sharedGraphTestTimes(60)
+	timestamps := sharedTopologyTestTimes(60)
 	model := &Model{schemaProvider: longPathTestProvider(), timeGraphQueryReference: timeGraphTestQueryReference}
 	var calls atomic.Int32
 	model.timeGraphVMQuery = func(ctx context.Context, _ *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {

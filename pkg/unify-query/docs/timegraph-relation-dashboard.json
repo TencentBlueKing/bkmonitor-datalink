@@ -35,7 +35,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "## TimeGraph 核心验收\n\n共享拓扑按 request/query 记录终态，兼容 multi_resource 按 route 区分 vm_legacy/timegraph。固定数据源、实例范围、请求窗口和并发，比较失败与 partial、阶段成本、输入/存储/输出及请求预算。阶段存在包含关系，不相加；物理输入不重复累计 Matrix 复用。节点/边输出为展开出现次数，字节预留是估算值；进程 RSS、Go heap 和普通查询影响使用对应服务监控。无样本不补为零。"
+        "content": "## TimeGraph 核心验收\n\n共享拓扑按 request/query 记录终态，兼容 multi_resource 按 route 区分 vm_legacy/timegraph。固定数据源、实例范围、请求窗口和并发，比较失败与 partial、阶段成本、输入/存储/输出及执行槽等待。阶段存在包含关系，不相加；物理输入不重复累计 Matrix 复用。节点/边输出为展开出现次数；进程 RSS、Go heap 和普通查询影响使用对应服务监控。无样本不补为零。"
       }
     },
     {
@@ -463,7 +463,7 @@
       "gridPos": {
         "x": 0,
         "y": 45,
-        "w": 12,
+        "w": 24,
         "h": 8
       },
       "datasource": {
@@ -520,61 +520,7 @@
           "legendFormat": "model {{query_mode}}"
         }
       ],
-      "description": "保留各采集实例标签，按进程比较；请求计数覆盖 HTTP/代理响应写出。活动请求受 max_shared_topology_concurrent_requests 限制，等待请求由 admission_waiters 单独记录。"
-    },
-    {
-      "id": 27,
-      "type": "timeseries",
-      "title": "请求内存预留与已物化下界",
-      "gridPos": {
-        "x": 12,
-        "y": 45,
-        "w": 12,
-        "h": 8
-      },
-      "datasource": {
-        "type": "bkmonitor-timeseries-datasource",
-        "uid": "${DS_BKMONITOR}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes"
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "format": "time_series",
-          "source": "sum(unify_query_cmdb_topology_reserved_bytes)",
-          "type": "range",
-          "datasource": {
-            "type": "bkmonitor-timeseries-datasource",
-            "uid": "${DS_BKMONITOR}"
-          },
-          "legendFormat": "reserved"
-        },
-        {
-          "refId": "B",
-          "format": "time_series",
-          "source": "sum(unify_query_cmdb_topology_materialized_bytes)",
-          "type": "range",
-          "datasource": {
-            "type": "bkmonitor-timeseries-datasource",
-            "uid": "${DS_BKMONITOR}"
-          },
-          "legendFormat": "materialized"
-        }
-      ]
+      "description": "保留各采集实例标签，按进程比较；请求计数覆盖 HTTP/代理响应写出。执行中的请求受 max_shared_topology_concurrent_requests 限制，其余请求排队等待（不设队列长度），由 admission_waiters 单独记录。"
     },
     {
       "id": 3,

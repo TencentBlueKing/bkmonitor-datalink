@@ -5,17 +5,15 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta3"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/stretchr/testify/require"
@@ -38,6 +36,7 @@ func (c *outputMeterCancelContext) Err() error {
 }
 func (c *outputMeterCancelContext) Done() <-chan struct{} { return c.done }
 
+// 60 帧各含一个 1.2MB 属性的节点，编码后超过 64 MiB。
 func outputMeterProbeItem() *cmdb.SharedTopologyResponseData {
 	item := &cmdb.SharedTopologyResponseData{Code: 200, StartTime: 1, EndTime: 60, Step: "60s", PointCount: 60}
 	label := strings.Repeat("a", 1200000)
@@ -47,45 +46,21 @@ func outputMeterProbeItem() *cmdb.SharedTopologyResponseData {
 	return item
 }
 
-// Seed a previous response item through the actual CommitTopologyStage helper.
-// Subsequent failure must keep this live item's materialized credit until release.
-func outputMeterPriorItem(t *testing.T, ctx context.Context) (topologyEncodedOwnership, [][]byte) {
-	t.Helper()
-	item := cmdb.SharedTopologyResponseData{Code: 200, Snapshots: []cmdb.SharedTopologySnapshot{}}
-	parts, size, owned, err := marshalTopologyBounded(ctx, item, 64*1024*1024, topologyEncodedOwnership{})
-	require.NoError(t, err)
-	require.NotEmpty(t, parts)
-	require.Positive(t, size)
-	require.Positive(t, owned.materialized)
-	state := topologyTestAdmissionState(t)
-	require.Equal(t, owned.materialized, state["materialized"])
-	require.GreaterOrEqual(t, state["reserved"], owned.reserved)
-	return owned, parts
-}
-
-func outputMeterAllReleased(t *testing.T) {
-	t.Helper()
-	require.Equal(t, map[string]int64{"active": 0, "waiters": 0, "reserved": 0, "materialized": 0}, topologyTestAdmissionState(t))
-}
-
 func TestOutputMeterMechanisms(t *testing.T) {
 	log.InitTestLogger()
 	metadata.InitMetadata()
 	t.Run("dto-bound-and-standard-encoding", func(t *testing.T) {
-		for _, s := range []string{"", "中文😀<&>\"\\\n\t", string([]byte{0xff, 0xfe}), "\u2028\u2029", strings.Repeat("界", 3000)} {
+		for _, s := range []string{"", "中文😀<&>\"\\\n\t", string([]byte{0xff, 0xfe}), "  ", strings.Repeat("界", 3000)} {
 			n := cmdb.CompactTopologyNode{ID: "18446744073709551615", ResourceType: "pod", Dimensions: cmdb.Matcher{"key<&>": s}, Mask: []string{"0000000000000001"}}
 			encoded, err := json.Marshal(n)
 			require.NoError(t, err)
 			size, err := topologyDTOEncoderBound(n)
 			require.NoError(t, err)
 			require.GreaterOrEqual(t, size, int64(len(encoded)))
-			meter := &topologyEncodeMeter{ctx: context.Background(), limit: len(encoded)}
+			meter := &topologyEncodeMeter{ctx: context.Background()}
 			actual, err := meter.marshal(n)
 			require.NoError(t, err)
 			require.Equal(t, encoded, actual)
-			meter.limit--
-			_, err = meter.marshal(n)
-			require.ErrorContains(t, err, "max_topology_output_bytes")
 		}
 	})
 	t.Run("dto-empty-and-numeric-boundaries", func(t *testing.T) {
@@ -100,87 +75,32 @@ func TestOutputMeterMechanisms(t *testing.T) {
 			size, err := topologyDTOEncoderBound(value)
 			require.NoError(t, err)
 			require.GreaterOrEqual(t, size, int64(len(encoded)))
-			meter := &topologyEncodeMeter{ctx: context.Background(), limit: len(encoded)}
+			meter := &topologyEncodeMeter{ctx: context.Background()}
 			actual, err := meter.marshal(value)
 			require.NoError(t, err)
 			require.Equal(t, encoded, actual)
-			meter.limit--
-			_, err = meter.marshal(value)
-			require.ErrorContains(t, err, "max_topology_output_bytes")
 		}
 	})
-	t.Run("actual-64MiB-wire-cap", func(t *testing.T) {
-		ctx, release, err := v1beta3.AcquireSharedTopology(context.Background())
+	// 编码字节不是拒绝理由：超过旧的 64 MiB 输出上限的项完整返回。
+	t.Run("beyond-former-64MiB-cap-encodes-completely", func(t *testing.T) {
+		item := *outputMeterProbeItem()
+		parts, size, err := marshalTopologyItem(context.Background(), item)
 		require.NoError(t, err)
-		defer release()
-		prior, priorParts := outputMeterPriorItem(t, ctx)
-		parts, size, held, err := marshalTopologyBounded(ctx, *outputMeterProbeItem(), 64*1024*1024, prior)
-		require.ErrorContains(t, err, "max_topology_output_bytes")
-		require.Nil(t, parts)
-		require.Zero(t, size)
-		require.Zero(t, held)
-		state := topologyTestAdmissionState(t)
-		require.Equal(t, prior.materialized, state["materialized"])
-		require.GreaterOrEqual(t, state["reserved"], prior.reserved)
-		runtime.KeepAlive(priorParts)
-		release()
-		outputMeterAllReleased(t)
-		fmt.Printf("OUTPUT_METER_BOUNDARY actual64MiB rejected before full item; prior=%+v before_release=%v all_four=0\n", prior, state)
+		want, err := json.Marshal(item)
+		require.NoError(t, err)
+		require.Greater(t, len(want), 64*1024*1024)
+		require.Equal(t, len(want), size)
+		hash := sha256.New()
+		for _, part := range parts {
+			hash.Write(part)
+		}
+		require.Equal(t, sha256.Sum256(want), [sha256.Size]byte(hash.Sum(nil)))
 	})
 	t.Run("cancel-during-encoding", func(t *testing.T) {
-		base, release, err := v1beta3.AcquireSharedTopology(context.Background())
-		require.NoError(t, err)
-		defer release()
-		prior, priorParts := outputMeterPriorItem(t, base)
-		ctx := &outputMeterCancelContext{Context: base, after: 100, done: make(chan struct{})}
-		_, _, _, err = marshalTopologyBounded(ctx, *outputMeterProbeItem(), 64*1024*1024, prior)
+		ctx := &outputMeterCancelContext{Context: context.Background(), after: 100, done: make(chan struct{})}
+		parts, size, err := marshalTopologyItem(ctx, *outputMeterProbeItem())
 		require.True(t, errors.Is(err, context.Canceled), err)
-		state := topologyTestAdmissionState(t)
-		require.Equal(t, prior.materialized, state["materialized"])
-		require.GreaterOrEqual(t, state["reserved"], prior.reserved)
-		runtime.KeepAlive(priorParts)
-		release()
-		outputMeterAllReleased(t)
-		fmt.Printf("OUTPUT_METER_BOUNDARY during-encode cancellation; prior=%+v before_release=%v all_four=0\n", prior, state)
-	})
-	t.Run("low-memory-preallocation", func(t *testing.T) {
-		oldLimit := v1beta3.MaxSharedTopologyReservedBytes
-		defer func() {
-			v1beta3.MaxSharedTopologyReservedBytes = oldLimit
-		}()
-		v1beta3.MaxSharedTopologyReservedBytes = 1024 * 1024
-		ctx, release, err := v1beta3.AcquireSharedTopology(context.Background())
-		require.NoError(t, err)
-		defer release()
-		item := cmdb.SharedTopologyResponseData{Code: 200, Snapshots: []cmdb.SharedTopologySnapshot{}}
-		_, _, _, err = marshalTopologyBounded(ctx, item, 64*1024*1024, topologyEncodedOwnership{})
-		require.ErrorContains(t, err, "max_topology_reserved_bytes")
-		require.Zero(t, topologyTestAdmissionState(t)["reserved"])
-		require.Zero(t, topologyTestAdmissionState(t)["materialized"])
-		release()
-		outputMeterAllReleased(t)
-		fmt.Println("OUTPUT_METER_BOUNDARY 1MiB budget failed before 4MiB encoder reservation; all_four=0")
-	})
-	t.Run("real-commit-prior-item-and-stage-clear", func(t *testing.T) {
-		ctx, release, err := v1beta3.AcquireSharedTopology(context.Background())
-		require.NoError(t, err)
-		defer release()
-		prior, priorParts := outputMeterPriorItem(t, ctx)
-		item := cmdb.SharedTopologyResponseData{Code: 200, Snapshots: []cmdb.SharedTopologySnapshot{}}
-		parts, size, owned, err := marshalTopologyBounded(ctx, item, 64*1024*1024, prior)
-		require.NoError(t, err)
-		require.NotEmpty(t, parts)
-		require.Positive(t, size)
-		state := topologyTestAdmissionState(t)
-		require.Equal(t, prior.materialized+owned.materialized, state["materialized"])
-		require.Equal(t, prior.reserved+owned.reserved, state["reserved"])
-		runtime.KeepAlive(priorParts)
-		runtime.KeepAlive(parts)
-		require.NoError(t, v1beta3.ReserveTopologyStage(ctx, "encoded", 0))
-		require.Zero(t, topologyTestAdmissionState(t)["reserved"])
-		require.Zero(t, topologyTestAdmissionState(t)["materialized"])
-		release()
-		outputMeterAllReleased(t)
-		fmt.Printf("OUTPUT_METER_BOUNDARY real Commit retained two items; before_clear=%v all_four=0\n", state)
+		require.Nil(t, parts)
+		require.Zero(t, size)
 	})
 }

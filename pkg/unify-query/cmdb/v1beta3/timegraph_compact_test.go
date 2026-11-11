@@ -58,10 +58,10 @@ func decodeCompactForTest(t testing.TB, compact *cmdb.CompactTopology) []cmdb.Sh
 
 func TestCompactOwnershipFallbackBudgetAndClient(t *testing.T) {
 	ctx := context.Background()
-	grid, err := NewTopologyGrid(sharedGraphTestTimes(60))
+	grid, err := NewTopologyGrid(sharedTopologyTestTimes(60))
 	require.NoError(t, err)
-	graph := newSharedTimeGraph(sharedGraphTestConfig(), grid)
-	require.NoError(t, graph.AddTimeRelationWithRelation(ctx, sharedGraphTestRelation("calls"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, grid.timestamps...))
+	graph := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
+	require.NoError(t, graph.AddTimeRelationWithRelation(ctx, sharedTopologyTestRelation("calls"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, grid.timestamps...))
 	require.NoError(t, graph.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": "a", "version": "old <&>", "name": "\u2028"}, grid.timestamps[:30]...))
 	require.NoError(t, graph.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": "a", "version": "new"}, grid.timestamps[30:]...))
 	// Exercise stable identity fallback when no version covers a reachable node.
@@ -110,7 +110,7 @@ func TestCompactOwnershipFallbackBudgetAndClient(t *testing.T) {
 	}
 }
 
-func TestCompactModelTargetFilterAndBudgets(t *testing.T) {
+func TestCompactModelTargetFilterAndCancellation(t *testing.T) {
 	ctx := initTimeGraphQueryTestEnvironment()
 	model := sharedTopologyQueryModel(map[string]pl.Matrix{
 		"source_info_relation": contractMatrix(map[string]string{"source_id": "a"}, 1700000000000),
@@ -124,13 +124,6 @@ func TestCompactModelTargetFilterAndBudgets(t *testing.T) {
 	got, err := model.QuerySharedTopology(ctx, request)
 	require.NoError(t, err)
 	require.Equal(t, want.Snapshots, decodeCompactForTest(t, got.Compact))
-	old := MaxSharedTopologyReservedBytes
-	MaxSharedTopologyReservedBytes = 1
-	t.Cleanup(func() { MaxSharedTopologyReservedBytes = old })
-	_, err = model.QuerySharedTopology(ctx, request)
-	var limit *ResultLimitError
-	require.ErrorAs(t, err, &limit)
-	require.Equal(t, "max_topology_reserved_bytes", limit.Reason)
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
 	_, err = model.QuerySharedTopology(canceled, request)
@@ -139,13 +132,13 @@ func TestCompactModelTargetFilterAndBudgets(t *testing.T) {
 
 func BenchmarkTopologyOutputFormats(b *testing.B) {
 	ctx := context.Background()
-	grid, err := NewTopologyGrid(sharedGraphTestTimes(60))
+	grid, err := NewTopologyGrid(sharedTopologyTestTimes(60))
 	require.NoError(b, err)
-	graph := newSharedTimeGraph(sharedGraphTestConfig(), grid)
+	graph := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
 	require.NoError(b, err)
 	defer graph.Clean(ctx)
 	for i := 0; i < 1000; i++ {
-		require.NoError(b, graph.AddTimeRelationWithRelation(ctx, sharedGraphTestRelation("calls"), cmdb.Matcher{"from_id": "root", "to_id": fmt.Sprint(i)}, grid.timestamps...))
+		require.NoError(b, graph.AddTimeRelationWithRelation(ctx, sharedTopologyTestRelation("calls"), cmdb.Matcher{"from_id": "root", "to_id": fmt.Sprint(i)}, grid.timestamps...))
 	}
 	query := SharedTopologyQuery{SourceType: "entity", SourceMatcher: cmdb.Matcher{"id": "root"}, MaxHops: 1}
 	for _, format := range []string{"snapshots", "compact"} {
@@ -184,7 +177,7 @@ func TestCompactLargeFixtureDifferential(t *testing.T) {
 	n, err := strconv.Atoi(value)
 	require.Positive(t, n)
 	ctx := context.Background()
-	grid, err := NewTopologyGrid(sharedGraphTestTimes(60))
+	grid, err := NewTopologyGrid(sharedTopologyTestTimes(60))
 	require.NoError(t, err)
 	graph := newSharedTimeGraph(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{{Name: "source", Index: cmdb.Index{"source_id"}}, {Name: "middle", Index: cmdb.Index{"middle_id"}}}}, grid)
 	defer graph.Clean(ctx)

@@ -204,7 +204,7 @@ func TestTimeGraphContractCases(t *testing.T) {
 		step             time.Duration
 		lookBackDelta    string
 		targetInfoShow   bool
-		maxNodes         int
+		wantNodes        int
 		responses        map[string]pl.Matrix
 		wantErr          string
 		wantQueries      []contractQueryWant
@@ -325,7 +325,7 @@ func TestTimeGraphContractCases(t *testing.T) {
 				{ResourceType: "node"}, {ResourceType: "container", RelationType: "node_to_container", Category: string(RelationCategoryStatic), Direction: string(DirectionOutbound)},
 			}},
 			sourceInfo: cmdb.Matcher{"node_id": "n1"},
-			start:      instantStart, end: instantStart, step: time.Minute, lookBackDelta: "10m", targetInfoShow: true, maxNodes: 2,
+			start:      instantStart, end: instantStart, step: time.Minute, lookBackDelta: "10m", targetInfoShow: true, wantNodes: 2,
 			responses: map[string]pl.Matrix{
 				"node_to_container_flow": contractMatrix(map[string]string{"node_id": "n1", "container_id": "c1"}, 100000),
 				"container_info_relation": append(
@@ -400,15 +400,6 @@ func TestTimeGraphContractCases(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			oldMaxNodes, oldMaxNodeInfos := MaxGraphNodes, MaxGraphNodeInfos
-			t.Cleanup(func() {
-				MaxGraphNodes = oldMaxNodes
-				MaxGraphNodeInfos = oldMaxNodeInfos
-			})
-			if tc.maxNodes > 0 {
-				MaxGraphNodes = tc.maxNodes
-			}
-
 			model := &Model{schemaProvider: tc.provider}
 			relations := model.buildRelationsFromRelationPathsForNamespace("", []cmdb.RelationPath{tc.path})
 			require.Len(t, relations, len(tc.path.Steps)-1)
@@ -425,6 +416,10 @@ func TestTimeGraphContractCases(t *testing.T) {
 			}
 			require.NoError(t, err)
 			t.Cleanup(func() { tg.Clean(ctx) })
+			if tc.wantNodes > 0 {
+				// 无关目标的属性不进入图。
+				require.Equal(t, tc.wantNodes, tg.nodeBuilder.Length())
+			}
 
 			got, err := tg.FindRelationTargets(ctx, tc.sourceType, tc.targetTypes, tc.sourceInfo, []cmdb.RelationPath{tc.path})
 			require.NoError(t, err)

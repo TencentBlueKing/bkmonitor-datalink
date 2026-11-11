@@ -45,7 +45,7 @@ func KACFields() FieldCatalog {
 	for _, field := range strings.Fields("source_id source_name level action bk_biz_name bk_set_id bk_module_id bk_obj_id bk_inst_id source_alarm_status bk_tenant_id cw_labels dynamic_group_id entity_uid fingerprint") {
 		result[field] = FieldKeyword
 	}
-	for _, field := range strings.Fields("bk_biz_id bk_cloud_id bk_service_id strategy_config_version duration") {
+	for _, field := range strings.Fields("bk_biz_id bk_cloud_id bk_service_id duration") {
 		result[field] = FieldNumber
 	}
 	result["alarm_time"] = FieldDate

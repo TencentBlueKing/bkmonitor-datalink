@@ -119,7 +119,7 @@ var reservedAlarmFields = func() map[string]bool {
 	reserved := map[string]bool{}
 	// 这些字段由 Lifecycle、投影协议或 KAC 处置维护，不属于来源自定义字段。
 	// metric_query_params 已停止输出，仍禁止通过自定义目录重新带出历史参数。
-	for _, name := range strings.Fields("status storage_time source_alarm_status tag_info associate_alarm_id associate_count conductor notify_status converge_reason duration strategy strategy_config_uid strategy_config_version source_event_id source_alert_id linkd_alert_id metric_query_params __kac_custom_fields") {
+	for _, name := range strings.Fields("status storage_time latest_event_time source_alarm_status tag_info associate_alarm_id associate_count conductor notify_status converge_reason duration strategy strategy_config_uid strategy_config_version source_event_id source_alert_id linkd_alert_id metric_query_params __kac_custom_fields") {
 		reserved[name] = true
 	}
 	typ := reflect.TypeFor[AlarmMessage]()

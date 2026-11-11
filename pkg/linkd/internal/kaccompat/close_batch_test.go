@@ -27,7 +27,7 @@ func (f closeTransportFunc) Perform(r *http.Request) (*http.Response, error) { r
 
 func TestCloseProjection5000PatchesOnlyFiveFields(t *testing.T) {
 	requests, requestBytes := 0, 0
-	client := newClient(config.KACPluginConfig{}, closeTransportFunc(func(req *http.Request) (*http.Response, error) {
+	client := newClient(config.KACPluginConfig{AlarmEventIndex: "alarm"}, closeTransportFunc(func(req *http.Request) (*http.Response, error) {
 		requests++
 		if req.URL.Path != "/_bulk" || req.URL.Query().Get("refresh") != "false" {
 			t.Fatal(req.URL)
@@ -63,6 +63,7 @@ func TestCloseProjection5000PatchesOnlyFiveFields(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(body)))}, nil
 	}), nil, nil)
+	prepareClientForWriteTest(t, client)
 	alerts := make([]domain.Alert, 5000)
 	content := strings.Repeat("x", 64<<10)
 	for i := range alerts {

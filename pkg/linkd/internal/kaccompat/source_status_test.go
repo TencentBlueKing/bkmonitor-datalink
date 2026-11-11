@@ -63,7 +63,7 @@ func TestProjectionSeparatesSourceStateFromDisposalState(t *testing.T) {
 				return
 			}
 			requests := 0
-			client = newClient(config.KACPluginConfig{}, closeTransportFunc(func(req *http.Request) (*http.Response, error) {
+			client = newClient(config.KACPluginConfig{AlarmEventIndex: "alarm"}, closeTransportFunc(func(req *http.Request) (*http.Response, error) {
 				requests++
 				if req.URL.Path != "/_bulk" || req.URL.Query().Get("refresh") != "false" {
 					t.Fatal(req.URL)
@@ -90,6 +90,7 @@ func TestProjectionSeparatesSourceStateFromDisposalState(t *testing.T) {
 				}
 				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"items":[{"update":{"status":200,"_index":"alarm-1"}}]}`))}, nil
 			}), nil, nil)
+			prepareClientForWriteTest(t, client)
 			client.locations[alarmKey{tenant: alert.BKTenantID, alert: alert.AlertID}] = "alarm-1"
 			results := client.WriteCloseBatch(t.Context(), []domain.Alert{alert})
 			if requests != 1 || len(results) != 1 || results[0].Err != nil {

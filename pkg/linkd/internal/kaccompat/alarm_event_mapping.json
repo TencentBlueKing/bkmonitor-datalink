@@ -223,12 +223,6 @@
         }
       }
     },
-    "strategy_config_uid": {
-      "type": "keyword"
-    },
-    "strategy_config_version": {
-      "type": "integer"
-    },
     "dimension_info": {
       "type": "text",
       "analyzer": "split_by_whitespace_analyzer",
@@ -290,6 +284,10 @@
     },
     "bk_tenant_id": {
       "type": "keyword"
+    },
+    "latest_event_time": {
+      "type": "date",
+      "format": "yyyy-MM-dd HH:mm:ss"
     }
   }
 }

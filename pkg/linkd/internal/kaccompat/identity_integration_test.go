@@ -74,6 +74,9 @@ func TestElasticsearchNativeIdentityLeavesLegacyUntouchedAcrossRestartAndRollove
 				t.Fatal(err)
 			}
 			defer restarted.Close()
+			if err := restarted.Maintain(t.Context()); err != nil {
+				t.Fatal(err)
+			}
 			for _, state := range []domain.AlertStatus{domain.AlertStatusActive, domain.AlertStatusRecovered, domain.AlertStatusClosed} {
 				alert.LatestEventID = "event-20261022081324-fghijklmabcde"
 				alert.UpdateAt = alert.UpdateAt.Add(time.Minute)

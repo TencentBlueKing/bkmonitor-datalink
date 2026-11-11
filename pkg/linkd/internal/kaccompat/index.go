@@ -35,7 +35,8 @@ func (c *Client) settings() map[string]any {
 	}
 }
 
-// Maintain 保留原 KAC alias、ILM 和 mapping，只追加当前字段；不创建同步元数据索引。
+// Maintain 维护 KAC alias、ILM 和 mapping，并校正模板中的 latest_event_time 声明。
+// 只有模板与已有索引均准备成功才放行写入；已有索引的字段类型冲突直接返回错误。
 func (c *Client) Maintain(ctx context.Context) error {
 	call, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -65,9 +66,25 @@ func (c *Client) Maintain(ctx context.Context) error {
 			mappings["properties"] = properties
 		}
 		changed := false
+		currentProperties := alarmMapping()["properties"].(map[string]any)
 		for _, field := range []string{"linkd_disposal_status", "fingerprint"} {
 			if properties[field] == nil {
-				properties[field] = map[string]any{"type": "keyword"}
+				properties[field] = currentProperties[field]
+				changed = true
+			}
+		}
+		// 模板可替换错误声明；只补缺失字段会让 rollover 继承不兼容的类型或格式。
+		// 正确声明上的其他选项仍保留，物理索引的类型冲突由后面的 mapping 请求拒绝。
+		latest, _ := properties["latest_event_time"].(map[string]any)
+		currentLatest := currentProperties["latest_event_time"].(map[string]any)
+		if latest["type"] != currentLatest["type"] || latest["format"] != currentLatest["format"] {
+			properties["latest_event_time"] = currentLatest
+			changed = true
+		}
+		// 模板可删除退役声明；已有索引 mapping 和历史 _source 保持原样。
+		for _, field := range []string{"strategy_config_uid", "strategy_config_version"} {
+			if _, exists := properties[field]; exists {
+				delete(properties, field)
 				changed = true
 			}
 		}
@@ -85,7 +102,11 @@ func (c *Client) Maintain(ctx context.Context) error {
 	} else if err != nil {
 		return err
 	}
-	return c.request(call, http.MethodPut, "/"+url.PathEscape(alias)+"/_mapping", nil, map[string]any{"properties": alarmMapping()["properties"]}, nil)
+	if err = c.request(call, http.MethodPut, "/"+url.PathEscape(alias)+"/_mapping", nil, map[string]any{"properties": alarmMapping()["properties"]}, nil); err != nil {
+		return fmt.Errorf("prepare KAC index mapping: %w", err)
+	}
+	c.mappingReady.Store(true)
+	return nil
 }
 
 func (c *Client) writeIndex(ctx context.Context) (string, error) {

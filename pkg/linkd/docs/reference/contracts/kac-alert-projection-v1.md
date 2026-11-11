@@ -44,6 +44,7 @@ rollover 后更新原物理索引，不向当前 write alias 重复创建。
 | --- | --- |
 | 身份、来源、丰富数据、storage_time 和处置默认值 | 新建时转换，后续普通同步不重置 |
 | fingerprint | 写入器直接取 Alert.Fingerprint，新建与后续同步均写入，不依赖自定义字段目录 |
+| latest_event_time | 每次普通投影写入 Alert.last_occurred_at，使用上海时区 yyyy-MM-dd HH:mm:ss；迟到事件可能使它变早，不取 update_at 或操作关闭时间 |
 | content、level、action、close_reason、close_time | 从最新 Alert 更新；content 包含持续触发更新及显式空串 |
 | source_alarm_status | 表示来源事实：活动为 firing、来源恢复为 resolved、来源关闭为 close；人工/系统主动关闭及等级升级结束旧生命周期仍为 firing |
 | associate_alarm_id、associate_count | 同步当前合并关系及解联 |
@@ -146,3 +147,21 @@ KAC 对历史内置告警只解析已知管理/实例路由，保留 ID 并换�
 V3 HTTP 字段不变；新 Celery 消息与文档均使用原生 ID，不兼容旧 UUID 消息。
 不需要为了发现旧文档刷新索引。旧 KAC 手动关闭只修改本地记录，不向 Linkd 发命令。
 新 ID 写入后不直接降级到旧 UUID 写入器。不迁移历史数据。
+
+
+## 顶层时间字段与策略字段退役（2026-11-06）
+
+`latest_event_time` 是 KAC 兼容存储的只读 date 字段；普通新建与更新均从
+`Alert.last_occurred_at` 写入，首次触发、同级触发、升级及来源恢复/关闭遵循 Lifecycle
+已有规则。低等级抑制及人工关闭、屏蔽、合并操作不以操作时间推进此值。
+主动关闭已有文档仍仅更新原有关闭字段，缺失文档才用完整快照新建；旧 Kafka Hook 协议不变。
+该字段不由 Event 丰富或自定义字段目录提供，也不改变 Alert 本身的时间语义。
+
+新建和已有模板同步声明 date 格式，已有模板中的同名错误类型或格式会被纠正；
+已有物理索引通过 mapping 追加，已有字段类型冲突时明确报错，不执行索引迁移。
+先完成模板和物理索引 mapping 维护才放行写入和消费投影队列。
+普通投影、同步关闭及缺失文档补建共用首次维护成功状态；尚未准备好时写入返回可重试错误，
+不逐条触发索引维护。主动关闭若已保存 Linkd 终态但 KAC 写入未完成，沿用原操作身份重试。
+删除新模板中的 `strategy_config_uid`、`strategy_config_version`，保留其他自定义 mapping。
+已有物理索引的旧字段和 `_source` 不删除，退役字段名仍禁止自定义输出。
+不增加历史回填或补偿扫描。已有原生告警下次普通投影时补齐时间；静止历史及旧 UUID 文档不补齐。

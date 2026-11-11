@@ -48,7 +48,7 @@ func TestProjectedCloseSchedulesOnlyActionWithoutReadingOrRewritingAlert(t *test
 	hook := &actionNotificationHook{}
 	client.AddHook(hook)
 	var refreshes atomic.Int32
-	writer := newClient(config.KACPluginConfig{}, closeTransportFunc(func(r *http.Request) (*http.Response, error) {
+	writer := newClient(config.KACPluginConfig{AlarmEventIndex: "alarm"}, closeTransportFunc(func(r *http.Request) (*http.Response, error) {
 		if !strings.HasSuffix(r.URL.Path, "/_refresh") {
 			t.Error("projected close repeated KAC read or write", r.URL.Path)
 		}
@@ -125,7 +125,7 @@ func TestCloseBulkDiagnosticsSeparateResponsesAndCancellation(t *testing.T) {
 			ctx, cancel := context.WithCancel(ctx)
 			defer cancel()
 			requests := 0
-			writer := newClient(config.KACPluginConfig{}, closeTransportFunc(func(*http.Request) (*http.Response, error) {
+			writer := newClient(config.KACPluginConfig{AlarmEventIndex: "alarm"}, closeTransportFunc(func(*http.Request) (*http.Response, error) {
 				requests++
 				if tc.transportError != nil {
 					cancel()
@@ -134,6 +134,7 @@ func TestCloseBulkDiagnosticsSeparateResponsesAndCancellation(t *testing.T) {
 				body := fmt.Sprintf(`{"took":37,"items":[{"update":{"status":%d,"_index":"alarm-1"}}]}`, tc.status)
 				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
 			}), nil, nil)
+			prepareClientForWriteTest(t, writer)
 			writer.locations[alarmKey{"tenant", "closed"}] = "alarm-1"
 			a := storetest.Alert("tenant", "closed", "event", "fingerprint", "warning")
 			out := writer.WriteCloseBatch(ctx, []domain.Alert{a})

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"linkd/internal/config"
 	"linkd/internal/domain"
@@ -22,6 +23,8 @@ func TestWriteBatchIncludesFingerprintOnCreateAndUpdate(t *testing.T) {
 				storetest.Alert("tenant-a", "same-alert", "event", "host-a:cpu-high", "warning"),
 				storetest.Alert("tenant-b", "same-alert", "event", "host-b:cpu-high", "warning"),
 			}
+			alerts[0].LastOccurredAt = time.Date(2026, 11, 5, 16, 0, 1, 0, time.UTC)
+			alerts[1].LastOccurredAt = time.Date(2026, 11, 6, 2, 3, 4, 0, time.UTC)
 			bulkCalls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -39,7 +42,7 @@ func TestWriteBatchIncludesFingerprintOnCreateAndUpdate(t *testing.T) {
 				case "/_bulk":
 					bulkCalls++
 					decoder := json.NewDecoder(r.Body)
-					for _, alert := range alerts {
+					for i, alert := range alerts {
 						var head map[string]any
 						var body struct {
 							Script struct {
@@ -58,6 +61,10 @@ func TestWriteBatchIncludesFingerprintOnCreateAndUpdate(t *testing.T) {
 							return
 						}
 						params := body.Script.Params
+						expectedTime := []string{"2026-11-06 00:00:01", "2026-11-06 10:03:04"}[i]
+						if params.Fields["latest_event_time"] != expectedTime || !exists && params.Create["latest_event_time"] != expectedTime {
+							t.Errorf("tenant %s latest event time missing/wrong: fields=%v create=%v", alert.BKTenantID, params.Fields["latest_event_time"], params.Create["latest_event_time"])
+						}
 						if params.Fields["fingerprint"] != alert.Fingerprint {
 							t.Errorf("tenant %s update fingerprint = %v", alert.BKTenantID, params.Fields["fingerprint"])
 						}
@@ -82,6 +89,7 @@ func TestWriteBatchIncludesFingerprintOnCreateAndUpdate(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer client.Close()
+			prepareClientForWriteTest(t, client)
 			for _, result := range client.WriteBatch(t.Context(), alerts, false) {
 				if result.Err != nil {
 					t.Fatal(result.Err)
@@ -99,12 +107,20 @@ func TestMaintainAddsFingerprintToExistingTemplateAndIndex(t *testing.T) {
 	if field, _ := properties["fingerprint"].(map[string]any); field["type"] != "keyword" {
 		t.Errorf("new index fingerprint mapping = %v", field)
 	}
+	if field, _ := properties["latest_event_time"].(map[string]any); field["type"] != "date" || field["format"] != "yyyy-MM-dd HH:mm:ss" {
+		t.Errorf("new index latest_event_time mapping = %v", field)
+	}
+	for _, retired := range []string{"strategy_config_uid", "strategy_config_version"} {
+		if _, exists := properties[retired]; exists {
+			t.Errorf("new index still declares %s", retired)
+		}
+	}
 	templateUpdated, indexUpdated := false, false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
 		case "GET /_template/alarm":
-			_, _ = w.Write([]byte(`{"alarm":{"index_patterns":["alarm*"],"mappings":{"properties":{"linkd_disposal_status":{"type":"keyword"},"custom_field":{"type":"keyword"}}}}}`))
+			_, _ = w.Write([]byte(`{"alarm":{"index_patterns":["alarm*"],"mappings":{"properties":{"linkd_disposal_status":{"type":"keyword"},"custom_field":{"type":"keyword"},"strategy_config_uid":{"type":"keyword"},"strategy_config_version":{"type":"integer"}}}}}`))
 		case "GET /_alias/alarm":
 			_, _ = w.Write([]byte(`{"alarm-000001":{"aliases":{"alarm":{"is_write_index":true}}}}`))
 		case "PUT /_template/alarm", "PUT /alarm/_mapping":
@@ -122,6 +138,14 @@ func TestMaintainAddsFingerprintToExistingTemplateAndIndex(t *testing.T) {
 			fields := body["properties"].(map[string]any)
 			if field, _ := fields["fingerprint"].(map[string]any); field["type"] != "keyword" {
 				t.Errorf("fingerprint mapping = %v", field)
+			}
+			if field, _ := fields["latest_event_time"].(map[string]any); field["type"] != "date" || field["format"] != "yyyy-MM-dd HH:mm:ss" {
+				t.Errorf("latest_event_time mapping = %v", field)
+			}
+			for _, retired := range []string{"strategy_config_uid", "strategy_config_version"} {
+				if _, exists := fields[retired]; exists {
+					t.Errorf("mapping request still declares %s", retired)
+				}
 			}
 			if r.URL.Path == "/_template/alarm" && fields["custom_field"] == nil {
 				t.Error("existing custom mapping removed")

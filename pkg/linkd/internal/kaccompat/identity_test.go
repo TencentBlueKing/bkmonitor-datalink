@@ -130,6 +130,7 @@ func TestBatchOfChildrenDoesNotLookUpUnprojectedParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
+	prepareClientForWriteTest(t, client)
 	alerts := make([]domain.Alert, 500)
 	for i := range alerts {
 		alerts[i] = storetest.Alert(fmt.Sprintf("tenant-%d", i%2), fmt.Sprintf("child-%d", i), "event", "fp", "warning")
@@ -166,6 +167,7 @@ func TestIdentityLookupFailureNeverCreatesDocument(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer client.Close()
+			prepareClientForWriteTest(t, client)
 			result := client.WriteBatch(t.Context(), []domain.Alert{storetest.Alert("tenant", "alert", "event", "fp", "warning")}, false)
 			if result[0].Err == nil {
 				t.Fatal("failed lookup was treated as missing document")

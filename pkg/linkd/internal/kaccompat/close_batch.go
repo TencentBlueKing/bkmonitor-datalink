@@ -141,8 +141,18 @@ func (r *Runtime) projectBatchNow(ctx context.Context, tenant string, ids []stri
 
 // WriteCloseBatch 仅更新现存 KAC 文档的终态字段；不存在项交给调用方按需补读后创建。
 // Bulk 使用 refresh=false，返回只确认写入成功，不承诺搜索立即可见。
+// 与普通投影共享首次 Maintain 检查；尚未准备好时返回可重试错误。
 func (c *Client) WriteCloseBatch(ctx context.Context, alerts []domain.Alert) []WriteResult {
 	results := make([]WriteResult, len(alerts))
+	if len(alerts) == 0 {
+		return results
+	}
+	if err := c.readyToWrite(ctx); err != nil {
+		for i := range results {
+			results[i].Err = err
+		}
+		return results
+	}
 	keys := make([]alarmKey, len(alerts))
 	for i, a := range alerts {
 		keys[i] = alarmKey{tenant: a.BKTenantID, alert: a.AlertID}

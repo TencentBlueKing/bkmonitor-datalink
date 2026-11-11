@@ -44,9 +44,19 @@ if (ctx._source.tag_info == null) { ctx._source.tag_info = []; }
 for (tag in params.tags) { if (!ctx._source.tag_info.contains(tag)) { ctx._source.tag_info.add(tag); } }
 `
 
-// WriteBatch 只执行一次批量新建/局部更新；失败由调用方记录，不建立补偿任务。
+// WriteBatch 在首次 Maintain 成功后执行批量新建/局部更新。
+// mapping 尚未准备好时返回可重试错误；失败由调用方记录，不建立补偿任务。
 func (c *Client) WriteBatch(ctx context.Context, alerts []domain.Alert, refresh bool) []WriteResult {
 	results := make([]WriteResult, len(alerts))
+	if len(alerts) == 0 {
+		return results
+	}
+	if err := c.readyToWrite(ctx); err != nil {
+		for i := range results {
+			results[i].Err = err
+		}
+		return results
+	}
 	ids := make([]string, len(alerts))
 	keys := make([]alarmKey, len(alerts))
 	for i, a := range alerts {
@@ -119,7 +129,7 @@ func (c *Client) WriteBatch(ctx context.Context, alerts []domain.Alert, refresh 
 		tags := fields["tag_info"]
 		delete(fields, "tag_info")
 		patch := map[string]any{}
-		for _, field := range []string{"fingerprint", "content", "level", "action", "source_alarm_status", "close_reason", "close_time", "associate_alarm_id", "associate_count"} {
+		for _, field := range []string{"fingerprint", "latest_event_time", "content", "level", "action", "source_alarm_status", "close_reason", "close_time", "associate_alarm_id", "associate_count"} {
 			patch[field] = fields[field]
 		}
 		params := map[string]any{"fields": patch, "mode": mode, "tags": tags}
@@ -208,6 +218,8 @@ func (c *Client) fields(ctx context.Context, a domain.Alert, create bool) (map[s
 	}
 	fields["level"] = level
 	fields["fingerprint"] = a.Fingerprint
+	// 与被接受 Event 的发生时间一致；操作时间不推进它，迟到 Event 也不在投影层取最大值。
+	fields["latest_event_time"] = a.LastOccurredAt.In(kacZone).Format(kacTimeLayout)
 	// 持续触发已经更新 Alert.Content；兼容文档必须同步最新正文，包括显式清空。
 	// 其他展示/丰富字段仍保留创建快照，不重置 KAC 的处置、通知或工单信息。
 	fields["content"] = a.Content

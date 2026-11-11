@@ -16,10 +16,12 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"linkd/internal/config"
 	"linkd/internal/domain"
+	"linkd/internal/processingerror"
 	elasticsearchstore "linkd/internal/store/elasticsearch"
 )
 
@@ -42,6 +44,9 @@ type Client struct {
 	relations Relations
 	mu        sync.Mutex
 	locations map[alarmKey]string
+	// mappingReady 只在首次完整维护成功后放行写入，避免并发关闭触发动态 text 映射。
+	// 后续周期维护的传输失败不撤销已准备好的 mapping。
+	mappingReady atomic.Bool
 }
 
 // Open 装配连接；索引维护和写入使用同一 Client。
@@ -63,6 +68,17 @@ func Open(c config.KACPluginConfig, level func(string) (string, error), relation
 
 func newClient(c config.KACPluginConfig, tr Transport, closeFn func(), level func(string) (string, error)) *Client {
 	return &Client{transport: tr, close: closeFn, config: c.WithDefaults(), level: level, locations: make(map[alarmKey]string)}
+}
+
+func (c *Client) readyToWrite(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !c.mappingReady.Load() {
+		// 由既有维护任务负责准备与重试；同步请求快速失败，不能逐条维护索引。
+		return processingerror.RetryableError{Err: errors.New("KAC index mapping not ready; retry after successful maintenance")}
+	}
+	return nil
 }
 
 // Close 在运行器与同步请求退出后释放连接。

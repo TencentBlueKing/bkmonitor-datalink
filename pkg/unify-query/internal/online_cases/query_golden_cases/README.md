@@ -17,11 +17,11 @@ sanitized request
 
 ## 当前覆盖
 
-数据集当前包含 49 个可执行 case。其中 21 个 case 的 input 与当前 expected outputs 均直接来自可关联的生产历史日志；26 个问题回归 case 的 expected outputs 由修复后的真实 handler 重新回放，其中 2 个 TSpider case 有生产 trace 证据，4 个 ES case 有生产日志或 trace 证据，另外 20 个 ES/Doris case 的问题形态与旧行为来自已合并 PR 的生产问题描述、测试和修复前 commit 回放，来源明确标记为 `merged_pr`；另有 2 个只有生产 input 形态的 provisional case，分别覆盖 ES 请求级批处理和 InfluxDB aggregate，outputs 由固定 fixture 经当前真实 handler 回放得到，不计入生产 output 采样收敛。
+数据集当前包含 50 个可执行 case。其中 21 个 case 的 input 与当前 expected outputs 均直接来自可关联的生产历史日志；27 个问题回归 case 的 expected outputs 由修复后的真实 handler 重新回放，其中 2 个 TSpider case 和 1 个 VM case 有生产 trace 证据，4 个 ES case 有生产日志或 trace 证据，另外 20 个 ES/Doris case 的问题形态与旧行为来自已合并 PR 的生产问题描述、测试和修复前 commit 回放，来源明确标记为 `merged_pr`；另有 2 个只有生产 input 形态的 provisional case，分别覆盖 ES 请求级批处理和 InfluxDB aggregate，outputs 由固定 fixture 经当前真实 handler 回放得到，不计入生产 output 采样收敛。
 
 | 分类 | Case 数 | 已覆盖形态 | Output 来源 |
 | --- | ---: | --- | --- |
-| VictoriaMetrics | 8 | PromQL range/instant、结构化 instant、复杂聚合/区间/二元表达式、多结果表合并、直方图分位数、label_replace 字符串参数与子查询、on 标签匹配的集合运算 | 生产日志 |
+| VictoriaMetrics | 9 | PromQL range/instant、结构化 instant、复杂聚合/区间/二元表达式、多结果表合并、直方图分位数、label_replace 字符串参数与子查询、on 标签匹配的集合运算、结构化 range 部分引用无路由 | 生产日志 + 修复后 handler 回放 |
 | Elasticsearch | 23 | aggregate/raw/reference、请求级开启的显式双 `query_list` 同连接批处理、query_string 语义、无引号保留字符转义与转义字符串区间、整份 mapping 缺失时回退原生 query_string、规范化混合大小写布尔运算符、适配单引号短语并忽略尾部运算符、聚合枚举提取、字段元数据滞后、多 RT 无效索引跳过、缺排序字段 mapping 的空索引判定与重试、data source 别名、`table_id_conditions` 查询与 field_map | 生产日志 + 修复后 handler 回放 + 暂定 handler 回放 |
 | Doris | 11 | aggregate、raw、单 reference 七路由/十四 output、ES→Doris 时间分段路由、多表显式投影、`SELECT *` 类型交集、对象叶子大小写/精度、缺失字段 contains、平台分钟字段 UNION 依赖、raw 字段别名回退、缺失 `__shard_key__` 的时间桶回退 | 生产日志 + 修复后 handler 回放 |
 | TSpider | 4 | aggregate、raw、PromQL 8 reference/16 output、PromQL 聚合回退 SELECT * 原始查询 | 生产日志 + 修复后 handler 回放 |
@@ -35,6 +35,8 @@ sanitized request
 `vm_promql_histogram_multi_route_001` 固定直方图分位数与 `irate`，1 reference 展开 4 张表后合并为 1 个 VM 请求；`vm_promql_label_replace_subquery_001` 固定 `label_replace` 字符串参数和 `[20m:]` 子查询，1 reference 展开 16 张表后仍为 1 个请求。两者均独立核对生产表达式、路由和时间参数，依赖响应只用于构造查询。
 
 `vm_promql_set_matching_001` 固定 `and on(...)` 的集合匹配：2 references 分别展开 12 和 54 路，合并为 1 个 VM 请求。54 张结果表分属 5 个 storage name；请求中的 66 条过滤分支与生产元数据查询按 multiset 核对，保留重复关系。
+
+`vm_structured_partial_binding_or_001` 来自生产问题 trace：结构化 range 查询用 `a/b*100 or c/d*100` 兼容新旧两组指标名，a、b 的指标在空间内有路由，c、d 的指标没有任何结果表。#1579 之后 VM 直查因 c 没有存储绑定整条失败，不发出任何下游请求；修复后仍发 1 个 VM 请求，a、b 带各自路由条件，c、d 带落在首个已绑定表上、匹配不到序列的条件：`1 input × 4 references（2 + 6 + 0 + 0 route branches，合并为 1 个 VM 请求）× 1 VM stage = 1 output`。c、d 选表为空时，成功响应带 `SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS` 路由提示，case 用 `expect_status_code` 显式声明。
 
 `vm_promql_instant_001` 和 `vm_structured_instant_001` 分别锁定 PromQL 与结构化入口的 instant 构造：下游 VM `api_type` 为 `query`，使用 `time/timeout` 参数而不是 range 的 `start/end/step`。
 
@@ -71,7 +73,7 @@ testdata/cases/<storage>/<case_id>/
   expect.outputs.json
 ```
 
-- `case.yaml`：case ID、存储分类、形似签名、不可逆来源摘要、output 来源、标签和文件引用。`source.kind=production_log` 表示入口形态来自生产日志或 trace；仅由已合并 PR 的问题描述、测试和修复前回放确认的问题使用 `source.kind=merged_pr`，且必须使用 `post_fix_handler_replay` 并同时带 `post_fix_expected`、`regression_fix`，不能计入生产日志采样收敛。`source.outputs_kind=handler_replay` 的 case 必须带 `provisional_output` 标签。
+- `case.yaml`：case ID、存储分类、形似签名、不可逆来源摘要、output 来源、标签和文件引用；可选 `expect_status_code` 声明成功响应中预期的 `status.code`（例如部分引用没有路由时的路由提示），未声明时响应带任何 `status.code` 都判为失败。`source.kind=production_log` 表示入口形态来自生产日志或 trace；仅由已合并 PR 的问题描述、测试和修复前回放确认的问题使用 `source.kind=merged_pr`，且必须使用 `post_fix_handler_replay` 并同时带 `post_fix_expected`、`regression_fix`，不能计入生产日志采样收敛。`source.outputs_kind=handler_replay` 的 case 必须带 `provisional_output` 标签。
 - `request.json`：进入 UQ 的 method、path、保留语义的安全 headers 和 body。
 - `route.json`：空间、结果表、data label、存储类型和时间分段路由 fixture。
 - `dependencies.json`：构造查询所需的最小稳定响应，例如 BKSQL schema、ES mapping 或 InfluxDB 空结果。多物理表 BKSQL case 可用 `bksql.schema_by_sql` 按完整 schema SQL 返回不同表结构，未命中时回退到 `bksql.schema`；同一 ES 查询链需要不同 search 响应时，可用 `elasticsearch.search_sequence` 按请求到达顺序依次返回。

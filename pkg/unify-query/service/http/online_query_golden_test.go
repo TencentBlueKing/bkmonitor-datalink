@@ -56,7 +56,9 @@ type onlineQueryGoldenCase struct {
 		Dependencies string `yaml:"dependencies"`
 		ExpectOutput string `yaml:"expect_outputs"`
 	} `yaml:"files"`
-	caseDir string
+	// ExpectStatusCode 声明成功响应中预期的 status.code；未声明时任何 status.code 都视为失败。
+	ExpectStatusCode string `yaml:"expect_status_code"`
+	caseDir          string
 }
 
 type onlineQueryGoldenHTTPRequest struct {
@@ -238,7 +240,7 @@ func captureOnlineQueryGoldenOutputs(
 	}
 
 	outputs := recorder.snapshot()
-	return outputs, onlineQueryGoldenResponseError(w.Status(), w.body())
+	return outputs, onlineQueryGoldenResponseError(w.Status(), w.body(), tc.ExpectStatusCode)
 }
 
 func TestOnlineQueryGoldenSegmentedRouteControlsFanOut(t *testing.T) {
@@ -649,7 +651,9 @@ func cloneOnlineQueryGoldenQuery(values url.Values) map[string][]string {
 	return query
 }
 
-func onlineQueryGoldenResponseError(statusCode int, content string) error {
+// onlineQueryGoldenResponseError 要求 HTTP 2xx、没有顶层 error，且 status.code 与 case 声明的完全一致。
+// 部分引用没有路由时，成功响应会带路由提示状态码；只有 case 显式声明该状态码时才接受。
+func onlineQueryGoldenResponseError(statusCode int, content, expectStatusCode string) error {
 	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
 		return fmt.Errorf("UQ handler returned HTTP status %d: %s", statusCode, content)
 	}
@@ -661,19 +665,34 @@ func onlineQueryGoldenResponseError(statusCode int, content string) error {
 	if failure, ok := response["error"]; ok && failure != nil && failure != "" {
 		return fmt.Errorf("UQ handler failed: %s", content)
 	}
-	status, ok := response["status"].(map[string]any)
-	if !ok {
-		return nil
+	code := ""
+	if status, ok := response["status"].(map[string]any); ok {
+		code, _ = status["code"].(string)
 	}
-	if code, _ := status["code"].(string); code != "" {
-		return fmt.Errorf("UQ handler failed: %s", content)
+	if code != expectStatusCode {
+		if expectStatusCode == "" {
+			return fmt.Errorf("UQ handler failed: %s", content)
+		}
+		return fmt.Errorf("UQ handler status code = %q, want %q: %s", code, expectStatusCode, content)
 	}
 	return nil
 }
 
 func TestOnlineQueryGoldenCasesRejectTopLevelError(t *testing.T) {
-	require.Error(t, onlineQueryGoldenResponseError(http.StatusOK, `{"error":"boom"}`))
-	require.Error(t, onlineQueryGoldenResponseError(http.StatusBadRequest, `{}`))
+	require.Error(t, onlineQueryGoldenResponseError(http.StatusOK, `{"error":"boom"}`, ""))
+	require.Error(t, onlineQueryGoldenResponseError(http.StatusBadRequest, `{}`, ""))
+}
+
+func TestOnlineQueryGoldenCasesRequireDeclaredStatusCode(t *testing.T) {
+	const code = "SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"
+	withStatus := `{"series":[],"status":{"code":"` + code + `","message":"field is empty"}}`
+
+	require.Error(t, onlineQueryGoldenResponseError(http.StatusOK, withStatus, ""))
+	require.NoError(t, onlineQueryGoldenResponseError(http.StatusOK, withStatus, code))
+	require.Error(t, onlineQueryGoldenResponseError(http.StatusOK, withStatus, "OTHER_STATUS"))
+	require.Error(t, onlineQueryGoldenResponseError(http.StatusOK, `{"series":[]}`, code))
+	require.Error(t, onlineQueryGoldenResponseError(http.StatusBadRequest, withStatus, code))
+	require.Error(t, onlineQueryGoldenResponseError(http.StatusOK, `{"error":"boom","status":{"code":"`+code+`"}}`, code))
 }
 
 func canonicalOnlineQueryGoldenOutputs(t *testing.T, outputs []onlineQueryGoldenOutput) []string {

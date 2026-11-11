@@ -154,22 +154,25 @@ func TestQueryTsVMCoverageUsesExecutedReferences(t *testing.T) {
 		t.Run(fmt.Sprintf("missing binding/instant=%t", instant), func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
 			metadata.SetUser(ctx, &metadata.User{Key: "username:test", SpaceUID: "bkcc__2", SkipSpace: "true"})
-			end, key := "1700000060", "query_range:1700000000170000006060a"
+			end, prefix := "1700000060", "query_range:1700000000170000006060"
 			data := `{"resultType":"matrix","result":[{"metric":{"service":"api"},"values":[[1700000000,"7"],[1700000060,"8"]]}]}`
 			if instant {
-				end, key = "1700000000", "query:1700000000a"
+				end, prefix = "1700000000", "query:1700000000"
 				data = `{"resultType":"vector","result":[{"metric":{"service":"api"},"value":[1700000000,"7"]}]}`
 			}
-			mock.Vm.Set(map[string]any{key: `{"result":true,"code":"00","data":{"vm_query_cluster":{"storage_cluster_list":["storage-a"]},"list":[{"status":"success","data":` + data + `}]}}`})
+			raw := `{"result":true,"code":"00","data":{"vm_query_cluster":{"storage_cluster_list":["storage-a"]},"list":[{"status":"success","data":` + data + `}]}}`
+			// The unbound reference reads no data, so the gateway answers with a's series.
+			mock.Vm.Set(map[string]any{prefix + "a": raw, prefix + `a or {__name__=~"b"}`: raw})
 			q := &structured.QueryTs{SpaceUid: "bkcc__2", Start: "1700000000", End: end, Step: "60s", Instant: instant, NotTimeAlign: true, MetricMerge: "a or b", QueryList: []*structured.Query{
 				{TableID: "coverage_a.__default__", FieldName: "up", ReferenceName: "a"},
 				{TableID: "coverage_missing.__default__", FieldName: "up", ReferenceName: "b", IsRegexp: true},
 			}}
 
 			calls := httpmock.GetCallCountInfo()["POST "+mock.BkBaseUrl]
-			_, err := queryTsWithPromEngine(ctx, q)
-			require.Equal(t, calls, httpmock.GetCallCountInfo()["POST "+mock.BkBaseUrl], "an incomplete expression must not reach the VM gateway")
-			require.ErrorContains(t, err, `no storage binding for reference "b"`)
+			res, err := queryTsWithPromEngine(ctx, q)
+			require.NoError(t, err, "an unbound reference reads no data instead of failing the expression")
+			require.NotEmpty(t, res.(*PromData).Tables)
+			require.Equal(t, calls+1, httpmock.GetCallCountInfo()["POST "+mock.BkBaseUrl])
 
 			q.ResponseContract = structured.NamedOutputsV1
 			q.LegacyOutputRef = "A"
@@ -177,14 +180,14 @@ func TestQueryTsVMCoverageUsesExecutedReferences(t *testing.T) {
 			result, err := queryTsNamedOutputs(ctx, q)
 			require.NoError(t, err)
 			require.Len(t, result.Outputs, 3)
-			require.Equal(t, OutputStateError, result.Outputs[0].State)
-			require.Contains(t, result.Outputs[0].Status.Message, `no storage binding for reference "b"`)
 			// Existing request-level routing diagnostics are inherited by each output.
-			require.Equal(t, metadata.SpaceTableIDFieldIsNotExists, result.Outputs[1].Status.Code)
+			for _, output := range result.Outputs {
+				require.Equal(t, metadata.SpaceTableIDFieldIsNotExists, output.Status.Code)
+			}
+			require.NotEmpty(t, result.Outputs[0].Tables, "a or b falls back to a")
 			require.NotEmpty(t, result.Outputs[1].Tables)
-			require.Equal(t, metadata.SpaceTableIDFieldIsNotExists, result.Outputs[2].Status.Code)
-			require.Empty(t, result.Outputs[2].Tables)
-			require.Equal(t, calls+1, httpmock.GetCallCountInfo()["POST "+mock.BkBaseUrl], "only the bound output should reach the VM gateway")
+			require.Empty(t, result.Outputs[2].Tables, "an expression with no bound reference stays empty")
+			require.Equal(t, calls+3, httpmock.GetCallCountInfo()["POST "+mock.BkBaseUrl], "outputs with a bound reference reach the VM gateway")
 		})
 	}
 	t.Run("optional error does not taint following output", func(t *testing.T) {

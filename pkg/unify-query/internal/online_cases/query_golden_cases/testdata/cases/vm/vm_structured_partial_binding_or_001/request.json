@@ -1,0 +1,292 @@
+{
+  "method": "POST",
+  "path": "/query/ts",
+  "headers": {
+    "Content-Type": "application/json",
+    "Bk-Query-Source": "golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__golden_vm_partial_binding",
+    "X-Bk-Tenant-Id": "tenant_golden"
+  },
+  "body": {
+    "space_uid": "bkcc__golden_vm_partial_binding",
+    "query_list": [
+      {
+        "field_name": "demo_resolver_forward_responses_total",
+        "is_regexp": false,
+        "function": [
+          {
+            "method": "sum",
+            "dimensions": [
+              "bcs_cluster_id",
+              "workload"
+            ]
+          }
+        ],
+        "time_aggregation": {
+          "function": "increase",
+          "window": "2m"
+        },
+        "is_dom_sampled": false,
+        "reference_name": "a",
+        "dimensions": [
+          "bcs_cluster_id",
+          "workload"
+        ],
+        "conditions": {
+          "field_list": [
+            {
+              "field_name": "bcs_cluster_id",
+              "value": [
+                "^demo-k8s-4"
+              ],
+              "op": "req"
+            },
+            {
+              "field_name": "workload",
+              "value": [
+                "demo-resolver"
+              ],
+              "op": "req"
+            },
+            {
+              "field_name": "namespace",
+              "value": [
+                "demo-system"
+              ],
+              "op": "contains"
+            },
+            {
+              "field_name": "result_code",
+              "value": [
+                "DEMO_SKIPPED",
+                "DEMO_ACCEPTED"
+              ],
+              "op": "ncontains"
+            }
+          ],
+          "condition_list": [
+            "and",
+            "and",
+            "and"
+          ]
+        },
+        "keep_columns": [
+          "_time",
+          "a",
+          "bcs_cluster_id",
+          "workload"
+        ],
+        "query_string": "",
+        "sql": "",
+        "is_prefix": false
+      },
+      {
+        "field_name": "demo_resolver_forward_responses_total",
+        "is_regexp": false,
+        "function": [
+          {
+            "method": "sum",
+            "dimensions": [
+              "bcs_cluster_id",
+              "workload"
+            ]
+          }
+        ],
+        "time_aggregation": {
+          "function": "increase",
+          "window": "2m"
+        },
+        "is_dom_sampled": false,
+        "reference_name": "b",
+        "dimensions": [
+          "bcs_cluster_id",
+          "workload"
+        ],
+        "conditions": {
+          "field_list": [
+            {
+              "field_name": "workload",
+              "value": [
+                "demo-resolver"
+              ],
+              "op": "req"
+            },
+            {
+              "field_name": "namespace",
+              "value": [
+                "demo-system"
+              ],
+              "op": "contains"
+            }
+          ],
+          "condition_list": [
+            "and"
+          ]
+        },
+        "keep_columns": [
+          "_time",
+          "b",
+          "bcs_cluster_id",
+          "workload"
+        ],
+        "query_string": "",
+        "sql": "",
+        "is_prefix": false
+      },
+      {
+        "field_name": "demo_resolver_proxy_requests_total",
+        "is_regexp": false,
+        "function": [
+          {
+            "method": "sum",
+            "dimensions": [
+              "bcs_cluster_id",
+              "workload"
+            ]
+          }
+        ],
+        "time_aggregation": {
+          "function": "increase",
+          "window": "2m"
+        },
+        "is_dom_sampled": false,
+        "reference_name": "c",
+        "dimensions": [
+          "bcs_cluster_id",
+          "workload"
+        ],
+        "conditions": {
+          "field_list": [
+            {
+              "field_name": "bcs_cluster_id",
+              "value": [
+                "^demo-k8s-4"
+              ],
+              "op": "req"
+            },
+            {
+              "field_name": "workload",
+              "value": [
+                "demo-resolver"
+              ],
+              "op": "req"
+            },
+            {
+              "field_name": "namespace",
+              "value": [
+                "demo-system"
+              ],
+              "op": "contains"
+            },
+            {
+              "field_name": "result_code",
+              "value": [
+                "DEMO_SKIPPED",
+                "DEMO_ACCEPTED"
+              ],
+              "op": "ncontains"
+            },
+            {
+              "field_name": "route_kind",
+              "value": [
+                "upstream"
+              ],
+              "op": "req"
+            }
+          ],
+          "condition_list": [
+            "and",
+            "and",
+            "and",
+            "and"
+          ]
+        },
+        "keep_columns": [
+          "_time",
+          "c",
+          "bcs_cluster_id",
+          "workload"
+        ],
+        "query_string": "",
+        "sql": "",
+        "is_prefix": false
+      },
+      {
+        "field_name": "demo_resolver_proxy_requests_total",
+        "is_regexp": false,
+        "function": [
+          {
+            "method": "sum",
+            "dimensions": [
+              "bcs_cluster_id",
+              "workload"
+            ]
+          }
+        ],
+        "time_aggregation": {
+          "function": "increase",
+          "window": "2m"
+        },
+        "is_dom_sampled": false,
+        "reference_name": "d",
+        "dimensions": [
+          "bcs_cluster_id",
+          "workload"
+        ],
+        "conditions": {
+          "field_list": [
+            {
+              "field_name": "bcs_cluster_id",
+              "value": [
+                "^demo-k8s-4"
+              ],
+              "op": "req"
+            },
+            {
+              "field_name": "workload",
+              "value": [
+                "demo-resolver"
+              ],
+              "op": "req"
+            },
+            {
+              "field_name": "namespace",
+              "value": [
+                "demo-system"
+              ],
+              "op": "contains"
+            },
+            {
+              "field_name": "route_kind",
+              "value": [
+                "upstream"
+              ],
+              "op": "req"
+            }
+          ],
+          "condition_list": [
+            "and",
+            "and",
+            "and"
+          ]
+        },
+        "keep_columns": [
+          "_time",
+          "d",
+          "bcs_cluster_id",
+          "workload"
+        ],
+        "query_string": "",
+        "sql": "",
+        "is_prefix": false
+      }
+    ],
+    "metric_merge": "a/b*100 or c/d*100",
+    "start_time": "1700000040",
+    "end_time": "1700000220",
+    "step": "60s",
+    "timezone": "Asia/Shanghai",
+    "instant": false,
+    "not_time_align": false
+  }
+}

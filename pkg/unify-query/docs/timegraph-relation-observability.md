@@ -28,7 +28,7 @@
 业务结果以子查询终态核实；外层 HTTP 状态用于定位入口和传输错误。
 
 `reason` 固定为 `invalid_request/max_shared_topology_points/max_graph_nodes/`
-`max_graph_edges/max_graph_node_infos/max_graph_results/max_targets/max_response_bytes/`
+`max_graph_edges/max_graph_node_infos/max_targets/max_response_bytes/`
 `max_topology_output_bytes/max_topology_queries/max_topology_request_bytes/`
 `max_topology_admission_waiters/max_topology_reserved_bytes/max_topology_memory_headroom/other`。
 

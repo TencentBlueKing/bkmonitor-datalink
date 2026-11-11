@@ -176,7 +176,6 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	configSpan.Set("relation-config-count", len(config.Relation))
 	configSpan.Set("max-graph-nodes", config.MaxNodes)
 	configSpan.Set("max-graph-edges", config.MaxEdges)
-	configSpan.Set("max-graph-results", config.MaxResults)
 	configSpan.Set("max-graph-node-infos", config.MaxNodeInfos)
 	var configErr error
 	configSpan.End(&configErr)
@@ -229,7 +228,6 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	}
 	span.Set("graph-max-nodes", tg.maxNodes)
 	span.Set("graph-max-edges", tg.maxEdges)
-	span.Set("graph-max-results", tg.maxResults)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -888,8 +886,16 @@ func sameResourcePair(resources []cmdb.Resource, source, target cmdb.Resource) b
 	return (resources[0] == source && resources[1] == target) || (resources[0] == target && resources[1] == source)
 }
 
-// QueryRelationTimeGraph executes validated, normalized relation query inputs.
-func (m *Model) QueryRelationTimeGraph(ctx context.Context, lookBackDelta, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher, sourceExpandInfo cmdb.Matcher) (results []cmdb.PathResourcesResult, err error) {
+// QueryRelationTimeGraph executes validated, normalized relation query inputs
+// and returns the targets reachable along the paths at each timestamp.
+func (m *Model) QueryRelationTimeGraph(ctx context.Context, lookBackDelta, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher, sourceExpandInfo cmdb.Matcher) ([]RelationTarget, error) {
+	results, _, err := m.queryRelationTargets(ctx, lookBackDelta, spaceUID, start, end, step, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
+	return results, err
+}
+
+// queryRelationTargets 同时返回所建时间分桶图的规模（各时刻边数与节点信息数之和），
+// 供区间查询按已建图的规模调整分段。
+func (m *Model) queryRelationTargets(ctx context.Context, lookBackDelta, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher, sourceExpandInfo cmdb.Matcher) (results []RelationTarget, graphPoints int, err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-query-relation")
 	defer span.End(&err)
 	span.Set("look-back-delta", lookBackDelta)
@@ -912,10 +918,14 @@ func (m *Model) QueryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 	span.Set("query-end", end.Unix())
 	span.Set("query-step-seconds", step.Seconds())
 	for _, path := range paths {
+		// 构图前拒绝，避免为答不了的形状付完全部取数。
+		if err := validateRelationTargetPath(path.Steps); err != nil {
+			return nil, 0, err
+		}
 		for index := 1; index < len(path.Steps); index++ {
 			source, target := path.Steps[index-1].ResourceType, path.Steps[index].ResourceType
 			if len(m.timeGraphRelationCandidates(spaceUID, source, target, path.Steps[index])) == 0 {
-				return nil, fmt.Errorf("path relation %s -> %s is not allowed by schema", source, target)
+				return nil, 0, fmt.Errorf("path relation %s -> %s is not allowed by schema", source, target)
 			}
 		}
 	}
@@ -929,16 +939,15 @@ func (m *Model) QueryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 	tg, err := m.buildTimeGraph(ctx, spaceUID, start, end, step, sourceType, matcher, sourceExpandInfo, rootRelations, relations, lookBackDelta, nil, nil)
 	if err != nil {
 		if timeGraphLegacyCompatibility(ctx) {
-			return nil, err
+			return nil, 0, err
 		}
-		return nil, errors.WithMessage(err, "build time graph")
+		return nil, 0, errors.WithMessage(err, "build time graph")
 	}
 	defer tg.Clean(ctx)
 
-	results = make([]cmdb.PathResourcesResult, 0)
-	pathResults, queryErr := tg.FindRelationPathResources(ctx, sourceType, targetTypes, matcher, paths)
+	results, queryErr := tg.FindRelationTargets(ctx, sourceType, targetTypes, matcher, paths)
 	if queryErr != nil {
-		return nil, errors.WithMessagef(queryErr, "find path from %s", sourceType)
+		return nil, 0, errors.WithMessagef(queryErr, "find targets from %s", sourceType)
 	}
 	if partial := tg.partialTimesCopy(); len(partial) > 0 {
 		reasons := make(map[string]struct{})
@@ -963,32 +972,17 @@ func (m *Model) QueryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 		sort.Strings(ordered)
 		metadata.SetStatus(ctx, metadata.QueryTsPartial, strings.Join(ordered, ";"))
 	}
-	for _, result := range pathResults {
-		results = append(results, cmdb.PathResourcesResult{
-			Timestamp:  result.Timestamp,
-			TargetType: result.TargetType,
-			Path:       result.Path,
-		})
-	}
 	span.Set("raw-result-count", len(results))
 	uniqueTimestamps := make(map[int64]struct{}, len(results))
 	uniqueTargetTypes := make(map[cmdb.Resource]struct{}, len(results))
-	pathNodeCount := 0
 	for _, result := range results {
 		uniqueTimestamps[result.Timestamp] = struct{}{}
 		uniqueTargetTypes[result.TargetType] = struct{}{}
-		pathNodeCount += len(result.Path)
 	}
 	span.Set("result-timestamp-count", len(uniqueTimestamps))
 	span.Set("result-target-type-count", len(uniqueTargetTypes))
-	span.Set("result-path-node-count", pathNodeCount)
-	sort.SliceStable(results, func(i, j int) bool {
-		if results[i].Timestamp == results[j].Timestamp {
-			return results[i].TargetType < results[j].TargetType
-		}
-		return results[i].Timestamp < results[j].Timestamp
-	})
-	return results, nil
+	// 时间分桶图按时刻计边和节点信息；Clean 在返回值求值后执行。
+	return results, tg.edgeCount + tg.nodeInfoCount, nil
 }
 
 func vectorToMatrix(vector pl.Vector) pl.Matrix {

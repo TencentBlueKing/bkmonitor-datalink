@@ -172,17 +172,17 @@ func TestTimeGraphNodeInfoLimitBoundaries(t *testing.T) {
 	}
 }
 
-func TestTimeGraphResultLimitBoundaries(t *testing.T) {
+// 目标数量只受图本身的节点、边限额约束，FindRelationTargets 不再有结果上限。
+func TestTimeGraphRelationTargetCountBoundaries(t *testing.T) {
 	tests := []struct {
-		name            string
-		ids             []string
-		wantErr         *ResultLimitError
-		wantResultCount int
+		name        string
+		ids         []string
+		wantTargets []string
 	}{
-		{name: "below_limit", ids: []string{"a"}, wantResultCount: 1},
-		{name: "at_limit", ids: []string{"a", "b"}, wantResultCount: 2},
-		{name: "duplicate_path_does_not_count_twice", ids: []string{"a", "a", "b"}, wantResultCount: 2},
-		{name: "third_path_exceeds_limit", ids: []string{"a", "b", "c"}, wantErr: &ResultLimitError{Reason: "max_graph_results", Count: 3, Limit: 2}},
+		{name: "one_target", ids: []string{"a"}, wantTargets: []string{"a"}},
+		{name: "two_targets", ids: []string{"a", "b"}, wantTargets: []string{"a", "b"}},
+		{name: "duplicate_relation_yields_one_target", ids: []string{"a", "a", "b"}, wantTargets: []string{"a", "b"}},
+		{name: "third_target_has_no_result_limit", ids: []string{"a", "b", "c"}, wantTargets: []string{"a", "b", "c"}},
 	}
 
 	for _, tc := range tests {
@@ -194,23 +194,22 @@ func TestTimeGraphResultLimitBoundaries(t *testing.T) {
 				},
 				MaxNodes:     100,
 				MaxEdges:     100,
-				MaxResults:   2,
 				MaxNodeInfos: 100,
 			})
 			relation := cmdb.Relation{V: []cmdb.Resource{"left", "right"}, RelationType: "left_to_right"}
 			for _, id := range tc.ids {
 				require.NoError(t, tg.AddTimeRelationWithRelation(context.Background(), relation, cmdb.Matcher{"id": id}, 100))
 			}
-			results, err := tg.FindPathResources(
+			results, err := tg.FindTargets(
 				context.Background(), "left", []cmdb.Resource{"right"}, nil,
 				[][]cmdb.Resource{{"left", "right"}},
 			)
-			if tc.wantErr != nil {
-				requireGraphLimitError(t, err, tc.wantErr)
-				return
-			}
 			require.NoError(t, err)
-			require.Len(t, results, tc.wantResultCount)
+			want := make([]RelationTarget, 0, len(tc.wantTargets))
+			for _, id := range tc.wantTargets {
+				want = append(want, RelationTarget{Timestamp: 100, TargetType: "right", Target: cmdb.PathNode{ResourceType: "right", Dimensions: cmdb.Matcher{"id": id}}})
+			}
+			require.Equal(t, want, results)
 		})
 	}
 }
@@ -293,7 +292,7 @@ func TestTimeGraphCancelledRequestStopsMutation(t *testing.T) {
 	if err := tg.AddTimeNode(ctx, "node", cmdb.Matcher{"id": "n1"}, 100); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected cancelled add to stop immediately, got %v", err)
 	}
-	if _, err := tg.FindRelationPathResources(ctx, "node", []cmdb.Resource{"node"}, nil, []cmdb.RelationPath{{Steps: []cmdb.RelationPathStep{{ResourceType: "node"}}}}); !errors.Is(err, context.Canceled) {
+	if _, err := tg.FindRelationTargets(ctx, "node", []cmdb.Resource{"node"}, nil, []cmdb.RelationPath{{Steps: []cmdb.RelationPathStep{{ResourceType: "node"}}}}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected cancelled find to stop immediately, got %v", err)
 	}
 }

@@ -17,7 +17,6 @@ const (
 	MaxTargetsConfigPath                     = "cmdb.v1beta3.max_targets"
 	MaxGraphNodesConfigPath                  = "cmdb.v1beta3.max_graph_nodes"
 	MaxGraphEdgesConfigPath                  = "cmdb.v1beta3.max_graph_edges"
-	MaxGraphResultsConfigPath                = "cmdb.v1beta3.max_graph_results"
 	MaxGraphNodeInfosConfigPath              = "cmdb.v1beta3.max_graph_node_infos"
 	MaxSharedTopologyPointsConfigPath        = "cmdb.v1beta3.max_shared_topology_points"
 	MaxSharedTopologyBackendBytesConfigPath  = "cmdb.v1beta3.max_shared_topology_backend_bytes"
@@ -40,7 +39,6 @@ var (
 	MaxTargets                     = 5000
 	MaxGraphNodes                  = 100000
 	MaxGraphEdges                  = 200000
-	MaxGraphResults                = 10000
 	MaxGraphNodeInfos              = 1000000
 	MaxSharedTopologyPoints        = 60
 	MaxSharedTopologyBackendBytes  = 16 * 1024 * 1024
@@ -69,10 +67,6 @@ func effectiveMaxGraphNodes() int {
 
 func effectiveMaxGraphEdges() int {
 	return effectiveTimeGraphLimit(MaxGraphEdges, 200000)
-}
-
-func effectiveMaxGraphResults() int {
-	return effectiveTimeGraphLimit(MaxGraphResults, 10000)
 }
 
 func effectiveMaxGraphNodeInfos() int {

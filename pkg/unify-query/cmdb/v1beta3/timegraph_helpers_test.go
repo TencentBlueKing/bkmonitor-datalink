@@ -44,13 +44,14 @@ func (q *TimeGraph) GetNodesByResourceType(resourceType cmdb.Resource) []cmdb.Ma
 	return q.nodeBuilder.ResourceNodeInfo(resourceType)
 }
 
-func (q *TimeGraph) FindPathResources(
+// FindTargets 用资源类型序列描述候选路径，返回各时刻沿路径可达的目标。
+func (q *TimeGraph) FindTargets(
 	ctx context.Context,
 	sourceType cmdb.Resource,
 	targetTypes []cmdb.Resource,
 	sourceMatcher cmdb.Matcher,
 	expectedPaths [][]cmdb.Resource,
-) ([]PathResourcesResult, error) {
+) ([]RelationTarget, error) {
 	relationPaths := make([]cmdb.RelationPath, 0, len(expectedPaths))
 	for _, expectedPath := range expectedPaths {
 		steps := make([]cmdb.RelationPathStep, 0, len(expectedPath))
@@ -59,7 +60,7 @@ func (q *TimeGraph) FindPathResources(
 		}
 		relationPaths = append(relationPaths, cmdb.RelationPath{Steps: steps})
 	}
-	return q.FindRelationPathResources(ctx, sourceType, targetTypes, sourceMatcher, relationPaths)
+	return q.FindRelationTargets(ctx, sourceType, targetTypes, sourceMatcher, relationPaths)
 }
 
 type (

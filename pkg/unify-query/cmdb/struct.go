@@ -65,13 +65,6 @@ type PathNode struct {
 	Dimensions   Matcher  `json:"dimensions"`
 }
 
-// PathResourcesResult contains one complete source-to-target path at a timestamp.
-type PathResourcesResult struct {
-	Timestamp  int64      `json:"timestamp"`
-	TargetType Resource   `json:"target_type"`
-	Path       []PathNode `json:"path"`
-}
-
 // SharedTopologyQuery 描述一次 instant 或 range 完整局部拓扑查询。它与旧路径
 // 请求分离：目标类型只过滤返回节点，遍历仍使用完整的候选关系图。
 // 时间支持秒或整秒对应的毫秒格式；VM 协议仅支持整数秒，step 也必须是正整秒。

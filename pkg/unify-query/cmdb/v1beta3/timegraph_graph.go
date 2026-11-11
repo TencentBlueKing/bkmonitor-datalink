@@ -44,7 +44,6 @@ type TimeGraph struct {
 	matrixResidency *matrixResidency
 	maxNodes        int
 	maxEdges        int
-	maxResults      int
 	maxNodeInfos    int
 	edgeCount       int
 	nodeInfoCount   int
@@ -80,7 +79,7 @@ func NewTimeGraphWithConfig(cfg *TimeGraphConfig) *TimeGraph {
 }
 
 func newTimeGraphWithConfig(cfg *TimeGraphConfig) *TimeGraph {
-	maxNodes, maxEdges, maxResults, maxNodeInfos := effectiveMaxGraphNodes(), effectiveMaxGraphEdges(), effectiveMaxGraphResults(), effectiveMaxGraphNodeInfos()
+	maxNodes, maxEdges, maxNodeInfos := effectiveMaxGraphNodes(), effectiveMaxGraphEdges(), effectiveMaxGraphNodeInfos()
 	var relations []TimeGraphRelationConfig
 	if cfg != nil {
 		if cfg.MaxNodes > 0 {
@@ -88,9 +87,6 @@ func newTimeGraphWithConfig(cfg *TimeGraphConfig) *TimeGraph {
 		}
 		if cfg.MaxEdges > 0 {
 			maxEdges = cfg.MaxEdges
-		}
-		if cfg.MaxResults > 0 {
-			maxResults = cfg.MaxResults
 		}
 		if cfg.MaxNodeInfos > 0 {
 			maxNodeInfos = cfg.MaxNodeInfos
@@ -102,7 +98,6 @@ func newTimeGraphWithConfig(cfg *TimeGraphConfig) *TimeGraph {
 		partialTimes: make(map[int64]string),
 		maxNodes:     maxNodes,
 		maxEdges:     maxEdges,
-		maxResults:   maxResults,
 		maxNodeInfos: maxNodeInfos,
 		relations:    relations,
 	}
@@ -764,25 +759,26 @@ func (q *TimeGraph) makeResourceInfoQueryTs(spaceUID string, resource cmdb.Resou
 	}, nil
 }
 
-// PathResourcesResult 路径资源查询结果
-// 按时间和目标资源类型分组，每个结果包含从源到目标的完整路径
-// 路径中的每个节点都包含资源类型和完整的维度信息
-type PathResourcesResult struct {
-	Timestamp  int64           // 时间戳
-	TargetType cmdb.Resource   // 目标资源类型
-	Path       []cmdb.PathNode // 路径上的所有节点，包含资源类型和维度信息（从源到目标）
+// RelationTarget 是兼容入口的答案单元：某个评估时刻沿候选类型路径可达的
+// 一个目标实例。中间实例只用于判断可达，不进入结果。
+type RelationTarget struct {
+	Timestamp  int64         // 时间戳
+	TargetType cmdb.Resource // 目标资源类型
+	Target     cmdb.PathNode // 目标实例，维度取该时刻的节点信息
 }
 
-// FindRelationPathResources 同时按资源类型和关系身份约束遍历结果，避免两条
-// 端点相同但关系定义不同的边被合并到同一次遍历中。
-func (q *TimeGraph) FindRelationPathResources(
+// FindRelationTargets 按时刻沿候选类型路径逐层求可达目标。每层只保留去重后的
+// 实例集合，不枚举实例路径，工作量与路径条数无关。兼容入口的候选路径各层资源
+// 类型互不相同（自关联只有一跳），节点类型就是它所在的层，集合去重与逐条路径
+// 不回访同一实例的约束得到相同的终点集合。
+func (q *TimeGraph) FindRelationTargets(
 	ctx context.Context,
 	sourceType cmdb.Resource,
 	targetTypes []cmdb.Resource,
 	sourceMatcher cmdb.Matcher,
 	expectedPaths []cmdb.RelationPath,
-) (results []PathResourcesResult, err error) {
-	ctx, span := trace.NewSpan(ctx, "timegraph-find-relation-paths")
+) (results []RelationTarget, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-find-relation-targets")
 	defer span.End(&err)
 	span.Set("source-type", sourceType)
 	span.Set("target-types", targetTypes)
@@ -793,6 +789,11 @@ func (q *TimeGraph) FindRelationPathResources(
 	}
 	if sourceType == "" || len(targetTypes) == 0 {
 		return nil, nil
+	}
+	for _, expectedPath := range expectedPaths {
+		if err := validateRelationTargetPath(expectedPath.Steps); err != nil {
+			return nil, err
+		}
 	}
 
 	targetTypeSet := make(map[cmdb.Resource]struct{}, len(targetTypes))
@@ -815,8 +816,7 @@ func (q *TimeGraph) FindRelationPathResources(
 		return nil, nil
 	}
 
-	results = make([]PathResourcesResult, 0)
-	seen := make(map[string]struct{})
+	results = make([]RelationTarget, 0)
 	for _, timestamp := range queryTimestamps {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -834,74 +834,54 @@ func (q *TimeGraph) FindRelationPathResources(
 			continue
 		}
 
-		for _, sourceNode := range sourceNodes {
-			if err := ctx.Err(); err != nil {
+		reached := make(map[cmdb.Resource]map[uint64]struct{})
+		for _, expectedPath := range expectedPaths {
+			if len(expectedPath.Steps) == 0 || expectedPath.Steps[0].ResourceType != sourceType {
+				continue
+			}
+			targetType := expectedPath.Steps[len(expectedPath.Steps)-1].ResourceType
+			if _, ok := targetTypeSet[targetType]; !ok {
+				continue
+			}
+			nodes, err := q.reachTypedRelationNodes(ctx, sourceNodes, expectedPath.Steps, adjacency, q.edgeTypes[timestamp])
+			if err != nil {
 				return nil, err
 			}
-			for _, expectedPath := range expectedPaths {
-				if len(expectedPath.Steps) == 0 || expectedPath.Steps[0].ResourceType != sourceType {
-					continue
-				}
-				targetType := expectedPath.Steps[len(expectedPath.Steps)-1].ResourceType
-				if _, ok := targetTypeSet[targetType]; !ok {
-					continue
-				}
-				nodePaths := [][]uint64(nil)
-				if len(expectedPath.Steps) == 1 {
-					nodePaths = [][]uint64{{sourceNode}}
-				} else {
-					nodePaths, err = q.findTypedRelationNodePaths(ctx, sourceNode, expectedPath.Steps, adjacency, q.edgeTypes[timestamp])
-					if err != nil {
-						return nil, err
-					}
-				}
-				if len(nodePaths) == 0 {
-					continue
-				}
-
-				for _, path := range nodePaths {
-					if err := ctx.Err(); err != nil {
-						return nil, err
-					}
-					key := fmt.Sprintf("%d:%s", timestamp, nodePathKey(path))
-					if _, ok := seen[key]; ok {
-						continue
-					}
-					if limit := q.maxResults; limit > 0 && len(results) >= limit {
-						return nil, &ResultLimitError{Reason: "max_graph_results", Count: len(results) + 1, Limit: limit}
-					}
-					seen[key] = struct{}{}
-
-					pathNodes := make([]cmdb.PathNode, 0, len(path))
-					for _, nodeID := range path {
-						resourceType, nodeInfo := q.infoAt(timestamp, nodeID)
-						pathNodes = append(pathNodes, cmdb.PathNode{
-							ResourceType: resourceType,
-							Dimensions:   nodeInfo,
-						})
-					}
-					results = append(results, PathResourcesResult{
-						Timestamp:  timestamp,
-						TargetType: targetType,
-						Path:       pathNodes,
-					})
-				}
+			if len(nodes) == 0 {
+				continue
 			}
+			if reached[targetType] == nil {
+				reached[targetType] = make(map[uint64]struct{}, len(nodes))
+			}
+			for _, node := range nodes {
+				reached[targetType][node] = struct{}{}
+			}
+		}
+
+		reachedTypes := make([]cmdb.Resource, 0, len(reached))
+		for targetType := range reached {
+			reachedTypes = append(reachedTypes, targetType)
+		}
+		sort.Slice(reachedTypes, func(i, j int) bool { return reachedTypes[i] < reachedTypes[j] })
+		for _, targetType := range reachedTypes {
+			frame := make([]RelationTarget, 0, len(reached[targetType]))
+			for node := range reached[targetType] {
+				resourceType, nodeInfo := q.infoAt(timestamp, node)
+				frame = append(frame, RelationTarget{
+					Timestamp:  timestamp,
+					TargetType: targetType,
+					Target:     cmdb.PathNode{ResourceType: resourceType, Dimensions: nodeInfo},
+				})
+			}
+			sort.Slice(frame, func(i, j int) bool {
+				return fmt.Sprint(frame[i].Target.Dimensions) < fmt.Sprint(frame[j].Target.Dimensions)
+			})
+			results = append(results, frame...)
 		}
 	}
 
-	sort.SliceStable(results, func(i, j int) bool {
-		if results[i].Timestamp != results[j].Timestamp {
-			return results[i].Timestamp < results[j].Timestamp
-		}
-		if results[i].TargetType != results[j].TargetType {
-			return results[i].TargetType < results[j].TargetType
-		}
-		return nodePathKeyFromPathNodes(results[i].Path) < nodePathKeyFromPathNodes(results[j].Path)
-	})
 	span.Set("source-candidate-count", len(sourceCandidates))
 	span.Set("result-count", len(results))
-	span.Set("seen-path-count", len(seen))
 	resultTimestamps := make(map[int64]struct{}, len(results))
 	for _, result := range results {
 		resultTimestamps[result.Timestamp] = struct{}{}
@@ -910,59 +890,68 @@ func (q *TimeGraph) FindRelationPathResources(
 	return results, nil
 }
 
-func (q *TimeGraph) findTypedRelationNodePaths(
+// validateRelationTargetPath 拒绝回访资源类型的路径。逐层集合按类型区分层，
+// 回访类型时无法表达“同一条路径不回到更早实例”的约束；兼容入口的路径规划
+// 只产生简单路径，这里具名拒绝其它来源的形状，不静默改变答案。
+func validateRelationTargetPath(steps []cmdb.RelationPathStep) error {
+	if len(steps) == 2 && steps[0].ResourceType == steps[1].ResourceType {
+		return nil
+	}
+	seen := make(map[cmdb.Resource]struct{}, len(steps))
+	for _, step := range steps {
+		if _, exists := seen[step.ResourceType]; exists {
+			return fmt.Errorf("relation path revisits resource type %s", step.ResourceType)
+		}
+		seen[step.ResourceType] = struct{}{}
+	}
+	return nil
+}
+
+// reachTypedRelationNodes 从同一时刻的根集合出发逐层推进，每层只保留按身份
+// 去重的实例。实际自环占用一次显式跳数，可到达根自身。
+func (q *TimeGraph) reachTypedRelationNodes(
 	ctx context.Context,
-	sourceNode uint64,
+	roots []uint64,
 	expectedPath []cmdb.RelationPathStep,
 	adjacency map[uint64]map[uint64]graph.Edge[uint64],
 	edgeTypes map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{},
-) ([][]uint64, error) {
-	// 汇合到同一节点的路径仍需分别保留，但每层状态数必须受结果预算约束。
-	frontier := [][]uint64{{sourceNode}}
+) ([]uint64, error) {
+	frontier := make(map[uint64]struct{}, len(roots))
+	for _, root := range roots {
+		frontier[root] = struct{}{}
+	}
 	for index := 1; index < len(expectedPath); index++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		next := make([][]uint64, 0)
-		for _, currentPath := range frontier {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			current := currentPath[len(currentPath)-1]
-			neighbors := make([]uint64, 0, len(adjacency[current]))
+		next := make(map[uint64]struct{})
+		for current := range frontier {
 			for neighbor := range adjacency[current] {
-				neighbors = append(neighbors, neighbor)
-			}
-			sort.Slice(neighbors, func(i, j int) bool { return neighbors[i] < neighbors[j] })
-			for _, neighbor := range neighbors {
-				if err := ctx.Err(); err != nil {
-					return nil, err
+				if _, done := next[neighbor]; done {
+					continue
 				}
 				resourceType, _ := q.nodeBuilder.Info(neighbor)
-				// 实际自环占用一次显式跳数，不属于零跳结果；仍排除经过更早不同节点的环。
-				if resourceType != expectedPath[index].ResourceType || (neighbor != current && containsNode(currentPath, neighbor)) {
+				if resourceType != expectedPath[index].ResourceType {
 					continue
 				}
 				if !relationEdgeMatches(edgeTypes, timeGraphEdgeKey{source: current, target: neighbor}, expectedPath[index]) {
 					continue
 				}
-				// 在复制路径前拒绝，避免先物化指数级组合再检查最终结果数量。
-				if limit := q.maxResults; limit > 0 && len(next) >= limit {
-					return nil, &ResultLimitError{Reason: "max_graph_results", Count: len(next) + 1, Limit: limit, Path: "path expansion"}
-				}
-				path := append([]uint64(nil), currentPath...)
-				next = append(next, append(path, neighbor))
+				next[neighbor] = struct{}{}
 			}
 		}
-		frontier = next
-		if len(frontier) == 0 {
+		if len(next) == 0 {
 			return nil, nil
 		}
+		frontier = next
 	}
 
-	paths := frontier
-	sort.Slice(paths, func(i, j int) bool { return nodePathKey(paths[i]) < nodePathKey(paths[j]) })
-	return paths, nil
+	nodes := make([]uint64, 0, len(frontier))
+	for node := range frontier {
+		nodes = append(nodes, node)
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i] < nodes[j] })
+	return nodes, nil
 }
 
 func relationEdgeMatches(
@@ -985,34 +974,6 @@ func relationEdgeMatches(
 		}
 	}
 	return false
-}
-
-func containsNode(path []uint64, target uint64) bool {
-	for _, nodeID := range path {
-		if nodeID == target {
-			return true
-		}
-	}
-	return false
-}
-
-func nodePathKey(path []uint64) string {
-	var builder strings.Builder
-	for _, nodeID := range path {
-		builder.WriteString(fmt.Sprintf("%d/", nodeID))
-	}
-	return builder.String()
-}
-
-func nodePathKeyFromPathNodes(path []cmdb.PathNode) string {
-	var builder strings.Builder
-	for _, node := range path {
-		builder.WriteString(string(node.ResourceType))
-		builder.WriteByte('/')
-		builder.WriteString(fmt.Sprint(node.Dimensions))
-		builder.WriteByte('|')
-	}
-	return builder.String()
 }
 
 func (q *TimeGraph) infoAt(timestamp int64, nodeID uint64) (cmdb.Resource, cmdb.Matcher) {

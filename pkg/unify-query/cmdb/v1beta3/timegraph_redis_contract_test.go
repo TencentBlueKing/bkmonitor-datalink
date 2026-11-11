@@ -71,7 +71,7 @@ func TestTimeGraphRedisSchemaIsolationAndReload(t *testing.T) {
 		matrix := contractMatrix(map[string]string{"from_" + field: "root", "to_" + field: target}, timestamps...)
 		return filteredTimeGraphMatrix(t, matrix, query.Conditions), nil
 	}
-	query := func(namespace, field string, ranged bool) ([]cmdb.PathResourcesResult, error) {
+	query := func(namespace, field string, ranged bool) ([]RelationTarget, error) {
 		if ranged {
 			return model.QueryRelationTimeGraph(
 				ctx, "5m", namespace,
@@ -100,7 +100,7 @@ func TestTimeGraphRedisSchemaIsolationAndReload(t *testing.T) {
 			}
 			require.Len(t, results, count)
 			for _, result := range results {
-				require.Equal(t, cmdb.Matcher{field: target}, result.Path[1].Dimensions)
+				require.Equal(t, cmdb.Matcher{field: target}, result.Target.Dimensions)
 			}
 		}
 	}
@@ -152,7 +152,7 @@ func TestTimeGraphRedisSchemaIsolationAndReload(t *testing.T) {
 					errors <- err
 					return
 				}
-				if len(results) != 1 || results[0].Path[1].Dimensions[field] != target {
+				if len(results) != 1 || results[0].Target.Dimensions[field] != target {
 					errors <- fmt.Errorf("namespace %s leaked result: %+v", namespace, results)
 					return
 				}

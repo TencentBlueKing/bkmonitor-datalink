@@ -227,5 +227,6 @@ func TestLegacyOptionalTargetInfoFailureKeepsRelationResult(t *testing.T) {
 	require.Equal(t, failedBefore+1, readTimeGraphMetric(t, "cmdb_timegraph_load_operations_total", metricLabels, "counter"))
 	require.Len(t, results, 1)
 	require.Equal(t, cmdb.Resource("middle"), results[0].TargetType)
-	require.Len(t, results[0].Path, 2)
+	require.Equal(t, cmdb.Resource("middle"), results[0].Target.ResourceType)
+	require.Equal(t, "b", results[0].Target.Dimensions["middle_id"])
 }

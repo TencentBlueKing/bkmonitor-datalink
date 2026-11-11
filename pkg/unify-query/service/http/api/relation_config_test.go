@@ -83,7 +83,6 @@ func relationRuntimeConfig() map[string]any {
 		v1beta3.MaxTargetsConfigPath:                     v1beta3.MaxTargets,
 		v1beta3.MaxGraphNodesConfigPath:                  v1beta3.MaxGraphNodes,
 		v1beta3.MaxGraphEdgesConfigPath:                  v1beta3.MaxGraphEdges,
-		v1beta3.MaxGraphResultsConfigPath:                v1beta3.MaxGraphResults,
 		v1beta3.MaxGraphNodeInfosConfigPath:              v1beta3.MaxGraphNodeInfos,
 		v1beta3.MaxSharedTopologyPointsConfigPath:        v1beta3.MaxSharedTopologyPoints,
 		v1beta3.MaxSharedTopologyBackendBytesConfigPath:  v1beta3.MaxSharedTopologyBackendBytes,

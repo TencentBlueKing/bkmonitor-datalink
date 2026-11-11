@@ -70,7 +70,7 @@ func CMDBRelationQualityInc(ctx context.Context, mode, quality, reasons string) 
 		case "backend_partial", "vm_storage_coverage_mismatch", "relation_no_physical_route",
 			"source_info_no_route", "target_info_failed",
 			"max_targets", "max_response_bytes", "max_graph_nodes", "max_graph_edges",
-			"max_graph_node_infos", "max_graph_results", "max_shared_topology_points":
+			"max_graph_node_infos", "max_shared_topology_points":
 		default:
 			reason = "other"
 		}
@@ -131,7 +131,7 @@ func CMDBTopologyRejectInc(ctx context.Context, mode, reason string) {
 		return
 	}
 	switch reason {
-	case "invalid_request", "max_shared_topology_points", "max_graph_nodes", "max_graph_edges", "max_graph_node_infos", "max_graph_results", "max_targets",
+	case "invalid_request", "max_shared_topology_points", "max_graph_nodes", "max_graph_edges", "max_graph_node_infos", "max_targets",
 		"max_response_bytes", "max_topology_output_bytes", "max_topology_queries", "max_topology_request_bytes",
 		"max_topology_admission_waiters", "max_topology_reserved_bytes", "max_topology_memory_headroom":
 	default:

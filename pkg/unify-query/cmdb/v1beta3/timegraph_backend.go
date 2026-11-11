@@ -172,7 +172,7 @@ func resourcePathSortKey(path resourcePath) string {
 }
 
 // 旧路径查询遇到首个有效结果即停止；其他候选路径失败不会直接中断查询。
-func queryFirstTimeGraphPath(ctx context.Context, paths []resourcePath, query func(resourcePath) ([]cmdb.PathResourcesResult, error)) (results []cmdb.PathResourcesResult, lastSuccess int, err error) {
+func queryFirstTimeGraphPath(ctx context.Context, paths []resourcePath, query func(resourcePath) ([]RelationTarget, error)) (results []RelationTarget, lastSuccess int, err error) {
 	lastSuccess = -1
 	reasons := make(map[string]struct{})
 	collectQuality := func() {
@@ -284,16 +284,12 @@ func timeGraphQueryTimestamp(ts string) (time.Time, error) {
 }
 
 func timeGraphTargetMatcher(
-	path []cmdb.PathNode,
+	target cmdb.PathNode,
 	targetType ResourceType,
 	provider SchemaProvider,
 	namespace string,
 	targetInfoShow bool,
 ) (string, cmdb.Matcher, bool) {
-	if len(path) == 0 {
-		return "", nil, false
-	}
-	target := path[len(path)-1]
 	if ResourceType(target.ResourceType) != targetType {
 		return "", nil, false
 	}
@@ -349,7 +345,7 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
 	result.candidatePathCount = len(candidatePaths)
-	results, lastSuccess, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) ([]cmdb.PathResourcesResult, error) {
+	results, lastSuccess, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) ([]RelationTarget, error) {
 		return m.QueryRelationTimeGraph(
 			ctx, lookBackDelta, spaceUID, queryTimestamp, queryTimestamp, 5*time.Minute,
 			cmdb.Resource(req.SourceType), []cmdb.Resource{cmdb.Resource(req.TargetType)},
@@ -363,18 +359,9 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 	result.rawResultCount = len(results)
 
 	provider := m.getSchemaProvider()
-	bestRank := len(candidatePaths)
 	matchersByID := make(map[string]cmdb.Matcher)
 	for _, result := range results {
-		rank := cmdb.PathRank(result.Path, candidatePaths)
-		if rank < bestRank {
-			bestRank = rank
-			matchersByID = make(map[string]cmdb.Matcher)
-		}
-		if rank != bestRank {
-			continue
-		}
-		key, matcher, ok := timeGraphTargetMatcher(result.Path, req.TargetType, provider, req.SchemaNamespace(), req.TargetInfoShow)
+		key, matcher, ok := timeGraphTargetMatcher(result.Target, req.TargetType, provider, req.SchemaNamespace(), req.TargetInfoShow)
 		if ok {
 			matchersByID[key] = matcher
 		}
@@ -391,16 +378,7 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 		return timeGraphLegacyResult{}, err
 	}
 
-	selectedPath := []string(nil)
-	if bestRank < len(paths) {
-		selectedPath = resourceTypesToPath(resourcePathToResourceTypes(paths[bestRank]))
-	}
-	if len(selectedPath) == 0 && len(results) > 0 {
-		selectedPath = cmdb.PathResourceTypes(results[0].Path)
-	}
-	if len(selectedPath) == 0 && lastSuccess >= 0 {
-		selectedPath = resourceTypesToPath(resourcePathToResourceTypes(paths[lastSuccess]))
-	}
+	selectedPath := legacySelectedPath(paths, lastSuccess)
 
 	result = timeGraphLegacyResult{
 		source:             cmdb.Resource(req.SourceType),
@@ -492,7 +470,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
 	result.candidatePathCount = len(candidatePaths)
-	results, lastSuccess, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) ([]cmdb.PathResourcesResult, error) {
+	results, lastSuccess, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) ([]RelationTarget, error) {
 		pathStart, pathEnd := startTime, endTime
 		if mayAdjustGrid {
 			useVM, routeErr := m.legacyRangeUsesVM(ctx, req, path, startTime, endTime, stepDuration, window)
@@ -503,17 +481,43 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 				pathStart, pathEnd = time.UnixMilli(cacheStartMs), time.UnixMilli(cacheEndMs)
 			}
 		}
-		pathResults, queryErr := m.QueryRelationTimeGraph(
-			ctx, lookBackDelta, spaceUID, pathStart, pathEnd, stepDuration,
-			cmdb.Resource(req.SourceType), []cmdb.Resource{cmdb.Resource(req.TargetType)},
-			resourcePathsToTimeGraphRelationPaths([]resourcePath{path}),
-			cmdb.Matcher(req.SourceInfo), cmdb.Matcher(req.SourceExpandInfo),
+		var (
+			pathResults []RelationTarget
+			noRouteErr  error
+			routed      bool
 		)
-		if queryErr == nil {
-			// 分桶必须使用本次成功候选的网格，不能沿用前一个候选。
-			startMs, endMs = pathStart.UnixMilli(), pathEnd.UnixMilli()
+		segments := newLegacyRangeSegmenter(pathStart, pathEnd, stepDuration)
+		for segment, ok := segments.next(); ok; segment, ok = segments.next() {
+			segmentResults, graphPoints, queryErr := m.queryRelationTargets(
+				ctx, lookBackDelta, spaceUID, segment.start, segment.end, stepDuration,
+				cmdb.Resource(req.SourceType), []cmdb.Resource{cmdb.Resource(req.TargetType)},
+				resourcePathsToTimeGraphRelationPaths([]resourcePath{path}),
+				cmdb.Matcher(req.SourceInfo), cmdb.Matcher(req.SourceExpandInfo),
+			)
+			var routeErr *relationNoPhysicalRouteError
+			if errors.As(queryErr, &routeErr) {
+				// 路由按存储切换记录分时段生效：没有路由的时段不读数并标记不完整，
+				// 与整段查询一样使用其它时段的结果；所有时段都没有路由才算路径无路由。
+				if noRouteErr == nil {
+					noRouteErr = queryErr
+				}
+				addTimeGraphPartialReason(ctx, "relation_no_physical_route:"+routeErr.metric)
+				segments.observe(segment, 0)
+				continue
+			}
+			if queryErr != nil {
+				return nil, queryErr
+			}
+			routed = true
+			pathResults = append(pathResults, segmentResults...)
+			segments.observe(segment, graphPoints)
 		}
-		return pathResults, queryErr
+		if !routed && noRouteErr != nil {
+			return nil, noRouteErr
+		}
+		// 分桶必须使用本次成功候选的网格，不能沿用前一个候选。
+		startMs, endMs = pathStart.UnixMilli(), pathEnd.UnixMilli()
+		return pathResults, nil
 	})
 	if err != nil {
 		return result, err
@@ -521,18 +525,9 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	result.rawResultCount = len(results)
 
 	provider := m.getSchemaProvider()
-	bestRank := len(candidatePaths)
 	timeSeries := make(map[int64]map[string]cmdb.Matcher)
 	for _, result := range results {
-		rank := cmdb.PathRank(result.Path, candidatePaths)
-		if rank < bestRank {
-			bestRank = rank
-			timeSeries = make(map[int64]map[string]cmdb.Matcher)
-		}
-		if rank != bestRank {
-			continue
-		}
-		key, matcher, ok := timeGraphTargetMatcher(result.Path, req.TargetType, provider, req.SchemaNamespace(), req.TargetInfoShow)
+		key, matcher, ok := timeGraphTargetMatcher(result.Target, req.TargetType, provider, req.SchemaNamespace(), req.TargetInfoShow)
 		if !ok {
 			continue
 		}
@@ -563,16 +558,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 		return result, err
 	}
 
-	selectedPath := []string(nil)
-	if bestRank < len(paths) {
-		selectedPath = resourceTypesToPath(resourcePathToResourceTypes(paths[bestRank]))
-	}
-	if len(selectedPath) == 0 && len(results) > 0 {
-		selectedPath = cmdb.PathResourceTypes(results[0].Path)
-	}
-	if len(selectedPath) == 0 && lastSuccess >= 0 {
-		selectedPath = resourceTypesToPath(resourcePathToResourceTypes(paths[lastSuccess]))
-	}
+	selectedPath := legacySelectedPath(paths, lastSuccess)
 
 	result = timeGraphRangeResult{
 		source:             cmdb.Resource(req.SourceType),
@@ -590,6 +576,95 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	span.Set("bucket-count", result.bucketCount)
 	span.Set("target-count", result.targetCount)
 	return result, nil
+}
+
+// legacySelectedPath 返回旧响应的 path。候选路径逐条查询，命中时最后一条
+// 成功的候选就是首条有结果的路径；都无结果时沿用最后一条成功候选。
+func legacySelectedPath(paths []resourcePath, lastSuccess int) []string {
+	if lastSuccess < 0 || lastSuccess >= len(paths) {
+		return nil
+	}
+	return resourceTypesToPath(resourcePathToResourceTypes(paths[lastSuccess]))
+}
+
+// legacyRangeSegmentPoints 是区间查询首段的评估点数。各点按自己的窗口独立
+// 计算，分段不改变答案；单段只物化这些点的时间分桶图。
+const legacyRangeSegmentPoints = 64
+
+// legacyRangeSegmentGraphPoints 是单段时间分桶图的规模预算：每个时刻的边数与节点信息数之和。
+// 段长按上一段得到的每点规模换算，轻量查询逐段翻倍以减少往返，重查询的工作集
+// 保持在这一量级，与总点数无关。
+const legacyRangeSegmentGraphPoints = 256 * 1024
+
+type legacyRangeSegment struct {
+	start, end time.Time
+	points     int
+}
+
+// legacyRangeSegmenter 把同一网格切成连续段：段的起点都落在网格上，最后一段沿用
+// 原终点；末段只剩一个网格点时并入前段，避免把区间查询退化为即时查询。
+type legacyRangeSegmenter struct {
+	start, end time.Time
+	step       time.Duration
+	remaining  int
+	size       int
+}
+
+func newLegacyRangeSegmenter(start, end time.Time, step time.Duration) *legacyRangeSegmenter {
+	segmenter := &legacyRangeSegmenter{start: start, end: end, step: step, size: legacyRangeSegmentPoints}
+	switch {
+	case step <= 0 || !end.After(start):
+		segmenter.remaining = 1
+		segmenter.size = 1
+	default:
+		segmenter.remaining = int(end.Sub(start)/step) + 1
+	}
+	return segmenter
+}
+
+func (s *legacyRangeSegmenter) next() (legacyRangeSegment, bool) {
+	if s.remaining <= 0 {
+		return legacyRangeSegment{}, false
+	}
+	size := min(max(s.size, 1), s.remaining)
+	if s.remaining-size == 1 {
+		size = s.remaining
+	}
+	segment := legacyRangeSegment{start: s.start, end: s.start.Add(time.Duration(size-1) * s.step), points: size}
+	if size == s.remaining {
+		segment.end = s.end
+	}
+	s.start = s.start.Add(time.Duration(size) * s.step)
+	s.remaining -= size
+	return segment, true
+}
+
+// observe 按刚完成一段的图规模决定下一段长度：至多翻倍，且不超过规模预算。
+func (s *legacyRangeSegmenter) observe(segment legacyRangeSegment, graphPoints int) {
+	next := 2 * max(segment.points, 1)
+	if graphPoints > 0 {
+		perPoint := (graphPoints + segment.points - 1) / segment.points
+		next = min(next, legacyRangeSegmentGraphPoints/perPoint)
+	}
+	s.size = max(next, 2)
+}
+
+// addTimeGraphPartialReason 把一个不完整原因并入当前查询的质量状态。
+func addTimeGraphPartialReason(ctx context.Context, reason string) {
+	reasons := map[string]struct{}{reason: {}}
+	if status := metadata.GetStatus(ctx); status != nil && status.Code == metadata.QueryTsPartial {
+		for _, existing := range strings.Split(status.Message, ";") {
+			if existing != "" {
+				reasons[existing] = struct{}{}
+			}
+		}
+	}
+	ordered := make([]string, 0, len(reasons))
+	for existing := range reasons {
+		ordered = append(ordered, existing)
+	}
+	sort.Strings(ordered)
+	metadata.SetStatus(ctx, metadata.QueryTsPartial, strings.Join(ordered, ";"))
 }
 
 func countTimeGraphRangeTargets(series []cmdb.MatchersWithTimestamp) int {

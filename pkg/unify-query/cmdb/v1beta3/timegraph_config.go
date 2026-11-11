@@ -30,7 +30,6 @@ type TimeGraphConfig struct {
 	Relation     []TimeGraphRelationConfig
 	MaxNodes     int
 	MaxEdges     int
-	MaxResults   int
 	MaxNodeInfos int
 }
 
@@ -42,7 +41,6 @@ func buildTimeGraphConfig(provider SchemaProvider, namespace string) *TimeGraphC
 	config := &TimeGraphConfig{
 		MaxNodes:     effectiveMaxGraphNodes(),
 		MaxEdges:     effectiveMaxGraphEdges(),
-		MaxResults:   effectiveMaxGraphResults(),
 		MaxNodeInfos: effectiveMaxGraphNodeInfos(),
 	}
 

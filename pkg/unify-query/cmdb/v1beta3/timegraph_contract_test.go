@@ -208,7 +208,7 @@ func TestTimeGraphContractCases(t *testing.T) {
 		responses        map[string]pl.Matrix
 		wantErr          string
 		wantQueries      []contractQueryWant
-		wantResults      []PathResourcesResult
+		wantResults      []RelationTarget
 	}{
 		{
 			name:        "default_dynamic_metric_name_is_used",
@@ -241,11 +241,9 @@ func TestTimeGraphContractCases(t *testing.T) {
 					ConditionList: []string{structured.ConditionAnd, structured.ConditionAnd, structured.ConditionAnd},
 				},
 			}},
-			wantResults: []PathResourcesResult{{
-				Timestamp: timestampMS, TargetType: "system", Path: []cmdb.PathNode{
-					{ResourceType: "pod", Dimensions: cmdb.Matcher{"bcs_cluster_id": "c1", "namespace": "ns", "pod": "p1"}},
-					{ResourceType: "system", Dimensions: cmdb.Matcher{"bk_target_ip": "test-ip-1"}},
-				},
+			wantResults: []RelationTarget{{
+				Timestamp: timestampMS, TargetType: "system",
+				Target: cmdb.PathNode{ResourceType: "system", Dimensions: cmdb.Matcher{"bk_target_ip": "test-ip-1"}},
 			}},
 		},
 		{
@@ -267,9 +265,9 @@ func TestTimeGraphContractCases(t *testing.T) {
 					{DimensionName: "to_id", Value: []string{""}, Operator: structured.ConditionNotEqual},
 				}, ConditionList: []string{structured.ConditionAnd}},
 			}},
-			wantResults: []PathResourcesResult{{Timestamp: timestampMS, TargetType: "service", Path: []cmdb.PathNode{
-				{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "caller"}}, {ResourceType: "service", Dimensions: cmdb.Matcher{"id": "callee"}},
-			}}},
+			wantResults: []RelationTarget{{Timestamp: timestampMS, TargetType: "service",
+				Target: cmdb.PathNode{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "callee"}},
+			}},
 		},
 		{
 			name:        "same_type_dynamic_inbound_uses_to_endpoint",
@@ -290,9 +288,9 @@ func TestTimeGraphContractCases(t *testing.T) {
 					{DimensionName: "to_id", Value: []string{"callee"}, Operator: structured.ConditionEqual},
 				}, ConditionList: []string{structured.ConditionAnd}},
 			}},
-			wantResults: []PathResourcesResult{{Timestamp: timestampMS, TargetType: "service", Path: []cmdb.PathNode{
-				{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "callee"}}, {ResourceType: "service", Dimensions: cmdb.Matcher{"id": "caller"}},
-			}}},
+			wantResults: []RelationTarget{{Timestamp: timestampMS, TargetType: "service",
+				Target: cmdb.PathNode{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "caller"}},
+			}},
 		},
 		{
 			name:        "range_step_and_lookback_are_sent_separately",
@@ -312,10 +310,10 @@ func TestTimeGraphContractCases(t *testing.T) {
 					{DimensionName: "right_id", Value: []string{""}, Operator: structured.ConditionNotEqual},
 				}, ConditionList: []string{structured.ConditionAnd}},
 			}},
-			wantResults: []PathResourcesResult{
-				{Timestamp: 100000, TargetType: "right", Path: []cmdb.PathNode{{ResourceType: "left", Dimensions: cmdb.Matcher{"left_id": "l1"}}, {ResourceType: "right", Dimensions: cmdb.Matcher{"right_id": "r1"}}}},
-				{Timestamp: 160000, TargetType: "right", Path: []cmdb.PathNode{{ResourceType: "left", Dimensions: cmdb.Matcher{"left_id": "l1"}}, {ResourceType: "right", Dimensions: cmdb.Matcher{"right_id": "r1"}}}},
-				{Timestamp: 220000, TargetType: "right", Path: []cmdb.PathNode{{ResourceType: "left", Dimensions: cmdb.Matcher{"left_id": "l1"}}, {ResourceType: "right", Dimensions: cmdb.Matcher{"right_id": "r1"}}}},
+			wantResults: []RelationTarget{
+				{Timestamp: 100000, TargetType: "right", Target: cmdb.PathNode{ResourceType: "right", Dimensions: cmdb.Matcher{"right_id": "r1"}}},
+				{Timestamp: 160000, TargetType: "right", Target: cmdb.PathNode{ResourceType: "right", Dimensions: cmdb.Matcher{"right_id": "r1"}}},
+				{Timestamp: 220000, TargetType: "right", Target: cmdb.PathNode{ResourceType: "right", Dimensions: cmdb.Matcher{"right_id": "r1"}}},
 			},
 		},
 		{
@@ -339,9 +337,9 @@ func TestTimeGraphContractCases(t *testing.T) {
 				{field: "node_to_container_flow", window: "10m0s", step: "1m0s", start: "100", end: "100", conditions: structured.Conditions{FieldList: []structured.ConditionField{{DimensionName: "container_id", Value: []string{""}, Operator: structured.ConditionNotEqual}, {DimensionName: "node_id", Value: []string{"n1"}, Operator: structured.ConditionEqual}}, ConditionList: []string{structured.ConditionAnd}}},
 				{field: "container_info_relation", window: "10m0s", step: "1m0s", start: "100", end: "100", conditions: structured.Conditions{FieldList: []structured.ConditionField{{DimensionName: "container_id", Value: []string{"c1"}, Operator: structured.ConditionEqual}}}},
 			},
-			wantResults: []PathResourcesResult{{Timestamp: 100000, TargetType: "container", Path: []cmdb.PathNode{
-				{ResourceType: "node", Dimensions: cmdb.Matcher{"node_id": "n1"}}, {ResourceType: "container", Dimensions: cmdb.Matcher{"container_id": "c1", "version": "v1"}},
-			}}},
+			wantResults: []RelationTarget{{Timestamp: 100000, TargetType: "container",
+				Target: cmdb.PathNode{ResourceType: "container", Dimensions: cmdb.Matcher{"container_id": "c1", "version": "v1"}},
+			}},
 		},
 		{
 			name:        "multi_hop_dynamic_query_only_constrains_root_edge",
@@ -378,11 +376,9 @@ func TestTimeGraphContractCases(t *testing.T) {
 					}, ConditionList: []string{structured.ConditionAnd}},
 				},
 			},
-			wantResults: []PathResourcesResult{{Timestamp: timestampMS, TargetType: "back", Path: []cmdb.PathNode{
-				{ResourceType: "front", Dimensions: cmdb.Matcher{"id": "f1"}},
-				{ResourceType: "middle", Dimensions: cmdb.Matcher{"id": "m1"}},
-				{ResourceType: "back", Dimensions: cmdb.Matcher{"id": "b1"}},
-			}}},
+			wantResults: []RelationTarget{{Timestamp: timestampMS, TargetType: "back",
+				Target: cmdb.PathNode{ResourceType: "back", Dimensions: cmdb.Matcher{"id": "b1"}},
+			}},
 		},
 		{
 			name:        "external_vm_error_is_returned",
@@ -430,7 +426,7 @@ func TestTimeGraphContractCases(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { tg.Clean(ctx) })
 
-			got, err := tg.FindRelationPathResources(ctx, tc.sourceType, tc.targetTypes, tc.sourceInfo, []cmdb.RelationPath{tc.path})
+			got, err := tg.FindRelationTargets(ctx, tc.sourceType, tc.targetTypes, tc.sourceInfo, []cmdb.RelationPath{tc.path})
 			require.NoError(t, err)
 			require.Equal(t, tc.wantResults, got)
 			require.Len(t, vm.calls, len(tc.wantQueries))

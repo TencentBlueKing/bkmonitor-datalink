@@ -35,16 +35,14 @@ func TestTimeGraphFindRelationPathAcrossTimestamps(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	results, err := tg.FindRelationPathResources(ctx, "pod", []cmdb.Resource{"system"}, cmdb.Matcher{"namespace": "default", "pod": "p1"}, cmdb.RelationPathsFromResourcePaths([][]cmdb.Resource{{"pod", "node", "system"}}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(results) != 1 || results[0].Timestamp != 100 {
-		t.Fatalf("unexpected timegraph results: %+v", results)
-	}
-	if len(results[0].Path) != 3 || results[0].Path[1].ResourceType != "node" {
-		t.Fatalf("unexpected path: %+v", results[0].Path)
-	}
+	// node -> system 只在 100 存在，200 时刻没有完整路径，不能产出目标。
+	results, err := tg.FindRelationTargets(ctx, "pod", []cmdb.Resource{"system"}, cmdb.Matcher{"namespace": "default", "pod": "p1"}, cmdb.RelationPathsFromResourcePaths([][]cmdb.Resource{{"pod", "node", "system"}}))
+	require.NoError(t, err)
+	require.Equal(t, []RelationTarget{{
+		Timestamp:  100,
+		TargetType: "system",
+		Target:     cmdb.PathNode{ResourceType: "system", Dimensions: cmdb.Matcher{"ip": "test-ip-1"}},
+	}}, results)
 }
 
 func TestBuildRelationsFromPathsDeduplicatesEdges(t *testing.T) {
@@ -60,7 +58,7 @@ func TestBuildRelationsFromPathsDeduplicatesEdges(t *testing.T) {
 	}
 }
 
-func TestTimeGraphFindPathResourcesHonorsExpectedPath(t *testing.T) {
+func TestTimeGraphFindTargetsHonorsExpectedPath(t *testing.T) {
 	config := &TimeGraphConfig{Resource: []TimeGraphResourceConfig{
 		{Name: "pod", Index: cmdb.Index{"cluster", "namespace", "pod"}},
 		{Name: "node", Index: cmdb.Index{"cluster", "node"}},
@@ -88,26 +86,39 @@ func TestTimeGraphFindPathResourcesHonorsExpectedPath(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// test-ip-2 只能经 service 到达，约束路径必须排除它。
+	require.NoError(t, tg.AddTimeRelation(ctx, "service", "system", cmdb.Matcher{"cluster": "c1", "service": "svc1", "ip": "test-ip-2"}, 100))
 
-	results, err := tg.FindPathResources(
+	systemTargets := func(ips ...string) []RelationTarget {
+		targets := make([]RelationTarget, 0, len(ips))
+		for _, ip := range ips {
+			targets = append(targets, RelationTarget{Timestamp: 100, TargetType: "system", Target: cmdb.PathNode{ResourceType: "system", Dimensions: cmdb.Matcher{"ip": ip}}})
+		}
+		return targets
+	}
+	results, err := tg.FindTargets(
 		ctx,
 		"pod",
 		[]cmdb.Resource{"system"},
 		cmdb.Matcher{"namespace": "default", "pod": "p1"},
 		[][]cmdb.Resource{{"pod", "node", "system"}},
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("unexpected constrained path results: %+v", results)
-	}
-	if got := []cmdb.Resource{results[0].Path[0].ResourceType, results[0].Path[1].ResourceType, results[0].Path[2].ResourceType}; got[0] != "pod" || got[1] != "node" || got[2] != "system" {
-		t.Fatalf("unexpected constrained path: %+v", got)
-	}
+	require.NoError(t, err)
+	require.Equal(t, systemTargets("test-ip-1"), results)
+
+	results, err = tg.FindTargets(
+		ctx,
+		"pod",
+		[]cmdb.Resource{"system"},
+		cmdb.Matcher{"namespace": "default", "pod": "p1"},
+		[][]cmdb.Resource{{"pod", "service", "system"}},
+	)
+	require.NoError(t, err)
+	require.Equal(t, systemTargets("test-ip-1", "test-ip-2"), results)
 }
 
-func TestTimeGraphFindPathResourcesPreservesConvergingPaths(t *testing.T) {
+// 多条实例路径汇合到同一目标时只产出一个目标。
+func TestTimeGraphFindTargetsCollapsesConvergingPaths(t *testing.T) {
 	config := &TimeGraphConfig{Resource: []TimeGraphResourceConfig{
 		{Name: "source", Index: cmdb.Index{"source_id"}},
 		{Name: "middle", Index: cmdb.Index{"middle_id"}},
@@ -128,7 +139,7 @@ func TestTimeGraphFindPathResourcesPreservesConvergingPaths(t *testing.T) {
 		require.NoError(t, tg.AddTimeRelation(ctx, "middle", "target", info, 100))
 	}
 
-	results, err := tg.FindPathResources(
+	results, err := tg.FindTargets(
 		ctx,
 		"source",
 		[]cmdb.Resource{"target"},
@@ -136,11 +147,11 @@ func TestTimeGraphFindPathResourcesPreservesConvergingPaths(t *testing.T) {
 		[][]cmdb.Resource{{"source", "middle", "target"}},
 	)
 	require.NoError(t, err)
-	require.Len(t, results, 2)
-	require.ElementsMatch(t, []cmdb.Matcher{
-		{"middle_id": "m1"},
-		{"middle_id": "m2"},
-	}, []cmdb.Matcher{results[0].Path[1].Dimensions, results[1].Path[1].Dimensions})
+	require.Equal(t, []RelationTarget{{
+		Timestamp:  100,
+		TargetType: "target",
+		Target:     cmdb.PathNode{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t"}},
+	}}, results)
 }
 
 func TestNodeIdentity(t *testing.T) {
@@ -244,12 +255,12 @@ func TestTimeGraphSameTimestampAttributeConflictIsStable(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			results, err := tg.FindRelationPathResources(context.Background(), "node", []cmdb.Resource{"node"}, cmdb.Matcher{"id": "m1"}, []cmdb.RelationPath{{
+			results, err := tg.FindRelationTargets(context.Background(), "node", []cmdb.Resource{"node"}, cmdb.Matcher{"id": "m1"}, []cmdb.RelationPath{{
 				Steps: []cmdb.RelationPathStep{{ResourceType: "node"}},
 			}})
 			require.NoError(t, err)
 			require.Len(t, results, 1)
-			require.Equal(t, tc.wantInfo, results[0].Path[0].Dimensions)
+			require.Equal(t, tc.wantInfo, results[0].Target.Dimensions)
 		})
 	}
 }
@@ -277,7 +288,7 @@ func TestTimeGraphRelationTypeConstrainsSameEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	results, err := tg.FindRelationPathResources(ctx, "left", []cmdb.Resource{"right"}, info, []cmdb.RelationPath{{
+	results, err := tg.FindRelationTargets(ctx, "left", []cmdb.Resource{"right"}, info, []cmdb.RelationPath{{
 		Steps: []cmdb.RelationPathStep{
 			{ResourceType: "left"},
 			{ResourceType: "right", RelationType: "relation_b"},
@@ -287,10 +298,10 @@ func TestTimeGraphRelationTypeConstrainsSameEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(results) != 1 {
-		t.Fatalf("expected relation_b path, got %+v", results)
+		t.Fatalf("expected relation_b target, got %+v", results)
 	}
 
-	results, err = tg.FindRelationPathResources(ctx, "left", []cmdb.Resource{"right"}, info, []cmdb.RelationPath{{
+	results, err = tg.FindRelationTargets(ctx, "left", []cmdb.Resource{"right"}, info, []cmdb.RelationPath{{
 		Steps: []cmdb.RelationPathStep{
 			{ResourceType: "left"},
 			{ResourceType: "right", RelationType: "relation_c"},
@@ -339,7 +350,7 @@ func TestTimeGraphSourceInfoNodeSupportsExpandedMatcher(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	results, err := tg.FindPathResources(
+	results, err := tg.FindTargets(
 		ctx,
 		"node",
 		[]cmdb.Resource{"system"},
@@ -349,9 +360,13 @@ func TestTimeGraphSourceInfoNodeSupportsExpandedMatcher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 1 || results[0].Path[0].Dimensions["region"] != "east" {
+	if len(results) != 1 || results[0].Target.Dimensions["ip"] != "test-ip-1" {
 		t.Fatalf("expanded source matcher did not select enriched node: %+v", results)
 	}
+	// 源节点的 region 是 east，扩展属性不匹配时不能选中它。
+	results, err = tg.FindTargets(ctx, "node", []cmdb.Resource{"system"}, cmdb.Matcher{"node": "n1", "region": "west"}, [][]cmdb.Resource{{"node", "system"}})
+	require.NoError(t, err)
+	require.Empty(t, results)
 }
 
 func TestTimeGraphUsesTimeSpecificExpandedMatcher(t *testing.T) {
@@ -369,13 +384,13 @@ func TestTimeGraphUsesTimeSpecificExpandedMatcher(t *testing.T) {
 	if err := tg.AddTimeRelation(ctx, "node", "system", cmdb.Matcher{"node": "n1", "ip": "test-ip-1"}, 100, 200); err != nil {
 		t.Fatal(err)
 	}
-	results, err := tg.FindPathResources(ctx, "node", []cmdb.Resource{"system"}, cmdb.Matcher{"node": "n1", "region": "west"}, [][]cmdb.Resource{{"node", "system"}})
+	results, err := tg.FindTargets(ctx, "node", []cmdb.Resource{"system"}, cmdb.Matcher{"node": "n1", "region": "west"}, [][]cmdb.Resource{{"node", "system"}})
 	if err != nil || len(results) != 1 || results[0].Timestamp != 200 {
 		t.Fatalf("time-specific expanded matcher was not respected: %v %+v", err, results)
 	}
 }
 
-func TestTimeGraphTargetInfoIsRetainedOnPath(t *testing.T) {
+func TestTimeGraphTargetInfoIsRetainedOnTarget(t *testing.T) {
 	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
 		{Name: "node", Index: cmdb.Index{"node"}},
 		{Name: "system", Index: cmdb.Index{"ip"}, Info: cmdb.Index{"zone"}},
@@ -387,9 +402,9 @@ func TestTimeGraphTargetInfoIsRetainedOnPath(t *testing.T) {
 	if err := tg.AddTimeRelation(ctx, "node", "system", cmdb.Matcher{"node": "n1", "ip": "test-ip-1"}, 100); err != nil {
 		t.Fatal(err)
 	}
-	results, err := tg.FindPathResources(ctx, "node", []cmdb.Resource{"system"}, cmdb.Matcher{"node": "n1"}, [][]cmdb.Resource{{"node", "system"}})
-	if err != nil || len(results) != 1 || results[0].Path[1].Dimensions["zone"] != "zone-a" {
-		t.Fatalf("target info was dropped from path: %v %+v", err, results)
+	results, err := tg.FindTargets(ctx, "node", []cmdb.Resource{"system"}, cmdb.Matcher{"node": "n1"}, [][]cmdb.Resource{{"node", "system"}})
+	if err != nil || len(results) != 1 || results[0].Target.Dimensions["zone"] != "zone-a" {
+		t.Fatalf("target info was dropped from target: %v %+v", err, results)
 	}
 }
 
@@ -439,25 +454,19 @@ func TestTimeGraphResultMatcherOwnershipAfterMutation(t *testing.T) {
 		name           string
 		mutationTarget matcherMutationTarget
 		mutationValue  string
-		wantResult     []PathResourcesResult
+		wantResult     []RelationTarget
 	}{
 		{
 			name:           "input_map_mutation_does_not_change_next_query",
 			mutationTarget: mutationTargetInput,
 			mutationValue:  "modified",
-			wantResult: []PathResourcesResult{{Timestamp: 100, TargetType: "right", Path: []cmdb.PathNode{
-				{ResourceType: "left", Dimensions: cmdb.Matcher{"id": "old"}},
-				{ResourceType: "right", Dimensions: cmdb.Matcher{"id": "old"}},
-			}}},
+			wantResult:     []RelationTarget{{Timestamp: 100, TargetType: "right", Target: cmdb.PathNode{ResourceType: "right", Dimensions: cmdb.Matcher{"id": "old"}}}},
 		},
 		{
 			name:           "returned_map_mutation_does_not_change_next_query",
 			mutationTarget: mutationTargetReturned,
 			mutationValue:  "modified",
-			wantResult: []PathResourcesResult{{Timestamp: 100, TargetType: "right", Path: []cmdb.PathNode{
-				{ResourceType: "left", Dimensions: cmdb.Matcher{"id": "old"}},
-				{ResourceType: "right", Dimensions: cmdb.Matcher{"id": "old"}},
-			}}},
+			wantResult:     []RelationTarget{{Timestamp: 100, TargetType: "right", Target: cmdb.PathNode{ResourceType: "right", Dimensions: cmdb.Matcher{"id": "old"}}}},
 		},
 	}
 	for _, tc := range tests {
@@ -477,13 +486,13 @@ func TestTimeGraphResultMatcherOwnershipAfterMutation(t *testing.T) {
 			if tc.mutationTarget == mutationTargetInput {
 				input["id"] = tc.mutationValue
 			}
-			results, err := tg.FindPathResources(ctx, "left", []cmdb.Resource{"right"}, cmdb.Matcher{"id": "old"}, [][]cmdb.Resource{{"left", "right"}})
+			results, err := tg.FindTargets(ctx, "left", []cmdb.Resource{"right"}, cmdb.Matcher{"id": "old"}, [][]cmdb.Resource{{"left", "right"}})
 			require.NoError(t, err)
 			require.Len(t, results, 1)
 			if tc.mutationTarget == mutationTargetReturned {
-				results[0].Path[0].Dimensions["id"] = tc.mutationValue
+				results[0].Target.Dimensions["id"] = tc.mutationValue
 			}
-			results, err = tg.FindPathResources(ctx, "left", []cmdb.Resource{"right"}, cmdb.Matcher{"id": "old"}, [][]cmdb.Resource{{"left", "right"}})
+			results, err = tg.FindTargets(ctx, "left", []cmdb.Resource{"right"}, cmdb.Matcher{"id": "old"}, [][]cmdb.Resource{{"left", "right"}})
 			require.NoError(t, err)
 			require.Equal(t, tc.wantResult, results)
 		})
@@ -495,21 +504,15 @@ func TestTimeGraphResultSurvivesCleanAndRebuild(t *testing.T) {
 		name          string
 		oldInfo       cmdb.Matcher
 		newInfo       cmdb.Matcher
-		wantOldResult []PathResourcesResult
-		wantNewResult []PathResourcesResult
+		wantOldResult []RelationTarget
+		wantNewResult []RelationTarget
 	}{
 		{
-			name:    "old_result_keeps_owned_dimensions_after_rebuild",
-			oldInfo: cmdb.Matcher{"id": "old"},
-			newInfo: cmdb.Matcher{"id": "new"},
-			wantOldResult: []PathResourcesResult{{Timestamp: 100, TargetType: "right", Path: []cmdb.PathNode{
-				{ResourceType: "left", Dimensions: cmdb.Matcher{"id": "old"}},
-				{ResourceType: "right", Dimensions: cmdb.Matcher{"id": "old"}},
-			}}},
-			wantNewResult: []PathResourcesResult{{Timestamp: 100, TargetType: "right", Path: []cmdb.PathNode{
-				{ResourceType: "left", Dimensions: cmdb.Matcher{"id": "new"}},
-				{ResourceType: "right", Dimensions: cmdb.Matcher{"id": "new"}},
-			}}},
+			name:          "old_result_keeps_owned_dimensions_after_rebuild",
+			oldInfo:       cmdb.Matcher{"id": "old"},
+			newInfo:       cmdb.Matcher{"id": "new"},
+			wantOldResult: []RelationTarget{{Timestamp: 100, TargetType: "right", Target: cmdb.PathNode{ResourceType: "right", Dimensions: cmdb.Matcher{"id": "old"}}}},
+			wantNewResult: []RelationTarget{{Timestamp: 100, TargetType: "right", Target: cmdb.PathNode{ResourceType: "right", Dimensions: cmdb.Matcher{"id": "new"}}}},
 		},
 	}
 	for _, tc := range tests {
@@ -520,14 +523,14 @@ func TestTimeGraphResultSurvivesCleanAndRebuild(t *testing.T) {
 				{Name: "right", Index: cmdb.Index{"id"}},
 			}})
 			require.NoError(t, tg.AddTimeRelation(ctx, "left", "right", tc.oldInfo, 100))
-			oldResults, err := tg.FindPathResources(ctx, "left", []cmdb.Resource{"right"}, tc.oldInfo, [][]cmdb.Resource{{"left", "right"}})
+			oldResults, err := tg.FindTargets(ctx, "left", []cmdb.Resource{"right"}, tc.oldInfo, [][]cmdb.Resource{{"left", "right"}})
 			require.NoError(t, err)
 			require.Equal(t, tc.wantOldResult, oldResults)
 
 			tg.Clean(ctx)
 			require.NoError(t, tg.AddTimeRelation(ctx, "left", "right", tc.newInfo, 100))
 			require.Equal(t, tc.wantOldResult, oldResults)
-			newResults, err := tg.FindPathResources(ctx, "left", []cmdb.Resource{"right"}, tc.newInfo, [][]cmdb.Resource{{"left", "right"}})
+			newResults, err := tg.FindTargets(ctx, "left", []cmdb.Resource{"right"}, tc.newInfo, [][]cmdb.Resource{{"left", "right"}})
 			require.NoError(t, err)
 			require.Equal(t, tc.wantNewResult, newResults)
 		})
@@ -549,21 +552,23 @@ func TestTimeGraphDynamicRelationKeepsEndpointIdentity(t *testing.T) {
 	if err := tg.AddTimeRelationWithRelation(ctx, relation, cmdb.Matcher{"from_id": "svc-1", "to_id": "pod-1"}, 100); err != nil {
 		t.Fatal(err)
 	}
-	results, err := tg.FindRelationPathResources(ctx, "service", []cmdb.Resource{"pod"}, cmdb.Matcher{"id": "svc-1"}, []cmdb.RelationPath{{
+	paths := []cmdb.RelationPath{{
 		Steps: []cmdb.RelationPathStep{
 			{ResourceType: "service"},
 			{ResourceType: "pod", RelationType: "service_to_pod_flow", Category: string(RelationCategoryDynamic)},
 		},
-	}})
-	if err != nil || len(results) != 1 {
-		t.Fatalf("unexpected dynamic relation result: %v %+v", err, results)
-	}
-	if got := results[0].Path[0].Dimensions["id"]; got != "svc-1" {
-		t.Fatalf("unexpected source node: %+v", results[0].Path)
-	}
-	if got := results[0].Path[1].Dimensions["id"]; got != "pod-1" {
-		t.Fatalf("unexpected target node: %+v", results[0].Path)
-	}
+	}}
+	results, err := tg.FindRelationTargets(ctx, "service", []cmdb.Resource{"pod"}, cmdb.Matcher{"id": "svc-1"}, paths)
+	require.NoError(t, err)
+	require.Equal(t, []RelationTarget{{
+		Timestamp:  100,
+		TargetType: "pod",
+		Target:     cmdb.PathNode{ResourceType: "pod", Dimensions: cmdb.Matcher{"id": "pod-1"}},
+	}}, results)
+	// from_ 端是 service 身份：用 to_ 端的值作为源时不能命中。
+	results, err = tg.FindRelationTargets(ctx, "service", []cmdb.Resource{"pod"}, cmdb.Matcher{"id": "pod-1"}, paths)
+	require.NoError(t, err)
+	require.Empty(t, results)
 }
 
 func TestTimeGraphSameTypeDynamicInboundAndOutboundCoexist(t *testing.T) {
@@ -597,11 +602,11 @@ func TestTimeGraphSameTypeDynamicInboundAndOutboundCoexist(t *testing.T) {
 			{ResourceType: "service", RelationType: "service_to_service", Category: string(RelationCategoryDynamic), Direction: string(DirectionInbound)},
 		}},
 	}
-	results, err := tg.FindRelationPathResources(ctx, "service", []cmdb.Resource{"service"}, cmdb.Matcher{"id": "caller"}, paths)
+	results, err := tg.FindRelationTargets(ctx, "service", []cmdb.Resource{"service"}, cmdb.Matcher{"id": "caller"}, paths)
 	require.NoError(t, err)
-	require.Equal(t, []PathResourcesResult{
-		{Timestamp: 100, TargetType: "service", Path: []cmdb.PathNode{{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "caller"}}, {ResourceType: "service", Dimensions: cmdb.Matcher{"id": "callee"}}}},
-		{Timestamp: 100, TargetType: "service", Path: []cmdb.PathNode{{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "caller"}}, {ResourceType: "service", Dimensions: cmdb.Matcher{"id": "other"}}}},
+	require.Equal(t, []RelationTarget{
+		{Timestamp: 100, TargetType: "service", Target: cmdb.PathNode{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "callee"}}},
+		{Timestamp: 100, TargetType: "service", Target: cmdb.PathNode{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "other"}}},
 	}, results)
 }
 
@@ -654,22 +659,22 @@ func TestTimeGraphSingleNodePathRequiresTimestampPresence(t *testing.T) {
 	tests := []struct {
 		name    string
 		samples []sample
-		want    []PathResourcesResult
+		want    []RelationTarget
 	}{
 		{
 			name:    "same_node_present_at_both_timestamps",
 			samples: []sample{{at: 100, id: "n1"}, {at: 200, id: "n1"}},
-			want: []PathResourcesResult{
-				{Timestamp: 100, TargetType: "node", Path: []cmdb.PathNode{{ResourceType: "node", Dimensions: cmdb.Matcher{"id": "n1"}}}},
-				{Timestamp: 200, TargetType: "node", Path: []cmdb.PathNode{{ResourceType: "node", Dimensions: cmdb.Matcher{"id": "n1"}}}},
+			want: []RelationTarget{
+				{Timestamp: 100, TargetType: "node", Target: cmdb.PathNode{ResourceType: "node", Dimensions: cmdb.Matcher{"id": "n1"}}},
+				{Timestamp: 200, TargetType: "node", Target: cmdb.PathNode{ResourceType: "node", Dimensions: cmdb.Matcher{"id": "n1"}}},
 			},
 		},
 		{
 			name:    "nodes_are_visible_only_at_their_own_timestamps",
 			samples: []sample{{at: 100, id: "n1"}, {at: 200, id: "n2"}},
-			want: []PathResourcesResult{
-				{Timestamp: 100, TargetType: "node", Path: []cmdb.PathNode{{ResourceType: "node", Dimensions: cmdb.Matcher{"id": "n1"}}}},
-				{Timestamp: 200, TargetType: "node", Path: []cmdb.PathNode{{ResourceType: "node", Dimensions: cmdb.Matcher{"id": "n2"}}}},
+			want: []RelationTarget{
+				{Timestamp: 100, TargetType: "node", Target: cmdb.PathNode{ResourceType: "node", Dimensions: cmdb.Matcher{"id": "n1"}}},
+				{Timestamp: 200, TargetType: "node", Target: cmdb.PathNode{ResourceType: "node", Dimensions: cmdb.Matcher{"id": "n2"}}},
 			},
 		},
 	}
@@ -684,7 +689,7 @@ func TestTimeGraphSingleNodePathRequiresTimestampPresence(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			got, err := tg.FindRelationPathResources(ctx, "node", []cmdb.Resource{"node"}, nil, []cmdb.RelationPath{{
+			got, err := tg.FindRelationTargets(ctx, "node", []cmdb.Resource{"node"}, nil, []cmdb.RelationPath{{
 				Steps: []cmdb.RelationPathStep{{ResourceType: "node"}},
 			}})
 			if err != nil {

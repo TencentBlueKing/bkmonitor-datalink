@@ -24,6 +24,8 @@ type topologyFetchGroup struct {
 	ctx       context.Context
 	query     *structured.QueryTs
 	relations []cmdb.Relation
+	// noRoute 表示该关系缺少物理路由：取数不访问后端，只按已读且无数据标记 partial。
+	noRoute bool
 }
 
 // compileTopologyFetches 仅合并路由、投影、条件、用户和后端语义均相同的物理查询。
@@ -66,11 +68,12 @@ func (loader *timeGraphMatrixLoader) compileTopologyFetches(ctx context.Context,
 		ts.NotTimeAlign = metadata.IsExactTimeGrid(queryCtx)
 		expression := ""
 		var params *metadata.QueryParams
+		noRoute := false
 		if loader.override == nil {
 			expression, params, err = loader.model.prepareTimeGraphVMQuery(queryCtx, ts)
 			if loader.relationNoRouteReason(err) != "" {
 				// params 为空，复用键保持为空，此关系不会并入其他物理查询。
-				err = nil
+				err, noRoute = nil, true
 			}
 			if err != nil {
 				return nil, err
@@ -86,15 +89,16 @@ func (loader *timeGraphMatrixLoader) compileTopologyFetches(ctx context.Context,
 			if key != "" {
 				indexes[key] = len(groups)
 			}
-			groups = append(groups, topologyFetchGroup{input: input, ctx: queryCtx, query: ts, relations: []cmdb.Relation{input.relation}})
+			groups = append(groups, topologyFetchGroup{input: input, ctx: queryCtx, query: ts, relations: []cmdb.Relation{input.relation}, noRoute: noRoute})
 		}
 	}
 	return groups, nil
 }
 
-func (loader *timeGraphMatrixLoader) fetchTopologyGroup(group topologyFetchGroup, space string, queries *int, collect func(cmdb.Relation, pl.Matrix)) error {
-	apply := func(ctx context.Context, matrix pl.Matrix) error {
-		for i, relation := range group.relations {
+// applyTopologyRelations 把一次物理响应写入共用它的每条逻辑关系。
+func (loader *timeGraphMatrixLoader) applyTopologyRelations(relations []cmdb.Relation, collect func(cmdb.Relation, pl.Matrix)) func(context.Context, pl.Matrix) error {
+	return func(ctx context.Context, matrix pl.Matrix) error {
+		for i, relation := range relations {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
@@ -117,6 +121,10 @@ func (loader *timeGraphMatrixLoader) fetchTopologyGroup(group topologyFetchGroup
 		}
 		return nil
 	}
+}
+
+func (loader *timeGraphMatrixLoader) fetchTopologyGroup(group topologyFetchGroup, space string, queries *int, collect func(cmdb.Relation, pl.Matrix)) error {
+	apply := loader.applyTopologyRelations(group.relations, collect)
 	if len(group.input.identities) > 0 {
 		return loader.loadFrontierBatch(group.ctx, space, group.input.relation, group.input.targetAnchor, group.input.identities, apply, queries)
 	}
@@ -178,6 +186,12 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 			return queries, compileErr
 		}
 		err = loader.fetchTopologyGroups(groups, space, &queries, nil)
+		return queries, err
+	}
+	// 其余有根条件的多跳计划从根逐跳读取实际到达的候选，不再整条读取关系分量。
+	if mode == "bulk" && q.topologyHopFetchEligible(source, identity, relations, visible) {
+		span.Set("fetch-mode", "hop")
+		err = loader.loadTopologyHops(ctx, space, source, identity, relations, wideGroups, plan.hops, reorder, &queries)
 		return queries, err
 	}
 

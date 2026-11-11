@@ -80,7 +80,7 @@ func TestTopologySelectorDynamicFallbackMatchesFullScanWithCompositeKeysAndChang
 					require.Equal(t, canonical, canonicalTopologyForTest(t, decodeCompactForTest(t, compact.Compact)))
 					request.ResponseFormat = ""
 				}
-				require.LessOrEqual(t, counts[1], counts[0], "dynamic relations use fixed broad groups without per-instance expansion")
+				require.LessOrEqual(t, counts[1], counts[0], "hop-by-hop reads return no more series than the whole-relation scan")
 			})
 		}
 	}

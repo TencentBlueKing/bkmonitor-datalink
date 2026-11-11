@@ -8,6 +8,7 @@ package v1beta3
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"time"
 
@@ -160,8 +161,7 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 	ctx, span := trace.NewSpan(ctx, "timegraph-propagate-topology")
 	defer finishTimeGraphStage(ctx, span, "topology-propagation", time.Now(), &err)
 	span.Set("max-hops", query.MaxHops)
-	reachable := make(map[uint64]timeBitmap)
-	frontier := make(map[uint64]timeBitmap)
+	var reachable map[uint64]timeBitmap
 	frontierSizes := make([]int64, 0, 8)
 	completed := 0
 	defer func() {
@@ -170,9 +170,40 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 		span.Set("frontier-levels-truncated", completed >= 64)
 		span.Set("reachable-node-count", len(reachable))
 	}()
+	reachable, err = q.sharedTopologySeeds(ctx, grid, query, nodeBits)
+	if err != nil {
+		return nil, seedCount, err
+	}
+	frontier := maps.Clone(reachable)
+	seedCount = len(frontier)
+	span.Set("source-match-node-count", seedCount)
+	if len(frontierSizes) < 64 {
+		frontierSizes = append(frontierSizes, int64(len(frontier)))
+	}
+
+	for level := 0; level < query.MaxHops && len(frontier) > 0; level++ {
+		frontier, err = sharedTopologyStep(ctx, frontier, reachable, nodeBits, edges)
+		if err != nil {
+			return nil, seedCount, err
+		}
+		completed++
+		if len(frontierSizes) < 64 {
+			frontierSizes = append(frontierSizes, int64(len(frontier)))
+		}
+	}
+	span.Set("reachable-node-count", len(reachable))
+	span.Set("traversal-level-count", query.MaxHops)
+
+	return reachable, seedCount, nil
+}
+
+// sharedTopologySeeds 返回各帧匹配根条件的源类型节点及其时间位。取数阶段与最终遍历
+// 共用这一判定，逐跳取数据此决定从哪些根展开。
+func (q *TimeGraph) sharedTopologySeeds(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, nodeBits map[uint64]timeBitmap) (map[uint64]timeBitmap, error) {
+	seeds := make(map[uint64]timeBitmap)
 	for node, bits := range nodeBits {
 		if err := ctx.Err(); err != nil {
-			return nil, seedCount, err
+			return nil, err
 		}
 		resourceType := q.nodeBuilder.resourceName(node)
 		if resourceType != query.SourceType {
@@ -196,53 +227,38 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 			}
 		}
 		if !matchedBits.empty() {
-			reachable[node] = matchedBits
-			frontier[node] = matchedBits
+			seeds[node] = matchedBits
 		}
 	}
-	seedCount = len(frontier)
-	span.Set("source-match-node-count", seedCount)
-	if len(frontierSizes) < 64 {
-		frontierSizes = append(frontierSizes, int64(len(frontier)))
-	}
+	return seeds, nil
+}
 
-	for level := 0; level < query.MaxHops && len(frontier) > 0; level++ {
-		// 每跳只传播源点、关系和目标点共同活跃的帧；一个节点可在不同帧首次到达。
+// sharedTopologyStep 推进一层并返回新前沿，reachable 原地累积。每跳只传播源点、关系和
+// 目标点共同活跃的帧；一个节点可在不同帧首次到达。
+func sharedTopologyStep(ctx context.Context, frontier, reachable, nodeBits map[uint64]timeBitmap, edges []sharedTopologyEdgeState) (map[uint64]timeBitmap, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	nextFrontier := make(map[uint64]timeBitmap)
+	for _, edge := range edges {
 		if err := ctx.Err(); err != nil {
-			return nil, seedCount, err
+			return nil, err
 		}
-		nextFrontier := make(map[uint64]timeBitmap)
-		discover := func(sourceBits timeBitmap, edge sharedTopologyEdgeState) {
-			// frontier is fixed for this level. Accumulate only previously unseen
-			// target frames; cycles and parallel edges need not enter a second map.
-			target := edge.key.target
-			candidate := sourceBits.intersect(edge.activeBits).subtract(reachable[target])
-			if candidate.empty() {
-				return
-			}
-			candidate = candidate.intersect(nodeBits[target])
-			if candidate.empty() {
-				return
-			}
-			reachable[target] = reachable[target].union(candidate)
-			nextFrontier[target] = nextFrontier[target].union(candidate)
+		// frontier is fixed for this level. Accumulate only previously unseen
+		// target frames; cycles and parallel edges need not enter a second map.
+		target := edge.key.target
+		candidate := frontier[edge.key.source].intersect(edge.activeBits).subtract(reachable[target])
+		if candidate.empty() {
+			continue
 		}
-		for _, edge := range edges {
-			if err := ctx.Err(); err != nil {
-				return nil, seedCount, err
-			}
-			discover(frontier[edge.key.source], edge)
+		candidate = candidate.intersect(nodeBits[target])
+		if candidate.empty() {
+			continue
 		}
-		frontier = nextFrontier
-		completed++
-		if len(frontierSizes) < 64 {
-			frontierSizes = append(frontierSizes, int64(len(frontier)))
-		}
+		reachable[target] = reachable[target].union(candidate)
+		nextFrontier[target] = nextFrontier[target].union(candidate)
 	}
-	span.Set("reachable-node-count", len(reachable))
-	span.Set("traversal-level-count", query.MaxHops)
-
-	return reachable, seedCount, nil
+	return nextFrontier, nil
 }
 
 func (q *TimeGraph) materializeSharedTopologyDTO(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, reachable map[uint64]timeBitmap, edges []sharedTopologyEdgeState) ([]cmdb.SharedTopologySnapshot, error) {

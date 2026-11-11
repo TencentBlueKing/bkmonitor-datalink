@@ -67,7 +67,9 @@ func TestSharedTopologyPartialFirstHopIsNotCompleteEmpty(t *testing.T) {
 		StartTime: 1700000000, EndTime: 1700000100, Step: "100s", MaxHops: 2,
 	})
 	require.NoError(t, err)
-	require.Equal(t, []string{"source_middle_flow", "middle_target_flow"}, fields, "an incomplete first stage continues the broad plan without repeating the root probe")
+	// 首跳已读取根的全部关联关系；部分成功且没有观测到根时没有可展开的候选，
+	// 其余关系也不能再观测到根。结果仍是不完整空，而不是完整空。
+	require.Equal(t, []string{"source_middle_flow"}, fields, "an incomplete empty root read has nothing reached to expand")
 	for _, snapshot := range result.Snapshots {
 		require.Empty(t, snapshot.Nodes)
 		require.True(t, snapshot.Partial)
@@ -215,11 +217,17 @@ func TestSharedTopologyTypeCycleReadsReachedSourceInstances(t *testing.T) {
 		FromType: "middle", ToType: "source", IsDirectional: true, MetricName: "middle_source_flow",
 	})
 	model := &Model{schemaProvider: provider, timeGraphQueryReference: timeGraphTestQueryReference}
-	var sourceQueries int
+	var sourceReads [][]string
 	model.timeGraphVMQuery = func(_ context.Context, q *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
 		switch q.QueryList[0].FieldName {
 		case "source_middle_flow":
-			sourceQueries++
+			identities := []string{}
+			for _, field := range q.QueryList[0].Conditions.FieldList {
+				if field.DimensionName == "source_id" && field.Operator == structured.ConditionEqual {
+					identities = append(identities, field.Value...)
+				}
+			}
+			sourceReads = append(sourceReads, identities)
 			return filterTopologyRegressionMatrix(q, append(
 				contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, 1700000000000),
 				contractMatrix(map[string]string{"source_id": "c", "middle_id": "d"}, 1700000000000)...,
@@ -238,7 +246,8 @@ func TestSharedTopologyTypeCycleReadsReachedSourceInstances(t *testing.T) {
 		Timestamp: 1700000000, MaxHops: 3,
 	})
 	require.NoError(t, err)
-	require.Equal(t, 1, sourceQueries, "the directed type cycle uses one broad read covering every reached source instance")
+	// 有向类型环按层读取：根 a 的首跳，以及第二跳回到起点类型的 c，各按到达的身份读一次。
+	require.Equal(t, [][]string{{"a"}, {"c"}}, sourceReads, "each reached source layer is read by its identities, never as a whole relation")
 	require.Len(t, result.Snapshots[0].Nodes, 4)
 	require.Len(t, result.Snapshots[0].Edges, 3)
 }

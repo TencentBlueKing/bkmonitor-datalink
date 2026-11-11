@@ -313,7 +313,12 @@ func TestTopologySelectorPartialFirstStageRetainsQualityAndChecksWideRoutes(t *t
 				require.Len(t, result.Snapshots[0].Edges, 4)
 				require.True(t, result.Snapshots[0].Partial)
 				require.Equal(t, "backend_partial", result.Snapshots[0].PartialReason)
-				require.Equal(t, map[string]int{"ab": 2, "bc": 1}, fetches, "continue the same loader without repeating source preparation or root probing")
+				want := map[string]int{"ab": 2, "bc": 1}
+				if hops == 6 {
+					// 逐跳取数：根读取一次 ab；展开 b0 时按身份读 ab 与 bc，展开 c0 时按身份再读一次 bc。
+					want["bc"] = 2
+				}
+				require.Equal(t, want, fetches, "continue the same loader without repeating source preparation or root probing")
 			})
 		}
 	}

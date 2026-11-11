@@ -94,15 +94,16 @@ func (loader *timeGraphMatrixLoader) frontierQuery(ctx context.Context, space st
 	return ts, nil
 }
 
-// frontierScopeQuery 用一个查询覆盖整个前沿：取值不超过一批的主键字段收窄到取值
-// 列表，其余字段不收窄。逐字段列表是联合主键的超集，调用方必须按身份过滤结果。
-func (loader *timeGraphMatrixLoader) frontierScopeQuery(ctx context.Context, space string, relation cmdb.Relation, identities []cmdb.Matcher) (*structured.QueryTs, error) {
+// frontierScopeQuery 用一个查询覆盖整个前沿：锚点一端取值不超过一批的主键字段收窄到
+// 取值列表，其余字段不收窄。逐字段列表是联合主键的超集，按路径求可达的调用方必须按身份
+// 过滤结果；多出的序列仍是同一关系的真实边。narrowed 为假时查询等同整条关系的宽读取。
+func (loader *timeGraphMatrixLoader) frontierScopeQuery(ctx context.Context, space string, relation cmdb.Relation, targetAnchor bool, identities []cmdb.Matcher) (ts *structured.QueryTs, narrowed bool, err error) {
 	q := loader.graph
-	ts, err := q.MakeQueryTsWithWindow(ctx, space, nil, loader.start, loader.end, loader.step, loader.lookBack, relation)
+	ts, err = q.MakeQueryTsWithWindow(ctx, space, nil, loader.start, loader.end, loader.step, loader.lookBack, relation)
 	if err != nil || ts == nil {
-		return ts, err
+		return ts, false, err
 	}
-	_, anchorFields := q.frontierAnchorFields(relation, false)
+	_, anchorFields := q.frontierAnchorFields(relation, targetAnchor)
 	values := make(map[string]map[string]struct{}, len(anchorFields))
 	for _, primary := range anchorFields {
 		values[primary] = make(map[string]struct{})
@@ -128,17 +129,19 @@ func (loader *timeGraphMatrixLoader) frontierScopeQuery(ctx context.Context, spa
 		field.Operator = structured.ConditionContains
 		field.Value = list
 		fields[i] = field
+		narrowed = true
 	}
-	return ts, nil
+	return ts, narrowed, nil
 }
 
-// loadFrontier 读取路径下一跳。规模超过阈值时先尝试一次宽读取，响应超过分批边界再
-// 退回分批：边界限制的是单次响应，分批读取的总量仍可以大于它。
-func (loader *timeGraphMatrixLoader) loadFrontier(ctx context.Context, space string, relation cmdb.Relation, identities []cmdb.Matcher, apply func(context.Context, pl.Matrix) error, queries *int) error {
+// loadFrontier 读取以 identities 为锚点一端的关系边。规模超过阈值时先尝试一次宽读取，
+// 响应超过分批边界再退回分批：边界限制的是单次响应，分批读取的总量仍可以大于它。
+// whole 表示成功的宽读取没有收窄任何字段，已读入整条关系。
+func (loader *timeGraphMatrixLoader) loadFrontier(ctx context.Context, space string, relation cmdb.Relation, targetAnchor bool, identities []cmdb.Matcher, apply func(context.Context, pl.Matrix) error, queries *int) (whole bool, err error) {
 	if len(identities) > timeGraphWideFrontierThreshold {
-		ts, err := loader.frontierScopeQuery(ctx, space, relation, identities)
+		ts, narrowed, err := loader.frontierScopeQuery(ctx, space, relation, targetAnchor, identities)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if ts != nil {
 			*queries = *queries + 1
@@ -146,20 +149,23 @@ func (loader *timeGraphMatrixLoader) loadFrontier(ctx context.Context, space str
 			budgeted := metadata.WithBackendResponseLimit(frontierSubqueryContext(ctx), timeGraphBackendResponseBytes)
 			matrix, _, err := loader.query(budgeted, ts)
 			if err == nil {
-				return apply(ctx, matrix)
+				if err := apply(ctx, matrix); err != nil {
+					return false, err
+				}
+				return !narrowed, nil
 			}
 			if !isBackendResponseTooLarge(err) {
-				return err
+				return false, err
 			}
 		}
 	}
 	for offset := 0; offset < len(identities); offset += timeGraphFrontierBatchSize {
 		end := min(offset+timeGraphFrontierBatchSize, len(identities))
-		if err := loader.loadFrontierBatch(ctx, space, relation, false, identities[offset:end], apply, queries); err != nil {
-			return err
+		if err := loader.loadFrontierBatch(ctx, space, relation, targetAnchor, identities[offset:end], apply, queries); err != nil {
+			return false, err
 		}
 	}
-	return nil
+	return false, nil
 }
 
 // frontierSubqueryContext 给一次前沿读取独立的 metadata，保留当前查询阶段。

@@ -679,6 +679,8 @@ func TestLegacyRangeSplitsTooLargeReadsInTime(t *testing.T) {
 		{points: 130, maxPoints: 2},
 		{points: 130, maxPoints: 1},
 		{points: 130, maxPoints: 7, offGrid: true},
+		// 少于 50 点时网格不按缓存边界对齐，末段终点保持不在网格上。
+		{points: 30, maxPoints: 7, offGrid: true},
 	} {
 		t.Run(fmt.Sprintf("%d_points_max_%d_offgrid_%t", tc.points, tc.maxPoints, tc.offGrid), func(t *testing.T) {
 			end := start.Add(time.Duration(tc.points-1) * time.Minute)
@@ -712,7 +714,13 @@ func TestLegacyRangeSplitsTooLargeReadsInTime(t *testing.T) {
 				require.Equal(t, 1, count, "the halves do not overlap at %d", at)
 			}
 			if tc.offGrid {
-				require.Equal(t, grid[len(grid)-1], accepted[len(accepted)-1].end, "the last half reaches the last grid point before the off-grid end")
+				// 达到 50 点时网格对齐到缓存边界，末段终点就是最后一个网格点；少于 50 点时拆出的
+				// 后段沿用不在网格上的原终点。
+				wantEnd := grid[len(grid)-1]
+				if tc.points < 50 {
+					wantEnd = end
+				}
+				require.Equal(t, wantEnd, accepted[len(accepted)-1].end, "the last half keeps the request's last segment end")
 			}
 		})
 	}

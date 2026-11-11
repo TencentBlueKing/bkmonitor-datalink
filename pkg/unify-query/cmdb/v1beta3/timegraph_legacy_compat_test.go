@@ -97,11 +97,11 @@ func TestLegacyCandidateQualityAndLastEmptyPath(t *testing.T) {
 			ctx := context.WithValue(initTimeGraphQueryTestEnvironment(), timeGraphLegacyCompatibilityKey{}, true)
 			metadata.SetStatus(ctx, metadata.QueryTsPartial, "backend_partial")
 			index := 0
-			_, last, err := queryFirstTimeGraphPath(ctx, make([]resourcePath, len(tc.errs)), func(resourcePath) ([]RelationTarget, error) {
+			last, err := queryFirstTimeGraphPath(ctx, make([]resourcePath, len(tc.errs)), func(resourcePath) (bool, error) {
 				err := tc.errs[index]
 				index++
 				metadata.SetStatus(ctx, "another_status", "")
-				return nil, err
+				return false, err
 			})
 			require.Equal(t, tc.last, last)
 			if tc.want != nil {

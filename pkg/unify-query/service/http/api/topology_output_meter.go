@@ -194,7 +194,7 @@ func marshalTopologyItem(ctx context.Context, payload any) ([][]byte, int, error
 	var err error
 	switch item := payload.(type) {
 	case cmdb.SharedTopologyResponseData:
-		err = enc.snapshots(item)
+		err = enc.snapshots(item, len(item.Snapshots), topologySnapshotSlice(item.Snapshots))
 	case cmdb.CompactTopologyResponseData:
 		err = enc.compact(item)
 	default:
@@ -209,7 +209,22 @@ func marshalTopologyItem(ctx context.Context, payload any) ([][]byte, int, error
 	return enc.parts, m.wire, nil
 }
 
-func (enc *topologyItemEncoder) snapshots(item cmdb.SharedTopologyResponseData) error {
+// marshalTopologySnapshotItem 编码 snapshots 格式的一项，帧由 source 逐帧交出、编码后即释放；
+// item.Snapshots 不参与编码。字节与把全部帧放进 item.Snapshots 后编码相同。
+func marshalTopologySnapshotItem(ctx context.Context, item cmdb.SharedTopologyResponseData, count int, source topologySnapshotSource) ([][]byte, int, error) {
+	m := &topologyEncodeMeter{ctx: ctx}
+	enc := &topologyItemEncoder{ctx: ctx, meter: m}
+	err := enc.snapshots(item, count, source)
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	return enc.parts, m.wire, nil
+}
+
+func (enc *topologyItemEncoder) snapshots(item cmdb.SharedTopologyResponseData, count int, source topologySnapshotSource) error {
 	m := enc.meter
 
 	header, err := m.marshal(topologyResponseHeader{item.Code, item.StartTime, item.EndTime, item.Step, item.PointCount})
@@ -222,7 +237,7 @@ func (enc *topologyItemEncoder) snapshots(item cmdb.SharedTopologyResponseData) 
 	if err != nil {
 		return err
 	}
-	frames, err := marshalTopologySnapshotFrames(m, item.Snapshots)
+	frames, err := marshalTopologySnapshotSource(m, count, source)
 	if err != nil {
 		return err
 	}

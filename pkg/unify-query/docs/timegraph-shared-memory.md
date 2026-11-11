@@ -48,7 +48,8 @@
 
 ## 错误与质量
 
-响应逐项编码并分块写出，累计字节只用于 trace 和负载指标。
+响应逐项编码，编码完一项立即写出并释放，批次只保留正在编码的一项；snapshots 由共享图逐帧
+构造并编码，不同时物化全部帧。累计字节只用于 trace 和负载指标。
 
 请求体或批次数量超限使 HTTP 批次失败（topology 原因为 `max_topology_request_bytes`、
 `max_topology_queries`，兼容入口为 `max_relation_request_bytes`、`max_relation_queries`）；单项模型失败通过该项 code/message 返回。单个评估点

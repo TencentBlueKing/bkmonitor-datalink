@@ -10,13 +10,13 @@ import (
 	"errors"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 // observeSharedTopologyResult 统一模型终态，区分校验拒绝、执行失败和不完整响应。
-func observeSharedTopologyResult(ctx context.Context, mode string, started time.Time, validated bool, result cmdb.SharedTopologyResult, err error) {
+// counts 是输出（target_types 过滤后）的节点、边出现次数与 partial 帧数。
+func observeSharedTopologyResult(ctx context.Context, mode string, started time.Time, validated bool, points int, counts topologySnapshotCounts, err error) {
 	metric.CMDBTopologyInFlightAdd(mode, -1)
 	outcome := metric.CMDBTimeGraphErrorResult(err)
 	if err != nil {
@@ -28,23 +28,12 @@ func observeSharedTopologyResult(ctx context.Context, mode string, started time.
 			metric.CMDBTopologyRejectInc(ctx, mode, "invalid_request")
 		}
 	} else {
-		nodes, edges, partial := 0, 0, 0
-		for _, snapshot := range result.Snapshots {
-			nodes += len(snapshot.Nodes)
-			edges += len(snapshot.Edges)
-			if snapshot.Partial {
-				partial++
-			}
-		}
-		if result.Compact != nil {
-			nodes, edges, partial = result.Compact.NodeOccurrences, result.Compact.EdgeOccurrences, len(result.Compact.Partial)
-		}
-		if partial > 0 {
+		if counts.partial > 0 {
 			outcome = metric.CMDBRelationResultPartial
-		} else if nodes == 0 {
+		} else if counts.nodes == 0 {
 			outcome = metric.CMDBRelationResultEmpty
 		}
-		metric.CMDBTopologySizeObserve(ctx, mode, result.PointCount, nodes, edges, partial)
+		metric.CMDBTopologySizeObserve(ctx, mode, points, counts.nodes, counts.edges, counts.partial)
 	}
 	metric.CMDBTopologyObserve(ctx, metric.CMDBTopologyScopeQuery, mode, outcome, time.Since(started))
 }

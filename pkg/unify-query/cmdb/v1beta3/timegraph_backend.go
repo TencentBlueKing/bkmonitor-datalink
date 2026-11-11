@@ -170,8 +170,9 @@ func resourcePathSortKey(path resourcePath) string {
 	return strings.Join(parts, "|")
 }
 
-// 旧路径查询遇到首个有效结果即停止；其他候选路径失败不会直接中断查询。
-func queryFirstTimeGraphPath(ctx context.Context, paths []resourcePath, query func(resourcePath) ([]RelationTarget, error)) (results []RelationTarget, lastSuccess int, err error) {
+// 旧路径查询遇到首个有效结果即停止；其他候选路径失败不会直接中断查询。query 自行保存
+// 候选的结果，返回它是否命中。
+func queryFirstTimeGraphPath(ctx context.Context, paths []resourcePath, query func(resourcePath) (bool, error)) (lastSuccess int, err error) {
 	lastSuccess = -1
 	reasons := make(map[string]struct{})
 	collectQuality := func() {
@@ -198,19 +199,19 @@ func queryFirstTimeGraphPath(ctx context.Context, paths []resourcePath, query fu
 	var failures []any
 	for index, path := range paths {
 		if err := ctx.Err(); err != nil {
-			return nil, lastSuccess, err
+			return lastSuccess, err
 		}
-		results, err := query(path)
+		hit, err := query(path)
 		collectQuality()
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return nil, lastSuccess, err
+				return lastSuccess, err
 			}
 			// 单个评估点仍超过单次响应边界时首选路径的答案无法确认，换下一条候选可能返回
 			// 另一条路径的结果，因此直接失败。
 			var unsplittable *UnsplittableResponseError
 			if errors.As(err, &unsplittable) {
-				return nil, lastSuccess, err
+				return lastSuccess, err
 			}
 			var routeErr *relationNoPhysicalRouteError
 			if timeGraphLegacyCompatibility(ctx) && errors.As(err, &routeErr) {
@@ -222,8 +223,8 @@ func queryFirstTimeGraphPath(ctx context.Context, paths []resourcePath, query fu
 			continue
 		}
 		lastSuccess = index
-		if len(results) > 0 {
-			return results, lastSuccess, nil
+		if hit {
+			return lastSuccess, nil
 		}
 	}
 	if len(failures) > 0 {
@@ -232,9 +233,9 @@ func queryFirstTimeGraphPath(ctx context.Context, paths []resourcePath, query fu
 			prefix = "all relation paths failed"
 		}
 		// 保留旧路径列表文案，同时让取消和限额错误仍可由 errors.Is/As 识别。
-		return nil, lastSuccess, fmt.Errorf(prefix+": ["+strings.Repeat("%w ", len(failures)-1)+"%w]", failures...)
+		return lastSuccess, fmt.Errorf(prefix+": ["+strings.Repeat("%w ", len(failures)-1)+"%w]", failures...)
 	}
-	return nil, lastSuccess, nil
+	return lastSuccess, nil
 }
 
 func resourcePathsToTimeGraphPaths(paths []resourcePath) [][]cmdb.Resource {
@@ -350,13 +351,19 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
 	result.candidatePathCount = len(candidatePaths)
-	results, lastSuccess, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) ([]RelationTarget, error) {
-		return m.QueryRelationTimeGraph(
+	var results []RelationTarget
+	lastSuccess, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) (bool, error) {
+		pathResults, err := m.QueryRelationTimeGraph(
 			ctx, lookBackDelta, spaceUID, queryTimestamp, queryTimestamp, 5*time.Minute,
 			cmdb.Resource(req.SourceType), []cmdb.Resource{cmdb.Resource(req.TargetType)},
 			resourcePathsToTimeGraphRelationPaths([]resourcePath{path}),
 			cmdb.Matcher(req.SourceInfo), cmdb.Matcher(req.SourceExpandInfo),
 		)
+		if err != nil {
+			return false, err
+		}
+		results = pathResults
+		return len(results) > 0, nil
 	})
 	if err != nil {
 		return timeGraphLegacyResult{}, err
@@ -470,19 +477,26 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
 	result.candidatePathCount = len(candidatePaths)
-	results, lastSuccess, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) ([]RelationTarget, error) {
+	provider := m.getSchemaProvider()
+	// 每段的结果立即并入该候选的时间桶，不跨段保留 RelationTarget；工作集是当前段的结果
+	// 与已去重的分桶。只有选中的候选的分桶留到最后构造响应。
+	var timeSeries map[int64]map[string]cmdb.Matcher
+	lastSuccess, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) (bool, error) {
 		pathStart, pathEnd := startTime, endTime
 		if mayAdjustGrid {
 			useVM, routeErr := m.legacyRangeUsesVM(ctx, req, path, startTime, endTime, stepDuration, window)
 			if routeErr != nil {
-				return nil, routeErr
+				return false, routeErr
 			}
 			if useVM {
 				pathStart, pathEnd = time.UnixMilli(cacheStartMs), time.UnixMilli(cacheEndMs)
 			}
 		}
+		// 分桶必须使用本候选的网格，不能沿用前一个候选。
+		bucketStart, bucketEnd := pathStart.UnixMilli(), pathEnd.UnixMilli()
 		var (
-			pathResults []RelationTarget
+			pathBuckets = make(map[int64]map[string]cmdb.Matcher)
+			rawResults  int
 			noRouteErr  error
 			routed      bool
 		)
@@ -507,40 +521,21 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 				continue
 			}
 			if queryErr != nil {
-				return nil, queryErr
+				return false, queryErr
 			}
 			routed = true
-			pathResults = append(pathResults, segmentResults...)
+			rawResults += len(segmentResults)
+			bucketRelationTargets(pathBuckets, segmentResults, req, provider, bucketStart, bucketEnd, stepMs)
 			segments.observe(segment, graphPoints)
 		}
 		if !routed && noRouteErr != nil {
-			return nil, noRouteErr
+			return false, noRouteErr
 		}
-		// 分桶必须使用本次成功候选的网格，不能沿用前一个候选。
-		startMs, endMs = pathStart.UnixMilli(), pathEnd.UnixMilli()
-		return pathResults, nil
+		timeSeries, result.rawResultCount = pathBuckets, rawResults
+		return rawResults > 0, nil
 	})
 	if err != nil {
 		return result, err
-	}
-	result.rawResultCount = len(results)
-
-	provider := m.getSchemaProvider()
-	timeSeries := make(map[int64]map[string]cmdb.Matcher)
-	for _, result := range results {
-		key, matcher, ok := timeGraphTargetMatcher(result.Target, req.TargetType, provider, req.SchemaNamespace(), req.TargetInfoShow)
-		if !ok {
-			continue
-		}
-		timestampMs := normalizeTimeGraphResultTimestamp(result.Timestamp)
-		bucket, ok := timeGraphRangeBucket(timestampMs, startMs, endMs, stepMs)
-		if !ok {
-			continue
-		}
-		if timeSeries[bucket] == nil {
-			timeSeries[bucket] = make(map[string]cmdb.Matcher)
-		}
-		timeSeries[bucket][key] = matcher
 	}
 
 	series := make([]cmdb.MatchersWithTimestamp, 0, len(timeSeries))
@@ -572,6 +567,24 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	span.Set("bucket-count", result.bucketCount)
 	span.Set("target-count", result.targetCount)
 	return result, nil
+}
+
+// bucketRelationTargets 把一段的目标并入时间桶：同一桶内按主键去重，段之间互不重叠。
+func bucketRelationTargets(buckets map[int64]map[string]cmdb.Matcher, results []RelationTarget, req *QueryRequest, provider SchemaProvider, start, end, step int64) {
+	for _, target := range results {
+		key, matcher, ok := timeGraphTargetMatcher(target.Target, req.TargetType, provider, req.SchemaNamespace(), req.TargetInfoShow)
+		if !ok {
+			continue
+		}
+		bucket, ok := timeGraphRangeBucket(normalizeTimeGraphResultTimestamp(target.Timestamp), start, end, step)
+		if !ok {
+			continue
+		}
+		if buckets[bucket] == nil {
+			buckets[bucket] = make(map[string]cmdb.Matcher)
+		}
+		buckets[bucket][key] = matcher
+	}
 }
 
 // legacySelectedPath 返回旧响应的 path。候选路径逐条查询，命中时最后一条

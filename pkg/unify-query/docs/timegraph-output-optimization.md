@@ -13,9 +13,10 @@ flowchart TD
     C --> D[Fetch or reuse a request-local Matrix]
     D --> E[Apply relations to shared graph]
     E --> F[Propagate per-frame reachability and induced edges]
-    F --> G[Materialize requested format]
-    G --> H[Encode each item into chunks]
-    H --> I[Write response and release the slot]
+    F --> G[Materialize compact, or build snapshots frame by frame]
+    G --> H[Encode the item into chunks]
+    H --> I[Write the item, release it, continue with the next item]
+    I --> J[Finish the batch and release the slot]
 ```
 
 ### Matrix Reuse
@@ -102,14 +103,21 @@ The [JavaScript reader](examples/topology-compact.mjs) retains string IDs and
 materializes a requested frame with independent attribute maps. The consumer
 fixtures cover both formats, historical attributes, output filters and failures.
 
-Both formats use the chunked item encoder. Item chunks are retained for the
-final batch write; repeated node/edge encodings may be reused within the item.
-Encoded bytes are counted for traces and the `response-item` payload metric;
-they are not a rejection reason. A compact item whose conservative JSON bound
-is at most 4 MiB is encoded whole; larger items are encoded row by row so the
-largest single allocation stays near the 64 KiB chunk size. Both paths produce
-the same bytes. Version-heavy graphs can still produce large responses, and
-instance memory is sized for them.
+Both formats use the chunked item encoder. Each item is written to the response
+as soon as it is encoded and then released, so a batch holds only the item being
+encoded. Snapshots are built frame by frame from the shared graph and encoded as
+they are produced; the K frame DTOs are never materialized together. Repeated
+node/edge encodings may be reused within the item. Encoded bytes are counted for
+traces and the `response-item` payload metric; they are not a rejection reason.
+A compact item whose conservative JSON bound is at most 4 MiB is encoded whole;
+larger items are encoded row by row so the largest single allocation stays near
+the 64 KiB chunk size. All paths produce the same bytes.
+
+Once the first item has been written, the HTTP status and success envelope are
+fixed. If the request deadline or cancellation arrives later, the current and
+remaining items are written as failed items (`code: 400` with the cause), so the
+response is still complete JSON. Before the first write, such a failure fails
+the whole request as before.
 
 ## Resource Protection
 

@@ -82,122 +82,150 @@ type topologyCachedEdge struct {
 	boundary uint64
 }
 
+// topologySnapshotSource 按顺序交出快照帧；共交出声明的帧数。
+type topologySnapshotSource func(yield func(cmdb.SharedTopologySnapshot) error) error
+
+func topologySnapshotSlice(snapshots []cmdb.SharedTopologySnapshot) topologySnapshotSource {
+	return func(yield func(cmdb.SharedTopologySnapshot) error) error {
+		for _, snapshot := range snapshots {
+			if err := yield(snapshot); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
 func marshalTopologySnapshotFrames(meter *topologyEncodeMeter, snapshots []cmdb.SharedTopologySnapshot) ([][]byte, error) {
+	return marshalTopologySnapshotSource(meter, len(snapshots), topologySnapshotSlice(snapshots))
+}
+
+// marshalTopologySnapshotSource 逐帧编码：每帧编码完即可丢弃该帧的 DTO，片段与一次性编码全部帧相同。
+func marshalTopologySnapshotSource(meter *topologyEncodeMeter, count int, source topologySnapshotSource) ([][]byte, error) {
 	ctx := meter.ctx
 	b := topologySnapshotChunkBuilder{meter: meter, byHash: make(map[uint64][][]byte)}
 	nodes := make(map[uint64]topologyCachedNode)
 	edges := make(map[cmdb.SharedTopologyEdge]topologyCachedEdge)
 	raw := func(text string) error { return b.append([]byte(text), 1) }
-	for frame, snapshot := range snapshots {
+	frame := 0
+	err := source(func(snapshot cmdb.SharedTopologySnapshot) (err error) {
+		defer func() { frame++ }()
+		if frame >= count {
+			return fmt.Errorf("topology snapshots exceed the declared %d frames", count)
+		}
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return err
 		}
 		header, err := b.meter.marshal(topologySnapshotHeader{snapshot.Timestamp})
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if err = b.append(header[:len(header)-1], 1); err != nil {
-			return nil, err
+			return err
 		}
 		if err = raw(`,"nodes":`); err != nil {
-			return nil, err
+			return err
 		}
 		if snapshot.Nodes == nil {
 			if err = raw("null"); err != nil {
-				return nil, err
+				return err
 			}
 		} else {
 			if err = raw("["); err != nil {
-				return nil, err
+				return err
 			}
 			// Isolate the changing timestamp from otherwise stable node blocks.
 			if err := b.flush(); err != nil {
-				return nil, err
+				return err
 			}
 			for index, node := range snapshot.Nodes {
 				if err := ctx.Err(); err != nil {
-					return nil, err
+					return err
 				}
 				cached, exists := nodes[node.ID]
 				if !exists || cached.node.ResourceType != node.ResourceType || (cached.node.Dimensions == nil) != (node.Dimensions == nil) || !maps.Equal(cached.node.Dimensions, node.Dimensions) {
 					encoded, e := b.meter.marshal(node)
 					if e != nil {
-						return nil, e
+						return e
 					}
 					cached = topologyCachedNode{node: node, encoded: encoded, boundary: xxhash.Sum64(encoded)}
 					nodes[node.ID] = cached
 				}
 				if err = b.append(cached.encoded, cached.boundary); err != nil {
-					return nil, err
+					return err
 				}
 				if index+1 < len(snapshot.Nodes) {
 					if err = b.append([]byte(","), 1); err != nil {
-						return nil, err
+						return err
 					}
 				}
 			}
 			if err = raw("]"); err != nil {
-				return nil, err
+				return err
 			}
 		}
 		if err := b.flush(); err != nil {
-			return nil, err
+			return err
 		}
 		if err = raw(`,"edges":`); err != nil {
-			return nil, err
+			return err
 		}
 		if snapshot.Edges == nil {
 			if err = raw("null"); err != nil {
-				return nil, err
+				return err
 			}
 		} else {
 			if err = raw("["); err != nil {
-				return nil, err
+				return err
 			}
 			for index, edge := range snapshot.Edges {
 				if err := ctx.Err(); err != nil {
-					return nil, err
+					return err
 				}
 				cached, exists := edges[edge]
 				if !exists {
 					encoded, e := b.meter.marshal(edge)
 					if e != nil {
-						return nil, e
+						return e
 					}
 					cached = topologyCachedEdge{encoded: encoded, boundary: xxhash.Sum64(encoded)}
 					edges[edge] = cached
 				}
 				if err = b.append(cached.encoded, cached.boundary); err != nil {
-					return nil, err
+					return err
 				}
 				if index+1 < len(snapshot.Edges) {
 					if err = b.append([]byte(","), 1); err != nil {
-						return nil, err
+						return err
 					}
 				}
 			}
 			if err = raw("]"); err != nil {
-				return nil, err
+				return err
 			}
 		}
 		trailer, err := b.meter.marshal(topologySnapshotTrailer{snapshot.Partial, snapshot.PartialReason})
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if err = raw(","); err != nil {
-			return nil, err
+			return err
 		}
 		if err = b.append(trailer[1:], 1); err != nil {
-			return nil, err
+			return err
 		}
-		if frame+1 < len(snapshots) {
+		if frame+1 < count {
 			if err = raw(","); err != nil {
-				return nil, err
+				return err
 			}
 		}
-		if err := b.flush(); err != nil {
-			return nil, err
-		}
+		return b.flush()
+	})
+	if err != nil {
+		return nil, err
+	}
+	if frame != count {
+		return nil, fmt.Errorf("topology snapshots ended after %d of %d frames", frame, count)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err

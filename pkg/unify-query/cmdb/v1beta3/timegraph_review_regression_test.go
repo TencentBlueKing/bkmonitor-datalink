@@ -192,13 +192,15 @@ func TestLegacyTimeGraphFirstPathExecution(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0
-			results, _, err := queryFirstTimeGraphPath(context.Background(), make([]resourcePath, len(test.errors)), func(resourcePath) ([]RelationTarget, error) {
+			var results []RelationTarget
+			_, err := queryFirstTimeGraphPath(context.Background(), make([]resourcePath, len(test.errors)), func(resourcePath) (bool, error) {
 				index := calls
 				calls++
 				if index == test.hitAt {
-					return []RelationTarget{{TargetType: "target"}}, nil
+					results = []RelationTarget{{TargetType: "target"}}
+					return true, nil
 				}
-				return nil, test.errors[index]
+				return false, test.errors[index]
 			})
 			require.Equal(t, test.wantCalls, calls)
 			if test.wantError != nil {

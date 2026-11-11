@@ -296,7 +296,8 @@ func TestPartialPathFallbackKeepsKnownQualityAndFailedPathsDoNotPublish(t *testi
 	}
 	paths := []resourcePath{{Steps: []resourcePathStep{{ResourceType: "node"}, {ResourceType: "middle", RelationType: "node_to_middle"}}}, {Steps: []resourcePathStep{{ResourceType: "node"}, {ResourceType: "middle", RelationType: "node_to_middle"}}}}
 	call := 0
-	results, _, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) ([]RelationTarget, error) {
+	var results []RelationTarget
+	_, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) (bool, error) {
 		call++
 		expand := cmdb.Matcher{"zone": "east"}
 		matcher := cmdb.Matcher{"node_id": "n1", "zone": "east"}
@@ -304,7 +305,9 @@ func TestPartialPathFallbackKeepsKnownQualityAndFailedPathsDoNotPublish(t *testi
 			expand = nil
 			matcher = cmdb.Matcher{"node_id": "n1"}
 		}
-		return model.QueryRelationTimeGraph(ctx, "", "space", time.Unix(1700000000, 0), time.Unix(1700000000, 0), time.Minute, "node", []cmdb.Resource{"middle"}, resourcePathsToTimeGraphRelationPaths([]resourcePath{path}), matcher, expand)
+		pathResults, err := model.QueryRelationTimeGraph(ctx, "", "space", time.Unix(1700000000, 0), time.Unix(1700000000, 0), time.Minute, "node", []cmdb.Resource{"middle"}, resourcePathsToTimeGraphRelationPaths([]resourcePath{path}), matcher, expand)
+		results = pathResults
+		return len(pathResults) > 0, err
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, results)

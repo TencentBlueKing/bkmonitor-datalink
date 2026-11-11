@@ -19,7 +19,7 @@ import (
 
 func setDefaultConfig() {
 	viper.SetDefault(MaxHopsConfigPath, 2)
-	viper.SetDefault(MaxAllowedHopsConfigPath, 6)
+	viper.SetDefault(MaxAllowedHopsConfigPath, 10)
 	viper.SetDefault(MaxRangePointsConfigPath, 11000)
 	viper.SetDefault(MaxSharedTopologyPointsConfigPath, 60)
 	viper.SetDefault(MaxSharedTopologyRequestBytesConfigPath, 1024*1024)

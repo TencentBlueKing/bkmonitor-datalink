@@ -16,7 +16,7 @@
 | 配置 | 默认值 | 含义 |
 | --- | --- | --- |
 | `max_hops` | 2 | topology 省略 H 时的查询深度 |
-| `max_allowed_hops` | 6 | topology 显式深度上限；旧兼容查询枚举不受此限 |
+| `max_allowed_hops` | 10 | topology 显式深度上限；旧兼容查询枚举不受此限 |
 | `max_shared_topology_points` | 60 | 网格点数，可调低；非正或大于 60 的配置回退到 60 |
 | `max_shared_topology_request_bytes` | 1048576（1 MiB） | topology 请求体上限；代理路径按 `data` 内层载荷计 |
 | `max_shared_topology_queries` | 16 | 单个 HTTP 批次查询条数 |

@@ -57,7 +57,7 @@ func TestRelationConfigRestoresOverridesAndRuntime(t *testing.T) {
 	beforeSettings := viper.AllSettings()
 	require.True(t, t.Run("isolated_defaults", func(t *testing.T) {
 		useRelationTestConfig(t)
-		require.Equal(t, 6, v1beta3.MaxAllowedHops)
+		require.Equal(t, 10, v1beta3.MaxAllowedHops)
 		require.Equal(t, 11000, v1beta3.MaxRangePoints)
 		require.Equal(t, "preserved", viper.GetString("review.unrelated"))
 		for key, value := range relationRuntimeConfig() {

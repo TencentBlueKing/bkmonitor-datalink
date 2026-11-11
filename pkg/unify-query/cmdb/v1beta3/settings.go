@@ -29,7 +29,7 @@ const (
 // 工作集由分批、分段和流式编码约束，容量按规格表配置实例资源。
 var (
 	DefaultMaxHops                = 2
-	MaxAllowedHops                = 6
+	MaxAllowedHops                = 10
 	MaxRangePoints                = 11000
 	MaxSharedTopologyPoints       = 60
 	MaxSharedTopologyRequestBytes = 1024 * 1024

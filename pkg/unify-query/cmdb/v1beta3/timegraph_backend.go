@@ -99,7 +99,7 @@ func (m *Model) buildTimeGraphRequest(
 		return nil, nil, err
 	}
 	// Legacy callers enumerate all simple schema paths, without a hop ceiling.
-	// Preserve execution budgets and cancellation for every backend query.
+	// Every backend query keeps the request deadline, cancellation and the single-response boundary.
 	req.MaxHops = int(^uint(0) >> 1)
 	// 保持现有 v1beta3 旧接口的兼容语义：先用主键字段确定源资源，再用
 	// source_expand_info 按非主键节点属性过滤已经确定的源资源。

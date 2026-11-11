@@ -16,17 +16,28 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
-// 图规模不设上限：节点、边和节点时间点超过旧的计数上限时照常写入，重复观测不重复计数。
+// 图规模不设上限：节点、边和节点时间点超过旧的默认计数上限（节点 100000、边 200000、
+// 节点时间点 1000000）时照常写入，重复观测不重复计数。数量取自旧默认值加一，旧实现在这些
+// 规模上会拒绝。
+const (
+	formerMaxGraphNodes     = 100000
+	formerMaxGraphEdges     = 200000
+	formerMaxGraphNodeInfos = 1000000
+)
+
 func TestTimeGraphNodesHaveNoCountCap(t *testing.T) {
 	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{{Name: "node", Index: cmdb.Index{"id"}}}})
-	for _, id := range []string{"n1", "n1", "n2", "n3"} {
-		require.NoError(t, tg.AddTimeNode(context.Background(), "node", cmdb.Matcher{"id": id}, 100))
+	for i := 0; i <= formerMaxGraphNodes; i++ {
+		require.NoError(t, tg.AddTimeNode(context.Background(), "node", cmdb.Matcher{"id": strconv.Itoa(i)}, 100))
 	}
-	require.Equal(t, 3, tg.nodeBuilder.Length())
+	require.NoError(t, tg.AddTimeNode(context.Background(), "node", cmdb.Matcher{"id": "0"}, 100))
+	require.Equal(t, formerMaxGraphNodes+1, tg.nodeBuilder.Length())
 }
 
 func TestTimeGraphRelationEntryNodesHaveNoCountCap(t *testing.T) {
-	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{{Name: "service", Index: cmdb.Index{"id"}}}})
+	grid, err := NewTopologyGrid([]int64{100})
+	require.NoError(t, err)
+	tg := newSharedTimeGraph(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{{Name: "service", Index: cmdb.Index{"id"}}}}, grid)
 	relation := cmdb.Relation{
 		V:            []cmdb.Resource{"service", "service"},
 		RelationType: "service_to_service",
@@ -34,30 +45,40 @@ func TestTimeGraphRelationEntryNodesHaveNoCountCap(t *testing.T) {
 		Category:     string(RelationCategoryDynamic),
 		Direction:    string(DirectionOutbound),
 	}
-	for _, info := range []cmdb.Matcher{{"from_id": "a", "to_id": "b"}, {"from_id": "a", "to_id": "c"}, {"from_id": "a", "to_id": "d"}} {
-		require.NoError(t, tg.AddTimeRelationWithRelation(context.Background(), relation, info, 100))
+	for i := 0; i < formerMaxGraphNodes; i++ {
+		require.NoError(t, tg.AddTimeRelationWithRelation(context.Background(), relation, cmdb.Matcher{"from_id": "a", "to_id": strconv.Itoa(i)}, 100))
 	}
-	require.Equal(t, 4, tg.nodeBuilder.Length())
+	require.NoError(t, tg.AddTimeRelationWithRelation(context.Background(), relation, cmdb.Matcher{"from_id": "a", "to_id": "0"}, 100))
+	require.Equal(t, formerMaxGraphNodes+1, tg.nodeBuilder.Length())
 }
 
 func TestTimeGraphEdgesHaveNoCountCap(t *testing.T) {
-	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
+	grid, err := NewTopologyGrid([]int64{100})
+	require.NoError(t, err)
+	tg := newSharedTimeGraph(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
 		{Name: "left", Index: cmdb.Index{"id"}},
 		{Name: "right", Index: cmdb.Index{"id"}},
-	}})
+	}}, grid)
 	relation := cmdb.Relation{V: []cmdb.Resource{"left", "right"}, RelationType: "left_to_right"}
-	for _, id := range []string{"a", "a", "b", "c"} {
-		require.NoError(t, tg.AddTimeRelationWithRelation(context.Background(), relation, cmdb.Matcher{"id": id}, 100))
+	for i := 0; i <= formerMaxGraphEdges; i++ {
+		require.NoError(t, tg.AddTimeRelationWithRelation(context.Background(), relation, cmdb.Matcher{"id": strconv.Itoa(i)}, 100))
 	}
-	require.Equal(t, 3, tg.edgeCount)
+	require.NoError(t, tg.AddTimeRelationWithRelation(context.Background(), relation, cmdb.Matcher{"id": "0"}, 100))
+	require.Equal(t, formerMaxGraphEdges+1, tg.edgeCount)
 }
 
 func TestTimeGraphNodeInfosHaveNoCountCap(t *testing.T) {
-	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{{Name: "node", Index: cmdb.Index{"id"}}}})
-	for _, timestamp := range []int64{100, 100, 200, 300} {
-		require.NoError(t, tg.AddTimeNode(context.Background(), "node", cmdb.Matcher{"id": "n1"}, timestamp))
+	timestamps := sharedTopologyTestTimes(60)
+	grid, err := NewTopologyGrid(timestamps)
+	require.NoError(t, err)
+	tg := newSharedTimeGraph(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{{Name: "node", Index: cmdb.Index{"id"}}}}, grid)
+	nodes := formerMaxGraphNodeInfos/len(timestamps) + 1
+	for i := 0; i < nodes; i++ {
+		require.NoError(t, tg.AddTimeNode(context.Background(), "node", cmdb.Matcher{"id": strconv.Itoa(i)}, timestamps...))
 	}
-	require.Equal(t, 3, tg.nodeInfoCount)
+	require.NoError(t, tg.AddTimeNode(context.Background(), "node", cmdb.Matcher{"id": "0"}, timestamps...))
+	require.Greater(t, tg.nodeInfoCount, formerMaxGraphNodeInfos)
+	require.Equal(t, nodes*len(timestamps), tg.nodeInfoCount)
 }
 
 // FindRelationTargets 没有结果上限。

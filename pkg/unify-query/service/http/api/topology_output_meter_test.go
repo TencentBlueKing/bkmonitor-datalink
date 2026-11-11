@@ -65,9 +65,10 @@ func TestOutputMeterMechanisms(t *testing.T) {
 	})
 	t.Run("dto-empty-and-numeric-boundaries", func(t *testing.T) {
 		cases := []any{
-			topologyResponseHeader{Code: -1, Start: -9223372036854775808, End: 9223372036854775807},
-			topologySnapshotTrailer{Partial: false, Reason: ""},
 			cmdb.CompactTopologyNode{ID: "", ResourceType: "", Dimensions: nil, Mask: nil},
+			cmdb.CompactTopologyEdge{},
+			[]cmdb.CompactTopologyPartial{},
+			[]cmdb.CompactTopologyPartial{{Index: 59, Reason: "relation_no_physical_route:a;relation_no_physical_route:b"}},
 		}
 		for _, value := range cases {
 			encoded, err := json.Marshal(value)

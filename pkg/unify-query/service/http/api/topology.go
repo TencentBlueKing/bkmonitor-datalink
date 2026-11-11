@@ -152,15 +152,9 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 	}
 	ctx, release, err := v1beta3.AcquireSharedTopologyWithQueuedPreparation(ctx, prepareBody)
 	if err != nil {
+		// 准入只因期限、取消或排队时读取请求体失败而返回错误；请求体超限已在 prepareBody 中
+		// 计为拒绝。准入已释放排队位置，返回限长错误而不是空的 HTTP 200。
 		handlerErr = err
-		var limit interface{ TruncationReason() string }
-		if requestResult != metric.CMDBRelationResultRejected && errors.As(err, &limit) {
-			requestResult = metric.CMDBRelationResultRejected
-			metric.CMDBTopologyRejectInc(ctx, queryMode, limit.TruncationReason())
-		}
-		// Admission has already canceled/released its lease. Report the bounded
-		// failure rather than silently producing an empty HTTP 200; no query or
-		// success payload runs under this context. Socket WriteTimeout remains.
 		failBeforeQuery(ctx, err)
 		return
 	}

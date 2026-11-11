@@ -167,8 +167,9 @@ compact 版本为 `version:1`；timestamps 是整份网格，节点/边按属性
 | 无匹配根/无关系观测 | 200 / 200 | 保留空时间帧，partial=false；不要当执行失败 |
 | info 有路由但属性条件无命中 | 200 / 200 | 完整空帧，partial=false；不能借别的根补答案 |
 | 显式根属性查询缺 info 路由 | 200 / 200 | 空帧且 partial=true、source_info_no_route；不能当确认无实体 |
-| 范围内关系缺物理路由 | 200 / 200 | 保留其他关系取得的图；所有帧 partial=true，partial_reason 含 relation_no_physical_route:<指标>，不宣称完整。范围内关系都缺路由时为空帧加同样标记 |
+| 取数时遇到的缺路由关系 | 200 / 200 | 保留其他关系取得的图；所有帧 partial=true，partial_reason 含 relation_no_physical_route:<指标>，不宣称完整。实际读取的关系都缺路由时为空帧加同样标记 |
 | 后端 partial | 200 / 200 | 保留已有图并标记对应帧 backend_partial；不宣称完整 |
+| 一帧有多个不完整原因 | 200 / 200 | partial_reason 按字典序排列、以 `;` 连接，如 `backend_partial;relation_no_physical_route:<指标>`；compact 的 partial[].reason 相同 |
 | 参数非法或单项后端执行失败 | 200 / 400 | 此项无可用图，保留其他成功项；失败 compact=null 或 snapshots=[] |
 | JSON 错误、请求体/批次数量超限 | 400 / 无 data 项 | 整个请求失败，直接响应为 {error:...} |
 | 单次后端响应无法再拆分 | 200 / 400 | max_response_bytes：根读取、整类关系的宽读取、单个身份的读取或 info 读取已按时间拆到单个评估点，仍超过分批边界；按单项失败处理 |
@@ -181,7 +182,7 @@ compact 版本为 `version:1`；timestamps 是整份网格，节点/边按属性
 两个典型响应，完整请求与响应见夹具：
 
 ```json
-{"trace_id":"","data":[{"code":200,"start_time":1700000000000,"end_time":1700000000000,"step":"","point_count":1,"snapshots":[{"timestamp":1700000000000,"nodes":[],"edges":[],"partial":true,"partial_reason":"relation_no_physical_route:node_with_pod_relation"}]}]}
+{"trace_id":"","data":[{"code":200,"start_time":1700000000000,"end_time":1700000000000,"step":"0s","point_count":1,"snapshots":[{"timestamp":1700000000000,"nodes":[],"edges":[],"partial":true,"partial_reason":"relation_no_physical_route:node_with_pod_relation"}]}]}
 ```
 
 ```json

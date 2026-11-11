@@ -152,8 +152,8 @@ func (loader *timeGraphMatrixLoader) loadFrontier(ctx context.Context, space str
 		if ts != nil && !loader.tooLargeScopes[scope] {
 			*queries = *queries + 1
 			// 独立子查询：被拒收的读取留下的质量状态不能影响替代它的分批读取。
-			budgeted := metadata.WithBackendResponseLimit(frontierSubqueryContext(ctx), timeGraphBackendResponseBytes)
-			matrix, _, err := loader.query(budgeted, ts)
+			bounded := metadata.WithBackendResponseLimit(frontierSubqueryContext(ctx), timeGraphBackendResponseBytes)
+			matrix, _, err := loader.query(bounded, ts)
 			if err == nil {
 				if err := apply(ctx, matrix); err != nil {
 					return false, err

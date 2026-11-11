@@ -30,8 +30,7 @@ func (m *topologyEncodeMeter) wirePart(n int) error {
 	return nil
 }
 
-// These conservative DTO bounds only select the compact fast path; they never
-// reject an answer.
+// 以下是逐段编码使用的外层 DTO，字段与 cmdb 响应 DTO 的 JSON 名称一致。
 type topologyResponseHeader struct {
 	Code   int    `json:"code"`
 	Start  int64  `json:"start_time"`
@@ -80,26 +79,10 @@ func topologyStringSliceWireBound(words []string) int64 {
 	return n
 }
 
+// topologyDTOEncoderBound 是 compact 行的保守编码上界，只用于选择整项编码的快速路径，
+// 从不拒绝答案。
 func topologyDTOEncoderBound(value any) (int64, error) {
 	switch v := value.(type) {
-	case string:
-		return topologyJSONStringBound(v), nil
-	case topologyResponseHeader:
-		return 256 + topologyJSONStringBound(v.Step), nil
-	case topologyCompactResponseHeader:
-		return 320 + topologyJSONStringBound(v.Step) + topologyJSONStringBound(v.Format), nil
-	case topologySnapshotHeader:
-		return 64, nil
-	case topologySnapshotTrailer:
-		return 64 + topologyJSONStringBound(v.Reason), nil
-	case topologyCompactHeader:
-		return 128 + 21*int64(len(v.Times)), nil
-	case topologyCompactTail:
-		return 128, nil
-	case cmdb.SharedTopologyNode:
-		return 128 + topologyJSONStringBound(string(v.ResourceType)) + topologyMatcherWireBound(v.Dimensions), nil
-	case cmdb.SharedTopologyEdge:
-		return 192 + topologyJSONStringBound(v.RelationType) + topologyJSONStringBound(v.MetricName) + topologyJSONStringBound(v.Category) + topologyJSONStringBound(v.Direction), nil
 	case cmdb.CompactTopologyNode:
 		return 128 + topologyJSONStringBound(v.ID) + topologyJSONStringBound(string(v.ResourceType)) + topologyMatcherWireBound(v.Dimensions) + topologyStringSliceWireBound(v.Mask), nil
 	case cmdb.CompactTopologyEdge:

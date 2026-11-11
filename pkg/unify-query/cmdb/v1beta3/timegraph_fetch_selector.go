@@ -133,7 +133,7 @@ func (loader *timeGraphMatrixLoader) fetchTopologyGroup(group topologyFetchGroup
 }
 
 // Each physical response is applied before the next group is fetched. Reuse
-// and cumulative budgets stay with the request's single loader.
+// and cumulative accounting stay with the request's single loader.
 func (loader *timeGraphMatrixLoader) fetchTopologyGroups(groups []topologyFetchGroup, space string, queries *int, collect func(cmdb.Relation, pl.Matrix)) error {
 	for _, group := range groups {
 		if err := loader.fetchTopologyGroup(group, space, queries, collect); err != nil {

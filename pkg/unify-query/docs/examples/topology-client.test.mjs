@@ -214,5 +214,6 @@ test("published synthetic response fixtures decode without a running service", (
       }
     }
   }
-  assert.ok(frames > 40 && partial > 0 && failed >= 4);
+  // Unrouted relations return a partial success; the failed items are invalid parameters and backend errors.
+  assert.ok(frames > 40 && partial > 0 && failed >= 3);
 });

@@ -370,12 +370,9 @@ func (s *SpacePusher) PushNamedDataLabels(tenantID string, labels []string) erro
 }
 
 func (s *SpacePusher) pushDataLabelMappings(dlRtsMap map[string][]string) error {
-	// 打印结束日志
-	defer logger.Infof("PushDataLabelTableIds: push data_label table_id data successfully")
-
 	// 如果数据标签和结果表的映射关系为空，则直接返回
 	if len(dlRtsMap) == 0 {
-		logger.Infof("PushDataLabelTableIds: data label and table id map is empty, skip push redis data_label_to_result_table,")
+		logger.Infof("pushDataLabelMappings: data label and table id map is empty, skip push redis data_label_to_result_table,")
 		return nil
 	}
 
@@ -390,19 +387,20 @@ func (s *SpacePusher) pushDataLabelMappings(dlRtsMap map[string][]string) error 
 
 		rtsStr, err := jsonx.MarshalString(rts)
 		if err != nil {
-			logger.Errorf("PushDataLabelTableIds: marshal data_label_to_result_table dl->[%s], rts->[%s], error->[%s]", dl, rts, err)
+			logger.Errorf("pushDataLabelMappings: marshal data_label_to_result_table dl->[%s], rts->[%s], error->[%s]", dl, rts, err)
 			return err
 		}
 		// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Publish操作
-		logger.Infof("PushDataLabelTableIds: start push redis data_label_to_result_table, key->[%s], data_label->[%s], result_table->[%s], channel_name->[%s],channel_key->[%s]", key, dl, rtsStr, cfg.DataLabelToResultTableChannel, dl)
+		logger.Infof("pushDataLabelMappings: start push redis data_label_to_result_table, key->[%s], data_label->[%s], result_table->[%s], channel_name->[%s],channel_key->[%s]", key, dl, rtsStr, cfg.DataLabelToResultTableChannel, dl)
 		isSuccess, err := client.HSetWithCompareAndPublish(key, dl, rtsStr, cfg.DataLabelToResultTableChannel, dl)
 		if err != nil {
-			logger.Errorf("PushDataLabelTableIds: push redis data_label_to_result_table error, dl->[%s], rts->[%s], error->[%s]", dl, rts, err)
+			logger.Errorf("pushDataLabelMappings: push redis data_label_to_result_table error, dl->[%s], rts->[%s], error->[%s]", dl, rts, err)
 			return err
 		}
-		logger.Infof("PushDataLabelTableIds: push redis data_label_to_result_table and publish, data_label->[%s], result_table->[%s], isSuccess->[%v]", dl, rtsStr, isSuccess)
+		logger.Infof("pushDataLabelMappings: push redis data_label_to_result_table and publish, data_label->[%s], result_table->[%s], isSuccess->[%v]", dl, rtsStr, isSuccess)
 	}
 
+	logger.Infof("pushDataLabelMappings: push data_label table_id data successfully")
 	return nil
 }
 

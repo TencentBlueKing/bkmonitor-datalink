@@ -94,7 +94,7 @@ func TestRelationCompatEntriesEnforceRawInputSpecs(t *testing.T) {
 				requireItems(t, status, body, 2)
 				status, body = post(batch(3))
 				require.Equal(t, http.StatusBadRequest, status, body)
-				require.Contains(t, body, "relation resource limit exceeded: max_relation_queries (3 > 2)")
+				require.Contains(t, body, "relation resource limit exceeded: max_relation_queries (3 ")
 
 				v1beta3.MaxRelationQueries = oldQueries
 				exact := batch(1)

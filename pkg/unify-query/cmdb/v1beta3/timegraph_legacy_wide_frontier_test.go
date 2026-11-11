@@ -300,10 +300,10 @@ func TestLegacyWideFrontierFallsBackToBatches(t *testing.T) {
 				b.rejectWide = tc.reject
 				entry.run(t, b)
 				require.Equal(t, 1, b.wideQueries)
-				// 301 identities in batches of 64, without a budget of their own.
+				// 301 identities in batches of 64; every legacy read keeps the same single-response boundary.
 				require.Len(t, b.hopQueries, 1+5)
 				for _, budget := range b.hopBudgets[1:] {
-					require.Zero(t, budget)
+					require.Equal(t, timeGraphBackendResponseBytes, budget)
 				}
 			})
 		}

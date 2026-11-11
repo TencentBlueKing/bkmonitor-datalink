@@ -66,7 +66,7 @@ type topologyHopFetch struct {
 	space    string
 	source   cmdb.Resource
 	identity cmdb.Matcher
-	// relations 是有物理路由的候选关系，保持规划顺序。
+	// relations 是候选关系，保持规划顺序；缺物理路由的关系由取数器按已读且无数据处理。
 	relations []cmdb.Relation
 	// reverse 是与关系共用物理序列的反向关系；一次读取同时写入两个方向。
 	reverse map[timeGraphRelationKey]cmdb.Relation
@@ -107,8 +107,11 @@ func (loader *timeGraphMatrixLoader) loadTopologyHops(ctx context.Context, space
 	}()
 
 	// 缺物理路由的关系不访问后端，先按已读且无数据标记 partial：即使逐跳取数从未到达
-	// 它的端点，质量状态也与整条读取一致。
+	// 它的端点，质量状态也与整条读取一致。这一步只是记账，保留 Matrix 复用槽；缺路由的
+	// 关系仍按原位置参与逐跳读取（取数器按已读且无数据处理，同样替换复用槽），其余关系的
+	// 读取与该关系有路由但无数据时相同。
 	unrouted := map[timeGraphRelationKey]bool{}
+	slot := loader.lastMatrix
 	for _, group := range wideGroups {
 		if !group.noRoute {
 			continue
@@ -120,11 +123,8 @@ func (loader *timeGraphMatrixLoader) loadTopologyHops(ctx context.Context, space
 			return err
 		}
 	}
-	for _, relation := range relations {
-		if !unrouted[timeGraphRelationKeyFor(relation)] {
-			fetch.relations = append(fetch.relations, relation)
-		}
-	}
+	loader.lastMatrix = slot
+	fetch.relations = relations
 	// 关闭 Matrix 复用时，每条逻辑关系各自取数，不共用反向关系的响应。
 	if SharedTopologyReuseMatrix {
 		for _, relation := range fetch.relations {

@@ -143,6 +143,33 @@ func (loader *timeGraphMatrixLoader) fetchTopologyGroups(groups []topologyFetchG
 	return nil
 }
 
+// markUnroutedRelations 只准备未读取关系的查询：缺物理路由的按已读且无数据标记 partial，
+// 不访问后端。提前返回空邻域时各帧的原因与读完全部关系相同；准备失败的关系与原来提前
+// 返回时一样不读取。
+func (loader *timeGraphMatrixLoader) markUnroutedRelations(ctx context.Context, space string, relations []cmdb.Relation, read map[timeGraphRelationKey]struct{}, queries *int) error {
+	for _, relation := range relations {
+		if _, done := read[timeGraphRelationKeyFor(relation)]; done || len(relation.V) != 2 {
+			continue
+		}
+		groups, err := loader.compileTopologyFetches(ctx, space, []topologyFetchInput{{relation: relation}}, false)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			continue
+		}
+		for _, group := range groups {
+			if !group.noRoute {
+				continue
+			}
+			if err := loader.fetchTopologyGroup(group, space, queries, nil); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, space string, source cmdb.Resource, identity cmdb.Matcher, rootRelations map[timeGraphRelationKey]struct{}, relations []cmdb.Relation, plan timeGraphFetchPlan) (queries int, err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-select-fetch")
 	defer span.End(&err)
@@ -251,8 +278,10 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 			return queries, err
 		}
 		// 后端完整且全窗无根观测即为空邻域；缺路由的关系按已读且无数据处理，不妨碍判空。
+		// 未读取的关系中缺路由的仍记入各帧原因，与读完全部关系时相同。
 		if !observed && !q.backendPartial() {
-			return queries, nil
+			err = loader.markUnroutedRelations(ctx, space, relations, queriedRoots, &queries)
+			return queries, err
 		}
 	}
 	if mode == "bipartite" && !incompleteIdentity {

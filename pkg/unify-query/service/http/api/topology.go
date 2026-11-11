@@ -306,7 +306,6 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 			metric.CMDBTopologyRejectInc(queryCtx, queryMode, topologyInvalidRequestReason)
 		}
 		if queryErr != nil {
-			failedQueryCount++
 			encoded = encodeTopologyItem(queryCtx, query.ResponseFormat, cmdb.SharedTopologyResult{}, nil, truncateTopologyErrorMessage(queryErr.Error(), topologyErrorMessageMaxBytes))
 		}
 		querySpan.Set("encoded-item-bytes", encoded.bytes)
@@ -329,17 +328,27 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 			querySpan.Set("node-version-count", encoded.nodeVersions)
 			querySpan.Set("edge-version-count", encoded.edgeVersions)
 		}
-		if encoded.counts.partial > 0 {
-			partialQueryCount++
-		}
 		v1beta3.SetTimeGraphLimitTrace(querySpan, queryErr)
 		querySpan.End(&queryErr)
+		// 编码完但尚未写出时请求被取消或到达期限：与批次中途的失败一样处理，尚未开始写出时
+		// 整个请求失败，已开始写出时这一项按单项失败写出。
+		if err := ctx.Err(); err != nil {
+			abort(index, err)
+			return
+		}
 		if err := stream.item(encoded.parts); err != nil {
 			// 客户端已不可写：停止批次，写出错误由 ResponseWriteError 带回。
 			finish(nil)
 			return
 		}
 		encoded.parts = nil
+		// 计数在写出后进行，批次中途失败时不重复计入当前项。
+		if queryErr != nil {
+			failedQueryCount++
+		}
+		if encoded.counts.partial > 0 {
+			partialQueryCount++
+		}
 	}
 	finish(nil)
 }

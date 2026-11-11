@@ -336,6 +336,11 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 				rootObserved = rootObserved || observed
 			}
 			if !rootObserved && !tg.backendPartial() {
+				// 未读取的关系中缺路由的仍记入各帧原因，与读完全部关系时相同。
+				unread := 0
+				if err := loader.markUnroutedRelations(ctx, spaceUID, relations, queriedRoots, &unread); err != nil {
+					return nil, err
+				}
 				return tg, nil
 			}
 		}

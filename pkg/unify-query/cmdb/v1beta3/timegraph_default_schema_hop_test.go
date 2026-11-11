@@ -121,7 +121,10 @@ func TestTopologyHopFetchDefaultSchemaContainerRoot(t *testing.T) {
 					}
 				}
 				require.Equal(t, map[string]bool{"hop": true}, modes)
-				require.Positive(t, attributeReads, "attributes projected by app_version relations are read again by reached identities")
+				if hops == 2 {
+					// H6 时这些节点都已展开，以它们为端点的序列已经读入，不需要补读。
+					require.Positive(t, attributeReads, "attributes projected by app_version relations are read again by reached identities")
+				}
 
 				// 只有补读才能得到的属性：pod-1/c1 的 v7 来自未到达的 app_version，主机的 v9 同理。
 				versions := map[string]bool{}

@@ -712,7 +712,7 @@ func TestLegacyRangeSplitsTooLargeReadsInTime(t *testing.T) {
 				require.Equal(t, 1, count, "the halves do not overlap at %d", at)
 			}
 			if tc.offGrid {
-				require.Equal(t, end, accepted[len(accepted)-1].end, "the last half keeps the off-grid end")
+				require.Equal(t, grid[len(grid)-1], accepted[len(accepted)-1].end, "the last half reaches the last grid point before the off-grid end")
 			}
 		})
 	}

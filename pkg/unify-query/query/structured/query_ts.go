@@ -988,9 +988,15 @@ func (q *Query) toQueryMetricPlan(ctx context.Context, spaceUid string, tsDBs Ts
 	// 查询路由匹配中的 tsDB 列表
 	routeBaseStart, routeBaseEnd := q.routeTimeRange(qp)
 	routeLookback, routeLookForward := q.routeOverlapDuration(qp.LookBackDelta)
+	type storageQuery struct {
+		query *metadata.Query
+		route queryMod.StorageIDRange
+	}
+	batches := make([][]storageQuery, 0, len(tsDBs))
+	var pendingQueries []*metadata.Query
 	for _, tsDB := range tsDBs {
 		storageRanges := tsDB.GetStorageIDRangesWithDirectionalOverlap(routeBaseStart, routeBaseEnd, routeLookback, routeLookForward)
-		targets := make(map[rawStorageTarget]struct{})
+		var batch []storageQuery
 
 		for _, storageRange := range storageRanges {
 			query, buildErr := q.buildStorageQuery(ctx, tsDB, storageRange, aggregates, allConditions)
@@ -1001,6 +1007,19 @@ func (q *Query) toQueryMetricPlan(ctx context.Context, spaceUid string, tsDBs Ts
 			if query == nil {
 				continue
 			}
+
+			batch = append(batch, storageQuery{query: query, route: storageRange})
+			pendingQueries = append(pendingQueries, query)
+		}
+		batches = append(batches, batch)
+	}
+	if mode == rawQuery {
+		restoreMergedDorisPagination(pendingQueries)
+	}
+	for _, batch := range batches {
+		targets := make(map[rawStorageTarget]struct{})
+		for _, pending := range batch {
+			query, storageRange := pending.query, pending.route
 
 			routedQuery := *query
 			if !storageRange.IsZero() {

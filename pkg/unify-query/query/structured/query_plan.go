@@ -127,3 +127,55 @@ func compareMergeTargets(left, right queryMergeTarget) int {
 		cmp.Compare(left.sourceType, right.sourceType),
 	)
 }
+
+// restoreMergedDorisPagination 在按后端分组合并前，将主表游标应用到同组成员。
+// 只从当前授权路由构造查询目标，游标中的物理表列表仅用于匹配成员。
+func restoreMergedDorisPagination(queries []*metadata.Query) {
+	groups := make(map[queryMergeTarget][]*metadata.Query)
+	for _, query := range queries {
+		if query.Measurement != metadata.DorisStorageType || !query.GetMergeDBStatus() {
+			continue
+		}
+		target := mergeTarget(query, rawQuery)
+		target.backend = ""
+		groups[target] = append(groups[target], query)
+	}
+	for _, group := range groups {
+		for _, primary := range group {
+			option := primary.ResultTableOption
+			if option == nil {
+				continue
+			}
+			for _, member := range group {
+				if member.ResultTableOption != nil {
+					continue
+				}
+				switch primary.QueryBackend {
+				case metadata.BkSqlStorageType:
+					if member.DB == "" {
+						continue
+					}
+					member.QueryBackend = metadata.BkSqlStorageType
+					member.DirectTables = nil
+				case metadata.DorisStorageType:
+					target := member.PhysicalTables["main"]
+					matched := false
+					for _, saved := range option.DirectTables {
+						if target.Database != "" && target.Table != "" && target.Database == saved.Database && target.Table == saved.Table {
+							matched = true
+							break
+						}
+					}
+					if !matched {
+						continue
+					}
+					member.QueryBackend = metadata.DorisStorageType
+					member.DirectTables = []metadata.PhysicalTable{target}
+				default:
+					continue
+				}
+				member.ResultTableOption = option
+			}
+		}
+	}
+}

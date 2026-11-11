@@ -64,7 +64,7 @@ Doris 执行器通过 MySQL 协议执行，复用 bksql.Instance 的过滤、聚
 
 ## 分页与检查
 
-SearchAfter 返回的 ResultTableOption 记录所选后端，后续页沿用该后端；物理库表仍从授权路由读取，不接受客户端游标携带任意物理目标。直查的 TableUUID 包含物理库表，隔离同集群历史表游标。继续分页应完整回传 result_table_options。
+SearchAfter 返回的 ResultTableOption 记录所选后端，后续页沿用该后端；物理库表仍从授权路由读取，不接受客户端游标携带任意物理目标。直查的 TableUUID 包含物理库表，隔离同集群历史表游标。继续分页应完整回传 result_table_options。 跨 RT 合并查询在分组前恢复主表游标对应的成员后端，因此切换 Header 不会拆分原合并查询；没有后端标记的旧游标按 BKBase 处理。
 
 滚动下载的会话标识在有效 flag 为 true 时加入标记，默认 false 保留旧标识；切换 Header 会启动另一会话，不混用两种后端的已有偏移。连续下载需保持 Header 和目标路由不变。路由变化期间的跨请求快照一致性不在本阶段保证范围内。
 

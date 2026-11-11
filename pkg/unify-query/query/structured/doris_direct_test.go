@@ -23,10 +23,10 @@ func directTables(name string) map[string]metadata.PhysicalTable {
 }
 
 func TestBKBasePaginationCompatibility(t *testing.T) {
-	for _, mode := range []string{"merged", "legacy_search_after", "legacy_offset"} {
+	for _, mode := range []string{"merged", "merged_enable", "merged_disable", "legacy_merged_enable", "legacy_search_after", "legacy_offset"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, req, table := rawPlanFixture()
-			enabled := false
+			enabled := mode == "merged_disable"
 			ctx = metadata.WithQueryFlags(ctx, metadata.QueryFlags{DorisDirectQuery: &enabled})
 			table.StorageType = metadata.BkSqlStorageType
 			table.Measurement = metadata.DorisStorageType
@@ -35,13 +35,15 @@ func TestBKBasePaginationCompatibility(t *testing.T) {
 			table.StorageClusterRecords = nil
 			req.IsSearchAfter = true
 			option := &metadata.ResultTableOption{SearchAfter: []any{42}}
-			if mode == "merged" {
+			if mode == "merged" || mode == "merged_enable" || mode == "merged_disable" || mode == "legacy_merged_enable" {
 				second := *table
 				second.TableID, second.DB = "b", "1001_b"
 				second.PhysicalTables = directTables("b")
 				req.TsDBMap["A"] = TsDBs{&second, table}
 				req.IsMergeDB = true
-				option.QueryBackend = metadata.BkSqlStorageType
+				if mode != "legacy_merged_enable" {
+					option.QueryBackend = metadata.BkSqlStorageType
+				}
 			} else if mode == "legacy_offset" {
 				from := 20
 				option = &metadata.ResultTableOption{From: &from}
@@ -51,18 +53,30 @@ func TestBKBasePaginationCompatibility(t *testing.T) {
 			require.Equal(t, 1, plan.Queries.Count())
 			req.ResultTableOptions = metadata.ResultTableOptions{}
 			plan.Queries.Range("", func(q *metadata.Query) {
+				if mode == "merged_disable" {
+					option.QueryBackend = metadata.DorisStorageType
+					option.DirectTables = q.DirectTables
+				}
 				req.ResultTableOptions[q.TableUUID()] = option
 			})
-			enabled = mode != "merged"
+			enabled = mode != "merged" && mode != "merged_disable"
 			ctx = metadata.WithQueryFlags(ctx, metadata.QueryFlags{DorisDirectQuery: &enabled})
 			plan, err = req.ToRawQueryPlan(ctx)
 			require.NoError(t, err)
 			require.Equal(t, 1, plan.Queries.Count())
-			plan.Queries.Range("", func(q *metadata.Query) {
-				require.Equal(t, metadata.BkSqlStorageType, q.QueryBackend)
-				require.Empty(t, q.DirectTables)
+			plan.Routes.Range("", func(q *metadata.Query) {
 				require.Equal(t, option, q.ResultTableOption)
-				if mode == "merged" {
+			})
+			plan.Queries.Range("", func(q *metadata.Query) {
+				if mode == "merged_disable" {
+					require.Equal(t, metadata.DorisStorageType, q.QueryBackend)
+					require.Len(t, q.DirectTables, 2)
+				} else {
+					require.Equal(t, metadata.BkSqlStorageType, q.QueryBackend)
+					require.Empty(t, q.DirectTables)
+				}
+				require.Equal(t, option, q.ResultTableOption)
+				if mode == "merged" || mode == "merged_enable" || mode == "merged_disable" || mode == "legacy_merged_enable" {
 					require.Equal(t, []string{"1001_a", "1001_b"}, q.DBs)
 				}
 			})
@@ -210,4 +224,40 @@ func TestMergedDorisPaginationKeepsAllPhysicalTargets(t *testing.T) {
 		require.Len(t, q.DirectTables, 2)
 		require.Equal(t, []any{1}, q.ResultTableOption.SearchAfter)
 	})
+}
+
+func TestMergedPaginationDoesNotPinOtherClusters(t *testing.T) {
+	for _, firstDirect := range []bool{false, true} {
+		ctx, req, table := rawPlanFixture()
+		ctx = metadata.WithQueryFlags(ctx, metadata.QueryFlags{DorisDirectQuery: &firstDirect})
+		table.StorageType, table.Measurement = metadata.BkSqlStorageType, metadata.DorisStorageType
+		table.DB = "1001_a"
+		table.PhysicalTables = directTables("a")
+		table.StorageClusterRecords = nil
+		req.IsMergeDB, req.IsSearchAfter = true, true
+		plan, err := req.ToRawQueryPlan(ctx)
+		require.NoError(t, err)
+		req.ResultTableOptions = metadata.ResultTableOptions{}
+		plan.Queries.Range("", func(q *metadata.Query) {
+			backend := metadata.BkSqlStorageType
+			if firstDirect {
+				backend = metadata.DorisStorageType
+			}
+			req.ResultTableOptions[q.TableUUID()] = &metadata.ResultTableOption{QueryBackend: backend, DirectTables: q.DirectTables, SearchAfter: []any{42}}
+		})
+		other := *table
+		other.TableID, other.StorageID = "other", "99"
+		req.TsDBMap["A"] = append(req.TsDBMap["A"], &other)
+		nextDirect := !firstDirect
+		ctx = metadata.WithQueryFlags(ctx, metadata.QueryFlags{DorisDirectQuery: &nextDirect})
+		plan, err = req.ToRawQueryPlan(ctx)
+		require.NoError(t, err)
+		require.Equal(t, 2, plan.Queries.Count())
+		plan.Queries.Range("", func(q *metadata.Query) {
+			if q.StorageID == "99" {
+				require.Nil(t, q.ResultTableOption)
+				require.Equal(t, nextDirect, q.QueryBackend == metadata.DorisStorageType)
+			}
+		})
+	}
 }

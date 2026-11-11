@@ -17,7 +17,7 @@
 | `cmdb_topology_size` | `query_mode`、`kind=points/nodes/edges/partial_snapshots`；成功响应的评估点数、节点/边出现次数和不完整快照数 |
 | `cmdb_topology_payload_bytes` | `stage=request-body/backend-response/response-item`、`result`；读取的请求/后端字节或单项编码字节 |
 | `cmdb_relation_route_total` / `cmdb_relation_route_seconds` | `route=timegraph`、`query_mode`；兼容关系查询的终态及耗时；计数器另有 `started` |
-| `cmdb_relation_quality_total` | `query_mode`、`quality`、`reason`；兼容查询与 topology 子查询中的 partial、截断和拒绝原因，每个查询按固定原因去重；topology 的缺路由计为 `relation_no_physical_route`，与 `backend_partial` 分开 |
+| `cmdb_relation_quality_total` | `entry`、`query_mode`、`quality`、`reason`；`entry` 为 `compat`（兼容查询）或 `topology`（topology 子查询），记录 partial、截断和拒绝原因，每个查询按固定原因去重；topology 的缺路由计为 `relation_no_physical_route`，与 `backend_partial` 分开 |
 | `cmdb_relation_target_count` | `route`、`query_mode`；兼容查询最终返回的目标数量 |
 | `cmdb_relation_query_list_size` | `route`、`query_mode`；批量 HTTP 请求的子查询数量 |
 

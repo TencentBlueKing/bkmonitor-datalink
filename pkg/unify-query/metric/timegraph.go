@@ -26,8 +26,8 @@ const (
 var (
 	cmdbRelationQualityTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "unify_query", Name: "cmdb_relation_quality_total",
-		Help: "relation query quality events of the legacy-compatible and topology queries, counted once per query and distinct bounded reason",
-	}, []string{"query_mode", "quality", "reason"})
+		Help: "relation query quality events by entry (compat or topology), counted once per query and distinct bounded reason",
+	}, []string{"entry", "query_mode", "quality", "reason"})
 	cmdbTopologyOperationsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "unify_query", Name: "cmdb_topology_operations_total",
 		Help: "completed topology HTTP requests or individual queries by outcome",
@@ -62,7 +62,7 @@ var (
 )
 
 // CMDBRelationQualityInc keeps metric names and backend details in traces only.
-func CMDBRelationQualityInc(ctx context.Context, mode, quality, reasons string) {
+func CMDBRelationQualityInc(ctx context.Context, entry, mode, quality, reasons string) {
 	seen := make(map[string]struct{})
 	for _, detail := range strings.Split(reasons, ";") {
 		reason, _, _ := strings.Cut(detail, ":")
@@ -77,7 +77,7 @@ func CMDBRelationQualityInc(ctx context.Context, mode, quality, reasons string) 
 			continue
 		}
 		seen[reason] = struct{}{}
-		counterInc(ctx, cmdbRelationQualityTotal.WithLabelValues(mode, quality, reason))
+		counterInc(ctx, cmdbRelationQualityTotal.WithLabelValues(entry, mode, quality, reason))
 	}
 }
 

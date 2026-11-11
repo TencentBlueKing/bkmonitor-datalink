@@ -81,14 +81,20 @@ func TestTopologyReasonMetricsKeepKnownReasonsAndDeduplicate(t *testing.T) {
 		"target_info_failed", "max_response_bytes", "max_shared_topology_points", "other",
 	} {
 		t.Run("quality/"+reason, func(t *testing.T) {
-			counter := cmdbRelationQualityTotal.WithLabelValues("instant", "partial", reason)
+			counter := cmdbRelationQualityTotal.WithLabelValues("compat", "instant", "partial", reason)
 			requireCounterIncrease(t, counter, 1, func() {
-				CMDBRelationQualityInc(ctx, "instant", "partial", reason+":detail;"+reason+":second")
+				CMDBRelationQualityInc(ctx, "compat", "instant", "partial", reason+":detail;"+reason+":second")
 			})
 		})
 	}
-	requireCounterIncrease(t, cmdbRelationQualityTotal.WithLabelValues("range", "partial", "other"), 1, func() {
-		CMDBRelationQualityInc(ctx, "range", "partial", "unknown-one:private;unknown-two:private")
+	requireCounterIncrease(t, cmdbRelationQualityTotal.WithLabelValues("compat", "range", "partial", "other"), 1, func() {
+		CMDBRelationQualityInc(ctx, "compat", "range", "partial", "unknown-one:private;unknown-two:private")
+	})
+	// 两个入口的同名原因各计各的。
+	requireCounterIncrease(t, cmdbRelationQualityTotal.WithLabelValues("topology", "range", "partial", "relation_no_physical_route"), 1, func() {
+		requireCounterIncrease(t, cmdbRelationQualityTotal.WithLabelValues("compat", "range", "partial", "relation_no_physical_route"), 0, func() {
+			CMDBRelationQualityInc(ctx, "topology", "range", "partial", "relation_no_physical_route:metric_a")
+		})
 	})
 	for _, reason := range []string{
 		"invalid_request", "max_shared_topology_points", "max_response_bytes", "max_topology_queries", "max_topology_request_bytes",
@@ -108,8 +114,8 @@ func TestTopologyReasonMetricsKeepKnownReasonsAndDeduplicate(t *testing.T) {
 			requireCounterIncrease(t, cmdbTopologyRejectionsTotal.WithLabelValues("range", "other"), 1, func() {
 				CMDBTopologyRejectInc(ctx, "range", reason)
 			})
-			requireCounterIncrease(t, cmdbRelationQualityTotal.WithLabelValues("range", "truncated", "other"), 1, func() {
-				CMDBRelationQualityInc(ctx, "range", "truncated", reason)
+			requireCounterIncrease(t, cmdbRelationQualityTotal.WithLabelValues("compat", "range", "truncated", "other"), 1, func() {
+				CMDBRelationQualityInc(ctx, "compat", "range", "truncated", reason)
 			})
 		})
 	}

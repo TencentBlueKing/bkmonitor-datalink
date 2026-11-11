@@ -286,7 +286,7 @@ func TestTopologyQualityMetricSeparatesNoRouteFromBackendPartial(t *testing.T) {
 				for _, label := range item.GetLabel() {
 					labels[label.GetName()] = label.GetValue()
 				}
-				if labels["query_mode"] == "instant" && labels["quality"] == "partial" && labels["reason"] == reason {
+				if labels["entry"] == "topology" && labels["query_mode"] == "instant" && labels["quality"] == "partial" && labels["reason"] == reason {
 					return item.GetCounter().GetValue()
 				}
 			}

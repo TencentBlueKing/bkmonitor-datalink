@@ -43,8 +43,8 @@ func TestLegacyRelationQualityTelemetry(t *testing.T) {
 					for _, label := range item.GetLabel() {
 						labels[label.GetName()] = label.GetValue()
 					}
-					require.Len(t, labels, 3)
-					if labels["query_mode"] == mode {
+					require.Len(t, labels, 4)
+					if labels["entry"] == "compat" && labels["query_mode"] == mode {
 						result[labels["quality"]+"/"+labels["reason"]] = item.GetCounter().GetValue()
 					}
 				}

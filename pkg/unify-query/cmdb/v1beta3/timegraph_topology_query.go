@@ -218,7 +218,7 @@ func (m *Model) QuerySharedTopologyFrames(ctx context.Context, request cmdb.Shar
 	// （backend_partial）分开计数；完整原因留在 trace。
 	if reasons := topologyPartialReasons(partialTimestamps); reasons != "" {
 		span.Set("partial-reasons", reasons)
-		metric.CMDBRelationQualityInc(queryCtx, queryMode, "partial", reasons)
+		metric.CMDBRelationQualityInc(queryCtx, metric.CMDBRelationEntryTopology, queryMode, "partial", reasons)
 	}
 	topologyQuery := SharedTopologyQuery{
 		SourceType:           request.SourceType,

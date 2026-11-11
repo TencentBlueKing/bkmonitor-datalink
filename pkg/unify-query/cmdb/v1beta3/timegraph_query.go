@@ -564,10 +564,9 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 	// 共享拓扑中关系缺少物理路由时不访问后端：该关系按已读且无数据处理，以它的原因把
 	// 整个计算网格标记为 partial，其余关系照常读取。所有拓扑取数路径（首跳探测、取数组、
 	// 前沿分批）都经过这里，返回成功也不会触发身份拆分重试。
-	partialReason := "backend_partial"
-	if reason := loader.relationNoRouteReason(err); reason != "" {
-		matrix, partial, err = nil, true, nil
-		partialReason = reason
+	noRouteReason := loader.relationNoRouteReason(err)
+	if noRouteReason != "" {
+		matrix, partial, err = nil, false, nil
 		span.Set("relation-no-physical-route", true)
 		// 与读到一个空结果一样替换复用槽，后续读取的复用与该关系有路由时相同。
 		loader.lastMatrix = timeGraphMatrixSlot{}
@@ -581,13 +580,25 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 		err = queryCtx.Err()
 	}
 	// Prometheus 聚合后端通过子查询 metadata 报告部分成功，VM 则返回 partial 位。
-	// 合并当前子查询的两种信号，让空结果的快照、指标和 trace 同样保留不完整状态。
-	if status := metadata.GetStatus(queryCtx); status != nil {
-		partial = partial || status.Code == metadata.QueryTsPartial
-		if status.Code == metadata.QueryTsPartial && status.Message == "source_info_no_route" {
-			partialReason = status.Message
+	// 合并当前子查询的两种信号，让空结果的快照、指标和 trace 同样保留不完整状态。各原因
+	// 分别记录：VM 的 partial 位与 source_info_no_route 状态同时出现时仍记 backend_partial，
+	// 它决定共享拓扑的取数路径。
+	var partialReasons []string
+	if noRouteReason != "" {
+		partialReasons = append(partialReasons, noRouteReason)
+	}
+	backendPartial := partial
+	if status := metadata.GetStatus(queryCtx); status != nil && status.Code == metadata.QueryTsPartial {
+		if status.Message == "source_info_no_route" {
+			partialReasons = append(partialReasons, status.Message)
+		} else {
+			backendPartial = true
 		}
 	}
+	if backendPartial {
+		partialReasons = append(partialReasons, "backend_partial")
+	}
+	partial = len(partialReasons) > 0
 	if err == nil && partial && applyQuality {
 		partialStart, partialEnd, partialStep := start, end, queryStep
 		if relationQueryParams != nil {
@@ -596,7 +607,9 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 		if instant {
 			partialStart = partialEnd
 		}
-		tg.markPartialRange(partialStart, partialEnd, partialStep, partialReason)
+		for _, reason := range partialReasons {
+			tg.markPartialRange(partialStart, partialEnd, partialStep, reason)
+		}
 	}
 	span.Set("matrix-series-count", len(matrix))
 	span.Set("matrix-point-count", pointCount)

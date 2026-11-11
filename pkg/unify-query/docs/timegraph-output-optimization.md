@@ -57,8 +57,12 @@ read. The 128-candidate transition changes the fetch plan, not the answer size.
 Identity batches contain up to 64 complete primary-key tuples joined by OR;
 each tuple remains an AND of its fields. One backend response is bounded by a
 16 MiB batch boundary (a program constant, not a capability limit): oversized
-responses split identity batches while retaining the exact time grid. A single
-identity whose response still exceeds the boundary returns an error.
+responses split identity batches while retaining the exact time grid. A root
+read, a whole-relation read, an info read or a single identity whose response
+still exceeds the boundary is re-read in two non-overlapping time halves of the
+exact grid, recursively down to one evaluation point; each point is evaluated
+with its own window, so the merged graph equals one read. One evaluation point
+that still exceeds the boundary returns the terminal `max_response_bytes` error.
 Aggregation children share the rejection state so it cannot be silently
 converted into a partial success.
 
@@ -140,10 +144,12 @@ deadline. Target counts and graph size are not capped.
 
 Each candidate loads relations in hop order. The first hop keeps the source
 matcher; later hops use batches of complete frontier identities and require
-matching timestamps. Range queries read the grid in adaptive segments; when a
-segment's backend response is too large, that segment is split in half by time
-and each half is retried, down to two points per segment. A two-point segment
-that is still too large, or a single-point request, returns the error. An empty frontier stops further reads without clearing
+matching timestamps. Range queries read the grid in adaptive segments that
+bound the per-segment time-bucket graph; an empty segment keeps the next
+segment's length. Legacy reads use the same 16 MiB response boundary as
+topology: an oversized read is split by identity and then by time inside the
+segment, down to one evaluation point. One point that is still too large fails
+the query without trying later candidates. An empty frontier stops further reads without clearing
 quality. A missing physical route makes that candidate unavailable, allowing
 later candidates to be tried. Cancellation and deadlines terminate the query.
 

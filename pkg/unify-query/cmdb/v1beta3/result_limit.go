@@ -52,3 +52,25 @@ func (e *ResultLimitError) TruncationReason() string {
 	}
 	return e.Reason
 }
+
+// UnsplittableResponseError 表示一次读取已按身份拆到单个身份、按时间拆到单个评估点，
+// 后端响应仍超过分批边界。原因保持 max_response_bytes；它是终态错误：不再触发任何拆分，
+// 兼容入口也不改用下一条候选路径，以免用另一条路径的答案冒充首条命中。
+type UnsplittableResponseError struct {
+	Metric string
+	Limit  int64
+	cause  error
+}
+
+func (e *UnsplittableResponseError) Error() string {
+	if e.Limit > 0 {
+		return fmt.Sprintf("topology resource limit exceeded: max_response_bytes (one evaluation point of %s exceeds the %d-byte backend response boundary)", e.Metric, e.Limit)
+	}
+	return fmt.Sprintf("topology resource limit exceeded: max_response_bytes (one evaluation point of %s exceeds the backend response size)", e.Metric)
+}
+
+// TruncationReason 与可拆分的超限使用同一稳定原因。
+func (e *UnsplittableResponseError) TruncationReason() string { return "max_response_bytes" }
+
+// Unwrap 保留后端或分批边界给出的原始错误。
+func (e *UnsplittableResponseError) Unwrap() error { return e.cause }

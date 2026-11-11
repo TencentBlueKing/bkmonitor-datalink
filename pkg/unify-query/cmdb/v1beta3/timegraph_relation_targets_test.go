@@ -7,6 +7,7 @@ package v1beta3
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"sort"
@@ -642,12 +643,12 @@ func TestLegacyRangeQuerySegmentsKeepBucketAnswer(t *testing.T) {
 	}
 }
 
-// 单次后端响应过大时把该段按时间对半重查：答案与不拆分时相同，每次被接受的读取都在
-// 后端接受的点数内，拆分后的段至少两点；两点的段无法再拆分时返回原错误。
-func TestLegacyRangeHalvesTooLargeSegments(t *testing.T) {
+// 单次后端响应过大时取数器在段内把这次读取按时间对半重读，直到单个评估点：答案与不拆分时
+// 相同，每次被接受的读取都在后端接受的点数内，被接受的读取互不重叠且恰好覆盖网格；
+// 拆出的单点读取仍是区间读取，不退化为即时查询。末段终点不在网格上时后段沿用原终点。
+func TestLegacyRangeSplitsTooLargeReadsInTime(t *testing.T) {
 	start := time.Unix(1700000040, 0)
-	query := func(model *Model, points int) ([]string, []cmdb.MatchersWithTimestamp, error) {
-		end := start.Add(time.Duration(points-1) * time.Minute)
+	query := func(model *Model, end time.Time) ([]string, []cmdb.MatchersWithTimestamp, error) {
 		_, _, path, _, buckets, err := model.QueryResourceMatcherRange(
 			initTimeGraphQueryTestEnvironment(), "", "space", "1m",
 			strconv.FormatInt(start.Unix(), 10), strconv.FormatInt(end.Unix(), 10),
@@ -660,6 +661,7 @@ func TestLegacyRangeHalvesTooLargeSegments(t *testing.T) {
 		model := legacySegmentModel()
 		backend := legacySegmentVM(t, start, accepted)
 		model.timeGraphVMQuery = func(ctx context.Context, q *structured.QueryTs, expr string, instant bool, queryStart, queryEnd time.Time, step time.Duration) (pl.Matrix, error) {
+			require.Positive(t, metadata.BackendResponseLimit(ctx), "the legacy entry reads under the same response boundary")
 			if points := len(legacyRangeGridPoints(queryStart, queryEnd, step)); points > maxPoints {
 				*rejected = append(*rejected, legacyRangeSegment{start: queryStart, end: queryEnd, points: points})
 				return nil, &metadata.BackendResponseTooLargeError{Message: "response body size exceeds the configured limit"}
@@ -668,44 +670,134 @@ func TestLegacyRangeHalvesTooLargeSegments(t *testing.T) {
 		}
 		return model
 	}
-	for _, tc := range []struct{ points, maxPoints int }{
+	for _, tc := range []struct {
+		points, maxPoints int
+		offGrid           bool
+	}{
 		{points: 65, maxPoints: 20},
 		{points: 200, maxPoints: 33},
 		{points: 130, maxPoints: 2},
+		{points: 130, maxPoints: 1},
+		{points: 130, maxPoints: 7, offGrid: true},
 	} {
-		t.Run(fmt.Sprintf("%d_points_max_%d", tc.points, tc.maxPoints), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%d_points_max_%d_offgrid_%t", tc.points, tc.maxPoints, tc.offGrid), func(t *testing.T) {
+			end := start.Add(time.Duration(tc.points-1) * time.Minute)
+			if tc.offGrid {
+				end = end.Add(30 * time.Second)
+			}
 			var unsplit []legacyRangeSegment
 			reference := legacySegmentModel()
 			reference.timeGraphVMQuery = legacySegmentVM(t, start, &unsplit)
-			_, want, err := query(reference, tc.points)
+			_, want, err := query(reference, end)
 			require.NoError(t, err)
 
 			var accepted, rejected []legacyRangeSegment
-			path, buckets, err := query(limitedModel(tc.maxPoints, &accepted, &rejected), tc.points)
+			path, buckets, err := query(limitedModel(tc.maxPoints, &accepted, &rejected), end)
 			require.NoError(t, err)
 			require.Equal(t, []string{"source", "middle"}, path)
 			require.Equal(t, want, buckets)
-			require.Equal(t, legacySegmentBuckets(start, legacyRangeGridPoints(start, start.Add(time.Duration(tc.points-1)*time.Minute), time.Minute)), buckets)
+			grid := legacyRangeGridPoints(start, end, time.Minute)
+			require.Len(t, grid, tc.points)
+			require.Equal(t, legacySegmentBuckets(start, grid), buckets)
 			require.NotEmpty(t, rejected, "the fixture must exercise the split")
-			covered := make(map[int64]struct{})
+			covered := make(map[int64]int)
 			for _, call := range accepted {
 				require.LessOrEqual(t, call.points, tc.maxPoints, "every accepted read stays within the backend size")
-				require.GreaterOrEqual(t, call.points, 2, "a split segment must not degrade into an instant query")
 				for _, at := range legacyRangeGridPoints(call.start, call.end, time.Minute) {
-					covered[at.UnixMilli()] = struct{}{}
+					covered[at.UnixMilli()]++
 				}
 			}
 			require.Len(t, covered, tc.points, "accepted reads cover the whole grid")
+			for at, count := range covered {
+				require.Equal(t, 1, count, "the halves do not overlap at %d", at)
+			}
+			if tc.offGrid {
+				require.Equal(t, end, accepted[len(accepted)-1].end, "the last half keeps the off-grid end")
+			}
 		})
 	}
-	t.Run("two_point_segment_returns_error", func(t *testing.T) {
+	t.Run("one_point_still_too_large", func(t *testing.T) {
 		var accepted, rejected []legacyRangeSegment
-		_, buckets, err := query(limitedModel(1, &accepted, &rejected), 2)
+		_, buckets, err := query(limitedModel(0, &accepted, &rejected), start.Add(time.Minute))
+		var terminal *UnsplittableResponseError
+		require.ErrorAs(t, err, &terminal)
 		require.ErrorIs(t, err, metadata.ErrBackendResponseTooLarge)
+		require.ErrorContains(t, err, "max_response_bytes")
+		require.Equal(t, "max_response_bytes", terminal.TruncationReason())
 		require.Empty(t, buckets)
 		require.Empty(t, accepted)
-		require.Equal(t, legacyGridSegments(start, time.Minute, 2), rejected)
+		require.Equal(t, []legacyRangeSegment{
+			{start: start, end: start.Add(time.Minute), points: 2},
+			{start: start, end: start, points: 1},
+		}, rejected, "the read is split down to one point once and then fails")
 	})
+	t.Run("other_errors_do_not_split", func(t *testing.T) {
+		model := legacySegmentModel()
+		calls := 0
+		model.timeGraphVMQuery = func(context.Context, *structured.QueryTs, string, bool, time.Time, time.Time, time.Duration) (pl.Matrix, error) {
+			calls++
+			return nil, errors.New("backend unavailable")
+		}
+		_, _, err := query(model, start.Add(9*time.Minute))
+		require.ErrorContains(t, err, "backend unavailable")
+		var terminal *UnsplittableResponseError
+		require.False(t, errors.As(err, &terminal))
+		require.Equal(t, 1, calls, "only a too-large response is split")
+	})
+}
+
+// 首选候选的单个评估点仍超过单次响应边界时整个查询失败，不改用下一条候选路径的答案；
+// 普通失败仍按候选循环换下一条。即时与区间入口相同。
+func TestLegacyUnsplittableResponseDoesNotFallBack(t *testing.T) {
+	start := time.Unix(1700000040, 0)
+	end := start.Add(9 * time.Minute)
+	for _, mode := range []string{"instant", "range"} {
+		for _, tooLarge := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/too_large_%t", mode, tooLarge), func(t *testing.T) {
+				model := legacyRegressionModel(legacyAlternativeProvider(true))
+				model.timeGraphVMQuery = func(_ context.Context, q *structured.QueryTs, _ string, _ bool, queryStart, queryEnd time.Time, step time.Duration) (pl.Matrix, error) {
+					name := q.QueryList[0].FieldName
+					if name == "source_target_flow" {
+						if tooLarge {
+							return nil, metadata.ErrBackendResponseTooLarge
+						}
+						return nil, errors.New("backend unavailable")
+					}
+					var timestamps []int64
+					if step <= 0 || queryStart.Equal(queryEnd) {
+						timestamps = []int64{queryEnd.UnixMilli()}
+					} else {
+						for _, at := range legacyRangeGridPoints(queryStart, queryEnd, step) {
+							timestamps = append(timestamps, at.UnixMilli())
+						}
+					}
+					return filterTopologyRegressionMatrix(q, legacyAlternativeMatrix(name, timestamps...)), nil
+				}
+				ctx := initTimeGraphQueryTestEnvironment()
+				var path []string
+				var err error
+				var found bool
+				if mode == "instant" {
+					var matchers cmdb.Matchers
+					_, _, path, _, matchers, err = model.QueryResourceMatcher(ctx, "1m", "space", strconv.FormatInt(end.Unix(), 10), "target", "source", cmdb.Matcher{"source_id": "a"}, nil, false, nil)
+					found = len(matchers) > 0
+				} else {
+					var buckets []cmdb.MatchersWithTimestamp
+					_, _, path, _, buckets, err = model.QueryResourceMatcherRange(ctx, "", "space", "1m", strconv.FormatInt(start.Unix(), 10), strconv.FormatInt(end.Unix(), 10), "target", "source", cmdb.Matcher{"source_id": "a"}, nil, false, nil)
+					found = len(buckets) > 0
+				}
+				if tooLarge {
+					var terminal *UnsplittableResponseError
+					require.ErrorAs(t, err, &terminal)
+					require.False(t, found)
+					return
+				}
+				require.NoError(t, err)
+				require.True(t, found)
+				require.Equal(t, []string{"source", "middle", "target"}, path)
+			})
+		}
+	}
 }
 
 // 路由按时段生效：没有物理路由的段不读数并标记不完整，其它段照常返回；

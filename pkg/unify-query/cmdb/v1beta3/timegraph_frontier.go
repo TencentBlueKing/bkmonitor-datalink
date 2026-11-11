@@ -23,7 +23,7 @@ const timeGraphFrontierBatchSize = 64
 const timeGraphWideFrontierThreshold = 2 * timeGraphFrontierBatchSize
 
 // timeGraphBackendResponseBytes 是单次后端响应解压后的分批边界，不是能力上限：
-// 超过它的读取按身份对半拆分（区间兼容入口另按时间对半拆分），总读取量可以大于它。
+// 超过它的读取先按身份对半拆分，单个身份再按时间对半拆分，总读取量可以大于它。
 const timeGraphBackendResponseBytes int64 = 16 * 1024 * 1024
 
 type timeGraphFrontier map[cmdb.Resource]map[string]cmdb.Matcher
@@ -175,13 +175,18 @@ func frontierSubqueryContext(ctx context.Context) context.Context {
 	return withTimeGraphQueryStage(child, timeGraphQueryStage(ctx))
 }
 
+// isBackendResponseTooLarge 判断一次读取能否通过拆分重读解决；已拆到底的终态错误不再拆分。
 func isBackendResponseTooLarge(err error) bool {
+	var terminal *UnsplittableResponseError
+	if errors.As(err, &terminal) {
+		return false
+	}
 	var limitErr *ResultLimitError
 	return errors.Is(err, metadata.ErrBackendResponseTooLarge) || (errors.As(err, &limitErr) && limitErr.Reason == "max_response_bytes")
 }
 
 // loadFrontierBatch 遇到过大响应时先拆分身份组，避免每个时间片重复读取整批候选。
-// 单组身份仍走原有的精确时间网格分片，并共用请求预算。
+// 单个身份再由 queryAndApply 按时间对半拆分。
 func (loader *timeGraphMatrixLoader) loadFrontierBatch(ctx context.Context, space string, relation cmdb.Relation, targetAnchor bool, identities []cmdb.Matcher, apply func(context.Context, pl.Matrix) error, queries *int) error {
 	if err := ctx.Err(); err != nil {
 		return err

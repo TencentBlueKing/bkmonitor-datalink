@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -609,13 +610,61 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 	return matrix, partial, nil
 }
 
-// queryAndApply owns one physical response until its graph mutation completes.
+// queryAndApply 读取一次并在写图完成前持有这份响应。单次后端响应超过分批边界时，
+// 把精确网格按时间对半重读，直到单个评估点：各点按自己的窗口独立计算，两半不重叠，
+// 依次写图与一次读取得到相同的图和质量状态。单个评估点仍过大时返回终态错误。
 func (loader *timeGraphMatrixLoader) queryAndApply(ctx context.Context, queryTs *structured.QueryTs, apply func(context.Context, pl.Matrix) error) error {
 	matrix, _, err := loader.query(ctx, queryTs)
-	if err != nil {
+	if err == nil {
+		return apply(ctx, matrix)
+	}
+	if !isBackendResponseTooLarge(err) {
 		return err
 	}
-	return apply(ctx, matrix)
+	halves, ok := loader.splitQueryTime(ctx, queryTs)
+	if !ok {
+		return &UnsplittableResponseError{Metric: timeGraphLoadMetricName(queryTs), Limit: metadata.BackendResponseLimit(ctx), cause: err}
+	}
+	for _, half := range halves {
+		// 独立子查询：被拒收的读取留下的质量状态不影响替代它的两半。
+		if err := loader.queryAndApply(frontierSubqueryContext(ctx), half, apply); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// splitQueryTime 把一次读取在请求网格上对半拆成两个不重叠的时间段：前段 ⌈n/2⌉ 点，
+// 后段沿用原终点（兼容区间的末段终点可以不在网格上）。只有精确网格的区间读取可拆；
+// 即时读取或只剩一个评估点时不能再拆。
+func (loader *timeGraphMatrixLoader) splitQueryTime(ctx context.Context, queryTs *structured.QueryTs) ([2]*structured.QueryTs, bool) {
+	var halves [2]*structured.QueryTs
+	stepSeconds := int64(loader.step / time.Second)
+	if queryTs == nil || loader.start.Equal(loader.end) || !metadata.IsExactTimeGrid(ctx) || stepSeconds <= 0 || loader.step%time.Second != 0 {
+		return halves, false
+	}
+	start, startErr := strconv.ParseInt(queryTs.Start, 10, 64)
+	end, endErr := strconv.ParseInt(queryTs.End, 10, 64)
+	if startErr != nil || endErr != nil || end < start {
+		return halves, false
+	}
+	points := (end-start)/stepSeconds + 1
+	if points < 2 {
+		return halves, false
+	}
+	firstPoints := (points + 1) / 2
+	bounds := [2][2]int64{{start, start + (firstPoints-1)*stepSeconds}, {start + firstPoints*stepSeconds, end}}
+	for i, bound := range bounds {
+		half := *queryTs
+		half.QueryList = make([]*structured.Query, len(queryTs.QueryList))
+		for j, item := range queryTs.QueryList {
+			copied := *item
+			half.QueryList[j] = &copied
+		}
+		half.Start, half.End = strconv.FormatInt(bound[0], 10), strconv.FormatInt(bound[1], 10)
+		halves[i] = &half
+	}
+	return halves, true
 }
 
 func (loader *timeGraphMatrixLoader) addSourceInfo(ctx context.Context, spaceUID string, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher) (queryCount int, err error) {
@@ -904,6 +953,12 @@ func (m *Model) queryRelationTargets(ctx context.Context, lookBackDelta, spaceUI
 	var cancel context.CancelFunc
 	ctx, cancel = withTimeGraphQueryContext(ctx)
 	defer cancel()
+	// 兼容入口与 topology 使用同一单次响应边界：超过边界的读取由取数器拆分重读，
+	// 不只依赖网关的拒收。
+	if metadata.BackendResponseLimit(ctx) <= 0 {
+		ctx = metadata.WithBackendResponseLimit(ctx, timeGraphBackendResponseBytes)
+	}
+	span.Set("backend-response-byte-limit", metadata.BackendResponseLimit(ctx))
 	span.Set("space-uid", spaceUID)
 	span.Set("source-type", sourceType)
 	span.Set("target-types", targetTypes)

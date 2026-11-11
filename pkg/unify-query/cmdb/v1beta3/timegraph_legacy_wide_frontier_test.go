@@ -91,13 +91,24 @@ func wideFrontierMatches(t *testing.T, conditions structured.Conditions, labels 
 	return false
 }
 
+// wideFrontierScopeRead 识别覆盖整个前沿的一次读取：没有按完整身份写出的等值条件。
+// 兼容入口的每次读取都带单次响应边界，不能再凭边界区分宽读取与分批读取。
+func wideFrontierScopeRead(conditions structured.Conditions) bool {
+	for _, field := range conditions.FieldList {
+		if field.Operator == structured.ConditionEqual {
+			return false
+		}
+	}
+	return true
+}
+
 func (b *wideFrontierBackend) query(t *testing.T) func(context.Context, *structured.QueryTs, string, bool, time.Time, time.Time, time.Duration) (pl.Matrix, error) {
 	return func(ctx context.Context, q *structured.QueryTs, _ string, _ bool, start, end time.Time, step time.Duration) (pl.Matrix, error) {
 		query := q.QueryList[0]
 		if query.FieldName == "pod_to_target_flow" {
 			b.hopQueries = append(b.hopQueries, query.Conditions)
 			b.hopBudgets = append(b.hopBudgets, metadata.BackendResponseLimit(ctx))
-			if metadata.BackendResponseLimit(ctx) > 0 {
+			if wideFrontierScopeRead(query.Conditions) {
 				b.wideQueries++
 				if b.rejectWide != nil {
 					if err := b.rejectWide(ctx); err != nil {
@@ -428,7 +439,7 @@ func TestLegacyWideFrontierKeepsRealQuality(t *testing.T) {
 			model := legacyRegressionModel(wideFrontierProvider())
 			model.timeGraphVMQuery = func(ctx context.Context, q *structured.QueryTs, expr string, instant bool, start, end time.Time, step time.Duration) (pl.Matrix, error) {
 				if q.QueryList[0].FieldName == "pod_to_target_flow" {
-					wide := metadata.BackendResponseLimit(ctx) > 0
+					wide := wideFrontierScopeRead(q.QueryList[0].Conditions)
 					if wide && tc.failWide {
 						b.hopQueries = append(b.hopQueries, q.QueryList[0].Conditions)
 						return nil, metadata.ErrBackendResponseTooLarge

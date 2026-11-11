@@ -28,9 +28,10 @@
 上限类配置非正时使用内置默认值。查询内部期限内置 60 秒，较短的父 context 期限优先。
 取消会中止排队、取数和后续构图；后端及 HTTP 期限同样生效。
 
-单次后端响应以 16 MiB 为分批边界（程序常量，不是配置项）：按身份分批的读取超过时对半
-拆分重读，兼容区间入口另按时间对半拆分；单个身份或整类关系的宽读取仍超过时返回
-`max_response_bytes`。构图规模（节点、关系身份、属性版本）、目标数和编码字节都不设上限。
+单次后端响应以 16 MiB 为分批边界（程序常量，不是配置项），topology 与兼容入口相同：按身份
+分批的读取超过时对半拆分重读；根读取、整类关系的宽读取、单个身份的读取和 info 读取超过时把
+这次读取在精确网格上按时间对半重读，两半不重叠，直到单个评估点。单个评估点仍超过时返回
+`max_response_bytes`，这是终态错误，兼容入口也不再改用下一条候选路径。构图规模（节点、关系身份、属性版本）、目标数和编码字节都不设上限。
 具体取数和编码见[取数与输出](timegraph-output-optimization.md)。
 
 ## 并发与生命周期
@@ -50,8 +51,8 @@
 响应逐项编码并分块写出，累计字节只用于 trace 和负载指标。
 
 请求体或批次数量超限使 HTTP 批次失败（topology 原因为 `max_topology_request_bytes`、
-`max_topology_queries`，兼容入口为 `max_relation_request_bytes`、`max_relation_queries`）；单项模型失败通过该项 code/message 返回。单次后端
-响应无法再拆分时返回 `max_response_bytes`，沿聚合子查询传播，不能被转成成功空图。
+`max_topology_queries`，兼容入口为 `max_relation_request_bytes`、`max_relation_queries`）；单项模型失败通过该项 code/message 返回。单个评估点
+的后端响应仍超过分批边界时返回 `max_response_bytes`，沿聚合子查询传播，不能被转成成功空图。
 普通后端 partial 保留在结果中。
 
 ## 观测

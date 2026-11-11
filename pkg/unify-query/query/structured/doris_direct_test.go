@@ -261,3 +261,65 @@ func TestMergedPaginationDoesNotPinOtherClusters(t *testing.T) {
 		})
 	}
 }
+
+func TestMixedBackendPaginationIndependentOfRTOrder(t *testing.T) {
+	for _, order := range []string{"abc", "acb", "bac", "bca", "cab", "cba"} {
+		for _, nextDirect := range []bool{true, false} {
+			t.Run(order+map[bool]string{true: "_enabled", false: "_disabled"}[nextDirect], func(t *testing.T) {
+				ctx, req, table := rawPlanFixture()
+				enabled := true
+				ctx = metadata.WithQueryFlags(ctx, metadata.QueryFlags{DorisDirectQuery: &enabled})
+				table.StorageType, table.Measurement = metadata.BkSqlStorageType, metadata.DorisStorageType
+				table.StorageClusterRecords = nil
+				tables := make(map[rune]*uqQuery.TsDBV2)
+				for _, name := range "abc" {
+					member := *table
+					member.TableID, member.DB = string(name), "1001_"+string(name)
+					if name != 'c' {
+						member.PhysicalTables = directTables(string(name))
+					}
+					tables[name] = &member
+				}
+				req.TsDBMap["A"] = TsDBs{tables['a'], tables['b'], tables['c']}
+				req.IsMergeDB, req.IsSearchAfter = true, true
+				plan, err := req.ToRawQueryPlan(ctx)
+				require.NoError(t, err)
+				require.Equal(t, 2, plan.Queries.Count())
+				req.ResultTableOptions = metadata.ResultTableOptions{}
+				plan.Queries.Range("", func(q *metadata.Query) {
+					// C 未配置物理表，沿用执行器返回的无后端标记旧格式游标。
+					option := &metadata.ResultTableOption{SearchAfter: []any{300}}
+					if q.QueryBackend == metadata.DorisStorageType {
+						require.Equal(t, []string{"1001_a", "1001_b"}, q.DBs)
+						option.QueryBackend = metadata.DorisStorageType
+						option.DirectTables = q.DirectTables
+						option.SearchAfter = []any{100}
+					} else {
+						require.Equal(t, []string{"1001_c"}, q.DBs)
+					}
+					req.ResultTableOptions[q.TableUUID()] = option
+				})
+				req.TsDBMap["A"] = nil
+				for _, name := range order {
+					req.TsDBMap["A"] = append(req.TsDBMap["A"], tables[name])
+				}
+				ctx = metadata.WithQueryFlags(ctx, metadata.QueryFlags{DorisDirectQuery: &nextDirect})
+				plan, err = req.ToRawQueryPlan(ctx)
+				require.NoError(t, err)
+				require.Equal(t, 2, plan.Queries.Count())
+				plan.Queries.Range("", func(q *metadata.Query) {
+					require.NotNil(t, q.ResultTableOption)
+					if q.QueryBackend == metadata.DorisStorageType {
+						require.Equal(t, []string{"1001_a", "1001_b"}, q.DBs)
+						require.ElementsMatch(t, []metadata.PhysicalTable{tables['a'].PhysicalTables["main"], tables['b'].PhysicalTables["main"]}, q.DirectTables)
+						require.Equal(t, []any{100}, q.ResultTableOption.SearchAfter)
+					} else {
+						require.Equal(t, []string{"1001_c"}, q.DBs)
+						require.Empty(t, q.DirectTables)
+						require.Equal(t, []any{300}, q.ResultTableOption.SearchAfter)
+					}
+				})
+			})
+		}
+	}
+}

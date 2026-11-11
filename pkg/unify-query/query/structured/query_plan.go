@@ -141,40 +141,43 @@ func restoreMergedDorisPagination(queries []*metadata.Query) {
 		groups[target] = append(groups[target], query)
 	}
 	for _, group := range groups {
-		for _, primary := range group {
-			option := primary.ResultTableOption
-			if option == nil {
-				continue
-			}
-			for _, member := range group {
-				if member.ResultTableOption != nil {
+		// Doris 游标明确列出物理成员，先恢复其归属，避免被 BKBase 游标提前接管。
+		for _, backend := range []string{metadata.DorisStorageType, metadata.BkSqlStorageType} {
+			for _, primary := range group {
+				option := primary.ResultTableOption
+				if option == nil || primary.QueryBackend != backend {
 					continue
 				}
-				switch primary.QueryBackend {
-				case metadata.BkSqlStorageType:
-					if member.DB == "" {
+				for _, member := range group {
+					if member.ResultTableOption != nil {
 						continue
 					}
-					member.QueryBackend = metadata.BkSqlStorageType
-					member.DirectTables = nil
-				case metadata.DorisStorageType:
-					target := member.PhysicalTables["main"]
-					matched := false
-					for _, saved := range option.DirectTables {
-						if target.Database != "" && target.Table != "" && target.Database == saved.Database && target.Table == saved.Table {
-							matched = true
-							break
+					switch primary.QueryBackend {
+					case metadata.BkSqlStorageType:
+						if member.DB == "" {
+							continue
 						}
-					}
-					if !matched {
+						member.QueryBackend = metadata.BkSqlStorageType
+						member.DirectTables = nil
+					case metadata.DorisStorageType:
+						target := member.PhysicalTables["main"]
+						matched := false
+						for _, saved := range option.DirectTables {
+							if target.Database != "" && target.Table != "" && target.Database == saved.Database && target.Table == saved.Table {
+								matched = true
+								break
+							}
+						}
+						if !matched {
+							continue
+						}
+						member.QueryBackend = metadata.DorisStorageType
+						member.DirectTables = []metadata.PhysicalTable{target}
+					default:
 						continue
 					}
-					member.QueryBackend = metadata.DorisStorageType
-					member.DirectTables = []metadata.PhysicalTable{target}
-				default:
-					continue
+					member.ResultTableOption = option
 				}
-				member.ResultTableOption = option
 			}
 		}
 	}

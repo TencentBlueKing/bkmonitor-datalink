@@ -1,0 +1,38 @@
+[
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {
+      "prefer_storage": "vm",
+      "sql": {
+        "api_params": {
+          "end": 1700000220,
+          "nocache": 0,
+          "query": "sum by (bcs_cluster_id, workload) (increase(a[2m] offset -59s999ms)) / sum by (bcs_cluster_id, workload) (increase(b[2m] offset -59s999ms)) * 100 or sum by (bcs_cluster_id, workload) (increase(c[2m] offset -59s999ms)) / sum by (bcs_cluster_id, workload) (increase(d[2m] offset -59s999ms)) * 100",
+          "start": 1700000040,
+          "step": 60
+        },
+        "api_type": "query_range",
+        "bk_biz_id": "golden_vm_partial_binding",
+        "cluster_name": "",
+        "influx_compatible": true,
+        "metric_filter_condition": {
+          "a": "bcs_cluster_id=~\"^demo-k8s-4\", workload=~\"demo-resolver\", namespace=\"demo-system\", result_code!~\"^(DEMO_SKIPPED|DEMO_ACCEPTED)$\", result_table_id=\"vm_rt_demo_partial_03\", __name__=\"demo_resolver_forward_responses_total_value\" or bcs_cluster_id=~\"^demo-k8s-4\", workload=~\"demo-resolver\", namespace=\"demo-system\", result_code!~\"^(DEMO_SKIPPED|DEMO_ACCEPTED)$\", result_table_id=\"vm_rt_demo_partial_04\", __name__=\"demo_resolver_forward_responses_total_value\"",
+          "b": "bk_biz_id=\"902\", workload=~\"demo-resolver\", namespace=\"demo-system\", result_table_id=\"vm_rt_demo_partial_05\", __name__=\"demo_resolver_forward_responses_total_value\" or bk_biz_id=\"902\", workload=~\"demo-resolver\", namespace=\"demo-system\", result_table_id=\"vm_rt_demo_partial_06\", __name__=\"demo_resolver_forward_responses_total_value\" or workload=~\"demo-resolver\", namespace=\"demo-system\", result_table_id=\"vm_rt_demo_partial_01\", __name__=\"demo_resolver_forward_responses_total_value\" or workload=~\"demo-resolver\", namespace=\"demo-system\", result_table_id=\"vm_rt_demo_partial_02\", __name__=\"demo_resolver_forward_responses_total_value\" or workload=~\"demo-resolver\", namespace=\"demo-system\", result_table_id=\"vm_rt_demo_partial_03\", __name__=\"demo_resolver_forward_responses_total_value\" or workload=~\"demo-resolver\", namespace=\"demo-system\", result_table_id=\"vm_rt_demo_partial_04\", __name__=\"demo_resolver_forward_responses_total_value\"",
+          "c": "result_table_id=\"vm_rt_demo_partial_01\", __name__=\"__unify_query_unbound_reference__\"",
+          "d": "result_table_id=\"vm_rt_demo_partial_01\", __name__=\"__unify_query_unbound_reference__\""
+        },
+        "result_table_list": [
+          "vm_rt_demo_partial_01",
+          "vm_rt_demo_partial_02",
+          "vm_rt_demo_partial_03",
+          "vm_rt_demo_partial_04",
+          "vm_rt_demo_partial_05",
+          "vm_rt_demo_partial_06"
+        ],
+        "use_native_or": true
+      }
+    }
+  }
+]

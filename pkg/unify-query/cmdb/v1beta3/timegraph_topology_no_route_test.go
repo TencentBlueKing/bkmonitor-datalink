@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	pl "github.com/prometheus/prometheus/promql"
 	"github.com/stretchr/testify/require"
 
@@ -116,6 +117,7 @@ func TestSharedTopologyRelationWithoutRouteKeepsOtherRelations(t *testing.T) {
 					require.NoError(t, err)
 					require.Zero(t, calls[missing], "an unrouted relation never reaches the backend")
 					require.Positive(t, calls["source_peer_flow"])
+					requireNoRouteKeepsBaselineReads(t, missing, baselineCalls, calls)
 					require.Len(t, result.Snapshots, points)
 					require.Equal(t, topologyObjectsForTest(t, baseline.Snapshots), topologyObjectsForTest(t, result.Snapshots))
 					for i, snapshot := range result.Snapshots {
@@ -174,6 +176,9 @@ func TestTopologySelectorRelationWithoutRouteOnEveryFetchPath(t *testing.T) {
 		{name: "bipartite-wide", provider: selectorProvider(), missing: "bc", count: timeGraphWideFrontierThreshold + 2, hops: 2, root: root},
 		{name: "bulk", provider: selectorProvider(), missing: "bc", count: 2, hops: 6, root: root},
 		{name: "bulk-without-root-filter", provider: selectorProvider(), missing: "bc", count: 2, hops: 2},
+		// 首跳的另一条关系缺路由：二部图第二阶段仍按身份分批，不退回宽读取。
+		{name: "bipartite-first-hop-unrouted", provider: selectorWithSecondFirstHop(), missing: "ad", count: 2, hops: 2, root: root},
+		{name: "bipartite-first-hop-unrouted-wide", provider: selectorWithSecondFirstHop(), missing: "ad", count: timeGraphWideFrontierThreshold + 2, hops: 2, root: root},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: tc.root, Timestamp: 1700000000, MaxHops: tc.hops}
@@ -195,6 +200,9 @@ func TestTopologySelectorRelationWithoutRouteOnEveryFetchPath(t *testing.T) {
 				require.NoError(t, err)
 				require.Zero(t, calls[tc.missing], "an unrouted relation never reaches the backend")
 				require.Positive(t, calls["ab"])
+				if planned {
+					requireNoRouteKeepsBaselineReads(t, tc.missing, baselineCalls, calls)
+				}
 				require.Equal(t, topologyObjectsForTest(t, baseline.Snapshots), topologyObjectsForTest(t, result.Snapshots))
 				require.True(t, result.Snapshots[0].Partial)
 				require.Equal(t, "relation_no_physical_route:"+tc.missing, result.Snapshots[0].PartialReason)
@@ -203,6 +211,116 @@ func TestTopologySelectorRelationWithoutRouteOnEveryFetchPath(t *testing.T) {
 				} else {
 					require.Equal(t, unplanned, canonicalTopologyForTest(t, result.Snapshots))
 				}
+			}
+		})
+	}
+}
+
+// requireNoRouteKeepsBaselineReads 断言缺路由只去掉该关系自身的读取：其余每条关系的读取
+// 次数与该关系有路由但无数据时相同，取数计划不因缺路由改变。
+func requireNoRouteKeepsBaselineReads(t *testing.T, missing string, baseline, calls map[string]int) {
+	t.Helper()
+	for metric, count := range baseline {
+		if metric != missing {
+			require.Equal(t, count, calls[metric], "%s is read as often as with a routed but empty %s", metric, missing)
+		}
+	}
+	for metric := range calls {
+		require.Contains(t, baseline, metric)
+	}
+}
+
+// selectorWithSecondFirstHop 在 a-b-c 二部图上再给根类型 a 加一条首跳关系 a-d。
+func selectorWithSecondFirstHop() contractSchemaProvider {
+	provider := selectorProvider()
+	provider.resources = append(provider.resources, "d")
+	provider.primary = map[ResourceType][]string{"a": {"a_id"}, "b": {"b_id"}, "c": {"c_id"}, "d": {"d_id"}}
+	provider.fields = map[ResourceType][]string{"a": {"a_id"}, "b": {"b_id"}, "c": {"c_id"}, "d": {"d_id"}}
+	provider.schemas = append(append([]RelationSchema(nil), provider.schemas...), RelationSchema{RelationType: "ad", Category: RelationCategoryStatic, FromType: "a", ToType: "d", MetricName: "ad"})
+	return provider
+}
+
+// 根在整个窗口都没有观测、首跳另一条关系缺路由时，首跳读取后即返回空邻域（带缺路由原因），
+// 与该关系有路由但无数据时一样不再读取后续关系；后端不完整时才继续读取。
+func TestTopologyUnobservedRootWithUnroutedFirstHopReturnsEarly(t *testing.T) {
+	old := SharedTopologyPlanCandidates
+	t.Cleanup(func() { SharedTopologyPlanCandidates = old })
+	SharedTopologyPlanCandidates = true
+	data := map[string]pl.Matrix{
+		"ab": contractMatrix(map[string]string{"a_id": "other", "b_id": "b0"}, 1700000000000),
+		"bc": contractMatrix(map[string]string{"b_id": "b0", "c_id": "c0"}, 1700000000000),
+	}
+	for _, hops := range []int{2, 3} {
+		t.Run(fmt.Sprintf("H%d", hops), func(t *testing.T) {
+			request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: hops}
+			baselineCalls := map[string]int{}
+			baseline, err := noRouteTopologyModel(t, selectorWithSecondFirstHop(), data, "", baselineCalls).QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
+			require.NoError(t, err)
+			require.Empty(t, baseline.Snapshots[0].Nodes)
+			require.False(t, baseline.Snapshots[0].Partial)
+			require.Zero(t, baselineCalls["bc"], "an unobserved root stops after the first hop")
+
+			calls := map[string]int{}
+			result, err := noRouteTopologyModel(t, selectorWithSecondFirstHop(), data, "ad", calls).QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
+			require.NoError(t, err)
+			require.Empty(t, result.Snapshots[0].Nodes)
+			require.True(t, result.Snapshots[0].Partial)
+			require.Equal(t, "relation_no_physical_route:ad", result.Snapshots[0].PartialReason)
+			requireNoRouteKeepsBaselineReads(t, "ad", baselineCalls, calls)
+		})
+	}
+}
+
+// topology 子查询按原因计入质量指标：缺路由计为 relation_no_physical_route，后端不完整计为
+// backend_partial，两者分开；完整查询不计数。
+func TestTopologyQualityMetricSeparatesNoRouteFromBackendPartial(t *testing.T) {
+	quality := func(reason string) float64 {
+		families, err := prometheus.DefaultGatherer.Gather()
+		require.NoError(t, err)
+		for _, family := range families {
+			if family.GetName() != "unify_query_cmdb_relation_quality_total" {
+				continue
+			}
+			for _, item := range family.GetMetric() {
+				labels := map[string]string{}
+				for _, label := range item.GetLabel() {
+					labels[label.GetName()] = label.GetValue()
+				}
+				if labels["query_mode"] == "instant" && labels["quality"] == "partial" && labels["reason"] == reason {
+					return item.GetCounter().GetValue()
+				}
+			}
+		}
+		return 0
+	}
+	request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: 1700000100, MaxHops: 2}
+	for _, tc := range []struct {
+		name, missing string
+		partial       bool
+		want          map[string]float64
+	}{
+		{name: "complete", want: map[string]float64{"relation_no_physical_route": 0, "backend_partial": 0}},
+		{name: "no_route", missing: "middle_target_flow", want: map[string]float64{"relation_no_physical_route": 1, "backend_partial": 0}},
+		{name: "backend_partial", partial: true, want: map[string]float64{"relation_no_physical_route": 0, "backend_partial": 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := map[string]float64{}
+			for reason := range tc.want {
+				before[reason] = quality(reason)
+			}
+			model := noRouteTopologyModel(t, noRouteSharedTopologyProvider(), noRouteSharedTopologyData(), tc.missing, map[string]int{})
+			if tc.partial {
+				vm := model.timeGraphVMQuery
+				model.timeGraphVMQuery = nil
+				model.timeGraphVMQueryWithPartial = func(ctx context.Context, ts *structured.QueryTs, expr string, instant bool, start, end time.Time, step time.Duration) (pl.Matrix, bool, error) {
+					matrix, err := vm(ctx, ts, expr, instant, start, end, step)
+					return matrix, ts.QueryList[0].FieldName == "source_peer_flow", err
+				}
+			}
+			_, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
+			require.NoError(t, err)
+			for reason, delta := range tc.want {
+				require.Equal(t, delta, quality(reason)-before[reason], reason)
 			}
 		})
 	}

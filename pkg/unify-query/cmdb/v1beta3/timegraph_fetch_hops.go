@@ -148,8 +148,9 @@ func (loader *timeGraphMatrixLoader) loadTopologyHops(ctx context.Context, space
 	}); err != nil {
 		return err
 	}
-	// 根的全部关联边已读入：完整成功且全窗无观测即为空邻域。
-	if !observed && len(q.partialTimes) == 0 {
+	// 根的全部关联边已读入：后端完整且全窗无观测即为空邻域。缺路由的关系按已读且无数据
+	// 处理，不妨碍判空，其原因仍留在各帧。
+	if !observed && !q.backendPartial() {
 		return nil
 	}
 

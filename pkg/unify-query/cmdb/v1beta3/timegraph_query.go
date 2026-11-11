@@ -335,7 +335,7 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 				}
 				rootObserved = rootObserved || observed
 			}
-			if !rootObserved && len(tg.partialTimes) == 0 {
+			if !rootObserved && !tg.backendPartial() {
 				return tg, nil
 			}
 		}
@@ -562,6 +562,8 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 		matrix, partial, err = nil, true, nil
 		partialReason = reason
 		span.Set("relation-no-physical-route", true)
+		// 与读到一个空结果一样替换复用槽，后续读取的复用与该关系有路由时相同。
+		loader.lastMatrix = timeGraphMatrixSlot{}
 	}
 	// 校验可能清空命名返回值；先记录已返回的 Matrix，超过分批边界的拒收也要计入输入成本。
 	if err == nil && loader.reusedQueryCount == reuseBefore {

@@ -213,6 +213,13 @@ func (m *Model) QuerySharedTopologyFrames(ctx context.Context, request cmdb.Shar
 	}
 	defer graph.Clean(queryCtx)
 
+	partialTimestamps := graph.partialTimesCopy()
+	// 不完整原因的并集按固定原因计入质量指标，缺路由（relation_no_physical_route）与后端不完整
+	// （backend_partial）分开计数；完整原因留在 trace。
+	if reasons := topologyPartialReasons(partialTimestamps); reasons != "" {
+		span.Set("partial-reasons", reasons)
+		metric.CMDBRelationQualityInc(queryCtx, queryMode, "partial", reasons)
+	}
 	topologyQuery := SharedTopologyQuery{
 		SourceType:           request.SourceType,
 		SourceMatcher:        request.SourceInfo,
@@ -220,7 +227,7 @@ func (m *Model) QuerySharedTopologyFrames(ctx context.Context, request cmdb.Shar
 		AllowedCategories:    toRelationCategories(request.AllowedCategories),
 		AllowedRelationTypes: append([]string(nil), request.AllowedRelationTypes...),
 		Direction:            direction,
-		PartialTimestamps:    graph.partialTimesCopy(),
+		PartialTimestamps:    partialTimestamps,
 		RootBits:             graph.sharedTopologyRootBits(),
 	}
 	header := cmdb.SharedTopologyResult{

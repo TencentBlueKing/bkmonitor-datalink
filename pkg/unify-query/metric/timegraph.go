@@ -26,7 +26,7 @@ const (
 var (
 	cmdbRelationQualityTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "unify_query", Name: "cmdb_relation_quality_total",
-		Help: "legacy relation query quality events, counted once per query and distinct bounded reason",
+		Help: "relation query quality events of the legacy-compatible and topology queries, counted once per query and distinct bounded reason",
 	}, []string{"query_mode", "quality", "reason"})
 	cmdbTopologyOperationsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "unify_query", Name: "cmdb_topology_operations_total",

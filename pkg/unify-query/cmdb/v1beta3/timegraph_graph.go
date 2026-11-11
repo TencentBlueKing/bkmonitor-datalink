@@ -35,14 +35,17 @@ type TimeGraph struct {
 	shared *sharedTimeGraph // 拓扑入口直接保存时间位，不创建逐桶图。
 	lock   sync.RWMutex     // 读写锁，保证并发安全
 
-	nodeBuilder   *NodeBuilder                          // 节点构建器，负责节点的创建和去重
-	timeGraph     map[int64]graph.Graph[uint64, uint64] // 时间分片图，key为时间戳，value为对应的图结构
-	edgeTypes     map[int64]map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{}
-	nodeInfos     map[int64]map[uint64]cmdb.Matcher // timestamp -> node -> time-specific dimensions
-	partialTimes  map[int64]string                  // 时间点 -> 数据不完整原因
-	edgeCount     int
-	nodeInfoCount int
-	relations     []TimeGraphRelationConfig
+	nodeBuilder  *NodeBuilder                          // 节点构建器，负责节点的创建和去重
+	timeGraph    map[int64]graph.Graph[uint64, uint64] // 时间分片图，key为时间戳，value为对应的图结构
+	edgeTypes    map[int64]map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{}
+	nodeInfos    map[int64]map[uint64]cmdb.Matcher // timestamp -> node -> time-specific dimensions
+	partialTimes map[int64]string                  // 时间点 -> 数据不完整原因
+	// backendIncomplete 表示后端返回了不完整结果（backend_partial）。缺物理路由的关系按已读
+	// 且无数据处理，只记入 partialTimes，不设置它：取数计划据此判断已读的候选是否完整。
+	backendIncomplete bool
+	edgeCount         int
+	nodeInfoCount     int
+	relations         []TimeGraphRelationConfig
 }
 
 type timeGraphEdgeKey struct {
@@ -118,6 +121,7 @@ func (q *TimeGraph) Clean(ctx context.Context) {
 	for k := range q.partialTimes {
 		delete(q.partialTimes, k)
 	}
+	q.backendIncomplete = false
 	if q.shared != nil {
 		q.shared.clear()
 	}
@@ -139,6 +143,9 @@ func (q *TimeGraph) markPartialRange(start, end time.Time, step time.Duration, r
 	pointCount := uint64(endMs-startMs)/uint64(stepMs) + 1
 	q.lock.Lock()
 	defer q.lock.Unlock()
+	if reason == "backend_partial" {
+		q.backendIncomplete = true
+	}
 	for index := uint64(0); index < pointCount; index++ {
 		timestamp := startMs + int64(index)*stepMs
 		reasons := strings.Split(q.partialTimes[timestamp], ";")
@@ -152,6 +159,31 @@ func (q *TimeGraph) markPartialRange(start, end time.Time, step time.Duration, r
 		sort.Strings(reasons)
 		q.partialTimes[timestamp] = strings.Trim(strings.Join(reasons, ";"), ";")
 	}
+}
+
+// backendPartial 返回是否有后端不完整的读取；缺物理路由不计入。
+func (q *TimeGraph) backendPartial() bool {
+	q.lock.RLock()
+	defer q.lock.RUnlock()
+	return q.backendIncomplete
+}
+
+// topologyPartialReasons 返回各帧不完整原因的并集，按字典序以 ";" 连接。
+func topologyPartialReasons(partial map[int64]string) string {
+	reasons := map[string]struct{}{}
+	for _, joined := range partial {
+		for _, reason := range strings.Split(joined, ";") {
+			if reason != "" {
+				reasons[reason] = struct{}{}
+			}
+		}
+	}
+	ordered := make([]string, 0, len(reasons))
+	for reason := range reasons {
+		ordered = append(ordered, reason)
+	}
+	sort.Strings(ordered)
+	return strings.Join(ordered, ";")
 }
 
 func (q *TimeGraph) partialTimesCopy() map[int64]string {

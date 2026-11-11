@@ -189,7 +189,8 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 		return queries, err
 	}
 	// 其余有根条件的多跳计划从根逐跳读取实际到达的候选，不再整条读取关系分量。
-	if mode == "bulk" && q.topologyHopFetchEligible(source, identity, relations, visible) {
+	hopEligible := q.topologyHopFetchEligible(source, identity, relations, visible)
+	if mode == "bulk" && hopEligible {
 		span.Set("fetch-mode", "hop")
 		err = loader.loadTopologyHops(ctx, space, source, identity, relations, wideGroups, plan.hops, reorder, &queries)
 		return queries, err
@@ -244,11 +245,25 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 		if err = loader.fetchTopologyGroups(groups, space, &queries, collect); err != nil {
 			return queries, err
 		}
-		if !observed && len(q.partialTimes) == 0 {
+		// 后端完整且全窗无根观测即为空邻域；缺路由的关系按已读且无数据处理，不妨碍判空。
+		if !observed && !q.backendPartial() {
 			return queries, nil
 		}
 	}
-	if mode == "bipartite" && len(q.partialTimes) == 0 && !incompleteIdentity {
+	if mode == "bipartite" && !incompleteIdentity {
+		// 首阶段后端不完整时另一侧候选不完整，首跳候选超过阈值时按身份分批代价过高：两种情况
+		// 都从根逐跳读取实际到达的候选，不退回整类关系的宽读取。
+		large := false
+		for _, candidates := range first {
+			large = large || len(candidates) > timeGraphWideFrontierThreshold
+		}
+		if (q.backendPartial() || large) && hopEligible {
+			span.Set("fetch-mode", "bipartite-then-hop")
+			err = loader.loadTopologyHops(ctx, space, source, identity, relations, wideGroups, plan.hops, reorder, &queries)
+			return queries, err
+		}
+	}
+	if mode == "bipartite" && !q.backendPartial() && !incompleteIdentity {
 		inputs := []topologyFetchInput{}
 		for _, relation := range relations {
 			candidates, ok := first[relation.V[0]]

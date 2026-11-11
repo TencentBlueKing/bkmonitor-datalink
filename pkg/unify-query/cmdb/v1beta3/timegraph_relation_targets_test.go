@@ -495,9 +495,19 @@ func TestLegacyRangeSegmenter(t *testing.T) {
 		// 余下恰好一个点时并入当前段，不产生单点段。
 		{name: "65_points_absorb_last", end: minute(64), step: time.Minute, want: legacyGridSegments(start, time.Minute, 65)},
 		{name: "66_points", end: minute(65), step: time.Minute, want: legacyGridSegments(start, time.Minute, 64, 2)},
-		// 没有边点时逐段翻倍：64 之后至多 128，余下 66 点一次取完。
-		{name: "130_points_double", end: minute(129), step: time.Minute, want: legacyGridSegments(start, time.Minute, 64, 66)},
-		{name: "1000_points_double", end: minute(999), step: time.Minute, want: legacyGridSegments(start, time.Minute, 64, 128, 256, 512, 40)},
+		// 空段不提供规模，下一段保持原长，连续空段不会放大段长。
+		{name: "130_points_empty_keep_size", end: minute(129), step: time.Minute, want: legacyGridSegments(start, time.Minute, 64, 64, 2)},
+		{name: "1000_points_empty_keep_size", end: minute(999), step: time.Minute, want: legacyGridSegments(start, time.Minute, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 40)},
+		// 轻量段逐段翻倍：64 之后至多 128，余下 66 点一次取完。
+		{name: "130_points_light_double", end: minute(129), step: time.Minute, edgePoints: perPoint(1), want: legacyGridSegments(start, time.Minute, 64, 66)},
+		{name: "1000_points_light_double", end: minute(999), step: time.Minute, edgePoints: perPoint(1), want: legacyGridSegments(start, time.Minute, 64, 128, 256, 512, 40)},
+		// 前两段为空时段长保持 64，第一个有边的段之后才翻倍。
+		{name: "empty_then_light", end: minute(299), step: time.Minute, edgePoints: func(segment legacyRangeSegment) int {
+			if segment.start.Before(minute(128)) {
+				return 0
+			}
+			return segment.points
+		}, want: legacyGridSegments(start, time.Minute, 64, 64, 64, 108)},
 		// 每点 10000 条边：下一段 = max(2, min(128, 262144/10000)) = 26。
 		{name: "dense_points_follow_budget", end: minute(129), step: time.Minute, edgePoints: perPoint(10000), want: legacyGridSegments(start, time.Minute, 64, 26, 26, 14)},
 		// 每点边数向上取整：(64*4096+1)/64 取整为 4097，262144/4097 = 63。
@@ -505,7 +515,7 @@ func TestLegacyRangeSegmenter(t *testing.T) {
 		// 单点就超过预算时退到最小段 2；末尾余 1 点时并入，得到 3。
 		{name: "per_point_over_budget", end: minute(68), step: time.Minute, edgePoints: perPoint(legacyRangeSegmentGraphPoints + 1), want: legacyGridSegments(start, time.Minute, 64, 2, 3)},
 		{name: "off_grid_end_single_segment", end: minute(10).Add(half), step: time.Minute, want: offGrid(legacyGridSegments(start, time.Minute, 11), minute(10).Add(half))},
-		{name: "off_grid_end_kept_by_last_segment", end: minute(129).Add(half), step: time.Minute, want: offGrid(legacyGridSegments(start, time.Minute, 64, 66), minute(129).Add(half))},
+		{name: "off_grid_end_kept_by_last_segment", end: minute(129).Add(half), step: time.Minute, want: offGrid(legacyGridSegments(start, time.Minute, 64, 64, 2), minute(129).Add(half))},
 		{name: "off_grid_end_below_one_step", end: start.Add(half), step: time.Minute, want: []legacyRangeSegment{{start: start, end: start.Add(half), points: 1}}},
 		{name: "zero_step", end: minute(200), step: 0, want: []legacyRangeSegment{{start: start, end: minute(200), points: 1}}},
 		{name: "negative_step", end: minute(200), step: -time.Minute, want: []legacyRangeSegment{{start: start, end: minute(200), points: 1}}},
@@ -712,8 +722,8 @@ func TestLegacyRangeNoRouteSegments(t *testing.T) {
 	}{
 		{
 			name: "first_segment_unrouted", points: 130, unroutedFrom: minute(0), unroutedTo: minute(63),
-			// 无路由段按零边点回报，下一段翻倍到 128，余下 66 点一次取完。
-			wantCalls:      legacyGridSegments(minute(64), time.Minute, 66),
+			// 无路由段不提供规模，下一段保持 64 点；有边的段之后才翻倍，余下 2 点一次取完。
+			wantCalls:      legacyGridSegments(minute(64), time.Minute, 64, 2),
 			wantRoutedFrom: []int{64}, wantRoutedTo: []int{129},
 		},
 		{

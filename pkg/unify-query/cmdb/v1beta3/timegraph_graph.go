@@ -837,9 +837,8 @@ func (q *TimeGraph) FindRelationTargets(
 					Target:     cmdb.PathNode{ResourceType: resourceType, Dimensions: nodeInfo},
 				})
 			}
-			sort.Slice(frame, func(i, j int) bool {
-				return fmt.Sprint(frame[i].Target.Dimensions) < fmt.Sprint(frame[j].Target.Dimensions)
-			})
+			// 帧内顺序只为输出确定；排序键每个目标只计算一次。
+			sortByTextKey(frame, func(target RelationTarget) string { return fmt.Sprint(target.Target.Dimensions) })
 			results = append(results, frame...)
 		}
 	}
@@ -894,8 +893,8 @@ func (q *TimeGraph) reachTypedRelationNodes(
 				if _, done := next[neighbor]; done {
 					continue
 				}
-				resourceType, _ := q.nodeBuilder.Info(neighbor)
-				if resourceType != expectedPath[index].ResourceType {
+				// 只按类型筛选，不复制节点属性。
+				if q.nodeBuilder.resourceName(neighbor) != expectedPath[index].ResourceType {
 					continue
 				}
 				if !relationEdgeMatches(edgeTypes, timeGraphEdgeKey{source: current, target: neighbor}, expectedPath[index]) {

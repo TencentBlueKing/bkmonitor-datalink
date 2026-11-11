@@ -370,9 +370,7 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 	for _, matcher := range matchersByID {
 		matchers = append(matchers, matcher)
 	}
-	sort.SliceStable(matchers, func(i, j int) bool {
-		return fmt.Sprint(matchers[i]) < fmt.Sprint(matchers[j])
-	})
+	sortByTextKey(matchers, matcherText)
 
 	selectedPath := legacySelectedPath(paths, lastSuccess)
 
@@ -569,9 +567,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 		for _, matcher := range matchersByID {
 			matchers = append(matchers, matcher)
 		}
-		sort.SliceStable(matchers, func(i, j int) bool {
-			return fmt.Sprint(matchers[i]) < fmt.Sprint(matchers[j])
-		})
+		sortByTextKey(matchers, matcherText)
 		series = append(series, cmdb.MatchersWithTimestamp{Timestamp: timestamp, Matchers: matchers})
 	}
 	sort.SliceStable(series, func(i, j int) bool { return series[i].Timestamp < series[j].Timestamp })
@@ -606,10 +602,10 @@ func legacySelectedPath(paths []resourcePath, lastSuccess int) []string {
 }
 
 // legacyRangeSegmentPoints 是区间查询首段的评估点数。各点按自己的窗口独立
-// 计算，分段不改变答案；单段只物化这些点的时间分桶图。
-const legacyRangeSegmentPoints = 64
+// 计算，分段不改变答案；单段只物化这些点的时间分桶图。测试可调大它取得不分段的参照答案。
+var legacyRangeSegmentPoints = 64
 
-// legacyRangeSegmentGraphPoints 是单段时间分桶图的规模预算：每个时刻的边数与节点信息数之和。
+// legacyRangeSegmentGraphPoints 是单段时间分桶图的目标规模：每个时刻的边数与节点信息数之和。
 // 段长按上一段得到的每点规模换算，轻量查询逐段翻倍以减少往返，重查询的工作集
 // 保持在这一量级，与总点数无关。
 const legacyRangeSegmentGraphPoints = 256 * 1024
@@ -671,13 +667,14 @@ func (s *legacyRangeSegmenter) next() (legacyRangeSegment, bool) {
 	return segment, true
 }
 
-// observe 按刚完成一段的图规模决定下一段长度：至多翻倍，不超过规模预算，
-// 后端拒收过之后也不超过拒收段的一半。
+// observe 按刚完成一段的图规模决定下一段长度：至多翻倍，不超过单段图规模，
+// 后端拒收过之后也不超过拒收段的一半。空段（含缺路由的段）不提供规模信息，
+// 下一段保持它的长度，连续空段之后也不会放大到单段规模之外。
 func (s *legacyRangeSegmenter) observe(segment legacyRangeSegment, graphPoints int) {
-	next := 2 * max(segment.points, 1)
+	next := max(segment.points, 1)
 	if graphPoints > 0 {
 		perPoint := (graphPoints + segment.points - 1) / segment.points
-		next = min(next, legacyRangeSegmentGraphPoints/perPoint)
+		next = min(2*next, legacyRangeSegmentGraphPoints/perPoint)
 	}
 	if s.ceiling > 0 {
 		next = min(next, s.ceiling)
@@ -708,6 +705,29 @@ func addTimeGraphPartialReason(ctx context.Context, reason string) {
 	}
 	sort.Strings(ordered)
 	metadata.SetStatus(ctx, metadata.QueryTsPartial, strings.Join(ordered, ";"))
+}
+
+// sortByTextKey 按文本键稳定排序，每个元素的键只计算一次，比较时不再格式化。
+func sortByTextKey[T any](items []T, key func(T) string) {
+	keys := make([]string, len(items))
+	for i, item := range items {
+		keys[i] = key(item)
+	}
+	sort.Stable(textKeyedItems[T]{keys: keys, items: items})
+}
+
+func matcherText(matcher cmdb.Matcher) string { return fmt.Sprint(matcher) }
+
+type textKeyedItems[T any] struct {
+	keys  []string
+	items []T
+}
+
+func (s textKeyedItems[T]) Len() int           { return len(s.items) }
+func (s textKeyedItems[T]) Less(i, j int) bool { return s.keys[i] < s.keys[j] }
+func (s textKeyedItems[T]) Swap(i, j int) {
+	s.keys[i], s.keys[j] = s.keys[j], s.keys[i]
+	s.items[i], s.items[j] = s.items[j], s.items[i]
 }
 
 func countTimeGraphRangeTargets(series []cmdb.MatchersWithTimestamp) int {

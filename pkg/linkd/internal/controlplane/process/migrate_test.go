@@ -38,7 +38,7 @@ func TestMigrationWithoutEventgen(t *testing.T) {
 	cfg.Dispatch.EventgenEnabled = false
 	step := func(context.Context, config.Config) error { return nil }
 	eventgenStep := func(context.Context, config.Config) error { t.Fatal("disabled eventgen accessed storage"); return nil }
-	if err := runMigration(t.Context(), cfg, migrationSteps{eventgenStep, step, step, step, step}); err != nil {
+	if err := runMigration(t.Context(), cfg, migrationSteps{prepareEventgen: eventgenStep, checkRedis: step, prepareRepository: step, prepareSources: step, preparePolicies: step}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -61,7 +61,7 @@ func TestMigrationStages(t *testing.T) {
 					return nil
 				}
 			}
-			steps := migrationSteps{makeStep("eventgen"), makeStep("redis"), makeStep("repository"), makeStep("sources"), makeStep("policies")}
+			steps := migrationSteps{prepareEventgen: makeStep("eventgen"), checkRedis: makeStep("redis"), prepareRepository: makeStep("repository"), prepareSources: makeStep("sources"), preparePolicies: makeStep("policies")}
 			err := runMigration(t.Context(), migrationTestConfig(), steps)
 			expected := []string{"redis", "repository", "sources", "policies", "eventgen"}
 			if failedAt != "" {
@@ -113,7 +113,7 @@ func TestMigrationChecksConfigurationBeforeIO(t *testing.T) {
 			tc.change(&cfg)
 			invoked := false
 			step := func(context.Context, config.Config) error { invoked = true; return nil }
-			err := runMigration(t.Context(), cfg, migrationSteps{step, step, step, step, step})
+			err := runMigration(t.Context(), cfg, migrationSteps{prepareEventgen: step, checkRedis: step, prepareRepository: step, prepareSources: step, preparePolicies: step})
 			if err == nil || invoked {
 				t.Fatalf("error=%v, invoked=%v", err, invoked)
 			}
@@ -130,7 +130,7 @@ func TestMigrationCancellation(t *testing.T) {
 	calls := 0
 	first := func(context.Context, config.Config) error { calls++; cancel(); return nil }
 	later := func(context.Context, config.Config) error { calls++; return nil }
-	err := runMigration(ctx, migrationTestConfig(), migrationSteps{later, first, later, later, later})
+	err := runMigration(ctx, migrationTestConfig(), migrationSteps{prepareEventgen: later, checkRedis: first, prepareRepository: later, prepareSources: later, preparePolicies: later})
 	if !errors.Is(err, context.Canceled) || calls != 1 {
 		t.Fatalf("error=%v calls=%d", err, calls)
 	}

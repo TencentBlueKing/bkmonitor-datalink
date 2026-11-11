@@ -106,9 +106,9 @@ test("default GHCR release images reach all roles and migration", () => {
   const prefix = "ghcr.io/tencentblueking/bkmonitor-datalink/";
   for (const role of ["control-plane", "cleaner", "lifecycle"]) {
     const name = "linkd";
-    assert.equal(byComponent(docs, role).spec.template.spec.containers[0].image, prefix + name + ":0.1.14");
+    assert.equal(byComponent(docs, role).spec.template.spec.containers[0].image, prefix + name + ":0.1.15");
   }
-  assert.equal(docs.find(d => d.kind === "Job").spec.template.spec.containers[0].image, prefix + "linkd:0.1.14");
+  assert.equal(docs.find(d => d.kind === "Job").spec.template.spec.containers[0].image, prefix + "linkd:0.1.15");
 });
 test("explicit image registry, tag and digest override release defaults", () => {
   const digest = "sha256:" + "b".repeat(64);
@@ -201,8 +201,9 @@ test("watch migration has self-contained pre hooks with ordered Secret and Servi
     assert.equal(pod.containers[0].ports, undefined);
     const secret = docs.find(d => d.kind === "Secret" && d.metadata.name === pod.volumes[0].secret.secretName);
     const account = docs.find(d => d.kind === "ServiceAccount" && d.metadata.name === pod.serviceAccountName);
-    assert.equal(secret.metadata.annotations["helm.sh/hook-weight"], "-10");
-    assert.equal(account.metadata.annotations["helm.sh/hook-weight"], "-20");
+    assert.equal(job.metadata.annotations["helm.sh/hook-weight"], "-31");
+    assert.equal(secret.metadata.annotations["helm.sh/hook-weight"], "-32");
+    assert.equal(account.metadata.annotations["helm.sh/hook-weight"], "-33");
     assert.equal(account.automountServiceAccountToken, false);
     assert.equal(secret.metadata.annotations["helm.sh/hook-delete-policy"], "before-hook-creation,hook-succeeded");
     assert.equal(Buffer.from(secret.data["linkd.yaml"], "base64").toString(), configFor(docs, byComponent(docs, "control-plane")));

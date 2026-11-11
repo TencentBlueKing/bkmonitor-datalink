@@ -830,7 +830,7 @@ linkd storage prepare --config /etc/linkd/linkd.yaml \
 ## 动态 EventSource 与调度
 
 部署前可使用 `linkd storage migrate --config <path> --timeout 4m` 检查控制面配置并执行一次性
-基础存储初始化。该命令有写入副作用，不等同于只读的 `config validate`；不会自动导入来源或
+基础存储初始化；启用 `plugins.kac` 时也初始化其独立 ES 目标的兼容告警索引。该命令有写入副作用，不等同于只读的 `config validate`；不会自动导入来源或
 重建调度历史。Helm Job 的执行、等待与清理规则见 [Helm 部署指南](helm.md#初始化-job-与等待方式)。
 
 Helm 中每个 worker 组可以通过 `LINKD_WORKER_LABELS` 注入 JSON 字符串映射，完整替换 YAML 的

@@ -6,7 +6,7 @@ Event Generator 和 ServiceMonitor 可选，管理界面使用 Kingeye Admin，�
 外部 Elasticsearch 最低要求 **7.10**；Redis 建议使用 **7.2 系列**（单节点或 Sentinel）。
 完整版本边界与实测范围见 [中间件版本要求](../../../docs/guides/configuration.md#中间件版本要求)。
 
-Chart 版本为 `0.1.14`。Linkd 的默认镜像为 `ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.14`；可选模拟器使用独立的 `linkd-eventgen:0.2.0`。
+Chart 版本为 `0.1.15`。Linkd 的默认镜像为 `ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.15`；可选模拟器使用独立的 `linkd-eventgen:0.2.0`。
 镜像仓库与版本均可通过 values 覆盖。
 手动打包与 GitHub Actions Artifacts 下载见[发布指南](../../../docs/guides/image-release.md#helm-chart-打包)。
 
@@ -41,3 +41,9 @@ Cleaner 的下游背压默认开启，`configuration.lifecycle.mailbox.backpress
 不等同于 `storage` 中的 Linkd Repository。各角色读取同一资源定义，按实际需求创建连接。
 更新资源后重启控制面与 Lifecycle；采用已有 Secret 时也需保持两者配置一致。
 EventSource 仅保存丰富规则，不再保存资源连接。Kingeye Admin OneModel 查询通过控制面执行。
+
+## 部署前索引初始化
+
+同步 migrate Hook 在 Fusion 初始化前运行（ServiceAccount / Secret / Job 权重为 -33 / -32 / -31）。
+`storage migrate` 在启用 `plugins.kac` 时同时初始化 KAC 兼容告警索引，复用控制面的
+ILM、模板和别名维护入口，不启动动作消费。异步普通 Job 不保证 Fusion 首装前索引就绪。

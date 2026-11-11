@@ -249,7 +249,9 @@ kubectl -n linkd get service -l 'linkd/metrics=true'
 Chart 默认在创建、更新时运行 `linkd storage migrate`，使用 Control Plane 的配置、镜像和认证凭据。
 这个一次性命令完成配置与认证前提校验、Redis PING、Repository schema 初始化及 EventSource
 Record/Release 集合初始化。Elasticsearch 复用控制面的 Schema/Active 资源与时间桶对账；MySQL
-复用 Repository 的 EnsureSchema。成功后退出，失败返回非零退出码。
+复用 Repository 的 EnsureSchema。启用 `plugins.kac` 时还复用兼容索引维护入口，初始化其独立 ES
+目标上的 ILM、模板、首个物理索引及写入别名；失败返回非零退出码，成功后关闭连接并退出，
+不启动控制面或动作消费。重复运行保留已有业务数据。
 
 ```yaml
 migrate:
@@ -265,7 +267,8 @@ migrate:
 ```
 
 `watch: true` 使用 `pre-install,pre-upgrade` Hook Job；Helm 等待完成后才创建/更新普通资源。
-Job 失败则本次 Helm 操作失败。初次安装所需的迁移配置 Secret 和专用 ServiceAccount 也作为更早的
+Hook 权重依次为 ServiceAccount `-33`、配置 Secret `-32`、Job `-31`，在 Kingeye Fusion
+初始化（`-30`）读取兼容告警索引 mapping 前完成。Job 失败则本次 Helm 操作失败。初次安装所需的迁移配置 Secret 和专用 ServiceAccount 也作为更早的
 Hook 创建，不依赖尚未创建的普通资源；成功后清理这些 Hook。失败 Job 保留到 TTL 或下次执行前，
 失败的 Hook Secret/ServiceAccount 保留用于排障，可在确认 Job 已结束后手工删除。
 

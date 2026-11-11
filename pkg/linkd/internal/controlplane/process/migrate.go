@@ -19,12 +19,13 @@ import (
 	"linkd/internal/config"
 	eventgenstore "linkd/internal/eventgen/storage"
 	sourcestore "linkd/internal/eventsource/storage"
+	"linkd/internal/kaccompat"
 	policystore "linkd/internal/policy/storage"
 	"linkd/internal/redisclient"
 	repositoryassembly "linkd/internal/store/assembly"
 )
 
-// Migrate 执行控制面的有界一次性初始化：校验配置与认证、检查 Redis、初始化 Repository、来源和策略集合。
+// Migrate 执行控制面的有界一次性初始化：校验配置与认证、检查 Redis、初始化 Repository、来源、策略集合及已启用的 KAC 兼容索引。
 // 可能部分生效，失败后可重试已有幂等初始化；不启动 API、任务、归档或调度，不申请中心资格，
 // 不导入来源或重建 Redis 协调历史。已有业务数据不会被清空；这不是历史 schema 自动升级器。
 func Migrate(ctx context.Context, cfg config.Config) error {
@@ -40,10 +41,12 @@ func Migrate(ctx context.Context, cfg config.Config) error {
 		prepareSources:    prepareMigrationSources,
 		preparePolicies:   prepareMigrationPolicies,
 		prepareEventgen:   prepareMigrationEventgen,
+		prepareKAC:        prepareMigrationKAC,
 	})
 }
 
 type migrationSteps struct {
+	prepareKAC        func(context.Context, config.Config) error
 	prepareEventgen   func(context.Context, config.Config) error
 	checkRedis        func(context.Context, config.Config) error
 	prepareRepository func(context.Context, config.Config) error
@@ -71,11 +74,15 @@ func runMigration(ctx context.Context, cfg config.Config, steps migrationSteps) 
 	}{
 		{"check Redis", steps.checkRedis},
 		{"prepare repository", steps.prepareRepository},
+		{"prepare KAC compatibility index", steps.prepareKAC},
 		{"prepare source collections", steps.prepareSources},
 		{"prepare policy collections", steps.preparePolicies},
 		{"prepare dynamic config snapshots", prepareDynamicConfigSnapshots},
 		{"prepare eventgen collections", steps.prepareEventgen},
 	} {
+		if step.name == "prepare KAC compatibility index" && (cfg.Plugins.KAC == nil || !cfg.Plugins.KAC.Enabled) {
+			continue
+		}
 		if step.name == "prepare eventgen collections" && !cfg.Dispatch.EventgenEnabled {
 			continue
 		}
@@ -151,4 +158,14 @@ func prepareMigrationEventgen(ctx context.Context, c config.Config) error {
 		return e
 	}
 	return store.Close()
+}
+
+// prepareMigrationKAC 只初始化兼容索引，不装配动作发送或依赖业务元数据的投影能力。
+func prepareMigrationKAC(ctx context.Context, cfg config.Config) error {
+	client, err := kaccompat.Open(*cfg.Plugins.KAC, nil, nil)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	return client.Maintain(ctx)
 }

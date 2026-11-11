@@ -182,7 +182,7 @@ func TestTopologyTimeSplitTerminalAndOtherErrors(t *testing.T) {
 		require.ErrorAs(t, err, &terminal)
 		require.ErrorIs(t, err, metadata.ErrBackendResponseTooLarge)
 		require.Equal(t, "container_with_pod", terminal.Metric)
-		require.ErrorContains(t, err, "max_response_bytes")
+		require.ErrorContains(t, err, "topology resource limit exceeded: max_response_bytes")
 		onePoint := false
 		for _, read := range backend.rejected {
 			onePoint = onePoint || (read.metric == "container_with_pod" && read.points == 1)

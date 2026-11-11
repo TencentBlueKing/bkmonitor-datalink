@@ -645,7 +645,7 @@ func (loader *timeGraphMatrixLoader) queryAndApply(ctx context.Context, queryTs 
 	}
 	halves, ok := loader.splitQueryTime(ctx, queryTs)
 	if !ok {
-		return &UnsplittableResponseError{Metric: timeGraphLoadMetricName(queryTs), Limit: metadata.BackendResponseLimit(ctx), cause: err}
+		return &UnsplittableResponseError{Metric: timeGraphLoadMetricName(queryTs), Limit: metadata.BackendResponseLimit(ctx), relation: timeGraphLegacyCompatibility(ctx), cause: err}
 	}
 	for _, half := range halves {
 		// 独立子查询：被拒收的读取留下的质量状态不影响替代它的两半。

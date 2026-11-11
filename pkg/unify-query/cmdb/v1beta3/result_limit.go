@@ -59,14 +59,20 @@ func (e *ResultLimitError) TruncationReason() string {
 type UnsplittableResponseError struct {
 	Metric string
 	Limit  int64
-	cause  error
+	// relation 表示读取来自兼容入口，文案与 ResultLimitError 一样按入口区分。
+	relation bool
+	cause    error
 }
 
 func (e *UnsplittableResponseError) Error() string {
-	if e.Limit > 0 {
-		return fmt.Sprintf("topology resource limit exceeded: max_response_bytes (one evaluation point of %s exceeds the %d-byte backend response boundary)", e.Metric, e.Limit)
+	subject := "topology"
+	if e.relation {
+		subject = "relation"
 	}
-	return fmt.Sprintf("topology resource limit exceeded: max_response_bytes (one evaluation point of %s exceeds the backend response size)", e.Metric)
+	if e.Limit > 0 {
+		return fmt.Sprintf("%s resource limit exceeded: max_response_bytes (one evaluation point of %s exceeds the %d-byte backend response boundary)", subject, e.Metric, e.Limit)
+	}
+	return fmt.Sprintf("%s resource limit exceeded: max_response_bytes (one evaluation point of %s exceeds the backend response size)", subject, e.Metric)
 }
 
 // TruncationReason 与可拆分的超限使用同一稳定原因。

@@ -789,6 +789,7 @@ func TestLegacyUnsplittableResponseDoesNotFallBack(t *testing.T) {
 				if tooLarge {
 					var terminal *UnsplittableResponseError
 					require.ErrorAs(t, err, &terminal)
+					require.ErrorContains(t, err, "relation resource limit exceeded: max_response_bytes")
 					require.False(t, found)
 					return
 				}

@@ -166,7 +166,7 @@ compact 版本为 `version:1`；timestamps 是整份网格，节点/边按属性
 | 无匹配根/无关系观测 | 200 / 200 | 保留空时间帧，partial=false；不要当执行失败 |
 | info 有路由但属性条件无命中 | 200 / 200 | 完整空帧，partial=false；不能借别的根补答案 |
 | 显式根属性查询缺 info 路由 | 200 / 200 | 空帧且 partial=true、source_info_no_route；不能当确认无实体 |
-| 所需关系缺物理路由 | 200 / 400 | 此项无可用图；message 标识 required relation has no physical query route，其他成功项仍可用 |
+| 范围内关系缺物理路由 | 200 / 200 | 保留其他关系取得的图；所有帧 partial=true，partial_reason 含 relation_no_physical_route:<指标>，不宣称完整。范围内关系都缺路由时为空帧加同样标记 |
 | 后端 partial | 200 / 200 | 保留已有图并标记对应帧 backend_partial；不宣称完整 |
 | 参数非法或单项后端执行失败 | 200 / 400 | 此项无可用图，保留其他成功项；失败 compact=null 或 snapshots=[] |
 | JSON 错误、请求体/批次数量超限 | 400 / 无 data 项 | 整个请求失败，直接响应为 {error:...} |
@@ -181,7 +181,7 @@ compact 版本为 `version:1`；timestamps 是整份网格，节点/边按属性
 两个典型响应，完整请求与响应见夹具：
 
 ```json
-{"trace_id":"","data":[{"code":400,"start_time":0,"end_time":0,"step":"","point_count":0,"snapshots":[],"message":"build shared topology: required relation has no physical query route: node_with_pod_relation"}]}
+{"trace_id":"","data":[{"code":200,"start_time":1700000000000,"end_time":1700000000000,"step":"","point_count":1,"snapshots":[{"timestamp":1700000000000,"nodes":[],"edges":[],"partial":true,"partial_reason":"relation_no_physical_route:node_with_pod_relation"}]}]}
 ```
 
 ```json

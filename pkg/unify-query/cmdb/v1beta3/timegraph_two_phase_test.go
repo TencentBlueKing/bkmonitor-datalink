@@ -3,6 +3,7 @@ package v1beta3
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -115,18 +116,59 @@ func TestSharedTopologyPartialIdentityMatchesMultipleRootsPerFrame(t *testing.T)
 	require.Empty(t, result.Snapshots[1].Nodes)
 }
 
-func TestSharedTopologyRequiredRelationWithoutRouteFails(t *testing.T) {
-	model := sharedTopologyQueryModel(nil)
-	model.timeGraphQueryReference = func(context.Context, *structured.QueryTs) (metadata.QueryReference, error) {
-		return metadata.QueryReference{}, nil
+// 范围内所有关系都缺少物理路由时返回空图而不是错误：每帧带全部关系的原因，
+// 快照和紧凑格式一致，且没有任何关系访问后端。
+func TestSharedTopologyAllRelationsWithoutRouteReturnPartialEmpty(t *testing.T) {
+	old := SharedTopologyPlanCandidates
+	t.Cleanup(func() { SharedTopologyPlanCandidates = old })
+	const reason = "relation_no_physical_route:middle_target_flow;relation_no_physical_route:source_middle_flow"
+	for _, planned := range []bool{false, true} {
+		for _, mode := range []string{"instant", "range"} {
+			t.Run(fmt.Sprintf("planned=%v/%s", planned, mode), func(t *testing.T) {
+				SharedTopologyPlanCandidates = planned
+				model := sharedTopologyQueryModel(nil)
+				model.timeGraphQueryReference = func(context.Context, *structured.QueryTs) (metadata.QueryReference, error) {
+					return metadata.QueryReference{}, nil
+				}
+				var fields []string
+				model.timeGraphVMQuery = func(_ context.Context, q *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
+					fields = append(fields, q.QueryList[0].FieldName)
+					return nil, nil
+				}
+				request := cmdb.SharedTopologyQuery{
+					SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
+					Timestamp: 1700000000, MaxHops: 2,
+				}
+				points := 1
+				if mode == "range" {
+					request.Timestamp, request.StartTime, request.EndTime, request.Step = 0, 1700000000, 1700000200, "100s"
+					points = 3
+				}
+				result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
+				require.NoError(t, err)
+				require.Len(t, result.Snapshots, points)
+				for _, snapshot := range result.Snapshots {
+					require.Empty(t, snapshot.Nodes)
+					require.Empty(t, snapshot.Edges)
+					require.True(t, snapshot.Partial)
+					require.Equal(t, reason, snapshot.PartialReason)
+				}
+
+				request.ResponseFormat = cmdb.CompactTopologyFormat
+				compact, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
+				require.NoError(t, err)
+				require.NotNil(t, compact.Compact)
+				require.Empty(t, compact.Compact.Nodes)
+				require.Empty(t, compact.Compact.Edges)
+				require.Len(t, compact.Compact.Partial, points)
+				for i, partial := range compact.Compact.Partial {
+					require.Equal(t, cmdb.CompactTopologyPartial{Index: i, Reason: reason}, partial)
+				}
+				require.Equal(t, canonicalTopologyForTest(t, result.Snapshots), canonicalTopologyForTest(t, decodeCompactForTest(t, compact.Compact)))
+				require.Empty(t, fields, "unrouted relations never reach the backend")
+			})
+		}
 	}
-	result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{
-		SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
-		Timestamp: 1700000000, MaxHops: 2,
-	})
-	require.ErrorContains(t, err, "required relation has no physical query route")
-	require.ErrorContains(t, err, "middle_target_flow")
-	require.Empty(t, result.Snapshots)
 }
 
 func TestSharedTopologyBoundaryRelationWithoutRouteIsNotRequired(t *testing.T) {
@@ -148,15 +190,22 @@ func TestSharedTopologyBoundaryRelationWithoutRouteIsNotRequired(t *testing.T) {
 	require.Len(t, result.Snapshots, 1)
 	require.Len(t, result.Snapshots[0].Nodes, 2)
 	require.Len(t, result.Snapshots[0].Edges, 1)
+	require.False(t, result.Snapshots[0].Partial, "a relation beyond the hop boundary is not in scope")
 	request.ResponseFormat = cmdb.CompactTopologyFormat
 	compact, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
 	require.NoError(t, err)
 	require.Equal(t, result.Snapshots, decodeCompactForTest(t, compact.Compact))
 
+	// 进入范围后缺路由关系按已读且无数据处理：其余结果不变，只多出 partial 原因。
+	// 该关系若访问后端，sharedTopologyQueryModel 会因未知指标返回错误。
 	request.ResponseFormat = ""
 	request.MaxHops = 2
-	_, err = model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
-	require.ErrorContains(t, err, "required relation has no physical query route: middle_target_flow")
+	inScope, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
+	require.NoError(t, err)
+	require.Len(t, inScope.Snapshots, 1)
+	require.Equal(t, topologyObjectsForTest(t, result.Snapshots), topologyObjectsForTest(t, inScope.Snapshots))
+	require.True(t, inScope.Snapshots[0].Partial)
+	require.Equal(t, "relation_no_physical_route:middle_target_flow", inScope.Snapshots[0].PartialReason)
 }
 
 func TestSharedTopologyTypeCycleReadsReachedSourceInstances(t *testing.T) {

@@ -175,13 +175,14 @@ test("consumer serializer to real UQ HTTP handler/model and back", { skip: !endp
   for (const spaceUID of ["example-partial", "example-empty-info", "example-no-info", "example-no-route", "example-backend-error"]) {
     const q = ["example-empty-info", "example-no-info"].includes(spaceUID) ? scenarios.find((s) => s.name === "attribute-roots").query : good;
     const { data } = await queryRelations({ baseURL: endpoint, spaceUID, path: "v1beta3/topology_range", queryList: [q] });
-    if (["example-no-route", "example-backend-error"].includes(spaceUID)) {
+    if (spaceUID === "example-backend-error") {
       assert.equal(data[0].code, 400, JSON.stringify(data)); assert.deepEqual(data[0].snapshots, []);
     } else {
       const reader = readTopologyItem(data[0]); assert.ok(reader.ok);
       for (let i = 0; i < reader.pointCount; i++) {
         const frame = reader.frame(i);
-        assert.equal(frame.partial, ["example-partial", "example-no-info"].includes(spaceUID));
+        assert.equal(frame.partial, ["example-partial", "example-no-info", "example-no-route"].includes(spaceUID));
+        if (spaceUID === "example-no-route") { assert.match(frame.partial_reason, /relation_no_physical_route/); assert.equal(frame.nodes.length, 0); }
         if (spaceUID === "example-no-info") assert.match(frame.partial_reason, /source_info_no_route/);
         if (spaceUID === "example-partial") { assert.match(frame.partial_reason, /backend_partial/); assert.equal(frame.nodes.length, 2); }
         else { assert.equal(frame.nodes.length, 0); }

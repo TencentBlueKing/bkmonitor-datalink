@@ -85,12 +85,22 @@ type timeGraphVMQueryWithPartial func(context.Context, *structured.QueryTs, stri
 
 type timeGraphQueryReference func(context.Context, *structured.QueryTs) (metadata.QueryReference, error)
 
-// A missing physical route is distinct from an executed query returning no
-// series. Only the legacy response adapter may downgrade it to partial data.
+// 缺少物理路由与已执行查询但没有序列不同，不能当作完整的空结果。
+// 共享拓扑由取数器按已读且无数据处理并把整个计算网格标记为 partial（见
+// relationNoRouteReason）；兼容入口仍收到该错误，由响应适配层降级为部分结果。
 type relationNoPhysicalRouteError struct{ metric string }
 
 func (e *relationNoPhysicalRouteError) Error() string {
 	return fmt.Sprintf("required relation has no physical query route: %s", e.metric)
+}
+
+// relationNoRouteReason 返回共享拓扑可吸收的缺路由原因；兼容入口或其他错误返回空串。
+func (loader *timeGraphMatrixLoader) relationNoRouteReason(err error) string {
+	var routeErr *relationNoPhysicalRouteError
+	if !loader.topology || !errors.As(err, &routeErr) {
+		return ""
+	}
+	return "relation_no_physical_route:" + routeErr.metric
 }
 
 func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured.QueryTs) (string, *metadata.QueryParams, error) {
@@ -567,6 +577,15 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 			})
 		}
 	}
+	// 共享拓扑中关系缺少物理路由时不访问后端：该关系按已读且无数据处理，以它的原因把
+	// 整个计算网格标记为 partial，其余关系照常读取。所有拓扑取数路径（首跳探测、取数组、
+	// 前沿分批）都经过这里，返回成功也不会触发身份拆分重试。
+	partialReason := "backend_partial"
+	if reason := loader.relationNoRouteReason(err); reason != "" {
+		matrix, partial, err = nil, true, nil
+		partialReason = reason
+		span.Set("relation-no-physical-route", true)
+	}
 	// 校验可能清空命名返回值；先记录已返回的 Matrix，预算拒收也要计入输入成本。
 	if err == nil && loader.reusedQueryCount == reuseBefore {
 		loadSize = timeGraphReturnedMatrixSize(matrix)
@@ -577,7 +596,6 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 	}
 	// Prometheus 聚合后端通过子查询 metadata 报告部分成功，VM 则返回 partial 位。
 	// 合并当前子查询的两种信号，让空结果的快照、指标和 trace 同样保留不完整状态。
-	partialReason := "backend_partial"
 	if status := metadata.GetStatus(queryCtx); status != nil {
 		partial = partial || status.Code == metadata.QueryTsPartial
 		if status.Code == metadata.QueryTsPartial && status.Message == "source_info_no_route" {

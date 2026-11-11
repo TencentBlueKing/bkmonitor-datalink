@@ -27,7 +27,8 @@ type topologyFetchGroup struct {
 }
 
 // compileTopologyFetches 仅合并路由、投影、条件、用户和后端语义均相同的物理查询。
-// 即使前沿为空也先完成查询准备，以便缺少必需路由时仍明确报错。
+// 即使前沿为空也先完成查询准备，其余准备错误仍明确报错；缺少物理路由的关系单独成组、
+// 不参与合并，取数时由 queryWithQuality 按已读且无数据处理并标记 partial。
 func (loader *timeGraphMatrixLoader) compileTopologyFetches(ctx context.Context, space string, inputs []topologyFetchInput, reorder bool) ([]topologyFetchGroup, error) {
 	groups := []topologyFetchGroup{}
 	indexes := map[string]int{}
@@ -67,6 +68,10 @@ func (loader *timeGraphMatrixLoader) compileTopologyFetches(ctx context.Context,
 		var params *metadata.QueryParams
 		if loader.override == nil {
 			expression, params, err = loader.model.prepareTimeGraphVMQuery(queryCtx, ts)
+			if loader.relationNoRouteReason(err) != "" {
+				// params 为空，复用键保持为空，此关系不会并入其他物理查询。
+				err = nil
+			}
 			if err != nil {
 				return nil, err
 			}

@@ -42,7 +42,8 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 
 // QuerySharedTopologyFrames 与 QuerySharedTopology 给出相同的答案。compact 格式把完整结果交给
 // consume，frames 为空；snapshots 格式的 header 不含 Snapshots，frames 在 consume 内逐帧构造快照，
-// 调用方可以边构造边编码，不同时物化 K 帧。consume 返回前图和执行槽保持有效，其错误原样返回。
+// 调用方可以边构造边编码，不同时物化 K 帧。compact 结果是独立副本，原图在调用 consume 之前释放；
+// snapshots 的原图保持到 consume 返回。执行槽都保持到 consume 返回，consume 的错误原样返回。
 func (m *Model) QuerySharedTopologyFrames(ctx context.Context, request cmdb.SharedTopologyQuery, consume func(cmdb.SharedTopologyResult, TopologyFrames) error) (err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-query-shared-topology")
 	defer span.End(&err)
@@ -211,7 +212,15 @@ func (m *Model) QuerySharedTopologyFrames(ctx context.Context, request cmdb.Shar
 	if err != nil {
 		return errors.WithMessage(err, "build shared topology")
 	}
-	defer graph.Clean(queryCtx)
+	// compact 分支在交给 consume 之前释放原图，其余路径在返回时释放；只释放一次。
+	graphReleased := false
+	releaseGraph := func() {
+		if !graphReleased {
+			graphReleased = true
+			graph.Clean(queryCtx)
+		}
+	}
+	defer releaseGraph()
 
 	partialTimestamps := graph.partialTimesCopy()
 	// 不完整原因的并集按固定原因计入质量指标，缺路由（relation_no_physical_route）与后端不完整
@@ -246,6 +255,7 @@ func (m *Model) QuerySharedTopologyFrames(ctx context.Context, request cmdb.Shar
 		}
 		header.Compact = compact
 		pointCount, counts = header.PointCount, topologySnapshotCounts{nodes: compact.NodeOccurrences, edges: compact.EdgeOccurrences, partial: len(compact.Partial)}
+		releaseGraph()
 		return consume(header, nil)
 	}
 	frames, err := graph.prepareSharedTopologyFrames(queryCtx, grid, topologyQuery, topologyOutputTypes(request.SourceType, request.TargetTypes))

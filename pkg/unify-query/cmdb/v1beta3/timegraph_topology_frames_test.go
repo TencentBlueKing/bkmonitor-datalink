@@ -54,3 +54,40 @@ func TestTopologyFramesMatchCollectedSnapshots(t *testing.T) {
 		}
 	}
 }
+
+// compact 结果是独立副本，原图在交给 consume 之前释放，编码期间不再同时持有原图；
+// 释放后的结果仍与快照一致。snapshots 逐帧读图，原图活到 consume 返回之后。两种格式都只释放一次。
+func TestTopologyCompactReleasesGraphBeforeConsume(t *testing.T) {
+	frames := hopFetchFrames()
+	data := randomHopFetchFixture(rand.New(rand.NewSource(0)), frames)
+	request := cmdb.SharedTopologyQuery{
+		SpaceUID: "space", SourceType: "container", SourceInfo: cmdb.Matcher{"cluster": "c0", "pod": "p0"},
+		StartTime: frames[0] / 1000, EndTime: frames[len(frames)-1] / 1000, Step: "60s", MaxHops: 3,
+	}
+	want, err := hopFetchModel(hopFetchProvider(), &hopFetchBackend{t: t, data: data}).QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
+	require.NoError(t, err)
+	wantSnapshots := canonicalTopologyForTest(t, want.Snapshots)
+	require.NotEmpty(t, want.Snapshots[0].Nodes)
+	cleanups := func() float64 {
+		return readTimeGraphMetric(t, "cmdb_timegraph_stage_seconds", map[string]string{"stage": "cleanup", "result": "success"}, "count")
+	}
+	for _, format := range []string{"", cmdb.CompactTopologyFormat} {
+		t.Run("format="+format, func(t *testing.T) {
+			request.ResponseFormat = format
+			before := cleanups()
+			err := hopFetchModel(hopFetchProvider(), &hopFetchBackend{t: t, data: data}).QuerySharedTopologyFrames(initTimeGraphQueryTestEnvironment(), request, func(header cmdb.SharedTopologyResult, source TopologyFrames) error {
+				if format == cmdb.CompactTopologyFormat {
+					require.Equal(t, before+1, cleanups(), "the graph is released before the compact result is encoded")
+					require.Equal(t, wantSnapshots, canonicalTopologyForTest(t, decodeCompactForTest(t, header.Compact)))
+					return nil
+				}
+				return source(func(cmdb.SharedTopologySnapshot) error {
+					require.Equal(t, before, cleanups(), "snapshot frames read the graph while they are encoded")
+					return nil
+				})
+			})
+			require.NoError(t, err)
+			require.Equal(t, before+1, cleanups(), "the graph is released exactly once")
+		})
+	}
+}

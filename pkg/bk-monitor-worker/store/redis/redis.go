@@ -52,21 +52,30 @@ func GetStorageRedisInstance() *Instance {
 		return storageRedisInstance
 	}
 	storageRedisOnce.Do(func() {
-		opt := redisUtils.Option{
-			Mode:             config.StorageRedisMode,
-			Host:             config.StorageRedisStandaloneHost,
-			Port:             config.StorageRedisStandalonePort,
-			SentinelAddress:  config.StorageRedisSentinelAddress,
-			MasterName:       config.StorageRedisSentinelMasterName,
-			SentinelPassword: config.StorageRedisSentinelPassword,
-			Password:         config.StorageRedisStandalonePassword,
-			Db:               config.StorageRedisDatabase,
-			DialTimeout:      config.StorageRedisDialTimeout,
-			ReadTimeout:      config.StorageRedisReadTimeout,
-		}
-		storageRedisInstance = GetInstance(&opt)
+		storageRedisInstance = GetInstance(storageRedisOption())
 	})
 	return storageRedisInstance
+}
+
+func storageRedisOption() *redisUtils.Option {
+	return &redisUtils.Option{
+		Mode:             config.StorageRedisMode,
+		Host:             config.StorageRedisStandaloneHost,
+		Port:             config.StorageRedisStandalonePort,
+		SentinelAddress:  config.StorageRedisSentinelAddress,
+		MasterName:       config.StorageRedisSentinelMasterName,
+		SentinelPassword: config.StorageRedisSentinelPassword,
+		Password:         config.StorageRedisStandalonePassword,
+		Db:               config.StorageRedisDatabase,
+		DialTimeout:      config.StorageRedisDialTimeout,
+		ReadTimeout:      config.StorageRedisReadTimeout,
+	}
+}
+
+// NewStorageRedisClient 创建存储类型 redis 的独立客户端，不检查连通性：
+// 用于 Redis 不可用时也要能启动的调用方（关联关系定义的覆盖层），连接失败由调用方重试。
+func NewStorageRedisClient() goRedis.UniversalClient {
+	return redisUtils.NewUniversalClient(storageRedisOption())
 }
 
 // GetCacheRedisInstance 获取缓存类型的 redis

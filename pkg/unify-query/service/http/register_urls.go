@@ -145,6 +145,10 @@ func registerOtherHandlers(registerHandler *endpoint.RegisterHandler) {
 	handlerPath = viper.GetString(StoragePrintHandlePathConfigPath)
 	registerHandler.Register(http.MethodGet, handlerPath, HandleStorage)
 
+	// relation_schema_print
+	handlerPath = viper.GetString(RelationSchemaPrintHandlePathConfigPath)
+	registerHandler.Register(http.MethodGet, handlerPath, HandleRelationSchemaPrint)
+
 	// HEAD
 	registerHandler.Register(http.MethodHead, "", HandlerHealth)
 

@@ -319,5 +319,39 @@ func (sp *StaticSchemaProvider) Subscribe(callback SchemaChangeCallback) error {
 	return nil
 }
 
+// EffectiveSchema 返回内置定义。静态提供器只有内置一层：业务 namespace 不单独存定义，
+// UQ 两个引擎对业务 namespace 都回退到这份 __all__ 定义。
+func (sp *StaticSchemaProvider) EffectiveSchema(namespace string) EffectiveSchema {
+	sp.mu.RLock()
+	defer sp.mu.RUnlock()
+
+	return EffectiveSchema{
+		Provider:  sp.Name(),
+		Namespace: normalizeNamespace(namespace),
+		Lookup:    []string{string(DefinitionSourceBuiltin)},
+		Overlay:   sp.OverlayStatus(),
+		Resources: effectiveDefinitions(listLayered(nil, sp.resourceDefinitions, NamespaceAll), SameResourceDefinition),
+		Relations: effectiveDefinitions(listLayered(nil, sp.relationDefinitions, NamespaceAll), SameRelationDefinition),
+	}
+}
+
+// SourceCounts 统计内置定义条数，其余来源恒为 0
+func (sp *StaticSchemaProvider) SourceCounts() []SourceCount {
+	sp.mu.RLock()
+	defer sp.mu.RUnlock()
+
+	return append(countSources[ResourceDefinition](KindResourceDefinition, nil, sp.resourceDefinitions),
+		countSources[RelationDefinition](KindRelationDefinition, nil, sp.relationDefinitions)...)
+}
+
+// OverlayStatus 静态提供器没有 Redis 覆盖层，状态恒为不可用
+func (sp *StaticSchemaProvider) OverlayStatus() OverlayStatus {
+	status := overlayStatus{lastReason: OverlayReasonClientMissing}
+	return status.snapshot()
+}
+
 // Ensure StaticSchemaProvider implements SchemaProvider
-var _ SchemaProvider = (*StaticSchemaProvider)(nil)
+var (
+	_ SchemaProvider        = (*StaticSchemaProvider)(nil)
+	_ SchemaSourceInspector = (*StaticSchemaProvider)(nil)
+)

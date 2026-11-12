@@ -62,8 +62,8 @@ func startSchemaRedis(t *testing.T) *redis.Client {
 func TestRedisProviderNamespaceRefreshIntegration(t *testing.T) {
 	client := startSchemaRedis(t)
 	definitions := map[string]string{
-		KindResourceDefinition: `{"service":{"namespace":"__all__","name":"service","fields":[{"name":"id","required":true}]}}`,
-		KindRelationDefinition: `{"calls":{"namespace":"__all__","name":"calls","from_resource":"service","to_resource":"service"}}`,
+		KindResourceDefinition: `{"custom_service":{"namespace":"__all__","name":"custom_service","fields":[{"name":"id","required":true}]}}`,
+		KindRelationDefinition: `{"calls":{"namespace":"__all__","name":"calls","from_resource":"custom_service","to_resource":"custom_service"}}`,
 	}
 	for _, kind := range []string{KindResourceDefinition, KindRelationDefinition} {
 		for _, change := range []string{"malformed JSON", "read failure", "missing namespace", "unchanged"} {
@@ -75,8 +75,7 @@ func TestRedisProviderNamespaceRefreshIntegration(t *testing.T) {
 					require.NoError(t, client.Del(ctx, key).Err())
 					require.NoError(t, client.HSet(ctx, key, NamespaceAll, value).Err())
 				}
-				provider, err := NewRedisProvider(ctx, client, WithReconcileInterval(0))
-				require.NoError(t, err)
+				provider := NewRedisProvider(ctx, client, WithReconcileInterval(0))
 				defer provider.Close()
 
 				changes := make(chan string, 1)
@@ -112,7 +111,7 @@ func TestRedisProviderNamespaceRefreshIntegration(t *testing.T) {
 				announce()
 				if change == "missing namespace" {
 					if kind == KindResourceDefinition {
-						_, err := provider.GetResourceDefinition(NamespaceAll, "service")
+						_, err := provider.GetResourceDefinition(NamespaceAll, "custom_service")
 						require.ErrorIs(t, err, ErrResourceDefinitionNotFound)
 					} else {
 						_, err := provider.GetRelationDefinition(NamespaceAll, "calls")
@@ -120,23 +119,23 @@ func TestRedisProviderNamespaceRefreshIntegration(t *testing.T) {
 					}
 				} else {
 					// 读取或解码失败后，查询继续使用原快照。
-					resource, err := provider.GetResourceDefinition(NamespaceAll, "service")
+					resource, err := provider.GetResourceDefinition(NamespaceAll, "custom_service")
 					require.NoError(t, err)
 					require.Equal(t, "id", resource.Fields[0].Name)
 					relation, err := provider.GetRelationDefinition(NamespaceAll, "calls")
 					require.NoError(t, err)
-					require.Equal(t, "service", relation.FromResource)
+					require.Equal(t, "custom_service", relation.FromResource)
 				}
 
 				require.NoError(t, client.Del(ctx, key).Err())
 				require.NoError(t, client.HSet(ctx, key, NamespaceAll, definitions[kind]).Err())
 				announce()
-				resource, err := provider.GetResourceDefinition(NamespaceAll, "service")
+				resource, err := provider.GetResourceDefinition(NamespaceAll, "custom_service")
 				require.NoError(t, err, "restored snapshot must be usable")
 				require.Equal(t, "id", resource.Fields[0].Name)
 				relation, err := provider.GetRelationDefinition(NamespaceAll, "calls")
 				require.NoError(t, err)
-				require.Equal(t, "service", relation.FromResource)
+				require.Equal(t, "custom_service", relation.FromResource)
 			})
 		}
 	}

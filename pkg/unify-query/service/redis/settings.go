@@ -28,8 +28,7 @@ const (
 	ReadTimeoutConfigPath = "redis.read_timeout"
 	ServiceNameConfigPath = "redis.service_name"
 
-	SchemaProviderTypeConfigPath = "schemaProvider.type"
-	KVBasePathConfigPath         = "redis.kv_base_path"
+	KVBasePathConfigPath = "redis.kv_base_path"
 )
 
 var (
@@ -48,6 +47,4 @@ var (
 
 	DialTimeout time.Duration
 	ReadTimeout time.Duration
-
-	SchemaProviderType string
 )

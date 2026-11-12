@@ -112,9 +112,8 @@ func TestRedisProviderPeriodicReconcileIntegration(t *testing.T) {
 			key := RedisKeyPrefix + ":" + KindResourceDefinition
 			require.NoError(t, client.Set(ctx, key, "wrong type", 0).Err())
 			core, logs := observer.New(zap.DebugLevel)
-			provider, err := NewRedisProvider(ctx, client, WithReloadOnStart(false),
+			provider := NewRedisProvider(ctx, client, WithReloadOnStart(false),
 				WithLogger(zap.New(core).Sugar()), WithReconcileInterval(interval))
-			require.NoError(t, err)
 			defer provider.Close()
 			require.Eventually(t, func() bool {
 				return logs.FilterMessageSnippet("reconciliation after subscription failed").Len() > 0
@@ -125,15 +124,15 @@ func TestRedisProviderPeriodicReconcileIntegration(t *testing.T) {
 				}, time.Second, time.Millisecond)
 			}
 			require.NoError(t, client.Del(ctx, key).Err())
-			require.NoError(t, client.HSet(ctx, key, NamespaceAll, `{"service":{"name":"service"}}`).Err())
+			require.NoError(t, client.HSet(ctx, key, NamespaceAll, `{"custom_service":{"name":"custom_service"}}`).Err())
 			if interval > 0 {
 				require.Eventually(t, func() bool {
-					_, err := provider.GetResourceDefinition(NamespaceAll, "service")
+					_, err := provider.GetResourceDefinition(NamespaceAll, "custom_service")
 					return err == nil
 				}, time.Second, time.Millisecond)
 			} else {
 				require.Never(t, func() bool {
-					_, err := provider.GetResourceDefinition(NamespaceAll, "service")
+					_, err := provider.GetResourceDefinition(NamespaceAll, "custom_service")
 					return err == nil
 				}, 60*time.Millisecond, 5*time.Millisecond)
 				require.Empty(t, logs.FilterMessageSnippet("periodic Redis").All())

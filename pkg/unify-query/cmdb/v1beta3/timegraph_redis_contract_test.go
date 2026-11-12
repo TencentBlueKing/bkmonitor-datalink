@@ -44,8 +44,7 @@ func TestTimeGraphRedisSchemaIsolationAndReload(t *testing.T) {
 		write(relation.KindResourceDefinition, ns, resource(ns, ns+"_id"))
 		write(relation.KindRelationDefinition, ns, relations(ns, ns+"_flow"))
 	}
-	provider, err := relation.NewRedisProvider(ctx, client)
-	require.NoError(t, err)
+	provider := relation.NewRedisProvider(ctx, client)
 	t.Cleanup(func() { require.NoError(t, provider.Close()) })
 	adapter := NewSchemaProviderFromRelation(provider)
 	model := &Model{schemaProvider: adapter, timeGraphQueryReference: timeGraphTestQueryReference}
@@ -61,6 +60,9 @@ func TestTimeGraphRedisSchemaIsolationAndReload(t *testing.T) {
 			field, target = "tenant_a_id", "a-v2"
 		case "tenant_b_flow":
 			field, target = "tenant_b_id", "b"
+		case "service_to_service_flow":
+			// 内置的 service_to_service 同样生效，本用例只为 calls 准备数据。
+			return pl.Matrix{}, nil
 		default:
 			return nil, fmt.Errorf("unexpected metric %s", query.FieldName)
 		}
@@ -197,8 +199,7 @@ func TestRedisSchemaReconcilesMissedPubSubChanges(t *testing.T) {
 		"business_relation": {Namespace: "bkcc__2", Name: "business_relation", FromResource: "service", ToResource: "service"},
 	})
 
-	provider, err := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(20*time.Millisecond))
-	require.NoError(t, err)
+	provider := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(20*time.Millisecond))
 	t.Cleanup(func() { require.NoError(t, provider.Close()) })
 	changes := make(chan string, 4)
 	require.NoError(t, provider.Subscribe(func(kind, namespace string) {
@@ -210,9 +211,17 @@ func TestRedisSchemaReconcilesMissedPubSubChanges(t *testing.T) {
 	resource, err := provider.GetResourceDefinition("bkcc__2", "service")
 	require.NoError(t, err)
 	require.Equal(t, "business_id", resource.Fields[0].Name)
+	relationNames := func(definitions []*relation.RelationDefinition) map[string]bool {
+		names := make(map[string]bool, len(definitions))
+		for _, definition := range definitions {
+			names[definition.Name] = true
+		}
+		return names
+	}
 	relations, err := provider.ListRelationDefinitions("bkcc__2")
 	require.NoError(t, err)
-	require.Len(t, relations, 2)
+	require.True(t, relationNames(relations)["shared_relation"])
+	require.True(t, relationNames(relations)["business_relation"])
 
 	// Simulate a completed HDEL whose Pub/Sub notification was lost. The next
 	// reconciliation must clear both cached kinds and notify model subscribers.
@@ -221,8 +230,9 @@ func TestRedisSchemaReconcilesMissedPubSubChanges(t *testing.T) {
 	require.Eventually(t, func() bool {
 		resource, resourceErr := provider.GetResourceDefinition("bkcc__2", "service")
 		relations, relationErr := provider.ListRelationDefinitions("bkcc__2")
+		names := relationNames(relations)
 		return resourceErr == nil && relationErr == nil && resource.Fields[0].Name == "shared_id" &&
-			len(relations) == 1 && relations[0].Name == "shared_relation"
+			names["shared_relation"] && !names["business_relation"]
 	}, 3*time.Second, 10*time.Millisecond)
 
 	seen := map[string]bool{}
@@ -261,8 +271,7 @@ func TestTimeGraphBusinessRelationNameMatchesStaticAndRedis(t *testing.T) {
 	write(relation.KindRelationDefinition, map[string]*relation.RelationDefinition{
 		"business_with_set": {Namespace: relation.NamespaceAll, Name: "business_with_set", FromResource: "business", ToResource: "set"},
 	})
-	provider, err := relation.NewRedisProvider(ctx, client)
-	require.NoError(t, err)
+	provider := relation.NewRedisProvider(ctx, client)
 	t.Cleanup(func() { require.NoError(t, provider.Close()) })
 
 	staticModel := &Model{schemaProvider: NewStaticSchemaProvider()}

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
@@ -79,6 +80,41 @@ func GetSchemaProvider() SchemaProvider {
 	defaultSchemaProviderMu.RLock()
 	defer defaultSchemaProviderMu.RUnlock()
 	return defaultSchemaProvider
+}
+
+func init() {
+	metric.SetRelationSchemaSnapshot(relationSchemaSnapshot)
+}
+
+// EffectiveSchema 返回当前 SchemaProvider 在 namespace 下的生效定义及来源；
+// 外部注入的 Provider 不提供来源时返回 false。
+func EffectiveSchema(namespace string) (relation.EffectiveSchema, bool) {
+	inspector, ok := GetUnderlyingProvider(GetSchemaProvider()).(relation.SchemaSourceInspector)
+	if !ok {
+		return relation.EffectiveSchema{}, false
+	}
+	return inspector.EffectiveSchema(namespace), true
+}
+
+func relationSchemaSnapshot() (metric.RelationSchemaSnapshot, bool) {
+	inspector, ok := GetUnderlyingProvider(GetSchemaProvider()).(relation.SchemaSourceInspector)
+	if !ok {
+		return metric.RelationSchemaSnapshot{}, false
+	}
+	counts := inspector.SourceCounts()
+	status := inspector.OverlayStatus()
+	snapshot := metric.RelationSchemaSnapshot{
+		Counts:        make([]metric.RelationSchemaSourceCount, 0, len(counts)),
+		OverlayLoaded: status.State == relation.OverlayStateLoaded,
+		Failures:      status.Failures,
+	}
+	for _, count := range counts {
+		snapshot.Counts = append(snapshot.Counts, metric.RelationSchemaSourceCount{Kind: count.Kind, Source: string(count.Source), Count: count.Count})
+	}
+	if status.LastSuccess != nil {
+		snapshot.LastSuccess = *status.LastSuccess
+	}
+	return snapshot, true
 }
 
 var defaultResourceFieldTypes = buildDefaultResourceFieldTypes()

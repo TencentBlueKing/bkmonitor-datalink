@@ -42,8 +42,7 @@ func TestSchemaReloadPreservesLegacyBusinessPaths(t *testing.T) {
 	write(relation.KindRelationDefinition, "bkcc__2", map[string]*relation.RelationDefinition{
 		"custom_edge": {Name: "custom_edge", FromResource: "custom_a", ToResource: "custom_b", Category: "static"},
 	})
-	p, err := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(10*time.Millisecond))
-	require.NoError(t, err)
+	p := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(10*time.Millisecond))
 	defer p.Close()
 	oldModels, oldProvider := models, provider
 	oldResourceConfig := AllResources()

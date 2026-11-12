@@ -1146,7 +1146,74 @@ TimeGraph 新旧关系接口选择、完整参数、双格式与失败合同见 
 
 **响应**: 文本格式的 TSDB 信息
 
-### 7.7 特性开关
+### 7.7 打印关联关系定义来源
+
+**接口**: `GET /relation_schema_print`
+
+**描述**: 只读，打印关联关系定义在指定 namespace 下的生效结果、每条定义的来源和 Redis 覆盖层状态，不触发重载。内置定义作 `__all__` 的底层，Redis 里的定义作覆盖层，查找顺序为业务 namespace（Redis）→ `__all__`（Redis）→ 内置，同名整条覆盖。Redis 不可用时只有内置一层。
+
+**查询参数**:
+
+| 参数        | 类型   | 必填 | 说明                                         |
+| ----------- | ------ | ---- | -------------------------------------------- |
+| `namespace` | string | 否   | 空间 UID，默认 `__all__`                     |
+| `content`   | bool   | 否   | 是否附带每条定义的内容，默认 `false`         |
+| `format`    | string | 否   | `text`（默认）或 `json`，其他取值返回 400    |
+
+**文本响应**:
+
+- 前几行依次是 provider、namespace、查找顺序、覆盖层状态，以及两类定义按来源的计数。
+- 覆盖层状态那一行格式为 `overlay: loaded|unavailable last_success=… last_failure=… last_reason=… failures: client_missing=… read_failed=… decode_failed=…`。
+- 之后每条定义一行：`名称<TAB>来源<TAB>builtin=same|differs|none`。
+
+**JSON 响应**（`format=json`）：
+
+```json
+{
+  "provider": "redis",
+  "namespace": "bkcc__2",
+  "lookup": ["bkcc__2", "__all__", "builtin"],
+  "overlay": {
+    "state": "loaded",
+    "last_success": "2026-01-01T00:00:00Z",
+    "failures": {"client_missing": 0, "read_failed": 0, "decode_failed": 0}
+  },
+  "resources": [{"name": "pod", "source": "override", "has_builtin": true, "matches_builtin": true}],
+  "relations": [{"name": "node_with_pod", "source": "builtin", "has_builtin": true, "matches_builtin": true}]
+}
+```
+
+- `overlay.last_failure`、`last_reason`、`last_error` 只在出现过失败时返回；`last_error` 是错误原文，只用于诊断。
+- `content=true` 时，每条定义附带 `definition` 字段。
+
+**来源取值**:
+
+| 来源        | 含义                                         |
+| ----------- | -------------------------------------------- |
+| `builtin`   | 内置定义，Redis 没有同名定义                 |
+| `override`  | Redis `__all__` 的同名定义整条覆盖内置       |
+| `extension` | Redis `__all__` 新增，内置没有同名定义       |
+| `namespace` | 业务 namespace 在 Redis 里的定义             |
+
+**与内置是否一致**：`builtin=same`（JSON 里 `matches_builtin=true`）表示与同名内置定义在读方用到的字段上一致，删掉这条 Redis 定义不改变查询；`differs` 表示删掉后会回到内置内容。比较的字段如下：
+- 资源：字段名、是否主键与顺序，缺类型时按内置补齐；
+- 关系：两端、类别、方向、从属标记和 `metric_name`。
+
+**覆盖层状态**：
+- `loaded` 表示至少完成过一次全量加载。之后读取失败时沿用上次快照，并累计失败次数。
+- `unavailable` 表示还没有加载成功过，只有内置一层。
+- 失败原因取值：`client_missing`（没有 Redis 客户端）、`read_failed`（读取失败）、`decode_failed`（某个 namespace 或某条定义无法解码，该 namespace 沿用上次快照）。
+
+**对应指标**（抓取时读当前状态）：
+
+| 指标 | 说明 |
+| --- | --- |
+| `unify_query_relation_schema_definitions{kind,source}` | `__all__` 的生效定义与全部业务 namespace 的定义条数 |
+| `unify_query_relation_schema_overlay_loaded` | 覆盖层已加载为 1，否则为 0 |
+| `unify_query_relation_schema_overlay_last_success_timestamp_seconds` | 最近一次全量加载成功的时间，从未成功为 0 |
+| `unify_query_relation_schema_overlay_failures_total{reason}` | 按原因累计的读取失败次数，Provider 重建时归零 |
+
+### 7.8 特性开关
 
 **接口**: `GET /ff`
 
@@ -1164,7 +1231,7 @@ TimeGraph 新旧关系接口选择、完整参数、双格式与失败合同见 
 
 **响应**: 文本格式的特性开关信息
 
-### 7.8 代理接口
+### 7.9 代理接口
 
 **接口**: `POST /proxy`
 
@@ -1211,7 +1278,7 @@ TimeGraph 新旧关系接口选择、完整参数、双格式与失败合同见 
 }
 ```
 
-### 7.9 Prometheus 指标
+### 7.10 Prometheus 指标
 
 **接口**: `GET /metrics`
 

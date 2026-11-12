@@ -22,6 +22,10 @@ import (
 func TestIdentityLookupBatchesTenantsAndCachesPhysicalIndices(t *testing.T) {
 	queries := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead && r.URL.Path == "/alarm-20260831" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		queries++
 		var body struct {
 			Query struct {
@@ -77,6 +81,10 @@ func TestIdentityLookupBatchesTenantsAndCachesPhysicalIndices(t *testing.T) {
 func TestBatchOfChildrenDoesNotLookUpUnprojectedParent(t *testing.T) {
 	queries := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead && r.URL.Path == "/alarm-20260831" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		switch r.URL.Path {
 		case "/alarm/_search":
 			queries++
@@ -152,6 +160,10 @@ func TestIdentityLookupFailureNeverCreatesDocument(t *testing.T) {
 	for _, response := range []string{"http-error", `{"timed_out":true,"hits":{"hits":[]}}`, `{"_shards":{"failed":1},"hits":{"hits":[]}}`} {
 		t.Run(response, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodHead && r.URL.Path == "/alarm-20260831" {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
 				if !strings.HasSuffix(r.URL.Path, "/_search") {
 					t.Error("lookup failure led to write", r.URL.Path)
 				}

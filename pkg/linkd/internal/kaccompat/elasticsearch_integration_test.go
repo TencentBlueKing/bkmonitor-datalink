@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -115,9 +116,8 @@ func TestElasticsearchBulkLifecycleAndDisposition(t *testing.T) {
 	if released["status"] != "executing" || len(released["associate_alarm_id"].([]any)) != 0 {
 		t.Fatal("release did not restore disposition")
 	}
-	// 滚动后客户端重新定位旧告警，更新原物理索引，不在新索引创建重复文档。
-	var rollover any
-	if err := client.request(t.Context(), http.MethodPost, "/"+client.config.AlarmEventIndex+"/_rollover", nil, map[string]any{}, &rollover); err != nil {
+	// 新时间桶出现后，重启定位仍更新旧桶中的文档。
+	if err := client.ensureBucket(t.Context(), client.bucketIndex(alert.CreateAt.AddDate(0, 0, 7))); err != nil {
 		t.Fatal(err)
 	}
 	client.mu.Lock()
@@ -129,7 +129,7 @@ func TestElasticsearchBulkLifecycleAndDisposition(t *testing.T) {
 	alert.EndType = domain.AlertEndTypeUser
 	alert.EndReason = "confirmed"
 	if out := client.WriteBatch(t.Context(), []domain.Alert{alert}, true); out[0].Err != nil || out[0].Index != index {
-		t.Fatal("rollover close", out)
+		t.Fatal("cross-bucket close", out)
 	}
 	doc := readAlarm(t, client, index, alert)
 	if doc["status"] != "closed" || doc["close_reason"] != "confirmed" {
@@ -257,4 +257,64 @@ type relationFunc func(context.Context, string, string) (domain.MergeRelation, e
 
 func (f relationFunc) GetMergeRelation(ctx context.Context, tenant, id string) (domain.MergeRelation, error) {
 	return f(ctx, tenant, id)
+}
+
+// TestElasticsearchTimeBucketsPreserveLegacyNativeDocument 验证真实 ES 中旧索引原位更新和模板 ILM 退出。
+func TestElasticsearchTimeBucketsPreserveLegacyNativeDocument(t *testing.T) {
+	client := integrationClient(t)
+	alias := client.config.AlarmEventIndex
+	policy := alias + "_policy"
+	if err := client.request(t.Context(), http.MethodPut, "/_ilm/policy/"+policy, nil, map[string]any{"policy": map[string]any{"phases": map[string]any{"hot": map[string]any{"actions": map[string]any{"rollover": map[string]any{"max_size": "30gb", "max_age": "60d"}}}}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	settings := client.settings()
+	settings["lifecycle"] = map[string]any{"name": policy, "rollover_alias": alias}
+	if err := client.request(t.Context(), http.MethodPut, "/_template/"+alias, nil, map[string]any{"index_patterns": []string{alias + "*"}, "settings": settings, "mappings": alarmMapping()}, nil); err != nil {
+		t.Fatal(err)
+	}
+	legacy := alias + "-000001"
+	if err := client.request(t.Context(), http.MethodPut, "/"+legacy, nil, map[string]any{"aliases": map[string]any{alias: map[string]any{"is_write_index": true}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	alert := storetest.Alert("tenant-a", "native-in-legacy", "event-a", "fp", "warning")
+	fields, _, err := client.fields(t.Context(), alert, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.request(t.Context(), http.MethodPut, "/"+legacy+"/_doc/"+alert.AlertID, url.Values{"refresh": {"true"}}, fields, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Maintain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	out := client.WriteBatch(t.Context(), []domain.Alert{alert}, true)
+	if out[0].Err != nil || out[0].Index != legacy {
+		t.Fatalf("legacy update: %+v", out)
+	}
+	fresh := alert.Clone()
+	fresh.AlertID = "new-in-bucket"
+	out = client.WriteBatch(t.Context(), []domain.Alert{fresh}, true)
+	if out[0].Err != nil || out[0].Index != client.bucketIndex(fresh.CreateAt) {
+		t.Fatalf("new document: %+v", out)
+	}
+	var result map[string]struct {
+		Settings struct {
+			Index struct {
+				Lifecycle struct {
+					Name string `json:"name"`
+				} `json:"lifecycle"`
+			} `json:"index"`
+		} `json:"settings"`
+	}
+	if err := client.request(t.Context(), http.MethodGet, "/"+legacy+","+out[0].Index+"/_settings", nil, nil, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result[legacy].Settings.Index.Lifecycle.Name != policy || result[out[0].Index].Settings.Index.Lifecycle.Name != "" {
+		t.Fatalf("unexpected lifecycle settings: %+v", result)
+	}
+	clear(client.locations)
+	out = client.WriteBatch(t.Context(), []domain.Alert{alert, fresh}, true)
+	if out[0].Err != nil || out[1].Err != nil || out[0].Index != legacy || out[1].Index != client.bucketIndex(fresh.CreateAt) {
+		t.Fatalf("restart locations: %+v", out)
+	}
 }

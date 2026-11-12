@@ -25,7 +25,7 @@ func (c *Client) locate(ctx context.Context, keys []alarmKey) (map[alarmKey]stri
 	if len(keys) == 0 {
 		return locations, nil
 	}
-	// 1. 复用已写入位置，rollover 后仍更新原物理索引。
+	// 1. 复用已写入位置，跨时间桶及旧 rollover 索引仍更新原物理索引。
 	missing := map[string]map[string]bool{}
 	c.mu.Lock()
 	for _, key := range keys {

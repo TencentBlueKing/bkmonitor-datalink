@@ -70,7 +70,7 @@ func (c *Client) WriteBatch(ctx context.Context, alerts []domain.Alert, refresh 
 		}
 		return results
 	}
-	writeIndex := ""
+	preparedBuckets := make(map[string]error)
 	var raw bytes.Buffer
 	positions := []int{}
 	flush := func() {
@@ -99,7 +99,7 @@ func (c *Client) WriteBatch(ctx context.Context, alerts []domain.Alert, refresh 
 			}
 			for _, item := range response.Items[j] {
 				if item.Status >= 300 {
-					results[pos].Err = httpFailure{item.Status}
+					results[pos].Err = httpFailure{status: item.Status}
 					if item.Status == 404 {
 						c.mu.Lock()
 						delete(c.locations, keys[pos])
@@ -135,14 +135,17 @@ func (c *Client) WriteBatch(ctx context.Context, alerts []domain.Alert, refresh 
 		params := map[string]any{"fields": patch, "mode": mode, "tags": tags}
 		body := map[string]any{"script": map[string]any{"lang": "painless", "source": updateScript, "params": params}}
 		if !exists {
-			if writeIndex == "" {
-				writeIndex, err = c.writeIndex(ctx)
-				if err != nil {
-					results[i].Err = err
-					continue
-				}
+			index = c.bucketIndex(a.CreateAt)
+			if bucketErr, prepared := preparedBuckets[index]; prepared {
+				err = bucketErr
+			} else {
+				err = c.ensureBucket(ctx, index)
+				preparedBuckets[index] = err
 			}
-			index = writeIndex
+			if err != nil {
+				results[i].Err = err
+				continue
+			}
 			params["create"] = fields
 			body["scripted_upsert"], body["upsert"] = true, map[string]any{}
 		}

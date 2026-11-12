@@ -27,6 +27,10 @@ func TestWriteBatchIncludesFingerprintOnCreateAndUpdate(t *testing.T) {
 			alerts[1].LastOccurredAt = time.Date(2026, 11, 6, 2, 3, 4, 0, time.UTC)
 			bulkCalls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodHead && r.URL.Path == "/alarm-20260831" {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
 				case "/alarm/_search":
@@ -117,6 +121,10 @@ func TestMaintainAddsFingerprintToExistingTemplateAndIndex(t *testing.T) {
 	}
 	templateUpdated, indexUpdated := false, false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead && r.URL.Path == "/alarm-20260831" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
 		case "GET /_template/alarm":

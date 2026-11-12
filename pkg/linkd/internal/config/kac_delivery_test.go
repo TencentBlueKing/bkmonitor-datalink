@@ -32,7 +32,7 @@ func TestKACPluginValidationAndRedaction(t *testing.T) {
 		t.Fatal("complete plugin rejected")
 	}
 	defaults := cfg.KAC.WithDefaults()
-	if defaults.Elasticsearch.NumberOfShards != 3 || *defaults.Elasticsearch.NumberOfReplicas != 2 || defaults.Elasticsearch.TotalFieldsLimit != 5000 || defaults.JWT.Username != "admin" {
+	if defaults.AlarmEventBucketDays != 7 || defaults.Elasticsearch.NumberOfShards != 3 || *defaults.Elasticsearch.NumberOfReplicas != 2 || defaults.Elasticsearch.TotalFieldsLimit != 5000 || defaults.JWT.Username != "admin" {
 		t.Fatal("KAC defaults differ")
 	}
 	public := Config{Plugins: cfg}.Redacted()
@@ -45,6 +45,7 @@ func TestKACPluginValidationAndRedaction(t *testing.T) {
 		t.Fatal("redaction leaked or mutated credentials")
 	}
 	for name, change := range map[string]func(*KACPluginConfig){
+		"negative bucket days":  func(c *KACPluginConfig) { c.AlarmEventBucketDays = -1 },
 		"missing index":         func(c *KACPluginConfig) { c.AlarmEventIndex = "" },
 		"wildcard index":        func(c *KACPluginConfig) { c.AlarmEventIndex = "alarm*" },
 		"missing ES":            func(c *KACPluginConfig) { c.Elasticsearch.Addresses = nil },

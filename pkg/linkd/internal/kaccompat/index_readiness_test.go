@@ -43,6 +43,10 @@ func TestMaintainRepairsLatestEventTimeTemplate(t *testing.T) {
 			template := map[string]any{"index_patterns": []string{"alarm*"}, "mappings": map[string]any{"properties": properties}}
 			updates, mappings := 0, 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodHead && r.URL.Path == "/alarm-20260831" {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
 				w.Header().Set("Content-Type", "application/json")
 				switch r.Method + " " + r.URL.Path {
 				case "GET /_template/alarm":
@@ -130,6 +134,10 @@ func TestProjectionRequiresPreparedMapping(t *testing.T) {
 			var mappingStatus atomic.Int32
 			mappingStatus.Store(http.StatusBadRequest)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodHead && r.URL.Path == "/alarm-20260831" {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
 				requests.Add(1)
 				w.Header().Set("Content-Type", "application/json")
 				switch r.Method + " " + r.URL.Path {
@@ -234,6 +242,10 @@ func TestWritesDuringFirstMappingPreparationFailWithoutWaiting(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	var bulks atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead && r.URL.Path == "/alarm-20260831" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
 		case "GET /_template/alarm":

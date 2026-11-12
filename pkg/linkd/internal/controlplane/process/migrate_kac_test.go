@@ -92,6 +92,9 @@ func TestPrepareMigrationKACInitializesEmptyTargetAndRepeats(t *testing.T) {
 	const alias = "custom_alarm_event"
 	var template map[string]any
 	created, policyWrites, mappingWrites := 0, 0, 0
+	date := time.Now().UTC()
+	offset := (int(date.Weekday()) + 6) % 7
+	bucket := alias + "-" + date.AddDate(0, 0, -offset).Format("20060102")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
@@ -115,7 +118,12 @@ func TestPrepareMigrationKACInitializesEmptyTargetAndRepeats(t *testing.T) {
 			}
 			_, _ = fmt.Fprintf(w, `{"%s-000001":{"aliases":{"%s":{"is_write_index":true}}}}`, alias, alias)
 			return
-		case "PUT /" + alias + "-000001":
+		case "HEAD /" + bucket:
+			if created == 0 {
+				w.WriteHeader(http.StatusNotFound)
+			}
+			return
+		case "PUT /" + bucket:
 			created++
 			var body struct {
 				Aliases map[string]struct {
@@ -125,8 +133,8 @@ func TestPrepareMigrationKACInitializesEmptyTargetAndRepeats(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Error(err)
 			}
-			if !body.Aliases[alias].Write {
-				t.Error("missing write alias")
+			if _, exists := body.Aliases[alias]; !exists || body.Aliases[alias].Write {
+				t.Error("missing read alias or unexpected write index")
 			}
 		case "PUT /" + alias + "/_mapping":
 			mappingWrites++
@@ -144,7 +152,7 @@ func TestPrepareMigrationKACInitializesEmptyTargetAndRepeats(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if created != 1 || policyWrites != 2 || mappingWrites != 2 || template == nil {
+	if created != 1 || policyWrites != 0 || mappingWrites != 2 || template == nil {
 		t.Fatalf("created=%d policies=%d mappings=%d template=%v", created, policyWrites, mappingWrites, template != nil)
 	}
 }

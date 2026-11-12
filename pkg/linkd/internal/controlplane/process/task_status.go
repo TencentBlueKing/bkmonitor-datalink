@@ -138,7 +138,7 @@ func taskCatalog(cfg config.Config, providers int) *taskstate.Registry {
 	}
 	for _, spec := range []struct{ id, name, description string }{
 		{"kac-delivery", "KAC 队列投影", "消费 Redis Stream，批量局部更新兼容告警并独立并发发送动作。"},
-		{"kac-index-maintenance", "KAC 兼容索引维护", "维护原 alarm_event 模板、ILM 与字段，不创建同步元数据。"},
+		{"kac-index-maintenance", "KAC 兼容索引维护", "维护 alarm_event 时间桶模板、查询别名与字段，不创建同步元数据。"},
 	} {
 		task := makeTask(spec.id, spec.name, "投影与配置", "service", spec.description, hasKACDelivery(cfg), 0, 0, "explicit", map[string]any{"projectionConcurrency": delivery.ProjectionConcurrency, "actionConcurrency": delivery.ActionConcurrency, "batchSize": delivery.BatchSize})
 		if spec.id == "kac-index-maintenance" {

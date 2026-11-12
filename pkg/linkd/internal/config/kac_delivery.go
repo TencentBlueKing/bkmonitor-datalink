@@ -34,8 +34,10 @@ type KACPluginConfig struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
 	// Elasticsearch 指向KAC 集群，与 Linkd Repository 的连接相互独立。
 	Elasticsearch KACElasticsearchConfig `yaml:"elasticsearch" json:"elasticsearch"`
-	// AlarmEventIndex 是 KAC 原查询/写入 alias，不能使用 Linkd Repository 的索引前缀替代。
+	// AlarmEventIndex 是 KAC 原查询 alias，不能使用 Linkd Repository 的索引前缀替代。
 	AlarmEventIndex string `yaml:"alarm_event_index" json:"alarm_event_index"`
+	// AlarmEventBucketDays 是按 Alert.CreateAt 划分的 UTC 桶天数，默认 7；已有数据写入后不应修改。
+	AlarmEventBucketDays int `yaml:"alarm_event_bucket_days,omitempty" json:"alarm_event_bucket_days,omitempty"`
 	// ActionEndpoint 使用轻量 V3 动作协议，不得指向旧告警 pipeline。
 	ActionEndpoint string `yaml:"action_endpoint" json:"action_endpoint"`
 	// RabbitMQ 配置后直接发布 Celery V2 消息，不再调用 ActionEndpoint。
@@ -87,6 +89,9 @@ func (c PluginsConfig) KACEnabled() bool { return c.KAC != nil && c.KAC.Enabled 
 // WithDefaults 使用 KAC 源码的索引默认参数；连接和 alias 必须由部署显式提供。
 func (c KACPluginConfig) WithDefaults() KACPluginConfig {
 	c.Delivery = c.Delivery.WithDefaults()
+	if c.AlarmEventBucketDays == 0 {
+		c.AlarmEventBucketDays = 7
+	}
 	if c.RabbitMQ != nil {
 		rabbit := c.RabbitMQ.WithDefaults()
 		c.RabbitMQ = &rabbit
@@ -130,6 +135,9 @@ func (c PluginsConfig) Validate() error {
 	}
 	if !kacIndexName.MatchString(v.AlarmEventIndex) || strings.Contains(v.AlarmEventIndex, "..") {
 		return fmt.Errorf("plugins.kac.alarm_event_index is invalid")
+	}
+	if v.AlarmEventBucketDays < 1 {
+		return fmt.Errorf("plugins.kac.alarm_event_bucket_days must be positive")
 	}
 	es := v.Elasticsearch
 	if err := (OneModelResource{Addresses: es.Addresses, APIKey: es.APIKey, BasicAuth: es.BasicAuth}).validate(); err != nil {

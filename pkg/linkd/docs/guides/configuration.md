@@ -451,6 +451,7 @@ plugins:
   kac:
     enabled: true
     alarm_event_index: cw_kac_saas_3.0_alarm_event
+    alarm_event_bucket_days: 7
     delivery:
       projection_concurrency: 64
       batch_size: 500
@@ -477,6 +478,7 @@ ES 认证可选 `api_key` 或 `basic_auth`，不能同时配置。
 | --- | --- |
 | enabled | 缺省 false；生产部署显式开启，一并启用兼容存储与处置通知 |
 | alarm_event_index | 必填，原 KAC alias；支持小写字母、数字、点、下划线和连字符，最多 180 字符 |
+| alarm_event_bucket_days | 默认 7，正整数；按 Alert.CreateAt 划分 UTC 时间桶，存在数据后保持不变 |
 | elasticsearch.addresses | 必填 ES 节点列表；请求不跟随重定向 |
 | elasticsearch.number_of_shards | 首次创建模板时默认 3，范围 1..1024 |
 | elasticsearch.number_of_replicas | 首次创建模板时默认 2，范围 0..10，可显式设为 0 |
@@ -500,7 +502,14 @@ rabbitmq:
 配置 RabbitMQ 后不调用或回退 HTTP；两个方式都先完成 KAC ES 投影和 refresh。
 直投使用 Celery V2 JSON、持久化消息和 Broker 确认，成功只表示队列接受，不代表处置成功。
 失败不重试、不新建动作受理表，确认结果未知时仍可能已经投递；协议见[动作投递 V3](../reference/contracts/kac-action-delivery-v3.md#rabbitmq-直投)。
-控制面负责原 KAC 模板、ILM、alias、mapping 和索引维护；已有索引不重建，已有模板运维参数保留。
+控制面负责 KAC 模板、查询 alias 和 mapping；已有索引不重建，已有模板运维参数保留。
+新告警按 `Alert.CreateAt` 写入 `{alarm_event_index}-YYYYMMDD`，日期为 UTC 桶起点，
+以 1970-01-05 UTC 为原点，默认每 7 天一桶。缺失桶在首次写入前按需创建，历史回放同样适用。
+所有桶加入原查询 alias，写入直接使用物理索引；查询 alias 不承担新桶的写入路由。
+已有文档优先定位并原位更新，包括原 `-000001` 等历史索引；重试仍写原创建时间桶。
+模板不再声明 ILM；不修改或删除已有索引上的 ILM 策略，不做容量滚动或历史自动删除。
+切换前停止旧版 Linkd 投影进程，等待在途请求结束并刷新原查询 alias，完成模板准备后再启动新版，避免旧进程继续向原写别名新建文档。
+已有数据后不要修改桶天数；本次不提供重新分桶或历史数据迁移。
 位置缓存仅在内存中，原处置态保存在 KAC 告警的 `linkd_disposal_status` 字段；无同步元数据索引。
 
 上述 delivery 六项均支持配置，零值采用所示默认值。普通消息失败记录日志和指标后结束，不创建失败任务；动作缓冲满也按失败结束当前消息。

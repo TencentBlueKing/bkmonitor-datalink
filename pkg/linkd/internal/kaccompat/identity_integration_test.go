@@ -24,6 +24,14 @@ func seedLegacyIdentity(t *testing.T, client *Client, alert domain.Alert) string
 	if alert.AlertID == "parent" {
 		id = "linkd-0148a4cd-4d45-5fe0-8959-f50c22d361bc"
 	}
+	legacyIndex := "/" + client.config.AlarmEventIndex + "-000001"
+	if err := client.request(t.Context(), http.MethodHead, legacyIndex, nil, nil, nil); hasStatus(err, 404) {
+		if err := client.request(t.Context(), http.MethodPut, legacyIndex, nil, map[string]any{"aliases": map[string]any{client.config.AlarmEventIndex: map[string]any{"is_write_index": true}}}, nil); err != nil {
+			t.Fatal(err)
+		}
+	} else if err != nil {
+		t.Fatal(err)
+	}
 	fields, _, err := client.fields(t.Context(), alert, true)
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +39,7 @@ func seedLegacyIdentity(t *testing.T, client *Client, alert domain.Alert) string
 	fields["alarm_id"], fields["event_id"] = id, "linkd-"+alert.AlertID
 	fields["status"], fields["conductor"] = "executing", []string{"existing-user"}
 	fields["storage_time"] = "2026-10-21 12:00:00"
-	if err := client.request(t.Context(), http.MethodPut, "/"+client.config.AlarmEventIndex+"/_doc/"+id, url.Values{"refresh": {"true"}}, fields, nil); err != nil {
+	if err := client.request(t.Context(), http.MethodPut, "/"+client.config.AlarmEventIndex+"-000001/_doc/"+id, url.Values{"refresh": {"true"}}, fields, nil); err != nil {
 		t.Fatal(err)
 	}
 	return id
@@ -48,7 +56,7 @@ func readIdentityDocument(t *testing.T, client *Client, index, id string) map[st
 	return result.Source
 }
 
-func TestElasticsearchNativeIdentityLeavesLegacyUntouchedAcrossRestartAndRollover(t *testing.T) {
+func TestElasticsearchNativeIdentityLeavesLegacyUntouchedAcrossRestartAndBuckets(t *testing.T) {
 	for _, legacy := range []bool{false, true} {
 		t.Run(fmt.Sprint(legacy), func(t *testing.T) {
 			client := integrationClient(t)
@@ -58,14 +66,14 @@ func TestElasticsearchNativeIdentityLeavesLegacyUntouchedAcrossRestartAndRollove
 			var legacyBefore map[string]any
 			if legacy {
 				legacyID = seedLegacyIdentity(t, client, alert)
-				legacyBefore = readIdentityDocument(t, client, client.config.AlarmEventIndex, legacyID)
+				legacyBefore = readIdentityDocument(t, client, client.config.AlarmEventIndex+"-000001", legacyID)
 			}
 			out := client.WriteBatch(t.Context(), []domain.Alert{alert}, true)
 			if out[0].Err != nil {
 				t.Fatal(out[0].Err)
 			}
 			index := out[0].Index
-			if err := client.request(t.Context(), http.MethodPost, "/"+client.config.AlarmEventIndex+"/_rollover", nil, map[string]any{}, nil); err != nil {
+			if err := client.ensureBucket(t.Context(), client.bucketIndex(alert.CreateAt.AddDate(0, 0, 7))); err != nil {
 				t.Fatal(err)
 			}
 			// 新进程没有位置缓存，仍需定位原生文档的原物理索引。
@@ -96,7 +104,7 @@ func TestElasticsearchNativeIdentityLeavesLegacyUntouchedAcrossRestartAndRollove
 					t.Fatal("identity changed", doc)
 				}
 				if legacy {
-					after := readIdentityDocument(t, restarted, index, legacyID)
+					after := readIdentityDocument(t, restarted, client.config.AlarmEventIndex+"-000001", legacyID)
 					if !reflect.DeepEqual(after, legacyBefore) {
 						t.Fatal("legacy document changed", after)
 					}

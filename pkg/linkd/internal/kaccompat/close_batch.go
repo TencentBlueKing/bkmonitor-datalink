@@ -197,7 +197,7 @@ func (c *Client) WriteCloseBatch(ctx context.Context, alerts []domain.Alert) []W
 				delete(c.locations, keys[i])
 				c.mu.Unlock()
 			} else if item.Status >= 300 {
-				results[i].Err = httpFailure{item.Status}
+				results[i].Err = httpFailure{status: item.Status}
 			} else {
 				results[i].Index = item.Index
 			}

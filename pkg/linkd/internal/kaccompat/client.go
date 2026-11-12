@@ -88,7 +88,10 @@ func (c *Client) Close() {
 	}
 }
 
-type httpFailure struct{ status int }
+type httpFailure struct {
+	status    int
+	errorType string
+}
 
 func (f httpFailure) Error() string { return fmt.Sprintf("KAC Elasticsearch HTTP %d", f.status) }
 
@@ -125,7 +128,14 @@ func (c *Client) requestRaw(ctx context.Context, method, path string, query url.
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return httpFailure{response.StatusCode}
+		var detail struct {
+			Error struct {
+				Type string `json:"type"`
+			} `json:"error"`
+		}
+		// 只提取错误类型，不记录 ES reason 中可能包含的业务正文。
+		_ = json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&detail)
+		return httpFailure{status: response.StatusCode, errorType: detail.Error.Type}
 	}
 	if out == nil {
 		_, err = io.Copy(io.Discard, response.Body)

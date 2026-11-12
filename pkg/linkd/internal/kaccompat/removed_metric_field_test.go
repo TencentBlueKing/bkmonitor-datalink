@@ -1,20 +1,30 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+
 package kaccompat
 
 import (
 	"encoding/json"
 	"io"
-	"linkd/internal/config"
-	"linkd/internal/domain"
-	"linkd/internal/store/storetest"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"linkd/internal/config"
+	"linkd/internal/domain"
+	"linkd/internal/store/storetest"
 )
 
 func TestNewMappingAndBulkDocumentDoNotGenerateMetricUniqueID(t *testing.T) {
 	t.Parallel()
 	templates, mappings, documents := 0, 0, 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead && r.URL.Path == "/alarm-20260831" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		switch r.URL.Path {
 		case "/_ilm/policy/alarm_policy":
 			_, _ = w.Write([]byte(`{}`))

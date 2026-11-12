@@ -87,9 +87,9 @@ func TestLegacyStorageCoverageReasonNamesStorage(t *testing.T) {
 			ctx := initTimeGraphQueryTestEnvironment()
 			model := legacyRegressionModel(legacyAlternativeProvider(true))
 			model.timeGraphVMQueryWithPartial = func(ctx context.Context, query *structured.QueryTs, _ string, _ bool, start, _ time.Time, _ time.Duration) (pl.Matrix, bool, error) {
-				// 与 VM 实例相同：响应缺了请求的存储时置 partial 位并写入带存储名的原因。
-				metadata.SetStatus(ctx, metadata.QueryTsPartial, reason)
-				return legacyAlternativeMatrix(query.QueryList[0].FieldName, start.UnixMilli()), true, nil
+				// 与 VM 实例相同：响应缺了请求的存储时只记录带存储名的覆盖原因，不置 partial 位。
+				metadata.AddStorageCoverageReason(ctx, reason)
+				return legacyAlternativeMatrix(query.QueryList[0].FieldName, start.UnixMilli()), false, nil
 			}
 			var count int
 			if mode == "instant" {

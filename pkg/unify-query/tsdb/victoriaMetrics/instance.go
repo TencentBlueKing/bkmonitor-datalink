@@ -257,8 +257,11 @@ func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadat
 // storageCoverageReasonNames 是不完整原因里最多列出的缺失存储数，其余只记个数。
 const storageCoverageReasonNames = 3
 
-// storageCoverageReason 把缺失的存储写进不完整原因：成功的读取只有它能指出是哪个存储没有出现在
+// storageCoverageReason 把缺失的存储写进覆盖原因：成功的读取只有它能指出是哪个存储没有出现在
 // 响应里。原因前缀不变，按前缀分类的指标标签仍然有界。
+//
+// 覆盖原因只单独记录，不改变 partial 与 Status：partial 以 VM 后端的 isPartial 为准。缺失依据的是
+// 元数据里的存储归属，归属可能滞后于实际放置；下游（如告警二次确认）会把 partial 当作整轮数据不可用。
 func storageCoverageReason(missing []string) string {
 	const reason = "vm_storage_coverage_mismatch"
 	if len(missing) == 0 {
@@ -269,22 +272,6 @@ func storageCoverageReason(missing []string) string {
 		names = append(append([]string(nil), names[:storageCoverageReasonNames]...), fmt.Sprintf("+%d", len(missing)-storageCoverageReasonNames))
 	}
 	return reason + ":" + strings.Join(names, ",")
-}
-
-// A successful response may omit a requested storage even when the backend's
-// isPartial flag is false. Keep its data, but do not present it as complete.
-func markStorageCoveragePartial(ctx context.Context, missing []string) {
-	reason := storageCoverageReason(missing)
-	message := reason
-	if status := metadata.GetStatus(ctx); status != nil && status.Message != "" {
-		for _, existing := range strings.Split(status.Message, ";") {
-			if strings.TrimSpace(existing) == reason {
-				return
-			}
-		}
-		message = status.Message + "; " + reason
-	}
-	metadata.SetStatus(ctx, metadata.QueryTsPartial, message)
 }
 
 func spanSetVmQueryClusterIfPresent(span *trace.Span, prefix string, v *metadata.VmQueryCluster) {
@@ -747,8 +734,7 @@ func (i *Instance) DirectQueryRange(
 	}
 	missing := spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
 	if err == nil && len(missing) > 0 {
-		isPartial = true
-		markStorageCoveragePartial(ctx, missing)
+		metadata.AddStorageCoverageReason(ctx, storageCoverageReason(missing))
 	}
 
 	return result, isPartial, err
@@ -830,8 +816,7 @@ func (i *Instance) DirectQueryWithPartial(
 	}
 	missing := spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
 	if err == nil && len(missing) > 0 {
-		isPartial = true
-		markStorageCoveragePartial(ctx, missing)
+		metadata.AddStorageCoverageReason(ctx, storageCoverageReason(missing))
 	}
 
 	return result, isPartial, err

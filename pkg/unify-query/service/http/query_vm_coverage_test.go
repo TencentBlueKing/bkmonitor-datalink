@@ -93,11 +93,13 @@ func TestQueryTsVMCoverageUsesExecutedReferences(t *testing.T) {
 							require.NoError(t, err)
 							response := result.(*PromData)
 							require.NotEmpty(t, response.Tables)
-							require.Equal(t, reverse, response.IsPartial)
+							// 缺失存储只单独记录，partial 与 Status 只认 VM 后端的结论。
+							require.False(t, response.IsPartial)
+							require.Nil(t, response.Status)
 							if reverse {
-								require.Equal(t, metadata.QueryTsPartial, response.Status.Code)
+								require.Equal(t, []string{"vm_storage_coverage_mismatch:storage-b"}, metadata.GetStorageCoverageReasons(ctx))
 							} else {
-								require.Nil(t, response.Status)
+								require.Empty(t, metadata.GetStorageCoverageReasons(ctx))
 							}
 							return
 						}
@@ -111,14 +113,11 @@ func TestQueryTsVMCoverageUsesExecutedReferences(t *testing.T) {
 						result, err := queryTsNamedOutputs(ctx, q)
 						require.NoError(t, err)
 						require.Len(t, result.Outputs, 2)
+						require.False(t, result.IsPartial)
 						for _, output := range result.Outputs {
 							require.NotEmpty(t, output.Tables)
-							require.Equal(t, output.ReferenceName == "A", output.IsPartial)
-							if output.ReferenceName == "A" {
-								require.Equal(t, metadata.QueryTsPartial, output.Status.Code)
-							} else {
-								require.Nil(t, output.Status)
-							}
+							require.False(t, output.IsPartial)
+							require.Nil(t, output.Status)
 						}
 						require.Nil(t, metadata.GetExpand(ctx), "output expansion must not leak into the parent")
 					})

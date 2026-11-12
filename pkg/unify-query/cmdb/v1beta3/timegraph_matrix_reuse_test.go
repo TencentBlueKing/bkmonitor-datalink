@@ -304,7 +304,8 @@ func TestMatrixReuseExceptionalTopologyParity(t *testing.T) {
 	}
 }
 
-// 复用的 Matrix 在新的子查询里写回同一个不完整原因，与重新读取时相同。
+// 复用的 Matrix 在新的子查询里写回同一个不完整原因，与重新读取时相同。VM 实例只单独记录
+// 覆盖原因、不置 partial 位，原因要在复用槽快照前并入状态。
 func TestMatrixReusePreservesStorageCoverageMetadata(t *testing.T) {
 	base := withTimeGraphQueryStage(initTimeGraphQueryTestEnvironment(), "relation-edge")
 	loader := &timeGraphMatrixLoader{topology: true}
@@ -314,8 +315,8 @@ func TestMatrixReusePreservesStorageCoverageMetadata(t *testing.T) {
 		params := metadata.GetQueryParams(ctx).SetStorageType(metadata.VictoriaMetricsStorageType)
 		fetch := func() (pl.Matrix, bool, error) {
 			calls++
-			metadata.SetStatus(ctx, metadata.QueryTsPartial, "vm_storage_coverage_mismatch:monitor-op")
-			return nil, true, nil
+			metadata.AddStorageCoverageReason(ctx, "vm_storage_coverage_mismatch:monitor-op")
+			return nil, false, nil
 		}
 		_, partial, err := loader.loadPrepared(ctx, &structured.QueryTs{}, "a", params, fetch)
 		require.NoError(t, err)

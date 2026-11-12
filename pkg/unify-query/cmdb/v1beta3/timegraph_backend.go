@@ -673,6 +673,14 @@ func addTimeGraphPartialReason(ctx context.Context, reason string) {
 	metadata.SetStatus(ctx, metadata.QueryTsPartial, strings.Join(ordered, ";"))
 }
 
+// addTimeGraphStorageCoverageReasons 把 VM 实例单独记录的缺失存储并入当前查询的质量状态。
+// 普通查询的 partial 与状态只认后端结论；拓扑需要完整性，由这里自行标记。
+func addTimeGraphStorageCoverageReasons(ctx context.Context) {
+	for _, reason := range metadata.GetStorageCoverageReasons(ctx) {
+		addTimeGraphPartialReason(ctx, reason)
+	}
+}
+
 // sortByTextKey 按文本键稳定排序，每个元素的键只计算一次，比较时不再格式化。
 func sortByTextKey[T any](items []T, key func(T) string) {
 	keys := make([]string, len(items))

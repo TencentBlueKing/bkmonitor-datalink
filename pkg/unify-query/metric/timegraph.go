@@ -65,7 +65,8 @@ var (
 func CMDBRelationQualityInc(ctx context.Context, entry, mode, quality, reasons string) {
 	seen := make(map[string]struct{})
 	for _, detail := range strings.Split(reasons, ";") {
-		reason, _, _ := strings.Cut(detail, ":")
+		// VM 实例追加原因时用 "; " 连接，去掉空格再按前缀分类。
+		reason, _, _ := strings.Cut(strings.TrimSpace(detail), ":")
 		switch reason {
 		case "backend_partial", "vm_storage_coverage_mismatch", "relation_no_physical_route",
 			"source_info_no_route", "target_info_failed",
@@ -173,7 +174,7 @@ func timeGraphResult(result string) bool {
 
 func timeGraphStage(stage string) bool {
 	switch stage {
-	case "build", "source-info", "relation-edge", "target-info", "topology-traversal", "topology-state", "topology-materialize", "topology-convert", "topology-encode", "apply-relation", "apply-source-info", "apply-target-info", "matrix-validation", "topology-propagation", "cleanup", "admission", "admission-release":
+	case "build", "source-info", "relation-edge", "frontier-probe", "target-info", "topology-traversal", "topology-state", "topology-materialize", "topology-convert", "topology-encode", "apply-relation", "apply-source-info", "apply-target-info", "matrix-validation", "topology-propagation", "cleanup", "admission", "admission-release":
 		return true
 	}
 	return false

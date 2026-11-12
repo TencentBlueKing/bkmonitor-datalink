@@ -21,6 +21,8 @@ type timeGraphMatrixSlot struct {
 	key     string
 	matrix  pl.Matrix
 	partial bool
+	// status 是这次物理读取留下的不完整原因，复用时原样写回，原因与重新读取时相同。
+	status string
 }
 
 // loadPrepared 在单次请求内最多保留一个 Matrix；每条逻辑查询仍重新准备，
@@ -38,6 +40,9 @@ func (loader *timeGraphMatrixLoader) loadPrepared(ctx context.Context, query *st
 	}
 	if key != "" && loader.lastMatrix.key == key {
 		loader.reusedQueryCount++
+		if loader.lastMatrix.status != "" {
+			metadata.SetStatus(ctx, metadata.QueryTsPartial, loader.lastMatrix.status)
+		}
 		return loader.lastMatrix.matrix, loader.lastMatrix.partial, nil
 	}
 	// 先释放旧 Matrix 的引用再取新数据，避免两份大输入同时存活。
@@ -45,11 +50,12 @@ func (loader *timeGraphMatrixLoader) loadPrepared(ctx context.Context, query *st
 	loader.physicalQueryCount++
 	matrix, partial, err := fetch()
 	// 复用槽只记后端不完整；source_info_no_route 是路由状态，由 queryWithQuality 按原因单独记录。
-	if status := metadata.GetStatus(ctx); status != nil {
-		partial = partial || (status.Code == metadata.QueryTsPartial && status.Message != "source_info_no_route")
+	status := ""
+	if current := metadata.GetStatus(ctx); current != nil && current.Code == metadata.QueryTsPartial && current.Message != "source_info_no_route" {
+		partial, status = true, current.Message
 	}
 	if err == nil && key != "" {
-		loader.lastMatrix = timeGraphMatrixSlot{key: key, matrix: matrix, partial: partial}
+		loader.lastMatrix = timeGraphMatrixSlot{key: key, matrix: matrix, partial: partial, status: status}
 	}
 	return matrix, partial, err
 }

@@ -100,6 +100,11 @@
 
 - HTTP 根和 item span：批量状态、参数、单项结果、响应编码和写出错误。
 - `build-time-graph-from-relations`：存储模式、唯一节点/关系、属性版本、逻辑时间记录、Matrix 次数与构图耗时。
+  逐次读取的 span 可能不入库，同一 span 还汇总：逐条准备（路由与过滤条件）的 `matrix-prepare-count/duration-seconds`；
+  收到响应的后端读取 `backend-read-count/bytes/first-byte-seconds`；宽读取前的计数 `frontier-probe-count`、
+  估算超过分批边界而不发的宽读取 `frontier-wide-skip-count`、估算以内仍超过边界的 `frontier-wide-overflow-count`，
+  以及本请求学到的最大分批 `frontier-batch-max-identities`。
+- `timegraph-hop-fetch`：逐层前沿、读取次数，以及不在后端查询里的耗时 `hop-local-duration-seconds`（写图、推进前沿与求诱导边）。
 - `timegraph-query-matrix`：`query-stage`、`metric-name`、`matrix-returned`、返回序列/点/标签字节、复用、partial 和错误。
 - `timegraph-validate-matrix` 与三类 `timegraph-apply-*-matrix`：网格校验、分批边界拒收和写图成本。
 - `timegraph-build-shared-topology-state`、`timegraph-propagate-topology`：种子、已完成层和可达节点。

@@ -38,6 +38,9 @@ type sampleLimitBackend struct {
 
 func (b *sampleLimitBackend) query(ctx context.Context, ts *structured.QueryTs, expr string, instant bool, start, end time.Time, step time.Duration) (pl.Matrix, bool, error) {
 	name := ts.QueryList[0].FieldName
+	if frontierProbeForTest(ts) {
+		return b.inner.query(ctx, ts, expr, instant, start, end, step)
+	}
 	if name == b.fail {
 		b.failed++
 		return nil, false, errors.New("backend unavailable")

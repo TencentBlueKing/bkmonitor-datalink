@@ -756,7 +756,8 @@ func TestSpanSetStorageListDiff(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			rec.Reset()
 			_, span := uqtrace.NewSpan(context.Background(), "test-span")
-			spanSetStorageListDiff(span, tc.rtDetail, tc.responseVMClusterList)
+			missing := spanSetStorageListDiff(span, tc.rtDetail, tc.responseVMClusterList)
+			assert.Equal(t, tc.wantStatus == "mismatch", len(missing) > 0, "missing storage names are returned only for proven mismatch")
 			var err error
 			span.End(&err)
 

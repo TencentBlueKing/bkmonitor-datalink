@@ -91,10 +91,25 @@ type hopFetchBackend struct {
 	limit    int
 	calls    []hopFetchCall
 	rejected int
+	probes   int
 }
 
 func (b *hopFetchBackend) query(_ context.Context, ts *structured.QueryTs, _ string, _ bool, start, end time.Time, step time.Duration) (pl.Matrix, bool, error) {
 	query := ts.QueryList[0]
+	if frontierProbeForTest(ts) {
+		b.probes++
+		var matched pl.Matrix
+		for _, series := range b.data[query.FieldName] {
+			labels := make(map[string]string, len(series.Metric))
+			for _, label := range series.Metric {
+				labels[label.Name] = label.Value
+			}
+			if wideFrontierMatches(b.t, query.Conditions, labels) {
+				matched = append(matched, series)
+			}
+		}
+		return frontierProbeAnswer(ts, matched), false, nil
+	}
 	b.calls = append(b.calls, hopFetchCall{metric: query.FieldName, conditions: cloneContractConditions(query.Conditions)})
 	var matrix pl.Matrix
 	for _, series := range b.data[query.FieldName] {
@@ -483,4 +498,21 @@ func TestTopologyHopFetchRemembersTooLargeScopes(t *testing.T) {
 		// 快照和紧凑格式各是一次请求，各自最多尝试一次。
 		require.LessOrEqual(t, count, 2, "an oversized scope is tried at most once per request: %s", scope)
 	}
+	// 每个请求：超过边界后补一次计数校准；之后下一层展开与补读诱导边的两次宽读取判断各先计数，
+	// 估算超过边界后不发。
+	require.Equal(t, 2*3, backend.probes)
+
+	// 没有超过边界的请求不计数，照常宽读取；第一次宽读取已读入整条关系，之后各层不再读它。
+	complete := &hopFetchBackend{t: t, data: fixture.data}
+	_, completeSnapshots, completeCompact := queryHopFetchTopology(t, provider, complete, request)
+	require.Equal(t, wantSnapshots, completeSnapshots)
+	require.Equal(t, wantCompact, completeCompact)
+	require.Zero(t, complete.probes, "a request without an oversized read sends no count")
+	completeWide := 0
+	for _, call := range complete.calls {
+		if call.metric == "peer" && !hopFetchNarrowed(call.conditions) {
+			completeWide++
+		}
+	}
+	require.Equal(t, 2*1, completeWide)
 }

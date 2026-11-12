@@ -304,21 +304,23 @@ func TestMatrixReuseExceptionalTopologyParity(t *testing.T) {
 	}
 }
 
+// 复用的 Matrix 在新的子查询里写回同一个不完整原因，与重新读取时相同。
 func TestMatrixReusePreservesStorageCoverageMetadata(t *testing.T) {
-	ctx := withTimeGraphQueryStage(initTimeGraphQueryTestEnvironment(), "relation-edge")
-	params := metadata.GetQueryParams(ctx).SetStorageType(metadata.VictoriaMetricsStorageType)
+	base := withTimeGraphQueryStage(initTimeGraphQueryTestEnvironment(), "relation-edge")
 	loader := &timeGraphMatrixLoader{topology: true}
 	calls := 0
-	fetch := func() (pl.Matrix, bool, error) {
-		calls++
-		metadata.SetStatus(ctx, metadata.QueryTsPartial, "vm_storage_coverage_mismatch")
-		return nil, false, nil
-	}
 	for i := 0; i < 2; i++ {
+		ctx := newTimeGraphSubqueryContext(base)
+		params := metadata.GetQueryParams(ctx).SetStorageType(metadata.VictoriaMetricsStorageType)
+		fetch := func() (pl.Matrix, bool, error) {
+			calls++
+			metadata.SetStatus(ctx, metadata.QueryTsPartial, "vm_storage_coverage_mismatch:monitor-op")
+			return nil, true, nil
+		}
 		_, partial, err := loader.loadPrepared(ctx, &structured.QueryTs{}, "a", params, fetch)
 		require.NoError(t, err)
 		require.True(t, partial)
+		require.Equal(t, "vm_storage_coverage_mismatch:monitor-op", metadata.GetStatus(ctx).Message, "read %d", i)
 	}
 	require.Equal(t, 1, calls)
-	require.Equal(t, "vm_storage_coverage_mismatch", metadata.GetStatus(ctx).Message)
 }

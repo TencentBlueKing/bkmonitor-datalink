@@ -40,7 +40,7 @@ type TimeGraph struct {
 	edgeTypes    map[int64]map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{}
 	nodeInfos    map[int64]map[uint64]cmdb.Matcher // timestamp -> node -> time-specific dimensions
 	partialTimes map[int64]string                  // 时间点 -> 数据不完整原因
-	// backendIncomplete 表示后端返回了不完整结果（backend_partial）。缺物理路由的关系按已读
+	// backendIncomplete 表示后端返回了不完整结果（backend_partial 或存储覆盖不一致）。缺物理路由的关系按已读
 	// 且无数据处理，只记入 partialTimes，不设置它：取数计划据此判断已读的候选是否完整。
 	backendIncomplete bool
 	edgeCount         int
@@ -143,7 +143,7 @@ func (q *TimeGraph) markPartialRange(start, end time.Time, step time.Duration, r
 	pointCount := uint64(endMs-startMs)/uint64(stepMs) + 1
 	q.lock.Lock()
 	defer q.lock.Unlock()
-	if reason == "backend_partial" {
+	if reason == "backend_partial" || isStorageCoverageReason(reason) {
 		q.backendIncomplete = true
 	}
 	for index := uint64(0); index < pointCount; index++ {
@@ -161,7 +161,26 @@ func (q *TimeGraph) markPartialRange(start, end time.Time, step time.Duration, r
 	}
 }
 
-// backendPartial 返回是否有后端不完整的读取；缺物理路由不计入。
+// splitPartialReasons 拆分查询状态里的不完整原因。VM 实例追加原因时用 "; " 连接，
+// 去掉空格后同一原因只出现一次。
+func splitPartialReasons(message string) []string {
+	var reasons []string
+	for _, reason := range strings.Split(message, ";") {
+		if reason = strings.TrimSpace(reason); reason != "" {
+			reasons = append(reasons, reason)
+		}
+	}
+	return reasons
+}
+
+// isStorageCoverageReason 表示响应缺了请求的存储（vm_storage_coverage_mismatch，可带 :<存储>）。
+// 缺的存储可能有数据，取数路径把它当作后端不完整。
+func isStorageCoverageReason(reason string) bool {
+	const prefix = "vm_storage_coverage_mismatch"
+	return reason == prefix || strings.HasPrefix(reason, prefix+":")
+}
+
+// backendPartial 返回是否有后端不完整的读取（含存储覆盖不一致）；缺物理路由不计入。
 func (q *TimeGraph) backendPartial() bool {
 	q.lock.RLock()
 	defer q.lock.RUnlock()

@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/pkg/errors"
 	pl "github.com/prometheus/prometheus/promql"
@@ -98,7 +99,10 @@ func (loader *timeGraphMatrixLoader) loadTopologyHops(ctx context.Context, space
 		expanded: map[uint64]bool{}, expandedKeys: map[cmdb.Resource]map[string]bool{}, roots: map[uint64]bool{}, queries: queries,
 	}
 	levels := []int64{}
+	started, queriedBefore := time.Now(), loader.queryDuration
 	defer func() {
+		// 逐跳取数中不在后端查询里的耗时：写图、推进前沿与求诱导边。
+		span.Set("hop-local-duration-seconds", max(time.Duration(0), time.Since(started)-(loader.queryDuration-queriedBefore)).Seconds())
 		span.Set("hop-frontier-nodes-by-level", levels)
 		span.Set("hop-read-count", fetch.reads)
 		span.Set("hop-expanded-node-count", len(fetch.expanded))

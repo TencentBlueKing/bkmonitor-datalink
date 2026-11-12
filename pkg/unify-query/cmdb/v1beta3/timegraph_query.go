@@ -612,9 +612,8 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 	}
 	backendPartial, coverage := false, false
 	if status := metadata.GetStatus(queryCtx); status != nil && status.Code == metadata.QueryTsPartial {
-		for _, reason := range strings.Split(status.Message, ";") {
-			switch reason = strings.TrimSpace(reason); {
-			case reason == "":
+		for _, reason := range splitPartialReasons(status.Message) {
+			switch {
 			case reason == "source_info_no_route":
 				partialReasons = append(partialReasons, reason)
 			case isStorageCoverageReason(reason):
@@ -1057,10 +1056,8 @@ func (m *Model) queryRelationTargets(ctx context.Context, lookBackDelta, spaceUI
 	if partial := tg.partialTimesCopy(); len(partial) > 0 {
 		reasons := make(map[string]struct{})
 		if status := metadata.GetStatus(ctx); status != nil && status.Code == metadata.QueryTsPartial {
-			for _, reason := range strings.Split(status.Message, ";") {
-				if reason != "" {
-					reasons[reason] = struct{}{}
-				}
+			for _, reason := range splitPartialReasons(status.Message) {
+				reasons[reason] = struct{}{}
 			}
 		}
 		for _, reason := range partial {

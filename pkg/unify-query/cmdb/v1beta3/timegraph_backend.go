@@ -177,10 +177,8 @@ func queryFirstTimeGraphPath(ctx context.Context, paths []resourcePath, query fu
 	reasons := make(map[string]struct{})
 	collectQuality := func() {
 		if status := metadata.GetStatus(ctx); status != nil && status.Code == metadata.QueryTsPartial {
-			for _, reason := range strings.Split(status.Message, ";") {
-				if reason != "" {
-					reasons[reason] = struct{}{}
-				}
+			for _, reason := range splitPartialReasons(status.Message) {
+				reasons[reason] = struct{}{}
 			}
 		}
 	}
@@ -663,10 +661,8 @@ func (s *legacyRangeSegmenter) observe(segment legacyRangeSegment, graphPoints i
 func addTimeGraphPartialReason(ctx context.Context, reason string) {
 	reasons := map[string]struct{}{reason: {}}
 	if status := metadata.GetStatus(ctx); status != nil && status.Code == metadata.QueryTsPartial {
-		for _, existing := range strings.Split(status.Message, ";") {
-			if existing != "" {
-				reasons[existing] = struct{}{}
-			}
+		for _, existing := range splitPartialReasons(status.Message) {
+			reasons[existing] = struct{}{}
 		}
 	}
 	ordered := make([]string, 0, len(reasons))

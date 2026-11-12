@@ -90,6 +90,14 @@ func TestTopologyReasonMetricsKeepKnownReasonsAndDeduplicate(t *testing.T) {
 	requireCounterIncrease(t, cmdbRelationQualityTotal.WithLabelValues("compat", "range", "partial", "other"), 1, func() {
 		CMDBRelationQualityInc(ctx, "compat", "range", "partial", "unknown-one:private;unknown-two:private")
 	})
+	// VM 实例追加原因时用 "; " 连接：去掉空格后各原因计入自己的类别，不落进 other。
+	requireCounterIncrease(t, cmdbRelationQualityTotal.WithLabelValues("compat", "range", "partial", "backend_partial"), 1, func() {
+		requireCounterIncrease(t, cmdbRelationQualityTotal.WithLabelValues("compat", "range", "partial", "vm_storage_coverage_mismatch"), 1, func() {
+			requireCounterIncrease(t, cmdbRelationQualityTotal.WithLabelValues("compat", "range", "partial", "other"), 0, func() {
+				CMDBRelationQualityInc(ctx, "compat", "range", "partial", "backend_partial; vm_storage_coverage_mismatch:storage-a")
+			})
+		})
+	})
 	// 两个入口的同名原因各计各的。
 	requireCounterIncrease(t, cmdbRelationQualityTotal.WithLabelValues("topology", "range", "partial", "relation_no_physical_route"), 1, func() {
 		requireCounterIncrease(t, cmdbRelationQualityTotal.WithLabelValues("compat", "range", "partial", "relation_no_physical_route"), 0, func() {

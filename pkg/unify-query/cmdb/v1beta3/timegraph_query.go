@@ -634,7 +634,8 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 
 // queryAndApply 读取一次并在写图完成前持有这份响应。单次后端响应超过分批边界时，
 // 把精确网格按时间对半重读，直到单个评估点：各点按自己的窗口独立计算，两半不重叠，
-// 依次写图与一次读取得到相同的图和质量状态。单个评估点仍过大时返回终态错误。
+// 依次写图与一次读取得到相同的图（节点、边、属性）。某一半缺路由时按缺路由的规则把整个网格
+// 标为 partial，质量状态可能比一次读取更保守。单个评估点仍过大时返回终态错误。
 func (loader *timeGraphMatrixLoader) queryAndApply(ctx context.Context, queryTs *structured.QueryTs, apply func(context.Context, pl.Matrix) error) error {
 	matrix, _, err := loader.query(ctx, queryTs)
 	if err == nil {

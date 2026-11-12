@@ -436,9 +436,10 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 }
 
 // responseError 让即时查询和区间查询把同一种后端拒收归为同一类错误。
+// resp.Message 已由调用方写在外层，错误详情只带 resp.Errors.Error（网关在这里给出上限与预估大小）。
 func responseError(resp *VmResponse) error {
 	if isResponseBodyTooLarge(resp.Message) || isResponseBodyTooLarge(resp.Errors.Error) {
-		return &metadata.BackendResponseTooLargeError{Message: resp.Message}
+		return &metadata.BackendResponseTooLargeError{Message: resp.Errors.Error}
 	}
 	return errors.New(resp.Errors.Error)
 }

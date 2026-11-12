@@ -6,7 +6,9 @@ package v1beta3
 import (
 	"fmt"
 	"math/rand"
+	"runtime"
 	"testing"
+	"weak"
 
 	"github.com/stretchr/testify/require"
 
@@ -55,8 +57,9 @@ func TestTopologyFramesMatchCollectedSnapshots(t *testing.T) {
 	}
 }
 
-// compact 结果是独立副本，原图在交给 consume 之前释放，编码期间不再同时持有原图；
-// 释放后的结果仍与快照一致。snapshots 逐帧读图，原图活到 consume 返回之后。两种格式都只释放一次。
+// compact 结果是独立副本，原图在交给 consume 之前清空并不再被引用：map 清空不缩容，
+// 只有原图及其存储不可达，编码期间才不再同时持有它们；释放后的结果仍与快照一致。
+// snapshots 逐帧读图，原图活到 consume 返回之后（也是不可达判断的阳性对照）。两种格式都只释放一次。
 func TestTopologyCompactReleasesGraphBeforeConsume(t *testing.T) {
 	frames := hopFetchFrames()
 	data := randomHopFetchFixture(rand.New(rand.NewSource(0)), frames)
@@ -74,13 +77,27 @@ func TestTopologyCompactReleasesGraphBeforeConsume(t *testing.T) {
 	for _, format := range []string{"", cmdb.CompactTopologyFormat} {
 		t.Run("format="+format, func(t *testing.T) {
 			request.ResponseFormat = format
+			model := hopFetchModel(hopFetchProvider(), &hopFetchBackend{t: t, data: data})
+			// 只持有弱引用，测试本身不延长图的生命周期。
+			var graphRef weak.Pointer[TimeGraph]
+			var storageRef weak.Pointer[sharedTimeGraph]
+			model.timeGraphTopologyBuilt = func(graph *TimeGraph) {
+				graphRef, storageRef = weak.Make(graph), weak.Make(graph.shared)
+			}
+			reachable := func() bool {
+				runtime.GC()
+				return graphRef.Value() != nil || storageRef.Value() != nil
+			}
 			before := cleanups()
-			err := hopFetchModel(hopFetchProvider(), &hopFetchBackend{t: t, data: data}).QuerySharedTopologyFrames(initTimeGraphQueryTestEnvironment(), request, func(header cmdb.SharedTopologyResult, source TopologyFrames) error {
+			err := model.QuerySharedTopologyFrames(initTimeGraphQueryTestEnvironment(), request, func(header cmdb.SharedTopologyResult, source TopologyFrames) error {
+				require.NotZero(t, graphRef, "the topology query reports the graph it built")
 				if format == cmdb.CompactTopologyFormat {
 					require.Equal(t, before+1, cleanups(), "the graph is released before the compact result is encoded")
+					require.False(t, reachable(), "neither the released graph nor its storage is reachable while the compact result is encoded")
 					require.Equal(t, wantSnapshots, canonicalTopologyForTest(t, decodeCompactForTest(t, header.Compact)))
 					return nil
 				}
+				require.True(t, reachable(), "snapshot frames keep the graph while they are encoded")
 				return source(func(cmdb.SharedTopologySnapshot) error {
 					require.Equal(t, before, cleanups(), "snapshot frames read the graph while they are encoded")
 					return nil

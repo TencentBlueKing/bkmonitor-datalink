@@ -212,12 +212,15 @@ func (m *Model) QuerySharedTopologyFrames(ctx context.Context, request cmdb.Shar
 	if err != nil {
 		return errors.WithMessage(err, "build shared topology")
 	}
+	if m.timeGraphTopologyBuilt != nil {
+		m.timeGraphTopologyBuilt(graph)
+	}
 	// compact 分支在交给 consume 之前释放原图，其余路径在返回时释放；只释放一次。
-	graphReleased := false
+	// 清空后不再引用原图：map 清空不缩容，原图不可达后其存储才能回收。
 	releaseGraph := func() {
-		if !graphReleased {
-			graphReleased = true
+		if graph != nil {
 			graph.Clean(queryCtx)
+			graph = nil
 		}
 	}
 	defer releaseGraph()

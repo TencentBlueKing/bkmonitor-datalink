@@ -38,8 +38,11 @@ type Model struct {
 	// timeGraphVMQueryWithPartial 是共享拓扑测试使用的带状态 VM 查询入口；
 	// 生产查询直接从 tsdb.Instance.DirectQueryRange 获取相同状态。
 	timeGraphVMQueryWithPartial timeGraphVMQueryWithPartial
-	schemaProvider              SchemaProvider
-	schemaProviderMu            sync.RWMutex
+	// timeGraphTopologyBuilt 仅由包内测试设置，在拓扑查询构建出图后调用，
+	// 用于确认图在交给调用方编码前已不可达。
+	timeGraphTopologyBuilt func(*TimeGraph)
+	schemaProvider         SchemaProvider
+	schemaProviderMu       sync.RWMutex
 }
 
 // GetModel 返回 v1beta3 HTTP handler 使用的服务模型。

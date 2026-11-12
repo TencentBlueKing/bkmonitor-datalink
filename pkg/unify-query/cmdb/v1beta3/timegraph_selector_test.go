@@ -285,7 +285,7 @@ func TestTopologySelectorDoesNotRestoreDisconnectedAttributeRoutes(t *testing.T)
 }
 
 // 首阶段读取不完整时保留质量状态并按后端不完整规划取数。VM 的 partial 位记 backend_partial；
-// 响应缺了请求的存储时 VM 实例同样置 partial 位并写入带存储名的原因，帧上只记这个原因，
+// 响应缺了请求的存储时 VM 实例只单独记录带存储名的覆盖原因、不置 partial 位，帧上只记这个原因，
 // 取数次数与 backend_partial 相同。
 func TestTopologySelectorPartialFirstStageRetainsQualityAndChecksWideRoutes(t *testing.T) {
 	const coverageReason = "vm_storage_coverage_mismatch:monitor-op"
@@ -308,9 +308,9 @@ func TestTopologySelectorPartialFirstStageRetainsQualityAndChecksWideRoutes(t *t
 						fetches[metric]++
 						if metric == "ab" {
 							if signal == coverageReason {
-								metadata.SetStatus(ctx, metadata.QueryTsPartial, coverageReason)
+								metadata.AddStorageCoverageReason(ctx, coverageReason)
 							}
-							return contractMatrix(map[string]string{"a_id": "root", "b_id": "b0"}, 1700000000000), true, nil
+							return contractMatrix(map[string]string{"a_id": "root", "b_id": "b0"}, 1700000000000), signal == "backend_partial", nil
 						}
 						return contractMatrix(map[string]string{"b_id": "b0", "c_id": "c0"}, 1700000000000), false, nil
 					}
@@ -362,9 +362,9 @@ func TestTopologyStorageCoverageMismatchPlansLikeBackendPartial(t *testing.T) {
 				return contractMatrix(map[string]string{"b_id": "b0", "c_id": "c0"}, 1700000000000), false, nil
 			}
 			if signal == coverageReason {
-				metadata.SetStatus(ctx, metadata.QueryTsPartial, coverageReason)
+				metadata.AddStorageCoverageReason(ctx, coverageReason)
 			}
-			return contractMatrix(map[string]string{"a_id": "root", "b_id": "b0"}, 1700000000000), signal != "", nil
+			return contractMatrix(map[string]string{"a_id": "root", "b_id": "b0"}, 1700000000000), signal == "backend_partial", nil
 		}
 		recorder.Reset()
 		result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: 2})

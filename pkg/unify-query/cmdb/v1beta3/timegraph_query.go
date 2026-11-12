@@ -603,9 +603,11 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 	// Prometheus 聚合后端通过子查询 metadata 报告部分成功，VM 则返回 partial 位。
 	// 合并当前子查询的两种信号，让空结果的快照、指标和 trace 同样保留不完整状态。各原因
 	// 分别记录：VM 的 partial 位与 source_info_no_route 状态同时出现时仍记 backend_partial，
-	// 它决定共享拓扑的取数路径。响应缺了请求的存储时单独记 vm_storage_coverage_mismatch:<存储>；
-	// VM 实例把它也并进 partial 位，所以这时 partial 位不再单记 backend_partial（两者同时出现时
+	// 它决定共享拓扑的取数路径。响应缺了请求的存储时 VM 实例只单独记录覆盖原因、不改 partial 位，
+	// 拓扑需要完整性，这里把它并入本查询的质量状态，单独记 vm_storage_coverage_mismatch:<存储>；
+	// 并入后状态会让 partial 位为真，所以这时 partial 位不再单记 backend_partial（两者同时出现时
 	// 只能看到覆盖不一致）。取数路径照样按后端不完整处理，见 markPartialRange。
+	addTimeGraphStorageCoverageReasons(queryCtx)
 	var partialReasons []string
 	if noRouteReason != "" {
 		partialReasons = append(partialReasons, noRouteReason)

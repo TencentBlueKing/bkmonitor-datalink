@@ -161,6 +161,18 @@ func (q *TimeGraph) markPartialRange(start, end time.Time, step time.Duration, r
 	}
 }
 
+// splitPartialReasons 拆分查询状态里的不完整原因。VM 实例追加原因时用 "; " 连接，
+// 去掉空格后同一原因只出现一次。
+func splitPartialReasons(message string) []string {
+	var reasons []string
+	for _, reason := range strings.Split(message, ";") {
+		if reason = strings.TrimSpace(reason); reason != "" {
+			reasons = append(reasons, reason)
+		}
+	}
+	return reasons
+}
+
 // isStorageCoverageReason 表示响应缺了请求的存储（vm_storage_coverage_mismatch，可带 :<存储>）。
 // 缺的存储可能有数据，取数路径把它当作后端不完整。
 func isStorageCoverageReason(reason string) bool {

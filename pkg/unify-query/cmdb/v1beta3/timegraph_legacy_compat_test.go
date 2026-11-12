@@ -110,6 +110,22 @@ func TestLegacyStorageCoverageReasonNamesStorage(t *testing.T) {
 	}
 }
 
+// VM 实例追加原因时用 "; " 连接。合并原因时去掉空格，同一原因只记一次，不因前导空格变成另一个原因。
+func TestPartialReasonMergeTrimsSeparatorSpaces(t *testing.T) {
+	ctx := initTimeGraphQueryTestEnvironment()
+	metadata.SetStatus(ctx, metadata.QueryTsPartial, "backend_partial; vm_storage_coverage_mismatch:storage-a")
+	addTimeGraphPartialReason(ctx, "vm_storage_coverage_mismatch:storage-a")
+	require.Equal(t, "backend_partial;vm_storage_coverage_mismatch:storage-a", metadata.GetStatus(ctx).Message)
+
+	metadata.SetStatus(ctx, metadata.QueryTsPartial, "backend_partial; vm_storage_coverage_mismatch:storage-a")
+	_, err := queryFirstTimeGraphPath(ctx, make([]resourcePath, 1), func(resourcePath) (bool, error) {
+		metadata.SetStatus(ctx, metadata.QueryTsPartial, "vm_storage_coverage_mismatch:storage-a")
+		return true, nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, "backend_partial;vm_storage_coverage_mismatch:storage-a", metadata.GetStatus(ctx).Message)
+}
+
 func TestLegacyCandidateQualityAndLastEmptyPath(t *testing.T) {
 	backendFailure := errors.New("backend failed")
 	for _, tc := range []struct {

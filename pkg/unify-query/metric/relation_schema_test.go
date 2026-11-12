@@ -10,48 +10,71 @@
 package metric
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 )
 
-func gatherRelationSchemaDefinitions(t *testing.T) map[string]float64 {
+func gatherRelationSchema(t *testing.T) map[string]float64 {
 	t.Helper()
 	families, err := prometheus.DefaultGatherer.Gather()
 	require.NoError(t, err)
 	values := map[string]float64{}
 	for _, family := range families {
-		if family.GetName() != "unify_query_relation_schema_definitions" {
+		if !strings.HasPrefix(family.GetName(), "unify_query_relation_schema_") {
 			continue
 		}
-		require.Equal(t, "GAUGE", family.GetType().String())
 		for _, item := range family.GetMetric() {
-			labels := map[string]string{}
+			key := family.GetName()
 			for _, label := range item.GetLabel() {
-				labels[label.GetName()] = label.GetValue()
+				key += "/" + label.GetValue()
 			}
-			require.Len(t, labels, 2)
-			values[labels["kind"]+"/"+labels["source"]] = item.GetGauge().GetValue()
+			if item.GetCounter() != nil {
+				values[key] = item.GetCounter().GetValue()
+			} else {
+				values[key] = item.GetGauge().GetValue()
+			}
 		}
 	}
 	return values
 }
 
-func TestRelationSchemaDefinitionsReadsCountsAtScrape(t *testing.T) {
-	t.Cleanup(func() { SetRelationSchemaSourceCounts(nil) })
-	SetRelationSchemaSourceCounts(nil)
-	require.Empty(t, gatherRelationSchemaDefinitions(t))
+func TestRelationSchemaMetricsReadSnapshotAtScrape(t *testing.T) {
+	t.Cleanup(func() { SetRelationSchemaSnapshot(nil) })
+	SetRelationSchemaSnapshot(nil)
+	require.Empty(t, gatherRelationSchema(t))
 
-	builtin := 26
-	SetRelationSchemaSourceCounts(func() []RelationSchemaSourceCount {
-		return []RelationSchemaSourceCount{
-			{Kind: "ResourceDefinition", Source: "builtin", Count: builtin},
-			{Kind: "ResourceDefinition", Source: "override", Count: 26 - builtin},
-		}
-	})
-	require.Equal(t, map[string]float64{"ResourceDefinition/builtin": 26, "ResourceDefinition/override": 0}, gatherRelationSchemaDefinitions(t))
+	snapshot := RelationSchemaSnapshot{
+		Counts: []RelationSchemaSourceCount{
+			{Kind: "ResourceDefinition", Source: "builtin", Count: 26},
+			{Kind: "ResourceDefinition", Source: "override", Count: 0},
+		},
+		Failures: map[string]int64{"client_missing": 0, "read_failed": 2, "decode_failed": 0},
+	}
+	SetRelationSchemaSnapshot(func() (RelationSchemaSnapshot, bool) { return snapshot, true })
+	require.Equal(t, map[string]float64{
+		"unify_query_relation_schema_definitions/ResourceDefinition/builtin":  26,
+		"unify_query_relation_schema_definitions/ResourceDefinition/override": 0,
+		"unify_query_relation_schema_overlay_loaded":                          0,
+		"unify_query_relation_schema_overlay_last_success_timestamp_seconds":  0,
+		"unify_query_relation_schema_overlay_failures_total/client_missing":   0,
+		"unify_query_relation_schema_overlay_failures_total/decode_failed":    0,
+		"unify_query_relation_schema_overlay_failures_total/read_failed":      2,
+	}, gatherRelationSchema(t))
+
 	// 每次抓取都重新读取，不缓存上一次的值。
-	builtin = 0
-	require.Equal(t, map[string]float64{"ResourceDefinition/builtin": 0, "ResourceDefinition/override": 26}, gatherRelationSchemaDefinitions(t))
+	snapshot.Counts = []RelationSchemaSourceCount{{Kind: "ResourceDefinition", Source: "override", Count: 26}}
+	snapshot.OverlayLoaded = true
+	snapshot.LastSuccess = time.Unix(1700000000, 500*int64(time.Millisecond))
+	values := gatherRelationSchema(t)
+	require.EqualValues(t, 26, values["unify_query_relation_schema_definitions/ResourceDefinition/override"])
+	require.NotContains(t, values, "unify_query_relation_schema_definitions/ResourceDefinition/builtin")
+	require.EqualValues(t, 1, values["unify_query_relation_schema_overlay_loaded"])
+	require.InDelta(t, 1700000000.5, values["unify_query_relation_schema_overlay_last_success_timestamp_seconds"], 1e-6)
+
+	SetRelationSchemaSnapshot(func() (RelationSchemaSnapshot, bool) { return RelationSchemaSnapshot{}, false })
+	require.Empty(t, gatherRelationSchema(t))
 }

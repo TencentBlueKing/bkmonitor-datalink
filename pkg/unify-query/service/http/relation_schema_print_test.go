@@ -10,6 +10,7 @@
 package http
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -43,6 +44,40 @@ func TestHandleRelationSchemaPrintShowsSources(t *testing.T) {
 	require.True(t, strings.Contains(body, "\nnode_with_pod\tbuiltin\tbuiltin=same\n"), body)
 	require.NotContains(t, body, `"bcs_cluster_id"`)
 
+	require.Contains(t, body, "\noverlay: unavailable last_success=- ")
 	require.Contains(t, request("/relation_schema_print"), "namespace: __all__\n")
 	require.Contains(t, request("/relation_schema_print?content=true"), `"bcs_cluster_id"`)
+
+	var decoded struct {
+		Provider  string `json:"provider"`
+		Namespace string `json:"namespace"`
+		Overlay   struct {
+			State    string           `json:"state"`
+			Failures map[string]int64 `json:"failures"`
+		} `json:"overlay"`
+		Resources []struct {
+			Name           string          `json:"name"`
+			Source         string          `json:"source"`
+			MatchesBuiltin bool            `json:"matches_builtin"`
+			Definition     json.RawMessage `json:"definition"`
+		} `json:"resources"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(request("/relation_schema_print?namespace=bkcc__2&format=json")), &decoded))
+	require.Equal(t, "static", decoded.Provider)
+	require.Equal(t, "bkcc__2", decoded.Namespace)
+	require.Equal(t, "unavailable", decoded.Overlay.State)
+	require.Contains(t, decoded.Overlay.Failures, "read_failed")
+	require.Len(t, decoded.Resources, len(relation.DefaultResourceDefinitions()))
+	for _, item := range decoded.Resources {
+		require.Equal(t, "builtin", item.Source)
+		require.True(t, item.MatchesBuiltin)
+		require.Empty(t, item.Definition, "content=false 不带定义内容")
+	}
+	require.Contains(t, request("/relation_schema_print?format=json&content=true"), `"definition":{`)
+
+	writer := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(writer)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/relation_schema_print?format=yaml", nil)
+	HandleRelationSchemaPrint(ctx)
+	require.Equal(t, http.StatusBadRequest, writer.Code)
 }

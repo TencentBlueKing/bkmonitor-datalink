@@ -26,8 +26,7 @@ func TestRedisProviderEmptyRedisServesBuiltinSchemaIntegration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	require.NoError(t, client.FlushDB(ctx).Err())
-	provider, err := NewRedisProvider(ctx, client, WithReconcileInterval(0))
-	require.NoError(t, err)
+	provider := NewRedisProvider(ctx, client, WithReconcileInterval(0))
 	defer provider.Close()
 
 	static := NewDefaultStaticSchemaProvider()
@@ -89,8 +88,7 @@ func TestRedisProviderOverlayOverridesAndRestoresBuiltinIntegration(t *testing.T
 	write(KindRelationDefinition, "bkcc__2", map[string]*RelationDefinition{
 		"custom_app_with_pod": {Namespace: "bkcc__2", Name: "custom_app_with_pod", FromResource: "custom_app", ToResource: "pod"},
 	})
-	provider, err := NewRedisProvider(ctx, client, WithReconcileInterval(0))
-	require.NoError(t, err)
+	provider := NewRedisProvider(ctx, client, WithReconcileInterval(0))
 	defer provider.Close()
 
 	primaryKeys := func(namespace, name string) []string {
@@ -158,4 +156,33 @@ func TestRedisProviderOverlayOverridesAndRestoresBuiltinIntegration(t *testing.T
 	require.NoError(t, err)
 	require.Equal(t, "node", restored.FromResource)
 	require.False(t, restored.IsBelongsTo)
+}
+
+// 首次读取 Redis 失败时以内置定义启动，周期对账成功后覆盖层生效。
+func TestRedisProviderStartsWithBuiltinWhenRedisReadFailsIntegration(t *testing.T) {
+	client := startSchemaRedis(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	require.NoError(t, client.FlushDB(ctx).Err())
+	key := RedisKeyPrefix + ":" + KindResourceDefinition
+	require.NoError(t, client.Set(ctx, key, "wrong type", 0).Err())
+
+	provider := NewRedisProvider(ctx, client, WithReconcileInterval(20*time.Millisecond))
+	defer provider.Close()
+	pod, err := provider.GetResourceDefinition("bkcc__2", "pod")
+	require.NoError(t, err)
+	require.Equal(t, []string{"bcs_cluster_id", "namespace", "pod"}, pod.GetPrimaryKeys())
+	status := provider.OverlayStatus()
+	require.Equal(t, OverlayStateUnavailable, status.State)
+	require.Equal(t, OverlayReasonReadFailed, status.LastReason)
+	require.Positive(t, status.Failures[OverlayReasonReadFailed])
+
+	require.NoError(t, client.Del(ctx, key).Err())
+	require.NoError(t, client.HSet(ctx, key, NamespaceAll,
+		`{"pod":{"namespace":"__all__","name":"pod","fields":[{"name":"pod","required":true}]}}`).Err())
+	require.Eventually(t, func() bool {
+		pod, err := provider.GetResourceDefinition("bkcc__2", "pod")
+		return err == nil && len(pod.Fields) == 1 && provider.OverlayStatus().State == OverlayStateLoaded
+	}, 2*time.Second, 5*time.Millisecond)
+	require.NotNil(t, provider.OverlayStatus().LastSuccess)
 }

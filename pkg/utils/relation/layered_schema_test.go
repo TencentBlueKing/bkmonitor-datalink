@@ -170,17 +170,93 @@ func TestLayeredSchemaAllChangeNotifiesBusinessNamespaces(t *testing.T) {
 	require.Equal(t, []string{KindResourceDefinition + ":bkcc__2"}, collect())
 }
 
-// Redis 读取失败时 Provider 创建失败，调用方保持原有降级路径（UQ 保留内置定义）。
-func TestLayeredSchemaRedisFailureStillFailsCreation(t *testing.T) {
+// 没有 Redis 客户端时 Provider 照常创建，只有内置一层，状态标为不可用。
+func TestLayeredSchemaWithoutRedisClientServesBuiltin(t *testing.T) {
 	ctx := context.Background()
-	client := &snapshotRedisClient{relationErr: errors.New("connection refused")}
-	provider, err := NewRedisProvider(ctx, client, WithReconcileInterval(0))
-	require.ErrorContains(t, err, "failed to load entities")
-	require.Nil(t, provider)
+	for name, provider := range map[string]*RedisProvider{
+		"provider": NewRedisProvider(ctx, nil),
+		"manager":  NewProviderManager(ctx, nil, nil, DefaultStaticProviderConfig()).GetProvider().(*RedisProvider),
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer provider.Close()
+			pod, err := provider.GetResourceDefinition("bkcc__2", "pod")
+			require.NoError(t, err)
+			require.Equal(t, []string{"bcs_cluster_id", "namespace", "pod"}, pod.GetPrimaryKeys())
+			status := provider.OverlayStatus()
+			require.Equal(t, OverlayStateUnavailable, status.State)
+			require.Nil(t, status.LastSuccess)
+			require.Equal(t, OverlayReasonClientMissing, status.LastReason)
+			require.Equal(t, map[string]int64{OverlayReasonClientMissing: 1, OverlayReasonReadFailed: 0, OverlayReasonDecodeFailed: 0}, status.Failures)
+			require.Contains(t, PrintEffectiveSchema(provider.EffectiveSchema(""), false),
+				"overlay: unavailable last_success=- ")
+		})
+	}
+	require.Equal(t, OverlayStateUnavailable, NewDefaultStaticSchemaProvider().OverlayStatus().State)
+}
 
-	manager, err := NewProviderManager(ctx, nil, "redis", client, DefaultStaticProviderConfig())
-	require.ErrorContains(t, err, "connection refused")
-	require.Nil(t, manager)
+// 读取失败时先用内置定义，之后的全量加载成功即切到已加载；失败计数按原因累计。
+func TestLayeredSchemaOverlayStatusTransitions(t *testing.T) {
+	resourceKey := RedisKeyPrefix + ":" + KindResourceDefinition
+	relationKey := RedisKeyPrefix + ":" + KindRelationDefinition
+	client := &snapshotRedisClient{relationErr: errors.New("connection refused"), fields: map[string]map[string]string{
+		resourceKey: {NamespaceAll: encodeDefinitions(t, map[string]*ResourceDefinition{
+			"custom_app": {Namespace: NamespaceAll, Name: "custom_app", Fields: []FieldDefinition{{Name: "app_id", Required: true}}},
+		})},
+		relationKey: {},
+	}}
+	provider := newRedisProvider(context.Background(), client, DefaultRedisProviderConfig())
+	t.Cleanup(provider.cancel)
+
+	require.ErrorContains(t, provider.loadAllEntities(), "connection refused")
+	status := provider.OverlayStatus()
+	require.Equal(t, OverlayStateUnavailable, status.State)
+	require.Equal(t, OverlayReasonReadFailed, status.LastReason)
+	require.Contains(t, status.LastError, "connection refused")
+	require.EqualValues(t, 1, status.Failures[OverlayReasonReadFailed])
+	_, err := provider.GetResourceDefinition(NamespaceAll, "pod")
+	require.NoError(t, err, "读取失败期间内置定义照常可用")
+	_, err = provider.GetResourceDefinition(NamespaceAll, "custom_app")
+	require.ErrorIs(t, err, ErrResourceDefinitionNotFound)
+
+	client.relationErr = nil
+	client.fields[relationKey]["bkcc__2"] = "{"
+	before := time.Now()
+	require.NoError(t, provider.loadAllEntities())
+	status = provider.OverlayStatus()
+	require.Equal(t, OverlayStateLoaded, status.State)
+	require.NotNil(t, status.LastSuccess)
+	require.False(t, status.LastSuccess.Before(before))
+	require.EqualValues(t, 1, status.Failures[OverlayReasonReadFailed])
+	require.EqualValues(t, 1, status.Failures[OverlayReasonDecodeFailed], "无法解码的 namespace 单独计数，其余照常加载")
+	require.Equal(t, OverlayReasonDecodeFailed, status.LastReason)
+	_, err = provider.GetResourceDefinition(NamespaceAll, "custom_app")
+	require.NoError(t, err)
+
+	// 加载成功后再失败：沿用上次快照，状态仍为已加载。
+	client.relationErr = errors.New("timeout")
+	require.Error(t, provider.loadAllEntities())
+	status = provider.OverlayStatus()
+	require.Equal(t, OverlayStateLoaded, status.State)
+	require.EqualValues(t, 2, status.Failures[OverlayReasonReadFailed])
+	_, err = provider.GetResourceDefinition(NamespaceAll, "custom_app")
+	require.NoError(t, err)
+
+	data, err := json.Marshal(provider.EffectiveSchema(NamespaceAll))
+	require.NoError(t, err)
+	var decoded struct {
+		Overlay struct {
+			State       string           `json:"state"`
+			LastSuccess string           `json:"last_success"`
+			Failures    map[string]int64 `json:"failures"`
+		} `json:"overlay"`
+		Resources []map[string]any `json:"resources"`
+	}
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	require.Equal(t, "loaded", decoded.Overlay.State)
+	require.NotEmpty(t, decoded.Overlay.LastSuccess)
+	require.EqualValues(t, 2, decoded.Overlay.Failures["read_failed"])
+	require.NotEmpty(t, decoded.Resources)
+	require.Contains(t, decoded.Resources[0], "source")
 }
 
 func TestLayeredSchemaWithBaseSchema(t *testing.T) {

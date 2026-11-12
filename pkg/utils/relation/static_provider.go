@@ -329,6 +329,7 @@ func (sp *StaticSchemaProvider) EffectiveSchema(namespace string) EffectiveSchem
 		Provider:  sp.Name(),
 		Namespace: normalizeNamespace(namespace),
 		Lookup:    []string{string(DefinitionSourceBuiltin)},
+		Overlay:   sp.OverlayStatus(),
 		Resources: effectiveDefinitions(listLayered(nil, sp.resourceDefinitions, NamespaceAll), SameResourceDefinition),
 		Relations: effectiveDefinitions(listLayered(nil, sp.relationDefinitions, NamespaceAll), SameRelationDefinition),
 	}
@@ -341,6 +342,12 @@ func (sp *StaticSchemaProvider) SourceCounts() []SourceCount {
 
 	return append(countSources[ResourceDefinition](KindResourceDefinition, nil, sp.resourceDefinitions),
 		countSources[RelationDefinition](KindRelationDefinition, nil, sp.relationDefinitions)...)
+}
+
+// OverlayStatus 静态提供器没有 Redis 覆盖层，状态恒为不可用
+func (sp *StaticSchemaProvider) OverlayStatus() OverlayStatus {
+	status := overlayStatus{lastReason: OverlayReasonClientMissing}
+	return status.snapshot()
 }
 
 // Ensure StaticSchemaProvider implements SchemaProvider

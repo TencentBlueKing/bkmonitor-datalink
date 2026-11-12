@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // DefinitionSource 是一条定义的生效来源，取值固定，可直接用作指标标签。
@@ -37,23 +38,24 @@ var DefinitionSources = []DefinitionSource{
 
 // EffectiveDefinition 是某个 namespace 下一条生效的定义。
 type EffectiveDefinition[T any] struct {
-	Name       string
-	Source     DefinitionSource
-	Definition *T
+	Name       string           `json:"name"`
+	Source     DefinitionSource `json:"source"`
+	Definition *T               `json:"definition,omitempty"`
 	// HasBuiltin 内置有同名定义；MatchesBuiltin 与同名内置在读方使用的字段上一致，
 	// 两者都为 true 时删掉这条 DB 定义不改变读方行为。
-	HasBuiltin     bool
-	MatchesBuiltin bool
+	HasBuiltin     bool `json:"has_builtin"`
+	MatchesBuiltin bool `json:"matches_builtin"`
 }
 
 // EffectiveSchema 是某个 namespace 的生效定义，按查找顺序给出每条定义的来源。
 type EffectiveSchema struct {
-	Provider  string
-	Namespace string
+	Provider  string `json:"provider"`
+	Namespace string `json:"namespace"`
 	// Lookup 是查找顺序，例如 [bkcc__2 __all__ builtin]。
-	Lookup    []string
-	Resources []EffectiveDefinition[ResourceDefinition]
-	Relations []EffectiveDefinition[RelationDefinition]
+	Lookup    []string                                  `json:"lookup"`
+	Overlay   OverlayStatus                             `json:"overlay"`
+	Resources []EffectiveDefinition[ResourceDefinition] `json:"resources"`
+	Relations []EffectiveDefinition[RelationDefinition] `json:"relations"`
 }
 
 // SourceCount 是某类定义在某个来源下的生效条数。
@@ -63,12 +65,86 @@ type SourceCount struct {
 	Count  int
 }
 
+// OverlayState 是 Redis 覆盖层的状态：loaded 表示至少完成过一次全量加载（之后读取失败时沿用上次快照），
+// unavailable 表示还没有加载成功过，此时只有内置一层。
+type OverlayState string
+
+const (
+	OverlayStateLoaded      OverlayState = "loaded"
+	OverlayStateUnavailable OverlayState = "unavailable"
+)
+
+// 覆盖层读取失败的原因，取值固定，可直接用作指标标签。
+const (
+	// OverlayReasonClientMissing 没有可用的 Redis 客户端，只有内置一层。
+	OverlayReasonClientMissing = "client_missing"
+	// OverlayReasonReadFailed 读取 Redis 失败（全量加载或按 namespace 重载）。
+	OverlayReasonReadFailed = "read_failed"
+	// OverlayReasonDecodeFailed 某个 namespace 或某条定义无法解码，该 namespace 沿用上次快照。
+	OverlayReasonDecodeFailed = "decode_failed"
+)
+
+// OverlayReasons 按固定顺序列出全部失败原因。
+var OverlayReasons = []string{OverlayReasonClientMissing, OverlayReasonReadFailed, OverlayReasonDecodeFailed}
+
+// OverlayStatus 是 Redis 覆盖层的读取状态。
+type OverlayStatus struct {
+	State OverlayState `json:"state"`
+	// LastSuccess 最近一次全量加载（启动、订阅建立、周期对账）成功的时间。
+	LastSuccess *time.Time `json:"last_success,omitempty"`
+	LastFailure *time.Time `json:"last_failure,omitempty"`
+	LastReason  string     `json:"last_reason,omitempty"`
+	// LastError 最近一次失败的错误文本，只用于诊断输出，不进指标。
+	LastError string `json:"last_error,omitempty"`
+	// Failures 按原因累计失败次数，每个原因都有一项。
+	Failures map[string]int64 `json:"failures"`
+}
+
+type overlayStatus struct {
+	lastSuccess time.Time
+	lastFailure time.Time
+	lastReason  string
+	lastError   string
+	failures    map[string]int64
+}
+
+func (s *overlayStatus) recordFailure(reason string, err error) {
+	if s.failures == nil {
+		s.failures = make(map[string]int64, len(OverlayReasons))
+	}
+	s.failures[reason]++
+	s.lastFailure = time.Now()
+	s.lastReason = reason
+	if err != nil {
+		s.lastError = err.Error()
+	}
+}
+
+func (s *overlayStatus) snapshot() OverlayStatus {
+	status := OverlayStatus{State: OverlayStateUnavailable, LastReason: s.lastReason, LastError: s.lastError,
+		Failures: make(map[string]int64, len(OverlayReasons))}
+	for _, reason := range OverlayReasons {
+		status.Failures[reason] = s.failures[reason]
+	}
+	if !s.lastSuccess.IsZero() {
+		status.State = OverlayStateLoaded
+		lastSuccess := s.lastSuccess
+		status.LastSuccess = &lastSuccess
+	}
+	if !s.lastFailure.IsZero() {
+		lastFailure := s.lastFailure
+		status.LastFailure = &lastFailure
+	}
+	return status
+}
+
 // SchemaSourceInspector 由提供内置定义的 Provider 实现，用来观测生效定义来自哪一层。
 type SchemaSourceInspector interface {
 	EffectiveSchema(namespace string) EffectiveSchema
 	// SourceCounts 统计 __all__ 的生效定义（内置、覆盖、新增）与全部业务 namespace 的 DB 定义，
 	// 每个 kind 和来源的组合都返回一项，没有定义时 Count 为 0。
 	SourceCounts() []SourceCount
+	OverlayStatus() OverlayStatus
 }
 
 type layeredEntry[T any] struct {
@@ -207,6 +283,7 @@ func SameRelationDefinition(override, builtin *RelationDefinition) bool {
 func PrintEffectiveSchema(schema EffectiveSchema, content bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "provider: %s\nnamespace: %s\nlookup: %s\n", schema.Provider, schema.Namespace, strings.Join(schema.Lookup, " -> "))
+	writeOverlayStatus(&b, schema.Overlay)
 	writeCounts := func(kind string, sources []DefinitionSource, differs int) {
 		fmt.Fprintf(&b, "%s:", kind)
 		for _, source := range DefinitionSources {
@@ -227,6 +304,28 @@ func PrintEffectiveSchema(schema EffectiveSchema, content bool) string {
 	writeEffectiveDefinitions(&b, KindResourceDefinition, schema.Resources, content)
 	writeEffectiveDefinitions(&b, KindRelationDefinition, schema.Relations, content)
 	return b.String()
+}
+
+func writeOverlayStatus(b *strings.Builder, status OverlayStatus) {
+	formatTime := func(t *time.Time) string {
+		if t == nil {
+			return "-"
+		}
+		return t.UTC().Format(time.RFC3339)
+	}
+	reason := status.LastReason
+	if reason == "" {
+		reason = "-"
+	}
+	fmt.Fprintf(b, "overlay: %s last_success=%s last_failure=%s last_reason=%s failures:", status.State,
+		formatTime(status.LastSuccess), formatTime(status.LastFailure), reason)
+	for _, item := range OverlayReasons {
+		fmt.Fprintf(b, " %s=%d", item, status.Failures[item])
+	}
+	b.WriteString("\n")
+	if status.LastError != "" {
+		fmt.Fprintf(b, "overlay_last_error: %s\n", status.LastError)
+	}
 }
 
 func summarize[T any](items []EffectiveDefinition[T]) ([]DefinitionSource, int) {

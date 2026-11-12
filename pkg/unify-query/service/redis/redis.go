@@ -67,6 +67,9 @@ func (s *Service) Reload(ctx context.Context) {
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
 	log.Debugf(context.TODO(), "redis service context update success.")
 
+	// 关联关系定义不依赖 Redis 可用：Redis 不可用时以内置定义启动，覆盖层由订阅与对账重试。
+	defer s.initSchemaProvider(s.ctx)
+
 	err := redis.SetInstance(s.ctx, KVBasePath, ServiceName, ClientOptions())
 	if err != nil {
 		log.Errorf(context.TODO(), "redis service start failed, err: %v", err)
@@ -79,37 +82,24 @@ func (s *Service) Reload(ctx context.Context) {
 		log.Errorf(context.TODO(), "redis service start failed, err: %v", err)
 		return
 	}
-
-	// 初始化 SchemaProvider
-	s.initSchemaProvider(s.ctx)
 }
 
-// initSchemaProvider 根据配置初始化 SchemaProvider
+// initSchemaProvider 初始化以内置定义作底层、Redis 作覆盖层的 SchemaProvider。
+// Redis 客户端缺失时只有内置一层，覆盖层状态见 /relation_schema_print。
 func (s *Service) initSchemaProvider(ctx context.Context) {
 	if s.providerManager != nil {
 		_ = s.providerManager.Close()
 	}
 
-	var redisClient goRedis.UniversalClient
-	if SchemaProviderType == "redis" {
-		client := redis.Client()
-		if client == nil {
-			log.Errorf(ctx, "Failed to get redis client for SchemaProvider: client is nil")
-			return
-		}
-		redisClient = client
+	redisClient := redis.Client()
+	if redisClient == nil {
+		log.Errorf(ctx, "redis client is nil, relation SchemaProvider serves builtin definitions only")
 	}
-
-	pm, err := relation.NewProviderManager(ctx, nil, SchemaProviderType, redisClient, relation.DefaultStaticProviderConfig())
-	if err != nil {
-		log.Errorf(ctx, "Failed to init SchemaProvider: %v", err)
-		return
-	}
-	s.providerManager = pm
+	s.providerManager = relation.NewProviderManager(ctx, nil, redisClient, relation.DefaultStaticProviderConfig())
 
 	v1beta1.InitSchemaProvider(s.providerManager.GetProvider())
 	v1beta3.InitSchemaProvider(s.providerManager.GetProvider())
-	log.Infof(ctx, "SchemaProvider initialized with type: %s", SchemaProviderType)
+	log.Infof(ctx, "relation SchemaProvider initialized: builtin base with Redis overlay")
 }
 
 func (s *Service) Wait() {

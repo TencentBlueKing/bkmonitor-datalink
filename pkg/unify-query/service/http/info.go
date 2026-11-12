@@ -345,17 +345,34 @@ func HandleTsDBPrint(c *gin.Context) {
 	c.String(200, res)
 }
 
-// HandleRelationSchemaPrint 打印关联关系定义在 namespace（默认 __all__）下的生效结果与来源，
-// content 为 true 时附带每条定义的内容。只读，不触发重载。
+// HandleRelationSchemaPrint 打印关联关系定义在 namespace（默认 __all__）下的生效结果、来源与覆盖层状态。
+// content 为 true 时附带每条定义的内容；format=json 时返回结构化结果，默认文本。只读，不触发重载。
 func HandleRelationSchemaPrint(c *gin.Context) {
 	namespace := c.DefaultQuery("namespace", relation.NamespaceAll)
 	content, _ := strconv.ParseBool(c.DefaultQuery("content", "false"))
+	format := c.DefaultQuery("format", "text")
+	if format != "text" && format != "json" {
+		c.String(400, fmt.Sprintf("invalid format %q, must be text or json", format))
+		return
+	}
 	schema, ok := v1beta3.EffectiveSchema(namespace)
 	if !ok {
 		c.String(500, "current relation schema provider does not expose definition sources")
 		return
 	}
-	c.String(200, relation.PrintEffectiveSchema(schema, content))
+	if format == "text" {
+		c.String(200, relation.PrintEffectiveSchema(schema, content))
+		return
+	}
+	if !content {
+		for i := range schema.Resources {
+			schema.Resources[i].Definition = nil
+		}
+		for i := range schema.Relations {
+			schema.Relations[i].Definition = nil
+		}
+	}
+	c.JSON(200, schema)
 }
 
 // HandleStorage 打印存储配置信息，refresh 不为空则强制刷新

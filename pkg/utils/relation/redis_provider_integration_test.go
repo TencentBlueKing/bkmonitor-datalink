@@ -75,8 +75,7 @@ func TestRedisProviderNamespaceRefreshIntegration(t *testing.T) {
 					require.NoError(t, client.Del(ctx, key).Err())
 					require.NoError(t, client.HSet(ctx, key, NamespaceAll, value).Err())
 				}
-				provider, err := NewRedisProvider(ctx, client, WithReconcileInterval(0))
-				require.NoError(t, err)
+				provider := NewRedisProvider(ctx, client, WithReconcileInterval(0))
 				defer provider.Close()
 
 				changes := make(chan string, 1)

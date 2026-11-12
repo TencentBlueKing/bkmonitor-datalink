@@ -27,8 +27,7 @@ func TestRedisSchemaEmptyRedisMatchesStatic(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
-	provider, err := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(0))
-	require.NoError(t, err)
+	provider := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(0))
 	t.Cleanup(func() { require.NoError(t, provider.Close()) })
 
 	static := NewStaticSchemaProvider()
@@ -57,25 +56,33 @@ func TestEffectiveSchemaReportsCurrentProviderSources(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, client.HSet(ctx, relation.RedisKeyPrefix+":"+relation.KindResourceDefinition, relation.NamespaceAll, data).Err())
-	provider, err := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(0))
-	require.NoError(t, err)
+	provider := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(0))
 	t.Cleanup(func() { require.NoError(t, provider.Close()) })
 
 	previous := GetUnderlyingProvider(GetSchemaProvider())
 	t.Cleanup(func() { InitSchemaProvider(previous) })
 	builtinResources := len(relation.DefaultResourceDefinitions())
 	count := func(kind, source string) int {
-		for _, item := range relationSchemaSourceCounts() {
+		snapshot, ok := relationSchemaSnapshot()
+		require.True(t, ok)
+		for _, item := range snapshot.Counts {
 			if item.Kind == kind && item.Source == source {
 				return item.Count
 			}
 		}
 		return -1
 	}
+	loaded := func() bool {
+		snapshot, ok := relationSchemaSnapshot()
+		require.True(t, ok)
+		require.Len(t, snapshot.Failures, len(relation.OverlayReasons))
+		return snapshot.OverlayLoaded && !snapshot.LastSuccess.IsZero()
+	}
 
 	InitSchemaProvider(nil)
 	require.Equal(t, builtinResources, count(relation.KindResourceDefinition, "builtin"))
 	require.Zero(t, count(relation.KindResourceDefinition, "override"))
+	require.False(t, loaded())
 	schema, ok := EffectiveSchema("bkcc__2")
 	require.True(t, ok)
 	require.Equal(t, "static", schema.Provider)
@@ -83,9 +90,11 @@ func TestEffectiveSchemaReportsCurrentProviderSources(t *testing.T) {
 	InitSchemaProvider(provider)
 	require.Equal(t, builtinResources-1, count(relation.KindResourceDefinition, "builtin"))
 	require.Equal(t, 1, count(relation.KindResourceDefinition, "override"))
+	require.True(t, loaded())
 	schema, ok = EffectiveSchema("bkcc__2")
 	require.True(t, ok)
 	require.Equal(t, "redis", schema.Provider)
+	require.Equal(t, relation.OverlayStateLoaded, schema.Overlay.State)
 	for _, item := range schema.Resources {
 		if item.Name == "pod" {
 			require.Equal(t, relation.DefinitionSourceOverride, item.Source)

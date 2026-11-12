@@ -616,6 +616,25 @@ func (b *MetricsBuilder) buildRelationConfigMetrics(bizID int, info *Info, paren
 	return metrics
 }
 
+// SchemaLogger 把 bmw 的全局日志函数适配到 relation.Logger，并统一加 [schema_provider] 前缀
+type SchemaLogger struct{}
+
+func (l *SchemaLogger) Infof(format string, args ...interface{}) {
+	logger.Infof("[schema_provider] "+format, args...)
+}
+
+func (l *SchemaLogger) Warnf(format string, args ...interface{}) {
+	logger.Warnf("[schema_provider] "+format, args...)
+}
+
+func (l *SchemaLogger) Errorf(format string, args ...interface{}) {
+	logger.Errorf("[schema_provider] "+format, args...)
+}
+
+func (l *SchemaLogger) Debugf(format string, args ...interface{}) {
+	logger.Debugf("[schema_provider] "+format, args...)
+}
+
 // InitSchemaProvider 初始化全局 MetricsBuilder 的 SchemaProvider
 // 应在服务启动时调用，用于注入 SchemaProvider
 func InitSchemaProvider(provider relation.SchemaProvider) {

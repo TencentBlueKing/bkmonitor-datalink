@@ -112,9 +112,8 @@ func TestRedisProviderPeriodicReconcileIntegration(t *testing.T) {
 			key := RedisKeyPrefix + ":" + KindResourceDefinition
 			require.NoError(t, client.Set(ctx, key, "wrong type", 0).Err())
 			core, logs := observer.New(zap.DebugLevel)
-			provider, err := NewRedisProvider(ctx, client, WithReloadOnStart(false),
+			provider := NewRedisProvider(ctx, client, WithReloadOnStart(false),
 				WithLogger(zap.New(core).Sugar()), WithReconcileInterval(interval))
-			require.NoError(t, err)
 			defer provider.Close()
 			require.Eventually(t, func() bool {
 				return logs.FilterMessageSnippet("reconciliation after subscription failed").Len() > 0

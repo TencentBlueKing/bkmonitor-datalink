@@ -28,8 +28,7 @@ func TestRelationConfigUsesBuiltinSchemaWhenRedisIsEmpty(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
-	provider, err := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(0))
-	require.NoError(t, err)
+	provider := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(0))
 	t.Cleanup(func() { require.NoError(t, provider.Close()) })
 
 	var resources map[string]*ResourceInfo

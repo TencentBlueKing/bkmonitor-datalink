@@ -41,8 +41,7 @@ func TestRedisBusinessExtensionKeepsBuiltinPaths(t *testing.T) {
 	write(relation.KindRelationDefinition, "bkcc__2", map[string]*relation.RelationDefinition{
 		"custom_app_with_pod": {Namespace: "bkcc__2", Name: "custom_app_with_pod", FromResource: "custom_app", ToResource: "pod"},
 	})
-	p, err := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(0))
-	require.NoError(t, err)
+	p := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(0))
 	defer p.Close()
 
 	oldModels, oldProvider := models, provider
@@ -94,8 +93,7 @@ func TestRedisAllChangeRebuildsBusinessModel(t *testing.T) {
 	write(relation.KindResourceDefinition, "bkcc__2", map[string]*relation.ResourceDefinition{
 		"custom_app": {Namespace: "bkcc__2", Name: "custom_app", Fields: []relation.FieldDefinition{{Name: "app_id", Required: true}}},
 	})
-	p, err := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(0))
-	require.NoError(t, err)
+	p := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(0))
 	defer p.Close()
 	oldModels, oldProvider := models, provider
 	oldResourceConfig := AllResources()

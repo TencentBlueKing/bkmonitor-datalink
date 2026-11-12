@@ -44,8 +44,7 @@ func TestTimeGraphRedisSchemaIsolationAndReload(t *testing.T) {
 		write(relation.KindResourceDefinition, ns, resource(ns, ns+"_id"))
 		write(relation.KindRelationDefinition, ns, relations(ns, ns+"_flow"))
 	}
-	provider, err := relation.NewRedisProvider(ctx, client)
-	require.NoError(t, err)
+	provider := relation.NewRedisProvider(ctx, client)
 	t.Cleanup(func() { require.NoError(t, provider.Close()) })
 	adapter := NewSchemaProviderFromRelation(provider)
 	model := &Model{schemaProvider: adapter, timeGraphQueryReference: timeGraphTestQueryReference}
@@ -200,8 +199,7 @@ func TestRedisSchemaReconcilesMissedPubSubChanges(t *testing.T) {
 		"business_relation": {Namespace: "bkcc__2", Name: "business_relation", FromResource: "service", ToResource: "service"},
 	})
 
-	provider, err := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(20*time.Millisecond))
-	require.NoError(t, err)
+	provider := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(20*time.Millisecond))
 	t.Cleanup(func() { require.NoError(t, provider.Close()) })
 	changes := make(chan string, 4)
 	require.NoError(t, provider.Subscribe(func(kind, namespace string) {
@@ -273,8 +271,7 @@ func TestTimeGraphBusinessRelationNameMatchesStaticAndRedis(t *testing.T) {
 	write(relation.KindRelationDefinition, map[string]*relation.RelationDefinition{
 		"business_with_set": {Namespace: relation.NamespaceAll, Name: "business_with_set", FromResource: "business", ToResource: "set"},
 	})
-	provider, err := relation.NewRedisProvider(ctx, client)
-	require.NoError(t, err)
+	provider := relation.NewRedisProvider(ctx, client)
 	t.Cleanup(func() { require.NoError(t, provider.Close()) })
 
 	staticModel := &Model{schemaProvider: NewStaticSchemaProvider()}

@@ -90,7 +90,10 @@ type RedisProvider struct {
 	// 内置底层，构造后不再变化；订阅与对账只更新覆盖层。
 	builtinResources map[string]*ResourceDefinition
 	builtinRelations map[string]*RelationDefinition
-	mu               sync.RWMutex
+	// 覆盖层读取状态，供诊断接口与指标使用。
+	statusMu sync.Mutex
+	status   overlayStatus
+	mu       sync.RWMutex
 	// Serializes full snapshots and Pub/Sub reloads so an older snapshot cannot
 	// overwrite a newer namespace update.
 	reloadMu sync.Mutex
@@ -144,18 +147,24 @@ func WithReconcileInterval(interval time.Duration) RedisProviderOption {
 	}
 }
 
-// NewRedisProvider 创建 Redis Provider
-func NewRedisProvider(ctx context.Context, client redis.UniversalClient, opts ...RedisProviderOption) (*RedisProvider, error) {
+// NewRedisProvider 创建 Redis Provider，不会失败：内置定义立即可用。
+// client 为 nil 时覆盖层不可用，只有内置一层；首次读取 Redis 失败时先用内置定义，
+// 订阅建立后与每次周期对账都会重试，成功后覆盖层生效。
+func NewRedisProvider(ctx context.Context, client redis.UniversalClient, opts ...RedisProviderOption) *RedisProvider {
 	config := DefaultRedisProviderConfig()
 	for _, opt := range opts {
 		opt(config)
 	}
 
 	provider := newRedisProvider(ctx, client, config)
+	if client == nil {
+		provider.recordFailure(OverlayReasonClientMissing, errors.New("redis client is not configured"))
+		config.Logger.Warnf("Redis client is not configured, serving builtin relation definitions only")
+		return provider
+	}
 	if config.ReloadOnStart {
 		if err := provider.loadAllEntities(); err != nil {
-			provider.cancel()
-			return nil, fmt.Errorf("failed to load entities: %w", err)
+			config.Logger.Errorf("initial Redis schema load failed, serving builtin definitions until a reload succeeds: %v", err)
 		}
 	}
 
@@ -166,7 +175,7 @@ func NewRedisProvider(ctx context.Context, client redis.UniversalClient, opts ..
 		go provider.reconcilePeriodically()
 	}
 
-	return provider, nil
+	return provider
 }
 
 // newRedisProvider 构造覆盖层为空、内置底层就绪的 Provider，不读取 Redis，也不启动订阅。
@@ -219,15 +228,26 @@ func (rp *RedisProvider) loadAllEntities() error {
 
 	resourceFields, err := rp.client.HGetAll(rp.ctx, RedisKeyPrefix+":"+KindResourceDefinition).Result()
 	if err != nil {
-		return fmt.Errorf("failed to load resource definitions: %w", err)
+		err = fmt.Errorf("failed to load resource definitions: %w", err)
+		rp.recordFailure(OverlayReasonReadFailed, err)
+		return err
 	}
 	relationFields, err := rp.client.HGetAll(rp.ctx, RedisKeyPrefix+":"+KindRelationDefinition).Result()
 	if err != nil {
-		return fmt.Errorf("failed to load relation definitions: %w", err)
+		err = fmt.Errorf("failed to load relation definitions: %w", err)
+		rp.recordFailure(OverlayReasonReadFailed, err)
+		return err
 	}
 
 	resources, invalidResources := rp.decodeResourceFields(resourceFields)
 	relations, invalidRelations := rp.decodeRelationFields(relationFields)
+	for namespace := range invalidResources {
+		rp.recordFailure(OverlayReasonDecodeFailed, fmt.Errorf("invalid resource definitions in namespace %s", namespace))
+	}
+	for namespace := range invalidRelations {
+		rp.recordFailure(OverlayReasonDecodeFailed, fmt.Errorf("invalid relation definitions in namespace %s", namespace))
+	}
+	rp.recordSuccess()
 
 	rp.mu.Lock()
 	for namespace := range invalidResources {
@@ -416,12 +436,16 @@ func (rp *RedisProvider) reloadNamespace(kind, namespace string) error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("failed to hget: %w", err)
+		err = fmt.Errorf("failed to hget: %w", err)
+		rp.recordFailure(OverlayReasonReadFailed, err)
+		return err
 	}
 
 	var entities map[string]json.RawMessage
 	if err = json.Unmarshal([]byte(entitiesJSON), &entities); err != nil {
-		return fmt.Errorf("failed to unmarshal entities: %w", err)
+		err = fmt.Errorf("failed to unmarshal entities: %w", err)
+		rp.recordFailure(OverlayReasonDecodeFailed, err)
+		return err
 	}
 
 	switch kind {
@@ -431,6 +455,7 @@ func (rp *RedisProvider) reloadNamespace(kind, namespace string) error {
 			var def ResourceDefinition
 			if unmarshalErr := json.Unmarshal(jsonData, &def); unmarshalErr != nil {
 				rp.config.Logger.Warnf("failed to unmarshal ResourceDefinition %s:%s: %v", namespace, name, unmarshalErr)
+				rp.recordFailure(OverlayReasonDecodeFailed, unmarshalErr)
 				continue
 			}
 			newMap[name] = &def
@@ -445,6 +470,7 @@ func (rp *RedisProvider) reloadNamespace(kind, namespace string) error {
 			var def RelationDefinition
 			if unmarshalErr := json.Unmarshal(jsonData, &def); unmarshalErr != nil {
 				rp.config.Logger.Warnf("failed to unmarshal RelationDefinition %s:%s: %v", namespace, name, unmarshalErr)
+				rp.recordFailure(OverlayReasonDecodeFailed, unmarshalErr)
 				continue
 			}
 			newMap[name] = &def
@@ -661,7 +687,8 @@ func (rp *RedisProvider) GetRelationSchema(relationType RelationName) (*Relation
 	return nil, ErrRelationDefinitionNotFound
 }
 
-// ListRelationSchemas 列出 __all__ 的生效关联 Schema 与各业务 namespace 在 Redis 里的关联 Schema
+// ListRelationSchemas 列出 __all__ 的生效关联 Schema 与各业务 namespace 在 Redis 里的关联 Schema。
+// 不区分 namespace：业务 namespace 与 __all__ 的同名定义各列一次，RelationName 带各自的 namespace 前缀。
 func (rp *RedisProvider) ListRelationSchemas() []RelationSchema {
 	rp.mu.RLock()
 	defer rp.mu.RUnlock()
@@ -693,9 +720,29 @@ func (rp *RedisProvider) EffectiveSchema(namespace string) EffectiveSchema {
 		Provider:  rp.Name(),
 		Namespace: ns,
 		Lookup:    lookupOrder(ns),
+		Overlay:   rp.OverlayStatus(),
 		Resources: effectiveDefinitions(listLayered(rp.resourceDefinitions, rp.builtinResources, ns), SameResourceDefinition),
 		Relations: effectiveDefinitions(listLayered(rp.relationDefinitions, rp.builtinRelations, ns), SameRelationDefinition),
 	}
+}
+
+// OverlayStatus 返回 Redis 覆盖层的读取状态
+func (rp *RedisProvider) OverlayStatus() OverlayStatus {
+	rp.statusMu.Lock()
+	defer rp.statusMu.Unlock()
+	return rp.status.snapshot()
+}
+
+func (rp *RedisProvider) recordSuccess() {
+	rp.statusMu.Lock()
+	defer rp.statusMu.Unlock()
+	rp.status.lastSuccess = time.Now()
+}
+
+func (rp *RedisProvider) recordFailure(reason string, err error) {
+	rp.statusMu.Lock()
+	defer rp.statusMu.Unlock()
+	rp.status.recordFailure(reason, err)
 }
 
 // SourceCounts 统计生效定义的来源

@@ -83,7 +83,7 @@ func GetSchemaProvider() SchemaProvider {
 }
 
 func init() {
-	metric.SetRelationSchemaSourceCounts(relationSchemaSourceCounts)
+	metric.SetRelationSchemaSnapshot(relationSchemaSnapshot)
 }
 
 // EffectiveSchema 返回当前 SchemaProvider 在 namespace 下的生效定义及来源；
@@ -96,17 +96,25 @@ func EffectiveSchema(namespace string) (relation.EffectiveSchema, bool) {
 	return inspector.EffectiveSchema(namespace), true
 }
 
-func relationSchemaSourceCounts() []metric.RelationSchemaSourceCount {
+func relationSchemaSnapshot() (metric.RelationSchemaSnapshot, bool) {
 	inspector, ok := GetUnderlyingProvider(GetSchemaProvider()).(relation.SchemaSourceInspector)
 	if !ok {
-		return nil
+		return metric.RelationSchemaSnapshot{}, false
 	}
 	counts := inspector.SourceCounts()
-	result := make([]metric.RelationSchemaSourceCount, 0, len(counts))
-	for _, count := range counts {
-		result = append(result, metric.RelationSchemaSourceCount{Kind: count.Kind, Source: string(count.Source), Count: count.Count})
+	status := inspector.OverlayStatus()
+	snapshot := metric.RelationSchemaSnapshot{
+		Counts:        make([]metric.RelationSchemaSourceCount, 0, len(counts)),
+		OverlayLoaded: status.State == relation.OverlayStateLoaded,
+		Failures:      status.Failures,
 	}
-	return result
+	for _, count := range counts {
+		snapshot.Counts = append(snapshot.Counts, metric.RelationSchemaSourceCount{Kind: count.Kind, Source: string(count.Source), Count: count.Count})
+	}
+	if status.LastSuccess != nil {
+		snapshot.LastSuccess = *status.LastSuccess
+	}
+	return snapshot, true
 }
 
 var defaultResourceFieldTypes = buildDefaultResourceFieldTypes()

@@ -159,8 +159,8 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 // while StorageName (cluster name) is the comparison subject; TableID is carried as context.
 // responseVMClusterList contains the storage cluster names returned by the VM API.
 // missing: cluster names present in request but absent from response, with associated RTs and TableIDs.
-// The return value is true only for proven mismatch, never for unknown coverage.
-func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadata.RtDetail, responseVMClusterList []string) bool {
+// It returns the sorted missing cluster names only for proven mismatch, never for unknown coverage.
+func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadata.RtDetail, responseVMClusterList []string) []string {
 	// Marshal request detail map as JSON for trace consumption.
 	requestJSON := ""
 	if len(requestRtDetail) > 0 {
@@ -199,13 +199,13 @@ func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadat
 
 	if len(requestRtDetail) == 0 {
 		span.Set("query-storage-status", "match")
-		return false
+		return nil
 	}
 
 	if responseVMClusterList == nil {
 		span.Set("query-storage-status", "unknown")
 		span.Set("query-storage-reason", "empty_storage_cluster_list")
-		return false
+		return nil
 	}
 
 	respSet := make(map[string]struct{}, len(responseVMClusterList))
@@ -247,17 +247,40 @@ func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadat
 	} else {
 		span.Set("query-storage-status", "match")
 	}
-	return len(missing) > 0
+	names := make([]string, 0, len(missing))
+	for _, item := range missing {
+		names = append(names, item.Cluster)
+	}
+	return names
+}
+
+// storageCoverageReasonNames 是不完整原因里最多列出的缺失存储数，其余只记个数。
+const storageCoverageReasonNames = 3
+
+// storageCoverageReason 把缺失的存储写进不完整原因：成功的读取只有它能指出是哪个存储没有出现在
+// 响应里。原因前缀不变，按前缀分类的指标标签仍然有界。
+func storageCoverageReason(missing []string) string {
+	const reason = "vm_storage_coverage_mismatch"
+	if len(missing) == 0 {
+		return reason
+	}
+	names := missing
+	if len(names) > storageCoverageReasonNames {
+		names = append(append([]string(nil), names[:storageCoverageReasonNames]...), fmt.Sprintf("+%d", len(missing)-storageCoverageReasonNames))
+	}
+	return reason + ":" + strings.Join(names, ",")
 }
 
 // A successful response may omit a requested storage even when the backend's
 // isPartial flag is false. Keep its data, but do not present it as complete.
-func markStorageCoveragePartial(ctx context.Context) {
-	const reason = "vm_storage_coverage_mismatch"
+func markStorageCoveragePartial(ctx context.Context, missing []string) {
+	reason := storageCoverageReason(missing)
 	message := reason
 	if status := metadata.GetStatus(ctx); status != nil && status.Message != "" {
-		if strings.Contains(status.Message, reason) {
-			return
+		for _, existing := range strings.Split(status.Message, ";") {
+			if strings.TrimSpace(existing) == reason {
+				return
+			}
 		}
 		message = status.Message + "; " + reason
 	}
@@ -722,10 +745,10 @@ func (i *Instance) DirectQueryRange(
 	if vmResp != nil && vmResp.Data.VmQueryCluster != nil {
 		responseVMClusterList = vmResp.Data.VmQueryCluster.StorageClusterList
 	}
-	mismatch := spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
-	if err == nil && mismatch {
+	missing := spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
+	if err == nil && len(missing) > 0 {
 		isPartial = true
-		markStorageCoveragePartial(ctx)
+		markStorageCoveragePartial(ctx, missing)
 	}
 
 	return result, isPartial, err
@@ -805,10 +828,10 @@ func (i *Instance) DirectQueryWithPartial(
 	if vmResp != nil && vmResp.Data.VmQueryCluster != nil {
 		responseVMClusterList = vmResp.Data.VmQueryCluster.StorageClusterList
 	}
-	mismatch := spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
-	if err == nil && mismatch {
+	missing := spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
+	if err == nil && len(missing) > 0 {
 		isPartial = true
-		markStorageCoveragePartial(ctx)
+		markStorageCoveragePartial(ctx, missing)
 	}
 
 	return result, isPartial, err

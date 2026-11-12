@@ -90,7 +90,7 @@ func TestLegacyTimeGraphPrefersShortestPath(t *testing.T) {
 }
 
 func TestTopologySixtyPointGridKeepsAllPoints(t *testing.T) {
-	timestamps := sharedGraphTestTimes(60)
+	timestamps := sharedTopologyTestTimes(60)
 	m := sharedTopologyQueryModel(map[string]pl.Matrix{
 		"source_info_relation": contractMatrix(map[string]string{"source_id": "a"}, timestamps...),
 		"source_middle_flow":   contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, timestamps...),
@@ -192,13 +192,15 @@ func TestLegacyTimeGraphFirstPathExecution(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0
-			results, _, err := queryFirstTimeGraphPath(context.Background(), make([]resourcePath, len(test.errors)), func(resourcePath) ([]cmdb.PathResourcesResult, error) {
+			var results []RelationTarget
+			_, err := queryFirstTimeGraphPath(context.Background(), make([]resourcePath, len(test.errors)), func(resourcePath) (bool, error) {
 				index := calls
 				calls++
 				if index == test.hitAt {
-					return []cmdb.PathResourcesResult{{TargetType: "target"}}, nil
+					results = []RelationTarget{{TargetType: "target"}}
+					return true, nil
 				}
-				return nil, test.errors[index]
+				return false, test.errors[index]
 			})
 			require.Equal(t, test.wantCalls, calls)
 			if test.wantError != nil {

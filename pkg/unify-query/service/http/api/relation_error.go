@@ -23,13 +23,13 @@ func observeLegacyRelationQuality(ctx context.Context, span *trace.Span, mode st
 	if status := metadata.GetStatus(ctx); status != nil && status.Code == metadata.QueryTsPartial {
 		span.Set("relation-partial", true)
 		span.Set("relation-partial-reason", status.Message)
-		metric.CMDBRelationQualityInc(ctx, mode, "partial", status.Message)
+		metric.CMDBRelationQualityInc(ctx, metric.CMDBRelationEntryCompat, mode, "partial", status.Message)
 	}
 	var limitErr interface{ TruncationReason() string }
 	if errors.As(err, &limitErr) {
 		reason := limitErr.TruncationReason()
 		span.Set("relation-truncated", true)
 		span.Set("relation-truncated-reason", reason)
-		metric.CMDBRelationQualityInc(ctx, mode, "truncated", reason)
+		metric.CMDBRelationQualityInc(ctx, metric.CMDBRelationEntryCompat, mode, "truncated", reason)
 	}
 }

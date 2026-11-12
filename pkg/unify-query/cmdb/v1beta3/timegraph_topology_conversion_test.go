@@ -47,10 +47,10 @@ func TestDirectTopologyDTOFrameContentsAndOwnership(t *testing.T) {
 	for _, points := range []int{3, 60} {
 		t.Run(fmt.Sprintf("points=%d", points), func(t *testing.T) {
 			ctx := context.Background()
-			times := sharedGraphTestTimes(points)
+			times := sharedTopologyTestTimes(points)
 			grid, err := NewTopologyGrid(times)
 			require.NoError(t, err)
-			g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
+			g := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
 			ids := make(map[string]uint64)
 			for _, id := range []string{"a", "b", "c"} {
 				info := cmdb.Matcher{"id": id, "version": "old"}
@@ -59,9 +59,9 @@ func TestDirectTopologyDTOFrameContentsAndOwnership(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.NoError(t, g.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": "b", "version": "z"}, times[len(times)-1]))
-			require.NoError(t, g.AddTimeRelationWithRelation(ctx, sharedGraphTestRelation("calls"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, times...))
-			require.NoError(t, g.AddTimeRelationWithRelation(ctx, sharedGraphTestRelation("other"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, times...))
-			require.NoError(t, g.AddTimeRelationWithRelation(ctx, sharedGraphTestRelation("calls"), cmdb.Matcher{"from_id": "b", "to_id": "c"}, times[1:]...))
+			require.NoError(t, g.AddTimeRelationWithRelation(ctx, sharedTopologyTestRelation("calls"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, times...))
+			require.NoError(t, g.AddTimeRelationWithRelation(ctx, sharedTopologyTestRelation("other"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, times...))
+			require.NoError(t, g.AddTimeRelationWithRelation(ctx, sharedTopologyTestRelation("calls"), cmdb.Matcher{"from_id": "b", "to_id": "c"}, times[1:]...))
 			query := SharedTopologyQuery{SourceType: "entity", SourceMatcher: cmdb.Matcher{"id": "a"}, MaxHops: 2, PartialTimestamps: map[int64]string{times[1]: "missing source"}}
 			got, err := g.findSharedTopologyDTO(ctx, grid, query)
 			require.NoError(t, err)
@@ -110,20 +110,52 @@ func TestDirectTopologyDTOFrameContentsAndOwnership(t *testing.T) {
 	}
 }
 
-func TestTopologyDTOFilterDropsRetainedReferences(t *testing.T) {
-	frames := []cmdb.SharedTopologySnapshot{{Nodes: []cmdb.SharedTopologyNode{
-		{ID: 1, ResourceType: "root", Dimensions: cmdb.Matcher{"id": "root"}},
-		{ID: 2, ResourceType: "dropped", Dimensions: cmdb.Matcher{"id": "dropped"}},
-		{ID: 3, ResourceType: "target", Dimensions: cmdb.Matcher{"id": "target"}},
-	}, Edges: []cmdb.SharedTopologyEdge{{Source: 1, Target: 2, RelationType: "removed"}, {Source: 1, Target: 3, RelationType: "kept"}}}}
-	backingNodes := frames[0].Nodes
-	backingEdges := frames[0].Edges
-	require.NoError(t, filterSharedTopologySnapshots(context.Background(), frames, "root", []cmdb.Resource{"target"}))
-	require.Len(t, frames[0].Nodes, 2)
-	require.Len(t, frames[0].Edges, 1)
-	require.Zero(t, backingNodes[2])
-	require.Zero(t, backingEdges[1])
-	canceled, cancel := context.WithCancel(context.Background())
+// target_types 在逐帧构造时过滤：保留源类型和目标类型的节点，删去其余节点及其关联边，
+// 不把中间节点折叠为新边；每帧都是新分配的切片。取消在构造帧时生效。
+func TestTopologyFramesFilterOutputTypes(t *testing.T) {
+	ctx := context.Background()
+	times := sharedTopologyTestTimes(2)
+	grid, err := NewTopologyGrid(times)
+	require.NoError(t, err)
+	g := newSharedTimeGraph(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
+		{Name: "root", Index: cmdb.Index{"root_id"}},
+		{Name: "dropped", Index: cmdb.Index{"dropped_id"}},
+		{Name: "target", Index: cmdb.Index{"target_id"}},
+	}}, grid)
+	t.Cleanup(func() { g.Clean(ctx) })
+	relation := func(source, target cmdb.Resource, relationType string) cmdb.Relation {
+		return cmdb.Relation{V: []cmdb.Resource{source, target}, RelationType: relationType, Category: string(RelationCategoryStatic), Direction: string(DirectionOutbound)}
+	}
+	require.NoError(t, g.AddTimeRelationWithRelation(ctx, relation("root", "dropped", "removed"), cmdb.Matcher{"root_id": "r", "dropped_id": "d"}, times...))
+	require.NoError(t, g.AddTimeRelationWithRelation(ctx, relation("root", "target", "kept"), cmdb.Matcher{"root_id": "r", "target_id": "t"}, times...))
+	require.NoError(t, g.AddTimeRelationWithRelation(ctx, relation("dropped", "target", "folded"), cmdb.Matcher{"dropped_id": "d", "target_id": "t"}, times...))
+	query := SharedTopologyQuery{SourceType: "root", SourceMatcher: cmdb.Matcher{"root_id": "r"}, MaxHops: 2}
+	all, err := g.findSharedTopologyDTO(ctx, grid, query)
+	require.NoError(t, err)
+	require.Len(t, all[0].Nodes, 3)
+	require.Len(t, all[0].Edges, 3)
+
+	frames, err := g.prepareSharedTopologyFrames(ctx, grid, query, topologyOutputTypes("root", []cmdb.Resource{"target"}))
+	require.NoError(t, err)
+	var filtered []cmdb.SharedTopologySnapshot
+	require.NoError(t, frames.each(ctx, func(snapshot cmdb.SharedTopologySnapshot) error {
+		filtered = append(filtered, snapshot)
+		return nil
+	}))
+	require.Len(t, filtered, len(times))
+	for index, frame := range filtered {
+		require.Equal(t, times[index], frame.Timestamp)
+		var types []cmdb.Resource
+		for _, node := range frame.Nodes {
+			types = append(types, node.ResourceType)
+		}
+		require.ElementsMatch(t, []cmdb.Resource{"root", "target"}, types)
+		require.Len(t, frame.Edges, 1)
+		require.Equal(t, "kept", frame.Edges[0].RelationType)
+	}
+	require.Nil(t, topologyOutputTypes("root", nil), "an empty target_types keeps every reachable type")
+
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	require.ErrorIs(t, filterSharedTopologySnapshots(canceled, frames, "root", nil), context.Canceled)
+	require.ErrorIs(t, frames.each(canceled, func(cmdb.SharedTopologySnapshot) error { return nil }), context.Canceled)
 }

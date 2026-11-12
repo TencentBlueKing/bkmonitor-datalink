@@ -21,16 +21,17 @@ import (
 
 func TestSharedTopologyMetricsCases(t *testing.T) {
 	for _, tt := range []struct {
-		name, outcome, reject                                           string
-		empty, partial, cancel, expired, gridLimit, graphLimit, invalid bool
-		backendErr                                                      error
+		name, outcome, reject                                            string
+		empty, partial, cancel, expired, gridLimit, extraMiddle, invalid bool
+		backendErr                                                       error
 	}{
 		{name: "非空结果", outcome: "success"},
 		{name: "空结果", outcome: "empty", empty: true},
 		{name: "不完整结果", outcome: "partial", partial: true},
 		{name: "空但不完整", outcome: "partial", empty: true, partial: true},
 		{name: "取数失败", outcome: "failed", backendErr: fmt.Errorf("backend failure")},
-		{name: "构图容量拒绝", outcome: "rejected", graphLimit: true, reject: "max_graph_node_infos"},
+		// 构图规模不是拒绝理由：多出的属性版本照常构图并返回。
+		{name: "构图规模不拒绝", outcome: "success", extraMiddle: true},
 		{name: "时间点超限", outcome: "rejected", gridLimit: true, reject: "max_shared_topology_points"},
 		{name: "参数无效", outcome: "rejected", invalid: true, reject: "invalid_request"},
 		{name: "提前取消", outcome: "canceled", cancel: true},
@@ -40,11 +41,6 @@ func TestSharedTopologyMetricsCases(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := initTimeGraphQueryTestEnvironment()
-			if tt.graphLimit {
-				oldLimit := MaxGraphNodeInfos
-				MaxGraphNodeInfos = 2
-				t.Cleanup(func() { MaxGraphNodeInfos = oldLimit })
-			}
 			if tt.cancel {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithCancel(ctx)
@@ -60,7 +56,7 @@ func TestSharedTopologyMetricsCases(t *testing.T) {
 				"source_middle_flow":   contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, 1700000000000, 1700000100000),
 				"middle_target_flow":   {},
 			}
-			if tt.graphLimit {
+			if tt.extraMiddle {
 				responses["source_middle_flow"] = append(responses["source_middle_flow"], contractMatrix(map[string]string{"source_id": "a", "middle_id": "extra"}, 1700000000000, 1700000100000)...)
 			}
 			model := sharedTopologyQueryModel(responses)
@@ -86,9 +82,6 @@ func TestSharedTopologyMetricsCases(t *testing.T) {
 			rejections := readTimeGraphMetric(t, "cmdb_topology_rejections_total", map[string]string{"query_mode": "range", "reason": tt.reject}, "counter")
 			builds := readTimeGraphMetric(t, "cmdb_timegraph_stage_seconds", map[string]string{"stage": "build", "result": tt.outcome}, "count")
 			matrixOutcome := tt.outcome
-			if tt.graphLimit {
-				matrixOutcome = "success"
-			}
 			matrixCalls := readTimeGraphMetric(t, "cmdb_timegraph_stage_seconds", map[string]string{"stage": "relation-edge", "result": matrixOutcome}, "count")
 			countsBefore := map[string]float64{}
 			for _, kind := range []string{"points", "nodes", "edges", "partial_snapshots"} {
@@ -105,6 +98,9 @@ func TestSharedTopologyMetricsCases(t *testing.T) {
 				if tt.partial {
 					wantCounts["partial_snapshots"] = 2
 				}
+				if tt.extraMiddle {
+					wantCounts["nodes"], wantCounts["edges"] = 6, 4
+				}
 				for kind, count := range wantCounts {
 					require.Equal(t, countsBefore[kind]+count, readTimeGraphMetric(t, "cmdb_topology_size", map[string]string{"query_mode": "range", "kind": kind}, "sum"), kind)
 				}
@@ -118,7 +114,7 @@ func TestSharedTopologyMetricsCases(t *testing.T) {
 			if tt.reject != "" {
 				require.Equal(t, rejections+1, readTimeGraphMetric(t, "cmdb_topology_rejections_total", map[string]string{"query_mode": "range", "reason": tt.reject}, "counter"))
 			}
-			if tt.backendErr != nil || tt.graphLimit {
+			if tt.backendErr != nil || tt.extraMiddle {
 				require.Equal(t, builds+1, readTimeGraphMetric(t, "cmdb_timegraph_stage_seconds", map[string]string{"stage": "build", "result": tt.outcome}, "count"))
 			}
 			if !tt.invalid && !tt.gridLimit && !tt.cancel && !tt.expired {

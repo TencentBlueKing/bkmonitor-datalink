@@ -13,11 +13,11 @@
 | --- | --- |
 | `cmdb_topology_operations_total` | `scope=request/query`、`query_mode=instant/range`、`result`；每个 HTTP 请求或模型查询记录一次终态 |
 | `cmdb_topology_operation_seconds` | `scope`、`query_mode`；所有终态的耗时，HTTP 请求覆盖响应写出 |
-| `cmdb_topology_rejections_total` | `query_mode`、`reason`；参数或预算拒绝 |
+| `cmdb_topology_rejections_total` | `query_mode`、`reason`；参数、原始输入规格或无法拆分的后端响应拒绝 |
 | `cmdb_topology_size` | `query_mode`、`kind=points/nodes/edges/partial_snapshots`；成功响应的评估点数、节点/边出现次数和不完整快照数 |
 | `cmdb_topology_payload_bytes` | `stage=request-body/backend-response/response-item`、`result`；读取的请求/后端字节或单项编码字节 |
 | `cmdb_relation_route_total` / `cmdb_relation_route_seconds` | `route=timegraph`、`query_mode`；兼容关系查询的终态及耗时；计数器另有 `started` |
-| `cmdb_relation_quality_total` | `query_mode`、`quality`、`reason`；兼容查询中的 partial、截断和拒绝原因，每个查询按固定原因去重 |
+| `cmdb_relation_quality_total` | `entry`、`query_mode`、`quality`、`reason`；`entry` 为 `compat`（兼容查询）或 `topology`（topology 子查询），记录 partial、截断和拒绝原因，每个查询按固定原因去重；topology 的缺路由计为 `relation_no_physical_route`，与 `backend_partial` 分开 |
 | `cmdb_relation_target_count` | `route`、`query_mode`；兼容查询最终返回的目标数量 |
 | `cmdb_relation_query_list_size` | `route`、`query_mode`；批量 HTTP 请求的子查询数量 |
 
@@ -27,16 +27,19 @@
 校验失败在进入模型前记录一次查询拒绝，进入模型后由模型记录，避免重复计数。
 业务结果以子查询终态核实；外层 HTTP 状态用于定位入口和传输错误。
 
-`reason` 固定为 `invalid_request/max_shared_topology_points/max_graph_nodes/`
-`max_graph_edges/max_graph_node_infos/max_graph_results/max_targets/max_response_bytes/`
-`max_topology_output_bytes/max_topology_queries/max_topology_request_bytes/`
-`max_topology_admission_waiters/max_topology_reserved_bytes/max_topology_memory_headroom/other`。
+`reason` 固定为 `invalid_request/max_shared_topology_points/max_response_bytes/`
+`max_topology_queries/max_topology_request_bytes/other`。构图规模、目标数、编码字节、
+内存估算和排队人数不是拒绝理由，不再有对应原因。
+
+`cmdb_relation_quality_total` 的 `reason` 固定为 `backend_partial/vm_storage_coverage_mismatch/`
+`relation_no_physical_route/source_info_no_route/target_info_failed/max_response_bytes/`
+`max_shared_topology_points/other`。
 
 快照和 compact 输出都按展开后的节点/边出现次数记录，便于比较相同请求；
 数量不是跨时间去重值。compact 的字节收益查看 `response-item`。
 超限读取只保留 limit+1 字节，因此 `request-body/backend-response` 可能是截断下界；
-`response-item` 是预算检查时编码的单项，后续批次仍可能失败。这些值不等于最终整批
-wire bytes 或堆内存。最终编码与写出结果查看 HTTP span。
+`response-item` 是单项的实际编码字节。这些值不等于最终整批 wire bytes 或堆内存。
+整批编码字节查看 HTTP 根 span 的 `response-encoded-bytes`，写出结果查看 HTTP span。
 
 ## 阶段、输入与存储
 
@@ -75,21 +78,20 @@ wire bytes 或堆内存。最终编码与写出结果查看 HTTP span。
 
 - `cmdb_topology_admission_active`：活跃请求数，包含 HTTP 批次响应写出期间；嵌套模型调用不重复计数。
 - `cmdb_topology_inflight{query_mode}`：正在执行的模型查询数。
-- `cmdb_topology_admission_waiters`：等待执行槽的有界 FIFO 项数；等待计入原请求期限。
-- `cmdb_topology_reserved_bytes`：进程内在途请求的估算内存预留量。
-- `cmdb_topology_materialized_bytes`：已确认由请求拥有且仍存活的存储下界；两者之差是尚未物化的预留。
+- `cmdb_topology_admission_waiters`：等待执行槽的 FIFO 项数，不设上限；等待计入原请求期限。
 
-取消和失败后释放请求资源，重复 release 不重复扣减。上述字节指标用于检查预算与释放，
-进程 RSS、Go heap 和 GC 仍需从进程监控核实；瞬时抓取可能错过短峰值。
+取消和失败后释放执行槽，重复 release 不重复扣减。内存按进程 RSS、Go heap 和 GC 从
+进程监控核实，结合 `cmdb_topology_size`、`cmdb_timegraph_storage_size` 和
+`cmdb_topology_payload_bytes` 的请求规模校准实例规格；瞬时抓取可能错过短峰值。
 资源保护机制见[共享构图与资源边界](timegraph-shared-memory.md)和
 [取数与输出](timegraph-output-optimization.md)。
 
 验收固定版本、窗口、step、lookBack、种子、H 和并发，再比较：
 
-1. 查询终态、partial、预算拒绝原因及兼容接口返回目标。
+1. 查询终态、partial、拒绝原因及兼容接口返回目标。
 2. 物理输入量、Matrix 复用和本地阶段耗时。
 3. 共享存储对象数、展开输出量与编码字节。
-4. 预留、物化和活动请求的释放，以及进程峰值和普通查询影响。
+4. 活动请求和等待项的释放，以及进程峰值和普通查询影响。
 
 看板保留这些核心量，不按指标名拆分成本。首次抓取没有计数器基线，
 `rate/increase` 无法还原抓取前的第一笔调用；无样本也不补为零。
@@ -99,13 +101,13 @@ wire bytes 或堆内存。最终编码与写出结果查看 HTTP span。
 - HTTP 根和 item span：批量状态、参数、单项结果、响应编码和写出错误。
 - `build-time-graph-from-relations`：存储模式、唯一节点/关系、属性版本、逻辑时间记录、Matrix 次数与构图耗时。
 - `timegraph-query-matrix`：`query-stage`、`metric-name`、`matrix-returned`、返回序列/点/标签字节、复用、partial 和错误。
-- `timegraph-validate-matrix` 与三类 `timegraph-apply-*-matrix`：网格校验、预算和写图成本。
+- `timegraph-validate-matrix` 与三类 `timegraph-apply-*-matrix`：网格校验、分批边界拒收和写图成本。
 - `timegraph-build-shared-topology-state`、`timegraph-propagate-topology`：种子、已完成层和可达节点。
-- `timegraph-materialize-topology` / `timegraph-compact-topology`、`timegraph-convert-topology`、`timegraph-encode-topology-item`：快照或 compact 物化、转换和输出预算。
-- `timegraph-admission`、`timegraph-reserve-memory`、`timegraph-release-admission`、`timegraph-clean`：准入、预留增长及释放。
+- `timegraph-materialize-topology` / `timegraph-compact-topology`、`timegraph-convert-topology`、`timegraph-encode-topology-item`：快照或 compact 物化、转换和单项编码字节。
+- `timegraph-admission`、`timegraph-release-admission`、`timegraph-clean`：等待执行槽、释放及清理。
 - `http-curl` 与 VM 转换 span：后端读取、解码、转换和失败位置。
 - `http-response-encode` / `http-response-write`：最终 envelope 编码和 ResponseWriter 写出。
 
-预算拒绝记录 `limit-reason/count/maximum`。阶段 span 记录聚合计数，
+规格拒绝记录 `limit-reason/count/maximum`。阶段 span 记录聚合计数，
 热点节点和边循环不创建逐元素 span。trace exemplar 可关联抽样请求；
 持续流量与失败率以聚合指标核实。

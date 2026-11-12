@@ -6,7 +6,6 @@ import (
 	stdjson "encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -14,7 +13,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 )
 
-// Exercise the production encoder while leaving quota boundaries to meter tests.
+// Exercise the production encoder.
 func marshalLargeTopologySnapshots(item cmdb.SharedTopologyResponseData) ([][]byte, int, error) {
 	return marshalLargeTopologySnapshotsContext(context.Background(), item)
 }
@@ -75,12 +74,11 @@ func TestBoundedSnapshotEncodingPreservesPublicInputAndOwnsBytes(t *testing.T) {
 }
 
 func marshalLargeTopologySnapshotsContext(ctx context.Context, item cmdb.SharedTopologyResponseData) ([][]byte, int, error) {
-	parts, size, _, err := marshalTopologyBounded(ctx, item, math.MaxInt, topologyEncodedOwnership{})
-	return parts, size, err
+	return marshalTopologyItem(ctx, item)
 }
 
 func marshalRepeatedTopologySnapshotsContext(ctx context.Context, snapshots []cmdb.SharedTopologySnapshot) ([][]byte, error) {
-	return marshalTopologySnapshotFrames(&topologyEncodeMeter{ctx: ctx, limit: math.MaxInt}, snapshots)
+	return marshalTopologySnapshotFrames(&topologyEncodeMeter{ctx: ctx}, snapshots)
 }
 
 type snapshotCancelContext struct {

@@ -14,13 +14,6 @@ func TestRelationPathHelpersPreservePathOrder(t *testing.T) {
 		{Steps: []RelationPathStep{{ResourceType: "pod"}, {ResourceType: "service"}}},
 	}, relationPaths)
 
-	rank := PathRank([]PathNode{{ResourceType: "pod"}, {ResourceType: "service"}}, paths)
-	if rank != 1 {
-		t.Fatalf("expected second candidate rank, got %d", rank)
-	}
-	if got := PathResourceTypes([]PathNode{{ResourceType: "pod"}, {ResourceType: "service"}}); len(got) != 2 || got[1] != "service" {
-		t.Fatalf("unexpected path resource types: %+v", got)
-	}
 }
 
 func TestRelationPathHelpersEmptyAndMismatchedCandidates(t *testing.T) {
@@ -34,20 +27,4 @@ func TestRelationPathHelpersEmptyAndMismatchedCandidates(t *testing.T) {
 			}
 		}
 	}
-	path := []PathNode{{ResourceType: "pod"}, {ResourceType: "service"}}
-	for _, tc := range []struct {
-		candidates [][]Resource
-		want       int
-	}{
-		{nil, 0},
-		{[][]Resource{{"pod", "service"}}, 0},
-		{[][]Resource{{"pod", "node"}, {"pod", "service"}}, 1},
-		{[][]Resource{{"node", "service"}, {"pod"}, {"pod", "service"}}, 2},
-		{[][]Resource{{"pod", "node"}}, 1},
-	} {
-		require.Equal(t, tc.want, PathRank(path, tc.candidates))
-	}
-	require.Equal(t, 2, PathRank(nil, [][]Resource{{}, {"pod"}}))
-	require.Empty(t, PathResourceTypes(nil))
-	require.Equal(t, []string{"pod"}, PathResourceTypes(path[:1]))
 }

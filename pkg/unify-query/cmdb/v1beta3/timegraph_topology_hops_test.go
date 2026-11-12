@@ -17,10 +17,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
-func TestSharedTopologySixHopsAtSixtyPoints(t *testing.T) {
+// 跳数上限内置 10（规格 H≤10）：H10 在 60 个评估点上完整返回，H11 在访问后端前拒绝。
+func TestSharedTopologyTenHopsAtSixtyPoints(t *testing.T) {
 	require.Equal(t, 2, DefaultMaxHops)
-	require.Equal(t, 6, MaxAllowedHops)
-	timestamps := sharedGraphTestTimes(60)
+	require.Equal(t, 10, MaxAllowedHops)
+	timestamps := sharedTopologyTestTimes(60)
 	model := &Model{schemaProvider: longPathTestProvider(), timeGraphQueryReference: timeGraphTestQueryReference}
 	var calls atomic.Int32
 	model.timeGraphVMQuery = func(ctx context.Context, _ *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
@@ -32,7 +33,7 @@ func TestSharedTopologySixHopsAtSixtyPoints(t *testing.T) {
 	}
 	request := cmdb.SharedTopologyQuery{
 		SpaceUID: "space", SourceType: "r0", SourceInfo: cmdb.Matcher{"id": "root"},
-		StartTime: timestamps[0], EndTime: timestamps[59], Step: "1s", MaxHops: 6,
+		StartTime: timestamps[0], EndTime: timestamps[59], Step: "1s", MaxHops: 10,
 	}
 	result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
 	require.NoError(t, err)
@@ -40,16 +41,16 @@ func TestSharedTopologySixHopsAtSixtyPoints(t *testing.T) {
 	require.Len(t, result.Snapshots, 60)
 	for _, frame := range result.Snapshots {
 		require.False(t, frame.Partial)
-		require.Len(t, frame.Nodes, 7)
-		require.Len(t, frame.Edges, 12)
-		require.True(t, hasSharedTopologyNode(frame, "r6", "id", "root"))
-		require.False(t, hasSharedTopologyNode(frame, "r7", "id", "root"))
+		require.Len(t, frame.Nodes, 11)
+		require.Len(t, frame.Edges, 20)
+		require.True(t, hasSharedTopologyNode(frame, "r10", "id", "root"))
+		require.False(t, hasSharedTopologyNode(frame, "r11", "id", "root"))
 	}
 
 	calls.Store(0)
-	request.MaxHops = 7
+	request.MaxHops = 11
 	result, err = model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
-	require.ErrorContains(t, err, "max hops 7 is outside [0, 6]")
+	require.ErrorContains(t, err, "max hops 11 is outside [0, 10]")
 	require.Empty(t, result)
 	require.Zero(t, calls.Load(), "invalid hop limits must fail before querying the backend")
 }

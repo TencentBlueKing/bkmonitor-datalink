@@ -26,8 +26,8 @@ const (
 var (
 	cmdbRelationQualityTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "unify_query", Name: "cmdb_relation_quality_total",
-		Help: "legacy relation query quality events, counted once per query and distinct bounded reason",
-	}, []string{"query_mode", "quality", "reason"})
+		Help: "relation query quality events by entry (compat or topology), counted once per query and distinct bounded reason",
+	}, []string{"entry", "query_mode", "quality", "reason"})
 	cmdbTopologyOperationsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "unify_query", Name: "cmdb_topology_operations_total",
 		Help: "completed topology HTTP requests or individual queries by outcome",
@@ -62,15 +62,14 @@ var (
 )
 
 // CMDBRelationQualityInc keeps metric names and backend details in traces only.
-func CMDBRelationQualityInc(ctx context.Context, mode, quality, reasons string) {
+func CMDBRelationQualityInc(ctx context.Context, entry, mode, quality, reasons string) {
 	seen := make(map[string]struct{})
 	for _, detail := range strings.Split(reasons, ";") {
 		reason, _, _ := strings.Cut(detail, ":")
 		switch reason {
 		case "backend_partial", "vm_storage_coverage_mismatch", "relation_no_physical_route",
 			"source_info_no_route", "target_info_failed",
-			"max_targets", "max_response_bytes", "max_graph_nodes", "max_graph_edges",
-			"max_graph_node_infos", "max_graph_results", "max_shared_topology_points":
+			"max_response_bytes", "max_shared_topology_points":
 		default:
 			reason = "other"
 		}
@@ -78,7 +77,7 @@ func CMDBRelationQualityInc(ctx context.Context, mode, quality, reasons string) 
 			continue
 		}
 		seen[reason] = struct{}{}
-		counterInc(ctx, cmdbRelationQualityTotal.WithLabelValues(mode, quality, reason))
+		counterInc(ctx, cmdbRelationQualityTotal.WithLabelValues(entry, mode, quality, reason))
 	}
 }
 
@@ -131,9 +130,7 @@ func CMDBTopologyRejectInc(ctx context.Context, mode, reason string) {
 		return
 	}
 	switch reason {
-	case "invalid_request", "max_shared_topology_points", "max_graph_nodes", "max_graph_edges", "max_graph_node_infos", "max_graph_results", "max_targets",
-		"max_response_bytes", "max_topology_output_bytes", "max_topology_queries", "max_topology_request_bytes",
-		"max_topology_admission_waiters", "max_topology_reserved_bytes", "max_topology_memory_headroom":
+	case "invalid_request", "max_shared_topology_points", "max_response_bytes", "max_topology_queries", "max_topology_request_bytes":
 	default:
 		reason = "other"
 	}

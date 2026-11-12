@@ -8,9 +8,9 @@ package v1beta3
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"time"
-	"unsafe"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -87,8 +87,57 @@ func (c *topologySnapshotCounts) add(nodes, edges int, partial bool) {
 	}
 }
 
-// findSharedTopologyDTO materializes the response directly from shared storage.
-func (q *TimeGraph) findSharedTopologyDTO(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery) (snapshots []cmdb.SharedTopologySnapshot, err error) {
+// TopologyFrames 按网格顺序逐帧交出快照，共 PointCount 帧。每帧在交出时构造，yield 返回后
+// 不再被保留；只在 QuerySharedTopologyFrames 的回调返回前有效。
+type TopologyFrames func(yield func(cmdb.SharedTopologySnapshot) error) error
+
+// findSharedTopologyDTO 遍历一次后把全部帧收集为快照，供直接模型调用和测试使用。
+func (q *TimeGraph) findSharedTopologyDTO(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery) ([]cmdb.SharedTopologySnapshot, error) {
+	frames, err := q.prepareSharedTopologyFrames(ctx, grid, query, nil)
+	if err != nil {
+		return nil, err
+	}
+	snapshots := make([]cmdb.SharedTopologySnapshot, 0, len(grid.timestamps))
+	err = frames.each(ctx, func(snapshot cmdb.SharedTopologySnapshot) error {
+		snapshots = append(snapshots, snapshot)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return snapshots, nil
+}
+
+type sharedTopologyFrameNode struct {
+	id       uint64
+	resource cmdb.Resource
+	bits     timeBitmap
+	versions []sharedNodeInfo
+}
+
+type sharedTopologyFrameEdge struct {
+	edge cmdb.SharedTopologyEdge
+	bits timeBitmap
+}
+
+// sharedTopologyFrames 保存一次遍历的结果：可达节点按 ID、诱导边按输出顺序预先排好，
+// 每帧只筛出该帧可达的节点和两端都可达的边，各帧顺序与整体排序后逐帧拆分相同，
+// 不同时物化 K 帧的 DTO。allowed 非空时按 target_types 在帧内过滤节点及其关联边。
+type sharedTopologyFrames struct {
+	q       *TimeGraph
+	grid    TopologyGrid
+	partial map[int64]string
+	allowed map[cmdb.Resource]struct{}
+	nodes   []sharedTopologyFrameNode
+	edges   []sharedTopologyFrameEdge
+	// infoFrames 把请求网格下标映射到存储网格下标，-1 表示存储网格没有该帧。
+	infoFrames []int
+	// counts 是过滤前的出现次数，与逐帧物化后的统计相同。
+	counts topologySnapshotCounts
+}
+
+// prepareSharedTopologyFrames 求状态并传播可达，按输出顺序整理节点和边；不物化任何帧。
+func (q *TimeGraph) prepareSharedTopologyFrames(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, allowed map[cmdb.Resource]struct{}) (frames *sharedTopologyFrames, err error) {
 	var counts topologySnapshotCounts
 	ctx, span := trace.NewSpan(ctx, "timegraph-find-shared-topology")
 	defer span.End(&err)
@@ -114,12 +163,6 @@ func (q *TimeGraph) findSharedTopologyDTO(ctx context.Context, grid TopologyGrid
 	}
 	q.lock.RLock()
 	defer q.lock.RUnlock()
-
-	ctx, releaseTraversal, err := q.withTraversalReservation(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer releaseTraversal()
 
 	_, stateSpan := trace.NewSpan(ctx, "timegraph-build-shared-topology-state")
 	var stateErr error
@@ -150,25 +193,137 @@ func (q *TimeGraph) findSharedTopologyDTO(ctx context.Context, grid TopologyGrid
 	span.Set("reachable-node-count", len(reachable))
 	span.Set("traversal-level-count", query.MaxHops)
 
-	snapshots, err = q.materializeSharedTopologyDTO(ctx, grid, query, reachable, edges)
-	if err != nil {
-		return nil, err
+	frames = &sharedTopologyFrames{q: q, grid: grid, partial: query.PartialTimestamps, allowed: allowed, infoFrames: make([]int, len(grid.timestamps))}
+	for index, timestamp := range grid.timestamps {
+		frames.infoFrames[index] = -1
+		if stored, ok := q.shared.timestampIndex[timestamp]; ok {
+			frames.infoFrames[index] = stored
+		}
+		if _, ok := query.PartialTimestamps[timestamp]; ok {
+			counts.partial++
+		}
 	}
-	for _, frame := range snapshots {
-		counts.add(len(frame.Nodes), len(frame.Edges), frame.Partial)
+	frames.nodes = make([]sharedTopologyFrameNode, 0, len(reachable))
+	for node, bits := range reachable {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		frames.nodes = append(frames.nodes, sharedTopologyFrameNode{id: node, resource: q.nodeBuilder.resourceName(node), bits: bits, versions: q.shared.nodeInfos[node]})
+		counts.nodes += bits.count()
 	}
+	sort.Slice(frames.nodes, func(i, j int) bool { return frames.nodes[i].id < frames.nodes[j].id })
+	for _, edge := range edges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		active := edge.activeBits.intersect(reachable[edge.key.source]).intersect(reachable[edge.key.target])
+		if active.empty() {
+			continue
+		}
+		frames.edges = append(frames.edges, sharedTopologyFrameEdge{bits: active, edge: cmdb.SharedTopologyEdge{
+			Source:       edge.key.source,
+			Target:       edge.key.target,
+			RelationType: edge.key.relation.relationType,
+			MetricName:   edge.key.relation.metricName,
+			Category:     edge.key.relation.category,
+			Direction:    edge.key.relation.direction,
+		}})
+		counts.edges += active.count()
+	}
+	sort.Slice(frames.edges, func(i, j int) bool { return lessSharedTopologyEdge(frames.edges[i].edge, frames.edges[j].edge) })
+	frames.counts = counts
 	span.Set("snapshot-node-count", counts.nodes)
 	span.Set("snapshot-edge-count", counts.edges)
 	span.Set("partial-snapshot-count", counts.partial)
-	return snapshots, nil
+	return frames, nil
+}
+
+// each 按网格顺序构造并交出每一帧；整个过程持有图读锁，借用的属性在交出前复制。
+func (f *sharedTopologyFrames) each(ctx context.Context, yield func(cmdb.SharedTopologySnapshot) error) (err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-materialize-topology")
+	defer span.End(&err)
+	started := time.Now()
+	defer func() {
+		metric.CMDBTimeGraphStageObserve(ctx, "topology-materialize", metric.CMDBTimeGraphErrorResult(err), time.Since(started))
+	}()
+	span.Set("frame-count", len(f.grid.timestamps))
+	span.Set("frame-node-count", len(f.nodes))
+	span.Set("frame-edge-count", len(f.edges))
+	f.q.lock.RLock()
+	defer f.q.lock.RUnlock()
+	var kept map[uint64]struct{}
+	if f.allowed != nil {
+		kept = make(map[uint64]struct{})
+	}
+	for index, timestamp := range f.grid.timestamps {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		snapshot := cmdb.SharedTopologySnapshot{Timestamp: timestamp, Nodes: make([]cmdb.SharedTopologyNode, 0), Edges: make([]cmdb.SharedTopologyEdge, 0)}
+		if reason, ok := f.partial[timestamp]; ok {
+			snapshot.Partial, snapshot.PartialReason = true, reason
+		}
+		clear(kept)
+		for position, node := range f.nodes {
+			if position%256 == 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
+			if !node.bits.has(index) {
+				continue
+			}
+			if kept != nil {
+				if _, ok := f.allowed[node.resource]; !ok {
+					continue
+				}
+				kept[node.id] = struct{}{}
+			}
+			snapshot.Nodes = append(snapshot.Nodes, cmdb.SharedTopologyNode{ID: node.id, ResourceType: node.resource, Dimensions: cloneMatcher(f.nodeInfo(node, index))})
+		}
+		for position, edge := range f.edges {
+			if position%256 == 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
+			if !edge.bits.has(index) {
+				continue
+			}
+			if kept != nil {
+				if _, ok := kept[edge.edge.Source]; !ok {
+					continue
+				}
+				if _, ok := kept[edge.edge.Target]; !ok {
+					continue
+				}
+			}
+			snapshot.Edges = append(snapshot.Edges, edge.edge)
+		}
+		if err := yield(snapshot); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
+}
+
+// nodeInfo 返回节点在该帧的属性版本；没有版本时回退到稳定身份信息。调用方持有图读锁。
+func (f *sharedTopologyFrames) nodeInfo(node sharedTopologyFrameNode, index int) cmdb.Matcher {
+	if stored := f.infoFrames[index]; stored >= 0 {
+		for _, version := range node.versions {
+			if version.activeBits.has(stored) {
+				return version.dimensions
+			}
+		}
+	}
+	return f.q.topologyBorrowedNodeInfo(node.id)
 }
 
 func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, nodeBits map[uint64]timeBitmap, edges []sharedTopologyEdgeState) (result map[uint64]timeBitmap, seedCount int, err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-propagate-topology")
 	defer finishTimeGraphStage(ctx, span, "topology-propagation", time.Now(), &err)
 	span.Set("max-hops", query.MaxHops)
-	reachable := make(map[uint64]timeBitmap)
-	frontier := make(map[uint64]timeBitmap)
+	var reachable map[uint64]timeBitmap
 	frontierSizes := make([]int64, 0, 8)
 	completed := 0
 	defer func() {
@@ -177,9 +332,40 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 		span.Set("frontier-levels-truncated", completed >= 64)
 		span.Set("reachable-node-count", len(reachable))
 	}()
+	reachable, err = q.sharedTopologySeeds(ctx, grid, query, nodeBits)
+	if err != nil {
+		return nil, seedCount, err
+	}
+	frontier := maps.Clone(reachable)
+	seedCount = len(frontier)
+	span.Set("source-match-node-count", seedCount)
+	if len(frontierSizes) < 64 {
+		frontierSizes = append(frontierSizes, int64(len(frontier)))
+	}
+
+	for level := 0; level < query.MaxHops && len(frontier) > 0; level++ {
+		frontier, err = sharedTopologyStep(ctx, frontier, reachable, nodeBits, edges)
+		if err != nil {
+			return nil, seedCount, err
+		}
+		completed++
+		if len(frontierSizes) < 64 {
+			frontierSizes = append(frontierSizes, int64(len(frontier)))
+		}
+	}
+	span.Set("reachable-node-count", len(reachable))
+	span.Set("traversal-level-count", query.MaxHops)
+
+	return reachable, seedCount, nil
+}
+
+// sharedTopologySeeds 返回各帧匹配根条件的源类型节点及其时间位。取数阶段与最终遍历
+// 共用这一判定，逐跳取数据此决定从哪些根展开。
+func (q *TimeGraph) sharedTopologySeeds(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, nodeBits map[uint64]timeBitmap) (map[uint64]timeBitmap, error) {
+	seeds := make(map[uint64]timeBitmap)
 	for node, bits := range nodeBits {
 		if err := ctx.Err(); err != nil {
-			return nil, seedCount, err
+			return nil, err
 		}
 		resourceType := q.nodeBuilder.resourceName(node)
 		if resourceType != query.SourceType {
@@ -203,154 +389,38 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 			}
 		}
 		if !matchedBits.empty() {
-			reachable[node] = matchedBits
-			frontier[node] = matchedBits
+			seeds[node] = matchedBits
 		}
 	}
-	seedCount = len(frontier)
-	span.Set("source-match-node-count", seedCount)
-	if len(frontierSizes) < 64 {
-		frontierSizes = append(frontierSizes, int64(len(frontier)))
-	}
-
-	for level := 0; level < query.MaxHops && len(frontier) > 0; level++ {
-		// 每跳只传播源点、关系和目标点共同活跃的帧；一个节点可在不同帧首次到达。
-		if err := ctx.Err(); err != nil {
-			return nil, seedCount, err
-		}
-		nextFrontier := make(map[uint64]timeBitmap)
-		discover := func(sourceBits timeBitmap, edge sharedTopologyEdgeState) {
-			// frontier is fixed for this level. Accumulate only previously unseen
-			// target frames; cycles and parallel edges need not enter a second map.
-			target := edge.key.target
-			candidate := sourceBits.intersect(edge.activeBits).subtract(reachable[target])
-			if candidate.empty() {
-				return
-			}
-			candidate = candidate.intersect(nodeBits[target])
-			if candidate.empty() {
-				return
-			}
-			reachable[target] = reachable[target].union(candidate)
-			nextFrontier[target] = nextFrontier[target].union(candidate)
-		}
-		for _, edge := range edges {
-			if err := ctx.Err(); err != nil {
-				return nil, seedCount, err
-			}
-			discover(frontier[edge.key.source], edge)
-		}
-		frontier = nextFrontier
-		completed++
-		if len(frontierSizes) < 64 {
-			frontierSizes = append(frontierSizes, int64(len(frontier)))
-		}
-	}
-	span.Set("reachable-node-count", len(reachable))
-	span.Set("traversal-level-count", query.MaxHops)
-
-	return reachable, seedCount, nil
+	return seeds, nil
 }
 
-func (q *TimeGraph) materializeSharedTopologyDTO(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, reachable map[uint64]timeBitmap, edges []sharedTopologyEdgeState) ([]cmdb.SharedTopologySnapshot, error) {
+// sharedTopologyStep 推进一层并返回新前沿，reachable 原地累积。每跳只传播源点、关系和
+// 目标点共同活跃的帧；一个节点可在不同帧首次到达。
+func sharedTopologyStep(ctx context.Context, frontier, reachable, nodeBits map[uint64]timeBitmap, edges []sharedTopologyEdgeState) (map[uint64]timeBitmap, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := ReserveTopologyStage(ctx, "output", int64(len(grid.timestamps))*int64(unsafe.Sizeof(cmdb.SharedTopologySnapshot{}))); err != nil {
-		return nil, err
-	}
-	result := make([]cmdb.SharedTopologySnapshot, len(grid.timestamps))
-	for index, timestamp := range grid.timestamps {
+	nextFrontier := make(map[uint64]timeBitmap)
+	for _, edge := range edges {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		result[index].Timestamp = timestamp
-		result[index].Nodes = make([]cmdb.SharedTopologyNode, 0)
-		result[index].Edges = make([]cmdb.SharedTopologyEdge, 0)
-		if reason, ok := query.PartialTimestamps[timestamp]; ok {
-			result[index].Partial = true
-			result[index].PartialReason = reason
+		// frontier is fixed for this level. Accumulate only previously unseen
+		// target frames; cycles and parallel edges need not enter a second map.
+		target := edge.key.target
+		candidate := frontier[edge.key.source].intersect(edge.activeBits).subtract(reachable[target])
+		if candidate.empty() {
+			continue
 		}
-	}
-	err := q.emitSharedTopology(ctx, grid, query, reachable, edges,
-		func(index int, node cmdb.SharedTopologyNode) {
-			result[index].Nodes = append(result[index].Nodes, node)
-		},
-		func(index int, edge cmdb.SharedTopologyEdge) {
-			result[index].Edges = append(result[index].Edges, edge)
-		},
-		func(budget *topologyOutputBudget) error {
-			nodes, edgeCounts, err := topologyFrameCounts(ctx, len(grid.timestamps), reachable, edges)
-			if err != nil {
-				return err
-			}
-			if err := budget.addCharge(topologySnapshotContainers(nodes, edgeCounts), 0); err != nil {
-				return err
-			}
-			for index := range result {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				result[index].Nodes = make([]cmdb.SharedTopologyNode, 0, nodes[index])
-				result[index].Edges = make([]cmdb.SharedTopologyEdge, 0, edgeCounts[index])
-			}
-			return nil
-		},
-		func() {
-			for index := range result {
-				sort.Slice(result[index].Nodes, func(i, j int) bool { return result[index].Nodes[i].ID < result[index].Nodes[j].ID })
-				sort.Slice(result[index].Edges, func(i, j int) bool {
-					return lessSharedTopologyEdge(result[index].Edges[i], result[index].Edges[j])
-				})
-			}
-		})
-	if err != nil {
-		return nil, err
-	}
-	if err := commitTopologyOutput(ctx, func() int64 { return topologySnapshotOwnedLowerBound(result) }); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-// 响应收集器按已计数的逐帧容量预分配，并在分配前预约 DTO 容器内存。
-func topologyFrameCounts(ctx context.Context, points int, reachable map[uint64]timeBitmap, edges []sharedTopologyEdgeState) ([]int, []int, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, nil, err
-	}
-	nodes, edgeCounts := make([]int, points), make([]int, points)
-	for _, active := range reachable {
-		if err := ctx.Err(); err != nil {
-			return nil, nil, err
+		candidate = candidate.intersect(nodeBits[target])
+		if candidate.empty() {
+			continue
 		}
-		for index := 0; index < points; index++ {
-			if index%256 == 0 {
-				if err := ctx.Err(); err != nil {
-					return nil, nil, err
-				}
-			}
-			if active.has(index) {
-				nodes[index]++
-			}
-		}
+		reachable[target] = reachable[target].union(candidate)
+		nextFrontier[target] = nextFrontier[target].union(candidate)
 	}
-	for _, edge := range edges {
-		if err := ctx.Err(); err != nil {
-			return nil, nil, err
-		}
-		active := edge.activeBits.intersect(reachable[edge.key.source]).intersect(reachable[edge.key.target])
-		for index := 0; index < points; index++ {
-			if index%256 == 0 {
-				if err := ctx.Err(); err != nil {
-					return nil, nil, err
-				}
-			}
-			if active.has(index) {
-				edgeCounts[index]++
-			}
-		}
-	}
-	return nodes, edgeCounts, nil
+	return nextFrontier, nil
 }
 
 func lessSharedTopologyEdge(left, right cmdb.SharedTopologyEdge) bool {
@@ -370,87 +440,6 @@ func lessSharedTopologyEdge(left, right cmdb.SharedTopologyEdge) bool {
 		return left.Category < right.Category
 	}
 	return left.Direction < right.Direction
-}
-
-func (q *TimeGraph) emitSharedTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, reachable map[uint64]timeBitmap, edges []sharedTopologyEdgeState, emitNode func(int, cmdb.SharedTopologyNode), emitEdge func(int, cmdb.SharedTopologyEdge), prepare func(*topologyOutputBudget) error, finish func()) (err error) {
-	ctx, span := trace.NewSpan(ctx, "timegraph-materialize-topology")
-	defer span.End(&err)
-	started := time.Now()
-	budget := newTopologyOutputBudget(grid, query.PartialTimestamps)
-	budget.ctx = ctx
-	defer func() {
-		span.Set("output-budget-elements-used", budget.elements)
-		span.Set("output-budget-bytes-used", budget.bytes)
-		SetTimeGraphLimitTrace(span, err)
-		metric.CMDBTimeGraphStageObserve(ctx, "topology-materialize", metric.CMDBTimeGraphErrorResult(err), time.Since(started))
-	}()
-	if err := budget.checkBytes(0); err != nil {
-		return err
-	}
-	if prepare != nil {
-		if err := prepare(budget); err != nil {
-			return err
-		}
-	}
-	// 持有图读锁时一次性定位存储网格，避免每帧重复查找。
-	var infoFrameIndices []int
-	if q.shared != nil {
-		infoFrameIndices = make([]int, len(grid.timestamps))
-		for index, timestamp := range grid.timestamps {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if stored, ok := q.shared.timestampIndex[timestamp]; ok {
-				infoFrameIndices[index] = stored
-			} else {
-				infoFrameIndices[index] = -1
-			}
-		}
-	}
-
-	for node, bits := range reachable {
-		if err := q.emitSharedTopologyNode(ctx, grid, infoFrameIndices, budget, node, bits, emitNode); err != nil {
-			return err
-		}
-	}
-	for _, edge := range edges {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		activeBits := edge.activeBits.intersect(reachable[edge.key.source]).intersect(reachable[edge.key.target])
-		if activeBits.empty() {
-			continue
-		}
-		if err := budget.retainEdge(edge.key); err != nil {
-			return err
-		}
-		for index := range grid.timestamps {
-			if index%256 == 0 {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-			}
-			if !activeBits.has(index) {
-				continue
-			}
-			if err := budget.add(0); err != nil {
-				return err
-			}
-			emitEdge(index, cmdb.SharedTopologyEdge{
-				Source:       edge.key.source,
-				Target:       edge.key.target,
-				RelationType: edge.key.relation.relationType,
-				MetricName:   edge.key.relation.metricName,
-				Category:     edge.key.relation.category,
-				Direction:    edge.key.relation.direction,
-			})
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	finish()
-	return ctx.Err()
 }
 
 // nodeInfoAt 返回节点在指定时间点的属性；没有时间点属性时回退到稳定身份
@@ -482,70 +471,9 @@ func (q *TimeGraph) storedNodeInfoAt(timestamp int64, node uint64) (cmdb.Matcher
 	return info, exists
 }
 
-func (q *TimeGraph) emitSharedTopologyNode(ctx context.Context, grid TopologyGrid, infoFrameIndices []int, budget *topologyOutputBudget, node uint64, bits timeBitmap, emitNode func(int, cmdb.SharedTopologyNode)) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	resourceType := q.nodeBuilder.resourceName(node)
-	var versions []sharedNodeInfo
-	if q.shared != nil {
-		versions = q.shared.nodeInfos[node]
-		// Borrowed strings are kept once per version, not once per frame.
-		for _, version := range versions {
-			if err := budget.retainMatcher(resourceType, version.dimensions); err != nil {
-				return err
-			}
-		}
-	}
-	fallbackRetained := false
-	for index := range grid.timestamps {
-		if index%256 == 0 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
-		if !bits.has(index) {
-			continue
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		var info cmdb.Matcher
-		var exists bool
-		if q.shared != nil {
-			storedIndex := infoFrameIndices[index]
-			if storedIndex >= 0 {
-				for _, version := range versions {
-					if version.activeBits.has(storedIndex) {
-						info, exists = version.dimensions, true
-						break
-					}
-				}
-			}
-		} else {
-			info, exists = q.storedNodeInfoAt(grid.timestamps[index], node)
-		}
-		if !exists {
-			info = q.topologyBorrowedNodeInfo(node)
-		}
-		entries := len(info)
-		if q.shared == nil || (!exists && !fallbackRetained) {
-			if err := budget.retainMatcher(resourceType, info); err != nil {
-				return err
-			}
-			if !exists {
-				fallbackRetained = true
-			}
-		}
-		if err := budget.add(topologyMatcherMemory(entries)); err != nil {
-			return err
-		}
-		info = cloneMatcher(info)
-		emitNode(index, cmdb.SharedTopologyNode{
-			ID:           node,
-			ResourceType: resourceType,
-			Dimensions:   info,
-		})
-	}
-	return nil
+// topologyBorrowedNodeInfo 只在图读锁阻止 Clean 时借用节点身份属性；输出的 DTO 仍复制 map。
+func (q *TimeGraph) topologyBorrowedNodeInfo(id uint64) cmdb.Matcher {
+	q.nodeBuilder.lock.RLock()
+	defer q.nodeBuilder.lock.RUnlock()
+	return q.nodeBuilder.info[id]
 }

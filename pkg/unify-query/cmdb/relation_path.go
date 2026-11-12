@@ -19,36 +19,3 @@ func RelationPathsFromResourcePaths(paths [][]Resource) []RelationPath {
 	}
 	return result
 }
-
-// PathRank returns the position of a concrete path in the candidate list.
-// Paths that are not present are ranked after all candidates.
-func PathRank(path []PathNode, candidates [][]Resource) int {
-	if len(path) == 0 {
-		return len(candidates)
-	}
-	for index, candidate := range candidates {
-		if len(candidate) != len(path) {
-			continue
-		}
-		matched := true
-		for step, node := range path {
-			if node.ResourceType != candidate[step] {
-				matched = false
-				break
-			}
-		}
-		if matched {
-			return index
-		}
-	}
-	return len(candidates)
-}
-
-// PathResourceTypes returns the resource sequence in a concrete path.
-func PathResourceTypes(path []PathNode) []string {
-	result := make([]string, 0, len(path))
-	for _, node := range path {
-		result = append(result, string(node.ResourceType))
-	}
-	return result
-}

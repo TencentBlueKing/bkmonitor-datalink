@@ -43,9 +43,10 @@ func (loader *timeGraphMatrixLoader) loadPrepared(ctx context.Context, query *st
 	// 先释放旧 Matrix 的引用再取新数据，避免两份大输入同时存活。
 	loader.lastMatrix = timeGraphMatrixSlot{}
 	loader.physicalQueryCount++
-	matrix, partial, err := loader.fetchResident(ctx, fetch)
+	matrix, partial, err := fetch()
+	// 复用槽只记后端不完整；source_info_no_route 是路由状态，由 queryWithQuality 按原因单独记录。
 	if status := metadata.GetStatus(ctx); status != nil {
-		partial = partial || status.Code == metadata.QueryTsPartial
+		partial = partial || (status.Code == metadata.QueryTsPartial && status.Message != "source_info_no_route")
 	}
 	if err == nil && key != "" {
 		loader.lastMatrix = timeGraphMatrixSlot{key: key, matrix: matrix, partial: partial}

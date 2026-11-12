@@ -2668,13 +2668,34 @@
       "trace_id": "",
       "data": [
         {
-          "code": 400,
-          "start_time": 0,
-          "end_time": 0,
-          "step": "",
-          "point_count": 0,
-          "snapshots": [],
-          "message": "build shared topology: required relation has no physical query route: node_with_pod_relation"
+          "code": 200,
+          "start_time": 1700000000000,
+          "end_time": 1700000120000,
+          "step": "1m0s",
+          "point_count": 3,
+          "snapshots": [
+            {
+              "timestamp": 1700000000000,
+              "nodes": [],
+              "edges": [],
+              "partial": true,
+              "partial_reason": "relation_no_physical_route:node_with_pod_relation"
+            },
+            {
+              "timestamp": 1700000060000,
+              "nodes": [],
+              "edges": [],
+              "partial": true,
+              "partial_reason": "relation_no_physical_route:node_with_pod_relation"
+            },
+            {
+              "timestamp": 1700000120000,
+              "nodes": [],
+              "edges": [],
+              "partial": true,
+              "partial_reason": "relation_no_physical_route:node_with_pod_relation"
+            }
+          ]
         }
       ]
     }

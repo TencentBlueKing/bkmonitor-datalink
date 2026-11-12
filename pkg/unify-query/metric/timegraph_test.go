@@ -63,7 +63,8 @@ func TestTimeGraphMetricsRejectDynamicLabels(t *testing.T) {
 func TestTopologyRejectionReasonsAreBounded(t *testing.T) {
 	for _, tt := range []struct{ name, reason, label string }{
 		{"点数超限", "max_shared_topology_points", "max_shared_topology_points"},
-		{"构图超限", "max_graph_edges", "max_graph_edges"},
+		// 构图规模不再是拒绝原因，旧原因名不再占用独立标签。
+		{"已移除的构图原因", "max_graph_edges", "other"},
 		{"未知原因", "private backend response", "other"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

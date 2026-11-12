@@ -34,8 +34,6 @@ var (
 		Help: "active topology requests, including HTTP response writing",
 	})
 	cmdbTopologyWaiters      = promauto.NewGauge(prometheus.GaugeOpts{Namespace: "unify_query", Name: "cmdb_topology_admission_waiters", Help: "topology requests waiting for an execution slot"})
-	cmdbTopologyMaterialized = promauto.NewGauge(prometheus.GaugeOpts{Namespace: "unify_query", Name: "cmdb_topology_materialized_bytes", Help: "confirmed lower bound of live owned topology memory; not measured RSS"})
-	cmdbTopologyReserved     = promauto.NewGauge(prometheus.GaugeOpts{Namespace: "unify_query", Name: "cmdb_topology_reserved_bytes", Help: "estimated memory reserved by topology requests, not measured RSS"})
 	cmdbTopologyPayloadBytes = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "unify_query", Name: "cmdb_topology_payload_bytes",
 		Help:    "bytes read from request/backend bodies or encoded response items; not complete wire response bytes",
@@ -79,8 +77,6 @@ func CMDBTopologyAdmissionSet(active int) {
 	cmdbTopologyAdmissionActive.Set(float64(active))
 }
 
-func CMDBTopologyReservedSet(bytes int64) { cmdbTopologyReserved.Set(float64(bytes)) }
-
 func CMDBTopologyPayloadObserve(ctx context.Context, stage, result string, bytes int) {
 	if !timeGraphResult(result) || bytes < 0 {
 		return
@@ -93,6 +89,3 @@ func CMDBTopologyPayloadObserve(ctx context.Context, stage, result string, bytes
 
 // CMDBTopologyWaitersSet is updated while holding the admission lock.
 func CMDBTopologyWaitersSet(waiters int) { cmdbTopologyWaiters.Set(float64(waiters)) }
-
-// CMDBTopologyMaterializedSet excludes borrowed memory and pending reservations.
-func CMDBTopologyMaterializedSet(bytes int64) { cmdbTopologyMaterialized.Set(float64(bytes)) }

@@ -25,30 +25,18 @@ import (
 
 func TestSharedTopologyStorageObservability(t *testing.T) {
 	for _, test := range []struct {
-		name, outcome, reason                     string
-		graphLimit, outputLimit, canceled, failed bool
+		name, outcome           string
+		extra, canceled, failed bool
+		storage                 map[string]float64
 	}{
-		{name: "success", outcome: "success"},
-		{name: "build rejection", outcome: "rejected", reason: "max_graph_node_infos", graphLimit: true},
-		{name: "output rejection", outcome: "success", reason: "max_topology_reserved_bytes", outputLimit: true},
+		{name: "success", outcome: "success", storage: map[string]float64{"nodes": 2, "relations": 1, "attribute_versions": 2, "edge_time_entries": 2, "node_time_entries": 4}},
+		// 属性版本超过旧上限时照常构图，存储规模如实记录。
+		{name: "larger graph", outcome: "success", extra: true, storage: map[string]float64{"nodes": 3, "relations": 2, "attribute_versions": 3, "edge_time_entries": 4, "node_time_entries": 6}},
 		{name: "backend cancellation", outcome: "canceled", canceled: true},
 		{name: "backend error", outcome: "failed", failed: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := initTimeGraphQueryTestEnvironment()
-			oldBackend := MaxSharedTopologyBackendBytes
-			if test.outputLimit {
-				MaxSharedTopologyBackendBytes = 1024
-			}
-			t.Cleanup(func() { MaxSharedTopologyBackendBytes = oldBackend })
-			oldEdges, oldOutput := MaxGraphNodeInfos, MaxSharedTopologyReservedBytes
-			t.Cleanup(func() { MaxGraphNodeInfos, MaxSharedTopologyReservedBytes = oldEdges, oldOutput })
-			if test.graphLimit {
-				MaxGraphNodeInfos = 2
-			}
-			if test.outputLimit {
-				MaxSharedTopologyReservedBytes = 2 * 1024 * 1024
-			}
 			recorder := tracetest.NewSpanRecorder()
 			provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 			previous := otel.GetTracerProvider()
@@ -60,7 +48,7 @@ func TestSharedTopologyStorageObservability(t *testing.T) {
 				"source_middle_flow":   contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, stamps...),
 				"middle_target_flow":   {},
 			})
-			if test.graphLimit {
+			if test.extra {
 				model = sharedTopologyQueryModel(map[string]pl.Matrix{"source_middle_flow": append(contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, stamps...), contractMatrix(map[string]string{"source_id": "a", "middle_id": "extra"}, stamps...)...), "middle_target_flow": {}})
 			}
 			backend := model.timeGraphVMQuery
@@ -91,17 +79,15 @@ func TestSharedTopologyStorageObservability(t *testing.T) {
 				matrixCountBefore[kind] = readTimeGraphMetric(t, "cmdb_timegraph_matrix_queries_per_build", labels, "count")
 			}
 			_, err := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, StartTime: 1700000000, EndTime: 1700000100, Step: "100s", MaxHops: 1})
-			if test.name == "success" {
+			if test.outcome == "success" {
 				require.NoError(t, err)
 			} else {
 				require.Error(t, err)
 			}
 			require.Equal(t, countBefore+1, readTimeGraphMetric(t, "cmdb_timegraph_storage_size", storageLabels("nodes"), "count"))
 			require.Equal(t, before["legacy_graphs"], readTimeGraphMetric(t, "cmdb_timegraph_storage_size", storageLabels("legacy_graphs"), "sum"))
-			if test.outcome == "success" {
-				for kind, want := range map[string]float64{"nodes": 2, "relations": 1, "attribute_versions": 2, "edge_time_entries": 2, "node_time_entries": 4} {
-					require.Equal(t, before[kind]+want, readTimeGraphMetric(t, "cmdb_timegraph_storage_size", storageLabels(kind), "sum"), kind)
-				}
+			for kind, want := range test.storage {
+				require.Equal(t, before[kind]+want, readTimeGraphMetric(t, "cmdb_timegraph_storage_size", storageLabels(kind), "sum"), kind)
 			}
 			require.Zero(t, readTimeGraphMetric(t, "cmdb_topology_admission_active", nil, "gauge"))
 			require.Len(t, recorder.Ended(), len(recorder.Started()))
@@ -128,33 +114,12 @@ func TestSharedTopologyStorageObservability(t *testing.T) {
 				require.Equal(t, codes.Error, build.Status().Code)
 				require.GreaterOrEqual(t, attrs["graph-attribute-version-count"].(int64), int64(0))
 			}
-			if test.reason != "" {
-				var limit *ResultLimitError
-				require.ErrorAs(t, err, &limit)
-				var matching int
-				for _, span := range recorder.Ended() {
-					values := map[string]any{}
-					for _, a := range span.Attributes() {
-						values[string(a.Key)] = a.Value.AsInterface()
-					}
-					if values["limit-reason"] == test.reason {
-						matching++
-						require.Equal(t, int64(limit.Count), values["limit-count"])
-						require.Equal(t, int64(limit.Limit), values["limit-maximum"])
-					}
-				}
-				require.GreaterOrEqual(t, matching, 2)
-			}
 			if test.outcome == "success" {
 				for _, name := range []string{"timegraph-admission", "timegraph-release-admission", "timegraph-clean", "timegraph-create-storage", "timegraph-plan-topology-fetch", "timegraph-validate-matrix", "timegraph-apply-relation-matrix", "timegraph-propagate-topology"} {
 					require.NotNil(t, spans[name], name)
 				}
 				require.NotNil(t, spans["timegraph-materialize-topology"])
-				if test.outputLimit {
-					require.Equal(t, codes.Error, spans["timegraph-materialize-topology"].Status().Code)
-				} else {
-					require.NotNil(t, spans["timegraph-convert-topology"])
-				}
+				require.NotNil(t, spans["timegraph-convert-topology"])
 			}
 		})
 	}

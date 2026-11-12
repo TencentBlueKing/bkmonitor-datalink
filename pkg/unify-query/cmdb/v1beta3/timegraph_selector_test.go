@@ -296,8 +296,15 @@ func TestTopologySelectorPartialFirstStageRetainsQualityAndChecksWideRoutes(t *t
 				}
 				result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: hops})
 				if missing {
-					require.ErrorContains(t, err, "required relation has no physical query route: bc")
-					require.Empty(t, fetches, "validate the planned second stage even before the first stage can be empty")
+					// 缺路由的宽读取关系按已读且无数据处理：原因与首阶段的 backend_partial 并存，
+					// 其余关系照常读取，缺路由关系不访问后端。
+					require.NoError(t, err)
+					require.Positive(t, preparations["bc"])
+					require.Len(t, result.Snapshots[0].Nodes, 2)
+					require.Len(t, result.Snapshots[0].Edges, 2)
+					require.True(t, result.Snapshots[0].Partial)
+					require.Equal(t, "backend_partial;relation_no_physical_route:bc", result.Snapshots[0].PartialReason)
+					require.Equal(t, map[string]int{"ab": 2}, fetches, "the remaining reads are unchanged and the unrouted relation is never fetched")
 					return
 				}
 				require.NoError(t, err)
@@ -306,7 +313,12 @@ func TestTopologySelectorPartialFirstStageRetainsQualityAndChecksWideRoutes(t *t
 				require.Len(t, result.Snapshots[0].Edges, 4)
 				require.True(t, result.Snapshots[0].Partial)
 				require.Equal(t, "backend_partial", result.Snapshots[0].PartialReason)
-				require.Equal(t, map[string]int{"ab": 2, "bc": 1}, fetches, "continue the same loader without repeating source preparation or root probing")
+				want := map[string]int{"ab": 2, "bc": 1}
+				if hops == 6 {
+					// 逐跳取数：根读取一次 ab；展开 b0 时按身份读 ab 与 bc，展开 c0 时按身份再读一次 bc。
+					want["bc"] = 2
+				}
+				require.Equal(t, want, fetches, "continue the same loader without repeating source preparation or root probing")
 			})
 		}
 	}

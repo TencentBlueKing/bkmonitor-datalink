@@ -20,8 +20,31 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
-// QuerySharedTopology 查询一个统一时间网格上的完整局部拓扑。
-func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopologyQuery) (result cmdb.SharedTopologyResult, err error) {
+// QuerySharedTopology 查询一个统一时间网格上的完整局部拓扑，snapshots 格式收集全部帧。
+func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopologyQuery) (cmdb.SharedTopologyResult, error) {
+	var result cmdb.SharedTopologyResult
+	err := m.QuerySharedTopologyFrames(ctx, request, func(header cmdb.SharedTopologyResult, frames TopologyFrames) error {
+		result = header
+		if frames == nil {
+			return nil
+		}
+		result.Snapshots = make([]cmdb.SharedTopologySnapshot, 0, header.PointCount)
+		return frames(func(snapshot cmdb.SharedTopologySnapshot) error {
+			result.Snapshots = append(result.Snapshots, snapshot)
+			return nil
+		})
+	})
+	if err != nil {
+		return cmdb.SharedTopologyResult{}, err
+	}
+	return result, nil
+}
+
+// QuerySharedTopologyFrames 与 QuerySharedTopology 给出相同的答案。compact 格式把完整结果交给
+// consume，frames 为空；snapshots 格式的 header 不含 Snapshots，frames 在 consume 内逐帧构造快照，
+// 调用方可以边构造边编码，不同时物化 K 帧。compact 结果是独立副本，原图在调用 consume 之前释放；
+// snapshots 的原图保持到 consume 返回。执行槽都保持到 consume 返回，consume 的错误原样返回。
+func (m *Model) QuerySharedTopologyFrames(ctx context.Context, request cmdb.SharedTopologyQuery, consume func(cmdb.SharedTopologyResult, TopologyFrames) error) (err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-query-shared-topology")
 	defer span.End(&err)
 	defer func() { SetTimeGraphLimitTrace(span, err) }()
@@ -31,8 +54,10 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	}
 	started := time.Now()
 	validated := false
+	pointCount := 0
+	var counts topologySnapshotCounts
 	metric.CMDBTopologyInFlightAdd(queryMode, 1)
-	defer func() { observeSharedTopologyResult(ctx, queryMode, started, validated, result, err) }()
+	defer func() { observeSharedTopologyResult(ctx, queryMode, started, validated, pointCount, counts, err) }()
 	span.Set("query-mode", queryMode)
 	span.Set("space-uid", request.SpaceUID)
 	span.Set("source-type", request.SourceType)
@@ -44,16 +69,16 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	span.Set("dynamic-relation-direction", request.DynamicRelationDirection)
 	span.Set("look-back-delta", request.LookBackDelta)
 	if err := ctx.Err(); err != nil {
-		return cmdb.SharedTopologyResult{}, err
+		return err
 	}
 	if request.SpaceUID == "" {
-		return cmdb.SharedTopologyResult{}, errors.New("space uid is empty")
+		return errors.New("space uid is empty")
 	}
 	if request.SourceType == "" {
-		return cmdb.SharedTopologyResult{}, errors.New("source type is empty")
+		return errors.New("source type is empty")
 	}
 	if request.ResponseFormat != "" && request.ResponseFormat != "snapshots" && request.ResponseFormat != cmdb.CompactTopologyFormat {
-		return cmdb.SharedTopologyResult{}, fmt.Errorf("unsupported topology response format %q", request.ResponseFormat)
+		return fmt.Errorf("unsupported topology response format %q", request.ResponseFormat)
 	}
 	span.Set("response-format", request.ResponseFormat)
 
@@ -62,7 +87,7 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		maxHops = DefaultMaxHops
 	}
 	if maxHops < 0 || maxHops > MaxAllowedHops {
-		return cmdb.SharedTopologyResult{}, fmt.Errorf("max hops %d is outside [0, %d]", maxHops, MaxAllowedHops)
+		return fmt.Errorf("max hops %d is outside [0, %d]", maxHops, MaxAllowedHops)
 	}
 
 	direction := TraversalDirection(request.DynamicRelationDirection)
@@ -70,7 +95,7 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		direction = DirectionBoth
 	}
 	if direction != DirectionOutbound && direction != DirectionInbound && direction != DirectionBoth {
-		return cmdb.SharedTopologyResult{}, fmt.Errorf("unsupported dynamic relation direction %q", direction)
+		return fmt.Errorf("unsupported dynamic relation direction %q", direction)
 	}
 
 	_, gridSpan := trace.NewSpan(ctx, "timegraph-normalize-topology-grid")
@@ -89,7 +114,7 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	}
 	gridSpan.End(&gridErr)
 	if gridErr != nil {
-		return cmdb.SharedTopologyResult{}, gridErr
+		return gridErr
 	}
 
 	_, lookBackSpan := trace.NewSpan(ctx, "timegraph-normalize-lookback")
@@ -99,21 +124,21 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	lookBackSpan.Set("normalized-look-back", lookBack)
 	lookBackSpan.End(&lookBackErr)
 	if lookBackErr != nil {
-		return cmdb.SharedTopologyResult{}, lookBackErr
+		return lookBackErr
 	}
 
 	provider := m.getSchemaProvider()
 	if err := validateSchemaProvider(provider, request.SpaceUID); err != nil {
-		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "validate topology schema")
+		return errors.WithMessage(err, "validate topology schema")
 	}
 
 	attributeRequest := &QueryRequest{SpaceUID: request.SpaceUID, SourceType: FromCMDBResource(request.SourceType), SourceInfo: matcherToMap(request.SourceInfo), SourceExpandInfo: cloneMatcher(request.SourceExpandInfo)}
 	if err := validateSourceExpandInfoFields(attributeRequest, provider); err != nil {
-		return cmdb.SharedTopologyResult{}, err
+		return err
 	}
 	for key, value := range attributeRequest.SourceExpandInfo {
 		if identityValue, exists := attributeRequest.SourceInfo[key]; exists && identityValue != value {
-			return cmdb.SharedTopologyResult{}, fmt.Errorf("source_expand_info conflicts with source_info for field %q", key)
+			return fmt.Errorf("source_expand_info conflicts with source_info for field %q", key)
 		}
 	}
 
@@ -162,10 +187,10 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	}
 	queryCtx, release, err := AcquireSharedTopology(queryCtx)
 	if err != nil {
-		return cmdb.SharedTopologyResult{}, err
+		return err
 	}
 	defer release()
-	queryCtx = metadata.WithBackendResponseLimit(queryCtx, int64(effectiveTimeGraphLimit(MaxSharedTopologyBackendBytes, 16*1024*1024)))
+	queryCtx = metadata.WithBackendResponseLimit(queryCtx, timeGraphBackendResponseBytes)
 	span.Set("backend-response-byte-limit", metadata.BackendResponseLimit(queryCtx))
 
 	graph, err := m.buildTimeGraph(
@@ -185,15 +210,25 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		&grid,
 	)
 	if err != nil {
-		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "build shared topology")
+		return errors.WithMessage(err, "build shared topology")
 	}
-	defer graph.Clean(queryCtx)
-	queryCtx, releaseTraversal, err := graph.withTraversalReservation(queryCtx)
-	if err != nil {
-		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "reserve topology traversal")
+	// compact 分支在交给 consume 之前释放原图，其余路径在返回时释放；只释放一次。
+	graphReleased := false
+	releaseGraph := func() {
+		if !graphReleased {
+			graphReleased = true
+			graph.Clean(queryCtx)
+		}
 	}
-	defer releaseTraversal()
+	defer releaseGraph()
 
+	partialTimestamps := graph.partialTimesCopy()
+	// 不完整原因的并集按固定原因计入质量指标，缺路由（relation_no_physical_route）与后端不完整
+	// （backend_partial）分开计数；完整原因留在 trace。
+	if reasons := topologyPartialReasons(partialTimestamps); reasons != "" {
+		span.Set("partial-reasons", reasons)
+		metric.CMDBRelationQualityInc(queryCtx, metric.CMDBRelationEntryTopology, queryMode, "partial", reasons)
+	}
 	topologyQuery := SharedTopologyQuery{
 		SourceType:           request.SourceType,
 		SourceMatcher:        request.SourceInfo,
@@ -201,69 +236,74 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		AllowedCategories:    toRelationCategories(request.AllowedCategories),
 		AllowedRelationTypes: append([]string(nil), request.AllowedRelationTypes...),
 		Direction:            direction,
-		PartialTimestamps:    graph.partialTimesCopy(),
+		PartialTimestamps:    partialTimestamps,
 		RootBits:             graph.sharedTopologyRootBits(),
 	}
-	if request.ResponseFormat == cmdb.CompactTopologyFormat {
-		compact, compactErr := graph.FindCompactTopology(queryCtx, grid, topologyQuery, request.TargetTypes)
-		if compactErr != nil {
-			return cmdb.SharedTopologyResult{}, errors.WithMessage(compactErr, "export compact topology")
-		}
-		return cmdb.SharedTopologyResult{
-			StartTime:  grid.timestamps[0],
-			EndTime:    grid.timestamps[len(grid.timestamps)-1],
-			Step:       responseStep,
-			PointCount: len(grid.timestamps),
-			Compact:    compact,
-		}, nil
-	}
-	snapshots, err := graph.findSharedTopologyDTO(queryCtx, grid, topologyQuery)
-	if err != nil {
-		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "find shared topology")
-	}
-	_, convertSpan := trace.NewSpan(queryCtx, "timegraph-convert-topology")
-	convertStarted := time.Now()
-	inputNodes, inputEdges := 0, 0
-	for _, snapshot := range snapshots {
-		inputNodes += len(snapshot.Nodes)
-		inputEdges += len(snapshot.Edges)
-	}
-	convertSpan.Set("input-node-count", inputNodes)
-	convertSpan.Set("input-edge-count", inputEdges)
-	convertSpan.Set("target-type-count", len(request.TargetTypes))
-	if err := filterSharedTopologySnapshots(queryCtx, snapshots, request.SourceType, request.TargetTypes); err != nil {
-		convertSpan.End(&err)
-		metric.CMDBTimeGraphStageObserve(queryCtx, "topology-convert", metric.CMDBTimeGraphErrorResult(err), time.Since(convertStarted))
-		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "filter shared topology")
-	}
-	result = cmdb.SharedTopologyResult{
+	header := cmdb.SharedTopologyResult{
 		StartTime:  grid.timestamps[0],
 		EndTime:    grid.timestamps[len(grid.timestamps)-1],
 		Step:       responseStep,
 		PointCount: len(grid.timestamps),
-		Snapshots:  snapshots,
 	}
-	convertSpan.Set("snapshot-count", len(result.Snapshots))
-	span.Set("query-start", result.StartTime)
-	span.Set("query-end", result.EndTime)
-	span.Set("point-count", result.PointCount)
-	span.Set("snapshot-count", len(result.Snapshots))
-	nodeCount, edgeCount, partialCount := 0, 0, 0
-	for _, snapshot := range result.Snapshots {
-		nodeCount += len(snapshot.Nodes)
-		edgeCount += len(snapshot.Edges)
-		if snapshot.Partial {
-			partialCount++
+	span.Set("query-start", header.StartTime)
+	span.Set("query-end", header.EndTime)
+	span.Set("point-count", header.PointCount)
+	if request.ResponseFormat == cmdb.CompactTopologyFormat {
+		compact, compactErr := graph.FindCompactTopology(queryCtx, grid, topologyQuery, request.TargetTypes)
+		if compactErr != nil {
+			return errors.WithMessage(compactErr, "export compact topology")
 		}
+		header.Compact = compact
+		pointCount, counts = header.PointCount, topologySnapshotCounts{nodes: compact.NodeOccurrences, edges: compact.EdgeOccurrences, partial: len(compact.Partial)}
+		releaseGraph()
+		return consume(header, nil)
 	}
-	convertSpan.Set("output-node-count", nodeCount)
-	convertSpan.Set("output-edge-count", edgeCount)
+	frames, err := graph.prepareSharedTopologyFrames(queryCtx, grid, topologyQuery, topologyOutputTypes(request.SourceType, request.TargetTypes))
+	if err != nil {
+		return errors.WithMessage(err, "find shared topology")
+	}
+	// 输出类型过滤在逐帧构造时完成，转换阶段覆盖调用方读取全部帧的过程。
+	convertCtx, convertSpan := trace.NewSpan(queryCtx, "timegraph-convert-topology")
+	convertStarted := time.Now()
+	convertSpan.Set("input-node-count", frames.counts.nodes)
+	convertSpan.Set("input-edge-count", frames.counts.edges)
+	convertSpan.Set("target-type-count", len(request.TargetTypes))
+	var output topologySnapshotCounts
+	snapshots := 0
+	err = consume(header, func(yield func(cmdb.SharedTopologySnapshot) error) error {
+		return frames.each(convertCtx, func(snapshot cmdb.SharedTopologySnapshot) error {
+			snapshots++
+			output.add(len(snapshot.Nodes), len(snapshot.Edges), snapshot.Partial)
+			return yield(snapshot)
+		})
+	})
+	convertSpan.Set("snapshot-count", snapshots)
+	convertSpan.Set("output-node-count", output.nodes)
+	convertSpan.Set("output-edge-count", output.edges)
 	convertSpan.End(&err)
-	metric.CMDBTimeGraphStageObserve(queryCtx, "topology-convert", metric.CMDBRelationResultSuccess, time.Since(convertStarted))
-	span.Set("snapshot-node-count", nodeCount)
-	span.Set("snapshot-edge-count", edgeCount)
-	span.Set("partial-snapshot-count", partialCount)
-	return result, nil
+	metric.CMDBTimeGraphStageObserve(queryCtx, "topology-convert", metric.CMDBTimeGraphErrorResult(err), time.Since(convertStarted))
+	if err != nil {
+		return err
+	}
+	pointCount, counts = header.PointCount, output
+	span.Set("snapshot-count", snapshots)
+	span.Set("snapshot-node-count", output.nodes)
+	span.Set("snapshot-edge-count", output.edges)
+	span.Set("partial-snapshot-count", output.partial)
+	return nil
+}
+
+// topologyOutputTypes 返回 target_types 过滤保留的类型（含源类型）；为空表示保留全部可达类型。
+func topologyOutputTypes(sourceType cmdb.Resource, targetTypes []cmdb.Resource) map[cmdb.Resource]struct{} {
+	if len(targetTypes) == 0 {
+		return nil
+	}
+	allowed := make(map[cmdb.Resource]struct{}, len(targetTypes)+1)
+	allowed[sourceType] = struct{}{}
+	for _, targetType := range targetTypes {
+		allowed[targetType] = struct{}{}
+	}
+	return allowed
 }
 
 func normalizeSharedTopologyTime(request cmdb.SharedTopologyQuery) (time.Time, time.Time, time.Duration, string, TopologyGrid, error) {
@@ -478,54 +518,4 @@ func toRelationCategories(values []string) []RelationCategory {
 		result[i] = RelationCategory(value)
 	}
 	return result
-}
-
-func filterSharedTopologySnapshots(ctx context.Context, snapshots []cmdb.SharedTopologySnapshot, sourceType cmdb.Resource, targetTypes []cmdb.Resource) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if len(targetTypes) == 0 {
-		return nil
-	}
-	allowed := make(map[cmdb.Resource]struct{}, len(targetTypes)+1)
-	allowed[sourceType] = struct{}{}
-	for _, targetType := range targetTypes {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		allowed[targetType] = struct{}{}
-	}
-	for index := range snapshots {
-		keptNodes := make(map[uint64]struct{})
-		nodes := snapshots[index].Nodes[:0]
-		for _, node := range snapshots[index].Nodes {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if _, ok := allowed[node.ResourceType]; !ok {
-				continue
-			}
-			keptNodes[node.ID] = struct{}{}
-			nodes = append(nodes, node)
-		}
-		edges := snapshots[index].Edges[:0]
-		for _, edge := range snapshots[index].Edges {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if _, sourceOK := keptNodes[edge.Source]; !sourceOK {
-				continue
-			}
-			if _, targetOK := keptNodes[edge.Target]; !targetOK {
-				continue
-			}
-			edges = append(edges, edge)
-		}
-		// 清空 DTO 底层数组中已移除的引用，避免继续持有属性对象。
-		clear(snapshots[index].Nodes[len(nodes):])
-		clear(snapshots[index].Edges[len(edges):])
-		snapshots[index].Nodes = nodes
-		snapshots[index].Edges = edges
-	}
-	return ctx.Err()
 }

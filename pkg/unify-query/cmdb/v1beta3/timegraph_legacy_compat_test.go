@@ -97,11 +97,11 @@ func TestLegacyCandidateQualityAndLastEmptyPath(t *testing.T) {
 			ctx := context.WithValue(initTimeGraphQueryTestEnvironment(), timeGraphLegacyCompatibilityKey{}, true)
 			metadata.SetStatus(ctx, metadata.QueryTsPartial, "backend_partial")
 			index := 0
-			_, last, err := queryFirstTimeGraphPath(ctx, make([]resourcePath, len(tc.errs)), func(resourcePath) ([]cmdb.PathResourcesResult, error) {
+			last, err := queryFirstTimeGraphPath(ctx, make([]resourcePath, len(tc.errs)), func(resourcePath) (bool, error) {
 				err := tc.errs[index]
 				index++
 				metadata.SetStatus(ctx, "another_status", "")
-				return nil, err
+				return false, err
 			})
 			require.Equal(t, tc.last, last)
 			if tc.want != nil {
@@ -246,38 +246,48 @@ func TestLegacyFrontierDoesNotMutateMatrixOrDropMissingKeys(t *testing.T) {
 	require.ErrorContains(t, err, "incomplete endpoint")
 }
 
+// 每跳都只读取前一跳的实际端点，反向遍历同样如此。单跳自关联返回目标；
+// 两跳自关联回访资源类型，在任何后端读取之前被具名拒绝。
 func TestLegacyFrontierDynamicDirectionAndRepeatedResource(t *testing.T) {
 	for _, direction := range []TraversalDirection{DirectionOutbound, DirectionInbound} {
-		t.Run(string(direction), func(t *testing.T) {
-			ctx := context.WithValue(initTimeGraphQueryTestEnvironment(), timeGraphLegacyCompatibilityKey{}, true)
-			model := legacyRegressionModel(frontierCompositeProvider())
-			calls := 0
-			model.timeGraphVMQuery = func(_ context.Context, query *structured.QueryTs, _ string, _ bool, start, _ time.Time, _ time.Duration) (pl.Matrix, error) {
-				calls++
-				matrix := pl.Matrix{}
-				for _, pair := range [][2]string{{"a", "b"}, {"b", "c"}, {"outside", "unreachable"}} {
-					from, to := pair[0], pair[1]
-					if direction == DirectionInbound {
-						from, to = to, from
+		for _, hops := range []int{1, 2} {
+			t.Run(fmt.Sprintf("%s/%d-hop", direction, hops), func(t *testing.T) {
+				ctx := context.WithValue(initTimeGraphQueryTestEnvironment(), timeGraphLegacyCompatibilityKey{}, true)
+				model := legacyRegressionModel(frontierCompositeProvider())
+				calls := 0
+				model.timeGraphVMQuery = func(_ context.Context, query *structured.QueryTs, _ string, _ bool, start, _ time.Time, _ time.Duration) (pl.Matrix, error) {
+					calls++
+					matrix := pl.Matrix{}
+					for _, pair := range [][2]string{{"a", "b"}, {"b", "c"}, {"outside", "unreachable"}} {
+						from, to := pair[0], pair[1]
+						if direction == DirectionInbound {
+							from, to = to, from
+						}
+						matrix = append(matrix, contractMatrix(map[string]string{"from_tenant": "x", "from_id": from, "to_tenant": "x", "to_id": to}, start.UnixMilli())...)
 					}
-					matrix = append(matrix, contractMatrix(map[string]string{"from_tenant": "x", "from_id": from, "to_tenant": "x", "to_id": to}, start.UnixMilli())...)
+					filtered := filterTopologyRegressionMatrix(query, matrix)
+					require.Len(t, filtered, 1, "each hop must read only its current endpoint, including reverse traversal")
+					return filtered, nil
 				}
-				filtered := filterTopologyRegressionMatrix(query, matrix)
-				require.Len(t, filtered, 1, "each hop must read only its current endpoint, including reverse traversal")
-				return filtered, nil
-			}
-			path := cmdb.RelationPath{Steps: []cmdb.RelationPathStep{{ResourceType: "service"}}}
-			for hop := 0; hop < 2; hop++ {
-				path.Steps = append(path.Steps, cmdb.RelationPathStep{ResourceType: "service", RelationType: "calls", Category: string(RelationCategoryDynamic), Direction: string(direction), MetricName: "calls_flow"})
-			}
-			stamp := time.Unix(1700000040, 0)
-			result, err := model.QueryRelationTimeGraph(ctx, "24h", "space", stamp, stamp, time.Minute, "service", []cmdb.Resource{"service"}, []cmdb.RelationPath{path}, cmdb.Matcher{"tenant": "x", "id": "a"}, nil)
-			require.NoError(t, err)
-			require.Equal(t, 2, calls)
-			require.Len(t, result, 1)
-			require.Len(t, result[0].Path, 3)
-			require.Equal(t, "c", result[0].Path[2].Dimensions["id"])
-		})
+				path := cmdb.RelationPath{Steps: []cmdb.RelationPathStep{{ResourceType: "service"}}}
+				for hop := 0; hop < hops; hop++ {
+					path.Steps = append(path.Steps, cmdb.RelationPathStep{ResourceType: "service", RelationType: "calls", Category: string(RelationCategoryDynamic), Direction: string(direction), MetricName: "calls_flow"})
+				}
+				stamp := time.Unix(1700000040, 0)
+				result, err := model.QueryRelationTimeGraph(ctx, "24h", "space", stamp, stamp, time.Minute, "service", []cmdb.Resource{"service"}, []cmdb.RelationPath{path}, cmdb.Matcher{"tenant": "x", "id": "a"}, nil)
+				if hops > 1 {
+					require.ErrorContains(t, err, "relation path revisits resource type service")
+					require.Empty(t, result)
+					require.Zero(t, calls, "rejected paths must not query the backend")
+					return
+				}
+				require.NoError(t, err)
+				require.Equal(t, 1, calls)
+				require.Len(t, result, 1)
+				require.Equal(t, cmdb.Resource("service"), result[0].Target.ResourceType)
+				require.Equal(t, "b", result[0].Target.Dimensions["id"])
+			})
+		}
 	}
 }
 

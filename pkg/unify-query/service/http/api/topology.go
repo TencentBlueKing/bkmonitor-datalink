@@ -7,7 +7,6 @@ package api
 
 import (
 	"context"
-	stdjson "encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -153,15 +152,9 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 	}
 	ctx, release, err := v1beta3.AcquireSharedTopologyWithQueuedPreparation(ctx, prepareBody)
 	if err != nil {
+		// 准入只因期限、取消或排队时读取请求体失败而返回错误；请求体超限已在 prepareBody 中
+		// 计为拒绝。准入已释放排队位置，返回限长错误而不是空的 HTTP 200。
 		handlerErr = err
-		var limit interface{ TruncationReason() string }
-		if requestResult != metric.CMDBRelationResultRejected && errors.As(err, &limit) {
-			requestResult = metric.CMDBRelationResultRejected
-			metric.CMDBTopologyRejectInc(ctx, queryMode, limit.TruncationReason())
-		}
-		// Admission has already canceled/released its lease. Report the bounded
-		// failure rather than silently producing an empty HTTP 200; no query or
-		// success payload runs under this context. Socket WriteTimeout remains.
 		failBeforeQuery(ctx, err)
 		return
 	}
@@ -216,26 +209,61 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		fail(ctx, err)
 		return
 	}
-	data := &topologyResponse{
-		TraceID: span.TraceID(),
-		Data:    make([]stdjson.RawMessage, len(request.QueryList)),
-	}
-	responseBytes := 1024
-	responseOwnedBytes := topologyEncodedOwnership{}
-	defer func() {
-		span.Set("response-budget-bytes-used", responseBytes)
-		span.Set("response-budget-bytes-limit", v1beta3.TopologyOutputByteLimit())
-	}()
+	stream := newTopologyResponseStream(ctx, c, span.TraceID())
+	// 批次逐项编码，编码完的项立即写出并释放，批次只保留正在编码的一项；累计字节只用于观测，
+	// 不是拒绝理由。
+	responseBytes := 0
+	defer func() { span.Set("response-encoded-bytes", responseBytes) }()
 	failedQueryCount := 0
 	partialQueryCount := 0
 	itemSpanName := "handler-api-relation-v1beta3-topology-item"
 	if rangeQuery {
 		itemSpanName += "-range"
 	}
+	finish := func(abortErr error) {
+		span.Set("query-count", len(request.QueryList))
+		span.Set("failed-query-count", failedQueryCount)
+		span.Set("successful-query-count", len(request.QueryList)-failedQueryCount)
+		span.Set("partial-failure", failedQueryCount > 0)
+		switch {
+		case len(request.QueryList) == 0:
+			requestResult = metric.CMDBRelationResultEmpty
+		case failedQueryCount == len(request.QueryList):
+			requestResult = metric.CMDBRelationResultFailed
+		case failedQueryCount > 0 || partialQueryCount > 0:
+			requestResult = metric.CMDBRelationResultPartial
+		}
+		// 写出失败另由 ResponseWriteError 带回请求终态；API 请求计数与它使用同一个错误。
+		if closeErr := stream.close(); abortErr == nil {
+			abortErr = closeErr
+		}
+		resp.streamed(ctx, abortErr)
+	}
+	// abort 处理批次中途的请求级失败（期限、取消、编码失败），只在项之间调用。尚未写出时整个
+	// 请求失败；已开始写出时 HTTP 200 和前面的项已经完整发出，当前项及其后各项按单项失败写出，
+	// 响应仍是完整 JSON。写出本身不受取消约束，只因传输错误停止。
+	abort := func(from int, failure error) {
+		handlerErr = failure
+		if !stream.started() {
+			fail(ctx, failure)
+			return
+		}
+		message := truncateTopologyErrorMessage(failure.Error(), topologyErrorMessageMaxBytes)
+		for index := from; index < len(request.QueryList); index++ {
+			failedQueryCount++
+			parts, _, encodeErr := marshalTopologyItem(context.WithoutCancel(ctx), topologyFailedItem(request.QueryList[index].ResponseFormat, message))
+			if encodeErr == nil {
+				encodeErr = stream.item(parts)
+			}
+			if encodeErr != nil {
+				break
+			}
+		}
+		finish(failure)
+	}
 	for index, query := range request.QueryList {
 		if err := ctx.Err(); err != nil {
-			handlerErr = err
-			fail(ctx, err)
+			abort(index, err)
 			return
 		}
 		queryStarted := time.Now()
@@ -252,8 +280,6 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		querySpan.Set("requested-start", query.StartTime)
 		querySpan.Set("requested-end", query.EndTime)
 		querySpan.Set("requested-step", query.Step)
-		item := cmdb.SharedTopologyResponseData{Code: http.StatusOK}
-		var result cmdb.SharedTopologyResult
 		var queryErr error
 		if rangeQuery {
 			if query.Timestamp != 0 {
@@ -266,119 +292,137 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		} else if query.Timestamp == 0 {
 			queryErr = fmt.Errorf("instant topology query requires timestamp")
 		}
+		var encoded topologyEncodedItem
 		if queryErr == nil {
-			result, queryErr = model.QuerySharedTopology(queryCtx, query)
+			// snapshots 在模型内逐帧构造并立即编码，不同时物化本项的全部帧。
+			queryErr = model.QuerySharedTopologyFrames(queryCtx, query, func(header cmdb.SharedTopologyResult, frames v1beta3.TopologyFrames) error {
+				encoded = encodeTopologyItem(queryCtx, query.ResponseFormat, header, frames, "")
+				return encoded.err
+			})
+			if encoded.err != nil {
+				queryErr = nil
+			}
 		} else {
 			// HTTP 时间模式校验未进入模型，单独记录该子查询，避免遗漏或重复计数。
 			metric.CMDBTopologyObserve(queryCtx, metric.CMDBTopologyScopeQuery, queryMode, metric.CMDBRelationResultRejected, time.Since(queryStarted))
 			metric.CMDBTopologyRejectInc(queryCtx, queryMode, topologyInvalidRequestReason)
 		}
 		if queryErr != nil {
-			failedQueryCount++
-			item.Code = http.StatusBadRequest
-			item.Message = queryErr.Error()
-		} else {
-			item.StartTime = result.StartTime
-			item.EndTime = result.EndTime
-			item.Step = result.Step
-			item.PointCount = result.PointCount
-			item.Snapshots = result.Snapshots
+			encoded = encodeTopologyItem(queryCtx, query.ResponseFormat, cmdb.SharedTopologyResult{}, nil, truncateTopologyErrorMessage(queryErr.Error(), topologyErrorMessageMaxBytes))
 		}
-		if item.Snapshots == nil {
-			item.Snapshots = make([]cmdb.SharedTopologySnapshot, 0)
-		}
-		// Record query metadata before releasing the DTO after encoding.
-		snapshotCount := len(item.Snapshots)
-		nodeCount, edgeCount, partialCount := 0, 0, 0
-		for _, snapshot := range item.Snapshots {
-			nodeCount += len(snapshot.Nodes)
-			edgeCount += len(snapshot.Edges)
-			if snapshot.Partial {
-				partialCount++
-			}
-		}
-		if result.Compact != nil {
-			nodeCount, edgeCount, partialCount = result.Compact.NodeOccurrences, result.Compact.EdgeOccurrences, len(result.Compact.Partial)
-			querySpan.Set("node-version-count", len(result.Compact.Nodes))
-			querySpan.Set("edge-version-count", len(result.Compact.Edges))
-		}
-		// 批次内结果累计也必须有界，不能用 query_list 倍增单查询预算。
-		item.Message = truncateTopologyErrorMessage(item.Message, topologyErrorMessageMaxBytes)
-		_, encodeSpan := trace.NewSpan(queryCtx, "timegraph-encode-topology-item")
-		encodeStarted := time.Now()
-		var payload any = item
-		if query.ResponseFormat == cmdb.CompactTopologyFormat {
-			payload = cmdb.CompactTopologyResponseData{
-				Code:           item.Code,
-				StartTime:      item.StartTime,
-				EndTime:        item.EndTime,
-				Step:           item.Step,
-				PointCount:     item.PointCount,
-				Message:        item.Message,
-				ResponseFormat: cmdb.CompactTopologyFormat,
-				Compact:        result.Compact,
-			}
-		}
-		chunks, encodedBytes, itemOwnedBytes, encodeErr := marshalTopologyBounded(queryCtx, payload, v1beta3.TopologyOutputByteLimit()-responseBytes, responseOwnedBytes)
-		encodeSpan.Set("encoded-item-bytes", encodedBytes)
-		encodeSpan.Set("segmented", len(chunks) > 0)
-		encodeSpan.End(&encodeErr)
-		metric.CMDBTimeGraphStageObserve(queryCtx, "topology-encode", metric.CMDBTimeGraphErrorResult(encodeErr), time.Since(encodeStarted))
-		metric.CMDBTopologyPayloadObserve(queryCtx, "response-item", metric.CMDBTimeGraphErrorResult(encodeErr), encodedBytes)
-		querySpan.Set("encoded-item-bytes", encodedBytes)
-		if encodeErr != nil {
+		querySpan.Set("encoded-item-bytes", encoded.bytes)
+		if encoded.err != nil {
+			// 编码失败（取消、期限）是请求级失败；已开始写出时当前项也按单项失败写出。
+			encodeErr := encoded.err
 			querySpan.End(&encodeErr)
-			handlerErr = encodeErr
-			fail(ctx, encodeErr)
+			abort(index, encodeErr)
 			return
 		}
-		if limit := v1beta3.TopologyOutputByteLimit(); limit > 0 && encodedBytes > limit-responseBytes {
-			queryErr = &v1beta3.ResultLimitError{Reason: "max_topology_output_bytes", Count: responseBytes + encodedBytes, Limit: v1beta3.TopologyOutputByteLimit()}
-			v1beta3.SetTimeGraphLimitTrace(querySpan, queryErr)
-			querySpan.End(&queryErr)
-			handlerErr = queryErr
-			requestResult = metric.CMDBRelationResultRejected
-			metric.CMDBTopologyRejectInc(ctx, queryMode, "max_topology_output_bytes")
-			fail(ctx, queryErr)
-			return
-		}
-		responseBytes += encodedBytes + 1
-		item.Snapshots = nil
-		result.Snapshots = nil
-		result.Compact = nil
-		_ = v1beta3.ReserveTopologyStage(ctx, "output", 0)
-		responseOwnedBytes.reserved += itemOwnedBytes.reserved
-		responseOwnedBytes.materialized += itemOwnedBytes.materialized
+		responseBytes += encoded.bytes
 		querySpan.Set("query-index", index)
-		querySpan.Set("point-count", item.PointCount)
-		querySpan.Set("response-code", item.Code)
-		querySpan.Set("snapshot-count", snapshotCount)
-		querySpan.Set("response-node-count", nodeCount)
-		querySpan.Set("response-edge-count", edgeCount)
-		querySpan.Set("partial-snapshot-count", partialCount)
-		if partialCount > 0 {
-			partialQueryCount++
+		querySpan.Set("point-count", encoded.points)
+		querySpan.Set("response-code", encoded.code)
+		querySpan.Set("snapshot-count", encoded.snapshots)
+		querySpan.Set("response-node-count", encoded.counts.nodes)
+		querySpan.Set("response-edge-count", encoded.counts.edges)
+		querySpan.Set("partial-snapshot-count", encoded.counts.partial)
+		if encoded.versions {
+			querySpan.Set("node-version-count", encoded.nodeVersions)
+			querySpan.Set("edge-version-count", encoded.edgeVersions)
 		}
 		v1beta3.SetTimeGraphLimitTrace(querySpan, queryErr)
 		querySpan.End(&queryErr)
-		if len(chunks) > 0 {
-			if data.chunks == nil {
-				data.chunks = make([][][]byte, len(request.QueryList))
-			}
-			data.chunks[index] = chunks
+		// 取消与期限只在项之间检查：编码完但尚未写出时请求被取消或到达期限，与批次中途的失败
+		// 一样处理，尚未开始写出时整个请求失败，已开始写出时这一项按单项失败写出。一项开始写出
+		// 后写完它的全部片段，期间到达的取消由下一项的检查处理。
+		if err := ctx.Err(); err != nil {
+			abort(index, err)
+			return
+		}
+		if err := stream.item(encoded.parts); err != nil {
+			// 传输错误：客户端已不可写，停止批次，写出错误由 ResponseWriteError 与请求计数带回。
+			finish(nil)
+			return
+		}
+		encoded.parts = nil
+		// 计数在写出后进行，批次中途失败时不重复计入当前项。
+		if queryErr != nil {
+			failedQueryCount++
+		}
+		if encoded.counts.partial > 0 {
+			partialQueryCount++
 		}
 	}
-	span.Set("query-count", len(request.QueryList))
-	span.Set("failed-query-count", failedQueryCount)
-	span.Set("successful-query-count", len(request.QueryList)-failedQueryCount)
-	span.Set("partial-failure", failedQueryCount > 0)
-	switch {
-	case len(request.QueryList) == 0:
-		requestResult = metric.CMDBRelationResultEmpty
-	case failedQueryCount == len(request.QueryList):
-		requestResult = metric.CMDBRelationResultFailed
-	case failedQueryCount > 0 || partialQueryCount > 0:
-		requestResult = metric.CMDBRelationResultPartial
+	finish(nil)
+}
+
+// topologyItemCounts 是一项输出的节点、边出现次数与 partial 帧数。
+type topologyItemCounts struct{ nodes, edges, partial int }
+
+// topologyEncodedItem 是一项编码后的片段及其观测数据；片段写出后即释放。
+type topologyEncodedItem struct {
+	parts                      [][]byte
+	bytes                      int
+	err                        error
+	code, points, snapshots    int
+	counts                     topologyItemCounts
+	versions                   bool
+	nodeVersions, edgeVersions int
+}
+
+func topologyFailedItem(format, message string) any {
+	if format == cmdb.CompactTopologyFormat {
+		return cmdb.CompactTopologyResponseData{Code: http.StatusBadRequest, Message: message, ResponseFormat: cmdb.CompactTopologyFormat}
 	}
-	resp.success(ctx, data)
+	return cmdb.SharedTopologyResponseData{Code: http.StatusBadRequest, Message: message, Snapshots: make([]cmdb.SharedTopologySnapshot, 0)}
+}
+
+// encodeTopologyItem 编码一项。message 非空表示失败项；snapshots 格式的成功项从 frames 逐帧编码。
+func encodeTopologyItem(ctx context.Context, format string, header cmdb.SharedTopologyResult, frames v1beta3.TopologyFrames, message string) (encoded topologyEncodedItem) {
+	_, encodeSpan := trace.NewSpan(ctx, "timegraph-encode-topology-item")
+	encodeStarted := time.Now()
+	defer func() {
+		encodeSpan.Set("encoded-item-bytes", encoded.bytes)
+		encodeSpan.Set("segmented", len(encoded.parts) > 0)
+		encodeSpan.End(&encoded.err)
+		metric.CMDBTimeGraphStageObserve(ctx, "topology-encode", metric.CMDBTimeGraphErrorResult(encoded.err), time.Since(encodeStarted))
+		metric.CMDBTopologyPayloadObserve(ctx, "response-item", metric.CMDBTimeGraphErrorResult(encoded.err), encoded.bytes)
+	}()
+	encoded.code = http.StatusOK
+	if message != "" {
+		encoded.code = http.StatusBadRequest
+		encoded.parts, encoded.bytes, encoded.err = marshalTopologyItem(ctx, topologyFailedItem(format, message))
+		return encoded
+	}
+	encoded.points = header.PointCount
+	if format == cmdb.CompactTopologyFormat {
+		if header.Compact != nil {
+			encoded.counts = topologyItemCounts{nodes: header.Compact.NodeOccurrences, edges: header.Compact.EdgeOccurrences, partial: len(header.Compact.Partial)}
+			encoded.versions, encoded.nodeVersions, encoded.edgeVersions = true, len(header.Compact.Nodes), len(header.Compact.Edges)
+		}
+		encoded.parts, encoded.bytes, encoded.err = marshalTopologyItem(ctx, cmdb.CompactTopologyResponseData{
+			Code: encoded.code, StartTime: header.StartTime, EndTime: header.EndTime, Step: header.Step,
+			PointCount: header.PointCount, ResponseFormat: cmdb.CompactTopologyFormat, Compact: header.Compact,
+		})
+		return encoded
+	}
+	item := cmdb.SharedTopologyResponseData{Code: encoded.code, StartTime: header.StartTime, EndTime: header.EndTime, Step: header.Step, PointCount: header.PointCount}
+	source := topologySnapshotSlice(header.Snapshots)
+	count := len(header.Snapshots)
+	if frames != nil {
+		count = header.PointCount
+		source = func(yield func(cmdb.SharedTopologySnapshot) error) error { return frames(yield) }
+	}
+	encoded.parts, encoded.bytes, encoded.err = marshalTopologySnapshotItem(ctx, item, count, func(yield func(cmdb.SharedTopologySnapshot) error) error {
+		return source(func(snapshot cmdb.SharedTopologySnapshot) error {
+			encoded.snapshots++
+			encoded.counts.nodes += len(snapshot.Nodes)
+			encoded.counts.edges += len(snapshot.Edges)
+			if snapshot.Partial {
+				encoded.counts.partial++
+			}
+			return yield(snapshot)
+		})
+	})
+	return encoded
 }

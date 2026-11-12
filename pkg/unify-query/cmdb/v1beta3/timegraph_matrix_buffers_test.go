@@ -11,10 +11,10 @@ import (
 )
 
 func TestMatrixWorkingBuffersMatchOwnedInputApplication(t *testing.T) {
-	times := sharedGraphTestTimes(60)
+	times := sharedTopologyTestTimes(60)
 	grid, err := NewTopologyGrid(times)
 	require.NoError(t, err)
-	relation := sharedGraphTestRelation("calls")
+	relation := sharedTopologyTestRelation("calls")
 	matrix := append(contractMatrix(map[string]string{"from_id": "a", "to_id": "b", "from_version": "old", "to_name": "first"}, times[0], times[54], times[59]), contractMatrix(map[string]string{"from_id": "c", "to_id": "d"}, times[58])...)
 	matrix = append(matrix, contractMatrix(map[string]string{"from_id": "a", "to_id": "b", "from_version": "z"}, times[54])...)
 	matrix = append(matrix, contractMatrix(map[string]string{"from_id": "zero", "to_id": "zero-target"})...)
@@ -25,10 +25,10 @@ func TestMatrixWorkingBuffersMatchOwnedInputApplication(t *testing.T) {
 		t.Run(map[bool]string{false: "legacy", true: "shared"}[shared], func(t *testing.T) {
 			newGraph := func() *TimeGraph {
 				if shared {
-					g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
+					g := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
 					return g
 				}
-				return NewTimeGraphWithConfig(sharedGraphTestConfig())
+				return NewTimeGraphWithConfig(sharedTopologyTestConfig())
 			}
 			got, want := newGraph(), newGraph()
 			ctx := withTimeGraphTargetInfoShow(context.Background(), true)
@@ -92,7 +92,7 @@ func TestMatrixWorkingBuffersMatchOwnedInputApplication(t *testing.T) {
 }
 
 func TestSourceAndTargetMatrixWorkingBuffersPreserveTimeAttributes(t *testing.T) {
-	times := sharedGraphTestTimes(60)
+	times := sharedTopologyTestTimes(60)
 	grid, err := NewTopologyGrid(times)
 	require.NoError(t, err)
 	matrix := append(contractMatrix(map[string]string{"id": "a", "version": "old", "name": "present"}, times[0], times[54], times[59]), contractMatrix(map[string]string{"id": "b"}, times[58])...)
@@ -103,10 +103,10 @@ func TestSourceAndTargetMatrixWorkingBuffersPreserveTimeAttributes(t *testing.T)
 			t.Run(map[bool]string{false: "source", true: "target"}[target]+map[bool]string{false: "-legacy", true: "-shared"}[shared], func(t *testing.T) {
 				newGraph := func() *TimeGraph {
 					if shared {
-						g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
+						g := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
 						return g
 					}
-					return NewTimeGraphWithConfig(sharedGraphTestConfig())
+					return NewTimeGraphWithConfig(sharedTopologyTestConfig())
 				}
 				got, want := newGraph(), newGraph()
 				ctx := context.Background()

@@ -105,6 +105,10 @@ func HandleProxy(c *gin.Context) {
 	for _, h := range handlers {
 		h(c)
 	}
+	// handler 已按片段写出成功响应（含本外层），写出错误由 ResponseWriteError 带回。
+	if responseStreamed(c) {
+		return
+	}
 	responseError, hasError := c.Get(ContextKeyResponseError)
 	responseData, _ := c.Get(ContextKeyResponseData)
 

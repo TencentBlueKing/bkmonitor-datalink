@@ -106,8 +106,7 @@ func newNodeBuilder(cfg *TimeGraphConfig) *NodeBuilder {
 // NodeBuilder 节点构建器
 // 负责创建和管理唯一的节点ID，将复杂的资源匹配器压缩为 uint64 ID
 type NodeBuilder struct {
-	residencyAdjust func(int64) error
-	lock            sync.RWMutex // 读写锁，保证并发安全
+	lock sync.RWMutex // 读写锁，保证并发安全
 
 	resource *resourceType // 资源类型映射器
 
@@ -345,33 +344,11 @@ func (n *NodeBuilder) GetID(resourceType cmdb.Resource, info cmdb.Matcher) (uint
 			}
 		}
 		if len(candidate) > 0 {
-			oldCost, newCost := int64(0), int64(0)
-			if n.residencyAdjust != nil {
-				oldCost = graphMatcherCost(n.info[id])
-				newCost = graphMergedMatcherCost(n.info[id], candidate)
-			}
-			if n.residencyAdjust != nil {
-				// Reserve old+new coexistence before allocating the replacement.
-				if err := n.residencyAdjust(newCost); err != nil {
-					return 0, err
-				}
-			}
-			merged := mergeMatcher(n.info[id], candidate)
-			n.info[id] = merged
-			if n.residencyAdjust != nil {
-				if err := n.residencyAdjust(-oldCost); err != nil {
-					return 0, err
-				}
-			}
+			n.info[id] = mergeMatcher(n.info[id], candidate)
 		}
 		return id, nil
 	}
 
-	if n.residencyAdjust != nil {
-		if err := n.residencyAdjust(graphNodeBuilderCost(indexes, n.resourceInfoFields(resourceType), info)); err != nil {
-			return 0, err
-		}
-	}
 	// 创建新的节点ID
 	rtID := n.resource.id(resourceType)
 	finaID := (uint64(rtID) << 48) | (n.index & 0xFFFFFFFFFFFF)

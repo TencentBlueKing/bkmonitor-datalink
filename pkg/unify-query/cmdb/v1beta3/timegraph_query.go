@@ -603,18 +603,30 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 	// Prometheus 聚合后端通过子查询 metadata 报告部分成功，VM 则返回 partial 位。
 	// 合并当前子查询的两种信号，让空结果的快照、指标和 trace 同样保留不完整状态。各原因
 	// 分别记录：VM 的 partial 位与 source_info_no_route 状态同时出现时仍记 backend_partial，
-	// 它决定共享拓扑的取数路径。
+	// 它决定共享拓扑的取数路径。响应缺了请求的存储时单独记 vm_storage_coverage_mismatch:<存储>；
+	// VM 实例把它也并进 partial 位，所以这时 partial 位不再单记 backend_partial（两者同时出现时
+	// 只能看到覆盖不一致）。取数路径照样按后端不完整处理，见 markPartialRange。
 	var partialReasons []string
 	if noRouteReason != "" {
 		partialReasons = append(partialReasons, noRouteReason)
 	}
-	backendPartial := partial
+	backendPartial, coverage := false, false
 	if status := metadata.GetStatus(queryCtx); status != nil && status.Code == metadata.QueryTsPartial {
-		if status.Message == "source_info_no_route" {
-			partialReasons = append(partialReasons, status.Message)
-		} else {
-			backendPartial = true
+		for _, reason := range strings.Split(status.Message, ";") {
+			switch reason = strings.TrimSpace(reason); {
+			case reason == "":
+			case reason == "source_info_no_route":
+				partialReasons = append(partialReasons, reason)
+			case isStorageCoverageReason(reason):
+				partialReasons = append(partialReasons, reason)
+				coverage = true
+			default:
+				backendPartial = true
+			}
 		}
+	}
+	if partial && !coverage {
+		backendPartial = true
 	}
 	if backendPartial {
 		partialReasons = append(partialReasons, "backend_partial")

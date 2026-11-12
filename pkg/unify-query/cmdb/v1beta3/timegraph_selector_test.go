@@ -11,6 +11,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	pl "github.com/prometheus/prometheus/promql"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func selectorProvider() contractSchemaProvider {
@@ -280,56 +284,102 @@ func TestTopologySelectorDoesNotRestoreDisconnectedAttributeRoutes(t *testing.T)
 	require.Len(t, result.Snapshots[0].Edges, 2)
 }
 
+// 首阶段读取不完整时保留质量状态并按后端不完整规划取数。VM 的 partial 位记 backend_partial；
+// 响应缺了请求的存储时 VM 实例同样置 partial 位并写入带存储名的原因，帧上只记这个原因，
+// 取数次数与 backend_partial 相同。
 func TestTopologySelectorPartialFirstStageRetainsQualityAndChecksWideRoutes(t *testing.T) {
+	const coverageReason = "vm_storage_coverage_mismatch:monitor-op"
 	for _, hops := range []int{2, 6} {
 		for _, missing := range []bool{false, true} {
-			t.Run(fmt.Sprintf("hops=%d/missing=%v", hops, missing), func(t *testing.T) {
-				model := &Model{schemaProvider: selectorProvider()}
-				preparations, fetches := map[string]int{}, map[string]int{}
-				model.timeGraphQueryReference = func(ctx context.Context, ts *structured.QueryTs) (metadata.QueryReference, error) {
-					metric := ts.QueryList[0].FieldName
-					preparations[metric]++
-					if missing && metric == "bc" {
-						return metadata.QueryReference{}, nil
+			for _, signal := range []string{"backend_partial", coverageReason} {
+				t.Run(fmt.Sprintf("hops=%d/missing=%v/signal=%s", hops, missing, signal), func(t *testing.T) {
+					model := &Model{schemaProvider: selectorProvider()}
+					preparations, fetches := map[string]int{}, map[string]int{}
+					model.timeGraphQueryReference = func(ctx context.Context, ts *structured.QueryTs) (metadata.QueryReference, error) {
+						metric := ts.QueryList[0].FieldName
+						preparations[metric]++
+						if missing && metric == "bc" {
+							return metadata.QueryReference{}, nil
+						}
+						return selectorQueryReference(ctx, ts)
 					}
-					return selectorQueryReference(ctx, ts)
-				}
-				model.timeGraphVMQueryWithPartial = func(_ context.Context, ts *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, bool, error) {
-					metric := ts.QueryList[0].FieldName
-					fetches[metric]++
-					if metric == "ab" {
-						return contractMatrix(map[string]string{"a_id": "root", "b_id": "b0"}, 1700000000000), true, nil
+					model.timeGraphVMQueryWithPartial = func(ctx context.Context, ts *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, bool, error) {
+						metric := ts.QueryList[0].FieldName
+						fetches[metric]++
+						if metric == "ab" {
+							if signal == coverageReason {
+								metadata.SetStatus(ctx, metadata.QueryTsPartial, coverageReason)
+							}
+							return contractMatrix(map[string]string{"a_id": "root", "b_id": "b0"}, 1700000000000), true, nil
+						}
+						return contractMatrix(map[string]string{"b_id": "b0", "c_id": "c0"}, 1700000000000), false, nil
 					}
-					return contractMatrix(map[string]string{"b_id": "b0", "c_id": "c0"}, 1700000000000), false, nil
-				}
-				result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: hops})
-				if missing {
-					// 缺路由的宽读取关系按已读且无数据处理：原因与首阶段的 backend_partial 并存，
-					// 其余关系照常读取，缺路由关系不访问后端。
+					result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: hops})
+					if missing {
+						// 缺路由的宽读取关系按已读且无数据处理：原因与首阶段的 backend_partial 并存，
+						// 其余关系照常读取，缺路由关系不访问后端。
+						require.NoError(t, err)
+						require.Positive(t, preparations["bc"])
+						require.Len(t, result.Snapshots[0].Nodes, 2)
+						require.Len(t, result.Snapshots[0].Edges, 2)
+						require.True(t, result.Snapshots[0].Partial)
+						require.Equal(t, map[string]string{"backend_partial": "backend_partial;relation_no_physical_route:bc", coverageReason: "relation_no_physical_route:bc;" + coverageReason}[signal], result.Snapshots[0].PartialReason)
+						require.Equal(t, map[string]int{"ab": 2}, fetches, "the remaining reads are unchanged and the unrouted relation is never fetched")
+						return
+					}
 					require.NoError(t, err)
 					require.Positive(t, preparations["bc"])
-					require.Len(t, result.Snapshots[0].Nodes, 2)
-					require.Len(t, result.Snapshots[0].Edges, 2)
+					require.Len(t, result.Snapshots[0].Nodes, 3)
+					require.Len(t, result.Snapshots[0].Edges, 4)
 					require.True(t, result.Snapshots[0].Partial)
-					require.Equal(t, "backend_partial;relation_no_physical_route:bc", result.Snapshots[0].PartialReason)
-					require.Equal(t, map[string]int{"ab": 2}, fetches, "the remaining reads are unchanged and the unrouted relation is never fetched")
-					return
-				}
-				require.NoError(t, err)
-				require.Positive(t, preparations["bc"])
-				require.Len(t, result.Snapshots[0].Nodes, 3)
-				require.Len(t, result.Snapshots[0].Edges, 4)
-				require.True(t, result.Snapshots[0].Partial)
-				require.Equal(t, "backend_partial", result.Snapshots[0].PartialReason)
-				want := map[string]int{"ab": 2, "bc": 1}
-				if hops == 6 {
-					// 逐跳取数：根读取一次 ab；展开 b0 时按身份读 ab 与 bc，展开 c0 时按身份再读一次 bc。
-					want["bc"] = 2
-				}
-				require.Equal(t, want, fetches, "continue the same loader without repeating source preparation or root probing")
-			})
+					require.Equal(t, signal, result.Snapshots[0].PartialReason)
+					want := map[string]int{"ab": 2, "bc": 1}
+					if hops == 6 {
+						// 逐跳取数：根读取一次 ab；展开 b0 时按身份读 ab 与 bc，展开 c0 时按身份再读一次 bc。
+						want["bc"] = 2
+					}
+					require.Equal(t, want, fetches, "continue the same loader without repeating source preparation or root probing")
+				})
+			}
 		}
 	}
+}
+
+// 首阶段读取不完整时另一侧候选不完整，取数改为从根逐跳读取。存储覆盖不一致与 backend_partial
+// 一样按后端不完整规划，取数方式相同；后端完整时按二部图候选读取。
+func TestTopologyStorageCoverageMismatchPlansLikeBackendPartial(t *testing.T) {
+	const coverageReason = "vm_storage_coverage_mismatch:monitor-op"
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(previous); require.NoError(t, provider.Shutdown(context.Background())) })
+	modes := map[string]string{}
+	for _, signal := range []string{"", "backend_partial", coverageReason} {
+		model := &Model{schemaProvider: selectorProvider(), timeGraphQueryReference: selectorQueryReference}
+		model.timeGraphVMQueryWithPartial = func(ctx context.Context, ts *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, bool, error) {
+			if ts.QueryList[0].FieldName != "ab" {
+				return contractMatrix(map[string]string{"b_id": "b0", "c_id": "c0"}, 1700000000000), false, nil
+			}
+			if signal == coverageReason {
+				metadata.SetStatus(ctx, metadata.QueryTsPartial, coverageReason)
+			}
+			return contractMatrix(map[string]string{"a_id": "root", "b_id": "b0"}, 1700000000000), signal != "", nil
+		}
+		recorder.Reset()
+		result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: 2})
+		require.NoError(t, err)
+		require.Equal(t, signal, result.Snapshots[0].PartialReason)
+		for _, span := range recorder.Ended() {
+			for _, kv := range span.Attributes() {
+				if span.Name() == "timegraph-select-fetch" && kv.Key == attribute.Key("fetch-mode") {
+					modes[signal] = kv.Value.AsString()
+				}
+			}
+		}
+	}
+	require.NotEqual(t, modes[""], modes["backend_partial"], "an incomplete first stage changes the read plan")
+	require.Equal(t, modes["backend_partial"], modes[coverageReason], "a storage coverage mismatch plans reads like backend_partial")
 }
 
 func TestTopologySelectorIgnoresOnlyUnobservableAttributeCollisions(t *testing.T) {

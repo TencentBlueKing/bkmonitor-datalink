@@ -238,6 +238,17 @@ func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relatio
 			},
 			Expands: relation.TransformExpands(expands),
 		}
+		// 集群归属由 CMDB 提供，空集群也需要生成两种业务资源的基础关系。
+		if bizID := cast.ToInt64(r[relation.BizID]); bizID > 0 && cast.ToInt64(r[relation.SetID]) > 0 {
+			biz := strconv.FormatInt(bizID, 10)
+			for _, resource := range []string{relation.Biz, relation.Business} {
+				info.Links = append(info.Links, relation.Link{{
+					ID:       biz,
+					Resource: resource,
+					Label:    map[string]string{relation.BizID: biz},
+				}})
+			}
+		}
 
 		// 如果存在 set_info 数据，则需要注入 set_name 等扩展维度
 		if info.Expands[relation.Set] != nil {

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
@@ -79,6 +80,33 @@ func GetSchemaProvider() SchemaProvider {
 	defaultSchemaProviderMu.RLock()
 	defer defaultSchemaProviderMu.RUnlock()
 	return defaultSchemaProvider
+}
+
+func init() {
+	metric.SetRelationSchemaSourceCounts(relationSchemaSourceCounts)
+}
+
+// EffectiveSchema 返回当前 SchemaProvider 在 namespace 下的生效定义及来源；
+// 外部注入的 Provider 不提供来源时返回 false。
+func EffectiveSchema(namespace string) (relation.EffectiveSchema, bool) {
+	inspector, ok := GetUnderlyingProvider(GetSchemaProvider()).(relation.SchemaSourceInspector)
+	if !ok {
+		return relation.EffectiveSchema{}, false
+	}
+	return inspector.EffectiveSchema(namespace), true
+}
+
+func relationSchemaSourceCounts() []metric.RelationSchemaSourceCount {
+	inspector, ok := GetUnderlyingProvider(GetSchemaProvider()).(relation.SchemaSourceInspector)
+	if !ok {
+		return nil
+	}
+	counts := inspector.SourceCounts()
+	result := make([]metric.RelationSchemaSourceCount, 0, len(counts))
+	for _, count := range counts {
+		result = append(result, metric.RelationSchemaSourceCount{Kind: count.Kind, Source: string(count.Source), Count: count.Count})
+	}
+	return result
 }
 
 var defaultResourceFieldTypes = buildDefaultResourceFieldTypes()

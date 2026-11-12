@@ -25,7 +25,7 @@ type ProviderManager struct {
 // NewProviderManager 根据 providerType 创建并初始化 SchemaProvider。
 // providerType: "static" 或 "redis"
 // redisClient: redis 模式下必须提供
-// staticConfig: static 模式下的硬编码配置
+// staticConfig: 内置定义。static 模式只用它；redis 模式以它作 __all__ 底层，Redis 里的定义作覆盖层
 func NewProviderManager(ctx context.Context, logger Logger, providerType string, redisClient redis.UniversalClient, staticConfig StaticProviderConfig) (*ProviderManager, error) {
 	if logger == nil {
 		logger = &noopLogger{}
@@ -42,7 +42,7 @@ func NewProviderManager(ctx context.Context, logger Logger, providerType string,
 		if redisClient == nil {
 			return nil, fmt.Errorf("redis client is required for redis provider type")
 		}
-		p, err := NewRedisProvider(ctx, redisClient)
+		p, err := NewRedisProvider(ctx, redisClient, WithBaseSchema(staticConfig))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create redis SchemaProvider: %w", err)
 		}

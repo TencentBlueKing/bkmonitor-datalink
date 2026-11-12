@@ -125,15 +125,15 @@ func TestRedisProviderPeriodicReconcileIntegration(t *testing.T) {
 				}, time.Second, time.Millisecond)
 			}
 			require.NoError(t, client.Del(ctx, key).Err())
-			require.NoError(t, client.HSet(ctx, key, NamespaceAll, `{"service":{"name":"service"}}`).Err())
+			require.NoError(t, client.HSet(ctx, key, NamespaceAll, `{"custom_service":{"name":"custom_service"}}`).Err())
 			if interval > 0 {
 				require.Eventually(t, func() bool {
-					_, err := provider.GetResourceDefinition(NamespaceAll, "service")
+					_, err := provider.GetResourceDefinition(NamespaceAll, "custom_service")
 					return err == nil
 				}, time.Second, time.Millisecond)
 			} else {
 				require.Never(t, func() bool {
-					_, err := provider.GetResourceDefinition(NamespaceAll, "service")
+					_, err := provider.GetResourceDefinition(NamespaceAll, "custom_service")
 					return err == nil
 				}, 60*time.Millisecond, 5*time.Millisecond)
 				require.Empty(t, logs.FilterMessageSnippet("periodic Redis").All())

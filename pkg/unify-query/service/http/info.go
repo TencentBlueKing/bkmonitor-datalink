@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta3"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
@@ -26,6 +27,7 @@ import (
 	influxdbService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/influxdb"
 	tsdbService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/tsdb"
 	innerTsdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
@@ -341,6 +343,19 @@ func HandleTsDBPrint(c *gin.Context) {
 	}
 	res += strings.Join(results, "\n\n")
 	c.String(200, res)
+}
+
+// HandleRelationSchemaPrint 打印关联关系定义在 namespace（默认 __all__）下的生效结果与来源，
+// content 为 true 时附带每条定义的内容。只读，不触发重载。
+func HandleRelationSchemaPrint(c *gin.Context) {
+	namespace := c.DefaultQuery("namespace", relation.NamespaceAll)
+	content, _ := strconv.ParseBool(c.DefaultQuery("content", "false"))
+	schema, ok := v1beta3.EffectiveSchema(namespace)
+	if !ok {
+		c.String(500, "current relation schema provider does not expose definition sources")
+		return
+	}
+	c.String(200, relation.PrintEffectiveSchema(schema, content))
 }
 
 // HandleStorage 打印存储配置信息，refresh 不为空则强制刷新

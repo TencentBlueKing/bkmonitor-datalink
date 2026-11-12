@@ -39,6 +39,9 @@ type RedisProviderConfig struct {
 	ReconcileInterval time.Duration
 	ReloadOnStart     bool
 	Logger            Logger // 日志接口
+	// BaseSchema 是 __all__ 的底层（内置）定义；Redis 里的定义只作覆盖层，
+	// 同名定义整条覆盖内置，删掉后内置恢复生效。
+	BaseSchema StaticProviderConfig
 }
 
 // Logger 日志接口，允许外部注入日志实现
@@ -57,6 +60,7 @@ func DefaultRedisProviderConfig() *RedisProviderConfig {
 		ReconcileInterval: defaultRedisReconcileInterval,
 		ReloadOnStart:     true,
 		Logger:            &noopLogger{},
+		BaseSchema:        DefaultStaticProviderConfig(),
 	}
 }
 
@@ -69,7 +73,8 @@ func (l *noopLogger) Errorf(format string, args ...interface{}) {}
 func (l *noopLogger) Debugf(format string, args ...interface{}) {}
 
 // RedisProvider 通用 Redis Schema 提供器
-// 从 Redis 动态加载资源和关联定义，支持 Pub/Sub 热更新与周期性收敛
+// 以内置定义作 __all__ 底层，从 Redis 动态加载覆盖层，支持 Pub/Sub 热更新与周期性收敛。
+// 查找顺序：业务 namespace（Redis）→ __all__（Redis）→ 内置；Redis 为空时等于完整内置。
 //
 // Redis 数据结构:
 //   - key:   bkmonitorv3:entity:ResourceDefinition
@@ -79,10 +84,13 @@ type RedisProvider struct {
 	client redis.UniversalClient
 	config *RedisProviderConfig
 
-	// 外层 key: namespace, 内层 key: resource/relation name
+	// Redis 覆盖层。外层 key: namespace, 内层 key: resource/relation name
 	resourceDefinitions map[string]map[string]*ResourceDefinition
 	relationDefinitions map[string]map[string]*RelationDefinition
-	mu                  sync.RWMutex
+	// 内置底层，构造后不再变化；订阅与对账只更新覆盖层。
+	builtinResources map[string]*ResourceDefinition
+	builtinRelations map[string]*RelationDefinition
+	mu               sync.RWMutex
 	// Serializes full snapshots and Pub/Sub reloads so an older snapshot cannot
 	// overwrite a newer namespace update.
 	reloadMu sync.Mutex
@@ -121,6 +129,13 @@ func WithReconnectConfig(interval time.Duration, maxRetry int) RedisProviderOpti
 	}
 }
 
+// WithBaseSchema 设置内置底层定义，默认 DefaultStaticProviderConfig。
+func WithBaseSchema(base StaticProviderConfig) RedisProviderOption {
+	return func(config *RedisProviderConfig) {
+		config.BaseSchema = base
+	}
+}
+
 // WithReconcileInterval sets the interval for recovering missed Pub/Sub updates.
 // A non-positive interval disables periodic reconciliation.
 func WithReconcileInterval(interval time.Duration) RedisProviderOption {
@@ -136,19 +151,10 @@ func NewRedisProvider(ctx context.Context, client redis.UniversalClient, opts ..
 		opt(config)
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-	provider := &RedisProvider{
-		client:              client,
-		config:              config,
-		resourceDefinitions: make(map[string]map[string]*ResourceDefinition),
-		relationDefinitions: make(map[string]map[string]*RelationDefinition),
-		ctx:                 ctx,
-		cancel:              cancel,
-	}
-
+	provider := newRedisProvider(ctx, client, config)
 	if config.ReloadOnStart {
 		if err := provider.loadAllEntities(); err != nil {
-			cancel()
+			provider.cancel()
 			return nil, fmt.Errorf("failed to load entities: %w", err)
 		}
 	}
@@ -161,6 +167,22 @@ func NewRedisProvider(ctx context.Context, client redis.UniversalClient, opts ..
 	}
 
 	return provider, nil
+}
+
+// newRedisProvider 构造覆盖层为空、内置底层就绪的 Provider，不读取 Redis，也不启动订阅。
+func newRedisProvider(ctx context.Context, client redis.UniversalClient, config *RedisProviderConfig) *RedisProvider {
+	ctx, cancel := context.WithCancel(ctx)
+	base := NewStaticSchemaProvider(config.BaseSchema)
+	return &RedisProvider{
+		client:              client,
+		config:              config,
+		resourceDefinitions: make(map[string]map[string]*ResourceDefinition),
+		relationDefinitions: make(map[string]map[string]*RelationDefinition),
+		builtinResources:    base.resourceDefinitions,
+		builtinRelations:    base.relationDefinitions,
+		ctx:                 ctx,
+		cancel:              cancel,
+	}
 }
 
 // Close 关闭提供器，幂等，可多次调用
@@ -220,14 +242,16 @@ func (rp *RedisProvider) loadAllEntities() error {
 	}
 	resourceChanges := changedNamespaces(rp.resourceDefinitions, resources)
 	relationChanges := changedNamespaces(rp.relationDefinitions, relations)
+	inheritors := rp.businessNamespacesLocked()
 	rp.resourceDefinitions = resources
 	rp.relationDefinitions = relations
+	inheritors = mergeNamespaces(inheritors, rp.businessNamespacesLocked())
 	rp.mu.Unlock()
 
-	for _, namespace := range resourceChanges {
+	for _, namespace := range withInheritors(resourceChanges, inheritors) {
 		rp.triggerCallbacks(KindResourceDefinition, namespace)
 	}
-	for _, namespace := range relationChanges {
+	for _, namespace := range withInheritors(relationChanges, inheritors) {
 		rp.triggerCallbacks(KindRelationDefinition, namespace)
 	}
 	if changed := len(resourceChanges) + len(relationChanges); changed > 0 {
@@ -310,6 +334,46 @@ func changedNamespaces[T any](previous, current map[string]map[string]*T) []stri
 		}
 	}
 	sort.Strings(changed)
+	return changed
+}
+
+// businessNamespacesLocked 返回覆盖层里除 __all__ 外的 namespace，调用方需持有 rp.mu。
+func (rp *RedisProvider) businessNamespacesLocked() []string {
+	namespaces := make([]string, 0, len(rp.resourceDefinitions)+len(rp.relationDefinitions))
+	for namespace := range rp.resourceDefinitions {
+		namespaces = append(namespaces, namespace)
+	}
+	for namespace := range rp.relationDefinitions {
+		namespaces = append(namespaces, namespace)
+	}
+	return mergeNamespaces(namespaces)
+}
+
+// mergeNamespaces 合并、去重并排序，去掉 __all__。
+func mergeNamespaces(groups ...[]string) []string {
+	seen := make(map[string]struct{})
+	for _, group := range groups {
+		for _, namespace := range group {
+			if namespace != NamespaceAll {
+				seen[namespace] = struct{}{}
+			}
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for namespace := range seen {
+		result = append(result, namespace)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// withInheritors 在 __all__ 变化时补上各业务 namespace：它们继承 __all__，生效定义也跟着变。
+func withInheritors(changed, inheritors []string) []string {
+	for _, namespace := range changed {
+		if namespace == NamespaceAll {
+			return append([]string{NamespaceAll}, mergeNamespaces(changed, inheritors)...)
+		}
+	}
 	return changed
 }
 
@@ -457,6 +521,14 @@ func (rp *RedisProvider) subscribeEntities() {
 					}
 
 					rp.triggerCallbacks(payload.Kind, payload.Namespace)
+					if rp.normalizeNamespace(payload.Namespace) == NamespaceAll {
+						rp.mu.RLock()
+						inheritors := rp.businessNamespacesLocked()
+						rp.mu.RUnlock()
+						for _, namespace := range inheritors {
+							rp.triggerCallbacks(payload.Kind, namespace)
+						}
+					}
 				}
 			}
 		}()
@@ -487,159 +559,84 @@ func (rp *RedisProvider) subscribeEntities() {
 	}
 }
 
-// GetResourceDefinition 获取资源定义
+// GetResourceDefinition 获取资源定义，按 业务 namespace → __all__ → 内置 查找
 func (rp *RedisProvider) GetResourceDefinition(namespace, name string) (*ResourceDefinition, error) {
 	rp.mu.RLock()
 	defer rp.mu.RUnlock()
 
-	ns := rp.normalizeNamespace(namespace)
-
-	// 先从指定 namespace 查找
-	if nsMap, ok := rp.resourceDefinitions[ns]; ok {
-		if def, ok := nsMap[name]; ok {
-			return def, nil
-		}
+	if def, ok := lookupLayered(rp.resourceDefinitions, rp.builtinResources, rp.normalizeNamespace(namespace), name); ok {
+		return def, nil
 	}
-
-	// 如果指定 namespace 没找到，尝试从 __all__ 查找
-	if ns != NamespaceAll {
-		if allMap, ok := rp.resourceDefinitions[NamespaceAll]; ok {
-			if def, ok := allMap[name]; ok {
-				return def, nil
-			}
-		}
-	}
-
 	rp.config.Logger.Debugf("resource definition not found: namespace=%s, name=%s", namespace, name)
 	return nil, ErrResourceDefinitionNotFound
 }
 
-// ListResourceDefinitions 列出指定命名空间下的所有资源定义
-// namespace 为空或 "__all__" 时只返回全局定义；指定业务 namespace 时合并 __all__ 作为兜底
+// ListResourceDefinitions 列出指定命名空间下生效的资源定义：
+// 业务 namespace、__all__ 与内置按查找顺序合并，同名只取上层整条定义
 func (rp *RedisProvider) ListResourceDefinitions(namespace string) ([]*ResourceDefinition, error) {
 	rp.mu.RLock()
 	defer rp.mu.RUnlock()
-
-	result := make([]*ResourceDefinition, 0)
-	ns := rp.normalizeNamespace(namespace)
-	seen := make(map[string]struct{})
-
-	if nsMap, ok := rp.resourceDefinitions[ns]; ok {
-		for name, def := range nsMap {
-			result = append(result, def)
-			seen[name] = struct{}{}
-		}
-	}
-
-	// 合并 __all__ 的定义（指定 namespace 优先）
-	if ns != NamespaceAll {
-		if allMap, ok := rp.resourceDefinitions[NamespaceAll]; ok {
-			for name, def := range allMap {
-				if _, exists := seen[name]; !exists {
-					result = append(result, def)
-				}
-			}
-		}
-	}
-	return result, nil
+	return definitionsOf(listLayered(rp.resourceDefinitions, rp.builtinResources, rp.normalizeNamespace(namespace))), nil
 }
 
-// ListAllResourceDefinitions 返回所有命名空间下的资源定义，按 namespace 分组
+// ListAllResourceDefinitions 返回 __all__ 与覆盖层各 namespace 生效的资源定义，按 namespace 分组
 func (rp *RedisProvider) ListAllResourceDefinitions() (map[string][]*ResourceDefinition, error) {
 	rp.mu.RLock()
 	defer rp.mu.RUnlock()
 
-	result := make(map[string][]*ResourceDefinition, len(rp.resourceDefinitions))
-	for ns, nsMap := range rp.resourceDefinitions {
-		defs := make([]*ResourceDefinition, 0, len(nsMap))
-		for _, def := range nsMap {
-			defs = append(defs, def)
-		}
-		result[ns] = defs
+	namespaces := rp.namespacesLocked()
+	result := make(map[string][]*ResourceDefinition, len(namespaces))
+	for _, ns := range namespaces {
+		result[ns] = definitionsOf(listLayered(rp.resourceDefinitions, rp.builtinResources, ns))
 	}
 	return result, nil
 }
 
-// GetRelationDefinition 获取关联定义
+// GetRelationDefinition 获取关联定义，按 业务 namespace → __all__ → 内置 查找
 func (rp *RedisProvider) GetRelationDefinition(namespace, name string) (*RelationDefinition, error) {
 	rp.mu.RLock()
 	defer rp.mu.RUnlock()
 
-	ns := rp.normalizeNamespace(namespace)
-
-	// 先从指定 namespace 查找
-	if nsMap, ok := rp.relationDefinitions[ns]; ok {
-		if def, ok := nsMap[name]; ok {
-			return def, nil
-		}
+	if def, ok := lookupLayered(rp.relationDefinitions, rp.builtinRelations, rp.normalizeNamespace(namespace), name); ok {
+		return def, nil
 	}
-
-	// 如果指定 namespace 没找到，尝试从 __all__ 查找
-	if ns != NamespaceAll {
-		if allMap, ok := rp.relationDefinitions[NamespaceAll]; ok {
-			if def, ok := allMap[name]; ok {
-				return def, nil
-			}
-		}
-	}
-
 	rp.config.Logger.Debugf("relation definition not found: namespace=%s, name=%s", namespace, name)
 	return nil, ErrRelationDefinitionNotFound
 }
 
-// ListRelationDefinitions 列出指定命名空间下的所有关联定义
-// namespace 为空或 "__all__" 时只返回全局定义；指定业务 namespace 时合并 __all__ 作为兜底
+// ListRelationDefinitions 列出指定命名空间下生效的关联定义：
+// 业务 namespace、__all__ 与内置按查找顺序合并，同名只取上层整条定义
 func (rp *RedisProvider) ListRelationDefinitions(namespace string) ([]*RelationDefinition, error) {
 	rp.mu.RLock()
 	defer rp.mu.RUnlock()
-
-	result := make([]*RelationDefinition, 0)
-	ns := rp.normalizeNamespace(namespace)
-	seen := make(map[string]struct{})
-
-	if nsMap, ok := rp.relationDefinitions[ns]; ok {
-		for name, def := range nsMap {
-			result = append(result, def)
-			seen[name] = struct{}{}
-		}
-	}
-
-	// 合并 __all__（指定 namespace 优先）
-	if ns != NamespaceAll {
-		if allMap, ok := rp.relationDefinitions[NamespaceAll]; ok {
-			for name, def := range allMap {
-				if _, exists := seen[name]; !exists {
-					result = append(result, def)
-				}
-			}
-		}
-	}
-	return result, nil
+	return definitionsOf(listLayered(rp.relationDefinitions, rp.builtinRelations, rp.normalizeNamespace(namespace))), nil
 }
 
-// ListAllRelationDefinitions 返回所有命名空间下的关联定义，按 namespace 分组
+// ListAllRelationDefinitions 返回 __all__ 与覆盖层各 namespace 生效的关联定义，按 namespace 分组
 func (rp *RedisProvider) ListAllRelationDefinitions() (map[string][]*RelationDefinition, error) {
 	rp.mu.RLock()
 	defer rp.mu.RUnlock()
 
-	result := make(map[string][]*RelationDefinition, len(rp.relationDefinitions))
-	for ns, nsMap := range rp.relationDefinitions {
-		defs := make([]*RelationDefinition, 0, len(nsMap))
-		for _, def := range nsMap {
-			defs = append(defs, def)
-		}
-		result[ns] = defs
+	namespaces := rp.namespacesLocked()
+	result := make(map[string][]*RelationDefinition, len(namespaces))
+	for _, ns := range namespaces {
+		result[ns] = definitionsOf(listLayered(rp.relationDefinitions, rp.builtinRelations, ns))
 	}
 	return result, nil
 }
 
-// GetResourcePrimaryKeys 获取资源类型的主键字段列表
+// namespacesLocked 返回 __all__ 与覆盖层里的全部 namespace，__all__ 在前，调用方需持有 rp.mu。
+func (rp *RedisProvider) namespacesLocked() []string {
+	return append([]string{NamespaceAll}, rp.businessNamespacesLocked()...)
+}
+
+// GetResourcePrimaryKeys 获取资源类型的主键字段列表，先查 __all__ 的生效定义，再按名字顺序查业务 namespace
 func (rp *RedisProvider) GetResourcePrimaryKeys(resourceType ResourceType) []string {
 	rp.mu.RLock()
 	defer rp.mu.RUnlock()
 
-	for _, nsMap := range rp.resourceDefinitions {
-		for _, rd := range nsMap {
+	for _, ns := range rp.namespacesLocked() {
+		for _, rd := range definitionsOf(listLayered(rp.resourceDefinitions, rp.builtinResources, ns)) {
 			if ToResourceType(rd) == resourceType {
 				return rd.GetPrimaryKeys()
 			}
@@ -648,13 +645,13 @@ func (rp *RedisProvider) GetResourcePrimaryKeys(resourceType ResourceType) []str
 	return []string{}
 }
 
-// GetRelationSchema 获取关联关系的 Schema
+// GetRelationSchema 获取关联关系的 Schema，查找顺序与 GetResourcePrimaryKeys 相同
 func (rp *RedisProvider) GetRelationSchema(relationType RelationName) (*RelationSchema, error) {
 	rp.mu.RLock()
 	defer rp.mu.RUnlock()
 
-	for _, nsMap := range rp.relationDefinitions {
-		for _, rd := range nsMap {
+	for _, ns := range rp.namespacesLocked() {
+		for _, rd := range definitionsOf(listLayered(rp.relationDefinitions, rp.builtinRelations, ns)) {
 			if ToRelationName(rd) == relationType {
 				schema := ToRelationSchema(rd)
 				return &schema, nil
@@ -664,18 +661,50 @@ func (rp *RedisProvider) GetRelationSchema(relationType RelationName) (*Relation
 	return nil, ErrRelationDefinitionNotFound
 }
 
-// ListRelationSchemas 列出所有关联 Schema
+// ListRelationSchemas 列出 __all__ 的生效关联 Schema 与各业务 namespace 在 Redis 里的关联 Schema
 func (rp *RedisProvider) ListRelationSchemas() []RelationSchema {
 	rp.mu.RLock()
 	defer rp.mu.RUnlock()
 
-	result := make([]RelationSchema, 0)
-	for _, nsMap := range rp.relationDefinitions {
-		for _, rd := range nsMap {
-			result = append(result, ToRelationSchema(rd))
+	result := make([]RelationSchema, 0, len(rp.builtinRelations))
+	for _, rd := range definitionsOf(listLayered(rp.relationDefinitions, rp.builtinRelations, NamespaceAll)) {
+		result = append(result, ToRelationSchema(rd))
+	}
+	for _, ns := range rp.businessNamespacesLocked() {
+		names := make([]string, 0, len(rp.relationDefinitions[ns]))
+		for name := range rp.relationDefinitions[ns] {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			result = append(result, ToRelationSchema(rp.relationDefinitions[ns][name]))
 		}
 	}
 	return result
+}
+
+// EffectiveSchema 返回 namespace 的生效定义及每条定义的来源
+func (rp *RedisProvider) EffectiveSchema(namespace string) EffectiveSchema {
+	rp.mu.RLock()
+	defer rp.mu.RUnlock()
+
+	ns := rp.normalizeNamespace(namespace)
+	return EffectiveSchema{
+		Provider:  rp.Name(),
+		Namespace: ns,
+		Lookup:    lookupOrder(ns),
+		Resources: effectiveDefinitions(listLayered(rp.resourceDefinitions, rp.builtinResources, ns), SameResourceDefinition),
+		Relations: effectiveDefinitions(listLayered(rp.relationDefinitions, rp.builtinRelations, ns), SameRelationDefinition),
+	}
+}
+
+// SourceCounts 统计生效定义的来源
+func (rp *RedisProvider) SourceCounts() []SourceCount {
+	rp.mu.RLock()
+	defer rp.mu.RUnlock()
+
+	return append(countSources(KindResourceDefinition, rp.resourceDefinitions, rp.builtinResources),
+		countSources(KindRelationDefinition, rp.relationDefinitions, rp.builtinRelations)...)
 }
 
 // FindRelationByResourceTypes 根据资源类型和方向类型查找关联定义
@@ -714,16 +743,11 @@ func (rp *RedisProvider) Name() string {
 	return "redis"
 }
 
-// ListNamespaces returns all namespaces that have resource definitions
+// ListNamespaces returns __all__ and every namespace that has definitions in Redis
 func (rp *RedisProvider) ListNamespaces() ([]string, error) {
 	rp.mu.RLock()
 	defer rp.mu.RUnlock()
-
-	namespaces := make([]string, 0, len(rp.resourceDefinitions))
-	for ns := range rp.resourceDefinitions {
-		namespaces = append(namespaces, ns)
-	}
-	return namespaces, nil
+	return rp.namespacesLocked(), nil
 }
 
 func (rp *RedisProvider) Subscribe(callback SchemaChangeCallback) error {
@@ -760,4 +784,7 @@ func (rp *RedisProvider) triggerCallbacks(kind, namespace string) {
 }
 
 // Ensure RedisProvider implements SchemaProvider
-var _ SchemaProvider = (*RedisProvider)(nil)
+var (
+	_ SchemaProvider        = (*RedisProvider)(nil)
+	_ SchemaSourceInspector = (*RedisProvider)(nil)
+)

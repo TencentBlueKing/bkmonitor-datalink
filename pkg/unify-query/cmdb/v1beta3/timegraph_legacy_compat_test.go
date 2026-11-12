@@ -79,6 +79,37 @@ func TestLegacyMissingRouteQuality(t *testing.T) {
 	}
 }
 
+// 兼容入口的不完整原因带上缺失的存储名，不再只记 backend_partial；读到的目标照常返回。
+func TestLegacyStorageCoverageReasonNamesStorage(t *testing.T) {
+	const reason = "vm_storage_coverage_mismatch:monitor-op"
+	for _, mode := range []string{"instant", "range"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := initTimeGraphQueryTestEnvironment()
+			model := legacyRegressionModel(legacyAlternativeProvider(true))
+			model.timeGraphVMQueryWithPartial = func(ctx context.Context, query *structured.QueryTs, _ string, _ bool, start, _ time.Time, _ time.Duration) (pl.Matrix, bool, error) {
+				// 与 VM 实例相同：响应缺了请求的存储时置 partial 位并写入带存储名的原因。
+				metadata.SetStatus(ctx, metadata.QueryTsPartial, reason)
+				return legacyAlternativeMatrix(query.QueryList[0].FieldName, start.UnixMilli()), true, nil
+			}
+			var count int
+			if mode == "instant" {
+				_, _, _, _, targets, err := model.QueryResourceMatcher(ctx, "24h", "space", "1700000040", "target", "source", cmdb.Matcher{"source_id": "a"}, nil, false, nil)
+				require.NoError(t, err)
+				count = len(targets)
+			} else {
+				_, _, _, _, targets, err := model.QueryResourceMatcherRange(ctx, "", "space", "1m", "1700000040", "1700000100", "target", "source", cmdb.Matcher{"source_id": "a"}, nil, false, nil)
+				require.NoError(t, err)
+				count = len(targets)
+			}
+			require.Equal(t, 1, count)
+			status := metadata.GetStatus(ctx)
+			require.NotNil(t, status)
+			require.Equal(t, metadata.QueryTsPartial, status.Code)
+			require.Equal(t, reason, status.Message)
+		})
+	}
+}
+
 func TestLegacyCandidateQualityAndLastEmptyPath(t *testing.T) {
 	backendFailure := errors.New("backend failed")
 	for _, tc := range []struct {

@@ -169,6 +169,7 @@ compact 版本为 `version:1`；timestamps 是整份网格，节点/边按属性
 | 显式根属性查询缺 info 路由 | 200 / 200 | 空帧且 partial=true、source_info_no_route；不能当确认无实体 |
 | 取数时遇到的缺路由关系 | 200 / 200 | 保留其他关系取得的图；所有帧 partial=true，partial_reason 含 relation_no_physical_route:<指标>，不宣称完整。实际读取的关系都缺路由时为空帧加同样标记 |
 | 后端 partial | 200 / 200 | 保留已有图并标记对应帧 backend_partial；不宣称完整 |
+| 响应缺了请求的存储 | 200 / 200 | 保留已有图，对应帧 partial_reason 为 `vm_storage_coverage_mismatch:<存储>`（最多列 3 个存储，其余记 `+N`），不再记成 backend_partial；取数路径仍按后端不完整处理，不宣称完整 |
 | 一帧有多个不完整原因 | 200 / 200 | partial_reason 按字典序排列、以 `;` 连接，如 `backend_partial;relation_no_physical_route:<指标>`；compact 的 partial[].reason 相同 |
 | 参数非法或单项后端执行失败 | 200 / 400 | 此项无可用图，保留其他成功项；失败 compact=null 或 snapshots=[] |
 | JSON 错误、请求体/批次数量超限 | 400 / 无 data 项 | 整个请求失败，直接响应为 {error:...} |
@@ -209,7 +210,7 @@ compact 版本为 `version:1`；timestamps 是整份网格，节点/边按属性
 
 旧 instant/range 接口及其代理保持原响应结构，不返回 `partial`、`partial_reason`、`truncated`、`truncated_reason`。后端部分返回或候选缺物理路由时保留已有结果；执行失败仍使用单项 `code=400` 和 `message`，`target_list` 保持数组。内部质量状态继续用于路径选择和排障。
 
-`unify_query_cmdb_relation_quality_total{entry,query_mode,quality,reason}` 记录每个兼容接口子查询（`entry=compat`）的质量事件，`query_mode` 为 `instant/range`，`quality` 为 `partial/truncated`。同一子查询的同类原因只计一次；多个不同原因各计一次，不能将原因计数相加当作请求数。`reason` 使用固定类别（例如 `backend_partial`、`relation_no_physical_route`、`vm_storage_coverage_mismatch`、`max_response_bytes`），未识别原因归入 `other`。指标不带业务 ID、资源 ID 或物理指标名；完整原因保留在子查询 trace 的 `relation-partial-reason` / `relation-truncated-reason` 中，布尔属性分别为 `relation-partial` / `relation-truncated`。正常项和普通执行失败不增加质量计数。topology 子查询也按各帧不完整原因的并集计入同一指标（`entry=topology`、`quality=partial`），缺路由计为 `relation_no_physical_route`、后端不完整计为 `backend_partial`；完整原因在模型 span `timegraph-query-shared-topology` 的 `partial-reasons` 属性中。
+`unify_query_cmdb_relation_quality_total{entry,query_mode,quality,reason}` 记录每个兼容接口子查询（`entry=compat`）的质量事件，`query_mode` 为 `instant/range`，`quality` 为 `partial/truncated`。同一子查询的同类原因只计一次；多个不同原因各计一次，不能将原因计数相加当作请求数。`reason` 使用固定类别（例如 `backend_partial`、`relation_no_physical_route`、`vm_storage_coverage_mismatch`、`max_response_bytes`），未识别原因归入 `other`。指标不带业务 ID、资源 ID 或物理指标名；完整原因保留在子查询 trace 的 `relation-partial-reason` / `relation-truncated-reason` 中，布尔属性分别为 `relation-partial` / `relation-truncated`。正常项和普通执行失败不增加质量计数。topology 子查询也按各帧不完整原因的并集计入同一指标（`entry=topology`、`quality=partial`），缺路由计为 `relation_no_physical_route`、后端不完整计为 `backend_partial`、响应缺了请求的存储计为 `vm_storage_coverage_mismatch`（原因里带的存储名不进标签）；完整原因在模型 span `timegraph-query-shared-topology` 的 `partial-reasons` 属性中。
 
 旧 range 兼容 VM 缓存网格：秒级 wire 步长不超过 60 秒且至少 50 个采样点时，起点向下对齐到步长边界，保留采样点数；短查询与不对齐的长步长查询保留原起点。比如 `start=1793259612,end=1793263212,step=60s` 使用 `1793259600..1793263200`。毫秒/微秒/纳秒时间戳仍先按旧 wire 规则转成整数秒，`1500ms` 仍保留 1500ms 聚合窗口和 1 秒采样步长。topology 接口继续使用精确网格和质量协议。
 

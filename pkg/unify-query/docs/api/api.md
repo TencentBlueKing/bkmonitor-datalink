@@ -1146,7 +1146,31 @@ TimeGraph 新旧关系接口选择、完整参数、双格式与失败合同见 
 
 **响应**: 文本格式的 TSDB 信息
 
-### 7.7 特性开关
+### 7.7 打印关联关系定义来源
+
+**接口**: `GET /relation_schema_print`
+
+**描述**: 只读，打印关联关系定义在指定 namespace 下的生效结果及每条定义的来源，不触发重载。查找顺序为业务 namespace（Redis）→ `__all__`（Redis）→ 内置；static 模式只有内置一层。
+
+**查询参数**:
+
+| 参数        | 类型   | 必填 | 说明                                   |
+| ----------- | ------ | ---- | -------------------------------------- |
+| `namespace` | string | 否   | 空间 UID，默认 `__all__`               |
+| `content`   | bool   | 否   | 是否附带每条定义的 JSON，默认 `false` |
+
+**响应**: 文本。前几行是 provider、namespace、查找顺序和两类定义按来源的计数，其后每条定义一行：`名称<TAB>来源<TAB>builtin=same|differs|none`。来源取值：
+
+| 来源        | 含义                                         |
+| ----------- | -------------------------------------------- |
+| `builtin`   | 内置定义，Redis 没有同名定义                 |
+| `override`  | Redis `__all__` 的同名定义整条覆盖内置       |
+| `extension` | Redis `__all__` 新增，内置没有同名定义       |
+| `namespace` | 业务 namespace 在 Redis 里的定义             |
+
+`builtin=same` 表示与同名内置在读方使用的字段上一致（资源的字段名、是否主键与顺序，缺类型按内置补齐；关系的两端、类别、方向、从属标记和 `metric_name`），删掉这条 Redis 定义不改变查询；`differs` 表示删掉后会回到内置内容。对应指标 `unify_query_relation_schema_definitions{kind,source}` 统计 `__all__` 的生效定义与全部业务 namespace 的定义条数。
+
+### 7.8 特性开关
 
 **接口**: `GET /ff`
 
@@ -1164,7 +1188,7 @@ TimeGraph 新旧关系接口选择、完整参数、双格式与失败合同见 
 
 **响应**: 文本格式的特性开关信息
 
-### 7.8 代理接口
+### 7.9 代理接口
 
 **接口**: `POST /proxy`
 
@@ -1211,7 +1235,7 @@ TimeGraph 新旧关系接口选择、完整参数、双格式与失败合同见 
 }
 ```
 
-### 7.9 Prometheus 指标
+### 7.10 Prometheus 指标
 
 **接口**: `GET /metrics`
 

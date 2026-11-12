@@ -235,7 +235,11 @@ func (i *Instance) tryFallbackEmptyMissingMappingIndexesWithObservation(
 		log.Warnf(ctx, "es raw batch child missing mapping fallback triggered")
 	}
 
-	retryRes, retryErr := client.Search().Index(retryIndexes...).SearchSource(retrySource).Do(ctx)
+	retrySearch := client.Search().Index(retryIndexes...).SearchSource(retrySource)
+	if partialShardResults(ctx) != nil {
+		retrySearch.AllowPartialSearchResults(true)
+	}
+	retryRes, retryErr := retrySearch.Do(ctx)
 	if retryErr != nil {
 		span.Set("fallback_error", fmt.Sprintf("retry: %v", retryErr))
 		return nil, nil, false
@@ -288,12 +292,15 @@ func resolvePhysicalIndexes(ctx context.Context, span *trace.Span, client *elast
 // 检查超时、分片失败和 total-hits relation，才能把索引当成空索引；CountService
 // 只返回 count 值。
 func searchExactTotalHits(ctx context.Context, client *elastic.Client, indexes []string, query elastic.Query) (int64, error) {
-	res, err := client.Search().
+	search := client.Search().
 		Index(indexes...).
 		Query(query).
 		Size(0).
-		TrackTotalHits(true).
-		Do(ctx)
+		TrackTotalHits(true)
+	if partialShardResults(ctx) != nil {
+		search.AllowPartialSearchResults(false)
+	}
+	res, err := search.Do(ctx)
 	if err != nil {
 		return 0, err
 	}

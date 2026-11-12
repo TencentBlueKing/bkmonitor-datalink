@@ -410,6 +410,10 @@ TimeGraph 新旧关系接口选择、完整参数、双格式与失败合同见 
 
 **请求体**: 同结构体查询
 
+`allow_partial_es_results` 是请求体顶层布尔值，默认 `false`。开启时，ES 查询可以返回未超时且有实际成功分片的部分聚合结果，响应携带 `is_partial=true` 和 `status.code = "QUERY_TS_PARTIAL"`，零聚合桶也保留该状态。最终采用的 ES 响应为 `timed_out=true` 时该子查询失败。此选项的 ES 原生参数与完整性条件同原始查询。
+
+跨存储路由、无时间分桶的 `avg` 由各路由的 `sum` 和 `count` 合并计算。若某个 ES 路由的任一查询存在分片失败，该路由不参与合并；其他成功路由的结果仍可返回并标记不完整，所有路由均失败时返回错误。
+
 **响应格式**: 同结构体查询（返回 `PromData` 格式，包含 `result_table_id`）
 
 ### 2.4 原始查询
@@ -421,6 +425,10 @@ TimeGraph 新旧关系接口选择、完整参数、双格式与失败合同见 
 **请求头**: 同结构体查询（需要 `X-Bk-Scope-Space-Uid`）
 
 **请求体**: 同结构体查询
+
+`allow_partial_es_results` 是请求体顶层布尔值，默认 `false`。设为 `true` 时，普通查询、`search_after` 和 ES 批量查询向 ES 传递 `allow_partial_search_results=true`，接纳未超时且至少一个实际执行分片成功的部分分片结果。此时响应携带 `status.code = "QUERY_RAW_PARTIAL"`，`list` 和 `total` 只反映本次可用的结果，零命中也保留该状态。最终采用的 ES 响应为 `timed_out=true` 时该子查询失败，无论失败分片数是否为零。已有受限 missing-mapping fallback 在完整证明空索引并重试成功后，按最终响应确定完整性。该选项与 `exact_total=true` 或 Scroll 互斥。
+
+`search_after` 的 `QUERY_RAW_PARTIAL` 只描述当前页。即使失败的分片在后续页恢复，游标之前缺失的记录也不会自动补回。调用方需要保留跨页的不完整状态；需要完整结果时，应从头重试查询。
 
 `query_list[].exact_total`（bool，默认 `false`）：请求 Elasticsearch 返回精确命中总数（`track_total_hits`）。仅对单个、非聚合、全部路由到 ES 的原始查询生效（不含 `sql`、`scroll`、`collapse`、多查询合并），其他情况直接报错而不是返回看似精确的总数；ES 响应超时、分片失败或 `total.relation` 不为 `eq` 时报错；任一 ES 路由缺少索引前缀时报错（不请求时仍按原逻辑跳过该路由）。满足时响应带 `"total_exact": true`。不设置时请求体与响应与之前一致。
 

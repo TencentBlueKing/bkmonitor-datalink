@@ -272,7 +272,7 @@ func HandlerQueryRaw(c *gin.Context) {
 		).Error(ctx, err))
 		return
 	}
-	if err = validateQueryTsRawPagination(queryTs); err != nil {
+	if err = validateQueryTsRawOptions(queryTs); err != nil {
 		resp.failed(ctx, metadata.NewMessage(
 			metadata.MsgQueryRaw,
 			"查询参数校验异常",
@@ -412,6 +412,10 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	if exactTotalRequested(queryTs) {
 		// a scrolled total is summed page by page and across routes; it cannot be attested as exact
 		err = fmt.Errorf("exact_total is not supported by query_raw_with_scroll")
+		return
+	}
+	if queryTs.AllowPartialESResults {
+		err = fmt.Errorf("allow_partial_es_results is not supported by query_raw_with_scroll")
 		return
 	}
 
@@ -846,6 +850,31 @@ func validateQueryTsRawPagination(queryTs *structured.QueryTs) error {
 	}
 	if queryTs.Scroll != "" {
 		return fmt.Errorf("is_search_after cannot be combined with scroll")
+	}
+	return nil
+}
+
+func validateQueryTsRawOptions(queryTs *structured.QueryTs) error {
+	if err := validateQueryTsRawPagination(queryTs); err != nil {
+		return err
+	}
+	return validatePartialESResults(queryTs)
+}
+
+func validatePartialESResults(queryTs *structured.QueryTs) error {
+	if queryTs == nil || !queryTs.AllowPartialESResults {
+		return nil
+	}
+	if exactTotalRequested(queryTs) {
+		return fmt.Errorf("allow_partial_es_results cannot be combined with exact_total")
+	}
+	if queryTs.Scroll != "" {
+		return fmt.Errorf("allow_partial_es_results cannot be combined with scroll")
+	}
+	for _, option := range queryTs.ResultTableOptions {
+		if option != nil && option.ScrollID != "" {
+			return fmt.Errorf("allow_partial_es_results cannot be combined with scroll")
+		}
 	}
 	return nil
 }

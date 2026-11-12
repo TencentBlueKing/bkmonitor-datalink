@@ -48,15 +48,16 @@ func (p *PreparedFieldMetadata) FieldsMap() metadata.FieldsMap {
 // PreparedRawQuery owns all mutable query and formatter state for one logical
 // result-table member. It must not be shared by multiple terminal schedulers.
 type PreparedRawQuery struct {
-	query         *metadata.Query
-	queryOption   *queryOption
-	fieldMetadata *PreparedFieldMetadata
-	fact          *FormatFactory
-	source        *elastic.SearchSource
-	countQuery    elastic.Query
-	body          string
-	connectionKey RawBatchConnectionKey
-	claimed       atomic.Bool
+	query               *metadata.Query
+	queryOption         *queryOption
+	fieldMetadata       *PreparedFieldMetadata
+	fact                *FormatFactory
+	source              *elastic.SearchSource
+	countQuery          elastic.Query
+	body                string
+	connectionKey       RawBatchConnectionKey
+	claimed             atomic.Bool
+	allowPartialResults bool
 }
 
 // FieldsMap returns a deep copy so highlight collection cannot mutate the
@@ -181,14 +182,15 @@ func (i *Instance) PrepareRawQuery(
 	}
 
 	return &PreparedRawQuery{
-		query:         rawQuery,
-		queryOption:   qo,
-		fieldMetadata: fieldMetadata,
-		fact:          fact,
-		source:        source,
-		countQuery:    countQuery,
-		body:          body,
-		connectionKey: i.RawBatchConnectionKey(ctx),
+		query:               rawQuery,
+		queryOption:         qo,
+		fieldMetadata:       fieldMetadata,
+		fact:                fact,
+		source:              source,
+		countQuery:          countQuery,
+		body:                body,
+		connectionKey:       i.RawBatchConnectionKey(ctx),
+		allowPartialResults: partialShardResults(ctx) != nil,
 	}, nil
 }
 

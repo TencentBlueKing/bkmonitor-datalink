@@ -43,6 +43,8 @@ func TestInstanceEsQueryMissingMappingEmptyIndexFallback(t *testing.T) {
 		expectAliasCheck    bool
 		expectPhysicalCheck bool
 		expectRetry         bool
+		allowPartialResults bool
+		initialTimedOut     bool
 	}{
 		{
 			name:             "alias filter and search routing are kept during empty check",
@@ -52,6 +54,16 @@ func TestInstanceEsQueryMissingMappingEmptyIndexFallback(t *testing.T) {
 			expectAliasCheck: true,
 			expectRetry:      true,
 		},
+		{
+			name:  "partial request keeps empty proof strict and retry permissive",
+			alias: "test_alias_partial", badIndex: "bad_index", goodIndex: "good_index",
+			expectAliasCheck: true, expectRetry: true, allowPartialResults: true,
+		},
+		{
+			name:  "timed out initial result can recover through strict proof and healthy retry",
+			alias: "test_alias_timeout_partial", badIndex: "bad_index", goodIndex: "good_index",
+			expectAliasCheck: true, expectRetry: true, allowPartialResults: true, initialTimedOut: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -59,6 +71,9 @@ func TestInstanceEsQueryMissingMappingEmptyIndexFallback(t *testing.T) {
 			mock.Init()
 			metadata.InitMetadata()
 			ctx := metadata.InitHashID(context.Background())
+			if tt.allowPartialResults {
+				ctx, _ = WithPartialShardResults(ctx)
+			}
 
 			// alias 元数据带有 filter/search_routing，用来显式验证 fallback 的安全约束：
 			// 空检查和 retry 都必须继续使用 alias target，而不是直接查询物理索引。
@@ -76,10 +91,19 @@ func TestInstanceEsQueryMissingMappingEmptyIndexFallback(t *testing.T) {
 			aliasSearchCalls := 0
 			httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/"+tt.alias+"/_search", func(r *http.Request) (*http.Response, error) {
 				aliasSearchCalls++
+				if tt.allowPartialResults {
+					expected := "true"
+					if aliasSearchCalls == 2 {
+						expected = "false"
+					}
+					assert.Equal(t, expected, r.URL.Query().Get("allow_partial_search_results"))
+				} else {
+					assert.NotContains(t, r.URL.Query(), "allow_partial_search_results")
+				}
 				if aliasSearchCalls == 1 {
 					return httpmock.NewStringResponse(
 						http.StatusOK,
-						fmt.Sprintf(`{"took":1,"timed_out":false,"_shards":{"total":2,"successful":1,"skipped":0,"failed":1,"failures":[{"shard":0,"index":"%s","reason":{"type":"query_shard_exception","reason":"No mapping found for [svrname] in order to sort on"}}]},"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`, tt.badIndex),
+						fmt.Sprintf(`{"took":1,"timed_out":%t,"_shards":{"total":2,"successful":1,"skipped":0,"failed":1,"failures":[{"shard":0,"index":"%s","reason":{"type":"query_shard_exception","reason":"No mapping found for [svrname] in order to sort on"}}]},"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`, tt.initialTimedOut, tt.badIndex),
 					), nil
 				}
 				if aliasSearchCalls == 3 {
@@ -130,6 +154,8 @@ func TestInstanceEsQueryMissingMappingEmptyIndexFallback(t *testing.T) {
 
 			require.NoError(t, err)
 			require.NotNil(t, res)
+			assert.False(t, res.TimedOut)
+			assert.Zero(t, res.Shards.Failed)
 			assert.Equal(t, tt.expectAliasCheck, aliasEmptyCheckCalled)
 			assert.Equal(t, tt.expectPhysicalCheck, directPhysicalEmptyCheckCalled)
 			assert.Equal(t, tt.expectRetry, retryCalled)

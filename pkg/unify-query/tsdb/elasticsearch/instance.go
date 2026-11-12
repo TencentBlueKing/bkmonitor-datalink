@@ -471,6 +471,10 @@ func (i *Instance) executeESQuery(
 	}
 	defer client.Stop()
 	opt := qb.ResultTableOption
+	search := client.Search().Index(qo.indexes...).SearchSource(source)
+	if partialShardResults(ctx) != nil {
+		search.AllowPartialSearchResults(true)
+	}
 	var res *elastic.SearchResult
 	func() {
 		defer func() {
@@ -491,7 +495,7 @@ func (i *Instance) executeESQuery(
 			}
 			if len(opt.SearchAfter) > 0 {
 				span.Set("query-search-after", opt.SearchAfter)
-				res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
+				res, err = search.Do(ctx)
 				return
 			}
 		}
@@ -512,7 +516,7 @@ func (i *Instance) executeESQuery(
 			res, err = scroll.Do(ctx)
 		} else {
 			span.Set("query-from", qb.From)
-			res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
+			res, err = search.Do(ctx)
 		}
 	}()
 
@@ -559,6 +563,7 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 	}
 
 	if sr == nil || sr.Aggregations == nil {
+		recordPartialShardResult(ctx, sr)
 		return storage.EmptySeriesSet()
 	}
 
@@ -569,6 +574,7 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 	}
 
 	span.Set("time-series-length", len(qr.Timeseries))
+	recordPartialShardResult(ctx, sr)
 
 	return remote.FromQueryResult(true, qr)
 }
@@ -771,10 +777,38 @@ func (i *Instance) QueryPreparedRawData(
 		).Error(ctx, err)
 	}
 
-	size, total, option, err = decodePreparedRawResult(prepared, sr, dataCh)
+	// Match executeESQuery's cursor precedence: ScrollID, SearchAfter, then Scroll.
+	isScroll := rawQuery.Scroll != ""
+	if option != nil {
+		if option.ScrollID != "" {
+			isScroll = true
+		} else if len(option.SearchAfter) > 0 {
+			isScroll = false
+		}
+	}
+
+	// Scroll keeps its existing streaming behavior; other queries publish only a fully decoded route.
+	destination := dataCh
+	var rows chan map[string]any
+	if !isScroll {
+		rowCapacity := 0
+		if sr != nil && sr.Hits != nil {
+			rowCapacity = len(sr.Hits.Hits)
+		}
+		rows = make(chan map[string]any, rowCapacity)
+		destination = rows
+	}
+	size, total, option, err = decodePreparedRawResult(prepared, sr, destination)
 	if err != nil {
 		return size, total, option, err
 	}
+	if rows != nil {
+		close(rows)
+		for row := range rows {
+			dataCh <- row
+		}
+	}
+	recordPartialShardResult(ctx, sr)
 	if sr != nil && sr.Hits != nil {
 		span.Set("instance-out-list-size", len(sr.Hits.Hits))
 	}

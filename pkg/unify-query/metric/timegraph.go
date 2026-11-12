@@ -173,7 +173,7 @@ func timeGraphResult(result string) bool {
 
 func timeGraphStage(stage string) bool {
 	switch stage {
-	case "build", "source-info", "relation-edge", "target-info", "topology-traversal", "topology-state", "topology-materialize", "topology-convert", "topology-encode", "apply-relation", "apply-source-info", "apply-target-info", "matrix-validation", "topology-propagation", "cleanup", "admission", "admission-release":
+	case "build", "source-info", "relation-edge", "frontier-probe", "target-info", "topology-traversal", "topology-state", "topology-materialize", "topology-convert", "topology-encode", "apply-relation", "apply-source-info", "apply-target-info", "matrix-validation", "topology-propagation", "cleanup", "admission", "admission-release":
 		return true
 	}
 	return false

@@ -126,7 +126,8 @@ func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured
 	if err != nil {
 		return "", nil, errors.WithMessage(err, "to query reference")
 	}
-	if timeGraphQueryStage(ctx) == "relation-edge" && queryRef.Count() == 0 {
+	// 宽读取前的计数与关系读取走同一路由，缺路由时同样按缺路由处理。
+	if (timeGraphQueryStage(ctx) == "relation-edge" || timeGraphQueryStage(ctx) == "frontier-probe") && queryRef.Count() == 0 {
 		return "", nil, &relationNoPhysicalRouteError{metric: timeGraphLoadMetricName(queryTs)}
 	}
 	if timeGraphQueryStage(ctx) == "source-info" && queryRef.Count() == 0 {
@@ -165,6 +166,7 @@ func validateTimeGraphPrecision(start, end time.Time, step time.Duration) error 
 
 func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, rootRelations map[timeGraphRelationKey]struct{}, relations []cmdb.Relation, lookBackDelta string, matrixQuery timeGraphMatrixQuery, topologyGrid *TopologyGrid) (graph *TimeGraph, err error) {
 	ctx = metadata.WithQueryMetadata(ctx)
+	ctx, readStats := metadata.WithBackendReadStats(ctx)
 	ctx, span := trace.NewSpan(ctx, "build-time-graph-from-relations")
 	defer span.End(&err)
 	started := time.Now()
@@ -206,7 +208,7 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	}()
 
 	sourceInfoQueryCount, relationEdgeQueryCount, targetInfoQueryCount := 0, 0, 0
-	loader := &timeGraphMatrixLoader{model: m, graph: tg, start: start, end: end, step: step, override: matrixQuery, topology: topologyGrid != nil}
+	loader := &timeGraphMatrixLoader{model: m, graph: tg, start: start, end: end, step: step, override: matrixQuery, topology: topologyGrid != nil, readStats: readStats}
 	defer func() { loader.lastMatrix = timeGraphMatrixSlot{} }()
 	defer func() {
 		observeTimeGraphBuild(ctx, span, tg, loader, started, err)
@@ -411,8 +413,25 @@ type timeGraphMatrixLoader struct {
 	physicalQueryCount     int
 	reusedQueryCount       int
 	lastMatrix             timeGraphMatrixSlot
-	// tooLargeScopes 记录本请求内已超过单次响应边界的前沿宽读取（按关系、锚点一侧和收窄条件）。
-	tooLargeScopes map[string]bool
+	// frontierStates 是本请求内按关系与锚点一侧学到的读取规模，见 frontierReadState。
+	frontierStates map[string]*frontierReadState
+	// 宽读取前的计数次数、估算后不发的宽读取数、估算以内仍超过边界的宽读取数。
+	frontierProbeCount, frontierWideSkips, frontierWideOverflows int
+	// 逐条逻辑查询的准备（路由与过滤条件）次数与累计耗时。
+	prepareCount    int
+	prepareDuration time.Duration
+	// readStats 汇总本请求收到响应的后端读取。
+	readStats *metadata.BackendReadStats
+}
+
+// prepare 准备一条逻辑查询（路由与过滤条件），并累计次数与耗时。
+func (loader *timeGraphMatrixLoader) prepare(ctx context.Context, queryTs *structured.QueryTs) (string, *metadata.QueryParams, error) {
+	started := time.Now()
+	defer func() {
+		loader.prepareCount++
+		loader.prepareDuration += time.Since(started)
+	}()
+	return loader.model.prepareTimeGraphVMQuery(ctx, queryTs)
 }
 
 func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *structured.QueryTs) (pl.Matrix, bool, error) {
@@ -490,7 +509,7 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 	case m.timeGraphVMQueryWithPartial != nil:
 		span.Set("query-source", "test-vm-with-partial")
 		var expr string
-		expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
+		expr, relationQueryParams, err = loader.prepare(queryCtx, queryTs)
 		if err == nil {
 			matrix, partial, err = loader.loadPrepared(queryCtx, queryTs, expr, relationQueryParams, func() (pl.Matrix, bool, error) {
 				return m.timeGraphVMQueryWithPartial(
@@ -507,7 +526,7 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 	case m.timeGraphVMQuery != nil:
 		span.Set("query-source", "test-vm")
 		var expr string
-		expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
+		expr, relationQueryParams, err = loader.prepare(queryCtx, queryTs)
 		if err == nil {
 			matrix, partial, err = loader.loadPrepared(queryCtx, queryTs, expr, relationQueryParams, func() (pl.Matrix, bool, error) {
 				value, queryErr := m.timeGraphVMQuery(
@@ -525,7 +544,7 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 	default:
 		wrapQueryErr = true
 		var expr string
-		expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
+		expr, relationQueryParams, err = loader.prepare(queryCtx, queryTs)
 		if err == nil {
 			matrix, partial, err = loader.loadPrepared(queryCtx, queryTs, expr, relationQueryParams, func() (pl.Matrix, bool, error) {
 				var instance tsdb.Instance

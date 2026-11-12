@@ -91,10 +91,25 @@ type hopFetchBackend struct {
 	limit    int
 	calls    []hopFetchCall
 	rejected int
+	probes   int
 }
 
 func (b *hopFetchBackend) query(_ context.Context, ts *structured.QueryTs, _ string, _ bool, start, end time.Time, step time.Duration) (pl.Matrix, bool, error) {
 	query := ts.QueryList[0]
+	if frontierProbeForTest(ts) {
+		b.probes++
+		var matched pl.Matrix
+		for _, series := range b.data[query.FieldName] {
+			labels := make(map[string]string, len(series.Metric))
+			for _, label := range series.Metric {
+				labels[label.Name] = label.Value
+			}
+			if wideFrontierMatches(b.t, query.Conditions, labels) {
+				matched = append(matched, series)
+			}
+		}
+		return frontierProbeAnswer(ts, matched), false, nil
+	}
 	b.calls = append(b.calls, hopFetchCall{metric: query.FieldName, conditions: cloneContractConditions(query.Conditions)})
 	var matrix pl.Matrix
 	for _, series := range b.data[query.FieldName] {

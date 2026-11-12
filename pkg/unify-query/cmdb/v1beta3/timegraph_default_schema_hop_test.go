@@ -109,7 +109,7 @@ func TestTopologyHopFetchDefaultSchemaContainerRoot(t *testing.T) {
 					require.True(t, hopFetchNarrowed(call.conditions), "%s must be read by reached identities or root conditions", call.metric)
 				}
 
-				modes, attributeReads := map[string]bool{}, int64(0)
+				modes, attributeReads, localReported := map[string]bool{}, int64(0), false
 				for _, span := range recorder.Ended() {
 					for _, kv := range span.Attributes() {
 						switch {
@@ -117,10 +117,13 @@ func TestTopologyHopFetchDefaultSchemaContainerRoot(t *testing.T) {
 							modes[kv.Value.AsString()] = true
 						case span.Name() == "timegraph-hop-fetch" && kv.Key == attribute.Key("hop-attribute-read-count"):
 							attributeReads += kv.Value.AsInt64()
+						case span.Name() == "timegraph-hop-fetch" && kv.Key == attribute.Key("hop-local-duration-seconds"):
+							localReported = localReported || kv.Value.AsFloat64() >= 0
 						}
 					}
 				}
 				require.Equal(t, map[string]bool{"hop": true}, modes)
+				require.True(t, localReported, "hop fetch reports the time spent outside backend queries")
 				if hops == 2 {
 					// H6 时这些节点都已展开，以它们为端点的序列已经读入，不需要补读。
 					require.Positive(t, attributeReads, "attributes projected by app_version relations are read again by reached identities")

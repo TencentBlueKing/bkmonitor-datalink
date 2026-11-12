@@ -93,6 +93,21 @@ func observeTimeGraphBuild(ctx context.Context, span *trace.Span, graph *TimeGra
 	span.Set("matrix-physical-query-count", loader.physicalQueryCount)
 	span.Set("matrix-reused-query-count", loader.reusedQueryCount)
 	span.Set("matrix-cumulative-point-count", loader.pointCount)
+	span.Set("matrix-prepare-count", loader.prepareCount)
+	span.Set("matrix-prepare-duration-seconds", loader.prepareDuration.Seconds())
+	// 逐次读取的 span 可能不入库，后端耗时由这些汇总值拆出。
+	reads, readBytes, firstByte := loader.readStats.Snapshot()
+	span.Set("backend-read-count", reads)
+	span.Set("backend-read-bytes", readBytes)
+	span.Set("backend-first-byte-seconds", firstByte.Seconds())
+	batchMax := 0
+	for _, state := range loader.frontierStates {
+		batchMax = max(batchMax, state.batch)
+	}
+	span.Set("frontier-probe-count", loader.frontierProbeCount)
+	span.Set("frontier-wide-skip-count", loader.frontierWideSkips)
+	span.Set("frontier-wide-overflow-count", loader.frontierWideOverflows)
+	span.Set("frontier-batch-max-identities", batchMax)
 	SetTimeGraphLimitTrace(span, err)
 }
 

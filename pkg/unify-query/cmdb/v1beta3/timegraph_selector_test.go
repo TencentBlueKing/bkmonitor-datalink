@@ -45,8 +45,12 @@ func TestTopologySelectorFixedTwoStagesAndFullAnswer(t *testing.T) {
 				calls := 0
 				model := &Model{schemaProvider: selectorProvider(), timeGraphQueryReference: selectorQueryReference}
 				model.timeGraphVMQuery = func(_ context.Context, ts *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
+					matched := filteredTimeGraphMatrix(t, data[ts.QueryList[0].FieldName], ts.QueryList[0].Conditions)
+					if frontierProbeForTest(ts) {
+						return frontierProbeAnswer(ts, matched), nil
+					}
 					calls++
-					return filteredTimeGraphMatrix(t, data[ts.QueryList[0].FieldName], ts.QueryList[0].Conditions), nil
+					return matched, nil
 				}
 				result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
 				require.NoError(t, err)
@@ -79,8 +83,12 @@ func TestTopologySelectorDeepUsesFixedGroups(t *testing.T) {
 	model := &Model{schemaProvider: selectorProvider(), timeGraphQueryReference: selectorQueryReference}
 	calls := 0
 	model.timeGraphVMQuery = func(_ context.Context, ts *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
+		matched := filteredTimeGraphMatrix(t, data[ts.QueryList[0].FieldName], ts.QueryList[0].Conditions)
+		if frontierProbeForTest(ts) {
+			return frontierProbeAnswer(ts, matched), nil
+		}
 		calls++
-		return filteredTimeGraphMatrix(t, data[ts.QueryList[0].FieldName], ts.QueryList[0].Conditions), nil
+		return matched, nil
 	}
 	result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: 6})
 	require.NoError(t, err)

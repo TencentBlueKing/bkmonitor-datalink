@@ -136,9 +136,10 @@ func (loader *timeGraphMatrixLoader) frontierScopeQuery(ctx context.Context, spa
 	return ts, narrowed, nil
 }
 
-// loadFrontier 读取以 identities 为锚点一端的关系边。规模超过阈值时考虑一次宽读取：先按同一范围
-// 计数，估算的响应超过分批边界就不发宽读取，直接分批；估算以内才发，实际响应超过边界时仍退回
-// 分批，并按这次读取校准之后的估算。边界限制的是单次响应，分批读取的总量仍可以大于它。
+// loadFrontier 读取以 identities 为锚点一端的关系边。规模超过阈值时先尝试一次宽读取，响应超过
+// 分批边界再退回分批：边界限制的是单次响应，分批读取的总量仍可以大于它。本请求出现过超过边界的
+// 宽读取后，说明它的读取范围可能都很大：之后的宽读取先按同一范围计数，估算超过分批边界就不发，
+// 直接分批。没有出现过超限的请求不计数，读取与此前相同。
 // whole 表示成功的宽读取没有收窄任何字段，已读入整条关系。
 func (loader *timeGraphMatrixLoader) loadFrontier(ctx context.Context, space string, relation cmdb.Relation, targetAnchor bool, identities []cmdb.Matcher, apply func(context.Context, pl.Matrix) error, queries *int) (whole bool, err error) {
 	state := loader.frontierState(relation, targetAnchor)
@@ -147,11 +148,14 @@ func (loader *timeGraphMatrixLoader) loadFrontier(ctx context.Context, space str
 		if err != nil {
 			return false, err
 		}
-		series, fits := 0, ts != nil
-		if fits {
-			series, fits, err = loader.frontierScopeFits(ctx, state, ts)
-			if err != nil {
+		series, counted, fits := 0, false, ts != nil
+		if fits && loader.frontierCounting {
+			if series, counted, err = loader.frontierScopeCount(ctx, ts); err != nil {
 				return false, err
+			}
+			if counted && state.estimate(series, loader.frontierPoints()) > timeGraphBackendResponseBytes*3/4 {
+				loader.frontierWideSkips++
+				fits = false
 			}
 		}
 		if fits {
@@ -169,9 +173,18 @@ func (loader *timeGraphMatrixLoader) loadFrontier(ctx context.Context, space str
 			if !isBackendResponseTooLarge(err) {
 				return false, err
 			}
-			// 估算偏低：这个范围的每条序列至少占边界除以序列数，之后同样规模的范围不再先读一次。
+			// 超过边界：之后的宽读取先计数。这次没有计数时补一次，按“边界 ÷ 序列数”校准这条关系
+			// 每条序列的字节下界，同样规模的范围不再先读一次。
 			loader.frontierWideOverflows++
-			state.underestimated(series)
+			loader.frontierCounting = true
+			if !counted {
+				if series, counted, err = loader.frontierScopeCount(ctx, ts); err != nil {
+					return false, err
+				}
+			}
+			if counted {
+				state.underestimated(series)
+			}
 		}
 	}
 	for offset := 0; offset < len(identities); {
@@ -187,13 +200,12 @@ func (loader *timeGraphMatrixLoader) loadFrontier(ctx context.Context, space str
 	return false, nil
 }
 
-// frontierScopeFits 用一次计数估算宽读取的响应：按关系的维度去重计数整个窗口内出现过的序列，
-// 乘以每条序列的估计字节。计数只返回一个数，代价远小于一次超过边界后被丢弃的读取。
-// 计数失败时按原样尝试宽读取，由分批兜底。
-func (loader *timeGraphMatrixLoader) frontierScopeFits(ctx context.Context, state *frontierReadState, ts *structured.QueryTs) (series int, fits bool, err error) {
+// frontierScopeCount 按关系的维度去重计数宽读取范围内整个窗口出现过的序列。计数只返回一个数，
+// 代价远小于一次超过边界后被丢弃的读取；计数失败时 counted 为假，调用方按没有计数处理。
+func (loader *timeGraphMatrixLoader) frontierScopeCount(ctx context.Context, ts *structured.QueryTs) (series int, counted bool, err error) {
 	probe := loader.frontierScopeProbe(ts)
 	if probe == nil {
-		return 0, true, nil
+		return 0, false, nil
 	}
 	// 计数与其他不可复用的读取一样清空复用槽：之后的宽读取或分批读取都与计数前那次读取不同。
 	probeCtx := newTimeGraphSubqueryContext(ctx)
@@ -202,17 +214,10 @@ func (loader *timeGraphMatrixLoader) frontierScopeFits(ctx context.Context, stat
 	loader.frontierProbeCount++
 	matrix, _, probeErr := loader.queryWithQuality(probeCtx, probe, false)
 	if probeErr != nil {
-		if err := ctx.Err(); err != nil {
-			return 0, false, err
-		}
-		return 0, true, nil
+		return 0, false, ctx.Err()
 	}
 	if len(matrix) > 0 && len(matrix[0].Points) > 0 {
 		series = int(matrix[0].Points[len(matrix[0].Points)-1].V)
-	}
-	if state.estimate(series, loader.frontierPoints()) > timeGraphBackendResponseBytes*3/4 {
-		loader.frontierWideSkips++
-		return series, false, nil
 	}
 	return series, true, nil
 }

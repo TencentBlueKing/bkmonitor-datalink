@@ -415,8 +415,10 @@ type timeGraphMatrixLoader struct {
 	lastMatrix             timeGraphMatrixSlot
 	// frontierStates 是本请求内按关系与锚点一侧学到的读取规模，见 frontierReadState。
 	frontierStates map[string]*frontierReadState
-	// 宽读取前的计数次数、估算后不发的宽读取数、估算以内仍超过边界的宽读取数。
+	// 宽读取前的计数次数、估算后不发的宽读取数、超过边界的宽读取数。frontierCounting 表示本请求
+	// 出现过超过边界的宽读取，之后的宽读取先计数。
 	frontierProbeCount, frontierWideSkips, frontierWideOverflows int
+	frontierCounting                                             bool
 	// 逐条逻辑查询的准备（路由与过滤条件）次数与累计耗时。
 	prepareCount    int
 	prepareDuration time.Duration

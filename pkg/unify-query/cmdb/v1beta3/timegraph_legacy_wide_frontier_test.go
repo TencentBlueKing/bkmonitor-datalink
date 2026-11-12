@@ -311,9 +311,9 @@ func TestLegacyWideFrontierFallsBackToBatches(t *testing.T) {
 				b.rejectWide = tc.reject
 				entry.run(t, b)
 				require.Equal(t, 1, b.wideQueries)
-				// 计数估算以内的宽读取超过边界后仍由分批接住。301 个身份：响应都很小，批大小
-				// 64、128 后剩下 109 个；每次读取都带同一单次响应边界。
-				require.Equal(t, 1, b.probes, "the wide read is estimated once before it is sent")
+				// 宽读取超过边界后由分批接住，并补一次计数校准之后的估算。301 个身份：响应都很小，
+				// 批大小 64、128 后剩下 109 个；每次读取都带同一单次响应边界。
+				require.Equal(t, 1, b.probes, "an oversized wide read is counted once to calibrate later estimates")
 				require.Len(t, b.hopQueries, 1+3)
 				for _, budget := range b.hopBudgets[1:] {
 					require.Equal(t, timeGraphBackendResponseBytes, budget)

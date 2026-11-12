@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	pl "github.com/prometheus/prometheus/promql"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -17,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
@@ -45,82 +45,55 @@ func TestFrontierScopeProbeCountsTheWholeWindow(t *testing.T) {
 	require.Equal(t, "count(count by (cluster, namespace, pod, target_id) (count_over_time(a[3m])))", expr)
 }
 
-// 计数估算超过分批边界时不发宽读取，直接分批，答案不变；估算以内照常宽读取。
-func TestFrontierWideReadIsSkippedWhenTheCountExceedsTheBoundary(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		series   float64
-		wantWide int
-	}{
-		{"estimate within the boundary", 400, 1},
-		{"estimate over the boundary", 2e6, 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			recorder := tracetest.NewSpanRecorder()
-			provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-			previous := otel.GetTracerProvider()
-			otel.SetTracerProvider(provider)
-			t.Cleanup(func() { otel.SetTracerProvider(previous); require.NoError(t, provider.Shutdown(context.Background())) })
-			b := wideFrontierScenario(300, 3, 2)
-			backend := b.query(t)
-			probes := 0
-			model := legacyRegressionModel(wideFrontierProvider())
-			model.timeGraphVMQuery = func(ctx context.Context, q *structured.QueryTs, expr string, instant bool, start, end time.Time, step time.Duration) (pl.Matrix, error) {
-				if frontierProbeForTest(q) {
-					probes++
-					return pl.Matrix{{Points: []pl.Point{{T: end.UnixMilli(), V: tc.series}}}}, nil
-				}
-				return backend(ctx, q, expr, instant, start, end, step)
+// 没有出现过超限的请求不计数：宽读取照常发出，读取与此前相同；构图 span 汇总计数、跳过的宽读取、
+// 超限次数、学到的最大批与逐条准备。
+func TestFrontierRequestWithoutOverflowSendsNoCount(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(previous); require.NoError(t, provider.Shutdown(context.Background())) })
+	b := wideFrontierScenario(300, 3, 2)
+	model := legacyRegressionModel(wideFrontierProvider())
+	model.timeGraphVMQuery = b.query(t)
+	_, _, _, _, buckets, err := model.QueryResourceMatcherRange(initTimeGraphQueryTestEnvironment(), "", "space", "1m", "1700000040", "1700000100", "target", "root", cmdb.Matcher{"root_id": "r1"}, nil, false, nil)
+	require.NoError(t, err)
+	require.Equal(t, wideFrontierWant(300), wideFrontierBucketTargets(buckets))
+	require.Zero(t, b.probes)
+	require.Equal(t, 1, b.wideQueries)
+	require.Len(t, b.hopQueries, 1)
+	attrs := map[string]attribute.Value{}
+	for _, span := range recorder.Ended() {
+		if span.Name() == "build-time-graph-from-relations" {
+			for _, kv := range span.Attributes() {
+				attrs[string(kv.Key)] = kv.Value
 			}
-			_, _, _, _, buckets, err := model.QueryResourceMatcherRange(initTimeGraphQueryTestEnvironment(), "", "space", "1m", "1700000040", "1700000100", "target", "root", cmdb.Matcher{"root_id": "r1"}, nil, false, nil)
-			require.NoError(t, err)
-			require.Equal(t, wideFrontierWant(300), wideFrontierBucketTargets(buckets))
-			require.Equal(t, 1, probes)
-			require.Equal(t, tc.wantWide, b.wideQueries)
-			if tc.wantWide == 0 {
-				// 301 个身份按 64、128、109 分批。
-				require.Len(t, b.hopQueries, 3)
-			} else {
-				require.Len(t, b.hopQueries, 1)
-			}
-			// 构图 span 汇总计数、跳过的宽读取、学到的最大批与逐条准备。
-			attrs := map[string]attribute.Value{}
-			for _, span := range recorder.Ended() {
-				if span.Name() == "build-time-graph-from-relations" {
-					for _, kv := range span.Attributes() {
-						attrs[string(kv.Key)] = kv.Value
-					}
-				}
-			}
-			require.EqualValues(t, 1, attrs["frontier-probe-count"].AsInt64())
-			require.EqualValues(t, 1-tc.wantWide, attrs["frontier-wide-skip-count"].AsInt64())
-			require.Zero(t, attrs["frontier-wide-overflow-count"].AsInt64())
-			require.EqualValues(t, map[int]int64{0: 256, 1: 64}[tc.wantWide], attrs["frontier-batch-max-identities"].AsInt64())
-			require.Positive(t, attrs["matrix-prepare-count"].AsInt64())
-			require.Contains(t, attrs, "matrix-prepare-duration-seconds")
-			require.Contains(t, attrs, "backend-read-count")
-			require.Contains(t, attrs, "backend-first-byte-seconds")
-		})
+		}
+	}
+	for _, key := range []string{"frontier-probe-count", "frontier-wide-skip-count", "frontier-wide-overflow-count"} {
+		require.Contains(t, attrs, key)
+		require.Zero(t, attrs[key].AsInt64(), key)
+	}
+	require.EqualValues(t, timeGraphFrontierBatchSize, attrs["frontier-batch-max-identities"].AsInt64())
+	require.Positive(t, attrs["matrix-prepare-count"].AsInt64())
+	for _, key := range []string{"matrix-prepare-duration-seconds", "backend-read-count", "backend-read-bytes", "backend-first-byte-seconds"} {
+		require.Contains(t, attrs, key)
 	}
 }
 
-// 响应远小于边界时批大小逐批翻倍：1001 个身份读 5 次（64、128、256、512、41），固定 64 个一批要读 16 次。
+// 宽读取超过边界后退回分批；响应远小于边界时批大小逐批翻倍：1001 个身份读 5 次（64、128、256、512、41），
+// 固定 64 个一批要读 16 次。
 func TestFrontierBatchesGrowWhileResponsesStaySmall(t *testing.T) {
 	b := wideFrontierScenario(1000, 3, 2)
-	backend := b.query(t)
+	b.rejectWide = func(context.Context) error { return metadata.ErrBackendResponseTooLarge }
 	model := legacyRegressionModel(wideFrontierProvider())
-	model.timeGraphVMQuery = func(ctx context.Context, q *structured.QueryTs, expr string, instant bool, start, end time.Time, step time.Duration) (pl.Matrix, error) {
-		if frontierProbeForTest(q) {
-			return pl.Matrix{{Points: []pl.Point{{T: end.UnixMilli(), V: 2e6}}}}, nil
-		}
-		return backend(ctx, q, expr, instant, start, end, step)
-	}
+	model.timeGraphVMQuery = b.query(t)
 	_, _, _, _, buckets, err := model.QueryResourceMatcherRange(initTimeGraphQueryTestEnvironment(), "", "space", "1m", "1700000040", "1700000100", "target", "root", cmdb.Matcher{"root_id": "r1"}, nil, false, nil)
 	require.NoError(t, err)
 	require.Equal(t, wideFrontierWant(1000), wideFrontierBucketTargets(buckets))
-	require.Zero(t, b.wideQueries)
+	require.Equal(t, 1, b.wideQueries, "the oversized wide read falls back to batches")
 	sizes := make([]int, 0, len(b.hopQueries))
-	for _, conditions := range b.hopQueries {
+	for _, conditions := range b.hopQueries[1:] {
 		groups, err := conditions.AnalysisConditions()
 		require.NoError(t, err)
 		sizes = append(sizes, len(groups))

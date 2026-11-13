@@ -354,29 +354,13 @@ func normalizeTopologySources(space string, provider SchemaProvider, requested [
 	return sources, nil
 }
 
-// planTopologySourceCandidates 取各选择器类型候选关系的并集，保持关系原有顺序。
+// planTopologySourceCandidates 按全部选择器类型裁剪候选关系，保持关系原有顺序；单个选择器与原来相同。
 func planTopologySourceCandidates(sources []topologySource, maxHops int, relations []cmdb.Relation) []cmdb.Relation {
-	if len(sources) == 1 {
-		return planSharedTopologyCandidates(sources[0].Type, maxHops, relations)
-	}
-	planned := map[timeGraphRelationKey]bool{}
-	seen := map[cmdb.Resource]bool{}
+	types := make([]cmdb.Resource, 0, len(sources))
 	for _, source := range sources {
-		if seen[source.Type] {
-			continue
-		}
-		seen[source.Type] = true
-		for _, relation := range planSharedTopologyCandidates(source.Type, maxHops, relations) {
-			planned[timeGraphRelationKeyFor(relation)] = true
-		}
+		types = append(types, source.Type)
 	}
-	result := make([]cmdb.Relation, 0, len(planned))
-	for _, relation := range relations {
-		if planned[timeGraphRelationKeyFor(relation)] {
-			result = append(result, relation)
-		}
-	}
-	return result
+	return planSharedTopologyCandidatesFrom(types, maxHops, relations)
 }
 
 // topologyOutputTypes 返回 target_types 过滤保留的类型（含全部选择器的源类型）；为空表示保留全部可达类型。

@@ -13,10 +13,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 
+	pl "github.com/prometheus/prometheus/promql"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -522,4 +525,139 @@ func TestMultiSourceTargetTypesKeepAllSelectorTypes(t *testing.T) {
 	snapshots, canonical, compact := topologyRequestResult(t, &hopFetchBackend{t: t, data: data}, request)
 	require.Equal(t, canonical, compact)
 	require.Equal(t, map[cmdb.Resource]bool{"container": true, "replicaset": true, "node": true}, resourceTypesOf(snapshots))
+}
+
+// 多个选择器时节点集是各根 H 跳内节点的并集，边是这个节点集内的全部关联（诱导子图）。一条关系的两端
+// 分别只在不同选择器的 H 跳范围内时也要输出：裁剪候选关系按全部选择器可达类型的并集，不按每个选择器
+// 分别裁剪再取并集。期望按诱导子图的定义直接列出，逐跳与整条读取两种取数、快照与紧凑两种格式都要相同。
+func TestMultiSourceKeepsEdgesBetweenSelectorNeighborhoods(t *testing.T) {
+	oldPlan := SharedTopologyPlanCandidates
+	t.Cleanup(func() { SharedTopologyPlanCandidates = oldPlan })
+	SharedTopologyPlanCandidates = true
+	type scenario struct {
+		name    string
+		model   func(*hopFetchBackend) *Model
+		data    map[string]pl.Matrix
+		request cmdb.SharedTopologyQuery
+		wide    cmdb.TopologySource // 替换第二个选择器，使它不满足逐跳取数条件
+		nodes   []cmdb.Resource
+		edges   []string
+	}
+	var scenarios []scenario
+	// 通用关系 a–x、b–y、x–y：以 a、b 为入口走 1 跳，a 只到 x、b 只到 y，x–y 的两端分属两个入口。
+	for _, category := range []RelationCategory{RelationCategoryDynamic, RelationCategoryStatic} {
+		provider := contractSchemaProvider{
+			resources: []ResourceType{"a", "b", "x", "y"},
+			primary:   map[ResourceType][]string{"a": {"a_id"}, "b": {"b_id"}, "x": {"x_id"}, "y": {"y_id"}},
+			fields:    map[ResourceType][]string{"a": {"a_id"}, "b": {"b_id"}, "x": {"x_id"}, "y": {"y_id"}},
+		}
+		fixture := newHopFetchFixture()
+		var edges []string
+		for _, pair := range [][2]string{{"a", "x"}, {"b", "y"}, {"x", "y"}} {
+			name := pair[0] + "_to_" + pair[1]
+			provider.schemas = append(provider.schemas, RelationSchema{RelationType: RelationType(name), Category: category, FromType: ResourceType(pair[0]), ToType: ResourceType(pair[1]), MetricName: name, IsDirectional: category == RelationCategoryDynamic})
+			from, to := pair[0]+"_id", pair[1]+"_id"
+			if category == RelationCategoryDynamic {
+				from, to = "from_"+from, "to_"+to
+			}
+			fixture.add(name, map[string]string{from: pair[0], to: pair[1]}, hopFetchStart)
+			// 动态关系按 out 只有调用方 → 被调用方；不分方向的静态关系两个视图各一条。
+			edges = append(edges, strings.Join([]string{name, pair[0], pair[1], string(DirectionOutbound)}, "|"))
+			if category == RelationCategoryStatic {
+				edges = append(edges, strings.Join([]string{name, pair[1], pair[0], string(DirectionInbound)}, "|"))
+			}
+		}
+		request := cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: hopFetchStart / 1000, MaxHops: 1, Direction: "both", Sources: []cmdb.TopologySource{
+			{SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "a"}},
+			{SourceType: "b", SourceInfo: cmdb.Matcher{"b_id": "b"}},
+		}}
+		if category == RelationCategoryDynamic {
+			request.Direction = "out"
+		}
+		scenarios = append(scenarios, scenario{
+			name:    string(category),
+			model:   func(backend *hopFetchBackend) *Model { return hopFetchModel(provider, backend) },
+			data:    fixture.data,
+			request: request,
+			wide:    cmdb.TopologySource{SourceType: "b"},
+			nodes:   []cmdb.Resource{"a", "b", "x", "y"},
+			edges:   edges,
+		})
+	}
+	// 内置归属链 container → pod → replicaset → deployment：以 container、deployment 为入口走 1 跳，
+	// pod 与 replicaset 分属两个入口，pod_with_replicaset 也在诱导子图里。
+	fixture := newHopFetchFixture()
+	workload := map[string]string{"bcs_cluster_id": "cluster", "namespace": "ns"}
+	with := func(extra map[string]string) map[string]string {
+		labels := maps.Clone(workload)
+		maps.Copy(labels, extra)
+		return labels
+	}
+	fixture.add("container_with_pod_relation", with(map[string]string{"pod": "pod-0", "container": "c0"}), hopFetchStart)
+	fixture.add("pod_with_replicaset_relation", with(map[string]string{"pod": "pod-0", "replicaset": "rs-0"}), hopFetchStart)
+	fixture.add("deployment_with_replicaset_relation", with(map[string]string{"deployment": "web", "replicaset": "rs-0"}), hopFetchStart)
+	scenarios = append(scenarios, scenario{
+		name:  "builtin-belong-to",
+		model: topologyRequestModel,
+		data:  fixture.data,
+		request: cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: hopFetchStart / 1000, MaxHops: 1, Direction: "both", RelationGroups: []string{RelationGroupBelongTo}, Sources: []cmdb.TopologySource{
+			{SourceType: "container", SourceInfo: cmdb.Matcher(with(map[string]string{"pod": "pod-0", "container": "c0"}))},
+			{SourceType: "deployment", SourceInfo: cmdb.Matcher(with(map[string]string{"deployment": "web"}))},
+		}},
+		wide:  cmdb.TopologySource{SourceType: "deployment"},
+		nodes: []cmdb.Resource{"container", "deployment", "pod", "replicaset"},
+		// 归属边每对节点一条，子 → 父。
+		edges: []string{
+			"container_with_pod|container|pod|outbound",
+			"deployment_with_replicaset|replicaset|deployment|outbound",
+			"pod_with_replicaset|pod|replicaset|outbound",
+		},
+	})
+	describe := func(snapshot cmdb.SharedTopologySnapshot) ([]cmdb.Resource, []string) {
+		types := map[uint64]cmdb.Resource{}
+		var nodes []cmdb.Resource
+		for _, node := range snapshot.Nodes {
+			types[node.ID] = node.ResourceType
+			nodes = append(nodes, node.ResourceType)
+		}
+		var edges []string
+		for _, edge := range snapshot.Edges {
+			edges = append(edges, strings.Join([]string{edge.RelationType, string(types[edge.Source]), string(types[edge.Target]), edge.Direction}, "|"))
+		}
+		slices.Sort(nodes)
+		slices.Sort(edges)
+		return nodes, edges
+	}
+	for _, tc := range scenarios {
+		slices.Sort(tc.edges)
+		for _, wide := range []bool{false, true} {
+			request := tc.request
+			request.Sources = slices.Clone(tc.request.Sources)
+			mode := "hop"
+			if wide {
+				request.Sources[1] = tc.wide
+				mode = "bulk"
+			}
+			for _, format := range []string{"", cmdb.CompactTopologyFormat} {
+				t.Run(fmt.Sprintf("%s/%s/%q", tc.name, mode, format), func(t *testing.T) {
+					request.ResponseFormat = format
+					var result cmdb.SharedTopologyResult
+					var err error
+					modes, _ := fetchSpans(t, func() {
+						result, err = tc.model(&hopFetchBackend{t: t, data: tc.data}).QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
+					})
+					require.NoError(t, err)
+					require.Equal(t, map[string]bool{mode: true}, modes)
+					snapshots := result.Snapshots
+					if format != "" {
+						snapshots = decodeCompactForTest(t, result.Compact)
+					}
+					require.Len(t, snapshots, 1)
+					nodes, edges := describe(snapshots[0])
+					require.Equal(t, tc.nodes, nodes)
+					require.Equal(t, tc.edges, edges)
+				})
+			}
+		}
+	}
 }

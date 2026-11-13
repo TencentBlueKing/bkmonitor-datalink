@@ -83,7 +83,7 @@ func TestTopologyBatchWritesEachItemBeforeTheNext(t *testing.T) {
 	const items = 3
 	list := make([]string, items)
 	for i := range list {
-		list[i] = `{"timestamp":1700000000,"source_type":"unknown-resource"}`
+		list[i] = `{"timestamp":1700000000,"sources":[{"source_type":"unknown-resource"}]}`
 	}
 	body := `{"query_list":[` + strings.Join(list, ",") + `]}`
 	for _, proxied := range []bool{false, true} {

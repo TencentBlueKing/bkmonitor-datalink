@@ -236,7 +236,7 @@ func TestTopologyHopFetchMatchesBulkReadOnRandomFixtures(t *testing.T) {
 		data := randomHopFetchFixture(rng, frames)
 		for _, hops := range []int{1, 2, 3, 6} {
 			for _, root := range roots {
-				direction := []string{"", "outbound", "inbound"}[rng.Intn(3)]
+				direction := []string{"", "out", "in"}[rng.Intn(3)]
 				var allowed []string
 				if rng.Intn(3) == 0 {
 					drop := rng.Intn(len(relationTypes))
@@ -247,9 +247,9 @@ func TestTopologyHopFetchMatchesBulkReadOnRandomFixtures(t *testing.T) {
 					}
 				}
 				request := cmdb.SharedTopologyQuery{
-					SpaceUID: "space", SourceType: root.source, SourceInfo: root.identity,
+					SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: root.source, SourceInfo: root.identity}},
 					StartTime: frames[0] / 1000, EndTime: frames[len(frames)-1] / 1000, Step: "60s",
-					MaxHops: hops, DynamicRelationDirection: direction, AllowedRelationTypes: allowed,
+					MaxHops: hops, Direction: direction, AllowedRelationTypes: allowed,
 				}
 				t.Run(fmt.Sprintf("seed-%d/H%d/%s-%d/direction-%s/types-%d", seed, hops, root.source, len(root.identity), direction, len(allowed)), func(t *testing.T) {
 					SharedTopologyPlanCandidates, SharedTopologyReuseMatrix = false, true
@@ -302,7 +302,7 @@ func TestTopologyHopFetchContainerRootStaysUnderResponseLimit(t *testing.T) {
 	for _, hops := range []int{2, 6} {
 		t.Run(fmt.Sprintf("H%d", hops), func(t *testing.T) {
 			request := cmdb.SharedTopologyQuery{
-				SpaceUID: "space", SourceType: "container", SourceInfo: cmdb.Matcher{"cluster": "c0", "pod": "p000"},
+				SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "container", SourceInfo: cmdb.Matcher{"cluster": "c0", "pod": "p000"}}},
 				StartTime: frames[0] / 1000, EndTime: frames[len(frames)-1] / 1000, Step: "60s", MaxHops: hops,
 			}
 			SharedTopologyPlanCandidates, SharedTopologyReuseMatrix = false, true
@@ -356,12 +356,12 @@ func TestTopologyHopFetchReadsInducedEdgesBetweenLastLayerNodes(t *testing.T) {
 	fixture.add("peer", map[string]string{"from_c_id": "c1", "to_c_id": "c2"}, frames...)
 	// c3 不可达，这条边不能出现在结果中。
 	fixture.add("peer", map[string]string{"from_c_id": "c2", "to_c_id": "c3"}, frames...)
-	for _, direction := range []string{"", "outbound"} {
+	for _, direction := range []string{"", "out"} {
 		t.Run("direction-"+direction, func(t *testing.T) {
 			request := cmdb.SharedTopologyQuery{
-				SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"},
+				SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}}},
 				StartTime: frames[0] / 1000, EndTime: frames[len(frames)-1] / 1000, Step: "60s",
-				MaxHops: 2, DynamicRelationDirection: direction,
+				MaxHops: 2, Direction: direction,
 			}
 			SharedTopologyPlanCandidates, SharedTopologyReuseMatrix = false, true
 			_, wantSnapshots, wantCompact := queryHopFetchTopology(t, provider, &hopFetchBackend{t: t, data: fixture.data}, request)
@@ -429,7 +429,7 @@ func TestTopologyHopFetchSkipsDeterminedParentEdges(t *testing.T) {
 		for _, hops := range []int{2, 3} {
 			t.Run(fmt.Sprintf("seed-%d/H%d", seed, hops), func(t *testing.T) {
 				request := cmdb.SharedTopologyQuery{
-					SpaceUID: "space", SourceType: "pod", SourceInfo: cmdb.Matcher{"cluster": "c0", "pod": "p0"},
+					SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "pod", SourceInfo: cmdb.Matcher{"cluster": "c0", "pod": "p0"}}},
 					StartTime: frames[0] / 1000, EndTime: frames[len(frames)-1] / 1000, Step: "60s", MaxHops: hops,
 				}
 				SharedTopologyPlanCandidates, SharedTopologyReuseMatrix = false, true
@@ -476,7 +476,7 @@ func TestTopologyHopFetchRemembersTooLargeScopes(t *testing.T) {
 		fixture.add("peer", map[string]string{"from_c_id": fmt.Sprintf("b%03d", i), "to_c_id": fmt.Sprintf("d%03d", i)}, frames...)
 	}
 	request := cmdb.SharedTopologyQuery{
-		SpaceUID: "space", SourceType: "r", SourceInfo: cmdb.Matcher{"r_id": "root"}, DynamicRelationDirection: "outbound",
+		SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "r", SourceInfo: cmdb.Matcher{"r_id": "root"}}}, Direction: "out",
 		StartTime: frames[0] / 1000, EndTime: frames[len(frames)-1] / 1000, Step: "60s", MaxHops: 3,
 	}
 	SharedTopologyPlanCandidates, SharedTopologyReuseMatrix = false, true

@@ -62,11 +62,20 @@ func (q *TimeGraph) topologyAnchorFilter(relation cmdb.Relation, targetAnchor bo
 //   - 根条件命中的节点的全部关联边（决定根及其时间位）；
 //   - H 跳以内每层前沿节点的全部出边（决定逐层可达）；
 //   - 两端都已到达的边（诱导边）。
-type topologyHopFetch struct {
-	loader   *timeGraphMatrixLoader
-	space    string
+//
+// topologyHopRoot 是逐跳取数的一组根：source 类型中身份匹配 identity 的节点。expand 是该组根的
+// source_expand_info 在各帧匹配的节点位，nil 表示没有属性条件。
+type topologyHopRoot struct {
 	source   cmdb.Resource
 	identity cmdb.Matcher
+	expand   map[uint64]timeBitmap
+}
+
+type topologyHopFetch struct {
+	loader *timeGraphMatrixLoader
+	space  string
+	// roots 是逐跳取数的各组根，多个选择器时各帧取并集。
+	roots []topologyHopRoot
 	// relations 是候选关系，保持规划顺序；缺物理路由的关系由取数器按已读且无数据处理。
 	relations []cmdb.Relation
 	// reverse 是与关系共用物理序列的反向关系；一次读取同时写入两个方向。
@@ -76,8 +85,8 @@ type topologyHopFetch struct {
 	// expanded 是全部出边（及成对反向关系的入边）已读入的节点；expandedKeys 按类型记录它们的身份键。
 	expanded     map[uint64]bool
 	expandedKeys map[cmdb.Resource]map[string]bool
-	// roots 缓存源类型节点是否命中根条件。
-	roots          map[uint64]bool
+	// rootNodes 缓存节点是否命中任一组根条件。
+	rootNodes      map[uint64]bool
 	queries        *int
 	reads          int
 	attributeReads int
@@ -89,14 +98,23 @@ type topologyHopFetch struct {
 // 每次读取沿用前沿分批：超过阈值时按字段收窄宽读取，响应超过分批边界再按身份对半拆分。
 // attributes 是把非主键属性投影到可见类型的关系分量内关系；逐跳取数后按到达节点补读，
 // 使到达节点的属性与读取整个关系分量相同。
-func (loader *timeGraphMatrixLoader) loadTopologyHops(ctx context.Context, space string, source cmdb.Resource, identity cmdb.Matcher, relations []cmdb.Relation, wideGroups []topologyFetchGroup, hops int, reorder bool, attributes []topologyAttributeRead, queries *int) (err error) {
+func (loader *timeGraphMatrixLoader) loadTopologyHops(ctx context.Context, space string, source cmdb.Resource, identity cmdb.Matcher, relations []cmdb.Relation, wideGroups []topologyFetchGroup, hops int, reorder bool, attributes []topologyAttributeRead, queries *int) error {
+	// 单个选择器的属性条件写在 sourceInfoBits，与最终遍历的根判定相同。
+	roots := []topologyHopRoot{{source: source, identity: identity, expand: loader.graph.shared.sourceInfoBits}}
+	return loader.loadTopologyHopsFrom(ctx, space, roots, relations, wideGroups, hops, reorder, attributes, queries)
+}
+
+// loadTopologyHopsFrom 与 loadTopologyHops 相同，从一组或多组根出发；首跳在同一关系、同一端上
+// 把各组根的条件写成一个 OR 查询。
+func (loader *timeGraphMatrixLoader) loadTopologyHopsFrom(ctx context.Context, space string, roots []topologyHopRoot, relations []cmdb.Relation, wideGroups []topologyFetchGroup, hops int, reorder bool, attributes []topologyAttributeRead, queries *int) (err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-hop-fetch")
 	defer span.End(&err)
 	q := loader.graph
+	span.Set("root-selector-count", len(roots))
 	fetch := &topologyHopFetch{
-		loader: loader, space: space, source: source, identity: identity,
+		loader: loader, space: space, roots: roots,
 		reverse: map[timeGraphRelationKey]cmdb.Relation{}, whole: map[timeGraphRelationKey]bool{},
-		expanded: map[uint64]bool{}, expandedKeys: map[cmdb.Resource]map[string]bool{}, roots: map[uint64]bool{}, queries: queries,
+		expanded: map[uint64]bool{}, expandedKeys: map[cmdb.Resource]map[string]bool{}, rootNodes: map[uint64]bool{}, queries: queries,
 	}
 	levels := []int64{}
 	started, queriedBefore := time.Now(), loader.queryDuration
@@ -302,54 +320,86 @@ func (fetch *topologyHopFetch) rootInputs() []topologyFetchInput {
 		key    timeGraphRelationKey
 		target bool
 	}
-	added := map[anchored]bool{}
-	inputs := []topologyFetchInput{}
-	add := func(relation cmdb.Relation, target bool) {
+	type rooted struct {
+		item anchored
+		root int
+	}
+	added := map[rooted]bool{}
+	order := []anchored{}
+	byItem := map[anchored]*topologyFetchInput{}
+	add := func(relation cmdb.Relation, target bool, root int) {
 		// 静态自关联两端共用同一组标签，源端条件已覆盖目标端。
 		if relation.V[0] == relation.V[1] && relation.Category == string(RelationCategoryStatic) {
 			target = false
 		}
 		item := anchored{key: timeGraphRelationKeyFor(relation), target: target}
-		if added[item] {
+		if added[rooted{item: item, root: root}] {
 			return
 		}
-		added[item] = true
-		filter := fetch.identity
+		added[rooted{item: item, root: root}] = true
+		identity := fetch.roots[root].identity
+		filter := identity
 		if target {
-			filter = q.topologyAnchorFilter(relation, true, fetch.identity)
+			filter = q.topologyAnchorFilter(relation, true, identity)
 		}
-		inputs = append(inputs, topologyFetchInput{relation: relation, filter: filter})
+		if input, ok := byItem[item]; ok {
+			input.filters = append(input.filters, filter)
+			return
+		}
+		order = append(order, item)
+		byItem[item] = &topologyFetchInput{relation: relation, filter: filter, filters: []cmdb.Matcher{filter}}
 	}
 	for _, relation := range fetch.relations {
-		if relation.V[0] != fetch.source {
-			continue
-		}
-		add(relation, false)
-		if reverse, ok := fetch.reverse[timeGraphRelationKeyFor(relation)]; ok {
-			add(reverse, true)
+		for root := range fetch.roots {
+			if relation.V[0] != fetch.roots[root].source {
+				continue
+			}
+			add(relation, false, root)
+			if reverse, ok := fetch.reverse[timeGraphRelationKeyFor(relation)]; ok {
+				add(reverse, true, root)
+			}
 		}
 	}
 	for _, relation := range fetch.relations {
-		if relation.V[1] == fetch.source {
-			add(relation, true)
+		for root := range fetch.roots {
+			if relation.V[1] == fetch.roots[root].source {
+				add(relation, true, root)
+			}
 		}
+	}
+	inputs := make([]topologyFetchInput, 0, len(order))
+	for _, item := range order {
+		input := *byItem[item]
+		// 只有一组根时按原来的单条件读取；多组根在同一关系、同一端上合成一个 OR 查询。
+		if len(input.filters) == 1 {
+			input.filters = nil
+		}
+		inputs = append(inputs, input)
 	}
 	return inputs
 }
 
-// rootCovered 表示节点命中根条件，首跳已读入它的全部关联边。
+// rootCovered 表示节点命中任一组根条件，首跳已读入它的全部关联边。
 func (fetch *topologyHopFetch) rootCovered(node uint64) bool {
 	q := fetch.loader.graph
-	if q.nodeBuilder.resourceName(node) != fetch.source {
-		return false
-	}
-	covered, ok := fetch.roots[node]
+	covered, ok := fetch.rootNodes[node]
 	if !ok {
-		_, info := q.nodeBuilder.Info(node)
-		covered = q.matchesPartial(info, fetch.identity)
-		fetch.roots[node] = covered
+		resource, info := q.nodeBuilder.Info(node)
+		covered = fetch.rootMatches(resource, info)
+		fetch.rootNodes[node] = covered
 	}
 	return covered
+}
+
+// rootMatches 判断该类型、该身份的节点是否命中任一组根条件。
+func (fetch *topologyHopFetch) rootMatches(resource cmdb.Resource, info cmdb.Matcher) bool {
+	q := fetch.loader.graph
+	for _, root := range fetch.roots {
+		if root.source == resource && q.matchesPartial(info, root.identity) {
+			return true
+		}
+	}
+	return false
 }
 
 func (fetch *topologyHopFetch) covered(node uint64) bool {
@@ -365,7 +415,11 @@ func (fetch *topologyHopFetch) seeds(ctx context.Context) (map[uint64]timeBitmap
 	if err != nil {
 		return nil, err
 	}
-	return q.sharedTopologySeeds(ctx, q.shared.grid, SharedTopologyQuery{SourceType: fetch.source, SourceMatcher: fetch.identity, RootBits: q.sharedTopologyRootBits()}, nodeBits)
+	seeds := make([]TopologySeed, len(fetch.roots))
+	for i, root := range fetch.roots {
+		seeds[i] = TopologySeed{SourceType: root.source, Matcher: root.identity, RootBits: q.sharedTopologyRootBitsWith(root.expand)}
+	}
+	return q.sharedTopologySeeds(ctx, q.shared.grid, SharedTopologyQuery{Seeds: seeds}, nodeBits)
 }
 
 // step 用已读入的边推进一层。前沿节点的出边此前已全部读入，结果与整条读取时相同；
@@ -458,8 +512,7 @@ func (fetch *topologyHopFetch) withoutReadParents(relation cmdb.Relation, anchor
 		for _, field := range fields {
 			parent[field] = anchor[field]
 		}
-		read := fetch.expandedKeys[parentType][q.primaryMatcherKey(parentType, parent)] ||
-			(parentType == fetch.source && q.matchesPartial(parent, fetch.identity))
+		read := fetch.expandedKeys[parentType][q.primaryMatcherKey(parentType, parent)] || fetch.rootMatches(parentType, parent)
 		if !read {
 			kept = append(kept, anchor)
 		}

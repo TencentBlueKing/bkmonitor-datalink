@@ -87,9 +87,9 @@ func TestTopologyHopFetchDefaultSchemaContainerRoot(t *testing.T) {
 			t.Run(fmt.Sprintf("H%d/reuse-%v", hops, reuse), func(t *testing.T) {
 				SharedTopologyReuseMatrix = reuse
 				request := cmdb.SharedTopologyQuery{
-					SpaceUID: "space", SourceType: "container",
-					SourceInfo: cmdb.Matcher{"bcs_cluster_id": "cluster-a", "namespace": "ns-a", "pod": "pod-0"},
-					StartTime:  frames[0] / 1000, EndTime: frames[len(frames)-1] / 1000, Step: "60s", MaxHops: hops,
+					SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "container", SourceInfo: cmdb.Matcher{"bcs_cluster_id": "cluster-a", "namespace": "ns-a", "pod": "pod-0"}}},
+
+					StartTime: frames[0] / 1000, EndTime: frames[len(frames)-1] / 1000, Step: "60s", MaxHops: hops,
 				}
 				SharedTopologyPlanCandidates = false
 				wantSnapshots, wantCompact, _ := query(t, &hopFetchBackend{t: t, data: data}, request)

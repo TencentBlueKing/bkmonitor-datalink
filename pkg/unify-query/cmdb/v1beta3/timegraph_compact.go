@@ -50,6 +50,7 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 		return nil, err
 	}
 	span.Set("source-match-node-count", seeds)
+	edges = canonicalTopologyEdges(edges, query.BelongsTo)
 	result = &cmdb.CompactTopology{
 		Version: 1, Timestamps: append([]int64(nil), grid.timestamps...),
 		Nodes: make([]cmdb.CompactTopologyNode, 0), Edges: make([]cmdb.CompactTopologyEdge, 0),
@@ -72,7 +73,7 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 			return nil, err
 		}
 		resource := q.nodeBuilder.resourceName(id)
-		keep := len(targets) == 0 || resource == query.SourceType || slices.Contains(targets, resource)
+		keep := len(targets) == 0 || query.isSourceType(resource) || slices.Contains(targets, resource)
 		kept[id] = keep
 		remaining := reachable[id]
 		appendVersion := func(bits timeBitmap, dimensions cmdb.Matcher) {

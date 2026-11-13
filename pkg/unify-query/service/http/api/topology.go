@@ -270,10 +270,15 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		queryCtx, querySpan := trace.NewSpan(ctx, itemSpanName)
 		query.SpaceUID = metadata.GetUser(ctx).SpaceUID
 		querySpan.Set("query-index", index)
-		querySpan.Set("requested-source-type", query.SourceType)
+		querySpan.Set("requested-source-count", len(query.Sources))
+		if len(query.Sources) > 0 {
+			querySpan.Set("requested-source-type", query.Sources[0].SourceType)
+			querySpan.Set("requested-source-matcher-count", len(query.Sources[0].SourceInfo))
+		}
 		querySpan.Set("requested-target-types", query.TargetTypes)
 		querySpan.Set("requested-max-hops", query.MaxHops)
-		querySpan.Set("requested-source-matcher-count", len(query.SourceInfo))
+		querySpan.Set("requested-direction", query.Direction)
+		querySpan.Set("requested-relation-group-count", len(query.RelationGroups))
 		querySpan.Set("requested-relation-type-count", len(query.AllowedRelationTypes))
 		querySpan.Set("requested-category-count", len(query.AllowedCategories))
 		querySpan.Set("requested-timestamp", query.Timestamp)

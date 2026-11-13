@@ -132,7 +132,7 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 				{Steps: []resourcePathStep{
 					{ResourceType: "system", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "pod", RelationType: "system_to_pod", Category: "dynamic", Direction: "outbound", MetricName: "system_to_pod_flow"},
-					{ResourceType: "node", RelationType: "node_with_pod", Category: "static", Direction: "inbound"},
+					{ResourceType: "node", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
 				}},
 			},
 		},
@@ -150,12 +150,12 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 				}},
 				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
+					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "inbound"},
 					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound", MetricName: "pod_to_system_flow"},
 				}},
 				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
+					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "inbound"},
 					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound", MetricName: "system_to_pod_flow"},
 				}},
 			},
@@ -176,20 +176,20 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 				// 3跳: node -> pod -> apm_service_instance -> system (静态)
 				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
-					{ResourceType: "apm_service_instance", RelationType: "apm_service_instance_with_pod", Category: "static", Direction: "inbound"},
-					{ResourceType: "system", RelationType: "apm_service_instance_with_system", Category: "static", Direction: "outbound"},
+					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "inbound"},
+					{ResourceType: "apm_service_instance", RelationType: "apm_service_instance_with_pod", Category: "static", Direction: "outbound"},
+					{ResourceType: "system", RelationType: "apm_service_instance_with_system", Category: "static", Direction: "inbound"},
 				}},
 				// 2跳: node -> pod -> system (动态 outbound)
 				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
+					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "inbound"},
 					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound", MetricName: "pod_to_system_flow"},
 				}},
 				// 2跳: node -> pod -> system (动态 inbound)
 				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
+					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "inbound"},
 					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound", MetricName: "system_to_pod_flow"},
 				}},
 				// 3跳: node -> datasource -> pod -> system (动态 outbound)

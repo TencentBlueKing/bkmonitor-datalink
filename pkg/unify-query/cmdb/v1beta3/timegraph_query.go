@@ -248,7 +248,26 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		(!timeGraphTargetInfoShow(ctx) || len(tg.nodeBuilder.resourceInfoFields(sourceType)) == 0) {
 		return nil, errors.New("query ts to prom expr error: 表达式配置不能为空")
 	}
-	if len(sourceExpandInfo) > 0 || (topologyGrid == nil && (len(relations) == 0 || timeGraphForceSourceInfo(ctx))) {
+	sources, _ := ctx.Value(timeGraphTopologySourcesKey{}).([]topologySource)
+	multiSource := topologyGrid != nil && tg.shared != nil && len(sources) > 1
+	if multiSource {
+		// 多个选择器的属性条件各自判定：每个选择器单独读一次 source info，匹配位按选择器保存。
+		tg.shared.sourceExpandBits = make([]map[uint64]timeBitmap, len(sources))
+		for i, source := range sources {
+			if len(source.ExpandInfo) == 0 {
+				continue
+			}
+			tg.shared.sourceInfoBits = make(map[uint64]timeBitmap)
+			count, infoErr := loader.addSourceInfo(ctx, spaceUID, source.Type, source.Info, source.ExpandInfo)
+			sourceInfoQueryCount += count
+			if infoErr != nil {
+				return nil, infoErr
+			}
+			tg.shared.sourceExpandBits[i] = tg.shared.sourceInfoBits
+		}
+		tg.shared.sourceInfoBits = nil
+		span.Set("source-count", len(sources))
+	} else if len(sourceExpandInfo) > 0 || (topologyGrid == nil && (len(relations) == 0 || timeGraphForceSourceInfo(ctx))) {
 		if tg.shared != nil && len(sourceExpandInfo) > 0 {
 			tg.shared.sourceInfoBits = make(map[uint64]timeBitmap)
 		}
@@ -259,6 +278,13 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	}
 
 	if plan, ok := ctx.Value(timeGraphFetchPlanKey{}).(timeGraphFetchPlan); topologyGrid != nil && ok {
+		if multiSource {
+			relationEdgeQueryCount, err = loader.loadMultiSourceTopology(ctx, spaceUID, sources, relations, plan)
+			if err != nil {
+				return nil, err
+			}
+			return tg, nil
+		}
 		relationEdgeQueryCount, err = loader.loadSelectedTopology(ctx, spaceUID, sourceType, sourceInfo, rootRelations, relations, plan)
 		if err != nil {
 			return nil, err
@@ -313,7 +339,14 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		return true, observed, loadErr
 	}
 
-	if path, ok := ctx.Value(timeGraphLegacyPathKey{}).(cmdb.RelationPath); topologyGrid == nil && ok {
+	if multiSource {
+		// 没有取数计划时，多个选择器不下推根条件，按无条件读取全部候选关系。
+		for _, relation := range relations {
+			if _, _, loadErr := loadRelation(relation, nil, false); loadErr != nil {
+				return nil, loadErr
+			}
+		}
+	} else if path, ok := ctx.Value(timeGraphLegacyPathKey{}).(cmdb.RelationPath); topologyGrid == nil && ok {
 		relationEdgeQueryCount, err = loader.loadLegacyPath(ctx, spaceUID, path, sourceInfo, targetMatchersByType, targetIDsByTimestamp)
 		if err != nil {
 			return nil, err

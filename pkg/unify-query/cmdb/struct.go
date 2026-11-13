@@ -80,13 +80,9 @@ type SharedTopologyQuery struct {
 	EndTime int64 `json:"end_time,omitempty"`
 	// Range grid spacing, a positive whole-second Go duration. Empty defaults to 1m. Independent of look_back_delta. Ignored by instant topology (response step 0s).
 	Step string `json:"step,omitempty" default:"1m"`
-	// Root resource type from the active schema; required for either endpoint.
-	SourceType Resource `json:"source_type" binding:"required"`
-	// Root identity matchers (string values). Partial or empty identity selects multiple relation endpoints; use the resource catalogue for complete primary keys.
-	SourceInfo Matcher `json:"source_info,omitempty"`
-	// Explicit root attribute predicates, evaluated per frame. Defined primary keys may complete identity, but conflicting identity or unknown fields fail. Does not filter neighbor attributes.
-	SourceExpandInfo Matcher `json:"source_expand_info,omitempty"`
-	// Output node-type filter after traversal, always retaining source_type nodes. Removes excluded nodes and incident edges, never collapses paths. Empty returns all reachable types.
+	// Root selectors, 1 to 20. Each frame's roots are the union of nodes matched by any selector; hops count from the nearest root.
+	Sources []TopologySource `json:"sources" binding:"required"`
+	// Output node-type filter after traversal, always retaining every selector's source_type nodes. Removes excluded nodes and incident edges, never collapses paths. Empty returns all reachable types.
 	TargetTypes []Resource `json:"target_types,omitempty"`
 	// Hop count. Zero/omitted uses configured default (built-in 2); negative is invalid. Configured ceiling defaults to 6.
 	MaxHops int `json:"max_hops,omitempty" default:"2" minimum:"0"`
@@ -94,10 +90,22 @@ type SharedTopologyQuery struct {
 	AllowedCategories []string `json:"allowed_categories,omitempty"`
 	// Exact relation-type allowlist from the active schema. Empty allows all types; unknown names match no relations. Intersects allowed_categories.
 	AllowedRelationTypes []string `json:"allowed_relation_types,omitempty"`
-	// Traversal orientation for directional relations; non-directional static relations remain bidirectional.
-	DynamicRelationDirection string `json:"dynamic_relation_direction,omitempty" enums:"both,outbound,inbound" default:"both"`
+	// Traversal orientation: out follows dynamic relations from caller to callee and belong-to relations from child to parent; in is the reverse; both follows either. Other static relations are always bidirectional.
+	Direction string `json:"direction,omitempty" enums:"out,in,both" default:"both"`
+	// Relation group allowlist derived from the schema: BELONG_TO (static relations marked is_belongs_to) and SERVICE_CALL (dynamic relations). Empty allows all relations; any other value is rejected with 400. Intersects allowed_categories and allowed_relation_types.
+	RelationGroups []string `json:"relation_groups,omitempty" enums:"BELONG_TO,SERVICE_CALL"`
 	// Positive Go duration used by count_over_time observation windows, independent of step. Empty uses configured lookback (built-in 24h); observed edges do not prove exact simultaneous existence.
 	LookBackDelta string `json:"look_back_delta,omitempty" default:"24h"`
+}
+
+// TopologySource selects roots of one resource type.
+type TopologySource struct {
+	// Root resource type from the active schema; required.
+	SourceType Resource `json:"source_type" binding:"required"`
+	// Root identity matchers (string values). Partial or empty identity selects multiple relation endpoints; use the resource catalogue for complete primary keys.
+	SourceInfo Matcher `json:"source_info,omitempty"`
+	// Explicit root attribute predicates for this selector, evaluated per frame. Defined primary keys may complete identity, but conflicting identity or unknown fields fail. Does not filter neighbor attributes or other selectors.
+	SourceExpandInfo Matcher `json:"source_expand_info,omitempty"`
 }
 
 type SharedTopologyRequest struct {

@@ -39,17 +39,28 @@ func NewTopologyGrid(timestamps []int64) (TopologyGrid, error) {
 	return TopologyGrid{timestamps: append([]int64(nil), timestamps...)}, nil
 }
 
+// TopologySeed 是一组根：SourceType 类型、身份匹配 Matcher、且在 RootBits 对应帧内的节点。
+type TopologySeed struct {
+	SourceType cmdb.Resource
+	Matcher    cmdb.Matcher
+	RootBits   map[uint64]timeBitmap // nil means no extra per-frame root constraint
+}
+
 // SharedTopologyQuery 控制共享拓扑的遍历和关系过滤。完整拓扑先遍历所有符合
 // 条件的资源，目标资源类型过滤在输出阶段执行，不能改变遍历深度。
 type SharedTopologyQuery struct {
+	// Seeds 是多个选择器时的根，各帧的根取并集；为空时由 SourceType、SourceMatcher、RootBits 组成唯一一组根。
+	Seeds                []TopologySeed
 	SourceType           cmdb.Resource
 	SourceMatcher        cmdb.Matcher
 	MaxHops              int
 	AllowedCategories    []RelationCategory
 	AllowedRelationTypes []string
 	Direction            TraversalDirection
-	PartialTimestamps    map[int64]string
-	RootBits             map[uint64]timeBitmap // nil means no extra per-frame root constraint
+	// BelongsTo 是归属关系的类型名；输出时这些关系每对节点只出一条子 → 父的边，遍历仍按 Direction 使用各视图。
+	BelongsTo         map[string]struct{}
+	PartialTimestamps map[int64]string
+	RootBits          map[uint64]timeBitmap // nil means no extra per-frame root constraint
 }
 
 type timeGraphTopologyEdgeKey struct {
@@ -63,9 +74,29 @@ type sharedTopologyEdgeState struct {
 	activeBits timeBitmap
 }
 
+// seeds 返回遍历的各组根；没有显式 Seeds 时只有 SourceType、SourceMatcher、RootBits 这一组。
+func (query SharedTopologyQuery) seeds() []TopologySeed {
+	if len(query.Seeds) > 0 {
+		return query.Seeds
+	}
+	return []TopologySeed{{SourceType: query.SourceType, Matcher: query.SourceMatcher, RootBits: query.RootBits}}
+}
+
+// isSourceType 判断类型是否是任一组根的类型；target_types 过滤时这些类型的节点始终保留。
+func (query SharedTopologyQuery) isSourceType(resource cmdb.Resource) bool {
+	for _, seed := range query.seeds() {
+		if seed.SourceType == resource {
+			return true
+		}
+	}
+	return false
+}
+
 func (q *TimeGraph) sharedTopologyState(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery) (map[uint64]timeBitmap, []sharedTopologyEdgeState, error) {
-	if query.SourceType == "" {
-		return nil, nil, fmt.Errorf("topology source type is required")
+	for _, seed := range query.seeds() {
+		if seed.SourceType == "" {
+			return nil, nil, fmt.Errorf("topology source type is required")
+		}
 	}
 	if query.MaxHops < 0 {
 		return nil, nil, fmt.Errorf("topology max hops must not be negative")
@@ -192,6 +223,7 @@ func (q *TimeGraph) prepareSharedTopologyFrames(ctx context.Context, grid Topolo
 	}
 	span.Set("reachable-node-count", len(reachable))
 	span.Set("traversal-level-count", query.MaxHops)
+	edges = canonicalTopologyEdges(edges, query.BelongsTo)
 
 	frames = &sharedTopologyFrames{q: q, grid: grid, partial: query.PartialTimestamps, allowed: allowed, infoFrames: make([]int, len(grid.timestamps))}
 	for index, timestamp := range grid.timestamps {
@@ -359,37 +391,48 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 	return reachable, seedCount, nil
 }
 
-// sharedTopologySeeds 返回各帧匹配根条件的源类型节点及其时间位。取数阶段与最终遍历
-// 共用这一判定，逐跳取数据此决定从哪些根展开。
+// sharedTopologySeeds 返回各帧匹配根条件的源类型节点及其时间位；多组根时取各组的并集。
+// 取数阶段与最终遍历共用这一判定，逐跳取数据此决定从哪些根展开。
 func (q *TimeGraph) sharedTopologySeeds(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, nodeBits map[uint64]timeBitmap) (map[uint64]timeBitmap, error) {
 	seeds := make(map[uint64]timeBitmap)
+	selectors := query.seeds()
 	for node, bits := range nodeBits {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		resourceType := q.nodeBuilder.resourceName(node)
-		if resourceType != query.SourceType {
-			continue
-		}
-		if query.RootBits != nil {
-			bits = bits.intersect(query.RootBits[node])
-		}
-		matchedBits := bits
-		if len(query.SourceMatcher) != 0 {
-			_, info := q.nodeBuilder.Info(node)
-			matchedBits = timeBitmap{}
-			for index, timestamp := range grid.timestamps {
-				if !bits.has(index) {
-					continue
-				}
-				_, timestampInfo := q.nodeInfoAt(timestamp, node, info)
-				if q.matchesPartial(timestampInfo, query.SourceMatcher) {
-					matchedBits.set(index)
-				}
+		var matched timeBitmap
+		var info cmdb.Matcher
+		infoLoaded := false
+		for _, seed := range selectors {
+			if resourceType != seed.SourceType {
+				continue
 			}
+			seedBits := bits
+			if seed.RootBits != nil {
+				seedBits = seedBits.intersect(seed.RootBits[node])
+			}
+			if len(seed.Matcher) != 0 {
+				if !infoLoaded {
+					_, info = q.nodeBuilder.Info(node)
+					infoLoaded = true
+				}
+				filtered := timeBitmap{}
+				for index, timestamp := range grid.timestamps {
+					if !seedBits.has(index) {
+						continue
+					}
+					_, timestampInfo := q.nodeInfoAt(timestamp, node, info)
+					if q.matchesPartial(timestampInfo, seed.Matcher) {
+						filtered.set(index)
+					}
+				}
+				seedBits = filtered
+			}
+			matched = matched.union(seedBits)
 		}
-		if !matchedBits.empty() {
-			seeds[node] = matchedBits
+		if !matched.empty() {
+			seeds[node] = matched
 		}
 	}
 	return seeds, nil
@@ -421,6 +464,31 @@ func sharedTopologyStep(ctx context.Context, frontier, reachable, nodeBits map[u
 		nextFrontier[target] = nextFrontier[target].union(candidate)
 	}
 	return nextFrontier, nil
+}
+
+// canonicalTopologyEdges 把归属关系的两个遍历视图合成一条子 → 父的输出边：父 → 子视图翻转为
+// 子 → 父，与同一对节点的子 → 父视图合并时间位。遍历在此之前完成，仍按请求方向使用各视图；
+// 其余关系原样输出。
+func canonicalTopologyEdges(edges []sharedTopologyEdgeState, belongsTo map[string]struct{}) []sharedTopologyEdgeState {
+	if len(belongsTo) == 0 {
+		return edges
+	}
+	result := make([]sharedTopologyEdgeState, 0, len(edges))
+	index := make(map[timeGraphTopologyEdgeKey]int, len(edges))
+	for _, edge := range edges {
+		key := edge.key
+		if _, ok := belongsTo[key.relation.relationType]; ok && key.relation.direction == string(DirectionInbound) {
+			key.source, key.target = key.target, key.source
+			key.relation.direction = string(DirectionOutbound)
+		}
+		if position, ok := index[key]; ok {
+			result[position].activeBits = result[position].activeBits.union(edge.activeBits)
+			continue
+		}
+		index[key] = len(result)
+		result = append(result, sharedTopologyEdgeState{key: key, activeBits: edge.activeBits})
+	}
+	return result
 }
 
 func lessSharedTopologyEdge(left, right cmdb.SharedTopologyEdge) bool {

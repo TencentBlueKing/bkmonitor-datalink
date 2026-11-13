@@ -120,7 +120,7 @@ func TestSharedTopologyPartialStatusCases(t *testing.T) {
 					}
 					return matrix, partial || (stage == tt.partialStage && tt.backendBit), err
 				}
-				request := cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000001, SourceType: "source", MaxHops: 1}
+				request := cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000001, Sources: []cmdb.TopologySource{{SourceType: "source"}}, MaxHops: 1}
 				wantPoints := 1
 				if mode == "range" {
 					request.Timestamp = 0

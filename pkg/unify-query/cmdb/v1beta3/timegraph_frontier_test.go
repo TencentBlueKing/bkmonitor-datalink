@@ -50,10 +50,10 @@ func TestTopologySelectorDynamicFallbackMatchesFullScanWithCompositeKeysAndChang
 	for i := 0; i < 2000; i++ {
 		add("isolated", fmt.Sprint(i), "isolated", fmt.Sprint(i+1), stamp, stamp+60000, stamp+120000)
 	}
-	for _, direction := range []string{"outbound", "inbound", "both"} {
+	for _, direction := range []string{"out", "in", "both"} {
 		for _, hops := range []int{1, 2, 3} {
 			t.Run(fmt.Sprintf("%s/H%d", direction, hops), func(t *testing.T) {
-				request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "service", SourceInfo: cmdb.Matcher{"tenant": "x", "id": "a"}, StartTime: 1700000000, EndTime: 1700000120, Step: "60s", MaxHops: hops, DynamicRelationDirection: direction}
+				request := cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "service", SourceInfo: cmdb.Matcher{"tenant": "x", "id": "a"}}}, StartTime: 1700000000, EndTime: 1700000120, Step: "60s", MaxHops: hops, Direction: direction}
 				var baseline []string
 				counts := []int{}
 				for _, planned := range []bool{false, true} {
@@ -89,7 +89,7 @@ func TestTopologySelectorDynamicFallbackMatchesFullScanWithCompositeKeysAndChang
 func TestTopologyFrontierSelectorCopiesGuardsIntoEveryTuple(t *testing.T) {
 	provider := frontierCompositeProvider()
 	model := &Model{schemaProvider: provider}
-	relations := model.sharedTopologyRelations("space", nil, nil, DirectionOutbound)
+	relations := model.sharedTopologyRelations("space", nil, nil, nil, DirectionOutbound)
 	graph := NewTimeGraphWithConfig(model.timeGraphConfig("space"))
 	loader := &timeGraphMatrixLoader{graph: graph, start: time.Unix(1700000000, 0), end: time.Unix(1700000120, 0), step: time.Minute, lookBack: 5 * time.Minute}
 	for _, targetAnchor := range []bool{false, true} {
@@ -149,7 +149,7 @@ func TestTopologyFrontierBatchSplitsIdentityBeforeTimeAndKeepsPartial(t *testing
 		require.NoError(t, err)
 		graph := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
 		loader := &timeGraphMatrixLoader{model: model, graph: graph, start: time.Unix(1700000000, 0), end: time.Unix(1700000120, 0), step: time.Minute, lookBack: 5 * time.Minute, topology: true}
-		relations := model.sharedTopologyRelations("space", nil, nil, DirectionOutbound)
+		relations := model.sharedTopologyRelations("space", nil, nil, nil, DirectionOutbound)
 		queries := 0
 		err = loader.loadFrontierBatch(withTimeGraphQueryStage(ctx, "relation-edge"), "space", relations[0], false, identities, func(_ context.Context, matrix pl.Matrix) error { applied += len(matrix); return nil }, &queries)
 		require.NoError(t, err)
@@ -186,7 +186,7 @@ func TestTopologyFrontierSingleIdentityCapAndCanceledShardStayFatal(t *testing.T
 			require.NoError(t, err)
 			graph := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
 			loader := &timeGraphMatrixLoader{model: model, graph: graph, start: time.Unix(1700000000, 0), end: time.Unix(1700000120, 0), step: time.Minute, lookBack: 5 * time.Minute, topology: true}
-			relations := model.sharedTopologyRelations("space", nil, nil, DirectionOutbound)
+			relations := model.sharedTopologyRelations("space", nil, nil, nil, DirectionOutbound)
 			queries := 0
 			err = loader.loadFrontierBatch(withTimeGraphQueryStage(ctx, "relation-edge"), "space", relations[0], false, identities, func(_ context.Context, matrix pl.Matrix) error { applied += len(matrix); cancel(); return nil }, &queries)
 			if cancelShard {

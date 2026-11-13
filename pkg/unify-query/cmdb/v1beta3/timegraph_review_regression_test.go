@@ -97,7 +97,7 @@ func TestTopologySixtyPointGridKeepsAllPoints(t *testing.T) {
 		"middle_target_flow":   nil,
 	})
 	result, err := m.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{
-		SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
+		SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}},
 		StartTime: timestamps[0], EndTime: timestamps[59], Step: "1s", MaxHops: 1,
 	})
 	require.NoError(t, err)

@@ -78,7 +78,7 @@ func TestLayeredSchemaSourcesAndBuiltinComparison(t *testing.T) {
 		},
 		relationKey: {
 			NamespaceAll: encodeDefinitions(t, map[string]*RelationDefinition{
-				"node_with_pod": {Namespace: NamespaceAll, Name: "node_with_pod", FromResource: "node", ToResource: "pod", Category: "static"},
+				"node_with_pod": {Namespace: NamespaceAll, Name: "node_with_pod", FromResource: "pod", ToResource: "node", Category: "static", IsBelongsTo: true},
 				"pod_to_pod": {Namespace: NamespaceAll, Name: "pod_to_pod", FromResource: "pod", ToResource: "pod", Category: "dynamic",
 					IsDirectional: true, Labels: map[string]string{"metric_name": "renamed_flow"}},
 			}),

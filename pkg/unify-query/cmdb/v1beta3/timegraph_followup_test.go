@@ -29,7 +29,7 @@ func TestTopologyAttributesSelectRootsPerFrame(t *testing.T) {
 			}
 			vm := &publicTimeGraphVM{responses: responses}
 			model := &Model{schemaProvider: publicSourceExpandProvider(), timeGraphQueryReference: timeGraphTestQueryReference, timeGraphVMQuery: vm.query}
-			request := cmdb.SharedTopologyQuery{SpaceUID: "space", StartTime: 1700000000, EndTime: 1700000120, Step: "60s", SourceType: "node", SourceExpandInfo: cmdb.Matcher{"zone": "east"}, MaxHops: 1, ResponseFormat: format}
+			request := cmdb.SharedTopologyQuery{SpaceUID: "space", StartTime: 1700000000, EndTime: 1700000120, Step: "60s", Sources: []cmdb.TopologySource{{SourceType: "node", SourceExpandInfo: cmdb.Matcher{"zone": "east"}}}, MaxHops: 1, ResponseFormat: format}
 			result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
 			require.NoError(t, err)
 			snapshots := result.Snapshots
@@ -60,14 +60,14 @@ func TestTopologyAttributesSelectRootsPerFrame(t *testing.T) {
 				}
 			}
 			require.True(t, foundZone)
-			request.SourceInfo = cmdb.Matcher{"node_id": "n1"}
-			request.SourceExpandInfo = cmdb.Matcher{"node_id": "n2"}
+			request.Sources[0].SourceInfo = cmdb.Matcher{"node_id": "n1"}
+			request.Sources[0].SourceExpandInfo = cmdb.Matcher{"node_id": "n2"}
 			_, err = model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
 			require.ErrorContains(t, err, "conflicts")
-			request.SourceExpandInfo = cmdb.Matcher{"unknown": "value"}
+			request.Sources[0].SourceExpandInfo = cmdb.Matcher{"unknown": "value"}
 			_, err = model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
 			require.Error(t, err)
-			request.SourceExpandInfo = cmdb.Matcher{"unknown": ""}
+			request.Sources[0].SourceExpandInfo = cmdb.Matcher{"unknown": ""}
 			_, err = model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
 			require.Error(t, err)
 		})
@@ -83,7 +83,7 @@ func TestTopologyInfoOnlyDoesNotCreateRootsOrRestrictSameTypeNeighbors(t *testin
 	for _, format := range []string{"snapshots", cmdb.CompactTopologyFormat} {
 		vm := &publicTimeGraphVM{responses: responses}
 		model := &Model{schemaProvider: provider, timeGraphQueryReference: timeGraphTestQueryReference, timeGraphVMQuery: vm.query}
-		result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", StartTime: 1700000000, EndTime: 1700000060, Step: "60s", SourceType: "entity", SourceExpandInfo: cmdb.Matcher{"version": "v2"}, MaxHops: 2, ResponseFormat: format})
+		result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", StartTime: 1700000000, EndTime: 1700000060, Step: "60s", Sources: []cmdb.TopologySource{{SourceType: "entity", SourceExpandInfo: cmdb.Matcher{"version": "v2"}}}, MaxHops: 2, ResponseFormat: format})
 		require.NoError(t, err)
 		snapshots := result.Snapshots
 		if result.Compact != nil {
@@ -136,7 +136,7 @@ func TestSourceInfoQualityRetainedByLegacyAndTopology(t *testing.T) {
 		} else {
 			require.Len(t, targets, 1)
 		}
-		result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000000, SourceType: "node", SourceExpandInfo: cmdb.Matcher{"zone": "east"}, MaxHops: 1})
+		result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000000, Sources: []cmdb.TopologySource{{SourceType: "node", SourceExpandInfo: cmdb.Matcher{"zone": "east"}}}, MaxHops: 1})
 		require.NoError(t, err)
 		require.True(t, result.Snapshots[0].Partial)
 		if missing {
@@ -227,7 +227,7 @@ func TestExpandedPrimaryKeyIsUsedInTopology(t *testing.T) {
 			"node_to_middle_flow": append(contractMatrix(map[string]string{"node_id": "n1", "middle_id": "m1"}, 1700000000000), contractMatrix(map[string]string{"node_id": "n2", "middle_id": "m2"}, 1700000000000)...),
 		}}
 		model := &Model{schemaProvider: publicSourceExpandProvider(), timeGraphQueryReference: timeGraphTestQueryReference, timeGraphVMQuery: vm.query}
-		result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000000, SourceType: "node", SourceExpandInfo: cmdb.Matcher{"node_id": "n1"}, MaxHops: 1, ResponseFormat: format})
+		result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000000, Sources: []cmdb.TopologySource{{SourceType: "node", SourceExpandInfo: cmdb.Matcher{"node_id": "n1"}}}, MaxHops: 1, ResponseFormat: format})
 		require.NoError(t, err)
 		snapshots := result.Snapshots
 		if result.Compact != nil {
@@ -277,7 +277,7 @@ func TestPartialReasonsStableAndCompleteEmptyUnmarked(t *testing.T) {
 	require.Equal(t, "backend_partial;source_info_no_route", q.partialTimesCopy()[now.UnixMilli()])
 	ctx := initTimeGraphQueryTestEnvironment()
 	model := sharedTopologyQueryModel(map[string]pl.Matrix{"source_middle_flow": nil, "middle_target_flow": nil})
-	result, err := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000000, SourceType: "source", MaxHops: 1})
+	result, err := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000000, Sources: []cmdb.TopologySource{{SourceType: "source"}}, MaxHops: 1})
 	require.NoError(t, err)
 	require.Empty(t, result.Snapshots[0].Nodes)
 	require.False(t, result.Snapshots[0].Partial)

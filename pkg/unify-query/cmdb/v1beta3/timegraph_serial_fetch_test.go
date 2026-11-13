@@ -55,7 +55,7 @@ func TestTopologySerialFetchStopsAfterFailureAndReleasesAdmission(t *testing.T) 
 					return nil, failure
 				}
 			}
-			relations := model.sharedTopologyRelations("space", nil, nil, DirectionBoth)
+			relations := model.sharedTopologyRelations("space", nil, nil, nil, DirectionBoth)
 			groups := make([]topologyFetchGroup, 3)
 			for i := range groups {
 				groups[i] = topologyFetchGroup{ctx: ctx, query: &structured.QueryTs{SpaceUid: strconv.Itoa(i), Start: "1700000000", End: "1700000000", Step: "1m0s"}, relations: relations}
@@ -100,7 +100,7 @@ func TestTopologySerialFetchPreservesApplicationAndAttributeOrder(t *testing.T) 
 		fetched = append(fetched, query.SpaceUid)
 		return contractMatrix(map[string]string{"a_id": "root", "b_id": query.SpaceUid}, grid.timestamps...), nil
 	}
-	relations := model.sharedTopologyRelations("space", nil, nil, DirectionBoth)
+	relations := model.sharedTopologyRelations("space", nil, nil, nil, DirectionBoth)
 	groups := make([]topologyFetchGroup, 4)
 	for i := range groups {
 		id := strconv.Itoa(len(groups) - 1 - i)
@@ -144,7 +144,7 @@ func TestFullRootSerialFetchPreservesK60H6SnapshotsAndCompact(t *testing.T) {
 	}
 	oldPlan, oldReuse := SharedTopologyPlanCandidates, SharedTopologyReuseMatrix
 	t.Cleanup(func() { SharedTopologyPlanCandidates, SharedTopologyReuseMatrix = oldPlan, oldReuse })
-	request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "container", StartTime: times[0] / 1000, EndTime: times[len(times)-1] / 1000, Step: "1s", MaxHops: 6}
+	request := cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "container"}}, StartTime: times[0] / 1000, EndTime: times[len(times)-1] / 1000, Step: "1s", MaxHops: 6}
 	SharedTopologyPlanCandidates, SharedTopologyReuseMatrix = false, false
 	baseline, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
 	require.NoError(t, err)

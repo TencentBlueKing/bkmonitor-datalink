@@ -33,9 +33,9 @@ func TestQuerySharedTopologyRejectsSchemaProviderError(t *testing.T) {
 	}
 
 	_, err := model.QuerySharedTopology(context.Background(), cmdb.SharedTopologyQuery{
-		SpaceUID:   "space",
-		Timestamp:  1700000000,
-		SourceType: "source",
+		SpaceUID:  "space",
+		Timestamp: 1700000000,
+		Sources:   []cmdb.TopologySource{{SourceType: "source"}},
 	})
 
 	require.Error(t, err)

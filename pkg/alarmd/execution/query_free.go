@@ -189,6 +189,17 @@ type ActivatedPlan struct {
 	ScheduleRevision  PlanScheduleRevision
 	RequiredFullSlots uint32
 	ForceWarming      bool
+	// Arrived is a Plan this activation found active for the first time: new,
+	// or deleted and put back. The control plane cannot tell the two apart -
+	// the state is one key per series, with no index by Plan - so it forces
+	// the Plan to warm up, and the Worker tells them apart at the Plan's first
+	// Slot by what it finds of it (worker/first_seen.go). Every other forced
+	// warm-up - a generation that moved under a Plan that stayed active and
+	// was not carried, a Query Group that reopened a retired timeline, a held
+	// Plan back - warms up whatever the Worker finds. False, and omitted,
+	// everywhere else, so a record without it serializes as before and is
+	// read as one to warm up.
+	Arrived bool `json:",omitempty"`
 	// Shard is the piece of a split strategy this activation is for, nil for
 	// a Plan that is not split. Activation records are persisted and compared
 	// by their bytes, so it is a pointer omitted when nil: every record of an
@@ -230,8 +241,8 @@ func (carry *NoDataCarry) Validate(plan ActivatedPlan) error {
 	if carry == nil {
 		return nil
 	}
-	if carry.From == "" || carry.From == plan.StateGeneration || !plan.ForceWarming || (!carry.Memory && !carry.Ends) {
-		return errors.New("alarmd execution: a no-data carry needs a previous generation on a warming activation and something to carry")
+	if carry.From == "" || carry.From == plan.StateGeneration || (!carry.Memory && !carry.Ends) {
+		return errors.New("alarmd execution: a no-data carry needs a previous generation and something to carry")
 	}
 	return nil
 }
@@ -250,14 +261,14 @@ type StateCarry struct {
 }
 
 // Validate holds a carry to the activation it is on: it comes from another
-// generation, only on an activation that warms up, and names each Level once,
-// in order.
+// generation and names each Level once, in order. A carried activation does
+// not warm up, so a carry is not tied to ForceWarming.
 func (carry *StateCarry) Validate(plan ActivatedPlan) error {
 	if carry == nil {
 		return nil
 	}
-	if carry.From == "" || carry.From == plan.StateGeneration || !plan.ForceWarming {
-		return errors.New("alarmd execution: a state carry needs a previous generation on a warming activation")
+	if carry.From == "" || carry.From == plan.StateGeneration {
+		return errors.New("alarmd execution: a state carry needs a previous generation")
 	}
 	for index, level := range carry.Levels {
 		if level == 0 || (index > 0 && carry.Levels[index-1] >= level) {
@@ -304,7 +315,7 @@ func (plan ActivatedPlan) Equal(other ActivatedPlan) bool {
 	return plan.Identity == other.Identity && plan.StateGeneration == other.StateGeneration &&
 		plan.StateApplyEpoch == other.StateApplyEpoch && plan.ScheduleRevision == other.ScheduleRevision &&
 		plan.RequiredFullSlots == other.RequiredFullSlots && plan.ForceWarming == other.ForceWarming &&
-		ShardsEqual(plan.Shard, other.Shard) && carriesEqual(plan.Carry, other.Carry) &&
+		plan.Arrived == other.Arrived && ShardsEqual(plan.Shard, other.Shard) && carriesEqual(plan.Carry, other.Carry) &&
 		noDataCarriesEqual(plan.NoDataCarry, other.NoDataCarry)
 }
 

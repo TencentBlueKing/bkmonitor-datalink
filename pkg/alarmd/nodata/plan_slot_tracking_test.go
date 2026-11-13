@@ -70,7 +70,7 @@ func TestAnExhaustedPlanWritesAgainOnceItsRosterComesBack(t *testing.T) {
 // record keeps stating an exhaustion that is not true, for as long as the Plan
 // exists.
 func TestARecordStatingExhaustionOverGroupsIsRepairedNotKept(t *testing.T) {
-	first, second := hostGroup(t, "10.0.0.1"), hostGroup(t, "10.0.0.2")
+	first, second := hostGroup(t, "192.0.2.1"), hostGroup(t, "192.0.2.2")
 	snapshot := storedSnapshot(t, 0,
 		execution.NoDataGroupMemory{GroupKey: first.Key(), FirstAbsent: 940},
 		execution.NoDataGroupMemory{GroupKey: second.Key(), FirstAbsent: 940},

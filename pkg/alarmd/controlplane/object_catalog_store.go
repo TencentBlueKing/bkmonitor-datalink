@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 )
 
 // The object catalog is the publication broken into the pieces a Worker
@@ -416,11 +417,15 @@ func (repository *RedisCatalogRepository) LoadCatalogManifest(ctx context.Contex
 }
 
 // renewObjectCatalog renews the manifest of the current publication and
-// every object it names. A key the renewal cannot find is counted and makes
-// the next write ask Redis about every digest again instead of trusting what
-// this process remembers.
+// every object and output context it names, on the first refresh round of
+// the Control Leader term and every objectRenewalRounds-th after. A key the renewal
+// cannot find is counted and makes the next write ask Redis about every
+// digest again instead of trusting what this process remembers.
 func (repository *RedisCatalogRepository) renewObjectCatalog(ctx context.Context, revision execution.SnapshotRevision) {
 	if repository == nil || repository.client == nil || revision == "" {
+		return
+	}
+	if !repository.renewals.objectRenewalDue() {
 		return
 	}
 	started := time.Now()
@@ -430,49 +435,38 @@ func (repository *RedisCatalogRepository) renewObjectCatalog(ctx context.Context
 		repository.observe(ctx, observability.Observation{Component: observability.ComponentControlPlane, Stage: observability.StageObjectCatalog,
 			Result: factsTextResult(facts.Result), ObjectCatalog: facts, Duration: facts.Duration, DurationKnown: true})
 	}()
-	keys, err := repository.objectCatalogKeys(ctx, revision, facts)
+	objects, contexts, err := repository.objectCatalogKeys(ctx, revision, facts)
 	if err != nil {
 		return
 	}
 	// A Query Group a cutover held back runs content the current manifest no
 	// longer names; renewing only the manifest's objects would let what it
 	// runs expire under it a catalog TTL later.
-	keys = append(keys, repository.blockedObjectKeys(ctx)...)
+	blockedObjects, blockedContexts := repository.blockedObjectKeys(ctx)
+	objects, contexts = append(objects, blockedObjects...), append(contexts, blockedContexts...)
 	// Content is renewed for as long as the publication's longest Plan may
 	// still read it once it is superseded; the manifest, like every other
 	// catalog key, for the catalog TTL. The retention is read from beside
 	// the manifest and not from memory, so the first renewal of a leader
 	// that has just started does not cut a long Plan's objects back.
 	objectTTL := repository.storedObjectRetention(ctx, revision)
-	contentKeys := len(keys)
-	keys = append(keys, repository.catalogManifestKey(revision))
-	for start := 0; start < len(keys); start += objectCatalogBatch {
-		batch := keys[start:minInt(start+objectCatalogBatch, len(keys))]
-		replies := make([]*redis.BoolCmd, len(batch))
-		if _, err := repository.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
-			for index, key := range batch {
-				ttl := objectTTL
-				if start+index >= contentKeys {
-					ttl = repository.ttl
-				}
-				replies[index] = pipe.PExpire(ctx, key, ttl)
-			}
-			if start+len(batch) == len(keys) && objectTTL > repository.ttl {
-				// Not counted: absent is what a publication with no long Plan
-				// has, and it is not a missing object.
-				pipe.PExpire(ctx, repository.objectRetentionKey(revision), repository.ttl)
-			}
-			return nil
-		}); err != nil {
-			return
-		}
-		for _, reply := range replies {
-			if reply.Val() {
-				facts.Present++
-			} else {
-				facts.Missing++
-			}
-		}
+	objectRenewals := make([]catalogKeyRenewal, 0, len(objects)+2)
+	for _, key := range objects {
+		objectRenewals = append(objectRenewals, catalogKeyRenewal{key: key, ttl: objectTTL})
+	}
+	objectRenewals = append(objectRenewals, catalogKeyRenewal{key: repository.catalogManifestKey(revision), ttl: repository.ttl})
+	if objectTTL > repository.ttl {
+		// Not counted: absent is what a publication with no long Plan has,
+		// and it is not a missing object.
+		objectRenewals = append(objectRenewals, catalogKeyRenewal{key: repository.objectRetentionKey(revision), ttl: repository.ttl, uncounted: true})
+	}
+	contextRenewals := make([]catalogKeyRenewal, 0, len(contexts))
+	for _, key := range contexts {
+		contextRenewals = append(contextRenewals, catalogKeyRenewal{key: key, ttl: objectTTL})
+	}
+	if !repository.renewCatalogKeys(redisfailure.WithCaller(ctx, redisfailure.CallerCatalogObjectRenewal), objectRenewals, facts, &facts.RenewedObjects) ||
+		!repository.renewCatalogKeys(redisfailure.WithCaller(ctx, redisfailure.CallerCatalogContextRenewal), contextRenewals, facts, &facts.RenewedContexts) {
+		return
 	}
 	if facts.Missing > 0 {
 		repository.objectCatalog.forget()
@@ -480,16 +474,53 @@ func (repository *RedisCatalogRepository) renewObjectCatalog(ctx context.Context
 	facts.Result = "success"
 }
 
+// catalogKeyRenewal is one key a catalog renewal renews and for how long.
+type catalogKeyRenewal struct {
+	key string
+	ttl time.Duration
+	// uncounted is a key whose absence is not a missing object.
+	uncounted bool
+}
+
+// renewCatalogKeys renews keys in pipelined batches, counting each key found
+// present or missing, and each renewal a batch the store answered sent in
+// renewed. It stops at the first batch that fails.
+func (repository *RedisCatalogRepository) renewCatalogKeys(ctx context.Context, keys []catalogKeyRenewal, facts *observability.ObjectCatalogFacts, renewed *int) bool {
+	for start := 0; start < len(keys); start += objectCatalogBatch {
+		batch := keys[start:minInt(start+objectCatalogBatch, len(keys))]
+		replies := make([]*redis.BoolCmd, len(batch))
+		if _, err := repository.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+			for index, renewal := range batch {
+				replies[index] = pipe.PExpire(ctx, renewal.key, renewal.ttl)
+			}
+			return nil
+		}); err != nil {
+			return false
+		}
+		*renewed += len(batch)
+		for index, reply := range replies {
+			switch {
+			case batch[index].uncounted:
+			case reply.Val():
+				facts.Present++
+			default:
+				facts.Missing++
+			}
+		}
+	}
+	return true
+}
+
 // objectCatalogKeys lists the object keys of a revision from what this
 // process remembers, or from the stored manifest when it remembers another
 // revision. Reading the manifest makes the remembered set the manifest's:
 // the renewal that follows proves each key present or drops the memory.
-func (repository *RedisCatalogRepository) objectCatalogKeys(ctx context.Context, revision execution.SnapshotRevision, facts *observability.ObjectCatalogFacts) ([]string, error) {
+func (repository *RedisCatalogRepository) objectCatalogKeys(ctx context.Context, revision execution.SnapshotRevision, facts *observability.ObjectCatalogFacts) (objectKeys, contextKeys []string, err error) {
 	known, objects, contexts := repository.objectCatalog.snapshot()
 	if known != revision {
 		manifest, err := repository.LoadCatalogManifest(ctx, revision)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		objects = make(map[execution.ObjectDigest]struct{}, len(manifest.QueryGroups))
 		for _, entry := range manifest.QueryGroups {
@@ -502,15 +533,17 @@ func (repository *RedisCatalogRepository) objectCatalogKeys(ctx context.Context,
 		repository.objectCatalog.replace(revision, objects, contexts)
 	}
 	facts.QueryGroups = len(objects)
-	keys := make([]string, 0, len(objects)+len(contexts)+1)
+	objectKeys = make([]string, 0, len(objects))
 	for digest := range objects {
-		keys = append(keys, repository.queryGroupObjectKey(digest))
+		objectKeys = append(objectKeys, repository.queryGroupObjectKey(digest))
 	}
+	contextKeys = make([]string, 0, len(contexts))
 	for digest := range contexts {
-		keys = append(keys, repository.outputContextKey(digest))
+		contextKeys = append(contextKeys, repository.outputContextKey(digest))
 	}
-	sort.Strings(keys)
-	return keys, nil
+	sort.Strings(objectKeys)
+	sort.Strings(contextKeys)
+	return objectKeys, contextKeys, nil
 }
 
 func minInt(left, right int) int {

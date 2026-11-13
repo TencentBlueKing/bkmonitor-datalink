@@ -74,8 +74,8 @@ func TestProductionPhaseTwoBundleReRunsChunkedSlotIdempotently(t *testing.T) {
 		if index > 0 {
 			body.WriteByte(',')
 		}
-		fmt.Fprintf(&body, `{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["host"],"group_values":["10.0.%d.%d"],"values":[[%d,95]]}`,
-			index/256, index%256, (base-1)*1000)
+		fmt.Fprintf(&body, `{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["host"],"group_values":["host-%05d"],"values":[[%d,95]]}`,
+			index, (base-1)*1000)
 	}
 	body.WriteString(`],"status":null,"trace_id":"c2-chunked-apply","is_partial":false,"result_table_id":["system.cpu"]}`)
 	response := body.Bytes()

@@ -32,6 +32,27 @@ var (
 	ErrContentScopeMoved = errors.New("alarmd ownership: content scope has moved")
 )
 
+// LeaseBusyError is ErrLeaseBusy as the store answered it: the lease in the
+// way, by its holder's id, owner epoch and session epoch (zero for a lease
+// not held under a worker session), and its deadline on the store's clock
+// (zero for one held under a session, which has none of its own). A refused
+// takeover names what refused it with these, where the bare word could not
+// tell one holder from the next.
+type LeaseBusyError struct {
+	OwnerID           string
+	OwnerEpoch        uint64
+	SessionEpoch      uint64
+	DeadlineUnixMilli int64
+}
+
+func (err *LeaseBusyError) Error() string { return ErrLeaseBusy.Error() }
+
+func (err *LeaseBusyError) Unwrap() error { return ErrLeaseBusy }
+
+// ErrNoWorkerSession is ErrLeaseBusy decided before the store was asked: this
+// worker holds no session yet to take a lease under (OpenSessionUnder).
+var ErrNoWorkerSession = fmt.Errorf("%w: no worker session is held yet", ErrLeaseBusy)
+
 // IsLeaseDecision reports whether err is an authoritative answer from the
 // lease store about the fence (stale, not desired, held by another owner)
 // rather than a failure to reach the store. Renewal loops retry only the
@@ -394,6 +415,9 @@ type AssignmentRecord struct {
 	// on a record no leader has written it to yet: a reader treats zero as
 	// "not said", never as revision zero, which no timeline has.
 	TimelineRecordRevision uint64
+	// ObservedAt is the server instant a fence check read the record at, on
+	// the clock EffectiveAt is on; zero for a record read any other way.
+	ObservedAt time.Time
 }
 
 // ContentChangePending reports whether the record carries a content change
@@ -405,8 +429,13 @@ func (record AssignmentRecord) ContentChangePending() bool {
 // AssignmentDecision is a Control Leader decision based on one observed
 // Assignment revision. ExpectedRecordRevision is zero only for first publish.
 type AssignmentDecision struct {
-	QueryGroup             execution.QueryGroupIdentity
-	DesiredWorkerID        string
+	QueryGroup      execution.QueryGroupIdentity
+	DesiredWorkerID string
+	// HolderWorkerID is the worker the Leader expects holds the lease now --
+	// the record's current desired worker -- whose session the publication
+	// reads to tell a holder that is gone from one that is draining. Empty
+	// is the decision's own desired worker.
+	HolderWorkerID         string
 	ExpectedRecordRevision uint64
 	PlacementReason        PlacementReason
 	DecidedAt              time.Time
@@ -480,6 +509,11 @@ type Lease struct {
 	// the Query Group is on, as of this renewal; zero when the record does
 	// not say. See AssignmentRecord.TimelineRecordRevision.
 	TimelineRecordRevision uint64
+	// SessionEpoch is the worker session the lease was taken under (A2), and
+	// TTL how long a confirmation lets its holder act; both zero for a lease
+	// its holder renews itself.
+	SessionEpoch uint64
+	TTL          time.Duration
 }
 
 // ContentChangePending reports whether the lease was renewed under a content

@@ -34,6 +34,10 @@ type rebalanceOwnershipStore struct {
 	decisions     []ownership.AssignmentDecision
 	beforePublish func(ownership.AssignmentDecision)
 	publishErr    error
+	// sweepErr is what every sweep returns when set.
+	sweepErr error
+	// holderKind is what every publication reports held the lease.
+	holderKind ownership.HolderKind
 
 	reads            int
 	readErr          error
@@ -82,6 +86,13 @@ func (store *rebalanceOwnershipStore) ReadAssignment(_ context.Context, queryGro
 		return ownership.AssignmentRecord{}, ownership.ErrAssignmentAbsent
 	}
 	return record, nil
+}
+
+// PublishAssignmentReporting is PublishAssignment with the holder this fake
+// reports for it (holderKind, none when unset).
+func (store *rebalanceOwnershipStore) PublishAssignmentReporting(ctx context.Context, authority ownership.PublicationAuthority, decision ownership.AssignmentDecision) (ownership.AssignmentRecord, ownership.HolderKind, error) {
+	record, err := store.PublishAssignment(ctx, authority, decision)
+	return record, store.holderKind, err
 }
 
 func (store *rebalanceOwnershipStore) PublishAssignment(

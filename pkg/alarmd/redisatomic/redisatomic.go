@@ -40,6 +40,8 @@ import (
 	"errors"
 
 	"github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisscript"
 )
 
 // Write is one atomic multi-key write: a Lua script, defined once as a
@@ -49,10 +51,10 @@ type Write struct {
 	script *redis.Script
 }
 
-// New defines a write. body is the Lua source. What it returns is not read:
-// a write either ran or failed.
-func New(body string) *Write {
-	return &Write{script: redis.NewScript(body)}
+// New defines a write. name is how its cost reads (redisscript), body the Lua
+// source. What it returns is not read: a write either ran or failed.
+func New(name, body string) *Write {
+	return &Write{script: redisscript.New(name, body)}
 }
 
 // Run makes the write: one EVALSHA, and only if the server answers NOSCRIPT

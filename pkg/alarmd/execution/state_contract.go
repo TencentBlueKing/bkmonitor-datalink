@@ -382,6 +382,21 @@ func BuildStateMutation(mutation StateMutation) (StateMutation, error) {
 	return mutation, nil
 }
 
+// ValidateSealed is the check a mutation passes inside the process between
+// its build and the store's admission: that it carries its build's seal for
+// its digest, without hashing its content again (decision-020 0.6.x
+// throughput design 3.2-1). Content changed
+// in place after the build is caught by the store's admission, the last check
+// before the Slot's events, which validates it whole (ValidateDigest). A
+// mutation without a seal - decoded, or made by hand - is validated whole
+// here as well.
+func (mutation StateMutation) ValidateSealed() error {
+	if mutation.sealedDigest.holds(mutation) {
+		return nil
+	}
+	return mutation.ValidateDigest()
+}
+
 // BuildProvisionalStateMutation normalizes and validates a mutation that is
 // still being carried inside one series evaluation. It deliberately leaves the
 // digest empty: a series with R records builds R mutations but keeps only the

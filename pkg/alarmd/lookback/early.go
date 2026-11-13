@@ -126,6 +126,12 @@ func (readings *durations) add(value time.Duration) {
 	readings.count = min(readings.count+1, readingsKept)
 }
 
+// widenLatest makes the latest reading value when value is longer.
+func (readings *durations) widenLatest(value time.Duration) {
+	latest := (readings.next + readingsKept - 1) % readingsKept
+	readings.values[latest] = max(readings.values[latest], value)
+}
+
 func (readings *durations) longest() time.Duration {
 	longest := time.Duration(0)
 	for index := 0; index < readings.count; index++ {
@@ -157,15 +163,28 @@ type earlyRead struct {
 }
 
 // leadLocked is how long before the next Slot reads a Query Group's early
-// read starts at the latest: the longest of its last first reads and of its
-// last supplement holds, or of every supplement hold this process has seen
-// while the group has had none.
-func (engine *Engine) leadLocked(state *group) time.Duration {
+// read starts at the latest: the longest first read (tookLocked) and the
+// longest of its last supplement holds, or of every supplement hold this
+// process has seen while the group has had none.
+func (engine *Engine) leadLocked(state *group, slot *directedSlot) time.Duration {
 	hold := state.holds.longest()
 	if state.holds.count == 0 {
 		hold = engine.holdMax
 	}
-	return state.took.longest() + hold
+	return tookLocked(state, slot) + hold
+}
+
+// tookLocked is the longest of a Query Group's last first reads and, for a
+// Slot read in slices, of that Slot's slices' times summed so far: those are
+// counted among the group's only when the Slot is read again (rereadSlices),
+// after its early read is planned, and a group's first sliced Slot has no
+// other reading. A nil slot is the group's alone.
+func tookLocked(state *group, slot *directedSlot) time.Duration {
+	took := state.took.longest()
+	if slot != nil {
+		took = max(took, slot.sliceTook)
+	}
+	return took
 }
 
 // planEarlyLocked decides a directed Slot's early read once its first read
@@ -177,7 +196,7 @@ func (engine *Engine) planEarlyLocked(state *group, slot *directedSlot, now time
 	slot.early = &earlyRead{}
 	outcome := ""
 	switch {
-	case len(slot.queries) != 1:
+	case slot.physicalQueries() != 1:
 		outcome = EarlyMultiQuery
 	case slot.queries[0].spec.PlanFacts.NamedOutputs != nil:
 		outcome = EarlyNamedOutputs
@@ -197,7 +216,7 @@ func (engine *Engine) planEarlyLocked(state *group, slot *directedSlot, now time
 		engine.fileEarlyLocked(state, slot, EarlyRungFirst)
 		return
 	}
-	slot.early.latest = slot.early.next.Add(-engine.leadLocked(state))
+	slot.early.latest = slot.early.next.Add(-engine.leadLocked(state, slot))
 	if now.After(slot.early.latest) {
 		outcome := EarlyAnchorPassed
 		frozenNext := time.Unix(int64(slot.following), 0).Add(slot.readyAt.Sub(time.Unix(int64(slot.evaluation), 0)))
@@ -287,7 +306,7 @@ func (engine *Engine) dueEarlyLocked(now time.Time, free int) ([]*directedSlot, 
 		if state != nil && !slot.early.done && !slot.early.running {
 			next := engine.nextReadLocked(slot)
 			previous := slot.early.next
-			slot.early.next, slot.early.latest = next, next.Add(-engine.leadLocked(state))
+			slot.early.next, slot.early.latest = next, next.Add(-engine.leadLocked(state, slot))
 			if next.Before(previous) && now.After(slot.early.latest) {
 				engine.fileEarlyLocked(state, slot, EarlyOvertaken)
 			} else if !next.Before(slot.readAt.Add(rungDelay(slot.rung, slot.step))) {
@@ -310,7 +329,7 @@ func (engine *Engine) dueEarlyLocked(now time.Time, free int) ([]*directedSlot, 
 		pending = append(pending, slot)
 		second := slot.early.next.Unix()
 		bySecond[second] = append(bySecond[second], slot)
-		took[slot] = state.took.longest()
+		took[slot] = tookLocked(state, slot)
 	}
 	engine.earlyPending = pending
 	var due []*directedSlot
@@ -430,7 +449,7 @@ func (engine *Engine) StepEarly(ctx context.Context) {
 					continue
 				}
 				slot.early.tried = true
-				retry := now.Add(state.took.longest() / time.Duration(free))
+				retry := now.Add(tookLocked(state, slot) / time.Duration(free))
 				if retry.After(slot.early.latest) {
 					retry = slot.early.latest
 				}
@@ -459,11 +478,8 @@ func (engine *Engine) StepEarly(ctx context.Context) {
 			continue
 		}
 		slot.early.tried, slot.early.running, slot.running = true, true, true
-		// The Slot's first query, taken under the lock: a later physical query
-		// of the Slot appends to its queries while the read runs.
-		captured := slot.queries[0]
 		engine.mu.Unlock()
-		go engine.earlyRead(ctx, slot, captured, release, yield)
+		go engine.earlyRead(ctx, slot, release, yield)
 	}
 }
 
@@ -492,8 +508,8 @@ func (engine *Engine) NextEarlyWake() time.Time {
 // and supplements the series its first read did not have, guarded under the
 // flight against a next Slot that has begun. The permit is given back
 // before the supplement, as a directed read's is.
-func (engine *Engine) earlyRead(ctx context.Context, slot *directedSlot, captured *directedQuery, release func(), yield <-chan struct{}) {
-	readCtx, cancel := context.WithTimeout(ctx, engine.rereadTimeout(slot.queryGroup))
+func (engine *Engine) earlyRead(ctx context.Context, slot *directedSlot, release func(), yield <-chan struct{}) {
+	readCtx, cancel := context.WithTimeout(ctx, engine.slotRereadTimeout(slot))
 	back := make(chan struct{})
 	if yield != nil {
 		go func() {
@@ -504,12 +520,11 @@ func (engine *Engine) earlyRead(ctx context.Context, slot *directedSlot, capture
 			}
 		}()
 	}
-	engine.mu.Lock()
-	first := captured.first.set
-	engine.mu.Unlock()
-	sink := &keptSink{first: first, admit: engine.options.Memory}
 	readAt := engine.options.Now()
-	completion, err := engine.options.Recheck(readCtx, captured.spec, sink)
+	// Every slice the Slot read, each against its own first read, as the
+	// read at the rung does (rereadSlices).
+	queries, sinks, completion, err, refused := engine.rereadSlices(readCtx, slot)
+	sink := mergeKeptSinks(sinks)
 	close(back)
 	release()
 	cancel()
@@ -535,12 +550,12 @@ func (engine *Engine) earlyRead(ctx context.Context, slot *directedSlot, capture
 		engine.fileEarlyLocked(state, slot, EarlyReadFailed)
 		engine.mu.Unlock()
 		return
-	case sink.refused:
+	case len(sinks) == 0 || refused == len(sinks):
 		engine.fileEarlyLocked(state, slot, EarlyMemoryRefused)
 		engine.mu.Unlock()
 		return
 	}
-	read, series := sink.kept(captured.spec, completion)
+	read, series := sink.kept(queries[0].spec, completion)
 	slot.early.readAt = readAt
 	// The late series are kept until the Slot is filed, whatever becomes of
 	// their supplement: the Slot's late count is both reads' together.
@@ -584,8 +599,11 @@ func (engine *Engine) earlyRead(ctx context.Context, slot *directedSlot, capture
 	case outcome.Ran:
 		// What it supplemented is not the read at the rung's to supplement
 		// again: the series join the first read's, admitted as it grows.
-		for identity := range sink.series {
-			captured.first.add(hashString(string(identity)))
+		// Each slice's late series join that slice's first read.
+		for index, kept := range sinks {
+			for identity := range kept.series {
+				queries[index].first.add(hashString(string(identity)))
+			}
 		}
 		slot.facts = addFacts(slot.facts, outcome.Facts)
 		slot.supplemented = true

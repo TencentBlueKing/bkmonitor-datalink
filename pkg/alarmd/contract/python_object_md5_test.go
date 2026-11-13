@@ -88,9 +88,9 @@ func TestPythonObjectMD5IsIndependentOfKeyOrder(t *testing.T) {
 // same series are different objects, and this is where that stops being a
 // statement and becomes an identity.
 func TestPythonObjectMD5SeparatesANoDataGroupFromItsSeries(t *testing.T) {
-	series := map[string]json.RawMessage{"bk_target_ip": json.RawMessage(`"10.0.0.1"`)}
+	series := map[string]json.RawMessage{"bk_target_ip": json.RawMessage(`"192.0.2.1"`)}
 	group := map[string]json.RawMessage{
-		"bk_target_ip": json.RawMessage(`"10.0.0.1"`), NoDataDimensionTag: json.RawMessage(`true`),
+		"bk_target_ip": json.RawMessage(`"192.0.2.1"`), NoDataDimensionTag: json.RawMessage(`true`),
 	}
 	withoutTag, err := PythonObjectMD5(series)
 	if err != nil {

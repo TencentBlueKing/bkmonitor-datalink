@@ -216,3 +216,19 @@ func TestARefusedNoDataMemoryWriteReportsTheComparisonTheStoreMade(t *testing.T)
 			"rollout apart from a race between two writers of the same record", facts.DerivedFrom)
 	}
 }
+
+func (store *answeringNoDataStore) ReadNoDataHeaders(ctx context.Context, request execution.NoDataLoadRequest) (execution.NoDataLoadResult, error) {
+	return LoadedRoster(store.LoadNoData).Headers(ctx, request)
+}
+
+func (store *answeringNoDataStore) RecheckNoDataHeader(ctx context.Context, identity execution.PlanNoDataIdentity) (execution.NoDataMemorySnapshot, error) {
+	return LoadedRoster(store.LoadNoData).Recheck(ctx, identity)
+}
+
+func (store *answeringNoDataStore) ScanNoDataGroups(ctx context.Context, request execution.NoDataScanRequest) (execution.NoDataScanPage, error) {
+	return LoadedRoster(store.LoadNoData).Scan(ctx, request)
+}
+
+func (store *answeringNoDataStore) ReadNoDataGroups(ctx context.Context, request execution.NoDataGroupsRequest) (execution.NoDataGroupsResult, error) {
+	return LoadedRoster(store.LoadNoData).Read(ctx, request)
+}

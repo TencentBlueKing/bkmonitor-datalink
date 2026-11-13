@@ -35,6 +35,30 @@ Labels: `wait`
 
 Slot executions that waited in place, holding their execution slot, for a later query of the Slot to become readable, by their total wait. A Slot whose queries become readable at different times is not deferred as a whole; its dispatch waits for each later query while keeping its slot, its prepared plan and the input its earlier queries delivered. Its slot_completed line carries the wait (inplace_wait_ms, inplace_waits, inplace_longest_ms, inplace_sent_before, inplace_wait_before_any_sent_ms) and what it held: inplace_held_input_bytes is exact, from the Slot's own retention accounting; inplace_held_prepared_bytes_estimate is an estimate, the struct sizes of the copies this execution made for itself, not the cached plan they reference, which is shared and held without the wait. Every cell exists from the start.
 
+## alarmd_access_query_answer_bytes
+
+Labels: `outcome`
+
+Bytes of each physical query's answer as read. By outcome: ok, timeout_alarmd_deadline (alarmd's own deadline: the round's, its transport, its body read or its delivery), upstream_504 (the provider answered that its backend ran out of time, 504 or 408), unavailable (no usable answer for another reason) and rejected (the provider refused the query). Counted where access_query_duration_seconds is.
+
+## alarmd_access_query_answer_records
+
+Labels: `outcome`
+
+Records (points) in each physical query's answer. By outcome: ok, timeout_alarmd_deadline (alarmd's own deadline: the round's, its transport, its body read or its delivery), upstream_504 (the provider answered that its backend ran out of time, 504 or 408), unavailable (no usable answer for another reason) and rejected (the provider refused the query). Counted where access_query_duration_seconds is.
+
+## alarmd_access_query_answer_seconds
+
+Labels: `outcome`
+
+Seconds each physical query's provider took, to 60 s: a query read past 30 s is in it, as its round's window on a one-minute period runs to about 45. By outcome: ok, timeout_alarmd_deadline (alarmd's own deadline: the round's, its transport, its body read or its delivery), upstream_504 (the provider answered that its backend ran out of time, 504 or 408), unavailable (no usable answer for another reason) and rejected (the provider refused the query). Counted where access_query_duration_seconds is.
+
+## alarmd_access_query_answer_series
+
+Labels: `outcome`
+
+Series in each physical query's answer. By outcome: ok, timeout_alarmd_deadline (alarmd's own deadline: the round's, its transport, its body read or its delivery), upstream_504 (the provider answered that its backend ran out of time, 504 or 408), unavailable (no usable answer for another reason) and rejected (the provider refused the query). Counted where access_query_duration_seconds is.
+
 ## alarmd_access_query_duration_seconds
 
 Each physical query a Slot runs, every attempt including retries, by the time its provider took from request to answer or failure. Counted where worker_work_total{work_kind="physical_query"} is, so the two agree; diagnostic reads are not in it. A query cut at 30 seconds lands in +Inf.
@@ -217,9 +241,9 @@ Assignment index rounds the Control Leader attempted, by result.
 
 ## alarmd_assignment_moves_total
 
-Labels: `reason`
+Labels: `reason`, `holder`
 
-Assignments the Control Leader moved to another ready worker, by reason. reason=rebalance is a move to even the owned counts out; each costs the Query Group at most one Slot on the old holder.
+Assignments the Control Leader moved to another ready worker, by reason: rebalance, a move to even the owned counts out; bytes, a feasibility move off a worker whose Query Groups' retained-byte peaks sum past its share of the pool, one per overloaded worker per round; ineligible, a move off a holder alive and READY but not eligible (a rollout that changed the capability digest); holder_gone, a placement off a holder not in the round's ready set (not READY, registration lapsed, or declining the Query Group). A Query Group placed for the first time is not a move. Each costs the Query Group at most one Slot on the old holder. holder is what held the Query Group's lease: session for a holder holding it under a worker session, no_session for one renewing its own lease (an older binary) or none.
 
 ## alarmd_assignment_record_read_total
 
@@ -261,7 +285,7 @@ What the shared pool has handed out at the moment of the scrape, labelled the wa
 
 Labels: `budget`, `result`
 
-Process-wide phase-two capacity admission outcomes by fixed budget kind.
+Capacity outcomes by budget, counted process-wide. rejected is one refusal - the pool, the share or a per-Slot cap - as its resource line reports it, whatever Slot it refused. admitted is one Slot that completed holding something of the budget: a Slot is counted once per budget it reserved, at its completion, so rejected over admitted plus rejected is the share of Slots refused at that budget. What the pool holds now is capacity_reserved; which Slot held what is the slot_budget_usage of its slot_completed line.
 
 ## alarmd_catalog_global_strategies
 
@@ -314,6 +338,12 @@ Plans in the Catalog the leader last built, by the wire format their events are 
 Labels: `source_semantics`
 
 Query Groups in the Catalog the leader last built, by the data sources their query reads. Every Query Group falls under exactly one source_semantics, so this family adds up to the Catalog's total. A Query Group whose query reads more than one data source is counted once, under mixed, rather than once per source: counting it per source would make the family stop adding up, and spelling the combination out would make the label set every subset of the sources. A source outside the supported list is other, which should stay zero while the compiler refuses such a source. Each supported source is reported at zero when it has no Query Groups, because a source that compiles nothing must not read the same as a source nobody asked about. Reported by the leader only: no other replica builds a Catalog. A Query Group is one query shared by every Plan that wants it, so this counts querying, not strategies -- catalog_plans counts those.
+
+## alarmd_catalog_renewals_total
+
+Labels: `kind`, `reason`
+
+Catalog keys the Control Leader renewed, by kind and why: timeline aged (this term last renewed or wrote it a third of the catalog TTL ago or more) or first (this term had not); object (the Query Group objects and the manifest) and context (the output contexts) periodic, on the first refresh round of the term and every tenth after. A key a renewal found missing is counted here and in object_catalog_objects_total{outcome="missing"}.
 
 ## alarmd_catalog_required_history_points
 
@@ -401,6 +431,12 @@ CPU budget the process is running against, labelled with where it was resolved f
 
 Cumulative CFS throttling. It separates 'busy' from 'not allowed to run', which no busy-time metric can: a process sitting at its quota looks identical to an idle one being held back. Absent when it cannot be read.
 
+## alarmd_container_memory_cgroup_info
+
+Labels: `version`, `memory_cgroup`, `usage_file`
+
+Which memory cgroup this process's memory gauges read, value 1: version (v2, v1 or unknown), the memory line of /proc/self/cgroup (memory_cgroup), and the usage file container_memory_used_bytes comes from (usage_file). Another reader of the container's memory - cAdvisor, kubectl top - may read another memcg or another counter: compare its path and container_memory_v1_bytes against this.
+
 ## alarmd_container_memory_limit_bytes
 
 Labels: `source`
@@ -416,6 +452,12 @@ The container cgroup's charge by kind (memory.stat): anon is process memory (ano
 ## alarmd_container_memory_used_bytes
 
 Memory charged to the container's cgroup. This is not the Go heap: the two differ by everything the heap does not account for, and it is this number that gets the process killed. Absent when it cannot be read, which is not the same as zero.
+
+## alarmd_container_memory_v1_bytes
+
+Labels: `counter`
+
+On cgroup v1, each counter of the memory cgroup by name: rss and total_rss (memory.stat; total_ includes child cgroups), usage_in_bytes and max_usage_in_bytes, and memsw_usage_in_bytes where swap accounting is on. Absent on v2 and where a file cannot be read.
 
 ## alarmd_control_cache_audit_total
 
@@ -507,6 +549,24 @@ Labels: `read`
 
 Redis round trips the Control Leader's reconcile round spent reading the records it places Query Groups from, by read: assignment (one Assignment record per Query Group of the population) or registry (the index plus one registration per ready worker). Counted where the calls are issued, so it is this round's own number and not a share of a client-wide total. Read it against control_read_keys_total on the same read: keys rising while round trips stay flat is the batch doing its job, both rising together is a batch that is not batching.
 
+## alarmd_control_record_cache_mismatch_total
+
+Labels: `field`
+
+Fields a backstop read found the Control Leader's copy of a record wrong on, once a record each field; presence is a record there that the copy had absent or the other way round. content_scope, pending_content_scope and effective_at_ms are written by a Worker promoting its pending content and are expected; any other is a write the copy missed, and the control_reads_spent line names the Query Group and both values.
+
+## alarmd_control_record_conflicts_total
+
+Labels: `outcome`
+
+Records whose publication in a reconcile round was refused because they had changed since read: settled (read again and settled in the same round) or again (refused again, left as read for the next round). Only a write that moves the record's revision refuses one: a publication whose answer the Leader did not get, another Leader's publication, or a sweep that removed the record. A Worker promoting its pending content and an activation writing the timeline revision do not, so conflicts are not the usual case of any round.
+
+## alarmd_control_record_reads_total
+
+Labels: `reason`
+
+Assignment records the Control Leader read, by why. It keeps a copy of the records for its term and reads one only when the copy cannot say: term_start (a new term's first reads), entered (the Query Group entered the population), backstop (the round's share of every record, each read at least once in sixty rounds), conflict (a publication over it was refused as changed), unknown_outcome (a publication over it failed without saying whether it was written), foreign_cutover (another process's activation rewrote its timeline revision, or a delta that could not say which it rewrote had every record the copy holds read again).
+
 ## alarmd_control_source_last_good_identity_changed_total
 
 Last-good Plans a Catalog build refused to retain because the source now states another tenant, business, space or global switch for the strategy than the Plan was built for (disposition LAST_GOOD_IDENTITY_CHANGED): the number is the same and the strategy is not, as when a writer's numbering started over. Counted where a document that did not compile, or compiled and was refused whole or in part, would otherwise keep its last good definition. Zero while every writer keeps its numbering; each such strategy stays out of the Catalog under its own disposition until its document compiles.
@@ -542,6 +602,14 @@ Source objects whose disposition changed in a refresh round, by whether the roun
 Labels: `function`
 
 Control rounds this process ran as a fallback Leader without a second-tier function, by function: the functions only the preferred control process runs, which detection never depends on. Non-zero while a Worker holds the control lease for want of a control process; it stops when control is handed back.
+
+## alarmd_dataset_record_ids_derived_outside_window_total
+
+Record ids of columnar Dataset points derived outside a window: read from a run that keeps no ids when no window has derived them, each derived for the read. Every reader of a Slot's inputs reads them in the window that evaluates its series, from ids derived once a point, so this stays near zero; a rising count is a reader outside a window paying a SHA-256 per read. A folded series' records are read once a point here, and a diagnostic query derives its own and is not counted.
+
+## alarmd_dataset_record_ids_kept_runs_total
+
+Columnar Dataset runs (one series' consecutive points) that keep their record ids, because at least one id is not the one derived from the series and the point's source time. A run whose every id is the derived one keeps none, 64 bytes a point less, and a window derives them when it reads the series. Every producer of Datasets builds its records from derived ids, so this stays zero; a rising count is a producer that does not, whose input is held at 64 bytes a point more than the share was measured at.
 
 ## alarmd_diagnostic_redis_dial_retries_total
 
@@ -893,6 +961,12 @@ Allocation stacks with live memory in the last profile read, the population the 
 
 Live heap the allocation samples add up to after scaling, every site included, read right after a forced collection so that it and heap_inuse_live_bytes describe the same cycle. The two agreeing, within a few percent, is the condition for trusting heap_inuse_site_bytes at all; a ratio far from one is the instrument failing, not a lag to be explained away.
 
+## alarmd_heap_inuse_reserved_bytes
+
+Labels: `at`
+
+What the retained-byte pool held at the collection heap_inuse_live_bytes was read from: at=gc_start just before it was forced, at=gc_end just after the live heap was read. Live heap less this is heap no Slot has reserved, and is that only when the two agree; when they differ a Slot took or gave back its reservation during the reading, and the live heap may hold it either way. Read the pair, never capacity_reserved, against the live heap: capacity_reserved is read by another collector of the same scrape, before or after the collection, and the live heap is refreshed only once a minute. Absent until the pool is bound.
+
 ## alarmd_heap_inuse_site_bytes
 
 Labels: `site`
@@ -921,6 +995,12 @@ Series a run produced Level outcomes for without summarising a detection window,
 
 Host states the access path treats as not monitored; zero means the filter is not installed.
 
+## alarmd_input_series_discarded_total
+
+Labels: `reason`
+
+Series a Slot was answered and let go of before evaluating them, by why. dependency_without_primary is a series a dependency query (a Plan's history or other non-PRIMARY input) answered that no PRIMARY input of the same Plan named: nothing evaluates a dependency without its series, so it is let go at the completion rather than held to the Slot's end. Steadily non-zero says the dependency query reads wider than the PRIMARY one - a filter or a window that differs - not that data was lost. Added from each completed Slot's dependency_series_discarded.
+
 ## alarmd_last_progress_timestamp_seconds
 
 Labels: `kind`
@@ -944,6 +1024,12 @@ Seconds the control leader's reconcile rounds in this process spent in each stag
 Labels: `result`
 
 Reconcile rounds the control leader ran in this process, by result: completed, or failed in one of its stages. Emitted by a process once it has led a round, both results from then on.
+
+## alarmd_lease_renewal_total
+
+Labels: `lease`, `result`, `reason`
+
+Lease renewal attempts by lease (query_group, control_leader, worker_registration, worker_session), result and reason. One per attempt: a round makes at most three, spread over its renew interval, so failed is not a lost lease, which ownership_transition_total{transition="assignment_lost"} reads. renewed has reason none. failed is a store that could not be asked, by the words of redis_failure_reason_total, or other for an error that is none of them. refused is one of the four words of ownership_refusals_total: the store's own answer, or the same word given locally with no script sent, when the session has already stopped accepting or the fence is invalid, at most once per session. worker_registration counts failures only: its writes answer plain errors and its success is not observed per attempt. The early renewal of the view gate is not counted here. worker_session counts the worker's session, its acquisitions with its renewals. Every cell a renewal can reach exists from startup, so a zero is a count.
 
 ## alarmd_legacy_pod_cache_total
 
@@ -1089,7 +1175,7 @@ Bytes the formal first reads delivered, by source, counted as the rechecks' are.
 
 Labels: `source`
 
-Formal first reads seen, by source - the data source the Query Group reads, labelled as the directory labels its Query Groups, so every lookback family reads beside them: the denominator of the query volume the lookback adds (lookback_rechecks_total over it).
+Formal first reads seen, a Slot read in slices one, by source - the data source the Query Group reads, labelled as the directory labels its Query Groups, so every lookback family reads beside them: the denominator of the query volume the lookback adds (lookback_rechecks_total over it).
 
 ## alarmd_lookback_floor_probe_changes_total
 
@@ -1208,6 +1294,12 @@ The longest a supplement held its Query Group's flight in this process, by sourc
 Labels: `source`, `bucket`
 
 Supplements by how long each held its Query Group's flight, by source: from taking the flight to the supplement's return - freezing the Slot's contract, evaluating, writing its State, and any wait on Redis inside them - which is how long the group's own Slot waited behind it. Buckets close at their bound: le_100ms, le_500ms, le_1s, le_5s, gt_5s. A supplement refused for the flight never held it and is not counted.
+
+## alarmd_lookback_supplement_partly_refused_total
+
+Labels: `source`
+
+Directed Slots read in slices some of whose rereads the memory share refused, by source: each came to the outcome of the slices read in lookback_supplement_windows_total and is in no reason of lookback_supplement_unobserved_total.
 
 ## alarmd_lookback_supplement_points_total
 
@@ -1423,13 +1515,17 @@ Slots whose events the broker acknowledged and whose State write the ownership s
 
 Labels: `site`, `refusal`
 
-Refusals the ownership store answered, by which of its four words and where it was met. refusal: OWNERSHIP_STALE_FENCE (the fence's epoch, token or deadline no longer match the lease), OWNERSHIP_NOT_DESIRED (the assignment names another worker), OWNERSHIP_LEASE_BUSY (another owner holds the lease), CONTENT_SCOPE_MOVED (the content scope a write was fenced against has moved while the lease is live; at renewal, the lease ran out at a content switch because the holder was still on the old content when the change fell due). site: admission is the side-effect admission check before a Slot's writes, state_apply the fenced State write itself, lease the worker's acquire, release and takeover, renewal the lease renewal, control the control leader's assignment writes. Every pair is created at startup, so a zero is never happened and not an absent series. A content change reads as follows: a holder already on the new content when the change falls due keeps its lease across it and nothing here moves; one still on the old content reads renewal CONTENT_SCOPE_MOVED once as its lease runs out at the switch, and takes the Query Group again on the new content at the next reconcile; a write still fenced against the old scope after the switch reads state_apply CONTENT_SCOPE_MOVED. Counted once per observation, not per key: a fenced batch refused as a whole is one.
+Refusals the ownership store answered, by which of its four words and where it was met. refusal: OWNERSHIP_STALE_FENCE (the fence's epoch, token or deadline no longer match the lease), OWNERSHIP_NOT_DESIRED (the assignment names another worker), OWNERSHIP_LEASE_BUSY (another owner holds the lease), CONTENT_SCOPE_MOVED (the content scope a write was fenced against has moved while the lease is live; at renewal, the lease ran out at a content switch because the holder was still on the old content when the change fell due). site: admission is the side-effect admission check before a Slot's writes, state_apply the fenced State write itself, lease the worker's acquire, release and takeover, renewal the renewal of a Query Group's or the control leader's lease, control the control leader's assignment writes. Every pair is created at startup, so a zero is never happened and not an absent series. A content change reads as follows: a holder already on the new content when the change falls due keeps its lease across it and nothing here moves; one still on the old content reads renewal CONTENT_SCOPE_MOVED once as its lease runs out at the switch, and takes the Query Group again on the new content at the next reconcile; a write still fenced against the old scope after the switch reads state_apply CONTENT_SCOPE_MOVED. Counted once per observation, not per key: a fenced batch refused as a whole is one.
 
 ## alarmd_ownership_transition_total
 
 Labels: `transition`, `result`, `reason_class`
 
 Ownership lifecycle transitions by bounded transition, result and reason class.
+
+## alarmd_placement_unfit_total
+
+Placements the Control Leader made although the Query Group fit no eligible ready worker under the byte constraint's projection (retained-byte peaks reported, each unread Query Group at the round's estimate), so it went to its rendezvous choice: a placement cannot wait on a fit, and the byte constraint moves it on a later round if the worker is then overloaded. Not counted while the round has no estimate, when nothing is judged.
 
 ## alarmd_platform_settings_authoritative_age_seconds
 
@@ -1483,7 +1579,7 @@ Acknowledged Progress commit observations by existing completion kind.
 
 Labels: `completion_kind`, `cause`, `reason`, `origin`
 
-Acknowledged Slots that completed short of whole - COMPLETED_WITH_UNAVAILABLE, COMPLETED_WITH_PARTIAL_GAP - by the cause the completion carried (the most actionable of what the round hit) and that cause's reason: which Plan, Level or query it was and when are on the progress_committed line (completion_strategy, completion_level, completion_query). NONE is a completion that carried no cause. origin says whose the reason is: physical for what the round met itself - a primary input's reason always is - and carried for a stored guard's reason a Level outcome repeated on a later round (LEVEL_OUTCOME_UNKNOWN, GAP_GUARD_WARMING); the guard's origin Slot is on the progress_committed line (evaluation_reason_origin_slot). reason=QUERY_TIMEOUT,origin=physical is a timeout this round.
+Acknowledged Slots that completed short of whole - COMPLETED_WITH_UNAVAILABLE, COMPLETED_WITH_PARTIAL_GAP - by the cause the completion carried (the most actionable of what the round hit) and that cause's reason: which Plan, Level or query it was and when are on the progress_committed line (completion_strategy, completion_level, completion_query). NONE is a completion that carried no cause. origin says whose the reason is: physical for what the round met itself - a primary input's reason always is - and carried for a stored guard's reason a Level outcome repeated on a later round (LEVEL_OUTCOME_UNKNOWN, GAP_GUARD_WARMING); the guard's origin Slot is on the progress_committed line (evaluation_reason_origin_slot). reason=QUERY_TIMEOUT,origin=physical is a timeout this round. A Slot is filed here by its cause, so one that ended PLAN_NOT_ACTIVE while its primary input was unavailable is under PRIMARY_INPUT_UNAVAILABLE: how many Slots ended PLAN_NOT_ACTIVE is slot_completed_reasons_total{reason="PLAN_NOT_ACTIVE"}, and the two families are not summed.
 
 ## alarmd_query_cooldown_events_total
 
@@ -1605,6 +1701,12 @@ Query Groups whose own read hold record did not decode: read as missing, the hol
 
 Retired Query Groups whose read hold closing failed; they retire all the same, and a successor reads the unclosed record as the hold bound.
 
+## alarmd_read_hold_retire_closes_total
+
+Labels: `site`
+
+Retired Query Groups whose read hold closed, by site: next, their own round at the retirement; release, their owner releasing them once drained, before a round came back to them. A drained group closed by neither leaves its successor reading the open record as the hold bound.
+
 ## alarmd_read_hold_seeds_total
 
 Labels: `origin`
@@ -1619,11 +1721,33 @@ Slots frozen at the group's hold limit because a transition asked for more, by s
 
 ## alarmd_read_hold_transition_overtaken_total
 
-Closed-segment attempts refused because newer state has already applied.
+Closed-segment attempts overtaken by newer state: refused STATE_STALE_VERSION, or having skipped series whose State a later Slot had already written (state_superseded_total{site="state"}).
 
 ## alarmd_read_hold_transition_total
 
 Slots whose first readiness preserves a preceding segment's completion deadline.
+
+## alarmd_read_hold_transition_waits_total
+
+Labels: `outcome`
+
+A Query Group's waits on the group a moved Plan left, whose read hold record was open or could not be read: waiting when one began, inherited when every predecessor waited on was read closed, bounded when one was still open when the first Slot would have been ready on the hold bound. The Slot is not frozen while it waits. A wait whose group moves to another replica, or is configured for other predecessors, ends neither way here, so waiting can exceed the two.
+
+## alarmd_read_hold_waiting_groups
+
+The Query Groups this replica holds that are waiting on a predecessor's read hold record now: their next Slot is not frozen until it closes or the wait ends.
+
+## alarmd_rebalance_byte_most_loaded_share
+
+The largest judged worker's sum of retained-byte peaks over the share of its pool the byte constraint allows, as the latest round on this Control Leader read it; above one is overloaded. A lower bound while rebalance_byte_unread_groups is not zero. Meaningful on the Control Leader only; aggregate replicas with max, not sum.
+
+## alarmd_rebalance_byte_overloaded_workers
+
+Ready workers whose Query Groups' retained-byte peaks sum past their share of the pool, as the latest round on this Control Leader judged them; each gives one Query Group away per round (assignment_moves_total{reason="bytes"}). Meaningful on the Control Leader only; aggregate replicas with max, not sum.
+
+## alarmd_rebalance_byte_unread_groups
+
+Query Groups with no reported retained-byte peak in the latest round on this Control Leader: they count nothing toward their worker's sum, so the byte readings beside it are lower bounds. Meaningful on the Control Leader only; aggregate replicas with max, not sum.
 
 ## alarmd_rebalance_gap
 
@@ -1639,6 +1763,18 @@ Rebalance rounds that planned moves and published none, by reason. reason=set_un
 
 Assignments the latest rebalance round on this Control Leader planned to move from the most to the least loaded ready worker. Read beside assignment_moves_total: planned and not published for more than one stabilisation window is a ready set that keeps changing. Meaningful on the Control Leader only; aggregate replicas with max, not sum.
 
+## alarmd_redis_bytes_total
+
+Labels: `client`, `caller`, `command`, `direction`
+
+RESP bytes of the commands the server answered, by client, job, command and direction (sent or received). A command with no reply (a pool timeout, a failed dial, a connection cut) counts nothing. Worked out from the command rather than counted on the connection: connection setup and Sentinel traffic are not in it, and a status and a bulk string nested in a script's reply read alike. Clients without the Redis hook are not read, as for redis_caller_duration_seconds.
+
+## alarmd_redis_caller_duration_seconds
+
+Labels: `client`, `caller`, `pipelined`
+
+Redis round-trip duration by the job that made the call, one per call or pipeline batch, including the wait for a connection. caller is a name of redis_caller_operation_total, other for a name outside that list, or unnamed for a call whose context names no job, which is a ping and nothing else, so the count of a client sums to its redis_operation_total. Clients without the Redis hook are not read: the CLI's and the instance registration's, and the lifecycle record's, so a zero there is not an absence of calls.
+
 ## alarmd_redis_caller_failure_reason_total
 
 Labels: `client`, `caller`, `reason`
@@ -1649,13 +1785,13 @@ Redis operations of a named job that failed, by why, counted as redis_failure_re
 
 Labels: `client`, `caller`
 
-Redis operations issued by a named job on a client, one per call or pipeline batch, for the jobs that share one client: on the diagnostics client directory_read, diagnostic_write, diagnostic_read, cost_projection; on the source and runtime clients (one client when the deployment points both at one Redis) strategy_source, legacy_effective_time, control_plane, ownership, runtime_state, query_cooldown, fleet, linkd; cmdb_cache, target_group and dynamic_config on whichever client they share; store_census on the source and runtime clients.
+Redis operations issued by a named job on a client, one per call or pipeline batch, for the jobs that share one client: on the diagnostics client directory_read, diagnostic_write, diagnostic_read, cost_projection; on the source and runtime clients (one client when the deployment points both at one Redis) strategy_source, legacy_effective_time, control_plane, ownership, runtime_state, query_cooldown, fleet, linkd; cmdb_cache, target_group and dynamic_config on whichever client they share; store_census and effective_maintenance on the source and runtime clients; lease_confirmation on the runtime client; catalog_timeline_renewal, catalog_object_renewal and catalog_context_renewal on the source client; legacy_output and legacy_pod_cache on the clients of those names.
 
 ## alarmd_redis_command_duration_seconds
 
 Labels: `client`, `command`, `pipelined`
 
-Redis round-trip duration. A pipelined batch is recorded once for the whole batch.
+Redis round-trip duration. A pipelined batch is recorded once for the whole batch, under the command of its first member. redis_script_duration_seconds reads a batch by the script it carries.
 
 ## alarmd_redis_command_failure_total
 
@@ -1699,6 +1835,24 @@ Labels: `client`, `result`
 
 Redis connection pool acquisitions by client and outcome.
 
+## alarmd_redis_script_bytes_total
+
+Labels: `script`, `direction`
+
+RESP bytes of the script commands the server answered, by script and direction, as redis_bytes_total counts them. A SCRIPT LOAD's text is in its script's sent bytes.
+
+## alarmd_redis_script_duration_seconds
+
+Labels: `script`, `pipelined`
+
+Redis round-trip duration by script, including the wait for a connection. A pipelined batch is recorded once for the whole batch, under its first eval or evalsha member.
+
+## alarmd_redis_script_total
+
+Labels: `script`, `command`, `pipelined`, `outcome`
+
+Lua script commands issued, one per command, pipeline members included. script is the name the script is registered under (redisscript), other for one that is not, which should never be: non-zero is a defect. Scripts with one text share one name. command is eval, evalsha or load (SCRIPT LOAD). outcome is ok, noscript or error; a script refusing in its own reply (a stale fence) has answered and is ok, the refusal is the caller's to count. Commands inside a script are not seen here. Clients without the Redis hook are not read, as for redis_caller_duration_seconds.
+
 ## alarmd_replay_expired_total
 
 Labels: `reason`
@@ -1733,9 +1887,9 @@ RunOne exits including panic, classified once by actual control flow.
 
 ## alarmd_schedule_cursor_advance_total
 
-Labels: `result`, `refusal`
+Labels: `result`, `refusal`, `reason`, `in_flight`
 
-Attempts to move a Progress cursor that points into a pruned part of its timeline to the earliest Slot the timeline still holds, by outcome; a conflict also carries the one fact that refused it (refusal), which is empty for every other outcome.
+Attempts to move a Progress cursor past Slots nobody evaluated to the earliest Slot its timeline still holds, by outcome and by the word the skip is recorded under (reason: SCHEDULE_PRUNED, PLAN_NOT_ACTIVE, SCHEDULE_REPAIRED, SCHEDULE_REOPENED). An applied attempt is one skipped span, of however many Slots, not one Slot; in_flight says whether it also threw away a Slot in flight - a Slot that ended, named by in_flight_slot on its slot_skipped line - and is false for every other outcome. A conflict also carries the one fact that refused it (refusal), which is empty for every other outcome. Every cell exists from the start, so a zero is a reading.
 
 ## alarmd_schedule_cutover_duration_seconds
 
@@ -1850,6 +2004,12 @@ Acknowledged short-period Slot Progress completions by actual completion kind.
 Labels: `cohort`, `completion_kind`
 
 Duration of the committed executor call, excluding SlotSource preparation and earlier attempts, by the completion kind it committed.
+
+## alarmd_slot_completed_reasons_total
+
+Labels: `reason`
+
+Slots that ended, by the reason word their slot_completed line carries: one per Slot, counted once, when it ends - a round that retries it is not an end - whatever the log samples. none is a Slot that ended whole. The answer to how many Slots ended PLAN_NOT_ACTIVE is the PLAN_NOT_ACTIVE cell, whatever cause progress_completion_causes_total files them under. The none, PLAN_NOT_ACTIVE, CONFIG_DRIFT, PLAN_REACTIVATED, reason_not_reported and _other cells exist from the start, so a zero there is a reading; another word of the contract catalogue appears once a Slot ends with it.
 
 ## alarmd_slot_decision_lag_seconds
 
@@ -1985,11 +2145,47 @@ Labels: `site`, `kind`
 
 Runtime State mutations found already on disk, by where that was decided and how. site: preflight is the view the Slot loaded before evaluating, apply is the bytes the CAS met when it tried to write. kind: stable is the ordinary retry that read the stored revision and found its own statement there; revision_skew is the same statement -- same ApplyVersion, same digest -- found at a revision the mutation did not expect, which is a write that landed while its reply was lost or was sent twice, and which used to be classified STATE_VERSION_CONFLICT and send the Slot into a retry that could not succeed. revision_skew is the only reading that says whether such re-sends happen in production: non-zero and aligned with conflict bursts confirms the mechanism, a steady zero says something else writes the key. Every pair is published at zero so absent and zero read apart. Population is mutations, not Redis commands.
 
+## alarmd_state_cache_budget_bytes
+
+The most the State cache may hold: the container's thirty-second, borrowed from the retained-bytes pool while no Slot has reserved it and given back when one needs it. A Query Group that would go past it or past the pool's room is kept out and read back; the resident ones stay.
+
+## alarmd_state_cache_bytes
+
+The State cache's charge: each entry's value and key rounded to their size classes plus a fixed overhead, summed. Read against state_cache_budget_bytes.
+
+## alarmd_state_cache_departures_total
+
+Labels: `reason`
+
+Entries that left the State cache, by reason: released (the Query Group stopped, was lost, declined or handed over), unknown (a write of its request ended in doubt), conflict (its write did not apply), expired, renewal_missing, untouched (neither read nor written for two of its own intervals), over_budget (its Query Group did not fit the budget: it left whole, or a write of it was not taken in), yielded (the same for what the Slots leave of the retained pool, or its Query Group given back whole for a Slot that needed the room). A group kept out is judged again once a round, by a whole round of it, so one that never fits leaves once rather than every round. Every cell exists from the start.
+
+## alarmd_state_cache_lookups_total
+
+Labels: `result`
+
+Runtime State keys a load asked the write-through State cache for, by result: hit (served from what this process last wrote), or why it was read back - miss_absent (nothing kept), miss_fence (another owner fence), miss_unknown (the last write's outcome unknown), miss_expired (past its key's life less the replay age), miss_replay (a replay, retry or older Slot), miss_activation (the Plan's activation changed: moved, put back, reactivated, edited), miss_sharded (a split strategy's Plan, never served), miss_over_budget (its Query Group kept out: a round of it does not fit the budget), miss_yielded (its Query Group kept out: a round of it fits the budget but not what the Slots leave of the retained pool, or it was given back for a Slot). Every cell exists from the start, so a zero is a reading.
+
+## alarmd_state_cache_query_groups
+
+Query Groups holding entries in the State cache.
+
+## alarmd_state_cache_restore_declined_total
+
+Labels: `reason`
+
+Conflicts on a key the State cache served that were not written back over, by reason: progress_rolled_back (the Progress went back with the State, so the Slot is replayed from the store) and newer_version (the stored bytes are no older than the cached ones: a legitimate writer's, handled as an ordinary conflict).
+
+## alarmd_state_cache_restored_total
+
+Labels: `cause`
+
+Values written back over an external change to a key the State cache served, by cause: missing (the key was deleted or evicted) and rolled_back (older bytes than this process last wrote, with the Query Group's Progress still at this Slot). A legitimate writer is never written over: see state_cache_restore_declined_total.
+
 ## alarmd_state_generation_carry_total
 
 Labels: `scope`, `result`
 
-History carried across a state generation that moved while its Plan stayed active. scope=plan: the Control Leader's decision per activation that commits, counted once its cutover commits (carried: every Level both versions have is carried and none's detection changed, the Plan warms up for one full Slot and its series keep their results; carried_detect_changed: the same, and some Level's detection changed, its results kept as they were decided, as Python keeps its check results across an edit; none_group_changed: the edit moved the Plan to another Query Group - its query facts changed: the query, its delay, the detection step (detect_interval), shard, named outputs, normalization or global business scope - so its old results are about other data and the Plan warms up whole; none_no_common_level: the previous version was read and shares no Level id with the new one; none_previous_unreadable: the previous version could not be read back or compiled; none_discontinuous: the Query Group is back from retirement; every none_* warms the Plan up whole). scope=series: what a Worker did on each evaluation of a series with no record under the new generation yet - counted per evaluation, not per series: a series is counted again on every evaluation until its first record under the new generation is written, so one series usually counts more than once (carried: the carried Levels' results kept; carried_across_detect: kept, some decided by the Level's previous detection; nothing_kept: none were; skipped_active_guard: the old record held a series guard; skipped_guard_warming and skipped_guard_gapped: a guard other than the activation's own drift guard held a carried Level of the old record WARMING, or GAPPED; each of the three starts the series over - a Level WARMING or GAPPED for its window's own holes, or under its activation's drift guard (CONFIG_DRIFT), is carried, its holes with it; old_missing: the old generation held nothing). scope=no_data_plan: the Control Leader's decision about the Plan's no-data memory and no-data end index, from the two versions of the Plan (carried: the same query, projection and alert identity, and for the memory the same no-data section, so both are read from the old generation while the new one holds none; carried_ends_only: the end index is, the memory is not because the no-data section changed; not_carried_semantics_changed: the query, projection or alert identity changed, or the edit moved the Plan to another Query Group, and the edit decides what the open alerts become; not_carried_previous_unreadable: the previous version could not be read back). scope=no_data_load: what a Worker found reading that state from the old generation (memory_carried and ends_carried: something was read; *_previous_empty: the old generation held nothing; *_previous_unreadable: it could not be read, and the Plan runs on the new generation's own state; ends_previous_not_cleared: carried entries could not be removed from the old index after they were written to the new one).
+History carried across a state generation that moved while its Plan stayed active. scope=plan: the Control Leader's decision per activation that commits, counted once its cutover commits (carried: every Level both versions have is carried and none's detection changed, the Plan warms up for one full Slot and its series keep their results; carried_detect_changed: the same, and some Level's detection changed, its results kept as they were decided, as Python keeps its check results across an edit; none_group_changed: the edit moved the Plan to another Query Group - its query facts changed: the query, its delay, the detection step (detect_interval), shard, named outputs, normalization or global business scope - so its old results are about other data and the Plan warms up whole; none_no_common_level: the previous version was read and shares no Level id with the new one; none_previous_unreadable: the previous version could not be read back or compiled; none_discontinuous: the Query Group is back from retirement; every none_* warms the Plan up whole). scope=series: what a Worker did on each evaluation of a series with no record under the new generation yet - counted per evaluation, not per series: a series is counted again on every evaluation until its first record under the new generation is written, so one series usually counts more than once (carried: the carried Levels' results kept; carried_across_detect: kept, some decided by the Level's previous detection; nothing_kept: none were; skipped_guard_warming and skipped_guard_gapped: a guard other than the activation's own drift guard held a carried Level of the old record WARMING, or GAPPED; each of the two starts the series over - a Level WARMING or GAPPED for its window's own holes, or under its activation's drift guard (CONFIG_DRIFT), is carried, its holes with it; old_missing: the old generation held nothing). scope=no_data_plan: the Control Leader's decision about the Plan's no-data memory and no-data end index, from the two versions of the Plan (carried: the same query, projection and alert identity, and for the memory the same no-data section, so both are read from the old generation while the new one holds none; carried_ends_only: the end index is, the memory is not because the no-data section changed; not_carried_semantics_changed: the query, projection or alert identity changed, or the edit moved the Plan to another Query Group, and the edit decides what the open alerts become; not_carried_previous_unreadable: the previous version could not be read back). scope=no_data_load: what a Worker found reading that state from the old generation (memory_carried and ends_carried: something was read; *_previous_empty: the old generation held nothing; *_previous_unreadable: it could not be read, and the Plan runs on the new generation's own state; ends_previous_not_cleared: carried entries could not be removed from the old index after they were written to the new one).
 
 ## alarmd_state_generation_skew_total
 
@@ -2009,13 +2205,31 @@ Times this process forgot every generation-scoped key life it had remembered, be
 
 ## alarmd_state_retained_share_approaching_slots_total
 
-Slots whose retained bytes reached at least 95 percent of the one-object share of the retained pool they were admitted under: completed Slots at or past the threshold, and Slots given up because the share refused them (RESOURCE_SHARE_EXCEEDED), which are past it. The objects are listed by name under RETAINED_SHARE_APPROACHING on the page and in fleet.get.
+Slots whose retained bytes reached at least 95 percent of the one-object share of the retained pool they were admitted under: completed Slots at or past the threshold, and Slots given up because the share refused them (RESOURCE_SHARE_EXCEEDED), which are past it. The objects are listed by name under RETAINED_SHARE_APPROACHING on the page and in fleet.get, except a completed Slot applied in more than one window: its windows are bounded by the share, so it reaches the share by construction and is counted here but not listed.
+
+## alarmd_state_series_held
+
+Series the Query Groups this replica holds now bound in their latest evaluated rounds: each Plan's series_matched, over the Plans evaluated within the last day (the longest interval alarmd evaluates at), summed over the Query Groups this replica runs. Not exact either way: no-data series it synthesizes and series absent from the latest round are not in it, and a Plan that left a Query Group still held here -- edited onto another, or deleted -- stays counted for up to a day after its last round, twice when the Query Group it moved to is held here too. Per replica; read the largest replica against the State cache's budget.
+
+## alarmd_state_superseded_total
+
+Labels: `site`, `operation`
+
+What a Slot did not write because a later Slot had already written it, by site and the Slot's operation. site: state is a series whose Runtime State is a later Slot's -- it compared PERSISTED_NEWER and its evaluation time is after this Slot's -- so it was not evaluated, sent nothing and wrote nothing, and the rest of the Slot went on; gap is a Plan gap marker a later Slot wrote, left as it was. These used to be refused as STATE_STALE_VERSION or GAP_APPLY_STALE_VERSION and retried until the replay expired. Non-zero says the store went back behind Progress -- a Redis failover that lost a Slot's tail while the next Slot ran on what was left -- or a replay crossed a later write: read operation=normal against the time of a failover. A newer state apply epoch at a time not after the Slot's is not counted here; it is still refused. Every pair is published at zero.
 
 ## alarmd_state_version_conflict_total
 
 Labels: `site`, `kind`
 
 Runtime State mutations refused STATE_VERSION_CONFLICT, by where that was decided and which comparison refused them. site: preflight is the view the Slot loaded before evaluating, apply is the bytes the write met. kind: missing is a key the mutation expected at a revision and did not find, which is what a TTL that ran out between the Slot's read and its write leaves -- the retry then reads missing, expects nothing and succeeds, so this kind rising alone is the key's lifetime against the Slot's duration and not a competing writer; revision_moved is a key another write advanced after the read; revision_reset is a key found below the revision expected, gone and written fresh since the read; same_version_other_statement is the expected revision holding this window's ApplyVersion with a different digest, two evaluations of one window that disagree; version_incomparable is a view that reached the comparison without an ordering; other is a store that refused without saying which. The status alone reads the same for all of them and each points at a different fix. Every pair is published at zero so absent and zero read apart. Population is mutations, not Redis commands.
+
+## alarmd_state_witness_bytes
+
+The runtime witness cache's estimated heap, a fixed 320 B per witness for its map entry plus the digests it alone keeps alive, each rounded to its allocation. No budget charges the cache. It is bounded at 2^18 witnesses, and a Query Group's witnesses leave when this worker releases its lease. Read it against the resident heap term in the sizing table. It is an estimate from the layout, not a measurement, and leaves out the Plan identity every series of a Plan shares.
+
+## alarmd_state_witness_items
+
+Preflight witnesses held in the runtime witness cache, kept from a Slot's load of Runtime State to its apply so the write compares without reading the value again. No budget charges the cache. It is bounded at 2^18 witnesses and 4096 Query Groups, the least recently filled Query Group evicted first, and a Query Group's witnesses leave when this worker releases its lease. Read with state_witness_bytes against the resident heap term in the sizing table.
 
 ## alarmd_state_write_reuse_total
 
@@ -2289,6 +2503,12 @@ Labels: `stage`
 
 Phase-two worker busy time by coarse workflow stage.
 
+## alarmd_worker_first_seen_unseen_total
+
+Labels: `unit`
+
+What completed Slots wrote as first-seen before a later slice found the Plan had run, by unit: slices and series. Those series were written without warming up; a rate above zero says the first-seen judgement changed within Slots read in slices.
+
 ## alarmd_worker_frozen_state_census_total
 
 Labels: `stage`
@@ -2307,11 +2527,33 @@ Labels: `status`, `reason`, `progress`
 
 One per held gap scope per round that read it, by status, by why it is held, and by where its count stands against its requirement. The rate is how many scopes are being held; progress=none holding up is a guard that has had no complete round since it was raised, which is the state somebody is looking for and the one a changed-only signal would say nothing about. It is counted per round rather than gauged because whether a guard is moving is a question about a stretch of time, and because a gauge would need a memory of the previous round that survives a Query Group changing owner. progress=ready should stay near zero: a warming scope cannot persist in that state. reason=other is a reason nobody named here. Every combination has a label at startup.
 
+## alarmd_worker_input_slice_shapes_total
+
+Labels: `outcome`
+
+Slots by what they did with their Query Group's shape, the leaves a slice that ran out of time for its size was split into, which the next Slot starts in: started, read in it; kept, a slice split for its time kept in it; merged, its last kept split taken back after three quick rounds; voided_revision, voided_dimensions, voided_max_leaves, dropped as the query revision or the dimensions changed or it grew past a starting tree's leaves; refused_not_a_leaf, refused_not_a_partition, refused_max_leaves, dropped as its leaves were not a partition of every value. A dropped shape's Slot starts in slices counted anew. evicted_idle counts the Query Groups whose slice memory, shape or none, was dropped for no Slot started on this replica for ten of their periods and ten minutes at least. Which Query Group is not a label here.
+
+## alarmd_worker_input_slice_timeouts_total
+
+Labels: `outcome`
+
+Slices of Slots read in slices whose read ran out of time, by how each ended: split_succeeded, split and its children read in its place, the Slot's query completing; split_failed, split and the Slot's query failing after; not_split, failed as before - the query cooldown held, its time could not be put on its size, the window left was too short for its children, or the Slot had split once. A Slot splits so once. Which Query Group is not a label here.
+
+## alarmd_worker_input_slices_total
+
+Labels: `outcome`
+
+Slices the input of completed Slots read in slices was read in, by outcome: landed, read and evaluated, and discarded, let go past the slice limit while they streamed and split. A Slot read whole counts nothing. Read beside worker_sliced_slots_total: their ratio is the slices a sliced Slot reads.
+
 ## alarmd_worker_no_data_absences_total
 
 Labels: `outcome`
 
 Groups of the Plans that detect no-data, summed over every Slot that judged them, by what the round counted each group as. expected is the roster's size and present what arrived; absent is the groups tracked and reported absent this round; unavailable the groups a round that did not see the whole period could not judge; dropped the series whose dimensions did not match the item. expired is the absences the tracking horizon stopped this round and suppressed the groups the round met already stopped -- the standing size of what the horizon holds down and of what manual closes hold down. manual_closed is the absences a round stopped because a user closed their alert by hand (decision-024); each is in suppressed from the next round on unless its history roster forgot it. Read expired and suppressed against each other: expired moving is the horizon acting, suppressed is what it has acted on and is still holding; a deployment that switched the horizon on and reads zero on both has a horizon nothing reached. Both are counted where each group is decided, never by differencing one round's memory against the last, so the round that failed to load its memory does not read as a quiet one. Every label is created at startup so a zero can be told from a label nothing ever wrote. Read absent + expired + suppressed against the fleet page's per-object line, which carries the same counts per Plan for the round it last decided.
+
+## alarmd_worker_no_data_groups_staged_ahead_total
+
+Groups of no-data first writes staged as their windows landed, ahead of the statements: what the worker held no longer to the tail. Counted from completed Slots.
 
 ## alarmd_worker_no_data_manual_close_dropped_total
 
@@ -2333,7 +2575,7 @@ One per Plan per execution that read its absence memory -- a normal round, a rep
 
 Labels: `reason`, `record`
 
-Absence-memory writes the store refused deterministically, by reason and by which record was measured when the reason was size. A refusal does not fail the Slot, so nothing else in this family moves when it happens: the Plan evaluated, reported and was counted as evaluated, and only the record it would have written was lost. That is why this exists - without it a Plan whose memory has stopped being writable is indistinguishable from one whose memory is fine, for as long as it lasts. Rising and staying up is one object the store will not take, and the line beside it carries the bytes and the bound. record is empty for a refusal that was not about size. The group bound (record GROUPS) defaults to 100,000 and may be raised to 1,000,000 for the deployment or one strategy; a raised bound costs Redis once per state generation, on the Plan's first whole-record write: measured about 120-180 ms at 100,000 groups, 610 ms at 200,000 and 2.9 s at 1,000,000.
+Absence-memory writes the store refused deterministically, and memories the worker refused for what they hold, by reason and by which record was measured when the reason was size. A refusal does not fail the Slot, so nothing else in this family moves when it happens: the Plan evaluated, reported and was counted as evaluated, and only the record it would have written was lost. That is why this exists - without it a Plan whose memory has stopped being writable is indistinguishable from one whose memory is fine, for as long as it lasts. Rising and staying up is one object the store will not take, and the line beside it carries the bytes and the bound. record is empty for a refusal that was not about size. The group bound (record GROUPS) defaults to 100,000 and may be raised to 1,000,000 for the deployment or one strategy; a raised bound costs Redis once per state generation, on the Plan's first whole-record write: measured about 120-180 ms at 100,000 groups, 610 ms at 200,000 and 2.9 s at 1,000,000. record BYTES is a memory past the share one Query Group's Slot may hold of the retained pool - a whole-record write as the worker builds it, or a loaded memory beside what the Slot already holds - refused for that Plan alone, its threshold detection unchanged; one within the share that the pool has no room for is a RESOURCE_HARD_STOP instead.
 
 ## alarmd_worker_no_data_memory_renewals_total
 
@@ -2362,6 +2604,18 @@ Plans that detect no-data, counted once per Slot where this worker finds them, b
 Labels: `outcome`
 
 Plans that detect no-data, counted once per Slot by what happened to that detection. The outcomes partition: every such Plan lands on exactly one every Slot, so their sum is the no-data Plans this worker evaluated. EVALUATED is the only one that judged absence; SKIPPED_QUERY_NOT_FULL and SKIPPED_ANSWER_TRUNCATED still judge the groups that arrived present, and judge no group absent. The others are different kinds of not judging and must be read apart, because once the round is over they look identical. Among them: SKIPPED_QUERY_NOT_FULL is a query that did not cover the period and resolves itself next round; SKIPPED_MEMORY_UNREADABLE is a record written by a newer build, which lasts as long as a rollback does; SKIPPED_SLOT_BUDGET is the Slot being unable to carry the work, which does not resolve on its own - a history roster only grows, so a Plan that did not fit this round does not fit the next one either, and a steady zero on it is the expected reading; and SKIPPED_ANSWER_TRUNCATED is an answer the query service may have cut at its group cap (uq_answer_truncated_total), which lasts as long as the strategy's groups stay at the cap. Any non-zero on those last two is worth acting on. Every outcome's label is created at startup so a zero can be told from a label nothing ever wrote. Read the fleet's sum over every outcome over a minute against the leader's sum(catalog_no_data_plans) times the Slots in that minute: they are the same Plans counted at the two ends of the publication, so the two should agree. Every outcome at zero while the leader reports Plans is what a Plan losing its no-data section between the leader and the worker looks like, and it looks like nothing else: the Plans still execute, nothing fails, and every label here reads as a computed zero.
+
+## alarmd_worker_no_data_stage_ahead_differs_total
+
+Labels: `reason`
+
+No-data first writes staged as their windows landed whose round wrote every group with the statement instead, by why: kept_otherwise, a staged group the round kept otherwise or not at all; count_mismatch, the stage's groups not the ones the round marked and kept; present_as_of, the round's present-as-of not the one they were staged against. A rate above zero is a shape the staging does not cover, held whole to the tail as before. Counted from completed Slots.
+
+## alarmd_worker_no_data_stage_ahead_total
+
+Labels: `outcome`
+
+No-data first writes staged as their windows landed, a Plan each, by how the staging ended: carried, the statement put the stage in place with it; differs, the round kept a staged group otherwise and wrote every group with the statement; discarded, the round wrote no statement and the stage was taken back; stopped, a segment could not be staged and the groups after it went with the statement. Counted from completed Slots. Which Query Group is not a label here.
 
 ## alarmd_worker_owned_query_groups
 
@@ -2398,6 +2652,16 @@ Query permits held at the moment of the scrape, by holder: each operation, and t
 Labels: `queue`
 
 Callers queued for a permit at the moment of the scrape, by queue. Non-zero means the budget is the constraint right now; zero does NOT mean it has spare room, because a caller that is admitted immediately never appears here.
+
+## alarmd_worker_slice_read_ahead_total
+
+Labels: `outcome`
+
+How the slices read ahead - read while the slice before completed - ended, by outcome: replayed, handed to the Slot; other_leaf, let go because the next slice was another; yielded, let go for a reservation of the Slot's own the share or the pool would otherwise refuse; failed, let go because the read failed before it was handed on. Every slice let go is read again on the Slot's goroutine. Counted from completed Slots.
+
+## alarmd_worker_sliced_slots_total
+
+Completed Slots whose input was read in more than one slice or had a slice let go: the Slots slicing reached. Which Query Group is not a label here.
 
 ## alarmd_worker_work_total
 

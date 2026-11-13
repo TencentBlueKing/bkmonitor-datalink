@@ -380,3 +380,19 @@ func TestTheOutputCheckFailsOpen(t *testing.T) {
 		}
 	})
 }
+
+func (store *closingNoDataStore) ReadNoDataHeaders(ctx context.Context, request execution.NoDataLoadRequest) (execution.NoDataLoadResult, error) {
+	return LoadedRoster(store.LoadNoData).Headers(ctx, request)
+}
+
+func (store *closingNoDataStore) RecheckNoDataHeader(ctx context.Context, identity execution.PlanNoDataIdentity) (execution.NoDataMemorySnapshot, error) {
+	return LoadedRoster(store.LoadNoData).Recheck(ctx, identity)
+}
+
+func (store *closingNoDataStore) ScanNoDataGroups(ctx context.Context, request execution.NoDataScanRequest) (execution.NoDataScanPage, error) {
+	return LoadedRoster(store.LoadNoData).Scan(ctx, request)
+}
+
+func (store *closingNoDataStore) ReadNoDataGroups(ctx context.Context, request execution.NoDataGroupsRequest) (execution.NoDataGroupsResult, error) {
+	return LoadedRoster(store.LoadNoData).Read(ctx, request)
+}

@@ -85,7 +85,7 @@ func TestActivationChangeIsClassifiedFromTheSameComparisonAsDrift(t *testing.T) 
 			want:        activationChangeNotActive, wantReason: contract.ReasonPlanNotActive, wantCause: execution.CausePlanNotActive},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			change := classifyActivationChange(testCase.duePlans, testCase.activations, testCase.gaps)
+			change := classifyActivationChange(testCase.duePlans, testCase.activations, testCase.gaps, nil)
 			if change != testCase.want {
 				t.Fatalf("change = %d, want %d", change, testCase.want)
 			}
@@ -145,10 +145,10 @@ func TestTheGuardWordIsClassifiedOverThePlansGettingAGuard(t *testing.T) {
 		Plan: back, Selection: execution.ActivationCurrent,
 		Selected: execution.ActivatedPlan{Identity: back, StateGeneration: "gen-1", StateApplyEpoch: 9, ScheduleRevision: "sched-1"},
 	}}}
-	if change := classifyActivationChange(duePlans, returned, execution.GapLoadResult{}); change != activationChangeNotActive {
+	if change := classifyActivationChange(duePlans, returned, execution.GapLoadResult{}, nil); change != activationChangeNotActive {
 		t.Fatalf("the Slot's change = %d, want the gone Plan's PLAN_NOT_ACTIVE to outrank the returned one", change)
 	}
-	if reason := guardReasonFor(duePlans, returned, execution.GapLoadResult{}); string(reason) != contract.ReasonPlanReactivated {
+	if reason := guardReasonFor(duePlans, returned, execution.GapLoadResult{}, nil); string(reason) != contract.ReasonPlanReactivated {
 		t.Fatalf("the Guard's word = %s, want %s: only the Plan that came back gets a Guard", reason, contract.ReasonPlanReactivated)
 	}
 	// And the Guard's word is a word the fold ranks and the scope vocabulary

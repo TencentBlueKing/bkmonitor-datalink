@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -371,9 +372,12 @@ func TestControlReadCacheRefreshesAfterCutoverAndKeepsHistoricalSemantics(t *tes
 	if err != nil || schedule.Segment.Publication.SnapshotRevision != second.Publication.SnapshotRevision {
 		t.Fatalf("Schedule after cutover=(%+v, %v)", schedule, err)
 	}
+	// The threshold edit closed the Segment; the Plan stayed, so the closed
+	// Segment's Slot is answered with the record it ran under, the one the
+	// activation held before the cutover.
 	historical, err := repository.LoadActivations(ctx, fixture.activationRequest())
-	if err != nil || len(historical.Facts) != 1 || historical.Facts[0].Selection != execution.ActivationNone {
-		t.Fatalf("historical authorization after cutover=(%+v, %v), want NONE from the closed Segment", historical, err)
+	if err != nil || len(historical.Facts) != 1 || !reflect.DeepEqual(historical.Facts[0], before.Plans[0].Fact) {
+		t.Fatalf("historical authorization after cutover=(%+v, %v), want the record the Slot ran under %+v", historical, err, before.Plans[0].Fact)
 	}
 	if got := fixture.hook.bodyReads("activation"); got != 1 {
 		t.Fatalf("activation body reads across the header change=%d, want 1", got)

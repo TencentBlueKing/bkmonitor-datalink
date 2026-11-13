@@ -162,6 +162,20 @@ func DeriveStreamingCompletionAttribution(
 	}, result)
 }
 
+// DeriveStreamingFoldedCompletionAttribution is
+// DeriveStreamingCompletionAttribution over the fold the Slot kept of its
+// results as they arrived (CompletionAttributionFold), for a Slot that does
+// not hold the results themselves to the end.
+func DeriveStreamingFoldedCompletionAttribution(
+	header InternalExecutionHeader,
+	bindings []NamedInputBinding,
+	fold CompletionAttributionFold,
+) (CompletionKind, CompletionAttribution, error) {
+	return DeriveFoldedCompletionAttribution(InternalExecution{
+		Contract: header.Contract, DuePlans: header.DuePlans, Requirements: header.Requirements, Inputs: bindings,
+	}, fold)
+}
+
 type ProviderSeriesBatch struct {
 	PhysicalQuery PhysicalQueryDigest
 	CompletionRef ProviderResultRef

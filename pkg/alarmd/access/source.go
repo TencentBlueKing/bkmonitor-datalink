@@ -35,13 +35,25 @@ func queryBudgetOf(schedule execution.ScheduleSpec, reserve time.Duration) time.
 	return time.Duration(schedule.CompletionOffsetSeconds())*time.Second - reserve
 }
 
+// DiscardSliceRead takes back what the lookback captured of a slice's read
+// that completed and was not used: a slice the worker read ahead of the one
+// its Slot was on and let go, to read it again later
+// (lookback.Engine.DiscardSlice).
+func (source *Source) DiscardSliceRead(contract execution.FrozenExecutionContractRef, slice execution.InputSlice) {
+	if source == nil || source.config.Lookback == nil {
+		return
+	}
+	source.config.Lookback.DiscardSlice(contract.Slot.QueryGroup, contract.Slot.EvaluationTime, slice)
+}
+
 // lookbackQuery is a physical query as the lookback sees it before it is
 // sent: its Slot, its frozen spec, the attempt, when it was ready, and the
 // Slot the frozen schedule has next, which the Runner put on ctx.
 func lookbackQuery(ctx context.Context, request execution.QueryExecutionRequest, spec execution.PhysicalQuerySpec,
 	attemptNo uint32, readyAtUnixMilli int64, secondary bool) lookback.Query {
 	return lookback.Query{Contract: request.Contract, Spec: spec, Operation: request.Operation, AttemptNo: attemptNo,
-		ReadyAt: time.UnixMilli(readyAtUnixMilli), FollowingSlot: execution.FollowingSlotOf(ctx), Secondary: secondary}
+		ReadyAt: time.UnixMilli(readyAtUnixMilli), FollowingSlot: execution.FollowingSlotOf(ctx), Secondary: secondary,
+		Slice: request.Slice}
 }
 
 // slotFirstRead is the index in queries of the Slot's first read: the query
@@ -199,6 +211,9 @@ type Config struct {
 	// it failed (QueryFailures), "" when it answered. Diagnostic reads do
 	// not go through a Source and are not heard.
 	ObserveQuery func(elapsed time.Duration, failure string)
+	// ObserveQueryAnswer hears the same queries with what came back and how
+	// each ended (queryAnswerOf), for the per-query histograms. Optional.
+	ObserveQueryAnswer func(observability.PhysicalQueryAnswer)
 	// Superseded receives the old fingerprints of admitted series whose
 	// alert identity moved, for the superseded-identity close; see
 	// SupersededSink. Optional.
@@ -253,6 +268,9 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		return execution.QueryExecutionCompletion{}, err
 	}
 	if request.Operation == execution.OperationSupplement {
+		if !request.Slice.IsZero() {
+			return execution.QueryExecutionCompletion{}, &execution.InputSliceUnsupportedError{Reason: execution.InputSliceReasonSupplement}
+		}
 		return source.executeSupplement(ctx, request, consumer)
 	}
 	// Read once, before anything this call does can take time. It is what "how
@@ -274,6 +292,17 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 	if err != nil {
 		return execution.QueryExecutionCompletion{}, err
 	}
+	// A slice is read of every physical query of the Slot or of none: one
+	// query it cannot go into would deliver the whole Query Group beside the
+	// others' slice, so the Slot is refused before anything is sent.
+	if err := checkInputSlice(request.Slice, prepared.Queries); err != nil {
+		return execution.QueryExecutionCompletion{}, err
+	}
+	// A slice's read takes part in the lookback as itself: its sample, its
+	// directed and early rereads and its kept read are of the slice
+	// (lookback.Query.Slice), and a slice let go past its limit is discarded
+	// from it (lookback.Read.Discard).
+	lookbackEngine := source.config.Lookback
 	recoveryDeadline, budgetErr := deriveRecoveryQueryDeadline(request, frozen, recoveryStartedAt, source.config.LiveReserve)
 	source.observeQueryTiming(ctx, request, frozen, prepared, recoveryStartedAt, recoveryDeadline)
 	// The deadline this recovery runs under, from here on: its channel wait
@@ -289,12 +318,12 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 	firstRead := slotFirstRead(prepared.Queries)
 	// While the Query Group's queries are failing the lookback reserves no
 	// earlier-read trial, one more read of the same backend, and counts why.
-	if request.Operation == execution.OperationNormal && source.config.Lookback != nil {
+	if request.Operation == execution.OperationNormal && lookbackEngine != nil {
 		failing := execution.BackendFailing(ctx)
 		for index, query := range prepared.Queries {
 			seen := lookbackQuery(ctx, request, query.Spec, request.AttemptNo, query.ReadyAtUnixMilli, index != firstRead)
 			seen.BackendFailing = failing
-			source.config.Lookback.Prepare(seen)
+			lookbackEngine.Prepare(seen)
 		}
 	}
 	if readyAt, pending := slotPendingReadinessOf(prepared.Queries, request.Contract.ReadHoldMillis, source.now()); !readyAt.IsZero() {
@@ -456,13 +485,13 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		attempt := execution.QueryAttempt{Spec: query.Spec, Slot: request.Contract.Slot, Operation: request.Operation,
 			AttemptNo: request.AttemptNo, DeadlineUnixMilli: queryDeadline.UnixMilli(), RecoveryPermit: permit.RecoveryPermit(),
 			BudgetStartUnixMilli: budgetStart, ReadyAtUnixMilli: query.ReadyAtUnixMilli,
-			Strategies: queryStrategies(query)}
+			Strategies: queryStrategies(query), Slice: request.Slice}
 		if err := attempt.Validate(); err != nil {
 			permit.Release()
 			dispatchErr = err
 			break
 		}
-		kept := source.config.Lookback.Begin(lookbackQuery(ctx, request, query.Spec, attempt.AttemptNo, query.ReadyAtUnixMilli,
+		kept := lookbackEngine.Begin(lookbackQuery(ctx, request, query.Spec, attempt.AttemptNo, query.ReadyAtUnixMilli,
 			queryIndex != firstRead))
 		// Each query raises the execution's deadline to its own as it
 		// starts, so a later query is judged by its deadline and not by an
@@ -504,8 +533,14 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 				err = errors.New("alarmd access: G1 provider returned an untrusted completion")
 			}
 			// The provider's own completion: a first read is kept as the
-			// provider delivered it, and a recheck is compared with that.
-			kept.Complete(completion, err)
+			// provider delivered it, and a recheck is compared with that. A
+			// slice let go past its limit is no read: its children are read
+			// in its place, and what was captured of it is taken back.
+			if errors.Is(err, execution.ErrSliceOverflow) {
+				kept.Discard()
+			} else {
+				kept.Complete(completion, err)
+			}
 			if err == nil {
 				completion = adapter.reconcileCompletion(completion)
 			}
@@ -806,8 +841,14 @@ func (source *Source) executeWithPermit(
 	// A caller that gave up -- a step-down, a shutdown -- is not a failure of
 	// the query, and an attempt cut short that way has no duration of its
 	// own: it is not heard.
-	if source.config.ObserveQuery != nil && !errors.Is(err, context.Canceled) {
-		source.config.ObserveQuery(queryElapsed(completion, err, time.Since(called)), queryFailureOf(completion, err))
+	if !errors.Is(err, context.Canceled) {
+		elapsed, failure := queryElapsed(completion, err, time.Since(called)), queryFailureOf(completion, err)
+		if source.config.ObserveQuery != nil {
+			source.config.ObserveQuery(elapsed, failure)
+		}
+		if source.config.ObserveQueryAnswer != nil {
+			source.config.ObserveQueryAnswer(queryAnswerOf(completion, err, elapsed, failure))
+		}
 	}
 	if err == nil && source.config.ObserveDownstreamDistress != nil {
 		if class := downstreamDistressOf(completion); class != "" {
@@ -822,6 +863,19 @@ func (source *Source) executeWithPermit(
 		observability.EmitTargetFlow(ctx, "runner_decision", observability.TraceFields{}, observability.TargetFlowFacts{Decision: "identity_field_null"})
 	}
 	return completion, err
+}
+
+// checkInputSlice is execution.CheckInputSlice over the facts of every
+// physical query the Slot plans, primary and dependency alike.
+func checkInputSlice(slice execution.InputSlice, queries []PlannedQuery) error {
+	if slice.IsZero() {
+		return nil
+	}
+	facts := make([]execution.QueryPlanFacts, 0, len(queries))
+	for _, query := range queries {
+		facts = append(facts, query.Spec.PlanFacts)
+	}
+	return execution.CheckInputSlice(slice, facts...)
 }
 
 func trustedProviderCompletion(digest execution.PhysicalQueryDigest, completion execution.ProviderCompletion) bool {
@@ -1212,6 +1266,13 @@ func (adapter *seriesAdapter) ConsumeProviderSeries(ctx context.Context, batch e
 	// Kept before the target filter returns: a recheck reads the whole
 	// dimension set, and a series every Plan turned away is still data.
 	adapter.lookback.Series(batch.Dataset, batch.Delivery.Bytes)
+	// A query that feeds no PRIMARY input hands its series on without their
+	// dimensions, once the target filter and the recheck above have read
+	// them: its readers read the series' digest, times and values, and the
+	// Slot holds it, beside its PRIMARY's, from now until it is evaluated.
+	if !feedsPrimary(adapter.query) {
+		batch.Dataset = batch.Dataset.WithoutDimensions()
+	}
 	bindings, err := dataBindings(adapter.query, batch, adapter.attemptNo, admitted)
 	if err != nil {
 		return err
@@ -1252,6 +1313,16 @@ func (adapter *seriesAdapter) ConsumeProviderSeries(ctx context.Context, batch e
 	}
 	adapter.forwarded = forwarded
 	return nil
+}
+
+// feedsPrimary is whether any requirement query answers is a PRIMARY input.
+func feedsPrimary(query PlannedQuery) bool {
+	for _, requirement := range query.Requirements {
+		if requirement.Role == execution.InputRolePrimary {
+			return true
+		}
+	}
+	return false
 }
 
 // reconcileCompletion restates a provider completion in terms of what the

@@ -175,3 +175,49 @@ func TestARoundsSettlementAndCountCorrectionShareOneBatch(t *testing.T) {
 		t.Fatal("unbounded count correction planned nothing; the shared-batch case above would mean nothing")
 	}
 }
+
+// A round says what it took off whom: a holder gone from the ready set gives
+// its Query Groups up as placements, a holder alive but not eligible as
+// replacements within the batch, each counted with the part taken from a
+// holder under a worker session; a Query Group placed for the first time was
+// taken off nobody and is neither.
+func TestARoundCountsWhatItTookOffHoldersAndNotWhatNobodyHeld(t *testing.T) {
+	queryGroups, records := rolloutFleet(4)
+	queryGroups = append(queryGroups, "qg-new")
+	// old-a is gone; old-b is alive and READY on the old capability digest.
+	workers := []ownership.WorkerRegistration{rolloutWorker("old-b", "cap-old"), rolloutWorker("new-1", "cap-new")}
+	store := &countingAssignmentStore{workers: workers, records: records, holderKind: ownership.HolderUnderSession}
+	reconciler := newRolloutReconciler(t, store)
+	settlement, err := reconciler.ReconcileRoundSettling(context.Background(), ownership.PublicationAuthority{}, queryGroups, workers, rolloutNow, ContentScopes{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record, placed := settlement.Records["qg-new"]; !placed || record.DesiredWorkerID != "new-1" {
+		t.Fatalf("qg-new = %+v, %v; want it placed on new-1", record, placed)
+	}
+	batch := HandoverBatch(len(queryGroups))
+	if settlement.Placed != 2 || settlement.PlacedFromSessionHolders != 2 {
+		t.Fatalf("placed = %d (%d from session holders), want old-a's 2, both from session holders",
+			settlement.Placed, settlement.PlacedFromSessionHolders)
+	}
+	if settlement.Replaced != batch || settlement.ReplacedFromSessionHolders != batch {
+		t.Fatalf("replaced = %d (%d from session holders), want one batch of %d from session holders",
+			settlement.Replaced, settlement.ReplacedFromSessionHolders, batch)
+	}
+}
+
+// A holder renewing its own lease is counted apart from one under a session.
+func TestARoundCountsPlacementsOffSelfRenewingHoldersApart(t *testing.T) {
+	queryGroups, records := rolloutFleet(4)
+	workers := []ownership.WorkerRegistration{rolloutWorker("old-b", "cap-old"), rolloutWorker("new-1", "cap-new")}
+	store := &countingAssignmentStore{workers: workers, records: records, holderKind: ownership.HolderRenewing}
+	reconciler := newRolloutReconciler(t, store)
+	settlement, err := reconciler.ReconcileRoundSettling(context.Background(), ownership.PublicationAuthority{}, queryGroups, workers, rolloutNow, ContentScopes{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settlement.Placed != 2 || settlement.PlacedFromSessionHolders != 0 || settlement.ReplacedFromSessionHolders != 0 {
+		t.Fatalf("placed = %d (%d from session holders), replaced from session holders = %d; want 2, 0, 0",
+			settlement.Placed, settlement.PlacedFromSessionHolders, settlement.ReplacedFromSessionHolders)
+	}
+}

@@ -35,7 +35,7 @@ func diagnosticFixture(t *testing.T, status int, payload string) *DiagnosticClie
 
 // smallDiagnosticLimits stand in for the production bounds where a test
 // drives a response past them: the production ones are tens of megabytes.
-var smallDiagnosticLimits = Limits{MaxBodyBytes: 4 << 20, MaxSeriesBytes: 512 << 10, MaxSeries: 1000, MaxRecords: 20000}
+var smallDiagnosticLimits = Limits{MaxSeriesBytes: 512 << 10, MaxSeries: 1000, MaxRecords: 20000}
 
 func diagnosticFixtureWithLimits(t *testing.T, status int, payload string, limits Limits) *DiagnosticClient {
 	t.Helper()

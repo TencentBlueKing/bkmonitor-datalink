@@ -25,18 +25,18 @@ import (
 // the endpoint empty and the token minted: the process serves the stream
 // and is not advertised.
 func TestTheStreamIdentityIsMintedOnceAndAdvertisedOnTheListenersPort(t *testing.T) {
-	first, err := newViewStreamIdentity("10.1.2.3:8080", "127.0.0.1:6379")
+	first, err := newViewStreamIdentity("192.0.2.123:8080", "127.0.0.1:6379")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := newViewStreamIdentity("10.1.2.3:8080", "127.0.0.1:6379")
+	second, err := newViewStreamIdentity("192.0.2.123:8080", "127.0.0.1:6379")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(first.Token) != 64 || first.Token == second.Token {
 		t.Fatalf("tokens = %q / %q, want 32 random bytes each, different", first.Token, second.Token)
 	}
-	if first.Endpoint != "10.1.2.3:8080" {
+	if first.Endpoint != "192.0.2.123:8080" {
 		t.Fatalf("bound listener endpoint = %q, want the bound address", first.Endpoint)
 	}
 	wildcard, err := newViewStreamIdentity(":8080", "127.0.0.1:6379")
@@ -136,7 +136,7 @@ func TestDiscoveryNamesEachWayOfFindingNoLeader(t *testing.T) {
 		"lease, registration without endpoint": {store: fakeDiscoveryStore{leader: lease, leaderFound: true,
 			registrations: map[string]ownership.WorkerRegistration{"leader-1": {WorkerID: "leader-1"}}}, miss: viewstream.MissLeaderNoEndpoint},
 		"lease, advertised": {store: fakeDiscoveryStore{leader: lease, leaderFound: true,
-			registrations: map[string]ownership.WorkerRegistration{"leader-1": {WorkerID: "leader-1", Endpoint: "10.0.0.1:8080"}}}, found: "10.0.0.1:8080"},
+			registrations: map[string]ownership.WorkerRegistration{"leader-1": {WorkerID: "leader-1", Endpoint: "192.0.2.1:8080"}}}, found: "192.0.2.1:8080"},
 		"lease read fails":    {store: fakeDiscoveryStore{leaderErr: errors.New("redis down")}, fails: true},
 		"registry read fails": {store: fakeDiscoveryStore{leader: lease, leaderFound: true, workerErr: errors.New("redis down")}, fails: true},
 	} {

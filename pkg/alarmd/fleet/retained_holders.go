@@ -31,9 +31,11 @@ type RetainedHolderFacts struct {
 	// RetainedHoldersListed of them.
 	Holders []RetainedHolderRef `json:"holders"`
 	// Oldest is the Slot that has held the longest, listed or not. Absent
-	// when nothing is held.
+	// when no Slot runs. A Slot holds from when its execution begins, at no
+	// bytes until it reserves, so one running long while reserving nothing
+	// is the oldest at zero bytes.
 	Oldest *RetainedHolderRef `json:"oldest,omitempty"`
-	// Total is how many Slots hold anything.
+	// Total is how many Slots run or hold anything.
 	Total int `json:"total"`
 	// AttributedBytes is what every holding Slot adds up to, listed or not;
 	// HeldBytes is the pool's own figure, read just after. A Slot starting

@@ -48,7 +48,7 @@ func TestAReplicaWhoseOutputIsNotReadyIsAStandingWithItsFacts(t *testing.T) {
 	snapshots[0].Dependencies = []Endpoint{outputEntry(true, 1, "")}
 	// pod-b restarted five minutes ago and has not opened its output since.
 	snapshots[1].StartedAt = now.Add(-5 * time.Minute)
-	snapshots[1].Dependencies = []Endpoint{outputEntry(false, 12, "kafka: dial tcp 10.0.0.1:9092: i/o timeout")}
+	snapshots[1].Dependencies = []Endpoint{outputEntry(false, 12, "kafka: dial tcp 192.0.2.1:9092: i/o timeout")}
 	view := Aggregate(Expectation{QueryGroups: 0, Known: true}, snapshots, replicas(), now, freshness)
 	if view.DependenciesReplica != "pod-a" {
 		t.Fatalf("dependencies shown from %q, want the newest list, pod-a's", view.DependenciesReplica)
@@ -63,7 +63,7 @@ func TestAReplicaWhoseOutputIsNotReadyIsAStandingWithItsFacts(t *testing.T) {
 		t.Fatalf("degradations = %+v, want exactly one OUTPUT_NOT_READY, pod-b's", view.Degradations)
 	}
 	standing := notReady[0]
-	if standing.Replica != "pod-b" || standing.Stage != "output" || standing.Text != "kafka: dial tcp 10.0.0.1:9092: i/o timeout" {
+	if standing.Replica != "pod-b" || standing.Stage != "output" || standing.Text != "kafka: dial tcp 192.0.2.1:9092: i/o timeout" {
 		t.Errorf("standing = %+v, want pod-b's output failure", standing)
 	}
 	if standing.AgeSeconds == nil || *standing.AgeSeconds != 300 {
@@ -140,7 +140,7 @@ func TestEachReplicaCarriesItsOwnDependencyRecord(t *testing.T) {
 	snapshots[0].Dependencies = []Endpoint{outputEntry(true, 1, "")}
 	// pod-b's is not, and its list is older.
 	snapshots[1].StartedAt = now.Add(-5 * time.Minute)
-	snapshots[1].Dependencies = []Endpoint{outputEntry(false, 12, "kafka: dial tcp 10.0.0.1:9092: i/o timeout")}
+	snapshots[1].Dependencies = []Endpoint{outputEntry(false, 12, "kafka: dial tcp 192.0.2.1:9092: i/o timeout")}
 	view := Aggregate(Expectation{QueryGroups: 0, Known: true}, snapshots, replicas(), now, freshness)
 	if view.DependenciesReplica != "pod-a" || view.DependenciesReplicas != 2 {
 		t.Fatalf("shown list is %q of %d replicas, want pod-a's, one of 2", view.DependenciesReplica, view.DependenciesReplicas)

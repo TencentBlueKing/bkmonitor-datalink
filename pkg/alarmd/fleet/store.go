@@ -386,7 +386,7 @@ func (store *RedisStore) PublishSummarized(ctx context.Context, snapshot Snapsho
 // activation scripts (controlplane/activation_rebuild.go) this runs on a
 // standalone or Sentinel server, and the configuration refuses Cluster
 // (config/redis.go).
-var publishSummarizedWrite = redisatomic.New(`
+var publishSummarizedWrite = redisatomic.New("fleet_publish_summarized", `
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[4])
 redis.call('SET', KEYS[2], ARGV[2], 'PX', ARGV[4])
 redis.call('SET', KEYS[3], ARGV[3], 'PX', ARGV[4])

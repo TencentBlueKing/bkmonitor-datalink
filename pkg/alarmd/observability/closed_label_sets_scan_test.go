@@ -2262,7 +2262,7 @@ func (r *scanResolver) returns(scope *scanScope, call *ast.CallExpr, result, dep
 //	B3 (8): a call through an interface or a func value;
 //	B4 (5): a value decoded from the store;
 //	B5 (3): external or free text;
-//	B6 (22): a field of a result whose type the scan does not see, or the result of a call it does not follow.
+//	B6 (24): a field of a result whose type the scan does not see, or the result of a call it does not follow.
 var closedLabelSetUnresolved = map[string]string{
 	"capacity_budget|worker/sideeffect_reservation.go|checkEffectCounts|check.kind":                                                                                  "PENDING B6",
 	"completion_cause|cmd/alarmd/runtime_phase_two_production.go|Execute|result.CompletionCause.Cause":                                                               "PENDING B6",
@@ -2308,16 +2308,18 @@ var closedLabelSetUnresolved = map[string]string{
 	"reason|viewstream/server.go|admit|server.admission.Admit(ctx, hello.WorkerId, hello.StreamToken)":                                                               "PENDING B3",
 	"reason|worker/coordinator.go|Execute|begin.ReasonCode":                                                                                                          "PENDING B6",
 	"reason|worker/coordinator.go|Execute|finalization.ReasonCode":                                                                                                   "PENDING B6",
+	"reason|worker/coordinator.go|admitDuePlanActivations|result.ReasonCode":                                                                                         "PENDING B6",
 	"reason|worker/coordinator.go|admitPlan|result.ReasonCode":                                                                                                       "PENDING B6",
 	"reason|worker/coordinator.go|commitProgress|progress.ReasonCode":                                                                                                "PENDING B6",
-	"reason|worker/coordinator.go|finalizePreparedWithGaps|planResult.ReasonCode":                                                                                    "PENDING B6",
-	"reason|worker/coordinator.go|finalizePreparedWithGaps|reason":                                                                                                   "PENDING B1",
 	"reason|worker/coordinator.go|firstStateAdmissionFailureReason|item.ReasonCode":                                                                                  "PENDING B6",
 	"reason|worker/coordinator.go|firstStateApplyFailureReason|item.ReasonCode":                                                                                      "PENDING B6",
 	"reason|worker/coordinator.go|outputRejectionReason|rejection.OutputRejectionReason()":                                                                           "PENDING B3",
+	"reason|worker/no_data_segmented.go|readAbsent|read.ReasonCode":                                                                                                  "PENDING B6",
+	"reason|worker/no_data_segmented.go|scan|page.ReasonCode":                                                                                                        "PENDING B6",
 	"reason|worker/no_data_skip_streak.go|noteNoDataStreaks|stream.noDataOutcomes[index]":                                                                            "PENDING B1",
 	"reason|worker/query_failure.go|observeQueryFailure|diagnostic.QueryFailure()":                                                                                   "PENDING B3",
 	"reason|worker/resume_applied_series.go|resumedSeriesResult|guard.ReasonCode":                                                                                    "PENDING B6",
+	"reason|worker/slot_apply.go|applyPlanState|reason":                                                                                                              "PENDING B1",
 	"reason|worker/stream_session.go|gapMutationForReasons|reasons[scope]":                                                                                           "PENDING B1",
 	"reason|worker/stream_session.go|observeCompletionOnlyProbe|binding.ReasonCode":                                                                                  "PENDING B6",
 	"reason|worker/stream_session.go|physicalFailureReason|execution.AttributeUnavailable(facts, execution.ReasonCode(contract.ReasonQueryUnavailable))":             "PENDING B6",

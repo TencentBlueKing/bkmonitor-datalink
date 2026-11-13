@@ -154,7 +154,7 @@ func TestEveryAnsweredQueryLineNamesTheRequestItAnswered(t *testing.T) {
 				c.observeQueryCompleted(context.Background(), execution.OperationNormal, time.Now(),
 					execution.QueryExecutionCompletion{PhysicalQueries: []execution.PhysicalQueryCompletion{
 						{Completeness: done.Completeness, DataState: done.DataState, RouteFacts: done.RouteFacts}}},
-					execution.EvaluationResult{Result: observability.ResultDegraded, ReasonCode: execution.ReasonCode(tc.reason)})
+					execution.EvaluationResult{Result: observability.ResultDegraded, ReasonCode: execution.ReasonCode(tc.reason)}, nil)
 			}
 			parts := strings.Split(sent, "-")
 			if len(parts) != 4 {

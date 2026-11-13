@@ -212,3 +212,35 @@ func (*unreachableNoDataStore) ApplyNoData(
 ) (execution.NoDataApplyResult, error) {
 	return execution.NoDataApplyResult{}, context.DeadlineExceeded
 }
+
+func (store *refusingNoDataStore) ReadNoDataHeaders(ctx context.Context, request execution.NoDataLoadRequest) (execution.NoDataLoadResult, error) {
+	return LoadedRoster(store.LoadNoData).Headers(ctx, request)
+}
+
+func (store *refusingNoDataStore) RecheckNoDataHeader(ctx context.Context, identity execution.PlanNoDataIdentity) (execution.NoDataMemorySnapshot, error) {
+	return LoadedRoster(store.LoadNoData).Recheck(ctx, identity)
+}
+
+func (store *refusingNoDataStore) ScanNoDataGroups(ctx context.Context, request execution.NoDataScanRequest) (execution.NoDataScanPage, error) {
+	return LoadedRoster(store.LoadNoData).Scan(ctx, request)
+}
+
+func (store *refusingNoDataStore) ReadNoDataGroups(ctx context.Context, request execution.NoDataGroupsRequest) (execution.NoDataGroupsResult, error) {
+	return LoadedRoster(store.LoadNoData).Read(ctx, request)
+}
+
+func (store *unreachableNoDataStore) ReadNoDataHeaders(ctx context.Context, request execution.NoDataLoadRequest) (execution.NoDataLoadResult, error) {
+	return LoadedRoster(store.LoadNoData).Headers(ctx, request)
+}
+
+func (store *unreachableNoDataStore) RecheckNoDataHeader(ctx context.Context, identity execution.PlanNoDataIdentity) (execution.NoDataMemorySnapshot, error) {
+	return LoadedRoster(store.LoadNoData).Recheck(ctx, identity)
+}
+
+func (store *unreachableNoDataStore) ScanNoDataGroups(ctx context.Context, request execution.NoDataScanRequest) (execution.NoDataScanPage, error) {
+	return LoadedRoster(store.LoadNoData).Scan(ctx, request)
+}
+
+func (store *unreachableNoDataStore) ReadNoDataGroups(ctx context.Context, request execution.NoDataGroupsRequest) (execution.NoDataGroupsResult, error) {
+	return LoadedRoster(store.LoadNoData).Read(ctx, request)
+}

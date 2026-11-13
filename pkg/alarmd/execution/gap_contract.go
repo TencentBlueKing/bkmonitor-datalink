@@ -126,10 +126,26 @@ func planGapMutationIsCanonical(mutation PlanGapMutation) bool {
 }
 
 // ExtendSameSlotGap adds protection without replaying an already recorded Slot.
-// Existing observations and reasons belong to the first committed attempt.
-// In particular this operation never warms, clears, or resets those facts.
+// Within one Slot a marker only grows: a scope is added, a held scope asks
+// more FULL Slots, or its reason rises - UNAVAILABLE over PARTIAL
+// (GapReasonRank) - and nothing is taken back: a lower or equal reason, or
+// fewer FULL Slots, leaves the scope as it is. A Slot read in slices answers
+// each slice on its own, and a later slice answering worse must be what the
+// marker says. Existing observations belong to the first committed attempt;
+// this operation never warms, clears, or resets them.
 // Callers validate the inputs and fence identity, ApplyVersion and schedule;
 // persistence must still compare the marker revision and the stored value.
+// GapReasonRank orders the reasons a scope is held for, worse higher: a query
+// that answered part of its series (QUERY_PARTIAL) under one that did not
+// answer (every other reason a scope is opened for). Two reasons of one rank
+// are the same severity, and the first stays.
+func GapReasonRank(reason ReasonCode) int {
+	if reason == ReasonCode(contract.ReasonQueryPartial) {
+		return 1
+	}
+	return 2
+}
+
 func ExtendSameSlotGap(previous []GapScopeState, mutations []GapScopeMutation) ([]GapScopeState, bool) {
 	if len(previous) == 0 || len(mutations) == 0 {
 		return nil, false
@@ -153,17 +169,18 @@ func ExtendSameSlotGap(previous []GapScopeState, mutations []GapScopeMutation) (
 			continue
 		}
 		current := &next[index]
-		if mutation.RequiredFullSlots < current.RequiredFullSlots || mutation.ReasonCode != current.ReasonCode {
-			return nil, false
-		}
 		if current.Status != GapStatusGapped || mutation.RequiredFullSlots > current.RequiredFullSlots {
+			changed = true
+		}
+		if GapReasonRank(mutation.ReasonCode) > GapReasonRank(current.ReasonCode) {
+			current.ReasonCode = mutation.ReasonCode
 			changed = true
 		}
 		// A same-Slot retry preserves the first commit's observations, so
 		// GAPPED may retain a positive count. It does not count a new Slot;
 		// a new-Slot gap is applied separately and resets that count.
 		current.Status = GapStatusGapped
-		current.RequiredFullSlots = mutation.RequiredFullSlots
+		current.RequiredFullSlots = max(current.RequiredFullSlots, mutation.RequiredFullSlots)
 	}
 	if !changed {
 		return nil, false

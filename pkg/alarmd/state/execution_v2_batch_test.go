@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,14 +24,23 @@ import (
 // Redis. Counters record how many storage round trips each path costs.
 type pipelineMemoryBackend struct {
 	casMemoryBackend
+	// pipelineMu serializes the pipelines: a request exchanges two at once
+	// (runtimeApplyBatchesInFlight), as a real server takes two calls.
+	pipelineMu   sync.Mutex
 	mgetCalls    int
 	pipelines    int
 	pipelineKeys int
 	casCalls     int
 	staleOwner   bool
 	failPipeline error
-	failMGet     error
-	guards       []*FenceGuard
+	// failKey ends that one key's write with an error of its own, the
+	// rest of the pipeline exchanged.
+	failKey string
+	// staleKey answers that one key's write as from a stale owner, the
+	// rest of the pipeline written: the request then ends in an error.
+	staleKey string
+	failMGet error
+	guards   []*FenceGuard
 	// recordKeyCounts keeps how many keys each MGET carried, for the tests
 	// that assert on the batch bound rather than on the number of calls.
 	recordKeyCounts bool
@@ -94,6 +104,8 @@ func (backend *pipelineMemoryBackend) CompareAndSet(ctx context.Context, key str
 }
 
 func (backend *pipelineMemoryBackend) CompareAndSetManyByDigest(_ context.Context, guard *FenceGuard, writes []FencedWrite) ([]FencedWriteOutcome, error) {
+	backend.pipelineMu.Lock()
+	defer backend.pipelineMu.Unlock()
 	backend.pipelines++
 	backend.pipelineKeys += len(writes)
 	backend.guards = append(backend.guards, guard)
@@ -102,7 +114,11 @@ func (backend *pipelineMemoryBackend) CompareAndSetManyByDigest(_ context.Contex
 	}
 	outcomes := make([]FencedWriteOutcome, len(writes))
 	for index, write := range writes {
-		if guard != nil && backend.staleOwner {
+		if write.Key == backend.failKey {
+			outcomes[index] = FencedWriteOutcome{Err: errors.New("connection reset")}
+			continue
+		}
+		if guard != nil && (backend.staleOwner || write.Key == backend.staleKey) {
 			outcomes[index] = FencedWriteOutcome{Status: FencedWriteStaleOwner}
 			continue
 		}
@@ -251,6 +267,38 @@ func TestLoadRuntimeBatchesReadsAndIsolatesInvalidItems(t *testing.T) {
 		if _, ok := store.witnesses.take(slot, mutations[index].Identity); ok {
 			t.Fatalf("invalid item %d must not leave a witness", index)
 		}
+	}
+}
+
+// A read no apply follows from (the worker's first-seen pre-pass) leaves no
+// witness, found or missing; and a read of the same Slot that does witness,
+// repeated, replaces its witness rather than adding one, so the pre-pass could
+// not have misled the apply either way.
+func TestAnUnwitnessedLoadLeavesNoWitnessAndAWitnessedOneReplacesItsOwn(t *testing.T) {
+	backend := newPipelineMemoryBackend()
+	store := newBatchStore(t, backend, nil)
+	mutations := seriesMutations(t, 4, applyVersion(), 0)
+	foundKey, _ := RuntimeStateKeyV3("alarmd", mutations[1].Identity)
+	backend.values[foundKey], _ = encodeRuntimePacked(mutations[1], 1)
+	request := execution.StatePreflightRequest{Contract: frozenRef(), Items: preflightItems(mutations), Unwitnessed: true}
+	loaded, err := store.LoadRuntime(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Items[1].Status != execution.StateFoundReady || loaded.Items[0].Status != execution.StateMissingWarming {
+		t.Fatalf("unwitnessed views = %+v, want them read as a witnessed load reads them", loaded.Items)
+	}
+	if stats := store.witnesses.stats(); stats.Items != 0 || stats.Bytes != 0 {
+		t.Fatalf("an unwitnessed load left %d witnesses (%d B)", stats.Items, stats.Bytes)
+	}
+	request.Unwitnessed = false
+	for range 2 {
+		if _, err := store.LoadRuntime(context.Background(), request); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if stats := store.witnesses.stats(); stats.Items != len(mutations) {
+		t.Fatalf("two witnessed loads of one Slot hold %d witnesses, want one per key (%d)", stats.Items, len(mutations))
 	}
 }
 
@@ -596,6 +644,45 @@ func TestRuntimeWitnessCacheScopesBySlotAndEvictsOldGroups(t *testing.T) {
 	newest := execution.SlotIdentity{QueryGroup: execution.QueryGroupIdentity(fmt.Sprintf("group-%d", runtimeWitnessMaxGroups+4)), EvaluationTime: 60}
 	if _, ok := cache.take(newest, identity); !ok {
 		t.Fatal("newest group was evicted")
+	}
+}
+
+// A released Query Group's witnesses leave with it, and the counts with them;
+// a later Slot's, remembered by a newer session of the same Query Group before
+// the old one's release ran, stay for that Slot's writes.
+func TestRuntimeWitnessCacheForgetDropsReleasedGroupOnly(t *testing.T) {
+	cache := newRuntimeWitnessCache()
+	released := execution.SlotIdentity{QueryGroup: "q", EvaluationTime: 60}
+	other := execution.SlotIdentity{QueryGroup: "other", EvaluationTime: 60}
+	cache.remember(released, seriesIdentity(0), runtimeWitness{framedDigest: "framed", digest: "framed"})
+	cache.remember(released, seriesIdentity(1), runtimeWitness{missing: true})
+	cache.remember(other, seriesIdentity(0), runtimeWitness{missing: true})
+	// Two witnesses of an empty record and one with a 6-byte digest, which
+	// counts once although digest and framedDigest both name it.
+	series := sizeClass(len(seriesIdentity(0).SeriesIdentityDigest))
+	if got, want := cache.stats(), (RuntimeWitnessStats{Items: 3, Bytes: 3*(runtimeWitnessEntryBytes+series) + 8}); got != want {
+		t.Fatalf("stats = %+v, want %+v", got, want)
+	}
+
+	cache.forget("q", 60)
+	if _, ok := cache.take(released, seriesIdentity(1)); ok {
+		t.Fatal("a released Query Group's witness survived forget")
+	}
+	if got, want := cache.stats(), (RuntimeWitnessStats{Items: 1, Bytes: runtimeWitnessEntryBytes + series}); got != want {
+		t.Fatalf("stats after forget = %+v, want %+v: only the other Query Group's witness", got, want)
+	}
+
+	newer := execution.SlotIdentity{QueryGroup: "q", EvaluationTime: 120}
+	cache.remember(newer, seriesIdentity(0), runtimeWitness{missing: true})
+	cache.forget("q", 60)
+	if _, ok := cache.take(newer, seriesIdentity(0)); !ok {
+		t.Fatal("releasing the session that ran up to Slot 60 dropped a newer session's Slot 120 witnesses")
+	}
+	if _, ok := cache.take(other, seriesIdentity(0)); !ok {
+		t.Fatal("forgetting one Query Group dropped another's witnesses")
+	}
+	if got := cache.stats(); got != (RuntimeWitnessStats{}) {
+		t.Fatalf("stats after every witness was taken = %+v, want zero", got)
 	}
 }
 

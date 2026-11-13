@@ -39,7 +39,7 @@ func (store *memoryControl) ReadControlBatch(_ context.Context, groups []executi
 func (store *memoryControl) FencedCompareAndSet(_ context.Context, request ownership.FencedCASRequest) (ownership.FencedCASStatus, error) {
 	store.requests = append(store.requests, request)
 	if store.refused != "" {
-		return store.refused, nil
+		return store.refused, ownership.FencedCASRefusalError(store.refused)
 	}
 	current, found := store.values[request.Fence.QueryGroup]
 	if request.ExpectedMissing == found || !bytes.Equal(request.Expected, current) {
@@ -906,7 +906,9 @@ func TestAReleasedPredecessorStaysAbsentAfterSuccessfulInheritance(t *testing.T)
 
 // A transition that asks for more than the group's hold limit is frozen at
 // the limit -- the same on every retry of the Slot, which used to be refused
-// on every retry -- and counted, a known hold apart from the bound.
+// on every retry -- and counted, a known hold apart from the bound. An open
+// predecessor is waited on first, and frozen at the bound only once the wait
+// reaches the time the Slot would have been ready on it.
 func TestATransitionOverTheLimitIsFrozenAtTheLimitAndCounted(t *testing.T) {
 	boundary := execution.EvaluationTime(1200)
 	for _, tc := range []struct {
@@ -925,7 +927,7 @@ func TestATransitionOverTheLimitIsFrozenAtTheLimitAndCounted(t *testing.T) {
 			ClosedQueryGroup: "old", PreviousSlot: 1140, PreviousHoldMillis: 600_000, PreviousHoldUnknown: true, CompletionOffsetMillis: 200_000}}}, ClampFallback},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c, store, _ := controllerFixture(t)
+			c, store, now := controllerFixture(t)
 			store.values["old"], _ = json.Marshal(tc.record)
 			if err := c.RestoreBatch(context.Background(), []execution.QueryGroupIdentity{"old"}); err != nil {
 				t.Fatal(err)
@@ -934,6 +936,16 @@ func TestATransitionOverTheLimitIsFrozenAtTheLimitAndCounted(t *testing.T) {
 			newSpec.Previous = []Previous{{QueryGroup: "old", ClosedAt: boundary, Links: []PlanLink{{PlanRef: planRef(), PreviousSlot: 1140, CompletionOffsetMillis: 200_000}}}}
 			prepare(t, c, newSpec)
 			schedule := scheduleFor(t, "new", boundary, nil)
+			if tc.source == ClampFallback && !tc.record.Closed {
+				// 1200 s + 30 s wait + 600 s limit, before the bound's own
+				// 1140 s + 600 s + 200 s.
+				_, err := c.SlotReadHold(context.Background(), schedule, boundary, holdFence("new"))
+				var awaiting *AwaitingPredecessorError
+				if !errors.As(err, &awaiting) || awaiting.Predecessor != "old" || awaiting.UntilUnixMilli != 1_830_000 {
+					t.Fatalf("an open predecessor's successor = %v, want it waiting until 1830 s", err)
+				}
+				*now = time.UnixMilli(awaiting.UntilUnixMilli)
+			}
 			for retry := 0; retry < 2; retry++ {
 				if got, err := c.SlotReadHold(context.Background(), schedule, boundary, holdFence("new")); err != nil || got != 10*time.Minute {
 					t.Fatalf("retry %d of an over-limit Slot = %s %v; want the 10 m limit", retry, got, err)
@@ -941,6 +953,11 @@ func TestATransitionOverTheLimitIsFrozenAtTheLimitAndCounted(t *testing.T) {
 			}
 			if got := c.Stats().Clamped; got[tc.source] == 0 || len(got) != 1 {
 				t.Fatalf("clamped %v, want %s only", got, tc.source)
+			}
+			if tc.source == ClampFallback && !tc.record.Closed {
+				if waits := c.Stats().TransitionWaits; waits[TransitionWaitWaiting] != 1 || waits[TransitionWaitBounded] != 1 {
+					t.Fatalf("waits %v, want one begun and one ended bounded", waits)
+				}
 			}
 		})
 	}

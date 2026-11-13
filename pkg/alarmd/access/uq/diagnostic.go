@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
@@ -310,6 +311,13 @@ func (sink *diagnosticSink) ConsumeProviderSeries(ctx context.Context, batch exe
 		return nil
 	}
 	sink.outputBytes += len(header)
+	// The Dataset keeps no ids (it is the decoder's, every id derived): they
+	// are derived here, the series' part of the hash once for the series,
+	// and only for the points the page takes.
+	deriver, err := contract.NewRecordIDDeriverV2(digest)
+	if err != nil {
+		return err
+	}
 	for index := 0; index < batch.Dataset.Len(); index++ {
 		if sink.result.ReturnedPoints >= sink.selection.MaxPoints {
 			sink.truncate()
@@ -320,7 +328,11 @@ func (sink *diagnosticSink) ConsumeProviderSeries(ctx context.Context, batch exe
 		if !found {
 			return errors.New("missing canonical value")
 		}
-		point := DiagnosticPoint{RecordID: record.RecordID(), SourceTime: record.SourceTime(), Value: value}
+		recordID, err := deriver.Derive(record.SourceTime())
+		if err != nil {
+			return err
+		}
+		point := DiagnosticPoint{RecordID: recordID, SourceTime: record.SourceTime(), Value: value}
 		encoded, _ := json.Marshal(point)
 		if sink.outputBytes+len(encoded)+1 > DiagnosticMaxOutputBytes {
 			sink.truncate()

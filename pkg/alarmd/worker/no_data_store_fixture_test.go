@@ -11,6 +11,7 @@ package worker
 
 import (
 	"context"
+	"sort"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
@@ -79,3 +80,108 @@ func (lookup fixedHostBusiness) HostIndexResolved() bool { return len(lookup.byI
 // has not been built yet looks like. Tests about something else use it; a test
 // about host resolution builds its own.
 var SharedHostBusiness = fixedHostBusiness{}
+
+// LoadedRoster answers the segmented reads of a memory (execution.
+// PlanNoDataRosterReader) from a double's whole load, so a double written
+// against LoadNoData answers the round's reads with the same record: the
+// header is the load without its groups, a scan pages the groups in key
+// order, Count a page, and a read by name picks them out.
+type LoadedRoster func(context.Context, execution.NoDataLoadRequest) (execution.NoDataLoadResult, error)
+
+func (load LoadedRoster) Headers(ctx context.Context, request execution.NoDataLoadRequest) (execution.NoDataLoadResult, error) {
+	result, err := load(ctx, request)
+	if err != nil {
+		return execution.NoDataLoadResult{}, err
+	}
+	items := make([]execution.NoDataMemorySnapshot, len(result.Items))
+	for index, item := range result.Items {
+		item.Groups = nil
+		items[index] = item
+	}
+	result.Items = items
+	return result, nil
+}
+
+func (load LoadedRoster) One(ctx context.Context, identity execution.PlanNoDataIdentity) (execution.NoDataMemorySnapshot, error) {
+	result, err := load(ctx, execution.NoDataLoadRequest{Items: []execution.PlanNoDataLoadItem{{Identity: identity}}})
+	if err != nil {
+		return execution.NoDataMemorySnapshot{}, err
+	}
+	for _, item := range result.Items {
+		if item.Identity == identity {
+			return item, nil
+		}
+	}
+	return execution.NoDataMemorySnapshot{Identity: identity, Status: execution.NoDataMemoryMissing,
+		Representation: execution.NoDataRepresentationNone}, nil
+}
+
+func (load LoadedRoster) Recheck(ctx context.Context, identity execution.PlanNoDataIdentity) (execution.NoDataMemorySnapshot, error) {
+	snapshot, err := load.One(ctx, identity)
+	snapshot.Groups, snapshot.ManualCloses, snapshot.ManualClosesUnread = nil, nil, false
+	return snapshot, err
+}
+
+func (load LoadedRoster) Scan(ctx context.Context, request execution.NoDataScanRequest) (execution.NoDataScanPage, error) {
+	snapshot, err := load.One(ctx, request.Identity)
+	if err != nil {
+		return execution.NoDataScanPage{}, err
+	}
+	groups := append([]execution.NoDataGroupMemory(nil), snapshot.Groups...)
+	sort.Slice(groups, func(left, right int) bool { return groups[left].GroupKey < groups[right].GroupKey })
+	count := request.Count
+	if count <= 0 {
+		count = execution.NoDataRosterSegmentGroups
+	}
+	start := min(int(request.Cursor), len(groups))
+	end := min(start+count, len(groups))
+	page := execution.NoDataScanPage{Groups: groups[start:end], Status: execution.NoDataMemoryFound}
+	if end < len(groups) {
+		page.Next = uint64(end)
+	}
+	return page, nil
+}
+
+func (load LoadedRoster) Read(ctx context.Context, request execution.NoDataGroupsRequest) (execution.NoDataGroupsResult, error) {
+	snapshot, err := load.One(ctx, request.Identity)
+	if err != nil {
+		return execution.NoDataGroupsResult{}, err
+	}
+	held := make(map[string]execution.NoDataGroupMemory, len(snapshot.Groups))
+	for _, group := range snapshot.Groups {
+		held[group.GroupKey] = group
+	}
+	result := execution.NoDataGroupsResult{Status: execution.NoDataMemoryFound, Groups: make([]execution.NoDataGroupMemory, len(request.Keys))}
+	for index, key := range request.Keys {
+		result.Groups[index] = held[key]
+	}
+	return result, nil
+}
+
+func (store *emptyNoDataStore) ReadNoDataHeaders(ctx context.Context, request execution.NoDataLoadRequest) (execution.NoDataLoadResult, error) {
+	return LoadedRoster(store.LoadNoData).Headers(ctx, request)
+}
+
+func (store *emptyNoDataStore) RecheckNoDataHeader(ctx context.Context, identity execution.PlanNoDataIdentity) (execution.NoDataMemorySnapshot, error) {
+	return LoadedRoster(store.LoadNoData).Recheck(ctx, identity)
+}
+
+func (store *emptyNoDataStore) ScanNoDataGroups(ctx context.Context, request execution.NoDataScanRequest) (execution.NoDataScanPage, error) {
+	return LoadedRoster(store.LoadNoData).Scan(ctx, request)
+}
+
+func (store *emptyNoDataStore) ReadNoDataGroups(ctx context.Context, request execution.NoDataGroupsRequest) (execution.NoDataGroupsResult, error) {
+	return LoadedRoster(store.LoadNoData).Read(ctx, request)
+}
+
+// SetNoDataSegmentGroups cuts a coordinator's no-data memory reads into
+// segments of groups fields, for a case that reads a small memory in many.
+func SetNoDataSegmentGroups(coordinator *SlotExecutionCoordinator, groups int) {
+	coordinator.noDataSegment = groups
+}
+
+// RetainedInputOf is what a Slot's consumer has charged to its input phase,
+// for a black-box measurement to hold against the heap.
+func RetainedInputOf(consumer execution.QueryExecutionConsumer) uint64 {
+	return consumer.(*streamedExecution).retainedByPhase[retainPhaseInput]
+}

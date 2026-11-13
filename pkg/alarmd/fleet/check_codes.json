@@ -236,7 +236,7 @@
   {
     "check": "RETAINED_SHARE_APPROACHING",
     "state": "DETECTING",
-    "action": "STRATEGY_EDIT",
+    "action": "NONE",
     "owner": "STRATEGY"
   },
   {

@@ -207,7 +207,7 @@ func TestARoundThatDidNotJudgeEmitsNoAbsenceLine(t *testing.T) {
 }
 
 // The line comes out of the round's own pass, once for the Plan that judged
-// and not for the Plan the budget skipped, and only when the Slot reports its
+// and not for the Plan the share skipped, and only when the Slot reports its
 // outcomes: read through evaluateNoData and the report, the two steps the
 // Slot runs, rather than the emitter, because a call site that was never
 // wired reads the same as one that was under a test that calls the emitter
@@ -228,8 +228,6 @@ func TestTheAbsenceLineComesOutOfTheRoundsOwnPass(t *testing.T) {
 				Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 					recorded = append(recorded, observation)
 				})},
-			// One mutation for the whole Slot: the first Plan judges and its
-			// series fits, the second is skipped by the budget.
 			budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxGapMutations: 10, MaxStateMutations: 1, MaxEvents: 1},
 		},
 		header: execution.InternalExecutionHeader{Contract: noDataPreflightContract(t, duePlans), DuePlans: duePlans},
@@ -237,6 +235,12 @@ func TestTheAbsenceLineComesOutOfTheRoundsOwnPass(t *testing.T) {
 	if err := stream.loadNoDataMemory(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	// The first Plan judges; the second's memory did not fit the share, as
+	// the load decides (reserveNoDataMemory), and is skipped by name. A
+	// per-Slot cap no longer skips a Plan: it is a window's bound (decision-
+	// 020 batch 8, 2.1).
+	stream.noDataRefused = map[execution.PlanNoDataIdentity]execution.NoDataApplyItemResult{
+		second.NoDataIdentity(): noDataBytesRefusal(second.NoDataIdentity(), 1, 2<<20, 1<<20)}
 	// The batch fails on purpose - this fixture has no evaluator - and that is
 	// after both Plans have been decided and their lines emitted.
 	if err := stream.evaluateNoData(context.Background(), nil, 16); err == nil {
@@ -304,9 +308,11 @@ func TestASlotBeyondItsBudgetSettlesEveryNoDataPlanOnce(t *testing.T) {
 		if err := stream.loadNoDataMemory(context.Background()); err != nil {
 			t.Fatal(err)
 		}
+		stream.noDataRefused = map[execution.PlanNoDataIdentity]execution.NoDataApplyItemResult{
+			second.NoDataIdentity(): noDataBytesRefusal(second.NoDataIdentity(), 1, 2<<20, 1<<20)}
 		if decidedFirst {
 			// The first Plan judges and files EVALUATED, the second is skipped by
-			// the no-data budget; then the cap trips.
+			// the share; then the cap trips.
 			_ = stream.evaluateNoData(context.Background(), nil, 16)
 			// The guard on the fixture: the case is only read if the first Plan
 			// really judged, or the correction below is never exercised.

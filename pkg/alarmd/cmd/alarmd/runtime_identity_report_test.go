@@ -44,7 +44,7 @@ func TestObjectIdentityReportsAreWrittenAsLogLines(t *testing.T) {
 	}}
 	chain := admission.NewChain([]admission.Fuller{admission.IdentityFuller{}}, filters)
 
-	missing := chain.Enrich(map[string]json.RawMessage{"bk_target_ip": json.RawMessage(`"10.0.0.1"`), "device": json.RawMessage(`"eth0"`)})
+	missing := chain.Enrich(map[string]json.RawMessage{"bk_target_ip": json.RawMessage(`"192.0.2.1"`), "device": json.RawMessage(`"eth0"`)})
 	if admitted, _, reason := chain.Admit(plan, &missing); admitted || reason != "object_identity_missing" {
 		t.Fatalf("decision = %v/%s", admitted, reason)
 	}

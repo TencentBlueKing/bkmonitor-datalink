@@ -55,6 +55,9 @@ type probeRun struct {
 	frozenHold map[int64]time.Duration
 	revised    map[int64]bool
 	revisedAt  map[int64]bool
+	// sliced reads every Slot in two slices, a and b, its first attempt
+	// prepared of a and b's formal read first, finding "2".
+	sliced bool
 }
 
 const probeDelay = 60 // seconds of source delay before the hold
@@ -107,6 +110,9 @@ func (r *probeRun) slotQuery(slot int64) Query {
 	q.ReadyAt = time.Unix(slot+probeDelay, 0).Add(hold)
 	if r.revised[slot] {
 		q.Spec.Digest = "revised"
+	}
+	if r.sliced {
+		q.Slice = sliceOf("^a$")
 	}
 	return q
 }
@@ -243,6 +249,13 @@ func (r *probeRun) formal(slot int64) {
 	q := r.slotQuery(slot)
 	if r.revisedAt[slot] {
 		q.Spec.Digest = "revised"
+	}
+	if r.sliced {
+		other := q
+		other.Slice = sliceOf("^b$")
+		read := r.f.engine.Begin(other)
+		read.Series(point(slot, "2"), 100)
+		read.Complete(execution.ProviderCompletion{Completeness: execution.CompletenessFull}, nil)
 	}
 	read := r.f.engine.Begin(q)
 	read.Series(point(slot, "1"), 100)
@@ -720,5 +733,23 @@ func TestAProbeGoesOnFromTheRoundsItsRecordKept(t *testing.T) {
 				t.Fatalf("events %v, %d starts seen, want each counted started, and resumed when it went on from kept rounds", events, len(gotStarts))
 			}
 		})
+	}
+}
+
+// A probe round is a read of the slice its Slot's first attempt prepared it
+// of: another slice's formal read, read first and finding other series, is
+// not compared with it, and the probe passes on its own slice's reads.
+func TestAProbeRoundIsComparedWithItsOwnSlice(t *testing.T) {
+	const rounds, slots = 5, 9
+	r := newProbeRun(t, 30*time.Second, 0, rounds)
+	r.sliced = true
+	first := r.f.clock.now().Unix() / 60 * 60
+	r.run(first, slots)
+	ends := r.endsSeen()
+	if len(ends) != 1 || ends[0].Event != FloorProbePassed || ends[0].Clean != rounds {
+		t.Fatalf("ends %+v, want the probe passed on %d clean rounds", ends, rounds)
+	}
+	if got := r.f.engine.Stats().Sources[sourceTimeSeries].FloorProbeRounds[FloorProbeDifferent]; got != 0 {
+		t.Fatalf("%d rounds compared different, want none", got)
 	}
 }

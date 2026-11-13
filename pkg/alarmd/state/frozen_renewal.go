@@ -133,6 +133,9 @@ func (store *ExecutionStore) RenewFrozenRuntime(
 				// the next Slot will read it as missing and start the series
 				// again, and there is no remaining life to spend.
 				result.Items[index].Outcome = execution.FrozenRenewalMissing
+				// Nor served from the State cache: the key it would answer for
+				// is gone (rule 4).
+				store.cache.drop(group.keys[position], StateCacheDepartRenewalMissing)
 			default:
 				result.Items[index].Outcome = execution.FrozenRenewalFresh
 				store.frozenRenewals.Answered(group.keys[position], RenewalAskInterval(ttl))

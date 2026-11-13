@@ -192,6 +192,9 @@ type OwnerFence struct {
 	LeaseToken string
 }
 
+// IsZero is a fence nobody holds.
+func (fence OwnerFence) IsZero() bool { return fence == OwnerFence{} }
+
 func (fence OwnerFence) Validate(contractRef FrozenExecutionContractRef) error {
 	if fence.QueryGroup != contractRef.Slot.QueryGroup || fence.OwnerID == "" || fence.OwnerEpoch == 0 || fence.LeaseToken == "" {
 		return errors.New("alarmd execution: valid current owner fence is required")
@@ -214,12 +217,25 @@ type SlotExecutionRequest struct {
 	// Runner saw this Slot refused for its Query Group's retained-byte share
 	// (ShareRefusal) and decided no retry can fit it. Finalization then names
 	// the Slot RESOURCE_SHARE_EXCEEDED and runs no query.
-	ShareExceeded    bool
-	Operation        Operation
-	AttemptNo        uint32
-	OwnerFence       OwnerFence
-	ExpectedNextSlot EvaluationTime
-	ExpiredRange     *ExpiredRangeProjectionV1
+	ShareExceeded bool
+	// QueryCooldownHeld is a non-identity scheduler fact, like ShareExceeded:
+	// the Query Group's query cooldown holds as the Slot runs (one of its
+	// checks let the Slot through). A slice of it that runs out of time is
+	// then not split and read again: the backend is slow, and two more
+	// requests to it are what the cooldown is there to stop.
+	QueryCooldownHeld bool
+	// QueryCooldownProbe is a non-identity scheduler fact too: the Query
+	// Group is in the query cooldown and its hold has run out, so this Slot
+	// is the one that decides whether it leaves (scheduler
+	// queryCooldownDecidedBy). It asks only whether the Query Group can be
+	// read: it is read whole, one request a query, never in the slices its
+	// memory holds.
+	QueryCooldownProbe bool
+	Operation          Operation
+	AttemptNo          uint32
+	OwnerFence         OwnerFence
+	ExpectedNextSlot   EvaluationTime
+	ExpiredRange       *ExpiredRangeProjectionV1
 	// ContentScope names the execution content this Slot runs under: the
 	// ObjectDigest of the Schedule Segment it was frozen from (decision-016).
 	// Every fenced write the Slot makes -- State, Progress, the expired range
@@ -301,6 +317,9 @@ type QueryExecutionRequest struct {
 	Contract  FrozenExecutionContractRef
 	Operation Operation
 	AttemptNo uint32
+	// Slice is the slice of the Query Group's series this read is of; the
+	// zero slice is all of them (InputSlice).
+	Slice InputSlice
 }
 
 type followingSlotKey struct{}
@@ -333,7 +352,7 @@ func (request QueryExecutionRequest) Validate() error {
 	if request.AttemptNo == 0 {
 		return errors.New("alarmd execution: positive query attempt number is required")
 	}
-	return nil
+	return request.Slice.Validate()
 }
 
 type PlanIdentity struct {
@@ -685,6 +704,9 @@ type StatePreflightItem struct {
 	// and what is found there is handed back beside the view (Carried),
 	// never as the view itself.
 	CarryFrom StateGeneration
+	// Sharded says the Plan is a piece of a split strategy. The State key
+	// carries no shard, so the store reads such a series back every round.
+	Sharded bool
 }
 
 type PlanGapLoadItem struct {
@@ -908,6 +930,18 @@ type RuntimeStateView struct {
 type StatePreflightRequest struct {
 	Contract FrozenExecutionContractRef
 	Items    []StatePreflightItem
+	// OwnerFence is the fence the round holds. The store serves a key from
+	// what it last wrote only under the fence it wrote with; zero serves
+	// nothing from there.
+	OwnerFence OwnerFence
+	// Unwitnessed reads without remembering, for an apply, what was read: a
+	// read no write of this Slot follows from, such as the first-seen
+	// pre-pass (worker/first_seen.go). The Slot's own preflight of the same
+	// keys would remember them again and replace what such a read left - a
+	// witness is kept per Slot and key - so leaving them would not mislead an
+	// apply; but until then they would sit in the store across every series
+	// of the Plan, charged to no budget.
+	Unwitnessed bool
 }
 
 type StatePreflightResult struct {
@@ -961,6 +995,29 @@ func CompareApplyVersion(persisted, candidate ApplyVersion) ApplyVersionComparis
 		return ApplyVersionPersistedNewer
 	}
 	return ApplyVersionEqual
+}
+
+// SupersededBy says the stored version is a later Slot's: it compares
+// PERSISTED_NEWER and its EvaluationTime is after the candidate's. That is
+// what a store rolled back by a Redis failover leaves -- a later Slot ran on
+// the older State it found, wrote its own, and Progress came back behind it
+// -- and the Slot that runs again behind it has nothing left to decide for
+// that key: the later Slot already decided it, from what it had.
+//
+// The other two ways to compare PERSISTED_NEWER are not this, and refusing
+// them stays right. A newer StateApplyEpoch at a time no later than the
+// candidate's is this Slot running on an older activation than the write
+// was made under; skipping would drop its decision for the key, where
+// refusing waits for the activation to catch up. The same epoch and time
+// with a larger SlotDigest is the tie rule between two Slots of the same
+// moment, which says nothing about which came first.
+//
+// The epoch is compared and never trusted alone: it is the Plan's
+// publication epoch, not an owner fence, so a second writer is kept out by
+// admission and the owner fence at the write, not here.
+func SupersededBy(persisted, candidate ApplyVersion) bool {
+	return CompareApplyVersion(persisted, candidate) == ApplyVersionPersistedNewer &&
+		persisted.EvaluationTime > candidate.EvaluationTime
 }
 
 func ClassifyStatePreflight(request StatePreflightRequest, result StatePreflightResult) (StatePreflightResult, error) {
@@ -1756,6 +1813,12 @@ type PlanNoDataMutation struct {
 	GroupLimit uint32
 	Set        []NoDataGroupDelta
 	Del        []string
+	// Staged is, for a statement replacing the whole record, the groups this
+	// attempt staged ahead of it (NoDataStaged): Set is then the groups
+	// left, and GroupCount is the two together. Not part of the statement:
+	// a whole record's statement is its memory digest and count, which the
+	// store proves the staged groups against at the swap.
+	Staged *NoDataStaged
 }
 
 // ReplacesWholeRecord reports whether this statement stands on its own.
@@ -1911,6 +1974,14 @@ type HistoryCoverage struct {
 	// to go back to the logs.
 	Resumed     uint32
 	Constrained uint32
+	// Superseded is a series this Slot did not evaluate because its State is
+	// a later Slot's (SupersededBy): it is in the round and has no Level
+	// outcome, window or write in it. Counted beside the two above because it
+	// is the third way the evaluated set is smaller than the handled one, and
+	// apart from them because it says something neither does -- that the
+	// store held a write from after this Slot, which is a rollback or a
+	// replay crossing a later write.
+	Superseded uint32
 	// WorstValid and WorstRequired are one Level's pair -- the Level with the
 	// largest shortfall -- and not a minimum over one field beside a maximum
 	// over the other. Taken independently they describe a Level that may not
@@ -2302,11 +2373,12 @@ func (coverage *HistoryCoverage) Merge(other HistoryCoverage) {
 	// it did not, so the short-circuit asks whether anything was reported at
 	// all rather than whether a window was. Reading Levels alone here would
 	// have dropped exactly the counts that exist to explain a low Levels.
-	if coverage == nil || (other.Levels == 0 && other.Resumed == 0 && other.Constrained == 0) {
+	if coverage == nil || (other.Levels == 0 && other.Resumed == 0 && other.Constrained == 0 && other.Superseded == 0) {
 		return
 	}
 	coverage.Resumed += other.Resumed
 	coverage.Constrained += other.Constrained
+	coverage.Superseded += other.Superseded
 	coverage.Levels += other.Levels
 	coverage.Short += other.Short
 	coverage.Empty += other.Empty
@@ -2579,7 +2651,9 @@ func (result EvaluationResult) Validate(request EvaluationRequest) error {
 				!candidateFound || mutation.ApplyVersion != candidate.ApplyVersion {
 				return errors.New("alarmd execution: invalid state mutation")
 			}
-			if err := mutation.ValidateDigest(); err != nil {
+			// The mutation built, by its seal; its content is the store
+			// admission's to check whole, before the events.
+			if err := mutation.ValidateSealed(); err != nil {
 				return err
 			}
 			if err := mutation.ApplyVersion.Validate(); err != nil {
@@ -3160,6 +3234,12 @@ const (
 	GapGuardConflict       GapGuardApplyStatus = "CONFLICT"
 	GapGuardRetryable      GapGuardApplyStatus = "RETRYABLE_IO"
 	GapGuardRejected       GapGuardApplyStatus = "DETERMINISTIC_INVALID"
+	// GapGuardSuperseded is a marker a later Slot already wrote
+	// (SupersededBy): nothing was written, and nothing is wrong with the
+	// Slot that asked. Told apart from STALE_VERSION, which stays the answer
+	// for every other newer marker, because the two need opposite handling:
+	// this one is skipped, that one is refused and retried.
+	GapGuardSuperseded GapGuardApplyStatus = "SUPERSEDED"
 )
 
 type GapGuardApplyItemResult struct {
@@ -3182,7 +3262,7 @@ func (result GapGuardApplyResult) Validate() error {
 			err = requireReasonClass(item.ReasonCode, contract.ReasonClassRetryable)
 		case GapGuardRejected:
 			err = requireReasonClass(item.ReasonCode, contract.ReasonClassDeterministic)
-		case GapGuardStale, GapGuardConflict:
+		case GapGuardStale, GapGuardSuperseded, GapGuardConflict:
 			err = requireReasonNone(item.ReasonCode)
 		default:
 			err = errors.New("alarmd execution: unknown gap guard apply status")
@@ -3666,11 +3746,15 @@ type CompletionScope struct {
 // would be functions that must agree about the same Slot, and the first time
 // they disagreed the page would explain a completion that did not happen.
 func DeriveCompletionAttribution(input InternalExecution, result EvaluationResult) (CompletionKind, CompletionAttribution, error) {
-	return deriveCompletionAttribution(input, result)
+	return deriveCompletionAttribution(input, FoldCompletionAttribution(result))
 }
 
-func deriveCompletionAttribution(input InternalExecution, result EvaluationResult) (CompletionKind, CompletionAttribution, error) {
-	if len(result.Plans) == 0 {
+// deriveCompletionAttribution reads the Slot's results through their fold
+// (CompletionAttributionFold), which keeps of them exactly what this reads:
+// a Slot that let its series go window by window still has it, and one
+// derived from a result in hand folds the result first.
+func deriveCompletionAttribution(input InternalExecution, fold CompletionAttributionFold) (CompletionKind, CompletionAttribution, error) {
+	if len(fold.plans) == 0 {
 		return "", CompletionAttribution{}, errors.New("alarmd execution: no Plan results to complete")
 	}
 	primary, err := DerivePrimaryInputFact(input)
@@ -3729,7 +3813,7 @@ func deriveCompletionAttribution(input InternalExecution, result EvaluationResul
 	allFullEmpty := primary.Completeness == CompletenessFull && primary.DataState == DataStateEmpty
 	hasTerminal := false
 	wholeness := NewSlotInputWholeness(input.Inputs)
-	for _, plan := range result.Plans {
+	for _, plan := range fold.plans {
 		switch plan.Disposition {
 		case PlanTerminal:
 			hasTerminal = true
@@ -3753,18 +3837,18 @@ func deriveCompletionAttribution(input InternalExecution, result EvaluationResul
 				// nobody has identified yet belong.
 				hasPartial = true
 			}
-			for _, outcome := range plan.LevelOutcomes {
-				switch outcome.Outcome {
-				case LevelOutcomeTerminal:
-					hasTerminal = true
-				case LevelOutcomeUnknown:
-					hasUnavailable = true
-					levelScope := CompletionScope{Plan: outcome.Plan, HasPlan: true, LevelID: outcome.LevelID, HasLevel: true}
-					if wholeness.UnknownIsGuardTail(outcome) {
-						noteOutcome(CauseGapGuardWarming, outcome, levelScope)
-					} else {
-						noteOutcome(CauseLevelOutcomeUnknown, outcome, levelScope)
-					}
+			if plan.terminal {
+				hasTerminal = true
+			}
+			// The UNKNOWN outcomes the fold kept, in the order they arrived:
+			// the only ones of the Plan that can be noted (see the fold).
+			for _, outcome := range plan.unknown {
+				hasUnavailable = true
+				levelScope := CompletionScope{Plan: outcome.Plan, HasPlan: true, LevelID: outcome.LevelID, HasLevel: true}
+				if wholeness.UnknownIsGuardTail(outcome) {
+					noteOutcome(CauseGapGuardWarming, outcome, levelScope)
+				} else {
+					noteOutcome(CauseLevelOutcomeUnknown, outcome, levelScope)
 				}
 			}
 		default:
@@ -4156,7 +4240,30 @@ const (
 	ProgressConflict    ProgressCommitStatus = "CONFLICT"
 	ProgressStaleOwner  ProgressCommitStatus = "STALE_OWNER"
 	ProgressRetryableIO ProgressCommitStatus = "RETRYABLE_IO"
+	// ProgressContentMoved is the fence refusing a write whose declared
+	// content scope the assignment record no longer names: the lease is good
+	// and the writer's view is behind. It is not an IO failure, and reading it
+	// as one would retry it on an IO backoff and name it REDIS_UNAVAILABLE.
+	ProgressContentMoved ProgressCommitStatus = "CONTENT_MOVED"
 )
+
+// SlotBeginRefusedError is an attempt the owner fence refused at its first
+// write -- the BeginSlot or BeginRange CAS -- so nothing of the Slot was
+// written. Err is the ownership word the fence answered with (a stale fence
+// or a moved content scope). The Runner reads it as the attempt's ownership
+// rejection, the same answer its own fence check before dispatch gave when it
+// still made one: the fence that refuses here is the same fence, read at the
+// moment of the write.
+type SlotBeginRefusedError struct {
+	Status ProgressCommitStatus
+	Err    error
+}
+
+func (err *SlotBeginRefusedError) Error() string {
+	return fmt.Sprintf("progress not begun: %s: %v", err.Status, err.Err)
+}
+
+func (err *SlotBeginRefusedError) Unwrap() error { return err.Err }
 
 type ScheduleProgress struct {
 	Identity           ProgressIdentity
@@ -4482,7 +4589,7 @@ func (result ProgressCommitResult) Validate() error {
 		return ValidateResultReason(observability.ResultSuccess, result.ReasonCode)
 	case ProgressRetryableIO:
 		return requireReasonClass(result.ReasonCode, contract.ReasonClassRetryable)
-	case ProgressConflict, ProgressStaleOwner:
+	case ProgressConflict, ProgressStaleOwner, ProgressContentMoved:
 		return requireReasonNone(result.ReasonCode)
 	default:
 		return errors.New("alarmd execution: unknown Progress commit status")
@@ -4583,15 +4690,69 @@ type SlotExecutionResult struct {
 	// Supplement is what a supplement execution did with each series it was
 	// given; nil for every other operation.
 	Supplement *SupplementFacts
+	// Superseded is the series this attempt did not evaluate because their
+	// State was a later Slot's, whether or not the attempt went on to
+	// commit. Observation only: the completion line reports it, and the read
+	// hold reads it as a Slot overtaken by newer state, which it used to
+	// learn from the STATE_STALE_VERSION refusal this skip replaced.
+	Superseded SupersededSeries
+}
+
+// SupersededSeries is how many series a Slot skipped as superseded, and the
+// first of them: one Slot's skips share one cause -- the store went back, or
+// a replay crossed a later write -- so one sample says which.
+type SupersededSeries struct {
+	Count  uint32
+	Sample *SupersededSample
+}
+
+// Record counts one skipped series, keeping the first as the sample.
+func (series *SupersededSeries) Record(sample SupersededSample) {
+	series.Count++
+	if series.Sample == nil {
+		series.Sample = &sample
+	}
+}
+
+// Facts is the count and sample as a completion line carries them; nil when
+// nothing was skipped, so the line says nothing rather than zero.
+func (series SupersededSeries) Facts() *observability.SlotSupersededFacts {
+	if series.Count == 0 {
+		return nil
+	}
+	facts := &observability.SlotSupersededFacts{Series: series.Count}
+	if series.Sample != nil {
+		facts.Sample = series.Sample.Facts()
+	}
+	return facts
+}
+
+// SupersededSample is one superseded series: which, the version this Slot
+// would have written, and the later one the store holds.
+type SupersededSample struct {
+	Series SeriesIdentityDigest
+	Slot   ApplyVersion
+	Stored ApplyVersion
+}
+
+// Facts is the sample as a line carries it.
+func (sample SupersededSample) Facts() *observability.StateSupersededSample {
+	return &observability.StateSupersededSample{Series: string(sample.Series),
+		Slot: applyVersionFacts(sample.Slot), Stored: applyVersionFacts(sample.Stored)}
+}
+
+func applyVersionFacts(version ApplyVersion) observability.ApplyVersionFacts {
+	return observability.ApplyVersionFacts{StateApplyEpoch: uint64(version.StateApplyEpoch),
+		EvaluationTime: int64(version.EvaluationTime), SlotDigest: string(version.SlotDigest)}
 }
 
 // SlotTiming is where one Slot's wall clock went, in milliseconds.
 //
 // Slot is the whole of it, from this replica taking the Slot up to the
-// completion row. The three beside it are the parts a Slot can be slow in for
-// unrelated reasons, and they deliberately do not sum to it: what is left over
-// is everything else the completion does, and carrying the total beside the
-// parts is what makes that remainder visible instead of implied.
+// completion row, and the phases beside it partition it: the clock charges one
+// phase at a time, a phase inside another takes its time from it, and what no
+// phase claims is Unattributed, carried as a number of its own rather than left
+// to be inferred from the total.
 //
 // Input runs from the moment this replica takes the Slot up to the completion
 // arriving -- the wait before the first record included, not from it. It is
@@ -4602,15 +4763,27 @@ type SlotExecutionResult struct {
 // that took eight seconds already spent three days being read as a slow data
 // source.
 //
-// Preflight and Evaluate are sums over one Slot's batches and series, not
-// single calls. Each call is already on its own line; what no line could
-// answer is what the Slot spent in each in total, which is the question asked
-// of a Slot that overran its period.
+// The rest are sums over one Slot's batches, series and windows, not single
+// calls. Preflight is the State reads, the first-seen pre-pass's included;
+// Evaluate the evaluator; RecordIDs the record ids the windows derive; Series
+// one series' work around its evaluation; Merge folding its result into the
+// Slot's; Cut a window's head while the Slot is evaluated; Apply the writes -
+// the windows' events, State and gaps and the tail, the waits for their
+// Sequences included; NoDataRead a no-data round's reading of its memory and
+// its judgement; NoDataWrite the memory and its ends written.
 type SlotTiming struct {
-	Slot      uint64
-	Input     uint64
-	Preflight uint64
-	Evaluate  uint64
+	Slot         uint64
+	Input        uint64
+	Preflight    uint64
+	Evaluate     uint64
+	Apply        uint64
+	RecordIDs    uint64
+	Cut          uint64
+	Merge        uint64
+	Series       uint64
+	NoDataRead   uint64
+	NoDataWrite  uint64
+	Unattributed uint64
 }
 
 // SlotBudgetUsage is one Slot's own consumption of the budgets it was admitted
@@ -4628,6 +4801,68 @@ type SlotBudgetUsage struct {
 	EventsWithoutMessage uint64
 	RetainedBytes        uint64
 	Series               uint64
+	// DependencySeriesDiscarded is the series a dependency query answered
+	// that no PRIMARY input of the same Plan named, let go at the
+	// completion: nothing evaluates a dependency without its series.
+	DependencySeriesDiscarded uint64
+	// InputSlices is the slices the Slot's input was read in (one for a Slot
+	// read whole), InputSlicesDiscarded the ones let go and split while they
+	// streamed, and FirstSeenUnseenSlices and FirstSeenUnseenSeries the
+	// slices, and their series, a Plan judged first-seen wrote before a later
+	// slice found it had run.
+	InputSlices           uint64
+	InputSlicesDiscarded  uint64
+	FirstSeenUnseenSlices uint64
+	FirstSeenUnseenSeries uint64
+	// InputSlicesReadAhead is the slices read while the slice before
+	// completed and handed to the Slot (replayed); the other three are the
+	// reads ahead let go - the next slice was another, the read yielded to a
+	// reservation of the Slot's own, or it failed - each read again after.
+	InputSlicesReadAhead          uint64
+	InputSlicesReadAheadOtherLeaf uint64
+	InputSlicesReadAheadYielded   uint64
+	InputSlicesReadAheadFailed    uint64
+	// InputSliceTimeouts is the slices of a completed Slot that ran out of
+	// time and were split and read again (split_succeeded): at most one.
+	InputSliceTimeouts uint64
+	// InputSliceShape* is what this Slot did with its Query Group's shape,
+	// one each at most (observability.InputSliceShapeOutcomes).
+	InputSliceShapeStarted              uint64
+	InputSliceShapeKept                 uint64
+	InputSliceShapeMerged               uint64
+	InputSliceShapeVoidedRevision       uint64
+	InputSliceShapeVoidedDimensions     uint64
+	InputSliceShapeVoidedMaxLeaves      uint64
+	InputSliceShapeRefusedNotALeaf      uint64
+	InputSliceShapeRefusedNotAPartition uint64
+	InputSliceShapeRefusedMaxLeaves     uint64
+	InputSliceShapeEvictedIdle          uint64
+	// InputSliceCutOn is where the dimension this Slot's starting slices
+	// were cut on came from (observability.InputSliceCutOnSources), empty
+	// for a Slot not started in slices counted.
+	InputSliceCutOn string
+	// InputSliceDimension is the dimension this Slot's slices were cut on at
+	// their root, however they started, empty for a Slot read whole.
+	InputSliceDimension string
+	// InputSlicesDeferred is the slices of this Slot read last for the
+	// provider having timed them out the Slot before.
+	InputSlicesDeferred uint64
+	// InputSliceStartDiscarded is 1 when a slice this Slot started in from
+	// its memory was let go for its size.
+	InputSliceStartDiscarded uint64
+	// NoDataStagesAhead* is how this Slot's no-data first writes staged
+	// ahead of their statements ended, a Plan each
+	// (observability.NoDataStageAheadOutcomes), NoDataStageAheadDiffers* the
+	// differs among them by why (nodata.StagedDiffersReasons), and
+	// NoDataGroupsStagedAhead the groups staged.
+	NoDataStagesAheadCarried             uint64
+	NoDataStagesAheadDiffers             uint64
+	NoDataStagesAheadDiscarded           uint64
+	NoDataStagesAheadStopped             uint64
+	NoDataStageAheadDiffersKeptOtherwise uint64
+	NoDataStageAheadDiffersCountMismatch uint64
+	NoDataStageAheadDiffersPresentAsOf   uint64
+	NoDataGroupsStagedAhead              uint64
 
 	// RetainedBytes split by what the memory was held for. They sum to
 	// RetainedBytes.
@@ -4663,6 +4898,16 @@ type SlotBudgetUsage struct {
 	// because the share's rule belongs to the producer that refuses by it,
 	// and a second copy of that rule elsewhere is one that can drift.
 	RetainedShareBytes uint64
+
+	// Windows is how many windows the Slot was applied in, zero for one
+	// applied whole. WindowCeilingWindows is how many windows the watchdog's
+	// ceiling allows it (ceil(S / s_min), and the absences' own), and
+	// WindowCeilingRaisedWindows how many of those a no-data round's absences
+	// added after its scan: a Slot near its ceiling, and whether its absences
+	// put it there, read off its own row.
+	Windows                    uint64
+	WindowCeilingWindows       uint64
+	WindowCeilingRaisedWindows uint64
 }
 
 // PrimaryBindingAttribution is the reason and the scope a completion names

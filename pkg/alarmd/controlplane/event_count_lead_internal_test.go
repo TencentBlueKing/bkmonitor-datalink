@@ -23,12 +23,12 @@ func TestOnlyAnEventCountQueryLeads(t *testing.T) {
 		"custom/event": true, "bk_log_search/log": false, "bk_monitor/log": false, "bk_monitor/time_series": false,
 	} {
 		query := execution.QueryPlanFacts{SourceSemantics: []string{semantics}, StepMillis: 60_000}
-		if got := readsEventCountOnly(query); got != want {
+		if got := execution.ReadsEventCountOnly(query); got != want {
 			t.Errorf("%s: leads %v, want %v", semantics, got, want)
 		}
 	}
 	mixed := execution.QueryPlanFacts{SourceSemantics: []string{"custom/event", "bk_monitor/time_series"}, StepMillis: 60_000}
-	if readsEventCountOnly(mixed) || readsEventCountOnly(execution.QueryPlanFacts{StepMillis: 60_000}) {
+	if execution.ReadsEventCountOnly(mixed) || execution.ReadsEventCountOnly(execution.QueryPlanFacts{StepMillis: 60_000}) {
 		t.Fatal("a mixed query or one without source semantics leads")
 	}
 }

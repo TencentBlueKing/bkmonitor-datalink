@@ -437,3 +437,58 @@ func TestTheDecisionsAGroupKeepsAreBounded(t *testing.T) {
 		t.Fatalf("%d decisions kept, want the latest %d", len(decisions), maxKeptDecisions)
 	}
 }
+
+// A round read in slices is one round: each slice is read again of its own
+// series, and the round counts once, when the last slice's reread ends -
+// clean only when every slice is.
+func TestASlicedProbationRoundCountsOnce(t *testing.T) {
+	sliced := func(f *probationFixture, hold time.Duration) (int64, time.Time) {
+		f.slot += 120
+		f.clock.set(time.Unix(f.slot, 0))
+		for _, host := range []string{"^a$", "^b$"} {
+			q := query("qg", f.slot, minute, sourceTimeSeries)
+			q.Contract.ReadHoldMillis = hold.Milliseconds()
+			q.FollowingSlot = execution.EvaluationTime(f.slot + 120)
+			q.Slice = sliceOf(host)
+			read := f.engine.Begin(q)
+			read.Series(point(f.slot, "3"), 100)
+			read.Complete(execution.ProviderCompletion{Completeness: execution.CompletenessFull}, nil)
+		}
+		return f.slot, f.clock.now()
+	}
+	f := newProbationFixture(t, 2)
+	f.round(2*time.Minute, "3")
+	slot, readAt := sliced(f, time.Minute)
+	if f.pending() != 2 {
+		t.Fatalf("rereads in flight %d, want one a slice", f.pending())
+	}
+	f.engine.mu.Lock()
+	for _, candidate := range f.engine.groups["qg"].probations {
+		if candidate.slice.IsZero() {
+			f.engine.mu.Unlock()
+			t.Fatal("a slice's reread reads the whole group")
+		}
+	}
+	f.engine.mu.Unlock()
+	f.reread(slot, readAt, 0, "3")
+	if got := f.rereads()[ProbationClean]; got != 0 {
+		t.Fatalf("a round counted %d clean before its last slice was read again", got)
+	}
+	f.reread(slot, readAt, 0, "3")
+	f.waitFor(func(stats Stats) bool { return stats.Sources[sourceTimeSeries].ProbationRereads[ProbationClean] == 1 })
+	if clean, in := f.engine.InProbation("qg"); !in || clean != 1 {
+		t.Fatalf("in probation %v with %d clean, want one clean round", in, clean)
+	}
+	// A round whose one slice reads early is a round read early.
+	slot, readAt = sliced(f, time.Minute)
+	f.reread(slot, readAt, 0, "3")
+	f.reread(slot, readAt, 0, "5")
+	// Still changing at its rung: followed one further, where it stood.
+	f.reread(slot, readAt, 1, "5")
+	f.waitFor(func(stats Stats) bool {
+		return stats.Sources[sourceTimeSeries].ProbationRereads[ProbationWindowReadEarly] == 1
+	})
+	if got := f.rereads()[ProbationClean]; got != 1 {
+		t.Fatalf("clean rounds %d, want still 1", got)
+	}
+}

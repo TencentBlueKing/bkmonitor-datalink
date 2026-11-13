@@ -59,6 +59,12 @@ func TestAnUnreadableTimelineIsReportedRewrittenAndDetectedAgain(t *testing.T) {
 	if err := fixture.redisClient.HSet(ctx, recordKey, "timeline_record_revision", "5").Err(); err != nil {
 		t.Fatal(err)
 	}
+	// In production only an activation moves this field, and the activation
+	// tells the leader (its own, or another's delta). Moved here behind the
+	// leader's back, the leader's copy of the records is dropped as a new
+	// term's would be, so its round reads the record and carries the moved
+	// revision to the view.
+	fixture.production.records.stepDown()
 	// The leader's round carries the record's revision to the view.
 	if err := bundle.refreshAndReconcile(ctx, true); err != nil {
 		t.Fatalf("the round that publishes the moved revision: %v", err)
@@ -92,6 +98,15 @@ func TestAnUnreadableTimelineIsReportedRewrittenAndDetectedAgain(t *testing.T) {
 	}
 	if stamped, err := fixture.redisClient.HGet(ctx, recordKey, "timeline_record_revision").Result(); err != nil || stamped != "6" {
 		t.Fatalf("the Assignment record names timeline revision %q (%v), want 6: one above what it named", stamped, err)
+	}
+	// The rewrite was this process's own cutover: the Leader's copy of the
+	// records took the revision it wrote as written, and no round read the
+	// record again as another process's activation.
+	for _, observation := range fixture.observed() {
+		if facts := observation.ControlReads; observation.Stage == observability.StageControlReadsSpent && facts != nil &&
+			facts.RecordReads["foreign_cutover"] != 0 {
+			t.Fatalf("a round read records as another process's activation: %+v", facts.RecordReads)
+		}
 	}
 
 	// The Worker detects again, past a recorded skip.

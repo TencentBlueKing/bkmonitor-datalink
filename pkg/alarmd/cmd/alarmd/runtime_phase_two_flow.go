@@ -49,6 +49,11 @@ func flowFactsOf(counters metric.FlowCounters, roleNames []string) *fleet.FlowFa
 	if counters.LiveHeapKnown {
 		heap := counters.LiveHeapBytes
 		facts.LiveHeapBytes = &heap
+		if counters.LiveHeapReserved.ReservedKnown {
+			facts.LiveHeapReserved = &fleet.LiveHeapReserved{
+				AtGCStart: counters.LiveHeapReserved.ReservedAtStart, AtGCEnd: counters.LiveHeapReserved.ReservedAtEnd,
+			}
+		}
 	}
 	return facts
 }

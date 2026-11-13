@@ -166,6 +166,26 @@ func TestExpectedDetectionSaysEachLevelsRecovery(t *testing.T) {
 			t.Errorf("%s: recovery %q, want %q", config, item.Recovery, want)
 		}
 	}
+	// A zero count that is no observation (an event count, an ungrouped log
+	// count; alarmd-recovery-and-missing-data.md §3.1, §3.2) does not recover
+	// on R quiet periods: only a count above zero that does not trigger
+	// recovers, and without -nodata the words say a quiet group stays open
+	// and name the setter that would end it. Off stays off.
+	for config, want := range map[string]string{
+		`{"enabled":true,"consecutive_windows":3}`:                                                 "预警：安静不恢复：只在来了大于 0、不满足触发的计数时恢复告警，且此前连续 3 个周期不满足触发条件（约 3 分钟）；可配 recovery-nodata",
+		`{"enabled":true,"consecutive_windows":3,"end":"close"}`:                                   "预警：安静不关闭：只在来了大于 0、不满足触发的计数时关闭告警，且此前连续 3 个周期不满足触发条件（约 3 分钟）；可配 close-nodata",
+		`{"enabled":true,"consecutive_windows":3,"missing_data":"evaluate_as_zero"}`:               "预警：只在来了大于 0、不满足触发的计数时恢复告警，且此前连续 3 个周期不满足触发条件（约 3 分钟）；无数据满 9 个周期（约 9 分钟）也结束",
+		`{"enabled":true,"consecutive_windows":3,"end":"close","missing_data":"evaluate_as_zero"}`: "预警：只在来了大于 0、不满足触发的计数时关闭告警，且此前连续 3 个周期不满足触发条件（约 3 分钟）；无数据满 9 个周期（约 9 分钟）也结束",
+		`{"enabled":false,"consecutive_windows":0}`:                                                "预警：不自动恢复",
+		`{"consecutive_windows":3}`:                                                                "预警：未知",
+	} {
+		plan := StrategyPlanConfig{Schedule: StrategyScheduleConfig{IntervalSeconds: 60}, Target: StrategyTargetConfig{Kind: TargetKindNone},
+			Levels: []StrategyLevelConfig{{LevelID: 2, Algorithms: []StrategyAlgorithmInfo{{Type: "Threshold"}}, Trigger: trigger,
+				Recovery: viewRecovery(config), ZeroCountIsNoObservation: true}}}
+		if item := expectedItemOf(plan); !reflect.DeepEqual(item.Recovery, []string{want}) {
+			t.Errorf("zero count %s: recovery %q, want %q", config, item.Recovery, want)
+		}
+	}
 	// -nodata with no trigger window known has no (R+T+1) to say.
 	noTrigger := StrategyPlanConfig{Schedule: StrategyScheduleConfig{IntervalSeconds: 60}, Levels: []StrategyLevelConfig{{LevelID: 2,
 		Recovery: viewRecovery(`{"enabled":true,"consecutive_windows":3,"missing_data":"evaluate_as_zero"}`)}}}

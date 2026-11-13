@@ -159,13 +159,13 @@ func openProductionControlRoleBundle(
 		return nil, fmt.Errorf("open kafka.legacy_adapter.service_redis: %w", err)
 	}
 	ownedClients = append(ownedClients, serviceClient)
-	converter := &legacyoutput.Converter{Store: legacyoutput.RedisSnapshotStore{Client: serviceClient},
+	converter := &legacyoutput.Converter{Store: legacyoutput.RedisSnapshotStore{Client: redisForCaller(serviceClient, redisfailure.CallerLegacyOutput)},
 		SnapshotPrefix: cfg.Kafka.LegacyAdapter.SnapshotPrefix, Now: external.Now, PluginID: cfg.Kafka.LegacyAdapter.PluginID}
 	if podConfig := cfg.Kafka.LegacyAdapter.PodCache; podConfig != nil {
 		podClient := redis.NewUniversalClient(productionRedisOptions(podConfig.Connection))
 		podClient.AddHook(recorder.RedisHook("legacy_pod_cache"))
 		ownedClients = append(ownedClients, podClient)
-		resolver, err := legacyoutput.NewDjangoPodResolver(podClient, legacyoutput.PodCacheConfig{
+		resolver, err := legacyoutput.NewDjangoPodResolver(redisForCaller(podClient, redisfailure.CallerLegacyPodCache), legacyoutput.PodCacheConfig{
 			KeyPrefix: podConfig.KeyPrefix, Version: podConfig.Version, Observe: recorder.RecordLegacyPodCache,
 		})
 		if err != nil {
@@ -217,7 +217,7 @@ func openProductionControlRoleBundle(
 	}
 	costs := scheduler.NewCostLedger(external.Now)
 	viewServer, err := viewstream.NewServer(viewStreamAdmission{registry: core.Ownership, now: external.Now}, observer,
-		viewstream.ServerOptions{Now: external.Now, Costs: costLedgerSink{ledger: costs}})
+		viewstream.ServerOptions{Now: external.streamClock(), Costs: costLedgerSink{ledger: costs}})
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +242,7 @@ func openProductionControlRoleBundle(
 	controlOwnership, err := newProductionPhaseTwoOwnership(productionPhaseTwoOwnershipDependencies{
 		Roles: cfg.EffectiveRoles(), Store: core.Ownership, WorkerID: cfg.PhaseTwo.Worker.ID,
 		Catalog: core.Catalog, Progress: core.Progress, Now: external.Now, Observer: observer,
-		ControlLeaderTTL: cfg.PhaseTwo.Ownership.ControlLeaderTTL.Duration(), Reconcile: assignments,
+		ControlLeaderTTL: cfg.PhaseTwo.Ownership.ControlLeaderTTL.Duration(), Reconcile: assignments, Activations: core.Repository,
 		LeaseTTL: cfg.PhaseTwo.Ownership.LeaseTTL.Duration(), ReconcileInterval: cfg.PhaseTwo.Control.ReconcileInterval.Duration(),
 		ContentScopes: currentContentScopes(core.Repository), SteppedDownAsLeader: controlLeaderSteppedDown(core.Reconciler, recorder),
 		ViewStream: viewServer, ViewSource: core.Repository, Costs: costs, TimelineRepairs: core.TimelineRepairs,

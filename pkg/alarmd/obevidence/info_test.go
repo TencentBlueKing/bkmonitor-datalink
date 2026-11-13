@@ -92,8 +92,8 @@ func TestParseInfoNamesMissingFields(t *testing.T) {
 // it did not report.
 func TestParseInfoReadsReplicationWithoutAddresses(t *testing.T) {
 	master := parseInfo("# Replication\r\nrole:master\r\nconnected_slaves:2\r\n"+
-		"slave0:ip=10.0.0.7,port=6379,state=online,offset=1000,lag=0\r\n"+
-		"slave1:ip=10.0.0.8,port=6379,state=wait_bgsave,offset=400,lag=3\r\n"+
+		"slave0:ip=192.0.2.7,port=6379,state=online,offset=1000,lag=0\r\n"+
+		"slave1:ip=192.0.2.8,port=6379,state=wait_bgsave,offset=400,lag=3\r\n"+
 		"master_replid:abc\r\nmaster_repl_offset:1200\r\n"+
 		"# Commandstats\r\ncmdstat_evalsha:calls=5,usec=50,usec_per_call=10.00\r\n", nil)
 	value := func(n *int64) string {
@@ -110,8 +110,8 @@ func TestParseInfoReadsReplicationWithoutAddresses(t *testing.T) {
 	}
 	// An offset either side did not report leaves bytes behind absent, not
 	// the whole other offset.
-	noOffset := parseInfo("role:master\r\nmaster_repl_offset:1200\r\nslave0:ip=10.0.0.7,port=6379,state=online,lag=1\r\n", nil)
-	noMaster := parseInfo("role:master\r\nslave0:ip=10.0.0.7,port=6379,state=online,offset=1000,lag=1\r\n", nil)
+	noOffset := parseInfo("role:master\r\nmaster_repl_offset:1200\r\nslave0:ip=192.0.2.7,port=6379,state=online,lag=1\r\n", nil)
+	noMaster := parseInfo("role:master\r\nslave0:ip=192.0.2.7,port=6379,state=online,offset=1000,lag=1\r\n", nil)
 	if read(noOffset.replicas[0]) != "online absent absent 1" || read(noMaster.replicas[0]) != "online 1000 absent 1" {
 		t.Fatalf("missing offsets read as %q and %q", read(noOffset.replicas[0]), read(noMaster.replicas[0]))
 	}

@@ -80,32 +80,64 @@ type heapSiteSample struct {
 	// export it, so that an unknown is not published as a zero.
 	live      float64
 	liveKnown bool
-	taken     time.Time
+	// reservedAtStart and reservedAtEnd are what the retained-byte pool held
+	// just before the forced collection and just after the live heap was
+	// read, so the live heap is read against the reservation of its own cycle
+	// rather than one taken by another collector of the same scrape or a
+	// snapshot up to a minute later. Two that differ say a Slot took or gave
+	// back its reservation during the reading. reservedKnown is false before a
+	// pool is bound.
+	reservedAtStart uint64
+	reservedAtEnd   uint64
+	reservedKnown   bool
+	taken           time.Time
 }
 
-// cachedLive is the live heap of the last sample, without taking one: the
-// flow's copy reads it every publish and must never force a collection.
-func (c *heapSiteCollector) cachedLive() (uint64, bool) {
+// HeapReading is the heap collector's last sample as the flow carries it:
+// the live heap and the pool's reservation at that same collection, so a
+// reader never pairs the one with a reservation of another moment.
+type HeapReading struct {
+	Live            uint64 `json:"live"`
+	ReservedAtStart uint64 `json:"reserved_at_gc_start"`
+	ReservedAtEnd   uint64 `json:"reserved_at_gc_end"`
+	ReservedKnown   bool   `json:"reserved_known"`
+}
+
+// cachedLive is the live heap of the last sample and the reservation of its
+// collection, without taking one: the flow's copy reads it every publish and
+// must never force a collection.
+func (c *heapSiteCollector) cachedLive() (HeapReading, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.last == nil || !c.last.liveKnown {
-		return 0, false
+		return HeapReading{}, false
 	}
-	return uint64(c.last.live), true
+	return HeapReading{Live: uint64(c.last.live), ReservedAtStart: c.last.reservedAtStart,
+		ReservedAtEnd: c.last.reservedAtEnd, ReservedKnown: c.last.reservedKnown}, true
+}
+
+// bindReserved gives the collector the pool's reservation to read beside
+// every forced collection.
+func (c *heapSiteCollector) bindReserved(source RetainedReservationSource) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reserved = source
 }
 
 type heapSiteCollector struct {
-	mu      sync.Mutex
-	now     func() time.Time
-	collect func()
-	profile func() []runtime.MemProfileRecord
-	last    *heapSiteSample
+	mu       sync.Mutex
+	now      func() time.Time
+	collect  func()
+	profile  func() []runtime.MemProfileRecord
+	reserved RetainedReservationSource
+	last     *heapSiteSample
 
 	siteBytes   *prometheus.Desc
 	siteObjects *prometheus.Desc
 	profiled    *prometheus.Desc
 	records     *prometheus.Desc
 	live        *prometheus.Desc
+	reservedAt  *prometheus.Desc
 }
 
 func newHeapSiteCollector(now func() time.Time) *heapSiteCollector {
@@ -144,6 +176,15 @@ func newHeapSiteCollector(now func() time.Time) *heapSiteCollector {
 			"Live heap the runtime marked in the collection forced before the profile was read, so the two "+
 				"describe the same cycle.",
 			nil),
+		reservedAt: descriptor("heap_inuse_reserved_bytes",
+			"What the retained-byte pool held at the collection heap_inuse_live_bytes was read from: at=gc_start "+
+				"just before it was forced, at=gc_end just after the live heap was read. Live heap less this is "+
+				"heap no Slot has reserved, and is that only when the two agree; when they differ a Slot took or "+
+				"gave back its reservation during the reading, and the live heap may hold it either way. Read the "+
+				"pair, never capacity_reserved, against the live heap: capacity_reserved is read by another "+
+				"collector of the same scrape, before or after the collection, and the live heap is refreshed only "+
+				"once a minute. Absent until the pool is bound.",
+			[]string{"at"}),
 	}
 }
 
@@ -153,6 +194,7 @@ func (c *heapSiteCollector) Describe(descriptions chan<- *prometheus.Desc) {
 	descriptions <- c.profiled
 	descriptions <- c.records
 	descriptions <- c.live
+	descriptions <- c.reservedAt
 }
 
 func (c *heapSiteCollector) Collect(metrics chan<- prometheus.Metric) {
@@ -165,6 +207,10 @@ func (c *heapSiteCollector) Collect(metrics chan<- prometheus.Metric) {
 	metrics <- prometheus.MustNewConstMetric(c.records, prometheus.GaugeValue, float64(sample.records))
 	if sample.liveKnown {
 		metrics <- prometheus.MustNewConstMetric(c.live, prometheus.GaugeValue, sample.live)
+	}
+	if sample.reservedKnown {
+		metrics <- prometheus.MustNewConstMetric(c.reservedAt, prometheus.GaugeValue, float64(sample.reservedAtStart), "gc_start")
+		metrics <- prometheus.MustNewConstMetric(c.reservedAt, prometheus.GaugeValue, float64(sample.reservedAtEnd), "gc_end")
 	}
 }
 
@@ -179,11 +225,18 @@ func (c *heapSiteCollector) sample() heapSiteSample {
 	if c.last != nil && now.Sub(c.last.taken) < heapSiteRefresh {
 		return *c.last
 	}
+	var sample heapSiteSample
+	if c.reserved != nil {
+		sample.reservedAtStart = c.reserved()
+	}
 	c.collect()
 	records := c.profile()
-	sites, profiled := chargeHeapSites(records, runtime.MemProfileRate, heapSiteTop)
-	sample := heapSiteSample{sites: sites, profiled: profiled, records: len(records), taken: now}
+	sample.sites, sample.profiled = chargeHeapSites(records, runtime.MemProfileRate, heapSiteTop)
+	sample.records, sample.taken = len(records), now
 	sample.live, sample.liveKnown = readLiveHeap()
+	if c.reserved != nil {
+		sample.reservedAtEnd, sample.reservedKnown = c.reserved(), true
+	}
 	c.last = &sample
 	return sample
 }

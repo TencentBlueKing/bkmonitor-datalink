@@ -7,23 +7,23 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisscript"
 )
 
 // No MULTI/EXEC: one Lua reply cannot desynchronize the shared Redis pool.
-var createScript = redis.NewScript(`
+var createScript = redisscript.New("sre_node_create", `
 if redis.call('EXISTS',KEYS[1]) == 1 then return 0 end
 redis.call('HSET',KEYS[1],'record',ARGV[1],'digest',ARGV[2],'cancel','0')
 redis.call('EXPIRE',KEYS[1],172800)
 redis.call('ZADD',KEYS[2],ARGV[3],ARGV[4])
 return 1`)
-var replaceScript = redis.NewScript(`
+var replaceScript = redisscript.New("sre_node_replace", `
 if redis.call('HGET',KEYS[1],'record') ~= ARGV[1] then return 0 end
 redis.call('HSET',KEYS[1],'record',ARGV[2]); return 1`)
-var cancelScript = redis.NewScript(`
+var cancelScript = redisscript.New("sre_node_cancel", `
 if redis.call('EXISTS',KEYS[1]) == 0 then return 0 end
 redis.call('HSET',KEYS[1],'cancel','1'); return 1`)
-var dispatchScript = redis.NewScript(`
+var dispatchScript = redisscript.New("sre_node_dispatch", `
 if redis.call('HGET',KEYS[1],'record') ~= ARGV[1] then return 0 end
 if redis.call('HGET',KEYS[1],'cancel') == '1' then return 0 end
 redis.call('HSET',KEYS[1],'record',ARGV[2]); return 1`)

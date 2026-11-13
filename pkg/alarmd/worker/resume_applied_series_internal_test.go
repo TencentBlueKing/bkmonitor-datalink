@@ -47,7 +47,7 @@ func TestResumedSeriesKeepsPersistedCompletionFacts(t *testing.T) {
 			}
 			before := view
 			before.Levels = append([]execution.RuntimeLevelStateView(nil), view.Levels...)
-			result, err := resumedSeriesResult(header, due, view, execution.GapLoadResult{})
+			result, _, err := resumedSeriesResult(header, due, view, execution.GapLoadResult{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -85,19 +85,29 @@ func TestResumedSeriesKeepsPersistedCompletionFacts(t *testing.T) {
 }
 
 func TestResumedSeriesNeverInfersGapRecovery(t *testing.T) {
-	for _, name := range []string{"same version", "same version different schedule", "newer", "older warm", "older clear", "older changed schedule", "same tombstone", "older tombstone"} {
+	for _, name := range []string{"same version", "same version different schedule", "newer", "later Slot", "later Slot tombstone", "older warm", "older clear", "older changed schedule", "same tombstone", "older tombstone"} {
 		t.Run(name, func(t *testing.T) {
 			header, due, view := resumeFixture(t)
 			gap := execution.GapGuardSnapshot{Identity: execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration}, Status: execution.GapFound, MarkerRevision: 4, LastScheduleRevision: due.ScheduleRevision, PersistedApplyVersion: view.PersistedApplyVersion,
 				Scopes: []execution.GapScopeState{{Status: execution.GapStatusWarming, RequiredFullSlots: 3, ObservedFullSlots: 1, ReasonCode: "GAP_SKIPPED"}}}
-			wantErr := false
+			wantErr, wantSuperseded := false, false
 			switch name {
 			case "same version different schedule":
 				gap.LastScheduleRevision = "different"
 				wantErr = true
 			case "newer":
+				// A newer activation at the Slot's own time is not a later
+				// Slot's marker, and is refused as it always was.
 				gap.PersistedApplyVersion.StateApplyEpoch++
 				wantErr = true
+			case "later Slot":
+				gap.PersistedApplyVersion.EvaluationTime += 60
+				wantSuperseded = true
+			case "later Slot tombstone":
+				gap.Status = execution.GapClearedTombstone
+				gap.Scopes = nil
+				gap.PersistedApplyVersion.EvaluationTime += 60
+				wantSuperseded = true
 			case "older warm":
 				gap.PersistedApplyVersion.StateApplyEpoch--
 			case "older clear":
@@ -117,7 +127,7 @@ func TestResumedSeriesNeverInfersGapRecovery(t *testing.T) {
 			}
 			before := gap
 			before.Scopes = append([]execution.GapScopeState(nil), gap.Scopes...)
-			result, err := resumedSeriesResult(header, due, view, execution.GapLoadResult{Items: []execution.GapGuardSnapshot{gap}})
+			result, superseded, err := resumedSeriesResult(header, due, view, execution.GapLoadResult{Items: []execution.GapGuardSnapshot{gap}})
 			if !reflect.DeepEqual(gap, before) {
 				t.Fatal("resume changed persisted gap evidence")
 			}
@@ -129,6 +139,9 @@ func TestResumedSeriesNeverInfersGapRecovery(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatal(err)
+			}
+			if superseded != wantSuperseded {
+				t.Fatalf("gap superseded = %v, want %v", superseded, wantSuperseded)
 			}
 			plan := result.Plans[0]
 			if len(plan.GuardBeforeEvents) != 0 || len(plan.GuardAfterState) != 0 {
@@ -152,7 +165,7 @@ func TestResumedSeriesRejectsMissingOrDifferentStateEvidence(t *testing.T) {
 			case "no reason":
 				view.Levels[0].GapReasonCode = ""
 			}
-			if _, err := resumedSeriesResult(header, due, view, execution.GapLoadResult{}); err == nil {
+			if _, _, err := resumedSeriesResult(header, due, view, execution.GapLoadResult{}); err == nil {
 				t.Fatal("incomplete resume evidence accepted")
 			}
 		})

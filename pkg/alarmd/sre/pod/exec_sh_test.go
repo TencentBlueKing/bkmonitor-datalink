@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -617,30 +618,99 @@ func TestAShortProgramIsMatchedOnlyAsTheRuntimeQuotesIt(t *testing.T) {
 	}
 }
 
-// A timer stopped before its deadline leaves no sleep behind: the timer's
-// own TERM ends it, whether or not the shell has job control.
-func TestAStoppedTimerLeavesNoSleep(t *testing.T) {
+// A timer stopped before its deadline leaves no sleep behind - under this
+// host's /bin/sh as it is and under setsid, and under dash, which has no job
+// control without a tty, alone and with setsid as a Debian-based image runs
+// it - even stopped as it starts, by a command that ends at once. A TERM
+// that came while the timer was forking its sleep, or before its trap, ended
+// the timer and left the sleep to run to the deadline: sent to the timer's
+// group, it missed a sleep not yet among the members, and sent to the timer
+// alone, where there was no group, it never reached the sleep. That is a
+// matter of scheduling, so many timers are stopped at once.
+func TestStoppedTimersLeaveNoSleep(t *testing.T) {
 	runtimeProvider(t)
-	// The timer's deadline lies past the wait below, so its sleep goes
-	// within the wait only by the TERM the stopped timer sends it: a leaked
-	// one would still be sleeping when the wait gives up.
-	seconds := strconv.Itoa(int(time.Until(testwait.Deadline(t)).Seconds()) + 47)
-	command := exec.Command("/bin/sh", "-c", remoteSupervisor, supervisorName, "N0NCE", seconds, "/bin/sh", "-c", "exit 0")
-	if out, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("%v %s", err, out)
+	type setup struct{ name, shell, path string }
+	setups := []setup{{"this host's /bin/sh", "/bin/sh", ""}, {"/bin/sh under setsid", "/bin/sh", withSetsid(t)}}
+	if _, err := os.Stat("/bin/dash"); err == nil {
+		setups = append(setups, setup{"dash", "/bin/dash", ""}, setup{"dash under setsid", "/bin/dash", withSetsid(t)})
 	}
-	testwait.Until(t, "the stopped timer's sleep ending on its TERM", func() bool {
-		listing, err := exec.Command("ps", "-Ao", "args").Output()
+	const parallel, runs = 12, 20
+	// Each sleep's length is this run's own and lies past the wait below, so
+	// a sleep goes within the wait only by its timer's stop, and another
+	// test binary's cannot be taken for one of these.
+	first := int(time.Until(testwait.Deadline(t)).Seconds()) + 47 + os.Getpid()%16*4096
+	lengths := map[string]string{}
+	for index, setup := range setups {
+		for run := 0; run < parallel*runs; run++ {
+			lengths[strconv.Itoa(first+index*parallel*runs+run)] = setup.name
+		}
+	}
+	// One setup at a time, each within a bound of its own: under the race
+	// detector a supervisor under setsid starts this test binary as the
+	// setsid stand-in, and all of them at once did not finish in one bound.
+	for index, setup := range setups {
+		ctx := testwait.Context(t)
+		var wg sync.WaitGroup
+		for worker := 0; worker < parallel; worker++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for run := worker * runs; run < (worker+1)*runs; run++ {
+					seconds := strconv.Itoa(first + index*parallel*runs + run)
+					command := exec.CommandContext(ctx, setup.shell, "-c", remoteSupervisor, supervisorName, "N0NCE", seconds, "/bin/sh", "-c", "exit 0")
+					if setup.path != "" {
+						command.Env = append(os.Environ(), "PATH="+setup.path)
+					}
+					// A timer that does not end holds the supervisor's stderr.
+					command.WaitDelay = time.Second
+					if out, err := command.CombinedOutput(); err != nil {
+						t.Errorf("%s: supervisor of a %s s timer: %v %s", setup.name, seconds, err, out)
+						return
+					}
+				}
+			}()
+		}
+		wg.Wait()
+	}
+	var left []string
+	t.Cleanup(func() {
+		for _, line := range left {
+			t.Logf("left behind (pid ppid pgid elapsed args; setup %s): %s", lengths[strings.Fields(line)[5]], line)
+			pid, _ := strconv.Atoi(strings.Fields(line)[0])
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+	testwait.Until(t, "every stopped timer's sleep ending", func() bool {
+		listing, err := exec.Command("ps", "-Ao", "pid=,ppid=,pgid=,etime=,args=").Output()
 		if err != nil {
 			t.Fatalf("ps: %v", err)
 		}
+		left = left[:0]
 		for _, line := range strings.Split(string(listing), "\n") {
-			if strings.TrimSpace(line) == "sleep "+seconds {
-				return false
+			if fields := strings.Fields(line); len(fields) == 6 && fields[4] == "sleep" && lengths[fields[5]] != "" {
+				left = append(left, strings.Join(fields, " "))
 			}
 		}
-		return true
+		return len(left) == 0
 	})
+}
+
+// withoutSetsid is a PATH of sleep and the tools named, and no setsid: a
+// target without setsid wherever this host keeps one beside them, as
+// Debian keeps /usr/bin/setsid.
+func withoutSetsid(t *testing.T, tools ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, tool := range append([]string{"sleep"}, tools...) {
+		path, err := exec.LookPath(tool)
+		if err != nil {
+			t.Fatalf("%s: %v", tool, err)
+		}
+		if err := os.Symlink(path, filepath.Join(dir, tool)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
 }
 
 // dashOrSkip is the local dash, the /bin/sh of Debian-based images.
@@ -659,11 +729,11 @@ func dashOrSkip(t *testing.T) {
 func TestUnderDashWithoutSetsidTheCommandHasNoGroupAndSaysSo(t *testing.T) {
 	runtimeProvider(t)
 	dashOrSkip(t)
-	if records, _, _ := superviseHeld(t, "/bin/dash", "", "5", true, "/bin/sh", "-c", "cat >/dev/null; exit 4"); fmt.Sprint(records) != "[started group 0 complete 4]" {
+	if records, _, _ := superviseHeld(t, "/bin/dash", withoutSetsid(t, "cat"), "5", true, "/bin/sh", "-c", "cat >/dev/null; exit 4"); fmt.Sprint(records) != "[started group 0 complete 4]" {
 		t.Fatalf("records %q, want no group and complete 4", records)
 	}
 	pidPath := filepath.Join(t.TempDir(), "pids")
-	records, _, _ := superviseUnder(t, "/bin/dash", "", recordDeadline, "/bin/sh", "-c", "sleep 30 >/dev/null 2>&1 & echo $$ $! > \"$1\"; wait", "cmd", pidPath)
+	records, _, _ := superviseUnder(t, "/bin/dash", withoutSetsid(t), recordDeadline, "/bin/sh", "-c", "sleep 30 >/dev/null 2>&1 & echo $$ $! > \"$1\"; wait", "cmd", pidPath)
 	data, _ := os.ReadFile(pidPath)
 	var command, child int
 	fmt.Sscan(string(data), &command, &child)
@@ -713,6 +783,7 @@ func TestUnderSetsidTheCommandsGroupIsEndedWhole(t *testing.T) {
 func TestExecUnderDashWithoutSetsidIsShPID(t *testing.T) {
 	provider, _, target := runtimeProvider(t)
 	dashOrSkip(t)
+	t.Setenv("PATH", withoutSetsid(t))
 	provider.options.Executor = executorFunc(func(ctx context.Context, request StreamRequest) (StreamResult, error) {
 		argv := append([]string{"/bin/dash"}, request.Argv[1:]...)
 		return localExecutor{}.Stream(ctx, StreamRequest{Target: request.Target, Argv: argv, Stdin: request.Stdin, Stdout: request.Stdout, Stderr: request.Stderr})

@@ -1,6 +1,10 @@
 package worker
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+import (
+	"errors"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+)
 
 // Called only on rejection while the shared reservation lock is held.
 func budgetRejection(
@@ -95,6 +99,28 @@ func (stream *streamedExecution) ownBudget(kind observability.CapacityBudget) *u
 		value = stream.effects.gaps
 	}
 	return stream.ownReservation(value)
+}
+
+// poolHeldByOthersRejection describes one Query Group's Slot within its share
+// that the pool has no room for: own is what the Slot holds, pool what the
+// pool has reserved in all, and the difference is what others hold - other
+// Query Groups and the worker's own preparation. The three are on the line so
+// that "the pool was full" is read with whose bytes filled it.
+func poolHeldByOthersRejection(phase string, own, pool, requested, limit uint64, usage []observability.CapacityBudgetUsage) error {
+	others := pool - min(own, pool)
+	return &provisionalBudgetExceededError{
+		budget: observability.CapacityBudgetRetainedBytes, others: true,
+		facts: &observability.CapacityRejectionFacts{
+			Phase: phase, OwnUsed: &own, SharedUsed: pool, OthersUsed: &others, Requested: requested, Limit: limit, Usage: usage,
+		},
+	}
+}
+
+// PoolHeldByOthers reports whether err is a Query Group's Slot within its
+// share refused by the pool for what others hold.
+func PoolHeldByOthers(err error) bool {
+	var exceeded *provisionalBudgetExceededError
+	return errors.As(err, &exceeded) && exceeded.others
 }
 
 // shareRejection describes one Query Group's Slot over the share a single

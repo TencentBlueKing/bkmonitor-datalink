@@ -22,7 +22,7 @@ import (
 // and the point is logged and skipped rather than reduced.
 func TestProjectDropsSeriesMissingAnyNoDataDimension(t *testing.T) {
 	for name, dimensions := range map[string]map[string]string{
-		"missing one":  {"bk_target_ip": "10.0.0.1"},
+		"missing one":  {"bk_target_ip": "192.0.2.1"},
 		"missing both": {"unrelated": "x"},
 		"empty":        {},
 	} {
@@ -40,12 +40,12 @@ func TestProjectDropsSeriesMissingAnyNoDataDimension(t *testing.T) {
 // not a no-data dimension.
 func TestProjectKeepsOnlyTheRequestedDimensions(t *testing.T) {
 	group, ok := Project(map[string]string{
-		"bk_target_ip": "10.0.0.1", "bk_target_cloud_id": "0", "device": "eth0",
+		"bk_target_ip": "192.0.2.1", "bk_target_cloud_id": "0", "device": "eth0",
 	}, []string{"bk_target_cloud_id", "bk_target_ip"})
 	if !ok {
 		t.Fatal("Project() rejected a series carrying every no-data dimension")
 	}
-	want := []Dimension{{Name: "bk_target_cloud_id", Value: "0"}, {Name: "bk_target_ip", Value: "10.0.0.1"}}
+	want := []Dimension{{Name: "bk_target_cloud_id", Value: "0"}, {Name: "bk_target_ip", Value: "192.0.2.1"}}
 	if got := group.Dimensions(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Dimensions() = %+v, want %+v in name order", got, want)
 	}

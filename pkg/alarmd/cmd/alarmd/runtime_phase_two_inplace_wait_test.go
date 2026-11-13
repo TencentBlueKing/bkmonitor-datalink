@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"sync"
 	"testing"
@@ -27,18 +28,39 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
+const inPlaceWaitPeriod = 30
+
+// inPlaceWaitStrategy is a ring-ratio strategy at the period given, in seconds.
+func inPlaceWaitStrategy(t *testing.T, period int64) []byte {
+	t.Helper()
+	document := controlledG4StrategyDocument(t, 7402, strategy.DetectorKindSimpleRingRatio, "usage", "system.cpu_summary",
+		[]string{"host"}, map[string]any{"floor": 50, "ceil": nil})
+	var decoded map[string]any
+	if err := json.Unmarshal(document, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	item := decoded["items"].([]any)[0].(map[string]any)
+	item["query_configs"].([]any)[0].(map[string]any)["agg_interval"] = period
+	encoded, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
 // A ring-ratio strategy reads a history window that ends before its primary
 // window, so its history query is readable before the primary one and its
 // Slot is not deferred as a whole: the execution sends the history query and
 // waits in place, holding its slot, for the primary. Through the production
 // bundle, a round run 200 ms before the primary is readable makes that wait:
 // its slot_completed line carries it and the counter counts it, in the
-// shortest bucket. A round run once both are readable makes none.
+// shortest bucket. A round run once both are readable makes none. A period of
+// under a minute is what still does this: a minute's Slot has its first round
+// at the primary's read (TestAMinuteMixedSlotHasNoInPlaceWait).
 func TestAnInPlaceReadinessWaitIsOnTheSlotLineAndCounted(t *testing.T) {
 	address, client := startPhaseTwoRedis(t)
 	ctx := context.Background()
-	document := controlledG4StrategyDocument(t, 7402, strategy.DetectorKindSimpleRingRatio, "usage", "system.cpu_summary",
-		[]string{"host"}, map[string]any{"floor": 50, "ceil": nil})
+	document := inPlaceWaitStrategy(t, inPlaceWaitPeriod)
 	if err := client.Set(ctx, "alarm-config.strategy_ids", "[7402]", 0).Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +68,7 @@ func TestAnInPlaceReadinessWaitIsOnTheSlotLineAndCounted(t *testing.T) {
 		t.Fatal(err)
 	}
 	backend := &poolBackend{}
+	backend.step.Store(inPlaceWaitPeriod)
 	base := controlledG4Base(t) + 60
 	backend.clock.Store(base * 1000)
 	var mu sync.Mutex
@@ -93,7 +116,7 @@ func TestAnInPlaceReadinessWaitIsOnTheSlotLineAndCounted(t *testing.T) {
 		if len(bundle.queryGroups) != 1 {
 			t.Fatalf("Query Groups = %v, want one", bundle.queryGroups)
 		}
-		backend.clock.Store((base+minute*60)*1000 + (firstReadWaitOf(cfg, bundle.queryGroups[0], 60) - beforePrimaryReady).Milliseconds())
+		backend.clock.Store((base+minute*inPlaceWaitPeriod)*1000 + (firstReadWaitOf(cfg, bundle.queryGroups[0], inPlaceWaitPeriod) - beforePrimaryReady).Milliseconds())
 		if err := runScheduledOnceSettled(ctx, bundle); err != nil {
 			t.Fatalf("minute %d: %v", minute, err)
 		}

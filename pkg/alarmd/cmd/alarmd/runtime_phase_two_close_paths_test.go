@@ -60,6 +60,15 @@ type closePathsFixture struct {
 // link's control plane named.
 func startClosePathsFixture(t *testing.T) *closePathsFixture {
 	t.Helper()
+	return startClosePathsFixtureWith(t, func(fixture *closePathsFixture) {
+		fixture.install(1, []string{"bk_target_ip", "bk_target_cloud_id", "device"}, false, nil)
+	})
+}
+
+// startClosePathsFixtureWith is startClosePathsFixture with the strategy the
+// bundle opens on written by install.
+func startClosePathsFixtureWith(t *testing.T, install func(*closePathsFixture)) *closePathsFixture {
+	t.Helper()
 	address, client := startPhaseTwoRedis(t)
 	life := &lifecycleFixture{t: t, address: address, redis: client, interval: lifecycleInterval,
 		clock: &atomic.Int64{}, sink: &followsSink{mode: followsOK}}
@@ -104,7 +113,7 @@ func startClosePathsFixture(t *testing.T) *closePathsFixture {
 			t.Fatal(err)
 		}
 	}
-	fixture.install(1, []string{"bk_target_ip", "bk_target_cloud_id", "device"}, false, nil)
+	install(fixture)
 	life.open("alarmd-worker-0", uqServer.Client())
 	// The Worker's executable view carries the Query Group, which the
 	// inactive close reads its Plans under.

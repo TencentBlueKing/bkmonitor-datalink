@@ -52,6 +52,13 @@ var fencedBatchWriteSHA = func() string {
 	return hex.EncodeToString(sum[:])
 }()
 
+// renewIfBelowSHA addresses the renewal script by its SHA-1, as the fenced
+// writes address theirs.
+var renewIfBelowSHA = func() string {
+	sum := sha1.Sum([]byte(renewIfBelowScript))
+	return hex.EncodeToString(sum[:])
+}()
+
 // Bounds of one fenced batch script. The script is atomic: while it runs
 // Redis serves nobody else, so it is cut by the bytes it writes as well as by
 // its keys. The key bound is the pipeline's own (runtimeApplyBatchItems), so
@@ -146,6 +153,17 @@ return 1
 // persistent). No instant is passed: the lease deadline is compared with the
 // server's clock, the one it was minted on.
 //
+// The current values are read with one MGET for every write of the call,
+// not a GET each: per command the server pays its lookup and the call out of
+// Lua, and a GET each was half the commands a state write ran (decision-020
+// 0.6.x throughput design 3.3-A). MGET answers nil for a key holding another
+// type where GET refuses it, so a key MGET finds nothing at is read again
+// alone with GET, which tells a missing key from one of another type as
+// before. Those are the keys written for the first time. The MGET reads the
+// values before any write of the call, and a call may carry one key twice:
+// a key this call wrote is read as what it wrote, as a GET after the write
+// read it.
+//
 // Each write's commands are called with pcall, so a command the server
 // refuses -- a key holding another type -- is that write's answer and not
 // the script's: its siblings are still written and reported, as they were
@@ -167,10 +185,17 @@ if fenced then
   first_key, first_arg = 3, 8
 end
 local replies = {'WRITES'}
+local currents = {}
+local written_values = {}
+if count > 0 then
+  currents = redis.call('MGET', unpack(KEYS, first_key, first_key + count - 1))
+end
 for index = 0, count - 1 do
   local key = KEYS[first_key + index]
   local arg = first_arg + index * 4
-  local current = redis.pcall('GET', key)
+  local current = written_values[key]
+  if current == nil then current = currents[index + 1] end
+  if not current then current = redis.pcall('GET', key) end
   local reply = nil
   if type(current) == 'table' and current.err then
     reply = {'ERROR', current.err}
@@ -194,6 +219,7 @@ for index = 0, count - 1 do
       reply = {'ERROR', written.err}
     else
       reply = {'APPLIED'}
+      written_values[key] = ARGV[arg + 2]
     end
   end
   replies[#replies + 1] = reply
@@ -446,18 +472,34 @@ func (backend *RedisBackend) RenewManyIfBelow(
 			return nil, fmt.Errorf("state: invalid Redis lifetime renewal")
 		}
 	}
-	cmds, err := backend.client.Pipelined(ctx, func(pipeline redis.Pipeliner) error {
-		for _, key := range keys {
-			pipeline.Eval(ctx, renewIfBelowScript, []string{key},
-				ttl.Milliseconds(), threshold.Milliseconds())
-		}
-		return nil
-	})
-	if err != nil && !isRedisReplyError(err) {
+	// By SHA-1, as the fenced writes are: the script's text went with every
+	// key of every Slot's renewal, which made EVAL the one script command
+	// that grew with the frozen series (decision-020 0.6.x throughput design
+	// 3.3). A server that does not hold the script - restarted, flushed -
+	// answers NOSCRIPT without running it, so those keys are sent again with
+	// the text and none is renewed twice.
+	cmds, err := backend.evalRenewals(ctx, keys, ttl, threshold, true)
+	if err != nil {
 		return nil, err
 	}
-	if len(cmds) != len(keys) {
-		return nil, fmt.Errorf("state: Redis pipeline returned %d replies for %d renewals", len(cmds), len(keys))
+	var uncached []int
+	for index, cmd := range cmds {
+		if noScriptReply(cmd.Err()) {
+			uncached = append(uncached, index)
+		}
+	}
+	if len(uncached) > 0 {
+		again := make([]string, len(uncached))
+		for position, index := range uncached {
+			again[position] = keys[index]
+		}
+		replies, err := backend.evalRenewals(ctx, again, ttl, threshold, false)
+		if err != nil {
+			return nil, err
+		}
+		for position, index := range uncached {
+			cmds[index] = replies[position]
+		}
 	}
 	outcomes := make([]RenewalOutcome, len(keys))
 	for index, cmd := range cmds {
@@ -479,6 +521,30 @@ func (backend *RedisBackend) RenewManyIfBelow(
 		}
 	}
 	return outcomes, nil
+}
+
+// evalRenewals sends one pipeline of renewIfBelowScript, one a key,
+// addressing the script by SHA-1 or carrying its text.
+func (backend *RedisBackend) evalRenewals(
+	ctx context.Context, keys []string, ttl, threshold time.Duration, byDigest bool,
+) ([]redis.Cmder, error) {
+	cmds, err := backend.client.Pipelined(ctx, func(pipeline redis.Pipeliner) error {
+		for _, key := range keys {
+			if byDigest {
+				pipeline.EvalSha(ctx, renewIfBelowSHA, []string{key}, ttl.Milliseconds(), threshold.Milliseconds())
+				continue
+			}
+			pipeline.Eval(ctx, renewIfBelowScript, []string{key}, ttl.Milliseconds(), threshold.Milliseconds())
+		}
+		return nil
+	})
+	if err != nil && !isRedisReplyError(err) {
+		return nil, err
+	}
+	if len(cmds) != len(keys) {
+		return nil, fmt.Errorf("state: Redis pipeline returned %d replies for %d renewals", len(cmds), len(keys))
+	}
+	return cmds, nil
 }
 
 // CompareAndSetManyByDigest sends the writes in one pipeline, as few fenced
@@ -570,13 +636,6 @@ func (backend *RedisBackend) evalFencedChunks(
 	ctx context.Context, guard *FenceGuard, writes []FencedWrite, chunks []fencedChunk, byDigest bool,
 ) ([]redis.Cmder, error) {
 	cmds, err := backend.client.Pipelined(ctx, func(pipeline redis.Pipeliner) error {
-		if byDigest {
-			// Caching the script in the same round trip that uses it puts the
-			// text on the wire once per call and costs no extra round trip on
-			// a server that has never seen it. Pipelined commands run in
-			// order, so the calls below find it.
-			pipeline.ScriptLoad(ctx, fencedBatchWriteScript)
-		}
 		for _, chunk := range chunks {
 			keys, args := fencedScriptArguments(guard, writes[chunk.start:chunk.end])
 			if byDigest {
@@ -589,11 +648,6 @@ func (backend *RedisBackend) evalFencedChunks(
 	})
 	if err != nil && !isRedisReplyError(err) {
 		return nil, err
-	}
-	if byDigest && len(cmds) > 0 {
-		// Drop the reply of the caching command, which is not one of the
-		// scripts.
-		cmds = cmds[1:]
 	}
 	return cmds, nil
 }

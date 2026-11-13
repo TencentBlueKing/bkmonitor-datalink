@@ -184,8 +184,23 @@ func decodeNoDataGroupValue(
 
 // encodeNoDataDelta turns one mutation into the fields to write and remove.
 func encodeNoDataDelta(mutation execution.PlanNoDataMutation) ([]HashField, []string, error) {
-	set := make([]HashField, 0, len(mutation.Set))
-	for _, group := range mutation.Set {
+	set, err := encodeNoDataGroups(mutation.Set)
+	if err != nil {
+		return nil, nil, err
+	}
+	deleted := make([]string, 0, len(mutation.Del))
+	for _, key := range mutation.Del {
+		deleted = append(deleted, noDataGroupPrefix+key)
+	}
+	return set, deleted, nil
+}
+
+// encodeNoDataGroups turns groups into the fields that store them. A staged
+// write encodes one segment at a time, so what it builds is a segment's and
+// not the memory's.
+func encodeNoDataGroups(groups []execution.NoDataGroupDelta) ([]HashField, error) {
+	set := make([]HashField, 0, len(groups))
+	for _, group := range groups {
 		if group.Absent == nil {
 			set = append(set, HashField{
 				Name: noDataGroupPrefix + group.GroupKey, Value: []byte(noDataPresentValue),
@@ -197,13 +212,9 @@ func encodeNoDataDelta(mutation execution.PlanNoDataMutation) ([]HashField, []st
 			SuppressedAt: group.Absent.SuppressedAt,
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		set = append(set, HashField{Name: noDataGroupPrefix + group.GroupKey, Value: encoded})
 	}
-	deleted := make([]string, 0, len(mutation.Del))
-	for _, key := range mutation.Del {
-		deleted = append(deleted, noDataGroupPrefix+key)
-	}
-	return set, deleted, nil
+	return set, nil
 }

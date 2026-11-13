@@ -96,7 +96,7 @@ func TestTheErrorTextNamesTheDependencyTheCodeDoesNot(t *testing.T) {
 		{"the server's LOADING reply", Anomaly{Kind: KindDegradedRun, ReasonCode: "error",
 			LastError: &LastError{Text: "LOADING Redis is loading the dataset in memory", At: at}}, DependencyRedis, dependencyByText},
 		{"the query failure's detail", Anomaly{Kind: KindDegradedRun, CauseReason: "STATE_WRITE_RETRYABLE", ReasonLastAt: at,
-			Failure: &FailureRef{Stage: "execute", Category: "other", Code: "STATE_WRITE_RETRYABLE", Detail: "dial tcp 10.0.0.1:6379: i/o timeout", At: &at}}, DependencyRedis, dependencyByText},
+			Failure: &FailureRef{Stage: "execute", Category: "other", Code: "STATE_WRITE_RETRYABLE", Detail: "dial tcp 192.0.2.1:6379: i/o timeout", At: &at}}, DependencyRedis, dependencyByText},
 		{"a timeout whose text names nothing stays unlocated", Anomaly{Kind: KindDegradedRun, CauseReason: "QUERY_TIMEOUT",
 			LastError: &LastError{Text: "context deadline exceeded", At: at}}, DependencyUnlocated, ""},
 		{"the code wins over the text when it names one", Anomaly{Kind: KindDegradedRun, CauseReason: "KAFKA_UNAVAILABLE",
@@ -122,7 +122,7 @@ func TestTheReadingIsTakenFromTheLatestRoundOnly(t *testing.T) {
 	fresh := now.Add(-time.Minute)
 	stale := &LastError{Text: "alarmd progress: commit: redis: connection pool timeout", At: old, Operation: "commit"}
 	row := Anomaly{Kind: KindDegradedRun, Cause: "LEVEL_OUTCOME_UNKNOWN", CauseReason: "QUERY_TIMEOUT", ReasonLastAt: fresh, LastError: stale,
-		Failure: &FailureRef{Stage: "execute", Category: "other", Code: "STATE_WRITE_RETRYABLE", Detail: "dial tcp 10.0.0.1:6379: i/o timeout", At: &old}}
+		Failure: &FailureRef{Stage: "execute", Category: "other", Code: "STATE_WRITE_RETRYABLE", Detail: "dial tcp 192.0.2.1:6379: i/o timeout", At: &old}}
 	blocked := blockedOf(row, ScheduleOnTime)
 	if blocked.Dependency != DependencyUnlocated || blocked.DependencyEvidence != "" || blocked.Text != "" || blocked.Operation != "" {
 		t.Fatalf("blocked = %+v, want the old error's words and dependency left out of this round's reading", blocked)
@@ -143,7 +143,7 @@ func TestTheReadingIsTakenFromTheLatestRoundOnly(t *testing.T) {
 	// A failure reference without a time is from a publisher that could not
 	// say when it was: not this round's evidence.
 	undated := Anomaly{Kind: KindDegradedRun, CauseReason: "STATE_WRITE_RETRYABLE", ReasonLastAt: fresh,
-		Failure: &FailureRef{Stage: "execute", Category: "other", Code: "STATE_WRITE_RETRYABLE", Detail: "dial tcp 10.0.0.1:6379: i/o timeout"}}
+		Failure: &FailureRef{Stage: "execute", Category: "other", Code: "STATE_WRITE_RETRYABLE", Detail: "dial tcp 192.0.2.1:6379: i/o timeout"}}
 	if blocked := blockedOf(undated, ScheduleOnTime); blocked.Dependency != DependencyUnlocated || blocked.Text != "" {
 		t.Fatalf("blocked = %+v, want an undated failure reference left out", blocked)
 	}
@@ -345,7 +345,7 @@ func TestTrackerStampsTheQueryFailureWithItsTimeAndSlot(t *testing.T) {
 		slot := int64(100 + 60*round)
 		failedAt = at.at
 		tracker.Observe(context.Background(), observability.Observation{
-			QueryFailure: &observability.QueryFailureFacts{Stage: "execute", Category: "other", Code: "STATE_WRITE_RETRYABLE", Detail: "dial tcp 10.0.0.1:6379: i/o timeout"},
+			QueryFailure: &observability.QueryFailureFacts{Stage: "execute", Category: "other", Code: "STATE_WRITE_RETRYABLE", Detail: "dial tcp 192.0.2.1:6379: i/o timeout"},
 			Trace:        observability.TraceFields{QueryGroupKey: "qg-1", EvaluationTime: slot},
 		})
 		at.at = at.at.Add(time.Millisecond)
@@ -364,7 +364,7 @@ func TestTrackerStampsTheQueryFailureWithItsTimeAndSlot(t *testing.T) {
 	}
 	Attribute(rows, at.at)
 	blocked := rows[0].Blocked
-	if blocked == nil || blocked.Dependency != DependencyRedis || blocked.DependencyEvidence != dependencyByText || blocked.Text != "dial tcp 10.0.0.1:6379: i/o timeout" {
+	if blocked == nil || blocked.Dependency != DependencyRedis || blocked.DependencyEvidence != dependencyByText || blocked.Text != "dial tcp 192.0.2.1:6379: i/o timeout" {
 		t.Fatalf("blocked = %+v, want Redis named from this round's failure detail, and the detail as the round's words", blocked)
 	}
 	// The round ended -- degraded, but ended -- so it is not being retried,
@@ -499,7 +499,7 @@ func TestKnownAndDifferentSlotsAreTwoRoundsWhateverTheClocksSay(t *testing.T) {
 	later := now.Add(time.Second)
 	inFlight := Anomaly{Kind: KindDegradedRun, ReasonCode: "COMPLETED_WITH_UNAVAILABLE", CauseReason: "HISTORY_GAPPED",
 		ReasonLastAt: now, RoundSlot: 1000,
-		Failure: &FailureRef{Stage: "execute", Category: "other", Code: "STATE_WRITE_RETRYABLE", Detail: "dial tcp 10.0.0.1:6379: i/o timeout", At: &later, Slot: 1060}}
+		Failure: &FailureRef{Stage: "execute", Category: "other", Code: "STATE_WRITE_RETRYABLE", Detail: "dial tcp 192.0.2.1:6379: i/o timeout", At: &later, Slot: 1060}}
 	blocked := blockedOf(inFlight, "")
 	if blocked.Dependency == DependencyRedis || blocked.Text != "" {
 		t.Fatalf("blocked = %+v, want the next Slot's failure not read as this round's although stamped later", blocked)
@@ -508,7 +508,7 @@ func TestKnownAndDifferentSlotsAreTwoRoundsWhateverTheClocksSay(t *testing.T) {
 	// as it did before the field existed.
 	unslotted := inFlight
 	unslotted.RoundSlot = 0
-	unslotted.Failure = &FailureRef{Stage: "execute", Category: "other", Code: "STATE_WRITE_RETRYABLE", Detail: "dial tcp 10.0.0.1:6379: i/o timeout", At: &later}
+	unslotted.Failure = &FailureRef{Stage: "execute", Category: "other", Code: "STATE_WRITE_RETRYABLE", Detail: "dial tcp 192.0.2.1:6379: i/o timeout", At: &later}
 	if blocked := blockedOf(unslotted, ""); blocked.Dependency != DependencyRedis {
 		t.Fatalf("blocked = %+v, want the clock to decide when no Slot is known", blocked)
 	}
@@ -623,7 +623,7 @@ func TestAFailureOnThePreviousSlotIsNotLentToTheNextRound(t *testing.T) {
 	}
 	// This round: a Redis failure on the way to the completion.
 	tracker.Observe(context.Background(), observability.Observation{
-		QueryFailure: &observability.QueryFailureFacts{Stage: "execute", Category: "other", Code: "STATE_WRITE_RETRYABLE", Detail: "dial tcp 10.0.0.1:6379: i/o timeout"},
+		QueryFailure: &observability.QueryFailureFacts{Stage: "execute", Category: "other", Code: "STATE_WRITE_RETRYABLE", Detail: "dial tcp 192.0.2.1:6379: i/o timeout"},
 		Trace:        observability.TraceFields{QueryGroupKey: "qg-1", EvaluationTime: 1000},
 	})
 	at.at = at.at.Add(time.Millisecond)

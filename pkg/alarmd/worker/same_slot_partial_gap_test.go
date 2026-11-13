@@ -17,8 +17,10 @@ import (
 
 // The marker is preseeded as the prior attempt's committed fact. This tests
 // the retry boundary, not the store's original commit: authoritative PRIMARY
-// has become PARTIAL, and neither the series nor no-series completion path may
-// reopen a same-Slot tombstone or strengthen an already committed level gap.
+// has become PARTIAL. Neither the series nor no-series completion path
+// reopens a same-Slot tombstone. A found marker only grows by what the
+// PARTIAL answer adds, from the revision the retry read: every scope and
+// observation the first commit wrote stays, no reason falls.
 func TestSameSlotCommittedGapSurvivesPartialPrimaryRetry(t *testing.T) {
 	for _, status := range []execution.GapLoadStatus{execution.GapClearedTombstone, execution.GapFound} {
 		for _, delivered := range []bool{false, true} {
@@ -65,8 +67,26 @@ func TestSameSlotCommittedGapSurvivesPartialPrimaryRetry(t *testing.T) {
 				if err != nil || !result.Completed {
 					t.Fatalf("partial retry did not finish Progress: result=%+v err=%v", result, err)
 				}
-				if len(ports.gapMutations) != 0 {
-					t.Errorf("same-Slot committed gap rewritten: %+v", ports.gapMutations)
+				if status == execution.GapClearedTombstone && len(ports.gapMutations) != 0 {
+					t.Errorf("same-Slot tombstone reopened: %+v", ports.gapMutations)
+				}
+				if status == execution.GapFound && len(ports.gapMutations) == 0 {
+					t.Error("the PARTIAL answer did not grow the committed marker")
+				}
+				for _, mutation := range ports.gapMutations {
+					grown, extends := execution.ExtendSameSlotGap(before.Scopes, mutation.Scopes)
+					if mutation.ExpectedMarkerRevision != before.MarkerRevision || !extends {
+						t.Fatalf("a retry wrote %+v over revision %d, want a growth of the marker it read", mutation, before.MarkerRevision)
+					}
+					kept := false
+					for _, scope := range grown {
+						kept = kept || (scope.Scope == before.Scopes[0].Scope && scope.ObservedFullSlots == before.Scopes[0].ObservedFullSlots &&
+							execution.GapReasonRank(scope.ReasonCode) >= execution.GapReasonRank(before.Scopes[0].ReasonCode) &&
+							scope.RequiredFullSlots >= before.Scopes[0].RequiredFullSlots)
+					}
+					if !kept {
+						t.Fatalf("the grown marker %+v took back the committed level scope %+v", grown, before.Scopes[0])
+					}
 				}
 				if len(evaluator.requests) != 0 || ports.stateApplyCalls != 0 || ports.eventCount != 0 {
 					t.Errorf("PARTIAL PRIMARY caused business effects: evaluate=%d state=%d events=%d", len(evaluator.requests), ports.stateApplyCalls, ports.eventCount)

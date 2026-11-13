@@ -62,7 +62,7 @@ func TestADeploymentNoDataGroupBoundAboveTheDefaultIsLoggedOnceAtStartup(t *test
 				return
 			}
 			for _, want := range []string{`"max_groups":100001`, `"default":100000`,
-				"blocks Redis about 120-180 ms at 100,000 groups, 610 ms at 200,000 and 2.9 s at 1,000,000"} {
+				"is staged in scripts of 1,000 groups - 100 at 100,000 groups, 1,000 at 1,000,000"} {
 				if lines != 1 || !strings.Contains(out.String(), want) {
 					t.Fatalf("startup logged %q, want one line carrying %s", out.String(), want)
 				}

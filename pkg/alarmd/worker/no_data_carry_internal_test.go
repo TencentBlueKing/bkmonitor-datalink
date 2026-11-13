@@ -178,7 +178,9 @@ func (store *generationNoDataStore) LoadNoData(
 // The previous generation's memory is read only while the new generation
 // holds no record, and the round then starts from its groups under a
 // snapshot that still names no record, so its first write replaces the
-// whole record under the new generation.
+// whole record under the new generation. The load reads headers only; the
+// groups the round starts from are the ones its scan reads, from the record
+// the load named (noDataCarried).
 func TestCarriedMemoryIsReadOnlyWhileTheNewGenerationHoldsNoRecord(t *testing.T) {
 	carried := []execution.NoDataGroupMemory{{GroupKey: "bk_target_ip=192.0.2.2,__NO_DATA_DIMENSION__=true", LastSeen: 880, FirstAbsent: 940}}
 	own := []execution.NoDataGroupMemory{{GroupKey: "bk_target_ip=192.0.2.1,__NO_DATA_DIMENSION__=true", LastSeen: 940}}
@@ -211,13 +213,40 @@ func TestCarriedMemoryIsReadOnlyWhileTheNewGenerationHoldsNoRecord(t *testing.T)
 			if err := stream.loadNoDataMemory(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			snapshot, _ := stream.noData.Find(duePlans[0].NoDataIdentity())
-			if !reflect.DeepEqual(snapshot.Groups, test.want) || len(store.read) != test.read {
-				t.Fatalf("the round starts from %+v after %d reads, want %+v after %d", snapshot.Groups, len(store.read), test.want, test.read)
+			identity := duePlans[0].NoDataIdentity()
+			snapshot, _ := stream.noData.Find(identity)
+			reads := len(store.read)
+			source := identity
+			if carried, from := stream.noDataCarried[identity]; from {
+				source = carried.Identity
+			}
+			page, err := store.ScanNoDataGroups(context.Background(), execution.NoDataScanRequest{Identity: source})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(page.Groups, test.want) || reads != test.read {
+				t.Fatalf("the round starts from %+v (generation %s) after %d reads, want %+v after %d",
+					page.Groups, source.StateGeneration, reads, test.want, test.read)
 			}
 			if test.read == 2 && (snapshot.Status != execution.NoDataMemoryMissing || snapshot.PresentAsOf != 940) {
 				t.Fatalf("carried snapshot = %+v, want MISSING with the previous present-as-of", snapshot)
 			}
 		})
 	}
+}
+
+func (store *generationNoDataStore) ReadNoDataHeaders(ctx context.Context, request execution.NoDataLoadRequest) (execution.NoDataLoadResult, error) {
+	return LoadedRoster(store.LoadNoData).Headers(ctx, request)
+}
+
+func (store *generationNoDataStore) RecheckNoDataHeader(ctx context.Context, identity execution.PlanNoDataIdentity) (execution.NoDataMemorySnapshot, error) {
+	return LoadedRoster(store.LoadNoData).Recheck(ctx, identity)
+}
+
+func (store *generationNoDataStore) ScanNoDataGroups(ctx context.Context, request execution.NoDataScanRequest) (execution.NoDataScanPage, error) {
+	return LoadedRoster(store.LoadNoData).Scan(ctx, request)
+}
+
+func (store *generationNoDataStore) ReadNoDataGroups(ctx context.Context, request execution.NoDataGroupsRequest) (execution.NoDataGroupsResult, error) {
+	return LoadedRoster(store.LoadNoData).Read(ctx, request)
 }

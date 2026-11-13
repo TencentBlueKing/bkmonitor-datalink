@@ -92,6 +92,38 @@ func TestObjectsAwaitingTheirFirstRoundDoNotMakeTheVerdictUnknown(t *testing.T) 
 	}
 }
 
+// A first round waiting on its predecessor's read hold record says so: its
+// due time is only the next look, a few seconds on, and what bounds it is the
+// wait's end. The objects waiting are counted, and the latest end is named.
+func TestAFirstRoundWaitingOnItsPredecessorSaysUntilWhen(t *testing.T) {
+	until := now.Add(9 * time.Minute)
+	waits := []FirstRoundWait{
+		{QueryGroup: "a", IntervalSeconds: 60, DueAt: now.Add(5 * time.Second), AwaitingPredecessor: &PredecessorWait{
+			QueryGroup: "old-a", Reason: "record_open", Since: now.Add(-time.Minute), Until: until}},
+		{QueryGroup: "b", IntervalSeconds: 60, DueAt: now.Add(5 * time.Second), AwaitingPredecessor: &PredecessorWait{
+			QueryGroup: "old-b", Reason: "record_unreadable", Since: now, Until: now.Add(time.Minute)}},
+		{QueryGroup: "c", IntervalSeconds: 60, DueAt: now.Add(30 * time.Second)},
+	}
+	snapshots := healthySnapshots()
+	snapshots[0].Owned, snapshots[0].Determined = 503, 500
+	snapshots[0].AwaitingFirstRound, snapshots[0].AwaitingFirstRoundTotal = waits, 3
+	view := Aggregate(Expectation{QueryGroups: 952, Known: true}, snapshots, replicas(), now, freshness)
+	awaiting := view.AwaitingFirstRound
+	if awaiting == nil || awaiting.AwaitingPredecessor != 2 || awaiting.PredecessorUntil == nil || !awaiting.PredecessorUntil.Equal(until) {
+		t.Fatalf("awaiting %+v, want two waiting on a predecessor until %s", awaiting, until)
+	}
+	if want := "其中 2 个在等前驱的读保持记录关闭，最迟 " + until.UTC().Format("01-02 15:04:05Z") + " 按上限就绪"; !strings.Contains(awaiting.Line, want) {
+		t.Fatalf("line %q lacks %q", awaiting.Line, want)
+	}
+	// None waiting: the line says nothing of predecessors.
+	snapshots[0].AwaitingFirstRound = waits[2:]
+	snapshots[0].Owned, snapshots[0].AwaitingFirstRoundTotal = 501, 1
+	view = Aggregate(Expectation{QueryGroups: 950, Known: true}, snapshots, replicas(), now, freshness)
+	if awaiting := view.AwaitingFirstRound; awaiting == nil || awaiting.AwaitingPredecessor != 0 || strings.Contains(awaiting.Line, "前驱") {
+		t.Fatalf("awaiting %+v, want no predecessor wait", awaiting)
+	}
+}
+
 // fleet.get names which objects unknown counts: the replicas' undetermined
 // objects together, longest owned first, each with its replica, within the
 // bound, and the total of all of them.

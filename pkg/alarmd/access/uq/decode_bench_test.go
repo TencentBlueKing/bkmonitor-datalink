@@ -69,7 +69,7 @@ func largeAnswerBody(tb testing.TB, series int) []byte {
 	for index := 0; index < series; index++ {
 		host, core := index/43, index%43
 		frame = append(frame, map[string]any{"s": 0,
-			"g": []json.RawMessage{json.RawMessage(`"0"`), json.RawMessage(fmt.Sprintf(`"10.%d.%d.%d"`, host/65536, host/256%256, host%256)),
+			"g": []json.RawMessage{json.RawMessage(`"0"`), json.RawMessage(fmt.Sprintf(`"host-%08d"`, host)),
 				json.RawMessage(fmt.Sprintf(`"cpu%d"`, core))},
 			"r": [][]json.RawMessage{{json.RawMessage(`1700123940000`), json.RawMessage(fmt.Sprintf(`%d.%d`, index%100, index%7))}}})
 		if len(frame) == sharedFrameSeries || index == series-1 {
@@ -99,7 +99,6 @@ func BenchmarkDecodeALargeAnswer(b *testing.B) {
 	attempt := largeAnswerAttempt(b)
 	body := largeAnswerBody(b, largeAnswerSeries)
 	limits := DefaultLimits()
-	limits.MaxBodyBytes = 1 << 30
 	client, err := NewClientWithLimits("http://127.0.0.1:1", "alarmd-shadow", &http.Client{}, limits)
 	if err != nil {
 		b.Fatal(err)
@@ -109,7 +108,7 @@ func BenchmarkDecodeALargeAnswer(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		sink := &deliveryFoldingSink{}
-		done, err := client.decodeShared(context.Background(), strings.NewReader(string(body)), attempt, sink)
+		done, err := client.decodeShared(context.Background(), nil, strings.NewReader(string(body)), attempt, sink)
 		if err != nil || done.Completeness != execution.CompletenessFull || done.Delivery.Series != largeAnswerSeries {
 			b.Fatalf("decode = %+v, %v", done, err)
 		}

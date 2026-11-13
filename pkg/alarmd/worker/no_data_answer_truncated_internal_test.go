@@ -81,9 +81,9 @@ func TestAPlanWhoseAnswerMayHaveBeenCutSkipsItsNoDataRoundAndRemembersNothing(t 
 	}
 	// The round is held among the judged like every skip, and its absence
 	// line is not emitted: only an EVALUATED round says what it found.
-	if stream.noDataStateMutations != 0 || len(stream.noDataMutations) != 0 {
-		t.Fatalf("a cut round spent %d state writes and queued %d memories, want none",
-			stream.noDataStateMutations, len(stream.noDataMutations))
+	if stream.seriesCensus.Due != 0 || len(stream.noDataMutations) != 0 {
+		t.Fatalf("a cut round sent %d series and queued %d memories, want none",
+			stream.seriesCensus.Due, len(stream.noDataMutations))
 	}
 }
 

@@ -51,9 +51,9 @@ func TestOnlyTheSeriesThatReachThePipelineAreCountedAsPulled(t *testing.T) {
 
 	// In scope: it becomes work, so it is counted with the points it carried.
 	inScope := newAdapter(&admissionConsumer{},
-		planScopes{plan: {StrategyID: plan.StrategyID, TargetScope: hostScope("10.0.0.1|0")}})
+		planScopes{plan: {StrategyID: plan.StrategyID, TargetScope: hostScope("192.0.2.1|0")}})
 	if err := inScope.ConsumeProviderSeries(context.Background(),
-		batchOf(inScope, hostSeries(t, "10.0.0.1"), 7)); err != nil {
+		batchOf(inScope, hostSeries(t, "192.0.2.1"), 7)); err != nil {
 		t.Fatalf("consume in-scope: %v", err)
 	}
 	if pulledSeries != 1 || pulledRecords != 7 {
@@ -64,9 +64,9 @@ func TestOnlyTheSeriesThatReachThePipelineAreCountedAsPulled(t *testing.T) {
 	// Out of scope: withheld before the pipeline, so it is not this instance's
 	// load. Counting it would report work that never happened.
 	outOfScope := newAdapter(&admissionConsumer{},
-		planScopes{plan: {StrategyID: plan.StrategyID, TargetScope: hostScope("10.0.0.1|0")}})
+		planScopes{plan: {StrategyID: plan.StrategyID, TargetScope: hostScope("192.0.2.1|0")}})
 	if err := outOfScope.ConsumeProviderSeries(context.Background(),
-		batchOf(outOfScope, hostSeries(t, "10.9.9.9"), 9)); err != nil {
+		batchOf(outOfScope, hostSeries(t, "192.0.2.99"), 9)); err != nil {
 		t.Fatalf("consume out-of-scope: %v", err)
 	}
 	if pulledSeries != 1 || pulledRecords != 7 {
@@ -84,10 +84,10 @@ func TestPullingWithoutACounterDoesNotFail(t *testing.T) {
 	adapter := &seriesAdapter{
 		consumer: &admissionConsumer{}, query: plannedQueryForTest(requirement), attemptNo: 1,
 		admission: scopedChain(), observe: func(string, string, string) {},
-		scopes: planScopes{plan: {StrategyID: plan.StrategyID, TargetScope: hostScope("10.0.0.1|0")}},
+		scopes: planScopes{plan: {StrategyID: plan.StrategyID, TargetScope: hostScope("192.0.2.1|0")}},
 	}
 	if err := adapter.ConsumeProviderSeries(context.Background(), execution.ProviderSeriesBatch{
-		PhysicalQuery: adapter.query.Spec.Digest, CompletionRef: "result", Dataset: hostSeries(t, "10.0.0.1"),
+		PhysicalQuery: adapter.query.Spec.Digest, CompletionRef: "result", Dataset: hostSeries(t, "192.0.2.1"),
 		Delivery: execution.SeriesDelivery{PhysicalQuery: adapter.query.Spec.Digest,
 			QueryRevision: adapter.query.Spec.PlanFacts.QueryRevision, Series: 1, Records: 1, Digest: "digest"},
 	}); err != nil {

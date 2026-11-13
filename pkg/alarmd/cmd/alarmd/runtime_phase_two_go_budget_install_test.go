@@ -6,6 +6,8 @@
 package main
 
 import (
+	"reflect"
+	"runtime/debug"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
@@ -42,5 +44,35 @@ func TestGoRuntimeBudgetIsInstalledExactlyWhenItWasDerived(t *testing.T) {
 	if got := install(config.DerivedGoRuntime{MemoryLimitBytes: 1 << 30, GCPercent: 300}); len(got.limits) != 0 ||
 		len(got.percents) != 0 {
 		t.Fatalf("installed %+v from a budget that was never derived, want nothing", got)
+	}
+}
+
+// noGoRuntime installs nothing: the setters a case that starts an
+// application passes, so the process's collector budget, which every case in
+// this binary runs under - the observation memory line reads its limit - is
+// not the last started application's.
+var noGoRuntime = goRuntimeBudgetSetters{}
+
+// The application the process runs installs the budget through the
+// runtime's own setters, as it did before they could be passed: the
+// production entry's dependencies carry debug.SetMemoryLimit and
+// debug.SetGCPercent themselves, and a case's no-op setters install
+// nothing.
+func TestTheProductionEntryInstallsTheBudgetThroughTheRuntimesOwnSetters(t *testing.T) {
+	setters := defaultPhaseTwoApplicationDependencies().goRuntime
+	if setters.setMemoryLimit == nil || reflect.ValueOf(setters.setMemoryLimit).Pointer() != reflect.ValueOf(debug.SetMemoryLimit).Pointer() {
+		t.Fatal("the production entry does not install the memory limit through debug.SetMemoryLimit")
+	}
+	if setters.setGCPercent == nil || reflect.ValueOf(setters.setGCPercent).Pointer() != reflect.ValueOf(debug.SetGCPercent).Pointer() {
+		t.Fatal("the production entry does not install the GC percent through debug.SetGCPercent")
+	}
+	limit, percent := debug.SetMemoryLimit(-1), debug.SetGCPercent(-1)
+	debug.SetGCPercent(percent)
+	applyPhaseTwoGoRuntime(config.DeriveGoRuntime(config.CapacityInputs{CPUBudget: 8, MemoryLimitBytes: 8 << 30, MemorySource: "pod_limit"}), noGoRuntime)
+	if got := debug.SetMemoryLimit(-1); got != limit {
+		t.Fatalf("the no-op setters changed the memory limit from %d to %d", limit, got)
+	}
+	if got := debug.SetGCPercent(percent); got != percent {
+		t.Fatalf("the no-op setters changed the GC percent from %d to %d", percent, got)
 	}
 }

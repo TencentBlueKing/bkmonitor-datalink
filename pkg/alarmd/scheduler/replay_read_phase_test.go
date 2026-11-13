@@ -26,7 +26,7 @@ func TestTheReplayGuardEstimatesTheGroupsOwnReadMoment(t *testing.T) {
 	deadline := int64(slot)*1000 + 55_000
 	for _, hold := range []int64{0, 20_000} {
 		want := int64(slot)*1000 + execution.ReadWaitWithinQueryBudget("query-group-1", 55*time.Second, 30*time.Second).Milliseconds() + hold
-		if got := source.replayReadyAtUnixMilli(slot, deadline+hold, hold); got != want {
+		if got := source.slotReadAtUnixMilli(slot, deadline+hold, hold); got != want {
 			t.Fatalf("hold %d: estimated ready %d, access reads at %d", hold, got, want)
 		}
 	}

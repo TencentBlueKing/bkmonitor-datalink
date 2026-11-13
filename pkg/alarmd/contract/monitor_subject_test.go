@@ -33,14 +33,14 @@ func TestTheSubjectChainPlacesEachObjectTheWayThePlatformDoes(t *testing.T) {
 		wantID     string
 	}{
 		"host id wins over the address it came with": {
-			dimensions: map[string]string{"bk_host_id": `101`, "bk_target_ip": `"10.0.0.1"`, "bk_target_cloud_id": `0`},
+			dimensions: map[string]string{"bk_host_id": `101`, "bk_target_ip": `"192.0.2.1"`, "bk_target_cloud_id": `0`},
 			identity:   []string{"bk_host_id", "bk_target_ip", "bk_target_cloud_id"},
 			wantType:   MonitorSubjectHost, wantID: "101",
 		},
 		"an address carries its cloud": {
-			dimensions: map[string]string{"bk_target_ip": `"10.0.0.1"`, "bk_target_cloud_id": `0`},
+			dimensions: map[string]string{"bk_target_ip": `"192.0.2.1"`, "bk_target_cloud_id": `0`},
 			identity:   []string{"bk_target_ip", "bk_target_cloud_id"},
-			wantType:   MonitorSubjectHost, wantID: "10.0.0.1|0",
+			wantType:   MonitorSubjectHost, wantID: "192.0.2.1|0",
 		},
 		"a service instance": {
 			dimensions: map[string]string{"bk_target_service_instance_id": `"55"`},

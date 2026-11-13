@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
@@ -198,5 +199,36 @@ func TestAReplaysLostRoundCarriesItsRecoveryBudget(t *testing.T) {
 		completion.QueryBudget.QueryDeadlineUnixMilli != 1_700_000_155_000 || completion.QueryBudget.RecoveryBudgetMillis != 55_000 ||
 		completion.QueryBudget.QueryStartedAtUnixMilli != 1_700_000_101_000 {
 		t.Fatalf("replay line %+v / %+v, want bound none, 55 s against the recovery deadline, and the recovery budget", completion.DivertDecision, completion.QueryBudget)
+	}
+}
+
+// A Slot whose first write the fence refused wrote nothing, so its line is a
+// retrying one carrying the fence's word, not a failed Slot.
+func TestARefusedBeginsLineIsRetryingWithTheFencesWord(t *testing.T) {
+	request := execution.SlotExecutionRequest{AttemptNo: 1, Operation: execution.OperationNormal}
+	request.Contract.Slot.EvaluationTime = execution.EvaluationTime(1_700_000_000)
+	for _, refusal := range []struct {
+		err  error
+		want string
+	}{
+		{&execution.SlotBeginRefusedError{Status: execution.ProgressStaleOwner, Err: ownership.ErrStaleFence}, contract.ReasonOwnershipStaleFence},
+		{&execution.SlotBeginRefusedError{Status: execution.ProgressContentMoved, Err: ownership.ErrContentScopeMoved}, contract.ReasonContentScopeMoved},
+	} {
+		var completion *observability.Observation
+		executor := observedProductionSlotExecutor{
+			next: slotExecutorFunc(func(context.Context, execution.SlotExecutionRequest) (execution.SlotExecutionResult, error) {
+				return execution.SlotExecutionResult{}, refusal.err
+			}),
+			observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) {
+				if o.Stage == observability.StageSlotCompleted {
+					completion = &o
+				}
+			}),
+			decisionLag: func(time.Duration) {},
+		}
+		_, _ = executor.Execute(context.Background(), request)
+		if completion == nil || completion.Result != observability.ResultRetrying || completion.ReasonCode != observability.ReasonCode(refusal.want) {
+			t.Fatalf("%v: completion %+v, want retrying with %s", refusal.err, completion, refusal.want)
+		}
 	}
 }

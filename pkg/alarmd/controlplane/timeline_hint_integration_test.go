@@ -109,7 +109,9 @@ func TestAHintedTimelineReadSkipsTheHeaderUntilTheHintGoesStale(t *testing.T) {
 
 // A hinted activation request is answered from the Query Group's timeline
 // with the same facts the header path answers, reading no header; after a
-// cutover the closed Segment's Slot is historical on both paths.
+// cutover the closed Segment's Slot is answered the same on both paths - the
+// Plan that stayed with the record it ran under, a Plan the Segment never
+// carried ActivationNone.
 func TestAHintedActivationRequestIsAnsweredFromTheTimelineWithoutTheHeader(t *testing.T) {
 	client := newControlplaneRedis(t)
 	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:hint-activation", time.Hour)
@@ -178,8 +180,10 @@ func TestAHintedActivationRequestIsAnsweredFromTheTimelineWithoutTheHeader(t *te
 		t.Fatal("a contract that does not reference its persisted Segment was answered on the hinted path")
 	}
 
-	// After the cutover the Slot at 60 is in a closed Segment: historical,
-	// every Plan ActivationNone, with the right hint (2) and without.
+	// After the cutover the Slot at 60 is in a closed Segment. The Plan
+	// stayed (only its schedule moved), so it is answered with the record it
+	// ran under, with the right hint (2) and without; the Plan the Segment
+	// never carried is still ActivationNone.
 	newCatalog := catalogWithSchedule(t, catalog, 60, 30)
 	newSnapshot, _, err := repository.PublishCatalog(ctx, newCatalog)
 	if err != nil {
@@ -187,12 +191,12 @@ func TestAHintedActivationRequestIsAnsweredFromTheTimelineWithoutTheHeader(t *te
 	}
 	cutOverAt(t, repository, newSnapshot, 180)
 	historical, err := repository.LoadActivations(controlplane.WithTimelineRevisionHint(ctx, 2), request)
-	if err != nil || historical.Facts[0].Selection != execution.ActivationNone {
-		t.Fatalf("hinted activations for a closed Segment = (%+v, %v), want ActivationNone", historical.Facts, err)
+	if err != nil || !reflect.DeepEqual(historical, byHeader) {
+		t.Fatalf("hinted activations for a closed Segment = (%+v, %v), want the record the Slot ran under %+v", historical.Facts, err, byHeader.Facts)
 	}
 	byHeaderAfter, err := repository.LoadActivations(ctx, request)
-	if err != nil || byHeaderAfter.Facts[0].Selection != execution.ActivationNone {
-		t.Fatalf("header activations for a closed Segment = (%+v, %v), want ActivationNone", byHeaderAfter.Facts, err)
+	if err != nil || !reflect.DeepEqual(byHeaderAfter, byHeader) {
+		t.Fatalf("header activations for a closed Segment = (%+v, %v), want the record the Slot ran under %+v", byHeaderAfter.Facts, err, byHeader.Facts)
 	}
 }
 

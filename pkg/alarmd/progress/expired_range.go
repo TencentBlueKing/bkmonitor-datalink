@@ -103,13 +103,14 @@ func (store *Store) changeRange(ctx context.Context, request execution.ExpiredRa
 	if err != nil {
 		return execution.ExpiredRangeResult{}, err
 	}
-	status, err := store.options.Control.FencedCompareAndSet(ctx, ownership.FencedCASRequest{
+	// The fence's refusals come back with a status and the ownership error
+	// beside it, so the status is read first: an error alone is an IO failure,
+	// and judged before the status a stale fence or a moved scope would be
+	// named REDIS_UNAVAILABLE and retried on an IO backoff.
+	status, _ := store.options.Control.FencedCompareAndSet(ctx, ownership.FencedCASRequest{
 		Fence: request.OwnerFence, Namespace: name, ContentScope: request.ContentScope,
 		Expected: raw, Value: value, TTL: 0,
 	})
-	if err != nil {
-		return rangeIO(), nil
-	}
 	switch status {
 	case ownership.FencedCASApplied:
 		return execution.ExpiredRangeResult{Status: execution.ProgressCommitted}, nil
@@ -117,6 +118,8 @@ func (store *Store) changeRange(ctx context.Context, request execution.ExpiredRa
 		return execution.ExpiredRangeResult{Status: execution.ProgressConflict}, nil
 	case ownership.FencedCASStaleOwner:
 		return execution.ExpiredRangeResult{Status: execution.ProgressStaleOwner}, nil
+	case ownership.FencedCASContentMoved:
+		return execution.ExpiredRangeResult{Status: execution.ProgressContentMoved}, nil
 	default:
 		return rangeIO(), nil
 	}

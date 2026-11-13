@@ -130,13 +130,14 @@ func (repository *RedisCatalogRepository) PlanCarries(ctx context.Context, query
 			return PlanCarriesReading{}, err
 		}
 		// Walk back to the record that activated the Plan: the one that
-		// forced it to warm up, which a new Plan, a moved generation and a
-		// return from a hold all are, and nothing else is. A return from a
-		// hold keeps the generation and carries nothing across the hole, so
-		// the generation alone would walk past it. A Segment that does not run
-		// the Plan under this generation also ends the walk.
+		// forced it to warm up - a new Plan, a moved generation nothing was
+		// carried into, a return from a hold - or the one that carried its
+		// state into a moved generation, which does not warm up. A return
+		// from a hold keeps the generation and carries nothing across the
+		// hole, so the generation alone would walk past it. A Segment that
+		// does not run the Plan under this generation also ends the walk.
 		activated, activation := open, record
-		for !activation.Fact.Selected.ForceWarming {
+		for !activation.Fact.Selected.ForceWarming && activation.Fact.Selected.Carry == nil {
 			if activated == 0 {
 				break
 			}
@@ -146,7 +147,7 @@ func (repository *RedisCatalogRepository) PlanCarries(ctx context.Context, query
 			}
 			activated, activation = activated-1, earlier
 		}
-		fact.ActivationFound = activation.Fact.Selected.ForceWarming || activated > 0
+		fact.ActivationFound = activation.Fact.Selected.ForceWarming || activation.Fact.Selected.Carry != nil || activated > 0
 		fact.ActivatedAt = timeline.Segments[activated].Schedule.Segment.Start
 		if carry := activation.Fact.Selected.Carry; carry != nil {
 			source := &PlanCarrySource{StateGeneration: carry.From, Levels: append([]uint32{}, carry.Levels...)}

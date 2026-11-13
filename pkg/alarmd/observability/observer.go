@@ -215,9 +215,13 @@ const (
 	StageFrozenStateRenewed  = "frozen_state_renewed"
 	StageEvaluationCompleted = "evaluation_completed"
 	StageSideEffectAdmission = "side_effect_admission"
-	StageStateAdmission      = "state_admission"
-	StageGapGuardCommitted   = "gap_guard_committed"
-	StageMutationCompared    = "mutation_compared"
+	// StagePlanActivationChecked is a Plan's activation read on its own,
+	// before the Progress commit: the commit's script runs the owner fence,
+	// so no fence is read here, and the line is not relayed as fence_checked.
+	StagePlanActivationChecked = "plan_activation_checked"
+	StageStateAdmission        = "state_admission"
+	StageGapGuardCommitted     = "gap_guard_committed"
+	StageMutationCompared      = "mutation_compared"
 	// StageWarmingPeak names a replica's hourly line on its state writes to
 	// series still warming their history: the busiest minute and the groups
 	// behind it (WarmingPeak).
@@ -351,6 +355,10 @@ const (
 
 	ReasonNone                                ReasonCode = "none"
 	ReasonStateAlreadyAppliedBeforeEvaluation ReasonCode = "state_already_applied_before_evaluation"
+	// ReasonStateSupersededBeforeEvaluation is a series a Slot did not
+	// evaluate because its State is a later Slot's: success, like the one
+	// above, and the word that keeps it from reading as nothing happened.
+	ReasonStateSupersededBeforeEvaluation ReasonCode = "state_superseded_before_evaluation"
 	// ReasonInternalUnknown is chosen by a site that has looked at the failure
 	// and has nothing finer to say about it.
 	ReasonInternalUnknown ReasonCode = "internal_unknown"
@@ -429,7 +437,15 @@ type Counts struct {
 	// returned; see execution.PreflightTiming.
 	StateFetchMillis  int64
 	StateDecodeMillis int64
+	// Evaluations is, on an evaluation_completed line, how many series
+	// evaluations it stands for: routine ones of one Plan's batch are one
+	// line (MergeRoutineEvaluation), and zero is one, a line of its own.
+	Evaluations int64
 }
+
+// EvaluationsOf is how many series evaluations an evaluation_completed
+// observation stands for.
+func EvaluationsOf(observation Observation) int64 { return max(1, observation.Counts.Evaluations) }
 
 // TargetResolutionFacts is one Plan's target plan resolved for one Slot:
 // the composed state, the age of a snapshot served past a failed refresh,
@@ -765,9 +781,11 @@ type NoDataMemoryRefusalFacts struct {
 	Record string
 	Groups int
 	Limit  int
-	// LimitSource is whose Limit is: platform (the deployment's) or strategy
-	// (the item's own max_groups).
+	// LimitSource is whose Limit is: platform (the deployment's), strategy
+	// (the item's own max_groups), or share for a BYTES refusal, whose Limit
+	// is the share in bytes and Bytes what the memory held.
 	LimitSource string
+	Bytes       uint64
 }
 
 // NoDataCensusFacts is how many Plans this Slot had that detect no-data, before
@@ -881,7 +899,12 @@ type ActiveQGSetFacts struct {
 	Result      string
 	QueryGroups int
 	ObjectBytes int
-	Duration    time.Duration
+	// TimelinesAged and TimelinesFirst are the Schedule timelines a renewal
+	// renewed: the ones this Control Leader term last renewed or wrote a
+	// third of the catalog TTL ago or more, and the ones it had not.
+	TimelinesAged  int
+	TimelinesFirst int
+	Duration       time.Duration
 }
 
 // ScheduleCutoverFacts describe one publication cutover as the Control
@@ -921,11 +944,31 @@ type ScheduleCutoverFacts struct {
 	// ReadHoldLinks counts the moved Plans' links to the groups they left,
 	// by ScheduleCutoverReadHoldLinks.
 	ReadHoldLinks map[string]int
+	// Samples names, for each of ScheduleCutoverSampledDecisions the cutover
+	// made, the first ScheduleCutoverSampleCap Query Groups it made it for,
+	// and SamplesTruncated how many more it made it for and did not name.
+	// Without them nothing said which Query Groups an edit reached, and a
+	// reading of their Slots after the cutover had nothing to join on.
+	Samples          map[string][]string
+	SamplesTruncated map[string]int
 }
 
 // ScheduleCutoverDecisions is the closed vocabulary of what a publication
 // cutover does with one Query Group.
 var ScheduleCutoverDecisions = []string{"kept", "revised", "cut", "retired", "added", "blocked", "reopened", "retired_unwritten", "repaired"}
+
+// ScheduleCutoverSampledDecisions are the decisions a cutover's line names
+// Query Groups for: an edit that moved only output contexts, one that
+// changed what runs, and a Query Group arriving or leaving.
+var ScheduleCutoverSampledDecisions = []string{"revised", "cut", "added", "retired"}
+
+// ScheduleCutoverSampleCap is how many Query Groups a cutover's line names
+// for one decision. An edit reaches a handful: a live deployment's cutovers
+// keep some 2,900 Query Groups an hour and revise about one, so 16 names
+// every Query Group of an ordinary edit. A bulk change past it is named by
+// its count, its first 16 and how many more, and the line stays bounded at
+// four lists of 16 identities whatever the change.
+const ScheduleCutoverSampleCap = 16
 
 // ScheduleCutoverReadHoldLinks is the closed vocabulary of what a cutover
 // does with a Plan's link to the Query Group it left: linked (the state
@@ -1373,7 +1416,11 @@ type ObjectCatalogFacts struct {
 	Missing       int
 	ManifestBytes int
 	ObjectBytes   int
-	Duration      time.Duration
+	// RenewedObjects and RenewedContexts are the keys a renewal renewed:
+	// the Query Group objects with the manifest, and the output contexts.
+	RenewedObjects  int
+	RenewedContexts int
+	Duration        time.Duration
 }
 
 // ObjectReadFacts describe one read of a catalog object by a Worker: the
@@ -1422,8 +1469,8 @@ var (
 	StateCarryScopes  = []string{"plan", "series", "no_data_plan", "no_data_load"}
 	StateCarryResults = map[string][]string{
 		"plan": {"carried", "carried_detect_changed", "none_group_changed", "none_no_common_level", "none_previous_unreadable", "none_discontinuous"},
-		"series": {"carried", "carried_across_detect", "nothing_kept", "skipped_active_guard", "skipped_guard_warming",
-			"skipped_guard_gapped", "old_missing"},
+		"series": {"carried", "carried_across_detect", "nothing_kept", "skipped_guard_warming", "skipped_guard_gapped",
+			"old_missing"},
 		"no_data_plan": {"carried", "carried_ends_only", "not_carried_semantics_changed",
 			"not_carried_previous_unreadable"},
 		"no_data_load": {"memory_carried", "memory_previous_empty", "memory_previous_unreadable",
@@ -1534,10 +1581,13 @@ type RebalanceFacts struct {
 	// had moved under the round. Paused says the round wrote none because
 	// the ready set changed within the stabilisation window, PausedForSeconds
 	// how much of the window was left.
-	PublishedMoves   int     `json:"published_moves"`
-	Conflicts        int     `json:"conflicts"`
-	Paused           bool    `json:"paused"`
-	PausedForSeconds float64 `json:"paused_for_seconds"`
+	PublishedMoves int `json:"published_moves"`
+	// PublishedFromSessionHolders is how many of those took a Query Group
+	// from a holder holding it under a worker session (A2).
+	PublishedFromSessionHolders int     `json:"published_from_session_holders"`
+	Conflicts                   int     `json:"conflicts"`
+	Paused                      bool    `json:"paused"`
+	PausedForSeconds            float64 `json:"paused_for_seconds"`
 	// Replaced is how many Query Groups the round moved off holders that are
 	// alive and READY but no longer eligible (a rollout that changed the
 	// capability digest), Deferred how many more it left where they were for
@@ -1548,6 +1598,16 @@ type RebalanceFacts struct {
 	Replaced    int `json:"replaced"`
 	Deferred    int `json:"replacements_deferred"`
 	Unplaceable int `json:"unplaceable"`
+	// Placed is how many Query Groups the round took off a holder not in its
+	// ready set and placed elsewhere (a first placement is not one).
+	// PlacedFromSessionHolders and ReplacedFromSessionHolders are the parts of
+	// Placed and Replaced taken from a holder under a worker session.
+	Placed                     int `json:"placed"`
+	PlacedFromSessionHolders   int `json:"placed_from_session_holders"`
+	ReplacedFromSessionHolders int `json:"replaced_from_session_holders"`
+	// Unfit is how many placements fit no worker under the byte constraint's
+	// projection and went to the rendezvous choice regardless.
+	Unfit int `json:"placement_unfit"`
 	// DeclinedEverywhere is the part of Unplaceable whose every eligible
 	// worker declines it - an execution of it hung on each in turn, the
 	// Query Group's own bug (design 02 section 6.5) - and the first few by
@@ -1595,6 +1655,11 @@ type ByteConstraintFacts struct {
 	Conflicts      int              `json:"conflicts"`
 	Paused         bool             `json:"paused"`
 	Moves          []ByteMoveSample `json:"moves,omitempty"`
+	// PublishedFromSessionHolders is the part of PublishedMoves taken from a
+	// holder under a worker session; MostLoadedShare the largest judged
+	// Worker's sum of peaks over its limit, above one overloaded.
+	PublishedFromSessionHolders int     `json:"published_from_session_holders"`
+	MostLoadedShare             float64 `json:"most_loaded_share"`
 }
 
 // ByteMoveSample is one byte-constraint move with the peak it was judged by.
@@ -1632,6 +1697,71 @@ type ControlReadFacts struct {
 	RegistryKeys           int     `json:"registry_keys"`
 	RegistryRoundTrips     int     `json:"registry_round_trips"`
 	RegistryMilliseconds   float64 `json:"registry_milliseconds"`
+	// RecordReads is the Assignment records the Leader read since its last
+	// round line, by why (RecordReadReasons): it keeps a copy of them for its
+	// term and reads one only when the copy cannot be trusted to say.
+	RecordReads map[string]int `json:"record_reads,omitempty"`
+	// RecordMismatches is the fields a backstop read found its copy wrong
+	// on (RecordFields), counted once a record each field; RecordMismatchSample
+	// the first few of them outside the three a Worker writes, each a write
+	// the copy missed.
+	RecordMismatches     map[string]int   `json:"record_mismatches,omitempty"`
+	RecordMismatchSample []RecordMismatch `json:"record_mismatch_sample,omitempty"`
+	// RecordConflicts is the round's records whose publication was refused
+	// because they had changed since read; each was read again and settled
+	// once more. RecordConflictsAgain is the part refused again, left for the
+	// next round.
+	RecordConflicts      int `json:"record_conflicts,omitempty"`
+	RecordConflictsAgain int `json:"record_conflicts_again,omitempty"`
+}
+
+// RecordMismatch is one field of one record a backstop read found the
+// Leader's copy wrong on, with both values.
+type RecordMismatch struct {
+	QueryGroup string `json:"query_group"`
+	Field      string `json:"field"`
+	Cached     string `json:"cached"`
+	Stored     string `json:"stored"`
+}
+
+// MaxRecordMismatchSamples bounds the mismatches a round line names.
+const MaxRecordMismatchSamples = 8
+
+// RecordReadReasons are why the Control Leader read an Assignment record:
+// the term began, the Query Group entered the population, the record is the
+// round's share of the backstop, a publication over it was refused as
+// changed or its outcome is not known, or another process's activation
+// rewrote its timeline revision - or a delta that could not say which it
+// rewrote had every record the copy holds read again.
+var RecordReadReasons = []string{"term_start", "entered", "backstop", "conflict", "unknown_outcome", "foreign_cutover"}
+
+// RecordFields are the fields of an Assignment record the Leader's copy is
+// compared on, and presence: whether there is a record at all. content_scope,
+// pending_content_scope and effective_at_ms are the ones a Worker writes
+// (promoting its pending content), and the copy is expected to fall behind
+// on them until a backstop read; any other is a write the copy missed.
+var RecordFields = []string{"presence", "record_revision", "desired_worker_id", "placement_reason", "timeline_record_revision",
+	"content_scope", "pending_content_scope", "effective_at_ms"}
+
+// RecordFieldWorkerWritten says a Worker writes the field.
+func RecordFieldWorkerWritten(field string) bool {
+	return field == "content_scope" || field == "pending_content_scope" || field == "effective_at_ms"
+}
+
+// closedCounts is counts keeping only the positive ones of a name in names,
+// nil when none is left.
+func closedCounts(counts map[string]int, names []string) map[string]int {
+	var kept map[string]int
+	for name, count := range counts {
+		if count <= 0 || !slices.Contains(names, name) {
+			continue
+		}
+		if kept == nil {
+			kept = make(map[string]int, len(counts))
+		}
+		kept[name] = count
+	}
+	return kept
 }
 
 func normalizeControlReadFacts(facts *ControlReadFacts) *ControlReadFacts {
@@ -1639,14 +1769,21 @@ func normalizeControlReadFacts(facts *ControlReadFacts) *ControlReadFacts {
 		return nil
 	}
 	normalized := *facts
+	normalized.RecordReads = closedCounts(facts.RecordReads, RecordReadReasons)
+	normalized.RecordMismatches = closedCounts(facts.RecordMismatches, RecordFields)
+	if len(normalized.RecordMismatchSample) > MaxRecordMismatchSamples {
+		normalized.RecordMismatchSample = normalized.RecordMismatchSample[:MaxRecordMismatchSamples]
+	}
 	for _, count := range []*int{
 		&normalized.QueryGroups, &normalized.AssignmentKeys, &normalized.AssignmentRoundTrips,
-		&normalized.RegistryKeys, &normalized.RegistryRoundTrips,
+		&normalized.RegistryKeys, &normalized.RegistryRoundTrips, &normalized.RecordConflicts, &normalized.RecordConflictsAgain,
 	} {
 		if *count < 0 {
 			*count = 0
 		}
 	}
+	// The ones refused again are a part of the ones refused.
+	normalized.RecordConflictsAgain = min(normalized.RecordConflictsAgain, normalized.RecordConflicts)
 	for _, elapsed := range []*float64{&normalized.AssignmentMilliseconds, &normalized.RegistryMilliseconds} {
 		if *elapsed < 0 || math.IsNaN(*elapsed) || math.IsInf(*elapsed, 0) {
 			*elapsed = 0
@@ -1662,7 +1799,8 @@ func normalizeRebalanceFacts(facts *RebalanceFacts) *RebalanceFacts {
 	normalized := *facts
 	for _, count := range []*int{
 		&normalized.ReadyWorkers, &normalized.Assigned, &normalized.Target, &normalized.MostOwned,
-		&normalized.LeastOwned, &normalized.Batch, &normalized.PlannedMoves, &normalized.PublishedMoves, &normalized.Conflicts,
+		&normalized.LeastOwned, &normalized.Batch, &normalized.PlannedMoves, &normalized.PublishedMoves,
+		&normalized.PublishedFromSessionHolders, &normalized.Conflicts,
 	} {
 		if *count < 0 {
 			*count = 0
@@ -2209,6 +2347,9 @@ type AlgorithmEvaluationFact struct {
 	// that answered whole.
 	ReasonCarried bool                `json:"reason_carried,omitempty"`
 	Provenance    AlgorithmProvenance `json:"provenance,omitempty"`
+	// Count is how many evaluations the fact stands for, on a line merged
+	// from routine ones (MergeRoutineEvaluation); zero is one.
+	Count uint64 `json:"count,omitempty"`
 }
 
 // RecoveryGateCause is the state of the first other Level a RECOVERY record
@@ -2526,6 +2667,9 @@ type AlgorithmInputFact struct {
 	Result                AlgorithmInputResult     `json:"result"`
 	ReasonCode            ReasonCode               `json:"reason_code"`
 	Provenance            AlgorithmProvenance      `json:"provenance,omitempty"`
+	// Count is how many inputs the fact stands for, as on
+	// AlgorithmEvaluationFact; zero is one.
+	Count uint64 `json:"count,omitempty"`
 }
 
 type TraceFields struct {
@@ -2540,6 +2684,7 @@ type TraceFields struct {
 	DuePlanSetDigest        string
 	OwnerID                 string
 	OwnerEpoch              uint64
+	SessionEpoch            uint64
 	EvaluationTime          int64
 	StrategyID              string
 	BusinessID              string
@@ -2742,6 +2887,11 @@ type Observation struct {
 	ReplayExpiry         *ReplayExpiryFacts
 	ReplayTakeover       *ReplayTakeoverFacts
 	SlotDiversion        *SlotDiversionFacts
+	// StateSuperseded is what one skip site left unwritten because a later
+	// Slot had written it, and is counted; SlotSuperseded is the attempt's
+	// series total on its completion line, and is not.
+	StateSuperseded *StateSupersededFacts
+	SlotSuperseded  *SlotSupersededFacts
 	// HeldBy is what the round before this one did with the Query Group. It
 	// sits on the Observation rather than inside one cohort's fact bundle:
 	// it first shipped inside ShortPeriodCompletionFacts, and every Query
@@ -2785,6 +2935,9 @@ type Observation struct {
 	// SlotDrain is one wait for in-flight Slots: a handover's, on
 	// handover_drained, or a stop's, on the shutdown line.
 	SlotDrain *SlotDrainFacts
+	// LeaseHolder is the lease a refused takeover ran into, or why it is not
+	// known, on the takeover_completed line that failed.
+	LeaseHolder *LeaseHolderFacts
 	// ExecutionHung is one execution past its deadline and grace declined,
 	// or returning, on execution_hung.
 	ExecutionHung *ExecutionHungFacts
@@ -3389,6 +3542,22 @@ func normalizeScheduleCutoverFacts(facts *ScheduleCutoverFacts) *ScheduleCutover
 	if normalized.Duration < 0 {
 		normalized.Duration = 0
 	}
+	samples, truncated := map[string][]string{}, map[string]int{}
+	for _, decision := range ScheduleCutoverSampledDecisions {
+		named := normalized.Samples[decision]
+		more := max(normalized.SamplesTruncated[decision], 0)
+		if len(named) > ScheduleCutoverSampleCap {
+			more += len(named) - ScheduleCutoverSampleCap
+			named = named[:ScheduleCutoverSampleCap]
+		}
+		if len(named) > 0 {
+			samples[decision] = append([]string(nil), named...)
+		}
+		if more > 0 {
+			truncated[decision] = more
+		}
+	}
+	normalized.Samples, normalized.SamplesTruncated = samples, truncated
 	return &normalized
 }
 
@@ -3460,7 +3629,8 @@ func normalizeObjectCatalogFacts(facts *ObjectCatalogFacts) *ObjectCatalogFacts 
 	if normalized.Result != "success" && normalized.Result != "failure" {
 		normalized.Result = "failure"
 	}
-	for _, count := range []*int{&normalized.QueryGroups, &normalized.Written, &normalized.Present, &normalized.Missing, &normalized.ManifestBytes, &normalized.ObjectBytes} {
+	for _, count := range []*int{&normalized.QueryGroups, &normalized.Written, &normalized.Present, &normalized.Missing, &normalized.ManifestBytes, &normalized.ObjectBytes,
+		&normalized.RenewedObjects, &normalized.RenewedContexts} {
 		if *count < 0 {
 			*count = 0
 		}
@@ -3487,8 +3657,10 @@ func normalizeActiveQGSetFacts(facts *ActiveQGSetFacts) *ActiveQGSetFacts {
 	if normalized.QueryGroups < 0 {
 		normalized.QueryGroups = 0
 	}
-	if normalized.ObjectBytes < 0 {
-		normalized.ObjectBytes = 0
+	for _, count := range []*int{&normalized.ObjectBytes, &normalized.TimelinesAged, &normalized.TimelinesFirst} {
+		if *count < 0 {
+			*count = 0
+		}
 	}
 	if normalized.Duration < 0 {
 		normalized.Duration = 0
@@ -3883,7 +4055,7 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentControlPlane, StageNoDataSuspended},
 	{ComponentControlPlane, StageControlHandbackWatch},
 	{ComponentRuntime, StageTraceExport},
-	{ComponentState, StageSideEffectAdmission}, {ComponentState, StageGapGuardCommitted},
+	{ComponentState, StageSideEffectAdmission}, {ComponentState, StagePlanActivationChecked}, {ComponentState, StageGapGuardCommitted},
 	{ComponentState, StageMutationCompared}, {ComponentState, StageStateAdmission}, {ComponentState, StageWarmingPeak},
 	{ComponentState, StageStateApplied}, {ComponentState, StageOutputUnapplied},
 	{ComponentOutput, StageEventACKed}, {ComponentOutput, StageNoDataManualCloseChecked},
@@ -4169,14 +4341,14 @@ var SlotPathReasons = func() []ReasonCode {
 
 var slotPathReasonSet = makeReasonSet(SlotPathReasons)
 
-var allCommonReasons = joinReasons(unclassifiedReasons, contractClassReasons, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
+var allCommonReasons = joinReasons(unclassifiedReasons, contractClassReasons, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation, ReasonStateSupersededBeforeEvaluation})
 var allResourceReasons = joinReasons(
-	unclassifiedReasons, resourceOnlyReasons, contractClassReasons, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
+	unclassifiedReasons, resourceOnlyReasons, contractClassReasons, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation, ReasonStateSupersededBeforeEvaluation})
 
 // allLogReasons is every reason NormalizeReason can return: the limiter keeps
 // a bucket for each, and refuses a reason it has none for, so a catalogue
 // NormalizeReason accepts and this list leaves out has its lines dropped.
-var allLogReasons = joinReasons(unclassifiedReasons, []ReasonCode{ReasonTraceExportFailed}, resourceOnlyReasons, activationFailureReasons, ViewStreamReasons, SchedulerDecisionReasons, SlotPathReasons, effectiveMaintenanceReasons, AbsentCloseReasons, EditCloseReasons, StrategyScopeCloseReasons, CompletionAttributionReasons, AdmissionFailureReasons, NoDataStallReasons, contractClassReasons, []ReasonCode{ReasonHeldBySupplement, ReasonHeldByMaintenance, ReasonSlotCancelled}, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
+var allLogReasons = joinReasons(unclassifiedReasons, []ReasonCode{ReasonTraceExportFailed}, resourceOnlyReasons, activationFailureReasons, ViewStreamReasons, SchedulerDecisionReasons, SlotPathReasons, effectiveMaintenanceReasons, AbsentCloseReasons, EditCloseReasons, StrategyScopeCloseReasons, CompletionAttributionReasons, AdmissionFailureReasons, NoDataStallReasons, contractClassReasons, []ReasonCode{ReasonHeldBySupplement, ReasonHeldByMaintenance, ReasonSlotCancelled}, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation, ReasonStateSupersededBeforeEvaluation})
 
 var componentStageSet = makeComponentStageSet(allComponentStages)
 var metricComponentStageSet = makeComponentStageSet(metricComponentStages)
@@ -4184,7 +4356,7 @@ var resultSet = makeResultSet(allResults)
 var operationSet = makeOperationSet(allOperations)
 var metricOperationSet = makeOperationSet(metricOperations)
 var logReasonSet = makeReasonSet(AllLogReasons())
-var commonReasonSet = makeReasonSet(joinReasons(unclassifiedReasons, []ReasonCode{ReasonStateAlreadyAppliedBeforeEvaluation}))
+var commonReasonSet = makeReasonSet(joinReasons(unclassifiedReasons, []ReasonCode{ReasonStateAlreadyAppliedBeforeEvaluation, ReasonStateSupersededBeforeEvaluation}))
 var resourceReasonSet = makeReasonSet(resourceOnlyReasons)
 var activationFailureReasonSet = makeReasonSet(activationFailureReasons)
 var viewStreamReasonSet = makeReasonSet(ViewStreamReasons)
@@ -4322,4 +4494,96 @@ func ObserveSlotWait(
 		Component: ComponentScheduler, Stage: StageSlotWait, Result: result, ReasonCode: reason, Operation: operation,
 		Duration: elapsed, DurationKnown: true, SlotWait: &SlotWaitFacts{Wait: wait},
 	})
+}
+
+// MergeRoutineEvaluation folds next, a routine evaluation_completed
+// observation of the Plan into's is of, into into: the evaluations, records
+// and time summed, the algorithm and Level facts summed by everything but
+// their counts (decision-020 0.6.x throughput design 3.4-3). Every count a
+// reader takes from the lines is the same over the merged line as over the
+// lines it was merged from. The trace is the Plan's, no series': the merged
+// line is no one series' evaluation.
+func MergeRoutineEvaluation(into *Observation, next Observation) {
+	if into.Counts.Evaluations == 0 {
+		*into = next
+		into.Counts.Evaluations = 1
+		into.Trace.DimensionIdentityDigest = ""
+		into.AlgorithmEvaluations = mergeAlgorithmEvaluations(nil, next.AlgorithmEvaluations)
+		into.AlgorithmInputs = mergeAlgorithmInputs(nil, next.AlgorithmInputs)
+		into.LevelOutcomes = mergeLevelOutcomes(nil, next.LevelOutcomes)
+		return
+	}
+	// Lines of known and of unknown time are not merged with each other
+	// (the worker merges only timed ones): the time of a merged line is
+	// known or not as each of its lines' was.
+	into.Counts.Evaluations += EvaluationsOf(next)
+	into.Counts.Records += next.Counts.Records
+	into.Duration += next.Duration
+	into.DurationKnown = into.DurationKnown && next.DurationKnown
+	into.EvaluationRecordsKnown = into.EvaluationRecordsKnown && next.EvaluationRecordsKnown
+	into.AlgorithmEvaluations = mergeAlgorithmEvaluations(into.AlgorithmEvaluations, next.AlgorithmEvaluations)
+	into.AlgorithmInputs = mergeAlgorithmInputs(into.AlgorithmInputs, next.AlgorithmInputs)
+	into.LevelOutcomes = mergeLevelOutcomes(into.LevelOutcomes, next.LevelOutcomes)
+}
+
+func mergeAlgorithmEvaluations(into, next []AlgorithmEvaluationFact) []AlgorithmEvaluationFact {
+	for _, fact := range next {
+		count := max(1, fact.Count)
+		merged := false
+		for index := range into {
+			held := into[index]
+			held.Count = fact.Count
+			if held == fact {
+				into[index].Count = max(1, into[index].Count) + count
+				merged = true
+				break
+			}
+		}
+		if !merged {
+			fact.Count = count
+			into = append(into, fact)
+		}
+	}
+	return into
+}
+
+func mergeAlgorithmInputs(into, next []AlgorithmInputFact) []AlgorithmInputFact {
+	for _, fact := range next {
+		count := max(1, fact.Count)
+		merged := false
+		for index := range into {
+			held := into[index]
+			held.Count = fact.Count
+			if held == fact {
+				into[index].Count = max(1, into[index].Count) + count
+				merged = true
+				break
+			}
+		}
+		if !merged {
+			fact.Count = count
+			into = append(into, fact)
+		}
+	}
+	return into
+}
+
+func mergeLevelOutcomes(into, next []LevelOutcomeFact) []LevelOutcomeFact {
+	for _, fact := range next {
+		merged := false
+		for index := range into {
+			held := into[index]
+			held.Count, held.OmittedRecoveries = fact.Count, fact.OmittedRecoveries
+			if held == fact {
+				into[index].Count += fact.Count
+				into[index].OmittedRecoveries += fact.OmittedRecoveries
+				merged = true
+				break
+			}
+		}
+		if !merged {
+			into = append(into, fact)
+		}
+	}
+	return into
 }

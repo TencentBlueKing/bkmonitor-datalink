@@ -102,7 +102,7 @@ func TestASlowQueryLeavesThePoolOnlyClearOfItsBackendsCut(t *testing.T) {
 		t.Fatalf("the probe history on the line = %+v, want the held probe then the one that let it out", event.Probes)
 	}
 	record := h.poolRecord()
-	if !record.Until.IsZero() || record.CeilingMillis != 30000 || len(record.Probes) != 2 || *record.LastProbe != *probe {
+	if !record.Until.IsZero() || record.CeilingMillis != 30000 || len(record.Probes) != 2 || !sameQueryCooldownProbe(*record.LastProbe, *probe) {
 		t.Fatalf("the record after the exit = %+v, want it out with the ceiling and both probes kept", record)
 	}
 }
@@ -205,4 +205,17 @@ func TestAReenteredQueryGroupLeavesOnlyOnEvidence(t *testing.T) {
 	if record := h.poolRecord(); !record.Until.IsZero() || record.CeilingMillis != 0 {
 		t.Fatalf("the record after the answer past the cut = %+v, want it out and the ceiling dropped", record)
 	}
+}
+
+// sameQueryCooldownProbe is whether two probes say the same, the instant
+// they were made compared as an instant: the record's comes back from its
+// JSON in UTC, the probe made in memory in the process's own location, and
+// == on the time, which compares the locations, holds only where the
+// process's location is not UTC.
+func sameQueryCooldownProbe(left, right observability.QueryCooldownProbe) bool {
+	if !left.At.Equal(right.At) {
+		return false
+	}
+	left.At = right.At
+	return left == right
 }

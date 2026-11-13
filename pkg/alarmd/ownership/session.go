@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 )
 
 // LeaseStore is what a Session needs of the ownership store. The instants
@@ -49,6 +50,166 @@ type Session struct {
 	// as its Runner noted it; renewals carry it, so a holder already on a
 	// pending change's content is not capped at the change.
 	declared string
+	// under is the worker session the lease was taken under (A2), nil for a
+	// lease its holder renews itself. confirmed is when the fence check
+	// whose answer set the lease's horizon began.
+	under     WorkerSessionSource
+	confirmed time.Time
+}
+
+// WorkerSessionSource is the worker session this process holds now, if any.
+type WorkerSessionSource func() (WorkerSession, bool)
+
+type sessionLeaseAcquirer interface {
+	AcquireUnder(context.Context, execution.QueryGroupIdentity, WorkerSession, time.Time, time.Duration) (Lease, error)
+}
+
+// OpenSessionUnder takes the Query Group's lease under the worker session
+// under names now (A2). With no session held yet it answers ErrLeaseBusy, a
+// refusal the caller retries on its next round.
+//
+// Such a lease has no deadline of its own. Deadline is the earliest of the
+// worker session's own deadline -- zero once the session is not the one the
+// lease was taken under -- the last confirmation plus the lease's TTL, and the
+// effective time of a change that confirmation saw pending for this holder.
+// A confirmation is a fence check that answered with the record; one that
+// began earlier than the last never replaces it, and its horizon and its cap
+// are taken from the one reply together.
+func OpenSessionUnder(
+	ctx context.Context,
+	store LeaseStore,
+	queryGroup execution.QueryGroupIdentity,
+	under WorkerSessionSource,
+	at time.Time,
+	ttl time.Duration,
+) (*Session, error) {
+	acquirer, ok := store.(sessionLeaseAcquirer)
+	if store == nil || !ok || under == nil {
+		return nil, errors.New("alarmd ownership: a store that holds leases under a worker session is required")
+	}
+	worker, held := under()
+	if !held {
+		return nil, ErrNoWorkerSession
+	}
+	lease, err := acquirer.AcquireUnder(ctx, queryGroup, worker, at, ttl)
+	if err != nil {
+		return nil, err
+	}
+	return &Session{store: store, lease: lease, accepting: true, under: under, confirmed: at}, nil
+}
+
+// horizonLocked is the lease's deadline as Deadline states it; the caller
+// holds mu.
+func (session *Session) horizonLocked() time.Time {
+	deadline := session.lease.Deadline
+	if session.under == nil {
+		return deadline
+	}
+	worker, held := session.under()
+	if !held || worker.Epoch != session.lease.SessionEpoch {
+		return time.Time{}
+	}
+	if worker.Deadline.Before(deadline) {
+		deadline = worker.Deadline
+	}
+	return deadline
+}
+
+// aliveLocked is whether the lease is still this process's to act on at at:
+// for a lease its holder renews, its deadline; for one held under a session,
+// the session it was taken under, still held and alive. A lease held under a
+// session whose last confirmation has run out is still alive -- its next
+// fence check is that confirmation -- and only Deadline stops at the
+// confirmation's horizon. The caller holds mu.
+func (session *Session) aliveLocked(at time.Time) bool {
+	if !session.accepting {
+		return false
+	}
+	if session.under == nil {
+		return session.lease.Deadline.After(at)
+	}
+	worker, held := session.under()
+	return held && worker.Epoch == session.lease.SessionEpoch && worker.Deadline.After(at)
+}
+
+// Alive reports whether the lease is still this process's to act on at at
+// (aliveLocked). A write it guards has to run the fence itself.
+func (session *Session) Alive(at time.Time) bool {
+	if session == nil {
+		return false
+	}
+	session.mu.RLock()
+	defer session.mu.RUnlock()
+	return session.aliveLocked(at)
+}
+
+// SessionEnded reports whether a lease held under a worker session has
+// ended with it: the Session stopped accepting, or the worker session it was
+// taken under is no longer held -- its own loop let it go -- or is another
+// one. A session whose deadline merely passed on this process's clock has not
+// ended until that loop says so: a renewal it is about to make may restate
+// it, and the lease with it. A lease its holder renews never ends this way.
+func (session *Session) SessionEnded() bool {
+	if session == nil {
+		return true
+	}
+	session.mu.RLock()
+	defer session.mu.RUnlock()
+	if !session.accepting {
+		return true
+	}
+	if session.under == nil {
+		return false
+	}
+	worker, held := session.under()
+	return !held || worker.Epoch != session.lease.SessionEpoch
+}
+
+// confirm records what a fence check that began at and answered with record
+// says about a lease held under a session: it may act for its TTL from at,
+// until a change pending for it takes effect, or, on content the record has
+// moved past, not at all. An answer older than the one in hand is dropped
+// whole.
+func (session *Session) confirm(at time.Time, record AssignmentRecord) {
+	if session == nil || session.under == nil {
+		return
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if !session.accepting || !at.After(session.confirmed) {
+		return
+	}
+	horizon := at.Add(session.lease.TTL)
+	draining := record.DesiredWorkerID != session.lease.Fence.OwnerID
+	pending := record.ContentChangePending() && session.declared != record.PendingContentScope
+	if draining || pending {
+		capAt := at
+		if !record.EffectiveAt.IsZero() && !record.ObservedAt.IsZero() {
+			capAt = at.Add(record.EffectiveAt.Sub(record.ObservedAt))
+		}
+		if capAt.Before(horizon) {
+			horizon = capAt
+		}
+	}
+	// The content declared is neither the record's nor pending as it: the
+	// change it was running toward has been promoted, perhaps with another
+	// pending behind it. The fence refuses that content as moved, so nothing
+	// it runs may go out, and a cap at the next change would let it.
+	if moved := session.declared != "" && record.ContentScope != "" && record.ContentScope != session.declared &&
+		!(record.ContentChangePending() && record.PendingContentScope == session.declared); moved {
+		horizon = at
+	}
+	session.confirmed = at
+	session.lease.Deadline = horizon
+	session.lease.ContentScope = record.ContentScope
+	session.lease.PendingContentScope = record.PendingContentScope
+	session.lease.EffectiveAt = time.Time{}
+	if !record.EffectiveAt.IsZero() && !record.ObservedAt.IsZero() {
+		session.lease.EffectiveAt = at.Add(record.EffectiveAt.Sub(record.ObservedAt))
+	}
+	if record.TimelineRecordRevision > session.lease.TimelineRecordRevision {
+		session.lease.TimelineRecordRevision = record.TimelineRecordRevision
+	}
 }
 
 func OpenSession(
@@ -79,7 +240,12 @@ func (session *Session) ValidateCurrent(ctx context.Context, at time.Time) (exec
 		return execution.OwnerFence{}, err
 	}
 	if err := session.store.CheckFence(ctx, lease.Fence); err != nil {
-		session.stopAccepting()
+		// As ValidateCurrentWithAssignment: only the store's answer about the
+		// fence ends admission. Failing to reach it keeps the lease it may still
+		// hold, and this attempt is refused all the same.
+		if IsLeaseDecision(err) {
+			session.stopAccepting()
+		}
 		return execution.OwnerFence{}, err
 	}
 	return lease.Fence, nil
@@ -115,6 +281,7 @@ func (session *Session) ValidateCurrentWithAssignment(
 		}
 		return execution.OwnerFence{}, AssignmentRecord{}, err
 	}
+	session.confirm(at, record)
 	return lease.Fence, record, nil
 }
 
@@ -127,9 +294,9 @@ func (session *Session) admittedLease(at time.Time) (Lease, error) {
 		return Lease{}, ErrStaleFence
 	}
 	session.mu.RLock()
-	lease, accepting := session.lease, session.accepting
+	lease, alive := session.lease, session.aliveLocked(at)
 	session.mu.RUnlock()
-	if !accepting || !lease.Deadline.After(at) {
+	if !alive {
 		return Lease{}, stale(ErrStaleFence, lease, at)
 	}
 	return lease, nil
@@ -140,10 +307,16 @@ func (session *Session) Renew(ctx context.Context, at time.Time, ttl time.Durati
 		return ErrStaleFence
 	}
 	session.mu.RLock()
-	lease, accepting, declared := session.lease, session.accepting, session.declared
+	lease, accepting, declared, under := session.lease, session.accepting, session.declared, session.under
 	session.mu.RUnlock()
 	if !accepting {
 		return ErrStaleFence
+	}
+	// A lease held under a session is not renewed: a renewal of it is a
+	// confirmation, which moves its horizon on by its TTL.
+	if under != nil {
+		_, _, err := session.ValidateCurrentWithAssignment(confirmation(ctx), at)
+		return err
 	}
 	renewed, err := session.store.RenewDeclaring(ctx, lease.Fence, declared, at, ttl)
 	if err != nil {
@@ -205,7 +378,35 @@ func (session *Session) Deadline() time.Time {
 	if !session.accepting {
 		return time.Time{}
 	}
-	return session.lease.Deadline
+	return session.horizonLocked()
+}
+
+// Confirm is a fence check made only to move a lease held under a session on
+// by its TTL: the confirmation a long Slot's output asks for before its lease
+// runs out (execution.LeaseConfirmer). A lease its holder renews needs none.
+func (session *Session) Confirm(ctx context.Context, at time.Time) error {
+	if !session.HeldUnderSession() {
+		return nil
+	}
+	_, _, err := session.ValidateCurrentWithAssignment(confirmation(ctx), at)
+	return err
+}
+
+// confirmation names the one fence check a confirmation makes, on a context of
+// its own: the caller's goes on to reads that are not the confirmation's.
+func confirmation(ctx context.Context) context.Context {
+	return redisfailure.WithCaller(ctx, redisfailure.CallerLeaseConfirmation)
+}
+
+// HeldUnderSession reports whether the lease is held under a worker session
+// (A2), and so has no renewal of its own to keep.
+func (session *Session) HeldUnderSession() bool {
+	if session == nil {
+		return false
+	}
+	session.mu.RLock()
+	defer session.mu.RUnlock()
+	return session.under != nil
 }
 
 // NoteContentScope records the content scope the Query Group's Slot about to

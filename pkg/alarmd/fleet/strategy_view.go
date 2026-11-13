@@ -292,7 +292,7 @@ func expectedItemOf(config StrategyPlanConfig) ExpectedItem {
 			joiner = " 或 "
 		}
 		item.Algorithms = append(item.Algorithms, levelWord(level.LevelID)+"："+strings.Join(names, joiner))
-		item.Recovery = append(item.Recovery, levelWord(level.LevelID)+"："+recoveryWord(level.Recovery, level.Trigger, config.Schedule.IntervalSeconds))
+		item.Recovery = append(item.Recovery, levelWord(level.LevelID)+"："+recoveryWord(level.Recovery, level.Trigger, config.Schedule.IntervalSeconds, level.ZeroCountIsNoObservation))
 	}
 	if config.NoData != nil {
 		item.NoData = fmt.Sprintf("连续 %d 个周期无数据时告警（%s）", config.NoData.Continuous, levelWord(config.NoData.Level))
@@ -312,7 +312,13 @@ func expectedItemOf(config StrategyPlanConfig) ExpectedItem {
 // §2.3). A plan with a key or a value this build does not read - an end word
 // it does not know - is unknown rather than read as recovering, and so is a
 // -nodata end whose trigger window is not known.
-func recoveryWord(recovery, trigger StrategyTypedPlanConfig, intervalSeconds int64) string {
+//
+// Where a zero count is no observation (an event count, or a log count
+// grouped by nothing; the same spec, §3.1 and §3.2) R periods of zeros end
+// nothing: the windows are walked as before, but only a round with a count
+// above zero that does not trigger recovers. Without -nodata a quiet group's
+// alert stays open, and the words say so and name the setter that ends it.
+func recoveryWord(recovery, trigger StrategyTypedPlanConfig, intervalSeconds int64, zeroIsNoObservation bool) string {
 	if recovery.Undecodable || recovery.UnknownKeys > 0 ||
 		recovery.Enabled == nil || recovery.ConsecutiveWindows == nil && *recovery.Enabled {
 		return "未知"
@@ -320,13 +326,20 @@ func recoveryWord(recovery, trigger StrategyTypedPlanConfig, intervalSeconds int
 	if !*recovery.Enabled {
 		return "不自动恢复"
 	}
-	ends := "恢复告警"
+	verb, setter := "恢复", "recovery-nodata"
 	if recovery.End == contract.RecoveryEndClose {
-		ends = "关闭告警"
+		verb, setter = "关闭", "close-nodata"
 	}
 	windows := int64(*recovery.ConsecutiveWindows)
-	word := fmt.Sprintf("连续 %d 个周期不满足触发条件时%s%s", windows, ends, periodsDuration(windows, intervalSeconds))
+	word := fmt.Sprintf("连续 %d 个周期不满足触发条件时%s告警%s", windows, verb, periodsDuration(windows, intervalSeconds))
+	if zeroIsNoObservation {
+		word = fmt.Sprintf("只在来了大于 0、不满足触发的计数时%s告警，且此前连续 %d 个周期不满足触发条件%s",
+			verb, windows, periodsDuration(windows, intervalSeconds))
+	}
 	if recovery.MissingData != contract.RecoveryMissingDataEvaluateAsZero {
+		if zeroIsNoObservation {
+			return fmt.Sprintf("安静不%s：%s；可配 %s", verb, word, setter)
+		}
 		return word
 	}
 	if trigger.WindowSize == nil {

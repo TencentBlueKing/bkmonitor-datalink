@@ -11,6 +11,8 @@ package metric
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -38,27 +40,101 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisscript"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scopeclose"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/sourceliveness"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategycache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/targetplan"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/tracing"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
 )
 
-func TestRecorderUsesPrivateRegistries(t *testing.T) {
-	first := NewRecorder(BuildInfo{Version: "v1", Commit: "a", SchemaVersion: "none"})
-	second := NewRecorder(BuildInfo{Version: "v2", Commit: "b", SchemaVersion: "none"})
+// cgroupShapes are the files the memory gauges read, as a host of each kind
+// has them: none outside a container, cgroup v1, cgroup v2. Every shape
+// serves a container_memory_cgroup_info line whose version label says which.
+var cgroupShapes = []struct {
+	name, version string
+	files         map[string]string
+}{
+	{"no cgroup", "unknown", map[string]string{}},
+	{"cgroup v1", "v1", map[string]string{"/proc/self/cgroup": "11:memory:/kubepods/pod1/c1\n", "/sys/fs/cgroup/memory/memory.usage_in_bytes": "1\n"}},
+	{"cgroup v2", "v2", map[string]string{"/proc/self/cgroup": "0::/kubepods/pod1/c1\n", "/sys/fs/cgroup/memory.current": "1\n"}},
+}
 
-	if first.Gatherer() == second.Gatherer() {
-		t.Fatal("recorders unexpectedly share a registry")
+// readingCgroup has the recorder's memory gauges read files instead of the
+// host's.
+func readingCgroup(recorder *Recorder, files map[string]string) {
+	recorder.phaseTwo.processMemory.read = func(name string) ([]byte, error) {
+		if body, ok := files[name]; ok {
+			return []byte(body), nil
+		}
+		return nil, errors.New("not here")
 	}
-	if got := scrape(t, first); !strings.Contains(got, `version="v1"`) || strings.Contains(got, `version="v2"`) {
-		t.Fatalf("first registry contains unexpected build labels:\n%s", got)
+}
+
+func TestRecorderUsesPrivateRegistries(t *testing.T) {
+	for _, shape := range cgroupShapes {
+		t.Run(shape.name, func(t *testing.T) {
+			first := NewRecorder(BuildInfo{Version: "v1", Commit: "a", SchemaVersion: "none"})
+			second := NewRecorder(BuildInfo{Version: "v2", Commit: "b", SchemaVersion: "none"})
+			readingCgroup(first, shape.files)
+			readingCgroup(second, shape.files)
+
+			if first.Gatherer() == second.Gatherer() {
+				t.Fatal("recorders unexpectedly share a registry")
+			}
+			// The fixture: the cgroup's version is served under the same
+			// label name as the build's.
+			if got := seriesLabels(t, second, "alarmd_container_memory_cgroup_info"); len(got) != 1 || got[0]["version"] != shape.version {
+				t.Fatalf("fixture: cgroup info = %v, want one of version %s", got, shape.version)
+			}
+			// Each registry's build_info is its own build and only that; the
+			// other recorder's build is in neither.
+			if got := buildLabels(t, first); len(got) != 1 || got[0] != "v1/a" {
+				t.Fatalf("first registry's build_info = %v, want only v1/a", got)
+			}
+			if got := buildLabels(t, second); len(got) != 1 || got[0] != "v2/b" {
+				t.Fatalf("second registry's build_info = %v, want only v2/b", got)
+			}
+		})
 	}
-	if got := scrape(t, second); !strings.Contains(got, `version="v2"`) || strings.Contains(got, `version="v1"`) {
-		t.Fatalf("second registry contains unexpected build labels:\n%s", got)
+}
+
+// buildLabels is each alarmd_build_info series the recorder serves, as
+// version/commit. It reads that family alone: other families carry a version
+// label too (container_memory_cgroup_info's is the cgroup's).
+func buildLabels(t *testing.T, recorder *Recorder) []string {
+	t.Helper()
+	var builds []string
+	for _, labels := range seriesLabels(t, recorder, "alarmd_build_info") {
+		builds = append(builds, labels["version"]+"/"+labels["commit"])
 	}
+	return builds
+}
+
+// seriesLabels is the labels of each series of one family the recorder
+// serves.
+func seriesLabels(t *testing.T, recorder *Recorder, name string) []map[string]string {
+	t.Helper()
+	families, err := recorder.Gatherer().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var series []map[string]string
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, metric := range family.Metric {
+			labels := map[string]string{}
+			for _, pair := range metric.Label {
+				labels[pair.GetName()] = pair.GetValue()
+			}
+			series = append(series, labels)
+		}
+	}
+	return series
 }
 
 func TestUnknownLabelValuesCollapseToOther(t *testing.T) {
@@ -232,6 +308,15 @@ func TestCustomMetricFamilySeriesDevelopmentLimits(t *testing.T) {
 		"alarmd_redis_failure_reason_total": (len(redisClientNames) + 1) * len(redisfailure.Reasons),
 		"alarmd_redis_command_duration_seconds": (len(redisCommandNames) + 1) * 2 *
 			(len(redisClientNames) + 1) * (12 + 1 + 2),
+		// The script families are bounded by redisscript.MaxScripts plus
+		// "other"; the caller ones by the closed caller list plus "other" and
+		// "unnamed".
+		"alarmd_redis_script_total":            65 * 3 * 2 * 3,
+		"alarmd_redis_script_duration_seconds": 65 * 2 * (12 + 1 + 2),
+		"alarmd_redis_script_bytes_total":      65 * 2,
+		"alarmd_redis_caller_duration_seconds": (len(redisClientNames) + 1) * 25 * 2 * (12 + 1 + 2),
+		"alarmd_redis_bytes_total":             (len(redisClientNames) + 1) * 25 * (len(redisCommandNames) + 1) * 2,
+		"alarmd_lease_renewal_total":           4 * 14,
 	} {
 		if got := bounds[family]; got != want {
 			t.Errorf("query permit metric family %s theoretical maximum = %d, want %d", family, got, want)
@@ -323,7 +408,50 @@ func equalFloats(left, right []float64) bool {
 	return true
 }
 
+func populateRedisScriptLabelCombinations(recorder *Recorder) {
+	metrics := recorder.phaseTwo.redisCalls
+	scripts := []string{redisscript.Other}
+	for index := 0; index < redisscript.MaxScripts; index++ {
+		scripts = append(scripts, fmt.Sprintf("script_%d", index))
+	}
+	for _, script := range scripts {
+		for _, pipelined := range []string{"true", "false"} {
+			metrics.scriptDuration.WithLabelValues(script, pipelined).Observe(0)
+			for _, command := range []string{redisscript.CommandEval, redisscript.CommandEvalSHA, redisscript.CommandLoad} {
+				for _, outcome := range []string{redisScriptOutcomeOK, redisScriptOutcomeNoScript, redisScriptOutcomeError} {
+					metrics.scriptCalls.WithLabelValues(script, command, pipelined, outcome).Inc()
+				}
+			}
+		}
+		for _, direction := range []string{redisBytesSent, redisBytesReceived} {
+			metrics.scriptBytes.WithLabelValues(script, direction).Inc()
+		}
+	}
+	clients := []string{"other"}
+	for client := range redisClientNames {
+		clients = append(clients, client)
+	}
+	commands := []string{"other"}
+	for command := range redisCommandNames {
+		commands = append(commands, command)
+	}
+	callers := append([]string{"other", redisCallerUnnamed}, redisfailure.Callers...)
+	for _, client := range clients {
+		for _, caller := range callers {
+			for _, pipelined := range []string{"true", "false"} {
+				metrics.callerDuration.WithLabelValues(client, caller, pipelined).Observe(0)
+			}
+			for _, command := range commands {
+				for _, direction := range []string{redisBytesSent, redisBytesReceived} {
+					metrics.bytes.WithLabelValues(client, caller, command, direction).Inc()
+				}
+			}
+		}
+	}
+}
+
 func populateAllCustomLabelCombinations(recorder *Recorder) {
+	populateRedisScriptLabelCombinations(recorder)
 	for level := uint32(1); level <= 65; level++ {
 		recorder.RecordUnmappedSeverity(level)
 	}
@@ -427,6 +555,15 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("last_progress_timestamp_seconds"):              len(phaseTwoProgressKinds),
 		fqName("capacity_transition_total"):                    len(phaseTwoBudgets) * len(phaseTwoCapacityResults),
 		fqName("state_retained_share_approaching_slots_total"): 1,
+		fqName("worker_input_slices_total"):                    2,
+		fqName("worker_sliced_slots_total"):                    1,
+		fqName("worker_first_seen_unseen_total"):               2,
+		fqName("worker_slice_read_ahead_total"):                len(observability.SliceReadAheadOutcomes),
+		fqName("worker_input_slice_timeouts_total"):            len(observability.InputSliceTimeoutOutcomes),
+		fqName("worker_input_slice_shapes_total"):              len(observability.InputSliceShapeOutcomes),
+		fqName("worker_no_data_stage_ahead_total"):             len(observability.NoDataStageAheadOutcomes),
+		fqName("worker_no_data_groups_staged_ahead_total"):     1,
+		fqName("worker_no_data_stage_ahead_differs_total"):     len(nodata.StagedDiffersReasons),
 		fqName("state_write_reuse_total"):                      len(observability.AllStateWriteReuseClasses()) * len(observability.AllStateWriteReuseStored()),
 		fqName("state_already_applied_total"):                  len(observability.AllStateAlreadyAppliedSites()) * len(observability.AllStateAlreadyAppliedKinds()),
 		fqName("state_version_conflict_total"):                 len(observability.AllStateAlreadyAppliedSites()) * len(observability.AllStateVersionConflictKinds()),
@@ -466,6 +603,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("heap_inuse_profiled_bytes"):  1,
 		fqName("heap_inuse_profile_records"): 1,
 		fqName("heap_inuse_live_bytes"):      1,
+		fqName("heap_inuse_reserved_bytes"):  2,
 		fqName("control_cache_audit_total"):  4,
 		fqName("legacy_pod_cache_total"):     3,
 		// Filters and reasons are closed vocabularies in the recorder.
@@ -509,16 +647,27 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		// Two clients at most: the control plane connection and, when it resolves
 		// to a different endpoint, the runtime connection.
 		// One unlabelled series; connection acquisitions minus it is the retries.
-		fqName("redis_operation_total"):               len(redisClientNames) + 1,
-		fqName("redis_pool_size"):                     2,
-		fqName("redis_pool_connections"):              6,
-		fqName("redis_pool_waits_total"):              6,
-		fqName("redis_command_total"):                 redisCommandSeries,
-		fqName("redis_command_failure_total"):         redisCommandSeries,
-		fqName("redis_failure_reason_total"):          (len(redisClientNames) + 1) * len(redisfailure.Reasons),
-		fqName("redis_caller_operation_total"):        (len(redisClientNames) + 1) * (len(redisfailure.Callers) + 1),
-		fqName("redis_caller_failure_reason_total"):   (len(redisClientNames) + 1) * (len(redisfailure.Callers) + 1) * len(redisfailure.Reasons),
-		fqName("redis_command_duration_seconds"):      histogramSeries(redisCommandSeries, 12),
+		fqName("redis_operation_total"):             len(redisClientNames) + 1,
+		fqName("redis_pool_size"):                   2,
+		fqName("redis_pool_connections"):            6,
+		fqName("redis_pool_waits_total"):            6,
+		fqName("redis_command_total"):               redisCommandSeries,
+		fqName("redis_command_failure_total"):       redisCommandSeries,
+		fqName("redis_failure_reason_total"):        (len(redisClientNames) + 1) * len(redisfailure.Reasons),
+		fqName("redis_caller_operation_total"):      (len(redisClientNames) + 1) * (len(redisfailure.Callers) + 1),
+		fqName("redis_caller_failure_reason_total"): (len(redisClientNames) + 1) * (len(redisfailure.Callers) + 1) * len(redisfailure.Reasons),
+		fqName("redis_command_duration_seconds"):    histogramSeries(redisCommandSeries, 12),
+		// Every registered script plus "other". The table is capped at
+		// MaxScripts whatever a binary links, so these are numbers too. The
+		// callers are the closed list plus "other" and "unnamed".
+		fqName("redis_script_total"):            (redisscript.MaxScripts + 1) * 3 * 2 * 3,
+		fqName("redis_script_duration_seconds"): histogramSeries((redisscript.MaxScripts+1)*2, 12),
+		fqName("redis_script_bytes_total"):      (redisscript.MaxScripts + 1) * 2,
+		fqName("redis_caller_duration_seconds"): histogramSeries((len(redisClientNames)+1)*(len(redisfailure.Callers)+2)*2, 12),
+		fqName("redis_bytes_total"):             (len(redisClientNames) + 1) * (len(redisfailure.Callers) + 2) * (len(redisCommandNames) + 1) * 2,
+		// Three leases, each with renewed, the refusal words and the failure
+		// reasons: the cells a registration cannot reach are not created.
+		fqName("lease_renewal_total"):                 4 * (1 + len(ownership.RefusalReasons) + len(redisfailure.Reasons)),
 		fqName("short_period_slot_completions_total"): 56,
 		// 11 codes UQ declares plus OTHER, times allowed/unavailable/other.
 		fqName("access_response_status_total"): 36,
@@ -526,6 +675,10 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		// query duration has 10 bounds, the decision lag 15), six failure
 		// reasons, one label-free counter
 		fqName("access_query_duration_seconds"):    13,
+		fqName("access_query_answer_bytes"):        histogramSeries(len(observability.PhysicalQueryOutcomes), 12),
+		fqName("access_query_answer_series"):       histogramSeries(len(observability.PhysicalQueryOutcomes), 11),
+		fqName("access_query_answer_records"):      histogramSeries(len(observability.PhysicalQueryOutcomes), 14),
+		fqName("access_query_answer_seconds"):      histogramSeries(len(observability.PhysicalQueryOutcomes), len(QueryAnswerBuckets)),
 		fqName("slot_decision_lag_seconds"):        18,
 		fqName("access_query_failure_total"):       7,
 		fqName("output_events_rejected_all_total"): 1,
@@ -618,14 +771,18 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		// Two operations (write, renew) by three outcomes (written, present,
 		// missing); two operations by two results for the duration.
 		fqName("object_catalog_objects_total"): 2 * 3,
+		fqName("catalog_renewals_total"):       4,
 		// object, manifest.
 		fqName("object_catalog_written_bytes_total"): 2,
 		// One series per rollout position, all four always emitted so the
 		// graph survives a cutover instead of a series vanishing at it.
 		fqName("canonical_encoding_calls_total"):          2,
 		fqName("canonical_encoding_records_shadow_total"): 2,
-		fqName("object_catalog_redis_duration_seconds"):   histogramSeries(2*2, len(activeQGSetDurationBuckets)),
-		fqName("object_catalog_manifest_bytes"):           1,
+		// Unlabelled: one count each.
+		fqName("dataset_record_ids_kept_runs_total"):              1,
+		fqName("dataset_record_ids_derived_outside_window_total"): 1,
+		fqName("object_catalog_redis_duration_seconds"):           histogramSeries(2*2, len(activeQGSetDurationBuckets)),
+		fqName("object_catalog_manifest_bytes"):                   1,
 		// Kinds and results are closed vocabularies plus "other" for each.
 		fqName("object_read_total"):           (len(observability.ObjectReadKinds) + 1) * (len(observability.ObjectReadResults) + 1),
 		fqName("state_generation_skew_total"): len(observability.StateGenerationSkewKinds) + 1,
@@ -645,10 +802,19 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("output_unapplied_total"):              len(ownership.RefusalReasons),
 		fqName("executions_hung_total"):               len(observability.ExecutionHungOutcomes),
 		fqName("control_tier_paused_total"):           len(ControlTierFunctions),
-		fqName("assignment_moves_total"):              1,
+		fqName("assignment_moves_total"):              8,
+		fqName("state_superseded_total"):              len(observability.AllStateSupersededSites()) * len(observability.StateSupersededOperations),
+		fqName("rebalance_byte_overloaded_workers"):   1,
+		fqName("rebalance_byte_most_loaded_share"):    1,
+		fqName("rebalance_byte_unread_groups"):        1,
+		fqName("placement_unfit_total"):               1,
+		fqName("state_series_held"):                   1,
 		fqName("rebalance_paused_total"):              1,
 		fqName("control_read_round_trips_total"):      len(ControlReadKinds),
 		fqName("control_read_keys_total"):             len(ControlReadKinds),
+		fqName("control_record_reads_total"):          len(observability.RecordReadReasons),
+		fqName("control_record_cache_mismatch_total"): len(observability.RecordFields),
+		fqName("control_record_conflicts_total"):      2,
 		fqName("control_read_duration_seconds"):       histogramSeries(len(ControlReadKinds), len(controlReadDurationBuckets)),
 		fqName("assignment_index_stale_rounds"):       1,
 		fqName("assignment_index_write_total"):        2,
@@ -685,8 +851,15 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("assignment_index_confirm_total"):          4,
 		fqName("assignment_record_read_total"):            2,
 		// Four outcomes without a refusal, plus a conflict for each refusal
-		// OTHER included, all created at construction.
-		fqName("schedule_cursor_advance_total"):   len(observability.CursorAdvanceStatuses) - 1 + len(observability.CursorRefusals),
+		// OTHER included, each under every skip reason, and an applied skip
+		// that threw away a Slot in flight under every reason: all created at
+		// construction.
+		fqName("schedule_cursor_advance_total"): (len(observability.CursorAdvanceStatuses) - 1 + len(observability.CursorRefusals) + 1) * len(execution.ForwardSkipReasons),
+		// Every word of the contract catalogue, none, reason_not_reported and
+		// _other, created at construction.
+		// The standing cells, and every word of the contract catalogue a Slot
+		// may end with.
+		fqName("slot_completed_reasons_total"):    len(slotReasonWords) + len(contract.ReasonCatalogV2()),
 		fqName("activation_held_query_groups"):    1,
 		fqName("activation_held_age_seconds_max"): 1,
 	}
@@ -712,6 +885,17 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("observer_panics_total")] = len(observability.ObserverNames)
 	bounds[fqName("absent_strategy_close_total")] = len(absentalerts.Outcomes)
 	bounds[fqName("strategy_edit_close_total")] = len(editclose.Outcomes)
+	bounds[fqName("state_cache_lookups_total")] = len(state.StateCacheLookupResults)
+	bounds[fqName("state_cache_departures_total")] = len(state.StateCacheDepartureReasons)
+	bounds[fqName("state_cache_restored_total")] = len(state.StateCacheRestoreCauses)
+	bounds[fqName("state_cache_restore_declined_total")] = len(state.StateCacheDeclineReasons)
+	bounds[fqName("state_cache_bytes")] = 1
+	bounds[fqName("state_cache_budget_bytes")] = 1
+	bounds[fqName("state_cache_query_groups")] = 1
+	bounds[fqName("state_witness_items")] = 1
+	bounds[fqName("state_witness_bytes")] = 1
+	bounds[fqName("container_memory_cgroup_info")] = 1
+	bounds[fqName("container_memory_v1_bytes")] = 5
 	// cmd/alarmd noDataCloseOutcomes: eight words.
 	bounds[fqName("no_data_close_requests_total")] = 8
 	bounds[fqName("linkd_filter_close_total")] = len(filterclose.Outcomes)
@@ -849,6 +1033,8 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	// all read identically otherwise, which is the reading this family was
 	// added to end.
 	bounds[fqName("worker_frozen_state_census_total")] = 3
+	// One per reason a Slot lets an answered series go, created at startup.
+	bounds[fqName("input_series_discarded_total")] = 1
 	// Every held status against every reason this build can put on a scope
 	// plus the catch-all, against every place the count can stand. All three
 	// come from published lists, so a value added to any of them moves this

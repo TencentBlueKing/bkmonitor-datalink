@@ -16,9 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-redis/redis/v8"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisscript"
 )
 
 // The Assignment index is a per-round snapshot the Control Leader writes
@@ -98,7 +97,7 @@ type AssignmentIndexPublication struct {
 // in ARGV[4] is what the Leader says about when it wrote, stored as
 // written_at_ms for readers; whether the Leader's lease is live is judged
 // by the fence on the server's clock, as everywhere.
-var publishAssignmentIndexScript = redis.NewScript(FenceLua + `
+var publishAssignmentIndexScript = redisscript.New("ownership_publish_assignment_index", FenceLua+`
 local leader_id = ARGV[1]
 local leader_epoch = ARGV[2]
 local leader_token = ARGV[3]

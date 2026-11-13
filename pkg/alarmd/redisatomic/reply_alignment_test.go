@@ -168,7 +168,7 @@ func TestARefusedMultiLeavesItsRepliesForTheNextCommand(t *testing.T) {
 func TestARefusedScriptWriteLeavesNothingForTheNextCommand(t *testing.T) {
 	address, served, answered := loadingServer(t)
 	client := oneConnection(t, address)
-	write := New(`redis.call('SET', KEYS[1], ARGV[1]) redis.call('SET', KEYS[2], ARGV[1]) return 1`)
+	write := New("redisatomic_reply_alignment_test", `redis.call('SET', KEYS[1], ARGV[1]) redis.call('SET', KEYS[2], ARGV[1]) return 1`)
 	err := write.Run(context.Background(), client, []string{"k", "k2"}, "v")
 	if err == nil || !strings.HasPrefix(err.Error(), "LOADING") {
 		t.Fatalf("script err = %v, want the LOADING refusal and no EVAL after it", err)

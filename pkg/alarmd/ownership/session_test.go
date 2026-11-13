@@ -208,6 +208,58 @@ func TestSessionStopsAcceptingOnAuthoritativeFenceCheckDecision(t *testing.T) {
 	}
 }
 
+// A fence check draws one line whichever way it is asked: the store's answer about
+// the fence ends admission, and failing to reach the store does not. This attempt
+// is refused either way. Ending the session as well lost a lease nobody had
+// refused, on a failure shorter than the lease's TTL.
+func TestAFenceCheckEndsTheSessionOnlyOnTheStoresAnswer(t *testing.T) {
+	now := time.Now()
+	unreachable := errors.New("ownership store unreachable")
+	for name, validate := range map[string]func(*Session, time.Time) error{
+		"ValidateCurrent": func(session *Session, at time.Time) error {
+			_, err := session.ValidateCurrent(context.Background(), at)
+			return err
+		},
+		"ValidateCurrentWithAssignment": func(session *Session, at time.Time) error {
+			_, _, err := session.ValidateCurrentWithAssignment(context.Background(), at)
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := &fakeLeaseStore{lease: Lease{
+				Fence:    execution.OwnerFence{QueryGroup: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "token-1"},
+				Deadline: now.Add(time.Minute),
+			}}
+			session, err := OpenSession(context.Background(), store, "query-group-1", "worker-1", now, time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store.checkErr = unreachable
+			if err := validate(session, now); !errors.Is(err, unreachable) {
+				t.Fatalf("with the store unreachable error = %v, want it returned", err)
+			}
+			if got := session.Deadline(); !got.Equal(store.lease.Deadline) {
+				t.Fatalf("an unreachable store left Deadline() = %s, want %s", got, store.lease.Deadline)
+			}
+			store.checkErr = nil
+			if err := validate(session, now); err != nil {
+				t.Fatalf("once the store answers error = %v", err)
+			}
+			store.checkErr = ErrNotDesired
+			if err := validate(session, now); !errors.Is(err, ErrNotDesired) {
+				t.Fatalf("with a refusal error = %v, want it returned", err)
+			}
+			if got := session.Deadline(); !got.IsZero() {
+				t.Fatalf("a refusal left Deadline() = %s, want it ended", got)
+			}
+			store.checkErr = nil
+			if err := validate(session, now); !errors.Is(err, ErrStaleFence) {
+				t.Fatalf("after a refusal error = %v, want ErrStaleFence", err)
+			}
+		})
+	}
+}
+
 type fakeLeaseStore struct {
 	lease        Lease
 	renewed      Lease

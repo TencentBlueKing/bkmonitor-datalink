@@ -31,6 +31,8 @@ func TestTheCompletionRowCountsTheEventsKeptAsIdentities(t *testing.T) {
 		}},
 		{StateResults: []execution.StateEvaluation{{WithoutMessage: []execution.EventWithoutMessage{recovery}}}},
 	}}
+	// Kept the way a merged batch keeps it: the row reads the Slot's summary.
+	stream.summary.add(stream.evaluated, nil)
 	usage := stream.budgetUsage()
 	if usage.EventsWithoutMessage != 3 || usage.Events != 1 {
 		t.Fatalf("usage events=%d without message=%d, want 1 held and 3 kept as identities across both Plans",

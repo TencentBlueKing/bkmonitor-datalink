@@ -378,3 +378,64 @@ func TestAShareChangeStartsTheKeyAgain(t *testing.T) {
 		t.Fatal("a refusal against a changed share finalized on one refusal")
 	}
 }
+
+// valueConcentrated is a Slot whose slices no split separates, as the worker
+// hands it on: deterministic, under its own code and why.
+func valueConcentrated() error {
+	return fmt.Errorf("alarmd worker: query: %w", &shareRefusalError{deterministic: true,
+		refusal: execution.ShareRefusal{Phase: "input_slice", OwnUsedBytes: 300 << 20, LimitBytes: 512 << 20,
+			Reason: contract.ReasonInputSliceValueConcentrated, Detail: "single_value on host"}})
+}
+
+// queryTooLong is a Slot whose slice conditions the store refuses as too
+// long: the same phase and share as valueConcentrated, another code.
+func queryTooLong() error {
+	return fmt.Errorf("alarmd worker: query: %w", &shareRefusalError{deterministic: true,
+		refusal: execution.ShareRefusal{Phase: "input_slice", OwnUsedBytes: 300 << 20, LimitBytes: 512 << 20,
+			Reason: contract.ReasonInputSliceQueryTooLong, Detail: "conditions of 4096 bytes"}})
+}
+
+// A Slot whose slices no split separates is refused the same way every
+// time: two in a row finalize it as a share refusal does - the same
+// query-free gap, the same cause - and the slot_skipped line names its own
+// code and why. A share refusal and a concentrated one, or a concentrated
+// one and a too-long one, are not the same decision and do not add up.
+func TestTwoIdenticalSliceRefusalsFinalizeTheSlotUnderTheirOwnCode(t *testing.T) {
+	clock := newMutableClock(time.Unix(102, 0))
+	runner, executor, _ := newShareRunner(t, clock, valueConcentrated(), valueConcentrated())
+	observer, output := sampledLog(t)
+	runner.WithSlotSkipReport(observer, nil)
+	for attempt := 1; attempt <= 2; attempt++ {
+		if _, attempted, err := runner.RunOne(context.Background()); err == nil || !attempted {
+			t.Fatalf("refusal %d: attempted=%t err=%v", attempt, attempted, err)
+		}
+		clock.Advance(testRecoveryLimits().RetryMinDelay)
+	}
+	result, attempted, err := runner.RunOne(context.Background())
+	if err != nil || !attempted || !result.Completed || result.QueryFreeCause != execution.CauseResourceShareExceeded || executor.queries != 2 {
+		t.Fatalf("finalization: result=%+v attempted=%t err=%v queries=%d", result, attempted, err, executor.queries)
+	}
+	lines := logLines(t, output, observability.StageSlotSkipped)
+	if len(lines) != 1 || lines[0]["skip_reason"] != contract.ReasonGapSkipped ||
+		lines[0]["share_refusal_reason"] != contract.ReasonInputSliceValueConcentrated ||
+		lines[0]["share_refusal_detail"] != "single_value on host" || lines[0]["share_refusal_phase"] != "input_slice" {
+		t.Fatalf("slot_skipped lines = %v", lines)
+	}
+
+	for name, first := range map[string]error{"a share refusal": ownTotalOverShare(), "a too-long one": queryTooLong()} {
+		clock = newMutableClock(time.Unix(102, 0))
+		runner, executor, _ = newShareRunner(t, clock, first, valueConcentrated())
+		for attempt := 1; attempt <= 2; attempt++ {
+			if _, _, err := runner.RunOne(context.Background()); err == nil {
+				t.Fatalf("%s, attempt %d was not refused", name, attempt)
+			}
+			if runner.NextReadyAt().IsZero() {
+				t.Fatalf("%s, attempt %d: it and a concentrated one added up to a decision", name, attempt)
+			}
+			clock.Advance(runner.NextReadyAt().Sub(clock.Now()))
+		}
+		if result, _, err := runner.RunOne(context.Background()); err != nil || result.QueryFreeCause != "" || executor.queries != 3 {
+			t.Fatalf("%s, third attempt: result=%+v err=%v queries=%d, want queried", name, result, err, executor.queries)
+		}
+	}
+}

@@ -789,7 +789,7 @@ var CHECK = {
   READ_HELD: '{n} 个对象的数据到得比 time_delay 等的晚（{s} 条策略）：alarmd 按测得的到齐时刻自动推后首读，检测照常、读的是到齐的数据；要把策略的 time_delay 调到对象行给的建议值，改了之后就不用再推后',
   LATE_PAST_ROUND: '{n} 个对象的迟到序列，连续两个补充窗口都晚过了下一轮（{s} 条策略）：补充一条也补不回，这些序列在迟到的那几轮是没有数据判的；要把策略的 time_delay 调到对象行给的建议值',
   LATE_SERIES_MISSED: '{n} 个对象有补充补不回的迟到序列（{s} 条策略）：补充补回了同一窗口里的其余序列，这几条到得比补充能等的还晚，在那几轮是没有数据判的；交数据侧查为什么这么晚',
-  RETAINED_SHARE_APPROACHING: '{n} 个对象最近一轮的留存字节已逼近单对象份额（阈值见对象行 threshold_percent；{s} 条策略）：检测照常，但再涨一点，这些对象的每一轮都会被按名拒掉、整条停检',
+  RETAINED_SHARE_APPROACHING: '{n} 个对象最近一轮的留存字节已逼近单对象份额（阈值见对象行 threshold_percent；{s} 条策略）：检测照常；再涨会改为分窗处理，单轮变慢，不用改策略',
   NO_DATA_PERSISTENT:    '{n} 个对象持续没有数据（{s} 条策略）',
   SERIES_SPARSE:         '{n} 个对象的序列按整分钟缺点（{s} 条策略）：查询正常返回，这些序列当时不在结果里，或整轮结果为空——数据侧的，不是本服务要处理的',
   EMPTY_EVERY_ROUND:     '{n} 个对象每一轮都查不到数据、没有任何一轮已知有过数据（{s} 条策略）：检测在跑，但没有任何东西可判',
@@ -970,7 +970,7 @@ var EVIDENCE = {
   READ_HELD: '对象行"alarmd 推后首读"（read_hold）：当前自动推后多少（read_hold_ms）、从哪个 Slot 起（held_since）、测得的数据到齐时刻（arrival_age_ms，距窗口结束）、当前 time_delay（time_delay_seconds）和不再需要推后的建议值（suggested_time_delay_seconds：到齐时刻减去 alarmd 自身的就绪等待 settling_wait_seconds，按周期向上取整，所以可能小于到齐时刻；到齐时刻只随证据上升，所以是上界）。只有测得到齐时刻的推后才有这一行；继承自前驱的上限或降级冻结的推后只在 diagnose 的 time_delay_advice 里显示 read_hold_seconds，不给建议值',
   LATE_PAST_ROUND: '对象行"迟到超过一轮"：当前有效的 time_delay（current_time_delay_seconds）、建议值（suggested_time_delay_seconds：当前值加上迟到序列在首读后多久被看到，按周期向上取整；序列在那一档复查和前一档之间到达，所以建议值是上界）、从何时起连续出现（since），以及依据的窗口（每个窗口的 Slot、看到迟到序列的那一档、距首读多久、首读准时的序列数与发现迟到的序列数（这两个按序列计，一条序列算一次）、已经越过自己 Slot 的数目（按 Plan 与序列的组合计，一条序列被几个 Plan 共用就算几次））。只有窗口里每一条迟到序列都越过了自己的 Slot 才算；同一窗口里有序列加载失败、读不全、配置已变或记为无数据的，这个窗口不算也不撤',
   LATE_SERIES_MISSED: '对象行"补充补不回的迟到序列"：补充只补回一部分的窗口数（windows）、这些窗口里补不回的序列数（crossed_series）、从何时起（since），以及最近的几个窗口（每个窗口首读准时的序列数与发现迟到的序列数，这两个按序列计，一条序列算一次；补回几个、补不回几个，这两个按 Plan 与序列的组合计，一条序列被几个 Plan 共用就算几次，不能拿来和前两个直接相比）。补回的由补充检测记在 lookback.get 的 supplements 里',
-  RETAINED_SHARE_APPROACHING: '对象行"逼近份额"：最近一个完成 Slot 的留存字节 retained_bytes、它被判的单对象份额 share_bytes、两者之比 percent_of_share、阈值 threshold_percent、从何时起一直在阈值以上（since），以及按相位拆开的 retained_input/state/output/gap_bytes；按策略分组，最满的在前。指标 state_retained_share_approaching_slots_total 数的是这样的完成 Slot'
+  RETAINED_SHARE_APPROACHING: '对象行"逼近份额"：最近一个完成 Slot 的留存字节 retained_bytes、它被判的单对象份额 share_bytes、两者之比 percent_of_share、阈值 threshold_percent、从何时起一直在阈值以上（since），以及按相位拆开的 retained_input/state/output/gap_bytes；按策略分组，最满的在前。指标 state_retained_share_approaching_slots_total 数的是这样的完成 Slot，分了窗的 Slot 也数，对象行不列它'
 };
 
 var NEXT = {
@@ -1014,13 +1014,13 @@ var NEXT = {
   SERIES_CHURNING:       '交策略侧：序列活不过检测窗口，通常是聚合维度太细',
   NEW_ALERTS_BURST:      '交策略负责人：去掉或收敛行上点名的维度（请求名、ID 这类取值没有上限的维度不宜作告警分组）；alarmd 不限流也不关闭这些告警，已开的由策略负责人处理',
   SERIES_SPARSER_THAN_WINDOW: '不用处理：告警照常触发，恢复按已落定的空缺算作无异常、与 Python 一致；策略侧若想要完整窗口（NORMAL），把检测周期或窗口调到不短于序列的上报间隔',
-  PLAN_UNEVALUABLE:      '交策略侧：按现在的定义算不了，改策略；分组为 VM_SAMPLE_LIMIT 时，是单次查询要读的样本超过存储上限：策略负责人缩小查询，多条策略同时出现时先请存储负责人核对上限；原因码为 DETECT_INTERVAL_STORAGE_NOT_SLIDING 时，是该指标的存储不支持按检测周期滑动，请去掉检测周期；原因码为 QUERY_NAMED_OUTPUT_DUPLICATE_KEY 时，是命名输出有一项在同一时刻同一组标签下有两个点，请把各输出聚合到检测输出的标签；原因码为 RESOURCE_SHARE_EXCEEDED 或 QG_BUDGET_SHARE_EXCEEDED 时，是这个对象单个 Slot 自己的留存就超过单对象份额（副本留存池的一半），等待和扩副本都不会让它装下，需要拆分策略（缩小分组或拆成多条）；拆分前这个对象的每个 Slot 都按缺口跳过，不出恢复也不判无数据',
+  PLAN_UNEVALUABLE:      '交策略侧：按现在的定义算不了，改策略；分组为 VM_SAMPLE_LIMIT 时，是单次查询要读的样本超过存储上限：策略负责人缩小查询，多条策略同时出现时先请存储负责人核对上限；原因码为 DETECT_INTERVAL_STORAGE_NOT_SLIDING 时，是该指标的存储不支持按检测周期滑动，请去掉检测周期；原因码为 QUERY_NAMED_OUTPUT_DUPLICATE_KEY 时，是命名输出有一项在同一时刻同一组标签下有两个点，请把各输出聚合到检测输出的标签；原因码为 RESOURCE_SHARE_EXCEEDED 或 QG_BUDGET_SHARE_EXCEEDED 时，是这个对象单个 Slot 自己的留存就超过单对象份额（副本留存池的四分之三），等待和扩副本都不会让它装下，需要拆分策略（缩小分组或拆成多条）；拆分前这个对象的每个 Slot 都按缺口跳过，不出恢复也不判无数据',
   QUERY_TARGET_MISSING:  '按策略核引用的表与字段是否真不存在（对元数据）：是就改策略或接入数据，不是就是查询构造或元数据问题回 alarmd；已降级的对象修好后会自动重试',
   READ_BEFORE_COMPLETE: '交策略负责人把策略的 time_delay 改到对象行的建议值（或更大）；这是整窗读早，服务会按确认到齐的样本自动推后首读，当前等待见 read_hold_ms；自动等待已达上限仍读早时需调整策略。改完新配置发布后，下一次抽样仍读早会继续留在这一行',
   READ_HELD: '交策略负责人把策略的 time_delay 改到对象行的建议值（或更大）。不改也照常检测，只是首读一直比 time_delay 写的晚',
   LATE_PAST_ROUND: '交策略负责人把策略的 time_delay 改到对象行的建议值（或更大）：整窗的迟到序列都晚过了下一轮，补充补不回，只有 time_delay 能把读往后挪',
   LATE_SERIES_MISSED: '交数据侧查这些序列为什么比同一对象的其余序列晚这么多；不调 time_delay，那会让整个对象为几条特别慢的序列一起变慢',
-  RETAINED_SHARE_APPROACHING: '先看对象行上哪个相位占大头，再决定找谁：state 占大头是策略的留存窗口与序列数，交策略侧（收聚合维度、缩短窗口，或分片 decision-020）；output 占大头是本服务每轮在内存里留着的产出（这一轮要发出去的事件与写回的状态；兼容协议下没有消息的 RECOVERY 已不再占用），不是策略写错了，交 alarmd 处理。份额本身不随争用调，调参解决不了'
+  RETAINED_SHARE_APPROACHING: '不用改策略：再涨会改为分窗处理，检测照常、单轮变慢。真正的墙是窗外持有加一条序列超过份额、或切片到顶，那时这一轮按名拒掉，出现在"策略本身不可用"那一行（QG_BUDGET_SHARE_EXCEEDED 等），按那一行处理'
 };
 
 // What state counts as recovered, per check: the thing to look at after
@@ -1074,7 +1074,7 @@ var RECOVERY = {
   READ_HELD: 'time_delay 改大后 Plan 换到新的查询组，新组从不推后开始，这一行随旧组离开而消失；不改时，到齐时刻经三次一致的较早读数确认变早后推后会降低，降到 0 即消失',
   LATE_PAST_ROUND: '出现一个补充补回了序列的窗口，或一个没有迟到序列的窗口，即消失；对象的序列不再迟到、不再逐轮迟到复查时也消失，之后再迟到从头计',
   LATE_SERIES_MISSED: '对象的序列不再迟到、不再逐轮迟到复查时消失，之后再迟到从头计；在那之前计数只增不减，读最近的窗口看它是否还在发生',
-  RETAINED_SHARE_APPROACHING: '最近一个完成 Slot 的留存降到阈值以下即消失；某一轮被份额拒掉时，这个对象在那一轮转到"策略本身不可用"那一行（QG_BUDGET_SHARE_EXCEEDED），不在这一行重复出现，下一轮完成后如仍在阈值以上会回到这一行，since 保持不变'
+  RETAINED_SHARE_APPROACHING: '最近一个完成 Slot 的留存降到阈值以下即消失；这个 Slot 分了窗（windows 大于 1）也消失：每个窗按份额减窗外持有切，峰值本来就贴着份额，再涨只会多切窗，不会停检。某一轮被份额拒掉时，这个对象在那一轮转到"策略本身不可用"那一行（QG_BUDGET_SHARE_EXCEEDED），不在这一行出现；之后完成一轮仍在阈值以上，会从那一轮起回到这一行。第一次碰到份额时，放弃之前的头几次尝试里，那一行还没列出，这个对象仍按被拒之前的读数留在这一行，这几次实际已经被拒'
 };
 
 // The next step for the two record lines in the history fold, where the
@@ -1333,7 +1333,7 @@ var SKIP_REASON = {
 
 function skipReasonWords(code) {
   if (SKIP_REASON[code]) return SKIP_REASON[code];
-  if (/BUDGET|RESOURCE_HARD_STOP|RECORD_TOO_LARGE/.test(code)) return '资源预算拒绝（' + code + '）';
+  if (/BUDGET|RESOURCE_HARD_STOP|RESOURCE_POOL_HELD_BY_OTHERS|RECORD_TOO_LARGE/.test(code)) return '资源预算拒绝（' + code + '）';
   return code;
 }
 
@@ -1583,7 +1583,7 @@ function lossClause(report, count) {
     if (group.key === 'ONGOING') ongoing += group.objects || 0;
     else if (group.key === 'AFTER_RESTART') restart += group.objects || 0;
     else if (group.key === 'HISTORICAL') stopped += group.objects || 0;
-    else if (/BUDGET|RESOURCE_HARD_STOP|RECORD_TOO_LARGE/.test(group.key)) budget += group.objects || 0;
+    else if (/BUDGET|RESOURCE_HARD_STOP|RESOURCE_POOL_HELD_BY_OTHERS|RECORD_TOO_LARGE/.test(group.key)) budget += group.objects || 0;
   });
   var parts = [];
   if (count === (report.current || 0)) {
@@ -2050,7 +2050,7 @@ function groupKeyLabel(report, key, group) {
   if (report.group_by === 'blocked') return blockedKeyLabel(key, group);
   if (report.group_by === 'loss') {
     if (LOSS[key]) return key + '（' + lossWords(key) + '）';
-    if (/BUDGET|RESOURCE_HARD_STOP|RECORD_TOO_LARGE/.test(key)) return key + '（资源预算拒绝——这一组才是容量限制）';
+    if (/BUDGET|RESOURCE_HARD_STOP|RESOURCE_POOL_HELD_BY_OTHERS|RECORD_TOO_LARGE/.test(key)) return key + '（资源预算拒绝——这一组才是容量限制）';
   }
   return key;
 }

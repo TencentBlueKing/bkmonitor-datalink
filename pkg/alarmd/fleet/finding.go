@@ -742,7 +742,10 @@ var codeChecks = map[string]verdict{
 	"STATE_READ_DEADLINE": lands(CheckDefect),
 	// Not a defect and not a dependency: this strategy asks for more of one
 	// replica than any single object may hold, and the answer is to shard it.
-	"QG_BUDGET_SHARE_EXCEEDED": lands(CheckPlanUnevaluable),
+	"QG_BUDGET_SHARE_EXCEEDED":       lands(CheckPlanUnevaluable),
+	"INPUT_SLICE_UNSUPPORTED":        lands(CheckPlanUnevaluable),
+	"INPUT_SLICE_VALUE_CONCENTRATED": lands(CheckPlanUnevaluable),
+	"INPUT_SLICE_QUERY_TOO_LONG":     lands(CheckPlanUnevaluable),
 	// A supplement whose kept read did not hold the Slot's planned query.
 	// Supplements never reach the tracker, so this records the decision:
 	// a defect until why the planned digest differed from the kept one is
@@ -908,14 +911,15 @@ var codeChecks = map[string]verdict{
 	// Budgets this deployment allocates itself, at run time: work it gave up on
 	// because of its own limits. The next step is capacity, the same as for a
 	// span skipped for falling behind.
-	"EXECUTION_BUDGET_EXHAUSTED": lands(CheckDetectionAbandoned),
-	"SLOT_BUDGET_EXCEEDED":       lands(CheckDetectionAbandoned),
-	"STATE_BUDGET_EXCEEDED":      lands(CheckDetectionAbandoned),
-	"VALIDATION_BUDGET_EXCEEDED": lands(CheckDetectionAbandoned),
-	"MESSAGE_BUDGET_EXCEEDED":    lands(CheckDetectionAbandoned),
-	"READINESS_BUDGET_INVALID":   lands(CheckDetectionAbandoned),
-	"RECORD_TOO_LARGE":           lands(CheckDetectionAbandoned),
-	"RESOURCE_HARD_STOP":         lands(CheckDetectionAbandoned),
+	"EXECUTION_BUDGET_EXHAUSTED":   lands(CheckDetectionAbandoned),
+	"SLOT_BUDGET_EXCEEDED":         lands(CheckDetectionAbandoned),
+	"STATE_BUDGET_EXCEEDED":        lands(CheckDetectionAbandoned),
+	"VALIDATION_BUDGET_EXCEEDED":   lands(CheckDetectionAbandoned),
+	"MESSAGE_BUDGET_EXCEEDED":      lands(CheckDetectionAbandoned),
+	"READINESS_BUDGET_INVALID":     lands(CheckDetectionAbandoned),
+	"RECORD_TOO_LARGE":             lands(CheckDetectionAbandoned),
+	"RESOURCE_HARD_STOP":           lands(CheckDetectionAbandoned),
+	"RESOURCE_POOL_HELD_BY_OTHERS": lands(CheckDetectionAbandoned),
 	// The per-Slot capacity budgets, as the query failure names the one that
 	// rejected: observability.CapacityBudgetFailureCode, one word per budget
 	// and OTHER for a budget it does not know. The round's own reason for

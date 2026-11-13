@@ -27,11 +27,12 @@ import (
 )
 
 const (
-	Set    = "set"
-	Module = "module"
-	Host   = "host"
-	System = "system"
-	Biz    = "biz"
+	Set      = "set"
+	Module   = "module"
+	Host     = "host"
+	System   = "system"
+	Biz      = "biz"
+	Business = "business"
 
 	AppVersion = "app_version"
 	GitCommit  = "git_commit"
@@ -374,7 +375,8 @@ func (b *MetricsBuilder) getCMDBMetrics(bizID int) []Metric {
 			for _, link := range info.Links {
 				sourceNode := rootNode
 				for _, item := range link {
-					if item.Resource == Biz {
+					// Set 自身提供业务归属；Host 等资源的拓扑路径继续跳过业务节点。
+					if item.Resource == Biz && info.Resource != Set {
 						continue
 					}
 

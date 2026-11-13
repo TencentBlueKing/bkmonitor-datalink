@@ -351,7 +351,10 @@ func (c *Controller) Reload(conf *confengine.Config) error {
 	}
 
 	if c.exporterMgr != nil {
-		c.exporterMgr.Reload(conf)
+		if err := c.exporterMgr.Reload(conf); err != nil {
+			DefaultMetricMonitor.IncReloadFailedCounter()
+			return err
+		}
 	}
 
 	if c.receiverMgr != nil {

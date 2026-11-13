@@ -1,0 +1,14 @@
+# 合并到主配置，或由平台模板下发 exporter 段。默认关闭。
+bk-collector:
+  exporter:
+    metric_metadata:
+      enabled: false # 是否上报元信息。
+      dataid: 0 # 启用时填写目标指标 DataID，联调使用自监控 DataID 1100014。
+      exporter:
+        interval: 1m # 每隔多久取出待发元信息，开始一轮发送。
+        timeout: 5s # 一轮发送最多用多久，所有批次共用。
+        batch_size: 1000 # 每批最多发送多少条元信息，最后一批可不足此数。
+        queue_size: 100000 # 最多缓存多少个待发指标，同一指标的多次更新只占一条。
+      rate_limit: # 每分钟允许的元信息更新数，不限制普通指标点。
+        instance_per_minute: 100000 # 每个 collector 每分钟最多处理多少次元信息新增或变化，所有来源合计。
+        dataid_per_minute: 10000 # 每个来源 DataID 在该 collector 上每分钟最多处理多少次元信息新增或变化。

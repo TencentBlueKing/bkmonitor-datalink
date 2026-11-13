@@ -60,9 +60,10 @@ UQ 按 URL 固定选择引擎。v1beta3 的查询错误直接返回调用方。�
 | 字段 | 必填、默认与组合规则 |
 | --- | --- |
 | query_list | 有序数组；省略或空数组得到空 data。内置最大 16 项 |
-| source_type | 两种 topology 接口均必填，使用实际 Schema 的资源类型 |
-| source_info | 字符串维度映射。完整主键定位一个身份；部分或空身份可能匹配多个根。身份字段见资源目录 |
-| source_expand_info | 显式根属性条件，按帧筛根；只接受 Schema 已定义字段。可用主键补全身份，与 source_info 同键不同值会失败；非主键不会覆盖身份，也不限制邻域属性 |
+| sources | 必填，1–20 个根选择器，超过 20 个逐项 400（原因 `max_topology_sources`）。每帧的根是命中任一选择器的节点的并集，跳数从最近的根起算 |
+| sources[].source_type | 必填，使用实际 Schema 的资源类型 |
+| sources[].source_info | 字符串维度映射。完整主键定位一个身份；部分或空身份可能匹配多个根。身份字段见资源目录 |
+| sources[].source_expand_info | 显式根属性条件，按帧筛**本选择器**的根；只接受 Schema 已定义字段。可用主键补全身份，与同一选择器的 source_info 同键不同值会失败；非主键不会覆盖身份，也不限制邻域属性和其他选择器 |
 | timestamp | topology 必填、非零；不得同时传 start_time/end_time |
 | start_time、end_time | topology_range 必须同时提供且非零；不得传 timestamp；结束点包含在内 |
 | step | range 正整秒 Go duration，省略为 `1m`；end-start 必须整除 step。单点接口不使用该字段，响应 step 为 `0s` |
@@ -70,15 +71,36 @@ UQ 按 URL 固定选择引擎。v1beta3 的查询错误直接返回调用方。�
 | max_hops | 省略或 0 使用配置默认值（内置 2），负数拒绝。配置上限内置 10；超限拒绝，不静默缩小 H |
 | allowed_categories | 关系类别白名单：通常 static、dynamic。空为不限，未知值匹配不到关系 |
 | allowed_relation_types | 精确关系名白名单，与类别范围取交集；空为不限，未知名匹配不到关系，不自动转换别名 |
-| dynamic_relation_direction | both（默认）、outbound、inbound。控制定向关系遍历；非定向静态关系仍可双向遍历 |
-| target_types | **遍历后**保留这些类型及所有可达的 source_type 节点。删除其他类型及其关联边；不会把中间节点折叠为新边。空为保留全部可达类型 |
+| relation_groups | 关系组白名单，由 Schema 推导：`BELONG_TO` 是置了 `is_belongs_to` 的静态关系，`SERVICE_CALL` 是动态关系；其余静态关系不属于任何组。与类别、关系名白名单取交集；空为不限，未知组匹配不到关系 |
+| direction | both（默认）、out、in。out 沿动态关系从调用方到被调方、沿归属关系从子到父；in 相反。其余静态关系没有方向，始终双向遍历 |
+| target_types | **遍历后**保留这些类型及全部选择器 source_type 的可达节点。删除其他类型及其关联边；不会把中间节点折叠为新边。空为保留全部可达类型 |
 | response_format | 单项选择 snapshots（省略/空时默认）或 compact-v1；同批次允许混用 |
 
 时间输入小于 `1e12` 按 Unix 秒解释，否则按 Unix 毫秒解释；必须对应整秒，不接受负数或亚秒精度。所有图响应 start_time/end_time/timestamp/timestamps 均为**毫秒**。range 点数为 `(end-start)/step+1`；上限内置 60，配置可降低。超限拒绝，不更改 step 或丢帧。
 
 关系按每个评估点的 `count_over_time` 回看窗口观测判活。窗口内看见多个关系不等价于证明它们在某一真实时刻同时存在。输出为在每帧内 H 跳可达节点的诱导边；不因跨 namespace 而隐式删边。
 
+归属关系（`is_belongs_to`）的 from 是子、to 是父，例如 pod → node、replicaset → deployment、set → business；关系名和指标名按两端类型的字母序生成，与 from/to 的顺序无关。输出时归属关系每对节点只出一条子 → 父的边（方向标签 `outbound`），与遍历方向无关；其余静态关系每对节点仍输出两条边（两个视图各一条）。
+
+多个选择器时各选择器的根按帧取并集，各自的 source_expand_info 只筛自己的根。全部选择器的身份字段都在主键内时，首跳在同一关系、同一端上把各选择器的条件写成一个 OR 查询读取，之后逐跳读取到达的节点；任一选择器不满足时，整项改为读取候选关系的整个分量，答案相同、读取更多，计入 `unify_query_cmdb_topology_fetch_fallback_total{reason="selector_not_eligible"}`。
+
+查询项不再接受顶层的 `source_type`、`source_info`、`source_expand_info` 和 `dynamic_relation_direction`；带这些字段的请求整体返回 400，并给出替换后的字段名。
+
 根必须出现在关系端点中；只有 info、没有关系的孤立实体不会凭空进入拓扑。默认图仅保证已观测关系及其现有属性，**不能把缺少可选属性解释为属性值为空，也不保证总是额外读取 info 指标**。显式属性选根或按需详情应明确查询 info 条件；本页详情样例重复一个相同的主键条件以触发 source info 读取。邻居不会被根的 version 条件过滤。历史属性是所选窗口的观测值，外部 CMDB 当前详情不可冒充历史值。
+
+### 时间窗映射
+
+调用方以“记录与窗口 [S, E) 相交即存在”为语义、并在整窗出现过的边构成的图上游走时，两种映射都能用现有接口表达：
+
+| | 整窗一帧（默认） | 分段并集（可选） |
+| --- | --- | --- |
+| 参数 | `topology`：`timestamp = E`，`look_back_delta = E − S` | `topology_range`：`start_time = S + s`，`end_time = E`，`step = s = (E − S)/K`（整秒，K ≤ 60），`look_back_delta = s` |
+| 帧 | 1 帧，覆盖 (S, E] | K 帧，第 k 帧覆盖 (S + (k−1)s, S + ks]，并集覆盖 (S, E] |
+| 可达 | 在整窗出现过的边构成的图上 H 跳可达 | 在某一段内 H 跳可达，路径上的边在同一段内出现过；结果包含于整窗一帧 |
+| 读取量 | 每条序列 1 个点 | 每条序列 K 个点，K = 60 时约为整窗一帧的八倍 |
+| 属性 | 一帧内同一节点有多个属性值时取字典序较大的值，**不是窗口内最晚的值** | 每帧各自取值，最后一帧即最晚一段的值 |
+
+窗口内属性变过时（例如容器换了版本），整窗一帧给出的属性可能不是最晚状态；需要最晚状态时，另用只覆盖最后一段的读取取属性，或使用分段并集的最后一帧。窗口按左开右闭计算，与半开区间 [S, E) 的差别只在恰好落在 S、E 上的样本。时间和 step 都是整秒，毫秒输入需由调用方先取整；分段并集还要求 E − S 能被 K 秒整除。窗口内没有数据时返回空帧，不报错，时间覆盖是否完整由调用方判断。
 
 ### 资源与期限
 
@@ -122,9 +144,11 @@ const response = await queryRelations({
   signal: abortController.signal,
   queryList: [{
     start_time: 1700000000, end_time: 1700000120, step: '1m',
-    source_type: 'container',
-    source_info: { bcs_cluster_id: 'example-cluster', namespace: 'demo' },
-    source_expand_info: { version: 'v2' },
+    sources: [{
+      source_type: 'container',
+      source_info: { bcs_cluster_id: 'example-cluster', namespace: 'demo' },
+      source_expand_info: { version: 'v2' }
+    }],
     max_hops: 1, look_back_delta: '5m',
     allowed_relation_types: ['container_with_pod'], response_format: 'compact-v1'
   }]

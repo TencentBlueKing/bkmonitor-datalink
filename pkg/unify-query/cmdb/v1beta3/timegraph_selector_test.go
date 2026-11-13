@@ -42,7 +42,7 @@ func TestTopologySelectorFixedTwoStagesAndFullAnswer(t *testing.T) {
 				data["bc"] = append(data["bc"], contractMatrix(map[string]string{"b_id": fmt.Sprint(i), "c_id": fmt.Sprint(i)}, 1700000000000, 1700000060000)...)
 			}
 			data["bc"] = append(data["bc"], contractMatrix(map[string]string{"b_id": "unrelated", "c_id": "unrelated"}, 1700000000000)...)
-			request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, StartTime: 1700000000, EndTime: 1700000060, Step: "60s", MaxHops: 2}
+			request := cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}}}, StartTime: 1700000000, EndTime: 1700000060, Step: "60s", MaxHops: 2}
 			var baseline []string
 			for _, planned := range []bool{false, true} {
 				SharedTopologyPlanCandidates = planned
@@ -94,7 +94,7 @@ func TestTopologySelectorDeepUsesFixedGroups(t *testing.T) {
 		calls++
 		return matched, nil
 	}
-	result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: 6})
+	result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}}}, Timestamp: 1700000000, MaxHops: 6})
 	require.NoError(t, err)
 	require.Len(t, result.Snapshots[0].Nodes, 261)
 	require.Len(t, result.Snapshots[0].Edges, 520)
@@ -129,7 +129,7 @@ func TestTopologySelectorPreservesAttributeApplicationOrder(t *testing.T) {
 		model.timeGraphVMQuery = func(_ context.Context, ts *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
 			return filteredTimeGraphMatrix(t, data[ts.QueryList[0].FieldName], ts.QueryList[0].Conditions), nil
 		}
-		result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: 2})
+		result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}}}, Timestamp: 1700000000, MaxHops: 2})
 		require.NoError(t, err)
 		if !planned {
 			baseline = canonicalTopologyForTest(t, result.Snapshots)
@@ -185,7 +185,7 @@ func TestTopologySelectorRangeProofPreservesCrossScopeBoundaries(t *testing.T) {
 					if planned && ts.QueryList[0].FieldName == "np" && hops >= 4 {
 						queriedNP = true
 						graph := NewTimeGraphWithConfig(model.timeGraphConfig("space"))
-						allowed := model.sharedTopologyRelations("space", nil, nil, DirectionBoth)
+						allowed := model.sharedTopologyRelations("space", nil, nil, nil, DirectionBoth)
 						filters := graph.topologyRangeFilters("container", cmdb.Matcher{"cluster": "alpha", "namespace": "one", "container_id": "root"}, topologyRelationComponent("container", allowed), allowed, hops)
 						for _, relation := range allowed {
 							if relation.MetricName != "np" {
@@ -201,7 +201,7 @@ func TestTopologySelectorRangeProofPreservesCrossScopeBoundaries(t *testing.T) {
 					}
 					return filteredTimeGraphMatrix(t, data[ts.QueryList[0].FieldName], ts.QueryList[0].Conditions), nil
 				}
-				request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "container", SourceInfo: cmdb.Matcher{"cluster": "alpha", "namespace": "one", "container_id": "root"}, StartTime: stamp / 1000, EndTime: stamp/1000 + 60, Step: "60s", MaxHops: hops}
+				request := cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "container", SourceInfo: cmdb.Matcher{"cluster": "alpha", "namespace": "one", "container_id": "root"}}}, StartTime: stamp / 1000, EndTime: stamp/1000 + 60, Step: "60s", MaxHops: hops}
 				result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
 				require.NoError(t, err)
 				if !planned {
@@ -251,7 +251,7 @@ func TestTopologySelectorRejectsUnprovedClosedNeighborhood(t *testing.T) {
 					model.timeGraphVMQuery = func(_ context.Context, ts *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
 						return filteredTimeGraphMatrix(t, data[ts.QueryList[0].FieldName], ts.QueryList[0].Conditions), nil
 					}
-					result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: hops})
+					result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}}}, Timestamp: 1700000000, MaxHops: hops})
 					require.NoError(t, err)
 					if !planned {
 						baseline = canonicalTopologyForTest(t, result.Snapshots)
@@ -278,7 +278,7 @@ func TestTopologySelectorDoesNotRestoreDisconnectedAttributeRoutes(t *testing.T)
 	model.timeGraphVMQuery = func(_ context.Context, ts *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
 		return contractMatrix(map[string]string{"a_id": "root", "b_id": "b0"}, 1700000000000), nil
 	}
-	result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: 1})
+	result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}}}, Timestamp: 1700000000, MaxHops: 1})
 	require.NoError(t, err)
 	require.Len(t, result.Snapshots[0].Nodes, 2)
 	require.Len(t, result.Snapshots[0].Edges, 2)
@@ -314,7 +314,7 @@ func TestTopologySelectorPartialFirstStageRetainsQualityAndChecksWideRoutes(t *t
 						}
 						return contractMatrix(map[string]string{"b_id": "b0", "c_id": "c0"}, 1700000000000), false, nil
 					}
-					result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: hops})
+					result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}}}, Timestamp: 1700000000, MaxHops: hops})
 					if missing {
 						// 缺路由的宽读取关系按已读且无数据处理：原因与首阶段的 backend_partial 并存，
 						// 其余关系照常读取，缺路由关系不访问后端。
@@ -367,7 +367,7 @@ func TestTopologyStorageCoverageMismatchPlansLikeBackendPartial(t *testing.T) {
 			return contractMatrix(map[string]string{"a_id": "root", "b_id": "b0"}, 1700000000000), signal == "backend_partial", nil
 		}
 		recorder.Reset()
-		result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: 2})
+		result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}}}, Timestamp: 1700000000, MaxHops: 2})
 		require.NoError(t, err)
 		require.Equal(t, signal, result.Snapshots[0].PartialReason)
 		for _, span := range recorder.Ended() {
@@ -406,7 +406,7 @@ func TestTopologySelectorIgnoresOnlyUnobservableAttributeCollisions(t *testing.T
 				metrics = append(metrics, ts.QueryList[0].FieldName)
 				return filteredTimeGraphMatrix(t, data[ts.QueryList[0].FieldName], ts.QueryList[0].Conditions), nil
 			}
-			result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: hops})
+			result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}}}, Timestamp: 1700000000, MaxHops: hops})
 			require.NoError(t, err)
 			if !planned {
 				baseline = canonicalTopologyForTest(t, result.Snapshots)

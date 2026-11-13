@@ -269,16 +269,16 @@ func TestTimeGraphBusinessRelationNameMatchesStaticAndRedis(t *testing.T) {
 		"set":      {Namespace: relation.NamespaceAll, Name: "set", Fields: []relation.FieldDefinition{{Name: "bk_set_id", Required: true, Type: relation.FieldTypeInteger}}},
 	})
 	write(relation.KindRelationDefinition, map[string]*relation.RelationDefinition{
-		"business_with_set": {Namespace: relation.NamespaceAll, Name: "business_with_set", FromResource: "business", ToResource: "set"},
+		"business_with_set": {Namespace: relation.NamespaceAll, Name: "business_with_set", FromResource: "set", ToResource: "business", IsBelongsTo: true},
 	})
 	provider := relation.NewRedisProvider(ctx, client)
 	t.Cleanup(func() { require.NoError(t, provider.Close()) })
 
 	staticModel := &Model{schemaProvider: NewStaticSchemaProvider()}
 	redisModel := &Model{schemaProvider: NewSchemaProviderFromRelation(provider)}
-	wantRelations := staticModel.sharedTopologyRelations("bkcc__2", nil, []string{"business_with_set"}, DirectionBoth)
+	wantRelations := staticModel.sharedTopologyRelations("bkcc__2", nil, []string{"business_with_set"}, nil, DirectionBoth)
 	require.Len(t, wantRelations, 2)
-	require.Equal(t, wantRelations, redisModel.sharedTopologyRelations("bkcc__2", nil, []string{"business_with_set"}, DirectionBoth))
+	require.Equal(t, wantRelations, redisModel.sharedTopologyRelations("bkcc__2", nil, []string{"business_with_set"}, nil, DirectionBoth))
 	for _, item := range wantRelations {
 		require.Equal(t, "business_with_set", item.RelationType)
 	}
@@ -293,7 +293,7 @@ func TestTimeGraphBusinessRelationNameMatchesStaticAndRedis(t *testing.T) {
 		t.Run(fixture.name, func(t *testing.T) {
 			model := fixture.model
 			// The retired spelling must not select the relation through an alias.
-			require.Empty(t, model.sharedTopologyRelations("bkcc__2", nil, []string{"business_set"}, DirectionBoth))
+			require.Empty(t, model.sharedTopologyRelations("bkcc__2", nil, []string{"business_set"}, nil, DirectionBoth))
 			model.timeGraphQueryReference = timeGraphTestQueryReference
 			model.timeGraphVMQuery = func(_ context.Context, q *structured.QueryTs, _ string, _ bool, start, end time.Time, _ time.Duration) (pl.Matrix, error) {
 				require.Equal(t, "business_with_set_relation", q.QueryList[0].FieldName)
@@ -308,8 +308,8 @@ func TestTimeGraphBusinessRelationNameMatchesStaticAndRedis(t *testing.T) {
 				for _, pointCount := range []int{1, 3} {
 					t.Run(fmt.Sprintf("%s/%d-points", format, pointCount), func(t *testing.T) {
 						request := cmdb.SharedTopologyQuery{
-							SpaceUID: "bkcc__2", Timestamp: 1700000000, SourceType: "business",
-							SourceInfo: cmdb.Matcher{"bk_biz_id": "2"}, MaxHops: 1,
+							SpaceUID: "bkcc__2", Timestamp: 1700000000, Sources: []cmdb.TopologySource{{SourceType: "business", SourceInfo: cmdb.Matcher{"bk_biz_id": "2"}}},
+							MaxHops:              1,
 							AllowedRelationTypes: []string{"business_with_set"}, ResponseFormat: format,
 						}
 						if pointCount > 1 {
@@ -323,18 +323,26 @@ func TestTimeGraphBusinessRelationNameMatchesStaticAndRedis(t *testing.T) {
 						if format == cmdb.CompactTopologyFormat {
 							require.NotNil(t, result.Compact)
 							require.Equal(t, 2*pointCount, result.Compact.NodeOccurrences)
-							require.Equal(t, 2*pointCount, result.Compact.EdgeOccurrences)
+							// 归属关系每对节点只出一条子 → 父的边。
+							require.Equal(t, pointCount, result.Compact.EdgeOccurrences)
 							snapshots = decodeCompactForTest(t, result.Compact)
 						}
 						require.Len(t, snapshots, pointCount)
 						for i, snapshot := range snapshots {
 							require.Equal(t, int64(1700000000000+i*60000), snapshot.Timestamp)
 							require.Len(t, snapshot.Nodes, 2)
-							require.Len(t, snapshot.Edges, 2)
+							require.Len(t, snapshot.Edges, 1)
 							require.False(t, snapshot.Partial)
-							for _, edge := range snapshot.Edges {
-								require.Equal(t, "business_with_set", edge.RelationType)
+							types := map[uint64]cmdb.Resource{}
+							for _, node := range snapshot.Nodes {
+								types[node.ID] = node.ResourceType
 							}
+							edge := snapshot.Edges[0]
+							require.Equal(t, "business_with_set", edge.RelationType)
+							// set 归属于 business：边从子指向父。
+							require.Equal(t, cmdb.Resource("set"), types[edge.Source])
+							require.Equal(t, cmdb.Resource("business"), types[edge.Target])
+							require.Equal(t, "outbound", edge.Direction)
 						}
 					})
 				}

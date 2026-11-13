@@ -116,14 +116,14 @@ func TestTimeGraphInfluxWindowBoundaries(t *testing.T) {
 							metadata.SetQueryReference(ctx, reference)
 							return reference, nil
 						}
-						request := cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: at / 1000, LookBackDelta: "1m", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, MaxHops: 1, ResponseFormat: format}
+						request := cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: at / 1000, LookBackDelta: "1m", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}}, MaxHops: 1, ResponseFormat: format}
 						frames := []int64{at}
 						if mode == "range" {
 							request.Timestamp, request.StartTime, request.EndTime, request.Step = 0, at/1000, (at+120000)/1000, "1m"
 							frames = []int64{at, at + 60000, at + 120000}
 						}
 						if sourceInfo {
-							request.SourceExpandInfo = cmdb.Matcher{"zone": "east"}
+							request.Sources[0].SourceExpandInfo = cmdb.Matcher{"zone": "east"}
 						}
 						result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
 						require.NoError(t, err)

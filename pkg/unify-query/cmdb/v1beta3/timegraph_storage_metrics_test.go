@@ -78,7 +78,7 @@ func TestSharedTopologyStorageObservability(t *testing.T) {
 				matrixBefore[kind] = readTimeGraphMetric(t, "cmdb_timegraph_matrix_queries_per_build", labels, "sum")
 				matrixCountBefore[kind] = readTimeGraphMetric(t, "cmdb_timegraph_matrix_queries_per_build", labels, "count")
 			}
-			_, err := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, StartTime: 1700000000, EndTime: 1700000100, Step: "100s", MaxHops: 1})
+			_, err := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}}, StartTime: 1700000000, EndTime: 1700000100, Step: "100s", MaxHops: 1})
 			if test.outcome == "success" {
 				require.NoError(t, err)
 			} else {

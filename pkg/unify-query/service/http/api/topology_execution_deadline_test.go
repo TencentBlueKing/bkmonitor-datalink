@@ -65,10 +65,10 @@ func TestTopologyExecutionDeadlineReturnsJSON(t *testing.T) {
 							require.NoError(t, provider.Shutdown(context.Background()))
 						})
 						handler := HandlerAPIRelationV1Beta3Topology
-						query := `{"timestamp":1700000000,"source_type":"unknown-resource"}`
+						query := `{"timestamp":1700000000,"sources":[{"source_type":"unknown-resource"}]}`
 						if rangeQuery {
 							handler = HandlerAPIRelationV1Beta3TopologyRange
-							query = `{"start_time":1700000000,"end_time":1700000060,"step":"60s","source_type":"unknown-resource"}`
+							query = `{"start_time":1700000000,"end_time":1700000060,"step":"60s","sources":[{"source_type":"unknown-resource"}]}`
 						}
 						innerPath := fmt.Sprintf("/test-topology-execution-deadline-%t", rangeQuery)
 						if _, exists := metadata.GetHandler(innerPath); !exists {

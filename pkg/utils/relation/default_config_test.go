@@ -29,8 +29,10 @@ func TestDefaultStaticProviderConfigBusinessRelationName(t *testing.T) {
 
 	relationDef, err := provider.GetRelationDefinition(NamespaceAll, "business_with_set")
 	require.NoError(t, err)
-	assert.Equal(t, "business", relationDef.FromResource)
-	assert.Equal(t, "set", relationDef.ToResource)
+	// set 归属于 business：from 是子、to 是父；名字与指标名仍按两端字母序生成，与 from/to 顺序无关。
+	assert.Equal(t, "set", relationDef.FromResource)
+	assert.Equal(t, "business", relationDef.ToResource)
+	assert.True(t, relationDef.IsBelongsTo)
 	assert.Equal(t, "business_with_set", relationDef.Name)
 	assert.Equal(t, "business_with_set_relation", relationDef.GetRelationName())
 

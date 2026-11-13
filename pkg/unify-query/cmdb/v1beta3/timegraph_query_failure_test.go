@@ -49,7 +49,7 @@ func TestSharedTopologyMissingPhysicalInstanceFails(t *testing.T) {
 		require.Greater(t, ref.Count(), 0)
 		return ref, nil
 	}
-	result, err := m.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000000, LookBackDelta: "1m", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, MaxHops: 1})
+	result, err := m.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000000, LookBackDelta: "1m", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}}, MaxHops: 1})
 	t.Logf("missing storage: err=%v result=%+v status=%+v", err, result, metadata.GetStatus(ctx))
 	require.Error(t, err, "required relation whose only physical instance cannot be constructed must not be reported complete-empty")
 }
@@ -90,9 +90,9 @@ func TestSharedTopologyLocalEngineWindowBoundaries(t *testing.T) {
 							matrix, _, err := backend.DirectQueryRange(qctx, expr, start, end, step)
 							return matrix, err
 						}
-						request := cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: at / 1000, LookBackDelta: "1m", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, MaxHops: 1, ResponseFormat: format}
+						request := cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: at / 1000, LookBackDelta: "1m", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}}, MaxHops: 1, ResponseFormat: format}
 						if stage == "source-info" {
-							request.SourceExpandInfo = cmdb.Matcher{"zone": "west"}
+							request.Sources[0].SourceExpandInfo = cmdb.Matcher{"zone": "west"}
 						}
 						points := 1
 						if mode == "range" {

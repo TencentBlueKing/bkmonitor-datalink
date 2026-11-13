@@ -79,7 +79,7 @@ func TestRedisProviderOverlayOverridesAndRestoresBuiltinIntegration(t *testing.T
 		"custom_app": {Namespace: NamespaceAll, Name: "custom_app", Fields: []FieldDefinition{{Name: "app_id", Required: true}}},
 	})
 	write(KindRelationDefinition, NamespaceAll, map[string]*RelationDefinition{
-		"node_with_pod": {Namespace: NamespaceAll, Name: "node_with_pod", FromResource: "pod", ToResource: "node", IsBelongsTo: true},
+		"node_with_pod": {Namespace: NamespaceAll, Name: "node_with_pod", FromResource: "node", ToResource: "pod"},
 	})
 	// 业务 namespace 再覆盖 pod，并只在本 namespace 定义一个关系。
 	write(KindResourceDefinition, "bkcc__2", map[string]*ResourceDefinition{
@@ -112,8 +112,8 @@ func TestRedisProviderOverlayOverridesAndRestoresBuiltinIntegration(t *testing.T
 		"同名定义只出现一次，业务 namespace 的关系追加在内置之上")
 	overridden, err := provider.GetRelationDefinition("bkcc__2", "node_with_pod")
 	require.NoError(t, err)
-	require.Equal(t, "pod", overridden.FromResource, "__all__ 的同名关系整条覆盖内置")
-	require.True(t, overridden.IsBelongsTo)
+	require.Equal(t, "node", overridden.FromResource, "__all__ 的同名关系整条覆盖内置")
+	require.False(t, overridden.IsBelongsTo)
 	_, err = provider.GetRelationDefinition("bkcc__3", "custom_app_with_pod")
 	require.ErrorIs(t, err, ErrRelationDefinitionNotFound, "业务 namespace 的定义不泄漏到其他 namespace")
 
@@ -154,8 +154,8 @@ func TestRedisProviderOverlayOverridesAndRestoresBuiltinIntegration(t *testing.T
 	remove(KindRelationDefinition, NamespaceAll)
 	restored, err := provider.GetRelationDefinition("bkcc__2", "node_with_pod")
 	require.NoError(t, err)
-	require.Equal(t, "node", restored.FromResource)
-	require.False(t, restored.IsBelongsTo)
+	require.Equal(t, "pod", restored.FromResource)
+	require.True(t, restored.IsBelongsTo)
 }
 
 // 首次读取 Redis 失败时以内置定义启动，周期对账成功后覆盖层生效。

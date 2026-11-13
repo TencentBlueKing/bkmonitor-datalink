@@ -24,7 +24,7 @@ func TestSharedTopologyCompleteFirstHopEmptyStopsFetching(t *testing.T) {
 		return query(ctx, q, expr, instant, start, end, step)
 	}
 	result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{
-		SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
+		SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}},
 		StartTime: 1700000000, EndTime: 1700000200, Step: "100s", MaxHops: 2,
 	})
 	require.NoError(t, err)
@@ -46,7 +46,7 @@ func TestSharedTopologyNoLegalRelationsDoesNotQueryInfo(t *testing.T) {
 		return nil, nil
 	}
 	result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{
-		SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
+		SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}},
 		Timestamp: 1700000000, MaxHops: 2,
 	})
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestSharedTopologyPartialFirstHopIsNotCompleteEmpty(t *testing.T) {
 		return nil, field == "source_middle_flow", nil
 	}
 	result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{
-		SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
+		SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}},
 		StartTime: 1700000000, EndTime: 1700000100, Step: "100s", MaxHops: 2,
 	})
 	require.NoError(t, err)
@@ -109,7 +109,7 @@ func TestSharedTopologyPartialIdentityMatchesMultipleRootsPerFrame(t *testing.T)
 		}
 	}
 	result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{
-		SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"tenant": "x"},
+		SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"tenant": "x"}}},
 		StartTime: 1700000000, EndTime: 1700000100, Step: "100s", MaxHops: 2,
 	})
 	require.NoError(t, err)
@@ -138,7 +138,7 @@ func TestSharedTopologyAllRelationsWithoutRouteReturnPartialEmpty(t *testing.T) 
 					return nil, nil
 				}
 				request := cmdb.SharedTopologyQuery{
-					SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
+					SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}},
 					Timestamp: 1700000000, MaxHops: 2,
 				}
 				points := 1
@@ -184,7 +184,7 @@ func TestSharedTopologyBoundaryRelationWithoutRouteIsNotRequired(t *testing.T) {
 		return timeGraphTestQueryReference(ctx, queryTs)
 	}
 	request := cmdb.SharedTopologyQuery{
-		SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
+		SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}},
 		Timestamp: 1700000000, MaxHops: 1,
 	}
 	result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
@@ -242,7 +242,7 @@ func TestSharedTopologyTypeCycleReadsReachedSourceInstances(t *testing.T) {
 		}
 	}
 	result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{
-		SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
+		SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}},
 		Timestamp: 1700000000, MaxHops: 3,
 	})
 	require.NoError(t, err)

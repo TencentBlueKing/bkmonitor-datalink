@@ -32,7 +32,7 @@ func TestSharedTopologyTenHopsAtSixtyPoints(t *testing.T) {
 		return contractMatrix(map[string]string{"id": "root"}, timestamps...), nil
 	}
 	request := cmdb.SharedTopologyQuery{
-		SpaceUID: "space", SourceType: "r0", SourceInfo: cmdb.Matcher{"id": "root"},
+		SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "r0", SourceInfo: cmdb.Matcher{"id": "root"}}},
 		StartTime: timestamps[0], EndTime: timestamps[59], Step: "1s", MaxHops: 10,
 	}
 	result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)

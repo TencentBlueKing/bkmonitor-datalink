@@ -197,7 +197,7 @@ func TestMatrixReuseDirectionsKeepAnswerAndInput(t *testing.T) {
 			calls++
 			return fetch(ctx, query, expr, instant, start, end, step)
 		}
-		result, err := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: 1700000000, MaxHops: 2})
+		result, err := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}}, Timestamp: 1700000000, MaxHops: 2})
 		require.NoError(t, err)
 		require.Equal(t, physicalBefore+float64(calls), readTimeGraphMetric(t, "cmdb_timegraph_matrix_queries_per_build", matrixLabels("physical"), "sum"))
 		reuseHits := readTimeGraphMetric(t, "cmdb_timegraph_matrix_queries_per_build", matrixLabels("reused"), "sum") - reusedBefore
@@ -256,7 +256,7 @@ func TestMatrixReuseExceptionalTopologyParity(t *testing.T) {
 					return nil, false, nil
 				}
 				request := cmdb.SharedTopologyQuery{
-					SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
+					SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}},
 					StartTime: 1700000000, EndTime: 1700000060, Step: "60s", MaxHops: 2,
 				}
 				result, err := model.QuerySharedTopology(ctx, request)

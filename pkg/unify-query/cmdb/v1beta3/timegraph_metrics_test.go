@@ -68,12 +68,12 @@ func TestSharedTopologyMetricsCases(t *testing.T) {
 				}
 				return responses[q.QueryList[0].FieldName], tt.partial, nil
 			}
-			query := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, StartTime: 1700000000, EndTime: 1700000100, Step: "100s", MaxHops: 1}
+			query := cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}}, StartTime: 1700000000, EndTime: 1700000100, Step: "100s", MaxHops: 1}
 			if tt.gridLimit {
 				query.EndTime = query.StartTime + 6000
 			}
 			if tt.invalid {
-				query.SourceType = ""
+				query.Sources[0].SourceType = ""
 			}
 			labels := map[string]string{"scope": "query", "query_mode": "range", "result": tt.outcome}
 			before := readTimeGraphMetric(t, "cmdb_topology_operations_total", labels, "counter")

@@ -117,7 +117,7 @@ func TestCompactModelTargetFilterAndCancellation(t *testing.T) {
 		"source_middle_flow":   contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, 1700000000000),
 		"middle_target_flow":   contractMatrix(map[string]string{"middle_id": "b", "target_id": "c"}, 1700000000000),
 	})
-	request := cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000000, SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, TargetTypes: []cmdb.Resource{"target"}, MaxHops: 2}
+	request := cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000000, Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}}, TargetTypes: []cmdb.Resource{"target"}, MaxHops: 2}
 	want, err := model.QuerySharedTopology(ctx, request)
 	require.NoError(t, err)
 	request.ResponseFormat = cmdb.CompactTopologyFormat

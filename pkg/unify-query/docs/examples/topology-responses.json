@@ -10,11 +10,15 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 1,
-          "source_type": "node",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "node": "node-a"
-          },
+          "sources": [
+            {
+              "source_type": "node",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "node": "node-a"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "node_with_pod"
           ],
@@ -26,11 +30,15 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 1,
-          "source_type": "node",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "node": "node-a"
-          },
+          "sources": [
+            {
+              "source_type": "node",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "node": "node-a"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "node_with_pod"
           ],
@@ -72,20 +80,12 @@
               ],
               "edges": [
                 {
-                  "source": 281474976710657,
-                  "target": 562949953421314,
-                  "relation_type": "node_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "outbound"
-                },
-                {
                   "source": 562949953421314,
                   "target": 281474976710657,
                   "relation_type": "node_with_pod",
                   "metric_name": "",
                   "category": "static",
-                  "direction": "inbound"
+                  "direction": "outbound"
                 }
               ],
               "partial": false
@@ -113,20 +113,12 @@
               ],
               "edges": [
                 {
-                  "source": 281474976710657,
-                  "target": 562949953421314,
-                  "relation_type": "node_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "outbound"
-                },
-                {
                   "source": 562949953421314,
                   "target": 281474976710657,
                   "relation_type": "node_with_pod",
                   "metric_name": "",
                   "category": "static",
-                  "direction": "inbound"
+                  "direction": "outbound"
                 }
               ],
               "partial": false
@@ -154,20 +146,12 @@
               ],
               "edges": [
                 {
-                  "source": 281474976710657,
-                  "target": 562949953421314,
-                  "relation_type": "node_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "outbound"
-                },
-                {
                   "source": 562949953421314,
                   "target": 281474976710657,
                   "relation_type": "node_with_pod",
                   "metric_name": "",
                   "category": "static",
-                  "direction": "inbound"
+                  "direction": "outbound"
                 }
               ],
               "partial": false
@@ -215,8 +199,8 @@
             ],
             "edges": [
               {
-                "source": "281474976710657",
-                "target": "562949953421314",
+                "source": "562949953421314",
+                "target": "281474976710657",
                 "relation_type": "node_with_pod",
                 "metric_name": "",
                 "category": "static",
@@ -224,22 +208,11 @@
                 "mask": [
                   "0000000000000007"
                 ]
-              },
-              {
-                "source": "562949953421314",
-                "target": "281474976710657",
-                "relation_type": "node_with_pod",
-                "metric_name": "",
-                "category": "static",
-                "direction": "inbound",
-                "mask": [
-                  "0000000000000007"
-                ]
               }
             ],
             "partial": [],
             "node_occurrences": 6,
-            "edge_occurrences": 6
+            "edge_occurrences": 3
           }
         }
       ]
@@ -256,12 +229,16 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 1,
-          "source_type": "pod",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "namespace": "demo",
-            "pod": "pod-a"
-          },
+          "sources": [
+            {
+              "source_type": "pod",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "namespace": "demo",
+                "pod": "pod-a"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "node_with_pod",
             "container_with_pod"
@@ -274,12 +251,16 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 1,
-          "source_type": "pod",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "namespace": "demo",
-            "pod": "pod-a"
-          },
+          "sources": [
+            {
+              "source_type": "pod",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "namespace": "demo",
+                "pod": "pod-a"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "node_with_pod",
             "container_with_pod"
@@ -341,23 +322,7 @@
                 },
                 {
                   "source": 562949953421314,
-                  "target": 281474976710657,
-                  "relation_type": "container_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
-                },
-                {
-                  "source": 562949953421314,
                   "target": 844424930131971,
-                  "relation_type": "node_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
-                },
-                {
-                  "source": 844424930131971,
-                  "target": 562949953421314,
                   "relation_type": "node_with_pod",
                   "metric_name": "",
                   "category": "static",
@@ -408,23 +373,7 @@
                 },
                 {
                   "source": 562949953421314,
-                  "target": 281474976710657,
-                  "relation_type": "container_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
-                },
-                {
-                  "source": 562949953421314,
                   "target": 844424930131971,
-                  "relation_type": "node_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
-                },
-                {
-                  "source": 844424930131971,
-                  "target": 562949953421314,
                   "relation_type": "node_with_pod",
                   "metric_name": "",
                   "category": "static",
@@ -475,23 +424,7 @@
                 },
                 {
                   "source": 562949953421314,
-                  "target": 281474976710657,
-                  "relation_type": "container_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
-                },
-                {
-                  "source": 562949953421314,
                   "target": 844424930131971,
-                  "relation_type": "node_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
-                },
-                {
-                  "source": 844424930131971,
-                  "target": 562949953421314,
                   "relation_type": "node_with_pod",
                   "metric_name": "",
                   "category": "static",
@@ -568,29 +501,7 @@
               },
               {
                 "source": "562949953421314",
-                "target": "281474976710657",
-                "relation_type": "container_with_pod",
-                "metric_name": "",
-                "category": "static",
-                "direction": "inbound",
-                "mask": [
-                  "0000000000000007"
-                ]
-              },
-              {
-                "source": "562949953421314",
                 "target": "844424930131971",
-                "relation_type": "node_with_pod",
-                "metric_name": "",
-                "category": "static",
-                "direction": "inbound",
-                "mask": [
-                  "0000000000000007"
-                ]
-              },
-              {
-                "source": "844424930131971",
-                "target": "562949953421314",
                 "relation_type": "node_with_pod",
                 "metric_name": "",
                 "category": "static",
@@ -602,7 +513,7 @@
             ],
             "partial": [],
             "node_occurrences": 9,
-            "edge_occurrences": 12
+            "edge_occurrences": 6
           }
         }
       ]
@@ -619,12 +530,16 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 2,
-          "source_type": "deployment",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "namespace": "demo",
-            "deployment": "web"
-          },
+          "sources": [
+            {
+              "source_type": "deployment",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "namespace": "demo",
+                "deployment": "web"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "deployment_with_replicaset",
             "pod_with_replicaset"
@@ -637,12 +552,16 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 2,
-          "source_type": "deployment",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "namespace": "demo",
-            "deployment": "web"
-          },
+          "sources": [
+            {
+              "source_type": "deployment",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "namespace": "demo",
+                "deployment": "web"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "deployment_with_replicaset",
             "pod_with_replicaset"
@@ -704,36 +623,12 @@
               ],
               "edges": [
                 {
-                  "source": 281474976710657,
-                  "target": 562949953421314,
-                  "relation_type": "deployment_with_replicaset",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "outbound"
-                },
-                {
                   "source": 562949953421314,
                   "target": 281474976710657,
                   "relation_type": "deployment_with_replicaset",
                   "metric_name": "",
                   "category": "static",
-                  "direction": "inbound"
-                },
-                {
-                  "source": 562949953421314,
-                  "target": 844424930131971,
-                  "relation_type": "pod_with_replicaset",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
-                },
-                {
-                  "source": 562949953421314,
-                  "target": 844424930131972,
-                  "relation_type": "pod_with_replicaset",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
+                  "direction": "outbound"
                 },
                 {
                   "source": 844424930131971,
@@ -796,36 +691,12 @@
               ],
               "edges": [
                 {
-                  "source": 281474976710657,
-                  "target": 562949953421314,
-                  "relation_type": "deployment_with_replicaset",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "outbound"
-                },
-                {
                   "source": 562949953421314,
                   "target": 281474976710657,
                   "relation_type": "deployment_with_replicaset",
                   "metric_name": "",
                   "category": "static",
-                  "direction": "inbound"
-                },
-                {
-                  "source": 562949953421314,
-                  "target": 844424930131971,
-                  "relation_type": "pod_with_replicaset",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
-                },
-                {
-                  "source": 562949953421314,
-                  "target": 844424930131972,
-                  "relation_type": "pod_with_replicaset",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
+                  "direction": "outbound"
                 },
                 {
                   "source": 844424930131971,
@@ -888,36 +759,12 @@
               ],
               "edges": [
                 {
-                  "source": 281474976710657,
-                  "target": 562949953421314,
-                  "relation_type": "deployment_with_replicaset",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "outbound"
-                },
-                {
                   "source": 562949953421314,
                   "target": 281474976710657,
                   "relation_type": "deployment_with_replicaset",
                   "metric_name": "",
                   "category": "static",
-                  "direction": "inbound"
-                },
-                {
-                  "source": 562949953421314,
-                  "target": 844424930131971,
-                  "relation_type": "pod_with_replicaset",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
-                },
-                {
-                  "source": 562949953421314,
-                  "target": 844424930131972,
-                  "relation_type": "pod_with_replicaset",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
+                  "direction": "outbound"
                 },
                 {
                   "source": 844424930131971,
@@ -1006,45 +853,12 @@
             ],
             "edges": [
               {
-                "source": "281474976710657",
-                "target": "562949953421314",
-                "relation_type": "deployment_with_replicaset",
-                "metric_name": "",
-                "category": "static",
-                "direction": "outbound",
-                "mask": [
-                  "0000000000000007"
-                ]
-              },
-              {
                 "source": "562949953421314",
                 "target": "281474976710657",
                 "relation_type": "deployment_with_replicaset",
                 "metric_name": "",
                 "category": "static",
-                "direction": "inbound",
-                "mask": [
-                  "0000000000000007"
-                ]
-              },
-              {
-                "source": "562949953421314",
-                "target": "844424930131971",
-                "relation_type": "pod_with_replicaset",
-                "metric_name": "",
-                "category": "static",
-                "direction": "inbound",
-                "mask": [
-                  "0000000000000007"
-                ]
-              },
-              {
-                "source": "562949953421314",
-                "target": "844424930131972",
-                "relation_type": "pod_with_replicaset",
-                "metric_name": "",
-                "category": "static",
-                "direction": "inbound",
+                "direction": "outbound",
                 "mask": [
                   "0000000000000007"
                 ]
@@ -1074,7 +888,7 @@
             ],
             "partial": [],
             "node_occurrences": 12,
-            "edge_occurrences": 18
+            "edge_occurrences": 9
           }
         }
       ]
@@ -1091,17 +905,21 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 1,
-          "source_type": "container",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "namespace": "demo"
-          },
+          "sources": [
+            {
+              "source_type": "container",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "namespace": "demo"
+              },
+              "source_expand_info": {
+                "version": "v2"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "container_with_pod"
           ],
-          "source_expand_info": {
-            "version": "v2"
-          },
           "response_format": "snapshots"
         },
         {
@@ -1110,17 +928,21 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 1,
-          "source_type": "container",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "namespace": "demo"
-          },
+          "sources": [
+            {
+              "source_type": "container",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "namespace": "demo"
+              },
+              "source_expand_info": {
+                "version": "v2"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "container_with_pod"
           ],
-          "source_expand_info": {
-            "version": "v2"
-          },
           "response_format": "compact-v1"
         }
       ]
@@ -1168,14 +990,6 @@
                   "metric_name": "",
                   "category": "static",
                   "direction": "outbound"
-                },
-                {
-                  "source": 562949953421316,
-                  "target": 281474976710658,
-                  "relation_type": "container_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
                 }
               ],
               "partial": false
@@ -1240,22 +1054,6 @@
                   "metric_name": "",
                   "category": "static",
                   "direction": "outbound"
-                },
-                {
-                  "source": 562949953421315,
-                  "target": 281474976710657,
-                  "relation_type": "container_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
-                },
-                {
-                  "source": 562949953421316,
-                  "target": 281474976710658,
-                  "relation_type": "container_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
                 }
               ],
               "partial": false
@@ -1320,22 +1118,6 @@
                   "metric_name": "",
                   "category": "static",
                   "direction": "outbound"
-                },
-                {
-                  "source": 562949953421315,
-                  "target": 281474976710657,
-                  "relation_type": "container_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
-                },
-                {
-                  "source": 562949953421316,
-                  "target": 281474976710658,
-                  "relation_type": "container_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
                 }
               ],
               "partial": false
@@ -1432,33 +1214,11 @@
                 "mask": [
                   "0000000000000007"
                 ]
-              },
-              {
-                "source": "562949953421315",
-                "target": "281474976710657",
-                "relation_type": "container_with_pod",
-                "metric_name": "",
-                "category": "static",
-                "direction": "inbound",
-                "mask": [
-                  "0000000000000006"
-                ]
-              },
-              {
-                "source": "562949953421316",
-                "target": "281474976710658",
-                "relation_type": "container_with_pod",
-                "metric_name": "",
-                "category": "static",
-                "direction": "inbound",
-                "mask": [
-                  "0000000000000007"
-                ]
               }
             ],
             "partial": [],
             "node_occurrences": 10,
-            "edge_occurrences": 10
+            "edge_occurrences": 5
           }
         }
       ]
@@ -1475,19 +1235,23 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 1,
-          "source_type": "container",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "namespace": "demo",
-            "pod": "pod-a",
-            "container": "app-a"
-          },
+          "sources": [
+            {
+              "source_type": "container",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "namespace": "demo",
+                "pod": "pod-a",
+                "container": "app-a"
+              },
+              "source_expand_info": {
+                "container": "app-a"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "container_with_pod"
           ],
-          "source_expand_info": {
-            "container": "app-a"
-          },
           "response_format": "snapshots"
         },
         {
@@ -1496,19 +1260,23 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 1,
-          "source_type": "container",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "namespace": "demo",
-            "pod": "pod-a",
-            "container": "app-a"
-          },
+          "sources": [
+            {
+              "source_type": "container",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "namespace": "demo",
+                "pod": "pod-a",
+                "container": "app-a"
+              },
+              "source_expand_info": {
+                "container": "app-a"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "container_with_pod"
           ],
-          "source_expand_info": {
-            "container": "app-a"
-          },
           "response_format": "compact-v1"
         }
       ]
@@ -1556,14 +1324,6 @@
                   "metric_name": "",
                   "category": "static",
                   "direction": "outbound"
-                },
-                {
-                  "source": 562949953421314,
-                  "target": 281474976710657,
-                  "relation_type": "container_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
                 }
               ],
               "partial": false
@@ -1600,14 +1360,6 @@
                   "metric_name": "",
                   "category": "static",
                   "direction": "outbound"
-                },
-                {
-                  "source": 562949953421314,
-                  "target": 281474976710657,
-                  "relation_type": "container_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
                 }
               ],
               "partial": false
@@ -1644,14 +1396,6 @@
                   "metric_name": "",
                   "category": "static",
                   "direction": "outbound"
-                },
-                {
-                  "source": 562949953421314,
-                  "target": 281474976710657,
-                  "relation_type": "container_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "inbound"
                 }
               ],
               "partial": false
@@ -1725,22 +1469,11 @@
                 "mask": [
                   "0000000000000007"
                 ]
-              },
-              {
-                "source": "562949953421314",
-                "target": "281474976710657",
-                "relation_type": "container_with_pod",
-                "metric_name": "",
-                "category": "static",
-                "direction": "inbound",
-                "mask": [
-                  "0000000000000007"
-                ]
               }
             ],
             "partial": [],
             "node_occurrences": 6,
-            "edge_occurrences": 6
+            "edge_occurrences": 3
           }
         }
       ]
@@ -1756,13 +1489,159 @@
           "end_time": 1700000120,
           "step": "1m",
           "look_back_delta": "5m",
+          "max_hops": 1,
+          "sources": [
+            {
+              "source_type": "node",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "node": "node-a"
+              }
+            }
+          ],
+          "allowed_relation_types": [
+            "node_with_pod"
+          ],
+          "response_format": "snapshots"
+        }
+      ]
+    },
+    "http_status": 200,
+    "response": {
+      "trace_id": "",
+      "data": [
+        {
+          "code": 200,
+          "start_time": 1700000000000,
+          "end_time": 1700000120000,
+          "step": "1m0s",
+          "point_count": 3,
+          "snapshots": [
+            {
+              "timestamp": 1700000000000,
+              "nodes": [
+                {
+                  "id": 281474976710657,
+                  "resource_type": "node",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "node": "node-a"
+                  }
+                },
+                {
+                  "id": 562949953421314,
+                  "resource_type": "pod",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "namespace": "demo",
+                    "pod": "pod-a"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "source": 562949953421314,
+                  "target": 281474976710657,
+                  "relation_type": "node_with_pod",
+                  "metric_name": "",
+                  "category": "static",
+                  "direction": "outbound"
+                }
+              ],
+              "partial": false
+            },
+            {
+              "timestamp": 1700000060000,
+              "nodes": [
+                {
+                  "id": 281474976710657,
+                  "resource_type": "node",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "node": "node-a"
+                  }
+                },
+                {
+                  "id": 562949953421314,
+                  "resource_type": "pod",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "namespace": "demo",
+                    "pod": "pod-a"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "source": 562949953421314,
+                  "target": 281474976710657,
+                  "relation_type": "node_with_pod",
+                  "metric_name": "",
+                  "category": "static",
+                  "direction": "outbound"
+                }
+              ],
+              "partial": false
+            },
+            {
+              "timestamp": 1700000120000,
+              "nodes": [
+                {
+                  "id": 281474976710657,
+                  "resource_type": "node",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "node": "node-a"
+                  }
+                },
+                {
+                  "id": 562949953421314,
+                  "resource_type": "pod",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "namespace": "demo",
+                    "pod": "pod-a"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "source": 562949953421314,
+                  "target": 281474976710657,
+                  "relation_type": "node_with_pod",
+                  "metric_name": "",
+                  "category": "static",
+                  "direction": "outbound"
+                }
+              ],
+              "partial": false
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "path": "/api/v1/relation/v1beta3/topology_range",
+    "space": "example-space",
+    "request": {
+      "query_list": [
+        {
+          "start_time": 1700000000,
+          "end_time": 1700000120,
+          "step": "1m",
+          "look_back_delta": "5m",
           "max_hops": 2,
-          "source_type": "deployment",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "namespace": "demo",
-            "deployment": "web"
-          },
+          "sources": [
+            {
+              "source_type": "deployment",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "namespace": "demo",
+                "deployment": "web"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "deployment_with_replicaset",
             "pod_with_replicaset"
@@ -1778,12 +1657,16 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 2,
-          "source_type": "deployment",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "namespace": "demo",
-            "deployment": "web"
-          },
+          "sources": [
+            {
+              "source_type": "deployment",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "namespace": "demo",
+                "deployment": "web"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "deployment_with_replicaset",
             "pod_with_replicaset"
@@ -1982,11 +1865,15 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 1,
-          "source_type": "node",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "node": "not-present"
-          },
+          "sources": [
+            {
+              "source_type": "node",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "node": "not-present"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "node_with_pod"
           ],
@@ -1998,11 +1885,15 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 1,
-          "source_type": "node",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "node": "not-present"
-          },
+          "sources": [
+            {
+              "source_type": "node",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "node": "not-present"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "node_with_pod"
           ],
@@ -2143,6 +2034,83 @@
     }
   },
   {
+    "path": "/api/v1/relation/v1beta3/multi_resource_range",
+    "space": "example-partial",
+    "request": {
+      "query_list": [
+        {
+          "start_time": 1700000000,
+          "end_time": 1700000120,
+          "step": "1m",
+          "look_back_delta": "5m",
+          "source_type": "node",
+          "source_info": {
+            "bcs_cluster_id": "example-cluster",
+            "node": "node-a"
+          },
+          "target_type": "pod",
+          "path_resource": [
+            "node",
+            "pod"
+          ],
+          "target_info_show": false
+        }
+      ]
+    },
+    "http_status": 200,
+    "response": {
+      "trace_id": "",
+      "data": [
+        {
+          "code": 200,
+          "source_type": "node",
+          "source_info": {
+            "bcs_cluster_id": "example-cluster",
+            "node": "node-a"
+          },
+          "target_type": "pod",
+          "target_list": [
+            {
+              "timestamp": 1700000000000,
+              "items": [
+                {
+                  "bcs_cluster_id": "example-cluster",
+                  "namespace": "demo",
+                  "pod": "pod-a"
+                }
+              ]
+            },
+            {
+              "timestamp": 1700000060000,
+              "items": [
+                {
+                  "bcs_cluster_id": "example-cluster",
+                  "namespace": "demo",
+                  "pod": "pod-a"
+                }
+              ]
+            },
+            {
+              "timestamp": 1700000120000,
+              "items": [
+                {
+                  "bcs_cluster_id": "example-cluster",
+                  "namespace": "demo",
+                  "pod": "pod-a"
+                }
+              ]
+            }
+          ],
+          "path": [
+            "node",
+            "pod"
+          ],
+          "message": ""
+        }
+      ]
+    }
+  },
+  {
     "path": "/api/v1/relation/v1beta3/topology_range",
     "space": "example-space",
     "request": {
@@ -2153,11 +2121,15 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 1,
-          "source_type": "node",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "node": "node-a"
-          },
+          "sources": [
+            {
+              "source_type": "node",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "node": "node-a"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "node_with_pod"
           ]
@@ -2168,17 +2140,21 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 1,
-          "source_type": "node",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "node": "node-a"
-          },
+          "sources": [
+            {
+              "source_type": "node",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "node": "node-a"
+              },
+              "source_expand_info": {
+                "unknown": "value"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "node_with_pod"
           ],
-          "source_expand_info": {
-            "unknown": "value"
-          },
           "response_format": "compact-v1"
         },
         {
@@ -2187,11 +2163,15 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": -1,
-          "source_type": "node",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "node": "node-a"
-          },
+          "sources": [
+            {
+              "source_type": "node",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "node": "node-a"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "node_with_pod"
           ]
@@ -2232,20 +2212,12 @@
               ],
               "edges": [
                 {
-                  "source": 281474976710657,
-                  "target": 562949953421314,
-                  "relation_type": "node_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "outbound"
-                },
-                {
                   "source": 562949953421314,
                   "target": 281474976710657,
                   "relation_type": "node_with_pod",
                   "metric_name": "",
                   "category": "static",
-                  "direction": "inbound"
+                  "direction": "outbound"
                 }
               ],
               "partial": false
@@ -2273,20 +2245,12 @@
               ],
               "edges": [
                 {
-                  "source": 281474976710657,
-                  "target": 562949953421314,
-                  "relation_type": "node_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "outbound"
-                },
-                {
                   "source": 562949953421314,
                   "target": 281474976710657,
                   "relation_type": "node_with_pod",
                   "metric_name": "",
                   "category": "static",
-                  "direction": "inbound"
+                  "direction": "outbound"
                 }
               ],
               "partial": false
@@ -2314,20 +2278,12 @@
               ],
               "edges": [
                 {
-                  "source": 281474976710657,
-                  "target": 562949953421314,
-                  "relation_type": "node_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "outbound"
-                },
-                {
                   "source": 562949953421314,
                   "target": 281474976710657,
                   "relation_type": "node_with_pod",
                   "metric_name": "",
                   "category": "static",
-                  "direction": "inbound"
+                  "direction": "outbound"
                 }
               ],
               "partial": false
@@ -2351,7 +2307,7 @@
           "step": "",
           "point_count": 0,
           "snapshots": [],
-          "message": "max hops -1 is outside [0, 5]"
+          "message": "max hops -1 is outside [0, 10]"
         }
       ]
     }
@@ -2367,11 +2323,15 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 1,
-          "source_type": "node",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "node": "node-a"
-          },
+          "sources": [
+            {
+              "source_type": "node",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "node": "node-a"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "node_with_pod"
           ]
@@ -2412,20 +2372,12 @@
               ],
               "edges": [
                 {
-                  "source": 281474976710657,
-                  "target": 562949953421314,
-                  "relation_type": "node_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "outbound"
-                },
-                {
                   "source": 562949953421314,
                   "target": 281474976710657,
                   "relation_type": "node_with_pod",
                   "metric_name": "",
                   "category": "static",
-                  "direction": "inbound"
+                  "direction": "outbound"
                 }
               ],
               "partial": true,
@@ -2454,20 +2406,12 @@
               ],
               "edges": [
                 {
-                  "source": 281474976710657,
-                  "target": 562949953421314,
-                  "relation_type": "node_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "outbound"
-                },
-                {
                   "source": 562949953421314,
                   "target": 281474976710657,
                   "relation_type": "node_with_pod",
                   "metric_name": "",
                   "category": "static",
-                  "direction": "inbound"
+                  "direction": "outbound"
                 }
               ],
               "partial": true,
@@ -2496,20 +2440,12 @@
               ],
               "edges": [
                 {
-                  "source": 281474976710657,
-                  "target": 562949953421314,
-                  "relation_type": "node_with_pod",
-                  "metric_name": "",
-                  "category": "static",
-                  "direction": "outbound"
-                },
-                {
                   "source": 562949953421314,
                   "target": 281474976710657,
                   "relation_type": "node_with_pod",
                   "metric_name": "",
                   "category": "static",
-                  "direction": "inbound"
+                  "direction": "outbound"
                 }
               ],
               "partial": true,
@@ -2531,17 +2467,21 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 1,
-          "source_type": "container",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "namespace": "demo"
-          },
+          "sources": [
+            {
+              "source_type": "container",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "namespace": "demo"
+              },
+              "source_expand_info": {
+                "version": "v2"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "container_with_pod"
-          ],
-          "source_expand_info": {
-            "version": "v2"
-          }
+          ]
         }
       ]
     },
@@ -2581,6 +2521,97 @@
   },
   {
     "path": "/api/v1/relation/v1beta3/topology_range",
+    "space": "example-space",
+    "request": {
+      "query_list": [
+        {
+          "start_time": 1700000000,
+          "end_time": 1700000120,
+          "step": "1m",
+          "look_back_delta": "5m",
+          "max_hops": 1,
+          "sources": [
+            {
+              "source_type": "node",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "node": "node-a"
+              }
+            }
+          ],
+          "allowed_relation_types": [
+            "node_with_pod"
+          ],
+          "response_format": "compact-v1"
+        }
+      ]
+    },
+    "http_status": 200,
+    "response": {
+      "trace_id": "",
+      "data": [
+        {
+          "code": 200,
+          "start_time": 1700000000000,
+          "end_time": 1700000120000,
+          "step": "1m0s",
+          "point_count": 3,
+          "response_format": "compact-v1",
+          "compact": {
+            "version": 1,
+            "timestamps": [
+              1700000000000,
+              1700000060000,
+              1700000120000
+            ],
+            "nodes": [
+              {
+                "id": "281474976710657",
+                "resource_type": "node",
+                "dimensions": {
+                  "bcs_cluster_id": "example-cluster",
+                  "node": "node-a"
+                },
+                "mask": [
+                  "0000000000000007"
+                ]
+              },
+              {
+                "id": "562949953421314",
+                "resource_type": "pod",
+                "dimensions": {
+                  "bcs_cluster_id": "example-cluster",
+                  "namespace": "demo",
+                  "pod": "pod-a"
+                },
+                "mask": [
+                  "0000000000000007"
+                ]
+              }
+            ],
+            "edges": [
+              {
+                "source": "562949953421314",
+                "target": "281474976710657",
+                "relation_type": "node_with_pod",
+                "metric_name": "",
+                "category": "static",
+                "direction": "outbound",
+                "mask": [
+                  "0000000000000007"
+                ]
+              }
+            ],
+            "partial": [],
+            "node_occurrences": 6,
+            "edge_occurrences": 3
+          }
+        }
+      ]
+    }
+  },
+  {
+    "path": "/api/v1/relation/v1beta3/topology_range",
     "space": "example-no-info",
     "request": {
       "query_list": [
@@ -2590,17 +2621,21 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 1,
-          "source_type": "container",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "namespace": "demo"
-          },
+          "sources": [
+            {
+              "source_type": "container",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "namespace": "demo"
+              },
+              "source_expand_info": {
+                "version": "v2"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "container_with_pod"
-          ],
-          "source_expand_info": {
-            "version": "v2"
-          }
+          ]
         }
       ]
     },
@@ -2652,11 +2687,15 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 1,
-          "source_type": "node",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "node": "node-a"
-          },
+          "sources": [
+            {
+              "source_type": "node",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "node": "node-a"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "node_with_pod"
           ]
@@ -2711,11 +2750,15 @@
           "step": "1m",
           "look_back_delta": "5m",
           "max_hops": 1,
-          "source_type": "node",
-          "source_info": {
-            "bcs_cluster_id": "example-cluster",
-            "node": "node-a"
-          },
+          "sources": [
+            {
+              "source_type": "node",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "node": "node-a"
+              }
+            }
+          ],
           "allowed_relation_types": [
             "node_with_pod"
           ]
@@ -2748,7 +2791,317 @@
     },
     "http_status": 400,
     "response": {
-      "error": "Mismatch type cmdb.SharedTopologyQuery with value number \"at index 15: mismatched type with value\\n\\n\\t{\\\"query_list\\\":[42]}\\n\\t...............^...\\n\""
+      "error": "json: cannot unmarshal number into Go struct field SharedTopologyRequest.query_list of type cmdb.plain"
+    }
+  },
+  {
+    "path": "/api/v1/relation/v1beta3/topology_range",
+    "space": "example-space",
+    "request": {
+      "query_list": [
+        {
+          "start_time": 1700000000,
+          "end_time": 1700000120,
+          "step": "1m",
+          "look_back_delta": "5m",
+          "max_hops": -1,
+          "sources": [
+            {
+              "source_type": "node",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "node": "node-a"
+              }
+            }
+          ],
+          "allowed_relation_types": [
+            "node_with_pod"
+          ]
+        },
+        {
+          "start_time": 1700000000,
+          "end_time": 1700000120,
+          "step": "1m",
+          "look_back_delta": "5m",
+          "max_hops": 1,
+          "sources": [
+            {
+              "source_type": "node",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "node": "node-a"
+              }
+            }
+          ],
+          "allowed_relation_types": [
+            "node_with_pod"
+          ]
+        }
+      ]
+    },
+    "http_status": 200,
+    "response": {
+      "trace_id": "",
+      "data": [
+        {
+          "code": 400,
+          "start_time": 0,
+          "end_time": 0,
+          "step": "",
+          "point_count": 0,
+          "snapshots": [],
+          "message": "max hops -1 is outside [0, 10]"
+        },
+        {
+          "code": 200,
+          "start_time": 1700000000000,
+          "end_time": 1700000120000,
+          "step": "1m0s",
+          "point_count": 3,
+          "snapshots": [
+            {
+              "timestamp": 1700000000000,
+              "nodes": [
+                {
+                  "id": 281474976710657,
+                  "resource_type": "node",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "node": "node-a"
+                  }
+                },
+                {
+                  "id": 562949953421314,
+                  "resource_type": "pod",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "namespace": "demo",
+                    "pod": "pod-a"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "source": 562949953421314,
+                  "target": 281474976710657,
+                  "relation_type": "node_with_pod",
+                  "metric_name": "",
+                  "category": "static",
+                  "direction": "outbound"
+                }
+              ],
+              "partial": false
+            },
+            {
+              "timestamp": 1700000060000,
+              "nodes": [
+                {
+                  "id": 281474976710657,
+                  "resource_type": "node",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "node": "node-a"
+                  }
+                },
+                {
+                  "id": 562949953421314,
+                  "resource_type": "pod",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "namespace": "demo",
+                    "pod": "pod-a"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "source": 562949953421314,
+                  "target": 281474976710657,
+                  "relation_type": "node_with_pod",
+                  "metric_name": "",
+                  "category": "static",
+                  "direction": "outbound"
+                }
+              ],
+              "partial": false
+            },
+            {
+              "timestamp": 1700000120000,
+              "nodes": [
+                {
+                  "id": 281474976710657,
+                  "resource_type": "node",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "node": "node-a"
+                  }
+                },
+                {
+                  "id": 562949953421314,
+                  "resource_type": "pod",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "namespace": "demo",
+                    "pod": "pod-a"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "source": 562949953421314,
+                  "target": 281474976710657,
+                  "relation_type": "node_with_pod",
+                  "metric_name": "",
+                  "category": "static",
+                  "direction": "outbound"
+                }
+              ],
+              "partial": false
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "path": "/api/v1/relation/v1beta3/topology_range",
+    "space": "example-space",
+    "request": {
+      "query_list": [
+        {
+          "start_time": 1700000000,
+          "end_time": 1700000120,
+          "step": "1m",
+          "look_back_delta": "5m",
+          "max_hops": 1,
+          "sources": [
+            {
+              "source_type": "node",
+              "source_info": {
+                "bcs_cluster_id": "example-cluster",
+                "node": "node-a"
+              }
+            }
+          ],
+          "allowed_relation_types": [
+            "node_with_pod"
+          ]
+        }
+      ]
+    },
+    "http_status": 200,
+    "response": {
+      "trace_id": "",
+      "data": [
+        {
+          "code": 200,
+          "start_time": 1700000000000,
+          "end_time": 1700000120000,
+          "step": "1m0s",
+          "point_count": 3,
+          "snapshots": [
+            {
+              "timestamp": 1700000000000,
+              "nodes": [
+                {
+                  "id": 281474976710657,
+                  "resource_type": "node",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "node": "node-a"
+                  }
+                },
+                {
+                  "id": 562949953421314,
+                  "resource_type": "pod",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "namespace": "demo",
+                    "pod": "pod-a"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "source": 562949953421314,
+                  "target": 281474976710657,
+                  "relation_type": "node_with_pod",
+                  "metric_name": "",
+                  "category": "static",
+                  "direction": "outbound"
+                }
+              ],
+              "partial": false
+            },
+            {
+              "timestamp": 1700000060000,
+              "nodes": [
+                {
+                  "id": 281474976710657,
+                  "resource_type": "node",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "node": "node-a"
+                  }
+                },
+                {
+                  "id": 562949953421314,
+                  "resource_type": "pod",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "namespace": "demo",
+                    "pod": "pod-a"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "source": 562949953421314,
+                  "target": 281474976710657,
+                  "relation_type": "node_with_pod",
+                  "metric_name": "",
+                  "category": "static",
+                  "direction": "outbound"
+                }
+              ],
+              "partial": false
+            },
+            {
+              "timestamp": 1700000120000,
+              "nodes": [
+                {
+                  "id": 281474976710657,
+                  "resource_type": "node",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "node": "node-a"
+                  }
+                },
+                {
+                  "id": 562949953421314,
+                  "resource_type": "pod",
+                  "dimensions": {
+                    "bcs_cluster_id": "example-cluster",
+                    "namespace": "demo",
+                    "pod": "pod-a"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "source": 562949953421314,
+                  "target": 281474976710657,
+                  "relation_type": "node_with_pod",
+                  "metric_name": "",
+                  "category": "static",
+                  "direction": "outbound"
+                }
+              ],
+              "partial": false
+            }
+          ]
+        }
+      ]
     }
   }
 ]

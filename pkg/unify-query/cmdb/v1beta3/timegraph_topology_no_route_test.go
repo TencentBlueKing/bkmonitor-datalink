@@ -93,7 +93,7 @@ func TestSharedTopologyRelationWithoutRouteKeepsOtherRelations(t *testing.T) {
 				t.Run(fmt.Sprintf("%s/planned=%v/%s", missing, planned, mode), func(t *testing.T) {
 					SharedTopologyPlanCandidates = planned
 					request := cmdb.SharedTopologyQuery{
-						SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
+						SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}},
 						Timestamp: 1700000100, MaxHops: 2,
 					}
 					points := 1
@@ -181,7 +181,7 @@ func TestTopologySelectorRelationWithoutRouteOnEveryFetchPath(t *testing.T) {
 		{name: "bipartite-first-hop-unrouted-wide", provider: selectorWithSecondFirstHop(), missing: "ad", count: timeGraphWideFrontierThreshold + 2, hops: 2, root: root},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: tc.root, Timestamp: 1700000000, MaxHops: tc.hops}
+			request := cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "a", SourceInfo: tc.root}}, Timestamp: 1700000000, MaxHops: tc.hops}
 			SharedTopologyPlanCandidates = true
 			baselineCalls := map[string]int{}
 			baseline, err := noRouteTopologyModel(t, tc.provider, fixtures(tc.count), "", baselineCalls).
@@ -252,7 +252,7 @@ func TestTopologyUnobservedRootWithUnroutedFirstHopReturnsEarly(t *testing.T) {
 	}
 	for _, hops := range []int{2, 3} {
 		t.Run(fmt.Sprintf("H%d", hops), func(t *testing.T) {
-			request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: hops}
+			request := cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}}}, Timestamp: 1700000000, MaxHops: hops}
 			baselineCalls := map[string]int{}
 			baseline, err := noRouteTopologyModel(t, selectorWithSecondFirstHop(), data, "", baselineCalls).QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
 			require.NoError(t, err)
@@ -293,7 +293,7 @@ func TestTopologyQualityMetricSeparatesNoRouteFromBackendPartial(t *testing.T) {
 		}
 		return 0
 	}
-	request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: 1700000100, MaxHops: 2}
+	request := cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}}, Timestamp: 1700000100, MaxHops: 2}
 	for _, tc := range []struct {
 		name, missing string
 		partial       bool

@@ -55,12 +55,16 @@ func TestSharedTopologyHandlerValidationCases(t *testing.T) {
 	}{
 		{name: "instant 空批次", body: `{"query_list":[]}`, status: http.StatusOK, dataCodes: []int{}, requestResult: "empty"},
 		{name: "range 空批次", rangeQuery: true, body: `{"query_list":[]}`, status: http.StatusOK, dataCodes: []int{}, requestResult: "empty"},
-		{name: "instant 缺少时间点", body: `{"query_list":[{"source_type":"node"}]}`, status: http.StatusOK, dataCodes: []int{http.StatusBadRequest}, requestResult: "failed"},
-		{name: "range 缺少时间范围", rangeQuery: true, body: `{"query_list":[{"source_type":"node","step":"1m"}]}`, status: http.StatusOK, dataCodes: []int{http.StatusBadRequest}, requestResult: "failed"},
+		{name: "instant 缺少时间点", body: `{"query_list":[{"sources":[{"source_type":"node"}]}]}`, status: http.StatusOK, dataCodes: []int{http.StatusBadRequest}, requestResult: "failed"},
+		{name: "range 缺少时间范围", rangeQuery: true, body: `{"query_list":[{"sources":[{"source_type":"node"}],"step":"1m"}]}`, status: http.StatusOK, dataCodes: []int{http.StatusBadRequest}, requestResult: "failed"},
 		{name: "instant 错用时间范围", body: `{"query_list":[{"timestamp":1700000000,"start_time":1700000000,"end_time":1700000060}]}`, status: http.StatusOK, dataCodes: []int{http.StatusBadRequest}, requestResult: "failed"},
 		{name: "range 错用时间点", rangeQuery: true, body: `{"query_list":[{"timestamp":1700000000}]}`, status: http.StatusOK, dataCodes: []int{http.StatusBadRequest}, requestResult: "failed"},
-		{name: "HTTP 和模型拒绝不重复计数", body: `{"query_list":[{}, {"timestamp":1700000000,"source_type":"node"}]}`, status: http.StatusOK, dataCodes: []int{http.StatusBadRequest, http.StatusBadRequest}, requestResult: "failed"},
+		{name: "HTTP 和模型拒绝不重复计数", body: `{"query_list":[{}, {"timestamp":1700000000,"sources":[{"source_type":"node"}]}]}`, status: http.StatusOK, dataCodes: []int{http.StatusBadRequest, http.StatusBadRequest}, requestResult: "failed"},
 		{name: "非法 JSON", body: `{`, status: http.StatusBadRequest, requestResult: "rejected"},
+		{name: "已替换的单根字段", body: `{"query_list":[{"timestamp":1700000000,"source_type":"node"}]}`, status: http.StatusBadRequest, requestResult: "rejected"},
+		{name: "已替换的方向字段", body: `{"query_list":[{"timestamp":1700000000,"sources":[{"source_type":"node"}],"dynamic_relation_direction":"outbound"}]}`, status: http.StatusBadRequest, requestResult: "rejected"},
+		{name: "旧的方向取值", body: `{"query_list":[{"timestamp":1700000000,"sources":[{"source_type":"node"}],"direction":"outbound"}]}`, status: http.StatusOK, dataCodes: []int{http.StatusBadRequest}, requestResult: "failed"},
+		{name: "超过选择器上限", body: `{"query_list":[{"timestamp":1700000000,"sources":[{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"}]}]}`, status: http.StatusOK, dataCodes: []int{http.StatusBadRequest}, requestResult: "failed"},
 	}
 
 	for _, tt := range tests {

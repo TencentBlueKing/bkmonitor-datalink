@@ -171,7 +171,7 @@ func TestSharedTopologyPipelineProbe(t *testing.T) {
 				if mode != "legacy" {
 					directGrid = &grid
 				}
-				relations := model.sharedTopologyRelations("space", nil, nil, DirectionOutbound)
+				relations := model.sharedTopologyRelations("space", nil, nil, nil, DirectionOutbound)
 				began := time.Now()
 				graph, err := model.buildTimeGraph(ctx, "space", time.UnixMilli(times[0]), time.UnixMilli(times[k-1]), time.Second, "source", cmdb.Matcher{"source_id": "a"}, nil, sharedTopologyRootRelationKeys("source", 1, relations), relations, "5m", matrixQuery, directGrid)
 				row["build_total_ms"] = float64(time.Since(began).Microseconds()) / 1000

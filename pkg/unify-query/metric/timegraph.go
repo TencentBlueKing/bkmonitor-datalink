@@ -45,6 +45,10 @@ var (
 		Help:    "successful topology response size; nodes and edges are summed across snapshots",
 		Buckets: []float64{0, 1, 2, 6, 30, 60, 64, 100, 1000, 10000, 100000, 1000000},
 	}, []string{"query_mode", "kind"})
+	cmdbTopologyFetchFallbackTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "unify_query", Name: "cmdb_topology_fetch_fallback_total",
+		Help: "topology queries whose fetch fell back to reading the whole candidate relation component, by bounded reason",
+	}, []string{"reason"})
 	cmdbTopologyRejectionsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "unify_query", Name: "cmdb_topology_rejections_total",
 		Help: "topology query rejections by bounded validation or capacity reason",
@@ -131,11 +135,22 @@ func CMDBTopologyRejectInc(ctx context.Context, mode, reason string) {
 		return
 	}
 	switch reason {
-	case "invalid_request", "max_shared_topology_points", "max_response_bytes", "max_topology_queries", "max_topology_request_bytes":
+	case "invalid_request", "max_shared_topology_points", "max_response_bytes", "max_topology_queries", "max_topology_request_bytes", "max_topology_sources":
 	default:
 		reason = "other"
 	}
 	counterInc(ctx, cmdbTopologyRejectionsTotal.WithLabelValues(mode, reason))
+}
+
+// CMDBTopologyFetchFallbackInc 记录取数退回为读取整个候选关系分量的次数；未知原因归入 other。
+// selector_not_eligible 表示多个选择器中有选择器不满足逐跳取数资格。
+func CMDBTopologyFetchFallbackInc(ctx context.Context, reason string) {
+	switch reason {
+	case "selector_not_eligible":
+	default:
+		reason = "other"
+	}
+	counterInc(ctx, cmdbTopologyFetchFallbackTotal.WithLabelValues(reason))
 }
 
 // CMDBTimeGraphStageObserve 阶段级聚合同时覆盖路径查询和共享拓扑，不逐节点或逐边打点。

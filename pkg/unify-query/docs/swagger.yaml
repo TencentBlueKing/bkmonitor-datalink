@@ -111,10 +111,12 @@ definitions:
                 identity dimensions.
               type: string
             start_time:
-              description: Range start in Unix seconds or milliseconds; used with end_time.
+              description: Range start in Unix seconds or milliseconds; used with
+                end_time.
               type: integer
             step:
-              description: Positive whole-second Go duration; omitted defaults to 1m.
+              description: Positive whole-second Go duration; omitted defaults to
+                1m.
               type: string
             target_info_show:
               description: Whether to return target information fields in the legacy
@@ -269,14 +271,15 @@ definitions:
         items:
           type: string
         type: array
-      dynamic_relation_direction:
+      direction:
         default: both
-        description: Traversal orientation for directional relations; non-directional
-          static relations remain bidirectional.
+        description: 'Traversal orientation: out follows dynamic relations from caller
+          to callee and belong-to relations from child to parent; in is the reverse;
+          both follows either. Other static relations are always bidirectional.'
         enum:
+        - out
+        - in
         - both
-        - outbound
-        - inbound
         type: string
       end_time:
         description: Inclusive range end; must be >= start_time and exactly aligned
@@ -294,6 +297,17 @@ definitions:
           negative is invalid. Configured ceiling defaults to 6.
         minimum: 0
         type: integer
+      relation_groups:
+        description: 'Relation group allowlist derived from the schema: BELONG_TO
+          (static relations marked is_belongs_to) and SERVICE_CALL (dynamic relations).
+          Empty allows all relations; unknown groups match no relations. Intersects
+          allowed_categories and allowed_relation_types.'
+        items:
+          enum:
+          - BELONG_TO
+          - SERVICE_CALL
+          type: string
+        type: array
       response_format:
         default: snapshots
         description: Per-item output format. Omitted or empty selects snapshots; compact-v1
@@ -302,22 +316,12 @@ definitions:
         - snapshots
         - compact-v1
         type: string
-      source_expand_info:
-        allOf:
-        - $ref: '#/definitions/cmdb.Matcher'
-        description: Explicit root attribute predicates, evaluated per frame. Defined
-          primary keys may complete identity, but conflicting identity or unknown
-          fields fail. Does not filter neighbor attributes.
-      source_info:
-        allOf:
-        - $ref: '#/definitions/cmdb.Matcher'
-        description: Root identity matchers (string values). Partial or empty identity
-          selects multiple relation endpoints; use the resource catalogue for complete
-          primary keys.
-      source_type:
-        description: Root resource type from the active schema; required for either
-          endpoint.
-        type: string
+      sources:
+        description: Root selectors, 1 to 20. Each frame's roots are the union of
+          nodes matched by any selector; hops count from the nearest root.
+        items:
+          $ref: '#/definitions/cmdb.TopologySource'
+        type: array
       start_time:
         description: Required and nonzero with end_time for topology_range; forbidden
           for topology. Same units as timestamp.
@@ -329,9 +333,9 @@ definitions:
           (response step 0s).
         type: string
       target_types:
-        description: Output node-type filter after traversal, always retaining source_type
-          nodes. Removes excluded nodes and incident edges, never collapses paths.
-          Empty returns all reachable types.
+        description: Output node-type filter after traversal, always retaining every
+          selector's source_type nodes. Removes excluded nodes and incident edges,
+          never collapses paths. Empty returns all reachable types.
         items:
           type: string
         type: array
@@ -341,7 +345,7 @@ definitions:
           always use milliseconds.
         type: integer
     required:
-    - source_type
+    - sources
     type: object
   cmdb.SharedTopologyRequest:
     properties:
@@ -369,6 +373,26 @@ definitions:
         type: string
       timestamp:
         type: integer
+    type: object
+  cmdb.TopologySource:
+    properties:
+      source_expand_info:
+        allOf:
+        - $ref: '#/definitions/cmdb.Matcher'
+        description: Explicit root attribute predicates for this selector, evaluated
+          per frame. Defined primary keys may complete identity, but conflicting identity
+          or unknown fields fail. Does not filter neighbor attributes or other selectors.
+      source_info:
+        allOf:
+        - $ref: '#/definitions/cmdb.Matcher'
+        description: Root identity matchers (string values). Partial or empty identity
+          selects multiple relation endpoints; use the resource catalogue for complete
+          primary keys.
+      source_type:
+        description: Root resource type from the active schema; required.
+        type: string
+    required:
+    - source_type
     type: object
   github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.AggregateMethod:
     properties:
@@ -459,6 +483,9 @@ definitions:
         items:
           type: string
         type: array
+      exact_total:
+        description: ExactTotal 显式请求 ES 返回精确命中总数（track_total_hits）；默认关闭
+        type: boolean
       field_name:
         description: FieldName 查询指标
         example: usage
@@ -611,6 +638,10 @@ definitions:
         items:
           type: string
         type: array
+      allow_partial_es_results:
+        description: AllowPartialESResults 仅在 /query/ts/raw 和 /query/ts/reference
+          接纳 ES 部分分片结果。
+        type: boolean
       clear_cache:
         description: ClearCache 是否强制清理已存在的缓存会话
         type: boolean
@@ -967,6 +998,8 @@ definitions:
         $ref: '#/definitions/metadata.Status'
       total:
         type: integer
+      total_exact:
+        type: boolean
       trace_id:
         type: string
     type: object

@@ -164,7 +164,7 @@ func TestQuerySharedTopologyInvalidGridDoesNotCreateStorage(t *testing.T) {
 	observer := newBuildCleanupObserver(t)
 	ctx := initTimeGraphQueryTestEnvironment()
 	result, err := sharedTopologyQueryModel(nil).QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{
-		SpaceUID: "space", SourceType: "source", StartTime: 1700000060, EndTime: 1700000000, Step: "60s",
+		SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source"}}, StartTime: 1700000060, EndTime: 1700000000, Step: "60s",
 	})
 	require.ErrorContains(t, err, "start_time must be less than or equal to end_time")
 	require.Empty(t, result)

@@ -54,7 +54,7 @@ func itemLead(p []byte) bool { return string(p) == "," }
 func topologyStreamTestBody(items int) string {
 	list := make([]string, items)
 	for i := range list {
-		list[i] = `{"timestamp":1700000000,"source_type":"unknown-resource"}`
+		list[i] = `{"timestamp":1700000000,"sources":[{"source_type":"unknown-resource"}]}`
 	}
 	return `{"query_list":[` + strings.Join(list, ",") + `]}`
 }

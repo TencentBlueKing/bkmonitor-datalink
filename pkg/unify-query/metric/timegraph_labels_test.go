@@ -106,6 +106,7 @@ func TestTopologyReasonMetricsKeepKnownReasonsAndDeduplicate(t *testing.T) {
 	})
 	for _, reason := range []string{
 		"invalid_request", "max_shared_topology_points", "max_response_bytes", "max_topology_queries", "max_topology_request_bytes",
+		"max_topology_sources",
 	} {
 		t.Run("rejection/"+reason, func(t *testing.T) {
 			requireCounterIncrease(t, cmdbTopologyRejectionsTotal.WithLabelValues("range", reason), 1, func() {
@@ -113,6 +114,13 @@ func TestTopologyReasonMetricsKeepKnownReasonsAndDeduplicate(t *testing.T) {
 			})
 		})
 	}
+	// 取数回退只有固定原因，其余归入 other。
+	requireCounterIncrease(t, cmdbTopologyFetchFallbackTotal.WithLabelValues("selector_not_eligible"), 1, func() {
+		CMDBTopologyFetchFallbackInc(ctx, "selector_not_eligible")
+	})
+	requireCounterIncrease(t, cmdbTopologyFetchFallbackTotal.WithLabelValues("other"), 1, func() {
+		CMDBTopologyFetchFallbackInc(ctx, "pod-1 is not eligible")
+	})
 	// 内部规模不再是拒绝原因，旧原因名不占独立标签。
 	for _, reason := range []string{
 		"max_targets", "max_graph_nodes", "max_graph_edges", "max_graph_node_infos", "max_topology_output_bytes",

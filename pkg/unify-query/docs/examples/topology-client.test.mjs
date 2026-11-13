@@ -167,7 +167,7 @@ test("consumer serializer to real UQ HTTP handler/model and back", { skip: !endp
     assert.deepEqual(Object.keys(data[0]).sort(), ["code", "message", "path", "source_info", "source_type", "target_list", "target_type"]);
   }
   const good = scenarios[0].query;
-  const mixed = await call("v1beta3/topology_range", [good, { ...good, source_expand_info: { unknown: "value" }, response_format: "compact-v1" }, { ...good, max_hops: -1 }]);
+  const mixed = await call("v1beta3/topology_range", [good, { ...good, sources: [{ ...good.sources[0], source_expand_info: { unknown: "value" } }], response_format: "compact-v1" }, { ...good, max_hops: -1 }]);
   assert.deepEqual(mixed.data.map((item) => item.code), [200, 400, 400]);
   assert.equal(mixed.data[1].compact, null);
   assert.deepEqual(mixed.data[2].snapshots, []);

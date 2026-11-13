@@ -114,7 +114,7 @@ func TestTopologyBatchMetadataLifetime(t *testing.T) {
 						if i%2 != 0 {
 							format = "compact-v1"
 						}
-						items[i] = fmt.Sprintf(`{"source_type":"node","look_back_delta":"5m","response_format":%q,%s}`, format, query)
+						items[i] = fmt.Sprintf(`{"sources":[{"source_type":"node"}],"look_back_delta":"5m","response_format":%q,%s}`, format, query)
 					}
 					body := `{"query_list":[` + strings.Join(items, ",") + `]}`
 					if proxied {

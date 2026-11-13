@@ -24,7 +24,7 @@ func TestTopologyFramesMatchCollectedSnapshots(t *testing.T) {
 		for _, targetTypes := range [][]cmdb.Resource{nil, {"node"}, {"pod", "service"}} {
 			t.Run(fmt.Sprintf("seed-%d/targets-%v", seed, targetTypes), func(t *testing.T) {
 				request := cmdb.SharedTopologyQuery{
-					SpaceUID: "space", SourceType: "container", SourceInfo: cmdb.Matcher{"cluster": "c0", "pod": "p0"},
+					SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "container", SourceInfo: cmdb.Matcher{"cluster": "c0", "pod": "p0"}}},
 					StartTime: frames[0] / 1000, EndTime: frames[len(frames)-1] / 1000, Step: "60s", MaxHops: 3, TargetTypes: targetTypes,
 				}
 				want, err := hopFetchModel(hopFetchProvider(), &hopFetchBackend{t: t, data: data}).QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
@@ -64,7 +64,7 @@ func TestTopologyCompactReleasesGraphBeforeConsume(t *testing.T) {
 	frames := hopFetchFrames()
 	data := randomHopFetchFixture(rand.New(rand.NewSource(0)), frames)
 	request := cmdb.SharedTopologyQuery{
-		SpaceUID: "space", SourceType: "container", SourceInfo: cmdb.Matcher{"cluster": "c0", "pod": "p0"},
+		SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "container", SourceInfo: cmdb.Matcher{"cluster": "c0", "pod": "p0"}}},
 		StartTime: frames[0] / 1000, EndTime: frames[len(frames)-1] / 1000, Step: "60s", MaxHops: 3,
 	}
 	want, err := hopFetchModel(hopFetchProvider(), &hopFetchBackend{t: t, data: data}).QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)

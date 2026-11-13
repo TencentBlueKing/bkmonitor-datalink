@@ -32,7 +32,7 @@ func TestSharedTopologyResourcesAndBackendLimit(t *testing.T) {
 			ctx := initTimeGraphQueryTestEnvironment()
 			stamp := int64(1700000000000)
 			relationStamps := []int64{stamp}
-			request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: stamp / 1000, MaxHops: 1}
+			request := cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}}, Timestamp: stamp / 1000, MaxHops: 1}
 			model := sharedTopologyQueryModel(map[string]pl.Matrix{"source_middle_flow": contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, relationStamps...), "middle_target_flow": {}})
 			if test.backendLimit {
 				model.timeGraphVMQueryWithPartial = func(ctx context.Context, _ *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, bool, error) {
@@ -87,7 +87,7 @@ func TestSharedTopologyConcurrentLoadingAndRecovery(t *testing.T) {
 				}
 				return nil, nil
 			}
-			request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: 1700000000, MaxHops: 1}
+			request := cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}}, Timestamp: 1700000000, MaxHops: 1}
 			for i := 0; i < concurrency; i++ {
 				workers.Add(1)
 				go func() {

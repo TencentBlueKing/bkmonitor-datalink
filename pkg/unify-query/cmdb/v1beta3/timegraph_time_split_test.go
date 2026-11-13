@@ -121,28 +121,28 @@ func TestTopologyTimeSplitMatchesUnsplitAnswer(t *testing.T) {
 	}{
 		{
 			name:    "wide_read",
-			request: cmdb.SharedTopologyQuery{SourceType: "node"},
+			request: cmdb.SharedTopologyQuery{Sources: []cmdb.TopologySource{{SourceType: "node"}}},
 			split: func(read sampleLimitRead) bool {
 				return read.metric == "node_with_pod" && !hopFetchNarrowed(read.conditions)
 			},
 		},
 		{
 			name:    "root_read",
-			request: cmdb.SharedTopologyQuery{SourceType: "pod", SourceInfo: cmdb.Matcher{"cluster": "c0", "pod": "p0"}},
+			request: cmdb.SharedTopologyQuery{Sources: []cmdb.TopologySource{{SourceType: "pod", SourceInfo: cmdb.Matcher{"cluster": "c0", "pod": "p0"}}}},
 			split: func(read sampleLimitRead) bool {
 				return read.metric == "container_with_pod" && hasEqualCondition(read.conditions, "pod", "p0") && len(read.conditions.ConditionList) == len(read.conditions.FieldList)-1
 			},
 		},
 		{
 			name:    "single_identity_read",
-			request: cmdb.SharedTopologyQuery{SourceType: "pod", SourceInfo: cmdb.Matcher{"cluster": "c0", "pod": "p0"}},
+			request: cmdb.SharedTopologyQuery{Sources: []cmdb.TopologySource{{SourceType: "pod", SourceInfo: cmdb.Matcher{"cluster": "c0", "pod": "p0"}}}},
 			split: func(read sampleLimitRead) bool {
 				return read.metric == "node_with_pod" && hasEqualCondition(read.conditions, "node", "node0")
 			},
 		},
 		{
 			name:    "info_read",
-			request: cmdb.SharedTopologyQuery{SourceType: "container", SourceInfo: cmdb.Matcher{"cluster": "c0"}, SourceExpandInfo: cmdb.Matcher{"pod": "p0"}},
+			request: cmdb.SharedTopologyQuery{Sources: []cmdb.TopologySource{{SourceType: "container", SourceInfo: cmdb.Matcher{"cluster": "c0"}, SourceExpandInfo: cmdb.Matcher{"pod": "p0"}}}},
 			split:   func(read sampleLimitRead) bool { return read.metric == "container_info_relation" },
 		},
 	} {
@@ -174,7 +174,7 @@ func TestTopologyTimeSplitMatchesUnsplitAnswer(t *testing.T) {
 func TestTopologyTimeSplitTerminalAndOtherErrors(t *testing.T) {
 	frames := hopFetchFrames()
 	request := cmdb.SharedTopologyQuery{
-		SpaceUID: "space", SourceType: "pod", SourceInfo: cmdb.Matcher{"cluster": "c0", "pod": "p0"}, MaxHops: 2, Step: "60s",
+		SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "pod", SourceInfo: cmdb.Matcher{"cluster": "c0", "pod": "p0"}}}, MaxHops: 2, Step: "60s",
 		StartTime: frames[0] / 1000, EndTime: frames[len(frames)-1] / 1000,
 	}
 	t.Run("one_point_still_too_large", func(t *testing.T) {

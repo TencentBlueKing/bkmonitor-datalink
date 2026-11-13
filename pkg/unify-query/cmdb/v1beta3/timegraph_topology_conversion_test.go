@@ -135,7 +135,7 @@ func TestTopologyFramesFilterOutputTypes(t *testing.T) {
 	require.Len(t, all[0].Nodes, 3)
 	require.Len(t, all[0].Edges, 3)
 
-	frames, err := g.prepareSharedTopologyFrames(ctx, grid, query, topologyOutputTypes("root", []cmdb.Resource{"target"}))
+	frames, err := g.prepareSharedTopologyFrames(ctx, grid, query, topologyOutputTypes([]topologySource{{Type: "root"}}, []cmdb.Resource{"target"}))
 	require.NoError(t, err)
 	var filtered []cmdb.SharedTopologySnapshot
 	require.NoError(t, frames.each(ctx, func(snapshot cmdb.SharedTopologySnapshot) error {
@@ -153,7 +153,7 @@ func TestTopologyFramesFilterOutputTypes(t *testing.T) {
 		require.Len(t, frame.Edges, 1)
 		require.Equal(t, "kept", frame.Edges[0].RelationType)
 	}
-	require.Nil(t, topologyOutputTypes("root", nil), "an empty target_types keeps every reachable type")
+	require.Nil(t, topologyOutputTypes([]topologySource{{Type: "root"}}, nil), "an empty target_types keeps every reachable type")
 
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()

@@ -178,3 +178,20 @@ curl --location --request POST 'http://127.0.0.1:10211/bmw/task/daemon/reload' \
 }'
 ```
 
+
+## 同步刷新查询路由
+
+向 BMW `task` 服务发送 `POST` JSON 请求。模板默认监听 `127.0.0.1:10211`，以部署中的 `service.task` 配置为准。每次请求指定一个租户，服务执行对应的 BMW 刷新方法后返回。
+
+| 路径 | 请求示例 |
+| --- | --- |
+| `/bmw/metadata/routes/result-table/refresh` | `{"bk_tenant_id":"system","table_ids":["system.cpu"],"is_publish":true}` |
+| `/bmw/metadata/routes/data-label/refresh` | `{"bk_tenant_id":"system","data_labels":["system"]}` 或 `{"bk_tenant_id":"system","table_ids":["system.cpu"]}` |
+| `/bmw/metadata/routes/space/refresh` | `{"bk_tenant_id":"system","space_type":"bkcc","space_id":"2"}` |
+
+- RT 详情要求非空 `table_ids`。`is_publish` 默认 `true`，传 `false` 只写入。部分刷新仅处理指定 RT 和同名 RecordRule；也支持直接指定仅存在于 RecordRule 中的表。
+- DataLabel 在 `table_ids` 和 `data_labels` 中选择一个非空列表，重建命中标签的完整映射。已移除的显式标签可以刷新为空列表。
+- 空间支持 `bkcc`、`bkci`、`bksaas`，重建单个空间的完整路由。预取只加载目标空间专属预计算、短链及本租户可能影响该空间的全局路由，沿用周期任务的合并顺序。
+- HTTP 200 表示 BMW 刷新方法返回成功，日志详情批次仍沿用 BMW 的写入容错。参数错误返回 400，目标空间不存在返回 404，刷新方法返回错误时返回 500。
+
+部分刷新按实际存储关联、origin、历史分段和同名规则收集集群 ID，批量读取 ClusterInfo，并在请求内复用结果。周期全量刷新每租户预加载一次 ClusterInfo，共享 BCS 数据源集合和 BKCI 前缀表候选，详情仍按 500 表分批处理。DataLabel 重建命中标签的完整 RT 映射，其字符串/JSON 匹配的扫描量取决于数据库索引与候选数据规模。

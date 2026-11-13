@@ -38,7 +38,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/memcache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -781,26 +780,6 @@ func TestSpaceRedisSvc_composeBcsSpaceBizTableIds(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotContains(t, data, tableIdTwo)
 	println(data)
-}
-
-func TestSpaceRedisSvc_getCachedClusterDataIdList(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	db := mysql.GetDBSession().DB
-	obj := bcs.BCSClusterInfo{ClusterID: "BCS-K8S-00000", K8sMetricDataID: 100001, CustomMetricDataID: 100002}
-	db.Delete(obj)
-	assert.NoError(t, obj.Create(db))
-
-	data, err := NewSpacePusher().getCachedClusterDataIdList()
-	assert.NoError(t, err)
-	assert.Equal(t, 2, len(data))
-	assert.Equal(t, []uint{100001, 100002}, data)
-
-	cache, err := memcache.GetMemCache()
-	cache.Wait()
-	assert.NoError(t, err)
-	dataList, ok := cache.Get(CachedClusterDataIdKey)
-	assert.True(t, ok)
-	assert.Equal(t, []uint{100001, 100002}, dataList.([]uint))
 }
 
 func TestGetDataLabelByTableId(t *testing.T) {

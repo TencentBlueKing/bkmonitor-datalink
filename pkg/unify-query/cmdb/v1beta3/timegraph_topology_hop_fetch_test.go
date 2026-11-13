@@ -371,11 +371,8 @@ func TestTopologyHopFetchReadsInducedEdgesBetweenLastLayerNodes(t *testing.T) {
 			require.Equal(t, wantSnapshots, gotSnapshots)
 			require.Equal(t, wantCompact, gotCompact)
 
+			// 一条调用序列只输出一条边，双向时入向视图合进调用方 → 被调用方。
 			wantPeers := 1
-			if direction == "" {
-				// 双向时同一条序列另有一条入向关系。
-				wantPeers = 2
-			}
 			for index, snapshot := range got.Snapshots {
 				ids := map[uint64]string{}
 				for _, node := range snapshot.Nodes {

@@ -91,7 +91,11 @@ func TestTopologyInfoOnlyDoesNotCreateRootsOrRestrictSameTypeNeighbors(t *testin
 		}
 		require.Empty(t, snapshots[0].Nodes)
 		require.Len(t, snapshots[1].Nodes, 3)
-		require.Len(t, snapshots[1].Edges, 4)
+		// 两条调用序列 a → b、b → c，每条只输出一条调用方 → 被调用方的边。
+		require.Len(t, snapshots[1].Edges, 2)
+		for _, edge := range snapshots[1].Edges {
+			require.Equal(t, string(DirectionOutbound), edge.Direction)
+		}
 	}
 }
 

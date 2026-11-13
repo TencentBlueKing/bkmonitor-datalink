@@ -661,3 +661,55 @@ func TestMultiSourceKeepsEdgesBetweenSelectorNeighborhoods(t *testing.T) {
 		}
 	}
 }
+
+// 一条调用序列只输出一条边：方向为调用方 → 被调用方、direction 为 outbound，不论请求 direction 取哪个，
+// 也不论遍历走的是 outbound 还是 inbound 视图。期望按调用序列与方向语义直接列出：
+// a → b 在第 0、1 帧，c → a 在第 2 帧；out 只走 a 作为调用方的边，in 只走 a 作为被调用方的边。
+func TestTopologyServiceCallOutputsOneEdgePerCall(t *testing.T) {
+	provider := contractSchemaProvider{
+		resources: []ResourceType{"svc"}, primary: map[ResourceType][]string{"svc": {"id"}}, fields: map[ResourceType][]string{"svc": {"id"}},
+		schemas: []RelationSchema{{RelationType: "calls", Category: RelationCategoryDynamic, FromType: "svc", ToType: "svc", MetricName: "calls_flow", IsDirectional: true}},
+	}
+	responses := map[string]pl.Matrix{
+		"calls_flow": append(contractMatrix(map[string]string{"from_id": "a", "to_id": "b"}, 1700000000000, 1700000060000),
+			contractMatrix(map[string]string{"from_id": "c", "to_id": "a"}, 1700000120000)...),
+	}
+	ab, ca := "calls|a|b|outbound", "calls|c|a|outbound"
+	for _, tc := range []struct {
+		direction string
+		frames    [][]string
+	}{
+		{direction: "both", frames: [][]string{{ab}, {ab}, {ca}}},
+		{direction: "", frames: [][]string{{ab}, {ab}, {ca}}},
+		{direction: "out", frames: [][]string{{ab}, {ab}, nil}},
+		{direction: "in", frames: [][]string{nil, nil, {ca}}},
+	} {
+		for _, format := range []string{"", cmdb.CompactTopologyFormat} {
+			t.Run(fmt.Sprintf("%s/%q", tc.direction, format), func(t *testing.T) {
+				vm := &publicTimeGraphVM{responses: responses}
+				model := &Model{schemaProvider: provider, timeGraphQueryReference: timeGraphTestQueryReference, timeGraphVMQuery: vm.query}
+				result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{
+					SpaceUID: "space", StartTime: 1700000000, EndTime: 1700000120, Step: "60s", LookBackDelta: "30s", MaxHops: 1,
+					Direction: tc.direction, ResponseFormat: format, Sources: []cmdb.TopologySource{{SourceType: "svc", SourceInfo: cmdb.Matcher{"id": "a"}}},
+				})
+				require.NoError(t, err)
+				snapshots := result.Snapshots
+				if format != "" {
+					snapshots = decodeCompactForTest(t, result.Compact)
+				}
+				require.Len(t, snapshots, len(tc.frames))
+				for index, snapshot := range snapshots {
+					ids := map[uint64]string{}
+					for _, node := range snapshot.Nodes {
+						ids[node.ID] = node.Dimensions["id"]
+					}
+					var edges []string
+					for _, edge := range snapshot.Edges {
+						edges = append(edges, strings.Join([]string{edge.RelationType, ids[edge.Source], ids[edge.Target], edge.Direction}, "|"))
+					}
+					require.Equal(t, tc.frames[index], edges, "frame %d", index)
+				}
+			})
+		}
+	}
+}

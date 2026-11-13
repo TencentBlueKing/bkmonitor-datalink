@@ -159,12 +159,12 @@ redis.call("HSET", KEYS[1],
            "msg", ARGV[1],
            "state", "pending",
            "pending_since", ARGV[3])
-redis.call("EXPIRE", KEYS[1], ARGV[4])
 redis.call("LPUSH", KEYS[2], ARGV[2])
 return 1
 `)
 
 // Enqueue adds the given task to the pending list of the queue.
+// Timeout 由 Processor 控制执行期限，消息由任务完成、归档或保留期清理流程删除。
 func (r *RDB) Enqueue(ctx context.Context, msg *task.TaskMessage) error {
 	var op errors.Op = "rdb.Enqueue"
 	encoded, err := task.EncodeMessage(msg)
@@ -182,7 +182,6 @@ func (r *RDB) Enqueue(ctx context.Context, msg *task.TaskMessage) error {
 		encoded,
 		msg.ID,
 		r.clock.Now().UnixNano(),
-		msg.Timeout,
 	}
 	n, err := r.runScriptWithErrorCode(ctx, op, enqueueCmd, keys, argv...)
 	if err != nil {
@@ -222,7 +221,6 @@ redis.call("HSET", KEYS[2],
            "state", "pending",
            "pending_since", ARGV[4],
            "unique_key", KEYS[1])
-redis.call("EXPIRE", KEYS[2], ARGV[5])
 redis.call("LPUSH", KEYS[3], ARGV[1])
 return 1
 `)
@@ -248,7 +246,6 @@ func (r *RDB) EnqueueUnique(ctx context.Context, msg *task.TaskMessage, ttl time
 		int(ttl.Seconds()),
 		encoded,
 		r.clock.Now().UnixNano(),
-		msg.Timeout,
 	}
 	n, err := r.runScriptWithErrorCode(ctx, op, enqueueUniqueCmd, keys, argv...)
 	if err != nil {
@@ -283,10 +280,24 @@ if redis.call("EXISTS", KEYS[2]) == 0 then
 	local id = redis.call("RPOPLPUSH", KEYS[1], KEYS[3])
 	if id then
 		local key = ARGV[2] .. id
+		local msg = redis.call("HGET", key, "msg")
+		if not msg then
+			local uniqueKey = redis.call("HGET", key, "unique_key")
+			if uniqueKey and redis.call("GET", uniqueKey) == id then
+				redis.call("DEL", uniqueKey)
+			end
+			redis.call("LREM", KEYS[3], 0, id)
+			redis.call("LREM", KEYS[1], 0, id)
+			redis.call("ZREM", KEYS[4], id)
+			redis.call("DEL", key)
+			return redis.error_reply("MISSING TASK MESSAGE: " .. id)
+		end
+		-- 清除旧版本在排队时设置的消息 TTL。
+		redis.call("PERSIST", key)
 		redis.call("HSET", key, "state", "active")
 		redis.call("HDEL", key, "pending_since")
 		redis.call("ZADD", KEYS[4], ARGV[1], id)
-		return redis.call("HGET", key, "msg")
+		return msg
 	end
 end
 return nil`)
@@ -563,9 +574,21 @@ local ids = redis.call("ZRANGEBYSCORE", KEYS[2], "-inf", ARGV[1], "LIMIT", 0, 10
 local recovered = 0
 for _, id in ipairs(ids) do
   local taskKey = ARGV[2] .. id
+  if redis.call("HEXISTS", taskKey, "msg") == 0 then
+    local uniqueKey = redis.call("HGET", taskKey, "unique_key")
+    if uniqueKey and redis.call("GET", uniqueKey) == id then
+      redis.call("DEL", uniqueKey)
+    end
+    redis.call("LREM", KEYS[1], 0, id)
+    redis.call("LREM", KEYS[3], 0, id)
+    redis.call("ZREM", KEYS[2], id)
+    redis.call("DEL", taskKey)
+    return {recovered, id}
+  end
   if redis.call("HGET", taskKey, "state") == "active" then
     if redis.call("LREM", KEYS[1], 0, id) > 0 then
       redis.call("ZREM", KEYS[2], id)
+      redis.call("PERSIST", taskKey)
       redis.call("RPUSH", KEYS[3], id)
       redis.call("HSET", taskKey, "state", "pending", "pending_since", ARGV[3])
       recovered = recovered + 1
@@ -574,11 +597,11 @@ for _, id in ipairs(ids) do
       redis.call("ZREM", KEYS[2], id)
     end
   else
-    -- Completed or missing tasks must not hide later expired active tasks.
+    -- 非执行状态的旧租约不能阻止后续任务恢复。
     redis.call("ZREM", KEYS[2], id)
   end
 end
-return recovered`)
+return {recovered, ""}`)
 
 // RecoverExpired returns active tasks whose leases have elapsed to pending.
 func (r *RDB) RecoverExpired(cutoff time.Time, qnames ...string) (int, error) {
@@ -590,12 +613,15 @@ func (r *RDB) RecoverExpired(cutoff time.Time, qnames ...string) (int, error) {
 			common.LeaseKey(qname),
 			common.PendingKey(qname),
 		}
-		count, err := recoverExpiredCmd.Run(context.Background(), r.client, keys,
-			cutoff.Unix(), common.TaskKeyPrefix(qname), cutoff.UnixNano()).Int()
+		result, err := recoverExpiredCmd.Run(context.Background(), r.client, keys,
+			cutoff.Unix(), common.TaskKeyPrefix(qname), cutoff.UnixNano()).Slice()
 		if err != nil {
 			return total, errors.E(op, errors.Internal, fmt.Sprintf("redis eval error: %v", err))
 		}
-		total += count
+		total += int(result[0].(int64))
+		if id := result[1].(string); id != "" {
+			return total, errors.E(op, errors.Internal, fmt.Sprintf("missing task message: queue %q, task %q; removed invalid task", qname, id))
+		}
 	}
 	return total, nil
 }

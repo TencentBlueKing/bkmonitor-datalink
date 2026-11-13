@@ -109,6 +109,9 @@ func (m *Model) QuerySharedTopologyFrames(ctx context.Context, request cmdb.Shar
 	if err != nil {
 		return err
 	}
+	if err := validateRelationGroups(request.RelationGroups); err != nil {
+		return err
+	}
 
 	_, gridSpan := trace.NewSpan(ctx, "timegraph-normalize-topology-grid")
 	var gridErr error
@@ -555,7 +558,8 @@ func relationGroupOf(schema RelationSchema) string {
 
 // sharedTopologyRelations 把 Schema 展开为遍历视图。direction 作用于动态关系（from → to 为 outbound）
 // 与归属关系（子 → 父为 outbound）；其余静态关系没有方向，始终两个视图都有。
-// allowedCategories、allowedRelationTypes、relationGroups 取交集，空表示不按该项筛选，未知取值不匹配任何关系。
+// allowedCategories、allowedRelationTypes、relationGroups 取交集，空表示不按该项筛选；类别与关系名的未知取值不匹配任何关系，
+// 关系组已在入口按枚举校验。
 func (m *Model) sharedTopologyRelations(namespace string, allowedCategories, allowedRelationTypes, relationGroups []string, direction TraversalDirection) []cmdb.Relation {
 	categorySet := make(map[string]struct{}, len(allowedCategories))
 	for _, category := range allowedCategories {
@@ -638,6 +642,18 @@ func (m *Model) belongsToRelationTypes(namespace string) map[string]struct{} {
 		}
 	}
 	return result
+}
+
+// validateRelationGroups 校验关系组取值。组是固定枚举，未知取值按名字拒绝，避免拼错时静默返回空图。
+func validateRelationGroups(groups []string) error {
+	for _, group := range groups {
+		switch group {
+		case RelationGroupBelongTo, RelationGroupServiceCall:
+		default:
+			return fmt.Errorf("unsupported relation group %q, must be %s or %s", group, RelationGroupBelongTo, RelationGroupServiceCall)
+		}
+	}
+	return nil
 }
 
 // parseTopologyDirection 把请求的 out/in/both 映射为遍历方向，空值为 both。

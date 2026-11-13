@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	uqjson "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 func TestTruncateTopologyErrorMessagePreservesValidJSON(t *testing.T) {
@@ -45,6 +47,7 @@ func TestTruncateTopologyErrorMessagePreservesValidJSON(t *testing.T) {
 
 func TestSharedTopologyHandlerValidationCases(t *testing.T) {
 	log.InitTestLogger()
+	metadata.InitMetadata()
 	tests := []struct {
 		name          string
 		rangeQuery    bool
@@ -52,6 +55,8 @@ func TestSharedTopologyHandlerValidationCases(t *testing.T) {
 		status        int
 		dataCodes     []int
 		requestResult string
+		space         string // 非空时带上空间，使请求越过空间校验，走到后面的参数校验
+		message       string // 非空时断言第一项的拒绝原因
 	}{
 		{name: "instant 空批次", body: `{"query_list":[]}`, status: http.StatusOK, dataCodes: []int{}, requestResult: "empty"},
 		{name: "range 空批次", rangeQuery: true, body: `{"query_list":[]}`, status: http.StatusOK, dataCodes: []int{}, requestResult: "empty"},
@@ -63,8 +68,9 @@ func TestSharedTopologyHandlerValidationCases(t *testing.T) {
 		{name: "非法 JSON", body: `{`, status: http.StatusBadRequest, requestResult: "rejected"},
 		{name: "已替换的单根字段", body: `{"query_list":[{"timestamp":1700000000,"source_type":"node"}]}`, status: http.StatusBadRequest, requestResult: "rejected"},
 		{name: "已替换的方向字段", body: `{"query_list":[{"timestamp":1700000000,"sources":[{"source_type":"node"}],"dynamic_relation_direction":"outbound"}]}`, status: http.StatusBadRequest, requestResult: "rejected"},
-		{name: "旧的方向取值", body: `{"query_list":[{"timestamp":1700000000,"sources":[{"source_type":"node"}],"direction":"outbound"}]}`, status: http.StatusOK, dataCodes: []int{http.StatusBadRequest}, requestResult: "failed"},
-		{name: "超过选择器上限", body: `{"query_list":[{"timestamp":1700000000,"sources":[{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"}]}]}`, status: http.StatusOK, dataCodes: []int{http.StatusBadRequest}, requestResult: "failed"},
+		{name: "旧的方向取值", body: `{"query_list":[{"timestamp":1700000000,"sources":[{"source_type":"node"}],"direction":"outbound"}]}`, status: http.StatusOK, dataCodes: []int{http.StatusBadRequest}, requestResult: "failed", space: "space", message: `unsupported topology direction "outbound"`},
+		{name: "未知的关系组", body: `{"query_list":[{"timestamp":1700000000,"sources":[{"source_type":"node"}],"relation_groups":["BELONGS_TO"]}]}`, status: http.StatusOK, dataCodes: []int{http.StatusBadRequest}, requestResult: "failed", space: "space", message: `unsupported relation group "BELONGS_TO"`},
+		{name: "超过选择器上限", body: `{"query_list":[{"timestamp":1700000000,"sources":[{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"},{"source_type":"node"}]}]}`, status: http.StatusOK, dataCodes: []int{http.StatusBadRequest}, requestResult: "failed", space: "space", message: "topology has 21 sources"},
 	}
 
 	for _, tt := range tests {
@@ -78,6 +84,11 @@ func TestSharedTopologyHandlerValidationCases(t *testing.T) {
 			response := httptest.NewRecorder()
 			ginContext, _ := gin.CreateTestContext(response)
 			ginContext.Request = httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(tt.body))
+			if tt.space != "" {
+				ctx := metadata.InitHashID(context.Background())
+				metadata.SetUser(ctx, &metadata.User{SpaceUID: tt.space})
+				ginContext.Request = ginContext.Request.WithContext(ctx)
+			}
 			if tt.rangeQuery {
 				HandlerAPIRelationV1Beta3TopologyRange(ginContext)
 			} else {
@@ -96,6 +107,9 @@ func TestSharedTopologyHandlerValidationCases(t *testing.T) {
 			for index, code := range tt.dataCodes {
 				require.Equal(t, code, result.Data[index].Code)
 				require.NotNil(t, result.Data[index].Snapshots)
+			}
+			if tt.message != "" {
+				require.Contains(t, result.Data[0].Message, tt.message)
 			}
 		})
 	}

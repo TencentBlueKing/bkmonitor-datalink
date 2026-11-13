@@ -71,7 +71,7 @@ UQ 按 URL 固定选择引擎。v1beta3 的查询错误直接返回调用方。�
 | max_hops | 省略或 0 使用配置默认值（内置 2），负数拒绝。配置上限内置 10；超限拒绝，不静默缩小 H |
 | allowed_categories | 关系类别白名单：通常 static、dynamic。空为不限，未知值匹配不到关系 |
 | allowed_relation_types | 精确关系名白名单，与类别范围取交集；空为不限，未知名匹配不到关系，不自动转换别名 |
-| relation_groups | 关系组白名单，由 Schema 推导：`BELONG_TO` 是置了 `is_belongs_to` 的静态关系，`SERVICE_CALL` 是动态关系；其余静态关系不属于任何组。与类别、关系名白名单取交集；空为不限，未知组匹配不到关系 |
+| relation_groups | 关系组白名单，由 Schema 推导：`BELONG_TO` 是置了 `is_belongs_to` 的静态关系，`SERVICE_CALL` 是动态关系；其余静态关系不属于任何组。与类别、关系名白名单取交集；空为不限，其他取值逐项返回 400 并报出该取值 |
 | direction | both（默认）、out、in。out 沿动态关系从调用方到被调方、沿归属关系从子到父；in 相反。其余静态关系没有方向，始终双向遍历 |
 | target_types | **遍历后**保留这些类型及全部选择器 source_type 的可达节点。删除其他类型及其关联边；不会把中间节点折叠为新边。空为保留全部可达类型 |
 | response_format | 单项选择 snapshots（省略/空时默认）或 compact-v1；同批次允许混用 |

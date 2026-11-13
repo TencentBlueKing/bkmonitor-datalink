@@ -234,6 +234,39 @@ func TestTopologyRelationViewsFollowDirection(t *testing.T) {
 	}
 }
 
+// relation_groups 是固定枚举 BELONG_TO、SERVICE_CALL：未知取值按名字拒绝，不当作空组返回空图；
+// 合法取值（含两组同时给出、重复给出）照常查询。
+func TestTopologyRelationGroupValues(t *testing.T) {
+	frames := hopFetchFrames()
+	model := topologyRequestModel(&hopFetchBackend{t: t, data: defaultSchemaHopFixture(frames)})
+	for _, tc := range []struct {
+		groups  []string
+		invalid string
+	}{
+		{groups: []string{"NOT_A_GROUP"}, invalid: "NOT_A_GROUP"},
+		{groups: []string{"belong_to"}, invalid: "belong_to"},
+		{groups: []string{"BELONGS_TO"}, invalid: "BELONGS_TO"},
+		{groups: []string{""}, invalid: ""},
+		{groups: []string{RelationGroupBelongTo, "SERVICE-CALL"}, invalid: "SERVICE-CALL"},
+	} {
+		request := topologyRangeRequest(frames, 1, podSource("pod-1"))
+		request.RelationGroups = tc.groups
+		_, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
+		require.ErrorContains(t, err, fmt.Sprintf("unsupported relation group %q", tc.invalid), "groups %v", tc.groups)
+	}
+	for _, groups := range [][]string{
+		{RelationGroupBelongTo},
+		{RelationGroupServiceCall},
+		{RelationGroupBelongTo, RelationGroupServiceCall},
+		{RelationGroupBelongTo, RelationGroupBelongTo},
+	} {
+		request := topologyRangeRequest(frames, 1, podSource("pod-1"))
+		request.RelationGroups = groups
+		_, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
+		require.NoError(t, err, "groups %v", groups)
+	}
+}
+
 // 关系组由 Schema 推导，BELONG_TO 是静态且 is_belongs_to 的关系，SERVICE_CALL 是动态关系。
 // 参照是把组展开成 allowed_relation_types 的同一请求；组与 allowed_relation_types 取交集。
 func TestTopologyRelationGroups(t *testing.T) {
@@ -254,7 +287,6 @@ func TestTopologyRelationGroups(t *testing.T) {
 		{name: "belong-to", groups: []string{RelationGroupBelongTo}, want: belongTo},
 		{name: "service-call", groups: []string{RelationGroupServiceCall}, want: serviceCall},
 		{name: "both-groups", groups: []string{RelationGroupBelongTo, RelationGroupServiceCall}, want: append(append([]string(nil), belongTo...), serviceCall...)},
-		{name: "unknown-group", groups: []string{"NOT_A_GROUP"}, want: []string{"not_a_relation"}},
 		{name: "intersection", groups: []string{RelationGroupBelongTo}, allowed: []string{"node_with_pod", "pod_to_pod"}, want: []string{"node_with_pod"}},
 	} {
 		for _, hops := range []int{1, 2} {

@@ -92,7 +92,7 @@ type SharedTopologyQuery struct {
 	AllowedRelationTypes []string `json:"allowed_relation_types,omitempty"`
 	// Traversal orientation: out follows dynamic relations from caller to callee and belong-to relations from child to parent; in is the reverse; both follows either. Other static relations are always bidirectional.
 	Direction string `json:"direction,omitempty" enums:"out,in,both" default:"both"`
-	// Relation group allowlist derived from the schema: BELONG_TO (static relations marked is_belongs_to) and SERVICE_CALL (dynamic relations). Empty allows all relations; unknown groups match no relations. Intersects allowed_categories and allowed_relation_types.
+	// Relation group allowlist derived from the schema: BELONG_TO (static relations marked is_belongs_to) and SERVICE_CALL (dynamic relations). Empty allows all relations; any other value is rejected with 400. Intersects allowed_categories and allowed_relation_types.
 	RelationGroups []string `json:"relation_groups,omitempty" enums:"BELONG_TO,SERVICE_CALL"`
 	// Positive Go duration used by count_over_time observation windows, independent of step. Empty uses configured lookback (built-in 24h); observed edges do not prove exact simultaneous existence.
 	LookBackDelta string `json:"look_back_delta,omitempty" default:"24h"`

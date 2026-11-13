@@ -1858,7 +1858,7 @@ const docTemplate = `{
                     "minimum": 0
                 },
                 "relation_groups": {
-                    "description": "Relation group allowlist derived from the schema: BELONG_TO (static relations marked is_belongs_to) and SERVICE_CALL (dynamic relations). Empty allows all relations; unknown groups match no relations. Intersects allowed_categories and allowed_relation_types.",
+                    "description": "Relation group allowlist derived from the schema: BELONG_TO (static relations marked is_belongs_to) and SERVICE_CALL (dynamic relations). Empty allows all relations; any other value is rejected with 400. Intersects allowed_categories and allowed_relation_types.",
                     "type": "array",
                     "items": {
                         "type": "string",

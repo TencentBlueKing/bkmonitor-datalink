@@ -466,18 +466,17 @@ func sharedTopologyStep(ctx context.Context, frontier, reachable, nodeBits map[u
 	return nextFrontier, nil
 }
 
-// canonicalTopologyEdges 把归属关系的两个遍历视图合成一条子 → 父的输出边：父 → 子视图翻转为
-// 子 → 父，与同一对节点的子 → 父视图合并时间位。遍历在此之前完成，仍按请求方向使用各视图；
-// 其余关系原样输出。
+// canonicalTopologyEdges 让一条物理边只输出一次：归属关系的两个遍历视图合成一条子 → 父的边，
+// 动态关系的两个视图合成一条调用方 → 被调用方的边。inbound 视图翻转后与同一对节点的 outbound
+// 视图合并时间位。遍历在此之前完成，仍按请求方向使用各视图；非归属的无向静态关系原样输出。
 func canonicalTopologyEdges(edges []sharedTopologyEdgeState, belongsTo map[string]struct{}) []sharedTopologyEdgeState {
-	if len(belongsTo) == 0 {
-		return edges
-	}
 	result := make([]sharedTopologyEdgeState, 0, len(edges))
 	index := make(map[timeGraphTopologyEdgeKey]int, len(edges))
 	for _, edge := range edges {
 		key := edge.key
-		if _, ok := belongsTo[key.relation.relationType]; ok && key.relation.direction == string(DirectionInbound) {
+		_, belongs := belongsTo[key.relation.relationType]
+		directed := belongs || key.relation.category == string(RelationCategoryDynamic)
+		if directed && key.relation.direction == string(DirectionInbound) {
 			key.source, key.target = key.target, key.source
 			key.relation.direction = string(DirectionOutbound)
 		}

@@ -80,7 +80,7 @@ UQ 按 URL 固定选择引擎。v1beta3 的查询错误直接返回调用方。�
 
 关系按每个评估点的 `count_over_time` 回看窗口观测判活。窗口内看见多个关系不等价于证明它们在某一真实时刻同时存在。输出为在每帧内 H 跳可达节点的诱导边；不因跨 namespace 而隐式删边。
 
-归属关系（`is_belongs_to`）的 from 是子、to 是父，例如 pod → node、replicaset → deployment、set → business；关系名和指标名按两端类型的字母序生成，与 from/to 的顺序无关。输出时归属关系每对节点只出一条子 → 父的边（方向标签 `outbound`），与遍历方向无关；其余静态关系每对节点仍输出两条边（两个视图各一条）。
+归属关系（`is_belongs_to`）的 from 是子、to 是父，例如 pod → node、replicaset → deployment、set → business；关系名和指标名按两端类型的字母序生成，与 from/to 的顺序无关。输出时一条物理边只出一次，与遍历方向无关：归属关系每对节点只出一条子 → 父的边，动态关系每条调用只出一条调用方 → 被调用方的边，方向标签都是 `outbound`；非归属的静态关系没有方向，每对节点仍输出两条边（两个视图各一条）。
 
 多个选择器时各选择器的根按帧取并集，各自的 source_expand_info 只筛自己的根。全部选择器的身份字段都在主键内时，首跳在同一关系、同一端上把各选择器的条件写成一个 OR 查询读取，之后逐跳读取到达的节点；任一选择器不满足时，整项改为读取候选关系的整个分量，答案相同、读取更多，计入 `unify_query_cmdb_topology_fetch_fallback_total{reason="selector_not_eligible"}`。
 

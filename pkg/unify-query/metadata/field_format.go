@@ -22,6 +22,9 @@ type FieldFormat struct {
 	ctx context.Context
 }
 
+// fieldDecodePattern 匹配 EncodeFunc 写出的 __bk_<码点>__ 标记；模式是常量，包初始化时编译一次
+var fieldDecodePattern = regexp.MustCompile((&FieldFormat{}).format(`([\d]+)`))
+
 func (f *FieldFormat) format(s string) string {
 	return fmt.Sprintf("__bk_%s__", s)
 }
@@ -54,9 +57,7 @@ func (f *FieldFormat) EncodeFunc() func(q string) string {
 // DecodeFunc 对字段进行还原，别名无需还原，保留原字段
 func (f *FieldFormat) DecodeFunc() func(q string) string {
 	return func(q string) string {
-		format := f.format(`([\d]+)`)
-		re := regexp.MustCompile(format)
-		matchList := re.FindAllStringSubmatch(q, -1)
+		matchList := fieldDecodePattern.FindAllStringSubmatch(q, -1)
 		for _, match := range matchList {
 			if len(match) == 2 {
 				num, err := strconv.Atoi(match[1])

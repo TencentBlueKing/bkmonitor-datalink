@@ -582,7 +582,7 @@ func (d *DorisSQLExpr) searchAfterLiteral(value any, fieldType string) (string, 
 		default:
 			return "", fmt.Errorf("value type %T is incompatible with numeric field type %s", value, fieldType)
 		}
-		if !regexp.MustCompile(`^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$`).MatchString(number) {
+		if !numberLiteralPattern.MatchString(number) {
 			return "", fmt.Errorf("value %q is not a valid number", number)
 		}
 		return number, nil
@@ -888,6 +888,12 @@ func (d *DorisSQLExpr) isAnalyzed(k string) bool {
 // 反斜杠先被 Doris 字符串字面量消费一次，再作为 LIKE 转义符，所以字面反斜杠要写 4 个
 var likeMetaEscaper = strings.NewReplacer(`\`, `\\\\`, "%", `\%`, "_", `\_`)
 
+var (
+	numberLiteralPattern = regexp.MustCompile(`^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$`)
+	arrayTypePattern     = regexp.MustCompile(`ARRAY<([^>]+)>`) // 匹配 < 和 > 之间的非 > 字符
+	minuteFieldPattern   = regexp.MustCompile(`MINUTE\d+`)
+)
+
 // substringLikeValue 把字面值包成 LIKE 子串模式，值里的 \、% 和 _ 按字面匹配
 func substringLikeValue(s string) string {
 	return "%" + likeMetaEscaper.Replace(s) + "%"
@@ -936,8 +942,7 @@ func (d *DorisSQLExpr) caseAs(s string) (string, bool) {
 		return DorisTypeString, false
 	}
 
-	re := regexp.MustCompile(`ARRAY<([^>]+)>`) // 匹配 < 和 > 之间的非 > 字符
-	matches := re.FindStringSubmatch(s)
+	matches := arrayTypePattern.FindStringSubmatch(s)
 	if len(matches) > 1 {
 		return fmt.Sprintf("%s ARRAY", matches[1]), true
 	}
@@ -961,8 +966,7 @@ func (d *DorisSQLExpr) getField(s string) (metadata.FieldOption, bool) {
 	s = strings.ToUpper(s)
 
 	// 检查是否是内置的 MINUTE 字段
-	re := regexp.MustCompile(`MINUTE\d+`)
-	if re.MatchString(s) {
+	if minuteFieldPattern.MatchString(s) {
 		return fo, true
 	}
 

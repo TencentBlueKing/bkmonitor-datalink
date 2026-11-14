@@ -42,7 +42,8 @@ func TestExtractRange(t *testing.T) {
 	require.True(t, matched)
 	assert.Equal(t, &RangeNode{End: &StringNode{Value: "10"}}, node)
 
-	for _, in := range []string{"1TO5", "[1 5]", "[TO]", "(1TO5)", ""} {
+	// The whole term must be the range: text outside the brackets is not a range.
+	for _, in := range []string{"1TO5", "[1 5]", "[TO]", "(1TO5)", "x[1TO5]", "[1TO5]x", ""} {
 		node, matched := extractRange(in, "")
 		assert.False(t, matched, in)
 		assert.Nil(t, node, in)

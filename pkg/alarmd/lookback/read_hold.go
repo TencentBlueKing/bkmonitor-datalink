@@ -74,10 +74,14 @@ const (
 	// or ended, after the candidate readiness point.
 	OvertakenStartedLate  = "started_after_readiness"
 	OvertakenFinishedLate = "finished_after_readiness"
+	// OvertakenSliceDiscarded: the slice the trial was a read of was let go
+	// past its limit before its formal read completed (Read.Discard); the
+	// slices read in its place have no trial, the trial being of the slice.
+	OvertakenSliceDiscarded = "slice_discarded"
 )
 
 var EarlierOvertakenPaths = []string{OvertakenPreparedLate, OvertakenNextSlot, OvertakenFormalFirst, OvertakenHoldMoved,
-	OvertakenStartedLate, OvertakenFinishedLate}
+	OvertakenStartedLate, OvertakenFinishedLate, OvertakenSliceDiscarded}
 
 // Why a held Slot's first attempt reserves no earlier-read trial, as Prepare
 // finds it, closed:
@@ -749,12 +753,13 @@ func (engine *Engine) earlyQueueLocked(now time.Time, free int) time.Time {
 type earlierReadOf struct {
 	queryGroup execution.QueryGroupIdentity
 	spec       execution.PhysicalQuerySpec
+	slice      execution.InputSlice
 	readyAt    time.Time
 	keptFrom   int64
 }
 
 func (trial *earlierSample) readOfLocked() earlierReadOf {
-	return earlierReadOf{queryGroup: trial.query.Contract.Slot.QueryGroup, spec: trial.query.Spec, readyAt: trial.readyAt,
+	return earlierReadOf{queryGroup: trial.query.Contract.Slot.QueryGroup, spec: trial.query.Spec, slice: trial.query.Slice, readyAt: trial.readyAt,
 		keptFrom: trial.keptFrom}
 }
 
@@ -795,7 +800,7 @@ func (engine *Engine) earlierRead(ctx context.Context, trial *earlierSample, rea
 	var completion execution.ProviderCompletion
 	var err error
 	if !sink.refused && !skipped {
-		completion, err = engine.options.Recheck(readCtx, tailSpec(read.spec, from), sink)
+		completion, err = engine.options.Recheck(execution.WithInputSlice(readCtx, read.slice), tailSpec(read.spec, from), sink)
 	}
 	finished := engine.options.Now()
 	close(back)

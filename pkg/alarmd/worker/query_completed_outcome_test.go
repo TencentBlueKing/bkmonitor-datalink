@@ -43,7 +43,8 @@ func queryLine(t *testing.T, completion execution.QueryExecutionCompletion, eval
 	})}}
 	ctx := observability.ContextWithDivertDecision(context.Background(), observability.DivertDecisionFacts{
 		ClassifiedAtUnixMilli: 1_700_000_000_000, BoundSource: "fallback"})
-	c.observeQueryCompleted(ctx, execution.OperationNormal, time.Now(), completion, evaluated)
+	summary := summarizeEvaluation(evaluated)
+	c.observeQueryCompleted(ctx, execution.OperationNormal, time.Now(), completion, evaluated, &summary)
 	if output.Len() == 0 {
 		return seen, nil
 	}

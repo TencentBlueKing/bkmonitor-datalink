@@ -46,6 +46,7 @@ func TestProductionLeaderMovesForTheByteConstraintBeforeItCorrectsTheCounts(t *t
 		fakePhaseTwoOwnershipStore: &fakePhaseTwoOwnershipStore{now: now, renewed: make(chan struct{})},
 		workers:                    []ownership.WorkerRegistration{worker("worker-1"), worker("worker-2"), worker("worker-3")},
 		assignments:                map[execution.QueryGroupIdentity]ownership.AssignmentRecord{},
+		holderKind:                 ownership.HolderUnderSession,
 	}
 	for _, queryGroup := range groups {
 		store.assignments[queryGroup] = ownership.AssignmentRecord{
@@ -121,6 +122,10 @@ func TestProductionLeaderMovesForTheByteConstraintBeforeItCorrectsTheCounts(t *t
 		!reflect.DeepEqual(facts.Bytes.Overloaded, []string{"worker-1"}) || facts.Bytes.PlannedMoves != 1 || facts.Bytes.PublishedMoves != 0 || !facts.Bytes.Paused {
 		t.Fatalf("round 1 byte facts = %+v, want worker-1 judged overloaded, one move planned and none published while the window runs", facts.Bytes)
 	}
+	// Three peaks of 35% of the pool on worker-1, against a share of 80%.
+	if share := facts.Bytes.MostLoadedShare; share < 1.3124 || share > 1.3126 {
+		t.Fatalf("round 1 most loaded share = %v, want 105/80", share)
+	}
 	if store.published != 0 {
 		t.Fatalf("round 1 published %d moves", store.published)
 	}
@@ -138,6 +143,11 @@ func TestProductionLeaderMovesForTheByteConstraintBeforeItCorrectsTheCounts(t *t
 	}
 	if facts.PlannedMoves != 1 || facts.PublishedMoves != 1 {
 		t.Fatalf("round 2 count facts = %+v, want one count move after the byte move", facts)
+	}
+	// Both moves took a Query Group off a holder under a worker session.
+	if facts.Bytes.PublishedFromSessionHolders != 1 || facts.PublishedFromSessionHolders != 1 {
+		t.Fatalf("round 2 moves from session holders = bytes %d, counts %d; want 1, 1",
+			facts.Bytes.PublishedFromSessionHolders, facts.PublishedFromSessionHolders)
 	}
 	after := owners()
 	if after["query-group-1"] == after["query-group-2"] && after["query-group-2"] == after["query-group-3"] {

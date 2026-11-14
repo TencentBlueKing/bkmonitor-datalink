@@ -29,7 +29,7 @@ import (
 // implementation that closed only the cases the ruling names would leave this
 // one open forever, and nothing in the contract cases would say so.
 func TestAbsence_A8_TargetGroupsLeftOpenAreClosedWhenTheItemExpectsNothing(t *testing.T) {
-	first, second := hostGroup(t, "10.0.0.1"), hostGroup(t, "10.0.0.2")
+	first, second := hostGroup(t, "192.0.2.1"), hostGroup(t, "192.0.2.2")
 	opened := evaluate(t, fullRound(absenceRound1, staticRoster("v1", first, second), nil, map[string]GroupMemory{}))
 	wantVerdicts(t, opened, map[string]Verdict{first.Key(): VerdictAnomaly, second.Key(): VerdictAnomaly})
 
@@ -70,8 +70,8 @@ func TestAbsence_A8_TargetGroupsLeftOpenAreClosedWhenTheItemExpectsNothing(t *te
 // built from the whole-item group would end whatever alert stands on the item
 // while leaving the host's own alert exactly where it was.
 func TestASyntheticClosingRecoveryCarriesTheGroupItCloses(t *testing.T) {
-	dropped := hostGroup(t, "10.0.0.2")
-	kept := hostGroup(t, "10.0.0.1")
+	dropped := hostGroup(t, "192.0.2.2")
+	kept := hostGroup(t, "192.0.2.1")
 	roster := staticRoster("v2", kept)
 	result := AbsenceResult{
 		Verdicts: map[string]Verdict{kept.Key(): VerdictAnomaly, dropped.Key(): VerdictNormal},

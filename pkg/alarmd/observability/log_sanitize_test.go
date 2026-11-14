@@ -9,7 +9,7 @@ import (
 func TestSanitizeErrorTextRedactsURLsAndBoundsLength(t *testing.T) {
 	for _, test := range []struct{ name, input, want string }{
 		{"plain", "alarmd worker: duplicate completion binding", "alarmd worker: duplicate completion binding"},
-		{"http client error", `Post "https://user:secret@example.test/query/ts": dial tcp 10.0.0.1:443: connect: connection refused`, `Post "<url>": dial tcp 10.0.0.1:443: connect: connection refused`},
+		{"http client error", `Post "https://user:secret@example.test/query/ts": dial tcp 192.0.2.1:443: connect: connection refused`, `Post "<url>": dial tcp 192.0.2.1:443: connect: connection refused`},
 		{"query string", "fetch http://example.test/path?token=secret failed", "fetch <url> failed"},
 		{"two urls", "a https://x.test/1 b redis://h:6379/0 c", "a <url> b <url> c"},
 		{"trailing colon", "reserve https://user:secret@example.test/query: rejected", "reserve <url>: rejected"},

@@ -178,14 +178,22 @@ func (engine *Engine) noteRoundHoldLocked(state *group, query Query, lowering *e
 // before.
 func (engine *Engine) captureProbationLocked(state *group, read *Read, lookback time.Duration) {
 	engine.nextID++
+	evaluation := read.query.Contract.Slot.EvaluationTime
 	state.probations = append(state.probations, &sample{id: engine.nextID, source: read.source,
 		queryGroup: read.query.Contract.Slot.QueryGroup, contract: read.query.Contract,
-		evaluation: read.query.Contract.Slot.EvaluationTime, spec: read.query.Spec, step: read.step,
+		evaluation: evaluation, spec: read.query.Spec, slice: read.query.Slice, step: read.step,
 		windowEnd: time.Unix(read.query.Spec.LogicalWindow.End, 0), readAt: read.readAt, lookback: lookback,
 		readyAt: read.query.ReadyAt, last: trimSummary(read.summary.buckets, read.keptFrom), keptFrom: read.keptFrom,
 		planned: 1, lastChange: -1, emptyFirstRead: len(read.summary.buckets) == 0, first: read.summary.series,
-		delaySeconds: read.query.Spec.PlanFacts.QueryDelaySeconds, probation: true})
+		delaySeconds: read.query.Spec.PlanFacts.QueryDelaySeconds, probation: true,
+		roundCounted: evaluation <= state.probationCounted})
 }
+
+// probationOutcomeRank orders a round's outcomes, the worst of its slices
+// the round's: read early anywhere is the round read early; a round is
+// clean only when every slice of it is.
+var probationOutcomeRank = map[string]int{ProbationClean: 0, ProbationSkippedForPermits: 1, ProbationReadFailed: 2,
+	ProbationUnclassified: 3, ProbationWindowReadEarly: 4}
 
 // finishProbationLocked takes a probation reread whose rungs were read or
 // passed. A round read early raises the hold as a sample's would; a clean
@@ -211,6 +219,29 @@ func (engine *Engine) finishProbationLocked(state *group, candidate *sample) {
 		engine.recordProbationCaughtLocked(candidate)
 		engine.noteReadEarlyLineLocked(state, candidate, ReadEarlyPathProbation)
 	}
+	if candidate.roundCounted {
+		// A slice of a round already counted: only a read early moves the
+		// count of clean rounds, back to none.
+		if outcome == ProbationWindowReadEarly && state.probation != nil && candidate.contract.ReadHoldMillis == state.lastHold {
+			state.probation.clean = 0
+		}
+		return
+	}
+	// A round is its slices' rereads: it ends with the last of them.
+	if state.probationRounds == nil {
+		state.probationRounds = map[execution.EvaluationTime]string{}
+	}
+	if so, found := state.probationRounds[candidate.evaluation]; found && probationOutcomeRank[so] > probationOutcomeRank[outcome] {
+		outcome = so
+	}
+	for _, pending := range state.probations {
+		if pending.evaluation == candidate.evaluation && !pending.roundCounted {
+			state.probationRounds[candidate.evaluation] = outcome
+			return
+		}
+	}
+	delete(state.probationRounds, candidate.evaluation)
+	state.probationCounted = max(state.probationCounted, candidate.evaluation)
 	// The round's reread ended: what it decided is kept no longer.
 	delete(state.decisions, candidate.evaluation)
 	engine.counts.probations[key2(candidate.source, outcome)]++

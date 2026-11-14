@@ -356,14 +356,21 @@ func (reconciler *ScheduleActivationReconciler) ensure(
 			previousRecord.Fact.Selected.StateGeneration != records[index].Fact.Selected.StateGeneration {
 			records[index].Fact.Selected.ForceWarming = true
 		}
+		// Only a Plan that was not active before may be one that never ran;
+		// one whose generation moved under it ran, and warms up. Nor is one
+		// the previous content listed: without a previous record only because
+		// its Query Group's records were not read - its timeline left out of
+		// the read, or the group held back - it was there, whatever its
+		// content now, and no Worker may take it for one that never ran. The
+		// list is the activated publication's manifest, already read.
+		_, listed := previousContent.contexts[records[index].Fact.Plan]
+		records[index].Fact.Selected.Arrived = !continuouslyActive && !listed
 		// A generation that moved under a Plan that stayed active: what of
 		// its state is still the same facts. See stateCarry.
 		if continuouslyActive && previousRecord.Fact.Selected.StateGeneration != records[index].Fact.Selected.StateGeneration {
-			current, compiledHere := changedPlans[records[index].Fact.Key()]
-			if !compiledHere {
-				uncarried = append(uncarried, StateCarryPreviousUnreadable)
-				continue
-			}
+			// Compiled here: a record carried from previous keeps the
+			// generation it had, and only a changed group's are compiled.
+			current := changedPlans[records[index].Fact.Key()]
 			// The no-data state is decided on its own: a detection edit that
 			// warms the Plan up whole changes nothing about it.
 			if noData, outcome := reconciler.noDataCarry(ctx, previousRecord, previousContent, current); outcome != "" {
@@ -397,6 +404,7 @@ func (reconciler *ScheduleActivationReconciler) ensure(
 		for index := range records {
 			if _, back := returning[planGroups[records[index].Fact.Key()]]; back {
 				records[index].Fact.Selected.ForceWarming = true
+				records[index].Fact.Selected.Arrived = false
 				returned[index] = struct{}{}
 			}
 		}
@@ -543,6 +551,8 @@ func (reconciler *ScheduleActivationReconciler) reactivateHeld(
 		if _, returning := returningPlans[record.Fact.Key()]; !returning {
 			continue
 		}
+		// Freshly compiled, the record carries no Arrived mark: held and back,
+		// it warms up whatever the Worker finds of it.
 		record.Fact.Selected.ForceWarming = true
 		// Held and back: the hold is a hole, so nothing is carried across it.
 		record.Fact.Selected.Carry = nil

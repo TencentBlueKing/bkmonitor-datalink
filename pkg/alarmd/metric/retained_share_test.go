@@ -71,3 +71,69 @@ func TestTheShareApproachCounterCountsSlotsGivenUpAtTheShare(t *testing.T) {
 		t.Fatalf("state_retained_share_approaching_slots_total = %v, want 2: the two Slots given up at the share", got)
 	}
 }
+
+// The counter reads the bytes alone: a Slot applied in windows at its share
+// counts, as one applied whole does. Only the fleet line leaves the windowed
+// Slot out.
+func TestTheShareApproachCounterCountsASlotAppliedInWindows(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	counter := recorder.phaseTwo.retainedShareApproaching
+	const share = 1_000_000
+	for _, windows := range []uint64{0, 4} {
+		recorder.Observe(context.Background(), observability.Observation{
+			Component: observability.ComponentScheduler, Stage: observability.StageSlotCompleted,
+			Result: observability.ResultSuccess,
+			SlotBudgetUsage: &observability.SlotBudgetUsageFacts{RetainedBytes: share * 99 / 100,
+				RetainedShareBytes: share, Windows: windows},
+		})
+	}
+	if got := testutil.ToFloat64(counter); got != 2 {
+		t.Fatalf("state_retained_share_approaching_slots_total = %v, want 2: the Slot applied whole and the "+
+			"one applied in four windows", got)
+	}
+}
+
+// A completed Slot read in slices counts its slices landed and let go, once
+// as a sliced Slot, its overturned first-seen writes and how its reads
+// ahead ended; a Slot read whole counts no slice.
+func TestACompletedSlotCountsItsSlicesAndHowItsReadsAheadEnded(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	m := recorder.phaseTwo
+	for _, usage := range []observability.SlotBudgetUsageFacts{
+		{InputSlices: 1},
+		{InputSlices: 4, InputSlicesDiscarded: 1, FirstSeenUnseenSlices: 1, FirstSeenUnseenSeries: 30,
+			InputSlicesReadAhead: 2, InputSlicesReadAheadYielded: 1},
+	} {
+		usage := usage
+		recorder.Observe(context.Background(), observability.Observation{
+			Component: observability.ComponentScheduler, Stage: observability.StageSlotCompleted,
+			Result: observability.ResultSuccess, SlotBudgetUsage: &usage,
+		})
+	}
+	for name, want := range map[string]float64{
+		"sliced":     1,
+		"landed":     4,
+		"discarded":  1,
+		"slices":     1,
+		"series":     30,
+		"replayed":   2,
+		"yielded":    1,
+		"other_leaf": 0,
+		"failed":     0,
+	} {
+		var got float64
+		switch name {
+		case "sliced":
+			got = testutil.ToFloat64(m.slicedSlots)
+		case "landed", "discarded":
+			got = testutil.ToFloat64(m.inputSlices.WithLabelValues(name))
+		case "slices", "series":
+			got = testutil.ToFloat64(m.firstSeenUnseen.WithLabelValues(name))
+		default:
+			got = testutil.ToFloat64(m.sliceReadAhead.WithLabelValues(name))
+		}
+		if got != want {
+			t.Errorf("%s = %v, want %v", name, got, want)
+		}
+	}
+}

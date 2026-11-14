@@ -207,7 +207,9 @@ type DataRequirement struct {
 	// event count's group comes back from the provider only while it holds
 	// an event inside the range asked, with zeros for the empty steps, so a
 	// range of the trigger and recovery windows keeps a group that went
-	// quiet in the answer until it can recover. Zero for every other
+	// quiet in the answer while those windows are walked. Its zeros end no
+	// alert (ZeroIsNoObservation): a quiet group recovers only on a count
+	// above zero, or ends by -nodata. Zero for every other
 	// requirement; a whole number of steps.
 	ProviderLeadSeconds int64 `json:",omitempty"`
 	// UnfilledCounts says the primary answers counts its provider does not

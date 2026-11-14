@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 )
 
 // A cutover whose preconditions fail on one Query Group used to fail the
@@ -372,7 +374,9 @@ func TestALostHeldBackSetIsNoticedAndTheQueryGroupIsJudgedAgain(t *testing.T) {
 
 // Renewal keeps what a held-back Query Group runs alive: its open Segment
 // names content the new manifest no longer does, and renewing only the
-// manifest's objects would let it expire a catalog TTL later.
+// manifest's objects would let it expire a catalog TTL later. What it adds is
+// renewed under the job of its kind, objects with the objects and contexts
+// with the contexts.
 func TestRenewalKeepsWhatAHeldBackQueryGroupRuns(t *testing.T) {
 	fixture := newCutoverFixture(t, "alarmd:control:cutover-isolation-renew")
 	first := cutoverCatalog(t, 80, nil)
@@ -388,11 +392,19 @@ func TestRenewalKeepsWhatAHeldBackQueryGroupRuns(t *testing.T) {
 	if err := fixture.client.PExpire(fixture.ctx, key, 10*time.Second).Err(); err != nil {
 		t.Fatal(err)
 	}
+	callers := &renewalCallers{prefix: fixture.prefix, byKind: map[string][]string{}}
+	fixture.client.AddHook(callers)
 	if err := fixture.repository.RenewCurrentActivationObjects(fixture.ctx); err != nil {
 		t.Fatal(err)
 	}
 	if ttl, err := fixture.client.PTTL(fixture.ctx, key).Result(); err != nil || ttl < 30*time.Minute {
 		t.Fatalf("the held-back Query Group's object ttl = %s (%v), want renewed", ttl, err)
+	}
+	named := callers.take()
+	for kind, want := range map[string]string{"qgobj": redisfailure.CallerCatalogObjectRenewal, "outctx": redisfailure.CallerCatalogContextRenewal} {
+		if len(named[kind]) == 0 || slices.ContainsFunc(named[kind], func(caller string) bool { return caller != want }) {
+			t.Fatalf("%s keys were renewed under %q, want all under %q", kind, named[kind], want)
+		}
 	}
 }
 

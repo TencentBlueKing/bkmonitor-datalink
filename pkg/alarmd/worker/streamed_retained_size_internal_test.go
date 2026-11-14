@@ -1,6 +1,6 @@
 // Tencent is pleased to support the open source community by making
 // 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Copyright (C) 2017-2026 Tencent. All rights reserved.
 // Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at http://opensource.org/licenses/MIT
 // Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -11,202 +11,92 @@ package worker
 
 import (
 	"encoding/json"
-	"math/rand"
-	"reflect"
-	"runtime"
+	"fmt"
 	"testing"
+	"unsafe"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
-// marshalledRetainedSize is the size as it was measured before: the whole
-// document marshalled, and its length taken.
-func marshalledRetainedSize(bindings []execution.NamedInputBinding, delivery execution.SeriesDelivery) (uint64, error) {
-	compact := make([]execution.NamedInputBinding, len(bindings))
-	copy(compact, bindings)
-	for index := range compact {
-		compact[index].Dataset = nil
-		compact[index].View = nil
-	}
-	encoded, err := json.Marshal(struct {
-		Bindings []execution.NamedInputBinding
-		Delivery execution.SeriesDelivery
-	}{Bindings: compact, Delivery: delivery})
-	if err != nil {
-		return 0, err
-	}
-	return uint64(len(encoded)) + delivery.Bytes, nil
-}
-
-// retainedSizeTexts are the strings whose encoding differs between the
-// settings an encoder can have: HTML characters Marshal escapes, the line
-// separators it escapes too, quotes and controls, and text outside ASCII.
-var retainedSizeTexts = []string{"", "plain", "<tag>&amp;", "a>b", "业务", "line sep", "para sep", `quo"te`, "tab\there", "\x01ctl", "é",
-	"\b\f\n\r\\", "bad\xffutf8", "\xe4\xb8"}
-
-// fillRetained sets every field reachable from value to something drawn from
-// random: strings from the texts above, numbers, slices and maps of up to two
-// entries, pointers allocated or left nil. A raw JSON field gets a JSON
-// string, so the document can always be encoded.
-func fillRetained(random *rand.Rand, value reflect.Value, depth int) {
-	if depth > 5 {
-		return
-	}
-	if value.Type() == reflect.TypeOf(json.RawMessage(nil)) {
-		encoded, _ := json.Marshal(retainedSizeTexts[random.Intn(len(retainedSizeTexts))])
-		value.Set(reflect.ValueOf(json.RawMessage(encoded)))
-		return
-	}
-	switch value.Kind() {
-	case reflect.String:
-		value.SetString(retainedSizeTexts[random.Intn(len(retainedSizeTexts))])
-	case reflect.Bool:
-		value.SetBool(random.Intn(2) == 0)
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		value.SetInt(int64(random.Intn(1 << 20)))
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		value.SetUint(uint64(random.Intn(1 << 20)))
-	case reflect.Float32, reflect.Float64:
-		value.SetFloat(random.Float64() * 1000)
-	case reflect.Pointer:
-		if random.Intn(2) == 0 {
-			return
-		}
-		value.Set(reflect.New(value.Type().Elem()))
-		fillRetained(random, value.Elem(), depth+1)
-	case reflect.Slice:
-		count := random.Intn(3)
-		value.Set(reflect.MakeSlice(value.Type(), count, count))
-		for index := 0; index < count; index++ {
-			fillRetained(random, value.Index(index), depth+1)
-		}
-	case reflect.Map:
-		count := random.Intn(3)
-		value.Set(reflect.MakeMapWithSize(value.Type(), count))
-		for index := 0; index < count; index++ {
-			key, element := reflect.New(value.Type().Key()).Elem(), reflect.New(value.Type().Elem()).Elem()
-			fillRetained(random, key, depth+1)
-			fillRetained(random, element, depth+1)
-			value.SetMapIndex(key, element)
-		}
-	case reflect.Struct:
-		for index := 0; index < value.NumField(); index++ {
-			if value.Type().Field(index).IsExported() {
-				fillRetained(random, value.Field(index), depth+1)
-			}
-		}
-	}
-}
-
-// The size counted as it is encoded is the size the marshalled document had,
-// for every binding and delivery a random corpus draws: the texts the
-// encoder escapes, datasets and views set or not, empty and absent
-// collections, no bindings at all. It is also what the encoder refuses,
-// where the document was refused.
-func TestTheRetainedSizeIsTheMarshalledDocumentsSize(t *testing.T) {
-	random := rand.New(rand.NewSource(20260928))
-	checked, refused := 0, 0
-	for index := 0; index < 3000; index++ {
-		bindings := make([]execution.NamedInputBinding, random.Intn(4))
-		for position := range bindings {
-			fillRetained(random, reflect.ValueOf(&bindings[position]).Elem(), 0)
-		}
-		var delivery execution.SeriesDelivery
-		fillRetained(random, reflect.ValueOf(&delivery).Elem(), 0)
-		want, wantErr := marshalledRetainedSize(bindings, delivery)
-		got, err := streamedRetainedSize(bindings, delivery)
-		if (err == nil) != (wantErr == nil) {
-			t.Fatalf("case %d: counted error %v, marshalled error %v", index, err, wantErr)
-		}
-		if err != nil {
-			refused++
-			continue
-		}
-		if got != want {
-			t.Fatalf("case %d: counted size %d, marshalled size %d", index, got, want)
-		}
-		checked++
-	}
-	if checked < 2500 {
-		t.Fatalf("only %d of 3000 cases could be encoded (%d refused); the corpus does not exercise the size", checked, refused)
-	}
-	if got, err := streamedRetainedSize(nil, execution.SeriesDelivery{}); err != nil || got != mustMarshalledSize(t, nil, execution.SeriesDelivery{}) {
-		t.Fatalf("no bindings: %d, %v", got, err)
-	}
-}
-
-func mustMarshalledSize(t *testing.T, bindings []execution.NamedInputBinding, delivery execution.SeriesDelivery) uint64 {
+// retainedSeries is a series of points points as the UQ decoder hands it on,
+// with one binding a view of all of it.
+func retainedSeries(t *testing.T, points int, wireBytes uint64) execution.SeriesExecutionBatch {
 	t.Helper()
-	size, err := marshalledRetainedSize(bindings, delivery)
+	digest := fmt.Sprintf("%064x", points)
+	fields := []contract.DimensionFieldV2{{Name: "bk_target_ip", Value: json.RawMessage(`"192.0.2.10"`)}}
+	dimensions := map[string]json.RawMessage{"bk_target_ip": json.RawMessage(`"192.0.2.10"`)}
+	records := make([]contract.CanonicalRecordV2, points)
+	ordinals := make([]uint32, points)
+	for index := range records {
+		at := int64(1_700_000_000 + index*60)
+		records[index] = contract.CanonicalRecordV2{RecordID: fmt.Sprintf("%064x", at), SourceTime: at, BusinessID: "2",
+			DimensionIdentity: contract.DimensionIdentityV2{Fields: fields, Digest: digest},
+			Values:            map[string]json.RawMessage{"value": json.RawMessage(fmt.Sprintf("%d.5", index))},
+			Dimensions:        dimensions, ReceivedTime: 1_700_000_999}
+		ordinals[index] = uint32(index)
+	}
+	dataset := execution.NewDataset(records)
+	view, err := execution.NewDatasetView(dataset, ordinals)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return size
+	return execution.SeriesExecutionBatch{Dataset: dataset, Delivery: execution.SeriesDelivery{Series: 1, Records: uint64(points), Bytes: wireBytes},
+		Inputs: []execution.NamedInputBinding{{RequirementID: "a", Dataset: dataset, View: view}}}
 }
 
-// allocatedBytesPerCall is what call allocates on average, in bytes.
-func allocatedBytesPerCall(call func()) uint64 {
-	const calls = 2000
-	call()
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	for range calls {
-		call()
+// What a batch holds is its Dataset at its RetainedBytes, each view once and
+// an entry per binding beside them: the bytes the answer encoded the series
+// in are no part of it, a second binding of the same Dataset and view adds
+// only its entry in the streamed map, and one of another Dataset adds that
+// Dataset and its view too. The part a binding shares with its query's other
+// series is charged once, when it is first kept (keepStreamed), not here.
+func TestARetainedSizeIsTheDatasetOnceAndEachBindingBesideIt(t *testing.T) {
+	batch := retainedSeries(t, 15, 4096)
+	size := streamedRetainedSize(batch)
+	view := uint64(unsafe.Sizeof(execution.DatasetView{})) + 4*15
+	entry := (uint64(unsafe.Sizeof(streamedInputKey{})+unsafe.Sizeof(streamedInput{})) + 1) * 8 / 7
+	if want := batch.Dataset.RetainedBytes() + view + entry; size != want {
+		t.Fatalf("a batch of one binding holds %d, want its Dataset %d, its view %d and one entry %d", size, batch.Dataset.RetainedBytes(), view, entry)
 	}
-	runtime.ReadMemStats(&after)
-	return (after.TotalAlloc - before.TotalAlloc) / calls
-}
-
-// Counting keeps nothing of the document: it allocates at least the
-// document's length less than marshalling did, which held all of it. The
-// number of allocations is the same -- the encoder is one object where the
-// document was one -- so it is the bytes that are held to it.
-func TestTheRetainedSizeDoesNotKeepTheDocument(t *testing.T) {
-	if racedetector.Enabled {
-		// Both arms encode through the JSON encoder's pooled buffer. Under the
-		// race detector the pool drops a quarter of what is put back, calls
-		// grow a new buffer at random, and 14 runs in 150 read a difference
-		// below the document's length; plain runs never do.
-		t.Skip("allocation is not measurable through a pooled buffer under the race detector")
+	if wider := retainedSeries(t, 15, 1<<20); streamedRetainedSize(wider) != size {
+		t.Fatalf("the same series encoded in 1 MiB holds %d, in 4 KiB %d; want the wire bytes no part of it", streamedRetainedSize(wider), size)
 	}
-	random := rand.New(rand.NewSource(7))
-	bindings := make([]execution.NamedInputBinding, 3)
-	for position := range bindings {
-		fillRetained(random, reflect.ValueOf(&bindings[position]).Elem(), 0)
+	again := batch
+	again.Inputs = append([]execution.NamedInputBinding{batch.Inputs[0]}, batch.Inputs[0])
+	if got := streamedRetainedSize(again) - size; got != entry {
+		t.Fatalf("a second binding of the same Dataset and view added %d; want its entry, %d", got, entry)
 	}
-	delivery := execution.SeriesDelivery{PhysicalQuery: "q", QueryRevision: "r", Series: 3, Records: 60, Bytes: 4096, Digest: "d"}
-	size, err := streamedRetainedSize(bindings, delivery)
-	if err != nil {
-		t.Fatalf("the drawn bindings cannot be encoded: %v", err)
-	}
-	document := size - delivery.Bytes
-	counted := allocatedBytesPerCall(func() { _, _ = streamedRetainedSize(bindings, delivery) })
-	marshalled := allocatedBytesPerCall(func() { _, _ = marshalledRetainedSize(bindings, delivery) })
-	// The encoder itself is the allowance: under a hundred bytes.
-	if counted+128 > marshalled || marshalled-counted+128 < document {
-		t.Fatalf("counting allocates %d bytes per call, marshalling %d, for a %d-byte document: the document is still being kept", counted, marshalled, document)
+	other := retainedSeries(t, 30, 4096)
+	apart := batch
+	apart.Inputs = append([]execution.NamedInputBinding{batch.Inputs[0]}, other.Inputs[0])
+	if got, want := streamedRetainedSize(apart)-size, other.Dataset.RetainedBytes()+uint64(unsafe.Sizeof(execution.DatasetView{}))+4*30+entry; got != want {
+		t.Fatalf("a binding of another Dataset added %d, want that Dataset, its view and an entry, %d", got, want)
 	}
 }
 
-func BenchmarkRetainedSize(b *testing.B) {
-	random := rand.New(rand.NewSource(7))
-	bindings := make([]execution.NamedInputBinding, 3)
-	for position := range bindings {
-		fillRetained(random, reflect.ValueOf(&bindings[position]).Elem(), 0)
+// A binding's facts are held with the part it shares: the room its quality
+// facts and terminals keep is counted at their size, once for every series
+// of the query that shares them, and a series' own charge carries none of it.
+func TestABindingsFactsAreCountedWithIt(t *testing.T) {
+	batch := retainedSeries(t, 1, 0)
+	size := streamedRetainedSize(batch)
+	plain := sharedBindingHeldBytes(&batch.Inputs[0])
+	batch.Inputs[0].QualityFacts = make([]execution.InputQualityFact, 0, 10)
+	batch.Inputs[0].Terminals = make([]execution.InputTerminal, 3)
+	want := 10*uint64(unsafe.Sizeof(execution.InputQualityFact{})) + 3*uint64(unsafe.Sizeof(execution.InputTerminal{}))
+	if got := sharedBindingHeldBytes(&batch.Inputs[0]) - plain; got != want {
+		t.Fatalf("ten quality facts and three terminals added %d to the shared binding, want %d", got, want)
 	}
-	delivery := execution.SeriesDelivery{PhysicalQuery: "q", QueryRevision: "r", Series: 3, Records: 60, Bytes: 4096, Digest: "d"}
-	for _, arm := range []struct {
-		name    string
-		measure func([]execution.NamedInputBinding, execution.SeriesDelivery) (uint64, error)
-	}{{"marshalled", marshalledRetainedSize}, {"counted", streamedRetainedSize}} {
-		b.Run(arm.name, func(b *testing.B) {
-			b.ReportAllocs()
-			for range b.N {
-				if _, err := arm.measure(bindings, delivery); err != nil {
-					b.Fatal(err)
-				}
-			}
-		})
+	if got := streamedRetainedSize(batch); got != size {
+		t.Fatalf("the facts added %d to the series' own charge, want none", got-size)
+	}
+	var shared sharedBindings
+	first, fresh := shared.share(batch.Inputs[0])
+	second := retainedSeries(t, 1, 0).Inputs[0]
+	second.QualityFacts, second.Terminals = make([]execution.InputQualityFact, 0, 10), make([]execution.InputTerminal, 3)
+	again, freshAgain := shared.share(second)
+	if !fresh || freshAgain || first != again || len(shared.all) != 1 {
+		t.Fatalf("two series with the same facts kept %d shared bindings (fresh %v, %v), want one, kept once", len(shared.all), fresh, freshAgain)
 	}
 }

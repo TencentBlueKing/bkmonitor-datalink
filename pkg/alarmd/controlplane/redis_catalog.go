@@ -170,6 +170,7 @@ type RedisCatalogRepository struct {
 	manifestFlights     catalogManifestFlights
 	latestPublication   latestPublicationMemo
 	freshnessClock      func() time.Time
+	renewals            catalogRenewals
 	controlCache        *controlReadCache
 	controlReads        controlReadCounters
 	activationBodyBytes atomic.Int64
@@ -189,7 +190,10 @@ type RedisCatalogRepository struct {
 	// timeline (decision-016 batch 4). Nil writes none: a deployment without
 	// the ownership store beside the catalog carries no such word.
 	assignmentRecordKey func(execution.QueryGroupIdentity) string
-	observer            observability.Observer
+	// recordTimelinesWritten hears the timeline revisions an activation
+	// wrote onto the records (OnRecordTimelineRevisions).
+	recordTimelinesWritten func(uint64, map[execution.QueryGroupIdentity]uint64)
+	observer               observability.Observer
 }
 
 // ConfigureDrainingTermination bounds how long a retired Query Group may stay
@@ -213,9 +217,16 @@ func (repository *RedisCatalogRepository) ConfigureObserver(observer observabili
 }
 
 func (repository *RedisCatalogRepository) observe(ctx context.Context, observation observability.Observation) {
-	if repository != nil && repository.observer != nil {
-		repository.observer.Observe(ctx, observation)
+	if repository == nil || repository.observer == nil {
+		return
 	}
+	// A repository call that failed because its caller called it off is not
+	// a failure of the store: a stop writes no ERROR and counts nothing failed.
+	if (observation.Result == observability.ResultFailed || observation.Result == observability.ResultTimeout) &&
+		ctx != nil && errors.Is(ctx.Err(), context.Canceled) {
+		return
+	}
+	repository.observer.Observe(ctx, observation)
 }
 
 func NewRedisCatalogRepository(client redis.Cmdable, prefix string, ttl time.Duration) (*RedisCatalogRepository, error) {
@@ -265,14 +276,11 @@ return {1, redis.call('STRLEN', KEYS[5])}
 // and the script only checks that the keys are still there.
 func (repository *RedisCatalogRepository) RenewCurrentActivationObjects(ctx context.Context) error {
 	started := time.Now()
-	metricResult := "failure"
-	queryGroups, objectBytes := 0, 0
+	facts := &observability.ActiveQGSetFacts{Operation: "renew", Result: "failure"}
 	defer func() {
-		renewed := time.Since(started)
+		facts.Duration = time.Since(started)
 		repository.observe(ctx, observability.Observation{Component: observability.ComponentControlPlane, Stage: observability.StageActiveQGSet,
-			Result: factsTextResult(metricResult), ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "renew", Result: metricResult,
-				QueryGroups: queryGroups, ObjectBytes: objectBytes, Duration: renewed},
-			Duration: renewed, DurationKnown: true})
+			Result: factsTextResult(facts.Result), ActiveQGSet: facts, Duration: facts.Duration, DurationKnown: true})
 	}()
 	state, err := repository.LoadActivationHead(ctx)
 	if err != nil {
@@ -320,7 +328,7 @@ func (repository *RedisCatalogRepository) RenewCurrentActivationObjects(ctx cont
 		// The Schedule timelines of the renewed Active Set and of the Draining
 		// projection are renewed only after the guarded CAS proved that the
 		// state read above is still the current one.
-		if err := repository.renewScheduleTimelines(ctx, groups, state.Draining); err != nil {
+		if err := repository.renewScheduleTimelines(ctx, groups, state.Draining, facts); err != nil {
 			return err
 		}
 		repository.renewObjectCatalog(ctx, state.Current.SnapshotRevision)
@@ -329,8 +337,8 @@ func (repository *RedisCatalogRepository) RenewCurrentActivationObjects(ctx cont
 		// header another writer put back while a rebuild conflicted stayed
 		// "missing" on the fleet until the next activation asked.
 		repository.header.present()
-		metricResult = "success"
-		queryGroups, objectBytes = len(groups), int(activeBytes)
+		facts.Result = "success"
+		facts.QueryGroups, facts.ObjectBytes = len(groups), int(activeBytes)
 		return nil
 	case 0:
 		repository.header.conflict(ActivationRenewalHeaderMoved)
@@ -849,8 +857,9 @@ func (repository *RedisCatalogRepository) LoadActivations(ctx context.Context, r
 	// from the Query Group's own timeline (decision-016 batch 4b): the open
 	// Segment's activation records are the same records the activation
 	// state carries for that Query Group - the cutover writes both from one
-	// list in one script - and a closed Segment's Slot is historical either
-	// way. Answering from the timeline reads no activation header, which is
+	// list in one script - and a closed Segment answers from its own records
+	// either way (activationsFromTimeline). Answering from the timeline reads
+	// no activation header, which is
 	// the poll batch 4 removes; a hint the timeline does not bear falls back
 	// to the header path inside loadScheduleTimelineHinted.
 	if timelineRevisionHint(ctx) > 0 {

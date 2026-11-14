@@ -45,17 +45,17 @@ func TestEvaluateSlotSaysNothingForAPlanThatDoesNotDetectNoData(t *testing.T) {
 // is normal and the one that did not is an anomaly with its absence clock
 // started. Nothing about the values reaches any of it.
 func TestEvaluateSlotDecidesAStaticTargetFromWhichSeriesReported(t *testing.T) {
-	scope := hostScope("10.0.0.1|0", "10.0.0.2|0")
-	present := hostTargetGroup(HostIdentity{IP: "10.0.0.1", CloudID: "0"})
-	absent := hostTargetGroup(HostIdentity{IP: "10.0.0.2", CloudID: "0"})
+	scope := hostScope("192.0.2.1|0", "192.0.2.2|0")
+	present := hostTargetGroup(HostIdentity{IP: "192.0.2.1", CloudID: "0"})
+	absent := hostTargetGroup(HostIdentity{IP: "192.0.2.2", CloudID: "0"})
 
 	result, outcome, err := EvaluateSlot(SlotInput{
 		Plan:           slotPlan(scope, []string{HostIPDimension, HostCloudDimension}),
 		EvaluationTime: 1000, PeriodSeconds: 60, Completeness: execution.CompletenessFull,
 		Series: []map[string]string{
-			{HostIPDimension: "10.0.0.1", HostCloudDimension: "0", "device": "eth0"},
+			{HostIPDimension: "192.0.2.1", HostCloudDimension: "0", "device": "eth0"},
 		},
-		KnownHosts: knownHosts("10.0.0.1|0", "10.0.0.2|0"), HostsResolved: true,
+		KnownHosts: knownHosts("192.0.2.1|0", "192.0.2.2|0"), HostsResolved: true,
 		Memory: map[string]GroupMemory{},
 	})
 	if err != nil || outcome != OutcomeEvaluated {
@@ -83,12 +83,12 @@ func TestEvaluateSlotDecidesAStaticTargetFromWhichSeriesReported(t *testing.T) {
 // dropped and counted, and the group it would have been is not invented: the
 // host that did report is still absent as far as this item can tell.
 func TestEvaluateSlotCountsASeriesItCannotProject(t *testing.T) {
-	scope := hostScope("10.0.0.1|0")
+	scope := hostScope("192.0.2.1|0")
 	result, outcome, err := EvaluateSlot(SlotInput{
 		Plan:           slotPlan(scope, []string{HostIPDimension, HostCloudDimension}),
 		EvaluationTime: 1000, PeriodSeconds: 60, Completeness: execution.CompletenessFull,
-		Series:     []map[string]string{{HostIPDimension: "10.0.0.1"}},
-		KnownHosts: knownHosts("10.0.0.1|0"), HostsResolved: true,
+		Series:     []map[string]string{{HostIPDimension: "192.0.2.1"}},
+		KnownHosts: knownHosts("192.0.2.1|0"), HostsResolved: true,
 		Memory: map[string]GroupMemory{},
 	})
 	if err != nil {
@@ -100,7 +100,7 @@ func TestEvaluateSlotCountsASeriesItCannotProject(t *testing.T) {
 	if result.Facts.Dropped != 1 {
 		t.Fatalf("Dropped = %d, want the series with no cloud dimension counted", result.Facts.Dropped)
 	}
-	group := hostTargetGroup(HostIdentity{IP: "10.0.0.1", CloudID: "0"})
+	group := hostTargetGroup(HostIdentity{IP: "192.0.2.1", CloudID: "0"})
 	if got := result.Verdicts[group.Key()]; got != VerdictAnomaly {
 		t.Fatalf("verdict = %q, want %q: a series that could not be projected did not arrive", got, VerdictAnomaly)
 	}
@@ -110,13 +110,13 @@ func TestEvaluateSlotCountsASeriesItCannotProject(t *testing.T) {
 // whole round says nothing about absence, and the memory it was given comes
 // back unchanged.
 func TestEvaluateSlotPassesTheCompletenessGateThrough(t *testing.T) {
-	scope := hostScope("10.0.0.1|0")
-	group := hostTargetGroup(HostIdentity{IP: "10.0.0.1", CloudID: "0"})
+	scope := hostScope("192.0.2.1|0")
+	group := hostTargetGroup(HostIdentity{IP: "192.0.2.1", CloudID: "0"})
 	memory := map[string]GroupMemory{group.Key(): {LastSeen: 500}}
 	result, outcome, err := EvaluateSlot(SlotInput{
 		Plan:           slotPlan(scope, []string{HostIPDimension, HostCloudDimension}),
 		EvaluationTime: 1000, PeriodSeconds: 60, Completeness: execution.CompletenessPartial,
-		KnownHosts: knownHosts("10.0.0.1|0"), HostsResolved: true, Memory: memory,
+		KnownHosts: knownHosts("192.0.2.1|0"), HostsResolved: true, Memory: memory,
 	})
 	if err != nil {
 		t.Fatalf("EvaluateSlot() error = %v", err)
@@ -137,7 +137,7 @@ func TestEvaluateSlotPassesTheCompletenessGateThrough(t *testing.T) {
 // evaluated into an empty decision. The seam is where a Plan that got past the
 // compiler stops, and it stops loudly.
 func TestEvaluateSlotRefusesAPlanWhoseRosterCannotBeDerived(t *testing.T) {
-	excluded := excludedHostScope("10.0.0.1|0")
+	excluded := excludedHostScope("192.0.2.1|0")
 	_, outcome, err := EvaluateSlot(SlotInput{
 		Plan:           slotPlan(excluded, []string{HostIPDimension, HostCloudDimension}),
 		EvaluationTime: 1000, PeriodSeconds: 60, Completeness: execution.CompletenessFull,

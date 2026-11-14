@@ -126,6 +126,14 @@ func TestALostRunnersLateReleaseLeavesItsSuccessorRunning(t *testing.T) {
 		t.Fatalf("Query Groups = %v, want one", bundle.queryGroups)
 	}
 	queryGroup := bundle.queryGroups[0]
+	// Opened by the startup Assignment, before the session's loop ran, and
+	// held under the worker session all the same.
+	bundle.mu.RLock()
+	started, _ := bundle.runners[queryGroup].runner.(*productionPhaseTwoQueryGroup)
+	bundle.mu.RUnlock()
+	if started == nil || !started.session.HeldUnderSession() {
+		t.Fatal("the lease the startup Assignment opened is not held under the worker session")
+	}
 	clock.Store((base+30)*1000 + 60*1000)
 	if _, _, err := settledRunner(bundle, queryGroup).RunOne(ctx); err != nil || queried.Load() == 0 {
 		t.Fatalf("first round: %v, %d queries", err, queried.Load())
@@ -151,6 +159,11 @@ func TestALostRunnersLateReleaseLeavesItsSuccessorRunning(t *testing.T) {
 	if settledRunner(bundle, queryGroup) == nil {
 		t.Fatal("the reconcile did not open a successor")
 	}
+	// The worker holds its session, so the successor's lease is held under
+	// it (A2).
+	if runtime, ok := bundle.runners[queryGroup].runner.(*productionPhaseTwoQueryGroup); !ok || !runtime.session.HeldUnderSession() {
+		t.Fatal("the successor's lease is not held under the worker session")
+	}
 	// The lost Runner's release, late.
 	if err := lost.runner.Release(ctx); err != nil {
 		t.Fatalf("the lost Runner's release: %v", err)
@@ -158,10 +171,29 @@ func TestALostRunnersLateReleaseLeavesItsSuccessorRunning(t *testing.T) {
 
 	before := queried.Load()
 	clock.Store((base+30)*1000 + 5*60*1000)
+	restateWorkerSession(t, bundle)
 	if _, _, err := settledRunner(bundle, queryGroup).RunOne(ctx); err != nil {
 		t.Fatalf("the successor's round: %v", err)
 	}
 	if queried.Load() == before {
 		t.Fatal("the successor's Slot was not queried: the lost Runner's release unbound it")
+	}
+
+	// Shutdown lets the worker session go last, so the Control Leader reads
+	// its holder as gone at once rather than after the TTL.
+	held, _ := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership).workerSession.current()
+	if err := bundle.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	store, err := ownership.NewRedisStoreWithClient(client, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "ownership"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := store.ReadWorkerSessions(ctx, []string{cfg.PhaseTwo.Worker.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if through, lapsed := facts[cfg.PhaseTwo.Worker.ID].LapsedThrough(); !lapsed || through != held.Epoch {
+		t.Fatalf("after shutdown the worker's sessions lapsed through (%d, %t), want through the one it held, %d", through, lapsed, held.Epoch)
 	}
 }

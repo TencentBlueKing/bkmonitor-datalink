@@ -15,7 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -120,5 +122,28 @@ func TestTheRuntimeRoundTripsFollowTheClientThatServesRuntimeState(t *testing.T)
 	r.SetRuntimeRedisClient("source")
 	if got := r.FlowCounters().RuntimeRedis.Count; got != 2 {
 		t.Fatalf("shared client: %d round trips, want the source client's two", got)
+	}
+}
+
+// A physical query's answer lands in the four histograms under its outcome,
+// and an outcome outside the closed list under unavailable.
+func TestAPhysicalQueryAnswerIsCountedByHowItEnded(t *testing.T) {
+	r := NewRecorder(BuildInfo{})
+	r.RecordPhysicalQueryAnswer(observability.PhysicalQueryAnswer{Outcome: observability.PhysicalQueryUpstream504,
+		Elapsed: 30 * time.Second, Bytes: 1 << 20, Series: 1000, Records: 1000})
+	r.RecordPhysicalQueryAnswer(observability.PhysicalQueryAnswer{Outcome: "a word nobody closed", Elapsed: time.Second})
+	flow := r.phaseTwo.flow
+	for outcome, want := range map[string]uint64{observability.PhysicalQueryUpstream504: 1, observability.PhysicalQueryUnavailable: 1,
+		observability.PhysicalQueryOK: 0} {
+		for name, vec := range map[string]*prometheus.HistogramVec{"bytes": flow.answerBytes, "series": flow.answerSeries,
+			"records": flow.answerRecords, "seconds": flow.answerSeconds} {
+			metric := &dto.Metric{}
+			if err := vec.WithLabelValues(outcome).(prometheus.Histogram).Write(metric); err != nil {
+				t.Fatal(err)
+			}
+			if got := metric.GetHistogram().GetSampleCount(); got != want {
+				t.Errorf("%s{outcome=%s} counted %d, want %d", name, outcome, got, want)
+			}
+		}
 	}
 }

@@ -163,6 +163,10 @@ func (*convergeObservingPorts) Check(context.Context, execution.SideEffectAdmiss
 	return execution.SideEffectAdmissionResult{Admitted: true}, nil
 }
 
+func (*convergeObservingPorts) CheckActivation(context.Context, execution.SideEffectAdmissionRequest) (execution.SideEffectAdmissionResult, error) {
+	return execution.SideEffectAdmissionResult{Admitted: true}, nil
+}
+
 func (*convergeObservingPorts) LoadGapsInto(context.Context, execution.GapLoadRequest, func(execution.GapGuardSnapshot) error) error {
 	return nil
 }

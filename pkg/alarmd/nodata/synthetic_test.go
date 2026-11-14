@@ -36,7 +36,7 @@ func synthRoster(groups ...Group) Roster {
 // as an absence; producing nothing is the only reading that says this round had
 // no evidence either way.
 func TestSyntheticSeriesAreNotProducedForAnUnavailableRound(t *testing.T) {
-	group := hostTargetGroup(HostIdentity{IP: "10.0.0.1", CloudID: "0"})
+	group := hostTargetGroup(HostIdentity{IP: "192.0.2.1", CloudID: "0"})
 	result := Evaluate(AbsenceInput{
 		EvaluationTime: synthNow, PeriodSeconds: synthPeriod,
 		Completeness: execution.CompletenessPartial,
@@ -53,8 +53,8 @@ func TestSyntheticSeriesAreNotProducedForAnUnavailableRound(t *testing.T) {
 // Absent is one and present is zero, and the list is ordered so a retry of the
 // same Slot produces the same list rather than a set in a new order.
 func TestSyntheticSeriesCarryTheVerdictAsAValueInAStableOrder(t *testing.T) {
-	present := hostTargetGroup(HostIdentity{IP: "10.0.0.1", CloudID: "0"})
-	absent := hostTargetGroup(HostIdentity{IP: "10.0.0.2", CloudID: "0"})
+	present := hostTargetGroup(HostIdentity{IP: "192.0.2.1", CloudID: "0"})
+	absent := hostTargetGroup(HostIdentity{IP: "192.0.2.2", CloudID: "0"})
 	roster := synthRoster(present, absent)
 	result := Evaluate(AbsenceInput{
 		EvaluationTime: synthNow, PeriodSeconds: synthPeriod, Completeness: execution.CompletenessFull,
@@ -128,12 +128,12 @@ func TestSyntheticSeriesCarryTheVerdictAsAValueInAStableOrder(t *testing.T) {
 // is the code's own choice restated rather than a fact about the backend, and
 // it held the wrong form in place while passing.
 func TestSyntheticSeriesIdentityFieldsAlwaysCarryTheTagAsABoolean(t *testing.T) {
-	group := hostTargetGroup(HostIdentity{IP: "10.0.0.1", CloudID: "0"})
+	group := hostTargetGroup(HostIdentity{IP: "192.0.2.1", CloudID: "0"})
 	fields := SyntheticSeries{Group: group}.IdentityFields()
 	if string(fields[contract.NoDataDimensionTag]) != "true" {
 		t.Fatalf("tag = %s, want the JSON boolean true", fields[contract.NoDataDimensionTag])
 	}
-	if string(fields[HostIPDimension]) != `"10.0.0.1"` || string(fields[HostCloudDimension]) != `"0"` {
+	if string(fields[HostIPDimension]) != `"192.0.2.1"` || string(fields[HostCloudDimension]) != `"0"` {
 		t.Fatalf("fields = %v, want the group's own pairs as JSON strings beside the tag", fields)
 	}
 	whole := SyntheticSeries{Group: WholeItemGroup()}.IdentityFields()

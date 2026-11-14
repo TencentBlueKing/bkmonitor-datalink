@@ -329,38 +329,38 @@ func applyBlockedToActivatedContent(content *activatedContent, groups []BlockedQ
 	}
 }
 
-// blockedObjectKeys are the object and context keys the held-back Query
-// Groups need: both the content their records were activated with and the
-// content their open Segment names. Unreadable reads as none, which is what
-// renewal did before the set existed.
-func (repository *RedisCatalogRepository) blockedObjectKeys(ctx context.Context) []string {
+// blockedObjectKeys are the object keys and the context keys the held-back
+// Query Groups need: both the content their records were activated with and
+// the content their open Segment names. Unreadable reads as none, which is
+// what renewal did before the set existed.
+func (repository *RedisCatalogRepository) blockedObjectKeys(ctx context.Context) (objects, contexts []string) {
 	groups, err := repository.ActivationBlocked(ctx)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	seen := make(map[string]struct{})
-	keys := make([]string, 0)
-	add := func(key string) {
+	add := func(keys *[]string, key string) {
 		if _, ok := seen[key]; ok {
 			return
 		}
 		seen[key] = struct{}{}
-		keys = append(keys, key)
+		*keys = append(*keys, key)
 	}
 	for _, group := range groups {
 		for _, digest := range []execution.ObjectDigest{group.ActivatedDigest, group.OpenDigest} {
 			if digest != "" {
-				add(repository.queryGroupObjectKey(digest))
+				add(&objects, repository.queryGroupObjectKey(digest))
 			}
 		}
 		for _, refs := range [][]execution.OutputContextRef{group.ActivatedRefs, group.OpenRefs} {
 			for _, ref := range refs {
-				add(repository.outputContextKey(ref.Digest))
+				add(&contexts, repository.outputContextKey(ref.Digest))
 			}
 		}
 	}
-	sort.Strings(keys)
-	return keys
+	sort.Strings(objects)
+	sort.Strings(contexts)
+	return objects, contexts
 }
 
 // ApplyBlockedToContent is a publication's content made true for the Query

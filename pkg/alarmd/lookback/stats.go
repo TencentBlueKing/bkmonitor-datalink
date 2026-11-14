@@ -40,7 +40,10 @@ type counters struct {
 	directedUnobserved map[string]uint64
 	supplementSeries   map[string]uint64
 	supplementPoints   map[string]uint64
-	directedBytes      map[string]uint64
+	// directedPartlyRefused is the directed Slots some of whose slices' rereads
+	// the share refused while the others' were read, by source.
+	directedPartlyRefused map[string]uint64
+	directedBytes         map[string]uint64
 	// source|bucket: how long each supplement held its Query Group's
 	// flight, and per source the longest.
 	supplementHold    map[string]uint64
@@ -105,7 +108,7 @@ func newCounters(sources, refusals []string) counters {
 		changed: map[string]uint64{}, changes: map[string]uint64{}, preempted: map[string]uint64{},
 		completion: map[string]uint64{}, probes: map[string]uint64{}, classes: map[string]uint64{}, unclassified: map[string]uint64{}, emptyFirstReads: map[string]uint64{},
 		directedWindows: map[string]uint64{}, directedUnobserved: map[string]uint64{}, supplementSeries: map[string]uint64{},
-		supplementPoints: map[string]uint64{}, directedBytes: map[string]uint64{},
+		supplementPoints: map[string]uint64{}, directedBytes: map[string]uint64{}, directedPartlyRefused: map[string]uint64{},
 		supplementHold: map[string]uint64{}, supplementHoldMax: map[string]time.Duration{},
 		early: map[string]uint64{}, earlyUndecided: map[string]uint64{}, earlyBytes: map[string]uint64{},
 		earlierReads: map[string]uint64{}, earlierBytes: map[string]uint64{}, holdIgnored: map[string]uint64{},
@@ -153,7 +156,7 @@ func newCounters(sources, refusals []string) counters {
 		for _, outcome := range SupplementSeriesOutcomes {
 			c.supplementSeries[key2(source, outcome)] = 0
 		}
-		c.supplementPoints[source], c.directedBytes[source] = 0, 0
+		c.supplementPoints[source], c.directedBytes[source], c.directedPartlyRefused[source] = 0, 0, 0
 		for _, bucket := range SupplementHoldBuckets {
 			c.supplementHold[key2(source, bucket)] = 0
 		}
@@ -223,6 +226,12 @@ type Stats struct {
 	// ReadHoldPredecessors is what a successor took each moved Plan's
 	// previous hold from, and the links it skipped, by reason.
 	ReadHoldPredecessors map[string]uint64 `json:"read_hold_predecessors,omitempty"`
+	// ReadHoldTransitionWaits is a successor's waits on a predecessor whose
+	// record was open or unreadable, by how they began or ended
+	// (readhold.TransitionWaitOutcomes); ReadHoldWaitingGroups the groups
+	// waiting now.
+	ReadHoldTransitionWaits map[string]uint64 `json:"read_hold_transition_waits,omitempty"`
+	ReadHoldWaitingGroups   uint64            `json:"read_hold_waiting_groups"`
 	// ReadHoldSeeds is the groups that started from a seeded arrival age, by
 	// where it came from: peer or cold_start.
 	ReadHoldSeeds map[string]uint64 `json:"read_hold_seeds,omitempty"`
@@ -257,6 +266,9 @@ type Stats struct {
 	// closing failed and that retired all the same.
 	ReadHoldOwnCorrupt        uint64 `json:"read_hold_record_corrupt"`
 	ReadHoldRetireCloseFailed uint64 `json:"read_hold_retire_close_failed"`
+	// ReadHoldRetireClosed is the retired groups whose read hold closed, by
+	// where (readhold.RetireCloseSites).
+	ReadHoldRetireClosed map[string]uint64 `json:"read_hold_retire_closed,omitempty"`
 	// ReadHoldCloseSkipped is the previous Segments a prepare skipped
 	// closing because the record was already past them without their
 	// closing facts.
@@ -344,8 +356,8 @@ type NeverCompleteGroup struct {
 // decide how its groups are rechecked; each group learns that from its own
 // samples.
 type SourceStats struct {
-	// FirstReads is the formal first reads seen, FirstReadBytes the bytes
-	// they delivered; Rechecks and RecheckBytes over them are the query
+	// FirstReads is the formal first reads seen, a Slot read in slices one,
+	// FirstReadBytes the bytes they delivered; Rechecks and RecheckBytes over them are the query
 	// volume the lookback adds, counted the same way.
 	FirstReads     uint64 `json:"first_reads"`
 	FirstReadBytes uint64 `json:"first_read_bytes"`
@@ -386,7 +398,11 @@ type SourceStats struct {
 	SupplementUnobserved map[string]uint64 `json:"supplement_unobserved"`
 	SupplementSeries     map[string]uint64 `json:"supplement_series"`
 	SupplementPoints     uint64            `json:"supplement_points"`
-	DirectedReadBytes    uint64            `json:"directed_read_bytes"`
+	// SupplementPartlyRefused is the directed Slots read in slices some of
+	// whose rereads the share refused: each came to the outcome of the slices
+	// read (SupplementWindows), none of them is in SupplementUnobserved.
+	SupplementPartlyRefused uint64 `json:"supplement_partly_refused"`
+	DirectedReadBytes       uint64 `json:"directed_read_bytes"`
 	// SupplementHold is how long the supplements held their Query Groups'
 	// flights, by SupplementHoldBuckets, and SupplementHoldMaxSeconds the
 	// longest: what a Query Group's own Slot waited behind one.
@@ -490,9 +506,11 @@ type GroupLateness struct {
 var GroupReadHoldClasses = []string{"h0", "h_positive"}
 
 // groupCounts has only the closed dimensions: two hold classes, six rungs,
-// five sample classes, two ignored reasons, eight earlier-read outcomes, six
+// five sample classes, two ignored reasons, eight earlier-read outcomes, seven
 // paths an earlier-read trial is overtaken by, four distances ahead, eight
-// reasons a held Slot reserved no trial and six probe round outcomes.
+// reasons a held Slot reserved no trial and six probe round outcomes. Each
+// array is as long as the words it counts by; a case holds the two to each
+// other (TestEveryGroupCountIsAsLongAsItsWords).
 // It belongs to the live group and is discarded by Forget, like supplements.
 type groupCounts struct {
 	since        time.Time
@@ -501,7 +519,7 @@ type groupCounts struct {
 	classes      [5]uint64
 	ignored      [2]uint64
 	earlier      [8]uint64
-	overtaken    [6]uint64
+	overtaken    [7]uint64
 	ahead        [4]uint64
 	skipped      [8]uint64
 	probeRounds  [6]uint64
@@ -756,7 +774,8 @@ func (engine *Engine) Stats() Stats {
 			Classes: map[string]uint64{}, Unclassified: map[string]uint64{},
 			SupplementWindows: map[string]uint64{}, SupplementUnobserved: map[string]uint64{}, SupplementSeries: map[string]uint64{},
 			SupplementPoints: engine.counts.supplementPoints[source], DirectedReadBytes: engine.counts.directedBytes[source],
-			SupplementHold: map[string]uint64{}, SupplementHoldMaxSeconds: engine.counts.supplementHoldMax[source].Seconds(),
+			SupplementPartlyRefused: engine.counts.directedPartlyRefused[source],
+			SupplementHold:          map[string]uint64{}, SupplementHoldMaxSeconds: engine.counts.supplementHoldMax[source].Seconds(),
 			EarlyReads: map[string]uint64{}, EarlyUndecided: engine.counts.earlyUndecided[source],
 			EarlyReadBytes: engine.counts.earlyBytes[source], EarlierReads: map[string]uint64{}, EarlierReadBytes: engine.counts.earlierBytes[source], ReadHoldIgnored: map[string]uint64{}}
 		for _, reason := range ReadHoldIgnoredReasons {

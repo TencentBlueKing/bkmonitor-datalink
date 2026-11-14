@@ -237,28 +237,28 @@ func TestALongLivedSegmentKeepsDetectingAcrossASnapshotChangeAndATakeover(t *tes
 		t.Fatalf("strategy 1001 detections = %v, want each of the five rounds exactly once %v", got, want)
 	}
 	// Published one second into round 2's window, the second strategy's
-	// Segment is queried from round 2, but that window opened before the
-	// Segment started, so the Slot completes with a partial gap under
-	// CONFIG_DRIFT rather than judging a window the strategy did not cover.
-	// Named here so a change that drops the round silently fails this test.
-	// It is detected from round 3, the first whole window after the
-	// publication, and every round after it exactly once, on either side of
-	// the takeover.
+	// Segment is queried from round 2. That is the strategy's first Slot, and
+	// it is evaluated as any Slot is: new to the activation, with nothing of
+	// it from before, it is not spent writing a warm-up marker (it was, and
+	// completed with a partial gap under CONFIG_DRIFT, a period late to
+	// detect). The window's data does not depend on when the strategy was
+	// published. Named here so a change that drops the round silently fails
+	// this test. It is detected from round 2 and every round after it exactly
+	// once, on either side of the takeover.
 	roundTwo := base + 2*period
-	var drift []observability.Observation
+	var firstSlot []observability.Observation
 	completionsMu.Lock()
 	for _, completion := range completions {
 		if completion.Trace.EvaluationTime == roundTwo && completion.Trace.ScheduleSegmentStart > roundTwo-period {
-			drift = append(drift, completion)
+			firstSlot = append(firstSlot, completion)
 		}
 	}
 	completionsMu.Unlock()
-	if len(drift) != 1 || drift[0].Result != observability.ResultDegraded || drift[0].ReasonCode != "CONFIG_DRIFT" ||
-		drift[0].SlotCompletionKind != "COMPLETED_WITH_PARTIAL_GAP" {
-		t.Fatalf("second strategy's round-2 completions = %+v, want one degraded CONFIG_DRIFT completion with a partial gap", drift)
+	if len(firstSlot) != 1 || firstSlot[0].Result != observability.ResultSuccess || firstSlot[0].SlotCompletionKind != "FULL_COMPLETED" {
+		t.Fatalf("second strategy's round-2 completions = %+v, want its first Slot completed FULL", firstSlot)
 	}
-	if got := detected("1002"); !equalTimes(got, want[3:]) {
-		t.Fatalf("strategy 1002 detections = %v, want each round from its first whole window exactly once %v", got, want[3:])
+	if got := detected("1002"); !equalTimes(got, want[2:]) {
+		t.Fatalf("strategy 1002 detections = %v, want each round from its first Slot exactly once %v", got, want[2:])
 	}
 	if calls := uqCalls.Load(); calls != 8 {
 		t.Fatalf("UQ calls = %d, want one per Query Group per round its Segment holds (5 + 3)", calls)

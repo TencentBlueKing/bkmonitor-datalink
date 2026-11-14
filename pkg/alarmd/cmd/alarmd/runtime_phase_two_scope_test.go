@@ -310,6 +310,8 @@ func (group *schedulerRunnerQueryGroup) DueBound() scheduler.RunnerDueBound {
 
 func (group *schedulerRunnerQueryGroup) NextDeadline() time.Time { return group.runner.NextDeadline() }
 
+func (*schedulerRunnerQueryGroup) HeldEpochs() (uint64, uint64) { return 0, 0 }
+
 func (*schedulerRunnerQueryGroup) DeclineHung(time.Time, time.Duration) (string, time.Time, bool) {
 	return "", time.Time{}, false
 }

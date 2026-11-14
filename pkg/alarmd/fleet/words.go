@@ -266,9 +266,11 @@ var checkWords = map[Check]wordPair{
 	CheckSeriesSparserThanWindow: {StateDetecting, ActionNone},
 	CheckPlanUnevaluable:         {StateStrategyInvalid, ActionStrategyEdit},
 	CheckQueryTargetMissing:      {StateStrategyInvalid, ActionStrategyEdit},
-	// Detecting: every round completes. The strategy's to act on before the
-	// share refuses it whole.
-	CheckRetainedShareApproaching: {StateDetecting, ActionStrategyEdit},
+	// Detecting: every round completes, and growing past the share cuts the
+	// Slot into windows, slower and still detecting. Nothing to change; the
+	// walls past it are refusals with codes of their own (PLAN_UNEVALUABLE
+	// for QG_BUDGET_SHARE_EXCEEDED), which keep their action.
+	CheckRetainedShareApproaching: {StateDetecting, ActionNone},
 	// Detecting, from data read before it was all there: its results cannot
 	// be taken as they stand, and the strategy's owner moves the read.
 	CheckReadBeforeComplete: {StateResultUntrusted, ActionStrategyEdit},

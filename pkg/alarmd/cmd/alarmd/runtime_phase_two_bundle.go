@@ -89,11 +89,24 @@ type phaseTwoProductionExternalDependencies struct {
 	// test's clock sets it to that clock, so a query's elapsed time is the
 	// latency the backend was given.
 	QueryClock func() time.Time
+	// StreamClock is the clock the view stream judges silence by, both ends,
+	// nil for Now. A test whose Now jumps a minute a Slot sets it to the real
+	// clock: silence read off a jumping clock is a jump, and a real stall
+	// between two jumps reads as none.
+	StreamClock func() time.Time
 	// PrepareEvents validates the output coordinates and returns the opener
 	// that connects; validation errors refuse startup, the opener's errors
 	// are retried while the replica reports itself not ready.
 	PrepareEvents      func(enginekafka.DecisionSinkConfig) (outputSinkOpener, error)
 	AdditionalObserver observability.Observer
+	// Placement narrows which workers the Control Leader may place a Query
+	// Group on, on top of the compatibility every worker is judged by: the
+	// placement, the incumbent it keeps, and both rebalances' destinations
+	// all ask it (scheduler.Router's eligibility), so a placement it pins is
+	// not undone. nil is production's - rendezvous over every compatible
+	// worker. It is set only by a test that has to put two Query Groups on
+	// two named workers; nothing in configuration reaches it.
+	Placement scheduler.WorkerEligibility
 	// StartupWaitInitial overrides the first retry delay of a startup
 	// dependency that does not answer; zero is the production delay.
 	StartupWaitInitial time.Duration
@@ -181,6 +194,21 @@ func openProductionPhaseTwoBundle(
 		},
 		defaultPhaseTwoProductionExternalDependencies(),
 	)
+}
+
+// The worker takes back what the lookback captured of a slice it read ahead
+// and let go through its query port's DiscardSliceRead; the port is the
+// access Source, which has to keep that method.
+var _ interface {
+	DiscardSliceRead(execution.FrozenExecutionContractRef, execution.InputSlice)
+} = (*access.Source)(nil)
+
+// streamClock is the view stream's clock: StreamClock, or Now without one.
+func (external phaseTwoProductionExternalDependencies) streamClock() func() time.Time {
+	if external.StreamClock != nil {
+		return external.StreamClock
+	}
+	return external.Now
 }
 
 func openProductionPhaseTwoBundleWithDependencies(
@@ -608,6 +636,7 @@ func openProductionPhaseTwoBundleAssembly(
 		ObserveHostPlacement:      hostPlacementObserver(recorder, addressDiffers, external.Now),
 		ObserveDownstreamDistress: recorder.RecordDownstreamDistress,
 		ObserveQuery:              recorder.RecordPhysicalQuery,
+		ObserveQueryAnswer:        recorder.RecordPhysicalQueryAnswer,
 		Superseded:                superseded,
 		ObserveSeriesPulled:       seriesPullTally.Add,
 		Lookback:                  lookbackEngine,
@@ -704,7 +733,7 @@ func openProductionPhaseTwoBundleAssembly(
 		legacyClients = append(legacyClients, serviceRedis)
 		compatOutputClient = serviceRedis
 		converter := &legacyoutput.Converter{
-			Store:          legacyoutput.RedisSnapshotStore{Client: serviceRedis},
+			Store:          legacyoutput.RedisSnapshotStore{Client: redisForCaller(serviceRedis, redisfailure.CallerLegacyOutput)},
 			SnapshotPrefix: cfg.Kafka.LegacyAdapter.SnapshotPrefix,
 			Now:            external.Now,
 			PluginID:       cfg.Kafka.LegacyAdapter.PluginID,
@@ -714,7 +743,7 @@ func openProductionPhaseTwoBundleAssembly(
 			podClient := redis.NewUniversalClient(productionRedisOptions(podConfig.Connection))
 			podClient.AddHook(recorder.RedisHook("legacy_pod_cache"))
 			legacyClients = append(legacyClients, podClient)
-			resolver, err := legacyoutput.NewDjangoPodResolver(podClient, legacyoutput.PodCacheConfig{KeyPrefix: podConfig.KeyPrefix, Version: podConfig.Version, Observe: recorder.RecordLegacyPodCache, OnFallback: func(reason string) {
+			resolver, err := legacyoutput.NewDjangoPodResolver(redisForCaller(podClient, redisfailure.CallerLegacyPodCache), legacyoutput.PodCacheConfig{KeyPrefix: podConfig.KeyPrefix, Version: podConfig.Version, Observe: recorder.RecordLegacyPodCache, OnFallback: func(reason string) {
 				observer.Observe(context.Background(), observability.Observation{Component: observability.ComponentRuntime, Stage: observability.StageLegacyPodCache, Result: observability.ResultDegraded, Err: fmt.Errorf("legacy Pod cache fallback: %s", reason)})
 			}})
 			if err != nil {
@@ -786,6 +815,10 @@ func openProductionPhaseTwoBundleAssembly(
 	// line: named, never limited.
 	newOpens := newopens.New(external.Now)
 	recorder.SetNewOpensSource(newopens.Outcomes, newOpens.Stats)
+	// The worker stages a first write's groups as its windows land only on
+	// a store that can (execution.PlanNoDataStager), and writes it whole at
+	// the statement otherwise: the store it is handed has to be one.
+	var _ execution.PlanNoDataStager = executionStore
 	workerPorts := worker.Ports{
 		Now:           time.Now,
 		EffectiveTime: legacyTime.Provider(),
@@ -803,11 +836,15 @@ func openProductionPhaseTwoBundleAssembly(
 		StateHorizon: func() int64 { return platformSettings.Current().NoDataTrackingHorizonSeconds },
 		Targets:      targetResolver,
 		ScopeGroups:  scopeGroups,
+		// The State cache borrows what no Slot has reserved of the retained
+		// pool and gives it back when a Slot needs it.
+		RetainedBorrower: executionStore.StateCacheBorrower(),
 	}
 	coordinator, err := worker.NewSlotExecutionCoordinator(workerPorts, worker.ProvisionalBudget{
 		MaxSeries: cfg.PhaseTwo.Coordinator.MaxSeries, MaxRetainedBytes: cfg.PhaseTwo.Coordinator.MaxRetainedBytes,
 		MaxStateMutations: cfg.PhaseTwo.Coordinator.MaxStateMutations, MaxEvents: cfg.PhaseTwo.Coordinator.MaxEvents,
 		MaxGapMutations: cfg.PhaseTwo.Coordinator.MaxGapMutations, StoreMaxItems: uint64(cfg.Limits.Store.MaxKeysPerBatch),
+		QueryPermits: cfg.PhaseTwo.Scheduler.ProcessQueryPermits,
 	})
 	if err != nil {
 		return nil, err
@@ -862,7 +899,7 @@ func openProductionPhaseTwoBundleAssembly(
 	// round for the byte constraint (decision-020 section 5.7).
 	costs := scheduler.NewCostLedger(external.Now)
 	viewServer, err := viewstream.NewServer(viewStreamAdmission{registry: ownershipStore, now: external.Now}, observer,
-		viewstream.ServerOptions{Now: external.Now, Costs: costLedgerSink{ledger: costs}})
+		viewstream.ServerOptions{Now: external.streamClock(), Costs: costLedgerSink{ledger: costs}})
 	if err != nil {
 		return nil, err
 	}
@@ -870,7 +907,7 @@ func openProductionPhaseTwoBundleAssembly(
 	if err != nil {
 		return nil, err
 	}
-	eligibility, err := scheduler.NewStaticWorkerEligibility(expectedCompatibility)
+	eligibility, err := phaseTwoWorkerEligibility(expectedCompatibility, external.Placement)
 	if err != nil {
 		return nil, err
 	}
@@ -882,17 +919,22 @@ func openProductionPhaseTwoBundleAssembly(
 	// from the catalog; a record that already says it is not asked about.
 	assignmentReconciler.WithTimelineRevisions(repository)
 	var executor scheduler.Executor = coordinator
+	var dropWitnesses func(execution.QueryGroupIdentity, execution.EvaluationTime)
+	if executionStore != nil {
+		dropWitnesses = executionStore.DropRuntimeWitnesses
+	}
 	productionOwnership, err := newProductionPhaseTwoOwnership(productionPhaseTwoOwnershipDependencies{
-		Roles:               cfg.EffectiveRoles(),
-		ControlCandidate:    phaseTwoControlCandidacy(cfg) == ownership.ControlCandidacyFallback,
-		SteppedDownAsLeader: controlLeaderSteppedDown(reconciler, recorder),
-		QueryCooldowns:      newProductionQueryCooldownStore(cfg, redisForCaller(runtimeClient, redisfailure.CallerQueryCooldown), recorder, observer),
-		ReadHolds:           readHolds,
-		Traces:              traces,
-		DecisionLag:         recorder.RecordDecisionLag,
-		Store:               ownershipStore, WorkerID: cfg.PhaseTwo.Worker.ID, Catalog: catalog, Progress: progressStore,
+		Roles:                cfg.EffectiveRoles(),
+		ControlCandidate:     phaseTwoControlCandidacy(cfg) == ownership.ControlCandidacyFallback,
+		SteppedDownAsLeader:  controlLeaderSteppedDown(reconciler, recorder),
+		QueryCooldowns:       newProductionQueryCooldownStore(cfg, redisForCaller(runtimeClient, redisfailure.CallerQueryCooldown), recorder, observer),
+		ReadHolds:            readHolds,
+		DropRuntimeWitnesses: dropWitnesses,
+		Traces:               traces,
+		DecisionLag:          recorder.RecordDecisionLag,
+		Store:                ownershipStore, WorkerID: cfg.PhaseTwo.Worker.ID, Catalog: catalog, Progress: progressStore,
 		Executor: executor, Now: external.Now, ControlLeaderTTL: cfg.PhaseTwo.Ownership.ControlLeaderTTL.Duration(),
-		Observer: observer, Reconcile: assignmentReconciler, Flights: flights, RecoveryLimits: recoveryLimits,
+		Observer: observer, Reconcile: assignmentReconciler, Activations: repository, Flights: flights, RecoveryLimits: recoveryLimits,
 		QueryLatency:              lookbackQueryLatency(lookbackEngine),
 		LookbackBusy:              lookbackBusy(lookbackEngine),
 		InheritedQueryLatency:     readHoldInheritedQueryLatency(readHolds),
@@ -936,7 +978,7 @@ func openProductionPhaseTwoBundleAssembly(
 	viewGate.retryWithin = cfg.PhaseTwo.Ownership.LeaseRenewInterval.Duration()
 	viewClient, err := viewstream.NewClient(
 		viewstream.ClientIdentity{WorkerID: cfg.PhaseTwo.Worker.ID, Incarnation: incarnation, StreamToken: streamIdentity.Token},
-		viewStreamDiscovery{store: ownershipStore}, repository, observer, viewstream.ClientOptions{Now: external.Now, Switched: viewGate,
+		viewStreamDiscovery{store: ownershipStore}, repository, observer, viewstream.ClientOptions{Now: external.streamClock(), Switched: viewGate,
 			Costs: workerCosts, LookbackPlans: lookbackPlansInto(lookbackEngine)},
 	)
 	if err != nil {
@@ -1202,6 +1244,7 @@ func openProductionPhaseTwoBundleAssembly(
 		Recorder: recorder, Observer: observer, TargetFlow: targetFlow, Now: external.Now,
 		FleetAPI: fleetAPI, PublicSurfaceRestricted: publicRestricted,
 		NoDataCloseAPI: noDataCloseAPIOf(core.NoDataCloses, external.Now),
+		DropStateCache: executionStore.DropStateCacheQueryGroup,
 		ControlStream:  controlStream, StreamIdentity: streamIdentity, ViewStreamStats: viewServer.Stats, ViewClient: viewClient,
 		PublishFleet: func(ctx context.Context) {
 			publishRoleControlFacts(ctx, bundle, fleetStore, external.RoleRuntime)
@@ -1266,11 +1309,23 @@ func openProductionPhaseTwoBundleAssembly(
 		return nil, err
 	}
 	bundle.addressDiffers = addressDiffers
+	// The series this replica's Query Groups bind, for the State cache's
+	// budget to be read against: the tracker's per-Plan counts over the Query
+	// Groups this replica runs now, at scrape time.
+	recorder.SetStateSeriesHeldSource(func() uint64 {
+		owned := bundle.ownedQueryGroups()
+		held := make(map[string]struct{}, len(owned))
+		for _, queryGroup := range owned {
+			held[string(queryGroup)] = struct{}{}
+		}
+		return fleetTracker.SeriesMatchedIn(held, phaseTwoMaxSupportedEvaluationInterval)
+	})
 	lookbackOwner.bind(bundle)
 	// A Slot a supplement or maintenance turned away from its flight runs as
 	// soon as the hold ends, not at its next turn.
 	flights.OnTurnedAwayReleased(bundle.noticeFlightReleased)
 	bundle.workerPorts = workerPorts
+	bundle.coordinator = coordinator
 	bundle.cmdbIndex = cmdbIndex
 	// The link's close by filter, where its control plane is named: the
 	// inactive and scope closes send through it, and the control leader's
@@ -1516,6 +1571,9 @@ func newProductionOwnershipStore(cfg config.Config, client redis.UniversalClient
 	if err := store.ConfigureEpochRetention(phaseTwoOwnerEpochRetention(cfg)); err != nil {
 		return nil, err
 	}
+	if err := store.ConfigureLeaseTTL(cfg.PhaseTwo.Ownership.LeaseTTL.Duration()); err != nil {
+		return nil, err
+	}
 	return store, nil
 }
 
@@ -1717,27 +1775,29 @@ func productionPhaseTwoPrefix(prefix, component string) string {
 	return prefix + ":phase-two:" + component
 }
 
+// phaseTwoWorkerEligibility is which workers the Leader may place on: every
+// worker of the expected compatibility, narrowed by placement when a test
+// injects one. With none it is the compatibility alone, as it always was.
+func phaseTwoWorkerEligibility(expected ownership.WorkerCompatibility, placement scheduler.WorkerEligibility) (scheduler.WorkerEligibility, error) {
+	compatible, err := scheduler.NewStaticWorkerEligibility(expected)
+	if err != nil {
+		return nil, err
+	}
+	return scheduler.AllEligible(compatible, placement), nil
+}
+
 func phaseTwoUQLimits(cfg config.Config) accessuq.Limits {
-	// One UQ response body is capped independently of the Coordinator retained
-	// budget: raising that budget to gigabytes must not allow a multi-gigabyte
-	// single response. Series, record and per-series byte limits are unchanged.
-	const maximumBodyCap = int64(512 << 20)
-	maximumBody := int64(cfg.PhaseTwo.Coordinator.MaxRetainedBytes)
-	if maximumBody > maximumBodyCap {
-		maximumBody = maximumBodyCap
-	}
-	maximumSeries := maximumBody
-	if defaults := accessuq.DefaultLimits(); defaults.MaxSeriesBytes < maximumSeries {
-		maximumSeries = defaults.MaxSeriesBytes
-	}
-	// The counts in one answer are what its bytes can hold at the smallest a
-	// series and a record encode: the body cap governs, and these stop only an
-	// answer whose counting has gone wrong. The record cap was once the
-	// coordinator's series count times the detector's records per series,
-	// two numbers that bound other things.
+	// An answer is decoded series by series, so it is bounded by its series:
+	// each at most the pool, and at most the per-series default. There is no
+	// bound on the whole body - it holds no memory, and a byte cap on it
+	// would refuse a Query Group the pool can hold. The counts are what the
+	// pool can hold at the smallest a series and a record encode; they stop
+	// only an answer whose counting has gone wrong.
+	pool := cfg.PhaseTwo.Coordinator.MaxRetainedBytes
+	maximumSeries := int64(min(pool, uint64(accessuq.DefaultLimits().MaxSeriesBytes)))
 	return accessuq.Limits{
-		MaxBodyBytes: maximumBody, MaxSeriesBytes: maximumSeries,
-		MaxSeries: max(uint64(maximumBody)/config.MinimumSeriesBytes, 1), MaxRecords: max(uint64(maximumBody)/config.MinimumRecordBytes, 1),
+		MaxSeriesBytes: max(maximumSeries, 1),
+		MaxSeries:      max(pool/config.MinimumSeriesBytes, 1), MaxRecords: max(pool/config.MinimumRecordBytes, 1),
 	}
 }
 

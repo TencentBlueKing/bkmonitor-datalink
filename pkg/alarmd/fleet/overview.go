@@ -359,11 +359,18 @@ type OverviewScale struct {
 }
 
 type OverviewReplicaResource struct {
-	Name                string          `json:"name"`
-	MemoryRatio         OverviewNumber  `json:"memory_ratio"`
-	LiveHeapBytes       OverviewNumber  `json:"live_heap_bytes"`
-	QueryPermits        OverviewPermits `json:"query_permits"`
-	CPUThrottledSeconds OverviewNumber  `json:"cpu_throttled_seconds"`
+	Name          string         `json:"name"`
+	MemoryRatio   OverviewNumber `json:"memory_ratio"`
+	LiveHeapBytes OverviewNumber `json:"live_heap_bytes"`
+	// LiveHeapReservedBytes is what the retained-byte pool held at the
+	// collection the live heap was read from, so live less reserved is heap
+	// no Slot reserved. Unmeasured when the replica did not report it, or
+	// when the pool moved during that reading (FlowFacts.LiveHeapReserved
+	// with gc_start and gc_end apart): the live heap then may or may not hold
+	// the Slot that moved it, and no difference of the two is a reading.
+	LiveHeapReservedBytes OverviewNumber  `json:"live_heap_reserved_bytes"`
+	QueryPermits          OverviewPermits `json:"query_permits"`
+	CPUThrottledSeconds   OverviewNumber  `json:"cpu_throttled_seconds"`
 }
 
 type OverviewPermits struct {
@@ -524,7 +531,8 @@ func overviewOf(health HealthResponse, running map[StateWord]int, runningKnown b
 	overview.Runtime = OverviewRuntime{Replicas: []OverviewReplica{}, Attention: []OverviewNotice{}}
 	for _, replica := range health.PerReplica {
 		resource := OverviewReplicaResource{Name: replica.Replica, MemoryRatio: overviewUnmeasured("ratio"),
-			LiveHeapBytes: overviewUnmeasured("bytes"), CPUThrottledSeconds: overviewUnmeasured("seconds")}
+			LiveHeapBytes: overviewUnmeasured("bytes"), LiveHeapReservedBytes: overviewUnmeasured("bytes"),
+			CPUThrottledSeconds: overviewUnmeasured("seconds")}
 		if capacity := replica.Capacity; capacity != nil {
 			peak := capacity.PermitsPeak
 			resource.QueryPermits = OverviewPermits{Held: capacity.PermitsHeld, Limit: capacity.PermitBudget, Peak: &peak, MemorySource: capacity.MemorySource}
@@ -845,6 +853,9 @@ func (flows *overviewFlows) apply(overview *Overview, health HealthResponse, at 
 		next[replica.Replica] = reading
 		if replica.Flow.LiveHeapBytes != nil && index < len(overview.Resources.Replicas) {
 			overview.Resources.Replicas[index].LiveHeapBytes = overviewMeasured(float64(*replica.Flow.LiveHeapBytes), "bytes")
+			if reserved := replica.Flow.LiveHeapReserved; reserved != nil && reserved.AtGCStart == reserved.AtGCEnd {
+				overview.Resources.Replicas[index].LiveHeapReservedBytes = overviewMeasured(float64(reserved.AtGCEnd), "bytes")
+			}
 		}
 		if index < len(overview.Runtime.Replicas) {
 			overview.Runtime.Replicas[index].Roles = replica.Flow.Roles

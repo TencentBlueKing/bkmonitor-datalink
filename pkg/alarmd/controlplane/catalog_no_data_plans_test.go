@@ -33,7 +33,7 @@ func noDataCatalog(plans []FrozenPlan, dispositions []ObjectDisposition) Catalog
 
 var staticScope = &contract.TargetScopeV2{Groups: []contract.TargetScopeGroupV2{{
 	Conditions: []contract.TargetScopeConditionV2{{
-		Field: contract.TargetScopeHost, Method: contract.TargetScopeInclude, Keys: []string{"10.0.0.1|0"},
+		Field: contract.TargetScopeHost, Method: contract.TargetScopeInclude, Keys: []string{"192.0.2.1|0"},
 	}},
 }}}
 
@@ -138,7 +138,7 @@ func TestNoDataPlansPreCreatesEverySource(t *testing.T) {
 func TestNoDataPlansCountAnUnclassifiablePlanRatherThanDropIt(t *testing.T) {
 	excluded := &contract.TargetScopeV2{Groups: []contract.TargetScopeGroupV2{{
 		Conditions: []contract.TargetScopeConditionV2{{
-			Field: contract.TargetScopeHost, Method: contract.TargetScopeExclude, Keys: []string{"10.0.0.1|0"},
+			Field: contract.TargetScopeHost, Method: contract.TargetScopeExclude, Keys: []string{"192.0.2.1|0"},
 		}},
 	}}}
 	composition := ComposeCatalog(noDataCatalog([]FrozenPlan{

@@ -14,6 +14,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisscript"
 )
 
 // AssignmentSweep is what one sweep of the Assignment records found and did.
@@ -48,17 +49,35 @@ type AssignmentSweep struct {
 // is simply deleted.
 //
 // KEYS[1] leader ownership hash, KEYS[2] the Assignment record, KEYS[3] the
-// Query Group's ownership hash. ARGV[1..3] the leader fence, ARGV[4] the
-// Query Group the record was read under, ARGV[5] how long the epoch is kept,
-// in milliseconds.
-var reclaimAssignmentScript = redis.NewScript(FenceLua + `
+// Query Group's ownership hash, KEYS[4] the session record of the holder the
+// sweep read before it ran (ARGV[6]). ARGV[1..3] the leader fence, ARGV[4]
+// the Query Group the record was read under, ARGV[5] how long the epoch is
+// kept, in milliseconds.
+//
+// A holder whose lease is held under a worker session (A2) has no deadline
+// of its own: it holds the Query Group while its session is not proven gone,
+// read from KEYS[4] as the publication reads it. A holder other than the one
+// read before is taken as alive and met again on the next sweep.
+var reclaimAssignmentScript = redisscript.New("ownership_reclaim_assignment", FenceLua+`
 if fence_refusal('', KEYS[1], '0', ARGV[1], ARGV[2], ARGV[3], '', redis_now_ms()) then return 'STALE' end
 local named = redis.call('HGET', KEYS[2], 'query_group')
 if not named then return 'GONE' end
 if named ~= ARGV[4] then return 'CHANGED' end
-local holder = redis.call('HGET', KEYS[3], 'owner_id')
-local deadline = tonumber(redis.call('HGET', KEYS[3], 'deadline_ms') or '0')
-if holder and holder ~= '' and deadline > redis_now_ms() then return 'HELD' end
+local held = redis.call('HMGET', KEYS[3], 'owner_id', 'owner_session_epoch', 'deadline_ms')
+local holder, session_epoch = held[1], held[2]
+local now_ms = redis_now_ms()
+if holder and holder ~= '' then
+  if session_epoch and session_epoch ~= '' then
+    if holder ~= ARGV[6] then return 'HELD' end
+    local session = redis.call('HMGET', KEYS[4], 'session_epoch', 'deadline_ms')
+    if not session[1] then return 'HELD' end
+    local through = tonumber(session[1])
+    if tonumber(session[2] or '0') > now_ms then through = through - 1 end
+    if tonumber(session_epoch) > through then return 'HELD' end
+  elseif tonumber(held[3] or '0') > now_ms then
+    return 'HELD'
+  end
+end
 local epoch = redis.call('HGET', KEYS[3], 'owner_epoch')
 redis.call('DEL', KEYS[2], KEYS[3])
 if epoch then
@@ -158,9 +177,14 @@ func (store *RedisStore) SweepAssignments(
 					continue
 				}
 				sweep.Retired++
-				result, err := reclaimAssignmentScript.Run(ctx, store.client, []string{leaderKey, key, store.ownershipKey(queryGroup)},
+				holder, err := store.client.HGet(ctx, store.ownershipKey(queryGroup), "owner_id").Result()
+				if err != nil && !errors.Is(err, redis.Nil) {
+					return sweep, fmt.Errorf("alarmd ownership: assignment sweep holder %s: %w", queryGroup, err)
+				}
+				result, err := reclaimAssignmentScript.Run(ctx, store.client,
+					[]string{leaderKey, key, store.ownershipKey(queryGroup), store.workerSessionKey(holder)},
 					authority.Fence.OwnerID, authority.Fence.OwnerEpoch, authority.Fence.LeaseToken, named,
-					store.epochRetention.Milliseconds()).Text()
+					store.epochRetention.Milliseconds(), holder).Text()
 				if err != nil {
 					return sweep, fmt.Errorf("alarmd ownership: assignment sweep reclaim %s: %w", queryGroup, err)
 				}

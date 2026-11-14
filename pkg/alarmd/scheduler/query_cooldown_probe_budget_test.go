@@ -20,14 +20,17 @@ import (
 )
 
 // operationSeeingExecutor answers every execution with availability and
-// keeps the operation each ran as.
+// keeps the operation each ran as, and whether it was told it probes the
+// pool.
 type operationSeeingExecutor struct {
 	availability execution.QueryAvailability
 	operations   []execution.Operation
+	probes       []bool
 }
 
 func (executor *operationSeeingExecutor) Execute(_ context.Context, request execution.SlotExecutionRequest) (execution.SlotExecutionResult, error) {
 	executor.operations = append(executor.operations, request.Operation)
+	executor.probes = append(executor.probes, request.QueryCooldownProbe)
 	result := execution.SlotExecutionResult{Completed: true, QueryAvailability: executor.availability}
 	if executor.availability == execution.QueryAvailabilityUnavailable {
 		result.QueryUnavailableReason = execution.ReasonCode(contract.ReasonQueryTimeout)
@@ -42,7 +45,8 @@ func (executor *operationSeeingExecutor) Execute(_ context.Context, request exec
 // Query Groups its normal rounds queue behind, so it neither takes the Query
 // Group out nor counts a failure or extends the cooldown. With the cooldown
 // run out, the Slot runs as a normal execution and its answer takes the
-// Query Group out, with the probe kept.
+// Query Group out, with the probe kept. The execution is told it probes the
+// pool only then (QueryCooldownProbe), so the worker reads it whole.
 func TestOnlyANormalExecutionDecidesThePool(t *testing.T) {
 	for _, test := range []struct {
 		name         string
@@ -85,6 +89,9 @@ func TestOnlyANormalExecutionDecidesThePool(t *testing.T) {
 			}
 			if len(executor.operations) != 1 || executor.operations[0] != test.operation {
 				t.Fatalf("operations %v, want [%s]", executor.operations, test.operation)
+			}
+			if executor.probes[0] != test.decides {
+				t.Fatalf("the execution told it probes the pool %t, want %t", executor.probes[0], test.decides)
 			}
 			if !test.decides && (!runner.queryCooldown.until.Equal(until) || runner.queryCooldown.failures != 3) {
 				t.Fatalf("after a retry %v: pool %+v, want it left as it was (until %s, 3 failures)", test.availability, runner.queryCooldown, until)

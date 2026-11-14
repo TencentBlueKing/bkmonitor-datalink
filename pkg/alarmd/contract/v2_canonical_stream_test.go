@@ -170,7 +170,7 @@ func FuzzCanonicalStreamAgreesWithTheEstablishedPath(f *testing.F) {
 // Both settings in one binary, alternating, because the two numbers are only
 // comparable if they met the same machine.
 func BenchmarkCanonicalStreamVersusEstablished(b *testing.B) {
-	input := json.RawMessage(`{"dimensions":{"bk_target_ip":"10.0.0.1","bk_cloud_id":"0",` +
+	input := json.RawMessage(`{"dimensions":{"bk_target_ip":"192.0.2.1","bk_cloud_id":"0",` +
 		`"instance":"host-000123","job":"node-exporter"},"value":12345.678,"time":1757740800}`)
 	for _, arm := range []struct {
 		name   string

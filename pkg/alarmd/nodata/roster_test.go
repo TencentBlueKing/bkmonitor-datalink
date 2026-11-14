@@ -25,7 +25,7 @@ var hostPair = []string{HostIPDimension, HostCloudDimension}
 // where a history roster comes from: the absence evaluation records groups that
 // arrived without being expected, and they become what is expected next time.
 func TestRosterWithoutATargetIsWhatTheMemoryHasSeen(t *testing.T) {
-	seen, never := hostTargetGroup(HostIdentity{IP: "10.0.0.1", CloudID: "0"}), hostTargetGroup(HostIdentity{IP: "10.0.0.2", CloudID: "0"})
+	seen, never := hostTargetGroup(HostIdentity{IP: "192.0.2.1", CloudID: "0"}), hostTargetGroup(HostIdentity{IP: "192.0.2.2", CloudID: "0"})
 	roster := mustBuildRoster(t, RosterRequest{
 		AggDimension: hostPair,
 		Memory: map[string]GroupMemory{
@@ -67,10 +67,10 @@ func TestRosterNeverExpectsTheWholeItemGroup(t *testing.T) {
 func TestRosterFromAStaticTargetExpectsItsHosts(t *testing.T) {
 	roster := mustBuildRoster(t, RosterRequest{
 		AggDimension: hostPair,
-		Scope:        hostScope("10.0.0.1|0", "10.0.0.2|0"),
-		KnownHosts:   knownHosts("10.0.0.1|0", "10.0.0.2|0"),
+		Scope:        hostScope("192.0.2.1|0", "192.0.2.2|0"),
+		KnownHosts:   knownHosts("192.0.2.1|0", "192.0.2.2|0"),
 		// A memory full of other groups does not widen a target's expected set.
-		Memory: map[string]GroupMemory{hostTargetGroup(HostIdentity{IP: "10.0.0.9", CloudID: "0"}).Key(): {LastSeen: 100}},
+		Memory: map[string]GroupMemory{hostTargetGroup(HostIdentity{IP: "192.0.2.9", CloudID: "0"}).Key(): {LastSeen: 100}},
 	})
 	if roster.Source != RosterTargetStatic {
 		t.Fatalf("Source = %q, want %q", roster.Source, RosterTargetStatic)
@@ -78,7 +78,7 @@ func TestRosterFromAStaticTargetExpectsItsHosts(t *testing.T) {
 	if len(roster.Groups) != 2 {
 		t.Fatalf("roster = %v, want the two hosts and nothing else", roster.Groups)
 	}
-	for _, host := range []HostIdentity{{IP: "10.0.0.1", CloudID: "0"}, {IP: "10.0.0.2", CloudID: "0"}} {
+	for _, host := range []HostIdentity{{IP: "192.0.2.1", CloudID: "0"}, {IP: "192.0.2.2", CloudID: "0"}} {
 		if _, expected := roster.Groups[hostTargetGroup(host).Key()]; !expected {
 			t.Fatalf("host %+v is in the target and not expected", host)
 		}
@@ -89,9 +89,9 @@ func TestRosterFromAStaticTargetExpectsItsHosts(t *testing.T) {
 // expected set is empty and the backend's is too. It must not fall back to
 // history, which would expect groups the backend does not.
 func TestRosterFromAStaticTargetThatMatchesNoHostExpectsNothing(t *testing.T) {
-	seen := hostTargetGroup(HostIdentity{IP: "10.0.0.1", CloudID: "0"})
+	seen := hostTargetGroup(HostIdentity{IP: "192.0.2.1", CloudID: "0"})
 	roster := mustBuildRoster(t, RosterRequest{
-		AggDimension: hostPair, Scope: hostScope("10.0.0.1|0"),
+		AggDimension: hostPair, Scope: hostScope("192.0.2.1|0"),
 		Memory: map[string]GroupMemory{seen.Key(): {LastSeen: 100}},
 	})
 	if roster.Source != RosterTargetStatic {
@@ -110,8 +110,8 @@ func TestRosterFromAStaticTargetThatMatchesNoHostExpectsNothing(t *testing.T) {
 func TestRosterWithDimensionsThatDoNotNameTheHostIsTheWholeItem(t *testing.T) {
 	roster := mustBuildRoster(t, RosterRequest{
 		AggDimension: []string{"device"},
-		Scope:        hostScope("10.0.0.1|0"), KnownHosts: knownHosts("10.0.0.1|0"),
-		Memory: map[string]GroupMemory{hostTargetGroup(HostIdentity{IP: "10.0.0.9", CloudID: "0"}).Key(): {LastSeen: 100}},
+		Scope:        hostScope("192.0.2.1|0"), KnownHosts: knownHosts("192.0.2.1|0"),
+		Memory: map[string]GroupMemory{hostTargetGroup(HostIdentity{IP: "192.0.2.9", CloudID: "0"}).Key(): {LastSeen: 100}},
 	})
 	if roster.Source != RosterWhole {
 		t.Fatalf("Source = %q, want %q", roster.Source, RosterWhole)
@@ -131,20 +131,20 @@ func TestRosterRefusesWhatThisCutCannotDerive(t *testing.T) {
 			AggDimension: hostPair, Scope: topoScope(),
 		},
 		"an excluded host list": {
-			AggDimension: hostPair, Scope: excludedHostScope("10.0.0.1|0"),
+			AggDimension: hostPair, Scope: excludedHostScope("192.0.2.1|0"),
 		},
 		"two host conditions in one group": {
-			AggDimension: hostPair, Scope: twoHostConditions("10.0.0.1|0", "10.0.0.2|0"),
+			AggDimension: hostPair, Scope: twoHostConditions("192.0.2.1|0", "192.0.2.2|0"),
 		},
 		"two alternative groups": {
-			AggDimension: hostPair, Scope: twoGroups("10.0.0.1|0", "10.0.0.2|0"),
+			AggDimension: hostPair, Scope: twoGroups("192.0.2.1|0", "192.0.2.2|0"),
 		},
 		"hosts named by identifier only": {
 			AggDimension: hostPair, Scope: hostScope("12345"),
 		},
 		"dimensions that name the host without being the pair": {
 			AggDimension: []string{HostIPDimension, HostCloudDimension, "device"},
-			Scope:        hostScope("10.0.0.1|0"), KnownHosts: knownHosts("10.0.0.1|0"),
+			Scope:        hostScope("192.0.2.1|0"), KnownHosts: knownHosts("192.0.2.1|0"),
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -180,7 +180,7 @@ func TestRosterNeverExpectsTheBareHostPairForOtherDimensions(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			roster, err := BuildRoster(RosterRequest{
 				AggDimension: dimensions,
-				Scope:        hostScope("10.0.0.1|0"), KnownHosts: knownHosts("10.0.0.1|0"),
+				Scope:        hostScope("192.0.2.1|0"), KnownHosts: knownHosts("192.0.2.1|0"),
 			})
 			if err != nil {
 				return
@@ -312,8 +312,8 @@ func knownHosts(keys ...string) map[string]struct{} {
 func TestTheRosterVersionNamesTheExpectedSetAndNothingElse(t *testing.T) {
 	request := RosterRequest{
 		AggDimension: []string{HostIPDimension, HostCloudDimension},
-		Scope:        hostScope("10.0.0.1|0", "10.0.0.2|0"),
-		KnownHosts:   knownHosts("10.0.0.1|0", "10.0.0.2|0"),
+		Scope:        hostScope("192.0.2.1|0", "192.0.2.2|0"),
+		KnownHosts:   knownHosts("192.0.2.1|0", "192.0.2.2|0"),
 	}
 	first, err := BuildRoster(request)
 	if err != nil {
@@ -335,7 +335,7 @@ func TestTheRosterVersionNamesTheExpectedSetAndNothingElse(t *testing.T) {
 	// One host leaves the business. The set moved, so the version moves - this
 	// is the change the field exists to record.
 	departed := request
-	departed.KnownHosts = knownHosts("10.0.0.1|0")
+	departed.KnownHosts = knownHosts("192.0.2.1|0")
 	fewer, err := BuildRoster(departed)
 	if err != nil {
 		t.Fatal(err)
@@ -361,7 +361,7 @@ func TestTheRosterVersionNamesTheExpectedSetAndNothingElse(t *testing.T) {
 
 	// A different source with the same (empty) groups is still a different
 	// roster, so the source is part of it.
-	whole, err := BuildRoster(RosterRequest{AggDimension: []string{"device"}, Scope: hostScope("10.0.0.1|0")})
+	whole, err := BuildRoster(RosterRequest{AggDimension: []string{"device"}, Scope: hostScope("192.0.2.1|0")})
 	if err != nil {
 		t.Fatal(err)
 	}

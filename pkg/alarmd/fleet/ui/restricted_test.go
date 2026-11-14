@@ -55,7 +55,7 @@ func TestTheRestrictedSurfaceShowsNoticesNotInferences(t *testing.T) {
 		Builds:       []fleet.BuildGroup{{Replicas: []string{"replica-a"}}},
 		PerReplica:   []fleet.ReplicaView{{Replica: "replica-a"}},
 		Degradations: []fleet.Degradation{{Kind: fleet.DegradationMetricsUnexported, Replica: "replica-a"}},
-		Dependencies: []fleet.Endpoint{{Role: "runtime", Kind: "redis", Address: "redis.internal.example:6379"}},
+		Dependencies: []fleet.Endpoint{{Role: "runtime", Kind: "redis", Address: "redis.planted.invalid:6379"}},
 		Gaps:         []fleet.Gap{{Kind: fleet.GapListTruncated, Replica: "replica-a"}},
 	}
 	summary, err := json.Marshal(fleet.PublicHealth(full))

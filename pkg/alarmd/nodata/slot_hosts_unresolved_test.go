@@ -29,9 +29,9 @@ import (
 // after every restart, and every replica for as long as a CMDB read keeps
 // failing.
 func TestEvaluateSlotSkipsAHostTargetItCannotResolve(t *testing.T) {
-	scope := hostScope("10.0.0.1|0", "10.0.0.2|0")
+	scope := hostScope("192.0.2.1|0", "192.0.2.2|0")
 	memory := map[string]GroupMemory{
-		hostTargetGroup(HostIdentity{IP: "10.0.0.2", CloudID: "0"}).Key(): {FirstAbsent: 940},
+		hostTargetGroup(HostIdentity{IP: "192.0.2.2", CloudID: "0"}).Key(): {FirstAbsent: 940},
 	}
 
 	result, outcome, err := EvaluateSlot(SlotInput{
@@ -64,7 +64,7 @@ func TestEvaluateSlotSkipsAHostTargetItCannotResolve(t *testing.T) {
 // must not swallow: the index answered, and what it said is that none of the
 // declared hosts is in this business any more.
 func TestEvaluateSlotStillJudgesATargetThatResolvedToNoHost(t *testing.T) {
-	scope := hostScope("10.0.0.1|0", "10.0.0.2|0")
+	scope := hostScope("192.0.2.1|0", "192.0.2.2|0")
 
 	result, outcome, err := EvaluateSlot(SlotInput{
 		Plan:           slotPlan(scope, []string{HostIPDimension, HostCloudDimension}),
@@ -93,7 +93,7 @@ func TestEvaluateSlotStillJudgesATargetThatResolvedToNoHost(t *testing.T) {
 // neither becomes less true because the host index is cold -- so gating them
 // on it would stop detection that was never at risk.
 func TestEvaluateSlotJudgesHistoryAndWholeItemWithNoHostIndex(t *testing.T) {
-	seen := hostGroup(t, "10.0.0.9")
+	seen := hostGroup(t, "192.0.2.9")
 	history := map[string]GroupMemory{seen.Key(): {LastSeen: 880}}
 
 	result, outcome, err := EvaluateSlot(SlotInput{
@@ -111,7 +111,7 @@ func TestEvaluateSlotJudgesHistoryAndWholeItemWithNoHostIndex(t *testing.T) {
 	whole, outcome, err := EvaluateSlot(SlotInput{
 		// No-data dimensions that do not name the host make this a whole-item
 		// item whatever the target says.
-		Plan:           slotPlan(hostScope("10.0.0.1|0"), []string{"device"}),
+		Plan:           slotPlan(hostScope("192.0.2.1|0"), []string{"device"}),
 		EvaluationTime: 1000, PeriodSeconds: 60, Completeness: execution.CompletenessFull,
 		HostsResolved: false, Memory: map[string]GroupMemory{},
 	})

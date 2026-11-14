@@ -24,7 +24,7 @@ func TestASharedResponseDoesNotAllocateItsFrameBuffer(t *testing.T) {
 	identity := queryIdentity{Spec: validAttempt(t).Spec, AttemptNo: 1}
 	body := sharedTestBody(t, []responseSeries{sharedTestSeries()}, map[string]any{"is_partial": false})
 	decode := func() {
-		done, err := client.decodeShared(context.Background(), strings.NewReader(body), identity, &collectingSink{})
+		done, err := client.decodeShared(context.Background(), nil, strings.NewReader(body), identity, &collectingSink{})
 		if err != nil || done.Completeness != execution.CompletenessFull {
 			t.Fatalf("decode = %+v, %v", done, err)
 		}
@@ -67,7 +67,7 @@ func TestAPooledFrameBufferCarriesNothingIntoTheNextResponse(t *testing.T) {
 		return string(raw)
 	}
 	firstSink := &collectingSink{}
-	if done, err := client.decodeShared(context.Background(), strings.NewReader(sharedTestBody(t, []responseSeries{first}, map[string]any{"is_partial": false})), identity, firstSink); err != nil || done.Completeness != execution.CompletenessFull {
+	if done, err := client.decodeShared(context.Background(), nil, strings.NewReader(sharedTestBody(t, []responseSeries{first}, map[string]any{"is_partial": false})), identity, firstSink); err != nil || done.Completeness != execution.CompletenessFull {
 		t.Fatalf("first response = %+v, %v", done, err)
 	}
 	delivered := snapshot(firstSink)
@@ -75,11 +75,11 @@ func TestAPooledFrameBufferCarriesNothingIntoTheNextResponse(t *testing.T) {
 		t.Fatalf("first response delivered %s, want its series", delivered)
 	}
 	overrun := `{"seq":0,"v":1,"padding":"` + strings.Repeat("x", sharedFrameBytes) + `"}` + "\n"
-	if done, err := client.decodeShared(context.Background(), strings.NewReader(overrun), identity, &collectingSink{}); err != nil || done.RouteFacts.Attempts[0].Detail != "response=limit_frame_bytes" {
+	if done, err := client.decodeShared(context.Background(), nil, strings.NewReader(overrun), identity, &collectingSink{}); err != nil || done.RouteFacts.Attempts[0].Detail != "response=limit_frame_bytes" {
 		t.Fatalf("overrun response = %+v, %v", done, err)
 	}
 	secondSink := &collectingSink{}
-	if done, err := client.decodeShared(context.Background(), strings.NewReader(sharedTestBody(t, []responseSeries{second}, map[string]any{"is_partial": false})), identity, secondSink); err != nil || done.Completeness != execution.CompletenessFull {
+	if done, err := client.decodeShared(context.Background(), nil, strings.NewReader(sharedTestBody(t, []responseSeries{second}, map[string]any{"is_partial": false})), identity, secondSink); err != nil || done.Completeness != execution.CompletenessFull {
 		t.Fatalf("response after an overrun = %+v, %v", done, err)
 	}
 	if got := snapshot(firstSink); got != delivered {

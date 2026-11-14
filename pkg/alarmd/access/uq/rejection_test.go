@@ -215,3 +215,28 @@ func TestTheStrategyHeaderNamesOnlyDecimalIDs(t *testing.T) {
 		t.Fatalf("headers sent %v", *seen)
 	}
 }
+
+// The store refusing a query longer than it takes - VictoriaMetrics past its
+// -search.maxQueryLen, the words UQ passes on - is filed QUERY_TOO_LONG, the
+// class a Slot read in slices names its slice by; a refusal about anything
+// else is not.
+func TestAQueryPastTheStoresLengthIsFiledTooLong(t *testing.T) {
+	body := `{"error":"cannot parse query: too long query; got 20481 bytes; mustn't exceed -search.maxQueryLen=16384 bytes",` +
+		`"trace_id":"` + rejectionTraceID + `"}`
+	client, _ := headerServer(t, http.StatusUnprocessableEntity, body)
+	completion, err := client.Execute(context.Background(), apmAttempt(t), &collectingSink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rejection := completion.RouteFacts.Attempts[0].Rejection; rejection == nil || rejection.Class != execution.RejectionClassQueryTooLong {
+		t.Fatalf("rejection %+v, want the class QUERY_TOO_LONG", rejection)
+	}
+	client, _ = headerServer(t, http.StatusUnprocessableEntity, `{"error":"invalid query: unknown function","trace_id":"`+rejectionTraceID+`"}`)
+	completion, err = client.Execute(context.Background(), apmAttempt(t), &collectingSink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rejection := completion.RouteFacts.Attempts[0].Rejection; rejection == nil || rejection.Class == execution.RejectionClassQueryTooLong {
+		t.Fatalf("rejection %+v, want another class than QUERY_TOO_LONG", rejection)
+	}
+}

@@ -171,6 +171,11 @@ func (fakeAssignmentStoreForPlan) ReadAssignment(context.Context, execution.Quer
 	return ownership.AssignmentRecord{}, ownership.ErrAssignmentAbsent
 }
 
+func (store fakeAssignmentStoreForPlan) PublishAssignmentReporting(ctx context.Context, authority ownership.PublicationAuthority, decision ownership.AssignmentDecision) (ownership.AssignmentRecord, ownership.HolderKind, error) {
+	record, err := store.PublishAssignment(ctx, authority, decision)
+	return record, "", err
+}
+
 func (fakeAssignmentStoreForPlan) PublishAssignment(context.Context, ownership.PublicationAuthority, ownership.AssignmentDecision) (ownership.AssignmentRecord, error) {
 	return ownership.AssignmentRecord{}, nil
 }

@@ -18,23 +18,23 @@ import (
 
 	"github.com/go-redis/redis/v8"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-// TestProductionPhaseTwoStateGenerationEditRewarmsAndResumes: an edit that
-// moves a Plan's state generation - a threshold, or a recovery window now
-// that the Level contract inputs are part of the generation - must let the
-// Query Group resume: the first Slot on the new Segment completes query-free
-// under CONFIG_DRIFT while the forced WARMING marker is written, and the
-// Slots after it warm and reach a FULL completion. Two ways this used to go
+// TestProductionPhaseTwoStateGenerationEditResumesOnTheCarriedState: an edit
+// that moves a Plan's state generation - a threshold, or a recovery window
+// now that the Level contract inputs are part of the generation - must let
+// the Query Group resume. Both carry, so the first Slot on the new Segment is
+// evaluated on the carried state, not spent query-free under CONFIG_DRIFT on
+// a warm-up marker; a series short of history warms up on its own window from
+// there, and the Plan reaches a FULL completion. Two ways this used to go
 // wrong, both silent on every completion counter: a recovery window edit
 // failed the loaded state's Level contract on every attempt, and any
 // generation move made the retried Slot collide with its own WARMING marker
 // on every attempt, until the Slot aged out ten minutes later.
-func TestProductionPhaseTwoStateGenerationEditRewarmsAndResumes(t *testing.T) {
+func TestProductionPhaseTwoStateGenerationEditResumesOnTheCarriedState(t *testing.T) {
 	edits := []struct {
 		name string
 		// carries is whether the edit leaves every Level's detection as it
@@ -105,18 +105,19 @@ func TestProductionPhaseTwoStateGenerationEditRewarmsAndResumes(t *testing.T) {
 			if (carry != nil) != edit.carries {
 				t.Fatalf("a %s edit carried %+v, want carried=%t", edit.name, carry, edit.carries)
 			}
-			// A carried activation warms up behind its guard for one full Slot;
-			// a series whose carried history is shorter than the edited window
-			// still warms up on its window, one position per Slot. This fixture
-			// runs one Slot before the edit, so that is what bounds it.
+			// A series whose carried history is shorter than the edited window
+			// warms up on its window, one position per Slot. This fixture runs
+			// one Slot before the edit, so that is what bounds it.
 			warmSlots := requiredFullSlots
 			if carry != nil {
 				warmSlots = edit.requiredPoints
 			}
 
-			var full, drifted bool
+			// The new Segment's Slots, from its first, until one is FULL.
+			first := boundary + 1
+			fullAt := execution.EvaluationTime(0)
 			idle := false
-			for tick := 1; tick <= 16 && !full; tick++ {
+			for tick := 1; tick <= 16 && fullAt == 0; tick++ {
 				nextAt := fixture.runner.NextReadyAt()
 				at := fixture.now().Add(time.Second)
 				if nextAt.After(at) {
@@ -132,23 +133,29 @@ func TestProductionPhaseTwoStateGenerationEditRewarmsAndResumes(t *testing.T) {
 				result, attempted, err := fixture.runner.RunOne(ctx)
 				idle = !attempted
 				if err != nil {
-					t.Fatalf("tick %d RunOne error = %v: the edit must re-warm the Plan, not fail its Slots", tick, err)
+					t.Fatalf("tick %d RunOne error = %v: the edit must let the Plan resume, not fail its Slots", tick, err)
 				}
 				t.Logf("tick %d at +%ds: attempted=%t completed=%t result=%s reason=%s kind=%s", tick, at.Unix()-base, attempted, result.Completed, result.Result, result.ReasonCode, result.CompletionKind)
-				if result.Completed && result.ReasonCode == execution.ReasonCode(contract.ReasonConfigDrift) {
-					drifted = true
-				}
-				if result.Completed && result.CompletionKind == execution.CompletionFull {
-					full = true
+				for slot, ended := range fixture.slotEndings() {
+					if slot >= first && ended == fullEnding && (fullAt == 0 || slot < fullAt) {
+						fullAt = slot
+					}
 				}
 			}
-			if !drifted || !full {
-				t.Fatalf("after a %s edit the Query Group must complete the drift Slot query-free and then reach FULL: drifted=%t full=%t", edit.name, drifted, full)
+			endings := fixture.slotEndings()
+			if fullAt == 0 {
+				t.Fatalf("after a %s edit the Query Group did not reach FULL; endings %v", edit.name, endings)
 			}
-			// The drift Slot, then one warming Slot per required full Slot, then
-			// the first FULL one; anything slower is a Slot aging out, not warming.
-			if resumed := fixture.now().Unix() - base; resumed > int64(warmSlots+2)*60+1 {
-				t.Fatalf("resuming took %ds with %d warming Slots, which is the shape of a Slot aging out rather than warming", resumed, warmSlots)
+			// Every Slot before it is a series warming up on its own window -
+			// one position per Slot, so no more than the window holds - and
+			// none is spent on a warm-up marker or aged out.
+			for slot := first; slot < fullAt; slot += 60 {
+				if ended := endings[slot]; ended != historyWarmingEnding {
+					t.Fatalf("after a %s edit Slot %d ended %q, want it evaluated on the carried state; endings %v", edit.name, slot, ended, endings)
+				}
+			}
+			if warming := uint32(fullAt-first) / 60; warming > warmSlots {
+				t.Fatalf("resuming took %d warming Slots, more than the %d the window holds", warming, warmSlots)
 			}
 			for _, observation := range fixture.observed() {
 				if failure := observation.QueryFailure; failure != nil && failure.Code == execution.QueryFailureCodeStateContractMismatch {
@@ -164,11 +171,12 @@ func TestProductionPhaseTwoStateGenerationEditRewarmsAndResumes(t *testing.T) {
 
 // TestProductionPhaseTwoACarriedEditResumesWithinOneWarmingSlot: an edit that
 // leaves detection alone - here the trigger's required count - carries the
-// history the window already holds, so after the drift Slot the Plan warms
-// up for one full Slot and is back, instead of warming up its whole window
-// again. The fixture runs a full window before the edit, which is what makes
-// the difference visible: with no history the Plan warms on its window
-// whether it carries or not.
+// history the window already holds, so the new Segment's first Slot is
+// evaluated on it as the Slots before the edit were: it is not spent
+// query-free on a warm-up marker (CONFIG_DRIFT), and the Plan does not warm
+// up its whole window again. The fixture runs a full window before the edit,
+// which is what makes the difference visible: with no history the Plan warms
+// on its window whether it carries or not.
 func TestProductionPhaseTwoACarriedEditResumesWithinOneWarmingSlot(t *testing.T) {
 	previousWindow := cutoverStallTriggerWindow
 	cutoverStallTriggerWindow = 3
@@ -244,10 +252,17 @@ func TestProductionPhaseTwoACarriedEditResumesWithinOneWarmingSlot(t *testing.T)
 			preludes: []editStep{{change: renumber, fulls: 1}, {change: both(renumber, threshold), fulls: 1}}, change: both(renumber, thresholdAt(82))},
 	} {
 		t.Run(edit.name, func(t *testing.T) {
-			carriedEditResumesWithinOneWarmingSlot(t, edit.change, edit.outcome, edit.fullsBefore, edit.preludes...)
+			carriedEditResumesWithinOneWarmingSlot(t, edit.change, edit.outcome, fullEnding, edit.fullsBefore, edit.preludes...)
 		})
 	}
 }
+
+// How a Slot ended (slotEndings): FULL, and a series warming up on its own
+// window.
+const (
+	fullEnding           = "FULL_COMPLETED/none"
+	historyWarmingEnding = "COMPLETED_WITH_UNAVAILABLE/HISTORY_WARMING"
+)
 
 // editStep is one edit made before the measured one, and the FULL Slots run
 // after it.
@@ -256,7 +271,8 @@ type editStep struct {
 	fulls  int
 }
 
-func carriedEditResumesWithinOneWarmingSlot(t *testing.T, change func(first map[string]any), outcome string, fullsBefore int, preludes ...editStep) {
+func carriedEditResumesWithinOneWarmingSlot(t *testing.T, change func(first map[string]any), outcome, firstEnding string, fullsBefore int,
+	preludes ...editStep) {
 	fixture := startCutoverFixture(t, nil)
 	ctx := context.Background()
 	idle := false
@@ -345,20 +361,25 @@ func carriedEditResumesWithinOneWarmingSlot(t *testing.T, change func(first map[
 			carriedLevels = record.Fact.Selected.Carry.Levels
 		}
 	}
+	// The new Segment's first Slot, dated after the boundary: the old
+	// Segment's last one completes under the configuration it was frozen
+	// with, and says nothing of the edit.
+	first := execution.EvaluationTime(boundary + 1)
 	idle = false
-	if !drive(16, full) {
-		t.Fatal("the Plan did not come back to FULL after the edit")
+	if !drive(16, func(execution.SlotExecutionResult) bool {
+		_, ended := fixture.slotEndings()[first]
+		return ended
+	}) {
+		t.Fatalf("the new Segment's first Slot did not end; endings %v", fixture.slotEndings())
 	}
-	// The drift Slot, one warming Slot, then FULL on the carried window.
-	if resumed := fixture.now().Unix() - boundary; resumed > int64(1+2)*60+1 {
-		t.Fatalf("resuming took %ds after the edit, want the drift Slot, one warming Slot and a FULL one", resumed)
+	if ended := fixture.slotEndings()[first]; ended != firstEnding {
+		t.Fatalf("the new Segment's first Slot ended %q, want %q; endings %v", ended, firstEnding, fixture.slotEndings())
 	}
-	// The one warming Slot is a guard's, and a Slot completes FULL whatever
-	// its series' windows hold; what says the history was carried is the
-	// windows themselves. The first window read after the edit holds the
-	// carried points and this Slot's own - short only by the position of the
-	// drift Slot, which completed without a query and wrote none - where a
-	// series that had started over would hold this Slot's one point alone.
+	// A Slot completes FULL whatever its series' windows hold; what says the
+	// history was carried is the windows themselves. A window read after the
+	// edit holds the carried points and the Slot's own - full, the window
+	// having filled before the edit - where a series that had started over
+	// would hold the Slot's one point alone.
 	carried, summarised := 0, 0
 	for _, observation := range fixture.observed()[before:] {
 		if facts := observation.StateCarry; facts != nil && facts.Scope == "series" {
@@ -369,7 +390,7 @@ func carriedEditResumesWithinOneWarmingSlot(t *testing.T, change func(first map[
 		}
 		if coverage := observation.HistoryCoverage; coverage != nil && coverage.Levels > 0 {
 			summarised++
-			if coverage.WorstValid <= 1 {
+			if coverage.Short > 0 && coverage.WorstValid <= 1 {
 				t.Fatalf("a window after the edit held %d of %d positions: the series started over instead of carrying", coverage.WorstValid, coverage.WorstRequired)
 			}
 		}

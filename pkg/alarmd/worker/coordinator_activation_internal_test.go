@@ -129,6 +129,10 @@ func (ports *activationSiblingPorts) Check(_ context.Context, request execution.
 	return execution.SideEffectAdmissionResult{Admitted: true}, nil
 }
 
+func (ports *activationSiblingPorts) CheckActivation(ctx context.Context, request execution.SideEffectAdmissionRequest) (execution.SideEffectAdmissionResult, error) {
+	return ports.Check(ctx, request)
+}
+
 func (ports *activationSiblingPorts) LoadGapsInto(ctx context.Context, request execution.GapLoadRequest, accept func(execution.GapGuardSnapshot) error) error {
 	result, err := ports.LoadGaps(ctx, request)
 	if err != nil {

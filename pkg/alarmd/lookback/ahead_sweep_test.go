@@ -58,6 +58,13 @@ func lastBucket(spec execution.PhysicalQuerySpec) *execution.Dataset {
 // how many Slots ahead.
 func serialRun(t *testing.T, period, hold time.Duration, slots int) (outcomes, overtaken, ahead map[string]uint64) {
 	t.Helper()
+	return serialRunFirstAttemptingAfter(t, period, hold, slots, 0)
+}
+
+// serialRunFirstAttemptingAfter is serialRun with each Slot first attempted that
+// long after its evaluation time.
+func serialRunFirstAttemptingAfter(t *testing.T, period, hold time.Duration, slots int, first time.Duration) (outcomes, overtaken, ahead map[string]uint64) {
+	t.Helper()
 	f := newFixture(t)
 	f.engine.options.OnEarlierRead = func(EarlierReadEvidence) {}
 	var endsMu sync.Mutex
@@ -96,7 +103,7 @@ func serialRun(t *testing.T, period, hold time.Duration, slots int) (outcomes, o
 	for index := 0; index < slots; index++ {
 		evaluation := start.Add(time.Duration(index) * period)
 		q := periodQuery(t, evaluation.Unix(), period, hold)
-		attempt := evaluation
+		attempt := evaluation.Add(first)
 		if readAt.After(attempt) {
 			attempt = readAt
 		}
@@ -154,6 +161,45 @@ func TestATrialReservedAheadReachesEveryHoldUpToTheLimit(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// A minute's Slot has its first round at its read without the hold, which is past
+// where the trial of a small hold had to start: that trial goes to the next Slot,
+// a period later, and still reads in time and matches its formal read. A hold long
+// enough that the Slot before is still being read then is first attempted behind
+// that read, as it always was, and its trials still read in time.
+func TestAFirstRoundAtTheReadMovesOnlyTheTrialsOfSmallHolds(t *testing.T) {
+	for hold, moves := range map[time.Duration]bool{
+		8 * time.Second: true, 30 * time.Second: true,
+		90 * time.Second: false, 120 * time.Second: false, 240 * time.Second: false,
+	} {
+		t.Run(hold.String(), func(t *testing.T) {
+			t.Parallel()
+			slots := int(hold/time.Minute) + 12
+			_, _, atGridPoint := serialRun(t, time.Minute, hold, slots)
+			outcomes, overtaken, atRead := serialRunFirstAttemptingAfter(t, time.Minute, hold, slots, settlingWait)
+			if outcomes[EarlierEqual] == 0 {
+				t.Errorf("no trial matched its formal read: outcomes %v, overtaken %v, ahead %v", outcomes, overtaken, atRead)
+			}
+			for _, path := range []string{OvertakenPreparedLate, OvertakenStartedLate, OvertakenFinishedLate} {
+				if overtaken[path] != 0 {
+					t.Errorf("%d trials overtaken %s: outcomes %v, overtaken %v, ahead %v", overtaken[path], path, outcomes, overtaken, atRead)
+				}
+			}
+			if moves {
+				if atGridPoint["1"] != 0 || atRead["1"] == 0 {
+					t.Errorf("one Slot ahead %v at the grid point and %v at the read, want none and some", atGridPoint, atRead)
+				}
+				return
+			}
+			// The one Slot ahead, and not the whole map: how far on the later trials
+			// land turns on when the trial before answered, which is not the same
+			// from run to run.
+			if atGridPoint["1"] != atRead["1"] {
+				t.Errorf("one Slot ahead %v at the grid point and %v at the read, want the same", atGridPoint, atRead)
+			}
+		})
 	}
 }
 

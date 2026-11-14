@@ -1038,7 +1038,7 @@ func TestTheVerdictRouteCarriesEachReplicasDependenciesAndTheListRouteDoesNot(t 
 	snapshots := healthySnapshots()
 	snapshots[0].TakenAt = now.Add(-5 * time.Second)
 	snapshots[0].Dependencies = []Endpoint{outputEntry(true, 1, "")}
-	snapshots[1].Dependencies = []Endpoint{outputEntry(false, 7, "kafka: dial tcp 10.0.0.1:9092: i/o timeout")}
+	snapshots[1].Dependencies = []Endpoint{outputEntry(false, 7, "kafka: dial tcp 192.0.2.1:9092: i/o timeout")}
 	handler := handlerWith(t, snapshots, Expectation{QueryGroups: 949, Known: true}, replicas())
 
 	_, health := get(t, handler, "/api/health")

@@ -38,6 +38,16 @@ func firstReadWaitOf(cfg config.Config, queryGroup execution.QueryGroupIdentity,
 	return landing + readWaitOf(cfg, queryGroup, intervalSeconds) - floor
 }
 
+// firstRoundAtMillis is the instant the source first answers a minute's Slot due:
+// its read without the read hold, up to the second.
+func firstRoundAtMillis(cfg config.Config, queryGroup execution.QueryGroupIdentity, evaluationAt, intervalSeconds int64) int64 {
+	return upToTheSecondMillis(evaluationAt*1000 + readWaitOf(cfg, queryGroup, intervalSeconds).Milliseconds())
+}
+
+func upToTheSecondMillis(millis int64) int64 {
+	return (millis + 999) / 1000 * 1000
+}
+
 // roundReadAtMillis is the instant a harness runs a round: half the interval
 // after the evaluation time, as the harnesses always have, or the group's
 // read if that is later.

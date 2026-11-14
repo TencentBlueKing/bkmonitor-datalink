@@ -12,6 +12,7 @@ package access
 import (
 	"context"
 	"errors"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"net/http"
 	"strconv"
 	"strings"
@@ -139,4 +140,53 @@ func queryElapsed(completion execution.ProviderCompletion, err error, called tim
 		}
 	}
 	return called
+}
+
+// queryAnswerOf is a physical query's answer for its histograms: what came
+// back, and how it ended - failure (queryFailureOf) read into the closed
+// outcomes, a timeout split by whose deadline it was (queryTimeoutSourceOf).
+func queryAnswerOf(completion execution.ProviderCompletion, err error, elapsed time.Duration, failure string) observability.PhysicalQueryAnswer {
+	answer := observability.PhysicalQueryAnswer{Elapsed: elapsed, Bytes: completion.Stats.Bytes,
+		Series: completion.Stats.Series, Records: completion.Stats.Records}
+	switch failure {
+	case "":
+		answer.Outcome = observability.PhysicalQueryOK
+	case QueryFailureTimeout:
+		answer.Outcome = observability.PhysicalQueryTimeoutAlarmdDeadline
+		if queryTimeoutSourceOf(completion, err) == observability.QueryTimeoutSourceProviderStatus {
+			answer.Outcome = observability.PhysicalQueryUpstream504
+		}
+	case QueryFailureRefused, QueryFailureNotFound, QueryFailureSampleLimit:
+		answer.Outcome = observability.PhysicalQueryRejected
+	default:
+		answer.Outcome = observability.PhysicalQueryUnavailable
+	}
+	return answer
+}
+
+// queryTimeoutSourceOf is which branch filed a query's timeout: the error's
+// own word when it carries one, else the request of its last failed attempt
+// (RequestFacts.TimeoutSource); "" when neither says.
+func queryTimeoutSourceOf(completion execution.ProviderCompletion, err error) string {
+	if err != nil {
+		var sourced interface{ QueryFailureTimeoutSource() string }
+		if errors.As(err, &sourced) {
+			return sourced.QueryFailureTimeoutSource()
+		}
+		var requested interface {
+			QueryFailureRequest() *execution.RequestFacts
+		}
+		if errors.As(err, &requested) {
+			if request := requested.QueryFailureRequest(); request != nil {
+				return request.TimeoutSource
+			}
+		}
+	}
+	attempts := completion.RouteFacts.Attempts
+	for index := len(attempts) - 1; index >= 0; index-- {
+		if request := attempts[index].Request; request != nil && request.TimeoutSource != "" {
+			return request.TimeoutSource
+		}
+	}
+	return ""
 }

@@ -66,6 +66,15 @@ type sealedStateMutationDigest struct {
 	digest     MutationDigest
 }
 
+// holds reports whether the mutation carries a seal its build wrote for the
+// digest it carries (ValidateSealed). It proves the mutation came from a
+// build, nothing of its content: content changed after the build is the store
+// admission's whole check to catch. Nothing here may hold an address, a copy
+// of a mutation compares equal to the mutation (reflect.DeepEqual).
+func (sealed *sealedStateMutationDigest) holds(mutation StateMutation) bool {
+	return sealed != nil && sealed.digest == mutation.MutationDigest
+}
+
 // stateMutationDigestPayloadOf reports the digest input of mutation. Both the
 // derivation and the content key read it, so neither can drift from the other.
 func stateMutationDigestPayloadOf(mutation StateMutation) stateMutationDigestPayload {

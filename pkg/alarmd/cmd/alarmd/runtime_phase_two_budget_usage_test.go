@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -25,11 +26,15 @@ func TestEveryBudgetUsageNumberReachesTheRowItIsReportedOn(t *testing.T) {
 	source := reflect.ValueOf(&usage).Elem()
 	for index := range source.NumField() {
 		field := source.Field(index)
-		if field.Kind() != reflect.Uint64 {
-			t.Fatalf("%s is a %s; this case gives every field a distinct number and only knows how to do that "+
-				"for uint64", source.Type().Field(index).Name, field.Kind())
+		switch field.Kind() {
+		case reflect.Uint64:
+			field.SetUint(uint64(index) + 1)
+		case reflect.String:
+			field.SetString(strconv.Itoa(index + 1))
+		default:
+			t.Fatalf("%s is a %s; this case gives every field a distinct value and only knows how to do that "+
+				"for uint64 and string", source.Type().Field(index).Name, field.Kind())
 		}
-		field.SetUint(uint64(index) + 1)
 	}
 
 	facts := slotBudgetUsageFacts(usage)
@@ -48,8 +53,8 @@ func TestEveryBudgetUsageNumberReachesTheRowItIsReportedOn(t *testing.T) {
 			t.Errorf("%s has no field of that name on the row, so nothing reports it", name)
 			continue
 		}
-		if carried.Uint() != source.Field(index).Uint() {
-			t.Errorf("%s = %d on the row, want the %d the Slot used", name, carried.Uint(), source.Field(index).Uint())
+		if carried.Kind() != source.Field(index).Kind() || !carried.Equal(source.Field(index)) {
+			t.Errorf("%s = %v on the row, want the %v the Slot used", name, carried, source.Field(index))
 		}
 	}
 }

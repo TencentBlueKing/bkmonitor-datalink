@@ -211,7 +211,6 @@ type RuntimeCapacityFacts struct {
 	EvaluatorMaxLevels uint64 `json:"evaluator_max_levels"`
 	EvidenceBytes      int    `json:"evidence_bytes"`
 	OutputMessageBytes int    `json:"output_message_bytes"`
-	UQBodyBytes        int64  `json:"uq_body_bytes"`
 	UQSeriesBytes      int64  `json:"uq_series_bytes"`
 	UQSeries           uint64 `json:"uq_series"`
 	UQRecords          uint64 `json:"uq_records"`

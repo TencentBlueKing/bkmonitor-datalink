@@ -91,15 +91,15 @@ func (p *BoundedLogPolicy) Admit(observation Observation) LogAdmission {
 			return LogAdmission{Allowed: true, Candidate: true, ReasonChanged: true, PreviousReasons: previous}
 		}
 	}
-	if routineResult(observation.Result) && !evaluationHeldQuery(observation) && !readAtLimitRound(observation) {
+	if Routine(observation) {
 		switch {
-		case roundStages[observation.Stage] && roundChanged(observation):
+		case roundStages[observation.Stage] && roundChanged(observation), cutoverChanged(observation):
 			return LogAdmission{Allowed: true, Candidate: true}
 		case roundStages[observation.Stage], routineStages[observation.Stage]:
 			return LogAdmission{Candidate: true, Unwritten: true}
 		}
 	}
-	if mandatoryLogStage(observation.Stage) {
+	if mandatoryLogStage(observation.Stage) || takeoverHeld(observation) {
 		return LogAdmission{Allowed: true, Candidate: true}
 	}
 	if !repeatedLogObservation(observation) || p == nil || p.repeated == nil {
@@ -108,6 +108,15 @@ func (p *BoundedLogPolicy) Admit(observation Observation) LogAdmission {
 	admission := p.repeated.Admit(observation)
 	admission.Candidate = true
 	return admission
+}
+
+// Routine is whether an observation's result is routine for the line: the
+// line counts it without writing it (Admit), and an evaluation of one may be
+// merged with the routine ones beside it (MergeRoutineEvaluation). One
+// function for both, so the two cannot part.
+func Routine(observation Observation) bool {
+	return routineResult(observation.Result) && !evaluationHeldQuery(observation) && !readAtLimitRound(observation) &&
+		!supersededRound(observation)
 }
 
 type LoggingObserver struct {
@@ -181,8 +190,15 @@ func (l *LoggingObserver) LineCounts() LogLineCounts {
 }
 
 // countLine adds one line of the stage to the count the admission says: a
-// routine line counted and not written, a line written, or one held back.
-func (l *LoggingObserver) countLine(stage Stage, admission LogAdmission) {
+// routine line counted and not written, a line written, or one held back. An
+// evaluation line merged from routine ones counts as the lines it stands
+// for (EvaluationsOf), as each was counted before they were merged.
+func (l *LoggingObserver) countLine(observation Observation, admission LogAdmission) {
+	stage := observation.Stage
+	lines := uint64(1)
+	if stage == StageEvaluationCompleted {
+		lines = uint64(EvaluationsOf(observation))
+	}
 	place, known := logStageIndex[stage]
 	if !known {
 		place = logStageIndex[StageOther]
@@ -195,7 +211,7 @@ func (l *LoggingObserver) countLine(stage Stage, admission LogAdmission) {
 		counts = l.written
 	}
 	if place < len(counts) {
-		counts[place].Add(1)
+		counts[place].Add(lines)
 	}
 }
 
@@ -285,7 +301,7 @@ func (l *LoggingObserver) Observe(ctx context.Context, observation Observation) 
 	// a routine stage's success counted and not written. A success outside
 	// the workflow stages is not a line at all.
 	if admission.Candidate {
-		l.countLine(observation.Stage, admission)
+		l.countLine(observation, admission)
 	}
 	if !admission.Allowed {
 		return
@@ -386,11 +402,12 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 	// Levels rides along so the identity a reader checks -- levels plus these
 	// two against the series the Slot handled -- is on one line rather than a
 	// join across three.
-	if c := observation.HistoryCoverage; c != nil && (c.Resumed > 0 || c.Constrained > 0) {
+	if c := observation.HistoryCoverage; c != nil && (c.Resumed > 0 || c.Constrained > 0 || c.Superseded > 0) {
 		attributes = append(attributes,
 			slog.Uint64("history_levels", uint64(c.Levels)),
 			slog.Uint64("history_resumed", uint64(c.Resumed)),
-			slog.Uint64("history_constrained", uint64(c.Constrained)))
+			slog.Uint64("history_constrained", uint64(c.Constrained)),
+			slog.Uint64("history_superseded", uint64(c.Superseded)))
 	}
 	if c := observation.HistoryCoverage; c != nil && len(c.Windows) > 0 {
 		// The worst named window, on the line: which series, and which minutes
@@ -467,6 +484,21 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			attributes = append(attributes, slog.Any("state_revision_skew", f.Skew))
 		}
 	}
+	// A skip of what a later Slot already wrote, on the skip's own line and
+	// on the Slot's completion: which site, how many, and the sample whose
+	// two versions say how far ahead the store was.
+	if f := observation.StateSuperseded; f != nil && f.Count > 0 {
+		attributes = append(attributes, slog.Int64("state_superseded_"+string(NormalizeStateSupersededSite(f.Site)), f.Count))
+		if f.Sample != nil {
+			attributes = append(attributes, slog.Any("state_superseded_sample", f.Sample))
+		}
+	}
+	if f := observation.SlotSuperseded; f != nil && f.Series > 0 {
+		attributes = append(attributes, slog.Uint64("superseded_series", uint64(f.Series)))
+		if f.Sample != nil {
+			attributes = append(attributes, slog.Any("superseded_sample", f.Sample))
+		}
+	}
 	if f := observation.StateVersionConflict; f != nil && !f.Empty() {
 		for key, count := range f.Counts {
 			attributes = append(attributes, slog.Int64("state_version_conflict_"+string(key.Site)+"_"+string(key.Kind), count))
@@ -492,6 +524,9 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 		attributes = append(attributes, slog.String("capacity_phase", f.Phase), slog.Uint64("capacity_shared_used", f.SharedUsed), slog.Uint64("capacity_requested", f.Requested), slog.Uint64("capacity_limit", f.Limit))
 		if f.OwnUsed != nil {
 			attributes = append(attributes, slog.Uint64("capacity_own_used", *f.OwnUsed))
+		}
+		if f.OthersUsed != nil {
+			attributes = append(attributes, slog.Uint64("capacity_others_used", *f.OthersUsed))
 		}
 		// Every budget's own usage, so the refusal can be read against the ones
 		// that did not refuse. capacity_budget names which was reached; without
@@ -543,7 +578,15 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.Uint64("slot_millis", f.Slot),
 			slog.Uint64("input_millis", f.Input),
 			slog.Uint64("preflight_millis", f.Preflight),
-			slog.Uint64("evaluate_millis", f.Evaluate))
+			slog.Uint64("evaluate_millis", f.Evaluate),
+			slog.Uint64("apply_millis", f.Apply),
+			slog.Uint64("record_ids_millis", f.RecordIDs),
+			slog.Uint64("cut_millis", f.Cut),
+			slog.Uint64("merge_millis", f.Merge),
+			slog.Uint64("series_millis", f.Series),
+			slog.Uint64("no_data_read_millis", f.NoDataRead),
+			slog.Uint64("no_data_write_millis", f.NoDataWrite),
+			slog.Uint64("unattributed_millis", f.Unattributed))
 	}
 	if observation.CapacityBudget != "" {
 		attributes = append(attributes, slog.String("capacity_budget", string(observation.CapacityBudget)))
@@ -635,6 +678,19 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.String("cutover_reason", facts.Reason),
 			slog.String("cutover_query_group", facts.QueryGroup),
 		)
+	}
+	if facts := observation.ScheduleCutover; facts != nil && facts.Result == "success" {
+		// What the cutover did, and to which Query Groups: a reading of the
+		// Slots an edit reached joins its Query Groups against these.
+		for _, decision := range []string{"kept", "revised", "cut", "added", "retired", "blocked"} {
+			attributes = append(attributes, slog.Int("cutover_"+decision, facts.QueryGroups[decision]))
+		}
+		for _, decision := range ScheduleCutoverSampledDecisions {
+			if facts.QueryGroups[decision] > 0 {
+				attributes = append(attributes, slog.Any("cutover_"+decision+"_sample", facts.Samples[decision]),
+					slog.Int("cutover_"+decision+"_truncated", facts.SamplesTruncated[decision]))
+			}
+		}
 	}
 	if facts := observation.SlotWait; facts != nil {
 		// Reached only for a wait past the threshold, which is the attempt
@@ -849,6 +905,9 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 				slog.Int("no_data_memory_limit", facts.Limit),
 				slog.String("no_data_memory_limit_source", facts.LimitSource),
 			)
+			if facts.Bytes > 0 {
+				attributes = append(attributes, slog.Uint64("no_data_memory_bytes", facts.Bytes))
+			}
 		}
 	}
 	if facts := observation.StateGenerationSkew; facts != nil {
@@ -956,6 +1015,15 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.Int64("hung_past_deadline_ms", facts.PastDeadlineMS),
 			slog.Int64("hung_ms", facts.HungMS),
 		)
+	}
+	if facts := observation.LeaseHolder; facts != nil {
+		if facts.Unknown != "" {
+			attributes = append(attributes, slog.String("holder_unknown", facts.Unknown))
+		} else {
+			attributes = append(attributes, slog.String("holder_owner_id", facts.OwnerID),
+				slog.Uint64("holder_owner_epoch", facts.OwnerEpoch), slog.Uint64("holder_session_epoch", facts.SessionEpoch),
+				slog.Int64("holder_deadline_ms", facts.DeadlineUnixMilli))
+		}
 	}
 	if facts := observation.SlotDrain; facts != nil {
 		attributes = append(attributes, slog.String("drain_site", facts.Site), slog.Int("drain_waited", facts.Waited))
@@ -1326,6 +1394,9 @@ func appendTraceFields(attributes []slog.Attr, trace TraceFields) []slog.Attr {
 	if trace.OwnerEpoch > 0 {
 		attributes = append(attributes, slog.Uint64("owner_epoch", trace.OwnerEpoch))
 	}
+	if trace.SessionEpoch > 0 {
+		attributes = append(attributes, slog.Uint64("session_epoch", trace.SessionEpoch))
+	}
 	if trace.EvaluationTime > 0 {
 		attributes = append(attributes, slog.Int64("evaluation_time", trace.EvaluationTime))
 	}
@@ -1333,6 +1404,18 @@ func appendTraceFields(attributes []slog.Attr, trace TraceFields) []slog.Attr {
 		attributes = append(attributes, slog.Int64("schedule_segment_start", trace.ScheduleSegmentStart))
 	}
 	return attributes
+}
+
+// takeoverHeld is a takeover that took its lease. Each one is written, not
+// sampled: its line is the one place the owner epoch, and the session epoch
+// under a worker session, of the lease a Query Group is held under can be
+// read, and a handover is told apart from the one before it by those epochs
+// alone - one line kept per Query Group an hour would drop exactly the second
+// of two handovers. The volume is the takeovers: one a Query Group a rollout,
+// a few a moved Query Group otherwise. A refused takeover stays under the
+// limiter's window, because it repeats every round while the lease is held.
+func takeoverHeld(observation Observation) bool {
+	return observation.Stage == StageTakeoverCompleted && observation.Result == ResultSuccess
 }
 
 func mandatoryLogStage(stage Stage) bool {
@@ -1393,6 +1476,17 @@ func mandatoryLogStage(stage Stage) bool {
 // it holds back into the next line it writes.
 func readAtLimitRound(observation Observation) bool {
 	return observation.ReadAtLimit
+}
+
+// supersededRound is the slot_completed line of an attempt that skipped
+// series a later Slot had already written (Observation.SlotSuperseded). Its
+// result is success and it is not routine: the store held writes from after
+// the Slot, which is a rollback or a replay crossing a later write, and this
+// line is the one that carries how many and a sample with both versions.
+// Written under the repeated-line limit of its Query Group, as a round read
+// at its limit is.
+func supersededRound(observation Observation) bool {
+	return observation.SlotSuperseded != nil && observation.SlotSuperseded.Series > 0
 }
 
 func repeatedLogObservation(observation Observation) bool {

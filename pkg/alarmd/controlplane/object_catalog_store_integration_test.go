@@ -271,9 +271,10 @@ func deriveRevisionForTest(catalog controlplane.Catalog) (execution.SnapshotRevi
 
 // TestRenewalKeepsTheCurrentCatalogAliveAndNoticesMissingObjects checks the
 // renewal path: every object the current manifest names gets its TTL back,
-// an object that went missing is counted and rewritten by the next
-// publication of that revision, and a fresh process finds what an earlier
-// one wrote instead of writing it again.
+// an object that went missing is counted by the next renewal of the objects,
+// ten refresh rounds after the last, and rewritten by the next publication
+// of that revision, and a fresh process finds what an earlier one wrote
+// instead of writing it again.
 func TestRenewalKeepsTheCurrentCatalogAliveAndNoticesMissingObjects(t *testing.T) {
 	harness := newObjectCatalogHarness(t)
 	catalog := objectCatalogTwoGroups(t, 80)
@@ -303,7 +304,8 @@ func TestRenewalKeepsTheCurrentCatalogAliveAndNoticesMissingObjects(t *testing.T
 		t.Fatalf("object TTL after renewal=(%s,%v)", ttl, err)
 	}
 	facts := harness.observer.last(t, "renew")
-	if facts.Result != "success" || facts.Present != 5 || facts.Missing != 0 {
+	// Two Query Group objects and the manifest; two output contexts.
+	if facts.Result != "success" || facts.Present != 5 || facts.Missing != 0 || facts.RenewedObjects != 3 || facts.RenewedContexts != 2 {
 		t.Fatalf("renew facts=%+v", facts)
 	}
 
@@ -334,13 +336,26 @@ func TestRenewalKeepsTheCurrentCatalogAliveAndNoticesMissingObjects(t *testing.T
 		t.Fatalf("a fresh process rewrote objects that were already stored: %+v", facts)
 	}
 
-	// An object that went missing is noticed by the renewal and written back
-	// by the next publication of the same revision.
+	// An object that went missing is noticed by the next renewal of the
+	// objects and written back by the next publication of the same revision.
+	// The nine refresh rounds after a renewal of the objects renew none.
 	if err := harness.client.Del(harness.ctx, objectKey).Err(); err != nil {
 		t.Fatal(err)
 	}
+	renewals := harness.observer.count()
+	for round := 1; round < 10; round++ {
+		if err := harness.repository.RenewCurrentActivationObjects(harness.ctx); err != nil {
+			t.Fatal(err)
+		}
+		if harness.observer.count() != renewals {
+			t.Fatalf("refresh round %d after a renewal of the objects renewed them again: %+v", round, harness.observer.last(t, "renew"))
+		}
+	}
 	if err := harness.repository.RenewCurrentActivationObjects(harness.ctx); err != nil {
 		t.Fatal(err)
+	}
+	if harness.observer.count() != renewals+1 {
+		t.Fatal("the tenth refresh round after a renewal of the objects did not renew them")
 	}
 	if facts := harness.observer.last(t, "renew"); facts.Missing != 1 || facts.Present != 4 {
 		t.Fatalf("renew facts after deletion=%+v", facts)

@@ -40,12 +40,12 @@ func wantTrackingFacts(t *testing.T, result AbsenceResult, expired, suppressed u
 // A NORMAL here is a recovery nobody observed: downstream closes the standing
 // alert and files it as resolved, which is a worse answer than leaving it open.
 // The obvious way to write this mechanism is to route the expired group through
-// the path that already forgets groups -- closeDroppedAbsences -- and that path
+// the path that already forgets groups -- closeDropped -- and that path
 // exists precisely to emit the closing NORMAL. So the two implementations differ
 // only in a verdict that one of them does not produce at all, and this states
 // which.
 func TestAnExpiredAbsenceProducesNoVerdictAtAll(t *testing.T) {
-	absent := hostGroup(t, "10.0.0.1")
+	absent := hostGroup(t, "192.0.2.1")
 	memory := map[string]GroupMemory{absent.Key(): {FirstAbsent: 800}}
 	result := evaluate(t, horizonRound(800+trackingHorizon, historyRoster("v1", absent), nil, memory))
 
@@ -66,7 +66,7 @@ func TestAnExpiredAbsenceProducesNoVerdictAtAll(t *testing.T) {
 // stopped absence resume the moment an operator raised the setting - a burst of
 // anomalies for groups that have been silent for days, none of which is news.
 func TestRaisingTheHorizonDoesNotReviveAStoppedAbsence(t *testing.T) {
-	absent := hostGroup(t, "10.0.0.1")
+	absent := hostGroup(t, "192.0.2.1")
 	// Suppressed at 900 under some earlier horizon. Under the horizon in force
 	// now this absence is 600 seconds old against a limit of 6000, so anything
 	// that recomputes from FirstAbsent decides it is still being tracked.
@@ -119,7 +119,7 @@ func TestTheWholeItemAbsenceStopsAtTheHorizonAndStaysStopped(t *testing.T) {
 // that empty roster apart from an item that never had groups.
 func TestAHistoryRosterEmptiedByTheHorizonDoesNotBecomeAWholeItemAbsence(t *testing.T) {
 	whole := WholeItemGroup().Key()
-	first, second := hostGroup(t, "10.0.0.1"), hostGroup(t, "10.0.0.2")
+	first, second := hostGroup(t, "192.0.2.1"), hostGroup(t, "192.0.2.2")
 
 	exhausting := evaluate(t, horizonRound(800+trackingHorizon,
 		historyRoster("v1", first, second), nil,
@@ -159,7 +159,7 @@ func TestAHistoryRosterEmptiedByTheHorizonDoesNotBecomeAWholeItemAbsence(t *test
 // a case holding one group of each kind states and a case holding one kind
 // cannot.
 func TestTheExpiredCountIsTheSumOfBothBranches(t *testing.T) {
-	forgotten, marked := hostGroup(t, "10.0.0.1"), hostGroup(t, "10.0.0.2")
+	forgotten, marked := hostGroup(t, "192.0.2.1"), hostGroup(t, "192.0.2.2")
 	memory := map[string]GroupMemory{
 		forgotten.Key(): {FirstAbsent: 800},
 		marked.Key():    {FirstAbsent: 800},
@@ -211,7 +211,7 @@ func TestClearingTheFactNeedsAMemoryToClearItWith(t *testing.T) {
 	// A round where series arrived for groups that all belong to another
 	// business. They are dropped rather than remembered, so the memory stays
 	// empty and the present-as-of does not advance either.
-	foreign := hostGroup(t, "10.0.0.9")
+	foreign := hostGroup(t, "192.0.2.9")
 	outOfBusiness := horizonRound(1000, Roster{Version: "v1", Source: RosterHistory, Groups: nil},
 		groupSet(foreign), empty)
 	outOfBusiness.TrackingExhaustedAt = exhaustedAt
@@ -236,7 +236,7 @@ func TestClearingTheFactNeedsAMemoryToClearItWith(t *testing.T) {
 	// The other direction, so the rule above is not satisfied by never clearing
 	// at all: a roster that holds groups again clears the fact, which is what
 	// lets an exhausted Plan given an explicit target write anything ever again.
-	recovered := horizonRound(1000, staticRoster("v3", hostGroup(t, "10.0.0.1")), nil, empty)
+	recovered := horizonRound(1000, staticRoster("v3", hostGroup(t, "192.0.2.1")), nil, empty)
 	recovered.TrackingExhaustedAt = exhaustedAt
 	result := evaluate(t, recovered)
 	if len(result.Memory) == 0 {
@@ -259,7 +259,7 @@ func TestClearingTheFactNeedsAMemoryToClearItWith(t *testing.T) {
 // it - which is the shape of under-reporting this whole decision exists to
 // bound, arrived at from the opposite direction.
 func TestDataArrivingRestartsTrackingFromNothing(t *testing.T) {
-	group := hostGroup(t, "10.0.0.1")
+	group := hostGroup(t, "192.0.2.1")
 	stopped := map[string]GroupMemory{group.Key(): {FirstAbsent: 800, SuppressedAt: 920}}
 
 	back := evaluate(t, horizonRound(1000, staticRoster("v1", group), groupSet(group), stopped))
@@ -283,7 +283,7 @@ func TestDataArrivingRestartsTrackingFromNothing(t *testing.T) {
 // horizon forgot it, and an alert may still be standing on it - is in the
 // roster from the next round, and is reported when it fails again.
 func TestAnExhaustedHistoryPlanTracksAGroupThatComesBack(t *testing.T) {
-	group := hostGroup(t, "10.0.0.1")
+	group := hostGroup(t, "192.0.2.1")
 	exhausted := horizonRound(1000, Roster{Version: "v1", Source: RosterHistory, Groups: nil},
 		groupSet(group), map[string]GroupMemory{})
 	exhausted.TrackingExhaustedAt = 920

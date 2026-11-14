@@ -1020,7 +1020,8 @@ func (publisher *fleetPublisher) awaitingFirstRound(owned []execution.QueryGroup
 		}
 		wake := publisher.schedule.WakeOf(id)
 		if fleet.AwaitingFirstRound(wake, held[id], at) {
-			waits = append(waits, fleet.FirstRoundWait{QueryGroup: id, IntervalSeconds: wake.IntervalSeconds, DueAt: wake.DueAt})
+			waits = append(waits, fleet.FirstRoundWait{QueryGroup: id, IntervalSeconds: wake.IntervalSeconds, DueAt: wake.DueAt,
+				AwaitingPredecessor: wake.AwaitingPredecessor})
 			continue
 		}
 		object := fleet.UndeterminedObject{QueryGroup: id, IntervalSeconds: wake.IntervalSeconds, OwnedSince: held[id]}

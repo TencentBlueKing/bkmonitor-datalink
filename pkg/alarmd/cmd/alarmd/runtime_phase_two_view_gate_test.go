@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
 )
@@ -89,10 +90,14 @@ func (hintCapturingExecutor) Execute(ctx context.Context, _ execution.SlotExecut
 type hintCapturingCatalog struct {
 	productionPhaseTwoSlotCatalog
 	hints []uint64
+	// callers is the job each read names: none, so the catalog's client
+	// counts it as its own.
+	callers []string
 }
 
 func (catalog *hintCapturingCatalog) NextSlotAfter(ctx context.Context, _ execution.QueryGroupIdentity, at execution.EvaluationTime) (execution.EvaluationTime, error) {
 	catalog.hints = append(catalog.hints, controlplane.TimelineRevisionHint(ctx))
+	catalog.callers = append(catalog.callers, redisfailure.Caller(ctx))
 	return at + 60, nil
 }
 
@@ -217,6 +222,11 @@ func TestTheGateRenewsTheLeaseOnceWhenTheViewIsAheadOfIt(t *testing.T) {
 	}
 	if renewals != 1 || len(next.hints) != 1 || next.hints[0] != 13 {
 		t.Fatalf("renewals %d, hints %v: want one early renewal and the read hinted at the record's 13", renewals, next.hints)
+	}
+	// The renewal's name stays on the renewal: the read it let through is the
+	// catalog's, not a confirmation.
+	if len(next.callers) != 1 || next.callers[0] != "" {
+		t.Fatalf("the read after the early renewal named %q, want no job of its own", next.callers)
 	}
 	if lease, _ := session.Current(); lease.TimelineRecordRevision != 13 {
 		t.Fatalf("the lease says %d after the early renewal, want 13", lease.TimelineRecordRevision)

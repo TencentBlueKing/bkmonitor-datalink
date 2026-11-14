@@ -93,11 +93,24 @@ type ExecutionStoreOptions struct {
 	// verify inside storage. It is optional: without it ApplyRuntimeFenced
 	// applies unfenced and the admission-time fence check stands alone.
 	FenceKeys FenceKeyResolver
+	// StateCacheBudgetBytes bounds the write-through State cache (fourth-batch
+	// design §4); zero turns it off. StateCacheReplayAge is the replay window
+	// an entry stops being used ahead of its key's expiry by (rule 3).
+	StateCacheBudgetBytes int64
+	StateCacheReplayAge   time.Duration
+	// RestoreProgressCheck says whether the Query Group's Progress still has
+	// this Slot begun: a cached value is written back over a rolled-back key
+	// only then (§4.4). Nil writes none back over a rolled-back key.
+	RestoreProgressCheck func(ctx context.Context, group execution.QueryGroupIdentity, slot execution.EvaluationTime) (bool, error)
+	// Now is the cache's clock; nil is time.Now.
+	Now func() time.Time
 }
 
 type ExecutionStore struct {
 	options   ExecutionStoreOptions
 	witnesses *runtimeWitnessCache
+	// cache is the write-through State cache, nil when it is off.
+	cache *stateCache
 	// renewals is what this process already asked Redis about the life of the
 	// generation-scoped keys it loads. Per store rather than per package so
 	// two stores in one process cannot answer for each other's keys.
@@ -148,8 +161,25 @@ func NewExecutionStore(options ExecutionStoreOptions) (*ExecutionStore, error) {
 	if err := probeBackendCapabilities("execution store", options.Router, executionStoreCapabilities); err != nil {
 		return nil, err
 	}
+	if options.Now == nil {
+		options.Now = time.Now
+	}
 	return &ExecutionStore{options: options, witnesses: newRuntimeWitnessCache(),
-		renewals: newRenewalGate(), frozenRenewals: newRenewalGate()}, nil
+		renewals: newRenewalGate(), frozenRenewals: newRenewalGate(),
+		cache: newStateCache(options.StateCacheBudgetBytes, options.StateCacheReplayAge, options.Now)}, nil
+}
+
+// DropRuntimeWitnesses lets go of the preflight witnesses a released Query
+// Group left, unless they are a Slot after upTo - the last Slot the releasing
+// session ran. Called once that session's Slots have drained: under a Slot
+// still applying, its writes would find no witness and be judged conflicts.
+func (store *ExecutionStore) DropRuntimeWitnesses(queryGroup execution.QueryGroupIdentity, upTo execution.EvaluationTime) {
+	store.witnesses.forget(queryGroup, upTo)
+}
+
+// RuntimeWitnessStats reports the witness cache's items and estimated bytes.
+func (store *ExecutionStore) RuntimeWitnessStats() RuntimeWitnessStats {
+	return store.witnesses.stats()
 }
 
 // runtimeTTL derives how long the keys of one apply request have to survive
@@ -254,6 +284,7 @@ func (store *ExecutionStore) LoadRuntime(ctx context.Context, request execution.
 		return execution.StatePreflightResult{}, fmt.Errorf("state: invalid runtime load request")
 	}
 	result := execution.StatePreflightResult{Items: make([]execution.RuntimeStateView, len(request.Items))}
+	store.cache.sweep(request.Contract.Slot.QueryGroup)
 	pass := &runtimeLoadPass{}
 	batch := &runtimeLoadBatch{}
 	roundLargest, anyRead := 0, false
@@ -282,6 +313,16 @@ func (store *ExecutionStore) LoadRuntime(ctx context.Context, request execution.
 		}
 		if err != nil {
 			result.Items[index] = runtimeLoadFailure(view, err)
+			continue
+		}
+		if entry, _ := store.cache.lookup(framedKey, request, item); entry != nil {
+			// Served from what this process last wrote: the same bytes the
+			// store holds while every rule of §4.3 holds, decoded and
+			// witnessed exactly as bytes read back are.
+			result.Items[index] = store.readFramedRecord(request, item, entry.raw)
+			if !request.Unwitnessed {
+				store.witnesses.markCached(request.Contract.Slot, item.Identity)
+			}
 			continue
 		}
 		if len(batch.indexes) > 0 && (batch.target.Name != target.Name || len(batch.indexes) >= store.runtimeLoadBatchLimit(request.Contract.Slot.QueryGroup, roundLargest, anyRead)) {
@@ -383,13 +424,24 @@ func (store *ExecutionStore) AdmitRuntime(_ context.Context, request execution.S
 // fresh encode otherwise. The two are the same bytes where the first is used
 // -- one encoder, one mutation, one revision -- so which one is written is a
 // matter of cost only.
-func (store *ExecutionStore) frameForWrite(request execution.StateApplyRequest, index int, mutation execution.StateMutation, revision uint64) ([]byte, writeRefusal, int) {
+func (store *ExecutionStore) frameForWrite(
+	request execution.StateApplyRequest, index int, mutation execution.StateMutation, revision uint64, checked bool,
+) ([]byte, writeRefusal, int) {
+	if frame := admittedFrame(request, index, mutation); frame != nil && frame.Revision == revision {
+		return frame.Bytes, writeRefusal{}, frame.LegacyRecordIDs
+	}
+	return store.encodeChecked(mutation, revision, checked)
+}
+
+// admittedFrame is the frame the admission encoded for this item from this
+// mutation, nil for none.
+func admittedFrame(request execution.StateApplyRequest, index int, mutation execution.StateMutation) *execution.EncodedStateFrame {
 	if index < len(request.Frames) {
-		if frame := request.Frames[index]; frame != nil && frame.Revision == revision && frame.MutationDigest == mutation.MutationDigest {
-			return frame.Bytes, writeRefusal{}, frame.LegacyRecordIDs
+		if frame := request.Frames[index]; frame != nil && frame.MutationDigest == mutation.MutationDigest {
+			return frame
 		}
 	}
-	return store.encodeForWrite(mutation, revision)
+	return nil
 }
 
 // ApplyRuntime applies without an owner fence. Items whose key was witnessed by
@@ -614,7 +666,14 @@ func (store *ExecutionStore) ApplyGap(ctx context.Context, request execution.Gap
 			_ = json.Unmarshal(raw, &previous)
 			comparison := execution.CompareApplyVersion(previous.ApplyVersion, mutation.ApplyVersion)
 			if comparison == execution.ApplyVersionPersistedNewer {
+				// A later Slot's marker is answered as such, not as a stale
+				// write: the Slot asking is one Progress came back to after
+				// that Slot ran, and refusing it would refuse it identically
+				// on every retry until its replay expired.
 				item.Status = execution.GapGuardStale
+				if execution.SupersededBy(previous.ApplyVersion, mutation.ApplyVersion) {
+					item.Status = execution.GapGuardSuperseded
+				}
 				result.Items[index] = item
 				continue
 			}

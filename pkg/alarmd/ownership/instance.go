@@ -192,7 +192,7 @@ func (store *RedisStore) RegisterInstance(ctx context.Context, instance Instance
 // indexes share no hash tag: like the activation scripts
 // (controlplane/activation_rebuild.go) this runs on a standalone or Sentinel
 // server, and the configuration refuses Cluster (config/redis.go).
-var registerPreferredInstanceWrite = redisatomic.New(`
+var registerPreferredInstanceWrite = redisatomic.New("ownership_register_preferred_instance", `
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
 redis.call('ZADD', KEYS[2], ARGV[3], ARGV[4])
 redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[5])

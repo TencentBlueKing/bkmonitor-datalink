@@ -437,7 +437,9 @@ func (engine *Engine) attachProbeLocked(state *group, read *Read, query Query) {
 		return
 	}
 	round := probe.reserved[query.Contract.Slot.EvaluationTime]
-	if round == nil || round.ahead || round.formal || round.query.Spec.Digest != query.Spec.Digest {
+	// A round is a read of one slice, as a trial is (Engine.Begin).
+	if round == nil || round.ahead || round.formal || round.query.Spec.Digest != query.Spec.Digest ||
+		round.query.Slice.Digest() != query.Slice.Digest() {
 		return
 	}
 	read.floorProbe, round.formal = round, true

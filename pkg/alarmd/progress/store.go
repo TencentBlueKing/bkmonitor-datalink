@@ -328,6 +328,8 @@ func (store *Store) BeginSlot(ctx context.Context, request execution.ProgressBeg
 		return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
 	case ownership.FencedCASStaleOwner:
 		return execution.ProgressBeginResult{Status: execution.ProgressStaleOwner}, nil
+	case ownership.FencedCASContentMoved:
+		return execution.ProgressBeginResult{Status: execution.ProgressContentMoved}, nil
 	default:
 		_ = applyErr
 		return execution.ProgressBeginResult{Status: execution.ProgressRetryableIO, ReasonCode: execution.ReasonCode(contract.ReasonRedisUnavailable)}, nil
@@ -427,6 +429,8 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 		return execution.ProgressCommitResult{Status: execution.ProgressConflict}, nil
 	case ownership.FencedCASStaleOwner:
 		return execution.ProgressCommitResult{Status: execution.ProgressStaleOwner}, nil
+	case ownership.FencedCASContentMoved:
+		return execution.ProgressCommitResult{Status: execution.ProgressContentMoved}, nil
 	default:
 		if applyErr != nil {
 			return retryable(), nil

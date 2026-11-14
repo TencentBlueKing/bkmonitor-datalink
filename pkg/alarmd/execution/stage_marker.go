@@ -17,7 +17,8 @@ import (
 // names where it is stuck (design 02 section 6.5). A stage is entered, not
 // completed; the last one entered is where an execution that never returns
 // stopped. Output, state and progress are the commit boundary: an execution
-// that has entered any of them is never declined (StageMarker.Decline).
+// that has entered any of them is never declined (StageMarker.Decline) until
+// it leaves it (StageMarker.LeaveCommit).
 const (
 	SlotStageSource   = "source"
 	SlotStageExecute  = "execute"
@@ -203,6 +204,7 @@ func (marker *StageMarker) Stage() string {
 // its output is written or being written, and the State and Progress writes
 // after it run under their own bounded timeouts. Letting it go between them
 // would leave acknowledged output unapplied, for the next holder to send again.
+// One that left the boundary (LeaveCommit) is open again and judged again.
 func (marker *StageMarker) Decline(now time.Time, grace time.Duration) (string, time.Time, bool) {
 	if marker == nil {
 		return "", time.Time{}, false
@@ -241,6 +243,40 @@ func (marker *StageMarker) EnterCommit(stage string) bool {
 	}
 }
 
+// LeaveCommit moves an execution inside its commit boundary back to open, in
+// stage, so the watchdog may decline it again, and reports whether it was
+// inside. It is for a Slot applied window by window (decision-020 batch 8,
+// 2.2 step 6), whose windows each enter the boundary and leave it, so a Slot
+// stuck between two windows can still be let go. What makes that safe, and
+// what a caller has to keep:
+//
+//   - It is called only where nothing the execution wrote is waiting on
+//     anything else it will write: after a window's State apply, its frozen
+//     renewal and the release of its held frames have all returned, never
+//     after only its output was sent. The shape a decline exists to prevent -
+//     output acknowledged, its State not applied, sent again by the next
+//     holder - is then not on the boundary, which is the shape a crash
+//     between two windows leaves and the retry resumes series by series.
+//   - Every write after it enters the boundary again (EnterCommit), and is
+//     refused with ErrExecutionDeclined once the watchdog claimed it.
+//   - It never undoes a decline: a claimed execution is never inside the
+//     boundary (Decline claims only an open one, EnterCommit never enters a
+//     claimed one), and it moves only the word of the execution in flight,
+//     the generation Begin set, so it cannot reopen the next execution's.
+func (marker *StageMarker) LeaveCommit(stage string) bool {
+	if marker == nil {
+		return false
+	}
+	word := marker.commit.Load()
+	if word&commitStateMask != commitEntered {
+		return false
+	}
+	// The stage first: a watchdog that claims the execution the moment it is
+	// open names the stage it is open in.
+	marker.stage.Store(stage)
+	return marker.commit.CompareAndSwap(word, word&^commitStateMask|commitOpen)
+}
+
 type stageMarkerKey struct{}
 
 // WithStageMarker carries marker to the code a Slot runs, for MarkStage,
@@ -250,6 +286,13 @@ func WithStageMarker(ctx context.Context, marker *StageMarker) context.Context {
 		return ctx
 	}
 	return context.WithValue(ctx, stageMarkerKey{}, marker)
+}
+
+// WithoutStageMarker is ctx carrying no stage marker, whatever it carried:
+// for work beside the Slot's own - a read ahead of the slice it is on - which
+// must not move the stage the watchdog judges the Slot by.
+func WithoutStageMarker(ctx context.Context) context.Context {
+	return context.WithValue(ctx, stageMarkerKey{}, (*StageMarker)(nil))
 }
 
 func stageMarkerOf(ctx context.Context) *StageMarker {
@@ -300,6 +343,19 @@ func BackendFailing(ctx context.Context) bool {
 // that of a query it starts at at (StageMarker.Extend).
 func ExtendDeadline(ctx context.Context, deadline, at time.Time) {
 	stageMarkerOf(ctx).Extend(deadline, at)
+}
+
+// ExecutionDeadline is the deadline of the execution running under ctx so
+// far (StageMarker.Deadline), zero for none or without a marker.
+func ExecutionDeadline(ctx context.Context) time.Time {
+	return stageMarkerOf(ctx).Deadline()
+}
+
+// LeaveCommit moves the execution running under ctx out of its commit
+// boundary, in stage (StageMarker.LeaveCommit); a context without a marker
+// has nothing to leave.
+func LeaveCommit(ctx context.Context, stage string) bool {
+	return stageMarkerOf(ctx).LeaveCommit(stage)
 }
 
 // EnterCommit is called before the execution running under ctx writes

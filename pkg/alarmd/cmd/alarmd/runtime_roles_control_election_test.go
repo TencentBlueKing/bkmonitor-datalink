@@ -168,6 +168,14 @@ func (fixture *electionFixture) leasesRunPastNow() bool {
 			}
 		}
 		for _, session := range sessions {
+			// A lease held under the worker session is restated by the
+			// session's renewal, not its own (A2).
+			if session.HeldUnderSession() {
+				if _, admits := session.Current(); admits && !session.Alive(now) {
+					return false
+				}
+				continue
+			}
 			if lease, admits := session.Current(); admits && !lease.Deadline.After(now) {
 				return false
 			}

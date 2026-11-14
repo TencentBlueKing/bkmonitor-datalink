@@ -24,8 +24,8 @@ func planSlotRosterVersion(t *testing.T) string {
 	t.Helper()
 	roster, err := BuildRoster(RosterRequest{
 		AggDimension: []string{HostIPDimension, HostCloudDimension},
-		Scope:        hostScope("10.0.0.1|0", "10.0.0.2|0"),
-		KnownHosts:   knownHosts("10.0.0.1|0", "10.0.0.2|0"),
+		Scope:        hostScope("192.0.2.1|0", "192.0.2.2|0"),
+		KnownHosts:   knownHosts("192.0.2.1|0", "192.0.2.2|0"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ func planSlotIdentity() execution.PlanNoDataIdentity {
 }
 
 func planSlotInput(snapshot execution.NoDataMemorySnapshot, series ...map[string]string) PlanSlotInput {
-	scope := hostScope("10.0.0.1|0", "10.0.0.2|0")
+	scope := hostScope("192.0.2.1|0", "192.0.2.2|0")
 	return PlanSlotInput{
 		NoData:           &contract.NoDataConfigV1{Continuous: 3, Level: 2, AggDimension: []string{HostIPDimension, HostCloudDimension}},
 		Scope:            scope,
@@ -53,13 +53,13 @@ func planSlotInput(snapshot execution.NoDataMemorySnapshot, series ...map[string
 		PeriodSeconds:    60,
 		Completeness:     execution.CompletenessFull,
 		Series:           series,
-		KnownHosts:       knownHosts("10.0.0.1|0", "10.0.0.2|0"),
+		KnownHosts:       knownHosts("192.0.2.1|0", "192.0.2.2|0"),
 		HostsResolved:    true,
 	}
 }
 
 func presentSeries() map[string]string {
-	return map[string]string{HostIPDimension: "10.0.0.1", HostCloudDimension: "0"}
+	return map[string]string{HostIPDimension: "192.0.2.1", HostCloudDimension: "0"}
 }
 
 func storedSnapshot(
@@ -176,7 +176,7 @@ func TestPlanSlotProducesSeriesAndTheMemoryToStore(t *testing.T) {
 // did not have.
 func TestPlanSlotWritesNothingOnAnIncompleteRound(t *testing.T) {
 	input := planSlotInput(storedSnapshot(t, 940,
-		execution.NoDataGroupMemory{GroupKey: hostTargetGroup(HostIdentity{IP: "10.0.0.1", CloudID: "0"}).Key(), LastSeen: 940},
+		execution.NoDataGroupMemory{GroupKey: hostTargetGroup(HostIdentity{IP: "192.0.2.1", CloudID: "0"}).Key(), LastSeen: 940},
 	))
 	input.Completeness = execution.CompletenessPartial
 

@@ -188,6 +188,22 @@ type WakeFacts struct {
 	// ReadinessHold says a Deferred bound is the Slot waiting for its data
 	// (a read hold), not a failure's backoff.
 	ReadinessHold bool `json:"readiness_hold,omitempty"`
+	// AwaitingPredecessor is the Slot not frozen yet because the object
+	// waits for the read hold record of the object a moved strategy left to
+	// close; DueAt is then only its next look. Nil when it does not wait.
+	AwaitingPredecessor *PredecessorWait `json:"awaiting_predecessor,omitempty"`
+}
+
+// PredecessorWait is an object's wait on its predecessor's read hold record:
+// which object, what its record read as (record_open, record_unreadable, or
+// unread when it is to be read again), since when, and until when at the
+// latest. Closed before then, the Slot is frozen on the hold it inherits; still
+// open then, it is frozen on the hold bound, as it would have been at once.
+type PredecessorWait struct {
+	QueryGroup string    `json:"query_group"`
+	Reason     string    `json:"reason"`
+	Since      time.Time `json:"since"`
+	Until      time.Time `json:"until"`
 }
 
 // ScheduleSource is what the publisher asks the due index for.

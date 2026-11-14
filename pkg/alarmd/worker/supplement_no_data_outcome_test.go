@@ -41,7 +41,7 @@ func (store *supplementNoDataStore) LoadNoData(
 	for index, item := range request.Items {
 		if store.unreadable {
 			result.Items[index] = execution.NoDataMemorySnapshot{Identity: item.Identity,
-				Status: execution.NoDataMemoryUnreadable, SchemaVersion: execution.NoDataMemorySchema(4),
+				Status: execution.NoDataMemoryUnreadable, SchemaVersion: execution.MaxSupportedNoDataMemorySchema + 1,
 				ReasonCode: execution.ReasonCode(contract.ReasonStateSchemaUnsupported)}
 			continue
 		}
@@ -247,4 +247,20 @@ func TestASupplementJudgesNoAbsenceAndFilesNoOutcome(t *testing.T) {
 				index+1, step.what, slots, stalls, want, step.stalls)
 		}
 	}
+}
+
+func (store *supplementNoDataStore) ReadNoDataHeaders(ctx context.Context, request execution.NoDataLoadRequest) (execution.NoDataLoadResult, error) {
+	return worker.LoadedRoster(store.LoadNoData).Headers(ctx, request)
+}
+
+func (store *supplementNoDataStore) RecheckNoDataHeader(ctx context.Context, identity execution.PlanNoDataIdentity) (execution.NoDataMemorySnapshot, error) {
+	return worker.LoadedRoster(store.LoadNoData).Recheck(ctx, identity)
+}
+
+func (store *supplementNoDataStore) ScanNoDataGroups(ctx context.Context, request execution.NoDataScanRequest) (execution.NoDataScanPage, error) {
+	return worker.LoadedRoster(store.LoadNoData).Scan(ctx, request)
+}
+
+func (store *supplementNoDataStore) ReadNoDataGroups(ctx context.Context, request execution.NoDataGroupsRequest) (execution.NoDataGroupsResult, error) {
+	return worker.LoadedRoster(store.LoadNoData).Read(ctx, request)
 }

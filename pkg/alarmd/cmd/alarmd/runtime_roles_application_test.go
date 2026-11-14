@@ -99,6 +99,7 @@ func TestApplicationInstallsChannelWhileBusinessStartupWaits(t *testing.T) {
 	waiting := make(chan struct{})
 	listener := make(chan *httpservice.Server, 1)
 	deps := phaseTwoApplicationDependencies{
+		goRuntime: noGoRuntime,
 		openRoles: func(cfg config.Config, recorder *metric.Recorder, facts *observability.RuntimeConfigFacts, logger *observability.Logger) (*phaseTwoRoleRuntime, error) {
 			runtime, err := openPhaseTwoRoleRuntime(cfg, recorder, facts, logger)
 			if err == nil {

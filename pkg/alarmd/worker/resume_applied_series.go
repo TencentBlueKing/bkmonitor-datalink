@@ -16,19 +16,22 @@ import (
 // State. It is not a new evaluation: State does not retain the original record
 // outcomes or window counts, so neither business verdicts nor HistoryCoverage
 // are manufactured here. UNKNOWN entries describe persisted protection only.
-func resumedSeriesResult(header execution.InternalExecutionHeader, due execution.DuePlan, view execution.RuntimeStateView, gaps execution.GapLoadResult) (execution.EvaluationResult, error) {
+//
+// gapSuperseded says the Plan's gap marker is a later Slot's (SupersededBy):
+// the resumed series leaves it as it found it, and the caller counts it.
+func resumedSeriesResult(header execution.InternalExecutionHeader, due execution.DuePlan, view execution.RuntimeStateView, gaps execution.GapLoadResult) (result execution.EvaluationResult, gapSuperseded bool, err error) {
 	version, err := execution.BuildApplyVersion(header.Contract, due.StateApplyEpoch)
 	if err != nil {
-		return execution.EvaluationResult{}, err
+		return execution.EvaluationResult{}, false, err
 	}
 	if view.Identity.Plan != due.Identity || view.Identity.StateGeneration != due.StateGeneration ||
 		view.VersionComparison != execution.ApplyVersionEqual || execution.CompareApplyVersion(view.PersistedApplyVersion, version) != execution.ApplyVersionEqual {
-		return execution.EvaluationResult{}, fmt.Errorf("alarmd worker: resumed State identity or ApplyVersion differs from Slot")
+		return execution.EvaluationResult{}, false, fmt.Errorf("alarmd worker: resumed State identity or ApplyVersion differs from Slot")
 	}
 	if len(view.Levels) == 0 {
-		return execution.EvaluationResult{}, fmt.Errorf("alarmd worker: resumed State has no persisted Level facts")
+		return execution.EvaluationResult{}, false, fmt.Errorf("alarmd worker: resumed State has no persisted Level facts")
 	}
-	result := execution.EvaluationResult{Contract: header.Contract, Result: observability.ResultSuccess, ReasonCode: observability.ReasonNone}
+	result = execution.EvaluationResult{Contract: header.Contract, Result: observability.ResultSuccess, ReasonCode: observability.ReasonNone}
 	plan := execution.PlanEvaluationResult{Plan: due.Identity, Disposition: execution.PlanDecided, ReasonCode: observability.ReasonNone}
 	// The one coverage fact a resumed series can honestly report: that it was
 	// resumed. The window counts stay absent for the reason above, but their
@@ -47,17 +50,17 @@ func resumedSeriesResult(header execution.InternalExecutionHeader, due execution
 		case execution.HistoryWarming, execution.HistoryGapped:
 			reason, origin = level.GapReasonCode, level.ReasonOrigin()
 			if reason == "" {
-				return execution.EvaluationResult{}, fmt.Errorf("alarmd worker: resumed incomplete Level has no reason")
+				return execution.EvaluationResult{}, false, fmt.Errorf("alarmd worker: resumed incomplete Level has no reason")
 			}
 		default:
-			return execution.EvaluationResult{}, fmt.Errorf("alarmd worker: resumed Level has unsupported completeness")
+			return execution.EvaluationResult{}, false, fmt.Errorf("alarmd worker: resumed Level has unsupported completeness")
 		}
 		if guard := view.SeriesGuard; guard != nil {
 			if guard.Status != execution.HistoryWarming && guard.Status != execution.HistoryGapped {
-				return execution.EvaluationResult{}, fmt.Errorf("alarmd worker: resumed series guard has unsupported completeness")
+				return execution.EvaluationResult{}, false, fmt.Errorf("alarmd worker: resumed series guard has unsupported completeness")
 			}
 			if guard.ReasonCode == "" {
-				return execution.EvaluationResult{}, fmt.Errorf("alarmd worker: resumed series guard has no reason")
+				return execution.EvaluationResult{}, false, fmt.Errorf("alarmd worker: resumed series guard has no reason")
 			}
 			if reason == "" {
 				reason = guard.ReasonCode
@@ -86,14 +89,23 @@ func resumedSeriesResult(header execution.InternalExecutionHeader, due execution
 	gap, found := gaps.Find(due.GapIdentity())
 	if found && gap.Status != execution.GapMissing {
 		if gap.Status != execution.GapFound && gap.Status != execution.GapClearedTombstone {
-			return execution.EvaluationResult{}, fmt.Errorf("alarmd worker: resumed Plan gap is not readable: %s", gap.Status)
+			return execution.EvaluationResult{}, false, fmt.Errorf("alarmd worker: resumed Plan gap is not readable: %s", gap.Status)
 		}
 		switch execution.CompareApplyVersion(gap.PersistedApplyVersion, version) {
 		case execution.ApplyVersionPersistedNewer:
-			return execution.EvaluationResult{}, fmt.Errorf("alarmd worker: resumed Plan gap is newer than Slot")
+			// A later Slot's marker is that Slot's statement about the
+			// Plan's history from where it stood, and this resumed series
+			// had nothing to write to it anyway: it is left as it is and
+			// counted, and the Slot goes on. Any other newer marker -- an
+			// activation this Slot has not caught up with, or the tie of
+			// two Slots of one moment -- is refused as before.
+			if !execution.SupersededBy(gap.PersistedApplyVersion, version) {
+				return execution.EvaluationResult{}, false, fmt.Errorf("alarmd worker: resumed Plan gap is newer than Slot")
+			}
+			gapSuperseded = true
 		case execution.ApplyVersionEqual:
 			if gap.LastScheduleRevision != due.ScheduleRevision {
-				return execution.EvaluationResult{}, fmt.Errorf("alarmd worker: resumed same-Slot Plan gap has a different schedule")
+				return execution.EvaluationResult{}, false, fmt.Errorf("alarmd worker: resumed same-Slot Plan gap has a different schedule")
 			}
 			// This Slot already committed its gap update; do not count it twice.
 		case execution.ApplyVersionPersistedOlder:
@@ -101,9 +113,9 @@ func resumedSeriesResult(header execution.InternalExecutionHeader, due execution
 			// Its inputs cannot be reconstructed from post-Slot history, so
 			// leave protection intact until a later evaluated Slot advances it.
 		default:
-			return execution.EvaluationResult{}, fmt.Errorf("alarmd worker: resumed Plan gap version is not comparable")
+			return execution.EvaluationResult{}, false, fmt.Errorf("alarmd worker: resumed Plan gap version is not comparable")
 		}
 	}
 	result.Plans = []execution.PlanEvaluationResult{plan}
-	return result, nil
+	return result, gapSuperseded, nil
 }

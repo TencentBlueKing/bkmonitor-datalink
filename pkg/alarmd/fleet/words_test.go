@@ -29,7 +29,7 @@ func TestEveryCheckHasExactlyOnePairOfWords(t *testing.T) {
 		actions[word] = true
 	}
 	// Nine and seven: the state "数据身份对不上" and the action "策略或采集方对齐
-	// 身份标签" for IDENTITY_UNMATCHED (leader 10-17): the data arrived, so
+	// 身份标签" for IDENTITY_UNMATCHED: the data arrived, so
 	// neither "数据没到" nor "数据负责人查" points at the side that differs.
 	if len(StateWords) != 9 || len(ActionWords) != 7 || len(WatchReasons) != 3 {
 		t.Fatalf("vocabulary = %d state / %d action / %d watch words, want 9 / 7 / 3: the count is the ruling", len(StateWords), len(ActionWords), len(WatchReasons))

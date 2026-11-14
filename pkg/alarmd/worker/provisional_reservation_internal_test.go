@@ -69,13 +69,16 @@ func TestProcessProvisionalReservationCapsConcurrentSlotsAndReleases(t *testing.
 	}
 }
 
+// A stream holding its whole share - three quarters of the 100-byte pool -
+// gives it back once however often it is released, and the pool is whole
+// again for the worker's own reservation.
 func TestStreamedExecutionReleaseProvisionalIsIdempotentAndReusable(t *testing.T) {
 	coordinator := &SlotExecutionCoordinator{budget: ProvisionalBudget{MaxSeries: 1, MaxRetainedBytes: 100}}
 	stream := &streamedExecution{coordinator: coordinator}
-	if err := stream.reserveProvisional(context.Background(), 1, 100); err != nil {
+	if err := stream.reserveProvisional(context.Background(), 1, 75); err != nil {
 		t.Fatal(err)
 	}
-	stream.series, stream.retainedByPhase = 1, retainedSeed(100)
+	stream.series, stream.retainedByPhase = 1, retainedSeed(75)
 	stream.releaseProvisional()
 	stream.releaseProvisional()
 

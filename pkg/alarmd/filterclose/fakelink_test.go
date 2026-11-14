@@ -18,6 +18,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -495,6 +496,20 @@ func decodeStrict(r *http.Request, maximum int64, target any) error {
 	return nil
 }
 
+// spendCloseCost takes cost, an alert's close: by the clock under a few
+// milliseconds, which a host's timer may not resolve - a sleep of 200us
+// takes 4 ms on a 250 Hz virtual machine, and a page of fifty then outlasts
+// the request budget the cases count it within - and asleep above.
+func spendCloseCost(cost time.Duration) {
+	if cost >= 5*time.Millisecond {
+		time.Sleep(cost) // fixed-wait: the link's cost per alert is the behaviour under test
+		return
+	}
+	for start := time.Now(); time.Since(start) < cost; { // fixed-wait: the link's cost per alert is the behaviour under test
+		runtime.Gosched()
+	}
+}
+
 // setCloseDelay sets closeDelay under the link's lock: a filtered close the
 // client gave up on is still being served, and reads it.
 func (link *fakeLink) setCloseDelay(delay time.Duration) {
@@ -609,7 +624,7 @@ func (link *fakeLink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				page.HasMore = true
 			default:
 				if link.closeDelay > 0 {
-					time.Sleep(link.closeDelay) // fixed-wait: the link's cost per alert is the behaviour under test
+					spendCloseCost(link.closeDelay)
 				}
 				status, code, already := link.closeOne(input.fakeCommand, alert.id)
 				item.Status, item.ErrorCode, item.AlreadyClosed = status, code, already

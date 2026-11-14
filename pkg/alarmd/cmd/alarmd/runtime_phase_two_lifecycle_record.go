@@ -62,7 +62,7 @@ type lifecycleEntry struct {
 // lifecycleRecordWrite adds an entry, cuts the list to its bound and renews
 // its life, as one script rather than a MULTI/EXEC (see redisatomic for why).
 // One key, so it is in one slot on any deployment.
-var lifecycleRecordWrite = redisatomic.New(`
+var lifecycleRecordWrite = redisatomic.New("list_push_trim_expire", `
 redis.call('LPUSH', KEYS[1], ARGV[1])
 redis.call('LTRIM', KEYS[1], 0, tonumber(ARGV[2]))
 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))

@@ -16,6 +16,15 @@ type ShareRefusal struct {
 	OwnUsedBytes   uint64
 	RequestedBytes uint64
 	LimitBytes     uint64
+	// Reason is the refusal's own code when it is not the share's
+	// (QG_BUDGET_SHARE_EXCEEDED, empty): a Slot that has to be read in
+	// slices and whose slices no split or no store takes
+	// (INPUT_SLICE_VALUE_CONCENTRATED, INPUT_SLICE_QUERY_TOO_LONG) is as
+	// deterministic, and is finalized the same way under its own code.
+	Reason string
+	// Detail is why, for a Reason: the tree's reason and dimension, or the
+	// bytes of the slice's conditions.
+	Detail string
 }
 
 // Same reports whether two refusals are the same decision: the same phase
@@ -23,7 +32,7 @@ type ShareRefusal struct {
 // re-read a minute later can carry a few more late points, and that does not
 // make the Slot any more likely to fit.
 func (refusal ShareRefusal) Same(other ShareRefusal) bool {
-	return refusal.Phase == other.Phase && refusal.LimitBytes == other.LimitBytes
+	return refusal.Phase == other.Phase && refusal.LimitBytes == other.LimitBytes && refusal.Reason == other.Reason
 }
 
 // DeterministicShareRefusal is implemented by an Execute error that is a share

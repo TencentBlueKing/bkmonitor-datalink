@@ -10,6 +10,8 @@
 package nodata
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"sort"
 	"strings"
@@ -301,16 +303,70 @@ func BuildRoster(request RosterRequest) (Roster, error) {
 // this decided against the same expected set as last time - and membership is
 // exactly what moves without the content moving: a host joining or leaving the
 // business changes the set and nothing else does.
+//
+// Every source folds its keys the one way (rosterVersionFold), so a history
+// roster learned one group at a time while the memory is scanned and a target
+// roster built whole name the same set alike.
 func rosterVersion(roster Roster) (string, error) {
-	keys := make([]string, 0, len(roster.Groups))
+	var fold rosterVersionFold
 	for key := range roster.Groups {
-		keys = append(keys, key)
+		fold.add(key)
 	}
-	sort.Strings(keys)
-	digest, err := contract.DeriveCanonicalDigestV2("alarmd-no-data-roster-v1", struct {
+	return fold.version(roster.Source)
+}
+
+// rosterVersionDomain names the v2 derivation. v1 was a canonical digest over
+// the sorted keys under "alarmd-no-data-roster-v1", which a round that reads
+// the memory in scan segments cannot compute without holding every history
+// key until the end (decision-020 batch 8, 2.7). The two domains differ, so a
+// v1 value never equals a v2 value for the same set: a record written by the
+// old build meets its first full round under this one as a roster that moved,
+// and is rewritten once with the new header.
+//
+// The version is only ever compared for equality - the no-op decision, the
+// partial round that carries the stored value forward, the carry across a
+// restart, the memory digest's input - so a stored v1 value stays valid for
+// every one of those until a full round replaces it.
+const rosterVersionDomain = "alarmd-no-data-roster-v2"
+
+// rosterVersionFold is the roster version folded one key at a time, in any
+// order: the per-key SHA-256 under rosterVersionDomain, summed modulo 2^256
+// (contract.DigestSum256), and the key count. The final digest is a canonical
+// digest over the domain, the source, the count and the sum; the source is in
+// it so two sources over the same keys never share a version.
+//
+// A key must be added once. The sum moves when a key is added twice, and so
+// would the version of a set that did not move. The fold keeps no key, so it
+// cannot deduplicate; the caller adds through the deduplication it already
+// has - a Roster's map, or the judgement's one-judgement-per-key (judge.go).
+type rosterVersionFold struct {
+	sum  contract.DigestSum256
+	keys uint64
+}
+
+// add folds one key in.
+func (fold *rosterVersionFold) add(key string) {
+	encoded := make([]byte, 0, len(rosterVersionDomain)+1+binary.MaxVarintLen64+len(key))
+	encoded = append(encoded, rosterVersionDomain...)
+	encoded = append(encoded, 0)
+	encoded = binary.AppendUvarint(encoded, uint64(len(key)))
+	encoded = append(encoded, key...)
+	fold.sum.Add(sha256.Sum256(encoded))
+	fold.keys++
+}
+
+// size is how many keys have been folded in.
+func (fold *rosterVersionFold) size() uint64 {
+	return fold.keys
+}
+
+// version is the roster version of the keys folded so far, for source.
+func (fold *rosterVersionFold) version(source RosterSource) (string, error) {
+	digest, err := contract.DeriveCanonicalDigestV2(rosterVersionDomain, struct {
 		Source RosterSource `json:"source"`
-		Groups []string     `json:"groups"`
-	}{Source: roster.Source, Groups: keys})
+		Keys   uint64       `json:"keys"`
+		Sum    string       `json:"sum"`
+	}{Source: source, Keys: fold.keys, Sum: fold.sum.Hex()})
 	if err != nil {
 		return "", fmt.Errorf("alarmd nodata: derive roster version: %w", err)
 	}

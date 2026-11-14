@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -17,10 +18,15 @@ import (
 // returns missing state and cannot exercise a retry after a partial commit.
 type persistedRetryState struct {
 	*recordingPorts
+	// mu guards saved: the next batch's State is read beside the window
+	// before it being written.
+	mu    sync.Mutex
 	saved map[execution.StateKeyIdentity]execution.StateMutation
 }
 
 func (s *persistedRetryState) LoadRuntime(ctx context.Context, req execution.StatePreflightRequest) (execution.StatePreflightResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	out, err := s.recordingPorts.LoadRuntime(ctx, req)
 	if err != nil {
 		return out, err
@@ -48,6 +54,8 @@ func (s *persistedRetryState) LoadRuntime(ctx context.Context, req execution.Sta
 }
 
 func (s *persistedRetryState) ApplyRuntime(ctx context.Context, req execution.StateApplyRequest) (execution.StateApplyResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	out, err := s.recordingPorts.ApplyRuntime(ctx, req)
 	if err == nil {
 		for _, m := range req.Items {

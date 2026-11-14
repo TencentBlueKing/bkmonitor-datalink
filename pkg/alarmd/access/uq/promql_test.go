@@ -7,6 +7,8 @@ package uq
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -155,5 +157,49 @@ func TestARangeFailureNamesTheTraceItWasSentWith(t *testing.T) {
 	parts := strings.Split(sent, "-")
 	if err == nil || len(parts) != 4 || !strings.Contains(err.Error(), "trace "+parts[1]) {
 		t.Fatalf("error %v, want the sent trace id of %q", err, sent)
+	}
+}
+
+// widestTrendAnswer is the largest answer a page asks a range for, as
+// rangeMaxBodyBytes is sized from: a line grouped by pod over the longest
+// window at its step (24h at 10m, 145 points), 400 pod names in a day.
+func widestTrendAnswer(pods int) string {
+	var body strings.Builder
+	body.WriteString(`{"series":[`)
+	for pod := 0; pod < pods; pod++ {
+		if pod > 0 {
+			body.WriteString(",")
+		}
+		fmt.Fprintf(&body, `{"columns":["_time","_value"],"types":["float","float"],"group_keys":["pod"],"group_values":["bk-monitor-alarmd-worker-7d9f8c6b5-%05d"],"values":[`, pod)
+		for point := 0; point < 145; point++ {
+			if point > 0 {
+				body.WriteString(",")
+			}
+			fmt.Fprintf(&body, "[%d,%.6f]", 1789006380000-int64(144-point)*600_000, 1234567890.123456+float64(point))
+		}
+		body.WriteString("]}")
+	}
+	body.WriteString(`],"is_partial":false}`)
+	return body.String()
+}
+
+// A range answer is read whole, so it has a bound of its own: the widest a
+// page asks for is read under it with room to spare (the bound is four times
+// it), and one past it is refused by name rather than cut short into a
+// decode error.
+func TestTheWidestTrendAnswerIsReadWhole(t *testing.T) {
+	widest := widestTrendAnswer(400)
+	if got := len(widest); got > rangeMaxBodyBytes/4 {
+		t.Fatalf("the widest trend answer is %d bytes, past a quarter of the bound %d: the bound no longer has its margin", got, rangeMaxBodyBytes)
+	}
+	client, _ := rangeClient(t, func(response http.ResponseWriter, _ *http.Request) { _, _ = response.Write([]byte(widest)) })
+	result, err := client.Range(context.Background(), rangeRequest())
+	if err != nil || len(result.Series) != 400 || len(result.Series[399].Points) != 145 {
+		t.Fatalf("Range() = %d series, err %v, want the widest answer read whole", len(result.Series), err)
+	}
+	past := widestTrendAnswer(400 * (rangeMaxBodyBytes/len(widest) + 1))
+	client, _ = rangeClient(t, func(response http.ResponseWriter, _ *http.Request) { _, _ = response.Write([]byte(past)) })
+	if _, err := client.Range(context.Background(), rangeRequest()); !errors.Is(err, ErrResponseBytesExceeded) {
+		t.Fatalf("Range() over the bound = %v, want it refused as %v", err, ErrResponseBytesExceeded)
 	}
 }

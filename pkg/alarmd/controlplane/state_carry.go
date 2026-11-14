@@ -57,11 +57,14 @@ func (reconciler *ScheduleActivationReconciler) observeStateCarry(ctx context.Co
 
 // applyStateCarries puts the decided carries on their records. A record whose
 // Query Group is back from retirement carries nothing: there is a hole between
-// the old state and now. Every other carried record carries, and warms up
-// behind its guard for one full Slot rather than for its whole window, while
-// that Slot writes the carried history under the new generation; a series the
-// previous generation held nothing for is short of points and stays WARMING on
-// its own window, as a new series does.
+// the old state and now, and it warms up whole. Every other carried record
+// carries and is not forced to warm up: its first Slot under the new
+// generation writes the carried history and evaluates on it, as the Slots
+// after it would. A warm-up would re-decide nothing - the state holds each
+// point's decided result, which stands as decided (stateCarry) - and only
+// cost the Slot it took and the absent point it left in every window. A
+// series the previous generation held nothing for is short of points and
+// stays WARMING on its own window, as a new series does.
 func applyStateCarries(records []PlanActivationRecord, carries map[int]*execution.StateCarry, returned map[int]struct{}) (carried, discontinuous int) {
 	for index, carry := range carries {
 		if _, back := returned[index]; back {
@@ -70,6 +73,7 @@ func applyStateCarries(records []PlanActivationRecord, carries map[int]*executio
 		}
 		records[index].Fact.Selected.Carry = carry
 		records[index].Fact.Selected.RequiredFullSlots = 1
+		records[index].Fact.Selected.ForceWarming = false
 		carried++
 	}
 	return carried, discontinuous

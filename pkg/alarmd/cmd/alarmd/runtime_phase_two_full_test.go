@@ -2127,6 +2127,8 @@ func (runtime *recordingPhaseTwoQueryGroupRuntime) DueBound() scheduler.RunnerDu
 	return scheduler.RunnerDueBound{}
 }
 
+func (*recordingPhaseTwoQueryGroupRuntime) HeldEpochs() (uint64, uint64) { return 0, 0 }
+
 func (*recordingPhaseTwoQueryGroupRuntime) DeclineHung(time.Time, time.Duration) (string, time.Time, bool) {
 	return "", time.Time{}, false
 }

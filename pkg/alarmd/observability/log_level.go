@@ -34,7 +34,7 @@ var warnReasons = makeReasonSet([]ReasonCode{
 	"OWNERSHIP_NOT_DESIRED", "OWNERSHIP_STALE_FENCE", "PROGRESS_BEGIN_FAILED",
 	"PROGRESS_BEGIN_REJECTED", "PROVIDER_UNAVAILABLE", "QUERY_PARTIAL", "QUERY_TIMEOUT", "QUERY_DELIVERY_TIMEOUT",
 	"QUERY_UNAVAILABLE", "READINESS_BUDGET_INVALID", "RECORD_TOO_LARGE", "REDIS_UNAVAILABLE",
-	"RESOURCE_HARD_STOP", "SCHEDULE_PRUNED", "SCHEDULE_REPAIRED", "SCHEDULE_REOPENED", "SLOT_BUDGET_EXCEEDED", "SLOT_SOURCE_RETRY",
+	"RESOURCE_HARD_STOP", "RESOURCE_POOL_HELD_BY_OTHERS", "SCHEDULE_PRUNED", "SCHEDULE_REPAIRED", "SCHEDULE_REOPENED", "SLOT_BUDGET_EXCEEDED", "SLOT_SOURCE_RETRY",
 	"SNAPSHOT_RETENTION_INSUFFICIENT", "SNAPSHOT_RETRY_PENDING", "SNAPSHOT_UNAVAILABLE",
 	"STATE_BUDGET_EXCEEDED", "STATE_CORRUPT", "STATE_LEVEL_CONTRACT_MISMATCH", "STATE_READ_DEADLINE",
 	"STATE_READ_TIMEOUT", "STATE_SCHEMA_UNSUPPORTED", "STATE_STALE_VERSION", "STATE_VERSION_CONFLICT",
@@ -216,10 +216,14 @@ var routineStages = map[Stage]bool{
 	StageSlotSourceCompleted: true, StageRunnerCompleted: true, StageGapLoaded: true, StageGapGuardCommitted: true,
 	StageGapGuardProgress: true, StageNoDataDecided: true, StageNoDataMemoryRead: true, StageNoDataMemoryWritten: true,
 	StageNoDataMemoryRenewed: true, StageProgressCommitted: true, StageStatePreflight: true, StageStateAdmission: true,
-	StageStateApplied: true, StageFrozenStateRenewed: true, StageSideEffectAdmission: true, StageFenceChecked: true,
+	StageStateApplied: true, StageFrozenStateRenewed: true, StageSideEffectAdmission: true, StagePlanActivationChecked: true, StageFenceChecked: true,
 	StageEventACKed: true, StageTargetResolved: true,
 	StageLeaseRenewed: true, StageAssignmentAcquired: true, StageAssignmentLost: true,
-	StageTakeoverStarted: true, StageTakeoverCompleted: true,
+	// A takeover's start is counted and not written: every one is followed at
+	// the same site by its completion, which carries the outcome and the
+	// epochs, so a start line would only double a rollout's lines. Its
+	// completion is written (takeoverHeld).
+	StageTakeoverStarted: true,
 }
 
 // unwrittenStage is a stage that has lines counted and not written.
@@ -235,15 +239,35 @@ var roundStages = map[Stage]bool{
 	StageControlReadsSpent: true, StageActiveQGSet: true, StageObjectCatalog: true,
 }
 
+// cutoverChanged says a publication cutover did something to a Query Group
+// other than keep it. Each of those is written, as a round that changed
+// something is: its line names the Query Groups an edit reached, and under
+// the hourly sample a second edit within the hour named none of its own. A
+// cutover that kept every Query Group stays under the sample. It is asked of
+// successes only (Admit); a failure keeps the failures' limit.
+func cutoverChanged(observation Observation) bool {
+	facts := observation.ScheduleCutover
+	if observation.Stage != StageScheduleCutover || facts == nil {
+		return false
+	}
+	for decision, count := range facts.QueryGroups {
+		if decision != "kept" && count > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // roundChanged says a Control Leader round line has something new on it: the
 // round moved, rewrote or found missing something, read the source changed,
-// or holds Query Groups draining. Three of the stages carry no facts at all
-// on their line and never have anything new.
+// holds Query Groups draining, or found a record changed under it. Two of the
+// stages carry no facts at all on their line and never have anything new.
 func roundChanged(observation Observation) bool {
 	switch observation.Stage {
 	case StageRebalancePlanned:
 		facts := observation.Rebalance
-		return facts != nil && (facts.PlannedMoves > 0 || facts.PublishedMoves > 0 || facts.Conflicts > 0 || facts.Paused)
+		return facts != nil && (facts.PlannedMoves > 0 || facts.PublishedMoves > 0 || facts.Conflicts > 0 || facts.Paused ||
+			facts.Placed > 0 || facts.Replaced > 0 || facts.Unfit > 0 || (facts.Bytes != nil && facts.Bytes.PublishedMoves > 0))
 	case StageAssignmentIndexRead:
 		// A worker that reads just before the Leader writes sees the previous
 		// round once: stale for one round is the ordinary race, the same
@@ -270,6 +294,19 @@ func roundChanged(observation Observation) bool {
 		return observation.SourceRefresh == nil || observation.SourceRefresh.Status != SourceRefreshUnchanged
 	case StageDrainingQGReconciled:
 		return observation.DrainingQG != nil && observation.DrainingQG.Total > 0
+	case StageControlReadsSpent:
+		// A conflict, or a field the Leader's copy of the records missed a
+		// write on: the sample names the Query Group and both values.
+		facts := observation.ControlReads
+		if facts == nil {
+			return false
+		}
+		for field, count := range facts.RecordMismatches {
+			if count > 0 && !RecordFieldWorkerWritten(field) {
+				return true
+			}
+		}
+		return facts.RecordConflicts > 0
 	default:
 		return false
 	}

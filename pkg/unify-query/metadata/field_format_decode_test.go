@@ -34,11 +34,12 @@ func TestFieldFormatDecodeCases(t *testing.T) {
 		{"overflow then valid", "__bk_99999999999999999999____bk_46__", "__bk_99999999999999999999__."},
 		{"letters inside", "__bk_x__", "__bk_x__"},
 		{"no digits", "__bk___", "__bk___"},
+		{"empty mark overlaps a real one", "__bk___bk_46__", "__bk_."},
 		{"sign", "__bk_-46__", "__bk_-46__"},
 		{"missing tail", "__bk_46", "__bk_46"},
 		{"missing head", "bk_46__", "bk_46__"},
 		{"single underscores", "_bk_46_", "_bk_46_"},
-		{"no rescan after replace", "__bk_95__bk_46__", "_bk_46__"},
+		{"no rescan after replace", "___bk_95__bk_46__", "__bk_46__"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			assert.Equal(t, c.want, decode(c.in))

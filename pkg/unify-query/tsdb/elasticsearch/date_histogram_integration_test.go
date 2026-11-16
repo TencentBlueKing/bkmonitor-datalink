@@ -12,6 +12,7 @@ package elasticsearch
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"testing"
@@ -73,6 +74,30 @@ func TestDateHistogramIntegration(t *testing.T) {
 				_, deleteErr := client.DeleteIndex(index).Do(cleanupCtx)
 				require.NoError(t, deleteErr)
 			})
+
+			queryInstance := instance
+			if username := os.Getenv(prefix + "_QUERY_USERNAME"); username != "" {
+				// 管理员准备隔离索引，查询账号只有索引 read/view_index_metadata 权限。
+				queryInstance, err = NewInstance(ctx, &InstanceOption{
+					Connect: Connect{Address: address, UserName: username, Password: os.Getenv(prefix + "_QUERY_PASSWORD")},
+					Timeout: 10 * time.Second,
+				})
+				require.NoError(t, err)
+				_, err = queryInstance.serverVersion(ctx)
+				var permissionError *elastic.Error
+				require.ErrorAs(t, err, &permissionError)
+				require.Equal(t, http.StatusForbidden, permissionError.Status)
+			}
+			recorder := setupESTraceRecorder(t)
+			source, mode, observedVersion := "root", "legacy", version.String()
+			if supportsExplicitDateHistogramInterval(version) {
+				mode = "explicit"
+			}
+			if queryInstance != instance {
+				source, observedVersion = "capability", "unknown"
+			}
+			labels := map[string]string{"source": source, "mode": mode, "result": "success"}
+			decisionsBefore := elasticsearchCounterValue(t, "unify_query_elasticsearch_date_histogram_resolution_total", labels)
 
 			// 三组相同取值分别验证普通时间窗、春季 DST 和秋季 DST。
 			timestamps := []time.Time{time.UnixMilli(0), time.UnixMilli(20), time.UnixMilli(40)}
@@ -157,7 +182,7 @@ func TestDateHistogramIntegration(t *testing.T) {
 						DB: index, Field: "value", TimeField: field,
 						Aggregates: metadata.Aggregates{{Name: Sum, Window: tc.window, TimeZone: zone, TimeZoneOffset: tc.offset}},
 					}
-					prepared, err := instance.PrepareRawQuery(ctx, query, start, end, nil)
+					prepared, err := queryInstance.PrepareRawQuery(ctx, query, start, end, nil)
 					require.NoError(t, err)
 					if version.Major >= 8 {
 						require.NotContains(t, prepared.body, `"interval":`)
@@ -169,9 +194,9 @@ func TestDateHistogramIntegration(t *testing.T) {
 							var result *elastic.SearchResult
 							if path == "series" {
 								factory := newSeriesFormatFactory(ctx, query, prepared.FieldsMap(), start, end, function.Millisecond, 0)
-								result, err = instance.esQuery(ctx, prepared.queryOption, factory)
+								result, err = queryInstance.esQuery(ctx, prepared.queryOption, factory)
 							} else {
-								result, err = instance.executeESQuery(ctx, prepared.queryOption, prepared.fact, prepared.source, prepared.countQuery, prepared.body)
+								result, err = queryInstance.executeESQuery(ctx, prepared.queryOption, prepared.fact, prepared.source, prepared.countQuery, prepared.body)
 							}
 							require.NoError(t, err)
 							histogram, ok := result.Aggregations.DateHistogram(field.Name)
@@ -206,11 +231,80 @@ func TestDateHistogramIntegration(t *testing.T) {
 				})
 			}
 
+			decisions := 0
+			for _, span := range recorder.Ended() {
+				if span.Name() != "elasticsearch-date-histogram" {
+					continue
+				}
+				decisions++
+				for key, expected := range map[string]string{
+					"es-version-source": source, "es-date-histogram-mode": mode, "es-version": observedVersion,
+				} {
+					value, ok := esSpanAttrString(span.Attributes(), key)
+					require.True(t, ok, key)
+					require.Equal(t, expected, value, key)
+				}
+			}
+			require.Equal(t, 32, decisions)
+			require.Equal(t, decisionsBefore+float64(decisions),
+				elasticsearchCounterValue(t, "unify_query_elasticsearch_date_histogram_resolution_total", labels))
+			t.Logf("date histogram decisions=%d source=%s mode=%s observed_version=%s; metric and trace verified", decisions, source, mode, observedVersion)
+
+			if queryInstance != instance {
+				unauthorized, err := NewInstance(ctx, &InstanceOption{
+					Connect: Connect{Address: address, UserName: os.Getenv(prefix + "_QUERY_USERNAME"), Password: os.Getenv(prefix+"_QUERY_PASSWORD") + "-invalid"},
+					Timeout: 10 * time.Second,
+				})
+				require.NoError(t, err)
+				for _, tc := range []struct {
+					name     string
+					instance *Instance
+					indexes  []string
+					status   int
+				}{
+					{name: "认证失败", instance: unauthorized, indexes: []string{index}, status: http.StatusUnauthorized},
+					{name: "索引权限不足", instance: queryInstance, indexes: []string{"uq_permission_denied"}, status: http.StatusForbidden},
+					{name: "空索引目标", instance: queryInstance},
+				} {
+					t.Run(tc.name, func(t *testing.T) {
+						failureSource := "capability"
+						if tc.status == http.StatusUnauthorized {
+							failureSource = "root"
+						}
+						failureLabels := map[string]string{"source": failureSource, "mode": "unknown", "result": "error"}
+						if tc.status == http.StatusForbidden && !supportsExplicitDateHistogramInterval(version) {
+							// ES6 在索引权限校验前报告未知字段；选择旧语法后，实际查询仍须返回 403。
+							failureLabels["mode"], failureLabels["result"] = "legacy", "success"
+						}
+						before := elasticsearchCounterValue(t, "unify_query_elasticsearch_date_histogram_resolution_total", failureLabels)
+						spanCount := len(recorder.Ended())
+						query := &metadata.Query{DB: index, Field: "value", TimeField: metadata.TimeField{Name: "time", Type: Date, Unit: function.Millisecond}, Aggregates: metadata.Aggregates{{Name: Sum, Window: time.Minute}}}
+						start, end := time.Unix(0, 0), time.Unix(60, 0)
+						factory := NewFormatFactory(ctx).WithQuery("value", query.TimeField, start, end, function.Millisecond, 0)
+						_, err := tc.instance.esQuery(ctx, &queryOption{query: query, indexes: tc.indexes, conn: tc.instance.connect, start: start, end: end}, factory)
+						require.Equal(t, before+1, elasticsearchCounterValue(t, "unify_query_elasticsearch_date_histogram_resolution_total", failureLabels))
+						if tc.status == http.StatusUnauthorized {
+							for _, span := range recorder.Ended()[spanCount:] {
+								require.NotEqual(t, "elasticsearch-date-histogram-capability", span.Name())
+							}
+						}
+						if tc.status == 0 {
+							require.ErrorContains(t, err, "without target indexes")
+							return
+						}
+						var responseError *elastic.Error
+						require.ErrorAs(t, err, &responseError)
+						require.Equal(t, tc.status, responseError.Status)
+					})
+				}
+			}
+
 			for _, timeout := range []time.Duration{0, -time.Second} {
 				t.Run(fmt.Sprintf("version_timeout_%s", timeout), func(t *testing.T) {
 					timeoutCtx, timeoutCancel := context.WithTimeout(ctx, timeout)
 					defer timeoutCancel()
-					_, err := instance.serverVersion(timeoutCtx)
+					query := &metadata.Query{Aggregates: metadata.Aggregates{{Name: Sum, Window: time.Minute}}}
+					err := queryInstance.configureDateHistogram(timeoutCtx, query, NewFormatFactory(timeoutCtx), []string{index})
 					require.ErrorIs(t, err, context.DeadlineExceeded)
 				})
 			}

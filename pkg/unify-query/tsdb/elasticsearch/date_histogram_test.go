@@ -12,16 +12,45 @@ package elasticsearch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/blang/semver"
+	elastic "github.com/olivere/elastic/v7"
 	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
+
+func TestUnsupportedExplicitDateHistogramInterval(t *testing.T) {
+	const reason = "[date_histogram] unknown field [fixed_interval], parser not found"
+	for _, tc := range []struct {
+		name   string
+		status int
+		detail *elastic.ErrorDetails
+		want   bool
+	}{
+		{name: "旧版本未知间隔字段", status: http.StatusBadRequest, detail: &elastic.ErrorDetails{Type: "illegal_argument_exception", Reason: reason}, want: true},
+		{name: "ES6 未知间隔字段", status: http.StatusBadRequest, detail: &elastic.ErrorDetails{Type: "x_content_parse_exception", Reason: "[1:67] " + reason}, want: true},
+		{name: "根原因包含未知间隔字段", status: http.StatusBadRequest, detail: &elastic.ErrorDetails{Type: "parsing_exception", RootCause: []*elastic.ErrorDetails{{Type: "illegal_argument_exception", Reason: reason}}}, want: true},
+		{name: "权限错误保持失败", status: http.StatusForbidden, detail: &elastic.ErrorDetails{Type: "illegal_argument_exception", Reason: reason}},
+		{name: "缺少错误详情", status: http.StatusBadRequest},
+		{name: "其他错误类型", status: http.StatusBadRequest, detail: &elastic.ErrorDetails{Type: "security_exception", Reason: reason}},
+		{name: "其他聚合未知字段", status: http.StatusBadRequest, detail: &elastic.ErrorDetails{Type: "illegal_argument_exception", Reason: "[histogram] unknown field [fixed_interval]"}},
+		{name: "其他未知字段", status: http.StatusBadRequest, detail: &elastic.ErrorDetails{Type: "illegal_argument_exception", Reason: "[date_histogram] unknown field [invalid_interval]"}},
+		{name: "间隔值非法", status: http.StatusBadRequest, detail: &elastic.ErrorDetails{Type: "illegal_argument_exception", Reason: "[date_histogram] invalid fixed_interval"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// 只把确定的旧版本语法错误转换为能力结果，其余服务端错误继续返回。
+			err := fmt.Errorf("query failed: %w", &elastic.Error{Status: tc.status, Details: tc.detail})
+			require.Equal(t, tc.want, unsupportedExplicitDateHistogramInterval(err))
+		})
+	}
+}
 
 func TestSupportsExplicitDateHistogramInterval(t *testing.T) {
 	for _, tc := range []struct {
@@ -111,7 +140,7 @@ func TestConfigureDateHistogramWithoutVersionRequest(t *testing.T) {
 			instance, err := NewInstance(ctx, &InstanceOption{Timeout: time.Second})
 			require.NoError(t, err)
 			factory := NewFormatFactory(ctx)
-			require.NoError(t, instance.configureDateHistogram(ctx, &metadata.Query{SourceType: tc.sourceType, Aggregates: tc.aggregates}, factory))
+			require.NoError(t, instance.configureDateHistogram(ctx, &metadata.Query{SourceType: tc.sourceType, Aggregates: tc.aggregates}, factory, nil))
 			require.False(t, factory.explicitDateHistogramInterval)
 		})
 	}

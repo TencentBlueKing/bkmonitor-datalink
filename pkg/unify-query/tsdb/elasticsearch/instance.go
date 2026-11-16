@@ -423,6 +423,9 @@ func buildESQuerySource(ctx context.Context, qb *metadata.Query, fact *FormatFac
 }
 
 func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
+	if err := i.configureDateHistogram(ctx, qo.query, fact, qo.indexes); err != nil {
+		return nil, err
+	}
 	source, countQuery, bodyString, err := buildESQuerySource(ctx, qo.query, fact, nil)
 	if err != nil {
 		return nil, err

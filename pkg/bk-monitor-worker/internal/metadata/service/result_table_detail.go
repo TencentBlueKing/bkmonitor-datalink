@@ -398,6 +398,7 @@ func (s *SpacePusher) composeLogTableIdDetail(
 			storage.ClusterRecordDBSchema.TableID,
 			storage.ClusterRecordDBSchema.ClusterID,
 			storage.ClusterRecordDBSchema.EnableTime,
+			storage.ClusterRecordDBSchemaField("physical_tables"),
 		).
 		BkTenantIDEq(bkTenantId).
 		TableIDIn(sourceTableIDs...).
@@ -432,7 +433,7 @@ func (s *SpacePusher) composeLogTableIdDetail(
 		esSourceType := firstNonEmpty(targetES.SourceType, originES.SourceType)
 		dorisDB := firstNonEmpty(targetDoris.BkbaseTableID, originDoris.BkbaseTableID)
 
-		// ClusterRecord 只记录集群与启用时间，db/source_type 等配置取自 origin 实体表。
+		// db/source_type 保持取自 origin 实体表，物理表只使用历史分段自身的快照。
 		// payload 只输出 enable_time；UQ 用下一分段的 enable_time 推导区间结束点，
 		// 因此这里有意不输出 disable_time。
 		history := make([]map[string]any, 0, len(recordsByTableID[sourceTableID]))
@@ -459,12 +460,16 @@ func (s *SpacePusher) composeLogTableIdDetail(
 					logger.Warnf("compose log history: Doris storage config missing, tenant [%s], table_id [%s], record_id [%d]", bkTenantId, tableID, record.ID)
 					continue
 				}
-				history = append(history, map[string]any{
+				detail := map[string]any{
 					"storage_id": record.ClusterID, "storage_type": models.StorageTypeBkSql,
 					"storage_name": cluster.ClusterName, "cluster_name": cluster.ClusterName,
 					"db": dorisDB, "measurement": models.DorisMeasurement,
 					"enable_time": storageRecordEnableTimestamp(record),
-				})
+				}
+				if physicalTables := parseDorisPhysicalTables(record.TableID, record.PhysicalTables); len(physicalTables) > 0 {
+					detail["physical_tables"] = physicalTables
+				}
+				history = append(history, detail)
 			}
 		}
 
@@ -520,6 +525,16 @@ func (s *SpacePusher) composeLogTableIdDetail(
 				"options": optionsMap[tableID], "storage_cluster_records": history,
 				"data_label": dataLabel,
 				"labels":     labels, "field_alias": fieldAlias,
+			}
+			var physicalTables map[string]string
+			if targetDoris.StorageClusterID == storageID {
+				physicalTables = parseDorisPhysicalTables(targetDoris.TableID, targetDoris.PhysicalTables)
+			}
+			if len(physicalTables) == 0 && originDoris.StorageClusterID == storageID {
+				physicalTables = parseDorisPhysicalTables(originDoris.TableID, originDoris.PhysicalTables)
+			}
+			if len(physicalTables) > 0 {
+				result[tableID]["physical_tables"] = physicalTables
 			}
 		}
 	}
@@ -651,6 +666,7 @@ func loadDorisStorageMap(db *gorm.DB, bkTenantId string, tableIDs []string) (map
 			storage.DorisStorageDBSchema.StorageClusterID,
 			storage.DorisStorageDBSchema.BkbaseTableID,
 			storage.DorisStorageDBSchema.OriginTableId,
+			storage.DorisStorageDBSchemaField("physical_tables"),
 		).
 		BkTenantIDEq(bkTenantId).
 		TableIDIn(tableIDs...).
@@ -661,6 +677,18 @@ func loadDorisStorageMap(db *gorm.DB, bkTenantId string, tableIDs []string) (map
 		result[row.TableID] = row
 	}
 	return result, nil
+}
+
+func parseDorisPhysicalTables(tableID string, value json.RawMessage) map[string]string {
+	if len(value) == 0 {
+		return nil
+	}
+	var tables map[string]string
+	if err := json.Unmarshal(value, &tables); err != nil {
+		logger.Errorf("parseDorisPhysicalTables: unmarshal failed, table_id [%s], err [%s]", tableID, err)
+		return nil
+	}
+	return tables
 }
 
 func loadResultTableOptions(

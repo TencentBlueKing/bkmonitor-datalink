@@ -44,7 +44,7 @@ type apiGwResponse struct {
 }
 
 func (a *apiGwResponse) failed(msg error) {
-	a.c.JSON(metadata.FailureStatus(msg), &apiGwResponse{
+	WriteJSON(a.c.Request.Context(), a.c, metadata.FailureStatus(msg), &apiGwResponse{
 		Result:  false,
 		Data:    nil,
 		Message: msg.Error(),
@@ -52,7 +52,7 @@ func (a *apiGwResponse) failed(msg error) {
 }
 
 func (a *apiGwResponse) success(data any) {
-	a.c.JSON(http.StatusOK, &apiGwResponse{
+	WriteJSON(a.c.Request.Context(), a.c, http.StatusOK, &apiGwResponse{
 		Result:  true,
 		Data:    data,
 		Message: SuccessMessage,
@@ -67,6 +67,9 @@ func HandleProxy(c *gin.Context) {
 	)
 
 	ctx, span := trace.NewSpan(ctx, "handler-proxy")
+	c.Request = c.Request.WithContext(ctx)
+	defer span.End(&err)
+	defer runResponseCleanup(c)
 
 	defer func() {
 		if err != nil {
@@ -77,13 +80,17 @@ func HandleProxy(c *gin.Context) {
 			resp.failed(err)
 		}
 
-		span.End(&err)
+		if writeErr := ResponseWriteError(c); err == nil && writeErr != nil {
+			err = writeErr
+		}
 	}()
 
 	span.Set("request-url", c.Request.URL.String())
 	span.Set("request-header", c.Request.Header)
 	query := &apiGwRequest{}
+	_, decodeSpan := trace.NewSpan(ctx, "proxy-decode-request")
 	err = json.NewDecoder(c.Request.Body).Decode(query)
+	decodeSpan.End(&err)
 	if err != nil {
 		return
 	}
@@ -97,6 +104,10 @@ func HandleProxy(c *gin.Context) {
 	c.Request.Body = io.NopCloser(bytes.NewReader(query.Data))
 	for _, h := range handlers {
 		h(c)
+	}
+	// handler 已按片段写出成功响应（含本外层），写出错误由 ResponseWriteError 带回。
+	if responseStreamed(c) {
+		return
 	}
 	responseError, hasError := c.Get(ContextKeyResponseError)
 	responseData, _ := c.Get(ContextKeyResponseData)

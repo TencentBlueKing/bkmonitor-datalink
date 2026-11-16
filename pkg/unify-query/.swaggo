@@ -1,0 +1,3 @@
+// time.Duration is a JSON integer number of nanoseconds, not an enum of Go constants.
+// Avoid dependency scanning producing nondeterministic min/max/unit constant lists.
+replace time.Duration int64

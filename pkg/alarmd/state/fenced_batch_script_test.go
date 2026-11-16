@@ -52,8 +52,11 @@ func fencedWritesForTest(prefix string, count, size int) []FencedWrite {
 
 // A batch of fenced writes verifies the owner fence once per script, not
 // once per write: the server runs one TIME and the fence's HGETs for the
-// script, and a GET and a PSETEX for each write. The fence used to be most
-// of what a state write cost the server.
+// script, one MGET for the current values and a PSETEX for each write. The
+// fence used to be most of what a state write cost the server, and a GET each
+// half of the rest. A key the MGET finds nothing at - a first write - is read
+// again alone, so the first batch also runs a GET each; the next, over keys
+// that exist, none.
 func TestAFencedBatchVerifiesTheFenceOncePerScript(t *testing.T) {
 	fixture := newRedisBatchFixture(t)
 	ctx := context.Background()
@@ -80,8 +83,53 @@ func TestAFencedBatchVerifiesTheFenceOncePerScript(t *testing.T) {
 		}
 	}
 	t.Logf("%d writes: server commands %v, %.2f per write", writes, calls, float64(total)/float64(writes))
-	if calls["evalsha"] != 1 || calls["time"] != 1 || calls["hget"] > 6 || calls["get"] != writes || calls["psetex"] != writes {
-		t.Fatalf("server commands %v, want one script, one TIME, at most six HGET and one GET and PSETEX per write", calls)
+	if calls["evalsha"] != 1 || calls["time"] != 1 || calls["hget"] > 6 || calls["mget"] != 1 || calls["get"] != writes ||
+		calls["psetex"] != writes {
+		t.Fatalf("server commands %v, want one script, one TIME, at most six HGET, one MGET and, every key new, "+
+			"one GET and PSETEX per write", calls)
+	}
+	again := fencedWritesForTest("once", writes, 64)
+	for index := range again {
+		again[index].ExpectedMissing, again[index].ExpectedDigest = false, ExpectedValueDigest(fencedWritesForTest("once", writes, 64)[index].Value)
+	}
+	if err := fixture.client.ConfigResetStat(ctx).Err(); err != nil {
+		t.Fatal(err)
+	}
+	outcomes, err = fixture.backend.CompareAndSetManyByDigest(ctx, guard, again)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, outcome := range outcomes {
+		if outcome.Err != nil || outcome.Status != FencedWriteApplied {
+			t.Fatalf("rewrite %d: %+v", index, outcome)
+		}
+	}
+	if calls := serverCommandCalls(t, fixture); calls["mget"] != 1 || calls["get"] != 0 || calls["psetex"] != writes {
+		t.Fatalf("rewriting keys that exist ran %v, want one MGET, no GET and a PSETEX per write", calls)
+	}
+}
+
+// A key holding another type is that write's error, as a GET of it was:
+// the MGET reads it as nothing, and the GET it is read again with refuses
+// it. A write expecting the key missing does not overwrite it.
+func TestAFencedWriteOverAKeyOfAnotherTypeIsItsErrorAndOverwritesNothing(t *testing.T) {
+	fixture := newRedisBatchFixture(t)
+	ctx := context.Background()
+	guard := &FenceGuard{Keys: fixture.owners.FenceKeys(frozenRef().Slot.QueryGroup), OwnerID: fixture.fence.OwnerID,
+		OwnerEpoch: fixture.fence.OwnerEpoch, LeaseToken: fixture.fence.LeaseToken}
+	writes := fencedWritesForTest("typed", 3, 16)
+	if err := fixture.client.HSet(ctx, writes[1].Key, "field", "value").Err(); err != nil {
+		t.Fatal(err)
+	}
+	outcomes, err := fixture.backend.CompareAndSetManyByDigest(ctx, guard, writes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcomes[0].Status != FencedWriteApplied || outcomes[2].Status != FencedWriteApplied || outcomes[1].Err == nil {
+		t.Fatalf("outcomes %+v, want the key of another type refused alone", outcomes)
+	}
+	if kind := fixture.client.Type(ctx, writes[1].Key).Val(); kind != "hash" {
+		t.Fatalf("the key of another type is now a %s, want it left a hash", kind)
 	}
 }
 
@@ -265,19 +313,10 @@ func TestMeasureFencedBatchScriptTime(t *testing.T) {
 	}
 }
 
-// scriptlessPipeliner stands in for a server that dropped the script between
-// the pipeline caching it and the calls using it: the caching command is
-// replaced by one that caches nothing, keeping its place in the replies.
-type scriptlessPipeliner struct{ redis.Pipeliner }
-
-func (pipe scriptlessPipeliner) ScriptLoad(ctx context.Context, _ string) *redis.StringCmd {
-	return pipe.Pipeliner.Echo(ctx, "not cached")
-}
-
-type scriptlessClient struct{ *countingRedisClient }
-
-func (client scriptlessClient) Pipelined(ctx context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error) {
-	return client.countingRedisClient.Pipelined(ctx, func(pipe redis.Pipeliner) error { return fn(scriptlessPipeliner{pipe}) })
+// scriptLoadCalls is SCRIPT LOAD in INFO commandstats, which Redis 7 names by its
+// subcommand and Redis 5 does not.
+func scriptLoadCalls(calls map[string]int) int {
+	return calls["script|load"] + calls["script"]
 }
 
 // A script the server does not hold is answered NOSCRIPT and never ran, so
@@ -289,7 +328,7 @@ func TestAFencedBatchTheServerHadNoScriptForIsSentAgainWithItsText(t *testing.T)
 	if err := fixture.client.ScriptFlush(ctx).Err(); err != nil {
 		t.Fatal(err)
 	}
-	backend := &RedisBackend{address: fixture.address, client: scriptlessClient{fixture.client}}
+	backend := fixture.backend
 	guard := &FenceGuard{Keys: fixture.owners.FenceKeys(frozenRef().Slot.QueryGroup), OwnerID: fixture.fence.OwnerID,
 		OwnerEpoch: fixture.fence.OwnerEpoch, LeaseToken: fixture.fence.LeaseToken}
 	writes := fencedWritesForTest("noscript", fencedScriptItems+3, 16)
@@ -306,7 +345,110 @@ func TestAFencedBatchTheServerHadNoScriptForIsSentAgainWithItsText(t *testing.T)
 		}
 	}
 	calls := serverCommandCalls(t, fixture)
-	if calls["eval"] != 2 || calls["psetex"] != len(writes) {
-		t.Fatalf("server commands %v, want both scripts sent again as EVAL and every write made once", calls)
+	if calls["evalsha"] != 2 || calls["eval"] != 2 || calls["psetex"] != len(writes) {
+		t.Fatalf("server commands %v, want both scripts answered NOSCRIPT, sent again as EVAL and every write made once", calls)
+	}
+	if loads := scriptLoadCalls(calls); loads != 0 {
+		t.Fatalf("server commands %v, want no SCRIPT LOAD: the EVAL leaves the script on the server", calls)
+	}
+}
+
+// A server that holds the script is sent none of its text: only the digest, once
+// per script, with no SCRIPT LOAD on the way. The text was on the wire for every
+// batch when a batch began by loading it, some 8 MB a minute on a real deployment.
+func TestAFencedBatchSendsNoScriptTextToAServerThatHoldsIt(t *testing.T) {
+	fixture := newRedisBatchFixture(t)
+	ctx := context.Background()
+	if err := fixture.client.ScriptLoad(ctx, fencedBatchWriteScript).Err(); err != nil {
+		t.Fatal(err)
+	}
+	guard := &FenceGuard{Keys: fixture.owners.FenceKeys(frozenRef().Slot.QueryGroup), OwnerID: fixture.fence.OwnerID,
+		OwnerEpoch: fixture.fence.OwnerEpoch, LeaseToken: fixture.fence.LeaseToken}
+	writes := fencedWritesForTest("held", fencedScriptItems+3, 16)
+	if err := fixture.client.ConfigResetStat(ctx).Err(); err != nil {
+		t.Fatal(err)
+	}
+	outcomes, err := fixture.backend.CompareAndSetManyByDigest(ctx, guard, writes)
+	if err != nil || len(outcomes) != len(writes) {
+		t.Fatalf("CompareAndSetManyByDigest() = (%d outcomes, %v)", len(outcomes), err)
+	}
+	for index, outcome := range outcomes {
+		if outcome.Err != nil || outcome.Status != FencedWriteApplied {
+			t.Fatalf("write %d: %+v", index, outcome)
+		}
+	}
+	calls := serverCommandCalls(t, fixture)
+	if calls["evalsha"] != 2 || calls["eval"] != 0 || scriptLoadCalls(calls) != 0 || calls["psetex"] != len(writes) {
+		t.Fatalf("server commands %v, want two EVALSHA, no script text, and every write made once", calls)
+	}
+}
+
+// A Slot's renewals address their script by its SHA-1: a server that holds
+// it is sent no text, and one that does not answers NOSCRIPT for every key,
+// each sent again once with the text and renewed once.
+func TestRenewalsAddressTheirScriptByDigestAndResendItsTextOnlyToAServerWithoutIt(t *testing.T) {
+	fixture := newRedisBatchFixture(t)
+	ctx := context.Background()
+	if err := fixture.client.ScriptFlush(ctx).Err(); err != nil {
+		t.Fatal(err)
+	}
+	keys := []string{"renew:0", "renew:1", "renew:2"}
+	for _, key := range keys {
+		if err := fixture.client.Set(ctx, key, "v", time.Second).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, held := range []bool{false, true} {
+		if err := fixture.client.ConfigResetStat(ctx).Err(); err != nil {
+			t.Fatal(err)
+		}
+		outcomes, err := fixture.backend.RenewManyIfBelow(ctx, keys, time.Hour, 30*time.Minute)
+		if err != nil || len(outcomes) != len(keys) {
+			t.Fatalf("RenewManyIfBelow() = (%v, %v)", outcomes, err)
+		}
+		want := RenewalRenewed
+		if held {
+			want = RenewalFresh // renewed by the first pass
+		}
+		for index, outcome := range outcomes {
+			if outcome != want {
+				t.Fatalf("held %t: key %d %s, want %s", held, index, outcome, want)
+			}
+		}
+		calls := serverCommandCalls(t, fixture)
+		wantEval := len(keys)
+		if held {
+			wantEval = 0
+		}
+		if calls["evalsha"] != len(keys) || calls["eval"] != wantEval {
+			t.Fatalf("held %t: server commands %v, want an EVALSHA a key and %d EVAL", held, calls, wantEval)
+		}
+	}
+}
+
+// One call may carry a key twice (CompareAndSetManyByDigest's contract): the
+// second write is compared with what the first wrote, as when each write was
+// a script of its own, not with the value the call's one read found. Proved
+// against the first write's value, it applies; against the value before the
+// call, it is a conflict naming the first write's value.
+func TestAKeyTwiceInOneFencedBatchIsComparedWithWhatTheFirstWrote(t *testing.T) {
+	fixture := newRedisBatchFixture(t)
+	ctx := context.Background()
+	guard := &FenceGuard{Keys: fixture.owners.FenceKeys(frozenRef().Slot.QueryGroup), OwnerID: fixture.fence.OwnerID,
+		OwnerEpoch: fixture.fence.OwnerEpoch, LeaseToken: fixture.fence.LeaseToken}
+	if err := fixture.client.Set(ctx, "twice", "v1", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	outcomes, err := fixture.backend.CompareAndSetManyByDigest(ctx, guard, []FencedWrite{
+		{Key: "twice", ExpectedDigest: ExpectedValueDigest([]byte("v1")), Value: []byte("v2"), TTL: time.Minute},
+		{Key: "twice", ExpectedDigest: ExpectedValueDigest([]byte("v2")), Value: []byte("v3"), TTL: time.Minute},
+		{Key: "twice", ExpectedDigest: ExpectedValueDigest([]byte("v1")), Value: []byte("v4"), TTL: time.Minute},
+	})
+	if err != nil || len(outcomes) != 3 || outcomes[0].Status != FencedWriteApplied || outcomes[1].Status != FencedWriteApplied ||
+		outcomes[2].Status != FencedWriteConflict || string(outcomes[2].Current) != "v3" {
+		t.Fatalf("outcomes = (%+v, %v), want the first two applied and the third a conflict with v3", outcomes, err)
+	}
+	if got := fixture.client.Get(ctx, "twice").Val(); got != "v3" {
+		t.Fatalf("the key holds %q, want v3", got)
 	}
 }

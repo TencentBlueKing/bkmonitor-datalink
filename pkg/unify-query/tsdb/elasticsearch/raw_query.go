@@ -48,15 +48,16 @@ func (p *PreparedFieldMetadata) FieldsMap() metadata.FieldsMap {
 // PreparedRawQuery owns all mutable query and formatter state for one logical
 // result-table member. It must not be shared by multiple terminal schedulers.
 type PreparedRawQuery struct {
-	query         *metadata.Query
-	queryOption   *queryOption
-	fieldMetadata *PreparedFieldMetadata
-	fact          *FormatFactory
-	source        *elastic.SearchSource
-	countQuery    elastic.Query
-	body          string
-	connectionKey RawBatchConnectionKey
-	claimed       atomic.Bool
+	query               *metadata.Query
+	queryOption         *queryOption
+	fieldMetadata       *PreparedFieldMetadata
+	fact                *FormatFactory
+	source              *elastic.SearchSource
+	countQuery          elastic.Query
+	body                string
+	connectionKey       RawBatchConnectionKey
+	claimed             atomic.Bool
+	allowPartialResults bool
 }
 
 // FieldsMap returns a deep copy so highlight collection cannot mutate the
@@ -168,6 +169,9 @@ func (i *Instance) PrepareRawQuery(
 		conn:            i.connect,
 	}
 	fact := newRawFormatFactory(ctx, rawQuery, qo, fieldMetadata.fieldMap)
+	if err := i.configureDateHistogram(ctx, rawQuery, fact, qo.indexes); err != nil {
+		return nil, err
+	}
 	source, countQuery, _, err := buildESQuerySource(ctx, rawQuery, fact, nil)
 	if err != nil {
 		return nil, err
@@ -181,14 +185,15 @@ func (i *Instance) PrepareRawQuery(
 	}
 
 	return &PreparedRawQuery{
-		query:         rawQuery,
-		queryOption:   qo,
-		fieldMetadata: fieldMetadata,
-		fact:          fact,
-		source:        source,
-		countQuery:    countQuery,
-		body:          body,
-		connectionKey: i.RawBatchConnectionKey(ctx),
+		query:               rawQuery,
+		queryOption:         qo,
+		fieldMetadata:       fieldMetadata,
+		fact:                fact,
+		source:              source,
+		countQuery:          countQuery,
+		body:                body,
+		connectionKey:       i.RawBatchConnectionKey(ctx),
+		allowPartialResults: partialShardResults(ctx) != nil,
 	}, nil
 }
 

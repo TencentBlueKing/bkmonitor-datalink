@@ -42,7 +42,7 @@ func (r *response) failed(ctx context.Context, err error) {
 		return
 	}
 
-	r.c.JSON(metadata.FailureStatus(err), ErrResponse{
+	proxy.WriteJSON(ctx, r.c, metadata.FailureStatus(err), ErrResponse{
 		Err: err.Error(),
 	})
 }
@@ -56,7 +56,18 @@ func (r *response) success(ctx context.Context, data any) {
 		r.c.Set(proxy.ContextKeyResponseData, data)
 		return
 	}
-	r.c.JSON(http.StatusOK, data)
+	proxy.WriteJSON(ctx, r.c, http.StatusOK, data)
+}
+
+// streamed 记录 handler 已逐项写出的响应；批次中途的请求级失败按失败计数。
+func (r *response) streamed(ctx context.Context, err error) {
+	user := metadata.GetUser(ctx)
+	status := metric.StatusSuccess
+	if err != nil {
+		log.Errorf(ctx, "%s", err.Error())
+		status = metric.StatusFailed
+	}
+	metric.APIRequestInc(ctx, r.c.Request.URL.Path, status, user.SpaceUID, user.Source)
 }
 
 func (r *response) isConfigUnifyRespProcess(c *gin.Context) bool {

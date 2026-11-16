@@ -100,6 +100,10 @@ type SlotSkipShareFacts struct {
 	RequestedBytes uint64
 	LimitBytes     uint64
 	Refusals       uint32
+	// Reason is the refusal's own code when it was not the share's -
+	// INPUT_SLICE_VALUE_CONCENTRATED or INPUT_SLICE_QUERY_TOO_LONG - and
+	// Detail why; both empty for the share's.
+	Reason, Detail string
 }
 
 // SlotSkippedFacts is one Slot, or one range of them, finalised as skipped.
@@ -112,6 +116,11 @@ type SlotSkippedFacts struct {
 	Cause     string
 	GapGuard  string
 	GapPlans  int
+	// InFlightSlot is the evaluation time of the Slot in flight that a
+	// cursor skip threw away with the span it skipped: a Slot that ended,
+	// named here because it has no slot_completed line of its own. Zero when
+	// there was none.
+	InFlightSlot int64
 	// GapStrategies is the first few due Plans' strategy ids.
 	GapStrategies []string
 	Replay        *SlotSkipReplayFacts
@@ -208,6 +217,9 @@ func appendSlotSkippedAttributes(attributes []slog.Attr, facts *SlotSkippedFacts
 		slog.Int("skip_gap_plans", facts.GapPlans),
 		slog.Any("skip_gap_strategies", facts.GapStrategies),
 	)
+	if facts.InFlightSlot != 0 {
+		attributes = append(attributes, slog.Int64("in_flight_slot", facts.InFlightSlot))
+	}
 	if busy := facts.Lookback; busy != nil {
 		attributes = append(attributes,
 			slog.Bool("held_by_lookback", busy.Held()),
@@ -240,6 +252,10 @@ func appendSlotSkippedAttributes(attributes []slog.Attr, facts *SlotSkippedFacts
 			slog.Uint64("share_limit_bytes", share.LimitBytes),
 			slog.Uint64("share_refusals", uint64(share.Refusals)),
 		)
+		if share.Reason != "" {
+			attributes = append(attributes, slog.String("share_refusal_reason", share.Reason),
+				slog.String("share_refusal_detail", share.Detail))
+		}
 	}
 	return attributes
 }

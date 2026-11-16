@@ -547,6 +547,17 @@ func (tap *lookbackDecisionTap) Observe(ctx context.Context, observation observa
 		!engine.KeepsDecisions(execution.QueryGroupIdentity(trace.QueryGroupKey)) {
 		return
 	}
+	if report, decided := slotDecisionReportOf(observation, trace); decided {
+		engine.NoteSlotDecision(report)
+	}
+}
+
+// slotDecisionReportOf is what one line says of its Slot's decision: a
+// completed Slot's events and mutations, or an evaluation's Level outcomes,
+// summed by outcome - over a line merged from routine evaluations
+// (observability.MergeRoutineEvaluation) what the lines summed, which
+// NoteSlotDecision adds up.
+func slotDecisionReportOf(observation observability.Observation, trace observability.TraceFields) (lookback.SlotDecisionReport, bool) {
 	report := lookback.SlotDecisionReport{QueryGroup: execution.QueryGroupIdentity(trace.QueryGroupKey),
 		Slot: execution.EvaluationTime(trace.EvaluationTime)}
 	switch {
@@ -562,7 +573,7 @@ func (tap *lookbackDecisionTap) Observe(ctx context.Context, observation observa
 			report.Levels[level.Outcome] += level.Count
 		}
 	default:
-		return
+		return report, false
 	}
-	engine.NoteSlotDecision(report)
+	return report, true
 }

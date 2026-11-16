@@ -12,6 +12,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisscript"
 )
 
 // MaxControlHashWrite bounds the fields one FencedHashUpdate sets and
@@ -85,7 +86,7 @@ func (store *RedisStore) ReadControlHash(ctx context.Context, queryGroup executi
 	return fields, err
 }
 
-var fencedHashScript = redis.NewScript(FenceLua + `
+var fencedHashScript = redisscript.New("ownership_fenced_hash", FenceLua+`
 local refusal = fence_refusal(KEYS[1], KEYS[2], ARGV[1], ARGV[2], ARGV[3], ARGV[4], '', redis_now_ms())
 if refusal then return 'STALE_OWNER' end
 local deletes = tonumber(ARGV[6])

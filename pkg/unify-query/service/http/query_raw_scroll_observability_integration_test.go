@@ -39,6 +39,7 @@ import (
 // BKMONITOR_TEST_ES_URL=http://127.0.0.1:19367 BKMONITOR_TEST_REDIS_ADDR=127.0.0.1:19368 go test ./service/http -run '^TestRawScrollObservabilityIntegration$' -count=1
 func TestRawScrollObservabilityIntegration(t *testing.T) {
 	esURL, redisAddr := os.Getenv("BKMONITOR_TEST_ES_URL"), os.Getenv("BKMONITOR_TEST_REDIS_ADDR")
+	esUsername, esPassword := os.Getenv("BKMONITOR_TEST_ES_USERNAME"), os.Getenv("BKMONITOR_TEST_ES_PASSWORD")
 	if esURL == "" || redisAddr == "" {
 		t.Skip("设置 BKMONITOR_TEST_ES_URL 和 BKMONITOR_TEST_REDIS_ADDR 后独立运行真实下载集成测试")
 	}
@@ -54,7 +55,7 @@ func TestRawScrollObservabilityIntegration(t *testing.T) {
 	t.Cleanup(redisUtil.Close)
 	require.NoError(t, redisUtil.Client().Ping(ctx).Err())
 
-	client, err := elastic.NewClient(elastic.SetURL(esURL), elastic.SetSniff(false), elastic.SetHealthcheck(false))
+	client, err := elastic.NewClient(elastic.SetURL(esURL), elastic.SetBasicAuth(esUsername, esPassword), elastic.SetSniff(false), elastic.SetHealthcheck(false))
 	require.NoError(t, err)
 	t.Cleanup(client.Stop)
 	_, err = client.CreateIndex(prefix).BodyJson(map[string]any{
@@ -80,7 +81,7 @@ func TestRawScrollObservabilityIntegration(t *testing.T) {
 	indexed, err := bulk.Do(ctx)
 	require.NoError(t, err)
 	require.False(t, indexed.Errors)
-	tsdb.SetStorage(prefix, &tsdb.Storage{Type: metadata.ElasticsearchStorageType, Address: esURL})
+	tsdb.SetStorage(prefix, &tsdb.Storage{Type: metadata.ElasticsearchStorageType, Address: esURL, Username: esUsername, Password: esPassword})
 	oldTimeout, oldMaxSize, oldRouting := tsdbService.EsTimeout, tsdbService.EsMaxSize, QueryMaxRouting
 	tsdbService.EsTimeout, tsdbService.EsMaxSize, QueryMaxRouting = 10*time.Second, 100, 2
 	t.Cleanup(func() {

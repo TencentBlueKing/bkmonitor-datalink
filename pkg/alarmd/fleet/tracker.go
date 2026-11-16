@@ -56,8 +56,11 @@ const (
 	// not take an absence memory for. Not a failure of the round -- it judged
 	// and its results went out -- and in no column; listed under its own line
 	// because what it loses is silent: the memory stays at the last version
-	// that was written, a group that goes absent after that is never recorded
-	// as first absent, and its no-data alert never fires.
+	// that was written (none, for a first write), and a group that goes
+	// absent after that is never recorded as first absent: under a HISTORY
+	// roster its no-data alert never fires; under a static roster it fires,
+	// its absence always one period long, never stopped by the horizon, and
+	// a group the roster drops is never told recovered.
 	KindNoDataMemoryRefused = "NO_DATA_MEMORY_REFUSED"
 	// KindReadBeforeComplete is an object the late-data lookback found read
 	// before its data was complete, in two of its latest three classified
@@ -481,6 +484,12 @@ type queryGroupState struct {
 	// (RESOURCE_SHARE_EXCEEDED), from their slot_skipped lines; cleared when
 	// a round completes any other way.
 	shareRefusal *ShareRefusalFacts
+	// shareRefusedLatest says the object's latest attempt was refused at its
+	// share (QG_BUDGET_SHARE_EXCEEDED), whether the Slot is still retried or
+	// was given up; a completed attempt clears it. The share-approaching line
+	// leaves such an object to its own row once that row is listed
+	// (RetainedShare).
+	shareRefusedLatest bool
 	// upkeep is the last this process saw of the store keeping this object's
 	// memories alive, by Plan: the last read's stored shape and the last
 	// renewal that reached the store. Positive evidence, kept apart from the
@@ -1302,11 +1311,13 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 	switch {
 	case string(observation.ReasonCode) == contract.ReasonQGBudgetShareExceeded:
 		// A refused attempt, which the Slot retries: the reading stays as it
-		// is and so does the row. The Slot given up at the share replaces it
-		// with the refusal's bytes (noteShareRefusedUsage); an object refused
-		// on every Slot completes none, and dropping it from the row on each
-		// attempt hid exactly the object the row is for.
+		// is. The Slot given up at the share replaces it with the refusal's
+		// bytes (noteShareRefusedUsage).
+		if observation.Stage == observability.StageSlotCompleted {
+			state.shareRefusedLatest = true
+		}
 	case observation.Stage == observability.StageSlotCompleted && observation.Err == nil:
+		state.shareRefusedLatest = false
 		state.noteShareUsage(observation.SlotBudgetUsage, trace.EvaluationTime, at)
 	}
 	if progress := observation.GapProgress; progress != nil {
@@ -2097,7 +2108,7 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 				Guarded: facts.Guarded, HeldFullRounds: state.heldFullRounds,
 				Fresh: facts.Fresh, ShortFresh: facts.ShortFresh, FreshRounds: state.freshRounds,
 				Unusable: facts.Unusable, UnusableReason: facts.UnusableReason,
-				Resumed: facts.Resumed, Constrained: facts.Constrained,
+				Resumed: facts.Resumed, Constrained: facts.Constrained, Superseded: facts.Superseded,
 				ConstrainedRounds: state.constrainedRounds, ResumedRounds: state.resumedRounds,
 				Abnormal: facts.Abnormal, AbnormalOnIncomplete: facts.AbnormalOnIncomplete,
 				NoProgressRounds: state.noProgressRounds, UnchangedRounds: state.unchangedRounds,
@@ -2891,6 +2902,36 @@ func (tracker *Tracker) Forget(owned map[string]struct{}) {
 			delete(tracker.rejections, queryGroup)
 		}
 	}
+}
+
+// SeriesMatchedIn is the series the latest rounds of the Query Groups in held
+// bound, summed over their Plans' series_matched: how many series those
+// Query Groups evaluate, read off the rounds this tracker already keeps.
+//
+// A Plan's count stays with the Query Group it was last seen on until that
+// Query Group leaves this replica: the tracker is not told the Query Group's
+// current Plans. A Plan edited onto another Query Group, or deleted, would be
+// counted on for as long as the Query Group stays -- twice, when the one it
+// moved to is held here too -- so only a Plan seen within the last within is
+// counted. within is the longest interval a Plan is evaluated at: a Plan
+// still on the Query Group has had a round in it.
+func (tracker *Tracker) SeriesMatchedIn(held map[string]struct{}, within time.Duration) uint64 {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	since := tracker.now().Add(-within)
+	total := uint64(0)
+	for queryGroup := range held {
+		state := tracker.groups[queryGroup]
+		if state == nil {
+			continue
+		}
+		for _, plan := range state.planSeries {
+			if plan.Matched > 0 && !plan.LastSeenAt.Before(since) {
+				total += uint64(plan.Matched)
+			}
+		}
+	}
+	return total
 }
 
 // HasConclusion reports whether the object already has conclusive evidence.

@@ -11,6 +11,7 @@ package influxdb
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
@@ -68,6 +69,17 @@ func (p *redisStorageProvider) GetInfluxdbStorageInfo(ctx context.Context) (map[
 // WatchStorageInfo 监听 Redis 存储配置变更
 func (p *redisStorageProvider) WatchStorageInfo(ctx context.Context) (<-chan any, error) {
 	return redis.WatchStorageInfo(ctx)
+}
+
+// consulStorageAddressError 在 Storage 来源是 Consul 却没有创建 Consul client 时返回带原因的错误。
+func consulStorageAddressError() error {
+	if StorageSource == "redis" {
+		return nil
+	}
+	if addressErr := consul.AddressUnavailable(); addressErr != nil {
+		return fmt.Errorf("storage.source is consul: %w", addressErr)
+	}
+	return nil
 }
 
 // getStorageProvider 根据配置获取存储提供者实例

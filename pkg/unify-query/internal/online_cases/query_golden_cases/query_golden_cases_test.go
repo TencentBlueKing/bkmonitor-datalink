@@ -47,6 +47,7 @@ var (
 	sensitiveIPv4Pattern          = regexp.MustCompile(`\b(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b`)
 	sensitiveDomainPattern        = regexp.MustCompile(`(?i)\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|cn|net|org|io|internal|local|invalid)\b`)
 	queryGoldenFingerprintPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	queryGoldenStatusCodePattern  = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 )
 
 type queryGoldenCase struct {
@@ -68,6 +69,8 @@ type queryGoldenCase struct {
 		Dependencies string `yaml:"dependencies"`
 		ExpectOutput string `yaml:"expect_outputs"`
 	} `yaml:"files"`
+	// ExpectStatusCode 是成功响应中预期的 status.code，例如部分引用没有路由时的路由提示。
+	ExpectStatusCode string `yaml:"expect_status_code"`
 }
 
 func TestQueryGoldenCasesDataset(t *testing.T) {
@@ -286,6 +289,9 @@ func assertQueryGoldenCaseMetadata(t *testing.T, seen, seenShapes map[string]str
 	}
 	if !queryGoldenFingerprintPattern.MatchString(tc.Source.Fingerprint) {
 		t.Fatalf("%s: source.fingerprint should be sha256:<64 lowercase hex chars>", tc.ID)
+	}
+	if tc.ExpectStatusCode != "" && !queryGoldenStatusCodePattern.MatchString(tc.ExpectStatusCode) {
+		t.Fatalf("%s: expect_status_code = %q, want an upper-case status code", tc.ID, tc.ExpectStatusCode)
 	}
 	if tc.Files.Request == "" || tc.Files.Route == "" || tc.Files.Dependencies == "" || tc.Files.ExpectOutput == "" {
 		t.Fatalf("%s: request, route, dependencies and expect_outputs files are required", tc.ID)

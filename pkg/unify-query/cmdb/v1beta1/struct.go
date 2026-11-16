@@ -18,7 +18,11 @@ type ResourceConf struct {
 }
 
 type RelationConf struct {
-	Resources []cmdb.Resource `json:"resources"`
+	Resources     []cmdb.Resource `json:"resources"`
+	RelationType  string          `json:"relation_type,omitempty"`
+	MetricName    string          `json:"metric_name,omitempty"`
+	Category      string          `json:"category,omitempty"`
+	IsDirectional bool            `json:"is_directional,omitempty"`
 }
 
 type Config struct {

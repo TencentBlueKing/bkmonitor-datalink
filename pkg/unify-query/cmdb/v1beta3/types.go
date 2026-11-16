@@ -51,49 +51,8 @@ const (
 	ResourceTypeEnvironment ResourceType = "environment"
 )
 
+// RelationType 是关系定义名（不含 namespace 前缀），取值以 schema provider 中的定义为准。
 type RelationType string
-
-const (
-	RelationNodeWithSystem           RelationType = "node_with_system"
-	RelationNodeWithPod              RelationType = "node_with_pod"
-	RelationJobWithPod               RelationType = "job_with_pod"
-	RelationPodWithReplicaSet        RelationType = "pod_with_replicaset"
-	RelationPodWithStatefulSet       RelationType = "pod_with_statefulset"
-	RelationDaemonSetWithPod         RelationType = "daemonset_with_pod"
-	RelationDeploymentWithReplicaSet RelationType = "deployment_with_replicaset"
-	RelationPodWithService           RelationType = "pod_with_service"
-	RelationIngressWithService       RelationType = "ingress_with_service"
-
-	RelationK8sAddressWithService RelationType = "k8s_address_with_service"
-	RelationDomainWithService     RelationType = "domain_with_service"
-
-	RelationAPMServiceInstanceWithPod        RelationType = "apm_service_instance_with_pod"
-	RelationAPMServiceInstanceWithSystem     RelationType = "apm_service_instance_with_system"
-	RelationAPMServiceWithAPMServiceInstance RelationType = "apm_service_with_apm_service_instance"
-
-	RelationContainerWithPod RelationType = "container_with_pod"
-
-	RelationDataSourceWithPod         RelationType = "datasource_with_pod"
-	RelationDataSourceWithNode        RelationType = "datasource_with_node"
-	RelationBKLogConfigWithDataSource RelationType = "bklogconfig_with_datasource"
-
-	RelationBizWithSet     RelationType = "biz_with_set"
-	RelationModuleWithSet  RelationType = "module_with_set"
-	RelationHostWithModule RelationType = "host_with_module"
-	RelationHostWithSystem RelationType = "host_with_system"
-
-	RelationAppVersionWithContainer  RelationType = "app_version_with_container"
-	RelationAppVersionWithSystem     RelationType = "app_version_with_system"
-	RelationContainerWithEnvironment RelationType = "container_with_environment"
-	RelationEnvironmentWithSystem    RelationType = "environment_with_system"
-	RelationAppVersionWithGitCommit  RelationType = "app_version_with_git_commit"
-
-	RelationPodToPod         RelationType = "pod_to_pod"
-	RelationPodToSystem      RelationType = "pod_to_system"
-	RelationSystemToPod      RelationType = "system_to_pod"
-	RelationSystemToSystem   RelationType = "system_to_system"
-	RelationServiceToService RelationType = "service_to_service"
-)
 
 type RelationCategory string
 
@@ -109,64 +68,6 @@ const (
 	DirectionInbound  TraversalDirection = "inbound"
 	DirectionBoth     TraversalDirection = "both"
 )
-
-const (
-	FieldPeriodStart = "period_start"
-	FieldPeriodEnd   = "period_end"
-	FieldReferenceID = "reference_id"
-)
-
-const (
-	ResponseFieldResult = "result"
-	ResponseFieldRoot   = "root"
-	ResponseFieldTarget = "target"
-
-	ResponseFieldHopPrefix = "hop"
-
-	ResponseFieldEntityID   = "entity_id"
-	ResponseFieldEntityType = "entity_type"
-	ResponseFieldEntityData = "entity_data"
-	ResponseFieldLiveness   = "liveness"
-
-	ResponseFieldRelationID       = "relation_id"
-	ResponseFieldRelationType     = "relation_type"
-	ResponseFieldRelationCategory = "relation_category"
-	ResponseFieldRelationLiveness = "relation_liveness"
-	ResponseFieldDirection        = "direction"
-)
-
-// LivenessRecord 资源存活记录
-type LivenessRecord struct {
-	ID          string `json:"id"`
-	ResourceID  string `json:"resource_id"`
-	PeriodStart int64  `json:"period_start"`
-	PeriodEnd   int64  `json:"period_end"`
-	IsActive    bool   `json:"is_active"`
-	CreatedAt   int64  `json:"created_at"`
-	UpdatedAt   int64  `json:"updated_at"`
-}
-
-// VisiblePeriod 可见时间段
-type VisiblePeriod struct {
-	Start int64 `json:"start"`
-	End   int64 `json:"end"`
-}
-
-// Overlap 计算两个 VisiblePeriod 的交集
-func (p *VisiblePeriod) Overlap(other *VisiblePeriod) *VisiblePeriod {
-	start := p.Start
-	if other.Start > start {
-		start = other.Start
-	}
-	end := p.End
-	if other.End < end {
-		end = other.End
-	}
-	if start > end {
-		return nil
-	}
-	return &VisiblePeriod{Start: start, End: end}
-}
 
 // GenerateResourceID 生成资源ID，格式: {resource_type}:⟨key1=value1,key2=value2,...⟩
 func GenerateResourceID(resourceType ResourceType, labels map[string]string) string {
@@ -188,14 +89,22 @@ func GenerateResourceID(resourceType ResourceType, labels map[string]string) str
 	return fmt.Sprintf("%s:⟨%s⟩", resourceType, strings.Join(pairs, ","))
 }
 
-func GetLivenessRecordTableName(resourceType ResourceType) string {
-	return string(resourceType) + "_liveness_record"
-}
+// generateResourceIdentityKey 按 schema 声明的主键字段生成资源身份。
+// 资源类型使用普通前缀，字段名和值使用长度前缀，避免值中包含分隔符时产生
+// 歧义；主键字段缺失时返回空字符串，未声明主键时回退到 GenerateResourceID。
+func generateResourceIdentityKey(resourceType ResourceType, fields []string, labels map[string]string) string {
+	if len(fields) == 0 {
+		return GenerateResourceID(resourceType, labels)
+	}
 
-func GetRelationLivenessRecordTableName(relationType RelationType) string {
-	return string(relationType) + "_liveness_record"
-}
-
-func GetLivenessIDField(resourceType ResourceType) string {
-	return FieldReferenceID
+	var builder strings.Builder
+	builder.WriteString(string(resourceType))
+	for _, field := range fields {
+		value, ok := labels[field]
+		if !ok {
+			return ""
+		}
+		fmt.Fprintf(&builder, ":%d:%s=%d:%s", len(field), field, len(value), value)
+	}
+	return builder.String()
 }

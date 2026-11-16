@@ -68,6 +68,9 @@ func (r *Recorder) BindRetainedReservation(source RetainedReservationSource) err
 	if err := r.registry.Register(newRetainedReservationCollector(source)); err != nil {
 		return err
 	}
+	if r.heap != nil {
+		r.heap.bindReserved(source)
+	}
 	r.retainedBound = true
 	return nil
 }

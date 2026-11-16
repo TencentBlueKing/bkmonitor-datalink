@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -272,11 +273,16 @@ func TestASupplementEvaluatesOnlyTheSeriesItWasGiven(t *testing.T) {
 // series written at a version reads back found at that version.
 type rememberingState struct {
 	*recordingPorts
+	// mu guards applied: the next batch's State is read beside the window
+	// before it being written.
+	mu      sync.Mutex
 	applied map[execution.StateKeyIdentity]execution.StateMutation
 }
 
 func (store *rememberingState) LoadRuntime(ctx context.Context, request execution.StatePreflightRequest) (execution.StatePreflightResult, error) {
 	result, err := store.recordingPorts.LoadRuntime(ctx, request)
+	store.mu.Lock()
+	defer store.mu.Unlock()
 	for index, item := range request.Items {
 		mutation, written := store.applied[item.Identity]
 		if !written {
@@ -297,9 +303,11 @@ func (store *rememberingState) LoadRuntime(ctx context.Context, request executio
 func (store *rememberingState) ApplyRuntime(ctx context.Context, request execution.StateApplyRequest) (execution.StateApplyResult, error) {
 	result, err := store.recordingPorts.ApplyRuntime(ctx, request)
 	if err == nil {
+		store.mu.Lock()
 		for _, item := range request.Items {
 			store.applied[item.Identity] = item
 		}
+		store.mu.Unlock()
 	}
 	return result, err
 }

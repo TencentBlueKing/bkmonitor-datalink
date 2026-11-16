@@ -43,9 +43,27 @@ type NoDataHashBackend interface {
 	// well would double what a Plan transfers every round, on exactly the
 	// objects whose size this representation exists to bring down.
 	ReadHashField(context.Context, string, string) ([]byte, error)
+	// ScanHashPage reads one page of a hash, HSCAN key cursor COUNT count:
+	// its fields, which may repeat one an earlier page returned, and the next
+	// cursor, zero at the end. A missing key is an empty last page.
+	ScanHashPage(ctx context.Context, key string, cursor uint64, count int64) ([]HashField, uint64, error)
+	// ReadHashFields reads some fields of one hash, HMGET, in the order asked;
+	// a missing field is nil.
+	ReadHashFields(ctx context.Context, key string, fields []string) ([][]byte, error)
 	// ApplyHashDelta applies one delta atomically, proving it was derived from
 	// the header the caller read.
 	ApplyHashDelta(context.Context, HashDeltaWrite) (HashDeltaOutcome, error)
+	// StageHashSegment writes one segment of a whole record into the
+	// attempt's own staging key: HashDeltaApplied, or HashStageLost when a
+	// segment after the first finds the key is not this attempt's any more.
+	StageHashSegment(context.Context, HashStageSegment) (HashDeltaOutcome, error)
+	// SwapStagedHash puts a fully staged record in place of the formal key,
+	// proving the formal header is the one the caller read as ApplyHashDelta
+	// does, and that the staging key is this attempt's and whole.
+	SwapStagedHash(context.Context, HashStageSwap) (HashDeltaOutcome, error)
+	// DiscardStagedHash deletes a staging key that still holds the marker
+	// given, and leaves one another write under its name has started over.
+	DiscardStagedHash(ctx context.Context, key, markerField string, marker []byte) error
 }
 
 // HashDeltaWrite is one atomic change to a hash record.
@@ -93,6 +111,14 @@ const (
 	// including the two directions of existence. Current carries the header
 	// Redis holds so the caller can classify it exactly as a fresh read.
 	HashDeltaConflict HashDeltaStatus = "CONFLICT"
+	// HashStageLost is a staging key that is no longer this attempt's: it
+	// expired between two segments, or a later attempt sharing its name
+	// started over. Nothing was put in place, and the write is retried.
+	HashStageLost HashDeltaStatus = "STAGE_LOST"
+	// HashStageShort is a staging key holding a different number of fields
+	// than the memory has groups. It is not renamed: what it holds is not
+	// the memory the header names.
+	HashStageShort HashDeltaStatus = "STAGE_SHORT"
 )
 
 type HashDeltaOutcome struct {
@@ -200,6 +226,26 @@ func (backend *RedisBackend) ReadHashField(ctx context.Context, key, field strin
 	return value, nil
 }
 
+func (backend *RedisBackend) ScanHashPage(
+	ctx context.Context, key string, cursor uint64, count int64,
+) ([]HashField, uint64, error) {
+	if backend == nil || backend.client == nil {
+		return nil, 0, fmt.Errorf("state: redis backend is not configured")
+	}
+	if key == "" || count <= 0 {
+		return nil, 0, fmt.Errorf("state: invalid hash scan")
+	}
+	page, next, err := backend.client.HScan(ctx, key, cursor, "", count).Result()
+	if err != nil {
+		return nil, 0, err
+	}
+	fields := make([]HashField, 0, len(page)/2)
+	for index := 0; index+1 < len(page); index += 2 {
+		fields = append(fields, HashField{Name: page[index], Value: []byte(page[index+1])})
+	}
+	return fields, next, nil
+}
+
 func (backend *RedisBackend) ApplyHashDelta(
 	ctx context.Context, write HashDeltaWrite,
 ) (HashDeltaOutcome, error) {
@@ -235,9 +281,9 @@ func decodeHashDeltaReply(reply interface{}) (HashDeltaOutcome, error) {
 	if !ok {
 		return HashDeltaOutcome{}, fmt.Errorf("state: Redis hash delta status %T is not text", items[0])
 	}
-	switch HashDeltaStatus(code) {
-	case HashDeltaApplied:
-		return HashDeltaOutcome{Status: HashDeltaApplied}, nil
+	switch status := HashDeltaStatus(code); status {
+	case HashDeltaApplied, HashStageLost, HashStageShort:
+		return HashDeltaOutcome{Status: status}, nil
 	case HashDeltaConflict:
 		outcome := HashDeltaOutcome{Status: HashDeltaConflict}
 		if len(items) > 1 {

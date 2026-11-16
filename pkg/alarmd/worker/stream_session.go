@@ -27,17 +27,38 @@ type streamedExecution struct {
 	request       execution.SlotExecutionRequest
 	header        execution.InternalExecutionHeader
 	prepared      preparedNamedInputIndex
-	streamed      map[streamedInputKey]execution.NamedInputBinding
-	planSeries    map[execution.PlanIdentity]map[execution.SeriesIdentityDigest]struct{}
+	streamed      map[streamedInputKey]streamedInput
+	// shared is what the streamed bindings share with every series of their
+	// query, each kept once (streamedInput).
+	shared sharedBindings
+	// completionInputs is what each series' inputs are built from
+	// (preparedInputs), and primaryRecords the most PRIMARY records one series
+	// holds.
+	completionInputs completionInputs
+	primaryRecords   uint64
+	// dependencyDiscarded is the dependency series no PRIMARY of their Plan
+	// named, let go at the completion (discardDependenciesWithoutPrimary).
+	dependencyDiscarded uint64
+	// inputHolds is, by series, what the batches of that series were charged
+	// to the input phase and how many streamed bindings still point at them,
+	// so a window that lets its series' bindings go gives their bytes back
+	// once nothing of the Slot reads them (dropWindowInputs).
+	inputHolds map[execution.SeriesIdentityDigest]*seriesInputHold
+	// planSeries is, by Plan, the series the stream bound, until the
+	// completion: it is read for the evaluation's order there and only
+	// counted after, so the completion leaves the counts (planSeriesCounts)
+	// and lets the sets go.
+	planSeries map[execution.PlanIdentity]map[execution.SeriesIdentityDigest]struct{}
 	// hostOverlays holds, by Plan and series, the dimensions the platform's
 	// fuller writes for a host CMDB placed by id with another address
 	// (SeriesExecutionBatch.HostOverlays). Nil until a series carries one,
 	// which most Slots never do.
 	hostOverlays map[execution.PlanIdentity]map[execution.SeriesIdentityDigest]map[string]json.RawMessage
 	// planSeriesCounts is len(planSeries[plan]) once per Plan, for the
-	// evaluation lines: the number is constant for a Plan within a Slot and
-	// the lines are one per series, so it is counted on the first line and
-	// the same pointer rides on the rest.
+	// evaluation lines and every reader after the completion, which fills it
+	// for every due Plan when it lets planSeries go: the number is constant
+	// for a Plan within a Slot and the lines are one per series, so the same
+	// pointer rides on all of them.
 	planSeriesCounts map[execution.PlanIdentity]*int
 	// completionOnly holds, per Plan without streamed PRIMARY series, the exact
 	// set validated by validateCompletionOnlyExactSet: one completion binding
@@ -50,6 +71,10 @@ type streamedExecution struct {
 	state          execution.StatePreflightResult
 	gaps           execution.GapLoadResult
 	noData         execution.NoDataLoadResult
+	// noDataRefused is the loaded memories that did not fit the share beside
+	// what this Slot holds (reserveNoDataMemory): their Plans skip no-data
+	// this Slot.
+	noDataRefused  map[execution.PlanNoDataIdentity]execution.NoDataApplyItemResult
 	noDataHosts    map[execution.PlanNoDataIdentity]nodata.HostResolution
 	noDataOutcomes []nodata.SlotOutcome
 	// noDataOutcomeIndex is where each Plan's outcome sits in noDataOutcomes,
@@ -76,11 +101,20 @@ type streamedExecution struct {
 	// seriesCensus is where this Slot's series went, counted where each
 	// decision is made rather than inferred afterwards. See seriesCensus.
 	seriesCensus seriesCensus
+	// superseded is the series this attempt skipped because their State is
+	// a later Slot's, for its result; supersededGaps the Plans whose gap
+	// marker a resumed series found from a later Slot, so a Plan of many
+	// resumed series counts its one marker once. See superseded_series.go.
+	superseded     execution.SupersededSeries
+	supersededGaps map[execution.PlanGapIdentity]struct{}
 	// noDataPlansSeen is how many of this Slot's Plans detect no-data,
 	// counted where they are found rather than where they are judged.
-	noDataPlansSeen      int
-	noDataStateMutations uint64
-	noDataMutations      []execution.PlanNoDataMutation
+	noDataPlansSeen int
+	noDataMutations []execution.PlanNoDataMutation
+	// noDataCarried is, for each Plan whose round starts from the memory of
+	// the generation its activation carries it from, that memory's header:
+	// the round scans that key in place of its own (carryNoDataMemory).
+	noDataCarried map[execution.PlanNoDataIdentity]execution.NoDataMemorySnapshot
 	// noDataAbsenceStarts carries each Plan's absent series to the output's
 	// manual-close check (decision-024).
 	noDataAbsenceStarts noDataAbsenceStarts
@@ -91,8 +125,12 @@ type streamedExecution struct {
 	noDataEndCarries map[execution.PlanIdentity]noDataEndCarry
 	effective        map[execution.ConsumerRef]strategy.EffectiveTimeFact
 	evaluated        execution.EvaluationResult
-	delivered        []execution.SeriesDelivery
-	series           uint64
+	// summary is what the Slot-wide readers after evaluation read of the
+	// Slot's results, kept beside evaluated as each batch merges
+	// (slotEvaluationSummary).
+	summary   slotEvaluationSummary
+	delivered []execution.SeriesDelivery
+	series    uint64
 	// retainedByPhase is this execution's retained bytes split by what they
 	// were retained for. The total is the sum rather than a counter of its
 	// own: a sixth budget's worth of memory arriving with no phase attached
@@ -100,10 +138,38 @@ type streamedExecution struct {
 	// be incremented by a site that names no phase while every assertion on
 	// the total still passes.
 	retainedByPhase [retainPhaseCount]uint64
+	// peakRetained is the most this execution held at once, and
+	// peakByPhase retainedByPhase at that moment, for the completion row: a
+	// Slot applied window by window gives bytes back as it goes, so what it
+	// holds at its end is not what it needed, and capacity is sized from
+	// what it needed.
+	peakRetained uint64
+	peakByPhase  [retainPhaseCount]uint64
 	// retainedInputNow is retainedByPhase's input share kept again for a
 	// reader on another goroutine: access reads it across an in-place
 	// readiness wait while the series path keeps adding.
 	retainedInputNow atomic.Uint64
+	// ahead is the next slice read while this one completes, and aheadBytes
+	// what it holds (slice_read_ahead.go): counted in retainedTotal, so the
+	// share, the slice limit and the windows see it.
+	aheads     []*sliceReadAhead
+	aheadBytes atomic.Uint64
+	// aheadAtRefusal is aheadBytes when a reservation of the stream's was
+	// last refused (judgeRetainedLocked), for yieldReadAhead.
+	aheadAtRefusal atomic.Uint64
+	// readAheadEnds counts how the Slot's reads ahead ended (readAheadEnd).
+	readAheadEnds [readAheadEnds]uint64
+	// stageAheadEnds counts how the Slot's no-data first writes staged
+	// ahead ended (observability.NoDataStageAheadOutcomes), and
+	// groupsStagedAhead the groups they staged.
+	// routineEvaluations is, by Plan in the order first met, the routine
+	// evaluations of the batch being evaluated merged into one line each
+	// (observability.MergeRoutineEvaluation), said as the batch ends.
+	routineEvaluations      map[execution.PlanIdentity]*observability.Observation
+	routineEvaluationsOrder []execution.PlanIdentity
+	stageAheadEnds          [4]uint64
+	stageAheadDiffers       [3]uint64
+	groupsStagedAhead       uint64
 	// retainedNow is retainedByPhase again for a reader on another goroutine
 	// (RetainedHolders), and heldSince when this execution first retained;
 	// holding says it has joined the coordinator's holder registry. holding
@@ -117,13 +183,33 @@ type streamedExecution struct {
 	// spentByPhase is this execution's wall clock split the same way, in
 	// nanoseconds, summed over every call of each phase.
 	spentByPhase [slotPhaseCount]uint64
+	// clockPhase is the phase the clock is charging and clockSince when it
+	// last moved; zero until the completion starts it (enter).
+	clockPhase slotPhase
+	clockSince time.Time
 	// beganAt is when this execution started, for the total the phases are
 	// read against. Zero on an execution that never began, which reports no
 	// duration rather than the time since the epoch.
-	beganAt  time.Time
-	effects  effectCounts
-	gapFacts uint64
-	began    bool
+	beganAt time.Time
+	// effects is the State, event and gap counts this execution holds of
+	// the pool and of the per-Slot caps; effectsSpent is what windows
+	// already applied held and gave back, so the two together are the
+	// Slot's.
+	effects      effectCounts
+	effectsSpent effectCounts
+	// keysHeld is what the Slot holds, under the state phase, for every State
+	// key it loaded and that no window gives back with its views
+	// (loadedKeyHeldBytes); summaryHeld is what the summary holds of its
+	// series, under the output phase (slotEvaluationSummary.addedBytes). Both
+	// are charged as each result merges, on either path, and stay to the
+	// Slot's end but for the witnesses a window's writes consumed.
+	keysHeld    uint64
+	summaryHeld uint64
+	gapFacts    uint64
+	began       bool
+	// windows is this Slot's windowed apply (windowed_apply.go); its zero
+	// value is a Slot that has not been cut.
+	windows slotWindows
 	// namedOutputs is the tables of named outputs the Slot's queries aligned,
 	// by physical query, kept from the completion for the detection
 	// snapshots of their Plans' events. Nil for a Slot whose queries asked
@@ -138,14 +224,17 @@ type streamedExecution struct {
 	// supplement is set on a supplement execution and nil on every Slot.
 	// See supplement.go.
 	supplement *supplementRun
+	// slices is the Slot read slice by slice (sliceReading); nil for a Slot
+	// read whole.
+	slices *sliceReading
 }
 
 // slotPhase says which part of a Slot a stretch of wall clock was spent in.
 //
-// The three are the parts a Slot can be slow in for unrelated causes: waiting
-// for its records, reading State, and deciding. They are not a partition of
-// the Slot -- the completion does more than these three -- and the total is
-// carried beside them so the remainder is visible rather than implied.
+// From the completion on they are a partition of the Slot: the clock charges
+// one phase at a time (enter), a phase entered inside another takes its time
+// from it, and what no phase claims is slotPhaseOther, reported as the Slot's
+// unattributed time rather than left to be inferred from the total.
 type slotPhase int
 
 const (
@@ -161,8 +250,62 @@ const (
 	slotPhaseInput slotPhase = iota
 	slotPhasePreflight
 	slotPhaseEvaluate
+	// slotPhaseApply is the writes: every window's events, State and gaps,
+	// and the tail, or the one apply of a Slot not cut into windows, the wait
+	// for its Sequence included.
+	slotPhaseApply
+	// slotPhaseRecordIDs is deriving the record ids of the series a window
+	// reads.
+	slotPhaseRecordIDs
+	// slotPhaseCut is cutting a window while the Slot is evaluated: the
+	// window's head (its open statements, the first-seen judgement) less the
+	// reads and writes inside it, which are Preflight and Apply.
+	slotPhaseCut
+	// slotPhaseMerge is folding one series' result into the Slot's.
+	slotPhaseMerge
+	// slotPhaseSeries is one series' work around its evaluation: its
+	// bindings, its effective-time facts and its result, the evaluation and
+	// the reads inside it apart.
+	slotPhaseSeries
+	// slotPhaseNoDataRead is a no-data round's reading of its memory and its
+	// judgement, the windows it cuts apart.
+	slotPhaseNoDataRead
+	// slotPhaseNoDataWrite is writing the no-data memory and its ends.
+	slotPhaseNoDataWrite
+	// slotPhaseOther is every moment after the completion no phase above
+	// claims: the Slot's unattributed time.
+	slotPhaseOther
 	slotPhaseCount
 )
+
+// enter charges this execution's clock to phase until the returned leave is
+// called, and to the phase that was charging before from then on. A phase
+// entered inside another takes its time from that one, so from the completion
+// on the phases partition the Slot. Before the completion the clock is not
+// running - the input phase is the whole of that stretch - and enter does
+// nothing.
+func (stream *streamedExecution) enter(phase slotPhase) (leave func()) {
+	if stream == nil || stream.clockSince.IsZero() {
+		return func() {}
+	}
+	previous := stream.clockPhase
+	stream.chargeClock()
+	stream.clockPhase = phase
+	return func() {
+		stream.chargeClock()
+		stream.clockPhase = previous
+	}
+}
+
+// chargeClock gives the time since the clock last moved to the phase it is
+// charging.
+func (stream *streamedExecution) chargeClock() {
+	now := time.Now()
+	if elapsed := now.Sub(stream.clockSince); elapsed > 0 {
+		stream.spentByPhase[stream.clockPhase] += uint64(elapsed)
+	}
+	stream.clockSince = now
+}
 
 // spend records wall clock against the phase that spent it, from since to now.
 //
@@ -233,6 +376,9 @@ const (
 // panics here rather than being dropped into the total unattributed.
 func (stream *streamedExecution) retainBytes(phase retainPhase, retained uint64) {
 	stream.retainedByPhase[phase] += retained
+	if total := stream.retainedTotal(); total > stream.peakRetained {
+		stream.peakRetained, stream.peakByPhase = total, stream.retainedByPhase
+	}
 	stream.retainedNow[phase].Add(retained)
 	if phase == retainPhaseInput {
 		stream.retainedInputNow.Add(retained)
@@ -278,33 +424,98 @@ func (stream *streamedExecution) ReleaseRetainedBytes(bytes uint64) {
 // reservation a series takes; refused the way either refuses, observed as
 // a capacity rejection.
 func (stream *streamedExecution) reserveRetainedInput(ctx context.Context, bytes uint64) error {
+	return stream.reserveRetained(ctx, retainPhaseInput, "normal_input", bytes)
+}
+
+// reserveRetained reserves bytes under one phase, judged as
+// reserveRetainedInput judges input: the share by this execution's total,
+// then the pool. label is the phase a refusal names.
+func (stream *streamedExecution) reserveRetained(ctx context.Context, retained retainPhase, label string, bytes uint64) error {
 	if bytes == 0 {
 		return nil
 	}
-	phase := stream.reservationPhase("normal_input")
-	if share := stream.coordinator.qgShareBytes(); share > 0 && stream.retainedTotal()+bytes > share {
-		err := shareRejection(phase, stream.retainedTotal(), bytes, share, stream.ownBudgetUsage(stream.coordinator.budget))
-		stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, observability.CapacityBudgetRetainedBytes, err)
+	if err := stream.reserveProvisionalAt(ctx, 0, bytes, stream.reservationPhase(label)); err != nil {
 		return err
 	}
-	if err := stream.reserveProvisionalAt(ctx, 0, bytes, phase); err != nil {
-		return err
-	}
-	stream.retainBytes(retainPhaseInput, bytes)
+	stream.retainBytes(retained, bytes)
 	return nil
 }
 
 // unretainInput gives back input bytes this execution reserved, to the
 // pool and from its own total.
 func (stream *streamedExecution) unretainInput(bytes uint64) {
+	stream.unretain(retainPhaseInput, bytes)
+}
+
+// unretain gives back bytes this execution retained under one phase, to the
+// pool and from its own total, no more than the phase holds. The one way to
+// take from a phase before the stream releases everything, as retainBytes is
+// the one way to add: a window applied gives its views, results and inputs
+// back here, phase by phase.
+func (stream *streamedExecution) unretain(phase retainPhase, bytes uint64) {
+	bytes = min(bytes, stream.retainedByPhase[phase])
 	if bytes == 0 {
 		return
 	}
-	bytes = min(bytes, stream.retainedByPhase[retainPhaseInput])
-	stream.retainedByPhase[retainPhaseInput] -= bytes
-	stream.retainedInputNow.Add(^(bytes - 1))
-	stream.retainedNow[retainPhaseInput].Add(^(bytes - 1))
+	stream.retainedByPhase[phase] -= bytes
+	stream.retainedNow[phase].Add(^(bytes - 1))
+	if phase == retainPhaseInput {
+		stream.retainedInputNow.Add(^(bytes - 1))
+	}
 	stream.coordinator.releaseProvisional(0, bytes)
+}
+
+type retainedOwnerKey struct{}
+
+// withRetainedOwner names the execution whose share the bytes held further
+// down ctx count against: the frames a State write keeps and the segments a
+// no-data first write holds are the Slot's, and judged with the rest of what
+// it holds (judgeRetainedLocked).
+func withRetainedOwner(ctx context.Context, stream *streamedExecution) context.Context {
+	return context.WithValue(ctx, retainedOwnerKey{}, stream)
+}
+
+func retainedOwnerFrom(ctx context.Context) *streamedExecution {
+	stream, _ := ctx.Value(retainedOwnerKey{}).(*streamedExecution)
+	return stream
+}
+
+// holdRetained reserves bytes the owner holds outside its phases' own
+// bookkeeping - kept frames, first-write segments - judged against its share
+// and the pool, and counted in its State phase so its total is all it holds.
+// Without an owner that has begun, the pool alone judges them.
+func (coordinator *SlotExecutionCoordinator) holdRetained(owner *streamedExecution, bytes uint64, phase string) error {
+	if bytes == 0 {
+		return nil
+	}
+	for {
+		coordinator.reservations.mu.Lock()
+		err := coordinator.judgeRetainedLocked(owner, bytes, phase)
+		if err == nil {
+			coordinator.reservations.retainedBytes += bytes
+		}
+		coordinator.reservations.mu.Unlock()
+		if err == nil || !owner.yieldReadAhead() {
+			if err == nil && owner != nil {
+				owner.retainBytes(retainPhaseState, bytes)
+			}
+			return err
+		}
+	}
+}
+
+// letGoRetained gives back what holdRetained reserved.
+func (coordinator *SlotExecutionCoordinator) letGoRetained(owner *streamedExecution, bytes uint64) {
+	if bytes == 0 {
+		return
+	}
+	if owner != nil {
+		// From the owner's State phase and the pool together; a stream
+		// already released has given the pool its bytes back.
+		owner.unretain(retainPhaseState, bytes)
+		return
+	}
+	coordinator.releaseProvisional(0, bytes)
 }
 
 // retainedTotal is what this execution holds across all phases.
@@ -312,7 +523,7 @@ func (stream *streamedExecution) retainedTotal() uint64 {
 	if stream == nil {
 		return 0
 	}
-	var total uint64
+	total := stream.aheadBytes.Load()
 	for _, retained := range stream.retainedByPhase {
 		total += retained
 	}
@@ -345,11 +556,24 @@ type preparedNamedInputIndex struct {
 }
 
 func (stream *streamedExecution) Begin(ctx context.Context, header execution.InternalExecutionHeader) error {
+	if stream.began && stream.slicing() {
+		// Every slice's read begins again; the Slot began with the first.
+		if header.Contract != stream.request.Contract {
+			return errors.New("alarmd worker: execution header changed frozen contract")
+		}
+		stream.resetSliceStream()
+		return nil
+	}
 	if stream.began {
 		return errors.New("alarmd worker: QueryExecutionSource called Begin more than once")
 	}
 	if header.Contract != stream.request.Contract {
 		return errors.New("alarmd worker: execution header changed frozen contract")
+	}
+	if stream.slicing() && stream.slices.dimensionsGone(header) {
+		// Begun before any query is sent (access.Source): the slices go
+		// with nothing read, and the Slot begins again read whole.
+		return errSliceDimensionsGone
 	}
 	inputBuilder, err := execution.PrepareSeriesEvaluationInputBuilder(header)
 	if err != nil {
@@ -361,13 +585,23 @@ func (stream *streamedExecution) Begin(ctx context.Context, header execution.Int
 	}
 	prepared.inputBuilder = inputBuilder
 	stream.began = true
+	// Listed as a holder from here, holding nothing yet: a Slot that runs is
+	// named by the retained holders for as long as it runs, so one that
+	// holds its structures while reserving nothing reads as the oldest
+	// holder of no bytes rather than not at all. releaseProvisional removes
+	// it.
+	if !stream.holding {
+		stream.holding, stream.heldSince = true, time.Now()
+		stream.coordinator.holders.add(stream)
+	}
 	// Started here rather than at the Slot's evaluation time: this is when
 	// this replica began working on it, and the gap between the two is the
 	// scheduler's to answer for, not the Slot's.
 	stream.beganAt = time.Now()
 	stream.header = header
 	stream.prepared = prepared
-	stream.streamed = make(map[streamedInputKey]execution.NamedInputBinding)
+	stream.streamed = make(map[streamedInputKey]streamedInput)
+	stream.shared = sharedBindings{}
 	stream.planSeries = make(map[execution.PlanIdentity]map[execution.SeriesIdentityDigest]struct{})
 	stream.completionOnly = make(map[execution.PlanIdentity][]execution.NamedInputBinding)
 	effective, err := PrepareEffectiveTimeFacts(ctx, header, stream.coordinator.ports.EffectiveTime, stream.coordinator.now().Unix())
@@ -391,22 +625,34 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 	if err != nil {
 		return fmt.Errorf("alarmd worker: invalid series batch: %w", err)
 	}
-	retained, err := streamedRetainedSize(batch.Inputs, batch.Delivery)
-	if err != nil {
-		return fmt.Errorf("alarmd worker: measure provisional retention: %w", err)
-	}
+	retained := streamedRetainedSize(batch)
 	// An overlay is kept until the series is evaluated, and charged as it is
 	// kept; a series without one is charged nothing more.
 	retained += hostOverlaysRetainedBytes(batch.HostOverlays)
-	if err := stream.reserveProvisional(ctx, batch.Delivery.Series, retained); err != nil {
+	// A series seen for the first time is also its hold and its place among
+	// its Plan's series (seriesBookkeepingBytes).
+	if _, held := stream.inputHolds[series]; !held {
+		retained += seriesBookkeepingBytes
+	}
+	if err := stream.admitSliceInput(ctx, batch, retained); err != nil {
 		return err
+	}
+	if err := stream.reserveProvisional(ctx, batch.Delivery.Series, retained); err != nil {
+		return stream.nameUnsliceableRefusal(err)
 	}
 	stream.series += batch.Delivery.Series
 	stream.retainBytes(retainPhaseInput, retained)
+	stream.noteSliceInput(batch, retained)
+	hold := stream.holdInput(series, retained)
 	folded := make(map[*execution.Dataset]foldedDataset)
 	for _, binding := range batch.Inputs {
 		key := streamedInputKey{consumer: binding.Consumer, series: series, requirement: binding.RequirementID}
-		if existing, duplicate := stream.streamed[key]; duplicate {
+		existing, duplicate := stream.streamed[key]
+		if !duplicate {
+			// A key folded into is still one binding: the batch's bytes join
+			// the series' hold above, and go when its last binding does.
+			hold.bindings++
+		} else {
 			// A second batch for one (consumer, series, requirement) key is a
 			// provider row finer than the series identity. Only a requirement
 			// whose compiled algorithm declares a fold policy may fold it; every
@@ -418,18 +664,20 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 			if !declared {
 				return namedInputError(codeStreamedNamedInputDuplicate, "alarmd worker: duplicate streamed named input")
 			}
-			merged, known := folded[existing.Dataset]
+			merged, known := folded[existing.dataset]
 			if !known {
 				var foldErr error
-				merged, foldErr = foldStreamedDataset(existing.Dataset, batch.Dataset, policy)
+				merged, foldErr = foldStreamedDataset(existing.dataset, batch.Dataset, policy)
 				if foldErr != nil {
 					return wrapNamedInputError(codeStreamedNamedInputFoldInvalid, fmt.Errorf("alarmd worker: fold streamed named input: %w", foldErr))
 				}
-				folded[existing.Dataset] = merged
+				folded[existing.dataset] = merged
 			}
 			binding.Dataset, binding.View = merged.dataset, merged.view
 		}
-		stream.streamed[key] = binding
+		if err := stream.keepStreamed(ctx, key, binding); err != nil {
+			return err
+		}
 		if binding.Role == execution.InputRolePrimary {
 			if overlay := batch.HostOverlays[binding.Consumer.Plan]; overlay != nil {
 				if stream.hostOverlays == nil {
@@ -465,10 +713,46 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 	return nil
 }
 
+// discardDependenciesWithoutPrimary lets go, at the completion, of every
+// dependency series no PRIMARY input of its Plan named: no series of the Plan
+// reads it, so it is held to no end until the Slot's. Each such series is
+// counted once (DependencySeriesDiscarded), and its hold given back when it
+// was the series' last binding.
+func (stream *streamedExecution) discardDependenciesWithoutPrimary() {
+	var released uint64
+	discarded := make(map[execution.SeriesIdentityDigest]struct{})
+	for key, entry := range stream.streamed {
+		if entry.shared.Role == execution.InputRolePrimary {
+			continue
+		}
+		if _, named := stream.planSeries[key.consumer.Plan][key.series]; named {
+			continue
+		}
+		delete(stream.streamed, key)
+		discarded[key.series] = struct{}{}
+		hold := stream.inputHolds[key.series]
+		if hold == nil {
+			continue
+		}
+		if hold.bindings--; hold.bindings == 0 {
+			delete(stream.inputHolds, key.series)
+			released += hold.bytes
+		}
+	}
+	stream.dependencyDiscarded += uint64(len(discarded))
+	stream.unretainInput(released)
+}
+
 func (stream *streamedExecution) reserveProvisional(ctx context.Context, series, retainedBytes uint64) error {
 	return stream.reserveProvisionalAt(ctx, series, retainedBytes, stream.reservationPhase("normal_input"))
 }
 
+// reserveProvisionalAt reserves what this execution will hold: judged first
+// by its Query Group's share, against its own total, and then by the pool.
+// Every reservation a Slot holds goes through it - a series as it streams
+// in, its record ids, its gap targets and its no-data memory alike - so a
+// Slot over its share is refused by name for its share and never runs the
+// pool, shared with the other Query Groups, out.
 func (stream *streamedExecution) reserveProvisionalAt(ctx context.Context, series, retainedBytes uint64, phase string) error {
 	err := stream.coordinator.acquireProvisional(series, retainedBytes, stream, phase)
 	if err == nil {
@@ -487,17 +771,24 @@ func (stream *streamedExecution) releaseProvisional() {
 	stream.header = execution.InternalExecutionHeader{}
 	stream.prepared = preparedNamedInputIndex{}
 	stream.streamed, stream.planSeries, stream.completionOnly, stream.effective = nil, nil, nil, nil
+	stream.inputHolds, stream.keysHeld, stream.summaryHeld = nil, 0, 0
 	stream.planSeriesCounts = nil
 	stream.bindings, stream.stateItems, stream.gapItems, stream.delivered = nil, nil, nil, nil
 	stream.state, stream.gaps = execution.StatePreflightResult{}, execution.GapLoadResult{}
+	stream.shared, stream.completionInputs, stream.primaryRecords = sharedBindings{}, completionInputs{}, 0
+	stream.dependencyDiscarded = 0
+	stream.noDataRefused = nil
 	stream.evaluated = execution.EvaluationResult{}
+	stream.summary = slotEvaluationSummary{}
 	stream.seriesCensus = seriesCensus{}
 	stream.coordinator.reservations.mu.Lock()
 	stream.coordinator.reservations.gapFacts -= stream.gapFacts
 	stream.coordinator.reservations.mu.Unlock()
 	stream.gapFacts = 0
 	stream.coordinator.releaseEffects(stream.effects)
-	stream.effects = effectCounts{}
+	stream.effects, stream.effectsSpent = effectCounts{}, effectCounts{}
+	stream.dropAllRecordIDs()
+	stream.windows = slotWindows{}
 	stream.coordinator.releaseProvisional(stream.series, stream.retainedTotal())
 	stream.namedOutputs = nil
 	stream.series, stream.retainedByPhase, stream.namedReserved = 0, [retainPhaseCount]uint64{}, 0
@@ -574,13 +865,6 @@ func hostOverlaysRetainedBytes(overlays map[execution.PlanIdentity]map[string]js
 		}
 	}
 	return total
-}
-
-func streamedRetainedSize(bindings []execution.NamedInputBinding, delivery execution.SeriesDelivery) (uint64, error) {
-	// The length the bindings without their datasets and the delivery encode
-	// to, counted field by field (retained_size.go): encoding them only to
-	// measure them was a twentieth of reading a large answer.
-	return uint64(retainedDocumentLength(bindings, delivery)) + delivery.Bytes, nil
 }
 
 func prepareNamedInputIndex(header execution.InternalExecutionHeader) (preparedNamedInputIndex, error) {
@@ -807,7 +1091,7 @@ func appendProvisional(target *execution.EvaluationResult, next execution.Evalua
 			continue
 		}
 		plan := &target.Plans[index]
-		if dispositionRank(nextPlan.Disposition) > dispositionRank(plan.Disposition) {
+		if execution.PlanDispositionOutranks(nextPlan.Disposition, plan.Disposition) {
 			plan.Disposition, plan.ReasonCode = nextPlan.Disposition, nextPlan.ReasonCode
 		}
 		plan.LevelOutcomes = append(plan.LevelOutcomes, nextPlan.LevelOutcomes...)
@@ -839,6 +1123,10 @@ type provisionalBudgetExceededError struct {
 	// capacity makes this object fit - but the action differs: the strategy has
 	// to be sharded rather than the process resized.
 	share bool
+	// others marks this Query Group's Slot within its share refused by the
+	// pool for what other Query Groups and the worker hold: a pause, as the
+	// pool frees when they let go, and not this object's size.
+	others bool
 }
 
 func (err *provisionalBudgetExceededError) Error() string {
@@ -881,23 +1169,6 @@ func resultRank(result observability.Result) int {
 	}
 }
 
-func dispositionRank(disposition execution.PlanDisposition) int {
-	switch disposition {
-	case execution.PlanRetryPending:
-		return 5
-	case execution.PlanTerminal:
-		return 4
-	case execution.PlanUnavailable, execution.PlanReadinessGap:
-		return 3
-	case execution.PlanDecidedDegraded:
-		return 2
-	case execution.PlanDecided:
-		return 1
-	default:
-		return 0
-	}
-}
-
 func (stream *streamedExecution) complete(ctx context.Context, completion execution.QueryExecutionCompletion) error {
 	if !stream.began {
 		return completionContractError(codeCompletionBeforeBegin, "alarmd worker: QueryExecutionSource returned completion before Begin")
@@ -906,7 +1177,19 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 	// call goes on to decide about it: a completion this Slot refuses still
 	// waited for its records, and charging that wait to nothing would make a
 	// refused Slot look instantaneous.
-	stream.spend(slotPhaseInput, stream.beganAt)
+	// A Slot read in slices completes once a slice: the first starts its
+	// clock and loads what the Slot holds whole (its gaps, its no-data memory
+	// and ends), the last judges what needs every series (completion-only
+	// Plans, the no-data round); the slices between evaluate their own series.
+	first := !stream.slicing() || stream.slices.index == 0
+	last := !stream.slicing() || stream.slices.last
+	if first {
+		stream.spend(slotPhaseInput, stream.beganAt)
+		stream.clockPhase, stream.clockSince = slotPhaseOther, time.Now()
+	} else if stream.slices.leaveInput != nil {
+		stream.slices.leaveInput()
+		stream.slices.leaveInput = nil
+	}
 	if err := completion.Validate(stream.header, stream.delivered); err != nil {
 		return wrapCompletionContractError(codeCompletionInvalid, err)
 	}
@@ -956,7 +1239,12 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 		stream.noteAnswerTruncation(binding, item.RouteFacts)
 		completionBindings[key] = binding
 	}
-	for key, binding := range stream.streamed {
+	// Each series' binding is settled by its query's completion. What that
+	// changes is the same for every series of the query, so the settled
+	// shared binding is made once per shared binding and kept shared.
+	settled := make(map[*execution.NamedInputBinding]*execution.NamedInputBinding)
+	for key, entry := range stream.streamed {
+		binding := entry.binding()
 		item, ok := physical[binding.Provenance.PhysicalQuery]
 		if !ok || item.Ref != binding.ProviderResult {
 			return completionContractError(codeStreamedBindingMismatch, "alarmd worker: streamed binding differs from physical completion")
@@ -972,44 +1260,101 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 			if binding.Completeness != execution.CompletenessFull {
 				return completionContractError(codeStreamedBindingPartialMismatch, "alarmd worker: streamed binding differs from PARTIAL physical completion")
 			}
-			binding.Completeness = execution.CompletenessPartial
-			binding.Disposition = execution.AccessDegraded
-			binding.ReasonCode = execution.ReasonCode(contract.ReasonQueryPartial)
-			binding.PartialEvidence = item.PartialEvidence
 		case execution.CompletenessUnavailable:
-			binding.Dataset, binding.View = nil, nil
-			binding.Completeness = execution.CompletenessUnavailable
-			binding.DataState = execution.DataStateUnknown
-			binding.Disposition = execution.AccessUnavailable
-			binding.ReasonCode, binding.UnavailableAttribution = physicalFailureReason(item.RouteFacts)
-			binding.PartialEvidence = nil
+			entry.dataset, entry.view = nil, nil
 		default:
 			return completionContractError(codeInvalidCompleteness, "alarmd worker: invalid physical completion completeness")
 		}
-		stream.streamed[key] = binding
+		if item.Completeness != execution.CompletenessFull {
+			next, done := settled[entry.shared]
+			if !done {
+				changed := *entry.shared
+				if item.Completeness == execution.CompletenessPartial {
+					changed.Completeness = execution.CompletenessPartial
+					changed.Disposition = execution.AccessDegraded
+					changed.ReasonCode = execution.ReasonCode(contract.ReasonQueryPartial)
+					changed.PartialEvidence = item.PartialEvidence
+				} else {
+					changed.Completeness = execution.CompletenessUnavailable
+					changed.DataState = execution.DataStateUnknown
+					changed.Disposition = execution.AccessUnavailable
+					changed.ReasonCode, changed.UnavailableAttribution = physicalFailureReason(item.RouteFacts)
+					changed.PartialEvidence = nil
+				}
+				var fresh bool
+				next, fresh = stream.shared.share(changed)
+				if fresh {
+					if err := stream.reserveRetainedInput(ctx, sharedBindingHeldBytes(next)); err != nil {
+						return err
+					}
+				}
+				settled[entry.shared] = next
+			}
+			entry.shared = next
+		}
+		stream.streamed[key] = entry
 	}
 
+	// Every series' inputs are built here, as they always were, so a series
+	// whose inputs do not make an exact set fails the Slot before anything is
+	// written; they are not kept (preparedSeries), only the most PRIMARY
+	// records one series holds, which bounds its events (eventsPerSeries).
+	stream.completionInputs = completionInputs{physical: physical, bindings: completionBindings,
+		completions: completion.PhysicalQueries}
 	preparedSeriesEvaluations := make([]preparedSeries, 0, len(stream.streamed))
-	for _, due := range stream.header.DuePlans {
+	for planIndex := range stream.header.DuePlans {
+		due := &stream.header.DuePlans[planIndex]
 		series := make([]execution.SeriesIdentityDigest, 0, len(stream.planSeries[due.Identity]))
 		for identity := range stream.planSeries[due.Identity] {
 			series = append(series, identity)
 		}
 		sort.Slice(series, func(i, j int) bool { return series[i] < series[j] })
 		for _, identity := range series {
-			inputs, err := stream.seriesInputs(due, identity, physical, completionBindings, completion.PhysicalQueries)
+			inputs, err := stream.seriesInputs(*due, identity, physical, completionBindings, completion.PhysicalQueries)
 			if err != nil {
 				return err
 			}
-			preparedSeriesEvaluations = append(preparedSeriesEvaluations,
-				preparedSeries{due: due, identity: identity, inputs: inputs})
+			for _, input := range inputs {
+				for _, binding := range input.Inputs {
+					if binding.Role == execution.InputRolePrimary && binding.View != nil {
+						stream.primaryRecords = max(stream.primaryRecords, uint64(binding.View.Len()))
+					}
+				}
+			}
+			preparedSeriesEvaluations = append(preparedSeriesEvaluations, preparedSeries{due: due, identity: identity})
 		}
 	}
-	for _, binding := range stream.streamed {
-		stream.bindings = append(stream.bindings, compactNamedInputBinding(binding))
+	// The prepared series stay to the Slot's end (windows.prepared), each
+	// its Plan and its series.
+	if err := stream.reserveRetainedInput(ctx, uint64(cap(preparedSeriesEvaluations))*preparedSeriesBytes); err != nil {
+		return err
 	}
+	// One entry per shared binding, not per series: every reader of the
+	// Slot's bindings asks whether there is one, the worst or the first of
+	// them, or folds them (completion attribution, gap reasons, the primary
+	// input fact), and a series' copy without its Dataset is its shared
+	// binding exactly.
+	listed := make(map[*execution.NamedInputBinding]struct{})
+	for _, entry := range stream.streamed {
+		if _, seen := listed[entry.shared]; seen {
+			continue
+		}
+		listed[entry.shared] = struct{}{}
+		stream.bindings = append(stream.bindings, *entry.shared)
+	}
+	// Listed with its query's: what the completion said of the query stays
+	// with the Plan whatever series it answered.
+	stream.discardDependenciesWithoutPrimary()
+	// A completion's bindings name the same queries every slice, and the
+	// Slot keeps the first slice's. A later slice's that did not complete
+	// are kept beside them: its query left out series of that slice, which
+	// no other slice reads, so the Plan's round is as short as its shortest
+	// slice for the no-data judgement and the completion row, whether or
+	// not the slice held any series of the Plan.
 	for _, binding := range completion.CompletionBindings {
-		stream.bindings = append(stream.bindings, compactNamedInputBinding(binding))
+		if first || binding.Completeness != execution.CompletenessFull {
+			stream.bindings = append(stream.bindings, compactNamedInputBinding(binding))
+		}
 	}
 	sort.SliceStable(stream.bindings, func(i, j int) bool {
 		left, right := stream.bindings[i], stream.bindings[j]
@@ -1021,25 +1366,59 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 		}
 		return left.RequirementID < right.RequirementID
 	})
+	// The order is taken; from here on a Plan's series are only counted,
+	// every slice's into its Plan's. A Plan none of them answered is
+	// completion-only, which only the last slice can say.
+	counts := stream.planSeriesCounts
+	if counts == nil {
+		counts = make(map[execution.PlanIdentity]*int, len(stream.header.DuePlans))
+	}
 	for _, due := range stream.header.DuePlans {
-		// A supplement decides nothing for a Plan without series: that
-		// judgement was the Slot's, on the Slot's own read.
-		if len(stream.planSeries[due.Identity]) == 0 && stream.supplement == nil {
-			if err := stream.validateCompletionOnlyExactSet(due, completionBindings, completion.PhysicalQueries); err != nil {
-				return err
+		matched := len(stream.planSeries[due.Identity])
+		if counted := counts[due.Identity]; counted != nil {
+			matched += *counted
+		}
+		counts[due.Identity] = &matched
+	}
+	if last {
+		for _, due := range stream.header.DuePlans {
+			// A supplement decides nothing for a Plan without series: that
+			// judgement was the Slot's, on the Slot's own read.
+			if *counts[due.Identity] == 0 && stream.supplement == nil {
+				if err := stream.validateCompletionOnlyExactSet(due, completionBindings, completion.PhysicalQueries); err != nil {
+					return err
+				}
 			}
 		}
 	}
-	if err := stream.loadGaps(ctx); err != nil {
-		return err
+	stream.planSeries, stream.planSeriesCounts = nil, counts
+	if first {
+		if err := stream.loadGaps(ctx); err != nil {
+			return err
+		}
+		if err := stream.loadNoDataMemory(ctx); err != nil {
+			return err
+		}
+		if err := stream.readSupplementNoDataGroups(ctx, preparedSeriesEvaluations); err != nil {
+			return err
+		}
+		if err := stream.loadNoDataEnds(ctx); err != nil {
+			return err
+		}
 	}
-	if err := stream.loadNoDataMemory(ctx); err != nil {
-		return err
+	stream.windows.prepared, stream.windows.reached, stream.windows.dropped = preparedSeriesEvaluations, 0, 0
+	if stream.slicing() {
+		stream.slices.notePrepared(preparedSeriesEvaluations)
 	}
-	if err := stream.loadNoDataEnds(ctx); err != nil {
-		return err
+	if first {
+		stream.fixWindowCeiling(ctx, len(preparedSeriesEvaluations))
+	} else {
+		stream.raiseSliceCeiling(ctx)
+		if err := stream.coordinator.applySliceHead(ctx, stream); err != nil {
+			return err
+		}
 	}
-	if err := stream.evaluateSeries(ctx, completion, preparedSeriesEvaluations); err != nil {
+	if err := stream.evaluateSeries(ctx, completion, preparedSeriesEvaluations, last); err != nil {
 		var exceeded *provisionalBudgetExceededError
 		// A supplement over its budget fails as it is: the replacement opens
 		// a gap on every Plan, and a supplement moves no marker.
@@ -1053,18 +1432,80 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 	// The no-data partition is reported once, when the Slot's results are
 	// final, on the replaced path as on the ordinary one: absence and the
 	// Plans without series were the Slot's to decide, never a supplement's.
+	if !last {
+		return stream.landSlice(ctx)
+	}
 	if stream.supplement == nil {
 		stream.observeNoDataOutcomes(ctx)
 	}
 	return nil
 }
 
-// preparedSeries is one PRIMARY series of a due Plan with its complete named
-// inputs, ready for the Runtime State read and evaluation.
+// preparedSeries is one PRIMARY series of a due Plan, ready for the Runtime
+// State read and evaluation. It names its Plan (in the header's due Plans)
+// and its series and nothing more: its named inputs are built from what the
+// Slot keeps of its bindings when its evaluation batch takes it
+// (preparedInputs) and go with the batch, so half a million prepared series
+// are half a million of these and not of their inputs. A series dropped with
+// its window is the zero value, due nil. inputs is set only by a caller that
+// has them built already.
 type preparedSeries struct {
-	due      execution.DuePlan
+	due      *execution.DuePlan
 	identity execution.SeriesIdentityDigest
 	inputs   []execution.SeriesEvaluationInputRequest
+}
+
+// completionInputs is what a series' inputs are built from once the
+// completion is in (completedBinding, seriesInputs): the physical
+// completions classified, the completion bindings by consumer and
+// requirement, and the completions themselves. One per query, kept to the
+// Slot's end.
+type completionInputs struct {
+	physical map[execution.PhysicalQueryDigest]classifiedPhysicalCompletion
+	bindings map[struct {
+		consumer    execution.ConsumerRef
+		requirement execution.RequirementID
+	}]execution.NamedInputBinding
+	completions []execution.PhysicalQueryCompletion
+}
+
+// preparedInputs is a prepared series' named inputs, built as the completion
+// validated them (seriesInputs).
+func (stream *streamedExecution) preparedInputs(prepared preparedSeries) ([]execution.SeriesEvaluationInputRequest, error) {
+	if prepared.inputs != nil || prepared.due == nil {
+		return prepared.inputs, nil
+	}
+	inputs := stream.completionInputs
+	return stream.seriesInputs(*prepared.due, prepared.identity, inputs.physical, inputs.bindings, inputs.completions)
+}
+
+// preparedBindings is every binding of a prepared series' inputs, as
+// preparedInputs builds them, without building the requests: what the
+// readers that only look at the bindings of every series read. The
+// completion built every series' inputs once, so a binding it found is
+// found again.
+func (stream *streamedExecution) preparedBindings(prepared preparedSeries) []execution.NamedInputBinding {
+	if prepared.due == nil {
+		return nil
+	}
+	if prepared.inputs != nil {
+		var bindings []execution.NamedInputBinding
+		for _, input := range prepared.inputs {
+			bindings = append(bindings, input.Inputs...)
+		}
+		return bindings
+	}
+	inputs := stream.completionInputs
+	var bindings []execution.NamedInputBinding
+	for _, consumer := range stream.prepared.consumersByPlan[prepared.due.Identity] {
+		for _, requirement := range stream.prepared.requirementsByConsumer[consumer] {
+			binding, err := stream.completedBinding(consumer, prepared.identity, requirement, inputs.physical, inputs.bindings)
+			if err == nil {
+				bindings = append(bindings, binding)
+			}
+		}
+	}
+	return bindings
 }
 
 // evaluateSeries reads Runtime State and evaluates every prepared series in
@@ -1073,6 +1514,7 @@ func (stream *streamedExecution) evaluateSeries(
 	ctx context.Context,
 	completion execution.QueryExecutionCompletion,
 	preparedSeriesEvaluations []preparedSeries,
+	last bool,
 ) error {
 	// Runtime State is read in bounded batches ahead of evaluation while
 	// evaluation itself keeps the exact Plan-then-series order. A series whose
@@ -1080,41 +1522,125 @@ func (stream *streamedExecution) evaluateSeries(
 	// flushed first so its degraded result merges in order.
 	batchLimit := stream.statePreflightBatchLimit()
 	pending := make([]completedSeries, 0, batchLimit)
-	flush := func() error {
+	// A full batch's State read starts as the batch is full and is evaluated
+	// once the next batch is full, or at flush: the read of one batch
+	// overlaps the evaluation and merge of the one before (startPreflightRead).
+	// The batches stay in order, and the series of two batches are different
+	// keys: a Slot's prepared series hold each (Plan, series) once - they
+	// come from the per-Plan series sets the stream keeps (planSeries) - the
+	// slices of a Slot read in slices are disjoint, so no series is in two,
+	// and the no-data synthetic series, with digests of their own, are
+	// evaluated after every real batch has been flushed (evaluateNoData),
+	// never read ahead beside one. A goroutine costs nothing beside a Redis round trip, and one more
+	// batch of loaded views in flight is a batch's, so every batch is read
+	// ahead.
+	var read struct {
+		batch []completedSeries
+		state *preflightRead
+	}
+	// No read outlives the evaluation that started it, whichever way it
+	// returns.
+	defer func() {
+		if read.state != nil {
+			<-read.state.done
+		}
+	}()
+	evaluateRead := func() error {
+		if read.state == nil {
+			return nil
+		}
+		batch, state := read.batch, read.state
+		read.batch, read.state = nil, nil
+		return stream.evaluateReadBatch(ctx, batch, state)
+	}
+	// next is the series before the next full batch.
+	next := func() error {
 		if len(pending) == 0 {
 			return nil
 		}
-		err := stream.evaluateCompletedSeriesBatch(ctx, pending)
-		pending = pending[:0]
+		batch := pending
+		pending = make([]completedSeries, 0, batchLimit)
+		state := stream.startPreflightRead(ctx, batch, true)
+		err := evaluateRead()
+		read.batch, read.state = batch, state
 		return err
+	}
+	flush := func() error {
+		if err := next(); err != nil {
+			return err
+		}
+		return evaluateRead()
 	}
 	// Counted here, before the first branch that can drop a series: this is
 	// the Slot's intent, and every later count is measured against it.
 	stream.seriesCensus.Due += len(preparedSeriesEvaluations)
-	for _, prepared := range preparedSeriesEvaluations {
+	if stream.readInSlices() {
+		// A slice that held none of a Plan's series and whose PRIMARY did
+		// not complete may have left out series of the Plan that no other
+		// slice reads: the Plan is answered as a series whose PRIMARY did
+		// not complete is, from the slice's completion, so its result says
+		// the round was short as its marker and its completion do.
+		for _, due := range stream.header.DuePlans {
+			held := false
+			for _, prepared := range preparedSeriesEvaluations {
+				held = held || prepared.due != nil && prepared.due.Identity == due.Identity
+			}
+			var incomplete []execution.NamedInputBinding
+			for _, binding := range stream.completionInputs.bindings {
+				if binding.Consumer.Plan == due.Identity && binding.Role == execution.InputRolePrimary &&
+					binding.Completeness != execution.CompletenessFull {
+					incomplete = append(incomplete, binding)
+				}
+			}
+			if held || len(incomplete) == 0 {
+				continue
+			}
+			// In the order the Slot keeps its bindings, so the reason taken
+			// is the same on every attempt.
+			sort.Slice(incomplete, func(i, j int) bool {
+				if incomplete[i].Consumer.LevelID != incomplete[j].Consumer.LevelID {
+					return incomplete[i].Consumer.LevelID < incomplete[j].Consumer.LevelID
+				}
+				return incomplete[i].RequirementID < incomplete[j].RequirementID
+			})
+			stream.beginEvaluating(due.Identity)
+			if err := stream.mergePrimaryIncompleteSeries(ctx, due, incomplete); err != nil {
+				return err
+			}
+		}
+	}
+	for position, prepared := range preparedSeriesEvaluations {
 		if stream.supplement != nil && !stream.supplementTakes(prepared) {
 			continue
 		}
-		if incomplete := primaryIncompleteBindings(prepared.inputs); len(incomplete) != 0 {
+		// Built as its batch takes it, and gone with the batch.
+		inputs, err := stream.preparedInputs(prepared)
+		if err != nil {
+			return err
+		}
+		due := *prepared.due
+		if incomplete := primaryIncompleteBindings(inputs); len(incomplete) != 0 {
 			if err := flush(); err != nil {
 				return err
 			}
-			if err := stream.mergePrimaryIncompleteSeries(ctx, prepared.due, incomplete); err != nil {
+			stream.beginEvaluating(due.Identity)
+			if err := stream.mergePrimaryIncompleteSeries(ctx, due, incomplete); err != nil {
 				return err
 			}
 			continue
 		}
-		version, err := execution.BuildApplyVersion(stream.header.Contract, prepared.due.StateApplyEpoch)
+		version, err := execution.BuildApplyVersion(stream.header.Contract, due.StateApplyEpoch)
 		if err != nil {
 			return err
 		}
 		stream.seriesCensus.Read++
-		pending = append(pending, completedSeries{due: prepared.due, series: prepared.identity, inputs: prepared.inputs,
+		pending = append(pending, completedSeries{due: due, series: prepared.identity, inputs: inputs,
+			position: position,
 			item: execution.StatePreflightItem{Identity: execution.StateKeyIdentity{
-				Plan: prepared.due.Identity, StateGeneration: prepared.due.StateGeneration, SeriesIdentityDigest: prepared.identity,
-			}, ApplyVersion: version, CarryFrom: carryFrom(prepared.due)}})
+				Plan: due.Identity, StateGeneration: due.StateGeneration, SeriesIdentityDigest: prepared.identity,
+			}, ApplyVersion: version, CarryFrom: carryFrom(due), Sharded: !due.Shard.IsZero()}})
 		if len(pending) >= batchLimit {
-			if err := flush(); err != nil {
+			if err := next(); err != nil {
 				return err
 			}
 		}
@@ -1126,20 +1652,26 @@ func (stream *streamedExecution) evaluateSeries(
 		// Absence and the Plans without series were the Slot's to decide.
 		return nil
 	}
+	if !last {
+		// A slice before the last: absence and the Plans without series
+		// are decided once every slice has been read.
+		return nil
+	}
 	// Absence is decided after the Slot's own series, because which groups
 	// reported is the evidence it is decided from. The synthetic series it
 	// produces then go through the same batch as everything above.
 	if err := stream.evaluateNoData(ctx, preparedSeriesEvaluations, batchLimit); err != nil {
 		return err
 	}
-	if len(stream.evaluated.Plans) == 0 {
+	if stream.summary.planCount() == 0 {
 		return stream.completeWithoutSeries(ctx, completion)
 	}
 	for _, due := range stream.header.DuePlans {
-		if len(stream.planSeries[due.Identity]) != 0 {
+		if stream.planSeriesCount(due.Identity) != 0 {
 			continue
 		}
 		started := time.Now()
+		stream.beginEvaluating(due.Identity)
 		result, err := stream.noSeriesPlanResult(due)
 		if err != nil {
 			return err
@@ -1149,7 +1681,7 @@ func (stream *streamedExecution) evaluateSeries(
 			return err
 		}
 	}
-	if len(stream.evaluated.Plans) != len(stream.header.DuePlans) {
+	if stream.summary.planCount() != len(stream.header.DuePlans) {
 		return completionContractError(codeDuePlanResultMissing, "alarmd worker: trustworthy completion did not produce every due Plan result")
 	}
 	return nil
@@ -1260,7 +1792,13 @@ func (stream *streamedExecution) loadNoDataMemory(ctx context.Context) error {
 	}
 	request := execution.NoDataLoadRequest{Contract: stream.header.Contract, Items: items}
 	started := time.Now()
-	stream.noData, err = stream.coordinator.ports.NoData.LoadNoData(ctx, request)
+	// Each memory is read in parts, and here only its header and its manual
+	// closes (decision-020 batch 8, 2.7). A Slot's round scans the groups as
+	// it judges them, after every present window (decideNoDataRound); a
+	// supplement asks of the memory only whether its own series' groups were
+	// recorded absent at the Slot (noDataStandingAt), and reads those groups
+	// by name once its series are known (readSupplementNoDataGroups).
+	stream.noData, err = stream.coordinator.ports.NoData.ReadNoDataHeaders(ctx, request)
 	if err == nil {
 		err = execution.ValidateNoDataLoad(request, stream.noData)
 	}
@@ -1272,6 +1810,9 @@ func (stream *streamedExecution) loadNoDataMemory(ctx context.Context) error {
 	stream.coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageGapLoaded,
 		stream.request.Operation, started, observability.ResultSuccess, observability.ReasonNone,
 		observability.Counts{Keys: int64(len(stream.noData.Items))}, nil)
+	if err := stream.reserveNoDataMemory(ctx); err != nil {
+		return err
+	}
 	stream.observeNoDataRepresentations(ctx)
 	stream.observeNoDataRenewals(ctx)
 	stream.carryNoDataMemory(ctx, request)
@@ -1402,6 +1943,7 @@ func (stream *streamedExecution) completeWithoutSeries(
 			if binding.Completeness != execution.CompletenessFull {
 				stream.evaluated = execution.EvaluationResult{Contract: stream.header.Contract,
 					Result: observability.ResultDegraded, ReasonCode: binding.ReasonCode}
+				stream.summary = slotEvaluationSummary{}
 				stream.observeCompletionOnlyProbe(ctx)
 				return nil
 			}
@@ -1409,6 +1951,7 @@ func (stream *streamedExecution) completeWithoutSeries(
 	}
 	stream.evaluated = execution.EvaluationResult{Contract: stream.header.Contract, Result: observability.ResultSuccess,
 		ReasonCode: observability.ReasonNone}
+	stream.summary = slotEvaluationSummary{}
 	for _, due := range stream.header.DuePlans {
 		started := time.Now()
 		planResult, err := stream.noSeriesPlanResult(due)
@@ -1579,8 +2122,8 @@ func (stream *streamedExecution) completedBinding(
 	}]execution.NamedInputBinding,
 ) (execution.NamedInputBinding, error) {
 	key := streamedInputKey{consumer: consumer, series: series, requirement: requirement.RequirementID}
-	if binding, found := stream.streamed[key]; found {
-		return binding, nil
+	if entry, found := stream.streamed[key]; found {
+		return entry.binding(), nil
 	}
 	templateKey := struct {
 		consumer    execution.ConsumerRef
@@ -1634,9 +2177,9 @@ func (stream *streamedExecution) queryForRequirement(
 		requirement execution.RequirementID
 	}]execution.NamedInputBinding,
 ) (execution.PlannedPhysicalQueryRef, error) {
-	for key, binding := range stream.streamed {
+	for key, entry := range stream.streamed {
 		if key.consumer == consumer && key.requirement == requirement.RequirementID {
-			return stream.prepared.queries[binding.Provenance.PhysicalQuery], nil
+			return stream.prepared.queries[entry.shared.Provenance.PhysicalQuery], nil
 		}
 	}
 	templateKey := struct {
@@ -1675,6 +2218,11 @@ type completedSeries struct {
 	// the roster stopped expecting (nodata.SyntheticSeries.Closing): its
 	// recovery goes past the open-alert gate, see oneTimeClose.
 	closing bool
+	// position is where the series sits among the Slot's prepared series:
+	// every one before it has been merged by the time it is, so a window
+	// applied before its merge lets go of the inputs of exactly those. A
+	// synthetic no-data series comes after every prepared one.
+	position int
 }
 
 // kind is what this series is, read off its inputs rather than stored twice.
@@ -1702,14 +2250,25 @@ func (stream *streamedExecution) statePreflightBatchLimit() int {
 // Plan, each opening a Plan-wide gap. Nothing evaluated so far reaches Events
 // or State; Progress records the coverage completion so the Slot is not
 // retried into the same deterministic rejection.
+//
+// That is a Slot none of whose windows was written yet. Once one was, only
+// the Plans the evaluation had not got past are answered that way, and the
+// windows written stay (completeWindowsBeyondSlotBudget).
 func (stream *streamedExecution) completeBeyondSlotBudget(ctx context.Context) error {
+	if stream.windows.started {
+		return stream.completeWindowsBeyondSlotBudget(ctx)
+	}
 	// The discarded results give back their State, Event and Gap shares so
 	// the replacement gaps are counted against an empty Slot; the retained
 	// bytes stay reserved until the stream releases everything.
 	stream.coordinator.releaseEffects(stream.effects)
 	stream.effects = effectCounts{}
+	// The summary goes with the results it summarised: the replacement
+	// Plans are the Slot's results now, and nothing read after evaluation
+	// may still count a series that will not be written.
 	stream.evaluated = execution.EvaluationResult{}
-	stream.closeNoDataBeyondSlotBudget(ctx)
+	stream.summary = slotEvaluationSummary{}
+	stream.closeNoDataBeyondSlotBudget(ctx, nil)
 	reason := execution.ReasonCode(contract.ReasonExecutionBudgetExhausted)
 	for _, due := range stream.header.DuePlans {
 		mutation, err := stream.gapMutationForReasons(due, map[execution.GapScope]execution.ReasonCode{{}: reason})
@@ -1730,10 +2289,17 @@ func (stream *streamedExecution) completeBeyondSlotBudget(ctx context.Context) e
 func primaryIncompleteBindings(inputs []execution.SeriesEvaluationInputRequest) []execution.NamedInputBinding {
 	primaryIncomplete := make([]execution.NamedInputBinding, 0)
 	for _, input := range inputs {
-		for _, binding := range input.Inputs {
-			if binding.Role == execution.InputRolePrimary && binding.Completeness != execution.CompletenessFull {
-				primaryIncomplete = append(primaryIncomplete, binding)
-			}
+		primaryIncomplete = append(primaryIncomplete, primaryIncompleteIn(input.Inputs)...)
+	}
+	return primaryIncomplete
+}
+
+// primaryIncompleteIn is the PRIMARY bindings of a series that are not FULL.
+func primaryIncompleteIn(bindings []execution.NamedInputBinding) []execution.NamedInputBinding {
+	var primaryIncomplete []execution.NamedInputBinding
+	for _, binding := range bindings {
+		if binding.Role == execution.InputRolePrimary && binding.Completeness != execution.CompletenessFull {
+			primaryIncomplete = append(primaryIncomplete, binding)
 		}
 	}
 	return primaryIncomplete
@@ -1768,21 +2334,66 @@ func (stream *streamedExecution) mergePrimaryIncompleteSeries(
 // own view. Per-item read outcomes stay isolated: a corrupt blob degrades only
 // its series, as it did when every series was read alone.
 func (stream *streamedExecution) evaluateCompletedSeriesBatch(ctx context.Context, batch []completedSeries) error {
+	return stream.evaluateReadBatch(ctx, batch, stream.startPreflightRead(ctx, batch, false))
+}
+
+// preflightRead is one preflight batch's State read, started on its own
+// goroutine while the batch before it is evaluated (prefetch), or on the
+// Slot's. done closes when the read has come back; the read touches only the
+// store and its own fields.
+type preflightRead struct {
+	request execution.StatePreflightRequest
+	loaded  execution.StatePreflightResult
+	err     error
+	started time.Time
+	timing  *execution.PreflightTiming
+	done    chan struct{}
+}
+
+// startPreflightRead reads the batch's Runtime State: on a goroutine of its
+// own with prefetch, so the next batch's read overlaps this batch's
+// evaluation and merge, or before it returns without.
+func (stream *streamedExecution) startPreflightRead(ctx context.Context, batch []completedSeries, prefetch bool) *preflightRead {
 	stateItems := make([]execution.StatePreflightItem, len(batch))
 	for index, entry := range batch {
 		stateItems[index] = entry.item
 	}
-	stateRequest := execution.StatePreflightRequest{Contract: stream.request.Contract, Items: stateItems}
-	started := time.Now()
+	read := &preflightRead{request: execution.StatePreflightRequest{Contract: stream.request.Contract, Items: stateItems,
+		OwnerFence: stream.request.OwnerFence}, started: time.Now(), done: make(chan struct{})}
 	timedCtx, timing := execution.WithPreflightTiming(ctx)
-	loaded, err := stream.coordinator.ports.State.LoadRuntime(timedCtx, stateRequest)
-	if err == nil {
-		loaded, err = execution.ClassifyStatePreflight(stateRequest, loaded)
+	read.timing = timing
+	state := stream.coordinator.ports.State
+	run := func() {
+		defer close(read.done)
+		read.loaded, read.err = state.LoadRuntime(timedCtx, read.request)
+		if read.err == nil {
+			read.loaded, read.err = execution.ClassifyStatePreflight(read.request, read.loaded)
+		}
 	}
+	if prefetch {
+		go run()
+	} else {
+		run()
+	}
+	return read
+}
+
+// evaluateReadBatch evaluates the batch from its State read, once the read
+// has come back.
+func (stream *streamedExecution) evaluateReadBatch(ctx context.Context, batch []completedSeries, read *preflightRead) error {
+	// The batch's routine evaluations are said as it ends, however it ends:
+	// each was evaluated.
+	defer stream.sayRoutineEvaluations(ctx)
+	// The phase is the wait for the read: a read that overlapped the batch
+	// before charges only what it had left when this batch needed it.
+	leave := stream.enter(slotPhasePreflight)
+	<-read.done
 	// Both outcomes: a read that did not come back is the one that took the
 	// longest, and leaving it out would make the phase's total fall exactly
 	// when the reads started timing out.
-	stream.spend(slotPhasePreflight, started)
+	leave()
+	stateRequest, loaded, err, started, timing := read.request, read.loaded, read.err, read.started, read.timing
+	stateItems := stateRequest.Items
 	if err != nil {
 		// The read's own facts, because they are the ones that decide what to
 		// do. A read that did not come back has no byte count - that is why the
@@ -1807,112 +2418,94 @@ func (stream *streamedExecution) evaluateCompletedSeriesBatch(ctx context.Contex
 			StateFetchMillis: timing.Fetch.Milliseconds(), StateDecodeMillis: timing.Decode.Milliseconds()}, nil)
 	outcomes := make(map[string]int)
 	defer stream.observeCarries(ctx, outcomes)
+	// The series are evaluated side by side and merged one after another in
+	// the batch's order (evaluateSideBySide): everything that reads or moves
+	// the Slot's own state - the window, the Plan in progress, the reservations
+	// - stays on this goroutine and in this order. pending is the series
+	// prepared and not yet merged; settle evaluates and merges them, and runs
+	// before anything else that merges or cuts a window.
+	var pending []*seriesEvaluation
+	settle := func() error {
+		err := stream.evaluateSideBySide(ctx, pending)
+		clear(pending)
+		pending = pending[:0]
+		return err
+	}
 	for index, entry := range batch {
+		// The batch stops pointing at the series' inputs as it is taken: a
+		// window applied part way through the batch lets the inputs of the
+		// series before go, and the batch is not to keep them alive past it.
+		batch[index].inputs = nil
 		view, outcome := carryHistory(entry.due, loaded.Items[index])
 		if outcome != "" {
 			outcomes[outcome]++
 		}
 		if stream.supplement != nil && stream.supplementReached(view) {
+			if err := settle(); err != nil {
+				return err
+			}
+			stream.beginEvaluating(entry.due.Identity)
 			continue
 		}
-		if err := stream.evaluateLoadedSeries(ctx, entry, view); err != nil {
+		// Before the evaluation and beside the supplement's own skip, for the
+		// same reason: a series whose State is already past this Slot has
+		// nothing for this Slot to decide. It used to reach the State
+		// preflight and fail the whole Slot as STATE_STALE_VERSION, which the
+		// store answers the same way on every retry -- it does not go back --
+		// so the Query Group stood still until the replay expired.
+		if execution.SupersededBy(view.PersistedApplyVersion, entry.item.ApplyVersion) {
+			if err := settle(); err != nil {
+				return err
+			}
+			stream.beginEvaluating(entry.due.Identity)
+			if err := stream.skipSupersededSeries(ctx, entry, view); err != nil {
+				return err
+			}
+			continue
+		}
+		if view.VersionComparison == execution.ApplyVersionEqual {
+			if err := settle(); err != nil {
+				return err
+			}
+			stream.beginEvaluating(entry.due.Identity)
+			if err := stream.mergeResumedSeries(ctx, entry, view); err != nil {
+				return err
+			}
+			continue
+		}
+		job, err := stream.prepareSeriesEvaluation(ctx, entry, view, settle)
+		if err != nil {
 			return err
 		}
+		pending = append(pending, job)
 	}
-	return nil
+	return settle()
 }
 
-func (stream *streamedExecution) evaluateLoadedSeries(ctx context.Context, entry completedSeries, view execution.RuntimeStateView) error {
-	due, series, inputs := entry.due, entry.series, entry.inputs
-	if view.VersionComparison == execution.ApplyVersionEqual {
-		resumed, err := resumedSeriesResult(stream.header, due, view, stream.gaps)
-		if err != nil {
-			return err
-		}
-		if err := stream.mergeProvisional(ctx, resumed, 0); err != nil {
-			return err
-		}
-		stream.coordinator.observe(ctx, observability.ComponentState, observability.StageMutationCompared,
-			stream.request.Operation, time.Now(), observability.ResultSuccess,
-			observability.ReasonStateAlreadyAppliedBeforeEvaluation, nil)
-		return nil
-	}
-	stateItems := []execution.StatePreflightItem{entry.item}
-	loaded := execution.StatePreflightResult{Items: []execution.RuntimeStateView{view}}
-	// The effective time is judged at the decision: the facts prepared when
-	// the Slot began are judged again only if a window boundary has passed
-	// since, which is when they stop holding.
-	decision := stream.coordinator.now().Unix()
-	if !effectiveFactsHoldAt(stream.effective, decision) {
-		effective, err := PrepareEffectiveTimeFacts(ctx, stream.header, stream.coordinator.ports.EffectiveTime, decision)
-		if err != nil {
-			return fmt.Errorf("alarmd worker: prepare EffectiveTime facts at the decision: %w", err)
-		}
-		stream.effective = effective
-	}
-	evaluationHeader, err := bindAlwaysEffectiveTimeFacts(stream.header, stateItems, stream.effective, entry.kind())
-	if err != nil {
-		return fmt.Errorf("alarmd worker: bind series EffectiveTime facts: %w", err)
-	}
-	evaluationHeader.DecisionTime = decision
-	request := execution.EvaluationRequest{Header: evaluationHeader, Inputs: inputs, State: loaded, Gaps: stream.gaps,
-		HostOverlay: stream.hostOverlays[due.Identity][series], NamedOutputs: stream.primaryNamedOutputs(inputs)}
-	// Told before the evaluation, so the strategy is in the copy's next read
-	// even if no record of this round asks about it. The constructor requires
-	// the port; the guard is for tests that build the struct.
-	if openAlerts := stream.coordinator.ports.OpenAlerts; openAlerts != nil {
-		openAlerts.TrackPlans(stream.header.Contract.Slot.QueryGroup, []execution.PlanIdentity{due.Identity})
-		request.OpenAlerts = openAlerts
-		if entry.closing {
-			request.OpenAlerts = oneTimeClose{}
-		}
-	}
-	started := time.Now()
-	execution.MarkStage(ctx, execution.SlotStageEvaluate)
-	evaluated, err := stream.coordinator.ports.Evaluator.Evaluate(ctx, request)
-	stream.spend(slotPhaseEvaluate, started)
-	if err != nil {
-		stream.observeEvaluationFailure(ctx, started, due, err)
-		return wrapEvaluationError(codeEvaluationFailed, fmt.Errorf("alarmd worker: evaluate series: %w", err))
-	}
-	incomplete := make([]execution.NamedInputBinding, 0)
-	for _, input := range inputs {
-		for _, binding := range input.Inputs {
-			// The same predicate the fold reads, so the marker proposed here
-			// covers exactly the Levels whose outcomes will name its reason.
-			if execution.InputIncompleteForGuard(binding) {
-				incomplete = append(incomplete, binding)
-			}
-		}
-	}
-	if len(incomplete) != 0 {
-		if len(evaluated.Plans) != 1 || evaluated.Plans[0].Plan != due.Identity {
-			return errors.New("alarmd worker: incomplete named input produced an invalid Plan result")
-		}
-		mutation, mutationErr := stream.completionGapMutationFor(due, incomplete)
-		if mutationErr != nil {
-			return mutationErr
-		}
-		evaluated.Plans[0].GuardBeforeEvents = []execution.PlanGapMutation{mutation}
-		evaluated.Plans[0].GuardAfterState = nil
-	}
-	if err := evaluated.Validate(request); err != nil {
-		stream.observeEvaluationFailure(ctx, started, due, err)
-		return wrapEvaluationError(codeEvaluationResultInvalid, fmt.Errorf("alarmd worker: invalid series evaluation: %w", err))
-	}
-	stream.observeEvaluationCompleted(ctx, started, due, series, inputs, evaluated)
-	retained, err := evaluationRetainedSize(loaded, execution.EvaluationResult{})
-	if err != nil {
-		return fmt.Errorf("alarmd worker: measure evaluated retention: %w", err)
-	}
-	if stream.supplement != nil {
-		stream.noteSupplementEvaluated(due, series, inputs, &evaluated)
-	}
-	if err := stream.mergeProvisional(ctx, evaluated, retained); err != nil {
+// mergeEvaluatedSeries merges one evaluated series' result with the views it
+// was evaluated from. Before the merge, a window the result would overfill is
+// applied without it (windowBeforeMerge), letting go of the inputs of every
+// prepared series before position, and the result starts the next window.
+// The views join the window the result is in.
+func (stream *streamedExecution) mergeEvaluatedSeries(
+	ctx context.Context,
+	position int,
+	evaluated execution.EvaluationResult,
+	retained uint64,
+	views []execution.RuntimeStateView,
+	items []execution.StatePreflightItem,
+) error {
+	defer stream.enter(slotPhaseMerge)()
+	measured := stream.measureMerge(evaluated, retained, uint64(len(views))*loadedKeyHeldBytes)
+	stream.windows.reached = position
+	if err := stream.windowBeforeMerge(ctx, evaluated, measured); err != nil {
 		return err
 	}
-	stream.state.Items = append(stream.state.Items, loaded.Items...)
-	stream.stateItems = append(stream.stateItems, stateItems...)
+	if err := stream.mergeMeasured(ctx, evaluated, measured); err != nil {
+		return err
+	}
+	stream.state.Items = append(stream.state.Items, views...)
+	stream.stateItems = append(stream.stateItems, items...)
 	return nil
 }
 
@@ -1923,11 +2516,36 @@ func uncommittedGapMutations(gaps execution.GapLoadResult, mutations []execution
 		if found && (marker.Status == execution.GapFound || marker.Status == execution.GapClearedTombstone) &&
 			marker.LastScheduleRevision == mutation.ScheduleRevision &&
 			execution.CompareApplyVersion(marker.PersistedApplyVersion, mutation.ApplyVersion) == execution.ApplyVersionEqual {
+			// Written by an earlier attempt of this Slot. A retry that
+			// proposes more - a scope the marker lacks, or a worse reason,
+			// as a retry read in other slices or answered worse can - grows
+			// it from the revision it found (execution.ExtendSameSlotGap);
+			// one that proposes nothing more writes nothing.
+			if grown, extends := extendCommittedGap(marker, mutation); extends {
+				pending = append(pending, grown)
+			}
 			continue
 		}
 		pending = append(pending, mutation)
 	}
 	return pending
+}
+
+// extendCommittedGap is mutation as the growth of a marker this Slot already
+// wrote, from the revision it was read at, when it grows it.
+func extendCommittedGap(marker execution.GapGuardSnapshot, mutation execution.PlanGapMutation) (execution.PlanGapMutation, bool) {
+	if marker.Status != execution.GapFound {
+		return execution.PlanGapMutation{}, false
+	}
+	if _, extends := execution.ExtendSameSlotGap(marker.Scopes, mutation.Scopes); !extends {
+		return execution.PlanGapMutation{}, false
+	}
+	mutation.ExpectedMarkerRevision, mutation.MutationDigest = marker.MarkerRevision, ""
+	grown, err := execution.BuildPlanGapMutation(mutation)
+	if err != nil {
+		return execution.PlanGapMutation{}, false
+	}
+	return grown, true
 }
 
 func (stream *streamedExecution) observeEvaluationCompleted(
@@ -1956,7 +2574,56 @@ func (stream *streamedExecution) observeEvaluationCompleted(
 		CarriedReason: execution.CarriedReasonFacts(evaluated.ReasonCarried && evaluated.Result != observability.ResultSuccess,
 			evaluated.ReasonOrigin),
 	}
+	stream.sayEvaluation(ctx, due, observation)
+}
+
+// sayEvaluation says one series' evaluation line, or merges it.
+func (stream *streamedExecution) sayEvaluation(ctx context.Context, due execution.DuePlan, observation observability.Observation) {
+	// A routine evaluation - one the line counts and does not write, with no
+	// reason and no gate of its own - is merged with its Plan's others of
+	// the batch into one line: every count read from the lines is the same,
+	// and a batch of thousands of series is one line a Plan, not one a
+	// series (decision-020 0.6.x throughput design 3.4-3).
+	if observability.Routine(observation) && observation.DurationKnown && observation.ReasonCode == "" && observation.CarriedReason == nil &&
+		len(observation.RecoveryGates) == 0 && len(observation.OpenAlertGates) == 0 && len(observation.RecoveryWithheld) == 0 {
+		if stream.routineEvaluations == nil {
+			stream.routineEvaluations = make(map[execution.PlanIdentity]*observability.Observation)
+		}
+		merged := stream.routineEvaluations[due.Identity]
+		if merged == nil {
+			// Started from the line itself, which the merge then takes as
+			// the Plan's first (Counts.Evaluations still zero).
+			first := observation
+			merged = &first
+			stream.routineEvaluations[due.Identity] = merged
+			stream.routineEvaluationsOrder = append(stream.routineEvaluationsOrder, due.Identity)
+		}
+		observability.MergeRoutineEvaluation(merged, observation)
+		return
+	}
 	stream.coordinator.ports.Observer.Observe(ctx, observation)
+}
+
+// sayRoutineEvaluations says the batch's routine evaluations, a line a Plan.
+func (stream *streamedExecution) sayRoutineEvaluations(ctx context.Context) {
+	defer func() { _ = recover() }()
+	for _, plan := range stream.routineEvaluationsOrder {
+		stream.coordinator.ports.Observer.Observe(ctx, *stream.routineEvaluations[plan])
+	}
+	clear(stream.routineEvaluations)
+	stream.routineEvaluationsOrder = stream.routineEvaluationsOrder[:0]
+}
+
+// planSeriesCount is how many series the stream bound for the Plan: from
+// planSeries until the completion, from the counts it leaves after.
+func (stream *streamedExecution) planSeriesCount(plan execution.PlanIdentity) int {
+	if stream.planSeries == nil {
+		if counted := stream.planSeriesCounts[plan]; counted != nil {
+			return *counted
+		}
+		return 0
+	}
+	return len(stream.planSeries[plan])
 }
 
 // planSeriesMatched is how many PRIMARY series the Slot bound to the Plan,
@@ -1968,7 +2635,7 @@ func (stream *streamedExecution) planSeriesMatched(due execution.DuePlan) *int {
 	if cached := stream.planSeriesCounts[due.Identity]; cached != nil {
 		return cached
 	}
-	matched := len(stream.planSeries[due.Identity])
+	matched := stream.planSeriesCount(due.Identity)
 	if stream.planSeriesCounts == nil {
 		stream.planSeriesCounts = make(map[execution.PlanIdentity]*int)
 	}
@@ -2196,10 +2863,9 @@ func (stream *streamedExecution) algorithmObservationFacts(
 			if !found {
 				continue
 			}
-			for _, binding := range input.Inputs {
-				if !algorithmObservesBinding(algorithm, binding) {
-					continue
-				}
+			for _, binding := range oneBindingARequirement(input.Inputs, func(binding execution.NamedInputBinding) bool {
+				return algorithmObservesBinding(algorithm, binding)
+			}) {
 				inputFacts = append(inputFacts, stream.algorithmInputFacts(algorithm, outcome, binding)...)
 			}
 		}
@@ -2262,6 +2928,35 @@ func algorithmObservesBinding(algorithm observedAlgorithm, binding execution.Nam
 	return found
 }
 
+// oneBindingARequirement is the bindings keep takes, one a requirement: a
+// Plan answered from its completion in a Slot read in slices carries a
+// binding of each slice that did not complete beside the first slice's, for
+// the same requirement, and its input is one input of the round,
+// counted once. The one taken is the first that did not complete, if one did
+// not - the round is as short as its shortest slice - and the first
+// otherwise, in the order the requirements first appear.
+func oneBindingARequirement(bindings []execution.NamedInputBinding, keep func(execution.NamedInputBinding) bool) []execution.NamedInputBinding {
+	chosen := make(map[execution.RequirementID]int, len(bindings))
+	order := make([]execution.RequirementID, 0, len(bindings))
+	for index, binding := range bindings {
+		if !keep(binding) {
+			continue
+		}
+		earlier, seen := chosen[binding.RequirementID]
+		if !seen {
+			order = append(order, binding.RequirementID)
+		}
+		if !seen || bindings[earlier].Completeness == execution.CompletenessFull && binding.Completeness != execution.CompletenessFull {
+			chosen[binding.RequirementID] = index
+		}
+	}
+	taken := make([]execution.NamedInputBinding, 0, len(order))
+	for _, requirement := range order {
+		taken = append(taken, bindings[chosen[requirement]])
+	}
+	return taken
+}
+
 func (stream *streamedExecution) completionOnlyAlgorithmInputFacts(
 	due execution.DuePlan,
 ) []observability.AlgorithmInputFact {
@@ -2277,11 +2972,9 @@ func (stream *streamedExecution) completionOnlyAlgorithmInputFacts(
 			if !observed {
 				continue
 			}
-			for _, binding := range bindings {
-				if !binding.Consumer.HasLevel || binding.Consumer.LevelID != levelID ||
-					!algorithmObservesBinding(algorithm, binding) {
-					continue
-				}
+			for _, binding := range oneBindingARequirement(bindings, func(binding execution.NamedInputBinding) bool {
+				return binding.Consumer.HasLevel && binding.Consumer.LevelID == levelID && algorithmObservesBinding(algorithm, binding)
+			}) {
 				facts = append(facts, stream.completionOnlyAlgorithmBindingFacts(algorithm, levelID, binding)...)
 			}
 		}

@@ -18,6 +18,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/cast"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/esquery"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/esregexpcompat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -633,7 +634,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 		if cv.Boost != "" {
 			cq.Boost(cast.ToFloat64(cv.Boost))
 		}
-		result = cq
+		result = esquery.Range(cq)
 	case *WildCardNode:
 		if n.isQuoted {
 			// 引号内的通配符应视为字面字符，与 ES query_string 语义一致
@@ -668,13 +669,13 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	case *StringNode:
 		switch op {
 		case ">":
-			result = elastic.NewRangeQuery(field).Gt(realStringValue(value))
+			result = esquery.Range(elastic.NewRangeQuery(field).Gt(realStringValue(value)))
 		case ">=":
-			result = elastic.NewRangeQuery(field).Gte(realStringValue(value))
+			result = esquery.Range(elastic.NewRangeQuery(field).Gte(realStringValue(value)))
 		case "<":
-			result = elastic.NewRangeQuery(field).Lt(realStringValue(value))
+			result = esquery.Range(elastic.NewRangeQuery(field).Lt(realStringValue(value)))
 		case "<=":
-			result = elastic.NewRangeQuery(field).Lte(realStringValue(value))
+			result = esquery.Range(elastic.NewRangeQuery(field).Lte(realStringValue(value)))
 		case "!=":
 			notEqual = true
 			if fieldOption.IsAnalyzed {

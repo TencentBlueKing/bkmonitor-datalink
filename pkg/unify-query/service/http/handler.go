@@ -187,7 +187,7 @@ func HandlerQueryExemplar(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryExemplar,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, string(queryStr),
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), string(queryStr),
 	).Info(ctx)
 
 	if err = validateQueryTsDataSource(query); err != nil {
@@ -272,7 +272,7 @@ func HandlerQueryRaw(c *gin.Context) {
 		).Error(ctx, err))
 		return
 	}
-	if err = validateQueryTsRawPagination(queryTs); err != nil {
+	if err = validateQueryTsRawOptions(queryTs); err != nil {
 		resp.failed(ctx, metadata.NewMessage(
 			metadata.MsgQueryRaw,
 			"查询参数校验异常",
@@ -414,6 +414,10 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 		err = fmt.Errorf("exact_total is not supported by query_raw_with_scroll")
 		return
 	}
+	if queryTs.AllowPartialESResults {
+		err = fmt.Errorf("allow_partial_es_results is not supported by query_raw_with_scroll")
+		return
+	}
 
 	if queryTs.Scroll == "" {
 		queryTs.Scroll = ScrollWindowTimeout
@@ -427,7 +431,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	queryTs.ClearCache = false
 	queryByte, _ := json.Marshal(queryTs)
 	queryStr := string(queryByte)
-	queryStrWithUserName := fmt.Sprintf("%s:%s", user.Name, queryStr)
+	queryStrWithUserName := scrollSessionKey(user, queryStr)
 	// 新后端与原会话隔离，默认 false 保持已有会话标识。
 	if metadata.GetQueryFlags(ctx).DorisDirectQuery {
 		queryStrWithUserName += ":doris_direct_query=true"
@@ -441,13 +445,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 
 	if clearCache {
 		span.Set("clear-cache", "true")
-		err = session.Clear(ctx)
-		if err != nil {
-			return
-		}
-		// 清理后需要重新初始化 session，确保从头开始查询
-		// 重新创建一个新的 session 来替换被清理的 session
-		session, err = redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollSessionLockTimeout, queryTs.SliceMax, queryTs.Limit)
+		err = session.Reset(ctx)
 		if err != nil {
 			return
 		}
@@ -532,7 +530,7 @@ func HandlerQueryTs(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryTs,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, string(queryStr),
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), string(queryStr),
 	).Info(ctx)
 
 	settings := getNamedOutputSettings()
@@ -647,7 +645,7 @@ func HandlerQueryPromQL(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgParserPromQL,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, string(queryStr),
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), string(queryStr),
 	).Info(ctx)
 
 	if queryPromQL.PromQL == "" {
@@ -741,7 +739,7 @@ func HandlerQueryReference(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryReference,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, string(queryStr),
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), string(queryStr),
 	).Info(ctx)
 
 	if err = validateQueryTsDataSource(query); err != nil {
@@ -804,7 +802,7 @@ func HandlerQueryTsClusterMetrics(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryClusterMetrics,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, string(queryStr),
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), string(queryStr),
 	).Info(ctx)
 
 	span.Set("query-body", string(queryStr))
@@ -856,6 +854,31 @@ func validateQueryTsRawPagination(queryTs *structured.QueryTs) error {
 	}
 	if queryTs.Scroll != "" {
 		return fmt.Errorf("is_search_after cannot be combined with scroll")
+	}
+	return nil
+}
+
+func validateQueryTsRawOptions(queryTs *structured.QueryTs) error {
+	if err := validateQueryTsRawPagination(queryTs); err != nil {
+		return err
+	}
+	return validatePartialESResults(queryTs)
+}
+
+func validatePartialESResults(queryTs *structured.QueryTs) error {
+	if queryTs == nil || !queryTs.AllowPartialESResults {
+		return nil
+	}
+	if exactTotalRequested(queryTs) {
+		return fmt.Errorf("allow_partial_es_results cannot be combined with exact_total")
+	}
+	if queryTs.Scroll != "" {
+		return fmt.Errorf("allow_partial_es_results cannot be combined with scroll")
+	}
+	for _, option := range queryTs.ResultTableOptions {
+		if option != nil && option.ScrollID != "" {
+			return fmt.Errorf("allow_partial_es_results cannot be combined with scroll")
+		}
 	}
 	return nil
 }

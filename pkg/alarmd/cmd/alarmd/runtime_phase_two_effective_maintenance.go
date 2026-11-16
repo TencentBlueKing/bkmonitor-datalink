@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/filterclose"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategycache"
@@ -28,6 +29,9 @@ import (
 // Maintenance uses the existing per-QG flight and lease, not a second owner or
 // an outbox. It never waits behind detection, and close batches stay small.
 func (runtime *productionPhaseTwoQueryGroup) withMaintenance(ctx context.Context, run func(context.Context, func(context.Context) error) error) error {
+	// Named so its fence checks read apart from the detection rounds': a run
+	// opens with one, and closes check again before they write.
+	ctx = redisfailure.WithCaller(ctx, redisfailure.CallerEffectiveMaintenance)
 	// Loading external facts never occupies a detection flight. Only the
 	// bounded close write needs exclusion from this owner's in-flight Slot.
 	var release func()
@@ -54,7 +58,18 @@ func (runtime *productionPhaseTwoQueryGroup) withMaintenance(ctx context.Context
 		}
 		return err
 	}
-	if _, err := runtime.session.ValidateCurrent(ctx, runtime.now()); err != nil {
+	// The run opens with a fence check, and under a worker session it is one
+	// that confirms: such a lease learns the record's content and timeline
+	// only from its checks, and a Query Group that runs no round -- its
+	// strategies edited out, waiting to retire -- makes no other, so the gate
+	// below would judge it by the timeline it was opened at for good. The
+	// same script either way. The lease taken above stays what a close is
+	// checked against: one the confirmation moved is not closed under.
+	if runtime.session.HeldUnderSession() {
+		if _, _, err := runtime.session.ValidateCurrentWithAssignment(ctx, runtime.now()); err != nil {
+			return err
+		}
+	} else if _, err := runtime.session.ValidateCurrent(ctx, runtime.now()); err != nil {
 		return err
 	}
 	if runtime.viewGate != nil {

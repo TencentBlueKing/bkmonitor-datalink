@@ -54,3 +54,33 @@ func TestString(t *testing.T) {
 	}
 	fmt.Println(s)
 }
+
+func TestRunStringKeepsUserEnvOutOfLogs(t *testing.T) {
+	const expanded = "example-expanded-value"
+	const unused = "example-unused-value"
+	const child = "BKMONITORBEAT_TEST_SCRIPT_LOG_CHILD"
+
+	// Run the command in a separate test process to capture the standard logger's output.
+	if os.Getenv(child) == "1" {
+		env := map[string]string{"EXPANDED": expanded, "UNUSED": unused}
+		out, err := utils.RunString(context.Background(), `printf %s "$EXPANDED"`, env, "")
+		if err != nil || out != expanded {
+			t.Fatalf("expected the command to receive the expanded argument, err=%v", err)
+		}
+		out, err = utils.RunString(context.Background(), "printenv UNUSED", env, "")
+		if err != nil || out != unused+"\n" {
+			t.Fatalf("expected the child environment to contain UNUSED, err=%v", err)
+		}
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$")
+	cmd.Env = append(os.Environ(), child+"=1")
+	logs, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run child: %v\n%s", err, logs)
+	}
+	if bytes.Contains(logs, []byte(expanded)) || bytes.Contains(logs, []byte(unused)) {
+		t.Fatal("script execution logs contain a user_env value")
+	}
+}

@@ -12,6 +12,7 @@ package uq
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -160,6 +161,12 @@ func (named *namedOutputDecoding) hold(ctx context.Context, bytes uint64) error 
 	return nil
 }
 
+// unhold lets go of bytes hold counted, no more than it holds. What was
+// reserved stays reserved, for the next hold to use.
+func (named *namedOutputDecoding) unhold(bytes uint64) {
+	named.held -= min(bytes, named.held)
+}
+
 // settle gives back what the alignment reserved beyond what it keeps once
 // its answer is read: the aligned table of a completion that carries one
 // (NamedOutputRecords.RetainedBytes), which its Slot then holds; nothing of
@@ -217,10 +224,14 @@ func (session *seriesDecoder) acceptOutputs(ctx context.Context, decoder *json.D
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		var answer namedOutputAnswer
-		if err := decoder.Decode(&answer); err != nil {
+		answer, decoded, err := session.decodeAnswer(ctx, decoder)
+		if err != nil {
 			return fmt.Errorf("alarmd access uq: decode output: %w", err)
 		}
+		// What reading the answer held is let go as it is handed on: the
+		// series are charged again where they are taken, and an answer
+		// dropped here is no longer held at all.
+		named.unhold(decoded)
 		if answer.ReferenceName == "" || seen[answer.ReferenceName] {
 			named.malformed = true
 			continue
@@ -244,8 +255,99 @@ func (session *seriesDecoder) acceptOutputs(ctx context.Context, decoder *json.D
 			return err
 		}
 	}
+	session.window.next(decoder, otherValueBytes, ErrResponseBytesExceeded)
 	_, err = decoder.Token()
 	return err
+}
+
+// decodeAnswer reads one output's answer a field at a time, so each of its
+// series is bounded as a series of the legacy answer is. The answer as a
+// whole is bounded by the Slot's share: each series kept is held as it is
+// read (named.hold), and refused as NAMED_OUTPUT_BYTES_EXCEEDED past it;
+// decoded is what was held, for the caller to let go as it hands the series
+// on. The series of an output nobody asked for, named before them, are read
+// and not kept.
+func (session *seriesDecoder) decodeAnswer(ctx context.Context, decoder *json.Decoder) (answer namedOutputAnswer, decoded uint64, err error) {
+	window := session.window
+	named := session.named
+	defer func() {
+		if err != nil {
+			named.unhold(decoded)
+			decoded = 0
+		}
+	}()
+	window.next(decoder, otherValueBytes, ErrResponseBytesExceeded)
+	start, err := decoder.Token()
+	if err == nil && start != json.Delim('{') {
+		err = errors.New("an output answer must be an object")
+	}
+	if err != nil {
+		return answer, decoded, err
+	}
+	for decoder.More() {
+		window.next(decoder, otherValueBytes, ErrResponseBytesExceeded)
+		var keyToken json.Token
+		keyToken, err = decoder.Token()
+		if err != nil {
+			return answer, decoded, err
+		}
+		key, _ := keyToken.(string)
+		window.next(decoder, otherValueBytes, ErrResponseBytesExceeded)
+		switch key {
+		case "series":
+			start, err = decoder.Token()
+			if err != nil {
+				return answer, decoded, err
+			}
+			if start == nil {
+				answer.Series = nil
+				continue
+			}
+			if start != json.Delim('[') {
+				err = errors.New("an output's series must be an array")
+				return answer, decoded, err
+			}
+			answer.Series = []json.RawMessage{}
+			// Named before its series and asked by nobody: read past them.
+			unasked := answer.ReferenceName != "" && answer.ReferenceName != named.outputs.LegacyRef && !named.asked(answer.ReferenceName)
+			for decoder.More() {
+				window.next(decoder, session.client.limits.MaxSeriesBytes, ErrSeriesBytesExceeded)
+				var raw json.RawMessage
+				if err = decoder.Decode(&raw); err != nil {
+					return answer, decoded, err
+				}
+				window.next(decoder, otherValueBytes, ErrResponseBytesExceeded)
+				if unasked {
+					continue
+				}
+				if err = named.hold(ctx, uint64(len(raw))); err != nil {
+					return answer, decoded, err
+				}
+				decoded += uint64(len(raw))
+				answer.Series = append(answer.Series, raw)
+			}
+			if _, err = decoder.Token(); err != nil {
+				return answer, decoded, err
+			}
+		case "reference_name":
+			err = decoder.Decode(&answer.ReferenceName)
+		case "state":
+			err = decoder.Decode(&answer.State)
+		case "status":
+			err = decoder.Decode(&answer.Status)
+		case "is_partial":
+			err = decoder.Decode(&answer.IsPartial)
+		default:
+			var ignored json.RawMessage
+			err = decoder.Decode(&ignored)
+		}
+		if err != nil {
+			return answer, decoded, err
+		}
+	}
+	window.next(decoder, otherValueBytes, ErrResponseBytesExceeded)
+	_, err = decoder.Token()
+	return answer, decoded, err
 }
 
 func (named *namedOutputDecoding) asked(ref string) bool {
@@ -352,15 +454,22 @@ func answeredState(answer namedOutputAnswer) execution.NamedOutputState {
 }
 
 // noteDelivered keeps the points of a legacy series that was delivered.
-func (named *namedOutputDecoding) noteDelivered(ctx context.Context, series responseSeries, dataset *execution.Dataset, valueField string) error {
+// recordIDs is the ids the normalization derived for the Dataset's records,
+// in its order: the points outlive every window, and the Dataset keeps no
+// ids to read them back from, so they are taken from that derivation rather
+// than derived again. They are held as they always were, in named.hold.
+func (named *namedOutputDecoding) noteDelivered(ctx context.Context, series responseSeries, dataset *execution.Dataset, recordIDs []string, valueField string) error {
+	if len(recordIDs) != dataset.Len() {
+		return fmt.Errorf("alarmd access uq: %d record ids for a series of %d records", len(recordIDs), dataset.Len())
+	}
 	labels := alignLabels(series)
 	for index := 0; index < dataset.Len(); index++ {
 		record, _ := dataset.Record(index)
 		value, _ := record.Value(valueField)
-		if err := named.hold(ctx, namedLegacyPointBytes+uint64(len(record.RecordID())+len(value))); err != nil {
+		if err := named.hold(ctx, namedLegacyPointBytes+uint64(len(recordIDs[index])+len(value))); err != nil {
 			return err
 		}
-		named.points = append(named.points, legacyPoint{recordID: record.RecordID(),
+		named.points = append(named.points, legacyPoint{recordID: recordIDs[index],
 			key: alignKey{time: record.SourceTime(), labels: labels}, value: value})
 	}
 	return nil

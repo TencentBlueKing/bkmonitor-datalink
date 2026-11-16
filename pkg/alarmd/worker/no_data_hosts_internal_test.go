@@ -50,13 +50,13 @@ func hostCandidate(t *testing.T, ip, cloud string) nodata.HostCandidate {
 // hosts.
 func TestResolvingNoDataHostsAnswersBothQuestionsInOnePass(t *testing.T) {
 	index := &countingHostBusiness{byIdentity: map[string]string{
-		"10.0.0.1|0": "2",
-		"10.0.0.2|0": "9",
+		"192.0.2.1|0": "2",
+		"192.0.2.2|0": "9",
 	}}
 	candidates := []nodata.HostCandidate{
-		hostCandidate(t, "10.0.0.1", "0"), // this business
-		hostCandidate(t, "10.0.0.2", "0"), // another business
-		hostCandidate(t, "10.0.0.3", "0"), // not held at all
+		hostCandidate(t, "192.0.2.1", "0"), // this business
+		hostCandidate(t, "192.0.2.2", "0"), // another business
+		hostCandidate(t, "192.0.2.3", "0"), // not held at all
 	}
 
 	resolution := resolveNoDataHosts(index, "2", candidates)
@@ -64,7 +64,7 @@ func TestResolvingNoDataHostsAnswersBothQuestionsInOnePass(t *testing.T) {
 	if len(resolution.Known) != 1 {
 		t.Fatalf("known = %+v, want only the host held under this business", resolution.Known)
 	}
-	if _, ok := resolution.Known["10.0.0.1|0"]; !ok {
+	if _, ok := resolution.Known["192.0.2.1|0"]; !ok {
 		t.Fatalf("known = %+v, want the host of this business", resolution.Known)
 	}
 	if len(resolution.OutOfBusiness) != 1 {
@@ -76,7 +76,7 @@ func TestResolvingNoDataHostsAnswersBothQuestionsInOnePass(t *testing.T) {
 		t.Fatalf("out of business = %+v, want it keyed by group %q",
 			resolution.OutOfBusiness, candidates[1].GroupKey)
 	}
-	if _, ok := resolution.Known["10.0.0.3|0"]; ok {
+	if _, ok := resolution.Known["192.0.2.3|0"]; ok {
 		t.Fatal("a host the index does not hold was expected")
 	}
 	if _, ok := resolution.OutOfBusiness[candidates[2].GroupKey]; ok {
@@ -125,10 +125,11 @@ func (store *rememberingNoDataStore) ApplyNoData(
 }
 
 // The hosts a history roster consults are the ones the Plan remembers, so they
-// cannot be known until the memory has been read - which is why the resolution
-// happens after the load and not before it.
-func TestNoDataHostsAreResolvedFromTheMemoryJustLoaded(t *testing.T) {
-	remembered := nodata.HostIdentity{IP: "10.0.0.9", CloudID: "0"}
+// cannot be known until the memory has been read - and the memory is read in
+// segments as the round judges it, so each remembered host is resolved as its
+// group is read, before it is judged.
+func TestNoDataHostsAreResolvedFromTheMemoryAsItIsRead(t *testing.T) {
+	remembered := nodata.HostIdentity{IP: "192.0.2.9", CloudID: "0"}
 	// Built by the same projection the evaluation uses rather than written out
 	// here: the key's shape is the package's, and a hand-written one is a guess
 	// that happens to agree until it does not.
@@ -143,7 +144,7 @@ func TestNoDataHostsAreResolvedFromTheMemoryJustLoaded(t *testing.T) {
 	store := &rememberingNoDataStore{groups: []execution.NoDataGroupMemory{
 		{GroupKey: rememberedKey, LastSeen: 940},
 	}}
-	index := &countingHostBusiness{byIdentity: map[string]string{"10.0.0.9|0": "9"}}
+	index := &countingHostBusiness{byIdentity: map[string]string{"192.0.2.9|0": "9"}}
 
 	duePlans := []execution.DuePlan{{
 		Identity:        execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"},
@@ -163,6 +164,9 @@ func TestNoDataHostsAreResolvedFromTheMemoryJustLoaded(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if _, err := stream.noDataRoundFor(duePlans[0], nil, execution.CompletenessFull); err != nil {
+		t.Fatal(err)
+	}
 	identity := execution.PlanNoDataIdentity{Plan: duePlans[0].Identity, StateGeneration: "state-v1"}
 	resolution, resolved := stream.noDataHosts[identity]
 	if !resolved {
@@ -188,7 +192,7 @@ func TestNoDataHostsAreResolvedFromTheMemoryJustLoaded(t *testing.T) {
 // open an alert per host on every restart.
 func TestResolvingNoDataHostsExpectsNothingFromAColdIndex(t *testing.T) {
 	resolution := resolveNoDataHosts(&countingHostBusiness{}, "2", []nodata.HostCandidate{
-		hostCandidate(t, "10.0.0.1", "0"),
+		hostCandidate(t, "192.0.2.1", "0"),
 	})
 	if len(resolution.Known) != 0 || len(resolution.OutOfBusiness) != 0 {
 		t.Fatalf("resolution = %+v, want nothing from an index that holds nothing", resolution)
@@ -204,7 +208,7 @@ func TestResolvingNoDataHostsExpectsNothingFromAColdIndex(t *testing.T) {
 // expected set it has no basis for.
 func TestResolvingNoDataHostsReportsAnIndexItCouldNotRead(t *testing.T) {
 	cold := &countingHostBusiness{}
-	candidates := []nodata.HostCandidate{hostCandidate(t, "10.0.0.1", "0"), hostCandidate(t, "10.0.0.2", "0")}
+	candidates := []nodata.HostCandidate{hostCandidate(t, "192.0.2.1", "0"), hostCandidate(t, "192.0.2.2", "0")}
 
 	resolution := resolveNoDataHosts(cold, "2", candidates)
 
@@ -219,8 +223,24 @@ func TestResolvingNoDataHostsReportsAnIndexItCouldNotRead(t *testing.T) {
 		t.Fatalf("resolution = %+v, want both sets empty", resolution)
 	}
 
-	warm := &countingHostBusiness{byIdentity: map[string]string{"10.0.0.1|0": "2"}}
+	warm := &countingHostBusiness{byIdentity: map[string]string{"192.0.2.1|0": "2"}}
 	if got := resolveNoDataHosts(warm, "2", candidates); !got.Resolved {
 		t.Fatalf("resolution = %+v, want Resolved once there is an index to answer from", got)
 	}
+}
+
+func (store *rememberingNoDataStore) ReadNoDataHeaders(ctx context.Context, request execution.NoDataLoadRequest) (execution.NoDataLoadResult, error) {
+	return LoadedRoster(store.LoadNoData).Headers(ctx, request)
+}
+
+func (store *rememberingNoDataStore) RecheckNoDataHeader(ctx context.Context, identity execution.PlanNoDataIdentity) (execution.NoDataMemorySnapshot, error) {
+	return LoadedRoster(store.LoadNoData).Recheck(ctx, identity)
+}
+
+func (store *rememberingNoDataStore) ScanNoDataGroups(ctx context.Context, request execution.NoDataScanRequest) (execution.NoDataScanPage, error) {
+	return LoadedRoster(store.LoadNoData).Scan(ctx, request)
+}
+
+func (store *rememberingNoDataStore) ReadNoDataGroups(ctx context.Context, request execution.NoDataGroupsRequest) (execution.NoDataGroupsResult, error) {
+	return LoadedRoster(store.LoadNoData).Read(ctx, request)
 }

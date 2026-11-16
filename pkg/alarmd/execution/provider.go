@@ -160,6 +160,12 @@ type QueryAttempt struct {
 	// on a request header and decide nothing. Empty for a read that serves
 	// no Plan.
 	Strategies []string
+
+	// Slice is the slice of the Query Group's series the query reads, as
+	// the execution request carries it; the zero slice is all of them. It
+	// shapes the request sent and nothing the query is known by: the spec,
+	// its digest and the result reference are the unsliced query's.
+	Slice InputSlice
 }
 
 func (attempt QueryAttempt) Validate() error {
@@ -184,7 +190,7 @@ func (attempt QueryAttempt) Validate() error {
 		attempt.RecoveryPermit.ExpiresAtUnixMilli < attempt.DeadlineUnixMilli {
 		return errors.New("alarmd execution: retry, replay and probe require a matching live recovery permit")
 	}
-	return nil
+	return attempt.Slice.Validate()
 }
 
 type RouteAttemptResult string
@@ -309,6 +315,10 @@ const (
 	RejectionClassVMSampleLimit = "VM_SAMPLE_LIMIT"
 	RejectionClassPromQLParse   = "PROMQL_PARSE"
 	RejectionClassInvalidQuery  = "INVALID_QUERY"
+	// RejectionClassQueryTooLong is the store refusing a query longer than
+	// it takes (VictoriaMetrics' -search.maxQueryLen): for a read in an input
+	// slice, the slice's conditions made it so (INPUT_SLICE_QUERY_TOO_LONG).
+	RejectionClassQueryTooLong = "QUERY_TOO_LONG"
 )
 
 type ProviderRejection struct {

@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	alarmdprogress "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisbatch"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -534,7 +535,7 @@ func (repository *RedisCatalogRepository) compareAndSetPublicationScheduleActiva
 		if !remains {
 			// Leaving the publication: there is nothing to keep running, and
 			// the draining projection already expects it gone.
-			cutover.decided(cutoverRetiredUnwritten)
+			cutover.decided(cutoverRetiredUnwritten, group)
 			return nil
 		}
 		for _, key := range keys {
@@ -545,7 +546,7 @@ func (repository *RedisCatalogRepository) compareAndSetPublicationScheduleActiva
 		blockedGroups[group] = struct{}{}
 		blockedNow = append(blockedNow, blockedAt(previousBlocked, group, reason, detail, boundary,
 			keys, activatedDigest, activatedRefs, openDigest, openRefs))
-		cutover.decided(cutoverBlocked)
+		cutover.decided(cutoverBlocked, group)
 		return nil
 	}
 	// keptWithoutRead is the Query Groups the manifest shows unchanged, whose
@@ -606,7 +607,7 @@ func (repository *RedisCatalogRepository) compareAndSetPublicationScheduleActiva
 				continue
 			}
 			plans = append(plans, kept...)
-			cutover.decided(cutoverKept)
+			cutover.decided(cutoverKept, queryGroup)
 			continue
 		}
 		timeline, raw, err := timelines.timeline(ctx, queryGroup)
@@ -624,7 +625,7 @@ func (repository *RedisCatalogRepository) compareAndSetPublicationScheduleActiva
 				coveredPrevious[key] = struct{}{}
 			}
 			if !remains {
-				cutover.decided(cutoverRetiredUnwritten)
+				cutover.decided(cutoverRetiredUnwritten, queryGroup)
 				continue
 			}
 			// The candidate records say which publication the Segment names: the
@@ -643,7 +644,7 @@ func (repository *RedisCatalogRepository) compareAndSetPublicationScheduleActiva
 			updates = append(updates, opened.update)
 			plans = append(plans, opened.records...)
 			reopened++
-			cutover.decided(cutoverReopened)
+			cutover.decided(cutoverReopened, queryGroup)
 			continue
 		}
 		var unreadable *DeterministicScheduleError
@@ -672,7 +673,7 @@ func (repository *RedisCatalogRepository) compareAndSetPublicationScheduleActiva
 					plans = append(plans, opened.records...)
 					repaired++
 					repairedGroups[queryGroup] = struct{}{}
-					cutover.decided(cutoverRepaired)
+					cutover.decided(cutoverRepaired, queryGroup)
 					continue
 				}
 				repository.timelineRepairs.add(TimelineRepairFailed, 1)
@@ -771,7 +772,7 @@ func (repository *RedisCatalogRepository) compareAndSetPublicationScheduleActiva
 				inForce = segment.OutputContextRevisions[count-1].Refs
 			}
 			if execution.SameOutputContextRefs(inForce, newContent[queryGroup].refs) {
-				cutover.decided(cutoverKept)
+				cutover.decided(cutoverKept, queryGroup)
 				continue
 			}
 			revised := open.Schedule
@@ -790,7 +791,7 @@ func (repository *RedisCatalogRepository) compareAndSetPublicationScheduleActiva
 				candidates = append(candidates, pruneCandidate{update: len(updates), dead: dead})
 			}
 			updates = append(updates, scheduleTimelineUpdate{expected: raw, next: timeline})
-			cutover.decided(cutoverRevised)
+			cutover.decided(cutoverRevised, queryGroup)
 			continue
 		}
 		closed := open.Schedule
@@ -844,11 +845,11 @@ func (repository *RedisCatalogRepository) compareAndSetPublicationScheduleActiva
 			}
 			timeline.Segments = append(timeline.Segments, persistedScheduleSegment{Schedule: opened, Plans: records})
 			plans = append(plans, records...)
-			cutover.decided(cutoverCut)
+			cutover.decided(cutoverCut, queryGroup)
 		} else {
 			retiredAt := boundary
 			timeline.RetiredAt = &retiredAt
-			cutover.decided(cutoverRetired)
+			cutover.decided(cutoverRetired, queryGroup)
 		}
 		if err := validateScheduleTimeline(timeline); err != nil {
 			return err
@@ -1129,7 +1130,7 @@ func (repository *RedisCatalogRepository) openQueryGroupTimeline(
 		return openedQueryGroupTimeline{}, err
 	}
 	result.update = scheduleTimelineUpdate{expected: raw, next: timeline}
-	cutover.decided(cutoverAdded)
+	cutover.decided(cutoverAdded, group.Identity)
 	return result, nil
 }
 
@@ -1427,6 +1428,9 @@ func (repository *RedisCatalogRepository) persistInitialActivation(
 			args = append(args, timeline.RecordRevision)
 		}
 	}
+	// Taken before the script goes out, as a renewal's is: the TTL the
+	// script sets runs from no earlier than this.
+	writtenAt := repository.renewals.now()
 	changed, err := repository.client.Eval(ctx, compareAndSetInitialSchedulesScript, keys, args...).Int()
 	if err != nil {
 		return activationDependencyIO(fmt.Errorf("persist initial schedule activation: %w", err))
@@ -1434,6 +1438,16 @@ func (repository *RedisCatalogRepository) persistInitialActivation(
 	if changed != 1 {
 		return ErrActivationConflict
 	}
+	// The timelines it wrote carry the full TTL: they come due a third of it
+	// from now, not on the next round.
+	written := make([]string, 0, len(timelines))
+	revisions := make(map[execution.QueryGroupIdentity]uint64, len(timelines))
+	for _, timeline := range timelines {
+		written = append(written, repository.scheduleTimelineKey(timeline.QueryGroup))
+		revisions[timeline.QueryGroup] = timeline.RecordRevision
+	}
+	repository.renewals.renewed(written, writtenAt)
+	repository.recordTimelineRevisions(next.RecordRevision, revisions)
 	repository.rememberWritten(activationPayload, next)
 	return nil
 }
@@ -1531,6 +1545,7 @@ func (repository *RedisCatalogRepository) persistCutoverActivation(
 		}
 	}
 	cutover.persisted(payloadBytes, timelineBytes)
+	writtenAt := repository.renewals.now()
 	changed, err := repository.client.Eval(ctx, compareAndSetCutoverSchedulesScript, keys, args...).Int()
 	if err != nil {
 		return activationDependencyIO(fmt.Errorf("persist schedule cutover: %w", err))
@@ -1538,6 +1553,14 @@ func (repository *RedisCatalogRepository) persistCutoverActivation(
 	if changed != 1 {
 		return ErrActivationConflict
 	}
+	written := make([]string, 0, len(updates))
+	revisions := make(map[execution.QueryGroupIdentity]uint64, len(updates))
+	for _, update := range updates {
+		written = append(written, repository.scheduleTimelineKey(update.next.QueryGroup))
+		revisions[update.next.QueryGroup] = update.next.RecordRevision
+	}
+	repository.renewals.renewed(written, writtenAt)
+	repository.recordTimelineRevisions(next.RecordRevision, revisions)
 	repository.rememberWritten(activationPayload, next)
 	return nil
 }
@@ -2067,6 +2090,7 @@ func (repository *RedisCatalogRepository) renewScheduleTimelines(
 	ctx context.Context,
 	active []execution.QueryGroupIdentity,
 	draining []DrainingQueryGroup,
+	facts *observability.ActiveQGSetFacts,
 ) error {
 	if repository == nil || repository.client == nil {
 		return errors.New("alarmd controlplane: Redis catalog repository is required")
@@ -2089,6 +2113,11 @@ func (repository *RedisCatalogRepository) renewScheduleTimelines(
 	for _, entry := range draining {
 		appendKey(entry.QueryGroup)
 	}
+	// Only the timelines this term has not renewed or written within a third
+	// of the TTL (catalogRenewals): a day's TTL renewed on every thirty-second
+	// refresh round was 2,880 renewals of each key per TTL.
+	keys, first, now := repository.renewals.timelinesDue(keys, repository.ttl)
+	ctx = redisfailure.WithCaller(ctx, redisfailure.CallerCatalogTimelineRenewal)
 	for start := 0; start < len(keys); start += scheduleTimelineRenewBatch {
 		end := start + scheduleTimelineRenewBatch
 		if end > len(keys) {
@@ -2103,6 +2132,10 @@ func (repository *RedisCatalogRepository) renewScheduleTimelines(
 		}); err != nil {
 			return activationDependencyIO(fmt.Errorf("renew Schedule timelines: %w", err))
 		}
+		repository.renewals.renewed(batch, now)
+		firstInBatch := min(max(first-start, 0), len(batch))
+		facts.TimelinesFirst += firstInBatch
+		facts.TimelinesAged += len(batch) - firstInBatch
 	}
 	return nil
 }
@@ -2832,7 +2865,7 @@ func (runtime *RedisCatalogRuntime) readPersistedSegment(
 // round's range has to reach back to the event: R + T + 1 windows before it.
 // The window accepted is the same, so the trigger reads what it read.
 func eventCountProviderLeads(query execution.QueryPlanFacts, duePlans []execution.DuePlan) map[int64]int64 {
-	if !readsEventCountOnly(query) {
+	if !execution.ReadsEventCountOnly(query) {
 		return nil
 	}
 	var histories []levelHistory
@@ -2854,10 +2887,10 @@ func eventCountProviderLeads(query execution.QueryPlanFacts, duePlans []executio
 // answer until they can. The requirement's identity is the template's and is
 // not changed.
 func countPrimary(requirement *execution.DataRequirement, facts execution.QueryPlanFacts, duePlans []execution.DuePlan) {
-	requirement.UnfilledCounts = readsUnfilledCounts(facts)
-	requirement.ZeroIsNoObservation = readsZeroAsNoObservation(facts)
+	requirement.UnfilledCounts = execution.ReadsUnfilledCounts(facts)
+	requirement.ZeroIsNoObservation = execution.ZeroCountIsNoObservation(facts)
 	requirement.ValueFiltered = readsValueFilter(facts)
-	if !readsEventCountOnly(facts) || requirement.StepMillis <= 0 {
+	if !execution.ReadsEventCountOnly(facts) || requirement.StepMillis <= 0 {
 		return
 	}
 	window := requirement.RelativeWindow.EndOffsetSeconds - requirement.RelativeWindow.StartOffsetSeconds
@@ -2897,11 +2930,6 @@ func eventLeadPoints(level strategy.CompiledLevel) int64 {
 	return points
 }
 
-// readsEventCountOnly is whether a query reads custom/event and nothing else.
-func readsEventCountOnly(query execution.QueryPlanFacts) bool {
-	return len(query.SourceSemantics) == 1 && query.SourceSemantics[0] == eventCountSourceSemantics && query.StepMillis > 0
-}
-
 // providerLeads is, by window, the most history points of a Level due with
 // it times the window, rounded up to a whole number of steps; zero points
 // lead nothing.
@@ -2917,24 +2945,6 @@ func providerLeads(stepMillis int64, histories []levelHistory) map[int64]int64 {
 		}
 	}
 	return leads
-}
-
-// readsZeroAsNoObservation is whether a query's count of zero is no
-// observation (DataRequirement.ZeroIsNoObservation): an event count, grouped
-// or not, or a log count whose clauses group by nothing.
-func readsZeroAsNoObservation(query execution.QueryPlanFacts) bool {
-	if readsEventCountOnly(query) {
-		return true
-	}
-	if !readsUnfilledCounts(query) {
-		return false
-	}
-	for _, clause := range query.QueryList {
-		if len(clause.Dimensions) > 0 {
-			return false
-		}
-	}
-	return true
 }
 
 // readsValueFilter is whether a query's expression compares its values: a
@@ -3012,51 +3022,6 @@ func sameSource(left, right execution.QueryPlanFacts) bool {
 		reflect.DeepEqual(left.QueryList, right.QueryList)
 }
 
-// readsUnfilledCounts is whether a query's one source answers counts its
-// provider does not zero-fill: a log count (bk_log_search/log, bk_monitor/log)
-// or a log time series aggregated by count or a count-like distinct
-// (bk_log_search/time_series), all read from an Elasticsearch date histogram
-// whose groups are absent rather than zero while they have no document. Its
-// range is not widened as an event count's is - the store already refuses
-// the largest log groups at one period - so its empty answer is labelled for
-// what it is instead. avg, sum, max and the rest keep their diagnosis.
-func readsUnfilledCounts(query execution.QueryPlanFacts) bool {
-	if len(query.SourceSemantics) != 1 {
-		return false
-	}
-	switch query.SourceSemantics[0] {
-	case "bk_log_search/log", "bk_monitor/log":
-		return true
-	case "bk_log_search/time_series":
-		return countsEveryClause(query.QueryList)
-	}
-	return false
-}
-
-// countsEveryClause is whether every clause of a query is aggregated by count
-// or a count-like distinct: count_over_time or distinct_over_time over time,
-// or count without time (compileAggregation).
-func countsEveryClause(clauses []execution.QueryClause) bool {
-	if len(clauses) == 0 {
-		return false
-	}
-	for _, clause := range clauses {
-		switch clause.TimeAggregation.Method {
-		case "count_over_time", "distinct_over_time":
-			continue
-		case "":
-			if len(clause.Functions) == 1 && clause.Functions[0].Method == "count" {
-				continue
-			}
-		}
-		return false
-	}
-	return true
-}
-
-// eventCountSourceSemantics is the source an event count reads.
-const eventCountSourceSemantics = "custom/event"
-
 // primaryIdentityFields is the dimensions every series of the query is told
 // apart by: the dataset's identity fields. The primary requirement reads them
 // beside the value - an event count with any is a count of groups, which is
@@ -3095,8 +3060,8 @@ func (runtime *RedisCatalogRuntime) primaryRequirements(
 				return nil, err
 			}
 			requirement = &execution.DataRequirement{RequirementID: execution.RequirementID(identity), ProviderLeadSeconds: lead,
-				UnfilledCounts:      readsUnfilledCounts(group.QueryPlan),
-				ZeroIsNoObservation: readsZeroAsNoObservation(group.QueryPlan),
+				UnfilledCounts:      execution.ReadsUnfilledCounts(group.QueryPlan),
+				ZeroIsNoObservation: execution.ZeroCountIsNoObservation(group.QueryPlan),
 				ValueFiltered:       readsValueFilter(group.QueryPlan),
 				DatasetName:         execution.DatasetName("primary:" + identity), Role: execution.InputRolePrimary,
 				LogicalQueryRef: execution.LogicalQueryRef(group.QueryPlan.QueryRevision),

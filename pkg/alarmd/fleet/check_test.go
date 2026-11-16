@@ -226,7 +226,7 @@ func TestTheCheckTableIsClosedAtTwenty(t *testing.T) {
 	// long-lived series that reports less often than its window has
 	// positions never fills a window yet has its recovery decided, as
 	// Python's is, and it sat on the undecidable column and the data's
-	// SERIES_SPARSE line as if one of those were true of it (leader 10-20).
+	// SERIES_SPARSE line as if one of those were true of it.
 	// Forty-two: LOG_COUNT_EMPTY is a rule over a dimension the rows did not
 	// carry before - whether an empty round's primary is a grouped count its
 	// provider does not zero-fill - because a log count's empty answer is

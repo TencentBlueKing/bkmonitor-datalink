@@ -99,6 +99,10 @@ func (admitEverything) Check(context.Context, execution.SideEffectAdmissionReque
 	return execution.SideEffectAdmissionResult{Admitted: true, ReasonCode: observability.ReasonNone}, nil
 }
 
+func (admitEverything) CheckActivation(context.Context, execution.SideEffectAdmissionRequest) (execution.SideEffectAdmissionResult, error) {
+	return execution.SideEffectAdmissionResult{Admitted: true, ReasonCode: observability.ReasonNone}, nil
+}
+
 // sixtyHourRound is one round of a sixty-hour Plan: its request and the
 // header its gap load is built from.
 func sixtyHourRound(t *testing.T, due execution.DuePlan, evaluationTime execution.EvaluationTime) (execution.SlotExecutionRequest, execution.InternalExecutionHeader) {
@@ -198,8 +202,12 @@ func TestAMarkerWrittenFromTheActivationOutlivesASixtyHourPlansNextRound(t *test
 
 			ageRedis(t, client, sixtyHours)
 
-			_, next := sixtyHourRound(t, due, first+execution.EvaluationTime(sixtyHours/time.Second))
+			nextRequest, next := sixtyHourRound(t, due, first+execution.EvaluationTime(sixtyHours/time.Second))
 			loaded = loadRound(t, store, next)
+			// The activations the next round reads are its own, as a Slot's
+			// always are: a marker at the first round's version is an earlier
+			// Slot's, not this one's.
+			activations.Contract = nextRequest.Contract
 			if forced := unsatisfiedForcedWarmingActivations(activations, loaded, nil); len(forced.Facts) != 0 {
 				t.Fatalf("the next round forces warming again for %+v: it would finish without evaluating, as every round after it would", forced.Facts)
 			}

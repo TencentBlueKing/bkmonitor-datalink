@@ -72,6 +72,16 @@ const (
 // ClampSources is the closed list of them.
 var ClampSources = []string{ClampKnown, ClampFallback}
 
+// Where a retired Query Group's read hold was closed: by its own round that
+// reached the retirement, or by its owner releasing it once it had drained,
+// before the round ever came back to it. RetireCloseSites is the closed list.
+const (
+	RetireCloseNext    = "next"
+	RetireCloseRelease = "release"
+)
+
+var RetireCloseSites = []string{RetireCloseNext, RetireCloseRelease}
+
 // A Slot whose group's hold could not be prepared or written is frozen with
 // the hold the group last read, by what failed: the group's route and delay
 // (spec_unreadable), its previous Segment's schedule (previous_unreadable),
@@ -99,7 +109,11 @@ var DegradedReasons = []string{DegradedSpecUnreadable, DegradedPreviousUnreadabl
 // Stats are the controller's counts since it started.
 type Stats struct {
 	Predecessors map[string]uint64
-	Clamped      map[string]uint64
+	// TransitionWaits is the waits on a predecessor, by outcome
+	// (TransitionWaitOutcomes); WaitingGroups the groups waiting now.
+	TransitionWaits map[string]uint64
+	WaitingGroups   int
+	Clamped         map[string]uint64
 	// OwnCorrupt is the groups whose own record did not decode: read as
 	// missing, and replaced at the group's next write.
 	OwnCorrupt uint64
@@ -291,12 +305,19 @@ type entry struct {
 	// corrupt is a stored record that did not decode: raw is its bytes, so
 	// the next write replaces it, and record starts empty.
 	corrupt bool
+	// readFailed is a read of the record that did not answer: unloaded for
+	// that reason, as against one not read since the group was forgotten or
+	// a write conflict dropped what was read.
+	readFailed bool
 	// validated is the Segment whose schedule SlotReadHold last checked: a
 	// frozen schedule is checked once per Segment, not once per Slot.
 	validated execution.ScheduleSegmentFact
 	// measuredQueryDuration is the group's query duration as this process
 	// last measured it (MeasureQueryDuration), for its record to keep.
 	measuredQueryDuration time.Duration
+	// waits is the predecessors the group waits on before its seed freezes,
+	// by link (predecessor_wait.go); empty once it is seeded.
+	waits map[string]predecessorWait
 }
 
 type Controller struct {
@@ -306,9 +327,12 @@ type Controller struct {
 
 	statsMu      sync.Mutex
 	predecessors map[string]uint64
-	clamped      map[string]uint64
-	seeds        map[string]uint64
-	ownCorrupt   uint64
+	// transitionWaits is the waits on a predecessor, by how they began or
+	// ended (TransitionWaitOutcomes).
+	transitionWaits map[string]uint64
+	clamped         map[string]uint64
+	seeds           map[string]uint64
+	ownCorrupt      uint64
 	// earlierSkipped is the earlier-read trials not run, by why
 	// (EarlierSkipReasons).
 	earlierSkipped map[string]uint64
@@ -334,13 +358,16 @@ func NewController(options Options) (*Controller, error) {
 		options.Now = time.Now
 	}
 	return &Controller{options: options, groups: make(map[execution.QueryGroupIdentity]*entry),
-		predecessors: make(map[string]uint64), clamped: make(map[string]uint64), seeds: make(map[string]uint64),
+		predecessors: make(map[string]uint64), transitionWaits: make(map[string]uint64), clamped: make(map[string]uint64), seeds: make(map[string]uint64),
 		durationWrites: make(map[string]uint64), earlierSkipped: make(map[string]uint64), floorProbes: make(map[string]uint64),
 		probationFindings: make(map[string]uint64), probeProgress: make(map[string]uint64)}, nil
 }
 
 // Stats copies the counts.
 func (controller *Controller) Stats() Stats {
+	// Read before the counts' lock: a group's lock is taken before it
+	// whenever a seed counts, so it must never be taken under it.
+	waiting := controller.waitingGroups()
 	controller.statsMu.Lock()
 	defer controller.statsMu.Unlock()
 	stats := Stats{Predecessors: make(map[string]uint64, len(controller.predecessors)),
@@ -348,6 +375,11 @@ func (controller *Controller) Stats() Stats {
 	for reason, count := range controller.predecessors {
 		stats.Predecessors[reason] = count
 	}
+	stats.TransitionWaits = make(map[string]uint64, len(TransitionWaitOutcomes))
+	for _, outcome := range TransitionWaitOutcomes {
+		stats.TransitionWaits[outcome] = controller.transitionWaits[outcome]
+	}
+	stats.WaitingGroups = waiting
 	for source, count := range controller.clamped {
 		stats.Clamped[source] = count
 	}
@@ -434,6 +466,7 @@ func (controller *Controller) Configure(spec GroupSpec) error {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	state.spec, state.configured, state.seeded = spec, true, false
+	keepWaits(state, spec)
 	return nil
 }
 
@@ -443,7 +476,8 @@ func (controller *Controller) RestoreBatch(ctx context.Context, groups []executi
 	for _, qg := range groups {
 		state := controller.group(qg)
 		state.mu.Lock()
-		state.loaded = false
+		// Failed until it answers: a batch that fails answers none of them.
+		state.loaded, state.readFailed = false, true
 		state.mu.Unlock()
 	}
 	reads, err := controller.options.Control.ReadControlBatch(ctx, groups, controller.options.Prefix+":"+Namespace)
@@ -479,6 +513,7 @@ func (controller *Controller) RestoreBatch(ctx context.Context, groups []executi
 		state := controller.group(groups[index])
 		state.mu.Lock()
 		state.record, state.raw, state.loaded, state.seeded, state.corrupt = record, append([]byte(nil), read.Raw...), true, false, corrupt
+		state.readFailed = false
 		state.mu.Unlock()
 	}
 	return first
@@ -638,6 +673,10 @@ type Inspection struct {
 	Seeded  bool
 	// Corrupt is a stored record that did not decode; Record is then empty.
 	Corrupt bool
+	// ReadFailed is a group not loaded because its last read did not answer.
+	// Not loaded without it, the group has not been read since it was
+	// forgotten, or since a write conflict dropped what was read.
+	ReadFailed bool
 }
 
 // Hold is the read hold the record states - the pending one while a change
@@ -672,7 +711,7 @@ func (controller *Controller) Inspect(qg execution.QueryGroupIdentity) Inspectio
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	return Inspection{Record: clone(state.record), Loaded: state.loaded, Missing: state.loaded && len(state.raw) == 0, Seeded: state.seeded,
-		Corrupt: state.corrupt}
+		Corrupt: state.corrupt, ReadFailed: !state.loaded && state.readFailed}
 }
 
 // Arrival is the group's arrival age and where it came from (empty for a
@@ -826,6 +865,9 @@ type previousFact struct {
 	hold   int64
 	reason string
 	bound  bool
+	// closedAtMillis is when a predecessor the successor waited on was read
+	// closed: the transition's deadline is no earlier (awaitPredecessor).
+	closedAtMillis int64
 }
 
 // previousHold reads one moved Plan's previousFact from the old group's
@@ -876,32 +918,53 @@ func (controller *Controller) previousHold(old Inspection, predecessor Previous,
 }
 
 func (controller *Controller) seed(state *entry, predecessors map[execution.QueryGroupIdentity]Inspection) (Record, error) {
+	next, _, err := controller.seedWaiting(state, predecessors, 0)
+	return next, err
+}
+
+// seedWaiting is seed for a Slot at waitAt that may wait on its
+// predecessors: a link read open or unreadable answers awaiting, nothing
+// counted and nothing written, until the wait's end (awaitPredecessor). A
+// zero waitAt waits on nothing and answers the bound, as seed always did.
+func (controller *Controller) seedWaiting(state *entry, predecessors map[execution.QueryGroupIdentity]Inspection,
+	waitAt execution.EvaluationTime) (Record, *AwaitingPredecessorError, error) {
 	next := clone(state.record)
 	if state.seeded {
-		return next, nil
-	}
-	if state.corrupt {
-		// The stored record did not decode: read as missing, the group
-		// relearns its hold, and its next write replaces the bytes. A
-		// deadline the record kept is lost with it, a risk overtaken counts.
-		controller.statsMu.Lock()
-		controller.ownCorrupt++
-		controller.statsMu.Unlock()
+		return next, nil, nil
 	}
 	previous := state.spec.Previous
 	if inherited(next, state.spec) {
 		previous = nil
 	}
+	var awaiting *AwaitingPredecessorError
+	var reasons []string
 	for _, predecessor := range previous {
 		old := predecessors[predecessor.QueryGroup]
 		for _, link := range predecessor.Links {
 			fact := controller.previousHold(old, predecessor, link)
+			if waitAt > 0 && fact.slot > 0 {
+				// What this round read, for the wait to be read as it stands.
+				unread, reason := !old.Loaded && !old.ReadFailed, fact.reason
+				if unread {
+					reason = AwaitingUnread
+				}
+				if waiting, retryAt := controller.awaitPredecessor(state, waitAt, predecessor, link, &fact, unread); waiting {
+					wait := state.waits[waitKey(predecessor, link)]
+					if awaiting == nil || retryAt < awaiting.RetryAt.UnixMilli() {
+						awaiting = &AwaitingPredecessorError{QueryGroup: state.spec.QueryGroup, Predecessor: predecessor.QueryGroup,
+							Reason: reason, SinceUnixMilli: wait.sinceMillis, UntilUnixMilli: wait.endMillis,
+							RetryAt: time.UnixMilli(retryAt)}
+					}
+					continue
+				}
+			}
 			if fact.slot == 0 {
 				// The Segment it left held no Slot of it: no deadline to
 				// keep, so its hold decides nothing and is not counted.
 				fact.hold, fact.bound = 0, false
 			} else {
-				controller.counted(controller.predecessors, fact.reason)
+				// Counted once the seed freezes, not on each round it waits.
+				reasons = append(reasons, fact.reason)
 			}
 			// The old group's arrival age does not carry over: the new group
 			// learns its own, a few windows read early at most.
@@ -910,10 +973,25 @@ func (controller *Controller) seed(state *entry, predecessors map[execution.Quer
 				PreviousHoldUnknown: fact.bound, PreviousHoldMillis: fact.hold, PreviousSlot: fact.slot,
 				CompletionOffsetMillis: fact.offset})
 			if fact.slot > 0 {
+				deadline := max(int64(fact.slot)*1000+fact.hold+fact.offset, fact.closedAtMillis)
 				next.Transitions = append(next.Transitions, Transition{Key: link.Key,
-					DeadlineMillis: int64(fact.slot)*1000 + fact.hold + fact.offset, Fallback: fact.bound})
+					DeadlineMillis: deadline, Fallback: fact.bound})
 			}
 		}
+	}
+	if awaiting != nil {
+		return Record{}, awaiting, nil
+	}
+	for _, reason := range reasons {
+		controller.counted(controller.predecessors, reason)
+	}
+	if state.corrupt {
+		// The stored record did not decode: read as missing, the group
+		// relearns its hold, and its next write replaces the bytes. A
+		// deadline the record kept is lost with it, a risk overtaken counts.
+		controller.statsMu.Lock()
+		controller.ownCorrupt++
+		controller.statsMu.Unlock()
 	}
 	// A group with no record of its own starts where its data has been seen
 	// to land, not at the settling wait alone: with the wait at its floor, a
@@ -946,7 +1024,7 @@ func (controller *Controller) seed(state *entry, predecessors map[execution.Quer
 			next.QuietSinceMillis = controller.options.Now().UnixMilli()
 		}
 	}
-	return next, nil
+	return next, nil, nil
 }
 
 // carries is a record holding anything a successor or a restart needs: a
@@ -1034,7 +1112,7 @@ func (controller *Controller) SlotReadHold(ctx context.Context, schedule executi
 		return 0, err
 	}
 	owner.Fence = fence
-	frozen, err := controller.slotHoldOf(state, predecessors, schedule, at)
+	frozen, err := controller.slotHoldOf(state, predecessors, schedule, at, true)
 	if err != nil {
 		return 0, err
 	}
@@ -1051,6 +1129,7 @@ func (controller *Controller) SlotReadHold(ctx context.Context, schedule executi
 		// alone does not make one either (query_duration.go).
 		if len(state.raw) == 0 && !carries(next) {
 			state.record, state.seeded = next, true
+			controller.endWaits(state)
 			return 0, nil
 		}
 		if err := controller.persist(ctx, qg, state, next, &owner); err != nil {
@@ -1058,6 +1137,7 @@ func (controller *Controller) SlotReadHold(ctx context.Context, schedule executi
 		}
 	}
 	state.seeded = true
+	controller.endWaits(state)
 	if frozen.cutFrom > 0 && controller.options.OnLimitCut != nil {
 		period := int64(0)
 		for _, plan := range schedule.Plans {
@@ -1092,7 +1172,7 @@ func (controller *Controller) PeekSlotReadHold(schedule execution.FrozenQueryGro
 	if !state.seeded {
 		return 0, ErrNotSeeded
 	}
-	frozen, err := controller.slotHoldOf(state, predecessors, schedule, at)
+	frozen, err := controller.slotHoldOf(state, predecessors, schedule, at, false)
 	if err != nil {
 		return 0, err
 	}
@@ -1141,10 +1221,17 @@ type frozenHold struct {
 // asking only a seeded group. The one computation both SlotReadHold and
 // PeekSlotReadHold run. Called with the group's lock held.
 func (controller *Controller) slotHoldOf(state *entry, predecessors map[execution.QueryGroupIdentity]Inspection,
-	schedule execution.FrozenQueryGroupSchedule, at execution.EvaluationTime) (frozenHold, error) {
-	next, err := controller.seed(state, predecessors)
+	schedule execution.FrozenQueryGroupSchedule, at execution.EvaluationTime, wait bool) (frozenHold, error) {
+	waitAt := execution.EvaluationTime(0)
+	if wait {
+		waitAt = at
+	}
+	next, awaiting, err := controller.seedWaiting(state, predecessors, waitAt)
 	if err != nil {
 		return frozenHold{}, err
+	}
+	if awaiting != nil {
+		return frozenHold{}, awaiting
 	}
 	if schedule.Segment.Start < next.SegmentStart {
 		return frozenHold{}, ErrSegmentStale

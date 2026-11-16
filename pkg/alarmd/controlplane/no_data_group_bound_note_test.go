@@ -16,11 +16,12 @@ import (
 )
 
 // An item that raises its no-data group bound above the default is noted with
-// the bound, the default and the measured one-off cost, and runs with that
+// the bound, the default and the one-off cost, and runs with that
 // bound; one at the default or without a bound of its own is not noted.
 func TestANoDataGroupBoundAboveTheDefaultIsNotedAndTheStrategyRuns(t *testing.T) {
-	const cost = "a Plan's first no-data write per state generation blocks Redis about 120-180 ms at 100,000 groups, " +
-		"610 ms at 200,000 and 2.9 s at 1,000,000, and the worker allocates about 3.5 KiB a group for it"
+	const cost = "a Plan's first no-data write per state generation is staged in scripts of 1,000 groups - " +
+		"100 at 100,000 groups, 1,000 at 1,000,000 - each blocking Redis an estimated 1-2 ms, " +
+		"and renamed into place by one more; the worker holds one segment at a time"
 	for name, test := range map[string]struct {
 		section string
 		noted   bool

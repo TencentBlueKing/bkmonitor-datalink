@@ -226,7 +226,9 @@ func (store *ExecutionStore) validatedNoData(
 	return snapshot
 }
 
-// ApplyNoData replaces one Plan's whole no-data memory per request item.
+// ApplyNoData writes one Plan's no-data memory per request item: a delta
+// against the record it was derived from, or a whole memory staged and put in
+// place.
 func (store *ExecutionStore) ApplyNoData(
 	ctx context.Context, request execution.NoDataApplyRequest,
 ) (execution.NoDataApplyResult, error) {
@@ -249,13 +251,14 @@ func (store *ExecutionStore) ApplyNoData(
 		if err := ctx.Err(); err != nil {
 			return execution.NoDataApplyResult{}, err
 		}
-		result.Items[index] = store.applyOneNoData(ctx, mutation, lifetimes[index])
+		result.Items[index] = store.applyOneNoData(ctx, mutation, lifetimes[index], request.Attempt)
 	}
 	return result, nil
 }
 
 func (store *ExecutionStore) applyOneNoData(
 	ctx context.Context, mutation execution.PlanNoDataMutation, lifetime time.Duration,
+	attempt execution.NoDataWriteAttempt,
 ) execution.NoDataApplyItemResult {
 	item := execution.NoDataApplyItemResult{Identity: mutation.Identity}
 	reject := func(reason string) execution.NoDataApplyItemResult {
@@ -387,31 +390,59 @@ func (store *ExecutionStore) applyOneNoData(
 	if encodeErr != nil {
 		return reject(contract.ReasonStateCorrupt)
 	}
-	set, deleted, deltaErr := encodeNoDataDelta(mutation)
-	if deltaErr != nil {
-		return reject(contract.ReasonStateCorrupt)
+	var outcome HashDeltaOutcome
+	var applyErr error
+	if mutation.ReplacesWholeRecord() {
+		// A statement derived from no record carries the whole memory, and
+		// at the Plans this representation exists for that is hundreds of
+		// thousands of groups - one script for them blocked the server for
+		// seconds. It is staged a segment at a time under this attempt's own
+		// key and renamed into place, so the record a reader finds is still
+		// only ever one writer's whole memory: nothing a writer put in the
+		// formal key since the read survives the rename, and nothing of
+		// another attempt's staging is in it.
+		stageKey, stageKeyErr := PlanNoDataStageKeyV1(store.options.Prefix, mutation.Identity, attempt)
+		if stageKeyErr != nil {
+			return reject(contract.ReasonStateCorrupt)
+		}
+		// The Plan's own lifetime, the one the load renews it to, for the
+		// same reason a gap marker takes it: written at the floor, the memory
+		// of a Plan whose interval is past a day was gone before its next
+		// round.
+		outcome, applyErr = store.replaceNoDataRecord(ctx, backend, key, stageKey, mutation, header, expectedHeader,
+			lifetime, attempt)
+		if errors.Is(applyErr, errNoDataGroupEncoding) || errors.Is(applyErr, errNoDataGroupCount) ||
+			errors.Is(applyErr, errNoDataStagedMemory) {
+			return reject(contract.ReasonStateCorrupt)
+		}
+	} else {
+		set, deleted, deltaErr := encodeNoDataDelta(mutation)
+		if deltaErr != nil {
+			return reject(contract.ReasonStateCorrupt)
+		}
+		write := HashDeltaWrite{
+			Key: key, HeaderField: noDataHeaderField,
+			ExpectedMissing: expectedHeader == nil, Header: header,
+			Set: set, Del: deleted,
+			// The Plan's own lifetime, as for a whole memory above.
+			TTL: lifetime,
+		}
+		if expectedHeader != nil {
+			write.ExpectedDigest = HeaderDigest(expectedHeader)
+		}
+		outcome, applyErr = backend.ApplyHashDelta(ctx, write)
 	}
-	write := HashDeltaWrite{
-		Key: key, HeaderField: noDataHeaderField,
-		ExpectedMissing: expectedHeader == nil, Header: header,
-		Set: set, Del: deleted,
-		// A statement derived from no record carries the whole memory, so what
-		// this one holds goes first. Leaving it would keep every group a writer
-		// put there since the read, and no reader could tell the mixture from a
-		// memory somebody wrote.
-		Replace: mutation.ReplacesWholeRecord(),
-		// The Plan's own lifetime, the one the load renews it to, for the same
-		// reason a gap marker takes it: written at the floor, the memory of a
-		// Plan whose interval is past a day was gone before its next round.
-		TTL: lifetime,
-	}
-	if expectedHeader != nil {
-		write.ExpectedDigest = HeaderDigest(expectedHeader)
-	}
-	outcome, applyErr := backend.ApplyHashDelta(ctx, write)
 	switch {
 	case applyErr != nil:
 		return retry()
+	case outcome.Status == HashStageLost || outcome.Status == HashStageShort:
+		// The staging key expired between two segments, was started over by
+		// another write under its name, or does not hold the memory's groups.
+		// Nothing was renamed and the formal key is as the read found it, so
+		// this is a write to try again - named as the write's and not as the
+		// server being down, because the server answered.
+		item.Status, item.ReasonCode = execution.NoDataRetryable, execution.ReasonCode(contract.ReasonStateWriteRetryable)
+		return item
 	case outcome.Status == HashDeltaConflict:
 		// Something wrote between the read above and this call. The header it
 		// left is classified exactly as a fresh read would classify it, so the

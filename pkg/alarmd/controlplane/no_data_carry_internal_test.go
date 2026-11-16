@@ -101,9 +101,10 @@ func TestTheNoDataCarryCoversOnlyTheStateTheNewVersionKeeps(t *testing.T) {
 	}
 }
 
-// A no-data carry is valid only on a warming activation whose generation
-// moved, and only when it carries something.
-func TestANoDataCarryIsValidOnlyOnAMovedWarmingActivation(t *testing.T) {
+// A no-data carry is valid only on an activation whose generation moved, and
+// only when it carries something. It is not tied to warming: a carried
+// activation does not warm up.
+func TestANoDataCarryIsValidOnlyOnAMovedActivation(t *testing.T) {
 	plan := execution.ActivatedPlan{StateGeneration: "new", ForceWarming: true}
 	for name, carry := range map[string]*execution.NoDataCarry{
 		"no previous generation": {Memory: true},
@@ -114,8 +115,8 @@ func TestANoDataCarryIsValidOnlyOnAMovedWarmingActivation(t *testing.T) {
 			t.Fatalf("%s: carry %+v validated", name, carry)
 		}
 	}
-	if err := (&execution.NoDataCarry{From: "old", Memory: true}).Validate(execution.ActivatedPlan{StateGeneration: "new"}); err == nil {
-		t.Fatal("a carry on an activation that does not warm validated")
+	if err := (&execution.NoDataCarry{From: "old", Memory: true}).Validate(execution.ActivatedPlan{StateGeneration: "new"}); err != nil {
+		t.Fatalf("a carry on a carried activation, which does not warm up, was refused: %v", err)
 	}
 	if err := (&execution.NoDataCarry{From: "old", Ends: true}).Validate(plan); err != nil {
 		t.Fatalf("a valid carry was refused: %v", err)

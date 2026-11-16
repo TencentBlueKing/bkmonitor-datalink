@@ -271,7 +271,7 @@ func TestSlotQueryAdvertisesTheBoundsItEnforces(t *testing.T) {
 	}
 	query, get := limitsOf["slot.query"], limitsOf["slot.get"]
 	decode := uq.DiagnosticLimits()
-	want := map[string]any{"timeout_ms": (MaxExecutionTimeout - requeryMargin).Milliseconds(), "uq_body_bytes": decode.MaxBodyBytes,
+	want := map[string]any{"timeout_ms": (MaxExecutionTimeout - requeryMargin).Milliseconds(),
 		"uq_series_bytes": decode.MaxSeriesBytes, "uq_series": decode.MaxSeries, "uq_records": decode.MaxRecords}
 	for key, value := range want {
 		if query[key] != value {

@@ -172,7 +172,9 @@ func ageBucket(age time.Duration) string {
 	return AgeBuckets[len(AgeBuckets)-1]
 }
 
-// Recheck reads a frozen physical query again; see uq.Client.Recheck.
+// Recheck reads a frozen physical query again; see uq.Client.Recheck. The
+// slice it reads is carried by ctx (execution.WithInputSlice), the slice the
+// read it rechecks was of, the whole Query Group without one.
 type Recheck func(ctx context.Context, spec execution.PhysicalQuerySpec, sink execution.ProviderSeriesSink) (execution.ProviderCompletion, error)
 
 // Permit grants a lookback query permit now, or refuses with the reason. A
@@ -311,6 +313,10 @@ type Query struct {
 	// (execution.BackendFailing): Prepare reserves it no trial, a trial being
 	// one more read of the same backend, and counts it backend_failing.
 	BackendFailing bool
+	// Slice is the part of the Query Group the query reads, the zero slice
+	// for all of it: every later read of what it captured reads the same
+	// slice (execution.WithInputSlice).
+	Slice execution.InputSlice
 }
 
 // Engine is the lookback of one process.
@@ -401,10 +407,19 @@ type group struct {
 	// directed and after, so a group read directed again starts with them.
 	took  durations
 	holds durations
-	// firstReads is its last whole first reads, directed or not, which every
-	// read of its query again is bounded by (rereadTimeout).
+	// firstReads is its last whole first reads, directed or not, a Slot's
+	// one: a Slot read in slices is read from its first slice's start to its
+	// last slice's end (sliceRound), how long its round's query takes
+	// (QueryDuration). requests is its last whole first-read requests, a
+	// slice's each, which one request of its query again is bounded by
+	// (rereadBound); read whole, the two are the same readings.
 	firstReads durations
-	capturing  bool
+	requests   durations
+	sliceRound sliceRound
+	// firstReadCounted is the latest Slot a sliced first read of it was
+	// counted at: the Slot's slices are one first read (Stats.FirstReads).
+	firstReadCounted execution.EvaluationTime
+	capturing        bool
 	// sampled says a sample of it has completed in this process, which then
 	// decides it rather than any plan; planKept that a plan was set aside
 	// for that, counted once.
@@ -439,12 +454,17 @@ type group struct {
 	// lastHold is the hold its latest round was frozen with, once holdSeen;
 	// probation is set while its rounds are read again after the hold was
 	// lowered, and probations is those rereads in flight (probation.go): one
-	// a round, each until its rung is read or passed, so no more than the
-	// rounds a rung window and the rung after it span.
-	lastHold   int64
-	holdSeen   bool
-	probation  *probationState
-	probations []*sample
+	// a slice of a round, each until its rung is read or passed, so no more
+	// than the rounds a rung window and the rung after it span times their
+	// slices. probationRounds is the outcome so far of each round some of
+	// whose slices are still in flight, and probationCounted the latest round
+	// counted: a round counts once, when its last slice's reread ends.
+	lastHold         int64
+	holdSeen         bool
+	probation        *probationState
+	probations       []*sample
+	probationRounds  map[execution.EvaluationTime]string
+	probationCounted execution.EvaluationTime
 	// decisions is what its rounds decided, kept by Slot while it is in
 	// probation until each round's reread ends, maxKeptDecisions at most
 	// (NoteSlotDecision): what a round found read early is written with.
@@ -452,6 +472,8 @@ type group struct {
 }
 
 type sample struct {
+	// slice is the part of the Query Group the sampled read was of.
+	slice      execution.InputSlice
 	contract   execution.FrozenExecutionContractRef
 	id         uint64
 	source     string
@@ -536,6 +558,10 @@ type sample struct {
 	// did not come back whole.
 	probation  bool
 	readFailed bool
+	// roundCounted marks a probation reread of a slice whose round was
+	// counted before the slice's formal read completed: its own outcome
+	// counts no round again.
+	roundCounted bool
 }
 
 // Recent is one recheck that found a change, kept whole for a reader.
@@ -584,18 +610,25 @@ func (engine *Engine) Begin(query Query) *Read {
 	verified := engine.loweringVerified(query)
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
-	engine.counts.firstReads[source]++
 	if step <= 0 {
+		engine.counts.firstReads[source]++
 		return read
 	}
 	if query.Secondary {
+		engine.counts.firstReads[source]++
 		if state := engine.groups[slot.QueryGroup]; state != nil && state.seriesLate != nil && engine.options.Supplement != nil {
 			read.directed = engine.captureDirectedLocked(state, query, source, step, now)
 		}
 		return read
 	}
 	state := engine.groupLocked(query, now)
-	read.queryGroup, read.sentAt = slot.QueryGroup, now
+	if query.Slice.IsZero() || state.firstReadCounted != slot.EvaluationTime {
+		engine.counts.firstReads[source]++
+	}
+	if !query.Slice.IsZero() {
+		state.firstReadCounted = slot.EvaluationTime
+	}
+	read.queryGroup, read.sentAt, read.evaluation, read.slice = slot.QueryGroup, now, slot.EvaluationTime, query.Slice
 	if slot.EvaluationTime > state.lastSlot {
 		if state.lastSlot > 0 {
 			state.period = time.Duration(slot.EvaluationTime-state.lastSlot) * time.Second
@@ -617,7 +650,11 @@ func (engine *Engine) Begin(query Query) *Read {
 		return read
 	}
 	if state.prepared != nil {
-		if state.prepared.query.Contract.Slot != slot || state.prepared.query.Spec.Digest != query.Spec.Digest {
+		// The trial is a read of one slice, the slice the Slot's first
+		// attempt prepared it of: another slice's formal read has none of
+		// its series to be compared with.
+		if state.prepared.query.Contract.Slot != slot || state.prepared.query.Spec.Digest != query.Spec.Digest ||
+			state.prepared.query.Slice.Digest() != query.Slice.Digest() {
 			return read
 		}
 		read.earlier = state.prepared
@@ -652,9 +689,12 @@ type Read struct {
 	source string
 	bytes  *atomic.Uint64
 	// queryGroup and sentAt are set on a Slot's first read, which is timed
-	// for its Query Group's rereads.
+	// for its Query Group's rereads; evaluation and slice say which Slot,
+	// and which slice of it when it is read in slices.
 	queryGroup execution.QueryGroupIdentity
 	sentAt     time.Time
+	evaluation execution.EvaluationTime
+	slice      execution.InputSlice
 	// The rest is set only on a Query Group's sample.
 	query    Query
 	step     time.Duration
@@ -691,6 +731,87 @@ func (read *Read) Series(dataset *execution.Dataset, bytes uint64) {
 	}
 }
 
+// Discard takes back what Begin captured of a read that is no read: a slice
+// let go past its limit and split (execution.ErrSliceOverflow), whose
+// children are read in its place. It is not completed, not counted as a
+// first read left incomplete and not reread; a sample it was taken as is let
+// go, so a later slice of the Slot can be the sample. The access layer calls
+// Discard or Complete, not both.
+func (read *Read) Discard() {
+	if read == nil {
+		return
+	}
+	engine := read.engine
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if read.directed != nil {
+		engine.removeDirectedLocked(read.directed)
+	}
+	if read.sampled {
+		if state := engine.groups[read.query.Contract.Slot.QueryGroup]; state != nil {
+			state.capturing = false
+		}
+	}
+	// A trial paired with this slice's formal read is a read of this slice:
+	// with the slice gone it has nothing to be compared with, and no later
+	// slice of the Slot may take it. The formal read that overtook a trial
+	// still running is no read either, so the slice is what ends it.
+	if read.earlier != nil {
+		read.earlier.overtakenBy = OvertakenSliceDiscarded
+		engine.dropTrialLocked(read.earlier, OvertakenSliceDiscarded)
+		if state := engine.groups[read.queryGroup]; state != nil && state.prepared == read.earlier {
+			state.prepared = nil
+		}
+	}
+	// So does a probe round it took, counted overtaken.
+	if round := read.floorProbe; round != nil && round.probe.reserved[round.query.Contract.Slot.EvaluationTime] == round {
+		round.overtakenBy = OvertakenSliceDiscarded
+		engine.dropProbeRoundLocked(round.probe, round, OvertakenSliceDiscarded)
+	}
+}
+
+// DiscardSlice takes back everything captured of a slice's read of a Query
+// Group's Slot, after the read completed: a slice read ahead of the one its
+// Slot was on and let go (the worker's read ahead), read again later. Its
+// directed capture goes, and so does a sample taken of it.
+func (engine *Engine) DiscardSlice(queryGroup execution.QueryGroupIdentity, evaluation execution.EvaluationTime, slice execution.InputSlice) {
+	if engine == nil || slice.IsZero() {
+		return
+	}
+	digest := slice.Digest()
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	state := engine.groups[queryGroup]
+	if state == nil {
+		return
+	}
+	if slot := state.directed[evaluation]; slot != nil {
+		for _, captured := range append([]*directedQuery(nil), slot.queries...) {
+			if !captured.slice.IsZero() && captured.slice.Digest() == digest {
+				engine.removeDirectedLocked(captured)
+			}
+		}
+	}
+	if sample := state.sample; sample != nil && sample.evaluation == evaluation && !sample.slice.IsZero() &&
+		sample.slice.Digest() == digest {
+		state.sample = nil
+	}
+	// A trial of the slice ends with it, as in Read.Discard.
+	if trial := state.prepared; trial != nil && trial.query.Contract.Slot.EvaluationTime == evaluation &&
+		!trial.query.Slice.IsZero() && trial.query.Slice.Digest() == digest {
+		trial.overtakenBy = OvertakenSliceDiscarded
+		engine.dropTrialLocked(trial, OvertakenSliceDiscarded)
+		state.prepared = nil
+	}
+	if probe := state.floorProbe; probe != nil {
+		if round := probe.reserved[evaluation]; round != nil && !round.ahead && !round.query.Slice.IsZero() &&
+			round.query.Slice.Digest() == digest {
+			round.overtakenBy = OvertakenSliceDiscarded
+			engine.dropProbeRoundLocked(probe, round, OvertakenSliceDiscarded)
+		}
+	}
+}
+
 // Complete hands a sample's summary to the engine, never waiting, kept to
 // the window's tail. A first read that is not complete is dropped: there is
 // nothing a later read could be compared against.
@@ -704,7 +825,12 @@ func (read *Read) Complete(completion execution.ProviderCompletion, err error) {
 		now := read.engine.options.Now()
 		read.engine.mu.Lock()
 		if state := read.engine.groups[read.queryGroup]; state != nil {
-			state.firstReads.add(now.Sub(read.sentAt))
+			state.requests.add(now.Sub(read.sentAt))
+			if read.slice.IsZero() {
+				state.firstReads.add(now.Sub(read.sentAt))
+			} else {
+				state.sliceRound.complete(&state.firstReads, read.evaluation, read.sentAt, now)
+			}
 		}
 		read.engine.mu.Unlock()
 	}
@@ -761,7 +887,7 @@ func (read *Read) Complete(completion execution.ProviderCompletion, err error) {
 	engine.nextID++
 	state.sample = &sample{id: engine.nextID, source: read.source, queryGroup: queryGroup,
 		contract:   read.query.Contract,
-		evaluation: read.query.Contract.Slot.EvaluationTime, spec: read.query.Spec, step: read.step,
+		evaluation: read.query.Contract.Slot.EvaluationTime, spec: read.query.Spec, slice: read.query.Slice, step: read.step,
 		windowEnd: time.Unix(read.query.Spec.LogicalWindow.End, 0), readAt: read.readAt, lookback: lookback,
 		readyAt: read.query.ReadyAt,
 		last:    trimSummary(read.summary.buckets, keptFrom), keptFrom: keptFrom, planned: read.depth, lastChange: -1,
@@ -827,7 +953,7 @@ func (engine *Engine) RereadBound(queryGroup execution.QueryGroupIdentity) (time
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	state := engine.groups[queryGroup]
-	if state == nil || state.firstReads.longest() <= 0 {
+	if state == nil || state.requests.longest() <= 0 {
 		return 0, false
 	}
 	return state.rereadBound(), true
@@ -929,7 +1055,36 @@ func (engine *Engine) Busy(queryGroup execution.QueryGroupIdentity) (Busy, bool)
 // longest of its last whole first reads, never less than RecheckTimeout.
 // Caller holds the engine lock.
 func (state *group) rereadBound() time.Duration {
-	return max(RecheckTimeout, state.firstReads.longest())
+	return max(RecheckTimeout, state.requests.longest())
+}
+
+// sliceRound is the Slot a group's latest sliced first read was of, and
+// when its first slice was sent: its slices' reading, one for the Slot, is
+// from then to the latest slice's end, so slices read side by side are not
+// summed.
+type sliceRound struct {
+	evaluation execution.EvaluationTime
+	begun      time.Time
+}
+
+// complete takes a whole slice's first read of the Slot at evaluation, sent
+// at sent and ended now, into readings: the Slot's first slice adds its
+// reading, each later slice widens it.
+func (round *sliceRound) complete(readings *durations, evaluation execution.EvaluationTime, sent, now time.Time) {
+	if round.evaluation != evaluation || readings.count == 0 {
+		round.evaluation, round.begun = evaluation, sent
+		readings.add(now.Sub(sent))
+		return
+	}
+	round.begun = minTime(round.begun, sent)
+	readings.widenLatest(now.Sub(round.begun))
+}
+
+func minTime(left, right time.Time) time.Time {
+	if right.Before(left) {
+		return right
+	}
+	return left
 }
 
 // Forget drops a Query Group this process no longer owns, with its samples.
@@ -1088,11 +1243,8 @@ func (engine *Engine) Step(ctx context.Context) {
 			continue
 		}
 		slot.running = true
-		// The Slot's first query, taken under the lock: a later physical query
-		// of the Slot appends to its queries while the read runs.
-		captured := slot.queries[0]
 		engine.mu.Unlock()
-		go engine.directedRead(ctx, slot, captured, release, yield)
+		go engine.directedRead(ctx, slot, release, yield)
 	}
 	for _, candidate := range due {
 		if !engine.options.Owns(candidate.queryGroup) {
@@ -1316,7 +1468,8 @@ func (engine *Engine) recheck(ctx context.Context, candidate *sample, at int, re
 		sink.summary.trackSeries(candidate.keptFrom, engine.options.Memory)
 	}
 	started := engine.options.Now()
-	completion, err := engine.options.Recheck(readCtx, tailSpec(candidate.spec, recheckFrom(candidate)), sink)
+	completion, err := engine.options.Recheck(execution.WithInputSlice(readCtx, candidate.slice),
+		tailSpec(candidate.spec, recheckFrom(candidate)), sink)
 	engine.mu.Lock()
 	candidate.returned = true
 	engine.mu.Unlock()

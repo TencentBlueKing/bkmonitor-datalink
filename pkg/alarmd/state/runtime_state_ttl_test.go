@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,7 +22,8 @@ import (
 // sequential and the pipelined path.
 type ttlRecordingBackend struct {
 	*pipelineMemoryBackend
-	ttls []time.Duration
+	ttlMu sync.Mutex
+	ttls  []time.Duration
 }
 
 func newTTLRecordingBackend() *ttlRecordingBackend {
@@ -38,9 +40,11 @@ func (backend *ttlRecordingBackend) CompareAndSet(
 func (backend *ttlRecordingBackend) CompareAndSetManyByDigest(
 	ctx context.Context, guard *FenceGuard, writes []FencedWrite,
 ) ([]FencedWriteOutcome, error) {
+	backend.ttlMu.Lock()
 	for _, write := range writes {
 		backend.ttls = append(backend.ttls, write.TTL)
 	}
+	backend.ttlMu.Unlock()
 	return backend.pipelineMemoryBackend.CompareAndSetManyByDigest(ctx, guard, writes)
 }
 

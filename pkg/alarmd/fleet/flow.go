@@ -49,12 +49,24 @@ type FlowFacts struct {
 	EventsEmitted  uint64 `json:"events_emitted"`
 	EventsRejected uint64 `json:"events_rejected"`
 	// LiveHeapBytes is the heap collector's last sample; absent before the
-	// first.
-	LiveHeapBytes *uint64 `json:"live_heap_bytes,omitempty"`
+	// first. LiveHeapReserved is what the retained-byte pool held at that
+	// sample's collection; absent before the pool is bound and from a build
+	// before it. Read the live heap against it, never against the holders'
+	// reservation of the same snapshot: the sample is up to a minute older.
+	LiveHeapBytes    *uint64           `json:"live_heap_bytes,omitempty"`
+	LiveHeapReserved *LiveHeapReserved `json:"live_heap_reserved,omitempty"`
 	// Hosts is the host index's size (cmdb_host_index_hosts).
 	Hosts uint64 `json:"hosts,omitempty"`
 	// Roles are the roles this process runs.
 	Roles []string `json:"roles,omitempty"`
+}
+
+// LiveHeapReserved is the retained-byte pool's reservation just before the
+// heap sample's forced collection and just after its live heap was read.
+// Live heap less it is heap no Slot reserved only when the two agree.
+type LiveHeapReserved struct {
+	AtGCStart uint64 `json:"gc_start"`
+	AtGCEnd   uint64 `json:"gc_end"`
 }
 
 // FlowHistogram is a histogram's cumulative bucket counts in the order of
@@ -68,9 +80,10 @@ type FlowHistogram struct {
 
 // FlowFactsMaxBytes bounds the block a summary carries. With 37 bucket
 // bounds and every counter at the test's ceiling of 10^12 the block encodes
-// to 1076 bytes; 1152 leaves room for one more such field. It is a small part
-// of a summary, which the snapshot budget bounds in MiB.
-const FlowFactsMaxBytes = 1152
+// to 1179 bytes, the live heap's reservation pair included; 1280 leaves room
+// for one more such field. It is a small part of a summary, which the
+// snapshot budget bounds in MiB.
+const FlowFactsMaxBytes = 1280
 
 // The bounds of the three histograms, in seconds: the metrics' own, held
 // equal to them by a test in the wiring.

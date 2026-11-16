@@ -55,6 +55,14 @@ func (coordinator *SlotExecutionCoordinator) observeNoDataCarry(
 // reads the old one again. Once the new generation holds a record the old
 // one is never read. A previous record that cannot be read leaves the Plan
 // on its own state, which is what it had without the carry; it is counted.
+//
+// The previous record is read as the Plan's own is, in parts (decision-020
+// batch 8, 2.7): only its header here, which names what the round starts
+// from, and its groups by segments as the round judges them (noDataCarried,
+// decideNoDataRound). A supplement reads no groups of it at all: the
+// snapshot it judges by stays MISSING, which records nothing absent at the
+// Slot (noDataStandingAt), so the carried groups were never what it decided
+// on.
 func (stream *streamedExecution) carryNoDataMemory(ctx context.Context, request execution.NoDataLoadRequest) {
 	var items []execution.PlanNoDataLoadItem
 	carried := map[execution.PlanNoDataIdentity]execution.PlanNoDataIdentity{}
@@ -83,7 +91,7 @@ func (stream *streamedExecution) carryNoDataMemory(ctx context.Context, request 
 	}
 	operation := stream.request.Operation
 	previousRequest := execution.NoDataLoadRequest{Contract: request.Contract, Items: items}
-	loaded, err := stream.coordinator.ports.NoData.LoadNoData(ctx, previousRequest)
+	loaded, err := stream.coordinator.ports.NoData.ReadNoDataHeaders(ctx, previousRequest)
 	if err == nil {
 		err = execution.ValidateNoDataLoad(previousRequest, loaded)
 	}
@@ -108,7 +116,10 @@ func (stream *streamedExecution) carryNoDataMemory(ctx context.Context, request 
 			if snapshot.Identity != identity {
 				continue
 			}
-			snapshot.Groups = append([]execution.NoDataGroupMemory(nil), previous.Groups...)
+			if stream.noDataCarried == nil {
+				stream.noDataCarried = make(map[execution.PlanNoDataIdentity]execution.NoDataMemorySnapshot)
+			}
+			stream.noDataCarried[identity] = previous
 			snapshot.PresentAsOf = previous.PresentAsOf
 			snapshot.RosterVersion = previous.RosterVersion
 			snapshot.TrackingExhaustedAt = previous.TrackingExhaustedAt

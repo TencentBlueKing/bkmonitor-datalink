@@ -279,12 +279,13 @@ func TestANoDataAlertOfAnItemWithRecoveryDisabledStaysOpenWhenDataReturns(t *tes
 
 // Turning recovery back on lets the data that came back end the no-data
 // alert the switch kept open. The switch is in the state-compatible hash, so
-// a toggle starts the item's state over, the no-data level included: the
-// no-data memory and the series' state move to a new generation, whose first
-// round warms that state up, and the alert ends on the round after it. B
-// stays away two rounds (continuous 2), the consumer takes its
-// alert, and B reports again: two rounds with recovery disabled end nothing;
-// with it turned off the alert ends under its own identity.
+// a toggle moves the item's state to a new generation, the no-data level
+// included: the no-data memory and the series' state are carried there, and
+// the new generation's first round is evaluated on them, not spent warming
+// up, so the alert ends on that round. B stays away two rounds
+// (continuous 2), the consumer takes its alert, and B reports again: two
+// rounds with recovery disabled end nothing; with it turned off the alert
+// ends under its own identity.
 func TestANoDataAlertKeptOpenByDisabledRecoveryEndsOnceTheSwitchIsOff(t *testing.T) {
 	strategy := lifecycleStrategy{revision: 7, continuous: 2,
 		targets: []string{lifecycleHostA, lifecycleHostB}, dimensions: lifecycleHostPair, disableRecovery: true}
@@ -308,14 +309,14 @@ func TestANoDataAlertKeptOpenByDisabledRecoveryEndsOnceTheSwitchIsOff(t *testing
 
 	strategy.revision, strategy.disableRecovery = 8, false
 	first := fixture.change(strategy, 4)
-	for round := int64(5); round <= first+1; round++ {
+	for round := int64(5); round <= first; round++ {
 		fixture.mustAttempt(round)
 	}
 	recoveries := recoveriesOf(fixture.noDataEventsFor(lifecycleHostB))
 	if len(recoveries) == 0 || recoveries[0].DedupeMD5 != raised[0].DedupeMD5 ||
-		recoveries[0].EvaluationTime != fixture.evaluationAt(first+1) {
-		t.Fatalf("recovery on from round %d: B's no-data RECOVERY %+v, want the first under alert %s on round %d (%d)",
-			first, recoveries, raised[0].DedupeMD5, first+1, fixture.evaluationAt(first+1))
+		recoveries[0].EvaluationTime != fixture.evaluationAt(first) {
+		t.Fatalf("recovery on from round %d: B's no-data RECOVERY %+v, want the first under alert %s on that round (%d)",
+			first, recoveries, raised[0].DedupeMD5, fixture.evaluationAt(first))
 	}
 	for name, keys := range map[string][2][]string{
 		"no-data memory":       {memoryBefore, fixture.memoryKeys()},

@@ -23,7 +23,8 @@ import (
 // setDefaultConfig
 func setDefaultConfig() {
 	viper.SetDefault(KVBasePathConfigPath, "bkmonitorv3/unify-query")
-	viper.SetDefault(AddressConfigPath, "http://127.0.0.1:8500")
+	// 不写地址就不创建 Consul client：特性开关只读 Redis，Consul Storage 来源具名报错。
+	viper.SetDefault(AddressConfigPath, "")
 	viper.SetDefault(TLSCertFileConfigPath, "")
 	viper.SetDefault(TLSCaFileConfigPath, "")
 	viper.SetDefault(TLSKeyFileConfigPath, "")

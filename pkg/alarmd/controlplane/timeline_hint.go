@@ -85,13 +85,26 @@ func TimelineRevisionHint(ctx context.Context) uint64 {
 
 // activationsFromTimeline answers a Plan activation request from the Query
 // Group's timeline: the Segment the contract's Slot falls in must be the one
-// the contract names, a closed Segment makes every Plan historical, and an
-// open one answers with its own activation records - which are the records
-// the activation state carries for the Query Group, written from one list
-// in the cutover's one script.
+// the contract names, and it answers with its own activation records - an
+// open one's are the records the activation state carries for the Query
+// Group, written from one list in the cutover's one script.
+//
+// A closed Segment answers a Plan with its own record only while the Plan
+// never left: every Segment from this one on carries it, and the last of
+// them is open. That is a Slot still in flight, or in a backlog, when an
+// edit to the Query Group's content closed the Segment it falls in - the
+// Plan ran then under the record this Segment holds, and answering it
+// ActivationNone threw the Slot away as PLAN_NOT_ACTIVE although the Plan
+// was there. Any other Plan of a closed Segment is ActivationNone, as every
+// Plan of one used to be: one deleted or disabled after the Slot, one that
+// left and came back (the Segments between do not carry it, and the stretch
+// it was away is the PLAN_NOT_ACTIVE / PLAN_REACTIVATED pair the contract
+// tells), one whose Query Group retired (no open Segment follows), and one
+// that moved to another Query Group. The Segments after the Slot's are all
+// still there: pruning drops a prefix (deadSegmentPrefix).
 func activationsFromTimeline(request execution.PlanActivationRequest, timeline persistedScheduleTimeline) (execution.PlanActivationResult, error) {
 	contractRef := request.Contract
-	for _, segment := range timeline.Segments {
+	for index, segment := range timeline.Segments {
 		schedule := segment.Schedule
 		if !schedule.Segment.Contains(contractRef.Slot.EvaluationTime) {
 			continue
@@ -110,7 +123,7 @@ func activationsFromTimeline(request execution.PlanActivationRequest, timeline p
 		result := execution.PlanActivationResult{Contract: contractRef, Facts: make([]execution.PlanActivationFact, 0, len(request.Plans))}
 		for _, plan := range request.Plans {
 			fact, found := byPlan[plan]
-			if historical || !found {
+			if !found || (historical && !carriedToTheOpenSegment(timeline.Segments[index+1:], plan)) {
 				fact = execution.PlanActivationFact{Plan: plan.PlanIdentity, Selection: execution.ActivationNone, Shard: shardPointerOf(plan)}
 			}
 			result.Facts = append(result.Facts, fact)
@@ -121,6 +134,28 @@ func activationsFromTimeline(request execution.PlanActivationRequest, timeline p
 		return result, nil
 	}
 	return execution.PlanActivationResult{}, errors.New("alarmd controlplane: activation request has no persisted Schedule Segment")
+}
+
+// carriedToTheOpenSegment reports whether every one of the Segments after a
+// closed one carries the Plan and the last of them is open: the Plan stayed
+// in the activation from that Segment to now.
+func carriedToTheOpenSegment(later []persistedScheduleSegment, plan execution.PlanKey) bool {
+	if len(later) == 0 || later[len(later)-1].Schedule.Segment.End != nil {
+		return false
+	}
+	for _, segment := range later {
+		carried := false
+		for _, record := range segment.Plans {
+			if record.Fact.Key() == plan {
+				carried = true
+				break
+			}
+		}
+		if !carried {
+			return false
+		}
+	}
+	return true
 }
 
 // DrainingContent is what a Query Group the current publication no longer

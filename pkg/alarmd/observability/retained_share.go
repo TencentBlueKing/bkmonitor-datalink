@@ -14,12 +14,12 @@ package observability
 // as approaching it.
 //
 // The share is a wall that stops a strategy whole: a Slot past it is refused
-// by name every round, and nothing before that says it is coming. The
-// largest strategy on a live deployment held 86 percent of its share at the
-// median and 91 at p99 for a day, with no line anywhere, and ten percent more
-// series would have stopped it. Ninety-five leaves room to act between the
-// warning and the wall, and sits above the p99 of that strategy as it is
-// today, so the line opens when it grows rather than on every round now.
+// by name every round, and nothing before that says it is coming. Ninety-five
+// leaves room to act between the warning and the wall. A Slot applied in
+// windows is at it by construction: each window is bounded by the share less
+// what the Slot holds outside it, so its peak sits at the share and says the
+// windows were used, not how far the wall is. The counter counts those Slots
+// as well; the fleet line leaves them out (fleet.Tracker.RetainedShare).
 const RetainedShareApproachPercent = 95
 
 // RetainedShareApproaching is the rule, decided on the bytes: a completed

@@ -55,6 +55,19 @@ func extractESResult(err error, res *elastic.SearchResult) ([]*elastic.ShardOper
 func handleESError(ctx context.Context, url string, err error, res *elastic.SearchResult) error {
 	shardFailures, err := extractESResult(err, res)
 
+	if err == nil && partialShardResults(ctx) != nil && res != nil {
+		if res.TimedOut {
+			err = fmt.Errorf("ES search timed out")
+		} else if hasFailedSearchShards(res) {
+			if canAcceptPartialShardResult(res) {
+				return nil
+			}
+			if len(shardFailures) == 0 {
+				err = fmt.Errorf("ES search has %d failed shards", res.Shards.Failed)
+			}
+		}
+	}
+
 	if err == nil && len(shardFailures) == 0 {
 		return nil
 	}

@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
@@ -196,9 +197,12 @@ func newModel(ctx context.Context, cfg *Config) (*model, error) {
 	// 初始化资源 map 配置
 	m := make(map[cmdb.Resource]cmdb.Index, len(cfg.Resource))
 
-	// 按照 index 数量倒序，用于判断资源归属
+	// 按照 index 数量倒序，用于判断资源归属；数量相同时顺序与进程无关
 	sort.SliceStable(cfg.Resource, func(i, j int) bool {
-		return len(cfg.Resource[i].Index) > len(cfg.Resource[j].Index)
+		if left, right := len(cfg.Resource[i].Index), len(cfg.Resource[j].Index); left != right {
+			return left > right
+		}
+		return relation.SourceInferenceLess(string(cfg.Resource[i].Name), string(cfg.Resource[j].Name))
 	})
 
 	for _, r := range cfg.Resource {
@@ -211,6 +215,12 @@ func newModel(ctx context.Context, cfg *Config) (*model, error) {
 	for _, r := range cfg.Relation {
 		if len(r.Resources) != 2 {
 			return nil, fmt.Errorf("wrong model %+v", r.Resources)
+		}
+		// The legacy VM graph only understands the static relation topology.
+		// Keep dynamic definitions in cfg for TimeGraph metric resolution, but do
+		// not expose them to the old path finder.
+		if r.Category == string(relation.RelationCategoryDynamic) {
+			continue
 		}
 
 		if err = g.AddEdge(string(r.Resources[0]), string(r.Resources[1])); err != nil {
@@ -342,6 +352,27 @@ func (r *model) getPaths(ctx context.Context, source, target cmdb.Resource, path
 
 func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptions) (source cmdb.Resource, sourceInfo cmdb.Matcher, hitPath []string, target cmdb.Resource, ts []cmdb.MatchersWithTimestamp, err error) {
 	user := metadata.GetUser(ctx)
+	queryMode := metric.CMDBRelationQueryModeRange
+	if opt.Instant {
+		queryMode = metric.CMDBRelationQueryModeInstant
+	}
+	queryStarted := time.Now()
+	var errorMessage []string
+	targetCount := 0
+	metric.CMDBRelationRouteInc(ctx, "vm_legacy", queryMode, metric.CMDBRelationResultStarted)
+	defer func() {
+		result := metric.CMDBRelationResultSuccess
+		if err != nil {
+			result = metric.CMDBRelationResultFailed
+		} else if len(errorMessage) > 0 {
+			result = metric.CMDBRelationResultPartial
+		} else if len(ts) == 0 {
+			result = metric.CMDBRelationResultEmpty
+		}
+		metric.CMDBRelationRouteInc(ctx, "vm_legacy", queryMode, result)
+		metric.CMDBRelationRouteSecond(ctx, time.Since(queryStarted), "vm_legacy", queryMode)
+		metric.CMDBRelationTargetCountObserve(ctx, "vm_legacy", queryMode, targetCount)
+	}()
 
 	ctx, span := trace.NewSpan(ctx, "get-resource-indexMatcher")
 	defer span.End(&err)
@@ -356,6 +387,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	span.Set("query-target-resource", opt.Target)
 	span.Set("query-index-matcher", opt.IndexMatcher)
 	span.Set("query-path-resource", opt.PathResource)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	opt.IndexMatcher = opt.IndexMatcher.Rename()
 	span.Set("query-renamed-index-matcher", opt.IndexMatcher)
@@ -400,22 +432,39 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	}
 
 	span.Set("query-relation-paths", paths)
+	span.Set("query-candidate-path-count", len(paths))
+
 	metadata.GetQueryParams(ctx).SetIsSkipK8s(true)
 
-	var errorMessage []string
-
 	for _, path := range paths {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err = ctxErr
+			break
+		}
 		reqTs, reqErr := r.doRequest(ctx, path, opt)
 		if reqErr != nil {
 			errorMessage = append(errorMessage, fmt.Sprintf("path [%v] do request error: %s", path, reqErr))
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				err = ctxErr
+				break
+			}
 			continue
 		}
 
+		for _, bucket := range reqTs {
+			targetCount += len(bucket.Matchers)
+		}
 		hitPath = path
 		if len(reqTs) > 0 {
 			ts = reqTs
 			break
 		}
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		err = ctxErr
+	}
+	if err == nil && hitPath == nil && len(errorMessage) > 0 {
+		err = fmt.Errorf("all relation paths failed: %v", errorMessage)
 	}
 
 	if len(ts) == 0 {
@@ -427,7 +476,14 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	}
 
 	span.Set("query-hit-path", hitPath)
-	return source, sourceInfo, hitPath, target, ts, err
+	span.Set("query-path-errors", errorMessage)
+	span.Set("query-path-error-count", len(errorMessage))
+	span.Set("query-target-count", targetCount)
+	if err != nil {
+		return source, sourceInfo, nil, target, nil, err
+	}
+
+	return source, sourceInfo, hitPath, target, ts, nil
 }
 
 type QueryResourceOptions struct {
@@ -498,6 +554,14 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 
 	ctx, span := trace.NewSpan(ctx, "query-do-request")
 	defer span.End(&err)
+	span.Set("query-path", path)
+	span.Set("query-path-depth", len(path))
+	if opt.Instant {
+		span.Set("query-mode", metric.CMDBRelationQueryModeInstant)
+	} else {
+		span.Set("query-mode", metric.CMDBRelationQueryModeRange)
+	}
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	indexMatcher, _, err := r.getIndexMatcher(ctx, opt.Source, opt.IndexMatcher)
 	if err != nil {
@@ -542,9 +606,22 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 
 	qb := metadata.GetQueryParams(ctx)
 
-	if qb.IsDirectQuery() {
-		vmExpand := query.ToVmExpand(ctx, queryReference)
+	realPromQL, err := queryTs.ToPromQL(ctx)
+	if err == nil {
+		span.Set("query-promql", realPromQL)
+	}
 
+	promQL, err := queryTs.ToPromExpr(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("query ts to prom expr error: %s", err)
+	}
+
+	if qb.IsDirectQuery() {
+		var vmExpand *metadata.VmExpand
+		vmExpand, err = query.ToVmExpandForExpression(ctx, queryReference, promQL)
+		if err != nil {
+			return nil, err
+		}
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
 			StorageType: metadata.VictoriaMetricsStorageType,
@@ -560,16 +637,6 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 		}, lookBackDelta, QueryMaxRouting)
 	}
 
-	realPromQL, err := queryTs.ToPromQL(ctx)
-	if err == nil {
-		span.Set("query-promql", realPromQL)
-	}
-
-	promQL, err := queryTs.ToPromExpr(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("query ts to prom expr error: %s", err)
-	}
-
 	statement := promQL.String()
 
 	var matrix pl.Matrix
@@ -583,6 +650,12 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 	if err != nil {
 		return nil, fmt.Errorf("instance query error: %s", err)
 	}
+	pointCount := 0
+	for _, series := range matrix {
+		pointCount += len(series.Points)
+	}
+	span.Set("query-result-series", len(matrix))
+	span.Set("query-result-points", pointCount)
 
 	if len(matrix) == 0 {
 		metadata.NewMessage(

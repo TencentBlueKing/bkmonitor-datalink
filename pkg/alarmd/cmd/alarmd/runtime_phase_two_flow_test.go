@@ -108,3 +108,19 @@ func TestTheFlowBlockIsTheMetricsValues(t *testing.T) {
 		t.Fatalf("flow facts = %+v", facts)
 	}
 }
+
+// Once sampled, the heap travels with the reservation of its own
+// collection; without a pool bound it travels alone.
+func TestTheFlowBlocksHeapCarriesTheReservationOfItsCollection(t *testing.T) {
+	alone := metric.FlowCounters{LiveHeapBytes: 560 << 20, LiveHeapKnown: true,
+		LiveHeapReserved: metric.HeapReading{Live: 560 << 20}}
+	if facts := flowFactsOf(alone, nil); facts.LiveHeapBytes == nil || *facts.LiveHeapBytes != 560<<20 || facts.LiveHeapReserved != nil {
+		t.Fatalf("flow facts without a pool = %+v, want the heap and no reservation", facts)
+	}
+	paired := alone
+	paired.LiveHeapReserved = metric.HeapReading{Live: 560 << 20, ReservedAtStart: 800 << 20, ReservedKnown: true}
+	facts := flowFactsOf(paired, nil)
+	if facts.LiveHeapReserved == nil || facts.LiveHeapReserved.AtGCStart != 800<<20 || facts.LiveHeapReserved.AtGCEnd != 0 {
+		t.Fatalf("flow facts = %+v, want the collection's 800 MiB at gc_start and 0 at gc_end", facts.LiveHeapReserved)
+	}
+}

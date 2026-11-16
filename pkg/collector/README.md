@@ -141,6 +141,33 @@ processor 数据流动通过 channel 来通信。
 $ make build
 ```
 
+`make build` 会在 `$(RELEASE_PATH)` 下同时产出两种插件包：
+
+- `bk-collector-<version>.tgz` / `bk-collector.tgz`：节点管理 V2 插件包
+- `bk-collector-nodeman-v3-<version>.tgz`：节点管理 V3 插件包，包内顶层目录为 `bk-collector/`
+
+仅构建 V3 插件包：
+
+```shell
+$ make build-v3
+```
+
+打包相关文件：
+
+```
+support-files/
+├── templates/linux/x86_64/          # V2 插件包
+│   ├── project.yaml
+│   └── etc/
+└── v3/                              # V3 插件包，对应插件包内 bk-collector/ 目录
+    ├── project.yaml
+    └── plugins_linux_x86_64/
+        ├── definition.yaml
+        └── templates/*.conf.template
+```
+
+V3 打包时把 `v3/` 整体拷贝为插件包内的 `bk-collector/`，再编译 `plugins_linux_x86_64/bin/bk-collector` 并替换 `project.yaml` 中的版本号。目前 V3 模板须与 V2 同名模板 `etc/*.conf.tpl` 保持一致（打包时会校验），修改模板时请两边同步。
+
 ## 📝 使用
 
 ### Processor

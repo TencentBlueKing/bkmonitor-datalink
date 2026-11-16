@@ -193,6 +193,14 @@ func admitAgainstLease(ctx context.Context, now func() time.Time) error {
 	needed := OutputAdmissionMargin + OutputBatchBound
 	remaining := authority.Deadline().Sub(now())
 	if remaining < needed {
+		// A lease held under a session is moved on by a confirmation: one
+		// asked for here, once, before the batch is deferred. A refused
+		// confirmation stops the lease, and the batch defers as it would.
+		if confirmer, ok := authority.(execution.LeaseConfirmer); ok && confirmer.Confirm(ctx, now()) == nil {
+			remaining = authority.Deadline().Sub(now())
+		}
+	}
+	if remaining < needed {
 		return &OutputDeferredError{Remaining: remaining, Needed: needed}
 	}
 	return nil

@@ -39,17 +39,23 @@ func (stream *streamedExecution) loadGapFacts(ctx context.Context, request execu
 		// The Store bounds that value and emits before reading the next key.
 		retained := 2 * retainedObjectBytes(snapshot)
 		reservations := &stream.coordinator.reservations
-		reservations.mu.Lock()
 		var err error
-		if reservations.gapFacts >= stream.coordinator.budget.MaxGapMutations {
-			err = budgetRejection(observability.CapacityBudgetGapMutations, stream.reservationPhase("normal_gap"), reservations.gapFacts, 1, stream.coordinator.budget.MaxGapMutations, stream.ownReservation(stream.gapFacts), stream.ownBudgetUsage(stream.coordinator.budget))
-		} else if retained > stream.coordinator.budget.MaxRetainedBytes-reservations.retainedBytes {
-			err = budgetRejection(observability.CapacityBudgetRetainedBytes, stream.reservationPhase("normal_gap"), reservations.retainedBytes, retained, stream.coordinator.budget.MaxRetainedBytes, stream.ownBudget(observability.CapacityBudgetRetainedBytes), stream.ownBudgetUsage(stream.coordinator.budget))
-		} else {
-			reservations.gapFacts++
-			reservations.retainedBytes += retained
+		for yielded := true; yielded; {
+			reservations.mu.Lock()
+			yielded = false
+			if reservations.gapFacts >= stream.coordinator.budget.MaxGapMutations {
+				err = budgetRejection(observability.CapacityBudgetGapMutations, stream.reservationPhase("normal_gap"), reservations.gapFacts, 1, stream.coordinator.budget.MaxGapMutations, stream.ownReservation(stream.gapFacts), stream.ownBudgetUsage(stream.coordinator.budget))
+			} else if err = stream.coordinator.judgeRetainedLocked(stream, retained, stream.reservationPhase("normal_gap")); err == nil {
+				reservations.gapFacts++
+				reservations.retainedBytes += retained
+			}
+			reservations.mu.Unlock()
+			// A refusal the read ahead may stand behind is judged again once
+			// it has yielded.
+			if err != nil {
+				yielded = stream.yieldReadAhead()
+			}
 		}
-		reservations.mu.Unlock()
 		if err != nil {
 			var exceeded *provisionalBudgetExceededError
 			if errors.As(err, &exceeded) {

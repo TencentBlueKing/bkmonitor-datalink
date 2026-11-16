@@ -288,9 +288,14 @@ func TestSlotExecutionCoordinatorBindsEmptyShareWhenDependencyDataLacksTheSeries
 	ports.gapMissing = true
 	ports.executeOverride = streamExecution(header, []execution.SeriesExecutionBatch{primaryBatch, otherSeriesBatch}, completion)
 
-	_, err := coordinator.Execute(context.Background(), workerSlotRequest(header.Contract))
+	result, err := coordinator.Execute(context.Background(), workerSlotRequest(header.Contract))
 	if err != nil && strings.Contains(err.Error(), "named-input exact set") {
 		t.Fatalf("Execute() rejected the EMPTY dependency share at the named-input exact set: %v", err)
+	}
+	// The dependency's own series, which no PRIMARY named, is let go and
+	// counted, not evaluated.
+	if err == nil && result.Usage.DependencySeriesDiscarded != 1 {
+		t.Fatalf("dependency series discarded = %d, want the one no PRIMARY named", result.Usage.DependencySeriesDiscarded)
 	}
 	if len(evaluator.requests) != 1 {
 		t.Fatalf("evaluation requests=%d (error=%v), want the streamed PRIMARY series evaluated once", len(evaluator.requests), err)

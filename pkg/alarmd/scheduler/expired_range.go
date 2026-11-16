@@ -298,13 +298,9 @@ func (source *ProductionSlotSource) resumeExpiredRange(ctx context.Context, p ex
 	if next != p.Next {
 		return FrozenSlot{}, false, &SourceBlockedError{Err: ErrProgressOffSchedule}
 	}
-	assignment, current, err := source.currentOwnership(ctx, source.now())
-	if err != nil {
-		return FrozenSlot{}, false, err
-	}
-	if !sameAssignment(initial, assignment) || current != fence {
-		return FrozenSlot{}, false, ErrSlotOwnershipChanged
-	}
+	// Dispatched under the ownership the round opened with; BeginRange runs the
+	// full fence in its own script (A1.2).
+	assignment, current := initial, fence
 	copy := p.Clone()
 	slot := FrozenSlot{ExpiredRange: &copy, Contract: p.Last.Contract, DuePlanTargets: p.Last.DuePlanTargets.Clone(),
 		EarliestQueryDeadlineUnixMilli: p.Last.EarliestQueryDeadlineUnixMilli,

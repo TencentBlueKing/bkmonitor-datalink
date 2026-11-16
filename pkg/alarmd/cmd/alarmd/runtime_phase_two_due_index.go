@@ -14,6 +14,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/readhold"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
@@ -157,6 +158,9 @@ type phaseTwoDueEntry struct {
 	// first round (fleet.AwaitingFirstRound).
 	nextSlotUnix  int64
 	readinessHold bool
+	// awaiting is a bound that is the next Slot waiting on a predecessor's
+	// read hold record, for a reader to see the wait (fleet.PredecessorWait).
+	awaiting *readhold.AwaitingPredecessorError
 	// heldBack marks that the dispatcher pushed this object back at least once
 	// since its last round returned: no room in the ready queue, or not urgent
 	// enough for the recovery queue. Cleared when the next round returns, and
@@ -365,13 +369,14 @@ func (index *phaseTwoDueIndex) Record(
 		existing.deferred = bound.Deferred
 		existing.queryCooldown = bound.QueryCooldown
 		existing.nextSlotUnix, existing.readinessHold = bound.NextSlotUnix, bound.ReadinessHold
+		existing.awaiting = bound.AwaitingPredecessor
 		existing.heldBack = false
 		heap.Fix(&index.pending, existing.position)
 	} else {
 		entry := &phaseTwoDueEntry{
 			queryGroup: queryGroup, lifecycle: lifecycle, dueAtUnix: dueAt,
 			intervalSeconds: interval, deferred: bound.Deferred, queryCooldown: bound.QueryCooldown,
-			nextSlotUnix: bound.NextSlotUnix, readinessHold: bound.ReadinessHold,
+			nextSlotUnix: bound.NextSlotUnix, readinessHold: bound.ReadinessHold, awaiting: bound.AwaitingPredecessor,
 		}
 		index.entries[queryGroup] = entry
 		heap.Push(&index.pending, entry)
@@ -770,6 +775,10 @@ func (index *phaseTwoDueIndex) WakeOf(queryGroup string) fleet.WakeFacts {
 		ReadinessHold: entry.readinessHold}
 	if entry.nextSlotUnix > 0 {
 		wake.NextSlot = time.Unix(entry.nextSlotUnix, 0)
+	}
+	if awaiting := entry.awaiting; awaiting != nil {
+		wake.AwaitingPredecessor = &fleet.PredecessorWait{QueryGroup: string(awaiting.Predecessor), Reason: awaiting.Reason,
+			Since: time.UnixMilli(awaiting.SinceUnixMilli), Until: time.UnixMilli(awaiting.UntilUnixMilli)}
 	}
 	return wake
 }

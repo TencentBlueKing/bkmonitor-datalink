@@ -52,9 +52,54 @@ func TestAdmitterRequiresCurrentFenceAndCurrentPlanActivation(t *testing.T) {
 	}
 }
 
-type fakeFenceChecker struct{ err error }
+// CheckActivation answers the activation half and never reads the fence: a
+// fence that would refuse does not refuse it, and the activation decides.
+// Its caller's next write runs the fence in its own script.
+func TestCheckActivationReadsTheActivationAndNotTheFence(t *testing.T) {
+	request := execution.SideEffectAdmissionRequest{
+		Contract: execution.FrozenExecutionContractRef{
+			Slot:                 execution.SlotIdentity{QueryGroup: "query-group-1", EvaluationTime: 100},
+			SnapshotRevision:     "snapshot-1",
+			QueryRevision:        "query-1",
+			ScheduleRevision:     "schedule-1",
+			ScheduleSegmentStart: 100,
+			DuePlanSetDigest:     "plans-1",
+		},
+		Plan:            execution.PlanKey{PlanIdentity: execution.PlanIdentity{TenantID: "tenant", BusinessID: "business", StrategyID: "strategy"}},
+		StateApplyEpoch: 1,
+		OwnerFence:      execution.OwnerFence{QueryGroup: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "token-1"},
+	}
+	fence := &fakeFenceChecker{err: ErrStaleFence}
+	activation := &fakeActivationReader{active: true}
+	admitter, err := NewAdmitter(fence, activation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := admitter.CheckActivation(context.Background(), request); err != nil || !result.Admitted {
+		t.Fatalf("CheckActivation(active, stale fence) = (%+v, %v), want admitted", result, err)
+	}
+	activation.active = false
+	result, err := admitter.CheckActivation(context.Background(), request)
+	if err != nil || result.Admitted || result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
+		t.Fatalf("CheckActivation(inactive) = (%+v, %v), want refused for %s", result, err, contract.ReasonConfigDrift)
+	}
+	if fence.calls != 0 {
+		t.Fatalf("CheckActivation read the fence %d times", fence.calls)
+	}
+	incomplete := request
+	incomplete.StateApplyEpoch = 0
+	if _, err := admitter.CheckActivation(context.Background(), incomplete); err == nil {
+		t.Fatal("CheckActivation took an incomplete Plan identity")
+	}
+}
+
+type fakeFenceChecker struct {
+	err   error
+	calls int
+}
 
 func (checker *fakeFenceChecker) CheckFence(context.Context, execution.OwnerFence) error {
+	checker.calls++
 	return checker.err
 }
 

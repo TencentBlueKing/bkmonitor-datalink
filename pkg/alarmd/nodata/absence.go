@@ -93,7 +93,7 @@ type AbsenceInput struct {
 	// back is remembered as present and gets no verdict, so the NORMAL that
 	// would end its no-data alert is never produced. The closes that are no
 	// recovery keep their NORMAL - a group the roster stopped expecting
-	// (closeDroppedAbsences), one in another business (A6) - as the control
+	// (closeDropped), one in another business (A6) - as the control
 	// plane's closes do elsewhere.
 	RecoveryDisabled bool
 	// AnswerTruncated is SlotInput.AnswerTruncated: the answer says it is
@@ -253,9 +253,10 @@ type AbsenceResult struct {
 // from data that is not there - and this is the one place where having the Slot's
 // own completeness lets alarmd not repeat it.
 func Evaluate(input AbsenceInput) AbsenceResult {
-	result := evaluateAbsence(input)
-
-	// The Plan-level fact is decided here and nowhere else, for every path out
+	// The rules are applied one group at a time (judge.go), and this is the
+	// whole round: every remembered group fed, then the round finished.
+	//
+	// The Plan-level fact is decided in one place, Finish, for every path out
 	// of the evaluation at once.
 	//
 	// The fact exists only to tell two empty memories apart - one that never
@@ -267,7 +268,7 @@ func Evaluate(input AbsenceInput) AbsenceResult {
 	//
 	// Data arriving clears it too, even when the memory stays empty. There is
 	// exactly one group that is never written to the memory - the whole-item
-	// group, which rememberPresent skips because it is not a series - so an
+	// group, which judgePresent skips because it is not a series - so an
 	// exhausted Plan whose data comes back only under that group would other-
 	// wise carry the fact forever: the memory it produces is empty, the fact is
 	// carried, and the whole-item absence it describes is never reported again.
@@ -277,375 +278,22 @@ func Evaluate(input AbsenceInput) AbsenceResult {
 	// leaves StateGeneration - and therefore the memory key - unchanged, and an
 	// exhausted history Plan carries its mark straight into whole-item mode.
 	//
-	// Written per branch instead, this is nine separate returns each having to
-	// remember a rule about a field most of them never touch, and the ones that
-	// forget do not fail here: they fail in the contract layer, on every write
-	// that Plan ever attempts again.
+	// Written per path instead, this is a rule each path has to remember about
+	// a field most of them never touch, and the ones that forget do not fail
+	// here: they fail in the contract layer, on every write that Plan ever
+	// attempts again.
 	// "Data arrived" is not the same as "something was present". A group that
 	// belongs to another business is present and is deliberately dropped rather
 	// than remembered, so counting it here would clear the mark over an empty
 	// memory - the other refusal. The whole-item group is the only one that is
 	// both this item's own and never written down.
-	_, result.WholeItemPresent = input.Present[WholeItemGroup().Key()]
-	if len(result.Memory) != 0 || result.WholeItemPresent {
-		result.TrackingExhaustedAt = 0
-		return result
-	}
-	if result.TrackingExhaustedAt == 0 {
-		result.TrackingExhaustedAt = input.TrackingExhaustedAt
-	}
-	return result
-}
-
-func evaluateAbsence(input AbsenceInput) AbsenceResult {
-	result := AbsenceResult{
-		Verdicts: make(map[string]Verdict, len(input.Roster.Groups)+1),
-		Memory:   copyGroupMemory(input.Memory),
-		Roster:   input.Roster,
-		Facts: AbsenceFacts{
-			Present: uint64(len(input.Present)), Expected: uint64(len(input.Roster.Groups)), Dropped: input.Dropped,
-			RosterSource: input.Roster.Source, RosterVersion: input.Roster.Version,
-		},
-	}
-
-	// A1. Not FULL, or full by its own account and possibly cut at the query
-	// service's group cap, or judged against an expected set that did not
-	// resolve in full: an answer that may have left groups out is no evidence
-	// about the ones it left out, and a roster that may have left members out
-	// is no evidence that they left, so every expected group that did not
-	// arrive is unavailable - no absence is raised, kept, aged or closed on it.
-	// A group that did arrive is a different fact: its data is in the answer,
-	// and an answer cannot hold a series that was not sent. So it is judged
-	// present exactly as in a FULL round (judgePresent, and A6 for one in
-	// another business), which is what recovers its absence. Skipping it too
-	// left a strategy whose answer is always cut - one at the group cap, which
-	// is its size and not a blip - with absences that never recover however
-	// much data comes back. An absence the roster has stopped expecting is not
-	// closed here: the roster change is known, but that close is an absence
-	// verdict, and the next FULL round makes it.
-	if input.Completeness != execution.CompletenessFull || input.AnswerTruncated || input.RosterUnresolved {
-		judgePresent(&result, input)
-		for key := range input.Roster.Groups {
-			if _, present := input.Present[key]; present {
-				if _, foreign := input.OutOfBusiness[key]; foreign && input.Memory[key].SuppressedAt == 0 {
-					// A6 for a group judgePresent has just forgotten: its
-					// recovery is said here, or its alert stays open with
-					// nothing left to close it.
-					result.Verdicts[key] = VerdictNormal
-				}
-				if _, judged := result.Verdicts[key]; judged || heldPresent(input, key) || input.Memory[key].SuppressedAt != 0 {
-					continue
-				}
-			}
-			result.Verdicts[key] = VerdictUnavailable
-			result.Facts.Unavailable++
-		}
-		return result
-	}
-
-	whole := WholeItemGroup().Key()
-
-	// A2 and A3. With nothing expected, the item speaks about itself: it is
-	// absent when nothing arrived, and recovers when its own data does. The
-	// groups that arrive are judged present like any other, which is also
-	// where a history roster grows from. The declared roster source is left as
-	// it is: an empty roster that was declared TARGET_STATIC is a target that
-	// resolved to no host, and rewriting it to WHOLE would hide exactly that.
-	if len(input.Roster.Groups) == 0 && input.Roster.Source == RosterTargetPlan {
-		// A target plan that resolved, completely, to no member expects
-		// nothing and opens nothing: the whole-item absence is the old
-		// target's reading and is not claimed for the new form. Data that
-		// arrives is still data and recovers what it names. What a
-		// confirmed-empty target decides on top of that is that every member
-		// whose absence was open has left the target, so those absences close
-		// once, here - a whole-item absence an earlier build left open among
-		// them - and the whole-item entry is not kept.
-		judgePresent(&result, input)
-		closeDroppedAbsences(&result, input, false)
-		delete(result.Memory, whole)
-		return result
-	}
-	if len(input.Roster.Groups) == 0 {
-		if len(input.Present) == 0 {
-			// An empty roster has two causes that look identical from here:
-			// this item never had groups, or the horizon emptied its history
-			// roster. Only the second carries the Plan-level fact, and without
-			// consulting it this branch rebuilds as a whole-item absence
-			// exactly what the horizon has just stopped, every round.
-			if input.TrackingExhaustedAt != 0 {
-				closeDroppedAbsences(&result, input, true)
-				return result
-			}
-			entry := result.Memory[whole]
-			if entry.SuppressedAt != 0 {
-				// The whole-item absence itself was stopped. Same rule as a
-				// group's: no verdict, and the entry stays as it is.
-				result.Facts.Suppressed++
-				closeDroppedAbsences(&result, input, true)
-				return result
-			}
-			if entry.FirstAbsent == 0 {
-				entry.FirstAbsent = input.EvaluationTime
-			}
-			// The whole-item group is not a series and never records a
-			// LastSeen: one would carry it into a history roster as if it were.
-			entry.LastSeen = 0
-			if trackingExpired(entry.FirstAbsent, input.EvaluationTime, input.TrackingHorizonSeconds) {
-				// Marked rather than forgotten. This group is not in any
-				// roster - it is what an empty roster produces - so deleting it
-				// would have the next empty round build it again from nothing.
-				result.Facts.Expired++
-				entry.SuppressedAt = input.EvaluationTime
-				result.Memory[whole] = entry
-				closeDroppedAbsences(&result, input, true)
-				return result
-			}
-			result.Verdicts[whole] = VerdictAnomaly
-			result.Facts.Absent++
-			result.Facts.AbsentAges.count(entry.FirstAbsent, input.EvaluationTime)
-			result.Memory[whole] = entry
-			closeDroppedAbsences(&result, input, true)
-			return result
-		}
-		judgePresent(&result, input)
-		closeDroppedAbsences(&result, input, true)
-		return result
-	}
-
-	judgePresent(&result, input)
-	for key := range input.Roster.Groups {
-		// A6. A host that belongs to another business is not this item's to
-		// alert on: it recovers and is forgotten, which is the backend's
-		// recover-and-skip. Checked before presence, because a group that is
-		// out of business is out of business whether or not it reported.
-		//
-		// An absence the horizon already stopped is forgotten without the
-		// recovery. Nothing was standing on it that this item still produces,
-		// and the contract allows no NORMAL out of the expiry path by any
-		// route (retention proposal, section 4 item 4).
-		if _, foreign := input.OutOfBusiness[key]; foreign {
-			if input.Memory[key].SuppressedAt == 0 {
-				result.Verdicts[key] = VerdictNormal
-			}
-			delete(result.Memory, key)
-			continue
-		}
-		// A4 and A7. Present groups were judged above, together with the ones
-		// the roster does not expect.
-		if _, judged := result.Verdicts[key]; judged || heldPresent(input, key) {
-			continue
-		}
-		entry := result.Memory[key]
-		if entry.SuppressedAt != 0 {
-			// Tracking of this absence has already stopped. No verdict, so no
-			// synthetic anomaly, and the entry is left exactly as it is: a
-			// horizon raised after the fact must not restart what a lower one
-			// stopped, and the only thing that restarts it is data arriving.
-			//
-			// Except that a history roster still forgets it at the horizon. The
-			// horizon never marks a history group - it forgets it - so a marked
-			// one is a manual close (decision-024), and the typical close is of a
-			// group whose data never returns. Kept, it would sit in a memory the
-			// running Plan renews every round; forgotten at the horizon it
-			// leaves exactly as an unmarked absence would, with nothing said.
-			if input.Roster.Source == RosterHistory &&
-				trackingExpired(entry.FirstAbsent, input.EvaluationTime, input.TrackingHorizonSeconds) {
-				result.Facts.Expired++
-				delete(result.Memory, key)
-				continue
-			}
-			result.Facts.Suppressed++
-			continue
-		}
-		// Only the first absent round starts the clock. Restarting it every
-		// round would hold the reported period count at one however long the
-		// group stayed away.
-		if entry.FirstAbsent == 0 {
-			entry.FirstAbsent = input.EvaluationTime
-		}
-		if trackingExpired(entry.FirstAbsent, input.EvaluationTime, input.TrackingHorizonSeconds) {
-			// The horizon is reached: stop producing this absence, and do it
-			// without a verdict of any kind. A NORMAL here would be a recovery
-			// nobody observed, which is the reading this whole mechanism exists
-			// to avoid.
-			result.Facts.Expired++
-			if input.Roster.Source == RosterHistory {
-				// A history roster is derived from this memory, so forgetting
-				// the group is what stops it being expected. There is nowhere
-				// else for it to come back from.
-				delete(result.Memory, key)
-				continue
-			}
-			// Something outside this memory expects this group and will go on
-			// expecting it, so forgetting it would let the next round meet it
-			// as new and start the clock again. The stopping is recorded
-			// instead, compactly, beside the timestamps that explain it.
-			entry.SuppressedAt = input.EvaluationTime
-			result.Memory[key] = entry
-			continue
-		}
-		result.Verdicts[key] = VerdictAnomaly
-		result.Facts.Absent++
-		result.Facts.AbsentAges.count(entry.FirstAbsent, input.EvaluationTime)
-		result.Memory[key] = entry
-	}
-
-	closeDroppedAbsences(&result, input, false)
-
-	// The Plan-level fact, decided last because it is about what the round
-	// left behind rather than about any one group.
 	//
-	// It is set only for a history roster, and only when the horizon has just
-	// emptied it: that is the one case where the next round meets an empty
-	// roster that is not "this item has no groups". This is the only place that
-	// sets it; carrying it forward on the rounds after belongs to Evaluate,
-	// which applies that one rule to every path.
-	if input.Roster.Source == RosterHistory && result.Facts.Expired > 0 &&
-		len(result.Memory) == 0 && len(input.Present) == 0 {
-		result.TrackingExhaustedAt = input.EvaluationTime
-	}
+	// Both errors the judgement can raise belong to a history roster derived
+	// from the memory - a key that does not parse, and the version of what was
+	// derived - and a stated roster derives nothing, so neither is reachable
+	// here.
+	result, _ := judgeAbsenceResult(newAbsenceJudge(input, false, nil), input.Memory, memoryKeys(input.Memory))
 	return result
-}
-
-// closeDroppedAbsences is A8: a remembered group the roster has stopped
-// expecting is handled by what it has open.
-//
-// One with an open absence -- a FirstAbsent, so an alert may be standing on it
-// -- gets exactly one NORMAL and is then forgotten. The roster no longer
-// expects it, so no later round will ever say NORMAL for it; without this one
-// verdict the alert stands until somebody closes it by hand. That is the case
-// a host leaving the target, and an item's whole-item absence turning into
-// target groups, both land in.
-//
-// One with nothing open keeps its memory and gets no verdict, which is where a
-// history roster grows from.
-//
-// One sweep rather than a branch in each path, because the reason is one
-// reason and it does not care which way the roster changed: a target roster
-// becoming empty strands the host groups exactly as a target roster arriving
-// strands the whole-item group. The NORMAL is not counted as an absence -- it
-// is the end of one.
-//
-// It reads the input memory, not the result's, so the answer does not depend
-// on what the paths above have already written and a retried Slot reaching
-// here with the same memory gets the same answer. That includes whether the
-// absence was stopped: a group whose host reported for another business has
-// already had its entry removed from the result, and reading the stop off the
-// result would turn that stopped absence into the recovery the horizon exists
-// to avoid. A group already judged this round keeps that verdict: the roster
-// expects it, it reported, or it is the whole-item group this round has just
-// spoken about.
-// wholeItemDecided says the whole-item branch has already settled that group
-// this round, including by deciding to say nothing about it. Without it the
-// silent decisions are not silent: the whole-item group is not in any roster,
-// so "the roster stopped expecting it" is true of it on every empty round, and
-// the sweep turns a stopped absence into the closing NORMAL the horizon exists
-// to avoid - then deletes the entry, so the next empty round opens the absence
-// again from nothing. The paths that give the group a verdict do not need it;
-// they are skipped as judged. The confirmed-empty target plan passes false on
-// purpose: there the whole-item reading really is retired and closing it is the
-// point.
-func closeDroppedAbsences(result *AbsenceResult, input AbsenceInput, wholeItemDecided bool) {
-	whole := WholeItemGroup().Key()
-	for key, entry := range input.Memory {
-		if entry.FirstAbsent == 0 {
-			continue
-		}
-		if wholeItemDecided && key == whole {
-			continue
-		}
-		if _, expected := input.Roster.Groups[key]; expected {
-			continue
-		}
-		if _, judged := result.Verdicts[key]; judged || heldPresent(input, key) {
-			continue
-		}
-		if entry.SuppressedAt != 0 {
-			// Tracking of this absence was stopped before the roster dropped
-			// the group. Nothing is standing to close, so the group is
-			// forgotten without a verdict rather than recovered with one.
-			delete(result.Memory, key)
-			continue
-		}
-		result.Verdicts[key] = VerdictNormal
-		if result.Closing == nil {
-			result.Closing = map[string]bool{}
-		}
-		result.Closing[key] = true
-		delete(result.Memory, key)
-	}
-}
-
-// judgePresent is what a FULL round's own data says, before anything is said
-// about what did not arrive (retention proposal, section 4 item 2).
-//
-// A4 and A7. Every group that reported is present, whether or not the roster
-// expects it: it gets a NORMAL and a whole new memory entry. The NORMAL is
-// what recovers an alert the roster no longer accounts for - a host the
-// target dropped while its absence was open, a history group the horizon
-// forgot - and the trigger's open-alert gate is what keeps it from reaching
-// the consumer when nothing is open, as it does for every healthy series. The
-// new entry is what clears a suppression: data arriving is the one thing that
-// restarts tracking, and it restarts it from nothing rather than resuming the
-// absence it interrupted. There is no "arrived but older than the last
-// checkpoint" branch: a Slot is evaluated after its readiness, so what it
-// holds is this period's, and the backend's staleness test exists because its
-// input arrives by push.
-//
-// A round with any data also gives the whole item a NORMAL and drops its
-// entry, every such round rather than once: the whole-item absence is the one
-// no roster names, so nothing else would ever say it ended, and a recovery the
-// gate held once has to be offered again. Any data means any: a host of
-// another business that reported is data the item's query admitted, and the
-// backend recovers the whole item on whatever arrived without asking whose
-// host it was (nodata.py:85 and :100, against _process_dimensions, which
-// filters nothing by business). With an empty agg_dimension every series
-// projects onto the whole-item group itself, which then has its one verdict
-// from here. That group is never remembered as seen: it is not a series, and a
-// LastSeen would carry it into a history roster as one.
-//
-// A group whose host belongs to another business is not this item's to alert
-// on or to remember. It is dropped from the memory, since remembering it would
-// carry it into a later history roster, and it is not judged here: whether it
-// closes with a NORMAL depends on what its own memory had open, which the
-// roster pass and the dropped-group sweep decide.
-func judgePresent(result *AbsenceResult, input AbsenceInput) {
-	whole := WholeItemGroup().Key()
-	for key := range input.Present {
-		if _, foreign := input.OutOfBusiness[key]; foreign {
-			delete(result.Memory, key)
-			continue
-		}
-		if key == whole {
-			continue
-		}
-		if !input.RecoveryDisabled {
-			result.Verdicts[key] = VerdictNormal
-		}
-		result.Memory[key] = GroupMemory{LastSeen: input.EvaluationTime}
-	}
-	if len(input.Present) > 0 {
-		if !input.RecoveryDisabled {
-			result.Verdicts[whole] = VerdictNormal
-		}
-		delete(result.Memory, whole)
-	}
-}
-
-// heldPresent is a group judgePresent found present and left without its
-// verdict because recovery is disabled: present all the same, so neither
-// absent nor dropped. With recovery enabled every such group carries its
-// NORMAL, and this is false.
-func heldPresent(input AbsenceInput, key string) bool {
-	if !input.RecoveryDisabled {
-		return false
-	}
-	if key == WholeItemGroup().Key() {
-		return len(input.Present) > 0
-	}
-	_, present := input.Present[key]
-	_, foreign := input.OutOfBusiness[key]
-	return present && !foreign
 }
 
 func copyGroupMemory(memory map[string]GroupMemory) map[string]GroupMemory {

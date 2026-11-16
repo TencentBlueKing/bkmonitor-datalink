@@ -161,7 +161,8 @@ func TestADrainingTimelineThatDoesNotDecodeLeavesOnlyItsQueryGroupUnexecutable(t
 		t.Run(name, func(t *testing.T) {
 			var observed []observability.Observation
 			runtime, server, authority := viewPublishRuntime(t, source, &observed)
-			runtime.dependencies.Store = &storedViewStore{records: records}
+			store := &storedViewStore{records: records}
+			runtime.dependencies.Store, runtime.records = store, newLeaderRecordCache(store, nil)
 			publish(runtime, authority)
 
 			stats := server.Stats()

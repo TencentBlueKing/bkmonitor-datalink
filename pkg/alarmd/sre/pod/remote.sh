@@ -44,6 +44,14 @@ else
 	"$@" <&4 4<&- 2>&3 3>&- &
 fi
 pid=$!
+# The timer leads a process group of its own where job control takes effect,
+# under setsid as well: turned on there only now, once setsid has launched
+# the command. The shells that turn it off again say so in $-.
+if [ -n "$wrap" ] && (set -m); then
+	set -m
+fi
+jobcontrol=
+case $- in *m*) jobcontrol=1 ;; esac
 # The timer starts before anything more is written: a write into a closed
 # output pipe may end this shell, never the timer, which ends the command.
 # The timer's sleeps close fd 3: one left behind would hold the exec's
@@ -52,11 +60,23 @@ pid=$!
 	# A closed output pipe must not end the timer before its kill.
 	trap '' PIPE
 	# The sleep is the timer's child: a TERM to the timer ends it too, also
-	# where the shell has no job control to send it to the group.
+	# where the shell has no job control to send it to the group. There the
+	# TERM reaches the timer alone, and one that came before the trap below
+	# ended the timer and left its sleep to run to the deadline: so it is
+	# caught from before the sleep is forked, and the sleep ended once it
+	# is - by KILL, which a sleep still between fork and exec cannot lose as
+	# it can a TERM. Under job control the TERM goes to the timer's group,
+	# and what it misses goes with the group after it (below); a TERM caught
+	# this early can leave bash 3.2 spinning in wait.
+	stop=
+	[ -n "$jobcontrol" ] || trap 'stop=1' TERM
 	sleep "$t" 3>&- &
 	s=$!
-	trap 'kill "$s"; exit 0' TERM
+	trap 'kill -KILL "$s"; exit 0' TERM
+	[ -z "$stop" ] || { kill -KILL "$s"; exit 0; }
 	wait "$s"
+	# The sleep is gone and its pid free to be taken again.
+	trap 'exit 0' TERM
 	printf '\n%s expired\n' "$nonce" >&3
 	kill -TERM -"$pid" || kill -TERM "$pid"
 	sleep 2 3>&-
@@ -80,4 +100,8 @@ rc=$?
 [ "$group" -eq 1 ] && kill -KILL -"$pid"
 kill -TERM -"$timer" || kill -TERM "$timer"
 wait "$timer"
+# A sleep the timer was forking as the TERM came is not among the members
+# the TERM reached, and its parent is gone: it is in the timer's group all
+# the same, which outlives the timer while it does.
+[ -z "$jobcontrol" ] || kill -KILL -"$timer"
 printf '\n%s complete %s\n' "$nonce" "$rc" >&3

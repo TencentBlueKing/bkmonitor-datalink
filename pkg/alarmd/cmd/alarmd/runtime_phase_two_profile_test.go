@@ -60,10 +60,8 @@ func TestPhaseTwoRetainedBudgetProfileUsesResolvedDefaultAndOverride(t *testing.
 	}
 	// The budgets follow the container, so the profile reports which
 	// container they were read from alongside them.
-	// The UQ body follows the retained budget but has its own ceiling, so it
-	// is bounded by it rather than equal to it.
-	if base.Capacity.RetainedBytes == 0 || base.Capacity.UQBodyBytes <= 0 ||
-		base.Capacity.UQBodyBytes > int64(base.Capacity.RetainedBytes) {
+	if base.Capacity.RetainedBytes == 0 || base.Capacity.UQSeriesBytes <= 0 ||
+		base.Capacity.UQSeriesBytes > int64(base.Capacity.RetainedBytes) {
 		t.Fatalf("resolved default capacity = %+v", base.Capacity)
 	}
 	if base.MemorySource == "" || base.MemoryLimitBytes == 0 {
@@ -78,18 +76,16 @@ func TestPhaseTwoRetainedBudgetProfileUsesResolvedDefaultAndOverride(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if legacy.Digest == base.Digest || legacy.Capacity.RetainedBytes != 64<<20 || legacy.Capacity.UQBodyBytes != 64<<20 {
+	if legacy.Digest == base.Digest || legacy.Capacity.RetainedBytes != 64<<20 {
 		t.Fatalf("explicit override missing from runtime facts: %+v", legacy)
 	}
-	// Retained bytes also bounds the existing UQ body limit, and the counts in
-	// one answer follow the body (the smallest series and record it can
-	// hold); all other limits stay fixed.
-	if legacy.Capacity.UQSeries != uint64(legacy.Capacity.UQBodyBytes)/config.MinimumSeriesBytes ||
-		legacy.Capacity.UQRecords != uint64(legacy.Capacity.UQBodyBytes)/config.MinimumRecordBytes {
-		t.Fatalf("UQ counts not derived from the body: %+v", legacy.Capacity)
+	// The counts in one answer follow the retained bytes (the smallest
+	// series and record they can hold); all other limits stay fixed.
+	if legacy.Capacity.UQSeries != legacy.Capacity.RetainedBytes/config.MinimumSeriesBytes ||
+		legacy.Capacity.UQRecords != legacy.Capacity.RetainedBytes/config.MinimumRecordBytes {
+		t.Fatalf("UQ counts not derived from the retained bytes: %+v", legacy.Capacity)
 	}
 	legacy.Capacity.RetainedBytes = base.Capacity.RetainedBytes
-	legacy.Capacity.UQBodyBytes = base.Capacity.UQBodyBytes
 	legacy.Capacity.UQSeries, legacy.Capacity.UQRecords = base.Capacity.UQSeries, base.Capacity.UQRecords
 	if legacy.Capacity != base.Capacity {
 		t.Fatalf("unrelated capacity changed: before=%+v after=%+v", base.Capacity, legacy.Capacity)
@@ -99,6 +95,7 @@ func TestPhaseTwoRetainedBudgetProfileUsesResolvedDefaultAndOverride(t *testing.
 func TestPhaseTwoCPUInitializationFailsBeforeOpeningServices(t *testing.T) {
 	want := errors.New("CPU quota unavailable")
 	dependencies := phaseTwoApplicationDependencies{
+		goRuntime:    noGoRuntime,
 		configureCPU: func() (string, error) { return "", want },
 		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger, *phaseTwoApplicationHealth) (*phaseTwoWorkerBundle, error) {
 			t.Fatal("opened bundle after CPU failure")

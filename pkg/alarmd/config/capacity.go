@@ -39,9 +39,19 @@ const memorySourceFallback = "fallback_default"
 // What they do not yet carry is measured scaling to other container shapes;
 // that calibration changes the formulas below and no interface.
 const (
-	retainedMemoryDivisor = 4
-	bytesPerSeries        = 4 << 10
-	bytesPerMutation      = 32 << 10
+	// The retained pool is what the Slots may hold of the live heap: half the
+	// soft memory limit, less what the process holds whatever runs
+	// (retainedPoolBytes, sizing.md, the pool). Half, so the collector keeps
+	// at least as much room above the live heap as the default GOGC of 100
+	// gives it - where the replicas holding the largest Query Group, at a live
+	// heap of 774-1,074 MiB, spent 4.6-4.7% of their busy CPU on compulsory
+	// collection (11-10, 5-minute windows). A sixteenth of the container -
+	// 256 MiB on 4 GiB - for the rest, where the most live heap a
+	// production replica held with no Slot reserving was 235 MiB, State cache
+	// included.
+	gcHeadroomDivisor   = 2
+	residentHeapDivisor = 16
+	bytesPerMutation    = 32 << 10
 
 	// The Go runtime's own budgets are derived from the same container limit.
 	// The soft memory limit takes five eighths of it (DeriveGoRuntime); the
@@ -61,6 +71,19 @@ const (
 	controlTimelineCacheMinEntryBytes = 1 << 10
 
 	compileCacheMemoryDivisor = 32
+
+	// stateCacheMemoryDivisor bounds the write-through State cache: at most
+	// the container's thirty-second, 128 MiB on 4 GiB (about 82,000 series),
+	// borrowed from the retained-bytes pool (fourth-batch design §4.5). The
+	// pool, not the container, gives it: the cache is resident heap, so the
+	// cache and the Slots' reservations together stay within the pool. It is
+	// borrowed, not taken out: the cache holds only what no Slot has
+	// reserved and gives it back when a Slot needs it, so the share one
+	// Query Group may hold is the same with the cache on or off. Taking it
+	// out of the pool once cut the share on 4 GiB by 96 MiB and refused a
+	// Query Group of about 700 MiB that had run beside no cache. Query permits keep
+	// their own line (DeriveExecution), which does not move.
+	stateCacheMemoryDivisor = 32
 	// Every compile cache entry is charged a 64-byte header before anything
 	// it holds (strategy.estimateCompileResultBytes), so none is smaller.
 	compileCacheMinEntryBytes = 64
@@ -211,7 +234,7 @@ func DeriveScheduler(inputs CapacityInputs) DerivedScheduler {
 
 func activeExecutionCeiling(inputs CapacityInputs) int {
 	runtimeBytes := inputs.MemoryLimitBytes / executionRuntimeDivisor
-	retained := inputs.MemoryLimitBytes / retainedMemoryDivisor
+	retained := retainedPoolBytes(inputs.MemoryLimitBytes)
 	if runtimeBytes <= retained {
 		return minimumActiveExecutions
 	}
@@ -470,8 +493,12 @@ func DeriveCompileCache(inputs CapacityInputs, maxCompiledPlanBytes int) Derived
 // The bytes govern. What is left of the count is a runaway guardrail at the
 // smallest size a series can have, so it binds only where the byte accounting
 // itself has gone wrong.
+//
+// The State cache takes nothing out of the pool: it borrows what no Slot has
+// reserved of it and gives that back when a Slot needs it, so the share one
+// Query Group may hold is the same with the cache on or off.
 func DeriveCoordinator(inputs CapacityInputs, storeItemsPerBatch, chunkedApplyBudget uint64) PhaseTwoCoordinatorConfig {
-	retained := max(inputs.MemoryLimitBytes/retainedMemoryDivisor, uint64(bytesPerMutation))
+	retained := max(retainedPoolBytes(inputs.MemoryLimitBytes), uint64(bytesPerMutation))
 	guardrail := max(chunkedApplyBudget, storeItemsPerBatch, 1)
 	return PhaseTwoCoordinatorConfig{
 		MaxRetainedBytes:  retained,
@@ -484,4 +511,20 @@ func DeriveCoordinator(inputs CapacityInputs, storeItemsPerBatch, chunkedApplyBu
 		// what an int holds is not a guardrail on this platform.
 		MaxSequencerReservations: int(min(guardrail, uint64(math.MaxInt))),
 	}
+}
+
+// retainedPoolBytes is the retained pool of a container of limit bytes: half
+// its soft memory limit less its sixteenth, which is the container's quarter
+// (1,024 MiB on 4 GiB) - the number the pool was, now read against the live
+// heap the Slots hold rather than the bytes their input came in.
+func retainedPoolBytes(limit uint64) uint64 {
+	goLimit := limit / goMemoryLimitDenominator * goMemoryLimitNumerator
+	return goLimit/gcHeadroomDivisor - limit/residentHeapDivisor
+}
+
+// DeriveStateCacheBytes is the most the write-through State cache may hold:
+// the container's thirty-second, borrowed from the retained-bytes pool while
+// no Slot has reserved it, never taken out of it.
+func DeriveStateCacheBytes(inputs CapacityInputs) uint64 {
+	return inputs.MemoryLimitBytes / stateCacheMemoryDivisor
 }

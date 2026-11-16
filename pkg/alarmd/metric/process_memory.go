@@ -27,6 +27,9 @@ import (
 // "page cache" meant getting into the Pod to read memory.stat.
 type processMemoryCollector struct {
 	resident, heapIdle, heapReleased, cgroup, readFailed *prometheus.Desc
+	// cgroupInfo and cgroupV1 say which memory cgroup the gauges read and,
+	// on v1, each counter a reader may be comparing against.
+	cgroupInfo, cgroupV1 *prometheus.Desc
 	// statmFailed and statFailed count the collections a source could not
 	// be read or parsed in, so an absent gauge reads as a source that failed
 	// rather than as nothing to say; which failure (no such file, refused,
@@ -69,6 +72,16 @@ func newProcessMemoryCollector() *processMemoryCollector {
 				"statm (/proc/self/statm, process_resident_bytes) and memory_stat (cgroup v2 then v1 "+
 				"memory.stat, container_memory_stat_bytes), whether the file is missing, refused or not "+
 				"parsable. It rises at each scrape while its gauge is absent.", []string{"source"}),
+		cgroupInfo: descriptor("container_memory_cgroup_info",
+			"Which memory cgroup this process's memory gauges read, value 1: version (v2, v1 or unknown), "+
+				"the memory line of /proc/self/cgroup (memory_cgroup), and the usage file container_memory_used_bytes "+
+				"comes from (usage_file). Another reader of the container's memory - cAdvisor, kubectl top - may read "+
+				"another memcg or another counter: compare its path and container_memory_v1_bytes against this.",
+			[]string{"version", "memory_cgroup", "usage_file"}),
+		cgroupV1: descriptor("container_memory_v1_bytes",
+			"On cgroup v1, each counter of the memory cgroup by name: rss and total_rss (memory.stat; total_ "+
+				"includes child cgroups), usage_in_bytes and max_usage_in_bytes, and memsw_usage_in_bytes where swap "+
+				"accounting is on. Absent on v2 and where a file cannot be read.", []string{"counter"}),
 		read: os.ReadFile,
 		stat: goHeapIdleReleased,
 	}
@@ -80,6 +93,8 @@ func (c *processMemoryCollector) Describe(descriptions chan<- *prometheus.Desc) 
 	descriptions <- c.heapReleased
 	descriptions <- c.cgroup
 	descriptions <- c.readFailed
+	descriptions <- c.cgroupInfo
+	descriptions <- c.cgroupV1
 }
 
 func (c *processMemoryCollector) Collect(out chan<- prometheus.Metric) {
@@ -97,6 +112,13 @@ func (c *processMemoryCollector) Collect(out chan<- prometheus.Metric) {
 		}
 	} else {
 		c.statFailed.Add(1)
+	}
+	identity := ReadCgroupMemoryIdentity(c.read)
+	out <- prometheus.MustNewConstMetric(c.cgroupInfo, prometheus.GaugeValue, 1, identity.Version, identity.Line, identity.UsageFile)
+	if identity.Version == "v1" {
+		for _, counter := range c.cgroupV1Counters() {
+			out <- prometheus.MustNewConstMetric(c.cgroupV1, prometheus.GaugeValue, float64(counter.value), counter.name)
+		}
 	}
 	out <- prometheus.MustNewConstMetric(c.readFailed, prometheus.CounterValue, float64(c.statmFailed.Load()), "statm")
 	out <- prometheus.MustNewConstMetric(c.readFailed, prometheus.CounterValue, float64(c.statFailed.Load()), "memory_stat")
@@ -174,4 +196,75 @@ func goHeapIdleReleased() (idle, released uint64) {
 		released = samples[1].Value.Uint64()
 	}
 	return free + released, released
+}
+
+// CgroupMemoryIdentity is which memory cgroup a process reads: the cgroup
+// version, the memory line of /proc/self/cgroup and the usage file read.
+type CgroupMemoryIdentity struct {
+	Version, Line, UsageFile string
+}
+
+// ReadCgroupMemoryIdentity reads it through read (os.ReadFile outside tests).
+func ReadCgroupMemoryIdentity(read func(string) ([]byte, error)) CgroupMemoryIdentity {
+	identity := CgroupMemoryIdentity{Version: "unknown"}
+	switch {
+	case readable(read, "/sys/fs/cgroup/memory.current"):
+		identity.Version, identity.UsageFile = "v2", "/sys/fs/cgroup/memory.current"
+	case readable(read, "/sys/fs/cgroup/memory/memory.usage_in_bytes"):
+		identity.Version, identity.UsageFile = "v1", "/sys/fs/cgroup/memory/memory.usage_in_bytes"
+	}
+	if raw, err := read("/proc/self/cgroup"); err == nil {
+		for _, line := range strings.Split(string(raw), "\n") {
+			// v1: "N:memory:/path" (or a joined controller list); v2: "0::/path".
+			parts := strings.SplitN(line, ":", 3)
+			if len(parts) != 3 {
+				continue
+			}
+			controllers := "," + parts[1] + ","
+			if strings.Contains(controllers, ",memory,") || (identity.Version != "v1" && parts[0] == "0" && parts[1] == "") {
+				identity.Line = line
+				break
+			}
+		}
+	}
+	return identity
+}
+
+func readable(read func(string) ([]byte, error), name string) bool {
+	_, err := read(name)
+	return err == nil
+}
+
+type cgroupCounter struct {
+	name  string
+	value uint64
+}
+
+// cgroupV1Counters reads the v1 counters a reader may be comparing against;
+// a file that cannot be read leaves its counter out.
+func (c *processMemoryCollector) cgroupV1Counters() []cgroupCounter {
+	var counters []cgroupCounter
+	if raw, err := c.read("/sys/fs/cgroup/memory/memory.stat"); err == nil {
+		for _, line := range strings.Split(string(raw), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) != 2 || (fields[0] != "rss" && fields[0] != "total_rss") {
+				continue
+			}
+			if value, err := strconv.ParseUint(fields[1], 10, 64); err == nil {
+				counters = append(counters, cgroupCounter{fields[0], value})
+			}
+		}
+	}
+	for _, file := range []struct{ name, path string }{
+		{"usage_in_bytes", "/sys/fs/cgroup/memory/memory.usage_in_bytes"},
+		{"max_usage_in_bytes", "/sys/fs/cgroup/memory/memory.max_usage_in_bytes"},
+		{"memsw_usage_in_bytes", "/sys/fs/cgroup/memory/memory.memsw.usage_in_bytes"},
+	} {
+		if raw, err := c.read(file.path); err == nil {
+			if value, err := strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64); err == nil {
+				counters = append(counters, cgroupCounter{file.name, value})
+			}
+		}
+	}
+	return counters
 }

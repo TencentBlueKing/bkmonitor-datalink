@@ -121,5 +121,6 @@ func (runner *Runner) shareSkipFacts(slot FrozenSlot) *observability.SlotSkipSha
 	}
 	last := runner.shareRefusal.last
 	return &observability.SlotSkipShareFacts{Phase: last.Phase, OwnUsedBytes: last.OwnUsedBytes,
-		RequestedBytes: last.RequestedBytes, LimitBytes: last.LimitBytes, Refusals: runner.shareRefusal.count}
+		RequestedBytes: last.RequestedBytes, LimitBytes: last.LimitBytes, Refusals: runner.shareRefusal.count,
+		Reason: last.Reason, Detail: last.Detail}
 }

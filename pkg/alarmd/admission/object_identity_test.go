@@ -94,7 +94,7 @@ func TestARecordWithoutAnObjectIdentityIsRefusedByName(t *testing.T) {
 		object(TargetScopeInclude, [][2]string{defaultPair}, "switch|12"),
 	}})}
 	for name, dimensions := range map[string]map[string]json.RawMessage{
-		"host data":      dims("bk_target_ip", `"10.0.0.1"`, "bk_target_cloud_id", `0`),
+		"host data":      dims("bk_target_ip", `"192.0.2.1"`, "bk_target_cloud_id", `0`),
 		"only the model": dims("cw_object_model_id", `"switch"`),
 		"empty instance": dims("cw_object_model_id", `"switch"`, "cw_object_model_inst_id", `""`),
 		"null instance":  dims("cw_object_model_id", `"switch"`, "cw_object_model_inst_id", `null`),
@@ -150,7 +150,7 @@ func TestARejectionOnMixedGroundsIsPlainOutOfScope(t *testing.T) {
 	}
 	// A topology absence keeps today's reason: it is Python's ordinary
 	// "unplaceable" and nothing downstream is waiting on a new name for it.
-	noTopology := enrich(dims("bk_target_ip", `"10.0.0.1"`))
+	noTopology := enrich(dims("bk_target_ip", `"192.0.2.1"`))
 	topology := PlanContext{TargetScope: scope(TargetScopeGroup{Conditions: []TargetScopeCondition{topo(TargetScopeInclude, "set|2")}})}
 	if decision := (TargetScopeFilter{}).Admit(topology, &noTopology); decision.Reason != "out_of_scope" {
 		t.Fatalf("a topology absence reported %+v", decision)
@@ -191,7 +191,7 @@ func TestAMissingIdentityIsReportedWithExpectedPairsAndSeenDimensions(t *testing
 	plan := PlanContext{TenantID: "system", BusinessID: "2", StrategyID: "77", TargetScope: scope(TargetScopeGroup{
 		Conditions: []TargetScopeCondition{object(TargetScopeInclude, [][2]string{{"model", "inst"}, defaultPair}, "switch|12")},
 	})}
-	facts := enrich(dims("bk_target_ip", `"10.0.0.1"`, "bk_target_cloud_id", `0`, "device_name", `"core"`))
+	facts := enrich(dims("bk_target_ip", `"192.0.2.1"`, "bk_target_cloud_id", `0`, "device_name", `"core"`))
 
 	for round := 0; round < 3; round++ {
 		if decision := filter.Admit(plan, &facts); decision.Reason != "object_identity_missing" {
@@ -293,13 +293,13 @@ func TestAnUnmatchedIdentityIsReportedOnlyWhileThePlanMatchesNothing(t *testing.
 // alternative never reports unmatched); the invariant is the reporter's,
 // not the reason rule's.
 func TestAnObjectIdentityHitCountsOnlyForTheGroupThatMatched(t *testing.T) {
-	record := enrich(dims("cw_object_model_id", `"switch"`, "cw_object_model_inst_id", `2`, "bk_target_ip", `"10.0.0.1"`))
+	record := enrich(dims("cw_object_model_id", `"switch"`, "cw_object_model_inst_id", `2`, "bk_target_ip", `"192.0.2.1"`))
 	record.SetTopoNodes([]string{"module|91"})
 	objectThenTopoFails := TargetScopeGroup{Conditions: []TargetScopeCondition{
 		object(TargetScopeInclude, [][2]string{defaultPair}, "switch|2"),
 		topo(TargetScopeInclude, "module|85"),
 	}}
-	hostOnly := TargetScopeGroup{Conditions: []TargetScopeCondition{host(TargetScopeInclude, "10.0.0.1|0")}}
+	hostOnly := TargetScopeGroup{Conditions: []TargetScopeCondition{host(TargetScopeInclude, "192.0.2.1|0")}}
 	objectThenTopoHolds := TargetScopeGroup{Conditions: []TargetScopeCondition{
 		object(TargetScopeInclude, [][2]string{defaultPair}, "switch|2"),
 		topo(TargetScopeInclude, "module|91"),
@@ -383,7 +383,7 @@ func TestTheReporterKeepsItsBookkeepingBounded(t *testing.T) {
 // hold the caller's map rather than a copy that could drift.
 func TestEnrichmentLeavesTheDimensionsUntouched(t *testing.T) {
 	dimensions := dims(
-		"bk_target_ip", `"10.0.0.1"`, "bk_target_cloud_id", `0`, "bk_host_id", `42`,
+		"bk_target_ip", `"192.0.2.1"`, "bk_target_cloud_id", `0`, "bk_host_id", `42`,
 		"bk_target_service_instance_id", `7`, "cw_object_model_id", `"switch"`, "cw_object_model_inst_id", `12`,
 	)
 	before := make(map[string]string, len(dimensions))
@@ -410,15 +410,15 @@ func TestEnrichmentLeavesTheDimensionsUntouched(t *testing.T) {
 // Facts learned by the fullers about a record are never a dimension of it.
 func TestFactsAreKeptApartFromDimensions(t *testing.T) {
 	facts := Facts{Dimensions: dims("a", `1`)}
-	facts.AddHostKey("10.0.0.1|0")
-	facts.AddHostKey("10.0.0.1|0")
+	facts.AddHostKey("192.0.2.1|0")
+	facts.AddHostKey("192.0.2.1|0")
 	facts.AddServiceInstanceKey("7")
 	facts.SetTopoNodes([]string{"set|2", "module|1", "set|2", ""})
 	facts.Set("empty", nil)
 	if _, present := facts.Attributes["empty"]; present {
 		t.Fatal("an attribute set to nothing was kept")
 	}
-	if !reflect.DeepEqual(facts.HostKeys(), []string{"10.0.0.1|0"}) || !reflect.DeepEqual(facts.TopoNodes(), []string{"module|1", "set|2"}) {
+	if !reflect.DeepEqual(facts.HostKeys(), []string{"192.0.2.1|0"}) || !reflect.DeepEqual(facts.TopoNodes(), []string{"module|1", "set|2"}) {
 		t.Fatalf("attributes = %v", facts.Attributes)
 	}
 	if len(facts.Dimensions) != 1 {

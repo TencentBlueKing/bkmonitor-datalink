@@ -299,6 +299,9 @@ func openPhaseTwoCoreResources(ctx context.Context, cfg config.Config, recorder 
 
 	var storageRouter *state.FixedRouter
 	var executionStore *state.ExecutionStore
+	// progressReader is the Progress store once opened, read by the State
+	// cache before it writes a value back over a rolled-back key.
+	var progressReader *progress.Store
 	if cfg.HasRole(roles.Worker) {
 		stateBackend, err := state.NewRedisBackendWithClient(productionRedisAddress(cfg.RuntimeStoreRedis()), redisForCaller(runtimeClient, redisfailure.CallerRuntimeState))
 		if err != nil {
@@ -316,6 +319,25 @@ func openPhaseTwoCoreResources(ctx context.Context, cfg config.Config, recorder 
 		// Runtime State writes verify the owner lease inside Redis; without the
 		// resolver the store would fall back to unfenced batched writes.
 		options.FenceKeys = ownershipStore
+		// The write-through State cache (fourth-batch design §4), its budget
+		// borrowed from the retained-bytes pool (the coordinator lends it its
+		// room). A value is written back over a
+		// rolled-back key only while the Query Group's Progress still has the
+		// Slot begun; the Progress store is opened below, before any Slot runs.
+		if !cfg.PhaseTwo.StateCache.Disabled {
+			options.StateCacheBudgetBytes = int64(config.DeriveStateCacheBytes(config.DetectCapacityInputs()))
+		}
+		options.StateCacheReplayAge = recoveryLimits.MaxReplayAge
+		options.RestoreProgressCheck = func(ctx context.Context, group execution.QueryGroupIdentity, slot execution.EvaluationTime) (bool, error) {
+			if progressReader == nil {
+				return false, nil
+			}
+			loaded, err := progressReader.LoadProgress(ctx, execution.ProgressIdentity{QueryGroup: group})
+			if err != nil || loaded.Progress == nil || loaded.Progress.UnfinishedSlot == nil {
+				return false, err
+			}
+			return loaded.Progress.UnfinishedSlot.Contract.Slot.EvaluationTime == slot, nil
+		}
 		executionStore, err = state.NewExecutionStore(options)
 		if err != nil {
 			return nil, err
@@ -324,6 +346,8 @@ func openPhaseTwoCoreResources(ctx context.Context, cfg config.Config, recorder 
 		// renewal round trip per Plan per Slot, and nothing else in the process
 		// says so: the Slots keep passing and the keys keep being renewed.
 		recorder.SetRenewalGateSource(executionStore.RenewalGateResets)
+		recorder.SetStateCacheSource(executionStore.StateCacheStats)
+		recorder.SetStateWitnessSource(executionStore.RuntimeWitnessStats)
 	}
 	// The control role records manual closes in the runtime-state store the
 	// owning worker reads them from. A process that is also a worker reuses
@@ -353,6 +377,7 @@ func openPhaseTwoCoreResources(ctx context.Context, cfg config.Config, recorder 
 	if err != nil {
 		return nil, err
 	}
+	progressReader = progressStore
 	activator, err := controlplane.NewScheduleActivationReconcilerWithProgress(
 		repository, compiler, strategySemantics, progressStore, now,
 	)

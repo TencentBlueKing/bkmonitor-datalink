@@ -1374,10 +1374,9 @@ func newRangeAggregateDocumentStorage(t *testing.T, ctx context.Context, address
 				Bool struct {
 					Filter struct {
 						Range map[string]struct {
-							From         int64 `json:"from"`
-							To           int64 `json:"to"`
-							IncludeLower bool  `json:"include_lower"`
-							IncludeUpper bool  `json:"include_upper"`
+							Gte *int64 `json:"gte"`
+							Lt  *int64 `json:"lt"`
+							Lte *int64 `json:"lte"`
 						} `json:"range"`
 					} `json:"filter"`
 				} `json:"bool"`
@@ -1391,16 +1390,19 @@ func newRangeAggregateDocumentStorage(t *testing.T, ctx context.Context, address
 		if !ok {
 			return nil, fmt.Errorf("重叠数据查询缺少 event_time 范围")
 		}
+		if bounds.Gte == nil || (bounds.Lt == nil) == (bounds.Lte == nil) {
+			return nil, fmt.Errorf("重叠数据查询需要 gte 和唯一的 lt 或 lte 上界")
+		}
 		assert.JSONEq(t, `{"service":{"terms":{"field":"service","size":100,"missing":" "},"aggregations":{"_value":{"sum":{"field":"value"}}}}}`, string(body.Aggregations))
 		var selectedIDs []string
 		sums := make(map[string]float64)
 		counts := make(map[string]int)
 		for _, document := range documents {
 			timestamp := document.timestamp.UnixMicro()
-			if timestamp < bounds.From || timestamp == bounds.From && !bounds.IncludeLower {
+			if timestamp < *bounds.Gte {
 				continue
 			}
-			if timestamp > bounds.To || timestamp == bounds.To && !bounds.IncludeUpper {
+			if bounds.Lt != nil && timestamp >= *bounds.Lt || bounds.Lte != nil && timestamp > *bounds.Lte {
 				continue
 			}
 			selectedIDs = append(selectedIDs, document.id)

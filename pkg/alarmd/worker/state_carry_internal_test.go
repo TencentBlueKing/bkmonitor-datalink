@@ -93,8 +93,6 @@ func TestASeriesKeepsTheCarriedLevelsResultsFromThePreviousGeneration(t *testing
 			carried *execution.RuntimeStateView
 			want    string
 		}{
-			"series guard": {previous([]execution.StateHistoryPoint{point(60, fingerprint)}, execution.HistoryFull,
-				&execution.StateGuardFact{Status: execution.HistoryGapped}), SeriesCarrySkippedActiveGuard},
 			"a guard held the Level WARMING": {held(execution.HistoryWarming, guard), SeriesCarrySkippedGuardWarming},
 			"a guard held the Level GAPPED":  {held(execution.HistoryGapped, guard), SeriesCarrySkippedGuardGapped},
 			// A Plan back after a stretch it was not active guards that

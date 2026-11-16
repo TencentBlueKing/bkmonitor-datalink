@@ -61,12 +61,36 @@ const (
 	// CallerStoreCensus is the census of what the stores hold by key family
 	// (package storecensus): the Control Leader's, every ten minutes.
 	CallerStoreCensus = "store_census"
+	// CallerLegacyOutput is the strategy snapshots the compatibility output
+	// writes on the service Redis.
+	CallerLegacyOutput = "legacy_output"
+	// CallerLegacyPodCache is the Pod facts it reads from the Django cache.
+	CallerLegacyPodCache = "legacy_pod_cache"
+	// CallerEffectiveMaintenance is a Query Group's effective-time maintenance
+	// run: its fence checks and whatever else it asks Redis, beside the
+	// owner's detection rounds rather than counted with them.
+	CallerEffectiveMaintenance = "effective_maintenance"
+	// CallerLeaseConfirmation is a fence check made only to move a lease held
+	// under a worker session on by its TTL: the view gate's early renewal and
+	// a long Slot's output asking before it defers. The fence check a round
+	// makes confirms the lease too, and stays the ownership store's.
+	CallerLeaseConfirmation = "lease_confirmation"
+	// CallerCatalogTimelineRenewal, CallerCatalogObjectRenewal and
+	// CallerCatalogContextRenewal are the Control Leader's renewals of the
+	// catalog's Schedule timelines, Query Group execution objects (with the
+	// manifest) and output contexts, each on its own cadence: told apart so
+	// what each costs is read rather than split from one control_plane count.
+	CallerCatalogTimelineRenewal = "catalog_timeline_renewal"
+	CallerCatalogObjectRenewal   = "catalog_object_renewal"
+	CallerCatalogContextRenewal  = "catalog_context_renewal"
 )
 
 // Callers is every caller name, for callers that must enumerate them.
 var Callers = []string{CallerDirectoryRead, CallerDiagnosticWrite, CallerDiagnosticRead, CallerCostProjection,
 	CallerStrategySource, CallerLegacyEffectiveTime, CallerControlPlane, CallerOwnership, CallerRuntimeState, CallerQueryCooldown,
-	CallerFleet, CallerCMDBCache, CallerTargetGroup, CallerDynamicConfig, CallerLinkd, CallerStoreCensus}
+	CallerFleet, CallerCMDBCache, CallerTargetGroup, CallerDynamicConfig, CallerLinkd, CallerStoreCensus,
+	CallerLegacyOutput, CallerLegacyPodCache, CallerEffectiveMaintenance, CallerLeaseConfirmation,
+	CallerCatalogTimelineRenewal, CallerCatalogObjectRenewal, CallerCatalogContextRenewal}
 
 type callerKey struct{}
 

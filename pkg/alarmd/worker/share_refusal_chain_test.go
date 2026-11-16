@@ -73,7 +73,7 @@ func TestTheShareRefusalChainGivesTheSlotUpAndTheNextAfterOneRead(t *testing.T) 
 	if err != nil || !measured.Completed || measured.Usage.RetainedBytes == 0 {
 		t.Fatalf("calibration Execute() = %+v, %v", measured, err)
 	}
-	// The pool holds the whole Slot; its share - half - does not.
+	// The pool holds the whole Slot; its share - three quarters - does not.
 	fixture := newFixtureWithBudget(t, worker.ProvisionalBudget{
 		MaxSeries: 100, MaxRetainedBytes: measured.Usage.RetainedBytes, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10,
 	})

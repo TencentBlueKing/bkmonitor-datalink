@@ -115,7 +115,7 @@ func runNoDataSampleRounds(t *testing.T, due execution.DuePlan, store *state.Exe
 			if err != nil {
 				t.Fatal(err)
 			}
-			prepared = []preparedSeries{{due: due, inputs: []execution.SeriesEvaluationInputRequest{{Inputs: []execution.NamedInputBinding{{Role: execution.InputRolePrimary, View: dataView}}}}}}
+			prepared = []preparedSeries{{due: &due, inputs: []execution.SeriesEvaluationInputRequest{{Inputs: []execution.NamedInputBinding{{Role: execution.InputRolePrimary, View: dataView}}}}}}
 		}
 		if err := stream.evaluateNoData(ctx, prepared, 4); err != nil {
 			t.Fatalf("round %d: %v", index+1, err)

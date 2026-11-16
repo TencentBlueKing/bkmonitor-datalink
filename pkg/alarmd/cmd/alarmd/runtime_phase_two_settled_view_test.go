@@ -49,9 +49,12 @@ func runScheduledOnceSettled(ctx context.Context, bundle *phaseTwoWorkerBundle) 
 // controlStreamServers is the control stream listener each bundle under test
 // got, keyed by bundle: a fixture that only Start()s the bundle serves no
 // listener, and the Worker's own view client has nothing to install from
-// until one is served on the address its registration advertises. Kept for
-// the life of the test process rather than closed per case, because the
-// helper has no test to hang a cleanup on. A case about a Worker whose
+// until one is served on the address its registration advertises. The
+// helper has no test to hang a cleanup on, so each listener lives as long
+// as its bundle: it is closed, and its entry let go, once the bundle has
+// shut down (releaseWhenClosed). Kept for the test process instead, every
+// bundle a case ever settled stayed reachable from here, its server and all
+// it held - seven gigabytes of a whole-package run. A case about a Worker whose
 // Leader is unreachable withholds it (withholdControlStreamForTest), and
 // the settling helpers leave it withheld until the case gives it back.
 var controlStreamServers sync.Map
@@ -100,11 +103,35 @@ func serveControlStreamForTest(bundle *phaseTwoWorkerBundle) {
 		http.NotFound(response, request)
 	}), &http2.Server{})
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
-	if _, raced := controlStreamServers.LoadOrStore(bundle, &testControlStream{server: server, listener: listener}); raced {
+	served := &testControlStream{server: server, listener: listener}
+	if _, raced := controlStreamServers.LoadOrStore(bundle, served); raced {
 		_ = listener.Close()
 		return
 	}
 	go func() { _ = server.Serve(listener) }()
+	go releaseWhenClosed(bundle, served)
+}
+
+// releaseWhenClosed closes the bundle's test listener and lets its entry go
+// once the bundle has shut down, unless another has taken its place (a case
+// withheld or restored it). It holds the bundle only until then.
+func releaseWhenClosed(bundle *phaseTwoWorkerBundle, served *testControlStream) {
+	ticker := time.NewTicker(200 * time.Millisecond) // fixed-wait: the poll interval of a condition wait, bounded by the bundle's shutdown
+	defer ticker.Stop()
+	for range ticker.C {
+		if current, ok := controlStreamServers.Load(bundle); !ok || current != any(served) {
+			return
+		}
+		bundle.mu.RLock()
+		closed := bundle.closed
+		bundle.mu.RUnlock()
+		if closed {
+			if controlStreamServers.CompareAndDelete(bundle, served) {
+				served.stop()
+			}
+			return
+		}
+	}
 }
 
 // withholdControlStreamForTest takes the bundle's control stream away --

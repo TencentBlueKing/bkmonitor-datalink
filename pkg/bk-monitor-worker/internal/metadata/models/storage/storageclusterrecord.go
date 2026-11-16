@@ -10,6 +10,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -26,6 +27,9 @@ type ClusterRecord struct {
 
 	// BkTenantID 限定历史分段所属租户，避免同名结果表串用记录。
 	BkTenantID string `json:"bk_tenant_id" gorm:"size:256;default:system;comment:'租户ID'"`
+
+	// PhysicalTables 保留此启用分段的物理表用途映射。
+	PhysicalTables json.RawMessage `json:"physical_tables" gorm:"column:physical_tables;type:json"`
 
 	// ClusterID is the ID of the storage cluster.
 	ClusterID int64 `json:"cluster_id" gorm:"index;comment:'存储集群ID'"`

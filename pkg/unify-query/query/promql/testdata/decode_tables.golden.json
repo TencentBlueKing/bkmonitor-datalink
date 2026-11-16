@@ -1,0 +1,130 @@
+[
+  {
+    "Name": "series0",
+    "MetricName": "",
+    "Headers": [
+      "_time",
+      "_value"
+    ],
+    "Types": [
+      "float",
+      "float"
+    ],
+    "GroupKeys": [
+      "!_ext/x",
+      "__ext.cloud.tencent.com/asset-code",
+      "中文",
+      "__bk_99999999999999999999__",
+      "__bk_x__",
+      "__bk___",
+      "a.b.c",
+      "container"
+    ],
+    "GroupValues": [
+      "a",
+      "v",
+      "中文",
+      "overflow",
+      "x",
+      "",
+      "repeated",
+      "plain"
+    ],
+    "Data": [
+      [
+        1000,
+        1
+      ],
+      [
+        4000,
+        2.5
+      ]
+    ]
+  },
+  {
+    "Name": "series1",
+    "MetricName": "",
+    "Headers": [
+      "_time",
+      "_value"
+    ],
+    "Types": [
+      "float",
+      "float"
+    ],
+    "GroupKeys": [
+      "."
+    ],
+    "GroupValues": [
+      "dot"
+    ],
+    "Data": [
+      [
+        1000,
+        0
+      ]
+    ]
+  },
+  {
+    "Name": "series0",
+    "MetricName": "",
+    "Headers": [
+      "_time",
+      "_value"
+    ],
+    "Types": [
+      "float",
+      "float"
+    ],
+    "GroupKeys": [
+      "!_ext/x",
+      "__ext.cloud.tencent.com/asset-code",
+      "中文",
+      "__bk_99999999999999999999__",
+      "__bk_x__",
+      "__bk___",
+      "a.b.c",
+      "container"
+    ],
+    "GroupValues": [
+      "a",
+      "v",
+      "中文",
+      "overflow",
+      "x",
+      "",
+      "repeated",
+      "plain"
+    ],
+    "Data": [
+      [
+        5000,
+        3
+      ]
+    ]
+  },
+  {
+    "Name": "series1",
+    "MetricName": "",
+    "Headers": [
+      "_time",
+      "_value"
+    ],
+    "Types": [
+      "float",
+      "float"
+    ],
+    "GroupKeys": [
+      "_bk_46__"
+    ],
+    "GroupValues": [
+      "no rescan"
+    ],
+    "Data": [
+      [
+        5000,
+        -1
+      ]
+    ]
+  }
+]

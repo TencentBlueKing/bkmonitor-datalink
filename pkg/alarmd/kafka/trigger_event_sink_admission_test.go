@@ -123,3 +123,64 @@ func TestTheAdmissionBoundIsTheProducersOwnTimeout(t *testing.T) {
 		t.Fatalf("producer timeout = %v, admission bound = %v, want one number", config.Producer.Timeout, OutputBatchBound)
 	}
 }
+
+// confirmingLease is a lease whose deadline a confirmation moves on, as one
+// held under a worker session is (A2).
+type confirmingLease struct {
+	deadline  time.Time
+	confirmed time.Time
+	refuse    error
+	calls     int
+}
+
+func (lease *confirmingLease) Deadline() time.Time { return lease.deadline }
+
+func (lease *confirmingLease) Confirm(context.Context, time.Time) error {
+	lease.calls++
+	if lease.refuse != nil {
+		return lease.refuse
+	}
+	lease.deadline = lease.confirmed
+	return nil
+}
+
+// A batch that would outlast a lease held under a session confirms the lease
+// once before it defers: confirmed, the batch goes out; refused, it defers
+// as it would have, named the same way.
+func TestABatchConfirmsALeaseHeldUnderASessionBeforeItDefers(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	needed := OutputAdmissionMargin + OutputBatchBound
+	for _, test := range []struct {
+		name     string
+		lease    *confirmingLease
+		admitted bool
+	}{
+		{"the confirmation moves it on", &confirmingLease{deadline: now.Add(time.Second), confirmed: now.Add(needed + time.Second)}, true},
+		{"the confirmation is refused", &confirmingLease{deadline: now.Add(time.Second), refuse: errors.New("stale")}, false},
+		{"enough left asks for none", &confirmingLease{deadline: now.Add(needed + time.Second)}, true},
+	} {
+		sent := 0
+		producer := &fakeSyncProducer{send: func(*sarama.ProducerMessage) (int32, int64, error) {
+			sent++
+			return 0, 0, nil
+		}}
+		sink, err := newTriggerEventSink("alarmd-trigger-event", producer, &fakeCloser{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sink.now = func() time.Time { return now }
+		event := triggerEventGolden(t)
+		event.WireFormat = contract.WireFormatStandardRawEvent
+		err = sink.WriteBatch(execution.ContextWithLeaseAuthority(context.Background(), test.lease), []contract.TriggerEventV1{event})
+		var deferred *OutputDeferredError
+		switch {
+		case test.admitted && (err != nil || sent != 1):
+			t.Fatalf("%s: WriteBatch() = %v sent=%d, want the batch sent", test.name, err, sent)
+		case !test.admitted && (!errors.As(err, &deferred) || sent != 0):
+			t.Fatalf("%s: WriteBatch() = %v sent=%d, want it deferred", test.name, err, sent)
+		}
+		if wantCalls := map[bool]int{true: 0, false: 1}[test.name == "enough left asks for none"]; test.lease.calls != wantCalls {
+			t.Fatalf("%s: %d confirmations, want %d", test.name, test.lease.calls, wantCalls)
+		}
+	}
+}

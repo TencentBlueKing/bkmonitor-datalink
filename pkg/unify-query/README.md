@@ -29,7 +29,7 @@ redis:
 
 Storage、空间及表路由由配置发布端写入 Redis，Redis 连接、认证和数据库按实际部署配置。Storage 只读取 Redis，不回退 Consul。容器调用方通过 K8s Service 访问 UQ，不使用 Consul 服务注册和 TTL 续约。配套 Helm Chart 根据每个普通或灰度集群的有效 `storage.source` 决定启动检查；Redis 模式无需等待 Consul。
 
-未指定 Storage 来源时保留旧 Consul Storage 加载和监听。`consul.enabled` 已不再控制行为；遗留字段会被忽略。Redis 模式显式配置空 `redis.kv_base_path` 会在启动或重载前被拒绝，重载失败保留上一份配置。
+未指定 Storage 来源时保留旧 Consul Storage 加载和监听，此时须配置 `consul.consul_address`；没配或地址缺 host 时，启动和重载各报一次带原因的错误（`consul_address_not_configured`、`consul_address_missing_host`），不每分钟重试。`consul.enabled` 已不再控制行为；遗留字段会被忽略。Redis 模式显式配置空 `redis.kv_base_path` 会在启动或重载前被拒绝，重载失败保留上一份配置。
 
 ### 设置 Feature Flag
 
@@ -37,7 +37,9 @@ Feature Flag 与 Storage 来源独立：优先读取 Redis，只有 Key 不存�
 
 Consul 回退请求有有限超时。回退失败不会向 Redis 写入空快照；已有实例保留有效规则，全新实例使用内存默认值并继续重试，因此仅提供 Redis 也可启动和查询。默认值为 `must-vm-query=true`、`range-vm-query=0`、`is-k8s=false` 和 `bk-data-table-id-auth=false`。Consul 成功确认没有规则时可以回填 `{}`；这与网络失败不同。手工写入的有效 `{}` 同样以 Redis 为准。
 
-若需要首次迁移或 reset 重新迁移，保留可用的 `consul.consul_address`。旧配置若已删除该地址，需从部署配置恢复真实地址；只升级镜像无法推断原 Consul 端点。新 Chart 保留回退地址，同时跳过 Redis 模式的 Consul 启动等待。
+`consul.consul_address` 没有默认值。不写或写空时不创建 Consul 客户端，Feature Flag 只读 Redis：Key 不存在时使用内存默认值，进程内只记一条 Info，不报错、不重试 Consul，也不向 Redis 写入快照；Key 写入后下一次调和生效，Key 删除后回到默认值。解析后没有 host 的地址（如 `:8500`、`http://:8500`）视为配置错误，启动或重载时报一次 `consul_address_missing_host`，同样不创建客户端；`unix://` socket 地址照常使用。
+
+若需要首次迁移或 reset 重新迁移，保留可用的 `consul.consul_address`。旧配置若已删除该地址，UQ 不再连接 `127.0.0.1:8500`，需从部署配置恢复真实地址；只升级镜像无法推断原 Consul 端点。新 Chart 保留回退地址，同时跳过 Redis 模式的 Consul 启动等待。
 
 使用运行服务相同的配置文件，将完整的 go-feature-flag JSON 快照写入 Redis：
 
@@ -83,7 +85,7 @@ unify-query --config /path/to/unify-query.yaml config delete-feature-flag --name
 unify-query --config /path/to/unify-query.yaml config reset-feature-flags
 ```
 
-命令仅删除 `<redis.kv_base_path>:data:feature_flag` 并发布刷新通知。在线 UQ 收到通知后重新读取 Consul，校验后通过 `SET NX` 回填 Redis，仍不设过期时间；通知丢失时由每分钟调和重试。命令成功表示 Redis 快照已删除，不表示回填已完成；没有在线实例时会在下次启动迁移。不要用 `set-feature-flags --file` 写入 `{}` 代替重置，已有空快照不会触发 Consul 回填。
+命令仅删除 `<redis.kv_base_path>:data:feature_flag` 并发布刷新通知。在线 UQ 收到通知后重新读取 Consul，校验后通过 `SET NX` 回填 Redis，仍不设过期时间；通知丢失时由每分钟调和重试。命令成功表示 Redis 快照已删除，不表示回填已完成；没有在线实例时会在下次启动迁移。未配置 Consul 地址时，在线 UQ 回到内存默认值。不要用 `set-feature-flags --file` 写入 `{}` 代替重置，已有空快照不会触发 Consul 回填。
 
 ## 快速部署
 

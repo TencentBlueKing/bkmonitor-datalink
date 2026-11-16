@@ -32,5 +32,7 @@ func (client *Client) Recheck(ctx context.Context, spec execution.PhysicalQueryS
 	if _, ok := ctx.Deadline(); !ok {
 		return execution.ProviderCompletion{}, errors.New("alarmd access uq: a recheck needs a deadline")
 	}
-	return client.execute(ctx, ctx, queryIdentity{Spec: spec, AttemptNo: 1}, sink, nil)
+	// A slice's read is rechecked as the slice: the slice ctx carries
+	// (execution.WithInputSlice), the whole Query Group without one.
+	return client.execute(ctx, ctx, queryIdentity{Spec: spec, AttemptNo: 1, Slice: execution.InputSliceFrom(ctx)}, sink, nil)
 }

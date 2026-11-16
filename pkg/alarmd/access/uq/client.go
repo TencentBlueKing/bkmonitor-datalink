@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -81,20 +82,26 @@ var (
 	ErrTotalRecordsExceeded  error = &responseLimitError{code: "TOTAL_RECORDS_EXCEEDED", class: execution.ResponseFailureLimitTotalRecords}
 )
 
+// Limits bound one answer's decode. There is no bound on the whole body: an
+// answer is decoded series by series and handed on as it is read, so its
+// size holds no memory - each series is bounded on its own (MaxSeriesBytes)
+// and is charged to the retained pool by whoever keeps it. A byte bound on
+// the whole body would refuse a large Query Group the pool can hold, by a
+// number that guards nothing. The counts stop only an answer whose counting
+// has gone wrong.
 type Limits struct {
-	MaxBodyBytes   int64
 	MaxSeriesBytes int64
 	MaxSeries      uint64
 	MaxRecords     uint64
 }
 
 func DefaultLimits() Limits {
-	return Limits{MaxBodyBytes: 64 << 20, MaxSeriesBytes: 8 << 20, MaxSeries: 100_000, MaxRecords: 1_000_000}
+	return Limits{MaxSeriesBytes: 8 << 20, MaxSeries: 100_000, MaxRecords: 1_000_000}
 }
 
 func (limits Limits) validate() error {
-	if limits.MaxBodyBytes <= 0 || limits.MaxSeriesBytes <= 0 || limits.MaxSeries == 0 || limits.MaxRecords == 0 || limits.MaxSeriesBytes > limits.MaxBodyBytes {
-		return errors.New("alarmd access uq: positive ordered response limits are required")
+	if limits.MaxSeriesBytes <= 0 || limits.MaxSeries == 0 || limits.MaxRecords == 0 {
+		return errors.New("alarmd access uq: positive response limits are required")
 	}
 	return nil
 }
@@ -160,6 +167,11 @@ func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttemp
 	if err := attempt.Validate(); err != nil {
 		return execution.ProviderCompletion{}, err
 	}
+	// A slice the query cannot be read in is refused before anything is
+	// sent: read anyway, it would deliver series of other slices or none.
+	if err := execution.CheckInputSlice(attempt.Slice, attempt.Spec.PlanFacts); err != nil {
+		return execution.ProviderCompletion{}, err
+	}
 	callerCtx := ctx
 	deadline := time.UnixMilli(attempt.DeadlineUnixMilli)
 	if current, ok := ctx.Deadline(); !ok || deadline.Before(current) {
@@ -176,7 +188,7 @@ func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttemp
 			attempt.Spec.PlanFacts.Normalization.Version != "uq-polling-normalization-v1",
 		Budget: queryBudget{StartUnixMilli: attempt.BudgetStartUnixMilli, ReadyAtUnixMilli: attempt.ReadyAtUnixMilli,
 			DeadlineUnixMilli: attempt.DeadlineUnixMilli},
-		Strategies: attempt.Strategies, NamedOutputs: namedOutputReserver(attempt.Spec, sink)}, sink, nil)
+		Strategies: attempt.Strategies, NamedOutputs: namedOutputReserver(attempt.Spec, sink), Slice: attempt.Slice}, sink, nil)
 }
 
 // queryIdentity carries provider-local accounting only. Diagnostic reads do
@@ -196,6 +208,9 @@ type queryIdentity struct {
 	// NamedOutputs reserves what aligning the named outputs holds
 	// (namedOutputReserver); nil reserves nothing.
 	NamedOutputs execution.RetainedBytesReserver
+	// Slice is the slice of the Query Group's series the request asks for
+	// (withInputSlice); the zero slice asks for all of them.
+	Slice execution.InputSlice
 }
 
 // queryBudget is a Slot query's budget as its attempt carries it: where it
@@ -235,9 +250,29 @@ func buildWireRequest(spec execution.PhysicalQuerySpec) (string, []byte, error) 
 // buildWireRequestCarrying is buildWireRequest with the APM application
 // carried or not (carriesAPMApp), for the read that has to go without it.
 func buildWireRequestCarrying(spec execution.PhysicalQuerySpec, carryApp bool) (string, []byte, error) {
+	return buildWireRequestSliced(spec, carryApp, execution.InputSlice{})
+}
+
+// buildWireRequestSliced is buildWireRequestCarrying asking for one slice of
+// the query's series: the slice's conditions go into every query clause's
+// conditions on the wire (withInputSlice), and the spec they are built from,
+// its digest and everything keyed by it stay the unsliced query's.
+func buildWireRequestSliced(spec execution.PhysicalQuerySpec, carryApp bool, slice execution.InputSlice) (string, []byte, error) {
 	body, err := buildRequestCarrying(spec, carryApp)
 	if err != nil {
 		return "", nil, err
+	}
+	if !slice.IsZero() {
+		// The PromQL path sends one expression and no conditions; its
+		// selectors are not rewritten (decision-020 batch 8, 7.3.1).
+		if spec.PlanFacts.PromQL != nil {
+			return "", nil, &execution.InputSliceUnsupportedError{Reason: execution.InputSliceReasonPromQL}
+		}
+		for index := range body.QueryList {
+			if body.QueryList[index].Conditions, err = withInputSlice(body.QueryList[index].Conditions, slice); err != nil {
+				return "", nil, err
+			}
+		}
 	}
 	var payload any = body
 	path := "/query/ts"
@@ -277,7 +312,7 @@ func (client *Client) execute(callerCtx, ctx context.Context, attempt queryIdent
 }
 
 func (client *Client) executeRequest(callerCtx, ctx context.Context, attempt queryIdentity, sink execution.ProviderSeriesSink, scanned *DiagnosticScan) (spanResult execution.ProviderCompletion, spanErr error) {
-	path, encoded, err := buildWireRequestCarrying(attempt.Spec, carriesAPMApp(attempt.Spec) && !attempt.NoAppCarry)
+	path, encoded, err := buildWireRequestSliced(attempt.Spec, carriesAPMApp(attempt.Spec) && !attempt.NoAppCarry, attempt.Slice)
 	if err != nil {
 		return execution.ProviderCompletion{}, err
 	}
@@ -377,13 +412,17 @@ func (client *Client) executeRequest(callerCtx, ctx context.Context, attempt que
 	if err != nil {
 		return execution.ProviderCompletion{}, &requestFailureError{err: err, request: answeredRequest(err)}
 	}
-	bounded := &boundedReader{reader: counted, maximum: client.limits.MaxBodyBytes}
 	delivered := &countingSink{sink: sink}
 	var completion execution.ProviderCompletion
 	if shared {
-		completion, err = client.decodeShared(ctx, bounded, attempt, delivered)
+		// Abort ends a read of the body the decoder's frame reader is in,
+		// when the answer ends before the body does.
+		completion, err = client.decodeShared(ctx, func() {
+			counted.stop()
+			_ = response.Body.Close()
+		}, counted, attempt, delivered)
 	} else {
-		completion, err = client.decodeQuery(ctx, bounded, attempt, delivered, scanned)
+		completion, err = client.decodeQuery(ctx, counted, attempt, delivered, scanned)
 	}
 	if scanned != nil {
 		scanned.Bytes = counted.bytes
@@ -563,6 +602,10 @@ type countingReader struct {
 	failed      error
 	failedBegan time.Time
 	failedAt    time.Time
+	// stopped is set when the decoder stopped reading the answer itself
+	// (decodeShared's abort), so the read the closed body ends is not
+	// counted as how the answer failed.
+	stopped atomic.Bool
 }
 
 type boundedReader struct {
@@ -588,17 +631,70 @@ func (reader *boundedReader) Read(buffer []byte) (int, error) {
 	return count, err
 }
 
+// valueWindow bounds what the decoder may buffer for the value it reads
+// next, in place of a bound on the whole body: the decoder holds one value
+// at a time, so one value's bound is what an answer of any length holds.
+// The window is measured from where the decoder has consumed to
+// (json.Decoder.InputOffset), not from what this reader handed it - the
+// decoder reads ahead, and a window from the handed count would let it pull
+// what it read ahead on top of the next value's bound. An overrun answers
+// with the window's own named error rather than io.EOF, which would read as
+// an answer cut short.
+type valueWindow struct {
+	reader   io.Reader
+	read     int64
+	end      int64
+	over     error
+	exceeded error
+}
+
+// valueWindowSlack is what the decoder may need past a value's own bytes to
+// know it ended: separators and whitespace.
+const valueWindowSlack = 4 << 10
+
+// otherValueBytes bounds a key, a delimiter, and every top-level value that
+// is not a series: status, result_table_id, an answer's own fields, and
+// anything the decoder skips.
+const otherValueBytes = 1 << 20
+
+// next lets the decoder read a value of up to limit bytes from where it has
+// consumed to; past it, the read answers over.
+func (window *valueWindow) next(decoder *json.Decoder, limit int64, over error) {
+	window.end, window.over = decoder.InputOffset()+limit+valueWindowSlack, over
+}
+
+func (window *valueWindow) Read(buffer []byte) (int, error) {
+	if window.exceeded != nil {
+		return 0, window.exceeded
+	}
+	remaining := window.end - window.read
+	if remaining <= 0 {
+		window.exceeded = window.over
+		return 0, window.exceeded
+	}
+	if int64(len(buffer)) > remaining {
+		buffer = buffer[:remaining]
+	}
+	count, err := window.reader.Read(buffer)
+	window.read += int64(count)
+	return count, err
+}
+
 func (reader *countingReader) Read(buffer []byte) (int, error) {
 	began := reader.now()
 	count, err := reader.reader.Read(buffer)
 	returned := reader.now()
 	reader.waited += returned.Sub(began)
 	reader.bytes += uint64(count)
-	if err != nil && err != io.EOF && reader.failed == nil {
+	if err != nil && err != io.EOF && reader.failed == nil && !reader.stopped.Load() {
 		reader.failed, reader.failedBegan, reader.failedAt = err, began, returned
 	}
 	return count, err
 }
+
+// stop marks every read from now on as one the decoder ended, not the
+// backend: a read the closed body ends is no failure of the answer's.
+func (reader *countingReader) stop() { reader.stopped.Store(true) }
 
 func buildRequestCarrying(spec execution.PhysicalQuerySpec, carryApp bool) (request, error) {
 	if err := spec.Validate(); err != nil {
@@ -777,9 +873,20 @@ func (client *Client) decodeQuery(ctx context.Context, reader io.Reader, attempt
 	// reserved only the table the completion carries.
 	defer func() { session.named.settle(completion, err) }()
 	defer session.limitCompletion(&completion, &err)
+	window := &valueWindow{reader: reader}
 	defer session.settle(ctx, &err)
-	decoder := json.NewDecoder(reader)
+	// A path that replaced the read's error with its own words is told the
+	// overrun it met, so it completes as the limit it is - before settle,
+	// whose own failure handing a series on stays the reason it gives.
+	defer func() {
+		if err != nil && window.exceeded != nil {
+			err = window.exceeded
+		}
+	}()
+	decoder := json.NewDecoder(window)
 	decoder.UseNumber()
+	session.window = window
+	window.next(decoder, otherValueBytes, ErrResponseBytesExceeded)
 	opening, err := decoder.Token()
 	if err != nil {
 		return completion, err
@@ -795,6 +902,7 @@ func (client *Client) decodeQuery(ctx context.Context, reader io.Reader, attempt
 		if err := ctx.Err(); err != nil {
 			return completion, err
 		}
+		window.next(decoder, otherValueBytes, ErrResponseBytesExceeded)
 		keyToken, err := decoder.Token()
 		if err != nil {
 			return completion, fmt.Errorf("alarmd access uq: decode field: %w", err)
@@ -803,6 +911,7 @@ func (client *Client) decodeQuery(ctx context.Context, reader io.Reader, attempt
 		if !ok {
 			return completion, errors.New("alarmd access uq: response field name is invalid")
 		}
+		window.next(decoder, otherValueBytes, ErrResponseBytesExceeded)
 		switch key {
 		case "series":
 			start, err := decoder.Token()
@@ -810,6 +919,7 @@ func (client *Client) decodeQuery(ctx context.Context, reader io.Reader, attempt
 				return completion, errors.New("alarmd access uq: series must be an array")
 			}
 			for decoder.More() {
+				window.next(decoder, client.limits.MaxSeriesBytes, ErrSeriesBytesExceeded)
 				var raw json.RawMessage
 				if err := decoder.Decode(&raw); err != nil {
 					return completion, fmt.Errorf("alarmd access uq: decode series payload: %w", err)
@@ -824,6 +934,7 @@ func (client *Client) decodeQuery(ctx context.Context, reader io.Reader, attempt
 				if err := session.accept(ctx, series, uint64(len(raw))); err != nil {
 					return completion, err
 				}
+				window.next(decoder, otherValueBytes, ErrResponseBytesExceeded)
 			}
 			if _, err := decoder.Token(); err != nil {
 				return completion, err
@@ -870,6 +981,7 @@ func (client *Client) decodeQuery(ctx context.Context, reader io.Reader, attempt
 			}
 		}
 	}
+	window.next(decoder, otherValueBytes, ErrResponseBytesExceeded)
 	if _, err := decoder.Token(); err != nil {
 		return completion, err
 	}
@@ -954,8 +1066,17 @@ var nullDimension = json.RawMessage("null")
 // where None is the value in both cases. Series that carry the field keep
 // their previous identity unchanged.
 func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderResultRef, source responseSeries, receivedAt int64) (execution.ProviderSeriesBatch, uint64, error) {
+	batch, nullFields, _, err := normalizeSeriesKeeping(spec, ref, source, receivedAt, false)
+	return batch, nullFields, err
+}
+
+// normalizeSeriesKeeping is normalizeSeries, and with keepIDs the record ids
+// it derived, in the Dataset's order: a named-outputs query keeps them for
+// its legacy points (noteDelivered) from this derivation, as the Dataset
+// keeps none.
+func normalizeSeriesKeeping(spec execution.PhysicalQuerySpec, ref execution.ProviderResultRef, source responseSeries, receivedAt int64, keepIDs bool) (execution.ProviderSeriesBatch, uint64, []string, error) {
 	if len(source.Columns) == 0 || len(source.Columns) != len(source.Types) || (spec.PlanFacts.Normalization.Version != "uq-polling-normalization-v1" && len(source.GroupKeys) != len(source.GroupValues)) {
-		return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: invalid series schema")
+		return execution.ProviderSeriesBatch{}, 0, nil, errors.New("alarmd access uq: invalid series schema")
 	}
 	dimensions := make(map[string]json.RawMessage, len(source.GroupKeys))
 	for index, key := range source.GroupKeys {
@@ -964,7 +1085,7 @@ func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderRes
 			key = alias
 		}
 		if _, exists := dimensions[key]; exists {
-			return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: duplicate normalized group key")
+			return execution.ProviderSeriesBatch{}, 0, nil, errors.New("alarmd access uq: duplicate normalized group key")
 		}
 		encoded := nullDimension
 		if index < len(source.GroupValues) {
@@ -972,12 +1093,12 @@ func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderRes
 		}
 		var scalar any
 		if err := json.Unmarshal(encoded, &scalar); err != nil {
-			return execution.ProviderSeriesBatch{}, 0, err
+			return execution.ProviderSeriesBatch{}, 0, nil, err
 		}
 		switch scalar.(type) {
 		case nil, string, float64, bool:
 		default:
-			return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: nonscalar group value")
+			return execution.ProviderSeriesBatch{}, 0, nil, errors.New("alarmd access uq: nonscalar group value")
 		}
 		dimensions[key] = encoded
 	}
@@ -1012,36 +1133,36 @@ func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderRes
 	// encoding from here rather than making it again.
 	identity, err := contract.EncodeDimensionIdentityV2(spec.PlanFacts.TenantID, spec.PlanFacts.BusinessID, identityFields)
 	if err != nil {
-		return execution.ProviderSeriesBatch{}, 0, err
+		return execution.ProviderSeriesBatch{}, 0, nil, err
 	}
 	dimensionDigest := identity.Digest
 	records := make([]contract.CanonicalRecordV2, 0, len(source.Values))
 	lastTime := int64(-1)
 	for _, row := range source.Values {
 		if len(row) != len(source.Columns) {
-			return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: row width differs from columns")
+			return execution.ProviderSeriesBatch{}, 0, nil, errors.New("alarmd access uq: row width differs from columns")
 		}
 		timestamp, value, err := rowFacts(source.Columns, row, spec.PlanFacts.QueryList)
 		if err != nil {
-			return execution.ProviderSeriesBatch{}, 0, err
+			return execution.ProviderSeriesBatch{}, 0, nil, err
 		}
 		sourceTime, err := spec.PlanFacts.Normalization.NormalizeSourceTime(timestamp)
 		if err != nil {
-			return execution.ProviderSeriesBatch{}, 0, err
+			return execution.ProviderSeriesBatch{}, 0, nil, err
 		}
 		if sourceTime <= lastTime {
-			return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: source order contract violation")
+			return execution.ProviderSeriesBatch{}, 0, nil, errors.New("alarmd access uq: source order contract broken")
 		}
 		lastTime = sourceTime
 		if sourceTime < spec.AcceptedRange.Start || sourceTime >= spec.AcceptedRange.End {
 			continue
 		}
 		if spec.PlanFacts.NotTimeAlign && !onRequestGrid(spec, sourceTime) {
-			return execution.ProviderSeriesBatch{}, 0, errOffRequestGrid
+			return execution.ProviderSeriesBatch{}, 0, nil, errOffRequestGrid
 		}
 		recordID, err := contract.DeriveRecordIDV2(dimensionDigest, sourceTime)
 		if err != nil {
-			return execution.ProviderSeriesBatch{}, 0, err
+			return execution.ProviderSeriesBatch{}, 0, nil, err
 		}
 		records = append(records, contract.CanonicalRecordV2{RecordID: recordID, SourceTime: sourceTime,
 			BusinessID:        spec.PlanFacts.BusinessID,
@@ -1049,14 +1170,24 @@ func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderRes
 			Values:            map[string]json.RawMessage{spec.PlanFacts.Normalization.CanonicalValueField: value},
 			Dimensions:        dimensions, ReceivedTime: receivedAt})
 	}
-	dataset := execution.NewDataset(records)
+	// Every id was derived just above from the series digest and the
+	// point's time, so the Dataset keeps none and derives them again only
+	// for the window that reads the series.
+	dataset := execution.NewDatasetOfDerivedRecordIDs(records)
 	digest, err := contract.DeriveSeriesRecordsDigestV2("alarmd-provider-series-delivery-v1", records, identity)
 	if err != nil {
-		return execution.ProviderSeriesBatch{}, 0, err
+		return execution.ProviderSeriesBatch{}, 0, nil, err
+	}
+	var recordIDs []string
+	if keepIDs {
+		recordIDs = make([]string, len(records))
+		for index := range records {
+			recordIDs[index] = records[index].RecordID
+		}
 	}
 	return execution.ProviderSeriesBatch{PhysicalQuery: spec.Digest, CompletionRef: ref, Dataset: dataset,
 		Delivery: execution.SeriesDelivery{PhysicalQuery: spec.Digest, QueryRevision: spec.PlanFacts.QueryRevision,
-			Series: 1, Records: uint64(len(records)), Digest: digest}}, nullIdentityFields, nil
+			Series: 1, Records: uint64(len(records)), Digest: digest}}, nullIdentityFields, recordIDs, nil
 }
 
 func rowFacts(columns []string, row []json.RawMessage, queries []execution.QueryClause) (int64, json.RawMessage, error) {

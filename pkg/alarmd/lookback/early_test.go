@@ -11,6 +11,7 @@ package lookback
 
 import (
 	"context"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -547,12 +548,32 @@ func TestTheLeadIsTheLongestOfTheLastReadings(t *testing.T) {
 	engine := &Engine{holdMax: 3 * time.Second}
 	state := &group{}
 	state.took.add(2 * time.Second)
-	if lead := engine.leadLocked(state); lead != 5*time.Second {
+	if lead := engine.leadLocked(state, nil); lead != 5*time.Second {
 		t.Fatalf("lead %v, want the first read and the process's longest hold while the group has none", lead)
 	}
 	state.holds.add(time.Second)
-	if lead := engine.leadLocked(state); lead != 3*time.Second {
+	if lead := engine.leadLocked(state, nil); lead != 3*time.Second {
 		t.Fatalf("lead %v, want the group's own hold once it has one", lead)
+	}
+}
+
+// A Slot read in slices leads by the longer of its group's readings and its
+// own slices' times summed so far, which the group counts only when the Slot
+// is read again: the group's first sliced Slot is not left without a lead,
+// and a group whose readings are longer keeps leading by them.
+func TestASlicedSlotLeadsByTheLongerOfItsGroupsReadingsAndItsOwnSlices(t *testing.T) {
+	engine := &Engine{}
+	state := &group{}
+	slot := &directedSlot{sliceTook: 2 * time.Second}
+	if lead := engine.leadLocked(state, slot); lead != 2*time.Second {
+		t.Fatalf("lead %v, want the Slot's own slices' times while its group has no reading", lead)
+	}
+	state.took.add(5 * time.Second)
+	if lead := engine.leadLocked(state, slot); lead != 5*time.Second {
+		t.Fatalf("lead %v, want the group's longer reading", lead)
+	}
+	if lead := engine.leadLocked(state, nil); lead != 5*time.Second {
+		t.Fatalf("lead %v, want the group's reading for the group alone", lead)
 	}
 }
 
@@ -574,5 +595,41 @@ func TestEveryEarlyOutcomeFallsInTheGroupItsMechanismIsReadBy(t *testing.T) {
 	if counts[EarlyGroupBeforeNext] != 1 || counts[EarlyGroupOutside] != len(EarlyOutsideMechanism) ||
 		counts[EarlyGroupNotAhead] != len(EarlyOutcomes)-1-len(EarlyOutsideMechanism) {
 		t.Fatalf("groups %v do not cover the outcomes as the mechanism reads them", counts)
+	}
+}
+
+// The early read of a Slot read in slices reads every slice the Slot read,
+// each against its own first read, and supplements their late series as one
+// kept read: both slices' late series, before the next Slot reads.
+func TestAnEarlyReadOfASlicedSlotReadsEverySlice(t *testing.T) {
+	f, supplement := earlyFixture(t, SupplementOutcome{Ran: true, Facts: execution.SupplementFacts{Candidates: 2, Admitted: 2}})
+	slot := f.clock.now().Unix()
+	begun := f.clock.now()
+	for _, slice := range []struct {
+		pattern string
+		series  *execution.Dataset
+	}{{"^a$", point(slot, "1")}, {"^b$", dataset("h3", map[int64]string{slot: "1"})}} {
+		seen := earlyQuery(slot, begun, 60)
+		seen.Slice = sliceOf(slice.pattern)
+		read := f.engine.Begin(seen)
+		if read == nil || read.directed == nil {
+			t.Fatal("a sliced first read was not kept for its directed read")
+		}
+		read.Series(slice.series, 100)
+		f.clock.set(f.clock.now().Add(time.Second))
+		read.Complete(execution.ProviderCompletion{Completeness: execution.CompletenessFull}, nil)
+	}
+	wake := f.engine.NextEarlyWake()
+	if wake.IsZero() {
+		t.Fatal("no early read was planned for the sliced Slot")
+	}
+	f.clock.set(wake)
+	f.answers <- delivered(point(slot, "1"), dataset("h2", map[int64]string{slot - 60: "5"}))
+	f.answers <- delivered(dataset("h3", map[int64]string{slot: "1"}), dataset("h4", map[int64]string{slot - 60: "5"}))
+	f.engine.Step(context.Background())
+	f.waitFor(func(stats Stats) bool { return stats.Sources[sourceLog].EarlyReads[EarlyBeforeNext] == 1 })
+	jobs := supplement.taken()
+	if len(jobs) != 1 || !reflect.DeepEqual(jobs[0].Series, []execution.SeriesIdentityDigest{"digest-h2", "digest-h4"}) {
+		t.Fatalf("jobs %+v, want one early supplement of both slices' late series", jobs)
 	}
 }

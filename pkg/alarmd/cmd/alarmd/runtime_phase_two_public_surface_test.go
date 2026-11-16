@@ -34,7 +34,7 @@ import (
 	httpservice "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/service/http"
 )
 
-const plantedAddress = "redis.internal.example:6379"
+const plantedAddress = "redis.planted.invalid:6379"
 
 // The routes the public surface stops serving when restricted. Each is
 // answered by the stand-in API with its own path and the planted address, so
@@ -514,6 +514,7 @@ func TestTheApplicationSettlesTheListenerFromTheBundle(t *testing.T) {
 		listener.run = func(ctx context.Context, _ string, _ time.Duration) error { <-ctx.Done(); return nil }
 		ctx, cancel := context.WithCancel(context.Background())
 		dependencies := phaseTwoApplicationDependencies{
+			goRuntime:    noGoRuntime,
 			configureCPU: func() (string, error) { return "cpu_quota", nil },
 			openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger, *phaseTwoApplicationHealth) (*phaseTwoWorkerBundle, error) {
 				return bundle, nil

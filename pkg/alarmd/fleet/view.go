@@ -942,6 +942,11 @@ type HistoryCoverage struct {
 	// reader needs to see before trusting Levels as a size.
 	Resumed     uint32 `json:"resumed"`
 	Constrained uint32 `json:"constrained"`
+	// Superseded is the series the round did not evaluate because their
+	// State was a later Slot's: the store went back behind Progress, or a
+	// replay crossed a later write. Zero on a healthy object; not omitempty,
+	// for the same reason as the two above.
+	Superseded uint32 `json:"superseded"`
 	// ConstrainedRounds is how many consecutive rounds could load no State
 	// for any series, and ResumedRounds the same for rounds that summarised
 	// no window because every series was already applied at the Slot's

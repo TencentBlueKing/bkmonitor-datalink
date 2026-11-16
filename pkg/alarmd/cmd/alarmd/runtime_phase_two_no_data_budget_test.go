@@ -14,53 +14,38 @@ import (
 	"testing"
 )
 
-// The no-data Plan spends from the State budget threshold detection left, not
-// from the whole of it (decomposition 5.9 item 2): when its series do not fit
-// in what is left, the Plan is skipped by name, and the Slot's threshold
-// results are committed as they would have been without it.
+// The per-Slot State cap is a window's bound, not the Slot's (decision-020
+// batch 8, 2.1): a no-data Plan whose series do not fit beside the threshold
+// ones is written in the next window, not skipped, and the threshold results
+// are committed as they are without it.
 //
 // Host A's threshold series takes one State write. The no-data round makes
 // three series: host A present, host B absent, and the whole item present. A
-// budget of three fits the no-data series alone and not beside A's series,
-// and a budget of four fits both. Under three, a check that counts only the
-// no-data series lets them in, and the Slot-wide cap then refuses the round:
-// every result is replaced by a budget gap, threshold included, and the memory
-// the discarded round decided is still applied.
+// cap of three fits the no-data series alone and not beside A's series, so
+// the Slot is written in two windows; a cap of four fits all four in one.
+// Either way the round is EVALUATED, host B's absence starts at this round,
+// and all four series are in the store.
 func TestANoDataPlanSpendsOnlyWhatThresholdDetectionLeft(t *testing.T) {
-	t.Run("does not fit beside the threshold series", func(t *testing.T) {
-		fixture := startFollowsFixture(t, 3)
-		if !fixture.attempt(1, 0) {
-			t.Fatal("round 1 was not attempted")
-		}
-		if outcomes := fixture.noDataOutcomes(); outcomes["SKIPPED_SLOT_BUDGET"] != 1 || outcomes["EVALUATED"] != 0 {
-			t.Fatalf("no-data outcomes = %v, want the Plan skipped by name as SKIPPED_SLOT_BUDGET", outcomes)
-		}
-		if value, held := fixture.memoryOf(followsGroupKey(followsHostB)); held {
-			t.Fatalf("the skipped round's memory was applied: host B = %q", value)
-		}
-		if sent := fixture.sink.noDataEventsFor(followsHostB); len(sent) != 0 {
-			t.Fatalf("a skipped round sent host B's events: %+v", sent)
-		}
-		if got := fixture.runtimeKeys(); got != 1 {
-			t.Fatalf("Runtime State keys = %d, want 1: host A's threshold series, written as it would have been "+
-				"without the no-data Plan, and no no-data series", got)
-		}
-	})
-	t.Run("fits beside the threshold series", func(t *testing.T) {
-		fixture := startFollowsFixture(t, 4)
-		if !fixture.attempt(1, 0) {
-			t.Fatal("round 1 was not attempted")
-		}
-		if outcomes := fixture.noDataOutcomes(); outcomes["EVALUATED"] != 1 || outcomes["SKIPPED_SLOT_BUDGET"] != 0 {
-			t.Fatalf("no-data outcomes = %v, want EVALUATED", outcomes)
-		}
-		if got, want := fixture.firstAbsentOf(followsGroupKey(followsHostB)), fixture.evaluationAt(1); got != want {
-			t.Fatalf("host B's absence starts at %d; want %d", got, want)
-		}
-		if got := fixture.runtimeKeys(); got != 4 {
-			t.Fatalf("Runtime State keys = %d, want 4: host A's threshold series and the three no-data series", got)
-		}
-	})
+	for _, test := range []struct {
+		name string
+		cap  uint64
+	}{{"does not fit beside the threshold series", 3}, {"fits beside the threshold series", 4}} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := startFollowsFixture(t, test.cap)
+			if !fixture.attempt(1, 0) {
+				t.Fatal("round 1 was not attempted")
+			}
+			if outcomes := fixture.noDataOutcomes(); outcomes["EVALUATED"] != 1 || outcomes["SKIPPED_SLOT_BUDGET"] != 0 {
+				t.Fatalf("no-data outcomes = %v, want EVALUATED", outcomes)
+			}
+			if got, want := fixture.firstAbsentOf(followsGroupKey(followsHostB)), fixture.evaluationAt(1); got != want {
+				t.Fatalf("host B's absence starts at %d; want %d", got, want)
+			}
+			if got := fixture.runtimeKeys(); got != 4 {
+				t.Fatalf("Runtime State keys = %d, want 4: host A's threshold series and the three no-data series", got)
+			}
+		})
+	}
 }
 
 // runtimeKeys is how many Runtime State keys the store holds: one per series

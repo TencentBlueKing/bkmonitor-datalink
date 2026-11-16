@@ -247,6 +247,8 @@ func mockElasticSearchHandler(ctx context.Context) {
 	httpmock.RegisterResponder(http.MethodHead, EsUrl, func(request *http.Request) (*http.Response, error) {
 		return httpmock.NewStringResponse(http.StatusOK, ""), nil
 	})
+	// 现有查询 fixture 使用旧版 interval；版本响应固定为同一兼容范围。
+	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/", httpmock.NewStringResponder(http.StatusOK, `{"version":{"number":"6.8.23"}}`))
 }
 
 func mockInfluxDBHandler(ctx context.Context) {

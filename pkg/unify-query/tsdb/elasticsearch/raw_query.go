@@ -169,6 +169,9 @@ func (i *Instance) PrepareRawQuery(
 		conn:            i.connect,
 	}
 	fact := newRawFormatFactory(ctx, rawQuery, qo, fieldMetadata.fieldMap)
+	if err := i.configureDateHistogram(ctx, rawQuery, fact); err != nil {
+		return nil, err
+	}
 	source, countQuery, _, err := buildESQuerySource(ctx, rawQuery, fact, nil)
 	if err != nil {
 		return nil, err

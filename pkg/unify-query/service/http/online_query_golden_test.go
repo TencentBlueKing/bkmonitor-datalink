@@ -546,7 +546,9 @@ func onlineQueryGoldenESResponse(
 	})
 
 	response := dependencies.Elasticsearch.Search
-	if request.Method == http.MethodGet && request.URL.Path != "/_msearch" {
+	if request.Method == http.MethodGet && request.URL.Path == "/" {
+		response = json.RawMessage(`{"version":{"number":"6.8.23"}}`)
+	} else if request.Method == http.MethodGet && request.URL.Path != "/_msearch" {
 		response = dependencies.Elasticsearch.Mapping
 	} else {
 		var err error

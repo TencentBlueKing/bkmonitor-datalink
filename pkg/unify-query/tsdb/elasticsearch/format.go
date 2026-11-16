@@ -181,7 +181,8 @@ type FormatFactory struct {
 	end        time.Time
 	timeFormat string
 
-	isReference bool
+	isReference                   bool
+	explicitDateHistogramInterval bool
 
 	labelMap map[string][]function.LabelMapValue
 }
@@ -205,6 +206,11 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 
 func (f *FormatFactory) WithFieldMap(fieldsMap metadata.FieldsMap) *FormatFactory {
 	f.fieldsMap = fieldsMap
+	return f
+}
+
+func (f *FormatFactory) WithExplicitDateHistogramInterval(supported bool) *FormatFactory {
+	f.explicitDateHistogramInterval = supported
 	return f
 }
 
@@ -796,8 +802,20 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			}
 
 			curAgg := elastic.NewDateHistogramAggregation().
-				Field(f.timeField.Name).Interval(interval).MinDocCount(0).
+				Field(f.timeField.Name).MinDocCount(0).
 				ExtendedBounds(f.timeFieldUnix(f.start), f.timeFieldUnix(f.end))
+			if f.explicitDateHistogramInterval {
+				// 按单位换算后的字符串保留旧 interval 语义；shortDur 的其他输出均为固定时长。
+				switch interval {
+				case "1s", "1m", "1h", "1d":
+					curAgg.CalendarInterval(interval)
+				default:
+					curAgg.FixedInterval(interval)
+				}
+			} else {
+				//nolint:staticcheck // ES 7.2 之前及 BKData 网关继续使用 interval。
+				curAgg.Interval(interval)
+			}
 
 			if function.IsAlignTime(info.Window) {
 				if f.timeField.Type == TimeFieldTypeTime {

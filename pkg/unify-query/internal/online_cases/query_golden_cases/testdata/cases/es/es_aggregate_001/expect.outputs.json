@@ -1,4 +1,5 @@
 [
+  {"backend": "elasticsearch", "method": "GET", "path": "/"},
   {"backend": "elasticsearch", "method": "GET", "path": "/golden_logs_index"},
   {
     "backend": "elasticsearch",

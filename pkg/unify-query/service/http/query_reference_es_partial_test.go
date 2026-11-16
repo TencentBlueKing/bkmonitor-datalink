@@ -39,6 +39,7 @@ func TestQueryReferenceESPartialShardResults(t *testing.T) {
 	)
 	tsdb.SetStorage(storageID, &tsdb.Storage{Type: metadata.ElasticsearchStorageType, Address: esURL})
 	registerRawESBatchMappingResponder(t, esURL, index)
+	httpmock.RegisterResponder(http.MethodGet, esURL+"/", httpmock.NewStringResponder(http.StatusOK, `{"version":{"number":"6.8.23"}}`))
 	for _, tc := range []struct {
 		name        string
 		enabled     bool

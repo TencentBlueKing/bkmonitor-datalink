@@ -3081,7 +3081,8 @@ func (s *SpacePusher) composeBkciOtherTableIds(bkTenantId, spaceType, spaceId st
 		logger.Errorf("composeBkciOtherTableIds get cached cluster data id list error, %s", err)
 		return nil, err
 	}
-	options := optionx.NewOptions(map[string]any{"includePlatformDataId": false, "fromAuthorization": false})
+	// 普通数据源的自有和授权关系均生成路由，容器数据源仍由集群分支处理。
+	options := optionx.NewOptions(map[string]any{"includePlatformDataId": false})
 	tableIdDataIdMap, err := s.GetSpaceTableIdDataId(bkTenantId, spaceType, spaceId, nil, excludeDataIdList, options)
 	if err != nil {
 		return nil, err

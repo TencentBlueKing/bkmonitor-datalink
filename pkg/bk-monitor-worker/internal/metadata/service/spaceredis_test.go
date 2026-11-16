@@ -2932,3 +2932,60 @@ func TestFilterTsInfoV3V4Comparison(t *testing.T) {
 	assert.Contains(t, v4Fields, "inactive_metric")
 	assert.Contains(t, v4Fields, "expired_metric")
 }
+
+func TestSpacePusher_composeBkciOtherTableIds_AuthorizedDataSource(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	setMultiTenantModeForTest(t, false)
+
+	for _, tc := range []struct {
+		name       string
+		authorized bool
+		spaceType  string
+		spaceID    string
+		dataID     uint
+		tenantID   string
+		wantRoute  bool
+	}{
+		{"owned", false, "bkci", "authorized_project", 19001, "system", true},
+		{"authorized", true, "bkci", "authorized_project", 19001, "system", true},
+		{"other_project", true, "bkci", "other_project", 19001, "system", false},
+		{"other_space_type", true, "bkcc", "authorized_project", 19001, "system", false},
+		{"other_table_tenant", true, "bkci", "authorized_project", 19001, "other_tenant", false},
+		{"owned_builtin_cluster", false, "bkci", "authorized_project", 19002, "system", false},
+		{"authorized_builtin_cluster", true, "bkci", "authorized_project", 19002, "system", false},
+		{"owned_custom_cluster", false, "bkci", "authorized_project", 19003, "system", false},
+		{"authorized_custom_cluster", true, "bkci", "authorized_project", 19003, "system", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tx := db.Begin()
+			if !assert.NoError(t, tx.Error) {
+				return
+			}
+			defer tx.Rollback()
+			patches := gomonkey.NewPatches()
+			defer patches.Reset()
+			patches.ApplyFunc(mysql.GetDBSession, func() *mysql.DBSession { return &mysql.DBSession{DB: tx} })
+			patches.ApplyPrivateMethod(NewSpacePusher(), "getCachedClusterDataIdList", func(_ *SpacePusher) ([]uint, error) {
+				return []uint{19002, 19003}, nil
+			})
+			const tableID = "authorized_route_test.__default__"
+			for _, row := range []any{
+				&space.SpaceDataSource{SpaceTypeId: tc.spaceType, SpaceId: tc.spaceID, BkDataId: tc.dataID, FromAuthorization: tc.authorized},
+				&resulttable.DataSourceResultTable{BkTenantId: tc.tenantID, BkDataId: tc.dataID, TableId: tableID},
+				&storage.AccessVMRecord{BkTenantId: tc.tenantID, ResultTableId: tableID},
+			} {
+				if !assert.NoError(t, tx.Create(row).Error) {
+					return
+				}
+			}
+			got, err := NewSpacePusher().composeBkciOtherTableIds("system", "bkci", "authorized_project")
+			assert.NoError(t, err)
+			want := map[string]map[string]any{}
+			if tc.wantRoute {
+				want[tableID] = map[string]any{"filters": []map[string]any{}}
+			}
+			assert.Equal(t, want, got)
+		})
+	}
+}

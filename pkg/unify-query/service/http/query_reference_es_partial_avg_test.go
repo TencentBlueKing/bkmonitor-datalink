@@ -93,9 +93,9 @@ func TestQueryReferenceESPartialAverageAcrossRoutes(t *testing.T) {
 							Bool struct {
 								Filter struct {
 									Range map[string]struct {
-										From, To     int64
-										IncludeLower bool `json:"include_lower"`
-										IncludeUpper bool `json:"include_upper"`
+										Gte *int64 `json:"gte"`
+										Lt  *int64 `json:"lt"`
+										Lte *int64 `json:"lte"`
 									} `json:"range"`
 								} `json:"filter"`
 							} `json:"bool"`
@@ -108,6 +108,9 @@ func TestQueryReferenceESPartialAverageAcrossRoutes(t *testing.T) {
 					bounds, ok := body.Query.Bool.Filter.Range["event_time"]
 					if !ok {
 						return nil, fmt.Errorf("missing event_time range")
+					}
+					if bounds.Gte == nil || (bounds.Lt == nil) == (bounds.Lte == nil) {
+						return nil, fmt.Errorf("event_time range requires gte and exactly one of lt or lte")
 					}
 					method := "avg"
 					if strings.Contains(string(body.Aggregations), `"sum"`) {
@@ -122,18 +125,18 @@ func TestQueryReferenceESPartialAverageAcrossRoutes(t *testing.T) {
 					partial := route == 0 && (method == "sum" && tc.partialSum || method == "count" && tc.partialCount) || route == 1 && tc.partialNew
 					assertPartialESNativeParameter(t, req, !tc.disabled)
 					if route == 0 {
-						assert.Equal(t, cut.UnixMilli(), bounds.To)
-						assert.False(t, bounds.IncludeUpper)
+						cutMillis := cut.UnixMilli()
+						assert.Equal(t, &cutMillis, bounds.Lt)
+						assert.Nil(t, bounds.Lte)
 					} else {
-						assert.Equal(t, cut.UnixMilli(), bounds.From)
-						assert.True(t, bounds.IncludeLower)
+						assert.Equal(t, cut.UnixMilli(), *bounds.Gte)
 					}
 					sums := map[string]float64{}
 					counts := map[string]int{}
 					var selected []float64
 					for _, doc := range docs {
 						timestamp := doc.time.UnixMilli()
-						if timestamp < bounds.From || timestamp == bounds.From && !bounds.IncludeLower || timestamp > bounds.To || timestamp == bounds.To && !bounds.IncludeUpper {
+						if timestamp < *bounds.Gte || bounds.Lt != nil && timestamp >= *bounds.Lt || bounds.Lte != nil && timestamp > *bounds.Lte {
 							continue
 						}
 						if partial && (method == "count" && doc.shard != 1 || method != "count" && doc.shard != 0) {

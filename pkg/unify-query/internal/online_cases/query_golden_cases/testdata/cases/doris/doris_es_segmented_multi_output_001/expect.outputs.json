@@ -48,7 +48,7 @@
         "bool": {
           "filter": [
             {"match_phrase": {"status": {"query": "failed"}}},
-            {"range": {"dtEventTimeStamp": {"format": "epoch_second", "from": 1784701739, "include_lower": true, "include_upper": true, "to": 1784702135}}}
+            {"range": {"dtEventTimeStamp": {"format": "epoch_second", "gte": 1784701739, "lte": 1784702135}}}
           ]
         }
       },

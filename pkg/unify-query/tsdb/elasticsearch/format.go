@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/esquery"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/esregexpcompat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
@@ -433,8 +434,6 @@ func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
 }
 
 func (f *FormatFactory) rangeQuery(endExclusive bool) (elastic.Query, error) {
-	var err error
-
 	fieldName := f.timeField.Name
 	fieldType := f.timeField.Type
 
@@ -452,12 +451,12 @@ func (f *FormatFactory) rangeQuery(endExclusive bool) (elastic.Query, error) {
 			Lte(f.queryToUnix(f.end, f.timeFormat)).
 			Format(f.timeFormatToEpoch(f.timeFormat))
 	default:
-		err = fmt.Errorf("time field type is error %s", fieldType)
+		return nil, fmt.Errorf("time field type is error %s", fieldType)
 	}
-	if query != nil && endExclusive {
+	if endExclusive {
 		query.IncludeUpper(false)
 	}
-	return query, err
+	return esquery.Range(query), nil
 }
 
 func (f *FormatFactory) timeAgg(name string, window time.Duration, timezoneOffset int64, timezone string) {
@@ -1181,13 +1180,13 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 										query = regexpQuery
 									}
 								case structured.ConditionGt:
-									query = elastic.NewRangeQuery(key).Gt(value).Format(format)
+									query = esquery.Range(elastic.NewRangeQuery(key).Gt(value).Format(format))
 								case structured.ConditionGte:
-									query = elastic.NewRangeQuery(key).Gte(value).Format(format)
+									query = esquery.Range(elastic.NewRangeQuery(key).Gte(value).Format(format))
 								case structured.ConditionLt:
-									query = elastic.NewRangeQuery(key).Lt(value).Format(format)
+									query = esquery.Range(elastic.NewRangeQuery(key).Lt(value).Format(format))
 								case structured.ConditionLte:
-									query = elastic.NewRangeQuery(key).Lte(value).Format(format)
+									query = esquery.Range(elastic.NewRangeQuery(key).Lte(value).Format(format))
 								default:
 									return fmt.Errorf("operator is not support, %+v", con)
 								}

@@ -269,9 +269,10 @@ func (s *Service) Close() {
 	s.clientMu.Unlock()
 }
 
-// newFeatureFlagProvider 优先读取 Redis，缺 Key 时保留 Consul 迁移来源。
+// newFeatureFlagProvider 优先读取 Redis，缺 Key 时保留 Consul 迁移来源；
+// Consul 地址没配或被拒时不建回退来源，只读 Redis。
 func newFeatureFlagProvider(ctx context.Context) (FeatureFlagProvider, error) {
-	consulProvider := consul.NewFeatureFlagProvider()
+	consulErr := consul.AddressUnavailable()
 	redisClient := redis.Client()
 	basePath := redisService.KVBasePath
 	var redisErr error
@@ -281,10 +282,16 @@ func newFeatureFlagProvider(ctx context.Context) (FeatureFlagProvider, error) {
 		redisErr = fmt.Errorf("redis.kv_base_path must not be empty")
 	}
 	if redisErr != nil {
+		if consulErr != nil {
+			return nil, fmt.Errorf("feature flags have no source: %s; %w", redisErr, consulErr)
+		}
 		log.Warnf(ctx, "feature flags will use consul fallback: %s", redisErr)
-		return consulProvider, nil
+		return consul.NewFeatureFlagProvider(), nil
 	}
 
 	provider := redis.NewFeatureFlagClient(redisClient, basePath)
-	return newFallbackFeatureFlagProvider(provider, consulProvider, provider.InitializeFeatureFlags), nil
+	if consulErr != nil {
+		return newRedisFeatureFlagProvider(provider, consulErr.Reason), nil
+	}
+	return newFallbackFeatureFlagProvider(provider, consul.NewFeatureFlagProvider(), provider.InitializeFeatureFlags), nil
 }

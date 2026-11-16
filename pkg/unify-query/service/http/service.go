@@ -102,7 +102,8 @@ func (s *Service) Reload(ctx context.Context) {
 	s.wg.Add(1)
 	go func(server *gohttp.Server) {
 		defer s.wg.Done()
-		if err = server.ListenAndServe(); err != nil && !errors.Is(gohttp.ErrServerClosed, err) {
+		// 两个 goroutine 各用自己的 err，不共写 Reload 的变量。
+		if err := server.ListenAndServe(); err != nil && !errors.Is(gohttp.ErrServerClosed, err) {
 			log.Panicf(ctx, "failed to start server for->[%s]", err)
 			return
 		}
@@ -115,8 +116,7 @@ func (s *Service) Reload(ctx context.Context) {
 	go func() {
 		defer s.wg.Done()
 		<-s.ctx.Done()
-		err = s.server.Close()
-		if err != nil {
+		if err := s.server.Close(); err != nil {
 			log.Errorf(ctx, "failed to close http server for->[%s]", err)
 		}
 	}()

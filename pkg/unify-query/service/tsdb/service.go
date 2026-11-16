@@ -57,7 +57,7 @@ func (s *Service) Reload(ctx context.Context) {
 
 	err = s.loopReloadStorage(s.ctx)
 	if err != nil {
-		log.Errorf(context.TODO(), "prometheus service close success")
+		log.Errorf(context.TODO(), "start storage reload loop failed: %s", err)
 		return
 	}
 
@@ -77,6 +77,10 @@ func (s *Service) Close() {
 
 // loopReloadStorage
 func (s *Service) loopReloadStorage(ctx context.Context) error {
+	// Consul Storage 没有可用地址时只在加载时具名报一次：地址不会在运行中出现，不起每分钟重试。
+	if err := consulStorageAddressError(); err != nil {
+		return err
+	}
 	// 先建立订阅再读取全量快照，避免首次读取和订阅确认之间遗漏 Redis 更新。
 	provider := getStorageProvider()
 	watchCh, err := provider.WatchStorageInfo(ctx)

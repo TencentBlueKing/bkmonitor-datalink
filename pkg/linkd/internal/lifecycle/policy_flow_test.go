@@ -29,13 +29,14 @@ func TestMergeFlowFreezesRolesAndBoundedFacts(t *testing.T) {
 			if err := freezeMergeFlow(change, &relation); err != nil {
 				t.Fatal(err)
 			}
+			facts := v3Facts(t, change.LogParams, "linkd_merge_"+tc.kind+".v1")
 			var role string
-			if json.Unmarshal(change.LogParams["merge_role"], &role) != nil || role != tc.role {
+			if json.Unmarshal(facts["merge_role"], &role) != nil || role != tc.role {
 				t.Fatal("lost merge role")
 			}
 			clone := change.Clone()
-			change.LogParams["merge_role"][0] = 'x'
-			if json.Unmarshal(clone.LogParams["merge_role"], &role) != nil || role != tc.role {
+			change.LogParams["content_params"][0] = 'x'
+			if json.Unmarshal(v3Facts(t, clone.LogParams, "linkd_merge_"+tc.kind+".v1")["merge_role"], &role) != nil || role != tc.role {
 				t.Fatal("retry payload shared bytes")
 			}
 			if _, exists := clone.LogParams["members"]; exists {
@@ -95,7 +96,7 @@ func TestEventShieldFlowReportsOnlyChangedBindings(t *testing.T) {
 			t.Fatal("lost transition kind")
 		}
 		var bindings []domain.ShieldBinding
-		if json.Unmarshal(logs[i].Params["bindings"], &bindings) != nil || len(bindings) != 1 || bindings[0].BindingID == "retained" {
+		if json.Unmarshal(v3Facts(t, logs[i].Params, "linkd_"+string(kind)+".v1")["bindings"], &bindings) != nil || len(bindings) != 1 || bindings[0].BindingID == "retained" {
 			t.Fatal("retained binding repeated")
 		}
 	}
@@ -129,11 +130,12 @@ func TestReleaseFlowRecordsConfirmedReasonAndRetryUsesFrozenFacts(t *testing.T) 
 			for _, log := range page.Logs {
 				if log.OperationKind == domain.OperationKindMergeRelease {
 					found = true
+					facts := v3Facts(t, log.Params, "linkd_merge_release.v1")
 					var actual string
-					if err := json.Unmarshal(log.Params["reason_code"], &actual); err != nil {
+					if err := json.Unmarshal(facts["reason_code"], &actual); err != nil {
 						t.Fatal(err)
 					}
-					if actual != reason || log.Params["policy_display"] != nil || string(log.Params["display_version"]) != "2" || string(log.Params["duration_seconds"]) != "60" || log.Params["policy"] == nil {
+					if actual != reason || facts["policy_display"] != nil || string(facts["duration_seconds"]) != "60" || facts["policy"] == nil {
 						t.Fatal("release history lost confirmed facts")
 					}
 				}
@@ -145,7 +147,7 @@ func TestReleaseFlowRecordsConfirmedReasonAndRetryUsesFrozenFacts(t *testing.T) 
 	}
 }
 
-func TestShieldFlowV2PreservesPeriodsAndCollectionsWithoutStaticDisplay(t *testing.T) {
+func TestShieldFlowV3PreservesPeriodsAndCollectionsWithoutStaticDisplay(t *testing.T) {
 	a := releaseAlert()
 	period := domain.PolicyPeriod{From: a.UpdateAt, Until: a.UpdateAt.Add(time.Hour)}
 	b := domain.ShieldBinding{BindingID: "binding", Policy: a.Merge.Pending[0].Policy, Origin: "manual", OperatorID: "user", OperatorDisplay: "张三", Reason: "配置原因", Periods: []domain.PolicyPeriod{period}}
@@ -153,9 +155,10 @@ func TestShieldFlowV2PreservesPeriodsAndCollectionsWithoutStaticDisplay(t *testi
 	if err != nil || len(logs) != 1 {
 		t.Fatal(logs, err)
 	}
+	facts := v3Facts(t, logs[0].Params, "linkd_shield.v1")
 	for _, key := range []string{"bindings", "after_bindings"} {
 		var bindings []domain.JSONObject
-		if json.Unmarshal(logs[0].Params[key], &bindings) != nil || len(bindings) != 1 {
+		if json.Unmarshal(facts[key], &bindings) != nil || len(bindings) != 1 {
 			t.Fatal("binding collection changed")
 		}
 		var periods []domain.PolicyPeriod
@@ -176,7 +179,7 @@ func TestShieldFlowV2PreservesPeriodsAndCollectionsWithoutStaticDisplay(t *testi
 	}
 }
 
-func TestSuppressionFlowV2KeepsRepeatedReferencesAndWindow(t *testing.T) {
+func TestSuppressionFlowV3KeepsRepeatedReferencesAndWindow(t *testing.T) {
 	event := testEvent("event", "warning")
 	ref := suppressionTestSnapshot().Releases[0]
 	step := store.SuppressionStep{Policy: ref, Scheme: "aggregation", Outcome: "suppressed", Window: &store.SuppressionWindow{OwnerAlertID: "real-owner"}}
@@ -185,8 +188,9 @@ func TestSuppressionFlowV2KeepsRepeatedReferencesAndWindow(t *testing.T) {
 	if err != nil || len(logs) != 1 {
 		t.Fatal(logs, err)
 	}
+	facts := v3Facts(t, logs[0].Params, "linkd_policy_suppress.v1")
 	var saved store.SuppressionStep
-	if json.Unmarshal(logs[0].Params["suppression"], &saved) != nil || saved.Policy != ref || !reflect.DeepEqual(saved.Window, step.Window) || logs[0].Params["policy"] == nil || logs[0].Params["policy_display"] != nil || string(logs[0].Params["display_version"]) != "2" {
+	if json.Unmarshal(facts["suppression"], &saved) != nil || saved.Policy != ref || !reflect.DeepEqual(saved.Window, step.Window) || facts["policy"] == nil || facts["policy_display"] != nil {
 		t.Fatal("suppression structure changed or display retained")
 	}
 	if !reflect.DeepEqual(result.Steps[0], step) {

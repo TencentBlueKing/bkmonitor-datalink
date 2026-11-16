@@ -20,3 +20,23 @@ v2 屏蔽绑定不输出 `display/reason`，实际命中的 UTC 时间段保存�
 KAC 按这些事实生成可读主流程，Linkd 策略引用不能当作 KAC 快照身份。快捷屏蔽成功节点只来自 AlertLog，本地操作审计和人员通知由 KAC 保留。
 
 后续新发布可在 Release 的 `origin` 固定 KAC 快照引用。流转查询由 AlertLog 的精确版本读取来源，KAC 核对策略类型、ID、快照内容中的租户及名称后生成旧页面的 `data-strategy-id` 跳转，并返回 `policy_snapshot_id/content_params`。快照不可用时仅显示名称，不猜测最新快照。关联不重复写入 AlertLog，重复绑定/策略引用仍保持；已有 Release 不回填。
+
+## v3 参数布局
+
+当前处于研发测试阶段，新策略日志与新屏蔽/合并变更直接生成 v3，不提供输出格式切换配置。已持久化变更仍按自身 v1/v2/v3 版本、原身份和事实输出；既有数据后续统一处理。
+
+v3 params 的共同字段为 display_version=3、content_key、content_params，以及原来实际存在的 operation_id、request_operation_id、event_id。其余原动作事实全部移入 content_params；只保留一个位置，不复制 content/content_format 或静态策略配置。准确 policy.id/version/digest、绑定集合、实际时段、窗口/关系、角色、父告警/成员数及 reason_code 仍按原产生点冻结。
+
+| content_key | operation_kind | 动作参数 |
+| --- | --- | --- |
+| linkd_shield.v1 | shield | bindings、before_bindings、after_bindings 和实际 reason_code |
+| linkd_unshield.v1 | unshield | 本次实际解除集合及 before/after，不把部分解除变成全部解除 |
+| linkd_policy_suppress.v1 | suppress | policy、suppression、severity、reason_code |
+| linkd_merge_wait.v1 | merge_wait | policy、原 policy_id、window_id、duration_seconds、deadline、change_kind、reason_code |
+| linkd_merge_member_link.v1 | merge | 原 policy、主告警/成员数、角色、窗口/关系与原因 |
+| linkd_merge_parent_ready.v1 | merge | 原主告警生成事实 |
+| linkd_merge_member_unlink.v1 | merge_end | 原关系结束事实 |
+| linkd_merge_release.v1 | merge_release | 原等待释放事实及已有 duration_seconds |
+| linkd_merge_parent_recover.v1 | recover | 原主告警恢复事实及 merge_members_ended |
+
+v3 流水使用 policy-flow-log-v3 身份命名空间。AlertPolicyChange.LogVersion 固定原输出；AlertMergeChange.LogParams 按保存事实重放。EventPlan.Logs 只在内存中，失败重试会重新准备，不提供跨重启或跨配置切换的持久冻结保证。旧 Event 已部分追加日志、结果尚未完成时，切换格式可能产生两个版本的同义日志。2026-11-13 用户确认已写入旧数据后续统一处理，本轮不新增 Event 级输出版本或暂停接入前提；切换期间旧 Event 可能留下的跨版本同义记录也在后续处理。回退格式有相同边界。新格式不更改策略裁决、窗口、计数、绑定或投递条件。

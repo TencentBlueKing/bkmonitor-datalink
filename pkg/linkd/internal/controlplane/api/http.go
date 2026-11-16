@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -54,12 +55,15 @@ type API struct {
 	OneModel *queryservice.Service
 	// CloseConcurrency 只限制单个筛选关闭请求的内部批次并发。
 	CloseConcurrency int
-	AlertCloser      AlertCloser
-	KACCloser        KACCloser
-	SourceAlerts     *SourceAlerts
-	AlertSearch      *AlertSearch
-	EnrichRecords    *EnrichRecords
-	Previewer        interface {
+	AlertLogAppender AlertLogAppender
+	// AlertLogLogger 复用部署日志的脱敏处理，记录部分成功边界的失败。
+	AlertLogLogger *slog.Logger
+	AlertCloser    AlertCloser
+	KACCloser      KACCloser
+	SourceAlerts   *SourceAlerts
+	AlertSearch    *AlertSearch
+	EnrichRecords  *EnrichRecords
+	Previewer      interface {
 		Preview(context.Context, preview.Request) (preview.Response, error)
 	}
 	// IngestPreviewer 只标准化并返回 KAC 调试字段，不执行丰富和业务写入。
@@ -113,6 +117,7 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("GET /api/v1/metrics/catalog", metricCatalogHandler())
 	mux.HandleFunc("POST /api/v1/enrich/preview", a.previewEnrich)
 	mux.HandleFunc("POST /api/v1/ingest/preview", a.previewIngest)
+	mux.HandleFunc("POST /api/v1/alert-logs", a.appendAlertLogs)
 	mux.HandleFunc("GET /api/v1/alerts", a.listSourceAlerts)
 	mux.HandleFunc("POST /api/v1/alerts/search", a.searchAlerts)
 	mux.HandleFunc("POST /api/v1/alerts/close", a.closeAlertsByFilter)

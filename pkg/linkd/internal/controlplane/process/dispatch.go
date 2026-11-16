@@ -227,7 +227,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	if hasKACDelivery(cfg) {
 		queryConnections += cfg.Plugins.KAC.Delivery.WithDefaults().ProjectionConcurrency
 	}
-	queryRepository, err := storeassembly.OpenReadOnly(ctx, *cfg.Storage, queryConnections)
+	queryRepository, err := storeassembly.OpenExisting(ctx, *cfg.Storage, queryConnections)
 	if err != nil {
 		return err
 	}
@@ -240,6 +240,8 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	if !ok {
 		return fmt.Errorf("repository does not support source alert queries")
 	}
+	api.AlertLogAppender = queryRepository.Repository
+	api.AlertLogLogger = logger
 	api.SourceAlerts = controlapi.NewSourceAlerts(sourceReader)
 	alertSearcher, _ := queryRepository.Repository.(controlapi.AlertSearcher)
 	api.AlertSearch = controlapi.NewAlertSearch(alertSearcher, d.AlertSearch, logger)

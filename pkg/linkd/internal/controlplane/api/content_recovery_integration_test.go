@@ -216,8 +216,9 @@ func TestContentFailureUsesFallbackWithoutBlockingIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if alert.Alert.Content != first.Content || alert.Alert.TriggerEventID != first.EventID || started.Load() != 1 || facts.calls.Load() != 1 {
-		t.Fatal("content failure did not freeze source text within the original task")
+	// 每次同级触发都按本次来源文本降级；内容更新不改变首次锚点，也不重启任务。
+	if alert.Alert.Content != second.Content || alert.Alert.TriggerEventID != first.EventID || started.Load() != 1 || facts.calls.Load() != 2 {
+		t.Fatalf("content=%q trigger=%s tasks=%d content_calls=%d", alert.Alert.Content, alert.Alert.TriggerEventID, started.Load(), facts.calls.Load())
 	}
 	ordered.mu.Lock()
 	order := slices.Clone(ordered.order)
@@ -244,7 +245,7 @@ func TestContentFailureUsesFallbackWithoutBlockingIntegration(t *testing.T) {
 	if _, err := processor.ProcessEvent(ctx, stored); err != nil {
 		t.Fatal(err)
 	}
-	if facts.calls.Load() != 1 {
+	if facts.calls.Load() != 2 {
 		t.Fatal("terminal replay generated content again")
 	}
 }

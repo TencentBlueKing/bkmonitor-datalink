@@ -130,8 +130,10 @@ func policySuppressionLogs(event domain.Event, result store.SuppressionEvaluatio
 		}
 		log.Params["policy"] = policy
 		log.Params["suppression"] = decision
-		log.Params["display_version"] = json.RawMessage("2")
-		log.LogID = digestStrings("policy-flow-log-v2", log.LogID)
+		log, err = policyFlowLog(log, "linkd_policy_suppress.v1")
+		if err != nil {
+			return nil, err
+		}
 		logs = append(logs, log)
 	}
 	return logs, nil

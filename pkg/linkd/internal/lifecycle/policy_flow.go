@@ -57,7 +57,14 @@ func freezeMergeMemberFlow(change *domain.AlertMergeChange, relation *domain.Mer
 		}
 		params[key] = raw
 	}
+	params["operation_id"], _ = json.Marshal(change.OperationID)
+	params["window_id"], _ = json.Marshal(change.WindowID)
+	params["relation_id"], _ = json.Marshal(change.RelationID)
 	var err error
+	params, err = policyFlowParams(params, "linkd_merge_"+change.Kind+".v1")
+	if err != nil {
+		return err
+	}
 	change.LogParams, err = params.Normalize()
 	return err
 }
@@ -80,7 +87,6 @@ func eventShieldFlowLogs(event domain.Event, alert domain.Alert, before, after [
 		if err != nil {
 			return nil, err
 		}
-		log.Params["display_version"] = json.RawMessage("2")
 		for key, value := range map[string][]domain.ShieldBinding{"bindings": item.bindings, "before_bindings": before, "after_bindings": after} {
 			raw, err := marshalShieldFlowBindings(value, 2)
 			if err != nil {
@@ -88,7 +94,10 @@ func eventShieldFlowLogs(event domain.Event, alert domain.Alert, before, after [
 			}
 			log.Params[key] = raw
 		}
-		log.LogID = digestStrings("policy-flow-log-v2", log.LogID)
+		log, err = policyFlowLog(log, "linkd_"+string(item.kind)+".v1")
+		if err != nil {
+			return nil, err
+		}
 		logs = append(logs, log)
 	}
 	return logs, nil
@@ -118,4 +127,34 @@ func marshalShieldFlowBindings(bindings []domain.ShieldBinding, version int) (js
 		facts = append(facts, item)
 	}
 	return json.Marshal(facts)
+}
+
+// policyFlowParams 仅对新意图生成 v3 信封；保存完整原动作事实，不增加展示快照。
+func policyFlowParams(params domain.JSONObject, key string) (domain.JSONObject, error) {
+	facts := params.Clone()
+	result := domain.JSONObject{"display_version": json.RawMessage("3")}
+	result["content_key"], _ = json.Marshal(key)
+	delete(facts, "display_version")
+	for _, name := range []string{"operation_id", "request_operation_id", "event_id"} {
+		if raw, ok := facts[name]; ok {
+			result[name] = raw
+			delete(facts, name)
+		}
+	}
+	raw, err := json.Marshal(facts)
+	if err != nil {
+		return nil, err
+	}
+	result["content_params"] = raw
+	return result.Normalize()
+}
+
+func policyFlowLog(log domain.AlertLog, key string) (domain.AlertLog, error) {
+	params, err := policyFlowParams(log.Params, key)
+	if err != nil {
+		return domain.AlertLog{}, err
+	}
+	log.Params = params
+	log.LogID = digestStrings("policy-flow-log-v3", log.LogID)
+	return log, nil
 }

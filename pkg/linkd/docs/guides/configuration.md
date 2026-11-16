@@ -68,9 +68,9 @@ LINKD_TEST_KAFKA_BROKERS=127.0.0.1:9092 go test -race ./internal/consume/kafka -
 
 Lifecycle 默认并发为 256；`lifecycle.elasticsearch_write_batch` 默认启用，仅作用于 Elasticsearch
 Lifecycle runtime。Event result update、Alert CAS/create、AlertLog create 跨独立调用合并为 Bulk，
-CAS 校验和冲突核对的 realtime GET 合并为 `_mget`。Lifecycle Event 点读通过 `_source` 投影排除
-不参与裁决的 `source_raw_data`，Event 终态 update 只写 `related_alert_ids` 和 `processing`；
-公共 Event 查询仍返回完整文档。每项成功后调用方才继续缓存、输出和 ACK；
+CAS 校验和冲突核对的 realtime GET 合并为 `_mget`。Lifecycle Event 点读保留完整来源事实，
+包括 `source_raw_data`，供 Event Enrich 和完整文档预算检查使用；Event 终态 update 只写
+`related_alert_ids` 和 `processing`，保留原始数据。每项成功后调用方才继续缓存、输出和 ACK；
 批次没有跨文档事务语义，Cleaner 与 Archiver 不使用这个队列。
 
 ```yaml
@@ -1092,3 +1092,7 @@ control_plane:
 ```
 
 当前 Cleaner/Lifecycle 消息处理不预置可重试错误白名单；普通错误或 panic 记录后确认。后续适配器显式标记可重试时，总尝试上限为三次，不能用较大的旧 retry_max_attempts 绕过。任务取消和 Broker 确认失败仍遵循所有权/确认协议，不属于业务消息重试。
+
+### 策略日志布局发布
+
+新策略日志固定使用 display_version=3 和 content_key/content_params，不设置格式切换开关。已持久化屏蔽/合并变更继续使用保存的版本，既有数据后续统一处理。EventPlan 仅在内存中，不提供跨重启原样重放保证。字段及冻结位置见 [策略流转合同](../reference/contracts/policy-flow-records.md)。

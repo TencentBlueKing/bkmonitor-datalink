@@ -30,3 +30,5 @@ Kafka Alert V1、KAC Alarm 兼容输出与策略索引变更通知 v1；后续�
 - [KAC 告警丰富事实查询](kac-enrich-records.md)：准确关联事件的冻结结果、字段前后对比与有界只读接口。
 
 - [Event 丰富窗口查询](event-enrich-window.md)：内置与第三方来源的真实事件采样、逐等级结果、窗口分页及诊断。
+
+- [AlertLog 批量追加](alert-logs.md)：不可变事实追加、逐项结果及 KAC 操作枚举。

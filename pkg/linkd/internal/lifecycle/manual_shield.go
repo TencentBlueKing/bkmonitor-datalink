@@ -114,7 +114,7 @@ func (p *Processor) BindShield(ctx context.Context, c ShieldCommand) (ShieldComm
 		next.PolicyTags = slices.Compact(next.PolicyTags)
 		next.LastShieldOperation = &domain.AlertShieldOperation{ID: c.OperationID, RequestHash: hash}
 		next.UpdateAt = nextAlertUpdateTime(now, a.UpdateAt)
-		next.PolicyChange = &domain.AlertPolicyChange{LogVersion: 2, OperationID: digestStrings("manual-shield", c.TenantID, c.AlertID, c.OperationID), EffectiveAt: next.UpdateAt, Before: a.Shield.Clone().Bindings, After: next.Shield.Clone().Bindings}
+		next.PolicyChange = &domain.AlertPolicyChange{LogVersion: 3, OperationID: digestStrings("manual-shield", c.TenantID, c.AlertID, c.OperationID), EffectiveAt: next.UpdateAt, Before: a.Shield.Clone().Bindings, After: next.Shield.Clone().Bindings}
 		updated, err := p.compareAndSetAlert(ctx, current, next)
 		if errors.Is(err, store.ErrVersionConflict) {
 			continue

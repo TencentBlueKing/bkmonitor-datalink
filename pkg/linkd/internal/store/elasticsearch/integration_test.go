@@ -265,7 +265,8 @@ func TestElasticsearchLifecycleEventProjectionAndPartialCAS(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(projected.Event.SourceRawData) != 0 || len(projected.Event.ExtraData) != 1 {
+			// Lifecycle Enrich 需要完整来源事实，后续局部 CAS 仍不得覆盖原始数据。
+			if string(projected.Event.SourceRawData["large"]) != `{"preserved":true}` || string(projected.Event.ExtraData["needed"]) != `{"value":1}` {
 				t.Fatalf("lifecycle projection=%#v", projected.Event)
 			}
 			plan := &store.EventPlan{

@@ -97,8 +97,23 @@ func TestRedisShieldHintSubscriptionIsolationCancellationAndLoss(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("blocked read leaked on shutdown")
 	}
-	if n, err := s.PublishShieldHint(t.Context(), "tenant", "after-stop"); err != nil || n != 0 {
-		t.Fatal("subscription remains", n, err)
+	// 本地监听已经退出；另一连接的 PUBLISH 可能先于 Redis 处理 TCP 关闭。
+	// 有界等待服务端清理订阅，持续残留仍失败，不能把一次计数当作泄漏证据。
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for {
+		n, err := s.PublishShieldHint(t.Context(), "tenant", "after-stop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			break
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("subscription remains", n)
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 	if len(received) != 0 {
 		t.Fatal("delivered forged or foreign hint")

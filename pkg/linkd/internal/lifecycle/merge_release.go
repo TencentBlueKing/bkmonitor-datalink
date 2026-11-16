@@ -87,7 +87,18 @@ func (p *Processor) ReleaseMergeWindowWithReason(ctx context.Context, tenant, id
 		if err := freezeMergeFlow(replacement.MergeChange, nil); err != nil {
 			return store.StoredAlert{}, err
 		}
-		replacement.MergeChange.LogParams["reason_code"], _ = json.Marshal(reason)
+		rawReason, _ := json.Marshal(reason)
+		var facts domain.JSONObject
+		if err := json.Unmarshal(replacement.MergeChange.LogParams["content_params"], &facts); err != nil {
+			return store.StoredAlert{}, err
+		}
+		facts["reason_code"] = rawReason
+		rawFacts, err := json.Marshal(facts)
+		if err != nil {
+			return store.StoredAlert{}, err
+		}
+		replacement.MergeChange.LogParams["content_params"] = rawFacts
+
 		updated, err := p.compareAndSetAlert(ctx, current, replacement)
 		if errors.Is(err, store.ErrVersionConflict) {
 			continue
@@ -151,6 +162,11 @@ func (p *Processor) mergeChangeOutput(ctx context.Context, current store.StoredA
 		namespace := "policy-flow-log-v1"
 		if string(intent.LogParams["display_version"]) == "2" {
 			namespace = "policy-flow-log-v2"
+		}
+		if string(intent.LogParams["display_version"]) == "3" {
+			namespace = "policy-flow-log-v3"
+			// 新格式完整事实已在 CAS 前冻结，不把旧平铺窗口/关系再加一份。
+			params = intent.LogParams.Clone()
 		}
 		logID = digestStrings(namespace, logID)
 	}

@@ -275,7 +275,7 @@ func TestAggregationSuppressionWritesOwnerLogAndRecalculatesAfterFailure(t *test
 				t.Fatal("lost member event identity")
 			}
 			var step store.SuppressionStep
-			if json.Unmarshal(policyLog.Params["suppression"], &step) != nil || step.Policy != snapshot.Releases[0] || step.Window.OwnerAlertID != ownerID {
+			if json.Unmarshal(v3Facts(t, policyLog.Params, "linkd_policy_suppress.v1")["suppression"], &step) != nil || step.Policy != snapshot.Releases[0] || step.Window.OwnerAlertID != ownerID {
 				t.Fatal("lost frozen policy/window")
 			}
 			otherTenant, err := base.ListAlertLogs(t.Context(), "other-tenant", ownerID, store.PageRequest{})

@@ -129,11 +129,33 @@ const (
 	OperationKindClose          OperationKind = "close"
 	OperationKindSuppress       OperationKind = "suppress"
 	OperationKindPush           OperationKind = "push"
+
+	// 仅扩展 18 类现行 KAC 写入操作；派生展示和历史操作不属于追加协议。
+	OperationKindKACNotDispatched        OperationKind = "not_dispatched"
+	OperationKindKACDispatched           OperationKind = "dispatched"
+	OperationKindKACResponse             OperationKind = "response"
+	OperationKindKACPendingExecute       OperationKind = "pending_execute"
+	OperationKindKACApproval             OperationKind = "approval"
+	OperationKindKACAutoExecuting        OperationKind = "auto_executing"
+	OperationKindKACAutoExecutingFailure OperationKind = "auto_executing_failure"
+	OperationKindKACAutoExecutingRetry   OperationKind = "auto_executing_retry"
+	OperationKindKACAutoExecutingSuccess OperationKind = "auto_executing_success"
+	OperationKindKACAutoOrdering         OperationKind = "auto_ordering"
+	OperationKindKACAutoOrderingFailure  OperationKind = "auto_ordering_failure"
+	OperationKindKACAutoOrderingFinish   OperationKind = "auto_ordering_finish"
+	OperationKindKACManualClosed         OperationKind = "manual_closed"
+	OperationKindKACAutoClosed           OperationKind = "auto_closed"
+	OperationKindKACSystemClosed         OperationKind = "system_closed"
+	OperationKindKACSourceClosed         OperationKind = "source_closed"
+	OperationKindKACRestored             OperationKind = "restored"
+	OperationKindKACNotify               OperationKind = "notify"
 )
 
 func (k OperationKind) Valid() bool {
 	switch k {
 	case OperationKindMergeWait, OperationKindMergeEnd, OperationKindMerge, OperationKindMergeRelease, OperationKindShield, OperationKindUnshield, OperationKindAdmit, OperationKindSeverityChange, OperationKindTrigger, OperationKindRecover, OperationKindClose, OperationKindSuppress, OperationKindPush:
+		return true
+	case OperationKindKACNotDispatched, OperationKindKACDispatched, OperationKindKACResponse, OperationKindKACPendingExecute, OperationKindKACApproval, OperationKindKACAutoExecuting, OperationKindKACAutoExecutingFailure, OperationKindKACAutoExecutingRetry, OperationKindKACAutoExecutingSuccess, OperationKindKACAutoOrdering, OperationKindKACAutoOrderingFailure, OperationKindKACAutoOrderingFinish, OperationKindKACManualClosed, OperationKindKACAutoClosed, OperationKindKACSystemClosed, OperationKindKACSourceClosed, OperationKindKACRestored, OperationKindKACNotify:
 		return true
 	default:
 		return false

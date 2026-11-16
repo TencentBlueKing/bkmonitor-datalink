@@ -277,7 +277,7 @@ func (c *AlertPolicyChange) Validate(a Alert) error {
 	if c == nil {
 		return nil
 	}
-	if c.LogVersion < 0 || c.LogVersion > 2 {
+	if c.LogVersion < 0 || c.LogVersion > 3 {
 		return fmt.Errorf("invalid policy log version")
 	}
 	err := ValidateIdentityPart("policy operation", c.OperationID, 128)

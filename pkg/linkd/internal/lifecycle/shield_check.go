@@ -130,7 +130,7 @@ func (p *Processor) RecheckShield(ctx context.Context, tenant, id string, expect
 			slices.Sort(afterIDs)
 			// 业务版本固定本次变更身份；投影 ACK 和安排复查不推进 revision，重试不会另造操作。
 			raw, _ := json.Marshal([]any{tenant, id, current.Alert.Revision, beforeIDs, afterIDs, replacement.PolicyTags})
-			replacement.PolicyChange = &domain.AlertPolicyChange{LogVersion: 2, OperationID: digestStrings("shield-change", string(raw)), EffectiveAt: replacement.UpdateAt, Before: current.Alert.Shield.Clone().Bindings, After: replacement.Shield.Clone().Bindings}
+			replacement.PolicyChange = &domain.AlertPolicyChange{LogVersion: 3, OperationID: digestStrings("shield-change", string(raw)), EffectiveAt: replacement.UpdateAt, Before: current.Alert.Shield.Clone().Bindings, After: replacement.Shield.Clone().Bindings}
 		}
 		updated, err := p.compareAndSetAlert(ctx, current, replacement)
 		if errors.Is(err, store.ErrVersionConflict) {
@@ -219,6 +219,13 @@ func (p *Processor) finishPendingChanges(ctx context.Context, current store.Stor
 				params["request_operation_id"], _ = json.Marshal(item.bindings[0].OperationID)
 			}
 		}
+		if intent.LogVersion == 3 {
+			var err error
+			params, err = policyFlowParams(params, "linkd_"+string(item.kind)+".v1")
+			if err != nil {
+				return store.StoredAlert{}, err
+			}
+		}
 		logs = append(logs, domain.AlertLog{LogID: logID, BKTenantID: current.Alert.BKTenantID, AlertID: current.Alert.AlertID, OperatorKind: actor, OperationKind: item.kind, CreatedTime: intent.EffectiveAt, Params: params})
 	}
 	hookLogs, err := p.runHooks(ctx, AlertChangeCause{Type: AlertChangeCauseSystemOperation, ID: intent.OperationID}, current.Alert, OutcomeAlertShieldChanged, false)
@@ -255,5 +262,5 @@ func terminalShieldChange(before domain.Alert, at time.Time, cause string) *doma
 	if !before.Shield.Active {
 		return nil
 	}
-	return &domain.AlertPolicyChange{LogVersion: 2, OperationID: digestStrings("terminal-shield-change", before.BKTenantID, before.AlertID, cause), EffectiveAt: at, Before: before.Shield.Clone().Bindings}
+	return &domain.AlertPolicyChange{LogVersion: 3, OperationID: digestStrings("terminal-shield-change", before.BKTenantID, before.AlertID, cause), EffectiveAt: at, Before: before.Shield.Clone().Bindings}
 }

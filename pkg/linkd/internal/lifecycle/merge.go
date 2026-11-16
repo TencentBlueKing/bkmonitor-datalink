@@ -77,11 +77,13 @@ func (p *Processor) planMerge(ctx context.Context, event domain.Event, evaluatio
 			duration, _ := json.Marshal(int64(step.Wait.Deadline.Sub(step.Wait.StartedAt).Seconds()))
 			deadline, _ := json.Marshal(step.Wait.Deadline)
 			log.Params["policy"] = policy
-			log.Params["display_version"] = json.RawMessage("2")
 			log.Params["duration_seconds"] = duration
 			log.Params["deadline"] = deadline
 			log.Params["change_kind"] = json.RawMessage(`"wait"`)
-			log.LogID = digestStrings("policy-flow-log-v2", log.LogID)
+			log, err = policyFlowLog(log, "linkd_merge_wait.v1")
+			if err != nil {
+				return err
+			}
 			plan.Logs = append(plan.Logs, log)
 		}
 	}

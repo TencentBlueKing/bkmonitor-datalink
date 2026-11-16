@@ -99,8 +99,8 @@ func TestManualShieldImmediateRetryExpiryAndDependencyFailure(t *testing.T) {
 				domain.ShieldBinding
 				Periods []domain.PolicyPeriod `json:"periods"`
 			}
-			if json.Unmarshal(row.Params["bindings"], &bindings) != nil || len(bindings) != 1 || len(bindings[0].Periods) != 1 || bindings[0].OperatorDisplay != "张三" || bindings[0].Policy != command.Policy || bindings[0].Reason != "" {
-				t.Fatal("manual business facts missing", string(row.Params["bindings"]))
+			if json.Unmarshal(shieldLogFacts(t, row)["bindings"], &bindings) != nil || len(bindings) != 1 || len(bindings[0].Periods) != 1 || bindings[0].OperatorDisplay != "张三" || bindings[0].Policy != command.Policy || bindings[0].Reason != "" {
+				t.Fatal("manual business facts missing", string(shieldLogFacts(t, row)["bindings"]))
 			}
 			var operation string
 			if json.Unmarshal(row.Params["request_operation_id"], &operation) != nil || operation != command.OperationID {

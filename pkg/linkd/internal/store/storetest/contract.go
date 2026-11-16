@@ -194,6 +194,53 @@ func RunRepositoryContract(t *testing.T, factory Factory) {
 			t.Fatalf("empty AppendAlertLogs() error=%v", err)
 		}
 	})
+	t.Run("KAC operation kinds and opaque facts round trip", func(t *testing.T) {
+		repo := factory(t)
+		ctx := context.Background()
+		kinds := []domain.OperationKind{domain.OperationKindKACNotDispatched, domain.OperationKindKACDispatched, domain.OperationKindKACResponse, domain.OperationKindKACPendingExecute, domain.OperationKindKACApproval, domain.OperationKindKACAutoExecuting, domain.OperationKindKACAutoExecutingFailure, domain.OperationKindKACAutoExecutingRetry, domain.OperationKindKACAutoExecutingSuccess, domain.OperationKindKACAutoOrdering, domain.OperationKindKACAutoOrderingFailure, domain.OperationKindKACAutoOrderingFinish, domain.OperationKindKACManualClosed, domain.OperationKindKACAutoClosed, domain.OperationKindKACSystemClosed, domain.OperationKindKACSourceClosed, domain.OperationKindKACRestored, domain.OperationKindKACNotify}
+		logs := make([]domain.AlertLog, 0, len(kinds))
+		for i, kind := range kinds {
+			logs = append(logs, domain.AlertLog{LogID: "kac-" + string(kind), BKTenantID: "tenant-1", AlertID: "alert-1", OperatorKind: domain.OperatorKindSystem, OperationKind: kind, CreatedTime: time.Date(2026, 11, 13, 6, 2, 21, 123456789+i, time.UTC), Params: domain.JSONObject{}})
+		}
+		// 展示字段不属于主记录；事实中的显式 null 必须往返保留。
+		logs[2].Params = domain.JSONObject{"content_key": []byte(`"only_response.v1"`), "content_params": []byte(`{"username":"alice","remark":null}`), "policy_snapshot_id": []byte(`null`)}
+		items, err := repo.AppendAlertLogs(ctx, logs)
+		if err != nil || len(items) != len(logs) {
+			t.Fatal(items, err)
+		}
+		for i, item := range items {
+			if item.Err != nil || !item.Result.Created {
+				t.Fatalf("append %s: %+v", logs[i].OperationKind, item)
+			}
+		}
+		page, err := waitForAlertLogs(ctx, repo, "tenant-1", "alert-1", len(logs))
+		if err != nil || len(page.Logs) != len(logs) {
+			t.Fatal("registered kinds lost", len(page.Logs), err)
+		}
+		byID := make(map[string]domain.AlertLog, len(page.Logs))
+		for _, log := range page.Logs {
+			byID[log.LogID] = log
+		}
+		for _, want := range logs {
+			got, exists := byID[want.LogID]
+			if !exists || got.OperationKind != want.OperationKind || !got.CreatedTime.Equal(want.CreatedTime) {
+				t.Fatalf("round trip changed %s", want.OperationKind)
+			}
+		}
+		if string(byID[logs[2].LogID].Params["policy_snapshot_id"]) != "null" {
+			t.Fatal("explicit null lost")
+		}
+		items, err = repo.AppendAlertLogs(ctx, logs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range items {
+			if item.Err != nil || item.Result.Created {
+				t.Fatal("duplicate KAC log was not idempotent", item)
+			}
+		}
+	})
+
 }
 
 func waitForEventsByAlert(

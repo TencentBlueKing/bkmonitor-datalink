@@ -335,13 +335,18 @@ func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapsho
 			if err != nil {
 				return nil, err
 			}
-			before, err := json.Marshal(associatedActive.Shield.Bindings)
+			before, err := marshalShieldFlowBindings(associatedActive.Shield.Bindings, 3)
 			if err != nil {
 				return nil, err
 			}
 			log.Params["before_bindings"] = before
 			log.Params["bindings"] = before
 			log.Params["after_bindings"] = json.RawMessage(`[]`)
+			// 终态解除也只生成 v3 动作事实。
+			log, err = policyFlowLog(log, "linkd_unshield.v1")
+			if err != nil {
+				return nil, err
+			}
 			plan.Logs = append(plan.Logs, log)
 		}
 	}

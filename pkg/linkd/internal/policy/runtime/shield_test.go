@@ -301,14 +301,14 @@ func TestPartialUnshieldHistoryKeepsRetainedBindingAndCompleteTransition(t *test
 		case domain.OperationKindShield:
 			shieldCount++
 			var after []domain.ShieldBinding
-			if err := json.Unmarshal(log.Params["after_bindings"], &after); err != nil || len(after) != 1 {
+			if err := json.Unmarshal(shieldLogFacts(t, log)["after_bindings"], &after); err != nil || len(after) != 1 {
 				t.Fatal("initial transition lost bindings", err)
 			}
 		case domain.OperationKindUnshield:
 			unshieldCount++
 			var removed, before, after []domain.ShieldBinding
 			for key, target := range map[string]*[]domain.ShieldBinding{"bindings": &removed, "before_bindings": &before, "after_bindings": &after} {
-				if err := json.Unmarshal(log.Params[key], target); err != nil {
+				if err := json.Unmarshal(shieldLogFacts(t, log)[key], target); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -452,7 +452,7 @@ func assertTerminalShieldHistory(t *testing.T, repo store.Repository, id string)
 		}
 		count++
 		var before, after []domain.ShieldBinding
-		if json.Unmarshal(log.Params["before_bindings"], &before) != nil || json.Unmarshal(log.Params["after_bindings"], &after) != nil || len(before) != 1 || len(after) != 0 {
+		if json.Unmarshal(shieldLogFacts(t, log)["before_bindings"], &before) != nil || json.Unmarshal(shieldLogFacts(t, log)["after_bindings"], &after) != nil || len(before) != 1 || len(after) != 0 {
 			t.Fatal("terminal cleanup lost binding history")
 		}
 	}
@@ -541,4 +541,17 @@ func TestRealRecheckReportIncludesCandidateStepsAndValidatesAsDiagnostic(t *test
 	if len(action.calls) != 0 {
 		t.Fatal("diagnostic changed admission behavior")
 	}
+}
+
+// shieldLogFacts 校验新输出格式后返回当次绑定事实；旧意图读取另有固定样本覆盖。
+func shieldLogFacts(t *testing.T, log domain.AlertLog) domain.JSONObject {
+	t.Helper()
+	if string(log.Params["display_version"]) != "3" {
+		t.Fatal("new shield history must use v3", log)
+	}
+	var facts domain.JSONObject
+	if err := json.Unmarshal(log.Params["content_params"], &facts); err != nil {
+		t.Fatal(err)
+	}
+	return facts
 }

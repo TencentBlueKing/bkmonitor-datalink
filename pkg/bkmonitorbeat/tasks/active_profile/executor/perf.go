@@ -20,6 +20,47 @@ import (
 // 被调度到。没有可查看的结果，上层按失败收敛并在 message 中说明。
 var ErrEmptyProfile = errors.New("empty profile")
 
+// targetCPUUsed 汇总目标进程在采样窗口内消耗的 CPU 时间。只统计前后两次都读到的
+// 进程；一个都没有时 measured 为 false，例如整机采集或进程在窗口内全部退出。
+func targetCPUUsed(before, after map[int32]time.Duration) (used time.Duration, measured bool) {
+	for pid, start := range before {
+		end, ok := after[pid]
+		if !ok {
+			continue
+		}
+		measured = true
+		if end > start {
+			used += end - start
+		}
+	}
+	return used, measured
+}
+
+// emptyProfileError 给没有样本的失败补上原因和调参方向，保留原错误链。
+// cpu-clock 的定时器只在线程占用 CPU 时走，且 perf 按线程和 CPU 分别计时，因此
+// 目标必须有某个线程在某个 CPU 上累计跑满一个采样周期才会产生样本。空闲的多线程
+// 进程在低频率下采不到样本是预期结果，提示里给出实际 CPU 占用，便于和采集故障区分。
+//
+// 采样前读到过、采样后一个都读不到，说明目标在窗口内全部退出：这时没有样本与
+// 采样频率无关，不能给出"进程太闲"的调参建议。
+func emptyProfileError(err error, conf perfConfig, before, after map[int32]time.Duration) error {
+	used, measured := targetCPUUsed(before, after)
+	if !measured && len(before) > 0 {
+		return fmt.Errorf("%w: target processes exited during the %ds sampling window", err, conf.DurationSec)
+	}
+	period := (time.Second / time.Duration(conf.FrequencyHz)).Round(100 * time.Microsecond)
+	hint := fmt.Sprintf(
+		"at %dhz a sample needs %s of CPU from one thread on one CPU; "+
+			"if the target is mostly idle, raise frequency_hz or duration_sec, or profile while it is busy",
+		conf.FrequencyHz, period,
+	)
+	if measured {
+		hint = fmt.Sprintf("target processes used %s of CPU during the %ds sampling window; %s",
+			used.Round(100*time.Microsecond), conf.DurationSec, hint)
+	}
+	return fmt.Errorf("%w: %s", err, hint)
+}
+
 // 以下标记执行失败的类别，上层据此生成 finished 的 error_type。标记经 MarkError
 // 附在原错误上，不改变错误文本。
 var (

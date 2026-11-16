@@ -198,6 +198,15 @@ finished 的 `event.content.error_type` 归类失败原因，SaaS 按类型给�
 | `processes_exited` | `partial_succeed` 的原因：部分进程在采集开始前退出 |
 | `collect_failed` | 其余失败 |
 
+perf 采集的 `empty_profile`，`message` 会带上目标进程在采样窗口内实际消耗的 CPU 时间和
+单个样本的门槛，例如 `target processes used 23.8ms of CPU during the 30s sampling window;
+at 99hz a sample needs 10.1ms of CPU from one thread on one CPU; ...`，用来区分"进程太闲"
+和采集故障。CPU 时间读自进程级 CPU 时钟，读不到时（如整机采集）只保留门槛和调参方向。
+目标在采样窗口内全部退出时与频率无关，`message` 只说明
+`target processes exited during the 30s sampling window`，不给调参建议。进程不存在的
+两种情况（没有匹配到、采集开始前已全部退出）在这之前就以 `process_not_found` 失败，
+不会走到这里。
+
 ### once_at 过期
 
 配置在 `execute_at` 之后才到达本机时不再采集，但仍上报一条 `status=failed` 的 finished
@@ -426,6 +435,11 @@ Location 1,000,000、Function 1,000,000、唯一 Sample 500,000、唯一 Sample 
 
 ## 已知边界
 
+- 空闲的多线程进程在低频率下会采不到样本。`cpu-clock` 的定时器只在线程占用 CPU 时走，
+  且 `perf record -p` 按线程和 CPU 分别计时，目标必须有某个线程在某个 CPU 上累计跑满一个
+  采样周期（99Hz 为 10.1ms）才产生样本。实测一个 22 线程、16 核、30 秒内合计只用 23.8ms
+  CPU 的进程，99Hz 为 0 样本，999Hz 正常。这是 perf 的预期行为，不调整默认频率，失败
+  信息里给出调参方向。
 - 内核模块（`.ko`）的帧在 legacy 模式下会被当作用户态偏移处理。perf 把内核模块视为
   内核 DSO 并打印 raw ip，但按 DSO 名无法与普通文件区分。用户态 CPU profile 中内核
   模块占比极低，且其符号通常已由 perf 自己的 `sym` 字段解出，属于已知的次要偏差。

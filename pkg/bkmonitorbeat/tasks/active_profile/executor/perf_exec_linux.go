@@ -90,7 +90,10 @@ func executePerf(ctx context.Context, conf perfConfig) (result perfResult, retur
 	result.CollectedPIDs = preflight.AlivePIDs
 
 	recordArgs := buildRecordArgs(conf, preflight.AlivePIDs, perfDataPath)
+	// 采样前后各读一次目标进程的 CPU 时间，只用于没有样本时说明原因。
+	cpuBefore := readTargetCPUTimes(preflight.AlivePIDs)
 	recordStderr, err := runCommand(ctx, preflight.PerfPath, recordArgs, io.Discard)
+	cpuAfter := readTargetCPUTimes(preflight.AlivePIDs)
 	result.RecordStderr = recordStderr
 	if err != nil {
 		result.Message = errWithOutput(err, recordStderr).Error()
@@ -117,6 +120,9 @@ func executePerf(ctx context.Context, conf perfConfig) (result perfResult, retur
 	)
 	result.ScriptStderr = scriptStderr
 	if scriptErr != nil {
+		if errors.Is(scriptErr, ErrEmptyProfile) {
+			scriptErr = emptyProfileError(scriptErr, conf, cpuBefore, cpuAfter)
+		}
 		result.Message = errWithOutput(scriptErr, scriptStderr).Error()
 		return result, scriptErr
 	}

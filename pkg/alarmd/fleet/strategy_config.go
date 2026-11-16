@@ -261,6 +261,11 @@ type StrategyLevelConfig struct {
 	Algorithms []StrategyAlgorithmInfo `json:"algorithms"`
 	Trigger    StrategyTypedPlanConfig `json:"trigger"`
 	Recovery   StrategyTypedPlanConfig `json:"recovery"`
+	// ZeroCountIsNoObservation says a count of zero from the query this
+	// Level's primary reads is no observation - an event count, or a log
+	// count grouped by nothing (execution.ZeroCountIsNoObservation, the word
+	// the evaluator reads) - so a quiet group does not recover on it.
+	ZeroCountIsNoObservation bool `json:"zero_count_is_no_observation,omitempty"`
 }
 
 // StrategyAlgorithmInfo is one algorithm by type and version, with the size
@@ -354,6 +359,8 @@ func strategyPlanConfigOf(object controlplane.QueryGroupObject, plan controlplan
 			Connector: level.Connector, Algorithms: []StrategyAlgorithmInfo{},
 			Trigger:  typedPlanConfigOf(level.TriggerPlan),
 			Recovery: typedPlanConfigOf(level.RecoveryPlan),
+			ZeroCountIsNoObservation: model.ZeroCountIsNoObservation(
+				primaryFactsOf(object.QueryPlan, plan, level.Definition.LevelID)),
 		}
 		for _, algorithm := range level.DetectPlan.Algorithms {
 			entry.Algorithms = append(entry.Algorithms, StrategyAlgorithmInfo{Type: algorithm.Type, Version: algorithm.Version, ConfigBytes: len(algorithm.Config)})
@@ -369,6 +376,21 @@ func strategyPlanConfigOf(object controlplane.QueryGroupObject, plan controlplan
 		})
 	}
 	return config
+}
+
+// primaryFactsOf is the query a Level's primary reads, as the controlplane
+// binds it: a template-bound primary reads the Plan's own query by its
+// logical reference, every other primary the object's query.
+func primaryFactsOf(shared model.QueryPlanFacts, plan controlplane.QueryGroupPlanObject, levelID uint32) model.QueryPlanFacts {
+	for _, template := range plan.RequirementTemplates {
+		if template.Role != model.InputRolePrimary || template.ConsumerLevelID != levelID {
+			continue
+		}
+		if facts, ok := plan.QueryPlans[template.LogicalQueryRef]; ok {
+			return facts
+		}
+	}
+	return shared
 }
 
 func typedPlanConfigOf(plan contract.TypedPlanV1) StrategyTypedPlanConfig {

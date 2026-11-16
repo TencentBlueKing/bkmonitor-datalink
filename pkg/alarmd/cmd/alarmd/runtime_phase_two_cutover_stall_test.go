@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -70,7 +71,9 @@ type cutoverStallFixture struct {
 	oldProjection   execution.UnfinishedSlotProjection
 	clock           *atomic.Int64
 	now             func() time.Time
-	uqCalls         *atomic.Int64
+	// recorder is the bundle's: its registry is what /metrics serves.
+	recorder *metric.Recorder
+	uqCalls  *atomic.Int64
 	// unalignedCalls counts the requests read from where they start: the
 	// queries of a Plan detected more often than it aggregates.
 	unalignedCalls   *atomic.Int64
@@ -81,7 +84,12 @@ type cutoverStallFixture struct {
 	// uqPartial marks the UQ answer for a query ending at the given Unix
 	// second as partial, so the PRIMARY input is genuinely incomplete; nil
 	// answers every query FULL.
-	uqPartial      func(end int64) bool
+	uqPartial func(end int64) bool
+	// stopInRead, when set, is called by the next query that arrives, which then
+	// answers nothing: the round is stopped inside its read.
+	stopInRead atomic.Pointer[context.CancelFunc]
+	// events is what the bundle's event sink was handed, in order.
+	events         *recordingPhaseTwoEventSink
 	observationsMu sync.Mutex
 	observations   []observability.Observation
 }
@@ -143,6 +151,17 @@ func openCutoverFixture(
 	opened func(*phaseTwoWorkerBundle), external func(*phaseTwoProductionExternalDependencies),
 ) *cutoverStallFixture {
 	t.Helper()
+	return openCutoverFixtureSharing(t, configure, logger, before, opened, external, 1)
+}
+
+// openCutoverFixtureSharing is openCutoverFixture for a before hook that
+// installs strategies sharing strategy 1001's query: its Query Group then
+// holds plans Plans, every other one a single Plan.
+func openCutoverFixtureSharing(
+	t *testing.T, configure func(*config.Config), logger *observability.Logger, before func(ctx context.Context, client *redis.Client, cfg config.Config),
+	opened func(*phaseTwoWorkerBundle), external func(*phaseTwoProductionExternalDependencies), plans int,
+) *cutoverStallFixture {
+	t.Helper()
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
 	installCutoverStallStrategies(t, ctx, redisClient, "system.mem", 1725000000)
@@ -154,13 +173,21 @@ func openCutoverFixture(
 	// It fails on some runs and not others, which is worse than always.
 	base := time.Now().Unix()
 	base += 60 - base%60
-	fixture := &cutoverStallFixture{t: t, redisClient: redisClient, base: base, clock: &atomic.Int64{}, uqCalls: &atomic.Int64{}, unalignedCalls: &atomic.Int64{}}
+	fixture := &cutoverStallFixture{t: t, redisClient: redisClient, base: base, clock: &atomic.Int64{}, uqCalls: &atomic.Int64{}, unalignedCalls: &atomic.Int64{},
+		recorder: metric.NewRecorder(metric.BuildInfo{})}
 	fixture.clock.Store(base * 1000)
 	fixture.now = func() time.Time { return time.UnixMilli(fixture.clock.Load()) }
 
 	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		fixture.uqCalls.Add(1)
+		if stop := fixture.stopInRead.Swap(nil); stop != nil {
+			// Read to its end: only then does the server see the client go.
+			_, _ = io.Copy(io.Discard, request.Body)
+			(*stop)()
+			<-request.Context().Done()
+			return
+		}
 		var payload struct {
 			StartTime    string `json:"start_time"`
 			EndTime      string `json:"end_time"`
@@ -233,6 +260,7 @@ func openCutoverFixture(
 		fixture.observations = append(fixture.observations, observation)
 	})
 	events := &recordingPhaseTwoEventSink{}
+	fixture.events = events
 	dependencies := phaseTwoProductionExternalDependencies{
 		Now: fixture.now, HTTPClient: uqServer.Client(), AdditionalObserver: additionalObserver,
 		PrepareEvents: preparedEvents(func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) { return events, nil }),
@@ -241,7 +269,7 @@ func openCutoverFixture(
 		external(&dependencies)
 	}
 	bundle, err := openProductionPhaseTwoBundleWithDependencies(
-		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), logger,
+		ctx, cfg, fixture.recorder, logger,
 		newPhaseTwoApplicationHealth(),
 		func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
 			return controlplane.NewLegacyRedisStrategySource(client, prefix)
@@ -270,10 +298,18 @@ func openCutoverFixture(
 	fixture.repository = bundle.dependencies.Control.(*productionPhaseTwoControl).dependencies.Repository.(*controlplane.RedisCatalogRepository)
 	for _, candidate := range bundle.queryGroups {
 		schedule, scheduleErr := fixture.production.dependencies.Catalog.ReadInitialFrozenSchedule(ctx, candidate)
-		if scheduleErr != nil || len(schedule.Plans) != 1 {
-			t.Fatalf("Query Group %s schedule=%+v error=%v", candidate, schedule, scheduleErr)
+		holds1001 := false
+		for _, plan := range schedule.Plans {
+			holds1001 = holds1001 || plan.Identity.StrategyID == "1001"
 		}
-		if schedule.Plans[0].Identity.StrategyID == "1001" {
+		want := 1
+		if holds1001 {
+			want = plans
+		}
+		if scheduleErr != nil || len(schedule.Plans) != want {
+			t.Fatalf("Query Group %s schedule=%+v error=%v, want %d Plans", candidate, schedule, scheduleErr, want)
+		}
+		if holds1001 {
 			fixture.queryGroup, fixture.initialSchedule = candidate, schedule
 		}
 	}
@@ -306,20 +342,24 @@ func openCutoverFixture(
 }
 
 // stallInFlightAcrossCutover begins the second grid point under the initial
-// Segment (the query is deferred by readiness, so the unfinished projection
+// Segment (its round is stopped inside its read, so the unfinished projection
 // stays persisted) and then cuts over to a publication whose boundary
 // precedes that Slot.
 func (fixture *cutoverStallFixture) stallInFlightAcrossCutover(ctx context.Context, base int64, redisClient *redis.Client, bundle *phaseTwoWorkerBundle) {
 	t := fixture.t
 	t.Helper()
 	// Step 2: the next grid point is begun under the still-open initial
-	// Segment; the query is deferred by readiness, so the unfinished projection
-	// stays persisted with the initial Segment's contract.
+	// Segment. A Slot's first round is its read, and this one is stopped there,
+	// so the unfinished projection stays persisted with the initial Segment's
+	// contract.
 	fixture.firstNewSlot = execution.EvaluationTime(base + 60)
-	fixture.clock.Store(int64(fixture.firstNewSlot) * 1000)
-	result, attempted, err := fixture.runner.RunOne(ctx)
-	if err != nil || !attempted || result.Completed {
-		t.Fatalf("deferred Slot RunOne = (%+v, %t, %v), want an attempted, uncompleted Slot", result, attempted, err)
+	fixture.clock.Store(firstRoundAtMillis(fixture.cfg, fixture.queryGroup, int64(fixture.firstNewSlot), 60))
+	roundCtx, stopRound := context.WithCancel(ctx)
+	defer stopRound()
+	fixture.stopInRead.Store(&stopRound)
+	result, attempted, err := fixture.runner.RunOne(roundCtx)
+	if !attempted || result.Completed || !errors.Is(err, context.Canceled) || fixture.stopInRead.Load() != nil {
+		t.Fatalf("stopped Slot RunOne = (%+v, %t, %v), want an attempted, uncompleted Slot stopped in its read", result, attempted, err)
 	}
 	fixture.inFlight = fixture.progress(ctx)
 	if fixture.inFlight.NextSlot != fixture.firstNewSlot || fixture.inFlight.UnfinishedSlot == nil ||

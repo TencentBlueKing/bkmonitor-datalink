@@ -41,7 +41,7 @@ func TestSharedTopologyInboundEndpointKeepsRoot(t *testing.T) {
 		return filterTopologyRegressionMatrix(q, matrix), nil
 	}
 	result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{
-		SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
+		SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}},
 		StartTime: 1700000000, EndTime: 1700000100, Step: "100s", MaxHops: 2,
 	})
 	require.NoError(t, err)
@@ -53,7 +53,7 @@ func TestSharedTopologyInboundEndpointKeepsRoot(t *testing.T) {
 	require.Empty(t, result.Snapshots[1].Edges)
 	require.False(t, result.Snapshots[1].Partial)
 	request := cmdb.SharedTopologyQuery{
-		SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
+		SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}},
 		StartTime: 1700000000, EndTime: 1700000100, Step: "100s", MaxHops: 2,
 		ResponseFormat: cmdb.CompactTopologyFormat,
 	}
@@ -137,9 +137,9 @@ func TestSharedTopologyMatchesIndependentFrameBFS(t *testing.T) {
 						return filteredTimeGraphMatrix(t, matrix, q.QueryList[0].Conditions), nil
 					}
 					request := cmdb.SharedTopologyQuery{
-						SpaceUID: "space", SourceType: "service", SourceInfo: cmdb.Matcher{"id": "0"},
+						SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "service", SourceInfo: cmdb.Matcher{"id": "0"}}},
 						StartTime: 1700000000, EndTime: 1700000120, Step: "60s", MaxHops: hops,
-						DynamicRelationDirection: "outbound",
+						Direction: "out",
 					}
 					if relationFilter != "" {
 						request.AllowedRelationTypes = []string{relationFilter}

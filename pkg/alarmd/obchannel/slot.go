@@ -128,7 +128,7 @@ func SlotOperations(options SlotOptions) []Operation {
 		}
 	}
 	limits := map[string]any{"timeout_ms": RequestTimeout.Milliseconds(), "response_bytes": MaxResponseBytes(), "physical_queries_per_call": 1, "query_plans": 32,
-		"uq_body_bytes": 4 << 20, "uq_series_bytes": 512 << 10, "uq_series": 1000, "uq_records": 20000, "returned_series": 10, "returned_points_total": 500,
+		"uq_series_bytes": 512 << 10, "uq_series": 1000, "uq_records": 20000, "returned_series": 10, "returned_points_total": 500,
 		"selected_series_bytes": uq.DiagnosticMaxOutputBytes, "provider_metadata_bytes": 16 << 10,
 		"contract_redis":                map[string]int{"commands": 64, "bytes": 4 << 20, "document_bytes": 1 << 20},
 		"query_concurrency_per_process": 1, "retained_records_scan": 200, "retained_samples_scan": 50,
@@ -144,7 +144,7 @@ func SlotOperations(options SlotOptions) []Operation {
 	}
 	queryLimits["timeout_ms"] = (MaxExecutionTimeout - requeryMargin).Milliseconds()
 	queryLimits["requery_timeout"] = "the Slot's frozen query budget plus " + requeryMargin.String() + ", at most " + (MaxExecutionTimeout - requeryMargin).String()
-	queryLimits["uq_body_bytes"], queryLimits["uq_series_bytes"] = decode.MaxBodyBytes, decode.MaxSeriesBytes
+	queryLimits["uq_series_bytes"] = decode.MaxSeriesBytes
 	queryLimits["uq_series"], queryLimits["uq_records"] = decode.MaxSeries, decode.MaxRecords
 	availability := func() Availability {
 		if options.Resolve != nil && options.UQ != nil {

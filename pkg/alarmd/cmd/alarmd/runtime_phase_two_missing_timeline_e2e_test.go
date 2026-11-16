@@ -46,6 +46,12 @@ func TestAMissingTimelineIsReportedAndReopenedUnderTheCurrentPublication(t *test
 	if err := fixture.redisClient.HSet(ctx, recordKey, "timeline_record_revision", "5").Err(); err != nil {
 		t.Fatal(err)
 	}
+	// In production only an activation moves this field, and the activation
+	// tells the leader (its own, or another's delta). Moved here behind the
+	// leader's back, the leader's copy of the records is dropped as a new
+	// term's would be, so its round reads the record and carries the moved
+	// revision to the view.
+	fixture.production.records.stepDown()
 	if err := bundle.refreshAndReconcile(ctx, true); err != nil {
 		t.Fatalf("the round that publishes the moved revision: %v", err)
 	}

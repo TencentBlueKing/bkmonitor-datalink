@@ -131,154 +131,85 @@ func wireObject(raw []byte) (map[string]json.RawMessage, error) {
 	return fields, nil
 }
 
-func (client *Client) decodeShared(ctx context.Context, reader io.Reader, attempt queryIdentity, sink execution.ProviderSeriesSink) (completion execution.ProviderCompletion, err error) {
+func (client *Client) decodeShared(
+	ctx context.Context, abort func(), reader io.Reader, attempt queryIdentity, sink execution.ProviderSeriesSink,
+) (completion execution.ProviderCompletion, err error) {
 	session := client.newSeriesDecoder(attempt, sink, nil)
 	// A frame is read whole before its series are handed on, so they may be
 	// made canonical side by side (seriesDecoder.handOn).
 	session.framed = true
 	defer session.limitCompletion(&completion, &err)
 	defer session.settle(ctx, &err)
-	lines := sharedFrameReaders.Get().(*bufio.Reader)
-	lines.Reset(reader)
-	defer sharedFrameReaders.Put(lines)
-	var schemas []sharedSchema
-	var dictionaryBytes uint64
-	var expected uint64
+	// The frames are read and parsed on a goroutine of their own, one frame
+	// ahead of the one being handed on (readSharedFrames): reading the
+	// socket and parsing a frame was the Slot's path while the frame before
+	// was evaluated, and the evaluation waited on it in turn (decision-020
+	// 0.6.x throughput design 3.1, way 2). Everything the answer's series
+	// are counted and judged by - its limits, its footer's counts - is
+	// still here, in the order the frames came.
+	frames := make(chan sharedFrame, 1)
+	stop, finished := make(chan struct{}), make(chan struct{})
+	// readerEnded is set when the reader ended the answer itself - the end
+	// of the body, or a frame that failed - and returns on its own.
+	readerEnded := false
+	// Returned with the reader stopped, whatever ended the answer: nothing
+	// reads the body once this returns, so the caller's reading of it - its
+	// bytes, its failure - is of reads that are over. Ended here instead, by
+	// a series or the footer this side refused, the reader may be in a read
+	// of the body, which closing it ends (abort).
+	defer func() {
+		close(stop)
+		if !readerEnded && abort != nil {
+			select {
+			case <-finished:
+			default:
+				abort()
+			}
+		}
+		<-finished
+	}()
+	go func() {
+		defer close(finished)
+		client.readSharedFrames(ctx, reader, frames, stop)
+	}()
 	var footer map[string]json.RawMessage
-	for {
-		if err := ctx.Err(); err != nil {
-			return completion, err
-		}
-		line, err := lines.ReadSlice('\n')
-		if errors.Is(err, bufio.ErrBufferFull) {
-			return completion, errFrameBytes
-		}
-		if err == io.EOF {
-			if len(line) != 0 {
-				return completion, protocolError(execution.ResponseFailureFrameInvalid)
-			}
-			if footer == nil {
-				return completion, protocolError(execution.ResponseFailureFooterMissing)
-			}
-			break
-		}
-		if err != nil {
-			return completion, err
-		}
-		if footer != nil || !utf8.Valid(line) {
-			return completion, protocolError(execution.ResponseFailureFrameInvalid)
-		}
-		frame, err := wireObject(line)
-		if err != nil {
-			return completion, err
-		}
-		var seq uint64
-		if !wireUnsigned(frame["seq"], &seq) || seq != expected {
-			return completion, protocolError(execution.ResponseFailureFrameInvalid)
-		}
-		expected++
-		payloads := 0
-		for _, key := range []string{"v", "schemas", "series", "end"} {
-			if _, ok := frame[key]; ok {
-				payloads++
-			}
-		}
-		if payloads != 1 {
-			return completion, protocolError(execution.ResponseFailureFrameInvalid)
-		}
-		if seq == 0 {
-			var version uint32
-			if json.Unmarshal(frame["v"], &version) != nil || version != 1 {
-				return completion, protocolError(execution.ResponseFailureFormatUnsupported)
-			}
-			session.receivedAt = client.now().Unix()
-			continue
-		}
-		if _, again := frame["v"]; again {
-			return completion, protocolError(execution.ResponseFailureFrameInvalid)
-		}
+	for frame := range frames {
+		readerEnded = frame.err != nil
 		switch {
-		case frame["schemas"] != nil:
-			var declarations []json.RawMessage
-			if json.Unmarshal(frame["schemas"], &declarations) != nil || declarations == nil || len(declarations) == 0 {
-				return completion, protocolError(execution.ResponseFailureSchemaInvalid)
-			}
-			if len(declarations) > sharedSchemaCount-len(schemas) {
-				return completion, errDictionary
-			}
-			for _, raw := range declarations {
-				if uint64(len(raw)) > sharedDictionaryBytes-dictionaryBytes {
-					return completion, errDictionary
-				}
-				dictionaryBytes += uint64(len(raw))
-				fields, err := wireObject(raw)
-				if err != nil {
-					return completion, protocolError(execution.ResponseFailureSchemaInvalid)
-				}
-				var schema sharedSchema
-				var id uint64
-				if !wireUnsigned(fields["id"], &id) || fields["columns"] == nil || fields["types"] == nil || fields["group_keys"] == nil || json.Unmarshal(raw, &schema) != nil ||
-					int(schema.ID) != len(schemas) || len(schema.Columns) == 0 || len(schema.Columns) != len(schema.Types) {
-					return completion, protocolError(execution.ResponseFailureSchemaInvalid)
-				}
-				schemas = append(schemas, schema)
-			}
-		case frame["series"] != nil:
-			var entries []json.RawMessage
-			if json.Unmarshal(frame["series"], &entries) != nil || entries == nil || len(entries) == 0 {
-				return completion, protocolError(execution.ResponseFailureFrameInvalid)
-			}
-			if len(entries) > sharedFrameSeries {
-				return completion, errFrameSeries
-			}
-			for _, raw := range entries {
-				if err := ctx.Err(); err != nil {
-					return completion, err
-				}
-				fields, err := sharedSeriesFields(raw)
-				if err != nil {
-					return completion, err
-				}
-				var id uint64
-				var groups []json.RawMessage
-				var rows [][]json.RawMessage
-				if !wireUnsigned(fields[0], &id) || id >= uint64(len(schemas)) ||
-					fields[1] == nil || json.Unmarshal(fields[1], &groups) != nil || fields[2] == nil || json.Unmarshal(fields[2], &rows) != nil {
-					return completion, protocolError(execution.ResponseFailureSchemaInvalid)
-				}
-				schema := schemas[id]
-				if len(groups) != len(schema.GroupKeys) {
-					return completion, protocolError(execution.ResponseFailureSchemaInvalid)
-				}
-				for _, row := range rows {
-					if len(row) != len(schema.Columns) {
-						return completion, protocolError(execution.ResponseFailureSchemaInvalid)
-					}
-				}
-				series := responseSeries{Columns: schema.Columns, Types: schema.Types, GroupKeys: schema.GroupKeys, GroupValues: groups, Values: rows}
-				size, err := expandedSeriesBytes(series, uint64(client.limits.MaxSeriesBytes))
-				if err != nil {
-					return completion, err
-				}
-				if err := session.accept(ctx, series, size); err != nil {
-					return completion, err
-				}
-			}
-			// The frame's series are handed on before the next is read: a
-			// series that came is delivered whether or not more come after it.
-			if err := session.handOn(ctx); err != nil {
-				return completion, err
-			}
-		case frame["end"] != nil:
-			footer, err = wireObject(frame["end"])
-			if err != nil {
-				return completion, err
-			}
+		case frame.version:
+			session.receivedAt = frame.receivedAt
+		case frame.footer != nil:
+			footer = frame.footer
 			var count, points uint64
 			if !wireUnsigned(footer["series"], &count) || !wireUnsigned(footer["points"], &points) || count != session.totalSeries || points != session.totalRecords {
 				return completion, protocolError(execution.ResponseFailureFooterCountMismatch)
 			}
 		}
+		for _, series := range frame.series {
+			if err := session.accept(ctx, series.series, series.size); err != nil {
+				return completion, err
+			}
+		}
+		if frame.err != nil {
+			// The series parsed before it are handed on (settle), as each
+			// accepted before a failure was.
+			return completion, frame.err
+		}
+		if len(frame.series) > 0 {
+			// The frame's series are handed on before the next is taken: a
+			// series that came is delivered whether or not more come after
+			// it.
+			if err := session.handOn(ctx); err != nil {
+				return completion, err
+			}
+		}
+	}
+	// Closed: the reader read to the body's end.
+	readerEnded = true
+	if footer == nil {
+		// The reader ends on an error or after a footer and the end of the
+		// answer; it never closes without one of the two.
+		return completion, protocolError(execution.ResponseFailureFooterMissing)
 	}
 	var status *responseStatus
 	var partial *bool
@@ -437,4 +368,216 @@ func jsonStringBytes(value string) uint64 {
 		}
 	}
 	return size
+}
+
+// sharedFrame is one frame of a shared-schema answer as readSharedFrames
+// parsed it: the version frame (with when it came), a frame of series - each
+// with its expanded size - or the footer; err is the failure that ended the
+// answer, with the series of its frame parsed before it.
+type sharedFrame struct {
+	version    bool
+	receivedAt int64
+	series     []sharedSeries
+	footer     map[string]json.RawMessage
+	err        error
+}
+
+type sharedSeries struct {
+	series responseSeries
+	size   uint64
+}
+
+// readSharedFrames reads and parses an answer's frames in order onto frames,
+// at most one ahead of the one being handed on, and closes it after the
+// footer and the end of the answer, or after the frame that failed. It
+// stops when stop closes; a read it is in returns when the answer's body is
+// closed, which decodeShared does before it returns when the answer ended
+// on its side (abort). The frame reader goes back to its pool from here, the
+// one goroutine that reads through it.
+//
+// What it holds ahead is one frame parsed - sharedFrameSeries series of a
+// line of sharedFrameBytes at most - beside the one being handed on: bounded
+// by the frame's own limits, and not charged to the share, as the frame being
+// read was not.
+func (client *Client) readSharedFrames(ctx context.Context, reader io.Reader, frames chan<- sharedFrame, stop <-chan struct{}) {
+	defer close(frames)
+	lines := sharedFrameReaders.Get().(*bufio.Reader)
+	lines.Reset(reader)
+	defer sharedFrameReaders.Put(lines)
+	send := func(frame sharedFrame) bool {
+		select {
+		case frames <- frame:
+			return frame.err == nil
+		case <-stop:
+			return false
+		}
+	}
+	fail := func(err error) { send(sharedFrame{err: err}) }
+	var schemas []sharedSchema
+	var dictionaryBytes uint64
+	var expected uint64
+	footer := false
+	for {
+		if err := ctx.Err(); err != nil {
+			fail(err)
+			return
+		}
+		line, err := lines.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			fail(errFrameBytes)
+			return
+		}
+		if err == io.EOF {
+			if len(line) != 0 {
+				fail(protocolError(execution.ResponseFailureFrameInvalid))
+				return
+			}
+			if !footer {
+				fail(protocolError(execution.ResponseFailureFooterMissing))
+			}
+			return
+		}
+		if err != nil {
+			fail(err)
+			return
+		}
+		if footer || !utf8.Valid(line) {
+			fail(protocolError(execution.ResponseFailureFrameInvalid))
+			return
+		}
+		frame, err := wireObject(line)
+		if err != nil {
+			fail(err)
+			return
+		}
+		var seq uint64
+		if !wireUnsigned(frame["seq"], &seq) || seq != expected {
+			fail(protocolError(execution.ResponseFailureFrameInvalid))
+			return
+		}
+		expected++
+		payloads := 0
+		for _, key := range []string{"v", "schemas", "series", "end"} {
+			if _, ok := frame[key]; ok {
+				payloads++
+			}
+		}
+		if payloads != 1 {
+			fail(protocolError(execution.ResponseFailureFrameInvalid))
+			return
+		}
+		if seq == 0 {
+			var version uint32
+			if json.Unmarshal(frame["v"], &version) != nil || version != 1 {
+				fail(protocolError(execution.ResponseFailureFormatUnsupported))
+				return
+			}
+			if !send(sharedFrame{version: true, receivedAt: client.now().Unix()}) {
+				return
+			}
+			continue
+		}
+		if _, again := frame["v"]; again {
+			fail(protocolError(execution.ResponseFailureFrameInvalid))
+			return
+		}
+		switch {
+		case frame["schemas"] != nil:
+			var declarations []json.RawMessage
+			if json.Unmarshal(frame["schemas"], &declarations) != nil || declarations == nil || len(declarations) == 0 {
+				fail(protocolError(execution.ResponseFailureSchemaInvalid))
+				return
+			}
+			if len(declarations) > sharedSchemaCount-len(schemas) {
+				fail(errDictionary)
+				return
+			}
+			for _, raw := range declarations {
+				if uint64(len(raw)) > sharedDictionaryBytes-dictionaryBytes {
+					fail(errDictionary)
+					return
+				}
+				dictionaryBytes += uint64(len(raw))
+				fields, err := wireObject(raw)
+				if err != nil {
+					fail(protocolError(execution.ResponseFailureSchemaInvalid))
+					return
+				}
+				var schema sharedSchema
+				var id uint64
+				if !wireUnsigned(fields["id"], &id) || fields["columns"] == nil || fields["types"] == nil || fields["group_keys"] == nil || json.Unmarshal(raw, &schema) != nil ||
+					int(schema.ID) != len(schemas) || len(schema.Columns) == 0 || len(schema.Columns) != len(schema.Types) {
+					fail(protocolError(execution.ResponseFailureSchemaInvalid))
+					return
+				}
+				schemas = append(schemas, schema)
+			}
+		case frame["series"] != nil:
+			var entries []json.RawMessage
+			if json.Unmarshal(frame["series"], &entries) != nil || entries == nil || len(entries) == 0 {
+				fail(protocolError(execution.ResponseFailureFrameInvalid))
+				return
+			}
+			if len(entries) > sharedFrameSeries {
+				fail(errFrameSeries)
+				return
+			}
+			parsed := sharedFrame{series: make([]sharedSeries, 0, len(entries))}
+			for _, raw := range entries {
+				series, size, err := client.sharedSeriesOf(ctx, raw, schemas)
+				if err != nil {
+					parsed.err = err
+					break
+				}
+				parsed.series = append(parsed.series, sharedSeries{series: series, size: size})
+			}
+			if !send(parsed) {
+				return
+			}
+		case frame["end"] != nil:
+			ended, err := wireObject(frame["end"])
+			if err != nil {
+				fail(err)
+				return
+			}
+			footer = true
+			if !send(sharedFrame{footer: ended}) {
+				return
+			}
+		}
+	}
+}
+
+// sharedSeriesOf is one series entry of a frame against the schemas
+// declared so far, with its expanded size.
+func (client *Client) sharedSeriesOf(ctx context.Context, raw json.RawMessage, schemas []sharedSchema) (responseSeries, uint64, error) {
+	if err := ctx.Err(); err != nil {
+		return responseSeries{}, 0, err
+	}
+	fields, err := sharedSeriesFields(raw)
+	if err != nil {
+		return responseSeries{}, 0, err
+	}
+	var id uint64
+	var groups []json.RawMessage
+	var rows [][]json.RawMessage
+	if !wireUnsigned(fields[0], &id) || id >= uint64(len(schemas)) ||
+		fields[1] == nil || json.Unmarshal(fields[1], &groups) != nil || fields[2] == nil || json.Unmarshal(fields[2], &rows) != nil {
+		return responseSeries{}, 0, protocolError(execution.ResponseFailureSchemaInvalid)
+	}
+	schema := schemas[id]
+	if len(groups) != len(schema.GroupKeys) {
+		return responseSeries{}, 0, protocolError(execution.ResponseFailureSchemaInvalid)
+	}
+	for _, row := range rows {
+		if len(row) != len(schema.Columns) {
+			return responseSeries{}, 0, protocolError(execution.ResponseFailureSchemaInvalid)
+		}
+	}
+	series := responseSeries{Columns: schema.Columns, Types: schema.Types, GroupKeys: schema.GroupKeys, GroupValues: groups, Values: rows}
+	size, err := expandedSeriesBytes(series, uint64(client.limits.MaxSeriesBytes))
+	if err != nil {
+		return responseSeries{}, 0, err
+	}
+	return series, size, nil
 }

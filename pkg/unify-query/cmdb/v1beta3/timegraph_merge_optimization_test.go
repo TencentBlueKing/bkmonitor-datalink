@@ -9,7 +9,7 @@ import (
 )
 
 func TestNodeAttributeMergePreservesEmptyKeysAndOwnership(t *testing.T) {
-	b := newNodeBuilder(sharedGraphTestConfig())
+	b := newNodeBuilder(sharedTopologyTestConfig())
 	id, err := b.GetID("entity", cmdb.Matcher{"id": "a", "version": "m"})
 	require.NoError(t, err)
 	_, before := b.Info(id)
@@ -37,10 +37,10 @@ func TestNodeAttributeMergePreservesEmptyKeysAndOwnership(t *testing.T) {
 }
 
 func TestSharedNodeMergePreservesTimeVersionsAndEmptyFields(t *testing.T) {
-	times := sharedGraphTestTimes(60)
+	times := sharedTopologyTestTimes(60)
 	grid, err := NewTopologyGrid(times)
 	require.NoError(t, err)
-	g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
+	g := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
 	ctx := context.Background()
 	initial := []int64{times[0], times[30], times[59]}
 	require.NoError(t, g.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": "a", "version": "m"}, initial...))
@@ -68,16 +68,11 @@ func TestSharedNodeMergePreservesTimeVersionsAndEmptyFields(t *testing.T) {
 	require.Equal(t, "z", other["version"])
 	require.Equal(t, "m", info["version"])
 
-	// A repeated update must still honor an already exceeded version limit.
-	single := newSharedTimeGraph(sharedGraphTestConfig(), grid)
+	// A repeated identical update keeps the single stored version.
+	single := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
 	require.NoError(t, single.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": "b"}, initial...))
-	single.maxNodeInfos = -1
-	single.shared.nodeInfoVersionCount = 2
-	single.maxNodeInfos = 1
-	err = single.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": "b"}, initial...)
-	var limit *ResultLimitError
-	require.ErrorAs(t, err, &limit)
-	require.Equal(t, "max_graph_node_infos", limit.Reason)
+	require.NoError(t, single.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": "b"}, initial...))
+	require.Equal(t, 1, single.shared.nodeInfoVersionCount)
 }
 
 func TestTimeBitmapSubset(t *testing.T) {
@@ -97,9 +92,9 @@ func TestTimeBitmapSubset(t *testing.T) {
 
 func TestFullGridTimeBitsFastPathPreservesValidationAndOwnership(t *testing.T) {
 	for _, size := range []int{1, 2, 30, 59, 60} {
-		grid, err := NewTopologyGrid(sharedGraphTestTimes(size))
+		grid, err := NewTopologyGrid(sharedTopologyTestTimes(size))
 		require.NoError(t, err)
-		g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
+		g := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
 		first, err := g.shared.timeBits(grid.timestamps)
 		require.NoError(t, err)
 		require.Equal(t, size, first.count())
@@ -136,10 +131,10 @@ func TestCompactMaskFixedWidth(t *testing.T) {
 }
 
 func TestSharedInitialAttributesStayImmutableThroughUpdatesAndCleanup(t *testing.T) {
-	times := sharedGraphTestTimes(60)
+	times := sharedTopologyTestTimes(60)
 	grid, err := NewTopologyGrid(times)
 	require.NoError(t, err)
-	g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
+	g := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
 	ctx := context.Background()
 	input := cmdb.Matcher{"id": "a", "version": "m", "name": ""}
 	require.NoError(t, g.AddTimeNode(ctx, "entity", input, times...))
@@ -166,7 +161,7 @@ func TestSharedInitialAttributesStayImmutableThroughUpdatesAndCleanup(t *testing
 	require.NoError(t, err)
 	want := decodeCompactForTest(t, compact)
 	g.Clean(ctx)
-	other := NewTimeGraphWithConfig(sharedGraphTestConfig())
+	other := NewTimeGraphWithConfig(sharedTopologyTestConfig())
 	defer other.Clean(ctx)
 	require.NoError(t, other.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": "different", "version": "reuse"}, times...))
 	require.Equal(t, "m", snapshots[0].Nodes[0].Dimensions["version"])
@@ -179,9 +174,9 @@ func TestSharedInitialAttributesStayImmutableThroughUpdatesAndCleanup(t *testing
 
 func TestUnchangedBorrowedAttributesExportSurvivesPoolReuse(t *testing.T) {
 	ctx := context.Background()
-	grid, err := NewTopologyGrid(sharedGraphTestTimes(60))
+	grid, err := NewTopologyGrid(sharedTopologyTestTimes(60))
 	require.NoError(t, err)
-	g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
+	g := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
 	info := cmdb.Matcher{"id": "unchanged", "version": "m", "name": "original"}
 	require.NoError(t, g.AddTimeNode(ctx, "entity", info, grid.timestamps...))
 	id, err := g.nodeBuilder.GetID("entity", info)
@@ -196,7 +191,7 @@ func TestUnchangedBorrowedAttributesExportSurvivesPoolReuse(t *testing.T) {
 	want := decodeCompactForTest(t, compact)
 	// No update has replaced n.info: Clean returns the actual borrowed map to its pool.
 	g.Clean(ctx)
-	other := NewTimeGraphWithConfig(sharedGraphTestConfig())
+	other := NewTimeGraphWithConfig(sharedTopologyTestConfig())
 	for _, value := range []string{"a", "b", "c"} {
 		require.NoError(t, other.AddTimeNode(ctx, "entity", cmdb.Matcher{"id": value, "version": "different", "name": "recycled"}, grid.timestamps...))
 	}

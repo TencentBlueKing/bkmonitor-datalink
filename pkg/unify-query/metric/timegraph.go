@@ -26,8 +26,8 @@ const (
 var (
 	cmdbRelationQualityTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "unify_query", Name: "cmdb_relation_quality_total",
-		Help: "legacy relation query quality events, counted once per query and distinct bounded reason",
-	}, []string{"query_mode", "quality", "reason"})
+		Help: "relation query quality events by entry (compat or topology), counted once per query and distinct bounded reason",
+	}, []string{"entry", "query_mode", "quality", "reason"})
 	cmdbTopologyOperationsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "unify_query", Name: "cmdb_topology_operations_total",
 		Help: "completed topology HTTP requests or individual queries by outcome",
@@ -45,6 +45,10 @@ var (
 		Help:    "successful topology response size; nodes and edges are summed across snapshots",
 		Buckets: []float64{0, 1, 2, 6, 30, 60, 64, 100, 1000, 10000, 100000, 1000000},
 	}, []string{"query_mode", "kind"})
+	cmdbTopologyFetchFallbackTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "unify_query", Name: "cmdb_topology_fetch_fallback_total",
+		Help: "topology queries whose fetch fell back to reading the whole candidate relation component, by bounded reason",
+	}, []string{"reason"})
 	cmdbTopologyRejectionsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "unify_query", Name: "cmdb_topology_rejections_total",
 		Help: "topology query rejections by bounded validation or capacity reason",
@@ -62,15 +66,15 @@ var (
 )
 
 // CMDBRelationQualityInc keeps metric names and backend details in traces only.
-func CMDBRelationQualityInc(ctx context.Context, mode, quality, reasons string) {
+func CMDBRelationQualityInc(ctx context.Context, entry, mode, quality, reasons string) {
 	seen := make(map[string]struct{})
 	for _, detail := range strings.Split(reasons, ";") {
-		reason, _, _ := strings.Cut(detail, ":")
+		// VM 实例追加原因时用 "; " 连接，去掉空格再按前缀分类。
+		reason, _, _ := strings.Cut(strings.TrimSpace(detail), ":")
 		switch reason {
 		case "backend_partial", "vm_storage_coverage_mismatch", "relation_no_physical_route",
 			"source_info_no_route", "target_info_failed",
-			"max_targets", "max_response_bytes", "max_graph_nodes", "max_graph_edges",
-			"max_graph_node_infos", "max_graph_results", "max_shared_topology_points":
+			"max_response_bytes", "max_shared_topology_points":
 		default:
 			reason = "other"
 		}
@@ -78,7 +82,7 @@ func CMDBRelationQualityInc(ctx context.Context, mode, quality, reasons string) 
 			continue
 		}
 		seen[reason] = struct{}{}
-		counterInc(ctx, cmdbRelationQualityTotal.WithLabelValues(mode, quality, reason))
+		counterInc(ctx, cmdbRelationQualityTotal.WithLabelValues(entry, mode, quality, reason))
 	}
 }
 
@@ -131,13 +135,22 @@ func CMDBTopologyRejectInc(ctx context.Context, mode, reason string) {
 		return
 	}
 	switch reason {
-	case "invalid_request", "max_shared_topology_points", "max_graph_nodes", "max_graph_edges", "max_graph_node_infos", "max_graph_results", "max_targets",
-		"max_response_bytes", "max_topology_output_bytes", "max_topology_queries", "max_topology_request_bytes",
-		"max_topology_admission_waiters", "max_topology_reserved_bytes", "max_topology_memory_headroom":
+	case "invalid_request", "max_shared_topology_points", "max_response_bytes", "max_topology_queries", "max_topology_request_bytes", "max_topology_sources":
 	default:
 		reason = "other"
 	}
 	counterInc(ctx, cmdbTopologyRejectionsTotal.WithLabelValues(mode, reason))
+}
+
+// CMDBTopologyFetchFallbackInc 记录取数退回为读取整个候选关系分量的次数；未知原因归入 other。
+// selector_not_eligible 表示多个选择器中有选择器不满足逐跳取数资格。
+func CMDBTopologyFetchFallbackInc(ctx context.Context, reason string) {
+	switch reason {
+	case "selector_not_eligible":
+	default:
+		reason = "other"
+	}
+	counterInc(ctx, cmdbTopologyFetchFallbackTotal.WithLabelValues(reason))
 }
 
 // CMDBTimeGraphStageObserve 阶段级聚合同时覆盖路径查询和共享拓扑，不逐节点或逐边打点。
@@ -176,7 +189,7 @@ func timeGraphResult(result string) bool {
 
 func timeGraphStage(stage string) bool {
 	switch stage {
-	case "build", "source-info", "relation-edge", "target-info", "topology-traversal", "topology-state", "topology-materialize", "topology-convert", "topology-encode", "apply-relation", "apply-source-info", "apply-target-info", "matrix-validation", "topology-propagation", "cleanup", "admission", "admission-release":
+	case "build", "source-info", "relation-edge", "frontier-probe", "target-info", "topology-traversal", "topology-state", "topology-materialize", "topology-convert", "topology-encode", "apply-relation", "apply-source-info", "apply-target-info", "matrix-validation", "topology-propagation", "cleanup", "admission", "admission-release":
 		return true
 	}
 	return false

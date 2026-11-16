@@ -35,7 +35,7 @@ func TestTopologyHTTPQueueLifecycle(t *testing.T) {
 	v1beta3.MaxSharedTopologyConcurrent = 1
 	t.Cleanup(func() { v1beta3.MaxSharedTopologyConcurrent = oldLimit })
 	for _, proxied := range []bool{false, true} {
-		for _, outcome := range []string{"promote", "disconnect", "deadline", "queue_full"} {
+		for _, outcome := range []string{"promote", "disconnect", "deadline", "second_waiter"} {
 			t.Run(fmt.Sprintf("proxy=%t/%s", proxied, outcome), func(t *testing.T) {
 				_, holderRelease, err := v1beta3.AcquireSharedTopology(context.Background())
 				require.NoError(t, err)
@@ -90,18 +90,20 @@ func TestTopologyHTTPQueueLifecycle(t *testing.T) {
 				go func() { reply <- send(ctx) }()
 				require.Eventually(t, func() bool {
 					s := topologyTestAdmissionState(t)
-					return s["active"] == 1 && s["waiters"] == 1 && s["reserved"] > 0
+					return s["active"] == 1 && s["waiters"] == 1
 				}, time.Second, time.Millisecond)
-				require.Positive(t, topologyTestAdmissionState(t)["reserved"], "queued request body is counted without executing graph work")
-				if outcome == "queue_full" {
-					full := send(context.Background())
-					require.NoError(t, full.err)
-					require.Equal(t, http.StatusBadRequest, full.code)
-					require.Contains(t, full.body, "max_topology_admission_waiters")
-					require.True(t, <-done, "proxy failure must not retain its payload")
+				// 等待人数不是拒绝理由：再来的请求同样排队，执行槽空出后按到达顺序完成。
+				var secondReply chan topologyHTTPQueueResult
+				if outcome == "second_waiter" {
+					secondReply = make(chan topologyHTTPQueueResult, 1)
+					go func() { secondReply <- send(context.Background()) }()
+					require.Eventually(t, func() bool {
+						s := topologyTestAdmissionState(t)
+						return s["active"] == 1 && s["waiters"] == 2
+					}, time.Second, time.Millisecond)
 				}
 				switch outcome {
-				case "promote", "queue_full":
+				case "promote", "second_waiter":
 					holderRelease()
 				case "disconnect":
 					cancel()
@@ -130,8 +132,20 @@ func TestTopologyHTTPQueueLifecycle(t *testing.T) {
 				case <-time.After(time.Second):
 					t.Fatal("handler retained after client exit")
 				}
+				if secondReply != nil {
+					var second topologyHTTPQueueResult
+					select {
+					case second = <-secondReply:
+					case <-time.After(4 * time.Second):
+						t.Fatal("second queued HTTP did not finish")
+					}
+					require.NoError(t, second.err)
+					require.Equal(t, 200, second.code)
+					require.Contains(t, second.body, `"data":[]`)
+					require.True(t, <-done)
+				}
 				holderRelease()
-				require.Equal(t, map[string]int64{"active": 0, "waiters": 0, "reserved": 0, "materialized": 0}, topologyTestAdmissionState(t))
+				require.Equal(t, map[string]int64{"active": 0, "waiters": 0}, topologyTestAdmissionState(t))
 				// A subsequent request on the same transport remains usable.
 				healthy := send(context.Background())
 				require.NoError(t, healthy.err)

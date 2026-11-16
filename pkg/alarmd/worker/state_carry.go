@@ -41,12 +41,10 @@ const (
 	// detects, and the results stand as decided, as Python's do.
 	SeriesCarryCarriedAcrossDetect = "carried_across_detect"
 	SeriesCarryNothingKept         = "nothing_kept"
-	// SeriesCarrySkippedActiveGuard is a series whose previous record held a
-	// series guard. SeriesCarrySkippedGuardWarming and
-	// SeriesCarrySkippedGuardGapped are one whose carried Level a guard held
-	// WARMING, or GAPPED, there - a reason other than the window's own holes:
-	// three different reasons a reader acts on differently, so each is named.
-	SeriesCarrySkippedActiveGuard  = "skipped_active_guard"
+	// SeriesCarrySkippedGuardWarming and SeriesCarrySkippedGuardGapped are a
+	// series whose carried Level a guard held WARMING, or GAPPED, in the
+	// previous record - a reason other than the window's own holes: two
+	// reasons a reader acts on differently, so each is named.
 	SeriesCarrySkippedGuardWarming = "skipped_guard_warming"
 	SeriesCarrySkippedGuardGapped  = "skipped_guard_gapped"
 	SeriesCarryOldMissing          = "old_missing"
@@ -54,7 +52,7 @@ const (
 
 // SeriesCarryOutcomes are the outcomes in the order a reader groups them.
 var SeriesCarryOutcomes = []string{SeriesCarryCarried, SeriesCarryCarriedAcrossDetect, SeriesCarryNothingKept,
-	SeriesCarrySkippedActiveGuard, SeriesCarrySkippedGuardWarming, SeriesCarrySkippedGuardGapped, SeriesCarryOldMissing}
+	SeriesCarrySkippedGuardWarming, SeriesCarrySkippedGuardGapped, SeriesCarryOldMissing}
 
 // carryFrom is the generation a due Plan's series are also read under when
 // they have no record of their own.
@@ -83,8 +81,8 @@ func carryFrom(due execution.DuePlan) execution.StateGeneration {
 // the new Level contract, so nothing loaded has to be validated against the
 // old one.
 //
-// A series whose previous record still guarded something - a series guard,
-// or a carried Level a guard held WARMING or GAPPED - is not carried at all.
+// A series whose previous record still guarded something - a carried Level
+// a guard held WARMING or GAPPED - is not carried at all.
 // A guard stands for holes the points do not show, and taking the points
 // without it could let the new generation conclude where the old one would
 // not. Such a series starts from nothing, which is WARMING, as a new series
@@ -117,9 +115,6 @@ func carryHistory(due execution.DuePlan, view execution.RuntimeStateView) (execu
 	}
 	if carried == nil {
 		return view, SeriesCarryOldMissing
-	}
-	if carried.SeriesGuard != nil {
-		return view, SeriesCarrySkippedActiveGuard
 	}
 	fingerprints := make(map[uint32]string)
 	for _, level := range due.CompiledPlan.Levels().All() {

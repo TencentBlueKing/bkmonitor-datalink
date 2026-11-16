@@ -10,13 +10,13 @@
       "query": {
         "bool": {
           "filter": [
-            {"range": {"dtEventTimeStamp": {"format": "epoch_second", "from": 1784701776, "include_lower": true, "include_upper": true, "to": 1784702076}}},
+            {"range": {"dtEventTimeStamp": {"format": "epoch_second", "gte": 1784701776, "lte": 1784702076}}},
             {
               "bool": {
                 "must": [
-                  {"range": {"name": {"from": "foo-bar", "include_lower": true, "include_upper": true, "to": "zoo-bar"}}},
-                  {"range": {"release_date": {"from": "2023-01-01", "include_lower": true, "include_upper": true, "to": "2023-12-31"}}},
-                  {"range": {"version": {"from": "foo-bar", "include_lower": false, "include_upper": true, "to": null}}}
+                  {"range": {"name": {"gte": "foo-bar", "lte": "zoo-bar"}}},
+                  {"range": {"release_date": {"gte": "2023-01-01", "lte": "2023-12-31"}}},
+                  {"range": {"version": {"gt": "foo-bar"}}}
                 ]
               }
             }

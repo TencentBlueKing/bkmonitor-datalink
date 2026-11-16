@@ -19,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // A physical query that did not answer is classified by what its last
@@ -156,5 +157,46 @@ func TestAQueryThatFailedAsAnErrorIsClassifiedAndTimedByIt(t *testing.T) {
 	}
 	if heard[2] != (observedQuery{12 * time.Second, QueryFailureTimeout}) {
 		t.Fatalf("delivery timeout heard as %+v, want a 12 s timeout", heard[2])
+	}
+}
+
+// A physical query's answer reads into the closed outcomes, a timeout by
+// whose deadline it was: the provider answering that its backend ran out of
+// time is upstream_504, alarmd's own deadline is timeout_alarmd_deadline; a
+// refusal is rejected, any other failure unavailable; an answer carries what
+// came back.
+func TestAQueryAnswerReadsWhoseDeadlineATimeoutWas(t *testing.T) {
+	timedOut := func(source string) execution.ProviderCompletion {
+		return execution.ProviderCompletion{Completeness: execution.CompletenessUnavailable,
+			RouteFacts: execution.ProviderRouteFacts{Attempts: []execution.RouteAttemptFact{{
+				Result: execution.RouteAttemptFailed, ReasonCode: execution.ReasonCode(contract.ReasonQueryTimeout),
+				Request: &execution.RequestFacts{TimeoutSource: source}}}}}
+	}
+	sampleLimited := execution.ProviderCompletion{Completeness: execution.CompletenessUnavailable,
+		RouteFacts: execution.ProviderRouteFacts{Attempts: []execution.RouteAttemptFact{{Result: execution.RouteAttemptFailed,
+			Rejection: &execution.ProviderRejection{Class: execution.RejectionClassVMSampleLimit}}}}}
+	answered := execution.ProviderCompletion{Completeness: execution.CompletenessFull,
+		Stats: execution.ProviderStats{Bytes: 4096, Series: 30, Records: 900}}
+	for name, test := range map[string]struct {
+		completion execution.ProviderCompletion
+		err        error
+		want       string
+	}{
+		"the provider's backend":   {completion: timedOut(observability.QueryTimeoutSourceProviderStatus), want: observability.PhysicalQueryUpstream504},
+		"the round's own":          {completion: timedOut(observability.QueryTimeoutSourceRoundDeadline), want: observability.PhysicalQueryTimeoutAlarmdDeadline},
+		"alarmd's transport":       {completion: timedOut(observability.QueryTimeoutSourceTransportClass), want: observability.PhysicalQueryTimeoutAlarmdDeadline},
+		"an error at the deadline": {err: &queryDeadlineError{err: context.DeadlineExceeded}, want: observability.PhysicalQueryTimeoutAlarmdDeadline},
+		"a refusal":                {completion: sampleLimited, want: observability.PhysicalQueryRejected},
+		"another failure":          {err: errors.New("broken"), want: observability.PhysicalQueryUnavailable},
+		"an answer":                {completion: answered, want: observability.PhysicalQueryOK},
+	} {
+		answer := queryAnswerOf(test.completion, test.err, time.Second, queryFailureOf(test.completion, test.err))
+		if answer.Outcome != test.want {
+			t.Errorf("%s: outcome %q, want %q", name, answer.Outcome, test.want)
+		}
+	}
+	answer := queryAnswerOf(answered, nil, 2*time.Second, "")
+	if answer.Bytes != 4096 || answer.Series != 30 || answer.Records != 900 || answer.Elapsed != 2*time.Second {
+		t.Fatalf("answer %+v, want the completion's bytes, series, records and the elapsed time", answer)
 	}
 }

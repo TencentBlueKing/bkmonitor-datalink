@@ -29,7 +29,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
-	goRedis "github.com/go-redis/redis/v8"
 )
 
 func init() {
@@ -59,30 +58,10 @@ func startWorker(cmd *cobra.Command, args []string) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	var redisClient goRedis.UniversalClient
-	if config.SchemaProviderType == "redis" {
-		inst := bmwRedis.GetStorageRedisInstance()
-		if inst == nil || inst.Client == nil {
-			logger.Errorf("[schema_provider] redis instance not ready, type=%s", config.SchemaProviderType)
-			cancel()
-			return
-		}
-		redisClient = inst.Client
-	}
-
-	pm, err := relation.NewProviderManager(ctx, nil, config.SchemaProviderType, redisClient, relation.DefaultStaticProviderConfig())
-	if err != nil {
-		// Graceful degradation: log warning but continue with nil provider
-		logger.Warnf("[schema_provider] init failed, degrading gracefully: %v", err)
-	}
-
-	var schemaProvider relation.SchemaProvider
-	if pm != nil {
-		schemaProvider = pm.GetProvider()
-	}
-	// InitSchemaProvider accepts nil provider (falls back to hardcoded config)
-	bmwRelation.InitSchemaProvider(schemaProvider)
-	logger.Infof("[schema_provider] initialized with type=%s", config.SchemaProviderType)
+	// 关联关系定义：内置作底层，Monitor 发布到存储 Redis 的定义作覆盖层。客户端不检查连通性，
+	// Redis 不可用时以内置定义启动，订阅与每分钟对账继续重试。
+	pm := relation.NewProviderManager(ctx, &bmwRelation.SchemaLogger{}, bmwRedis.NewStorageRedisClient(), relation.DefaultStaticProviderConfig())
+	bmwRelation.InitSchemaProvider(pm.GetProvider())
 
 	r := bmwHttp.NewProfHttpService()
 

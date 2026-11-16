@@ -162,13 +162,11 @@ func (stream *streamedExecution) noDataEndRound() noDataEndRound {
 		gapOpen := found && gap.Status == execution.GapFound && len(gap.Scopes) > 0
 		plan := noDataEndPlan{loaded: loaded, present: map[execution.SeriesIdentityDigest]struct{}{},
 			complete: stream.noDataCompleteness(due) == execution.CompletenessFull && !stream.answerTruncated[due.Identity] && !gapOpen}
-		for _, result := range stream.evaluated.Plans {
-			if result.Plan != due.Identity {
-				continue
-			}
-			for _, outcome := range result.LevelOutcomes {
-				plan.present[outcome.SeriesIdentityDigest] = struct{}{}
-			}
+		// The series the Slot decided a Level of, which the summary kept
+		// for this Plan because its index was read. A Slot's summary names
+		// a Plan once.
+		if part, found := stream.summary.planPart(due.Identity); found && part.present != nil {
+			plan.present = part.present
 		}
 		if carry, carried := stream.noDataEndCarries[due.Identity]; carried {
 			plan.carry = &carry
@@ -192,7 +190,8 @@ func (stream *streamedExecution) noDataEndRound() noDataEndRound {
 // ahead of the decisions it follows; a Plan whose output did not land
 // (withheld) is left as it was.
 func (coordinator *SlotExecutionCoordinator) applyNoDataEnds(ctx context.Context, request execution.SlotExecutionRequest,
-	header execution.InternalExecutionHeader, evaluated execution.EvaluationResult, withheld map[execution.PlanIdentity]struct{}) error {
+	header execution.InternalExecutionHeader, summary *slotEvaluationSummary, withheld map[execution.PlanIdentity]struct{}) error {
+	defer retainedOwnerFrom(ctx).enter(slotPhaseNoDataWrite)()
 	round := noDataEndsFrom(ctx)
 	index := coordinator.ports.NoDataEnds
 	if len(round) == 0 || index == nil || coordinator.ports.OpenAlerts == nil {
@@ -227,7 +226,7 @@ func (coordinator *SlotExecutionCoordinator) applyNoDataEnds(ctx context.Context
 			continue
 		}
 		judged := judgedSourceTime(header, due)
-		if err := coordinator.applyPlanNoDataEnds(ctx, request, header.ExecutionID, judged, due, plan, updatesOf(evaluated, identity), index); err != nil {
+		if err := coordinator.applyPlanNoDataEnds(ctx, request, header.ExecutionID, judged, due, plan, updatesOf(summary, identity), index); err != nil {
 			return err
 		}
 		if !plan.complete {
@@ -309,11 +308,9 @@ func (coordinator *SlotExecutionCoordinator) observeSourceHeld(ctx context.Conte
 	})
 }
 
-func updatesOf(evaluated execution.EvaluationResult, plan execution.PlanIdentity) []execution.NoDataEndUpdate {
-	for _, result := range evaluated.Plans {
-		if result.Plan == plan {
-			return result.NoDataEnds
-		}
+func updatesOf(summary *slotEvaluationSummary, plan execution.PlanIdentity) []execution.NoDataEndUpdate {
+	if part, found := summary.planPart(plan); found {
+		return part.noDataEnds
 	}
 	return nil
 }

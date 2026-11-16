@@ -193,7 +193,7 @@ func TestThePreCutoverWriterNamesChangedContentUnderTheFleetsGate(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			runtime := &productionPhaseTwoOwnership{reconciler: reconciler, dependencies: productionPhaseTwoOwnershipDependencies{
+			runtime := &productionPhaseTwoOwnership{records: newLeaderRecordCache(store, nil), reconciler: reconciler, dependencies: productionPhaseTwoOwnershipDependencies{
 				Store: store, WorkerID: "worker-1", Now: func() time.Time { return now }, ControlLeaderTTL: time.Minute,
 				Observer: observability.NopObserver{}, Reconcile: reconciler, ContentScopes: noContentScopes,
 			}}
@@ -223,7 +223,7 @@ func TestThePreCutoverWriterNamesChangedContentUnderTheFleetsGate(t *testing.T) 
 func TestARoundSweepsRetiredAssignmentsOnlyWhenARecordCouldHaveBeenLeftBehind(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	store := &fakePhaseTwoOwnershipStore{now: now}
-	runtime := &productionPhaseTwoOwnership{dependencies: productionPhaseTwoOwnershipDependencies{
+	runtime := &productionPhaseTwoOwnership{records: newLeaderRecordCache(store, nil), dependencies: productionPhaseTwoOwnershipDependencies{
 		Store: store, WorkerID: "worker-1", Now: func() time.Time { return now }, Observer: observability.NopObserver{},
 	}}
 	authority := func(epoch uint64) ownership.PublicationAuthority {
@@ -313,7 +313,7 @@ func TestTheLastSweepIsKeptForTheFleetWithItsNumbersAndItsFailure(t *testing.T) 
 	now := time.Unix(1_700_000_000, 0)
 	store := &fakePhaseTwoOwnershipStore{now: now, sweep: ownership.AssignmentSweep{Scanned: 2407, Retired: 6, Reclaimed: 5, HeldByLease: 1, Duration: 40 * time.Millisecond}}
 	var observed []observability.Observation
-	runtime := &productionPhaseTwoOwnership{dependencies: productionPhaseTwoOwnershipDependencies{
+	runtime := &productionPhaseTwoOwnership{records: newLeaderRecordCache(store, nil), dependencies: productionPhaseTwoOwnershipDependencies{
 		Store: store, WorkerID: "worker-1", Now: func() time.Time { return now },
 		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 			observed = append(observed, observation)
@@ -365,7 +365,7 @@ func TestTheLastSweepIsKeptForTheFleetWithItsNumbersAndItsFailure(t *testing.T) 
 func TestASweepThatLeftRecordsHeldOrFailedIsOwedAndAnArrivalThatLeavesIsSwept(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	store := &fakePhaseTwoOwnershipStore{now: now}
-	runtime := &productionPhaseTwoOwnership{dependencies: productionPhaseTwoOwnershipDependencies{
+	runtime := &productionPhaseTwoOwnership{records: newLeaderRecordCache(store, nil), dependencies: productionPhaseTwoOwnershipDependencies{
 		Store: store, WorkerID: "worker-1", Now: func() time.Time { return now }, Observer: observability.NopObserver{},
 	}}
 	authority := ownership.PublicationAuthority{Fence: execution.OwnerFence{

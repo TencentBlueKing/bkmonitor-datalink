@@ -82,7 +82,7 @@ func (loader *timeGraphMatrixLoader) loadLegacyPath(ctx context.Context, space s
 					return queries, err
 				}
 			} else {
-				if err := loader.loadFrontier(relationCtx, space, relation, identities, apply, &queries); err != nil {
+				if _, err := loader.loadFrontier(relationCtx, space, relation, false, identities, apply, &queries); err != nil {
 					return queries, err
 				}
 			}

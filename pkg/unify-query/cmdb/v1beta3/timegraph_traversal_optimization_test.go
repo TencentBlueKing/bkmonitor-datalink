@@ -9,7 +9,7 @@ import (
 )
 
 func TestSharedTraversalPreservesFrameReachabilityAndRootFilters(t *testing.T) {
-	times := sharedGraphTestTimes(60)
+	times := sharedTopologyTestTimes(60)
 	grid, err := NewTopologyGrid(times)
 	require.NoError(t, err)
 	g := newSharedTimeGraph(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
@@ -108,7 +108,7 @@ func TestSharedTraversalChecksCancellationWhileScanningEdges(t *testing.T) {
 }
 
 func TestPrivateResourceIndexViewDoesNotChangeOwnedIndexes(t *testing.T) {
-	config := sharedGraphTestConfig()
+	config := sharedTopologyTestConfig()
 	builder := newNodeBuilder(config)
 	owned := builder.resourceIndexes("entity")
 	require.NotEmpty(t, owned)
@@ -122,7 +122,7 @@ func TestPrivateResourceIndexViewDoesNotChangeOwnedIndexes(t *testing.T) {
 }
 
 func TestCompactReservationsPreserveSparseTargetsAndVersions(t *testing.T) {
-	times := sharedGraphTestTimes(60)
+	times := sharedTopologyTestTimes(60)
 	grid, err := NewTopologyGrid(times)
 	require.NoError(t, err)
 	g := newSharedTimeGraph(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
@@ -160,11 +160,45 @@ func TestEmptyRootMatcherPreservesSharedBits(t *testing.T) {
 	require.NoError(t, err)
 	bits := timeBitmap{first: 1}
 	nodes := map[uint64]timeBitmap{id: bits}
-	result, count, err := g.propagateSharedTopology(context.Background(), TopologyGrid{timestamps: sharedGraphTestTimes(60)}, SharedTopologyQuery{SourceType: "root", MaxHops: 0}, nodes, nil)
+	result, count, err := g.propagateSharedTopology(context.Background(), TopologyGrid{timestamps: sharedTopologyTestTimes(60)}, SharedTopologyQuery{SourceType: "root", MaxHops: 0}, nodes, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, count)
 	require.Equal(t, bits, result[id])
 	changed := result[id]
 	changed.set(59)
 	require.Equal(t, timeBitmap{first: 1}, nodes[id])
+}
+
+func traversalTestGraph(t *testing.T) (*TimeGraph, TopologyGrid, SharedTopologyQuery) {
+	t.Helper()
+	grid, err := NewTopologyGrid(sharedTopologyTestTimes(60))
+	require.NoError(t, err)
+	graph := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
+	for _, edge := range []cmdb.Matcher{{"from_id": "a", "to_id": "b"}, {"from_id": "b", "to_id": "c"}, {"from_id": "a", "to_id": "c"}} {
+		require.NoError(t, graph.AddTimeRelationWithRelation(context.Background(), sharedTopologyTestRelation("calls"), edge, grid.timestamps...))
+	}
+	return graph, grid, SharedTopologyQuery{SourceType: "entity", SourceMatcher: cmdb.Matcher{"id": "a"}, MaxHops: 2}
+}
+
+func TestSharedTraversalGridAndEmptyFrameContracts(t *testing.T) {
+	t.Run("grid_mismatch_is_rejected", func(t *testing.T) {
+		graph, grid, query := traversalTestGraph(t)
+		defer graph.Clean(context.Background())
+		badGrid, err := NewTopologyGrid(grid.timestamps[:59])
+		require.NoError(t, err)
+		_, err = graph.FindCompactTopology(context.Background(), badGrid, query, nil)
+		require.ErrorContains(t, err, "grid does not match")
+	})
+	t.Run("public_empty_frames_keep_nil_contract", func(t *testing.T) {
+		graph, grid, query := traversalTestGraph(t)
+		defer graph.Clean(context.Background())
+		query.SourceMatcher = cmdb.Matcher{"id": "missing"}
+		frames, err := graph.FindSharedTopology(context.Background(), grid, query)
+		require.NoError(t, err)
+		require.Len(t, frames, 60)
+		for _, frame := range frames {
+			require.Nil(t, frame.Nodes)
+			require.Nil(t, frame.Edges)
+		}
+	})
 }

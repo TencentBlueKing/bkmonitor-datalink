@@ -96,8 +96,12 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	if opt.Attempt > 0 {
 		span.Set("outbound.request.attempt", opt.Attempt)
 	}
-	readBody := false
+	readBody, responded := false, false
+	var firstByte time.Duration
 	defer func() {
+		if responded {
+			metadata.RecordBackendRead(ctx, size, firstByte)
+		}
 		if readBody && metadata.BackendResponseLimit(ctx) > 0 {
 			metric.CMDBTopologyPayloadObserve(ctx, "backend-response", metric.CMDBTimeGraphErrorResult(err), size)
 		}
@@ -150,10 +154,12 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 
 	roundTripStarted := time.Now()
 	resp, err := client.Do(req)
-	span.Set("response-headers-duration", time.Since(roundTripStarted))
+	firstByte = time.Since(roundTripStarted)
+	span.Set("response-headers-duration", firstByte)
 	if err != nil {
 		return size, HandleClientError(ctx, metadata.MsgHttpCurl, opt.UrlPath, err)
 	}
+	responded = true
 
 	buf := bufPool.Get().(*bytes.Buffer)
 	defer func() {

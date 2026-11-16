@@ -21,24 +21,10 @@
     }
   },
   {
-    "name": "memory-reservation",
-    "http_status": 400,
-    "response": {
-      "error": "topology resource limit exceeded: max_topology_reserved_bytes (6291456 \u003e 1)"
-    }
-  },
-  {
     "name": "queue-timeout",
     "http_status": 400,
     "response": {
       "error": "context deadline exceeded"
-    }
-  },
-  {
-    "name": "queue-full",
-    "http_status": 400,
-    "response": {
-      "error": "topology resource limit exceeded: max_topology_admission_waiters (2 \u003e 1)"
     }
   },
   {

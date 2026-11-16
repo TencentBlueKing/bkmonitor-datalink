@@ -8,14 +8,17 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	pl "github.com/prometheus/prometheus/promql"
 )
 
 type topologyFetchInput struct {
-	relation     cmdb.Relation
-	filter       cmdb.Matcher
+	relation cmdb.Relation
+	filter   cmdb.Matcher
+	// filters 非空时取各条件的并集：每个条件与 filter 写法相同，合成一个 OR 查询（多组根的首跳）。
+	filters      []cmdb.Matcher
 	identities   []cmdb.Matcher
 	targetAnchor bool
 }
@@ -24,10 +27,13 @@ type topologyFetchGroup struct {
 	ctx       context.Context
 	query     *structured.QueryTs
 	relations []cmdb.Relation
+	// noRoute 表示该关系缺少物理路由：取数不访问后端，只按已读且无数据标记 partial。
+	noRoute bool
 }
 
 // compileTopologyFetches 仅合并路由、投影、条件、用户和后端语义均相同的物理查询。
-// 即使前沿为空也先完成查询准备，以便缺少必需路由时仍明确报错。
+// 即使前沿为空也先完成查询准备，其余准备错误仍明确报错；缺少物理路由的关系单独成组、
+// 不参与合并，取数时由 queryWithQuality 按已读且无数据处理并标记 partial。
 func (loader *timeGraphMatrixLoader) compileTopologyFetches(ctx context.Context, space string, inputs []topologyFetchInput, reorder bool) ([]topologyFetchGroup, error) {
 	groups := []topologyFetchGroup{}
 	indexes := map[string]int{}
@@ -40,21 +46,13 @@ func (loader *timeGraphMatrixLoader) compileTopologyFetches(ctx context.Context,
 		queryCtx = withTimeGraphQueryStage(queryCtx, "relation-edge")
 		var ts *structured.QueryTs
 		var err error
-		if len(input.identities) > 0 {
+		switch {
+		case len(input.identities) > 0:
 			ts, err = loader.frontierQuery(queryCtx, space, input.relation, input.targetAnchor, input.identities)
-		} else {
-			ts, err = loader.graph.MakeQueryTsWithWindow(queryCtx, space, input.filter, loader.start, loader.end, loader.step, loader.lookBack, input.relation)
-			// 范围条件可能落在关系的任一端；MakeQueryTs 只接受源端身份，
-			// 因此仅显式写入已证明可投影的标签条件。
-			if ts != nil {
-				for i, field := range ts.QueryList[0].Conditions.FieldList {
-					if value, ok := input.filter[field.DimensionName]; ok {
-						field.Operator = structured.ConditionEqual
-						field.Value = []string{value}
-						ts.QueryList[0].Conditions.FieldList[i] = field
-					}
-				}
-			}
+		case len(input.filters) > 0:
+			ts, err = loader.topologyFiltersQuery(queryCtx, space, input.relation, input.filters)
+		default:
+			ts, err = loader.topologyFilterQuery(queryCtx, space, input.relation, input.filter)
 		}
 		if err != nil {
 			return nil, err
@@ -65,8 +63,13 @@ func (loader *timeGraphMatrixLoader) compileTopologyFetches(ctx context.Context,
 		ts.NotTimeAlign = metadata.IsExactTimeGrid(queryCtx)
 		expression := ""
 		var params *metadata.QueryParams
+		noRoute := false
 		if loader.override == nil {
 			expression, params, err = loader.model.prepareTimeGraphVMQuery(queryCtx, ts)
+			if loader.relationNoRouteReason(err) != "" {
+				// params 为空，复用键保持为空，此关系不会并入其他物理查询。
+				err, noRoute = nil, true
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -81,15 +84,63 @@ func (loader *timeGraphMatrixLoader) compileTopologyFetches(ctx context.Context,
 			if key != "" {
 				indexes[key] = len(groups)
 			}
-			groups = append(groups, topologyFetchGroup{input: input, ctx: queryCtx, query: ts, relations: []cmdb.Relation{input.relation}})
+			groups = append(groups, topologyFetchGroup{input: input, ctx: queryCtx, query: ts, relations: []cmdb.Relation{input.relation}, noRoute: noRoute})
 		}
 	}
 	return groups, nil
 }
 
-func (loader *timeGraphMatrixLoader) fetchTopologyGroup(group topologyFetchGroup, space string, queries *int, collect func(cmdb.Relation, pl.Matrix)) error {
-	apply := func(ctx context.Context, matrix pl.Matrix) error {
-		for i, relation := range group.relations {
+// topologyFilterQuery 按条件读取关系：源端身份由 MakeQueryTs 写入；范围条件可能落在关系的任一端，
+// MakeQueryTs 只接受源端身份，因此仅显式写入已证明可投影的标签条件。
+func (loader *timeGraphMatrixLoader) topologyFilterQuery(ctx context.Context, space string, relation cmdb.Relation, filter cmdb.Matcher) (*structured.QueryTs, error) {
+	ts, err := loader.graph.MakeQueryTsWithWindow(ctx, space, filter, loader.start, loader.end, loader.step, loader.lookBack, relation)
+	if err != nil || ts == nil {
+		return ts, err
+	}
+	for i, field := range ts.QueryList[0].Conditions.FieldList {
+		if value, ok := filter[field.DimensionName]; ok {
+			field.Operator = structured.ConditionEqual
+			field.Value = []string{value}
+			ts.QueryList[0].Conditions.FieldList[i] = field
+		}
+	}
+	return ts, nil
+}
+
+// topologyFiltersQuery 把多个条件写成一个 OR 查询：每个条件生成的条件组内部为 AND，组之间为 OR，
+// 与逐个条件读取的序列并集相同。
+func (loader *timeGraphMatrixLoader) topologyFiltersQuery(ctx context.Context, space string, relation cmdb.Relation, filters []cmdb.Matcher) (*structured.QueryTs, error) {
+	var result *structured.QueryTs
+	conditions := structured.Conditions{}
+	for _, filter := range filters {
+		ts, err := loader.topologyFilterQuery(ctx, space, relation, filter)
+		if err != nil || ts == nil {
+			return nil, err
+		}
+		for i, field := range ts.QueryList[0].Conditions.FieldList {
+			if len(conditions.FieldList) > 0 {
+				connector := structured.ConditionAnd
+				if i == 0 {
+					connector = structured.ConditionOr
+				}
+				conditions.ConditionList = append(conditions.ConditionList, connector)
+			}
+			conditions.FieldList = append(conditions.FieldList, field)
+		}
+		if result == nil {
+			result = ts
+		}
+	}
+	if result != nil {
+		result.QueryList[0].Conditions = conditions
+	}
+	return result, nil
+}
+
+// applyTopologyRelations 把一次物理响应写入共用它的每条逻辑关系。
+func (loader *timeGraphMatrixLoader) applyTopologyRelations(relations []cmdb.Relation, collect func(cmdb.Relation, pl.Matrix)) func(context.Context, pl.Matrix) error {
+	return func(ctx context.Context, matrix pl.Matrix) error {
+		for i, relation := range relations {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
@@ -112,6 +163,10 @@ func (loader *timeGraphMatrixLoader) fetchTopologyGroup(group topologyFetchGroup
 		}
 		return nil
 	}
+}
+
+func (loader *timeGraphMatrixLoader) fetchTopologyGroup(group topologyFetchGroup, space string, queries *int, collect func(cmdb.Relation, pl.Matrix)) error {
+	apply := loader.applyTopologyRelations(group.relations, collect)
 	if len(group.input.identities) > 0 {
 		return loader.loadFrontierBatch(group.ctx, space, group.input.relation, group.input.targetAnchor, group.input.identities, apply, queries)
 	}
@@ -120,7 +175,7 @@ func (loader *timeGraphMatrixLoader) fetchTopologyGroup(group topologyFetchGroup
 }
 
 // Each physical response is applied before the next group is fetched. Reuse
-// and cumulative budgets stay with the request's single loader.
+// and cumulative accounting stay with the request's single loader.
 func (loader *timeGraphMatrixLoader) fetchTopologyGroups(groups []topologyFetchGroup, space string, queries *int, collect func(cmdb.Relation, pl.Matrix)) error {
 	for _, group := range groups {
 		if err := loader.fetchTopologyGroup(group, space, queries, collect); err != nil {
@@ -130,17 +185,116 @@ func (loader *timeGraphMatrixLoader) fetchTopologyGroups(groups []topologyFetchG
 	return nil
 }
 
+// markUnroutedRelations 只准备未读取关系的查询：缺物理路由的按已读且无数据标记 partial，
+// 不访问后端。提前返回空邻域时各帧的原因与读完全部关系相同；准备失败的关系与原来提前
+// 返回时一样不读取。
+func (loader *timeGraphMatrixLoader) markUnroutedRelations(ctx context.Context, space string, relations []cmdb.Relation, read map[timeGraphRelationKey]struct{}, queries *int) error {
+	for _, relation := range relations {
+		if _, done := read[timeGraphRelationKeyFor(relation)]; done || len(relation.V) != 2 {
+			continue
+		}
+		groups, err := loader.compileTopologyFetches(ctx, space, []topologyFetchInput{{relation: relation}}, false)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			continue
+		}
+		for _, group := range groups {
+			if !group.noRoute {
+				continue
+			}
+			if err := loader.fetchTopologyGroup(group, space, queries, nil); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// loadMultiSourceTopology 是多个选择器的取数：全部选择器都满足逐跳资格时，从合并的根逐跳读取，
+// 首跳在同一关系、同一端上把各选择器的条件写成一个 OR 查询；任一选择器不满足时，整项退回为
+// 读取各选择器候选关系分量的并集，答案相同、代价更高，并按有界原因计数。
+func (loader *timeGraphMatrixLoader) loadMultiSourceTopology(ctx context.Context, space string, sources []topologySource, relations []cmdb.Relation, plan timeGraphFetchPlan) (queries int, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-select-fetch")
+	defer span.End(&err)
+	q := loader.graph
+	span.Set("source-count", len(sources))
+	componentKeys := map[timeGraphRelationKey]bool{}
+	visible := map[cmdb.Resource]bool{}
+	seen := map[cmdb.Resource]bool{}
+	for _, source := range sources {
+		if seen[source.Type] {
+			continue
+		}
+		seen[source.Type] = true
+		for _, relation := range topologyRelationComponent(source.Type, plan.allowed) {
+			componentKeys[timeGraphRelationKeyFor(relation)] = true
+		}
+		for resource := range topologyReachableTypes(source.Type, plan.hops, plan.allowed) {
+			visible[resource] = true
+		}
+	}
+	allowedComponent := make([]cmdb.Relation, 0, len(componentKeys))
+	for _, relation := range plan.allowed {
+		if componentKeys[timeGraphRelationKeyFor(relation)] {
+			allowedComponent = append(allowedComponent, relation)
+		}
+	}
+	planned := relations
+	var attributes []topologyAttributeRead
+	if !q.topologyProjectionCompatible(allowedComponent, visible) {
+		relations = allowedComponent
+		attributes = q.topologyAttributeReads(allowedComponent, visible)
+	}
+	span.Set("attribute-relation-count", len(attributes))
+	reorder := topologyStaticBidirectional(relations) && q.topologyProjectionCompatible(relations, visible)
+	wideInputs := make([]topologyFetchInput, 0, len(relations))
+	for _, relation := range relations {
+		wideInputs = append(wideInputs, topologyFetchInput{relation: relation})
+	}
+	wideGroups, err := loader.compileTopologyFetches(ctx, space, wideInputs, reorder)
+	if err != nil {
+		return queries, err
+	}
+	roots := make([]topologyHopRoot, 0, len(sources))
+	eligible := true
+	for i, source := range sources {
+		eligible = eligible && q.topologyHopFetchEligible(source.Type, source.Info, planned)
+		var expand map[uint64]timeBitmap
+		if i < len(q.shared.sourceExpandBits) {
+			expand = q.shared.sourceExpandBits[i]
+		}
+		roots = append(roots, topologyHopRoot{source: source.Type, identity: source.Info, expand: expand})
+	}
+	if eligible {
+		span.Set("fetch-mode", "hop")
+		err = loader.loadTopologyHopsFrom(ctx, space, roots, planned, wideGroups, plan.hops, reorder, attributes, &queries)
+		return queries, err
+	}
+	span.Set("fetch-mode", "bulk")
+	span.Set("fetch-fallback", "selector_not_eligible")
+	metric.CMDBTopologyFetchFallbackInc(ctx, "selector_not_eligible")
+	err = loader.fetchTopologyGroups(wideGroups, space, &queries, nil)
+	return queries, err
+}
+
 func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, space string, source cmdb.Resource, identity cmdb.Matcher, rootRelations map[timeGraphRelationKey]struct{}, relations []cmdb.Relation, plan timeGraphFetchPlan) (queries int, err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-select-fetch")
 	defer span.End(&err)
 	q := loader.graph
-	// H 跳边界外的关系也可能给保留节点提供属性。无法证明投影独立时，
-	// 在按资源类型裁剪之前恢复原有有序宽读取，维持属性覆盖顺序。
+	// H 跳边界外的关系也可能给保留节点提供属性。无法证明投影独立时，宽读取在按资源类型
+	// 裁剪之前恢复整个关系分量；逐跳取数仍只读计划内的关系，之后按到达节点补读投影可见
+	// 端点属性的关系，答案相同，不因属性投影冲突退回宽读取。
 	allowedComponent := topologyRelationComponent(source, plan.allowed)
 	visible := topologyReachableTypes(source, plan.hops, plan.allowed)
+	planned := relations
+	var attributes []topologyAttributeRead
 	if !q.topologyProjectionCompatible(allowedComponent, visible) {
 		relations = allowedComponent
+		attributes = q.topologyAttributeReads(allowedComponent, visible)
 	}
+	span.Set("attribute-relation-count", len(attributes))
 	mode, component := q.topologyFetchMode(source, identity, relations, plan)
 	span.Set("fetch-mode", mode)
 	span.Set("max-hops", plan.hops)
@@ -173,6 +327,13 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 			return queries, compileErr
 		}
 		err = loader.fetchTopologyGroups(groups, space, &queries, nil)
+		return queries, err
+	}
+	// 其余有根条件的多跳计划从根逐跳读取实际到达的候选，不再整条读取关系分量。
+	hopEligible := q.topologyHopFetchEligible(source, identity, planned)
+	if mode == "bulk" && hopEligible {
+		span.Set("fetch-mode", "hop")
+		err = loader.loadTopologyHops(ctx, space, source, identity, planned, wideGroups, plan.hops, reorder, attributes, &queries)
 		return queries, err
 	}
 
@@ -225,11 +386,27 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 		if err = loader.fetchTopologyGroups(groups, space, &queries, collect); err != nil {
 			return queries, err
 		}
-		if !observed && len(q.partialTimes) == 0 {
-			return queries, nil
+		// 后端完整且全窗无根观测即为空邻域；缺路由的关系按已读且无数据处理，不妨碍判空。
+		// 未读取的关系中缺路由的仍记入各帧原因，与读完全部关系时相同。
+		if !observed && !q.backendPartial() {
+			err = loader.markUnroutedRelations(ctx, space, relations, queriedRoots, &queries)
+			return queries, err
 		}
 	}
-	if mode == "bipartite" && len(q.partialTimes) == 0 && !incompleteIdentity {
+	if mode == "bipartite" && !incompleteIdentity {
+		// 首阶段后端不完整时另一侧候选不完整，首跳候选超过阈值时按身份分批代价过高：两种情况
+		// 都从根逐跳读取实际到达的候选，不退回整类关系的宽读取。
+		large := false
+		for _, candidates := range first {
+			large = large || len(candidates) > timeGraphWideFrontierThreshold
+		}
+		if (q.backendPartial() || large) && hopEligible {
+			span.Set("fetch-mode", "bipartite-then-hop")
+			err = loader.loadTopologyHops(ctx, space, source, identity, relations, wideGroups, plan.hops, reorder, nil, &queries)
+			return queries, err
+		}
+	}
+	if mode == "bipartite" && !q.backendPartial() && !incompleteIdentity {
 		inputs := []topologyFetchInput{}
 		for _, relation := range relations {
 			candidates, ok := first[relation.V[0]]

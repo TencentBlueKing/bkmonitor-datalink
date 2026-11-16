@@ -79,6 +79,53 @@ func TestLegacyMissingRouteQuality(t *testing.T) {
 	}
 }
 
+// 兼容入口的不完整原因带上缺失的存储名，不再只记 backend_partial；读到的目标照常返回。
+func TestLegacyStorageCoverageReasonNamesStorage(t *testing.T) {
+	const reason = "vm_storage_coverage_mismatch:monitor-op"
+	for _, mode := range []string{"instant", "range"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := initTimeGraphQueryTestEnvironment()
+			model := legacyRegressionModel(legacyAlternativeProvider(true))
+			model.timeGraphVMQueryWithPartial = func(ctx context.Context, query *structured.QueryTs, _ string, _ bool, start, _ time.Time, _ time.Duration) (pl.Matrix, bool, error) {
+				// 与 VM 实例相同：响应缺了请求的存储时只记录带存储名的覆盖原因，不置 partial 位。
+				metadata.AddStorageCoverageReason(ctx, reason)
+				return legacyAlternativeMatrix(query.QueryList[0].FieldName, start.UnixMilli()), false, nil
+			}
+			var count int
+			if mode == "instant" {
+				_, _, _, _, targets, err := model.QueryResourceMatcher(ctx, "24h", "space", "1700000040", "target", "source", cmdb.Matcher{"source_id": "a"}, nil, false, nil)
+				require.NoError(t, err)
+				count = len(targets)
+			} else {
+				_, _, _, _, targets, err := model.QueryResourceMatcherRange(ctx, "", "space", "1m", "1700000040", "1700000100", "target", "source", cmdb.Matcher{"source_id": "a"}, nil, false, nil)
+				require.NoError(t, err)
+				count = len(targets)
+			}
+			require.Equal(t, 1, count)
+			status := metadata.GetStatus(ctx)
+			require.NotNil(t, status)
+			require.Equal(t, metadata.QueryTsPartial, status.Code)
+			require.Equal(t, reason, status.Message)
+		})
+	}
+}
+
+// VM 实例追加原因时用 "; " 连接。合并原因时去掉空格，同一原因只记一次，不因前导空格变成另一个原因。
+func TestPartialReasonMergeTrimsSeparatorSpaces(t *testing.T) {
+	ctx := initTimeGraphQueryTestEnvironment()
+	metadata.SetStatus(ctx, metadata.QueryTsPartial, "backend_partial; vm_storage_coverage_mismatch:storage-a")
+	addTimeGraphPartialReason(ctx, "vm_storage_coverage_mismatch:storage-a")
+	require.Equal(t, "backend_partial;vm_storage_coverage_mismatch:storage-a", metadata.GetStatus(ctx).Message)
+
+	metadata.SetStatus(ctx, metadata.QueryTsPartial, "backend_partial; vm_storage_coverage_mismatch:storage-a")
+	_, err := queryFirstTimeGraphPath(ctx, make([]resourcePath, 1), func(resourcePath) (bool, error) {
+		metadata.SetStatus(ctx, metadata.QueryTsPartial, "vm_storage_coverage_mismatch:storage-a")
+		return true, nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, "backend_partial;vm_storage_coverage_mismatch:storage-a", metadata.GetStatus(ctx).Message)
+}
+
 func TestLegacyCandidateQualityAndLastEmptyPath(t *testing.T) {
 	backendFailure := errors.New("backend failed")
 	for _, tc := range []struct {
@@ -97,11 +144,11 @@ func TestLegacyCandidateQualityAndLastEmptyPath(t *testing.T) {
 			ctx := context.WithValue(initTimeGraphQueryTestEnvironment(), timeGraphLegacyCompatibilityKey{}, true)
 			metadata.SetStatus(ctx, metadata.QueryTsPartial, "backend_partial")
 			index := 0
-			_, last, err := queryFirstTimeGraphPath(ctx, make([]resourcePath, len(tc.errs)), func(resourcePath) ([]cmdb.PathResourcesResult, error) {
+			last, err := queryFirstTimeGraphPath(ctx, make([]resourcePath, len(tc.errs)), func(resourcePath) (bool, error) {
 				err := tc.errs[index]
 				index++
 				metadata.SetStatus(ctx, "another_status", "")
-				return nil, err
+				return false, err
 			})
 			require.Equal(t, tc.last, last)
 			if tc.want != nil {
@@ -246,38 +293,48 @@ func TestLegacyFrontierDoesNotMutateMatrixOrDropMissingKeys(t *testing.T) {
 	require.ErrorContains(t, err, "incomplete endpoint")
 }
 
+// 每跳都只读取前一跳的实际端点，反向遍历同样如此。单跳自关联返回目标；
+// 两跳自关联回访资源类型，在任何后端读取之前被具名拒绝。
 func TestLegacyFrontierDynamicDirectionAndRepeatedResource(t *testing.T) {
 	for _, direction := range []TraversalDirection{DirectionOutbound, DirectionInbound} {
-		t.Run(string(direction), func(t *testing.T) {
-			ctx := context.WithValue(initTimeGraphQueryTestEnvironment(), timeGraphLegacyCompatibilityKey{}, true)
-			model := legacyRegressionModel(frontierCompositeProvider())
-			calls := 0
-			model.timeGraphVMQuery = func(_ context.Context, query *structured.QueryTs, _ string, _ bool, start, _ time.Time, _ time.Duration) (pl.Matrix, error) {
-				calls++
-				matrix := pl.Matrix{}
-				for _, pair := range [][2]string{{"a", "b"}, {"b", "c"}, {"outside", "unreachable"}} {
-					from, to := pair[0], pair[1]
-					if direction == DirectionInbound {
-						from, to = to, from
+		for _, hops := range []int{1, 2} {
+			t.Run(fmt.Sprintf("%s/%d-hop", direction, hops), func(t *testing.T) {
+				ctx := context.WithValue(initTimeGraphQueryTestEnvironment(), timeGraphLegacyCompatibilityKey{}, true)
+				model := legacyRegressionModel(frontierCompositeProvider())
+				calls := 0
+				model.timeGraphVMQuery = func(_ context.Context, query *structured.QueryTs, _ string, _ bool, start, _ time.Time, _ time.Duration) (pl.Matrix, error) {
+					calls++
+					matrix := pl.Matrix{}
+					for _, pair := range [][2]string{{"a", "b"}, {"b", "c"}, {"outside", "unreachable"}} {
+						from, to := pair[0], pair[1]
+						if direction == DirectionInbound {
+							from, to = to, from
+						}
+						matrix = append(matrix, contractMatrix(map[string]string{"from_tenant": "x", "from_id": from, "to_tenant": "x", "to_id": to}, start.UnixMilli())...)
 					}
-					matrix = append(matrix, contractMatrix(map[string]string{"from_tenant": "x", "from_id": from, "to_tenant": "x", "to_id": to}, start.UnixMilli())...)
+					filtered := filterTopologyRegressionMatrix(query, matrix)
+					require.Len(t, filtered, 1, "each hop must read only its current endpoint, including reverse traversal")
+					return filtered, nil
 				}
-				filtered := filterTopologyRegressionMatrix(query, matrix)
-				require.Len(t, filtered, 1, "each hop must read only its current endpoint, including reverse traversal")
-				return filtered, nil
-			}
-			path := cmdb.RelationPath{Steps: []cmdb.RelationPathStep{{ResourceType: "service"}}}
-			for hop := 0; hop < 2; hop++ {
-				path.Steps = append(path.Steps, cmdb.RelationPathStep{ResourceType: "service", RelationType: "calls", Category: string(RelationCategoryDynamic), Direction: string(direction), MetricName: "calls_flow"})
-			}
-			stamp := time.Unix(1700000040, 0)
-			result, err := model.QueryRelationTimeGraph(ctx, "24h", "space", stamp, stamp, time.Minute, "service", []cmdb.Resource{"service"}, []cmdb.RelationPath{path}, cmdb.Matcher{"tenant": "x", "id": "a"}, nil)
-			require.NoError(t, err)
-			require.Equal(t, 2, calls)
-			require.Len(t, result, 1)
-			require.Len(t, result[0].Path, 3)
-			require.Equal(t, "c", result[0].Path[2].Dimensions["id"])
-		})
+				path := cmdb.RelationPath{Steps: []cmdb.RelationPathStep{{ResourceType: "service"}}}
+				for hop := 0; hop < hops; hop++ {
+					path.Steps = append(path.Steps, cmdb.RelationPathStep{ResourceType: "service", RelationType: "calls", Category: string(RelationCategoryDynamic), Direction: string(direction), MetricName: "calls_flow"})
+				}
+				stamp := time.Unix(1700000040, 0)
+				result, err := model.QueryRelationTimeGraph(ctx, "24h", "space", stamp, stamp, time.Minute, "service", []cmdb.Resource{"service"}, []cmdb.RelationPath{path}, cmdb.Matcher{"tenant": "x", "id": "a"}, nil)
+				if hops > 1 {
+					require.ErrorContains(t, err, "relation path revisits resource type service")
+					require.Empty(t, result)
+					require.Zero(t, calls, "rejected paths must not query the backend")
+					return
+				}
+				require.NoError(t, err)
+				require.Equal(t, 1, calls)
+				require.Len(t, result, 1)
+				require.Equal(t, cmdb.Resource("service"), result[0].Target.ResourceType)
+				require.Equal(t, "b", result[0].Target.Dimensions["id"])
+			})
+		}
 	}
 }
 

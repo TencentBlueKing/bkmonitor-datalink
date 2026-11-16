@@ -198,7 +198,7 @@ func TestOmittedLookBackOutsideLegacyInstant(t *testing.T) {
 		model := legacyRegressionModel(sharedTopologyQueryProvider())
 		seen := windows(t, model)
 		_, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{
-			SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
+			SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}},
 			StartTime: 1700000000, EndTime: 1700000000, MaxHops: 1,
 		})
 		require.NoError(t, err)

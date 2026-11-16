@@ -18,15 +18,17 @@ import (
 // 不相交的时间位分组表示，不为每个评估点创建图或 timestamp map。
 // 所有读写由所属 TimeGraph 的锁保护，生命周期仅限单次查询。
 type sharedTimeGraph struct {
-	grid                 TopologyGrid
-	fullGridBits         timeBitmap
-	timestampIndex       map[int64]int
-	uniformStart         int64
-	uniformEnd           int64
-	uniformStep          int64
-	nodeBits             map[uint64]timeBitmap
-	relationNodeBits     map[uint64]timeBitmap
-	sourceInfoBits       map[uint64]timeBitmap
+	grid             TopologyGrid
+	fullGridBits     timeBitmap
+	timestampIndex   map[int64]int
+	uniformStart     int64
+	uniformEnd       int64
+	uniformStep      int64
+	nodeBits         map[uint64]timeBitmap
+	relationNodeBits map[uint64]timeBitmap
+	sourceInfoBits   map[uint64]timeBitmap
+	// sourceExpandBits 按选择器下标保存多个选择器各自的属性条件匹配位，nil 表示该选择器没有属性条件。
+	sourceExpandBits     []map[uint64]timeBitmap
 	nodeInfoVersionCount int
 	nodeInfos            map[uint64][]sharedNodeInfo
 	edgeBits             map[timeGraphTopologyEdgeKey]timeBitmap
@@ -78,6 +80,7 @@ func (g *sharedTimeGraph) clear() {
 	clear(g.nodeBits)
 	clear(g.relationNodeBits)
 	clear(g.sourceInfoBits)
+	g.sourceExpandBits = nil
 	g.nodeInfoVersionCount = 0
 	clear(g.nodeInfos)
 	clear(g.edgeBits)
@@ -138,7 +141,7 @@ func appendSharedNodeInfo(versions []sharedNodeInfo, active timeBitmap, info cmd
 	return append(versions, sharedNodeInfo{activeBits: active, dimensions: info})
 }
 
-func (q *TimeGraph) setSharedNodeInfo(node uint64, info cmdb.Matcher, active timeBitmap) (err error) {
+func (q *TimeGraph) setSharedNodeInfo(node uint64, info cmdb.Matcher, active timeBitmap) {
 	g := q.shared
 	previous := g.nodeInfos[node]
 	if len(previous) == 1 && active.isSubsetOf(previous[0].activeBits) {
@@ -151,24 +154,10 @@ func (q *TimeGraph) setSharedNodeInfo(node uint64, info cmdb.Matcher, active tim
 			}
 		}
 		if unchanged {
-			if q.maxNodeInfos > 0 && g.nodeInfoVersionCount > q.maxNodeInfos {
-				return &ResultLimitError{Reason: "max_graph_node_infos", Count: g.nodeInfoVersionCount, Limit: q.maxNodeInfos}
-			}
-			return nil
+			return
 		}
 	}
 	newPoints := active.subtract(g.nodeBits[node]).count()
-	if q.residency != nil {
-		reservation, reserveErr := q.reserveInfoChange(node, info, active)
-		if reserveErr != nil {
-			return reserveErr
-		}
-		defer func() {
-			if settleErr := reservation.settle(g.nodeInfos[node], err == nil); err == nil {
-				err = settleErr
-			}
-		}()
-	}
 	versions := make([]sharedNodeInfo, 0, len(previous)+1)
 	remaining := active
 	for _, version := range previous {
@@ -190,15 +179,10 @@ func (q *TimeGraph) setSharedNodeInfo(node uint64, info cmdb.Matcher, active tim
 		}
 		versions = appendSharedNodeInfo(versions, remaining, owned)
 	}
-	versionCount := g.nodeInfoVersionCount + len(versions) - len(previous)
-	if q.maxNodeInfos > 0 && versionCount > q.maxNodeInfos {
-		return &ResultLimitError{Reason: "max_graph_node_infos", Count: versionCount, Limit: q.maxNodeInfos}
-	}
-	g.nodeInfoVersionCount = versionCount
+	g.nodeInfoVersionCount += len(versions) - len(previous)
 	g.nodeInfos[node] = versions
 	g.nodeBits[node] = g.nodeBits[node].union(active)
 	q.nodeInfoCount += newPoints
-	return nil
 }
 
 func (q *TimeGraph) addSharedRelation(ctx context.Context, relation cmdb.Relation, direction string, source, target uint64, sourceInfo, targetInfo cmdb.Matcher, timestamps []int64) error {
@@ -214,29 +198,14 @@ func (q *TimeGraph) addSharedRelation(ctx context.Context, relation cmdb.Relatio
 		return nil
 	}
 	pair := timeGraphEdgeKey{source: source, target: target}
-	// 存储上限按完整关系身份计数；出现次数、输入点、内存、时间及遍历上限独立计量。
+	// 关系按完整身份存一份，出现次数按节点对的时间位累计。
 	newEdges := active.subtract(g.edgePairBits[pair]).count()
 	key := timeGraphTopologyEdgeKey{source: source, target: target, relation: timeGraphEdgeRelation{
 		relationType: relation.RelationType, metricName: relation.MetricName,
 		category: relation.Category, direction: direction,
 	}}
-	if err := q.reserveSharedEdge(key, pair); err != nil {
-		return err
-	}
-	// A membership lookup is only needed at the configured edge limit. Below
-	// it (or with no limit), inserting or updating a relation is always allowed.
-	if q.residency == nil && q.maxEdges > 0 && g.edgeCount() >= q.maxEdges {
-		_, exists := g.edgeBits[key]
-		if !exists {
-			return &ResultLimitError{Reason: "max_graph_edges", Count: g.edgeCount() + 1, Limit: q.maxEdges}
-		}
-	}
-	if err := q.setSharedNodeInfo(source, sourceInfo, active); err != nil {
-		return err
-	}
-	if err := q.setSharedNodeInfo(target, targetInfo, active); err != nil {
-		return err
-	}
+	q.setSharedNodeInfo(source, sourceInfo, active)
+	q.setSharedNodeInfo(target, targetInfo, active)
 	g.relationNodeBits[source] = g.relationNodeBits[source].union(active)
 	g.relationNodeBits[target] = g.relationNodeBits[target].union(active)
 	g.edgeBits[key] = g.edgeBits[key].union(active)
@@ -260,7 +229,10 @@ func (g *sharedTimeGraph) state(ctx context.Context, grid TopologyGrid, query Sh
 		if len(query.AllowedRelationTypes) > 0 && !slices.Contains(query.AllowedRelationTypes, key.relation.relationType) {
 			return nil
 		}
-		if key.relation.category == string(RelationCategoryDynamic) && query.Direction != "" && query.Direction != DirectionBoth && key.relation.direction != "" && key.relation.direction != string(query.Direction) {
+		// 动态关系与归属关系按请求方向遍历，其余静态关系始终双向。
+		_, belongsTo := query.BelongsTo[key.relation.relationType]
+		directed := key.relation.category == string(RelationCategoryDynamic) || belongsTo
+		if directed && query.Direction != "" && query.Direction != DirectionBoth && key.relation.direction != "" && key.relation.direction != string(query.Direction) {
 			return nil
 		}
 		edges = append(edges, sharedTopologyEdgeState{key: key, activeBits: active})
@@ -278,16 +250,33 @@ func (g *sharedTimeGraph) state(ctx context.Context, grid TopologyGrid, query Sh
 // sharedTopologyRootBits 排除只由 info 查询产生的孤立节点。
 // 请求属性时，只有 info 查询在该帧匹配的关系节点才可作为根。
 func (q *TimeGraph) sharedTopologyRootBits() map[uint64]timeBitmap {
+	return q.sharedTopologyRootBitsWith(q.shared.sourceInfoBits)
+}
+
+// topologySourceSeeds 返回多个选择器的根：各选择器的身份与属性条件分别判定，遍历时取并集。
+func (q *TimeGraph) topologySourceSeeds(sources []topologySource) []TopologySeed {
+	seeds := make([]TopologySeed, len(sources))
+	for i, source := range sources {
+		var expand map[uint64]timeBitmap
+		if i < len(q.shared.sourceExpandBits) {
+			expand = q.shared.sourceExpandBits[i]
+		}
+		seeds[i] = TopologySeed{SourceType: source.Type, Matcher: source.Info, RootBits: q.sharedTopologyRootBitsWith(expand)}
+	}
+	return seeds
+}
+
+// sharedTopologyRootBitsWith 返回关系端点与一组根的属性条件共同匹配的节点位；expand 为 nil
+// 表示没有属性条件。
+func (q *TimeGraph) sharedTopologyRootBitsWith(expand map[uint64]timeBitmap) map[uint64]timeBitmap {
 	// The private query only reads this map before graph cleanup. Without an
 	// info condition, the relation endpoint masks are already the exact roots.
-	if q.shared.sourceInfoBits == nil {
+	if expand == nil {
 		return q.shared.relationNodeBits
 	}
 	roots := make(map[uint64]timeBitmap, len(q.shared.relationNodeBits))
 	for id, bits := range q.shared.relationNodeBits {
-		if q.shared.sourceInfoBits != nil {
-			bits = bits.intersect(q.shared.sourceInfoBits[id])
-		}
+		bits = bits.intersect(expand[id])
 		if !bits.empty() {
 			roots[id] = bits
 		}

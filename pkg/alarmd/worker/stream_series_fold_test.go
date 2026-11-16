@@ -23,7 +23,7 @@ func (row procPortRow) record(base contract.CanonicalRecordV2) contract.Canonica
 	record := base
 	record.Values = map[string]json.RawMessage{"value": json.RawMessage(row.value)}
 	record.Dimensions = map[string]json.RawMessage{
-		"bk_target_cloud_id": json.RawMessage(`"0"`), "bk_target_ip": json.RawMessage(`"10.0.0.9"`), "display_name": json.RawMessage(`"nginx"`),
+		"bk_target_cloud_id": json.RawMessage(`"0"`), "bk_target_ip": json.RawMessage(`"192.0.2.9"`), "display_name": json.RawMessage(`"nginx"`),
 		"nonlisten": json.RawMessage(row.nonListen), "not_accurate_listen": json.RawMessage(row.notAccurateListen),
 		"listen": json.RawMessage(row.listen), "protocol": json.RawMessage(row.protocol), "bind_ip": json.RawMessage(row.bindIP),
 	}
@@ -83,11 +83,11 @@ func primaryEvaluationBinding(t *testing.T, evaluator *recordingEvaluator) execu
 // folded record must be ABNORMAL whenever one row is, whichever row it is,
 // carry the offending ports, and stay NORMAL when every row is healthy.
 func TestSlotExecutionCoordinatorFoldsProcPortRowsPreservingEveryAnomalousRow(t *testing.T) {
-	healthyTCP := procPortRow{value: `1`, nonListen: `"[]"`, notAccurateListen: `"[]"`, listen: `"[80]"`, protocol: `"tcp"`, bindIP: `"10.0.0.1"`}
-	healthyUDP := procPortRow{value: `1`, nonListen: `"[]"`, notAccurateListen: `"null"`, listen: `"[53]"`, protocol: `"udp"`, bindIP: `"10.0.0.1"`}
-	portsMissing := procPortRow{value: `1`, nonListen: `"[8080, 8081]"`, notAccurateListen: `"[]"`, listen: `"[]"`, protocol: `"tcp"`, bindIP: `"10.0.0.2"`}
-	bindMismatch := procPortRow{value: `1`, nonListen: `"[]"`, notAccurateListen: `"[127.0.0.1:10011]"`, listen: `"[10011]"`, protocol: `"tcp"`, bindIP: `"10.0.0.3"`}
-	processGone := procPortRow{value: `0`, nonListen: `"[]"`, notAccurateListen: `"[]"`, listen: `"[]"`, protocol: `"tcp"`, bindIP: `"10.0.0.1"`}
+	healthyTCP := procPortRow{value: `1`, nonListen: `"[]"`, notAccurateListen: `"[]"`, listen: `"[80]"`, protocol: `"tcp"`, bindIP: `"192.0.2.1"`}
+	healthyUDP := procPortRow{value: `1`, nonListen: `"[]"`, notAccurateListen: `"null"`, listen: `"[53]"`, protocol: `"udp"`, bindIP: `"192.0.2.1"`}
+	portsMissing := procPortRow{value: `1`, nonListen: `"[8080, 8081]"`, notAccurateListen: `"[]"`, listen: `"[]"`, protocol: `"tcp"`, bindIP: `"192.0.2.2"`}
+	bindMismatch := procPortRow{value: `1`, nonListen: `"[]"`, notAccurateListen: `"[127.0.0.1:10011]"`, listen: `"[10011]"`, protocol: `"tcp"`, bindIP: `"192.0.2.3"`}
+	processGone := procPortRow{value: `0`, nonListen: `"[]"`, notAccurateListen: `"[]"`, listen: `"[]"`, protocol: `"tcp"`, bindIP: `"192.0.2.1"`}
 	tests := []struct {
 		name          string
 		rows          []procPortRow
@@ -101,28 +101,28 @@ func TestSlotExecutionCoordinatorFoldsProcPortRowsPreservingEveryAnomalousRow(t 
 	}{
 		{
 			name: "first row anomalous", rows: []procPortRow{portsMissing, healthyTCP}, wantOutcome: execution.LevelOutcomeAbnormal,
-			wantValue: `1`, wantNonListen: `"[8080, 8081]"`, wantMismatch: `"[]"`, wantListen: `"[80]"`, wantProtocol: `"tcp"`, wantBindIP: `["10.0.0.2","10.0.0.1"]`,
+			wantValue: `1`, wantNonListen: `"[8080, 8081]"`, wantMismatch: `"[]"`, wantListen: `"[80]"`, wantProtocol: `"tcp"`, wantBindIP: `["192.0.2.2","192.0.2.1"]`,
 		},
 		{
 			name: "second row anomalous", rows: []procPortRow{healthyTCP, portsMissing}, wantOutcome: execution.LevelOutcomeAbnormal,
-			wantValue: `1`, wantNonListen: `"[8080, 8081]"`, wantMismatch: `"[]"`, wantListen: `"[80]"`, wantProtocol: `"tcp"`, wantBindIP: `["10.0.0.1","10.0.0.2"]`,
+			wantValue: `1`, wantNonListen: `"[8080, 8081]"`, wantMismatch: `"[]"`, wantListen: `"[80]"`, wantProtocol: `"tcp"`, wantBindIP: `["192.0.2.1","192.0.2.2"]`,
 		},
 		{
 			name: "two healthy rows", rows: []procPortRow{healthyTCP, healthyUDP}, wantOutcome: execution.LevelOutcomeNormal,
-			wantValue: `1`, wantNonListen: `"[]"`, wantMismatch: `"[]"`, wantListen: `"[80,53]"`, wantProtocol: `["tcp","udp"]`, wantBindIP: `"10.0.0.1"`,
+			wantValue: `1`, wantNonListen: `"[]"`, wantMismatch: `"[]"`, wantListen: `"[80,53]"`, wantProtocol: `["tcp","udp"]`, wantBindIP: `"192.0.2.1"`,
 		},
 		{
 			name: "listen address mismatch in the second row", rows: []procPortRow{healthyTCP, bindMismatch}, wantOutcome: execution.LevelOutcomeAbnormal,
-			wantValue: `1`, wantNonListen: `"[]"`, wantMismatch: `"[127.0.0.1:10011]"`, wantListen: `"[80,10011]"`, wantProtocol: `"tcp"`, wantBindIP: `["10.0.0.1","10.0.0.3"]`,
+			wantValue: `1`, wantNonListen: `"[]"`, wantMismatch: `"[127.0.0.1:10011]"`, wantListen: `"[80,10011]"`, wantProtocol: `"tcp"`, wantBindIP: `["192.0.2.1","192.0.2.3"]`,
 		},
 		{
 			name: "process absent in one row", rows: []procPortRow{healthyTCP, processGone}, wantOutcome: execution.LevelOutcomeAbnormal,
-			wantValue: `0`, wantNonListen: `"[]"`, wantMismatch: `"[]"`, wantListen: `"[80]"`, wantProtocol: `"tcp"`, wantBindIP: `"10.0.0.1"`,
+			wantValue: `0`, wantNonListen: `"[]"`, wantMismatch: `"[]"`, wantListen: `"[80]"`, wantProtocol: `"tcp"`, wantBindIP: `"192.0.2.1"`,
 		},
 		{
-			name: "three rows union their ports", rows: []procPortRow{portsMissing, healthyTCP, {value: `1`, nonListen: `"[8081, 9000]"`, notAccurateListen: `"[]"`, listen: `"[]"`, protocol: `"udp"`, bindIP: `"10.0.0.2"`}},
+			name: "three rows union their ports", rows: []procPortRow{portsMissing, healthyTCP, {value: `1`, nonListen: `"[8081, 9000]"`, notAccurateListen: `"[]"`, listen: `"[]"`, protocol: `"udp"`, bindIP: `"192.0.2.2"`}},
 			wantOutcome: execution.LevelOutcomeAbnormal,
-			wantValue:   `1`, wantNonListen: `"[8080,8081,9000]"`, wantMismatch: `"[]"`, wantListen: `"[80]"`, wantProtocol: `["tcp","udp"]`, wantBindIP: `["10.0.0.2","10.0.0.1"]`,
+			wantValue:   `1`, wantNonListen: `"[8080,8081,9000]"`, wantMismatch: `"[]"`, wantListen: `"[80]"`, wantProtocol: `["tcp","udp"]`, wantBindIP: `["192.0.2.2","192.0.2.1"]`,
 		},
 	}
 	for _, test := range tests {

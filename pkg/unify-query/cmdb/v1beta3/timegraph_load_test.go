@@ -101,7 +101,7 @@ func TestTimeGraphLoadStagePreservesPartial(t *testing.T) {
 			callLabels := map[string]string{"stage": "relation-edge", "result": outcome}
 			beforePoints := readTimeGraphMetric(t, "cmdb_timegraph_load_size_total", pointLabels, "counter")
 			beforeCalls := readTimeGraphMetric(t, "cmdb_timegraph_load_operations_total", callLabels, "counter")
-			result, err := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: 1700000000, MaxHops: 1})
+			result, err := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}}, Timestamp: 1700000000, MaxHops: 1})
 			require.NoError(t, err)
 			require.NotEmpty(t, result.Snapshots)
 			require.Equal(t, beforePoints+1, readTimeGraphMetric(t, "cmdb_timegraph_load_size_total", pointLabels, "counter"))

@@ -54,8 +54,8 @@ func TestARosterShapeThisBuildCannotDeriveSuspendsOnlyNoData(t *testing.T) {
 	// Two host conditions: the backend enumerates only the first condition of
 	// the first group, so this is a target alarmd refuses to guess at.
 	scope := map[string]any{"target": []any{[]any{
-		map[string]any{"field": "bk_target_ip", "method": "eq", "value": []any{map[string]any{"bk_target_ip": "10.0.0.1", "bk_target_cloud_id": "0"}}},
-		map[string]any{"field": "bk_target_ip", "method": "eq", "value": []any{map[string]any{"bk_target_ip": "10.0.0.2", "bk_target_cloud_id": "0"}}},
+		map[string]any{"field": "bk_target_ip", "method": "eq", "value": []any{map[string]any{"bk_target_ip": "192.0.2.1", "bk_target_cloud_id": "0"}}},
+		map[string]any{"field": "bk_target_ip", "method": "eq", "value": []any{map[string]any{"bk_target_ip": "192.0.2.2", "bk_target_cloud_id": "0"}}},
 	}}}
 	catalog := buildSuspensionCatalog(t,
 		`{"is_enabled":true,"continuous":3,"agg_dimension":["bk_target_ip","bk_target_cloud_id"]}`, scope)

@@ -6,6 +6,8 @@
 package execution
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -52,15 +54,42 @@ const (
 	// suppressed and not yet exhausted - correct, because no build that wrote a
 	// v2 record had a horizon to stop anything with.
 	NoDataMemorySchemaV3 NoDataMemorySchema = 3
+	// NoDataMemorySchemaV4 changes nothing a record stores and one thing it
+	// states: the memory digest no longer depends on the order of the groups
+	// (decision-020 batch 8, 2.7, ruled 11-10). A v3 digest is taken over the
+	// whole memory sorted by key, which a round that reads the memory in scan
+	// segments cannot compute without holding every group; a v4 digest folds
+	// each group's own digest into a sum that any order and any segmentation
+	// reach alike (NoDataMemoryDigestAccumulator).
+	//
+	// Old records only have to decode. The store's guard compares the digest
+	// of the header it read against the one it is handed, never recomputes a
+	// stored digest, so a v1, v2 or v3 record is read as before and replaced
+	// by a v4 one on its next write. There is no dual write and no migration.
+	//
+	// The upgrade has exactly two edges, both accepted when this was ruled:
+	//
+	//   - A Slot written by the old build and retried by the new one meets a
+	//     record at its own apply version whose digest differs only because
+	//     the algorithm did: one same_version_other_statement conflict
+	//     (StateVersionConflictSameVersionOtherStatement), counted by the
+	//     existing conflict counter, and the next round carries a newer apply
+	//     version and passes.
+	//   - It cannot be rolled back. A build that reads at most v3 meets a v4
+	//     header as StateSchemaUnsupported (NoDataMemoryReadable), so every
+	//     Plan the new build wrote has no no-data detection until the new build
+	//     returns. The deployment it replaces runs alarmd as a shadow, so this is written for the
+	//     final design rather than for a rollback.
+	NoDataMemorySchemaV4 NoDataMemorySchema = 4
 	// MaxSupportedNoDataMemorySchema is the newest record shape this build can
 	// read. A record above it was written by a newer build than this one, which
 	// happens during a rollback, and the rule for it is in NoDataMemoryReadable.
-	MaxSupportedNoDataMemorySchema = NoDataMemorySchemaV3
+	MaxSupportedNoDataMemorySchema = NoDataMemorySchemaV4
 	// WrittenNoDataMemorySchema is the one shape this build writes. Reading
-	// three and writing one is the whole coexistence rule: a Plan whose record
-	// is still v1 or v2 is read from it and written to v3, and no build ever
-	// writes two shapes so no reader has to merge them.
-	WrittenNoDataMemorySchema = NoDataMemorySchemaV3
+	// four and writing one is the whole coexistence rule: a Plan whose record
+	// is still v1, v2 or v3 is read from it and written to v4, and no build
+	// ever writes two shapes so no reader has to merge them.
+	WrittenNoDataMemorySchema = NoDataMemorySchemaV4
 )
 
 // NoDataMemoryReadable says whether this build may load and replace a stored
@@ -296,7 +325,16 @@ func derivePlanNoDataStatementDigest(mutation PlanNoDataMutation) (MutationDiges
 	if mutation.MemoryDigest == "" {
 		return "", errors.New("alarmd execution: Plan no-data mutation states no resulting memory")
 	}
-	digest, err := contract.DeriveCanonicalDigestV2("alarmd-plan-no-data-statement-v2", struct {
+	// A whole record is stated by its memory digest and group count, not by
+	// its groups: they are staged a segment at a time, some before the
+	// statement exists (NoDataStaged), and the store proves the staged ones
+	// fold to that digest before it puts them in place. A delta is stated by
+	// its groups, which it carries whole.
+	set := mutation.Set
+	if mutation.ReplacesWholeRecord() {
+		set = nil
+	}
+	digest, err := contract.DeriveCanonicalDigestV2("alarmd-plan-no-data-statement-v3", struct {
 		Identity               PlanNoDataIdentity   `json:"identity"`
 		SchemaVersion          NoDataMemorySchema   `json:"schema_version"`
 		DerivedFrom            NoDataRepresentation `json:"derived_from"`
@@ -315,7 +353,7 @@ func derivePlanNoDataStatementDigest(mutation PlanNoDataMutation) (MutationDiges
 		mutation.Identity, mutation.SchemaVersion, mutation.DerivedFrom, mutation.ExpectedMarkerRevision,
 		mutation.LoadedApplyVersion, mutation.ApplyVersion,
 		mutation.ScheduleRevision, mutation.RosterVersion, mutation.PresentAsOf, mutation.TrackingExhaustedAt,
-		mutation.MemoryDigest, mutation.GroupCount, mutation.Set, mutation.Del,
+		mutation.MemoryDigest, mutation.GroupCount, set, mutation.Del,
 	})
 	if err != nil {
 		return "", fmt.Errorf("alarmd execution: derive Plan no-data statement digest: %w", err)
@@ -534,13 +572,103 @@ func canonicalNoDataMemory(groups []NoDataGroupMemory) ([]NoDataGroupMemory, err
 // versions hold the same memory. It does not cover the delta either, so two
 // rounds reaching one memory from different records agree, which is what keeps
 // a retry from reading as a conflict.
+//
+// The groups are folded one at a time (NoDataMemoryDigestAccumulator), so the
+// same memory in any order has the same digest; memory is canonical here, so
+// every group is folded once.
 func derivePlanNoDataMemoryDigest(
 	mutation PlanNoDataMutation, memory []NoDataGroupMemory,
 ) (MutationDigest, error) {
+	var groups NoDataMemoryDigestAccumulator
+	for _, group := range memory {
+		if err := groups.Add(group); err != nil {
+			return "", err
+		}
+	}
+	return groups.MemoryDigest(mutation)
+}
+
+// NoDataMemoryDigestAccumulator folds a memory's groups into its digest one
+// group at a time, in any order, so a round that reads the memory in segments
+// can name the memory it results in without holding it (schema v4).
+//
+// Each group's digest is SHA-256 over an unambiguous encoding of the group,
+// and the fold is their sum modulo 2^256. A sum and not an XOR: XOR is
+// order-free too, but a group folded twice cancels out of it, so a scan that
+// returned one field twice would digest as a memory without that group. A
+// sum moves instead - which still makes the digest wrong, so each group must
+// be added exactly once, and deduplicating is the caller's: the per-group
+// judgement already judges each key once (nodata.PlanJudge), and the same
+// deduplication is what feeds this. Two different memories collide only if
+// their sums of SHA-256 values agree modulo 2^256. The groups are the
+// platform's own records and the digest is an idempotency identity rather
+// than a security boundary, so the generalised-birthday weakening of additive
+// set hashes against a chosen-input adversary does not apply here.
+type NoDataMemoryDigestAccumulator struct {
+	// sum is the fold (contract.DigestSum256), shared with the roster
+	// version, which folds its keys alike.
+	sum    contract.DigestSum256
+	groups uint64
+	// lastSeen is the newest last-seen time folded and lastSeenKey its group,
+	// for the one per-group check of BuildPlanNoDataMutation a statement
+	// built from the fold still has to make (BuildPlanNoDataSegmentedMutation).
+	lastSeen    int64
+	lastSeenKey string
+}
+
+// noDataGroupDigestDomain separates a group's digest from every other SHA-256
+// this build takes.
+const noDataGroupDigestDomain = "alarmd-plan-no-data-memory-group-v1"
+
+// Add folds one group in. A group a record could not store is refused with
+// the message the canonical memory gives it.
+func (accumulator *NoDataMemoryDigestAccumulator) Add(group NoDataGroupMemory) error {
+	if group.GroupKey == "" {
+		return errors.New("alarmd execution: Plan no-data mutation group requires a key")
+	}
+	if group.LastSeen < 0 || group.FirstAbsent < 0 {
+		return errors.New("alarmd execution: Plan no-data mutation timestamps must not be negative")
+	}
+	if group.LastSeen == 0 && group.FirstAbsent == 0 {
+		return errors.New("alarmd execution: Plan no-data mutation group remembers nothing and must be omitted")
+	}
+	// Length-prefixed key, then the three timestamps at fixed width: no two
+	// groups encode alike.
+	encoded := make([]byte, 0, len(noDataGroupDigestDomain)+1+binary.MaxVarintLen64+len(group.GroupKey)+24)
+	encoded = append(encoded, noDataGroupDigestDomain...)
+	encoded = append(encoded, 0)
+	encoded = binary.AppendUvarint(encoded, uint64(len(group.GroupKey)))
+	encoded = append(encoded, group.GroupKey...)
+	encoded = binary.BigEndian.AppendUint64(encoded, uint64(group.LastSeen))
+	encoded = binary.BigEndian.AppendUint64(encoded, uint64(group.FirstAbsent))
+	encoded = binary.BigEndian.AppendUint64(encoded, uint64(group.SuppressedAt))
+	accumulator.sum.Add(sha256.Sum256(encoded))
+	accumulator.groups++
+	if group.LastSeen > accumulator.lastSeen {
+		accumulator.lastSeen, accumulator.lastSeenKey = group.LastSeen, group.GroupKey
+	}
+	return nil
+}
+
+// Groups is how many groups have been folded in.
+func (accumulator *NoDataMemoryDigestAccumulator) Groups() uint64 {
+	return accumulator.groups
+}
+
+// MemoryDigest is the digest of the memory folded so far, under the facts the
+// mutation states. The mutation's group count has to be the number folded: a
+// digest that named a different memory size than the statement carrying it
+// would let the store answer "already applied" for a memory nobody held.
+func (accumulator *NoDataMemoryDigestAccumulator) MemoryDigest(mutation PlanNoDataMutation) (MutationDigest, error) {
 	if err := mutation.validateStatement(); err != nil {
 		return "", err
 	}
-	digest, err := contract.DeriveCanonicalDigestV2("alarmd-plan-no-data-memory-v2", struct {
+	if uint64(mutation.GroupCount) != accumulator.groups {
+		return "", fmt.Errorf(
+			"alarmd execution: the no-data memory digest folds %d groups and the mutation states %d",
+			accumulator.groups, mutation.GroupCount)
+	}
+	digest, err := contract.DeriveCanonicalDigestV2("alarmd-plan-no-data-memory-v4", struct {
 		Identity         PlanNoDataIdentity   `json:"identity"`
 		SchemaVersion    NoDataMemorySchema   `json:"schema_version"`
 		ScheduleRevision PlanScheduleRevision `json:"schedule_revision"`
@@ -552,11 +680,13 @@ func derivePlanNoDataMemoryDigest(
 		// on a digest match - so the write that set the field would be dropped,
 		// silently, on exactly the same-Slot retry the frozen horizon makes
 		// routine.
-		TrackingExhaustedAt int64               `json:"tracking_exhausted_at"`
-		Groups              []NoDataGroupMemory `json:"groups"`
+		TrackingExhaustedAt int64  `json:"tracking_exhausted_at"`
+		GroupCount          uint32 `json:"group_count"`
+		Groups              string `json:"groups"`
 	}{
 		mutation.Identity, mutation.SchemaVersion, mutation.ScheduleRevision,
-		mutation.RosterVersion, mutation.PresentAsOf, mutation.TrackingExhaustedAt, memory,
+		mutation.RosterVersion, mutation.PresentAsOf, mutation.TrackingExhaustedAt,
+		mutation.GroupCount, accumulator.sum.Hex(),
 	})
 	if err != nil {
 		return "", fmt.Errorf("alarmd execution: derive Plan no-data memory digest: %w", err)

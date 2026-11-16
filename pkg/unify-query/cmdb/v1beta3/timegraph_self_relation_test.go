@@ -2,6 +2,7 @@ package v1beta3
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -30,76 +31,83 @@ func TestTimeGraphRootRelationsExcludeLaterHopsAcrossPaths(t *testing.T) {
 	}
 }
 
+// 有向自关联的出向、入向计划各自只走本方向的边。多跳自关联会回访资源类型，
+// 逐层集合无法表达“不回到更早实例”，必须在取数前具名拒绝，而不是混用方向或改变答案。
 func TestTimeGraphPublicDirectedPathsDoNotMixOrientations(t *testing.T) {
 	const timestampMS int64 = 1700000000000
-	var paths []cmdb.RelationPath
-	for _, direction := range []TraversalDirection{DirectionOutbound, DirectionInbound} {
-		step := cmdb.RelationPathStep{ResourceType: "service", RelationType: "service_to_service", MetricName: "service_to_service_flow", Category: string(RelationCategoryDynamic), Direction: string(direction)}
-		paths = append(paths, cmdb.RelationPath{Steps: []cmdb.RelationPathStep{{ResourceType: "service"}, step, step}})
-	}
-	for _, mode := range []string{"instant", "range"} {
-		t.Run(mode, func(t *testing.T) {
-			timestamps := []int64{timestampMS}
-			if mode == "range" {
-				timestamps = append(timestamps, timestampMS+60000)
+	for _, hops := range []int{1, 2} {
+		var paths []cmdb.RelationPath
+		for _, direction := range []TraversalDirection{DirectionOutbound, DirectionInbound} {
+			step := cmdb.RelationPathStep{ResourceType: "service", RelationType: "service_to_service", MetricName: "service_to_service_flow", Category: string(RelationCategoryDynamic), Direction: string(direction)}
+			path := cmdb.RelationPath{Steps: []cmdb.RelationPathStep{{ResourceType: "service"}}}
+			for hop := 0; hop < hops; hop++ {
+				path.Steps = append(path.Steps, step)
 			}
-			var matrix pl.Matrix
-			for _, edge := range [][2]string{{"a", "b"}, {"c", "b"}, {"b", "d"}, {"e", "a"}, {"f", "e"}} {
-				matrix = append(matrix, contractMatrix(map[string]string{"from_id": edge[0], "to_id": edge[1]}, timestamps...)...)
-			}
-			vm := &publicTimeGraphVM{responses: map[string]pl.Matrix{"service_to_service_flow": matrix}}
-			model := &Model{schemaProvider: publicDynamicSelfProvider(), timeGraphVMQuery: vm.query, timeGraphQueryReference: timeGraphTestQueryReference}
-			ctx := initTimeGraphQueryTestEnvironment()
-			var results []cmdb.PathResourcesResult
-			var err error
-			if mode == "instant" {
-				results, err = model.QueryRelationTimeGraph(
-					ctx, "10m", "space",
-					time.Unix(1700000000, 0), time.Unix(1700000000, 0), 5*time.Minute,
-					"service", []cmdb.Resource{"service"},
-					paths,
-					cmdb.Matcher{"id": "a"}, nil,
-				)
-			} else {
-				results, err = model.QueryRelationTimeGraph(
-					ctx, "10m", "space",
-					time.Unix(1700000000, 0), time.Unix(1700000060, 0), time.Minute,
-					"service", []cmdb.Resource{"service"},
-					paths,
-					cmdb.Matcher{"id": "a"}, nil,
-				)
-			}
-			require.NoError(t, err)
-			var want []cmdb.PathResourcesResult
-			for _, timestamp := range timestamps {
-				for _, ids := range [][]string{{"a", "b", "d"}, {"a", "e", "f"}} {
-					result := cmdb.PathResourcesResult{Timestamp: timestamp, TargetType: "service"}
-					for _, id := range ids {
-						result.Path = append(result.Path, cmdb.PathNode{ResourceType: "service", Dimensions: cmdb.Matcher{"id": id}})
-					}
-					want = append(want, result)
+			paths = append(paths, path)
+		}
+		for _, mode := range []string{"instant", "range"} {
+			t.Run(fmt.Sprintf("%d-hop/%s", hops, mode), func(t *testing.T) {
+				timestamps := []int64{timestampMS}
+				if mode == "range" {
+					timestamps = append(timestamps, timestampMS+60000)
 				}
-			}
-			require.ElementsMatch(t, want, results)
-		})
+				var matrix pl.Matrix
+				for _, edge := range [][2]string{{"a", "b"}, {"c", "b"}, {"b", "d"}, {"e", "a"}, {"f", "e"}} {
+					matrix = append(matrix, contractMatrix(map[string]string{"from_id": edge[0], "to_id": edge[1]}, timestamps...)...)
+				}
+				vm := &publicTimeGraphVM{responses: map[string]pl.Matrix{"service_to_service_flow": matrix}}
+				model := &Model{schemaProvider: publicDynamicSelfProvider(), timeGraphVMQuery: vm.query, timeGraphQueryReference: timeGraphTestQueryReference}
+				ctx := initTimeGraphQueryTestEnvironment()
+				var results []RelationTarget
+				var err error
+				if mode == "instant" {
+					results, err = model.QueryRelationTimeGraph(
+						ctx, "10m", "space",
+						time.Unix(1700000000, 0), time.Unix(1700000000, 0), 5*time.Minute,
+						"service", []cmdb.Resource{"service"},
+						paths,
+						cmdb.Matcher{"id": "a"}, nil,
+					)
+				} else {
+					results, err = model.QueryRelationTimeGraph(
+						ctx, "10m", "space",
+						time.Unix(1700000000, 0), time.Unix(1700000060, 0), time.Minute,
+						"service", []cmdb.Resource{"service"},
+						paths,
+						cmdb.Matcher{"id": "a"}, nil,
+					)
+				}
+				if hops > 1 {
+					require.ErrorContains(t, err, "relation path revisits resource type service")
+					require.Empty(t, results)
+					require.Empty(t, vm.calls, "rejected paths must not query the backend")
+					return
+				}
+				require.NoError(t, err)
+				// 出向只到 b，入向只到 e；c、d、f 只能经错误方向或第二跳到达。
+				requireRelationTargets(t, serviceRelationTargets(timestamps, "b", "e"), results)
+			})
+		}
 	}
 }
 
 func TestTimeGraphPublicExplicitSelfRelations(t *testing.T) {
 	const timestampMS int64 = 1700000000000
 	for _, tc := range []struct {
-		name  string
-		path  []cmdb.Resource
-		edges [][2]string
-		want  [][]string
+		name    string
+		path    []cmdb.Resource
+		edges   [][2]string
+		want    []string
+		wantErr bool
 	}{
-		{"both-directions", []cmdb.Resource{"service", "service"}, [][2]string{{"a", "b"}, {"c", "a"}}, [][]string{{"a", "b"}, {"a", "c"}}},
-		{"repeated-relation", []cmdb.Resource{"service", "service", "service"}, [][2]string{{"a", "b"}, {"b", "c"}}, [][]string{{"a", "b", "c"}}},
-		{"real-self-loop", []cmdb.Resource{"service", "service"}, [][2]string{{"a", "a"}}, [][]string{{"a", "a"}}},
-		{"repeated-self-loop", []cmdb.Resource{"service", "service", "service"}, [][2]string{{"a", "a"}}, [][]string{{"a", "a", "a"}}},
-		{"self-loop-before-next-hop", []cmdb.Resource{"service", "service", "service"}, [][2]string{{"a", "a"}, {"a", "b"}}, [][]string{{"a", "a", "a"}, {"a", "a", "b"}}},
-		{"no-zero-hop-match", []cmdb.Resource{"service", "service"}, nil, nil},
-		{"no-backtracking-cycle", []cmdb.Resource{"service", "service", "service"}, [][2]string{{"a", "b"}}, nil},
+		{name: "both-directions", path: []cmdb.Resource{"service", "service"}, edges: [][2]string{{"a", "b"}, {"c", "a"}}, want: []string{"b", "c"}},
+		{name: "real-self-loop", path: []cmdb.Resource{"service", "service"}, edges: [][2]string{{"a", "a"}}, want: []string{"a"}},
+		{name: "self-loop-and-neighbor", path: []cmdb.Resource{"service", "service"}, edges: [][2]string{{"a", "a"}, {"a", "b"}}, want: []string{"a", "b"}},
+		{name: "no-zero-hop-match", path: []cmdb.Resource{"service", "service"}},
+		// 多跳自关联回访资源类型，逐层集合不能表达旧路径的“不回溯”约束，取数前拒绝。
+		{name: "repeated-relation", path: []cmdb.Resource{"service", "service", "service"}, edges: [][2]string{{"a", "b"}, {"b", "c"}}, wantErr: true},
+		{name: "repeated-self-loop", path: []cmdb.Resource{"service", "service", "service"}, edges: [][2]string{{"a", "a"}}, wantErr: true},
+		{name: "no-backtracking-cycle", path: []cmdb.Resource{"service", "service", "service"}, edges: [][2]string{{"a", "b"}}, wantErr: true},
 	} {
 		for _, mode := range []string{"instant", "range"} {
 			t.Run(tc.name+"/"+mode, func(t *testing.T) {
@@ -141,7 +149,7 @@ func TestTimeGraphPublicExplicitSelfRelations(t *testing.T) {
 					return filtered, nil
 				}
 				ctx := initTimeGraphQueryTestEnvironment()
-				var results []cmdb.PathResourcesResult
+				var results []RelationTarget
 				var err error
 				if mode == "instant" {
 					results, err = model.QueryRelationTimeGraph(
@@ -160,31 +168,27 @@ func TestTimeGraphPublicExplicitSelfRelations(t *testing.T) {
 						cmdb.Matcher{"id": "a"}, nil,
 					)
 				}
+				if tc.wantErr {
+					require.ErrorContains(t, err, "relation path revisits resource type service")
+					require.Empty(t, results)
+					require.Empty(t, vm.calls, "rejected paths must not query the backend")
+					return
+				}
 				require.NoError(t, err)
-				require.Len(t, results, len(tc.want)*len(timestamps))
-				for _, timestamp := range timestamps {
-					var paths [][]string
-					for _, result := range results {
-						if result.Timestamp != timestamp {
-							continue
-						}
-						var ids []string
-						for _, node := range result.Path {
-							ids = append(ids, node.Dimensions["id"])
-						}
-						paths = append(paths, ids)
-					}
-					require.ElementsMatch(t, tc.want, paths)
-				}
-				require.Len(t, vm.calls, 2, "query each direction once, including for repeated hops")
-				if len(tc.path) > 2 {
-					for _, call := range vm.calls {
-						for _, field := range call.conditions.FieldList {
-							require.Equal(t, structured.ConditionNotEqual, field.Operator, "later hops must not inherit the root filter")
-						}
-					}
-				}
+				requireRelationTargets(t, serviceRelationTargets(timestamps, tc.want...), results)
+				require.Len(t, vm.calls, 2, "query each direction once")
 			})
 		}
 	}
+}
+
+// serviceRelationTargets 按 FindRelationTargets 的顺序生成各时刻的 service 目标。
+func serviceRelationTargets(timestamps []int64, ids ...string) []RelationTarget {
+	var targets []RelationTarget
+	for _, timestamp := range timestamps {
+		for _, id := range ids {
+			targets = append(targets, RelationTarget{Timestamp: timestamp, TargetType: "service", Target: cmdb.PathNode{ResourceType: "service", Dimensions: cmdb.Matcher{"id": id}}})
+		}
+	}
+	return sortedRelationTargets(targets)
 }

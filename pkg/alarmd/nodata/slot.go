@@ -233,13 +233,35 @@ type TargetResolution struct {
 // untouched, and the ones that arrived are judged present - and the outcome is
 // what distinguishes that from a round that judged and found nothing absent.
 func EvaluateSlot(input SlotInput) (AbsenceResult, SlotOutcome, error) {
+	judge, outcome, err := newSlotJudge(input)
+	if err != nil || judge == nil {
+		return AbsenceResult{}, outcome, err
+	}
+	result, err := judgeAbsenceResult(judge, input.Memory, memoryKeys(input.Memory))
+	if err != nil {
+		return AbsenceResult{}, OutcomeNone, err
+	}
+	return result, outcome, nil
+}
+
+// newSlotJudge settles everything about one Slot's round that is known before
+// its memory is read, and returns the judgement to feed the memory to. A nil
+// judgement is a round that judges nothing, under the outcome returned with
+// it. input.Memory is not read.
+func newSlotJudge(input SlotInput) (*absenceJudge, SlotOutcome, error) {
+	return newSlotJudgeWith(input, nil)
+}
+
+// newSlotJudgeWith is newSlotJudge over a present set the caller kept as the
+// Slot's series landed, in place of input.Series; nil projects input.Series.
+func newSlotJudgeWith(input SlotInput, kept *PresentSet) (*absenceJudge, SlotOutcome, error) {
 	if input.Plan == nil || input.Plan.NoData == nil {
-		return AbsenceResult{}, OutcomeNone, nil
+		return nil, OutcomeNone, nil
 	}
 	config := input.Plan.NoData
 	class, err := ClassifyTarget(input.Plan.TargetScope, input.Plan.TargetPlan, config.AggDimension)
 	if err != nil {
-		return AbsenceResult{}, OutcomeNone, err
+		return nil, OutcomeNone, err
 	}
 	var members []string
 	// targetSkip names a target plan this Slot did not resolve in full. Its
@@ -267,7 +289,7 @@ func EvaluateSlot(input SlotInput) (AbsenceResult, SlotOutcome, error) {
 		case input.TargetResolution.State == TargetResolutionComplete:
 			members = input.TargetResolution.Members
 		default:
-			return AbsenceResult{}, OutcomeNone, fmt.Errorf("alarmd nodata: unknown target resolution state %q", input.TargetResolution.State)
+			return nil, OutcomeNone, fmt.Errorf("alarmd nodata: unknown target resolution state %q", input.TargetResolution.State)
 		}
 	}
 	if class.Source == RosterTargetStatic && !input.HostsResolved {
@@ -279,22 +301,34 @@ func EvaluateSlot(input SlotInput) (AbsenceResult, SlotOutcome, error) {
 		// untouched: a history roster comes out of the memory and a whole-item
 		// one expects nothing by design, and neither becomes less true because
 		// the index is cold.
-		return AbsenceResult{}, OutcomeSkippedHostsUnresolved, nil
+		return nil, OutcomeSkippedHostsUnresolved, nil
 	}
-	tally := ProjectSeries(input.Series, config.AggDimension)
-	// Before the roster: a history roster is derived from the memory, and a
-	// closed group has to be gone from it by then.
-	memory, manualClosed := applyManualCloses(input.Memory, input.ManualCloses, input.EvaluationTime)
-	roster, err := BuildRoster(RosterRequest{
-		AggDimension:  config.AggDimension,
-		Scope:         input.Plan.TargetScope,
-		Plan:          input.Plan.TargetPlan,
-		TargetMembers: members,
-		KnownHosts:    input.KnownHosts,
-		Memory:        memory,
-	})
-	if err != nil {
-		return AbsenceResult{}, OutcomeNone, err
+	var present map[string]uint8
+	tally := ProjectionTally{}
+	if kept != nil {
+		if err := kept.claim(config.AggDimension); err != nil {
+			return nil, OutcomeNone, err
+		}
+		present, tally.Dropped = kept.keys, kept.dropped
+	} else {
+		tally = ProjectSeries(input.Series, config.AggDimension)
+	}
+	// A history roster is derived from the memory as it is fed, after the
+	// manual closes - a closed group has to be gone from it by then, and
+	// closing one never moves its last-seen time, which is what the history
+	// roster reads. Every other expected set reads no memory and is built
+	// here.
+	roster := Roster{Source: RosterHistory}
+	if class.Source != RosterHistory {
+		if roster, err = BuildRoster(RosterRequest{
+			AggDimension:  config.AggDimension,
+			Scope:         input.Plan.TargetScope,
+			Plan:          input.Plan.TargetPlan,
+			TargetMembers: members,
+			KnownHosts:    input.KnownHosts,
+		}); err != nil {
+			return nil, OutcomeNone, err
+		}
 	}
 	// None of the three below judges absence; all still judge the groups
 	// that arrived (A1). A target that did not resolve in full is named
@@ -310,21 +344,19 @@ func EvaluateSlot(input SlotInput) (AbsenceResult, SlotOutcome, error) {
 	case input.AnswerTruncated:
 		outcome = OutcomeSkippedAnswerTruncated
 	}
-	result := Evaluate(AbsenceInput{
+	judge := newAbsenceJudgeOver(AbsenceInput{
 		EvaluationTime:         input.EvaluationTime,
 		PeriodSeconds:          input.PeriodSeconds,
 		Completeness:           input.Completeness,
 		Present:                tally.Groups,
 		Dropped:                tally.Dropped,
 		Roster:                 roster,
-		Memory:                 memory,
 		OutOfBusiness:          input.OutOfBusiness,
 		TrackingHorizonSeconds: input.TrackingHorizonSeconds,
 		TrackingExhaustedAt:    input.TrackingExhaustedAt,
 		RecoveryDisabled:       config.RecoveryDisabled,
 		AnswerTruncated:        input.AnswerTruncated,
 		RosterUnresolved:       targetSkip != OutcomeNone,
-	})
-	result.Facts.ManualClosed = manualClosed
-	return result, outcome, nil
+	}, class.Source == RosterHistory, input.ManualCloses, present)
+	return judge, outcome, nil
 }

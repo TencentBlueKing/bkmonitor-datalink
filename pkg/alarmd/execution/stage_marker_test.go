@@ -157,3 +157,42 @@ func TestWithoutAMarkerEverythingIsAdmitted(t *testing.T) {
 		t.Fatalf("EnterCommit without a marker = %v", err)
 	}
 }
+
+// A window boundary (decision-020 batch 8, 2.2 step 6): an execution that
+// left its commit is open again and judged again, its next write enters from
+// open and is refused once claimed, and leaving from anywhere but inside the
+// boundary changes nothing - a claimed execution stays claimed.
+func TestAnExecutionThatLeftItsCommitIsJudgedAgainAndItsNextWriteIsRefusedOnceClaimed(t *testing.T) {
+	var marker StageMarker
+	marker.Begin(SlotStageEvaluate)
+	marker.Extend(time.UnixMilli(1_000), time.UnixMilli(1_000))
+	ctx := WithStageMarker(context.Background(), &marker)
+	late := time.UnixMilli(1_000).Add(2 * markerGrace)
+	if LeaveCommit(ctx, SlotStageEvaluate) {
+		t.Fatal("an execution that had not entered its commit left it")
+	}
+	if err := EnterCommit(ctx, SlotStageOutput); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, declined := marker.Decline(late, markerGrace); declined {
+		t.Fatal("an execution inside its commit was declined")
+	}
+	if !LeaveCommit(ctx, SlotStageEvaluate) || marker.Stage() != SlotStageEvaluate {
+		t.Fatalf("leaving the commit: stage %q, want it open in %s", marker.Stage(), SlotStageEvaluate)
+	}
+	if _, _, declined := marker.Decline(time.UnixMilli(1_000).Add(markerGrace/2), markerGrace); declined {
+		t.Fatal("an open execution inside its grace was declined")
+	}
+	if stage, _, declined := marker.Decline(late, markerGrace); !declined || stage != SlotStageEvaluate {
+		t.Fatalf("Decline after the boundary = (%q, %t), want it claimed in %s", stage, declined, SlotStageEvaluate)
+	}
+	if LeaveCommit(ctx, SlotStageEvaluate) {
+		t.Fatal("a claimed execution left a commit it was not in")
+	}
+	if err := EnterCommit(ctx, SlotStageOutput); !errors.Is(err, ErrExecutionDeclined) {
+		t.Fatalf("the next window's write after the claim = %v, want ErrExecutionDeclined", err)
+	}
+	if got := ExecutionDeadline(ctx); !got.Equal(time.UnixMilli(1_000)) {
+		t.Fatalf("ExecutionDeadline = %v, want the marker's", got)
+	}
+}

@@ -3119,7 +3119,8 @@ func (s *SpacePusher) composeBkciLevelTableIds(bkTenantId, spaceType, spaceId st
 // composeBkciOtherTableIds 组装BKCI级别结果表
 func (s *SpacePusher) composeBkciOtherTableIds(bkTenantId, spaceType, spaceId string) (map[string]map[string]any, error) {
 	logger.Infof("start to push bkci other table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
-	options := optionx.NewOptions(map[string]any{"includePlatformDataId": false, "excludeClusterDataIDs": true, "fromAuthorization": false})
+	// 普通数据源的自有和授权关系均生成路由，容器数据源仍由集群分支处理。
+	options := optionx.NewOptions(map[string]any{"includePlatformDataId": false, "excludeClusterDataIDs": true})
 	tableIdDataIdMap, err := s.GetSpaceTableIdDataId(bkTenantId, spaceType, spaceId, nil, nil, options)
 	if err != nil {
 		return nil, err

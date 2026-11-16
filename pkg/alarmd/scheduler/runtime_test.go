@@ -106,7 +106,11 @@ func TestRunnerRejectsStaleFenceBeforeResolvingSlot(t *testing.T) {
 	}
 }
 
-func TestRunnerRejectsDispatchFenceThatChangedAfterSlotFreeze(t *testing.T) {
+// The Runner dispatches a Slot under the fence it was frozen with and does not
+// read ownership again before it: a fence that moved since is the Slot's first
+// write's to refuse, by the same fence in its own script
+// (TestAnAttemptRefusedAtItsBeginIsAnOwnershipRejection).
+func TestRunnerDispatchesUnderTheFenceTheSlotWasFrozenWith(t *testing.T) {
 	now := time.UnixMilli(1_700_000_000_000)
 	slot := frozenSlot("query-group-1")
 	session := &sequenceOwnerSession{fences: []execution.OwnerFence{
@@ -119,11 +123,14 @@ func TestRunnerRejectsDispatchFenceThatChangedAfterSlotFreeze(t *testing.T) {
 		t.Fatalf("NewRunner() error = %v", err)
 	}
 
-	if _, _, err := runner.RunOne(context.Background()); !errors.Is(err, ErrSlotOwnershipChanged) {
-		t.Fatalf("RunOne() error = %v, want ErrSlotOwnershipChanged", err)
+	if _, attempted, err := runner.RunOne(context.Background()); err != nil || !attempted {
+		t.Fatalf("RunOne() attempted=%t error=%v, want the Slot run", attempted, err)
 	}
-	if executor.calls != 0 {
-		t.Fatalf("executor calls = %d, want 0", executor.calls)
+	if executor.calls != 1 || executor.request.OwnerFence != slot.Dispatch.OwnerFence {
+		t.Fatalf("executor calls=%d fence=%+v, want one run under the frozen fence %+v", executor.calls, executor.request.OwnerFence, slot.Dispatch.OwnerFence)
+	}
+	if session.reads != 1 {
+		t.Fatalf("ownership readings in the round = %d, want the one the round opened with", session.reads)
 	}
 }
 

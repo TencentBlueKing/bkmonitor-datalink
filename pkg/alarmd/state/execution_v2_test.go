@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,12 @@ type casMemoryBackend struct {
 	// writeTTLs is the lifetime each write asked for, so a test can tell a key
 	// written with one from a key written to live forever.
 	writeTTLs map[string]time.Duration
+	// replyFields is how many fields each hash read returned, in the order of
+	// commands' reads, so a test can bound what one command carried.
+	replyFields []int
+	// scanRepeat makes every page a scan returns repeat its first field, as
+	// HSCAN may return one field twice.
+	scanRepeat bool
 }
 
 type renewalCall struct {
@@ -158,6 +165,45 @@ func (backend *casMemoryBackend) ReadHash(_ context.Context, key string) (map[st
 	return copied, nil
 }
 
+// ScanHashPage pages the hash in field-name order, count fields a page, the
+// cursor being the index of the next field; with scanRepeat each page returns
+// its first field twice.
+func (backend *casMemoryBackend) ScanHashPage(_ context.Context, key string, cursor uint64, count int64) ([]HashField, uint64, error) {
+	backend.commands = append(backend.commands, "HSCAN")
+	names := make([]string, 0, len(backend.hashes[key]))
+	for name := range backend.hashes[key] {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	start := min(int(cursor), len(names))
+	end := min(start+int(count), len(names))
+	page := make([]HashField, 0, end-start+1)
+	for _, name := range names[start:end] {
+		page = append(page, HashField{Name: name, Value: append([]byte(nil), backend.hashes[key][name]...)})
+	}
+	if backend.scanRepeat && len(page) != 0 {
+		page = append(page, page[0])
+	}
+	backend.replyFields = append(backend.replyFields, len(page))
+	next := uint64(end)
+	if end >= len(names) {
+		next = 0
+	}
+	return page, next, nil
+}
+
+func (backend *casMemoryBackend) ReadHashFields(_ context.Context, key string, fields []string) ([][]byte, error) {
+	backend.commands = append(backend.commands, "HMGET")
+	backend.replyFields = append(backend.replyFields, len(fields))
+	values := make([][]byte, len(fields))
+	for index, field := range fields {
+		if value, found := backend.hashes[key][field]; found {
+			values[index] = append([]byte(nil), value...)
+		}
+	}
+	return values, nil
+}
+
 func (backend *casMemoryBackend) ScanHash(ctx context.Context, key string, _ int64) (map[string][]byte, error) {
 	fields, err := backend.ReadHash(ctx, key)
 	backend.commands[len(backend.commands)-1] = "HSCAN"
@@ -227,6 +273,69 @@ func (backend *casMemoryBackend) ApplyHashDelta(
 		backend.writeTTLs = make(map[string]time.Duration)
 	}
 	backend.writeTTLs[write.Key] = write.TTL
+	return HashDeltaOutcome{Status: HashDeltaApplied}, nil
+}
+
+// StageHashSegment and SwapStagedHash restate the staged write's two scripts:
+// the first segment starts its key over, a later one proves the marker, and
+// the swap guards the formal header, proves the marker and the field count,
+// and moves the staging key into place with the formal lifetime.
+func (backend *casMemoryBackend) StageHashSegment(_ context.Context, segment HashStageSegment) (HashDeltaOutcome, error) {
+	if backend.hashes == nil {
+		backend.hashes = make(map[string]map[string][]byte)
+	}
+	if segment.First {
+		backend.hashes[segment.Key] = map[string][]byte{segment.MarkerField: append([]byte(nil), segment.Marker...)}
+	} else if marker, found := backend.hashes[segment.Key][segment.MarkerField]; !found || string(marker) != string(segment.Marker) {
+		return HashDeltaOutcome{Status: HashStageLost}, nil
+	}
+	for _, field := range segment.Set {
+		backend.hashes[segment.Key][field.Name] = append([]byte(nil), field.Value...)
+	}
+	return HashDeltaOutcome{Status: HashDeltaApplied}, nil
+}
+
+func (backend *casMemoryBackend) DiscardStagedHash(_ context.Context, key, markerField string, marker []byte) error {
+	if found, ok := backend.hashes[key][markerField]; ok && string(found) == string(marker) {
+		delete(backend.hashes, key)
+	}
+	return nil
+}
+
+func (backend *casMemoryBackend) SwapStagedHash(_ context.Context, swap HashStageSwap) (HashDeltaOutcome, error) {
+	staged := backend.hashes[swap.StageKey]
+	marker, found := staged[swap.MarkerField]
+	own := found && string(marker) == string(swap.Marker)
+	refuse := func(outcome HashDeltaOutcome) (HashDeltaOutcome, error) {
+		if own {
+			delete(backend.hashes, swap.StageKey)
+		}
+		return outcome, nil
+	}
+	if backend.conflict {
+		return refuse(HashDeltaOutcome{Status: HashDeltaConflict})
+	}
+	header, present := backend.hashes[swap.Key][swap.HeaderField]
+	switch {
+	case swap.ExpectedMissing && present:
+		return refuse(HashDeltaOutcome{Status: HashDeltaConflict, Current: header})
+	case !swap.ExpectedMissing && !present:
+		return refuse(HashDeltaOutcome{Status: HashDeltaConflict})
+	case !swap.ExpectedMissing && HeaderDigest(header) != swap.ExpectedDigest:
+		return refuse(HashDeltaOutcome{Status: HashDeltaConflict, Current: header})
+	case !own:
+		return refuse(HashDeltaOutcome{Status: HashStageLost})
+	case len(staged) != swap.Fields:
+		return refuse(HashDeltaOutcome{Status: HashStageShort})
+	}
+	delete(staged, swap.MarkerField)
+	staged[swap.HeaderField] = append([]byte(nil), swap.Header...)
+	backend.hashes[swap.Key] = staged
+	delete(backend.hashes, swap.StageKey)
+	if backend.writeTTLs == nil {
+		backend.writeTTLs = make(map[string]time.Duration)
+	}
+	backend.writeTTLs[swap.Key] = swap.TTL
 	return HashDeltaOutcome{Status: HashDeltaApplied}, nil
 }
 func (backend *casMemoryBackend) CompareAndSet(_ context.Context, key string, expected []byte, missing bool, value []byte, ttl time.Duration) (bool, error) {
@@ -573,4 +682,26 @@ func applyVersion() execution.ApplyVersion {
 }
 func stateIdentityV2() execution.StateKeyIdentity {
 	return execution.StateKeyIdentity{Plan: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "9"}, StateGeneration: "generation", SeriesIdentityDigest: seriesDigest("series")}
+}
+
+// 2.8: the swap's field count is the statement's distinct groups, len(Set),
+// and its GroupCount: a whole record that counts other groups than it carries
+// is refused before anything is staged, rather than meeting STAGE_SHORT on
+// every attempt.
+func TestAWholeNoDataRecordCountingOtherGroupsThanItCarriesStagesNothing(t *testing.T) {
+	backend := &casMemoryBackend{values: make(map[string][]byte)}
+	router, _ := NewFixedRouter("target", backend)
+	store, err := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutation := execution.PlanNoDataMutation{GroupCount: 2, Set: []execution.NoDataGroupDelta{{GroupKey: "group-1"}}}
+	_, err = store.replaceNoDataRecord(context.Background(), backend, "formal", "stage", mutation, []byte("header"), nil,
+		time.Hour, execution.NoDataWriteAttempt{OwnerEpoch: 1, AttemptNo: 1})
+	if !errors.Is(err, errNoDataGroupCount) {
+		t.Fatalf("err = %v, want the count refused", err)
+	}
+	if len(backend.hashes) != 0 {
+		t.Fatalf("a refused statement staged %v", backend.hashes)
+	}
 }

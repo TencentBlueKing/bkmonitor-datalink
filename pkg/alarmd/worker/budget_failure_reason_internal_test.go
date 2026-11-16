@@ -33,6 +33,9 @@ func TestABudgetRejectionNamesWhetherRetryingCanHelp(t *testing.T) {
 		name string
 		err  error
 		want string
+		// budget is the budget the rejection names, state mutations unless
+		// said.
+		budget observability.CapacityBudget
 	}{
 		{
 			name: "the Slot's own output is past a per-Slot cap",
@@ -45,6 +48,12 @@ func TestABudgetRejectionNamesWhetherRetryingCanHelp(t *testing.T) {
 			name: "shared capacity is full",
 			err:  &provisionalBudgetExceededError{budget: observability.CapacityBudgetStateMutations},
 			want: contract.ReasonResourceHardStop,
+		},
+		{
+			name:   "within its share, the pool held by others",
+			err:    poolHeldByOthersRejection("normal_input", 10, 95, 10, 100, nil),
+			want:   contract.ReasonResourcePoolHeldByOthers,
+			budget: observability.CapacityBudgetRetainedBytes,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -61,7 +70,11 @@ func TestABudgetRejectionNamesWhetherRetryingCanHelp(t *testing.T) {
 			}
 			// And the code a reader can parse, from the one place that maps a
 			// budget's label spelling to its code spelling.
-			want := observability.CapacityBudgetFailureCode(observability.CapacityBudgetStateMutations)
+			budget := test.budget
+			if budget == "" {
+				budget = observability.CapacityBudgetStateMutations
+			}
+			want := observability.CapacityBudgetFailureCode(budget)
 			if got.QueryFailure == nil || got.QueryFailure.Code != want {
 				t.Fatalf("failure code = %+v, want %q", got.QueryFailure, want)
 			}

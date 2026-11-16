@@ -108,7 +108,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			name:  "unquoted escaped range comparison",
 			input: `name:>foo\-bar`,
 			sql:   "`name` > 'foo-bar'",
-			dsl:   `{"range":{"name":{"from":"foo-bar","include_lower":false,"include_upper":true,"to":null}}}`,
+			dsl:   `{"range":{"name":{"gt":"foo-bar"}}}`,
 		},
 		{
 			name:  "one word",
@@ -167,31 +167,31 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			name:  "date range query",
 			input: "timestamp:[2023-01-01 TO 2023-12-31]",
 			sql:   "`timestamp` >= '2023-01-01' AND `timestamp` <= '2023-12-31'",
-			dsl:   `{"range":{"timestamp":{"from":"2023-01-01","include_lower":true,"include_upper":true,"to":"2023-12-31"}}}`,
+			dsl:   `{"range":{"timestamp":{"gte":"2023-01-01","lte":"2023-12-31"}}}`,
 		},
 		{
 			name:  "unquoted escaped string range",
 			input: `name:[foo\-bar TO zoo\-bar]`,
 			sql:   "`name` >= 'foo-bar' AND `name` <= 'zoo-bar'",
-			dsl:   `{"range":{"name":{"from":"foo-bar","include_lower":true,"include_upper":true,"to":"zoo-bar"}}}`,
+			dsl:   `{"range":{"name":{"gte":"foo-bar","lte":"zoo-bar"}}}`,
 		},
 		{
 			name:  "unquoted escaped date range",
 			input: `timestamp:[2023\-01\-01 TO 2023\-12\-31]`,
 			sql:   "`timestamp` >= '2023-01-01' AND `timestamp` <= '2023-12-31'",
-			dsl:   `{"range":{"timestamp":{"from":"2023-01-01","include_lower":true,"include_upper":true,"to":"2023-12-31"}}}`,
+			dsl:   `{"range":{"timestamp":{"gte":"2023-01-01","lte":"2023-12-31"}}}`,
 		},
 		{
 			name:  "date range query - 1",
 			input: "count:[1 TO 10}",
 			sql:   "`count` >= '1' AND `count` < '10'",
-			dsl:   `{"range":{"count":{"from":1,"include_lower":true,"include_upper":false,"to":10}}}`,
+			dsl:   `{"range":{"count":{"gte":1,"lt":10}}}`,
 		},
 		{
 			name:  "date range query - 2",
 			input: "count:{10 TO *]",
 			sql:   "`count` > '10'",
-			dsl:   `{"range":{"count":{"from":10,"include_lower":false,"include_upper":true,"to":null}}}`,
+			dsl:   `{"range":{"count":{"gt":10}}}`,
 		},
 		{
 			name:  "invalid field name",
@@ -221,13 +221,13 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			name:  "start",
 			input: "a: >100",
 			sql:   "`a` > '100'",
-			dsl:   `{"range":{"a":{"from":100,"include_lower":false,"include_upper":true,"to":null}}}`,
+			dsl:   `{"range":{"a":{"gt":100}}}`,
 		},
 		{
 			name:  "+level:info AND -iterationIndex:[4 TO 8] NOT iterationIndex:9",
 			input: "+level:info AND -iterationIndex:[4 TO 8] NOT iterationIndex:9",
 			sql:   "`iterationIndex` >= '4' AND `iterationIndex` <= '8' AND `level` = 'info' AND `iterationIndex` != '9'",
-			dsl:   `{"bool":{"must":[{"term":{"level":"info"}},{"bool":{"must_not":{"range":{"iterationIndex":{"from":4,"include_lower":true,"include_upper":true,"to":8}}}}},{"bool":{"must_not":{"term":{"iterationIndex":"9"}}}}]}}`,
+			dsl:   `{"bool":{"must":[{"term":{"level":"info"}},{"bool":{"must_not":{"range":{"iterationIndex":{"gte":4,"lte":8}}}}},{"bool":{"must_not":{"term":{"iterationIndex":"9"}}}}]}}`,
 		},
 		{
 			name:  "nested query",
@@ -245,7 +245,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			name:  "test-1",
 			input: `__ext.io_kubernetes_pod_namespace: "gfp-online-livepy-b" AND is_data_valid: "1" AND born_dist_to_recipient: <400 AND recipient_exists: "1" AND bot_dead_reason: (*killed_by_unknown* OR *bot_without_injury*) AND approach_succ: "0" AND approach_curr_recipient_frame: >200 AND in_fight_aggressive_ratio: "0"`,
 			sql:   "CAST(__ext['io_kubernetes_pod_namespace'] AS STRING) = 'gfp-online-livepy-b' AND `is_data_valid` = '1' AND `born_dist_to_recipient` < '400' AND `recipient_exists` = '1' AND (`bot_dead_reason` LIKE '%killed_by_unknown%' OR `bot_dead_reason` LIKE '%bot_without_injury%') AND `approach_succ` = '0' AND `approach_curr_recipient_frame` > '200' AND `in_fight_aggressive_ratio` = '0'",
-			dsl:   `{"bool":{"must":[{"term":{"__ext.io_kubernetes_pod_namespace":"gfp-online-livepy-b"}},{"term":{"is_data_valid":"1"}},{"range":{"born_dist_to_recipient":{"from":null,"include_lower":true,"include_upper":false,"to":400}}},{"term":{"recipient_exists":"1"}},{"bool":{"should":[{"wildcard":{"bot_dead_reason":{"value":"*killed_by_unknown*"}}},{"wildcard":{"bot_dead_reason":{"value":"*bot_without_injury*"}}}]}},{"term":{"approach_succ":"0"}},{"range":{"approach_curr_recipient_frame":{"from":200,"include_lower":false,"include_upper":true,"to":null}}},{"term":{"in_fight_aggressive_ratio":"0"}}]}}`,
+			dsl:   `{"bool":{"must":[{"term":{"__ext.io_kubernetes_pod_namespace":"gfp-online-livepy-b"}},{"term":{"is_data_valid":"1"}},{"range":{"born_dist_to_recipient":{"lt":400}}},{"term":{"recipient_exists":"1"}},{"bool":{"should":[{"wildcard":{"bot_dead_reason":{"value":"*killed_by_unknown*"}}},{"wildcard":{"bot_dead_reason":{"value":"*bot_without_injury*"}}}]}},{"term":{"approach_succ":"0"}},{"range":{"approach_curr_recipient_frame":{"gt":200}}},{"term":{"in_fight_aggressive_ratio":"0"}}]}}`,
 		},
 		{
 			name:  "not + or",
@@ -535,34 +535,39 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"范围匹配，左闭右开": {
 			q:   `count:[1 TO 5}`,
-			es:  `{"range":{"count":{"from":1,"include_lower":true,"include_upper":false,"to":5}}}`,
+			es:  `{"range":{"count":{"gte":1,"lt":5}}}`,
 			sql: "`count` >= '1' AND `count` < '5'",
 		},
 		"范围匹配": {
 			q:   `count:[1 TO 5]`,
-			es:  `{"range":{"count":{"from":1,"include_lower":true,"include_upper":true,"to":5}}}`,
+			es:  `{"range":{"count":{"gte":1,"lte":5}}}`,
 			sql: "`count` >= '1' AND `count` <= '5'",
+		},
+		"范围零边界仍有值": {
+			q:   `count:[0 TO 0]`,
+			es:  `{"range":{"count":{"gte":0,"lte":0}}}`,
+			sql: "`count` >= '0' AND `count` <= '0'",
 		},
 		"范围匹配（无下限） - 1": {
 			q:   `count:{* TO 10]`,
-			es:  `{"range":{"count":{"from":null,"include_lower":false,"include_upper":true,"to":10}}}`,
+			es:  `{"range":{"count":{"lte":10}}}`,
 			sql: "`count` <= '10'",
 		},
 		"范围匹配（无下限）": {
 			q: `count:[* TO 10]`,
 
-			es:  `{"range":{"count":{"from":null,"include_lower":true,"include_upper":true,"to":10}}}`,
+			es:  `{"range":{"count":{"lte":10}}}`,
 			sql: "`count` <= '10'",
 		},
 		"范围匹配（无上限）": {
 			q: `count:[10 TO *]`,
 
-			es:  `{"range":{"count":{"from":10,"include_lower":true,"include_upper":true,"to":null}}}`,
+			es:  `{"range":{"count":{"gte":10}}}`,
 			sql: "`count` >= '10'",
 		},
 		"范围匹配（无上限）- 1": {
 			q:   `count:[10 TO *}`,
-			es:  `{"range":{"count":{"from":10,"include_lower":true,"include_upper":false,"to":null}}}`,
+			es:  `{"range":{"count":{"gte":10}}}`,
 			sql: "`count` >= '10'",
 		},
 		"字段匹配": {
@@ -630,13 +635,13 @@ func TestLuceneParser(t *testing.T) {
 		"match and time range with quote": {
 			q: "message: test\\ node AND datetime: [\"2020-01-01T00:00:00\" TO \"2020-12-31T00:00:00\"]",
 
-			es:  `{"bool":{"must":[{"match_phrase":{"message":{"query":"test node"}}},{"range":{"datetime":{"from":"2020-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2020-12-31T00:00:00"}}}]}}`,
+			es:  `{"bool":{"must":[{"match_phrase":{"message":{"query":"test node"}}},{"range":{"datetime":{"gte":"2020-01-01T00:00:00","lte":"2020-12-31T00:00:00"}}}]}}`,
 			sql: "`message` MATCH_PHRASE 'test node' AND `datetime` >= '2020-01-01T00:00:00' AND `datetime` <= '2020-12-31T00:00:00'",
 		},
 		"match and time range": {
 			q: "message: test\\ node AND datetime: [2020-01-01T00:00:00 TO 2020-12-31T00:00:00]",
 
-			es:  `{"bool":{"must":[{"match_phrase":{"message":{"query":"test node"}}},{"range":{"datetime":{"from":"2020-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2020-12-31T00:00:00"}}}]}}`,
+			es:  `{"bool":{"must":[{"match_phrase":{"message":{"query":"test node"}}},{"range":{"datetime":{"gte":"2020-01-01T00:00:00","lte":"2020-12-31T00:00:00"}}}]}}`,
 			sql: "`message` MATCH_PHRASE 'test node' AND `datetime` >= '2020-01-01T00:00:00' AND `datetime` <= '2020-12-31T00:00:00'",
 		},
 		"mixed or / and": {
@@ -648,31 +653,31 @@ func TestLuceneParser(t *testing.T) {
 		"start without tCOLON": {
 			q: "a > 100",
 
-			es:  `{"range":{"a":{"from":100,"include_lower":false,"include_upper":true,"to":null}}}`,
+			es:  `{"range":{"a":{"gt":100}}}`,
 			sql: "`a` > '100'",
 		},
 		"end without tCOLON": {
 			q: "a < 100",
 
-			es:  `{"range":{"a":{"from":null,"include_lower":true,"include_upper":false,"to":100}}}`,
+			es:  `{"range":{"a":{"lt":100}}}`,
 			sql: "`a` < '100'",
 		},
 		"start and eq without tCOLON": {
 			q: "a >= 100",
 
-			es:  `{"range":{"a":{"from":100,"include_lower":true,"include_upper":true,"to":null}}}`,
+			es:  `{"range":{"a":{"gte":100}}}`,
 			sql: "`a` >= '100'",
 		},
 		"end and eq without tCOLON": {
 			q: "a <= 100",
 
-			es:  `{"range":{"a":{"from":null,"include_lower":true,"include_upper":true,"to":100}}}`,
+			es:  `{"range":{"a":{"lte":100}}}`,
 			sql: "`a` <= '100'",
 		},
 		"start": {
 			q: "a>100",
 
-			es:  `{"range":{"a":{"from":100,"include_lower":false,"include_upper":true,"to":null}}}`,
+			es:  `{"range":{"a":{"gt":100}}}`,
 			sql: "`a` > '100'",
 		},
 		"one word left star": {
@@ -981,27 +986,27 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"range_inclusive": {
 			q:   `count:[1 TO 10]`,
-			es:  `{"range":{"count":{"from":1,"include_lower":true,"include_upper":true,"to":10}}}`,
+			es:  `{"range":{"count":{"gte":1,"lte":10}}}`,
 			sql: "`count` >= '1' AND `count` <= '10'",
 		},
 		"range_exclusive": {
 			q:   `age:{18 TO 30}`,
-			es:  `{"range":{"age":{"from":18,"include_lower":false,"include_upper":false,"to":30}}}`,
+			es:  `{"range":{"age":{"gt":18,"lt":30}}}`,
 			sql: "`age` > '18' AND `age` < '30'",
 		},
 		"range_unbounded_lower": {
 			q:   `count:[* TO 100]`,
-			es:  `{"range":{"count":{"from":null,"include_lower":true,"include_upper":true,"to":100}}}`,
+			es:  `{"range":{"count":{"lte":100}}}`,
 			sql: "`count` <= '100'",
 		},
 		"range_unbounded_upper": {
 			q:   `count:[10 TO *]`,
-			es:  `{"range":{"count":{"from":10,"include_lower":true,"include_upper":true,"to":null}}}`,
+			es:  `{"range":{"count":{"gte":10}}}`,
 			sql: "`count` >= '10'",
 		},
 		"range_date": {
 			q:   `datetime:[2021-01-01 TO 2021-12-31]`,
-			es:  `{"range":{"datetime":{"from":"2021-01-01","include_lower":true,"include_upper":true,"to":"2021-12-31"}}}`,
+			es:  `{"range":{"datetime":{"gte":"2021-01-01","lte":"2021-12-31"}}}`,
 			sql: "`datetime` >= '2021-01-01' AND `datetime` <= '2021-12-31'",
 		},
 		"boost_integer": {
@@ -1124,7 +1129,7 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"complex_mixed_types": {
 			q:   `author:john~ AND count:[* TO 100] AND (status:urgent OR loglevel:high^2)`,
-			es:  `{"bool":{"must":[{"fuzzy":{"author":{"fuzziness":"AUTO","value":"john"}}},{"range":{"count":{"from":null,"include_lower":true,"include_upper":true,"to":100}}},{"bool":{"should":[{"term":{"status":"urgent"}},{"term":{"loglevel":{"boost":2,"value":"high"}}}]}}]}}`,
+			es:  `{"bool":{"must":[{"fuzzy":{"author":{"fuzziness":"AUTO","value":"john"}}},{"range":{"count":{"lte":100}}},{"bool":{"should":[{"term":{"status":"urgent"}},{"term":{"loglevel":{"boost":2,"value":"high"}}}]}}]}}`,
 			sql: "`author` MATCH_PHRASE 'john' AND `count` <= '100' AND (`status` = 'urgent' OR `loglevel` = 'high')",
 		},
 
@@ -1163,12 +1168,12 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"lucene_extracted_range_int": {
 			q:   `age:[1 TO 3]`,
-			es:  `{"range":{"age":{"from":1,"include_lower":true,"include_upper":true,"to":3}}}`,
+			es:  `{"range":{"age":{"gte":1,"lte":3}}}`,
 			sql: "`age` >= '1' AND `age` <= '3'",
 		},
 		"lucene_extracted_range_float": {
 			q:   `price:[1.5 TO 3.6]`,
-			es:  `{"range":{"price":{"from":1.5,"include_lower":true,"include_upper":true,"to":3.6}}}`,
+			es:  `{"range":{"price":{"gte":1.5,"lte":3.6}}}`,
 			sql: "`price` >= '1.5' AND `price` <= '3.6'",
 		},
 
@@ -1446,7 +1451,7 @@ func TestLuceneParser(t *testing.T) {
 		// =================================================================
 		"range_integer_field": {
 			q:   `intField:[1 TO 3]`,
-			es:  `{"range":{"intField":{"from":1,"include_lower":true,"include_upper":true,"to":3}}}`,
+			es:  `{"range":{"intField":{"gte":1,"lte":3}}}`,
 			sql: "`intField` >= '1' AND `intField` <= '3'",
 		},
 		"range_integer_field_single": {
@@ -1456,17 +1461,17 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"range_long_field": {
 			q:   `longField:[1 TO 3]`,
-			es:  `{"range":{"longField":{"from":1,"include_lower":true,"include_upper":true,"to":3}}}`,
+			es:  `{"range":{"longField":{"gte":1,"lte":3}}}`,
 			sql: "`longField` >= '1' AND `longField` <= '3'",
 		},
 		"range_float_field": {
 			q:   `floatField:[1.5 TO 3.6]`,
-			es:  `{"range":{"floatField":{"from":1.5,"include_lower":true,"include_upper":true,"to":3.6}}}`,
+			es:  `{"range":{"floatField":{"gte":1.5,"lte":3.6}}}`,
 			sql: "`floatField` >= '1.5' AND `floatField` <= '3.6'",
 		},
 		"range_double_field": {
 			q:   `doubleField:[1.5 TO 3.6]`,
-			es:  `{"range":{"doubleField":{"from":1.5,"include_lower":true,"include_upper":true,"to":3.6}}}`,
+			es:  `{"range":{"doubleField":{"gte":1.5,"lte":3.6}}}`,
 			sql: "`doubleField` >= '1.5' AND `doubleField` <= '3.6'",
 		},
 
@@ -1520,7 +1525,7 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"lucene_range_field_alpha": {
 			q:   `field:[a TO z]`,
-			es:  `{"range":{"field":{"from":"a","include_lower":true,"include_upper":true,"to":"z"}}}`,
+			es:  `{"range":{"field":{"gte":"a","lte":"z"}}}`,
 			sql: "`field` >= 'a' AND `field` <= 'z'",
 		},
 		"lucene_boost_field_integer": {
@@ -1623,32 +1628,32 @@ func TestLuceneParser(t *testing.T) {
 		// =================================================================
 		"range_exclusive_both": {
 			q:   `count:{10 TO 20}`,
-			es:  `{"range":{"count":{"from":10,"include_lower":false,"include_upper":false,"to":20}}}`,
+			es:  `{"range":{"count":{"gt":10,"lt":20}}}`,
 			sql: "`count` > '10' AND `count` < '20'",
 		},
 		"range_mixed_inclusive_exclusive_left": {
 			q:   `count:[10 TO 20}`,
-			es:  `{"range":{"count":{"from":10,"include_lower":true,"include_upper":false,"to":20}}}`,
+			es:  `{"range":{"count":{"gte":10,"lt":20}}}`,
 			sql: "`count` >= '10' AND `count` < '20'",
 		},
 		"range_mixed_inclusive_exclusive_right": {
 			q:   `count:{10 TO 20]`,
-			es:  `{"range":{"count":{"from":10,"include_lower":false,"include_upper":true,"to":20}}}`,
+			es:  `{"range":{"count":{"gt":10,"lte":20}}}`,
 			sql: "`count` > '10' AND `count` <= '20'",
 		},
 		"range_with_negative_numbers": {
 			q:   `temperature:[-10 TO 30]`,
-			es:  `{"range":{"temperature":{"from":-10,"include_lower":true,"include_upper":true,"to":30}}}`,
+			es:  `{"range":{"temperature":{"gte":-10,"lte":30}}}`,
 			sql: "`temperature` >= '-10' AND `temperature` <= '30'",
 		},
 		"range_with_decimals": {
 			q:   `price:[9.99 TO 99.99]`,
-			es:  `{"range":{"price":{"from":9.99,"include_lower":true,"include_upper":true,"to":99.99}}}`,
+			es:  `{"range":{"price":{"gte":9.99,"lte":99.99}}}`,
 			sql: "`price` >= '9.99' AND `price` <= '99.99'",
 		},
 		"range_timestamp": {
 			q:   `timestamp:[2024-01-01T00:00:00 TO 2024-12-31T23:59:59]`,
-			es:  `{"range":{"timestamp":{"from":"2024-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2024-12-31T23:59:59"}}}`,
+			es:  `{"range":{"timestamp":{"gte":"2024-01-01T00:00:00","lte":"2024-12-31T23:59:59"}}}`,
 			sql: "`timestamp` >= '2024-01-01T00:00:00' AND `timestamp` <= '2024-12-31T23:59:59'",
 		},
 
@@ -1711,12 +1716,12 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"field_range_and_term": {
 			q:   `age:[18 TO 65] AND status:active`,
-			es:  `{"bool":{"must":[{"range":{"age":{"from":18,"include_lower":true,"include_upper":true,"to":65}}},{"term":{"status":"active"}}]}}`,
+			es:  `{"bool":{"must":[{"range":{"age":{"gte":18,"lte":65}}},{"term":{"status":"active"}}]}}`,
 			sql: "`age` >= '18' AND `age` <= '65' AND `status` = 'active'",
 		},
 		"range_with_multiple_not": {
 			q:   `status:[500 TO 600] NOT status:501 AND NOT sIdeToken AND NOT "dify-api"`,
-			es:  `{"bool":{"must":[{"bool":{"must_not":{"term":{"status":"501"}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"sIdeToken"}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"dify-api\""}}}},{"range":{"status":{"from":500,"include_lower":true,"include_upper":true,"to":600}}}]}}`,
+			es:  `{"bool":{"must":[{"bool":{"must_not":{"term":{"status":"501"}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"sIdeToken"}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"dify-api\""}}}},{"range":{"status":{"gte":500,"lte":600}}}]}}`,
 			sql: "`status` >= '500' AND `status` <= '600' AND `log` NOT MATCH_PHRASE 'sIdeToken' AND `log` NOT MATCH_PHRASE 'dify-api' AND `status` != '501' OR `log` NOT MATCH_PHRASE 'sIdeToken' AND `log` NOT MATCH_PHRASE 'dify-api' AND `status` != '501'",
 		},
 		"field_value_with_multiple_not": {
@@ -1740,7 +1745,7 @@ func TestLuceneParser(t *testing.T) {
 		},
 		"boost_range_query": {
 			q:   `count:[1 TO 10]^3`,
-			es:  `{"range":{"count":{"boost":3,"from":1,"include_lower":true,"include_upper":true,"to":10}}}`,
+			es:  `{"range":{"count":{"boost":3,"gte":1,"lte":10}}}`,
 			sql: "`count` >= '1' AND `count` <= '10'",
 		},
 		"boost_nested_groups": {
@@ -2234,7 +2239,7 @@ func TestNotEqualOperator(t *testing.T) {
 		"greater_than_still_works": {
 			input: "status > 200",
 			sql:   "`status` > '200'",
-			es:    `{"range":{"status":{"from":200,"include_lower":false,"include_upper":true,"to":null}}}`,
+			es:    `{"range":{"status":{"gt":200}}}`,
 		},
 	}
 

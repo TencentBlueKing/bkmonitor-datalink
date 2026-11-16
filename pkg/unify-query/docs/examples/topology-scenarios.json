@@ -10,11 +10,15 @@
         "step": "1m",
         "look_back_delta": "5m",
         "max_hops": 1,
-        "source_type": "node",
-        "source_info": {
-          "bcs_cluster_id": "example-cluster",
-          "node": "node-a"
-        },
+        "sources": [
+          {
+            "source_type": "node",
+            "source_info": {
+              "bcs_cluster_id": "example-cluster",
+              "node": "node-a"
+            }
+          }
+        ],
         "allowed_relation_types": [
           "node_with_pod"
         ]
@@ -39,9 +43,9 @@
         ]
       ],
       "expected_edge_counts": [
-        2,
-        2,
-        2
+        1,
+        1,
+        1
       ]
     },
     {
@@ -53,12 +57,16 @@
         "step": "1m",
         "look_back_delta": "5m",
         "max_hops": 1,
-        "source_type": "pod",
-        "source_info": {
-          "bcs_cluster_id": "example-cluster",
-          "namespace": "demo",
-          "pod": "pod-a"
-        },
+        "sources": [
+          {
+            "source_type": "pod",
+            "source_info": {
+              "bcs_cluster_id": "example-cluster",
+              "namespace": "demo",
+              "pod": "pod-a"
+            }
+          }
+        ],
         "allowed_relation_types": [
           "node_with_pod",
           "container_with_pod"
@@ -87,9 +95,9 @@
         ]
       ],
       "expected_edge_counts": [
-        4,
-        4,
-        4
+        2,
+        2,
+        2
       ]
     },
     {
@@ -101,12 +109,16 @@
         "step": "1m",
         "look_back_delta": "5m",
         "max_hops": 2,
-        "source_type": "deployment",
-        "source_info": {
-          "bcs_cluster_id": "example-cluster",
-          "namespace": "demo",
-          "deployment": "web"
-        },
+        "sources": [
+          {
+            "source_type": "deployment",
+            "source_info": {
+              "bcs_cluster_id": "example-cluster",
+              "namespace": "demo",
+              "deployment": "web"
+            }
+          }
+        ],
         "allowed_relation_types": [
           "deployment_with_replicaset",
           "pod_with_replicaset"
@@ -138,9 +150,9 @@
         ]
       ],
       "expected_edge_counts": [
-        6,
-        6,
-        6
+        3,
+        3,
+        3
       ]
     },
     {
@@ -152,17 +164,21 @@
         "step": "1m",
         "look_back_delta": "5m",
         "max_hops": 1,
-        "source_type": "container",
-        "source_info": {
-          "bcs_cluster_id": "example-cluster",
-          "namespace": "demo"
-        },
+        "sources": [
+          {
+            "source_type": "container",
+            "source_info": {
+              "bcs_cluster_id": "example-cluster",
+              "namespace": "demo"
+            },
+            "source_expand_info": {
+              "version": "v2"
+            }
+          }
+        ],
         "allowed_relation_types": [
           "container_with_pod"
-        ],
-        "source_expand_info": {
-          "version": "v2"
-        }
+        ]
       },
       "expected_node_counts": [
         2,
@@ -188,9 +204,9 @@
         ]
       ],
       "expected_edge_counts": [
+        1,
         2,
-        4,
-        4
+        2
       ]
     },
     {
@@ -202,19 +218,23 @@
         "step": "1m",
         "look_back_delta": "5m",
         "max_hops": 1,
-        "source_type": "container",
-        "source_info": {
-          "bcs_cluster_id": "example-cluster",
-          "namespace": "demo",
-          "pod": "pod-a",
-          "container": "app-a"
-        },
+        "sources": [
+          {
+            "source_type": "container",
+            "source_info": {
+              "bcs_cluster_id": "example-cluster",
+              "namespace": "demo",
+              "pod": "pod-a",
+              "container": "app-a"
+            },
+            "source_expand_info": {
+              "container": "app-a"
+            }
+          }
+        ],
         "allowed_relation_types": [
           "container_with_pod"
-        ],
-        "source_expand_info": {
-          "container": "app-a"
-        }
+        ]
       },
       "expected_node_counts": [
         2,
@@ -236,9 +256,9 @@
         ]
       ],
       "expected_edge_counts": [
-        2,
-        2,
-        2
+        1,
+        1,
+        1
       ]
     },
     {
@@ -250,12 +270,16 @@
         "step": "1m",
         "look_back_delta": "5m",
         "max_hops": 2,
-        "source_type": "deployment",
-        "source_info": {
-          "bcs_cluster_id": "example-cluster",
-          "namespace": "demo",
-          "deployment": "web"
-        },
+        "sources": [
+          {
+            "source_type": "deployment",
+            "source_info": {
+              "bcs_cluster_id": "example-cluster",
+              "namespace": "demo",
+              "deployment": "web"
+            }
+          }
+        ],
         "allowed_relation_types": [
           "deployment_with_replicaset",
           "pod_with_replicaset"
@@ -301,11 +325,15 @@
         "step": "1m",
         "look_back_delta": "5m",
         "max_hops": 1,
-        "source_type": "node",
-        "source_info": {
-          "bcs_cluster_id": "example-cluster",
-          "node": "not-present"
-        },
+        "sources": [
+          {
+            "source_type": "node",
+            "source_info": {
+              "bcs_cluster_id": "example-cluster",
+              "node": "not-present"
+            }
+          }
+        ],
         "allowed_relation_types": [
           "node_with_pod"
         ]

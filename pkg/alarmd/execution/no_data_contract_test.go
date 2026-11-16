@@ -435,7 +435,9 @@ func TestNoDataMemoryReadableRefusesAFutureSchema(t *testing.T) {
 	if !NoDataMemoryReadable(0) {
 		t.Fatal("schema 0 is the absence of a record, not a record this build cannot read")
 	}
-	for _, schema := range []NoDataMemorySchema{NoDataMemorySchemaV1, NoDataMemorySchemaV2, NoDataMemorySchemaV3} {
+	for _, schema := range []NoDataMemorySchema{
+		NoDataMemorySchemaV1, NoDataMemorySchemaV2, NoDataMemorySchemaV3, NoDataMemorySchemaV4,
+	} {
 		if !NoDataMemoryReadable(schema) {
 			t.Fatalf("this build cannot read schema %d, which it is expected to", schema)
 		}
@@ -445,13 +447,13 @@ func TestNoDataMemoryReadableRefusesAFutureSchema(t *testing.T) {
 	}
 }
 
-// This build reads three shapes and writes one. That asymmetry is the whole
+// This build reads four shapes and writes one. That asymmetry is the whole
 // coexistence rule, and it is asserted rather than described: a build that
 // wrote two would leave two records per Plan with no rule for which is the
 // memory, and one that wrote an older shape would undo the change.
-func TestThisBuildWritesOneSchemaAndReadsThree(t *testing.T) {
-	if WrittenNoDataMemorySchema != NoDataMemorySchemaV3 {
-		t.Fatalf("this build writes schema %d, want the one that carries the tracking facts",
+func TestThisBuildWritesOneSchemaAndReadsFour(t *testing.T) {
+	if WrittenNoDataMemorySchema != NoDataMemorySchemaV4 {
+		t.Fatalf("this build writes schema %d, want the one whose memory digest does not depend on group order",
 			WrittenNoDataMemorySchema)
 	}
 	built, err := BuildPlanNoDataMutation(noDataUpdate(NoDataGroupMemory{GroupKey: "a", LastSeen: 90}))
@@ -464,7 +466,7 @@ func TestThisBuildWritesOneSchemaAndReadsThree(t *testing.T) {
 	// The builder owns the version as well as the digest. A caller that could
 	// state one could write the shape this build no longer maintains.
 	for _, schema := range []NoDataMemorySchema{
-		0, NoDataMemorySchemaV1, NoDataMemorySchemaV2, MaxSupportedNoDataMemorySchema + 1,
+		0, NoDataMemorySchemaV1, NoDataMemorySchemaV2, NoDataMemorySchemaV3, MaxSupportedNoDataMemorySchema + 1,
 	} {
 		other := built
 		other.SchemaVersion = schema

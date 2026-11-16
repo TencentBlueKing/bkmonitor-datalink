@@ -6,8 +6,11 @@
 package controlplane_test
 
 import (
+	"context"
 	"errors"
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -291,5 +294,59 @@ func TestAFreshLeadersReadErrorFailsTheReadAndSkipsNothing(t *testing.T) {
 	}
 	if kind, err := fixture.client.Type(fixture.ctx, key).Result(); err != nil || kind != "hash" {
 		t.Fatalf("the unreadable key is now a %q (%v), want it left as it was", kind, err)
+	}
+}
+
+// sharedCatalogAt is sharedQueryGroupCatalog with strategy 1001's threshold
+// set, so a later catalog can move its state generation.
+func sharedCatalogAt(t *testing.T, thresholdA int, includeB bool) controlplane.Catalog {
+	t.Helper()
+	documents := realThresholdDocuments(t)
+	strategies := []controlplane.SourceStrategy{{SourceID: "1001",
+		Document: []byte(strings.Replace(string(documents[0]), `"threshold":80`, `"threshold":`+strconv.Itoa(thresholdA), 1)),
+		Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}}}
+	if includeB {
+		strategies = append(strategies, controlplane.SourceStrategy{SourceID: "1002", Document: documents[1],
+			Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}})
+	}
+	catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{Strategies: strategies,
+		Planner: &recordingPlanner{facts: queryFacts(t)}})
+	if err != nil || len(catalog.QueryGroups) != 1 {
+		t.Fatalf("shared catalog = (%d groups, %v)", len(catalog.QueryGroups), err)
+	}
+	return catalog
+}
+
+// A Plan the activation read left out - its Query Group's timeline did not
+// decode - has no previous record, which is the read's gap, not a Plan new to
+// the activation. When the group's content changed since, and the Plan's
+// state generation with it, it is forced to warm up, and no Worker may judge
+// it by finding nothing under the new generation: it ran under the one
+// before. A Plan the previous content did not list in that group is new, and
+// is marked so.
+func TestAPlanOfAnUnreadTimelineIsNotTakenForANewOne(t *testing.T) {
+	fixture, recordKey := repairFixture(t, "alarmd:control:skip-arrived")
+	first := sharedCatalogAt(t, 80, false)
+	group := first.QueryGroups[0].Identity
+	fixture.publish(t, first, 60)
+	before := activationRecordByStrategy(t, fixture.activation(t), "1001")
+	fixture.corrupt(t, group, unreadableTimeline)
+
+	leader := fixture.freshLeader(t, recordKey)
+	loaded, err := leader.repository.LoadActivation(leader.ctx)
+	if err != nil || len(loaded.SkippedTimelines) != 1 || loaded.SkippedTimelines[0].QueryGroup != group {
+		t.Fatalf("the activation read = (skipped %+v, %v), want %s left out", loaded.SkippedTimelines, err, group)
+	}
+	leader.publish(t, sharedCatalogAt(t, 85, true), 120)
+	after := leader.activation(t)
+	edited, added := activationRecordByStrategy(t, after, "1001").Fact.Selected, activationRecordByStrategy(t, after, "1002").Fact.Selected
+	if edited.StateGeneration == before.Fact.Selected.StateGeneration {
+		t.Fatalf("the edit kept 1001's generation %s: the case needs it moved", edited.StateGeneration)
+	}
+	if !edited.ForceWarming || edited.Arrived {
+		t.Fatalf("1001, unread and edited = %+v, want it forced to warm up and not new", edited)
+	}
+	if !added.ForceWarming || !added.Arrived {
+		t.Fatalf("1002, added = %+v, want it forced to warm up as a new Plan", added)
 	}
 }

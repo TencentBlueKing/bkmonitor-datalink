@@ -58,3 +58,17 @@ type RetainedBytesReserver interface {
 	ReserveRetainedBytes(ctx context.Context, bytes uint64) error
 	ReleaseRetainedBytes(bytes uint64)
 }
+
+// RetainedBytesBorrower is a cache that holds bytes of the retained pool only
+// while no Slot has reserved them. The pool's owner hands it room once, when
+// it takes the borrower on: what no Slot has reserved, which bounds what the
+// borrower takes in. BorrowedRetainedBytes is what it holds of the pool now,
+// and YieldRetainedBytes gives back at least need bytes, or all it holds,
+// before a reservation that needs them is judged. The pool's owner calls
+// those two under the lock its reservations are judged under, and room takes
+// that lock, so the borrower must not call room while it holds its own lock.
+type RetainedBytesBorrower interface {
+	BorrowRetainedWithin(room func() uint64)
+	BorrowedRetainedBytes() uint64
+	YieldRetainedBytes(need uint64)
+}

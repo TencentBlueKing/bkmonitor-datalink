@@ -160,8 +160,9 @@ func apmTableKind(spec execution.PhysicalQuerySpec) string {
 // apmHeldSeries keeps a carried response's series until it is known whole.
 // reserver is what they are reserved through, nil for a sink that reserves
 // nothing, and reserved what is still reserved for the series not yet
-// handed on: each series' delivered bytes, what the sink charges for its
-// data when it takes it.
+// handed on: each series' Dataset at its RetainedBytes, what the sink
+// charges for its data when it takes it. bytes is what the series came to as
+// the answer encoded them, for the carried response's reading.
 type apmHeldSeries struct {
 	batches  []execution.ProviderSeriesBatch
 	seen     map[string]struct{}
@@ -173,14 +174,15 @@ type apmHeldSeries struct {
 
 func (held *apmHeldSeries) ConsumeProviderSeries(ctx context.Context, batch execution.ProviderSeriesBatch) error {
 	if held.reserver != nil {
-		if err := held.reserver.ReserveRetainedBytes(ctx, batch.Delivery.Bytes); err != nil {
+		kept := batch.Dataset.RetainedBytes()
+		if err := held.reserver.ReserveRetainedBytes(ctx, kept); err != nil {
 			return err
 		}
-		held.reserved += batch.Delivery.Bytes
+		held.reserved += kept
 	}
 	held.bytes += batch.Delivery.Bytes
-	if records := batch.Dataset.Records(); len(records) > 0 {
-		identity := records[0].DimensionIdentity.Digest
+	if record, ok := batch.Dataset.Record(0); ok {
+		identity := record.DimensionIdentityDigest()
 		if _, again := held.seen[identity]; again {
 			held.repeated = true
 		}
@@ -198,7 +200,7 @@ func (held *apmHeldSeries) ConsumeProviderSeries(ctx context.Context, batch exec
 func (held *apmHeldSeries) handOff(index int) execution.ProviderSeriesBatch {
 	batch := held.batches[index]
 	held.batches[index] = execution.ProviderSeriesBatch{}
-	held.giveBack(batch.Delivery.Bytes)
+	held.giveBack(batch.Dataset.RetainedBytes())
 	return batch
 }
 

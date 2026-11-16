@@ -13,6 +13,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -29,6 +30,37 @@ var ErrDeclinedEverywhere = fmt.Errorf("%w: every eligible worker declines it", 
 
 type WorkerEligibility interface {
 	Eligible(execution.QueryGroupIdentity, ownership.WorkerRegistration, time.Time) bool
+}
+
+// AllEligible is eligible where every one of eligibilities is; a nil one
+// is left out, so AllEligible(e) is e and AllEligible(e, nil) is e. With
+// none left it is nil - no eligibility, as NewRouter reads nil - not one
+// that says every worker is eligible.
+func AllEligible(eligibilities ...WorkerEligibility) WorkerEligibility {
+	var kept allEligible
+	for _, eligibility := range eligibilities {
+		if eligibility != nil {
+			kept = append(kept, eligibility)
+		}
+	}
+	switch len(kept) {
+	case 0:
+		return nil
+	case 1:
+		return kept[0]
+	}
+	return kept
+}
+
+type allEligible []WorkerEligibility
+
+func (eligibilities allEligible) Eligible(queryGroup execution.QueryGroupIdentity, worker ownership.WorkerRegistration, at time.Time) bool {
+	for _, eligibility := range eligibilities {
+		if !eligibility.Eligible(queryGroup, worker, at) {
+			return false
+		}
+	}
+	return true
 }
 
 type staticWorkerEligibility struct {
@@ -63,19 +95,37 @@ func (router *Router) Select(
 	workers []ownership.WorkerRegistration,
 	at time.Time,
 ) (ownership.WorkerRegistration, error) {
-	if router == nil || queryGroup == "" || at.IsZero() {
-		return ownership.WorkerRegistration{}, errors.New("alarmd scheduler: invalid routing request")
+	ranked, err := router.ranked(queryGroup, workers, at)
+	if err != nil {
+		return ownership.WorkerRegistration{}, err
 	}
-	var selected ownership.WorkerRegistration
-	var selectedScore [sha256.Size]byte
-	found, declined := false, false
+	return ranked[0], nil
+}
+
+// ranked is the Workers Select may choose, highest rendezvous score first:
+// a valid READY registration that has not expired, eligible, and not
+// declining the Query Group.
+func (router *Router) ranked(
+	queryGroup execution.QueryGroupIdentity,
+	workers []ownership.WorkerRegistration,
+	at time.Time,
+) ([]ownership.WorkerRegistration, error) {
+	if router == nil || queryGroup == "" || at.IsZero() {
+		return nil, errors.New("alarmd scheduler: invalid routing request")
+	}
+	type scored struct {
+		worker ownership.WorkerRegistration
+		score  [sha256.Size]byte
+	}
+	candidates := make([]scored, 0, len(workers))
+	declined := false
 	seen := make(map[string]struct{}, len(workers))
 	for _, worker := range workers {
 		if err := worker.Validate(); err != nil {
-			return ownership.WorkerRegistration{}, err
+			return nil, err
 		}
 		if _, duplicate := seen[worker.WorkerID]; duplicate {
-			return ownership.WorkerRegistration{}, errors.New("alarmd scheduler: duplicate worker identity")
+			return nil, errors.New("alarmd scheduler: duplicate worker identity")
 		}
 		seen[worker.WorkerID] = struct{}{}
 		if worker.AssignmentReadiness != ownership.WorkerReady || !worker.ExpiresAt.After(at) {
@@ -90,18 +140,45 @@ func (router *Router) Select(
 			declined = true
 			continue
 		}
-		score := sha256.Sum256([]byte(string(queryGroup) + "\x00" + worker.WorkerID))
-		if !found || bytes.Compare(score[:], selectedScore[:]) > 0 {
-			selected, selectedScore, found = worker, score, true
-		}
+		candidates = append(candidates, scored{worker: worker, score: sha256.Sum256([]byte(string(queryGroup) + "\x00" + worker.WorkerID))})
 	}
-	if !found {
+	if len(candidates) == 0 {
 		if declined {
-			return ownership.WorkerRegistration{}, ErrDeclinedEverywhere
+			return nil, ErrDeclinedEverywhere
 		}
-		return ownership.WorkerRegistration{}, ErrNoEligibleWorker
+		return nil, ErrNoEligibleWorker
 	}
-	return selected, nil
+	sort.Slice(candidates, func(left, right int) bool {
+		return bytes.Compare(candidates[left].score[:], candidates[right].score[:]) > 0
+	})
+	ranked := make([]ownership.WorkerRegistration, len(candidates))
+	for index, candidate := range candidates {
+		ranked[index] = candidate.worker
+	}
+	return ranked, nil
+}
+
+// selectFitting is Select under the round's byte projection: the highest
+// rendezvous score the Query Group fits (byteProjection.fits). When it fits
+// none, a placement still has to be made - an unknown fit is not a reason
+// to leave a Query Group unplaced - and Select's own choice is returned,
+// reported unfit, for the byte constraint to correct on a later round.
+func (router *Router) selectFitting(
+	queryGroup execution.QueryGroupIdentity,
+	workers []ownership.WorkerRegistration,
+	at time.Time,
+	projection *byteProjection,
+) (ownership.WorkerRegistration, bool, error) {
+	ranked, err := router.ranked(queryGroup, workers, at)
+	if err != nil {
+		return ownership.WorkerRegistration{}, false, err
+	}
+	for _, worker := range ranked {
+		if projection.fits(worker.WorkerID, queryGroup) {
+			return worker, false, nil
+		}
+	}
+	return ranked[0], true, nil
 }
 
 // incumbentEligible reports whether the Worker named by workerID is in the
@@ -211,6 +288,15 @@ type AssignmentStore interface {
 		ownership.PublicationAuthority,
 		ownership.AssignmentDecision,
 	) (ownership.AssignmentRecord, error)
+	// PublishAssignmentReporting writes a decision and says what held the
+	// Query Group's lease when it did (ownership.HolderKind), so a round that
+	// takes a Query Group off a holder counts it by the holder it took it
+	// from, whichever path took it.
+	PublishAssignmentReporting(
+		context.Context,
+		ownership.PublicationAuthority,
+		ownership.AssignmentDecision,
+	) (ownership.AssignmentRecord, ownership.HolderKind, error)
 }
 
 type Reconciler struct {
@@ -332,6 +418,19 @@ func NewReconciler(router *Router, store AssignmentStore) (*Reconciler, error) {
 	return &Reconciler{router: router, store: store}, nil
 }
 
+// WithStore is the reconciler reading and writing its records through store
+// instead, with the same router and timeline source: the Control Leader
+// rounds through its term's copy of the records (a caching store over the
+// one it was given).
+func (reconciler *Reconciler) WithStore(store AssignmentStore) *Reconciler {
+	if reconciler == nil || store == nil {
+		return reconciler
+	}
+	rebound := *reconciler
+	rebound.store = store
+	return &rebound
+}
+
 // ListReadyWorkers reads the ready set once for a reconcile round. A round
 // reconciles every Query Group against this one set: listing per Query
 // Group costs a registry read per Query Group and, worse, lets one round
@@ -381,7 +480,7 @@ func (reconciler *Reconciler) ReconcileWith(
 	if !hasCurrent && !errors.Is(err, ownership.ErrAssignmentAbsent) {
 		return ownership.AssignmentRecord{}, err
 	}
-	record, outcome, err := reconciler.settle(ctx, authority, queryGroup, current, hasCurrent, indexReadyWorkers(workers), at, ContentScopes{}, nil)
+	record, outcome, _, err := reconciler.settle(ctx, authority, queryGroup, current, hasCurrent, indexReadyWorkers(workers), at, ContentScopes{}, nil, nil, nil)
 	if err == nil && outcome == settleUnplaceable {
 		return ownership.AssignmentRecord{}, ErrNoEligibleWorker
 	}
@@ -439,6 +538,22 @@ type RoundSettlement struct {
 	// the round moved, each a handover; Deferred those it left where they
 	// were for a later round, because the round's handover batch was spent.
 	Replaced, Deferred int
+	// Placed counts the Query Groups the round took off a holder that is not
+	// in its ready set - not READY, its registration lapsed, or declining the
+	// Query Group - and placed elsewhere. A Query Group placed for the first
+	// time is not one: nothing held it. PlacedFromSessionHolders and
+	// ReplacedFromSessionHolders are the parts of Placed and Replaced taken
+	// from a holder holding the lease under a worker session.
+	Placed                                               int
+	PlacedFromSessionHolders, ReplacedFromSessionHolders int
+	// Unfit counts the placements that fit no Worker under the round's byte
+	// projection and went to the rendezvous choice regardless.
+	Unfit int
+	// Conflicts counts the Query Groups whose record had changed since it
+	// was read, so the publication was refused; each was read again and
+	// settled once more in the round. ConflictsAgain is the part of them
+	// refused again, left as read for the next round.
+	Conflicts, ConflictsAgain int
 	// Unplaceable counts the Query Groups no ready worker can take this
 	// round. Each keeps the record it had, or stays without one; the round
 	// goes on with the rest.
@@ -489,6 +604,23 @@ func (reconciler *Reconciler) ReconcileRoundSettling(
 	at time.Time,
 	scopes ContentScopes,
 ) (RoundSettlement, error) {
+	return reconciler.ReconcileRoundSettlingWithBytes(ctx, authority, queryGroups, workers, at, scopes, nil)
+}
+
+// ReconcileRoundSettlingWithBytes is ReconcileRoundSettling with its
+// placements judged under the byte constraint's projection: readings gives
+// the round's byte readings for the owners the records name before the
+// round, and a Query Group placed goes to the highest rendezvous score it
+// fits on (selectFitting). Nil readings judge nothing.
+func (reconciler *Reconciler) ReconcileRoundSettlingWithBytes(
+	ctx context.Context,
+	authority ownership.PublicationAuthority,
+	queryGroups []execution.QueryGroupIdentity,
+	workers []ownership.WorkerRegistration,
+	at time.Time,
+	scopes ContentScopes,
+	readings func(map[execution.QueryGroupIdentity]string) ByteReadings,
+) (RoundSettlement, error) {
 	if reconciler == nil {
 		return RoundSettlement{}, errors.New("alarmd scheduler: initialized reconciler is required")
 	}
@@ -499,16 +631,68 @@ func (reconciler *Reconciler) ReconcileRoundSettling(
 	}
 	index := indexReadyWorkers(workers)
 	budget := rebalanceBatch(len(queryGroups))
+	var projection *byteProjection
+	if readings != nil {
+		owners := make(map[execution.QueryGroupIdentity]string, len(current))
+		for queryGroup, record := range current {
+			owners[queryGroup] = record.DesiredWorkerID
+		}
+		projection = newByteProjection(owners, readings(owners))
+	}
 	settled := make(map[execution.QueryGroupIdentity]ownership.AssignmentRecord, len(queryGroups))
 	for _, queryGroup := range queryGroups {
 		existing, hasCurrent := current[queryGroup]
-		record, outcome, settleErr := reconciler.settle(ctx, authority, queryGroup, existing, hasCurrent, index, at, scopes, &budget)
+		record, outcome, holder, settleErr := reconciler.settle(ctx, authority, queryGroup, existing, hasCurrent, index, at, scopes, &budget, projection, &settlement.Unfit)
+		if errors.Is(settleErr, ownership.ErrAssignmentConflict) {
+			// The record's revision moved since it was read. Only a write
+			// that bumps record_revision does that: a publication whose
+			// answer this Leader never got, another Leader's publication,
+			// or a sweep that removed the record. A Worker promoting its
+			// pending content and an activation writing the timeline
+			// revision leave record_revision as it is, so neither is ever
+			// a conflict, and a round with one is not the usual case. One
+			// stale record does not fail the round: it is read again and
+			// settled once more, and one refused again is left as read for
+			// the next round. A handover the refusal did not make gives its
+			// place in the batch back.
+			settlement.Conflicts++
+			if outcome == settleReplaced {
+				budget++
+			}
+			existing, hasCurrent, settleErr = reconciler.readAgain(ctx, queryGroup)
+			if settleErr != nil {
+				return settlement, settleErr
+			}
+			record, outcome, holder, settleErr = reconciler.settle(ctx, authority, queryGroup, existing, hasCurrent, index, at, scopes, &budget, projection, &settlement.Unfit)
+			if errors.Is(settleErr, ownership.ErrAssignmentConflict) {
+				settlement.ConflictsAgain++
+				if outcome == settleReplaced {
+					budget++
+				}
+				if hasCurrent {
+					settled[queryGroup] = existing
+				}
+				continue
+			}
+		}
 		if settleErr != nil {
 			return settlement, settleErr
 		}
 		switch outcome {
 		case settleReplaced:
 			settlement.Replaced++
+			if holder == ownership.HolderUnderSession {
+				settlement.ReplacedFromSessionHolders++
+			}
+		case settlePlaced:
+			// A holder not in the ready set is never selected again, so a
+			// placement over a record that named one always moved it.
+			if hasCurrent && existing.DesiredWorkerID != "" {
+				settlement.Placed++
+				if holder == ownership.HolderUnderSession {
+					settlement.PlacedFromSessionHolders++
+				}
+			}
 		case settleDeferred:
 			settlement.Deferred++
 		case settleUnplaceable, settleDeclinedEverywhere:
@@ -527,6 +711,19 @@ func (reconciler *Reconciler) ReconcileRoundSettling(
 	}
 	settlement.Records = settled
 	return settlement, nil
+}
+
+// readAgain reads one Query Group's record after its publication was
+// refused; absent is no record, not a failure.
+func (reconciler *Reconciler) readAgain(ctx context.Context, queryGroup execution.QueryGroupIdentity) (ownership.AssignmentRecord, bool, error) {
+	record, err := reconciler.store.ReadAssignment(ctx, queryGroup)
+	if errors.Is(err, ownership.ErrAssignmentAbsent) {
+		return ownership.AssignmentRecord{}, false, nil
+	}
+	if err != nil {
+		return ownership.AssignmentRecord{}, false, err
+	}
+	return record, true, nil
 }
 
 // settleOutcome is what settle did with one Query Group.
@@ -564,7 +761,9 @@ func (reconciler *Reconciler) settle(
 	at time.Time,
 	scopes ContentScopes,
 	budget *int,
-) (ownership.AssignmentRecord, settleOutcome, error) {
+	projection *byteProjection,
+	unfit *int,
+) (ownership.AssignmentRecord, settleOutcome, ownership.HolderKind, error) {
 	expectedRevision := uint64(0)
 	if hasCurrent {
 		expectedRevision = current.RecordRevision
@@ -573,33 +772,33 @@ func (reconciler *Reconciler) settle(
 	if hasCurrent && reconciler.router.incumbentEligibleIn(queryGroup, current.DesiredWorkerID, workers, at) {
 		scope, withdraw, needed := scopes.wanted(queryGroup, current)
 		if !needed && timeline == 0 {
-			return current, settleKept, nil
+			return current, settleKept, "", nil
 		}
-		record, err := reconciler.store.PublishAssignment(
+		record, _, err := reconciler.store.PublishAssignmentReporting(
 			ctx, authority, ownership.AssignmentDecision{
 				QueryGroup: queryGroup, DesiredWorkerID: current.DesiredWorkerID,
 				ExpectedRecordRevision: expectedRevision, PlacementReason: current.PlacementReason, DecidedAt: at,
 				ContentScope: scope, WithdrawContentScope: withdraw, TimelineRecordRevision: timeline,
 			},
 		)
-		return record, settleKept, err
+		return record, settleKept, "", err
 	}
-	selected, err := reconciler.router.Select(queryGroup, workers.ordered, at)
+	selected, placedUnfit, err := reconciler.router.selectFitting(queryGroup, workers.ordered, at, projection)
 	if errors.Is(err, ErrDeclinedEverywhere) {
-		return current, settleDeclinedEverywhere, nil
+		return current, settleDeclinedEverywhere, "", nil
 	}
 	if errors.Is(err, ErrNoEligibleWorker) {
 		// Nobody can take it this round; one Query Group's answer is its
 		// own (design 016 §4.1), and the rest of the round goes on.
-		return current, settleUnplaceable, nil
+		return current, settleUnplaceable, "", nil
 	}
 	if err != nil {
-		return ownership.AssignmentRecord{}, settlePlaced, err
+		return ownership.AssignmentRecord{}, settlePlaced, "", err
 	}
 	outcome := settlePlaced
 	if hasCurrent && workers.alive(queryGroup, current.DesiredWorkerID, at) {
 		if budget != nil && *budget <= 0 {
-			return current, settleDeferred, nil
+			return current, settleDeferred, "", nil
 		}
 		if budget != nil {
 			*budget--
@@ -611,6 +810,12 @@ func (reconciler *Reconciler) settle(
 		ExpectedRecordRevision: expectedRevision, PlacementReason: ownership.PlacementRendezvous, DecidedAt: at,
 		TimelineRecordRevision: timeline,
 	}
+	// The lease is expected to be held by the record's desired worker, whose
+	// session the publication reads to tell whether the move must wait out a
+	// grace.
+	if hasCurrent {
+		decision.HolderWorkerID = current.DesiredWorkerID
+	}
 	// A placement carries the content it places onto when the round
 	// declares scopes, so a Query Group is never placed without one and
 	// then named on the next round; and it withdraws when the round
@@ -621,6 +826,12 @@ func (reconciler *Reconciler) settle(
 	case ContentScopesWithdrawn:
 		decision.WithdrawContentScope = true
 	}
-	record, err := reconciler.store.PublishAssignment(ctx, authority, decision)
-	return record, outcome, err
+	record, holder, err := reconciler.store.PublishAssignmentReporting(ctx, authority, decision)
+	if err == nil {
+		projection.land(queryGroup, selected.WorkerID)
+		if placedUnfit && unfit != nil {
+			*unfit++
+		}
+	}
+	return record, outcome, holder, err
 }

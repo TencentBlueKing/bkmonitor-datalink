@@ -24,6 +24,8 @@ type countingAssignmentStore struct {
 	batchErr   error
 	records    map[execution.QueryGroupIdentity]ownership.AssignmentRecord
 	published  int
+	// holderKind is what every publication reports held the lease.
+	holderKind ownership.HolderKind
 	// observeDecision sees each publication's decision, so a case can
 	// assert what the round conditioned the write on rather than only
 	// that it wrote.
@@ -69,6 +71,13 @@ func (store *countingAssignmentStore) ReadAssignments(
 		}
 	}
 	return found, ownership.ControlReadStats{Keys: len(queryGroups), RoundTrips: 1}, nil
+}
+
+// PublishAssignmentReporting is PublishAssignment with the holder this fake
+// reports for it (holderKind, none when unset).
+func (store *countingAssignmentStore) PublishAssignmentReporting(ctx context.Context, authority ownership.PublicationAuthority, decision ownership.AssignmentDecision) (ownership.AssignmentRecord, ownership.HolderKind, error) {
+	record, err := store.PublishAssignment(ctx, authority, decision)
+	return record, store.holderKind, err
 }
 
 func (store *countingAssignmentStore) PublishAssignment(

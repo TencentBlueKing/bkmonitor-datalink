@@ -58,6 +58,7 @@ type wideFrontierBackend struct {
 	hopBudgets  []int64
 	rejectWide  func(ctx context.Context) error
 	wideQueries int
+	probes      int
 }
 
 func wideFrontierMatches(t *testing.T, conditions structured.Conditions, labels map[string]string) bool {
@@ -91,13 +92,34 @@ func wideFrontierMatches(t *testing.T, conditions structured.Conditions, labels 
 	return false
 }
 
+// wideFrontierScopeRead 识别覆盖整个前沿的一次读取：没有按完整身份写出的等值条件。
+// 兼容入口的每次读取都带单次响应边界，不能再凭边界区分宽读取与分批读取。
+func wideFrontierScopeRead(conditions structured.Conditions) bool {
+	for _, field := range conditions.FieldList {
+		if field.Operator == structured.ConditionEqual {
+			return false
+		}
+	}
+	return true
+}
+
 func (b *wideFrontierBackend) query(t *testing.T) func(context.Context, *structured.QueryTs, string, bool, time.Time, time.Time, time.Duration) (pl.Matrix, error) {
 	return func(ctx context.Context, q *structured.QueryTs, _ string, _ bool, start, end time.Time, step time.Duration) (pl.Matrix, error) {
 		query := q.QueryList[0]
+		if frontierProbeForTest(q) {
+			b.probes++
+			var matched pl.Matrix
+			for _, edge := range b.edges[query.FieldName] {
+				if wideFrontierMatches(t, query.Conditions, edge.labels) {
+					matched = append(matched, contractMatrix(edge.labels, edge.times...)...)
+				}
+			}
+			return frontierProbeAnswer(q, matched), nil
+		}
 		if query.FieldName == "pod_to_target_flow" {
 			b.hopQueries = append(b.hopQueries, query.Conditions)
 			b.hopBudgets = append(b.hopBudgets, metadata.BackendResponseLimit(ctx))
-			if metadata.BackendResponseLimit(ctx) > 0 {
+			if wideFrontierScopeRead(query.Conditions) {
 				b.wideQueries++
 				if b.rejectWide != nil {
 					if err := b.rejectWide(ctx); err != nil {
@@ -289,10 +311,12 @@ func TestLegacyWideFrontierFallsBackToBatches(t *testing.T) {
 				b.rejectWide = tc.reject
 				entry.run(t, b)
 				require.Equal(t, 1, b.wideQueries)
-				// 301 identities in batches of 64, without a budget of their own.
-				require.Len(t, b.hopQueries, 1+5)
+				// 宽读取超过边界后由分批接住，并补一次计数校准之后的估算。301 个身份：响应都很小，
+				// 批大小 64、128 后剩下 109 个；每次读取都带同一单次响应边界。
+				require.Equal(t, 1, b.probes, "an oversized wide read is counted once to calibrate later estimates")
+				require.Len(t, b.hopQueries, 1+3)
 				for _, budget := range b.hopBudgets[1:] {
-					require.Zero(t, budget)
+					require.Equal(t, timeGraphBackendResponseBytes, budget)
 				}
 			})
 		}
@@ -408,7 +432,8 @@ func TestLegacyWideFrontierRejectedReadKeepsNoQuality(t *testing.T) {
 	ctx := initTimeGraphQueryTestEnvironment()
 	_, _, _, _, buckets, err := model.QueryResourceMatcherRange(ctx, "", "space", "1m", "1700000040", "1700000100", "target", "root", cmdb.Matcher{"root_id": "r1"}, nil, false, nil)
 	require.NoError(t, err)
-	require.Len(t, b.hopQueries, 1+5)
+	// 宽读取之后按 64、128、109 个身份分批。
+	require.Len(t, b.hopQueries, 1+3)
 	require.NotEmpty(t, buckets)
 	require.Nil(t, metadata.GetStatus(ctx), "the batches that replaced it were complete")
 }
@@ -420,15 +445,15 @@ func TestLegacyWideFrontierKeepsRealQuality(t *testing.T) {
 		wantHopReads int
 	}{
 		{"a wide read that was used", false, 1},
-		{"a batch after the fallback", true, 1 + 5},
+		{"a batch after the fallback", true, 1 + 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := wideFrontierScenario(300, 3, 2)
 			backend := b.query(t)
 			model := legacyRegressionModel(wideFrontierProvider())
 			model.timeGraphVMQuery = func(ctx context.Context, q *structured.QueryTs, expr string, instant bool, start, end time.Time, step time.Duration) (pl.Matrix, error) {
-				if q.QueryList[0].FieldName == "pod_to_target_flow" {
-					wide := metadata.BackendResponseLimit(ctx) > 0
+				if q.QueryList[0].FieldName == "pod_to_target_flow" && !frontierProbeForTest(q) {
+					wide := wideFrontierScopeRead(q.QueryList[0].Conditions)
 					if wide && tc.failWide {
 						b.hopQueries = append(b.hopQueries, q.QueryList[0].Conditions)
 						return nil, metadata.ErrBackendResponseTooLarge

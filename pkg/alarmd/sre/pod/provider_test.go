@@ -364,7 +364,15 @@ func (localExecutor) Stream(ctx context.Context, request StreamRequest) (StreamR
 	command.Stdin = request.Stdin
 	command.Stdout = request.Stdout
 	command.Stderr = request.Stderr
+	// The stream ends with the process, as a runtime's exec stream does,
+	// not with the last holder of its output: a shell that forks its last
+	// command (dash; bash execs it) leaves that child holding the output
+	// once the shell is ended, and the stream would last as long as it.
+	command.WaitDelay = time.Second
 	err := command.Run()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		err = nil
+	}
 	// A program that cannot be found or executed is a start the runtime
 	// refused, as the Kubernetes adapter reads containerd's refusal.
 	var path *fs.PathError

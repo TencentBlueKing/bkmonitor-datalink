@@ -66,6 +66,9 @@ type FirstRoundWait struct {
 	QueryGroup      string    `json:"query_group"`
 	IntervalSeconds int64     `json:"interval_seconds"`
 	DueAt           time.Time `json:"due_at"`
+	// AwaitingPredecessor is a first Slot waiting on its predecessor's read
+	// hold record (WakeFacts.AwaitingPredecessor).
+	AwaitingPredecessor *PredecessorWait `json:"awaiting_predecessor,omitempty"`
 }
 
 // AwaitingFirstRound says whether an owned object that has no conclusion is
@@ -112,6 +115,11 @@ func AwaitingFirstRound(wake WakeFacts, ownedSince, now time.Time) bool {
 type FirstRoundWaits struct {
 	Objects int                    `json:"objects"`
 	Periods []FirstRoundWaitPeriod `json:"periods"`
+	// AwaitingPredecessor is how many of the named ones wait on a
+	// predecessor's read hold record, and PredecessorUntil the latest any of
+	// them waits until.
+	AwaitingPredecessor int        `json:"awaiting_predecessor,omitempty"`
+	PredecessorUntil    *time.Time `json:"predecessor_until,omitempty"`
 	// Line is the above in plain words.
 	Line string `json:"line"`
 }
@@ -149,6 +157,12 @@ func (waits *FirstRoundWaits) add(snapshot Snapshot) *FirstRoundWaits {
 			copy(waits.Periods[index+1:], waits.Periods[index:])
 			waits.Periods[index] = FirstRoundWaitPeriod{IntervalSeconds: wait.IntervalSeconds, FirstDueAt: wait.DueAt, LastDueAt: wait.DueAt}
 		}
+		if wait.AwaitingPredecessor != nil {
+			waits.AwaitingPredecessor++
+			if until := wait.AwaitingPredecessor.Until; waits.PredecessorUntil == nil || until.After(*waits.PredecessorUntil) {
+				waits.PredecessorUntil = &until
+			}
+		}
 		period := &waits.Periods[index]
 		period.Objects++
 		if wait.DueAt.Before(period.FirstDueAt) {
@@ -171,6 +185,11 @@ func (waits *FirstRoundWaits) text() string {
 			period.LastDueAt.UTC().Format("01-02 15:04Z")))
 	}
 	line := fmt.Sprintf("%d 个对象在等第一轮（%s）", waits.Objects, strings.Join(parts, "；"))
+	if waits.AwaitingPredecessor > 0 {
+		// Their due time is only the next look: what bounds them is the wait.
+		line += fmt.Sprintf("；其中 %d 个在等前驱的读保持记录关闭，最迟 %s 按上限就绪", waits.AwaitingPredecessor,
+			waits.PredecessorUntil.UTC().Format("01-02 15:04:05Z"))
+	}
 	if waits.Objects > named {
 		line += fmt.Sprintf("；另有 %d 个没有列出", waits.Objects-named)
 	}

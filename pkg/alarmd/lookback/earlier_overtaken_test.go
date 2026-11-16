@@ -11,6 +11,7 @@ package lookback
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,6 +87,37 @@ func TestAnOvertakenTrialIsCountedByWhatOvertookIt(t *testing.T) {
 			waitTrialDone(f, trial)
 			formalRead(f, q)
 		}},
+		{OvertakenSliceDiscarded, func(f *fixture, q Query) {
+			// The trial is of slice a; slice a's formal read is let go past
+			// its limit, and slice b's formal read, the same Slot and query,
+			// takes no trial of a.
+			q.Slice = sliceOf("^a$")
+			f.engine.Prepare(q)
+			f.clock.set(q.ReadyAt)
+			f.engine.Begin(q).Discard()
+			other := q
+			other.Slice = sliceOf("^b$")
+			if read := f.engine.Begin(other); read.earlier != nil {
+				f.t.Fatal("slice b's formal read was paired with slice a's trial")
+			}
+		}},
+		{OvertakenSliceDiscarded + "/before_formal", func(f *fixture, q Query) {
+			// Slice a is let go before its formal read began; its trial ends
+			// with it and no later formal read of the Slot takes it.
+			q.Slice = sliceOf("^a$")
+			f.engine.Prepare(q)
+			f.engine.DiscardSlice(q.Contract.Slot.QueryGroup, q.Contract.Slot.EvaluationTime, q.Slice)
+			f.clock.set(q.ReadyAt)
+			if read := f.engine.Begin(q); read.earlier != nil {
+				f.t.Fatal("a formal read was paired with a discarded slice's trial")
+			}
+		}},
+		{OvertakenFormalFirst + "/sliced", func(f *fixture, q Query) {
+			// Slice a's own formal read takes slice a's trial as ever.
+			q.Slice = sliceOf("^a$")
+			f.engine.Prepare(q)
+			formalRead(f, q)
+		}},
 		{OvertakenHoldMoved, func(f *fixture, q Query) {
 			base := 2 * time.Minute
 			f.engine.options.CurrentReadHold = func(execution.QueryGroupIdentity) time.Duration { return base }
@@ -104,21 +136,22 @@ func TestAnOvertakenTrialIsCountedByWhatOvertookIt(t *testing.T) {
 			f := newFixture(t)
 			f.engine.options.OnEarlierRead = func(EarlierReadEvidence) {}
 			c.run(f, heldQuery(f))
+			path, _, _ := strings.Cut(c.path, "/")
 			got := overtakenPaths(f)
-			if len(got) != 1 || got[c.path] != 1 {
-				t.Fatalf("overtaken by path %v, want only %s once", got, c.path)
+			if len(got) != 1 || got[path] != 1 {
+				t.Fatalf("overtaken by path %v, want only %s once", got, path)
 			}
 			if f.engine.Stats().Sources[sourceLog].EarlierReads[EarlierOvertaken] != 1 {
 				t.Fatal("the trial was not counted overtaken once")
 			}
 			// The group's own reading says the same, so groups can be told apart.
 			reading, found := f.engine.GroupReading("qg")
-			if !found || reading.EarlierOvertaken[c.path] != 1 {
-				t.Fatalf("the group's reading overtaken by %v, want %s once", reading.EarlierOvertaken, c.path)
+			if !found || reading.EarlierOvertaken[path] != 1 {
+				t.Fatalf("the group's reading overtaken by %v, want %s once", reading.EarlierOvertaken, path)
 			}
-			for path, count := range reading.EarlierOvertaken {
-				if path != c.path && count != 0 {
-					t.Fatalf("the group's reading also counts %s: %v", path, reading.EarlierOvertaken)
+			for other, count := range reading.EarlierOvertaken {
+				if other != path && count != 0 {
+					t.Fatalf("the group's reading also counts %s: %v", other, reading.EarlierOvertaken)
 				}
 			}
 		})

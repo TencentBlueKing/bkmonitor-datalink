@@ -158,3 +158,64 @@ func TestSameSlotStrengtheningPersistsExistingObservations(t *testing.T) {
 		t.Fatalf("same-Slot extension lost observations: %+v", after)
 	}
 }
+
+// Within one Slot a scope's reason only rises: a statement at the marker's
+// own version that answers a held PARTIAL scope UNAVAILABLE is applied and
+// the marker says UNAVAILABLE; one that answers a held UNAVAILABLE scope
+// PARTIAL changes nothing and is answered as no growth (CONFLICT), the
+// marker left as it was.
+func TestASameSlotScopesReasonOnlyRises(t *testing.T) {
+	backend := &casMemoryBackend{values: make(map[string][]byte)}
+	router, _ := NewFixedRouter("test", backend)
+	store, err := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := execution.PlanGapIdentity{Plan: stateIdentityV2().Plan, StateGeneration: "generation"}
+	level := func(reason string) execution.GapScopeMutation {
+		return execution.GapScopeMutation{Scope: execution.GapScope{HasLevel: true, LevelID: 1}, Kind: execution.GapOpen,
+			ReasonCode: execution.ReasonCode(reason), RequiredFullSlots: 3}
+	}
+	build := func(scope execution.GapScopeMutation, revision uint64) execution.PlanGapMutation {
+		mutation, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{Identity: identity, ExpectedMarkerRevision: revision,
+			ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1", Scopes: []execution.GapScopeMutation{scope}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return mutation
+	}
+	apply := func(mutation execution.PlanGapMutation) execution.GapGuardApplyStatus {
+		result, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
+			Contract: frozenRef(), Items: []execution.PlanGapMutation{mutation}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result.Items[0].Status
+	}
+	load := func() execution.GapGuardSnapshot {
+		result, err := store.LoadGaps(context.Background(), execution.GapLoadRequest{Contract: frozenRef(),
+			Items: []execution.PlanGapLoadItem{{Identity: identity, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result.Items[0]
+	}
+	if status := apply(build(level(contract.ReasonQueryPartial), 0)); status != execution.GapGuardApplied {
+		t.Fatalf("seed = %s", status)
+	}
+	worse := load()
+	if status := apply(build(level(contract.ReasonQueryUnavailable), worse.MarkerRevision)); status != execution.GapGuardApplied {
+		t.Fatalf("a held PARTIAL scope answered UNAVAILABLE = %s, want applied", status)
+	}
+	raised := load()
+	if len(raised.Scopes) != 1 || raised.Scopes[0].ReasonCode != execution.ReasonCode(contract.ReasonQueryUnavailable) ||
+		raised.MarkerRevision != worse.MarkerRevision+1 {
+		t.Fatalf("marker after the worse answer = %+v, want its scope UNAVAILABLE one revision on", raised)
+	}
+	if status := apply(build(level(contract.ReasonQueryPartial), raised.MarkerRevision)); status != execution.GapGuardConflict {
+		t.Fatalf("a held UNAVAILABLE scope answered PARTIAL = %s, want no growth", status)
+	}
+	if after := load(); !reflect.DeepEqual(after.Scopes, raised.Scopes) || after.MarkerRevision != raised.MarkerRevision {
+		t.Fatalf("marker after the better answer = %+v, want it as it was", after)
+	}
+}

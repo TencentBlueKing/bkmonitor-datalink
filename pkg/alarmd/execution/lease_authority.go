@@ -26,6 +26,15 @@ type LeaseAuthority interface {
 	Deadline() time.Time
 }
 
+// LeaseConfirmer is a LeaseAuthority whose deadline a fence check moves on: a
+// Query Group lease held under a worker session (A2), whose holder may act
+// for its lease TTL from its last confirmation. A Slot whose output would
+// outlast the deadline confirms before it defers, so a long Slot is not
+// turned away for having gone quiet on the store.
+type LeaseConfirmer interface {
+	Confirm(context.Context, time.Time) error
+}
+
 type leaseAuthorityKey struct{}
 
 // ContextWithLeaseAuthority carries the authority a Slot runs under to the

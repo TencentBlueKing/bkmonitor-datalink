@@ -324,7 +324,8 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 	defer span.End(&err)
 
 	request := new(cmdb.RelationMultiResourceRequest)
-	err = json.NewDecoder(c.Request.Body).Decode(request)
+	err = decodeRelationRequest(ctx, c, request, func() int { return len(request.QueryList) })
+	v1beta3.SetTimeGraphLimitTrace(span, err)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -457,7 +458,8 @@ func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
 	defer span.End(&err)
 
 	request := new(cmdb.RelationMultiResourceRangeRequest)
-	err = json.NewDecoder(c.Request.Body).Decode(request)
+	err = decodeRelationRequest(ctx, c, request, func() int { return len(request.QueryList) })
+	v1beta3.SetTimeGraphLimitTrace(span, err)
 	if err != nil {
 		resp.failed(ctx, err)
 		return

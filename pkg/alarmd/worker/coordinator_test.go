@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -156,78 +157,68 @@ func TestSlotExecutionCoordinatorBindsAlwaysEffectiveTimeToRealSeries(t *testing
 	}
 }
 
-// A Slot whose own State output exceeds the per-Slot cap can never be applied
-// by this process, so it completes UNAVAILABLE with a Plan-wide gap instead of
-// being retried into the same rejection. Nothing reaches Events or State.
-func TestSlotExecutionCoordinatorCompletesSlotBeyondItsOwnBudgetAsUnavailable(t *testing.T) {
+// A Slot whose own State output exceeds the per-Slot cap used to be refused
+// whole: it completed UNAVAILABLE with a Plan-wide gap and nothing reached
+// Events or State. The cap now bounds a window (decision-020 batch 8), so the
+// same Slot is written in two windows - each one's events acknowledged
+// before its State - and completes; only a series that alone exceeds a cap
+// is still refused by name.
+func TestSlotExecutionCoordinatorWritesASlotBeyondItsCapInWindows(t *testing.T) {
 	fixture := newFixtureWithBudget(t, worker.ProvisionalBudget{
 		MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 1, MaxEvents: 1, MaxGapMutations: 1, StoreMaxItems: 8192,
 	})
 	fixture.ports.reverseStateReceipts = true
 	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
-	if err != nil || !result.Completed || result.CompletionKind != execution.CompletionUnavailable ||
-		result.Result != observability.ResultDegraded ||
-		result.ReasonCode != execution.ReasonCode(contract.ReasonExecutionBudgetExhausted) {
-		t.Fatalf("Execute() result=%+v error=%v, want a deterministic UNAVAILABLE completion", result, err)
+	if err != nil || !result.Completed || result.ReasonCode == execution.ReasonCode(contract.ReasonExecutionBudgetExhausted) {
+		t.Fatalf("Execute() result=%+v error=%v, want the Slot written in windows and completed", result, err)
 	}
-	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 {
-		t.Fatal("over-budget Slot reached Events or State")
+	if fixture.ports.eventCount != 2 || fixture.ports.stateApplyCalls != 2 || len(fixture.ports.eventBatches) != 2 {
+		t.Fatalf("events=%d in %d batches, State writes=%d; want one window per series", fixture.ports.eventCount,
+			len(fixture.ports.eventBatches), fixture.ports.stateApplyCalls)
 	}
-	completion := fixture.ports.lastProgress.Completion
-	if completion.Kind != execution.CompletionUnavailable || completion.Result != observability.ResultDegraded ||
-		completion.ReasonCode != execution.ReasonCode(contract.ReasonExecutionBudgetExhausted) || completion.Primary == nil {
-		t.Fatalf("Progress completion = %+v", completion)
-	}
-	gaps := fixture.ports.gapMutations
-	if len(gaps) != 1 || len(gaps[0].Scopes) != 1 || gaps[0].Scopes[0].Scope != (execution.GapScope{}) ||
-		gaps[0].Scopes[0].ReasonCode != execution.ReasonCode(contract.ReasonExecutionBudgetExhausted) {
-		t.Fatalf("gap mutations = %+v, want one Plan-wide gap with the completion reason", gaps)
-	}
-	var rejection *observability.Observation
-	for index := range *fixture.observations {
-		if (*fixture.observations)[index].Stage == observability.StageResourceHard {
-			rejection = &(*fixture.observations)[index]
+	var order []string
+	for _, stage := range *fixture.trace {
+		if stage == "event_ack" || stage == "state_apply" || stage == "progress_commit" {
+			order = append(order, stage)
 		}
 	}
-	// The Slot still reports its no-data census, on this path as on the
-	// ordinary one, so a replaced Slot is not silent about its Plans.
-	census := false
+	if want := []string{"event_ack", "state_apply", "event_ack", "state_apply", "progress_commit"}; !reflect.DeepEqual(order, want) {
+		t.Fatalf("write order = %v, want %v", order, want)
+	}
 	for _, observation := range *fixture.observations {
-		if observation.NoDataCensus != nil {
-			census = true
+		if observation.Stage == observability.StageResourceHard {
+			t.Fatalf("a Slot cut into windows reported a capacity rejection: %+v", observation)
 		}
-	}
-	if !census {
-		t.Fatal("the over-budget Slot reported no no-data census")
-	}
-	if rejection == nil || rejection.CapacityBudget != observability.CapacityBudgetStateMutations ||
-		rejection.ReasonCode != execution.ReasonCode(contract.ReasonSlotBudgetExceeded) {
-		t.Fatalf("capacity rejection = %+v, want the per-Slot budget reason", rejection)
-	}
-	facts := rejection.CapacityRejection
-	if facts == nil || facts.Phase != "slot_output" || facts.OwnUsed == nil || *facts.OwnUsed != 2 ||
-		facts.Requested != 1 || facts.Limit != 1 || facts.SharedUsed != 0 {
-		t.Fatalf("capacity rejection facts = %+v, want own_used=2 requested=1 limit=1", facts)
 	}
 }
 
+// The series budget refuses a Slot with more series than it allows, the pool's
+// pause (RESOURCE_HARD_STOP); retained bytes refuse a Slot whose own series
+// take it past its Query Group's share - a 1 MiB pool's share is 768 KiB and
+// the series is 900 KiB - by the share's word, QG_BUDGET_SHARE_EXCEEDED. The
+// pool refusing a Slot within its share is the internal
+// TestEveryHolderOfASlotIsJudgedAgainstItsShareThenThePool.
 func TestSlotExecutionCoordinatorBudgetsRetainedSeriesAndBytes(t *testing.T) {
 	tests := []struct {
-		name       string
-		budget     worker.ProvisionalBudget
-		wantBudget observability.CapacityBudget
+		name        string
+		budget      worker.ProvisionalBudget
+		seriesBytes []uint64
+		wantBudget  observability.CapacityBudget
+		wantReason  string
 	}{
 		{name: "series", budget: worker.ProvisionalBudget{
 			MaxSeries: 1, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10,
-		}, wantBudget: observability.CapacityBudgetSeries},
+		}, wantBudget: observability.CapacityBudgetSeries, wantReason: contract.ReasonResourceHardStop},
 		{name: "retained bytes", budget: worker.ProvisionalBudget{
-			MaxSeries: 100, MaxRetainedBytes: 1, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10,
-		}, wantBudget: observability.CapacityBudgetRetainedBytes},
+			MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10,
+		}, seriesBytes: []uint64{900 << 10}, wantBudget: observability.CapacityBudgetRetainedBytes,
+			wantReason: contract.ReasonQGBudgetShareExceeded},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newFixtureWithBudget(t, test.budget)
 			fixture.ports.reverseStateReceipts = true
+			fixture.ports.querySeriesBytes = test.seriesBytes
 			result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
 			if err == nil || result.Completed {
 				t.Fatalf("Execute() result=%+v error=%v", result, err)
@@ -235,7 +226,7 @@ func TestSlotExecutionCoordinatorBudgetsRetainedSeriesAndBytes(t *testing.T) {
 			if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 || !isZeroProgressCommit(fixture.ports.lastProgress) {
 				t.Fatal("series/byte budget rejection reached side effects")
 			}
-			assertCapacityRejection(t, fixture.observations, test.wantBudget)
+			assertCapacityRejectionReason(t, fixture.observations, test.wantBudget, test.wantReason)
 		})
 	}
 }
@@ -247,7 +238,7 @@ func TestSlotExecutionCoordinatorRejectsCumulativeUQPayloadBeforeSideEffectsAndR
 		MaxSeries: 100, MaxRetainedBytes: 2 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10,
 	})
 	fixture.ports.reverseStateReceipts = true
-	fixture.ports.queryDeliveryBytes = []uint64{900 << 10, 900 << 10}
+	fixture.ports.querySeriesBytes = []uint64{900 << 10, 900 << 10}
 
 	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
 	if err == nil || result.Completed {
@@ -275,8 +266,10 @@ func TestSlotExecutionCoordinatorRejectsCumulativeUQPayloadBeforeSideEffectsAndR
 	// and the share it crossed, and no shared usage: nothing another Query
 	// Group did is part of why this one was refused, and reporting a pool
 	// figure here would point the reader at a neighbour that is not involved.
-	// Limit is three quarters of the 2 MiB budget.
-	if rejection == nil || rejection.Phase != "normal_output" || rejection.OwnUsed == nil ||
+	// Limit is three quarters of the 2 MiB budget. The reservation that
+	// crosses it is the second series itself, as it streams in
+	// (ConsumeSeries), so the refusal names the input phase.
+	if rejection == nil || rejection.Phase != "normal_input" || rejection.OwnUsed == nil ||
 		*rejection.OwnUsed < 900<<10 || rejection.SharedUsed != 0 || rejection.Limit != 3<<19 {
 		t.Fatalf("missing exact failed-reservation facts: %+v", rejection)
 	}
@@ -285,7 +278,7 @@ func TestSlotExecutionCoordinatorRejectsCumulativeUQPayloadBeforeSideEffectsAndR
 	// A complete single-series execution fitting the same budget proves the
 	// failed attempt released its accepted first-batch reservation.
 	fixture.ports.reverseStateReceipts = false
-	fixture.ports.queryDeliveryBytes = []uint64{600 << 10}
+	fixture.ports.querySeriesBytes = []uint64{600 << 10}
 	result, err = fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
 	if err != nil || !result.Completed {
 		t.Fatalf("Execute() after rejection result=%+v error=%v", result, err)
@@ -326,11 +319,6 @@ func TestSlotExecutionCoordinatorReleasesProcessReservationAfterQueryExit(t *tes
 			}
 		})
 	}
-}
-
-func assertCapacityRejection(t *testing.T, observations *[]observability.Observation, want observability.CapacityBudget) {
-	t.Helper()
-	assertCapacityRejectionReason(t, observations, want, contract.ReasonResourceHardStop)
 }
 
 func assertCapacityRejectionReason(
@@ -389,7 +377,9 @@ func TestSlotExecutionCoordinatorOrdersRequiredSideEffects(t *testing.T) {
 		// reporting it would be a Slot nobody could tell from one with an
 		// empty candidate set.
 		observability.StageFrozenStateRenewed,
-		observability.StageSideEffectAdmission,
+		// The activation read before Progress reads no fence: the commit's
+		// script runs it.
+		observability.StagePlanActivationChecked,
 		observability.StageProgressCommitted,
 	}
 	var gotStages []observability.Stage
@@ -757,7 +747,7 @@ func TestSlotExecutionCoordinatorPersistsDegradedGapBeforeEvents(t *testing.T) {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, []string{
-		"query", "gap_load", "sequence", "admission_initial", "gap_before", "admission_progress", "progress_commit",
+		"query", "gap_load", "sequence", "admission_initial", "gap_before", "activation_progress", "progress_commit",
 	})
 	if fixture.ports.lastProgress.Completion.Kind != execution.CompletionPartialGap {
 		t.Fatalf("completion=%q, want=%q", fixture.ports.lastProgress.Completion.Kind, execution.CompletionPartialGap)
@@ -817,7 +807,7 @@ func TestSlotExecutionCoordinatorShortCircuitsAlreadyAppliedState(t *testing.T) 
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, []string{
-		"query", "gap_load", "state_load", "sequence", "admission_initial", "admission_progress", "progress_commit",
+		"query", "gap_load", "state_load", "sequence", "admission_initial", "activation_progress", "progress_commit",
 	})
 	var reused int
 	for _, observed := range *fixture.observations {
@@ -872,7 +862,7 @@ func TestSlotExecutionCoordinatorPreservesStateTerminalAsPlanCompletion(t *testi
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, []string{
-		"query", "gap_load", "state_load", "evaluate", "sequence", "admission_initial", "gap_before", "admission_progress", "progress_commit",
+		"query", "gap_load", "state_load", "evaluate", "sequence", "admission_initial", "gap_before", "activation_progress", "progress_commit",
 	})
 	if fixture.ports.lastProgress.Completion.Kind != execution.CompletionTerminal {
 		t.Fatalf("completion=%q", fixture.ports.lastProgress.Completion.Kind)
@@ -953,7 +943,7 @@ func TestSlotExecutionCoordinatorIsolatesDeterministicStateAdmission(t *testing.
 			assertTrace(t, fixture.trace, []string{
 				"query", "gap_load", "state_load", "evaluate", "evaluate", "sequence", "admission_initial",
 				"admission_event", "state_admission", "event_ack", "state_apply", "gap_after",
-				"admission_progress", "progress_commit",
+				"activation_progress", "progress_commit",
 			})
 			if fixture.ports.eventCount != 1 || fixture.ports.lastProgress.Completion.Kind != execution.CompletionTerminal {
 				t.Fatalf("events=%d completion=%+v", fixture.ports.eventCount, fixture.ports.lastProgress.Completion)
@@ -1135,7 +1125,7 @@ func TestSlotExecutionCoordinatorObserverPanicIsFailOpen(t *testing.T) {
 	}
 	assertTrace(t, fixture.trace, []string{
 		"query", "gap_load", "state_load", "evaluate", "sequence", "admission_initial",
-		"admission_event", "state_admission", "event_ack", "state_apply", "gap_after", "admission_progress", "progress_commit",
+		"admission_event", "state_admission", "event_ack", "state_apply", "gap_after", "activation_progress", "progress_commit",
 	})
 }
 
@@ -1172,7 +1162,7 @@ func TestSlotExecutionCoordinatorAcceptsUnorderedStoreReceipts(t *testing.T) {
 	}
 	assertTrace(t, fixture.trace, []string{
 		"query", "gap_load", "state_load", "evaluate", "evaluate", "sequence", "admission_initial",
-		"admission_event", "state_admission", "event_ack", "state_apply", "gap_after", "admission_progress", "progress_commit",
+		"admission_event", "state_admission", "event_ack", "state_apply", "gap_after", "activation_progress", "progress_commit",
 	})
 	if len(fixture.ports.lastSequenceScope.StateKeys) != 2 || len(fixture.ports.lastSequenceScope.GapKeys) != 1 {
 		t.Fatalf("sequencing scope=%+v", fixture.ports.lastSequenceScope)
@@ -1194,7 +1184,7 @@ func TestSlotExecutionCoordinatorFailsClosedBeforeLaterSideEffects(t *testing.T)
 		{stage: "state_admission", want: fullTrace[:8]},
 		{stage: "state_apply", want: fullTrace[:10]},
 		{stage: "gap_after", want: fullTrace[:11]},
-		{stage: "admission_progress", want: fullTrace[:12]},
+		{stage: "activation_progress", want: fullTrace[:12]},
 		{stage: "progress_commit", want: fullTrace[:13]},
 	}
 	for _, test := range tests {
@@ -1246,7 +1236,7 @@ func TestSlotExecutionCoordinatorKeepsEventACKUnknownRetryable(t *testing.T) {
 
 var fullTrace = []string{
 	"query", "gap_load", "state_load", "evaluate", "sequence", "admission_initial",
-	"admission_event", "state_admission", "event_ack", "state_apply", "gap_after", "admission_progress", "progress_commit",
+	"admission_event", "state_admission", "event_ack", "state_apply", "gap_after", "activation_progress", "progress_commit",
 }
 
 type fixture struct {
@@ -1406,9 +1396,19 @@ func (ports *recordingPorts) LoadActivations(
 }
 
 type recordingPorts struct {
+	// traceMu guards the trace, and callMu the evaluator and the State read:
+	// a Slot evaluates a batch's series side by side and reads the next
+	// batch's State beside them.
+	traceMu, callMu sync.Mutex
 	// refuseGapStage refuses one of the Slot's two gap applies ("gap_before"
-	// or "gap_after"), so a case can tell which of them a refusal came from.
-	refuseGapStage string
+	// or "gap_after"), so a case can tell which of them a refusal came from;
+	// refuseGapStatus is the status it answers with, CONFLICT when empty.
+	refuseGapStage  string
+	refuseGapStatus execution.GapGuardApplyStatus
+	// storedVersion, with alreadyApplied, is the ApplyVersion the found
+	// State was written at, under another statement's digest: a State some
+	// other Slot wrote.
+	storedVersion *execution.ApplyVersion
 	// finalizationMode lets a test put the Slot on the query-free path, which
 	// is where the evidence is read. Empty means the ordinary query path.
 	finalizationMode execution.FinalizationMode
@@ -1432,8 +1432,10 @@ type recordingPorts struct {
 	eventFailureKind string
 	// outputWrite, when set, is the count the fake sink reports for every
 	// batch, the way the real sink counts what a batch became.
-	outputWrite    *observability.OutputWriteFacts
-	beginErr       error
+	outputWrite *observability.OutputWriteFacts
+	beginErr    error
+	// beginStatus, when set, is the status BeginSlot answers with.
+	beginStatus    execution.ProgressCommitStatus
 	lastBegin      execution.ProgressBeginRequest
 	admissionCalls int
 	contractDrift  bool
@@ -1515,11 +1517,25 @@ type recordingPorts struct {
 	// zero; the in-memory answer is otherwise often done within one.
 	queryTakes            time.Duration
 	queryAfterSeriesError error
-	queryDeliveryBytes    []uint64
+	querySeriesBytes      []uint64
 
 	// stateAdmissionRule and stateAdmissionText go on the refused admission
 	// item, as the store names its rule and says its sentence.
 	stateAdmissionRule, stateAdmissionText string
+
+	// extraSeries streams one more series per digest beside the fixture's
+	// own, each with its bound EffectiveTime fact, so a Slot can hold more
+	// series than one window takes.
+	extraSeries []string
+	// failEventAckAt and failStateApplyAt fail only that call of the event
+	// write or of the State apply, counted from one: one window of a Slot
+	// written window by window.
+	failEventAckAt, failStateApplyAt int
+	eventAckCalls                    int
+	// eventBatches is the series of every event batch the sink took, and
+	// appliedKeys every State key a write sent, in the order they came.
+	eventBatches [][]string
+	appliedKeys  []execution.StateKeyIdentity
 }
 
 func (ports *recordingPorts) Execute(ctx context.Context, request execution.QueryExecutionRequest, consumer execution.QueryExecutionConsumer) (execution.QueryExecutionCompletion, error) {
@@ -1566,6 +1582,33 @@ func (ports *recordingPorts) Execute(ctx context.Context, request execution.Quer
 			Consumer:       execution.ConsumerRef{Plan: planIdentity(), LevelID: 5, HasLevel: true},
 			SeriesIdentity: second.Identity.SeriesIdentityDigest, Fact: effectiveTimeFactForTest(input.DuePlans[0].CompiledPlan),
 		})
+	}
+	if len(ports.extraSeries) > 0 {
+		records := input.Inputs[0].Dataset.Records()
+		for _, digest := range ports.extraSeries {
+			// The record the fake evaluator anchors the series' outcome and
+			// event to (Evaluate).
+			recordID := derivedTestRecordID()
+			if digest == strings.Repeat("d", 64) {
+				recordID = strings.Repeat("f", 64)
+			}
+			records = append(records, contract.CanonicalRecordV2{
+				RecordID: recordID, SourceTime: 1_788_000_000, BusinessID: "2",
+				DimensionIdentity: contract.DimensionIdentityV2{Digest: digest},
+				Values:            map[string]json.RawMessage{"value": json.RawMessage(`50.1`)}, Dimensions: map[string]json.RawMessage{},
+				ReceivedTime: 1_788_000_000,
+			})
+			input.EffectiveTimeFacts = append(input.EffectiveTimeFacts, execution.BoundEffectiveTimeFact{
+				Consumer:       execution.ConsumerRef{Plan: planIdentity(), LevelID: 5, HasLevel: true},
+				SeriesIdentity: execution.SeriesIdentityDigest(digest), Fact: effectiveTimeFactForTest(input.DuePlans[0].CompiledPlan),
+			})
+		}
+		indexes := make([]uint32, len(records))
+		for index := range indexes {
+			indexes[index] = uint32(index)
+		}
+		input.Inputs[0].Dataset = execution.NewDataset(records)
+		input.Inputs[0].View, _ = execution.NewDatasetView(input.Inputs[0].Dataset, indexes)
 	}
 	if ports.contractDrift {
 		input.Contract.QueryRevision = "query-v2"
@@ -1675,6 +1718,17 @@ func (ports *recordingPorts) Execute(ctx context.Context, request execution.Quer
 			DimensionIdentity: record.DimensionIdentity(), Values: record.Values(), Dimensions: record.Dimensions(),
 			ReceivedTime: record.ReceivedTime(),
 		}
+		if index < len(ports.querySeriesBytes) {
+			// The series holds that many bytes more in a dimension of its
+			// own, outside its identity: its Dataset's retained size counts
+			// it, and nothing reads it.
+			dimensions := make(map[string]json.RawMessage, len(canonical.Dimensions)+1)
+			for name, value := range canonical.Dimensions {
+				dimensions[name] = value
+			}
+			dimensions["padding"] = json.RawMessage(`"` + strings.Repeat("p", int(ports.querySeriesBytes[index])) + `"`)
+			canonical.Dimensions = dimensions
+		}
 		seriesDataset := execution.NewDataset([]contract.CanonicalRecordV2{canonical})
 		view, _ := execution.NewDatasetView(seriesDataset, []uint32{0})
 		binding := input.Inputs[0]
@@ -1682,9 +1736,6 @@ func (ports *recordingPorts) Execute(ctx context.Context, request execution.Quer
 		batchDelivery := execution.SeriesDelivery{
 			PhysicalQuery: "physical-query-1", QueryRevision: queryRevision,
 			Series: 1, Records: 1, Digest: fmt.Sprintf("delivery-%d", index+1),
-		}
-		if index < len(ports.queryDeliveryBytes) {
-			batchDelivery.Bytes = ports.queryDeliveryBytes[index]
 		}
 		accumulated, accumulateErr := execution.AccumulateSeriesDelivery(delivery, batchDelivery)
 		if accumulateErr != nil {
@@ -1731,6 +1782,8 @@ func (ports *recordingPorts) Sequence(
 }
 
 func (ports *recordingPorts) Evaluate(_ context.Context, request execution.EvaluationRequest) (execution.EvaluationResult, error) {
+	ports.callMu.Lock()
+	defer ports.callMu.Unlock()
 	ports.record("evaluate")
 	ports.lastEvaluation = request
 	seriesDigest := string(request.State.Items[0].Identity.SeriesIdentityDigest)
@@ -1866,6 +1919,8 @@ func (ports *recordingPorts) Evaluate(_ context.Context, request execution.Evalu
 }
 
 func (ports *recordingPorts) LoadRuntime(ctx context.Context, request execution.StatePreflightRequest) (execution.StatePreflightResult, error) {
+	ports.callMu.Lock()
+	defer ports.callMu.Unlock()
 	ports.record("state_load")
 	ports.stateLoadCalls++
 	items := make([]execution.RuntimeStateView, len(request.Items))
@@ -1894,6 +1949,10 @@ func (ports *recordingPorts) LoadRuntime(ctx context.Context, request execution.
 				LevelID: 5, LevelStateCompatibility: refs[0].LevelStateCompatibility, HistoryCompleteness: execution.HistoryFull,
 				WarmupRequirementRef: refs[0].WarmupRequirementRef,
 			}}
+			if ports.storedVersion != nil {
+				items[index].PersistedApplyVersion = *ports.storedVersion
+				items[index].PersistedMutationDigest = "another-slot-statement"
+			}
 		}
 	}
 	if timing := execution.PreflightTimingFrom(ctx); timing != nil {
@@ -1975,6 +2034,19 @@ func (ports *recordingPorts) Check(context.Context, execution.SideEffectAdmissio
 	return execution.SideEffectAdmissionResult{Admitted: true}, ports.fail(stage)
 }
 
+// CheckActivation is the admission before Progress, which reads no fence.
+func (ports *recordingPorts) CheckActivation(context.Context, execution.SideEffectAdmissionRequest) (execution.SideEffectAdmissionResult, error) {
+	ports.admissionCalls++
+	stage := "activation_progress"
+	ports.record(stage)
+	if ports.admissionRejectAt == ports.admissionCalls {
+		return execution.SideEffectAdmissionResult{
+			Admitted: false, ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift),
+		}, nil
+	}
+	return execution.SideEffectAdmissionResult{Admitted: true}, ports.fail(stage)
+}
+
 func (ports *recordingPorts) ApplyGap(_ context.Context, request execution.GapGuardApplyRequest) (execution.GapGuardApplyResult, error) {
 	stage := "gap_before"
 	if len(request.Items) > 0 && len(request.Items[0].Scopes) > 0 && request.Items[0].Scopes[0].Kind == execution.GapClear {
@@ -1987,6 +2059,9 @@ func (ports *recordingPorts) ApplyGap(_ context.Context, request execution.GapGu
 		items[index] = execution.GapGuardApplyItemResult{Identity: item.Identity, Status: execution.GapGuardApplied}
 		if ports.refuseGapStage != "" && ports.refuseGapStage == stage {
 			items[index].Status = execution.GapGuardConflict
+			if ports.refuseGapStatus != "" {
+				items[index].Status = ports.refuseGapStatus
+			}
 		}
 		if ports.persistActivatedGaps && (item.Identity.StateGeneration != "state-v1" || ports.persistReentryGaps) {
 			if ports.activatedGapMarkers == nil {
@@ -2037,6 +2112,8 @@ func (ports *recordingPorts) Acknowledged(events []contract.TriggerEventV1) {
 }
 
 func (ports *recordingPorts) lastTrace() string {
+	ports.traceMu.Lock()
+	defer ports.traceMu.Unlock()
 	if ports.trace == nil || len(*ports.trace) == 0 {
 		return ""
 	}
@@ -2045,8 +2122,17 @@ func (ports *recordingPorts) lastTrace() string {
 
 func (ports *recordingPorts) WriteBatch(ctx context.Context, events []contract.TriggerEventV1) error {
 	ports.record("event_ack")
+	ports.eventAckCalls++
 	ports.eventCount += len(events)
 	ports.lastEvents = append([]contract.TriggerEventV1(nil), events...)
+	batch := make([]string, 0, len(events))
+	for _, event := range events {
+		batch = append(batch, event.RecordRef.DimensionIdentityDigest)
+	}
+	ports.eventBatches = append(ports.eventBatches, batch)
+	if ports.failEventAckAt != 0 && ports.eventAckCalls == ports.failEventAckAt {
+		return &retryableOutputTestError{err: errors.New("injected event_ack"), kind: ports.eventFailureKind}
+	}
 	if ports.outputWrite != nil {
 		observability.ReportOutputWrite(ctx, int(ports.outputWrite.Published), int(ports.outputWrite.WithoutMessage), ports.outputWrite.WithoutMessageBy)
 	}
@@ -2140,6 +2226,12 @@ func (ports *recordingPorts) ApplyRuntime(_ context.Context, request execution.S
 	ports.record("state_apply")
 	ports.stateApplyCalls++
 	ports.lastStateApply = request
+	if ports.failStateApplyAt != 0 && ports.stateApplyCalls == ports.failStateApplyAt {
+		return execution.StateApplyResult{}, errors.New("injected state_apply")
+	}
+	for _, item := range request.Items {
+		ports.appliedKeys = append(ports.appliedKeys, item.Identity)
+	}
 	items := make([]execution.StateApplyItemResult, len(request.Items))
 	deterministicIndex := 0
 	if ports.stateApplyDeterministicLast {
@@ -2180,6 +2272,9 @@ func (ports *recordingPorts) BeginSlot(_ context.Context, request execution.Prog
 	if ports.beginErr != nil {
 		return execution.ProgressBeginResult{}, ports.beginErr
 	}
+	if ports.beginStatus != "" {
+		return execution.ProgressBeginResult{Status: ports.beginStatus}, nil
+	}
 	return execution.ProgressBeginResult{Status: execution.ProgressCommitted}, nil
 }
 
@@ -2187,7 +2282,11 @@ func (ports *recordingPorts) LoadProgress(context.Context, execution.ProgressIde
 	return execution.ProgressLoadResult{Status: execution.ProgressMissing}, nil
 }
 
-func (ports *recordingPorts) record(stage string) { *ports.trace = append(*ports.trace, stage) }
+func (ports *recordingPorts) record(stage string) {
+	ports.traceMu.Lock()
+	defer ports.traceMu.Unlock()
+	*ports.trace = append(*ports.trace, stage)
+}
 
 func isZeroProgressCommit(request execution.ProgressCommitRequest) bool {
 	return request.Identity == (execution.ProgressIdentity{}) && request.OwnerFence == (execution.OwnerFence{}) &&

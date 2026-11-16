@@ -159,8 +159,8 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 // while StorageName (cluster name) is the comparison subject; TableID is carried as context.
 // responseVMClusterList contains the storage cluster names returned by the VM API.
 // missing: cluster names present in request but absent from response, with associated RTs and TableIDs.
-// The return value is true only for proven mismatch, never for unknown coverage.
-func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadata.RtDetail, responseVMClusterList []string) bool {
+// It returns the sorted missing cluster names only for proven mismatch, never for unknown coverage.
+func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadata.RtDetail, responseVMClusterList []string) []string {
 	// Marshal request detail map as JSON for trace consumption.
 	requestJSON := ""
 	if len(requestRtDetail) > 0 {
@@ -199,13 +199,13 @@ func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadat
 
 	if len(requestRtDetail) == 0 {
 		span.Set("query-storage-status", "match")
-		return false
+		return nil
 	}
 
 	if responseVMClusterList == nil {
 		span.Set("query-storage-status", "unknown")
 		span.Set("query-storage-reason", "empty_storage_cluster_list")
-		return false
+		return nil
 	}
 
 	respSet := make(map[string]struct{}, len(responseVMClusterList))
@@ -247,21 +247,31 @@ func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadat
 	} else {
 		span.Set("query-storage-status", "match")
 	}
-	return len(missing) > 0
+	names := make([]string, 0, len(missing))
+	for _, item := range missing {
+		names = append(names, item.Cluster)
+	}
+	return names
 }
 
-// A successful response may omit a requested storage even when the backend's
-// isPartial flag is false. Keep its data, but do not present it as complete.
-func markStorageCoveragePartial(ctx context.Context) {
+// storageCoverageReasonNames 是不完整原因里最多列出的缺失存储数，其余只记个数。
+const storageCoverageReasonNames = 3
+
+// storageCoverageReason 把缺失的存储写进覆盖原因：成功的读取只有它能指出是哪个存储没有出现在
+// 响应里。原因前缀不变，按前缀分类的指标标签仍然有界。
+//
+// 覆盖原因只单独记录，不改变 partial 与 Status：partial 以 VM 后端的 isPartial 为准。缺失依据的是
+// 元数据里的存储归属，归属可能滞后于实际放置；下游（如告警二次确认）会把 partial 当作整轮数据不可用。
+func storageCoverageReason(missing []string) string {
 	const reason = "vm_storage_coverage_mismatch"
-	message := reason
-	if status := metadata.GetStatus(ctx); status != nil && status.Message != "" {
-		if strings.Contains(status.Message, reason) {
-			return
-		}
-		message = status.Message + "; " + reason
+	if len(missing) == 0 {
+		return reason
 	}
-	metadata.SetStatus(ctx, metadata.QueryTsPartial, message)
+	names := missing
+	if len(names) > storageCoverageReasonNames {
+		names = append(append([]string(nil), names[:storageCoverageReasonNames]...), fmt.Sprintf("+%d", len(missing)-storageCoverageReasonNames))
+	}
+	return reason + ":" + strings.Join(names, ",")
 }
 
 func spanSetVmQueryClusterIfPresent(span *trace.Span, prefix string, v *metadata.VmQueryCluster) {
@@ -436,9 +446,10 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 }
 
 // responseError 让即时查询和区间查询把同一种后端拒收归为同一类错误。
+// resp.Message 已由调用方写在外层，错误详情只带 resp.Errors.Error（网关在这里给出上限与预估大小）。
 func responseError(resp *VmResponse) error {
 	if isResponseBodyTooLarge(resp.Message) || isResponseBodyTooLarge(resp.Errors.Error) {
-		return &metadata.BackendResponseTooLargeError{Message: resp.Message}
+		return &metadata.BackendResponseTooLargeError{Message: resp.Errors.Error}
 	}
 	return errors.New(resp.Errors.Error)
 }
@@ -721,10 +732,9 @@ func (i *Instance) DirectQueryRange(
 	if vmResp != nil && vmResp.Data.VmQueryCluster != nil {
 		responseVMClusterList = vmResp.Data.VmQueryCluster.StorageClusterList
 	}
-	mismatch := spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
-	if err == nil && mismatch {
-		isPartial = true
-		markStorageCoveragePartial(ctx)
+	missing := spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
+	if err == nil && len(missing) > 0 {
+		metadata.AddStorageCoverageReason(ctx, storageCoverageReason(missing))
 	}
 
 	return result, isPartial, err
@@ -804,10 +814,9 @@ func (i *Instance) DirectQueryWithPartial(
 	if vmResp != nil && vmResp.Data.VmQueryCluster != nil {
 		responseVMClusterList = vmResp.Data.VmQueryCluster.StorageClusterList
 	}
-	mismatch := spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
-	if err == nil && mismatch {
-		isPartial = true
-		markStorageCoveragePartial(ctx)
+	missing := spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
+	if err == nil && len(missing) > 0 {
+		metadata.AddStorageCoverageReason(ctx, storageCoverageReason(missing))
 	}
 
 	return result, isPartial, err

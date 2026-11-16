@@ -18,21 +18,19 @@ import (
 )
 
 func TestLegacyOrdinaryLongPathCandidates(t *testing.T) {
-	oldHops, oldNodes := MaxAllowedHops, MaxGraphNodes
+	oldHops := MaxAllowedHops
 	MaxAllowedHops = 5
-	t.Cleanup(func() { MaxAllowedHops, MaxGraphNodes = oldHops, oldNodes })
+	t.Cleanup(func() { MaxAllowedHops = oldHops })
 	for _, mode := range []string{"instant", "range"} {
 		for _, tc := range []struct {
 			name       string
 			shortEmpty bool
-			nodeBudget int
 		}{
-			{name: "only twelve-hop candidate", nodeBudget: 100},
-			{name: "empty short candidate then twelve-hop hit", shortEmpty: true, nodeBudget: 100},
-			{name: "long candidate exceeds real node budget", shortEmpty: true, nodeBudget: 5},
+			{name: "only twelve-hop candidate"},
+			// 13 个节点的长路径不受图规模限制，照常命中。
+			{name: "empty short candidate then twelve-hop hit", shortEmpty: true},
 		} {
 			t.Run(mode+"/"+tc.name, func(t *testing.T) {
-				MaxGraphNodes = tc.nodeBudget
 				provider := longPathTestProvider()
 				if tc.shortEmpty {
 					provider.schemas = append(provider.schemas, RelationSchema{
@@ -77,14 +75,6 @@ func TestLegacyOrdinaryLongPathCandidates(t *testing.T) {
 				if tc.shortEmpty {
 					require.NotEmpty(t, fields)
 					require.Equal(t, "short", fields[0], "short candidates are queried first")
-				}
-				if tc.nodeBudget == 5 {
-					var limitErr *ResultLimitError
-					require.ErrorAs(t, err, &limitErr)
-					require.Equal(t, "max_graph_nodes", limitErr.Reason)
-					require.Equal(t, 5, limitErr.Limit)
-					require.Empty(t, results)
-					return
 				}
 				require.NoError(t, err)
 				var wantPath []string

@@ -7,10 +7,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"math"
 	"testing"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta3"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,7 +30,7 @@ func TestSnapshotChunkFlushBoundaries(t *testing.T) {
 		{topologyChunkTargetBytes, 1, true},
 		{topologyChunkTargetBytes + 1, 1, true},
 	} {
-		b := topologySnapshotChunkBuilder{meter: &topologyEncodeMeter{ctx: context.Background(), limit: math.MaxInt}, byHash: make(map[uint64][][]byte)}
+		b := topologySnapshotChunkBuilder{meter: &topologyEncodeMeter{ctx: context.Background()}, byHash: make(map[uint64][][]byte)}
 		payload := bytes.Repeat([]byte("x"), tc.size)
 		require.NoError(t, b.append(payload, tc.boundary))
 		if tc.flushed {
@@ -49,58 +47,17 @@ func TestSnapshotChunkFlushBoundaries(t *testing.T) {
 	}
 }
 
-func TestSnapshotChunkMeterKeepsWireAndReservations(t *testing.T) {
+// 编码字节只计量不拒绝：分块输出与整体编码相同，计数等于实际字节数。
+func TestSnapshotChunkMeterCountsWire(t *testing.T) {
 	for _, changing := range []bool{false, true} {
 		frames := changingTopologySnapshots(changing)
 		want, err := json.Marshal(frames)
 		require.NoError(t, err)
 		want = want[1 : len(want)-1]
-		for _, wireLimit := range []int{len(want), len(want) - 1} {
-			ctx, release, err := v1beta3.AcquireSharedTopology(context.Background())
-			require.NoError(t, err)
-			func() {
-				defer release()
-				meter := &topologyEncodeMeter{ctx: ctx, limit: wireLimit}
-				parts, err := marshalTopologySnapshotFrames(meter, frames)
-				if wireLimit == len(want) {
-					require.NoError(t, err)
-					require.Equal(t, want, bytes.Join(parts, nil))
-					require.Equal(t, len(want), meter.wire)
-					require.Positive(t, meter.owned)
-					require.Positive(t, meter.working)
-					require.GreaterOrEqual(t, topologyTestAdmissionState(t)["reserved"], meter.owned+meter.working+meter.cached+meter.scratch+meter.container)
-				} else {
-					require.ErrorContains(t, err, "max_topology_output_bytes")
-					require.Nil(t, parts)
-				}
-			}()
-			require.Zero(t, topologyTestAdmissionState(t)["reserved"])
-		}
-	}
-}
-
-func TestSnapshotChunkReservationFailurePrecedesAllocation(t *testing.T) {
-	previous := v1beta3.MaxSharedTopologyReservedBytes
-	v1beta3.MaxSharedTopologyReservedBytes = 1024 * 1024
-	t.Cleanup(func() { v1beta3.MaxSharedTopologyReservedBytes = previous })
-	for _, flushing := range []bool{false, true} {
-		ctx, release, err := v1beta3.AcquireSharedTopology(context.Background())
+		meter := &topologyEncodeMeter{ctx: context.Background()}
+		parts, err := marshalTopologySnapshotFrames(meter, frames)
 		require.NoError(t, err)
-		func() {
-			defer release()
-			b := topologySnapshotChunkBuilder{meter: &topologyEncodeMeter{ctx: ctx, limit: 1024}, byHash: make(map[uint64][][]byte)}
-			if flushing {
-				b.work = []byte("payload")
-				err = b.flush()
-				require.Equal(t, "payload", string(b.work))
-			} else {
-				err = b.append([]byte("payload"), 1)
-				require.Zero(t, cap(b.work))
-			}
-			require.ErrorContains(t, err, "max_topology_reserved_bytes")
-			require.Empty(t, b.parts)
-			require.Zero(t, b.size)
-			require.Zero(t, topologyTestAdmissionState(t)["reserved"])
-		}()
+		require.Equal(t, want, bytes.Join(parts, nil))
+		require.Equal(t, len(want), meter.wire)
 	}
 }

@@ -410,3 +410,41 @@ func TestIncludeConfigReadsTheUnitFactsFromTheLookup(t *testing.T) {
 		})
 	}
 }
+
+// Whether a Level's zero count is no observation is read off the query its
+// primary reads, by the rule the evaluator holds it to: an event count or a
+// log count grouped by nothing says so, a metric does not, and a
+// template-bound primary reads the Plan's own query, for its own Level only.
+func TestALevelSaysWhetherItsZeroCountIsNoObservation(t *testing.T) {
+	event := model.QueryPlanFacts{SourceSemantics: []string{"custom/event"}, StepMillis: 60000,
+		QueryList: []model.QueryClause{{TimeAggregation: model.QueryFunction{Method: "count_over_time"}, Dimensions: []string{"bk_target_ip"}}}}
+	zeroOf := func(object controlplane.QueryGroupObject) map[uint32]bool {
+		words := map[uint32]bool{}
+		for _, level := range StrategyPlanConfigsOf(object, "4101", "2").Items[0].Levels {
+			words[level.LevelID] = level.ZeroCountIsNoObservation
+		}
+		return words
+	}
+	metric := configObject()
+	if got := zeroOf(metric); got[1] {
+		t.Errorf("a metric's zero is no observation: %v", got)
+	}
+	counted := configObject()
+	counted.QueryPlan = event
+	if got := zeroOf(counted); !got[1] {
+		t.Errorf("an event count's zero is an observation: %v", got)
+	}
+	// A template-bound primary of Level 1 reading an event count beside a
+	// metric object: Level 1 reads it, Level 2 reads the object's query.
+	bound := configObject()
+	plan := &bound.Plans[0]
+	plan.QueryPlans = map[model.LogicalQueryRef]model.QueryPlanFacts{"a": plan.QueryPlans["a"], "events": event}
+	plan.RequirementTemplates = append(plan.RequirementTemplates, model.DataRequirementTemplate{
+		DatasetName: "primary:events", Role: model.InputRolePrimary, ConsumerLevelID: 1, LogicalQueryRef: "events"})
+	second := plan.StrategyIR.Levels[0]
+	second.Definition.LevelID = 2
+	plan.StrategyIR.Levels = append(plan.StrategyIR.Levels, second)
+	if got := zeroOf(bound); !got[1] || got[2] {
+		t.Errorf("a template-bound event count: %v, want Level 1 only", got)
+	}
+}

@@ -43,8 +43,8 @@ func TestLegacyRelationQualityTelemetry(t *testing.T) {
 					for _, label := range item.GetLabel() {
 						labels[label.GetName()] = label.GetValue()
 					}
-					require.Len(t, labels, 3)
-					if labels["query_mode"] == mode {
+					require.Len(t, labels, 4)
+					if labels["entry"] == "compat" && labels["query_mode"] == mode {
 						result[labels["quality"]+"/"+labels["reason"]] = item.GetCounter().GetValue()
 					}
 				}
@@ -61,7 +61,7 @@ func TestLegacyRelationQualityTelemetry(t *testing.T) {
 			{name: "coverage", partial: "vm_storage_coverage_mismatch"},
 			{name: "routes", partial: "relation_no_physical_route:metric_a;relation_no_physical_route:metric_b"},
 			{name: "unknown", partial: "unknown_backend_detail_a;unknown_backend_detail_b"},
-			{name: "limited", truncated: "max_targets", err: fmt.Errorf("wrapped: %w", &v1beta3.ResultLimitError{Reason: "max_targets", Count: 3, Limit: 2})},
+			{name: "limited", truncated: "max_response_bytes", err: fmt.Errorf("wrapped: %w", &v1beta3.ResultLimitError{Reason: "max_response_bytes", Count: 3, Limit: 2})},
 			{name: "failed", err: fmt.Errorf("backend unavailable")},
 		} {
 			t.Run(mode+"/"+tc.name, func(t *testing.T) {
@@ -92,7 +92,7 @@ func TestLegacyRelationQualityTelemetry(t *testing.T) {
 		}
 		require.Equal(t, map[string]float64{
 			"partial/backend_partial": 1, "partial/vm_storage_coverage_mismatch": 1,
-			"partial/relation_no_physical_route": 1, "partial/other": 1, "truncated/max_targets": 1,
+			"partial/relation_no_physical_route": 1, "partial/other": 1, "truncated/max_response_bytes": 1,
 		}, after)
 	}
 }

@@ -90,6 +90,22 @@ func HostCandidates(request RosterRequest) ([]HostCandidate, error) {
 	return candidates, nil
 }
 
+// HistoryHostCandidate is the host a remembered group's key names, for a
+// history roster whose hosts are resolved as its memory is read in segments
+// rather than before: the candidate HostCandidates gives a history group, and
+// false for a key that does not parse or names no host.
+func HistoryHostCandidate(groupKey string) (HostCandidate, bool) {
+	group, ok := ParseGroupKey(groupKey)
+	if !ok {
+		return HostCandidate{}, false
+	}
+	host, ok := groupHostIdentity(group)
+	if !ok {
+		return HostCandidate{}, false
+	}
+	return HostCandidate{GroupKey: groupKey, Host: host}, true
+}
+
 // groupHostIdentity reads the host pair out of a group's own dimensions, and
 // says so when the group does not carry one.
 func groupHostIdentity(group Group) (HostIdentity, bool) {

@@ -8,6 +8,7 @@ package victoriaMetrics
 import (
 	"context"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,15 +70,28 @@ func TestFormatsClassifyBackendResponseSizeLimit(t *testing.T) {
 				return err
 			}
 
-			err := run(&VmResponse{Message: "Response body size exceeds 100 MB, estimatedSize: 135 MB", Code: "400"})
-			require.ErrorIs(t, err, metadata.ErrBackendResponseTooLarge)
-			require.ErrorContains(t, err, "estimatedSize: 135 MB")
+			// The gateway's usual shape puts a generic message in message and the limit and
+			// estimate in errors.error; either field carries the rejection. Each field appears
+			// once: the message is the outer context, errors.error the backend's detail.
+			for _, shape := range []struct{ name, message, detail string }{
+				{"detail_in_errors", "返回结果集大小超过最大值", "Response body size exceeds 500 MB, estimatedSize: 550 MB"},
+				{"detail_in_message", "Response body size exceeds 100 MB, estimatedSize: 135 MB", ""},
+				{"lowercase_detail", "", "response body size exceeds backend limit"},
+			} {
+				t.Run(shape.name, func(t *testing.T) {
+					response := &VmResponse{Message: shape.message, Code: "400"}
+					response.Errors.Error = shape.detail
+					err := run(response)
+					require.ErrorIs(t, err, metadata.ErrBackendResponseTooLarge)
+					for _, field := range []string{shape.message, shape.detail} {
+						if field != "" {
+							require.Equal(t, 1, strings.Count(err.Error(), field), err.Error())
+						}
+					}
+				})
+			}
 
-			response := &VmResponse{Code: "400"}
-			response.Errors.Error = "response body size exceeds backend limit"
-			require.ErrorIs(t, run(response), metadata.ErrBackendResponseTooLarge)
-
-			err = run(&VmResponse{Message: "query timed out", Code: "400"})
+			err := run(&VmResponse{Message: "query timed out", Code: "400"})
 			require.Error(t, err)
 			require.NotErrorIs(t, err, metadata.ErrBackendResponseTooLarge)
 		})

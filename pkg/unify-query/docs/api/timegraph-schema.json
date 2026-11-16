@@ -540,22 +540,22 @@
     {
       "namespace": "__all__",
       "name": "node_with_pod",
-      "from_resource": "node",
-      "to_resource": "pod",
+      "from_resource": "pod",
+      "to_resource": "node",
       "category": "",
       "is_directional": false,
-      "is_belongs_to": false,
+      "is_belongs_to": true,
       "labels": null,
       "spec": null
     },
     {
       "namespace": "__all__",
       "name": "job_with_pod",
-      "from_resource": "job",
-      "to_resource": "pod",
+      "from_resource": "pod",
+      "to_resource": "job",
       "category": "",
       "is_directional": false,
-      "is_belongs_to": false,
+      "is_belongs_to": true,
       "labels": null,
       "spec": null
     },
@@ -566,7 +566,7 @@
       "to_resource": "pod",
       "category": "",
       "is_directional": false,
-      "is_belongs_to": false,
+      "is_belongs_to": true,
       "labels": null,
       "spec": null
     },
@@ -577,7 +577,7 @@
       "to_resource": "replicaset",
       "category": "",
       "is_directional": false,
-      "is_belongs_to": false,
+      "is_belongs_to": true,
       "labels": null,
       "spec": null
     },
@@ -588,29 +588,29 @@
       "to_resource": "statefulset",
       "category": "",
       "is_directional": false,
-      "is_belongs_to": false,
+      "is_belongs_to": true,
       "labels": null,
       "spec": null
     },
     {
       "namespace": "__all__",
       "name": "daemonset_with_pod",
-      "from_resource": "daemonset",
-      "to_resource": "pod",
+      "from_resource": "pod",
+      "to_resource": "daemonset",
       "category": "",
       "is_directional": false,
-      "is_belongs_to": false,
+      "is_belongs_to": true,
       "labels": null,
       "spec": null
     },
     {
       "namespace": "__all__",
       "name": "deployment_with_replicaset",
-      "from_resource": "deployment",
-      "to_resource": "replicaset",
+      "from_resource": "replicaset",
+      "to_resource": "deployment",
       "category": "",
       "is_directional": false,
-      "is_belongs_to": false,
+      "is_belongs_to": true,
       "labels": null,
       "spec": null
     },
@@ -621,7 +621,7 @@
       "to_resource": "service",
       "category": "",
       "is_directional": false,
-      "is_belongs_to": false,
+      "is_belongs_to": true,
       "labels": null,
       "spec": null
     },
@@ -650,11 +650,11 @@
     {
       "namespace": "__all__",
       "name": "ingress_with_service",
-      "from_resource": "ingress",
-      "to_resource": "service",
+      "from_resource": "service",
+      "to_resource": "ingress",
       "category": "",
       "is_directional": false,
-      "is_belongs_to": false,
+      "is_belongs_to": true,
       "labels": null,
       "spec": null
     },
@@ -665,7 +665,7 @@
       "to_resource": "service",
       "category": "",
       "is_directional": false,
-      "is_belongs_to": false,
+      "is_belongs_to": true,
       "labels": null,
       "spec": null
     },
@@ -683,33 +683,33 @@
     {
       "namespace": "__all__",
       "name": "apm_service_instance_with_system",
-      "from_resource": "apm_service_instance",
-      "to_resource": "system",
+      "from_resource": "system",
+      "to_resource": "apm_service_instance",
       "category": "",
       "is_directional": false,
-      "is_belongs_to": false,
+      "is_belongs_to": true,
       "labels": null,
       "spec": null
     },
     {
       "namespace": "__all__",
       "name": "apm_service_instance_with_pod",
-      "from_resource": "apm_service_instance",
-      "to_resource": "pod",
+      "from_resource": "pod",
+      "to_resource": "apm_service_instance",
       "category": "",
       "is_directional": false,
-      "is_belongs_to": false,
+      "is_belongs_to": true,
       "labels": null,
       "spec": null
     },
     {
       "namespace": "__all__",
       "name": "apm_service_with_apm_service_instance",
-      "from_resource": "apm_service",
-      "to_resource": "apm_service_instance",
+      "from_resource": "apm_service_instance",
+      "to_resource": "apm_service",
       "category": "",
       "is_directional": false,
-      "is_belongs_to": false,
+      "is_belongs_to": true,
       "labels": null,
       "spec": null
     },
@@ -727,22 +727,22 @@
     {
       "namespace": "__all__",
       "name": "business_with_set",
-      "from_resource": "business",
-      "to_resource": "set",
+      "from_resource": "set",
+      "to_resource": "business",
       "category": "",
       "is_directional": false,
-      "is_belongs_to": false,
+      "is_belongs_to": true,
       "labels": null,
       "spec": null
     },
     {
       "namespace": "__all__",
       "name": "biz_with_set",
-      "from_resource": "biz",
-      "to_resource": "set",
+      "from_resource": "set",
+      "to_resource": "biz",
       "category": "",
       "is_directional": false,
-      "is_belongs_to": false,
+      "is_belongs_to": true,
       "labels": null,
       "spec": null
     },
@@ -753,7 +753,7 @@
       "to_resource": "set",
       "category": "",
       "is_directional": false,
-      "is_belongs_to": false,
+      "is_belongs_to": true,
       "labels": null,
       "spec": null
     },
@@ -764,7 +764,7 @@
       "to_resource": "module",
       "category": "",
       "is_directional": false,
-      "is_belongs_to": false,
+      "is_belongs_to": true,
       "labels": null,
       "spec": null
     },
@@ -882,7 +882,7 @@
       "is_directional": true,
       "is_belongs_to": false,
       "labels": {
-        "metric_name": "system_to_system_flow"
+        "metric_name": "system_to_system_flow_count"
       },
       "spec": null
     },
@@ -908,7 +908,7 @@
       "is_directional": true,
       "is_belongs_to": false,
       "labels": {
-        "metric_name": "apm_service_to_apm_service_flow"
+        "metric_name": "apm_service_to_apm_service_flow_count"
       },
       "spec": null
     }

@@ -11,6 +11,7 @@ package metadata
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"sync/atomic"
 )
@@ -65,6 +66,37 @@ func SetStatus(ctx context.Context, code, message string) {
 		}
 		md.set(ctx, statusKey(ctx), status)
 	}
+}
+
+func storageCoverageKey(ctx context.Context) string {
+	return statusKey(ctx) + ":storage-coverage"
+}
+
+// AddStorageCoverageReason 记录一次成功读取的响应缺了请求的存储。它与 Status 分开存放：
+// 查询的 partial 与 Status 只认存储后端自己的结论，缺失存储依据的是元数据里的存储归属，
+// 只有需要完整拓扑的调用方（TimeGraph）读取它。
+func AddStorageCoverageReason(ctx context.Context, reason string) {
+	if md == nil || reason == "" {
+		return
+	}
+	reasons := GetStorageCoverageReasons(ctx)
+	if slices.Contains(reasons, reason) {
+		return
+	}
+	md.set(ctx, storageCoverageKey(ctx), append(slices.Clone(reasons), reason))
+}
+
+// GetStorageCoverageReasons 返回当前状态作用域内记录的缺失存储原因。
+func GetStorageCoverageReasons(ctx context.Context) []string {
+	if md == nil {
+		return nil
+	}
+	if r, ok := md.get(ctx, storageCoverageKey(ctx)); ok {
+		if v, ok := r.([]string); ok {
+			return v
+		}
+	}
+	return nil
 }
 
 // GetStatus

@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"sort"
-	"strings"
 	"testing"
 	"time"
 
@@ -61,6 +59,8 @@ func topologyFixtureMatchesGroups(groups structured.AllConditions, info map[stri
 	return false
 }
 
+// 单跳自关联的目标集合与独立 DFS 枚举的路径终点一致；多跳自关联回访资源
+// 类型，必须在取数前具名拒绝。
 func TestTimeGraphRandomizedPathsMatchIndependentEnumeration(t *testing.T) {
 	ctx := initTimeGraphQueryTestEnvironment()
 	const stamp int64 = 1700000000000
@@ -102,7 +102,8 @@ func TestTimeGraphRandomizedPathsMatchIndependentEnumeration(t *testing.T) {
 							step.RelationType = []string{"calls", "depends"}[(plan+hop)%2]
 							step.MetricName = step.RelationType + "_flow"
 							step.Category = string(RelationCategoryDynamic)
-							step.Direction = []string{string(DirectionOutbound), string(DirectionInbound), string(DirectionBoth)}[(plan+hop)%3]
+							// 单跳计划（plan 0、3、6）依次覆盖无约束、入向和双向。
+							step.Direction = []string{string(DirectionOutbound), string(DirectionInbound), string(DirectionBoth)}[(plan/3+hop)%3]
 						}
 						path.Steps = append(path.Steps, step)
 					}
@@ -115,11 +116,13 @@ func TestTimeGraphRandomizedPathsMatchIndependentEnumeration(t *testing.T) {
 						matrix[name] = append(matrix[name], contractMatrix(map[string]string{"from_id": e.from, "to_id": e.to}, e.at)...)
 					}
 					model := &Model{schemaProvider: provider, timeGraphQueryReference: timeGraphTestQueryReference}
+					vmCalls := 0
 					model.timeGraphVMQuery = func(_ context.Context, q *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
+						vmCalls++
 						query := q.QueryList[0]
 						return filteredTimeGraphMatrix(t, matrix[query.FieldName], query.Conditions), nil
 					}
-					var got []cmdb.PathResourcesResult
+					var got []RelationTarget
 					var err error
 					if mode == "instant" {
 						got, err = model.QueryRelationTimeGraph(
@@ -138,23 +141,26 @@ func TestTimeGraphRandomizedPathsMatchIndependentEnumeration(t *testing.T) {
 							cmdb.Matcher{"id": "0"}, nil,
 						)
 					}
+					if hops > 1 {
+						require.ErrorContains(t, err, "relation path revisits resource type service")
+						require.Empty(t, got)
+						require.Zero(t, vmCalls, "rejected paths must not query the backend")
+						return
+					}
 					require.NoError(t, err)
 					actual := make(map[string]bool)
 					for _, result := range got {
-						var ids []string
-						for _, node := range result.Path {
-							ids = append(ids, node.Dimensions["id"])
-						}
-						key := fmt.Sprintf("%d:%s", result.Timestamp, strings.Join(ids, "/"))
+						key := fmt.Sprintf("%d:%s", result.Timestamp, result.Target.Dimensions["id"])
 						require.False(t, actual[key], "duplicate result: %s", key)
 						actual[key] = true
 					}
 					// A separate DFS over the input edges, without using production graph helpers.
+					// Every enumerated path contributes only its last node.
 					expected := make(map[string]bool)
 					var visit func(int64, []string)
 					visit = func(at int64, ids []string) {
 						if len(ids) == len(path.Steps) {
-							expected[fmt.Sprintf("%d:%s", at, strings.Join(ids, "/"))] = true
+							expected[fmt.Sprintf("%d:%s", at, ids[len(ids)-1])] = true
 							return
 						}
 						step := path.Steps[len(ids)]
@@ -205,6 +211,7 @@ func BenchmarkTimeGraphBranchingConvergence(b *testing.B) {
 				{Name: "sink", Index: cmdb.Index{"sink_id"}},
 			}}
 			b.ReportAllocs()
+			// 实例路径数随宽度平方增长，目标只有一个 sink。
 			b.ReportMetric(float64(width*width), "paths/op")
 			for n := 0; n < b.N; n++ {
 				tg := NewTimeGraphWithConfig(cfg)
@@ -221,22 +228,12 @@ func BenchmarkTimeGraphBranchingConvergence(b *testing.B) {
 						}
 					}
 				}
-				results, err := tg.FindPathResources(ctx, "root", []cmdb.Resource{"sink"}, cmdb.Matcher{"root_id": "r"}, [][]cmdb.Resource{{"root", "left", "right", "sink"}})
+				results, err := tg.FindTargets(ctx, "root", []cmdb.Resource{"sink"}, cmdb.Matcher{"root_id": "r"}, [][]cmdb.Resource{{"root", "left", "right", "sink"}})
 				if err != nil {
 					b.Fatal(err)
 				}
-				if len(results) != width*width {
-					b.Fatalf("want %d paths, got %d", width*width, len(results))
-				}
-				ids := make([]string, 0, len(results))
-				for _, result := range results {
-					ids = append(ids, result.Path[1].Dimensions["left_id"]+"/"+result.Path[2].Dimensions["right_id"])
-				}
-				sort.Strings(ids)
-				for i := 1; i < len(ids); i++ {
-					if ids[i] == ids[i-1] {
-						b.Fatal("duplicate path")
-					}
+				if len(results) != 1 || results[0].Target.Dimensions["sink_id"] != "s" {
+					b.Fatalf("want the single sink target, got %+v", results)
 				}
 				tg.Clean(ctx)
 			}

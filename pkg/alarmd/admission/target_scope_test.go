@@ -44,7 +44,7 @@ func host(method TargetScopeMethod, values ...string) TargetScopeCondition {
 // pointed at one of a host's several modules must still include it, which is
 // the case a single-node model gets wrong.
 func TestAHostInSeveralModulesMatchesATargetNamingAnyOfThem(t *testing.T) {
-	facts := hostFacts("10.0.0.1|0")
+	facts := hostFacts("192.0.2.1|0")
 	facts.SetTopoNodes([]string{"module|85", "set|12", "biz|7", "module|91", "set|13"})
 
 	for _, node := range []string{"module|85", "module|91", "set|13", "biz|7"} {
@@ -68,19 +68,19 @@ func TestIncludeAndExcludeInOneGroupBothHaveToHold(t *testing.T) {
 	}}
 	plan := PlanContext{TargetScope: scope(group)}
 
-	inside := hostFacts("10.0.0.1|0")
+	inside := hostFacts("192.0.2.1|0")
 	inside.SetTopoNodes([]string{"biz|9", "set|81", "module|100"})
 	if decision := (TargetScopeFilter{}).Admit(plan, &inside); !decision.Admit {
 		t.Errorf("a host in an included set and no excluded module was dropped: %v", decision)
 	}
 
-	excluded := hostFacts("10.0.0.2|0")
+	excluded := hostFacts("192.0.2.2|0")
 	excluded.SetTopoNodes([]string{"biz|9", "set|81", "module|7298"})
 	if decision := (TargetScopeFilter{}).Admit(plan, &excluded); decision.Admit {
 		t.Error("a host in an excluded module was admitted")
 	}
 
-	elsewhere := hostFacts("10.0.0.3|0")
+	elsewhere := hostFacts("192.0.2.3|0")
 	elsewhere.SetTopoNodes([]string{"biz|9", "set|900"})
 	if decision := (TargetScopeFilter{}).Admit(plan, &elsewhere); decision.Admit {
 		t.Error("a host outside every included set was admitted")
@@ -91,9 +91,9 @@ func TestIncludeAndExcludeInOneGroupBothHaveToHold(t *testing.T) {
 func TestAnyGroupAdmits(t *testing.T) {
 	plan := PlanContext{TargetScope: scope(
 		TargetScopeGroup{Conditions: []TargetScopeCondition{topo(TargetScopeInclude, "set|1")}},
-		TargetScopeGroup{Conditions: []TargetScopeCondition{host(TargetScopeInclude, "10.0.0.9|0")}},
+		TargetScopeGroup{Conditions: []TargetScopeCondition{host(TargetScopeInclude, "192.0.2.9|0")}},
 	)}
-	facts := hostFacts("10.0.0.9|0")
+	facts := hostFacts("192.0.2.9|0")
 	facts.SetTopoNodes([]string{"set|2"})
 	if decision := (TargetScopeFilter{}).Admit(plan, &facts); !decision.Admit {
 		t.Errorf("a record matching the second alternative was dropped: %v", decision)
@@ -108,7 +108,7 @@ func TestAnyGroupAdmits(t *testing.T) {
 func TestATopologyTargetRejectsRecordsWithNoTopology(t *testing.T) {
 	plan := PlanContext{TargetScope: scope(TargetScopeGroup{Conditions: []TargetScopeCondition{topo(TargetScopeInclude, "set|81")}})}
 
-	unknownHost := hostFacts("10.9.9.9|0")
+	unknownHost := hostFacts("192.0.2.99|0")
 	if decision := (TargetScopeFilter{}).Admit(plan, &unknownHost); decision.Admit {
 		t.Error("a host CMDB does not know was admitted into a topology target")
 	}
@@ -130,7 +130,7 @@ func TestATopologyTargetRejectsRecordsWithNoTopology(t *testing.T) {
 // the group to decide - the opposite of the topology rule, and also Python's.
 func TestAHostConditionIsSkippedWhenTheRecordHasNoHost(t *testing.T) {
 	plan := PlanContext{TargetScope: scope(TargetScopeGroup{Conditions: []TargetScopeCondition{
-		host(TargetScopeInclude, "10.0.0.1|0"),
+		host(TargetScopeInclude, "192.0.2.1|0"),
 		topo(TargetScopeInclude, "set|81"),
 	}})}
 	facts := Facts{}
@@ -159,15 +159,15 @@ func TestAnEmptyScopeMatchesNothing(t *testing.T) {
 func TestChainEnrichesOnceAndNamesTheRejectingFilter(t *testing.T) {
 	chain := NewChain([]Fuller{IdentityFuller{}}, []Filter{TargetScopeFilter{}})
 	dimensions := map[string]json.RawMessage{
-		"bk_target_ip":       json.RawMessage(`"10.0.0.1"`),
+		"bk_target_ip":       json.RawMessage(`"192.0.2.1"`),
 		"bk_target_cloud_id": json.RawMessage(`0`),
 	}
 	facts := chain.Enrich(dimensions)
-	if len(facts.HostKeys()) != 1 || facts.HostKeys()[0] != "10.0.0.1|0" {
+	if len(facts.HostKeys()) != 1 || facts.HostKeys()[0] != "192.0.2.1|0" {
 		t.Fatalf("identity enrichment produced %v", facts.HostKeys())
 	}
 	admitted, filter, reason := chain.Admit(PlanContext{TargetScope: scope(
-		TargetScopeGroup{Conditions: []TargetScopeCondition{host(TargetScopeInclude, "10.0.0.2|0")}},
+		TargetScopeGroup{Conditions: []TargetScopeCondition{host(TargetScopeInclude, "192.0.2.2|0")}},
 	)}, &facts)
 	if admitted || filter != "target_scope" || reason != "out_of_scope" {
 		t.Fatalf("admit = %v, %q, %q", admitted, filter, reason)
@@ -179,12 +179,12 @@ func TestChainEnrichesOnceAndNamesTheRejectingFilter(t *testing.T) {
 func TestIdentityEnrichmentAcceptsBothDimensionEncodings(t *testing.T) {
 	chain := NewChain([]Fuller{IdentityFuller{}}, nil)
 	numeric := chain.Enrich(map[string]json.RawMessage{
-		"bk_target_ip":       json.RawMessage(`"10.0.0.1"`),
+		"bk_target_ip":       json.RawMessage(`"192.0.2.1"`),
 		"bk_target_cloud_id": json.RawMessage(`0`),
 		"bk_host_id":         json.RawMessage(`12345`),
 	})
 	textual := chain.Enrich(map[string]json.RawMessage{
-		"bk_target_ip":       json.RawMessage(`"10.0.0.1"`),
+		"bk_target_ip":       json.RawMessage(`"192.0.2.1"`),
 		"bk_target_cloud_id": json.RawMessage(`"0"`),
 		"bk_host_id":         json.RawMessage(`"12345"`),
 	})
@@ -201,8 +201,8 @@ func TestIdentityEnrichmentAcceptsBothDimensionEncodings(t *testing.T) {
 // Absent cloud means the direct area, matching how the cache keys hosts.
 func TestAnAbsentCloudDefaultsToTheDirectArea(t *testing.T) {
 	chain := NewChain([]Fuller{IdentityFuller{}}, nil)
-	facts := chain.Enrich(map[string]json.RawMessage{"ip": json.RawMessage(`"10.0.0.1"`)})
-	if len(facts.HostKeys()) != 1 || facts.HostKeys()[0] != "10.0.0.1|0" {
+	facts := chain.Enrich(map[string]json.RawMessage{"ip": json.RawMessage(`"192.0.2.1"`)})
+	if len(facts.HostKeys()) != 1 || facts.HostKeys()[0] != "192.0.2.1|0" {
 		t.Fatalf("host keys = %v", facts.HostKeys())
 	}
 }

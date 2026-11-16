@@ -11,6 +11,7 @@ package consul
 
 import (
 	"context"
+	"errors"
 
 	"github.com/spf13/viper"
 
@@ -54,7 +55,13 @@ func (s *Service) Reload(ctx context.Context) {
 	err := consul.SetInstanceWithAuth(
 		s.ctx, KVBasePath, Address, CaFilePath, KeyFilePath, CertFilePath, auth,
 	)
+	var addressErr *consul.AddressError
+	if errors.As(err, &addressErr) && addressErr.Reason == consul.ReasonAddressNotConfigured {
+		log.Infof(context.TODO(), "consul address is not configured, consul client is not created")
+		return
+	}
 	if err != nil {
+		// 地址缺 host 等配置错误只在加载时报一次，之后的调用直接返回同一原因，不连接任何地址。
 		log.Errorf(context.TODO(), "consul service init failed for->[%s]", err)
 		return
 	}

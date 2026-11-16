@@ -89,7 +89,7 @@ func TestIndependentAndCombinedTopologyOptimizations(t *testing.T) {
 			count++
 			return fetch(ctx, q, expr, instant, start, end, step)
 		}
-		request := cmdb.SharedTopologyQuery{SpaceUID: "space", StartTime: 1700000000, EndTime: 1700000060, Step: "60s", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, MaxHops: 2}
+		request := cmdb.SharedTopologyQuery{SpaceUID: "space", StartTime: 1700000000, EndTime: 1700000060, Step: "60s", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}}, MaxHops: 2}
 		result, err := model.QuerySharedTopology(ctx, request)
 		require.NoError(t, err)
 		calls = append(calls, count)

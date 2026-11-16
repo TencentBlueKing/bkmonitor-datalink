@@ -154,7 +154,7 @@ func TestTopologyBodyFailureHTTP(t *testing.T) {
 			if release != nil {
 				release()
 			}
-			require.Equal(t, map[string]int64{"active": 0, "waiters": 0, "reserved": 0, "materialized": 0}, topologyTestAdmissionState(t))
+			require.Equal(t, map[string]int64{"active": 0, "waiters": 0}, topologyTestAdmissionState(t))
 			afterReject, _, _ := topologyTestMetric(t, rejections, rejectLabels)
 			_, afterCount, afterSum := topologyTestMetric(t, payload, payloadLabels)
 			require.Equal(t, float64(1), afterReject-beforeReject)
@@ -172,10 +172,8 @@ func topologyTestAdmissionState(t *testing.T) map[string]int64 {
 	families, err := prometheus.DefaultGatherer.Gather()
 	require.NoError(t, err)
 	names := map[string]string{
-		"unify_query_cmdb_topology_admission_active":   "active",
-		"unify_query_cmdb_topology_admission_waiters":  "waiters",
-		"unify_query_cmdb_topology_reserved_bytes":     "reserved",
-		"unify_query_cmdb_topology_materialized_bytes": "materialized",
+		"unify_query_cmdb_topology_admission_active":  "active",
+		"unify_query_cmdb_topology_admission_waiters": "waiters",
 	}
 	state := make(map[string]int64, len(names))
 	for _, family := range families {

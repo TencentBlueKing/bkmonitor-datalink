@@ -18,25 +18,26 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
-func TestTimeGraphPathExpansionBudgetCases(t *testing.T) {
+// 逐层集合推进不枚举实例路径：路径条数按宽度指数增长时，结果仍只是各时刻
+// 去重后的终点集合，不再有结果数或路径展开上限。
+func TestTimeGraphRelationTargetFanOutCases(t *testing.T) {
 	for _, tt := range []struct {
-		name                            string
-		width, depth, limit, timestamps int
-		duplicate, canceled, deadEnd    bool
-		wantCount                       int
-		wantReason                      string
+		name                         string
+		width, depth, timestamps     int
+		duplicate, canceled, deadEnd bool
+		wantTargets                  []string
 	}{
-		{name: "恰好预算", width: 2, depth: 2, limit: 4, timestamps: 1, wantCount: 4},
-		{name: "汇合路径全部保留", width: 2, depth: 3, limit: 8, timestamps: 1, wantCount: 8},
-		{name: "重复计划不重复消耗结果预算", width: 2, depth: 2, limit: 4, timestamps: 1, duplicate: true, wantCount: 4},
-		{name: "展开前拒绝指数级路径", width: 8, depth: 5, limit: 100, timestamps: 1, wantReason: "max_graph_results"},
-		{name: "中间层也受预算约束", width: 4, depth: 2, limit: 3, timestamps: 1, deadEnd: true, wantReason: "max_graph_results"},
-		{name: "跨时间累计结果预算", width: 2, depth: 1, limit: 3, timestamps: 2, wantReason: "max_graph_results"},
-		{name: "提前取消", width: 2, depth: 2, limit: 4, timestamps: 1, canceled: true},
+		{name: "两层全连接", width: 2, depth: 2, timestamps: 1, wantTargets: []string{"0", "1"}},
+		{name: "汇合路径收敛为终点集合", width: 2, depth: 3, timestamps: 1, wantTargets: []string{"0", "1"}},
+		{name: "重复计划不重复产出目标", width: 2, depth: 2, timestamps: 1, duplicate: true, wantTargets: []string{"0", "1"}},
+		{name: "指数级路径只产出终点", width: 8, depth: 5, timestamps: 1, wantTargets: []string{"0", "1", "2", "3", "4", "5", "6", "7"}},
+		{name: "中间层扩散后末层收窄", width: 4, depth: 2, timestamps: 1, deadEnd: true, wantTargets: []string{"0"}},
+		{name: "逐时刻分别产出", width: 2, depth: 1, timestamps: 2, wantTargets: []string{"0", "1"}},
+		{name: "提前取消", width: 2, depth: 2, timestamps: 1, canceled: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			config := &TimeGraphConfig{MaxResults: tt.limit}
+			config := &TimeGraphConfig{}
 			steps := make([]cmdb.RelationPathStep, 0, tt.depth+1)
 			for depth := 0; depth <= tt.depth; depth++ {
 				resource := cmdb.Resource(fmt.Sprintf("r%d", depth))
@@ -72,25 +73,24 @@ func TestTimeGraphPathExpansionBudgetCases(t *testing.T) {
 			if tt.duplicate {
 				paths = append(paths, paths[0])
 			}
-			results, err := graph.FindRelationPathResources(ctx, "r0", []cmdb.Resource{steps[len(steps)-1].ResourceType}, cmdb.Matcher{"id0": "0"}, paths)
+			targetType := steps[len(steps)-1].ResourceType
+			results, err := graph.FindRelationTargets(ctx, "r0", []cmdb.Resource{targetType}, cmdb.Matcher{"id0": "0"}, paths)
 			if tt.canceled {
 				require.ErrorIs(t, err, context.Canceled)
 				return
 			}
-			if tt.wantReason != "" {
-				var limitErr *ResultLimitError
-				require.ErrorAs(t, err, &limitErr)
-				require.Equal(t, tt.wantReason, limitErr.Reason)
-				require.Equal(t, tt.limit+1, limitErr.Count)
-				require.Equal(t, tt.limit, limitErr.Limit)
-				if tt.timestamps == 1 {
-					require.Equal(t, "path expansion", limitErr.Path)
-				}
-				require.Empty(t, results)
-				return
-			}
 			require.NoError(t, err)
-			require.Len(t, results, tt.wantCount)
+			var want []RelationTarget
+			for point := 0; point < tt.timestamps; point++ {
+				for _, id := range tt.wantTargets {
+					want = append(want, RelationTarget{
+						Timestamp:  1700000000000 + int64(point)*60000,
+						TargetType: targetType,
+						Target:     cmdb.PathNode{ResourceType: targetType, Dimensions: cmdb.Matcher{fmt.Sprintf("id%d", tt.depth): id}},
+					})
+				}
+			}
+			require.Equal(t, want, results)
 		})
 	}
 }
@@ -133,7 +133,7 @@ func TestTimeGraphExplicitPathDirectionCases(t *testing.T) {
 				matcher = cmdb.Matcher{"middle_id": "b"}
 			}
 			ctx := initTimeGraphQueryTestEnvironment()
-			var results []cmdb.PathResourcesResult
+			var results []RelationTarget
 			var err error
 			if tt.typed {
 				plans := cmdb.RelationPathsFromResourcePaths([][]cmdb.Resource{path})

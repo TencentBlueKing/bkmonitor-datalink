@@ -186,15 +186,15 @@ func (router *Router) PlanRebalanceWithin(
 		return plan
 	}
 	candidates := make([]execution.QueryGroupIdentity, 0, plan.MostOwned)
-	var destinationSum uint64
 	for queryGroup, owner := range owners {
 		if owner == most {
 			candidates = append(candidates, queryGroup)
 		}
-		if owner == least {
-			destinationSum += readings.Peak[queryGroup]
-		}
 	}
+	// The destination is judged on the same projection a placement and the
+	// byte constraint use (projectedSum): an unread Query Group on it, or the
+	// one moved, counts at the round's estimate, not at nothing.
+	projection := newByteProjection(owners, readings)
 	sort.Slice(candidates, func(left, right int) bool { return candidates[left] < candidates[right] })
 	destination := ready[least]
 	for _, queryGroup := range candidates {
@@ -207,11 +207,10 @@ func (router *Router) PlanRebalanceWithin(
 		if destination.Declines(queryGroup) {
 			continue
 		}
-		peak := readings.Peak[queryGroup]
-		if !readings.fits(least, destinationSum, peak) {
+		if !projection.fits(least, queryGroup) {
 			continue
 		}
-		destinationSum += peak
+		projection.land(queryGroup, least)
 		plan.Moves = append(plan.Moves, RebalanceMove{QueryGroup: queryGroup, From: most, To: least})
 	}
 	return plan

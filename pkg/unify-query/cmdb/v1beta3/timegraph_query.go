@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -85,12 +86,22 @@ type timeGraphVMQueryWithPartial func(context.Context, *structured.QueryTs, stri
 
 type timeGraphQueryReference func(context.Context, *structured.QueryTs) (metadata.QueryReference, error)
 
-// A missing physical route is distinct from an executed query returning no
-// series. Only the legacy response adapter may downgrade it to partial data.
+// 缺少物理路由与已执行查询但没有序列不同，不能当作完整的空结果。
+// 共享拓扑由取数器按已读且无数据处理并把整个计算网格标记为 partial（见
+// relationNoRouteReason）；兼容入口仍收到该错误，由响应适配层降级为部分结果。
 type relationNoPhysicalRouteError struct{ metric string }
 
 func (e *relationNoPhysicalRouteError) Error() string {
 	return fmt.Sprintf("required relation has no physical query route: %s", e.metric)
+}
+
+// relationNoRouteReason 返回共享拓扑可吸收的缺路由原因；兼容入口或其他错误返回空串。
+func (loader *timeGraphMatrixLoader) relationNoRouteReason(err error) string {
+	var routeErr *relationNoPhysicalRouteError
+	if !loader.topology || !errors.As(err, &routeErr) {
+		return ""
+	}
+	return "relation_no_physical_route:" + routeErr.metric
 }
 
 func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured.QueryTs) (string, *metadata.QueryParams, error) {
@@ -115,7 +126,8 @@ func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured
 	if err != nil {
 		return "", nil, errors.WithMessage(err, "to query reference")
 	}
-	if timeGraphQueryStage(ctx) == "relation-edge" && queryRef.Count() == 0 {
+	// 宽读取前的计数与关系读取走同一路由，缺路由时同样按缺路由处理。
+	if (timeGraphQueryStage(ctx) == "relation-edge" || timeGraphQueryStage(ctx) == "frontier-probe") && queryRef.Count() == 0 {
 		return "", nil, &relationNoPhysicalRouteError{metric: timeGraphLoadMetricName(queryTs)}
 	}
 	if timeGraphQueryStage(ctx) == "source-info" && queryRef.Count() == 0 {
@@ -154,6 +166,7 @@ func validateTimeGraphPrecision(start, end time.Time, step time.Duration) error 
 
 func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, rootRelations map[timeGraphRelationKey]struct{}, relations []cmdb.Relation, lookBackDelta string, matrixQuery timeGraphMatrixQuery, topologyGrid *TopologyGrid) (graph *TimeGraph, err error) {
 	ctx = metadata.WithQueryMetadata(ctx)
+	ctx, readStats := metadata.WithBackendReadStats(ctx)
 	ctx, span := trace.NewSpan(ctx, "build-time-graph-from-relations")
 	defer span.End(&err)
 	started := time.Now()
@@ -174,10 +187,6 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	configSpan.Set("space-uid", spaceUID)
 	configSpan.Set("resource-config-count", len(config.Resource))
 	configSpan.Set("relation-config-count", len(config.Relation))
-	configSpan.Set("max-graph-nodes", config.MaxNodes)
-	configSpan.Set("max-graph-edges", config.MaxEdges)
-	configSpan.Set("max-graph-results", config.MaxResults)
-	configSpan.Set("max-graph-node-infos", config.MaxNodeInfos)
 	var configErr error
 	configSpan.End(&configErr)
 	_, storageSpan := trace.NewSpan(ctx, "timegraph-create-storage")
@@ -187,13 +196,9 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	} else {
 		tg = NewTimeGraphWithConfig(config)
 	}
-	err = tg.enableResidency(ctx)
 	storageSpan.Set("shared", tg.shared != nil)
-	storageSpan.End(&err)
-	if err != nil {
-		tg.Clean(ctx)
-		return nil, err
-	}
+	var storageErr error
+	storageSpan.End(&storageErr)
 	// 成功时由调用方持有图；失败时必须释放已构建的存储。
 	// 先注册清理，再注册构建观察器，使失败计数在清理前可见。
 	defer func() {
@@ -203,21 +208,10 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	}()
 
 	sourceInfoQueryCount, relationEdgeQueryCount, targetInfoQueryCount := 0, 0, 0
-	loader := &timeGraphMatrixLoader{model: m, graph: tg, start: start, end: end, step: step, override: matrixQuery, topology: topologyGrid != nil}
-	defer func() {
-		loader.lastMatrix = timeGraphMatrixSlot{}
-		tg.matrixResidency.clear()
-	}()
+	loader := &timeGraphMatrixLoader{model: m, graph: tg, start: start, end: end, step: step, override: matrixQuery, topology: topologyGrid != nil, readStats: readStats}
+	defer func() { loader.lastMatrix = timeGraphMatrixSlot{} }()
 	defer func() {
 		observeTimeGraphBuild(ctx, span, tg, loader, started, err)
-		graphMemory := graphResidencyState(tg)
-		span.Set("graph-structural-estimated-bytes", graphMemory.EstimatedBytes)
-		span.Set("graph-structural-reserved-bytes", graphMemory.ReservedBytes)
-		span.Set("graph-structural-owned-lower-bound-bytes", graphMemory.MaterializedLowerBoundBytes)
-		matrixMemory := matrixResidencyState(tg)
-		span.Set("matrix-receiving-bytes", matrixMemory.ReceivingBytes)
-		span.Set("matrix-resident-bytes", matrixMemory.ResidentBytes)
-		span.Set("matrix-residency-peak-bytes", matrixMemory.PeakTotalBytes)
 		span.Set("source-info-query-count", sourceInfoQueryCount)
 		span.Set("relation-edge-query-count", relationEdgeQueryCount)
 		span.Set("target-info-query-count", targetInfoQueryCount)
@@ -227,9 +221,6 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	} else {
 		span.Set("graph-storage-mode", "time-buckets")
 	}
-	span.Set("graph-max-nodes", tg.maxNodes)
-	span.Set("graph-max-edges", tg.maxEdges)
-	span.Set("graph-max-results", tg.maxResults)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -246,7 +237,6 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		lookBack = time.Duration(DefaultLookBackDelta) * time.Millisecond
 	}
 	span.Set("query-lookback-seconds", lookBack.Seconds())
-	span.Set("graph-max-node-infos", tg.maxNodeInfos)
 
 	// step 只控制 range 查询的采样间隔，lookBack 只控制 count_over_time 的
 	// 回溯窗口；两者必须分开，否则稀疏的 range 查询会产生错误的采样结果。
@@ -258,7 +248,26 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		(!timeGraphTargetInfoShow(ctx) || len(tg.nodeBuilder.resourceInfoFields(sourceType)) == 0) {
 		return nil, errors.New("query ts to prom expr error: 表达式配置不能为空")
 	}
-	if len(sourceExpandInfo) > 0 || (topologyGrid == nil && (len(relations) == 0 || timeGraphForceSourceInfo(ctx))) {
+	sources, _ := ctx.Value(timeGraphTopologySourcesKey{}).([]topologySource)
+	multiSource := topologyGrid != nil && tg.shared != nil && len(sources) > 1
+	if multiSource {
+		// 多个选择器的属性条件各自判定：每个选择器单独读一次 source info，匹配位按选择器保存。
+		tg.shared.sourceExpandBits = make([]map[uint64]timeBitmap, len(sources))
+		for i, source := range sources {
+			if len(source.ExpandInfo) == 0 {
+				continue
+			}
+			tg.shared.sourceInfoBits = make(map[uint64]timeBitmap)
+			count, infoErr := loader.addSourceInfo(ctx, spaceUID, source.Type, source.Info, source.ExpandInfo)
+			sourceInfoQueryCount += count
+			if infoErr != nil {
+				return nil, infoErr
+			}
+			tg.shared.sourceExpandBits[i] = tg.shared.sourceInfoBits
+		}
+		tg.shared.sourceInfoBits = nil
+		span.Set("source-count", len(sources))
+	} else if len(sourceExpandInfo) > 0 || (topologyGrid == nil && (len(relations) == 0 || timeGraphForceSourceInfo(ctx))) {
 		if tg.shared != nil && len(sourceExpandInfo) > 0 {
 			tg.shared.sourceInfoBits = make(map[uint64]timeBitmap)
 		}
@@ -269,6 +278,13 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	}
 
 	if plan, ok := ctx.Value(timeGraphFetchPlanKey{}).(timeGraphFetchPlan); topologyGrid != nil && ok {
+		if multiSource {
+			relationEdgeQueryCount, err = loader.loadMultiSourceTopology(ctx, spaceUID, sources, relations, plan)
+			if err != nil {
+				return nil, err
+			}
+			return tg, nil
+		}
 		relationEdgeQueryCount, err = loader.loadSelectedTopology(ctx, spaceUID, sourceType, sourceInfo, rootRelations, relations, plan)
 		if err != nil {
 			return nil, err
@@ -323,7 +339,14 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		return true, observed, loadErr
 	}
 
-	if path, ok := ctx.Value(timeGraphLegacyPathKey{}).(cmdb.RelationPath); topologyGrid == nil && ok {
+	if multiSource {
+		// 没有取数计划时，多个选择器不下推根条件，按无条件读取全部候选关系。
+		for _, relation := range relations {
+			if _, _, loadErr := loadRelation(relation, nil, false); loadErr != nil {
+				return nil, loadErr
+			}
+		}
+	} else if path, ok := ctx.Value(timeGraphLegacyPathKey{}).(cmdb.RelationPath); topologyGrid == nil && ok {
 		relationEdgeQueryCount, err = loader.loadLegacyPath(ctx, spaceUID, path, sourceInfo, targetMatchersByType, targetIDsByTimestamp)
 		if err != nil {
 			return nil, err
@@ -347,7 +370,12 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 				}
 				rootObserved = rootObserved || observed
 			}
-			if !rootObserved && len(tg.partialTimes) == 0 {
+			if !rootObserved && !tg.backendPartial() {
+				// 未读取的关系中缺路由的仍记入各帧原因，与读完全部关系时相同。
+				unread := 0
+				if err := loader.markUnroutedRelations(ctx, spaceUID, relations, queriedRoots, &unread); err != nil {
+					return nil, err
+				}
 				return tg, nil
 			}
 		}
@@ -404,7 +432,7 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	return tg, nil
 }
 
-// timeGraphMatrixLoader 统一取数、网格校验和完整性状态，并按请求累计 Matrix 预算。
+// timeGraphMatrixLoader 统一取数、网格校验和完整性状态，并按请求累计 Matrix 规模。
 // 构图器只负责把已校验的序列写入所选存储。
 type timeGraphMatrixLoader struct {
 	model                  *Model
@@ -418,6 +446,27 @@ type timeGraphMatrixLoader struct {
 	physicalQueryCount     int
 	reusedQueryCount       int
 	lastMatrix             timeGraphMatrixSlot
+	// frontierStates 是本请求内按关系与锚点一侧学到的读取规模，见 frontierReadState。
+	frontierStates map[string]*frontierReadState
+	// 宽读取前的计数次数、估算后不发的宽读取数、超过边界的宽读取数。frontierCounting 表示本请求
+	// 出现过超过边界的宽读取，之后的宽读取先计数。
+	frontierProbeCount, frontierWideSkips, frontierWideOverflows int
+	frontierCounting                                             bool
+	// 逐条逻辑查询的准备（路由与过滤条件）次数与累计耗时。
+	prepareCount    int
+	prepareDuration time.Duration
+	// readStats 汇总本请求收到响应的后端读取。
+	readStats *metadata.BackendReadStats
+}
+
+// prepare 准备一条逻辑查询（路由与过滤条件），并累计次数与耗时。
+func (loader *timeGraphMatrixLoader) prepare(ctx context.Context, queryTs *structured.QueryTs) (string, *metadata.QueryParams, error) {
+	started := time.Now()
+	defer func() {
+		loader.prepareCount++
+		loader.prepareDuration += time.Since(started)
+	}()
+	return loader.model.prepareTimeGraphVMQuery(ctx, queryTs)
 }
 
 func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *structured.QueryTs) (pl.Matrix, bool, error) {
@@ -426,7 +475,7 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 
 func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, queryTs *structured.QueryTs, applyQuality bool) (matrix pl.Matrix, partial bool, err error) {
 	if metadata.BackendResponseLimit(queryCtx) > 0 {
-		// 一次物理响应的聚合子查询共用拒收标记，防止预算超限被误判为 partial；
+		// 一次物理响应的聚合子查询共用拒收标记，防止响应超过分批边界被误判为 partial；
 		// 不同身份分片各有标记，先前的大分片失败不会污染后续小分片。
 		queryCtx = metadata.WithBackendResponseLimit(queryCtx, metadata.BackendResponseLimit(queryCtx))
 	}
@@ -491,14 +540,11 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 		span.Set("query-source", "test-matrix")
 		loader.lastMatrix = timeGraphMatrixSlot{}
 		loader.physicalQueryCount++
-		matrix, partial, err = loader.fetchResident(queryCtx, func() (pl.Matrix, bool, error) {
-			value, queryErr := matrixQuery(queryCtx, queryTs)
-			return value, false, queryErr
-		})
+		matrix, err = matrixQuery(queryCtx, queryTs)
 	case m.timeGraphVMQueryWithPartial != nil:
 		span.Set("query-source", "test-vm-with-partial")
 		var expr string
-		expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
+		expr, relationQueryParams, err = loader.prepare(queryCtx, queryTs)
 		if err == nil {
 			matrix, partial, err = loader.loadPrepared(queryCtx, queryTs, expr, relationQueryParams, func() (pl.Matrix, bool, error) {
 				return m.timeGraphVMQueryWithPartial(
@@ -515,7 +561,7 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 	case m.timeGraphVMQuery != nil:
 		span.Set("query-source", "test-vm")
 		var expr string
-		expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
+		expr, relationQueryParams, err = loader.prepare(queryCtx, queryTs)
 		if err == nil {
 			matrix, partial, err = loader.loadPrepared(queryCtx, queryTs, expr, relationQueryParams, func() (pl.Matrix, bool, error) {
 				value, queryErr := m.timeGraphVMQuery(
@@ -533,7 +579,7 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 	default:
 		wrapQueryErr = true
 		var expr string
-		expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
+		expr, relationQueryParams, err = loader.prepare(queryCtx, queryTs)
 		if err == nil {
 			matrix, partial, err = loader.loadPrepared(queryCtx, queryTs, expr, relationQueryParams, func() (pl.Matrix, bool, error) {
 				var instance tsdb.Instance
@@ -569,7 +615,17 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 			})
 		}
 	}
-	// 校验可能清空命名返回值；先记录已返回的 Matrix，预算拒收也要计入输入成本。
+	// 共享拓扑中关系缺少物理路由时不访问后端：该关系按已读且无数据处理，以它的原因把
+	// 整个计算网格标记为 partial，其余关系照常读取。所有拓扑取数路径（首跳探测、取数组、
+	// 前沿分批）都经过这里，返回成功也不会触发身份拆分重试。
+	noRouteReason := loader.relationNoRouteReason(err)
+	if noRouteReason != "" {
+		matrix, partial, err = nil, false, nil
+		span.Set("relation-no-physical-route", true)
+		// 与读到一个空结果一样替换复用槽，后续读取的复用与该关系有路由时相同。
+		loader.lastMatrix = timeGraphMatrixSlot{}
+	}
+	// 校验可能清空命名返回值；先记录已返回的 Matrix，超过分批边界的拒收也要计入输入成本。
 	if err == nil && loader.reusedQueryCount == reuseBefore {
 		loadSize = timeGraphReturnedMatrixSize(matrix)
 	}
@@ -578,14 +634,38 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 		err = queryCtx.Err()
 	}
 	// Prometheus 聚合后端通过子查询 metadata 报告部分成功，VM 则返回 partial 位。
-	// 合并当前子查询的两种信号，让空结果的快照、指标和 trace 同样保留不完整状态。
-	partialReason := "backend_partial"
-	if status := metadata.GetStatus(queryCtx); status != nil {
-		partial = partial || status.Code == metadata.QueryTsPartial
-		if status.Code == metadata.QueryTsPartial && status.Message == "source_info_no_route" {
-			partialReason = status.Message
+	// 合并当前子查询的两种信号，让空结果的快照、指标和 trace 同样保留不完整状态。各原因
+	// 分别记录：VM 的 partial 位与 source_info_no_route 状态同时出现时仍记 backend_partial，
+	// 它决定共享拓扑的取数路径。响应缺了请求的存储时 VM 实例只单独记录覆盖原因、不改 partial 位，
+	// 拓扑需要完整性，这里把它并入本查询的质量状态，单独记 vm_storage_coverage_mismatch:<存储>；
+	// 并入后状态会让 partial 位为真，所以这时 partial 位不再单记 backend_partial（两者同时出现时
+	// 只能看到覆盖不一致）。取数路径照样按后端不完整处理，见 markPartialRange。
+	addTimeGraphStorageCoverageReasons(queryCtx)
+	var partialReasons []string
+	if noRouteReason != "" {
+		partialReasons = append(partialReasons, noRouteReason)
+	}
+	backendPartial, coverage := false, false
+	if status := metadata.GetStatus(queryCtx); status != nil && status.Code == metadata.QueryTsPartial {
+		for _, reason := range splitPartialReasons(status.Message) {
+			switch {
+			case reason == "source_info_no_route":
+				partialReasons = append(partialReasons, reason)
+			case isStorageCoverageReason(reason):
+				partialReasons = append(partialReasons, reason)
+				coverage = true
+			default:
+				backendPartial = true
+			}
 		}
 	}
+	if partial && !coverage {
+		backendPartial = true
+	}
+	if backendPartial {
+		partialReasons = append(partialReasons, "backend_partial")
+	}
+	partial = len(partialReasons) > 0
 	if err == nil && partial && applyQuality {
 		partialStart, partialEnd, partialStep := start, end, queryStep
 		if relationQueryParams != nil {
@@ -594,7 +674,9 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 		if instant {
 			partialStart = partialEnd
 		}
-		tg.markPartialRange(partialStart, partialEnd, partialStep, partialReason)
+		for _, reason := range partialReasons {
+			tg.markPartialRange(partialStart, partialEnd, partialStep, reason)
+		}
 	}
 	span.Set("matrix-series-count", len(matrix))
 	span.Set("matrix-point-count", pointCount)
@@ -617,13 +699,62 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 	return matrix, partial, nil
 }
 
-// queryAndApply owns one physical response until its graph mutation completes.
+// queryAndApply 读取一次并在写图完成前持有这份响应。单次后端响应超过分批边界时，
+// 把精确网格按时间对半重读，直到单个评估点：各点按自己的窗口独立计算，两半不重叠，
+// 依次写图与一次读取得到相同的图（节点、边、属性）。某一半缺路由时按缺路由的规则把整个网格
+// 标为 partial，质量状态可能比一次读取更保守。单个评估点仍过大时返回终态错误。
 func (loader *timeGraphMatrixLoader) queryAndApply(ctx context.Context, queryTs *structured.QueryTs, apply func(context.Context, pl.Matrix) error) error {
 	matrix, _, err := loader.query(ctx, queryTs)
-	if err != nil {
+	if err == nil {
+		return apply(ctx, matrix)
+	}
+	if !isBackendResponseTooLarge(err) {
 		return err
 	}
-	return apply(ctx, matrix)
+	halves, ok := loader.splitQueryTime(ctx, queryTs)
+	if !ok {
+		return &UnsplittableResponseError{Metric: timeGraphLoadMetricName(queryTs), Limit: metadata.BackendResponseLimit(ctx), relation: timeGraphLegacyCompatibility(ctx), cause: err}
+	}
+	for _, half := range halves {
+		// 独立子查询：被拒收的读取留下的质量状态不影响替代它的两半。
+		if err := loader.queryAndApply(frontierSubqueryContext(ctx), half, apply); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// splitQueryTime 把一次读取在请求网格上对半拆成两个不重叠的时间段：前段 ⌈n/2⌉ 点，
+// 后段沿用原终点（兼容区间的末段终点可以不在网格上）。只有精确网格的区间读取可拆；
+// 即时读取或只剩一个评估点时不能再拆。
+func (loader *timeGraphMatrixLoader) splitQueryTime(ctx context.Context, queryTs *structured.QueryTs) ([2]*structured.QueryTs, bool) {
+	var halves [2]*structured.QueryTs
+	stepSeconds := int64(loader.step / time.Second)
+	if queryTs == nil || loader.start.Equal(loader.end) || !metadata.IsExactTimeGrid(ctx) || stepSeconds <= 0 || loader.step%time.Second != 0 {
+		return halves, false
+	}
+	start, startErr := strconv.ParseInt(queryTs.Start, 10, 64)
+	end, endErr := strconv.ParseInt(queryTs.End, 10, 64)
+	if startErr != nil || endErr != nil || end < start {
+		return halves, false
+	}
+	points := (end-start)/stepSeconds + 1
+	if points < 2 {
+		return halves, false
+	}
+	firstPoints := (points + 1) / 2
+	bounds := [2][2]int64{{start, start + (firstPoints-1)*stepSeconds}, {start + firstPoints*stepSeconds, end}}
+	for i, bound := range bounds {
+		half := *queryTs
+		half.QueryList = make([]*structured.Query, len(queryTs.QueryList))
+		for j, item := range queryTs.QueryList {
+			copied := *item
+			half.QueryList[j] = &copied
+		}
+		half.Start, half.End = strconv.FormatInt(bound[0], 10), strconv.FormatInt(bound[1], 10)
+		halves[i] = &half
+	}
+	return halves, true
 }
 
 func (loader *timeGraphMatrixLoader) addSourceInfo(ctx context.Context, spaceUID string, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher) (queryCount int, err error) {
@@ -888,8 +1019,16 @@ func sameResourcePair(resources []cmdb.Resource, source, target cmdb.Resource) b
 	return (resources[0] == source && resources[1] == target) || (resources[0] == target && resources[1] == source)
 }
 
-// QueryRelationTimeGraph executes validated, normalized relation query inputs.
-func (m *Model) QueryRelationTimeGraph(ctx context.Context, lookBackDelta, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher, sourceExpandInfo cmdb.Matcher) (results []cmdb.PathResourcesResult, err error) {
+// QueryRelationTimeGraph executes validated, normalized relation query inputs
+// and returns the targets reachable along the paths at each timestamp.
+func (m *Model) QueryRelationTimeGraph(ctx context.Context, lookBackDelta, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher, sourceExpandInfo cmdb.Matcher) ([]RelationTarget, error) {
+	results, _, err := m.queryRelationTargets(ctx, lookBackDelta, spaceUID, start, end, step, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
+	return results, err
+}
+
+// queryRelationTargets 同时返回所建时间分桶图的规模（各时刻边数与节点信息数之和），
+// 供区间查询按已建图的规模调整分段。
+func (m *Model) queryRelationTargets(ctx context.Context, lookBackDelta, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher, sourceExpandInfo cmdb.Matcher) (results []RelationTarget, graphPoints int, err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-query-relation")
 	defer span.End(&err)
 	span.Set("look-back-delta", lookBackDelta)
@@ -904,6 +1043,12 @@ func (m *Model) QueryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 	var cancel context.CancelFunc
 	ctx, cancel = withTimeGraphQueryContext(ctx)
 	defer cancel()
+	// 兼容入口与 topology 使用同一单次响应边界：超过边界的读取由取数器拆分重读，
+	// 不只依赖网关的拒收。
+	if metadata.BackendResponseLimit(ctx) <= 0 {
+		ctx = metadata.WithBackendResponseLimit(ctx, timeGraphBackendResponseBytes)
+	}
+	span.Set("backend-response-byte-limit", metadata.BackendResponseLimit(ctx))
 	span.Set("space-uid", spaceUID)
 	span.Set("source-type", sourceType)
 	span.Set("target-types", targetTypes)
@@ -912,10 +1057,14 @@ func (m *Model) QueryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 	span.Set("query-end", end.Unix())
 	span.Set("query-step-seconds", step.Seconds())
 	for _, path := range paths {
+		// 构图前拒绝，避免为答不了的形状付完全部取数。
+		if err := validateRelationTargetPath(path.Steps); err != nil {
+			return nil, 0, err
+		}
 		for index := 1; index < len(path.Steps); index++ {
 			source, target := path.Steps[index-1].ResourceType, path.Steps[index].ResourceType
 			if len(m.timeGraphRelationCandidates(spaceUID, source, target, path.Steps[index])) == 0 {
-				return nil, fmt.Errorf("path relation %s -> %s is not allowed by schema", source, target)
+				return nil, 0, fmt.Errorf("path relation %s -> %s is not allowed by schema", source, target)
 			}
 		}
 	}
@@ -929,24 +1078,21 @@ func (m *Model) QueryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 	tg, err := m.buildTimeGraph(ctx, spaceUID, start, end, step, sourceType, matcher, sourceExpandInfo, rootRelations, relations, lookBackDelta, nil, nil)
 	if err != nil {
 		if timeGraphLegacyCompatibility(ctx) {
-			return nil, err
+			return nil, 0, err
 		}
-		return nil, errors.WithMessage(err, "build time graph")
+		return nil, 0, errors.WithMessage(err, "build time graph")
 	}
 	defer tg.Clean(ctx)
 
-	results = make([]cmdb.PathResourcesResult, 0)
-	pathResults, queryErr := tg.FindRelationPathResources(ctx, sourceType, targetTypes, matcher, paths)
+	results, queryErr := tg.FindRelationTargets(ctx, sourceType, targetTypes, matcher, paths)
 	if queryErr != nil {
-		return nil, errors.WithMessagef(queryErr, "find path from %s", sourceType)
+		return nil, 0, errors.WithMessagef(queryErr, "find targets from %s", sourceType)
 	}
 	if partial := tg.partialTimesCopy(); len(partial) > 0 {
 		reasons := make(map[string]struct{})
 		if status := metadata.GetStatus(ctx); status != nil && status.Code == metadata.QueryTsPartial {
-			for _, reason := range strings.Split(status.Message, ";") {
-				if reason != "" {
-					reasons[reason] = struct{}{}
-				}
+			for _, reason := range splitPartialReasons(status.Message) {
+				reasons[reason] = struct{}{}
 			}
 		}
 		for _, reason := range partial {
@@ -963,32 +1109,17 @@ func (m *Model) QueryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 		sort.Strings(ordered)
 		metadata.SetStatus(ctx, metadata.QueryTsPartial, strings.Join(ordered, ";"))
 	}
-	for _, result := range pathResults {
-		results = append(results, cmdb.PathResourcesResult{
-			Timestamp:  result.Timestamp,
-			TargetType: result.TargetType,
-			Path:       result.Path,
-		})
-	}
 	span.Set("raw-result-count", len(results))
 	uniqueTimestamps := make(map[int64]struct{}, len(results))
 	uniqueTargetTypes := make(map[cmdb.Resource]struct{}, len(results))
-	pathNodeCount := 0
 	for _, result := range results {
 		uniqueTimestamps[result.Timestamp] = struct{}{}
 		uniqueTargetTypes[result.TargetType] = struct{}{}
-		pathNodeCount += len(result.Path)
 	}
 	span.Set("result-timestamp-count", len(uniqueTimestamps))
 	span.Set("result-target-type-count", len(uniqueTargetTypes))
-	span.Set("result-path-node-count", pathNodeCount)
-	sort.SliceStable(results, func(i, j int) bool {
-		if results[i].Timestamp == results[j].Timestamp {
-			return results[i].TargetType < results[j].TargetType
-		}
-		return results[i].Timestamp < results[j].Timestamp
-	})
-	return results, nil
+	// 时间分桶图按时刻计边和节点信息；Clean 在返回值求值后执行。
+	return results, tg.edgeCount + tg.nodeInfoCount, nil
 }
 
 func vectorToMatrix(vector pl.Vector) pl.Matrix {

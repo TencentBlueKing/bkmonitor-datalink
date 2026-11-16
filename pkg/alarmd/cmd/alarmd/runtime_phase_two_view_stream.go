@@ -545,7 +545,7 @@ func (runtime *productionPhaseTwoOwnership) PublishStoredView(ctx context.Contex
 	if len(unique) == 0 {
 		return
 	}
-	records, _, err := runtime.dependencies.Store.ReadAssignments(ctx, unique)
+	records, _, err := runtime.records.readStoredView(ctx, authority, state.RecordRevision, unique)
 	if err != nil {
 		stream.NotePublishFailure(viewstream.PublishFailureAssignmentsUnreadable)
 		report(fmt.Errorf("stored view: read assignments: %w", err))

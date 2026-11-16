@@ -121,7 +121,7 @@ func NewSREReceipts(client redis.Cmdable, key string, now func() time.Time, writ
 // life, as one script rather than a MULTI/EXEC (see redisatomic for why).
 // One key, so it is in one slot on any deployment. ARGV[3] is seconds, as
 // EXPIRE takes them.
-var sreReceiptWrite = redisatomic.New(`
+var sreReceiptWrite = redisatomic.New("list_push_trim_expire", `
 redis.call('LPUSH', KEYS[1], ARGV[1])
 redis.call('LTRIM', KEYS[1], 0, tonumber(ARGV[2]))
 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))

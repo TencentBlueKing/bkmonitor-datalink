@@ -410,6 +410,10 @@ TimeGraph 新旧关系接口选择、完整参数、双格式与失败合同见 
 
 **请求体**: 同结构体查询
 
+`allow_partial_es_results` 是请求体顶层布尔值，默认 `false`。开启时，ES 查询可以返回未超时且有实际成功分片的部分聚合结果，响应携带 `is_partial=true` 和 `status.code = "QUERY_TS_PARTIAL"`，零聚合桶也保留该状态。最终采用的 ES 响应为 `timed_out=true` 时该子查询失败。此选项的 ES 原生参数与完整性条件同原始查询。
+
+跨存储路由、无时间分桶的 `avg` 由各路由的 `sum` 和 `count` 合并计算。若某个 ES 路由的任一查询存在分片失败，该路由不参与合并；其他成功路由的结果仍可返回并标记不完整，所有路由均失败时返回错误。
+
 **响应格式**: 同结构体查询（返回 `PromData` 格式，包含 `result_table_id`）
 
 ### 2.4 原始查询
@@ -421,6 +425,10 @@ TimeGraph 新旧关系接口选择、完整参数、双格式与失败合同见 
 **请求头**: 同结构体查询（需要 `X-Bk-Scope-Space-Uid`）
 
 **请求体**: 同结构体查询
+
+`allow_partial_es_results` 是请求体顶层布尔值，默认 `false`。设为 `true` 时，普通查询、`search_after` 和 ES 批量查询向 ES 传递 `allow_partial_search_results=true`，接纳未超时且至少一个实际执行分片成功的部分分片结果。此时响应携带 `status.code = "QUERY_RAW_PARTIAL"`，`list` 和 `total` 只反映本次可用的结果，零命中也保留该状态。最终采用的 ES 响应为 `timed_out=true` 时该子查询失败，无论失败分片数是否为零。已有受限 missing-mapping fallback 在完整证明空索引并重试成功后，按最终响应确定完整性。该选项与 `exact_total=true` 或 Scroll 互斥。
+
+`search_after` 的 `QUERY_RAW_PARTIAL` 只描述当前页。即使失败的分片在后续页恢复，游标之前缺失的记录也不会自动补回。调用方需要保留跨页的不完整状态；需要完整结果时，应从头重试查询。
 
 `query_list[].exact_total`（bool，默认 `false`）：请求 Elasticsearch 返回精确命中总数（`track_total_hits`）。仅对单个、非聚合、全部路由到 ES 的原始查询生效（不含 `sql`、`scroll`、`collapse`、多查询合并），其他情况直接报错而不是返回看似精确的总数；ES 响应超时、分片失败或 `total.relation` 不为 `eq` 时报错；任一 ES 路由缺少索引前缀时报错（不请求时仍按原逻辑跳过该路由）。满足时响应带 `"total_exact": true`。不设置时请求体与响应与之前一致。
 
@@ -1138,7 +1146,74 @@ TimeGraph 新旧关系接口选择、完整参数、双格式与失败合同见 
 
 **响应**: 文本格式的 TSDB 信息
 
-### 7.7 特性开关
+### 7.7 打印关联关系定义来源
+
+**接口**: `GET /relation_schema_print`
+
+**描述**: 只读，打印关联关系定义在指定 namespace 下的生效结果、每条定义的来源和 Redis 覆盖层状态，不触发重载。内置定义作 `__all__` 的底层，Redis 里的定义作覆盖层，查找顺序为业务 namespace（Redis）→ `__all__`（Redis）→ 内置，同名整条覆盖。Redis 不可用时只有内置一层。
+
+**查询参数**:
+
+| 参数        | 类型   | 必填 | 说明                                         |
+| ----------- | ------ | ---- | -------------------------------------------- |
+| `namespace` | string | 否   | 空间 UID，默认 `__all__`                     |
+| `content`   | bool   | 否   | 是否附带每条定义的内容，默认 `false`         |
+| `format`    | string | 否   | `text`（默认）或 `json`，其他取值返回 400    |
+
+**文本响应**:
+
+- 前几行依次是 provider、namespace、查找顺序、覆盖层状态，以及两类定义按来源的计数。
+- 覆盖层状态那一行格式为 `overlay: loaded|unavailable last_success=… last_failure=… last_reason=… failures: client_missing=… read_failed=… decode_failed=…`。
+- 之后每条定义一行：`名称<TAB>来源<TAB>builtin=same|differs|none`。
+
+**JSON 响应**（`format=json`）：
+
+```json
+{
+  "provider": "redis",
+  "namespace": "bkcc__2",
+  "lookup": ["bkcc__2", "__all__", "builtin"],
+  "overlay": {
+    "state": "loaded",
+    "last_success": "2026-01-01T00:00:00Z",
+    "failures": {"client_missing": 0, "read_failed": 0, "decode_failed": 0}
+  },
+  "resources": [{"name": "pod", "source": "override", "has_builtin": true, "matches_builtin": true}],
+  "relations": [{"name": "node_with_pod", "source": "builtin", "has_builtin": true, "matches_builtin": true}]
+}
+```
+
+- `overlay.last_failure`、`last_reason`、`last_error` 只在出现过失败时返回；`last_error` 是错误原文，只用于诊断。
+- `content=true` 时，每条定义附带 `definition` 字段。
+
+**来源取值**:
+
+| 来源        | 含义                                         |
+| ----------- | -------------------------------------------- |
+| `builtin`   | 内置定义，Redis 没有同名定义                 |
+| `override`  | Redis `__all__` 的同名定义整条覆盖内置       |
+| `extension` | Redis `__all__` 新增，内置没有同名定义       |
+| `namespace` | 业务 namespace 在 Redis 里的定义             |
+
+**与内置是否一致**：`builtin=same`（JSON 里 `matches_builtin=true`）表示与同名内置定义在读方用到的字段上一致，删掉这条 Redis 定义不改变查询；`differs` 表示删掉后会回到内置内容。比较的字段如下：
+- 资源：字段名、是否主键与顺序，缺类型时按内置补齐；
+- 关系：两端、类别、方向、从属标记和 `metric_name`。
+
+**覆盖层状态**：
+- `loaded` 表示至少完成过一次全量加载。之后读取失败时沿用上次快照，并累计失败次数。
+- `unavailable` 表示还没有加载成功过，只有内置一层。
+- 失败原因取值：`client_missing`（没有 Redis 客户端）、`read_failed`（读取失败）、`decode_failed`（某个 namespace 或某条定义无法解码，该 namespace 沿用上次快照）。
+
+**对应指标**（抓取时读当前状态）：
+
+| 指标 | 说明 |
+| --- | --- |
+| `unify_query_relation_schema_definitions{kind,source}` | `__all__` 的生效定义与全部业务 namespace 的定义条数 |
+| `unify_query_relation_schema_overlay_loaded` | 覆盖层已加载为 1，否则为 0 |
+| `unify_query_relation_schema_overlay_last_success_timestamp_seconds` | 最近一次全量加载成功的时间，从未成功为 0 |
+| `unify_query_relation_schema_overlay_failures_total{reason}` | 按原因累计的读取失败次数，Provider 重建时归零 |
+
+### 7.8 特性开关
 
 **接口**: `GET /ff`
 
@@ -1156,7 +1231,7 @@ TimeGraph 新旧关系接口选择、完整参数、双格式与失败合同见 
 
 **响应**: 文本格式的特性开关信息
 
-### 7.8 代理接口
+### 7.9 代理接口
 
 **接口**: `POST /proxy`
 
@@ -1203,7 +1278,7 @@ TimeGraph 新旧关系接口选择、完整参数、双格式与失败合同见 
 }
 ```
 
-### 7.9 Prometheus 指标
+### 7.10 Prometheus 指标
 
 **接口**: `GET /metrics`
 

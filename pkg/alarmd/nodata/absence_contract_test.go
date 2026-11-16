@@ -263,7 +263,7 @@ func wantMemory(t *testing.T, result AbsenceResult, key string, want GroupMemory
 // round, and the whole item is present. The same round read as FULL is the
 // control: there the silent group is absent.
 func TestAbsence_A1_NonFullSlotJudgesOnlyWhatArrived(t *testing.T) {
-	seen, gone := hostGroup(t, "10.0.0.1"), hostGroup(t, "10.0.0.2")
+	seen, gone := hostGroup(t, "192.0.2.1"), hostGroup(t, "192.0.2.2")
 	before := map[string]GroupMemory{
 		// Both were absent: the one that reports again recovers.
 		seen.Key(): {LastSeen: absenceRound1 - 3*absencePeriod, FirstAbsent: absenceRound1 - 2*absencePeriod},
@@ -305,7 +305,7 @@ func TestAbsence_A1_NonFullSlotJudgesOnlyWhatArrived(t *testing.T) {
 // A1 with nothing present: every expected group is UNAVAILABLE and the
 // memory is the input's, untouched.
 func TestAbsence_A1_NonFullSlotWithNothingPresentLeavesMemoryAlone(t *testing.T) {
-	seen, gone := hostGroup(t, "192.0.2.1"), hostGroup(t, "192.0.2.2")
+	seen, gone := hostGroup(t, "198.51.100.1"), hostGroup(t, "198.51.100.2")
 	before := map[string]GroupMemory{
 		seen.Key(): {LastSeen: absenceRound1 - absencePeriod},
 		gone.Key(): {LastSeen: absenceRound1 - 3*absencePeriod, FirstAbsent: absenceRound1 - 2*absencePeriod},
@@ -323,7 +323,7 @@ func TestAbsence_A1_NonFullSlotWithNothingPresentLeavesMemoryAlone(t *testing.T)
 // recovers and is forgotten, as in a FULL round - forgotten without its
 // NORMAL, its alert would stay open with nothing left to close it.
 func TestAbsence_A1_ForeignGroupThatArrivesRecoversAndIsForgotten(t *testing.T) {
-	foreign, gone := hostGroup(t, "192.0.2.1"), hostGroup(t, "192.0.2.2")
+	foreign, gone := hostGroup(t, "198.51.100.1"), hostGroup(t, "198.51.100.2")
 	before := map[string]GroupMemory{foreign.Key(): {FirstAbsent: absenceRound1 - absencePeriod}}
 	input := fullRound(absenceRound1, staticRoster("v1", foreign, gone), groupSet(foreign), copyMemory(before))
 	input.Completeness = execution.CompletenessPartial
@@ -390,7 +390,7 @@ func TestAbsence_A2_WholeItemFirstAbsentIsKeptAcrossRounds(t *testing.T) {
 // not a roster expects it.
 func TestAbsence_A3_NoRosterWithDataRecoversWholeItemAndRecordsTheGroups(t *testing.T) {
 	whole := WholeItemGroup().Key()
-	one, two := hostGroup(t, "10.0.0.1"), hostGroup(t, "10.0.0.2")
+	one, two := hostGroup(t, "192.0.2.1"), hostGroup(t, "192.0.2.2")
 	memory := map[string]GroupMemory{whole: {FirstAbsent: absenceRound1 - absencePeriod}}
 	result := evaluate(t, fullRound(absenceRound1, historyRoster("v1"), groupSet(one, two), memory))
 	wantVerdicts(t, result, map[string]Verdict{whole: VerdictNormal, one.Key(): VerdictNormal, two.Key(): VerdictNormal})
@@ -425,7 +425,7 @@ func TestAbsence_A3_WholeItemPresentIsNormalAndNotRemembered(t *testing.T) {
 // starts FirstAbsent only if it was not already running, so the period count
 // in the event keeps growing instead of resetting every round.
 func TestAbsence_A4_EachRosterGroupIsJudgedOnItsOwn(t *testing.T) {
-	back, newlyGone, stillGone := hostGroup(t, "10.0.0.1"), hostGroup(t, "10.0.0.2"), hostGroup(t, "10.0.0.3")
+	back, newlyGone, stillGone := hostGroup(t, "192.0.2.1"), hostGroup(t, "192.0.2.2"), hostGroup(t, "192.0.2.3")
 	earlier := absenceRound1 - 4*absencePeriod
 	memory := map[string]GroupMemory{
 		back.Key():      {LastSeen: earlier, FirstAbsent: absenceRound1 - absencePeriod},
@@ -449,7 +449,7 @@ func TestAbsence_A4_EachRosterGroupIsJudgedOnItsOwn(t *testing.T) {
 // roster is the target itself, so a static IP that never reported is an
 // anomaly from its first round, with no history required.
 func TestAbsence_A4_NeverSeenTargetIsAnomalyWithoutHistory(t *testing.T) {
-	never := hostGroup(t, "10.0.0.9")
+	never := hostGroup(t, "192.0.2.9")
 	result := evaluate(t, fullRound(absenceRound1, staticRoster("v1", never), nil, map[string]GroupMemory{}))
 	wantVerdicts(t, result, map[string]Verdict{never.Key(): VerdictAnomaly})
 	wantMemory(t, result, never.Key(), GroupMemory{FirstAbsent: absenceRound1})
@@ -460,7 +460,7 @@ func TestAbsence_A4_NeverSeenTargetIsAnomalyWithoutHistory(t *testing.T) {
 // roster accounts for any more (retention proposal, section 4 item 2). Its
 // LastSeen is recorded, which is how the history roster learns about it.
 func TestAbsence_A5_UnexpectedGroupThatReportsIsNormalAndRemembered(t *testing.T) {
-	expected, stranger := hostGroup(t, "10.0.0.1"), hostGroup(t, "10.0.0.7")
+	expected, stranger := hostGroup(t, "192.0.2.1"), hostGroup(t, "192.0.2.7")
 	result := evaluate(t, fullRound(absenceRound1, staticRoster("v1", expected), groupSet(expected, stranger), map[string]GroupMemory{}))
 	wantVerdicts(t, result, map[string]Verdict{
 		expected.Key(): VerdictNormal, stranger.Key(): VerdictNormal, WholeItemGroup().Key(): VerdictNormal,
@@ -473,7 +473,7 @@ func TestAbsence_A5_UnexpectedGroupThatReportsIsNormalAndRemembered(t *testing.T
 // memory, matching Python's recover-and-skip. One that is not expected and
 // out of business does not even enter the memory.
 func TestAbsence_A6_HostOutsideTheBusinessRecoversAndIsForgotten(t *testing.T) {
-	ours, moved, strangerMoved := hostGroup(t, "10.0.0.1"), hostGroup(t, "10.0.0.2"), hostGroup(t, "10.0.0.8")
+	ours, moved, strangerMoved := hostGroup(t, "192.0.2.1"), hostGroup(t, "192.0.2.2"), hostGroup(t, "192.0.2.8")
 	memory := map[string]GroupMemory{moved.Key(): {LastSeen: absenceRound1 - 3*absencePeriod, FirstAbsent: absenceRound1 - 2*absencePeriod}}
 	input := fullRound(absenceRound1, staticRoster("v1", ours, moved), groupSet(strangerMoved), memory)
 	input.OutOfBusiness = map[string]struct{}{moved.Key(): {}, strangerMoved.Key(): {}}
@@ -494,7 +494,7 @@ func TestAbsence_A6_HostOutsideTheBusinessRecoversAndIsForgotten(t *testing.T) {
 // branch: a group in Present is present, whatever the memory says about when
 // it was last seen - including a LastSeen that is later than this round.
 func TestAbsence_A7_PresentIsNormalWhateverTheMemorySays(t *testing.T) {
-	group := hostGroup(t, "10.0.0.1")
+	group := hostGroup(t, "192.0.2.1")
 	for name, memory := range map[string]map[string]GroupMemory{
 		"never seen":         {},
 		"seen long ago":      {group.Key(): {LastSeen: absenceRound1 - 100*absencePeriod}},
@@ -521,7 +521,7 @@ func TestAbsence_A7_PresentIsNormalWhateverTheMemorySays(t *testing.T) {
 // a whole-item group turning into target groups, and a host confirmed gone,
 // must end the old alert correctly.
 func TestAbsence_A8_OpenAbsenceTheRosterDroppedIsClosedOnceAndForgotten(t *testing.T) {
-	kept, removed, quiet := hostGroup(t, "10.0.0.1"), hostGroup(t, "10.0.0.2"), hostGroup(t, "10.0.0.3")
+	kept, removed, quiet := hostGroup(t, "192.0.2.1"), hostGroup(t, "192.0.2.2"), hostGroup(t, "192.0.2.3")
 	first := evaluate(t, fullRound(absenceRound1, staticRoster("v1", kept, removed, quiet), groupSet(quiet), map[string]GroupMemory{}))
 	wantVerdicts(t, first, map[string]Verdict{
 		kept.Key(): VerdictAnomaly, removed.Key(): VerdictAnomaly, quiet.Key(): VerdictNormal, WholeItemGroup().Key(): VerdictNormal,
@@ -558,7 +558,7 @@ func TestAbsence_A8_WholeItemAbsenceIsClosedWhenATargetRosterArrives(t *testing.
 	wantVerdicts(t, first, map[string]Verdict{whole: VerdictAnomaly})
 	wantMemory(t, first, whole, GroupMemory{FirstAbsent: absenceRound1})
 
-	host := hostGroup(t, "10.0.0.1")
+	host := hostGroup(t, "192.0.2.1")
 	second := evaluate(t, fullRound(absenceRound2, staticRoster("v1", host), nil, first.Memory))
 	wantVerdicts(t, second, map[string]Verdict{whole: VerdictNormal, host.Key(): VerdictAnomaly})
 	if entry, ok := second.Memory[whole]; ok {
@@ -577,7 +577,7 @@ func TestAbsence_A8_WholeItemAbsenceIsClosedWhenATargetRosterArrives(t *testing.
 // untouched, until the roster is rebuilt (A8). Python keeps such a group in
 // its dimension cache for as long as the item is checked.
 func TestAbsence_A9_LongAbsentHistoryGroupIsStillExpected(t *testing.T) {
-	old := hostGroup(t, "10.0.0.1")
+	old := hostGroup(t, "192.0.2.1")
 	tenDays := int64(10 * 24 * 60 * 60)
 	memory := map[string]GroupMemory{old.Key(): {LastSeen: absenceRound1 - tenDays, FirstAbsent: absenceRound1 - tenDays + absencePeriod}}
 	result := evaluate(t, fullRound(absenceRound1, historyRoster("v1", old), nil, memory))
@@ -590,7 +590,7 @@ func TestAbsence_A9_LongAbsentHistoryGroupIsStillExpected(t *testing.T) {
 // FULL round it is missing from. The group that was in the partial answer is
 // stamped seen by it.
 func TestAbsence_UnavailableRoundDoesNotCountAsAbsence(t *testing.T) {
-	seen, gone := hostGroup(t, "10.0.0.1"), hostGroup(t, "10.0.0.2")
+	seen, gone := hostGroup(t, "192.0.2.1"), hostGroup(t, "192.0.2.2")
 	partial := fullRound(absenceRound1, staticRoster("v1", seen, gone), groupSet(seen), map[string]GroupMemory{})
 	partial.Completeness = execution.CompletenessPartial
 	first := evaluate(t, partial)
@@ -607,7 +607,7 @@ func TestAbsence_UnavailableRoundDoesNotCountAsAbsence(t *testing.T) {
 // disappearance, not at the first, because the event text counts consecutive
 // periods and the return broke the run.
 func TestAbsence_ReturnResetsTheAbsenceClock(t *testing.T) {
-	group := hostGroup(t, "10.0.0.1")
+	group := hostGroup(t, "192.0.2.1")
 	roster := staticRoster("v1", group)
 	first := evaluate(t, fullRound(absenceRound1, roster, nil, map[string]GroupMemory{}))
 	wantMemory(t, first, group.Key(), GroupMemory{FirstAbsent: absenceRound1})
@@ -621,7 +621,7 @@ func TestAbsence_ReturnResetsTheAbsenceClock(t *testing.T) {
 // Dropped is the projection's count of series that could not be placed in a
 // group; the evaluation reports it beside its own counts without judging it.
 func TestAbsence_DroppedSeriesPassThroughToTheFacts(t *testing.T) {
-	group := hostGroup(t, "10.0.0.1")
+	group := hostGroup(t, "192.0.2.1")
 	input := fullRound(absenceRound1, staticRoster("v1", group), groupSet(group), map[string]GroupMemory{})
 	input.Dropped = 7
 	result := evaluate(t, input)

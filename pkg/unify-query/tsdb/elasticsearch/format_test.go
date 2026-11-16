@@ -31,6 +31,22 @@ func TestFormatFactory_Query(t *testing.T) {
 		conditions metadata.AllConditions
 		expected   string
 	}{
+		"大于零保留字符串条件值": {
+			conditions: metadata.AllConditions{{{DimensionName: "key", Operator: structured.ConditionGt, Value: []string{"0"}}}},
+			expected:   `{"query":{"range":{"key":{"gt":"0"}}}}`,
+		},
+		"大于等于零包含边界": {
+			conditions: metadata.AllConditions{{{DimensionName: "key", Operator: structured.ConditionGte, Value: []string{"0"}}}},
+			expected:   `{"query":{"range":{"key":{"gte":"0"}}}}`,
+		},
+		"小于零排除边界": {
+			conditions: metadata.AllConditions{{{DimensionName: "key", Operator: structured.ConditionLt, Value: []string{"0"}}}},
+			expected:   `{"query":{"range":{"key":{"lt":"0"}}}}`,
+		},
+		"小于等于零包含边界": {
+			conditions: metadata.AllConditions{{{DimensionName: "key", Operator: structured.ConditionLte, Value: []string{"0"}}}},
+			expected:   `{"query":{"range":{"key":{"lte":"0"}}}}`,
+		},
 		"query 1": {
 			conditions: metadata.AllConditions{
 				{
@@ -150,7 +166,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"bool":{"should":[{"bool":{"must":[{"bool":{"should":[{"wildcard":{"key":{"value":"val-1"}}},{"wildcard":{"key":{"value":"val-2"}}}]}},{"bool":{"should":[{"wildcard":{"key":{"value":"val-3"}}},{"wildcard":{"key":{"value":"val-4"}}}]}}]}},{"bool":{"must":[{"bool":{"must_not":[{"match_phrase":{"key":{"query":"val-1"}}},{"match_phrase":{"key":{"query":"val-2"}}}]}},{"range":{"key":{"from":"9","include_lower":true,"include_upper":true,"to":null}}}]}}]}}}`,
+			expected: `{"query":{"bool":{"should":[{"bool":{"must":[{"bool":{"should":[{"wildcard":{"key":{"value":"val-1"}}},{"wildcard":{"key":{"value":"val-2"}}}]}},{"bool":{"should":[{"wildcard":{"key":{"value":"val-3"}}},{"wildcard":{"key":{"value":"val-4"}}}]}}]}},{"bool":{"must":[{"bool":{"must_not":[{"match_phrase":{"key":{"query":"val-1"}}},{"match_phrase":{"key":{"query":"val-2"}}}]}},{"range":{"key":{"gte":"9"}}}]}}]}}}`,
 		},
 		"query 5": {
 			conditions: metadata.AllConditions{
@@ -520,7 +536,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":[{"match_phrase":{"keyword":{"query":"value1"}}},{"match_phrase":{"keyword":{"query":"value2"}}}]}},{"match_phrase":{"text":{"query":"partial"}}},{"nested":{"path":"nested1","query":{"bool":{"must":[{"range":{"nested1.age":{"from":"18","include_lower":true,"include_upper":true,"to":null}}},{"exists":{"field":"nested1.active"}}]}}}}]}}}`,
+			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":[{"match_phrase":{"keyword":{"query":"value1"}}},{"match_phrase":{"keyword":{"query":"value2"}}}]}},{"match_phrase":{"text":{"query":"partial"}}},{"nested":{"path":"nested1","query":{"bool":{"must":[{"range":{"nested1.age":{"gte":"18"}}},{"exists":{"field":"nested1.active"}}]}}}}]}}}`,
 		},
 		"nested + must_not": {
 			conditions: metadata.AllConditions{
@@ -679,7 +695,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":null,"include_lower":true,"include_upper":true,"to":"1754466569000"}}}}`,
+			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","lte":"1754466569000"}}}}`,
 		},
 		"dtEventTimeStamp's value is milli unix": {
 			conditions: metadata.AllConditions{
@@ -691,7 +707,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":null,"include_lower":true,"include_upper":true,"to":"1754466569000"}}}}`,
+			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","lte":"1754466569000"}}}}`,
 		},
 		"dtEventTimeStamp's value is unix": {
 			conditions: metadata.AllConditions{
@@ -703,7 +719,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":null,"include_lower":true,"include_upper":true,"to":"1754466569000"}}}}`,
+			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","lte":"1754466569000"}}}}`,
 		},
 		"dtEventTimeStamp's value is error unix": {
 			conditions: metadata.AllConditions{
@@ -715,7 +731,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"range":{"dtEventTimeStamp":{"from":null,"include_lower":true,"include_upper":true,"to":"175446656a"}}}}`,
+			expected: `{"query":{"range":{"dtEventTimeStamp":{"lte":"175446656a"}}}}`,
 		},
 		"dtEventTimeStamp's value is string": {
 			conditions: metadata.AllConditions{
@@ -727,7 +743,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":null,"include_lower":true,"include_upper":true,"to":"1754466569000"}}}}`,
+			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","lte":"1754466569000"}}}}`,
 		},
 		"dtEventTimeNanoStamp's value is string": {
 			conditions: metadata.AllConditions{
@@ -739,7 +755,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"range":{"dtEventTimeNanoStamp":{"format":"strict_date_optional_time_nanos","from":null,"include_lower":true,"include_upper":true,"to":"2025-08-06T07:49:29.000000000Z"}}}}`,
+			expected: `{"query":{"range":{"dtEventTimeNanoStamp":{"format":"strict_date_optional_time_nanos","lte":"2025-08-06T07:49:29.000000000Z"}}}}`,
 		},
 		"keyword trace IDs use one terms query": {
 			conditions: metadata.AllConditions{{{
@@ -1078,8 +1094,37 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 		aggregates   metadata.Aggregates
 		timeOffset   time.Duration
 		endExclusive bool
+		queryFormat  string
+		wantError    bool
 		expected     string
 	}{
+		"无效时间字段返回错误": {
+			timeField: metadata.TimeField{Name: "time", Type: "keyword"},
+			wantError: true,
+		},
+		"切换路由排他上界保留纳秒精度": {
+			timeField:    metadata.TimeField{Name: "event_time", Type: TimeFieldTypeInt, Unit: function.Nanosecond},
+			timeOffset:   time.Nanosecond,
+			endExclusive: true,
+			expected:     `{"query":{"range":{"event_time":{"gte":1721024820000000001,"lt":1721046420000000001}}}}`,
+		},
+		"用户终点包含且保留纳秒精度": {
+			timeField:  metadata.TimeField{Name: "event_time", Type: TimeFieldTypeInt, Unit: function.Nanosecond},
+			timeOffset: time.Nanosecond,
+			expected:   `{"query":{"range":{"event_time":{"gte":1721024820000000001,"lte":1721046420000000001}}}}`,
+		},
+		"日期排他上界保留秒格式": {
+			timeField:    metadata.TimeField{Name: "time", Type: TimeFieldTypeTime, Unit: function.Second},
+			endExclusive: true,
+			expected:     `{"query":{"range":{"time":{"format":"epoch_second","gte":1721024820,"lt":1721046420}}}}`,
+		},
+		"日期排他上界保留毫秒格式": {
+			timeField:    metadata.TimeField{Name: "time", Type: TimeFieldTypeTime, Unit: function.Millisecond},
+			timeOffset:   time.Millisecond,
+			queryFormat:  function.Millisecond,
+			endExclusive: true,
+			expected:     `{"query":{"range":{"time":{"format":"epoch_millis","gte":1721024820001,"lt":1721046420001}}}}`,
+		},
 		"切换路由排他上界保留微秒精度": {
 			timeField: metadata.TimeField{
 				Name: "event_time",
@@ -1088,7 +1133,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 			},
 			timeOffset:   time.Microsecond,
 			endExclusive: true,
-			expected:     `{"query":{"range":{"event_time":{"from":1721024820000001,"include_lower":true,"include_upper":false,"to":1721046420000001}}}}`,
+			expected:     `{"query":{"range":{"event_time":{"gte":1721024820000001,"lt":1721046420000001}}}}`,
 		},
 		"用户终点包含且保留微秒精度": {
 			timeField: metadata.TimeField{
@@ -1097,7 +1142,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 				Unit: function.Microsecond,
 			},
 			timeOffset: time.Microsecond,
-			expected:   `{"query":{"range":{"event_time":{"from":1721024820000001,"include_lower":true,"include_upper":true,"to":1721046420000001}}}}`,
+			expected:   `{"query":{"range":{"event_time":{"gte":1721024820000001,"lte":1721046420000001}}}}`,
 		},
 		"second date field": {
 			timeField: metadata.TimeField{
@@ -1105,7 +1150,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 				Type: TimeFieldTypeTime,
 				Unit: function.Second,
 			},
-			expected: `{"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"query":{"range":{"time":{"format":"epoch_second","gte":1721024820,"lte":1721046420}}}}`,
 		},
 		"second time field": {
 			timeField: metadata.TimeField{
@@ -1113,7 +1158,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 				Type: TimeFieldTypeTime,
 				Unit: function.Second,
 			},
-			expected: `{"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"query":{"range":{"time":{"format":"epoch_second","gte":1721024820,"lte":1721046420}}}}`,
 		},
 		"int time field": {
 			timeField: metadata.TimeField{
@@ -1121,7 +1166,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 				Type: TimeFieldTypeInt,
 				Unit: function.Second,
 			},
-			expected: `{"query":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"query":{"range":{"time":{"gte":1721024820,"lte":1721046420}}}}`,
 		},
 		"aggregate 1d": {
 			timeField: metadata.TimeField{
@@ -1137,7 +1182,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/Shanghai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1d","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1d","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","gte":1721024820,"lte":1721046420}}}}`,
 		},
 		"aggregate 1h": {
 			timeField: metadata.TimeField{
@@ -1153,7 +1198,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/Shanghai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1h","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1h","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","gte":1721024820,"lte":1721046420}}}}`,
 		},
 		"aggregate copy preserves without with window": {
 			timeField: metadata.TimeField{
@@ -1170,7 +1215,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/Shanghai",
 				},
 			}.Copy(),
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","gte":1721024820,"lte":1721046420}}}}`,
 		},
 		"aggregate 1h2m": {
 			timeField: metadata.TimeField{
@@ -1186,7 +1231,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/Shanghai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"62m","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"62m","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","gte":1721024820,"lte":1721046420}}}}`,
 		},
 		"aggregate 1h12s": {
 			timeField: metadata.TimeField{
@@ -1202,7 +1247,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/Shanghai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"3612s","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"3612s","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","gte":1721024820,"lte":1721046420}}}}`,
 		},
 		"aggregate second time field": {
 			timeField: metadata.TimeField{
@@ -1218,7 +1263,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/Shanghai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1m","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1m","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","gte":1721024820,"lte":1721046420}}}}`,
 		},
 		"aggregate second int field": {
 			timeField: metadata.TimeField{
@@ -1234,7 +1279,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/Shanghai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"60ms","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"60ms","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"gte":1721024820,"lte":1721046420}}}}`,
 		},
 		"aggregate millisecond int field": {
 			timeField: metadata.TimeField{
@@ -1250,7 +1295,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/Shanghai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"dtEventTime":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420000,"min":1721024820000},"field":"dtEventTime","interval":"1m","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"dtEventTime":{"from":1721024820000,"include_lower":true,"include_upper":true,"to":1721046420000}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"dtEventTime":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420000,"min":1721024820000},"field":"dtEventTime","interval":"1m","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"dtEventTime":{"gte":1721024820000,"lte":1721046420000}}}}`,
 		},
 		"aggregate millisecond time field": {
 			timeField: metadata.TimeField{
@@ -1266,19 +1311,28 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/Shanghai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"dtEventTime":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420000,"min":1721024820000},"field":"dtEventTime","interval":"1m","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"dtEventTime":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"dtEventTime":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420000,"min":1721024820000},"field":"dtEventTime","interval":"1m","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"dtEventTime":{"format":"epoch_second","gte":1721024820,"lte":1721046420}}}}`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
+			queryFormat := timeFormat
+			if c.queryFormat != "" {
+				queryFormat = c.queryFormat
+			}
 			fact := NewFormatFactory(ctx).
-				WithQuery("value", c.timeField, start.Add(c.timeOffset), end.Add(c.timeOffset), timeFormat, 0).
+				WithQuery("value", c.timeField, start.Add(c.timeOffset), end.Add(c.timeOffset), queryFormat, 0).
 				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 
 			ss := elastic.NewSearchSource()
 			rangeQuery, err := fact.RangeQuery()
 			if c.endExclusive {
 				rangeQuery, err = fact.rangeQuery(true)
+			}
+			if c.wantError {
+				assert.Error(t, err)
+				assert.Nil(t, rangeQuery)
+				return
 			}
 			assert.Nil(t, err)
 			ss.Query(rangeQuery)
@@ -1294,6 +1348,11 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 			bodyJson, _ := json.Marshal(body)
 			bodyString := string(bodyJson)
 			assert.JSONEq(t, c.expected, bodyString)
+			if c.timeField.Unit == function.Nanosecond {
+				// JSONEq 会把数字转为 float64；额外检查发送的整数文本。
+				assert.Contains(t, bodyString, "1721024820000000001")
+				assert.Contains(t, bodyString, "1721046420000000001")
+			}
 		})
 	}
 }
@@ -1486,10 +1545,9 @@ func TestBuildQuery(t *testing.T) {
 			"filter": {
 				"range": {
 					"time": {
-						"from": 1721024820,
-						"include_lower": true,
-						"include_upper": true,
-						"to": 1721046420
+						"format": "epoch_second",
+						"gte": 1721024820,
+						"lte": 1721046420
 					}
 				}
 			}
@@ -1556,10 +1614,9 @@ func TestBuildQuery(t *testing.T) {
 			"filter": {
 				"range": {
 					"time": {
-						"from": 1721024820,
-						"include_lower": true,
-						"include_upper": true,
-						"to": 1721046420
+						"format": "epoch_second",
+						"gte": 1721024820,
+						"lte": 1721046420
 					}
 				}
 			}
@@ -1575,13 +1632,9 @@ func TestBuildQuery(t *testing.T) {
 				WithQuery("value", c.timeField, start, end, timeFormat, 0).
 				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 
-			filterQueries := []elastic.Query{
-				elastic.NewRangeQuery(c.timeField.Name).
-					From(start.Unix()).
-					To(end.Unix()).
-					IncludeLower(true).
-					IncludeUpper(true),
-			}
+			rangeQuery, err := fact.RangeQuery()
+			assert.NoError(t, err)
+			filterQueries := []elastic.Query{rangeQuery}
 
 			ss := elastic.NewSearchSource()
 			esQuery := elastic.NewBoolQuery().Filter(filterQueries...)

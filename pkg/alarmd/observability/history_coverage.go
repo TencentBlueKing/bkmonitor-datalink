@@ -44,6 +44,12 @@ type HistoryCoverageFacts struct {
 	// and because a reading that carries them names its own mechanism.
 	Resumed     uint32 `json:"resumed,omitempty"`
 	Constrained uint32 `json:"constrained,omitempty"`
+	// Superseded is the third such count: series not evaluated because their
+	// State was a later Slot's. Nothing was decided for them this round, so
+	// they carry no Level outcome either; they are counted so a round that
+	// skipped most of its object does not read as a small one, and so the
+	// store having held a later write is on the line that commits the round.
+	Superseded uint32 `json:"superseded,omitempty"`
 	// Empty is how many of those held no valid position at all. Separate from
 	// Short because zero points and few points are different situations that
 	// report the same reason: few points is a series not yet old enough, no
@@ -256,7 +262,7 @@ func (f HistoryCoverageFacts) reportsNothing() bool {
 		f.Unusable == 0 && f.UnusableReason == "" &&
 		len(f.Windows) == 0 && f.End == 0 && f.WindowStart == 0 &&
 		len(f.MissingMinutes) == 0 && !f.MissingMinutesTruncated && f.ShortUnusable == 0 &&
-		f.Resumed == 0 && f.Constrained == 0
+		f.Resumed == 0 && f.Constrained == 0 && f.Superseded == 0
 }
 
 // summarisedNothing says whether the set summarised no window. Distinct from

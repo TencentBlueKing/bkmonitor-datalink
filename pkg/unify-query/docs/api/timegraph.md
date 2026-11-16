@@ -23,9 +23,11 @@ Monitor 按业务查询名单直接选择旧 `/api/v1/relation/multi_resource`�
 
 UQ 按 URL 固定选择引擎。v1beta3 的查询错误直接返回调用方。定义缓存通过 Pub/Sub 和周期对账更新；周期对账以完整快照替换缓存，并通知发生变化的 namespace，补偿断线期间漏掉的更新和删除。
 
-兼容目标查询在普通模式下也保留全部简单候选路径，按跳数从短到长、同长按资源路径字典顺序尝试，返回首条有数据的路径；`path_resource` 保持旧连续片段语义。候选顺序与旧入口相同，但下表列出的结果差异会改变首条命中的路径，例如短路径的目标缺 info 时，旧入口改走更长的路径，兼容入口直接返回短路径，因此响应的 `path` 不保证与旧入口相同；目标为空时 `path` 只作参考。候选枚举和执行共用查询期限，实际资源超限返回错误。这里的兼容语义独立于 topology 的显式 `max_hops` 和路径资源接口的搜索上限。
+兼容目标查询在普通模式下也保留全部简单候选路径，按跳数从短到长、同长按资源路径字典顺序尝试，返回首条有数据的路径；`path_resource` 保持旧连续片段语义。候选顺序与旧入口相同，但下表列出的结果差异会改变首条命中的路径，例如短路径的目标缺 info 时，旧入口改走更长的路径，兼容入口直接返回短路径，因此响应的 `path` 不保证与旧入口相同；目标为空时 `path` 只作参考。候选枚举和执行共用查询期限；目标数和图规模不设上限，不截断结果。这里的兼容语义独立于 topology 的显式 `max_hops` 和路径资源接口的搜索上限。
 
-兼容查询逐跳读取。下一跳的实体不超过 128 个时按完整身份分批查询；超过后改为一次读取，取值不超过 64 个的主键字段收窄到取值列表，再按身份和时间过滤结果，所以读取方式不影响结果。这次读取的响应上限复用 `cmdb.v1beta3.max_shared_topology_backend_bytes`，超限时退回分批。
+兼容查询逐跳读取。下一跳的实体不超过 128 个时按完整身份分批查询；超过后改为一次读取，取值不超过 64 个的主键字段收窄到取值列表，再按身份和时间过滤结果，所以读取方式不影响结果。兼容入口与 topology 使用同一单次响应分批边界 16 MiB（程序常量，不是能力上限）：宽读取超过时退回按身份分批，分批超过时按身份对半拆分，单个身份再把这次读取在网格上按时间对半重读，直到单个评估点。兼容范围查询按自适应段读取网格，段只约束时间分桶图的规模。单个评估点仍过大时返回 `max_response_bytes`，且不再尝试其他候选路径，避免用另一条路径的答案代替首条命中。
+
+兼容入口只按原始输入规格拒绝：请求体内置 16 MiB（`max_relation_request_bytes`）、批次 10000 条（`max_relation_queries`），范围查询另有 11000 个评估点（`max_range_points`）。请求体或批次超限时整个请求返回 400，`message` 带 `max_relation_request_bytes` 或 `max_relation_queries`；点数超限按单项 400 返回。兼容入口的批次规格大于 topology，调用方按业务成批提交的目标查询不受 topology 批次 16 条的约束。
 
 兼容即时查询省略 `look_back_delta` 时沿用旧裸选择器的窗口，即查询引擎默认回看（内置 `5m`），已迁走或已消失的关系不再返回；显式传值时按传入窗口观测。兼容范围查询每个时间桶按 `step` 观测，只校验 `look_back_delta` 的格式。两者都独立于 topology 省略时的配置值（内置 `24h`）。
 
@@ -43,7 +45,6 @@ UQ 按 URL 固定选择引擎。v1beta3 的查询错误直接返回调用方。�
 | 范围查询起止时间颠倒 | 200，结果取决于存储 | 逐项 400 |
 | 同一序列被重复上报，旧语句连接失败 | 该路径失败。其他候选路径没有命中时 200 空结果，全部失败时逐项 400 | 分开读取边和 info，正常返回目标 |
 | 参数错误 | 逐项 400 | 逐项 400，`message` 文案不同，调用方不应解析 |
-| 单桶目标数或图规模超过执行预算 | 无上限 | 逐项报错，不静默截断 |
 | 候选路径的语句部分引用有存储绑定、部分没有 | 这条候选路径在发出前失败（`VM direct query has no storage binding`），按上面的候选路径失败规则处理；全部引用都没有绑定时不报这个错 | 缺绑定的跳按无数据处理并记为不完整，继续尝试其他候选路径，仍可能返回目标 |
 | 结果是否完整 | 关系引擎不汇总：VM 适配器在 trace 和请求状态里留下存储覆盖与后端的不完整标记，但关系引擎不读取；路由指标里的 `partial` 表示部分候选路径失败 | 汇总每跳后端的不完整标记、存储覆盖和缺绑定的跳，写入 trace 和 `cmdb_relation_route_total{result="partial"}`；响应格式不变。两边的 `partial` 口径不同，不能直接比较 |
 
@@ -59,29 +60,51 @@ UQ 按 URL 固定选择引擎。v1beta3 的查询错误直接返回调用方。�
 | 字段 | 必填、默认与组合规则 |
 | --- | --- |
 | query_list | 有序数组；省略或空数组得到空 data。内置最大 16 项 |
-| source_type | 两种 topology 接口均必填，使用实际 Schema 的资源类型 |
-| source_info | 字符串维度映射。完整主键定位一个身份；部分或空身份可能匹配多个根。身份字段见资源目录 |
-| source_expand_info | 显式根属性条件，按帧筛根；只接受 Schema 已定义字段。可用主键补全身份，与 source_info 同键不同值会失败；非主键不会覆盖身份，也不限制邻域属性 |
+| sources | 必填，1–20 个根选择器，超过 20 个逐项 400（原因 `max_topology_sources`）。每帧的根是命中任一选择器的节点的并集，跳数从最近的根起算 |
+| sources[].source_type | 必填，使用实际 Schema 的资源类型 |
+| sources[].source_info | 字符串维度映射。完整主键定位一个身份；部分或空身份可能匹配多个根。身份字段见资源目录 |
+| sources[].source_expand_info | 显式根属性条件，按帧筛**本选择器**的根；只接受 Schema 已定义字段。可用主键补全身份，与同一选择器的 source_info 同键不同值会失败；非主键不会覆盖身份，也不限制邻域属性和其他选择器 |
 | timestamp | topology 必填、非零；不得同时传 start_time/end_time |
 | start_time、end_time | topology_range 必须同时提供且非零；不得传 timestamp；结束点包含在内 |
 | step | range 正整秒 Go duration，省略为 `1m`；end-start 必须整除 step。单点接口不使用该字段，响应 step 为 `0s` |
 | look_back_delta | 正 Go duration，省略用配置值（内置 `24h`）。与 step 独立 |
-| max_hops | 省略或 0 使用配置默认值（内置 2），负数拒绝。配置上限内置 6；超限拒绝，不静默缩小 H |
+| max_hops | 省略或 0 使用配置默认值（内置 2），负数拒绝。配置上限内置 10；超限拒绝，不静默缩小 H |
 | allowed_categories | 关系类别白名单：通常 static、dynamic。空为不限，未知值匹配不到关系 |
 | allowed_relation_types | 精确关系名白名单，与类别范围取交集；空为不限，未知名匹配不到关系，不自动转换别名 |
-| dynamic_relation_direction | both（默认）、outbound、inbound。控制定向关系遍历；非定向静态关系仍可双向遍历 |
-| target_types | **遍历后**保留这些类型及所有可达的 source_type 节点。删除其他类型及其关联边；不会把中间节点折叠为新边。空为保留全部可达类型 |
+| relation_groups | 关系组白名单，由 Schema 推导：`BELONG_TO` 是置了 `is_belongs_to` 的静态关系，`SERVICE_CALL` 是动态关系；其余静态关系不属于任何组。与类别、关系名白名单取交集；空为不限，其他取值逐项返回 400 并报出该取值 |
+| direction | both（默认）、out、in。out 沿动态关系从调用方到被调方、沿归属关系从子到父；in 相反。其余静态关系没有方向，始终双向遍历 |
+| target_types | **遍历后**保留这些类型及全部选择器 source_type 的可达节点。删除其他类型及其关联边；不会把中间节点折叠为新边。空为保留全部可达类型 |
 | response_format | 单项选择 snapshots（省略/空时默认）或 compact-v1；同批次允许混用 |
 
 时间输入小于 `1e12` 按 Unix 秒解释，否则按 Unix 毫秒解释；必须对应整秒，不接受负数或亚秒精度。所有图响应 start_time/end_time/timestamp/timestamps 均为**毫秒**。range 点数为 `(end-start)/step+1`；上限内置 60，配置可降低。超限拒绝，不更改 step 或丢帧。
 
 关系按每个评估点的 `count_over_time` 回看窗口观测判活。窗口内看见多个关系不等价于证明它们在某一真实时刻同时存在。输出为在每帧内 H 跳可达节点的诱导边；不因跨 namespace 而隐式删边。
 
+归属关系（`is_belongs_to`）的 from 是子、to 是父，例如 pod → node、replicaset → deployment、set → business；关系名和指标名按两端类型的字母序生成，与 from/to 的顺序无关。输出时一条物理边只出一次，与遍历方向无关：归属关系每对节点只出一条子 → 父的边，动态关系每条调用只出一条调用方 → 被调用方的边，方向标签都是 `outbound`；非归属的静态关系没有方向，每对节点仍输出两条边（两个视图各一条）。
+
+多个选择器时各选择器的根按帧取并集，各自的 source_expand_info 只筛自己的根。全部选择器的身份字段都在主键内时，首跳在同一关系、同一端上把各选择器的条件写成一个 OR 查询读取，之后逐跳读取到达的节点；任一选择器不满足时，整项改为读取候选关系的整个分量，答案相同、读取更多，计入 `unify_query_cmdb_topology_fetch_fallback_total{reason="selector_not_eligible"}`。
+
+查询项不再接受顶层的 `source_type`、`source_info`、`source_expand_info` 和 `dynamic_relation_direction`；带这些字段的请求整体返回 400，并给出替换后的字段名。
+
 根必须出现在关系端点中；只有 info、没有关系的孤立实体不会凭空进入拓扑。默认图仅保证已观测关系及其现有属性，**不能把缺少可选属性解释为属性值为空，也不保证总是额外读取 info 指标**。显式属性选根或按需详情应明确查询 info 条件；本页详情样例重复一个相同的主键条件以触发 source info 读取。邻居不会被根的 version 条件过滤。历史属性是所选窗口的观测值，外部 CMDB 当前详情不可冒充历史值。
+
+### 时间窗映射
+
+调用方以“记录与窗口 [S, E) 相交即存在”为语义、并在整窗出现过的边构成的图上游走时，两种映射都能用现有接口表达：
+
+| | 整窗一帧（默认） | 分段并集（可选） |
+| --- | --- | --- |
+| 参数 | `topology`：`timestamp = E`，`look_back_delta = E − S` | `topology_range`：`start_time = S + s`，`end_time = E`，`step = s = (E − S)/K`（整秒，K ≤ 60），`look_back_delta = s` |
+| 帧 | 1 帧，覆盖 (S, E] | K 帧，第 k 帧覆盖 (S + (k−1)s, S + ks]，并集覆盖 (S, E] |
+| 可达 | 在整窗出现过的边构成的图上 H 跳可达 | 在某一段内 H 跳可达，路径上的边在同一段内出现过；结果包含于整窗一帧 |
+| 读取量 | 每条序列 1 个点 | 每条序列 K 个点，K = 60 时约为整窗一帧的八倍 |
+| 属性 | 一帧内同一节点有多个属性值时取字典序较大的值，**不是窗口内最晚的值** | 每帧各自取值，最后一帧即最晚一段的值 |
+
+窗口内属性变过时（例如容器换了版本），整窗一帧给出的属性可能不是最晚状态；需要最晚状态时，另用只覆盖最后一段的读取取属性，或使用分段并集的最后一帧。窗口按左开右闭计算，与半开区间 [S, E) 的差别只在恰好落在 S、E 上的样本。时间和 step 都是整秒，毫秒输入需由调用方先取整；分段并集还要求 E − S 能被 K 秒整除。窗口内没有数据时返回空帧，不报错，时间覆盖是否完整由调用方判断。
 
 ### 资源与期限
 
-查询按实际活跃结构预约内存，内置共享预约总额 4 GiB、内存余量 512 MiB、执行槽 8、等待队列容量同执行槽上限；请求体内置 1 MiB、编码输出 64 MiB、后端字节上限 16 MiB。配置键和阶段计量见[资源与输出说明](../timegraph-output-optimization.md)。排队开始即使用同一个内部期限（内置 60 秒），较短的父期限优先；运行中资源增长失败立即拒绝，不等待内存而占住执行槽。后端与 HTTP 期限继续生效。
+请求只按原始输入规格拒绝：请求体内置 1 MiB、批次 16 条、网格 60 点、跳数上限 10。构图规模、内存估算、编码字节和排队人数都不是拒绝理由：单次后端响应以 16 MiB 为分批边界，超过时先按身份、再按时间对半拆分重读，直到单个评估点；响应逐项编码，编码完一项立即写出并释放，snapshots 逐帧构造并编码，不同时物化全部帧；实例资源按部署规格配置。执行槽内置 8，槽满时请求按到达顺序等待，队列不设长度。排队开始即使用同一个内部期限（内置 60 秒），较短的父期限优先；后端与 HTTP 期限继续生效。配置键见[资源与输出说明](../timegraph-output-optimization.md)。
 
 ## 按场景运行
 
@@ -121,9 +144,11 @@ const response = await queryRelations({
   signal: abortController.signal,
   queryList: [{
     start_time: 1700000000, end_time: 1700000120, step: '1m',
-    source_type: 'container',
-    source_info: { bcs_cluster_id: 'example-cluster', namespace: 'demo' },
-    source_expand_info: { version: 'v2' },
+    sources: [{
+      source_type: 'container',
+      source_info: { bcs_cluster_id: 'example-cluster', namespace: 'demo' },
+      source_expand_info: { version: 'v2' }
+    }],
     max_hops: 1, look_back_delta: '5m',
     allowed_relation_types: ['container_with_pod'], response_format: 'compact-v1'
   }]
@@ -166,29 +191,30 @@ compact 版本为 `version:1`；timestamps 是整份网格，节点/边按属性
 | 无匹配根/无关系观测 | 200 / 200 | 保留空时间帧，partial=false；不要当执行失败 |
 | info 有路由但属性条件无命中 | 200 / 200 | 完整空帧，partial=false；不能借别的根补答案 |
 | 显式根属性查询缺 info 路由 | 200 / 200 | 空帧且 partial=true、source_info_no_route；不能当确认无实体 |
-| 所需关系缺物理路由 | 200 / 400 | 此项无可用图；message 标识 required relation has no physical query route，其他成功项仍可用 |
+| 取数时遇到的缺路由关系 | 200 / 200 | 保留其他关系取得的图；所有帧 partial=true，partial_reason 含 relation_no_physical_route:<指标>，不宣称完整。实际读取的关系都缺路由时为空帧加同样标记 |
 | 后端 partial | 200 / 200 | 保留已有图并标记对应帧 backend_partial；不宣称完整 |
+| 响应缺了请求的存储 | 200 / 200 | 保留已有图，对应帧 partial_reason 为 `vm_storage_coverage_mismatch:<存储>`（最多列 3 个存储，其余记 `+N`），不再记成 backend_partial；取数路径仍按后端不完整处理，不宣称完整 |
+| 一帧有多个不完整原因 | 200 / 200 | partial_reason 按字典序排列、以 `;` 连接，如 `backend_partial;relation_no_physical_route:<指标>`；compact 的 partial[].reason 相同 |
 | 参数非法或单项后端执行失败 | 200 / 400 | 此项无可用图，保留其他成功项；失败 compact=null 或 snapshots=[] |
 | JSON 错误、请求体/批次数量超限 | 400 / 无 data 项 | 整个请求失败，直接响应为 {error:...} |
-| 准入/编码资源拒绝 | 400 / 无 data 项 | 整个请求失败；可能含 max_topology_reserved_bytes、max_topology_memory_headroom、max_response_bytes 等原因 |
-| 模型内单项资源拒绝 | 200 / 400 | 按单项失败处理。相同资源原因可出现于不同阶段，因此不能只用原因字符串判断外层状态 |
-| 执行槽满、队列尚有空间 | 暂无响应 | 普通模式 FIFO 等待，可取消，期限不重新计时；不是立即拒绝 |
-| 等待队列满 | 400 / 无 data 项 | max_topology_admission_waiters，属于硬拒绝；不在此层返回 429 |
+| 单次后端响应无法再拆分 | 200 / 400 | max_response_bytes：根读取、整类关系的宽读取、单个身份的读取或 info 读取已按时间拆到单个评估点，仍超过分批边界；按单项失败处理 |
+| 执行槽满 | 暂无响应 | FIFO 等待，队列不设长度，可取消，期限不重新计时；不因排队人数或内存估算拒绝 |
 | 排队期限到达 | 400（仍可写时） | {"error":"context deadline exceeded"}；整个请求无可用结果，不返回部分批次 |
-| 客户端取消/断连、写出失败 | 不保证有完整 HTTP 响应 | 服务端释放请求资源；丢弃不完整 JSON，不把收到的前缀当完整成功。已取消但传输仍可写时可见 {error:"context canceled"} |
+| 批次已开始写出后到达期限或被取消 | 200 / 已写出的项不变，其余 400 | 期限与取消只在项之间检查：已写出和正在写出的项完整写出；尚未写出的各项按单项失败写出，message 为期限或取消原因，响应仍是完整 JSON |
+| 客户端断连、写出失败 | 不保证有完整 HTTP 响应 | 服务端停止写出并释放请求资源；丢弃不完整 JSON，不把收到的前缀当完整成功。开始写出前已取消且传输仍可写时可见 {error:"context canceled"} |
 | 启用 JWT 后鉴权失败 | 401 | handler 不执行；按部署要求处理凭据和权限 |
 
 两个典型响应，完整请求与响应见夹具：
 
 ```json
-{"trace_id":"","data":[{"code":400,"start_time":0,"end_time":0,"step":"","point_count":0,"snapshots":[],"message":"build shared topology: required relation has no physical query route: node_with_pod_relation"}]}
+{"trace_id":"","data":[{"code":200,"start_time":1700000000000,"end_time":1700000000000,"step":"0s","point_count":1,"snapshots":[{"timestamp":1700000000000,"nodes":[],"edges":[],"partial":true,"partial_reason":"relation_no_physical_route:node_with_pod_relation"}]}]}
 ```
 
 ```json
-{"error":"topology resource limit exceeded: max_topology_admission_waiters (2 > 1)"}
+{"error":"context deadline exceeded"}
 ```
 
-后一个示例来自本地将执行槽/队列设为 1 的验收，不是部署默认配置。
+后一个示例是排队期间请求期限到达；本地验收把执行槽设为 1，不是部署默认配置。
 
 旧 `multi_resource` / `multi_resource_range` 的 v1beta3 适配按兼容合同保留已有结果，质量信息只写指标和 trace，不增加响应字段。
 
@@ -206,9 +232,9 @@ compact 版本为 `version:1`；timestamps 是整份网格，节点/边按属性
 
 旧 multi_resource 的 source_info/source_expand_info、target_type、target_info_show、path_resource、target_list/path 合同继续保留，候选从短到长执行，返回首条非空路径。新 topology 返回每帧节点与诱导关系，不能用旧的目标列表伪装完整图。旧范围目标的分桶/路径选择合同仍用原回归验证，不套用 topology 的精确网格解释。
 
-旧 instant/range 接口及其代理保持原响应结构，不返回 `partial`、`partial_reason`、`truncated`、`truncated_reason`。后端部分返回或候选缺物理路由时保留已有结果；容量超限等执行失败仍使用单项 `code=400` 和 `message`，`target_list` 保持数组。内部质量状态继续用于路径选择和排障。
+旧 instant/range 接口及其代理保持原响应结构，不返回 `partial`、`partial_reason`、`truncated`、`truncated_reason`。后端部分返回或候选缺物理路由时保留已有结果；执行失败仍使用单项 `code=400` 和 `message`，`target_list` 保持数组。内部质量状态继续用于路径选择和排障。
 
-`unify_query_cmdb_relation_quality_total{query_mode,quality,reason}` 记录每个兼容接口子查询的质量事件，`query_mode` 为 `instant/range`，`quality` 为 `partial/truncated`。同一子查询的同类原因只计一次；多个不同原因各计一次，不能将原因计数相加当作请求数。`reason` 使用固定类别（例如 `backend_partial`、`relation_no_physical_route`、`vm_storage_coverage_mismatch`、`max_targets`），未识别原因归入 `other`。指标不带业务 ID、资源 ID 或物理指标名；完整原因保留在子查询 trace 的 `relation-partial-reason` / `relation-truncated-reason` 中，布尔属性分别为 `relation-partial` / `relation-truncated`。正常项和普通执行失败不增加质量计数。
+`unify_query_cmdb_relation_quality_total{entry,query_mode,quality,reason}` 记录每个兼容接口子查询（`entry=compat`）的质量事件，`query_mode` 为 `instant/range`，`quality` 为 `partial/truncated`。同一子查询的同类原因只计一次；多个不同原因各计一次，不能将原因计数相加当作请求数。`reason` 使用固定类别（例如 `backend_partial`、`relation_no_physical_route`、`vm_storage_coverage_mismatch`、`max_response_bytes`），未识别原因归入 `other`。指标不带业务 ID、资源 ID 或物理指标名；完整原因保留在子查询 trace 的 `relation-partial-reason` / `relation-truncated-reason` 中，布尔属性分别为 `relation-partial` / `relation-truncated`。正常项和普通执行失败不增加质量计数。topology 子查询也按各帧不完整原因的并集计入同一指标（`entry=topology`、`quality=partial`），缺路由计为 `relation_no_physical_route`、后端不完整计为 `backend_partial`、响应缺了请求的存储计为 `vm_storage_coverage_mismatch`（原因里带的存储名不进标签）；完整原因在模型 span `timegraph-query-shared-topology` 的 `partial-reasons` 属性中。
 
 旧 range 兼容 VM 缓存网格：秒级 wire 步长不超过 60 秒且至少 50 个采样点时，起点向下对齐到步长边界，保留采样点数；短查询与不对齐的长步长查询保留原起点。比如 `start=1793259612,end=1793263212,step=60s` 使用 `1793259600..1793263200`。毫秒/微秒/纳秒时间戳仍先按旧 wire 规则转成整数秒，`1500ms` 仍保留 1500ms 聚合窗口和 1 秒采样步长。topology 接口继续使用精确网格和质量协议。
 
@@ -229,6 +255,6 @@ go run ./docs/examples/schema-catalog
 make test-timegraph-examples
 ```
 
-本地 HTTP 验收注册实际路由，执行真实参数解析、空间路由、PromQL 构造、查询模型、编码和 Node HTTP wrapper。仅后端 gateway 返回合成、已聚合样本；这不是独立 VM 引擎执行或部署鉴权验收。覆盖两种时间模式、双格式逐帧对账、九类场景、多根属性筛选、失败批次、partial、缺路由、普通模式资源/排队错误及跨请求身份。公开夹具通过 `UPDATE_TIMEGRAPH_EXAMPLES=1 go test -tags=jsonsonic -run '^TestTopology(ConsumerExampleHTTP|DocumentedFailures)$' ./service/http/api` 更新；修改后复核差异，保留完全合成的数据。
+本地 HTTP 验收注册实际路由，执行真实参数解析、空间路由、PromQL 构造、查询模型、编码和 Node HTTP wrapper。仅后端 gateway 返回合成、已聚合样本；这不是独立 VM 引擎执行或部署鉴权验收。覆盖两种时间模式、双格式逐帧对账、九类场景、多根属性筛选、失败批次、partial、缺路由、请求规格与排队期限错误及跨请求身份。公开夹具通过 `UPDATE_TIMEGRAPH_EXAMPLES=1 go test -tags=jsonsonic -run '^TestTopology(ConsumerExampleHTTP|DocumentedFailures)$' ./service/http/api` 更新；修改后复核差异，保留完全合成的数据。
 
 真实环境数据覆盖、性能容量、正式消费页面发布各自验收；不要将本地夹具通过写成这些目标已完成。

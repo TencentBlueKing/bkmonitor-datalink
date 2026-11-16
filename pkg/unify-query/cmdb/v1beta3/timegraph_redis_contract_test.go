@@ -44,8 +44,7 @@ func TestTimeGraphRedisSchemaIsolationAndReload(t *testing.T) {
 		write(relation.KindResourceDefinition, ns, resource(ns, ns+"_id"))
 		write(relation.KindRelationDefinition, ns, relations(ns, ns+"_flow"))
 	}
-	provider, err := relation.NewRedisProvider(ctx, client)
-	require.NoError(t, err)
+	provider := relation.NewRedisProvider(ctx, client)
 	t.Cleanup(func() { require.NoError(t, provider.Close()) })
 	adapter := NewSchemaProviderFromRelation(provider)
 	model := &Model{schemaProvider: adapter, timeGraphQueryReference: timeGraphTestQueryReference}
@@ -61,6 +60,9 @@ func TestTimeGraphRedisSchemaIsolationAndReload(t *testing.T) {
 			field, target = "tenant_a_id", "a-v2"
 		case "tenant_b_flow":
 			field, target = "tenant_b_id", "b"
+		case "service_to_service_flow":
+			// 内置的 service_to_service 同样生效，本用例只为 calls 准备数据。
+			return pl.Matrix{}, nil
 		default:
 			return nil, fmt.Errorf("unexpected metric %s", query.FieldName)
 		}
@@ -71,7 +73,7 @@ func TestTimeGraphRedisSchemaIsolationAndReload(t *testing.T) {
 		matrix := contractMatrix(map[string]string{"from_" + field: "root", "to_" + field: target}, timestamps...)
 		return filteredTimeGraphMatrix(t, matrix, query.Conditions), nil
 	}
-	query := func(namespace, field string, ranged bool) ([]cmdb.PathResourcesResult, error) {
+	query := func(namespace, field string, ranged bool) ([]RelationTarget, error) {
 		if ranged {
 			return model.QueryRelationTimeGraph(
 				ctx, "5m", namespace,
@@ -100,7 +102,7 @@ func TestTimeGraphRedisSchemaIsolationAndReload(t *testing.T) {
 			}
 			require.Len(t, results, count)
 			for _, result := range results {
-				require.Equal(t, cmdb.Matcher{field: target}, result.Path[1].Dimensions)
+				require.Equal(t, cmdb.Matcher{field: target}, result.Target.Dimensions)
 			}
 		}
 	}
@@ -152,7 +154,7 @@ func TestTimeGraphRedisSchemaIsolationAndReload(t *testing.T) {
 					errors <- err
 					return
 				}
-				if len(results) != 1 || results[0].Path[1].Dimensions[field] != target {
+				if len(results) != 1 || results[0].Target.Dimensions[field] != target {
 					errors <- fmt.Errorf("namespace %s leaked result: %+v", namespace, results)
 					return
 				}
@@ -197,8 +199,7 @@ func TestRedisSchemaReconcilesMissedPubSubChanges(t *testing.T) {
 		"business_relation": {Namespace: "bkcc__2", Name: "business_relation", FromResource: "service", ToResource: "service"},
 	})
 
-	provider, err := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(20*time.Millisecond))
-	require.NoError(t, err)
+	provider := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(20*time.Millisecond))
 	t.Cleanup(func() { require.NoError(t, provider.Close()) })
 	changes := make(chan string, 4)
 	require.NoError(t, provider.Subscribe(func(kind, namespace string) {
@@ -210,9 +211,17 @@ func TestRedisSchemaReconcilesMissedPubSubChanges(t *testing.T) {
 	resource, err := provider.GetResourceDefinition("bkcc__2", "service")
 	require.NoError(t, err)
 	require.Equal(t, "business_id", resource.Fields[0].Name)
+	relationNames := func(definitions []*relation.RelationDefinition) map[string]bool {
+		names := make(map[string]bool, len(definitions))
+		for _, definition := range definitions {
+			names[definition.Name] = true
+		}
+		return names
+	}
 	relations, err := provider.ListRelationDefinitions("bkcc__2")
 	require.NoError(t, err)
-	require.Len(t, relations, 2)
+	require.True(t, relationNames(relations)["shared_relation"])
+	require.True(t, relationNames(relations)["business_relation"])
 
 	// Simulate a completed HDEL whose Pub/Sub notification was lost. The next
 	// reconciliation must clear both cached kinds and notify model subscribers.
@@ -221,8 +230,9 @@ func TestRedisSchemaReconcilesMissedPubSubChanges(t *testing.T) {
 	require.Eventually(t, func() bool {
 		resource, resourceErr := provider.GetResourceDefinition("bkcc__2", "service")
 		relations, relationErr := provider.ListRelationDefinitions("bkcc__2")
+		names := relationNames(relations)
 		return resourceErr == nil && relationErr == nil && resource.Fields[0].Name == "shared_id" &&
-			len(relations) == 1 && relations[0].Name == "shared_relation"
+			names["shared_relation"] && !names["business_relation"]
 	}, 3*time.Second, 10*time.Millisecond)
 
 	seen := map[string]bool{}
@@ -259,17 +269,16 @@ func TestTimeGraphBusinessRelationNameMatchesStaticAndRedis(t *testing.T) {
 		"set":      {Namespace: relation.NamespaceAll, Name: "set", Fields: []relation.FieldDefinition{{Name: "bk_set_id", Required: true, Type: relation.FieldTypeInteger}}},
 	})
 	write(relation.KindRelationDefinition, map[string]*relation.RelationDefinition{
-		"business_with_set": {Namespace: relation.NamespaceAll, Name: "business_with_set", FromResource: "business", ToResource: "set"},
+		"business_with_set": {Namespace: relation.NamespaceAll, Name: "business_with_set", FromResource: "set", ToResource: "business", IsBelongsTo: true},
 	})
-	provider, err := relation.NewRedisProvider(ctx, client)
-	require.NoError(t, err)
+	provider := relation.NewRedisProvider(ctx, client)
 	t.Cleanup(func() { require.NoError(t, provider.Close()) })
 
 	staticModel := &Model{schemaProvider: NewStaticSchemaProvider()}
 	redisModel := &Model{schemaProvider: NewSchemaProviderFromRelation(provider)}
-	wantRelations := staticModel.sharedTopologyRelations("bkcc__2", nil, []string{"business_with_set"}, DirectionBoth)
+	wantRelations := staticModel.sharedTopologyRelations("bkcc__2", nil, []string{"business_with_set"}, nil, DirectionBoth)
 	require.Len(t, wantRelations, 2)
-	require.Equal(t, wantRelations, redisModel.sharedTopologyRelations("bkcc__2", nil, []string{"business_with_set"}, DirectionBoth))
+	require.Equal(t, wantRelations, redisModel.sharedTopologyRelations("bkcc__2", nil, []string{"business_with_set"}, nil, DirectionBoth))
 	for _, item := range wantRelations {
 		require.Equal(t, "business_with_set", item.RelationType)
 	}
@@ -284,7 +293,7 @@ func TestTimeGraphBusinessRelationNameMatchesStaticAndRedis(t *testing.T) {
 		t.Run(fixture.name, func(t *testing.T) {
 			model := fixture.model
 			// The retired spelling must not select the relation through an alias.
-			require.Empty(t, model.sharedTopologyRelations("bkcc__2", nil, []string{"business_set"}, DirectionBoth))
+			require.Empty(t, model.sharedTopologyRelations("bkcc__2", nil, []string{"business_set"}, nil, DirectionBoth))
 			model.timeGraphQueryReference = timeGraphTestQueryReference
 			model.timeGraphVMQuery = func(_ context.Context, q *structured.QueryTs, _ string, _ bool, start, end time.Time, _ time.Duration) (pl.Matrix, error) {
 				require.Equal(t, "business_with_set_relation", q.QueryList[0].FieldName)
@@ -299,8 +308,8 @@ func TestTimeGraphBusinessRelationNameMatchesStaticAndRedis(t *testing.T) {
 				for _, pointCount := range []int{1, 3} {
 					t.Run(fmt.Sprintf("%s/%d-points", format, pointCount), func(t *testing.T) {
 						request := cmdb.SharedTopologyQuery{
-							SpaceUID: "bkcc__2", Timestamp: 1700000000, SourceType: "business",
-							SourceInfo: cmdb.Matcher{"bk_biz_id": "2"}, MaxHops: 1,
+							SpaceUID: "bkcc__2", Timestamp: 1700000000, Sources: []cmdb.TopologySource{{SourceType: "business", SourceInfo: cmdb.Matcher{"bk_biz_id": "2"}}},
+							MaxHops:              1,
 							AllowedRelationTypes: []string{"business_with_set"}, ResponseFormat: format,
 						}
 						if pointCount > 1 {
@@ -314,18 +323,26 @@ func TestTimeGraphBusinessRelationNameMatchesStaticAndRedis(t *testing.T) {
 						if format == cmdb.CompactTopologyFormat {
 							require.NotNil(t, result.Compact)
 							require.Equal(t, 2*pointCount, result.Compact.NodeOccurrences)
-							require.Equal(t, 2*pointCount, result.Compact.EdgeOccurrences)
+							// 归属关系每对节点只出一条子 → 父的边。
+							require.Equal(t, pointCount, result.Compact.EdgeOccurrences)
 							snapshots = decodeCompactForTest(t, result.Compact)
 						}
 						require.Len(t, snapshots, pointCount)
 						for i, snapshot := range snapshots {
 							require.Equal(t, int64(1700000000000+i*60000), snapshot.Timestamp)
 							require.Len(t, snapshot.Nodes, 2)
-							require.Len(t, snapshot.Edges, 2)
+							require.Len(t, snapshot.Edges, 1)
 							require.False(t, snapshot.Partial)
-							for _, edge := range snapshot.Edges {
-								require.Equal(t, "business_with_set", edge.RelationType)
+							types := map[uint64]cmdb.Resource{}
+							for _, node := range snapshot.Nodes {
+								types[node.ID] = node.ResourceType
 							}
+							edge := snapshot.Edges[0]
+							require.Equal(t, "business_with_set", edge.RelationType)
+							// set 归属于 business：边从子指向父。
+							require.Equal(t, cmdb.Resource("set"), types[edge.Source])
+							require.Equal(t, cmdb.Resource("business"), types[edge.Target])
+							require.Equal(t, "outbound", edge.Direction)
 						}
 					})
 				}

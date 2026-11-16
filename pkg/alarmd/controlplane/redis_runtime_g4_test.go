@@ -294,7 +294,7 @@ func TestRedisCatalogRuntimeAddsLegacyPrimaryOnlyToUncoveredLevels(t *testing.T)
 	}
 }
 
-func TestSourceReconcilerPublishesStateCompatibilityChangeAndForcesWarming(t *testing.T) {
+func TestSourceReconcilerPublishesStateCompatibilityChangeAndWarmsWhatItDoesNotCarry(t *testing.T) {
 	ctx := context.Background()
 	client := newControlplaneRedis(t)
 	document := realThresholdDocuments(t)[0]
@@ -355,8 +355,8 @@ func TestSourceReconcilerPublishesStateCompatibilityChangeAndForcesWarming(t *te
 	}
 	if len(initialActivation.Plans) != 1 || len(changedActivation.Plans) != 1 ||
 		initialActivation.Plans[0].Fact.Selected.StateGeneration == changedActivation.Plans[0].Fact.Selected.StateGeneration ||
-		!changedActivation.Plans[0].Fact.Selected.ForceWarming {
-		t.Fatalf("state compatibility activation did not force WARMING: initial=%+v changed=%+v",
+		changedActivation.Plans[0].Fact.Selected.ForceWarming != (changedActivation.Plans[0].Fact.Selected.Carry == nil) {
+		t.Fatalf("state compatibility activation did not move the generation, or did not warm up exactly when it carried nothing: initial=%+v changed=%+v",
 			initialActivation.Plans, changedActivation.Plans)
 	}
 	stable, err := changedReconciler.Refresh(ctx, source, planner)
@@ -440,8 +440,8 @@ func TestRedisCatalogRuntimeReplaysPreG4HistoricalSegmentAfterG4StateGenerationU
 	}
 	currentThreshold, ok := activationForStrategy(currentActivation, "460")
 	if !ok || currentThreshold.Fact.Selected.StateGeneration != currentGeneration ||
-		!currentThreshold.Fact.Selected.ForceWarming {
-		t.Fatalf("current Threshold activation = %+v, want generation %q", currentThreshold, currentGeneration)
+		currentThreshold.Fact.Selected.ForceWarming != (currentThreshold.Fact.Selected.Carry == nil) {
+		t.Fatalf("current Threshold activation = %+v, want generation %q, warming exactly when it carried nothing", currentThreshold, currentGeneration)
 	}
 
 	queryGroup := previousCatalog.QueryGroups[0].Identity
@@ -495,8 +495,13 @@ func TestRedisCatalogRuntimeReplaysPreG4HistoricalSegmentAfterG4StateGenerationU
 	activations, err := repository.LoadActivations(ctx, execution.PlanActivationRequest{
 		Contract: historical.Contract, Plans: []execution.PlanKey{historical.DuePlans[0].Key()},
 	})
-	if err != nil || len(activations.Facts) != 1 || activations.Facts[0].Selection != execution.ActivationNone {
-		t.Fatalf("historical activation admission = (%+v, %v), want NONE without a new-generation Guard", activations, err)
+	// Plan 460 stayed across the G4 cutover (461 was added beside it), so the
+	// replayed pre-G4 Slot is admitted under the record it ran under, at the
+	// legacy generation; its State carries to the G4 generation at that
+	// generation's first Slot, as an edit's does.
+	if err != nil || len(activations.Facts) != 1 || activations.Facts[0].Selection == execution.ActivationNone ||
+		activations.Facts[0].Selected.StateGeneration != legacyGeneration {
+		t.Fatalf("historical activation admission = (%+v, %v), want the legacy-generation record the Slot ran under", activations, err)
 	}
 
 	scheduleKey := "alarmd:control:g4-generation-upgrade:schedule_timeline:" + string(queryGroup)

@@ -38,8 +38,11 @@ type Model struct {
 	// timeGraphVMQueryWithPartial 是共享拓扑测试使用的带状态 VM 查询入口；
 	// 生产查询直接从 tsdb.Instance.DirectQueryRange 获取相同状态。
 	timeGraphVMQueryWithPartial timeGraphVMQueryWithPartial
-	schemaProvider              SchemaProvider
-	schemaProviderMu            sync.RWMutex
+	// timeGraphTopologyBuilt 仅由包内测试设置，在拓扑查询构建出图后调用，
+	// 用于确认图在交给调用方编码前已不可达。
+	timeGraphTopologyBuilt func(*TimeGraph)
+	schemaProvider         SchemaProvider
+	schemaProviderMu       sync.RWMutex
 }
 
 // GetModel 返回 v1beta3 HTTP handler 使用的服务模型。
@@ -369,23 +372,6 @@ func filterTargetMatcher(
 		}
 	}
 	return matcher
-}
-
-func validateTargetCount(count int) error {
-	limit := effectiveMaxTargets()
-	if limit <= 0 || count <= limit {
-		return nil
-	}
-	return &ResultLimitError{Reason: "max_targets", Count: count, Limit: limit}
-}
-
-func validateRangeTargetCounts(result []cmdb.MatchersWithTimestamp) (int64, error) {
-	for _, bucket := range result {
-		if err := validateTargetCount(len(bucket.Matchers)); err != nil {
-			return bucket.Timestamp, err
-		}
-	}
-	return 0, nil
 }
 
 func matcherToMap(matcher cmdb.Matcher) map[string]string {

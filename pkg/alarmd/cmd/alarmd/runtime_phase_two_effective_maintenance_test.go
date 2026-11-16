@@ -15,6 +15,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
@@ -484,5 +485,61 @@ func TestEffectiveMaintenanceClosesWhenItsCallsTogetherOutlastTheOldStepBudget(t
 				t.Fatalf("err=%v closes=%v spent=%s", f.runner.lastErr, f.closed(), store.spent)
 			}
 		})
+	}
+}
+
+// callerRecordingLeaseStore is the real store, noting the caller each fence
+// check names.
+type callerRecordingLeaseStore struct {
+	*ownership.RedisStore
+	callers []string
+}
+
+func (store *callerRecordingLeaseStore) CheckFence(ctx context.Context, fence execution.OwnerFence) error {
+	store.callers = append(store.callers, redisfailure.Caller(ctx))
+	return store.RedisStore.CheckFence(ctx, fence)
+}
+
+func (store *callerRecordingLeaseStore) CheckFenceWithAssignment(ctx context.Context, fence execution.OwnerFence) (ownership.AssignmentRecord, error) {
+	store.callers = append(store.callers, redisfailure.Caller(ctx))
+	return store.RedisStore.CheckFenceWithAssignment(ctx, fence)
+}
+
+// A maintenance run's fence checks are named effective_maintenance -- the one
+// it opens with and the one before a close -- so they read apart from the
+// detection rounds' on the caller counters.
+func TestAMaintenanceRunsFenceChecksAreNamedForIt(t *testing.T) {
+	ctx := context.Background()
+	redisStore := newViewGateTestStore(t)
+	now := time.UnixMilli(1_700_000_000_000)
+	authority, err := redisStore.AcquireControlLeader(ctx, "control-1", now, 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := redisStore.PublishAssignment(ctx, authority, ownership.AssignmentDecision{
+		QueryGroup: "qg-0", DesiredWorkerID: "worker-1", PlacementReason: ownership.PlacementRendezvous, DecidedAt: now,
+		ContentScope: "obj-a", TimelineRecordRevision: 12,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store := &callerRecordingLeaseStore{RedisStore: redisStore}
+	session, err := ownership.OpenSession(ctx, store, "qg-0", "worker-1", now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Release(ctx) })
+	runtime := &productionPhaseTwoQueryGroup{session: session, queryGroup: "qg-0", flights: scheduler.NewFlightCoordinator(), now: func() time.Time { return now }}
+	if err := runtime.withMaintenance(ctx, func(ctx context.Context, check func(context.Context) error) error {
+		return check(ctx)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.callers) != 2 {
+		t.Fatalf("fence checks %v, want the run's and the close's", store.callers)
+	}
+	for _, caller := range store.callers {
+		if caller != redisfailure.CallerEffectiveMaintenance {
+			t.Fatalf("fence checks named %v, want each %s", store.callers, redisfailure.CallerEffectiveMaintenance)
+		}
 	}
 }

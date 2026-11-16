@@ -60,6 +60,7 @@ const (
 	SpaceKeyPrintHandlePathConfigPath             = "http.path.space_key_print"
 	TsDBPrintHandlePathConfigPath                 = "http.path.tsdb_print"
 	StoragePrintHandlePathConfigPath              = "http.path.storage_print"
+	RelationSchemaPrintHandlePathConfigPath       = "http.path.relation_schema_print"
 	FeatureFlagHandlePathConfigPath               = "http.path.feature_flag_path"
 	ESHandlePathConfigPath                        = "http.path.es"
 	ProxyConfigPath                               = "http.path.proxy"

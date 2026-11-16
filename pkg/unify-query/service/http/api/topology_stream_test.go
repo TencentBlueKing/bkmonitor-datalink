@@ -39,21 +39,20 @@ func TestLargeTopologySnapshotEncodingPreservesResponse(t *testing.T) {
 	require.Equal(t, len(wantItem), size)
 	require.Equal(t, wantItem, bytes.Join(chunks, nil))
 
-	response := &topologyResponse{
-		TraceID: "0123456789abcdef0123456789abcdef",
-		Data:    []stdjson.RawMessage{wantItem, nil, wantItem},
-		chunks:  [][][]byte{nil, chunks, nil},
-	}
+	const traceID = "0123456789abcdef0123456789abcdef"
 	want, err := stdjson.Marshal(struct {
 		TraceID string               `json:"trace_id"`
 		Data    []stdjson.RawMessage `json:"data"`
-	}{response.TraceID, []stdjson.RawMessage{wantItem, wantItem, wantItem}})
+	}{traceID, []stdjson.RawMessage{wantItem, wantItem, wantItem}})
 	require.NoError(t, err)
 	writer := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(writer)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/topology", nil)
-	proxy.TraceJSONEncoding(ctx)
-	proxy.WriteJSON(ctx.Request.Context(), ctx, http.StatusOK, response)
+	stream := newTopologyResponseStream(ctx.Request.Context(), ctx, traceID)
+	for _, parts := range [][][]byte{{wantItem}, chunks, {wantItem}} {
+		require.NoError(t, stream.item(parts))
+	}
+	require.NoError(t, stream.close())
 	require.NoError(t, proxy.ResponseWriteError(ctx))
 	require.Equal(t, want, writer.Body.Bytes())
 	require.Equal(t, "application/json; charset=utf-8", writer.Header().Get("Content-Type"))
@@ -83,9 +82,13 @@ func TestBoundedTopologyEncodingPreservesStringsAndUint64(t *testing.T) {
 			} {
 				want, err := stdjson.Marshal(payload)
 				require.NoError(t, err)
-				// Exact quota also exercises compact's bounded per-row encoding.
-				for _, limit := range []int{math.MaxInt, len(want)} {
-					chunks, size, _, err := marshalTopologyBounded(context.Background(), payload, limit, topologyEncodedOwnership{})
+				// The default bound selects whole-item encoding; a zero bound forces
+				// compact's per-row encoding. Both produce the same bytes.
+				for _, wholeItemBytes := range []int64{topologyCompactWholeItemBytes, 0} {
+					previous := topologyCompactWholeItemBytes
+					topologyCompactWholeItemBytes = wholeItemBytes
+					chunks, size, err := marshalTopologyItem(context.Background(), payload)
+					topologyCompactWholeItemBytes = previous
 					require.NoError(t, err)
 					encoded := bytes.Join(chunks, nil)
 					require.Equal(t, len(want), size)
@@ -114,26 +117,33 @@ func TestBoundedTopologyMixedResponseAndShortWrite(t *testing.T) {
 	require.NoError(t, err)
 	compact := stdjson.RawMessage(`{"code":200,"response_format":"compact-v1","compact":null}`)
 	failed := stdjson.RawMessage(`{"code":400,"start_time":0,"end_time":0,"step":"","point_count":0,"snapshots":[],"message":"bad"}`)
-	response := &topologyResponse{TraceID: "0123456789abcdef0123456789abcdef", Data: []stdjson.RawMessage{nil, compact, failed}, chunks: [][][]byte{parts, nil, nil}}
+	const traceID = "0123456789abcdef0123456789abcdef"
 	want, err := stdjson.Marshal(struct {
 		TraceID string               `json:"trace_id"`
 		Data    []stdjson.RawMessage `json:"data"`
-	}{response.TraceID, []stdjson.RawMessage{snap, compact, failed}})
+	}{traceID, []stdjson.RawMessage{snap, compact, failed}})
 	require.NoError(t, err)
+	write := func(g *gin.Context) {
+		stream := newTopologyResponseStream(g.Request.Context(), g, traceID)
+		for _, item := range [][][]byte{parts, {compact}, {failed}} {
+			if stream.item(item) != nil {
+				break
+			}
+		}
+		_ = stream.close()
+	}
 	rec := httptest.NewRecorder()
 	g, _ := gin.CreateTestContext(rec)
 	g.Request = httptest.NewRequest(http.MethodPost, "/", nil)
-	proxy.TraceJSONEncoding(g)
-	proxy.WriteJSON(g.Request.Context(), g, http.StatusOK, response)
+	write(g)
 	require.NoError(t, proxy.ResponseWriteError(g))
 	require.Equal(t, want, rec.Body.Bytes())
 	w := &topologyShortWriter{header: http.Header{}}
 	g, _ = gin.CreateTestContext(w)
 	g.Request = httptest.NewRequest(http.MethodPost, "/", nil)
-	proxy.TraceJSONEncoding(g)
-	proxy.WriteJSON(g.Request.Context(), g, http.StatusOK, response)
+	write(g)
 	require.ErrorIs(t, proxy.ResponseWriteError(g), io.ErrShortWrite)
-	require.Equal(t, 1, w.calls)
+	require.Equal(t, 1, w.calls, "the stream stops at the first short write")
 }
 
 func TestLargeTopologySnapshotEncodingEmptyAndFailed(t *testing.T) {
@@ -150,18 +160,25 @@ func TestLargeTopologySnapshotEncodingEmptyAndFailed(t *testing.T) {
 	}
 }
 
-func TestTopologyResponseSegmentsPreserveEmptyRawMessage(t *testing.T) {
-	response := &topologyResponse{
-		Data:   []stdjson.RawMessage{nil, stdjson.RawMessage(`{"code":200}`)},
-		chunks: make([][][]byte, 2),
+// 空批次写出空 data；代理路径加与 apiGwResponse 相同的外层，代理不再重复写出。
+func TestTopologyResponseStreamEmptyAndProxyEnvelope(t *testing.T) {
+	for _, proxied := range []bool{false, true} {
+		rec := httptest.NewRecorder()
+		g, _ := gin.CreateTestContext(rec)
+		g.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+		if proxied {
+			g.Set(proxy.ContextConfigUnifyResponseProcess, true)
+		}
+		stream := newTopologyResponseStream(g.Request.Context(), g, "")
+		require.False(t, stream.started())
+		require.NoError(t, stream.close())
+		want := `{"trace_id":"","data":[]}`
+		if proxied {
+			want = `{"result":true,"data":` + want + `,"message":"success"}`
+		}
+		require.Equal(t, want, rec.Body.String())
+		require.Equal(t, http.StatusOK, rec.Code)
 	}
-	parts, err := response.JSONSegments()
-	require.NoError(t, err)
-	require.Equal(t, `{"trace_id":"","data":[null,{"code":200}]}`, string(bytes.Join(parts, nil)))
-
-	response.chunks = response.chunks[:1]
-	_, err = response.JSONSegments()
-	require.ErrorContains(t, err, "chunk lists")
 }
 
 func BenchmarkLargeTopologySnapshotEncoding(b *testing.B) {
@@ -199,7 +216,10 @@ func BenchmarkLargeTopologyResponsePreparation(b *testing.B) {
 					if err != nil {
 						b.Fatal(err)
 					}
-					body, err := uqjson.Marshal(&topologyResponse{TraceID: "abc", Data: []stdjson.RawMessage{encoded}})
+					body, err := uqjson.Marshal(struct {
+						TraceID string               `json:"trace_id"`
+						Data    []stdjson.RawMessage `json:"data"`
+					}{"abc", []stdjson.RawMessage{encoded}})
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -209,13 +229,8 @@ func BenchmarkLargeTopologyResponsePreparation(b *testing.B) {
 					if err != nil {
 						b.Fatal(err)
 					}
-					response := &topologyResponse{TraceID: "abc", Data: make([]stdjson.RawMessage, 1), chunks: [][][]byte{chunks}}
-					parts, err := response.JSONSegments()
-					if err != nil {
-						b.Fatal(err)
-					}
 					size := 0
-					for _, part := range parts {
+					for _, part := range chunks {
 						size += len(part)
 					}
 					b.ReportMetric(float64(size), "wire-bytes")
@@ -239,28 +254,22 @@ func largeTopologyBenchmarkItem() cmdb.SharedTopologyResponseData {
 	return item
 }
 
-func TestTopologyEncodedItemsReusePreservesNilEmptyAndMixedResults(t *testing.T) {
-	for _, items := range [][]stdjson.RawMessage{nil, {}, {nil, stdjson.RawMessage(`{"code":400,"message":"bad"}`), stdjson.RawMessage(`{"code":200,"snapshots":[]}`)}} {
-		response := &topologyResponse{TraceID: "x", Data: items}
-		expected, err := stdjson.Marshal(response)
+// 流式写出的批次与整体编码同一批次的字节相同：空批次、失败项与成功项混合。
+func TestTopologyResponseStreamMatchesMarshal(t *testing.T) {
+	for _, items := range [][]stdjson.RawMessage{{}, {stdjson.RawMessage(`{"code":400,"message":"bad"}`), stdjson.RawMessage(`{"code":200,"snapshots":[]}`)}} {
+		expected, err := stdjson.Marshal(struct {
+			TraceID string               `json:"trace_id"`
+			Data    []stdjson.RawMessage `json:"data"`
+		}{"x", items})
 		require.NoError(t, err)
-		parts, err := response.JSONSegments()
-		require.NoError(t, err)
-		if items == nil {
-			require.Nil(t, parts)
-			continue
-		}
-		require.JSONEq(t, string(expected), string(bytes.Join(parts, nil)))
+		rec := httptest.NewRecorder()
+		g, _ := gin.CreateTestContext(rec)
+		g.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+		stream := newTopologyResponseStream(g.Request.Context(), g, "x")
 		for _, item := range items {
-			if len(item) > 0 {
-				found := false
-				for _, part := range parts {
-					if len(part) > 0 && &part[0] == &item[0] {
-						found = true
-					}
-				}
-				require.True(t, found, "encoded item copied instead of reused")
-			}
+			require.NoError(t, stream.item([][]byte{item}))
 		}
+		require.NoError(t, stream.close())
+		require.Equal(t, string(expected), rec.Body.String())
 	}
 }

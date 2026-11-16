@@ -44,6 +44,12 @@ func NewSpan(ctx context.Context, name string) (context.Context, *Span) {
 	}
 }
 
+// SpanFromContext 返回 ctx 中当前的 span，用于在不新建 span 的函数里打点；
+// 没有链路时 Set 不产生任何效果。
+func SpanFromContext(ctx context.Context) *Span {
+	return &Span{span: oteltrace.SpanFromContext(ctx)}
+}
+
 // TraceID 获取 traceid
 func (s *Span) TraceID() string {
 	if s.span == nil {

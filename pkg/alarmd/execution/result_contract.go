@@ -481,7 +481,7 @@ func loadedSeriesWarmingCompleted(
 		if mutation.Identity != identity {
 			continue
 		}
-		if matchingMutation || mutation.SeriesGuard != nil || mutation.ValidateDigest() != nil ||
+		if matchingMutation || mutation.SeriesGuard != nil || mutation.ValidateSealed() != nil ||
 			mutation.ExpectedBlobRevision != loaded.BlobRevision {
 			return false
 		}

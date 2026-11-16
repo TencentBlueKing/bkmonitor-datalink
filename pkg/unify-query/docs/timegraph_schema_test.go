@@ -225,13 +225,18 @@ func TestTimeGraphSwaggerUsageContract(t *testing.T) {
 	document := readSwaggerDocument(t)
 	definitions := schemaObject(t, document["definitions"])
 	topology := schemaObject(t, definitions["cmdb.SharedTopologyQuery"])
-	require.Contains(t, topology["required"], "source_type")
+	require.Contains(t, topology["required"], "sources")
+	source := schemaObject(t, definitions["cmdb.TopologySource"])
+	require.Contains(t, source["required"], "source_type")
 	properties := schemaObject(t, topology["properties"])
+	for _, removed := range []string{"source_type", "source_info", "source_expand_info", "dynamic_relation_direction"} {
+		require.NotContains(t, properties, removed, "replaced topology field %s is not published", removed)
+	}
 	for name, value := range properties {
 		field := schemaObject(t, value)
 		require.NotEmpty(t, field["description"], "public topology field %s needs usage semantics", name)
 	}
-	for name, expected := range map[string]any{"step": "1m", "max_hops": float64(2), "look_back_delta": "24h", "dynamic_relation_direction": "both", "response_format": "snapshots"} {
+	for name, expected := range map[string]any{"step": "1m", "max_hops": float64(2), "look_back_delta": "24h", "direction": "both", "response_format": "snapshots"} {
 		require.Equal(t, expected, schemaObject(t, properties[name])["default"])
 	}
 	paths := schemaObject(t, document["paths"])

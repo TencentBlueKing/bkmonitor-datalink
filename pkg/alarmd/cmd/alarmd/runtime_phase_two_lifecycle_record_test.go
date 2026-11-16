@@ -118,6 +118,7 @@ func TestTheApplicationWritesItsStartAndStop(t *testing.T) {
 	listener.run = func(ctx context.Context, _ string, _ time.Duration) error { <-ctx.Done(); return nil }
 	ctx, cancel := context.WithCancel(context.Background())
 	dependencies := phaseTwoApplicationDependencies{
+		goRuntime:    noGoRuntime,
 		configureCPU: func() (string, error) { return "cpu_quota", nil },
 		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger, *phaseTwoApplicationHealth) (*phaseTwoWorkerBundle, error) {
 			return bundle, nil

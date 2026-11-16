@@ -23,22 +23,16 @@ import (
 func TestSharedTopologyResourcesAndBackendLimit(t *testing.T) {
 	for _, test := range []struct {
 		name, reason string
-		bytes        int
 		backendLimit bool
 	}{
-		{name: "输出字节预算由 HTTP 编码执行", bytes: 16},
+		{name: "模型返回完整拓扑"},
 		{name: "聚合后端不能吞掉容量拒绝", backendLimit: true, reason: "max_response_bytes"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := initTimeGraphQueryTestEnvironment()
-			oldBytes := MaxSharedTopologyOutputBytes
-			t.Cleanup(func() { MaxSharedTopologyOutputBytes = oldBytes })
-			if test.bytes > 0 {
-				MaxSharedTopologyOutputBytes = test.bytes
-			}
 			stamp := int64(1700000000000)
 			relationStamps := []int64{stamp}
-			request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: stamp / 1000, MaxHops: 1}
+			request := cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}}, Timestamp: stamp / 1000, MaxHops: 1}
 			model := sharedTopologyQueryModel(map[string]pl.Matrix{"source_middle_flow": contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, relationStamps...), "middle_target_flow": {}})
 			if test.backendLimit {
 				model.timeGraphVMQueryWithPartial = func(ctx context.Context, _ *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, bool, error) {
@@ -66,9 +60,6 @@ func TestSharedTopologyResourcesAndBackendLimit(t *testing.T) {
 }
 
 func TestSharedTopologyConcurrentLoadingAndRecovery(t *testing.T) {
-	oldHeadroom := topologyMemoryHeadroom
-	topologyMemoryHeadroom = func() (int64, bool) { return 16 * 1024 * 1024 * 1024, true }
-	t.Cleanup(func() { topologyMemoryHeadroom = oldHeadroom })
 	for _, outcome := range []string{"success", "canceled", "backend failure"} {
 		t.Run(outcome, func(t *testing.T) {
 			initTimeGraphQueryTestEnvironment()
@@ -96,7 +87,7 @@ func TestSharedTopologyConcurrentLoadingAndRecovery(t *testing.T) {
 				}
 				return nil, nil
 			}
-			request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: 1700000000, MaxHops: 1}
+			request := cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}}, Timestamp: 1700000000, MaxHops: 1}
 			for i := 0; i < concurrency; i++ {
 				workers.Add(1)
 				go func() {
@@ -168,9 +159,9 @@ func TestTopologyHardSixtyPoints(t *testing.T) {
 	t.Cleanup(func() { MaxSharedTopologyPoints = old })
 	for _, configured := range []int{0, -1, 60, 61, 64, 1000} {
 		MaxSharedTopologyPoints = configured
-		_, err := NewTopologyGrid(sharedGraphTestTimes(60))
+		_, err := NewTopologyGrid(sharedTopologyTestTimes(60))
 		require.NoError(t, err)
-		_, err = NewTopologyGrid(sharedGraphTestTimes(61))
+		_, err = NewTopologyGrid(sharedTopologyTestTimes(61))
 		require.Error(t, err)
 	}
 }

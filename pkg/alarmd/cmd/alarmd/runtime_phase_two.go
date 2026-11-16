@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"runtime"
 	"sort"
 	"sync"
@@ -94,6 +95,13 @@ type phaseTwoApplicationDependencies struct {
 	newHTTP        func(*metric.Recorder, observability.HealthSource, httpSurface) (httpRuntime, error)
 	// lifecycle opens the process's start/stop record; nil records nothing.
 	lifecycle func(config.Config) *lifecycleRecord
+	// goRuntime installs the collector budget derived from the container
+	// (applyPhaseTwoGoRuntime): the runtime's own setters in production. The
+	// limit is the process's, not the application's, and a test process runs
+	// many applications beside cases that read it - the observation memory
+	// line among them - so a case starting one installs nothing (the zero
+	// setters).
+	goRuntime goRuntimeBudgetSetters
 }
 
 // httpSurface is what the listener needs from the configuration: where the
@@ -121,7 +129,7 @@ type runtimeModeDependencies struct {
 
 func defaultPhaseTwoApplicationDependencies() phaseTwoApplicationDependencies {
 	return phaseTwoApplicationDependencies{
-		configureCPU: configurePhaseTwoCPU, lifecycle: newLifecycleRecord,
+		configureCPU: configurePhaseTwoCPU, lifecycle: newLifecycleRecord, goRuntime: runtimeGoBudgetSetters(),
 		run: runPhaseTwoApplication, openBundle: openProductionPhaseTwoBundle,
 		openRoles: openPhaseTwoRoleRuntime, openRoleBundle: openProductionRoleBundle,
 		newHTTP: func(recorder *metric.Recorder, source observability.HealthSource, surface httpSurface) (httpRuntime, error) {
@@ -197,7 +205,7 @@ func runPhaseTwoApplicationWithDependencies(
 	// budget, and is installed here rather than at configuration load because
 	// --check-config reports the derived pair without being the process that
 	// has to run under it.
-	applyPhaseTwoGoRuntime(config.DeriveGoRuntime(config.DetectCapacityInputs()), runtimeGoBudgetSetters())
+	applyPhaseTwoGoRuntime(config.DeriveGoRuntime(config.DetectCapacityInputs()), dependencies.goRuntime)
 	// The OB channel's one bound on a request is its answer's size, a share
 	// of the container's memory.
 	obchannel.SetMemoryLimit(config.DetectCapacityInputs().MemoryLimitBytes)
@@ -225,11 +233,16 @@ func runPhaseTwoApplicationWithDependencies(
 	// The collector budget rides on the same line. Nothing outside the process
 	// can set it, so this and the facts table are the only two places anyone
 	// reading a running Pod can find out what the collector was told.
+	cgroupIdentity := metric.ReadCgroupMemoryIdentity(os.ReadFile)
 	logger.InfoEvent(observability.StageStartup, observability.ResultStarted, 0,
 		slog.String("diagnostics_listen", cfg.HTTP.DiagnosticsFact()),
 		slog.Int64("go_memory_limit_bytes", profile.Capacity.GoMemoryLimitBytes),
 		slog.Int("go_gc_percent", profile.Capacity.GoGCPercent),
-		slog.String("memory_source", profile.MemorySource))
+		slog.String("memory_source", profile.MemorySource),
+		// Which memcg and which usage file the memory gauges read, so a
+		// reader comparing another tool's number knows what this one is.
+		slog.String("memory_cgroup_version", cgroupIdentity.Version), slog.String("memory_cgroup", cgroupIdentity.Line),
+		slog.String("memory_usage_file", cgroupIdentity.UsageFile))
 	// A series delivery digest assembled from its shared parts that differed
 	// from the generic one: counted on canonical_encoding_records_shadow_total
 	// and said here at most once a minute. The generic digest was returned.
@@ -621,6 +634,11 @@ type phaseTwoQueryGroupRuntime interface {
 	NextDeadline() time.Time
 	MaintainLease(context.Context, time.Duration, time.Duration) error
 	Release(context.Context) error
+	// HeldEpochs is the lease this Query Group is held under: its owner
+	// epoch, and the worker session's epoch when it is held under one (A2).
+	// The takeover lines carry them, so which lease a takeover took is read
+	// on the line that names it rather than off the Slots that follow.
+	HeldEpochs() (ownerEpoch, sessionEpoch uint64)
 	// DeclineHung claims the execution in flight as hung when it is past
 	// its own deadline by more than grace and has not begun to commit, and
 	// returns the stage it is stuck in (execution.SlotStages) and the
@@ -696,6 +714,10 @@ type phaseTwoWorkerBundleDependencies struct {
 	// maintenance goroutines and read by nothing in execution.
 	ViewClient   *viewstream.Client
 	PublishFleet func(context.Context)
+	// DropStateCache takes a Query Group's entries out of the write-through
+	// State cache when this process starts, stops, declines or hands it over;
+	// nil where there is no cache.
+	DropStateCache func(execution.QueryGroupIdentity)
 	// MeasureStores takes a census of what the stores this process writes to
 	// hold, by key family (package storecensus), while it is the Control
 	// Leader, and forgets the last one when it is not: one census for the
@@ -751,6 +773,10 @@ type phaseTwoWorkerBundle struct {
 	// The check is a scan of the whole struct rather than of one field, so the
 	// next optional port is covered without anybody remembering to add it.
 	workerPorts worker.Ports
+	// coordinator is the Slot coordinator this runtime runs, which owns the
+	// retained pool. Kept so a measurement can read what the pool holds
+	// without gathering every metric family.
+	coordinator *worker.SlotExecutionCoordinator
 	// applied and capacity feed the heartbeat's acknowledgement and load.
 	// Both are set at assembly and may be nil, in which case the heartbeat
 	// carries neither, which readers take as unknown.
@@ -1220,6 +1246,11 @@ func (bundle *phaseTwoWorkerBundle) Start(ctx context.Context) error {
 	bundle.readPersistedSourceSuccess(ctx)
 	if err := bundle.registerAtStartup(ctx, ownership.WorkerReady); err != nil {
 		return err
+	}
+	if opener, ok := bundle.dependencies.Ownership.(phaseTwoWorkerSessionOpener); ok && bundle.dependencies.Config.HasRole(roles.Worker) {
+		ownershipCfg := bundle.dependencies.Config.PhaseTwo.Ownership
+		opener.OpenWorkerSessionAtStartup(ctx, bundle.dependencies.Config.PhaseTwo.Worker.ID,
+			ownershipCfg.LeaseRenewInterval.Duration(), ownershipCfg.LeaseTTL.Duration())
 	}
 	if !controlFactsAvailable {
 		// Nothing to publish and nothing to be assigned: this replica does not
@@ -2271,6 +2302,11 @@ func (dispatcher *phaseTwoRunnerDispatcher) handleResult(
 		if !result.attempted {
 			var outcome observability.Result = observability.ResultFailed
 			reason := observability.ReasonInternalUnknown
+			// An ownership refusal this branch meets is named by its word
+			// rather than left unknown.
+			if refusal, refused := ownership.RefusalReason(result.err); refused {
+				reason = observability.ReasonCode(refusal)
+			}
 			yielded := heldByYield(result.err)
 			switch yielded {
 			case scheduler.FlightHeldBySupplement:
@@ -2800,6 +2836,11 @@ func (bundle *phaseTwoWorkerBundle) Shutdown(ctx context.Context) error {
 			}
 			bundle.observeOwnership(ctx, observability.StageAssignmentLost, transitionResult, queryGroups[index], releaseErr)
 		}
+		// The worker session goes after the Query Group leases, so the Control
+		// Leader reads this worker as gone once its Query Groups are let go.
+		if maintainer, ok := bundle.dependencies.Ownership.(phaseTwoWorkerSessionMaintainer); ok {
+			result = append(result, maintainer.ReleaseWorkerSession(ctx))
+		}
 		// The Control Leader lease goes last among the leases, and only when
 		// every leader task has stopped: a wait that timed out may leave one
 		// still writing, and releasing then would let the next leader start
@@ -3088,6 +3129,18 @@ func (bundle *phaseTwoWorkerBundle) startMaintenance() {
 	if bundle.dependencies.Config.HasRole(roles.Worker) {
 		bundle.maintenanceWG.Add(1)
 		go bundle.maintainRegistration()
+		if maintainer, ok := bundle.dependencies.Ownership.(phaseTwoWorkerSessionMaintainer); ok {
+			ownershipCfg := bundle.dependencies.Config.PhaseTwo.Ownership
+			bundle.maintenanceWG.Add(1)
+			go func() {
+				defer bundle.maintenanceWG.Done()
+				err := maintainer.MaintainWorkerSession(bundle.maintenanceCtx, bundle.dependencies.Config.PhaseTwo.Worker.ID,
+					ownershipCfg.LeaseRenewInterval.Duration(), ownershipCfg.LeaseTTL.Duration())
+				if err != nil && !errors.Is(err, context.Canceled) {
+					bundle.observe(context.Background(), observability.ComponentOwnership, observability.StageLeaseRenewed, observability.ResultFailed, err)
+				}
+			}()
+		}
 	}
 	if bundle.dependencies.PublishFleet != nil {
 		bundle.maintenanceWG.Add(1)
@@ -3400,7 +3453,7 @@ func (bundle *phaseTwoWorkerBundle) applyAssignment(
 		)
 		if err != nil {
 			applied.Note(string(queryGroup), false, true)
-			bundle.observeOwnership(ctx, observability.StageTakeoverCompleted, observability.ResultFailed, queryGroup, err)
+			bundle.observeTakeoverRefused(ctx, queryGroup, err)
 			if errors.Is(err, ownership.ErrLeaseBusy) || errors.Is(err, ownership.ErrNotDesired) ||
 				errors.Is(err, ownership.ErrStaleFence) {
 				continue
@@ -3556,6 +3609,7 @@ func (bundle *phaseTwoWorkerBundle) startQueryGroup(
 	queryGroup execution.QueryGroupIdentity,
 	runner phaseTwoQueryGroupRuntime,
 ) bool {
+	bundle.dropStateCache(queryGroup)
 	bundle.mu.Lock()
 	if bundle.draining || bundle.closed {
 		bundle.mu.Unlock()
@@ -3574,8 +3628,9 @@ func (bundle *phaseTwoWorkerBundle) startQueryGroup(
 	bundle.setRunnerLocked(queryGroup, lifecycle)
 	bundle.maintenanceWG.Add(1)
 	bundle.mu.Unlock()
-	bundle.observeOwnership(ctx, observability.StageTakeoverCompleted, observability.ResultSuccess, queryGroup, nil)
-	bundle.observeOwnership(ctx, observability.StageAssignmentAcquired, observability.ResultSuccess, queryGroup, nil)
+	ownerEpoch, sessionEpoch := runner.HeldEpochs()
+	bundle.observeOwnershipHeld(ctx, observability.StageTakeoverCompleted, queryGroup, ownerEpoch, sessionEpoch)
+	bundle.observeOwnershipHeld(ctx, observability.StageAssignmentAcquired, queryGroup, ownerEpoch, sessionEpoch)
 
 	cfg := bundle.dependencies.Config.PhaseTwo.Ownership
 	go func() {
@@ -3608,6 +3663,7 @@ func (bundle *phaseTwoWorkerBundle) handOverQueryGroup(
 	queryGroup execution.QueryGroupIdentity,
 	lifecycle *phaseTwoQueryGroupLifecycle,
 ) {
+	bundle.dropStateCache(queryGroup)
 	defer bundle.maintenanceWG.Done()
 	bound := bundle.dependencies.Config.ShutdownTimeout.Duration()
 	began := time.Now()
@@ -3680,6 +3736,7 @@ func (bundle *phaseTwoWorkerBundle) stopLostQueryGroup(
 	lifecycle *phaseTwoQueryGroupLifecycle,
 	err error,
 ) {
+	bundle.dropStateCache(queryGroup)
 	if !bundle.detachQueryGroup(queryGroup, lifecycle) {
 		return
 	}
@@ -4003,9 +4060,14 @@ func (bundle *phaseTwoWorkerBundle) unreadableTimelinesRegistration() ([]string,
 // a taken-over Slot is minutes past by design. Only the stages before the
 // commit are judged, where past its deadline an execution has only its
 // evaluation left, which the grace (the liveness probe's minute) covers. An
-// execution that has begun to write output is never declined: its State and
-// Progress writes run under their own bounded timeouts, and releasing the
-// lease between them would leave acknowledged output unapplied.
+// execution that has begun to write output is never declined while it is
+// inside its commit: its State and Progress writes run under their own
+// bounded timeouts, and releasing the lease between them would leave
+// acknowledged output unapplied. A Slot applied window by window leaves its
+// commit between two windows, once a window's State is applied
+// (execution.StageMarker.LeaveCommit), and is judged again there, under a
+// deadline each window boundary moves a window's bound ahead, up to a ceiling
+// fixed at its completion (worker windowStepBound).
 func (bundle *phaseTwoWorkerBundle) declineHungExecutions(now time.Time) {
 	type hung struct {
 		queryGroup execution.QueryGroupIdentity
@@ -4048,6 +4110,7 @@ func (bundle *phaseTwoWorkerBundle) declineHungExecutions(now time.Time) {
 // registration is written at once so the leader learns of the decline on its
 // next round rather than at the next renewal.
 func (bundle *phaseTwoWorkerBundle) declineQueryGroup(queryGroup execution.QueryGroupIdentity, entry *declinedQueryGroup) {
+	bundle.dropStateCache(queryGroup)
 	defer bundle.maintenanceWG.Done()
 	bound := bundle.dependencies.Config.ShutdownTimeout.Duration()
 	lifecycle := entry.lifecycle
@@ -4504,6 +4567,55 @@ func (bundle *phaseTwoWorkerBundle) observeOwnership(
 	})
 }
 
+// observeTakeoverRefused is a takeover that did not take its lease, named
+// with the lease it ran into when the store said which (its holder's id,
+// owner epoch and session epoch), or with why it is not known. Every
+// refusal's line carries one or the other, so a line without a holder reads
+// as a refusal that could not name one, not as a field left out.
+func (bundle *phaseTwoWorkerBundle) observeTakeoverRefused(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	err error,
+) {
+	holder := &observability.LeaseHolderFacts{Unknown: observability.LeaseHolderNotAnswered}
+	var busy *ownership.LeaseBusyError
+	switch {
+	case errors.As(err, &busy):
+		holder = &observability.LeaseHolderFacts{OwnerID: busy.OwnerID, OwnerEpoch: busy.OwnerEpoch,
+			SessionEpoch: busy.SessionEpoch, DeadlineUnixMilli: busy.DeadlineUnixMilli}
+	case errors.Is(err, ownership.ErrNoWorkerSession):
+		holder.Unknown = observability.LeaseHolderNoWorkerSession
+	case errors.Is(err, ownership.ErrNotDesired), errors.Is(err, ownership.ErrStaleFence):
+		holder.Unknown = observability.LeaseHolderRefusedBeforeRead
+	}
+	observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
+		Component: observability.ComponentOwnership, Stage: observability.StageTakeoverCompleted, Result: observability.ResultFailed,
+		Operation:  observability.OperationTransition,
+		ReasonCode: ownershipObservationReason(err), Trace: observability.TraceFields{
+			QueryGroupKey: string(queryGroup), OwnerID: bundle.dependencies.Config.PhaseTwo.Worker.ID,
+		}, LeaseHolder: holder, Err: err,
+	})
+}
+
+// observeOwnershipHeld is a takeover that succeeded, named with the lease it
+// took: the owner epoch, and the session epoch when the lease is held under
+// a worker session.
+func (bundle *phaseTwoWorkerBundle) observeOwnershipHeld(
+	ctx context.Context,
+	stage observability.Stage,
+	queryGroup execution.QueryGroupIdentity,
+	ownerEpoch, sessionEpoch uint64,
+) {
+	observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
+		Component: observability.ComponentOwnership, Stage: stage, Result: observability.ResultSuccess,
+		Operation: observability.OperationTransition,
+		Trace: observability.TraceFields{
+			QueryGroupKey: string(queryGroup), OwnerID: bundle.dependencies.Config.PhaseTwo.Worker.ID,
+			OwnerEpoch: ownerEpoch, SessionEpoch: sessionEpoch,
+		},
+	})
+}
+
 // ownershipObservationReason is the reason an ownership observation carries
 // for err: none for no error, the store's own refusal word for one of its
 // four refusals, internal_unknown for anything else. Every ownership site
@@ -4749,4 +4861,13 @@ func (bundle *phaseTwoWorkerBundle) schedulerShape() config.DerivedScheduler {
 // while fewer than the derived bound execute.
 func (dispatcher *phaseTwoRunnerDispatcher) slotsFull() bool {
 	return len(dispatcher.active) >= dispatcher.bundle.schedulerShape().ActiveExecutions
+}
+
+// dropStateCache takes the Query Group's entries out of the State cache
+// (fourth-batch design §4.3, rule 1): a held entry is written under a fence
+// this process no longer holds, or will hold anew.
+func (bundle *phaseTwoWorkerBundle) dropStateCache(queryGroup execution.QueryGroupIdentity) {
+	if drop := bundle.dependencies.DropStateCache; drop != nil {
+		drop(queryGroup)
+	}
 }

@@ -80,6 +80,7 @@ func setDefaultConfig() {
 	viper.SetDefault(SpaceKeyPrintHandlePathConfigPath, "/space_key_print")
 	viper.SetDefault(TsDBPrintHandlePathConfigPath, "/tsdb_print")
 	viper.SetDefault(StoragePrintHandlePathConfigPath, "/storage_print")
+	viper.SetDefault(RelationSchemaPrintHandlePathConfigPath, "/relation_schema_print")
 	viper.SetDefault(InfluxDBPrintHandlePathConfigPath, "/influxdb_print")
 
 	viper.SetDefault(CheckQueryTsConfigPath, "/check/query/ts")

@@ -159,7 +159,8 @@ func PreparedRawQueryFingerprint(prepared *PreparedRawQuery) (string, error) {
 }
 
 type rawBatchHeader struct {
-	Index []string `json:"index"`
+	Index                     []string `json:"index"`
+	AllowPartialSearchResults bool     `json:"allow_partial_search_results,omitempty"`
 }
 
 func encodeRawBatchMember(member RawBatchMember) (string, error) {
@@ -170,7 +171,8 @@ func encodeRawBatchMember(member RawBatchMember) (string, error) {
 		return "", fmt.Errorf("prepared raw query body is empty")
 	}
 	header, err := json.Marshal(rawBatchHeader{
-		Index: append([]string(nil), member.Prepared.queryOption.indexes...),
+		Index:                     append([]string(nil), member.Prepared.queryOption.indexes...),
+		AllowPartialSearchResults: member.Prepared.allowPartialResults,
 	})
 	if err != nil {
 		return "", err
@@ -541,7 +543,13 @@ func (i *Instance) executeRawBatchMember(
 			child = fallbackChild
 		}
 	}
-	if childErr := rawBatchChildError(child); childErr != nil {
+	partialCount := partialShardResults(ctx)
+	acceptPartial := partialCount != nil && canAcceptPartialShardResult(child)
+	childErr := rawBatchChildError(child)
+	if childErr == nil && partialCount != nil && child.TimedOut {
+		childErr = &RawBatchChildError{Type: "timeout"}
+	}
+	if childErr != nil && !acceptPartial {
 		result.Err = childErr
 		return result
 	}
@@ -557,6 +565,9 @@ func (i *Instance) executeRawBatchMember(
 	if decodeErr != nil {
 		result.Err = &RawBatchChildError{Type: "decode_error"}
 		return result
+	}
+	if acceptPartial {
+		partialCount.Add(1)
 	}
 	rows := make([]map[string]any, 0, rowCapacity)
 	for row := range dataCh {
@@ -619,7 +630,7 @@ func rawBatchChildError(result *elastic.SearchResult) error {
 			Type:   "http_status",
 		}
 	}
-	if result.Shards != nil && (result.Shards.Failed > 0 || len(result.Shards.Failures) > 0) {
+	if hasFailedSearchShards(result) {
 		return &RawBatchChildError{
 			Status: result.Status,
 			Type:   "shard_failure",

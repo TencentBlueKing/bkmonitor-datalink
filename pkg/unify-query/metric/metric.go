@@ -45,7 +45,10 @@ const (
 const (
 	CMDBRelationQueryModeInstant = "instant"
 	CMDBRelationQueryModeRange   = "range"
-	CMDBRelationRouteTimeGraph   = "timegraph"
+	// 质量指标按入口区分兼容接口与 topology 子查询，两者的 query_mode 取值相同。
+	CMDBRelationEntryCompat    = "compat"
+	CMDBRelationEntryTopology  = "topology"
+	CMDBRelationRouteTimeGraph = "timegraph"
 
 	CMDBRelationResultStarted = "started"
 	CMDBRelationResultSuccess = "success"

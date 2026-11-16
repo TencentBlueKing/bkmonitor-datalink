@@ -18,12 +18,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
-func TestTopologySerialFetchStopsAfterFailureAndReleasesReservations(t *testing.T) {
+func TestTopologySerialFetchStopsAfterFailureAndReleasesAdmission(t *testing.T) {
 	for _, outcome := range []string{"backend", "apply", "cancel"} {
 		t.Run(outcome, func(t *testing.T) {
 			topologyAdmissionTestEnvironment(t, 1)
-			MaxSharedTopologyReservedBytes = 1 << 30
-			topologyMemoryHeadroom = func() (int64, bool) { return 4 << 30, true }
 
 			parent, cancel := context.WithCancel(metadata.WithExactTimeGrid(initTimeGraphQueryTestEnvironment()))
 			defer cancel()
@@ -37,7 +35,6 @@ func TestTopologySerialFetchStopsAfterFailureAndReleasesReservations(t *testing.
 			require.NoError(t, err)
 			graph := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
 			defer graph.Clean(ctx)
-			require.NoError(t, graph.enableResidency(ctx))
 			loader := &timeGraphMatrixLoader{model: model, graph: graph, topology: true, start: time.Unix(1700000000, 0), end: time.Unix(1700000000, 0), step: time.Minute}
 			failure := errors.New("later group backend unavailable")
 			var fetched, applied []string
@@ -58,7 +55,7 @@ func TestTopologySerialFetchStopsAfterFailureAndReleasesReservations(t *testing.
 					return nil, failure
 				}
 			}
-			relations := model.sharedTopologyRelations("space", nil, nil, DirectionBoth)
+			relations := model.sharedTopologyRelations("space", nil, nil, nil, DirectionBoth)
 			groups := make([]topologyFetchGroup, 3)
 			for i := range groups {
 				groups[i] = topologyFetchGroup{ctx: ctx, query: &structured.QueryTs{SpaceUid: strconv.Itoa(i), Start: "1700000000", End: "1700000000", Step: "1m0s"}, relations: relations}
@@ -77,11 +74,9 @@ func TestTopologySerialFetchStopsAfterFailureAndReleasesReservations(t *testing.
 			require.Equal(t, []string{"0", "1"}, fetched)
 			require.Equal(t, 2, queries)
 			require.Equal(t, 2, loader.physicalQueryCount)
-			require.Zero(t, matrixResidencyState(graph).ReceivingBytes)
 			graph.Clean(ctx)
-			require.Zero(t, matrixResidencyState(graph).ResidentBytes)
 			release()
-			require.Equal(t, map[string]int64{"active": 0, "waiters": 0, "reserved": 0, "materialized": 0}, topologyAdmissionTestState())
+			require.Equal(t, map[string]int64{"active": 0, "waiters": 0}, topologyAdmissionTestState())
 		})
 	}
 }
@@ -105,7 +100,7 @@ func TestTopologySerialFetchPreservesApplicationAndAttributeOrder(t *testing.T) 
 		fetched = append(fetched, query.SpaceUid)
 		return contractMatrix(map[string]string{"a_id": "root", "b_id": query.SpaceUid}, grid.timestamps...), nil
 	}
-	relations := model.sharedTopologyRelations("space", nil, nil, DirectionBoth)
+	relations := model.sharedTopologyRelations("space", nil, nil, nil, DirectionBoth)
 	groups := make([]topologyFetchGroup, 4)
 	for i := range groups {
 		id := strconv.Itoa(len(groups) - 1 - i)
@@ -133,7 +128,7 @@ func TestTopologySerialFetchPreservesApplicationAndAttributeOrder(t *testing.T) 
 }
 
 func TestFullRootSerialFetchPreservesK60H6SnapshotsAndCompact(t *testing.T) {
-	times := sharedGraphTestTimes(60)
+	times := sharedTopologyTestTimes(60)
 	data := map[string]pl.Matrix{
 		"cp": contractMatrix(map[string]string{"cluster": "alpha", "namespace": "one", "container_id": "c0", "pod_id": "p0"}, times...),
 		"np": contractMatrix(map[string]string{"cluster": "alpha", "namespace": "one", "node_id": "n0", "pod_id": "p0"}, times...),
@@ -149,7 +144,7 @@ func TestFullRootSerialFetchPreservesK60H6SnapshotsAndCompact(t *testing.T) {
 	}
 	oldPlan, oldReuse := SharedTopologyPlanCandidates, SharedTopologyReuseMatrix
 	t.Cleanup(func() { SharedTopologyPlanCandidates, SharedTopologyReuseMatrix = oldPlan, oldReuse })
-	request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "container", StartTime: times[0] / 1000, EndTime: times[len(times)-1] / 1000, Step: "1s", MaxHops: 6}
+	request := cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "container"}}, StartTime: times[0] / 1000, EndTime: times[len(times)-1] / 1000, Step: "1s", MaxHops: 6}
 	SharedTopologyPlanCandidates, SharedTopologyReuseMatrix = false, false
 	baseline, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
 	require.NoError(t, err)

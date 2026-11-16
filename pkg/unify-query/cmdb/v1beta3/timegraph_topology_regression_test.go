@@ -44,7 +44,7 @@ func TestSharedTopologyBackendGridCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := initTimeGraphQueryTestEnvironment()
 			model := &Model{schemaProvider: sharedTopologyQueryProvider(), timeGraphQueryReference: timeGraphTestQueryReference}
-			request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, MaxHops: 2, Step: tt.step}
+			request := cmdb.SharedTopologyQuery{SpaceUID: "space", Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}}, MaxHops: 2, Step: tt.step}
 			if tt.end == 0 {
 				request.Timestamp = tt.start
 			} else {
@@ -113,9 +113,9 @@ func TestSharedTopologyRepeatedResourceCases(t *testing.T) {
 		edges     [][2]string
 		wantEdges int
 	}{
-		{"同类型多跳出向", "outbound", 2, [][2]string{{"a", "b"}, {"b", "c"}}, 2},
-		{"同类型多跳入向", "inbound", 2, [][2]string{{"b", "a"}, {"c", "b"}}, 2},
-		{"一跳边界诱导边", "outbound", 1, [][2]string{{"a", "b"}, {"a", "c"}, {"b", "c"}}, 3},
+		{"同类型多跳出向", "out", 2, [][2]string{{"a", "b"}, {"b", "c"}}, 2},
+		{"同类型多跳入向", "in", 2, [][2]string{{"b", "a"}, {"c", "b"}}, 2},
+		{"一跳边界诱导边", "out", 1, [][2]string{{"a", "b"}, {"a", "c"}, {"b", "c"}}, 3},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			model := &Model{schemaProvider: publicDynamicSelfProvider(), timeGraphQueryReference: timeGraphTestQueryReference}
@@ -129,7 +129,7 @@ func TestSharedTopologyRepeatedResourceCases(t *testing.T) {
 				}
 				return filterTopologyRegressionMatrix(q, matrix), nil
 			}
-			result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000000, SourceType: "service", SourceInfo: cmdb.Matcher{"id": "a"}, MaxHops: tt.hops, DynamicRelationDirection: tt.direction})
+			result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000000, Sources: []cmdb.TopologySource{{SourceType: "service", SourceInfo: cmdb.Matcher{"id": "a"}}}, MaxHops: tt.hops, Direction: tt.direction})
 			require.NoError(t, err)
 			require.Len(t, result.Snapshots, 1)
 			var ids []string
@@ -174,7 +174,7 @@ func TestSharedTopologyReturnsToSourceTypeCases(t *testing.T) {
 				}
 				return filterTopologyRegressionMatrix(q, matrix), nil
 			}
-			result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000000, SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, MaxHops: tt.hops})
+			result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000000, Sources: []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}}, MaxHops: tt.hops})
 			require.NoError(t, err)
 			require.Len(t, result.Snapshots[0].Nodes, tt.wantNodes)
 			require.Len(t, result.Snapshots[0].Edges, tt.wantEdges)
@@ -233,7 +233,7 @@ func TestSharedTopologyInstantPartialCases(t *testing.T) {
 			}
 			labels := map[string]string{"scope": "query", "query_mode": "instant", "result": outcome}
 			before := readTimeGraphMetric(t, "cmdb_topology_operations_total", labels, "counter")
-			result, err := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000000, SourceType: "source", MaxHops: 1})
+			result, err := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", Timestamp: 1700000000, Sources: []cmdb.TopologySource{{SourceType: "source"}}, MaxHops: 1})
 			require.NoError(t, err)
 			require.Equal(t, before+1, readTimeGraphMetric(t, "cmdb_topology_operations_total", labels, "counter"))
 			require.Equal(t, tt.partialMetric != "", result.Snapshots[0].Partial)

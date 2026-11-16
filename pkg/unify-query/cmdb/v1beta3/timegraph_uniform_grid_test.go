@@ -47,7 +47,7 @@ func TestReusedMatrixKeepsLogicalPointAccounting(t *testing.T) {
 	loader := &timeGraphMatrixLoader{model: model, graph: graph, topology: true, start: time.Unix(1700000000, 0), end: time.Unix(1700000120, 0), step: time.Minute, override: func(context.Context, *structured.QueryTs) (pl.Matrix, error) {
 		return contractMatrix(map[string]string{"a_id": "root", "b_id": "one"}, grid.timestamps...), nil
 	}}
-	relations := model.sharedTopologyRelations("space", nil, nil, DirectionBoth)[:2]
+	relations := model.sharedTopologyRelations("space", nil, nil, nil, DirectionBoth)[:2]
 	queries := 0
 	require.NoError(t, loader.fetchTopologyGroup(topologyFetchGroup{ctx: ctx, query: &structured.QueryTs{Start: "1700000000", End: "1700000120", Step: "1m0s"}, relations: relations}, "space", &queries, nil))
 	require.Equal(t, 1, queries)

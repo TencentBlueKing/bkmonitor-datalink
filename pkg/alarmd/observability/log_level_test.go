@@ -150,7 +150,7 @@ func TestWhichSuccessesAreWrittenAndWhichAreCounted(t *testing.T) {
 	for _, observation := range []Observation{
 		{Component: ComponentScheduler, Stage: StageSlotStarted, Result: ResultStarted, Trace: qg},
 		{Component: ComponentEvaluation, Stage: StageEvaluationCompleted, Result: ResultSuccess, Trace: qg},
-		{Component: ComponentOwnership, Stage: StageTakeoverCompleted, Result: ResultSuccess, Trace: qg},
+		{Component: ComponentOwnership, Stage: StageTakeoverStarted, Result: ResultStarted, Trace: qg},
 		{Component: ComponentOwnership, Stage: StageRebalancePlanned, Result: ResultSuccess, Rebalance: &RebalanceFacts{Assigned: 4}},
 		{Component: ComponentControlPlane, Stage: StageSnapshotRefreshed, Result: ResultSuccess,
 			SourceRefresh: &SourceRefreshFacts{Status: SourceRefreshUnchanged}},
@@ -162,7 +162,7 @@ func TestWhichSuccessesAreWrittenAndWhichAreCounted(t *testing.T) {
 		t.Fatalf("routine and unchanged lines were written: %v", lines)
 	}
 	counts := observer.LineCounts()
-	for _, stage := range []Stage{StageSlotStarted, StageEvaluationCompleted, StageTakeoverCompleted, StageRebalancePlanned,
+	for _, stage := range []Stage{StageSlotStarted, StageEvaluationCompleted, StageTakeoverStarted, StageRebalancePlanned,
 		StageSnapshotRefreshed, StageControlReadsSpent} {
 		if counts.Unwritten[stage] != 1 {
 			t.Fatalf("%s unwritten=%d, want 1", stage, counts.Unwritten[stage])
@@ -192,6 +192,60 @@ func TestWhichSuccessesAreWrittenAndWhichAreCounted(t *testing.T) {
 	observer.Observe(ctx, turnaway)
 	if lines := decodeLines(t, &output); len(lines) != 1 || lines[0]["suppressed_logs"] != float64(1) {
 		t.Fatalf("next hour's turnaway=%v, want one line carrying the one merged", lines)
+	}
+}
+
+// A round that took a Query Group off a holder writes its line whichever path
+// took it: a placement off a holder gone from the ready set, a replacement
+// of one no longer eligible, a byte feasibility move. Before, only the count
+// correction's moves did, and the other three moved Query Groups with no line.
+func TestARoundThatMovedByAnyPathWritesItsLine(t *testing.T) {
+	for _, facts := range []*RebalanceFacts{
+		{Placed: 1}, {Replaced: 1}, {Bytes: &ByteConstraintFacts{PublishedMoves: 1}},
+	} {
+		var output bytes.Buffer
+		now := time.Unix(1_000, 0)
+		observer := levelObserver(t, &output, &now)
+		observer.Observe(context.Background(), Observation{Component: ComponentOwnership, Stage: StageRebalancePlanned,
+			Result: ResultSuccess, Rebalance: facts})
+		if lines := decodeLines(t, &output); len(lines) != 1 {
+			t.Fatalf("a round with %+v wrote %v, want its line", facts, lines)
+		}
+	}
+	// A byte plan that published nothing is not a move.
+	var output bytes.Buffer
+	now := time.Unix(1_000, 0)
+	observer := levelObserver(t, &output, &now)
+	observer.Observe(context.Background(), Observation{Component: ComponentOwnership, Stage: StageRebalancePlanned,
+		Result: ResultSuccess, Rebalance: &RebalanceFacts{Bytes: &ByteConstraintFacts{Judged: 4}}})
+	if lines := decodeLines(t, &output); len(lines) != 0 {
+		t.Fatalf("a round that moved nothing wrote %v", lines)
+	}
+}
+
+// A round's control reads line is written when a record changed under the
+// round, or a backstop read found the Leader's copy wrong on a field no
+// Worker writes - a write the copy missed, named on the line. A Worker's
+// promotion found the same way is expected and only counted.
+func TestAControlReadsLineIsWrittenOnAConflictOrAMissedWrite(t *testing.T) {
+	for _, test := range []struct {
+		facts *ControlReadFacts
+		lines int
+	}{
+		{&ControlReadFacts{RecordConflicts: 1}, 1},
+		{&ControlReadFacts{RecordMismatches: map[string]int{"desired_worker_id": 1}}, 1},
+		{&ControlReadFacts{RecordMismatches: map[string]int{"presence": 1}}, 1},
+		{&ControlReadFacts{RecordMismatches: map[string]int{"content_scope": 1, "pending_content_scope": 1, "effective_at_ms": 1}}, 0},
+		{&ControlReadFacts{RecordReads: map[string]int{"backstop": 1}}, 0},
+	} {
+		var output bytes.Buffer
+		now := time.Unix(1_000, 0)
+		observer := levelObserver(t, &output, &now)
+		observer.Observe(context.Background(), Observation{Component: ComponentOwnership, Stage: StageControlReadsSpent,
+			Result: ResultSuccess, ControlReads: test.facts})
+		if lines := decodeLines(t, &output); len(lines) != test.lines {
+			t.Fatalf("a round with %+v wrote %v, want %d lines", test.facts, lines, test.lines)
+		}
 	}
 }
 

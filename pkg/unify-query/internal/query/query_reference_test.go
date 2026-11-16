@@ -18,6 +18,8 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
@@ -144,27 +146,134 @@ func TestVmExpandDoesNotResolveUnrelatedSelectors(t *testing.T) {
 	require.Nil(t, expand)
 }
 
-func TestVmExpandRejectsPartiallyBoundExpression(t *testing.T) {
+func TestVmExpandScopesUnboundReferencesToNoData(t *testing.T) {
 	ctx := context.Background()
-	qr := metadata.QueryReference{
-		"a":     {{QueryList: metadata.QueryList{{VmRt: "rt-a", VmCondition: `result_table_id="rt-a"`}}}},
-		"b":     {{QueryList: metadata.QueryList{{}}}},
-		"empty": {{QueryList: metadata.QueryList{{VmRt: "rt-empty"}}}},
-		"":      {{QueryList: metadata.QueryList{{VmRt: "rt-other", VmCondition: `result_table_id="rt-other"`}}}},
+	bound := func(ref string) []*metadata.QueryMetric {
+		return []*metadata.QueryMetric{{QueryList: metadata.QueryList{{
+			VmRt: "rt-" + ref, VmCondition: metadata.VmCondition(`result_table_id="rt-` + ref + `"`),
+		}}}}
 	}
-	for _, tc := range []struct{ expr, missing string }{
-		{`a or count_over_time({__name__=~"b"}[5m])`, "b"},
-		{"topk(scalar(c), a)", "c"},
-		{"a or empty", "empty"},
-		{"empty", "empty"},
-		{`a or {job="api"}`, ""},
+	qr := metadata.QueryReference{
+		"a":     bound("a"),
+		"b":     bound("b"),
+		"d":     bound("d"),
+		"x":     {{QueryList: metadata.QueryList{{}}}},
+		"empty": {{QueryList: metadata.QueryList{{VmRt: "rt-empty"}}}},
+		"":      bound("other"),
+	}
+	noData := func(table string) string {
+		return `result_table_id="` + table + `", __name__="__unify_query_unbound_reference__"`
+	}
+	for _, tc := range []struct {
+		name   string
+		expr   string
+		tables []string
+		want   map[string]string
+	}{
+		{
+			name: "or_falls_back_to_bound_branch", expr: `a / b * 100 or c / d * 100`,
+			tables: []string{"rt-a", "rt-b", "rt-d"},
+			want: map[string]string{
+				"a": `result_table_id="rt-a"`, "b": `result_table_id="rt-b"`,
+				"c": noData("rt-a"), "d": `result_table_id="rt-d"`,
+			},
+		},
+		{
+			name: "or_of_sums", expr: `a + b or a + c`, tables: []string{"rt-a", "rt-b"},
+			want: map[string]string{"a": `result_table_id="rt-a"`, "b": `result_table_id="rt-b"`, "c": noData("rt-a")},
+		},
+		{
+			name: "and_with_unbound_guard", expr: `(a - b) and (c == 0)`, tables: []string{"rt-a", "rt-b"},
+			want: map[string]string{"a": `result_table_id="rt-a"`, "b": `result_table_id="rt-b"`, "c": noData("rt-a")},
+		},
+		{
+			name: "group_left_join", expr: `((c - b) * a + d + on(pod) group_left(node) e * 0) > 0`,
+			tables: []string{"rt-a", "rt-b", "rt-d"},
+			want: map[string]string{
+				"a": `result_table_id="rt-a"`, "b": `result_table_id="rt-b"`, "d": `result_table_id="rt-d"`,
+				"c": noData("rt-a"), "e": noData("rt-a"),
+			},
+		},
+		{
+			name: "nested_in_range_function", expr: `rate(a[5m]) / rate({__name__=~"c"}[5m])`, tables: []string{"rt-a"},
+			want: map[string]string{"a": `result_table_id="rt-a"`, "c": noData("rt-a")},
+		},
+		{
+			name: "reference_without_vm_table", expr: `topk(scalar(x), a)`, tables: []string{"rt-a"},
+			want: map[string]string{"a": `result_table_id="rt-a"`, "x": noData("rt-a")},
+		},
+		{
+			name: "table_without_condition", expr: `a or empty`, tables: []string{"rt-a", "rt-empty"},
+			want: map[string]string{"a": `result_table_id="rt-a"`, "empty": noData("rt-a")},
+		},
+		{
+			name: "only_table_without_condition", expr: `empty`, tables: []string{"rt-empty"},
+			want: map[string]string{"empty": noData("rt-empty")},
+		},
 	} {
-		t.Run(tc.expr, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			expr, err := parser.ParseExpr(tc.expr)
 			require.NoError(t, err)
 			expand, err := ToVmExpandForExpression(ctx, qr, expr)
-			require.ErrorContains(t, err, "no storage binding for reference "+strconv.Quote(tc.missing))
-			require.Nil(t, expand)
+			require.NoError(t, err)
+			require.NotNil(t, expand)
+			require.Equal(t, tc.tables, expand.ResultTableList, "unbound references add no table")
+			require.Equal(t, tc.want, expand.MetricFilterCondition)
+			for ref, condition := range expand.MetricFilterCondition {
+				require.NotEmpty(t, condition, "reference %q must not reach the gateway unbound", ref)
+			}
+		})
+	}
+
+	t.Run("all_references_unbound_stays_empty", func(t *testing.T) {
+		for _, expression := range []string{`c or e`, `rate(c[5m]) / rate(e[5m])`, `(c - e) and (c == 0)`} {
+			expr, err := parser.ParseExpr(expression)
+			require.NoError(t, err)
+			expand, err := ToVmExpandForExpression(ctx, qr, expr)
+			require.NoError(t, err)
+			require.Nil(t, expand, expression)
+		}
+	})
+
+	t.Run("selector_without_reference_name_is_rejected", func(t *testing.T) {
+		expr, err := parser.ParseExpr(`a or {job="api"}`)
+		require.NoError(t, err)
+		expand, err := ToVmExpandForExpression(ctx, qr, expr)
+		require.ErrorContains(t, err, "selector without a reference name")
+		require.Nil(t, expand)
+	})
+}
+
+func TestVmExpandRecordsUnboundReferencesOnSpan(t *testing.T) {
+	qr := metadata.QueryReference{
+		"a": {{QueryList: metadata.QueryList{{VmRt: "rt-a", VmCondition: `result_table_id="rt-a"`}}}},
+	}
+	for _, tc := range []struct {
+		expr string
+		want string
+	}{
+		{expr: `a or e or c`, want: "c,e"},
+		{expr: `a`, want: ""},
+	} {
+		t.Run(tc.expr, func(t *testing.T) {
+			recorder := tracetest.NewSpanRecorder()
+			provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+			ctx, span := provider.Tracer("test").Start(context.Background(), "parent")
+			expr, err := parser.ParseExpr(tc.expr)
+			require.NoError(t, err)
+			_, err = ToVmExpandForExpression(ctx, qr, expr)
+			require.NoError(t, err)
+			span.End()
+
+			require.Len(t, recorder.Ended(), 1)
+			got, found := "", false
+			for _, attr := range recorder.Ended()[0].Attributes() {
+				if attr.Key == "vm-unbound-references" {
+					got, found = attr.Value.AsString(), true
+				}
+			}
+			require.Equal(t, tc.want != "", found, "the attribute is written only when a reference is unbound")
+			require.Equal(t, tc.want, got)
 		})
 	}
 }

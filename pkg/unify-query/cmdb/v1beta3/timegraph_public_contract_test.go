@@ -228,7 +228,7 @@ func TestTimeGraphPublicQueryContractCases(t *testing.T) {
 		responses     map[string]pl.Matrix
 		failOn        string
 		wantErr       string
-		wantResults   []cmdb.PathResourcesResult
+		wantResults   []RelationTarget
 		wantCalls     []publicTimeGraphQueryWant
 	}{
 		{
@@ -238,11 +238,7 @@ func TestTimeGraphPublicQueryContractCases(t *testing.T) {
 				"node_to_middle_flow":   contractMatrix(map[string]string{"node_id": "n1", "middle_id": "m1"}, timestampMS),
 				"middle_to_target_flow": contractMatrix(map[string]string{"middle_id": "m1", "target_id": "t1"}, timestampMS),
 			},
-			wantResults: []cmdb.PathResourcesResult{{Timestamp: timestampMS, TargetType: "target", Path: []cmdb.PathNode{
-				{ResourceType: "node", Dimensions: cmdb.Matcher{"node_id": "n1"}},
-				{ResourceType: "middle", Dimensions: cmdb.Matcher{"middle_id": "m1"}},
-				{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}},
-			}}},
+			wantResults: []RelationTarget{{Timestamp: timestampMS, TargetType: "target", Target: cmdb.PathNode{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}}}},
 			wantCalls: []publicTimeGraphQueryWant{
 				{
 					metric: "node_to_middle_flow", expr: "count by (middle_id, node_id) (count_over_time(a[10m]))", instant: true,
@@ -265,11 +261,7 @@ func TestTimeGraphPublicQueryContractCases(t *testing.T) {
 				"node_to_middle_flow":   contractMatrix(map[string]string{"node_id": "n1", "middle_id": "m1"}, timestampMS),
 				"middle_to_target_flow": contractMatrix(map[string]string{"middle_id": "m1", "target_id": "t1"}, timestampMS),
 			},
-			wantResults: []cmdb.PathResourcesResult{{Timestamp: timestampMS, TargetType: "target", Path: []cmdb.PathNode{
-				{ResourceType: "node", Dimensions: cmdb.Matcher{"node_id": "n1"}},
-				{ResourceType: "middle", Dimensions: cmdb.Matcher{"middle_id": "m1"}},
-				{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}},
-			}}},
+			wantResults: []RelationTarget{{Timestamp: timestampMS, TargetType: "target", Target: cmdb.PathNode{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}}}},
 			wantCalls: []publicTimeGraphQueryWant{
 				{
 					metric: "node_to_middle_flow", expr: "count by (middle_id, node_id) (count_over_time(a[1d]))", instant: true,
@@ -292,7 +284,7 @@ func TestTimeGraphPublicQueryContractCases(t *testing.T) {
 				"node_to_middle_flow":   {},
 				"middle_to_target_flow": {},
 			},
-			wantResults: []cmdb.PathResourcesResult{},
+			wantResults: nil,
 			wantCalls: []publicTimeGraphQueryWant{
 				{
 					metric: "node_to_middle_flow", expr: "count by (middle_id, node_id) (count_over_time(a[10m]))", instant: true,
@@ -360,7 +352,7 @@ func TestTimeGraphPublicQueryContractCases(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.Equal(t, tc.wantResults, got)
+			requireRelationTargets(t, tc.wantResults, got)
 			requirePublicTimeGraphCalls(t, vm.calls, tc.wantCalls)
 		})
 	}
@@ -374,7 +366,7 @@ func TestTimeGraphPublicRangeQueryContract(t *testing.T) {
 		startSec    int64
 		endSec      int64
 		responses   map[string]pl.Matrix
-		wantResults []cmdb.PathResourcesResult
+		wantResults []RelationTarget
 		wantCalls   []publicTimeGraphQueryWant
 	}{
 		{
@@ -385,22 +377,10 @@ func TestTimeGraphPublicRangeQueryContract(t *testing.T) {
 				"node_to_middle_flow":   contractMatrix(map[string]string{"node_id": "n1", "middle_id": "m1"}, 1700000040000, 1700000100000, 1700000160000),
 				"middle_to_target_flow": contractMatrix(map[string]string{"middle_id": "m1", "target_id": "t1"}, 1700000040000, 1700000100000, 1700000160000),
 			},
-			wantResults: []cmdb.PathResourcesResult{
-				{Timestamp: 1700000040000, TargetType: "target", Path: []cmdb.PathNode{
-					{ResourceType: "node", Dimensions: cmdb.Matcher{"node_id": "n1"}},
-					{ResourceType: "middle", Dimensions: cmdb.Matcher{"middle_id": "m1"}},
-					{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}},
-				}},
-				{Timestamp: 1700000100000, TargetType: "target", Path: []cmdb.PathNode{
-					{ResourceType: "node", Dimensions: cmdb.Matcher{"node_id": "n1"}},
-					{ResourceType: "middle", Dimensions: cmdb.Matcher{"middle_id": "m1"}},
-					{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}},
-				}},
-				{Timestamp: 1700000160000, TargetType: "target", Path: []cmdb.PathNode{
-					{ResourceType: "node", Dimensions: cmdb.Matcher{"node_id": "n1"}},
-					{ResourceType: "middle", Dimensions: cmdb.Matcher{"middle_id": "m1"}},
-					{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}},
-				}},
+			wantResults: []RelationTarget{
+				{Timestamp: 1700000040000, TargetType: "target", Target: cmdb.PathNode{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}}},
+				{Timestamp: 1700000100000, TargetType: "target", Target: cmdb.PathNode{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}}},
+				{Timestamp: 1700000160000, TargetType: "target", Target: cmdb.PathNode{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}}},
 			},
 			wantCalls: []publicTimeGraphQueryWant{
 				{
@@ -433,22 +413,10 @@ func TestTimeGraphPublicRangeQueryContract(t *testing.T) {
 				"node_to_middle_flow":   contractMatrix(map[string]string{"node_id": "n1", "middle_id": "m1"}, 1699999980000, 1700000040000, 1700000100000),
 				"middle_to_target_flow": contractMatrix(map[string]string{"middle_id": "m1", "target_id": "t1"}, 1699999980000, 1700000040000, 1700000100000),
 			},
-			wantResults: []cmdb.PathResourcesResult{
-				{Timestamp: 1699999980000, TargetType: "target", Path: []cmdb.PathNode{
-					{ResourceType: "node", Dimensions: cmdb.Matcher{"node_id": "n1"}},
-					{ResourceType: "middle", Dimensions: cmdb.Matcher{"middle_id": "m1"}},
-					{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}},
-				}},
-				{Timestamp: 1700000040000, TargetType: "target", Path: []cmdb.PathNode{
-					{ResourceType: "node", Dimensions: cmdb.Matcher{"node_id": "n1"}},
-					{ResourceType: "middle", Dimensions: cmdb.Matcher{"middle_id": "m1"}},
-					{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}},
-				}},
-				{Timestamp: 1700000100000, TargetType: "target", Path: []cmdb.PathNode{
-					{ResourceType: "node", Dimensions: cmdb.Matcher{"node_id": "n1"}},
-					{ResourceType: "middle", Dimensions: cmdb.Matcher{"middle_id": "m1"}},
-					{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}},
-				}},
+			wantResults: []RelationTarget{
+				{Timestamp: 1699999980000, TargetType: "target", Target: cmdb.PathNode{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}}},
+				{Timestamp: 1700000040000, TargetType: "target", Target: cmdb.PathNode{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}}},
+				{Timestamp: 1700000100000, TargetType: "target", Target: cmdb.PathNode{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}}},
 			},
 			wantCalls: []publicTimeGraphQueryWant{
 				{
@@ -504,7 +472,7 @@ func TestTimeGraphPublicDynamicSelfRelationFindsBothDirections(t *testing.T) {
 	tests := []struct {
 		name        string
 		responses   []pl.Matrix
-		wantResults []cmdb.PathResourcesResult
+		wantResults []RelationTarget
 		wantCalls   []publicTimeGraphQueryWant
 	}{
 		{
@@ -513,15 +481,9 @@ func TestTimeGraphPublicDynamicSelfRelationFindsBothDirections(t *testing.T) {
 				contractMatrix(map[string]string{"from_id": "caller", "to_id": "callee"}, timestampMS),
 				contractMatrix(map[string]string{"from_id": "other", "to_id": "caller"}, timestampMS),
 			},
-			wantResults: []cmdb.PathResourcesResult{
-				{Timestamp: timestampMS, TargetType: "service", Path: []cmdb.PathNode{
-					{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "caller"}},
-					{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "callee"}},
-				}},
-				{Timestamp: timestampMS, TargetType: "service", Path: []cmdb.PathNode{
-					{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "caller"}},
-					{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "other"}},
-				}},
+			wantResults: []RelationTarget{
+				{Timestamp: timestampMS, TargetType: "service", Target: cmdb.PathNode{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "callee"}}},
+				{Timestamp: timestampMS, TargetType: "service", Target: cmdb.PathNode{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "other"}}},
 			},
 			wantCalls: []publicTimeGraphQueryWant{
 				{

@@ -19,7 +19,7 @@ func hostDimensions() []string { return []string{HostIPDimension, HostCloudDimen
 // A static target's declared hosts are what gets resolved, keyed by the group
 // each one will be judged as.
 func TestHostCandidatesAreTheStaticTargetsOwnHosts(t *testing.T) {
-	scope := hostScope("10.0.0.2|0", "10.0.0.1|0")
+	scope := hostScope("192.0.2.2|0", "192.0.2.1|0")
 	candidates, err := HostCandidates(RosterRequest{AggDimension: hostDimensions(), Scope: scope})
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestHostCandidatesAreTheStaticTargetsOwnHosts(t *testing.T) {
 	// about and the hosts expected cannot drift apart.
 	roster, err := BuildRoster(RosterRequest{
 		AggDimension: hostDimensions(), Scope: scope,
-		KnownHosts: knownHosts("10.0.0.1|0", "10.0.0.2|0"),
+		KnownHosts: knownHosts("192.0.2.1|0", "192.0.2.2|0"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestHostCandidatesAreTheStaticTargetsOwnHosts(t *testing.T) {
 // most: the roster only grows, so a host that left the business would stay in
 // the expected set and be reported absent for as long as the strategy lives.
 func TestHostCandidatesCoverARememberedHistoryRoster(t *testing.T) {
-	present := hostTargetGroup(HostIdentity{IP: "10.0.0.1", CloudID: "0"})
+	present := hostTargetGroup(HostIdentity{IP: "192.0.2.1", CloudID: "0"})
 	other := Group{dimensions: []Dimension{{Name: "device", Value: "eth0"}}}
 	memory := map[string]GroupMemory{
 		present.Key(): {LastSeen: 940},
@@ -77,7 +77,7 @@ func TestHostCandidatesCoverARememberedHistoryRoster(t *testing.T) {
 	if candidates[0].GroupKey != present.Key() {
 		t.Fatalf("candidate = %q, want %q", candidates[0].GroupKey, present.Key())
 	}
-	if candidates[0].Key() != "10.0.0.1|0" {
+	if candidates[0].Key() != "192.0.2.1|0" {
 		t.Fatalf("lookup key = %q, want the CMDB identity", candidates[0].Key())
 	}
 }
@@ -86,7 +86,7 @@ func TestHostCandidatesCoverARememberedHistoryRoster(t *testing.T) {
 // be asking about a group that is not addressed by host at all.
 func TestHostCandidatesAreEmptyForAWholeItem(t *testing.T) {
 	candidates, err := HostCandidates(RosterRequest{
-		AggDimension: []string{"device"}, Scope: hostScope("10.0.0.1|0"),
+		AggDimension: []string{"device"}, Scope: hostScope("192.0.2.1|0"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ func TestHostCandidatesAreEmptyForAWholeItem(t *testing.T) {
 func TestHostCandidatesRefuseARosterThatCannotBeDerived(t *testing.T) {
 	_, err := HostCandidates(RosterRequest{
 		AggDimension: []string{HostIPDimension, HostCloudDimension, "device"},
-		Scope:        hostScope("10.0.0.1|0"),
+		Scope:        hostScope("192.0.2.1|0"),
 	})
 	var unsupported *RosterUnsupportedError
 	if !errors.As(err, &unsupported) {

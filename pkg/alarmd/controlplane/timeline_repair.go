@@ -384,9 +384,9 @@ func (repository *RedisCatalogRepository) RepairUnreadableTimelines(
 		rewritten[queryGroup] = struct{}{}
 		if absent {
 			reopened++
-			cutover.decided(cutoverReopened)
+			cutover.decided(cutoverReopened, queryGroup)
 		} else {
-			cutover.decided(cutoverRepaired)
+			cutover.decided(cutoverRepaired, queryGroup)
 		}
 	}
 	if len(updates) == 0 {

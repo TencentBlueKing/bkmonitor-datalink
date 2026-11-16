@@ -89,6 +89,20 @@ func (rounds *storeRounds) load(at int64) execution.NoDataMemorySnapshot {
 	if !found {
 		rounds.t.Fatal("no memory was loaded for the Plan")
 	}
+	// The load reads the header; the groups are what the round's scan reads
+	// of the record, a segment at a time.
+	for cursor := uint64(0); snapshot.Status == execution.NoDataMemoryFound; {
+		page, err := rounds.store.ScanNoDataGroups(context.Background(), execution.NoDataScanRequest{
+			Identity: snapshot.Identity, Cursor: cursor, PresentAsOf: snapshot.PresentAsOf})
+		if err != nil || page.Status != execution.NoDataMemoryFound {
+			rounds.t.Fatalf("scan the record: %v (%s)", err, page.Status)
+		}
+		snapshot.Groups = append(snapshot.Groups, page.Groups...)
+		if page.Next == 0 {
+			break
+		}
+		cursor = page.Next
+	}
 	return snapshot
 }
 
@@ -317,6 +331,9 @@ func TestASupplementLeavesAStoppedNoDataAbsenceStandingInTheStore(t *testing.T) 
 		late := supplementSeries(t, due, slot.at, map[string]string{"bk_target_ip": "192.0.2.33", "bk_target_cloud_id": "0"})
 		stream.supplement = newSupplementRun(execution.SupplementScope{Series: []execution.SeriesIdentityDigest{late.identity}})
 		if err := stream.loadNoDataMemory(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := stream.readSupplementNoDataGroups(context.Background(), []preparedSeries{late}); err != nil {
 			t.Fatal(err)
 		}
 		if got := stream.noDataStandingAt(late); got != slot.want {

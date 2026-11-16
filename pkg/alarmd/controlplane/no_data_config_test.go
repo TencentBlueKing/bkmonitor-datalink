@@ -218,7 +218,7 @@ func TestFrozenNoDataConfigFollowsTheBackendReadSites(t *testing.T) {
 func TestNoDataRosterUnsupportedNamesOnlyWhatThisBuildCannotDerive(t *testing.T) {
 	hostScope := &contract.TargetScopeV2{Groups: []contract.TargetScopeGroupV2{{
 		Conditions: []contract.TargetScopeConditionV2{{
-			Field: contract.TargetScopeHost, Method: contract.TargetScopeInclude, Keys: []string{"10.0.0.1|0"},
+			Field: contract.TargetScopeHost, Method: contract.TargetScopeInclude, Keys: []string{"192.0.2.1|0"},
 		}},
 	}}}
 	topoScope := &contract.TargetScopeV2{Groups: []contract.TargetScopeGroupV2{{
@@ -263,7 +263,7 @@ func TestNoDataRosterUnsupportedNamesOnlyWhatThisBuildCannotDerive(t *testing.T)
 		"host and topology together": {
 			scope: &contract.TargetScopeV2{Groups: []contract.TargetScopeGroupV2{{
 				Conditions: []contract.TargetScopeConditionV2{
-					{Field: contract.TargetScopeHost, Method: contract.TargetScopeInclude, Keys: []string{"10.0.0.1|0"}},
+					{Field: contract.TargetScopeHost, Method: contract.TargetScopeInclude, Keys: []string{"192.0.2.1|0"}},
 					{Field: contract.TargetScopeTopoNode, Method: contract.TargetScopeInclude, Keys: []string{"module|1"}},
 				},
 			}}},

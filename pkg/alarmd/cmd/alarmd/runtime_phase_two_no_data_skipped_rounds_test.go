@@ -74,8 +74,8 @@ func outcomesAre(t *testing.T, round int64, got map[string]int, want map[string]
 // produces no synthetic series and no mutation and does not fail; while that
 // lasts the Plan's no-data detection is paused, and once a build that can read
 // the record is back the absence is still counted from its first_absent. The
-// newest schema this build writes is 3 (decision-018 section 1.1), so a
-// header stating 4 is what a newer build leaves behind.
+// newest schema this build writes is 4 (decision-020 batch 8, 2.7), so a
+// header stating 5 is what a newer build leaves behind.
 func TestANoDataRecordANewerBuildWroteIsNeitherReadNorWritten(t *testing.T) {
 	fixture := startRoundsFixture(t, roundsOptions{hosts: true})
 	ctx := context.Background()
@@ -90,10 +90,10 @@ func TestANoDataRecordANewerBuildWroteIsNeitherReadNorWritten(t *testing.T) {
 	if err := json.Unmarshal([]byte(record["_meta"]), &header); err != nil {
 		t.Fatalf("fixture: the record header %q does not decode: %v", record["_meta"], err)
 	}
-	if header["version"] != float64(3) {
-		t.Fatalf("fixture: the record header states version %v, want 3, the schema this build writes", header["version"])
+	if header["version"] != float64(4) {
+		t.Fatalf("fixture: the record header states version %v, want 4, the schema this build writes", header["version"])
 	}
-	header["version"] = 4
+	header["version"] = 5
 	newer, err := json.Marshal(header)
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestANoDataRecordANewerBuildWroteIsNeitherReadNorWritten(t *testing.T) {
 	// The build that wrote it is gone and the record reads again. The round
 	// judges, and host B's absence is still the one that began in round 1:
 	// the record holds timestamps, so the paused round cost nothing.
-	header["version"] = 3
+	header["version"] = 4
 	restored, err := json.Marshal(header)
 	if err != nil {
 		t.Fatal(err)

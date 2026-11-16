@@ -31,18 +31,15 @@ func TestTopologyHTTPBudgetsApplyThroughProxy(t *testing.T) {
 	if _, registered := metadata.GetHandler(route); !registered {
 		metadata.AddHandler(route, HandlerAPIRelationV1Beta3Topology)
 	}
+	// 请求体和批次条数是原始输入规格，超出时拒绝；响应大小不是拒绝理由。
 	for _, test := range []struct {
-		name, body  string
-		outputLimit int
+		name, body string
+		code       int
 	}{
-		{name: "large body", body: `{"padding":"` + strings.Repeat("x", 1024*1024) + `","query_list":[]}`},
-		{name: "large batch", body: `{"query_list":[` + strings.Repeat(`{},`, 16) + `{}]}`},
-		{name: "large response", body: `{"query_list":[{}]}`, outputLimit: 1024},
+		{name: "large body", body: `{"padding":"` + strings.Repeat("x", 1024*1024) + `","query_list":[]}`, code: http.StatusBadRequest},
+		{name: "large batch", body: `{"query_list":[` + strings.Repeat(`{},`, 16) + `{}]}`, code: http.StatusBadRequest},
+		{name: "response item", body: `{"query_list":[{}]}`, code: http.StatusOK},
 	} {
-		oldOutputLimit := v1beta3.MaxSharedTopologyOutputBytes
-		if test.outputLimit > 0 {
-			v1beta3.MaxSharedTopologyOutputBytes = test.outputLimit
-		}
 		for _, proxied := range []bool{false, true} {
 			body := test.body
 			if proxied {
@@ -56,9 +53,8 @@ func TestTopologyHTTPBudgetsApplyThroughProxy(t *testing.T) {
 			} else {
 				HandlerAPIRelationV1Beta3Topology(c)
 			}
-			require.Equal(t, http.StatusBadRequest, w.Code, test.name)
+			require.Equal(t, test.code, w.Code, test.name)
 		}
-		v1beta3.MaxSharedTopologyOutputBytes = oldOutputLimit
 	}
 }
 
@@ -84,15 +80,14 @@ func TestTopologyHandlerBudgets(t *testing.T) {
 			require.Zero(t, topologyObservation(t, "cmdb_topology_admission_active", nil).GetGauge().GetValue())
 		})
 	}
-	old := v1beta3.MaxSharedTopologyOutputBytes
-	v1beta3.MaxSharedTopologyOutputBytes = 1024
-	t.Cleanup(func() { v1beta3.MaxSharedTopologyOutputBytes = old })
+	// 整批响应不设字节上限：子查询的失败按该项 code/message 返回，批次仍是 HTTP 200。
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"query_list":[{}]}`))
 	HandlerAPIRelationV1Beta3Topology(c)
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Contains(t, w.Body.String(), "max_topology_output_bytes")
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), "instant topology query requires timestamp")
+	require.NotContains(t, w.Body.String(), "max_topology_output_bytes")
 }
 
 type topologyAdmissionWriter struct {
@@ -145,7 +140,6 @@ func TestTopologyAdmissionHeldThroughProxyWrite(t *testing.T) {
 	proxy.HandleProxy(c)
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Zero(t, topologyObservation(t, "cmdb_topology_admission_active", nil).GetGauge().GetValue())
-	require.Zero(t, topologyObservation(t, "cmdb_topology_reserved_bytes", nil).GetGauge().GetValue())
 }
 
 func TestTopologyHTTPRequestsContinueWhileOthersAreActive(t *testing.T) {

@@ -17,11 +17,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 )
 
-func sharedGraphTestConfig() *TimeGraphConfig {
+func sharedTopologyTestConfig() *TimeGraphConfig {
 	return &TimeGraphConfig{Resource: []TimeGraphResourceConfig{{Name: "entity", Index: cmdb.Index{"id"}, Info: cmdb.Index{"version", "group", "name"}}}}
 }
 
-func sharedGraphTestTimes(k int) []int64 {
+func sharedTopologyTestTimes(k int) []int64 {
 	times := make([]int64, k)
 	for i := range times {
 		times[i] = 1700000000000 + int64(i)*1000
@@ -29,18 +29,18 @@ func sharedGraphTestTimes(k int) []int64 {
 	return times
 }
 
-func sharedGraphTestRelation(kind string) cmdb.Relation {
+func sharedTopologyTestRelation(kind string) cmdb.Relation {
 	return cmdb.Relation{V: []cmdb.Resource{"entity", "entity"}, RelationType: kind, MetricName: kind + "_flow", Category: string(RelationCategoryDynamic), Direction: string(DirectionOutbound)}
 }
 
 func TestDirectSharedGraphStorageAndOwnership(t *testing.T) {
 	ctx := context.Background()
-	times := sharedGraphTestTimes(60)
+	times := sharedTopologyTestTimes(60)
 	grid, err := NewTopologyGrid(times)
 	require.NoError(t, err)
-	g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
+	g := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
 	info := cmdb.Matcher{"from_id": "a", "to_id": "b"}
-	require.NoError(t, g.AddTimeRelationWithRelation(ctx, sharedGraphTestRelation("calls"), info, times...))
+	require.NoError(t, g.AddTimeRelationWithRelation(ctx, sharedTopologyTestRelation("calls"), info, times...))
 	info["from_id"] = "changed"
 	query := SharedTopologyQuery{SourceType: "entity", SourceMatcher: cmdb.Matcher{"id": "a"}, MaxHops: 1}
 	result, err := g.FindSharedTopology(ctx, grid, query)
@@ -80,11 +80,11 @@ func TestDirectSharedGraphDifferential(t *testing.T) {
 	for _, k := range []int{1, 3, 30, 60} {
 		t.Run(fmt.Sprintf("K%d", k), func(t *testing.T) {
 			ctx := context.Background()
-			times := sharedGraphTestTimes(k)
+			times := sharedTopologyTestTimes(k)
 			grid, err := NewTopologyGrid(times)
 			require.NoError(t, err)
-			legacy := NewTimeGraphWithConfig(sharedGraphTestConfig())
-			direct := newSharedTimeGraph(sharedGraphTestConfig(), grid)
+			legacy := NewTimeGraphWithConfig(sharedTopologyTestConfig())
+			direct := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
 			graphs := []*TimeGraph{legacy, direct}
 			rng := rand.New(rand.NewSource(1499))
 			for node := 0; node < 40; node++ {
@@ -113,7 +113,7 @@ func TestDirectSharedGraphDifferential(t *testing.T) {
 						selected = append(selected, ts)
 					}
 				}
-				relation := sharedGraphTestRelation(fmt.Sprintf("calls%d", edge%3))
+				relation := sharedTopologyTestRelation(fmt.Sprintf("calls%d", edge%3))
 				if edge%4 == 0 {
 					relation.Direction = string(DirectionInbound)
 				}
@@ -142,37 +142,33 @@ func TestDirectSharedGraphDifferential(t *testing.T) {
 	}
 }
 
-func TestDirectSharedGraphBudgetsAndGrid(t *testing.T) {
-	for _, test := range []struct {
-		name                string
-		nodes, edges, infos int
-		want                string
-	}{
-		{name: "节点预算", nodes: 1, want: "max_graph_nodes"},
-		{name: "时间边预算", edges: 1, want: "max_graph_edges"},
-		{name: "节点时间预算", infos: 1, want: "max_graph_node_infos"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			cfg := sharedGraphTestConfig()
-			cfg.MaxNodes = test.nodes
-			cfg.MaxEdges = test.edges
-			cfg.MaxNodeInfos = test.infos
-			grid, err := NewTopologyGrid(sharedGraphTestTimes(3))
+// 图规模不设上限：节点、关系身份和属性版本超过旧的计数上限时照常构图并给出答案。
+func TestDirectSharedTopologyGrowsWithoutCountCapsAndValidatesGrid(t *testing.T) {
+	for _, points := range []int{1, 3, 60} {
+		t.Run(fmt.Sprintf("%d_points", points), func(t *testing.T) {
+			grid, err := NewTopologyGrid(sharedTopologyTestTimes(points))
 			require.NoError(t, err)
-			g := newSharedTimeGraph(cfg, grid)
-			err = g.AddTimeRelationWithRelation(context.Background(), sharedGraphTestRelation("calls"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, grid.timestamps...)
-			if test.edges > 0 && err == nil {
-				other := sharedGraphTestRelation("other")
-				err = g.AddTimeRelationWithRelation(context.Background(), other, cmdb.Matcher{"from_id": "a", "to_id": "b"}, grid.timestamps...)
+			g := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
+			info := cmdb.Matcher{"from_id": "a", "to_id": "b"}
+			require.NoError(t, g.AddTimeRelationWithRelation(context.Background(), sharedTopologyTestRelation("calls"), info, grid.timestamps...))
+			require.NoError(t, g.AddTimeRelationWithRelation(context.Background(), sharedTopologyTestRelation("calls"), info, grid.timestamps...))
+			require.Equal(t, 1, g.shared.edgeCount(), "duplicate observations do not store another relation")
+			require.NoError(t, g.AddTimeRelationWithRelation(context.Background(), sharedTopologyTestRelation("other"), info, grid.timestamps...))
+			require.Equal(t, 2, g.nodeBuilder.Length())
+			require.Equal(t, 2, g.shared.edgeCount())
+			require.Equal(t, 2, g.shared.nodeInfoVersionCount)
+			frames, err := g.FindSharedTopology(context.Background(), grid, SharedTopologyQuery{SourceType: "entity", SourceMatcher: cmdb.Matcher{"id": "a"}, MaxHops: 1})
+			require.NoError(t, err)
+			require.Len(t, frames, points)
+			for _, frame := range frames {
+				require.Len(t, frame.Nodes, 2)
+				require.Len(t, frame.Edges, 2)
 			}
-			var limit *ResultLimitError
-			require.ErrorAs(t, err, &limit)
-			require.Equal(t, test.want, limit.Reason)
 		})
 	}
-	grid, err := NewTopologyGrid(sharedGraphTestTimes(1))
+	grid, err := NewTopologyGrid(sharedTopologyTestTimes(1))
 	require.NoError(t, err)
-	g := newSharedTimeGraph(sharedGraphTestConfig(), grid)
+	g := newSharedTimeGraph(sharedTopologyTestConfig(), grid)
 	require.ErrorContains(t, g.AddTimeNode(context.Background(), "entity", cmdb.Matcher{"id": "a"}, 0), "does not match")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

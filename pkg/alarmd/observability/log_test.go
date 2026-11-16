@@ -404,8 +404,8 @@ func TestTheViewSessionLineCarriesTheStreamsWordAsItsReasonCode(t *testing.T) {
 		{"NO_LEADER", ResultDegraded, "NO_LEADER"},
 		{"DELTA_DIGEST_MISMATCH", ResultDegraded, "DELTA_DIGEST_MISMATCH"},
 		{"NOT_LEADER", ResultDegraded, "NOT_LEADER"},
-		{"10.0.0.1:9000", ResultDegraded, string(ReasonNotReported)},
-		{"10.0.0.1:9000", ResultSuccess, string(ReasonNone)},
+		{"192.0.2.1:9000", ResultDegraded, string(ReasonNotReported)},
+		{"192.0.2.1:9000", ResultSuccess, string(ReasonNone)},
 	} {
 		var output bytes.Buffer
 		limiter, err := NewScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 10, MaxScopes: 1024})

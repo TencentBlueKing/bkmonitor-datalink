@@ -16,6 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/readhold"
 )
 
 var ErrSlotInFlight = errors.New("alarmd scheduler: Query Group Slot is already in flight")
@@ -242,6 +243,10 @@ func verifiedOwnershipFrom(
 // no metric would separate that from a deployment where the index is simply
 // not helping.
 type SlotDueFacts struct {
+	// AwaitingPredecessor is a Slot not frozen because its Query Group waits
+	// on the group a moved Plan left (readhold.AwaitingPredecessorError):
+	// which, since and until when, for a reader to see the wait as one.
+	AwaitingPredecessor *readhold.AwaitingPredecessorError
 	// NextSlotUnix is the evaluation time of the Slot a not-due return waits
 	// for, or of the Slot frozen and waiting for its data: the grid point,
 	// as against NotDueUntilUnix, when it becomes runnable. Zero where none.
@@ -251,7 +256,9 @@ type SlotDueFacts struct {
 	// return; zero means the call carries no bound and the Query Group must be
 	// treated as due now. Truncation to the second is toward the past, which is
 	// the safe direction: an early bound costs one more call, a late one would
-	// hold back a Slot that is already due.
+	// hold back a Slot that is already due. A Slot waiting for its read is the
+	// exception: its bound is rounded up, and the source judges by the same second,
+	// so the bound is still the second it first answers due.
 	NotDueUntilUnix int64
 	// IntervalSeconds is the shortest evaluation interval among the Plans due at
 	// the Slot this call resolved. It is the number shortPeriodCohort already
@@ -654,6 +661,9 @@ type RunnerDueBound struct {
 	// ReadinessHold says a Deferred bound is a frozen Slot waiting for its
 	// data, not a failure's backoff.
 	ReadinessHold bool
+	// AwaitingPredecessor is a not-due bound that is the next Slot not frozen
+	// yet, waiting on a predecessor's read hold record (SlotDueFacts).
+	AwaitingPredecessor *readhold.AwaitingPredecessorError
 }
 
 // DueBound reports what the last completed round concluded. A Runner that has
@@ -680,6 +690,7 @@ func (runner *Runner) recordDueBound(decision string, facts SlotDueFacts) {
 		// or the schedule is retired. This is the bound worth having.
 		bound.Verdict = DueVerdictNotDue
 		bound.NotDueUntilUnix, bound.Retired, bound.NextSlotUnix = facts.NotDueUntilUnix, facts.Retired, facts.NextSlotUnix
+		bound.AwaitingPredecessor = facts.AwaitingPredecessor
 	case "source_backoff":
 		// The local gate answered before any store read. The Query Group is not
 		// due for a reason of its own, which is exactly what deferred means.
@@ -769,6 +780,11 @@ func (runner *Runner) NextDeadline() time.Time {
 		return time.Time{}
 	}
 	if bound.Verdict == DueVerdictNotDue && !bound.Deferred && bound.NotDueUntilUnix > 0 {
+		// A Slot's deadline is reckoned from its grid point, whatever it is
+		// waiting for.
+		if bound.NextSlotUnix > 0 {
+			return time.Unix(bound.NextSlotUnix+bound.IntervalSeconds, 0)
+		}
 		return time.Unix(bound.NotDueUntilUnix+bound.IntervalSeconds, 0)
 	}
 	return runner.now().Add(time.Duration(bound.IntervalSeconds) * time.Second)
@@ -1025,15 +1041,12 @@ func (runner *Runner) runOneTracked(
 		decision = "operation_not_ready"
 		return execution.SlotExecutionResult{}, false, nil
 	}
-	fence, err := runner.session.ValidateCurrent(ctx, runner.now())
-	if err != nil {
-		decision = "ownership_rejected"
-		return execution.SlotExecutionResult{}, false, err
-	}
-	if fence != slot.Dispatch.OwnerFence {
-		decision = "ownership_rejected"
-		return execution.SlotExecutionResult{}, false, ErrSlotOwnershipChanged
-	}
+	// The Slot runs under the fence it was frozen with. Its first write --
+	// BeginSlot or BeginRange -- runs the full fence in its own script, and a
+	// refusal there comes back as a SlotBeginRefusedError, counted below as
+	// this round's ownership rejection, as a fence check here used to be
+	// (A1.2).
+	fence := slot.Dispatch.OwnerFence
 	request := execution.SlotExecutionRequest{
 		ExpiredRange:      slot.ExpiredRange,
 		ShortPeriodCohort: slot.ShortPeriodCohort,
@@ -1044,8 +1057,9 @@ func (runner *Runner) runOneTracked(
 		ReplayExpired:                  slot.Recovery.Disposition == ReplayExpired,
 		// Decided on the Slot's refusals so far (noteShareRefusal); an
 		// expired replay or range is finalized query-free by its own rule.
-		ShareExceeded: runner.shareExceeded(slot) && slot.Recovery.Disposition != ReplayExpired && slot.ExpiredRange == nil,
-		Operation:     operation, AttemptNo: runner.attemptNo(slot), OwnerFence: fence, ExpectedNextSlot: slot.ExpectedNextSlot,
+		ShareExceeded:     runner.shareExceeded(slot) && slot.Recovery.Disposition != ReplayExpired && slot.ExpiredRange == nil,
+		QueryCooldownHeld: runner.queryCooldownHolds(), QueryCooldownProbe: runner.queryCooldownProbes(),
+		Operation: operation, AttemptNo: runner.attemptNo(slot), OwnerFence: fence, ExpectedNextSlot: slot.ExpectedNextSlot,
 		ContentScope: slot.Dispatch.ContentScope,
 	}
 	if err := request.Validate(); err != nil {
@@ -1103,6 +1117,24 @@ func (runner *Runner) runOneTracked(
 	}
 	decidesPool, poolResult := runner.queryCooldownDecision(operation, result, busyUntil)
 	if err != nil {
+		// The fence refused the attempt at its first write, so nothing of the
+		// Slot was written: this is the round's ownership rejection, counted
+		// and retried as one rather than as an execution that failed. It is
+		// the answer the Runner's own check before dispatch used to give, by
+		// the same fence, read at the moment of the write.
+		var notBegun *execution.SlotBeginRefusedError
+		if errors.As(err, &notBegun) {
+			// A moved content scope is the lease holding and this view
+			// behind the record: the view gate's answer, retried on its delay
+			// rather than at once, or a view that stays behind would spin a
+			// round per tick on the refusal.
+			if errors.Is(err, ownership.ErrContentScopeMoved) {
+				decision, *refusal = "view_not_executable", err
+				return runner.refuseViewNotExecutable(err), true, nil
+			}
+			decision = "ownership_rejected"
+			return execution.SlotExecutionResult{}, false, err
+		}
 		// The gate is asked again at execution, and a lease that moved
 		// between the source's reads and here is refused by the same name:
 		// not an attempt of this Slot that failed, the round did not run.

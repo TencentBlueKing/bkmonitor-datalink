@@ -39,6 +39,7 @@ import (
 	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
 )
@@ -224,8 +225,13 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance")
 	defer span.End(&err)
 
-	if err = validateQueryTsRawPagination(queryTs); err != nil {
+	if err = validateQueryTsRawOptions(queryTs); err != nil {
 		return total, list, resultTableOptions, routeInfo, err
+	}
+
+	var partialESResults *atomic.Uint32
+	if queryTs.AllowPartialESResults {
+		ctx, partialESResults = elasticsearch.WithPartialShardResults(ctx)
 	}
 
 	var (
@@ -484,23 +490,28 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	// 等待数据组装完毕
 	receiveWg.Wait()
 
+	if errorMessage.Len() > 0 && (successedPaths.Load() == 0 || exactTotalRequested(queryTs)) {
+		err = metadata.NewMessage(
+			metadata.MsgQueryRaw,
+			"查询原始数据报错",
+		).Error(ctx, metadata.ErrorWithCauses(strings.TrimSpace(errorMessage.String()), routeErrors...))
+		return total, list, resultTableOptions, routeInfo, err
+	}
+
+	if partialESResults != nil {
+		if count := partialESResults.Load(); count > 0 {
+			span.Set("raw.es_partial_shard_query_count", int64(count))
+			fmt.Fprintf(&errorMessage, "Elasticsearch 有 %d 路查询返回了部分分片结果", count)
+		}
+	}
 	if errorMessage.Len() > 0 {
 		partialDetail := strings.TrimSpace(errorMessage.String())
-		if successedPaths.Load() > 0 && !exactTotalRequested(queryTs) {
-			err = nil
-			span.Set("partial_errors", partialDetail)
-			const warnPrefix = "查询原始数据部分失败: "
-			fullMsg := warnPrefix + partialDetail
-			if existing := metadata.GetStatus(ctx); existing != nil && existing.Message != "" {
-				fullMsg = existing.Message + "; " + fullMsg
-			}
-			metadata.SetStatus(ctx, metadata.QueryRawPartial, fullMsg)
-		} else {
-			err = metadata.NewMessage(
-				metadata.MsgQueryRaw,
-				"查询原始数据报错",
-			).Error(ctx, metadata.ErrorWithCauses(partialDetail, routeErrors...))
+		span.Set("partial_errors", partialDetail)
+		fullMsg := "查询原始数据部分失败: " + partialDetail
+		if existing := metadata.GetStatus(ctx); existing != nil && existing.Message != "" {
+			fullMsg = existing.Message + "; " + fullMsg
 		}
+		metadata.SetStatus(ctx, metadata.QueryRawPartial, fullMsg)
 	}
 
 	// A total summed over routes is exact only if every route answered: a failed route, or a finished route that
@@ -745,8 +756,27 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		isPartial bool
 	)
 
+	if err = validatePartialESResults(queryTs); err != nil {
+		return nil, err
+	}
+	var partialESResults *atomic.Uint32
+	if queryTs.AllowPartialESResults {
+		ctx, partialESResults = elasticsearch.WithPartialShardResults(ctx)
+	}
 	ctx, span := trace.NewSpan(ctx, "query-reference-with-prom-engine")
 	defer func() {
+		if err == nil && partialESResults != nil {
+			if count := partialESResults.Load(); count > 0 {
+				message := fmt.Sprintf("Elasticsearch 有 %d 路查询返回了部分分片结果", count)
+				if existing := metadata.GetStatus(ctx); existing != nil && existing.Message != "" {
+					message = existing.Message + "; " + message
+				}
+				metadata.SetStatus(ctx, metadata.QueryTsPartial, message)
+			}
+			if status := metadata.GetStatus(ctx); status != nil && status.Code == metadata.QueryTsPartial {
+				resp.IsPartial = true
+			}
+		}
 		resp.TraceID = span.TraceID()
 		resp.Status = metadata.GetStatus(ctx)
 		span.End(&err)

@@ -1,6 +1,9 @@
 package observability
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // QueryFailureFacts is log-only: no raw error, query, URL or dimension values.
 // Stage names the actual Coordinator boundary, not an inferred root cause.
@@ -30,6 +33,10 @@ type QueryFailureFacts struct {
 	// plan (execution.PlannedQueryFacts). Nil where not known.
 	Request *QueryRequestFacts
 	Planned *QueryPlannedFacts
+	// SliceTimeout is, for a Slot read in slices whose query failed after a
+	// slice ran out of time, how that slice ended: split_failed or not_split
+	// (InputSliceTimeoutOutcomes); empty otherwise.
+	SliceTimeout string
 }
 
 // QueryRequestFacts is execution.RequestFacts as a line renders it.
@@ -355,3 +362,29 @@ func normalizeQueryFailure(component Component, stage Stage, input *QueryFailure
 	f.Request = normalizeQueryRequest(f.Request)
 	return &f
 }
+
+// PhysicalQueryAnswer is one physical query's answer as its histograms read
+// it: how it ended (Outcome, one of PhysicalQueryOutcomes), how long its
+// provider took, and what came back - bytes of the answer, series and
+// records - zero for an answer that never began.
+type PhysicalQueryAnswer struct {
+	Outcome                string
+	Elapsed                time.Duration
+	Bytes, Series, Records uint64
+}
+
+// How a physical query ended, closed. A timeout is split by whose deadline
+// it was: alarmd's own (the round's deadline, its transport, its body read
+// or its delivery) or the provider's backend, which answered that it ran out
+// of time (504, 408: QueryTimeoutSourceProviderStatus).
+const (
+	PhysicalQueryOK                    = "ok"
+	PhysicalQueryTimeoutAlarmdDeadline = "timeout_alarmd_deadline"
+	PhysicalQueryUpstream504           = "upstream_504"
+	PhysicalQueryUnavailable           = "unavailable"
+	PhysicalQueryRejected              = "rejected"
+)
+
+// PhysicalQueryOutcomes is the closed list.
+var PhysicalQueryOutcomes = []string{PhysicalQueryOK, PhysicalQueryTimeoutAlarmdDeadline, PhysicalQueryUpstream504,
+	PhysicalQueryUnavailable, PhysicalQueryRejected}

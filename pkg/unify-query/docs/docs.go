@@ -1815,7 +1815,7 @@ const docTemplate = `{
         "cmdb.SharedTopologyQuery": {
             "type": "object",
             "required": [
-                "source_type"
+                "sources"
             ],
             "properties": {
                 "allowed_categories": {
@@ -1832,18 +1832,18 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
-                "dynamic_relation_direction": {
-                    "description": "Traversal orientation for directional relations; non-directional static relations remain bidirectional.",
+                "direction": {
+                    "description": "Traversal orientation: out follows dynamic relations from caller to callee and belong-to relations from child to parent; in is the reverse; both follows either. Other static relations are always bidirectional.",
                     "type": "string",
                     "default": "both",
                     "enum": [
-                        "both",
-                        "outbound",
-                        "inbound"
+                        "out",
+                        "in",
+                        "both"
                     ]
                 },
                 "end_time": {
-                    "description": "Inclusive range end; must be >= start_time and exactly aligned to step. Same units as timestamp.",
+                    "description": "Inclusive range end; must be \u003e= start_time and exactly aligned to step. Same units as timestamp.",
                     "type": "integer"
                 },
                 "look_back_delta": {
@@ -1857,6 +1857,17 @@ const docTemplate = `{
                     "default": 2,
                     "minimum": 0
                 },
+                "relation_groups": {
+                    "description": "Relation group allowlist derived from the schema: BELONG_TO (static relations marked is_belongs_to) and SERVICE_CALL (dynamic relations). Empty allows all relations; any other value is rejected with 400. Intersects allowed_categories and allowed_relation_types.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "BELONG_TO",
+                            "SERVICE_CALL"
+                        ]
+                    }
+                },
                 "response_format": {
                     "description": "Per-item output format. Omitted or empty selects snapshots; compact-v1 is opt-in.",
                     "type": "string",
@@ -1866,25 +1877,12 @@ const docTemplate = `{
                         "compact-v1"
                     ]
                 },
-                "source_expand_info": {
-                    "description": "Explicit root attribute predicates, evaluated per frame. Defined primary keys may complete identity, but conflicting identity or unknown fields fail. Does not filter neighbor attributes.",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/cmdb.Matcher"
-                        }
-                    ]
-                },
-                "source_info": {
-                    "description": "Root identity matchers (string values). Partial or empty identity selects multiple relation endpoints; use the resource catalogue for complete primary keys.",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/cmdb.Matcher"
-                        }
-                    ]
-                },
-                "source_type": {
-                    "description": "Root resource type from the active schema; required for either endpoint.",
-                    "type": "string"
+                "sources": {
+                    "description": "Root selectors, 1 to 20. Each frame's roots are the union of nodes matched by any selector; hops count from the nearest root.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.TopologySource"
+                    }
                 },
                 "start_time": {
                     "description": "Required and nonzero with end_time for topology_range; forbidden for topology. Same units as timestamp.",
@@ -1896,14 +1894,14 @@ const docTemplate = `{
                     "default": "1m"
                 },
                 "target_types": {
-                    "description": "Output node-type filter after traversal, always retaining source_type nodes. Removes excluded nodes and incident edges, never collapses paths. Empty returns all reachable types.",
+                    "description": "Output node-type filter after traversal, always retaining every selector's source_type nodes. Removes excluded nodes and incident edges, never collapses paths. Empty returns all reachable types.",
                     "type": "array",
                     "items": {
                         "type": "string"
                     }
                 },
                 "timestamp": {
-                    "description": "Required and nonzero for topology; forbidden for topology_range. Unix seconds (<1e12) or whole-second Unix milliseconds (>=1e12). Responses always use milliseconds.",
+                    "description": "Required and nonzero for topology; forbidden for topology_range. Unix seconds (\u003c1e12) or whole-second Unix milliseconds (\u003e=1e12). Responses always use milliseconds.",
                     "type": "integer"
                 }
             }
@@ -1943,6 +1941,34 @@ const docTemplate = `{
                 },
                 "timestamp": {
                     "type": "integer"
+                }
+            }
+        },
+        "cmdb.TopologySource": {
+            "type": "object",
+            "required": [
+                "source_type"
+            ],
+            "properties": {
+                "source_expand_info": {
+                    "description": "Explicit root attribute predicates for this selector, evaluated per frame. Defined primary keys may complete identity, but conflicting identity or unknown fields fail. Does not filter neighbor attributes or other selectors.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/cmdb.Matcher"
+                        }
+                    ]
+                },
+                "source_info": {
+                    "description": "Root identity matchers (string values). Partial or empty identity selects multiple relation endpoints; use the resource catalogue for complete primary keys.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/cmdb.Matcher"
+                        }
+                    ]
+                },
+                "source_type": {
+                    "description": "Root resource type from the active schema; required.",
+                    "type": "string"
                 }
             }
         },
@@ -2074,6 +2100,10 @@ const docTemplate = `{
                         "bk_target_cloud_id"
                     ]
                 },
+                "exact_total": {
+                    "description": "ExactTotal 显式请求 ES 返回精确命中总数（track_total_hits）；默认关闭",
+                    "type": "boolean"
+                },
                 "field_name": {
                     "description": "FieldName 查询指标",
                     "type": "string",
@@ -2147,7 +2177,7 @@ const docTemplate = `{
                     "example": "system.cpu_summary"
                 },
                 "table_id_conditions": {
-                    "description": "TableIDConditions 表标签条件（Body table_id_conditions 与 PromQL __bk_query_label_selector_<维度> 写入此字段，用于路由选表）；AllConditions 形态，内层 AND、外层 OR。",
+                    "description": "TableIDConditions 表标签条件（Body table_id_conditions 与 PromQL __bk_query_label_selector_\u003c维度\u003e 写入此字段，用于路由选表）；AllConditions 形态，内层 AND、外层 OR。",
                     "type": "array",
                     "items": {
                         "type": "array",
@@ -2284,6 +2314,10 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "allow_partial_es_results": {
+                    "description": "AllowPartialESResults 仅在 /query/ts/raw 和 /query/ts/reference 接纳 ES 部分分片结果。",
+                    "type": "boolean"
+                },
                 "clear_cache": {
                     "description": "ClearCache 是否强制清理已存在的缓存会话",
                     "type": "boolean"
@@ -2355,7 +2389,7 @@ const docTemplate = `{
                     "example": "a"
                 },
                 "not_time_align": {
-                    "description": "NotTimeAlign 查询开始时间和聚合是否需要对齐\n例如\ntrue:  range: 10:03 - 10:23 window: 10m -> 10:03 - 10:13, 10:13 - 10:23\nfalse: range: 10:03 - 10:23 window: 10m -> 10:00 - 10:10, 10:10 - 10:20, 10:20 - 10:23",
+                    "description": "NotTimeAlign 查询开始时间和聚合是否需要对齐\n例如\ntrue:  range: 10:03 - 10:23 window: 10m -\u003e 10:03 - 10:13, 10:13 - 10:23\nfalse: range: 10:03 - 10:23 window: 10m -\u003e 10:00 - 10:10, 10:10 - 10:20, 10:20 - 10:23",
                     "type": "boolean"
                 },
                 "order_by": {
@@ -2380,7 +2414,7 @@ const docTemplate = `{
                     }
                 },
                 "reference": {
-                    "description": "Reference 查询开始时间是否需要对齐，\n例如：\ntrue:  range: 10:03 - 10:23 window: 10m -> 10:03 - 10:10, 10:10 - 10:20, 10:20 - 10:23\nfalse: range: 10:03 - 10:23 window: 10m -> 10:00 - 10:10, 10:10 - 10:20, 10:20 - 10:23",
+                    "description": "Reference 查询开始时间是否需要对齐，\n例如：\ntrue:  range: 10:03 - 10:23 window: 10m -\u003e 10:03 - 10:10, 10:10 - 10:20, 10:20 - 10:23\nfalse: range: 10:03 - 10:23 window: 10m -\u003e 10:00 - 10:10, 10:10 - 10:20, 10:20 - 10:23",
                     "type": "boolean"
                 },
                 "response_contract": {
@@ -2772,6 +2806,9 @@ const docTemplate = `{
                 },
                 "total": {
                     "type": "integer"
+                },
+                "total_exact": {
+                    "type": "boolean"
                 },
                 "trace_id": {
                     "type": "string"

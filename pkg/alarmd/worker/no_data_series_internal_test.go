@@ -255,10 +255,10 @@ func TestASyntheticSeriesIsBoundToTheNoDataLevelsOwnEffectiveTime(t *testing.T) 
 // The dimensions a Slot saw come back as text, because that is what a group is.
 func TestSeenSeriesDimensionsComeBackAsText(t *testing.T) {
 	text := dimensionText(map[string]json.RawMessage{
-		"bk_target_ip": json.RawMessage(`"10.0.0.1"`),
+		"bk_target_ip": json.RawMessage(`"192.0.2.1"`),
 		"port":         json.RawMessage(`8080`),
 	})
-	if text["bk_target_ip"] != "10.0.0.1" {
+	if text["bk_target_ip"] != "192.0.2.1" {
 		t.Fatalf("a string dimension came back as %q, want the text inside it", text["bk_target_ip"])
 	}
 	// A dimension that is not a string keeps its JSON form: rendering it any
@@ -327,190 +327,10 @@ func TestAnUnalignedSlotStopsTheNoDataRound(t *testing.T) {
 	}
 }
 
-// The budget decision itself: what fits, what does not, and what an unset
-// budget means.
-//
-// An unset budget is no bound, not no room. Reading it the other way would turn
-// no-data off in every deployment that never set one, and it would do it
-// silently - every Plan skipped for budget, on a worker with no budget.
-func TestTheNoDataBudgetDecision(t *testing.T) {
-	for name, test := range map[string]struct {
-		spent, adding, budget uint64
-		fits                  bool
-	}{
-		"room to spare":    {spent: 1, adding: 2, budget: 8, fits: true},
-		"exactly fills it": {spent: 6, adding: 2, budget: 8, fits: true},
-		"one over":         {spent: 7, adding: 2, budget: 8, fits: false},
-		"nothing left":     {spent: 8, adding: 1, budget: 8, fits: false},
-		// Zero is no room, the same reading checkEffectCounts uses for this
-		// number. It is unreachable - the coordinator refuses a zero budget -
-		// and the test below is what makes that the guarantee rather than this.
-		"no budget at all": {spent: 0, adding: 1, budget: 0, fits: false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if got := noDataFitsSlotBudget(test.spent, test.adding, test.budget); got != test.fits {
-				t.Fatalf("fits(spent=%d, adding=%d, budget=%d) = %t, want %t",
-					test.spent, test.adding, test.budget, got, test.fits)
-			}
-		})
-	}
-}
-
-// A Plan whose synthetic series do not fit the Slot's remaining state budget is
-// skipped by name, and none of its series are evaluated.
-//
-// By name because it does not resolve on its own: a history roster only grows,
-// so a Plan that did not fit this round will not fit the next one either, and
-// folded into any other outcome it reads as a transient. None of its series,
-// because a partial set would report the groups that fitted as absent and say
-// nothing at all about the rest - a half-answer that looks like a whole one.
-func TestAPlanBeyondTheSlotBudgetIsSkippedByNameAndEntirely(t *testing.T) {
-	due := noDataWiredPlan(t)
-	stream := noDataWiredStream(t, due, &emptyNoDataStore{})
-	stream.coordinator.budget.MaxStateMutations = 1
-	if err := stream.loadNoDataMemory(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	// Spend the budget first, as an earlier Plan in the same Slot would.
-	stream.noDataStateMutations = 1
-
-	// Nothing is evaluated, so nothing reaches the batch - which is itself the
-	// assertion: a Plan that was only partly skipped would need the state port
-	// this fixture deliberately does not have, and would panic here.
-	if err := stream.evaluateNoData(context.Background(), nil, 16); err != nil {
-		t.Fatal(err)
-	}
-	if len(stream.noDataOutcomes) != 1 || stream.noDataOutcomes[0] != nodata.OutcomeSkippedSlotBudget {
-		t.Fatalf("outcomes = %+v, want exactly %q", stream.noDataOutcomes, nodata.OutcomeSkippedSlotBudget)
-	}
-	if stream.noDataStateMutations != 1 {
-		t.Fatalf("the skipped Plan spent %d mutations, want it to have spent none",
-			stream.noDataStateMutations-1)
-	}
-
-	// And the same Plan does produce series when asked directly, so the skip
-	// above was the budget rather than the Plan having nothing to say.
-	round, err := stream.noDataRoundFor(due, nil, execution.CompletenessFull)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(round.series) == 0 {
-		t.Fatal("the Plan produced no series at all, so the budget test proved nothing")
-	}
-}
-
-// The no-data Plans share only what the Slot's own series left of each cap
-// their series spend from: one State write per series and at most one event,
-// since a no-data Plan has one Level (decomposition 5.9 item 2). The edge is
-// exact on both sides of both caps: filling what is left fits, one more does
-// not. Counted against the whole cap instead, a Plan beside threshold series
-// that used part of it passes here and is refused by the Slot-wide check,
-// which replaces every Plan's results with a budget gap.
-func TestANoDataPlanSharesOnlyWhatTheSlotsOwnSeriesLeft(t *testing.T) {
-	due := noDataWiredPlan(t)
-	probe := noDataWiredStream(t, due, &emptyNoDataStore{})
-	if err := probe.loadNoDataMemory(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	round, err := probe.noDataRoundFor(due, nil, execution.CompletenessFull)
-	if err != nil {
-		t.Fatal(err)
-	}
-	series := uint64(len(round.series))
-	if series == 0 {
-		t.Fatal("the Plan produced no series, so no budget edge can be read from it")
-	}
-	const spent = 3
-	for name, test := range map[string]struct {
-		effects              effectCounts
-		maxStates, maxEvents uint64
-		want                 nodata.SlotOutcome
-	}{
-		"State writes fill exactly what is left": {effects: effectCounts{states: spent},
-			maxStates: spent + series, maxEvents: 100, want: nodata.OutcomeEvaluated},
-		"State writes one over what is left": {effects: effectCounts{states: spent},
-			maxStates: spent + series - 1, maxEvents: 100, want: nodata.OutcomeSkippedSlotBudget},
-		"events fill exactly what is left": {effects: effectCounts{events: spent},
-			maxStates: 100, maxEvents: spent + series, want: nodata.OutcomeEvaluated},
-		"events one over what is left": {effects: effectCounts{events: spent},
-			maxStates: 100, maxEvents: spent + series - 1, want: nodata.OutcomeSkippedSlotBudget},
-	} {
-		t.Run(name, func(t *testing.T) {
-			stream := noDataWiredStream(t, due, &emptyNoDataStore{})
-			stream.coordinator.ports.State = failingStatePort{}
-			stream.coordinator.budget.MaxStateMutations, stream.coordinator.budget.MaxEvents = test.maxStates, test.maxEvents
-			stream.effects = test.effects
-			if err := stream.loadNoDataMemory(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			// An evaluated Plan reaches the batch, which fails on purpose in
-			// this fixture; the outcome is recorded before it.
-			_ = stream.evaluateNoData(context.Background(), nil, 16)
-			if len(stream.noDataOutcomes) != 1 || stream.noDataOutcomes[0] != test.want {
-				t.Fatalf("outcomes = %+v, want exactly %q", stream.noDataOutcomes, test.want)
-			}
-		})
-	}
-}
-
-// An evaluated Plan spends the budget its series cost, which is visible in what
-// happens to the Plan after it.
-//
-// Asserted through the effect rather than by reading the counter: a Plan that
-// charged nothing would leave room for the next one, and the next one would be
-// evaluated instead of skipped. That is the behaviour the charge exists for,
-// and it is the one a reader of this code would want to be sure of.
-func TestAnEvaluatedPlanSpendsWhatItsSeriesCost(t *testing.T) {
-	first := noDataWiredPlan(t)
-	second := first
-	second.Identity.StrategyID = "8"
-	second.CompiledPlan = noDataPreflightPlan(t, "8", &contract.NoDataConfigV1{
-		Continuous: 1, Level: 2, AggDimension: []string{"bk_target_ip", "bk_target_cloud_id"},
-	})
-	duePlans := []execution.DuePlan{first, second}
-
-	stream := &streamedExecution{
-		coordinator: &SlotExecutionCoordinator{
-			ports: Ports{NoData: &emptyNoDataStore{}, Hosts: SharedHostBusiness, State: failingStatePort{}},
-			// One mutation for the whole Slot: the first Plan's one series fits
-			// and the second Plan's does not.
-			budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxGapMutations: 10,
-				MaxStateMutations: 1, MaxEvents: 1},
-		},
-		header: execution.InternalExecutionHeader{
-			Contract: noDataPreflightContract(t, duePlans), DuePlans: duePlans,
-		},
-	}
-	if err := stream.loadNoDataMemory(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	// The batch fails on purpose - this fixture has no evaluator - and that is
-	// after both Plans have been decided, which is what this reads.
-	err := stream.evaluateNoData(context.Background(), nil, 16)
-	if err == nil {
-		t.Fatal("fixture: the batch was expected to fail, so its success means this read something else")
-	}
-	if len(stream.noDataOutcomes) != 2 {
-		t.Fatalf("outcomes = %+v, want one per Plan", stream.noDataOutcomes)
-	}
-	if stream.noDataOutcomes[0] != nodata.OutcomeEvaluated {
-		t.Fatalf("the first Plan landed on %q, want it evaluated", stream.noDataOutcomes[0])
-	}
-	if stream.noDataOutcomes[1] != nodata.OutcomeSkippedSlotBudget {
-		t.Fatalf("the second Plan landed on %q, want %q - the first Plan's series did not spend the budget",
-			stream.noDataOutcomes[1], nodata.OutcomeSkippedSlotBudget)
-	}
-	// The one synthetic series that went to the batch is in the census on
-	// both sides it can be on before the write: it is a series the Slot meant
-	// to evaluate and issued a preflight for. Left out, the written side of
-	// the census counted it and the read side did not, and on a live
-	// deployment written stood above read by exactly the synthetic series.
-	// The skipped Plan's series never went anywhere and is not counted.
-	if stream.seriesCensus != (seriesCensus{Due: 1, Read: 1}) {
-		t.Fatalf("census = %+v, want the one synthetic series that went to the batch on due and read", stream.seriesCensus)
-	}
-}
+// A no-data Plan's synthetic series are no longer judged against what the
+// Slot's own series left of its caps before any is evaluated: they are cut
+// into windows like every other series (decision-020 batch 8, 2.7), which
+// windowed_no_data_internal_test.go pins.
 
 // failingStatePort answers every runtime load with an error, so a test can
 // reach the batch without standing up an evaluator.
@@ -722,12 +542,12 @@ func TestTheCensusCountsTheSlotsOwnNoDataPlans(t *testing.T) {
 	if err := stream.loadNoDataMemory(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	// The budget is already spent, as an earlier Plan in the same Slot would
-	// leave it. The no-data Plan is then skipped by name rather than evaluated,
-	// which keeps this test off the state port -- and makes the point sharper:
-	// the census counts a Plan the round found, whatever the round then does
-	// with it.
-	stream.noDataStateMutations = 1
+	// The memory was refused for the Slot, as one past the share is. The
+	// no-data Plan is then skipped by name rather than evaluated, which keeps
+	// this test off the state port -- and makes the point sharper: the census
+	// counts a Plan the round found, whatever the round then does with it.
+	stream.noDataRefused = map[execution.PlanNoDataIdentity]execution.NoDataApplyItemResult{
+		withNoData.NoDataIdentity(): noDataBytesRefusal(withNoData.NoDataIdentity(), 1, 1, 1)}
 
 	if err := stream.evaluateNoData(context.Background(), nil, 16); err != nil {
 		t.Fatal(err)

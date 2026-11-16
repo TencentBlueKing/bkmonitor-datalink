@@ -65,10 +65,10 @@ func TestTopologyExecutionDeadlineReturnsJSON(t *testing.T) {
 							require.NoError(t, provider.Shutdown(context.Background()))
 						})
 						handler := HandlerAPIRelationV1Beta3Topology
-						query := `{"timestamp":1700000000,"source_type":"unknown-resource"}`
+						query := `{"timestamp":1700000000,"sources":[{"source_type":"unknown-resource"}]}`
 						if rangeQuery {
 							handler = HandlerAPIRelationV1Beta3TopologyRange
-							query = `{"start_time":1700000000,"end_time":1700000060,"step":"60s","source_type":"unknown-resource"}`
+							query = `{"start_time":1700000000,"end_time":1700000060,"step":"60s","sources":[{"source_type":"unknown-resource"}]}`
 						}
 						innerPath := fmt.Sprintf("/test-topology-execution-deadline-%t", rangeQuery)
 						if _, exists := metadata.GetHandler(innerPath); !exists {
@@ -152,7 +152,9 @@ func TestTopologyExecutionDeadlineReturnsJSON(t *testing.T) {
 	}
 }
 
-func TestTopologySuccessStillHonorsCancellation(t *testing.T) {
+// 取消落在成功响应开始写出时：响应仍完整写出（200、完整 JSON），不留下没有状态码和正文的
+// 空响应；期限与取消只在项之间检查。
+func TestTopologySuccessWriteFinishesOnceStarted(t *testing.T) {
 	useRelationTestConfig(t)
 	log.InitTestLogger()
 	metadata.InitMetadata()
@@ -189,16 +191,12 @@ func TestTopologySuccessStillHonorsCancellation(t *testing.T) {
 				} else {
 					HandlerAPIRelationV1Beta3Topology(c)
 				}
+				require.Equal(t, interrupted, ctx.Err() != nil, "the request is canceled when the response write starts")
 				cancel()
-				if interrupted {
-					require.ErrorIs(t, proxy.ResponseWriteError(c), context.Canceled)
-					require.Empty(t, writer.Body.String())
-				} else {
-					require.NoError(t, proxy.ResponseWriteError(c))
-					require.Equal(t, http.StatusOK, writer.Code)
-					require.True(t, json.Valid(writer.Body.Bytes()), writer.Body.String())
-					require.Contains(t, writer.Body.String(), `"data":[]`)
-				}
+				require.NoError(t, proxy.ResponseWriteError(c))
+				require.Equal(t, http.StatusOK, writer.Code)
+				require.True(t, json.Valid(writer.Body.Bytes()), writer.Body.String())
+				require.Contains(t, writer.Body.String(), `"data":[]`)
 			}
 		})
 	}

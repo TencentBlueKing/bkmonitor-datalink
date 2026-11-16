@@ -80,13 +80,13 @@ func TestQuerySharedTopologyCases(t *testing.T) {
 		{
 			name: "range 使用统一时间网格",
 			request: cmdb.SharedTopologyQuery{
-				SpaceUID:   "space",
-				StartTime:  1700000000,
-				EndTime:    1700000200,
-				Step:       "100s",
-				SourceType: "source",
-				SourceInfo: cmdb.Matcher{"source_id": "a"},
-				MaxHops:    2,
+				SpaceUID:  "space",
+				StartTime: 1700000000,
+				EndTime:   1700000200,
+				Step:      "100s",
+				Sources:   []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}},
+
+				MaxHops: 2,
 			},
 			wantPoints:   3,
 			wantStep:     "1m40s",
@@ -95,12 +95,12 @@ func TestQuerySharedTopologyCases(t *testing.T) {
 		{
 			name: "目标类型只过滤输出不改变遍历",
 			request: cmdb.SharedTopologyQuery{
-				SpaceUID:    "space",
-				StartTime:   1700000000,
-				EndTime:     1700000200,
-				Step:        "100s",
-				SourceType:  "source",
-				SourceInfo:  cmdb.Matcher{"source_id": "a"},
+				SpaceUID:  "space",
+				StartTime: 1700000000,
+				EndTime:   1700000200,
+				Step:      "100s",
+				Sources:   []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}},
+
 				TargetTypes: []cmdb.Resource{"target"},
 				MaxHops:     2,
 			},
@@ -111,11 +111,11 @@ func TestQuerySharedTopologyCases(t *testing.T) {
 		{
 			name: "instant 是单点网格",
 			request: cmdb.SharedTopologyQuery{
-				SpaceUID:   "space",
-				Timestamp:  1700000000,
-				SourceType: "source",
-				SourceInfo: cmdb.Matcher{"source_id": "a"},
-				MaxHops:    1,
+				SpaceUID:  "space",
+				Timestamp: 1700000000,
+				Sources:   []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}},
+
+				MaxHops: 1,
 			},
 			wantPoints:   1,
 			wantStep:     "0s",
@@ -124,11 +124,11 @@ func TestQuerySharedTopologyCases(t *testing.T) {
 		{
 			name: "超过配置点数明确拒绝",
 			request: cmdb.SharedTopologyQuery{
-				SpaceUID:   "space",
-				StartTime:  1700000000,
-				EndTime:    1700006000,
-				Step:       "100s",
-				SourceType: "source",
+				SpaceUID:  "space",
+				StartTime: 1700000000,
+				EndTime:   1700006000,
+				Step:      "100s",
+				Sources:   []cmdb.TopologySource{{SourceType: "source"}},
 			},
 			wantErr: "topology time grid contains",
 		},
@@ -182,13 +182,13 @@ func TestQuerySharedTopologyPartialCases(t *testing.T) {
 				return matrix, queryTs.QueryList[0].FieldName == tt.partialMetric, err
 			}
 			result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{
-				SpaceUID:   "space",
-				StartTime:  1700000000,
-				EndTime:    1700000200,
-				Step:       "100s",
-				SourceType: "source",
-				SourceInfo: cmdb.Matcher{"source_id": "a"},
-				MaxHops:    2,
+				SpaceUID:  "space",
+				StartTime: 1700000000,
+				EndTime:   1700000200,
+				Step:      "100s",
+				Sources:   []cmdb.TopologySource{{SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}}},
+
+				MaxHops: 2,
 			})
 			require.NoError(t, err)
 			for _, snapshot := range result.Snapshots {

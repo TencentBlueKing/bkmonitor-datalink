@@ -143,6 +143,9 @@ func bodyTraceID(body []byte) string {
 func rejectionClass(status int, body []byte) string {
 	text := bytes.ToLower(body)
 	switch {
+	case bytes.Contains(text, []byte("maxquerylen")) || bytes.Contains(text, []byte("too long query")):
+		// VictoriaMetrics' words for a query past -search.maxQueryLen.
+		return execution.RejectionClassQueryTooLong
 	case bytes.Contains(text, []byte("reduce the time range")) ||
 		bytes.Contains(text, []byte("samples")) && bytes.Contains(text, []byte("limit")):
 		return execution.RejectionClassVMSampleLimit

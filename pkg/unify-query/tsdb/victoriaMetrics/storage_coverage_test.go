@@ -8,7 +8,6 @@ package victoriaMetrics
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"testing"
 	"time"
 
@@ -29,19 +28,20 @@ func TestDirectQueryStorageCoverage(t *testing.T) {
 			emptyList      bool
 			data           bool
 			backendPartial bool
-			wantMismatch   bool
+			wantMismatch   string
 			wantPartial    bool
 		}{
 			{name: "complete-empty", actual: []string{"storage-a", "storage-b"}},
 			{name: "complete-data", actual: []string{"storage-a", "storage-b"}, data: true},
-			{name: "missing-storage-empty", actual: []string{"storage-a"}, wantMismatch: true, wantPartial: true},
-			{name: "missing-storage-data", actual: []string{"storage-a"}, data: true, wantMismatch: true, wantPartial: true},
-			{name: "missing-storage-no-list", actual: []string{"storage-a"}, emptyList: true, wantMismatch: true, wantPartial: true},
-			{name: "explicit-empty-coverage", actual: []string{}, wantMismatch: true, wantPartial: true},
+			{name: "missing-storage-empty", actual: []string{"storage-a"}, wantMismatch: "vm_storage_coverage_mismatch:storage-b"},
+			{name: "missing-storage-data", actual: []string{"storage-a"}, data: true, wantMismatch: "vm_storage_coverage_mismatch:storage-b"},
+			{name: "missing-storage-backend-partial", actual: []string{"storage-a"}, data: true, backendPartial: true, wantMismatch: "vm_storage_coverage_mismatch:storage-b", wantPartial: true},
+			{name: "missing-storage-no-list", actual: []string{"storage-a"}, emptyList: true, wantMismatch: "vm_storage_coverage_mismatch:storage-b"},
+			{name: "explicit-empty-coverage", actual: []string{}, wantMismatch: "vm_storage_coverage_mismatch:storage-a,storage-b"},
 			{name: "absent-coverage"},
 			{name: "absent-coverage-backend-partial", backendPartial: true, wantPartial: true},
 			{name: "unknown-request", actual: []string{"storage-a"}, unknownRequest: true},
-			{name: "unknown-request-known-missing", actual: []string{}, unknownRequest: true, wantMismatch: true, wantPartial: true},
+			{name: "unknown-request-known-missing", actual: []string{}, unknownRequest: true, wantMismatch: "vm_storage_coverage_mismatch:storage-a"},
 			{name: "complete-backend-partial", actual: []string{"storage-a", "storage-b"}, backendPartial: true, wantPartial: true},
 			{name: "extra-storage", actual: []string{"storage-a", "storage-b", "storage-c"}},
 		} {
@@ -99,24 +99,32 @@ func TestDirectQueryStorageCoverage(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, tc.wantPartial, partial)
 				require.Equal(t, map[bool]int{false: 0, true: 1}[tc.data], count)
-				status := metadata.GetStatus(ctx)
-				if tc.wantMismatch {
-					require.NotNil(t, status)
-					require.Equal(t, metadata.QueryTsPartial, status.Code)
-					require.Contains(t, status.Message, "vm_storage_coverage_mismatch")
-				} else if status != nil {
-					require.NotContains(t, status.Message, "vm_storage_coverage_mismatch", fmt.Sprint(status))
+				// partial 与 Status 只认 VM 后端的结论，缺失存储单独记录。
+				require.Nil(t, metadata.GetStatus(ctx))
+				if tc.wantMismatch != "" {
+					require.Equal(t, []string{tc.wantMismatch}, metadata.GetStorageCoverageReasons(ctx))
+				} else {
+					require.Empty(t, metadata.GetStorageCoverageReasons(ctx))
 				}
 			})
 		}
 	}
 }
 
-func TestStorageCoveragePartialPreservesExistingReason(t *testing.T) {
+func TestStorageCoverageReasonLeavesStatus(t *testing.T) {
 	mock.Init()
 	ctx := metadata.InitHashID(context.Background())
 	metadata.SetStatus(ctx, metadata.QueryTsPartial, "existing_partial")
-	markStorageCoveragePartial(ctx)
-	markStorageCoveragePartial(ctx)
-	require.Equal(t, "existing_partial; vm_storage_coverage_mismatch", metadata.GetStatus(ctx).Message)
+	metadata.AddStorageCoverageReason(ctx, storageCoverageReason([]string{"storage-a"}))
+	metadata.AddStorageCoverageReason(ctx, storageCoverageReason([]string{"storage-a"}))
+	metadata.AddStorageCoverageReason(ctx, storageCoverageReason([]string{"storage-b"}))
+	require.Equal(t, []string{"vm_storage_coverage_mismatch:storage-a", "vm_storage_coverage_mismatch:storage-b"}, metadata.GetStorageCoverageReasons(ctx))
+	require.Equal(t, "existing_partial", metadata.GetStatus(ctx).Message)
+}
+
+// 原因里最多列出 3 个缺失存储，其余只记个数，原因长度不随请求的存储数增长。
+func TestStorageCoverageReasonIsBounded(t *testing.T) {
+	require.Equal(t, "vm_storage_coverage_mismatch", storageCoverageReason(nil))
+	require.Equal(t, "vm_storage_coverage_mismatch:a,b,c", storageCoverageReason([]string{"a", "b", "c"}))
+	require.Equal(t, "vm_storage_coverage_mismatch:a,b,c,+2", storageCoverageReason([]string{"a", "b", "c", "d", "e"}))
 }

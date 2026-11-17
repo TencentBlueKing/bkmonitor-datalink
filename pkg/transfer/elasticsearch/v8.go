@@ -34,7 +34,9 @@ func NewESv8Writer(config map[string]interface{}) (BulkWriter, error) {
 	if err := ApplyFields(&clientConfig, config); err != nil {
 		return nil, err
 	}
-	// 由 BulkHandler 按文档结果重试，避免客户端再次发送已经成功的条目。
+	// SDK 默认会对 502/503/504 进行请求级重试；这里关闭它，
+	// 统一由 BulkHandler 按逐条回执重试，避免两层重试叠加。
+	// https://www.elastic.co/docs/reference/elasticsearch/clients/go/configuration#_config_retry
 	clientConfig.DisableRetry = true
 	client, err := elasticsearch.NewClient(clientConfig)
 	if err != nil {
@@ -45,7 +47,8 @@ func NewESv8Writer(config map[string]interface{}) (BulkWriter, error) {
 
 func (w *ESv8Writer) Write(ctx context.Context, index string, records Records) (*Response, error) {
 	for _, record := range records {
-		// ES8 已移除 mapping type，批量请求的元数据也不能包含 _type。
+		// ES 8.0 起不再支持 mapping type，批量请求的元数据也不能包含 _type。
+		// https://www.elastic.co/guide/en/elasticsearch/reference/8.19/removal-of-types.html
 		delete(record.Meta, "_type")
 	}
 	body, err := w.getBodyByRecords(records)

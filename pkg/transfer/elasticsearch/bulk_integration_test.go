@@ -163,7 +163,8 @@ func TestBulkIntegration(t *testing.T) {
 					} else {
 						require.NoError(t, err)
 					}
-					// 同一 ID 写入两次应更新原文档，证明文档 ID 规则没有变化。
+					// index 动作再次写入同一 ID 会替换原文档，成功更新时 _version 递增。
+					// https://www.elastic.co/guide/en/elasticsearch/reference/8.19/docs-bulk.html
 					count, err = handler.Flush(context.Background(), results[:1])
 					require.NoError(t, err)
 					require.Equal(t, 1, count)
@@ -180,7 +181,9 @@ func TestBulkIntegration(t *testing.T) {
 				})
 			}
 
-			// 新版本的只读磁盘保护返回逐条 429，直接用真实 ES 产生可重试失败。
+			// 在本地临时索引上启用只读磁盘保护，触发 ES8/9 的逐条 429，验证可重试失败。
+			// 设置语义：https://www.elastic.co/guide/en/elasticsearch/reference/8.19/index-modules-blocks.html
+			// 429 状态的官方实现：https://github.com/elastic/elasticsearch/blob/v8.19.6/server/src/main/java/org/elasticsearch/cluster/metadata/IndexMetadata.java#L132
 			if major >= 8 {
 				for _, tc := range []struct {
 					name      string

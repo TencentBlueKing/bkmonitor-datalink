@@ -23,11 +23,15 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
 
+// 429 的退避重试依据见官方写入调优说明；5xx 统一按本处理器的服务端错误策略重试。
+// https://www.elastic.co/guide/en/elasticsearch/reference/8.19/tune-for-indexing-speed.html#multiple-workers-threads
 func retryableBulkStatus(status int) bool {
 	return status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
 }
 
-// ES 按请求顺序返回条目。先校验完整响应，再按位置关联文档；
+// ES 按请求顺序返回逐条结果，各条的成功或失败相互独立。
+// https://www.elastic.co/guide/en/elasticsearch/reference/8.19/docs-bulk.html#bulk-api-response-body
+// 先校验完整响应，再按位置关联文档；
 // 回执不完整时无法确定哪些文档成功，需要重试当前待确认的文档。
 func readBulkResponse(response *Response, size int) (*ESWriteResult, bool, error) {
 	if response == nil || response.Body == nil {

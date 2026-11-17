@@ -19,6 +19,7 @@ import (
 
 func TestReadBulkResponse(t *testing.T) {
 	// HTTP 200 只表示批量请求已处理，必须继续检查每条 index 操作的结果。
+	// https://www.elastic.co/guide/en/elasticsearch/reference/8.19/docs-bulk.html#bulk-api-response-body
 	for _, tc := range []struct {
 		name      string
 		status    int

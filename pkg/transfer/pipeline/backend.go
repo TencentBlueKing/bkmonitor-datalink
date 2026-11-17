@@ -158,7 +158,8 @@ type BulkBackendAdapter struct {
 	pushSem             utils.Semaphore
 }
 
-func getBufferSizeAndFlushInterval(ctx context.Context, name string) (int, time.Duration) {
+// GetBufferSizeAndFlushInterval 解析数据源的批量配置，未提供有效覆盖值时使用全局默认。
+func GetBufferSizeAndFlushInterval(ctx context.Context, name string) (int, time.Duration) {
 	bufferSize := BulkDefaultBufferSize
 	flushInterval := BulkDefaultFlushInterval
 	mqConfig := config.MQConfigFromContext(ctx)
@@ -182,7 +183,7 @@ func getBufferSizeAndFlushInterval(ctx context.Context, name string) (int, time.
 
 // NewBulkBackendDefaultAdapter
 func NewBulkBackendDefaultAdapter(ctx context.Context, name string, handler BulkHandler, maxQps int) *BulkBackendAdapter {
-	bufferSize, flushInterval := getBufferSizeAndFlushInterval(ctx, name)
+	bufferSize, flushInterval := GetBufferSizeAndFlushInterval(ctx, name)
 	return NewBulkBackendAdapter(ctx, name, handler, bufferSize, flushInterval, BulkDefaultFlushRetries)
 }
 

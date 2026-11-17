@@ -255,6 +255,76 @@ func TestBulkIntegration(t *testing.T) {
 						require.Equal(t, 1, document.Version)
 					})
 				}
+
+				for _, tc := range []struct {
+					name         string
+					mqInterval   string
+					withoutMQ    bool
+					wantInterval time.Duration
+				}{
+					{"retry_interval_global_default", "", false, 120 * time.Millisecond},
+					{"retry_interval_data_source_override", "600ms", false, 600 * time.Millisecond},
+					{"retry_interval_invalid_override", "invalid", false, 120 * time.Millisecond},
+					{"retry_interval_without_mq", "", true, 120 * time.Millisecond},
+				} {
+					t.Run(tc.name, func(t *testing.T) {
+						// 通过生产 NewBackend 构造整条写入路径，用真实 429 验证等待预算。
+						// 批量大小设为 1，使发送立即开始，测量不包含等待批量发送的时间。
+						oldSize, oldInterval := pipeline.BulkDefaultBufferSize, pipeline.BulkDefaultFlushInterval
+						pipeline.BulkDefaultBufferSize, pipeline.BulkDefaultFlushInterval = 1, 120*time.Millisecond
+						t.Cleanup(func() {
+							pipeline.BulkDefaultBufferSize, pipeline.BulkDefaultFlushInterval = oldSize, oldInterval
+						})
+						server.setBlock(t, blockedIndex, true)
+						t.Cleanup(func() { server.setBlock(t, blockedIndex, false) })
+						conf := config.NewConfiguration()
+						conf.Set(pipeline.ConfKeyPayloadFlushInterval, pipeline.BulkDefaultFlushInterval)
+						pipe := config.NewPipelineConfig()
+						pipe.DataID = major
+						pipe.MQConfig.BatchSize = 1
+						pipe.MQConfig.FlushInterval = tc.mqInterval
+						address, err := url.Parse(server.address)
+						require.NoError(t, err)
+						port, err := strconv.Atoi(address.Port())
+						require.NoError(t, err)
+						shipper := config.NewMetaClusterInfo()
+						shipper.ClusterType = "elasticsearch"
+						cluster := shipper.AsElasticSearchCluster()
+						cluster.SetVersion(info.Version.Number)
+						cluster.SetSchema(address.Scheme)
+						cluster.SetDomain(address.Hostname())
+						cluster.SetPort(port)
+						cluster.SetIndex(blockedIndex)
+						cluster.StorageConfig["index_datetime_format"] = ""
+						cluster.StorageConfig["index_template_separator"] = ""
+						cluster.AuthInfo["username"], cluster.AuthInfo["password"] = server.user, server.secret
+						ctx := config.IntoContext(context.Background(), conf)
+						ctx = config.PipelineConfigIntoContext(ctx, pipe)
+						ctx = config.ShipperConfigIntoContext(ctx, shipper)
+						ctx = config.ResultTableConfigIntoContext(ctx, &config.MetaResultTableConfig{ResultTable: "doc"})
+						if !tc.withoutMQ {
+							ctx = config.MQConfigIntoContext(ctx, pipe.MQConfig)
+						}
+						backend, err := NewBackend(ctx, t.Name(), 0)
+						require.NoError(t, err)
+						t.Cleanup(func() { require.NoError(t, backend.Close()) })
+						adapter := backend.(*pipeline.BulkBackendAdapter)
+						successBefore := testutil.ToFloat64(adapter.CounterSuccesses)
+						failBefore := testutil.ToFloat64(adapter.CounterFails)
+						now := time.Now().Unix()
+						payload := define.NewJSONPayload(0)
+						require.NoError(t, payload.From(&define.ETLRecord{Time: &now, Metrics: map[string]interface{}{"id": tc.name, "value": 1}}))
+						started := time.Now()
+						adapter.Push(payload, nil)
+						require.Eventually(t, func() bool {
+							return testutil.ToFloat64(adapter.CounterFails)-failBefore == 1
+						}, 5*time.Second, 10*time.Millisecond)
+						elapsed := time.Since(started)
+						t.Logf("重试用尽耗时 %s，配置等待预算 %s", elapsed, tc.wantInterval)
+						require.GreaterOrEqual(t, elapsed, tc.wantInterval)
+						require.Equal(t, successBefore, testutil.ToFloat64(adapter.CounterSuccesses))
+					})
+				}
 			}
 
 			for _, retries := range []int{0, 3} {

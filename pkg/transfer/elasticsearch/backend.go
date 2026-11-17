@@ -224,7 +224,7 @@ func NewBackend(ctx context.Context, name string, maxQps int) (define.Backend, e
 
 	shipper := config.ShipperConfigFromContext(ctx)
 	cluster := shipper.AsElasticSearchCluster()
-	flushInterval := conf.GetDuration(pipeline.ConfKeyPayloadFlushInterval)
+	bufferSize, flushInterval := pipeline.GetBufferSizeAndFlushInterval(ctx, name)
 	clusterConf := utils.NewMapHelper(cluster.ClusterConfig)
 	clusterConf.SetDefault("version", conf.GetString(ConfKeyDefaultVersion))
 
@@ -238,7 +238,7 @@ func NewBackend(ctx context.Context, name string, maxQps int) (define.Backend, e
 		return nil, err
 	}
 
-	return pipeline.NewBulkBackendDefaultAdapter(ctx, name, bulk, maxQps), nil
+	return pipeline.NewBulkBackendAdapter(ctx, name, bulk, bufferSize, flushInterval, pipeline.BulkDefaultFlushRetries), nil
 }
 
 func init() {

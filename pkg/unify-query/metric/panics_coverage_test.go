@@ -132,7 +132,9 @@ func countRecover(body *ast.BlockStmt, exempt bool, fset *token.FileSet, missing
 		if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == "PanicInc" {
 			return true
 		}
-		return selectorIs(call.Fun, "metric", "PanicInc")
+		// The metric package may be imported under another name.
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		return ok && sel.Sel.Name == "PanicInc"
 	})
 	if !counted {
 		*missing = append(*missing, fset.Position(body.Pos()).String()+": recover() without PanicInc")

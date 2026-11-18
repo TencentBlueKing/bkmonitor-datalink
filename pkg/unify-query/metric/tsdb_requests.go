@@ -27,10 +27,12 @@ const (
 	TsDBOutcomeRejected = "rejected"
 	TsDBOutcomeTimeout  = "timeout"
 	TsDBOutcomeCanceled = "canceled"
+	// TsDBOutcomeBodyError 是后端以 2xx 答复、在应答体里报的失败，业务码还没有分类。
+	TsDBOutcomeBodyError = "body_error"
 )
 
 // TsDBOutcomes 列出全部存储请求结果。
-var TsDBOutcomes = []string{TsDBOutcomeSuccess, TsDBOutcomeError, TsDBOutcomeRejected, TsDBOutcomeTimeout, TsDBOutcomeCanceled}
+var TsDBOutcomes = []string{TsDBOutcomeSuccess, TsDBOutcomeError, TsDBOutcomeRejected, TsDBOutcomeTimeout, TsDBOutcomeCanceled, TsDBOutcomeBodyError}
 
 // TsDBTypes 是各后端打点时传给 TsDBRequestSecond 和 TsDBRequestInc 的 tsdb_type，封闭集合。
 var TsDBTypes = []string{
@@ -49,13 +51,14 @@ var tsdbRequestsTotal = promauto.NewCounterVec(
 		Help: "Requests to storage backends by outcome, counted for failures as well as successes: " +
 			"success; error (the backend answered 5xx, 429, 401 or 403, or the transport failed); " +
 			"rejected (any other failure, mostly the backend refusing the query with another 4xx); " +
-			"timeout (the deadline passed); canceled (the request was canceled before the backend answered).",
+			"timeout (the deadline passed); canceled (the request was canceled before the backend answered); " +
+			"body_error (the backend answered 2xx and reported a failure in the response body, its code not yet classified).",
 	},
 	[]string{"tsdb_type", "outcome"},
 )
 
 func init() {
-	// 6 种 tsdb_type 乘以 5 种结果，启动时全部建出，值为 0。
+	// 6 种 tsdb_type 乘以 6 种结果，启动时全部建出，值为 0。
 	for _, tsdbType := range TsDBTypes {
 		for _, outcome := range TsDBOutcomes {
 			tsdbRequestsTotal.WithLabelValues(tsdbType, outcome)
@@ -65,12 +68,18 @@ func init() {
 
 // TsDBRequestOutcome 按错误链里的类型给一次存储请求分类，与失败响应共用 FailureStatus：
 // 504 为 timeout，502 为 error，其余失败为 rejected。一次存储请求只对应一个后端，取消可以按整条链判。
+// 后端在应答体里报的失败（BackendBodyError）单列为 body_error：并进 rejected 会把后端的失败藏起来，
+// 并进 error 又会让调用方写错的查询算成后端故障。
 func TsDBRequestOutcome(err error) string {
 	if err == nil {
 		return TsDBOutcomeSuccess
 	}
 	if errors.Is(err, context.Canceled) {
 		return TsDBOutcomeCanceled
+	}
+	var body *metadata.BackendBodyError
+	if errors.As(err, &body) {
+		return TsDBOutcomeBodyError
 	}
 	switch metadata.FailureStatus(err) {
 	case http.StatusGatewayTimeout:

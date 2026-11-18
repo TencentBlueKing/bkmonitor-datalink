@@ -13,6 +13,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -52,19 +53,27 @@ func TestVMRequestsAreCountedByOutcome(t *testing.T) {
 	http.DefaultTransport = transport
 	t.Cleanup(func() { transport.CloseIdleConnections(); http.DefaultTransport = previousTransport })
 
+	const answered = `{"result":true,"code":"00","message":"ok"}`
 	cases := []struct {
 		name    string
 		status  int
+		body    string
+		cut     bool
 		delay   time.Duration
 		cancel  bool
 		outcome string
+		// failure is the status vmQuery's error answers with (0: vmQuery returns no error).
+		failure int
 	}{
-		{name: "answered", status: http.StatusOK, outcome: "success"},
-		{name: "unavailable", status: http.StatusServiceUnavailable, outcome: "error"},
-		{name: "throttled", status: http.StatusTooManyRequests, outcome: "error"},
-		{name: "query refused", status: http.StatusUnprocessableEntity, outcome: "rejected"},
-		{name: "too slow", status: http.StatusOK, delay: 2 * time.Second, outcome: "timeout"},
-		{name: "canceled", status: http.StatusOK, cancel: true, outcome: "canceled"},
+		{name: "answered", status: http.StatusOK, body: answered, outcome: "success"},
+		{name: "failure in a 200 body", status: http.StatusOK, body: `{"result":false,"code":"1500005","message":"query failed"}`, outcome: "body_error"},
+		{name: "code not OK in a 200 body", status: http.StatusOK, body: `{"result":true,"code":"1500404","message":"no route"}`, outcome: "body_error"},
+		{name: "body cut short", status: http.StatusOK, body: answered, cut: true, outcome: "error", failure: http.StatusBadGateway},
+		{name: "unavailable", status: http.StatusServiceUnavailable, body: answered, outcome: "error", failure: http.StatusBadGateway},
+		{name: "throttled", status: http.StatusTooManyRequests, body: answered, outcome: "error", failure: http.StatusBadGateway},
+		{name: "query refused", status: http.StatusUnprocessableEntity, body: answered, outcome: "rejected", failure: http.StatusBadRequest},
+		{name: "too slow", status: http.StatusOK, body: answered, delay: 2 * time.Second, outcome: "timeout", failure: http.StatusGatewayTimeout},
+		{name: "canceled", status: http.StatusOK, body: answered, cancel: true, outcome: "canceled", failure: http.StatusBadRequest},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -76,12 +85,22 @@ func TestVMRequestsAreCountedByOutcome(t *testing.T) {
 						return
 					}
 				}
+				if c.cut {
+					// Promise more than is sent, then drop the connection mid-body.
+					w.Header().Set("Content-Length", strconv.Itoa(len(c.body)+64))
+					w.WriteHeader(c.status)
+					_, _ = w.Write([]byte(c.body[:len(c.body)/2]))
+					if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+						_ = conn.Close()
+					}
+					return
+				}
 				w.WriteHeader(c.status)
-				_, _ = w.Write([]byte(`{}`))
+				_, _ = w.Write([]byte(c.body))
 			}))
 			defer server.Close()
 			before := map[string]float64{}
-			for _, outcome := range []string{"success", "error", "rejected", "timeout", "canceled"} {
+			for _, outcome := range []string{"success", "error", "rejected", "timeout", "canceled", "body_error"} {
 				before[outcome] = vmRequestCount(t, outcome)
 			}
 			instance := &Instance{url: server.URL, timeout: 200 * time.Millisecond, curl: &curl.HttpCurl{}}
@@ -94,10 +113,12 @@ func TestVMRequestsAreCountedByOutcome(t *testing.T) {
 			ctx, span := trace.NewSpan(ctx, "vm-request-outcome")
 			err := instance.vmQuery(ctx, "{}", &VmResponse{}, span)
 			span.End(&err)
-			if c.outcome == "success" {
+			// A failure stated in a 200 body is reported to the caller by the format step, not by vmQuery.
+			if c.failure == 0 {
 				require.NoError(t, err)
 			} else {
 				require.Error(t, err)
+				require.Equal(t, c.failure, metadata.FailureStatus(err), err.Error())
 			}
 			for outcome, value := range before {
 				want := value

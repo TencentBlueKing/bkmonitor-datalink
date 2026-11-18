@@ -33,7 +33,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	uqMetric "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -414,7 +413,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			})
 		}()
 	} else {
-		p, _ := ants.NewPool(QueryMaxRouting, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
+		p, _ := ants.NewPool(QueryMaxRouting, ants.WithPanicHandler(uqMetric.PanicHandler(ctx, uqMetric.PanicSiteQueryWorker)))
 		defer p.Release()
 
 		go func() {
@@ -634,7 +633,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 	sliceStats := rawScrollTraceStats{candidates: stats.readyQueries * session.SliceLength()}
 	defer sliceStats.record(span)
 
-	p, _ := ants.NewPool(QueryMaxRouting, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
+	p, _ := ants.NewPool(QueryMaxRouting, ants.WithPanicHandler(uqMetric.PanicHandler(ctx, uqMetric.PanicSiteQueryWorker)))
 	defer p.Release()
 
 	qb := metadata.GetQueryParams(ctx)

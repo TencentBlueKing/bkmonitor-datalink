@@ -592,12 +592,13 @@ func (i *Instance) vmQuery(
 		Attempt:          1,
 	}
 	size, err := i.curl.Request(ctx, curl.Post, requestOptions, data)
-	metric.TsDBRequestInc(ctx, i.InstanceType(), err)
 	retryReason := vmQuerySyncRetryReason(err)
 	if retryReason != "" && ctx.Err() != nil {
 		err = ctx.Err()
 	}
 	if retryReason != "" && ctx.Err() == nil {
+		// 触发重试的那次是传输失败，在这里计；重试的那次按最终结果在下面计。
+		metric.TsDBRequestInc(ctx, i.InstanceType(), err)
 		span.Set("query-sync-retry.reason", retryReason)
 		span.Set("query-sync-retry.first-response-bytes", size)
 
@@ -621,7 +622,6 @@ func (i *Instance) vmQuery(
 		requestOptions.Attempt = 2
 		span.Set("query-sync-retry.attempts", 2)
 		size, err = i.curl.Request(ctx, curl.Post, requestOptions, data)
-		metric.TsDBRequestInc(ctx, i.InstanceType(), err)
 		if err != nil && ctx.Err() != nil {
 			err = ctx.Err()
 		}
@@ -636,6 +636,8 @@ func (i *Instance) vmQuery(
 			metric.VMQuerySyncRetryInc(ctx, "failed", retryReason)
 		}
 	}
+	// 每次请求按最终结果计一次：HTTP 层成功时，再看应答体里有没有报失败。
+	metric.TsDBRequestInc(ctx, i.InstanceType(), vmRequestResult(err, data))
 	if err != nil {
 		return metadata.NewMessage(
 			metadata.MsgQueryVictoriaMetrics,

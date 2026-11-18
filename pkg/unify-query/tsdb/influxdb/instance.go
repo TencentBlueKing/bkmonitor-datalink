@@ -203,7 +203,7 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 		},
 		res,
 	)
-	metric.TsDBRequestInc(ctx, i.InstanceType()+"_http", err)
+	metric.TsDBRequestInc(ctx, i.InstanceType()+"_http", influxRequestResult(err, res))
 	metric.TsDBRequestBytes(ctx, size, i.InstanceType())
 
 	return res, nil
@@ -488,7 +488,7 @@ func (i *Instance) query(
 		},
 		res,
 	)
-	metric.TsDBRequestInc(ctx, i.InstanceType()+"_http", err)
+	metric.TsDBRequestInc(ctx, i.InstanceType()+"_http", influxRequestResult(err, res))
 	if err != nil {
 		return nil, err
 	}
@@ -504,6 +504,9 @@ func (i *Instance) query(
 	metric.TsDBRequestBytes(ctx, size, i.InstanceType())
 
 	series := make([]*decoder.Row, 0)
+	if res.Err != "" {
+		return nil, errors.New(res.Err)
+	}
 	for _, r := range res.Results {
 		if r.Err != "" {
 			return nil, errors.New(r.Err)
@@ -907,7 +910,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 			},
 			res,
 		)
-		metric.TsDBRequestInc(ctx, i.InstanceType()+"_http", err)
+		metric.TsDBRequestInc(ctx, i.InstanceType()+"_http", influxRequestResult(err, res))
 		metric.TsDBRequestBytes(ctx, size, i.InstanceType())
 
 		span.Set("query-cost", time.Since(startAnaylize).String())
@@ -1023,7 +1026,7 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 		},
 		res,
 	)
-	metric.TsDBRequestInc(ctx, i.InstanceType()+"_http", err)
+	metric.TsDBRequestInc(ctx, i.InstanceType()+"_http", influxRequestResult(err, res))
 	metric.TsDBRequestBytes(ctx, size, i.InstanceType())
 
 	span.Set("query-cost", time.Since(startAnaylize).String())
@@ -1170,7 +1173,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 			},
 			res,
 		)
-		metric.TsDBRequestInc(ctx, i.InstanceType()+"_http", err)
+		metric.TsDBRequestInc(ctx, i.InstanceType()+"_http", influxRequestResult(err, res))
 		metric.TsDBRequestBytes(ctx, size, i.InstanceType())
 
 		span.Set("query-cost", time.Since(startAnaylize).String())

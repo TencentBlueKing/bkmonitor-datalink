@@ -80,7 +80,8 @@ func TestEveryStorageRequestIsCounted(t *testing.T) {
 				if sendsBackendRequest(call) {
 					sends = true
 				}
-				if selectorIs(call.Fun, "metric", "TsDBRequestInc") || selectorIs(call.Fun, "metric", "TsDBRequestOutcomeInc") {
+				// The metric package may be imported under another name.
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && (sel.Sel.Name == "TsDBRequestInc" || sel.Sel.Name == "TsDBRequestOutcomeInc") {
 					counts = true
 				}
 				return true

@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -35,18 +36,20 @@ func TestTsDBRequestOutcomeClassifiesByType(t *testing.T) {
 		err  error
 		want string
 	}{
-		"no error":              {nil, "success"},
-		"backend 503":           {backend(http.StatusServiceUnavailable), "error"},
-		"backend 429":           {backend(http.StatusTooManyRequests), "error"},
-		"backend 401":           {backend(http.StatusUnauthorized), "error"},
-		"backend 403":           {backend(http.StatusForbidden), "error"},
-		"connection refused":    {refused, "error"},
-		"backend 422":           {backend(http.StatusUnprocessableEntity), "rejected"},
-		"backend 400":           {backend(http.StatusBadRequest), "rejected"},
-		"untyped failure":       {errors.New("decode response"), "rejected"},
-		"deadline":              {fmt.Errorf("request: %w", context.DeadlineExceeded), "timeout"},
-		"canceled":              {&url.Error{Op: "Post", URL: "http://192.0.2.20:8481", Err: context.Canceled}, "canceled"},
-		"canceled among causes": {metadata.ErrorWithCauses("route", context.Canceled, backend(http.StatusBadGateway)), "canceled"},
+		"no error":               {nil, "success"},
+		"backend 503":            {backend(http.StatusServiceUnavailable), "error"},
+		"backend 429":            {backend(http.StatusTooManyRequests), "error"},
+		"backend 401":            {backend(http.StatusUnauthorized), "error"},
+		"backend 403":            {backend(http.StatusForbidden), "error"},
+		"connection refused":     {refused, "error"},
+		"backend 422":            {backend(http.StatusUnprocessableEntity), "rejected"},
+		"backend 400":            {backend(http.StatusBadRequest), "rejected"},
+		"untyped failure":        {errors.New("decode response"), "rejected"},
+		"deadline":               {fmt.Errorf("request: %w", context.DeadlineExceeded), "timeout"},
+		"canceled":               {&url.Error{Op: "Post", URL: "http://192.0.2.20:8481", Err: context.Canceled}, "canceled"},
+		"canceled among causes":  {metadata.ErrorWithCauses("route", context.Canceled, backend(http.StatusBadGateway)), "canceled"},
+		"failure in a 200 body":  {fmt.Errorf("query: %w", &metadata.BackendBodyError{Code: "1500005", Message: "failed"}), "body_error"},
+		"backend body cut short": {&metadata.BackendResponseError{Err: io.ErrUnexpectedEOF}, "error"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -72,12 +75,12 @@ func TestTsDBRequestCellsArePrebuiltAndCounted(t *testing.T) {
 		}
 	}
 	for _, tsdbType := range []string{"victoria_metrics", "elasticsearch", "bk_sql", "influxdb_http", "influxdb_grpc", "redis"} {
-		for _, outcome := range []string{"success", "error", "rejected", "timeout", "canceled"} {
+		for _, outcome := range []string{"success", "error", "rejected", "timeout", "canceled", "body_error"} {
 			_, ok := cells[tsdbType+"/"+outcome]
 			require.True(t, ok, "%s %s", tsdbType, outcome)
 		}
 	}
-	require.Len(t, cells, 30)
+	require.Len(t, cells, 36)
 
 	before := cells["bk_sql/error"]
 	TsDBRequestInc(context.Background(), metadata.BkSqlStorageType, metadata.ErrorWithCauses("x", &metadata.BackendStatusError{Status: http.StatusBadGateway}))

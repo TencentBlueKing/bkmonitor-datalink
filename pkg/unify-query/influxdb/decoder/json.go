@@ -45,6 +45,10 @@ func (d *JSONDecoder) Decode(ctx context.Context, reader io.Reader, resp *Respon
 					return size, err
 				}
 				resp.Results = append(resp.Results, res.Results...)
+				// InfluxDB 把整次请求的失败写在顶层 error 里（例如语句解析失败），保留第一个。
+				if res.Err != "" && resp.Err == "" {
+					resp.Err = res.Err
+				}
 			}
 
 			if err == io.EOF {

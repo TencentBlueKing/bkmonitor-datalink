@@ -32,6 +32,7 @@ func TestTsDBRequestSecondURLLabelKeepsOriginOnly(t *testing.T) {
 		{"grpc origin unchanged", "grpc://192.0.2.14", "grpc://192.0.2.14"},
 		{"empty unchanged", "", ""},
 		{"unparsable is a fixed value", "http://user:fake-secret/x@192.0.2.15", "[invalid URL]"},
+		{"userinfo cut short by a slash is a fixed value", "http://user:1234/x@192.0.2.16", "[invalid URL]"},
 	}
 	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

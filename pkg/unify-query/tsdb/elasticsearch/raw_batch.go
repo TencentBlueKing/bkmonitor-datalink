@@ -517,6 +517,7 @@ func (i *Instance) executeRawBatchMember(
 	result.Ordinal = member.Ordinal
 	defer func() {
 		if recover() != nil {
+			metric.PanicInc(ctx, metric.PanicSiteStorage)
 			result.Rows = nil
 			result.Size = 0
 			result.Total = 0

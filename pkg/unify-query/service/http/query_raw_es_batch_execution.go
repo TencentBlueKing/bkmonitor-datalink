@@ -78,6 +78,7 @@ func (s *rawQueryExecutionSink) guardTask(task func()) func() {
 	return func() {
 		defer func() {
 			if recover() != nil {
+				metric.PanicInc(context.Background(), metric.PanicSiteQueryWorker)
 				s.errCh <- fmt.Errorf("query raw execution task panicked")
 			}
 		}()
@@ -108,6 +109,7 @@ func runRawQueryExecutionProducer(
 	defer close(errCh)
 	defer func() {
 		if recover() != nil {
+			metric.PanicInc(context.Background(), metric.PanicSiteQueryWorker)
 			errCh <- fmt.Errorf("query raw ES batch execution panicked")
 		}
 	}()
@@ -338,6 +340,7 @@ func executeQueryRawWithESBatch(
 			defer coordinators.Done()
 			defer func() {
 				if recover() != nil {
+					metric.PanicInc(ctx, metric.PanicSiteQueryWorker)
 					sink.errCh <- fmt.Errorf("query raw execution task panicked")
 				}
 			}()

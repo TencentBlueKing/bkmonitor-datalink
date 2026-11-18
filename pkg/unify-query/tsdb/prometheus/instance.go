@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
@@ -290,7 +291,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 		return list, err
 	}
 
-	p, _ := ants.NewPool(i.maxRouting)
+	p, _ := ants.NewPool(i.maxRouting, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
 	defer p.Release()
 
 	var wg sync.WaitGroup

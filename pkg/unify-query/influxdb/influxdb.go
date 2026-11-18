@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/client"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -158,7 +159,7 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 			metadata.MsgQueryInfo,
 			"查询失败",
 		).Error(ctx, err)
-	})
+	}, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
 	defer p.Release()
 
 	for i := range sqlInfos {
@@ -272,7 +273,7 @@ func QueryAsync(ctx context.Context, sqlInfos []SQLInfo, precision string) (*Tab
 			metadata.MsgQueryInfluxDB,
 			"查询失败",
 		).Error(ctx, err)
-	})
+	}, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
 	defer p.Release()
 
 	for i := range sqlInfos {

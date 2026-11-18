@@ -85,7 +85,7 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 		lock             sync.Mutex
 		failedQueryCount int
 	)
-	p, err := ants.NewPool(RelationMaxRouting)
+	p, err := ants.NewPool(RelationMaxRouting, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
 	if err != nil {
 		resp.failed(ctx, fmt.Errorf("create relation worker pool: %w", err))
 		return
@@ -212,7 +212,7 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 		lock             sync.Mutex
 		failedQueryCount int
 	)
-	p, err := ants.NewPool(RelationMaxRouting)
+	p, err := ants.NewPool(RelationMaxRouting, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
 	if err != nil {
 		resp.failed(ctx, fmt.Errorf("create relation range worker pool: %w", err))
 		return
@@ -352,7 +352,7 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 		lock             sync.Mutex
 		failedQueryCount int
 	)
-	p, err := ants.NewPool(RelationMaxRouting)
+	p, err := ants.NewPool(RelationMaxRouting, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
 	if err != nil {
 		resp.failed(ctx, fmt.Errorf("create v1beta3 relation worker pool: %w", err))
 		return
@@ -486,7 +486,7 @@ func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
 		lock             sync.Mutex
 		failedQueryCount int
 	)
-	p, err := ants.NewPool(RelationMaxRouting)
+	p, err := ants.NewPool(RelationMaxRouting, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
 	if err != nil {
 		resp.failed(ctx, fmt.Errorf("create v1beta3 relation range worker pool: %w", err))
 		return

@@ -27,6 +27,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 )
 
@@ -111,7 +112,7 @@ func (q *Querier) selectRangeAggregate(ctx context.Context, queries QueryList) s
 		}
 	}
 
-	pool, err := ants.NewPool(q.maxRouting)
+	pool, err := ants.NewPool(q.maxRouting, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}

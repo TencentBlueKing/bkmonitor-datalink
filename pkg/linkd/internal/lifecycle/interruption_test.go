@@ -266,3 +266,49 @@ func TestCreateResponseLostAdoptsStoredAlert(t *testing.T) {
 		t.Fatalf("create response loss changed alert identity: %+v %v", active.Alert, err)
 	}
 }
+
+func TestUpgradeCacheFailureKeepsOpeningIdentityOnRestart(t *testing.T) {
+	repo := memory.New()
+	cache := newMemoryRecentAlertCache()
+	p := newTestProcessorWithCache(t, repo, cache, NoopFinalHook{})
+	opening := persistAndProcess(t, repo, p, testEvent("original-alert", "warning"))
+	upgrade := testEvent("upgrade-cache-failure", "critical")
+	created, err := repo.CreateEvent(t.Context(), upgrade)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 旧告警已关闭且写入 terminal 缓存。新告警落库后，模拟 Redis 失败，随后重建 Processor。
+	p.recentAlerts = &interruptionCache{RecentAlertCache: cache}
+	if _, err := p.ProcessEvent(t.Context(), created.StoredEvent); !errors.Is(err, ErrRecentAlertUnavailable) {
+		t.Fatalf("cache failure did not defer event: %v", err)
+	}
+	pending := mustGetStoredEvent(t, repo, upgrade)
+	if pending.Processing.State != domain.EventProcessStateUnprocessed {
+		t.Fatalf("failed cache write terminated the event: %+v", pending.Processing)
+	}
+	active, err := repo.FindActiveAlert(t.Context(), activeKeyForTest(upgrade))
+	if err != nil || active.Alert.TriggerEventID != upgrade.EventID {
+		t.Fatalf("new alert did not persist before the cache fault: %v", err)
+	}
+	cached, found, err := cache.GetCurrent(t.Context(), activeKeyForTest(upgrade))
+	if err != nil || !found || cached.Alert.AlertID != opening.AlertIDs[0] || !cached.Alert.Status.Terminal() {
+		t.Fatalf("old terminal cache was not preserved: %+v %v", cached.Alert, err)
+	}
+	restarted := newTestProcessorWithCache(t, repo, cache, NoopFinalHook{})
+	result, err := restarted.ProcessEvent(t.Context(), pending)
+	if err != nil || len(result.AlertIDs) != 1 || result.AlertIDs[0] != active.Alert.AlertID {
+		t.Fatalf("retry did not adopt existing alert: %+v %v", result, err)
+	}
+	following := persistAndProcess(t, repo, restarted, testEvent("following-trigger", "critical"))
+	if following.Outcome != OutcomeAlertSuppressed || len(following.AlertIDs) != 1 || following.AlertIDs[0] != active.Alert.AlertID {
+		t.Fatalf("following trigger did not reuse the same alert: %+v", following)
+	}
+	resolved := testEvent("following-recovery", "critical")
+	resolved.Evaluations[0].Action = domain.EventActionResolved
+	if result := persistAndProcess(t, repo, restarted, resolved); result.Outcome != OutcomeAlertRecovered {
+		t.Fatalf("following recovery failed: %+v", result)
+	}
+	if _, err := repo.FindActiveAlert(t.Context(), activeKeyForTest(upgrade)); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("recovery left a duplicate active alert: %v", err)
+	}
+}

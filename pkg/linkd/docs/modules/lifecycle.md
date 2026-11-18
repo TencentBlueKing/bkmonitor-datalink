@@ -111,7 +111,7 @@ Alert 事实源，也不会保存全部 active Alert。
 
 首次裁决先查 current 缓存；命中 active 时直接使用，命中 terminal 时视为“当前无 active”。
 重投读取当前策略和真实 Alert 状态重新判断，不再恢复 processing.plan。
-只有 current 缓存明确不存在时才查询 Elasticsearch；缓存错误、损坏或身份不一致均保留队首重试。
+只有 current 缓存明确不存在时才查询 Elasticsearch；缓存错误、损坏或身份不一致均保留队首、释放 lease，并沿用 Signal 退避。
 ended 条目仍由缓存接口维护，但不是当前 Processor 的恢复入口。MySQL 后端不启用该缓存。
 
 ## 2. 关键抽象
@@ -412,14 +412,16 @@ History 内容冲突、读取/写入失败仍保留失败语义。
 上述步骤不是一个事务。Event 终态直接返回；未完成重投读取当前策略和真实 Alert 状态重新裁决。
 Alert 创建仍使用 opening Event 的稳定 ID 和 create-only，业务更新保留原有 CAS。创建已提交但响应丢失时，
 失败路径按同一 Alert ID 回读真实状态；同一源事件已生效或后续控制命令已推进告警时，不能用旧快照覆盖。
-告警写入后先发布缓存，再执行绑定、Hook、流水与 Event 最终结果，不增加新的持久化补偿状态。
+告警写入后先发布缓存，再更新候选索引、执行绑定和 Hook，然后写入流水与 Event 最终结果。
+缓存发布失败时使用现有 Signal 退避保留队首。重投重新裁决时按原 Alert ID 实时回读并采用已提交的写入，
+再发布缓存，不增加持久化补偿状态。
 
 同一次裁决产生的 AlertLog 在一次 Bulk 中提交。只有全部日志项成功后才执行独立的 Event CAS，避免
 Bulk 部分成功时 Event 已经终态而日志无法由现有重试路径补齐。Alert 与 Event/AlertLog 位于不同
 索引，Bulk 不提供跨文档事务。
 
 Elasticsearch Lifecycle 专用的 Alert create/CAS、AlertLog Bulk 和最终 Event CAS 都使用
-`refresh=false`。Alert 写入成功后必须先更新 Redis Recent Alert 缓存，缓存失败时不能继续 FinalHook、
+`refresh=false`。Alert 写入成功后必须先更新 Redis Recent Alert 缓存，缓存失败时不能继续更新候选索引或执行 FinalHook、
 AlertLog 或 Event CAS。Active 索引 `refresh_interval` 由
 `storage.elasticsearch.active_alert_refresh_interval_seconds` 配置，默认 5 秒；缓存 TTL 在此基础上
 再增加 5 秒安全余量，默认 10 秒。缓存过期后搜索结果应已经可见；CAS

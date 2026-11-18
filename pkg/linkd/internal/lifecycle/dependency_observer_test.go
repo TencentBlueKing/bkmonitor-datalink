@@ -23,7 +23,6 @@ import (
 
 type recordingDependencyIndex struct {
 	alerts []domain.Alert
-	err    error
 }
 
 type terminalDependencyIndex struct {
@@ -110,30 +109,55 @@ func (*recordingDependencyIndex) ClearDependency(context.Context, string, string
 
 func (o *recordingDependencyIndex) ObserveDependencyAlert(_ context.Context, a domain.Alert, _ func(string) (string, error)) error {
 	o.alerts = append(o.alerts, a.Clone())
-	return o.err
+	return nil
 }
 
-func TestDependencyIndexFailureAfterCreateCanRepairFromCurrentState(t *testing.T) {
+type failingUpgradeDependency struct {
+	recordingDependencyIndex
+	openingEventID string
+	err            error
+}
+
+func (o *failingUpgradeDependency) ObserveDependencyAlert(ctx context.Context, a domain.Alert, level func(string) (string, error)) error {
+	if a.Status == domain.AlertStatusActive && a.TriggerEventID == o.openingEventID {
+		return o.err
+	}
+	return o.recordingDependencyIndex.ObserveDependencyAlert(ctx, a, level)
+}
+
+func TestUpgradeDependencyFailurePublishesCommittedAlert(t *testing.T) {
 	repo := memory.New()
-	p := newTestProcessor(t, repo, NoopFinalHook{})
-	index := &recordingDependencyIndex{err: errors.New("index temporarily unavailable")}
-	p.dependency = index
-	alert := storetestAlert(testEvent("opening", "warning"), "observer-alert")
-	created, err := p.createAlertAfterActiveLookup(t.Context(), alert)
-	if !processingerror.Retryable(err) || !created.Created {
-		t.Fatalf("created=%v error=%v", created.Created, err)
+	cache := newMemoryRecentAlertCache()
+	p := newTestProcessorWithCache(t, repo, cache, NoopFinalHook{})
+	persistAndProcess(t, repo, p, testEvent("before-upgrade", "warning"))
+	upgrade := testEvent("upgrade", "critical")
+	failure := errors.New("dependency index unavailable after create")
+	p.dependency = &failingUpgradeDependency{openingEventID: upgrade.EventID, err: failure}
+	saved, err := repo.CreateEvent(t.Context(), upgrade)
+	if err != nil {
+		t.Fatal(err)
 	}
-	stored, err := repo.GetAlert(t.Context(), alert.BKTenantID, alert.AlertID)
-	if err != nil || stored.Alert.Revision != 1 {
-		t.Fatalf("committed alert missing: %v", err)
+	if _, err := p.ProcessEvent(t.Context(), saved.StoredEvent); !errors.Is(err, failure) {
+		t.Fatalf("expected dependency failure after create, got %v", err)
 	}
-	index.err = nil
-	repaired, err := p.getAlertCurrent(t.Context(), alert.BKTenantID, alert.AlertID)
-	if err != nil || repaired.Alert.Revision != 1 || len(index.alerts) != 2 {
-		t.Fatalf("repair error=%v observations=%d", err, len(index.alerts))
+	active, err := repo.FindActiveAlert(t.Context(), activeKeyForTest(upgrade))
+	if err != nil || active.Alert.TriggerEventID != upgrade.EventID {
+		t.Fatalf("committed upgrade missing: %v", err)
 	}
-	if index.alerts[0].AlertID != index.alerts[1].AlertID {
-		t.Fatal("repair observed a different alert")
+	// 旧告警的终态快照还在则下一条事件会直接判定无 active，跳过 ES 查询。
+	cached, found, err := cache.GetCurrent(t.Context(), activeKeyForTest(upgrade))
+	if err != nil || !found || cached.Alert.AlertID != active.Alert.AlertID {
+		t.Fatalf("index error hid committed active alert: cached=%q want=%q err=%v", cached.Alert.AlertID, active.Alert.AlertID, err)
+	}
+	restarted := newTestProcessorWithCache(t, repo, cache, NoopFinalHook{})
+	following := persistAndProcess(t, repo, restarted, testEvent("lower-severity", "warning"))
+	if following.Outcome != OutcomeAlertSuppressed {
+		t.Fatalf("new alert opened for lower severity: %+v", following)
+	}
+	resolved := testEvent("recovered", "critical")
+	resolved.Evaluations[0].Action = domain.EventActionResolved
+	if result := persistAndProcess(t, repo, restarted, resolved); result.Outcome != OutcomeAlertRecovered {
+		t.Fatalf("committed upgrade did not recover: %+v", result)
 	}
 }
 
@@ -142,17 +166,12 @@ func TestDependencyIndexObservesCommittedUpdatesAndTerminalState(t *testing.T) {
 	p := newTestProcessor(t, repo, NoopFinalHook{})
 	index := &recordingDependencyIndex{}
 	p.dependency = index
-	alert := storetestAlert(testEvent("opening", "warning"), "observer-terminal")
-	created, err := p.createAlertAfterActiveLookup(t.Context(), alert)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replacement := created.Alert.Clone()
-	replacement.Status = domain.AlertStatusRecovered
-	replacement.EndType = domain.AlertEndTypeSource
-	replacement.UpdateAt = replacement.UpdateAt.Add(time.Second)
-	replacement.EndAt = &replacement.UpdateAt
-	updated, err := p.compareAndSetAlert(t.Context(), created.StoredAlert, replacement)
+	opening := testEvent("observer-terminal", "warning")
+	result := persistAndProcess(t, repo, p, opening)
+	resolved := testEvent("observer-recovered", "warning")
+	resolved.Evaluations[0].Action = domain.EventActionResolved
+	persistAndProcess(t, repo, p, resolved)
+	updated, err := repo.GetAlert(t.Context(), opening.BKTenantID, result.AlertIDs[0])
 	if err != nil {
 		t.Fatal(err)
 	}

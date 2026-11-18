@@ -20,6 +20,9 @@ import (
 	"linkd/internal/store"
 )
 
+// ErrRecentAlertUnavailable 让调度器保留队首并退避，避免下一条事件绕过尚未发布的告警状态。
+var ErrRecentAlertUnavailable = errors.New("recent alert cache unavailable")
+
 var errRetryDecision = errors.New("lifecycle decision changed concurrently")
 
 func (p *Processor) getLifecycleEvent(ctx context.Context, bkTenantID, eventID string) (store.StoredEvent, error) {
@@ -40,7 +43,7 @@ func (p *Processor) findActiveAlert(
 	defer p.measureStep(phasePlan, "active_lookup")()
 	cached, found, err := p.recentAlerts.GetCurrent(ctx, key)
 	if err != nil {
-		return store.StoredAlert{}, fmt.Errorf("read recent active alert cache: %w", err)
+		return store.StoredAlert{}, fmt.Errorf("%w: read current alert: %w", ErrRecentAlertUnavailable, err)
 	}
 	if found {
 		if cached.Alert.Status == domain.AlertStatusActive {
@@ -53,7 +56,7 @@ func (p *Processor) findActiveAlert(
 		return store.StoredAlert{}, err
 	}
 	if err := p.recentAlerts.PutCurrent(ctx, active); err != nil {
-		return store.StoredAlert{}, fmt.Errorf("cache active alert from repository: %w", err)
+		return store.StoredAlert{}, fmt.Errorf("%w: cache active alert %q from repository: %w", ErrRecentAlertUnavailable, active.Alert.AlertID, err)
 	}
 	return active, nil
 }
@@ -72,19 +75,31 @@ func (p *Processor) createAlertAfterActiveLookup(
 	}
 	if err != nil && ctx.Err() == nil {
 		// 创建可能已提交但响应丢失；同一 opening 身份直接采用真实状态，不再次创建。
-		current, readErr := p.getAlertCurrent(ctx, alert.BKTenantID, alert.AlertID)
+		current, readErr := p.readAlertCurrent(ctx, alert.BKTenantID, alert.AlertID)
 		if readErr == nil && current.Alert.EventSourceID == alert.EventSourceID && current.Alert.Fingerprint == alert.Fingerprint && current.Alert.TriggerEventID == alert.TriggerEventID {
 			return store.CreateAlertResult{StoredAlert: current, Created: false}, nil
 		}
 	}
 	if err == nil {
 		p.observeActiveAlert(ctx, result.Alert)
-		err = p.observeDependencyIndex(ctx, result.Alert)
 	}
 	return result, err
 }
 
 func (p *Processor) compareAndSetAlert(
+	ctx context.Context,
+	current store.StoredAlert,
+	replacement domain.Alert,
+) (store.StoredAlert, error) {
+	updated, err := p.writeAlert(ctx, current, replacement)
+	if err == nil {
+		err = p.observeDependencyIndex(ctx, updated.Alert)
+	}
+	return updated, err
+}
+
+// writeAlert 保留 CAS 的冲突恢复。Event 路径在发布 Recent Alert 后更新候选索引。
+func (p *Processor) writeAlert(
 	ctx context.Context,
 	current store.StoredAlert,
 	replacement domain.Alert,
@@ -103,11 +118,8 @@ func (p *Processor) compareAndSetAlert(
 		}
 		updated, err = p.compareAndSetAlertWithoutSnapshot(ctx, current, replacement)
 	}
-	if err == nil {
-		if current.Alert.Status != updated.Alert.Status {
-			p.observeActiveAlert(ctx, updated.Alert)
-		}
-		err = p.observeDependencyIndex(ctx, updated.Alert)
+	if err == nil && current.Alert.Status != updated.Alert.Status {
+		p.observeActiveAlert(ctx, updated.Alert)
 	}
 	if !errors.Is(err, store.ErrVersionConflict) {
 		return updated, err
@@ -205,14 +217,14 @@ func (p *Processor) compareAndSetAlertWithoutSnapshot(ctx context.Context, curre
 }
 
 func (p *Processor) repairRecentAlert(ctx context.Context, bkTenantID, alertID string) error {
-	current, err := p.getAlertCurrent(ctx, bkTenantID, alertID)
+	current, err := p.readAlertCurrent(ctx, bkTenantID, alertID)
 	if err != nil {
 		return fmt.Errorf("read current alert %q after CAS conflict: %w", alertID, err)
 	}
 	if err := p.recentAlerts.Repair(ctx, current); err != nil {
-		return fmt.Errorf("repair recent alert cache for %q: %w", alertID, err)
+		return fmt.Errorf("%w: repair recent alert %q: %w", ErrRecentAlertUnavailable, alertID, err)
 	}
-	return nil
+	return p.observeDependencyIndex(ctx, current.Alert)
 }
 
 func (p *Processor) getAlertCurrent(

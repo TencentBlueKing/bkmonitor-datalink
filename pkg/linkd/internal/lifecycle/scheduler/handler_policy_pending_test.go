@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"linkd/internal/consume"
+	"linkd/internal/lifecycle"
 	"linkd/internal/processingerror"
 	"linkd/internal/store"
 )
@@ -24,6 +25,10 @@ func TestPolicyPreparationDefersMailboxHeadUntilIndexIsReady(t *testing.T) {
 
 func TestControlPlaneFailurePreservesMailboxBeyondRetryBudget(t *testing.T) {
 	testPendingMailbox(t, processingerror.ErrControlPlaneUnavailable)
+}
+
+func TestRecentAlertCacheFailurePreservesMailboxBeyondRetryBudget(t *testing.T) {
+	testPendingMailbox(t, fmt.Errorf("publish committed alert: %w", lifecycle.ErrRecentAlertUnavailable))
 }
 
 func testPendingMailbox(t *testing.T, failure error) {

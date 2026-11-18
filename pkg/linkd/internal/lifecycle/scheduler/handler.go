@@ -190,7 +190,7 @@ func (h *Handler) drain(
 		}
 		stored, result, attempts, stage, processErr := h.processMailboxEvent(ctx, signal, eventID)
 		if processingPending(processErr) {
-			h.logger.WarnContext(ctx, "lifecycle event waiting for dependency", "module", "lifecycle", "operation", stage, "error", processErr, "bk_tenant_id", signal.BKTenantID, "event_source_id", signal.EventSourceID, "event_id", eventID, "mailbox_id", signal.MailboxID)
+			h.logger.WarnContext(ctx, "lifecycle event deferred", "module", "lifecycle", "operation", stage, "error", processErr, "bk_tenant_id", signal.BKTenantID, "event_source_id", signal.EventSourceID, "event_id", eventID, "mailbox_id", signal.MailboxID)
 			return processed, last, false, processErr, nil
 		}
 		if ctx.Err() != nil {
@@ -227,7 +227,7 @@ func (h *Handler) drain(
 	return processed, last, false, nil, nil
 }
 
-// processMailboxEvent 每次重读 Event 持久检查点；普通临时错误最多三次，控制面/索引等待直接让出调度。
+// processMailboxEvent 每次重读 Event 持久检查点；普通临时错误最多三次，依赖暂不可用时直接让出调度。
 func (h *Handler) processMailboxEvent(ctx context.Context, signal Signal, id string) (stored store.StoredEvent, result lifecycle.ProcessResult, attempts int, stage string, err error) {
 	for attempts = 1; attempts <= processingerror.MaxAttempts; attempts++ {
 		stage = "event_read"
@@ -257,10 +257,12 @@ func (h *Handler) processMailboxEvent(ctx context.Context, signal Signal, id str
 	return
 }
 
-// 控制面传输故障与索引准备均保留 Mailbox 头并让出 lease，不能按普通三次错误丢弃 Event。
+// 控制面传输故障、索引准备和 Recent Alert 发布故障保留 Mailbox 头并让出 lease。
 func processingPending(err error) bool {
 	var pending interface{ PolicyPreparationPending() bool }
-	return errors.Is(err, processingerror.ErrControlPlaneUnavailable) || (errors.As(err, &pending) && pending.PolicyPreparationPending())
+	return errors.Is(err, lifecycle.ErrRecentAlertUnavailable) ||
+		errors.Is(err, processingerror.ErrControlPlaneUnavailable) ||
+		(errors.As(err, &pending) && pending.PolicyPreparationPending())
 }
 
 // recordFailure 尽力保存明确的终态；诊断存储失败不能再次卡住该 Event。

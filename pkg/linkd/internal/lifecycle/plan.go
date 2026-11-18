@@ -480,7 +480,7 @@ func (p *Processor) executePlan(ctx context.Context, stored store.StoredEvent, p
 		if err != nil {
 			return store.StoredEvent{}, err
 		}
-		// 告警已写入后立即发布真实缓存，后续绑定/流水失败不能留下旧 current。
+		// 先发布 ES 已提交的状态。候选索引、绑定或流水失败时，下一条事件仍能看到本次写入。
 		func() {
 			defer p.measureStep(phaseApply, "cache")()
 			if updated.Alert.Status == domain.AlertStatusActive {
@@ -490,6 +490,10 @@ func (p *Processor) executePlan(ctx context.Context, stored store.StoredEvent, p
 			}
 		}()
 		if err != nil {
+			// 保留队首。重投重新裁决，applyMutation 用原告警 ID 实时读取已提交写入。
+			return store.StoredEvent{}, fmt.Errorf("%w: publish recent alert %q: %w", ErrRecentAlertUnavailable, updated.Alert.AlertID, err)
+		}
+		if err := p.observeDependencyIndex(ctx, updated.Alert); err != nil {
 			return store.StoredEvent{}, err
 		}
 		if err := func() error {
@@ -575,13 +579,13 @@ func (p *Processor) applyMutation(ctx context.Context, event domain.Event, mutat
 	current, err := p.readAlertCurrent(ctx, event.BKTenantID, target.AlertID)
 	if err == nil {
 		if domain.SameAlertBusinessSnapshot(current.Alert, target) {
-			return current, p.observeDependencyIndex(ctx, current.Alert)
+			return current, nil
 		}
 		// 源写入之后，控制任务可能继续屏蔽/合并/关闭该生命周期。revision 加上保留的源事件/创建锚点
 		// 证明该源事件已经生效；不能把输出重试当成身份冲突，也不能用旧快照覆盖较新的业务结果。
 		sameLifecycle := current.Alert.BKTenantID == target.BKTenantID && current.Alert.EventSourceID == target.EventSourceID && current.Alert.Fingerprint == target.Fingerprint && current.Alert.TriggerEventID == target.TriggerEventID
 		if sameLifecycle && (mutation.ExpectedVersion == "" || current.Alert.Revision > target.Revision) && (current.Alert.LatestEventID == event.EventID || (mutation.ExpectedVersion == "" && current.Alert.TriggerEventID == event.EventID)) {
-			return current, p.observeDependencyIndex(ctx, current.Alert)
+			return current, nil
 		}
 		if mutation.ExpectedVersion == "" {
 			p.logger.WarnContext(ctx, "create decision conflicts with persisted alert", "module", "lifecycle", "operation", "execute_create_plan",
@@ -594,13 +598,13 @@ func (p *Processor) applyMutation(ctx context.Context, event domain.Event, mutat
 		if current.Version.String() != mutation.ExpectedVersion {
 			if first {
 				if err := p.recentAlerts.Repair(ctx, current); err != nil {
-					return store.StoredAlert{}, err
+					return store.StoredAlert{}, fmt.Errorf("%w: repair recent alert %q: %w", ErrRecentAlertUnavailable, current.Alert.AlertID, err)
 				}
 				return store.StoredAlert{}, errRetryDecision
 			}
 			return store.StoredAlert{}, fmt.Errorf("%w: planned alert changed after earlier mutation", store.ErrVersionConflict)
 		}
-		return p.compareAndSetAlert(ctx, current, target)
+		return p.writeAlert(ctx, current, target)
 	}
 	if !errors.Is(err, store.ErrNotFound) {
 		return store.StoredAlert{}, err

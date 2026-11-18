@@ -35,10 +35,14 @@ type Hardware struct {
 var readDMIFile = os.ReadFile
 
 func getHardware() *Hardware {
-	if runtime.GOOS != "linux" {
+	switch runtime.GOOS {
+	case "linux":
+		return collectLinuxHardware()
+	case "windows":
+		return collectWindowsHardware()
+	default:
 		return &Hardware{UUIDStatus: uuidStatusUnsupported}
 	}
-	return collectLinuxHardware()
 }
 
 func collectLinuxHardware() *Hardware {
@@ -65,12 +69,16 @@ func readDMIValue(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	text := strings.ReplaceAll(string(data), "\x00", "")
+	return cleanHardwareString(string(data)), nil
+}
+
+func cleanHardwareString(raw string) string {
+	text := strings.ReplaceAll(raw, "\x00", "")
 	line := text
 	if index := strings.IndexAny(text, "\r\n"); index >= 0 {
 		line = text[:index]
 	}
-	return strings.TrimSpace(line), nil
+	return strings.TrimSpace(line)
 }
 
 func classifyProductUUID(raw string, err error) (string, string) {

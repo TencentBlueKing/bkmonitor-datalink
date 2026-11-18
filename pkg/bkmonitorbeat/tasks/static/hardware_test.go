@@ -81,9 +81,9 @@ func TestCollectLinuxHardware(t *testing.T) {
 	assert.Equal(t, "serial-1", hardware.ProductSerial)
 }
 
-func TestGetHardwareOnNonLinux(t *testing.T) {
-	if runtime.GOOS == "linux" {
-		t.Skip("linux collects DMI files")
+func TestGetHardwareOnUnsupportedOS(t *testing.T) {
+	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
+		t.Skip("linux and windows collect hardware identity")
 	}
 	hardware := getHardware()
 	assert.Equal(t, uuidStatusUnsupported, hardware.UUIDStatus)

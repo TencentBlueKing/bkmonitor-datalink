@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
@@ -25,6 +26,29 @@ type Service struct {
 }
 
 var storageReloadLock sync.Mutex
+
+// storageWatching and storageReadOK (the latest sync reached the backend) make this watcher's half of
+// unify_query_config_sync_up{source="storage"}.
+var (
+	storageSyncMu   sync.Mutex
+	storageWatching bool
+	storageReadOK   bool
+)
+
+// setStorageSync records whether the storage watch is open and whether the latest sync reached the
+// storage backend; nil leaves that half as it was. The watch retries inside the Consul and Redis
+// clients without reporting a lost connection, so up also needs the latest read to have succeeded.
+func setStorageSync(watching, readOK *bool) {
+	storageSyncMu.Lock()
+	defer storageSyncMu.Unlock()
+	if watching != nil {
+		storageWatching = *watching
+	}
+	if readOK != nil {
+		storageReadOK = *readOK
+	}
+	metric.ConfigSyncSetUp(metric.ConfigSyncSourceStorage, metric.ConfigSyncWatcherTsDBStorage, storageWatching && storageReadOK)
+}
 
 // Type
 func (s *Service) Type() string {
@@ -81,12 +105,15 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 	if err := consulStorageAddressError(); err != nil {
 		return err
 	}
+	metric.ConfigSyncEnable(metric.ConfigSyncSourceStorage)
 	// 先建立订阅再读取全量快照，避免首次读取和订阅确认之间遗漏 Redis 更新。
 	provider := getStorageProvider()
 	watchCh, err := provider.WatchStorageInfo(ctx)
 	if err != nil {
 		log.Errorf(context.TODO(), "initial watch storage failed, will retry: %v", err)
 	}
+	watching := err == nil
+	setStorageSync(&watching, nil)
 	if err := s.reloadStorage(); err != nil {
 		log.Errorf(context.TODO(), "initial reload storage failed, will retry: %v", err)
 	}
@@ -105,6 +132,10 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 				if !ok {
 					log.Warnf(context.TODO(), "storage watch channel closed, continue with periodic reconcile")
 					watchCh = nil
+					if ctx.Err() == nil {
+						watching := false
+						setStorageSync(&watching, nil)
+					}
 					continue
 				}
 				log.Debugf(context.TODO(), "get storage info changed notify")
@@ -119,6 +150,8 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 						log.Errorf(context.TODO(), "retry watch storage failed %v", watchErr)
 					} else {
 						watchCh = newWatchCh
+						watching := true
+						setStorageSync(&watching, nil)
 					}
 				}
 				if reloadErr := s.reloadStorage(); reloadErr != nil {
@@ -137,9 +170,19 @@ func (s *Service) reloadStorage() error {
 }
 
 // ReloadStorage 串行完成配置读取与运行时替换，供 watcher、周期调和和诊断强刷共用。
-func ReloadStorage(ctx context.Context) error {
+func ReloadStorage(ctx context.Context) (err error) {
 	storageReloadLock.Lock()
 	defer storageReloadLock.Unlock()
+
+	defer func() {
+		if err == nil {
+			metric.ConfigSyncSucceeded(metric.ConfigSyncSourceStorage)
+		} else {
+			metric.ConfigSyncFailed(ctx, metric.ConfigSyncSourceStorage, err)
+		}
+		answered := metric.ConfigSyncBackendAnswered(err)
+		setStorageSync(nil, &answered)
+	}()
 
 	// 使用接口多态，根据配置自动选择 Consul 或 Redis
 	provider := getStorageProvider()
@@ -177,7 +220,7 @@ func ReloadStorage(ctx context.Context) error {
 	err = inner.ReloadTsDBStorage(ctx, storageData, options)
 	if err != nil {
 		log.Errorf(context.TODO(), "reload storage failed %v", err)
-		return err
+		return metric.ConfigSyncApplyError(err)
 	}
 
 	return nil

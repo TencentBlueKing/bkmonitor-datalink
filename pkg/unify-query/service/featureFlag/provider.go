@@ -17,6 +17,7 @@ import (
 
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 )
 
 // FeatureFlagProvider 特性开关提供者接口(consul和redis)
@@ -93,7 +94,7 @@ func (p *fallbackFeatureFlagProvider) GetFeatureFlags(ctx context.Context) ([]by
 		return nil, err
 	}
 	if err := inner.ValidateFeatureFlagSnapshot(data); err != nil {
-		return nil, fmt.Errorf("invalid consul feature flag snapshot: %w", err)
+		return nil, metric.ConfigSyncDecodeError(fmt.Errorf("invalid consul feature flag snapshot: %w", err))
 	}
 	if p.initialize != nil {
 		created, err := p.initialize(ctx, data)

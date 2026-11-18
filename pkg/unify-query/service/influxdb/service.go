@@ -22,6 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/utils"
 )
@@ -34,6 +35,27 @@ type Service struct {
 	storageMu  sync.Mutex
 
 	storageHash string
+
+	// storageWatching and storageReadOK (the latest sync reached the backend) make this watcher's half of
+	// unify_query_config_sync_up{source="storage"}.
+	storageSyncMu   sync.Mutex
+	storageWatching bool
+	storageReadOK   bool
+}
+
+// setStorageSync records whether the storage watch is open and whether the latest sync reached the
+// storage backend; nil leaves that half as it was. The watch retries inside the Consul and Redis
+// clients without reporting a lost connection, so up also needs the latest read to have succeeded.
+func (s *Service) setStorageSync(watching, readOK *bool) {
+	s.storageSyncMu.Lock()
+	defer s.storageSyncMu.Unlock()
+	if watching != nil {
+		s.storageWatching = *watching
+	}
+	if readOK != nil {
+		s.storageReadOK = *readOK
+	}
+	metric.ConfigSyncSetUp(metric.ConfigSyncSourceStorage, metric.ConfigSyncWatcherInfluxDB, s.storageWatching && s.storageReadOK)
 }
 
 var (
@@ -135,6 +157,16 @@ func (s *Service) reloadStorageWithContext(ctx context.Context) error {
 		err     error
 	)
 
+	defer func() {
+		if err == nil {
+			metric.ConfigSyncSucceeded(metric.ConfigSyncSourceStorage)
+		} else {
+			metric.ConfigSyncFailed(ctx, metric.ConfigSyncSourceStorage, err)
+		}
+		answered := metric.ConfigSyncBackendAnswered(err)
+		s.setStorageSync(nil, &answered)
+	}()
+
 	// 使用接口多态，根据配置自动选择 Consul 或 Redis
 	provider := getStorageProvider()
 	storageData, err := provider.GetInfluxdbStorageInfo(ctx)
@@ -143,8 +175,8 @@ func (s *Service) reloadStorageWithContext(ctx context.Context) error {
 		return err
 	}
 
-	dTmp, err = model.ParseDuration(Timeout)
-	if err != nil {
+	dTmp, parseErr := model.ParseDuration(Timeout)
+	if parseErr != nil {
 		timeout = 30 * time.Second
 		log.Warnf(context.TODO(), "parse influxdb query timeout failed,use 30s as default")
 	} else {
@@ -193,6 +225,7 @@ func (s *Service) reloadStorageWithContext(ctx context.Context) error {
 	err = inner.ReloadStorage(ctx, hostList, option)
 	if err != nil {
 		log.Errorf(context.TODO(), "reload storage failed,error:%s", err)
+		err = metric.ConfigSyncApplyError(err)
 		return err
 	}
 
@@ -206,12 +239,15 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 	if err := consulStorageAddressError(); err != nil {
 		return err
 	}
+	metric.ConfigSyncEnable(metric.ConfigSyncSourceStorage)
 	// 先建立订阅再读取全量快照，避免首次读取和订阅确认之间遗漏 Redis 更新。
 	provider := getStorageProvider()
 	watchCh, err := provider.WatchStorageInfo(ctx)
 	if err != nil {
 		log.Errorf(context.TODO(), "initial watch storage failed, will retry,error:%s", err)
 	}
+	watching := err == nil
+	s.setStorageSync(&watching, nil)
 	if err := s.reloadStorage(); err != nil {
 		log.Errorf(context.TODO(), "initial reload storage failed, will retry,error:%s", err)
 	}
@@ -230,6 +266,10 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 				if !ok {
 					log.Warnf(context.TODO(), "storage watch channel closed, continue with periodic reconcile")
 					watchCh = nil
+					if ctx.Err() == nil {
+						watching := false
+						s.setStorageSync(&watching, nil)
+					}
 					continue
 				}
 				log.Debugf(context.TODO(), "get storage info changed notify")
@@ -244,6 +284,8 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 						log.Errorf(context.TODO(), "retry watch storage failed,error:%s", watchErr)
 					} else {
 						watchCh = newWatchCh
+						watching := true
+						s.setStorageSync(&watching, nil)
 					}
 				}
 				if reloadErr := s.reloadStorage(); reloadErr != nil {
@@ -324,6 +366,7 @@ func (s *Service) reloadSpaceTsDbRouter(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	metric.ConfigSyncSetInterval(metric.ConfigSyncSourceSpaceRouterFull, RouterInterval)
 	err = ir.ReloadAllKey(ctx, false)
 	if err != nil {
 		return err
@@ -346,10 +389,18 @@ func (s *Service) reloadSpaceTsDbRouter(ctx context.Context) error {
 				if err != nil {
 					log.Errorf(ctx, "[SpaceTSDB Router] TimeTicker reload with error, %v", err)
 				}
-			case msg := <-ch:
+			case msg, ok := <-ch:
+				if !ok {
+					// The subscription ends only with ctx.
+					ch = nil
+					continue
+				}
 				err = ir.ReloadByChannel(ctx, msg.Channel, msg.Payload)
 				if err != nil {
+					metric.ConfigSyncFailed(ctx, metric.ConfigSyncSourceSpaceRouterIncremental, err)
 					log.Errorf(ctx, "[SpaceTSDB Router] Subscribe msg with error, %s, %v", msg.String(), err)
+				} else {
+					metric.ConfigSyncSucceeded(metric.ConfigSyncSourceSpaceRouterIncremental)
 				}
 			}
 		}

@@ -120,10 +120,25 @@ func TestConfigSyncSeries(t *testing.T) {
 }
 
 func TestConfigSyncUpNeedsEveryWatcher(t *testing.T) {
+	configSyncUpMu.Lock()
+	delete(configSyncUpParts, ConfigSyncSourceStorage)
+	configSyncUpMu.Unlock()
 	value := func() float64 { return testutil.ToFloat64(configSyncUp.WithLabelValues("storage")) }
+
+	// Both services enable storage; a watcher that has not reported yet counts as down.
+	ConfigSyncEnable(ConfigSyncSourceStorage, ConfigSyncStorageWatchers...)
+	if value() != 0 {
+		t.Fatal("no watcher has reported")
+	}
 	ConfigSyncSetUp(ConfigSyncSourceStorage, ConfigSyncWatcherTsDBStorage, true)
+	if value() != 0 {
+		t.Fatal("one watcher live and the other still to report is not up")
+	}
+	// The second service enabling storage does not reset the watcher that already reported.
+	ConfigSyncEnable(ConfigSyncSourceStorage, ConfigSyncStorageWatchers...)
+	ConfigSyncSetUp(ConfigSyncSourceStorage, ConfigSyncWatcherInfluxDB, true)
 	if value() != 1 {
-		t.Fatal("the only watcher that reported is live")
+		t.Fatal("both watchers live")
 	}
 	ConfigSyncSetUp(ConfigSyncSourceStorage, ConfigSyncWatcherInfluxDB, false)
 	if value() != 0 {
@@ -135,6 +150,6 @@ func TestConfigSyncUpNeedsEveryWatcher(t *testing.T) {
 	}
 	ConfigSyncSetUp(ConfigSyncSourceStorage, ConfigSyncWatcherInfluxDB, true)
 	if value() != 1 {
-		t.Fatal("both watchers live")
+		t.Fatal("both watchers live again")
 	}
 }

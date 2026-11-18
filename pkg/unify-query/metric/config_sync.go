@@ -76,7 +76,7 @@ var (
 			"inside the Consul and Redis clients without reporting a lost connection, so the once-a-minute " +
 			"reconcile read is what notices one, and this can lag a backend outage by up to a minute. storage " +
 			"is read by two watchers, the storage map queries use and the InfluxDB host list, and is up only " +
-			"while both are",
+			"while both are; each counts as down until it first reports, up to a minute after startup",
 	}, []string{"source"})
 
 	configSyncUpMu    sync.Mutex
@@ -92,6 +92,10 @@ const (
 	ConfigSyncWatcherInfluxDB    = "influxdb_storage"
 )
 
+// ConfigSyncStorageWatchers are the watchers of storage. Both services are always started and enable
+// storage under the same condition, so storage is up only once both have reported.
+var ConfigSyncStorageWatchers = []string{ConfigSyncWatcherTsDBStorage, ConfigSyncWatcherInfluxDB}
+
 func configSyncWatchSource(source string) bool {
 	switch source {
 	case ConfigSyncSourceSpaceRouterIncremental, ConfigSyncSourceStorage, ConfigSyncSourceFeatureFlag:
@@ -101,17 +105,50 @@ func configSyncWatchSource(source string) bool {
 }
 
 // ConfigSyncEnable creates the series of a subscribed or watched source this deployment uses: up at 0
-// until the subscription or watch is live, and a failure counter at 0 for every reason. A source the
-// deployment does not use is never enabled and has no series. The timestamp is created by the first
-// success, never preset to 0.
-func ConfigSyncEnable(source string) {
+// and a failure counter at 0 for every reason. watchers are every watcher the deployment starts for the
+// source; each that has not reported yet counts as down, so the source is not up while one of them is
+// still to report. A source the deployment does not use is never enabled and has no series. The
+// timestamp is created by the first success, never preset to 0.
+func ConfigSyncEnable(source string, watchers ...string) {
 	if !configSyncWatchSource(source) {
 		return
 	}
-	configSyncUp.WithLabelValues(source)
 	for _, reason := range configSyncReasons {
 		configSyncFailures.WithLabelValues(source, reason)
 	}
+	configSyncUpMu.Lock()
+	defer configSyncUpMu.Unlock()
+	parts := configSyncWatchers(source)
+	for _, watcher := range watchers {
+		if _, reported := parts[watcher]; !reported {
+			parts[watcher] = false
+		}
+	}
+	configSyncSetUpLocked(source, parts)
+}
+
+func configSyncWatchers(source string) map[string]bool {
+	parts := configSyncUpParts[source]
+	if parts == nil {
+		parts = map[string]bool{}
+		configSyncUpParts[source] = parts
+	}
+	return parts
+}
+
+// configSyncSetUpLocked sets up from the watchers' states: 1 only when there is at least one and every
+// one is live.
+func configSyncSetUpLocked(source string, parts map[string]bool) {
+	value := 0.0
+	if len(parts) > 0 {
+		value = 1
+	}
+	for _, live := range parts {
+		if !live {
+			value = 0
+		}
+	}
+	configSyncUp.WithLabelValues(source).Set(value)
 }
 
 // ConfigSyncSucceeded records now as the source's last successful sync.
@@ -131,26 +168,16 @@ func ConfigSyncFailed(ctx context.Context, source string, err error) {
 }
 
 // ConfigSyncSetUp sets whether one watcher of the source is live. The source is up only while every
-// watcher of it that has reported is.
+// watcher enabled for it, and every one that has reported, is.
 func ConfigSyncSetUp(source, watcher string, up bool) {
 	if !configSyncWatchSource(source) {
 		return
 	}
 	configSyncUpMu.Lock()
 	defer configSyncUpMu.Unlock()
-	parts := configSyncUpParts[source]
-	if parts == nil {
-		parts = map[string]bool{}
-		configSyncUpParts[source] = parts
-	}
+	parts := configSyncWatchers(source)
 	parts[watcher] = up
-	value := 1.0
-	for _, live := range parts {
-		if !live {
-			value = 0
-		}
-	}
-	configSyncUp.WithLabelValues(source).Set(value)
+	configSyncSetUpLocked(source, parts)
 }
 
 // ConfigSyncSetInterval sets the effective period of a source reloaded on a timer.

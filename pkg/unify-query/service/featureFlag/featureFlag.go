@@ -198,7 +198,7 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 		return fmt.Errorf("feature flag provider is not initialized")
 	}
 
-	metric.ConfigSyncEnable(metric.ConfigSyncSourceFeatureFlag)
+	metric.ConfigSyncEnable(metric.ConfigSyncSourceFeatureFlag, metric.ConfigSyncWatcherFeatureFlag)
 	// 先完成订阅，再读取一次全量配置，避免 GET 与订阅建立之间遗漏更新。
 	ch, err := s.provider.WatchFeatureFlags(ctx)
 	if err != nil {

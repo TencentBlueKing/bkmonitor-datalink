@@ -105,7 +105,7 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 	if err := consulStorageAddressError(); err != nil {
 		return err
 	}
-	metric.ConfigSyncEnable(metric.ConfigSyncSourceStorage)
+	metric.ConfigSyncEnable(metric.ConfigSyncSourceStorage, metric.ConfigSyncStorageWatchers...)
 	// 先建立订阅再读取全量快照，避免首次读取和订阅确认之间遗漏 Redis 更新。
 	provider := getStorageProvider()
 	watchCh, err := provider.WatchStorageInfo(ctx)

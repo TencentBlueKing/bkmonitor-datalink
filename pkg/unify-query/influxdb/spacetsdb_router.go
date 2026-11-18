@@ -316,7 +316,7 @@ func (r *SpaceTsDbRouter) initRouter(ctx context.Context) error {
 func (r *SpaceTsDbRouter) RouterSubscribe(ctx context.Context) <-chan *goRedis.Message {
 	r.rwLock.RLock()
 	defer r.rwLock.RUnlock()
-	metric.ConfigSyncEnable(metric.ConfigSyncSourceSpaceRouterIncremental)
+	metric.ConfigSyncEnable(metric.ConfigSyncSourceSpaceRouterIncremental, metric.ConfigSyncWatcherSpaceRouter)
 	return r.router.SubscribeChannelsWithState(ctx, func(up bool) {
 		metric.ConfigSyncSetUp(metric.ConfigSyncSourceSpaceRouterIncremental, metric.ConfigSyncWatcherSpaceRouter, up)
 		if up {

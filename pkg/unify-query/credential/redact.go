@@ -66,6 +66,22 @@ func RedactURL(value string) string {
 	return u.String()
 }
 
+// URLOrigin keeps only scheme://host:port, for metric labels: userinfo, path and query
+// are dropped whether or not they look sensitive. A value without a scheme keeps host:port.
+func URLOrigin(value string) string {
+	if value == "" {
+		return ""
+	}
+	u, err := parsedURL(value)
+	if err != nil || u.Host == "" {
+		return "[invalid URL]"
+	}
+	if u.Scheme == "" {
+		return u.Host
+	}
+	return u.Scheme + "://" + u.Host
+}
+
 // RedactSettings returns a deep copy; authentication consumers keep original values.
 func RedactSettings(settings map[string]any) map[string]any {
 	return redact(settings).(map[string]any)

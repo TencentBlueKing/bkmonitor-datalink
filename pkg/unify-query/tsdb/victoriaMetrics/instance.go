@@ -592,6 +592,7 @@ func (i *Instance) vmQuery(
 		Attempt:          1,
 	}
 	size, err := i.curl.Request(ctx, curl.Post, requestOptions, data)
+	metric.TsDBRequestInc(ctx, i.InstanceType(), err)
 	retryReason := vmQuerySyncRetryReason(err)
 	if retryReason != "" && ctx.Err() != nil {
 		err = ctx.Err()
@@ -620,6 +621,7 @@ func (i *Instance) vmQuery(
 		requestOptions.Attempt = 2
 		span.Set("query-sync-retry.attempts", 2)
 		size, err = i.curl.Request(ctx, curl.Post, requestOptions, data)
+		metric.TsDBRequestInc(ctx, i.InstanceType(), err)
 		if err != nil && ctx.Err() != nil {
 			err = ctx.Err()
 		}

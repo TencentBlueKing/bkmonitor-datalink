@@ -81,6 +81,7 @@ func (c *Client) curlGet(ctx context.Context, method string, req QuerySyncReques
 		},
 		res,
 	)
+	metric.TsDBRequestInc(ctx, metadata.BkSqlStorageType, err)
 	if err != nil {
 		return err
 	}

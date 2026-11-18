@@ -314,6 +314,7 @@ func (i *Instance) ExecuteRawBatch(
 		Body:        batch.ndjson,
 		ContentType: rawBatchContentType,
 	})
+	metric.TsDBRequestInc(ctx, metadata.ElasticsearchStorageType, withBackendStatus(err))
 	span.Set("es_batch_request_duration_ms", float64(time.Since(requestStartedAt))/float64(time.Millisecond))
 	if err != nil {
 		status := 0

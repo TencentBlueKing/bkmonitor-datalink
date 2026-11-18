@@ -228,6 +228,7 @@ func resolveIndexMetadataSnapshot(ctx context.Context, span *trace.Span, cli *el
 		span.Set("get-mapping", aliases)
 		mappingStartedAt := time.Now()
 		res, err := cli.GetMapping().Index(aliases...).Type("").Do(ctx)
+		metric.TsDBRequestInc(ctx, metadata.ElasticsearchStorageType, withBackendStatus(err))
 		span.Set("get-mapping-duration-ms", float64(time.Since(mappingStartedAt))/float64(time.Millisecond))
 		if err != nil {
 			span.Set("get-mapping-error", truncateString(err.Error(), esIndexMetadataErrorMaxLength))
@@ -533,7 +534,10 @@ func (i *Instance) executeESQuery(
 		retryQo.indexes = retryIndexes
 		recordESQueryShardsWithPrefix(ctx, span, &retryQo, res, "fallback_retry_")
 	}
-	if err = handleESError(ctx, qo.conn.Address, err, res); err != nil {
+	// 一次查询（含缺 mapping 的回退重试）计一次，按 handleESError 归一后的结果。
+	err = handleESError(ctx, qo.conn.Address, err, res)
+	metric.TsDBRequestInc(ctx, metadata.ElasticsearchStorageType, err)
+	if err != nil {
 		return nil, err
 	}
 	if res.Hits != nil {
@@ -1178,6 +1182,7 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 	defer cli.Stop()
 
 	searchResult, err := cli.Search().Index(aliases...).SearchSource(source).Do(ctx)
+	metric.TsDBRequestInc(ctx, metadata.ElasticsearchStorageType, withBackendStatus(err))
 	if err != nil {
 		return nil, withBackendStatus(err)
 	}

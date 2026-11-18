@@ -48,7 +48,9 @@ type streamSeriesSet struct {
 
 	errMtx sync.Mutex
 	err    error
-	warns  storage.Warnings
+	// requestErr 是流的第一个失败，不管严格模式是否把它交给调用方，都用于存储请求计数。
+	requestErr error
+	warns      storage.Warnings
 
 	timeout time.Duration
 }
@@ -100,6 +102,10 @@ func StartStreamSeriesSet(
 
 		ctx, cancel := context.WithCancel(ctx)
 		defer func() {
+			s.errMtx.Lock()
+			requestErr := s.requestErr
+			s.errMtx.Unlock()
+			metric.TsDBRequestOutcomeInc(ctx, grpcTsDBType, grpcRequestOutcome(requestErr))
 			if span != nil {
 				sub := time.Since(start)
 
@@ -204,6 +210,9 @@ func (s *streamSeriesSet) handleErr(err error, done chan struct{}) {
 		"查询异常",
 	).Error(s.ctx, err)
 
+	if s.requestErr == nil {
+		s.requestErr = err
+	}
 	s.err = nil
 	if metadata.IsStrictQueryFailures(s.ctx) {
 		s.err = err

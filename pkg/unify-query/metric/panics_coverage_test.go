@@ -22,7 +22,6 @@ import (
 	"time"
 
 	ants "github.com/panjf2000/ants/v2"
-	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -165,7 +164,5 @@ func panicCounterValue(t *testing.T, site string) float64 {
 	t.Helper()
 	metric, err := panicsTotal.GetMetricWithLabelValues(site)
 	require.NoError(t, err)
-	var m dto.Metric
-	require.NoError(t, metric.Write(&m))
-	return m.GetCounter().GetValue()
+	return counterValueOf(t, metric)
 }

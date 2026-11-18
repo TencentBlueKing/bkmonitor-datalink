@@ -74,8 +74,9 @@ var (
 )
 
 // trafficLimiterDecisionsTotal 回答「额度判断用的是共享额度还是本地降级」。
-// backend="redis" 表示判断时处于共享模式（余额来自 Redis 租约），backend="local" 表示
-// Redis 不可用或太慢，余额在本地按速率补充，reason 是最近一次失败的原因。
+// backend="redis" 表示判断时按共享额度记账（余额来自 Redis 租约）：reason="none" 是正常，
+// reason="timeout" 是 Redis 变慢，请求不再等待、余额不够时先欠着放行。backend="local" 表示
+// Redis 出错或长时间没有同步成功，余额在本地按速率补充，reason 是最近一次失败的原因。
 // 用 Counter 而不是 Gauge：Prometheus 按间隔抓取，短于抓取间隔的降级窗口在 Gauge 上会整段丢失。
 var trafficLimiterDecisionsTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
@@ -133,6 +134,7 @@ var trafficLimiterMode = promauto.NewGaugeVec(
 // 不应反复付 WithLabelValues 的标签哈希与 map 查找开销。
 var (
 	decisionRedis         = trafficLimiterDecisionsTotal.WithLabelValues(backendRedis, reasonNone)
+	decisionRedisSlow     = trafficLimiterDecisionsTotal.WithLabelValues(backendRedis, reasonTimeout)
 	decisionLocalNoClient = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonNoClient)
 	decisionLocalTimeout  = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonTimeout)
 	decisionLocalClosed   = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonClosed)
@@ -630,6 +632,9 @@ func (p *trafficLimiter) Reload(conf map[string]any, customized []processor.SubC
 // Clean 释放 Redis 连接池并停止后台同步，避免被丢弃的实例泄漏连接和 goroutine：
 // Manager.Reload 每次都会完整构造一套新 Processor，不 Close 就是每次热加载泄漏一个连接池和一个 goroutine。
 // 但客户端置空只表示「当前没有可用客户端」，不代表限流器永久失效，ensureRedis 会在下次请求时重建。
+//
+// 关闭客户端时先归还本实例预取的额度并删除需求记录（见 quotaSyncer.Close），再清空本地状态：
+// 顺序反过来就无从归还，被丢弃的实例会把预取的额度带走，其需求记录还要 2s 才过期。
 func (p *trafficLimiter) Clean() {
 	p.mu.Lock()
 	current := p.view.Load()
@@ -637,13 +642,19 @@ func (p *trafficLimiter) Clean() {
 		configs: current.configs, index: current.index,
 		enabled: current.enabled, redisReady: current.redisReady,
 	})
-	p.quota.Clean()
-	p.activity.Clean()
 	p.mu.Unlock()
 
 	if current.redis != nil {
 		_ = current.redis.Close()
 	}
+	p.quota.Clean()
+	p.activity.Clean()
+}
+
+// Stop 在 Collector 正常退出时调用：发布时旧实例退出，把预取的额度还给共享桶、删除自己的需求记录，
+// 接手流量的实例立即可以使用这些额度，不必等它们在 Redis 中按速率恢复、等需求记录过期。
+func (p *trafficLimiter) Stop() {
+	p.Clean()
 }
 
 // Process 先计算服务逻辑字节数并解析各服务配置，再分别判断各服务的流量额度。
@@ -733,9 +744,13 @@ func (p *trafficLimiter) limit(
 	now := p.now()
 	mode, decision := quotaLocalOnly, decisionLocalNoClient
 	if syncer != nil {
-		mode, decision = quotaFallback, syncer.failureDecision()
-		if syncer.shared(now) {
+		switch syncer.state(now) {
+		case redisHealthy:
 			mode, decision = quotaShared, decisionRedis
+		case redisSlow:
+			mode, decision = quotaStalled, decisionRedisSlow
+		default:
+			mode, decision = quotaFallback, syncer.failureDecision()
 		}
 	}
 
@@ -803,23 +818,28 @@ func (p *trafficLimiter) limit(
 	return result, nil
 }
 
-// admitAfterLease 为余额不够的服务等一次紧急补货，然后重新判断。
-// 补货超时或失败时按本地降级判断，保证 Redis 变慢不会让限额之内的流量被拒。
+// admitAfterLease 为余额不够的服务登记等待者、等一次紧急补货，然后结算。
+// 补货写回时额度直接兑现给等待者（见 quotaBucket.waiters）；没被兑现的在透支上限之内放行，否则拒绝。
+// 等待超时（Redis 变慢）时按欠账放行，补货回来再还上；补货失败时按本地降级判断。
 func (p *trafficLimiter) admitAfterLease(syncer *quotaSyncer, pendings []pendingAdmission, result *limitDecision) {
+	tickets := make([]*waitTicket, len(pendings))
 	keys := make([]serviceKey, 0, len(pendings))
-	for _, pending := range pendings {
-		p.quota.AddNeed(pending.key, pending.config, pending.cost)
-		keys = append(keys, pending.key)
+	for i, pending := range pendings {
+		ticket, granted := p.quota.Enqueue(pending.key, pending.config, pending.cost)
+		tickets[i] = ticket
+		if !granted {
+			keys = append(keys, pending.key)
+		}
 	}
-	mode := quotaFallback
-	if syncer.await(keys) {
-		mode = quotaShared
+	mode := quotaShared
+	if len(keys) > 0 {
+		mode = syncer.await(keys)
 	}
 
 	now := p.now()
 	var refills []serviceKey
-	for _, pending := range pendings {
-		admitted, refill := p.quota.Admit(pending.key, pending.cost, pending.config, now, mode, true)
+	for i, pending := range pendings {
+		admitted, refill := p.quota.Settle(pending.key, pending.config, tickets[i], pending.cost, now, mode)
 		if refill {
 			refills = append(refills, pending.key)
 		}

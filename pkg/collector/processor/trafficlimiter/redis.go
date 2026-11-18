@@ -50,21 +50,27 @@ const (
 // redisLeaseScript 为一批服务处理租约，使用 Redis TIME 统一各 Collector Pod 的时间源。
 //
 // 每个服务两个 Key：KEYS[2i-1] 是共享 GCRA 状态（TAT，微秒），KEYS[2i] 是需求表
-// （Hash，字段为实例 ID，值为「需求速率,上报时间」）。ARGV[1..4] 是实例 ID、同步周期、需求失联时长、
-// 预取窗口（后三者为微秒），其后每服务 4 个参数：速率、容量（见 Config.leaseCapacity）、
-// 申请量（负数表示退还）、本实例需求速率。
+// （Hash，字段为实例 ID，值为「需求速率,上报时间,公平额度,额度时间」）。ARGV[1..4] 是实例 ID、同步周期、
+// 需求失联时长、预取窗口（后三者为微秒），其后每服务 5 个参数：速率、容量（见 Config.leaseCapacity）、
+// 申请量（负数表示退还）、本实例需求速率、申请量中必须满足的部分（need：等待中的请求与透支欠账，见 leaseRequest.required）。
 //
 // 对每个服务：
 //  1. 用本实例的需求覆盖写需求表，剔除失联实例，得到全部存活实例的需求与总需求 D；
-//  2. D ≤ 速率时不紧张，授予 min(申请量, 桶中可用量)，公平份额为「需求 + 剩余额度均分」；
-//  3. D > 速率时按 max-min 算出本实例的公平速率 f，授予量另受封顶：
-//     max(f × 距本实例上次租约的时长, 桶中可用量 − 其他实例公平份额的预取量)。
-//     前者保证先同步的实例只能拿走自己那份；后者在桶里还有富余时允许多拿，
-//     只要给其他实例留足各自的预取。D 来自各实例最近的上报，需求刚下降的实例要一会儿才会更新，
-//     这段时间 D 偏高、看起来像争抢，若只按前者封顶，限额之内突增的实例会被白白卡住。
-//  4. 退还时把 TAT 回拨，不早于当前时间。
+//  2. D ≤ 速率时公平份额为「需求 + 剩余额度均分」，否则按 max-min 算出本实例的公平速率 f；
+//  3. 本实例的公平额度按 f 持续累积，至多 2 个同步周期的份额，只有正向授予才扣减；
+//  4. 按三种情况授予：
+//     - D ≤ 速率：不紧张，授予 min(申请量, 桶中可用量)；
+//     - D > 速率，但桶中可用量不少于一半容量，或低于一半还不到一个同步周期：上报看起来紧张，桶里却还有存量，
+//     典型是突发让瞬时需求虚高、多个实例同时突发，或刚退出的实例的需求还没过期。
+//     必须满足的部分（need）先到先得，与理想的全局令牌桶一致；投机性的预取只能用扣掉 need 之后
+//     超出半个桶的部分，不挤占同一时刻其他实例真实到达的请求；
+//     - D > 速率且可用量持续一个同步周期以上不足一半：真正紧张（持续超限），授予量受
+//     max(公平额度, 桶中可用量 − 其他实例公平份额的预取) 封顶。前者保证先同步的实例拿不走别人那份，
+//     后者在桶里还有富余时不白白浪费。紧张的起始时间记在需求表的 __scarce 字段；
+//  5. 退还时把 TAT 回拨，不早于当前时间。
 //
-// 返回每个服务的 {授予量, 存活实例数, 公平份额}。时间戳与 TAT 用 %.0f 写入，
+// 返回每个服务的 {授予量, 存活实例数, 公平份额, 是否真正紧张, 这次租约之后桶中的可用量}。
+// 最后一项让实例在 Redis 变慢、等不到补货时估计共享桶还剩多少（见 quotaBucket.stallAllowance）。时间戳与 TAT 用 %.0f 写入，
 // 避免 Lua number 转字符串时按 %.14g 截断微秒精度。
 const redisLeaseScript = `
 local id = ARGV[1]
@@ -72,7 +78,7 @@ local period = tonumber(ARGV[2])
 local stale = tonumber(ARGV[3])
 local prefetch = tonumber(ARGV[4])
 local count = #KEYS / 2
-if #KEYS % 2 ~= 0 or period == nil or stale == nil or prefetch == nil or #ARGV ~= 4 + count * 4 then
+if #KEYS % 2 ~= 0 or period == nil or stale == nil or prefetch == nil or #ARGV ~= 4 + count * 5 then
   return redis.error_reply("invalid lease arguments")
 end
 local now_parts = redis.call("TIME")
@@ -81,12 +87,14 @@ local result = {}
 for i = 1, count do
   local tat_key = KEYS[i * 2 - 1]
   local demand_key = KEYS[i * 2]
-  local base = 4 + (i - 1) * 4
+  local base = 4 + (i - 1) * 5
   local rate = tonumber(ARGV[base + 1])
   local capacity = tonumber(ARGV[base + 2])
   local want = tonumber(ARGV[base + 3])
   local demand = tonumber(ARGV[base + 4])
-  if rate == nil or capacity == nil or want == nil or demand == nil or rate <= 0 or capacity <= 0 or demand < 0 then
+  local need = tonumber(ARGV[base + 5])
+  if rate == nil or capacity == nil or want == nil or demand == nil or need == nil or
+      rate <= 0 or capacity <= 0 or demand < 0 or need < 0 then
     return redis.error_reply("invalid lease arguments")
   end
   if demand > rate then
@@ -95,20 +103,23 @@ for i = 1, count do
 
   local demands = {demand}
   local total = demand
-  local last = nil
+  local own_credit = nil
+  local own_credit_at = nil
   local entries = redis.call("HGETALL", demand_key)
+  local scarce_since = nil
   for j = 1, #entries, 2 do
     local field = entries[j]
-    local value = entries[j + 1]
-    local sep = string.find(value, ",", 1, true)
-    local d = nil
-    local seen = nil
-    if sep ~= nil then
-      d = tonumber(string.sub(value, 1, sep - 1))
-      seen = tonumber(string.sub(value, sep + 1))
+    local parts = {}
+    for item in string.gmatch(entries[j + 1], "[^,]+") do
+      parts[#parts + 1] = tonumber(item)
     end
-    if field == id then
-      last = seen
+    local d = parts[1]
+    local seen = parts[2]
+    if field == "__scarce" then
+      scarce_since = d
+    elseif field == id then
+      own_credit = parts[3]
+      own_credit_at = parts[4]
     elseif d == nil or seen == nil or now - seen > stale then
       redis.call("HDEL", demand_key, field)
     else
@@ -135,33 +146,62 @@ for i = 1, count do
     share = math.min(demand, level)
   end
 
+  -- 公平额度：按公平份额持续累积，至多 2 个同步周期的份额，只有正向授予才扣减。
+  -- 不能按「距上次调用的时长」封顶：实例刚做过一次退还或上报，时长接近 0，突发到达时就一点也领不到。
+  local credit_cap = share * period * 2 / 1000000
+  local credit = credit_cap
+  if own_credit ~= nil and own_credit_at ~= nil then
+    credit = math.min(credit_cap, own_credit + share * (now - own_credit_at) / 1000000)
+  end
+
   local tat = tonumber(redis.call("GET", tat_key))
   if tat == nil or tat < now then
     tat = now
   end
+  -- 紧张状态：上报的总需求超过额度，且桶中可用量不足一半。只有持续超过一个同步周期才按公平额度分配；
+  -- 一次突发会让桶瞬间跌破一半，此时仍按真实需要先到先得，与理想的全局令牌桶一致。
+  local available = math.floor((now + math.ceil(capacity * 1000000 / rate) - tat) * rate / 1000000)
+  local half = math.floor(capacity / 2)
+  local pressed = total > rate and available < half
+  if pressed and scarce_since == nil then
+    scarce_since = now
+    redis.call("HSET", demand_key, "__scarce", string.format("%.0f", now))
+  elseif not pressed and scarce_since ~= nil then
+    scarce_since = nil
+    redis.call("HDEL", demand_key, "__scarce")
+  end
+
   local grant = 0
+  local scarce = 0
   if want < 0 then
     tat = math.max(now, tat - math.floor(-want * 1000000 / rate))
     grant = want
   elseif want > 0 then
-    local available = math.floor((now + math.ceil(capacity * 1000000 / rate) - tat) * rate / 1000000)
-    local limit = want
-    if total > rate then
-      local elapsed = period * 2
-      if last ~= nil and now - last < elapsed then
-        elapsed = now - last
+    if total <= rate then
+      grant = math.min(want, available)
+    elseif not pressed or now - scarce_since < period then
+      if need > want then
+        need = want
       end
-      limit = math.floor(share * elapsed / 1000000)
+      local above = available - need - half
+      if above < 0 then
+        above = 0
+      end
+      grant = math.min(need + math.min(want - need, above), available)
+    else
+      scarce = 1
+      local limit = math.floor(credit)
       local spare = available - math.ceil((rate - share) * prefetch / 1000000)
       if spare > limit then
         limit = spare
       end
+      grant = math.min(want, available, limit)
     end
-    grant = math.min(want, available, limit)
     if grant < 0 then
       grant = 0
     end
     tat = tat + math.ceil(grant * 1000000 / rate)
+    credit = math.max(0, credit - grant)
   end
   if grant ~= 0 then
     if tat > now then
@@ -171,16 +211,26 @@ for i = 1, count do
     end
   end
 
-  if demand > 0 or want ~= 0 then
-    redis.call("HSET", demand_key, id, string.format("%.0f,%.0f", demand, now))
+  -- 需求为 0 时删除本实例的记录：它不再需要份额，也不应再被算作存活实例（退出时的归还走这里）。
+  if demand > 0 then
+    redis.call("HSET", demand_key, id, string.format("%.0f,%.0f,%.0f,%.0f", demand, now, credit, now))
   else
     redis.call("HDEL", demand_key, id)
   end
   redis.call("PEXPIRE", demand_key, math.ceil(stale / 1000) * 5)
 
+  local remaining = math.floor((now + math.ceil(capacity * 1000000 / rate) - tat) * rate / 1000000)
+  if remaining > capacity then
+    remaining = capacity
+  elseif remaining < 0 then
+    remaining = 0
+  end
+
   result[#result + 1] = grant
   result[#result + 1] = peers
   result[#result + 1] = math.floor(share)
+  result[#result + 1] = scarce
+  result[#result + 1] = remaining
 end
 return result
 `
@@ -239,6 +289,9 @@ func newInstanceID() string {
 	return fmt.Sprintf("%s-%08x", host, rand.Uint32())
 }
 
+// leaseResultFields 是 Lua 为每个服务返回的值个数。
+const leaseResultFields = 5
+
 type redisLeaser struct {
 	client redis.UniversalClient
 	script *redis.Script
@@ -275,24 +328,26 @@ func newRedisLeaserWithID(config RedisConfig, id string) quotaLeaser {
 // Lease 用一次脚本调用处理整批服务。批次为空时只执行一次 TIME，用作健康探测。
 func (r *redisLeaser) Lease(ctx context.Context, requests []leaseRequest) ([]leaseResult, error) {
 	keys := make([]string, 0, len(requests)*2)
-	args := make([]any, 0, 4+len(requests)*4)
+	args := make([]any, 0, 4+len(requests)*5)
 	args = append(args, r.id, defaultSyncInterval.Microseconds(), defaultDemandStaleAfter.Microseconds(),
 		defaultPrefetchWindow.Microseconds())
 	for _, request := range requests {
 		key := r.stateKey(request.key.token, request.key.service, request.config)
 		keys = append(keys, key, key+":demand")
-		args = append(args, request.config.BytesPerSecond, request.config.leaseCapacity(), request.want, request.demand)
+		args = append(args, request.config.BytesPerSecond, request.config.leaseCapacity(), request.want, request.demand,
+			request.required())
 	}
 	values, err := r.script.Run(ctx, r.client, keys, args...).Int64Slice()
 	if err != nil {
 		return nil, err
 	}
-	if len(values) != len(requests)*3 {
+	if len(values) != len(requests)*leaseResultFields {
 		return nil, errors.Errorf("traffic limiter lease script returned %d values for %d requests", len(values), len(requests))
 	}
 	results := make([]leaseResult, len(requests))
 	for i := range results {
-		results[i] = leaseResult{grant: values[i*3], peers: values[i*3+1], share: values[i*3+2]}
+		row := values[i*leaseResultFields : (i+1)*leaseResultFields]
+		results[i] = leaseResult{grant: row[0], peers: row[1], share: row[2], scarce: row[3] == 1, available: row[4]}
 	}
 	return results, nil
 }

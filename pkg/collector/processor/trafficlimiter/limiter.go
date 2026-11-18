@@ -77,7 +77,16 @@ const (
 	quotaFallback
 	// quotaLocalOnly：没有可用的 Redis（未配置或配置非法），每个实例独立使用全额。
 	quotaLocalOnly
+	// quotaStalled：Redis 能用但变慢（一次等待超过上限，或一轮租约太慢）。仍按共享额度记账，
+	// 请求不再等待；余额不够时在 stallAllowance 之内先欠着放行，后台补货照常进行、欠账从租约中扣回。
+	// 只是一次判断的方式，桶本身仍处于共享模式（见 switchMode）。
+	quotaStalled
 )
+
+// shared 表示这次判断按共享额度记账。
+func (m quotaMode) shared() bool {
+	return m == quotaShared || m == quotaStalled
+}
 
 type limitDecision struct {
 	// accepted 表示请求中至少有一个服务成功扣减或处于不限流状态。
@@ -136,11 +145,22 @@ type quotaBucket struct {
 	// 预取目标也会迟迟降不下来，空闲实例占着的额度退不回共享桶。
 	demand float64
 
-	// need 是正在等待补货的请求所需的计费字节之和。
+	// need 是正在等待补货、还没拿到额度的请求所需的计费字节之和，恒等于 waiters 的 cost 之和。
 	need int64
-	// limitedUntil 之前，余额不够的请求直接拒绝，既不等待也不按需补货：最近一次租约没有足额授予，
-	// 立即再去 Redis 也拿不到更多。退避时长见 limitBackoff。
+	// waiters 是等待补货的请求，按到达顺序排列。补货写回时直接从余额里扣给付得起的等待者（见 serveWaiters），
+	// 等待者醒来只看自己有没有被兑现。balance 因此只代表空闲额度：下一轮的申请量、需求下降时的退还、
+	// 后到的请求都看不到已经许给等待者的那部分。
+	//
+	// 不这样做的话，授予写回之后、等待者被唤醒扣款之前有一段空档：补货泵紧接着开始的下一轮会把这笔授予
+	// 当成空闲余额少申请，甚至当成富余退回 Redis；后到的请求也会先把它扣走。满桶并发时等待者只能吃透支，
+	// 超出透支就在限额之内被拒。
+	waiters []*waitTicket
+	// limitedUntil 之前，余额不够的请求不再等待，只能使用透支空间，也不按需补货：
+	// 最近一次租约连等待中请求的真实需要都没满足，或额度真正紧张，立即再去 Redis 也拿不到更多。
 	limitedUntil time.Time
+	// prefetchUntil 之前不做异步预取：最近一次只是投机性的预取没领满，真实需要不受影响，仍可以等待补货。
+	// 与 limitedUntil 分开，否则预取领不满会连带挡住真实请求的等待。退避时长见 limitBackoff。
+	prefetchUntil time.Time
 	// queued 表示已经提交了一次异步补货、还没有结果，避免同一服务重复提交。
 	queued bool
 	// leased 表示进入共享模式以来领到过额度。没领到过就切到本地降级（典型是冷启动时 Redis 恰好卡住），
@@ -150,17 +170,70 @@ type quotaBucket struct {
 	// share、peers 是 Redis 最近一次返回的本实例公平份额与该服务的存活实例数，本地降级时使用。
 	share float64
 	peers int64
+	// observed 是最近一次租约之后共享桶中的可用量，observedAt 是写回时间，Redis 变慢时用来估计还能先欠多少。
+	observed   int64
+	observedAt time.Time
 
 	lastSeen time.Time
 }
 
 func newQuotaBucket(config Config, now time.Time, mode quotaMode) *quotaBucket {
+	if mode.shared() {
+		mode = quotaShared
+	}
 	bucket := &quotaBucket{config: config, mode: mode, refilledAt: now, measuredAt: now}
 	if mode != quotaShared {
 		// 本地模式下新出现的服务从满桶开始，与单机限流一致；共享模式从 0 开始，第一个请求等一次租约。
 		bucket.balance = bucket.localCapacity()
 	}
 	return bucket
+}
+
+// waitTicket 是一个等待补货的请求。granted 只在所属分片的锁内读写。
+type waitTicket struct {
+	cost    int64
+	granted bool
+}
+
+// serveWaiters 按到达顺序把空闲余额扣给付得起的等待者。付不起的跳过、继续看后面的（first-fit），
+// 大请求不挡住同一批里的小请求；没被兑现的等待者醒来后自己走透支或拒绝。
+func (b *quotaBucket) serveWaiters() {
+	if len(b.waiters) == 0 {
+		return
+	}
+	kept := b.waiters[:0]
+	for _, waiter := range b.waiters {
+		if b.balance >= waiter.cost {
+			b.balance -= waiter.cost
+			b.need = max(b.need-waiter.cost, 0)
+			waiter.granted = true
+			continue
+		}
+		kept = append(kept, waiter)
+	}
+	clear(b.waiters[len(kept):])
+	b.waiters = kept
+}
+
+// dropWaiter 撤下一个没被兑现的等待者。
+func (b *quotaBucket) dropWaiter(ticket *waitTicket) {
+	for i, waiter := range b.waiters {
+		if waiter == ticket {
+			b.waiters = append(b.waiters[:i], b.waiters[i+1:]...)
+			b.need = max(b.need-ticket.cost, 0)
+			return
+		}
+	}
+}
+
+// wantsRefill 判断放行之后是否需要提交一次异步补货，需要时置 queued，避免重复提交。
+func (b *quotaBucket) wantsRefill(now time.Time, mode quotaMode) bool {
+	refill := mode.shared() && !now.Before(b.limitedUntil) && !now.Before(b.prefetchUntil) && !b.queued &&
+		b.balance < b.target(now)/refillWatermark
+	if refill {
+		b.queued = true
+	}
+	return refill
 }
 
 // localRate 是本地模式下的补充速率。没有 Redis 时就是全额；Redis 故障时取 max(公平份额, L/n)：
@@ -182,6 +255,9 @@ func (b *quotaBucket) localCapacity() int64 {
 // switchMode 处理额度来源的切换。进入本地模式时保留手上的余额（它们在 Redis 中已经扣减过）；
 // 回到共享模式时清零：本地补充出来的令牌在 Redis 中没有对应的扣减，不能带进共享模式。
 func (b *quotaBucket) switchMode(now time.Time, mode quotaMode) {
+	if mode.shared() {
+		mode = quotaShared
+	}
 	if b.mode == mode {
 		return
 	}
@@ -189,6 +265,7 @@ func (b *quotaBucket) switchMode(now time.Time, mode quotaMode) {
 	case mode == quotaShared:
 		b.balance = 0
 		b.limitedUntil = time.Time{}
+		b.prefetchUntil = time.Time{}
 		b.leased = false
 	case b.mode == quotaShared && !b.leased:
 		b.mode = mode
@@ -235,11 +312,25 @@ func (b *quotaBucket) overdraft() int64 {
 	return min(byWindow, b.config.leaseCapacity()/max(b.peers, 1))
 }
 
-// admit 在本地余额上判断一次请求。retry 为真表示这是等待补货之后的第二次判断：
+// stallAllowance 是 Redis 变慢时可以先欠着的额度：最近一次租约之后共享桶的可用量，加上之后按速率补回的量，
+// 不超过桶容量。它估计的是「共享桶此刻很可能还有多少」：限额之内的流量对应的额度，补货一回来就把欠账还上，
+// 不会多放行；只有共享桶确实已经空了（真的超限）才会多放行，至多这么多，并从之后的租约中扣回。
+// 还没拿到过余量（冷启动恰逢 Redis 变慢）时按满桶计，与本地降级「从没领到过额度的服务从满桶开始」一致。
+func (b *quotaBucket) stallAllowance(now time.Time) int64 {
+	capacity := b.config.leaseCapacity()
+	if b.observedAt.IsZero() {
+		return capacity
+	}
+	refill := now.Sub(b.observedAt).Seconds() * float64(b.config.BytesPerSecond)
+	return min(capacity, b.observed+int64(min(refill, float64(capacity))))
+}
+
+// admit 在本地余额上判断一次请求。retry 为真表示这是等待补货之后、没被兑现的第二次判断（见 Settle）：
 // 不再重复计入需求，也不再要求等待。
 //
-// 共享模式下余额不够时：没被限流的第一次判断返回 admitInsufficient，先等一次补货，用真实额度；
-// 被限流或补货后仍不够时，在透支上限之内放行。
+// 共享模式下余额不够时：没被限流的第一次判断返回 admitInsufficient，登记为等待者等一次补货，用真实额度；
+// 被限流或补货后仍没被兑现时，在透支上限之内放行。Redis 变慢（quotaStalled）时不等待，
+// 没被限流的话可以欠到 stallAllowance；被限流（额度真正紧张）时仍只有透支空间。
 func (b *quotaBucket) admit(now time.Time, cost int64, mode quotaMode, retry bool) (admitResult, bool) {
 	b.switchMode(now, mode)
 	if !retry {
@@ -250,28 +341,27 @@ func (b *quotaBucket) admit(now time.Time, cost int64, mode quotaMode, retry boo
 			b.avgCost += (float64(cost) - b.avgCost) * requestSizeSmoothing
 		}
 	}
-	if mode != quotaShared {
+	if !mode.shared() {
 		b.refill(now)
 	}
 	limited := now.Before(b.limitedUntil)
 	if b.balance >= cost {
 		b.balance -= cost
-		refill := mode == quotaShared && !limited && !b.queued &&
-			b.balance < b.target(now)/refillWatermark
-		if refill {
-			b.queued = true
-		}
-		return admitAccepted, refill
+		return admitAccepted, b.wantsRefill(now, mode)
 	}
-	if mode != quotaShared {
+	if !mode.shared() {
 		return admitRejected, false
 	}
-	if !limited && !retry {
+	if !limited && !retry && mode == quotaShared {
 		return admitInsufficient, false
 	}
-	if b.balance-cost >= -b.overdraft() {
+	limit := b.overdraft()
+	if mode == quotaStalled && !limited {
+		limit = max(limit, b.stallAllowance(now))
+	}
+	if b.balance-cost >= -limit {
 		b.balance -= cost
-		refill := !limited && !b.queued
+		refill := !limited && !now.Before(b.prefetchUntil) && !b.queued
 		if refill {
 			b.queued = true
 		}
@@ -305,11 +395,19 @@ func (b *quotaBucket) measureDemand(now time.Time) {
 	b.measuredAt = now
 }
 
-// target 是预取目标：约 defaultPrefetchWindow 的需求量，不超过共享桶容量的一半。
-// 封顶保证所有实例的预取加起来也给共享桶留有余量，突增的实例总能取到额度。
+// target 是预取目标：约 defaultPrefetchWindow 的需求量，不超过 C / (2 × 存活实例数)。
+// 封顶保证所有实例的预取加起来不超过半个共享桶，另一半总能留给其他实例真正到达的请求。
+// 突发流量在短窗口里会被估成很高的速率，若只按 C/2 封顶，先到的实例会为一次突发囤下半个桶，
+// 同一时刻到达的其他实例的突发就只能被拒。
+//
+// 还没从 Redis 拿到存活实例数时（冷启动）不预取，只领等待中请求的真实需要：
+// 此时不知道有几个实例在同时冷启动，按 1 个实例封顶会让先到的实例囤下半个桶。
 func (b *quotaBucket) target(now time.Time) int64 {
+	if b.peers == 0 {
+		return 0
+	}
 	prefetch := int64(b.demandEstimate(now) * defaultPrefetchWindow.Seconds())
-	return min(prefetch, b.config.leaseCapacity()/2)
+	return min(prefetch, b.config.leaseCapacity()/(2*b.peers))
 }
 
 func saturatingAdd(left, right int64) int64 {
@@ -377,14 +475,55 @@ func (m *quotaManager) Admit(
 	return result, refill
 }
 
-// AddNeed 登记一个等待补货的请求，补货量至少覆盖所有等待者。
-func (m *quotaManager) AddNeed(key serviceKey, config Config, cost int64) {
+// Enqueue 登记一个等待补货的请求，之后的补货量至少覆盖所有未兑现的等待者。
+// 第一遍判断之后、登记之前可能刚有补货写回：余额已经够时当场兑现，第二个返回值为真，调用方不必再等。
+// 状态已被回收或额度已变化时返回 nil，调用方照常等待后由 Settle 按新状态判断。
+func (m *quotaManager) Enqueue(key serviceKey, config Config, cost int64) (*waitTicket, bool) {
 	shard := m.shard(key)
 	shard.mu.Lock()
-	if bucket, ok := shard.buckets[key]; ok && bucket.config == config {
-		bucket.need = saturatingAdd(bucket.need, cost)
+	defer shard.mu.Unlock()
+	bucket, ok := shard.buckets[key]
+	if !ok || bucket.config != config {
+		return nil, false
 	}
-	shard.mu.Unlock()
+	ticket := &waitTicket{cost: cost}
+	bucket.waiters = append(bucket.waiters, ticket)
+	bucket.need = saturatingAdd(bucket.need, cost)
+	bucket.serveWaiters()
+	return ticket, ticket.granted
+}
+
+// Settle 结算一个等待者。已被兑现的直接放行：额度在写回时已经从余额里扣过，不会被别人拿走。
+// 没被兑现的先撤下票据，再按等待之后的规则判断：余额够就扣，否则在透支上限之内放行，再不行就拒绝。
+func (m *quotaManager) Settle(
+	key serviceKey,
+	config Config,
+	ticket *waitTicket,
+	cost int64,
+	now time.Time,
+	mode quotaMode,
+) (admitResult, bool) {
+	shard := m.shard(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	bucket, ok := shard.buckets[key]
+	matched := ok && bucket.config == config
+	if ticket != nil && ticket.granted {
+		refill := false
+		if matched {
+			bucket.lastSeen = now
+			refill = bucket.wantsRefill(now, mode)
+		}
+		return admitAccepted, refill
+	}
+	if !matched {
+		bucket = newQuotaBucket(config, now, mode)
+		shard.buckets[key] = bucket
+	} else if ticket != nil {
+		bucket.dropWaiter(ticket)
+	}
+	bucket.lastSeen = now
+	return bucket.admit(now, cost, mode, true)
 }
 
 // leaseRequest 是一次租约里对单个服务的申请。want 为负表示退还多余的余额。
@@ -392,17 +531,30 @@ type leaseRequest struct {
 	key    serviceKey
 	config Config
 	want   int64
-	// need 是这次申请里属于等待者的部分，结果写回后从 bucket.need 中扣掉。
+	// need 是申请时还没兑现的等待者所需字节之和。写回时由 serveWaiters 逐个兑现，不按这个数整体扣减：
+	// 申请之后才登记的等待者同样可能被这笔授予兑现。
 	need int64
+	// debt 是申请时的透支欠账（余额的相反数）。这些字节已经放行，必须从租约中补回，不是投机性的预取。
+	debt int64
 	// demand 是上报给 Redis 的需求速率（计费字节/秒），用于公平分配。
 	demand int64
 }
 
-// leaseResult 是 Redis 对一个服务的答复。
+// required 是申请量中必须满足的部分：等待中请求的真实需要加上透支欠账，不超过申请量。
+// 桶里有存量时它与理想的全局令牌桶一样先到先得；欠账若被当成预取、只能用上半桶的额度，
+// 就会一直还不上，下一次突发时透支空间已经用尽。
+func (r leaseRequest) required() int64 {
+	return max(min(saturatingAdd(r.need, r.debt), r.want), 0)
+}
+
+// leaseResult 是 Redis 对一个服务的答复。scarce 表示额度真正紧张：上报的总需求超过额度，且桶中可用量不足一半。
 type leaseResult struct {
-	grant int64
-	peers int64
-	share int64
+	grant  int64
+	peers  int64
+	share  int64
+	scarce bool
+	// available 是这次租约之后共享桶中的可用量，Redis 变慢时用来估计还能先欠多少（见 quotaBucket.stallAllowance）。
+	available int64
 }
 
 // prepare 生成一轮租约申请。scheduled 为真时是定时同步：结算全部服务的需求、补齐预取、
@@ -419,12 +571,14 @@ func (m *quotaManager) prepare(
 		if scheduled {
 			bucket.measureDemand(now)
 		}
-		// 每一轮都结算当前登记的等待：余额可能已被其他补货补够（want ≤ 0），等待者也可能已经超时离开，
-		// 不结算的话 need 会一直累积，此后每次都多预取，挤占其他实例的额度。
+		// 余额够付的等待者先兑现：申请量、欠账与是否退还都只按空闲余额和还没兑现的 need 计算。
+		// 超时离开的等待者由 Settle 撤下，need 不会累积。
+		bucket.serveWaiters()
 		request := leaseRequest{
 			key:    key,
 			config: bucket.config,
 			need:   bucket.need,
+			debt:   max(-bucket.balance, 0),
 			demand: int64(bucket.demandEstimate(now)),
 		}
 		if shared && bucket.mode == quotaShared {
@@ -440,7 +594,6 @@ func (m *quotaManager) prepare(
 			}
 		}
 		if request.want == 0 && (!scheduled || request.demand == 0) {
-			bucket.need = 0
 			bucket.queued = false
 			return
 		}
@@ -497,18 +650,29 @@ func (m *quotaManager) apply(now time.Time, requests []leaseRequest, results []l
 		bucket, ok := shard.buckets[request.key]
 		if ok && bucket.config == request.config {
 			result := results[i]
-			bucket.limitedUntil = time.Time{}
 			if request.want > 0 {
 				bucket.balance = saturatingAdd(bucket.balance, result.grant)
 				bucket.leased = bucket.leased || result.grant > 0
-				if shortfall := request.want - result.grant; shortfall > 0 {
-					bucket.limitedUntil = now.Add(limitBackoff(bucket.config, request, result, shortfall))
-				}
 			}
-			bucket.need = max(bucket.need-request.need, 0)
+			switch shortfall := request.want - result.grant; {
+			case request.want <= 0 || shortfall <= 0:
+				bucket.limitedUntil, bucket.prefetchUntil = time.Time{}, time.Time{}
+			case result.scarce:
+				// 额度真正紧张：之后的请求不再等待，避免对 Redis 形成频繁调用，也让分配由公平额度决定。
+				bucket.limitedUntil = now.Add(limitBackoff(bucket.config, request, result, shortfall))
+			case result.grant < request.required():
+				// 连必须满足的部分都没领到：按这部分的缺口退避，之后的请求不再等待。
+				bucket.limitedUntil = now.Add(limitBackoff(bucket.config, request, result, request.required()-result.grant))
+			default:
+				// 真实需要已满足，只是预取没领满：不挡住之后请求的等待。
+				bucket.prefetchUntil = now.Add(limitBackoff(bucket.config, request, result, shortfall))
+			}
+			// 授予直接兑现给等待者，不留在余额里等它们被唤醒：补货泵紧接着开始的下一轮、后到的请求都拿不走。
+			bucket.serveWaiters()
 			bucket.queued = false
 			bucket.share = float64(result.share)
 			bucket.peers = result.peers
+			bucket.observed, bucket.observedAt = result.available, now
 		}
 		shard.mu.Unlock()
 	}
@@ -519,7 +683,7 @@ func (m *quotaManager) apply(now time.Time, requests []leaseRequest, results []l
 // 公平份额低于本实例上报的需求，说明 Redis 看到的总需求超过额度、本实例已用到自己那份：
 // 退避一个需求更新粒度（demandResponseWindow）。不能退避一整个同步周期：需求下降的实例
 // 至多 100ms 后就会上报并退还额度，那时争抢可能已经消失，锁住一个周期会让限额之内的突增被拒。
-// 争抢下的授予按「公平份额 × 距上次租约的时长」封顶，租约更频繁也不会多拿额度。
+// 紧张时的授予受公平额度封顶，租约更频繁也不会多拿额度。
 //
 // 否则只是共享桶暂时被取空（例如其他实例刚预取过），按桶以 bytes_per_second 补回缺口所需的时长退避。
 // 两种情况都不短于异步补货的最小间隔、不长于一个同步周期。
@@ -531,7 +695,8 @@ func limitBackoff(config Config, request leaseRequest, result leaseResult, short
 	return min(max(refill, defaultAsyncRefillSpacing), defaultSyncInterval)
 }
 
-// abort 撤销一轮失败的申请：退还的余额原样加回，等待登记清掉。
+// abort 撤销一轮失败的申请：退还的余额原样加回（够付的等待者随即兑现）。
+// 没被兑现的等待者会因这一轮失败按本地降级判断，由 Settle 撤下票据。
 func (m *quotaManager) abort(requests []leaseRequest) {
 	for _, request := range requests {
 		shard := m.shard(request.key)
@@ -540,11 +705,29 @@ func (m *quotaManager) abort(requests []leaseRequest) {
 			if request.want < 0 {
 				bucket.balance = saturatingAdd(bucket.balance, -request.want)
 			}
-			bucket.need = max(bucket.need-request.need, 0)
+			bucket.serveWaiters()
 			bucket.queued = false
 		}
 		shard.mu.Unlock()
 	}
+}
+
+// release 生成退出时的归还申请：共享模式下的每个服务退还全部正余额，并上报需求为 0（删除需求记录）。
+func (m *quotaManager) release() []leaseRequest {
+	var requests []leaseRequest
+	for i := range m.shards {
+		shard := &m.shards[i]
+		shard.mu.Lock()
+		for key, bucket := range shard.buckets {
+			if bucket.mode != quotaShared {
+				continue
+			}
+			requests = append(requests, leaseRequest{key: key, config: bucket.config, want: -max(bucket.balance, 0)})
+			bucket.balance = min(bucket.balance, 0)
+		}
+		shard.mu.Unlock()
+	}
+	return requests
 }
 
 func (m *quotaManager) Delete(key serviceKey) {

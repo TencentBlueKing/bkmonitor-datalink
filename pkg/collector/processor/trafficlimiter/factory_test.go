@@ -430,7 +430,7 @@ func TestRequestsAndReloadNotBlockedByRedis(t *testing.T) {
 	}()
 	select {
 	case decision := <-done:
-		assert.True(t, decision.accepted, "等待超时后按本地降级放行")
+		assert.True(t, decision.accepted, "等待超时后按欠账放行")
 	case <-time.After(10 * time.Second):
 		t.Error("请求被卡住的 Redis 阻塞")
 	}
@@ -505,17 +505,21 @@ func TestQuotaBucketSharedOverdraft(t *testing.T) {
 		result, _ := manager.Admit(key, cost, config, clock.Now(), quotaShared, retry)
 		return result
 	}
+	lease := func(request leaseRequest, result leaseResult) {
+		request.key, request.config = key, config
+		result.peers = 1
+		manager.apply(clock.Now(), []leaseRequest{request}, []leaseResult{result})
+	}
 
 	assert.Equal(t, admitInsufficient, admit(10, false), "共享模式从 0 开始，先等一次租约")
-	manager.apply(clock.Now(), []leaseRequest{{key: key, config: config, want: 30}}, []leaseResult{{grant: 30}})
+	lease(leaseRequest{want: 30, need: 10}, leaseResult{grant: 30})
 	assert.Equal(t, admitAccepted, admit(25, false))
 	assert.Equal(t, admitInsufficient, admit(10, false), "没被限流时先等补货，不急于透支")
 	assert.Equal(t, admitAccepted, admit(25, true), "补货后仍不足，在透支上限之内放行：余额 5 → -20")
 	assert.Equal(t, admitRejected, admit(1, true), "透支已到上限")
 
-	// 公平份额低于需求：额度确实紧张，退避一个需求更新粒度，期间不足的请求只能用透支空间。
-	manager.apply(clock.Now(), []leaseRequest{{key: key, config: config, want: 50, demand: 100}},
-		[]leaseResult{{grant: 30, share: 50}})
+	// 额度真正紧张：退避一个需求更新粒度，期间不足的请求只能用透支空间。
+	lease(leaseRequest{want: 50, demand: 100}, leaseResult{grant: 30, share: 50, scarce: true})
 	assert.Equal(t, admitAccepted, admit(5, false), "欠账从授予中扣回：-20 + 30 = 10 → 5")
 	assert.Equal(t, admitRejected, admit(26, false), "被限流时只能用透支空间，超出上限的请求被拒")
 	assert.Equal(t, admitAccepted, admit(25, false), "被拒的请求不扣余额，5 → -20")
@@ -524,16 +528,19 @@ func TestQuotaBucketSharedOverdraft(t *testing.T) {
 	clock.Advance(time.Millisecond)
 	assert.Equal(t, admitInsufficient, admit(1, false), "退避结束后可以再等一次补货")
 
-	// 不紧张、只是共享桶暂时被取空：只退避到桶补回缺口所需的时长（20 字节 / 100 B/s = 200ms）。
-	manager.apply(clock.Now(), []leaseRequest{{key: key, config: config, want: 40, demand: 10}},
-		[]leaseResult{{grant: 20, share: 50}})
-	clock.Advance(200*time.Millisecond - time.Millisecond)
-	assert.Equal(t, admitRejected, admit(21, false), "余额 0，超出透支空间")
-	clock.Advance(time.Millisecond)
+	// 只是投机性的预取没领满：真实需要不受影响，仍可以等待补货，只暂停异步预取。
+	lease(leaseRequest{want: 60, debt: 20}, leaseResult{grant: 40, share: 50})
+	assert.Equal(t, admitInsufficient, admit(21, false), "预取没领满不挡住真实请求的等待")
+
+	// 连真实需要都没满足：之后的请求不再等待（缺口 30 字节 / 100 B/s = 300ms）。
+	lease(leaseRequest{want: 60, need: 40}, leaseResult{grant: 10, share: 50})
+	assert.Equal(t, admitAccepted, admit(30, false), "余额 20 + 10 = 30")
+	assert.Equal(t, admitRejected, admit(21, false), "被限流，超出透支空间")
+	clock.Advance(300 * time.Millisecond)
 	assert.Equal(t, admitInsufficient, admit(21, false))
 
-	manager.apply(clock.Now(), []leaseRequest{{key: key, config: config, want: 30}}, []leaseResult{{grant: 30}})
-	assert.Equal(t, admitAccepted, admit(30, false), "足额授予后解除限流，欠账已从授予中扣回")
+	lease(leaseRequest{want: 30}, leaseResult{grant: 30})
+	assert.Equal(t, admitAccepted, admit(30, false), "足额授予后解除限流")
 }
 
 func TestQuotaBucketAsyncRefillWatermark(t *testing.T) {
@@ -543,7 +550,7 @@ func TestQuotaBucketAsyncRefillWatermark(t *testing.T) {
 	key := testKey("checkout")
 
 	manager.Admit(key, 100, config, clock.Now(), quotaShared, false)
-	manager.apply(clock.Now(), []leaseRequest{{key: key, config: config, want: 300}}, []leaseResult{{grant: 300}})
+	manager.apply(clock.Now(), []leaseRequest{{key: key, config: config, want: 300}}, []leaseResult{{grant: 300, peers: 1}})
 	// 本周期已到达 200 字节，需求估计 400 B/s，预取目标 300，水位 75。
 	_, refill := manager.Admit(key, 100, config, clock.Now(), quotaShared, false)
 	assert.False(t, refill, "余额 200 仍高于水位")
@@ -565,14 +572,25 @@ func TestQuotaManagerPrepare(t *testing.T) {
 	}
 
 	admit(200)
-	manager.AddNeed(key, config, 200)
+	ticket, granted := manager.Enqueue(key, config, 200)
+	require.False(t, granted)
 	clock.Advance(200 * time.Millisecond)
 	requests := manager.prepare(clock.Now(), false, keys, true)
 	require.Len(t, requests, 1)
 	assert.Equal(t, int64(1000), requests[0].demand, "本周期 200ms 到达 200 字节")
-	assert.Equal(t, int64(750), requests[0].want, "预取 1000 B/s × 0.75s，至少覆盖等待者")
+	assert.Equal(t, int64(200), requests[0].want, "还不知道实例数，只领真实需要，不预取")
 	assert.Equal(t, int64(200), requests[0].need)
-	manager.apply(clock.Now(), requests, []leaseResult{{grant: 750}})
+	manager.apply(clock.Now(), requests, []leaseResult{{grant: 200, peers: 1}})
+
+	requests = manager.prepare(clock.Now(), false, keys, true)
+	require.Len(t, requests, 1)
+	assert.Equal(t, int64(750), requests[0].want,
+		"知道实例数后按 1000 B/s × 0.75s 预取；授予已经兑现给等待者，不算在余额里")
+	assert.Zero(t, requests[0].need)
+	manager.apply(clock.Now(), requests, []leaseResult{{grant: 750, peers: 1}})
+	result, _ := manager.Settle(key, config, ticket, 200, clock.Now(), quotaShared)
+	assert.Equal(t, admitAccepted, result, "等待者醒来时额度已经兑现")
+	assert.Equal(t, int64(750), quotaBucketBalance(manager, key), "兑现过的等待者不再扣第二次")
 
 	clock.Advance(300 * time.Millisecond)
 	requests = manager.prepare(clock.Now(), true, nil, true)
@@ -594,30 +612,216 @@ func TestQuotaManagerPrepare(t *testing.T) {
 	assert.Equal(t, int64(-650), requests[0].want, "需求消失后退还全部余额")
 }
 
-// TestQuotaManagerNeedSettled 覆盖等待登记的结算：余额已经被另一轮补货补够时，
-// 这一轮不需要申请，但登记的 need 也必须清掉，否则之后每次都会多预取。
-func TestQuotaManagerNeedSettled(t *testing.T) {
+func TestLeaseRequestRequired(t *testing.T) {
+	assert.Equal(t, int64(30), leaseRequest{want: 100, need: 10, debt: 20}.required(), "等待中的请求加透支欠账")
+	assert.Equal(t, int64(50), leaseRequest{want: 50, need: 40, debt: 20}.required(), "不超过申请量")
+	assert.Zero(t, leaseRequest{want: -10, need: 5}.required(), "退还时没有必须满足的部分")
+}
+
+// TestQuotaManagerWaitersSettled 覆盖等待者的兑现与撤销：任何一轮写回都按到达顺序兑现等待者，
+// 余额已够时登记即兑现；没被兑现的等待者离开时撤下票据，need 不会累积，之后也不会因此多预取。
+func TestQuotaManagerWaitersSettled(t *testing.T) {
 	clock := newFakeClock()
 	manager := newQuotaManager(clock.Now)
-	config := limiterConfig(10000, 100000)
+	config := limiterConfig(10000, 100000) // 透支上限 min(10000 × 0.2s, 100000) = 2000
 	key := testKey("checkout")
 	keys := map[serviceKey]struct{}{key: {}}
 
 	manager.Admit(key, 100, config, clock.Now(), quotaShared, false)
-	manager.AddNeed(key, config, 100)
-	// 登记等待之前生成的另一轮把余额补到了预取目标 750（需求估计 1000 B/s × 0.75s）。
-	manager.apply(clock.Now(), []leaseRequest{{key: key, config: config, want: 750}}, []leaseResult{{grant: 750}})
+	ticket, granted := manager.Enqueue(key, config, 100)
+	require.False(t, granted)
 	assert.Equal(t, int64(100), quotaBucketNeed(manager, key))
-
-	assert.Empty(t, manager.prepare(clock.Now(), false, keys, true), "余额已够，不再申请")
-	assert.Zero(t, quotaBucketNeed(manager, key), "跳过申请时也要结算等待登记")
-
-	manager.AddNeed(key, config, 100)
-	requests := manager.prepare(clock.Now(), true, nil, true)
-	require.Len(t, requests, 1)
-	assert.Equal(t, int64(100), requests[0].need, "退还多余余额的一轮同样带上等待登记")
-	manager.apply(clock.Now(), requests, []leaseResult{{grant: requests[0].want}})
+	// 登记等待之前生成的另一轮写回了 750：直接兑现给等待者。
+	manager.apply(clock.Now(), []leaseRequest{{key: key, config: config, want: 750}}, []leaseResult{{grant: 750, peers: 1}})
 	assert.Zero(t, quotaBucketNeed(manager, key))
+	assert.Equal(t, int64(650), quotaBucketBalance(manager, key))
+	result, _ := manager.Settle(key, config, ticket, 100, clock.Now(), quotaShared)
+	assert.Equal(t, admitAccepted, result)
+	assert.Equal(t, int64(650), quotaBucketBalance(manager, key), "兑现过的等待者不再扣第二次")
+
+	_, granted = manager.Enqueue(key, config, 100)
+	assert.True(t, granted, "余额已够时登记即兑现，不必再等")
+	assert.Equal(t, int64(550), quotaBucketBalance(manager, key))
+
+	// 付不起的等待者：这一轮的申请必须覆盖它，它离开时撤下票据。
+	big, granted := manager.Enqueue(key, config, 1000)
+	require.False(t, granted)
+	requests := manager.prepare(clock.Now(), false, keys, true)
+	require.Len(t, requests, 1)
+	assert.Equal(t, int64(1000), requests[0].need)
+	manager.abort(requests)
+	result, _ = manager.Settle(key, config, big, 1000, clock.Now(), quotaShared)
+	assert.Equal(t, admitAccepted, result, "没被兑现时在透支上限之内放行：550 → -450")
+	assert.Zero(t, quotaBucketNeed(manager, key), "离开的等待者撤下票据，need 不累积")
+	assert.Equal(t, int64(-450), quotaBucketBalance(manager, key))
+}
+
+// TestQuotaManagerGrantedWaitersAreReserved 覆盖并发压测里限额之内 429 的根因：授予写回之后、
+// 等待者被唤醒扣款之前，这笔额度不能被下一轮当成空闲余额、不能被当成富余退回、也不能被后到的请求拿走。
+func TestQuotaManagerGrantedWaitersAreReserved(t *testing.T) {
+	config := limiterConfig(1000, 10000)
+	key := testKey("checkout")
+	keys := map[serviceKey]struct{}{key: {}}
+	enqueue := func(t *testing.T, manager *quotaManager, now time.Time, cost int64) *waitTicket {
+		t.Helper()
+		result, _ := manager.Admit(key, cost, config, now, quotaShared, false)
+		require.Equal(t, admitInsufficient, result)
+		ticket, granted := manager.Enqueue(key, config, cost)
+		require.False(t, granted)
+		return ticket
+	}
+	settle := func(t *testing.T, manager *quotaManager, now time.Time, tickets ...*waitTicket) {
+		t.Helper()
+		for _, ticket := range tickets {
+			result, _ := manager.Settle(key, config, ticket, ticket.cost, now, quotaShared)
+			assert.Equal(t, admitAccepted, result)
+		}
+		assert.GreaterOrEqual(t, quotaBucketBalance(manager, key), int64(0), "限额之内不应动用透支")
+	}
+
+	t.Run("下一轮按还没兑现的等待者申请", func(t *testing.T) {
+		clock := newFakeClock()
+		manager := newQuotaManager(clock.Now)
+		first := enqueue(t, manager, clock.Now(), 100)
+		round1 := manager.prepare(clock.Now(), false, keys, true)
+		require.Len(t, round1, 1)
+		second := enqueue(t, manager, clock.Now(), 100) // 第一轮在途时到达
+		// peers 很大让预取目标（C / 2n = 50）小于一个请求，申请量只由等待者决定。
+		manager.apply(clock.Now(), round1, []leaseResult{{grant: round1[0].want, peers: 100}})
+
+		// 补货泵紧接着开始第二轮，first 还没被唤醒扣款。
+		round2 := manager.prepare(clock.Now(), false, keys, true)
+		require.Len(t, round2, 1, "已许给 first 的额度不能抵掉 second 的需要")
+		assert.Equal(t, int64(100), round2[0].want)
+		manager.apply(clock.Now(), round2, []leaseResult{{grant: round2[0].want, peers: 100}})
+		settle(t, manager, clock.Now(), first, second)
+	})
+
+	t.Run("需求下降的退还不拿走等待者的额度", func(t *testing.T) {
+		clock := newFakeClock()
+		manager := newQuotaManager(clock.Now)
+		var tickets []*waitTicket
+		for i := 0; i < 10; i++ {
+			tickets = append(tickets, enqueue(t, manager, clock.Now(), 100))
+		}
+		round1 := manager.prepare(clock.Now(), false, keys, true)
+		require.Len(t, round1, 1)
+		// 20 个存活实例：预取目标 C / 2n = 250，旧实现会把还没扣走的 1000 当成超过两倍目标的富余退掉 750。
+		manager.apply(clock.Now(), round1, []leaseResult{{grant: 1000, peers: 20}})
+
+		assert.Empty(t, manager.surplus(clock.Now()), "余额里没有富余")
+		for _, request := range manager.prepare(clock.Now(), false, keys, true) {
+			assert.Positive(t, request.want, "只补预取，不退还")
+		}
+		settle(t, manager, clock.Now(), tickets...)
+	})
+
+	t.Run("后到的请求不插到等待者前面", func(t *testing.T) {
+		clock := newFakeClock()
+		manager := newQuotaManager(clock.Now)
+		waiter := enqueue(t, manager, clock.Now(), 100)
+		round := manager.prepare(clock.Now(), false, keys, true)
+		manager.apply(clock.Now(), round, []leaseResult{{grant: 100, peers: 100}})
+
+		result, _ := manager.Admit(key, 100, config, clock.Now(), quotaShared, false)
+		assert.Equal(t, admitInsufficient, result, "这笔额度已经属于等待者，后到的请求要自己等补货")
+		settle(t, manager, clock.Now(), waiter)
+	})
+}
+
+// TestQuotaBucketStalledAdmitsOnDebt 覆盖 Redis 变慢时的判断：不再等待，余额不够时按共享桶最近一次的可用量
+// 加上之后补回的量先欠着放行；额度真正紧张（被限流）时仍只有透支空间；从没拿到过可用量时按满桶计。
+func TestQuotaBucketStalledAdmitsOnDebt(t *testing.T) {
+	clock := newFakeClock()
+	manager := newQuotaManager(clock.Now)
+	config := limiterConfig(1000, 1000) // 透支上限 min(1000 × 0.2s, 1000 / 1) = 200
+	key := testKey("checkout")
+	admit := func(cost int64, mode quotaMode) admitResult {
+		result, _ := manager.Admit(key, cost, config, clock.Now(), mode, false)
+		return result
+	}
+
+	assert.Equal(t, admitAccepted, admit(900, quotaStalled), "还没拿到过可用量，按满桶计：余额 0 → -900")
+	assert.Equal(t, admitRejected, admit(200, quotaStalled), "欠账不超过桶容量")
+
+	// 一轮租约还清欠账并告诉本实例：共享桶此后还剩 300。
+	manager.apply(clock.Now(), []leaseRequest{{key: key, config: config, want: 900}},
+		[]leaseResult{{grant: 900, peers: 1, available: 300}})
+	assert.Equal(t, int64(0), quotaBucketBalance(manager, key))
+	assert.Equal(t, admitInsufficient, admit(100, quotaShared), "健康时照常等一次补货")
+	assert.Equal(t, admitAccepted, admit(300, quotaStalled), "变慢时不等待，按可用量 300 先欠着")
+	assert.Equal(t, admitRejected, admit(100, quotaStalled), "超出可用量与透支上限")
+	clock.Advance(200 * time.Millisecond)
+	assert.Equal(t, admitAccepted, admit(200, quotaStalled), "共享桶按速率补回：300 + 1000 × 0.2s = 500")
+
+	// 额度真正紧张：只剩透支空间，不按可用量放大。
+	manager.apply(clock.Now(), []leaseRequest{{key: key, config: config, want: 600, demand: 1000}},
+		[]leaseResult{{grant: 500, peers: 1, share: 500, scarce: true, available: 1000}})
+	assert.Equal(t, int64(0), quotaBucketBalance(manager, key), "-500 + 500")
+	assert.Equal(t, admitAccepted, admit(200, quotaStalled), "透支到上限 200")
+	assert.Equal(t, admitRejected, admit(1, quotaStalled), "被限流时不按可用量欠账")
+}
+
+// TestSyncerStates 覆盖补货泵对 Redis 的三档判断：等待超时记为变慢（请求按欠账放行），一轮快的租约恢复；
+// 租约出错记为故障（本地降级）；故障之后成功但不够快的一轮记为变慢，而不是一直停在本地降级。
+func TestSyncerStates(t *testing.T) {
+	clock := newFakeClock()
+	leaser := &fakeLeaser{}
+	slow := &delayLeaser{quotaLeaser: leaser}
+	quota := newQuotaManager(clock.Now)
+	syncer := newQuotaSyncer(slow, quota, clock.Now, 0)
+	defer syncer.Close()
+	config := limiterConfig(1<<20, 1<<20)
+	key := testKey("checkout")
+
+	result, _ := quota.Admit(key, 100, config, clock.Now(), quotaShared, false)
+	require.Equal(t, admitInsufficient, result)
+	ticket, _ := quota.Enqueue(key, config, 100)
+	slow.set(2 * syncer.waitBudget)
+	assert.Equal(t, quotaStalled, syncer.await([]serviceKey{key}), "等不到补货：按欠账放行")
+	assert.Equal(t, redisSlow, syncer.state(clock.Now()))
+	result, _ = quota.Settle(key, config, ticket, 100, clock.Now(), quotaStalled)
+	assert.Equal(t, admitAccepted, result)
+
+	slow.set(0)
+	time.Sleep(3 * syncer.waitBudget) // 等那一轮慢租约写回
+	syncer.syncNow()
+	assert.Equal(t, redisHealthy, syncer.state(clock.Now()), "一轮快的租约之后恢复等待")
+	assert.GreaterOrEqual(t, quotaBucketBalance(quota, key), int64(0), "慢租约回来后欠账已经还上")
+
+	leaser.setErr(context.DeadlineExceeded)
+	syncer.syncNow()
+	assert.Equal(t, redisFailed, syncer.state(clock.Now()), "租约出错：本地降级")
+
+	leaser.setErr(nil)
+	slow.set(syncer.healthyLatency + 10*time.Millisecond)
+	syncer.syncNow()
+	assert.Equal(t, redisSlow, syncer.state(clock.Now()), "Redis 恢复应答但不够快：按共享额度记账，不再停在本地降级")
+
+	slow.set(0)
+	clock.Advance(defaultSyncStaleAfter + time.Millisecond)
+	assert.Equal(t, redisFailed, syncer.state(clock.Now()), "长时间没有同步成功按故障处理")
+}
+
+// delayLeaser 给每次租约加一段可调的时延。
+type delayLeaser struct {
+	quotaLeaser
+	mu    sync.Mutex
+	delay time.Duration
+}
+
+func (l *delayLeaser) set(delay time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.delay = delay
+}
+
+func (l *delayLeaser) Lease(ctx context.Context, requests []leaseRequest) ([]leaseResult, error) {
+	l.mu.Lock()
+	delay := l.delay
+	l.mu.Unlock()
+	time.Sleep(delay)
+	return l.quotaLeaser.Lease(ctx, requests)
 }
 
 func TestQuotaBucketFallback(t *testing.T) {
@@ -818,7 +1022,11 @@ func (l *fakeLeaser) lastRequests() []leaseRequest {
 
 func (l *fakeLeaser) Lease(_ context.Context, requests []leaseRequest) ([]leaseResult, error) {
 	if l.entered != nil {
-		l.entered <- struct{}{}
+		// 只需要第一次进入的信号；之后的调用（补货、退出时的归还）不能卡在信号上。
+		select {
+		case l.entered <- struct{}{}:
+		default:
+		}
 		<-l.release
 	}
 	l.mu.Lock()
@@ -885,6 +1093,13 @@ func quotaBucketNeed(manager *quotaManager, key serviceKey) int64 {
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 	return shard.buckets[key].need
+}
+
+func quotaBucketBalance(manager *quotaManager, key serviceKey) int64 {
+	shard := manager.shard(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	return shard.buckets[key].balance
 }
 
 func quotaBucketExists(manager *quotaManager, key serviceKey) bool {

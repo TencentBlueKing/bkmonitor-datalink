@@ -214,6 +214,25 @@ func (p CommonProcessor) SubConfigs() []SubConfigProcessor {
 
 func (p CommonProcessor) Clean() {}
 
+// Stopper 是可选接口：Collector 正常退出时调用，让持有外部共享状态的处理器主动归还，
+// 例如限流器把预取的 Redis 额度还给共享桶。不实现它的处理器退出行为不变。
+type Stopper interface {
+	Stop()
+}
+
+// Stop 对实现了 Stopper 的处理器实例调用 Stop。
+func Stop(inst Instance) {
+	if i, ok := inst.(instance); ok {
+		if stopper, ok := i.Processor.(Stopper); ok {
+			stopper.Stop()
+		}
+		return
+	}
+	if stopper, ok := inst.(Stopper); ok {
+		stopper.Stop()
+	}
+}
+
 var nonSchedRecords = define.NewRecordQueue(define.PushModeGuarantee)
 
 func PublishNonSchedRecords(r *define.Record) {

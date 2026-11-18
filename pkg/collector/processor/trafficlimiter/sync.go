@@ -35,16 +35,19 @@ const (
 	// 单次 EVAL 携带的服务数上限，服务很多时分批提交，避免一次脚本执行太久占住 Redis。
 	defaultLeaseBatchSize = 256
 
+	// 关闭客户端前归还额度的上限，避免 Redis 不可用时拖慢退出。
+	defaultReleaseTimeout = 200 * time.Millisecond
+
 	// 两次异步补货之间的最小间隔。等待中的请求触发的补货不受它约束。
 	defaultAsyncRefillSpacing = 20 * time.Millisecond
 
 	// 扫描需求下降的间隔，见 quotaManager.surplus。
 	defaultSurplusCheckInterval = demandResponseWindow
 
-	// 请求为一次补货最多等这么久，超时按 Redis 变慢处理：关闭等待、本次请求按本地降级判断。
+	// 请求为一次补货最多等这么久，超时按 Redis 变慢处理：之后的请求不再等待，额度不够时先欠着放行（见 redisSlow）。
 	defaultLeaseWaitBudget = 50 * time.Millisecond
 
-	// 关闭等待后，一轮成功的租约耗时不超过它才重新开启，与 defaultLeaseWaitBudget 之间留出迟滞，避免来回切换。
+	// 变慢之后，一轮成功的租约耗时不超过它才重新允许等待，与 defaultLeaseWaitBudget 之间留出迟滞，避免来回切换。
 	defaultHealthyLatency = 25 * time.Millisecond
 
 	// Redis 需求表中某个实例超过这么久没有上报，就视为已经离开，它的份额让给其他实例。
@@ -76,11 +79,30 @@ func newLeaseRound() *leaseRound {
 // 它有三个来源：定时同步、余额低于水位时的异步补货、等待中的请求触发的紧急补货。
 // 全部由同一个 goroutine 串行执行，同一时刻至多一个 Redis 调用在途；调用进行中到达的申请自动并入下一轮。
 // 因此对 Redis 的调用次数以 1/RTT 为上限，与请求量和服务数无关。
+// syncState 是补货泵对 Redis 的判断，决定请求怎么用额度。
+type syncState int32
+
+const (
+	// redisHealthy：余额不够时可以等一次补货（至多 waitBudget）。
+	redisHealthy syncState = iota
+	// redisSlow：Redis 能用但变慢，一次等待超过了上限或一轮租约太慢。请求不再等待，仍按共享额度记账，
+	// 余额不够时在 quotaBucket.stallAllowance 之内先欠着放行；补货照常进行，欠账从租约中扣回。
+	// Redis 抖动几十毫秒时，限额之内的突增与切流不因此被拒，也不退回按实例平摊的本地降级。
+	redisSlow
+	// redisFailed：租约出错，或距最近一次同步成功已超过 defaultSyncStaleAfter。请求按本地降级判断。
+	redisFailed
+)
+
 type quotaSyncer struct {
 	leaser   quotaLeaser
 	quota    *quotaManager
 	now      func() time.Time
 	interval time.Duration
+
+	// waitBudget、healthyLatency 默认为 defaultLeaseWaitBudget、defaultHealthyLatency。
+	// 它们按真实时间计量；仿真测试用假时钟推进，把它们放大，结果才不受机器快慢（例如 -race）影响。
+	waitBudget     time.Duration
+	healthyLatency time.Duration
 
 	mu        sync.Mutex
 	scheduled bool
@@ -92,11 +114,13 @@ type quotaSyncer struct {
 
 	kick      chan struct{}
 	done      chan struct{}
+	stopped   chan struct{}
 	closeOnce sync.Once
 	closeErr  error
 
-	// healthy 为假时请求不再等待、也不再异步补货，额度改由本地降级承担；定时同步继续作为探测。
-	healthy atomic.Bool
+	// status 是最近一次判断出的 syncState；距最近一次同步成功太久时由 state 按故障处理。
+	// 故障时请求按本地降级判断、补货只上报需求，定时同步继续作为探测。
+	status atomic.Int32
 	// lastSynced 是最近一次同步成功的时间（UnixNano，按 now 计）。
 	// 同步卡在一次慢调用里时它会变旧，请求路径据此在 defaultSyncStaleAfter 后自行切到本地降级。
 	lastSynced atomic.Int64
@@ -119,20 +143,33 @@ func newQuotaSyncer(
 		quota:    quota,
 		now:      now,
 		interval: interval,
-		pending:  make(map[serviceKey]struct{}),
-		next:     newLeaseRound(),
-		kick:     make(chan struct{}, 1),
-		done:     make(chan struct{}),
+
+		waitBudget:     defaultLeaseWaitBudget,
+		healthyLatency: defaultHealthyLatency,
+
+		pending: make(map[serviceKey]struct{}),
+		next:    newLeaseRound(),
+		kick:    make(chan struct{}, 1),
+		done:    make(chan struct{}),
+		stopped: make(chan struct{}),
 	}
-	s.healthy.Store(true)
+	s.status.Store(int32(redisHealthy))
 	s.lastSynced.Store(now().UnixNano())
 	go s.run()
 	return s
 }
 
-// shared 判断当前是否可以使用共享额度。
+// state 返回当前对 Redis 的判断。同步卡在一次慢调用里、超过 defaultSyncStaleAfter 没有成功时按故障处理。
+func (s *quotaSyncer) state(now time.Time) syncState {
+	if now.UnixNano()-s.lastSynced.Load() > defaultSyncStaleAfter.Nanoseconds() {
+		return redisFailed
+	}
+	return syncState(s.status.Load())
+}
+
+// shared 判断当前是否健康：可以使用共享额度，余额不够时也可以等一次补货。
 func (s *quotaSyncer) shared(now time.Time) bool {
-	return s.healthy.Load() && now.UnixNano()-s.lastSynced.Load() <= defaultSyncStaleAfter.Nanoseconds()
+	return s.state(now) == redisHealthy
 }
 
 // failureDecision 返回本地降级下应记的 decisions 计数。还没有失败记录却已经超时未同步，
@@ -144,9 +181,15 @@ func (s *quotaSyncer) failureDecision() prometheus.Counter {
 	return decisionLocalTimeout
 }
 
+// degrade 记为故障：之后的请求按本地降级判断，直到一轮租约成功。
 func (s *quotaSyncer) degrade(decision prometheus.Counter) {
 	s.lastFailure.Store(&decision)
-	s.healthy.Store(false)
+	s.status.Store(int32(redisFailed))
+}
+
+// slowDown 记为变慢。已经是故障时保持故障：变慢只由成功但慢的租约或等待超时触发。
+func (s *quotaSyncer) slowDown() {
+	s.status.CompareAndSwap(int32(redisHealthy), int32(redisSlow))
 }
 
 // request 登记一批需要补货的服务并唤醒补货泵，返回会处理它们的那一轮。
@@ -162,22 +205,27 @@ func (s *quotaSyncer) request(keys []serviceKey, urgent bool) *leaseRound {
 	return round
 }
 
-// await 为等待中的请求发起一次紧急补货，最多等 defaultLeaseWaitBudget。
-// 返回 true 表示补货已经完成、可以按共享额度重新判断；false 表示应按本地降级判断。
-func (s *quotaSyncer) await(keys []serviceKey) bool {
+// await 为等待中的请求发起一次紧急补货，最多等 waitBudget，返回结算等待者时使用的额度来源：
+// 补货完成为 quotaShared；补货失败或补货泵已关闭为 quotaFallback；等待超时为 quotaStalled。
+//
+// 超时说明 Redis 变慢，但这一轮补货多半还在路上、等待者的需要已经包含在申请里：等待者按欠账放行，
+// 补货回来就把欠账还上，不因为 Redis 晚回来几十毫秒而被拒。之后的请求不再等待，直到一轮足够快的租约成功。
+func (s *quotaSyncer) await(keys []serviceKey) quotaMode {
 	round := s.request(keys, true)
-	timer := time.NewTimer(defaultLeaseWaitBudget)
+	timer := time.NewTimer(s.waitBudget)
 	defer timer.Stop()
 	select {
 	case <-round.done:
-		return round.ok
+		if round.ok {
+			return quotaShared
+		}
+		return quotaFallback
 	case <-timer.C:
-		// 不等这一轮返回：后续请求立即改走本地降级，直到一轮足够快的租约成功。
-		s.degrade(decisionLocalTimeout)
+		s.slowDown()
 		leaseWaitTimeout.Inc()
-		return false
+		return quotaStalled
 	case <-s.done:
-		return false
+		return quotaFallback
 	}
 }
 
@@ -202,6 +250,7 @@ func (s *quotaSyncer) wake() {
 }
 
 func (s *quotaSyncer) run() {
+	defer close(s.stopped)
 	var schedule, surplus <-chan time.Time
 	var timer *time.Timer
 	if s.interval > 0 {
@@ -230,10 +279,10 @@ func (s *quotaSyncer) run() {
 }
 
 // checkSurplus 把需求已经下降的服务登记为异步补货，由 prepare 生成退还申请。
-// 只在共享模式下进行：本地降级时余额不来自 Redis，没有可退还的额度。
+// Redis 故障时不进行：本地降级时余额不来自 Redis，没有可退还的额度。
 func (s *quotaSyncer) checkSurplus() {
 	now := s.now()
-	if !s.shared(now) {
+	if s.state(now) == redisFailed {
 		return
 	}
 	if keys := s.quota.surplus(now); len(keys) > 0 {
@@ -289,12 +338,13 @@ func (s *quotaSyncer) drain() {
 // runRound 执行一轮租约：生成申请、分批提交、写回结果，并按结果与耗时更新健康状态。
 func (s *quotaSyncer) runRound(scheduled bool, keys map[serviceKey]struct{}) bool {
 	now := s.now()
-	healthy := s.healthy.Load()
-	requests := s.quota.prepare(now, scheduled, keys, healthy)
-	if len(requests) == 0 && healthy {
+	state := syncState(s.status.Load())
+	// 变慢时照常领取额度：Redis 能用，欠账要从租约中扣回。只有故障时只上报需求。
+	requests := s.quota.prepare(now, scheduled, keys, state != redisFailed)
+	if len(requests) == 0 && state == redisHealthy {
 		// 没有需要申请的服务时不访问 Redis：平台可能给所有 Collector 下发 Redis 而额度为 0，
 		// 空闲实例每个周期一次空调用，乘上实例数就是对 Redis 的无谓压力。
-		// 不健康时仍要访问一次，作为恢复的探测。
+		// 变慢或故障时仍要访问一次，作为恢复的探测。
 		if scheduled {
 			s.lastSynced.Store(now.UnixNano())
 		}
@@ -325,21 +375,49 @@ func (s *quotaSyncer) runRound(scheduled bool, keys map[serviceKey]struct{}) boo
 	s.lastSynced.Store(now.UnixNano())
 	syncSucceeded.Inc()
 	switch {
-	case latency > defaultLeaseWaitBudget:
-		// Redis 能用但太慢：请求等不起，改由本地降级承担，定时同步继续上报需求并探测。
-		s.degrade(decisionLocalTimeout)
-	case latency <= defaultHealthyLatency:
-		s.healthy.Store(true)
+	case latency <= s.healthyLatency:
+		s.status.Store(int32(redisHealthy))
+	case latency > s.waitBudget || state == redisFailed:
+		// Redis 能用但太慢，或刚从故障中恢复但还不够快：请求等不起，按共享额度记账、先欠着放行。
+		s.status.Store(int32(redisSlow))
 	}
 	return true
 }
 
 // Close 可能被重复调用（Reload 关闭旧客户端后 Clean 仍持有同一快照），只执行一次。
-// 不等待在途的租约返回：关闭客户端会让它尽快失败，迟到写回的授予本身也是合法额度。
+//
+// 先停止补货泵并等在途的租约结束（至多 defaultSyncTimeout），再归还额度、关闭客户端：
+// 在途的租约若在归还之后才写回，领到的额度就会被带走。
 func (s *quotaSyncer) Close() error {
 	s.closeOnce.Do(func() {
 		close(s.done)
+		timer := time.NewTimer(defaultSyncTimeout)
+		select {
+		case <-s.stopped:
+		case <-timer.C:
+		}
+		timer.Stop()
+		s.release()
 		s.closeErr = s.leaser.Close()
 	})
 	return s.closeErr
+}
+
+// release 把本实例在共享模式下预取的正余额还给共享桶，并删除本实例的需求记录。
+// 正常退出时调用：否则这些额度要在 Redis 中按速率慢慢恢复，需求记录要 2s 才过期，
+// 这段时间里接手流量的实例会领不到额度。透支欠账无法归还，退出即作废，至多一个透支上限。
+func (s *quotaSyncer) release() {
+	requests := s.quota.release()
+	if len(requests) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), defaultReleaseTimeout)
+	defer cancel()
+	for offset := 0; offset < len(requests); offset += defaultLeaseBatchSize {
+		batch := requests[offset:min(offset+defaultLeaseBatchSize, len(requests))]
+		if _, err := s.leaser.Lease(ctx, batch); err != nil {
+			warnRedisFailure(err)
+			return
+		}
+	}
 }

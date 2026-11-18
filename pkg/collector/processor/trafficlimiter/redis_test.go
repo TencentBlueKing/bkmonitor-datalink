@@ -16,6 +16,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -116,37 +117,87 @@ func TestRedisLeaseReturn(t *testing.T) {
 	assert.Equal(t, int64(50), leaseOne(t, leaser, config, 100, 10).grant, "退还不会让桶超过容量")
 }
 
-// TestRedisLeaseFairShare 覆盖额度紧张时的 max-min 公平封顶：需求不超过水位的实例拿满需求，
-// 其余实例平分剩下的额度。授予量受 max(公平份额 × 距上次租约的时长, 桶中富余) 封顶，
-// 桶中富余是可用量扣掉其他实例公平份额的预取后剩下的部分。
+// redisLeaseState 直接设置共享桶的可用量与紧张起始时间，用来构造 Lua 的各种分配情况。
+func redisLeaseState(t *testing.T, server *miniredis.Miniredis, leaser *redisLeaser, config Config,
+	now time.Time, available int64, scarceSince *time.Time,
+) {
+	t.Helper()
+	key := leaser.stateKey("token", "checkout", config)
+	tat := now.UnixMicro() + (config.leaseCapacity()-available)*1000000/config.BytesPerSecond
+	require.NoError(t, server.Set(key, fmt.Sprintf("%d", tat)))
+	if scarceSince != nil {
+		server.HSet(key+":demand", "__scarce", fmt.Sprintf("%d", scarceSince.UnixMicro()))
+	}
+}
+
+// TestRedisLeaseFairShare 覆盖持续紧张时的 max-min 公平分配：桶中可用量持续一个同步周期以上不足一半，
+// 授予量受 max(公平额度, 桶中富余) 封顶，需求低于水位的实例拿满需求，先领的实例拿不走别人那份。
 func TestRedisLeaseFairShare(t *testing.T) {
 	server := miniredis.RunT(t)
 	base := time.Unix(1700000000, 0)
 	server.SetTime(base)
-	config := limiterConfig(100, 100)
+	config := limiterConfig(100, 100) // 容量 100，一半为 50
 	a, b, c := newTestLeaser(server, "a"), newTestLeaser(server, "b"), newTestLeaser(server, "c")
 	defer a.Close()
 	defer b.Close()
 	defer c.Close()
 
 	// 只上报需求：总需求 10 + 30 + 80 = 120 > 100。
+	leaseOne(t, a, config, 0, 80)
 	leaseOne(t, b, config, 0, 10)
 	leaseOne(t, c, config, 0, 30)
+	since := base.Add(-time.Second)
+	redisLeaseState(t, server, a, config, base, 45, &since)
 
-	server.SetTime(base.Add(500 * time.Millisecond))
+	results, err := b.Lease(context.Background(), []leaseRequest{{
+		key: serviceKey{token: "token", service: "checkout"}, config: config, want: 1000, demand: 10,
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), results[0].peers)
+	assert.Equal(t, int64(10), results[0].share, "水位为 33：10 拿满需求")
+	assert.True(t, results[0].scarce)
+	assert.Equal(t, int64(10), results[0].grant, "公平额度为 10 × 2 个周期，桶里虽有 45 也只给 10")
+	assert.Zero(t, leaseOne(t, b, config, 1000, 10).grant, "公平额度已用完，拿不走别人的份额")
+
 	result := leaseOne(t, a, config, 1000, 80)
-	assert.Equal(t, int64(3), result.peers)
-	assert.Equal(t, int64(60), result.share, "水位为 60：10 与 30 拿满需求，剩下的 60 给 A")
-	assert.Equal(t, int64(70), result.grant, "桶满 100，给 B、C 留 40 × 0.75s = 30 的预取后，A 可拿 70")
+	assert.Equal(t, int64(60), result.share, "10 与 30 拿满需求，剩下的 60 给 A")
+	assert.Equal(t, int64(35), result.grant, "公平额度 60，受桶中可用量 35 限制")
+}
 
-	result = leaseOne(t, b, config, 1000, 10)
-	assert.Equal(t, int64(10), result.share)
-	assert.Equal(t, int64(5), result.grant, "桶里只剩 30，不够给其他实例留预取，B 按 10 × 0.5s 封顶")
+// TestRedisLeaseBurstNeedFirst 覆盖「上报看起来紧张、桶里却还有存量」：突发让瞬时需求虚高，或桶刚跌破一半
+// 还不到一个同步周期。必须满足的部分先到先得，投机性的预取只能用超出半个桶的部分。
+func TestRedisLeaseBurstNeedFirst(t *testing.T) {
+	server := miniredis.RunT(t)
+	base := time.Unix(1700000000, 0)
+	server.SetTime(base)
+	config := limiterConfig(100, 100)
+	a, b := newTestLeaser(server, "a"), newTestLeaser(server, "b")
+	defer a.Close()
+	defer b.Close()
+	request := func(leaser *redisLeaser, want, need int64) leaseResult {
+		t.Helper()
+		results, err := leaser.Lease(context.Background(), []leaseRequest{{
+			key: serviceKey{token: "token", service: "checkout"}, config: config, want: want, demand: 100, need: need,
+		}})
+		require.NoError(t, err)
+		return results[0]
+	}
 
-	server.SetTime(base.Add(time.Second))
-	assert.Equal(t, int64(30), leaseOne(t, c, config, 1000, 30).grant, "C 距上次租约 1s，封顶 30 × 1s")
-	assert.Equal(t, int64(30), leaseOne(t, a, config, 1000, 80).grant, "A 距上次租约 0.5s，封顶 60 × 0.5s")
-	assert.Zero(t, leaseOne(t, a, config, 1000, 80).grant, "A 刚领过，封顶为 0，拿不走别人的份额")
+	leaseOne(t, b, config, 0, 100) // 总需求 200 > 100
+	result := request(a, 80, 30)
+	assert.False(t, result.scarce)
+	assert.Equal(t, int64(50), result.grant, "桶满 100：需要的 30 先给，预取只能用超出一半的 20")
+
+	result = request(b, 80, 30)
+	assert.Equal(t, int64(30), result.grant, "桶里 50，已到一半：只给需要的 30，不给预取")
+	result = request(a, 80, 30)
+	assert.False(t, result.scarce, "跌破一半还不到一个同步周期，仍按先到先得")
+	assert.Equal(t, int64(20), result.grant, "需要 30，桶里只剩 20")
+
+	since := base.Add(-defaultSyncInterval)
+	redisLeaseState(t, server, a, config, base, 20, &since)
+	result = request(b, 80, 30)
+	assert.True(t, result.scarce, "持续一个同步周期仍不足一半，按公平额度分配")
 }
 
 func TestRedisLeaseNoContentionGrantsWant(t *testing.T) {
@@ -622,6 +673,160 @@ func TestUrgentLeaseCoalescesServices(t *testing.T) {
 	assert.Len(t, leaser.lastRequests(), 3)
 }
 
+// slowLeaser 给每次租约加一段往返时延，模拟跨机 Redis，拉宽补货在途时的并发窗口。
+type slowLeaser struct {
+	quotaLeaser
+	rtt time.Duration
+}
+
+func (l slowLeaser) Lease(ctx context.Context, requests []leaseRequest) ([]leaseResult, error) {
+	time.Sleep(l.rtt)
+	return l.quotaLeaser.Lease(ctx, requests)
+}
+
+// TestConcurrentBurstWithinCapacity 是 2026-10-20 真实 OTLP 压测里「满桶边缘并发尾包」的回归：
+// 不超过桶容量的一次倒量由大量请求同时到达时，限额之内不能有 429。
+//
+// 根因是授予写回之后、等待者被唤醒扣款之前的空档：补货泵紧接着开始的下一轮把这笔授予当成空闲余额少申请，
+// 后到的请求先把它扣走，等待者只能吃透支。仿真用例在一个 goroutine 里逐个判断，每个等待者独占一轮补货，
+// 看不到这种交错；这里用真实 goroutine、真实补货泵和 miniredis。冷启动与已有预取两种起点各跑若干轮。
+func TestConcurrentBurstWithinCapacity(t *testing.T) {
+	const (
+		limit   = int64(10 << 20)
+		size    = 66000 // 压测中单包逻辑字节约 66KB
+		packets = 154   // 合计约 97% 容量
+		spread  = 5 * time.Millisecond
+		runs    = 8
+	)
+	for _, warm := range []bool{false, true} {
+		name := "冷启动"
+		if warm {
+			name = "已有预取"
+		}
+		t.Run(name, func(t *testing.T) {
+			for run := 0; run < runs; run++ {
+				server := miniredis.RunT(t)
+				conf := policyMap(limit, limit)
+				conf["redis"] = map[string]any{
+					"mode": redisModeStandalone, "db": 0, "key": "burst.traffic_limiter", "addrs": []string{server.Addr()},
+				}
+				factory, err := newFactoryWithLeaser(conf, nil, time.Now, func(config RedisConfig) quotaLeaser {
+					return slowLeaser{quotaLeaser: newRedisLeaserWithID(config, "burst"), rtt: time.Millisecond}
+				}, 0)
+				require.NoError(t, err)
+				// 只验证额度语义：放宽等待上限与健康阈值，-race 拖慢执行时也不切到本地降级。
+				factory.snapshot().redis.waitBudget = time.Minute
+				factory.snapshot().redis.healthyLatency = time.Minute
+
+				burst := packets
+				if warm {
+					// 先放行一个请求：拿到存活实例数之后按需求预取，倒量从「手上已有预取」开始。
+					decision, err := factory.limitSnapshot("token", map[string]int{"checkout": size})
+					require.NoError(t, err)
+					require.True(t, decision.accepted)
+					time.Sleep(10 * time.Millisecond)
+					burst--
+				}
+
+				var wg sync.WaitGroup
+				var mu sync.Mutex
+				var rejected int
+				start := make(chan struct{})
+				for i := 0; i < burst; i++ {
+					delay := time.Duration(i) * spread / time.Duration(burst)
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						<-start
+						time.Sleep(delay)
+						decision, err := factory.limitSnapshot("token", map[string]int{"checkout": size})
+						if err != nil || !decision.accepted {
+							mu.Lock()
+							rejected++
+							mu.Unlock()
+						}
+					}()
+				}
+				close(start)
+				wg.Wait()
+				factory.Clean()
+				require.Zero(t, rejected, "第 %d 轮：%d 个请求合计 %d 字节，不超过容量 %d，却拒绝了 %d 个",
+					run, packets, packets*size, limit, rejected)
+			}
+		})
+	}
+}
+
+// stallLeaser 让第 stallAt 次租约卡住 stall，模拟 Redis 抖动（RDB fork、慢命令、网络重传）。
+type stallLeaser struct {
+	quotaLeaser
+	calls   atomic.Int64
+	stallAt int64
+	stall   time.Duration
+}
+
+func (l *stallLeaser) Lease(ctx context.Context, requests []leaseRequest) ([]leaseResult, error) {
+	if l.calls.Add(1) == l.stallAt {
+		time.Sleep(l.stall)
+	}
+	return l.quotaLeaser.Lease(ctx, requests)
+}
+
+// TestRedisStallDuringBurstWithinCapacity 是 Redis 抖动的回归：不超过桶容量的一次倒量进行到一半时，
+// 一轮租约卡了 80ms（超过 50ms 等待上限）。等不到补货的请求按欠账放行，补货回来再还上，限额之内不能有 429；
+// 旧实现在这里改走按实例平摊的本地降级，等待者多半被拒。
+func TestRedisStallDuringBurstWithinCapacity(t *testing.T) {
+	const (
+		limit   = int64(10 << 20)
+		size    = 66000
+		packets = 154 // 合计约 97% 容量
+		spread  = 5 * time.Millisecond
+		runs    = 5
+	)
+	for run := 0; run < runs; run++ {
+		server := miniredis.RunT(t)
+		conf := policyMap(limit, limit)
+		conf["redis"] = map[string]any{
+			"mode": redisModeStandalone, "db": 0, "key": "stall.traffic_limiter", "addrs": []string{server.Addr()},
+		}
+		factory, err := newFactoryWithLeaser(conf, nil, time.Now, func(config RedisConfig) quotaLeaser {
+			return &stallLeaser{quotaLeaser: newRedisLeaserWithID(config, "stall"), stallAt: 2, stall: 80 * time.Millisecond}
+		}, 0)
+		require.NoError(t, err)
+
+		timeouts := testutil.ToFloat64(leaseWaitTimeout)
+		var wg sync.WaitGroup
+		var rejected atomic.Int64
+		start := make(chan struct{})
+		for i := 0; i < packets; i++ {
+			delay := time.Duration(i) * spread / packets
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				time.Sleep(delay)
+				decision, err := factory.limitSnapshot("token", map[string]int{"checkout": size})
+				if err != nil || !decision.accepted {
+					rejected.Add(1)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+		require.Zero(t, rejected.Load(), "第 %d 轮：Redis 卡了 80ms，限额之内的 %d 个请求被拒了 %d 个",
+			run, packets, rejected.Load())
+		require.Greater(t, testutil.ToFloat64(leaseWaitTimeout), timeouts, "第 %d 轮没有走到等待超时，用例失效", run)
+
+		// 卡住的那一轮回来之后，再同步一次：欠账全部从共享桶里扣回，Redis 也恢复成健康。
+		time.Sleep(100 * time.Millisecond)
+		factory.syncNow()
+		assert.GreaterOrEqual(t, quotaBucketBalance(factory.quota, serviceKey{token: "token", service: "checkout"}), int64(0),
+			"第 %d 轮：欠账没有还上", run)
+		assert.True(t, factory.snapshot().redis.shared(time.Now()), "第 %d 轮：一轮快的租约之后恢复健康", run)
+		factory.Clean()
+	}
+}
+
 func redisTestConfig(address string) RedisConfig {
 	return RedisConfig{
 		Mode:  redisModeStandalone,
@@ -646,4 +851,53 @@ func leaseOne(t *testing.T, leaser quotaLeaser, config Config, want, demand int6
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	return results[0]
+}
+
+// TestCleanReleasesLeasedQuota 覆盖正常退出时的归还：预取的正余额退回共享桶，本实例的需求记录被删除，
+// 接手流量的实例立即可以使用这些额度。
+func TestCleanReleasesLeasedQuota(t *testing.T) {
+	server := miniredis.RunT(t)
+	server.SetTime(time.Unix(1700000000, 0))
+	conf := policyMap(1000, 10000)
+	conf["redis"] = map[string]any{
+		"mode": redisModeStandalone, "db": 0,
+		"key": "release.traffic_limiter", "addrs": []string{server.Addr()},
+	}
+	newCollector := func(id string) *trafficLimiter {
+		t.Helper()
+		factory, err := newFactoryWithLeaser(conf, nil, newFakeClock().Now, func(config RedisConfig) quotaLeaser {
+			return newRedisLeaserWithID(config, id)
+		}, 0)
+		require.NoError(t, err)
+		return factory
+	}
+	leaving, staying := newCollector("leaving"), newCollector("staying")
+	defer staying.Clean()
+
+	decision, err := leaving.limitSnapshot("token", map[string]int{"checkout": 9000})
+	require.NoError(t, err)
+	require.True(t, decision.accepted)
+	leaving.syncNow() // 上报需求并补齐预取
+	leaser := leaving.snapshot().redis.leaser.(*redisLeaser)
+	key := leaser.stateKey("token", "checkout", limiterConfig(1000, 10000))
+	fields, err := server.HKeys(key + ":demand")
+	require.NoError(t, err)
+	require.Contains(t, fields, "leaving")
+
+	leaving.Stop()
+	fields, _ = server.HKeys(key + ":demand")
+	assert.NotContains(t, fields, "leaving", "退出时删除本实例的需求记录")
+
+	decision, err = staying.limitSnapshot("token", map[string]int{"checkout": 1000})
+	require.NoError(t, err)
+	assert.True(t, decision.accepted,
+		"桶里只剩 10000 − 9000 − 750（预取）= 250，靠退出实例退还的 750 才够放行 1000")
+}
+
+// TestStopWithoutRedisIsNoop 覆盖没有 Redis 客户端时的 Stop：不访问 Redis、不报错。
+func TestStopWithoutRedisIsNoop(t *testing.T) {
+	factory, err := newFactory(policyMap(1, 1), nil, time.Now)
+	require.NoError(t, err)
+	factory.Stop()
+	factory.Stop()
 }

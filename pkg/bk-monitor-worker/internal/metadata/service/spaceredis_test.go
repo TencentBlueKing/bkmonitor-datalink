@@ -37,8 +37,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/testutil/routefixture"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/memcache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -781,26 +781,6 @@ func TestSpaceRedisSvc_composeBcsSpaceBizTableIds(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotContains(t, data, tableIdTwo)
 	println(data)
-}
-
-func TestSpaceRedisSvc_getCachedClusterDataIdList(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	db := mysql.GetDBSession().DB
-	obj := bcs.BCSClusterInfo{ClusterID: "BCS-K8S-00000", K8sMetricDataID: 100001, CustomMetricDataID: 100002}
-	db.Delete(obj)
-	assert.NoError(t, obj.Create(db))
-
-	data, err := NewSpacePusher().getCachedClusterDataIdList()
-	assert.NoError(t, err)
-	assert.Equal(t, 2, len(data))
-	assert.Equal(t, []uint{100001, 100002}, data)
-
-	cache, err := memcache.GetMemCache()
-	cache.Wait()
-	assert.NoError(t, err)
-	dataList, ok := cache.Get(CachedClusterDataIdKey)
-	assert.True(t, ok)
-	assert.Equal(t, []uint{100001, 100002}, dataList.([]uint))
 }
 
 func TestGetDataLabelByTableId(t *testing.T) {
@@ -2934,8 +2914,8 @@ func TestFilterTsInfoV3V4Comparison(t *testing.T) {
 }
 
 func TestSpacePusher_composeBkciOtherTableIds_AuthorizedDataSource(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	db := mysql.GetDBSession().DB
+	f := routefixture.New(t)
+	db := f.DB
 	setMultiTenantModeForTest(t, false)
 
 	for _, tc := range []struct {
@@ -2966,9 +2946,8 @@ func TestSpacePusher_composeBkciOtherTableIds_AuthorizedDataSource(t *testing.T)
 			patches := gomonkey.NewPatches()
 			defer patches.Reset()
 			patches.ApplyFunc(mysql.GetDBSession, func() *mysql.DBSession { return &mysql.DBSession{DB: tx} })
-			patches.ApplyPrivateMethod(NewSpacePusher(), "getCachedClusterDataIdList", func(_ *SpacePusher) ([]uint, error) {
-				return []uint{19002, 19003}, nil
-			})
+			pusher := NewSpacePusher()
+			pusher.clusterDataIDs = map[uint]struct{}{19002: {}, 19003: {}}
 			const tableID = "authorized_route_test.__default__"
 			for _, row := range []any{
 				&space.SpaceDataSource{SpaceTypeId: tc.spaceType, SpaceId: tc.spaceID, BkDataId: tc.dataID, FromAuthorization: tc.authorized},
@@ -2979,7 +2958,7 @@ func TestSpacePusher_composeBkciOtherTableIds_AuthorizedDataSource(t *testing.T)
 					return
 				}
 			}
-			got, err := NewSpacePusher().composeBkciOtherTableIds("system", "bkci", "authorized_project")
+			got, err := pusher.composeBkciOtherTableIds("system", "bkci", "authorized_project")
 			assert.NoError(t, err)
 			want := map[string]map[string]any{}
 			if tc.wantRoute {

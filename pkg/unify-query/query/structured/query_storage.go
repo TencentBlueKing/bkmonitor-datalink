@@ -116,7 +116,7 @@ func (q *Query) buildStorageQuery(
 		}
 	}
 	// 后续页保留首次选择的后端，不因 Header 改变而重用另一种游标。
-	if query.Measurement == metadata.DorisStorageType {
+	if query.Measurement == metadata.DorisStorageType && (query.StorageType == metadata.BkSqlStorageType || query.StorageType == metadata.DorisStorageType) {
 		if query.ResultTableOption == nil && len(query.PhysicalTables) > 0 {
 			direct := *query
 			direct.QueryBackend = metadata.DorisStorageType

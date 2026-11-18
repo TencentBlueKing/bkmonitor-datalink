@@ -323,3 +323,41 @@ func TestMixedBackendPaginationIndependentOfRTOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestDorisHistoricalBKBaseClusterWithoutHeader(t *testing.T) {
+	ctx, req, table := rawPlanFixture()
+	table.StorageType, table.Measurement = metadata.BkSqlStorageType, metadata.DorisStorageType
+	table.StorageClusterRecords = rawPlanRecords(table, "16")
+	route := &table.StorageClusterRecords[0]
+	route.StorageName, route.ClusterName = "", "historical"
+	route.PhysicalTables = directTables("old")
+	plan, err := req.ToRawQueryPlan(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, plan.Queries.Count())
+	plan.Queries.Range("", func(q *metadata.Query) {
+		require.Empty(t, q.QueryBackend)
+		require.Equal(t, "historical", q.StorageName)
+		require.Equal(t, route.DB, q.DB)
+	})
+}
+
+func TestESMeasurementNamedDorisKeepsPaginationBackend(t *testing.T) {
+	ctx, req, table := rawPlanFixture()
+	table.Measurement = "doris"
+	table.StorageClusterRecords = nil
+	req.IsSearchAfter = true
+	plan, err := req.ToRawQueryPlan(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, plan.Queries.Count())
+	option := &metadata.ResultTableOption{SearchAfter: []any{42}}
+	req.ResultTableOptions = metadata.ResultTableOptions{}
+	plan.Queries.Range("", func(q *metadata.Query) { req.ResultTableOptions[q.TableUUID()] = option })
+	plan, err = req.ToRawQueryPlan(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, plan.Queries.Count())
+	plan.Queries.Range("", func(q *metadata.Query) {
+		require.Equal(t, metadata.ElasticsearchStorageType, q.StorageType)
+		require.Empty(t, q.QueryBackend)
+		require.Equal(t, option, q.ResultTableOption)
+	})
+}

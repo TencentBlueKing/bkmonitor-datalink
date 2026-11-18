@@ -129,10 +129,12 @@ func (z *TsDBV2) validateStorageRouteRecord(record Record) (Record, bool, string
 		storageType = z.StorageType
 	}
 	hasExplicitStorageType := record.StorageType != ""
-	requiresBkSQLRouteFields := record.StorageType == metadata.BkSqlStorageType && record.PhysicalTables["main"].Table == ""
+	main := record.PhysicalTables["main"]
+	hasDorisTarget := (storageType == metadata.BkSqlStorageType || storageType == metadata.DorisStorageType) && record.Measurement == metadata.DorisStorageType && main.Database != "" && main.Table != ""
+	requiresBkSQLRouteFields := record.StorageType == metadata.BkSqlStorageType && !hasDorisTarget
 	// 显式声明 storage_type 的新格式 route 必须自带目标物理表字段，不能从外层 RT 逐字段 fallback。
 	// 切到 BKSQL 时还必须携带 cluster_name，用于 BKBase query_sync 的 properties.cluster_name。
-	if hasExplicitStorageType && ((record.DB == "" && record.PhysicalTables["main"].Table == "") || record.Measurement == "" || (requiresBkSQLRouteFields && record.ClusterName == "")) {
+	if hasExplicitStorageType && ((record.DB == "" && !hasDorisTarget) || record.Measurement == "" || (requiresBkSQLRouteFields && record.ClusterName == "")) {
 		missingFields := make([]string, 0, 3)
 		if record.DB == "" {
 			missingFields = append(missingFields, "db")
@@ -149,8 +151,8 @@ func (z *TsDBV2) validateStorageRouteRecord(record Record) (Record, bool, string
 	// 旧 Redis 缓存未声明 storage_type 时只下发 storage_id/enable_time，继续从外层 RT detail 补齐查询目标。
 	storageName := record.StorageName
 	if storageName == "" {
-		if requiresBkSQLRouteFields {
-			// BKSQL 路由的 storage_name 旧字段和 cluster_name 都表示 BKBase 集群名；record 已校验 cluster_name 非空，可安全回填。
+		if record.StorageType == metadata.BkSqlStorageType {
+			// BKBase 使用历史记录自身的集群名，即使记录同时提供 Doris 物理表。
 			storageName = record.ClusterName
 		} else if !hasExplicitStorageType {
 			storageName = z.StorageName

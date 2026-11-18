@@ -13,26 +13,27 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
+// vmAnswer 是 vmQuery 能解码的应答：每种应答都要给出体内的 result 与 code，体内报的失败才不会被算成成功。
+// vmQuery 只收这个接口，新加一种应答类型却没实现它，就编译不过。
+type vmAnswer interface {
+	bodyStatus() (result bool, code, message string)
+}
+
+func (r *VmResponse) bodyStatus() (bool, string, string) { return r.Result, r.Code, r.Message }
+
+func (r *VmLableValuesResponse) bodyStatus() (bool, string, string) {
+	return r.Result, r.Code, r.Message
+}
+
+func (r *VmSeriesResponse) bodyStatus() (bool, string, string) { return r.Result, r.Code, r.Message }
+
 // vmRequestResult 是一次 VM 请求的最终结果：HTTP 层失败时就是那个错误；HTTP 层成功时，网关可能在
 // 应答体里报失败（result 为假，或者 code 不是 OK），这时返回 BackendBodyError。
-func vmRequestResult(err error, data any) error {
+func vmRequestResult(err error, data vmAnswer) error {
 	if err != nil {
 		return err
 	}
-	var (
-		result        bool
-		code, message string
-	)
-	switch resp := data.(type) {
-	case *VmResponse:
-		result, code, message = resp.Result, resp.Code, resp.Message
-	case *VmLableValuesResponse:
-		result, code, message = resp.Result, resp.Code, resp.Message
-	case *VmSeriesResponse:
-		result, code, message = resp.Result, resp.Code, resp.Message
-	default:
-		return nil
-	}
+	result, code, message := data.bodyStatus()
 	if result && code == OK {
 		return nil
 	}

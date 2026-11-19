@@ -12,10 +12,10 @@ package elasticsearch
 import (
 	"context"
 	"fmt"
-	"io"
 	"strconv"
 	"time"
 
+	"github.com/cenkalti/backoff"
 	"github.com/cespare/xxhash/v2"
 	"github.com/cstockton/go-conv"
 	version "github.com/hashicorp/go-version"
@@ -25,7 +25,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/etl"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
@@ -37,6 +36,7 @@ type BulkHandler struct {
 	resultTable   *config.MetaResultTableConfig
 	uniqueField   []string
 	flushInterval time.Duration
+	flushRetries  int
 	writer        BulkWriter
 	indexRender   IndexRenderFn
 	transformers  map[string]etl.TransformFn
@@ -103,73 +103,6 @@ func (b *BulkHandler) Handle(ctx context.Context, payload define.Payload, killCh
 	return &etlRecord, utils.ParseTimeStamp(*etlRecord.Time), true
 }
 
-func (b *BulkHandler) flush(ctx context.Context, index string, records Records) (count int, err error) {
-	logging.Debugf("backend %v flush %d records", b, len(records))
-
-	errs := utils.NewMultiErrors()
-	response, err := b.writer.Write(ctx, index, records)
-
-	buf := bufferpool.Get()
-	defer bufferpool.Put(buf)
-
-	var e error
-	var result []byte
-	if response != nil {
-		defer func() {
-			logging.WarnIf("close response error", response.Body.Close())
-		}()
-		_, e = io.Copy(buf, response.Body)
-		result = buf.Bytes()
-		errs.Add(e)
-	}
-
-	switch {
-	case err != nil:
-		logging.Warnf("backend %v flush error %v", b, err)
-		errs.Add(errors.Wrapf(err, "%v write failed", b))
-
-	case response == nil:
-		errs.Add(errors.Wrapf(define.ErrDisaster, "response is nil"))
-
-	case response.IsSysError():
-		logging.Errorf("backend %v flush failed because server error %s", b, result)
-		errs.Add(errors.Wrapf(define.ErrOperationForbidden, "response %d, %s", response.StatusCode, result))
-
-	default:
-		logging.Debugf("backend %v write response status code %d", b, response.StatusCode)
-		var writeResult ESWriteResult
-		if err := json.Unmarshal(result, &writeResult); err != nil {
-			logging.Errorf("backend %v parse elasticsearch response error %v from %s, skipped", b, err, result)
-			break
-		}
-
-		if writeResult.Errors {
-			var total int
-			var resultErrors []*ESWriteResultError
-			for _, item := range writeResult.Items {
-				index := item.Index
-				if index.Error != nil {
-					total++
-					resultErrors = append(resultErrors, index.Error)
-				}
-			}
-			if len(resultErrors) > 0 {
-				s, _ := json.Marshal(resultErrors)
-				msg := fmt.Sprintf("backend %v write %d documents to elasticsearch failed, error: %s", b, len(resultErrors), string(s))
-				logging.MinuteErrorSampling(b.String(), msg)
-			}
-			count = len(writeResult.Items) - total // 成功写入的数据量
-		} else {
-			count = len(writeResult.Items)
-			if count != len(records) {
-				logging.Warnf("backend %v write %d documents to elasticsearch with ack %d, please check why data lost, response: %s", b, len(records), count, string(result))
-			}
-		}
-	}
-
-	return count, errs.AsError()
-}
-
 // Flush :
 func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count int, err error) {
 	lastIndex := ""
@@ -210,7 +143,11 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 		errs.Add(err)
 	}
 
-	return count, errs.AsError()
+	if err := errs.AsError(); err != nil {
+		// 每个索引批次已完成内部重试；通知外层保留成功数量，避免整批重发。
+		return count, backoff.Permanent(err)
+	}
+	return count, nil
 }
 
 // Close :
@@ -259,6 +196,7 @@ func NewBulkHandler(cluster *config.ElasticSearchMetaClusterInfo, table *config.
 	handler := &BulkHandler{
 		resultTable:   table,
 		flushInterval: flushInterval,
+		flushRetries:  pipeline.BulkDefaultFlushRetries,
 		writer:        writer,
 		uniqueField:   uniqueFields,
 		indexRender:   indexRender,
@@ -286,7 +224,7 @@ func NewBackend(ctx context.Context, name string, maxQps int) (define.Backend, e
 
 	shipper := config.ShipperConfigFromContext(ctx)
 	cluster := shipper.AsElasticSearchCluster()
-	flushInterval := conf.GetDuration(pipeline.ConfKeyPayloadFlushInterval)
+	bufferSize, flushInterval := pipeline.GetBufferSizeAndFlushInterval(ctx, name)
 	clusterConf := utils.NewMapHelper(cluster.ClusterConfig)
 	clusterConf.SetDefault("version", conf.GetString(ConfKeyDefaultVersion))
 
@@ -300,7 +238,7 @@ func NewBackend(ctx context.Context, name string, maxQps int) (define.Backend, e
 		return nil, err
 	}
 
-	return pipeline.NewBulkBackendDefaultAdapter(ctx, name, bulk, maxQps), nil
+	return pipeline.NewBulkBackendAdapter(ctx, name, bulk, bufferSize, flushInterval, pipeline.BulkDefaultFlushRetries), nil
 }
 
 func init() {

@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/consul/api"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 )
 
 var storagePath = "storage"
@@ -36,7 +37,7 @@ func FormatStorageInfo(kvPairs api.KVPairs) (map[string]*Storage, error) {
 		var data *Storage
 		err := json.Unmarshal(kvPair.Value, &data)
 		if err != nil {
-			return nil, err
+			return nil, metric.ConfigSyncDecodeError(err)
 		}
 		prefix := fmt.Sprintf("%s/%s/%s/", basePath, dataPath, storagePath)
 		key := strings.ReplaceAll(string(kvPair.Key), prefix, "")

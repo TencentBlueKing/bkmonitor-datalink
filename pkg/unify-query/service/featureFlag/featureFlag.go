@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	redisService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/redis"
 )
@@ -35,6 +36,26 @@ type Service struct {
 	refreshMu         sync.Mutex
 	clientMu          sync.Mutex
 	clientInitialized bool
+
+	// watching and readOK (the latest sync reached the backend) make unify_query_config_sync_up{source="feature_flag"}.
+	syncMu   sync.Mutex
+	watching bool
+	readOK   bool
+}
+
+// setSync records whether the feature flag watch is open and whether the latest sync reached the
+// backend; nil leaves that half as it was. The watch retries inside the Redis and Consul clients
+// without reporting a lost connection, so up also needs the latest read to have succeeded.
+func (s *Service) setSync(watching, readOK *bool) {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	if watching != nil {
+		s.watching = *watching
+	}
+	if readOK != nil {
+		s.readOK = *readOK
+	}
+	metric.ConfigSyncSetUp(metric.ConfigSyncSourceFeatureFlag, metric.ConfigSyncWatcherFeatureFlag, s.watching && s.readOK)
 }
 
 var (
@@ -95,7 +116,8 @@ func (s *Service) reloadFeatureFlags(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
-	return featureFlag.ReloadFeatureFlagsIfChanged(data)
+	changed, err := featureFlag.ReloadFeatureFlagsIfChanged(data)
+	return changed, metric.ConfigSyncDecodeError(err)
 }
 
 func (s *Service) initFeatureFlagClientLocked(ctx context.Context) error {
@@ -142,9 +164,19 @@ func (s *Service) refreshFeatureFlagClient(ctx context.Context) error {
 	})
 }
 
-func (s *Service) reconcileFeatureFlags(ctx context.Context) error {
+func (s *Service) reconcileFeatureFlags(ctx context.Context) (err error) {
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
+
+	defer func() {
+		if err == nil {
+			metric.ConfigSyncSucceeded(metric.ConfigSyncSourceFeatureFlag)
+		} else {
+			metric.ConfigSyncFailed(ctx, metric.ConfigSyncSourceFeatureFlag, err)
+		}
+		answered := metric.ConfigSyncBackendAnswered(err)
+		s.setSync(nil, &answered)
+	}()
 
 	changed, err := s.reloadFeatureFlags(ctx)
 	if err != nil {
@@ -155,9 +187,9 @@ func (s *Service) reconcileFeatureFlags(ctx context.Context) error {
 		return err
 	}
 	if changed {
-		return s.refreshFeatureFlagClient(ctx)
+		return metric.ConfigSyncApplyError(s.refreshFeatureFlagClient(ctx))
 	}
-	return s.ensureFeatureFlagClient(ctx)
+	return metric.ConfigSyncApplyError(s.ensureFeatureFlagClient(ctx))
 }
 
 // loopReloadFeatureFlags
@@ -166,11 +198,14 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 		return fmt.Errorf("feature flag provider is not initialized")
 	}
 
+	metric.ConfigSyncEnable(metric.ConfigSyncSourceFeatureFlag, metric.ConfigSyncWatcherFeatureFlag)
 	// 先完成订阅，再读取一次全量配置，避免 GET 与订阅建立之间遗漏更新。
 	ch, err := s.provider.WatchFeatureFlags(ctx)
 	if err != nil {
 		log.Errorf(ctx, "watch feature flags failed, will retry during periodic reconcile, error: %s", err)
 	}
+	watching := err == nil
+	s.setSync(&watching, nil)
 	if reconcileErr := s.reconcileFeatureFlags(ctx); reconcileErr != nil {
 		// 后端不可用或配置非法时仍保留调和循环，修正配置后自动完成客户端初始化。
 		log.Errorf(ctx, "initial reconcile feature flags failed, will retry, error: %s", reconcileErr)
@@ -190,6 +225,10 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 				if !ok {
 					log.Warnf(context.TODO(), "feature flags watch channel closed, continue with periodic reconcile")
 					ch = nil
+					if ctx.Err() == nil {
+						watching := false
+						s.setSync(&watching, nil)
+					}
 					continue
 				}
 				log.Debugf(context.TODO(), "get feature flags changed notify")
@@ -204,6 +243,8 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 						log.Errorf(context.TODO(), "retry watch feature flags failed, error: %s", watchErr)
 					} else {
 						ch = newCh
+						watching := true
+						s.setSync(&watching, nil)
 					}
 				}
 				if reloadErr := s.reconcileFeatureFlags(ctx); reloadErr != nil {

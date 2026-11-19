@@ -29,6 +29,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/precision"
 )
@@ -538,6 +539,7 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 
 	defer func() {
 		if r := recover(); r != nil {
+			metric.PanicInc(f.ctx, metric.PanicSiteStorage)
 			_ = metadata.NewMessage(
 				metadata.MsgQueryES,
 				"聚合数据格式化失败",
@@ -680,6 +682,7 @@ func (f *FormatFactory) resetAggInfoListWithNested() {
 func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			metric.PanicInc(f.ctx, metric.PanicSiteStorage)
 			_ = metadata.NewMessage(
 				metadata.MsgQueryES,
 				"聚合数据格式化失败",

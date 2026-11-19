@@ -180,7 +180,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 		set = storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(mergeFunc, bucketDuration))
 	}()
 
-	p, _ := ants.NewPool(q.maxRouting)
+	p, _ := ants.NewPool(q.maxRouting, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
 	defer p.Release()
 
 	// 统一收敛子路由错误，最终用于 partial status 或全失败报错。

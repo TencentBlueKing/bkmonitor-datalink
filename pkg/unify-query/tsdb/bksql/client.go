@@ -81,6 +81,8 @@ func (c *Client) curlGet(ctx context.Context, method string, req QuerySyncReques
 		},
 		res,
 	)
+	// 每次请求按最终结果计一次：HTTP 层成功时，再看应答体里有没有报失败。
+	metric.TsDBRequestInc(ctx, metadata.BkSqlStorageType, bkSQLRequestResult(err, res))
 	if err != nil {
 		return err
 	}

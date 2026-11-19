@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	encodingJson "encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -195,7 +196,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 			metadata.MarkBackendResponseLimitExceeded(ctx)
 			return size, &ResponseBodyLimitError{Limit: opt.MaxResponseBytes}
 		}
-		return size, err
+		return size, backendResponseFailure(err)
 	} else {
 		bodyReadStarted := time.Now()
 		reader := io.Reader(resp.Body)
@@ -208,7 +209,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 		size = buf.Len()
 		span.Set("response-body-bytes", size)
 		if err != nil {
-			return size, err
+			return size, backendResponseFailure(err)
 		}
 		if opt.MaxResponseBytes > 0 && int64(size) > opt.MaxResponseBytes {
 			metadata.MarkBackendResponseLimitExceeded(ctx)
@@ -222,6 +223,14 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 		decoder.UseNumber()
 		err = decoder.Decode(&res)
 		span.Set("json-decode-duration", time.Since(decodeStarted))
-		return size, err
+		return size, backendResponseFailure(err)
 	}
+}
+
+// backendResponseFailure 把读或解码后端应答体的失败包成后端失败；取消和超时照旧按各自的类型归类。
+func backendResponseFailure(err error) error {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return &metadata.BackendResponseError{Err: err}
 }

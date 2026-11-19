@@ -80,6 +80,11 @@ func (r *response) sharedSchemaSuccess(ctx context.Context, data *PromData) (err
 		if reason == "" {
 			reason = "preflight_cancel"
 		}
+		if reason == "write" {
+			metadata.RecordResponseWriteFailure(ctx)
+		} else {
+			metadata.RecordRequestFailure(ctx, err)
+		}
 		metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusFailed, user.SpaceUID, user.Source)
 		// Headers may already be committed. Missing end/transport failure is
 		// the stream failure signal; never append a legacy JSON error.

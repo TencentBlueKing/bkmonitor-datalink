@@ -20,6 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
@@ -44,4 +45,30 @@ func TestTheRelationAPIsAnswerATimeoutWithGatewayTimeout(t *testing.T) {
 			require.Equal(t, c.want, recorder.Code)
 		})
 	}
+}
+
+// Both answers of the relation APIs leave the failure they were built from in the request's outcome
+// record: a streamed batch that fails mid-way has already sent 200, so the record decides its outcome.
+func TestRelationResponsesRecordTheFailureForTheRequestOutcome(t *testing.T) {
+	mock.Init()
+	failure := errors.New("backend failed")
+	for name, answer := range map[string]func(r *response, ctx context.Context){
+		"failed":   func(r *response, ctx context.Context) { r.failed(ctx, failure) },
+		"streamed": func(r *response, ctx context.Context) { r.streamed(ctx, failure) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ginCtx, _ := gin.CreateTestContext(recorder)
+			ctx, record := metadata.WithRequestOutcome(context.Background())
+			ginCtx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/relation/multi_resource", nil).WithContext(ctx)
+			answer(&response{c: ginCtx}, ctx)
+			require.Same(t, failure, record.Snapshot().Failure)
+		})
+	}
+	recorder := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(recorder)
+	ctx, record := metadata.WithRequestOutcome(context.Background())
+	ginCtx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/relation/multi_resource", nil).WithContext(ctx)
+	(&response{c: ginCtx}).streamed(ctx, nil)
+	require.NoError(t, record.Snapshot().Failure)
 }

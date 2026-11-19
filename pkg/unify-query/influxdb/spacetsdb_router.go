@@ -311,18 +311,33 @@ func (r *SpaceTsDbRouter) initRouter(ctx context.Context) error {
 	return nil
 }
 
+// RouterSubscribe subscribes to the space router's update channels. Whether the subscription is live is
+// unify_query_config_sync_up{source="space_router_incremental"}: 0 until Redis first confirms it.
 func (r *SpaceTsDbRouter) RouterSubscribe(ctx context.Context) <-chan *goRedis.Message {
 	r.rwLock.RLock()
 	defer r.rwLock.RUnlock()
-	return r.router.SubscribeChannels(ctx, influxdb.SpaceChannelKeys...)
+	metric.ConfigSyncEnable(metric.ConfigSyncSourceSpaceRouterIncremental, metric.ConfigSyncWatcherSpaceRouter)
+	return r.router.SubscribeChannelsWithState(ctx, func(up bool) {
+		metric.ConfigSyncSetUp(metric.ConfigSyncSourceSpaceRouterIncremental, metric.ConfigSyncWatcherSpaceRouter, up)
+		if up {
+			// Updates published from here on reach this replica.
+			metric.ConfigSyncSucceeded(metric.ConfigSyncSourceSpaceRouterIncremental)
+		}
+	}, influxdb.SpaceChannelKeys...)
 }
 
+// ReloadAllKey reloads every space router key from Redis. Only a reload in which every key loaded
+// moves unify_query_config_sync_last_success_timestamp_seconds{source="space_router_full"}; each key's
+// failure is unify_query_redis_router_load_total{result="failure"}.
 func (r *SpaceTsDbRouter) ReloadAllKey(ctx context.Context, printBytes bool) error {
+	loaded := true
 	for _, k := range influxdb.SpaceAllKey {
-		err := r.LoadRouter(ctx, k, printBytes)
-		if err != nil {
-			return err
+		if !r.loadRouter(ctx, k, printBytes) {
+			loaded = false
 		}
+	}
+	if loaded {
+		metric.ConfigSyncSucceeded(metric.ConfigSyncSourceSpaceRouterFull)
 	}
 	return nil
 }
@@ -337,48 +352,67 @@ func (r *SpaceTsDbRouter) ReloadByChannel(ctx context.Context, channelKey string
 	case influxdb.BkAppToSpaceChannelKey:
 		spaceUidList, err := r.router.GetBkAppSpace(ctx, hashKey)
 		if err != nil {
-			return err
+			return reloadReadError(err)
 		}
 		err = r.Add(ctx, influxdb.BkAppToSpaceKey, hashKey, &spaceUidList)
+		if err != nil {
+			return metric.ConfigSyncApplyError(err)
+		}
 	case influxdb.SpaceToResultTableChannelKey:
 		space, err := r.router.GetSpace(ctx, hashKey)
 		if err != nil {
-			return err
+			return reloadReadError(err)
 		}
 		err = r.Add(ctx, influxdb.SpaceToResultTableKey, hashKey, &space)
 		if err != nil {
-			return err
+			return metric.ConfigSyncApplyError(err)
 		}
 	case influxdb.ResultTableDetailChannelKey:
 		table, err := r.router.GetResultTableDetail(ctx, hashKey)
 		if err != nil {
-			return err
+			return reloadReadError(err)
 		}
 		err = r.Add(ctx, influxdb.ResultTableDetailKey, hashKey, table)
 		if err != nil {
-			return err
+			return metric.ConfigSyncApplyError(err)
 		}
 	case influxdb.DataLabelToResultTableChannelKey:
 		tableIds, err := r.router.GetDataLabelToResultTableDetail(ctx, hashKey)
 		if err != nil {
-			return err
+			return reloadReadError(err)
 		}
 		err = r.Add(ctx, influxdb.DataLabelToResultTableKey, hashKey, &tableIds)
 		if err != nil {
-			return err
+			return metric.ConfigSyncApplyError(err)
 		}
 	case influxdb.ResultTableDetailChannelDeleteKey:
 		err := r.Delete(ctx, influxdb.ResultTableDetailKey, hashKey)
 		if err != nil {
-			return err
+			return metric.ConfigSyncApplyError(err)
 		}
 	default:
-		return fmt.Errorf("Invalid channel key(%s) from subscribe process ", channelKey)
+		return metric.ConfigSyncApplyError(fmt.Errorf("Invalid channel key(%s) from subscribe process ", channelKey))
 	}
 	return nil
 }
 
+// reloadReadError keeps the read's error as it is, except that an update naming a key Redis no longer
+// holds is not a failed read.
+func reloadReadError(err error) error {
+	if errors.Is(err, goRedis.Nil) {
+		return metric.ConfigSyncApplyError(err)
+	}
+	return err
+}
+
 func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes bool) error {
+	r.loadRouter(ctx, key, printBytes)
+	return nil
+}
+
+// loadRouter reloads one key from Redis and reports whether it loaded: no item failed to read or
+// decode, no batch failed to store and ctx was not canceled.
+func (r *SpaceTsDbRouter) loadRouter(ctx context.Context, key string, printBytes bool) bool {
 	r.rwLock.Lock()
 	defer r.rwLock.Unlock()
 	start := time.Now()
@@ -432,16 +466,17 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 				entities = entities[:0]
 			}
 			if !ok {
+				// ctx 被取消时，HScan 可能提前结束但不会显式透传 GenericKV.Err，记为 failure
+				loaded := !recvErr && !batchErr && ctx.Err() == nil
 				// 仅 SpaceAllKey 打点，避免非法 key 造成 Prometheus 高基数
 				if influxdb.IsSpaceAllRouterKey(key) {
-					// ctx 被取消时，HScan 可能提前结束但不会显式透传 GenericKV.Err，记为 failure
-					if recvErr || batchErr || ctx.Err() != nil {
-						metric.RedisRouterLoadResultInc(ctx, key, metric.RedisRouterLoadResultFailure)
-					} else {
+					if loaded {
 						metric.RedisRouterLoadResultInc(ctx, key, metric.RedisRouterLoadResultSuccess)
+					} else {
+						metric.RedisRouterLoadResultInc(ctx, key, metric.RedisRouterLoadResultFailure)
 					}
 				}
-				return nil
+				return loaded
 			}
 		}
 	}

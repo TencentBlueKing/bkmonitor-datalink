@@ -547,7 +547,7 @@ func (i *Instance) noCache(ctx context.Context, start, step int64) int {
 
 // vmQuery
 func (i *Instance) vmQuery(
-	ctx context.Context, sql string, data any, span *trace.Span,
+	ctx context.Context, sql string, data vmAnswer, span *trace.Span,
 ) error {
 	var (
 		cancel        context.CancelFunc
@@ -597,6 +597,8 @@ func (i *Instance) vmQuery(
 		err = ctx.Err()
 	}
 	if retryReason != "" && ctx.Err() == nil {
+		// 触发重试的那次是传输失败，在这里计；重试的那次按最终结果在下面计。
+		metric.TsDBRequestInc(ctx, i.InstanceType(), err)
 		span.Set("query-sync-retry.reason", retryReason)
 		span.Set("query-sync-retry.first-response-bytes", size)
 
@@ -634,6 +636,8 @@ func (i *Instance) vmQuery(
 			metric.VMQuerySyncRetryInc(ctx, "failed", retryReason)
 		}
 	}
+	// 每次请求按最终结果计一次：HTTP 层成功时，再看应答体里有没有报失败。
+	metric.TsDBRequestInc(ctx, i.InstanceType(), vmRequestResult(err, data))
 	if err != nil {
 		return metadata.NewMessage(
 			metadata.MsgQueryVictoriaMetrics,

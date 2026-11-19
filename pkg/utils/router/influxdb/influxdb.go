@@ -48,6 +48,7 @@ type Router interface {
 	Close() error
 	Subscribe(ctx context.Context) <-chan *goRedis.Message
 	SubscribeChannels(ctx context.Context, channels ...string) <-chan *goRedis.Message
+	SubscribeChannelsWithState(ctx context.Context, state func(up bool), channels ...string) <-chan *goRedis.Message
 	GetClusterInfo(ctx context.Context) (ClusterInfo, error)
 	GetHostInfo(ctx context.Context) (HostInfo, error)
 	GetTagInfo(ctx context.Context) (TagInfo, error)
@@ -106,11 +107,27 @@ func (r *router) Subscribe(ctx context.Context) <-chan *goRedis.Message {
 }
 
 func (r *router) SubscribeChannels(ctx context.Context, channels ...string) <-chan *goRedis.Message {
-	actualChannels := make([]string, 0)
+	return r.client.Subscribe(ctx, r.channelNames(channels)...).Channel()
+}
+
+// SubscribeChannelsWithState subscribes like SubscribeChannels and reports through state whether the
+// subscription is live: true each time Redis confirms it, again after every reconnect; false when a
+// receive or a health-check ping fails. Nothing is reported before the first confirmation or when ctx
+// stops the subscription. The returned channel closes once ctx is done.
+func (r *router) SubscribeChannelsWithState(
+	ctx context.Context, state func(up bool), channels ...string,
+) <-chan *goRedis.Message {
+	subscription := newStateSubscription(ctx, r.client, state, r.channelNames(channels))
+	go subscription.run(ctx)
+	return subscription.out
+}
+
+func (r *router) channelNames(channels []string) []string {
+	actualChannels := make([]string, 0, len(channels))
 	for _, c := range channels {
 		actualChannels = append(actualChannels, fmt.Sprintf("%s:%s", r.prefix, c))
 	}
-	return r.client.Subscribe(ctx, actualChannels...).Channel()
+	return actualChannels
 }
 
 // GetClusterInfo get all cluster info with map

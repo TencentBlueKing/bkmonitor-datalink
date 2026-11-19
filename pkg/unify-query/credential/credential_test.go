@@ -175,3 +175,17 @@ func TestRedactionDoesNotMutateCredentials(t *testing.T) {
 	require.Equal(t, "fake-secret", settings["redis"].(map[string]any)["password"])
 	require.Contains(t, out["url"], "route=keep")
 }
+
+// A password with an unescaped '/', '?' or '#' ends the authority early: the parser then reports no
+// userinfo and a host made of the credentials, so the raw value is treated as carrying credentials.
+func TestURLWithAtButNoParsedUserinfoIsTreatedAsCredentialed(t *testing.T) {
+	const raw = "http://user:1234/x@192.0.2.16"
+	require.True(t, HasURLCredentials(raw))
+	require.Equal(t, "[invalid URL]", RedactURL(raw))
+	require.Equal(t, "[invalid URL]", URLOrigin(raw))
+
+	const plain = "http://192.0.2.16:9200/select"
+	require.False(t, HasURLCredentials(plain))
+	require.Equal(t, plain, RedactURL(plain))
+	require.Equal(t, "http://192.0.2.16:9200", URLOrigin(plain))
+}

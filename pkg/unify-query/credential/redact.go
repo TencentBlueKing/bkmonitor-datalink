@@ -30,12 +30,20 @@ func parsedURL(value string) (*url.URL, error) {
 	return url.Parse(value)
 }
 
+// userinfoCutShort is true when the parser found no userinfo but the raw value has an '@': a password
+// with an unescaped '/', '?' or '#' ends the authority early, and the parsed host is then made of the
+// credentials (http://user:1234/x@host parses as host user:1234). Such a value is treated as carrying
+// credentials, the same reading as a value that does not parse at all.
+func userinfoCutShort(u *url.URL, value string) bool {
+	return u.User == nil && strings.Contains(value, "@")
+}
+
 func HasURLCredentials(value string) bool {
 	u, err := parsedURL(value)
 	if err != nil {
 		return strings.Contains(value, "@")
 	}
-	if u.User != nil {
+	if u.User != nil || userinfoCutShort(u, value) {
 		return true
 	}
 	for key := range u.Query() {
@@ -49,7 +57,7 @@ func HasURLCredentials(value string) bool {
 // RedactURL removes userinfo and credential query parameters from diagnostics.
 func RedactURL(value string) string {
 	u, err := parsedURL(value)
-	if err != nil {
+	if err != nil || userinfoCutShort(u, value) {
 		return "[invalid URL]"
 	}
 	if !HasURLCredentials(value) {
@@ -64,6 +72,22 @@ func RedactURL(value string) string {
 	}
 	u.RawQuery = query.Encode()
 	return u.String()
+}
+
+// URLOrigin keeps only scheme://host:port, for metric labels: userinfo, path and query
+// are dropped whether or not they look sensitive. A value without a scheme keeps host:port.
+func URLOrigin(value string) string {
+	if value == "" {
+		return ""
+	}
+	u, err := parsedURL(value)
+	if err != nil || u.Host == "" || userinfoCutShort(u, value) {
+		return "[invalid URL]"
+	}
+	if u.Scheme == "" {
+		return u.Host
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // RedactSettings returns a deep copy; authentication consumers keep original values.

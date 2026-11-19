@@ -70,6 +70,30 @@ function package() {
 #   bk-collector/plugins_${goos}_${arch}/definition.yaml
 #   bk-collector/plugins_${goos}_${arch}/templates/*.conf.template
 #   bk-collector/plugins_${goos}_${arch}/bin/bk-collector               <- 打包时编译
+# same_bytes <a> <b>: whether two files hold the same bytes - 0 the same, 1 not. cmp is diffutils and not on every build
+# host; without it the files' sha256sum (coreutils) is compared instead. With neither, or a file that cannot be read,
+# it stops the build saying so: a comparison that could not run is not two templates that differ.
+function same_bytes() {
+  local rc=0
+  if command -v cmp >/dev/null 2>&1; then
+    cmp -s "$1" "$2" || rc=$?
+    if [ ${rc} -gt 1 ]; then
+      echo "cannot compare ${1} with ${2}: cmp exited ${rc}"
+      exit 1
+    fi
+    return ${rc}
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    local a b
+    a=$(sha256sum < "$1") || { echo "cannot read ${1}"; exit 1; }
+    b=$(sha256sum < "$2") || { echo "cannot read ${2}"; exit 1; }
+    [ "${a}" = "${b}" ] || rc=1
+    return ${rc}
+  fi
+  echo "comparing the v3 config templates with v2 needs cmp or sha256sum, and neither is on PATH"
+  exit 1
+}
+
 function package_v3() {
   # 变量声明
   local goos=${1:-'linux'}
@@ -97,7 +121,11 @@ function package_v3() {
   local tpl v2_tpl
   for tpl in ${src}/plugins_${goos}_${arch}/templates/*.template; do
     v2_tpl=${v2_src}/etc/$(basename ${tpl} .template).tpl
-    if ! cmp -s ${tpl} ${v2_tpl}; then
+    if [ ! -f "${v2_tpl}" ]; then
+      echo "v3 config template has no v2 template of its name: ${tpl} ${v2_tpl}"
+      exit 1
+    fi
+    if ! same_bytes "${tpl}" "${v2_tpl}"; then
       echo "v3 config template differs from v2: ${tpl} ${v2_tpl}"
       exit 1
     fi

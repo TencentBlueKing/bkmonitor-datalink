@@ -10,8 +10,10 @@
 package httpmiddleware
 
 import (
+	"io"
 	"net/http"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/optmap"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -34,10 +36,37 @@ func MaxBytes(opt string) MiddlewareFunc {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.ContentLength > int64(n) {
 				logger.Errorf("request entity too large, limit is %d, but got %d", n, r.ContentLength)
+				define.IncReceiverRejected(define.RequestHttp, define.RejectTooLarge)
 				w.WriteHeader(http.StatusRequestEntityTooLarge)
-			} else {
-				next.ServeHTTP(w, r)
+				return
 			}
+			// A chunked body has no length to check up front. Its bytes are
+			// counted as the handler reads them and a body past the limit is
+			// counted once, but it is still read in full: refusing it here
+			// would make the handler fail halfway through the body.
+			if r.ContentLength < 0 && r.Body != nil && r.Body != http.NoBody {
+				r.Body = &chunkedBody{ReadCloser: r.Body, limit: int64(n)}
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// chunkedBody passes a chunked request body through unchanged and counts a
+// chunked_over_limit rejection the first time the bytes read exceed limit.
+type chunkedBody struct {
+	io.ReadCloser
+	limit int64
+	read  int64
+	over  bool
+}
+
+func (b *chunkedBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	b.read += int64(n)
+	if !b.over && b.read > b.limit {
+		b.over = true
+		define.IncReceiverRejected(define.RequestHttp, define.RejectChunkedOverLimit)
+	}
+	return n, err
 }

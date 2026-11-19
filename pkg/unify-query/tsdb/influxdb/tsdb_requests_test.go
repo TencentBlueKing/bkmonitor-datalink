@@ -184,3 +184,59 @@ func TestInfluxHTTPRequestEndedWhileDecodingIsCountedByTheContext(t *testing.T) 
 		}
 	}
 }
+
+// A request InfluxDB answers with a failure is returned as an error by every metadata reader, not read as an
+// empty result; an answer without a failure still reads as before. metrics already returned the request's
+// error at its end and is kept here as a guard.
+func TestInfluxHTTPReadersReturnAFailedRequest(t *testing.T) {
+	previousTransport := http.DefaultTransport
+	transport := &http.Transport{}
+	http.DefaultTransport = transport
+	t.Cleanup(func() { transport.CloseIdleConnections(); http.DefaultTransport = previousTransport })
+	for name, c := range map[string]struct {
+		status int
+		body   string
+		failed bool
+	}{
+		"unavailable": {http.StatusServiceUnavailable, `{}`, true},
+		"answered":    {http.StatusOK, `{"results":[{"statement_id":0}]}`, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(c.status)
+				_, _ = w.Write([]byte(c.body))
+			}))
+			defer server.Close()
+			address, err := url.Parse(server.URL)
+			require.NoError(t, err)
+			host, portText, err := net.SplitHostPort(address.Host)
+			require.NoError(t, err)
+			port, err := strconv.Atoi(portText)
+			require.NoError(t, err)
+			ctx := metadata.InitHashID(context.Background())
+			instance, err := NewInstance(ctx, &Options{
+				Host: host, Port: port, Timeout: time.Second,
+				Protocol: influxrouter.HTTP, ContentType: ContentTypeJson, MaxLimit: 100, MaxSlimit: 100, Curl: &curl.HttpCurl{},
+			})
+			require.NoError(t, err)
+			query := &metadata.Query{DB: "strict", Measurement: "cpu", Field: "value"}
+			end := time.Now()
+			start := end.Add(-time.Hour)
+
+			_, exemplarErr := instance.QueryExemplar(ctx, []string{"trace_id"}, query, start, end)
+			_, namesErr := instance.QueryLabelNames(ctx, query, start, end)
+			_, metricsErr := instance.metrics(ctx, query)
+			_, valuesErr := instance.QueryLabelValues(ctx, query, "host", start, end)
+			for reader, err := range map[string]error{
+				"QueryExemplar": exemplarErr, "QueryLabelNames": namesErr, "metrics": metricsErr, "QueryLabelValues": valuesErr,
+			} {
+				if c.failed {
+					require.Error(t, err, reader)
+				} else {
+					require.NoError(t, err, reader)
+				}
+			}
+		})
+	}
+}

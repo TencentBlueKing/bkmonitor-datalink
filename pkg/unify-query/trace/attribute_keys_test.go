@@ -24,19 +24,26 @@ import (
 )
 
 // spanAttributeKey returns the literal key a call sets on a span: the first argument of Set on a
-// receiver named like a span (span.Set, querySpan.Set), or of an OpenTelemetry attribute constructor
-// (attribute.Int, attribute.String).
+// receiver named like a span (span.Set, querySpan.Set, s.span.Set), or of an OpenTelemetry attribute
+// constructor (attribute.Int, attribute.String).
 func spanAttributeKey(call *ast.CallExpr) (string, bool) {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok || len(call.Args) == 0 {
 		return "", false
 	}
-	receiver, ok := sel.X.(*ast.Ident)
-	if !ok {
+	var receiver string
+	constructor := false
+	switch x := sel.X.(type) {
+	case *ast.Ident:
+		receiver, constructor = x.Name, x.Name == "attribute"
+	case *ast.SelectorExpr:
+		// A span held in a field: s.span.Set, r.writeSpan.Set.
+		receiver = x.Sel.Name
+	default:
 		return "", false
 	}
-	spanSet := sel.Sel.Name == "Set" && strings.HasSuffix(strings.ToLower(receiver.Name), "span")
-	if !spanSet && receiver.Name != "attribute" {
+	spanSet := sel.Sel.Name == "Set" && strings.HasSuffix(strings.ToLower(receiver), "span")
+	if !spanSet && !constructor {
 		return "", false
 	}
 	literal, ok := call.Args[0].(*ast.BasicLit)
@@ -97,12 +104,13 @@ func TestNoSpanAttributeKeyIsAnotherKeysObjectPath(t *testing.T) {
 	}
 	sort.Strings(conflicts)
 	require.Empty(t, conflicts)
-	// Positive control: the walk saw the keys unify-query sets, through span.Set and through the
-	// attribute constructors, dotted ones among them.
+	// Positive control: the walk saw the keys unify-query sets, through span.Set, through a span held in
+	// a field (streamed is set only as s.span.Set) and through the attribute constructors.
 	require.GreaterOrEqual(t, len(where), 500)
 	require.Contains(t, where, "query-cost")
 	require.Contains(t, where, "query-profile.points")
 	require.Contains(t, where, "query-profile.result-points")
+	require.Contains(t, where, "streamed")
 }
 
 func nextDot(key string, after int) int {

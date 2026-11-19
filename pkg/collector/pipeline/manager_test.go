@@ -37,7 +37,7 @@ processorx:
       config:
 `
 		conf := confengine.MustLoadConfigContent(content)
-		_, err := parseProcessors("x", conf, nil)
+		_, err := parseProcessors("x", conf, nil, nil)
 		assert.Error(t, err)
 	})
 
@@ -48,7 +48,7 @@ processor:
       config:
 `
 		conf := confengine.MustLoadConfigContent(content)
-		_, err := parseProcessors("x", conf, nil)
+		_, err := parseProcessors("x", conf, nil, nil)
 		assert.NoError(t, err)
 	})
 
@@ -61,7 +61,7 @@ processor:
       config:
 `
 		conf := confengine.MustLoadConfigContent(content)
-		_, err := parseProcessors("x", conf, nil)
+		_, err := parseProcessors("x", conf, nil, nil)
 		assert.NoError(t, err)
 	})
 
@@ -72,7 +72,7 @@ processor:
       config:
 `
 		conf := confengine.MustLoadConfigContent(content)
-		_, err := parseProcessors("x", conf, nil)
+		_, err := parseProcessors("x", conf, nil, nil)
 		assert.NoError(t, err)
 	})
 }
@@ -85,7 +85,7 @@ pipelinex:
       config:
 `
 		conf := confengine.MustLoadConfigContent(content)
-		_, err := parsePipelines("x", conf, nil)
+		_, err := parsePipelines("x", conf, nil, nil)
 		assert.Error(t, err)
 	})
 
@@ -96,7 +96,7 @@ pipeline:
       config:
 `
 		conf := confengine.MustLoadConfigContent(content)
-		_, err := parsePipelines("x", conf, nil)
+		_, err := parsePipelines("x", conf, nil, nil)
 		assert.NoError(t, err)
 	})
 
@@ -110,7 +110,7 @@ pipeline:
         - "rate_limiter/token_bucket"
 `
 		conf := confengine.MustLoadConfigContent(content)
-		_, err := parsePipelines("x", conf, nil)
+		_, err := parsePipelines("x", conf, nil, nil)
 		assert.NoError(t, err)
 	})
 
@@ -125,7 +125,7 @@ pipeline:
         - "rate_limiter/token_bucket"
 `
 		conf := confengine.MustLoadConfigContent(content)
-		_, err := parsePipelines("x", conf, nil)
+		_, err := parsePipelines("x", conf, nil, nil)
 		assert.NoError(t, err)
 	})
 }

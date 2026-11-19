@@ -164,6 +164,7 @@ func JwtAuthMiddleware(enabled bool, publicKey string, defaultAppCodeSpaces map[
 					res["trace_id"] = span.TraceID()
 				}
 
+				metadata.RecordRequestUnauthorized(ctx)
 				c.JSON(http.StatusUnauthorized, res)
 				c.Abort()
 			} else {

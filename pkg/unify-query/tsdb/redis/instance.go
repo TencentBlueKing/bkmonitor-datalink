@@ -121,6 +121,8 @@ func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time
 
 	sto := MetricStorage{ctx: stoCtx, storagePrefix: i.ClusterMetricPrefix}
 	metricMeta, err := sto.GetMetricMeta(metricName)
+	// 读失败在这里被吞掉（返回空结果），仍按存储请求计。
+	metric.TsDBRequestInc(ctx, i.InstanceType(), err)
 	if err != nil {
 		_ = metadata.NewMessage(
 			metadata.MsgQueryRedis,
@@ -131,6 +133,7 @@ func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time
 	df, opts := metricMeta.toDataframe()
 	for _, clusterName := range clusterNames {
 		dfPointer, err := sto.LoadMetricDataFrame(metricName, clusterName, opts)
+		metric.TsDBRequestInc(ctx, i.InstanceType(), err)
 		if err != nil {
 			metadata.NewMessage(
 				metadata.MsgQueryRedis,

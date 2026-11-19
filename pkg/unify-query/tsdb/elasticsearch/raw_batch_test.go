@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -55,6 +56,26 @@ func TestRawBatchErrorsKeepSensitiveCausesAndTypesPrivate(t *testing.T) {
 	transportErr := newRawBatchTransportError("request", 0, cause)
 	assert.Nil(t, errors.Unwrap(transportErr))
 	assert.NotContains(t, transportErr.Error(), "endpoint-and-reason-sentinel")
+
+	// The cause kept for classification carries only types: nothing in the chain renders the sentinel.
+	for name, c := range map[string]struct {
+		cause  error
+		status int
+	}{
+		"es status": {&elastic.Error{Status: http.StatusServiceUnavailable, Details: &elastic.ErrorDetails{
+			Type: "exception", Reason: "endpoint-and-reason-sentinel"}}, http.StatusBadGateway},
+		"unreachable": {&url.Error{Op: "Get", URL: "http://endpoint-and-reason-sentinel", Err: &net.OpError{
+			Op: "dial", Err: errors.New("endpoint-and-reason-sentinel")}}, http.StatusBadGateway},
+		"canceled": {fmt.Errorf("endpoint-and-reason-sentinel: %w", context.Canceled), http.StatusBadRequest},
+		"deadline": {fmt.Errorf("endpoint-and-reason-sentinel: %w", context.DeadlineExceeded), http.StatusGatewayTimeout},
+	} {
+		err := error(newRawBatchTransportError("request", 0, c.cause))
+		for link := err; link != nil; link = errors.Unwrap(link) {
+			assert.NotContains(t, link.Error(), "endpoint-and-reason-sentinel", name)
+		}
+		assert.Equal(t, c.status, metadata.FailureStatus(err), name)
+	}
+	assert.ErrorIs(t, newRawBatchTransportError("request", 0, fmt.Errorf("x: %w", context.Canceled)), context.Canceled)
 
 	assert.Equal(t, "index_not_found_exception", sanitizeRawBatchErrorType("index_not_found_exception"))
 	assert.Equal(t, "unknown", sanitizeRawBatchErrorType("secret_type_sentinel"))

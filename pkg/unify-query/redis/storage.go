@@ -22,6 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 )
 
 // NewRedisInstance : https://redis.uptrace.dev/guide/universal.html
@@ -94,16 +95,16 @@ func (s *StorageClient) FormatStorageInfo(keys []string, getValue func(string) (
 			return nil, fmt.Errorf("failed to get storage config for key %s: %w", key, err)
 		}
 		if value == "" {
-			return nil, fmt.Errorf("storage config for key %s must not be empty", key)
+			return nil, metric.ConfigSyncDecodeError(fmt.Errorf("storage config for key %s must not be empty", key))
 		}
 
 		var data *Storage
 		err = json.Unmarshal([]byte(value), &data)
 		if err != nil {
-			return nil, fmt.Errorf("failed to unmarshal storage config for key %s: %w", key, err)
+			return nil, metric.ConfigSyncDecodeError(fmt.Errorf("failed to unmarshal storage config for key %s: %w", key, err))
 		}
 		if data == nil {
-			return nil, fmt.Errorf("storage config for key %s must not be null", key)
+			return nil, metric.ConfigSyncDecodeError(fmt.Errorf("storage config for key %s must not be null", key))
 		}
 		result[storageID] = data
 	}

@@ -21,6 +21,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -301,6 +302,7 @@ func searchExactTotalHits(ctx context.Context, client *elastic.Client, indexes [
 		search.AllowPartialSearchResults(false)
 	}
 	res, err := search.Do(ctx)
+	metric.TsDBRequestInc(ctx, metadata.ElasticsearchStorageType, withBackendStatus(err))
 	if err != nil {
 		return 0, err
 	}

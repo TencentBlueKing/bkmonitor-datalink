@@ -82,8 +82,8 @@ func observePromQLResultCapacity(ctx context.Context, result any, instant bool) 
 	}
 	span := otelTrace.SpanFromContext(ctx)
 	span.SetAttributes(
-		attribute.Int("query-cost.result-points", points),
-		attribute.Int("query-cost.result-point-capacity", capacity),
+		attribute.Int("query-profile.result-points", points),
+		attribute.Int("query-profile.result-point-capacity", capacity),
 	)
 	metric.QueryResultCapacityObserve(ctx, queryType, points, capacity)
 }

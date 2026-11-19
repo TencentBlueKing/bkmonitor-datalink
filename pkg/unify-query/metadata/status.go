@@ -65,6 +65,9 @@ func SetStatus(ctx context.Context, code, message string) {
 			Message: message,
 		}
 		md.set(ctx, statusKey(ctx), status)
+		if code == QueryTsPartial || code == QueryRawPartial {
+			recordRequestPartial(ctx)
+		}
 	}
 }
 

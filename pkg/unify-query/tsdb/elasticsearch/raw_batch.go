@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -101,6 +102,17 @@ type RawBatchMemberResult struct {
 type RawBatchTransportError struct {
 	Status int
 	Kind   string
+	// cause 只给失败分类用（FailureStatus、存储请求计数），只含类型，不含原始错误。
+	cause error
+}
+
+// Unwrap 交出分类用的原因：ES 的状态码、取消或超时、没能到达 ES、应答不成形。原始错误带着地址和 ES 的原因，
+// 不经 Error() 也不经 Unwrap 交出。
+func (e *RawBatchTransportError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
 }
 
 func (e *RawBatchTransportError) Error() string {
@@ -131,6 +143,16 @@ func (e *RawBatchTransportError) Error() string {
 type RawBatchChildError struct {
 	Status int
 	Type   string
+	// cause 只给失败分类用，是子请求的 ES 状态码，不进 Error() 的文本。
+	cause error
+}
+
+// Unwrap 交出分类用的原因，与单条查询按 ES 状态码分类同一口径。
+func (e *RawBatchChildError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
 }
 
 func (e *RawBatchChildError) Error() string {
@@ -254,8 +276,16 @@ func (i *Instance) ExecuteRawBatch(
 	startedAt := time.Now()
 	wireAttempted := false
 	wireEvent := metric.QueryRawESBatchEventWireTransportFailure
+	// 有成员失败时整批的结果：应答是 2xx，失败写在应答体里。
+	var bodyFailure error
 	defer func() {
 		if wireAttempted {
+			// 整批请求按应答体检查后的最终结果计一次：应答空、解码失败、条数对不上都是后端失败。
+			requestResult := err
+			if requestResult == nil {
+				requestResult = bodyFailure
+			}
+			metric.TsDBRequestInc(ctx, metadata.ElasticsearchStorageType, requestResult)
 			if wireEvent != "" {
 				metric.QueryRawESBatchEventInc(ctx, wireEvent)
 			}
@@ -340,10 +370,7 @@ func (i *Instance) ExecuteRawBatch(
 		span.Set("es_batch_took_millis", *multiSearchResult.TookInMillis)
 	}
 	if len(multiSearchResult.Responses) != len(batch.members) {
-		return nil, &RawBatchTransportError{
-			Status: response.StatusCode,
-			Kind:   "response_count_mismatch",
-		}
+		return nil, newRawBatchTransportError("response_count_mismatch", response.StatusCode, nil)
 	}
 	recordRawBatchResponseTrace(span, batch.members, multiSearchResult.Responses)
 
@@ -378,6 +405,7 @@ func (i *Instance) ExecuteRawBatch(
 		len(results)-childErrors,
 	)
 	if childErrors > 0 {
+		bodyFailure = &metadata.BackendBodyError{Message: fmt.Sprintf("%d of %d members failed", childErrors, len(results))}
 		metric.QueryRawESBatchEventAdd(ctx, metric.QueryRawESBatchEventWireChildFailure, childErrors)
 		span.Set("es_batch_item_errors", childErrors)
 		if childErrors < len(results) {
@@ -517,6 +545,7 @@ func (i *Instance) executeRawBatchMember(
 	result.Ordinal = member.Ordinal
 	defer func() {
 		if recover() != nil {
+			metric.PanicInc(ctx, metric.PanicSiteStorage)
 			result.Rows = nil
 			result.Size = 0
 			result.Total = 0
@@ -619,15 +648,22 @@ func rawBatchChildError(result *elastic.SearchResult) error {
 		return &RawBatchChildError{Type: "nil_response"}
 	}
 	if result.Error != nil {
+		var cause error
+		// 桶数超限是调用方的查询要的桶太多，与单条查询的 withBackendStatus 一样不带状态码。
+		if result.Status > 0 && !exceedsBucketLimit(result.Error) {
+			cause = &metadata.BackendStatusError{Status: result.Status}
+		}
 		return &RawBatchChildError{
 			Status: result.Status,
 			Type:   sanitizeRawBatchErrorType(result.Error.Type),
+			cause:  cause,
 		}
 	}
 	if result.Status >= http.StatusBadRequest {
 		return &RawBatchChildError{
 			Status: result.Status,
 			Type:   "http_status",
+			cause:  &metadata.BackendStatusError{Status: result.Status},
 		}
 	}
 	if hasFailedSearchShards(result) {
@@ -670,5 +706,44 @@ func newRawBatchTransportError(kind string, status int, cause error) *RawBatchTr
 	return &RawBatchTransportError{
 		Status: status,
 		Kind:   kind,
+		cause:  rawBatchTransportCause(kind, cause),
 	}
+}
+
+// 分类用的原因，都不带地址、应答内容或 ES 的原因。两者都按后端失败归类（FailureStatus 的 502）。
+var (
+	errRawBatchMalformedResponse = errors.New("elasticsearch raw batch response is malformed")
+	errRawBatchUnreachable       = errors.New("elasticsearch raw batch got no answer")
+)
+
+// rawBatchTransportCause 按单条查询的口径给整批失败分类，只留类型。
+func rawBatchTransportCause(kind string, cause error) error {
+	switch kind {
+	case "empty_response", "decode", "response_count_mismatch":
+		return &metadata.BackendResponseError{Err: errRawBatchMalformedResponse}
+	}
+	switch {
+	case cause == nil:
+		return nil
+	case errors.Is(cause, context.Canceled):
+		return context.Canceled
+	case errors.Is(cause, context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	}
+	var elasticErr *elastic.Error
+	if errors.As(cause, &elasticErr) && elasticErr != nil {
+		// 与 withBackendStatus 相同：桶数超限是调用方的查询要的桶太多，不带状态码。
+		if elasticErr.Status == 0 || exceedsBucketLimit(elasticErr.Details) {
+			return nil
+		}
+		return &metadata.BackendStatusError{Status: elasticErr.Status}
+	}
+	var netErr net.Error
+	if errors.As(cause, &netErr) {
+		if netErr.Timeout() {
+			return context.DeadlineExceeded
+		}
+		return &metadata.BackendResponseError{Err: errRawBatchUnreachable}
+	}
+	return nil
 }

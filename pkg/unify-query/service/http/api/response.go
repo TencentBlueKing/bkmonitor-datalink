@@ -33,6 +33,7 @@ type response struct {
 }
 
 func (r *response) failed(ctx context.Context, err error) {
+	metadata.RecordRequestFailure(ctx, err)
 	log.Errorf(ctx, "%s", err.Error())
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusFailed, user.SpaceUID, user.Source)
@@ -64,6 +65,7 @@ func (r *response) streamed(ctx context.Context, err error) {
 	user := metadata.GetUser(ctx)
 	status := metric.StatusSuccess
 	if err != nil {
+		metadata.RecordRequestFailure(ctx, err)
 		log.Errorf(ctx, "%s", err.Error())
 		status = metric.StatusFailed
 	}

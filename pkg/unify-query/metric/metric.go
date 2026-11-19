@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/credential"
 )
 
 const (
@@ -268,8 +269,10 @@ func APIRequestSecond(ctx context.Context, duration time.Duration, api, spaceUID
 	observe(ctx, metric, duration.Seconds())
 }
 
+// TsDBRequestSecond labels url with the backend origin only: a backend address may carry
+// credentials, and the label keeps the prefix that existing groupings by url already use.
 func TsDBRequestSecond(ctx context.Context, duration time.Duration, tsdbType, url string) {
-	metric, _ := tsDBRequestSecondHistogram.GetMetricWithLabelValues(tsdbType, url)
+	metric, _ := tsDBRequestSecondHistogram.GetMetricWithLabelValues(tsdbType, credential.URLOrigin(url))
 	observe(ctx, metric, duration.Seconds())
 }
 

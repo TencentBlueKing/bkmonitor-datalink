@@ -477,21 +477,21 @@ func (f *QueryFactory) FormatDataToQueryResult(
 		}
 	}
 	profile := f.query.CostProfile
-	span.Set("query-cost.rows", len(list))
-	span.Set("query-cost.series", len(res.Timeseries))
-	span.Set("query-cost.points", points)
-	span.Set("query-cost.label-bytes", labelBytes)
+	span.Set("query-profile.rows", len(list))
+	span.Set("query-profile.series", len(res.Timeseries))
+	span.Set("query-profile.points", points)
+	span.Set("query-profile.label-bytes", labelBytes)
 	if len(list) > 0 {
-		span.Set("query-cost.series-rows-ratio", float64(len(res.Timeseries))/float64(len(list)))
+		span.Set("query-profile.series-rows-ratio", float64(len(res.Timeseries))/float64(len(list)))
 	}
 	if len(res.Timeseries) > 0 {
-		span.Set("query-cost.points-per-series", float64(points)/float64(len(res.Timeseries)))
+		span.Set("query-profile.points-per-series", float64(points)/float64(len(res.Timeseries)))
 	}
-	span.Set("query-cost.select-all", profile.SelectAllCandidate)
-	span.Set("query-cost.range-function", profile.RangeFunction)
-	span.Set("query-cost.step-less-than-window", profile.StepLessThanWindow)
-	span.Set("query-cost.ast-branches", profile.ASTBranchCount)
-	span.Set("query-cost.sql-pushdown", profile.SQLPushdown)
+	span.Set("query-profile.select-all", profile.SelectAllCandidate)
+	span.Set("query-profile.range-function", profile.RangeFunction)
+	span.Set("query-profile.step-less-than-window", profile.StepLessThanWindow)
+	span.Set("query-profile.ast-branches", profile.ASTBranchCount)
+	span.Set("query-profile.sql-pushdown", profile.SQLPushdown)
 	metric.QueryCostProfileObserve(
 		ctx,
 		profile.SelectAllCandidate,

@@ -349,6 +349,7 @@ func (i *Instance) queryFieldMaps(ctx context.Context, query *metadata.Query, st
 
 	defer func() {
 		if r := recover(); r != nil {
+			metric.PanicInc(ctx, metric.PanicSiteStorage)
 			err = fmt.Errorf("es query error: %s", r)
 		}
 	}()
@@ -443,6 +444,7 @@ func normalizeFieldsMap(fieldsMap metadata.FieldsMap, fieldAlias metadata.FieldA
 func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (size int64, total int64, option *metadata.ResultTableOption, err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			metric.PanicInc(ctx, metric.PanicSiteStorage)
 			err = fmt.Errorf("doris query panic: %s", r)
 		}
 	}()

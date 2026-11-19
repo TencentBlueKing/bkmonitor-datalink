@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"syscall"
 	"testing"
 
@@ -70,6 +71,14 @@ func TestFailureStatus(t *testing.T) {
 		"one route failed, another timed out": {err: ErrorWithCauses("query error: a query error: b",
 			fmt.Errorf("a: %w", refused()), fmt.Errorf("b: %w", context.DeadlineExceeded)), want: http.StatusGatewayTimeout},
 		"words alone of a refused connection": {err: errors.New("dial tcp: connection refused"), want: http.StatusBadRequest},
+
+		// A read or write past its deadline is a timeout, not a failed backend: net.Error.Timeout() is true.
+		"a read that passed its i/o deadline": {err: &url.Error{Op: "Post", URL: "http://backend.example.test/",
+			Err: &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}}, want: http.StatusGatewayTimeout},
+		"an i/o deadline wrapped by the caller": {err: fmt.Errorf("查询异常: %w", os.ErrDeadlineExceeded), want: http.StatusGatewayTimeout},
+		"one route refused, another passed its i/o deadline": {err: ErrorWithCauses("query error: a query error: b",
+			fmt.Errorf("a: %w", refused()), fmt.Errorf("b: %w", &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded})),
+			want: http.StatusGatewayTimeout},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

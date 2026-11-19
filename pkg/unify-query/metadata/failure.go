@@ -79,7 +79,8 @@ func (e *BackendResponseError) Error() string { return e.Err.Error() }
 func (e *BackendResponseError) Unwrap() error { return e.Err }
 
 // FailureStatus 是查询失败时回给调用方的 HTTP 状态码，所有失败响应共用，只按错误链里的类型判断，不匹配文本：
-//   - 504：存储或查询引擎在截止时间内没有应答（context.DeadlineExceeded、查询引擎的 ErrQueryTimeout）；
+//   - 504：存储或查询引擎在截止时间内没有应答（context.DeadlineExceeded、网络层的超时 net.Error.Timeout()，
+//     如读写截止时间到了的 i/o timeout，以及查询引擎的 ErrQueryTimeout）；
 //   - 502：后端本身失败，与请求无关、调用方也改不了：非超时的网络或传输错误（连接被拒、重置、DNS 等，
 //     包括本服务自己的 Redis、Consul 等依赖），读后端应答体失败（BackendResponseError），后端答复 5xx、429（后端自身的负载），
 //     或 401/403（本服务访问后端的凭据或配置）；
@@ -87,13 +88,35 @@ func (e *BackendResponseError) Unwrap() error { return e.Err }
 //     以及只在应答正文里说明失败、没有类型化原因的情况。
 func FailureStatus(err error) int {
 	var engineTimeout promPromql.ErrQueryTimeout
-	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &engineTimeout) {
+	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &engineTimeout) || networkTimedOut(err) {
 		return http.StatusGatewayTimeout
 	}
 	if backendFailed(err) {
 		return http.StatusBadGateway
 	}
 	return http.StatusBadRequest
+}
+
+// networkTimedOut 遍历整条错误链（含多路合并的每一路），有一层是网络层的超时（net.Error.Timeout()）即为真。
+// 不用 errors.As：它停在第一个 net.Error 上，多路查询里先遇到的可能是另一路非超时的网络错误。
+func networkTimedOut(err error) bool {
+	if err == nil {
+		return false
+	}
+	if network, ok := err.(net.Error); ok && network.Timeout() {
+		return true
+	}
+	switch unwrapped := err.(type) {
+	case interface{ Unwrap() []error }:
+		for _, cause := range unwrapped.Unwrap() {
+			if networkTimedOut(cause) {
+				return true
+			}
+		}
+	case interface{ Unwrap() error }:
+		return networkTimedOut(unwrapped.Unwrap())
+	}
+	return false
 }
 
 // backendFailed 遍历整条错误链（含多路合并的每一路），有一路是后端本身的失败即为真。

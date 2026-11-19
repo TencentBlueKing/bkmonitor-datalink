@@ -205,6 +205,9 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 	)
 	metric.TsDBRequestInc(ctx, i.InstanceType()+"_http", influxRequestResult(err, res))
 	metric.TsDBRequestBytes(ctx, size, i.InstanceType())
+	if err != nil {
+		return nil, err
+	}
 
 	return res, nil
 }
@@ -912,6 +915,9 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 		)
 		metric.TsDBRequestInc(ctx, i.InstanceType()+"_http", influxRequestResult(err, res))
 		metric.TsDBRequestBytes(ctx, size, i.InstanceType())
+		if err != nil {
+			return nil, err
+		}
 
 		span.Set("query-cost", time.Since(startAnaylize).String())
 
@@ -1175,6 +1181,9 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		)
 		metric.TsDBRequestInc(ctx, i.InstanceType()+"_http", influxRequestResult(err, res))
 		metric.TsDBRequestBytes(ctx, size, i.InstanceType())
+		if err != nil {
+			return nil, err
+		}
 
 		span.Set("query-cost", time.Since(startAnaylize).String())
 		span.Set("response-size", size)

@@ -66,13 +66,13 @@ func (q *Query) toBkDataQueryMetric(ctx context.Context, spaceUid string, aggreg
 	}
 	costProfile.RangeFunction, costProfile.Window, costProfile.Step = q.queryCostRangeProfile()
 	costProfile.StepLessThanWindow = costProfile.Window > 0 && costProfile.Step > 0 && costProfile.Step < costProfile.Window
-	span.Set("query-cost.select-all-candidate", costProfile.SelectAllCandidate)
-	span.Set("query-cost.range-function", costProfile.RangeFunction)
-	span.Set("query-cost.step-less-than-window", costProfile.StepLessThanWindow)
-	span.Set("query-cost.ast-branches", costProfile.ASTBranchCount)
-	span.Set("query-cost.sql-pushdown", costProfile.SQLPushdown)
-	span.Set("query-cost.window", costProfile.Window)
-	span.Set("query-cost.step", costProfile.Step)
+	span.Set("query-profile.select-all-candidate", costProfile.SelectAllCandidate)
+	span.Set("query-profile.range-function", costProfile.RangeFunction)
+	span.Set("query-profile.step-less-than-window", costProfile.StepLessThanWindow)
+	span.Set("query-profile.ast-branches", costProfile.ASTBranchCount)
+	span.Set("query-profile.sql-pushdown", costProfile.SQLPushdown)
+	span.Set("query-profile.window", costProfile.Window)
+	span.Set("query-profile.step", costProfile.Step)
 
 	query := &metadata.Query{
 		StorageType:   metadata.BkSqlStorageType,

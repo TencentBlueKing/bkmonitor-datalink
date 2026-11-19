@@ -32,7 +32,8 @@ func (d *JSONDecoder) Decode(ctx context.Context, reader io.Reader, resp *Respon
 	for {
 		select {
 		case <-ctx.Done():
-			err = fmt.Errorf("context timeout")
+			// 保留 ctx.Err()：超时和取消要按各自的类型归类，不能算成后端失败。
+			err = fmt.Errorf("influxdb response decode stopped: %w", ctx.Err())
 			return size, err
 		default:
 			var line []byte

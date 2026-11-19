@@ -118,7 +118,11 @@ func ConfigSyncEnable(source string, watchers ...string) {
 	}
 	configSyncUpMu.Lock()
 	defer configSyncUpMu.Unlock()
-	parts := configSyncWatchers(source)
+	parts := configSyncUpParts[source]
+	if parts == nil {
+		parts = map[string]bool{}
+		configSyncUpParts[source] = parts
+	}
 	for _, watcher := range watchers {
 		if _, reported := parts[watcher]; !reported {
 			parts[watcher] = false
@@ -127,13 +131,14 @@ func ConfigSyncEnable(source string, watchers ...string) {
 	configSyncSetUpLocked(source, parts)
 }
 
-func configSyncWatchers(source string) map[string]bool {
-	parts := configSyncUpParts[source]
-	if parts == nil {
-		parts = map[string]bool{}
-		configSyncUpParts[source] = parts
-	}
-	return parts
+// configSyncEnabled reports whether the deployment enabled the source. A sync of a source it does not
+// use, such as a diagnostic refresh of storage read from Consul with no Consul configured, leaves no
+// series.
+func configSyncEnabled(source string) bool {
+	configSyncUpMu.Lock()
+	defer configSyncUpMu.Unlock()
+	_, enabled := configSyncUpParts[source]
+	return enabled
 }
 
 // configSyncSetUpLocked sets up from the watchers' states: 1 only when there is at least one and every
@@ -151,31 +156,37 @@ func configSyncSetUpLocked(source string, parts map[string]bool) {
 	configSyncUp.WithLabelValues(source).Set(value)
 }
 
-// ConfigSyncSucceeded records now as the source's last successful sync.
+// ConfigSyncSucceeded records now as the source's last successful sync. A subscribed or watched source
+// the deployment did not enable is left without series.
 func ConfigSyncSucceeded(source string) {
-	if source != ConfigSyncSourceSpaceRouterFull && !configSyncWatchSource(source) {
+	if source != ConfigSyncSourceSpaceRouterFull && (!configSyncWatchSource(source) || !configSyncEnabled(source)) {
 		return
 	}
 	configSyncLastSuccess.WithLabelValues(source).Set(float64(time.Now().UnixNano()) / float64(time.Second))
 }
 
-// ConfigSyncFailed counts one failed sync of a subscribed or watched source, with err's reason.
+// ConfigSyncFailed counts one failed sync of a subscribed or watched source, with err's reason; nothing
+// for a source the deployment did not enable.
 func ConfigSyncFailed(ctx context.Context, source string, err error) {
-	if err == nil || !configSyncWatchSource(source) {
+	if err == nil || !configSyncWatchSource(source) || !configSyncEnabled(source) {
 		return
 	}
 	counterInc(ctx, configSyncFailures.WithLabelValues(source, ConfigSyncReason(err)))
 }
 
 // ConfigSyncSetUp sets whether one watcher of the source is live. The source is up only while every
-// watcher enabled for it, and every one that has reported, is.
+// watcher enabled for it, and every one that has reported, is. A source the deployment did not enable is
+// left without series.
 func ConfigSyncSetUp(source, watcher string, up bool) {
 	if !configSyncWatchSource(source) {
 		return
 	}
 	configSyncUpMu.Lock()
 	defer configSyncUpMu.Unlock()
-	parts := configSyncWatchers(source)
+	parts := configSyncUpParts[source]
+	if parts == nil {
+		return
+	}
 	parts[watcher] = up
 	configSyncSetUpLocked(source, parts)
 }

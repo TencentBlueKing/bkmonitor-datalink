@@ -14,8 +14,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +28,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/proxy"
 )
 
 // counterValue reads one cell of a counter family from the default registry; ok is false when the cell does not exist.
@@ -309,5 +312,62 @@ func TestRequestOutcomeCellsArePrebuilt(t *testing.T) {
 	for _, site := range []string{"http_handler", "query_worker", "storage"} {
 		_, ok := counterValue(t, "unify_query_panics_total", map[string]string{"site": site})
 		require.True(t, ok, site)
+	}
+}
+
+// deadlineWriter stands for net/http's response writer once the write deadline has passed: the status
+// goes out and every body write fails.
+type deadlineWriter struct{ http.ResponseWriter }
+
+func (deadlineWriter) Write([]byte) (int, error) { return 0, os.ErrDeadlineExceeded }
+
+// A response that fails to go out is the write-back to the caller failing, counted as canceled; a
+// response that could not be encoded, so that nothing went out, is internal. The same holds for the plain
+// JSON answer and for the proxy's.
+func TestRequestOutcomeResponseFailures(t *testing.T) {
+	mock.Init()
+	gin.SetMode(gin.TestMode)
+	engine, public, _ := newEngine()
+	unencodable := map[string]any{"value": math.Inf(1)}
+	public.GET("/outcome/write-timeout", succeed)
+	public.GET("/outcome/proxy-write-timeout", func(c *gin.Context) {
+		proxy.WriteJSON(c.Request.Context(), c, http.StatusOK, gin.H{"ok": true})
+	})
+	public.GET("/outcome/encode-failure", func(c *gin.Context) {
+		(&response{c: c}).success(c.Request.Context(), unencodable)
+	})
+	public.GET("/outcome/proxy-encode-failure", func(c *gin.Context) {
+		proxy.WriteJSON(c.Request.Context(), c, http.StatusOK, unencodable)
+	})
+	prebuildRequestOutcomes(engine)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "write-timeout") {
+			w = deadlineWriter{w}
+		}
+		engine.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	for path, outcome := range map[string]string{
+		"/outcome/write-timeout":        "canceled",
+		"/outcome/proxy-write-timeout":  "canceled",
+		"/outcome/encode-failure":       "internal",
+		"/outcome/proxy-encode-failure": "internal",
+	} {
+		t.Run(path, func(t *testing.T) {
+			before := make(map[string]float64)
+			for _, o := range []string{"canceled", "unauthorized", "internal", "timeout", "upstream_error", "client_error", "partial", "success"} {
+				before[o] = outcomeValue(t, path, o)
+			}
+			res, err := outcomeClient.Get(server.URL + path)
+			require.NoError(t, err)
+			drain(t, res)
+			require.Equal(t, http.StatusOK, res.StatusCode)
+			waitOutcome(t, path, outcome, before[outcome]+1)
+			for o, value := range before {
+				if o != outcome {
+					require.Equal(t, value, outcomeValue(t, path, o), "outcome %s", o)
+				}
+			}
+		})
 	}
 }

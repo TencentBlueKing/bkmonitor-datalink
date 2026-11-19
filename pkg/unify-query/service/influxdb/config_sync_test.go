@@ -21,6 +21,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 )
 
 // syncSample reads one config sync series from the process registry.
@@ -72,6 +73,8 @@ func TestInfluxDBStorageWatcherSyncMetrics(t *testing.T) {
 	StorageSource, Timeout, ContentType = "consul", "30s", "application/x-msgpack"
 	PerQueryMaxGoroutine, ChunkSize, MaxLimit, MaxSLimit, Tolerance = 2, 20000, 5000000, 200000, 5
 
+	// loopReloadStorage enables storage before its watcher reports; only this service's watcher is driven here.
+	metric.ConfigSyncEnable(metric.ConfigSyncSourceStorage, metric.ConfigSyncWatcherInfluxDB)
 	s := &Service{ctx: context.Background()}
 	watching := true
 	s.setStorageSync(&watching, nil)

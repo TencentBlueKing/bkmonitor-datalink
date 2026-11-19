@@ -64,20 +64,23 @@ func requestHandlerLabel(c *gin.Context) string {
 //  1. canceled：调用方断开，即入站请求的 context 已取消；或者响应写回调用方失败。
 //     不对错误链用 errors.Is：多路查询把各路错误合在一起，其中一路被本服务内部取消，不等于调用方断开。
 //  2. unauthorized：本服务的 JWT 鉴权拒绝。
-//  3. internal：恢复的 panic，以及不是由失败分类得出的 5xx。
+//  3. internal：恢复的 panic，没能编码出响应，以及不是由失败分类得出的 5xx。
 //  4. timeout：失败响应所依据的错误经 FailureStatus 得 504；没有记下错误时按答复的状态码。
 //  5. upstream_error：同上得 502。
 //  6. client_error：同上得其余 4xx。
 //  7. partial：有路由失败，返回的是其余结果。
 //  8. success。
 func requestOutcome(inbound context.Context, c *gin.Context, record metadata.RequestOutcomeSnapshot) string {
-	if inbound.Err() == context.Canceled || record.ResponseWriteFailure || proxy.ResponseWriteError(c) != nil {
+	// 写响应失败：代理记下的写出错误，或者 gin 的 Render 放进 c.Errors 的错误（本服务不另用 c.Error）。
+	// 已经开始写出的是写回调用方失败；什么都没写出的是本服务没能编码出响应。
+	responseFailed := proxy.ResponseWriteError(c) != nil || len(c.Errors) > 0
+	if inbound.Err() == context.Canceled || record.ResponseWriteFailure || (responseFailed && c.Writer.Written()) {
 		return metric.OutcomeCanceled
 	}
 	if record.Unauthorized {
 		return metric.OutcomeUnauthorized
 	}
-	if record.Panicked {
+	if record.Panicked || responseFailed {
 		return metric.OutcomeInternal
 	}
 	status := c.Writer.Status()

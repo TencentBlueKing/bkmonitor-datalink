@@ -10,6 +10,7 @@
 package influxdb
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"net/http"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	influxrouter "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
@@ -98,5 +100,87 @@ func TestInfluxHTTPRequestsAreCountedAfterTheBodyCheck(t *testing.T) {
 				require.Equal(t, want, influxHTTPRequestCount(t, o), "outcome %s", o)
 			}
 		})
+	}
+}
+
+// endingBody hands over the whole answer on its first read, after end has ended the request's context:
+// the decoder then meets the end between two chunks it already holds, as when a query's deadline passes
+// while a large answer is decoded.
+type endingBody struct {
+	req   *http.Request
+	data  *bytes.Reader
+	end   func(*http.Request)
+	ended bool
+}
+
+func (b *endingBody) Read(p []byte) (int, error) {
+	if !b.ended {
+		b.ended = true
+		b.end(b.req)
+	}
+	return b.data.Read(p)
+}
+
+func (b *endingBody) Close() error { return nil }
+
+type endingTransport struct {
+	body []byte
+	end  func(*http.Request)
+}
+
+func (t *endingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK, Status: "200 OK", Header: http.Header{}, Request: req,
+		Body: &endingBody{req: req, data: bytes.NewReader(t.body), end: t.end},
+	}, nil
+}
+
+// A request whose context ends while its answer is decoded is counted as a timeout or a cancel, with
+// either decoder: neither is a failure of InfluxDB.
+func TestInfluxHTTPRequestEndedWhileDecodingIsCountedByTheContext(t *testing.T) {
+	chunk, err := (&decoder.Response{Results: []decoder.Result{{StatementID: 0}}}).MarshalMsg(nil)
+	require.NoError(t, err)
+	bodies := map[string][]byte{
+		ContentTypeJson:    []byte(`{"results":[{"statement_id":0}]}` + "\n" + `{"results":[{"statement_id":0}]}` + "\n"),
+		ContentTypeMsgpack: append(append([]byte{}, chunk...), chunk...),
+	}
+	previousTransport := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = previousTransport })
+	for contentType, body := range bodies {
+		for _, c := range []struct {
+			name    string
+			timeout time.Duration
+			outcome string
+		}{
+			{"deadline", 100 * time.Millisecond, "timeout"},
+			{"canceled", 5 * time.Second, "canceled"},
+		} {
+			t.Run(contentType+"/"+c.name, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(metadata.InitHashID(context.Background()))
+				defer cancel()
+				end := func(req *http.Request) { <-req.Context().Done() }
+				if c.name == "canceled" {
+					end = func(*http.Request) { cancel() }
+				}
+				http.DefaultTransport = &endingTransport{body: body, end: end}
+				instance, err := NewInstance(ctx, &Options{
+					Host: "192.0.2.10", Port: 8086, Timeout: c.timeout,
+					Protocol: influxrouter.HTTP, ContentType: contentType, MaxLimit: 100, MaxSlimit: 100, Curl: &curl.HttpCurl{},
+				})
+				require.NoError(t, err)
+				before := map[string]float64{}
+				for _, o := range []string{"success", "error", "rejected", "timeout", "canceled", "body_error"} {
+					before[o] = influxHTTPRequestCount(t, o)
+				}
+				_, _ = instance.metrics(ctx, &metadata.Query{DB: "strict", Measurement: "cpu"})
+				for o, value := range before {
+					want := value
+					if o == c.outcome {
+						want++
+					}
+					require.Equal(t, want, influxHTTPRequestCount(t, o), "outcome %s", o)
+				}
+			})
+		}
 	}
 }

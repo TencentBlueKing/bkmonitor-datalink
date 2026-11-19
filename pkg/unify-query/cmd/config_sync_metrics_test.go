@@ -257,6 +257,11 @@ func TestConfigSyncMetricsAbsentWithoutASuccessOrASource(t *testing.T) {
 	if strings.Contains(page, `source="storage"`) {
 		t.Fatalf("storage is not used by this deployment and must have no series:\n%s", configSyncLines(page))
 	}
+	// A diagnostic refresh reads storage anyway, and fails without Consul; that creates no series either.
+	p.get("/tsdb_print?r=1")
+	if page := p.metrics(); strings.Contains(page, `source="storage"`) {
+		t.Fatalf("a diagnostic refresh must not create series for a source the deployment does not use:\n%s", configSyncLines(page))
+	}
 	if _, ok := seriesValue(page, up("feature_flag")); !ok {
 		t.Fatalf("feature flags are still read from Redis:\n%s", configSyncLines(page))
 	}

@@ -153,3 +153,39 @@ func TestConfigSyncUpNeedsEveryWatcher(t *testing.T) {
 		t.Fatal("both watchers live again")
 	}
 }
+
+// A sync of a source the deployment did not enable, such as a diagnostic refresh of storage read from
+// Consul with no Consul configured, leaves the source without series.
+func TestConfigSyncLeavesASourceNotEnabledWithoutSeries(t *testing.T) {
+	configSyncUpMu.Lock()
+	delete(configSyncUpParts, ConfigSyncSourceStorage)
+	configSyncUpMu.Unlock()
+	configSyncUp.DeleteLabelValues(ConfigSyncSourceStorage)
+	configSyncLastSuccess.DeleteLabelValues(ConfigSyncSourceStorage)
+	for _, reason := range configSyncReasons {
+		configSyncFailures.DeleteLabelValues(ConfigSyncSourceStorage, reason)
+	}
+	collectors := map[string]prometheus.Collector{"failures": configSyncFailures, "up": configSyncUp, "last success": configSyncLastSuccess}
+
+	ConfigSyncFailed(context.Background(), ConfigSyncSourceStorage, errors.New("dial tcp: connection refused"))
+	ConfigSyncSetUp(ConfigSyncSourceStorage, ConfigSyncWatcherInfluxDB, false)
+	ConfigSyncSucceeded(ConfigSyncSourceStorage)
+	for name, collector := range collectors {
+		if got := seriesCount(t, collector, map[string]string{"source": "storage"}); got != 0 {
+			t.Fatalf("%s: storage was not enabled and must have no series, got %d", name, got)
+		}
+	}
+
+	// Positive control: once the source is enabled, the same calls write it.
+	ConfigSyncEnable(ConfigSyncSourceStorage, ConfigSyncStorageWatchers...)
+	ConfigSyncFailed(context.Background(), ConfigSyncSourceStorage, errors.New("dial tcp: connection refused"))
+	ConfigSyncSucceeded(ConfigSyncSourceStorage)
+	if got := testutil.ToFloat64(configSyncFailures.WithLabelValues("storage", "backend")); got != 1 {
+		t.Fatalf("one backend failure once enabled, got %v", got)
+	}
+	for name, collector := range map[string]prometheus.Collector{"up": configSyncUp, "last success": configSyncLastSuccess} {
+		if got := seriesCount(t, collector, map[string]string{"source": "storage"}); got != 1 {
+			t.Fatalf("%s: want the series once enabled, got %d", name, got)
+		}
+	}
+}

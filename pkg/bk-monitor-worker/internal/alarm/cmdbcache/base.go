@@ -83,8 +83,8 @@ func getCmdbApi(tenantId string) *cmdb.Client {
 
 	client, err := cmdb.New(
 		config,
+		bkapi.OptJsonResultProvider(),
 		bkapi.OptJsonBodyProvider(),
-		OptRateLimitResultProvider(cfg.CmdbApiRateLimitQPS, cfg.CmdbApiRateLimitBurst, cfg.CmdbApiRateLimitTimeout),
 		api.NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}),
 	)
 	if err != nil {
@@ -363,7 +363,7 @@ func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) 
 		// 获取业务列表
 		cmdbApi := getCmdbApi(cacheManager.GetBkTenantId())
 		var result cmdb.SearchBusinessResp
-		_, err := cmdbApi.SearchBusiness().SetResult(&result).Request()
+		err := DoRequest(ctx, cmdbApi.SearchBusiness().SetContext(ctx), &result)
 		if err = api.HandleApiResultError(result.ApiCommonRespMeta, err, "search business failed"); err != nil {
 			return err
 		}

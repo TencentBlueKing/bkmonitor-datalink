@@ -24,7 +24,6 @@ import (
 	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -95,7 +94,8 @@ func NewModuleCacheManager(bkTenantId string, prefix string, opt *redis.Options,
 // getModuleListByBizID 通过业务ID获取模块列表
 func getModuleListByBizID(ctx context.Context, bkTenantId string, bizID int) ([]map[string]any, error) {
 	cmdbApi := getCmdbApi(bkTenantId)
-	result, err := api.BatchApiRequest(
+	result, err := BatchApiRequest(
+		ctx,
 		cmdbApiPageSize,
 		func(resp any) (int, error) {
 			var result cmdb.SearchModuleResp

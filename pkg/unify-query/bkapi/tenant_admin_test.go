@@ -80,7 +80,7 @@ func TestConfiguredQueryAuth(t *testing.T) {
 	api := &BkDataAPI{
 		bkAPI:      &BkAPI{authConfig: map[string]string{BkAppCodeKey: "app", BkSecretKey: "secret", BkUserNameKey: AdminUserName}},
 		authConfig: map[string]string{BkDataAuthenticationMethodKey: "user", BkUserNameKey: AdminUserName},
-		adminLogin: "service+login", userAPIURL: userAPIBaseURL(),
+		adminLogin: "service+login", userAPIURL: userAPIBaseURL("", ""),
 	}
 	oldMode := viper.GetBool("http.multi_tenant_mode")
 	t.Cleanup(func() { viper.Set("http.multi_tenant_mode", oldMode) })
@@ -117,10 +117,23 @@ func TestConfiguredQueryAuth(t *testing.T) {
 	require.Equal(t, AdminUserName, auth[BkUserNameKey])
 	require.Equal(t, "test-token", auth[BkDataDataTokenKey])
 	api.authConfig[BkDataAuthenticationMethodKey], api.adminLogin = "user", ""
+	viper.Set("http.multi_tenant_mode", false)
 	auth, _, err = QueryAuth(context.Background(), api, "missing", input)
 	require.NoError(t, err)
 	require.Equal(t, AdminUserName, auth[BkUserNameKey])
 	require.EqualValues(t, 5, calls.Load())
 	t.Setenv("BKAPP_USER_API_BASE_URL", server.URL+"/custom/")
-	require.Equal(t, server.URL+"/custom/", userAPIBaseURL())
+	require.Equal(t, server.URL+"/custom/", userAPIBaseURL("", ""))
+}
+
+func TestLegacyBKUserGateway(t *testing.T) {
+	t.Setenv("BKAPP_USER_API_BASE_URL", "")
+	t.Setenv("BK_COMPONENT_API_URL", "")
+	require.Equal(t, "https://example.test/api/bk-user/prod/", userAPIBaseURL("https://example.test/", "api/bk-base/preview/v3/queryengine"))
+	require.Equal(t, "https://example.test/gateway/api/bk-user/prod/", userAPIBaseURL("https://example.test/gateway/api/bk-base", "other-stage/resource"))
+	require.Empty(t, userAPIBaseURL("https://dedicated.example.test", "prod/v3/queryengine"))
+	require.Empty(t, userAPIBaseURL("", "api/bk-base/prod/v3/queryengine"))
+	api := &BkDataAPI{bkAPI: &BkAPI{}, adminLogin: "login"}
+	_, err := api.tenantAdmin(context.Background(), "tenant")
+	require.ErrorContains(t, err, "BKAPP_USER_API_BASE_URL or BK_COMPONENT_API_URL")
 }

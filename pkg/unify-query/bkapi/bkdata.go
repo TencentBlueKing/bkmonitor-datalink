@@ -69,12 +69,13 @@ func GetBkDataAPI() *BkDataAPI {
 		}
 
 		bkAPI := GetBkAPI()
+		uriPath := viper.GetString(BkDataUriPathConfigPath)
 		defaultBkDataAPI = &BkDataAPI{
 			bkAPI:       bkAPI,
 			adminLogin:  strings.TrimSpace(os.Getenv("BK_ADMIN_USERNAME")),
-			userAPIURL:  userAPIBaseURL(),
+			userAPIURL:  userAPIBaseURL(bkAPI.address, uriPath),
 			baseAddress: viper.GetString(BkDataAddressConfigPath), // 如果配置了则直接使用，否则使用原来的组装方式
-			uriPath:     viper.GetString(BkDataUriPathConfigPath),
+			uriPath:     uriPath,
 			authConfig: map[string]string{
 				BkDataDataTokenKey:            viper.GetString(BkDataTokenConfigPath),
 				BkDataAuthenticationMethodKey: viper.GetString(BkDataAuthenticationMethodConfigPath),
@@ -129,8 +130,9 @@ func QueryAuth(ctx context.Context, api *BkDataAPI, tenantID string, headers map
 		return GetBkDataAPI().GetDataAuth(), headers, nil
 	}
 	auth := api.GetDataAuth()
-	if api.adminLogin != "" && auth[BkDataAuthenticationMethodKey] == "user" {
-		if !viper.GetBool(config.MultiTenantModeConfigPath) {
+	multiTenant := viper.GetBool(config.MultiTenantModeConfigPath)
+	if auth[BkDataAuthenticationMethodKey] == "user" && (multiTenant || api.adminLogin != "") {
+		if !multiTenant {
 			tenantID = "default"
 		}
 		username, err := api.tenantAdmin(ctx, tenantID)

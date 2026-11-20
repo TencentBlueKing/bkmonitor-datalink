@@ -27,14 +27,25 @@ var userAPIClient = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
-func userAPIBaseURL() string {
+func userAPIBaseURL(apiAddress, dataURI string) string {
 	if base := strings.TrimSpace(os.Getenv("BKAPP_USER_API_BASE_URL")); base != "" {
 		return base
 	}
 	if root := strings.TrimSpace(os.Getenv("BK_COMPONENT_API_URL")); root != "" {
 		return strings.TrimRight(root, "/") + "/api/bk-user/prod/"
 	}
-	return ""
+	// Older deployments describe the shared gateway as bk_api.address plus a
+	// path routed under /api/bk-base/. A direct BKData address cannot identify BKUser.
+	gateway, err := url.Parse(apiAddress)
+	if err != nil || gateway.Host == "" || (gateway.Scheme != "http" && gateway.Scheme != "https") {
+		return ""
+	}
+	route := "/" + strings.TrimLeft(gateway.JoinPath(dataURI).Path, "/")
+	root, _, shared := strings.Cut(route, "/api/bk-base/")
+	if !shared {
+		return ""
+	}
+	return (&url.URL{Scheme: gateway.Scheme, Host: gateway.Host, Path: root + "/api/bk-user/prod/"}).String()
 }
 
 func (i *BkDataAPI) tenantAdmin(ctx context.Context, tenantID string) (string, error) {
@@ -78,7 +89,11 @@ func (i *BkDataAPI) lookupAdmin(ctx context.Context, tenantID string) (string, e
 		return "", errors.New("invalid BKUser base URL")
 	}
 	endpoint = endpoint.JoinPath("api/v3/open/tenant/virtual-users/-/lookup/")
-	endpoint.RawQuery = url.Values{"lookup_field": {"login_name"}, "lookups": {i.adminLogin}}.Encode()
+	login := i.adminLogin
+	if login == "" {
+		login = "bk_admin"
+	}
+	endpoint.RawQuery = url.Values{"lookup_field": {"login_name"}, "lookups": {login}}.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
 		return "", fmt.Errorf("create BKUser admin lookup: %w", err)

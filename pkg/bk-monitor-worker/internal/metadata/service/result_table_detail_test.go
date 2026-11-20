@@ -61,7 +61,7 @@ func setupResultTableDetailMySQL(t *testing.T) *gorm.DB {
 		`CREATE TEMPORARY TABLE metadata_esfieldqueryaliasoption (table_id VARCHAR(128), bk_tenant_id VARCHAR(256), field_path VARCHAR(255), query_alias VARCHAR(255), is_deleted BOOLEAN)`,
 		`CREATE TEMPORARY TABLE metadata_esstorage (table_id VARCHAR(128), bk_tenant_id VARCHAR(256), storage_cluster_id INTEGER, source_type VARCHAR(32), index_set VARCHAR(128), origin_table_id VARCHAR(128))`,
 		`CREATE TEMPORARY TABLE metadata_dorisstorage (table_id VARCHAR(128), bk_tenant_id VARCHAR(256), storage_cluster_id INTEGER, bkbase_table_id VARCHAR(128), origin_table_id VARCHAR(128), physical_tables JSON)`,
-		`CREATE TEMPORARY TABLE metadata_storageclusterrecord (id INTEGER, table_id VARCHAR(128), bk_tenant_id VARCHAR(256), cluster_id BIGINT, enable_time DATETIME(6), is_deleted BOOLEAN, physical_tables JSON)`,
+		`CREATE TEMPORARY TABLE metadata_storageclusterrecord (id INTEGER, table_id VARCHAR(128), bk_tenant_id VARCHAR(256), cluster_id BIGINT, enable_time DATETIME(6), is_deleted BOOLEAN, bkbase_table_id VARCHAR(255) DEFAULT '', physical_tables JSON)`,
 		`CREATE TEMPORARY TABLE metadata_clusterinfo (cluster_id INTEGER, bk_tenant_id VARCHAR(64), cluster_name VARCHAR(128), cluster_type VARCHAR(32))`,
 		`CREATE TEMPORARY TABLE metadata_bcsclusterinfo (cluster_id VARCHAR(128), bk_tenant_id VARCHAR(256), K8sMetricDataID BIGINT, CustomMetricDataID BIGINT)`,
 		"CREATE TEMPORARY TABLE metadata_influxdbstorage (table_id VARCHAR(128), bk_tenant_id VARCHAR(256), influxdb_proxy_storage_id INTEGER, `database` VARCHAR(128), real_table_name VARCHAR(128), partition_tag VARCHAR(128))",
@@ -439,7 +439,7 @@ func TestComposeLogTableIdDetailDorisPhysicalTables(t *testing.T) {
 				insertClusterRecord(t, db, 30, entityTableID, tenantID, 2, &profileTime, false)
 				insertClusterRecord(t, db, 31, entityTableID, tenantID, 2, &emptyTime, false)
 				execResultTableDetailSQL(t, db,
-					`UPDATE metadata_storageclusterrecord SET physical_tables = ? WHERE id = 30`,
+					`UPDATE metadata_storageclusterrecord SET physical_tables = ?, bkbase_table_id = 'history_rt' WHERE id = 30`,
 					`{"sample":"db.old_samples","label":"db.old_labels"}`,
 				)
 
@@ -457,6 +457,10 @@ func TestComposeLogTableIdDetailDorisPhysicalTables(t *testing.T) {
 				}
 				history := detail["storage_cluster_records"].([]map[string]any)
 				require.Len(t, history, 4)
+				assert.Equal(t, "mixed_doris_table", history[0]["db"])
+				assert.NotContains(t, history[0], "bkbase_table_id")
+				assert.Equal(t, "history_rt", history[1]["db"])
+				assert.Equal(t, "history_rt", history[1]["bkbase_table_id"])
 				assert.NotContains(t, history[0], "physical_tables")
 				assert.Equal(t, map[string]string{"sample": "db.old_samples", "label": "db.old_labels"}, history[1]["physical_tables"])
 				assert.NotContains(t, history[2], "physical_tables") // ES 段即使有快照字段也不输出。
@@ -517,11 +521,11 @@ func TestComposeLogTableIdDetailESCurrentWithDorisPhysicalHistory(t *testing.T) 
 	const tableID = "2_bklog.es_physical_history"
 	seedMixedLogRoute(t, db, tenantID, tableID, models.StorageTypeES)
 	execResultTableDetailSQL(t, db,
-		`UPDATE metadata_dorisstorage SET physical_tables = ? WHERE table_id = ?`,
-		`{"main":"db.current"}`, tableID,
+		`DELETE FROM metadata_dorisstorage WHERE table_id = ? AND bk_tenant_id = ?`,
+		tableID, tenantID,
 	)
 	execResultTableDetailSQL(t, db,
-		`UPDATE metadata_storageclusterrecord SET physical_tables = ? WHERE table_id = ?`,
+		`UPDATE metadata_storageclusterrecord SET physical_tables = ?, bkbase_table_id = 'old_rt' WHERE table_id = ?`,
 		`{"main":"db.old_*"}`, tableID,
 	)
 
@@ -535,6 +539,8 @@ func TestComposeLogTableIdDetailESCurrentWithDorisPhysicalHistory(t *testing.T) 
 	history := detail["storage_cluster_records"].([]map[string]any)
 	require.Len(t, history, 2)
 	assert.NotContains(t, history[0], "physical_tables")
+	assert.NotContains(t, history[0], "bkbase_table_id")
+	assert.Equal(t, "old_rt", history[1]["db"])
 	assert.Equal(t, map[string]string{"main": "db.old_*"}, history[1]["physical_tables"])
 }
 

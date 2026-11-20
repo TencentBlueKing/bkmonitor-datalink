@@ -15,6 +15,8 @@ import (
 	"compress/zlib"
 	"io"
 	"net/http"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
 func init() {
@@ -103,6 +105,7 @@ func (d *decompressor) wrap(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		newBody, err := newBodyReader(r)
 		if err != nil {
+			define.IncReceiverRejected(define.RequestHttp, define.RejectDecompress)
 			d.errorHandler(w, r, err.Error(), http.StatusBadRequest)
 			return
 		}

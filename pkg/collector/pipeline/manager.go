@@ -18,8 +18,51 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+// buildState records, for one build of the manager, which configurations did
+// not build. A nil buildState records nothing.
+type buildState struct {
+	mainFailed map[string]int            // key: kind; failed builds at every level
+	skipped    map[string]int            // key: instance name; sub-configurations skipped by its last build
+	unbuilt    map[define.RecordType]int // key: record type; pipelines not built at every level
+}
+
+func newBuildState() *buildState {
+	return &buildState{mainFailed: map[string]int{}, skipped: map[string]int{}, unbuilt: map[define.RecordType]int{}}
+}
+
+func (st *buildState) failed(kind string) {
+	processor.IncConfigFailed(kind, processor.ConfigMain)
+	if st != nil {
+		st.mainFailed[kind]++
+	}
+}
+
+func (st *buildState) built(name string, skipped int) {
+	if st != nil {
+		st.skipped[name] = skipped
+	}
+}
+
+func (st *buildState) pipelineFailed(rtype define.RecordType) {
+	if st != nil {
+		st.unbuilt[rtype]++
+	}
+}
+
+// apply sets the state metrics from this build, which is now in effect with
+// the processor instances named in processors: sub counts the
+// sub-configurations those instances skipped, by kind.
+func (st *buildState) apply(processors map[string]processor.Instance) {
+	sub := map[string]int{}
+	for name := range processors {
+		sub[processor.KindOf(name)] += st.skipped[name]
+	}
+	processor.SetConfigFailing(st.mainFailed, sub)
+	setPipelineUnbuilt(st.unbuilt)
+}
+
 // parseProcessors 解析 Processors 配置
-func parseProcessors(typ string, conf *confengine.Config, subConfigs map[string][]processor.SubConfigProcessor) (map[string]processor.Instance, error) {
+func parseProcessors(typ string, conf *confengine.Config, subConfigs map[string][]processor.SubConfigProcessor, st *buildState) (map[string]processor.Instance, error) {
 	var processorConfigs processor.Configs
 	if err := conf.UnpackChild(define.ConfigFieldProcessor, &processorConfigs); err != nil {
 		return nil, err
@@ -45,21 +88,26 @@ func parseProcessors(typ string, conf *confengine.Config, subConfigs map[string]
 		createFunc := processor.GetProcessorCreator(cfg.Name)
 		if createFunc == nil {
 			logger.Errorf("unknown processor type: %v", cfg.Name)
+			st.failed(processor.KindUnknown)
 			continue
 		}
 
-		p, err := createFunc(cfg.Config, subConfigs[cfg.Name])
+		var p processor.Processor
+		var err error
+		skipped := processor.CountSkipped(func() { p, err = createFunc(cfg.Config, subConfigs[cfg.Name]) })
 		if err != nil {
 			logger.Errorf("failed to create processor instance %+v: %v", cfg, err)
+			st.failed(processor.KindOf(cfg.Name))
 			continue
 		}
+		st.built(cfg.Name, skipped)
 		processors[cfg.Name] = processor.NewInstance(cfg.Name, p)
 	}
 	return processors, nil
 }
 
 // parsePipelines 解析 pipelines 配置
-func parsePipelines(typ string, conf *confengine.Config, processors map[string]processor.Instance) (map[define.RecordType]Pipeline, error) {
+func parsePipelines(typ string, conf *confengine.Config, processors map[string]processor.Instance, st *buildState) (map[define.RecordType]Pipeline, error) {
 	var pipelineConf PipelineConfigs
 	if err := conf.UnpackChild(define.ConfigFieldPipeline, &pipelineConf); err != nil {
 		return nil, err
@@ -105,6 +153,7 @@ func parsePipelines(typ string, conf *confengine.Config, processors map[string]p
 
 		// 在一条 pipeline 中如果有某个节点处理出现问题 则整条流水线构建失败
 		if len(instances) != len(plc.Processors) {
+			st.pipelineFailed(rtype)
 			DefaultMetricMonitor.IncBuiltFailedCounter(plc.Name, plc.Type)
 			logger.Errorf("build pipeline %s failed", plc.Name)
 			continue
@@ -113,6 +162,7 @@ func parsePipelines(typ string, conf *confengine.Config, processors map[string]p
 		pl := NewPipeline(plc.Name, rtype, instances...)
 		// 校验 pipeline 配置，precheck processor 要位于 sched processor 之前
 		if !pl.Validate() {
+			st.pipelineFailed(rtype)
 			DefaultMetricMonitor.IncBuiltFailedCounter(plc.Name, plc.Type)
 			logger.Errorf("validate pipeline %s failed", plc.Name)
 			continue
@@ -272,6 +322,7 @@ func mergePipelines(main, sub map[define.RecordType]Pipeline) map[define.RecordT
 type Manager struct {
 	processors map[string]processor.Instance  // key: 处理器实例名称; value: 处理器实例（函数指针）
 	pipelines  map[define.RecordType]Pipeline // key: 记录类型; value: 流水线
+	build      *buildState                    // 构建这份配置时哪些没建成
 }
 
 // Getter processor/pipeline 获取接口
@@ -312,11 +363,12 @@ func parseManagerConfig(conf *confengine.Config) (*Manager, error) {
 		parseReportV1Configs(subConfigs),
 		parseReportV2Configs(subConfigs),
 	)
-	finalProcessors, err := parseProcessors(mainType, conf, processorSubConfigs)
+	st := newBuildState()
+	finalProcessors, err := parseProcessors(mainType, conf, processorSubConfigs, st)
 	if err != nil {
 		return nil, err
 	}
-	finalPipelines, err := parsePipelines(mainType, conf, finalProcessors)
+	finalPipelines, err := parsePipelines(mainType, conf, finalProcessors, st)
 	if err != nil {
 		return nil, err
 	}
@@ -325,7 +377,7 @@ func parseManagerConfig(conf *confengine.Config) (*Manager, error) {
 	platformConfig := confengine.SelectConfigFromType(subConfigs, define.ConfigTypePlatform)
 	if platformConfig != nil {
 		if platformConfig.Has(define.ConfigFieldProcessor) {
-			platformProcessors, err := parseProcessors(PlatformType, platformConfig, processorSubConfigs)
+			platformProcessors, err := parseProcessors(PlatformType, platformConfig, processorSubConfigs, st)
 			if err != nil {
 				return nil, err
 			}
@@ -333,7 +385,7 @@ func parseManagerConfig(conf *confengine.Config) (*Manager, error) {
 		}
 
 		if platformConfig.Has(define.ConfigFieldPipeline) {
-			platformPipelines, err := parsePipelines(PlatformType, platformConfig, finalProcessors)
+			platformPipelines, err := parsePipelines(PlatformType, platformConfig, finalProcessors, st)
 			if err != nil {
 				return nil, err
 			}
@@ -345,7 +397,7 @@ func parseManagerConfig(conf *confengine.Config) (*Manager, error) {
 	privilegedConfig := confengine.SelectConfigFromType(subConfigs, define.ConfigTypePrivileged)
 	if privilegedConfig != nil {
 		if privilegedConfig.Has(define.ConfigFieldProcessor) {
-			privilegedProcessors, err := parseProcessors(PrivilegedType, privilegedConfig, processorSubConfigs)
+			privilegedProcessors, err := parseProcessors(PrivilegedType, privilegedConfig, processorSubConfigs, st)
 			if err != nil {
 				return nil, err
 			}
@@ -356,15 +408,19 @@ func parseManagerConfig(conf *confengine.Config) (*Manager, error) {
 	mgr := &Manager{
 		processors: finalProcessors,
 		pipelines:  finalPipelines,
+		build:      st,
 	}
 	return mgr, nil
 }
 
 func New(conf *confengine.Config) (*Manager, error) {
+	processor.PrebuildConfigFailed()
+	prebuildPipelineUnbuilt()
 	mgr, err := parseManagerConfig(conf)
 	if err != nil {
 		return nil, err
 	}
+	mgr.build.apply(mgr.processors)
 	defaultGetter = mgr
 	return mgr, nil
 }
@@ -388,10 +444,13 @@ func (mgr *Manager) Reload(conf *confengine.Config) error {
 			mgr.processors[k] = p
 			continue
 		}
-		inst.Reload(p.MainConfig(), p.SubConfigs())
+		// The running instance is the one in effect, so its own rebuild says
+		// how many sub-configurations are skipped.
+		newManager.build.built(k, processor.CountSkipped(func() { inst.Reload(p.MainConfig(), p.SubConfigs()) }))
 	}
 
 	mgr.pipelines = newManager.pipelines
+	newManager.build.apply(newManager.processors)
 	return nil
 }
 

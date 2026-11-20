@@ -559,7 +559,7 @@ func (i *Instance) vmQuery(
 		err error
 	)
 
-	user := metadata.GetUser(ctx)
+	user := *metadata.GetUser(ctx)
 
 	ctx, cancel = context.WithTimeout(ctx, i.timeout)
 	defer cancel()
@@ -593,7 +593,7 @@ func (i *Instance) vmQuery(
 	requestOptions := curl.Options{
 		UrlPath:          i.url,
 		Body:             body,
-		Headers:          metadata.Headers(ctx, headers),
+		Headers:          user.Headers(headers),
 		MaxResponseBytes: metadata.BackendResponseLimit(ctx),
 		Attempt:          1,
 	}

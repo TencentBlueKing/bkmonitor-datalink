@@ -137,14 +137,15 @@ func (i *Instance) getClient(ctx context.Context, connect Connect, options ...el
 	defer cancel()
 
 	headers := cloneStringMap(i.headers)
+	user := *metadata.GetUser(ctx)
 	if i.bkData != nil {
 		var err error
-		_, headers, err = bkapi.QueryAuth(ctx, i.bkData, metadata.GetUser(ctx).TenantID, headers)
+		_, headers, err = bkapi.QueryAuth(ctx, i.bkData, user.TenantID, headers)
 		if err != nil {
 			return nil, err
 		}
 	}
-	headers = metadata.Headers(ctx, headers)
+	headers = user.Headers(headers)
 	if len(headers) > 0 {
 		httpHeaders := make(http.Header, len(headers))
 		for k, v := range headers {

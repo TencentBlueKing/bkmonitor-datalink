@@ -83,7 +83,11 @@ func TestConfiguredQueryAuth(t *testing.T) {
 		adminLogin: "service+login", userAPIURL: userAPIBaseURL("", ""),
 	}
 	oldMode := viper.GetBool("http.multi_tenant_mode")
-	t.Cleanup(func() { viper.Set("http.multi_tenant_mode", oldMode) })
+	setMode := func(multi bool) {
+		viper.Set("http.multi_tenant_mode", multi)
+		LoadConfig()
+	}
+	t.Cleanup(func() { setMode(oldMode) })
 	input := map[string]string{"Content-Type": "application/json"}
 	for _, tc := range []struct {
 		multi            bool
@@ -92,7 +96,7 @@ func TestConfiguredQueryAuth(t *testing.T) {
 		{false, "system", "default-virtual"}, {false, "", "default-virtual"},
 		{true, "first", "first-virtual"}, {true, "second", "second-virtual"}, {true, "first", "first-virtual"},
 	} {
-		viper.Set("http.multi_tenant_mode", tc.multi)
+		setMode(tc.multi)
 		auth, headers, err := QueryAuth(context.Background(), api, tc.tenant, input)
 		require.NoError(t, err)
 		require.Equal(t, tc.wantUser, auth[BkUserNameKey])
@@ -117,7 +121,7 @@ func TestConfiguredQueryAuth(t *testing.T) {
 	require.Equal(t, AdminUserName, auth[BkUserNameKey])
 	require.Equal(t, "test-token", auth[BkDataDataTokenKey])
 	api.authConfig[BkDataAuthenticationMethodKey], api.adminLogin = "user", ""
-	viper.Set("http.multi_tenant_mode", false)
+	setMode(false)
 	auth, _, err = QueryAuth(context.Background(), api, "missing", input)
 	require.NoError(t, err)
 	require.Equal(t, AdminUserName, auth[BkUserNameKey])

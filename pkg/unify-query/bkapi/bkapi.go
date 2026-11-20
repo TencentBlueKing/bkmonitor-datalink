@@ -14,8 +14,6 @@ import (
 	"maps"
 	"sync"
 
-	"github.com/spf13/viper"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
@@ -40,12 +38,16 @@ var (
 )
 
 func GetBkAPI() *BkAPI {
+	return getBkAPI(currentSettings.Load())
+}
+
+func getBkAPI(settings *clientSettings) *BkAPI {
 	onceBkAPI.Do(func() {
 		defaultBkAPI = &BkAPI{
-			address: viper.GetString(BkAPIAddressConfigPath),
+			address: settings.apiAddress,
 			authConfig: map[string]string{
-				BkAppCodeKey:  viper.GetString(BkAPICodeConfigPath),
-				BkSecretKey:   viper.GetString(BkAPISecretConfigPath),
+				BkAppCodeKey:  settings.appCode,
+				BkSecretKey:   settings.appSecret,
 				BkUserNameKey: AdminUserName,
 			},
 		}

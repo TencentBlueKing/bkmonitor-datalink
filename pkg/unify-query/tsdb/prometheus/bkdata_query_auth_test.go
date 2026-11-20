@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -53,32 +54,47 @@ func TestBKDataQueryBackendIdentity(t *testing.T) {
 		login, wantLogin, lookupTenant = "", "bk_admin", "resource-tenant"
 		queryPath = "/api/bk-base/prod/v3/queryengine/query_sync/"
 	}
+	ctx := metadata.InitHashID(context.Background())
 	var lookups, sqlRequests, vmRequests, esRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/user/api/v3/open/tenant/virtual-users/-/lookup/" || r.URL.Path == "/api/bk-user/prod/api/v3/open/tenant/virtual-users/-/lookup/" {
 			lookups.Add(1)
-			if r.Header.Get(metadata.TenantIDHeader) != lookupTenant {
+			tenant := r.Header.Get(metadata.TenantIDHeader)
+			wantUser := username
+			if scenario == "legacy-multitenant" && strings.HasPrefix(tenant, "resource-") {
+				// Replace the cached request identity while the outbound lookup is in flight.
+				metadata.SetUser(ctx, &metadata.User{})
+				wantUser = "virtual-" + tenant
+			} else if tenant != lookupTenant {
 				http.Error(w, "unknown tenant", http.StatusNotFound)
 				return
 			}
 			assert.Equal(t, wantLogin, r.URL.Query().Get("lookups"))
-			fmt.Fprintf(w, `{"data":[{"bk_username":%q}]}`, username)
+			fmt.Fprintf(w, `{"data":[{"bk_username":%q}]}`, wantUser)
 			return
 		}
-		assert.Equal(t, "resource-tenant", r.Header.Get(metadata.TenantIDHeader))
+		tenant := r.Header.Get(metadata.TenantIDHeader)
+		wantUser := username
+		if scenario == "legacy-multitenant" {
+			assert.Contains(t, []string{"resource-sql", "resource-vm", "resource-es"}, tenant)
+			wantUser = "virtual-" + tenant
+		} else {
+			assert.Equal(t, "resource-tenant", tenant)
+		}
 		assert.Equal(t, "ui:request-user", r.Header.Get(metadata.BkQuerySourceHeader))
+		assert.Equal(t, "bkcc__sample", r.Header.Get(metadata.SpaceUIDHeader))
 		for _, key := range []string{bkapi.BkAPIAuthorization, bkapi.BkDataAuthorization} {
 			var auth map[string]string
 			if assert.NoError(t, json.Unmarshal([]byte(r.Header.Get(key)), &auth)) {
-				assert.Equal(t, username, auth[bkapi.BkUserNameKey])
+				assert.Equal(t, wantUser, auth[bkapi.BkUserNameKey])
 			}
 		}
 		switch r.URL.Path {
 		case queryPath:
 			var body map[string]any
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-			assert.Equal(t, username, body["bk_username"])
+			assert.Equal(t, wantUser, body["bk_username"])
 			assert.Equal(t, method, body["bkdata_authentication_method"])
 			if method == "token" {
 				assert.Equal(t, "original-token", body["bkdata_data_token"])
@@ -113,8 +129,15 @@ func TestBKDataQueryBackendIdentity(t *testing.T) {
 		viper.Set(bkapi.BkDataAddressConfigPath, "")
 		viper.Set(config.MultiTenantModeConfigPath, true)
 	}
-	ctx := metadata.InitHashID(context.Background())
-	metadata.SetUser(ctx, &metadata.User{Key: "ui:request-user", TenantID: "resource-tenant"})
+	bkapi.LoadConfig()
+	setUser := func(storage string) {
+		tenant := "resource-tenant"
+		if scenario == "legacy-multitenant" {
+			tenant = "resource-" + storage
+		}
+		metadata.SetUser(ctx, &metadata.User{Key: "ui:request-user", TenantID: tenant, SpaceUID: "bkcc__sample"})
+	}
+	setUser("sql")
 	metadata.SetExpand(ctx, &metadata.VmExpand{ResultTableList: []string{"sample_rt"}})
 	now := time.Now()
 	sql := &metadata.Query{StorageType: metadata.BkSqlStorageType, DB: "sample_rt", Measurement: "hdfs"}
@@ -124,8 +147,10 @@ func TestBKDataQueryBackendIdentity(t *testing.T) {
 	require.Zero(t, lookups.Load(), "previews only construct an instance")
 	_, err := bkSQL.QueryFieldMap(ctx, sql, now.Add(-time.Minute), now)
 	require.NoError(t, err)
+	setUser("vm")
 	_, err = vm.DirectQuery(ctx, "sample", now)
 	require.NoError(t, err)
+	setUser("es")
 	require.NoError(t, es.(*elasticsearch.Instance).ClearScroll(ctx, "sample-scroll-id"))
 	require.EqualValues(t, 1, sqlRequests.Load())
 	require.EqualValues(t, 1, vmRequests.Load())
@@ -134,12 +159,29 @@ func TestBKDataQueryBackendIdentity(t *testing.T) {
 		require.Zero(t, lookups.Load())
 		return
 	}
-	require.EqualValues(t, 1, lookups.Load())
+	wantLookups := int32(1)
+	if scenario == "legacy-multitenant" {
+		wantLookups = 3
+	}
+	require.Equal(t, wantLookups, lookups.Load())
 
 	viper.Set(config.MultiTenantModeConfigPath, true)
+	bkapi.LoadConfig()
+	metadata.SetUser(ctx, &metadata.User{})
+	// TSpider requires a field map and exposes the underlying query error.
+	sql.Measurement = "tspider"
+	_, err = bkSQL.QueryFieldMap(ctx, sql, now.Add(-time.Minute), now)
+	require.ErrorContains(t, err, "requires a tenant ID")
+	_, err = vm.DirectQuery(ctx, "sample", now)
+	require.ErrorContains(t, err, "requires a tenant ID")
+	require.ErrorContains(t, es.(*elasticsearch.Instance).ClearScroll(ctx, "sample-scroll-id"), "requires a tenant ID")
+	require.Equal(t, wantLookups, lookups.Load())
+	require.EqualValues(t, 1, sqlRequests.Load())
+	require.EqualValues(t, 1, vmRequests.Load())
+	require.EqualValues(t, 1, esRequests.Load())
 	metadata.SetUser(ctx, &metadata.User{TenantID: "missing", Key: "ui:request-user"})
 	_, err = vm.DirectQuery(ctx, "sample", now)
 	require.ErrorContains(t, err, "404")
-	require.EqualValues(t, 2, lookups.Load())
+	require.Equal(t, wantLookups+1, lookups.Load())
 	require.EqualValues(t, 1, vmRequests.Load(), "failed lookup must stop the query")
 }

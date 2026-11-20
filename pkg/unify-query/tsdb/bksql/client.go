@@ -53,7 +53,8 @@ func (c *Client) curlGet(ctx context.Context, method string, req QuerySyncReques
 	if method == "" {
 		method = curl.Post
 	}
-	auth, headers, err := bkapi.QueryAuth(ctx, c.bkData, metadata.GetUser(ctx).TenantID, c.headers)
+	user := *metadata.GetUser(ctx)
+	auth, headers, err := bkapi.QueryAuth(ctx, c.bkData, user.TenantID, c.headers)
 	if err != nil {
 		return err
 	}
@@ -81,7 +82,7 @@ func (c *Client) curlGet(ctx context.Context, method string, req QuerySyncReques
 		curl.Options{
 			UrlPath: c.url,
 			Body:    body,
-			Headers: metadata.Headers(ctx, headers),
+			Headers: user.Headers(headers),
 		},
 		res,
 	)

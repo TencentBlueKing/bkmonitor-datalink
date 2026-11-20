@@ -17,10 +17,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/spf13/viper"
 	"golang.org/x/sync/singleflight"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
@@ -56,54 +54,49 @@ type BkDataAPI struct {
 
 func GetBkDataAPI() *BkDataAPI {
 	onceBkDataAPI.Do(func() {
-		// 加载独立集群配置
-		clusterSpaceUid := viper.GetStringMapStringSlice(BkDataClusterSpaceUidConfigPath)
-		clusterMap := make(map[string]string)
-
-		for name, su := range clusterSpaceUid {
-			for _, s := range su {
-				if s != "" && name != "" {
-					clusterMap[s] = name
-				}
-			}
-		}
-
-		bkAPI := GetBkAPI()
-		uriPath := viper.GetString(BkDataUriPathConfigPath)
+		settings := currentSettings.Load()
+		bkAPI := getBkAPI(settings)
 		defaultBkDataAPI = &BkDataAPI{
 			bkAPI:       bkAPI,
-			adminLogin:  strings.TrimSpace(os.Getenv("BK_ADMIN_USERNAME")),
-			userAPIURL:  userAPIBaseURL(bkAPI.address, uriPath),
-			baseAddress: viper.GetString(BkDataAddressConfigPath), // 如果配置了则直接使用，否则使用原来的组装方式
-			uriPath:     uriPath,
+			baseAddress: settings.dataAddress,
+			uriPath:     settings.dataURI,
 			authConfig: map[string]string{
-				BkDataDataTokenKey:            viper.GetString(BkDataTokenConfigPath),
-				BkDataAuthenticationMethodKey: viper.GetString(BkDataAuthenticationMethodConfigPath),
+				BkDataDataTokenKey:            settings.token,
+				BkDataAuthenticationMethodKey: settings.authMethod,
 				BkUserNameKey:                 AdminUserName,
 				BkAppCodeKey:                  bkAPI.GetCode(),
 			},
-			clusterMap: clusterMap,
+			clusterMap: settings.clusterMap,
+		}
+		// An initially empty method may become user on reload. An explicit token stays pinned.
+		if settings.authMethod == "" || settings.authMethod == "user" {
+			defaultBkDataAPI.adminLogin = strings.TrimSpace(os.Getenv("BK_ADMIN_USERNAME"))
+			defaultBkDataAPI.userAPIURL = userAPIBaseURL(bkAPI.address, settings.dataURI)
 		}
 	})
 	return defaultBkDataAPI
 }
 
 func (i *BkDataAPI) GetDataAuth() map[string]string {
+	return i.dataAuth(currentSettings.Load())
+}
+
+func (i *BkDataAPI) dataAuth(settings *clientSettings) map[string]string {
 	authConfig := make(map[string]string, len(i.authConfig))
 	for k, v := range i.authConfig {
 		authConfig[k] = v
 	}
 	if authConfig[BkDataDataTokenKey] == "" {
-		authConfig[BkDataDataTokenKey] = viper.GetString(BkDataTokenConfigPath)
+		authConfig[BkDataDataTokenKey] = settings.token
 	}
 	if authConfig[BkDataAuthenticationMethodKey] == "" {
-		authConfig[BkDataAuthenticationMethodKey] = viper.GetString(BkDataAuthenticationMethodConfigPath)
+		authConfig[BkDataAuthenticationMethodKey] = settings.authMethod
 	}
 	if authConfig[BkUserNameKey] == "" {
 		authConfig[BkUserNameKey] = AdminUserName
 	}
 	if authConfig[BkAppCodeKey] == "" {
-		authConfig[BkAppCodeKey] = viper.GetString(BkAPICodeConfigPath)
+		authConfig[BkAppCodeKey] = settings.appCode
 	}
 	return authConfig
 }
@@ -129,10 +122,10 @@ func QueryAuth(ctx context.Context, api *BkDataAPI, tenantID string, headers map
 	if api == nil {
 		return GetBkDataAPI().GetDataAuth(), headers, nil
 	}
-	auth := api.GetDataAuth()
-	multiTenant := viper.GetBool(config.MultiTenantModeConfigPath)
-	if auth[BkDataAuthenticationMethodKey] == "user" && (multiTenant || api.adminLogin != "") {
-		if !multiTenant {
+	settings := currentSettings.Load()
+	auth := api.dataAuth(settings)
+	if auth[BkDataAuthenticationMethodKey] == "user" && (settings.multiTenant || api.adminLogin != "") {
+		if !settings.multiTenant {
 			tenantID = "default"
 		}
 		username, err := api.tenantAdmin(ctx, tenantID)

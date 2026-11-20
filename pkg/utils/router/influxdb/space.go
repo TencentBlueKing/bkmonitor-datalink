@@ -10,6 +10,7 @@
 package influxdb
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -72,6 +73,24 @@ type PhysicalTable struct {
 	Database       string   `json:"database"`
 	Table          string   `json:"table"`
 	AnalyzedFields []string `json:"analyzed_fields,omitempty"`
+}
+
+// UnmarshalJSON 同时接受路由下发的 "database.table" 和包含字段信息的对象。
+func (t *PhysicalTable) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		var name string
+		if err := json.Unmarshal(data, &name); err != nil {
+			return err
+		}
+		database, table, ok := strings.Cut(name, ".")
+		if !ok || database == "" || table == "" {
+			return fmt.Errorf("expected physical table in database.table format, got %q", name)
+		}
+		*t = PhysicalTable{Database: database, Table: table}
+		return nil
+	}
+	type tableObject PhysicalTable
+	return json.Unmarshal(data, (*tableObject)(t))
 }
 
 // Record 是 Redis 中 result_table_detail.storage_cluster_records 的单条时间分段路由。

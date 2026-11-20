@@ -34,3 +34,35 @@ func TestPhysicalTableRouteRoundTrip(t *testing.T) {
 		t.Fatalf("physical routes lost: %+v", decoded)
 	}
 }
+
+func TestPhysicalTableRouteFormats(t *testing.T) {
+	const qualified = `"logs.events"`
+	const object = `{"database":"logs","table":"events","analyzed_fields":["log"]}`
+	for _, current := range []string{qualified, object} {
+		for _, history := range []string{qualified, object} {
+			raw := `{"physical_tables":{"main":` + current + `},"storage_cluster_records":[{"physical_tables":{"main":` + history + `}}]}`
+			var route, cached ResultTableDetail
+			if err := json.Unmarshal([]byte(raw), &route); err != nil {
+				t.Fatal(err)
+			}
+			data, err := route.MarshalMsg(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = cached.UnmarshalMsg(data); err != nil {
+				t.Fatal(err)
+			}
+			for _, detail := range []*ResultTableDetail{&route, &cached} {
+				for i, table := range []PhysicalTable{detail.PhysicalTables["main"], detail.StorageClusterRecords[0].PhysicalTables["main"]} {
+					want := PhysicalTable{Database: "logs", Table: "events"}
+					if []string{current, history}[i] == object {
+						want.AnalyzedFields = []string{"log"}
+					}
+					if !reflect.DeepEqual(table, want) {
+						t.Fatalf("route %s, member %d: got %+v, want %+v", raw, i, table, want)
+					}
+				}
+			}
+		}
+	}
+}

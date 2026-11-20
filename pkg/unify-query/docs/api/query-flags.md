@@ -48,6 +48,8 @@ query:
 }
 ```
 
+当前表和历史记录中的 `physical_tables.main` 均接受 `"logs.events"` 字符串，也接受上例中的对象。字符串只提供库名和表名。
+
 Redis 原始路由的 storage_id 保持原来的整数类型；上面的示例是查询侧 tsdb_map 格式。db 继续保存 BKBase table ID，不能改成物理表名。历史记录各自携带当时的 physical_tables；没有历史物理配置时不会借用当前表，继续走该记录的 BKBase ID。同集群换表通过真实库表区分，不再只按 BKBase RT 去重。
 
 `analyzed_fields` 由路由提供，用于恢复 BKBase 返回的 Analyzed 信息；不根据 TEXT 类型推定分词。应与目标表真实倒排索引和 BKBase storage_config 保持相同口径。未列出的字段按非分词字段处理。

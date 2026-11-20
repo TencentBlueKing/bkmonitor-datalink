@@ -28,6 +28,9 @@ type ClusterRecord struct {
 	// BkTenantID 限定历史分段所属租户，避免同名结果表串用记录。
 	BkTenantID string `json:"bk_tenant_id" gorm:"size:256;default:system;comment:'租户ID'"`
 
+	// BkbaseTableID 是该分段启用时的 BKBase 结果表 ID。
+	BkbaseTableID string `json:"bkbase_table_id" gorm:"column:bkbase_table_id;size:255"`
+
 	// PhysicalTables 保留此启用分段的物理表用途映射。
 	PhysicalTables json.RawMessage `json:"physical_tables" gorm:"column:physical_tables;type:json"`
 

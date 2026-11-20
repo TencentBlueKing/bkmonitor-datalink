@@ -395,6 +395,14 @@ func (mgr *Manager) Reload(conf *confengine.Config) error {
 	return nil
 }
 
+// Stop 在 Collector 正常退出时调用，只通知实现了 processor.Stopper 的处理器。
+// 必须在 Receiver 停止、全部记录处理完之后调用。
+func (mgr *Manager) Stop() {
+	for _, p := range mgr.processors {
+		processor.Stop(p)
+	}
+}
+
 func (mgr *Manager) GetProcessor(name string) processor.Instance {
 	return mgr.processors[name]
 }

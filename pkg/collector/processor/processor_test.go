@@ -303,3 +303,42 @@ processor:
 		assert.Equal(t, "baz", ret.Keep[0].ID)
 	})
 }
+
+type stopperProcessor struct {
+	CommonProcessor
+	stopped int
+}
+
+func (p *stopperProcessor) Name() string { return "stopper" }
+
+func (p *stopperProcessor) IsDerived() bool { return false }
+
+func (p *stopperProcessor) IsPreCheck() bool { return false }
+
+func (p *stopperProcessor) Process(*define.Record) (*define.Record, error) { return nil, nil }
+
+func (p *stopperProcessor) Reload(map[string]any, []SubConfigProcessor) {}
+
+func (p *stopperProcessor) Stop() { p.stopped++ }
+
+func TestStopInstance(t *testing.T) {
+	p := &stopperProcessor{}
+	Stop(NewInstance("stopper", p))
+	assert.Equal(t, 1, p.stopped, "Stop 要穿透 instance 包装调用到处理器")
+
+	Stop(NewInstance("plain", plainProcessor{})) // 没有实现 Stopper 的处理器不受影响
+}
+
+type plainProcessor struct {
+	CommonProcessor
+}
+
+func (plainProcessor) Name() string { return "plain" }
+
+func (plainProcessor) IsDerived() bool { return false }
+
+func (plainProcessor) IsPreCheck() bool { return false }
+
+func (plainProcessor) Process(*define.Record) (*define.Record, error) { return nil, nil }
+
+func (plainProcessor) Reload(map[string]any, []SubConfigProcessor) {}

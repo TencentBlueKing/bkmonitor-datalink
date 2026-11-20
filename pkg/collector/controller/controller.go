@@ -328,6 +328,11 @@ func (c *Controller) Stop() error {
 
 	c.cancel()
 	c.wg.Wait()
+
+	// 记录已经处理完，再让处理器归还外部共享状态（例如限流器预取的 Redis 额度）。
+	if c.pipelineMgr != nil {
+		c.pipelineMgr.Stop()
+	}
 	logger.Info("controller has already stopped")
 	return nil
 }

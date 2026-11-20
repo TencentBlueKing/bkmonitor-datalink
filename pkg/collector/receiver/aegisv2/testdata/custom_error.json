@@ -1,0 +1,21 @@
+{
+	"topic": "capture-app",
+	"bean": {
+		"uid": "",
+		"env": "production",
+		"referer": ""
+	},
+	"ext": "{}",
+	"scheme": "v2",
+	"d2": [
+		{
+			"fields": "{\"from\":\"http://127.0.0.1:8802/\",\"type\":\"normal\",\"level\":\"custom_error\",\"plugin\":\"custom\"}",
+			"message": [
+				"{\"msg\":\"string boom\",\"errorMsg\":\"string boom\",\"aegisv2_goto\":\"89065fd229520852\",\"timestamp\":1792486515704}",
+				"{\"msg\":\"Error.message: object boom \\\\n  Error.stack: Error: object boom\\\\n    at http://127.0.0.1:8802/:24:36\",\"errorMsg\":\"object boom\",\"aegisv2_goto\":\"51bc9b49f57eae8f\",\"timestamp\":1792486515705}",
+				"{\"msg\":\"mapped boom\",\"code\":500,\"errorMsg\":\"mapped boom\",\"aegisv2_goto\":\"01916658ff45b5f8\",\"timestamp\":1792486515705}"
+			]
+		}
+	],
+	"v": "2.5.42"
+}

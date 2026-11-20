@@ -17,6 +17,7 @@ import sys
 parser = argparse.ArgumentParser(description=__doc__)
 for name in ("env", "tenant", "target", "table", "start", "end", "metric"):
     parser.add_argument("--" + name, required=True)
+parser.add_argument("--baseline-target", help="Compare BKBase on this explicit independent target to BKBase on --target")
 parser.add_argument("--biz", type=int, required=True)
 parser.add_argument("--second-table", help="Optional second RT in the same authorized space")
 parser.add_argument("--lucene", action="append", default=[], help="Additional positive query_string to compare")
@@ -29,11 +30,13 @@ query = dict(data_source="bklog", table_id=args.table, reference_name="a", limit
 order = ["-dtEventTimeStamp", "-__unique_key__"]
 raw = dict(start_time=args.start, end_time=args.end, query_list=[query], limit=3, order_by=order)
 prom = dict(start=args.start, end=args.end, step="60s")
-flags = (False, True)
+flags = (False, False) if args.baseline_target else (False, True)
 
 
-def call(op, body, flag):
+def call(op, body, flag, baseline=False):
     params = {**common, **body}
+    if baseline:
+        params["uq_target"] = args.baseline_target
     if flag is not None:
         params["doris_direct_query"] = flag
     proc = subprocess.run(["bkmonitor-admin", "api", "call", "unify_query." + op,
@@ -70,7 +73,7 @@ def run(name, op, body, *, cursor=None, scroll=False, route=False, empty=False,
             if cursor:
                 request["result_table_options"] = cursor[i]["result_table_options"]
             try:
-                data = call(op, request, flag)
+                data = call(op, request, flag, baseline=args.baseline_target and i == 0)
             except Exception as exc:
                 errors.append(f"{flag}: {exc}")
                 continue
@@ -135,7 +138,7 @@ def run(name, op, body, *, cursor=None, scroll=False, route=False, empty=False,
 
 
 run("route", "check", raw, route=True)
-run("default", "raw", raw, modes=(None, False))
+run("default", "raw", raw, modes=(None, None) if args.baseline_target else (None, False))
 base = run("raw", "raw", raw)
 if not base:
     raise SystemExit("raw baseline unavailable")
@@ -170,12 +173,13 @@ page_wide = run("search-after-six", "raw", {**with_query(limit=6), "limit": 6, "
 if page and page_wide:
     expected = page_wide[0]["list"][3:6]
     run("search-after-2", "raw", {**raw, "is_search_after": True}, cursor=page, expected=expected)
-    run("search-after-switch", "raw", {**raw, "is_search_after": True}, cursor=page, modes=(True, False), expected=expected)
+    if not args.baseline_target:
+        run("search-after-switch", "raw", {**raw, "is_search_after": True}, cursor=page, modes=(True, False), expected=expected)
 if wide:
     expected = wide[0]["list"][3:6]
     run("offset", "raw", {**raw, "from": 3}, expected=expected)
 scroll_body = {**raw, "scroll": "1m", "slice_max": 1}
-scroll1 = run("scroll-1", "raw_with_scroll", scroll_body, scroll=True)
+scroll1 = None if args.baseline_target else run("scroll-1", "raw_with_scroll", scroll_body, scroll=True)
 if scroll1:
     run("scroll-2", "raw_with_scroll", scroll_body, scroll=True,
         validate=lambda rows: not ({r["__unique_key__"] for r in rows} &

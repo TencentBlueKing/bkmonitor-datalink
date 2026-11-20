@@ -62,3 +62,26 @@ python3 field_types.py --env "$ENV_ID" --tenant "$TENANT" --biz "$BIZ" \
 ```
 
 离线执行 `go test ./tsdb/doris -run TestFieldTypeWireContract -count=1`（工作目录 pkg/unify-query）。24 个驱动输入用例各返回一个非空值和一个 SQL NULL，检查字段存在性、精确 Go 类型、值和 schema。上述过滤、聚合、驱动实际暴露的类型名及跨版本行为仍需真实查询验证。
+
+## 独立 BKBase 基线和报告口径
+
+每个执行用例以脚本输出的 `case` 为稳定标识。每次验收记录同名用例、批次、状态、两侧观测及 trace；字段专项按 FT01–FT13 逐项记录样本覆盖和缺口。布尔组合、词项及字段值等补充请求单列。
+
+| 批次 | 对照双方 | 判断的问题 |
+|---|---|---|
+| 版本兼容 | 非测试部署 BKBase / 测试部署 BKBase，显式 false | 同一 BKBase 查询在 PR 版和基线部署上是否返回相同结果 |
+| 后端兼容 | 测试部署 BKBase / 测试部署 Doris | 同一版本切换后端是否改变结果 |
+
+版本兼容批次在相同命令上追加 `--baseline-target "$BASELINE_TARGET"`。两边的普通、SearchAfter 查询各自使用自己的游标；不执行跨后端切换和可能共享 Redis 会话键的滚动下载。default 用例额外比较两个实例均缺省 flag。先通过两条 raw trace 核对服务端 Pod、部署及镜像版本，并确认 BKBase query_sync。若默认空间路由也进入测试实例，应标为独立基线不可用。若只有镜像不同，尚需发布版本证据才能将差异归因于 PR。两条路径同时为空、共同报错或缺少专用数据时，在报告中说明原因。
+
+### 混合路由验收
+
+先用 query_route.query 获取逻辑 RT 的 storage_cluster_records，按 enable_time 排序，核对每段的 storage_type、storage_id、db 及 physical_tables.main。切换日前后、跨切换点、跨历史物理版本和当前纯后端窗口分别编号。测试命令如下：
+
+```sh
+python3 history.py --env "$ENV_ID" --tenant "$TENANT" --biz "$BIZ" \
+  --baseline-target "$BASELINE_TARGET" --target "$UQ_TARGET" --table "$RT" \
+  --window "HX-before:$BEFORE_START:$BEFORE_END" --window "HX-cross:$CROSS_START:$CROSS_END"
+```
+
+每个窗口依次列出基线实例关闭直查、测试实例关闭直查、测试实例开启直查的 check 和 raw 结果。记录每段集群和物理目标、取样行数、total、partial/status、首屏来源与顺序。相同空结果、相同部分失败应独立标记；不能仅以 HTTP 成功或 equal=true 判定通过。用 --second-table 另测两个活跃 RT 同窗扇出。用已知事件和稳定排序复核分页；单个 limit=3 的首屏差异不足以断言丢数。

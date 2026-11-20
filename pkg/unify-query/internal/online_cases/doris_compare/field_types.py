@@ -41,11 +41,13 @@ def verify(args, table):
     body = dict(bk_biz_id=args.biz, uq_target=args.target, start_time=args.start,
                 end_time=args.end, query_list=[query], limit=args.limit,
                 order_by=["-dtEventTimeStamp", "-__unique_key__"], is_search_after=True)
-    baseline, direct = [call(args, "unify_query.raw", dict(body, doris_direct_query=f)) for f in (False, True)]
+    baseline = call(args, "unify_query.raw", dict(body, uq_target=args.baseline_target or args.target, doris_direct_query=False))
+    expect_direct = not args.baseline_target
+    direct = call(args, "unify_query.raw", dict(body, doris_direct_query=expect_direct))
     rows = [d.get("list") or [] for d in (baseline, direct)]
     traces = [d.get("trace_id") for d in (baseline, direct)]
     keys = [list((d.get("result_table_options") or {}).keys()) for d in (baseline, direct)]
-    routed = all(keys) and all("|doris|" not in k for k in keys[0]) and all("|doris|" in k for k in keys[1])
+    routed = all(keys) and all("|doris|" not in k for k in keys[0]) and all(("|doris|" in k) == expect_direct for k in keys[1])
     aligned = bool(rows[0]) and all("__unique_key__" in r for page in rows for r in page) and (
         [r["__unique_key__"] for r in rows[0]] == [r["__unique_key__"] for r in rows[1]])
     result = dict(table=table, traces=traces, counts=list(map(len, rows)), routed=routed,
@@ -65,6 +67,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     for opt in ("env", "tenant", "target", "start", "end"):
         parser.add_argument("--" + opt, required=True)
+    parser.add_argument("--baseline-target", help="Independent BKBase deployment to compare with BKBase on --target")
     parser.add_argument("--biz", required=True, type=int)
     parser.add_argument("--table", required=True, action="append")
     parser.add_argument("--limit", default=10, type=int, choices=range(1, 101), metavar="1..100")

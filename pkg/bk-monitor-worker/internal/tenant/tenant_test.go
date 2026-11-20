@@ -10,11 +10,16 @@
 package tenant
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
@@ -72,6 +77,7 @@ func TestBkBizIdToTenantId(t *testing.T) {
 }
 
 func TestGetTenantAdminUser(t *testing.T) {
+	t.Setenv("BK_ADMIN_USERNAME", "")
 	cfg.EnableMultiTenantMode = false
 	adminUser, err := GetTenantAdminUser("system")
 	assert.NoError(t, err)
@@ -101,7 +107,82 @@ func TestGetTenantAdminUser(t *testing.T) {
 	assert.Equal(t, "admin", adminUser)
 }
 
+func TestConfiguredTenantAdminLookup(t *testing.T) {
+	t.Setenv("BKAPP_USER_API_BASE_URL", "")
+	t.Setenv("BK_COMPONENT_API_URL", "")
+	oldURL, oldMode := cfg.BkApiUrl, cfg.EnableMultiTenantMode
+	t.Cleanup(func() { cfg.BkApiUrl, cfg.EnableMultiTenantMode = oldURL, oldMode })
+	for _, tc := range []struct {
+		name, login, tenantID, lookupTenant, lookupLogin string
+		multi                                            bool
+	}{
+		{"legacy single tenant", "  ", "system", "", "", false},
+		{"configured single tenant", " service ", "system", "default", "service", false},
+		{"legacy multi tenant", "", "tenant-a", "tenant-a", "bk_admin", true},
+		{"configured multi tenant", "service", "tenant-b", "tenant-b", "service", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("BK_ADMIN_USERNAME", tc.login)
+			cfg.EnableMultiTenantMode = tc.multi
+			username := "resolved-" + tc.lookupTenant
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempt := calls.Add(1)
+				assert.Equal(t, "/api/bk-user/prod/api/v3/open/tenant/virtual-users/-/lookup/", r.URL.Path)
+				assert.Equal(t, tc.lookupTenant, r.Header.Get("X-Bk-Tenant-Id"))
+				assert.Equal(t, "login_name", r.URL.Query().Get("lookup_field"))
+				assert.Equal(t, tc.lookupLogin, r.URL.Query().Get("lookups"))
+				var auth map[string]string
+				assert.NoError(t, json.Unmarshal([]byte(r.Header.Get("X-Bkapi-Authorization")), &auth))
+				assert.Equal(t, map[string]string{"bk_app_code": cfg.BkApiAppCode, "bk_app_secret": cfg.BkApiAppSecret}, auth)
+				var user BatchLookupVirtualUserData
+				if attempt > 1 {
+					user.BkUsername = username
+				}
+				// A failed response must not populate the cache even if a username is present.
+				success := attempt != 2
+				_ = json.NewEncoder(w).Encode(BatchLookupVirtualUserResp{Result: &success, Data: []BatchLookupVirtualUserData{user}})
+			}))
+			defer server.Close()
+			cfg.BkApiUrl = server.URL
+			if tc.lookupTenant == "" {
+				got, err := GetTenantAdminUser(tc.tenantID)
+				require.NoError(t, err)
+				assert.Equal(t, "admin", got)
+				assert.Zero(t, calls.Load())
+				return
+			}
+			t.Cleanup(func() { tenantAdminUserCache.Delete(tc.lookupTenant) })
+			_, err := GetTenantAdminUser(tc.tenantID)
+			require.Error(t, err)
+			_, err = GetTenantAdminUser(tc.tenantID)
+			require.Error(t, err)
+			for range 2 {
+				got, err := GetTenantAdminUser(tc.tenantID)
+				require.NoError(t, err)
+				assert.Equal(t, username, got)
+			}
+			assert.EqualValues(t, 3, calls.Load())
+		})
+	}
+}
+
+func TestUserAPIRedirectIsRejected(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/tenants/", r.URL.Path)
+		http.Redirect(w, r, "/redirected", http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+	t.Setenv("BKAPP_USER_API_BASE_URL", server.URL)
+	var result ListTenantResp
+	err := sendRequestToUserApi(DefaultTenantId, http.MethodGet, "tenants/", nil, &result)
+	require.ErrorContains(t, err, "HTTP 307")
+}
+
 func TestGetTenantList(t *testing.T) {
+	oldList, oldRefresh, oldMode := tenantList, lastTenantListUpdate, cfg.EnableMultiTenantMode
+	t.Cleanup(func() { tenantList, lastTenantListUpdate, cfg.EnableMultiTenantMode = oldList, oldRefresh, oldMode })
+	tenantList = nil
 	cfg.EnableMultiTenantMode = false
 	tenantList, err := GetTenantList()
 	assert.NoError(t, err)

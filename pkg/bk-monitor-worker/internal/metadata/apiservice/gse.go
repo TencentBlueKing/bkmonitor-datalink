@@ -15,6 +15,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
@@ -22,17 +23,25 @@ var Gse GseService
 
 type GseService struct{}
 
+func getGseRouteClient(tenantID string, operation *bkgse.Operation) (*bkgse.Client, error) {
+	if operation.OperatorName == "" {
+		username, err := tenant.GetTenantAdminUser(tenantID)
+		if err != nil {
+			return nil, err
+		}
+		operation.OperatorName = username
+	}
+	return api.GetGseApi(tenantID)
+}
+
 // QueryRoute 查询路由配置
 func (GseService) QueryRoute(bkTenantId string, params bkgse.QueryRouteParams) (any, error) {
-	gseApi, err := api.GetGseApi(bkTenantId)
+	gseApi, err := getGseRouteClient(bkTenantId, &params.Operation)
 	if err != nil {
 		return nil, errors.Wrap(err, "get gse api failed")
 	}
 	if params.Condition.ChannelId == 0 {
 		return nil, errors.Errorf("condition.channel_id can not be empty")
-	}
-	if params.Operation.OperatorName == "" {
-		params.Operation.OperatorName = "admin"
 	}
 	var resp define.APICommonResp
 	_, err = gseApi.QueryRoute().SetBody(params).SetResult(&resp).Request()
@@ -49,12 +58,9 @@ func (GseService) QueryRoute(bkTenantId string, params bkgse.QueryRouteParams) (
 
 // AddRoute 注册路由配置
 func (GseService) AddRoute(bkTenantId string, params bkgse.AddRouteParams) (any, error) {
-	gseApi, err := api.GetGseApi(bkTenantId)
+	gseApi, err := getGseRouteClient(bkTenantId, &params.Operation)
 	if err != nil {
 		return nil, errors.Wrap(err, "get gse api failed")
-	}
-	if params.Operation.OperatorName == "" {
-		params.Operation.OperatorName = "admin"
 	}
 	var resp define.APICommonResp
 	_, err = gseApi.AddRoute().SetBody(params).SetResult(&resp).Request()
@@ -71,15 +77,12 @@ func (GseService) AddRoute(bkTenantId string, params bkgse.AddRouteParams) (any,
 
 // UpdateRoute 更新路由配置
 func (GseService) UpdateRoute(bkTenantId string, params bkgse.UpdateRouteParams) (any, error) {
-	gseApi, err := api.GetGseApi(bkTenantId)
+	gseApi, err := getGseRouteClient(bkTenantId, &params.Operation)
 	if err != nil {
 		return nil, errors.Wrap(err, "get gse api failed")
 	}
 	if params.Specification == nil {
 		return nil, errors.Errorf("specification can not be empty")
-	}
-	if params.Operation.OperatorName == "" {
-		params.Operation.OperatorName = "admin"
 	}
 	var resp define.APICommonResp
 	_, err = gseApi.UpdateRoute().SetBody(params).SetResult(&resp).Request()

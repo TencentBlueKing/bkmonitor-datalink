@@ -9,6 +9,57 @@
 
 package cmdbcache
 
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
+)
+
+func TestResourceWatchWithConfiguredAdmin(t *testing.T) {
+	const businessTenant = "system"
+	t.Setenv("BK_ADMIN_USERNAME", "watcher-login")
+	t.Setenv("BKAPP_USER_API_BASE_URL", "")
+	oldURL, oldMode := cfg.BkApiCmdbApiGatewayUrl, cfg.EnableMultiTenantMode
+	t.Cleanup(func() {
+		cfg.BkApiCmdbApiGatewayUrl, cfg.EnableMultiTenantMode = oldURL, oldMode
+		delete(cmdbApiClients, businessTenant)
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/bk-user/prod/api/v3/open/tenant/virtual-users/-/lookup/":
+			assert.Equal(t, "default", r.Header.Get("X-Bk-Tenant-Id"))
+			fmt.Fprint(w, `{"data":[{"bk_username":"watcher-account"}]}`)
+		case "/api/v3/event/watch/resource/host":
+			assert.Equal(t, businessTenant, r.Header.Get("X-Bk-Tenant-Id"))
+			var auth map[string]string
+			assert.NoError(t, json.Unmarshal([]byte(r.Header.Get("X-Bkapi-Authorization")), &auth))
+			assert.Equal(t, "watcher-account", auth["bk_username"])
+			fmt.Fprint(w, `{"result":true,"data":{"bk_watched":false}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("BK_COMPONENT_API_URL", server.URL+"/")
+	cfg.BkApiCmdbApiGatewayUrl, cfg.EnableMultiTenantMode = server.URL, false
+	opts := &redis.Options{Mode: "standalone", Addrs: []string{testRedisAddr}}
+	watcher, err := NewCmdbResourceWatcher(businessTenant, "test", opts)
+	require.NoError(t, err)
+	defer watcher.redisClient.Close()
+	_, err = watcher.Watch(context.Background(), CmdbResourceTypeHost)
+	require.NoError(t, err)
+}
+
 // import (
 // 	"fmt"
 // 	"testing"

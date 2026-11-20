@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -40,12 +41,21 @@ var (
 // sendRequestToUserApi send request to user api
 func sendRequestToUserApi(tenantId string, method string, path string, urlParams map[string]string, response any) error {
 	// build url
-	baseUrl := fmt.Sprintf("%s/api/bk-user/prod/", cfg.BkApiUrl)
-	url := fmt.Sprintf("%s%s", baseUrl, path)
+	baseURL := os.Getenv("BKAPP_USER_API_BASE_URL")
+	if baseURL == "" {
+		host := os.Getenv("BK_COMPONENT_API_URL")
+		if host == "" {
+			host = cfg.BkApiUrl
+		}
+		baseURL = strings.TrimRight(host, "/") + "/api/bk-user/prod"
+	}
+	url := strings.TrimRight(baseURL, "/") + "/" + path
 
 	// create http client
 	client := &http.Client{
 		Timeout: 30 * time.Second,
+		// The custom application authorization header must stay on the configured endpoint.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	req, err := http.NewRequest(method, url, nil)
 	if err != nil {
@@ -64,8 +74,8 @@ func sendRequestToUserApi(tenantId string, method string, path string, urlParams
 	// set tenant header
 	req.Header.Set("X-Bk-Tenant-Id", tenantId)
 
-	// set bkapi authorization header
-	authStr, err := jsonx.Marshal(map[string]string{"bk_username": "admin", "bk_app_code": cfg.BkApiAppCode, "bk_app_secret": cfg.BkApiAppSecret})
+	// Bootstrap bk-user requests before a tenant administrator has been resolved.
+	authStr, err := jsonx.Marshal(map[string]string{"bk_app_code": cfg.BkApiAppCode, "bk_app_secret": cfg.BkApiAppSecret})
 	if err != nil {
 		return err
 	}
@@ -77,6 +87,9 @@ func sendRequestToUserApi(tenantId string, method string, path string, urlParams
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("bk-user %s returned HTTP %d", path, resp.StatusCode)
+	}
 
 	// read response body
 	body, err := io.ReadAll(resp.Body)
@@ -185,9 +198,15 @@ func GetTenantList() ([]ListTenantData, error) {
 
 // GetTenantAdminUser get tenant admin user
 func GetTenantAdminUser(tenantId string) (string, error) {
-	// single tenant mode use default admin user
+	loginName := strings.TrimSpace(os.Getenv("BK_ADMIN_USERNAME"))
 	if !cfg.EnableMultiTenantMode {
-		return "admin", nil
+		if loginName == "" {
+			return "admin", nil
+		}
+		// The virtual user belongs to the default tenant. Business requests keep their own tenant.
+		tenantId = "default"
+	} else if loginName == "" {
+		loginName = "bk_admin"
 	}
 
 	// check cache
@@ -195,20 +214,22 @@ func GetTenantAdminUser(tenantId string) (string, error) {
 		return val.(string), nil
 	}
 
-	// multi tenant mode use bk-user api to get admin virtual user
+	// Resolve the login name to the username expected by downstream gateways.
 	var result BatchLookupVirtualUserResp
 	urlParams := map[string]string{
 		"lookup_field": "login_name",
-		"lookups":      "bk_admin",
+		"lookups":      loginName,
 	}
 	err := sendRequestToUserApi(tenantId, http.MethodGet, "api/v3/open/tenant/virtual-users/-/lookup/", urlParams, &result)
 	if err != nil {
 		return "", fmt.Errorf("failed to get tenant admin user, tenantId: %s, err: %v", tenantId, err)
 	}
 
-	// handle api empty result error
-	if len(result.Data) == 0 {
-		return "", fmt.Errorf("tenant admin user not found, tenantId: %s", tenantId)
+	if result.Code != 0 || (result.Result != nil && !*result.Result) {
+		return "", fmt.Errorf("tenant admin lookup failed for tenant %s (code %d)", tenantId, result.Code)
+	}
+	if len(result.Data) != 1 || strings.TrimSpace(result.Data[0].BkUsername) == "" {
+		return "", fmt.Errorf("expected one tenant admin username for tenant %s", tenantId)
 	}
 
 	// cache the admin user

@@ -579,7 +579,10 @@ func (m *HostAndTopoCacheManager) refreshHostAgentIDCache(ctx context.Context, b
 
 // getHostAndTopoByBiz 查询业务下的主机及拓扑信息
 func getHostAndTopoByBiz(ctx context.Context, bkTenantId string, bkBizID int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
-	cmdbApi := getCmdbApi(bkTenantId)
+	cmdbApi, err := getCmdbApi(bkTenantId)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// 设置超时时间
 	_ = cmdbApi.AddOperationOptions()

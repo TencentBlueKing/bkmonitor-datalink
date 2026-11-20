@@ -59,6 +59,7 @@ const (
 type Options struct {
 	Address         string
 	Headers         map[string]string
+	BkData          *bkapi.BkDataAPI
 	MaxConditionNum int
 	Timeout         time.Duration
 	Curl            curl.Curl
@@ -78,6 +79,7 @@ type Instance struct {
 
 	url     string
 	headers map[string]string
+	bkData  *bkapi.BkDataAPI
 
 	influxCompatible bool
 	useNativeOr      bool
@@ -108,6 +110,7 @@ func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 		maxConditionNum:  opt.MaxConditionNum,
 		url:              opt.Address,
 		headers:          opt.Headers,
+		bkData:           opt.BkData,
 		influxCompatible: opt.InfluxCompatible,
 		useNativeOr:      opt.UseNativeOr,
 		timeout:          opt.Timeout,
@@ -556,14 +559,21 @@ func (i *Instance) vmQuery(
 		err error
 	)
 
-	user := metadata.GetUser(ctx)
+	user := *metadata.GetUser(ctx)
+
+	ctx, cancel = context.WithTimeout(ctx, i.timeout)
+	defer cancel()
 
 	params := make(map[string]string)
 	params["sql"] = sql
 	params["prefer_storage"] = PreferStorage
 
 	// body 增加 bkdata auth 信息
-	for k, v := range bkapi.GetBkDataAPI().GetDataAuth() {
+	auth, headers, err := bkapi.QueryAuth(ctx, i.bkData, user.TenantID, i.headers)
+	if err != nil {
+		return err
+	}
+	for k, v := range auth {
 		params[k] = v
 	}
 
@@ -572,8 +582,6 @@ func (i *Instance) vmQuery(
 		return err
 	}
 
-	ctx, cancel = context.WithTimeout(ctx, i.timeout)
-	defer cancel()
 	startAnaylize = time.Now()
 
 	span.Set("query-source", user.Source)
@@ -582,12 +590,10 @@ func (i *Instance) vmQuery(
 
 	span.Set("query-address", credential.RedactURL(i.url))
 
-	headers := metadata.Headers(ctx, i.headers)
-
 	requestOptions := curl.Options{
 		UrlPath:          i.url,
 		Body:             body,
-		Headers:          headers,
+		Headers:          user.Headers(headers),
 		MaxResponseBytes: metadata.BackendResponseLimit(ctx),
 		Attempt:          1,
 	}

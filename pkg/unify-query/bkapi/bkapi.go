@@ -11,9 +11,8 @@ package bkapi
 
 import (
 	"fmt"
+	"maps"
 	"sync"
-
-	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
@@ -39,12 +38,16 @@ var (
 )
 
 func GetBkAPI() *BkAPI {
+	return getBkAPI(currentSettings.Load())
+}
+
+func getBkAPI(settings *clientSettings) *BkAPI {
 	onceBkAPI.Do(func() {
 		defaultBkAPI = &BkAPI{
-			address: viper.GetString(BkAPIAddressConfigPath),
+			address: settings.apiAddress,
 			authConfig: map[string]string{
-				BkAppCodeKey:  viper.GetString(BkAPICodeConfigPath),
-				BkSecretKey:   viper.GetString(BkAPISecretConfigPath),
+				BkAppCodeKey:  settings.appCode,
+				BkSecretKey:   settings.appSecret,
 				BkUserNameKey: AdminUserName,
 			},
 		}
@@ -58,10 +61,16 @@ func (i *BkAPI) GetCode() string {
 }
 
 func (i *BkAPI) Headers(headers map[string]string) map[string]string {
+	return i.headersForUser(headers, i.authConfig[BkUserNameKey])
+}
+
+func (i *BkAPI) headersForUser(headers map[string]string, username string) map[string]string {
 	if len(headers) == 0 {
 		headers = make(map[string]string)
 	}
-	auth, _ := json.Marshal(i.authConfig)
+	params := maps.Clone(i.authConfig)
+	params[BkUserNameKey] = username
+	auth, _ := json.Marshal(params)
 	headers[BkAPIAuthorization] = string(auth)
 	return headers
 }

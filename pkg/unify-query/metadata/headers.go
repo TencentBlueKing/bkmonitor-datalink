@@ -13,11 +13,15 @@ import "context"
 
 // Headers 统一注入请求 header 头信息
 func Headers(ctx context.Context, headers map[string]string) map[string]string {
+	return GetUser(ctx).Headers(headers)
+}
+
+// Headers applies the same request identity used to select the backend user.
+func (user User) Headers(headers map[string]string) map[string]string {
 	if headers == nil {
 		headers = make(map[string]string)
 	}
 
-	user := GetUser(ctx)
 	headers[BkQuerySourceHeader] = user.Key
 	headers[SpaceUIDHeader] = user.SpaceUID
 	headers[TenantIDHeader] = user.TenantID

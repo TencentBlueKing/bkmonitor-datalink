@@ -11,6 +11,7 @@ package bkapi
 
 import (
 	"fmt"
+	"maps"
 	"sync"
 
 	"github.com/spf13/viper"
@@ -58,10 +59,16 @@ func (i *BkAPI) GetCode() string {
 }
 
 func (i *BkAPI) Headers(headers map[string]string) map[string]string {
+	return i.headersForUser(headers, i.authConfig[BkUserNameKey])
+}
+
+func (i *BkAPI) headersForUser(headers map[string]string, username string) map[string]string {
 	if len(headers) == 0 {
 		headers = make(map[string]string)
 	}
-	auth, _ := json.Marshal(i.authConfig)
+	params := maps.Clone(i.authConfig)
+	params[BkUserNameKey] = username
+	auth, _ := json.Marshal(params)
 	headers[BkAPIAuthorization] = string(auth)
 	return headers
 }

@@ -95,6 +95,8 @@ bk_api:
 bk_data:
   address: "" # 可选 如果配置了 address，则直接使用此地址，不再通过 bk_api.address + uri_path 组装
   uri_path: bk_data
+  # user 模式可用 BK_ADMIN_USERNAME 指定后台登录名。BKUser 在单租户查询 default，
+  # 多租户查询请求租户。网关取 BKAPP_USER_API_BASE_URL 或 BK_COMPONENT_API_URL。
   authentication_method: token
   token: 123456
   cluster_space_uid:

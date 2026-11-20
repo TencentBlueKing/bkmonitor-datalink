@@ -9,8 +9,10 @@
 
 package influxdb
 
+import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
+
 const (
-	MultiTenantModeConfigPath = "http.multi_tenant_mode"
+	MultiTenantModeConfigPath = config.MultiTenantModeConfigPath
 )
 
 var MultiTenantMode bool

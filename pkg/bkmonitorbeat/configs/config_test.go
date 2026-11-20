@@ -17,6 +17,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 )
 
+func TestDefaultClockJumpThreshold(t *testing.T) {
+	if got := configs.NewConfig().ClockJumpThreshold; got != 0 {
+		t.Fatalf("default clock jump threshold = %s, want disabled", got)
+	}
+}
+
 func TestConfigWithTcpConf(t *testing.T) {
 	conf := configs.NewConfig()
 	// 提供一个心跳的data_id，防止命中data_id防御机制

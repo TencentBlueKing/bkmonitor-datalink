@@ -1,0 +1,41 @@
+应用 / 环境,app_name,应用名称,应用名称,字符串,派生,✅ 必须,支持,"Session,View",后台已注入,多应用检索基础
+应用 / 环境,resource.service.name,服务名,服务名,字符串,采集,✅ 必须,支持,"Session,View",semconv: service.name,应用或服务标识，是多应用检索的基础维度。
+应用 / 环境,resource.service.version,版本,发布版本,字符串,采集,✅ 必须,支持,"Session,View",semconv: service.version,应用发布版本，用于版本回归和问题定位。
+应用 / 环境,resource.deployment.environment.name,环境,应用环境,字符串,采集,✅ 必须,支持,"Session,View",semconv: deployment.environment.name,development（开发环境） / production（生产环境） / staging（预发布环境） / test（测试环境）。
+应用 / 环境,resource.telemetry.sdk.name,SDK 名称,SDK 名称,字符串,采集,✅ 必须,支持,"Session,View",semconv: telemetry.sdk.name,blueking（蓝鲸 Otel SDK，当前值为 @blueking/open-telemetry，需修改） / aegis（Aegis SDK）。
+应用 / 环境,resource.telemetry.sdk.version,SDK 版本,SDK 版本,字符串,采集,✅ 必须,支持,"Session,View",semconv: telemetry.sdk.version,SDK 版本，用于定位采集协议和兼容性问题。
+应用 / 环境,resource.telemetry.sdk.language,语言,SDK语言,字符串,采集,✅ 必须,支持,"Session,View",semconv: telemetry.sdk.language,webjs（Web JavaScript SDK），当前固定为该值。
+终端,resource.device.type,设备类型,设备类型,字符串,采集,✅ 必须,支持,"Session,View",browser attrs + UA 解析,desktop（桌面设备） / mobile（移动设备） / tablet（平板设备） / other（其他设备）。
+终端,resource.user_agent.name,代理名称,浏览器名称,字符串,采集,✅ 必须,支持,"Session,View",semconv: user_agent.name,浏览器名称，如 Chrome、Edge。
+终端,resource.user_agent.version,代理版本,浏览器发布版本,字符串,采集,✅ 必须,支持,"Session,View",semconv: user_agent.version,浏览器版本，如 149、151。
+终端,resource.user_agent.os.name,操作系统名,操作系统,字符串,采集,✅ 必须,支持,"Session,View",semconv: user_agent.os.name,操作系统名称，如 macOS、Windows、Android。
+地理 / 网络,attributes.network.connection.type,连接类型,,字符串,采集,✅ 必须,SDK 上报，预计算不写入,"View,Session",navigator.connection.type,bluetooth（蓝牙网络） / cellular（蜂窝移动网络） / ethernet（以太网） / mixed（混合连接） / none（无网络连接） / other（其他连接方式） / unknown（未知连接方式） / wifi（Wi-Fi 网络） / wimax（WiMAX 网络）；浏览器不支持 API 或未返回值时不上报；预计算索引不再消费此字段。
+地理 / 网络,attributes.network.effective_type,有效网络质量,网络类型,字符串,采集,✅ 必须,支持,"View,Session",navigator.connection.effectiveType,slow-2g（极慢网络） / 2g（较慢网络） / 3g（中等网络） / 4g（较快网络）。
+核心标识,attributes.user.id,用户 ID,用户 ID,字符串,采集,✅ 必须,支持,"Session,View",semconv: user.id（脱敏）,用户身份
+核心标识,attributes.session.id,会话 ID,会话 ID,ID,采集,✅ 必须,支持,"Session,View",SDK 生成 Session ID,会话主键，用于关联同一 Session 下的 View、Action、Resource、Error 和 Vital。
+核心标识,attributes.session.has_replay,是否回放,是否回放,布尔,采集,✅ 必须,支持,Session,SDK 上报 Session Replay 启用状态,标识当前 Session 是否包含回放数据。
+核心标识,attributes.view.id,视图 ID,,ID,采集,✅ 必须,支持,View,SDK 生成 View ID,页面或路由实例主键。
+核心标识,attributes.view.name,视图名称,,字符串,采集,✅ 必须,支持,View,默认取 view.url_template；startView({ name }) / setViewName 可覆盖,默认使用路径分组，也可由接入方设置。
+核心标识,attributes.view.loading_type,视图加载类型,,字符串,采集,✅ 必须,支持,View,SDK 按 View 创建场景派生,initial_load（首次页面加载，即初始导航） / route_change（SPA 路由切换） / session_renewal（会话续期后重建） / bf_cache（从浏览器 BFCache 恢复）。
+核心标识,attributes.view.url,视图 URL,,字符串,采集,✅ 必须,支持,View,window.location.href,当前视图的完整 URL。
+核心标识,attributes.view.previous,视图 URL（前一个）,,字符串,采集,✅ 必须,SDK 上报，预计算不写入,View,上一个逻辑 View 的 URL,关联当前 View 的前一个视图；预计算索引不再消费此字段。
+核心标识,attributes.view.url_template,视图路径分组,,字符串,采集,✅ 必须,支持,View,URL pathname + 接入方分组配置,聚合用低基数路径；默认仅取 pathname，不自动把数字或 UUID 替换为 :id。
+核心标识,attributes.view.previous_url_template,前序视图路径模板,,字符串,采集,✅ 必须,支持,View,SDK 上报 view.previous_url_template,
+核心标识,attributes.view.loading_time,视图加载耗时,,数值(ms),采集,✅ 必须,支持,View,SDK 等待 loadEventEnd 与页面活动稳定后计算,加载时间计算完成后上报；start 阶段可能不存在。
+体验聚合,view_count,View 数量,View 数量,数值,派生,✅ 必须,Session 预计算,Session,派生：distinct(view.id),本 session 内访问页面数，不可直接按 attributes.span_type=view 来统计，因为 View Span 有版本（attributes.view.version）的概念。
+体验聚合,enter_url_template,入口视图 URL,入口视图 URL,字符串,派生,✅ 必须,Session 预计算,Session,派生：min(start_time + view.url + session.id).view.url（url_template）,用户进入应用的视图URL
+体验聚合,exit_url_template,退出视图 URL,退出视图 URL,字符串,派生,✅ 必须,Session 预计算,Session,派生：max(start_time + view.url + session.id).view.url（url_template）,用户退出应用的视图URL
+体验聚合,web_vitals.cls,CLS 指标值,CLS 指标值,浮点,派生,✅ 必须,View 预计算,View,派生：attributes.vital.value,
+体验聚合,web_vitals.lcp,lcp 指标,lcp 指标,数值(ms),派生,✅ 必须,View 预计算,View,派生：attributes.vital.value,
+体验聚合,web_vitals.fcp,fcp 指标,fcp 指标,数值(ms),派生,✅ 必须,View 预计算,View,派生：attributes.vital.value,
+体验聚合,web_vitals.inp,inp 指标,inp 指标,数值(ms),派生,✅ 必须,View 预计算,View,派生：attributes.vital.value,
+体验聚合,web_vitals.ttfb,ttfb 指标,ttfb 指标,数值(ms),派生,✅ 必须,View 预计算,View,派生：attributes.vital.value,
+体验聚合,trace_count,Trace 数量,Trace 数量,数值,派生,✅ 必须,"Session 预计算,View 预计算","View,Session",派生：count(links[].trace_id),"满足 `attributes.span_type=resource, attributes.resource.type=xhr or fetch` 时，SDK 将前端生成的 TraceID 记录到该字段。"
+体验聚合,error_count,错误数量,错误数量,数值,派生,✅ 必须,"Session 预计算,View 预计算","View,Session",派生：count(attributes.span_type=error),异常密度
+体验聚合,action_count,动作数量,动作数量,数值,派生,✅ 必须,"Session 预计算,View 预计算","View,Session",派生：count(attributes.span_type=action),用户交互次数
+体验聚合,request_count,动作数量,动作数量,数值,派生,✅ 必须,"Session 预计算,View 预计算","View,Session","派生：count(attributes.resource.type ∈{xhr, fetch})",外部调用规模
+体验聚合,long_task_count,Long Task 数,Long Task 数,数值,派生,✅ 必须,"Session 预计算,View 预计算","View,Session",派生：count(attributes.span_type=long_task),
+体验聚合,is_active,是否进行中,是否进行中,字符串,派生,✅ 必须,"Session 预计算,View 预计算","View,Session",派生： 是 attributes.session.phase  != end ，否 attributes.session.phase = end（补下 view 的）,session 是否还在活动中
+体验聚合,end_reason,结束原因,,字符串,派生,✅ 必须,"Session 预计算,View 预计算","View,Session",派生：接收到 phase=end -> 正常关闭 / -> 预计算超时,
+体验聚合,duration,持续时长,持续时长,数值(us),派生,✅ 必须,"Session 预计算,View 预计算","View,Session",派生：max(end_time) - min(start_time),
+体验聚合,frustration_count,挫败行为数,挫败行为数,数值,派生,✅ 必须,"Session 预计算,View 预计算","View,Session",派生：count(span_type ∈ {click,action} 且 attributes.action.frustration.type 非空),挫败信号计数。

@@ -58,6 +58,13 @@ func (q *Query) TableUUID() string {
 		}
 	}
 
+	if q.QueryBackend == DorisStorageType {
+		l = append(l, DorisStorageType)
+		for _, t := range q.DorisTables() {
+			l = append(l, PhysicalTableSQL(t))
+		}
+	}
+
 	return strings.Join(l, "|")
 }
 

@@ -127,6 +127,7 @@ func newEngine() (engine *gin.Engine, public, private *gin.RouterGroup) {
 			SlowQueryThreshold: SlowQueryThreshold,
 		}),
 		middleware.JwtAuthMiddleware(JwtEnabled, JwtPublicKey, JwtBkAppCodeSpaces),
+		middleware.QueryFlags(),
 	)
 	private = engine.Group("/")
 	return engine, public, private

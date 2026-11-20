@@ -432,6 +432,10 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	queryByte, _ := json.Marshal(queryTs)
 	queryStr := string(queryByte)
 	queryStrWithUserName := scrollSessionKey(user, queryStr)
+	// 新后端与原会话隔离，默认 false 保持已有会话标识。
+	if metadata.GetQueryFlags(ctx).DorisDirectQuery {
+		queryStrWithUserName += ":doris_direct_query=true"
+	}
 	session, err = redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollSessionLockTimeout, queryTs.SliceMax, queryTs.Limit)
 	if err != nil {
 		return

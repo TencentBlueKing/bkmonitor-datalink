@@ -66,6 +66,8 @@ func (q *QueryTs) ToRawQueryPlan(ctx context.Context) (plan QueryPlan, err error
 // rawStorageTarget 只在同一个逻辑查询和同一个结果表的历史展开中使用。
 // 查询条件、投影和分页属于该逻辑查询；历史记录只改变这里的存储定位信息。
 type rawStorageTarget struct {
+	backend     string
+	physical    string
 	storageType string
 	storageID   string
 	storageName string
@@ -77,7 +79,12 @@ type rawStorageTarget struct {
 
 // rawTarget 提取已完成默认值补齐和历史覆盖的存储定位字段。
 func rawTarget(query *metadata.Query) rawStorageTarget {
+	physical := ""
+	if query.QueryBackend == metadata.DorisStorageType {
+		physical = metadata.PhysicalTableSQL(query.PhysicalTables["main"])
+	}
 	return rawStorageTarget{
+		backend: query.QueryBackend, physical: physical,
 		storageType: query.StorageType,
 		storageID:   query.StorageID,
 		storageName: query.StorageName,
@@ -89,6 +96,7 @@ func rawTarget(query *metadata.Query) rawStorageTarget {
 }
 
 type queryMergeTarget struct {
+	backend     string
 	storageUUID string
 	clusterName string
 	measurement string
@@ -97,7 +105,11 @@ type queryMergeTarget struct {
 
 // mergeTarget 生成 DB 合并分组键，Raw 查询同时区分集群、Measurement 和 SourceType。
 func mergeTarget(query *metadata.Query, mode queryMode) queryMergeTarget {
-	target := queryMergeTarget{storageUUID: query.StorageUUID()}
+	target := queryMergeTarget{storageUUID: query.StorageUUID(), backend: query.QueryBackend}
+	// 未显式选后端时执行器使用 StorageType，续页的显式标记不应拆分同一组查询。
+	if target.backend == "" {
+		target.backend = query.StorageType
+	}
 	if mode == rawQuery {
 		target.clusterName = query.ClusterName
 		target.measurement = query.Measurement
@@ -108,9 +120,65 @@ func mergeTarget(query *metadata.Query, mode queryMode) queryMergeTarget {
 
 func compareMergeTargets(left, right queryMergeTarget) int {
 	return cmp.Or(
+		cmp.Compare(left.backend, right.backend),
 		cmp.Compare(left.storageUUID, right.storageUUID),
 		cmp.Compare(left.clusterName, right.clusterName),
 		cmp.Compare(left.measurement, right.measurement),
 		cmp.Compare(left.sourceType, right.sourceType),
 	)
+}
+
+// restoreMergedDorisPagination 在按后端分组合并前，将主表游标应用到同组成员。
+// 只从当前授权路由构造查询目标，游标中的物理表列表仅用于匹配成员。
+func restoreMergedDorisPagination(queries []*metadata.Query) {
+	groups := make(map[queryMergeTarget][]*metadata.Query)
+	for _, query := range queries {
+		if query.Measurement != metadata.DorisStorageType || !query.GetMergeDBStatus() {
+			continue
+		}
+		target := mergeTarget(query, rawQuery)
+		target.backend = ""
+		groups[target] = append(groups[target], query)
+	}
+	for _, group := range groups {
+		// Doris 游标明确列出物理成员，先恢复其归属，避免被 BKBase 游标提前接管。
+		for _, backend := range []string{metadata.DorisStorageType, metadata.BkSqlStorageType} {
+			for _, primary := range group {
+				option := primary.ResultTableOption
+				if option == nil || primary.QueryBackend != backend {
+					continue
+				}
+				for _, member := range group {
+					if member.ResultTableOption != nil {
+						continue
+					}
+					switch primary.QueryBackend {
+					case metadata.BkSqlStorageType:
+						if member.DB == "" {
+							continue
+						}
+						member.QueryBackend = metadata.BkSqlStorageType
+						member.DirectTables = nil
+					case metadata.DorisStorageType:
+						target := member.PhysicalTables["main"]
+						matched := false
+						for _, saved := range option.DirectTables {
+							if target.Database != "" && target.Table != "" && target.Database == saved.Database && target.Table == saved.Table {
+								matched = true
+								break
+							}
+						}
+						if !matched {
+							continue
+						}
+						member.QueryBackend = metadata.DorisStorageType
+						member.DirectTables = []metadata.PhysicalTable{target}
+					default:
+						continue
+					}
+					member.ResultTableOption = option
+				}
+			}
+		}
+	}
 }

@@ -156,8 +156,11 @@ type QueryCostProfile struct {
 
 // Query 查询扩展信息，为后面查询提供定位
 type Query struct {
-	SourceType string `json:"source_type,omitempty"`
-	Password   string `json:"password,omitempty"` // 查询鉴权
+	PhysicalTables map[string]PhysicalTable `json:"physical_tables,omitempty"`
+	DirectTables   []PhysicalTable          `json:"direct_tables,omitempty"`
+	QueryBackend   string                   `json:"query_backend,omitempty"`
+	SourceType     string                   `json:"source_type,omitempty"`
+	Password       string                   `json:"password,omitempty"` // 查询鉴权
 
 	ClusterID string `json:"cluster_id,omitempty"` // 存储 ID
 
@@ -252,7 +255,12 @@ type Query struct {
 
 // ToRouteInfo 生成单条子查询路由摘要，不调用实际 TSDB 查询。
 func (q *Query) ToRouteInfo(referenceName, metricName string) RouteInfo {
+	var physical map[string]PhysicalTable
+	if q.QueryBackend == DorisStorageType {
+		physical = q.PhysicalTables
+	}
 	return RouteInfo{
+		QueryBackend: q.QueryBackend, PhysicalTables: physical,
 		ReferenceName: referenceName,
 		MetricName:    metricName,
 		TableID:       q.TableID,
@@ -267,6 +275,9 @@ func (q *Query) ToRouteInfo(referenceName, metricName string) RouteInfo {
 
 // GetMergeDBStatus 判断是否进行 db 合并处理
 func (q *Query) GetMergeDBStatus() bool {
+	if q.QueryBackend == DorisStorageType {
+		return q.IsMergeDB && len(q.DorisTables()) > 0
+	}
 	// 如果 db 为空，则不需要合并
 	if q.DB == "" {
 		return false
@@ -422,15 +433,17 @@ type QueryReference map[string][]*QueryMetric
 
 // RouteInfo 单条子查询路由摘要（与 Query 同源；不含敏感字段；不调真实 TSDB）。
 type RouteInfo struct {
-	ReferenceName string `json:"reference_name"`
-	MetricName    string `json:"metric_name,omitempty"`
-	TableID       string `json:"table_id"`
-	DB            string `json:"db,omitempty"`
-	DataLabel     string `json:"data_label,omitempty"`
-	DataSource    string `json:"data_source,omitempty"`
-	StorageType   string `json:"storage_type,omitempty"`
-	StorageID     string `json:"storage_id,omitempty"`
-	Measurement   string `json:"measurement,omitempty"`
+	QueryBackend   string                   `json:"query_backend,omitempty"`
+	PhysicalTables map[string]PhysicalTable `json:"physical_tables,omitempty"`
+	ReferenceName  string                   `json:"reference_name"`
+	MetricName     string                   `json:"metric_name,omitempty"`
+	TableID        string                   `json:"table_id"`
+	DB             string                   `json:"db,omitempty"`
+	DataLabel      string                   `json:"data_label,omitempty"`
+	DataSource     string                   `json:"data_source,omitempty"`
+	StorageType    string                   `json:"storage_type,omitempty"`
+	StorageID      string                   `json:"storage_id,omitempty"`
+	Measurement    string                   `json:"measurement,omitempty"`
 }
 
 // CollectRouteInfo 汇总子查询路由字段；无路由时返回空切片，最终按路由摘要排序以保证输出稳定。

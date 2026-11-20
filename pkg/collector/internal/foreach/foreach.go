@@ -58,6 +58,20 @@ func SpansWithResource(traces ptrace.Traces, f func(rs pcommon.Map, span ptrace.
 	}
 }
 
+func SpansWithResourceRemoveIf(traces ptrace.Traces, f func(rs pcommon.Map, span ptrace.Span) bool) {
+	resourceSpansSlice := traces.ResourceSpans()
+	resourceSpansSlice.RemoveIf(func(resourceSpans ptrace.ResourceSpans) bool {
+		rs := resourceSpans.Resource().Attributes()
+		resourceSpans.ScopeSpans().RemoveIf(func(scopeSpans ptrace.ScopeSpans) bool {
+			scopeSpans.Spans().RemoveIf(func(span ptrace.Span) bool {
+				return f(rs, span)
+			})
+			return scopeSpans.Spans().Len() == 0
+		})
+		return resourceSpans.ScopeSpans().Len() == 0
+	})
+}
+
 func SpansSliceResource(traces ptrace.Traces, f func(rs pcommon.Resource)) {
 	resourceSpansSlice := traces.ResourceSpans()
 	for i := 0; i < resourceSpansSlice.Len(); i++ {

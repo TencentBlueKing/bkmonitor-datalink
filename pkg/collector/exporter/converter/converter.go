@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/metricmeta"
 )
 
 var converterSpanKindTotal = promauto.NewCounterVec(
@@ -49,35 +50,39 @@ type EventConverter interface {
 }
 
 func NewCommonConverter(conf *Config) Converter {
+	return NewCommonConverterWithMetadata(conf, nil)
+}
+
+// NewCommonConverterWithMetadata 为各协议注入元信息观察器，每条记录只读取一次当前观察器。
+func NewCommonConverterWithMetadata(conf *Config, observer func() metricmeta.Observer) Converter {
+	if observer == nil {
+		observer = func() metricmeta.Observer { return nil }
+	}
 	return commonConverter{
-		traces:      tracesConverter{},
-		metrics:     metricsConverter{},
-		logs:        logsConverter{},
-		pushGateway: pushGatewayConverter{},
-		remoteWrite: remoteWriteConverter{},
-		proxy:       proxyConverter{},
-		pingserver:  pingserverConverter{},
-		profiles:    profilesConverter{},
-		fta:         ftaConverter{},
-		beat:        beatConverter{},
-		logPush:     logPushConverter{},
-		tars:        newTarsConverter(conf.Tars),
+		observer:   observer,
+		traces:     tracesConverter{},
+		logs:       logsConverter{},
+		proxy:      proxyConverter{},
+		pingserver: pingserverConverter{},
+		profiles:   profilesConverter{},
+		fta:        ftaConverter{},
+		beat:       beatConverter{},
+		logPush:    logPushConverter{},
+		tars:       newTarsConverterWithMetadata(conf.Tars, nil),
 	}
 }
 
 type commonConverter struct {
-	traces      EventConverter
-	metrics     EventConverter
-	logs        EventConverter
-	pushGateway EventConverter
-	remoteWrite EventConverter
-	proxy       EventConverter
-	pingserver  EventConverter
-	profiles    EventConverter
-	fta         EventConverter
-	beat        EventConverter
-	logPush     EventConverter
-	tars        EventConverter
+	observer   func() metricmeta.Observer
+	traces     EventConverter
+	logs       EventConverter
+	proxy      EventConverter
+	pingserver EventConverter
+	profiles   EventConverter
+	fta        EventConverter
+	beat       EventConverter
+	logPush    EventConverter
+	tars       tarsConverter
 }
 
 func (c commonConverter) Clean() {
@@ -91,13 +96,13 @@ func (c commonConverter) Convert(record *define.Record, f define.GatherFunc) {
 	case define.RecordRumTraces:
 		c.traces.Convert(record, f)
 	case define.RecordMetrics:
-		c.metrics.Convert(record, f)
+		metricsConverter{metadata: c.observer()}.Convert(record, f)
 	case define.RecordLogs:
 		c.logs.Convert(record, f)
 	case define.RecordPushGateway:
-		c.pushGateway.Convert(record, f)
+		pushGatewayConverter{metadata: c.observer()}.Convert(record, f)
 	case define.RecordRemoteWrite:
-		c.remoteWrite.Convert(record, f)
+		remoteWriteConverter{metadata: c.observer()}.Convert(record, f)
 	case define.RecordProxy:
 		c.proxy.Convert(record, f)
 	case define.RecordPingserver:
@@ -109,6 +114,7 @@ func (c commonConverter) Convert(record *define.Record, f define.GatherFunc) {
 	case define.RecordBeat:
 		c.beat.Convert(record, f)
 	case define.RecordTars:
+		c.tars.metadata = c.observer()
 		c.tars.Convert(record, f)
 	case define.RecordLogPush:
 		c.logPush.Convert(record, f)

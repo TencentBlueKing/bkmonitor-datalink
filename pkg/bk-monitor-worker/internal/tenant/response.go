@@ -20,7 +20,9 @@ type ListTenantData struct {
 }
 
 type BatchLookupVirtualUserResp struct {
-	Data []BatchLookupVirtualUserData `json:"data"`
+	Code   int                          `json:"code"`
+	Result *bool                        `json:"result"`
+	Data   []BatchLookupVirtualUserData `json:"data"`
 }
 
 type BatchLookupVirtualUserData struct {

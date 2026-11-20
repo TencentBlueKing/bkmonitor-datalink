@@ -88,14 +88,16 @@ type CmdbResourceWatcher struct {
 
 // NewCmdbResourceWatcher 创建cmdb资源监听器
 func NewCmdbResourceWatcher(bkTenantId string, prefix string, rOpt *redis.Options) (*CmdbResourceWatcher, error) {
+	cmdbApi, err := getCmdbApi(bkTenantId)
+	if err != nil {
+		return nil, err
+	}
+
 	// 创建redis client
 	redisClient, err := redis.GetClient(rOpt)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to create redis client, bkTenantId: %s", bkTenantId)
 	}
-
-	// 创建cmdb api client
-	cmdbApi := getCmdbApi(bkTenantId)
 
 	return &CmdbResourceWatcher{
 		bkTenantId:  bkTenantId,

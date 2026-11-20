@@ -439,7 +439,7 @@ func TestReplaceStorageClient(t *testing.T) {
 	assert.Equal(t, "second:data:storage", GetStoragePath())
 }
 
-func TestGetTsDBStorageInfoKeepsSurrealDB(t *testing.T) {
+func TestGetTsDBStorageInfoKeepsSurrealDBAndDoris(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := goRedis.NewClient(&goRedis.Options{Addr: mr.Addr()})
 	defer client.Close()
@@ -452,6 +452,7 @@ func TestGetTsDBStorageInfoKeepsSurrealDB(t *testing.T) {
 	})
 	replaceStorageClient(client, "test")
 	mr.Set("test:data:storage:7", `{"address":"http://localhost:8000","username":"root","password":"test-password","type":"surrealdb"}`)
+	mr.Set("test:data:storage:31", `{"type":"doris","address":"http://doris.example:9030"}`)
 	mr.Set("test:data:storage:8", `{"address":"http://localhost:9092","type":"kafka"}`)
 
 	storages, err := GetTsDBStorageInfo(context.Background())
@@ -462,7 +463,10 @@ func TestGetTsDBStorageInfoKeepsSurrealDB(t *testing.T) {
 	if storage == nil || storage.Type != "surrealdb" || storage.Address != "http://localhost:8000" {
 		t.Fatalf("SurrealDB storage must remain available: %+v", storage)
 	}
-	if len(storages) != 1 {
+	if doris := storages["31"]; doris == nil || doris.Address != "http://doris.example:9030" {
+		t.Fatal("Doris storage missing or address changed")
+	}
+	if len(storages) != 2 {
 		t.Fatalf("expected only TSDB storage records, got %d", len(storages))
 	}
 }

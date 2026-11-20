@@ -54,7 +54,7 @@ Redis 原始路由的 storage_id 保持原来的整数类型；上面的示例�
 
 `analyzed_fields` 由路由提供，用于恢复 BKBase 返回的 Analyzed 信息；不根据 TEXT 类型推定分词。应与目标表真实倒排索引和 BKBase storage_config 保持相同口径。未列出的字段按非分词字段处理。
 
-storage_id 对应现有存储配置中的 address、username、password。address 为 Doris FE 的 MySQL 地址 `host:9030`（不是 HTTP 查询地址），账号需要查询及字段描述权限。客户端按集群复用连接池；配置变化时替换旧连接池，凭据不进入路由或 trace。会话时区按现有平台默认口径使用 `+08:00`。
+storage_id 对应现有存储配置中的 address、username、password。address 支持 `host:9030` 和配置下发的 `http://host:9030`，两者均使用 Doris FE 的 MySQL 协议端口，账号需要查询及字段描述权限。客户端按集群复用连接池；配置变化时替换旧连接池，凭据不进入路由或 trace。会话时区按现有平台默认口径使用 `+08:00`。
 
 ## 实现与兼容范围
 

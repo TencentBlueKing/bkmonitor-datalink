@@ -13,6 +13,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,6 +45,13 @@ type Client struct {
 }
 
 func NewClient(storageID, address, username, password string, timeout time.Duration, tables []metadata.PhysicalTable) (*Client, error) {
+	if strings.Contains(address, "://") {
+		endpoint, err := url.Parse(address)
+		if err != nil || endpoint.Hostname() == "" || endpoint.Port() == "" {
+			return nil, fmt.Errorf("Doris storage URL requires a host and MySQL port")
+		}
+		address = endpoint.Host
+	}
 	if address == "" {
 		return nil, fmt.Errorf("Doris storage address is empty")
 	}

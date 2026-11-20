@@ -112,3 +112,18 @@ func TestDirectQueryCancellation(t *testing.T) {
 	require.Nil(t, res.Data)
 	require.NoError(t, m.ExpectationsWereMet())
 }
+
+func TestPublishedURLAndTCPAddressShareDorisPool(t *testing.T) {
+	id := t.Name()
+	first, err := NewClient(id, "http://doris.example:9030", "", "", time.Second, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		pools.Lock()
+		delete(pools.entries, id)
+		pools.Unlock()
+		first.db.Close()
+	})
+	second, err := NewClient(id, "doris.example:9030", "", "", time.Second, nil)
+	require.NoError(t, err)
+	require.Same(t, first.db, second.db)
+}

@@ -96,15 +96,6 @@ scope 的指标清单和 value 引用数在同一事务中更新；增量消息�
 
 模块运行指标注册到项目已有 Prometheus Registry，名称以 `bmw_metricmetadata_` 开头。`refresh_duration_seconds` 按成功、失败或因并发失效而丢弃的结果记录刷新耗时；`cache_size` 提供 scope 数、指标引用数和估算字节数，估算字节数不是 Go 堆内存。Debug 日志中的 `state load timing` 记录加载耗时、分页数、计划的 value 查询批次数和 ID 数（跨页可能重复），可用于分析数据库读取成本。worker 模式通过已有 `/metrics` 暴露；独立命令在 `worker.listenHost:worker.listenPort` 上启动只提供 `/bmw/metrics` 的 HTTP 服务。
 
-## 本地数据验证
-
-`deploy/metricmetadata/send_mock_to_kafka.py` 可向本地 Kafka 发送 Collector 格式的样例消息。目标 DataID 必须已配置启用分组；脚本参数、MySQL 连接和消息规模可通过 `--help` 查看。启动 Compose 并发送样例：
-
-```bash
-python3 -m pip install -r deploy/metricmetadata/requirements.txt
-docker compose -f deploy/metricmetadata/docker-compose.yaml up -d --wait
-KAFKA_TOPIC=your-topic python3 deploy/metricmetadata/send_mock_to_kafka.py --dataid 1002
-```
 
 ## 测试
 

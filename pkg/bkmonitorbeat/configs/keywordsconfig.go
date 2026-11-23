@@ -137,7 +137,19 @@ func (c *KeywordTaskConfig) Clean() error {
 		c.Paths[i] = strings.TrimSpace(path)
 	}
 	if c.ExcludeFiles == nil || len(c.ExcludeFiles) <= 0 {
-		c.ExcludeFiles = []string{".gz$", ".tar$", ".bz2$"}
+		c.ExcludeFiles = []string{
+			".gz$",
+			".tar$",
+			".bz2$",
+			".xz$",
+			".zst$",
+			".zip$",
+			".7z$",
+			".lz4$",
+			".tgz$",
+			".tbz2$",
+			".txz$",
+		}
 	}
 	if c.CloseInactive == 0 {
 		c.CloseInactive = 1 * time.Hour

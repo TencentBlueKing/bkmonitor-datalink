@@ -162,8 +162,16 @@ EOF
       period: 1m
       check_period: 1m
       report_period: 6h
+{%- if extra_vars is defined and extra_vars.virtual_iface_whitelist is defined %}
+      virtual_iface_whitelist: {{ extra_vars.virtual_iface_whitelist | default(["bond1"]) }}
+{%- else %}
       virtual_iface_whitelist: ["bond1"]
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.virtual_iface_blacklist is defined %}
+      virtual_iface_blacklist: {{ extra_vars.virtual_iface_blacklist | default([]) }}
+{%- else %}
       virtual_iface_blacklist: []
+{%- endif %}
 
   # 主机性能数据采集
 EOF
@@ -179,8 +187,14 @@ EOF
 #      info_timeout: 30s
 #    disk:
 #      stat_times: 1
-#      mountpoint_black_list: ["docker","container","k8s","kubelet"]
-#      fs_type_white_list: ["overlay","btrfs","ext2","ext3","ext4","reiser","xfs","ffs","ufs","jfs","jfs2","vxfs","hfs","apfs","refs","ntfs","fat32","zfs"]
+#      disk_white_list: []
+#      disk_black_list: []
+#      partition_white_list: []
+#      partition_black_list: []
+#      mountpoint_white_list: []
+#      mountpoint_black_list: ["docker","container","k8s","kubelet","blueking"]
+#      fs_type_white_list: []
+#      fs_type_black_list: ["tmpfs","devtmpfs","devfs","iso9660","overlay","aufs","squashfs"]
 #      collect_all_device: true
 #    mem:
 #      info_times: 1
@@ -188,6 +202,7 @@ EOF
 #      stat_times: 4
 #      revert_protect_number: 100
 #      skip_virtual_interface: false
+#      interface_white_list: []
 #      interface_black_list: ["veth", "cni", "docker", "flannel", "tunnat", "cbr", "kube-ipvs", "dummy"]
 #      force_report_list: ["bond"]
 
@@ -204,15 +219,45 @@ EOF
       info_timeout: 30s
     disk:
       stat_times: 1
+{%- if extra_vars is defined and extra_vars.disk_white_list is defined %}
+      disk_white_list: {{ extra_vars.disk_white_list | default([]) }}
+{%- else %}
+      disk_white_list: []
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.disk_black_list is defined %}
+      disk_black_list: {{ extra_vars.disk_black_list | default([]) }}
+{%- else %}
+      disk_black_list: []
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.partition_white_list is defined %}
+      partition_white_list: {{ extra_vars.partition_white_list | default([]) }}
+{%- else %}
+      partition_white_list: []
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.partition_black_list is defined %}
+      partition_black_list: {{ extra_vars.partition_black_list | default([]) }}
+{%- else %}
+      partition_black_list: []
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.mountpoint_white_list is defined %}
+      mountpoint_white_list: {{ extra_vars.mountpoint_white_list | default([]) }}
+{%- else %}
+      mountpoint_white_list: []
+{%- endif %}
 {%- if extra_vars is defined and extra_vars.mountpoint_black_list is defined %}
-      mountpoint_black_list: {{ extra_vars.mountpoint_black_list | default(["docker","container","k8s","kubelet","blueking"], true) }}
+      mountpoint_black_list: {{ extra_vars.mountpoint_black_list | default(["docker","container","k8s","kubelet","blueking"]) }}
 {%- else %}
       mountpoint_black_list: ["docker","container","k8s","kubelet","blueking"]
 {%- endif %}
 {%- if extra_vars is defined and extra_vars.fs_type_white_list is defined %}
-      fs_type_white_list: {{ extra_vars.fs_type_white_list | default(["overlay","btrfs","ext2","ext3","ext4","reiser","xfs","ffs","ufs","jfs","jfs2","vxfs","hfs","apfs","refs","ntfs","fat32","zfs"], true) }}
+      fs_type_white_list: {{ extra_vars.fs_type_white_list | default([]) }}
 {%- else %}
-      fs_type_white_list: ["overlay","btrfs","ext2","ext3","ext4","reiser","xfs","ffs","ufs","jfs","jfs2","vxfs","hfs","apfs","refs","ntfs","fat32","zfs"]
+      fs_type_white_list: []
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.fs_type_black_list is defined %}
+      fs_type_black_list: {{ extra_vars.fs_type_black_list | default(["tmpfs","devtmpfs","devfs","iso9660","overlay","aufs","squashfs"]) }}
+{%- else %}
+      fs_type_black_list: ["tmpfs","devtmpfs","devfs","iso9660","overlay","aufs","squashfs"]
 {%- endif %}
       collect_all_device: true
     mem:
@@ -221,8 +266,21 @@ EOF
       stat_times: 4
       revert_protect_number: 100
       skip_virtual_interface: false
+{%- if extra_vars is defined and extra_vars.interface_white_list is defined %}
+      interface_white_list: {{ extra_vars.interface_white_list | default([]) }}
+{%- else %}
+      interface_white_list: []
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.interface_black_list is defined %}
+      interface_black_list: {{ extra_vars.interface_black_list | default(["veth","cni","docker","flannel","tunnat","cbr","kube-ipvs","dummy"]) }}
+{%- else %}
       interface_black_list: ["veth", "cni", "docker", "flannel", "tunnat", "cbr", "kube-ipvs", "dummy"]
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.force_report_list is defined %}
+      force_report_list: {{ extra_vars.force_report_list | default(["bond"]) }}
+{%- else %}
       force_report_list: ["bond"]
+{%- endif %}
 
 EOF
   fi
@@ -240,6 +298,8 @@ EOF
 #    check_disk_space_interval: 60
 #    check_oom_interval: 10
 #    used_max_disk_space_percent: 95
+#    disk_ro_white_list: []
+#    disk_ro_black_list: ["docker","container","k8s","kubelet","blueking"]
 
 EOF
   else
@@ -260,7 +320,16 @@ EOF
 {%- if extra_vars is defined and extra_vars.corefile_match_regex is defined %}
     corefile_match_regex: {{ extra_vars.corefile_match_regex or '' }}
 {%- endif %}
+{%- if extra_vars is defined and extra_vars.disk_ro_white_list is defined %}
+    disk_ro_white_list: {{ extra_vars.disk_ro_white_list | default([]) }}
+{%- else %}
+    disk_ro_white_list: []
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.disk_ro_black_list is defined %}
+    disk_ro_black_list: {{ extra_vars.disk_ro_black_list | default(["docker","container","k8s","kubelet","blueking"]) }}
+{%- else %}
     disk_ro_black_list: ["docker","container","k8s","kubelet","blueking"]
+{%- endif %}
 EOF
   cat <<EOF >> "$path"
   # 进程采集：同步 CMDB 进程配置文件到 bkmonitorbeat 子任务文件夹下

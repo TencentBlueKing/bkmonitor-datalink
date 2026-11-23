@@ -129,6 +129,35 @@ taskConfig:
     window:
       maxDuration: 5m
       delay: 5m
+  metricmetadata:
+    batch:
+      # 达到记录数或消息字节上限时提前提交。
+      size: 30000
+      maxBytes: 16777216
+      # 消费聚合窗口时长上限，从第一条消息开始计时。
+      wait: 30s
+    queue:
+      # 队列按消息数和估算内存字节数限流，满载时阻塞读取。
+      maxMessages: 1000
+      maxBytes: 67108864
+    state:
+      # 完整状态刷新时每次查询的最大 scope 行数。
+      pageSize: 1000
+    capacity:
+      # 每个 group 的 scope 和 value 数量上限，0 表示不限制。
+      maxScopes: 0
+      maxValues: 0
+    database:
+      # 数据库操作超时。
+      timeout: 10s
+    # 数据库或 Kafka 超时后，重建运行实例前的等待时长。
+    retryInterval: 5s
+    # 退出或 rebalance 时的排空超时，必须大于 database.timeout。
+    drainTimeout: 15s
+    # 过期 scope 清理周期。
+    refreshInterval: 5m
+    # 活跃 scope 的 last_seen 最小刷新间隔。
+    touchInterval: 24h
   # common: 任务通用配置
   common:
     queues:

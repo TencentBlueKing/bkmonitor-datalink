@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/proxy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -175,6 +176,13 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		failBeforeQuery(ctx, err)
 		return
 	}
+	// 批次内的各项与各跳共用一次全空间字段匹配（见 structured.RouteCandidates）。
+	ctx, routeCandidates := structured.WithRouteCandidates(ctx)
+	defer func() {
+		scans, hits := routeCandidates.Counts()
+		span.Set("route-candidate-scans", scans)
+		span.Set("route-candidate-hits", hits)
+	}()
 	request := new(cmdb.SharedTopologyRequest)
 	_, decodeSpan := trace.NewSpan(ctx, "topology-decode-request")
 	err = json.Unmarshal(body, request)

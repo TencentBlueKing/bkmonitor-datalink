@@ -21,6 +21,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/prometheus/prompb"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/metricmeta"
 )
 
 const (
@@ -164,6 +166,8 @@ type PushGatewayData struct {
 
 type RemoteWriteData struct {
 	Timeseries []prompb.TimeSeries
+	// 为空或与 Timeseries 等长；描述发布后只读，processor 改变序列顺序时须同步处理。
+	MetricDescriptors []*metricmeta.Value
 }
 
 type LogPushData struct {

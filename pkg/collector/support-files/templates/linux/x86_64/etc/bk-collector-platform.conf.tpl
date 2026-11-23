@@ -1,4 +1,6 @@
-type: "platform"
+{% if metric_metadata is defined and metric_metadata and metric_metadata.enabled | default(false) %}exporter:
+  metric_metadata: {{ metric_metadata | tojson }}
+{% endif %}type: "platform"
 processor:
 {% if apdex_config is defined %}
   - name: "{{ apdex_config.name }}"

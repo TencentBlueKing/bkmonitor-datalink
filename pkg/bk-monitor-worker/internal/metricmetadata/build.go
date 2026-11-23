@@ -90,6 +90,9 @@ func optionsFromConfig() core.Options {
 	getDuration := func(key string, value time.Duration) time.Duration {
 		return config.GetValue("taskConfig.metricmetadata."+key, value, viper.GetDuration)
 	}
+	getString := func(key string, value string) string {
+		return config.GetValue("taskConfig.metricmetadata."+key, value, viper.GetString)
+	}
 	o.BatchRecords = getInt("batch.size", o.BatchRecords)
 	o.BatchBytes = getInt("batch.maxBytes", o.BatchBytes)
 	o.BatchWait = getDuration("batch.wait", o.BatchWait)
@@ -101,6 +104,7 @@ func optionsFromConfig() core.Options {
 	o.DBTimeout = getDuration("database.timeout", o.DBTimeout)
 	o.RetryInterval = getDuration("retryInterval", o.RetryInterval)
 	o.DrainTimeout = getDuration("drainTimeout", o.DrainTimeout)
+	o.KafkaOffsetReset = getString("kafka.offsetReset", o.KafkaOffsetReset)
 	o.MaintenanceInterval = getDuration("refreshInterval", o.MaintenanceInterval)
 	o.TouchInterval = getDuration("touchInterval", o.TouchInterval)
 	if config.GlobalTimeSeriesMetricExpiredSeconds > 0 {

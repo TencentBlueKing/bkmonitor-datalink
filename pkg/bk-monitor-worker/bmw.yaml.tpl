@@ -149,11 +149,14 @@ taskConfig:
       maxValues: 0
     database:
       # 数据库操作超时。
-      timeout: 10s
+      timeout: 20s
     # 数据库或 Kafka 超时后，重建运行实例前的等待时长。
     retryInterval: 5s
     # 退出或 rebalance 时的排空超时，必须大于 database.timeout。
-    drainTimeout: 15s
+    drainTimeout: 25s
+    kafka:
+      # 消费组没有已提交位点时的起始位点：newest（默认，不回溯历史队列）或 oldest（首次接入回放全量历史消息）。
+      offsetReset: newest
     # 过期 scope 清理周期。
     refreshInterval: 5m
     # 活跃 scope 的 last_seen 最小刷新间隔。

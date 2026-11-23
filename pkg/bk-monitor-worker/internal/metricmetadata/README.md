@@ -59,6 +59,7 @@ taskConfig:
 | `capacity.maxScopes` / `capacity.maxValues` | `0` / `0` | 每个业务分组的容量限制；`0` 表示不限制 |
 | `database.timeout` / `drainTimeout` | `20s` / `25s` | 数据库操作和退出排空超时 |
 | `retryInterval` | `5s` | 数据库或 Kafka 超时后重建运行实例前的等待时长 |
+| `kafka.offsetReset` | `newest` | 消费组没有已提交位点时的起始位点；`oldest` 表示回放全量历史消息 |
 | `refreshInterval` | `5m` | scope 过期清理周期 |
 | `touchInterval` | `24h` | 活跃 scope 的 `last_seen` 刷新周期 |
 
@@ -91,6 +92,8 @@ worker 需监听 `metricmetadata` 队列。daemon 注册固定任务 `daemon:met
 scope 的指标清单和 value 引用数在同一事务中更新；增量消息未出现的指标不会被删除。重复记录通过内存快照去重，完整状态每 15 分钟刷新一次。其他写入者修改同一 scope 时，旧快照可能暂时跳过有效报告；刷新后持续上报可修正状态，但已跳过的一次性报告不会重放。
 
 批次中需要持久化的记录全部写入成功后才标记 Kafka offset。数据库提交后、offset 提交前发生故障时，消息可能重放，写入按幂等方式处理。队列预算覆盖已接收的等待及待提交消息；预算不足时暂停接收并提前提交当前窗口。各 partition 已从 Kafka 取出但仍在等待预算的消息，以及解析后的记录，不计入该预算。单条消息超过队列字节预算时，当前消费 session 停止且消息不确认。
+
+消费组尚无已提交位点时，默认从 topic 尾部（`kafka.offsetReset: newest`）开始消费，不回溯队列中已有的历史消息；低频上报的指标要等到采集器下次上报才会入库。如果首次接入就需要建出完整目录，可将 `kafka.offsetReset` 配置为 `oldest` 回放全部历史消息；该设置仅在消费组没有已提交位点时生效，已有提交位点的消费组不受影响。
 
 ### 运行指标
 

@@ -14,6 +14,12 @@ import (
 
 const StateRefreshInterval = 15 * time.Minute
 
+// Kafka offset reset strategies for consumer groups without a committed offset.
+const (
+	KafkaOffsetNewest = "newest"
+	KafkaOffsetOldest = "oldest"
+)
+
 // Options bounds consumption, retained state and database operations.
 type Options struct {
 	BatchRecords  int
@@ -28,6 +34,9 @@ type Options struct {
 	DBTimeout     time.Duration
 	RetryInterval time.Duration
 	DrainTimeout  time.Duration
+	// KafkaOffsetReset selects the initial offset when the consumer group has
+	// no committed offset: KafkaOffsetNewest or KafkaOffsetOldest.
+	KafkaOffsetReset string
 	// MaintenanceInterval controls how often the expiry task removes stale scopes.
 	MaintenanceInterval time.Duration
 	// StateRefreshInterval controls how often the full state snapshot is reloaded.
@@ -44,6 +53,7 @@ func DefaultOptions() Options {
 		QueueMessages: 1000, QueueBytes: 64 << 20,
 		LoadPageSize: 1000,
 		DBTimeout:    20 * time.Second, RetryInterval: 5 * time.Second, DrainTimeout: 25 * time.Second,
+		KafkaOffsetReset:    KafkaOffsetNewest,
 		MaintenanceInterval: 5 * time.Minute, StateRefreshInterval: StateRefreshInterval,
 		TouchInterval: 24 * time.Hour,
 		ExpireAfter:   30 * 24 * time.Hour,
@@ -57,6 +67,7 @@ func (o Options) Validate() error {
 		o.LoadPageSize <= 0 ||
 		o.MaxScopes < 0 || o.MaxValues < 0 ||
 		o.DBTimeout <= 0 || o.RetryInterval <= 0 || o.DrainTimeout <= o.DBTimeout ||
+		(o.KafkaOffsetReset != KafkaOffsetNewest && o.KafkaOffsetReset != KafkaOffsetOldest) ||
 		o.MaintenanceInterval <= 0 || o.StateRefreshInterval <= 0 || o.TouchInterval <= 0 || o.ExpireAfter <= o.TouchInterval {
 		return fmt.Errorf("invalid metric metadata capacity or timeout configuration")
 	}

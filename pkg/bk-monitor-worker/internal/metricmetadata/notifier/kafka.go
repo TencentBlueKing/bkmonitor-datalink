@@ -66,7 +66,11 @@ func (c *Consumer) Run(ctx context.Context) error {
 	config := sarama.NewConfig()
 	config.Version = sarama.V0_10_2_0
 	config.ChannelBufferSize = 1
-	config.Consumer.Offsets.Initial = sarama.OffsetNewest
+	if c.options.KafkaOffsetReset == core.KafkaOffsetOldest {
+		config.Consumer.Offsets.Initial = sarama.OffsetOldest
+	} else {
+		config.Consumer.Offsets.Initial = sarama.OffsetNewest
+	}
 	config.Consumer.Return.Errors = true
 	config.Net.DialTimeout = c.options.DBTimeout
 	config.Net.ReadTimeout = c.options.DBTimeout

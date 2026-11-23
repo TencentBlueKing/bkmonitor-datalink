@@ -159,3 +159,65 @@ func TestGrpcServerCountsTheRequestsGrpcRefuses(t *testing.T) {
 	want["decompress"]++
 	assert.Equal(t, want, grpcRejected(t))
 }
+
+// unknownEncoding marks its messages compressed with an encoding no
+// compressor is registered for. It is given to the client as a dial option
+// that names the encoding itself, rather than through the registry the
+// server in this process shares, so the server has no decompressor for it.
+type unknownEncoding struct{}
+
+func (unknownEncoding) Do(w io.Writer, p []byte) error {
+	_, err := w.Write(p)
+	return err
+}
+
+func (unknownEncoding) Type() string { return "x-unknown" }
+
+// A streaming call's message that does not decode - the service reads it
+// with RecvMsg and returns the error it gets - is counted as decode, as a
+// unary request that does not decode is; a message compressed with an
+// encoding the server has no decompressor for is counted as decompress.
+// Each moves its reason's cell by one and no other.
+func TestGrpcServerCountsAStreamedMessageThatDoesNotDecodeAndAnEncodingItHasNoDecompressorFor(t *testing.T) {
+	conn := startGrpcReceiver(t, 1024)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	refused := func(reason string, call func() error, code codes.Code) {
+		t.Helper()
+		want := grpcRejected(t)
+		require.Equal(t, code, status.Code(call()), reason)
+		want[reason]++
+		assert.Eventually(t, func() bool { return assert.ObjectsAreEqual(want, grpcRejected(t)) }, 5*time.Second, 20*time.Millisecond, reason)
+		assert.Equal(t, want, grpcRejected(t), reason)
+	}
+
+	refused("decode", func() error {
+		stream, err := conn.NewStream(ctx, &grpc.StreamDesc{ServerStreams: true}, "/grpc.health.v1.Health/Watch",
+			grpc.ForceCodec(rawCodec{}))
+		require.NoError(t, err)
+		require.NoError(t, stream.SendMsg([]byte{0xff, 0xff, 0xff, 0xff}))
+		require.NoError(t, stream.CloseSend())
+		var out []byte
+		return stream.RecvMsg(&out)
+	}, codes.Internal)
+
+	refused("decompress", func() error {
+		legacy, err := grpc.NewClient(conn.Target(), grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithCompressor(unknownEncoding{}))
+		require.NoError(t, err)
+		defer legacy.Close()
+		_, err = healthpb.NewHealthClient(legacy).Check(ctx, &healthpb.HealthCheckRequest{Service: "compressed"})
+		return err
+	}, codes.Unimplemented)
+
+	// A stream the service answers is not counted.
+	answered, stop := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stop()
+	before := grpcRejected(t)
+	stream, err := healthpb.NewHealthClient(conn).Watch(answered, &healthpb.HealthCheckRequest{})
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.NoError(t, err)
+	assert.Equal(t, before, grpcRejected(t))
+}

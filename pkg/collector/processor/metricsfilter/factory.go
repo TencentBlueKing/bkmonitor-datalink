@@ -55,6 +55,7 @@ func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) 
 		}
 		if err := cfg.Validate(); err != nil {
 			logger.Errorf("invalid config: %v", err)
+			processor.IncConfigFailed(define.ProcessorMetricsFilter, processor.ConfigSub)
 			continue
 		}
 		configs.Set(custom.Token, custom.Type, custom.ID, *cfg)

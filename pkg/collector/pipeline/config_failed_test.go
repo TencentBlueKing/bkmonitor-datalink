@@ -303,3 +303,80 @@ func TestASubConfigThatDoesNotDecodeIsCounted(t *testing.T) {
 	p.Reload(main, subs)
 	assert.Equal(t, before+2, configFailed(t, define.ProcessorApdexCalculator, "sub"))
 }
+
+// metricsFilterConfig is a main configuration with one metrics filter and the
+// metrics pipeline that names it, reading sub-configurations from pattern.
+func metricsFilterConfig(pattern string) string {
+	return `
+apm:
+    patterns: ["` + pattern + `"]
+processor:
+    - name: "metrics_filter/drop"
+      config:
+        drop:
+          metrics: ["main_metric"]
+pipeline:
+    - name: "metrics_pipeline/common"
+      type: "metrics"
+      processors:
+        - "metrics_filter/drop"
+`
+}
+
+// metricsFilterSubConfigFiles writes one sub-configuration file per token,
+// each giving the metrics filter a drop rule on predicateKey, and returns the
+// pattern that reads them.
+func metricsFilterSubConfigFiles(t *testing.T, predicateKeys map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	i := 0
+	for token, predicateKey := range predicateKeys {
+		i++
+		content := `
+type: "subconfig"
+token: "` + token + `"
+default:
+  processor:
+    - name: "metrics_filter/drop"
+      config:
+        drop:
+          metrics: ["sub_metric"]
+          extra_rules:
+            - predicate_key: "` + predicateKey + `"
+              match:
+                op: "eq"
+                value: "x"
+`
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "sub"+strconv.Itoa(i)+".yml"), []byte(content), 0o600))
+	}
+	return filepath.Join(dir, "*.yml")
+}
+
+// A metrics filter sub-configuration that decodes but does not validate - a
+// drop rule on a field that is not the resource's - is skipped like one that
+// does not decode, so it is counted as sub and held in the failing state; a
+// sub-configuration that validates is not counted.
+func TestAMetricsFilterSubConfigThatDoesNotValidateIsCounted(t *testing.T) {
+	sub := func() float64 {
+		t.Helper()
+		v, ok := failing(t, define.ProcessorMetricsFilter, "sub")
+		require.True(t, ok)
+		return v
+	}
+	counted := configFailed(t, define.ProcessorMetricsFilter, "sub")
+	valid := metricsFilterConfig(metricsFilterSubConfigFiles(t, map[string]string{"good-app": "resource.service.name"}))
+	mgr, err := New(confengine.MustLoadConfigContent(valid))
+	require.NoError(t, err)
+	require.NotNil(t, mgr.GetPipeline(define.RecordMetrics))
+	assert.Equal(t, float64(0), sub())
+	assert.Equal(t, counted, configFailed(t, define.ProcessorMetricsFilter, "sub"))
+
+	invalid := metricsFilterConfig(metricsFilterSubConfigFiles(t, map[string]string{"good-app": "resource.service.name",
+		"bad-app": "attributes.service.name"}))
+	require.NoError(t, mgr.Reload(confengine.MustLoadConfigContent(invalid)))
+	require.NotNil(t, mgr.GetPipeline(define.RecordMetrics))
+	assert.Equal(t, float64(1), sub())
+	// A reload builds the processor twice: the new manager's and the running
+	// instance's rebuild.
+	assert.Equal(t, counted+2, configFailed(t, define.ProcessorMetricsFilter, "sub"))
+}

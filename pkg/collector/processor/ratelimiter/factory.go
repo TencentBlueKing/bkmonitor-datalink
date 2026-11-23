@@ -41,6 +41,7 @@ func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) 
 		var cfg throttle.Config
 		if err := mapstructure.Decode(custom.Config.Config, &cfg); err != nil {
 			logger.Errorf("failed to decode config: %v", err)
+			processor.IncConfigFailed(define.ProcessorRateLimiter, processor.ConfigSub)
 			continue
 		}
 		rateLimiters.Set(custom.Token, custom.Type, custom.ID, throttle.New(cfg))

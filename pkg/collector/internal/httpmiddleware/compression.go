@@ -13,8 +13,11 @@ import (
 	"bytes"
 	"compress/gzip"
 	"compress/zlib"
+	"errors"
 	"io"
 	"net/http"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
 func init() {
@@ -101,8 +104,14 @@ func HTTPContentDecompressor(h http.Handler, opts ...DecompressorOption) http.Ha
 
 func (d *decompressor) wrap(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		newBody, err := newBodyReader(r)
+		source := &sourceBody{Reader: r.Body}
+		newBody, err := newBodyReader(r.Header.Get("Content-Encoding"), source)
 		if err != nil {
+			// A header the decompressor cannot read; not counted when the
+			// body below it failed first.
+			if source.err == nil {
+				define.IncReceiverRejected(define.RequestHttp, define.RejectDecompress)
+			}
 			d.errorHandler(w, r, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -114,22 +123,61 @@ func (d *decompressor) wrap(h http.Handler) http.Handler {
 			// "Content-Length" is set to -1 as the size of the decompressed body is unknown.
 			r.Header.Del("Content-Length")
 			r.ContentLength = -1
-			r.Body = newBody
+			r.Body = &decompressedBody{ReadCloser: newBody, source: source}
 		}
 		h.ServeHTTP(w, r)
 	})
 }
 
-func newBodyReader(r *http.Request) (io.ReadCloser, error) {
-	switch r.Header.Get("Content-Encoding") {
+// sourceBody is the request body as it arrived, under the decompressor: it
+// keeps the first error a read of it returned other than its end.
+type sourceBody struct {
+	io.Reader
+	err error
+}
+
+func (b *sourceBody) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) && b.err == nil {
+		b.err = err
+	}
+	return n, err
+}
+
+// decompressedBody is the body the handler reads, through its decompressor.
+// The first read that fails for the decompressor's own reason - the stream
+// ends before its end, a checksum does not match, what follows is not a
+// stream of the encoding - counts the request as decompress once. Most of
+// them surface only as the handler reads the body, after the header was
+// read. A read that fails because the body below it did - the client gone
+// before the body was sent - is not the decompressor's, and is not counted.
+type decompressedBody struct {
+	io.ReadCloser
+	source  *sourceBody
+	counted bool
+}
+
+func (b *decompressedBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) && b.source.err == nil && !b.counted {
+		b.counted = true
+		define.IncReceiverRejected(define.RequestHttp, define.RejectDecompress)
+	}
+	return n, err
+}
+
+// newBodyReader is the decompressor of encoding over body, nil for a body
+// not compressed.
+func newBodyReader(encoding string, body io.Reader) (io.ReadCloser, error) {
+	switch encoding {
 	case "gzip":
-		gr, err := gzip.NewReader(r.Body)
+		gr, err := gzip.NewReader(body)
 		if err != nil {
 			return nil, err
 		}
 		return gr, nil
 	case "deflate", "zlib":
-		zr, err := zlib.NewReader(r.Body)
+		zr, err := zlib.NewReader(body)
 		if err != nil {
 			return nil, err
 		}

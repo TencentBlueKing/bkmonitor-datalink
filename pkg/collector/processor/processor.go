@@ -11,6 +11,7 @@ package processor
 
 import (
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -188,8 +189,22 @@ func Register(name string, createFunc CreateFunc) {
 
 // GetProcessorCreator 获取已经注册的 Processor
 func GetProcessorCreator(name string) CreateFunc {
-	n := strings.Split(name, "/")
-	return processorsMap[n[0]]
+	return processorsMap[KindOf(name)]
+}
+
+// KindOf 返回配置里的 Processor 名对应的注册名：`token_checker/fixed` 的注册名是 `token_checker`
+func KindOf(name string) string {
+	return strings.Split(name, "/")[0]
+}
+
+// Names 返回已经注册的 Processor 名，按字典序
+func Names() []string {
+	names := make([]string, 0, len(processorsMap))
+	for name := range processorsMap {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 type CommonProcessor struct {

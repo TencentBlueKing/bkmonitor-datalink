@@ -122,8 +122,9 @@ func TestLoadLayers(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load() error = %v", err)
 			}
+			test.want.Dispatch.JWT.Username = "admin"
 			test.want.Severity = DefaultSeverityConfig()
-			test.want.Cleaner = DefaultCleanerRuntimeConfig()
+			test.want.Cleaner = DefaultCleanerRuntimeConfig().WithDefaults()
 			if !reflect.DeepEqual(cfg, test.want) {
 				t.Fatalf("load() = %#v, want %#v", cfg, test.want)
 			}
@@ -134,7 +135,15 @@ func TestLoadLayers(t *testing.T) {
 func TestLoadEventSources(t *testing.T) {
 	t.Parallel()
 
-	path := writeConfig(t, `event_sources:
+	path := writeConfig(t, `resources:
+  mysql:
+    address: mysql.example.com:3306
+    database: kingeye
+    username: reader
+    password: secret
+  onemodel:
+    addresses: [http://onemodel.example.com:9200]
+event_sources:
   - event_source_id: source-a
     enabled: false
     storage:
@@ -159,6 +168,13 @@ func TestLoadEventSources(t *testing.T) {
     fingerprint_fields: [subject_id, dimensions.port]
     severity_mapping:
       P1: critical
+    enrich:
+      processors:
+        - type: strategy
+        - type: resource
+        - type: display
+        - type: metric
+        - type: source
     storage:
       type: kafka
       kafka:
@@ -184,6 +200,12 @@ func TestLoadEventSources(t *testing.T) {
 	if cfg.EventSources[1].Storage.Kafka.Security.Protocol != kafkaclient.SecurityProtocolPlaintext {
 		t.Fatalf("load() default protocol = %q", cfg.EventSources[1].Storage.Kafka.Security.Protocol)
 	}
+	if cfg.Resources.MySQL == nil || cfg.Resources.MySQL.Password != "secret" || cfg.Resources.OneModel == nil {
+		t.Fatalf("load() enrich datasources = %#v", cfg.Resources)
+	}
+	if got := cfg.EventSources[1].Enrich.Processors; !reflect.DeepEqual(got, []EnrichProcessorConfig{{Type: "strategy"}, {Type: "resource"}, {Type: "display"}, {Type: "metric"}, {Type: "source"}}) {
+		t.Fatalf("load() enrich processors = %#v", got)
+	}
 	if !reflect.DeepEqual(
 		cfg.EventSources[1].FingerprintFields,
 		[]string{"subject_id", "dimensions.port"},
@@ -205,6 +227,7 @@ func TestLoadStorage(t *testing.T) {
   elasticsearch:
     addresses: [http://127.0.0.1:9200]
     number_of_replicas: 0
+    number_of_shards: 2
     basic_auth:
       username: elastic
       password: elastic-secret
@@ -231,11 +254,36 @@ func TestLoadStorage(t *testing.T) {
 		cfg.Storage.Redis.Password != "redis-secret" {
 		t.Fatalf("load() did not preserve runtime storage secrets: %#v", cfg.Storage)
 	}
+	if cfg.Storage.Redis.Mode != RedisModeStandalone {
+		t.Fatalf("load() redis mode = %q", cfg.Storage.Redis.Mode)
+	}
 	if cfg.Storage.Elasticsearch.IndexPrefix != defaultElasticsearchIndexPrefix {
 		t.Fatalf("load() elasticsearch index prefix = %q", cfg.Storage.Elasticsearch.IndexPrefix)
 	}
 	if cfg.Storage.Elasticsearch.NumberOfReplicas == nil || *cfg.Storage.Elasticsearch.NumberOfReplicas != 0 {
 		t.Fatalf("load() elasticsearch number of replicas = %v", cfg.Storage.Elasticsearch.NumberOfReplicas)
+	}
+	if cfg.Storage.Elasticsearch.NumberOfShards == nil || *cfg.Storage.Elasticsearch.NumberOfShards != 2 {
+		t.Fatalf("load() elasticsearch number of shards = %v", cfg.Storage.Elasticsearch.NumberOfShards)
+	}
+	if cfg.Storage.Elasticsearch.RefreshIntervalSeconds != defaultElasticsearchRefreshIntervalSeconds {
+		t.Fatalf(
+			"load() elasticsearch refresh interval = %d",
+			cfg.Storage.Elasticsearch.RefreshIntervalSeconds,
+		)
+	}
+	if cfg.Storage.Elasticsearch.ActiveAlertRefreshIntervalSeconds !=
+		defaultElasticsearchActiveAlertRefreshIntervalSeconds {
+		t.Fatalf(
+			"load() elasticsearch active alert refresh interval = %d",
+			cfg.Storage.Elasticsearch.ActiveAlertRefreshIntervalSeconds,
+		)
+	}
+	if cfg.Storage.Elasticsearch.AlertLogTranslogDurability != ElasticsearchTranslogDurabilityAsync {
+		t.Fatalf(
+			"load() elasticsearch alert log translog durability = %q",
+			cfg.Storage.Elasticsearch.AlertLogTranslogDurability,
+		)
 	}
 	partition := cfg.Storage.Elasticsearch.TimePartition
 	if partition.EventBucketDays != 7 || partition.AlertHistoryBucketDays != 7 ||
@@ -245,22 +293,74 @@ func TestLoadStorage(t *testing.T) {
 	}
 }
 
+func TestLoadRedisSentinel(t *testing.T) {
+	t.Parallel()
+
+	path := writeConfig(t, `storage:
+  redis:
+    mode: sentinel
+    username: redis-user
+    password: redis-secret
+    database: 2
+    sentinel:
+      master_name: linkd-master
+      addresses:
+        - sentinel-a.example.com:26379
+        - sentinel-b.example.com:26379
+      username: sentinel-user
+      password: sentinel-secret
+`)
+
+	cfg, err := load(path, Overrides{}, mapLookup(nil))
+	if err != nil {
+		t.Fatalf("load() error = %v", err)
+	}
+	redisConfig := cfg.Storage.Redis
+	if redisConfig == nil || redisConfig.Mode != RedisModeSentinel || redisConfig.Address != "" ||
+		redisConfig.Username != "redis-user" || redisConfig.Password != "redis-secret" || redisConfig.Database != 2 ||
+		redisConfig.Sentinel == nil || redisConfig.Sentinel.MasterName != "linkd-master" ||
+		!reflect.DeepEqual(redisConfig.Sentinel.Addresses, []string{
+			"sentinel-a.example.com:26379", "sentinel-b.example.com:26379",
+		}) || redisConfig.Sentinel.Username != "sentinel-user" || redisConfig.Sentinel.Password != "sentinel-secret" {
+		t.Fatalf("load() redis sentinel = %#v", redisConfig)
+	}
+	clientOptions := redisConfig.ClientOptions()
+	clientOptions.Sentinel.Addresses[0] = "changed.example.com:26379"
+	if redisConfig.Sentinel.Addresses[0] != "sentinel-a.example.com:26379" {
+		t.Fatal("ClientOptions() shares Sentinel addresses with RedisConfig")
+	}
+}
+
+func TestLoadStorageAllowsCustomRefreshIntervals(t *testing.T) {
+	t.Parallel()
+
+	path := writeConfig(t, `storage:
+  elasticsearch:
+    addresses: [http://127.0.0.1:9200]
+    refresh_interval_seconds: 11
+    active_alert_refresh_interval_seconds: 17
+    alert_log_translog_durability: request
+`)
+	cfg, err := load(path, Overrides{}, mapLookup(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Storage.Elasticsearch.ActiveAlertRefreshInterval(); got != 17*time.Second {
+		t.Fatalf("ActiveAlertRefreshInterval()=%s", got)
+	}
+	if got := cfg.Storage.Elasticsearch.RefreshInterval(); got != 11*time.Second {
+		t.Fatalf("RefreshInterval()=%s", got)
+	}
+	if cfg.Storage.Elasticsearch.AlertLogTranslogDurability != ElasticsearchTranslogDurabilityRequest {
+		t.Fatalf("AlertLogTranslogDurability=%q", cfg.Storage.Elasticsearch.AlertLogTranslogDurability)
+	}
+}
+
 func TestLoadLifecycleWithDefaults(t *testing.T) {
 	t.Parallel()
 
 	path := writeConfig(t, `lifecycle:
   concurrency: 4
-  output:
-    kafka:
-      brokers: [kafka.example.com:9092]
-      topic: linkd-alerts
-      client_id: linkd-lifecycle
-      security:
-        protocol: sasl_ssl
-        sasl:
-          mechanism: scram_sha_256
-          username: linkd
-          password: lifecycle-secret
 `)
 
 	cfg, err := load(path, Overrides{}, mapLookup(nil))
@@ -278,12 +378,16 @@ func TestLoadLifecycleWithDefaults(t *testing.T) {
 		lifecycle.Mailbox.MaxDrainEvents != defaultMailboxMaxDrainEvents ||
 		lifecycle.Mailbox.Backpressure.CacheTTLSeconds != defaultMailboxBackpressureCacheTTL ||
 		lifecycle.Mailbox.Backpressure.QueryTimeoutSeconds != defaultMailboxBackpressureQueryTimeout ||
-		lifecycle.Mailbox.Backpressure.HighWatermark != defaultMailboxBackpressureHighWatermark ||
-		lifecycle.Mailbox.Backpressure.LowWatermark != defaultMailboxBackpressureLowWatermark ||
+		lifecycle.Signal.MaxBatchMessages != defaultSignalMaxBatchMessages ||
+		lifecycle.Signal.MaxInflightMessages != 64 ||
+		lifecycle.Mailbox.Backpressure.HighWatermark != 0 ||
+		lifecycle.Mailbox.Backpressure.LowWatermark != 0 ||
 		lifecycle.Signal.CreateGroup == nil || !*lifecycle.Signal.CreateGroup {
 		t.Fatalf("load() lifecycle defaults = %#v", lifecycle)
 	}
-	if lifecycle.RuntimeConfig().WorkerCount != 4 || lifecycle.Output.Kafka.Security.SASL.Password != "lifecycle-secret" {
+	runtimeConfig := lifecycle.RuntimeConfig()
+	if runtimeConfig.WorkerCount != 4 || runtimeConfig.MaxInflightMessages != 64 ||
+		runtimeConfig.MaxRetryMessages != runtimeConfig.MaxInflightMessages {
 		t.Fatalf("load() lifecycle runtime = %#v", lifecycle)
 	}
 }
@@ -309,10 +413,18 @@ func TestLoadRejectsInvalidLifecycle(t *testing.T) {
 		{
 			name: "batch memory bound",
 			override: `  signal:
-    max_batch_messages: 4096
+    max_batch_messages: 9223372036854775807
     max_message_bytes: 1048576
 `,
 			wantError: "batch capacity",
+		},
+		{
+			name: "inflight below batch",
+			override: `  signal:
+    max_batch_messages: 65
+    max_inflight_messages: 64
+`,
+			wantError: "max_inflight_messages",
 		},
 		{name: "mailbox backpressure watermarks", override: "  mailbox:\n    backpressure:\n      low_watermark: 100\n      high_watermark: 99\n", wantError: "watermarks"},
 		{name: "mailbox backpressure ttl", override: "  mailbox:\n    backpressure:\n      cache_ttl_seconds: 61\n", wantError: "cache_ttl_seconds"},
@@ -332,11 +444,7 @@ func TestLoadRejectsInvalidLifecycle(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			content := `lifecycle:
-` + test.override + `  output:
-    kafka:
-      brokers: [kafka.example.com:9092]
-      topic: linkd-alerts
-`
+` + test.override
 			path := writeConfig(t, content)
 			_, err := load(path, Overrides{}, mapLookup(nil))
 			if err == nil || !strings.Contains(err.Error(), test.wantError) {
@@ -432,6 +540,43 @@ func TestLoadRejectsInvalidStorage(t *testing.T) {
 			wantError: "number_of_replicas",
 		},
 		{
+			name:      "elasticsearch zero primary shards",
+			content:   "storage:\n  elasticsearch:\n    addresses: [http://127.0.0.1:9200]\n    number_of_shards: 0\n",
+			wantError: "number_of_shards",
+		},
+		{
+			name:      "elasticsearch excessive primary shards",
+			content:   "storage:\n  elasticsearch:\n    addresses: [http://127.0.0.1:9200]\n    number_of_shards: 1025\n",
+			wantError: "number_of_shards",
+		},
+		{
+			name: "elasticsearch invalid alert log translog durability",
+			content: `storage:
+  elasticsearch:
+    addresses: [http://127.0.0.1:9200]
+    alert_log_translog_durability: invalid
+`,
+			wantError: "alert_log_translog_durability",
+		},
+		{
+			name: "elasticsearch invalid bucket refresh interval",
+			content: `storage:
+  elasticsearch:
+    addresses: [http://127.0.0.1:9200]
+    refresh_interval_seconds: 3601
+`,
+			wantError: "refresh_interval_seconds",
+		},
+		{
+			name: "elasticsearch invalid active alert refresh interval",
+			content: `storage:
+  elasticsearch:
+    addresses: [http://127.0.0.1:9200]
+    active_alert_refresh_interval_seconds: 3601
+`,
+			wantError: "active_alert_refresh_interval_seconds",
+		},
+		{
 			name: "elasticsearch invalid bucket days",
 			content: `storage:
   elasticsearch:
@@ -449,6 +594,68 @@ func TestLoadRejectsInvalidStorage(t *testing.T) {
     database: -1
 `,
 			wantError: "database must not be negative",
+		},
+		{
+			name: "redis unsupported mode",
+			content: `storage:
+  redis:
+    mode: cluster
+    address: 127.0.0.1:16379
+`,
+			wantError: "mode must be one of",
+		},
+		{
+			name: "redis standalone with sentinel",
+			content: `storage:
+  redis:
+    mode: standalone
+    address: 127.0.0.1:16379
+    sentinel:
+      master_name: linkd-master
+      addresses: [127.0.0.1:26379]
+`,
+			wantError: "sentinel must be omitted",
+		},
+		{
+			name: "redis sentinel missing settings",
+			content: `storage:
+  redis:
+    mode: sentinel
+`,
+			wantError: "sentinel is required",
+		},
+		{
+			name: "redis sentinel keeps standalone address",
+			content: `storage:
+  redis:
+    mode: sentinel
+    address: 127.0.0.1:16379
+    sentinel:
+      master_name: linkd-master
+      addresses: [127.0.0.1:26379]
+`,
+			wantError: "address must be empty",
+		},
+		{
+			name: "redis sentinel missing master name",
+			content: `storage:
+  redis:
+    mode: sentinel
+    sentinel:
+      addresses: [127.0.0.1:26379]
+`,
+			wantError: "sentinel.master_name",
+		},
+		{
+			name: "redis sentinel invalid address",
+			content: `storage:
+  redis:
+    mode: sentinel
+    sentinel:
+      master_name: linkd-master
+      addresses: [sentinel-without-port]
+`,
+			wantError: "sentinel.addresses[0] must be host:port",
 		},
 		{
 			name: "unknown storage field",
@@ -777,7 +984,12 @@ func TestMarshalRedactedStorageSecrets(t *testing.T) {
 			Elasticsearch: &ElasticsearchConfig{
 				Addresses: []string{"http://elasticsearch:9200"}, APIKey: "elastic-secret",
 			},
-			Redis: &RedisConfig{Address: "redis:6379", Password: "redis-secret"},
+			Redis: &RedisConfig{
+				Mode: RedisModeSentinel, Password: "redis-secret",
+				Sentinel: &RedisSentinelConfig{
+					MasterName: "linkd-master", Addresses: []string{"sentinel:26379"}, Password: "sentinel-secret",
+				},
+			},
 		},
 		EventSources: []EventSource{},
 	}
@@ -786,47 +998,20 @@ func TestMarshalRedactedStorageSecrets(t *testing.T) {
 		t.Fatalf("MarshalRedacted() error = %v", err)
 	}
 	output := string(data)
-	for _, secret := range []string{"mysql-secret", "elastic-secret", "redis-secret"} {
+	for _, secret := range []string{"mysql-secret", "elastic-secret", "redis-secret", "sentinel-secret"} {
 		if strings.Contains(output, secret) {
 			t.Fatalf("MarshalRedacted() leaked %q: %s", secret, output)
 		}
 	}
-	if strings.Count(output, "'******'") != 3 {
+	if strings.Count(output, "'******'") != 4 {
 		t.Fatalf("MarshalRedacted() = %s", output)
 	}
 	if cfg.Storage.MySQL.Password != "mysql-secret" || cfg.Storage.Elasticsearch.APIKey != "elastic-secret" ||
-		cfg.Storage.Redis.Password != "redis-secret" {
+		cfg.Storage.Redis.Password != "redis-secret" || cfg.Storage.Redis.Sentinel.Password != "sentinel-secret" {
 		t.Fatalf("MarshalRedacted() changed original storage config = %#v", cfg.Storage)
 	}
-}
-
-func TestMarshalRedactedLifecycleKafkaPassword(t *testing.T) {
-	t.Parallel()
-
-	lifecycle := validLifecycleConfigForTest()
-	lifecycle.Output.Kafka.Security = kafkaclient.SecurityConfig{
-		Protocol: "sasl_ssl",
-		SASL: &kafkaclient.SASLConfig{
-			Mechanism: "plain",
-			Username:  "linkd",
-			Password:  "lifecycle-secret",
-		},
-	}
-	cfg := Config{
-		Logging:      logging.DefaultConfig(),
-		Lifecycle:    &lifecycle,
-		EventSources: []EventSource{},
-	}
-	data, err := MarshalRedacted(cfg)
-	if err != nil {
-		t.Fatalf("MarshalRedacted() error = %v", err)
-	}
-	if strings.Contains(string(data), "lifecycle-secret") ||
-		!strings.Contains(string(data), "password: '******'") {
-		t.Fatalf("MarshalRedacted() = %s", data)
-	}
-	if cfg.Lifecycle.Output.Kafka.Security.SASL.Password != "lifecycle-secret" {
-		t.Fatal("MarshalRedacted() changed original lifecycle password")
+	if cfg.Storage.Redis.Sentinel.Addresses[0] != "sentinel:26379" {
+		t.Fatalf("MarshalRedacted() changed Sentinel addresses = %#v", cfg.Storage.Redis.Sentinel.Addresses)
 	}
 }
 
@@ -844,16 +1029,18 @@ func TestLoadResolvesAndValidatesKafkaTLSFiles(t *testing.T) {
 	}
 	configPath := filepath.Join(directory, "linkd.yaml")
 	content := `lifecycle:
-  output:
-    kafka:
-      brokers: [kafka.example.com:9093]
-      topic: alerts
-      security:
-        protocol: ssl
-        tls:
-          ca_file: ./certs/ca.pem
 event_sources:
   - event_source_id: source-a
+    hooks:
+      - name: alerts
+        type: kac
+        config:
+          brokers: [kafka.example.com:9093]
+          topic: alerts
+          security:
+            protocol: ssl
+            tls:
+              ca_file: ./certs/ca.pem
     enabled: true
     storage:
       type: kafka
@@ -878,7 +1065,7 @@ event_sources:
 	if gotPath != caPath {
 		t.Fatalf("load() ca_file = %q, want %q", gotPath, caPath)
 	}
-	if lifecyclePath := cfg.Lifecycle.Output.Kafka.Security.TLS.CAFile; lifecyclePath != caPath {
+	if lifecyclePath := cfg.EventSources[0].Hooks[0].Config.Security.TLS.CAFile; lifecyclePath != caPath {
 		t.Fatalf("load() lifecycle ca_file = %q, want %q", lifecyclePath, caPath)
 	}
 	printed, err := MarshalRedacted(cfg)
@@ -895,6 +1082,33 @@ event_sources:
 	_, err = load(configPath, Overrides{}, mapLookup(nil))
 	if err == nil || !strings.Contains(err.Error(), caPath) || !strings.Contains(err.Error(), "valid certificate") {
 		t.Fatalf("load(invalid CA) error = %v", err)
+	}
+}
+
+func TestLoadIgnoresRemovedKafkaHookAndItsTLSFiles(t *testing.T) {
+	path := writeConfig(t, `event_sources:
+  - event_source_id: source
+    enabled: true
+    storage:
+      type: kafka
+      kafka: {brokers: ["kafka:9092"], topic: raw, consumer_group: cleaner}
+    hooks:
+      - name: ignored
+        type: kafka
+        unused: true
+        config:
+          security:
+            protocol: ssl
+            tls: {ca_file: ./does-not-exist.pem}
+          max_message_bytes: obsolete
+          unused: ignored
+`)
+	cfg, err := load(path, Overrides{}, mapLookup(nil))
+	if err != nil {
+		t.Fatal("obsolete hook prevented loading", err)
+	}
+	if len(cfg.EventSources[0].Hooks) != 1 || cfg.EventSources[0].Hooks[0].Config.Security.TLS != nil {
+		t.Fatal("obsolete hook parameters retained")
 	}
 }
 
@@ -919,54 +1133,6 @@ func TestLoadRejectsUnknownKafkaTLSField(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "field ca_path not found") {
 		t.Fatalf("load() error = %v, want unknown TLS field", err)
 	}
-}
-
-func TestMarshalRedactedKafkaInlinePrivateKey(t *testing.T) {
-	t.Parallel()
-
-	cfg := Config{
-		Logging: logging.DefaultConfig(),
-		Lifecycle: &LifecycleConfig{Output: LifecycleOutputConfig{Kafka: &LifecycleKafkaConfig{
-			Brokers: []string{"kafka:9093"},
-			Topic:   "alerts",
-			Security: kafkaclient.SecurityConfig{
-				Protocol: kafkaclient.SecurityProtocolSSL,
-				TLS: &kafkaclient.TLSConfig{
-					CAPEM:         "public-ca",
-					ClientCertPEM: "public-client-certificate",
-					ClientKeyPEM:  "private-client-key",
-				},
-			},
-		}}},
-		EventSources: []EventSource{},
-	}
-	data, err := MarshalRedacted(cfg)
-	if err != nil {
-		t.Fatalf("MarshalRedacted() error = %v", err)
-	}
-	output := string(data)
-	if strings.Contains(output, "private-client-key") || !strings.Contains(output, "client_key_pem: '******'") {
-		t.Fatalf("MarshalRedacted() leaked private key: %s", output)
-	}
-	for _, publicValue := range []string{"public-ca", "public-client-certificate"} {
-		if !strings.Contains(output, publicValue) {
-			t.Fatalf("MarshalRedacted() hid %q: %s", publicValue, output)
-		}
-	}
-	if cfg.Lifecycle.Output.Kafka.Security.TLS.ClientKeyPEM != "private-client-key" {
-		t.Fatal("MarshalRedacted() changed original private key")
-	}
-}
-
-func validLifecycleConfigForTest() LifecycleConfig {
-	return LifecycleConfig{
-		Output: LifecycleOutputConfig{
-			Kafka: &LifecycleKafkaConfig{
-				Brokers: []string{"kafka.example.com:9092"},
-				Topic:   "linkd-alerts",
-			},
-		},
-	}.WithDefaults()
 }
 
 func newTestCAPEM(t *testing.T) []byte {

@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -24,9 +25,13 @@ import (
 	mysqlstore "linkd/internal/store/mysql"
 )
 
-const databaseMaxLifetime = 30 * time.Minute
+const (
+	databaseMaxLifetime                = 30 * time.Minute
+	minElasticsearchConnectionsPerHost = 4
+	maxElasticsearchConnectionsPerHost = 1024
+)
 
-// Runtime 持有一个已经完成连接检查和 schema 初始化的 Repository 及其资源。
+// Runtime 持有 Repository 及连接资源；只有 Open 执行初始化，OpenReadOnly 不执行写操作。
 type Runtime struct {
 	Repository store.Repository
 	Backend    string
@@ -77,14 +82,14 @@ func Open(
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("open repository: %w", err)
 	}
-	if maxConnections < 1 {
+	if maxConnections < 0 {
 		return nil, fmt.Errorf("open repository: max connections must be positive")
 	}
 	switch cfg.Repository {
 	case config.RepositoryTypeMySQL:
 		return openMySQL(ctx, *cfg.MySQL, maxConnections)
 	case config.RepositoryTypeElasticsearch:
-		return openElasticsearch(ctx, *cfg.Elasticsearch)
+		return openElasticsearch(ctx, *cfg.Elasticsearch, maxConnections)
 	default:
 		return nil, fmt.Errorf("open repository: storage.repository is required")
 	}
@@ -104,21 +109,25 @@ func (r *Runtime) Close() error {
 }
 
 func openMySQL(ctx context.Context, cfg config.MySQLConfig, maxConnections int) (*Runtime, error) {
+	return openMySQLMode(ctx, cfg, maxConnections, true)
+}
+
+func openMySQLMode(ctx context.Context, cfg config.MySQLConfig, maxConnections int, initialize bool) (*Runtime, error) {
 	dsn := driver.NewConfig()
 	dsn.User = cfg.Username
 	dsn.Passwd = cfg.Password
 	dsn.Net = "tcp"
 	dsn.Addr = cfg.Address
 	dsn.DBName = cfg.Database
+	// 驱动转义绑定参数，避免每次临时 prepare/execute/close；JSON 参数使用文本编码。
+	dsn.InterpolateParams = true
 	dsn.ParseTime = true
 	dsn.Loc = time.UTC
 	database, err := sql.Open("mysql", dsn.FormatDSN())
 	if err != nil {
 		return nil, fmt.Errorf("open mysql repository: %w", err)
 	}
-	database.SetMaxOpenConns(max(maxConnections, 8))
-	database.SetMaxIdleConns(max(maxConnections/2, 2))
-	database.SetConnMaxLifetime(databaseMaxLifetime)
+	configureMySQLPool(database, maxConnections)
 	if err := database.PingContext(ctx); err != nil {
 		_ = database.Close()
 		return nil, fmt.Errorf("connect mysql repository: %w", err)
@@ -128,9 +137,11 @@ func openMySQL(ctx context.Context, cfg config.MySQLConfig, maxConnections int) 
 		_ = database.Close()
 		return nil, fmt.Errorf("initialize mysql repository: %w", err)
 	}
-	if err := repository.EnsureSchema(ctx); err != nil {
-		_ = database.Close()
-		return nil, fmt.Errorf("initialize mysql repository schema: %w", err)
+	if initialize {
+		if err := repository.EnsureSchema(ctx); err != nil {
+			_ = database.Close()
+			return nil, fmt.Errorf("initialize mysql repository schema: %w", err)
+		}
 	}
 	return &Runtime{
 		Repository: repository,
@@ -144,8 +155,21 @@ func openMySQL(ctx context.Context, cfg config.MySQLConfig, maxConnections int) 
 	}, nil
 }
 
-func openElasticsearch(ctx context.Context, cfg config.ElasticsearchConfig) (*Runtime, error) {
-	repository, router, transport, err := newElasticsearchComponents(cfg)
+// configureMySQLPool 保留允许的并发连接，避免请求波谷触发空闲淘汰和反复握手。
+func configureMySQLPool(database *sql.DB, maxConnections int) {
+	database.SetMaxOpenConns(maxConnections)
+	// 空闲预算小于并发预算会在每波请求结束时销毁连接，下一波重新建连。
+	// 0 沿用既有无限 open 语义，不能直接作为 idle=0（它表示完全禁用复用）。
+	idleConnections := maxConnections
+	if idleConnections == 0 {
+		idleConnections = math.MaxInt
+	}
+	database.SetMaxIdleConns(idleConnections)
+	database.SetConnMaxLifetime(databaseMaxLifetime)
+}
+
+func openElasticsearch(ctx context.Context, cfg config.ElasticsearchConfig, maxConnections int) (*Runtime, error) {
+	repository, router, transport, err := newElasticsearchComponents(cfg, maxConnections)
 	if err != nil {
 		return nil, err
 	}
@@ -172,11 +196,15 @@ func openElasticsearch(ctx context.Context, cfg config.ElasticsearchConfig) (*Ru
 func OpenElasticsearchManager(
 	ctx context.Context,
 	cfg config.ElasticsearchConfig,
+	maxConnections int,
 ) (*ElasticsearchManagerRuntime, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("open elasticsearch manager: context must not be nil")
 	}
-	repository, router, transport, err := newElasticsearchComponents(cfg)
+	if maxConnections < 0 {
+		return nil, fmt.Errorf("open elasticsearch manager: max connections must be positive")
+	}
+	repository, router, transport, err := newElasticsearchComponents(cfg, maxConnections)
 	if err != nil {
 		return nil, err
 	}
@@ -190,11 +218,13 @@ func OpenElasticsearchManager(
 
 func newElasticsearchComponents(
 	cfg config.ElasticsearchConfig,
+	maxConnections int,
 ) (*elasticsearchstore.Repository, *elasticsearchstore.BucketRouter, *elasticsearchstore.HTTPTransport, error) {
 	cfg.TimePartition = cfg.TimePartition.WithDefaults()
 	transportConfig := elasticsearchstore.HTTPTransportConfig{
-		Addresses: append([]string(nil), cfg.Addresses...),
-		APIKey:    cfg.APIKey,
+		Addresses:             append([]string(nil), cfg.Addresses...),
+		APIKey:                cfg.APIKey,
+		MaxConnectionsPerHost: elasticsearchConnectionBudget(maxConnections),
 	}
 	if cfg.BasicAuth != nil {
 		transportConfig.BasicUsername = cfg.BasicAuth.Username
@@ -204,13 +234,7 @@ func newElasticsearchComponents(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	router, err := elasticsearchstore.NewBucketRouter(cfg.IndexPrefix, elasticsearchstore.BucketConfig{
-		EventBucketDays:        cfg.TimePartition.EventBucketDays,
-		AlertHistoryBucketDays: cfg.TimePartition.AlertHistoryBucketDays,
-		AlertLogBucketDays:     cfg.TimePartition.AlertLogBucketDays,
-		MaxFutureSkew:          cfg.TimePartition.MaxFutureSkew(),
-		NumberOfReplicas:       cfg.NumberOfReplicas,
-	})
+	router, err := newBucketRouter(cfg)
 	if err != nil {
 		transport.Close()
 		return nil, nil, nil, err
@@ -221,6 +245,37 @@ func newElasticsearchComponents(
 		return nil, nil, nil, fmt.Errorf("initialize elasticsearch repository: %w", err)
 	}
 	return repository, router, transport, nil
+}
+
+// ElasticsearchQueryLayout 复用生产 Router 配置，仅计算查询元信息，不连接存储或创建索引。
+func ElasticsearchQueryLayout(cfg config.ElasticsearchConfig) (elasticsearchstore.QueryLayout, error) {
+	router, err := newBucketRouter(cfg)
+	if err != nil {
+		return elasticsearchstore.QueryLayout{}, err
+	}
+	return router.QueryLayout(), nil
+}
+
+func newBucketRouter(cfg config.ElasticsearchConfig) (*elasticsearchstore.BucketRouter, error) {
+	cfg.TimePartition = cfg.TimePartition.WithDefaults()
+	return elasticsearchstore.NewBucketRouter(cfg.IndexPrefix, elasticsearchstore.BucketConfig{
+		EventBucketDays:            cfg.TimePartition.EventBucketDays,
+		AlertHistoryBucketDays:     cfg.TimePartition.AlertHistoryBucketDays,
+		AlertLogBucketDays:         cfg.TimePartition.AlertLogBucketDays,
+		MaxFutureSkew:              cfg.TimePartition.MaxFutureSkew(),
+		RefreshInterval:            cfg.RefreshInterval(),
+		ActiveAlertRefreshInterval: cfg.ActiveAlertRefreshInterval(),
+		AlertLogTranslogDurability: cfg.AlertLogTranslogDurability,
+		NumberOfReplicas:           cfg.NumberOfReplicas,
+		NumberOfShards:             cfg.NumberOfShards,
+	})
+}
+
+func elasticsearchConnectionBudget(requested int) int {
+	if requested == 0 {
+		return 0
+	}
+	return max(requested, minElasticsearchConnectionsPerHost)
 }
 
 func newElasticsearchManager(
@@ -243,5 +298,34 @@ func JoinCloseError(runErr *error, runtime *Runtime) {
 	}
 	if err := runtime.Close(); err != nil {
 		*runErr = errors.Join(*runErr, err)
+	}
+}
+
+// OpenReadOnly 只连接并读取已有存储，不初始化表、索引或投影；调用方只注入读取端口。
+func OpenReadOnly(ctx context.Context, cfg config.StorageConfig, maxConnections int) (*Runtime, error) {
+	return OpenExisting(ctx, cfg, maxConnections)
+}
+
+// OpenExisting 连接已有存储且不初始化 schema；调用方可以执行既有领域用例的读写。
+// 只读入口应继续使用 OpenReadOnly 并只注入读取端口。
+func OpenExisting(ctx context.Context, cfg config.StorageConfig, maxConnections int) (*Runtime, error) {
+	if ctx == nil || maxConnections < 0 {
+		return nil, fmt.Errorf("read repository requires context and positive connection limit")
+	}
+	cfg = cfg.WithDefaults()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	switch cfg.Repository {
+	case config.RepositoryTypeMySQL:
+		return openMySQLMode(ctx, *cfg.MySQL, maxConnections, false)
+	case config.RepositoryTypeElasticsearch:
+		r, _, transport, err := newElasticsearchComponents(*cfg.Elasticsearch, maxConnections)
+		if err != nil {
+			return nil, err
+		}
+		return &Runtime{Repository: r, Backend: cfg.Repository, close: func() error { transport.Close(); return nil }}, nil
+	default:
+		return nil, fmt.Errorf("repository backend required")
 	}
 }

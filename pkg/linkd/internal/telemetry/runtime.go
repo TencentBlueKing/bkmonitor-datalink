@@ -15,11 +15,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
+	goruntime "runtime"
 	"time"
 
 	promclient "github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/prometheus"
@@ -28,6 +29,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+	settings "linkd/internal/config"
 )
 
 const (
@@ -39,22 +41,28 @@ const (
 // Runtime 持有一个 Linkd 进程内共享的 OTel MeterProvider 和 Prometheus 服务。
 // 指标关闭时 Runtime 使用 no-op provider，调用方无需增加条件分支。
 type Runtime struct {
-	provider metric.MeterProvider
-	shutdown func(context.Context) error
-	meter    metric.Meter
-	server   *http.Server
-	listener net.Listener
-	metrics  *instruments
+	version                      string
+	provider                     metric.MeterProvider
+	shutdown                     func(context.Context) error
+	server                       *http.Server
+	listener                     net.Listener
+	profileServer                *http.Server
+	profileListener              net.Listener
+	previousMutexProfileFraction int
+	metrics                      *instruments
 }
 
 // Start 创建指定职责的 telemetry runtime。Prometheus 端口会在返回前完成 bind，
 // 因此地址冲突不会等到业务进程接管消息后才暴露。
-func Start(ctx context.Context, cfg Config, role Role, version string) (*Runtime, error) {
+func Start(ctx context.Context, cfg settings.TelemetryConfig, role Role, version string) (*Runtime, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("start telemetry: context must not be nil")
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
+	}
+	if version == "" {
+		version = "dev"
 	}
 	if !cfg.Enabled() {
 		provider := metricnoop.NewMeterProvider()
@@ -63,12 +71,16 @@ func Start(ctx context.Context, cfg Config, role Role, version string) (*Runtime
 		if err != nil {
 			return nil, err
 		}
-		return &Runtime{provider: provider, meter: meter, metrics: metrics}, nil
+		runtime := &Runtime{provider: provider, metrics: metrics, version: version}
+		if err := runtime.startProfiling(ctx, cfg.Profiling); err != nil {
+			return nil, err
+		}
+		return runtime, nil
 	}
 
 	address := cfg.ListenAddress()
 	registry := promclient.NewRegistry()
-	exporter, err := prometheus.New(prometheus.WithRegisterer(registry))
+	exporter, err := prometheus.New(prometheus.WithRegisterer(registry), prometheus.WithTranslationStrategy(metricTranslationStrategy()))
 	if err != nil {
 		return nil, fmt.Errorf("create prometheus exporter: %w", err)
 	}
@@ -87,13 +99,9 @@ func Start(ctx context.Context, cfg Config, role Role, version string) (*Runtime
 		_ = provider.Shutdown(context.Background())
 		return nil, err
 	}
-	if err := registry.Register(collectors.NewGoCollector()); err != nil {
+	if err := registerBuiltinCollectors(registry); err != nil {
 		_ = provider.Shutdown(context.Background())
-		return nil, fmt.Errorf("register go collector: %w", err)
-	}
-	if err := registry.Register(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{})); err != nil {
-		_ = provider.Shutdown(context.Background())
-		return nil, fmt.Errorf("register process collector: %w", err)
+		return nil, err
 	}
 
 	listenConfig := net.ListenConfig{}
@@ -112,12 +120,21 @@ func Start(ctx context.Context, cfg Config, role Role, version string) (*Runtime
 		IdleTimeout:       time.Minute,
 	}
 	runtime := &Runtime{
+		version:  version,
 		provider: provider,
 		shutdown: provider.Shutdown,
-		meter:    meter,
 		server:   server,
 		listener: listener,
 		metrics:  metrics,
+	}
+	if err := runtime.startProfiling(ctx, cfg.Profiling); err != nil {
+		// Serve 尚未启动，http.Server 还未跟踪 listener，Shutdown 无法
+		// 代为关闭。必须在返回启动错误前显式释放已绑定的端口。
+		closeErr := listener.Close()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		shutdownErr := runtime.Shutdown(shutdownCtx)
+		cancel()
+		return nil, errors.Join(err, closeErr, shutdownErr)
 	}
 	go func() {
 		// listener 已在 Start 中成功 bind；此后的 Serve 错误只能由底层 listener
@@ -125,6 +142,48 @@ func Start(ctx context.Context, cfg Config, role Role, version string) (*Runtime
 		_ = server.Serve(listener)
 	}()
 	return runtime, nil
+}
+
+func (r *Runtime) startProfiling(ctx context.Context, cfg settings.TelemetryProfilingConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	listenConfig := net.ListenConfig{}
+	listener, err := listenConfig.Listen(ctx, "tcp", cfg.ListenAddress)
+	if err != nil {
+		return fmt.Errorf("listen profiling on %s: %w", cfg.ListenAddress, err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	for _, name := range []string{"allocs", "block", "goroutine", "heap", "mutex", "threadcreate"} {
+		mux.Handle("/debug/pprof/"+name, pprof.Handler(name))
+	}
+	server := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      2 * time.Minute,
+		IdleTimeout:       time.Minute,
+	}
+	r.profileServer = server
+	r.profileListener = listener
+	// 采样率属于进程级运行时状态；只在显式启用诊断时修改，并在 Shutdown 时复位。
+	goruntime.SetBlockProfileRate(cfg.BlockProfileRate)
+	r.previousMutexProfileFraction = goruntime.SetMutexProfileFraction(cfg.MutexProfileFraction)
+	go func() { _ = server.Serve(listener) }()
+	return nil
+}
+
+// Version 返回启动方传入的构建版本；Runtime 为空时不推断版本。
+func (r *Runtime) Version() string {
+	if r == nil {
+		return ""
+	}
+	return r.version
 }
 
 // MeterProvider 返回进程级 provider，供需要 OTel API 的窄基础设施组件使用。
@@ -144,6 +203,14 @@ func (r *Runtime) PrometheusListenAddress() string {
 	return r.listener.Addr().String()
 }
 
+// ProfilingListenAddress 返回当前进程实际绑定的 pprof 地址；未启用时返回空字符串。
+func (r *Runtime) ProfilingListenAddress() string {
+	if r == nil || r.profileListener == nil {
+		return ""
+	}
+	return r.profileListener.Addr().String()
+}
+
 // Shutdown 先停止 Prometheus HTTP server，再关闭 MeterProvider。
 func (r *Runtime) Shutdown(ctx context.Context) error {
 	if r == nil {
@@ -153,6 +220,15 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 		return fmt.Errorf("shutdown telemetry: context must not be nil")
 	}
 	var shutdownErrors []error
+	if r.profileServer != nil {
+		serverCtx, cancel := context.WithTimeout(ctx, shutdownTimeout)
+		if err := r.profileServer.Shutdown(serverCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			shutdownErrors = append(shutdownErrors, fmt.Errorf("shutdown profiling server: %w", err))
+		}
+		cancel()
+		goruntime.SetBlockProfileRate(0)
+		goruntime.SetMutexProfileFraction(r.previousMutexProfileFraction)
+	}
 	if r.server != nil {
 		serverCtx, cancel := context.WithTimeout(ctx, shutdownTimeout)
 		if err := r.server.Shutdown(serverCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {

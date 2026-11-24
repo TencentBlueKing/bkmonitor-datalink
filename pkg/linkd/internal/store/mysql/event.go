@@ -54,7 +54,7 @@ func (r *Repository) createEvent(ctx context.Context, event domain.Event) (store
 		return store.CreateEventResult{}, err
 	}
 	_, err = r.db.ExecContext(ctx, `INSERT INTO linkd_events
-		(bk_tenant_id, event_id, related_alert_id, version, processing_state, received_at_ns, payload, processing)
+		(bk_tenant_id, event_id, related_alert_ids, version, processing_state, received_at_ns, payload, processing)
 		VALUES (?, ?, NULL, 1, ?, ?, ?, ?)`, normalized.BKTenantID, normalized.EventID,
 		processing.State, normalized.ReceivedAt.UnixNano(), payload, processingPayload)
 	if err == nil {
@@ -67,7 +67,7 @@ func (r *Repository) createEvent(ctx context.Context, event domain.Event) (store
 	if getErr != nil {
 		return store.CreateEventResult{}, fmt.Errorf("read duplicate event %q: %w", normalized.EventID, getErr)
 	}
-	if err := domain.ValidateEventReplacement(normalized, existing.Event); err != nil {
+	if err := domain.ValidateEventRedelivery(normalized, existing.Event); err != nil {
 		return store.CreateEventResult{}, fmt.Errorf("%w: event %q contains different content: %w", store.ErrIdentityConflict, normalized.EventID, err)
 	}
 	return store.CreateEventResult{StoredEvent: existing, Created: false}, nil
@@ -152,6 +152,82 @@ func (r *Repository) GetEvents(ctx context.Context, tenantID string, eventIDs []
 	return result, nil
 }
 
+// ListEventsBySource 读取来源时间窗口内的事件，包含尚未关联 Alert 的事件。
+func (r *Repository) ListEventsBySource(
+	ctx context.Context,
+	bkTenantID, sourceID string,
+	request store.EventBySourceRequest,
+) (store.EventPage, error) {
+	if err := contextError(ctx); err != nil {
+		return store.EventPage{}, err
+	}
+	from, to := request.ReceivedFrom, request.ReceivedTo
+	page, err := request.Page.Normalize()
+	if err != nil {
+		return store.EventPage{}, err
+	}
+	expected := cursorPayload{
+		Kind: cursorKindEventBySource, TenantID: bkTenantID, ParentID: sourceID,
+		RangeStartNS: from.UnixNano(), BoundaryNS: to.UnixNano(),
+	}
+	var cursor cursorPayload
+	if page.Cursor != "" {
+		cursor, err = decodeCursor(page.Cursor, expected)
+		if err != nil {
+			return store.EventPage{}, err
+		}
+	}
+	query := `SELECT event_id, received_at_ns, ` + storedEventColumns + ` FROM linkd_events
+		WHERE bk_tenant_id=? AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.event_source_id'))=?
+		AND received_at_ns>=? AND received_at_ns<=?`
+	args := []any{bkTenantID, sourceID, from.UnixNano(), to.UnixNano()}
+	if page.Cursor != "" {
+		query += ` AND (received_at_ns>? OR (received_at_ns=? AND event_id>?))`
+		args = append(args, cursor.TimeNS, cursor.TimeNS, cursor.ObjectID)
+	}
+	query += ` ORDER BY received_at_ns,event_id LIMIT ?`
+	args = append(args, page.Limit+1)
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return store.EventPage{}, err
+	}
+	defer func() { _ = rows.Close() }()
+	items := make([]store.StoredEvent, 0, page.Limit+1)
+	times := make([]int64, 0, page.Limit+1)
+	for rows.Next() {
+		var id string
+		var receivedNS int64
+		var payload, processing []byte
+		var version uint64
+		if err := rows.Scan(&id, &receivedNS, &payload, &processing, &version); err != nil {
+			return store.EventPage{}, err
+		}
+		stored, err := storedEventFromColumns(payload, processing, version)
+		if err != nil {
+			return store.EventPage{}, err
+		}
+		items = append(items, stored)
+		times = append(times, receivedNS)
+	}
+	if err := rows.Err(); err != nil {
+		return store.EventPage{}, err
+	}
+	result := store.EventPage{Events: items}
+	if len(items) > page.Limit {
+		last := items[page.Limit-1]
+		result.NextCursor, err = encodeCursor(cursorPayload{
+			Kind: cursorKindEventBySource, TenantID: bkTenantID, ParentID: sourceID,
+			RangeStartNS: from.UnixNano(), BoundaryNS: to.UnixNano(),
+			TimeNS: times[page.Limit-1], ObjectID: last.Event.EventID,
+		})
+		if err != nil {
+			return store.EventPage{}, err
+		}
+		result.Events = items[:page.Limit]
+	}
+	return result, nil
+}
+
 // ListEventsByAlert 按关联 Alert 和 received_at 稳定分页。
 func (r *Repository) ListEventsByAlert(
 	ctx context.Context,
@@ -187,7 +263,7 @@ func (r *Repository) ListEventsByAlert(
 		}
 	}
 	query := `SELECT event_id, received_at_ns, ` + storedEventColumns + ` FROM linkd_events
-		WHERE bk_tenant_id=? AND related_alert_id=?
+		WHERE bk_tenant_id=? AND JSON_CONTAINS(related_alert_ids, JSON_QUOTE(?))
 		AND received_at_ns>=? AND received_at_ns<=?`
 	args := []any{bkTenantID, alertID, from.UnixNano(), to.UnixNano()}
 	if page.Cursor != "" {
@@ -389,73 +465,24 @@ func (r *Repository) ScanAllUnprocessedEvents(ctx context.Context, before time.T
 }
 
 func (r *Repository) CompareAndSetEventResult(ctx context.Context, tenantID, eventID string, expected store.VersionToken, result store.EventResult) (store.StoredEvent, error) {
-	if err := contextError(ctx); err != nil {
-		return store.StoredEvent{}, err
-	}
-	if err := validateIdentity(tenantID, "event_id", eventID); err != nil {
-		return store.StoredEvent{}, err
-	}
-	expectedVersion, ok := parseVersion(expected)
-	if !ok {
-		return store.StoredEvent{}, fmt.Errorf("%w: event %q", store.ErrVersionConflict, eventID)
-	}
-	normalizedResult, err := result.Normalize()
-	if err != nil {
-		return store.StoredEvent{}, fmt.Errorf("%w: %w", store.ErrInvalidArgument, err)
-	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return store.StoredEvent{}, err
-	}
-	defer rollback(tx)
-	current, err := scanStoredEvent(tx.QueryRowContext(ctx, `SELECT `+storedEventColumns+` FROM linkd_events WHERE bk_tenant_id=? AND event_id=? FOR UPDATE`, tenantID, eventID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return store.StoredEvent{}, fmt.Errorf("%w: event %q", store.ErrNotFound, eventID)
-	}
+	current, err := r.GetEvent(ctx, tenantID, eventID)
 	if err != nil {
 		return store.StoredEvent{}, err
 	}
 	if current.Version != expected {
-		return store.StoredEvent{}, fmt.Errorf("%w: event %q", store.ErrVersionConflict, eventID)
+		return store.StoredEvent{}, store.ErrVersionConflict
 	}
-	if current.Processing.State != domain.EventProcessStateUnprocessed {
-		return store.StoredEvent{}, fmt.Errorf("%w: event already processed", store.ErrInvalidTransition)
-	}
-	updated := current.Event.Clone()
-	if normalizedResult.RelatedAlertID != "" {
-		updated, err = updated.WithRelatedAlertID(normalizedResult.RelatedAlertID)
-		if err != nil {
-			return store.StoredEvent{}, fmt.Errorf("%w: %w", store.ErrInvalidTransition, err)
-		}
-	}
-	if err := domain.ValidateEventReplacement(current.Event, updated); err != nil {
-		return store.StoredEvent{}, fmt.Errorf("%w: %w", store.ErrInvalidTransition, err)
-	}
-	processedAt := normalizedResult.ProcessedAt
-	processing := store.EventProcessing{State: normalizedResult.State, Outcome: normalizedResult.Outcome, ReasonCode: normalizedResult.ReasonCode, ProcessedAt: &processedAt}
-	payload, err := encodeEvent(updated)
+	return r.CompareAndSetLifecycleEventResultFromSnapshot(ctx, current, result)
+}
+
+// CompareAndSetEventEnrichment 保留外部接口的读取语义，内部生命周期直接使用快照入口。
+func (r *Repository) CompareAndSetEventEnrichment(ctx context.Context, tenantID, eventID string, expected store.VersionToken, result domain.EventEnrichment) (store.StoredEvent, error) {
+	current, err := r.GetEvent(ctx, tenantID, eventID)
 	if err != nil {
 		return store.StoredEvent{}, err
 	}
-	processingPayload, err := encodeProcessing(processing)
-	if err != nil {
-		return store.StoredEvent{}, err
+	if current.Version != expected {
+		return store.StoredEvent{}, store.ErrVersionConflict
 	}
-	newVersion := expectedVersion + 1
-	var relatedAlertID any
-	if updated.RelatedAlertID != "" {
-		relatedAlertID = updated.RelatedAlertID
-	}
-	execResult, err := tx.ExecContext(ctx, `UPDATE linkd_events SET payload=?,processing=?,processing_state=?,related_alert_id=?,version=? WHERE bk_tenant_id=? AND event_id=? AND version=?`, payload, processingPayload, processing.State, relatedAlertID, newVersion, tenantID, eventID, expectedVersion)
-	if err != nil {
-		return store.StoredEvent{}, err
-	}
-	affected, err := execResult.RowsAffected()
-	if err != nil || affected != 1 {
-		return store.StoredEvent{}, fmt.Errorf("%w: event %q", store.ErrVersionConflict, eventID)
-	}
-	if err := tx.Commit(); err != nil {
-		return store.StoredEvent{}, err
-	}
-	return store.StoredEvent{Event: updated, Processing: processing, Version: versionToken(newVersion)}, nil
+	return r.CompareAndSetEventEnrichmentFromSnapshot(ctx, current, result)
 }

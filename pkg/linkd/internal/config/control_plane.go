@@ -17,17 +17,22 @@ import (
 const (
 	defaultElasticsearchSchemaAndActiveReconcileIntervalSeconds = 3600
 	defaultElasticsearchBucketReconcileIntervalSeconds          = 21600
-	defaultElasticsearchArchiveIntervalSeconds                  = 30
+	defaultElasticsearchArchiveIntervalSeconds                  = 5
 	defaultElasticsearchArchiveBatchSize                        = 1000
-	defaultElasticsearchArchiveWorkerCount                      = 4
-	defaultRedisStreamReconcileIntervalSeconds                  = 60
-	defaultRedisStreamOperationTimeoutSeconds                   = 10
+	defaultElasticsearchArchiveWorkerCount                      = 1
+	defaultRedisStreamReconcileIntervalSeconds                  = 10
+	defaultRedisStreamOperationTimeoutSeconds                   = 3
 	defaultRedisStreamMaxEntries                                = 100000
 	defaultRedisStreamTrimBatchSize                             = 10000
+	defaultRedisStreamTrimBatchesPerCycle                       = 10
 )
 
-// ControlPlaneConfig 描述控制面独占执行的低吞吐管理任务。
+// ControlPlaneConfig 描述控制面管理任务及共享的合并执行预算。
 type ControlPlaneConfig struct {
+	Close         *CloseControlConfig              `yaml:"close,omitempty"`
+	Merge         *MergeControlConfig              `yaml:"merge,omitempty"`
+	ActiveIndex   *ActiveIndexConfig               `yaml:"active_index,omitempty"`
+	DynamicConfig *DynamicConfigConfig             `yaml:"dynamic_config,omitempty"`
 	Elasticsearch *ElasticsearchControlPlaneConfig `yaml:"elasticsearch,omitempty"`
 	RedisStream   *RedisStreamManagerConfig        `yaml:"redis_stream,omitempty"`
 }
@@ -48,19 +53,54 @@ type ElasticsearchControlPlaneConfig struct {
 // MaxEntries 是软上限：控制面只裁剪所有 Consumer Group 都已确认的连续前缀，
 // 未读或 Pending 消息可以使实际长度暂时超过该值。
 type RedisStreamManagerConfig struct {
+	// Enabled 省略时默认启用；false 显式关闭指标采集和安全裁剪。
+	Enabled *bool `yaml:"enabled,omitempty"`
 	// ReconcileIntervalSeconds 是指标采集和裁剪周期。
 	ReconcileIntervalSeconds int `yaml:"reconcile_interval_seconds"`
-	// OperationTimeoutSeconds 限制单轮 Redis 操作总时间。
+	// OperationTimeoutSeconds 分别限制来源目录读取与单个来源的 Redis 采集/裁剪时间。
 	OperationTimeoutSeconds int `yaml:"operation_timeout_seconds"`
 	// MaxEntries 是触发安全裁剪的软长度上限。
 	MaxEntries int64 `yaml:"max_entries"`
-	// TrimBatchSize 限制单轮裁剪检查和删除的条目数。
+	// TrimBatchSize 限制单条 Redis 裁剪命令检查和删除的条目数。
 	TrimBatchSize int64 `yaml:"trim_batch_size"`
+	// MaxTrimEntriesPerCycle 限制单轮累计裁剪的条目数。
+	MaxTrimEntriesPerCycle int64 `yaml:"max_trim_entries_per_cycle"`
+}
+
+// IsEnabled 报告 Stream 管理任务是否启用，省略开关时默认为 true。
+func (c RedisStreamManagerConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+// RedisStreamSettings 返回有效的 Stream 管理配置副本。
+// 未声明任务时，仅在 Redis 和 Lifecycle 均已配置时启用默认任务；显式配置仍交给校验检查依赖。
+func (c Config) RedisStreamSettings() *RedisStreamManagerConfig {
+	if c.ControlPlane != nil && c.ControlPlane.RedisStream != nil {
+		settings := c.ControlPlane.RedisStream.WithDefaults()
+		return &settings
+	}
+	if c.Storage == nil || c.Storage.Redis == nil || c.Lifecycle == nil {
+		return nil
+	}
+	settings := (RedisStreamManagerConfig{}).WithDefaults()
+	return &settings
 }
 
 // WithDefaults 返回补齐控制面管理任务默认值且不共享嵌套配置的副本。
 func (c ControlPlaneConfig) WithDefaults() ControlPlaneConfig {
 	normalized := c
+	if c.Merge != nil {
+		v := c.Merge.WithDefaults()
+		normalized.Merge = &v
+	}
+	if c.ActiveIndex != nil {
+		v := c.ActiveIndex.WithDefaults()
+		normalized.ActiveIndex = &v
+	}
+	if c.DynamicConfig != nil {
+		v := c.DynamicConfig.Clone()
+		normalized.DynamicConfig = &v
+	}
 	if c.Elasticsearch != nil {
 		elasticsearch := c.Elasticsearch.WithDefaults()
 		normalized.Elasticsearch = &elasticsearch
@@ -94,6 +134,8 @@ func (c ElasticsearchControlPlaneConfig) WithDefaults() ElasticsearchControlPlan
 
 // WithDefaults 返回补齐采集、超时和裁剪预算的配置。
 func (c RedisStreamManagerConfig) WithDefaults() RedisStreamManagerConfig {
+	enabled := c.IsEnabled()
+	c.Enabled = &enabled
 	if c.ReconcileIntervalSeconds == 0 {
 		c.ReconcileIntervalSeconds = defaultRedisStreamReconcileIntervalSeconds
 	}
@@ -106,13 +148,31 @@ func (c RedisStreamManagerConfig) WithDefaults() RedisStreamManagerConfig {
 	if c.TrimBatchSize == 0 {
 		c.TrimBatchSize = defaultRedisStreamTrimBatchSize
 	}
+	if c.MaxTrimEntriesPerCycle == 0 {
+		c.MaxTrimEntriesPerCycle = c.TrimBatchSize * defaultRedisStreamTrimBatchesPerCycle
+	}
 	return c
 }
 
 // Validate 校验已声明的控制面任务。
 func (c ControlPlaneConfig) Validate() error {
-	if c.Elasticsearch == nil && c.RedisStream == nil {
+	if c.Elasticsearch == nil && c.RedisStream == nil && c.DynamicConfig == nil && c.ActiveIndex == nil && c.Merge == nil && c.Close == nil {
 		return fmt.Errorf("control_plane must configure at least one management task")
+	}
+	if c.Close != nil {
+		if err := c.Close.Validate(); err != nil {
+			return err
+		}
+	}
+	if c.Merge != nil {
+		if err := c.Merge.Validate(); err != nil {
+			return err
+		}
+	}
+	if c.ActiveIndex != nil {
+		if err := c.ActiveIndex.Validate(); err != nil {
+			return fmt.Errorf("control_plane.%w", err)
+		}
 	}
 	if c.Elasticsearch != nil {
 		if err := c.Elasticsearch.Validate(); err != nil {
@@ -122,6 +182,11 @@ func (c ControlPlaneConfig) Validate() error {
 	if c.RedisStream != nil {
 		if err := c.RedisStream.Validate(); err != nil {
 			return fmt.Errorf("control_plane.redis_stream.%w", err)
+		}
+	}
+	if c.DynamicConfig != nil {
+		if err := c.DynamicConfig.Validate(); err != nil {
+			return fmt.Errorf("control_plane.dynamic_config.%w", err)
 		}
 	}
 	return nil
@@ -186,6 +251,12 @@ func (c RedisStreamManagerConfig) Validate() error {
 	if c.TrimBatchSize < 1 || c.TrimBatchSize > 1_000_000 {
 		return fmt.Errorf("trim_batch_size must be between 1 and 1000000")
 	}
+	if c.MaxTrimEntriesPerCycle < c.TrimBatchSize {
+		return fmt.Errorf("max_trim_entries_per_cycle must not be less than trim_batch_size")
+	}
+	if c.MaxTrimEntriesPerCycle > c.TrimBatchSize*100 {
+		return fmt.Errorf("max_trim_entries_per_cycle must not exceed 100 times trim_batch_size")
+	}
 	return nil
 }
 
@@ -194,7 +265,7 @@ func (c RedisStreamManagerConfig) ReconcileInterval() time.Duration {
 	return time.Duration(c.ReconcileIntervalSeconds) * time.Second
 }
 
-// OperationTimeout 返回单轮 Redis 管理操作的最大时间。
+// OperationTimeout 返回目录读取或单个来源 Redis 管理操作的最大时间。
 func (c RedisStreamManagerConfig) OperationTimeout() time.Duration {
 	return time.Duration(c.OperationTimeoutSeconds) * time.Second
 }

@@ -11,242 +11,381 @@ package eventgen
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
-
-	"linkd/internal/cleaner"
-	linkdconfig "linkd/internal/config"
-	"linkd/internal/domain"
 )
 
-type fakePublisher struct {
-	batches [][]Record
-	err     error
+func fixture() Config {
+	return Config{TenantID: "tenant-a", Seed: 42, Datasets: map[string]Dataset{"hosts": {Rows: []map[string]any{{"id": 1, "ip": "10.0.0.1", "model": "host"}, {"id": 2, "ip": "10.0.0.2", "model": "host"}}}, "models": {Rows: []map[string]any{{"id": "host", "label": "主机"}}}}, Templates: map[string]Template{"fire": {Kind: "standard", Body: `{"title":{{json (printf "%v CPU high" .Bindings.host.ip)}},"dimensions":{"id":{{json .Bindings.host.id}},"ip":{{json .Bindings.host.ip}}},"values":{"cpu":{{randInt 80 100}}},"evaluations":[{"severity":"warning","action":"triggered"}]}`}, "recover": {Kind: "standard", Body: `{"evaluations":[{"severity":"warning","action":"resolved"}]}`}}, Scenarios: []Scenario{{ID: "cpu", SourceID: "source", Bindings: []Binding{{Name: "host", Dataset: "hosts", Mode: "iterate", Loop: true}, {Name: "model", Dataset: "models", Mode: "random", Where: map[string]string{"id": `{{json .Bindings.host.model}}`}}}, Arrival: Arrival{PerSecond: 1, Count: 1}, Stages: []Stage{{Name: "active", Template: "fire", Duration: Span{Fixed: "2s"}, Every: Span{Fixed: "1s"}}, {Name: "recovered", Template: "recover", Terminal: true}}}}}
 }
 
-func (p *fakePublisher) Publish(_ context.Context, records []Record) error {
-	cloned := make([]Record, len(records))
-	for index, record := range records {
-		cloned[index] = record
-		cloned[index].Key = append([]byte(nil), record.Key...)
-		cloned[index].Body = append([]byte(nil), record.Body...)
-		cloned[index].Headers = make(map[string]string, len(record.Headers))
-		for key, value := range record.Headers {
-			cloned[index].Headers[key] = value
+func startTime() time.Time { return time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC) }
+
+func TestPreviewLifecycleAndStableRows(t *testing.T) {
+	c := fixture()
+	records, e := Preview(c, startTime(), 10)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(records) != 3 {
+		t.Fatalf("records=%d", len(records))
+	}
+	for i, r := range records {
+		if r.Fingerprint != records[0].Fingerprint || !r.Timestamp.Equal(startTime().Add(time.Duration(i)*time.Second)) {
+			t.Fatalf("unstable identity/time %+v", r)
 		}
-	}
-	p.batches = append(p.batches, cloned)
-	return p.err
-}
-
-type fakeClock struct {
-	now   time.Time
-	waits []time.Duration
-}
-
-func (c *fakeClock) Now() time.Time { return c.now }
-
-func (c *fakeClock) Wait(ctx context.Context, duration time.Duration) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	c.waits = append(c.waits, duration)
-	c.now = c.now.Add(duration)
-	return nil
-}
-
-func TestRunCycleRateAndGeometricRecovery(t *testing.T) {
-	t.Parallel()
-	publisher := &fakePublisher{}
-	engine := newTestEngine(t, publisher, func(cfg *Config) {
-		cfg.NewAlertsPerMinute = 20
-		cfg.CycleDuration = 30 * time.Second
-		cfg.MeanLifetimeCycles = 1
-	})
-	startedAt := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
-
-	first, err := engine.RunCycle(context.Background(), 1, startedAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.Generated != 10 || first.Resolved != 0 || first.Active != 10 || first.Published != 10 {
-		t.Fatalf("first cycle = %#v", first)
-	}
-	second, err := engine.RunCycle(context.Background(), 2, startedAt.Add(30*time.Second))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second.Generated != 10 || second.Resolved != 10 || second.Active != 10 || second.Published != 20 {
-		t.Fatalf("second cycle = %#v", second)
-	}
-	if len(publisher.batches) != 2 || len(publisher.batches[0]) != 10 || len(publisher.batches[1]) != 20 {
-		t.Fatalf("published batch sizes = %v", batchSizes(publisher.batches))
-	}
-
-	triggerFingerprints := make(map[string]string)
-	for _, record := range publisher.batches[0] {
-		assertValidRecord(t, record)
-		if record.Action != domain.EventActionTriggered {
-			t.Fatalf("first cycle action = %q", record.Action)
+		var body map[string]any
+		if e = json.Unmarshal(r.Body, &body); e != nil {
+			t.Fatal(e)
 		}
-		triggerFingerprints[record.SourceAlertID] = record.Fingerprint
-	}
-	for index, record := range publisher.batches[1] {
-		assertValidRecord(t, record)
-		if index < 10 {
-			if record.Action != domain.EventActionResolved {
-				t.Fatalf("second cycle record %d action = %q, want resolved", index, record.Action)
+		if i < 2 {
+			dims := body["dimensions"].(map[string]any)
+			if dims["id"] != float64(1) || dims["ip"] != "10.0.0.1" {
+				t.Fatal(dims)
 			}
-			if record.Fingerprint != triggerFingerprints[record.SourceAlertID] {
-				t.Fatalf("alert %q fingerprint changed", record.SourceAlertID)
-			}
-		} else if record.Action != domain.EventActionTriggered {
-			t.Fatalf("second cycle record %d action = %q, want triggered", index, record.Action)
+		}
+	}
+	again, e := Preview(c, startTime(), 10)
+	if e != nil || !reflect.DeepEqual(records, again) {
+		t.Fatal("preview is not reproducible", e)
+	}
+}
+
+func TestCSVTypedImport(t *testing.T) {
+	d, e := ImportCSV("id,enabled,ip\n42,true,10.0.0.1\n", map[string]string{"id": "number", "enabled": "boolean"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if d.Rows[0]["id"] != float64(42) || d.Rows[0]["enabled"] != true {
+		t.Fatal(d)
+	}
+	if _, e = ImportCSV("id\nx", map[string]string{"id": "number"}); e == nil {
+		t.Fatal("invalid numeric value accepted")
+	}
+}
+
+func TestConfigurationFailureAndNoMatch(t *testing.T) {
+	c := fixture()
+	c.Scenarios[0].Bindings[1].Where["id"] = `"absent"`
+	if _, e := Preview(c, startTime(), 1); e == nil {
+		t.Fatal("missing data ignored")
+	}
+	c = fixture()
+	c.Scenarios[0].Stages[0].Next = []Branch{{Stage: "unknown", Weight: 1}}
+	if _, e := Compile(c); e == nil {
+		t.Fatal("invalid stage accepted")
+	}
+	c = fixture()
+	v := c.Templates["fire"]
+	v.Kind = "json"
+	c.Templates["fire"] = v
+	if _, e := Compile(c); e == nil {
+		t.Fatal("missing custom cleanup accepted")
+	}
+}
+
+func TestTraversalStopsAndRandomWeight(t *testing.T) {
+	c := fixture()
+	c.Scenarios[0].Arrival.Count = 0
+	c.Scenarios[0].Bindings[0].Loop = false
+	r, e := Preview(c, startTime(), 20)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(r) != 6 {
+		t.Fatalf("one pass generated %d events", len(r))
+	}
+	c = fixture()
+	d := c.Datasets["hosts"]
+	d.WeightColumn = "weight"
+	for _, row := range d.Rows {
+		row["weight"] = 1
+	}
+	c.Datasets["hosts"] = d
+	c.Scenarios[0].Bindings[0].Mode = "weighted"
+	if _, e := Preview(c, startTime(), 3); e != nil {
+		t.Fatal(e)
+	}
+}
+
+func TestStageBoundaryAndWeightedLoop(t *testing.T) {
+	c := fixture()
+	c.Scenarios[0].Stages[0].Next = []Branch{{Stage: "active", Weight: 1}}
+	r, e := Preview(c, startTime(), 6)
+	if e != nil {
+		t.Fatal(e)
+	}
+	for i, v := range r {
+		if !v.Timestamp.Equal(startTime().Add(time.Duration(i) * time.Second)) {
+			t.Fatal("duplicated boundary", r)
 		}
 	}
 }
 
-func TestFractionalRateAccumulatorDoesNotDrift(t *testing.T) {
-	t.Parallel()
-	engine := newTestEngine(t, &fakePublisher{}, func(cfg *Config) {
-		cfg.NewAlertsPerMinute = 1
-		cfg.CycleDuration = 20 * time.Second
-		cfg.MeanLifetimeCycles = 1000
-	})
-	now := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
-	want := []int{0, 0, 1, 0, 0, 1}
-	for index, expected := range want {
-		result, err := engine.RunCycle(context.Background(), index+1, now.Add(time.Duration(index)*20*time.Second))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if result.Generated != expected {
-			t.Fatalf("cycle %d generated = %d, want %d", index+1, result.Generated, expected)
-		}
+func TestDuplicateFreezesRecord(t *testing.T) {
+	c := fixture()
+	c.Scenarios[0].DuplicatePercent = 100
+	r, e := Preview(c, startTime(), 2)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if string(r[0].Body) != string(r[1].Body) || r[0].SourceEventID != r[1].SourceEventID || !reflect.DeepEqual(r[0].Headers, r[1].Headers) {
+		t.Fatal("duplicate re-rendered")
 	}
 }
 
-func TestRunCycleDuplicatesExactRecords(t *testing.T) {
-	t.Parallel()
-	publisher := &fakePublisher{}
-	engine := newTestEngine(t, publisher, func(cfg *Config) {
-		cfg.DuplicatePercent = 100
-		cfg.MeanLifetimeCycles = 1000
-	})
-	result, err := engine.RunCycle(context.Background(), 1, time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC))
+func testPlan(e *Engine, at time.Time) []Record {
+	r := e.plan(at)
+	e.ack(sendResult{r, make([]error, len(r))})
+	return r
+}
+
+func TestPauseFreezesClockAndRateUpdate(t *testing.T) {
+	c := fixture()
+	e, err := New(c, "test", 1, startTime(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Generated != 10 || result.Duplicated != 10 || result.Published != 20 {
-		t.Fatalf("cycle=%#v", result)
-	}
-	for index := 0; index < len(publisher.batches[0]); index += 2 {
-		if !reflect.DeepEqual(publisher.batches[0][index], publisher.batches[0][index+1]) {
-			t.Fatalf("record %d duplicate changed payload", index)
-		}
-	}
-}
-
-func TestRunUsesImmediateFirstCycleAndFakeClock(t *testing.T) {
-	t.Parallel()
-	publisher := &fakePublisher{}
-	engine := newTestEngine(t, publisher, func(cfg *Config) {
-		cfg.Cycles = 2
-		cfg.MeanLifetimeCycles = 1
-	})
-	clock := &fakeClock{now: time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)}
-	engine.clock = clock
-	if err := engine.Run(context.Background()); err != nil {
+	testPlan(e, startTime())
+	if err = e.Control("pause"); err != nil {
 		t.Fatal(err)
 	}
-	if len(clock.waits) != 1 || clock.waits[0] != 30*time.Second {
-		t.Fatalf("clock waits = %v", clock.waits)
+	if r := testPlan(e, startTime().Add(30*time.Second)); len(r) != 0 {
+		t.Fatal("paused emitted")
 	}
-	if len(publisher.batches) != 2 {
-		t.Fatalf("published batches = %d, want 2", len(publisher.batches))
+	e.paused = false
+	e.status.State = "running"
+	r := testPlan(e, startTime().Add(31*time.Second))
+	if len(r) != 1 {
+		t.Fatalf("resume burst %d", len(r))
+	}
+	c.Scenarios[0].Arrival.PerSecond = 3
+	if err = e.Apply(c, 2); err != nil {
+		t.Fatal(err)
+	}
+	if e.stopping || e.status.Revision != 2 {
+		t.Fatal("rate update restarted")
 	}
 }
 
-func TestCycleCapacityAndPublishFailureDoNotCommitState(t *testing.T) {
-	t.Parallel()
-	t.Run("capacity", func(t *testing.T) {
-		t.Parallel()
-		engine := newTestEngine(t, &fakePublisher{}, func(cfg *Config) { cfg.MaxActiveAlerts = 9 })
-		_, err := engine.RunCycle(context.Background(), 1, time.Now().UTC())
-		if err == nil || !strings.Contains(err.Error(), "capacity exceeded") {
-			t.Fatalf("RunCycle() error = %v", err)
-		}
-		if len(engine.active) != 0 {
-			t.Fatalf("active alerts = %d after capacity failure", len(engine.active))
-		}
-	})
-	t.Run("publisher", func(t *testing.T) {
-		t.Parallel()
-		publisher := &fakePublisher{err: errors.New("broker unavailable")}
-		engine := newTestEngine(t, publisher, nil)
-		_, err := engine.RunCycle(context.Background(), 1, time.Now().UTC())
-		if err == nil || !strings.Contains(err.Error(), "broker unavailable") {
-			t.Fatalf("RunCycle() error = %v", err)
-		}
-		if len(engine.active) != 0 || engine.totalSent != 0 {
-			t.Fatalf("state committed after publish failure: active=%d sent=%d", len(engine.active), engine.totalSent)
-		}
-	})
+func TestGracefulSwitchClosesBeforeNewTemplate(t *testing.T) {
+	c := fixture()
+	e, err := New(c, "test", 1, startTime(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := testPlan(e, startTime())
+	next := fixture()
+	next.Duration = "10s"
+	if err = e.Apply(next, 2); err != nil {
+		t.Fatal(err)
+	}
+	closeRecords := testPlan(e, startTime().Add(time.Second))
+	if len(closeRecords) != 1 || !closeRecords[0].Cleanup || closeRecords[0].Fingerprint != first[0].Fingerprint {
+		t.Fatalf("cleanup=%+v", closeRecords)
+	}
+	testPlan(e, startTime().Add(2*time.Second))
+	if e.status.Revision != 2 {
+		t.Fatal(e.status)
+	}
+	fresh := testPlan(e, startTime().Add(3*time.Second))
+	if len(fresh) == 0 || fresh[0].Fingerprint == first[0].Fingerprint {
+		t.Fatal("new round reused identity")
+	}
 }
 
-func TestRunTreatsCancellationAsGracefulStop(t *testing.T) {
-	t.Parallel()
-	engine := newTestEngine(t, &fakePublisher{}, nil)
+func TestFailedCleanupCanRetryAndCannotApply(t *testing.T) {
+	c := fixture()
+	e, _ := New(c, "test", 1, startTime(), nil)
+	testPlan(e, startTime())
+	next := fixture()
+	next.Duration = "10s"
+	_ = e.Apply(next, 2)
+	records := e.plan(startTime().Add(time.Second))
+	e.ack(sendResult{records, []error{errors.New("offline")}})
+	e.plan(startTime().Add(2 * time.Second))
+	if e.status.State != "cleanup_failed" || e.status.Revision != 1 {
+		t.Fatal(e.status)
+	}
+	if err := e.Control("retry_cleanup"); err != nil {
+		t.Fatal(err)
+	}
+	retry := testPlan(e, startTime().Add(3*time.Second))
+	if len(retry) != 1 {
+		t.Fatal("no retry")
+	}
+	testPlan(e, startTime().Add(4*time.Second))
+	if e.status.Revision != 2 {
+		t.Fatal(e.status)
+	}
+}
+
+type capturePublisher struct {
+	mu      sync.Mutex
+	records []Record
+	block   <-chan struct{}
+}
+
+func (p *capturePublisher) Publish(ctx context.Context, r []Record) []error {
+	if p.block != nil {
+		select {
+		case <-p.block:
+		case <-ctx.Done():
+			out := make([]error, len(r))
+			for i := range out {
+				out[i] = ctx.Err()
+			}
+			return out
+		}
+	}
+	p.mu.Lock()
+	p.records = append(p.records, r...)
+	p.mu.Unlock()
+	return make([]error, len(r))
+}
+
+func (p *capturePublisher) Close() {}
+
+func TestCancellationAndControlsDuringBlockedSend(t *testing.T) {
+	c := fixture()
+	c.Limits.SendTimeout = "20ms"
+	c.Limits.CleanupTimeout = "100ms"
+	blocked := make(chan struct{})
+	pub := &capturePublisher{block: blocked}
+	e, err := New(c, "run", 1, time.Now(), pub)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- e.Run(ctx) }()
+	time.Sleep(5 * time.Millisecond)
+	if err = e.Control("pause"); err != nil {
+		t.Fatal(err)
+	}
+	if e.Snapshot().State != "paused" {
+		t.Fatal("control blocked")
+	}
 	cancel()
-	if err := engine.Run(ctx); err != nil {
-		t.Fatalf("Run() cancellation error = %v", err)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("cancel leaked runtime")
 	}
 }
 
-func newTestEngine(t *testing.T, publisher Publisher, mutate func(*Config)) *Engine {
-	t.Helper()
-	cfg := Config{
-		RunID: "test-run", TenantID: "tenant-a",
-		NewAlertsPerMinute: 20, CycleDuration: 30 * time.Second, MeanLifetimeCycles: 4,
-		Scenarios: []Scenario{ScenarioCPUHigh, ScenarioDiskFull, ScenarioOOMKilled},
-		Seed:      42, MaxActiveAlerts: 1000, Cycles: 0,
+func BenchmarkTemplateGeneration(b *testing.B) {
+	c := fixture()
+	c.Scenarios[0].Arrival.Count = 0
+	p, e := Compile(c)
+	if e != nil {
+		b.Fatal(e)
 	}
-	if mutate != nil {
-		mutate(&cfg)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		ctx, e := p.instance(0, "bench", uint64(i), startTime())
+		if e != nil {
+			b.Fatal(e)
+		}
+		if _, e = p.render(0, 0, ctx, 1, startTime(), false); e != nil {
+			b.Fatal(e)
+		}
 	}
-	engine, err := New(cfg, testSource(), linkdconfig.DefaultSeverityConfig(), publisher, testLogger())
+}
+
+func TestRunContinuesAfterEmptySchedulingTick(t *testing.T) {
+	c := fixture()
+	c.Scenarios[0].Stages[0].Duration = Span{Fixed: "30ms"}
+	c.Scenarios[0].Stages[0].Every = Span{Fixed: "10ms"}
+	pub := &capturePublisher{}
+	engine, err := New(c, "run", 1, time.Now(), pub)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return engine
-}
-
-func assertValidRecord(t *testing.T, record Record) {
-	t.Helper()
-	if len(record.Key) == 0 || string(record.Key) != record.Fingerprint {
-		t.Fatalf("record key = %q, fingerprint = %q", record.Key, record.Fingerprint)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	if err = engine.Run(ctx); err != nil {
+		t.Fatal(err)
 	}
-	for _, key := range []string{"message_id", "bk_tenant_id", "order_key"} {
-		if record.Headers[key] == "" {
-			t.Fatalf("record missing header %q", key)
-		}
-	}
-	if record.Headers["message_id"] != record.SourceEventID {
-		t.Fatalf("message_id = %q, source event = %q", record.Headers["message_id"], record.SourceEventID)
-	}
-	if _, err := (cleaner.StandardCleaner{}).Clean(context.Background(), cleaner.RawEventMessage{Payload: record.Body}); err != nil {
-		t.Fatalf("generated standard payload is invalid: %v", err)
+	if engine.Snapshot().State != "completed" || len(pub.records) != 4 {
+		t.Fatalf("runtime stalled: %+v records=%d", engine.Snapshot(), len(pub.records))
 	}
 }
 
-func batchSizes(batches [][]Record) []int {
-	result := make([]int, len(batches))
-	for index, batch := range batches {
-		result[index] = len(batch)
+func TestDelayedMessagesObeyByteAndCountBudgets(t *testing.T) {
+	c := fixture()
+	c.Scenarios[0].Arrival = Arrival{PerSecond: 10000}
+	c.Scenarios[0].SendDelay = Span{Fixed: "10s"}
+	c.Limits = Limits{QueueRecords: 8, QueueBytes: 8192, MaxMessageBytes: 1024, Batch: 4}
+	e, err := New(c, "test", 1, startTime(), nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	return result
+	for i := 0; i < 1000; i++ {
+		testPlan(e, startTime().Add(time.Duration(i)*time.Millisecond))
+	}
+	s := e.Snapshot()
+	if s.QueueBytes > 8192 || s.Queued > 8 || s.Queued == 0 {
+		t.Fatal(s)
+	}
+}
+
+func TestCleanupRetryKeepsOriginalDelivery(t *testing.T) {
+	c := fixture()
+	e, _ := New(c, "test", 1, startTime(), nil)
+	testPlan(e, startTime())
+	_ = e.Control("stop")
+	records := e.plan(startTime().Add(time.Second))
+	e.ack(sendResult{records, []error{errors.New("offline")}})
+	e.plan(startTime().Add(2 * time.Second))
+	_ = e.Control("retry_cleanup")
+	retry := e.plan(startTime().Add(3 * time.Second))
+	if len(retry) != 1 || string(retry[0].Body) != string(records[0].Body) || retry[0].SourceEventID != records[0].SourceEventID {
+		t.Fatal("cleanup retry changed delivery")
+	}
+}
+
+func TestStopBeforeScheduledStartAndDelayedDrain(t *testing.T) {
+	c := fixture()
+	e, err := New(c, "test", 1, startTime().Add(time.Hour), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Control("stop"); err != nil {
+		t.Fatal(err)
+	}
+	testPlan(e, startTime())
+	if e.Snapshot().State != "completed" {
+		t.Fatal("stop waited for future start")
+	}
+	c.Scenarios[0].SendDelay = Span{Fixed: "1h"}
+	e, _ = New(c, "test", 1, startTime(), nil)
+	testPlan(e, startTime())
+	_ = e.Control("stop")
+	records := testPlan(e, startTime().Add(time.Second))
+	if len(records) == 0 {
+		t.Fatal("shutdown waited for artificial delivery delay")
+	}
+	testPlan(e, startTime().Add(2*time.Second))
+	testPlan(e, startTime().Add(3*time.Second))
+	if e.Snapshot().State != "completed" {
+		t.Fatal(e.Snapshot())
+	}
+}
+
+func TestLargeObjectIdentityRemainsExact(t *testing.T) {
+	c := fixture()
+	c.Datasets["hosts"].Rows[0]["id"] = json.Number("9007199254740993")
+	records, err := Preview(c, startTime(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(records[0].Body), `"id":9007199254740993`) {
+		t.Fatalf("object ID rounded: %s", records[0].Body)
+	}
 }

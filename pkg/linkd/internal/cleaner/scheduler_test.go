@@ -290,3 +290,19 @@ func waitScheduler(t *testing.T, done <-chan error) error {
 		return nil
 	}
 }
+
+func TestInternalMergeSourceNeverCreatesCleanerFlow(t *testing.T) {
+	source := config.EventSource{EventSourceID: "builtin_alarm_merge", Enabled: true, Storage: config.EventSourceStorageConfig{Type: config.StorageTypeInternalMerge}}
+	scheduler, err := NewScheduler([]config.EventSource{source}, config.DefaultSeverityConfig(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := scheduler.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewEventFactory(source, config.DefaultSeverityConfig()); err == nil {
+		t.Fatal("internal source accepted external event factory")
+	}
+}

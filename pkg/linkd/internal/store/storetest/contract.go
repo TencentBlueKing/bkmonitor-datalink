@@ -11,7 +11,9 @@ package storetest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -25,6 +27,17 @@ type Factory func(t *testing.T) store.Repository
 // RunRepositoryContract 固定 Event/Alert/AlertLog 的跨后端行为。
 func RunRepositoryContract(t *testing.T, factory Factory) {
 	t.Helper()
+	runEventEnrichmentContract(t, factory)
+	runPolicyDecisionContract(t, factory)
+	runShieldWorkContract(t, factory)
+	runShieldQueryContract(t, factory)
+	runShieldDependentsContract(t, factory)
+	runActiveCandidatesContract(t, factory)
+	runSourceAlertsContract(t, factory)
+	runSourceEventsContract(t, factory)
+	runMergeContract(t, factory)
+	runMergeWorkContract(t, factory)
+	runMergeOriginContract(t, factory)
 	t.Run("event create and processing CAS", func(t *testing.T) {
 		repo := factory(t)
 		ctx := context.Background()
@@ -43,15 +56,15 @@ func RunRepositoryContract(t *testing.T, factory Factory) {
 			t.Fatalf("conflict err=%v", err)
 		}
 		processedAt := event.CreateAt.Add(time.Minute)
-		updated, err := repo.CompareAndSetEventResult(ctx, event.BKTenantID, event.EventID, created.Version, store.EventResult{State: domain.EventProcessStateAccepted, RelatedAlertID: "alert-1", Outcome: "alert_created", ProcessedAt: processedAt})
+		updated, err := repo.CompareAndSetEventResult(ctx, event.BKTenantID, event.EventID, created.Version, store.EventResult{State: domain.EventProcessStateAccepted, RelatedAlertIDs: []string{"alert-1"}, Outcome: "alert_created", ProcessedAt: processedAt})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if updated.Processing.State != domain.EventProcessStateAccepted || updated.Event.RelatedAlertID != "alert-1" {
+		if updated.Processing.State != domain.EventProcessStateAccepted || !slices.Contains(updated.Event.RelatedAlertIDs, "alert-1") {
 			t.Fatalf("updated=%#v", updated)
 		}
 		processedDuplicate, err := repo.CreateEvent(ctx, event)
-		if err != nil || processedDuplicate.Created || processedDuplicate.Event.RelatedAlertID != "alert-1" ||
+		if err != nil || processedDuplicate.Created || !slices.Contains(processedDuplicate.Event.RelatedAlertIDs, "alert-1") ||
 			processedDuplicate.Processing.State != domain.EventProcessStateAccepted {
 			t.Fatalf("processed duplicate=%#v,%v", processedDuplicate, err)
 		}
@@ -129,12 +142,12 @@ func RunRepositoryContract(t *testing.T, factory Factory) {
 		alert := Alert("tenant-1", "alert-1", "event-1", "fp", "warning")
 		_, _ = repo.CreateAlert(ctx, alert)
 		processedAt := event.CreateAt.Add(time.Minute)
-		_, _ = repo.CompareAndSetEventResult(ctx, event.BKTenantID, event.EventID, storedEvent.Version, store.EventResult{State: domain.EventProcessStateAccepted, RelatedAlertID: alert.AlertID, Outcome: "alert_created", ProcessedAt: processedAt})
+		_, _ = repo.CompareAndSetEventResult(ctx, event.BKTenantID, event.EventID, storedEvent.Version, store.EventResult{State: domain.EventProcessStateAccepted, RelatedAlertIDs: []string{alert.AlertID}, Outcome: "alert_created", ProcessedAt: processedAt})
 		result, err := waitForAlertByEvent(ctx, repo, event.BKTenantID, event.EventID, alert.AlertID)
-		if err != nil || result.Alert == nil || result.Alert.Alert.AlertID != alert.AlertID {
+		if err != nil || len(result.Alerts) == 0 || result.Alerts[0].Alert.AlertID != alert.AlertID {
 			t.Fatalf("query=%#v,%v", result, err)
 		}
-		events, err := repo.ListEventsByAlert(ctx, event.BKTenantID, alert.AlertID, store.EventByAlertRequest{})
+		events, err := waitForEventsByAlert(ctx, repo, event.BKTenantID, alert.AlertID, 1)
 		if err != nil || len(events.Events) != 1 || events.Events[0].Event.EventID != event.EventID {
 			t.Fatalf("events by alert=%#v,%v", events, err)
 		}
@@ -181,6 +194,74 @@ func RunRepositoryContract(t *testing.T, factory Factory) {
 			t.Fatalf("empty AppendAlertLogs() error=%v", err)
 		}
 	})
+	t.Run("KAC operation kinds and opaque facts round trip", func(t *testing.T) {
+		repo := factory(t)
+		ctx := context.Background()
+		kinds := []domain.OperationKind{domain.OperationKindKACNotDispatched, domain.OperationKindKACDispatched, domain.OperationKindKACResponse, domain.OperationKindKACPendingExecute, domain.OperationKindKACApproval, domain.OperationKindKACAutoExecuting, domain.OperationKindKACAutoExecutingFailure, domain.OperationKindKACAutoExecutingRetry, domain.OperationKindKACAutoExecutingSuccess, domain.OperationKindKACAutoOrdering, domain.OperationKindKACAutoOrderingFailure, domain.OperationKindKACAutoOrderingFinish, domain.OperationKindKACManualClosed, domain.OperationKindKACAutoClosed, domain.OperationKindKACSystemClosed, domain.OperationKindKACSourceClosed, domain.OperationKindKACRestored, domain.OperationKindKACNotify}
+		logs := make([]domain.AlertLog, 0, len(kinds))
+		for i, kind := range kinds {
+			logs = append(logs, domain.AlertLog{LogID: "kac-" + string(kind), BKTenantID: "tenant-1", AlertID: "alert-1", OperatorKind: domain.OperatorKindSystem, OperationKind: kind, CreatedTime: time.Date(2026, 11, 13, 6, 2, 21, 123456789+i, time.UTC), Params: domain.JSONObject{}})
+		}
+		// 展示字段不属于主记录；事实中的显式 null 必须往返保留。
+		logs[2].Params = domain.JSONObject{"content_key": []byte(`"only_response.v1"`), "content_params": []byte(`{"username":"alice","remark":null}`), "policy_snapshot_id": []byte(`null`)}
+		items, err := repo.AppendAlertLogs(ctx, logs)
+		if err != nil || len(items) != len(logs) {
+			t.Fatal(items, err)
+		}
+		for i, item := range items {
+			if item.Err != nil || !item.Result.Created {
+				t.Fatalf("append %s: %+v", logs[i].OperationKind, item)
+			}
+		}
+		page, err := waitForAlertLogs(ctx, repo, "tenant-1", "alert-1", len(logs))
+		if err != nil || len(page.Logs) != len(logs) {
+			t.Fatal("registered kinds lost", len(page.Logs), err)
+		}
+		byID := make(map[string]domain.AlertLog, len(page.Logs))
+		for _, log := range page.Logs {
+			byID[log.LogID] = log
+		}
+		for _, want := range logs {
+			got, exists := byID[want.LogID]
+			if !exists || got.OperationKind != want.OperationKind || !got.CreatedTime.Equal(want.CreatedTime) {
+				t.Fatalf("round trip changed %s", want.OperationKind)
+			}
+		}
+		if string(byID[logs[2].LogID].Params["policy_snapshot_id"]) != "null" {
+			t.Fatal("explicit null lost")
+		}
+		items, err = repo.AppendAlertLogs(ctx, logs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range items {
+			if item.Err != nil || item.Result.Created {
+				t.Fatal("duplicate KAC log was not idempotent", item)
+			}
+		}
+	})
+
+}
+
+func waitForEventsByAlert(
+	ctx context.Context,
+	repo store.Repository,
+	tenantID, alertID string,
+	want int,
+) (store.EventPage, error) {
+	deadline := time.Now().Add(3 * time.Second)
+	var last store.EventPage
+	var lastErr error
+	for {
+		last, lastErr = repo.ListEventsByAlert(ctx, tenantID, alertID, store.EventByAlertRequest{})
+		if lastErr == nil && len(last.Events) >= want {
+			return last, nil
+		}
+		if time.Now().After(deadline) {
+			return last, lastErr
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func waitForAlertByEvent(
@@ -193,7 +274,7 @@ func waitForAlertByEvent(
 	var lastErr error
 	for {
 		last, lastErr = repo.QueryAlertByEvent(ctx, tenantID, eventID)
-		if lastErr == nil && last.Alert != nil && last.Alert.Alert.AlertID == alertID {
+		if lastErr == nil && len(last.Alerts) > 0 && last.Alerts[0].Alert.AlertID == alertID {
 			return last, nil
 		}
 		if time.Now().After(deadline) {
@@ -227,12 +308,13 @@ func waitForAlertLogs(
 // Event 返回一个有效的新 Event 测试夹具。
 func Event(tenantID, eventID, fingerprint, severity string) domain.Event {
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	return domain.Event{BKTenantID: tenantID, EventSourceID: "source", EventID: eventID, Fingerprint: fingerprint, Title: "CPU high", Severity: severity, Action: domain.EventActionTriggered, ConditionKey: "cpu", Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceEventID: "source-" + eventID, SourceAlertID: fingerprint, SourceRawData: domain.JSONObject{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}}
+	return domain.Event{
+		EventEnrichment: domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}, Evaluations: []domain.EventEvaluation{{Severity: severity, Action: domain.EventActionTriggered}}, EventSourceVersion: 1, BKTenantID: tenantID, EventSourceID: "source", EventID: eventID, Fingerprint: fingerprint, Title: "CPU high", Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceEventID: "source-" + eventID, SourceAlertID: fingerprint, SourceRawData: domain.JSONObject{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}}
 }
 
 // Alert 返回一个有效的 active Alert 测试夹具。
 func Alert(tenantID, alertID, eventID, fingerprint, severity string) domain.Alert {
 	event := Event(tenantID, eventID, fingerprint, severity)
 	now := event.CreateAt.Add(time.Second)
-	return domain.Alert{AlertID: alertID, BKTenantID: tenantID, EventSourceID: event.EventSourceID, Fingerprint: fingerprint, Title: event.Title, Severity: severity, ConditionKey: event.ConditionKey, Dimensions: event.Dimensions.Clone(), SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: eventID, LastOccurredAt: event.OccurredAt, UpdateAt: now, TriggerEventID: eventID, BeginAt: event.OccurredAt, CreateAt: event.CreateAt, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{}}
+	return domain.Alert{Revision: 1, EventSourceVersion: 1, AlertID: alertID, BKTenantID: tenantID, EventSourceID: event.EventSourceID, Fingerprint: fingerprint, Title: event.Title, Severity: severity, Dimensions: event.Dimensions.Clone(), SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: eventID, LastOccurredAt: event.OccurredAt, UpdateAt: now, TriggerEventID: eventID, BeginAt: event.OccurredAt, CreateAt: event.CreateAt, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{"processors": json.RawMessage(`[]`)}}
 }

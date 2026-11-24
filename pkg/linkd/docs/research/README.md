@@ -6,6 +6,7 @@
 
 - 背景、问题和不在本次范围内的事项；
 - 调研日期、目标版本、源码提交或资料链接；
+- 验证报告及配套原始输出不保留实际环境域名、IP、镜像仓库地址或凭据；使用组件名称、版本或占位符说明环境；
 - 候选方案、评价维度和可复现证据；
 - 推荐结论、适用边界、风险及未决问题；
 - 结论落地后对应的设计文档、模块文档或代码位置。
@@ -16,5 +17,30 @@
 
 | 文档 | 内容 |
 |---|---|
+| [2026-10-29-close-batches.md](2026-10-29-close-batches.md) | 筛选关闭的独立批次预算、窄字段 CAS/投影、5000 条协议验证与异步投影评估 |
+| [2026-10-26-alert-search-test.md](2026-10-26-alert-search-test.md) | test 控制面 DSL 检索、租户隔离、dry-run、分页关闭、幂等重试与测试数据收尾 |
+| [2026-10-26-active-alert-soft-limit-test.md](2026-10-26-active-alert-soft-limit-test.md) | test 隔离来源的真实 Kafka、生命周期、ES/Redis 软限流及故障修复验证 |
+| [2026-10-26-active-alert-soft-limit-validation.md](2026-10-26-active-alert-soft-limit-validation.md) | 活跃缓存与软限流的隔离 Redis 回归、热路径微基准及未验证边界 |
+| [2026-10-21-multi-query-legacy-compatibility.md](2026-10-21-multi-query-legacy-compatibility.md) | 单个监控项多 query 的首查询兼容字段、旧 KAC 对照及多查询 只读重放 |
+| [2026-10-21-dataset-enrich-validation.md](2026-10-21-dataset-enrich-validation.md) | 历史 dataset 语义字段到物理查询的绑定、当前策略清单及数据集 完整链只读重放 |
+| [2026-10-21-strategy-scope-enrich-validation.md](2026-10-21-strategy-scope-enrich-validation.md) | 非 BKCC 来源空间、derived 父指标和衍生指标告警完整丰富链只读重放 |
+| [2026-10-17-test-kac-linkd-validation.md](2026-10-17-test-kac-linkd-validation.md) | test 环境 KAC→Linkd 全流程、边界、Hook 性能与修复后的真实验证记录 |
+| [2026-10-17-redis-capacity-assessment.md](2026-10-17-redis-capacity-assessment.md) | Event 请求/命令计数、策略与控制面规模关系、Redis 数据族/TTL、test 内存采样及容量估算公式 |
+| [2026-10-15-log-metric-title-live-validation.md](2026-10-15-log-metric-title-live-validation.md) | 日志指标名称恢复旧 KAC 规则、真实 Kafka 普通及无数据事件只读回放与交付边界 |
+| [2026-10-14-lifecycle-global-scope-latency.md](2026-10-14-lifecycle-global-scope-latency.md) | 全局业务逐事件重复扫描的根因、修复、回归与测试环境性能复核 |
+| [2026-10-14-kac-output-v3-validation.md](2026-10-14-kac-output-v3-validation.md) | KAC V3 队列输出、真实服务联调与突发压测验收边界 |
+| [2026-10-14-kac-metric-query-live-validation.md](2026-10-14-kac-metric-query-live-validation.md) | KAC 单指标别名与目录物理引用修复、回归测试和真实告警指标查询验证 |
+| [2026-10-12-kac-debug-preview-local-validation.md](2026-10-12-kac-debug-preview-local-validation.md) | KAC V2 调试到 Linkd 的真实本地 HTTP、verification 存储、失败恢复与页面组件验证边界 |
+| [2026-10-09-metric-catalog-live-validation.md](2026-10-09-metric-catalog-live-validation.md) | 测试环境 22 条真实活跃告警的指标目录读取、四个丰富 Processor 只读重放与缺失引用边界 |
+| [2026-09-30-kac-policy-matching.md](2026-09-30-kac-policy-matching.md) | KAC 条件 DSL、分析器、时间端点和分组编码与 Linkd 的真实 ES 对照 |
+| [2026-09-22-kingeye-alarm-source-enrichment.md](2026-09-22-kingeye-alarm-source-enrichment.md) | Kingeye 告警源 CMDB/常规字段丰富的配置、执行顺序、依赖、失败边界及 Linkd 待确认事项 |
+| [2026-09-09-elasticsearch-version-compatibility.md](2026-09-09-elasticsearch-version-compatibility.md) | ES 7.10+/8/9 API 差异、列表空结果根因及真实协议矩阵 |
+| [benchmarks/README.md](benchmarks/README.md) | 带明确源码、平台、配置和负载模型的性能压测记录 |
+| [2026-09-06-lifecycle-throughput-optimization-summary.md](2026-09-06-lifecycle-throughput-optimization-summary.md) | Alert 归档、Stream、Cleaner、Lifecycle 合批与最终吞吐配置的阶段性优化汇总 |
+| [2026-09-06-lifecycle-execution-flow.md](2026-09-06-lifecycle-execution-flow.md) | Lifecycle 处理顺序、并发控制、中转队列及一致性边界审查 |
+| [profiles/2026-09-07-lifecycle-gc/README.md](profiles/2026-09-07-lifecycle-gc/README.md) | Lifecycle/Cleaner 正常段、降速段和优化后的 pprof SVG 与 top 摘要 |
 | [data-pipeline-observability.md](data-pipeline-observability.md) | OpenTelemetry、Kafka、Flink 与 CloudEvents 的数据流指标和 Trace 划分方案 |
 | [kingeye-alarm-callback-data-dependencies.md](kingeye-alarm-callback-data-dependencies.md) | Kingeye `callback_utils` 告警数据生成的外部依赖、字段来源、调用时机及对 Linkd 丰富设计的输入 |
+| [2026-09-30-alert-content-generation.md](2026-09-30-alert-content-generation.md) | bk-monitor 告警描述生成到 Linkd `Alert.content` 的源码证据、可行性与数据缺口 |
+| [2026-10-08 告警内容真实样本](samples/2026-10-08-alert-content/README.md) | 测试环境 保留区间只读重放：13 条实际 Alert 内容、5 条版本拒绝样本、源码对照与未覆盖类型 |
+| [alarm-callback-input-field-inventory.md](alarm-callback-input-field-inventory.md) | 指定 `kac/alarm_callback` 的历史回调字段与旧测试样本取证；现行契约见 [Alert Enrich 设计](../design/enrich.md) |

@@ -5,24 +5,28 @@ on:
   workflow_dispatch:
     inputs:
       component:
-        description: 要构建并推送的镜像
+        description: 构建目标（all 仅含 Linkd；eventgen 单独选择）
         type: choice
         options:
           - all
           - linkd
-          - linkd-console
+          - linkd-eventgen
         default: all
       version:
-        description: 可选版本标签（如 v0.1.0-rc.1）；留空仅发布唯一构建标签
+        description: Linkd 可选版本标签；留空仅发布唯一构建标签
         type: string
-        default: ""
+        default: "1.0.0"
+      eventgen_version:
+        description: 仅用于 linkd-eventgen 的独立版本；留空仅发布唯一构建标签
+        type: string
+        default: "0.1.1"
 
 permissions:
   contents: read
 
-# 同一版本串行发布，避免并发覆盖；正在发布的任务不会被后续运行取消。
+# 同一镜像版本串行发布。
 concurrency:
-  group: linkd-images-${{ inputs.version || github.run_id }}
+  group: linkd-images-${{ inputs.component == 'linkd-eventgen' && format('eventgen-{0}', inputs.eventgen_version || github.run_id) || inputs.version || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -35,25 +39,26 @@ jobs:
       build-tag: ${{ steps.metadata.outputs.build-tag }}
       version: ${{ steps.metadata.outputs.version }}
     steps:
-      - name: Validate inputs and prepare shared version
+      - name: Validate inputs and prepare selected version
         id: metadata
         shell: bash
         env:
           COMPONENT: ${{ inputs.component }}
           VERSION: ${{ inputs.version }}
+          EVENTGEN_VERSION: ${{ inputs.eventgen_version }}
         run: |
           set -euo pipefail
-          # 输入通过环境变量传入，避免把人工输入插入 shell 源码。
-          if [[ -n "$VERSION" && ! "$VERSION" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
-            echo '::error::version 必须是合法的 Docker tag（最长 128 字符）'
-            exit 1
-          fi
           case "$COMPONENT" in
-            all) components='["linkd","linkd-console"]' ;;
+            all) components='["linkd"]' ;;
             linkd) components='["linkd"]' ;;
-            linkd-console) components='["linkd-console"]' ;;
+            linkd-eventgen) components='["linkd-eventgen"]'; VERSION="$EVENTGEN_VERSION" ;;
             *) echo '::error::未知的 component'; exit 1 ;;
           esac
+          # 只校验所选组件的版本；两个版本输入互不覆盖，通过环境变量避免 shell 注入。
+          if [[ -n "$VERSION" && ! "$VERSION" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+            echo '::error::所选版本必须是合法的 Docker tag（最长 128 字符）'
+            exit 1
+          fi
           # 重跑可能拉取不同的基础镜像；run attempt 区分同一提交的不同构建。
           build_tag="sha-${GITHUB_SHA:0:12}-${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
           {
@@ -67,7 +72,7 @@ jobs:
     name: Build and push ${{ matrix.component }}
     needs: prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
@@ -80,6 +85,29 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Check build context
+        id: context
+        shell: bash
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+          context=pkg/linkd
+          dockerfile=Dockerfile
+          case "$COMPONENT" in
+            linkd-eventgen) dockerfile=Dockerfile.eventgen ;;
+            linkd) ;;
+            *) echo '::error::未知的镜像组件'; exit 1 ;;
+          esac
+          if [[ ! -f "$context/$dockerfile" ]]; then
+            echo '::error::所选分支缺少 Dockerfile，请选择包含 Linkd 源码的分支（如 feat/linkd-dev）'
+            exit 1
+          fi
+          {
+            echo "path=$context"
+            echo "dockerfile=$context/$dockerfile"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Prepare image tags
         id: image
@@ -99,6 +127,12 @@ jobs:
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
+      # 版本查询需要运行 ARM 镜像。
+      - name: Set up QEMU for ARM64
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
@@ -113,18 +147,45 @@ jobs:
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
-          context: ${{ matrix.component == 'linkd' && 'pkg/linkd' || 'pkg/linkd/console' }}
-          platforms: linux/amd64
+          context: ${{ steps.context.outputs.path }}
+          file: ${{ steps.context.outputs.dockerfile }}
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.image.outputs.tags }}
           build-args: |
             VERSION=${{ needs.prepare.outputs.version }}
+            GIT_COMMIT=${{ github.sha }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+      - name: Verify published image build metadata
+        shell: bash
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image-prefix }}/${{ matrix.component }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          expected=$(printf 'version: %s\ngit_commit: %s' "$VERSION" "$GITHUB_SHA")
+          manifest=$(docker buildx imagetools inspect "$IMAGE@$DIGEST" --raw)
+          for platform in linux/amd64 linux/arm64; do
+            # classic image store 不能以同一 index digest 同时存储两个架构；
+            # 从固定索引解析各自的子 manifest，既避免覆盖冲突，又保持产物可追溯。
+            platform_digest=$(jq -er --arg arch "${platform#linux/}" '
+              [.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch)]
+              | if length == 1 then .[0].digest else error("平台 manifest 缺失或重复") end
+            ' <<< "$manifest")
+            actual=$(docker run --rm --pull always --platform "$platform" --network none "$IMAGE@$platform_digest" version)
+            if [[ "$actual" != "$expected" ]]; then
+              echo "::error::$platform 镜像内的版本号或 Git commit 与本次构建不一致"
+              exit 1
+            fi
+            printf '%s\n%s\n' "$platform" "$actual"
+          done
 
       - name: Summarize published image
         shell: bash
@@ -140,5 +201,5 @@ jobs:
             printf -- '- 构建标签：`%s:%s`\n' "$IMAGE" "$BUILD_TAG"
             printf -- '- 固定产物：`%s@%s`\n' "$IMAGE" "$DIGEST"
             printf -- '- 源码提交：`%s`\n' "$GITHUB_SHA"
-            printf -- '- 平台：`linux/amd64`\n'
+            printf -- '- 平台：`linux/amd64`、`linux/arm64`（同一标签和多架构 index digest）\n'
           } >> "$GITHUB_STEP_SUMMARY"

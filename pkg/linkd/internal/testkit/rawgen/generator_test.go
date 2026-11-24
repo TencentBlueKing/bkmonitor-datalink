@@ -51,15 +51,14 @@ func TestGenerateIsDeterministicAndMatchesScenarioSemantics(t *testing.T) {
 	if !reflect.DeepEqual(first, second) {
 		t.Fatal("same seed generated different datasets")
 	}
-	if first.Expected.InputRecords != 12 || first.Expected.OutputMessages != 10 || len(first.Expected.Alerts) != 5 {
+	if first.Expected.InputRecords != 12 || len(first.Expected.Alerts) != 5 {
 		t.Fatalf("generated counts = %#v", first.Expected)
 	}
 	wantOperations := map[domain.OperationKind]int{
 		domain.OperationKindTrigger:  5,
 		domain.OperationKindRecover:  1,
 		domain.OperationKindClose:    2,
-		domain.OperationKindSuppress: 1,
-		domain.OperationKindPush:     10,
+		domain.OperationKindSuppress: 3,
 	}
 	if !reflect.DeepEqual(first.Expected.OperationCounts, wantOperations) {
 		t.Fatalf("operation counts = %v, want %v", first.Expected.OperationCounts, wantOperations)

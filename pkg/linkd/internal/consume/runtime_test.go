@@ -14,11 +14,12 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"linkd/internal/processingerror"
 )
 
 func TestRuntimeCumulativeSettlementWaitsForContinuousPrefix(t *testing.T) {
@@ -112,7 +113,7 @@ func TestRuntimeRetriesInMemoryBeforeConfirm(t *testing.T) {
 	var attempts atomic.Int32
 	handler := HandlerFunc(func(_ context.Context, _ Message) Outcome {
 		if attempts.Add(1) == 1 {
-			return Retry(errors.New("temporary"), time.Millisecond)
+			return Retry(processingerror.RetryableError{Err: processingerror.HTTPStatus(502)}, time.Millisecond)
 		}
 		return Complete()
 	})
@@ -131,28 +132,35 @@ func TestRuntimeRetriesInMemoryBeforeConfirm(t *testing.T) {
 	}
 }
 
-func TestRuntimeRetryExhaustionFailsAndLeavesMessageUnconfirmed(t *testing.T) {
-	t.Parallel()
-
+func TestRuntimeRetryExhaustionConfirmsAndContinues(t *testing.T) {
 	session := newFakeSession(SettlementIndividual)
-	session.addBatch("queue-a", "message-a")
-	wantErr := errors.New("storage unavailable")
+	session.addBatch("queue-a", "bad", "good")
 	var attempts atomic.Int32
-	handler := HandlerFunc(func(_ context.Context, _ Message) Outcome {
-		attempts.Add(1)
-		return Retry(wantErr, time.Millisecond)
+	handler := HandlerFunc(func(_ context.Context, m Message) Outcome {
+		if m.ID == "bad" {
+			attempts.Add(1)
+			return Retry(processingerror.RetryableError{Err: processingerror.HTTPStatus(502)}, time.Millisecond)
+		}
+		return Complete()
 	})
-	config := testRuntimeConfig()
-	config.RetryMaxAttempts = 2
-
-	err := waitRuntime(t, runRuntime(t, context.Background(), config, session, handler))
-	if !errors.Is(err, wantErr) || !strings.Contains(err.Error(), "retry attempts exhausted") {
-		t.Fatalf("Run() error = %v, want retry exhaustion", err)
+	cfg := testRuntimeConfig()
+	cfg.RetryMaxAttempts = 99
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := runRuntime(t, ctx, cfg, session, handler)
+	confirmed := map[string]bool{}
+	for len(confirmed) < 2 {
+		for _, id := range waitConfirm(t, session.confirms) {
+			confirmed[id] = true
+		}
 	}
-	if attempts.Load() != 2 {
-		t.Fatalf("handler attempts = %d, want 2", attempts.Load())
+	if attempts.Load() != 3 {
+		t.Fatal("attempt limit", attempts.Load())
 	}
-	assertNoConfirm(t, session.confirms)
+	cancel()
+	if err := waitRuntime(t, done); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestDispatchReadyRetriesKeepsItemForBlockedLane(t *testing.T) {
@@ -181,7 +189,7 @@ func TestRuntimeReportsStructuredObserverEvents(t *testing.T) {
 	var calls atomic.Int32
 	handler := HandlerFunc(func(_ context.Context, _ Message) Outcome {
 		if calls.Add(1) == 1 {
-			return Retry(errors.New("temporary"), time.Millisecond)
+			return Retry(processingerror.RetryableError{Err: processingerror.HTTPStatus(502)}, time.Millisecond)
 		}
 		return Complete()
 	})
@@ -244,31 +252,29 @@ func TestRuntimeRetriesConfirmationWithoutReprocessing(t *testing.T) {
 	}
 }
 
-func TestRuntimeBlockKeepsMessageUnconfirmed(t *testing.T) {
-	t.Parallel()
-
-	session := newFakeSession(SettlementIndividual)
-	session.addBatch("queue-a", "message-a")
-	blocked := make(chan struct{})
-	handler := HandlerFunc(func(_ context.Context, _ Message) Outcome {
-		close(blocked)
-		return Block(errors.New("storage unavailable"))
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	done := runRuntime(t, ctx, testRuntimeConfig(), session, handler)
-	select {
-	case <-blocked:
-	case <-time.After(time.Second):
-		t.Fatal("handler did not block")
+func TestRuntimeOrdinaryFailureConfirmsWithoutRetry(t *testing.T) {
+	for _, panicMessage := range []bool{false, true} {
+		t.Run(fmt.Sprint(panicMessage), func(t *testing.T) {
+			session := newFakeSession(SettlementIndividual)
+			session.addBatch("queue-a", "bad")
+			var calls atomic.Int32
+			handler := HandlerFunc(func(context.Context, Message) Outcome {
+				calls.Add(1)
+				if panicMessage {
+					panic("private payload")
+				}
+				return Block(errors.New("logic failed"))
+			})
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := runRuntime(t, ctx, testRuntimeConfig(), session, handler)
+			waitConfirm(t, session.confirms)
+			cancel()
+			if err := waitRuntime(t, done); err != nil || calls.Load() != 1 {
+				t.Fatal(err, calls.Load())
+			}
+		})
 	}
-	assertNoConfirm(t, session.confirms)
-	err := waitRuntime(t, done)
-	if err == nil || !strings.Contains(err.Error(), "block message lane") ||
-		!strings.Contains(err.Error(), "storage unavailable") {
-		t.Fatalf("Run() error = %v, want blocked-lane failure", err)
-	}
-	cancel()
 }
 
 func TestRuntimeDiscardIsAConfirmableTerminalOutcome(t *testing.T) {
@@ -291,76 +297,28 @@ func TestRuntimeDiscardIsAConfirmableTerminalOutcome(t *testing.T) {
 	}
 }
 
-func TestRuntimeBlockStopsQueuedOrderKeyWorkInSameLane(t *testing.T) {
-	t.Parallel()
-
-	session := &fakePausableSession{
-		fakeSession: newFakeSession(SettlementIndividual),
-		paused:      make(chan string, 1),
-	}
-	session.batches <- []Delivery{
-		session.delivery("queue-a", "blocker", "block-key"),
-		session.delivery("queue-a", "first", "same-key"),
-		session.delivery("queue-a", "second", "same-key"),
-	}
-	blockerDone := make(chan struct{})
-	firstStarted := make(chan struct{})
-	firstRelease := make(chan struct{})
-	secondStarted := make(chan struct{})
-	handler := HandlerFunc(func(ctx context.Context, message Message) Outcome {
-		switch message.ID {
-		case "blocker":
-			close(blockerDone)
-			return Block(errors.New("lane blocked"))
-		case "first":
-			close(firstStarted)
-			select {
-			case <-ctx.Done():
-				return Block(ctx.Err())
-			case <-firstRelease:
-				return Complete()
-			}
-		default:
-			close(secondStarted)
-			return Complete()
+func TestRuntimeBadMessageDoesNotBlockLaterOrderedMessages(t *testing.T) {
+	session := newFakeSession(SettlementCumulative)
+	session.addBatchWithOrderKey("queue-a", "same", "bad", "good")
+	handler := HandlerFunc(func(_ context.Context, m Message) Outcome {
+		if m.ID == "bad" {
+			return Block(errors.New("bad JSON"))
 		}
+		return Complete()
 	})
-
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	done := runRuntime(t, ctx, testRuntimeConfig(), session, handler)
-	select {
-	case <-blockerDone:
-	case <-time.After(time.Second):
-		t.Fatal("blocker handler did not finish")
-	}
-	select {
-	case lane := <-session.paused:
-		if lane != "queue-a" {
-			t.Fatalf("paused lane = %q", lane)
+	seen := map[string]bool{}
+	for !seen["good"] {
+		for _, id := range waitConfirm(t, session.confirms) {
+			seen[id] = true
 		}
-	case <-time.After(time.Second):
-		t.Fatal("runtime did not pause blocked lane")
-	}
-	select {
-	case <-firstStarted:
-	case <-time.After(time.Second):
-		t.Fatal("first ordered handler did not start")
-	}
-	close(firstRelease)
-	select {
-	case <-secondStarted:
-		t.Fatal("second handler started after lane was blocked")
-	case <-time.After(30 * time.Millisecond):
-	}
-	if got := waitConfirm(t, session.confirms); !slices.Equal(got, []string{"first"}) {
-		t.Fatalf("confirm = %v, want only the completed first message", got)
-	}
-	assertNoConfirm(t, session.confirms)
-	err := waitRuntime(t, done)
-	if err == nil || !strings.Contains(err.Error(), "lane blocked") {
-		t.Fatalf("Run() error = %v, want blocked-lane failure", err)
 	}
 	cancel()
+	if err := waitRuntime(t, done); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRuntimeSerializesSameOrderKey(t *testing.T) {
@@ -432,20 +390,32 @@ func TestRuntimeRejectsDeliveryBeyondByteLimit(t *testing.T) {
 	assertNoConfirm(t, session.confirms)
 }
 
-func TestRuntimeRejectsDeliveryWithoutTenantScope(t *testing.T) {
-	t.Parallel()
-
+func TestRuntimeDiscardsUnscopedMessageWithoutInvokingBusiness(t *testing.T) {
 	session := newFakeSession(SettlementIndividual)
 	delivery := session.delivery("queue-a", "message-a", "")
 	delivery.Message.TenantID = ""
 	session.batches <- []Delivery{delivery}
-	done := runRuntime(t, context.Background(), testRuntimeConfig(), session, HandlerFunc(func(context.Context, Message) Outcome {
-		return Complete()
-	}))
-	if err := waitRuntime(t, done); !errors.Is(err, ErrInvalidDelivery) {
-		t.Fatalf("Run() error = %v, want ErrInvalidDelivery", err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := runRuntime(t, ctx, testRuntimeConfig(), session, HandlerFunc(func(context.Context, Message) Outcome { t.Error("unscoped business execution"); return Complete() }))
+	waitConfirm(t, session.confirms)
+	cancel()
+	if err := waitRuntime(t, done); err != nil {
+		t.Fatal(err)
 	}
-	assertNoConfirm(t, session.confirms)
+}
+
+func TestDependencyCancellationIsOrdinaryFailureWhenTaskRemainsActive(t *testing.T) {
+	session := newFakeSession(SettlementIndividual)
+	session.addBatch("queue-a", "message-a")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := runRuntime(t, ctx, testRuntimeConfig(), session, HandlerFunc(func(context.Context, Message) Outcome { return Retry(context.Canceled, 0) }))
+	waitConfirm(t, session.confirms)
+	cancel()
+	if err := waitRuntime(t, done); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRuntimeDrainsCompletedWorkOnCancellation(t *testing.T) {
@@ -756,3 +726,68 @@ func (s *fakePausableSession) Pause(_ context.Context, lane string) error {
 }
 
 var _ LanePauser = (*fakePausableSession)(nil)
+
+// 全部在途消息可以因正常背压而延后；解除背压后仍应逐条确认且保持原 Receipt。
+func TestRuntimeAllInflightCanDeferAndResume(t *testing.T) {
+	t.Parallel()
+	session := newFakeSession(SettlementIndividual)
+	for batch := 0; batch < 4; batch++ {
+		deliveries := make([]Delivery, 64)
+		for i := range deliveries {
+			id := fmt.Sprintf("%d-%d", batch, i)
+			deliveries[i] = session.delivery("redis", id, id)
+		}
+		session.batches <- deliveries
+	}
+	config := DefaultConfig()
+	config.WorkerCount = 64
+	config.MaxBatchMessages = 64
+	config.MaxInflightMessages = 256
+	config.MaxInflightPerLane = 256
+	config.MaxRetryMessages = 64
+	var resume atomic.Bool
+	var mu sync.Mutex
+	seen := map[string]bool{}
+	allDeferred := make(chan struct{})
+	var once sync.Once
+	handler := HandlerFunc(func(_ context.Context, m Message) Outcome {
+		if resume.Load() {
+			return Complete()
+		}
+		mu.Lock()
+		seen[m.ID] = true
+		if len(seen) == 256 {
+			once.Do(func() { close(allDeferred) })
+		}
+		mu.Unlock()
+		return Defer(time.Millisecond)
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := runRuntime(t, ctx, config, session, handler)
+	select {
+	case <-allDeferred:
+	case err := <-done:
+		t.Fatalf("normal defer stopped source: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("inflight messages did not all reach defer")
+	}
+	resume.Store(true)
+	confirmed := map[string]bool{}
+	for len(confirmed) < 256 {
+		select {
+		case ids := <-session.confirms:
+			for _, id := range ids {
+				confirmed[id] = true
+			}
+		case err := <-done:
+			t.Fatalf("source stopped: %v", err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("messages did not drain")
+		}
+	}
+	cancel()
+	if err := waitRuntime(t, done); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -1,0 +1,250 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package taskdispatch
+
+import (
+	"fmt"
+	"sort"
+	"time"
+
+	"linkd/internal/config"
+	"linkd/internal/eventsource"
+	"linkd/internal/kafkaclient"
+)
+
+// Reconcile 保留已有匹配 owner，再补足目标；撤销中的 assignment 仍占位置。
+// Kafka 分片元数据失败时只允许保留/撤销，不能新增 assignment。
+func Reconcile(st *State, releases []eventsource.Release, now time.Time) {
+	reconcile(st, releases, nil, now)
+}
+
+// unavailable 中的来源没有可用发布快照，不新增或重配任务；保留已有任务，
+// 但仍执行统一的授权过期处理，不能把读取失败当作删除或延长旧授权。
+func reconcile(st *State, releases []eventsource.Release, unavailable map[string]bool, now time.Time) {
+	for id, t := range st.Tasks {
+		if t.Phase != "stopped" && !now.Before(t.Expires.Add(SafetyMargin)) {
+			t.Phase = "stopped"
+			if t.Role == "lifecycle" {
+				t.Retired = append(t.Retired, ConsumerName(t))
+			} else {
+				t.Retired = nil
+			}
+			t.Error = "authorization expired"
+			w := st.Workers[t.Worker]
+			w.CooldownUntil = now.Add(60 * time.Second)
+			st.Workers[t.Worker] = w
+			st.Tasks[id] = t
+		}
+	}
+	for id, w := range st.Workers {
+		if now.Sub(w.Seen) > 10*time.Minute {
+			active := false
+			for _, t := range st.Tasks {
+				if t.Worker == id && t.Phase != "stopped" {
+					active = true
+				}
+			}
+			if !active {
+				delete(st.Workers, id)
+			}
+		}
+	}
+	st.Statuses = nil
+	sourceSet := map[string]bool{}
+	subscriptionOwners := map[string]string{}
+	for _, rel := range releases {
+		for _, t := range st.Tasks {
+			if rel.Spec.Storage.Type != config.StorageTypeInternalMerge && t.Source == rel.ID && t.Role == "cleaner" && t.Phase != "stopped" {
+				key := subscriptionIdentity(rel.Spec)
+				if owner := subscriptionOwners[key]; owner == "" || rel.ID < owner {
+					subscriptionOwners[key] = rel.ID
+				}
+			}
+		}
+	}
+
+	for _, rel := range releases {
+		s := rel.Spec
+		sourceSet[rel.ID] = true
+		for _, role := range []string{"cleaner", "lifecycle"} {
+			eligible := []string{}
+			for id, w := range st.Workers {
+				if !w.Draining && !now.Before(w.StableAfter) && !now.Before(w.CooldownUntil) && now.Sub(w.Seen) < 10*time.Second && matches(w, s, role) {
+					eligible = append(eligible, id)
+				}
+			}
+			sort.Strings(eligible)
+			target := placement(s, role).Replicas.Limit(len(eligible))
+			if !s.Enabled || rel.Deleted {
+				target = 0
+			}
+			internalCleaner := role == "cleaner" && s.Storage.Type == config.StorageTypeInternalMerge
+			if internalCleaner {
+				target = 0
+			}
+			status := Status{Source: rel.ID, Role: role, Matching: len(eligible), Target: target}
+			if internalCleaner {
+				status.Reason = "internal source has no cleaner"
+			}
+			allowNew := true
+			blocked := false
+			for _, task := range st.Tasks {
+				if task.Source == rel.ID && task.Role == role && task.Blocked {
+					blocked = true
+					break
+				}
+			}
+			subscriptionConflict := false
+			if role == "cleaner" && !internalCleaner {
+				m := st.Metadata[rel.ID]
+				status.Metadata = &m
+				key := subscriptionIdentity(s)
+				owner := subscriptionOwners[key]
+				subscriptionConflict = owner != "" && owner != rel.ID
+				if owner == "" && s.Enabled && !rel.Deleted {
+					subscriptionOwners[key] = rel.ID
+				}
+				if m.Digest != digest(s.Storage) || m.Partitions == 0 {
+					allowNew = false
+					status.Reason = "waiting for Kafka metadata"
+				} else {
+					if target > m.Partitions {
+						status.Reason = "limited by Kafka partitions"
+					}
+					target = min(target, m.Partitions)
+					if m.Error != "" {
+						allowNew = false
+						status.Reason = m.Error
+					}
+				}
+			}
+			if subscriptionConflict {
+				allowNew = false
+				status.Reason = "subscription is owned by another source"
+			}
+			status.Target = target
+			if blocked {
+				// 一个永久失败会暂停整个来源角色，避免新 slot 或另一 worker
+				// 重新接管同一 PEL 消息。诊断保留期望副本数，实际目标为零。
+				allowNew = false
+				status.Reason = "task requires repair and explicit resume"
+				target = 0
+			}
+			active := []string{}
+			for id, t := range st.Tasks {
+				if t.Source == rel.ID && t.Role == role && t.Phase != "stopped" {
+					active = append(active, id)
+				}
+			}
+			sort.Strings(active)
+			// 停用整个来源时先撤销 Cleaner，避免停止 Lifecycle 后仍有新的接入。
+			delayStop := false
+			if role == "lifecycle" && (!s.Enabled || rel.Deleted) {
+				for _, t := range st.Tasks {
+					if t.Source == rel.ID && t.Role == "cleaner" && t.Phase != "stopped" {
+						delayStop = true
+					}
+				}
+			}
+			retained := 0
+			used := map[string]bool{}
+			for _, id := range active {
+				t := st.Tasks[id]
+				w := st.Workers[t.Worker]
+				used[t.Worker] = true
+				valid := !subscriptionConflict && matches(w, s, role) && !w.Draining && t.Digest == executionDigest(s)
+				// 单次失联不迁走。到达失联容错窗口后撤销，仍等待停止或完整授权到期。
+				if now.Sub(w.Seen) >= 10*time.Second {
+					valid = false
+				}
+				revoke := !valid || retained >= target
+				if !allowNew && !blocked && !subscriptionConflict && placement(s, role).Replicas.Limit(1) > 0 && s.Enabled && !rel.Deleted && matches(w, s, role) && !w.Draining && now.Sub(w.Seen) < 10*time.Second && retained < target {
+					revoke = false
+				}
+				if delayStop {
+					revoke = false
+				}
+				if revoke && t.Phase != "stopping" {
+					t.Phase = "stopping"
+					st.Tasks[id] = t
+				}
+				if t.Phase != "stopping" {
+					retained++
+				}
+				if t.Phase == "running" {
+					status.Running++
+				}
+			}
+			live := len(active)
+			for _, wid := range eligible {
+				if !allowNew || live >= target {
+					break
+				}
+				if used[wid] {
+					continue
+				}
+				w := st.Workers[wid]
+				load, totalWorkers, totalBytes := 0, 0, int64(0)
+				budget, err := w.Runtime.budgetFor(role, s)
+				if err != nil {
+					status.Reason = "worker runtime budget is missing or invalid"
+					continue
+				}
+				costWorkers, costBytes := budget.Concurrency, budget.InflightBytes
+				for _, t := range st.Tasks {
+					if t.Worker == wid && t.Phase != "stopped" {
+						load++
+						totalWorkers += t.Concurrency
+						totalBytes += t.InflightBytes
+					}
+				}
+				maxWorkers, maxBytes := w.MaxConcurrency, w.MaxInflightBytes
+				if (w.MaxTasks > 0 && load >= w.MaxTasks) || (maxWorkers > 0 && totalWorkers+costWorkers > maxWorkers) || (maxBytes > 0 && totalBytes+costBytes > maxBytes) {
+					continue
+				}
+				slot := 0
+				for {
+					key := taskID(rel.ID, role, slot)
+					old, ok := st.Tasks[key]
+					if !ok || old.Phase == "stopped" {
+						if now.Before(old.RetryAfter) {
+							break
+						}
+						st.NextEpoch++
+						st.Tasks[key] = Task{Concurrency: costWorkers, InflightBytes: costBytes, ID: key, Source: rel.ID, Role: role, Slot: slot, Epoch: st.NextEpoch, Worker: wid, Version: rel.Version, Digest: executionDigest(s), Phase: "preparing", Expires: now.Add(LeaseTTL), Retired: old.Retired, Failures: old.Failures}
+						used[wid] = true
+						live++
+						break
+					}
+					slot++
+				}
+			}
+			if live < target && status.Reason == "" {
+				status.Reason = fmt.Sprintf("capacity pending: %d", target-live)
+			}
+			st.Statuses = append(st.Statuses, status)
+		}
+	}
+	for id, t := range st.Tasks {
+		if !sourceSet[t.Source] && !unavailable[t.Source] && t.Phase != "stopped" {
+			t.Phase = "stopping"
+			st.Tasks[id] = t
+		}
+	}
+}
+
+func subscriptionIdentity(s config.EventSource) string {
+	brokers, _ := kafkaclient.NormalizeBrokers(s.Storage.Kafka.Brokers)
+	sort.Strings(brokers)
+	return digest(struct {
+		Brokers      []string
+		Topic, Group string
+	}{brokers, s.Storage.Kafka.Topic, s.Storage.Kafka.ConsumerGroup})
+}

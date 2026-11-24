@@ -17,12 +17,14 @@ import (
 	repositoryassembly "linkd/internal/store/assembly"
 )
 
+const storagePrepareElasticsearchConnections = 4
+
 func newStorageCommand(options *commandOptions) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "storage",
 		Short: "执行 Linkd 存储管理操作",
 	}
-	command.AddCommand(newStoragePrepareCommand(options))
+	command.AddCommand(newStoragePrepareCommand(options), newStorageMigrateCommand(options))
 	return command
 }
 
@@ -48,7 +50,11 @@ func newStoragePrepareCommand(options *commandOptions) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("parse --to as RFC3339: %w", err)
 			}
-			runtime, err := repositoryassembly.OpenElasticsearchManager(cmd.Context(), *cfg.Storage.Elasticsearch)
+			runtime, err := repositoryassembly.OpenElasticsearchManager(
+				cmd.Context(),
+				*cfg.Storage.Elasticsearch,
+				storagePrepareElasticsearchConnections,
+			)
 			if err != nil {
 				return err
 			}

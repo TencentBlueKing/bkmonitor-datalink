@@ -13,15 +13,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"linkd/internal/domain"
 	"linkd/internal/store"
 	"linkd/internal/store/storetest"
 )
@@ -47,6 +50,14 @@ func (t endpointTransport) Perform(request *http.Request) (*http.Response, error
 }
 
 func TestElasticsearchRepositoryContract(t *testing.T) {
+	runElasticsearchRepositoryContract(t, false)
+}
+
+func TestElasticsearchBatchedRepositoryContract(t *testing.T) {
+	runElasticsearchRepositoryContract(t, true)
+}
+
+func runElasticsearchRepositoryContract(t *testing.T, batched bool) {
 	endpoint := os.Getenv(elasticsearchIntegrationURLEnv)
 	if endpoint == "" {
 		t.Skipf("set %s to run Elasticsearch contract", elasticsearchIntegrationURLEnv)
@@ -88,8 +99,229 @@ func TestElasticsearchRepositoryContract(t *testing.T) {
 				_ = repository.performJSON(cleanup, http.MethodDelete, "/_index_template/"+name, nil, nil, nil)
 			}
 		})
+		if batched {
+			wrapped, closer, err := repository.EnableWriteBatch(WriteBatchConfig{MaxOperations: 32, MaxBytes: 4 << 20, Wait: 2 * time.Millisecond, ReadWait: 10 * time.Millisecond, MaxConcurrentBatches: 2, MaxCalls: 32, Timeout: 15 * time.Second}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(closer.Close)
+			return wrapped
+		}
 		return repository
 	})
+}
+
+func TestElasticsearchEventCreateDoesNotDependOnRefresh(t *testing.T) {
+	endpoint := os.Getenv(elasticsearchIntegrationURLEnv)
+	if endpoint == "" {
+		t.Skipf("set %s to run Elasticsearch event refresh integration", elasticsearchIntegrationURLEnv)
+	}
+	baseURL, err := url.Parse(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := endpointTransport{
+		baseURL: baseURL,
+		client:  &http.Client{Timeout: 15 * time.Second},
+		apiKey:  os.Getenv("LINKD_TEST_ELASTICSEARCH_API_KEY"),
+	}
+	prefix := "linkd-event-refresh-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	router, err := NewStaticRouter(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := New(transport, router, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	schema := router.SchemaConfig()
+	if err := repository.EnsureSchema(ctx, schema); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.EnsureIndex(ctx, router.eventIndex, entityEvent); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanup, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cleanupCancel()
+		_ = repository.performJSON(cleanup, http.MethodDelete, "/"+router.eventIndex, nil, nil, nil)
+		for _, spec := range schema.Templates() {
+			_ = repository.performJSON(cleanup, http.MethodDelete, "/_index_template/"+spec.Name, nil, nil, nil)
+		}
+	})
+	settings, err := marshalRequest(map[string]any{"index": map[string]any{"refresh_interval": "-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.performJSON(ctx, http.MethodPut, "/"+router.eventIndex+"/_settings", nil, settings, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	event := storetest.Event("tenant-1", "event-no-refresh", "fingerprint-1", "warning")
+	created, err := repository.CreateEvent(ctx, event)
+	if err != nil || !created.Created {
+		t.Fatalf("CreateEvent()=%#v,%v", created, err)
+	}
+	stored, err := repository.GetEvent(ctx, event.BKTenantID, event.EventID)
+	if err != nil || stored.Event.EventID != event.EventID {
+		t.Fatalf("GetEvent()=%#v,%v", stored, err)
+	}
+	duplicate, err := repository.CreateEvent(ctx, event)
+	if err != nil || duplicate.Created {
+		t.Fatalf("duplicate CreateEvent()=%#v,%v", duplicate, err)
+	}
+	duplicates, err := repository.CreateEvents(ctx, []domain.Event{event, event})
+	if err != nil || len(duplicates) != 2 {
+		t.Fatalf("duplicate batch=%+v error=%v", duplicates, err)
+	}
+	for _, item := range duplicates {
+		if item.Err != nil || item.Result.Created || item.Result.Event.EventID != event.EventID {
+			t.Fatalf("realtime duplicate batch item=%+v", item)
+		}
+	}
+	conflict := event.Clone()
+	conflict.Title = "different"
+	if _, err := repository.CreateEvent(ctx, conflict); !errors.Is(err, store.ErrIdentityConflict) {
+		t.Fatalf("conflicting CreateEvent() error=%v", err)
+	}
+
+	var count struct {
+		Count int `json:"count"`
+	}
+	if err := repository.performJSON(ctx, http.MethodGet, "/"+router.eventIndex+"/_count", nil, nil, &count); err != nil {
+		t.Fatal(err)
+	}
+	if count.Count != 0 {
+		t.Fatalf("event became searchable without refresh: count=%d", count.Count)
+	}
+	if err := repository.performJSON(ctx, http.MethodPost, "/"+router.eventIndex+"/_refresh", nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.performJSON(ctx, http.MethodGet, "/"+router.eventIndex+"/_count", nil, nil, &count); err != nil {
+		t.Fatal(err)
+	}
+	if count.Count != 1 {
+		t.Fatalf("event count after refresh=%d", count.Count)
+	}
+}
+
+func TestElasticsearchLifecycleEventProjectionAndPartialCAS(t *testing.T) {
+	endpoint := os.Getenv(elasticsearchIntegrationURLEnv)
+	if endpoint == "" {
+		t.Skipf("set %s to run Elasticsearch lifecycle event integration", elasticsearchIntegrationURLEnv)
+	}
+	baseURL, err := url.Parse(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, batched := range []bool{false, true} {
+		t.Run("batched="+strconv.FormatBool(batched), func(t *testing.T) {
+			transport := endpointTransport{baseURL: baseURL, client: &http.Client{Timeout: 15 * time.Second}, apiKey: os.Getenv("LINKD_TEST_ELASTICSEARCH_API_KEY")}
+			prefix := "linkd-lifecycle-projection-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatBool(batched)
+			router, err := NewStaticRouter(prefix)
+			if err != nil {
+				t.Fatal(err)
+			}
+			repository, err := New(transport, router, DefaultConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			schema := router.SchemaConfig()
+			if err := repository.EnsureSchema(ctx, schema); err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.EnsureIndex(ctx, router.eventIndex, entityEvent); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				cleanup, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cleanupCancel()
+				_ = repository.performJSON(cleanup, http.MethodDelete, "/"+router.eventIndex, nil, nil, nil)
+				for _, spec := range schema.Templates() {
+					_ = repository.performJSON(cleanup, http.MethodDelete, "/_index_template/"+spec.Name, nil, nil, nil)
+				}
+			})
+			var lifecycleStore store.LifecycleEventStore = repository
+			if batched {
+				wrapped, closer, err := repository.EnableWriteBatch(WriteBatchConfig{MaxOperations: 32, MaxBytes: 4 << 20, Wait: 2 * time.Millisecond, ReadWait: 10 * time.Millisecond, MaxConcurrentBatches: 2, MaxCalls: 32, Timeout: 15 * time.Second}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(closer.Close)
+				lifecycleStore = wrapped
+			}
+			event := storetest.Event("tenant-1", "event-projection", "fingerprint-1", "warning")
+			event.SourceRawData = domain.JSONObject{"large": json.RawMessage(`{"preserved":true}`)}
+			event.ExtraData = domain.JSONObject{"needed": json.RawMessage(`{"value":1}`)}
+			created, err := repository.CreateEvent(ctx, event)
+			if err != nil || !created.Created {
+				t.Fatalf("CreateEvent()=%#v,%v", created, err)
+			}
+			projected, err := lifecycleStore.GetLifecycleEvent(ctx, event.BKTenantID, event.EventID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Lifecycle Enrich 需要完整来源事实，后续局部 CAS 仍不得覆盖原始数据。
+			if string(projected.Event.SourceRawData["large"]) != `{"preserved":true}` || string(projected.Event.ExtraData["needed"]) != `{"value":1}` {
+				t.Fatalf("lifecycle projection=%#v", projected.Event)
+			}
+			plan := &store.EventPlan{
+				UpgradePolicy: "close_and_create", State: domain.EventProcessStateAccepted,
+				Outcome: "alert_created", RelatedAlertIDs: []string{"alert-1"},
+				Evaluations: []store.EvaluationResult{{
+					Severity: event.Evaluations[0].Severity, Action: event.Evaluations[0].Action,
+					State: domain.EventProcessStateAccepted, Outcome: "alert_created", RelatedAlertIDs: []string{"alert-1"},
+				}},
+			}
+			for _, finish := range []bool{false, true} {
+				planned, planErr := lifecycleStore.CompareAndSetLifecycleEventResult(ctx, event.BKTenantID, event.EventID, projected.Version, store.EventResult{
+					State: domain.EventProcessStateUnprocessed,
+				})
+				if planErr != nil {
+					t.Fatal(planErr)
+				}
+				if _, staleErr := lifecycleStore.CompareAndSetLifecycleEventResult(ctx, event.BKTenantID, event.EventID, projected.Version, store.EventResult{State: domain.EventProcessStateUnprocessed}); !errors.Is(staleErr, store.ErrVersionConflict) {
+					t.Fatalf("stale plan CAS error=%v", staleErr)
+				}
+				result := store.EventResult{State: domain.EventProcessStateUnprocessed}
+				if finish {
+					result = store.EventResult{
+						State: plan.State, RelatedAlertIDs: plan.RelatedAlertIDs, Outcome: plan.Outcome,
+						Evaluations: plan.Evaluations, ProcessedAt: time.Now().Round(0).UTC(),
+					}
+				}
+				if _, writeErr := lifecycleStore.CompareAndSetLifecycleEventResult(ctx, event.BKTenantID, event.EventID, planned.Version, result); writeErr != nil {
+					t.Fatal(writeErr)
+				}
+				// 必须回读真实文档，不能只断言写方法在内存中构造的返回快照。
+				projected, err = lifecycleStore.GetLifecycleEvent(ctx, event.BKTenantID, event.EventID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if projected.Processing.State != result.State {
+					t.Fatalf("finish=%v persisted processing=%#v", finish, projected.Processing)
+				}
+			}
+			complete, err := repository.GetEvent(ctx, event.BKTenantID, event.EventID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(complete.Event.SourceRawData["large"]) != `{"preserved":true}` || !slices.Contains(complete.Event.RelatedAlertIDs, "alert-1") {
+				t.Fatalf("complete event after partial CAS=%#v", complete.Event)
+			}
+			if _, err := lifecycleStore.GetLifecycleEvent(ctx, "another-tenant", event.EventID); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("cross-tenant event read error=%v", err)
+			}
+			redelivered, err := repository.CreateEvent(ctx, event)
+			if err != nil || redelivered.Created || redelivered.Processing.State != plan.State {
+				t.Fatalf("terminal event redelivery=%#v,%v", redelivered, err)
+			}
+		})
+	}
 }
 
 func TestElasticsearchArchiveDrainsMoreThanOneDefaultBatch(t *testing.T) {
@@ -107,7 +339,8 @@ func TestElasticsearchArchiveDrainsMoreThanOneDefaultBatch(t *testing.T) {
 	prefix := "linkd-archive-" + strconv.Itoa(os.Getpid())
 	now := time.Now().Round(0).UTC()
 	router, err := newBucketRouter(prefix, BucketConfig{
-		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7, MaxFutureSkew: time.Minute,
+		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
+		MaxFutureSkew: time.Minute, ActiveAlertRefreshInterval: 5 * time.Second,
 	}, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
@@ -141,8 +374,12 @@ func TestElasticsearchArchiveDrainsMoreThanOneDefaultBatch(t *testing.T) {
 
 	const total = 1001
 	var createBody bytes.Buffer
+	var firstTerminal store.StoredAlert
 	for index := range total {
 		terminal := archiveStoredAlert(t, "integration-"+strconv.Itoa(index), now.Add(time.Duration(index)*time.Millisecond))
+		if index == 0 {
+			firstTerminal = terminal
+		}
 		metadata, err := json.Marshal(map[string]any{"create": map[string]string{
 			"_index": router.activeAlertWriteAlias(), "_id": alertDocumentID(terminal.Alert),
 		}})
@@ -177,6 +414,15 @@ func TestElasticsearchArchiveDrainsMoreThanOneDefaultBatch(t *testing.T) {
 			t.Fatalf("bulk create item[%d] status=%d", index, item.Create.Status)
 		}
 	}
+	refreshDisabled, err := marshalRequest(map[string]any{"index": map[string]any{"refresh_interval": "-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{router.activeAlertIndex(), router.alertHistoryIndex(now)} {
+		if err := repository.performJSON(ctx, http.MethodPut, "/"+target+"/_settings", nil, refreshDisabled, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	first, err := manager.ArchiveTerminalAlerts(ctx, ArchiveBatchRequest{Limit: 1000, WorkerCount: 4})
 	if err != nil {
@@ -194,6 +440,40 @@ func TestElasticsearchArchiveDrainsMoreThanOneDefaultBatch(t *testing.T) {
 	if second.Scanned != 1 || second.Archived != 1 || second.Failed != 0 || second.NextCursor != "" {
 		t.Fatalf("second archive batch=%#v", second)
 	}
+	repeated, err := manager.ArchiveTerminalAlerts(ctx, ArchiveBatchRequest{Limit: 1, WorkerCount: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeated.Scanned != 1 || repeated.Archived != 1 || repeated.Failed != 0 || repeated.NextCursor == "" {
+		t.Fatalf("repeated unrefreshed archive batch=%#v", repeated)
+	}
+	current, err := repository.GetAlertCurrent(
+		ctx,
+		firstTerminal.Alert.BKTenantID,
+		firstTerminal.Alert.AlertID,
+	)
+	if err != nil || current.Alert.AlertID != firstTerminal.Alert.AlertID {
+		t.Fatalf("GetAlertCurrent()=%#v,%v", current, err)
+	}
+
+	for target, want := range map[string]int{
+		router.activeAlertAlias(): total, router.alertHistoryReadAlias(): 0,
+	} {
+		var response struct {
+			Count int `json:"count"`
+		}
+		if err := repository.performJSON(ctx, http.MethodGet, "/"+target+"/_count", nil, nil, &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Count != want {
+			t.Fatalf("count before explicit refresh %s=%d, want %d", target, response.Count, want)
+		}
+	}
+	for _, target := range []string{router.activeAlertIndex(), router.alertHistoryIndex(now)} {
+		if err := repository.performJSON(ctx, http.MethodPost, "/"+target+"/_refresh", nil, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	for target, want := range map[string]int{
 		router.activeAlertAlias(): 0, router.alertHistoryReadAlias(): total,
@@ -208,4 +488,172 @@ func TestElasticsearchArchiveDrainsMoreThanOneDefaultBatch(t *testing.T) {
 			t.Fatalf("count %s=%d, want %d", target, response.Count, want)
 		}
 	}
+}
+
+// TestElasticsearchScanPagination 验证真实版本的 PIT、隐式排序尾项和纳秒游标往返。
+func TestElasticsearchScanPagination(t *testing.T) {
+	endpoint := os.Getenv(elasticsearchIntegrationURLEnv)
+	if endpoint == "" {
+		t.Skip("set LINKD_TEST_ELASTICSEARCH_URL to run pagination contract")
+	}
+	baseURL, err := url.Parse(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := endpointTransport{baseURL: baseURL, client: &http.Client{Timeout: 15 * time.Second}, apiKey: os.Getenv("LINKD_TEST_ELASTICSEARCH_API_KEY")}
+	prefix := "linkd-pagination-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	router, err := NewStaticRouter(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := New(transport, router, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := router.SchemaConfig()
+	if err := r.EnsureSchema(t.Context(), schema); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		for _, spec := range schema.Templates() {
+			_ = r.performJSON(cleanup, http.MethodDelete, "/"+spec.Name, nil, nil, nil)
+			_ = r.performJSON(cleanup, http.MethodDelete, "/_index_template/"+spec.Name, nil, nil, nil)
+		}
+	}()
+	for _, spec := range schema.Templates() {
+		if err := r.EnsureIndex(t.Context(), spec.Name, spec.Entity); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 4; i++ {
+		tenant := "system"
+		if i == 3 {
+			tenant = "other"
+		}
+		event := storetest.Event(tenant, "event-"+strconv.Itoa(i), "fp", "warning")
+		event.ReceivedAt = event.ReceivedAt.Add(time.Duration(i+1) * time.Nanosecond)
+		if _, err := r.CreateEvent(t.Context(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.performJSON(t.Context(), http.MethodPost, "/"+prefix+"-events/_refresh", nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	before := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+	for _, all := range []bool{false, true} {
+		page := store.PageRequest{Limit: 1}
+		var ids []string
+		for n := 0; n < 6; n++ {
+			var result store.EventPage
+			if all {
+				result, err = r.ScanAllUnprocessedEvents(t.Context(), before, page)
+			} else {
+				result, err = r.ScanUnprocessedEvents(t.Context(), "system", before, page)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, item := range result.Events {
+				ids = append(ids, item.Event.EventID)
+			}
+			page.Cursor = result.NextCursor
+			if page.Cursor == "" {
+				break
+			}
+		}
+		want := 3
+		if all {
+			want = 4
+		}
+		if page.Cursor != "" || len(ids) != want {
+			t.Fatalf("all=%t ids=%v cursor remains=%t", all, ids, page.Cursor != "")
+		}
+		for i, id := range ids {
+			if id != "event-"+strconv.Itoa(i) {
+				t.Fatalf("unexpected order: %v", ids)
+			}
+		}
+	}
+}
+
+func TestElasticsearchAddsEnrichmentMappingPreservingExistingEvent(t *testing.T) {
+	endpoint := os.Getenv(elasticsearchIntegrationURLEnv)
+	if endpoint == "" {
+		t.Skip("set LINKD_TEST_ELASTICSEARCH_URL to run additive mapping contract")
+	}
+	baseURL, err := url.Parse(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := "linkd-enrich-mapping-" + strconv.Itoa(os.Getpid())
+	router, err := NewStaticRouter(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := New(endpointTransport{baseURL: baseURL, client: &http.Client{Timeout: 15 * time.Second}, apiKey: os.Getenv("LINKD_TEST_ELASTICSEARCH_API_KEY")}, router, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	index := prefix + "-events"
+	properties := eventProperties()
+	processingProperties := properties["processing"].(map[string]any)["properties"].(map[string]any)
+	delete(processingProperties, "policy_context")
+	delete(processingProperties, "policy_decision")
+	for name := range eventEnrichmentProperties() {
+		delete(properties, name)
+	}
+	body, err := json.Marshal(map[string]any{"mappings": map[string]any{"dynamic": "strict", "_meta": schemaMetadata{ManagedBy: managedByLinkd, Entity: entityEvent, SchemaVersion: currentSchemaVersion}, "properties": properties}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.performJSON(ctx, http.MethodPut, "/"+index, nil, body, nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := repo.performJSON(cleanup, http.MethodDelete, "/"+index, nil, nil, nil); err != nil {
+			t.Error(err)
+		}
+	})
+	event := storetest.Event("tenant-preserved", "event-preserved", "fp-preserved", "warning")
+	data, err := encodeEventDocument(event, store.NewUnprocessedEventProcessing())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var old map[string]json.RawMessage
+	if err := json.Unmarshal(data, &old); err != nil {
+		t.Fatal(err)
+	}
+	for name := range eventEnrichmentProperties() {
+		delete(old, name)
+	}
+	data, err = json.Marshal(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.performJSON(ctx, http.MethodPut, "/"+index+"/_doc/"+documentID(event.BKTenantID, event.EventID), nil, data, nil); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := repo.EnsureIndex(ctx, index, entityEvent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saved, err := repo.GetEvent(ctx, event.BKTenantID, event.EventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enriched, err := repo.CompareAndSetEventEnrichment(ctx, event.BKTenantID, event.EventID, saved.Version, storetest.Enrichment(event))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enriched.Event.Title != event.Title || string(enriched.Event.SourceRawData["source"]) != string(event.SourceRawData["source"]) || enriched.Event.EnrichStatus != domain.EnrichStatusSucceeded {
+		t.Fatal("existing facts were not preserved")
+	}
+
 }

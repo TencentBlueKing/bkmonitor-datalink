@@ -30,6 +30,13 @@ Pod。Kafka、Redis、MySQL、Elasticsearch 等外部依赖不包含在 `all-in-
 Metrics 不是单独的部署角色。每个常驻进程都创建自己的 telemetry runtime；配置 Prometheus exporter
 后分别暴露 `/metrics`。因此拆分 Cleaner 或 Lifecycle 不会失去对应指标，也不依赖控制面代为采集。
 
+### 合并成员执行（2026-10-16）
+
+合并成员由主控制面单进程执行。调度器在内存拆批，有空闲名额才启动 goroutine，完成结果直接返回。
+通过 `control_plane.merge.member_batch_size` 和 `concurrency` 调节批次大小与在途数量，不另部署成员 Worker。
+不使用 Redis/ES/MySQL 保存或分发短时批次；崩溃后根据持久合并关系重建并幂等重放。
+详见[合并批处理预算](../guides/configuration.md#合并控制面批处理预算)。
+
 ## All-in-one 模式
 
 ```text
@@ -37,7 +44,7 @@ linkd run all-in-one
   ├─ Cleaner
   ├─ Lifecycle
   └─ Control Plane
-      ├─ API                 （规划）
+      ├─ EventSource API
       ├─ Leader Election     （规划）
       └─ Manager
 ```
@@ -98,15 +105,23 @@ Lifecycle 可按待处理 fingerprint 数量水平扩展。同一 fingerprint �
 
 控制面内部以有名称、可取消的 management task 作为扩展单元。Elasticsearch 当前注册
 `elasticsearch-schema-and-active-reconciler`、`elasticsearch-bucket-manager` 和 `elasticsearch-alert-archiver`
-三个任务；它们共享连接和 Leader 所有权，但不是独立进程入口。Archiver 会隔离单项失败并在内部重试，只有任务本身
-异常退出才会触发进程级 fail-fast；后续控制面任务统一加入同一装配和监督器。不得为每个任务新增顶级常驻 command。
+三个任务；它们共享连接和 Leader 所有权，但不是独立进程入口。ES 资源首次准备在后台按 Schema/Active →
+时间桶 → 归档的顺序推进，不作为管理 API 和调度启动的前置条件。来源与策略集合的初始化同样在后台重试，
+已有集合仍可读取；依赖未就绪的请求保留真实错误，不伪装成空数据或写入成功。
+
+控制面任务及子任务的普通错误、意外返回和 panic 在各自边界记录失败并重试，不取消其他任务或退出进程。
+失败重试间隔为 5 秒，ES 周期任务失败后最多等待 5 秒，成功后仍按原配置周期运行；已持久化的业务命令
+继续按自身状态与幂等规则接续，不重新构造命令。并发子任务也必须捕获调用 panic，不能依赖父 goroutine 的 recover。
+调度器的一轮来源读取、探测或规划失败保留授权并重试；失去中心租约时停止当前调度实例，释放旧资源后重新取得
+授权，不绕过协调历史缺失检查，也不重建已有调度状态。API 监听器异常时重建其所属运行时，控制面进程保持存活。
+配置错误仍在启动前报告；进程退出由取消或信号驱动。后续控制面任务统一加入现有装配和监督边界，不新增顶级常驻 command。
 
 各项管理操作必须可重试且幂等。Leader 租约还必须配合可验证的任期或 fencing 约束，不能只凭进程内
 布尔状态假定旧 Leader 已经停止写入。失去 Leader 身份时应立即取消 Manager 任务，但不应因此把仍可
 提供 API 的 follower 判定为不健康。
 
-Leader Election 完成前，`linkd run control-plane` 只能部署单副本，当前由它运行 Elasticsearch 管理任务。
-该限制不能靠部署多个没有选举能力的副本绕过，否则会失去单例维护任务的所有权保证。
+当前 `linkd run control-plane` 只能部署单副本，同时运行来源 API、调度与管理任务。
+Redis 单活动中心保护不等于支持多副本 follower 服务与高可用选举；不能通过增加副本绕过该限制。
 
 控制面副本数、API 请求量和管理任务并发分别设定上限。API 的水平扩展不应制造多个活动任务所有者；
 耗时管理任务也不应长期占用 API 请求 goroutine。
@@ -117,9 +132,26 @@ Leader Election 完成前，`linkd run control-plane` 只能部署单副本，�
 - 三种进程使用相同的租户作用域、稳定身份和版本化外部协议，拆分部署不得改变业务结果；
 - 每个进程只校验并使用自身职责所需的配置和凭据，部署时按最小权限分别授权；
 - 进程的并发、批次、重试、队列和关闭等待均有硬上限，并传播 `context.Context` 取消；
+- Elasticsearch Repository runtime 使用独立 HTTP 连接池，按 Cleaner、Lifecycle 或 Control Plane 的
+  并发预算派生每节点硬上限；达到上限的请求等待连接并服从自身 Context，不由 Transport 自动重试写入；
 - 日志和指标必须带进程角色与实例标识；控制面额外暴露 Leader 状态和各任务最近一次执行结果；
 - 滚动升级期间，消息和存储契约必须保持兼容。需要破坏性变更时先停止相关角色并按明确步骤升级，
   不依赖不同模式之间的双写兜底。
+
+当前 values/evaluations/related_alert_ids 改造同时改变 Standard 输入与 Event 存储结构。
+`storage migrate` 不转换旧事件；不保留数据的 ES + Helm 测试环境可按
+[重置升级指南](../guides/multilevel-event-upgrade.md)切换新业务前缀。保留真实数据的升级需另行设计迁移。
+
+仅针对此前启用 Elasticsearch Recent Alert 缓存和取消 Lifecycle Alert refresh 等待的改动，新旧 Lifecycle 不能混合
+消费同一 Mailbox。升级或回滚前应暂停 Cleaner、排空 Signal lag/PEL 和 Mailbox，再同时替换 Lifecycle；
+控制面须先把 Active 索引的 `refresh_interval` 对账为 YAML 中的配置值（默认 `5s`）。
+仅 Event create 改用 `refresh=false` 的那次优化不改变 schema，差异只在 Event 搜索可见等待，
+彼时新旧 Cleaner 可滚动替换；此结论不适用于当前多级别输入改造。Lifecycle 和幂等冲突核对仍使用 realtime GET。
+Event、Alert History 和 AlertLog 的新时间桶也通过模板使用默认 `5s` refresh；修改该值只影响后续
+refresh 周期，不改变实时 GET 或 CAS 的可见性。
+AlertLog 默认使用 `async` translog durability，而 Event、Active Alert 和 Alert History 保持
+`request`；部署方必须接受节点异常时最近一个 translog sync interval 内 AlertLog 可能丢失，不能把
+AlertLog 当作零丢失审计账本。
 
 ## 故障与扩缩容边界
 
@@ -142,8 +174,25 @@ Leader Election 完成前，`linkd run control-plane` 只能部署单副本，�
 - `linkd run cleaner` 和 `linkd run lifecycle` 已提供独立进程入口；
 - `linkd run control-plane` 已提供控制面进程入口和多任务监督边界，当前可装配两个周期性 Elasticsearch
   对账任务、一个连续批量归档任务和 `redis-stream-manager`；后者采集 Signal Stream、Consumer Group、
-  PEL、lag 和内存状态，并只裁剪全部 Group 已确认的前缀。API 和 Leader Election 尚未实现，因此只能部署单副本；
+  PEL、lag 和内存状态，并在单轮预算内分批追赶、只裁剪全部 Group 已确认的前缀。来源 API 和调度已实现，
+  具备 Redis 单活动中心保护；多副本控制面高可用尚未实现，因此只能部署单副本；
 - `linkd storage prepare` 是历史回放前预创建 Elasticsearch 时间桶的一次性管理命令，不是常驻进程。
+- `linkd storage migrate` 执行控制面基础配置检查与幂等存储初始化，不启动 API/调度或重建协调历史；
+  部署时可通过初始化 Job 执行该命令。
+- `pkg/linkd/Dockerfile` 可在模块目录独立构建镜像，运行时基础镜像为 `tencentos/tencentos4-minimal`。
+  同一二进制通过 command 选择 `all-in-one`、`cleaner`、`lifecycle` 或 `control-plane`。镜像不包含可用
+  配置，启动常驻进程必须挂载配置文件。容器终止宽限期建议至少 60 秒。
 
-因此，本文确认的是目标部署边界，不表示三进程模式已经具备完整生产交付能力。控制面实现、健康与
-就绪探针、部署清单、容量基线和高可用验证完成后，再在使用指南中补充可执行的生产部署步骤。
+各角色镜像版本与运行配置见 [Kubernetes 部署](../guides/helm.md)。
+部署模板不代表专用健康探针、容量基线或控制面高可用已经验证，生产链路仍需单独联调。
+
+## 动态来源调度的当前部署约束
+
+当前单活动控制面提供来源 API 和调度；Cleaner/Lifecycle 作为 worker 注册，all-in-one 两角色共享一个会话。
+每来源角色可使用 all/数字副本与标签选择器，Kafka group 或来源 Redis Stream group 分担消息。
+早期草案中“每来源全局只有一个 Flow”已由同 worker 同源同角色互斥取代。
+
+API 与 worker 使用不同 token。计划内发布先进入任务停止并报告，确认后接续；断网容灾按有界自停模型实现。
+容器终止宽限期建议至少 60 秒并覆盖配置的总关闭预算，preStop 与 SIGTERM 共用同一关闭流程。
+调度 Redis 协调历史丢失需停止旧执行环境后显式恢复，不宣称普通 Sentinel 提升可保证协调历史不回退。
+全局 Severity 仍静态，来源版本切换不持久化 offset 映射，未落库消息按当前任务启动配置执行。

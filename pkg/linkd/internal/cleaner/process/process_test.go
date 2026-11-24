@@ -24,7 +24,7 @@ func TestValidateConfig(t *testing.T) {
 		config    config.Config
 		wantError string
 	}{
-		{name: "no enabled sources"},
+		{name: "no enabled sources still require dynamic dependencies", wantError: "storage config is required"},
 		{
 			name: "enabled source without storage",
 			config: config.Config{EventSources: []config.EventSource{{
@@ -46,5 +46,22 @@ func TestValidateConfig(t *testing.T) {
 				t.Fatalf("ValidateConfig() error = %v, want containing %q", err, test.wantError)
 			}
 		})
+	}
+}
+
+func TestRepositoryConnectionBudgetUsesEffectiveBatchConcurrency(t *testing.T) {
+	t.Parallel()
+	global := config.CleanerRuntimeConfig{MaxConcurrentBatches: 3}
+	override := config.CleanerRuntimeConfig{MaxConcurrentBatches: 7}
+	cfg := config.Config{
+		Cleaner: global,
+		EventSources: []config.EventSource{
+			{Enabled: true},
+			{Enabled: true, Cleaner: config.CleanerConfig{Runtime: &override}},
+			{Enabled: false, Cleaner: config.CleanerConfig{Runtime: &override}},
+		},
+	}
+	if got, want := repositoryConnectionBudget(cfg), 0; got != want {
+		t.Fatalf("repositoryConnectionBudget()=%d, want %d", got, want)
 	}
 }

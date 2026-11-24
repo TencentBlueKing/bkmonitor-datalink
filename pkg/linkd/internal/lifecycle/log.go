@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"linkd/internal/domain"
+	"linkd/internal/store"
 )
 
 func eventAlertLog(event domain.Event, alert domain.Alert, operation domain.OperationKind,
@@ -38,6 +39,7 @@ func eventAlertLog(event domain.Event, alert domain.Alert, operation domain.Oper
 func operationCloseLog(command CloseAlertCommand, alert domain.Alert) (domain.AlertLog, error) {
 	params, err := encodeLogParams(map[string]string{
 		"operation_id": command.OperationID, "operator_id": command.OperatorID, "reason": command.Reason,
+		"severity": alert.Severity, "config_digest": command.ConfigDigest, "operation_source": command.endOperation().Source,
 	})
 	if err != nil {
 		return domain.AlertLog{}, err
@@ -69,6 +71,9 @@ func finalHookLog(cause AlertChangeCause, alert domain.Alert, outcome ProcessOut
 // appendAlertLogs 在一次 lifecycle 决策结束前统一提交全部日志。
 // 任一逐项失败都阻止后续 Event CAS；已经成功的 create 由稳定 log_id 在重试时幂等吸收。
 func (p *Processor) appendAlertLogs(ctx context.Context, logs []domain.AlertLog) error {
+	defer p.measureStep(phaseApply, "logs")()
+	started := time.Now()
+	defer func() { store.ObserveBatchPhase(ctx, "member.logs", time.Since(started)) }()
 	if len(logs) == 0 {
 		return nil
 	}

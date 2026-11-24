@@ -85,11 +85,11 @@ type ExpectedAlert struct {
 
 // Expected 汇总下游可观察数量和身份，供 E2E、压测抽样及结果核对复用。
 type Expected struct {
+	EventReasons       map[string]string                   `json:"event_reasons"`
 	SourceEventIDs     []string                            `json:"source_event_ids"`
 	EventStates        map[string]domain.EventProcessState `json:"event_states"`
 	FallbackReceivedAt map[string]time.Time                `json:"fallback_received_time"`
 	InputRecords       int                                 `json:"input_records"`
-	OutputMessages     int                                 `json:"output_messages"`
 	Alerts             []ExpectedAlert                     `json:"alerts"`
 	OperationCounts    map[domain.OperationKind]int        `json:"operation_counts"`
 }
@@ -120,6 +120,7 @@ func Generate(input Config) (Dataset, error) {
 		random: random,
 		expected: Expected{
 			FallbackReceivedAt: make(map[string]time.Time),
+			EventReasons:       make(map[string]string),
 			EventStates:        make(map[string]domain.EventProcessState),
 			OperationCounts:    make(map[domain.OperationKind]int),
 		},
@@ -143,14 +144,6 @@ func Generate(input Config) (Dataset, error) {
 	withDuplicates := injectDuplicates(baseRecords, config.DuplicateRecords, random)
 	records := injectInvalidRecords(withDuplicates, config.InvalidRecords, config.StartTime, random)
 	generator.expected.InputRecords = len(records)
-	for _, state := range generator.expected.EventStates {
-		if state == domain.EventProcessStateAccepted {
-			generator.expected.OutputMessages++
-		}
-	}
-	// 每次等级升级由同一 Event 产生旧 Alert closed 和新 Alert active 两个快照。
-	generator.expected.OutputMessages += config.Counts[ScenarioSeverityRotation]
-	generator.expected.OperationCounts[domain.OperationKindPush] = generator.expected.OutputMessages
 	return Dataset{Config: config, Records: records, Expected: generator.expected}, nil
 }
 
@@ -404,6 +397,9 @@ func (g *generator) terminalScenario(
 			return nil, updateErr
 		}
 		records = append(records, updated)
+		g.expected.EventStates[updated.SourceEventID] = domain.EventProcessStateSuppressed
+		g.expected.EventReasons[updated.SourceEventID] = "duplicate_trigger"
+		g.expected.OperationCounts[domain.OperationKindSuppress]++
 	}
 	action := domain.EventActionResolved
 	status := domain.AlertStatusRecovered
@@ -442,6 +438,9 @@ func (g *generator) rotationScenario(index int, tenantID, alertID string, update
 			return nil, updateErr
 		}
 		records = append(records, updated)
+		g.expected.EventStates[updated.SourceEventID] = domain.EventProcessStateSuppressed
+		g.expected.EventReasons[updated.SourceEventID] = "duplicate_trigger"
+		g.expected.OperationCounts[domain.OperationKindSuppress]++
 	}
 	rotated, err := g.eventRecord(
 		ScenarioSeverityRotation, index, tenantID, alertID, "critical", domain.EventActionTriggered, startTime,
@@ -458,6 +457,7 @@ func (g *generator) rotationScenario(index int, tenantID, alertID string, update
 	}
 	records = append(records, suppressed)
 	g.expected.EventStates[suppressed.SourceEventID] = domain.EventProcessStateSuppressed
+	g.expected.EventReasons[suppressed.SourceEventID] = "severity_suppressed"
 	closed, err := g.eventRecord(
 		ScenarioSeverityRotation, index, tenantID, alertID, "critical", domain.EventActionClosed, startTime,
 	)
@@ -509,10 +509,12 @@ func (g *generator) eventRecord(
 		return Record{}, err
 	}
 	raw := standardRecord{
-		EventID: sourceEventID, AlertID: alertID,
-		Title:    fmt.Sprintf("%s %s", scenario, action),
-		Content:  fmt.Sprintf("generated seed=%d event=%d", g.config.Seed, g.eventCounter),
-		Severity: severity, Action: action, ConditionKey: "cpu",
+		BKTenantID: tenantID,
+		EventID:    sourceEventID, AlertID: alertID,
+		Title:       fmt.Sprintf("%s %s", scenario, action),
+		Content:     fmt.Sprintf("generated seed=%d event=%d", g.config.Seed, g.eventCounter),
+		Evaluations: []domain.EventEvaluation{{Severity: severity, Action: action}},
+		Values:      domain.EventValues{},
 		Dimensions: domain.DimensionMap{
 			"host":     domain.NewStringScalar(fmt.Sprintf("host-%04d", scenarioIndex)),
 			"scenario": domain.NewStringScalar(string(scenario)),
@@ -562,19 +564,19 @@ func (g *generator) nextOccurredTime() time.Time {
 }
 
 type standardRecord struct {
-	EventID      string              `json:"event_id"`
-	AlertID      string              `json:"alert_id"`
-	Title        string              `json:"title"`
-	Content      string              `json:"content"`
-	Severity     string              `json:"severity"`
-	Action       domain.EventAction  `json:"action"`
-	ConditionKey string              `json:"condition_key"`
-	Dimensions   domain.DimensionMap `json:"dimensions"`
-	Subject      standardSubject     `json:"subject"`
-	OccurredAt   time.Time           `json:"occurred_at"`
-	ProducedAt   time.Time           `json:"produced_at"`
-	Labels       domain.DimensionMap `json:"labels"`
-	ExtraData    domain.JSONObject   `json:"extra_data"`
+	BKTenantID  string                   `json:"bk_tenant_id"`
+	EventID     string                   `json:"event_id"`
+	AlertID     string                   `json:"alert_id"`
+	Title       string                   `json:"title"`
+	Content     string                   `json:"content"`
+	Evaluations []domain.EventEvaluation `json:"evaluations"`
+	Values      domain.EventValues       `json:"values"`
+	Dimensions  domain.DimensionMap      `json:"dimensions"`
+	Subject     standardSubject          `json:"subject"`
+	OccurredAt  time.Time                `json:"occurred_at"`
+	ProducedAt  time.Time                `json:"produced_at"`
+	Labels      domain.DimensionMap      `json:"labels"`
+	ExtraData   domain.JSONObject        `json:"extra_data"`
 }
 
 type standardSubject struct {

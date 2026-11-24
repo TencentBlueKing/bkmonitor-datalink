@@ -10,39 +10,246 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"unicode"
 
+	"linkd/internal/domain"
+	"linkd/internal/enrich/custom"
 	"linkd/internal/kafkaclient"
 )
 
 const (
-	StorageTypeKafka      = "kafka"
-	FingerprintModeField  = "field"
-	FingerprintModeFields = "fields"
-	CleanerTypeStandard   = "standard"
+	StorageTypeKafka         = "kafka"
+	StorageTypeInternalMerge = "internal_merge"
+	FingerprintModeField     = "field"
+	FingerprintModeFields    = "fields"
+	CleanerTypeStandard      = "standard"
 )
 
 // EventSource 是一个全局唯一、供进程调度和事件标准化使用的事件源定义。
 type EventSource struct {
-	EventSourceID     string                   `yaml:"event_source_id"`
-	RelatedTenantID   string                   `yaml:"related_tenant_id,omitempty"`
-	Enabled           bool                     `yaml:"enabled"`
-	Cleaner           CleanerConfig            `yaml:"cleaner"`
-	FingerprintMode   string                   `yaml:"fingerprint_mode,omitempty"`
-	FingerprintField  string                   `yaml:"fingerprint_field,omitempty"`
-	FingerprintFields []string                 `yaml:"fingerprint_fields,omitempty"`
-	SeverityMapping   map[string]string        `yaml:"severity_mapping,omitempty"`
-	DefaultSeverity   string                   `yaml:"default_severity,omitempty"`
-	Storage           EventSourceStorageConfig `yaml:"storage"`
+	ActiveAlertLimits *ActiveAlertLimits `yaml:"active_alert_limits,omitempty" json:"active_alert_limits,omitempty"`
+	// RuntimeClientID 由任务代次注入，不属于可编辑配置或发布摘要。
+	RuntimeClientID   string                   `yaml:"-" json:"-"`
+	Version           int64                    `yaml:"-" json:"-"`
+	Scheduling        SourceScheduling         `yaml:"scheduling" json:"scheduling"`
+	EventSourceID     string                   `yaml:"event_source_id" json:"event_source_id"`
+	RelatedTenantID   string                   `yaml:"related_tenant_id,omitempty" json:"related_tenant_id,omitempty"`
+	Enabled           bool                     `yaml:"enabled" json:"enabled"`
+	Cleaner           CleanerConfig            `yaml:"cleaner,omitempty" json:"cleaner,omitzero"`
+	FingerprintMode   string                   `yaml:"fingerprint_mode,omitempty" json:"fingerprint_mode,omitempty"`
+	FingerprintField  string                   `yaml:"fingerprint_field,omitempty" json:"fingerprint_field,omitempty"`
+	FingerprintFields []string                 `yaml:"fingerprint_fields,omitempty" json:"fingerprint_fields,omitempty"`
+	SeverityMapping   map[string]string        `yaml:"severity_mapping,omitempty" json:"severity_mapping,omitempty"`
+	DefaultSeverity   string                   `yaml:"default_severity,omitempty" json:"default_severity,omitempty"`
+	Hooks             []HookConfig             `yaml:"hooks,omitempty" json:"hooks,omitempty"`
+	Enrich            EnrichConfig             `yaml:"enrich,omitempty" json:"enrich,omitempty"`
+	Storage           EventSourceStorageConfig `yaml:"storage" json:"storage"`
+}
+
+// EnrichConfig 定义该来源每条 Event 在策略裁决前执行的丰富链；资源由部署配置注入。
+type EnrichConfig struct {
+	// CMDBSetModuleEnabled 控制监控场景额外查询并补充集群、模块；默认关闭，实例自带属性仍保留。
+	CMDBSetModuleEnabled bool `yaml:"cmdb_set_module_enabled,omitempty" json:"cmdb_set_module_enabled,omitempty"`
+	// ContentMode 决定新建和持续触发时的内容来源；空值等价于 source。
+	// bkmonitor_description 必须显式启用，不以策略标签推断。
+	ContentMode string                  `yaml:"content_mode,omitempty" json:"content_mode,omitempty"`
+	Processors  []EnrichProcessorConfig `yaml:"processors,omitempty" json:"processors,omitempty"`
+}
+
+const (
+	// ContentModeSource 保留来源 content。
+	ContentModeSource = "source"
+	// ContentModeBKMonitorDescription 在创建前按冻结事实生成 bk-monitor description。
+	ContentModeBKMonitorDescription = "bkmonitor_description"
+)
+
+// EffectiveContentMode 返回显式模式或来源内容默认模式。
+func (c EnrichConfig) EffectiveContentMode() string {
+	if c.ContentMode == "" {
+		return ContentModeSource
+	}
+	return c.ContentMode
+}
+
+func (c EnrichConfig) clone() EnrichConfig {
+	cloned := c
+	cloned.Processors = make([]EnrichProcessorConfig, len(c.Processors))
+	for index, processor := range c.Processors {
+		cloned.Processors[index] = processor.clone()
+	}
+	return cloned
+}
+
+func (c EnrichConfig) validate() error {
+	if mode := c.EffectiveContentMode(); mode != ContentModeSource && mode != ContentModeBKMonitorDescription {
+		return fmt.Errorf("enrich.content_mode must be source or bkmonitor_description")
+	}
+	seenProcessors := make(map[string]int, len(c.Processors))
+	for index, processor := range c.Processors {
+		if strings.TrimSpace(processor.Type) == "" {
+			return fmt.Errorf("enrich.processors[%d].type is required", index)
+		}
+		if err := processor.validate(); err != nil {
+			return fmt.Errorf("enrich.processors[%d]: %w", index, err)
+		}
+		if processor.Type != "strategy" && processor.Type != "test" && processor.Type != "cmdb" && processor.Type != "fields" && len(processor.Config) != 0 {
+			return fmt.Errorf("enrich.processors[%d].config is not supported by processor %q", index, processor.Type)
+		}
+		if processor.Type == "cmdb" || processor.Type == "fields" {
+			if _, err := custom.Compile(processor.Type, processor.Config); err != nil {
+				return fmt.Errorf("enrich.processors[%d]: %w", index, err)
+			}
+		}
+		switch processor.Type {
+		case "cmdb-access", "cmdb", "fields", "test", "strategy", "resource", "monitor-resource", "display", "metric", "source", "log", "cloud_resource", "k8s", "apm":
+		default:
+			return fmt.Errorf("enrich processor type is not registered: %q", processor.Type)
+		}
+		if previous, exists := seenProcessors[processor.Type]; exists {
+			return fmt.Errorf("enrich.processors[%d].type duplicates enrich.processors[%d]: %q", index, previous, processor.Type)
+		}
+		seenProcessors[processor.Type] = index
+	}
+
+	return nil
+}
+
+// SelectResources 按 Processor Chain 返回实际需要绑定的物理连接。
+// 全部 Processor 共享一个 MySQL 连接池；Strategy 和 Resource 额外共享 Elasticsearch Transport。
+func (c EnrichConfig) SelectResources(configured ResourcesConfig) (ResourcesConfig, error) {
+	selected := ResourcesConfig{}
+	if err := c.validate(); err != nil {
+		return selected, err
+	}
+	if c.EffectiveContentMode() == ContentModeBKMonitorDescription {
+		if configured.MySQL == nil {
+			return selected, fmt.Errorf("resources.mysql is required by bkmonitor_description")
+		}
+		selected.MySQL = configured.MySQL
+	}
+	legacyMonitor := false
+	for _, processor := range c.Processors {
+		legacyMonitor = legacyMonitor || processor.Type == "strategy"
+	}
+	for _, processor := range c.Processors {
+		switch processor.Type {
+		case "cmdb", "fields":
+			program, err := custom.Compile(processor.Type, processor.Config)
+			if err != nil {
+				return ResourcesConfig{}, err
+			}
+			if processor.Type == "cmdb" {
+				if configured.OneModel == nil {
+					return ResourcesConfig{}, fmt.Errorf("resources.onemodel is required by cmdb")
+				}
+				selected.OneModel = configured.OneModel
+			}
+			if program.NeedsDisplay() {
+				if configured.MySQL == nil {
+					return ResourcesConfig{}, fmt.Errorf("resources.mysql required by display transform")
+				}
+				selected.MySQL = configured.MySQL
+				if configured.KingeyeDisplay == nil {
+					return ResourcesConfig{}, fmt.Errorf("resources.kingeye_display required by display transform")
+				}
+				selected.KingeyeDisplay = configured.KingeyeDisplay
+			}
+		case "cmdb-access":
+			selected.OneModel = configured.OneModel
+			selected.DynamicGroup = configured.DynamicGroup
+		case "test":
+			// 测试处理器只生成固定字段和等待，不需要外部连接。
+		case "strategy", "resource", "monitor-resource":
+			if configured.MySQL == nil {
+				return ResourcesConfig{}, fmt.Errorf("resources.mysql is required by configured enrich processors")
+			}
+			if configured.OneModel == nil {
+				return ResourcesConfig{}, fmt.Errorf("resources.onemodel is required by configured enrich processors")
+			}
+			selected.MySQL, selected.OneModel = configured.MySQL, configured.OneModel
+			// 冻结监控链仍使用 strategy/resource，其分组连接不能在升级后消失。
+			if processor.Type == "monitor-resource" || processor.Type == "resource" && legacyMonitor {
+				selected.DynamicGroup = configured.DynamicGroup
+			}
+		case "display", "metric", "source", "log", "cloud_resource", "k8s", "apm":
+			if configured.MySQL == nil {
+				return ResourcesConfig{}, fmt.Errorf("resources.mysql is required by configured enrich processors")
+			}
+			selected.MySQL = configured.MySQL
+		default:
+			return ResourcesConfig{}, fmt.Errorf("enrich processor type is not registered: %q", processor.Type)
+		}
+	}
+	return selected.Clone(), selected.Validate()
+}
+
+// EnrichProcessorConfig 通过稳定注册名选择丰富处理器，并保存该处理器独占的配置。
+// Config 必须是最多 64 KiB 的 JSON-compatible object；具体字段由对应 Processor 校验。
+type EnrichProcessorConfig struct {
+	Type   string         `yaml:"type" json:"type"`
+	Config map[string]any `yaml:"config,omitempty" json:"config,omitempty"`
+	// ReuseOnActive 在同一活跃告警的快照等级上复用本步骤成功结果；默认每条 Event 执行。
+	ReuseOnActive bool `yaml:"reuse_on_active,omitempty" json:"reuse_on_active,omitempty"`
+}
+
+func (c EnrichProcessorConfig) clone() EnrichProcessorConfig {
+	cloned := c
+	cloned.Config = cloneProcessorConfigMap(c.Config)
+	return cloned
+}
+
+func cloneProcessorConfigMap(source map[string]any) map[string]any {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]any, len(source))
+	for key, value := range source {
+		cloned[key] = cloneProcessorConfigValue(value)
+	}
+	return cloned
+}
+
+func cloneProcessorConfigValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneProcessorConfigMap(typed)
+	case []any:
+		cloned := make([]any, len(typed))
+		for index, item := range typed {
+			cloned[index] = cloneProcessorConfigValue(item)
+		}
+		return cloned
+	default:
+		return value
+	}
+}
+
+func (c EnrichProcessorConfig) validate() error {
+	for key := range c.Config {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("config key must not be empty")
+		}
+	}
+	data, err := json.Marshal(c.Config)
+	if err != nil {
+		return fmt.Errorf("config must be JSON compatible: %w", err)
+	}
+	if len(data) > 64*1024 {
+		return fmt.Errorf("config must not exceed 65536 bytes")
+	}
+	return nil
 }
 
 // CleanerConfig 选择一个进程内注册的来源 Cleaner。
 type CleanerConfig struct {
-	Type    string                `yaml:"type"`
-	Runtime *CleanerRuntimeConfig `yaml:"runtime,omitempty"`
+	Rules   []SourceCleaning      `yaml:"rules,omitempty" json:"rules,omitempty"`
+	Type    string                `yaml:"type" json:"type"`
+	Runtime *CleanerRuntimeConfig `yaml:"runtime,omitempty" json:"runtime,omitempty"`
 }
 
 // RuntimeConfig 将该事件源的非零局部预算覆盖到进程级 Cleaner 默认预算上。
@@ -55,21 +262,36 @@ func (c CleanerConfig) RuntimeConfig(global CleanerRuntimeConfig) CleanerRuntime
 
 // EventSourceStorageConfig 定义 EventSource 当前使用的输入消息队列配置。
 type EventSourceStorageConfig struct {
-	Type  string             `yaml:"type"`
-	Kafka KafkaStorageConfig `yaml:"kafka"`
+	Type  string             `yaml:"type" json:"type"`
+	Kafka KafkaStorageConfig `yaml:"kafka,omitempty" json:"kafka,omitzero"`
 }
 
 // KafkaStorageConfig 定义 EventSource 的 Kafka subscription 与安全参数。
 type KafkaStorageConfig struct {
-	Brokers       []string                   `yaml:"brokers"`
-	Topic         string                     `yaml:"topic"`
-	ConsumerGroup string                     `yaml:"consumer_group"`
-	Security      kafkaclient.SecurityConfig `yaml:"security"`
+	Brokers       []string `yaml:"brokers" json:"brokers"`
+	Topic         string   `yaml:"topic" json:"topic"`
+	ConsumerGroup string   `yaml:"consumer_group" json:"consumer_group"`
+	// FetchMaxWaitMilliseconds 限制 broker 空拉取等待；不控制 Cleaner 或 ES 合批。
+	FetchMaxWaitMilliseconds int                        `yaml:"fetch_max_wait_milliseconds" json:"fetch_max_wait_milliseconds"`
+	Security                 kafkaclient.SecurityConfig `yaml:"security" json:"security"`
 }
 
 // WithDefaults 补齐 fingerprint、Cleaner 和安全协议默认值并深拷贝配置。
 func (s EventSource) WithDefaults() EventSource {
 	s = s.clone()
+	if s.Version == 0 {
+		s.Version = 1
+	}
+	if s.Storage.Type == StorageTypeInternalMerge {
+		if s.Scheduling.Cleaner.Replicas.Number == nil {
+			zero := 0
+			s.Scheduling.Cleaner.Replicas.Number = &zero
+		}
+		for i := range s.Hooks {
+			s.Hooks[i] = s.Hooks[i].WithDefaults()
+		}
+		return s
+	}
 	if s.Cleaner.Type == "" {
 		s.Cleaner.Type = CleanerTypeStandard
 	}
@@ -79,7 +301,13 @@ func (s EventSource) WithDefaults() EventSource {
 	if s.FingerprintMode == FingerprintModeField && s.FingerprintField == "" && len(s.FingerprintFields) == 0 {
 		s.FingerprintField = "source_alert_id"
 	}
+	for i := range s.Hooks {
+		s.Hooks[i] = s.Hooks[i].WithDefaults()
+	}
 	s.Storage.Kafka.Security = s.Storage.Kafka.Security.WithDefaults()
+	if s.Storage.Kafka.FetchMaxWaitMilliseconds == 0 {
+		s.Storage.Kafka.FetchMaxWaitMilliseconds = 100
+	}
 	return s
 }
 
@@ -87,19 +315,40 @@ func (s EventSource) WithDefaults() EventSource {
 func (s EventSource) Redacted() EventSource {
 	redacted := s.clone()
 	redacted.Storage.Kafka.Security = redacted.Storage.Kafka.Security.Redacted()
+	for i := range redacted.Hooks {
+		redacted.Hooks[i] = redacted.Hooks[i].Redacted()
+	}
 	return redacted
 }
 
 func (s EventSource) clone() EventSource {
 	cloned := s
+	if s.ActiveAlertLimits != nil {
+		v := s.ActiveAlertLimits.WithDefaults()
+		cloned.ActiveAlertLimits = &v
+	}
+	cloned.Hooks = make([]HookConfig, len(s.Hooks))
+	for i := range s.Hooks {
+		cloned.Hooks[i] = s.Hooks[i].clone()
+	}
+	cloned.Scheduling = s.Scheduling.Clone()
 	if s.Cleaner.Runtime != nil {
 		runtimeConfig := *s.Cleaner.Runtime
 		cloned.Cleaner.Runtime = &runtimeConfig
 	}
+	cloned.Cleaner.Rules = append([]SourceCleaning(nil), s.Cleaner.Rules...)
+	for i, rule := range s.Cleaner.Rules {
+		cloned.Cleaner.Rules[i].Assignments = append([]SourceAssignment(nil), rule.Assignments...)
+		cloned.Cleaner.Rules[i].Filter = append([]byte(nil), rule.Filter...)
+	}
 	cloned.FingerprintFields = append([]string(nil), s.FingerprintFields...)
+	cloned.Enrich = s.Enrich.clone()
 	cloned.Storage.Kafka.Brokers = append([]string(nil), s.Storage.Kafka.Brokers...)
 	cloned.Storage.Kafka.Security = s.Storage.Kafka.Security.Clone()
-	if s.SeverityMapping != nil {
+	if len(s.SeverityMapping) == 0 {
+		cloned.SeverityMapping = nil
+	}
+	if len(s.SeverityMapping) > 0 {
 		cloned.SeverityMapping = make(map[string]string, len(s.SeverityMapping))
 		for source, target := range s.SeverityMapping {
 			cloned.SeverityMapping[source] = target
@@ -124,6 +373,9 @@ func ValidateEventSources(sources []EventSource, severity SeverityConfig) error 
 			return fmt.Errorf("event_sources[%d].event_source_id duplicates event_sources[%d]: %q", index, previous, source.EventSourceID)
 		}
 		ids[source.EventSourceID] = index
+		if source.Storage.Type == StorageTypeInternalMerge {
+			continue
+		}
 		key := source.subscriptionKey()
 		if previous, exists := subscriptions[key]; exists {
 			return fmt.Errorf("event_sources[%d].storage.kafka duplicates event_sources[%d] subscription", index, previous)
@@ -134,6 +386,14 @@ func ValidateEventSources(sources []EventSource, severity SeverityConfig) error 
 }
 
 func (s EventSource) validate(severity SeverityConfig) error {
+	if s.ActiveAlertLimits != nil {
+		if err := s.ActiveAlertLimits.Validate(); err != nil {
+			return err
+		}
+	}
+	if err := s.Scheduling.Validate(); err != nil {
+		return err
+	}
 	if err := validateBoundedText("event_source_id", s.EventSourceID, 1, 32); err != nil {
 		return err
 	}
@@ -152,8 +412,29 @@ func (s EventSource) validate(severity SeverityConfig) error {
 			}
 		}
 	}
+	if s.Storage.Type == StorageTypeInternalMerge {
+		if s.EventSourceID != domain.BuiltinMergeEventSourceID {
+			return fmt.Errorf("internal merge source must use reserved ID")
+		}
+		if !reflect.DeepEqual(s.Cleaner, CleanerConfig{}) || !reflect.DeepEqual(s.Storage.Kafka, KafkaStorageConfig{}) || s.FingerprintMode != "" || s.FingerprintField != "" || len(s.FingerprintFields) > 0 || len(s.SeverityMapping) > 0 || s.DefaultSeverity != "" {
+			return fmt.Errorf("internal merge source cannot configure external cleaner, subscription or field mapping")
+		}
+		if s.Scheduling.Cleaner.Replicas.Limit(1) != 0 || len(s.Scheduling.Cleaner.Selector) > 0 {
+			return fmt.Errorf("internal merge source cannot schedule cleaner")
+		}
+		if err := ValidateHooks(s.Hooks); err != nil {
+			return err
+		}
+		return s.Enrich.validate()
+	}
+	if s.EventSourceID == domain.BuiltinMergeEventSourceID {
+		return fmt.Errorf("builtin merge source ID is reserved")
+	}
 	if s.Cleaner.Type != CleanerTypeStandard {
 		return fmt.Errorf("cleaner.type is not registered: %q", s.Cleaner.Type)
+	}
+	if err := s.Cleaner.ValidateCleaning(); err != nil {
+		return err
 	}
 	if err := s.validateFingerprint(); err != nil {
 		return err
@@ -168,6 +449,12 @@ func (s EventSource) validate(severity SeverityConfig) error {
 	}
 	if s.DefaultSeverity != "" && !severity.Has(s.DefaultSeverity) {
 		return fmt.Errorf("default_severity references unknown severity %q", s.DefaultSeverity)
+	}
+	if err := ValidateHooks(s.Hooks); err != nil {
+		return err
+	}
+	if err := s.Enrich.validate(); err != nil {
+		return err
 	}
 	if s.Storage.Type != StorageTypeKafka {
 		return fmt.Errorf("storage.type must be %q: %q", StorageTypeKafka, s.Storage.Type)
@@ -205,13 +492,55 @@ func (s EventSource) validateFingerprint() error {
 	}
 }
 
+// ValidateNormalization 只验证事件标准化字段，不要求消息消费、丰富或输出资源。
+// 调用方必须自行保证配置来源可信；该验证不构成正式 EventSource 发布准入。
+func (s EventSource) ValidateNormalization(severity SeverityConfig) error {
+	if s.ActiveAlertLimits != nil {
+		if err := s.ActiveAlertLimits.Validate(); err != nil {
+			return err
+		}
+	}
+	if err := domain.ValidateIdentityPart("event_source_id", s.EventSourceID, 32); err != nil {
+		return err
+	}
+	if s.EventSourceID == domain.BuiltinMergeEventSourceID {
+		return fmt.Errorf("builtin merge source has no external normalization")
+	}
+	if s.RelatedTenantID != "" {
+		if err := domain.ValidateIdentityPart("related_tenant_id", s.RelatedTenantID, 64); err != nil {
+			return err
+		}
+	}
+	if s.Cleaner.Type != CleanerTypeStandard {
+		return fmt.Errorf("cleaner.type is not registered")
+	}
+	if err := s.Cleaner.ValidateCleaning(); err != nil {
+		return err
+	}
+	if err := s.validateFingerprint(); err != nil {
+		return err
+	}
+	if len(s.SeverityMapping) > 256 {
+		return fmt.Errorf("severity mapping limit exceeded")
+	}
+	for from, to := range s.SeverityMapping {
+		if strings.TrimSpace(from) == "" || len(from) > 32 || !severity.Has(to) {
+			return fmt.Errorf("invalid severity mapping")
+		}
+	}
+	if s.DefaultSeverity != "" && !severity.Has(s.DefaultSeverity) {
+		return fmt.Errorf("unknown default severity")
+	}
+	return nil
+}
+
 func validateFingerprintPath(path string) error {
 	if strings.HasPrefix(path, "dimensions.") && len(path) > len("dimensions.") &&
 		!strings.Contains(strings.TrimPrefix(path, "dimensions."), ".") {
 		return nil
 	}
 	for _, allowed := range []string{
-		"source_alert_id", "condition_key", "subject_system", "subject_type", "subject_id",
+		"source_alert_id", "subject_system", "subject_type", "subject_id",
 	} {
 		if path == allowed {
 			return nil
@@ -237,7 +566,30 @@ func (s EventSource) MapSeverity(raw string, severity SeverityConfig) (string, e
 	return fallback, nil
 }
 
+// ValidateRuntimeSource 在动态等级模式只校验来源结构；已删除的引用留待 Lifecycle 拒绝，
+// 避免某个旧 mapping 阻止整个来源重启。新建/编辑来源仍使用完整引用校验。
+func ValidateRuntimeSource(s EventSource, severity SeverityConfig, dynamic bool) error {
+	if dynamic {
+		for _, target := range s.SeverityMapping {
+			if err := validateBoundedText("severity_mapping target", target, 1, 32); err != nil {
+				return err
+			}
+		}
+		if s.DefaultSeverity != "" {
+			if err := validateBoundedText("default_severity", s.DefaultSeverity, 1, 32); err != nil {
+				return err
+			}
+		}
+		s.SeverityMapping = nil
+		s.DefaultSeverity = ""
+	}
+	return ValidateEventSources([]EventSource{s}, severity)
+}
+
 func (c KafkaStorageConfig) validate() error {
+	if c.FetchMaxWaitMilliseconds < 10 || c.FetchMaxWaitMilliseconds > 5000 {
+		return fmt.Errorf("fetch_max_wait_milliseconds must be between 10 and 5000")
+	}
 	if len(c.Brokers) == 0 {
 		return fmt.Errorf("brokers must contain at least one broker")
 	}
@@ -283,3 +635,6 @@ func (s EventSource) subscriptionKey() subscriptionKey {
 	sort.Strings(brokers)
 	return subscriptionKey{strings.Join(brokers, "\x00"), s.Storage.Kafka.Topic, s.Storage.Kafka.ConsumerGroup}
 }
+
+// Validate 校验丰富配置并静态编译所有表达式，不访问外部服务。
+func (c EnrichConfig) Validate() error { return c.validate() }

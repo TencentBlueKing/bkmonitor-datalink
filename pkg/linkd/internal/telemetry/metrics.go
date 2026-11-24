@@ -17,6 +17,22 @@ import (
 )
 
 type instruments struct {
+	activeAlertCache        metric.Int64Counter
+	mergeBatchPhase         metric.Float64Histogram
+	closePhase              metric.Float64Histogram
+	mergePoolWaits          metric.Int64Gauge
+	mergePoolWaitDuration   metric.Float64Gauge
+	policyMatchDuration     metric.Float64Histogram
+	policyCheckDelay        metric.Float64Histogram
+	policySamples           metric.Int64Counter
+	policyStateInit         metric.Int64Counter
+	kac                     *kacInstruments
+	shieldHints             metric.Int64Counter
+	shieldDecisions         metric.Int64Counter
+	mergeDecisions          metric.Int64Counter
+	suppressionDecisions    metric.Int64Counter
+	writeBatch              *WriteBatchObserver
+	dispatch                *dispatchInstruments
 	pipelineAttempts        metric.Int64Counter
 	pipelineAttemptDuration metric.Float64Histogram
 	pipelineInflight        metric.Int64UpDownCounter
@@ -24,6 +40,7 @@ type instruments struct {
 	pipelineRetries         metric.Int64Counter
 
 	messagingHandlerOutcomes metric.Int64Counter
+	messagingHandlerDuration metric.Float64Histogram
 	messagingReceived        metric.Int64Counter
 	messagingReceivedBytes   metric.Int64Counter
 	messagingRedelivered     metric.Int64Counter
@@ -52,23 +69,40 @@ type instruments struct {
 	cleanerBackpressurePaused      metric.Int64Gauge
 	cleanerBackpressureTransitions metric.Int64Counter
 
-	lifecycleResults    metric.Int64Counter
-	lifecycleMailboxOps metric.Int64Counter
-	lifecycleDrained    metric.Int64Histogram
-	lifecycleLeaseOps   metric.Int64Counter
-	finalHookOperations metric.Int64Counter
-	finalHookDuration   metric.Float64Histogram
+	lifecycleResults                metric.Int64Counter
+	lifecyclePhaseDuration          metric.Float64Histogram
+	lifecyclePhaseExecutionDuration metric.Float64Histogram
+	lifecyclePhaseWaitDuration      metric.Float64Histogram
+	lifecycleStepDuration           metric.Float64Histogram
+	lifecycleMailboxOps             metric.Int64Counter
+	lifecycleDrained                metric.Int64Histogram
+	lifecycleLeaseOps               metric.Int64Counter
+	lifecycleRecentAlertCacheOps    metric.Int64Counter
+	finalHookOperations             metric.Int64Counter
+	finalHookDuration               metric.Float64Histogram
 
-	controlPlaneTaskActive      metric.Int64Gauge
-	controlPlaneTaskRuns        metric.Int64Counter
-	controlPlaneTaskRunDuration metric.Float64Histogram
-	controlPlaneTaskLastSuccess metric.Int64Gauge
-	elasticsearchScannedAlerts  metric.Int64Counter
-	elasticsearchArchivedAlerts metric.Int64Counter
-	elasticsearchFailedAlerts   metric.Int64Counter
-	elasticsearchScanLast       metric.Int64Gauge
-	elasticsearchArchiveLast    metric.Int64Gauge
-	elasticsearchFailureLast    metric.Int64Gauge
+	enrichAttempts             metric.Int64Counter
+	enrichAttemptDuration      metric.Float64Histogram
+	enrichInflight             metric.Int64UpDownCounter
+	enrichPayloadSize          metric.Int64Histogram
+	enrichProcessorAttempts    metric.Int64Counter
+	enrichProcessorDuration    metric.Float64Histogram
+	enrichProcessorDiagnostics metric.Int64Counter
+	enrichDatasourceOperations metric.Int64Counter
+	enrichDatasourceDuration   metric.Float64Histogram
+
+	controlPlaneTaskActive        metric.Int64Gauge
+	controlPlaneTaskRuns          metric.Int64Counter
+	controlPlaneTaskRunDuration   metric.Float64Histogram
+	controlPlaneTaskLastSuccess   metric.Int64Gauge
+	elasticsearchScannedAlerts    metric.Int64Counter
+	elasticsearchArchivedAlerts   metric.Int64Counter
+	elasticsearchFailedAlerts     metric.Int64Counter
+	elasticsearchConflictedAlerts metric.Int64Counter
+	elasticsearchScanLast         metric.Int64Gauge
+	elasticsearchArchiveLast      metric.Int64Gauge
+	elasticsearchFailureLast      metric.Int64Gauge
+	elasticsearchConflictLast     metric.Int64Gauge
 
 	redisStreamExists               metric.Int64Gauge
 	redisStreamExpectedGroupPresent metric.Int64Gauge
@@ -97,42 +131,70 @@ type instruments struct {
 	storeCASConflicts      metric.Int64Counter
 }
 
-func newInstruments(meter metric.Meter) (*instruments, error) {
-	if meter == nil {
+func newInstruments(raw metric.Meter) (*instruments, error) {
+	return newRegisteredInstruments(&instrumentRegistry{meter: raw})
+}
+
+func newRegisteredInstruments(meter *instrumentRegistry) (*instruments, error) {
+	if meter == nil || meter.meter == nil {
 		return nil, fmt.Errorf("create telemetry instruments: meter must not be nil")
 	}
 	result := &instruments{}
 	var err error
+	if result.lifecyclePhaseDuration, err = meter.Float64Histogram(
+		"linkd.lifecycle.event.phase.duration", describeMetric("Event 环节独占耗时", "lifecycle", "latency", "linkd.event_source_id", "linkd.phase", "linkd.outcome"),
+		metric.WithUnit("s"), metric.WithDescription("单次 ProcessEvent 的独占分段耗时；每次尝试为所有环节记录样本，未执行的环节为零"),
+	); err != nil {
+		return nil, err
+	}
+	if result.lifecyclePhaseExecutionDuration, err = meter.Float64Histogram(
+		"linkd.lifecycle.event.phase.execution_duration", describeMetric("Event 环节执行耗时", "lifecycle", "latency", "linkd.event_source_id", "linkd.phase", "linkd.outcome"),
+		metric.WithUnit("s"), metric.WithDescription("扣除逻辑调用的主动合批与存储排队；包含实际 I/O 和编解码，不等同于 CPU 时间"),
+	); err != nil {
+		return nil, err
+	}
+	if result.lifecyclePhaseWaitDuration, err = meter.Float64Histogram(
+		"linkd.lifecycle.event.phase.wait_duration", describeMetric("Event 环节存储等待", "lifecycle", "latency", "linkd.event_source_id", "linkd.phase", "linkd.outcome", "linkd.wait_kind"),
+		metric.WithUnit("s"), metric.WithDescription("每次 Event 尝试按环节记录 batch_wait 和 storage_queue，未等待也记录零样本"),
+	); err != nil {
+		return nil, err
+	}
+	if result.lifecycleStepDuration, err = meter.Float64Histogram(
+		"linkd.lifecycle.event.phase.step.duration", describeMetric("Event 子步骤耗时", "lifecycle", "latency", "linkd.event_source_id", "linkd.phase", "linkd.step", "linkd.outcome", "linkd.wait_kind"),
+		metric.WithUnit("s"), metric.WithDescription("同一次 Event 各子步骤的独占 execution、batch_wait、storage_queue，每次尝试均记录零或实际样本"),
+	); err != nil {
+		return nil, err
+	}
 	if result.pipelineAttempts, err = meter.Int64Counter(
-		"linkd.pipeline.attempts",
+		"linkd.pipeline.attempts", describeMetric("阶段处理尝试", "pipeline", "throughput", "linkd.stage", "messaging.system", "linkd.event_source_id", "linkd.outcome", "linkd.trigger", "linkd.reason_code"),
 		metric.WithUnit("{attempt}"),
 		metric.WithDescription("阶段处理尝试次数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.pipelineAttemptDuration, err = meter.Float64Histogram(
-		"linkd.pipeline.attempt.duration",
+		"linkd.pipeline.attempt.duration", describeMetric("阶段处理耗时", "pipeline", "latency", "linkd.stage", "messaging.system", "linkd.event_source_id", "linkd.outcome", "linkd.trigger", "linkd.reason_code"),
 		metric.WithUnit("s"),
 		metric.WithDescription("单条阶段处理尝试耗时"),
 	); err != nil {
 		return nil, err
 	}
 	if result.pipelineInflight, err = meter.Int64UpDownCounter(
-		"linkd.pipeline.inflight",
+		"linkd.pipeline.inflight", describeMetric("阶段在途处理量", "pipeline", "capacity", "linkd.stage", "messaging.system", "linkd.event_source_id"),
 		metric.WithUnit("{event}"),
 		metric.WithDescription("正在执行的阶段处理数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.pipelineQueueDelay, err = meter.Float64Histogram(
-		"linkd.pipeline.queue.delay",
+		"linkd.pipeline.queue.delay", describeMetric("处理队列等待时间", "pipeline", "latency", "linkd.stage", "messaging.system", "linkd.event_source_id", "linkd.queue.role", "linkd.trigger"),
 		metric.WithUnit("s"),
 		metric.WithDescription("对象从可消费到开始处理的等待时间"),
 	); err != nil {
 		return nil, err
 	}
 	if result.pipelineRetries, err = meter.Int64Counter(
-		"linkd.pipeline.retries",
+		"linkd.pipeline.retries", describeMetric("阶段重试次数", "pipeline", "reliability", "linkd.stage", "messaging.system", "linkd.event_source_id", "linkd.reason_code"),
 		metric.WithUnit("{retry}"),
 		metric.WithDescription("明确安排的阶段重试次数"),
 	); err != nil {
@@ -140,438 +202,594 @@ func newInstruments(meter metric.Meter) (*instruments, error) {
 	}
 
 	if result.messagingHandlerOutcomes, err = meter.Int64Counter(
-		"linkd.messaging.handler.outcomes",
+		"linkd.messaging.handler.outcomes", describeMetric("消息处理结果", "messaging", "throughput", "linkd.stage", "messaging.system", "linkd.event_source_id", "linkd.outcome"),
 		metric.WithUnit("{message}"),
 		metric.WithDescription("消息 Handler 结构化结果"),
 	); err != nil {
 		return nil, err
 	}
+	if result.messagingHandlerDuration, err = meter.Float64Histogram(
+		"linkd.messaging.handler.duration", describeMetric("消息处理耗时", "messaging", "latency", "linkd.stage", "messaging.system", "linkd.event_source_id", "linkd.outcome", "linkd.trigger"), metric.WithUnit("s"),
+		metric.WithDescription("单条消息 Handler 耗时；Lifecycle 的处理单元是 Signal，不是 Event"),
+		metric.WithExplicitBucketBoundaries(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60),
+	); err != nil {
+		return nil, err
+	}
 	if result.messagingReceived, err = meter.Int64Counter(
-		"linkd.messaging.received.messages", metric.WithUnit("{message}"),
+		"linkd.messaging.received.messages", describeMetric("接管消息数", "messaging", "throughput", "linkd.stage", "messaging.system", "linkd.event_source_id", "messaging.kafka.partition"), metric.WithUnit("{message}"),
 		metric.WithDescription("已由运行时接管的消息数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingReceivedBytes, err = meter.Int64Counter(
-		"linkd.messaging.received.bytes", metric.WithUnit("By"),
+		"linkd.messaging.received.bytes", describeMetric("接管消息字节数", "messaging", "throughput", "linkd.stage", "messaging.system", "linkd.event_source_id", "messaging.kafka.partition"), metric.WithUnit("By"),
 		metric.WithDescription("已由运行时接管的消息字节数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingRedelivered, err = meter.Int64Counter(
-		"linkd.messaging.redelivered.messages", metric.WithUnit("{message}"),
+		"linkd.messaging.redelivered.messages", describeMetric("重投消息数", "messaging", "reliability", "linkd.stage", "messaging.system", "linkd.event_source_id", "messaging.kafka.partition"), metric.WithUnit("{message}"),
 		metric.WithDescription("Broker 标记为重投或重新接管的消息数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingInflight, err = meter.Int64Gauge(
-		"linkd.messaging.inflight",
+		"linkd.messaging.inflight", describeMetric("在途消息数", "messaging", "capacity", "linkd.stage", "messaging.system", "linkd.event_source_id"),
 		metric.WithUnit("{message}"),
 		metric.WithDescription("已接管但尚未确认终态的消息数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingInflightSize, err = meter.Int64Gauge(
-		"linkd.messaging.inflight.size",
+		"linkd.messaging.inflight.size", describeMetric("在途消息字节数", "messaging", "capacity", "linkd.stage", "messaging.system", "linkd.event_source_id"),
 		metric.WithUnit("By"),
 		metric.WithDescription("已接管但尚未确认终态的消息字节数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingRetryItems, err = meter.Int64Gauge(
-		"linkd.messaging.retry.items",
+		"linkd.messaging.retry.items", describeMetric("待重试消息数", "messaging", "capacity", "linkd.stage", "messaging.system", "linkd.event_source_id"),
 		metric.WithUnit("{message}"),
 		metric.WithDescription("进程内等待重试的消息数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingRetryOldestAge, err = meter.Float64Gauge(
-		"linkd.messaging.retry.oldest.age",
+		"linkd.messaging.retry.oldest.age", describeMetric("最老重试项年龄", "messaging", "latency", "linkd.stage", "messaging.system", "linkd.event_source_id"),
 		metric.WithUnit("s"),
 		metric.WithDescription("进程内最老重试项年龄"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingSettlements, err = meter.Int64Counter(
-		"linkd.messaging.settlements",
+		"linkd.messaging.settlements", describeMetric("消息确认操作数", "messaging", "throughput", "linkd.stage", "messaging.system", "linkd.event_source_id", "messaging.kafka.partition", "linkd.settlement.mode", "linkd.outcome"),
 		metric.WithUnit("{operation}"),
 		metric.WithDescription("消息确认操作次数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingSettledMessages, err = meter.Int64Counter(
-		"linkd.messaging.settled.messages", metric.WithUnit("{message}"),
+		"linkd.messaging.settled.messages", describeMetric("消息确认尝试数量", "messaging", "throughput", "linkd.stage", "messaging.system", "linkd.event_source_id", "messaging.kafka.partition", "linkd.settlement.mode", "linkd.outcome"), metric.WithUnit("{message}"),
 		metric.WithDescription("消息确认尝试涉及的实际消息数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingSettleDuration, err = meter.Float64Histogram(
-		"linkd.messaging.settlement.duration", metric.WithUnit("s"),
+		"linkd.messaging.settlement.duration", describeMetric("消息确认耗时", "messaging", "latency", "linkd.stage", "messaging.system", "linkd.event_source_id", "linkd.settlement.mode", "linkd.outcome"), metric.WithUnit("s"),
 		metric.WithDescription("消息确认操作耗时"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingSettlementGap, err = meter.Int64Gauge(
-		"linkd.messaging.settlement.gap",
+		"linkd.messaging.settlement.gap", describeMetric("确认缺口消息数", "messaging", "capacity", "linkd.stage", "messaging.system", "linkd.event_source_id"),
 		metric.WithUnit("{message}"),
 		metric.WithDescription("已完成但被更早消息阻塞的数量"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingGapOldestAge, err = meter.Float64Gauge(
-		"linkd.messaging.settlement.gap.oldest.age",
+		"linkd.messaging.settlement.gap.oldest.age", describeMetric("最老确认缺口年龄", "messaging", "latency", "linkd.stage", "messaging.system", "linkd.event_source_id"),
 		metric.WithUnit("s"),
 		metric.WithDescription("最老确认缺口年龄"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingFlowTransitions, err = meter.Int64Counter(
-		"linkd.messaging.flow.transitions",
+		"linkd.messaging.flow.transitions", describeMetric("消息流状态转换", "messaging", "state", "linkd.stage", "messaging.system", "linkd.event_source_id", "linkd.action", "linkd.reason_code"),
 		metric.WithUnit("{transition}"),
 		metric.WithDescription("消息流暂停和恢复转换次数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingShutdown, err = meter.Float64Histogram(
-		"linkd.messaging.shutdown.duration",
+		"linkd.messaging.shutdown.duration", describeMetric("消费运行时停止耗时", "messaging", "latency", "linkd.stage", "messaging.system", "linkd.event_source_id", "linkd.outcome"),
 		metric.WithUnit("s"),
 		metric.WithDescription("消息运行时停止耗时"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingRemaining, err = meter.Int64Histogram(
-		"linkd.messaging.shutdown.remaining",
+		"linkd.messaging.shutdown.remaining", describeMetric("停止时未确认消息数", "messaging", "reliability", "linkd.stage", "messaging.system", "linkd.event_source_id"),
 		metric.WithUnit("{message}"),
 		metric.WithDescription("停止时交回 Broker 的未确认消息数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingLaneInflight, err = meter.Int64Gauge(
-		"linkd.messaging.lane.inflight", metric.WithUnit("{message}"),
+		"linkd.messaging.lane.inflight", describeMetric("分区在途消息数", "messaging", "capacity", "linkd.stage", "messaging.system", "linkd.event_source_id", "messaging.kafka.partition"), metric.WithUnit("{message}"),
 		metric.WithDescription("活跃 lane 当前在途消息数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingLaneBytes, err = meter.Int64Gauge(
-		"linkd.messaging.lane.inflight.bytes", metric.WithUnit("By"),
+		"linkd.messaging.lane.inflight.bytes", describeMetric("分区在途消息字节数", "messaging", "capacity", "linkd.stage", "messaging.system", "linkd.event_source_id", "messaging.kafka.partition"), metric.WithUnit("By"),
 		metric.WithDescription("活跃 lane 当前在途消息字节数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingLanePaused, err = meter.Int64Gauge(
-		"linkd.messaging.lane.paused", metric.WithUnit("1"),
+		"linkd.messaging.lane.paused", describeMetric("分区暂停状态", "messaging", "state", "linkd.stage", "messaging.system", "linkd.event_source_id", "messaging.kafka.partition"), metric.WithUnit("1"),
 		metric.WithDescription("活跃 lane 是否暂停"),
 	); err != nil {
 		return nil, err
 	}
 	if result.messagingLaneOwned, err = meter.Int64Gauge(
-		"linkd.messaging.lane.owned", metric.WithUnit("1"),
+		"linkd.messaging.lane.owned", describeMetric("分区持有状态", "messaging", "state", "linkd.stage", "messaging.system", "linkd.event_source_id", "messaging.kafka.partition"), metric.WithUnit("1"),
 		metric.WithDescription("当前进程是否拥有该 lane"),
 	); err != nil {
 		return nil, err
 	}
 
+	if result.activeAlertCache, err = meter.Int64Counter("linkd.active_alert_cache.operations", describeMetric("活跃缓存与限流结果", "lifecycle", "throughput", "linkd.operation", "linkd.outcome"), metric.WithUnit("{operation}"), metric.WithDescription("活跃缓存更新、修复、软限流及放行降级次数")); err != nil {
+		return nil, err
+	}
 	if result.cleanerStepItems, err = meter.Int64Counter(
-		"linkd.cleaner.step.items", metric.WithUnit("{item}"),
+		"linkd.cleaner.step.items", describeMetric("清洗步骤处理结果", "cleaner", "throughput", "linkd.stage", "messaging.system", "linkd.event_source_id", "linkd.step", "linkd.outcome"), metric.WithUnit("{item}"),
 		metric.WithDescription("Cleaner 各可靠性步骤处理结果"),
 	); err != nil {
 		return nil, err
 	}
 	if result.cleanerStepDuration, err = meter.Float64Histogram(
-		"linkd.cleaner.step.duration", metric.WithUnit("s"),
+		"linkd.cleaner.step.duration", describeMetric("清洗步骤批次耗时", "cleaner", "latency", "linkd.stage", "messaging.system", "linkd.event_source_id", "linkd.step", "linkd.outcome"), metric.WithUnit("s"),
 		metric.WithDescription("Cleaner 各步骤批次耗时"),
 	); err != nil {
 		return nil, err
 	}
 	if result.cleanerFlowActive, err = meter.Int64Gauge(
-		"linkd.cleaner.flow.active", metric.WithUnit("1"),
+		"linkd.cleaner.flow.active", describeMetric("清洗流活跃状态", "cleaner", "state", "linkd.stage", "messaging.system", "linkd.event_source_id"), metric.WithUnit("1"),
 		metric.WithDescription("当前进程中 EventSource Cleaner Flow 是否活跃"),
 	); err != nil {
 		return nil, err
 	}
 	if result.cleanerBackpressureChecks, err = meter.Int64Counter(
-		"linkd.cleaner.backpressure.checks", metric.WithUnit("{check}"),
+		"linkd.cleaner.backpressure.checks", describeMetric("背压采样结果", "cleaner", "reliability", "linkd.outcome"), metric.WithUnit("{check}"),
 		metric.WithDescription("Cleaner Signal 积压背压的 Redis 采样结果"),
 	); err != nil {
 		return nil, err
 	}
 	if result.cleanerBackpressureUnresolved, err = meter.Int64Gauge(
-		"linkd.cleaner.backpressure.unresolved", metric.WithUnit("{signal}"),
+		"linkd.cleaner.backpressure.unresolved", describeMetric("生命周期信号积压", "cleaner", "capacity"), metric.WithUnit("{signal}"),
 		metric.WithDescription("目标 Lifecycle Consumer Group 最近采样的 lag 加 pending；-1 表示未知"),
 	); err != nil {
 		return nil, err
 	}
 	if result.cleanerBackpressurePaused, err = meter.Int64Gauge(
-		"linkd.cleaner.backpressure.paused", metric.WithUnit("1"),
+		"linkd.cleaner.backpressure.paused", describeMetric("背压暂停状态", "cleaner", "state"), metric.WithUnit("1"),
 		metric.WithDescription("Cleaner 是否因 Signal 近似积压而暂停发起新 Receive"),
 	); err != nil {
 		return nil, err
 	}
 	if result.cleanerBackpressureTransitions, err = meter.Int64Counter(
-		"linkd.cleaner.backpressure.transitions", metric.WithUnit("{transition}"),
+		"linkd.cleaner.backpressure.transitions", describeMetric("背压状态转换", "cleaner", "state", "linkd.action"), metric.WithUnit("{transition}"),
 		metric.WithDescription("Cleaner Signal 背压暂停和恢复转换次数"),
 	); err != nil {
 		return nil, err
 	}
 
 	if result.lifecycleResults, err = meter.Int64Counter(
-		"linkd.lifecycle.result.items", metric.WithUnit("{event}"),
+		"linkd.lifecycle.result.items", describeMetric("事件裁决结果", "lifecycle", "throughput", "linkd.event_source_id", "linkd.event.action", "linkd.event.state", "linkd.outcome", "linkd.reason_code"), metric.WithUnit("{event}"),
 		metric.WithDescription("Lifecycle Event 裁决结果"),
 	); err != nil {
 		return nil, err
 	}
 	if result.lifecycleMailboxOps, err = meter.Int64Counter(
-		"linkd.lifecycle.mailbox.operations", metric.WithUnit("{operation}"),
+		"linkd.lifecycle.mailbox.operations", describeMetric("信箱操作结果", "lifecycle", "throughput", "linkd.operation", "linkd.outcome", "linkd.event_source_id"), metric.WithUnit("{operation}"),
 		metric.WithDescription("Lifecycle Mailbox 操作结果"),
 	); err != nil {
 		return nil, err
 	}
 	if result.lifecycleDrained, err = meter.Int64Histogram(
-		"linkd.lifecycle.mailbox.drained.events", metric.WithUnit("{event}"),
+		"linkd.lifecycle.mailbox.drained.events", describeMetric("单信号排空事件数", "lifecycle", "throughput", "linkd.outcome", "linkd.event_source_id"), metric.WithUnit("{event}"),
 		metric.WithDescription("单个 Signal 排空的 Event 数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.lifecycleLeaseOps, err = meter.Int64Counter(
-		"linkd.lifecycle.lease.operations", metric.WithUnit("{operation}"),
+		"linkd.lifecycle.lease.operations", describeMetric("租约操作结果", "lifecycle", "reliability", "linkd.operation", "linkd.outcome"), metric.WithUnit("{operation}"),
 		metric.WithDescription("Lifecycle lease 操作结果"),
 	); err != nil {
 		return nil, err
 	}
+	if result.lifecycleRecentAlertCacheOps, err = meter.Int64Counter(
+		"linkd.lifecycle.recent_alert_cache.operations", describeMetric("近期告警缓存操作结果", "lifecycle", "reliability", "linkd.operation", "linkd.outcome"), metric.WithUnit("{operation}"),
+		metric.WithDescription("Lifecycle Recent Alert 缓存操作结果"),
+	); err != nil {
+		return nil, err
+	}
 	if result.finalHookOperations, err = meter.Int64Counter(
-		"linkd.final_hook.operations", metric.WithUnit("{operation}"),
+		"linkd.final_hook.operations", describeMetric("输出钩子调用结果", "final_hook", "throughput", "linkd.event_source_id", "linkd.hook.name", "messaging.system", "linkd.outcome"), metric.WithUnit("{operation}"),
 		metric.WithDescription("Lifecycle FinalHook 调用结果"),
 	); err != nil {
 		return nil, err
 	}
+	if result.policyMatchDuration, err = meter.Float64Histogram("linkd.policy.match.duration", describeMetric("策略匹配耗时", "policy", "latency", "linkd.policy.kind", "linkd.outcome"), metric.WithUnit("s"), metric.WithDescription("一次条件与目标求值墙钟耗时，包含只读资源查询；不含Redis执行和统计采样"), metric.WithExplicitBucketBoundaries(.001, .01, .05, .1, .5, 1, 3, 10)); err != nil {
+		return nil, err
+	}
+	if result.policyCheckDelay, err = meter.Float64Histogram("linkd.policy.check.delay", describeMetric("策略到期检查延迟", "policy", "latency", "linkd.policy.kind"), metric.WithUnit("s"), metric.WithDescription("合并窗口截止或屏蔽计划检查时间到实际检查的延迟，重试重复观察，不代表解除完成"), metric.WithExplicitBucketBoundaries(0, 1, 5, 10, 30, 60, 300, 3600)); err != nil {
+		return nil, err
+	}
+	if result.policySamples, err = meter.Int64Counter("linkd.policy.statistics.samples", describeMetric("逐策略统计采样结果", "policy", "reliability", "linkd.outcome"), metric.WithUnit("{sample}"), metric.WithDescription("Redis逐策略观察采样的recorded、failed、dropped结果")); err != nil {
+		return nil, err
+	}
+	if result.policyStateInit, err = meter.Int64Counter("linkd.policy.state.initializations", describeMetric("策略缓存状态初始化", "policy", "reliability", "linkd.scheme", "linkd.outcome"), metric.WithUnit("{state}"), metric.WithDescription("防抖计数、聚合和合并窗口的初次创建或可确认的残缺修复；完整丢失无法与首次创建区分")); err != nil {
+		return nil, err
+	}
+
+	if result.mergeDecisions, err = meter.Int64Counter("linkd.policy.merge.decisions", describeMetric("合并策略入窗结果", "policy", "throughput", "linkd.outcome", "linkd.reason"), metric.WithUnit("{operation}"), metric.WithDescription("合并匹配、窗口加入与真实成员确认；按调用统计含重试")); err != nil {
+		return nil, err
+	}
+	if result.shieldHints, err = meter.Int64Counter("linkd.policy.shield.hints", describeMetric("屏蔽事件提示观察", "policy", "reliability", "linkd.outcome"), metric.WithUnit("{operation}"), metric.WithDescription("尽力而为的提示发布、订阅、排队与分页检查结果；不是唯一事件或解除数")); err != nil {
+		return nil, err
+	}
+	if result.shieldDecisions, err = meter.Int64Counter("linkd.policy.shield.decisions", describeMetric("屏蔽策略裁决结果", "policy", "throughput", "linkd.outcome", "linkd.reason"), metric.WithUnit("{operation}"), metric.WithDescription("屏蔽新匹配与已有关系重查结果；按调用统计，包含重试")); err != nil {
+		return nil, err
+	}
+	if result.suppressionDecisions, err = meter.Int64Counter("linkd.policy.suppression.decisions", describeMetric("抑制策略裁决结果", "policy", "throughput", "linkd.scheme", "linkd.outcome", "linkd.reason"), metric.WithUnit("{operation}"), metric.WithDescription("抑制策略求值、计数及 owner 清理结果；按调用计数，包含重试")); err != nil {
+		return nil, err
+	}
+	if result.enrichAttempts, err = meter.Int64Counter(
+		"linkd.enrich.attempts", describeMetric("事件丰富尝试结果", "enrich", "throughput", "linkd.event_source_id", "linkd.status", "linkd.outcome", "linkd.chain_kind"), metric.WithUnit("{attempt}"),
+		metric.WithDescription("Event 同步丰富尝试结果"),
+	); err != nil {
+		return nil, err
+	}
+	if result.enrichAttemptDuration, err = meter.Float64Histogram(
+		"linkd.enrich.attempt.duration", describeMetric("事件丰富总耗时", "enrich", "latency", "linkd.event_source_id", "linkd.status", "linkd.outcome", "linkd.chain_kind"), metric.WithUnit("s"),
+		metric.WithDescription("Event 同步丰富总耗时"),
+	); err != nil {
+		return nil, err
+	}
+	if result.enrichInflight, err = meter.Int64UpDownCounter(
+		"linkd.enrich.inflight", describeMetric("正在执行的丰富调用", "enrich", "capacity", "linkd.event_source_id"), metric.WithUnit("{attempt}"),
+		metric.WithDescription("正在执行的同步丰富调用数"),
+	); err != nil {
+		return nil, err
+	}
+	if result.enrichPayloadSize, err = meter.Int64Histogram(
+		"linkd.enrich.payload.size", describeMetric("丰富结果载荷大小", "enrich", "capacity", "linkd.event_source_id", "linkd.status"), metric.WithUnit("By"),
+		metric.WithDescription("最终 Event enrich payload 字节数"),
+	); err != nil {
+		return nil, err
+	}
+	if result.enrichProcessorAttempts, err = meter.Int64Counter(
+		"linkd.enrich.processor.attempts", describeMetric("丰富处理器执行结果", "enrich", "throughput", "linkd.processor", "linkd.status", "linkd.outcome"), metric.WithUnit("{attempt}"),
+		metric.WithDescription("Enrich Processor 执行结果"),
+	); err != nil {
+		return nil, err
+	}
+	if result.enrichProcessorDuration, err = meter.Float64Histogram(
+		"linkd.enrich.processor.duration", describeMetric("丰富处理器执行耗时", "enrich", "latency", "linkd.processor", "linkd.status", "linkd.outcome"), metric.WithUnit("s"),
+		metric.WithDescription("Enrich Processor 执行耗时"),
+	); err != nil {
+		return nil, err
+	}
+	if result.enrichProcessorDiagnostics, err = meter.Int64Counter(
+		"linkd.enrich.processor.diagnostics", describeMetric("丰富处理器诊断结果", "enrich", "reliability", "linkd.processor", "linkd.diagnostic_code", "linkd.dependency"), metric.WithUnit("{diagnostic}"),
+		metric.WithDescription("Enrich Processor 诊断结果"),
+	); err != nil {
+		return nil, err
+	}
+	if result.enrichDatasourceOperations, err = meter.Int64Counter(
+		"linkd.enrich.datasource.operations", describeMetric("丰富数据源调用结果", "enrich", "throughput", "linkd.datasource", "linkd.operation", "linkd.outcome"), metric.WithUnit("{operation}"),
+		metric.WithDescription("Enrich DataSource 调用结果"),
+	); err != nil {
+		return nil, err
+	}
+	if result.enrichDatasourceDuration, err = meter.Float64Histogram(
+		"linkd.enrich.datasource.duration", describeMetric("丰富数据源调用耗时", "enrich", "latency", "linkd.datasource", "linkd.operation", "linkd.outcome"), metric.WithUnit("s"),
+		metric.WithDescription("Enrich DataSource 调用耗时"),
+	); err != nil {
+		return nil, err
+	}
+
 	if result.finalHookDuration, err = meter.Float64Histogram(
-		"linkd.final_hook.duration", metric.WithUnit("s"),
+		"linkd.final_hook.duration", describeMetric("输出钩子调用耗时", "final_hook", "latency", "linkd.event_source_id", "linkd.hook.name", "messaging.system", "linkd.outcome"), metric.WithUnit("s"),
 		metric.WithDescription("Lifecycle FinalHook 调用耗时"),
 	); err != nil {
 		return nil, err
 	}
 
 	if result.controlPlaneTaskActive, err = meter.Int64Gauge(
-		"linkd.control_plane.task.active", metric.WithUnit("1"),
+		"linkd.control_plane.task.active", describeMetric("管理任务活跃状态", "control_plane", "state", "linkd.task"), metric.WithUnit("1"),
 		metric.WithDescription("当前进程是否正在运行指定控制面管理任务"),
 	); err != nil {
 		return nil, err
 	}
 	if result.controlPlaneTaskRuns, err = meter.Int64Counter(
-		"linkd.control_plane.task.runs", metric.WithUnit("{run}"),
+		"linkd.control_plane.task.runs", describeMetric("管理任务执行结果", "control_plane", "throughput", "linkd.task", "linkd.outcome"), metric.WithUnit("{run}"),
 		metric.WithDescription("控制面管理任务单轮执行结果"),
 	); err != nil {
 		return nil, err
 	}
 	if result.controlPlaneTaskRunDuration, err = meter.Float64Histogram(
-		"linkd.control_plane.task.run.duration", metric.WithUnit("s"),
+		"linkd.control_plane.task.run.duration", describeMetric("管理任务执行耗时", "control_plane", "latency", "linkd.task", "linkd.outcome"), metric.WithUnit("s"),
 		metric.WithDescription("控制面管理任务单轮执行耗时"),
 	); err != nil {
 		return nil, err
 	}
 	if result.controlPlaneTaskLastSuccess, err = meter.Int64Gauge(
-		"linkd.control_plane.task.last_success", metric.WithUnit("s"),
+		"linkd.control_plane.task.last_success", describeMetric("管理任务最近成功时间", "control_plane", "state", "linkd.task"), metric.WithUnit("s"),
 		metric.WithDescription("控制面管理任务最近成功完成时间的 Unix 秒"),
 	); err != nil {
 		return nil, err
 	}
 	if result.elasticsearchArchivedAlerts, err = meter.Int64Counter(
-		"linkd.elasticsearch_alert_archiver.archived_alerts", metric.WithUnit("{alert}"),
+		"linkd.elasticsearch_alert_archiver.archived_alerts", describeMetric("已归档告警数", "archiver", "throughput"), metric.WithUnit("{alert}"),
 		metric.WithDescription("Elasticsearch Alert Archiver 已完成归档的 Alert 数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.elasticsearchScannedAlerts, err = meter.Int64Counter(
-		"linkd.elasticsearch_alert_archiver.scanned_alerts", metric.WithUnit("{alert}"),
+		"linkd.elasticsearch_alert_archiver.scanned_alerts", describeMetric("已扫描终态告警数", "archiver", "throughput"), metric.WithUnit("{alert}"),
 		metric.WithDescription("Elasticsearch Alert Archiver 已扫描的终态 Alert 数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.elasticsearchFailedAlerts, err = meter.Int64Counter(
-		"linkd.elasticsearch_alert_archiver.failed_alerts", metric.WithUnit("{alert}"),
-		metric.WithDescription("Elasticsearch Alert Archiver 未完成归档的 Alert 数"),
+		"linkd.elasticsearch_alert_archiver.failed_alerts", describeMetric("归档失败告警数", "archiver", "reliability"), metric.WithUnit("{alert}"),
+		metric.WithDescription("Elasticsearch Alert Archiver 真实归档失败次数，不含并发更新冲突"),
 	); err != nil {
 		return nil, err
 	}
 	if result.elasticsearchScanLast, err = meter.Int64Gauge(
-		"linkd.elasticsearch_alert_archiver.last_batch_scanned", metric.WithUnit("{alert}"),
+		"linkd.elasticsearch_alert_archiver.last_batch_scanned", describeMetric("最近一批扫描告警数", "archiver", "throughput"), metric.WithUnit("{alert}"),
 		metric.WithDescription("Elasticsearch Alert Archiver 最近一批扫描的 Alert 数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.elasticsearchArchiveLast, err = meter.Int64Gauge(
-		"linkd.elasticsearch_alert_archiver.last_batch_items", metric.WithUnit("{alert}"),
+		"linkd.elasticsearch_alert_archiver.last_batch_items", describeMetric("最近一批归档告警数", "archiver", "throughput"), metric.WithUnit("{alert}"),
 		metric.WithDescription("Elasticsearch Alert Archiver 最近一轮已归档 Alert 数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.elasticsearchFailureLast, err = meter.Int64Gauge(
-		"linkd.elasticsearch_alert_archiver.last_batch_failed", metric.WithUnit("{alert}"),
-		metric.WithDescription("Elasticsearch Alert Archiver 最近一批未完成归档的 Alert 数"),
+		"linkd.elasticsearch_alert_archiver.last_batch_failed", describeMetric("最近一批归档失败数", "archiver", "reliability"), metric.WithUnit("{alert}"),
+		metric.WithDescription("Elasticsearch Alert Archiver 最近一批真实失败的 Alert 数，不含并发更新冲突"),
 	); err != nil {
 		return nil, err
 	}
 
+	if result.elasticsearchConflictedAlerts, err = meter.Int64Counter(
+		"linkd.elasticsearch_alert_archiver.conflicted_alerts", describeMetric("归档并发更新冲突数", "archiver", "reliability"), metric.WithUnit("{alert}"),
+		metric.WithDescription("Active 条件删除时确认版本已变化的次数，留待下轮扫描，不计作存储失败"),
+	); err != nil {
+		return nil, err
+	}
+	if result.elasticsearchConflictLast, err = meter.Int64Gauge(
+		"linkd.elasticsearch_alert_archiver.last_batch_conflicted", describeMetric("最近一批归档并发更新冲突数", "archiver", "reliability"), metric.WithUnit("{alert}"),
+		metric.WithDescription("最近非空批次中因 Active 并发更新而未归档的条目数，不计作存储失败"),
+	); err != nil {
+		return nil, err
+	}
 	if result.redisStreamExists, err = meter.Int64Gauge(
-		"linkd.redis_stream.exists", metric.WithUnit("1"),
+		"linkd.redis_stream.exists", describeMetric("信号流存在状态", "redis_stream", "state"), metric.WithUnit("1"),
 		metric.WithDescription("受管 Redis Stream 是否存在"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamExpectedGroupPresent, err = meter.Int64Gauge(
-		"linkd.redis_stream.expected_group.present", metric.WithUnit("1"),
+		"linkd.redis_stream.expected_group.present", describeMetric("预期消费组存在状态", "redis_stream", "state"), metric.WithUnit("1"),
 		metric.WithDescription("配置的 Consumer Group 是否存在"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamLength, err = meter.Int64Gauge(
-		"linkd.redis_stream.entries", metric.WithUnit("{entry}"),
+		"linkd.redis_stream.entries", describeMetric("信号流当前条目数", "redis_stream", "capacity"), metric.WithUnit("{entry}"),
 		metric.WithDescription("受管 Redis Stream 当前条目数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamEntriesAdded, err = meter.Int64Gauge(
-		"linkd.redis_stream.entries_added", metric.WithUnit("{entry}"),
+		"linkd.redis_stream.entries_added", describeMetric("信号流累计添加条目数", "redis_stream", "throughput"), metric.WithUnit("{entry}"),
 		metric.WithDescription("受管 Redis Stream 自创建以来累计添加条目数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamMemory, err = meter.Int64Gauge(
-		"linkd.redis_stream.memory", metric.WithUnit("By"),
+		"linkd.redis_stream.memory", describeMetric("信号流内存占用", "redis_stream", "resources"), metric.WithUnit("By"),
 		metric.WithDescription("受管 Redis Stream 当前 Redis 内存占用"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamGroups, err = meter.Int64Gauge(
-		"linkd.redis_stream.consumer_groups", metric.WithUnit("{group}"),
+		"linkd.redis_stream.consumer_groups", describeMetric("信号流消费组数", "redis_stream", "capacity"), metric.WithUnit("{group}"),
 		metric.WithDescription("受管 Redis Stream 的 Consumer Group 数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamConsumers, err = meter.Int64Gauge(
-		"linkd.redis_stream.consumers", metric.WithUnit("{consumer}"),
+		"linkd.redis_stream.consumers", describeMetric("信号流消费者数", "redis_stream", "capacity"), metric.WithUnit("{consumer}"),
 		metric.WithDescription("受管 Redis Stream 所有 Consumer Group 的 Consumer 总数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamPending, err = meter.Int64Gauge(
-		"linkd.redis_stream.pending", metric.WithUnit("{entry}"),
+		"linkd.redis_stream.pending", describeMetric("信号流待确认条目数", "redis_stream", "capacity"), metric.WithUnit("{entry}"),
 		metric.WithDescription("受管 Redis Stream 所有 Consumer Group 的 Pending 总数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamMaxLag, err = meter.Int64Gauge(
-		"linkd.redis_stream.consumer_group.max_lag", metric.WithUnit("{entry}"),
+		"linkd.redis_stream.consumer_group.max_lag", describeMetric("消费组最大未投递积压", "redis_stream", "capacity"), metric.WithUnit("{entry}"),
 		metric.WithDescription("受管 Redis Stream 各 Consumer Group 中最大的未投递条目数；-1 表示 Redis 无法计算"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamOldestEntryAge, err = meter.Float64Gauge(
-		"linkd.redis_stream.oldest_entry.age", metric.WithUnit("s"),
+		"linkd.redis_stream.oldest_entry.age", describeMetric("最老信号条目年龄", "redis_stream", "latency"), metric.WithUnit("s"),
 		metric.WithDescription("受管 Redis Stream 最老条目年龄"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamOldestPendingAge, err = meter.Float64Gauge(
-		"linkd.redis_stream.oldest_pending.age", metric.WithUnit("s"),
+		"linkd.redis_stream.oldest_pending.age", describeMetric("最老待确认条目年龄", "redis_stream", "latency"), metric.WithUnit("s"),
 		metric.WithDescription("受管 Redis Stream 所有 Consumer Group 中最老 Pending 条目年龄"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamMaxEntries, err = meter.Int64Gauge(
-		"linkd.redis_stream.max_entries", metric.WithUnit("{entry}"),
+		"linkd.redis_stream.max_entries", describeMetric("信号流长度软上限", "redis_stream", "state"), metric.WithUnit("{entry}"),
 		metric.WithDescription("受管 Redis Stream 配置的软长度上限"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamEntriesAboveMax, err = meter.Int64Gauge(
-		"linkd.redis_stream.entries_above_max", metric.WithUnit("{entry}"),
+		"linkd.redis_stream.entries_above_max", describeMetric("超过软上限的条目数", "redis_stream", "capacity"), metric.WithUnit("{entry}"),
 		metric.WithDescription("受管 Redis Stream 超出软上限的条目数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamReconcileOperations, err = meter.Int64Counter(
-		"linkd.redis_stream.reconcile.operations", metric.WithUnit("{operation}"),
+		"linkd.redis_stream.reconcile.operations", describeMetric("信号流管理轮次", "redis_stream", "throughput", "linkd.outcome"), metric.WithUnit("{operation}"),
 		metric.WithDescription("Redis Stream 指标采集和安全裁剪轮次"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamReconcileDuration, err = meter.Float64Histogram(
-		"linkd.redis_stream.reconcile.duration", metric.WithUnit("s"),
+		"linkd.redis_stream.reconcile.duration", describeMetric("信号流管理耗时", "redis_stream", "latency", "linkd.outcome"), metric.WithUnit("s"),
 		metric.WithDescription("Redis Stream 指标采集和安全裁剪耗时"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamTrimmedEntries, err = meter.Int64Counter(
-		"linkd.redis_stream.trimmed.entries", metric.WithUnit("{entry}"),
+		"linkd.redis_stream.trimmed.entries", describeMetric("安全裁剪条目总数", "redis_stream", "throughput"), metric.WithUnit("{entry}"),
 		metric.WithDescription("Redis Stream 已安全裁剪条目数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamTrimRequired, err = meter.Int64Gauge(
-		"linkd.redis_stream.trim.required", metric.WithUnit("1"),
+		"linkd.redis_stream.trim.required", describeMetric("信号流裁剪需求", "redis_stream", "state"), metric.WithUnit("1"),
 		metric.WithDescription("受管 Redis Stream 当前是否超过软长度上限"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamTrimSafe, err = meter.Int64Gauge(
-		"linkd.redis_stream.trim.safe", metric.WithUnit("1"),
+		"linkd.redis_stream.trim.safe", describeMetric("信号流安全裁剪条件", "redis_stream", "state"), metric.WithUnit("1"),
 		metric.WithDescription("受管 Redis Stream 当前是否存在不会删除未确认消息的裁剪边界"),
 	); err != nil {
 		return nil, err
 	}
 	if result.redisStreamTrimLastEntries, err = meter.Int64Gauge(
-		"linkd.redis_stream.trim.last_entries", metric.WithUnit("{entry}"),
+		"linkd.redis_stream.trim.last_entries", describeMetric("最近一轮裁剪条目数", "redis_stream", "throughput"), metric.WithUnit("{entry}"),
 		metric.WithDescription("Redis Stream 管理任务最近一轮实际裁剪条目数"),
 	); err != nil {
 		return nil, err
 	}
 
 	if result.storeOperations, err = meter.Int64Counter(
-		"linkd.store.operations",
+		"linkd.store.operations", describeMetric("存储逻辑操作数", "store", "throughput", "linkd.object.type", "linkd.operation", "linkd.outcome"),
 		metric.WithUnit("{operation}"),
 		metric.WithDescription("Repository 逻辑操作次数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.storeOperationDuration, err = meter.Float64Histogram(
-		"linkd.store.operation.duration",
+		"linkd.store.operation.duration", describeMetric("存储逻辑操作耗时", "store", "latency", "linkd.object.type", "linkd.operation", "linkd.outcome"),
 		metric.WithUnit("s"),
 		metric.WithDescription("Repository 逻辑操作耗时"),
 	); err != nil {
 		return nil, err
 	}
 	if result.storeIdempotencyReplay, err = meter.Int64Counter(
-		"linkd.store.idempotency.replays",
+		"linkd.store.idempotency.replays", describeMetric("存储幂等重放次数", "store", "reliability", "linkd.object.type", "linkd.operation"),
 		metric.WithUnit("{event}"),
 		metric.WithDescription("存储幂等重放次数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.storeIdentityConflicts, err = meter.Int64Counter(
-		"linkd.store.identity.conflicts",
+		"linkd.store.identity.conflicts", describeMetric("存储身份冲突次数", "store", "reliability", "linkd.object.type", "linkd.operation"),
 		metric.WithUnit("{conflict}"),
 		metric.WithDescription("存储身份冲突次数"),
 	); err != nil {
 		return nil, err
 	}
 	if result.storeCASConflicts, err = meter.Int64Counter(
-		"linkd.store.cas.conflicts",
+		"linkd.store.cas.conflicts", describeMetric("存储版本冲突次数", "store", "reliability", "linkd.object.type", "linkd.operation"),
 		metric.WithUnit("{conflict}"),
 		metric.WithDescription("存储 CAS 冲突次数"),
 	); err != nil {
 		return nil, err
 	}
+	if result.kac, err = newKACInstruments(meter); err != nil {
+		return nil, err
+	}
+	if result.dispatch, err = newDispatchInstruments(meter); err != nil {
+		return nil, err
+	}
+	if result.writeBatch, err = newWriteBatchInstruments(meter); err != nil {
+		return nil, err
+	}
+	if result.mergeBatchPhase, err = meter.Float64Histogram("linkd.merge.batch.phase_duration", describeMetric("合并批次分段耗时", "control_plane", "latency", "linkd.phase"), metric.WithUnit("s"), metric.WithDescription("显式合并批次的固定阶段耗时，成员并行样本不能相加为批次墙钟"), metric.WithExplicitBucketBoundaries(0.0001, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10)); err != nil {
+		return nil, err
+	}
+	if result.closePhase, err = meter.Float64Histogram("linkd.close.phase_duration", describeMetric("主动关闭阶段耗时", "control_plane", "latency", "linkd.phase"), metric.WithUnit("s"), metric.WithDescription("关闭批次墙钟及成员阶段耗时；嵌套阶段和并行成员样本不可相加"), metric.WithExplicitBucketBoundaries(0.0001, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10)); err != nil {
+		return nil, err
+	}
+	if result.mergePoolWaits, err = meter.Int64Gauge("linkd.merge.pool.waits", describeMetric("合并连接池累计等待次数", "control_plane", "capacity", "linkd.pool"), metric.WithUnit("{wait}"), metric.WithDescription("进程共享连接池启动以来累计等待次数，重复采样取差值")); err != nil {
+		return nil, err
+	}
+	if result.mergePoolWaitDuration, err = meter.Float64Gauge("linkd.merge.pool.wait_duration", describeMetric("合并连接池累计等待耗时", "control_plane", "latency", "linkd.pool"), metric.WithUnit("s"), metric.WithDescription("进程共享连接池启动以来累计等待时间，重复采样取差值")); err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+
+func enrichDurationBuckets() []float64 {
+	return []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30}
 }
 
 func metricViews() []sdkmetric.View {
 	return []sdkmetric.View{
 		sdkmetric.NewView(
+			sdkmetric.Instrument{Name: "linkd.enrich.attempt.duration"},
+			sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
+				Boundaries: enrichDurationBuckets(),
+			}},
+		),
+		sdkmetric.NewView(
+			sdkmetric.Instrument{Name: "linkd.enrich.processor.duration"},
+			sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
+				Boundaries: enrichDurationBuckets(),
+			}},
+		),
+		sdkmetric.NewView(
+			sdkmetric.Instrument{Name: "linkd.enrich.datasource.duration"},
+			sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
+				Boundaries: enrichDurationBuckets(),
+			}},
+		),
+		sdkmetric.NewView(
+			sdkmetric.Instrument{Name: "linkd.enrich.payload.size"},
+			sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
+				Boundaries: []float64{512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144},
+			}},
+		),
+		sdkmetric.NewView(
 			sdkmetric.Instrument{Name: "linkd.pipeline.attempt.duration"},
 			sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
-				// Elasticsearch refresh=wait_for 会让 Lifecycle 耗时集中在 1 秒附近；
-				// 加密该区间可避免 P95/P99 在 1～2.5 秒宽桶内产生过大的插值误差。
+				// 保留 1 秒附近的加密边界，用于比较移除 Lifecycle Alert refresh 等待前后的尾延迟。
 				Boundaries: []float64{
 					0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5,
 					0.75, 0.9, 1, 1.1, 1.25, 1.5, 2, 2.5, 5, 10, 30,

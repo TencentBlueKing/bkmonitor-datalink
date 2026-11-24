@@ -1,0 +1,921 @@
+{
+  "name": "内置场景配置示例",
+  "bk_tenant_id": "system",
+  "seed": 42,
+  "duration": "10m",
+  "datasets": {
+    "hosts": {
+      "rows": [
+        {
+          "id": 101,
+          "ip": "10.0.0.1",
+          "cloud_id": 0,
+          "bk_biz_id": 2,
+          "model": "host"
+        },
+        {
+          "id": 102,
+          "ip": "10.0.0.2",
+          "cloud_id": 0,
+          "bk_biz_id": 2,
+          "model": "host"
+        }
+      ]
+    },
+    "models": {
+      "rows": [
+        {
+          "id": "host",
+          "name": "主机"
+        }
+      ]
+    }
+  },
+  "templates": {
+    "host": {
+      "kind": "standard",
+      "body": "{\n \"title\": {{json (printf \"%v CPU 异常\" .Bindings.host.ip)}},\n \"subject\": {\"system\":\"cmdb\",\"type\":\"host\",\"id\":{{json (printf \"%v\" .Bindings.host.id)}},\"name\":{{json .Bindings.host.ip}}},\n \"dimensions\": {\"bk_host_id\":{{json .Bindings.host.id}},\"bk_target_ip\":{{json .Bindings.host.ip}},\"bk_target_cloud_id\":{{json .Bindings.host.cloud_id}},\"cpu_core\":{{json .Instance.cpu_core}}},\n \"labels\": {\"bk_biz_id\":{{json .Bindings.host.bk_biz_id}}},\n \"values\": {\"cpu\":{{randFloat 70 99}}},\n \"evaluations\": {{json .Parameters.evaluations}},\n \"extra_data\": {\"model_name\":{{json .Bindings.model.name}}}\n}"
+    },
+    "cpu_high": {
+      "kind": "standard",
+      "body": "{\"title\": \"CPU 使用率过高\", \"dimensions\": {\"scenario\": \"cpu_high\"}, \"values\": {\"cpu\": 0}, \"extra_data\": {\"unit\": \"%\"}, \"evaluations\": {{json .Parameters.evaluations}}, \"subject\": {\"system\":\"cmdb\",\"type\":\"host\",\"id\":{{json (printf \"%v\" .Bindings.host.id)}}}, \"labels\":{\"bk_biz_id\":{{json .Bindings.host.bk_biz_id}}} }"
+    },
+    "memory_high": {
+      "kind": "standard",
+      "body": "{\"title\": \"内存使用率过高\", \"dimensions\": {\"scenario\": \"memory_high\"}, \"values\": {\"memory\": 0}, \"extra_data\": {\"unit\": \"%\"}, \"evaluations\": {{json .Parameters.evaluations}}, \"subject\": {\"system\":\"cmdb\",\"type\":\"host\",\"id\":{{json (printf \"%v\" .Bindings.host.id)}}}, \"labels\":{\"bk_biz_id\":{{json .Bindings.host.bk_biz_id}}} }"
+    },
+    "disk_full": {
+      "kind": "standard",
+      "body": "{\"title\": \"磁盘空间不足\", \"dimensions\": {\"scenario\": \"disk_full\"}, \"values\": {\"disk_used\": 0}, \"extra_data\": {\"unit\": \"%\"}, \"evaluations\": {{json .Parameters.evaluations}}, \"subject\": {\"system\":\"cmdb\",\"type\":\"host\",\"id\":{{json (printf \"%v\" .Bindings.host.id)}}}, \"labels\":{\"bk_biz_id\":{{json .Bindings.host.bk_biz_id}}} }"
+    },
+    "disk_read_only": {
+      "kind": "standard",
+      "body": "{\"title\": \"磁盘只读\", \"dimensions\": {\"scenario\": \"disk_read_only\"}, \"values\": {\"readonly\": 0}, \"extra_data\": {\"unit\": \"\"}, \"evaluations\": {{json .Parameters.evaluations}}, \"subject\": {\"system\":\"cmdb\",\"type\":\"host\",\"id\":{{json (printf \"%v\" .Bindings.host.id)}}}, \"labels\":{\"bk_biz_id\":{{json .Bindings.host.bk_biz_id}}} }"
+    },
+    "disk_io_latency_high": {
+      "kind": "standard",
+      "body": "{\"title\": \"磁盘延迟过高\", \"dimensions\": {\"scenario\": \"disk_io_latency_high\"}, \"values\": {\"disk_latency\": 0}, \"extra_data\": {\"unit\": \"ms\"}, \"evaluations\": {{json .Parameters.evaluations}}, \"subject\": {\"system\":\"cmdb\",\"type\":\"host\",\"id\":{{json (printf \"%v\" .Bindings.host.id)}}}, \"labels\":{\"bk_biz_id\":{{json .Bindings.host.bk_biz_id}}} }"
+    },
+    "oom_killed": {
+      "kind": "standard",
+      "body": "{\"title\": \"进程 OOM\", \"dimensions\": {\"scenario\": \"oom_killed\"}, \"values\": {\"oom_count\": 0}, \"extra_data\": {\"unit\": \"次\"}, \"evaluations\": {{json .Parameters.evaluations}}, \"subject\": {\"system\":\"cmdb\",\"type\":\"host\",\"id\":{{json (printf \"%v\" .Bindings.host.id)}}}, \"labels\":{\"bk_biz_id\":{{json .Bindings.host.bk_biz_id}}} }"
+    },
+    "process_down": {
+      "kind": "standard",
+      "body": "{\"title\": \"进程不可用\", \"dimensions\": {\"scenario\": \"process_down\"}, \"values\": {\"process_up\": 0}, \"extra_data\": {\"unit\": \"\"}, \"evaluations\": {{json .Parameters.evaluations}}, \"subject\": {\"system\":\"cmdb\",\"type\":\"host\",\"id\":{{json (printf \"%v\" .Bindings.host.id)}}}, \"labels\":{\"bk_biz_id\":{{json .Bindings.host.bk_biz_id}}} }"
+    },
+    "host_unreachable": {
+      "kind": "standard",
+      "body": "{\"title\": \"主机不可达\", \"dimensions\": {\"scenario\": \"host_unreachable\"}, \"values\": {\"host_up\": 0}, \"extra_data\": {\"unit\": \"\"}, \"evaluations\": {{json .Parameters.evaluations}}, \"subject\": {\"system\":\"cmdb\",\"type\":\"host\",\"id\":{{json (printf \"%v\" .Bindings.host.id)}}}, \"labels\":{\"bk_biz_id\":{{json .Bindings.host.bk_biz_id}}} }"
+    },
+    "network_packet_loss_high": {
+      "kind": "standard",
+      "body": "{\"title\": \"网络丢包\", \"dimensions\": {\"scenario\": \"network_packet_loss_high\"}, \"values\": {\"packet_loss\": 0}, \"extra_data\": {\"unit\": \"%\"}, \"evaluations\": {{json .Parameters.evaluations}}, \"subject\": {\"system\":\"cmdb\",\"type\":\"host\",\"id\":{{json (printf \"%v\" .Bindings.host.id)}}}, \"labels\":{\"bk_biz_id\":{{json .Bindings.host.bk_biz_id}}} }"
+    },
+    "service_unavailable": {
+      "kind": "standard",
+      "body": "{\"title\": \"服务不可用\", \"dimensions\": {\"scenario\": \"service_unavailable\"}, \"values\": {\"service_up\": 0}, \"extra_data\": {\"unit\": \"\"}, \"evaluations\": {{json .Parameters.evaluations}}, \"subject\": {\"system\":\"cmdb\",\"type\":\"host\",\"id\":{{json (printf \"%v\" .Bindings.host.id)}}}, \"labels\":{\"bk_biz_id\":{{json .Bindings.host.bk_biz_id}}} }"
+    },
+    "http_error_rate_high": {
+      "kind": "standard",
+      "body": "{\"title\": \"HTTP 错误率过高\", \"dimensions\": {\"scenario\": \"http_error_rate_high\"}, \"values\": {\"http_error_rate\": 0}, \"extra_data\": {\"unit\": \"%\"}, \"evaluations\": {{json .Parameters.evaluations}}, \"subject\": {\"system\":\"cmdb\",\"type\":\"host\",\"id\":{{json (printf \"%v\" .Bindings.host.id)}}}, \"labels\":{\"bk_biz_id\":{{json .Bindings.host.bk_biz_id}}} }"
+    },
+    "database_connections_high": {
+      "kind": "standard",
+      "body": "{\"title\": \"数据库连接数过高\", \"dimensions\": {\"scenario\": \"database_connections_high\"}, \"values\": {\"connections\": 0}, \"extra_data\": {\"unit\": \"个\"}, \"evaluations\": {{json .Parameters.evaluations}}, \"subject\": {\"system\":\"cmdb\",\"type\":\"host\",\"id\":{{json (printf \"%v\" .Bindings.host.id)}}}, \"labels\":{\"bk_biz_id\":{{json .Bindings.host.bk_biz_id}}} }"
+    },
+    "online_users_zero": {
+      "kind": "standard",
+      "body": "{\"title\": \"在线用户归零\", \"dimensions\": {\"scenario\": \"online_users_zero\"}, \"values\": {\"online_users\": 0}, \"extra_data\": {\"unit\": \"个\"}, \"evaluations\": {{json .Parameters.evaluations}}, \"subject\": {\"system\":\"cmdb\",\"type\":\"host\",\"id\":{{json (printf \"%v\" .Bindings.host.id)}}}, \"labels\":{\"bk_biz_id\":{{json .Bindings.host.bk_biz_id}}} }"
+    },
+    "queue_backlog_high": {
+      "kind": "standard",
+      "body": "{\"title\": \"队列积压\", \"dimensions\": {\"scenario\": \"queue_backlog_high\"}, \"values\": {\"queue_backlog\": 0}, \"extra_data\": {\"unit\": \"条\"}, \"evaluations\": {{json .Parameters.evaluations}}, \"subject\": {\"system\":\"cmdb\",\"type\":\"host\",\"id\":{{json (printf \"%v\" .Bindings.host.id)}}}, \"labels\":{\"bk_biz_id\":{{json .Bindings.host.bk_biz_id}}} }"
+    }
+  },
+  "scenarios": [
+    {
+      "id": "cpu_high",
+      "event_source_id": "eventgen-hosts",
+      "bindings": [
+        {
+          "name": "host",
+          "dataset": "hosts",
+          "mode": "iterate",
+          "loop": true
+        },
+        {
+          "name": "model",
+          "dataset": "models",
+          "mode": "random",
+          "where": {
+            "id": "{{json .Bindings.host.model}}"
+          }
+        }
+      ],
+      "instance": "{\"cpu_core\":{{randInt 0 8}}}",
+      "arrival": {
+        "per_second": 1,
+        "count": 10
+      },
+      "stages": [
+        {
+          "name": "warning",
+          "template": "cpu_high",
+          "duration": {
+            "fixed": "60s"
+          },
+          "every": {
+            "fixed": "10s"
+          },
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "triggered"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recover",
+          "template": "cpu_high",
+          "terminal": true,
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "resolved"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "memory_high",
+      "event_source_id": "eventgen-hosts",
+      "bindings": [
+        {
+          "name": "host",
+          "dataset": "hosts",
+          "mode": "iterate",
+          "loop": true
+        },
+        {
+          "name": "model",
+          "dataset": "models",
+          "mode": "random",
+          "where": {
+            "id": "{{json .Bindings.host.model}}"
+          }
+        }
+      ],
+      "instance": "{\"cpu_core\":{{randInt 0 8}}}",
+      "arrival": {
+        "per_second": 1,
+        "count": 10
+      },
+      "stages": [
+        {
+          "name": "warning",
+          "template": "memory_high",
+          "duration": {
+            "fixed": "60s"
+          },
+          "every": {
+            "fixed": "10s"
+          },
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "triggered"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recover",
+          "template": "memory_high",
+          "terminal": true,
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "resolved"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "disk_full",
+      "event_source_id": "eventgen-hosts",
+      "bindings": [
+        {
+          "name": "host",
+          "dataset": "hosts",
+          "mode": "iterate",
+          "loop": true
+        },
+        {
+          "name": "model",
+          "dataset": "models",
+          "mode": "random",
+          "where": {
+            "id": "{{json .Bindings.host.model}}"
+          }
+        }
+      ],
+      "instance": "{\"cpu_core\":{{randInt 0 8}}}",
+      "arrival": {
+        "per_second": 1,
+        "count": 10
+      },
+      "stages": [
+        {
+          "name": "warning",
+          "template": "disk_full",
+          "duration": {
+            "fixed": "60s"
+          },
+          "every": {
+            "fixed": "10s"
+          },
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "triggered"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recover",
+          "template": "disk_full",
+          "terminal": true,
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "resolved"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "disk_read_only",
+      "event_source_id": "eventgen-hosts",
+      "bindings": [
+        {
+          "name": "host",
+          "dataset": "hosts",
+          "mode": "iterate",
+          "loop": true
+        },
+        {
+          "name": "model",
+          "dataset": "models",
+          "mode": "random",
+          "where": {
+            "id": "{{json .Bindings.host.model}}"
+          }
+        }
+      ],
+      "instance": "{\"cpu_core\":{{randInt 0 8}}}",
+      "arrival": {
+        "per_second": 1,
+        "count": 10
+      },
+      "stages": [
+        {
+          "name": "warning",
+          "template": "disk_read_only",
+          "duration": {
+            "fixed": "60s"
+          },
+          "every": {
+            "fixed": "10s"
+          },
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "triggered"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recover",
+          "template": "disk_read_only",
+          "terminal": true,
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "resolved"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "disk_io_latency_high",
+      "event_source_id": "eventgen-hosts",
+      "bindings": [
+        {
+          "name": "host",
+          "dataset": "hosts",
+          "mode": "iterate",
+          "loop": true
+        },
+        {
+          "name": "model",
+          "dataset": "models",
+          "mode": "random",
+          "where": {
+            "id": "{{json .Bindings.host.model}}"
+          }
+        }
+      ],
+      "instance": "{\"cpu_core\":{{randInt 0 8}}}",
+      "arrival": {
+        "per_second": 1,
+        "count": 10
+      },
+      "stages": [
+        {
+          "name": "warning",
+          "template": "disk_io_latency_high",
+          "duration": {
+            "fixed": "60s"
+          },
+          "every": {
+            "fixed": "10s"
+          },
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "triggered"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recover",
+          "template": "disk_io_latency_high",
+          "terminal": true,
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "resolved"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "oom_killed",
+      "event_source_id": "eventgen-hosts",
+      "bindings": [
+        {
+          "name": "host",
+          "dataset": "hosts",
+          "mode": "iterate",
+          "loop": true
+        },
+        {
+          "name": "model",
+          "dataset": "models",
+          "mode": "random",
+          "where": {
+            "id": "{{json .Bindings.host.model}}"
+          }
+        }
+      ],
+      "instance": "{\"cpu_core\":{{randInt 0 8}}}",
+      "arrival": {
+        "per_second": 1,
+        "count": 10
+      },
+      "stages": [
+        {
+          "name": "warning",
+          "template": "oom_killed",
+          "duration": {
+            "fixed": "60s"
+          },
+          "every": {
+            "fixed": "10s"
+          },
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "triggered"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recover",
+          "template": "oom_killed",
+          "terminal": true,
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "resolved"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "process_down",
+      "event_source_id": "eventgen-hosts",
+      "bindings": [
+        {
+          "name": "host",
+          "dataset": "hosts",
+          "mode": "iterate",
+          "loop": true
+        },
+        {
+          "name": "model",
+          "dataset": "models",
+          "mode": "random",
+          "where": {
+            "id": "{{json .Bindings.host.model}}"
+          }
+        }
+      ],
+      "instance": "{\"cpu_core\":{{randInt 0 8}}}",
+      "arrival": {
+        "per_second": 1,
+        "count": 10
+      },
+      "stages": [
+        {
+          "name": "warning",
+          "template": "process_down",
+          "duration": {
+            "fixed": "60s"
+          },
+          "every": {
+            "fixed": "10s"
+          },
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "triggered"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recover",
+          "template": "process_down",
+          "terminal": true,
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "resolved"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "host_unreachable",
+      "event_source_id": "eventgen-hosts",
+      "bindings": [
+        {
+          "name": "host",
+          "dataset": "hosts",
+          "mode": "iterate",
+          "loop": true
+        },
+        {
+          "name": "model",
+          "dataset": "models",
+          "mode": "random",
+          "where": {
+            "id": "{{json .Bindings.host.model}}"
+          }
+        }
+      ],
+      "instance": "{\"cpu_core\":{{randInt 0 8}}}",
+      "arrival": {
+        "per_second": 1,
+        "count": 10
+      },
+      "stages": [
+        {
+          "name": "warning",
+          "template": "host_unreachable",
+          "duration": {
+            "fixed": "60s"
+          },
+          "every": {
+            "fixed": "10s"
+          },
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "triggered"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recover",
+          "template": "host_unreachable",
+          "terminal": true,
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "resolved"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "network_packet_loss_high",
+      "event_source_id": "eventgen-hosts",
+      "bindings": [
+        {
+          "name": "host",
+          "dataset": "hosts",
+          "mode": "iterate",
+          "loop": true
+        },
+        {
+          "name": "model",
+          "dataset": "models",
+          "mode": "random",
+          "where": {
+            "id": "{{json .Bindings.host.model}}"
+          }
+        }
+      ],
+      "instance": "{\"cpu_core\":{{randInt 0 8}}}",
+      "arrival": {
+        "per_second": 1,
+        "count": 10
+      },
+      "stages": [
+        {
+          "name": "warning",
+          "template": "network_packet_loss_high",
+          "duration": {
+            "fixed": "60s"
+          },
+          "every": {
+            "fixed": "10s"
+          },
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "triggered"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recover",
+          "template": "network_packet_loss_high",
+          "terminal": true,
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "resolved"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "service_unavailable",
+      "event_source_id": "eventgen-hosts",
+      "bindings": [
+        {
+          "name": "host",
+          "dataset": "hosts",
+          "mode": "iterate",
+          "loop": true
+        },
+        {
+          "name": "model",
+          "dataset": "models",
+          "mode": "random",
+          "where": {
+            "id": "{{json .Bindings.host.model}}"
+          }
+        }
+      ],
+      "instance": "{\"cpu_core\":{{randInt 0 8}}}",
+      "arrival": {
+        "per_second": 1,
+        "count": 10
+      },
+      "stages": [
+        {
+          "name": "warning",
+          "template": "service_unavailable",
+          "duration": {
+            "fixed": "60s"
+          },
+          "every": {
+            "fixed": "10s"
+          },
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "triggered"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recover",
+          "template": "service_unavailable",
+          "terminal": true,
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "resolved"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "http_error_rate_high",
+      "event_source_id": "eventgen-hosts",
+      "bindings": [
+        {
+          "name": "host",
+          "dataset": "hosts",
+          "mode": "iterate",
+          "loop": true
+        },
+        {
+          "name": "model",
+          "dataset": "models",
+          "mode": "random",
+          "where": {
+            "id": "{{json .Bindings.host.model}}"
+          }
+        }
+      ],
+      "instance": "{\"cpu_core\":{{randInt 0 8}}}",
+      "arrival": {
+        "per_second": 1,
+        "count": 10
+      },
+      "stages": [
+        {
+          "name": "warning",
+          "template": "http_error_rate_high",
+          "duration": {
+            "fixed": "60s"
+          },
+          "every": {
+            "fixed": "10s"
+          },
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "triggered"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recover",
+          "template": "http_error_rate_high",
+          "terminal": true,
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "resolved"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "database_connections_high",
+      "event_source_id": "eventgen-hosts",
+      "bindings": [
+        {
+          "name": "host",
+          "dataset": "hosts",
+          "mode": "iterate",
+          "loop": true
+        },
+        {
+          "name": "model",
+          "dataset": "models",
+          "mode": "random",
+          "where": {
+            "id": "{{json .Bindings.host.model}}"
+          }
+        }
+      ],
+      "instance": "{\"cpu_core\":{{randInt 0 8}}}",
+      "arrival": {
+        "per_second": 1,
+        "count": 10
+      },
+      "stages": [
+        {
+          "name": "warning",
+          "template": "database_connections_high",
+          "duration": {
+            "fixed": "60s"
+          },
+          "every": {
+            "fixed": "10s"
+          },
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "triggered"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recover",
+          "template": "database_connections_high",
+          "terminal": true,
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "resolved"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "online_users_zero",
+      "event_source_id": "eventgen-hosts",
+      "bindings": [
+        {
+          "name": "host",
+          "dataset": "hosts",
+          "mode": "iterate",
+          "loop": true
+        },
+        {
+          "name": "model",
+          "dataset": "models",
+          "mode": "random",
+          "where": {
+            "id": "{{json .Bindings.host.model}}"
+          }
+        }
+      ],
+      "instance": "{\"cpu_core\":{{randInt 0 8}}}",
+      "arrival": {
+        "per_second": 1,
+        "count": 10
+      },
+      "stages": [
+        {
+          "name": "warning",
+          "template": "online_users_zero",
+          "duration": {
+            "fixed": "60s"
+          },
+          "every": {
+            "fixed": "10s"
+          },
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "triggered"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recover",
+          "template": "online_users_zero",
+          "terminal": true,
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "resolved"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "queue_backlog_high",
+      "event_source_id": "eventgen-hosts",
+      "bindings": [
+        {
+          "name": "host",
+          "dataset": "hosts",
+          "mode": "iterate",
+          "loop": true
+        },
+        {
+          "name": "model",
+          "dataset": "models",
+          "mode": "random",
+          "where": {
+            "id": "{{json .Bindings.host.model}}"
+          }
+        }
+      ],
+      "instance": "{\"cpu_core\":{{randInt 0 8}}}",
+      "arrival": {
+        "per_second": 1,
+        "count": 10
+      },
+      "stages": [
+        {
+          "name": "warning",
+          "template": "queue_backlog_high",
+          "duration": {
+            "fixed": "60s"
+          },
+          "every": {
+            "fixed": "10s"
+          },
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "triggered"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recover",
+          "template": "queue_backlog_high",
+          "terminal": true,
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "resolved"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "limits": {
+    "active": 100000,
+    "queue_records": 10000,
+    "queue_bytes": 33554432,
+    "max_message_bytes": 1048576,
+    "batch": 1000,
+    "send_per_second": 20000,
+    "send_timeout": "10s",
+    "cleanup_timeout": "30s",
+    "samples": 50
+  }
+}

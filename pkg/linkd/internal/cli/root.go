@@ -20,6 +20,7 @@ import (
 	cleanerprocess "linkd/internal/cleaner/process"
 	"linkd/internal/config"
 	controlplaneprocess "linkd/internal/controlplane/process"
+	"linkd/internal/eventsource"
 	lifecycleprocess "linkd/internal/lifecycle/process"
 	"linkd/internal/telemetry"
 )
@@ -31,6 +32,7 @@ type commandOptions struct {
 	logLevel             string
 	logFormat            string
 	version              string
+	gitCommit            string
 	cleanerFactory       cleaner.FlowFactory
 	cleanerRunner        CleanerRunner
 	cleanerValidate      ProcessValidator
@@ -38,6 +40,7 @@ type commandOptions struct {
 	lifecycleValidate    ProcessValidator
 	controlPlaneRunner   ControlPlaneRunner
 	controlPlaneValidate ProcessValidator
+	migrationRunner      MigrationRunner
 }
 
 // ProcessRunner 是常驻进程职责共享的装配签名。每个进程都接收独立的 telemetry runtime，
@@ -62,9 +65,14 @@ type LifecycleRunner = ProcessRunner
 // 管理任务；后续管理任务、API 和 Leader Election 仍沿用该进程边界。
 type ControlPlaneRunner = ProcessRunner
 
+// MigrationRunner 执行有界的一次性初始化，返回前必须释放所有已获取的资源。
+type MigrationRunner func(context.Context, config.Config) error
+
 // Dependencies 汇总各职责启动命令需要的进程装配依赖。
 // 已完成职责可在 nil 时使用正式默认实现；尚未完成职责必须在接管数据前明确失败。
 type Dependencies struct {
+	// SourceProviders 是显式注入的来源增量提供方，与 API 共用配置对象。
+	SourceProviders []eventsource.Provider
 	// CleanerFlowFactory 为每个启用 EventSource 创建 cleaner 处理流程。
 	CleanerFlowFactory cleaner.FlowFactory
 	// CleanerRunner 可在嵌入或测试场景替换默认 cleaner 进程；nil 使用正式实现。
@@ -73,10 +81,12 @@ type Dependencies struct {
 	LifecycleRunner LifecycleRunner
 	// ControlPlaneRunner 可在嵌入或测试场景替换控制面进程；nil 使用正式任务装配。
 	ControlPlaneRunner ControlPlaneRunner
+	// MigrationRunner 替换一次性初始化；nil 使用正式控制面初始化逻辑。
+	MigrationRunner MigrationRunner
 }
 
-// NewRootCommand 构造 Linkd 根命令。version 为空时按 dev 展示。
-func NewRootCommand(version string, dependencies Dependencies) *cobra.Command {
+// NewRootCommand 构造 Linkd 根命令。缺少构建版本或提交时分别展示 dev、unknown。
+func NewRootCommand(version, gitCommit string, dependencies Dependencies) *cobra.Command {
 	if version == "" {
 		version = "dev"
 	}
@@ -96,11 +106,17 @@ func NewRootCommand(version string, dependencies Dependencies) *cobra.Command {
 	controlPlaneRunner := dependencies.ControlPlaneRunner
 	controlPlaneValidate := ProcessValidator(nil)
 	if controlPlaneRunner == nil {
-		controlPlaneRunner = controlplaneprocess.Run
+		controlPlaneRunner = func(ctx context.Context, cfg config.Config, logger *slog.Logger, rt *telemetry.Runtime) error {
+			return controlplaneprocess.RunWithProviders(ctx, cfg, logger, rt, dependencies.SourceProviders...)
+		}
 		controlPlaneValidate = controlplaneprocess.ValidateConfig
+	}
+	if gitCommit == "" {
+		gitCommit = "unknown"
 	}
 	options := &commandOptions{
 		version:              version,
+		gitCommit:            gitCommit,
 		cleanerFactory:       dependencies.CleanerFlowFactory,
 		cleanerRunner:        cleanerRunner,
 		cleanerValidate:      cleanerValidate,
@@ -108,6 +124,10 @@ func NewRootCommand(version string, dependencies Dependencies) *cobra.Command {
 		lifecycleValidate:    lifecycleValidate,
 		controlPlaneRunner:   controlPlaneRunner,
 		controlPlaneValidate: controlPlaneValidate,
+		migrationRunner:      dependencies.MigrationRunner,
+	}
+	if options.migrationRunner == nil {
+		options.migrationRunner = controlplaneprocess.Migrate
 	}
 	if dependencies.CleanerFlowFactory != nil {
 		options.cleanerValidate = func(cfg config.Config) error {
@@ -128,10 +148,13 @@ func NewRootCommand(version string, dependencies Dependencies) *cobra.Command {
 	flags.StringVar(&options.logFormat, "log-format", "", "显式覆盖日志格式")
 
 	root.AddCommand(
+		newEnrichCommand(),
 		newRunCommand(options),
 		newStorageCommand(options),
 		newConfigCommand(options),
 		newVersionCommand(options),
+		newEventSourceCommand(options),
+		newSchedulingCommand(options),
 	)
 	return root
 }
@@ -197,7 +220,7 @@ func newVersionCommand(options *commandOptions) *cobra.Command {
 		Short: "打印 Linkd 版本",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), options.version)
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "version: %s\ngit_commit: %s\n", options.version, options.gitCommit)
 			return err
 		},
 	}

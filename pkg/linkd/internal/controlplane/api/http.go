@@ -1,0 +1,506 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package api
+
+import (
+	"context"
+	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"linkd/internal/blueking"
+	"linkd/internal/config"
+	"linkd/internal/controlplane/taskstate"
+	"linkd/internal/dynamicconfig"
+	"linkd/internal/enrich/custom"
+	"linkd/internal/enrich/preview"
+	"linkd/internal/eventgen"
+	"linkd/internal/eventsource"
+	"linkd/internal/ingestpreview"
+	"linkd/internal/internaltoken"
+	"linkd/internal/onemodel/queryservice"
+	"linkd/internal/policy"
+	"linkd/internal/policy/simulation"
+	"linkd/internal/taskdispatch"
+)
+
+// API 提供 JWT 管理接口和使用独立 Worker Token 的调度协议。
+type API struct {
+	// Eventgen 管理租户测试任务与独立生成进程。
+	Eventgen *eventgen.Service
+	// EventgenSeverity 返回显式样本预览使用的当前等级配置。
+	EventgenSeverity func() config.SeverityConfig
+	// ModuleInfo 提供当前进程白名单连接发现，仅管理 JWT 可请求敏感快照。
+	ModuleInfo *ModuleInfo
+	// Tenants 提供当前部署模式的租户目录，仅向管理 JWT 暴露。
+	Tenants interface {
+		ListTenants(context.Context) ([]blueking.Tenant, error)
+	}
+	// Tasks 提供当前进程的只读任务目录及执行快照。
+	Tasks    interface{ Snapshot() taskstate.Snapshot }
+	OneModel *queryservice.Service
+	// CloseConcurrency 只限制单个筛选关闭请求的内部批次并发。
+	CloseConcurrency int
+	AlertLogAppender AlertLogAppender
+	// AlertLogLogger 复用部署日志的脱敏处理，记录部分成功边界的失败。
+	AlertLogLogger *slog.Logger
+	AlertCloser    AlertCloser
+	KACCloser      KACCloser
+	SourceAlerts   *SourceAlerts
+	AlertSearch    *AlertSearch
+	EnrichRecords  *EnrichRecords
+	Previewer      interface {
+		Preview(context.Context, preview.Request) (preview.Response, error)
+	}
+	// IngestPreviewer 只标准化并返回 KAC 调试字段，不执行丰富和业务写入。
+	IngestPreviewer interface {
+		Preview(context.Context, ingestpreview.Request) (ingestpreview.Response, error)
+	}
+	DynamicConfig      *dynamicconfig.Manager
+	Lifecycle          config.LifecycleConfig
+	Sources            *eventsource.Service
+	Policies           *policy.Service
+	PolicyDependencies PolicyDependencies
+	PolicyCatalog      *policy.Catalog
+	PolicyPreparation  interface {
+		Schedule(context.Context, string) error
+		Invalidate(string)
+	}
+	PolicyStatistics    PolicyStatisticsReader
+	PolicySimulator     *simulation.Service
+	PolicyPreviewer     *policy.Previewer
+	MergeRuntime        *MergeRuntime
+	ShieldRuntime       *ShieldRuntime
+	ShieldDiagnostics   ShieldDiagnostics
+	ShieldRequests      ShieldRequests
+	ManualShieldBinder  ManualShieldBinder
+	SuppressionRuntime  *SuppressionRuntime
+	SuppressionCleanups *SuppressionCleanups
+	SuppressionChecks   *SuppressionChecks
+	MergeRetries        *MergeRetries
+	Controller          Controller
+	Config              config.DispatchConfig
+}
+
+// Handler 创建有身份校验的正式接口。
+func (a *API) Handler() http.Handler {
+	verifier, verifierErr := internaltoken.New(a.Config.JWT.SecretKey, nil)
+	mux := http.NewServeMux()
+	a.eventgenRoutes(mux)
+	const kacCloseRoute = "POST /api/v1/integrations/kac/alerts/{id}/close"
+	const kacGetRoute = "GET /api/v1/integrations/kac/alerts/{id}"
+	mux.HandleFunc("GET /api/v1/tenants", a.listTenants)
+	mux.HandleFunc("GET /api/v1/module-info", a.moduleInfo)
+	mux.HandleFunc("GET /api/v1/control-plane/tasks", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if a.Tasks == nil {
+			http.Error(w, "task status unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		output(w, a.Tasks.Snapshot())
+	})
+	mux.HandleFunc("POST /api/v1/onemodel/{operation}", a.queryOneModel)
+	mux.Handle("GET /api/v1/metrics/catalog", metricCatalogHandler())
+	mux.HandleFunc("POST /api/v1/enrich/preview", a.previewEnrich)
+	mux.HandleFunc("POST /api/v1/ingest/preview", a.previewIngest)
+	mux.HandleFunc("POST /api/v1/alert-logs", a.appendAlertLogs)
+	mux.HandleFunc("GET /api/v1/alerts", a.listSourceAlerts)
+	mux.HandleFunc("POST /api/v1/alerts/search", a.searchAlerts)
+	mux.HandleFunc("POST /api/v1/alerts/close", a.closeAlertsByFilter)
+	mux.HandleFunc("POST /api/v1/alerts/{id}/enrich-records", a.queryEnrichRecords)
+	mux.HandleFunc("POST /api/v1/events/enrich-records/query", a.queryEventEnrichWindow)
+	mux.HandleFunc("POST /api/v1/events/{id}/enrich-record", a.queryEventEnrichDetail)
+	mux.HandleFunc("POST /api/v1/alerts/{id}/recovery-record", a.queryRecoveryRecord)
+	mux.HandleFunc("POST /api/v1/alerts/{id}/close", a.closeAlert)
+	mux.HandleFunc(kacCloseRoute, a.closeKACAlert)
+	mux.HandleFunc(kacGetRoute, a.getKACAlert)
+	mux.HandleFunc("GET /api/v1/event-sources", a.list)
+	mux.HandleFunc("GET /api/v1/event-sources/{id}", a.get)
+	mux.HandleFunc("PUT /api/v1/event-sources/{id}", a.put)
+	mux.HandleFunc("DELETE /api/v1/event-sources/{id}", a.delete)
+	mux.HandleFunc("GET /api/v1/event-sources/{id}/releases/{version}", a.release)
+	mux.HandleFunc("POST /api/v1/event-sources/{id}/tasks/{task}/resume", a.resumeTask)
+	mux.HandleFunc("POST /api/v1/policies/preview", a.previewPolicy)
+	mux.HandleFunc("POST /api/v1/policies/preview-batch", a.previewPolicyBatch)
+	mux.HandleFunc("POST /api/v1/policies/simulate", a.simulatePolicy)
+	mux.HandleFunc("GET /api/v1/policies/statistics", a.policyStatistics)
+	mux.HandleFunc("GET /api/v1/policies", a.listPolicies)
+	mux.HandleFunc("GET /api/v1/policies/{type}/{id}", a.getPolicy)
+	mux.HandleFunc("PUT /api/v1/policies/{type}/{id}", a.putPolicy)
+	mux.HandleFunc("DELETE /api/v1/policies/{type}/{id}", a.deletePolicy)
+	mux.HandleFunc("GET /api/v1/policies/{type}/{id}/releases/{version}", a.policyRelease)
+	mux.HandleFunc("GET /api/v1/runtime", a.status)
+	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{resource}", a.listMergeRuntime)
+	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{kind}/{id}/control", a.mergeRetryPoint)
+	mux.HandleFunc("POST /api/v1/policy-runtime/merge/{kind}/{id}/requests", a.requestMergeRetry)
+	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{kind}/{id}/requests", a.listMergeRetries)
+	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{kind}/{id}/requests/{request}", a.getMergeRetry)
+
+	mux.HandleFunc("GET /api/v1/policy-runtime/shield/alerts", a.listShieldRuntime)
+	mux.HandleFunc("GET /api/v1/policy-runtime/suppression/{kind}", a.listSuppressionRuntime)
+	mux.HandleFunc("GET /api/v1/policy-runtime/suppression/cleanups", a.listSuppressionCleanups)
+	mux.HandleFunc("GET /api/v1/policy-runtime/suppression/cleanups/{id}", a.getSuppressionCleanup)
+	mux.HandleFunc("GET /api/v1/policy-runtime/suppression/{kind}/{id}", a.getSuppressionRuntime)
+	mux.HandleFunc("GET /api/v1/policy-runtime/suppression/{kind}/{id}/members", a.suppressionRuntimeMembers)
+	mux.HandleFunc("POST /api/v1/policy-runtime/suppression/{kind}/{id}/reconcile", a.requestSuppressionCheck)
+	mux.HandleFunc("GET /api/v1/policy-runtime/suppression/{kind}/{id}/requests", a.listSuppressionChecks)
+	mux.HandleFunc("GET /api/v1/policy-runtime/suppression/{kind}/{id}/requests/{request}", a.getSuppressionCheck)
+	mux.HandleFunc("GET /api/v1/policy-runtime/shield/alerts/{id}", a.getShieldRuntime)
+	mux.HandleFunc("GET /api/v1/policy-runtime/shield/alerts/{id}/history", a.shieldRuntimeHistory)
+	mux.HandleFunc("GET /api/v1/policy-runtime/shield/alerts/{id}/check", a.shieldLatestCheck)
+	mux.HandleFunc("GET /api/v1/policy-runtime/shield/alerts/{id}/requests", a.shieldRequestHistory)
+	mux.HandleFunc("GET /api/v1/policy-runtime/shield/alerts/{id}/requests/{request}", a.shieldRequestDetail)
+	mux.HandleFunc("POST /api/v1/policy-runtime/shield/alerts/{id}/reconcile", a.requestShieldCheck)
+	mux.HandleFunc("POST /api/v1/alerts/{id}/shield", a.bindManualShield)
+	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{resource}/{id}", a.getMergeRuntime)
+	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{resource}/{id}/members", a.mergeRuntimeMembers)
+	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{resource}/{id}/members/{alert}", a.mergeRuntimeSnapshot)
+	mux.HandleFunc("GET /api/v1/dynamic-config", a.dynamicStatus)
+	mux.HandleFunc("GET /internal/policies", a.workerPolicies)
+	mux.HandleFunc("GET /internal/policy-catalog", a.workerPolicyCatalog)
+	mux.HandleFunc("POST /internal/policy-dependencies", a.workerDependencies)
+	mux.HandleFunc("GET /internal/policies/{type}/{id}/releases/{version}", a.workerPolicyRelease)
+	mux.HandleFunc("GET /internal/settings/severity", a.workerSeverity)
+	mux.HandleFunc("POST /internal/heartbeat", a.beat)
+	mux.HandleFunc("GET /internal/releases/{id}/{version}", a.workerRelease)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, route := mux.Handler(r)
+		kacRequest := (r.Method == http.MethodPost && route == kacCloseRoute) || (r.Method == http.MethodGet && route == kacGetRoute)
+		if strings.HasPrefix(r.URL.Path, "/internal/") {
+			// 调度接口不能因共享管理 JWT 而绕过 Worker 的独立身份边界。
+			provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if a.Config.WorkerToken == "" || subtle.ConstantTimeCompare([]byte(a.Config.WorkerToken), []byte(provided)) != 1 {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		} else if !kacRequest {
+			if verifierErr != nil {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			username, err := verifier.VerifyHeader(r.Header)
+			if err != nil {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			r = r.WithContext(internaltoken.WithUsername(r.Context(), username))
+		}
+		budget := 10 * time.Second
+		if r.Method == http.MethodPost && route == "POST /api/v1/alerts/close" {
+			budget = 20 * time.Second
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), budget)
+		defer cancel()
+		mux.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func output(w http.ResponseWriter, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	if e := json.NewEncoder(w).Encode(value); e != nil {
+		return
+	}
+}
+
+func failure(w http.ResponseWriter, e error) {
+	var invalid *custom.ConfigurationError
+	if errors.As(e, &invalid) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		output(w, map[string]any{"error": map[string]string{"message": e.Error()}})
+		return
+	}
+	code := http.StatusBadRequest
+	if errors.Is(e, eventsource.ErrNotFound) {
+		code = 404
+	}
+	if errors.Is(e, eventsource.ErrConflict) {
+		code = 409
+	}
+	http.Error(w, http.StatusText(code), code)
+}
+
+func decode(r *http.Request, v any) error {
+	d := json.NewDecoder(io.LimitReader(r.Body, (1<<20)+1))
+	d.DisallowUnknownFields()
+	if e := d.Decode(v); e != nil {
+		return e
+	}
+	var extra any
+	if !errors.Is(d.Decode(&extra), io.EOF) {
+		return fmt.Errorf("trailing JSON")
+	}
+	return nil
+}
+
+// includeSecrets 仅允许已通过管理 JWT 鉴权的显式读取；默认接口继续脱敏。
+func includeSecrets(w http.ResponseWriter, r *http.Request) (bool, error) {
+	raw := r.URL.Query().Get("include_secrets")
+	if raw == "" || raw == "false" {
+		return false, nil
+	}
+	if raw != "true" {
+		return false, fmt.Errorf("invalid include_secrets")
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	return true, nil
+}
+
+func (a *API) list(w http.ResponseWriter, r *http.Request) {
+	published := r.URL.Query().Get("published")
+	if published != "" && published != "true" && published != "false" {
+		failure(w, fmt.Errorf("invalid published"))
+		return
+	}
+	full, err := includeSecrets(w, r)
+	if err != nil {
+		failure(w, err)
+		return
+	}
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		var e error
+		limit, e = strconv.Atoi(raw)
+		if e != nil {
+			failure(w, e)
+			return
+		}
+	}
+	rs, e := a.Sources.List(r.Context(), r.URL.Query().Get("after"), limit)
+	if e != nil {
+		failure(w, e)
+		return
+	}
+	// 策略缓存诊断必须与投影任务使用同一已发布范围；保留未发布记录和 tombstone，
+	// 避免过滤后的页长被误认为分页结束。默认列表仍返回编辑版本。
+	if published == "true" {
+		for i := range rs {
+			if rs[i].Published == 0 {
+				continue
+			}
+			release, err := a.Sources.GetRelease(r.Context(), rs[i].ID, rs[i].Published)
+			if err != nil {
+				failure(w, err)
+				return
+			}
+			rs[i].Spec = release.Spec
+		}
+	}
+	if !full {
+		for i := range rs {
+			rs[i] = rs[i].Redacted()
+		}
+	}
+	output(w, rs)
+}
+
+func (a *API) get(w http.ResponseWriter, r *http.Request) {
+	full, err := includeSecrets(w, r)
+	if err != nil {
+		failure(w, err)
+		return
+	}
+	v, e := a.Sources.Get(r.Context(), r.PathValue("id"))
+	if e != nil {
+		failure(w, e)
+		return
+	}
+	if !full {
+		v = v.Redacted()
+	}
+	output(w, v)
+}
+
+// Mutation 省略 security 时保持原凭据，显式提交则整体替换认证材料。
+type Mutation struct {
+	Expected                int64              `json:"expected_revision"`
+	Spec                    config.EventSource `json:"spec"`
+	AllowSubscriptionChange bool               `json:"allow_subscription_change,omitempty"`
+}
+
+func (a *API) put(w http.ResponseWriter, r *http.Request) {
+	var m Mutation
+	if e := decode(r, &m); e != nil {
+		failure(w, e)
+		return
+	}
+	if m.Spec.EventSourceID != r.PathValue("id") {
+		failure(w, fmt.Errorf("source id mismatch"))
+		return
+	}
+	if old, e := a.Sources.Get(r.Context(), m.Spec.EventSourceID); e == nil {
+		if m.Spec.Storage.Kafka.Security.Protocol == "" && m.Spec.Storage.Kafka.Security.SASL == nil {
+			m.Spec.Storage.Kafka.Security = old.Spec.Storage.Kafka.Security
+		}
+		m.Spec = m.Spec.WithPreservedHookSecrets(old.Spec)
+	}
+	record, e := a.Sources.Apply(r.Context(), m.Spec, m.Expected, false, "api", eventsource.ApplyOptions{AllowSubscriptionChange: m.AllowSubscriptionChange})
+	if e != nil {
+		failure(w, e)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+	output(w, record.Redacted())
+}
+
+func (a *API) delete(w http.ResponseWriter, r *http.Request) {
+	var m struct {
+		Expected int64 `json:"expected_revision"`
+	}
+	if e := decode(r, &m); e != nil {
+		failure(w, e)
+		return
+	}
+	old, e := a.Sources.Get(r.Context(), r.PathValue("id"))
+	if e == nil {
+		old, e = a.Sources.Apply(r.Context(), old.Spec, m.Expected, true, "api")
+	}
+	if e != nil {
+		failure(w, e)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+	output(w, old.Redacted())
+}
+
+func (a *API) release(w http.ResponseWriter, r *http.Request) {
+	v, e := strconv.ParseInt(r.PathValue("version"), 10, 64)
+	if e != nil {
+		failure(w, e)
+		return
+	}
+	rel, e := a.Sources.GetRelease(r.Context(), r.PathValue("id"), v)
+	if e != nil {
+		failure(w, e)
+		return
+	}
+	rel.Spec = rel.Spec.Redacted()
+	output(w, rel)
+}
+
+func (a *API) status(w http.ResponseWriter, r *http.Request) {
+	s, e := a.Controller.Snapshot(r.Context())
+	if e != nil {
+		failure(w, e)
+		return
+	}
+	routes := map[string]map[string]string{}
+	for _, status := range s.Statuses {
+		lc := a.Lifecycle.ForSource(a.Config.Deployment, status.Source)
+		routes[status.Source] = map[string]string{"stream": lc.Signal.Stream, "mailbox_prefix": lc.Mailbox.KeyPrefix, "lock_prefix": lc.Lock.KeyPrefix}
+	}
+	output(w, struct {
+		taskdispatch.State
+		Routes map[string]map[string]string `json:"routes"`
+	}{s, routes})
+}
+
+func (a *API) beat(w http.ResponseWriter, r *http.Request) {
+	if a.DynamicConfig != nil {
+		w.Header().Set("X-Linkd-Dynamic-Config", a.DynamicConfig.Status().Current.Digest)
+	} else {
+		w.Header().Set("X-Linkd-Dynamic-Config", "disabled")
+	}
+	var h taskdispatch.Heartbeat
+	if e := decode(r, &h); e != nil {
+		failure(w, e)
+		return
+	}
+	if e := config.ValidateLabels(h.Worker.Labels); e != nil {
+		failure(w, e)
+		return
+	}
+	tasks, e := a.Controller.Beat(r.Context(), h)
+	if e != nil {
+		failure(w, e)
+		return
+	}
+	output(w, tasks)
+}
+
+func releaseForRole(release eventsource.Release, role string) eventsource.Release {
+	if role != "lifecycle" {
+		release.Spec.Enrich = config.EnrichConfig{}
+	}
+	return release
+}
+
+func (a *API) workerRelease(w http.ResponseWriter, r *http.Request) {
+	state, e := a.Controller.Snapshot(r.Context())
+	if e != nil {
+		failure(w, e)
+		return
+	}
+	id := r.URL.Query().Get("task")
+	t, ok := state.Tasks[id]
+	version, e := strconv.ParseInt(r.PathValue("version"), 10, 64)
+	purpose := r.URL.Query().Get("purpose")
+	if e != nil || !ok || !canReadWorkerRelease(t, r.Header.Get("X-Worker-ID"), r.PathValue("id"), version, purpose) {
+		http.Error(w, "assignment required", http.StatusForbidden)
+		return
+	}
+	rel, e := a.Sources.GetRelease(r.Context(), t.Source, version)
+	if e == nil {
+		rel = releaseForRole(rel, t.Role)
+	}
+	if e != nil {
+		failure(w, e)
+		return
+	}
+	output(w, rel)
+}
+
+func (a *API) previewEnrich(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if a.Previewer == nil {
+		http.Error(w, "preview unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var request preview.Request
+	if err := decode(r, &request); err != nil {
+		http.Error(w, "invalid preview request", http.StatusBadRequest)
+		return
+	}
+	result, err := a.Previewer.Preview(r.Context(), request)
+	if err != nil {
+		var previewError *preview.Error
+		if errors.As(err, &previewError) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(previewError.Status)
+			output(w, map[string]any{"error": map[string]string{"message": previewError.Message}})
+			return
+		}
+		http.Error(w, "preview failed", http.StatusInternalServerError)
+		return
+	}
+	output(w, result)
+}
+
+// Controller 是管理 API 消费的调度端口，不包含存储装配或中心任务循环。
+type Controller interface {
+	Snapshot(context.Context) (taskdispatch.State, error)
+	Beat(context.Context, taskdispatch.Heartbeat) ([]taskdispatch.Task, error)
+}
+
+// canReadWorkerRelease 只允许读取当前分配任务的来源版本，不提供按 Event 回读历史配置的入口。
+func canReadWorkerRelease(task taskdispatch.Task, worker, source string, version int64, purpose string) bool {
+	if version <= 0 || version >= 1<<53 || task.Worker != worker || task.Source != source || task.Phase == "stopped" {
+		return false
+	}
+	return purpose == "" && task.Version == version
+}

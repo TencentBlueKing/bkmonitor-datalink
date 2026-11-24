@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -79,15 +80,46 @@ func (m *Manager) ReconcileSchemaAndActive(ctx context.Context) error {
 	return nil
 }
 
-// ReconcileBuckets 幂等维护当前预创建窗口内的时间桶及其 alias。
-// 模板必须先由 ReconcileSchemaAndActive 准备；控制面启动时按该顺序完成首次对账。
+// ReconcileBuckets 核对已有历史桶的字段，并幂等维护当前预创建窗口内的时间桶及其 alias。
+// 模板必须先由 ReconcileSchemaAndActive 准备；控制面后台按该顺序完成首次对账。
 func (m *Manager) ReconcileBuckets(ctx context.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("reconcile elasticsearch buckets: context must not be nil")
 	}
+	if err := m.reconcileExistingBuckets(ctx); err != nil {
+		return err
+	}
 	now := m.now().Round(0).UTC()
 	if err := m.ensureWindow(ctx, now); err != nil {
 		return err
+	}
+	return nil
+}
+
+// 历史告警仍会写入原创建时间桶；只升级已有读 alias 成员，不扩大预创建范围。
+// 物理名称和 managed metadata 都必须与当前部署一致，不能把异主索引当作可修复的旧版本。
+func (m *Manager) reconcileExistingBuckets(ctx context.Context) error {
+	for _, family := range m.bucketFamilies() {
+		indices, err := m.aliasIndices(ctx, family.readAlias)
+		if err != nil {
+			return err
+		}
+		if len(indices) > m.config.MaxBucketsPerEntity {
+			return fmt.Errorf("elasticsearch alias %q exceeds max bucket count %d", family.readAlias, m.config.MaxBucketsPerEntity)
+		}
+		for _, index := range indices {
+			_, date, found := strings.Cut(index, family.readAlias+"-")
+			start, err := time.Parse(bucketDateLayout, date)
+			if !found || err != nil || family.index(start) != index {
+				return fmt.Errorf("elasticsearch alias %q contains incompatible bucket %q", family.readAlias, index)
+			}
+			expected := schemaMetadata{ManagedBy: managedByLinkd, Entity: family.entity, Role: family.role,
+				SchemaVersion: currentSchemaVersion, BucketDays: family.days,
+				BucketStart: start.Format(time.RFC3339), BucketEnd: start.AddDate(0, 0, family.days).Format(time.RFC3339)}
+			if err := m.verifyManagedIndex(ctx, index, expected); err != nil {
+				return fmt.Errorf("reconcile existing %s bucket %q: %w", family.entity, index, err)
+			}
+		}
 	}
 	return nil
 }
@@ -137,6 +169,9 @@ func (m *Manager) VerifyReady(ctx context.Context) error {
 			return fmt.Errorf("elasticsearch write alias %q must point to %q with is_write_index=true", alias, expectedIndex)
 		}
 	}
+	if err := m.verifyActiveAlertRefreshInterval(ctx, m.router.activeAlertIndex()); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -178,6 +213,9 @@ func (m *Manager) ensureActiveAlert(ctx context.Context) error {
 	if err := m.ensureManagedIndex(ctx, index, metadata); err != nil {
 		return fmt.Errorf("ensure active alert index: %w", err)
 	}
+	if err := m.ensureActiveAlertRefreshInterval(ctx, index); err != nil {
+		return err
+	}
 	if err := m.ensureAlias(ctx, m.router.alertReadAlias(), index, false, false); err != nil {
 		return err
 	}
@@ -185,6 +223,44 @@ func (m *Manager) ensureActiveAlert(ctx context.Context) error {
 		return err
 	}
 	return m.ensureAlias(ctx, m.router.activeAlertWriteAlias(), index, true, true)
+}
+
+func (m *Manager) ensureActiveAlertRefreshInterval(ctx context.Context, index string) error {
+	refreshInterval := m.router.activeRefreshInterval.String()
+	body, err := marshalRequest(map[string]any{"index": map[string]any{"refresh_interval": refreshInterval}})
+	if err != nil {
+		return err
+	}
+	if err := m.repository.performJSON(ctx, http.MethodPut, "/"+index+"/_settings", nil, body, nil); err != nil {
+		return fmt.Errorf("ensure active alert index refresh interval: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) verifyActiveAlertRefreshInterval(ctx context.Context, index string) error {
+	var response map[string]struct {
+		Settings struct {
+			Index struct {
+				RefreshInterval string `json:"refresh_interval"`
+			} `json:"index"`
+		} `json:"settings"`
+	}
+	if err := m.repository.performJSON(
+		ctx,
+		http.MethodGet,
+		"/"+index+"/_settings/index.refresh_interval",
+		nil,
+		nil,
+		&response,
+	); err != nil {
+		return fmt.Errorf("verify active alert index refresh interval: %w", err)
+	}
+	item, ok := response[index]
+	expected := m.router.activeRefreshInterval.String()
+	if !ok || len(response) != 1 || item.Settings.Index.RefreshInterval != expected {
+		return fmt.Errorf("elasticsearch active alert index %q refresh_interval must be %s", index, expected)
+	}
+	return nil
 }
 
 func (m *Manager) ensureBucket(ctx context.Context, family bucketFamily, start time.Time) error {
@@ -197,6 +273,11 @@ func (m *Manager) ensureBucket(ctx context.Context, family bucketFamily, start t
 	index := family.index(start)
 	if err := m.ensureManagedIndex(ctx, index, metadata); err != nil {
 		return fmt.Errorf("ensure %s bucket %q: %w", family.entity, index, err)
+	}
+	if family.entity == entityAlertLog {
+		if err := m.ensureAlertLogTranslogDurability(ctx, index); err != nil {
+			return err
+		}
 	}
 	indices, err := m.aliasIndices(ctx, family.readAlias)
 	if err != nil {
@@ -214,6 +295,19 @@ func (m *Manager) ensureBucket(ctx context.Context, family bucketFamily, start t
 		}
 	}
 	return m.ensureAlias(ctx, family.writeAlias(start), index, true, true)
+}
+
+func (m *Manager) ensureAlertLogTranslogDurability(ctx context.Context, index string) error {
+	body, err := marshalRequest(map[string]any{
+		"index": map[string]any{"translog.durability": m.router.alertLogDurability},
+	})
+	if err != nil {
+		return err
+	}
+	if err := m.repository.performJSON(ctx, http.MethodPut, "/"+index+"/_settings", nil, body, nil); err != nil {
+		return fmt.Errorf("ensure alert log index %q translog durability: %w", index, err)
+	}
+	return nil
 }
 
 func (m *Manager) ensureManagedIndex(ctx context.Context, index string, metadata schemaMetadata) error {
@@ -234,7 +328,8 @@ func (m *Manager) ensureManagedIndex(ctx context.Context, index string, metadata
 func (m *Manager) verifyManagedIndex(ctx context.Context, index string, expected schemaMetadata) error {
 	var response map[string]struct {
 		Mappings struct {
-			Metadata schemaMetadata `json:"_meta"`
+			Metadata   schemaMetadata            `json:"_meta"`
+			Properties map[string]map[string]any `json:"properties"`
 		} `json:"mappings"`
 	}
 	if err := m.repository.performJSON(ctx, http.MethodGet, "/"+index+"/_mapping", nil, nil, &response); err != nil {
@@ -243,6 +338,15 @@ func (m *Manager) verifyManagedIndex(ctx context.Context, index string, expected
 	item, ok := response[index]
 	if !ok || len(response) != 1 || item.Mappings.Metadata != expected {
 		return fmt.Errorf("elasticsearch index %q has incompatible managed metadata; stop Linkd, delete managed indices and aliases, then restart linkd run control-plane or linkd run all-in-one", index)
+	}
+	if expected.Entity == entityEvent {
+		if err := m.repository.ensureEventEnrichmentMapping(ctx, index, item.Mappings.Properties); err != nil {
+			return err
+		}
+		return m.repository.ensureEventPolicyMapping(ctx, index, item.Mappings.Properties)
+	}
+	if expected.Entity == entityAlert || expected.Entity == entityAlertHistory {
+		return m.repository.ensureAlertPolicyMapping(ctx, index, item.Mappings.Properties)
 	}
 	return nil
 }
@@ -334,6 +438,8 @@ func (m *Manager) ArchiveTerminalAlerts(
 		"seq_no_primary_term": true,
 		"query": map[string]any{"bool": map[string]any{"must_not": []any{
 			map[string]any{"term": map[string]any{"status": domain.AlertStatusActive}},
+			map[string]any{"exists": map[string]any{"field": "merge_change.operation_id"}},
+			map[string]any{"exists": map[string]any{"field": "policy_change.operation_id"}},
 		}}},
 		"sort": []any{map[string]any{"alert_id": map[string]any{"order": "asc"}}},
 	}
@@ -378,6 +484,13 @@ func (m *Manager) ArchiveTerminalAlerts(
 			result.Archived++
 			continue
 		}
+		if item.conflicted {
+			result.Conflicts++
+			if len(result.ConflictItems) < maxArchiveFailureSamples {
+				result.ConflictItems = append(result.ConflictItems, ArchiveConflict{Index: item.index, DocumentID: item.documentID})
+			}
+			continue
+		}
 		reason := "archive worker returned neither success nor error"
 		if item.err != nil {
 			reason = item.err.Error()
@@ -387,7 +500,7 @@ func (m *Manager) ArchiveTerminalAlerts(
 			Code: item.stage + "_failed", Reason: reason,
 		})
 	}
-	result.Failed = result.Scanned - result.Archived
+	result.Failed = result.Scanned - result.Archived - result.Conflicts
 	if result.Scanned == request.Limit {
 		if err := json.Unmarshal(response.Hits.Hits[len(response.Hits.Hits)-1].Sort[0], &result.NextCursor); err != nil {
 			return ArchiveBatchResult{}, fmt.Errorf("decode active alert archive cursor: %w", err)

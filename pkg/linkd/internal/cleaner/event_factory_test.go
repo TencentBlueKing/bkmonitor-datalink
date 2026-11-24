@@ -59,8 +59,8 @@ func TestEventFactoryProtectsSystemFieldsAndUsesResolvers(t *testing.T) {
 		RecordID: "record-1", BKTenantID: "tenant-1", ReceivedAt: receivedAt,
 		Payload: []byte(`{"title":"payload title","fingerprint":"payload-fingerprint","bk_tenant_id":"payload-tenant","unknown":{"nested":true}}`),
 	}
-	draft := EventDraft{
-		Title: "draft title", SourceSeverity: "P0", Action: domain.EventActionTriggered,
+	draft := EventDraft{Evaluations: []domain.EventEvaluation{{Severity: "P0", Action: domain.EventActionTriggered}},
+		BKTenantID: "tenant-1", Title: "draft title",
 		SubjectID: "host-1", Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{},
 	}
@@ -71,8 +71,8 @@ func TestEventFactoryProtectsSystemFieldsAndUsesResolvers(t *testing.T) {
 	if severityResolver.raw != "P0" || fingerprintResolver.subject != "host-1" {
 		t.Fatalf("resolver inputs severity=%q subject=%q", severityResolver.raw, fingerprintResolver.subject)
 	}
-	if event.Severity != "critical" || event.Fingerprint != "resolved-fingerprint" ||
-		event.BKTenantID != "tenant-1" || event.Title != "draft title" || event.RelatedAlertID != "" {
+	if event.Evaluations[0].Severity != "critical" || event.Fingerprint != "resolved-fingerprint" ||
+		event.BKTenantID != "tenant-1" || event.Title != "draft title" || len(event.RelatedAlertIDs) != 0 {
 		t.Fatalf("event=%#v", event)
 	}
 	for _, key := range []string{"fingerprint", "bk_tenant_id", "unknown"} {
@@ -85,6 +85,23 @@ func TestEventFactoryProtectsSystemFieldsAndUsesResolvers(t *testing.T) {
 	}
 }
 
+func TestEventFactoryRejectsTenantMismatch(t *testing.T) {
+	t.Parallel()
+	factory, err := NewEventFactory(testSource(), config.SeverityConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = factory.Build(RawEventMessage{
+		RecordID: "record-1", BKTenantID: "envelope-tenant", ReceivedAt: time.Now(), Payload: []byte(`{}`),
+	}, EventDraft{Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}},
+		BKTenantID: "payload-tenant",
+		Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{},
+	})
+	if err == nil {
+		t.Fatal("tenant mismatch accepted")
+	}
+}
+
 func TestEventFactoryRequiresResolvers(t *testing.T) {
 	t.Parallel()
 	if _, err := NewEventFactoryWithResolvers(testSource(), config.SeverityConfig{}, nil, DefaultFingerprintResolver{}); err == nil {
@@ -92,5 +109,36 @@ func TestEventFactoryRequiresResolvers(t *testing.T) {
 	}
 	if _, err := NewEventFactoryWithResolvers(testSource(), config.SeverityConfig{}, DefaultSeverityResolver{}, nil); err == nil {
 		t.Fatal("nil fingerprint resolver accepted")
+	}
+}
+
+func TestSourceIDIsPreservedWhileRecordIdentitySeparatesEvents(t *testing.T) {
+	t.Parallel()
+	factory, err := NewEventFactoryWithResolvers(testSource(), config.SeverityConfig{}, &recordingSeverityResolver{value: "warning"}, &recordingFingerprintResolver{value: "same-alarm"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := RawEventMessage{RecordID: "topic/0/1", BKTenantID: "tenant-1", ReceivedAt: time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC), Payload: []byte(`{"event_id":"A123"}`)}
+	draft := EventDraft{BKTenantID: "tenant-1", SourceEventID: "A123", SourceAlertID: "A123", Title: "CPU", Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}}}
+	firing, err := factory.Build(message, draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := factory.Build(message, draft)
+	if err != nil || replay.EventID != firing.EventID {
+		t.Fatal("record replay changed identity", err)
+	}
+	message.RecordID = "topic/0/2"
+	draft.Evaluations[0].Action = domain.EventActionResolved
+	resolved, err := factory.Build(message, draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.EventID == firing.EventID || resolved.SourceEventID != "A123" || firing.SourceEventID != "A123" || resolved.Fingerprint != firing.Fingerprint {
+		t.Fatalf("same original ID/timestamp must retain correlation and distinguish records: firing=%+v resolved=%+v", firing, resolved)
+	}
+	message.RecordID = ""
+	if _, err := factory.Build(message, draft); err == nil {
+		t.Fatal("missing stable record identity accepted")
 	}
 }

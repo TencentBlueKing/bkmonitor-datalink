@@ -20,6 +20,32 @@ import (
 	"linkd/internal/domain"
 )
 
+func TestMapperUsesPayloadTenant(t *testing.T) {
+	t.Parallel()
+	mapper, err := NewMapper(testSource(), config.SeverityConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(validPayload(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	payload["bk_tenant_id"] = "payload-tenant"
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := mapper.MapMessage(context.Background(), consume.Message{
+		ID: "record", Body: body, EnqueuedAt: time.Date(2026, 9, 1, 0, 0, 2, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.BKTenantID != "payload-tenant" {
+		t.Fatalf("tenant=%q", event.BKTenantID)
+	}
+}
+
 func TestMapperBuildsStableEvent(t *testing.T) {
 	t.Parallel()
 	source := testSource()
@@ -37,9 +63,9 @@ func TestMapperBuildsStableEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 	parsedID, parseErr := domain.ParseEventID(first.EventID)
-	if first.EventID != second.EventID || parseErr != nil || parsedID.BKTenantID != first.BKTenantID ||
-		parsedID.EventSourceID != source.EventSourceID || first.EventSourceID != source.EventSourceID ||
-		first.Fingerprint != "source-alert-1" || first.Severity != "warning" || first.RelatedAlertID != "" {
+	if first.EventID != second.EventID || parseErr != nil || !parsedID.Timestamp.Equal(first.ReceivedAt.Truncate(time.Second)) ||
+		first.EventSourceID != source.EventSourceID ||
+		first.Fingerprint != "source-alert-1" || first.Evaluations[0].Severity != "warning" || len(first.RelatedAlertIDs) != 0 {
 		t.Fatalf("event=%#v", first)
 	}
 	if first.BKTenantID != message.TenantID {
@@ -127,7 +153,7 @@ func TestMapperAllowsEmptySourceIDsAndPreservesUnknownFields(t *testing.T) {
 	}
 	delete(payload, "event_id")
 	delete(payload, "alert_id")
-	payload["fingerprint"] = "payload-must-not-win"
+	payload["fingerprint"] = "source-fingerprint"
 	payload["unknown"] = map[string]any{"nested": true}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -146,7 +172,7 @@ func TestMapperAllowsEmptySourceIDsAndPreservesUnknownFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if event.SourceEventID != "" || event.SourceAlertID != "" || event.Fingerprint != "1" {
+	if event.SourceEventID != "" || event.SourceAlertID != "" || event.Fingerprint != "source-fingerprint" {
 		t.Fatalf("event identities=%#v", event)
 	}
 	for _, key := range []string{"fingerprint", "unknown"} {

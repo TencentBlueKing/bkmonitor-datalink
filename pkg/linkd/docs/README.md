@@ -1,7 +1,20 @@
 # Linkd 文档中心
 
-Linkd 项目仍处于早期开发阶段，本文档只描述当前代码、测试和已确认契约，不为未发布的旧内部模型
-保留兼容说明页。
+Linkd 项目仍处于早期开发阶段。文档中心区分当前代码、测试和已确认契约与尚未实现的开发方案；
+不为未发布的旧内部模型保留兼容说明页。
+
+图解入口：[整体架构图](design/architecture.md#整体架构) · [事件处理流程图](design/architecture.md#处理链路)。
+两张图统一在总体架构文档维护，包含同步处理、控制面后台推进及外部系统边界。
+
+## 开发实施方案
+
+- [三类策略的内存匹配与增量运行](design/policy-runtime-scaling.md)：候选索引、共享依赖的 60 秒时效、依赖主索引、合并批量推进及验证记录；OneModel 通知暂缓。
+- [KAC 告警源插件调试接入 Linkd 方案](design/kac-alarm-source-debug-preview.md)：首版代码已实现；保留原 KAC 字段与调试步骤，
+  复用 verification 索引、不执行丰富并同步 HTTP 返回；本地 HTTP/索引及原调试组件已联调，全主站验收待验证。
+- [Event 丰富与抑制、屏蔽、合并开发方案](design/event-enrich-and-alarm-policies.md)：Event Enrich 前移、
+  字段变更、KAC 三类策略配置与行为、控制面任务、管理接口、可靠输出与降级及验收矩阵。
+  当前代码流程见上述图解；业务决策、历史实施证据和
+  [当前能力与剩余差距](design/event-enrich-and-alarm-policies.md#112-当前能力与剩余差距2026-10-08)分别标明。
 
 ## 阅读顺序
 
@@ -12,16 +25,47 @@ Linkd 项目仍处于早期开发阶段，本文档只描述当前代码、测�
 5. [Lifecycle](modules/lifecycle.md)：Mailbox、Signal、lease、状态裁决和恢复。
 6. [配置指南](guides/configuration.md)：YAML 配置、默认预算和校验规则。
 7. [Standard Event 模拟器](guides/event-generator.md)：持续生成常见告警并推送到指定 EventSource。
-8. [总体设计](design/architecture.md)：当前处理链路和模块边界。
+8. [总体设计](design/architecture.md)：整体架构图、事件处理流程图、模块和可靠性边界。
 9. [部署模式](design/deployment.md)：All-in-one 与三进程拓扑、职责和演进边界。
 10. [消息消费运行时](design/message-consumption-runtime.md)：MQ 通用端口、确认和背压。
 11. [核心存储契约](design/core-storage-contract.md)：Repository、CAS 和物理资源。
-12. [外部协议](reference/contracts/README.md)：`standard` 输入和 Kafka Alert V1 输出。
+12. [Linkd 标准事件](reference/contracts/standard-event.md)：RawEvent 输入、KAC V2 校验与旧 `AlarmEvent` 字段映射。
+13. [其他外部协议](reference/contracts/README.md)：KAC Alarm 输出与已移除的 Kafka V1 Hook。
+
+Kubernetes 部署入口：[Kubernetes 部署](guides/helm.md)。
+多级别事件改造的测试环境切换见[重置升级指南](guides/multilevel-event-upgrade.md)；
+[核心模型 HTML 说明页](linkd-core-model.html)提供当前模型与处理流程的可视化概览。
 
 ## 当前文档与归档
 
+KAC 当前出口见[全局兼容插件](design/kac-compatibility-plugin.md)：Linkd 直接维护 `alarm_event`，
+确认兼容文档可搜索后再可靠通知获准动作。外部 KAC 接入与生产切流需另行验证。
+原 Kafka 转换路径见 [KAC Alarm Hook 设计](design/kac-alarm-hook.md)，不能将旧 Hook 等同于全局插件的可靠性保证。
+
+EventSource 管理与部分全局配置动态化独立演进：
+
+- [EventSource 动态配置](design/event-source-dynamic-configuration.md)：来源独立管理、主动拉取/API 修改、版本与 Flow 生效，已接入实现。
+- [部分配置动态化](design/dynamic-configuration.md)：Severity 等选定配置项的消费者、生效和恢复边界，不包含来源管理，已实现，默认关闭。
+
+跨模块运行协议：[中心化任务调度](design/task-scheduling-protocol.md)，由 EventSource 首先接入，后续可供
+Lifecycle 等模块复用；包含停止确认、失联自停、超时强切及服务/容器发布防抖，当前采用有界自停模型。
+
 `design/`、`modules/`、`guides/` 和 `reference/` 是现行文档，修改行为时必须同步更新。已经被当前
-模型替换的早期占位页和重复模块页不再保留。
+模型替换的早期占位页和重复模块页不再保留；旧的 alarm_callback 丰富迁移计划也未纳入本目录。
+当前接口以[丰富设计](design/enrich.md)与[核心模型](design/define.md)为准。
+各类资源如何取得 `model_id`、`model_inst_id` 并关联 OneModel，见[资源关联规则](design/enrich-resource-identity.md)。
+
+告警对象展示文本 `object` 如何补全，见 [object 补全规则](design/enrich-object.md)：按场景说明
+`subject_name`、实例名称、维度和任务名称的选择，以及 `extra_data.object` 的覆盖规则。
+
+字段梳理：[Enrich 的 item 补全规则](design/enrich-item.md)，按当前代码说明来源字段、策略名称、
+指标库名称、各类告警取值及 Alert 快照规则。
+
+告警名称见 [title 生成规则](design/enrich-title.md)：区分当前按类型拼接的行为与待实现的
+“有对象名称时统一拼接”规则，说明字段来源、覆盖顺序及历史告警边界。
+
+KAC 告警详情中的指标字段见 [metric_name 与 item](design/enrich-metric-identity-and-item.md)：
+按普通指标、多查询、衍生指标、PromQL、日志和 dataset 分别说明当前补全规则与歧义处理。
 
 `research/` 与 `reviews/` 是带日期或 commit 基线的归档输入，不属于当前契约。阅读归档时必须以
 其记录的版本为准，不能反向覆盖当前代码和设计。
@@ -34,3 +78,7 @@ Linkd 项目仍处于早期开发阶段，本文档只描述当前代码、测�
 - `reference/`：统一术语与外部协议。
 - `research/`：带版本和证据的历史技术输入。
 - `reviews/`：特定时间点的审查快照。
+
+控制面队列展批、优雅重启和 KAC 字段增量更新见[控制面批处理](design/control-plane-batch-delivery.md)。
+
+- [KAC 输出 V3 本地验收](research/2026-10-14-kac-output-v3-validation.md)

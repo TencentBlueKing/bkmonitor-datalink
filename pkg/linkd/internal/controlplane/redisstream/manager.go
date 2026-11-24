@@ -21,6 +21,19 @@ import (
 	redis "github.com/redis/go-redis/v9"
 )
 
+// OperationError 在错误链中保留固定命令名，便于外层只记录操作和脱敏错误类别。
+// Err 可能含服务端私有信息，日志不得直接输出它。
+type OperationError struct {
+	Operation string
+	Err       error
+}
+
+func (e *OperationError) Error() string {
+	return fmt.Sprintf("redis stream %s: %v", e.Operation, e.Err)
+}
+
+func (e *OperationError) Unwrap() error { return e.Err }
+
 // Config 定义单个 Redis Stream 管理任务的目标和资源边界。
 type Config struct {
 	// Stream 是受管 Redis Stream key。
@@ -33,8 +46,10 @@ type Config struct {
 	OperationTimeout time.Duration
 	// MaxEntries 是触发安全裁剪的软长度上限。
 	MaxEntries int64
-	// TrimBatchSize 限制单轮裁剪检查和删除的条目数。
+	// TrimBatchSize 限制单条 Redis 裁剪命令检查和删除的条目数。
 	TrimBatchSize int64
+	// MaxTrimEntriesPerCycle 限制单轮累计裁剪的条目数。
+	MaxTrimEntriesPerCycle int64
 }
 
 // Snapshot 是一轮采集得到的低基数 Stream 状态。
@@ -116,7 +131,9 @@ func newManager(client redisClient, config Config, observer Observer, now func()
 		return nil, fmt.Errorf("create redis stream manager: stream and expected group are required")
 	}
 	if config.ReconcileInterval < time.Second || config.OperationTimeout <= 0 ||
-		config.OperationTimeout >= config.ReconcileInterval || config.MaxEntries < 1 || config.TrimBatchSize < 1 {
+		config.OperationTimeout >= config.ReconcileInterval || config.MaxEntries < 1 || config.TrimBatchSize < 1 ||
+		config.MaxTrimEntriesPerCycle < config.TrimBatchSize ||
+		config.MaxTrimEntriesPerCycle > config.TrimBatchSize*100 {
 		return nil, fmt.Errorf("create redis stream manager: invalid resource limits")
 	}
 	if observer == nil {
@@ -162,23 +179,34 @@ func (m *Manager) ReconcileOnce(ctx context.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("reconcile redis stream: context must not be nil")
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	startedAt := time.Now()
 	trimmed := int64(0)
 	snapshot, boundary, safeToTrim, err := m.inspect(ctx)
-	if err == nil && snapshot.TrimRequired && safeToTrim {
-		trimmed, err = m.client.XTrimMinIDApprox(
-			ctx,
-			m.config.Stream,
-			boundary,
-			m.config.TrimBatchSize,
-		).Result()
+	for err == nil && snapshot.TrimRequired && safeToTrim && trimmed < m.config.MaxTrimEntriesPerCycle {
+		// 每批后重读所有 Group/PEL，不复用旧边界连续删除。这既能追赶已确认积压，
+		// 也能在 Pending 或 Group 变化时立即停止，避免为满足长度目标删除未确认消息。
+		limit := min(m.config.TrimBatchSize, m.config.MaxTrimEntriesPerCycle-trimmed)
+		var trimmedBatch int64
+		trimmedBatch, err = m.client.XTrimMinIDApprox(ctx, m.config.Stream, boundary, limit).Result()
 		if err != nil {
-			err = fmt.Errorf("trim redis stream %q before %q: %w", m.config.Stream, boundary, err)
-		} else if trimmed > 0 {
-			snapshot, _, _, err = m.inspect(ctx)
+			err = &OperationError{Operation: "XTRIM", Err: err}
+			break
 		}
+		trimmed += trimmedBatch
+		if trimmedBatch == 0 {
+			// 近似 XTRIM 可能暂时找不到可释放的 radix-tree 节点；本轮停止避免忙循环。
+			break
+		}
+		snapshot, boundary, safeToTrim, err = m.inspect(ctx)
 	}
 	if err != nil {
+		// 进程主动取消不计作维护失败；独立来源 DeadlineExceeded 仍应被记录。
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return err
+		}
 		m.observer.ReconcileFinished(ctx, "failed", time.Since(startedAt), trimmed)
 		return err
 	}
@@ -191,7 +219,7 @@ func (m *Manager) inspect(ctx context.Context) (Snapshot, string, bool, error) {
 	snapshot := Snapshot{MaxEntries: m.config.MaxEntries, MaxLag: -1}
 	exists, err := m.client.Exists(ctx, m.config.Stream).Result()
 	if err != nil {
-		return snapshot, "", false, fmt.Errorf("inspect redis stream %q existence: %w", m.config.Stream, err)
+		return snapshot, "", false, &OperationError{Operation: "EXISTS", Err: err}
 	}
 	if exists == 0 {
 		snapshot.MaxLag = 0
@@ -201,7 +229,7 @@ func (m *Manager) inspect(ctx context.Context) (Snapshot, string, bool, error) {
 
 	info, err := m.client.XInfoStream(ctx, m.config.Stream).Result()
 	if err != nil {
-		return snapshot, "", false, fmt.Errorf("inspect redis stream %q: %w", m.config.Stream, err)
+		return snapshot, "", false, &OperationError{Operation: "XINFO STREAM", Err: err}
 	}
 	snapshot.Length = info.Length
 	snapshot.TrimRequired = info.Length > m.config.MaxEntries
@@ -212,13 +240,13 @@ func (m *Manager) inspect(ctx context.Context) (Snapshot, string, bool, error) {
 	}
 	memoryBytes, err := m.client.MemoryUsage(ctx, m.config.Stream).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		return snapshot, "", false, fmt.Errorf("inspect redis stream %q memory: %w", m.config.Stream, err)
+		return snapshot, "", false, &OperationError{Operation: "MEMORY USAGE", Err: err}
 	}
 	snapshot.MemoryBytes = memoryBytes
 
 	groups, err := m.client.XInfoGroups(ctx, m.config.Stream).Result()
 	if err != nil {
-		return snapshot, "", false, fmt.Errorf("inspect redis stream %q groups: %w", m.config.Stream, err)
+		return snapshot, "", false, &OperationError{Operation: "XINFO GROUPS", Err: err}
 	}
 	snapshot.Groups = int64(len(groups))
 	if len(groups) == 0 {
@@ -291,12 +319,7 @@ func (m *Manager) groupTrimBoundary(
 		Count:  1,
 	}).Result()
 	if err != nil {
-		return "", "", false, fmt.Errorf(
-			"inspect redis stream %q group %q oldest pending: %w",
-			m.config.Stream,
-			group.Name,
-			err,
-		)
+		return "", "", false, &OperationError{Operation: "XPENDING", Err: err}
 	}
 	if len(pending) == 0 {
 		// Pending 可能在 XINFO 与 XPENDING 之间刚好被确认。本轮不裁剪，下一轮重读完整状态，

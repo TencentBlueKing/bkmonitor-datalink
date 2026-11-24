@@ -10,8 +10,12 @@
 package kafka
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"slices"
 	"sync"
 	"testing"
@@ -19,7 +23,159 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kgo"
 	"linkd/internal/consume"
+	"linkd/internal/logging"
 )
+
+func TestSessionReceiveContinuesAfterDataLoss(t *testing.T) {
+	t.Parallel()
+	for _, withRecords := range []bool{false, true} {
+		t.Run(fmt.Sprint("with_records=", withRecords), func(t *testing.T) {
+			dataLoss := &kgo.ErrDataLoss{Topic: "raw-events", Partition: 3, ConsumedTo: 30, ConsumedToEpoch: 2, ResetTo: 10, ResetToEpoch: 3}
+			fetches := kgo.Fetches{{Topics: []kgo.FetchTopic{{Topic: "raw-events", Partitions: []kgo.FetchPartition{{Partition: 3, Err: dataLoss}}}}}}
+			if withRecords {
+				fetches = append(fetches, kafkaFetches(kafkaRecord(3, 10, "id-10"))...)
+			}
+			client := &fakeKafkaClient{fetches: fetches}
+			session := newSession(testConfig(), client)
+			limits := consume.ReceiveLimits{MaxMessages: 2, MaxBytes: 1024}
+			deliveries, err := session.Receive(context.Background(), limits)
+			if err != nil {
+				t.Fatalf("Receive(data loss) error = %v", err)
+			}
+			if withRecords {
+				if len(deliveries) != 1 || deliveries[0].Message.ID != "id-10" {
+					t.Fatalf("Receive() deliveries = %#v, want id-10", deliveries)
+				}
+				if client.allowCalls() != 0 {
+					t.Fatal("rebalance released before record confirmation")
+				}
+				if err := session.Confirm(context.Background(), []consume.Receipt{deliveries[0].Receipt}); err != nil {
+					t.Fatal(err)
+				}
+			} else if len(deliveries) != 0 || client.allowCalls() != 1 {
+				t.Fatalf("notification-only poll: deliveries=%d rebalance calls=%d", len(deliveries), client.allowCalls())
+			}
+			client.mu.Lock()
+			client.fetches = kafkaFetches(kafkaRecord(3, 11, "id-11"))
+			client.mu.Unlock()
+			deliveries, err = session.Receive(context.Background(), limits)
+			if err != nil || len(deliveries) != 1 || deliveries[0].Message.ID != "id-11" {
+				t.Fatalf("Receive(next poll) = %#v, %v", deliveries, err)
+			}
+			if err := session.Confirm(context.Background(), []consume.Receipt{deliveries[0].Receipt}); err != nil {
+				t.Fatal(err)
+			}
+			want := []int64{11}
+			if withRecords {
+				want = []int64{10, 11}
+			}
+			if got := client.committedOffsets(); !slices.Equal(got, want) {
+				t.Fatalf("committed offsets = %v, want %v", got, want)
+			}
+			if client.closed {
+				t.Fatal("data loss closed the client")
+			}
+		})
+	}
+}
+
+func TestSessionReceiveReturnsOtherFetchErrors(t *testing.T) {
+	t.Parallel()
+	for _, cause := range []error{errors.New("authorization failed"), context.Canceled} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			client := &fakeKafkaClient{fetches: kgo.Fetches{{Topics: []kgo.FetchTopic{{Topic: "raw-events", Partitions: []kgo.FetchPartition{
+				{Partition: 0, Err: &kgo.ErrDataLoss{Topic: "raw-events", Partition: 0}},
+				{Partition: 1, Err: cause},
+			}}}}}}
+			session := newSession(testConfig(), client)
+			deliveries, err := session.Receive(context.Background(), consume.ReceiveLimits{MaxMessages: 2, MaxBytes: 1024})
+			if !errors.Is(err, cause) || len(deliveries) != 0 {
+				t.Fatalf("Receive() = %#v, %v, want cause %v", deliveries, err, cause)
+			}
+			if len(client.committedOffsets()) != 0 {
+				t.Fatal("failed poll advanced committed offsets")
+			}
+		})
+	}
+}
+
+func TestSessionReceiveLogsDataLoss(t *testing.T) {
+	t.Parallel()
+	// 模拟消费位置已推进、但重置位置未知的通知。
+	dataLoss := &kgo.ErrDataLoss{Topic: "example-events", Partition: 0, ConsumedTo: 120, ConsumedToEpoch: 3, ResetTo: -1, ResetToEpoch: -1}
+	client := &fakeKafkaClient{fetches: kgo.Fetches{{Topics: []kgo.FetchTopic{{Topic: dataLoss.Topic, Partitions: []kgo.FetchPartition{{Partition: 0, Err: dataLoss}}}}}}}
+	var output bytes.Buffer
+	logger, err := logging.New(logging.DefaultConfig(), &output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := newSession(testConfig(), client)
+	session.logger = logger
+	if _, err := session.Receive(context.Background(), consume.ReceiveLimits{MaxMessages: 1, MaxBytes: 1024}); err != nil {
+		t.Fatal(err)
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
+		t.Fatalf("decode warning: %v; output=%s", err, output.String())
+	}
+	for key, want := range map[string]any{
+		"level": "WARN", "module": "consume", "operation": "receive", "error": dataLoss.Error(),
+		"topic": dataLoss.Topic, "partition": float64(0), "consumer_group": testConfig().ConsumerGroup,
+		"client_id": testConfig().ClientID, "consumed_to": float64(120), "consumed_to_epoch": float64(3),
+		"reset_to": float64(-1), "reset_to_epoch": float64(-1),
+	} {
+		if got := entry[key]; got != want {
+			t.Errorf("warning %s = %v, want %v", key, got, want)
+		}
+	}
+	if len(client.committedOffsets()) != 0 {
+		t.Fatal("data loss notification advanced committed offsets")
+	}
+}
+
+func TestSessionReceivePausedTimeoutDoesNotHideFetchFailure(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("authorization failed")
+	client := &fakeKafkaClient{fetches: kgo.Fetches{{Topics: []kgo.FetchTopic{{Topic: "raw-events", Partitions: []kgo.FetchPartition{
+		{Partition: 0, Err: context.DeadlineExceeded},
+		{Partition: 1, Err: cause},
+	}}}}}}
+	session := newSession(testConfig(), client)
+	if err := session.PauseFlow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Receive(context.Background(), consume.ReceiveLimits{MaxMessages: 1, MaxBytes: 1024}); !errors.Is(err, cause) {
+		t.Fatalf("Receive(paused) error = %v, want %v", err, cause)
+	}
+}
+
+func TestSessionDefaultsToTailWithoutCommittedOffset(t *testing.T) {
+	t.Parallel()
+	options, err := sessionClientOptions(testConfig(), newOwnershipBridge())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 检查实际生效的客户端配置；拦截所有连接，测试不访问 Kafka 或本机网络。
+	options = append(options, kgo.Dialer(func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("network disabled in unit test")
+	}))
+	client, err := kgo.NewClient(options...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	for _, option := range []any{kgo.ConsumeStartOffset, kgo.ConsumeResetOffset} {
+		if got := client.OptValue(option); got != kgo.NewOffset().AtEnd() {
+			t.Fatalf("fallback offset = %v, want tail", got)
+		}
+	}
+	if got := client.OptValue(kgo.ConsumerGroup); got != testConfig().ConsumerGroup {
+		t.Fatalf("consumer group = %v", got)
+	}
+	if got := client.OptValue(kgo.DisableAutoCommit); got != true {
+		t.Fatalf("auto commit disabled = %v, want true", got)
+	}
+}
 
 func TestSessionReceiveAndConfirmContinuousPrefix(t *testing.T) {
 	t.Parallel()
@@ -362,3 +518,106 @@ func (c *fakeKafkaClient) allowCalls() int {
 }
 
 var _ kafkaClient = (*fakeKafkaClient)(nil)
+
+func TestOwnershipCallbacksDoNotBlockAfterRuntimeStops(t *testing.T) {
+	bridge := newOwnershipBridge()
+	bridge.closeOnce.Do(func() { close(bridge.closed) })
+	done := make(chan struct{})
+	go func() { bridge.revoked(context.Background(), nil, map[string][]int32{"events": {0}}); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Kafka close callback waits for an exited runtime")
+	}
+}
+
+// 模拟 broker 退组不响应，超时后本地关闭仍需等待；不能把超时当作关闭完成。
+func TestSessionCloseReportsLateCompletion(t *testing.T) {
+	client := &delayedCloseClient{closeStarted: make(chan struct{}), finish: make(chan struct{})}
+	var once sync.Once
+	finish := func() { once.Do(func() { close(client.finish) }) }
+	defer finish()
+	session := newSession(testConfig(), client)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	err := session.Close(ctx)
+	var incomplete *consume.StopIncompleteError
+	if !errors.As(err, &incomplete) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Close() = %v", err)
+	}
+	select {
+	case <-client.closeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("close did not continue after leave timeout")
+	}
+	select {
+	case <-incomplete.Done:
+		t.Fatal("close reported completion before resources were released")
+	default:
+	}
+	if err := session.Close(t.Context()); !errors.Is(err, consume.ErrSessionClosed) {
+		t.Fatalf("second Close() = %v", err)
+	}
+	finish()
+	select {
+	case <-incomplete.Done:
+	case <-time.After(time.Second):
+		t.Fatal("late completion was not reported")
+	}
+}
+
+type delayedCloseClient struct {
+	fakeKafkaClient
+	closeStarted chan struct{}
+	finish       chan struct{}
+}
+
+func (c *delayedCloseClient) LeaveGroupContext(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (c *delayedCloseClient) Close() {
+	close(c.closeStarted)
+	<-c.finish
+	c.fakeKafkaClient.Close()
+}
+
+func (c *fakeKafkaClient) LeaveGroupContext(context.Context) error { return nil }
+
+func TestSessionCloseCompletesNormally(t *testing.T) {
+	client := &fakeKafkaClient{}
+	session := newSession(testConfig(), client)
+	if err := session.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if !client.closed {
+		t.Fatal("Close returned before client closed")
+	}
+}
+
+func TestSessionCloseCancelsStalledClientRequests(t *testing.T) {
+	client := &delayedCloseClient{closeStarted: make(chan struct{}), finish: make(chan struct{})}
+	session := newSession(testConfig(), client)
+	var once sync.Once
+	session.cancelClient = func() { once.Do(func() { close(client.finish) }) }
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err := session.Close(ctx)
+	var incomplete *consume.StopIncompleteError
+	if !errors.As(err, &incomplete) {
+		t.Fatalf("Close()=%v", err)
+	}
+	select {
+	case <-incomplete.Done:
+	case <-time.After(time.Second):
+		t.Fatal("close did not cancel stalled client requests")
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if !client.closed {
+		t.Fatal("completion published before client closed")
+	}
+}

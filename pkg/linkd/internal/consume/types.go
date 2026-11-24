@@ -18,6 +18,10 @@ import (
 )
 
 var (
+	// ErrDeferredCapacity 表示延后集合违反在途容量不变量，用于安全错误分类。
+	ErrDeferredCapacity = errors.New("deferred message capacity exhausted")
+	// ErrStopIncomplete 表示消费客户端尚未确认关闭，不能报告任务安全停止。
+	ErrStopIncomplete = errors.New("consumer stop incomplete")
 	// ErrSessionClosed 表示当前 Broker Session 已关闭，Receipt 也随之失效。
 	ErrSessionClosed = errors.New("message consumption session is closed")
 	// ErrReceiveLimitExceeded 表示适配器返回的数据超过运行时本次允许接管的上限。
@@ -25,6 +29,26 @@ var (
 	// ErrInvalidDelivery 表示适配器返回的投递缺少稳定身份、租户或传输位置。
 	ErrInvalidDelivery = errors.New("invalid message delivery")
 )
+
+// StopIncompleteError 保留退组或关闭等待失败的原因以及最终资源释放信号。
+// Done 可能在返回时已关闭；只有收到该信号才能将任务报告为 stopped，
+// 该信号不表示未确认消息已提交。
+type StopIncompleteError struct {
+	// Cause 保留等待关闭失败的原因。
+	Cause error
+	// Done 仅在消费客户端的所有关闭工作完成后关闭。
+	Done <-chan struct{}
+}
+
+// Error 返回关闭未完成及其原因。
+func (e *StopIncompleteError) Error() string {
+	return fmt.Sprintf("%s: %v", ErrStopIncomplete, e.Cause)
+}
+
+// Unwrap 保留错误分类和底层取消或超时原因。
+func (e *StopIncompleteError) Unwrap() []error {
+	return []error{ErrStopIncomplete, e.Cause}
+}
 
 // SettlementMode 描述 Broker 的确认进度是逐条独立还是按 lane 累计推进。
 type SettlementMode uint8
@@ -38,8 +62,11 @@ const (
 
 // Capabilities 描述一个 Session 对核心运行时暴露的可靠性能力。
 type Capabilities struct {
-	Settlement   SettlementMode
-	CanPauseLane bool
+	// BatchIndividualConfirm 允许合并同 lane 已完成的独立确认；失败时必须允许
+	// 原 receipts 整批重试，即使前次请求已经部分或全部生效。累计确认不使用此能力。
+	BatchIndividualConfirm bool
+	Settlement             SettlementMode
+	CanPauseLane           bool
 }
 
 // ReceiveLimits 是运行时本次允许 Session 接管的消息与载荷上限。
@@ -190,7 +217,7 @@ const (
 	OutcomeRetry
 	// OutcomeDiscard 表示确定性错误已形成诊断且产品规则允许跳过，可以确认消息。
 	OutcomeDiscard
-	// OutcomeBlock 表示不能确认当前消息；Runtime 会暂停可暂停的 lane 并以错误退出。
+	// OutcomeBlock 表示普通逻辑处理失败；Runtime 记录丢弃并确认，不升级为来源故障。
 	OutcomeBlock
 	// OutcomeDefer 表示当前没有失败，但应释放 worker 后延迟再次调度；不消耗普通重试预算。
 	OutcomeDefer

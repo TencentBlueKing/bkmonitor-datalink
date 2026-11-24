@@ -1,0 +1,333 @@
+{
+  "head": "11641f0e",
+  "working_tree": "uncommitted merged EventSource implementation plus dispatch observability",
+  "go_inputs_sha256": "754ce14b685899c35d57fa9ab4151052bf83a64e3cfb8e28d1fd6bd8d88f80e5",
+  "hash_algorithm": "sort relative paths of cmd/internal/tests Go files and go.mod/go.sum; SHA256(path + NUL + bytes + NUL)",
+  "runs": [
+    {
+      "run": 1,
+      "steps": [
+        {
+          "Name": "S01",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:14:29.002907Z",
+          "Seconds": 13.747097375
+        },
+        {
+          "Name": "S02",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:14:42.750009Z",
+          "Seconds": 65.983180042
+        },
+        {
+          "Name": "S03",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:15:48.73296Z",
+          "Seconds": 15.08066625
+        },
+        {
+          "Name": "S04",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:16:03.813572Z",
+          "Seconds": 9.180097666
+        },
+        {
+          "Name": "S05",
+          "Outcome": "failed",
+          "Started": "2026-09-07T08:16:12.993678Z",
+          "Seconds": 94.016721958
+        }
+      ],
+      "public_run_id": "run-01"
+    },
+    {
+      "run": 2,
+      "steps": [
+        {
+          "Name": "S01",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:18:09.711531Z",
+          "Seconds": 13.816463083
+        },
+        {
+          "Name": "S02",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:18:23.527991Z",
+          "Seconds": 65.981377
+        },
+        {
+          "Name": "S03",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:19:29.509155Z",
+          "Seconds": 15.113924542
+        },
+        {
+          "Name": "S04",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:19:44.623037Z",
+          "Seconds": 8.94842175
+        },
+        {
+          "Name": "S05",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:19:53.571437Z",
+          "Seconds": 30.227092541
+        },
+        {
+          "Name": "S06",
+          "Outcome": "failed",
+          "Started": "2026-09-07T08:20:23.798395Z",
+          "Seconds": 9.24947275
+        }
+      ],
+      "public_run_id": "run-02"
+    },
+    {
+      "run": 3,
+      "steps": [
+        {
+          "Name": "S01",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:22:33.966603Z",
+          "Seconds": 13.607120125
+        },
+        {
+          "Name": "S02",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:22:47.573798Z",
+          "Seconds": 65.977285708
+        },
+        {
+          "Name": "S03",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:23:53.550876Z",
+          "Seconds": 15.128478208
+        },
+        {
+          "Name": "S04",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:24:08.679554Z",
+          "Seconds": 8.95257625
+        },
+        {
+          "Name": "S05",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:24:17.632137Z",
+          "Seconds": 30.1060335
+        },
+        {
+          "Name": "S06",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:24:47.738114Z",
+          "Seconds": 9.242804666
+        },
+        {
+          "Name": "S07",
+          "Outcome": "failed",
+          "Started": "2026-09-07T08:24:56.980939Z",
+          "Seconds": 0.515722917
+        }
+      ],
+      "public_run_id": "run-03"
+    },
+    {
+      "run": 4,
+      "steps": [
+        {
+          "Name": "S01",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:25:32.165574Z",
+          "Seconds": 13.869105375
+        },
+        {
+          "Name": "S02",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:25:46.034738Z",
+          "Seconds": 65.999363834
+        },
+        {
+          "Name": "S03",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:26:52.033767Z",
+          "Seconds": 15.096630417
+        },
+        {
+          "Name": "S04",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:27:07.130995Z",
+          "Seconds": 8.93571525
+        },
+        {
+          "Name": "S05",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:27:16.06814Z",
+          "Seconds": 29.959593791
+        },
+        {
+          "Name": "S06",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:27:46.029217Z",
+          "Seconds": 9.247027
+        },
+        {
+          "Name": "S07",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:27:55.276368Z",
+          "Seconds": 77.519489083
+        },
+        {
+          "Name": "S08",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:29:12.795769Z",
+          "Seconds": 5.95674925
+        },
+        {
+          "Name": "S09",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:29:18.75253Z",
+          "Seconds": 36.138295625
+        },
+        {
+          "Name": "S10",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:29:54.890801Z",
+          "Seconds": 30.632073458
+        },
+        {
+          "Name": "S11",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:30:25.522752Z",
+          "Seconds": 15.045497584
+        },
+        {
+          "Name": "S12",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:30:40.568225Z",
+          "Seconds": 3.202552834
+        },
+        {
+          "Name": "S13",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:30:43.770821Z",
+          "Seconds": 33.062588167
+        }
+      ],
+      "public_run_id": "run-04"
+    },
+    {
+      "run": 5,
+      "steps": [
+        {
+          "Name": "S01",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:34:27.993443Z",
+          "Seconds": 13.534850791
+        },
+        {
+          "Name": "S02",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:34:41.528357Z",
+          "Seconds": 66.1801485
+        },
+        {
+          "Name": "S03",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:35:47.708198Z",
+          "Seconds": 14.865320958
+        },
+        {
+          "Name": "S04",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:36:02.573498Z",
+          "Seconds": 9.176965917
+        },
+        {
+          "Name": "S05",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:36:11.750456Z",
+          "Seconds": 29.990866417
+        },
+        {
+          "Name": "S06",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:36:41.741349Z",
+          "Seconds": 9.400060916
+        },
+        {
+          "Name": "S07",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:36:51.141441Z",
+          "Seconds": 77.197633958
+        },
+        {
+          "Name": "S08",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:38:08.338678Z",
+          "Seconds": 5.953755708
+        },
+        {
+          "Name": "S09",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:38:14.292428Z",
+          "Seconds": 35.946187125
+        },
+        {
+          "Name": "S10",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:38:50.238642Z",
+          "Seconds": 30.751936292
+        },
+        {
+          "Name": "S11",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:39:20.990458Z",
+          "Seconds": 14.902315959
+        },
+        {
+          "Name": "S12",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:39:35.892761Z",
+          "Seconds": 3.3925439170000002
+        },
+        {
+          "Name": "S13",
+          "Outcome": "passed",
+          "Started": "2026-09-07T08:39:39.285361Z",
+          "Seconds": 33.018624458
+        }
+      ],
+      "public_run_id": "run-05"
+    }
+  ],
+  "final_metric_samples": [
+    {
+      "file": "S07-all.prom",
+      "sample": "linkd_dispatch_transitions_total{linkd_dispatch_side=\"controller\",linkd_reason=\"authorization_expired\",linkd_task_from=\"stopping\",linkd_task_phase=\"stopped\",linkd_task_role=\"cleaner\",otel_scope_name=\"linkd\",otel_scope_schema_url=\"\",otel_scope_version=\"\"} 1"
+    },
+    {
+      "file": "S09-c2.prom",
+      "sample": "linkd_dispatch_transitions_total{linkd_dispatch_side=\"worker\",linkd_reason=\"disconnected\",linkd_task_from=\"running\",linkd_task_phase=\"stopping\",linkd_task_role=\"cleaner\",otel_scope_name=\"linkd\",otel_scope_schema_url=\"\",otel_scope_version=\"\"} 1"
+    },
+    {
+      "file": "S13-all.prom",
+      "sample": "linkd_dispatch_controller_tasks{linkd_task_phase=\"running\",linkd_task_role=\"cleaner\",otel_scope_name=\"linkd\",otel_scope_schema_url=\"\",otel_scope_version=\"\"} 0"
+    },
+    {
+      "file": "S13-all.prom",
+      "sample": "linkd_dispatch_controller_tasks{linkd_task_phase=\"running\",linkd_task_role=\"lifecycle\",otel_scope_name=\"linkd\",otel_scope_schema_url=\"\",otel_scope_version=\"\"} 0"
+    },
+    {
+      "file": "S13-all.prom",
+      "sample": "linkd_dispatch_transitions_total{linkd_dispatch_side=\"controller\",linkd_reason=\"authorization_expired\",linkd_task_from=\"stopping\",linkd_task_phase=\"stopped\",linkd_task_role=\"cleaner\",otel_scope_name=\"linkd\",otel_scope_schema_url=\"\",otel_scope_version=\"\"} 1"
+    }
+  ],
+  "final_business_counts": {
+    "input": 12,
+    "events": 10,
+    "alerts": 5,
+    "alert_logs": 19,
+    "output": 10,
+    "event_and_alert_source_version": 18
+  },
+  "publication_redaction": "Local filesystem paths, process-derived deployment identifiers and local log locations are omitted; original evidence remains local."
+}

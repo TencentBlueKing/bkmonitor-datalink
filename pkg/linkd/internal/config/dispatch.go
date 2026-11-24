@@ -1,0 +1,94 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package config
+
+import (
+	"fmt"
+	"maps"
+	"net/url"
+	"strings"
+)
+
+// DispatchConfig 定义静态中心连接和控制协议预算；业务配置不从启动 YAML 导入。
+type DispatchConfig struct {
+	// AlertSearch 限制通用告警检索对控制面和 Elasticsearch 的资源占用。
+	AlertSearch AlertSearchConfig `yaml:"alert_search" json:"alert_search"`
+	// EventgenEnabled 仅在测试部署显式启用生成器管理；默认不打开其存储或后台任务。
+	EventgenEnabled bool   `yaml:"eventgen_enabled" json:"eventgen_enabled"`
+	Deployment      string `yaml:"deployment" json:"deployment"`
+	Listen          string `yaml:"listen" json:"listen"`
+	URL             string `yaml:"url" json:"url"`
+	// JWT 配置内部调用签名；密钥仅由管理调用方和控制面持有。
+	JWT         JWTConfig `yaml:"jwt" json:"jwt"`
+	WorkerToken string    `yaml:"worker_token" json:"-"`
+	MaxTasks    int       `yaml:"max_tasks" json:"max_tasks"`
+}
+
+// JWTConfig 定义 Kingeye 兼容的内部 HTTP 身份，不属于租户授权配置。
+type JWTConfig struct {
+	// SecretKey 与 Kingeye BKAPP_JWT_SECRET_KEY 相同，不得展示给浏览器或写入日志。
+	SecretKey string `yaml:"secret_key" json:"-"`
+	// Username 用于本地签发，空值默认 admin；不限制接收端允许的用户名。
+	Username string `yaml:"username" json:"username"`
+}
+
+// WithDefaults 补齐单中心地址和进程任务上限。
+func (d DispatchConfig) WithDefaults() DispatchConfig {
+	if d.JWT.Username == "" {
+		d.JWT.Username = "admin"
+	}
+	if d.Deployment == "" {
+		d.Deployment = "default"
+	}
+	if d.Listen == "" {
+		d.Listen = "127.0.0.1:8090"
+	}
+	if d.URL == "" {
+		d.URL = "http://127.0.0.1:8090"
+	}
+	return d
+}
+
+// Validate 校验启动控制连接，正式控制面另外要求 JWT 密钥和独立 Worker Token。
+func (d DispatchConfig) Validate() error {
+	d = d.WithDefaults()
+	if err := d.AlertSearch.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(d.JWT.Username) == "" {
+		return fmt.Errorf("dispatch.jwt.username must not be blank")
+	}
+	u, e := url.Parse(d.URL)
+	if e != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("invalid dispatch URL")
+	}
+	if d.MaxTasks < 0 {
+		return fmt.Errorf("dispatch.max_tasks must be non-negative (0 disables static task admission)")
+	}
+	return ValidateLabels(map[string]string{d.Deployment: ""})
+}
+
+// WorkerConfig 的标签属于进程；all-in-one 两角色共享它们。
+type WorkerConfig struct {
+	// MaxConcurrency 限制进程所有任务申报的总 worker 数量，零值不启用静态并发预留配额。
+	MaxConcurrency int `yaml:"max_concurrency" json:"max_concurrency"`
+	// MaxInflightBytes 限制所有任务的 inflight 预算之和，零值不启用静态内存预留配额。
+	MaxInflightBytes        int64             `yaml:"max_inflight_bytes" json:"max_inflight_bytes"`
+	Labels                  map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+	RequireExplicitSelector bool              `yaml:"require_explicit_selector" json:"require_explicit_selector"`
+}
+
+// Clone 隔离可变标签。
+func (w WorkerConfig) Clone() WorkerConfig { w.Labels = maps.Clone(w.Labels); return w }
+
+// Limits 补齐进程资源硬上限；此配置不属于来源动态配置。
+func (w WorkerConfig) Limits() (int, int64) {
+	return w.MaxConcurrency, w.MaxInflightBytes
+}

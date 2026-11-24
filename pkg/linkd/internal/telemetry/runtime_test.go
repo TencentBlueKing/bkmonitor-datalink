@@ -18,18 +18,22 @@ import (
 	"testing"
 	"time"
 
+	settings "linkd/internal/config"
 	"linkd/internal/consume"
 	controlplaneredisstream "linkd/internal/controlplane/redisstream"
 	"linkd/internal/domain"
+	"linkd/internal/enrich"
+	"linkd/internal/enrich/models"
+	"linkd/internal/enrich/rules"
 	"linkd/internal/lifecycle"
 )
 
 func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) {
 	t.Parallel()
 
-	config := Config{Metrics: MetricsConfig{
-		Exporter:   ExporterPrometheus,
-		Prometheus: PrometheusConfig{ListenAddress: "127.0.0.1:0"},
+	config := settings.TelemetryConfig{Metrics: settings.TelemetryMetricsConfig{
+		Exporter:   settings.TelemetryExporterPrometheus,
+		Prometheus: settings.TelemetryPrometheusConfig{ListenAddress: "127.0.0.1:0"},
 	}}
 	runtime, err := Start(context.Background(), config, RoleCleaner, "test-version")
 	if err != nil && strings.Contains(err.Error(), "operation not permitted") {
@@ -37,6 +41,9 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 	}
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
+	}
+	if runtime.Version() != "test-version" {
+		t.Fatal("runtime lost the actual build version")
 	}
 	if runtime.PrometheusListenAddress() == "" {
 		t.Fatal("PrometheusListenAddress() is empty")
@@ -66,11 +73,28 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 	}}})
 	runtime.ObserveCleanerBackpressureCheck(ctx, "sampled", 42, true)
 	runtime.ObserveCleanerBackpressureTransition(ctx, "pause")
+	enrichObserver := runtime.EnrichObserver()
+	enrichObserver.Started(ctx, "source-a")
+	enrichObserver.Finished(ctx, lifecycle.EnrichObservation{
+		EventSourceID: "source-a", Status: domain.EnrichStatusPartial,
+		Outcome: lifecycle.EnrichOutcomeCompleted, ChainKind: enrich.ChainConfigured,
+		Duration: 12 * time.Millisecond, PayloadBytes: 2048,
+	})
+	runtime.EnrichProcessorObserver().ProcessorFinished(ctx, enrich.ProcessorObservation{
+		Processor: rules.ResourceProcessor, Status: domain.EnrichStatusFailed,
+		Outcome: enrich.ProcessorOutcomeCompleted, Duration: 8 * time.Millisecond,
+		Diagnostics: []enrich.Diagnostic{{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel}},
+	})
+	observedSources := runtime.ObserveEnrichSources(enrich.Sources{AlarmSource: testAlarmSourceReader{}})
+	_, _, _ = observedSources.AlarmSource.GetAlarmSource(ctx, "sensitive-tenant", "source-a")
+	runtime.RecentAlertCacheObserver().Operation(ctx, "get_current", "hit")
+	runtime.ObserveShieldHint(ctx, "published")
+	runtime.ObserveShieldHint(ctx, "private-invalid-outcome")
 	panicRecovered := false
 	func() {
 		defer func() { panicRecovered = recover() != nil }()
-		_, _ = runtime.ObserveFinalHook(panickingFinalHook{}).Execute(ctx, lifecycle.FinalHookInput{
-			Alert: domain.Alert{EventSourceID: "source-a"},
+		_, _ = runtime.ObserveFinalHook(lifecycle.NamedFinalHook{Name: "panic-instance", Hook: panickingFinalHook{}}).Execute(ctx, lifecycle.FinalHookInput{
+			Alert: domain.Alert{Revision: 1, EventSourceID: "source-a"},
 		})
 	}()
 	if !panicRecovered {
@@ -87,8 +111,8 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 	taskObserver := runtime.ControlPlaneTaskObserver(ControlPlaneTaskElasticsearchAlertArchiver)
 	taskObserver.SetActive(ctx, true)
 	taskObserver.RunFinished(ctx, 20*time.Millisecond, true)
-	runtime.ObserveElasticsearchArchiveBatch(ctx, 9, 7, 2)
-	runtime.ObserveElasticsearchArchiveBatch(ctx, 0, 0, 0)
+	runtime.ObserveElasticsearchArchiveBatch(ctx, 12, 7, 2, 3)
+	runtime.ObserveElasticsearchArchiveBatch(ctx, 0, 0, 0, 0)
 
 	request, err := http.NewRequestWithContext(
 		context.Background(),
@@ -110,11 +134,14 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 		t.Fatalf("read metrics error = %v", err)
 	}
 	text := string(body)
+	assertScrapeMatchesCatalog(t, text)
 	for _, expected := range []string{
 		"linkd_pipeline_attempts_total",
+		"go_sched_latencies_seconds_bucket",
+		"go_cpu_classes_gc_mark_assist_cpu_seconds_total",
 		"linkd_pipeline_attempt_duration_seconds_bucket",
-		`linkd_pipeline_attempt_duration_seconds_bucket{linkd_event_source_id="source-a",linkd_outcome="succeeded",linkd_stage="clean",linkd_trigger="queue",messaging_system="kafka",otel_scope_name="linkd",otel_scope_schema_url="",otel_scope_version="",le="0.9"}`,
-		`linkd_pipeline_attempt_duration_seconds_bucket{linkd_event_source_id="source-a",linkd_outcome="succeeded",linkd_stage="clean",linkd_trigger="queue",messaging_system="kafka",otel_scope_name="linkd",otel_scope_schema_url="",otel_scope_version="",le="1.1"}`,
+		`linkd_pipeline_attempt_duration_seconds_bucket{linkd_event_source_id="source-a",linkd_outcome="complete",linkd_stage="clean",linkd_trigger="queue",messaging_system="kafka",otel_scope_name="linkd",otel_scope_schema_url="",otel_scope_version="",le="0.9"}`,
+		`linkd_pipeline_attempt_duration_seconds_bucket{linkd_event_source_id="source-a",linkd_outcome="complete",linkd_stage="clean",linkd_trigger="queue",messaging_system="kafka",otel_scope_name="linkd",otel_scope_schema_url="",otel_scope_version="",le="1.1"}`,
 		"linkd_messaging_inflight",
 		"linkd_messaging_received_messages_total",
 		"linkd_messaging_settled_messages_total",
@@ -125,7 +152,24 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 		"linkd_cleaner_backpressure_paused_ratio",
 		"linkd_cleaner_backpressure_transitions_total",
 		"linkd_final_hook_operations_total",
+		`linkd_hook_name="panic-instance"`,
+		"linkd_enrich_attempts_total",
+		"linkd_enrich_attempt_duration_seconds_bucket",
+		"linkd_enrich_inflight",
+		"linkd_enrich_payload_size_bytes_bucket",
+		"linkd_enrich_processor_attempts_total",
+		"linkd_enrich_processor_duration_seconds_bucket",
+		"linkd_enrich_processor_diagnostics_total",
+		"linkd_enrich_datasource_operations_total",
+		"linkd_enrich_datasource_duration_seconds_bucket",
+		`linkd_enrich_payload_size_bytes_bucket{linkd_event_source_id="source-a",linkd_status="partial"`,
+		`le="512"`,
+		`le="65536"`,
+		`le="262144"`,
 		"linkd_final_hook_duration_seconds_bucket",
+		"linkd_policy_shield_hints_total",
+		"linkd_lifecycle_recent_alert_cache_operations_total",
+		`linkd_lifecycle_recent_alert_cache_operations_total{linkd_operation="get_current",linkd_outcome="hit"`,
 		"linkd_redis_stream_entries",
 		"linkd_redis_stream_memory_bytes",
 		"linkd_redis_stream_pending",
@@ -146,6 +190,8 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 		"linkd_elasticsearch_alert_archiver_last_batch_scanned",
 		"linkd_elasticsearch_alert_archiver_last_batch_items",
 		"linkd_elasticsearch_alert_archiver_last_batch_failed",
+		"linkd_elasticsearch_alert_archiver_conflicted_alerts_total",
+		"linkd_elasticsearch_alert_archiver_last_batch_conflicted",
 		`linkd_task="elasticsearch-alert-archiver"`,
 		"target_info",
 		`linkd_stage="clean"`,
@@ -157,11 +203,33 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 			t.Fatalf("metrics missing %q:\n%s", expected, text)
 		}
 	}
-	for _, forbidden := range []string{"bk_tenant_id", "event_id", "alert_id", "raw-events", `consumer_group="`} {
+	for name, value := range map[string]string{
+		"linkd_elasticsearch_alert_archiver_conflicted_alerts_total": "3",
+		"linkd_elasticsearch_alert_archiver_last_batch_conflicted":   "3",
+		"linkd_elasticsearch_alert_archiver_failed_alerts_total":     "2",
+		"linkd_elasticsearch_alert_archiver_last_batch_failed":       "2",
+	} {
+		found := false
+		for _, line := range strings.Split(text, "\n") {
+			if strings.HasPrefix(line, name+"{") && strings.HasSuffix(line, " "+value) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("metric %s did not retain value %s after empty batch", name, value)
+		}
+	}
+	for _, forbidden := range []string{"bk_tenant_id", "event_id", "alert_id", "raw-events", `consumer_group="`, "sensitive-tenant", "private-invalid-outcome"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("metrics contain forbidden attribute %q", forbidden)
 		}
 	}
+}
+
+type testAlarmSourceReader struct{}
+
+func (testAlarmSourceReader) GetAlarmSource(context.Context, string, string) (models.AlarmSource, bool, error) {
+	return models.AlarmSource{}, false, nil
 }
 
 type panickingFinalHook struct{}
@@ -185,9 +253,9 @@ func TestStartFailsBeforeBusinessRunsWhenPortIsOccupied(t *testing.T) {
 		t.Fatalf("listen test port: %v", err)
 	}
 	defer func() { _ = listener.Close() }()
-	config := Config{Metrics: MetricsConfig{
-		Exporter:   ExporterPrometheus,
-		Prometheus: PrometheusConfig{ListenAddress: listener.Addr().String()},
+	config := settings.TelemetryConfig{Metrics: settings.TelemetryMetricsConfig{
+		Exporter:   settings.TelemetryExporterPrometheus,
+		Prometheus: settings.TelemetryPrometheusConfig{ListenAddress: listener.Addr().String()},
 	}}
 	if _, err := Start(context.Background(), config, RoleCleaner, "test"); err == nil || !strings.Contains(err.Error(), "listen prometheus") {
 		t.Fatalf("Start() error = %v", err)
@@ -197,14 +265,80 @@ func TestStartFailsBeforeBusinessRunsWhenPortIsOccupied(t *testing.T) {
 func TestDisabledMetricsUsesNoopProvider(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := Start(context.Background(), Config{}, RoleCleaner, "test")
+	runtime, err := Start(context.Background(), settings.TelemetryConfig{}, RoleCleaner, "test")
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	if runtime.PrometheusListenAddress() != "" || runtime.MeterProvider() == nil {
+	if runtime.PrometheusListenAddress() != "" || runtime.MeterProvider() == nil || runtime.Version() != "test" {
 		t.Fatalf("disabled runtime = %#v", runtime)
 	}
 	if err := runtime.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown() error = %v", err)
 	}
+}
+
+func TestProfilingEndpointWithoutMetrics(t *testing.T) {
+	config := settings.TelemetryConfig{Profiling: settings.TelemetryProfilingConfig{
+		Enabled: true, ListenAddress: "127.0.0.1:0", BlockProfileRate: 100000, MutexProfileFraction: 10,
+	}}
+	runtime, err := Start(context.Background(), config, RoleLifecycle, "test")
+	if err != nil && strings.Contains(err.Error(), "operation not permitted") {
+		t.Skipf("sandbox does not allow local listeners: %v", err)
+	}
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	address := runtime.ProfilingListenAddress()
+	if address == "" || runtime.PrometheusListenAddress() != "" {
+		t.Fatalf("profiling runtime addresses: profiling=%q prometheus=%q", address, runtime.PrometheusListenAddress())
+	}
+	request, err := http.NewRequestWithContext(
+		t.Context(), http.MethodGet, "http://"+address+"/debug/pprof/goroutine?debug=1", nil,
+	)
+	if err != nil {
+		t.Fatalf("build goroutine profile request: %v", err)
+	}
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	if err != nil {
+		t.Fatalf("GET goroutine profile: %v", err)
+	}
+	body, readErr := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if readErr != nil || response.StatusCode != http.StatusOK || !strings.Contains(string(body), "goroutine profile") {
+		t.Fatalf("profile response status=%d error=%v body=%q", response.StatusCode, readErr, body)
+	}
+	if err := runtime.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+}
+
+func TestProfilingStartupFailureReleasesMetricsListener(t *testing.T) {
+	listenConfig := net.ListenConfig{}
+	profileListener, err := listenConfig.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve profiling address: %v", err)
+	}
+	defer func() { _ = profileListener.Close() }()
+
+	metricsListener, err := listenConfig.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve metrics address: %v", err)
+	}
+	metricsAddress := metricsListener.Addr().String()
+	if err := metricsListener.Close(); err != nil {
+		t.Fatalf("release metrics address: %v", err)
+	}
+
+	config := settings.TelemetryConfig{Metrics: settings.TelemetryMetricsConfig{Exporter: settings.TelemetryExporterPrometheus, Prometheus: settings.TelemetryPrometheusConfig{ListenAddress: "127.0.0.1:9464"}}}
+	config.Metrics.Prometheus.ListenAddress = metricsAddress
+	config.Profiling = settings.TelemetryProfilingConfig{Enabled: true, ListenAddress: profileListener.Addr().String()}
+	if _, err := Start(t.Context(), config, RoleLifecycle, "test"); err == nil {
+		t.Fatal("Start() error = nil, want profiling bind failure")
+	}
+
+	rebound, err := listenConfig.Listen(t.Context(), "tcp", metricsAddress)
+	if err != nil {
+		t.Fatalf("metrics listener was not released after startup failure: %v", err)
+	}
+	_ = rebound.Close()
 }

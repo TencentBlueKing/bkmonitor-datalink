@@ -1,0 +1,168 @@
+# KAC 告警兼容投影
+
+状态：2026-10-28 对应当前实现。文件名沿用既有路径；当前写入不使用持久投影任务、快照、摘要或水位。
+
+## 身份与消息
+
+一个租户的一个 Linkd Alert 生命周期对应一条原生 ID KAC 文档。
+当前告警 ID 为 `alert-<14 位 UTC 时间>-<13 位小写 Base32 摘要>`，事件 ID 为 `event-<14 位 UTC 时间>-<13 位小写 Base32 摘要>`，均为 34 字符；租户与来源取独立字段。
+`alarm_id` 与 ES `_id` 直接等于 Linkd `alert_id`，`event_id` 固定使用 `trigger_event_id`。
+不兼容旧 `linkd-<UUID>`：旧文档脱离关联，不更新、不迁移、不删除，用户后续在 KAC 手动关闭。
+持续中的 Linkd 告警下次投影按原生 ID 创建新文档，可以与旧记录并存；处置信息不从旧记录继承。
+新文档沿用处置默认值，动作仍取自原生命周期资格，不主动重放历史动作。
+主流程保存 Alert 后向部署专属 Redis Stream 发布租户、Alert ID 和必要动作信息，不做同步 KAC HTTP 调用。
+
+## K8s 固定字段（2026-10-28）
+
+创建 KAC 文档时，从 opening Alert 冻结的有效 labels / extra_data 投影
+`bcs_cluster_id`、`cluster_name`、小写 `namespace`、`service`、`workload_kind`、
+`workload_name`、`pod_name`、`container_name`。遵循 labels 优先、空字符串不发送的规则，
+不依赖自定义字段目录。大写 `Namespace` 保持旧协议语义，不用于 K8s 命名空间。
+K8s 的 `cw_labels` 与其他场景一样承接有效丰富结果。
+
+本地回放不更新远端既有文档。后续普通同步仍遵守丰富字段只在新建时写入的所有权，
+修复代码不会自动回填已有 KAC 文档；回填、重建或共享环境重放必须另行明确授权。
+
+## 批量写入
+
+控制面按租户与 Alert 固定分配到 64 个通道，同一告警串行，不同告警并发。
+每个通道最多收集 500 条、等待 10ms；批内重复投影合并，动作独立保留。
+按租户批量读取最新 Alert，ES 使用 realtime `_mget`，不依赖搜索 refresh。
+新建执行既有 KAC 结构转换；更新通过 `_bulk` 只写最新内容、等级、动作、生命周期、关闭信息、合并关系和策略标签。
+每次 Bulk 默认不超过 4MiB；单条超过预算记失败。只执行当前消息，无补偿扫描或投影 CAS。
+
+## 索引与字段所有权
+
+沿用原 KAC 查询 alias、mapping 和模板；新文档按 Alert.CreateAt 写入 UTC 时间桶，默认 7 天，物理名称为 `{alias}-YYYYMMDD`。首次索引准备成功后才消费队列。
+模板移除 ILM 声明，旧索引和旧策略保持原样；无容量滚动和历史自动删除。缺失时间桶在写入前按需创建并加入原查询 alias。
+仅按原生 ID 定位物理索引，多租户候选在一次搜索中分别限定租户；查询失败直接返回错误。
+位置缓存按租户和原生 ID 保存物理索引，上限 100,000 项，达到上限清空后重新定位。
+已有文档更新原物理索引，包括旧 rollover 索引；未找到的新文档及其重试固定写入创建时间桶，不使用全局 write alias。
+父子引用直接使用原生 ID，不查父文档；尚未投影的父告警随后落库使用同一 ID。
+旧 Kafka Hook 输出契约保持不变，不新增位置元数据索引。
+
+| 字段 | 行为 |
+| --- | --- |
+| 身份、来源、丰富数据、storage_time 和处置默认值 | 新建时转换，后续普通同步不重置 |
+| fingerprint | 写入器直接取 Alert.Fingerprint，新建与后续同步均写入，不依赖自定义字段目录 |
+| latest_event_time | 每次普通投影写入 Alert.last_occurred_at，使用上海时区 yyyy-MM-dd HH:mm:ss；迟到事件可能使它变早，不取 update_at 或操作关闭时间 |
+| content、level、action、close_reason、close_time | 从最新 Alert 更新；content 包含持续触发更新及显式空串 |
+| source_alarm_status | 表示来源事实：活动为 firing、来源恢复为 resolved、来源关闭为 close；人工/系统主动关闭及等级升级结束旧生命周期仍为 firing |
+| associate_alarm_id、associate_count | 同步当前合并关系及解联 |
+| status | 屏蔽、合并及终态按业务转换；普通 active 保留 KAC 处置状态 |
+| linkd_disposal_status | KAC 文档内的业务字段；屏蔽/合并前保存原处置状态，解除后恢复 |
+| tag_info | 追加合并，保留已有标签 |
+| conductor、工单、通知、自愈和 field_extra_info | 更新保留 KAC 已写入内容 |
+
+不创建同步元数据索引，不回读版本、校验内容摘要或记录 Receipt。
+
+指纹在既有索引及模板中声明为 `keyword`，用于 KAC 原样展示和精确搜索。
+仅原生 ID 文档随正常投影补齐指纹；旧 UUID 文档保持原样，不新增回填任务。
+
+## 主动关闭
+
+`status/action` 表示本告警的处置和生命周期，`source_alarm_status` 表示来源状态，二者不能共用终态映射。
+人工关闭第三方告警时，`status=closed`、`action=close`，源状态保持 `firing`（未恢复），与 KAC 关闭命令冻结的审计状态一致。
+系统、处理策略、自愈、工单主动关闭和等级升级同样不生成来源恢复/关闭事实；只有 `EndType=source` 的真实来源关闭映射为 `close`，恢复映射为 `resolved`。
+普通投影的新建/更新与同步关闭的五字段补丁使用同一源状态规则，关闭原因和时间继续按真实终态输出。
+本次修复只影响后续正常投影，不自动修正或重放历史文档。
+
+主动关闭保存 Linkd 终态后，使用同一个写入器；只对同租户同 Alert ID 的投影串行，互不重叠的关闭批次可以并行。
+关闭状态按 Alert 冻结的 `EndOperation.Source` 区分：`auto_policy` 为 `auto_closed`、`self_heal` 为 `autoexecute_closed`、`work_order` 为 `autoorder_closed`。手动关闭仍为 `closed`，系统关闭仍为 `system_closed`；无主动关闭命令的来源关闭，以及来源等级升级结束旧告警（`EndType=severity_upgrade`），均为 `source_closed`，恢复保持 `restored`。此映射同时用于新建及后续更新；流转日志保留等级升级的具体原因。
+普通投影在 Alert 身份锁内实时读取；批量关闭复用本次成功关闭返回的不可变终态快照，缺失 KAC 文档才补读完整快照。Bulk 使用 `refresh=false`，写入被接受后返回，不强制搜索刷新；搜索在索引自然刷新后可见。普通动作执行前原有刷新保持不变。
+现存目标的主动关闭直接 Bulk 更新 `status/action/source_alarm_status/close_reason/close_time` 五个字段，
+不读取或回写 Enrich、正文、等级和处置数据；不存在时才补读完整 Alert 创建。使用 Alert 身份锁，
+不再占满固定投影通道。写入器按已有字节预算切片，不逐条提交；失败保留逐项位置和 502 结果不确定语义。
+
+同步写入成功的关闭不再发布普通投影消息。存在后续动作时，内部 Redis 通知携带原动作及
+`projection_index` 物理索引位置，后台直接进入既有刷新、发送、确认流程，不再读取完整 Alert 或更新 KAC；
+无动作时不发布通知。动作队列满时背压后台读取，取消时未开始动作的通知不确认，保留在原有 PEL 恢复；不阻塞 HTTP 关闭，也不额外建立任务。物理位置只用于动作路由与刷新，不是水位、摘要、Receipt 或回读确认。
+普通生命周期变更以及同步失败项继续走普通投影通知。动作请求仍为原有 V3 小参数，身份和原因保持。
+
+关闭诊断分别记录 `projection.locate`、实际查询的 `projection.search.succeeded/failed/canceled`、
+实际 Bulk 的 `projection.bulk.succeeded/failed/canceled`；这些直方图的 count 表示真实请求数，
+成功、失败和取消的耗时不能混成成功写入均值。ES 返回可解码响应且含 `took` 时，另记录
+`projection.es_search_took`、`projection.es_bulk_took`；无响应的取消不虚构服务端耗时。
+缓存命中时不会产生查询请求样本；单纯定位耗时仍记录在 `projection.locate`。
+
+普通投影失败记录诊断并确认当前消息，不新增补偿扫描；动作发送仍沿用原有尽力通知和失败确认语义。
+优雅退出与队列恢复见[动作 V3](kac-action-delivery-v3.md)。
+旧投影任务 API、快照、人工恢复、水位及页面已移除；旧存储不自动删除。
+实现入口为 `internal/kaccompat/runtime.go`、`close_batch.go` 与 `internal/alertqueue/queue.go`。
+
+## 失败与观测
+
+普通执行失败记录明确日志及指标并结束当前消息，不阻塞主流程。部分 Bulk 失败按单项处理。
+动作发送在成功投影后独立刷新和并发执行；优雅退出及队列恢复见[动作 V3](kac-action-delivery-v3.md)。
+旧投影任务 API、快照、人工恢复、水位及页面已移除；旧存储不自动删除。
+实现入口为 `internal/kaccompat/runtime.go`、`writer.go` 与 `internal/alertqueue/queue.go`。
+
+## 策略关联事实与详情导航（2026-10-15）
+
+新 `strategy` 丰富结果不含 URL。KAC 输出适配把冻结事实放入
+`field_extra_info.strategy_name.strategy_context`：
+
+**2026-10-16 本地实现：** KAC 输出已使用下表明确名称，尚未部署。
+Linkd 原始 labels 和 enrich 内部保留 `strategy_id/strategy_version`，该命名承接冻结执行身份，供内置告警查询时定位准确执行历史。
+
+| 字段 | 类型与语义 |
+| --- | --- |
+| `bk_tenant_id` | Alert 或恢复 Event 的租户，不能由来源全局配置覆盖 |
+| `strategy_set_split_record_id` | 目标名称，来自 alarmd `strategy_id`，对应历史 Reader 的 `strategy_id`；不是监控模板 ID |
+| `strategy_set_split_record_version` | 目标名称，来自 alarmd `strategy_version`，对应历史 Reader 的 `strategy_revision`；与 ID 联合唯一 |
+| `monitor_template_id` | 监控模板 ID，对应既有 KAC 顶层 `strategy_id` |
+| `strategy_config_id` | 原有规则规范化后的配置 UID，保留监控项抽屉定位 |
+| `strategy_kind` | `Strategy` / `StrategyCloud` |
+| `is_default` | bool，缺失与 false 不同；不推断缺失值，云策略仅凭类别即可选路，普通策略缺失时不生成导航 |
+| `strategy_instance` | 非默认实例策略关联，包含字符串 `object_model_code`、`bk_obj_id`、`bk_inst_id`、`object_model_group_id`；实例 ID 不转数字 |
+
+`field_extra_info` 按展示字段组织，`strategy_name` 是已有“监控策略名称”字段，原本就保存 URL；
+导航迁移在同一字段下增加内部 `strategy_context`，不新增展示字段或 KAC 顶层列。
+所有告警源的 Metric 丰富结果均不再生成查询参数，KAC Hook 不再输出 `metric_query_params` 或 `{}` 占位；
+新版 KAC 按准确 Event 关联和执行修订读取不可变历史，在请求内构造查询。
+Linkd 仍保留 `strategy_context`、原始维度和指标事实；不新增事实查询 API。
+外部来源的具体取数由所属插件承接。Linkd 不再读取或编码历史 `metric_query_params`，正式输出、调试和恢复详情均省略该字段；不清理或回填 Event、Alert、ES 和历史快照。
+先部署支持两种输入的 KAC 并验证真实曲线，再部署本次 Linkd 停止所有来源参数生成的配套改动。
+分组和维度过滤由 KAC 按历史声明与原始 Event 的维度交集生成，不补造缺失 `target`；部署前仍须完成当前原生告警/Event 身份承接与无参数真实曲线验收。
+完整边界在 Kingeye `docs/specs/kac-linkd-integration.md` 第 8.6 节维护。
+
+`strategy_name` 和 `data_source` 继续由 Linkd 生成或透传并投影，KAC 消费已保存结果；
+两者不再属于后续展示迁移项，职责依据见 [strategy 输出](../../design/enrich.md#61-strategy)。
+
+KAC 共用详情组装层按以上事实选择路由，读取当前 `KINGEYE_WEB_SAAS_MODULE_URL`，
+并处理观测融合参数。Linkd 不含前端路由常量，不查询产品页面开关。
+新告警不依赖反解析 URL，恢复详情使用引用的恢复 Event 事实。
+恢复业务字段投影同样生成 `strategy_context`，只使用该恢复 Event 已冻结并生效的丰富结果；
+不借用 opening Alert 的策略版本、不重跑丰富；当次冻结的查询参数继续透传，缺失时不在读取入口补造。
+
+历史 Alert 丰富结果中的 `url` 继续解码、重放；来源自定义 `field_extra_info` 覆盖规则保留。
+KAC 对历史内置告警只解析已知管理/实例路由，保留 ID 并换用当前基础地址；
+外部自定义链接原样承接。必要事实缺失时展示名称。详情转换不写 ES、不查询最新策略，
+既有投影更新保留 `field_extra_info` 的约定不变，因此无需批量修复历史告警。
+`strategy` Processor 不读取或校验 `web_saas_module_url`，该键是否存在及其取值均不影响关联事实输出；新来源发布不再带此配置。
+
+部署先升级支持新旧两种输入的 KAC，再升级 Linkd；本契约和本地回归不代表线上已部署或完成页面验收。
+
+告警 ID 切换前暂停 Linkd 投影和动作投递，等待在途请求与旧 KAC Celery 动作完成。
+现有 KAC 引用字段足够，无需扩容；升级全部 Web、Worker、管理入口及 Linkd，再恢复投影和动作。
+V3 HTTP 字段不变；新 Celery 消息与文档均使用原生 ID，不兼容旧 UUID 消息。
+不需要为了发现旧文档刷新索引。旧 KAC 手动关闭只修改本地记录，不向 Linkd 发命令。
+新 ID 写入后不直接降级到旧 UUID 写入器。不迁移历史数据。
+
+
+## 顶层时间字段与策略字段退役（2026-11-06）
+
+`latest_event_time` 是 KAC 兼容存储的只读 date 字段；普通新建与更新均从
+`Alert.last_occurred_at` 写入，首次触发、同级触发、升级及来源恢复/关闭遵循 Lifecycle
+已有规则。低等级抑制及人工关闭、屏蔽、合并操作不以操作时间推进此值。
+主动关闭已有文档仍仅更新原有关闭字段，缺失文档才用完整快照新建；旧 Kafka Hook 协议不变。
+该字段不由 Event 丰富或自定义字段目录提供，也不改变 Alert 本身的时间语义。
+
+新建和已有模板同步声明 date 格式，已有模板中的同名错误类型或格式会被纠正；
+已有物理索引通过 mapping 追加，已有字段类型冲突时明确报错，不执行索引迁移。
+先完成模板和物理索引 mapping 维护才放行写入和消费投影队列。
+普通投影、同步关闭及缺失文档补建共用首次维护成功状态；尚未准备好时写入返回可重试错误，
+不逐条触发索引维护。主动关闭若已保存 Linkd 终态但 KAC 写入未完成，沿用原操作身份重试。
+删除新模板中的 `strategy_config_uid`、`strategy_config_version`，保留其他自定义 mapping。
+已有物理索引的旧字段和 `_source` 不删除，退役字段名仍禁止自定义输出。
+不增加历史回填或补偿扫描。已有原生告警下次普通投影时补齐时间；静止历史及旧 UUID 文档不补齐。

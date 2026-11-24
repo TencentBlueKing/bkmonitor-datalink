@@ -31,7 +31,7 @@
 整改定向验证：
 
 ```bash
-GOCACHE=/private/tmp/linkd-recovery-go-cache go test ./internal/consume ./internal/lifecycle ./internal/config ./internal/store/memory ./internal/store/mysql ./internal/store/elasticsearch ./internal/telemetry ./internal/lifecycle/process
+go test ./internal/consume ./internal/lifecycle ./internal/config ./internal/store/memory ./internal/store/mysql ./internal/store/elasticsearch ./internal/telemetry ./internal/lifecycle/process
 ```
 
 上述包测试通过；MySQL/Elasticsearch 真实服务集成用例仍由各自环境变量显式启用，不能把默认 skip
@@ -40,8 +40,7 @@ GOCACHE=/private/tmp/linkd-recovery-go-cache go test ./internal/consume ./intern
 完整质量门禁随后使用可写缓存执行并通过：
 
 ```bash
-GOCACHE=/private/tmp/linkd-recovery-go-cache \
-GOLANGCI_LINT_CACHE=/private/tmp/linkd-recovery-golangci-cache \
+\
 make check
 ```
 

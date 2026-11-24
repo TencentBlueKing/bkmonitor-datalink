@@ -12,6 +12,8 @@ package store
 import "errors"
 
 var (
+	// ErrPageTooLarge 表示读取的单页载荷超过传输预算，可缩小页重读而非卡住游标。
+	ErrPageTooLarge = errors.New("store page exceeds response budget")
 	// ErrNotFound 表示当前租户作用域内不存在目标对象。
 	ErrNotFound = errors.New("store object not found")
 	// ErrIdentityConflict 表示相同业务身份已保存了不同内容。
@@ -24,4 +26,6 @@ var (
 	ErrInvalidCursor = errors.New("store invalid cursor")
 	// ErrInvalidArgument 表示调用参数不满足存储契约。
 	ErrInvalidArgument = errors.New("store invalid argument")
+	// ErrInvalidEventProcessing 表示 Event 处理快照违反状态约束，不能作为正常快照读取。
+	ErrInvalidEventProcessing = errors.New("store invalid event processing")
 )

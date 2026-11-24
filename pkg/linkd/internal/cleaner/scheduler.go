@@ -71,7 +71,7 @@ func NewScheduler(sources []config.EventSource, severity config.SeverityConfig, 
 	hasEnabledSource := false
 	for index, source := range sources {
 		normalized[index] = cloneEventSource(source)
-		hasEnabledSource = hasEnabledSource || normalized[index].Enabled
+		hasEnabledSource = hasEnabledSource || (normalized[index].Enabled && normalized[index].Storage.Type != config.StorageTypeInternalMerge)
 	}
 	if err := config.ValidateEventSources(normalized, severity); err != nil {
 		return nil, fmt.Errorf("create event source scheduler: %w", err)
@@ -102,7 +102,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 	enabled := make([]config.EventSource, 0, len(s.sources))
 	for _, source := range s.sources {
-		if source.Enabled {
+		if source.Enabled && source.Storage.Type != config.StorageTypeInternalMerge {
 			enabled = append(enabled, cloneEventSource(source))
 		}
 	}

@@ -15,10 +15,82 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"linkd/internal/config"
+	"linkd/internal/enrich"
+	"linkd/internal/enrich/assembly"
+	onemodelassembly "linkd/internal/onemodel/assembly"
 	"linkd/internal/telemetry"
 )
+
+func TestOneModelTransportRejectsNegativeConnectionBudget(t *testing.T) {
+	t.Parallel()
+	dataSource := &config.OneModelResource{Addresses: []string{"http://127.0.0.1:9200"}}
+	if _, err := onemodelassembly.NewTransport(dataSource, -1, time.Second); err == nil {
+		t.Fatal("onemodelassembly.NewTransport() accepted an excessive connection budget")
+	}
+}
+
+func TestOneModelTransportUsesConnectionBudget(t *testing.T) {
+	t.Parallel()
+	dataSource := &config.OneModelResource{Addresses: []string{"http://127.0.0.1:9200"}}
+	transport, err := onemodelassembly.NewTransport(dataSource, 36, 30*time.Second)
+	if err != nil {
+		t.Fatalf("onemodelassembly.NewTransport() error = %v", err)
+	}
+	transport.Close()
+}
+
+func TestReleaseRequiresMySQLDataSource(t *testing.T) {
+	resources := config.ResourcesConfig{}
+	t.Parallel()
+	source := config.EventSource{
+		EventSourceID: "built_in_bk",
+		Enrich:        config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "source"}}},
+	}
+	if err := validateEnricherConfig(source, resources); err == nil || !strings.Contains(err.Error(), "resources.mysql") {
+		t.Fatalf("validateEnricherConfig() error=%v", err)
+	}
+	resources = config.ResourcesConfig{MySQL: validMySQLResource()}
+	if err := validateEnricherConfig(source, resources); err != nil {
+		t.Fatalf("complete source dependencies: %v", err)
+	}
+}
+
+func TestDisplayRequiresMySQLDataSource(t *testing.T) {
+	resources := config.ResourcesConfig{}
+	t.Parallel()
+	source := config.EventSource{
+		EventSourceID: "built_in_bk",
+		Enrich:        config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "display"}}},
+	}
+	if err := validateEnricherConfig(source, resources); err == nil || !strings.Contains(err.Error(), "resources.mysql") {
+		t.Fatalf("mysql requirement error=%v", err)
+	}
+	resources = config.ResourcesConfig{MySQL: validMySQLResource()}
+	if err := validateEnricherConfig(source, resources); err != nil {
+		t.Fatalf("complete display dependencies: %v", err)
+	}
+}
+
+func TestResourceRequiresMySQLAndElasticsearch(t *testing.T) {
+	resources := config.ResourcesConfig{}
+	t.Parallel()
+	source := config.EventSource{
+		EventSourceID: "built_in_bk",
+		Enrich: config.EnrichConfig{
+			Processors: []config.EnrichProcessorConfig{{Type: "resource"}},
+		},
+	}
+	if err := validateEnricherConfig(source, resources); err == nil || !strings.Contains(err.Error(), "resources.mysql") {
+		t.Fatalf("validateEnricherConfig() error=%v", err)
+	}
+	resources.MySQL = validMySQLResource()
+	if err := validateEnricherConfig(source, resources); err == nil || !strings.Contains(err.Error(), "resources.onemodel") {
+		t.Fatalf("validateEnricherConfig() error=%v", err)
+	}
+}
 
 func TestValidateConfigRequiresLifecycleDependencies(t *testing.T) {
 	t.Parallel()
@@ -96,19 +168,18 @@ func TestNewConsumerName(t *testing.T) {
 }
 
 func validLifecycleConfig() *config.LifecycleConfig {
-	value := config.LifecycleConfig{
-		Output: config.LifecycleOutputConfig{
-			Kafka: &config.LifecycleKafkaConfig{
-				Brokers: []string{"kafka.example.com:9092"},
-				Topic:   "alerts",
-			},
-		},
-	}.WithDefaults()
+	value := config.LifecycleConfig{}.WithDefaults()
 	return &value
 }
 
 func validMySQLConfig() *config.MySQLConfig {
 	return &config.MySQLConfig{
+		Address: "mysql.example.com:3306", Database: "linkd", Username: "linkd",
+	}
+}
+
+func validMySQLResource() *config.MySQLResource {
+	return &config.MySQLResource{
 		Address:  "mysql.example.com:3306",
 		Database: "linkd",
 		Username: "linkd",
@@ -117,4 +188,42 @@ func validMySQLConfig() *config.MySQLConfig {
 
 func validRedisConfig() *config.RedisConfig {
 	return &config.RedisConfig{Address: "redis.example.com:6379"}
+}
+
+func TestReleaseEnrichRoutesAreIndependent(t *testing.T) {
+	resources := config.ResourcesConfig{}
+	t.Parallel()
+	source := config.EventSource{EventSourceID: "dynamic-source", Version: 1}
+	firstRuntime, err := assembly.Open(context.Background(), source, resources, 8, time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = firstRuntime.Close() }()
+	first, err := firstRuntime.Router(source, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.Version = 2
+	source.Enrich.Processors = []config.EnrichProcessorConfig{{Type: "source"}}
+	if err := validateEnricherConfig(source, resources); err == nil {
+		t.Fatal("missing data source accepted")
+	}
+	resources = config.ResourcesConfig{MySQL: validMySQLResource()}
+	if err := validateEnricherConfig(source, resources); err != nil {
+		t.Fatal(err)
+	}
+	source.Enrich.Processors[0].Type = "unknown"
+	if err := validateEnricherConfig(source, resources); err == nil {
+		t.Fatal("unknown processor accepted")
+	}
+	if first.EnrichChainKind(source.EventSourceID) != enrich.ChainNoop {
+		t.Fatal("new release changed an existing route")
+	}
+}
+
+func TestValidateConfigDoesNotLoadYAMLSourceRoutes(t *testing.T) {
+	cfg := config.Config{Lifecycle: validLifecycleConfig(), Storage: &config.StorageConfig{Repository: config.RepositoryTypeMySQL, MySQL: validMySQLConfig(), Redis: validRedisConfig()}, EventSources: []config.EventSource{{EventSourceID: "yaml-only", Enrich: config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "unknown"}}}}}}
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("startup used YAML source route: %v", err)
+	}
 }

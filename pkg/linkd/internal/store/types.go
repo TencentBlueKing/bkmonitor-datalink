@@ -11,6 +11,7 @@ package store
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"linkd/internal/domain"
@@ -20,6 +21,8 @@ const (
 	DefaultPageSize = 100
 	MaxPageSize     = 500
 	MaxBatchSize    = 500
+	// MaxAlertLogBatchSize 允许小体积流水按关闭批次提交；各后端仍按请求字节预算切块。
+	MaxAlertLogBatchSize = 5000
 )
 
 // VersionToken 是由具体存储产生、只供单对象 CAS 原样回传的不透明令牌。
@@ -33,6 +36,11 @@ func (t VersionToken) String() string { return t.value }
 
 // EventProcessing 是 Event JSON 之外的生命周期处理元数据。
 type EventProcessing struct {
+	// ActiveAlertLimit 仅保存 Cleaner 终结本事件时的软限流诊断。
+	ActiveAlertLimit *ActiveAlertLimitDecision `json:"active_alert_limit,omitempty"`
+	PolicyDecision   *PolicyDecision           `json:"policy_decision,omitempty"`
+	// Evaluations 保存逐级最终结果，事件级 State 是聚合结果。
+	Evaluations []EvaluationResult       `json:"evaluations,omitempty"`
 	State       domain.EventProcessState `json:"state"`
 	Outcome     string                   `json:"outcome,omitempty"`
 	ReasonCode  string                   `json:"reason_code,omitempty"`
@@ -44,26 +52,33 @@ func NewUnprocessedEventProcessing() EventProcessing {
 }
 
 func (p EventProcessing) Normalize() (EventProcessing, error) {
+	p = p.Clone()
+	if err := p.PolicyDecision.Validate(); err != nil {
+		return EventProcessing{}, fmt.Errorf("%w: %w", ErrInvalidEventProcessing, err)
+	}
 	if !p.State.Valid() {
-		return EventProcessing{}, fmt.Errorf("event processing state is invalid: %q", p.State)
+		return EventProcessing{}, fmt.Errorf("%w: state is invalid: %q", ErrInvalidEventProcessing, p.State)
 	}
 	if p.ProcessedAt != nil {
 		value := p.ProcessedAt.Round(0).UTC()
 		p.ProcessedAt = &value
 	}
 	if p.State == domain.EventProcessStateUnprocessed {
-		if p.Outcome != "" || p.ReasonCode != "" || p.ProcessedAt != nil {
-			return EventProcessing{}, fmt.Errorf("unprocessed event must not contain process result")
+		if p.Outcome != "" || p.ReasonCode != "" || p.ProcessedAt != nil || len(p.Evaluations) > 0 || p.PolicyDecision != nil || p.ActiveAlertLimit != nil {
+			return EventProcessing{}, fmt.Errorf("%w: unprocessed event must not contain process result", ErrInvalidEventProcessing)
 		}
 		return p, nil
 	}
 	if p.Outcome == "" || p.ProcessedAt == nil || p.ProcessedAt.IsZero() {
-		return EventProcessing{}, fmt.Errorf("terminal event processing requires outcome and processed_at")
+		return EventProcessing{}, fmt.Errorf("%w: terminal event processing requires outcome and processed_at", ErrInvalidEventProcessing)
 	}
 	return p, nil
 }
 
 func (p EventProcessing) Clone() EventProcessing {
+	p.ActiveAlertLimit = p.ActiveAlertLimit.Clone()
+	p.PolicyDecision = p.PolicyDecision.Clone()
+	p.Evaluations = cloneEvaluationResults(p.Evaluations)
 	if p.ProcessedAt != nil {
 		value := *p.ProcessedAt
 		p.ProcessedAt = &value
@@ -78,24 +93,26 @@ type StoredEvent struct {
 	Version    VersionToken
 }
 
-// Validate 校验领域字段与处理元数据之间的关联约束。
+// Validate 检查存储快照的身份与处理状态关系，不重新解析 Event 业务载荷。
 func (s StoredEvent) Validate() error {
-	if err := s.Event.Validate(); err != nil {
+	if err := s.Event.ValidateIdentity(); err != nil {
 		return err
 	}
 	processing, err := s.Processing.Normalize()
 	if err != nil {
 		return err
 	}
+	if err := ValidatePolicyDecision(s.Event, nil, processing.PolicyDecision); err != nil {
+		return err
+	}
 	if s.Version.IsZero() {
 		return fmt.Errorf("stored event version must not be empty")
 	}
-	if processing.State == domain.EventProcessStateAccepted || processing.State == domain.EventProcessStateSuppressed {
-		if s.Event.RelatedAlertID == "" {
-			return fmt.Errorf("associated event requires related_alert_id")
-		}
-	} else if s.Event.RelatedAlertID != "" {
-		return fmt.Errorf("only accepted or suppressed event may contain related_alert_id")
+	if processing.State == domain.EventProcessStateAccepted && len(s.Event.RelatedAlertIDs) == 0 {
+		return fmt.Errorf("accepted event requires related_alert_ids")
+	}
+	if processing.State != domain.EventProcessStateAccepted && processing.State != domain.EventProcessStateSuppressed && len(s.Event.RelatedAlertIDs) != 0 {
+		return fmt.Errorf("only accepted or suppressed event may contain related_alert_ids")
 	}
 	return nil
 }
@@ -155,6 +172,13 @@ type EventPage struct {
 	NextCursor string
 }
 
+// EventBySourceRequest 定义来源调试窗口的显式时间范围与游标分页。
+type EventBySourceRequest struct {
+	ReceivedFrom time.Time
+	ReceivedTo   time.Time
+	Page         PageRequest
+}
+
 // EventByAlertRequest 定义按关联 Alert 查询 Event 的可选接收时间范围和分页。
 // 零时间由 Repository 根据 Alert 生命周期边界补齐。
 type EventByAlertRequest struct {
@@ -199,25 +223,53 @@ type AlertLogPage struct {
 
 // EventResult 是一次生命周期裁决写回 Event 的完整结果。
 type EventResult struct {
-	State          domain.EventProcessState
-	RelatedAlertID string
-	Outcome        string
-	ReasonCode     string
-	ProcessedAt    time.Time
+	ActiveAlertLimit *ActiveAlertLimitDecision
+	PolicyDecision   *PolicyDecision
+	Evaluations      []EvaluationResult
+	State            domain.EventProcessState
+	RelatedAlertIDs  []string
+	Outcome          string
+	ReasonCode       string
+	ProcessedAt      time.Time
+}
+
+// Processing 返回与本次 CAS 对应的技术状态，未处理结果不带完成时间。
+func (r EventResult) Processing() EventProcessing {
+	p := EventProcessing{ActiveAlertLimit: r.ActiveAlertLimit.Clone(), PolicyDecision: r.PolicyDecision.Clone(), State: r.State, Outcome: r.Outcome, ReasonCode: r.ReasonCode, Evaluations: cloneEvaluationResults(r.Evaluations)}
+	if r.State != domain.EventProcessStateUnprocessed {
+		at := r.ProcessedAt
+		p.ProcessedAt = &at
+	}
+	return p
 }
 
 func (r EventResult) Normalize() (EventResult, error) {
-	processing, err := (EventProcessing{State: r.State, Outcome: r.Outcome, ReasonCode: r.ReasonCode, ProcessedAt: &r.ProcessedAt}).Normalize()
+	processing, err := r.Processing().Normalize()
 	if err != nil {
 		return EventResult{}, err
 	}
-	r.ProcessedAt = *processing.ProcessedAt
-	if r.State == domain.EventProcessStateAccepted || r.State == domain.EventProcessStateSuppressed {
-		if r.RelatedAlertID == "" {
-			return EventResult{}, fmt.Errorf("associated event result requires related_alert_id")
+	r.Evaluations = processing.Evaluations
+	r.PolicyDecision = processing.PolicyDecision
+	r.RelatedAlertIDs = slices.Clone(r.RelatedAlertIDs)
+	slices.Sort(r.RelatedAlertIDs)
+	r.RelatedAlertIDs = slices.Compact(r.RelatedAlertIDs)
+	if len(r.RelatedAlertIDs) > domain.MaxEventEvaluations {
+		return EventResult{}, fmt.Errorf("event result alert associations exceed evaluation limit")
+	}
+	for _, id := range r.RelatedAlertIDs {
+		if id == "" || len(id) > domain.EntityIDMaxBytes {
+			return EventResult{}, fmt.Errorf("invalid related alert id")
 		}
-	} else if r.RelatedAlertID != "" {
-		return EventResult{}, fmt.Errorf("only accepted or suppressed event result may contain related_alert_id")
+	}
+	// 防抖未达阈值时不存在 Alert；抑制结果仍可独立持久化。
+	if r.State == domain.EventProcessStateAccepted && len(r.RelatedAlertIDs) == 0 {
+		return EventResult{}, fmt.Errorf("accepted event result requires related_alert_ids")
+	}
+	if r.State != domain.EventProcessStateAccepted && r.State != domain.EventProcessStateSuppressed && len(r.RelatedAlertIDs) > 0 {
+		return EventResult{}, fmt.Errorf("only accepted or suppressed event result may contain related_alert_ids")
+	}
+	if processing.ProcessedAt != nil {
+		r.ProcessedAt = *processing.ProcessedAt
 	}
 	return r, nil
 }
@@ -225,8 +277,8 @@ func (r EventResult) Normalize() (EventResult, error) {
 type ActiveAlertKey struct{ BKTenantID, EventSourceID, Fingerprint string }
 
 type AlertByEventResult struct {
-	Event StoredEvent
-	Alert *StoredAlert
+	Event  StoredEvent
+	Alerts []StoredAlert
 }
 
 func (request PageRequest) Normalize() (PageRequest, error) {

@@ -18,6 +18,7 @@ import (
 	"io"
 	"time"
 
+	"linkd/internal/config"
 	"linkd/internal/domain"
 )
 
@@ -32,27 +33,27 @@ type RawEventMessage struct {
 }
 
 // EventDraft 是来源 Cleaner 从 payload 中提取的来源事实。
-// 租户、来源、Event ID、fingerprint、标准 severity、接收时间和原始 payload
-// 由 EventFactory 统一生成或保存，具体 Cleaner 不得覆盖。
+// 来源、Event ID、fingerprint、标准 severity、接收时间和原始 payload
+// 由 EventFactory 统一生成或保存。BKTenantID 由 Standard payload 提供，
+// EventSource.related_tenant_id 可在 EventFactory 中覆盖它。
 type EventDraft struct {
-	Title          string
-	Content        string
-	SourceSeverity string
-	Action         domain.EventAction
-	ActionReason   string
-	ConditionKey   string
-	ConditionName  string
-	Dimensions     domain.DimensionMap
-	SubjectSystem  string
-	SubjectType    string
-	SubjectID      string
-	SubjectName    string
-	OccurredAt     time.Time
-	ProducedAt     time.Time
-	SourceEventID  string
-	SourceAlertID  string
-	Labels         domain.DimensionMap
-	ExtraData      domain.JSONObject
+	Fingerprint   *string
+	BKTenantID    string
+	Title         string
+	Content       string
+	Evaluations   []domain.EventEvaluation
+	Dimensions    domain.DimensionMap
+	Values        domain.EventValues
+	SubjectSystem string
+	SubjectType   string
+	SubjectID     string
+	SubjectName   string
+	OccurredAt    time.Time
+	ProducedAt    time.Time
+	SourceEventID string
+	SourceAlertID string
+	Labels        domain.DimensionMap
+	ExtraData     domain.JSONObject
 }
 
 // SourceCleaner 把一种来源 payload 确定性投影为 EventDraft。
@@ -68,35 +69,51 @@ type standardSubject struct {
 }
 
 type standardPayload struct {
-	EventID       string              `json:"event_id"`
-	AlertID       string              `json:"alert_id"`
-	Title         string              `json:"title"`
-	Content       string              `json:"content"`
-	Severity      string              `json:"severity"`
-	Action        domain.EventAction  `json:"action"`
-	ActionReason  string              `json:"action_reason"`
-	ConditionKey  string              `json:"condition_key"`
-	ConditionName string              `json:"condition_name"`
-	Dimensions    domain.DimensionMap `json:"dimensions"`
-	Subject       standardSubject     `json:"subject"`
-	OccurredAt    time.Time           `json:"occurred_at"`
-	ProducedAt    time.Time           `json:"produced_at"`
-	Labels        domain.DimensionMap `json:"labels"`
-	ExtraData     domain.JSONObject   `json:"extra_data"`
+	Fingerprint *string                  `json:"fingerprint"`
+	BKTenantID  string                   `json:"bk_tenant_id"`
+	EventID     string                   `json:"event_id"`
+	AlertID     string                   `json:"alert_id"`
+	Title       string                   `json:"title"`
+	Content     string                   `json:"content"`
+	Evaluations []domain.EventEvaluation `json:"evaluations"`
+	Dimensions  domain.DimensionMap      `json:"dimensions"`
+	Values      domain.EventValues       `json:"values"`
+	Subject     standardSubject          `json:"subject"`
+	OccurredAt  time.Time                `json:"occurred_at"`
+	ProducedAt  time.Time                `json:"produced_at"`
+	Labels      domain.DimensionMap      `json:"labels"`
+	ExtraData   domain.JSONObject        `json:"extra_data"`
 }
 
 // StandardCleaner 解析 Linkd 标准事件 payload，并把来源字段投影为 EventDraft。
 // 未知字段只由 EventFactory 保存在 SourceRawData 中，不进入 EventDraft。
-type StandardCleaner struct{}
+type StandardCleaner struct{ Rules []config.SourceCleaning }
 
-func (StandardCleaner) Clean(ctx context.Context, message RawEventMessage) (EventDraft, error) {
+func (c StandardCleaner) Clean(ctx context.Context, message RawEventMessage) (EventDraft, error) {
 	if err := ctx.Err(); err != nil {
 		return EventDraft{}, err
 	}
 	if err := validateJSONObject(message.Payload); err != nil {
 		return EventDraft{}, err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(message.Payload))
+	// 显式指纹是输入合同，不能因来源过滤而吞掉非法身份。
+	var identity struct {
+		Fingerprint json.RawMessage `json:"fingerprint"`
+	}
+	if err := json.Unmarshal(message.Payload, &identity); err != nil {
+		return EventDraft{}, err
+	}
+	if len(identity.Fingerprint) > 0 {
+		var fingerprint string
+		if err := json.Unmarshal(identity.Fingerprint, &fingerprint); err != nil || len(fingerprint) == 0 || len(fingerprint) > 128 {
+			return EventDraft{}, fmt.Errorf("standard fingerprint must be a non-empty string of at most 128 bytes")
+		}
+	}
+	cleaned, err := c.applyRules(ctx, message)
+	if err != nil {
+		return EventDraft{}, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(cleaned))
 	var payload standardPayload
 	if err := decoder.Decode(&payload); err != nil {
 		return EventDraft{}, fmt.Errorf("decode standard payload: %w", err)
@@ -104,8 +121,13 @@ func (StandardCleaner) Clean(ctx context.Context, message RawEventMessage) (Even
 	if err := requireJSONEOF(decoder); err != nil {
 		return EventDraft{}, err
 	}
-	if !payload.Action.Valid() {
-		return EventDraft{}, fmt.Errorf("standard action is invalid: %q", payload.Action)
+	if len(payload.Evaluations) == 0 || len(payload.Evaluations) > domain.MaxEventEvaluations {
+		return EventDraft{}, fmt.Errorf("standard evaluations must contain between 1 and %d items", domain.MaxEventEvaluations)
+	}
+	for _, evaluation := range payload.Evaluations {
+		if !evaluation.Action.Valid() {
+			return EventDraft{}, fmt.Errorf("standard evaluation action is invalid")
+		}
 	}
 	if err := payload.Dimensions.Validate(); err != nil {
 		return EventDraft{}, fmt.Errorf("standard dimensions: %w", err)
@@ -113,16 +135,44 @@ func (StandardCleaner) Clean(ctx context.Context, message RawEventMessage) (Even
 	if err := payload.Labels.Validate(); err != nil {
 		return EventDraft{}, fmt.Errorf("standard labels: %w", err)
 	}
+	if err := validateAdditionalDimensions(payload.Dimensions, payload.ExtraData); err != nil {
+		return EventDraft{}, err
+	}
 	return EventDraft{
-		Title: payload.Title, Content: payload.Content,
-		SourceSeverity: payload.Severity, Action: payload.Action, ActionReason: payload.ActionReason,
-		ConditionKey: payload.ConditionKey, ConditionName: payload.ConditionName,
-		Dimensions: payload.Dimensions.Clone(), SubjectSystem: payload.Subject.System,
+		Fingerprint: payload.Fingerprint,
+		BKTenantID:  payload.BKTenantID,
+		Title:       payload.Title, Content: payload.Content,
+		Evaluations: append([]domain.EventEvaluation(nil), payload.Evaluations...),
+		Dimensions:  payload.Dimensions.Clone(), SubjectSystem: payload.Subject.System,
 		SubjectType: payload.Subject.Type, SubjectID: payload.Subject.ID, SubjectName: payload.Subject.Name,
 		OccurredAt: payload.OccurredAt, ProducedAt: payload.ProducedAt,
 		SourceEventID: payload.EventID, SourceAlertID: payload.AlertID,
 		Labels: payload.Labels.Clone(), ExtraData: payload.ExtraData.Clone(),
+		Values: payload.Values.Clone(),
 	}, nil
+}
+
+func validateAdditionalDimensions(dimensions domain.DimensionMap, extraData domain.JSONObject) error {
+	raw, exists := extraData["additional_dimensions"]
+	if !exists {
+		return nil
+	}
+	if err := validateJSONObject(raw); err != nil {
+		return fmt.Errorf("standard extra_data.additional_dimensions: %w", err)
+	}
+	var additional domain.DimensionMap
+	if err := json.Unmarshal(raw, &additional); err != nil {
+		return fmt.Errorf("standard extra_data.additional_dimensions: %w", err)
+	}
+	if err := additional.Validate(); err != nil {
+		return fmt.Errorf("standard extra_data.additional_dimensions: %w", err)
+	}
+	for key := range additional {
+		if _, exists := dimensions[key]; exists {
+			return fmt.Errorf("standard dimensions and extra_data.additional_dimensions duplicate key %q", key)
+		}
+	}
+	return nil
 }
 
 func validateJSONObject(data []byte) error {

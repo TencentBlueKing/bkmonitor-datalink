@@ -17,11 +17,13 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"linkd/internal/config"
 	elasticsearchstore "linkd/internal/store/elasticsearch"
+	"testing/synctest"
 )
 
 type recordingTaskObserver struct {
@@ -91,13 +93,8 @@ func TestValidateConfigAcceptsRedisStreamManagerWithoutElasticsearch(t *testing.
 	t.Parallel()
 
 	cfg := config.Config{
-		Storage: &config.StorageConfig{Redis: &config.RedisConfig{Address: "redis.example.com:6379"}},
-		Lifecycle: &config.LifecycleConfig{Output: config.LifecycleOutputConfig{
-			Kafka: &config.LifecycleKafkaConfig{
-				Brokers: []string{"kafka.example.com:9092"},
-				Topic:   "linkd-alerts",
-			},
-		}},
+		Storage:   &config.StorageConfig{Redis: &config.RedisConfig{Address: "redis.example.com:6379"}},
+		Lifecycle: &config.LifecycleConfig{},
 		ControlPlane: &config.ControlPlaneConfig{
 			RedisStream: &config.RedisStreamManagerConfig{},
 		},
@@ -132,6 +129,39 @@ func TestValidateConfigRejectsInvalidElasticsearchTaskSchedule(t *testing.T) {
 	}
 }
 
+func TestRedisStreamTaskDefaultsAndExplicitDisable(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name         string
+		controlPlane *config.ControlPlaneConfig
+		wantEnabled  bool
+	}{
+		{name: "omitted control plane", wantEnabled: true},
+		{name: "omitted stream manager", controlPlane: &config.ControlPlaneConfig{}, wantEnabled: true},
+		{name: "explicit stream manager", controlPlane: &config.ControlPlaneConfig{RedisStream: &config.RedisStreamManagerConfig{}}, wantEnabled: true},
+		{name: "disabled", controlPlane: &config.ControlPlaneConfig{RedisStream: &config.RedisStreamManagerConfig{Enabled: new(false)}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := config.Config{
+				Storage:      &config.StorageConfig{Redis: &config.RedisConfig{Address: "redis.example.com:6379"}},
+				Lifecycle:    &config.LifecycleConfig{},
+				ControlPlane: test.controlPlane,
+			}
+			if err := ValidateConfig(cfg); err != nil {
+				t.Fatal(err)
+			}
+			if got := hasRedisStreamTask(cfg); got != test.wantEnabled {
+				t.Fatalf("hasRedisStreamTask()=%t, want %t", got, test.wantEnabled)
+			}
+			cfg.Lifecycle = nil
+			if test.controlPlane == nil && hasRedisStreamTask(cfg) {
+				t.Fatal("default task enabled without lifecycle")
+			}
+		})
+	}
+}
+
 func TestPrepareElasticsearchDataPlanePreservesDependencyOrder(t *testing.T) {
 	t.Parallel()
 	manager := &recordingElasticsearchManager{}
@@ -152,33 +182,52 @@ func TestPrepareElasticsearchDataPlanePreservesDependencyOrder(t *testing.T) {
 	}
 }
 
-func TestPeriodicTaskRecordsImmediateRunAndFailure(t *testing.T) {
-	t.Parallel()
-	observer := &recordingTaskObserver{}
-	wantErr := fmt.Errorf("reconcile failed")
-	task := newPeriodicTask(
-		slog.New(slog.NewTextHandler(testWriter{t}, nil)),
-		"test-task",
-		time.Hour,
-		observer,
-		func(context.Context) error { return wantErr },
-	)
-
-	err := task.Run(context.Background())
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("Run() error = %v, want %v", err, wantErr)
-	}
-	observer.mu.Lock()
-	defer observer.mu.Unlock()
-	if got := fmt.Sprint(observer.active); got != "[true false]" {
-		t.Fatalf("active = %s", got)
-	}
-	if got := fmt.Sprint(observer.succeeded); got != "[false]" {
-		t.Fatalf("succeeded = %s", got)
-	}
+func TestPeriodicTaskRetriesFailureAndPanicThenResumesConfiguredInterval(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		observer := &recordingTaskObserver{}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		var calls atomic.Int64
+		task := newPeriodicTask(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-task", time.Hour, observer,
+			func(context.Context) error {
+				switch calls.Add(1) {
+				case 1:
+					return errors.New("ES read-only")
+				case 2:
+					panic("private payload")
+				}
+				return nil
+			})
+		done := make(chan error, 1)
+		go func() { done <- task.Run(ctx) }()
+		synctest.Wait()
+		if calls.Load() != 1 {
+			t.Fatal("missing immediate run", calls.Load())
+		}
+		time.Sleep(2 * taskRetryInterval)
+		synctest.Wait()
+		observer.mu.Lock()
+		outcomes := fmt.Sprint(observer.succeeded)
+		observer.mu.Unlock()
+		if calls.Load() != 3 || outcomes != "[false false true]" {
+			t.Fatalf("recovery calls=%d outcomes=%s", calls.Load(), outcomes)
+		}
+		time.Sleep(time.Hour - time.Second)
+		synctest.Wait()
+		if calls.Load() != 3 {
+			t.Fatal("success did not restore configured interval", calls.Load())
+		}
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		if fmt.Sprint(observer.active) != "[true false]" {
+			t.Fatal(observer.active)
+		}
+	})
 }
 
-func TestAlertArchiveTaskDrainsBatchesWithoutIntervalDelay(t *testing.T) {
+func TestAlertArchiveTaskDrainsSweepPagesWithoutIntervalDelay(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -189,7 +238,7 @@ func TestAlertArchiveTaskDrainsBatchesWithoutIntervalDelay(t *testing.T) {
 			ArchiveIntervalSeconds: 30, ArchiveBatchSize: 1000, ArchiveWorkerCount: 4,
 		},
 		&recordingTaskObserver{},
-		func(context.Context, int, int, int) {},
+		func(context.Context, elasticsearchstore.ArchiveBatchResult) {},
 		func(_ context.Context, request elasticsearchstore.ArchiveBatchRequest) (elasticsearchstore.ArchiveBatchResult, error) {
 			requests = append(requests, request)
 			switch len(requests) {
@@ -198,8 +247,10 @@ func TestAlertArchiveTaskDrainsBatchesWithoutIntervalDelay(t *testing.T) {
 					Scanned: 1000, Archived: 1000, NextCursor: "alert-1000",
 				}, nil
 			case 2:
+				cancel()
 				return elasticsearchstore.ArchiveBatchResult{Scanned: 1, Archived: 1}, nil
 			default:
+				t.Errorf("archive task started a new sweep without waiting")
 				cancel()
 				return elasticsearchstore.ArchiveBatchResult{}, nil
 			}
@@ -208,8 +259,7 @@ func TestAlertArchiveTaskDrainsBatchesWithoutIntervalDelay(t *testing.T) {
 	if err := task.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(requests) != 3 || requests[0].AfterAlertID != "" ||
-		requests[1].AfterAlertID != "alert-1000" || requests[2].AfterAlertID != "" {
+	if len(requests) != 2 || requests[0].AfterAlertID != "" || requests[1].AfterAlertID != "alert-1000" {
 		t.Fatalf("archive requests=%#v", requests)
 	}
 	for _, request := range requests {
@@ -219,11 +269,11 @@ func TestAlertArchiveTaskDrainsBatchesWithoutIntervalDelay(t *testing.T) {
 	}
 }
 
-func TestAlertArchiveTaskIsolatesItemFailuresAndWaitsWithoutProgress(t *testing.T) {
+func TestAlertArchiveTaskWaitsAfterCompletedSweepWithProgress(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	secondCall := make(chan struct{})
+	firstCall := make(chan struct{})
 	done := make(chan error, 1)
 	calls := 0
 	observer := &recordingTaskObserver{}
@@ -233,21 +283,23 @@ func TestAlertArchiveTaskIsolatesItemFailuresAndWaitsWithoutProgress(t *testing.
 			ArchiveIntervalSeconds: 30, ArchiveBatchSize: 1000, ArchiveWorkerCount: 4,
 		},
 		observer,
-		func(context.Context, int, int, int) {},
+		func(context.Context, elasticsearchstore.ArchiveBatchResult) {},
 		func(context.Context, elasticsearchstore.ArchiveBatchRequest) (elasticsearchstore.ArchiveBatchResult, error) {
 			calls++
 			if calls == 1 {
+				close(firstCall)
 				return elasticsearchstore.ArchiveBatchResult{Scanned: 2, Archived: 1, Failed: 1}, nil
 			}
-			close(secondCall)
-			return elasticsearchstore.ArchiveBatchResult{Scanned: 1, Failed: 1}, nil
+			t.Errorf("archive task started a new sweep without waiting")
+			cancel()
+			return elasticsearchstore.ArchiveBatchResult{}, nil
 		},
 	)
 	go func() { done <- task.Run(ctx) }()
 	select {
-	case <-secondCall:
+	case <-firstCall:
 	case <-time.After(time.Second):
-		t.Fatal("archive task did not begin the next sweep")
+		t.Fatal("archive task did not begin the first sweep")
 	}
 	select {
 	case err := <-done:
@@ -260,7 +312,7 @@ func TestAlertArchiveTaskIsolatesItemFailuresAndWaitsWithoutProgress(t *testing.
 	}
 	observer.mu.Lock()
 	defer observer.mu.Unlock()
-	if got := fmt.Sprint(observer.succeeded); got != "[false false]" {
+	if got := fmt.Sprint(observer.succeeded); got != "[false]" {
 		t.Fatalf("archive outcomes=%s", got)
 	}
 }
@@ -277,7 +329,7 @@ func TestAlertArchiveTaskShrinksOversizedScan(t *testing.T) {
 			ArchiveIntervalSeconds: 30, ArchiveBatchSize: 1000, ArchiveWorkerCount: 4,
 		},
 		&recordingTaskObserver{},
-		func(context.Context, int, int, int) {},
+		func(context.Context, elasticsearchstore.ArchiveBatchResult) {},
 		func(_ context.Context, request elasticsearchstore.ArchiveBatchRequest) (elasticsearchstore.ArchiveBatchResult, error) {
 			limits <- request.Limit
 			if request.Limit == 1000 {
@@ -301,4 +353,36 @@ type testWriter struct{ t *testing.T }
 func (w testWriter) Write(data []byte) (int, error) {
 	w.t.Log(strings.TrimSpace(string(data)))
 	return len(data), nil
+}
+
+func TestArchiveConflictsAdvanceCursorWithoutFailureWarningOrImmediateRetry(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var logs strings.Builder
+	observer := &recordingTaskObserver{}
+	calls, conflicts := 0, 0
+	task := newAlertArchiveTask(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})), config.ElasticsearchControlPlaneConfig{ArchiveIntervalSeconds: 30, ArchiveBatchSize: 1000, ArchiveWorkerCount: 1}, observer,
+		func(_ context.Context, result elasticsearchstore.ArchiveBatchResult) {
+			conflicts += result.Conflicts
+			if result.Scanned == 0 {
+				cancel()
+			}
+		},
+		func(_ context.Context, request elasticsearchstore.ArchiveBatchRequest) (elasticsearchstore.ArchiveBatchResult, error) {
+			calls++
+			if calls == 1 {
+				return elasticsearchstore.ArchiveBatchResult{Scanned: 1, Conflicts: 1, NextCursor: "after-conflict"}, nil
+			}
+			if calls != 2 || request.AfterAlertID != "after-conflict" {
+				t.Fatal(calls, request)
+			}
+			return elasticsearchstore.ArchiveBatchResult{}, nil
+		})
+	if err := task.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || conflicts != 1 || logs.Len() != 0 || fmt.Sprint(observer.succeeded) != "[true true]" {
+		t.Fatal(calls, conflicts, logs.String(), observer.succeeded)
+	}
 }

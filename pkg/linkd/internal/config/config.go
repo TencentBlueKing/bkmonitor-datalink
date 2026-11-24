@@ -14,7 +14,6 @@ import (
 	"fmt"
 
 	"linkd/internal/logging"
-	"linkd/internal/telemetry"
 )
 
 // MaxFileSize 是 Linkd 配置文件允许的最大字节数。
@@ -22,11 +21,17 @@ const MaxFileSize = 1 << 20
 
 // Config 是 Linkd 本地进程配置的聚合根对象。
 type Config struct {
+	// Blueking 是所有蓝鲸 API 共用的部署配置，模式开关不改变业务数据的租户作用域。
+	Plugins      PluginsConfig        `yaml:"plugins,omitempty"`
+	Blueking     BluekingConfig       `yaml:"blueking"`
+	Resources    ResourcesConfig      `yaml:"resources,omitempty"`
+	Dispatch     DispatchConfig       `yaml:"dispatch"`
+	Worker       WorkerConfig         `yaml:"worker"`
 	Logging      logging.Config       `yaml:"logging"`
 	Storage      *StorageConfig       `yaml:"storage,omitempty"`
 	Lifecycle    *LifecycleConfig     `yaml:"lifecycle,omitempty"`
 	ControlPlane *ControlPlaneConfig  `yaml:"control_plane,omitempty"`
-	Telemetry    *telemetry.Config    `yaml:"telemetry,omitempty"`
+	Telemetry    *TelemetryConfig     `yaml:"telemetry,omitempty"`
 	Cleaner      CleanerRuntimeConfig `yaml:"cleaner"`
 	Severity     SeverityConfig       `yaml:"severity"`
 	EventSources []EventSource        `yaml:"event_sources"`
@@ -51,6 +56,25 @@ func Default() Config {
 
 // Validate 校验完整的 Linkd 本地进程配置。
 func (c Config) Validate() error {
+	if err := c.Plugins.Validate(); err != nil {
+		return err
+	}
+	if err := c.Blueking.Validate(c.Resources.CMDB != nil); err != nil {
+		return err
+	}
+	if err := c.Resources.Validate(); err != nil {
+		return err
+	}
+	workers, bytes := c.Worker.Limits()
+	if workers < 0 || bytes < 0 {
+		return fmt.Errorf("invalid worker resource budgets")
+	}
+	if err := c.Dispatch.Validate(); err != nil {
+		return err
+	}
+	if err := ValidateLabels(c.Worker.Labels); err != nil {
+		return err
+	}
 	if err := c.Logging.Validate(); err != nil {
 		return err
 	}
@@ -73,7 +97,7 @@ func (c Config) Validate() error {
 				return fmt.Errorf("storage.elasticsearch repository is required when control_plane.elasticsearch is configured")
 			}
 		}
-		if c.ControlPlane.RedisStream != nil {
+		if c.ControlPlane.RedisStream != nil && c.ControlPlane.RedisStream.IsEnabled() {
 			if c.Storage == nil || c.Storage.Redis == nil {
 				return fmt.Errorf("storage.redis is required when control_plane.redis_stream is configured")
 			}
@@ -107,16 +131,26 @@ func (c Config) Validate() error {
 // Redacted 返回可安全展示的配置副本。
 func (c Config) Redacted() Config {
 	redacted := c
+	redacted.Plugins = c.Plugins.Redacted()
+	redacted.Blueking = c.Blueking.Redacted()
+	redacted.Resources = c.Resources.Redacted()
+	redacted.Dispatch.JWT.SecretKey = "[redacted]"
+	redacted.Dispatch.WorkerToken = "[redacted]"
+	redacted.Worker = c.Worker.Clone()
 	if c.Storage != nil {
 		storage := c.Storage.Redacted()
 		redacted.Storage = &storage
 	}
 	if c.Lifecycle != nil {
-		lifecycle := c.Lifecycle.Redacted()
+		lifecycle := c.Lifecycle.WithDefaults()
 		redacted.Lifecycle = &lifecycle
 	}
 	if c.ControlPlane != nil {
 		controlPlane := c.ControlPlane.WithDefaults()
+		if controlPlane.DynamicConfig != nil {
+			v := controlPlane.DynamicConfig.Redacted()
+			controlPlane.DynamicConfig = &v
+		}
 		redacted.ControlPlane = &controlPlane
 	}
 	if c.Telemetry != nil {

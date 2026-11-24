@@ -11,14 +11,15 @@ package redisstream
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	redis "github.com/redis/go-redis/v9"
 	"linkd/internal/consume"
+	"linkd/internal/redisclient"
 )
 
 type redisClient interface {
@@ -44,6 +45,7 @@ type Session struct {
 	receipts    map[uint64]receiptData
 	outstanding map[string]uint64
 	claimStart  string
+	nextClaim   time.Time
 	closed      bool
 }
 
@@ -53,18 +55,12 @@ func NewSession(config Config) (*Session, error) {
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("create redis streams session: %w", err)
 	}
-	options := &redis.Options{
-		Addr:     config.Address,
-		Username: config.Username,
-		Password: config.Password,
-		DB:       config.DB,
+	client, err := redisclient.New(config.Connection)
+	if err != nil {
+		return nil, fmt.Errorf("create redis streams session: %w", err)
 	}
-	if config.UseTLS {
-		options.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-	}
-	client := redis.NewClient(options)
 	if config.CreateGroup {
-		err := client.XGroupCreateMkStream(context.Background(), config.Stream, config.Group, "0").Err()
+		err = client.XGroupCreateMkStream(context.Background(), config.Stream, config.Group, "0").Err()
 		if err != nil && !redis.HasErrorPrefix(err, "BUSYGROUP") {
 			_ = client.Close()
 			return nil, fmt.Errorf("create redis streams consumer group: %w", err)
@@ -84,9 +80,9 @@ func newSession(config Config, client redisClient) *Session {
 	}
 }
 
-// Capabilities 返回 Redis Streams 的逐条 XACK 能力。
+// Capabilities 返回按 ID 独立确认且可有界合批的 XACK 能力。
 func (s *Session) Capabilities() consume.Capabilities {
-	return consume.Capabilities{Settlement: consume.SettlementIndividual}
+	return consume.Capabilities{Settlement: consume.SettlementIndividual, BatchIndividualConfirm: true}
 }
 
 // ValidateRuntime 防止 XAUTOCLAIM 在本地处理和重试预算尚未结束时接管消息。
@@ -96,6 +92,9 @@ func (s *Session) ValidateRuntime(config consume.Config) error {
 
 // Receive 优先接管超时 Pending，再读取当前 Consumer Group 的新消息。
 func (s *Session) Receive(ctx context.Context, limits consume.ReceiveLimits) ([]consume.Delivery, error) {
+	if err := consume.WaitForAdmission(ctx); err != nil {
+		return nil, err
+	}
 	if limits.MaxMessages <= 0 || limits.MaxBytes <= 0 {
 		return nil, fmt.Errorf("redis streams receive: invalid limits: %+v", limits)
 	}
@@ -182,8 +181,21 @@ func (s *Session) Receive(ctx context.Context, limits consume.ReceiveLimits) ([]
 }
 
 func (s *Session) claim(ctx context.Context, maxMessages int) ([]redis.XMessage, bool, error) {
+	if len(s.config.RetiredConsumers) > 0 {
+		messages, err := s.claimRetired(ctx, maxMessages)
+		if err != nil || len(messages) > 0 {
+			return messages, len(messages) > 0, err
+		}
+	}
 	s.mu.Lock()
+	if time.Now().Before(s.nextClaim) {
+		s.mu.Unlock()
+		return nil, false, nil
+	}
 	start := s.claimStart
+	// 空 PEL 不随每次拉新消息反复扫描；沿用阻塞读取间隔，最多增加一个读取周期的接管延迟。
+	// 先占用本次扫描窗口，避免并发 Receive 同时发起空扫描；退休 owner 仍在上方立即接管。
+	s.nextClaim = time.Now().Add(s.config.ReadBlock)
 	s.mu.Unlock()
 	messages, next, err := s.client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
 		Stream:   s.config.Stream,
@@ -194,6 +206,9 @@ func (s *Session) claim(ctx context.Context, maxMessages int) ([]redis.XMessage,
 		Count:    int64(maxMessages),
 	}).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
+		s.mu.Lock()
+		s.nextClaim = time.Time{}
+		s.mu.Unlock()
 		return nil, false, fmt.Errorf("redis streams auto claim: %w", err)
 	}
 	if next == "" {
@@ -201,6 +216,10 @@ func (s *Session) claim(ctx context.Context, maxMessages int) ([]redis.XMessage,
 	}
 	s.mu.Lock()
 	s.claimStart = next
+	// 未扫描完的 PEL 和已找到的待恢复消息继续排空，不被空扫描间隔限速。
+	if next != "0-0" || len(messages) > 0 {
+		s.nextClaim = time.Time{}
+	}
 	s.mu.Unlock()
 	return messages, len(messages) > 0, nil
 }
@@ -281,7 +300,7 @@ func (s *Session) Close(ctx context.Context) error {
 	go func() { done <- s.client.Close() }()
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("%w: %w", consume.ErrStopIncomplete, ctx.Err())
 	case err := <-done:
 		if err != nil {
 			return fmt.Errorf("close redis streams session: %w", err)
@@ -335,3 +354,62 @@ func valueHeaders(values map[string]any) map[string][]byte {
 var _ consume.Session = (*Session)(nil)
 
 var _ consume.RuntimeValidator = (*Session)(nil)
+
+// claimRetired 在同一 Lua 中选择退休 consumer 的 Pending 并转交，不零等待扫描整个 Group。
+func (s *Session) claimRetired(ctx context.Context, limit int) ([]redis.XMessage, error) {
+	client, ok := s.client.(interface {
+		Eval(context.Context, string, []string, ...any) *redis.Cmd
+	})
+	if !ok {
+		return nil, fmt.Errorf("retired consumer recovery requires atomic Redis scripting")
+	}
+	const script = `local pending=redis.call('XPENDING',KEYS[1],ARGV[1],'-','+',ARGV[4],ARGV[2]); local result={}; for _,p in ipairs(pending) do local messages=redis.call('XCLAIM',KEYS[1],ARGV[1],ARGV[3],0,p[1]); for _,m in ipairs(messages) do result[#result+1]=m end end; return result`
+	for checked := 0; len(s.config.RetiredConsumers) > 0 && checked < 16; checked++ {
+		old := s.config.RetiredConsumers[0]
+		values, e := client.Eval(ctx, script, []string{s.config.Stream}, s.config.Group, old, s.config.Consumer, limit).Slice()
+		if e != nil {
+			return nil, e
+		}
+		if len(values) == 0 {
+			const drainedScript = `local p=redis.call('XPENDING',KEYS[1],ARGV[1],'-','+',1,ARGV[2]); if #p>0 then return 0 end; redis.call('XGROUP','DELCONSUMER',KEYS[1],ARGV[1],ARGV[2]); return 1`
+			drained, err := client.Eval(ctx, drainedScript, []string{s.config.Stream}, s.config.Group, old).Int()
+			if err != nil {
+				return nil, err
+			}
+			if drained != 1 {
+				return nil, nil
+			}
+			s.config.RetiredConsumers = s.config.RetiredConsumers[1:]
+			if s.config.OnRetiredDrained != nil {
+				s.config.OnRetiredDrained(old)
+			}
+			continue
+		}
+		messages := make([]redis.XMessage, 0, len(values))
+		for _, value := range values {
+			row, ok := value.([]any)
+			if !ok || len(row) != 2 {
+				return nil, fmt.Errorf("invalid retired claim response")
+			}
+			id, ok := row[0].(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid retired stream id")
+			}
+			fields, ok := row[1].([]any)
+			if !ok || len(fields)%2 != 0 {
+				return nil, fmt.Errorf("invalid retired stream fields")
+			}
+			m := redis.XMessage{ID: id, Values: map[string]any{}}
+			for i := 0; i < len(fields); i += 2 {
+				k, ok := fields[i].(string)
+				if !ok {
+					return nil, fmt.Errorf("invalid retired field name")
+				}
+				m.Values[k] = fields[i+1]
+			}
+			messages = append(messages, m)
+		}
+		return messages, nil
+	}
+	return nil, nil
+}

@@ -1,7 +1,145 @@
 # 配置与启动
 
+## 本地 pprof 诊断
+
+`telemetry.profiling` 默认关闭。只在有界现场诊断中开启，并使用与 Prometheus 不同的回环端口：
+
+```yaml
+telemetry:
+  profiling:
+    enabled: true
+    listen_address: 127.0.0.1:9474
+    block_profile_rate: 100000
+    mutex_profile_fraction: 10
+```
+
+开启后提供标准 `/debug/pprof/`、CPU、allocs、heap、goroutine、block、mutex 和 trace endpoint。
+监听地址必须是 IP 回环地址；配置非回环地址会使进程在接管消息前启动失败。block/mutex 采样
+存在运行时开销，普通运行不要配置这些字段。不同常驻角色需要使用不同端口。
+
+## Kafka 数据丢失通知与消费恢复
+
+franz-go 检测到消费位置对应的日志历史发生截断时，可能返回 `kgo.ErrDataLoss`。
+SDK 会调整当前 Client 的消费位置；Linkd 记录包含 Topic、partition、原/新 offset 和
+leader epoch 的 WARN，继续使用该 Client，并处理同次 Poll 返回的有效消息。
+这种恢复只表示继续消费，不表示丢失的数据已找回；其他拉取错误仍返回给运行时处理。
+
+该处理不修改消费组提交位点，不改变现有 `ConsumeStartOffset` / `ConsumeResetOffset`
+从尾部开始的策略。提交位点越界、历史日志缺失或 Topic 被重建时，仍需核对可用数据范围，
+按环境恢复方案决定是否重置消费组；不能以恢复后 lag 为零证明历史消息全部处理完成。
+
+真实 Kafka 定向回归只接受独立实例的数字回环地址，显式运行：
+
+```bash
+LINKD_TEST_KAFKA_DATA_LOSS_BROKER=127.0.0.1:29093 go test -race ./internal/consume/kafka -run '^TestKafkaDataLossRecovery$' -count=3 -v
+```
+
+测试创建并清理专用 Topic 和消费组，写入少量合成消息，再提交高于日志末尾且带真实
+leader epoch 的历史位点，触发 Kafka/SDK 的 `ErrDataLoss`。它验证通知后同一 Client
+继续消费、真实提交位点推进及 Session 重启接续，不模拟 Broker 磁盘损坏或多副本选主故障。
+
+## Kafka 分区恢复延迟
+
+Cleaner 的组批等待仅在批次尚未执行、存在空闲执行槽位且期限尚未到达时驱动定时唤醒。
+执行中和等待槽位的批次由完成通知推进，不能用过期组批期限忙等；批次槽位在通知之前释放。
+重试、撤销所有权与退出截止时间独立调度，不依赖忙等检查期限。
+
+Cleaner 的 ES Event Bulk 遇到多个 create 冲突时，使用有界 realtime `_mget` 核对内容和最新
+processing，避免重复投递比例升高时逐条 GET 占住批次槽位。单个冲突保留 realtime GET；
+读取失败不重放本批已成功创建的项，也不跳过内容或租户校验。
+
+`event_sources[].storage.kafka.fetch_max_wait_milliseconds` 默认 100，允许 10～5000。
+它限制 broker 等待空 fetch 的时间，不是 Cleaner 的批次等待，也不是 ES 合批期限。
+显式配置可用于对照；普通运行无需手调。较短的等待会增加空闲 fetch 请求量，
+但避免某个有积压分区从暂停恢复后，被同 broker 上其他空分区的长轮询拖住数秒。
+单分区在途上限、暂停/恢复滞回与连续 ACK 规则不变。
+
+独立定向集成测试（创建并清理唯一测试 topic/group，不使用业务 topic）：
+
+```bash
+LINKD_TEST_KAFKA_BROKERS=127.0.0.1:9092 go test -race ./internal/consume/kafka -run TestKafkaPartitionTailFetchWait -count=3 -v
+```
+
+测试使用同 broker 的三个分区，仅向 partition 1 预写 1024 条有序消息，停止生产后再消费，
+按 256 条模拟达到 lane 上限，每次暂停 200ms 并持续 Poll 空分区，比较 5s 与 100ms 的恢复空档。
+这个测试定位 Kafka Session 的恢复行为，不代表 ES/Lifecycle 端到端吞吐。
+
+## Lifecycle Elasticsearch 合批
+
+Lifecycle 默认并发为 256；`lifecycle.elasticsearch_write_batch` 默认启用，仅作用于 Elasticsearch
+Lifecycle runtime。Event result update、Alert CAS/create、AlertLog create 跨独立调用合并为 Bulk，
+CAS 校验和冲突核对的 realtime GET 合并为 `_mget`。Lifecycle Event 点读保留完整来源事实，
+包括 `source_raw_data`，供 Event Enrich 和完整文档预算检查使用；Event 终态 update 只写
+`related_alert_ids` 和 `processing`，保留原始数据。每项成功后调用方才继续缓存、输出和 ACK；
+批次没有跨文档事务语义，Cleaner 与 Archiver 不使用这个队列。
+
+```yaml
+lifecycle:
+  severity_upgrade_policy: close_and_create
+  concurrency: 256
+  elasticsearch_write_batch:
+    enabled: true
+    max_bytes: 4194304
+```
+
+`max_bytes` 可配置为 1～16 MiB。单批操作数 B = `min(128, max(1, floor(C / 2)))`，C 为 Lifecycle 配置并发。写和实时读默认最多收集 10ms，B=1 时不等待；数量、字节或期限任一达到即发送。操作数是 ES 文档操作数，不是 Event 数，同一 Event 的依赖步骤仍逐次等待真实结果。
+
+合批器执行名额与聚合名额均跟随 C，不再附加 32 个物理批次的固定封顶。聚合名额已满时原请求直接发送；直接请求仍遵循 CAS、请求字节上限和 Close/取消协议。扩大并发不会放大 10ms 收集窗口；该窗口不包含 ES 执行与响应时间。
+
+| Lifecycle 并发 | 操作数上限 | 写最大等待 | 读最大等待 | 合批 worker（满载可直发） |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 1 | 0ms | 0ms | 1 |
+| 8 | 4 | 10ms | 10ms | 8 |
+| 32 | 16 | 10ms | 10ms | 32 |
+| 64 | 32 | 10ms | 10ms | 64 |
+| 256 | 128 | 10ms | 10ms | 256 |
+| 384 | 128 | 10ms | 10ms | 384 |
+| 512 | 128 | 10ms | 10ms | 512 |
+| 1024 | 128 | 10ms | 10ms | 1024 |
+
+旧的 `max_operations`、`wait_milliseconds`、`max_concurrent_batches` YAML 键已删除，
+严格解析会拒绝它们；应移除这些键，只配置 `lifecycle.concurrency`。
+
+合并成员使用本进程内存批次池，默认 `control_plane.merge.member_batch_size: 128`、`concurrency: 8`。同组不同批次按空闲名额启动 goroutine 并行执行；`concurrency` 是在途批次数，成员准备/输出仍有独立执行名额。ES 与 MySQL 都显式提交已形成的批次，没有 ES 自动收集等待；ES 保留每项 seq_no/primary_term，MySQL 使用短事务批读版本和 UPDATE JOIN。成功成员独立确认，失败项保留待办重试；完成确认只更新意图字段。快照和引用的物理读写块为 128，Alert 仓储的数量/字节预算仍可能将较大的配置拆块。主流程 MySQL 使用直接快照条件写；其他控制操作保留已有 1ms SQL 合批。
+
+筛选关闭仅配置单次请求的内部并发：
+
+```yaml
+control_plane:
+  close:
+    concurrency: 8
+```
+
+用户只提交关闭条件和稳定操作信息，不传关闭数量或游标。服务固定每块 1000 条，自动查询下一块，
+单请求默认并发 8，在二十秒内尽力执行。完成块的平均耗时用于后续块准入，剩余预算不足就停止启动新块，
+汇总实际结果并用 `has_more` 表示是否需要再次提交相同条件。
+关闭没有全局请求/批次并发限制，也不占用普通检索槽；不同请求各用自己的内部并发。
+块内不再叠加成员、来源或 Hook 的另一层并发配置。`batch_size` 和 `member_concurrency` 已删除。
+主动关闭终态缓存使用状态投影；发布时控制面及 Lifecycle 使用同版代码。
+版本和真实环境数据见[批量关闭验证报告](../research/2026-10-29-close-batches.md)。
+
+主控制面在本进程内存拆批，按并发预算启动 goroutine 并直接汇总结果，不另部署成员 Worker。
+进程重启从持久关系重建未确认阶段，可按新的批次预算重新拆分。
+`read_wait_milliseconds` 同样是派生字段，不接受 YAML 手动配置；Kingeye Admin 生效配置展示上述四项值。
+当前不是热更新：调整并发后需重启。
+调用取消不会取消其他调用已经发送的批次；该调用不继续 ACK，按可能部分成功重试。
+关闭时取消未完成批次并等待 worker 退出后关闭连接池。设 `enabled: false` 可做同并发对照。
+
 配置是严格单文档 YAML。未知字段、重复来源 ID、重复 Kafka subscription、无效 Cleaner、fingerprint
 路径和 severity 引用都会使进程启动失败。
+
+仓库跟踪的 `configs/linkd.yaml` 和 `configs/linkd.pm2.yaml` 只提供无凭据示例。本机 MySQL、Redis、
+Elasticsearch 或 Kafka 需要认证时，复制一份本地配置并仅在副本中填写凭据：
+
+```bash
+cp ./configs/linkd.yaml ./configs/linkd.local.yaml
+chmod 600 ./configs/linkd.local.yaml
+go run ./cmd/linkd config validate --config ./configs/linkd.local.yaml
+```
+
+`configs/*.local.yaml` 和 `.env*` 已被 Git 忽略。普通命令使用 `--config` 选择本地文件；PM2
+也可以通过 `LINKD_CONFIG` 使用同一份 YAML。当前 Linkd 进程不提供逐项环境变量或 secret-file 覆盖，
+生产部署必须把配置文件作为受权限保护的 Secret 挂载，且不得提交包含凭据的副本。
 
 ```yaml
 cleaner:
@@ -26,6 +164,14 @@ severity:
     - { name: warning, priority: 2 }
     - { name: info, priority: 3 }
 
+resources:
+  mysql:
+    address: kingeye-mysql.example.com:3306
+    database: kingeye
+    username: reader
+    password: ""
+  onemodel:
+    addresses: [http://onemodel.example.com:9200]
 event_sources:
   - event_source_id: source-a
     related_tenant_id: ""
@@ -40,6 +186,14 @@ event_sources:
       P1: critical
       P2: warning
     default_severity: warning
+    enrich:
+      cmdb_set_module_enabled: false
+      processors:
+        - type: strategy
+        - { type: monitor-resource }
+        - { type: display }
+        - { type: metric }
+        - { type: source }
     storage:
       type: kafka
       kafka:
@@ -49,9 +203,333 @@ event_sources:
         security: { protocol: plaintext }
 ```
 
+`event_sources[].enrich.processors[].config` 是归属该 Processor 的 JSON-compatible 配置 map，由对应
+Processor 自行校验字段和类型；每项最多 64 KiB，禁止空 key。`strategy` 只输出冻结的策略关联事实，
+不生成产品 URL。`strategy` Processor 当前没有配置项，传入的 `config` 不参与校验或输出；
+`web_saas_module_url` 是否存在、是否为 URL 或字符串均不影响装配与丰富，不保留旧 Release 的专门兼容校验。
+新发布器不携带此键。KAC 详情读取时生成链接及兼容历史 URL，具体字段见
+[KAC 投影契约](../reference/contracts/kac-alert-projection-v1.md)。`test` 支持下述负载模拟参数；其余 Processor 当前只接受空 config。
+
+`event_sources[].enrich.cmdb_set_module_enabled` 控制监控场景额外补充 CMDB 集群和模块，默认 `false`。
+两个字段组一起开启或关闭。关闭时仍保留实例文档自带的 `bk_set_id/name`、`bk_module_id/name`，
+以及业务、主机、云区域、动态分组等丰富；已有唯一业务归属的主机跳过拓扑查询，缺少业务时只读取
+主机 membership，不读取集群、模块祖先节点，业务名称仍通过同租户业务实例补偿。关闭不会清理原始字段
+或回填历史结果，也不会因主动跳过集群、模块而报告依赖失败；必要的业务归属查询失败仍保留诊断。
+显式设为 `true` 恢复完整拓扑补充（包括集群权限标签）。实例自带集群仍按既有规则生成权限标签。
+此开关作用于 `monitor-resource`、已发布 `built_in_bk` 的旧 `resource` 监控链以及共享场景解析的 Display，
+不限制显式配置的自定义 CMDB 规则。修改后发布来源新版本生效。
+
+`event_sources[].enrich.processors` 是每条 Event 在策略前执行的有序丰富链。当前注册名为
+`strategy/resource/monitor-resource/display/metric/source/log/cloud_resource/k8s/apm/test/cmdb/fields/cmdb-access`；空列表输出 `{"processors":[]}`。
+
+Processor 可选配置 `reuse_on_active`，默认 `false`。例如仅复用同一活跃告警的资源丰富，展示和指标仍按当前 Event 执行：
+
+```yaml
+enrich:
+  processors:
+    - type: strategy
+    - type: monitor-resource
+      reuse_on_active: true
+    - type: display
+    - type: metric
+    - type: source
+```
+
+复用使用已有活跃 Alert 查询返回的结果，不新增查询或独立缓存。没有对应快照等级的成功结果时照常执行。
+开启即接受本生命周期内该步骤结果固定，包括资源属性、拓扑和分组；修改步骤规则不会刷新已活跃快照，
+关闭后下一条新 Event 正常执行。配置变更仍需发布来源并等待任务切换。
+多等级、失败结果、重投及预览语义见[丰富设计](../design/enrich.md#25-活跃告警丰富复用)。
+
+`k8s` 通过 OneModel 定位实例。维度缺失、实例未命中、查询错误或返回身份校验失败时，保留对应诊断；
+当前有效视图只有模型或只有实例时，显式清空 `labels.model_id` 和 `labels.model_inst_id`，避免输出残缺身份。
+清理结果使用 `partial`，保证补丁进入有效视图和 KAC 输出；已有完整身份继续保留，没有身份需要清理时沿用原失败状态。
+原始 Event 维度不变，已创建 Alert 的首次丰富快照不回填。
+
+旧 KAC 单模型 CMDB 配置转换生成 `cmdb → fields → cmdb-access`；身份绑定、首条选择、无匹配回滚和展示连接配置见 [自定义丰富](../design/custom-enrichment.md#81-cmdb-身份与在线转换2026-10-17)。`cmdb-access` 应放在字段规则之后，按有效身份补权限标签和动态分组。
+重复类型、空 type、未知处理器或缺少 Processor 所需的数据源会在来源发布时被拒绝。路由按任务
+固定的 Release 创建，来源发布后通过停止确认与重新调度生效。停用来源按调度协议停止任务，积压保留。
+
+测试负载在单个来源中配置 `test`；运行时自动装配进程内模拟 datasource，不需要外部数据库：
+
+```yaml
+enrich:
+  processors:
+    - type: test
+      config:
+        fields:
+          region: local
+          simulated: true
+        datasource:
+          calls: 2
+          sleep_mean_milliseconds: 50
+          sleep_stddev_milliseconds: 15
+          sleep_max_milliseconds: 200
+          timeout_milliseconds: 150
+          error_rate: 0.05
+```
+
+`fields` 是固定 JSON object，支持嵌套对象、数组和标量，默认 `{}`；全部调用成功后写入
+`Alert.enrich.processors[].test.value`，不覆盖 Alert 核心字段。配置总大小仍受每处理器 64 KiB 上限限制。
+
+| datasource 参数 | 默认 | 约束与含义 |
+| --- | --- | --- |
+| `calls` | 1 | 每次丰富顺序调用 1–16 次；首次失败后停止，不自动重试 |
+| `sleep_mean_milliseconds` | 0 | 正态分布期望，可为小数，范围 0–sleep_max_milliseconds |
+| `sleep_stddev_milliseconds` | 0 | 标准差，可为小数，范围 0–60000；0 表示固定延迟 |
+| `sleep_max_milliseconds` | 60000 | 单次延迟上限，整数 1–60000 毫秒 |
+| `timeout_milliseconds` | 60000 | 单次 datasource 调用超时，整数 1–60000 毫秒 |
+| `error_rate` | 0 | 每次调用等待完成后独立注入错误的概率，范围 0–1；1 表示必定报错 |
+
+每次调用自动产生随机样本，无需种子配置。延迟采样值裁剪到 `[0, sleep_max_milliseconds]`，
+所以靠近上下界时，实际均值和标准差与配置的原始正态分布参数不同。
+错误概率针对单次调用；例如 calls=2、error_rate=0.05，忽略超时后的单次丰富失败概率约为 9.75%。
+父 Context 取消或超时优先终止等待，不产生额外后台任务；单次 datasource 超时或注入错误形成
+`test` 的 failed 空 value 信封，沿用既有 Enrich 失败隔离，不阻止后续处理器或 Alert 创建。
+父 Context 取消则终止整次 Enrich。
+
+调用通过与真实数据源相同的观测层记录 `datasource=test`、`operation=call` 的次数和耗时。
+结果标签为 `found/failed/timeout/canceled`，租户、告警身份和模拟参数不进入指标标签。
+每条新 Event 的调用与字段副本独立；计划持久化后的重试沿用冻结结果，不重新模拟。
+无丰富基线测试使用 `processors: []`。原临时顶层 `sleep_milliseconds` 已移入 datasource 分布配置。
+
+第三方只读资源统一由顶层 `resources` 配置：`mysql` 供 Kingeye 元数据 Reader 使用，
+`onemodel` 供统一实例、关联和业务拓扑查询使用，`kingeye_display` 供展示缓存转换使用，
+`dynamic_group` 供 monitor-resource 和 cmdb-access 从 Kingeye 已物化的 Redis hash 读取分组归属。
+KAC 兼容存储与处置凭据使用下节的 `plugins.kac`，不参与丰富查询。
+所有 EventSource、丰富预览及 OneModel 查询复用同一套资源定义；连接仍按实际依赖初始化，来源任务退出时关闭。
+OneModel 默认使用 Elasticsearch，实例读取 `kingeye_all_instance`，关联边固定读取 `kingeye_topo`；业务拓扑读取
+`<index_prefix>cmdb_biz_topo_node` 和 `<index_prefix>cmdb_biz_topo_host_membership`，前缀默认 `bk_monitor_base_`。
+
+资源是静态启动配置，更新后同步重启控制面和 Lifecycle。Helm 使用 `configuration.resources` 为各角色提供一致配置。
+来源导入文件只需包含处理规则，无需复制资源凭据；控制面发布和运行时装配检查实际所需资源。
+旧 `event_sources[].enrich.datasources` 输入已移除；历史 Release 不改写，读取后也不再使用其内嵌连接。
+配置展示隐藏 MySQL、Doris、Redis、Elasticsearch API Key、Basic Auth 密码、蓝鲸应用密钥和 KAC JWT 签名密钥；新发布的 Record/Release 不包含公共资源。
+
+### alarmd 无数据关闭联动
+
+```yaml
+resources:
+  alarmd:
+    event_source_id: built_in_bk
+    no_data_close_endpoint: http://alarmd-control:8081/internal/v1/no-data-closures
+    timeout_milliseconds: 2000
+```
+
+地址是包含 control 角色的内部 Service 完整路径，无需 Token；示例 Service 名须替换为实际值。
+拆分角色部署不能使用仅提供 channel 的公共 Service。`event_source_id` 缺省为 `built_in_bk`，
+部署时显式绑定实际 alarmd 渠道 ID；超时缺省 2000 毫秒，配置范围 1–10000 毫秒，仍受关闭总时限约束。
+未配置 `alarmd` 或地址为空时不启用联动；只有绑定渠道的明确无数据告警才调用，其他关闭保持原行为。
+
+先部署包含该接口的 alarmd 版本，再配置并升级 Linkd 控制面。2026-10-22 核对的 alarmd 开发分支
+`181d92d6d` 包含接口，主分支 `38033da86` 尚未包含；镜像是否包含须按实际发布版本确认。
+联动失败时不推进 Linkd 关闭；停止的是当前无数据过程的追踪，数据恢复后再次缺失仍可告警。
+此接口不能撤回已进入 Kafka 的事件。完整行为见[关闭接口](../reference/contracts/alert-close.md#alarmd-无数据关闭联动)。
+
+### OneModel Doris 读取
+
+按 KAC `base/infras/instance_storage/doris.py` 与 `doris_schema.py` 的现行表结构读取，仅增加后端适配：
+
+```yaml
+resources:
+  onemodel:
+    backend: doris
+    doris:
+      address: doris-fe.example.com:9030
+      database: kingeye
+      username: linkd_reader
+      password: your-password
+      instance_table: kingeye_instance
+      edge_table: kingeye_projection_edge
+    # 可选：仅供 KAC 现有 CMDB 主线拓扑专用索引读取，不回退实例或通用边。
+    addresses: [http://topology-es.example.com:9200]
+    index_prefix: bk_monitor_base_
+```
+
+backend 省略为 elasticsearch，既有 ES 配置无需修改。Doris 使用 MySQL 查询协议，默认表名与 KAC 相同，
+也允许 database.table；仅做参数化 SELECT，不迁移或创建业务表。连接池沿用消费方预算，单查询至多一分钟
+且服从上层更短超时，支持取消及进程关闭。Doris 密码与其他资源一样脱敏，不进入来源发布。
+
+通用实例、关联边、动态分组的实例展开、丰富和调试查询使用同一 Doris 后端，失败不回退旧 ES。
+CMDB 主线拓扑在参考 KAC 中仍使用 ES node/membership 数据面；不改造其语义、不从 Doris 通用关系边
+推导替代。未配置可选 ES 时，要求该拓扑能力的请求明确返回依赖错误，不返回伪造的空成员集合。
+MySQL 模型定义、CMDB APIGW、动态分组 Redis 的职责不变。KAC alarm_event 兼容存储仍为 ES。
+
+### 动态分组 Redis 投影
+
+启用 `monitor-resource` 或 `cmdb-access` Processor 时可选配置 `resources.dynamic_group`。当前读端对齐 Kingeye
+`get_dynamic_inst_group_cache_key` 写入格式：Redis hash key 为
+`<key_prefix>dynamic_inst_group:<model_id>`，field 为 canonical `model_inst_id`，
+value 为 `{"group_ids":[整数分组 ID...]}`。Linkd 只读取该投影，不计算成员关系。
+
+```yaml
+resources:
+  dynamic_group:
+    tenants:
+      tenant-a:
+        redis:
+          address: tenant-a-redis.example.com:6379
+          database: 0
+        key_prefix: "bk_monitor_base:"
+```
+
+每个租户必须明确绑定其写入端 Redis 逻辑数据库或专属前缀，最多配置 32 个租户；
+同一 keyspace 不允许配置给两个租户。
+这是因为当前写入端的键不含租户 ID。未配置 `dynamic_group` 时保持空数组；配置后若某租户
+没有对应连接、Redis 读取失败或值格式错误，Resource 结果为部分成功并保留已确定的资源字段。
+未命中返回空数组。分组 ID 输出为十进制字符串数组，按数字升序去重；单条值限制为 64 KiB、
+最多 1024 个 ID。Kingeye 当前代码的默认 `redis_key_prefix` 为 `bk_monitor_base:`，实际配置
+必须与目标写入端一致。
+
+旧 `link_pipeline` 的 `META_DYNAMIC_INST_GROUP_CACHE_KEY` 与当前 Kingeye 写入端的键格式不同；
+此处读取当前写入端投影，旧键不作为 Linkd 兼容契约。
+
+### 蓝鲸全局配置与 CMDB 实时目标读取
+
+蓝鲸应用凭据、APIGW 公共地址和多租户模式统一在顶层 `blueking` 声明。`resources.cmdb: {}` 启用
+策略的显式服务实例、服务拓扑与主机回源；它与继续使用 OneModel 的丰富处理器 `type=cmdb` 分开。
+
+```yaml
+blueking:
+  enable_multi_tenant_mode: true
+  api_url: https://apigw.example.com
+  app_code: linkd
+  app_secret: replace-with-app-secret
+resources:
+  cmdb: {}
+```
+
+`enable_multi_tenant_mode` 缺省为 false：单租户业务调用直接使用 `admin`，不调用用户管理解析用户名。
+管理操作（主动关闭、屏蔽与合并步骤）装配来源处理器时，单租户模式不检查来源 `related_tenant_id` 与请求租户是否匹配；多租户模式保留该检查。
+多租户根据当前请求的租户查询并缓存 `bk_admin`。两种模式均将调用者显式租户写入 APIGW 的 `X-Bk-Tenant-Id` 请求头，
+不会把 Event/Alert、管理 API、Redis 或存储中的租户改为默认租户。全租户应用只需一份凭据，无租户名单。
+
+控制面的 `GET /api/v1/tenants` 只需管理 JWT，不需要 `resources.cmdb`。单租户模式固定返回
+`system/Blueking/enabled`，无需蓝鲸连接，也不请求用户管理。启用多租户模式后，配置
+`blueking.api_url/app_code/app_secret` 实时读取全局租户目录；未配置连接时返回 503，
+查询失败返回 502，不回退默认租户；详见
+[租户目录查询 API](../reference/contracts/tenant-directory.md)。
+
+只支持 APIGW。CMDB 默认地址为 `<blueking.api_url>/api/bk-cmdb/prod/`；需要独立地址时使用
+`resources.cmdb.base_url` 覆盖。应用凭据与公共地址必须成组配置，启用 CMDB 时三项均必填。
+原 `resources.cmdb.mode`、`identities` 已移除，启动时拒绝旧字段，不提供 ESB 或旧配置兼容分支。
+
+多租户查询使用同一应用凭据、固定 `admin` 和当前租户头，调用
+`GET /api/bk-user/prod/api/v3/open/tenant/virtual-users/-/lookup/`，参数为
+`lookup_field=login_name&lookups=bk_admin`。用户管理的 `code/data` 信封单独解析，不要求 `result`。
+只有唯一且非空的 `bk_username` 被缓存；空结果、歧义、格式错误、接口失败均不回退 `admin`。
+
+每个控制面/Lifecycle 运行时共享 1000 项租户 LRU 成功缓存，无 TTL、无 Redis、无后台刷新；Worker
+不同来源复用同一缓存。失败不缓存，同租户并发查询合并；一个等待者取消不取消其他等待者，全部
+等待者退出时取消共享查询。最多四个不同租户同时查询，超额按依赖失败处理；关闭客户端取消并等待
+未完成调用并清空缓存。切换模式、修改凭据或需要刷新身份时同步重启相关进程。
+
+单次用户查询或 CMDB HTTP 请求的排队与网络预算均为 3 秒，共用四个 HTTP 配额；身份解析先于
+CMDB 配额申请，不嵌套持有信号量。完整 CMDB 组合读取仍受 10 秒及上游更短截止时间限制。
+请求不跟随重定向，错误不回显凭据、URL 或响应体；Go/Kingeye Admin 配置展示隐藏 `blueking.app_secret`。
+
+配置 CMDB 时，主机缓存有成员沿用 OneModel；空集合、节点缺失或读取失败时回源。回源按真实业务树、
+内置空闲模块及租户模型目录验证 locator。服务实例直接读取服务详情与所属主机，显式选择要求具体
+业务；服务拓扑支持业务、集群、模块。动态组继续按 KAC strict fetcher 的定义与实例数据面执行。
+
+分页每页 200，最多 256 页/20000 条/32 MiB，单个 CMDB 响应 8 MiB；业务树最多 10000 节点/64 层，
+用户查询响应最多 1 MiB。总数变化、重复身份、缺主机、跨范围、超限均失败，不使用部分结果解除屏蔽。
+有效节点的完整零成员可解除；显式目标消失和身份查询失败保留既有屏蔽并记录 partial。新 Event
+按既定依赖故障规则跳过受影响策略；这些跨接口读取不承诺物理时刻一致的快照。
+
+Helm 使用公共 `configuration.blueking`，禁止角色/集群配置单独覆盖多租户开关；独立部署文件也需
+保持该开关一致。来源/策略发布只保存业务配置，不保存蓝鲸凭据。网关权限仍须在实际部署验证。
+
+### KAC 全局插件配置
+
+以下片段合入现有部署配置。一个开关同时启用 KAC `alarm_event` 直接维护和获准处置通知，
+对所有 EventSource、租户及内置合并来源生效，不需要来源发布配置或租户身份表。
+
+```yaml
+plugins:
+  kac:
+    enabled: true
+    alarm_event_index: cw_kac_saas_3.0_alarm_event
+    alarm_event_bucket_days: 7
+    delivery:
+      projection_concurrency: 64
+      batch_size: 500
+      batch_wait_ms: 10
+      max_batch_bytes: 4194304
+      action_concurrency: 64
+      action_buffer: 10000
+    elasticsearch:
+      addresses: [https://kac-es.example.com:9200]
+      basic_auth:
+        username: linkd
+        password: replace-with-es-secret
+    action_endpoint: https://kac.example.com/internal/linkd/action
+    jwt:
+      secret_key: replace-with-kac-jwt-secret-key
+      username: admin
+```
+
+`alarm_event_index` 必须填写目标 KAC 原 alias，不能从蓝鲸应用凭据或 Linkd Repository 索引前缀推导。
+ES 连接独立于 `storage.repository`，所以 Linkd 使用 MySQL 时也可维护 KAC 原 ES 索引。
+ES 认证可选 `api_key` 或 `basic_auth`，不能同时配置。
+
+| 配置 | 行为 |
+| --- | --- |
+| enabled | 缺省 false；生产部署显式开启，一并启用兼容存储与处置通知 |
+| alarm_event_index | 必填，原 KAC alias；支持小写字母、数字、点、下划线和连字符，最多 180 字符 |
+| alarm_event_bucket_days | 默认 7，正整数；按 Alert.CreateAt 划分 UTC 时间桶，存在数据后保持不变 |
+| elasticsearch.addresses | 必填 ES 节点列表；请求不跟随重定向 |
+| elasticsearch.number_of_shards | 首次创建模板时默认 3，范围 1..1024 |
+| elasticsearch.number_of_replicas | 首次创建模板时默认 2，范围 0..10，可显式设为 0 |
+| elasticsearch.max_result_window | 首次创建模板时默认 50000，范围 1..1000000 |
+| elasticsearch.total_fields_limit | 首次创建模板时默认 5000，范围 1..100000 |
+| action_endpoint | 完整 HTTP(S) 动作 V3 接口，不接受 userinfo、query、fragment，不使用旧 KAC pipeline |
+| rabbitmq.url | 可选，配置后直接发布 Celery 消息，使用 `amqp://` 或 `amqps://` URL，包含 KAC Broker 的凭据和 vhost；整项脱敏 |
+| rabbitmq.queue | 已存在的 KAC 动作队列，默认 `kac_alarm_execute`；不由 Linkd 创建 |
+| jwt.secret_key | HTTP 方式必填，与 KAC 的 `BKAPP_JWT_SECRET_KEY` 相同，非空白且最多 16384 字节；拒绝脱敏占位值；填写签名密钥，不填写 JWT 或 Bearer 前缀 |
+| jwt.username | 签发的内部调用身份，默认 `admin`，非空白且最多 256 字节；不替代动作租户或业务操作人 |
+
+HTTP 方式每次动作请求通过公共签发器生成 HS256 JWT，使用 `Internal-Token: Bearer <JWT>`；凭据只在配置和请求头中。
+RabbitMQ 方式可将上述 `action_endpoint`、`jwt` 替换为：
+
+```yaml
+rabbitmq:
+  url: amqp://linkd:replace-with-broker-secret@rabbitmq.example.com:5672/kingeye
+  queue: kac_alarm_execute
+```
+
+配置 RabbitMQ 后不调用或回退 HTTP；两个方式都先完成 KAC ES 投影和 refresh。
+直投使用 Celery V2 JSON、持久化消息和 Broker 确认，成功只表示队列接受，不代表处置成功。
+失败不重试、不新建动作受理表，确认结果未知时仍可能已经投递；协议见[动作投递 V3](../reference/contracts/kac-action-delivery-v3.md#rabbitmq-直投)。
+控制面负责 KAC 模板、查询 alias 和 mapping；已有索引不重建，已有模板运维参数保留。
+新告警按 `Alert.CreateAt` 写入 `{alarm_event_index}-YYYYMMDD`，日期为 UTC 桶起点，
+以 1970-01-05 UTC 为原点，默认每 7 天一桶。缺失桶在首次写入前按需创建，历史回放同样适用。
+所有桶加入原查询 alias，写入直接使用物理索引；查询 alias 不承担新桶的写入路由。
+已有文档优先定位并原位更新，包括原 `-000001` 等历史索引；重试仍写原创建时间桶。
+模板不再声明 ILM；不修改或删除已有索引上的 ILM 策略，不做容量滚动或历史自动删除。
+切换前停止旧版 Linkd 投影进程，等待在途请求结束并刷新原查询 alias，完成模板准备后再启动新版，避免旧进程继续向原写别名新建文档。
+已有数据后不要修改桶天数；本次不提供重新分桶或历史数据迁移。
+位置缓存仅在内存中，原处置态保存在 KAC 告警的 `linkd_disposal_status` 字段；无同步元数据索引。
+
+上述 delivery 六项均支持配置，零值采用所示默认值。普通消息失败记录日志和指标后结束，不创建失败任务；动作缓冲满也按失败结束当前消息。
+普通投影和动作 I/O 有 10 秒超时；停止时等待已开始调用完成，未开始消息保留在 Stream 供下一次单活动控制面恢复。
+HTTP 优雅退出预算 30 秒，Helm terminationGracePeriodSeconds 默认 60 秒。不要在新旧控制面之间重叠运行消费者。
+主动关闭与普通投影只对同租户同 Alert ID 串行，互不重叠的关闭批次可以并行，Bulk 使用 `refresh=false`，写成功即返回，KAC 搜索等待自然刷新后可见；失败 502 保留 Linkd 终态并支持原命令重试。
+旧任务数据不迁移、不自动删除。完整行为见[动作 V3](../reference/contracts/kac-action-delivery-v3.md)。
+
+`resources.kac_delivery`、`event_sources[].kac_targets`、`projection_endpoint` 及 `plugins.kac.internal_token` 均已移除，旧字段明确拒绝。
+连接和凭据只保存在部署配置及运行时内存，Go/Kingeye Admin 展示均脱敏。
+Helm 仅允许公共 `configuration.plugins.kac`，不接受角色、Worker 组或 migrate 覆盖；独立配置文件需保持一致，
+变更后重启相关进程。Kingeye/KAC 需使用配套 V3 接收端，并停止旧告警状态写入。
+
+设计见[KAC 全局兼容插件](../design/kac-compatibility-plugin.md)。
+
+### 其他运行边界
+
 顶层 `cleaner` 是每条 EventSource Flow 的默认预算；`event_sources[].cleaner.runtime` 只覆盖非零
 字段。每条 Flow 内共享清洗 worker pool，但 Event 持久化、Mailbox 入队和原消息确认始终按 lane 独立推进，
 `max_concurrent_batches` 只限制同时执行副作用的 lane 数量，不启用跨 lane 合批。
+
+Cleaner/Lifecycle 的共享 Repository 连接池不再按任务数派生 4～1024 的额外上限，实际并发由任务内未确认消息软水位控制。各 runtime 保持独立生命周期。合批器队列已满时回退为原始 CAS 请求，避免把优化器变成跨来源限流器。
 
 未声明 severity 或 levels 为空时整体使用默认表。自定义表整体替换默认表；name 和 priority 必须唯一，
 priority 越小越严重。EventSource mapping/default 的目标必须存在于全局表。来源值先匹配 mapping；未命中
@@ -59,20 +537,98 @@ priority 越小越严重。EventSource mapping/default 的目标必须存在于�
 
 fingerprint_mode=field 默认读取 source_alert_id，目标必须是非空字符串且不超过 128 bytes；fields 模式
 接受 1–32 个稳定路径并按路径排序、保留标量类型计算 SHA-256。允许
-`source_alert_id/condition_key/subject_system/subject_type/subject_id/dimensions.<key>`，缺失维度直接拒绝。
+`source_alert_id/subject_system/subject_type/subject_id/dimensions.<key>`，缺失维度直接拒绝。
 
 EventSource 各字段的职责、fingerprint/Severity 规则和“一来源一 Flow”边界见
 [EventSource 文档](../modules/event-source.md)。
 
+Redis 支持直连单节点和 Sentinel 两种发现模式。`mode` 省略时默认为 `standalone`，继续使用单个
+`address`：
+
+```yaml
+storage:
+  redis:
+    mode: standalone
+    address: redis.example.com:6379
+    username: linkd
+    password: redis-data-secret
+    database: 0
+```
+
+Sentinel 模式必须省略 `address`，提供 master 名称和至少一个 Sentinel seed：
+
+```yaml
+storage:
+  redis:
+    mode: sentinel
+    username: linkd
+    password: redis-data-secret
+    database: 0
+    sentinel:
+      master_name: linkd-master
+      addresses:
+        - sentinel-a.example.com:26379
+        - sentinel-b.example.com:26379
+        - sentinel-c.example.com:26379
+      username: sentinel-user
+      password: sentinel-secret
+```
+
+顶层 `username/password` 用于 Sentinel 返回的数据节点，`sentinel.username/password` 只用于 Sentinel
+自身认证；两组认证都可按服务端配置省略。Cleaner、Lifecycle、Redis Stream Session 和 Control Plane
+统一通过这些 seed 发现并跟随当前 master。所有读写都指向 master，不把只读命令路由到 replica，避免
+Mailbox、lease 和 Recent Alert 缓存出现读写不一致。Sentinel 负责故障发现和切换，但不能替代 Redis
+持久化、复制和备份；`config print` 会同时隐藏数据节点和 Sentinel 密码。
+
+开发环境可通过 `LINKD_TEST_REDIS_SENTINEL_ADDRESSES`（逗号分隔）和
+`LINKD_TEST_REDIS_SENTINEL_MASTER_NAME` 启用 Sentinel 发现集成测试；需要认证时分别补充
+`LINKD_TEST_REDIS_USERNAME/PASSWORD` 和 `LINKD_TEST_REDIS_SENTINEL_USERNAME/PASSWORD`。
+
 Lifecycle 使用单 Redis List Mailbox 保存待处理 Event ID。默认 `key_prefix=linkd:lifecycle:mailbox`、单
-Mailbox 上限 128、单次持锁最多排空 512 条。Signal Stream/Group 默认为
+Mailbox 上限 128、单次持锁最多排空 128 条。Signal Stream/Group 默认为
 `linkd:lifecycle:signals` / `linkd-lifecycle`。Signal payload 使用独立的 `schema_version` 校验；代码
 不提供其他字段名或 namespace 的兼容读取。
 
-Cleaner 对目标 Signal Group 启用近似全局背压：默认每 3 秒最多执行一次 `XINFO GROUPS`，查询超时
-1 秒，`lag + pending >= 100000` 时暂停新 Kafka fetch，降到 80000 时恢复。要求
-`0 < low_watermark < high_watermark`、TTL 为 1～60 秒且查询超时不大于 TTL。查询失败或 lag 未知
-fail-open，明确缺少 Group 时暂停。
+`lifecycle.signal.max_batch_messages` 默认 64，只限制单次 Redis Stream 读取和确认批次；
+`max_inflight_messages` 才限制从接收到安全确认之间的总在途 Signal。后者省略时按
+`max(2 × lifecycle.concurrency, max_batch_messages)` 派生，允许用两个并发窗口覆盖 I/O 等待，
+但不会因提高 Handler 并发而保留四倍消息。重试预算继续包含在同一在途上限内，默认不超过
+`min(lifecycle.concurrency, max_inflight_messages / 2)`。
+
+Cleaner 同一 lane 的已落库前缀通过有界 Redis 脚本批量入 Mailbox，每次最多 128 项且参数预算
+不超过 1 MiB，超过预算顺序切片，不新增凑批等待。每项仍只在 Mailbox 从空变为非空时生成 Signal；
+首个失败之后不执行后项，已成功切片保留结果。传输失败时当前切片结果未知，重投允许重复引用，
+依赖 Lifecycle 终态短路收敛；不允许以批量 Pipeline 越过失败项执行后项。Stream 当前仍按已有配置共享，
+本次不按 EventSource 拆分。Redis 脚本没有事务回滚，Signal 先于 List 追加，异常至多留下空唤醒，
+不能将已经入队的 Event 留在没有 Signal 的 Mailbox 中。
+
+Signal 仅在 Handler 安全完成后确认。Redis 按消息 ID 独立确认，同 lane 已完成项可以合入
+尚未发送的确认批次，上限复用 `lifecycle.signal.max_batch_messages`（默认 64）；
+不新增凑批等待，通道空闲立即发送。确认成功后才释放在途名额，失败保持原批重试；
+已发送或等待重试的批次不再扩大。Kafka 的连续 offset 前缀确认不受影响。
+
+选择 Elasticsearch Repository 时，Lifecycle 还会从 Mailbox prefix 派生
+`<key_prefix>:recent-alert` namespace，保存最近 Alert 写入。缓存 TTL 没有独立配置项，始终等于
+Active Alert `refresh_interval + 5s`，默认为 10 秒。Redis 读写错误不会回落到可能尚未 refresh 的
+Elasticsearch，而是保留 Event 重试。生产 Redis 应使用 `noeviction`，避免 current/ended key 被提前
+淘汰。MySQL Repository 不创建这些 key。
+
+Helm 默认通过 `configuration.lifecycle.mailbox.backpressure` 配置高水位 2048、低水位 1024，开启 Cleaner 的下游背压。各来源 Signal Consumer Group 的 `lag + pending` 达到高水位时暂停该来源的新消息消费，降到低水位恢复；已接收消息与 Lifecycle 继续处理。可覆盖 values 调整水位；显式设置两者为 0 关闭控制。直接使用程序 YAML 且不配置水位时仍为 0/0。无论是否开启控制，Cleaner 都按 `cache_ttl_seconds` 懒采样并上报积压，Admin 使用同一指标显示；查询失败或 lag 未知保留未知语义，不显示为零。任务自己的未确认消息计数和字节软水位仍生效，Mailbox `max_pending` 默认 0。
+
+```yaml
+configuration:
+  lifecycle:
+    mailbox:
+      backpressure:
+        high_watermark: 2048
+        low_watermark: 1024
+```
+
+
+配置了 `storage.redis` 和 `lifecycle` 后，Redis Signal Stream 的指标采集和安全裁剪默认开启；
+省略 `control_plane.redis_stream` 或整个 `control_plane` 配置段也会使用默认预算。
+任务由 `control-plane` 或 `all-in-one` 进程执行，独立 Cleaner/Lifecycle 进程不会执行裁剪。
+需要显式关闭时设置 `control_plane.redis_stream.enabled: false`；关闭后已确认的 Stream 条目仍会持续占用内存。
 
 控制面可分别配置 Elasticsearch 三项管理任务的周期，以及 Redis Signal Stream 的指标采集和安全裁剪：
 
@@ -81,22 +637,32 @@ control_plane:
   elasticsearch:
     schema_and_active_reconcile_interval_seconds: 3600
     bucket_reconcile_interval_seconds: 21600
-    archive_interval_seconds: 30
+    archive_interval_seconds: 5
     archive_batch_size: 1000
-    archive_worker_count: 4
+    archive_worker_count: 1
   redis_stream:
-    reconcile_interval_seconds: 60
-    operation_timeout_seconds: 10
+    enabled: true
+    reconcile_interval_seconds: 10
+    operation_timeout_seconds: 3
     max_entries: 100000
     trim_batch_size: 10000
+    max_trim_entries_per_cycle: 100000
 ```
 
-`max_entries` 是软上限。只有 Stream 超过该值时才启动裁剪，每轮最多检查并删除
-`trim_batch_size` 条安全前缀。控制面会读取全部 Consumer Group 的 `last-delivered-id` 和最老 PEL ID，
-只删除所有 Group 都已经确认的连续前缀；未读或 Pending Signal 即使使 Stream 暂时超过上限也会保留。
+`operation_timeout_seconds` 分别限制来源目录读取和每个来源的采集/裁剪，不再由整页来源共用。
+维护任务复用独立且服从调用截止时间的 Redis 连接池，不占用调度器的连接池。
+每页最多 16 个来源顺序执行，单个来源超时后继续下一个；进程取消时立即停止遍历，未执行来源不记为失败。
+来源错误日志只记录来源 ID、固定 Redis 操作名、脱敏错误类别和耗时，不输出连接凭据或原始响应。
+
+`max_entries` 是软上限。只有 Stream 超过该值时才启动裁剪；`trim_batch_size` 限制单条
+Redis 命令的删除量，`max_trim_entries_per_cycle` 限制单轮累计删除量。后者省略时默认为
+`10 × trim_batch_size`，且必须不小于单批、不超过单批的 100 倍。每批后控制面都重新读取全部
+Consumer Group 的 `last-delivered-id` 和最老 PEL ID，直到回落到软上限、达到单轮预算、
+没有删除进展或无法证明新边界安全。任务只删除所有 Group 都已经确认的连续前缀；
+未读或 Pending Signal 即使使 Stream 暂时超过上限也会保留。
 配置的 `lifecycle.signal.group` 不存在、跨命令观察到 PEL 正在变化，或无法证明边界安全时，本轮只采集
-指标而不裁剪。该任务要求同时配置 `storage.redis` 和 `lifecycle`，但不要求使用 Elasticsearch
-Repository，因此 Redis-only 控制面也可以独立启动。
+指标而不裁剪。显式启用该任务时必须同时配置 `storage.redis` 和 `lifecycle`；未声明任务且依赖不齐时
+不会自动启用。任务不要求使用 Elasticsearch Repository，因此 Redis-only 控制面也可以独立启动。
 
 完整存储、Redis、lifecycle retry/lease/mailbox、Kafka output 和 telemetry 示例见仓库
 [`configs/linkd.yaml`](../../configs/linkd.yaml)。常用命令：
@@ -110,18 +676,88 @@ linkd run control-plane --config /etc/linkd/linkd.yaml
 linkd run all-in-one --config /etc/linkd/linkd.yaml
 ```
 
-`config print` 会隐藏 MySQL、Redis、Elasticsearch 和 Kafka 认证信息。进程运行期间 EventSource 和
-Severity 配置冻结；修改配置需要重启进程。
+`resources` 按 Processor 的实际依赖选择物理连接：
+
+| Processor | 必需连接 | 逻辑 Reader |
+| --- | --- | --- |
+| `strategy` | `mysql`、`onemodel` | CW Strategy、OneModel |
+| `resource` | `mysql`、`onemodel` | 租户模型目录、OneModel 实例；不依赖监控策略 |
+| `monitor-resource` | `mysql`、`onemodel` | 监控策略及场景资源推断 |
+| `display` | `mysql` | CW Strategy、指标目录 |
+| `metric` | `mysql` | CW Strategy、指标目录 |
+| `source` | `mysql` | AlarmSource |
+| `cmdb` | `onemodel` | 实例与关联查询 |
+| `cmdb` / `fields` 的 display 转换 | 额外需要 `mysql`、`kingeye_display` | 模型元数据与展示缓存 |
+
+`mysql` 使用 `address/database/username/password`。各 Reader 共享同一个连接池，并在所配置数据库中
+查询各自的表；AlarmSource 按 `bk_tenant_id + EventSourceID` 查询
+`alarm_collect_alarmsource.name`。
+
+`resources.onemodel` 配置 Strategy/Resource Processor 使用的 OneModel
+只读后端；默认 Elasticsearch，Doris 配置见上文。ES 模式读取 `kingeye_all_instance` alias 和 `kingeye_topo` 投影边；
+`index_prefix` 默认 `bk_monitor_base_`，用于读取 `<prefix>cmdb_biz_topo_node` 与
+`<prefix>cmdb_biz_topo_host_membership`。实例查询使用根字段
+`bk_tenant_id/model_id/model_inst_id` 定位实例；来源属性查询通过 nested `attribute_values` 类型槽表达，
+响应中的来源属性从 `attributes` 合并到 Resource 输出。该连接独立于 `storage.elasticsearch`，两段配置可以指向同一集群。
+
+`config print` 会隐藏 MySQL、Redis、Elasticsearch 和 Kafka 认证信息。EventSource 使用已发布的来源快照；
+Severity 默认使用启动 YAML，启用[动态配置](#动态配置)后在线应用。
 
 `cleaner`、`lifecycle`、`control-plane` 和 `all-in-one` 都会初始化自己的 telemetry runtime。启用
 Prometheus exporter 后，每个进程分别暴露 `/metrics`；部署在独立 Pod 时可以使用相同端口，共享宿主
 网络时则需要使用不同配置文件设置不冲突的 `listen_address`。Redis Stream 管理指标由执行任务的
 `control-plane` 或 `all-in-one` endpoint 暴露，指标名、单位和告警含义见[可观测性设计](../design/observability.md)。
 
+## 中间件版本要求
+
+### Redis
+
+部署建议使用 Redis 7.2 系列。当前没有覆盖所有版本的兼容测试矩阵；命令层面的最低要求为
+Redis 6.2，但这不代表 Redis 6.2 已完整支持。以下结论核对于 2026-09-09：
+
+| Redis 版本 | 当前支持与验证边界 |
+| --- | --- |
+| 低于 6.2 | 不满足当前 Stream 命令要求，不支持部署。 |
+| 6.2 | 具备所需的 Stream 命令，但缺少部分监控字段，未完成完整链路验证，不建议部署。 |
+| 7.0 | 从当前代码及命令要求判断具备所需功能，尚无该版本的专项验证记录。 |
+| 7.2.16 | 已有真实业务链路及多进程任务调度验证记录；7.2 系列作为当前部署建议基线。 |
+| 8.0.0 | 已有 Redis 协议集成测试记录，覆盖范围不等同于完整业务链路验证。 |
+| 其他版本 | 未逐一验证，不因版本号更高而自动承诺兼容。 |
+
+版本下限来自 [XAUTOCLAIM](https://redis.io/docs/latest/commands/xautoclaim/) 和
+[XTRIM 的 MINID/LIMIT 选项](https://redis.io/docs/latest/commands/xtrim/)，两者均从 Redis 6.2 开始提供。
+消费积压 `lag` 与累计入流 `entries-added` 等监控字段从 Redis 7.0 才提供，见
+[XINFO GROUPS](https://redis.io/docs/latest/commands/xinfo-groups/) 和
+[XINFO STREAM](https://redis.io/docs/latest/commands/xinfo-stream/)。在 Redis 6.2 上，当前客户端与指标处理
+可能把缺失字段显示为 `0`，不能据此判断没有积压。
+
+已验证版本及具体场景见 [2026-09-07 核心任务调度验证记录](../reviews/2026-09-07-task-scheduling-validation.md)。
+这些记录对应当时的代码与测试范围，不代表当前所有功能已在每个版本上重新验证。
+
+连接形态支持直连单节点和 Sentinel 主从高可用；当前不支持原生 Redis Cluster 分片集群。
+Sentinel 模式仍连接 master 进行读写，不能替代数据节点的持久化、复制和备份。
+
+### Elasticsearch
+
+**Elasticsearch 最低部署版本为 7.10，低于 7.10 不在支持范围内。** 此下限是部署要求，
+不表示所有 7.10 及以上版本都已通过兼容性验证，也不构成对后续大版本的自动兼容承诺。
+已有 [核心任务调度验证记录](../reviews/2026-09-07-task-scheduling-validation.md) 使用 Elasticsearch 7.17.7；
+该记录不能替代 Elasticsearch 7.10 或其他版本的专项验证。
+
 ## Elasticsearch schema 重建
 
+`storage.elasticsearch.number_of_shards` 可选，范围 1～1024，仅设置新建索引的主分片数；
+省略时使用 ES 默认值。修改该配置不会重分片已有索引，已有数据应另行设计 reindex 或 split，
+不能把模板更新当作数据迁移。双节点实验使用两个主分片、零副本，并核对各主分片实际分布。
+
 当前 Elasticsearch schema version 为 3，Event、Alert 和 AlertLog 的完整稳定领域字段直接保存在
-`_source` 根层。Event、AlertHistory、AlertLog 默认使用 7 天 UTC 时间桶；Active Alert 使用单一热索引。
+`_source` 根层。Event、AlertHistory、AlertLog 默认使用 7 天 UTC 时间桶；Active Alert 使用单一热索引，
+模板和控制面对账会把 Active Alert 的 `refresh_interval` 设为
+`storage.elasticsearch.active_alert_refresh_interval_seconds`，默认 5 秒。Event、Alert History 和 AlertLog
+时间桶模板的 `refresh_interval` 由 `storage.elasticsearch.refresh_interval_seconds` 配置，同样默认 5 秒，
+用于减少持续写入时的 refresh 开销；这些对象通过搜索读取时需要接受该近实时可见性窗口。Recent Alert 缓存 TTL 自动为 Active 配置加 5 秒，
+为缓存过期后的查询回源提供可见性边界。可配置范围为 1～3600 秒，修改后需由控制面对账已有
+Active 索引。
 `control-plane` 当前分别装配 Elasticsearch Schema 与 Active 资源对账、时间桶维护和终态 Alert 归档任务。三项任务共享
 连接和进程级监督；前两项按独立周期执行，归档按连续批量循环执行。数据进程遇到缺失 write alias 时直接失败。这些任务没有独立
 启动 command。
@@ -133,6 +769,9 @@ storage:
   elasticsearch:
     # 单节点本地环境可设为 0；生产环境按节点拓扑和容灾要求设置或省略。
     number_of_replicas: 0
+    refresh_interval_seconds: 5
+    active_alert_refresh_interval_seconds: 5
+    alert_log_translog_durability: async
     time_partition:
       event_bucket_days: 7
       alert_history_bucket_days: 7
@@ -146,10 +785,17 @@ storage:
 `schema_and_active_reconcile_interval_seconds` 只驱动模板、Active Alert 索引和静态 alias 对账；
 `bucket_reconcile_interval_seconds` 只驱动当前预创建窗口内的时间桶和 alias 维护；
 `archive_batch_size` 是终态 Alert 单次扫描上限，`archive_worker_count` 是批内最大并发 Worker 数；默认每批
-1000 条、4 个 Worker，配置范围分别为 1～10000 和 1～64，且 Worker 数不得超过批量上限。每个 Worker
+1000 条、1 个 Worker，配置范围分别为 1～10000 和 1～64，且 Worker 数不得超过批量上限。单 Worker
+用于降低归档 Bulk 与 Lifecycle 实时读写争抢；一次 sweep 内仍会连续翻页追赶积压，因此并不把整轮吞吐
+限制为每 5 秒 1000 条。每个 Worker
 使用 Bulk create History 和 Bulk CAS delete Active，单个 Bulk 子批最多 500 条并受 Repository 16 MiB
-请求上限约束。`archive_interval_seconds` 是积压清空、整轮无进展或请求失败后的等待时间；有归档进展时
-批次连续执行，不等待该间隔。单次搜索仍受 64 MiB 响应上限保护，超过时会自动缩小本轮拉取数量。
+请求上限约束。History create 和 Active delete 使用 `refresh=false`，归档成功不代表搜索立即可见；
+409 冲突通过 realtime `_mget` 核对：Active 已消失视为完成；确认版本已变化则保留 Active，
+记入独立的 `conflicted_alerts` / `last_batch_conflicted` 指标，下一轮重新扫描，不计入失败且不占用重试队列。
+无法核对、身份不符、版本未变化、History 内容冲突及真实存储错误仍记为失败。
+`archive_interval_seconds` 是一次完整 sweep 到达尾部或请求失败后的
+等待时间，默认 5 秒；有后续页时批次连续执行，不等待该间隔。这避免 Active 删除在下一次 refresh 前被立即重复
+扫描。单次搜索仍受 64 MiB 响应上限保护，超过时会自动缩小本轮拉取数量。
 
 独立 `control-plane` 启动时会先按“Schema 与 Active 资源对账、时间桶对账”的顺序完成一次准备，再启动管理任务；
 归档不阻塞数据面启动。
@@ -161,6 +807,12 @@ storage:
 被自动修改。单节点本地环境设为 `0` 可以避免因无法分配副本而长期处于 `yellow`，但这也意味着没有
 副本冗余，不应直接照搬到生产环境。已有索引如需调整，应由操作者明确选择目标后通过动态 index
 settings 原地修改，不需要删除索引或 reindex。
+
+`alert_log_translog_durability` 只作用于 AlertLog 索引，支持 `request` 和 `async`，默认 `async`；Event、
+Active Alert 和 Alert History 仍使用 Elasticsearch 的 `request` 默认值。`async` 会减少每次 AlertLog
+写请求等待 translog `fsync` 的成本，但 Elasticsearch 或宿主异常退出时，最近一个
+`index.translog.sync_interval`（Elasticsearch 默认 5 秒）内已经返回成功的 AlertLog 可能丢失。
+模板负责新索引，Bucket Manager 会把当前预创建窗口内既有 AlertLog bucket 动态对账到该值。
 
 历史消息回放前显式准备桶：
 
@@ -177,7 +829,268 @@ linkd storage prepare --config /etc/linkd/linkd.yaml \
 4. 清理或更换 Redis Mailbox/Signal 中引用旧 EventID 的状态；
 5. 先启动 `linkd run control-plane`，确认 schema、Active 索引、当前及相邻桶和 alias 对账成功；
 6. 再启动 cleaner/lifecycle；使用 all-in-one 时首次对账会在接管消息前同步完成；
-7. 检查 DevTools Elasticsearch 拓扑后恢复上游流量。
+7. 检查 Kingeye Admin Elasticsearch 拓扑后恢复上游流量。
 
 删除操作不可恢复。本仓库不提供旧 schema 的 reindex、双读或双写逻辑，也不会在启动时替操作者执行
 删除。本轮不自动执行 retention；达到 `max_buckets_per_entity` 时 Bucket Manager 会失败并要求人工处理。
+
+## 动态 EventSource 与调度
+
+部署前可使用 `linkd storage migrate --config <path> --timeout 4m` 检查控制面配置并执行一次性
+基础存储初始化；启用 `plugins.kac` 时也初始化其独立 ES 目标的兼容告警索引。该命令有写入副作用，不等同于只读的 `config validate`；不会自动导入来源或
+重建调度历史。通过 Kubernetes Job 执行时，等待与清理规则由部署配置决定。
+
+Helm 中每个 worker 组可以通过 `LINKD_WORKER_LABELS` 注入 JSON 字符串映射，完整替换 YAML 的
+`worker.labels`；变量未设置时保留 YAML 标签，`{}` 清空标签。输入限制为 16384 字节，继续遵守
+最多 32 个标签、键最多 128 字节、值最多 256 字节的校验。
+
+来源运行配置以 ES/MySQL 中的 Record/Release 为准。文件中的 `event_sources` 只供显式导入和本地模拟器使用，常驻进程不会自动导入。
+
+```yaml
+dispatch:
+  deployment: default
+  listen: 127.0.0.1:8090
+  url: http://127.0.0.1:8090
+  max_tasks: 0 # 不限制进程任务数
+  alert_search:
+    max_concurrent: 2 # 每进程通用检索与 filter 批量关闭共用的请求槽
+    timeout_seconds: 5 # 查询阶段超时，允许 1–10 秒；关闭阶段使用管理接口剩余预算
+    max_request_bytes: 1048576
+    max_response_bytes: 8388608 # 通用检索返回完整 Alert 的结果页大小
+worker:
+  labels:
+    pool: ingestion
+  require_explicit_selector: false
+  max_concurrency: 0 # 不按来源声明并发预占配额
+  max_inflight_bytes: 0 # 不按来源最大字节数预占配额
+```
+
+`LINKD_JWT_SECRET_KEY` 与 `LINKD_WORKER_TOKEN` 必须显式设置且不同；也可在受保护的本地 YAML 中配置 `dispatch.jwt.secret_key` 和 `dispatch.worker_token`。控制面和迁移 Job 要求这两个凭据；纯 Worker 只需要 Worker Token。
+
+```yaml
+dispatch:
+  jwt:
+    secret_key: "<与 Kingeye BKAPP_JWT_SECRET_KEY 相同的密钥>"
+    username: admin
+  worker_token: "<独立 Worker Token>"
+```
+
+`LINKD_JWT_USERNAME` 覆盖签发用户名，默认 `admin`。密钥通过 `LINKD_JWT_SECRET_KEY` 覆盖；环境变量优先于 YAML。更改后重启对应进程。旧 `dispatch.api_token` 已移除，旧 `LINKD_API_TOKEN` 不再生效。协议、有效期及双向调用示例见 [内部 HTTP JWT 认证](../reference/contracts/internal-token.md)。
+`LINKD_CONTROL_PLANE_URL` 可覆盖 worker/CLI 的控制面地址。不要把 token 提交到仓库。
+
+```bash
+# 先运行控制面或 all-in-one，再在另一个终端显式导入。
+linkd event-source import --config configs/linkd.local.yaml --file configs/linkd.local.yaml
+```
+
+来源新增 `scheduling.cleaner` / `scheduling.lifecycle`，各含 `replicas`（默认 all，或非负整数）与 `selector`（精确 AND 标签）。
+0 停止对应角色，enabled=false 停止整个来源。Cleaner 有 Kafka partition 上限，Lifecycle 无此上限。
+
+内部合并来源只调度 Lifecycle，配置无需 Kafka 或 Cleaner：
+
+```yaml
+event_sources:
+  - event_source_id: builtin_alarm_merge
+    enabled: true
+    storage:
+      type: internal_merge
+    scheduling:
+      lifecycle:
+        replicas: 1
+        selector: {}
+    enrich:
+      processors: []
+    hooks: []
+```
+
+该配置只能用于系统合并生产者，不能作为外部事件导入通道。配置 Lifecycle 的控制面在调度初始化后
+自动创建缺失的内置来源（默认空 Enrich/Hook），保留已有配置及停用/删除状态；可用上述配置显式调整。
+
+### 合并控制面批处理预算
+
+```yaml
+control_plane:
+  merge:
+    member_batch_size: 128
+    concurrency: 8
+```
+
+省略 `control_plane.merge` 或某个字段时使用上述默认值，0 也表示采用默认值，负数拒绝。
+`member_batch_size` 限制自动捕获、建联、终态确认及解除的单批成员数；总组可以跨多批推进，
+它不限制一个组的总成员数。快照与关系引用的网络块最多 128 项；成员 Alert 的物理请求还受仓储数量和字节预算约束。
+
+`concurrency` 限制控制面本进程同时在途的成员批次，有空闲名额才启动执行 goroutine。
+各批共享已有成员准备/输出预算；成员仍取得自己的 fingerprint lease，保留 Alert CAS。
+批次本身不另加分布式锁、不保存中间进度；组级窗口租约用于阶段切换、汇总与父准入。
+部分失败在本进程只重试未完成成员，进程崩溃后可重建整个未确认阶段并幂等重放。
+
+单组不设 256 或 10,000 个成员的硬上限，容量由既有字节预算约束：Redis 窗口总计 32 MiB、
+窗口元数据最多 8 MiB、完整成员 Alert 快照总计 32 MiB、持久化单文档最多 8 MiB。
+增大批次或并发不会放宽这些预算，也不保证整个组在固定时间内完成。
+
+成员批次仍有 10 秒截止；失败或取消时已提交的成员通过稳定身份恢复。组协调每页最多 16 个窗口/关系、总预算 45 秒；
+等待扫描每页 128 项。成员批次由内存调度器直接执行，不通过存储扫描发现；慢批不会阻塞其他空闲名额。
+
+| 控制任务 | 无待处理下一页时的间隔 | 职责 |
+| --- | --- | --- |
+| merge-judge | 1 秒 | 扫描持久化等待，独立冻结窗口，检查丢失窗口的原截止时间 |
+| merge-decisions | 1 秒 | 恢复快照、内部 Event、真实父、关系/释放和缓存提示清理步骤 |
+| merge-relations | 30 秒 | 检查父子终态；同页各执行一批后，轮转续跑有进展且无错误的关系 |
+| merge-batches | 待办扫描到尾部后 1 秒 | 多进程独立领取引用/建联/解除批次；结束阶段的组收尾待办也在此及时执行 |
+
+有进展时下一批重新获取窗口租约，在本页剩余预算内及时继续；无进展、锁忙、失败或释放租约不确定时停止立即续跑。
+组扫描结束或失败后重新计时退避，不因前一长页的 ticker 已到期而立即全量重扫。
+成员池按各成员独立结果确认；组偏移作为阶段汇总检查点，不能用最早失败项阻塞其他批次。确认响应丢失时可重放同一成员，原意图与日志身份保持幂等。
+控制面任务页同时显示合并运行时与四个循环的状态。生命周期配置缺失时不启动该运行时。
+完整约束及当前验收范围见 [合并开发方案](../design/event-enrich-and-alarm-policies.md#83-成功后的主告警与父子关系)。
+
+同一进程同源同角色最多一个 Flow；all-in-one 的两种角色允许共存。资源上限作用于整个 worker，不随来源数量无限增长。
+
+`lifecycle.signal.stream` 现在作为来源 Stream 的基础前缀；最终键由 deployment/EventSource 稳定派生。
+不要手工在前缀中加入 Release 或 worker ID。背压、Mailbox、lease 和 Stream 诊断均使用同一派生规则。
+
+详细 API 见[动态来源设计](../design/event-source-dynamic-configuration.md)，恢复与容器关闭预算见[调度协议](../design/task-scheduling-protocol.md)。
+
+## EventSource hooks
+
+输出配置属于每个 EventSource，随 Record/Release 发布。通用 Kafka Alert V1 已移除；
+残留的 `hooks[].type: kafka` 声明直接忽略，参数、凭据、连接和多余字段不参与校验或执行，
+不占实例名额，不产生 push 流水。无需先删除遗留配置才能加载或发布。
+旧 `lifecycle.output` 不是来源 Hook，仍按其既有的移除规则处理。
+
+当前主要输出使用全局 `plugins.kac`。确需旧 KAC Kafka Hook 时，在单个来源中配置：
+
+```yaml
+hooks:
+  - name: kac-alarm
+    type: kac
+    config:
+      brokers: [127.0.0.1:9092]
+      topic: alarm-collect
+      max_message_bytes: 1048576
+      security:
+        protocol: plaintext
+```
+
+在用实例名在来源内唯一，由 1～64 个字母、数字、下划线或连字符组成，首字符为字母或数字。
+每个来源至多 16 个在用 Hook；未知类型和在用插件的错误参数仍在发布前拒绝。
+`active-alert-by-strategy` 已从 Hook 中移除；活跃集合、限流与成员变化通知统一使用来源的
+`active_alert_limits`，复用 `storage.redis`。完整格式、built_in_bk 默认 5000、禁用和升级步骤见
+[活跃告警缓存与软限流](active-alert-by-strategy.md)。
+
+Kingeye Admin Kafka 页面按来源和实例展示输出目标；动态管理接口中的连接凭据已脱敏，因此该模式只展示
+目标声明，不使用脱敏凭据探测输出集群 metadata，也不将其标记为已验证可用。
+
+### 全局级别升级策略
+
+`lifecycle.severity_upgrade_policy` 支持 `close_and_create`（默认，关闭低级别后新建）和
+`update_current`（保留当前 Alert 身份更新级别）。所有 Lifecycle 实例使用相同全局配置，重启生效；
+已保存计划的事件继续原策略，配置只影响尚未生成计划的事件。非法取值在启动校验时拒绝。
+高级别 trigger 优先于同一事件中旧级别的 recovery/closed；完整裁决规则见 [Lifecycle](../modules/lifecycle.md#4-event-状态裁决)。
+
+以下为代码默认值，不是升级时必须使用的新前缀：
+
+| 配置 | 默认值 |
+| --- | --- |
+| storage.elasticsearch.index_prefix | `linkd` |
+| lifecycle.severity_upgrade_policy | `close_and_create` |
+| lifecycle.signal.stream | `linkd:lifecycle:signals` |
+| lifecycle.mailbox.key_prefix | `linkd:lifecycle:mailbox` |
+| lifecycle.lock.key_prefix | `linkd:lifecycle:lock` |
+
+Stream、Mailbox 和锁会继续按 deployment 与 EventSource 派生作用域；Recent Alert 缓存由 Mailbox
+基础前缀派生。切换多级别模型的测试环境见[重置升级](multilevel-event-upgrade.md)。
+
+
+## 动态配置
+
+默认关闭，不增加 MySQL/Redis 来源依赖，也不读写动态配置快照：
+
+```yaml
+control_plane:
+  dynamic_config:
+    enabled: false
+```
+
+启用告警等级同步时，将以下块合并到控制面的配置。Worker 无需持有上游数据库凭据，
+通过现有控制面地址和 Worker token 接收配置。
+
+```yaml
+control_plane:
+  dynamic_config:
+    enabled: true
+    sources:
+      kingeye_levels:
+        type: kingeye_alarmlevel
+        mysql:
+          address: kingeye-mysql:3306
+          database: kingeye
+          username: linkd_reader
+          password: "由部署 Secret 提供"
+        table: alarm_alarmlevel
+        bk_tenant_id: system
+        poll_interval_seconds: 30
+        operation_timeout_seconds: 3
+    bindings:
+      severity:
+        source: kingeye_levels
+```
+
+来源 MySQL 只需要 SELECT 权限。快照保存在 Linkd 自己的 `storage.repository`，其账户沿用
+现有 schema 初始化和读写权限；不会把快照写回 Kingeye。
+
+Redis 适配器可在后续绑定已确定的 dynamicconfig 字段。值须为完整等级数组，包含必填的
+`name` 和整数 `priority`，不能绑定任意字段来覆盖 Linkd 启动参数：
+
+```yaml
+control_plane:
+  dynamic_config:
+    enabled: true
+    sources:
+      kingeye_redis:
+        type: kingeye_dynamicconfig
+        redis:
+          mode: standalone
+          address: kingeye-redis:6379
+          database: 0
+          password: "由部署 Secret 提供"
+        redis_key_prefix: "bk_monitor_base:"
+        bk_tenant_id: system
+        poll_interval_seconds: 300
+        operation_timeout_seconds: 3
+    bindings:
+      severity:
+        source: kingeye_redis
+        key: "替换为上游实际发布的等级字段"
+```
+
+Redis 连接同样支持 `sentinel`，字段与 `storage.redis` 相同。以上密码说明仅为文档占位，
+YAML 不自动展开任意环境变量；实际配置通过受保护文件或 Secret 注入。
+
+来源同步周期允许 1..86400 秒，操作超时允许 1..60 秒；等级最多 256 项，载荷最多 1 MiB。
+默认等级优先沿用 YAML；其名称被删除时使用当前最轻等级，已清洗未知等级仍按拒绝策略处理。
+
+启动优先恢复已持久化有效快照，后台同步最新配置。没有可用快照且上游异常时才回退 YAML。
+运行中读取、校验、持久化失败均保留最后有效值；持久化成功后才发布。快照不自动过期，
+来源实例、数据库、表/前缀或租户切换会使用新的隔离身份。
+
+完整行为、接口与未知等级处理见[动态配置设计](../design/dynamic-configuration.md)。
+
+### 消息并发与后台补扫
+
+默认 Cleaner 每任务未确认消息 512，处理并发和 lane 批次并发跟随该计数预算；Lifecycle 默认未确认 Signal 256，默认处理并发 256。工作 goroutine 懒启动，空闲来源不预建大线程池。显式设置 cleaner.worker_count、cleaner.max_concurrent_batches 或 lifecycle.concurrency 会保留该自定义并发；从旧配置升级时若要使用新默认值，应删除旧显式数值。载荷字节、单次请求大小、取消与所有权边界仍生效。
+
+```yaml
+control_plane:
+  delivery:
+    # 0：每个补建/发送循环默认 max(16, GOMAXPROCS*4)，可显式设置。
+    concurrency: 0
+    # 0：默认 max(64, concurrency*2)。超出响应字节预算时自动缩页，不跳过游标。
+    batch_size: 0
+```
+
+当前 Cleaner/Lifecycle 消息处理不预置可重试错误白名单；普通错误或 panic 记录后确认。后续适配器显式标记可重试时，总尝试上限为三次，不能用较大的旧 retry_max_attempts 绕过。任务取消和 Broker 确认失败仍遵循所有权/确认协议，不属于业务消息重试。
+
+### 策略日志布局发布
+
+新策略日志固定使用 display_version=3 和 content_key/content_params，不设置格式切换开关。已持久化屏蔽/合并变更继续使用保存的版本，既有数据后续统一处理。EventPlan 仅在内存中，不提供跨重启原样重放保证。字段及冻结位置见 [策略流转合同](../reference/contracts/policy-flow-records.md)。

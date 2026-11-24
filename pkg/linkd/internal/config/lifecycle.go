@@ -16,51 +16,47 @@ import (
 
 	"linkd/internal/consume"
 	"linkd/internal/consume/redisstream"
-	"linkd/internal/kafkaclient"
-	"linkd/internal/lifecycle/kafkahook"
 	"linkd/internal/lifecycle/mailbox"
 	"linkd/internal/lifecycle/scheduler"
 )
 
 const (
-	defaultLifecycleConcurrency             = 8
-	defaultLifecycleProcessTimeoutSeconds   = 30
-	defaultLifecycleRetryMaxAttempts        = 3
-	defaultLifecycleRetryMaxElapsedSeconds  = 120
-	defaultSignalStream                     = "linkd:lifecycle:signals"
-	defaultSignalGroup                      = "linkd-lifecycle"
-	defaultSignalConsumerPrefix             = "linkd-lifecycle"
-	defaultSignalReadBlockMilliseconds      = 1000
-	defaultSignalClaimMinIdleSeconds        = 300
-	defaultSignalMaxBatchMessages           = 128
-	defaultSignalMaxMessageBytes            = 64 << 10
-	defaultMailboxKeyPrefix                 = "linkd:lifecycle:mailbox"
-	defaultMailboxMaxPending                = 128
-	defaultMailboxMaxDrainEvents            = 512
-	defaultMailboxBackpressureCacheTTL      = 3
-	defaultMailboxBackpressureQueryTimeout  = 1
-	defaultMailboxBackpressureHighWatermark = 100000
-	defaultMailboxBackpressureLowWatermark  = 80000
-	defaultLockKeyPrefix                    = "linkd:lifecycle:lock"
-	defaultLockTTLSeconds                   = 60
-	defaultLockRenewIntervalSeconds         = 20
-	defaultLockRetryDelayMilliseconds       = 500
-	defaultLockReleaseTimeoutSeconds        = 3
-	defaultKafkaMaxMessageBytes             = 1 << 20
-	maxLifecycleBatchBytes                  = 64 << 20
-	maxLifecycleInflightBytes               = 256 << 20
+	defaultLifecycleConcurrency            = 256
+	defaultLifecycleProcessTimeoutSeconds  = 30
+	defaultLifecycleRetryMaxAttempts       = 3
+	defaultLifecycleRetryMaxElapsedSeconds = 120
+	defaultSignalStream                    = "linkd:lifecycle:signals"
+	defaultSignalGroup                     = "linkd-lifecycle"
+	defaultSignalConsumerPrefix            = "linkd-lifecycle"
+	defaultSignalReadBlockMilliseconds     = 1000
+	defaultSignalClaimMinIdleSeconds       = 300
+	defaultSignalMaxBatchMessages          = 64
+	defaultSignalMaxMessageBytes           = 64 << 10
+	defaultMailboxKeyPrefix                = "linkd:lifecycle:mailbox"
+	defaultMailboxMaxPending               = 0
+	defaultMailboxMaxDrainEvents           = 128
+	defaultMailboxBackpressureCacheTTL     = 1
+	defaultMailboxBackpressureQueryTimeout = 1
+	defaultLockKeyPrefix                   = "linkd:lifecycle:lock"
+	defaultLockTTLSeconds                  = 60
+	defaultLockRenewIntervalSeconds        = 20
+	defaultLockRetryDelayMilliseconds      = 500
+	defaultLockReleaseTimeoutSeconds       = 3
 )
 
 // LifecycleConfig 描述 lifecycle 独立进程的消费、并发、锁和输出配置。
 type LifecycleConfig struct {
-	Concurrency            int                    `yaml:"concurrency"`
-	ProcessTimeoutSeconds  int                    `yaml:"process_timeout_seconds"`
-	RetryMaxAttempts       int                    `yaml:"retry_max_attempts"`
-	RetryMaxElapsedSeconds int                    `yaml:"retry_max_elapsed_seconds"`
-	Signal                 LifecycleSignalConfig  `yaml:"signal"`
-	Mailbox                LifecycleMailboxConfig `yaml:"mailbox"`
-	Lock                   LifecycleLockConfig    `yaml:"lock"`
-	Output                 LifecycleOutputConfig  `yaml:"output"`
+	// SeverityUpgradePolicy 决定更高级别触发时更新当前告警或关闭后新建。
+	SeverityUpgradePolicy string `yaml:"severity_upgrade_policy"`
+	// ElasticsearchWriteBatch 控制 Lifecycle 专用跨 Event 合批。
+	ElasticsearchWriteBatch ElasticsearchWriteBatchConfig `yaml:"elasticsearch_write_batch"`
+	Concurrency             int                           `yaml:"concurrency"`
+	ProcessTimeoutSeconds   int                           `yaml:"process_timeout_seconds"`
+	RetryMaxAttempts        int                           `yaml:"retry_max_attempts"`
+	RetryMaxElapsedSeconds  int                           `yaml:"retry_max_elapsed_seconds"`
+	Signal                  LifecycleSignalConfig         `yaml:"signal"`
+	Mailbox                 LifecycleMailboxConfig        `yaml:"mailbox"`
+	Lock                    LifecycleLockConfig           `yaml:"lock"`
 }
 
 // LifecycleSignalConfig 描述 Redis Stream 和单批资源边界。
@@ -72,6 +68,7 @@ type LifecycleSignalConfig struct {
 	ReadBlockMilliseconds int    `yaml:"read_block_milliseconds"`
 	ClaimMinIdleSeconds   int    `yaml:"claim_min_idle_seconds"`
 	MaxBatchMessages      int    `yaml:"max_batch_messages"`
+	MaxInflightMessages   int    `yaml:"max_inflight_messages"`
 	MaxMessageBytes       int    `yaml:"max_message_bytes"`
 }
 
@@ -100,25 +97,15 @@ type LifecycleLockConfig struct {
 	ReleaseTimeoutSeconds  int    `yaml:"release_timeout_seconds"`
 }
 
-// LifecycleOutputConfig 描述 lifecycle 最终 Hook；当前只支持 Kafka。
-type LifecycleOutputConfig struct {
-	Kafka *LifecycleKafkaConfig `yaml:"kafka,omitempty"`
-}
-
-// LifecycleKafkaConfig 描述 Kafka FinalHook 的 producer 和 topic。
-type LifecycleKafkaConfig struct {
-	Brokers         []string                   `yaml:"brokers"`
-	Topic           string                     `yaml:"topic"`
-	ClientID        string                     `yaml:"client_id,omitempty"`
-	MaxMessageBytes int                        `yaml:"max_message_bytes"`
-	Security        kafkaclient.SecurityConfig `yaml:"security"`
-}
-
 // WithDefaults 返回补齐 lifecycle 默认值且不共享嵌套数据的副本。
 func (c LifecycleConfig) WithDefaults() LifecycleConfig {
+	if c.SeverityUpgradePolicy == "" {
+		c.SeverityUpgradePolicy = "close_and_create"
+	}
 	if c.Concurrency == 0 {
 		c.Concurrency = defaultLifecycleConcurrency
 	}
+	c.ElasticsearchWriteBatch = c.ElasticsearchWriteBatch.WithDefaults(c.Concurrency)
 	if c.ProcessTimeoutSeconds == 0 {
 		c.ProcessTimeoutSeconds = defaultLifecycleProcessTimeoutSeconds
 	}
@@ -153,6 +140,12 @@ func (c LifecycleConfig) WithDefaults() LifecycleConfig {
 	if c.Signal.MaxBatchMessages == 0 {
 		c.Signal.MaxBatchMessages = defaultSignalMaxBatchMessages
 	}
+	if c.Signal.MaxInflightMessages == 0 {
+		c.Signal.MaxInflightMessages = max(
+			c.Concurrency,
+			c.Signal.MaxBatchMessages,
+		)
+	}
 	if c.Signal.MaxMessageBytes == 0 {
 		c.Signal.MaxMessageBytes = defaultSignalMaxMessageBytes
 	}
@@ -171,12 +164,6 @@ func (c LifecycleConfig) WithDefaults() LifecycleConfig {
 	if c.Mailbox.Backpressure.QueryTimeoutSeconds == 0 {
 		c.Mailbox.Backpressure.QueryTimeoutSeconds = defaultMailboxBackpressureQueryTimeout
 	}
-	if c.Mailbox.Backpressure.HighWatermark == 0 {
-		c.Mailbox.Backpressure.HighWatermark = defaultMailboxBackpressureHighWatermark
-	}
-	if c.Mailbox.Backpressure.LowWatermark == 0 {
-		c.Mailbox.Backpressure.LowWatermark = defaultMailboxBackpressureLowWatermark
-	}
 	if c.Lock.KeyPrefix == "" {
 		c.Lock.KeyPrefix = defaultLockKeyPrefix
 	}
@@ -192,23 +179,19 @@ func (c LifecycleConfig) WithDefaults() LifecycleConfig {
 	if c.Lock.ReleaseTimeoutSeconds == 0 {
 		c.Lock.ReleaseTimeoutSeconds = defaultLockReleaseTimeoutSeconds
 	}
-	if c.Output.Kafka != nil {
-		kafka := *c.Output.Kafka
-		kafka.Brokers = append([]string(nil), c.Output.Kafka.Brokers...)
-		if kafka.MaxMessageBytes == 0 {
-			kafka.MaxMessageBytes = defaultKafkaMaxMessageBytes
-		}
-		kafka.Security = kafka.Security.WithDefaults()
-		c.Output.Kafka = &kafka
-	}
+
 	return c
 }
 
 // Validate 校验 lifecycle 资源上限和跨组件时间预算。
 func (c LifecycleConfig) Validate() error {
+	policy := c.WithDefaults().SeverityUpgradePolicy
+	if policy != "close_and_create" && policy != "update_current" {
+		return fmt.Errorf("lifecycle.severity_upgrade_policy must be close_and_create or update_current")
+	}
 	c = c.WithDefaults()
-	if c.Concurrency < 1 || c.Concurrency > 1024 {
-		return fmt.Errorf("lifecycle.concurrency must be between 1 and 1024")
+	if c.Concurrency < 1 {
+		return fmt.Errorf("lifecycle.concurrency must be positive")
 	}
 	if c.ProcessTimeoutSeconds < 1 || c.ProcessTimeoutSeconds > 3600 {
 		return fmt.Errorf("lifecycle.process_timeout_seconds must be between 1 and 3600")
@@ -234,8 +217,11 @@ func (c LifecycleConfig) Validate() error {
 	if c.Signal.ClaimMinIdleSeconds <= c.ProcessTimeoutSeconds+c.RetryMaxElapsedSeconds {
 		return fmt.Errorf("lifecycle.signal.claim_min_idle_seconds must exceed process timeout plus retry elapsed")
 	}
-	if c.Signal.MaxBatchMessages < 1 || c.Signal.MaxBatchMessages > 4096 {
-		return fmt.Errorf("lifecycle.signal.max_batch_messages must be between 1 and 4096")
+	if c.Signal.MaxBatchMessages < 1 {
+		return fmt.Errorf("lifecycle.signal.max_batch_messages must be positive")
+	}
+	if c.Signal.MaxInflightMessages < c.Signal.MaxBatchMessages {
+		return fmt.Errorf("lifecycle.signal.max_inflight_messages must be at least max_batch_messages")
 	}
 	if c.Signal.MaxMessageBytes < 1 || c.Signal.MaxMessageBytes > 1<<20 {
 		return fmt.Errorf("lifecycle.signal.max_message_bytes must be between 1 and 1048576")
@@ -250,17 +236,17 @@ func (c LifecycleConfig) Validate() error {
 	if backpressure.QueryTimeoutSeconds < 1 || backpressure.QueryTimeoutSeconds > backpressure.CacheTTLSeconds {
 		return fmt.Errorf("lifecycle.mailbox.backpressure.query_timeout_seconds must be between 1 and cache_ttl_seconds")
 	}
-	if backpressure.LowWatermark <= 0 || backpressure.HighWatermark <= backpressure.LowWatermark {
+	if backpressure.HighWatermark < 0 || backpressure.LowWatermark < 0 || (backpressure.HighWatermark > 0 && backpressure.HighWatermark <= backpressure.LowWatermark) {
 		return fmt.Errorf("lifecycle.mailbox.backpressure watermarks must satisfy 0 < low_watermark < high_watermark")
 	}
 	batchBytes := int64(c.Signal.MaxBatchMessages) * int64(c.Signal.MaxMessageBytes)
-	if batchBytes > maxLifecycleBatchBytes {
-		return fmt.Errorf("lifecycle signal batch capacity must not exceed %d bytes", maxLifecycleBatchBytes)
+	if batchBytes/int64(c.Signal.MaxMessageBytes) != int64(c.Signal.MaxBatchMessages) {
+		return fmt.Errorf("lifecycle signal batch capacity overflows")
 	}
-	inflightMessages := max(c.Concurrency*4, c.Signal.MaxBatchMessages)
+	inflightMessages := c.Signal.MaxInflightMessages
 	inflightBytes := int64(inflightMessages) * int64(c.Signal.MaxMessageBytes)
-	if inflightBytes > maxLifecycleInflightBytes {
-		return fmt.Errorf("lifecycle signal inflight capacity must not exceed %d bytes", maxLifecycleInflightBytes)
+	if inflightBytes/int64(c.Signal.MaxMessageBytes) != int64(inflightMessages) {
+		return fmt.Errorf("lifecycle signal inflight capacity overflows")
 	}
 	if strings.TrimSpace(c.Lock.KeyPrefix) != c.Lock.KeyPrefix || len(c.Lock.KeyPrefix) > 256 {
 		return fmt.Errorf("lifecycle.lock.key_prefix must be at most 256 bytes without surrounding whitespace")
@@ -268,22 +254,8 @@ func (c LifecycleConfig) Validate() error {
 	if err := c.SchedulerConfig().Validate(); err != nil {
 		return fmt.Errorf("lifecycle.lock: %w", err)
 	}
-	if c.Output.Kafka == nil {
-		return fmt.Errorf("lifecycle.output.kafka is required")
-	}
-	if err := c.KafkaHookConfig().Validate(); err != nil {
-		return fmt.Errorf("lifecycle.output.kafka: %w", err)
-	}
-	return c.RuntimeConfig().Validate()
-}
 
-// Redacted 返回隐藏 Kafka SASL password 的深拷贝。
-func (c LifecycleConfig) Redacted() LifecycleConfig {
-	redacted := c.WithDefaults()
-	if redacted.Output.Kafka != nil {
-		redacted.Output.Kafka.Security = redacted.Output.Kafka.Security.Redacted()
-	}
-	return redacted
+	return c.RuntimeConfig().Validate()
 }
 
 // RuntimeConfig 把用户可调并发和预算映射为有界消费运行时配置。
@@ -293,13 +265,14 @@ func (c LifecycleConfig) RuntimeConfig() consume.Config {
 	runtimeConfig.WorkerCount = c.Concurrency
 	runtimeConfig.MaxBatchMessages = c.Signal.MaxBatchMessages
 	runtimeConfig.MaxBatchBytes = c.Signal.MaxBatchMessages * c.Signal.MaxMessageBytes
-	runtimeConfig.MaxInflightMessages = max(c.Concurrency*4, c.Signal.MaxBatchMessages)
+	runtimeConfig.MaxInflightMessages = c.Signal.MaxInflightMessages
 	runtimeConfig.MaxInflightBytes = runtimeConfig.MaxInflightMessages * c.Signal.MaxMessageBytes
 	runtimeConfig.MaxInflightPerLane = runtimeConfig.MaxInflightMessages
 	runtimeConfig.ProcessTimeout = time.Duration(c.ProcessTimeoutSeconds) * time.Second
 	runtimeConfig.RetryMaxAttempts = c.RetryMaxAttempts
 	runtimeConfig.RetryMaxElapsed = time.Duration(c.RetryMaxElapsedSeconds) * time.Second
-	runtimeConfig.MaxRetryMessages = min(runtimeConfig.MaxInflightMessages, max(c.Concurrency*2, 1))
+	// 已接管 Signal 都可能正常延后，容量必须覆盖整个在途预算。
+	runtimeConfig.MaxRetryMessages = runtimeConfig.MaxInflightMessages
 	return runtimeConfig
 }
 
@@ -307,10 +280,7 @@ func (c LifecycleConfig) RuntimeConfig() consume.Config {
 func (c LifecycleConfig) RedisStreamConfig(redisConfig RedisConfig, consumerName string) redisstream.Config {
 	c = c.WithDefaults()
 	return redisstream.Config{
-		Address:        redisConfig.Address,
-		Username:       redisConfig.Username,
-		Password:       redisConfig.Password,
-		DB:             redisConfig.Database,
+		Connection:     redisConfig.ClientOptions(),
 		Stream:         c.Signal.Stream,
 		Group:          c.Signal.Group,
 		Consumer:       consumerName,
@@ -346,18 +316,11 @@ func (c LifecycleConfig) MailboxConfig() mailbox.Config {
 	}
 }
 
-// KafkaHookConfig 构造同步 Kafka FinalHook 配置。
-func (c LifecycleConfig) KafkaHookConfig() kafkahook.Config {
+// ForSource 派生同来源所有副本共享的 Signal Stream 与 Mailbox 存储范围。
+func (c LifecycleConfig) ForSource(deployment, source string) LifecycleConfig {
 	c = c.WithDefaults()
-	if c.Output.Kafka == nil {
-		return kafkahook.Config{}
-	}
-	kafka := c.Output.Kafka
-	return kafkahook.Config{
-		Brokers:         append([]string(nil), kafka.Brokers...),
-		Topic:           kafka.Topic,
-		ClientID:        kafka.ClientID,
-		MaxMessageBytes: kafka.MaxMessageBytes,
-		Security:        kafka.Security.Clone(),
-	}
+	c.Signal.Stream = mailbox.SourceStream(c.Signal.Stream, deployment, source)
+	c.Mailbox.KeyPrefix = c.Mailbox.KeyPrefix + ":" + mailbox.SourceKey(deployment, source)
+	c.Lock.KeyPrefix = c.Lock.KeyPrefix + ":" + mailbox.SourceKey(deployment, source)
+	return c
 }

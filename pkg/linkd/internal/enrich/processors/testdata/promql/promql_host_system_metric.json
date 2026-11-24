@@ -1,0 +1,122 @@
+{
+  "monitor_template_name": "PromQL",
+  "strategy_revision": {
+    "bk_tenant_id": "tenant-example",
+    "strategy_bk_biz_id": 2,
+    "strategy_id": 11,
+    "strategy_revision": 1
+  },
+  "runtime_config": {
+    "metadata": {
+      "name": "example-cpu",
+      "labels": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-example",
+        "config_id": "example-config",
+        "monitor_template_id": 12,
+        "is_default": true
+      }
+    },
+    "spec": {
+      "config_type": "data",
+      "monitor_item_type": "metric",
+      "name": "avg_over_time(bkmonitor:system:cpu_summary:usage{bk_biz_id=\"2\"}[60s])",
+      "strategy_item": {
+        "query_configs": [
+          {
+            "agg_interval": 60,
+            "promql": "avg_over_time(bkmonitor:system:cpu_summary:usage{bk_biz_id=\"2\"}[60s])",
+            "query_config_type": "prometheus"
+          }
+        ],
+        "agg_interval": "60s"
+      }
+    }
+  },
+  "runtime_items": [
+    {
+      "query_configs": [
+        {
+          "promql": "avg_over_time(bkmonitor:system:cpu_summary:usage{bk_biz_id=\"2\"}[60s])"
+        }
+      ]
+    }
+  ],
+  "event": {
+    "bk_tenant_id": "tenant-example",
+    "event_id": "event-example",
+    "source_event_id": "source-example",
+    "title": "CPU threshold",
+    "content": "CPU sample above threshold",
+    "dimensions": {
+      "bk_host_id": "101",
+      "bk_target_host_id": "101",
+      "bk_target_ip": "192.0.2.10",
+      "ip": "192.0.2.10",
+      "hostname": "example-host",
+      "device_name": "cpu-total"
+    },
+    "labels": {
+      "bk_biz_id": 2,
+      "strategy_id": 11,
+      "strategy_version": 1
+    },
+    "subject": {
+      "system": "cmdb",
+      "type": "host",
+      "id": "101"
+    },
+    "evaluations": [
+      {
+        "severity": "info",
+        "action": "triggered"
+      }
+    ],
+    "occurred_at": "2025-01-01T00:00:00Z",
+    "produced_at": "2025-01-01T00:00:00Z",
+    "received_at": "2025-01-01T00:00:00Z",
+    "create_at": "2025-01-01T00:00:00Z"
+  },
+  "host": {
+    "model": {
+      "model_id": "cw-Host",
+      "model_code": "cw-Host",
+      "fields": {
+        "object_model_name": "主机",
+        "bk_cmdb_obj_id": "host"
+      }
+    },
+    "instance": {
+      "model_code": "cw-Host",
+      "instance_id": "101",
+      "fields": {
+        "display_name": "example-host",
+        "bk_biz_ids": [
+          2
+        ]
+      },
+      "attributes": {
+        "bk_host_id": 101,
+        "bk_host_innerip": "192.0.2.10",
+        "bk_biz_id": 2,
+        "bk_biz_name": "示例业务"
+      }
+    },
+    "topology": {
+      "bk_biz_id": 2,
+      "bk_biz_name": "示例业务"
+    }
+  },
+  "catalog": [
+    {
+      "id": 9,
+      "model_id": "cw-Host",
+      "metric_name": "usage",
+      "display_name": "CPU使用率",
+      "kind": "native",
+      "result_table_id": "system.cpu_summary",
+      "physical_field": "usage",
+      "unit": "percent"
+    }
+  ]
+}

@@ -1,0 +1,681 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package processors
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"sort"
+	"strings"
+
+	"linkd/internal/domain"
+	"linkd/internal/enrich"
+	"linkd/internal/enrich/basetarget"
+	"linkd/internal/enrich/collect"
+	"linkd/internal/enrich/models"
+	"linkd/internal/enrich/rules"
+	uptimeenrich "linkd/internal/enrich/uptime"
+)
+
+// Display 丰富告警的展示信息。
+type Display struct {
+	// PreserveContent 在创建内容模式下不发布 content 覆盖项；Event 丰富先于 Alert 内容生成。
+	PreserveContent bool
+}
+
+// Name 返回稳定的 Processor 名称。
+func (Display) Name() string { return rules.DisplayProcessor }
+
+// Match 判断当前告警是否适用 Display。
+func (Display) Match(context.Context, *enrich.Scope) (bool, error) { return true, nil }
+
+// Process 生成告警展示字段。
+func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
+	alert := scope.Facts()
+	_, diagnostics := enrich.ValidateStrategyIdentity(alert)
+	bizID := enrich.OptionalBusinessID(alert)
+	if len(diagnostics) != 0 {
+		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil
+	}
+	strategy, found, err := scope.CWStrategy(ctx)
+	if ctx.Err() != nil {
+		return enrich.ProcessorResult{}, ctx.Err()
+	}
+	if err != nil || !found {
+		return failedDependency(rules.DependencyKingeyeStrategy), nil
+	}
+	projection, err := strategy.StrategyItemProjection()
+	if err != nil {
+		return failedDependency(rules.DependencyKingeyeStrategy), nil
+	}
+	alertDimensions, err := combinedDimensions(alert)
+	if err != nil {
+		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: []enrich.Diagnostic{{
+			Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"extra_data.additional_dimensions"},
+		}}}, nil
+	}
+	classification := rules.Classify(strategy, alert.Dimensions)
+	objectName := cleanDisplayObject(alert, strategy, scope.Context().Resource.Values)
+	displayDiagnostics := make([]enrich.Diagnostic, 0, 1)
+	var uptimeResult *uptimeenrich.Result
+	if classification.BaseTarget == rules.BaseTargetUptimeCheck {
+		result, uptimeErr := uptimeenrich.Enrich(ctx, scope, *strategy.ObjectModelCode, alert.Dimensions, bizID)
+		if uptimeErr != nil {
+			return enrich.ProcessorResult{}, uptimeErr
+		}
+		uptimeResult = &result
+		if result.Object != "" {
+			objectName = result.Object
+		}
+		displayDiagnostics = append(displayDiagnostics, result.DisplayDiagnostics...)
+	}
+	if classification.Main == rules.MainData {
+		objectName, err = dataResourceDisplay(ctx, scope, strategy)
+		if err != nil {
+			return enrich.ProcessorResult{}, err
+		}
+		resultTableID := projection.QueryConfigs[0].ResultTableID
+		if rules.IsAPMQuery(projection.QueryConfigs[0]) {
+			objectName = rules.DimensionText(alertDimensions, rules.FieldServiceName)
+		} else if strings.HasPrefix(resultTableID, "uptimecheck") {
+			result, uptimeErr := uptimeenrich.Enrich(ctx, scope, rules.UptimeModelCode, alert.Dimensions, bizID)
+			if uptimeErr != nil {
+				return enrich.ProcessorResult{}, uptimeErr
+			}
+			uptimeResult = &result
+			objectName = result.Object
+			displayDiagnostics = append(displayDiagnostics, result.DisplayDiagnostics...)
+		}
+	} else if classification.BaseTarget == rules.BaseTargetCollectTask {
+		result, collectErr := collect.Enrich(ctx, scope, alert.Dimensions, bizID, alert.SubjectName)
+		if collectErr != nil {
+			return enrich.ProcessorResult{}, collectErr
+		}
+		if result.Object != "" {
+			objectName = result.Object
+		}
+	} else if classification.Main != rules.MainData && classification.BaseTarget != rules.BaseTargetUptimeCheck {
+		result, targetErr := basetarget.Enrich(ctx, scope, classification, strategy, alert.Dimensions, bizID, alert.SubjectName)
+		if targetErr != nil {
+			return enrich.ProcessorResult{}, targetErr
+		}
+		// 实例展示名不可用时保留已从主机 IP、K8s node 或 Subject
+		// 得到的名称，避免降级结果再次清空合法来源展示值。
+		if result.Object != "" {
+			objectName = result.Object
+		}
+		displayDiagnostics = append(displayDiagnostics, result.DisplayDiagnostics...)
+	}
+	itemName, err := displayItem(ctx, scope, strategy, projection)
+	if classification.Main == rules.DisplayLogMetric && strategy.Spec.AliasName != "" {
+		itemName = strategy.Spec.AliasName
+	} else if classification.Main == rules.DisplayLogKeyword {
+		itemName = sourceConfigString(strategy.Spec.SourceConfig, rules.FieldQueryString)
+		if itemName == "" {
+			itemName = rules.LogMetricFallback
+		}
+	}
+	if err != nil {
+		return failedDependency(rules.DependencyMetricCatalog), nil
+	}
+	additional, err := additionalDimensions(alert.ExtraData)
+	if err != nil {
+		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: []enrich.Diagnostic{{
+			Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"extra_data.additional_dimensions"},
+		}}}, nil
+	}
+	var dimensions []models.DimensionDisplay
+	var metricMetadata models.MetricMetadata
+	if classification.Main == rules.MainData && uptimeResult == nil {
+		mapping, mappingErr := dataMetricMetadata(ctx, scope, strategy, projection)
+		if mappingErr != nil {
+			return failedDependency(rules.DependencyMetricCatalog), nil
+		}
+		metricMetadata = mapping
+	}
+	if uptimeResult != nil {
+		dimensions = uptimeResult.Dimensions
+	} else {
+		dimensions, err = buildDisplayDimensions(ctx, scope, strategy, projection, alertDimensions, additional)
+	}
+	if err != nil {
+		return failedDependency(rules.DependencyMetricCatalog), nil
+	}
+	titleSubject := alert.SubjectName
+	if classification.Main == rules.DisplayLogMetric {
+		// 旧链路在转换前把日志主题写入 alarm_obj；原始 Event 的 subject 可以为空。
+		_, themeName, themeDiagnostics := resolveLogTheme(ctx, scope, strategy.Spec.SourceConfig)
+		if err := ctx.Err(); err != nil {
+			return enrich.ProcessorResult{}, err
+		}
+		titleSubject = logDisplaySubject(themeName, alert.SubjectName)
+		displayDiagnostics = append(displayDiagnostics, themeDiagnostics...)
+	}
+	title := cleanDisplayTitle(classification.Main, strategy, titleSubject, objectName, itemName)
+	dimensionText := buildDimensionText(
+		dimensions,
+		classification.Main,
+		scope.Context().Resource.Values,
+		projection.QueryConfigs[0],
+		additional,
+	)
+	content := alert.Content
+	if !p.PreserveContent && rules.IsLogDisplay(classification.Main) {
+		subjectName := logDisplaySubject(alert.SubjectName, sourceConfigString(strategy.Spec.SourceConfig, rules.FieldLogThemeName))
+		content = subjectName + logDisplayContent(content, classification.Main, sourceConfigString(strategy.Spec.SourceConfig, rules.FieldQueryString))
+	} else if !p.PreserveContent {
+		content = applyDataContentAlgorithm(content, strategy, metricMetadata, scope.Evaluation().Severity)
+	}
+	if !p.PreserveContent && classification.Main == rules.MainData {
+		content = enrichDataAlgorithmContent(content, metricMetadata.ValueMapping)
+	}
+	values := models.DisplayValues{
+		Title: title, Content: content, Object: objectName,
+		Dimensions: dimensions, DimensionText: dimensionText,
+	}
+	scope.Context().Display.Set(values)
+	value, encodeErr := scope.Context().Display.JSONObject()
+	if encodeErr != nil {
+		return enrich.ProcessorResult{}, encodeErr
+	}
+	if p.PreserveContent {
+		delete(value, "content")
+	}
+	status := domain.EnrichStatusSucceeded
+	if len(displayDiagnostics) != 0 {
+		status = domain.EnrichStatusPartial
+	}
+	return enrich.ProcessorResult{Status: status, Value: value, Diagnostics: displayDiagnostics}, nil
+}
+
+// DATA 与目标类复用同一已确认资源的展示名；查询未命中时保留来源名称或主机 IP。
+// 主机路径使用场景缓存，避免 Display 与 Resource 的独立读取产生不同对象。
+func dataResourceDisplay(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy) (string, error) {
+	event := scope.Facts()
+	values := scope.Context().Resource.Values
+	if values.ModelID == rules.HostModelCode {
+		code := rules.HostModelCode
+		strategy.ObjectModelCode = &code
+		bizID := enrich.OptionalBusinessID(event)
+		branch := rules.BaseTargetSystemMetric
+		if rules.ScalarProvided(event.Dimensions[rules.FieldNoDataDimension]) {
+			branch = rules.BaseTargetNoData
+		} else if _, hasModel := event.Dimensions[rules.FieldModelID]; hasModel {
+			branch = rules.BaseTargetMonitorSource
+		} else if _, hasInstance := event.Dimensions[rules.FieldModelInstID]; hasInstance {
+			branch = rules.BaseTargetMonitorSource
+		}
+		result, err := basetarget.Enrich(ctx, scope, rules.Classification{Main: rules.MainData, BaseTarget: branch}, strategy, event.Dimensions, bizID, event.SubjectName)
+		if err != nil {
+			return "", err
+		}
+		if result.Object != "" {
+			return result.Object, nil
+		}
+	}
+	if values.ModelID != "" && values.ModelInstID != "" && values.ModelID != rules.HostModelCode {
+		instance, found, err := scope.Instance(ctx, enrich.InstanceQuery{ModelCode: values.ModelID, InstanceID: values.ModelInstID})
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		if err == nil && found && instance.TenantID == event.BKTenantID && instance.ModelCode == values.ModelID && instance.InstanceID == values.ModelInstID {
+			if name, ok := rules.FirstStringField(mergeInstanceFields(instance.Fields, instance.Attributes), rules.FieldBKInstDisplayName, rules.FieldBKInstName, "display_name"); ok {
+				return name, nil
+			}
+		}
+	}
+	return cleanDisplayObject(event, strategy, values), nil
+}
+
+func logDisplaySubject(alertSubject string, logThemeName string) string {
+	if alertSubject != "" {
+		return alertSubject
+	}
+	return logThemeName
+}
+
+func logDisplayContent(content string, classification rules.DisplayClassification, query string) string {
+	content = strings.SplitN(content, ",关联信息", 2)[0]
+	if classification == rules.DisplayLogMetric {
+		return content
+	}
+	if strings.Contains(content, "无数据") {
+		text := content
+		if index := strings.LastIndex(text, ")"); index >= 0 && index+1 < len(text) {
+			text = text[index+1:]
+		}
+		return fmt.Sprintf("【%s】关键字%s", query, text)
+	}
+	pattern := regexp.MustCompile(`(?:[<>=!]=?|大于等于|大于|小于等于|小于|等于|不等于)\s*\d+\.?\d*\s*,\s*当前值\s*\d+`)
+	match := pattern.FindString(content)
+	if match == "" {
+		match = content
+	} else if index := strings.Index(content, match); index >= 0 {
+		match = content[index:]
+	}
+	return fmt.Sprintf("匹配到【%s】关键字次数 %s", query, match)
+}
+
+func dataMetricMetadata(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, projection models.StrategyItemProjection) (models.MetricMetadata, error) {
+	query := projection.QueryConfigs[0]
+	objectModelCode := ""
+	if strategy.ObjectModelCode != nil {
+		objectModelCode = *strategy.ObjectModelCode
+	}
+	metadata, found, err := metricDefinitionMetadata(ctx, scope, strategy, query, objectModelCode)
+	if err != nil || !found {
+		return models.MetricMetadata{}, err
+	}
+	if len(projection.QueryConfigs) > 1 || hasFunctions(projection.Functions) || hasFunctions(query.Functions) {
+		return models.MetricMetadata{}, nil
+	}
+	return metadata, nil
+}
+
+func applyDataContentAlgorithm(content string, strategy models.CWStrategy, metadata models.MetricMetadata, severity string) string {
+	for _, item := range metadata.ValueMapping {
+		if item.OriginalValue == "" || item.MappedValue == "" {
+			continue
+		}
+		content = replaceMetricValue(content, item.OriginalValue, item.MappedValue)
+	}
+	if isDataThresholdContent(content) {
+		return appendMetricUnit(content, effectiveMetricUnit(strategy, metadata, severity))
+	}
+	return content
+}
+
+func enrichDataAlgorithmContent(content string, mapping []models.MetricValueMapping) string {
+	for _, item := range mapping {
+		if item.OriginalValue == "" || item.MappedValue == "" {
+			continue
+		}
+		content = annotateAlgorithmValues(content, item.OriginalValue, item.MappedValue)
+	}
+	return content
+}
+
+func annotateAlgorithmValues(content, original, mapped string) string {
+	parts := strings.Split(content, ",")
+	for index, part := range parts {
+		if strings.Contains(part, "无数据") || strings.Contains(part, "无数据上报") {
+			continue
+		}
+		if strings.Contains(part, "同一时刻绝对值") || strings.Contains(part, "前一时刻值") {
+			parts[index] = replaceMetricValue(part, original, mapped)
+			continue
+		}
+		if strings.Contains(part, "较前一时刻") || strings.Contains(part, "时间点的均值") || strings.Contains(part, "上周同一时刻") || strings.Contains(part, "同一时刻差值") {
+			parts[index] = replaceMetricValue(part, original, mapped)
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+func isDataThresholdContent(content string) bool {
+	return regexp.MustCompile(`\s[><=!]`).MatchString(content) &&
+		!strings.Contains(content, "前一时刻值") && !strings.Contains(content, "同一时刻绝对值")
+}
+
+func effectiveMetricUnit(strategy models.CWStrategy, metadata models.MetricMetadata, severity string) string {
+	for _, algorithm := range strategy.Spec.StrategyDetectAlgorithms {
+		if algorithm.LevelStatus != severity || algorithm.AlgorithmConfig == nil {
+			continue
+		}
+		if raw, ok := algorithm.AlgorithmConfig["algorithmUnit"]; ok {
+			var unit string
+			if json.Unmarshal(raw, &unit) == nil {
+				if unit == "NONE" {
+					return ""
+				}
+				if unit != "" {
+					return unit
+				}
+			}
+		}
+	}
+	switch metadata.Unit {
+	case "bytes":
+		return "B"
+	case "percent", "percentunit":
+		return "%"
+	default:
+		return metadata.Unit
+	}
+}
+
+func appendMetricUnit(content, unit string) string {
+	if unit == "" {
+		return content
+	}
+	pattern := `(?i)(>=|<=|>|<|=|current value is)\s*(-?[0-9]+(?:\.[0-9]+)?)`
+	re := regexp.MustCompile(pattern)
+	return re.ReplaceAllStringFunc(content, func(match string) string {
+		return match + unit
+	})
+}
+
+func replaceMetricValue(content, original, mapped string) string {
+	pattern := `(^|[^[:alnum:]_.-])(` + regexp.QuoteMeta(original) + `)($|[^[:alnum:]_.-])`
+	re := regexp.MustCompile(pattern)
+	return re.ReplaceAllStringFunc(content, func(match string) string {
+		index := strings.Index(match, original)
+		if index < 0 {
+			return match
+		}
+		end := index + len(original)
+		return match[:end] + "(" + mapped + ")" + match[end:]
+	})
+}
+
+func cleanDisplayTitle(
+	classification rules.DisplayClassification,
+	strategy models.CWStrategy,
+	subjectName, objectName, itemName string,
+) string {
+	if strategy.Spec.AlarmAlias != "" {
+		return strategy.Spec.AlarmAlias
+	}
+	switch classification {
+	case rules.DisplayData:
+		return itemName + "发生了告警"
+	case rules.DisplayLogMetric:
+		return subjectName + "发生了" + itemName + "告警"
+	case rules.DisplayLogKeyword:
+		subjectName := logDisplaySubject(subjectName, sourceConfigString(strategy.Spec.SourceConfig, rules.FieldLogThemeName))
+		queryString := sourceConfigString(strategy.Spec.SourceConfig, rules.FieldQueryString)
+		return subjectName + "发生了【" + queryString + "】关键字告警"
+	default:
+		return objectName + "发生了" + itemName + "告警"
+	}
+}
+
+func cleanDisplayObject(
+	alert domain.Event,
+	strategy models.CWStrategy,
+	resource models.ResourceValues,
+) string {
+	classification := rules.ClassifyDisplay(strategy)
+	if rules.IsLogDisplay(classification) {
+		return ""
+	}
+	if classification == rules.DisplayCloud {
+		resourceName := displayResourceName(resource)
+		cloudName := resource.BKCloudName
+		if cloudName == "" {
+			cloudName = fmt.Sprint(resource.CloudPlatformID)
+		}
+		switch {
+		case resourceName != "" && cloudName != "" && cloudName != "<nil>":
+			return resourceName + "(" + cloudName + ")"
+		case resourceName != "":
+			return resourceName
+		}
+	}
+	query := models.StrategyQueryConfig{ResultTableID: strategy.Spec.TableID}
+	if projection, err := strategy.StrategyItemProjection(); err == nil {
+		query = projection.QueryConfigs[0]
+	}
+	if rules.IsAPMQuery(query) {
+		if dimensions, err := combinedDimensions(alert); err == nil {
+			if serviceName := rules.DimensionText(dimensions, rules.FieldServiceName); serviceName != "" {
+				return serviceName
+			}
+		}
+	}
+	if strategy.ObjectModelCode != nil && *strategy.ObjectModelCode == rules.K8sNodeModelCode {
+		if alert.SubjectName != "" {
+			return alert.SubjectName
+		}
+		if node := rules.DimensionText(alert.Dimensions, rules.FieldNode); node != "" {
+			return node
+		}
+		if instance := rules.DimensionText(alert.Dimensions, rules.FieldInstance); instance != "" {
+			return strings.SplitN(instance, ":", 2)[0]
+		}
+		return ""
+	}
+	if strategy.ObjectModelCode != nil && *strategy.ObjectModelCode == rules.HostModelCode {
+		if alert.SubjectName != "" {
+			return alert.SubjectName
+		}
+		if ip := rules.DimensionText(alert.Dimensions, rules.FieldIP); ip != "" {
+			return ip
+		}
+		return rules.DimensionText(alert.Dimensions, rules.FieldBKTargetIP)
+	}
+	return alert.SubjectName
+}
+
+func displayResourceName(resource models.ResourceValues) string {
+	if resource.ModelName != "" {
+		return resource.ModelName
+	}
+	if resource.BKInstID != nil {
+		value := fmt.Sprint(resource.BKInstID)
+		if value != "<nil>" {
+			return value
+		}
+	}
+	return ""
+}
+
+func displayItem(
+	ctx context.Context,
+	scope *enrich.Scope,
+	strategy models.CWStrategy,
+	projection models.StrategyItemProjection,
+) (string, error) {
+	return cleanItem(ctx, scope, strategy, projection, projection.QueryConfigs[0])
+}
+
+func buildDisplayDimensions(
+	ctx context.Context,
+	scope *enrich.Scope,
+	strategy models.CWStrategy,
+	projection models.StrategyItemProjection,
+	dimensions domain.DimensionMap,
+	additional domain.DimensionMap,
+) ([]models.DimensionDisplay, error) {
+	query := projection.QueryConfigs[0]
+	objectModelCode := ""
+	if strategy.ObjectModelCode != nil {
+		objectModelCode = *strategy.ObjectModelCode
+	}
+	metadata, found, err := metricDefinitionMetadata(ctx, scope, strategy, query, objectModelCode)
+	if err != nil {
+		return nil, err
+	}
+	nameByKey := map[string]string{rules.FieldBKBizID: "业务", rules.FieldBKTargetCloudID: "云区域"}
+	if found {
+		for _, dimension := range metadata.Dimensions {
+			if dimension.Key != "" {
+				nameByKey[dimension.Key] = dimension.Name
+			}
+		}
+	}
+
+	dimensionKeys := query.AggregateBy
+	if query.IsPromQL() {
+		// PromQL 的聚合语义在表达式内，声明可以没有 agg_dimension。
+		// 仅展示实际返回的标签，不从表达式或目录补造已被聚合掉的维度；
+		// 无数据控制标记不是序列标签。排序保证 map 遍历不影响补丁和快照。
+		dimensionKeys = make([]string, 0, len(dimensions))
+		for key := range dimensions {
+			if key != rules.FieldNoDataDimension {
+				dimensionKeys = append(dimensionKeys, key)
+			}
+		}
+		sort.Strings(dimensionKeys)
+	}
+	result := make([]models.DimensionDisplay, 0, len(dimensionKeys)+2)
+	seen := make(map[string]struct{}, len(dimensionKeys)+2)
+	resource := scope.Context().Resource.Values
+	appendDimension := func(key, name string) {
+		value, exists := dimensions[key]
+		if !exists {
+			return
+		}
+		if _, exists := seen[key]; exists {
+			return
+		}
+		realKey := key
+		realValue := value
+		displayValue := displayDimensionValue(key, value, resource)
+		result = append(result, models.DimensionDisplay{
+			Name: name, Value: displayValue, RealKey: &realKey, RealValue: &realValue,
+		})
+		seen[key] = struct{}{}
+	}
+
+	// 对象模型和实例条目沿用 Converter 的固定生成顺序。
+	for _, field := range []struct{ key, name string }{
+		{rules.FieldModelID, "对象模型ID"}, {rules.FieldObjectModelID, "对象模型ID"},
+		{rules.FieldModelInstID, "对象模型实例ID"}, {rules.FieldObjectModelInstID, "对象模型实例ID"},
+	} {
+		appendDimension(field.key, field.name)
+	}
+	for _, key := range dimensionKeys {
+		name, exists := nameByKey[key]
+		if query.IsPromQL() && name == "" {
+			name, exists = key, true
+		}
+		if !exists {
+			continue
+		}
+		appendDimension(key, name)
+	}
+	if !query.IsPromQL() {
+		result = appendAdditionalDisplayDimensions(result, additional, nameByKey, resource)
+	}
+	return result, nil
+}
+
+func appendAdditionalDisplayDimensions(
+	entries []models.DimensionDisplay,
+	additional domain.DimensionMap,
+	nameByKey map[string]string,
+	resource models.ResourceValues,
+) []models.DimensionDisplay {
+	seen := make(map[string]struct{}, len(entries)+len(additional))
+	for _, entry := range entries {
+		if entry.RealKey != nil {
+			seen[*entry.RealKey] = struct{}{}
+		}
+	}
+	keys := make([]string, 0, len(additional))
+	for key := range additional {
+		if _, exists := seen[key]; !exists {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		value := additional[key]
+		realKey := key
+		realValue := value
+		name := nameByKey[key]
+		if name == "" {
+			name = key
+		}
+		entries = append(entries, models.DimensionDisplay{
+			Name: name, Value: displayDimensionValue(key, value, resource), RealKey: &realKey, RealValue: &realValue,
+		})
+	}
+	return entries
+}
+
+func displayDimensionValue(
+	key string,
+	original domain.Scalar,
+	resource models.ResourceValues,
+) domain.Scalar {
+	var translated string
+	switch key {
+	case rules.FieldModelID, rules.FieldObjectModelID:
+		translated = resource.ModelName
+	case rules.FieldModelInstID, rules.FieldObjectModelInstID:
+		translated = fmt.Sprint(resource.BKInstID)
+	case rules.FieldBKBizID:
+		translated = resource.BKBizName
+	case rules.FieldBKCloudID, rules.FieldBKTargetCloudID, rules.FieldCloudID:
+		translated = resource.BKCloudName
+	}
+	if translated == "" || translated == "<nil>" {
+		return original
+	}
+	return domain.NewStringScalar(translated)
+}
+
+func buildDimensionText(
+	entries []models.DimensionDisplay,
+	classification rules.DisplayClassification,
+	resource models.ResourceValues,
+	query models.StrategyQueryConfig,
+	additional domain.DimensionMap,
+) string {
+	copied := append([]models.DimensionDisplay(nil), entries...)
+	sort.SliceStable(copied, func(i, j int) bool { return copied[i].Name < copied[j].Name })
+	parts := make([]string, 0, len(copied))
+	for _, entry := range copied {
+		if entry.Name == rules.FieldBKBizID || excludeAPMDimension(entry, query) {
+			continue
+		}
+		if entry.RealKey != nil {
+			if _, exists := additional[*entry.RealKey]; exists {
+				parts = append(parts, fmt.Sprintf("%s(%v)", entry.Name, rules.ScalarValue(entry.Value)))
+				continue
+			}
+		}
+		parts = appendDimensionText(parts, entry, resource)
+	}
+	text := strings.Join(parts, " | ")
+	if classification == rules.DisplayLogKeyword {
+		text = strings.ReplaceAll(text, "keyword(", "日志关键字(")
+	}
+	return text
+}
+
+func excludeAPMDimension(entry models.DimensionDisplay, query models.StrategyQueryConfig) bool {
+	if !rules.IsAPMQuery(query) || entry.RealKey == nil {
+		return false
+	}
+	return rules.IsAPMDimension(*entry.RealKey)
+}
+
+func appendDimensionText(
+	parts []string,
+	entry models.DimensionDisplay,
+	resource models.ResourceValues,
+) []string {
+	realKey := ""
+	if entry.RealKey != nil {
+		realKey = strings.ToLower(*entry.RealKey)
+	}
+	if realKey == rules.FieldBKBizID {
+		if resource.BKBizID != nil {
+			return append(parts, fmt.Sprintf("%s=%v(%s)", entry.Name, resource.BKBizID, resource.BKBizName))
+		}
+		if rules.ScalarProvided(entry.Value) && entry.RealValue != nil {
+			return append(parts, fmt.Sprintf("%s=%v(%v)", entry.Name, rules.ScalarValue(*entry.RealValue), rules.ScalarValue(entry.Value)))
+		}
+		return parts
+	}
+	if rules.IsIdentityDimension(realKey) && rules.ScalarProvided(entry.Value) && entry.RealValue != nil {
+		return append(parts, fmt.Sprintf("%s=%v(%v)", entry.Name, rules.ScalarValue(*entry.RealValue), rules.ScalarValue(entry.Value)))
+	}
+	value := rules.ScalarValue(entry.Value)
+	if !rules.ScalarProvided(entry.Value) && entry.RealValue != nil {
+		value = rules.ScalarValue(*entry.RealValue)
+	}
+	return append(parts, fmt.Sprintf("%s=%v", entry.Name, value))
+}

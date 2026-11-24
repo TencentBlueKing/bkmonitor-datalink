@@ -29,13 +29,13 @@ func TestArchiveTerminalAlertsBulkCreatesHistoryThenConditionallyDeletesActive(t
 	event := eventForIDTest(t, eventID, now)
 	alertID, _ := domain.GenerateAlertID(event, event.CreateAt)
 	endAt := now.Add(time.Minute)
-	alert := domain.Alert{
+	alert := domain.Alert{Revision: 1, EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
-		Fingerprint: event.Fingerprint, Severity: event.Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
+		Fingerprint: event.Fingerprint, Severity: event.Evaluations[0].Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusRecovered, LatestEventID: eventID,
 		LastOccurredAt: endAt, UpdateAt: endAt, TriggerEventID: eventID, BeginAt: now,
 		CreateAt: now, EndAt: &endAt, EndType: domain.AlertEndTypeSource,
-		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{},
+		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: succeededEnrich(),
 	}
 	activeID := alertDocumentID(alert)
 	activeVersion, err := encodeVersion(versionPayload{
@@ -56,7 +56,7 @@ func TestArchiveTerminalAlertsBulkCreatesHistoryThenConditionallyDeletesActive(t
 			body, _ := io.ReadAll(request.Body)
 			if request.Method != http.MethodPost || request.URL.Path != "/_bulk" ||
 				request.URL.Query().Get("require_alias") != "true" ||
-				request.URL.Query().Get("refresh") != "wait_for" ||
+				request.URL.Query().Get("refresh") != "false" ||
 				!strings.Contains(string(body), `"create":{"_id":"`+historyID+`","_index":"linkd-test-alert-history-write-20260831"}`) {
 				t.Fatalf("history request=%s %s", request.Method, request.URL.String())
 			}
@@ -66,7 +66,7 @@ func TestArchiveTerminalAlertsBulkCreatesHistoryThenConditionallyDeletesActive(t
 		case 2:
 			body, _ := io.ReadAll(request.Body)
 			if request.Method != http.MethodPost || request.URL.Path != "/_bulk" ||
-				request.URL.Query().Get("refresh") != "wait_for" ||
+				request.URL.Query().Get("refresh") != "false" ||
 				!strings.Contains(string(body), `"if_primary_term":2`) ||
 				!strings.Contains(string(body), `"if_seq_no":7`) {
 				t.Fatalf("delete request=%s %s", request.Method, request.URL.String())
@@ -80,7 +80,8 @@ func TestArchiveTerminalAlertsBulkCreatesHistoryThenConditionallyDeletesActive(t
 		}
 	})
 	router, err := newBucketRouter("linkd-test", BucketConfig{
-		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7, MaxFutureSkew: time.Minute,
+		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
+		MaxFutureSkew: time.Minute, ActiveAlertRefreshInterval: 5 * time.Second,
 	}, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
@@ -94,6 +95,24 @@ func TestArchiveTerminalAlertsBulkCreatesHistoryThenConditionallyDeletesActive(t
 	)
 	if len(results) != 1 || !results[0].archived || results[0].err != nil || requests != 2 {
 		t.Fatalf("results=%#v requests=%d", results, requests)
+	}
+}
+
+func TestArchiveRejectsTerminalMergeIntentBeforeAnyHistoryWrite(t *testing.T) {
+	a := archiveStoredAlert(t, "pending-merge-recovery", time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC))
+	a.Alert.EventSourceID = domain.BuiltinMergeEventSourceID
+	a.Alert.EndType = domain.AlertEndTypeSystem
+	a.Alert.EndReason = "merge_members_ended"
+	relation := strings.Repeat("a", 64)
+	a.Alert.Merge = &domain.AlertMerge{Role: "aggregate", State: "none", OperationID: relation}
+	a.Alert.MergeChange = &domain.AlertMergeChange{Kind: "parent_recover", OperationID: "recovery", RelationID: relation, WindowID: strings.Repeat("b", 64), EffectiveAt: a.Alert.UpdateAt, Before: a.Alert.Merge.Clone(), After: a.Alert.Merge.Clone()}
+	if err := a.Alert.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	repo := &Repository{}
+	// guard 必须在路由和外部 I/O 前执行；尚待输出的终态要留在 Active，供工作扫描发现。
+	if _, err := repo.prepareArchiveItem(t.Context(), a); err == nil {
+		t.Fatal("pending output was archived")
 	}
 }
 
@@ -131,6 +150,9 @@ func TestArchiveTerminalAlertsBulkIsolatesCreateConflictAndDeleteFailures(t *tes
 			}
 			return jsonResponse(t, map[string]any{"items": items}), nil
 		case 2:
+			if request.URL.Path != "/_mget" || request.URL.Query().Get("realtime") != "true" {
+				t.Fatalf("history verify request=%s %s", request.Method, request.URL.String())
+			}
 			duplicate := terminals[1].Alert
 			conflicting := terminals[3].Alert.Clone()
 			conflicting.Title = "different"
@@ -162,8 +184,16 @@ func TestArchiveTerminalAlertsBulkIsolatesCreateConflictAndDeleteFailures(t *tes
 					"_index": createdVersion.Index, "_id": createdVersion.DocumentID, "status": http.StatusOK,
 				}},
 				map[string]any{"delete": map[string]any{
-					"_index": duplicateVersion.Index, "_id": duplicateVersion.DocumentID, "status": http.StatusNotFound,
+					"_index": duplicateVersion.Index, "_id": duplicateVersion.DocumentID, "status": http.StatusConflict,
+					"error": map[string]string{"type": "version_conflict_engine_exception", "reason": "stale search hit"},
 				}},
+			}}), nil
+		case 4:
+			if request.URL.Path != "/_mget" || request.URL.Query().Get("realtime") != "true" {
+				t.Fatalf("active verify request=%s %s", request.Method, request.URL.String())
+			}
+			return jsonResponse(t, map[string]any{"docs": []any{
+				map[string]any{"_index": "linkd-test-alerts-active-000001", "_id": alertDocumentID(terminals[1].Alert), "found": false},
 			}}), nil
 		default:
 			t.Fatalf("unexpected request %s %s", request.Method, request.URL.String())
@@ -171,7 +201,8 @@ func TestArchiveTerminalAlertsBulkIsolatesCreateConflictAndDeleteFailures(t *tes
 		}
 	})
 	router, err := newBucketRouter("linkd-test", BucketConfig{
-		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7, MaxFutureSkew: 30 * 24 * time.Hour,
+		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
+		MaxFutureSkew: 30 * 24 * time.Hour, ActiveAlertRefreshInterval: 5 * time.Second,
 	}, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
@@ -183,7 +214,60 @@ func TestArchiveTerminalAlertsBulkIsolatesCreateConflictAndDeleteFailures(t *tes
 	results := repository.archiveTerminalAlertsBulk(context.Background(), terminals)
 	if len(results) != 4 || !results[0].archived || !results[1].archived ||
 		results[2].archived || results[2].stage != "history_create" ||
-		results[3].archived || results[3].stage != "history_verify" || requests != 3 {
+		results[3].archived || results[3].stage != "history_verify" || requests != 4 {
+		t.Fatalf("results=%#v requests=%d", results, requests)
+	}
+}
+
+func TestArchiveTerminalAlertsKeepsActiveDocumentAfterRealVersionConflict(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 2, 16, 32, 12, 0, time.UTC)
+	terminal := archiveStoredAlert(t, "concurrent-update", now)
+	requests := 0
+	transport := transportFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			return jsonResponse(t, map[string]any{"items": []any{
+				map[string]any{"create": map[string]any{
+					"_index": "linkd-test-alert-history-physical", "_id": alertDocumentID(terminal.Alert),
+					"_seq_no": 0, "_primary_term": 1, "status": http.StatusCreated,
+				}},
+			}}), nil
+		case 2:
+			return jsonResponse(t, map[string]any{"items": []any{
+				map[string]any{"delete": map[string]any{
+					"_index": "linkd-test-alerts-active-000001", "_id": alertDocumentID(terminal.Alert),
+					"status": http.StatusConflict,
+					"error":  map[string]string{"type": "version_conflict_engine_exception", "reason": "updated"},
+				}},
+			}}), nil
+		case 3:
+			return jsonResponse(t, map[string]any{"docs": []any{
+				map[string]any{
+					"_index": "linkd-test-alerts-active-000001", "_id": alertDocumentID(terminal.Alert),
+					"found": true, "_seq_no": 8, "_primary_term": 2,
+				},
+			}}), nil
+		default:
+			t.Fatalf("unexpected request %s %s", request.Method, request.URL.String())
+			return nil, nil
+		}
+	})
+	router, err := newBucketRouter("linkd-test", BucketConfig{
+		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
+		MaxFutureSkew: time.Minute, ActiveAlertRefreshInterval: 5 * time.Second,
+	}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := New(transport, router, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := repository.archiveTerminalAlertsBulk(context.Background(), []store.StoredAlert{terminal})
+	if len(results) != 1 || results[0].archived || !results[0].conflicted || results[0].err != nil ||
+		requests != 3 {
 		t.Fatalf("results=%#v requests=%d", results, requests)
 	}
 }
@@ -214,12 +298,12 @@ func TestTerminalAlertCASLeavesPhysicalArchiveToManager(t *testing.T) {
 	eventID, _ := domain.GenerateEventID("tenant-1", "source-1", "event-1", now)
 	event := eventForIDTest(t, eventID, now)
 	alertID, _ := domain.GenerateAlertID(event, event.CreateAt)
-	active := domain.Alert{
+	active := domain.Alert{Revision: 1, EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
-		Fingerprint: event.Fingerprint, Severity: event.Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
+		Fingerprint: event.Fingerprint, Severity: event.Evaluations[0].Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: eventID,
 		LastOccurredAt: now, UpdateAt: now, TriggerEventID: eventID, BeginAt: now, CreateAt: now,
-		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{},
+		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: succeededEnrich(),
 	}
 	document, err := encodeAlertDocument(active)
 	if err != nil {
@@ -237,10 +321,12 @@ func TestTerminalAlertCASLeavesPhysicalArchiveToManager(t *testing.T) {
 		requests++
 		switch requests {
 		case 1:
-			if request.Method != http.MethodPost || request.URL.Path != "/_msearch" {
+			if request.Method != http.MethodGet ||
+				request.URL.Path != "/linkd-test-alerts-active-000001/_doc/"+documentID ||
+				request.URL.Query().Get("realtime") != "true" {
 				t.Fatalf("read request=%s %s", request.Method, request.URL.String())
 			}
-			response := `{"responses":[{"status":200,"hits":{"hits":[{"_index":"linkd-test-alerts-active-000001","_id":"` + documentID + `","_seq_no":7,"_primary_term":2,"_source":` + string(document) + `}]}}]}`
+			response := `{"_index":"linkd-test-alerts-active-000001","_id":"` + documentID + `","_seq_no":7,"_primary_term":2,"found":true,"_source":` + string(document) + `}`
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(response))}, nil
 		case 2:
 			if request.Method != http.MethodPut || request.URL.Path != "/linkd-test-alerts-active-000001/_doc/"+documentID ||
@@ -255,7 +341,8 @@ func TestTerminalAlertCASLeavesPhysicalArchiveToManager(t *testing.T) {
 		}
 	})
 	router, err := newBucketRouter("linkd-test", BucketConfig{
-		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7, MaxFutureSkew: time.Minute,
+		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
+		MaxFutureSkew: time.Minute, ActiveAlertRefreshInterval: 5 * time.Second,
 	}, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
@@ -295,13 +382,13 @@ func archiveStoredAlert(t *testing.T, stableID string, createAt time.Time) store
 		t.Fatal(err)
 	}
 	endAt := createAt.Add(time.Minute)
-	alert := domain.Alert{
+	alert := domain.Alert{Revision: 1, EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
-		Fingerprint: event.Fingerprint, Severity: event.Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
+		Fingerprint: event.Fingerprint, Severity: event.Evaluations[0].Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusRecovered, LatestEventID: eventID,
 		LastOccurredAt: endAt, UpdateAt: endAt, TriggerEventID: eventID, BeginAt: createAt,
 		CreateAt: createAt, EndAt: &endAt, EndType: domain.AlertEndTypeSource,
-		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{},
+		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: succeededEnrich(),
 	}
 	version, err := encodeVersion(versionPayload{
 		Index: "linkd-test-alerts-active-000001", DocumentID: alertDocumentID(alert), SeqNo: 7, PrimaryTerm: 2,
@@ -312,6 +399,10 @@ func archiveStoredAlert(t *testing.T, stableID string, createAt time.Time) store
 	return store.StoredAlert{Alert: alert, Version: version}
 }
 
+func succeededEnrich() domain.JSONObject {
+	return domain.JSONObject{"processors": json.RawMessage(`[]`)}
+}
+
 func jsonResponse(t *testing.T, value any) *http.Response {
 	t.Helper()
 	body, err := json.Marshal(value)
@@ -319,4 +410,131 @@ func jsonResponse(t *testing.T, value any) *http.Response {
 		t.Fatal(err)
 	}
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(body)))}
+}
+
+func TestActiveDeleteConflictRequiresReliableRealtimeEvidence(t *testing.T) {
+	t.Parallel()
+	terminal := archiveStoredAlert(t, "verify", time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC))
+	version, _ := decodeVersion(terminal.Version)
+	for _, tc := range []struct {
+		name      string
+		seq       int64
+		term      int64
+		index     string
+		found     bool
+		itemError bool
+		conflict  bool
+		archived  bool
+	}{
+		{"updated", 8, 2, version.Index, true, false, true, false},
+		{"new primary", 7, 3, version.Index, true, false, true, false},
+		{"already removed", 0, 0, version.Index, false, false, false, true},
+		{"same version", 7, 2, version.Index, true, false, false, false},
+		{"missing version", 0, 0, version.Index, true, false, false, false},
+		{"wrong identity", 8, 2, "other-index", true, false, false, false},
+		{"read item failed", 0, 0, version.Index, false, true, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			transport := transportFunc(func(request *http.Request) (*http.Response, error) {
+				if request.URL.Path != "/_mget" || request.URL.Query().Get("realtime") != "true" {
+					t.Fatal(request.URL)
+				}
+				doc := map[string]any{"_index": tc.index, "_id": version.DocumentID, "found": tc.found, "_seq_no": tc.seq, "_primary_term": tc.term}
+				if tc.itemError {
+					doc["error"] = map[string]any{"type": "unavailable"}
+				}
+				return jsonResponse(t, map[string]any{"docs": []any{doc}}), nil
+			})
+			router, err := NewStaticRouter("linkd-test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			repository, err := New(transport, router, DefaultConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			results := []archiveItemResult{{}}
+			repository.verifyActiveDeleteConflicts(t.Context(), []*preparedArchiveItem{{terminal: terminal, activeVersion: version}}, []int{0}, results)
+			result := results[0]
+			if result.conflicted != tc.conflict || result.archived != tc.archived || (result.err != nil) == (tc.conflict || tc.archived) {
+				t.Fatalf("result=%+v", result)
+			}
+		})
+	}
+}
+
+func TestArchiveBatchCountsConflictsApartFromSuccessAndStorageFailure(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+	terminals := []store.StoredAlert{archiveStoredAlert(t, "raced", now), archiveStoredAlert(t, "archived", now), archiveStoredAlert(t, "storage-failure", now)}
+	requests := 0
+	transport := transportFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			if !strings.HasSuffix(request.URL.Path, "/_search") {
+				t.Fatal(request.URL)
+			}
+			hits := make([]map[string]any, 0, 3)
+			for _, item := range terminals {
+				source, err := encodeAlertDocument(item.Alert)
+				if err != nil {
+					t.Fatal(err)
+				}
+				version, _ := decodeVersion(item.Version)
+				hits = append(hits, map[string]any{"_index": version.Index, "_id": version.DocumentID, "_seq_no": version.SeqNo, "_primary_term": version.PrimaryTerm, "_source": json.RawMessage(source), "sort": []string{item.Alert.AlertID}})
+			}
+			return jsonResponse(t, map[string]any{"hits": map[string]any{"hits": hits}}), nil
+		case 2:
+			items := make([]map[string]any, 0, 3)
+			for i, terminal := range terminals {
+				status := 201
+				if i == 2 {
+					status = 429
+				}
+				items = append(items, map[string]any{"create": map[string]any{"_index": "history", "_id": alertDocumentID(terminal.Alert), "_seq_no": 0, "_primary_term": 1, "status": status}})
+			}
+			return jsonResponse(t, map[string]any{"items": items}), nil
+		case 3:
+			body, err := io.ReadAll(request.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(body), alertDocumentID(terminals[2].Alert)) {
+				t.Fatal("history failure was deleted")
+			}
+			items := make([]map[string]any, 0, 2)
+			for i, terminal := range terminals[:2] {
+				status := 200
+				if i == 0 {
+					status = 409
+				}
+				version, _ := decodeVersion(terminal.Version)
+				items = append(items, map[string]any{"delete": map[string]any{"_index": version.Index, "_id": version.DocumentID, "status": status}})
+			}
+			return jsonResponse(t, map[string]any{"items": items}), nil
+		case 4:
+			version, _ := decodeVersion(terminals[0].Version)
+			return jsonResponse(t, map[string]any{"docs": []any{map[string]any{"_index": version.Index, "_id": version.DocumentID, "found": true, "_seq_no": 8, "_primary_term": 2}}}), nil
+		default:
+			t.Fatal("unexpected immediate retry", requests)
+			return nil, nil
+		}
+	})
+	router, err := newBucketRouter("linkd-test", BucketConfig{EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7, MaxFutureSkew: time.Minute, ActiveAlertRefreshInterval: 5 * time.Second}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := New(transport, router, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{repository: repository, router: router}
+	result, err := manager.ArchiveTerminalAlerts(t.Context(), ArchiveBatchRequest{Limit: 3, WorkerCount: 1})
+	if err != nil || result.Scanned != 3 || result.Archived != 1 || result.Conflicts != 1 || result.Failed != 1 || result.NextCursor != terminals[2].Alert.AlertID || requests != 4 {
+		t.Fatal(result, err, requests)
+	}
+	if len(result.FailureItems) != 1 || result.FailureItems[0].Stage != "history_create" || len(result.ConflictItems) != 1 || result.ConflictItems[0].DocumentID != alertDocumentID(terminals[0].Alert) {
+		t.Fatal(result)
+	}
 }

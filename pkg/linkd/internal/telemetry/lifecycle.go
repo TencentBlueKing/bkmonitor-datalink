@@ -16,10 +16,59 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"linkd/internal/lifecycle"
+	"linkd/internal/store"
 )
 
 type lifecycleProcessor interface {
-	ProcessEvent(ctx context.Context, bkTenantID, eventID string) (lifecycle.ProcessResult, error)
+	ProcessEvent(ctx context.Context, stored store.StoredEvent) (lifecycle.ProcessResult, error)
+}
+
+type lifecyclePhaseObserver struct{ metrics *instruments }
+
+// LifecyclePhaseObserver 创建 Event 独占分段观察器；未启用指标时返回 nil。
+func (r *Runtime) LifecyclePhaseObserver() lifecycle.PhaseObserver {
+	if r == nil || r.metrics == nil {
+		return nil
+	}
+	return &lifecyclePhaseObserver{metrics: r.metrics}
+}
+
+func (o *lifecyclePhaseObserver) Finished(ctx context.Context, sample lifecycle.PhaseObservation) {
+	outcome := lifecycleMetricOutcome(sample.Result, sample.Err)
+	source := attribute.String("linkd.event_source_id", sample.EventSourceID)
+	// 所有环节每次都记一个样本，零耗时也记录，保证均值使用同一批 Event 尝试。
+	for _, phase := range sample.Phases {
+		execution := max(0, phase.Duration-phase.BatchWait-phase.StorageQueue)
+		o.metrics.lifecyclePhaseExecutionDuration.Record(ctx, execution.Seconds(), metric.WithAttributes(
+			source, attribute.String("linkd.phase", phase.Phase), attribute.String("linkd.outcome", outcome),
+		))
+		for _, wait := range [...]struct {
+			kind     string
+			duration time.Duration
+		}{{"batch_wait", phase.BatchWait}, {"storage_queue", phase.StorageQueue}} {
+			o.metrics.lifecyclePhaseWaitDuration.Record(ctx, wait.duration.Seconds(), metric.WithAttributes(
+				source, attribute.String("linkd.phase", phase.Phase), attribute.String("linkd.outcome", outcome), attribute.String("linkd.wait_kind", wait.kind),
+			))
+		}
+		o.metrics.lifecyclePhaseDuration.Record(ctx, phase.Duration.Seconds(), metric.WithAttributes(
+			source, attribute.String("linkd.phase", phase.Phase), attribute.String("linkd.outcome", outcome),
+		))
+	}
+	for _, step := range sample.Steps {
+		for _, component := range [...]struct {
+			kind     string
+			duration time.Duration
+		}{
+			{"execution", max(0, step.Duration-step.BatchWait-step.StorageQueue)},
+			{"batch_wait", step.BatchWait}, {"storage_queue", step.StorageQueue},
+		} {
+			o.metrics.lifecycleStepDuration.Record(ctx, component.duration.Seconds(), metric.WithAttributes(
+				source, attribute.String("linkd.phase", step.Phase), attribute.String("linkd.step", step.Step),
+				attribute.String("linkd.wait_kind", component.kind), attribute.String("linkd.outcome", outcome),
+			))
+		}
+	}
+
 }
 
 type observedLifecycleProcessor struct {
@@ -37,10 +86,10 @@ func (r *Runtime) ObserveLifecycleProcessor(next lifecycleProcessor) lifecyclePr
 
 func (p *observedLifecycleProcessor) ProcessEvent(
 	ctx context.Context,
-	bkTenantID, eventID string,
+	stored store.StoredEvent,
 ) (lifecycle.ProcessResult, error) {
 	startedAt := time.Now()
-	result, err := p.next.ProcessEvent(ctx, bkTenantID, eventID)
+	result, err := p.next.ProcessEvent(ctx, stored)
 	outcome := lifecycleMetricOutcome(result, err)
 	attributes := []attribute.KeyValue{
 		attribute.String("linkd.stage", "lifecycle"),

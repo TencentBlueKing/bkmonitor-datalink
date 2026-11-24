@@ -1,0 +1,58 @@
+File: linkd
+Type: cpu
+Time: 2026-09-07 00:56:32 CST
+Duration: 20.15s, Total samples = 24.45s (121.33%)
+Showing nodes accounting for 18.69s, 76.44% of 24.45s total
+Dropped 795 nodes (cum <= 0.12s)
+Showing top 50 nodes out of 303
+      flat  flat%   sum%        cum   cum%
+     9.51s 38.90% 38.90%      9.51s 38.90%  syscall.rawsyscalln
+     1.19s  4.87% 43.76%      1.19s  4.87%  runtime.madvise
+     0.87s  3.56% 47.32%      0.87s  3.56%  runtime.kevent
+     0.86s  3.52% 50.84%      0.86s  3.52%  runtime.usleep
+     0.68s  2.78% 53.62%      0.69s  2.82%  encoding/json.stateInString
+     0.46s  1.88% 55.50%      0.46s  1.88%  runtime.pthread_cond_wait
+     0.40s  1.64% 57.14%      0.52s  2.13%  runtime.tryDeferToSpanScan
+     0.39s  1.60% 58.73%      0.39s  1.60%  runtime.pthread_kill
+     0.38s  1.55% 60.29%      0.38s  1.55%  runtime.pthread_cond_signal
+     0.25s  1.02% 61.31%      0.67s  2.74%  encoding/json.(*decodeState).skip
+     0.22s   0.9% 62.21%      0.62s  2.54%  encoding/json.checkValid
+     0.22s   0.9% 63.11%      0.34s  1.39%  runtime.wbBufFlush1
+     0.21s  0.86% 63.97%      0.22s   0.9%  encoding/json.(*decodeState).rescanLiteral
+     0.21s  0.86% 64.83%      0.46s  1.88%  runtime.scanObjectsSmall
+     0.20s  0.82% 65.64%      0.90s  3.68%  encoding/json.(*Decoder).readValue
+     0.20s  0.82% 66.46%      0.34s  1.39%  runtime.pcvalue
+     0.18s  0.74% 67.20%      0.18s  0.74%  runtime.getMCache (inline)
+     0.16s  0.65% 67.85%      2.12s  8.67%  runtime.mallocgc
+     0.15s  0.61% 68.47%      0.15s  0.61%  runtime.memmove
+     0.14s  0.57% 69.04%      0.30s  1.23%  runtime.scanblock
+     0.12s  0.49% 69.53%      0.14s  0.57%  encoding/json.appendString[go.shape.string]
+     0.12s  0.49% 70.02%      0.37s  1.51%  encoding/json.stateEndValue
+     0.11s  0.45% 70.47%      0.22s   0.9%  regexp.(*Regexp).doOnePass
+     0.11s  0.45% 70.92%      0.75s  3.07%  runtime.mallocgcSmallScanNoHeader
+     0.10s  0.41% 71.33%      0.30s  1.23%  runtime.scanObject
+     0.10s  0.41% 71.74%      0.31s  1.27%  runtime.unlock2
+     0.09s  0.37% 72.11%      0.16s  0.65%  internal/runtime/maps.(*Iter).Next
+     0.09s  0.37% 72.47%      0.48s  1.96%  runtime.mallocgcSmallNoscan
+     0.08s  0.33% 72.80%      0.16s  0.65%  runtime.scanObjectSmall
+     0.08s  0.33% 73.13%      0.54s  2.21%  runtime.scanframeworker
+     0.07s  0.29% 73.42%      0.33s  1.35%  gcWriteBarrier
+     0.07s  0.29% 73.70%      0.22s   0.9%  runtime.(*stkframe).getStackMap
+     0.06s  0.25% 73.95%      1.55s  6.34%  encoding/json.(*decodeState).object
+     0.06s  0.25% 74.19%      0.37s  1.51%  runtime.growslice
+     0.06s  0.25% 74.44%      0.41s  1.68%  runtime.mapassign_faststr
+     0.05s   0.2% 74.64%      0.20s  0.82%  encoding/json.(*Decoder).peek
+     0.05s   0.2% 74.85%      0.15s  0.61%  encoding/json.stateBeginValue
+     0.05s   0.2% 75.05%      0.67s  2.74%  runtime.lock2
+     0.04s  0.16% 75.21%      0.16s  0.65%  encoding/json.indirect
+     0.04s  0.16% 75.38%      0.21s  0.86%  runtime.(*sweepLocked).sweep
+     0.04s  0.16% 75.54%      2.02s  8.26%  runtime.gcDrain
+     0.03s  0.12% 75.66%      0.61s  2.49%  encoding/json.(*decodeState).literalStore
+     0.03s  0.12% 75.79%      0.56s  2.29%  encoding/json.mapEncoder.encode
+     0.03s  0.12% 75.91%      0.19s  0.78%  runtime.mProf_FlushLocked
+     0.03s  0.12% 76.03%      1.13s  4.62%  runtime.markroot
+     0.02s 0.082% 76.11%      1.64s  6.71%  encoding/json.(*Decoder).Decode
+     0.02s 0.082% 76.20%         2s  8.18%  encoding/json.(*decodeState).value
+     0.02s 0.082% 76.28%      0.83s  3.39%  encoding/json.Marshal
+     0.02s 0.082% 76.36%      0.16s  0.65%  encoding/json.marshalerEncoder
+     0.02s 0.082% 76.44%      0.33s  1.35%  encoding/json.structEncoder.encode

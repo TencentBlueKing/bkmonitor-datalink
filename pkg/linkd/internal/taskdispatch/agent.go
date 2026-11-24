@@ -1,0 +1,404 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package taskdispatch
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"slices"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/google/uuid"
+	"linkd/internal/config"
+	"linkd/internal/consume"
+	"linkd/internal/eventsource"
+	"linkd/internal/runtimeconfig"
+)
+
+// Runner 适配一个任务；返回前必须退出所有后台工作并关闭任务所属资源。
+type Runner func(context.Context, Task, config.EventSource) error
+
+// Agent 负责进程全部角色，业务关闭不能阻塞独立的授权 watchdog。
+type Agent struct {
+	// Severity 是本进程所有任务读取的共享配置状态。
+	Severity       *runtimeconfig.Severity
+	staticSeverity runtimeconfig.Snapshot
+	// Logger 接收已脱敏的任务故障上下文。
+	Logger            *slog.Logger
+	Runtime           WorkerRuntime
+	Observer          Observer
+	Config            config.DispatchConfig
+	Worker            config.WorkerConfig
+	Roles             []string
+	RunTask           Runner
+	OnForcedExit      func()
+	ObservePartitions func(string) []string
+}
+
+type localTask struct {
+	loading    bool
+	recovered  map[string]bool
+	blocked    bool
+	partitions atomic.Value
+	admission  atomic.Bool
+	budget     TaskBudget
+	task       Task
+	spec       config.EventSource
+	phase      string
+	cancel     context.CancelFunc
+	done       chan struct{}
+	stopDone   <-chan struct{}
+	deadline   time.Time
+	stopAt     time.Time
+	err        string
+}
+
+// Run 运行会话，配置/撤销立即开始停止；失联容错后自停，旧代次不可恢复。
+func (a *Agent) Run(ctx context.Context) error {
+	if a.Logger == nil {
+		return fmt.Errorf("worker logger is required")
+	}
+	if err := a.Runtime.validate(a.Roles); err != nil {
+		return err
+	}
+	observer := observerOrNoop(a.Observer)
+	if a.Severity != nil {
+		a.staticSeverity = a.Severity.SeveritySnapshot()
+	}
+	// 停止确认和 watchdog 观测必须在调用方取消后继续，直到协议排空完成。
+	observationCtx := context.WithoutCancel(ctx)
+	cfg := a.Config.WithDefaults()
+	id := uuid.NewString()
+	var advertisedDigest string
+	client := Client{URL: cfg.URL, Token: cfg.WorkerToken, WorkerID: id, OnResponse: func(h http.Header) {
+		if value := h.Get("X-Linkd-Dynamic-Config"); value != "" {
+			advertisedDigest = value
+		}
+	}}
+	worker := Worker{Runtime: a.Runtime, ID: id, Roles: a.Roles, Labels: a.Worker.Labels, Explicit: a.Worker.RequireExplicitSelector, MaxTasks: cfg.MaxTasks}
+	worker.MaxConcurrency, worker.MaxInflightBytes = a.Worker.Limits()
+	var mu sync.Mutex
+	var forceOnce sync.Once
+	locals := map[string]*localTask{}
+	lastSuccess := time.Now()
+	failures := 0
+	stopping := false
+	stopTask := func(t *localTask, reason string) {
+		if t.phase == "stopped" || t.phase == "stopping" {
+			return
+		}
+		observer.Transition(observationCtx, "worker", t.task.Role, t.phase, "stopping", reason, 0)
+		t.phase = "stopping"
+		t.admission.Store(false)
+		t.stopAt = time.Now()
+		if t.cancel != nil {
+			t.cancel()
+		} else {
+			t.phase = "stopped"
+		}
+	}
+	stopAll := func(reason string) {
+		for _, t := range locals {
+			stopTask(t, reason)
+		}
+	}
+	watchdogCtx, cancelWatch := context.WithCancel(observationCtx)
+	watchDone := make(chan struct{})
+	defer func() { cancelWatch(); <-watchDone }()
+	go func() {
+		defer close(watchDone)
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-watchdogCtx.Done():
+				return
+			case <-ticker.C:
+				mu.Lock()
+				now := time.Now()
+				if ctx.Err() != nil {
+					stopping = true
+					stopAll("shutdown")
+				}
+				if failures >= 3 && now.Sub(lastSuccess) >= 10*time.Second {
+					stopAll("disconnected")
+				}
+				force := false
+				for _, t := range locals {
+					if t.phase == "stopping" && t.stopDone != nil {
+						select {
+						case <-t.stopDone:
+							// Runner 已返回且底层客户端确已关闭，才释放占位。
+							// 原故障仍随 stopped 报告，交给现有调度退避重建。
+							t.phase = "stopped"
+							t.stopDone = nil
+							observer.Transition(observationCtx, "worker", t.task.Role, "stopping", "stopped", "cleanup_completed", now.Sub(t.stopAt))
+						default:
+						}
+					}
+					if (t.phase == "running" || t.phase == "prepared") && !t.deadline.IsZero() && now.Add(DrainTimeout+5*time.Second).After(t.deadline) {
+						stopTask(t, "authorization_deadline")
+					}
+					// Cleaner 的来源可能卡在 broker 退组或连接关闭，不能因此杀死
+					// 同进程其他来源。保留 stopping 和预算占位，禁止原任务续跑
+					// 或在本进程启动其新代次；只有进程关闭才升级为强制退出。
+					if t.phase == "stopping" && (t.task.Role != "cleaner" || stopping) && now.Sub(t.stopAt) > DrainTimeout+5*time.Second {
+						force = true
+					}
+				}
+				sample := WorkerObservation{Tasks: map[string]map[string]int64{}, Failures: failures, HeartbeatAge: now.Sub(lastSuccess)}
+				first := true
+				for _, t := range locals {
+					if sample.Tasks[t.task.Role] == nil {
+						sample.Tasks[t.task.Role] = map[string]int64{}
+					}
+					sample.Tasks[t.task.Role][t.phase]++
+					if t.phase != "stopped" {
+						if !t.admission.Load() {
+							sample.Paused++
+						}
+						if ps := t.partitions.Load(); ps != nil {
+							sample.Partitions += int64(len(ps.([]string)))
+						}
+						remaining := max(0, t.deadline.Sub(now))
+						if first || remaining < sample.AuthorizationRemaining {
+							sample.AuthorizationRemaining = remaining
+							first = false
+						}
+					}
+				}
+				mu.Unlock()
+				observer.WorkerSnapshot(observationCtx, sample)
+				if force && a.OnForcedExit != nil {
+					forceOnce.Do(func() {
+						observer.Operation(observationCtx, "forced_exit", false, 0)
+						a.OnForcedExit()
+					})
+				}
+			}
+		}
+	}()
+	// defer 必须先取消 watchdog 再等待；显式返回路径统一在 finish 中执行。
+	finish := func() error { cancelWatch(); return nil }
+	for {
+		mu.Lock()
+		if ctx.Err() != nil {
+			stopping = true
+			stopAll("shutdown")
+		}
+		worker.Draining = stopping
+		worker.Seq++
+		if a.Severity != nil {
+			snap := a.Severity.SeveritySnapshot()
+			if snap.Enabled {
+				worker.ConfigDigest = snap.Digest
+			} else {
+				worker.ConfigDigest = ""
+			}
+		}
+		reports := make([]Report, 0, len(locals))
+		remaining := 0
+		for _, t := range locals {
+			r := Report{ID: t.task.ID, Epoch: t.task.Epoch, Phase: t.phase, Error: t.err, Blocked: t.blocked}
+			if a.ObservePartitions != nil {
+				r.Partitions = a.ObservePartitions(t.task.ID)
+			}
+			if ps := t.partitions.Load(); ps != nil {
+				r.Partitions = ps.([]string)
+			}
+			for _, owner := range t.task.Retired {
+				if t.recovered[owner] {
+					r.Recovered = append(r.Recovered, owner)
+				}
+			}
+			reports = append(reports, r)
+			if t.phase != "stopped" {
+				remaining++
+			}
+		}
+		mu.Unlock()
+		call, cancel := context.WithTimeout(observationCtx, 2*time.Second)
+		started := time.Now()
+		var tasks []Task
+		e := client.Call(call, http.MethodPost, "/internal/heartbeat", Heartbeat{Worker: worker, Reports: reports}, &tasks)
+		cancel()
+		observer.Operation(observationCtx, "heartbeat_client", e == nil, time.Since(started))
+		configReady := true
+		if e == nil {
+			configReady, worker.ConfigError = a.syncSeverity(observationCtx, client, advertisedDigest)
+		}
+		mu.Lock()
+		if e != nil {
+			failures++
+			for _, t := range locals {
+				t.admission.Store(false)
+			}
+		} else {
+			failures = 0
+			lastSuccess = time.Now()
+			seen := map[string]bool{}
+			for _, task := range tasks {
+				seen[task.ID] = true
+				t := locals[task.ID]
+				if t != nil && t.task.Epoch != task.Epoch {
+					if t.phase != "stopped" {
+						stopTask(t, "revoked")
+						continue
+					}
+					delete(locals, task.ID)
+					t = nil
+				}
+				if t != nil {
+					if task.Phase == "stopping" {
+						stopTask(t, "revoked")
+					} else if t.phase != "stopping" && t.phase != "stopped" {
+						t.deadline = started.Add(time.Duration(task.RemainingMillis)*time.Millisecond - SafetyMargin)
+					}
+					for owner := range t.recovered {
+						if !slices.Contains(task.Retired, owner) {
+							delete(t.recovered, owner)
+						}
+					}
+					t.task = task
+					if t.phase == "running" {
+						t.admission.Store(true)
+					}
+				}
+				if t == nil && !stopping && configReady {
+					t = &localTask{task: task, phase: "preparing", deadline: started.Add(time.Duration(task.RemainingMillis)*time.Millisecond - SafetyMargin)}
+					locals[task.ID] = t
+				}
+				if t != nil && t.phase == "preparing" && !t.loading && !stopping && configReady {
+					// 配置读取独立于心跳；大量慢来源不能让整个 Worker 失去授权。
+					local, assigned := t, task
+					prepareCtx, cancelPrepare := context.WithTimeout(observationCtx, 2*time.Second)
+					local.cancel, local.loading = cancelPrepare, true
+					local.done = make(chan struct{})
+					releaseClient := client
+					releaseClient.OnResponse = nil // 动态配置摘要只从串行心跳更新。
+					go func() {
+						defer cancelPrepare()
+						var rel eventsource.Release
+						err := releaseClient.Call(prepareCtx, http.MethodGet, "/internal/releases/"+url.PathEscape(assigned.Source)+"/"+fmt.Sprint(assigned.Version)+"?task="+url.QueryEscape(assigned.ID), nil, &rel)
+						mu.Lock()
+						defer mu.Unlock()
+						local.loading = false
+						local.cancel = nil
+						close(local.done)
+						if local.phase == "stopping" || stopping {
+							local.phase = "stopped"
+							return
+						}
+						if err != nil {
+							local.err = "release load failed; retrying"
+							return
+						}
+						rel.Spec.Version = rel.Version
+						local.spec = rel.Spec
+						local.budget, err = a.admitTask(assigned, rel.Spec, locals)
+						if err != nil {
+							local.phase = "stopped"
+							local.err = "worker runtime budget rejected"
+							a.logTaskFailure(observationCtx, assigned, WithTaskStage("task_admission", err))
+							return
+						}
+						local.err = ""
+						local.phase = "prepared"
+					}()
+				}
+				if t != nil && t.phase == "prepared" && task.Phase == "starting" && !stopping && configReady && time.Now().Add(DrainTimeout+5*time.Second).Before(t.deadline) {
+					budget, err := a.admitTask(task, t.spec, locals)
+					if err != nil {
+						t.phase = "stopped"
+						t.err = "worker runtime budget rejected"
+						mu.Unlock()
+						a.logTaskFailure(observationCtx, task, WithTaskStage("task_admission", err))
+						mu.Lock()
+						continue
+					}
+					t.budget = budget
+					work, cancelTask := context.WithCancel(consume.WithPartitionObserver(consume.WithAdmission(observationCtx, &t.admission), func(p []string) { t.partitions.Store(p) }))
+					work = consume.WithRetiredObserver(work, func(owner string) {
+						mu.Lock()
+						defer mu.Unlock()
+						if t.recovered == nil {
+							t.recovered = map[string]bool{}
+						}
+						t.recovered[owner] = true
+					})
+					t.admission.Store(true)
+					t.cancel = cancelTask
+					t.done = make(chan struct{})
+					observer.Transition(observationCtx, "worker", task.Role, t.phase, "running", "authorized", 0)
+					t.phase = "running"
+					taskCopy, specCopy := t.task, t.spec
+					go func(local *localTask) {
+						defer cancelTask()
+						runStarted := time.Now()
+						err := a.runTask(work, taskCopy, specCopy)
+						mu.Lock()
+						previousPhase := local.phase
+						local.phase = "stopped"
+						if errors.Is(err, consume.ErrStopIncomplete) {
+							local.phase = "stopping"
+							local.admission.Store(false)
+							var incomplete *consume.StopIncompleteError
+							if local.task.Role == "cleaner" && errors.As(err, &incomplete) {
+								local.stopDone = incomplete.Done
+							}
+							if local.stopAt.IsZero() {
+								local.stopAt = time.Now()
+							}
+						}
+						if err != nil && !expectedTaskCancellation(work, err) {
+							local.err = "task failed; inspect worker logs"
+							local.blocked = requiresTaskRepair(err)
+						}
+						duration := time.Duration(0)
+						if !local.stopAt.IsZero() {
+							duration = time.Since(local.stopAt)
+						}
+						observer.Operation(observationCtx, "task_run", err == nil || expectedTaskCancellation(work, err), time.Since(runStarted))
+						observer.Transition(observationCtx, "worker", local.task.Role, previousPhase, local.phase, "task_returned", duration)
+						close(local.done)
+						mu.Unlock()
+					}(t)
+				}
+			}
+			for key, t := range locals {
+				if !seen[key] {
+					if t.phase == "stopped" {
+						delete(locals, key)
+					} else {
+						stopTask(t, "revoked")
+					}
+				}
+			}
+		}
+		isStopping := stopping
+		mu.Unlock()
+		if isStopping && remaining == 0 {
+			return finish()
+		}
+		timer := time.NewTimer(HeartbeatInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			time.Sleep(100 * time.Millisecond)
+		case <-timer.C:
+		}
+	}
+}

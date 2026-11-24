@@ -1,0 +1,187 @@
+{
+  "name": "真实主机生命周期测试示例",
+  "bk_tenant_id": "system",
+  "seed": 42,
+  "duration": "10m",
+  "datasets": {
+    "hosts": {
+      "rows": [
+        {
+          "id": 101,
+          "ip": "10.0.0.1",
+          "cloud_id": 0,
+          "bk_biz_id": 2,
+          "model": "host"
+        },
+        {
+          "id": 102,
+          "ip": "10.0.0.2",
+          "cloud_id": 0,
+          "bk_biz_id": 2,
+          "model": "host"
+        }
+      ]
+    },
+    "models": {
+      "rows": [
+        {
+          "id": "host",
+          "name": "主机"
+        }
+      ]
+    }
+  },
+  "templates": {
+    "host": {
+      "kind": "standard",
+      "body": "{\n \"title\": {{json (printf \"%v CPU 异常\" .Bindings.host.ip)}},\n \"subject\": {\"system\":\"cmdb\",\"type\":\"host\",\"id\":{{json (printf \"%v\" .Bindings.host.id)}},\"name\":{{json .Bindings.host.ip}}},\n \"dimensions\": {\"bk_host_id\":{{json .Bindings.host.id}},\"bk_target_ip\":{{json .Bindings.host.ip}},\"bk_target_cloud_id\":{{json .Bindings.host.cloud_id}},\"cpu_core\":{{json .Instance.cpu_core}}},\n \"labels\": {\"bk_biz_id\":{{json .Bindings.host.bk_biz_id}}},\n \"values\": {\"cpu\":{{randFloat 70 99}}},\n \"evaluations\": {{json .Parameters.evaluations}},\n \"extra_data\": {\"model_name\":{{json .Bindings.model.name}}}\n}"
+    }
+  },
+  "scenarios": [
+    {
+      "id": "host_cpu",
+      "event_source_id": "eventgen-hosts",
+      "bindings": [
+        {
+          "name": "host",
+          "dataset": "hosts",
+          "mode": "iterate",
+          "loop": true
+        },
+        {
+          "name": "model",
+          "dataset": "models",
+          "mode": "random",
+          "where": {
+            "id": "{{json .Bindings.host.model}}"
+          }
+        }
+      ],
+      "instance": "{\"cpu_core\":{{randInt 0 8}}}",
+      "arrival": {
+        "per_second": 1,
+        "count": 100,
+        "rates": [
+          {
+            "at": "0s",
+            "per_second": 1
+          },
+          {
+            "at": "2m",
+            "per_second": 10
+          },
+          {
+            "at": "5m",
+            "per_second": 1
+          }
+        ]
+      },
+      "stages": [
+        {
+          "name": "warning",
+          "template": "host",
+          "duration": {
+            "fixed": "60s"
+          },
+          "every": {
+            "fixed": "10s"
+          },
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "triggered"
+              }
+            ]
+          }
+        },
+        {
+          "name": "critical",
+          "template": "host",
+          "duration": {
+            "min": "30s",
+            "max": "90s"
+          },
+          "every": {
+            "fixed": "5s"
+          },
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "critical",
+                "action": "triggered"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lower",
+          "template": "host",
+          "duration": {
+            "fixed": "1s"
+          },
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "critical",
+                "action": "resolved"
+              },
+              {
+                "severity": "warning",
+                "action": "triggered"
+              }
+            ]
+          },
+          "next": [
+            {
+              "stage": "recover",
+              "weight": 8
+            },
+            {
+              "stage": "close",
+              "weight": 2
+            }
+          ]
+        },
+        {
+          "name": "recover",
+          "template": "host",
+          "terminal": true,
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "warning",
+                "action": "resolved"
+              }
+            ]
+          }
+        },
+        {
+          "name": "close",
+          "template": "host",
+          "terminal": true,
+          "parameters": {
+            "evaluations": [
+              {
+                "severity": "__ALL__",
+                "action": "closed",
+                "action_reason": "test_complete"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "limits": {
+    "active": 100000,
+    "queue_records": 10000,
+    "queue_bytes": 33554432,
+    "max_message_bytes": 1048576,
+    "batch": 1000,
+    "send_per_second": 20000,
+    "send_timeout": "10s",
+    "cleanup_timeout": "30s",
+    "samples": 50
+  }
+}

@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -37,10 +38,15 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
 	"linkd/internal/cleaner"
+	"linkd/internal/config"
+	controlapi "linkd/internal/controlplane/api"
 	"linkd/internal/domain"
-	"linkd/internal/lifecycle/kafkahook"
+	"linkd/internal/eventsource"
+	"linkd/internal/lifecycle/mailbox"
 	"linkd/internal/lifecycle/scheduler"
+	"linkd/internal/policy"
 	"linkd/internal/store"
+	"linkd/internal/taskdispatch"
 	"linkd/internal/testkit/rawgen"
 )
 
@@ -76,11 +82,11 @@ type resourceNames struct {
 	IndexPrefix          string
 	EventIndex           string
 	AlertIndex           string
+	ActiveAlertIndex     string
 	AlertLogIndex        string
 	RawTopic             string
 	OutputTopic          string
 	CleanerGroup         string
-	OutputGroup          string
 	SignalStream         string
 	SignalGroup          string
 	SignalConsumerPrefix string
@@ -160,6 +166,7 @@ func TestAllInOneElasticsearchE2E(t *testing.T) {
 	)
 
 	process := startAllInOne(t, repoRoot, binaryPath, configPath, temporaryDirectory)
+	names.SignalStream = mailbox.SourceStream(names.SignalStream, names.Token, dataset.Config.EventSourceID)
 	t.Cleanup(func() {
 		if err := process.stop(); err != nil {
 			t.Logf("stop all-in-one during cleanup: %v", err)
@@ -170,32 +177,66 @@ func TestAllInOneElasticsearchE2E(t *testing.T) {
 			}
 		}
 	})
+	importSources(ctx, t, process, configPath)
 	waitUntilReady(ctx, t, process, es, redisClient, names)
+	prepareDatasetBuckets(ctx, t, repoRoot, binaryPath, configPath, dataset)
+	startExtraWorkers(ctx, t, repoRoot, binaryPath, configPath, temporaryDirectory, dataset.Config.EventSourceID)
+	policyReleases := publishDatasetPolicies(ctx, t, configPath, dataset)
 
 	produceDataset(ctx, t, environment.KafkaBroker, names.RawTopic, dataset)
 	events := waitForAcceptedEvents(ctx, t, process, es, names.EventIndex, expected)
-	assertEvents(t, events, dataset)
-	alerts := loadAlerts(ctx, t, es, names.AlertIndex)
+	assertEvents(t, events, dataset, policyReleases)
+	alerts := waitForAlertsVisible(ctx, t, process, es, names.AlertIndex, expected.Alerts)
 	assertAlerts(t, alerts, expected.Alerts)
 	logs := waitForAlertLogsVisible(ctx, t, process, es, names.AlertLogIndex, expected.OperationCounts)
 	assertAlertLogs(t, logs, expected.OperationCounts)
-	outputs := consumeOutputs(ctx, t, environment.KafkaBroker, names, expected.OutputMessages)
-	assertOutputs(t, outputs, events, expected.OutputMessages)
+	assertNoLegacyOutputs(ctx, t, environment.KafkaBroker, names)
 	waitForRedisDrain(ctx, t, redisClient, names)
+	verifySourceMutationCycle(ctx, t, configPath)
 
 	if err := process.stop(); err != nil {
 		t.Fatalf("gracefully stop all-in-one: %v", err)
 	}
 	t.Logf(
-		"E2E passed: backend=elasticsearch version=%s input=%d events=%d alerts=%d logs=%d output=%d stream=%s",
+		"E2E passed: backend=elasticsearch version=%s input=%d events=%d alerts=%d logs=%d stream=%s",
 		version,
 		expected.InputRecords,
 		len(events),
 		len(alerts),
 		len(logs),
-		len(outputs),
 		names.SignalStream,
 	)
+}
+
+func waitForAlertsVisible(
+	ctx context.Context,
+	t *testing.T,
+	process *linkdProcess,
+	es *elasticsearchClient,
+	index string,
+	expected []rawgen.ExpectedAlert,
+) []domain.Alert {
+	t.Helper()
+	want := 0
+	for _, item := range expected {
+		want += item.Count
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if exited, err := process.checkExited(); exited {
+			t.Fatalf("all-in-one exited while waiting for Alert refresh: %v", err)
+		}
+		alerts := loadAlerts(ctx, t, es, index)
+		if len(alerts) >= want {
+			return alerts
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("wait for Alert refresh: found %d/%d: %v", len(alerts), want, ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func waitForAlertLogsVisible(
@@ -242,12 +283,13 @@ func TestAllInOneMySQLE2E(t *testing.T) {
 	defer cancel()
 
 	adminDatabase, repositoryDatabase, version := createMySQLDatabase(ctx, t, environment, names.MySQLDatabase)
-	if !strings.HasPrefix(version, "8.4.10") {
-		t.Fatalf("MySQL version = %q, want 8.4.10", version)
-	}
 	t.Cleanup(func() {
 		cleanupMySQLDatabase(t, adminDatabase, repositoryDatabase, names.MySQLDatabase)
 	})
+	expectedVersion := envOrDefault("LINKD_E2E_MYSQL_VERSION", "8.4.10")
+	if !strings.HasPrefix(version, expectedVersion) {
+		t.Fatalf("MySQL version = %q, want %s", version, expectedVersion)
+	}
 
 	redisClient := redis.NewClient(&redis.Options{
 		Addr: environment.RedisAddress, Password: environment.RedisPassword, DB: environment.RedisDatabase,
@@ -292,6 +334,7 @@ func TestAllInOneMySQLE2E(t *testing.T) {
 	)
 
 	process := startAllInOne(t, repoRoot, binaryPath, configPath, temporaryDirectory)
+	names.SignalStream = mailbox.SourceStream(names.SignalStream, names.Token, dataset.Config.EventSourceID)
 	t.Cleanup(func() {
 		if err := process.stop(); err != nil {
 			t.Logf("stop all-in-one during cleanup: %v", err)
@@ -302,30 +345,32 @@ func TestAllInOneMySQLE2E(t *testing.T) {
 			}
 		}
 	})
+	importSources(ctx, t, process, configPath)
 	waitUntilMySQLReady(ctx, t, process, repositoryDatabase, redisClient, names)
+	startExtraWorkers(ctx, t, repoRoot, binaryPath, configPath, temporaryDirectory, dataset.Config.EventSourceID)
+	policyReleases := publishDatasetPolicies(ctx, t, configPath, dataset)
 
 	produceDataset(ctx, t, environment.KafkaBroker, names.RawTopic, dataset)
 	events := waitForAcceptedMySQLEvents(ctx, t, process, repositoryDatabase, expected)
-	assertEvents(t, events, dataset)
+	assertEvents(t, events, dataset, policyReleases)
 	alerts := loadMySQLAlerts(ctx, t, repositoryDatabase)
 	assertAlerts(t, alerts, expected.Alerts)
 	logs := loadMySQLAlertLogs(ctx, t, repositoryDatabase)
 	assertAlertLogs(t, logs, expected.OperationCounts)
-	outputs := consumeOutputs(ctx, t, environment.KafkaBroker, names, expected.OutputMessages)
-	assertOutputs(t, outputs, events, expected.OutputMessages)
+	assertNoLegacyOutputs(ctx, t, environment.KafkaBroker, names)
 	waitForRedisDrain(ctx, t, redisClient, names)
+	verifySourceMutationCycle(ctx, t, configPath)
 
 	if err := process.stop(); err != nil {
 		t.Fatalf("gracefully stop all-in-one: %v", err)
 	}
 	t.Logf(
-		"E2E passed: backend=mysql version=%s input=%d events=%d alerts=%d logs=%d output=%d database=%s",
+		"E2E passed: backend=mysql version=%s input=%d events=%d alerts=%d logs=%d database=%s",
 		version,
 		expected.InputRecords,
 		len(events),
 		len(alerts),
 		len(logs),
-		len(outputs),
 		names.MySQLDatabase,
 	)
 }
@@ -376,11 +421,11 @@ func newResourceNames() resourceNames {
 		IndexPrefix:          prefix,
 		EventIndex:           prefix + "-events",
 		AlertIndex:           prefix + "-alerts",
+		ActiveAlertIndex:     prefix + "-alerts-active-000001",
 		AlertLogIndex:        prefix + "-alert-logs",
 		RawTopic:             prefix + "-raw",
 		OutputTopic:          prefix + "-output",
 		CleanerGroup:         prefix + "-cleaner",
-		OutputGroup:          prefix + "-assert-output",
 		SignalStream:         "linkd:e2e:" + token + ":signals",
 		SignalGroup:          prefix + "-lifecycle",
 		SignalConsumerPrefix: prefix + "-consumer",
@@ -766,13 +811,31 @@ func writeConfig(
 	for placeholder, value := range extra {
 		replacements[placeholder] = value
 	}
-	configText := string(template)
-	for placeholder, value := range replacements {
-		configText = strings.ReplaceAll(configText, placeholder, value)
+	// 空凭据仍为字符串；JSON 引号同时是合法 YAML，防止 null/数字推断和特殊字符改写。
+	for _, key := range []string{"{{REDIS_PASSWORD}}", "{{MYSQL_PASSWORD}}", "{{MYSQL_USERNAME}}"} {
+		if value, ok := replacements[key]; ok {
+			quoted, _ := json.Marshal(value)
+			replacements[key] = string(quoted)
+		}
 	}
-	if strings.Contains(configText, "{{") {
+	remaining := string(template)
+	pairs := make([]string, 0, len(replacements)*2)
+	for placeholder, value := range replacements {
+		remaining = strings.ReplaceAll(remaining, placeholder, "")
+		pairs = append(pairs, placeholder, value)
+	}
+	if strings.Contains(remaining, "{{") {
 		t.Fatal("E2E config contains unresolved placeholders")
 	}
+	// 单次替换不会把凭据中的字面模板文本再次解释成变量。
+	configText := strings.NewReplacer(pairs...).Replace(string(template))
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	_ = listener.Close()
+	configText += fmt.Sprintf("\ndispatch:\n  deployment: %s\n  listen: %s\n  url: http://%s\n  jwt:\n    secret_key: e2e-admin-%s\n  worker_token: e2e-worker-%s\n", names.Token, address, address, names.Token, names.Token)
 	path := filepath.Join(directory, "linkd-e2e.yaml")
 	// path 位于 testing.T.TempDir 创建的隔离目录中。
 	//nolint:gosec // G703: 不包含外部可控路径片段。
@@ -872,7 +935,24 @@ func waitUntilReady(
 		}
 		groups, err := redisClient.XInfoGroups(ctx, names.SignalStream).Result()
 		groupReady := err == nil && len(groups) == 1 && groups[0].Name == names.SignalGroup
-		if indicesReady && groupReady {
+		refreshReady := false
+		var settings map[string]struct {
+			Settings struct {
+				Index struct {
+					RefreshInterval string `json:"refresh_interval"`
+				} `json:"index"`
+			} `json:"settings"`
+		}
+		if status, settingsErr := es.do(
+			ctx,
+			http.MethodGet,
+			"/"+names.ActiveAlertIndex+"/_settings/index.refresh_interval",
+			nil,
+			&settings,
+		); settingsErr == nil && status == http.StatusOK {
+			refreshReady = settings[names.ActiveAlertIndex].Settings.Index.RefreshInterval == "5s"
+		}
+		if indicesReady && refreshReady && groupReady {
 			return
 		}
 		select {
@@ -991,9 +1071,9 @@ func waitForAcceptedEvents(
 			state, exists := expected.EventStates[stored.Event.SourceEventID]
 			processed = processed && exists && stored.Processing.State == state
 			if state == domain.EventProcessStateAccepted || state == domain.EventProcessStateSuppressed {
-				processed = processed && stored.Event.RelatedAlertID != ""
+				processed = processed && len(stored.Event.RelatedAlertIDs) != 0
 			} else {
-				processed = processed && stored.Event.RelatedAlertID == ""
+				processed = processed && len(stored.Event.RelatedAlertIDs) == 0
 			}
 		}
 		if processed {
@@ -1027,9 +1107,9 @@ func waitForAcceptedMySQLEvents(
 			state, exists := expected.EventStates[stored.Event.SourceEventID]
 			processed = processed && exists && stored.Processing.State == state
 			if state == domain.EventProcessStateAccepted || state == domain.EventProcessStateSuppressed {
-				processed = processed && stored.Event.RelatedAlertID != ""
+				processed = processed && len(stored.Event.RelatedAlertIDs) != 0
 			} else {
-				processed = processed && stored.Event.RelatedAlertID == ""
+				processed = processed && len(stored.Event.RelatedAlertIDs) == 0
 			}
 		}
 		if processed {
@@ -1055,9 +1135,18 @@ func searchSources(
 	index string,
 ) []json.RawMessage {
 	t.Helper()
-	body := []byte(`{"size":100,"query":{"match_all":{}},"sort":[{"_id":"asc"}]}`)
+	// 测试场景有明确的输入规模；超出查询预算直接失败，不能把截断的结果当成全部事实。
+	body := []byte(`{"size":10000,"track_total_hits":true,"query":{"match_all":{}},"sort":[{"_id":"asc"}]}`)
 	var response struct {
+		TimedOut bool `json:"timed_out"`
+		Shards   struct {
+			Failed int `json:"failed"`
+		} `json:"_shards"`
 		Hits struct {
+			Total struct {
+				Value    int    `json:"value"`
+				Relation string `json:"relation"`
+			} `json:"total"`
 			Hits []struct {
 				Source json.RawMessage `json:"_source"`
 			} `json:"hits"`
@@ -1065,6 +1154,9 @@ func searchSources(
 	}
 	if _, err := es.do(ctx, http.MethodPost, "/"+index+"/_search", body, &response); err != nil {
 		t.Fatalf("search Elasticsearch index %s: %v", index, err)
+	}
+	if response.TimedOut || response.Shards.Failed != 0 || response.Hits.Total.Relation != "eq" || response.Hits.Total.Value != len(response.Hits.Hits) {
+		t.Fatalf("incomplete Elasticsearch fixture query %s: total=%d rows=%d timed_out=%t failed_shards=%d", index, response.Hits.Total.Value, len(response.Hits.Hits), response.TimedOut, response.Shards.Failed)
 	}
 	sources := make([]json.RawMessage, 0, len(response.Hits.Hits))
 	for _, hit := range response.Hits.Hits {
@@ -1080,23 +1172,17 @@ type storedEventView struct {
 
 func loadEvents(ctx context.Context, t *testing.T, es *elasticsearchClient, index string) []storedEventView {
 	t.Helper()
-	body := []byte(`{"size":100,"query":{"match_all":{}},"sort":[{"_id":"asc"}]}`)
-	var response struct {
-		Hits struct {
-			Hits []struct {
-				Source struct {
-					domain.Event
-					Processing store.EventProcessing `json:"processing"`
-				} `json:"_source"`
-			} `json:"hits"`
-		} `json:"hits"`
-	}
-	if _, err := es.do(ctx, http.MethodPost, "/"+index+"/_search", body, &response); err != nil {
-		t.Fatalf("search Elasticsearch Event index %s: %v", index, err)
-	}
-	events := make([]storedEventView, 0, len(response.Hits.Hits))
-	for _, hit := range response.Hits.Hits {
-		events = append(events, storedEventView{Event: hit.Source.Event, Processing: hit.Source.Processing})
+	sources := searchSources(ctx, t, es, index)
+	events := make([]storedEventView, 0, len(sources))
+	for _, source := range sources {
+		var saved struct {
+			domain.Event
+			Processing store.EventProcessing `json:"processing"`
+		}
+		if err := json.Unmarshal(source, &saved); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, storedEventView{Event: saved.Event, Processing: saved.Processing})
 	}
 	return events
 }
@@ -1217,6 +1303,7 @@ func assertEvents(
 	t *testing.T,
 	events []storedEventView,
 	dataset rawgen.Dataset,
+	expectedPolicies ...map[string]policy.Release,
 ) {
 	t.Helper()
 	expected := dataset.Expected
@@ -1224,8 +1311,25 @@ func assertEvents(
 	wantIDs := append([]string(nil), expected.SourceEventIDs...)
 	sort.Strings(wantIDs)
 	gotIDs := make([]string, 0, len(events))
+	policyReleases := map[string]policy.Release{}
+	if len(expectedPolicies) > 0 {
+		policyReleases = expectedPolicies[0]
+	}
 	for _, stored := range events {
 		event := stored.Event
+		for _, ref := range eventPolicyReferences(stored.Processing) {
+			expectedPolicy, ok := policyReleases[event.BKTenantID]
+			if !ok || ref.ID != expectedPolicy.ID || ref.Version != expectedPolicy.Version || ref.Digest != expectedPolicy.Compiled.Digest || ref.Kind != string(expectedPolicy.Kind) {
+				t.Fatalf("decision used another tenant/version: %+v", ref)
+			}
+		}
+		if event.EnrichStatus != domain.EnrichStatusSucceeded || event.EnrichedAt == nil || event.EnrichConfigDigest == "" || event.EnrichConfigDigest == "unavailable" || len(event.Enrich.Evaluations) != len(event.Evaluations) {
+			t.Fatalf("Event enrichment was not persisted before completion: %s", event.EventID)
+		}
+		if err := event.EventEnrichment.Validate(event.Evaluations); err != nil {
+			t.Fatalf("Event enrichment contract: %v", err)
+		}
+
 		gotIDs = append(gotIDs, event.SourceEventID)
 		rawRecord, exists := rawEvents[event.SourceEventID]
 		if !exists {
@@ -1233,20 +1337,23 @@ func assertEvents(
 		}
 		raw := rawRecord.Raw
 		wantState := expected.EventStates[event.SourceEventID]
+		if stored.Processing.ReasonCode != expected.EventReasons[event.SourceEventID] {
+			t.Fatalf("event reason=%q want %q", stored.Processing.ReasonCode, expected.EventReasons[event.SourceEventID])
+		}
 		if stored.Processing.State != wantState {
 			t.Fatalf("Event processing state = %q, want %q: %#v", stored.Processing.State, wantState, event)
 		}
 		if (wantState == domain.EventProcessStateAccepted || wantState == domain.EventProcessStateSuppressed) &&
-			event.RelatedAlertID == "" {
+			len(event.RelatedAlertIDs) == 0 {
 			t.Fatalf("associated Event has no related_alert_id: %#v", event)
 		}
 		if wantState != domain.EventProcessStateAccepted && wantState != domain.EventProcessStateSuppressed &&
-			event.RelatedAlertID != "" {
+			len(event.RelatedAlertIDs) != 0 {
 			t.Fatalf("unassociated Event has related_alert_id: %#v", event)
 		}
 		if event.BKTenantID != rawRecord.BKTenantID || event.EventSourceID != dataset.Config.EventSourceID ||
-			event.Fingerprint != raw.SourceAlertID || event.Severity != raw.SourceSeverity ||
-			event.Title != raw.Title || event.Content != raw.Content || event.Action != raw.Action ||
+			event.Fingerprint != raw.SourceAlertID || event.Evaluations[0].Severity != raw.Evaluations[0].Severity ||
+			event.Title != raw.Title || event.Content != raw.Content || event.Evaluations[0].Action != raw.Evaluations[0].Action ||
 			!reflect.DeepEqual(event.Dimensions, raw.Dimensions) {
 			t.Fatalf("standard basic field mapping mismatch: event=%#v raw=%#v", event, raw)
 		}
@@ -1261,9 +1368,7 @@ func assertEvents(
 			t.Fatalf("standard source field mapping mismatch: event=%#v raw=%#v", event, raw)
 		}
 		parsedID, err := domain.ParseEventID(event.EventID)
-		if err != nil || parsedID.BKTenantID != event.BKTenantID ||
-			parsedID.EventSourceID != event.EventSourceID ||
-			!parsedID.Timestamp.Equal(event.ReceivedAt.Truncate(time.Second)) {
+		if err != nil || !parsedID.Timestamp.Equal(event.ReceivedAt.Truncate(time.Second)) {
 			t.Fatalf("Event ID %q is not a valid deterministic route: %#v, %v", event.EventID, parsedID, err)
 		}
 	}
@@ -1343,91 +1448,30 @@ func assertAlertLogs(t *testing.T, logs []domain.AlertLog, expected map[domain.O
 	}
 }
 
-func consumeOutputs(
-	ctx context.Context,
-	t *testing.T,
-	broker string,
-	names resourceNames,
-	expected int,
-) []kafkahook.Message {
+// 基础 E2E 故意保留旧 kafka Hook 声明，验证该声明不会产生消息或 push 流水。
+func assertNoLegacyOutputs(ctx context.Context, t *testing.T, broker string, names resourceNames) {
 	t.Helper()
+	partitions := make(map[int32]kgo.Offset, e2eTopicPartitions)
+	for partition := int32(0); partition < e2eTopicPartitions; partition++ {
+		partitions[partition] = kgo.NewOffset().AtStart()
+	}
 	consumer, err := kgo.NewClient(
 		kgo.SeedBrokers(broker),
 		kgo.ClientID("linkd-e2e-output-reader-"+names.Token),
-		kgo.ConsumerGroup(names.OutputGroup),
-		kgo.ConsumeTopics(names.OutputTopic),
-		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
-		kgo.DisableAutoCommit(),
+		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{names.OutputTopic: partitions}),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer consumer.Close()
-	messages := make([]kafkahook.Message, 0, expected)
-	for len(messages) < expected {
-		fetches := consumer.PollRecords(ctx, expected-len(messages))
-		if err := fetches.Err(); err != nil {
-			t.Fatalf("consume output Kafka: %v", err)
-		}
-		for _, record := range fetches.Records() {
-			var message kafkahook.Message
-			if err := json.Unmarshal(record.Value, &message); err != nil {
-				t.Fatalf("decode output Kafka message: %v", err)
-			}
-			headers := make(map[string]string, len(record.Headers))
-			for _, header := range record.Headers {
-				headers[header.Key] = string(header.Value)
-			}
-			if headers["message_id"] != message.MessageID || headers["cause_id"] != message.Cause.ID ||
-				headers["bk_tenant_id"] != message.BKTenantID {
-				t.Fatalf("output Kafka header/payload mismatch: headers=%v message=%#v", headers, message)
-			}
-			messages = append(messages, message)
-		}
-	}
-	quietCtx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	quietCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
 	defer cancel()
-	extra := consumer.PollRecords(quietCtx, 1)
-	if records := extra.Records(); len(records) != 0 {
-		t.Fatalf("output Kafka contains unexpected duplicate message: %s", records[0].Value)
+	fetches := consumer.PollRecords(quietCtx, 1)
+	if err := fetches.Err(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("read retired output topic: %v", err)
 	}
-	return messages
-}
-
-func assertOutputs(
-	t *testing.T,
-	outputs []kafkahook.Message,
-	events []storedEventView,
-	expected int,
-) {
-	t.Helper()
-	eventIDs := make(map[string]struct{}, len(events))
-	suppressedEventIDs := make(map[string]struct{})
-	for _, stored := range events {
-		eventIDs[stored.Event.EventID] = struct{}{}
-		if stored.Processing.State == domain.EventProcessStateSuppressed {
-			suppressedEventIDs[stored.Event.EventID] = struct{}{}
-		}
-	}
-	seen := make(map[string]struct{}, len(outputs))
-	for _, output := range outputs {
-		if _, exists := eventIDs[output.Cause.ID]; !exists {
-			t.Fatalf("output references unknown Event %q", output.Cause.ID)
-		}
-		if _, suppressed := suppressedEventIDs[output.Cause.ID]; suppressed {
-			t.Fatalf("suppressed Event %q unexpectedly emitted an Alert snapshot", output.Cause.ID)
-		}
-		if _, duplicate := seen[output.MessageID]; duplicate {
-			t.Fatalf("output repeated message %q", output.MessageID)
-		}
-		seen[output.MessageID] = struct{}{}
-		if output.SchemaVersion != "1" || output.Alert.AlertID != output.AlertID ||
-			output.EnrichStatus != domain.EnrichStatusSucceeded {
-			t.Fatalf("invalid output message: %#v", output)
-		}
-	}
-	if len(outputs) != expected || len(seen) != expected {
-		t.Fatalf("output messages = %d unique=%d, want %d", len(outputs), len(seen), expected)
+	if len(fetches.Records()) != 0 {
+		t.Fatal("removed Kafka Hook still produced messages")
 	}
 }
 
@@ -1477,4 +1521,274 @@ func redisMailboxesDrained(ctx context.Context, client *redis.Client, keyPrefix 
 			return true, nil
 		}
 	}
+}
+
+func importSources(ctx context.Context, t *testing.T, process *linkdProcess, path string) {
+	t.Helper()
+	cfg, err := config.Load(path, config.Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := taskdispatch.Client{URL: cfg.Dispatch.URL, JWTSecretKey: cfg.Dispatch.JWT.SecretKey, JWTUsername: cfg.Dispatch.JWT.Username}
+	for {
+		var records []any
+		e := client.Call(ctx, http.MethodGet, "/api/v1/event-sources", nil, &records)
+		if e == nil {
+			break
+		}
+		if exited, err := process.checkExited(); exited {
+			t.Fatalf("process exited before source import: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("control API did not become ready")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	for _, source := range cfg.EventSources {
+		var record any
+		if err := client.Call(ctx, http.MethodPut, "/api/v1/event-sources/"+source.EventSourceID, controlapi.Mutation{Spec: source}, &record); err != nil {
+			t.Fatal("explicit source import", err)
+		}
+	}
+}
+
+// startExtraWorkers 验证 all 模式、多副本分担和 Kafka 三分片上限；资源仅属于本次测试。
+func startExtraWorkers(ctx context.Context, t *testing.T, root, binary, configPath, directory, sourceID string) {
+	t.Helper()
+	for i, role := range []string{"cleaner", "cleaner", "cleaner", "lifecycle"} {
+		dir := filepath.Join(directory, fmt.Sprintf("worker-%d", i))
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		//nolint:gosec // G304: dir 来自当前测试 TempDir 的固定子目录。
+		logFile, err := os.Create(filepath.Join(dir, "worker.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		//nolint:gosec // G204: binary/configPath 均由本测试创建，role 来自固定枚举。
+		command := exec.CommandContext(context.Background(), binary, "run", role, "--config", configPath)
+		command.Dir = root
+		command.Stdout = logFile
+		command.Stderr = logFile
+		if err := command.Start(); err != nil {
+			_ = logFile.Close()
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- command.Wait() }()
+		p := &linkdProcess{command: command, wait: done, logFile: logFile, logPath: logFile.Name()}
+		t.Cleanup(func() {
+			if err := p.stop(); err != nil {
+				t.Logf("stop extra %s worker: %v", role, err)
+			}
+			if t.Failed() {
+				if data, err := os.ReadFile(p.logPath); err == nil {
+					t.Logf("%s worker log:\n%s", role, data)
+				}
+			}
+		})
+	}
+	cfg, err := config.Load(configPath, config.Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := taskdispatch.Client{URL: cfg.Dispatch.URL, JWTSecretKey: cfg.Dispatch.JWT.SecretKey, JWTUsername: cfg.Dispatch.JWT.Username}
+	for {
+		var state taskdispatch.State
+		if err := client.Call(ctx, http.MethodGet, "/api/v1/runtime", nil, &state); err == nil {
+			cleanerCount, lifecycleCount, assigned := 0, 0, 0
+			seen := map[string]bool{}
+			for _, task := range state.Tasks {
+				if task.Source != sourceID || task.Phase != "running" {
+					continue
+				}
+				key := task.Worker + task.Role
+				if seen[key] {
+					t.Fatal("same worker has duplicate source role")
+				}
+				seen[key] = true
+				if task.Role == "cleaner" {
+					cleanerCount++
+					if len(task.Partitions) > 0 {
+						assigned++
+					}
+				} else {
+					lifecycleCount++
+				}
+			}
+			if cleanerCount == 3 && lifecycleCount == 2 && assigned == 3 {
+				t.Log("multi-worker verified: 4 cleaner-capable workers capped at 3 partitions; 2 lifecycle replicas")
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("multi-worker scheduling did not converge; verify task state and broker assignments")
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+func verifySourceMutationCycle(ctx context.Context, t *testing.T, path string) {
+	t.Helper()
+	cfg, err := config.Load(path, config.Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := taskdispatch.Client{URL: cfg.Dispatch.URL, JWTSecretKey: cfg.Dispatch.JWT.SecretKey, JWTUsername: cfg.Dispatch.JWT.Username}
+	spec := cfg.EventSources[0]
+	endpoint := "/api/v1/event-sources/" + spec.EventSourceID
+	var record eventsource.Record
+	zero := 0
+	spec.Scheduling.Cleaner.Replicas.Number = &zero
+	if err := client.Call(ctx, http.MethodPut, endpoint, controlapi.Mutation{Expected: 1, Spec: spec}, &record); err != nil || record.Published != 2 {
+		t.Fatalf("zero replicas publication: %v %+v", err, record.Redacted())
+	}
+	waitTaskCounts(ctx, t, client, spec.EventSourceID, 0, 2)
+	spec.Scheduling.Cleaner.Replicas.Number = nil
+	if err := client.Call(ctx, http.MethodPut, endpoint, controlapi.Mutation{Expected: 2, Spec: spec}, &record); err != nil || record.Published != 3 {
+		t.Fatal("resume publication failed", err)
+	}
+	waitTaskCounts(ctx, t, client, spec.EventSourceID, 3, 2)
+	if err := client.Call(ctx, http.MethodDelete, endpoint, map[string]int{"expected_revision": 3}, &record); err != nil || !record.Deleted {
+		t.Fatal("delete publication failed", err)
+	}
+	waitTaskCounts(ctx, t, client, spec.EventSourceID, 0, 0)
+	var runtime taskdispatch.State
+	if err := client.Call(ctx, http.MethodGet, "/api/v1/runtime", nil, &runtime); err != nil {
+		t.Fatal(err)
+	}
+	builtinRunning := false
+	for _, task := range runtime.Tasks {
+		if task.Source != domain.BuiltinMergeEventSourceID || task.Phase != "running" {
+			continue
+		}
+		if task.Role != "lifecycle" {
+			t.Fatal("builtin merge source started an external Cleaner")
+		}
+		builtinRunning = true
+	}
+	if !builtinRunning {
+		t.Fatal("deleting ordinary source stopped builtin merge lifecycle")
+	}
+	var first eventsource.Release
+	if err := client.Call(ctx, http.MethodGet, endpoint+"/releases/1", nil, &first); err != nil || !first.Spec.Enabled {
+		t.Fatal("immutable release lost", err)
+	}
+	t.Log("source API verified: replicas 0, resume all, tombstone delete and immutable old release")
+}
+
+func waitTaskCounts(ctx context.Context, t *testing.T, client taskdispatch.Client, source string, cleanerCount, lifecycleCount int) {
+	t.Helper()
+	for {
+		var state taskdispatch.State
+		if err := client.Call(ctx, http.MethodGet, "/api/v1/runtime", nil, &state); err == nil {
+			c, l, pending := 0, 0, 0
+			for _, task := range state.Tasks {
+				// 内置合并来源独立运行；单个来源停用/删除不能把其他来源计入其收敛条件。
+				if task.Source != source {
+					continue
+				}
+				switch task.Phase {
+				case "running":
+					if task.Role == "cleaner" {
+						c++
+					} else {
+						l++
+					}
+				case "stopped":
+				default:
+					pending++
+				}
+			}
+			if c == cleanerCount && l == lifecycleCount && pending == 0 {
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("task counts did not converge to %d/%d", cleanerCount, lifecycleCount)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// prepareDatasetBuckets 为固定历史 fixture 显式准备桶，避免测试结果随日历推进失效。
+func prepareDatasetBuckets(ctx context.Context, t *testing.T, root, binary, configPath string, dataset rawgen.Dataset) {
+	t.Helper()
+	from, to := dataset.Config.StartTime, dataset.Config.StartTime
+	for _, record := range dataset.Records {
+		if record.KafkaTimestamp.Before(from) {
+			from = record.KafkaTimestamp
+		}
+		if record.KafkaTimestamp.After(to) {
+			to = record.KafkaTimestamp
+		}
+	}
+	//nolint:gosec // G204: binary/configPath 为测试临时目录内自产文件，时间来自固定 fixture。
+	command := exec.CommandContext(ctx, binary, "storage", "prepare", "--config", configPath, "--from", from.Add(-time.Second).Format(time.RFC3339), "--to", to.Add(time.Second).Format(time.RFC3339))
+	command.Dir = root
+	if data, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("prepare historical fixture buckets: %v\n%s", err, data)
+	}
+}
+
+// publishDatasetPolicies 发布租户内容不同的停用策略，验证真实 Worker 获取并固定正确版本，不改变原数据集业务结果。
+func publishDatasetPolicies(ctx context.Context, t *testing.T, path string, dataset rawgen.Dataset) map[string]policy.Release {
+	t.Helper()
+	cfg, err := config.Load(path, config.Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := taskdispatch.Client{URL: cfg.Dispatch.URL, JWTSecretKey: cfg.Dispatch.JWT.SecretKey, JWTUsername: cfg.Dispatch.JWT.Username}
+	releases := map[string]policy.Release{}
+	for _, record := range dataset.Records {
+		if !record.Valid {
+			continue
+		}
+		if _, ok := releases[record.BKTenantID]; ok {
+			continue
+		}
+		spec, err := json.Marshal(map[string]any{"name": "E2E " + record.BKTenantID, "is_enable": false, "updated_at": "2026-09-30T00:00:00Z", "space_code": "bkcc__2", "activate_times": []any{}, "policy": map[string]any{"expression": "A", "A": map[string]any{"condition": "term", "target_key": "name", "target_value": "test"}}, "scheme": []any{map[string]any{"type": "clip", "duration": 60, "duration_type": "second", "count": 2}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := policy.ApplyRequest{Scope: policy.Scope{TenantID: record.BKTenantID, Kind: policy.Suppression}, SchemaVersion: 1, ID: "e2e-policy", OperationID: "create-e2e-policy", Spec: spec}
+		var release policy.Release
+		if err := client.Call(ctx, http.MethodPut, "/api/v1/policies/suppression/e2e-policy", request, &release); err != nil {
+			t.Fatal(err)
+		}
+		releases[record.BKTenantID] = release
+	}
+	return releases
+}
+
+// 只核对实际参与裁决的版本，不再要求保存全部当前策略引用。
+func eventPolicyReferences(processing store.EventProcessing) []store.PolicyReleaseRef {
+	decisions := []*store.PolicyDecision{processing.PolicyDecision}
+	var refs []store.PolicyReleaseRef
+	for _, decision := range decisions {
+		if decision == nil {
+			continue
+		}
+		if decision.Suppression != nil {
+			for _, evaluation := range decision.Suppression.Evaluations {
+				for _, step := range evaluation.Steps {
+					refs = append(refs, step.Policy)
+				}
+			}
+		}
+		if decision.Shield != nil {
+			for _, step := range decision.Shield.Steps {
+				refs = append(refs, step.Policy)
+			}
+		}
+		if decision.Merge != nil {
+			for _, step := range decision.Merge.Steps {
+				refs = append(refs, step.Policy)
+			}
+		}
+	}
+	return refs
 }

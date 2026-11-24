@@ -63,12 +63,47 @@ func (r *observedRepository) CreateEvents(
 	return results, err
 }
 
+func (r *observedRepository) CreateNormalizedEvents(
+	ctx context.Context,
+	events []domain.Event,
+) ([]store.CreateEventItemResult, error) {
+	startedAt := time.Now()
+	next, ok := r.next.(store.NormalizedEventBatchStore)
+	if !ok {
+		return r.CreateEvents(ctx, events)
+	}
+	results, err := next.CreateNormalizedEvents(ctx, events)
+	r.record(ctx, "event", "create_batch", startedAt, err)
+	if err == nil {
+		for _, item := range results {
+			if item.Err == nil && !item.Result.Created {
+				r.replay(ctx, "event", "create_batch")
+			}
+		}
+	}
+	return results, err
+}
+
 func (r *observedRepository) GetEvent(
 	ctx context.Context,
 	bkTenantID, eventID string,
 ) (store.StoredEvent, error) {
 	startedAt := time.Now()
 	result, err := r.next.GetEvent(ctx, bkTenantID, eventID)
+	r.record(ctx, "event", "get", startedAt, err)
+	return result, err
+}
+
+func (r *observedRepository) GetLifecycleEvent(
+	ctx context.Context,
+	bkTenantID, eventID string,
+) (store.StoredEvent, error) {
+	startedAt := time.Now()
+	next, ok := r.next.(store.LifecycleEventStore)
+	if !ok {
+		return r.GetEvent(ctx, bkTenantID, eventID)
+	}
+	result, err := next.GetLifecycleEvent(ctx, bkTenantID, eventID)
 	r.record(ctx, "event", "get", startedAt, err)
 	return result, err
 }
@@ -84,6 +119,17 @@ func (r *observedRepository) GetEvents(
 	return result, err
 }
 
+func (r *observedRepository) ListEventsBySource(
+	ctx context.Context,
+	bkTenantID, sourceID string,
+	request store.EventBySourceRequest,
+) (store.EventPage, error) {
+	startedAt := time.Now()
+	result, err := r.next.ListEventsBySource(ctx, bkTenantID, sourceID, request)
+	r.record(ctx, "event", "list_by_source", startedAt, err)
+	return result, err
+}
+
 func (r *observedRepository) ListEventsByAlert(
 	ctx context.Context,
 	bkTenantID, alertID string,
@@ -95,6 +141,18 @@ func (r *observedRepository) ListEventsByAlert(
 	return result, err
 }
 
+func (r *observedRepository) CompareAndSetEventEnrichment(
+	ctx context.Context,
+	bkTenantID, eventID string,
+	expected store.VersionToken,
+	result domain.EventEnrichment,
+) (store.StoredEvent, error) {
+	startedAt := time.Now()
+	stored, err := r.next.CompareAndSetEventEnrichment(ctx, bkTenantID, eventID, expected, result)
+	r.record(ctx, "event", "compare_and_set_enrichment", startedAt, err)
+	return stored, err
+}
+
 func (r *observedRepository) CompareAndSetEventResult(
 	ctx context.Context,
 	bkTenantID, eventID string,
@@ -103,6 +161,22 @@ func (r *observedRepository) CompareAndSetEventResult(
 ) (store.StoredEvent, error) {
 	startedAt := time.Now()
 	stored, err := r.next.CompareAndSetEventResult(ctx, bkTenantID, eventID, expected, result)
+	r.record(ctx, "event", "compare_and_set_result", startedAt, err)
+	return stored, err
+}
+
+func (r *observedRepository) CompareAndSetLifecycleEventResult(
+	ctx context.Context,
+	bkTenantID, eventID string,
+	expected store.VersionToken,
+	result store.EventResult,
+) (store.StoredEvent, error) {
+	startedAt := time.Now()
+	next, ok := r.next.(store.LifecycleEventStore)
+	if !ok {
+		return r.CompareAndSetEventResult(ctx, bkTenantID, eventID, expected, result)
+	}
+	stored, err := next.CompareAndSetLifecycleEventResult(ctx, bkTenantID, eventID, expected, result)
 	r.record(ctx, "event", "compare_and_set_result", startedAt, err)
 	return stored, err
 }
@@ -120,6 +194,25 @@ func (r *observedRepository) CreateAlert(
 	return result, err
 }
 
+func (r *observedRepository) CreateAlertAfterActiveLookup(
+	ctx context.Context,
+	alert domain.Alert,
+) (store.CreateAlertResult, error) {
+	startedAt := time.Now()
+	var result store.CreateAlertResult
+	var err error
+	if next, ok := r.next.(store.LifecycleAlertStore); ok {
+		result, err = next.CreateAlertAfterActiveLookup(ctx, alert)
+	} else {
+		result, err = r.next.CreateAlert(ctx, alert)
+	}
+	r.record(ctx, "alert", "create", startedAt, err)
+	if err == nil && !result.Created {
+		r.replay(ctx, "alert", "create")
+	}
+	return result, err
+}
+
 func (r *observedRepository) GetAlert(
 	ctx context.Context,
 	bkTenantID, alertID string,
@@ -127,6 +220,22 @@ func (r *observedRepository) GetAlert(
 	startedAt := time.Now()
 	result, err := r.next.GetAlert(ctx, bkTenantID, alertID)
 	r.record(ctx, "alert", "get", startedAt, err)
+	return result, err
+}
+
+func (r *observedRepository) GetAlertCurrent(
+	ctx context.Context,
+	bkTenantID, alertID string,
+) (store.StoredAlert, error) {
+	startedAt := time.Now()
+	var result store.StoredAlert
+	var err error
+	if next, ok := r.next.(store.LifecycleAlertStore); ok {
+		result, err = next.GetAlertCurrent(ctx, bkTenantID, alertID)
+	} else {
+		result, err = r.next.GetAlert(ctx, bkTenantID, alertID)
+	}
+	r.record(ctx, "alert", "get_current", startedAt, err)
 	return result, err
 }
 
@@ -141,6 +250,20 @@ func (r *observedRepository) GetAlerts(
 	return result, err
 }
 
+// GetAlertsCurrent 保留批量实时读取能力，避免观测包装退化为逐条读取或 ES search。
+func (r *observedRepository) GetAlertsCurrent(ctx context.Context, tenant string, ids []string) (store.AlertBatch, error) {
+	startedAt := time.Now()
+	var result store.AlertBatch
+	var err error
+	if next, ok := r.next.(store.CurrentAlertBatchStore); ok {
+		result, err = next.GetAlertsCurrent(ctx, tenant, ids)
+	} else {
+		result, err = r.next.GetAlerts(ctx, tenant, ids)
+	}
+	r.record(ctx, "alert", "get_batch_current", startedAt, err)
+	return result, err
+}
+
 func (r *observedRepository) FindActiveAlert(
 	ctx context.Context,
 	key store.ActiveAlertKey,
@@ -149,6 +272,58 @@ func (r *observedRepository) FindActiveAlert(
 	result, err := r.next.FindActiveAlert(ctx, key)
 	r.record(ctx, "alert", "find_active", startedAt, err)
 	return result, err
+}
+
+// CompareAndSetEventEnrichmentFromSnapshot 保留原有逻辑操作指标，透明转发可选快照能力。
+func (r *observedRepository) CompareAndSetEventEnrichmentFromSnapshot(ctx context.Context, current store.StoredEvent, result domain.EventEnrichment) (store.StoredEvent, error) {
+	startedAt := time.Now()
+	if next, ok := r.next.(store.LifecycleEventSnapshotStore); ok {
+		stored, err := next.CompareAndSetEventEnrichmentFromSnapshot(ctx, current, result)
+		r.record(ctx, "event", "compare_and_set_enrichment", startedAt, err)
+		return stored, err
+	}
+	return r.CompareAndSetEventEnrichment(ctx, current.Event.BKTenantID, current.Event.EventID, current.Version, result)
+}
+
+// CompareAndSetLifecycleEventResultFromSnapshot 保留策略、计划和最终提交的独立计量与后端回退。
+func (r *observedRepository) CompareAndSetLifecycleEventResultFromSnapshot(ctx context.Context, current store.StoredEvent, result store.EventResult) (store.StoredEvent, error) {
+	startedAt := time.Now()
+	if next, ok := r.next.(store.LifecycleEventSnapshotStore); ok {
+		stored, err := next.CompareAndSetLifecycleEventResultFromSnapshot(ctx, current, result)
+		r.record(ctx, "event", "compare_and_set_result", startedAt, err)
+		return stored, err
+	}
+	return r.CompareAndSetLifecycleEventResult(ctx, current.Event.BKTenantID, current.Event.EventID, current.Version, result)
+}
+
+// CompareAndSetAlertFromSnapshot 透传快照 CAS，未实现时保留原有 active-lookup 更新语义。
+func (r *observedRepository) CompareAndSetAlertFromSnapshot(ctx context.Context, current store.StoredAlert, replacement domain.Alert) (store.StoredAlert, error) {
+	startedAt := time.Now()
+	if next, ok := r.next.(store.LifecycleAlertSnapshotStore); ok {
+		stored, err := next.CompareAndSetAlertFromSnapshot(ctx, current, replacement)
+		r.record(ctx, "alert", "compare_and_set", startedAt, err)
+		return stored, err
+	}
+	return r.CompareAndSetAlertAfterActiveLookup(ctx, current.Alert.BKTenantID, current.Alert.AlertID, current.Version, replacement)
+}
+
+var _ store.LifecycleEventSnapshotStore = (*observedRepository)(nil)
+
+var _ store.LifecycleAlertSnapshotStore = (*observedRepository)(nil)
+
+// CompleteAlertChange 独立计量局部完成写，未实现的仓储沿用原 CAS。
+func (r *observedRepository) CompleteAlertChange(ctx context.Context, current store.StoredAlert, field store.AlertChangeField) (store.StoredAlert, error) {
+	if next, ok := r.next.(store.AlertChangeCompletionStore); ok {
+		startedAt := time.Now()
+		stored, err := next.CompleteAlertChange(ctx, current, field)
+		r.record(ctx, "alert", "complete_change", startedAt, err)
+		return stored, err
+	}
+	next, err := store.CompletedAlertChange(current, field)
+	if err != nil {
+		return store.StoredAlert{}, err
+	}
+	return r.CompareAndSetAlertFromSnapshot(ctx, current, next)
 }
 
 func (r *observedRepository) FindAlertEndedByEvent(
@@ -169,6 +344,26 @@ func (r *observedRepository) CompareAndSetAlert(
 ) (store.StoredAlert, error) {
 	startedAt := time.Now()
 	result, err := r.next.CompareAndSetAlert(ctx, bkTenantID, alertID, expected, replacement)
+	r.record(ctx, "alert", "compare_and_set", startedAt, err)
+	return result, err
+}
+
+func (r *observedRepository) CompareAndSetAlertAfterActiveLookup(
+	ctx context.Context,
+	bkTenantID, alertID string,
+	expected store.VersionToken,
+	replacement domain.Alert,
+) (store.StoredAlert, error) {
+	startedAt := time.Now()
+	var result store.StoredAlert
+	var err error
+	if next, ok := r.next.(store.LifecycleAlertStore); ok {
+		result, err = next.CompareAndSetAlertAfterActiveLookup(
+			ctx, bkTenantID, alertID, expected, replacement,
+		)
+	} else {
+		result, err = r.next.CompareAndSetAlert(ctx, bkTenantID, alertID, expected, replacement)
+	}
 	r.record(ctx, "alert", "compare_and_set", startedAt, err)
 	return result, err
 }
@@ -291,3 +486,71 @@ func storeOutcome(err error) string {
 }
 
 var _ store.Repository = (*observedRepository)(nil)
+
+var _ store.LifecycleAlertStore = (*observedRepository)(nil)
+
+var _ store.LifecycleEventStore = (*observedRepository)(nil)
+
+// ListProjectionWork 保留归档后终态及逐目标补扫语义。
+
+// ListMergeWork 保留持久化窗口及意图的逐项分页语义。
+func (r *observedRepository) ListMergeWork(ctx context.Context, after store.MergeWorkCursor, limit int) (store.MergeWorkPage, error) {
+	next, ok := r.next.(store.MergeWorkStore)
+	if !ok {
+		return store.MergeWorkPage{}, store.ErrInvalidArgument
+	}
+	started := time.Now()
+	result, err := next.ListMergeWork(ctx, after, limit)
+	r.record(ctx, "alert", "merge_work", started, err)
+	return result, err
+}
+
+// ListActionWork 保留动作意图的有界分页语义。
+
+// ListShieldAlerts 保留管理查询的明确租户范围及未来待检查绑定。
+func (r *observedRepository) ListShieldAlerts(ctx context.Context, tenant, after string, limit int) (store.ShieldAlertPage, error) {
+	next, ok := r.next.(store.ShieldAlertReader)
+	if !ok {
+		return store.ShieldAlertPage{}, store.ErrInvalidArgument
+	}
+	started := time.Now()
+	result, err := next.ListShieldAlerts(ctx, tenant, after, limit)
+	r.record(ctx, "alert", "shield_query", started, err)
+	return result, err
+}
+
+// ListShieldWork 保留控制面工作枚举的身份校验和分页语义。
+func (r *observedRepository) ListShieldWork(ctx context.Context, after store.ShieldWorkCursor, at time.Time, limit int) (store.ShieldWorkPage, error) {
+	next, ok := r.next.(store.ShieldWorkStore)
+	if !ok {
+		return store.ShieldWorkPage{}, store.ErrInvalidArgument
+	}
+	started := time.Now()
+	result, err := next.ListShieldWork(ctx, after, at, limit)
+	r.record(ctx, "alert", "shield_work", started, err)
+	return result, err
+}
+
+// ListActiveAlerts 保留租户分页和存储错误，不把部分候选当成完整结果。
+func (r *observedRepository) ListActiveAlerts(ctx context.Context, tenant, after string, limit int) (store.ActiveAlertPage, error) {
+	next, ok := r.next.(store.ActiveAlertReader)
+	if !ok {
+		return store.ActiveAlertPage{}, store.ErrInvalidArgument
+	}
+	started := time.Now()
+	result, err := next.ListActiveAlerts(ctx, tenant, after, limit)
+	r.record(ctx, "alert", "active_candidates", started, err)
+	return result, err
+}
+
+// ListShieldDependents 保留当前依赖主查询的租户边界与页面预算，不用提示冒充关系事实。
+func (r *observedRepository) ListShieldDependents(ctx context.Context, tenant, main, after string, limit int) (store.ShieldAlertPage, error) {
+	next, ok := r.next.(store.ShieldDependencyReader)
+	if !ok {
+		return store.ShieldAlertPage{}, store.ErrInvalidArgument
+	}
+	started := time.Now()
+	result, err := next.ListShieldDependents(ctx, tenant, main, after, limit)
+	r.record(ctx, "alert", "shield_dependents", started, err)
+	return result, err
+}

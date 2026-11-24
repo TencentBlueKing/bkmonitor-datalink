@@ -15,6 +15,7 @@ import (
 
 	"linkd/internal/config"
 	"linkd/internal/domain"
+	"linkd/internal/runtimeconfig"
 )
 
 // SeverityResolver 根据来源取值和 EventSource 配置生成 Linkd 标准 severity。
@@ -52,8 +53,24 @@ func (DefaultFingerprintResolver) Resolve(source config.EventSource, event domai
 type EventFactory struct {
 	source              config.EventSource
 	severity            config.SeverityConfig
+	runtimeSeverity     *runtimeconfig.Severity
 	severityResolver    SeverityResolver
 	fingerprintResolver FingerprintResolver
+}
+
+// NewDynamicEventFactory 让来源长期运行时读取最新等级，保留已删除的来源映射以便落库后拒绝。
+func NewDynamicEventFactory(source config.EventSource, state *runtimeconfig.Severity) (*EventFactory, error) {
+	if source.Storage.Type == config.StorageTypeInternalMerge {
+		return nil, fmt.Errorf("internal merge source has no cleaner")
+	}
+	if state == nil {
+		return nil, fmt.Errorf("severity state is required")
+	}
+	snapshot := state.SeveritySnapshot()
+	if err := config.ValidateRuntimeSource(source, snapshot.Severity, snapshot.Enabled); err != nil {
+		return nil, err
+	}
+	return &EventFactory{source: source.WithDefaults(), severity: snapshot.Severity, runtimeSeverity: state, severityResolver: DefaultSeverityResolver{}, fingerprintResolver: DefaultFingerprintResolver{}}, nil
 }
 
 // NewEventFactory 使用 Linkd 默认 resolver 创建 EventFactory。
@@ -66,6 +83,20 @@ func NewEventFactory(source config.EventSource, severity config.SeverityConfig) 
 	)
 }
 
+// NewNormalizationFactory 复用正式 Build 规则，仅要求标准化配置，供无消息消费的调试使用。
+// 工厂不持有存储或输出端口；输入 RecordID 和 ReceivedAt 必须由调试样本固定。
+func NewNormalizationFactory(source config.EventSource, severity config.SeverityConfig) (*EventFactory, error) {
+	source = source.WithDefaults()
+	severity = severity.WithDefaults()
+	if err := severity.Validate(); err != nil {
+		return nil, err
+	}
+	if err := source.ValidateNormalization(severity); err != nil {
+		return nil, err
+	}
+	return &EventFactory{source: source, severity: severity, severityResolver: DefaultSeverityResolver{}, fingerprintResolver: DefaultFingerprintResolver{}}, nil
+}
+
 // NewEventFactoryWithResolvers 使用显式 resolver 创建 EventFactory。
 // resolver 只覆盖配置驱动算法，不改变 EventFactory 独占的系统字段。
 func NewEventFactoryWithResolvers(
@@ -75,6 +106,9 @@ func NewEventFactoryWithResolvers(
 	fingerprintResolver FingerprintResolver,
 ) (*EventFactory, error) {
 	source = source.WithDefaults()
+	if source.Storage.Type == config.StorageTypeInternalMerge {
+		return nil, fmt.Errorf("internal merge source has no cleaner")
+	}
 	severity = severity.WithDefaults()
 	if err := config.ValidateEventSources([]config.EventSource{source}, severity); err != nil {
 		return nil, fmt.Errorf("create event factory: %w", err)
@@ -99,9 +133,16 @@ func (f *EventFactory) Build(message RawEventMessage, draft EventDraft) (domain.
 	if message.ReceivedAt.IsZero() {
 		return domain.Event{}, fmt.Errorf("raw event received_at is required")
 	}
-	tenantID := message.BKTenantID
+	tenantID := draft.BKTenantID
 	if f.source.RelatedTenantID != "" {
 		tenantID = f.source.RelatedTenantID
+	} else {
+		if message.BKTenantID != "" && draft.BKTenantID != "" && message.BKTenantID != draft.BKTenantID {
+			return domain.Event{}, fmt.Errorf("event tenant mismatch: payload=%q envelope=%q", draft.BKTenantID, message.BKTenantID)
+		}
+		if tenantID == "" {
+			tenantID = message.BKTenantID
+		}
 	}
 	if tenantID == "" {
 		return domain.Event{}, fmt.Errorf("event tenant is required")
@@ -113,8 +154,40 @@ func (f *EventFactory) Build(message RawEventMessage, draft EventDraft) (domain.
 	if err := json.Unmarshal(message.Payload, &sourceRawData); err != nil {
 		return domain.Event{}, fmt.Errorf("preserve source payload: %w", err)
 	}
-	severity, err := f.severityResolver.Resolve(f.source, f.severity, draft.SourceSeverity)
-	if err != nil {
+	evaluations := make([]domain.EventEvaluation, len(draft.Evaluations))
+	severityConfig := f.severity
+	dynamic := false
+	if f.runtimeSeverity != nil {
+		snapshot := f.runtimeSeverity.SeveritySnapshot()
+		severityConfig = snapshot.Severity
+		dynamic = snapshot.Enabled
+	}
+	for index, evaluation := range draft.Evaluations {
+		// __ALL__ 表达关闭范围，不能经过来源映射或回退为默认等级；
+		// 后续领域校验确保该保留标记只用于 closed。
+		if evaluation.Severity == domain.SeverityAll {
+			evaluations[index] = evaluation
+			continue
+		}
+		severity, err := f.severityResolver.Resolve(f.source, severityConfig, evaluation.Severity)
+		// 动态等级模式保留无法识别的标准等级，交由 Lifecycle 落 rejected；
+		// 不能在删除等级时把旧事件悄悄降为全局默认等级。
+		if dynamic && evaluation.Severity != "" {
+			if mapped, ok := f.source.SeverityMapping[evaluation.Severity]; ok {
+				severity = mapped
+				err = nil
+			} else if f.source.DefaultSeverity == "" {
+				severity = evaluation.Severity
+				err = nil
+			}
+		}
+		if err != nil {
+			return domain.Event{}, err
+		}
+		evaluation.Severity = severity
+		evaluations[index] = evaluation
+	}
+	if err := domain.ValidateEvaluations(evaluations); err != nil {
 		return domain.Event{}, err
 	}
 	receivedAt := message.ReceivedAt.Round(0).UTC()
@@ -126,27 +199,29 @@ func (f *EventFactory) Build(message RawEventMessage, draft EventDraft) (domain.
 	if occurredAt.IsZero() {
 		occurredAt = receivedAt
 	}
-	stableSourceID := draft.SourceEventID
-	if stableSourceID == "" {
-		stableSourceID = message.RecordID
-	}
-	eventID, err := domain.GenerateEventID(tenantID, f.source.EventSourceID, stableSourceID, receivedAt)
+	// 来源可能用同一编号表示触发和恢复，Kafka 同毫秒也可能有多条记录。
+	// 使用稳定 RecordID 区分输入，保留来源编号供回查；重放同一记录不会另造业务身份。
+	eventID, err := domain.GenerateEventID(tenantID, f.source.EventSourceID, message.RecordID, receivedAt)
 	if err != nil {
 		return domain.Event{}, err
 	}
 	event := domain.Event{
-		BKTenantID: tenantID, EventSourceID: f.source.EventSourceID,
+		EventSourceVersion: f.source.Version,
+		BKTenantID:         tenantID, EventSourceID: f.source.EventSourceID,
 		EventID: eventID,
-		Title:   draft.Title, Content: draft.Content, Severity: severity,
-		Action: draft.Action, ActionReason: draft.ActionReason,
-		ConditionKey: draft.ConditionKey, ConditionName: draft.ConditionName,
+		Title:   draft.Title, Content: draft.Content, Evaluations: evaluations,
 		Dimensions: draft.Dimensions.Clone(), SubjectSystem: draft.SubjectSystem,
 		SubjectType: draft.SubjectType, SubjectID: draft.SubjectID, SubjectName: draft.SubjectName,
 		OccurredAt: occurredAt, ProducedAt: producedAt, ReceivedAt: receivedAt, CreateAt: receivedAt,
 		SourceEventID: draft.SourceEventID, SourceAlertID: draft.SourceAlertID,
 		SourceRawData: sourceRawData, Labels: draft.Labels.Clone(), ExtraData: draft.ExtraData.Clone(),
+		Values: draft.Values.Clone(),
 	}
-	event.Fingerprint, err = f.fingerprintResolver.Resolve(f.source, event)
+	if draft.Fingerprint != nil {
+		event.Fingerprint = *draft.Fingerprint
+	} else {
+		event.Fingerprint, err = f.fingerprintResolver.Resolve(f.source, event)
+	}
 	if err != nil {
 		return domain.Event{}, err
 	}
@@ -154,7 +229,7 @@ func (f *EventFactory) Build(message RawEventMessage, draft EventDraft) (domain.
 	if err != nil {
 		return domain.Event{}, fmt.Errorf("normalize Event: %w", err)
 	}
-	if err := domain.ValidateNewEvent(normalized); err != nil {
+	if err := domain.ValidateNormalizedNewEvent(normalized); err != nil {
 		return domain.Event{}, fmt.Errorf("validate new Event: %w", err)
 	}
 	return normalized, nil

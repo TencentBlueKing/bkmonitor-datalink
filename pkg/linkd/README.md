@@ -7,7 +7,7 @@ Linkd 是独立的 Go 告警接入和生命周期处理项目。当前领域事�
 
 项目处于早期开发阶段，没有稳定 Go API 或历史版本兼容承诺。当前配置、领域身份和物理资源直接描述
 当前实现；早期草案中的 `AlertEvent`、固定 RawEvent 映射、
-`severity_priority`、`revision` 和 `terminal_event_id` 不属于当前模型。
+`severity_priority` 和 `terminal_event_id` 不属于当前模型。Alert 的业务 `revision` 用于生命周期 CAS 与稳定动作身份。
 
 ## 当前链路
 
@@ -21,30 +21,52 @@ MQ delivery
   → 各 lane 将仍为 unprocessed 的 Event ID 写入 Redis Mailbox
   → 确认原 MQ 消息
   → Mailbox Signal + fingerprint lease
-  → Alert 创建/更新/升级/抑制/终态
-  → AlertLog + Kafka V1 Alert change
+  → 查询活跃 Alert（Elasticsearch 使用 Recent Alert 缓存优先）
+  → Event Enrich 并 CAS 冻结结果、策略版本与裁决上下文
+  → 新告警抑制 / Alert 生命周期 / 屏蔽判定 / 合并入窗 / 处置准入
+  → Alert / AlertLog / 轻量 Redis Streams 通知
+  → 控制面独立推进屏蔽复查、合并裁决及父子关系
+  → 控制面 64 通道批量写 KAC → 独立 refresh 与 64 并发动作投递
 ```
 
-- Event action 仅 `triggered | resolved | closed`。
+- 来源可通过 `active_alert_limits` 配置按字段分组的活跃告警软限额；Cleaner 提前过滤，Lifecycle 增量维护内部 Redis，控制面差异修复。详见[配置与升级](docs/guides/active-alert-by-strategy.md)。
+- Event 使用 evaluations 记录多个级别的 `triggered | resolved | closed` 判定，values 记录本次数值。
 - Alert status 仅 `active | recovered | closed`，后两者不可重新打开。
-- 同等级 `triggered` 只推进生命周期字段；更高等级关闭旧 Alert 并创建新 Alert；更低等级 Event 被抑制且不修改 Alert。
-- accepted 与 suppressed Event 写入 `related_alert_id`；suppressed 不推进 Alert，orphaned/rejected 保持为空。
-- Enricher 在 Alert 创建前同步执行一次；未配置规则视为 succeeded 空结果，错误降级为 failed。
+- 同一 fingerprint 最多一个活动 Alert；更高级别触发优先，可全局配置原地升级或关闭后新建；普通恢复/关闭只匹配当前级别，`__ALL__/closed` 可关闭任意当前级别。
+- Event 保存逐 evaluation 结果；防抖未达阈值时可为 suppressed 且没有关联 Alert，诊断仍可查询。
+- 每条不同 Event 在策略裁决前执行并冻结 Enrich，重投复用已保存结果；Alert 固定复制 opening Event
+  的丰富与展示快照。Processor 可显式配置 `reuse_on_active`，沿用同一活跃告警、同快照等级的该步骤成功结果；
+  见[丰富复用](docs/design/enrich.md#25-活跃告警丰富复用)。未配置规则视为 succeeded 空结果，错误降级为 failed。
+- 防抖与跨来源聚合只约束没有活动 Alert 的候选；活动 Alert 的更新与升级绕过这两项策略。
+  生命周期、屏蔽、合并、处置准入和同步水位分别保存。定时解除屏蔽或父关闭解联只更新关系，等待下一条触发 Event。
+- `plugins.kac` 全局开启兼容存储和处置通知，覆盖普通来源、内置合并来源及各租户；
+  `alarm_event` 沿用 KAC 原索引定义，一个 Alert 生命周期对应一条稳定文档。
+  通用 Kafka V1 Hook 已移除，残留 `type: kafka` 声明忽略；全局 KAC 插件启用时跳过旧 KAC Kafka Hook。
 - MySQL 和 Elasticsearch 都只承诺单对象 CAS；跨对象步骤依赖稳定身份和幂等流水恢复。Cleaner 确认
   原消息后不再扫描 Event 补发 Signal，因此 Redis Mailbox 必须依靠自身持久化和复制保证已确认数据。
+- Elasticsearch Event create 使用 `refresh=false`；Cleaner 在主分片确认后入 Mailbox，Lifecycle 和重复
+  Event 核对通过 realtime GET 读取，不依赖 `_search` 可见性。
+- Elasticsearch Lifecycle 使用共享 Redis Recent Alert 缓存跨越可配置的 search refresh 窗口；Alert create/CAS
+  使用 `refresh=false`，缓存写入失败时 Event 保留在 Mailbox 重试。MySQL 不启用该缓存。
 - Elasticsearch 使用控制面进程内三个独立任务分别执行 Schema 与 Active 资源对账、时间桶维护和 Alert 归档：
   Event 按 received_at，AlertHistory 与 AlertLog 按 Alert 创建锚点分桶；终态 Alert 由有界 Worker 连续批量从
   Active 热索引幂等归档到 History，积压期间批次之间不等待固定周期。
+- 拆分部署的控制面存储初始化与后台任务失败会记录状态并重试，管理 API 和调度保持运行；ES 只读或不可达时，
+  相关业务读写仍明确失败。失去调度中心租约时重新取得授权，不绕过原有协调历史保护。
 - 控制面可监控 Redis Signal Stream 的长度、内存、Consumer Group、PEL 和 lag，并在超过软上限时有界
   裁剪所有 Group 都已确认的连续前缀；未读和 Pending Signal 不会为满足长度目标而删除。
+
+Linkd 核心处理和 KAC 兼容插件已有本地验收；KAC 策略同步、真实处置接收端、生命周期命令转交及
+旧状态写入/索引维护退出仍需跨仓接入。运行观测和管理统一使用 Kingeye Admin，Linkd 不再提供独立 Console。
+当前能力与验收边界统一见
+[开发方案的差距清单](docs/design/event-enrich-and-alarm-policies.md#112-当前能力与剩余差距2026-10-08)。
 
 ## 目录
 
 ```text
 cmd/linkd/            Linkd 服务进程入口
-cmd/linkd-eventgen/   Standard Event 模拟器入口
+cmd/linkd-eventgen/   测试环境可选的配置驱动事件生成器入口
 configs/     示例配置
-devtools/    本机只读运维调试工具
 internal/    领域、Cleaner、生命周期、存储和运行时实现
 docs/        设计、配置、协议、调研和审查记录
 tests/       数据生成和 all-in-one E2E
@@ -54,22 +76,48 @@ tests/       数据生成和 all-in-one E2E
 [`docs/guides/configuration.md`](docs/guides/configuration.md)，存储边界见
 [`docs/design/core-storage-contract.md`](docs/design/core-storage-contract.md)，生命周期见
 [`docs/modules/lifecycle.md`](docs/modules/lifecycle.md)。后续部署形态统一为测试和小规模场景使用的
-`all-in-one`，以及 Cleaner、Lifecycle、控制面（API / Leader / Manager）三进程模式；当前实现与目标
+`all-in-one`，以及 Cleaner、Lifecycle、控制面（API / Leader / Manager）三进程模式；本次多级别事件改造的测试环境升级见[重置升级指南](docs/guides/multilevel-event-upgrade.md)。当前实现与目标
 边界见 [`docs/design/deployment.md`](docs/design/deployment.md)。
+
+开发维护人员通过 Kingeye Admin 及其 CLI 查询和管理 Linkd。
+Elasticsearch 模式提供[通用告警 DSL 检索](docs/reference/contracts/alert-search.md)及
+[按条件批量关闭](docs/reference/contracts/alert-close.md#按-filter-批量关闭)，复用控制面管理 JWT。
+
+## 动态来源与任务调度
+
+EventSource 通过控制面 API/自定义 provider 管理，显式 `linkd event-source import --file <yaml>` 导入；常驻进程不自动加载文件中的来源。
+Cleaner/Lifecycle 按来源和标签分配多副本，数量默认 all，支持 0 和 enabled 总开关；Cleaner 自动受 Kafka partition 数限制。
+Event/Alert 保存实际使用的 event_source_version，来源级 Stream 支持多个 Lifecycle consumer。
+启动前设置不同的 LINKD_JWT_SECRET_KEY / LINKD_WORKER_TOKEN；管理调用使用 [Kingeye 兼容 JWT](docs/reference/contracts/internal-token.md)。Kingeye Admin 的 Event Sources 页面通过正式 API 修改配置。
+
+实现和边界见[来源管理](docs/design/event-source-dynamic-configuration.md)与[调度协议](docs/design/task-scheduling-protocol.md)。
+
+## 动态配置
+
+`control_plane.dynamic_config.enabled` 默认关闭。启用后可从 Kingeye AlarmLevel MySQL 表定时同步等级，
+或从已约定的 Redis dynamicconfig 字段读取并 watch；来源连接独立配置。
+控制面先持久化最后有效配置再在线分发，重启优先恢复快照，上游故障不会清空当前等级表。
+未知等级 Event 标记 rejected；处理到未知等级活动 Alert 时系统关闭。
+详见[配置指南](docs/guides/configuration.md#动态配置)与[设计和恢复语义](docs/design/dynamic-configuration.md)。
 
 ## 本地开发
 
-要求 Go 1.26.7、golangci-lint v2.13.2，以及已安装依赖的 Node.js/pnpm 环境。
+要求 Go 1.26.10、golangci-lint v2.13.2 和 Node.js/pnpm。Node.js 用于镜像发布工作流检查，先执行 `pnpm --dir scripts install --frozen-lockfile` 安装其 YAML 依赖。
 
 ```bash
 go run ./cmd/linkd config validate --config ./configs/linkd.yaml
 go run ./cmd/linkd run control-plane --config ./configs/linkd.yaml
+
 go run ./cmd/linkd run cleaner --config ./configs/linkd.yaml
 go run ./cmd/linkd run lifecycle --config ./configs/linkd.yaml
 go run ./cmd/linkd run all-in-one --config ./configs/linkd.yaml
-go run ./cmd/linkd-eventgen --config ./configs/linkd.yaml --event-source-id demo-source --tenant-id tenant-a
+go run ./cmd/linkd-eventgen preview --config ./configs/eventgen/hosts.json --count 10
 make check
 ```
+
+仓库内配置不保存凭据。本机服务需要认证时，复制对应示例为被 Git 忽略的
+`configs/linkd.local.yaml` 或 `configs/linkd.pm2.local.yaml`，只在本地副本中填写凭据，并通过
+`--config` 或 `LINKD_CONFIG` 选择该文件。具体步骤见[配置指南](docs/guides/configuration.md)。
 
 独立模拟器的速率、生命周期、场景和重启边界见
 [`docs/guides/event-generator.md`](docs/guides/event-generator.md)。
@@ -80,3 +128,45 @@ make check
 
 `cleaner`、`lifecycle` 和 `all-in-one` 都传播 Context 取消并执行有界排空。真实 MySQL、Elasticsearch、
 Redis 和 Kafka 集成验证由 `tests/e2e/allinone` 提供，需显式配置对应环境变量。
+
+## 容器镜像
+
+`pkg/linkd` 可独立构建镜像，不依赖仓库根目录预编译。运行时基础镜像为
+`tencentos/tencentos4-minimal`。
+
+```bash
+make image IMAGE_TAG=dev VERSION=$(git rev-parse --short HEAD)
+# 或
+docker build -t linkd:dev --build-arg VERSION=$(git rev-parse --short HEAD) .
+```
+
+以上示例统一构建 `linkd:dev`，二进制版本使用当前 Git 短哈希。不指定 `IMAGE_TAG` 时，
+`make image` 默认使用独立版本 `1.0.0` 作为镜像标签，运行时应使用对应标签。
+`make image` 和 `make eventgen-image` 都自动传入完整 `GIT_COMMIT`，并将 VERSION 与 commit 写入产物。
+直接使用 Docker 构建时，可用 `--build-arg VERSION=<version>` 覆盖版本，并用 `--build-arg GIT_COMMIT=<full-sha>` 记录源码提交。
+两个镜像都支持追加 `version` 查询版本号及 commit，未注入的 commit 显示 unknown。
+
+构建缓存：两个 Go 镜像的依赖下载层不依赖版本、commit 或目标架构；依赖文件和基础镜像等
+输入不变且缓存可用时，`go mod download` 应显示 `CACHED`。Go 编译使用 BuildKit cache mount，
+同一 builder 可复用编译缓存；GitHub Actions 的 `type=gha` 默认只恢复镜像层，不恢复 cache mount，
+因此临时 runner 上的 Go 增量编译缓存仍需额外配置。
+构建日志会列出缓存命中的步骤，不能仅凭步骤名称判断重新执行。
+
+默认启动 `run all-in-one`。镜像不包含可用配置，必须把配置文件挂载到
+`/data/linkd/configs/linkd.yaml`，或用 `--config` 指定其他路径：
+
+```bash
+docker run --rm -v /path/to/linkd.yaml:/data/linkd/configs/linkd.yaml linkd:dev
+docker run --rm -v /path/to/linkd.yaml:/data/linkd/configs/linkd.yaml linkd:dev \
+  run cleaner --config /data/linkd/configs/linkd.yaml
+docker run --rm linkd:dev version
+```
+
+容器终止宽限期建议至少 60 秒。当前镜像只提供与本地进程相同的启动入口，不表示生产部署方案已完成。
+
+Kubernetes 部署时的镜像与角色配置见 [Helm 部署指南](docs/guides/helm.md)。
+
+GitHub Actions 支持手动选择构建 Linkd 或独立 Eventgen 镜像并推送到 GHCR；没有自动触发事件。
+参数、权限和版本标签约定见 [手动构建与发布镜像](docs/guides/image-release.md)。
+
+KAC 输出的重启边界和真实本地验收见[输出 V3 验收记录](docs/research/2026-10-14-kac-output-v3-validation.md)。

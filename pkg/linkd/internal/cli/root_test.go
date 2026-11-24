@@ -65,10 +65,6 @@ func TestLifecycleCommandDelegatesToRunner(t *testing.T) {
 
 	path := writeCLIConfig(t, `lifecycle:
   concurrency: 3
-  output:
-    kafka:
-      brokers: [kafka.example.com:9092]
-      topic: linkd-alerts
 `)
 	var calls atomic.Int32
 	runner := LifecycleRunner(func(
@@ -84,7 +80,7 @@ func TestLifecycleCommandDelegatesToRunner(t *testing.T) {
 		return nil
 	})
 	stdout := &bytes.Buffer{}
-	command := NewRootCommand("test-version", Dependencies{LifecycleRunner: runner})
+	command := NewRootCommand("test-version", "test-commit", Dependencies{LifecycleRunner: runner})
 	command.SetOut(stdout)
 	command.SetErr(&bytes.Buffer{})
 	command.SetArgs([]string{"run", "lifecycle", "--config", path})
@@ -123,7 +119,7 @@ func TestControlPlaneRequiresManagementTask(t *testing.T) {
 func TestDefaultConfigPath(t *testing.T) {
 	t.Parallel()
 
-	command := NewRootCommand("test-version", Dependencies{})
+	command := NewRootCommand("test-version", "test-commit", Dependencies{})
 	flag := command.PersistentFlags().Lookup("config")
 	if flag == nil || flag.DefValue != defaultConfigPath {
 		t.Fatalf("config default = %#v, want %q", flag, defaultConfigPath)
@@ -195,8 +191,27 @@ func TestVersion(t *testing.T) {
 	if err := command.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("ExecuteContext() error = %v", err)
 	}
-	if stdout.String() != "1.2.3\n" {
+	if stdout.String() != "version: 1.2.3\ngit_commit: test-commit\n" {
 		t.Fatalf("version output = %q", stdout.String())
+	}
+}
+
+func TestVersionWithoutBuildMetadata(t *testing.T) {
+	t.Parallel()
+
+	command := NewRootCommand("", "", Dependencies{})
+	var stdout bytes.Buffer
+	command.SetOut(&stdout)
+	command.SetArgs([]string{"version", "--config", "/does/not/exist"})
+	if err := command.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := stdout.String(); got != "version: dev\ngit_commit: unknown\n" {
+		t.Fatalf("unexpected output %q", got)
+	}
+	command.SetArgs([]string{"version", "unexpected-argument"})
+	if err := command.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("version accepted an unexpected argument")
 	}
 }
 
@@ -213,24 +228,12 @@ func TestCompletionCommand(t *testing.T) {
 	}
 }
 
-func TestCleanerStopsWhenContextIsCanceled(t *testing.T) {
-	t.Parallel()
-
-	path := writeCLIConfig(t, `logging:
-  level: info
-  format: json
-`)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	command, stdout, _ := testCommand("test-version")
+func TestCleanerWithoutDynamicDependenciesFailsBeforeRunning(t *testing.T) {
+	path := writeCLIConfig(t, "{}\n")
+	command, _, _ := testCommand("test-version")
 	command.SetArgs([]string{"run", "cleaner", "--config", path})
-	if err := command.ExecuteContext(ctx); err != nil {
-		t.Fatalf("ExecuteContext() error = %v", err)
-	}
-	if output := stdout.String(); !strings.Contains(output, `"msg":"linkd cleaner started"`) ||
-		!strings.Contains(output, `"msg":"linkd cleaner stopped"`) {
-		t.Fatalf("cleaner output = %s", output)
+	if err := command.ExecuteContext(context.Background()); err == nil || !strings.Contains(err.Error(), "storage config is required") {
+		t.Fatalf("expected dynamic dependencies, got %v", err)
 	}
 }
 
@@ -392,7 +395,7 @@ func testCommandWithCleaner(
 ) (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	command := NewRootCommand(version, Dependencies{CleanerFlowFactory: cleanerFactory})
+	command := NewRootCommand(version, "test-commit", Dependencies{CleanerFlowFactory: cleanerFactory})
 	command.SetOut(stdout)
 	command.SetErr(stderr)
 	return command, stdout, stderr

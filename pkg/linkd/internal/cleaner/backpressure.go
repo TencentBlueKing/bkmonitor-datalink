@@ -44,7 +44,7 @@ func (c BackpressureConfig) validate() error {
 	if c.QueryTimeout <= 0 || c.QueryTimeout > c.CacheTTL {
 		return fmt.Errorf("query timeout must be positive and not exceed cache TTL")
 	}
-	if c.LowWatermark <= 0 || c.HighWatermark <= c.LowWatermark {
+	if c.HighWatermark < 0 || c.LowWatermark < 0 || (c.HighWatermark > 0 && c.HighWatermark <= c.LowWatermark) {
 		return fmt.Errorf("watermarks must satisfy 0 < low < high")
 	}
 	return nil
@@ -130,7 +130,8 @@ func newSignalBackpressureChecker(
 }
 
 // Check 返回缓存的准入状态；缓存过期时最多由一个调用方刷新。
-// Redis 查询失败或 lag 未知时 fail-open，Group 明确缺失时 fail-closed。
+// Redis 查询失败或 lag 未知时维持上次状态，避免短暂观测故障绕过已经生效的背压；
+// 开启背压时 Group 明确缺失会暂停。高水位为 0 时始终放行，但保留采样供运行观测使用。
 func (c *SignalBackpressureChecker) Check(ctx context.Context) ReceiveDecision {
 	now := c.now()
 	c.mu.Lock()
@@ -155,7 +156,6 @@ func (c *SignalBackpressureChecker) Check(ctx context.Context) ReceiveDecision {
 		allowed = false
 		outcome = "group_missing"
 	} else if err != nil {
-		allowed = true
 		outcome = "query_failed"
 	} else {
 		found := false
@@ -165,7 +165,6 @@ func (c *SignalBackpressureChecker) Check(ctx context.Context) ReceiveDecision {
 			}
 			found = true
 			if group.Lag < 0 {
-				allowed = true
 				outcome = "lag_unknown"
 				break
 			}
@@ -186,6 +185,11 @@ func (c *SignalBackpressureChecker) Check(ctx context.Context) ReceiveDecision {
 			allowed = false
 			outcome = "group_missing"
 		}
+	}
+
+	// 关闭控制不关闭观测；查询失败或 Group 缺失也不能暂停已禁用背压的来源。
+	if c.config.HighWatermark == 0 {
+		allowed = true
 	}
 
 	c.mu.Lock()

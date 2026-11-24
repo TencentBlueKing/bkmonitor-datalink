@@ -1,0 +1,45 @@
+{
+  "events": [
+    {
+      "event_id": "example-rest-event-1",
+      "received_at": "2025-01-01T00:00:00Z",
+      "raw": {
+        "bk_tenant_id": "system",
+        "event_id": "",
+        "fingerprint": "example-rest",
+        "evaluations": [
+          {
+            "action": "triggered",
+            "action_reason": "",
+            "severity": "warning"
+          }
+        ],
+        "title": "Example REST alert",
+        "content": "Example content"
+      }
+    },
+    {
+      "event_id": "example-rest-event-2",
+      "received_at": "2025-01-01T00:01:00Z",
+      "raw": {
+        "bk_tenant_id": "system",
+        "event_id": "",
+        "fingerprint": "example-rest",
+        "evaluations": [
+          {
+            "action": "triggered",
+            "action_reason": "",
+            "severity": "warning"
+          }
+        ],
+        "subject": {},
+        "labels": {},
+        "dimensions": {},
+        "extra_data": {},
+        "values": {},
+        "title": "Example REST alert",
+        "content": "Example content"
+      }
+    }
+  ]
+}

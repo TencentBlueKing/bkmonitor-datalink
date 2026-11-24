@@ -31,7 +31,8 @@ var _ store.Repository = (*Repository)(nil)
 // Repository 使用 database/sql 实现 Linkd 的完整存储契约。
 // 连接池和事务重试策略由创建 sql.DB 的进程装配层负责。
 type Repository struct {
-	db *sql.DB
+	db    *sql.DB
+	batch *writeBatch
 }
 
 // New 使用调用方持有的 MySQL 连接池创建 Repository。
@@ -42,6 +43,9 @@ func New(db *sql.DB) (*Repository, error) {
 	}
 	return &Repository{db: db}, nil
 }
+
+// PoolStats 返回共享连接池统计，调用方只读观测，不改变连接预算。
+func (r *Repository) PoolStats() sql.DBStats { return r.db.Stats() }
 
 func contextError(ctx context.Context) error {
 	if ctx == nil {

@@ -14,19 +14,28 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
-	redis "github.com/redis/go-redis/v9"
+	"linkd/internal/activeindex"
 	"linkd/internal/config"
 	"linkd/internal/consume"
 	"linkd/internal/consume/redisstream"
+	"linkd/internal/enrich/assembly"
 	"linkd/internal/lifecycle"
-	"linkd/internal/lifecycle/kafkahook"
 	"linkd/internal/lifecycle/mailbox"
+	"linkd/internal/lifecycle/recentalert"
 	"linkd/internal/lifecycle/scheduler"
+	"linkd/internal/policy"
+	"linkd/internal/policy/redisstate"
+	policyruntime "linkd/internal/policy/runtime"
+	policystore "linkd/internal/policy/storage"
+	"linkd/internal/redisclient"
+	"linkd/internal/store"
 	repositoryassembly "linkd/internal/store/assembly"
+	elasticsearchstore "linkd/internal/store/elasticsearch"
+	"linkd/internal/suppressioncleanup"
+	"linkd/internal/taskdispatch"
 	"linkd/internal/telemetry"
 )
 
@@ -60,23 +69,54 @@ func Run(
 
 	lifecycleConfig := cfg.Lifecycle.WithDefaults()
 	storageConfig := cfg.Storage
-	consumerName := newConsumerName(lifecycleConfig.Signal.ConsumerPrefix, hostname(), os.Getpid())
 
 	startupCtx, cancelStartup := context.WithTimeout(ctx, startupTimeout)
 	defer cancelStartup()
-	repositoryRuntime, err := repositoryassembly.Open(startupCtx, *storageConfig, lifecycleConfig.Concurrency+4)
+	repositoryRuntime, err := repositoryassembly.Open(startupCtx, *storageConfig, 0)
 	if err != nil {
 		return fmt.Errorf("initialize lifecycle repository: %w", err)
 	}
 	defer repositoryassembly.JoinCloseError(&runErr, repositoryRuntime)
+	batchConfig := lifecycleConfig.ElasticsearchWriteBatch
+	if repositoryRuntime.Backend == config.RepositoryTypeElasticsearch && *batchConfig.Enabled {
+		repository, ok := repositoryRuntime.Repository.(*elasticsearchstore.Repository)
+		if !ok {
+			return fmt.Errorf("lifecycle elasticsearch batch requires elasticsearch repository")
+		}
+		observer, err := telemetryRuntime.NewWriteBatchObserver()
+		if err != nil {
+			return err
+		}
+		batched, closer, err := repository.EnableWriteBatch(elasticsearchstore.WriteBatchConfig{
+			MaxOperations: batchConfig.MaxOperations, MaxBytes: batchConfig.MaxBytes,
+			Wait:                 time.Duration(batchConfig.WaitMilliseconds) * time.Millisecond,
+			ReadWait:             time.Duration(batchConfig.ReadWaitMilliseconds) * time.Millisecond,
+			MaxConcurrentBatches: batchConfig.MaxConcurrentBatches, MaxCalls: lifecycleConfig.Concurrency,
+			Timeout: time.Duration(lifecycleConfig.ProcessTimeoutSeconds) * time.Second,
+		}, observer)
+		if err != nil {
+			return err
+		}
+		defer closer.Close()
+		repositoryRuntime.Repository = batched
+	}
 	observedRepository := telemetryRuntime.ObserveRepository(repositoryRuntime.Repository)
+	cleanupDocs, err := policystore.Open(startupCtx, *storageConfig, cfg.Dispatch.WithDefaults().Deployment)
+	if err != nil {
+		return err
+	}
+	defer func() { runErr = errors.Join(runErr, cleanupDocs.Close()) }()
+	cleanupJournal, err := suppressioncleanup.NewJournal(cleanupDocs, time.Now)
+	if err != nil {
+		return err
+	}
 
-	lockClient := redis.NewClient(&redis.Options{
-		Addr:     storageConfig.Redis.Address,
-		Username: storageConfig.Redis.Username,
-		Password: storageConfig.Redis.Password,
-		DB:       storageConfig.Redis.Database,
-	})
+	redisOptions := storageConfig.Redis.ClientOptions()
+	redisOptions.ContextTimeoutEnabled = true
+	lockClient, err := redisclient.New(redisOptions)
+	if err != nil {
+		return fmt.Errorf("initialize lifecycle redis: %w", err)
+	}
 	defer func() {
 		if err := lockClient.Close(); err != nil {
 			runErr = errors.Join(runErr, fmt.Errorf("close lifecycle redis: %w", err))
@@ -85,79 +125,146 @@ func Run(
 	if err := lockClient.Ping(startupCtx).Err(); err != nil {
 		return fmt.Errorf("connect lifecycle redis: %w", err)
 	}
-	mailboxStore, err := mailbox.NewStore(lockClient, lifecycleConfig.MailboxConfig())
-	if err != nil {
-		return fmt.Errorf("initialize lifecycle mailbox: %w", err)
+	recentAlerts := lifecycle.RecentAlertCache(lifecycle.NoopRecentAlertCache{})
+	recentAlertCacheEnabled := false
+	recentAlertCacheTTL := time.Duration(0)
+	if repositoryRuntime.Backend == config.RepositoryTypeElasticsearch {
+		cacheConfig := recentalert.Config{
+			KeyPrefix:       lifecycleConfig.Mailbox.KeyPrefix + ":recent-alert",
+			RefreshInterval: storageConfig.Elasticsearch.ActiveAlertRefreshInterval(),
+		}
+		recentAlerts, err = recentalert.NewStore(lockClient, cacheConfig, telemetryRuntime.RecentAlertCacheObserver())
+		if err != nil {
+			return fmt.Errorf("initialize lifecycle recent alert cache: %w", err)
+		}
+		recentAlertCacheEnabled = true
+		recentAlertCacheTTL = cacheConfig.TTL()
 	}
 
-	session, err := redisstream.NewSession(
-		lifecycleConfig.RedisStreamConfig(*storageConfig.Redis, consumerName),
-	)
+	policyState, err := redisstate.New(lockClient, cfg.Dispatch.WithDefaults().Deployment)
 	if err != nil {
-		return fmt.Errorf("initialize lifecycle signal session: %w", err)
+		return err
 	}
-	// 从这里开始 Session 的所有权交给 consume.Runtime，Run 会在所有返回路径关闭它。
+	observations := policyruntime.NewObservations(policyState, telemetryRuntime)
+	defer observations.Close()
+	policyState.SetObserver(telemetryRuntime)
+	policyDependencies := policyruntime.NewWorkerDependencies(ctx, taskdispatch.Client{URL: cfg.Dispatch.WithDefaults().URL, Token: cfg.Dispatch.WorkerToken})
+	defer policyDependencies.Close()
+	policyCatalog := policy.NewCatalog(policyDependencies)
+	policyCtx, cancelPolicies := context.WithCancel(ctx)
+	policyDone := make(chan struct{})
+	go func() { defer close(policyDone); _ = policyCatalog.Run(policyCtx) }()
+	defer func() { cancelPolicies(); <-policyDone }()
 
-	hook, err := kafkahook.New(lifecycleConfig.KafkaHookConfig())
-	if err != nil {
-		closeSession(session)
-		return fmt.Errorf("initialize lifecycle kafka hook: %w", err)
-	}
-	defer hook.Close()
-	observedHook := telemetryRuntime.ObserveFinalHook(hook)
+	severityState := taskdispatch.SeverityState(ctx, cfg.Severity)
+	return taskdispatch.ServeWithSeverity(ctx, cfg, "lifecycle", func(taskCtx context.Context, task taskdispatch.Task, source config.EventSource) (taskErr error) {
+		unregister := policyDependencies.Register(task, source.RelatedTenantID)
+		defer unregister()
+		stage := "enrich_datasources"
+		defer func() { taskErr = taskdispatch.WithTaskStage(stage, taskErr) }()
+		openCtx, cancelOpen := context.WithTimeout(taskCtx, startupTimeout)
+		enrichRuntime, err := assembly.Open(
+			openCtx, source, cfg.Resources, lifecycleConfig.Concurrency+4,
+			time.Duration(lifecycleConfig.ProcessTimeoutSeconds)*time.Second, telemetryRuntime,
+		)
+		cancelOpen()
+		if err != nil {
+			return fmt.Errorf("initialize lifecycle source enrich datasources: %w", err)
+		}
+		defer func() {
+			if closeErr := enrichRuntime.Close(); closeErr != nil {
+				taskErr = errors.Join(taskErr, closeErr)
+			}
+		}()
+		stage = "enricher"
+		enricher, err := enrichRuntime.Router(source, telemetryRuntime, assembly.WithLogger(logger))
+		if err != nil {
+			return fmt.Errorf("initialize lifecycle source enricher: %w", err)
+		}
+		stage = "hooks"
+		hooks, closeHooks, err := openHooksWithSeverity(kacHooks(source.Hooks, cfg.Plugins.KACEnabled()), telemetryRuntime, severityState)
+		if err != nil {
+			return fmt.Errorf("initialize source hooks: %w", err)
+		}
+		defer func() {
+			if err := closeHooks(); err != nil {
+				logger.WarnContext(taskCtx, "source hook cleanup failed", "module", "lifecycle", "operation", "hook_cleanup", "error", err, "event_source_id", source.EventSourceID)
+			}
+		}()
+		stage = "processor"
+		suppressor := &policyruntime.Suppressor{Releases: policyDependencies, Catalog: policyCatalog, Targets: policyDependencies.Dependencies, State: policyState, Aggregation: policyState,
+			CleanupRecorder: cleanupJournal,
+			CurrentAlert: func(ctx context.Context, tenant, id string) (store.StoredAlert, error) {
+				if current, ok := observedRepository.(store.LifecycleAlertStore); ok {
+					return current.GetAlertCurrent(ctx, tenant, id)
+				}
+				return observedRepository.GetAlert(ctx, tenant, id)
+			},
+			NewAlertID: lifecycle.DeterministicAlertIDGenerator{}.Generate, Observations: observations, Observer: telemetryRuntime, Logger: logger}
+		processor, err := lifecycle.NewProcessor(
+			observedRepository,
+			recentAlerts,
+			lifecycle.DeterministicAlertIDGenerator{},
+			enricher,
+			hooks,
+			severityState,
+			lifecycle.SystemClock{},
+			logger,
+			lifecycle.WithEnrichObserver(telemetryRuntime.EnrichObserver()),
+			lifecycle.WithPhaseObserver(telemetryRuntime.LifecyclePhaseObserver()),
+			lifecycle.WithAlertChangePublisher(changePublisher(cfg, lockClient, telemetryRuntime)),
+			lifecycle.WithPolicySnapshotter(policyruntime.Snapshotter{Catalog: policyCatalog, Level: func(name string) (string, error) { return severityState.SeveritySnapshot().KACLevel(name) }}),
+			lifecycle.WithNewAlertSuppressor(suppressor),
+			lifecycle.WithMergeEvaluator(&policyruntime.Merger{Loader: suppressor, State: policyState, Logger: logger, Observer: telemetryRuntime}),
+			lifecycle.WithShieldEvaluator(&policyruntime.Shielder{Loader: suppressor, Events: observedRepository.GetEvent, Candidates: observedRepository.(store.ActiveAlertReader), CurrentAlert: suppressor.CurrentAlert, Dependency: policyState, Index: policyState, Hints: policyState, Relations: policyDependencies.Dependencies, Logger: logger, Observer: telemetryRuntime}),
+			lifecycle.WithSeverityUpgradePolicy(lifecycleConfig.SeverityUpgradePolicy),
+			lifecycle.WithAlertContentBuilder(enricher),
+			lifecycle.WithActiveAlertCache(activeindex.New(lockClient, cfg.Dispatch.WithDefaults().Deployment, source, telemetryRuntime)),
+		)
+		if err != nil {
+			return fmt.Errorf("initialize lifecycle processor: %w", err)
+		}
 
-	processor, err := lifecycle.NewProcessor(
-		observedRepository,
-		lifecycle.DeterministicAlertIDGenerator{},
-		lifecycle.NoopEnricher{},
-		observedHook,
-		cfg.Severity,
-		lifecycle.SystemClock{},
-		logger,
-	)
-	if err != nil {
-		closeSession(session)
-		return fmt.Errorf("initialize lifecycle processor: %w", err)
-	}
-	locker, err := scheduler.NewRedisLocker(lockClient, lifecycleConfig.SchedulerConfig())
-	if err != nil {
-		closeSession(session)
-		return fmt.Errorf("initialize lifecycle fingerprint locker: %w", err)
-	}
-	observedProcessor := telemetryRuntime.ObserveLifecycleProcessor(processor)
-	handler, err := scheduler.NewHandler(
-		observedRepository,
-		mailboxStore,
-		observedProcessor,
-		locker,
-		lifecycleConfig.SchedulerConfig(),
-		logger,
-		telemetryRuntime.LifecycleSchedulerObserver(),
-	)
-	if err != nil {
-		closeSession(session)
-		return fmt.Errorf("initialize lifecycle scheduler: %w", err)
-	}
-	logger.InfoContext(
-		ctx,
-		"linkd lifecycle started",
-		"consumer", consumerName,
-		"stream", lifecycleConfig.Signal.Stream,
-		"group", lifecycleConfig.Signal.Group,
-		"concurrency", lifecycleConfig.Concurrency,
-		"mailbox_max_drain_events", lifecycleConfig.Mailbox.MaxDrainEvents,
-		"output_topic", lifecycleConfig.Output.Kafka.Topic,
-	)
-	defer logger.InfoContext(context.Background(), "linkd lifecycle stopped", "consumer", consumerName)
+		stage = "mailbox"
+		lc := lifecycleConfig.ForSource(cfg.Dispatch.WithDefaults().Deployment, source.EventSourceID)
+		mailboxStore, err := mailbox.NewStore(lockClient, lc.MailboxConfig())
+		if err != nil {
+			return err
+		}
+		sc := lc.RedisStreamConfig(*storageConfig.Redis, taskdispatch.ConsumerName(task))
+		sc.RetiredConsumers = append([]string(nil), task.Retired...)
+		sc.OnRetiredDrained = consume.RetiredObserver(taskCtx)
+		stage = "signal_session"
+		session, err := redisstream.NewSession(sc)
+		if err != nil {
+			return err
+		}
+		stage = "lease"
+		locker, err := scheduler.NewRedisLocker(lockClient, lc.SchedulerConfig())
+		if err != nil {
+			closeSession(session)
+			return err
+		}
+		stage = "scheduler"
+		handler, err := scheduler.NewHandler(observedRepository, mailboxStore, telemetryRuntime.ObserveLifecycleProcessor(processor), locker, lc.SchedulerConfig(), logger, telemetryRuntime.LifecycleSchedulerObserver())
+		if err != nil {
+			closeSession(session)
+			return err
+		}
+		handler.BindSource(source.EventSourceID)
+		labels := consume.RuntimeLabels{Stage: "lifecycle", Transport: "redis_streams", EventSourceID: source.EventSourceID}
+		rc := lc.RuntimeConfig()
+		rc.ShutdownDrainTimeout = taskdispatch.DrainTimeout
+		logger.InfoContext(taskCtx, "lifecycle source started", "event_source_id", source.EventSourceID, "stream", lc.Signal.Stream, "consumer", sc.Consumer, "recent_alert_cache_enabled", recentAlertCacheEnabled, "recent_alert_cache_ttl_seconds", recentAlertCacheTTL.Seconds())
+		stage = "consume"
+		err = consume.New(rc, session, handler, consume.WithObserver(labels, telemetryRuntime.ConsumeObserver(labels)), consume.WithLogger(logger)).Run(taskCtx)
+		var contentFailure interface{ PermanentContentFailure() string }
+		if errors.As(err, &contentFailure) {
+			return taskdispatch.RequireTaskRepair(err)
+		}
+		return err
+	}, logger, severityState, telemetryRuntime.DispatchObserver())
 
-	labels := consume.RuntimeLabels{Stage: "lifecycle", Transport: "redis_streams"}
-	runtime := consume.New(
-		lifecycleConfig.RuntimeConfig(),
-		session,
-		handler,
-		consume.WithObserver(labels, telemetryRuntime.ConsumeObserver(labels)),
-	)
-	return runtime.Run(ctx)
 }
 
 // ValidateConfig 校验 lifecycle 命令实际需要的 MySQL、Redis 和输出配置。
@@ -178,14 +285,6 @@ func ValidateConfig(cfg config.Config) error {
 		return fmt.Errorf("run lifecycle process: storage.redis is required")
 	}
 	return nil
-}
-
-func hostname() string {
-	value, err := os.Hostname()
-	if err != nil || value == "" {
-		return "unknown-host"
-	}
-	return value
 }
 
 func newConsumerName(prefix, host string, processID int) string {

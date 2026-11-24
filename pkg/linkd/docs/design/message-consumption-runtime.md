@@ -69,9 +69,9 @@ Handler 只返回以下结构化结果：
 | ---------- | -------: | --------------------------------------------- |
 | `Complete` |       是 | 业务结果已可靠落地                            |
 | `Discard`  |       是 | 确定性错误已形成允许跳过的终态                |
-| `Retry`    |       否 | 进入有次数和时间上限的内存退避队列            |
+| `Retry`    | 条件确认 | 仅显式可重试标记进入退避，总尝试最多三次；耗尽后确认当前消息 |
 | `Defer`    |       否 | 释放 worker 后重新排队，不消耗普通 Retry 预算 |
-| `Block`    |       否 | 暂停可暂停 lane，并使当前 Runtime 失败退出    |
+| `Block`    | 是 | 普通消息逻辑失败转为丢弃并确认，不停止来源 |
 
 `Defer` 仍保留 Receipt 和 `OrderKey` 占用。Lifecycle 在 lease 锁忙或主动让出 Mailbox 时使用它，
 避免锁等待长期占用 worker。
@@ -169,3 +169,9 @@ Cleaner 默认预算和 EventSource 局部覆盖见[配置指南](../guides/conf
 partition 暂停/恢复、连续 commit、commit 失败以及 revoked/lost fencing。普通 `make check` 不连接
 真实 Broker；外部服务 E2E 只有显式设置 `LINKD_E2E=1` 才执行。尚未完成生产容量压测，不能仅因
 Elasticsearch 使用 `_bulk` 就宣称达到生产吞吐目标。
+
+### 消息级失败确认
+
+当前不预置 HTTP 状态、网络错误或错误文本的自动重试白名单。普通处理失败和 panic 记录诊断后进入可确认前缀；仅适配器明确标记的错误最多尝试三次。确认操作失败、任务上下文取消及所有权撤销仍保留未确认数据，这是消费协议，不是再次执行业务消息。Cleaner 逐条计算和批次执行均捕获异常；Lifecycle 对 Mailbox 中具体 Event 处理失败记录 rejected/processing_failed，再移出队头，不能只 XACK 唤醒 Signal 而留下无法再唤醒的 Mailbox。
+
+默认处理并发跟随任务未确认消息预算，工作 goroutine 懒启动；显式 worker_count/concurrency 可降低并发。延后集合覆盖全部已接管消息，不能因单独更小的重试堆导致退出。细项见[运行容量与恢复](runtime-capacity-and-recovery.md)。

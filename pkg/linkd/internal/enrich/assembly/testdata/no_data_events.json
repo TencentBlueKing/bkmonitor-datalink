@@ -1,0 +1,86 @@
+[
+  {
+    "name": "log",
+    "partition": 0,
+    "offset": 1,
+    "payload": {
+      "evaluations": [
+        {
+          "severity": "critical",
+          "action": "triggered",
+          "action_reason": ""
+        }
+      ],
+      "occurred_at": "2025-01-01T00:05:00Z",
+      "produced_at": "2025-01-01T00:05:00Z",
+      "labels": {
+        "strategy_id": 1,
+        "strategy_version": 1,
+        "bk_biz_id": 2
+      },
+      "extra_data": {
+        "evaluation_family": "no_data",
+        "no_data_periods": 6,
+        "window": {
+          "size": 5,
+          "anomalies": 5,
+          "required": 5
+        },
+        "anomaly_begin_time": "2025-01-01T00:00:00Z",
+        "signal_type": "log"
+      },
+      "bk_tenant_id": "tenant-fixture",
+      "event_id": "source-event-log",
+      "alert_id": "source-alert-log",
+      "title": "Strategy 1 level 1 triggered",
+      "content": "no data for 6 periods",
+      "dimensions": {
+        "__NO_DATA_DIMENSION__": true
+      }
+    },
+    "item_name": "COUNT(关键字指标)",
+    "expected": "当前指标(COUNT(关键字指标))已经有6个周期无数据上报"
+  },
+  {
+    "name": "metric",
+    "partition": 0,
+    "offset": 2,
+    "payload": {
+      "evaluations": [
+        {
+          "severity": "critical",
+          "action": "triggered",
+          "action_reason": ""
+        }
+      ],
+      "occurred_at": "2025-01-01T00:05:00Z",
+      "produced_at": "2025-01-01T00:05:00Z",
+      "labels": {
+        "strategy_id": 2,
+        "strategy_version": 1,
+        "bk_biz_id": 2
+      },
+      "extra_data": {
+        "evaluation_family": "no_data",
+        "no_data_periods": 7,
+        "window": {
+          "size": 5,
+          "anomalies": 5,
+          "required": 5
+        },
+        "anomaly_begin_time": "2025-01-01T00:00:00Z",
+        "signal_type": "metric"
+      },
+      "bk_tenant_id": "tenant-fixture",
+      "event_id": "source-event-metric",
+      "alert_id": "source-alert-metric",
+      "title": "Strategy 2 level 1 triggered",
+      "content": "no data for 7 periods",
+      "dimensions": {
+        "__NO_DATA_DIMENSION__": true
+      }
+    },
+    "item_name": "COUNT(主机ID)",
+    "expected": "当前指标(COUNT(主机ID))已经有7个周期无数据上报"
+  }
+]

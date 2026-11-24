@@ -17,7 +17,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"linkd/internal/domain"
@@ -65,9 +67,26 @@ func (r *Repository) CreateEvent(
 }
 
 // CreateEvents 使用 Elasticsearch Bulk create API 按输入顺序返回逐项结果。
+// refresh=false 只取消搜索可见性等待；成功返回前主分片仍已确认创建，后续 GetEvent 使用 realtime GET。
 func (r *Repository) CreateEvents(
 	ctx context.Context,
 	events []domain.Event,
+) ([]store.CreateEventItemResult, error) {
+	return r.createEvents(ctx, events, false)
+}
+
+// CreateNormalizedEvents 接收 Cleaner 同一调用链刚完成规范化的 Event，跳过动态 JSON 重扫。
+func (r *Repository) CreateNormalizedEvents(
+	ctx context.Context,
+	events []domain.Event,
+) ([]store.CreateEventItemResult, error) {
+	return r.createEvents(ctx, events, true)
+}
+
+func (r *Repository) createEvents(
+	ctx context.Context,
+	events []domain.Event,
+	normalized bool,
 ) ([]store.CreateEventItemResult, error) {
 	if err := contextError(ctx); err != nil {
 		return nil, err
@@ -79,7 +98,13 @@ func (r *Repository) CreateEvents(
 	prepared := make([]*bulkEventCreateItem, len(events))
 	groups := map[bool][]int{false: {}, true: {}}
 	for index, event := range events {
-		item, err := r.prepareBulkEvent(ctx, event)
+		var item bulkEventCreateItem
+		var err error
+		if normalized {
+			item, err = r.prepareNormalizedBulkEvent(ctx, event)
+		} else {
+			item, err = r.prepareBulkEvent(ctx, event)
+		}
 		if err != nil {
 			results[index].Err = err
 			continue
@@ -108,7 +133,11 @@ func (r *Repository) prepareBulkEvent(ctx context.Context, event domain.Event) (
 	if err != nil {
 		return bulkEventCreateItem{}, fmt.Errorf("%w: normalize event: %w", store.ErrInvalidArgument, err)
 	}
-	if err := domain.ValidateNewEvent(normalized); err != nil {
+	return r.prepareNormalizedBulkEvent(ctx, normalized)
+}
+
+func (r *Repository) prepareNormalizedBulkEvent(ctx context.Context, normalized domain.Event) (bulkEventCreateItem, error) {
+	if err := domain.ValidateNormalizedNewEvent(normalized); err != nil {
 		return bulkEventCreateItem{}, fmt.Errorf("%w: validate new event: %w", store.ErrInvalidArgument, err)
 	}
 	if err := validateIdentity(normalized.BKTenantID, "event_id", normalized.EventID); err != nil {
@@ -161,7 +190,7 @@ func (r *Repository) createEventBulkGroup(
 		body.Write(item.body)
 		body.WriteByte('\n')
 	}
-	query := url.Values{"refresh": []string{"wait_for"}}
+	query := url.Values{"refresh": []string{"false"}}
 	if requireAlias {
 		query.Set("require_alias", "true")
 	}
@@ -172,6 +201,7 @@ func (r *Repository) createEventBulkGroup(
 	if len(response.Items) != len(indices) {
 		return fmt.Errorf("elasticsearch event bulk returned %d items for %d events", len(response.Items), len(indices))
 	}
+	var conflicts []int
 	for responseIndex, resultIndex := range indices {
 		item := prepared[resultIndex]
 		created := response.Items[responseIndex].Create
@@ -182,14 +212,7 @@ func (r *Repository) createEventBulkGroup(
 			})
 			results[resultIndex] = store.CreateEventItemResult{Result: store.CreateEventResult{StoredEvent: stored, Created: true}, Err: err}
 		case http.StatusConflict:
-			existing, err := r.getEventFromTarget(ctx, item.writeTarget, item.event.BKTenantID, item.event.EventID)
-			if err == nil {
-				err = domain.ValidateEventReplacement(item.event, existing.Event)
-				if err != nil {
-					err = fmt.Errorf("%w: event %q already contains different content: %w", store.ErrIdentityConflict, item.event.EventID, err)
-				}
-			}
-			results[resultIndex] = store.CreateEventItemResult{Result: store.CreateEventResult{StoredEvent: existing, Created: false}, Err: err}
+			conflicts = append(conflicts, resultIndex)
 		default:
 			err := fmt.Errorf("elasticsearch bulk create event %q returned status %d", item.event.EventID, created.Status)
 			if created.Error != nil {
@@ -201,7 +224,93 @@ func (r *Repository) createEventBulkGroup(
 			results[resultIndex].Err = err
 		}
 	}
+	r.verifyEventCreateConflicts(ctx, prepared, conflicts, results)
 	return nil
+}
+
+// verifyEventCreateConflicts 批量 realtime 核对重复项，避免重复投递让一次 Bulk
+// 退化成多个串行 GET。读取当前 processing，不使用本批创建快照代替恢复状态。
+// 新建成功项不参与重读；核对失败只影响对应冲突项，不重放已成功的写入。
+func (r *Repository) verifyEventCreateConflicts(ctx context.Context, prepared []*bulkEventCreateItem, indices []int, results []store.CreateEventItemResult) {
+	if len(indices) == 0 {
+		return
+	}
+	if len(indices) == 1 {
+		index := indices[0]
+		item := prepared[index]
+		existing, err := r.getEventFromTarget(ctx, item.writeTarget, item.event.BKTenantID, item.event.EventID)
+		results[index] = eventCreateConflictResult(item, existing, err)
+		return
+	}
+	// 按单文档硬上限保守估计响应预算，避免大文档令合法批次持续重试超大响应。
+	limit := max(1, min(32, int(r.config.MaxResponseBytes/(int64(r.config.MaxDocumentBytes)+1024))))
+	for len(indices) > 0 {
+		n := min(limit, len(indices))
+		r.verifyEventCreateConflictChunk(ctx, prepared, indices[:n], results)
+		indices = indices[n:]
+	}
+}
+
+func (r *Repository) verifyEventCreateConflictChunk(ctx context.Context, prepared []*bulkEventCreateItem, indices []int, results []store.CreateEventItemResult) {
+	docs := make([]map[string]string, 0, len(indices))
+	for _, index := range indices {
+		item := prepared[index]
+		docs = append(docs, map[string]string{"_index": item.writeTarget, "_id": item.documentID})
+	}
+	body, err := marshalRequest(map[string]any{"docs": docs})
+	var response struct {
+		Docs []struct {
+			getResponse
+			Error json.RawMessage `json:"error"`
+		} `json:"docs"`
+	}
+	if err == nil {
+		err = r.performJSON(ctx, http.MethodPost, "/_mget", url.Values{"realtime": []string{"true"}}, body, &response)
+	}
+	if (errors.Is(err, ErrResponseTooLarge) || len(body) > r.config.MaxRequestBytes) && len(indices) > 1 {
+		mid := len(indices) / 2
+		r.verifyEventCreateConflictChunk(ctx, prepared, indices[:mid], results)
+		r.verifyEventCreateConflictChunk(ctx, prepared, indices[mid:], results)
+		return
+	}
+	if err == nil && len(response.Docs) != len(indices) {
+		err = fmt.Errorf("event conflict mget returned %d items for %d events", len(response.Docs), len(indices))
+	}
+	if err != nil {
+		for _, index := range indices {
+			results[index].Err = err
+		}
+		return
+	}
+	for position, index := range indices {
+		doc := response.Docs[position]
+		item := prepared[index]
+		var stored store.StoredEvent
+		var itemErr error
+		switch {
+		case len(doc.Error) != 0 && string(doc.Error) != "null":
+			itemErr = fmt.Errorf("event conflict mget returned an item error")
+		case !doc.Found:
+			itemErr = fmt.Errorf("%w: event %q", store.ErrNotFound, item.event.EventID)
+		case doc.ID != item.documentID:
+			itemErr = fmt.Errorf("event conflict mget returned an unexpected document identity")
+		default:
+			stored, itemErr = decodeEventHit(doc.hit())
+			if itemErr == nil && (stored.Event.BKTenantID != item.event.BKTenantID || stored.Event.EventID != item.event.EventID) {
+				itemErr = fmt.Errorf("event conflict mget returned an unexpected identity")
+			}
+		}
+		results[index] = eventCreateConflictResult(item, stored, itemErr)
+	}
+}
+
+func eventCreateConflictResult(item *bulkEventCreateItem, existing store.StoredEvent, err error) store.CreateEventItemResult {
+	if err == nil {
+		if validationErr := domain.ValidateEventRedelivery(item.event, existing.Event); validationErr != nil {
+			err = fmt.Errorf("%w: event %q already contains different content: %w", store.ErrIdentityConflict, item.event.EventID, validationErr)
+		}
+	}
+	return store.CreateEventItemResult{Result: store.CreateEventResult{StoredEvent: existing, Created: false}, Err: err}
 }
 
 // GetEvent 使用 EventID 的确定性写路由执行 realtime GET。
@@ -225,6 +334,29 @@ func (r *Repository) GetEvent(
 		return store.StoredEvent{}, err
 	}
 	return r.getEventFromTarget(ctx, route.WriteTarget, bkTenantID, eventID)
+}
+
+// GetLifecycleEvent realtime 读取 Lifecycle 所需的 Event 投影。
+// Event Enrich 可读取来源原始字段，Lifecycle 读取必须包含完整来源事实。
+func (r *Repository) GetLifecycleEvent(
+	ctx context.Context,
+	bkTenantID, eventID string,
+) (store.StoredEvent, error) {
+	if err := contextError(ctx); err != nil {
+		return store.StoredEvent{}, err
+	}
+	if err := validateIdentity(bkTenantID, "event_id", eventID); err != nil {
+		return store.StoredEvent{}, err
+	}
+	route, err := r.router.EventRoute(ctx, eventID)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	route, err = normalizeRoute(route, r.config.MaxReadTargets)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	return r.getLifecycleEventFromTarget(ctx, route.WriteTarget, bkTenantID, eventID)
 }
 
 // GetEvents 按首次出现顺序批量查询 Event，并使用单次 _msearch 避免逐 ID 网络往返。
@@ -258,7 +390,107 @@ func (r *Repository) GetEvents(
 	return batch, nil
 }
 
-// ListEventsByAlert 按 related_alert_id 和 received_at 稳定分页读取一次 Alert 关联的 Event。
+// ListEventsBySource 读取来源时间窗口内的事件，包含尚未关联 Alert 的事件。
+func (r *Repository) ListEventsBySource(
+	ctx context.Context,
+	bkTenantID, sourceID string,
+	request store.EventBySourceRequest,
+) (store.EventPage, error) {
+	if err := contextError(ctx); err != nil {
+		return store.EventPage{}, err
+	}
+	from, to := request.ReceivedFrom, request.ReceivedTo
+	page, err := request.Page.Normalize()
+	if err != nil {
+		return store.EventPage{}, err
+	}
+	if err := validateDateNanos("received_from", from); err != nil {
+		return store.EventPage{}, err
+	}
+	if err := validateDateNanos("received_to", to); err != nil {
+		return store.EventPage{}, err
+	}
+	targets, err := r.router.EventRangeTargets(ctx, from, to)
+	if err != nil {
+		return store.EventPage{}, fmt.Errorf("route events for source %q: %w", sourceID, err)
+	}
+	if len(targets) > r.config.MaxReadTargets {
+		targets, err = r.router.EventScanTargets(ctx, to)
+		if err != nil {
+			return store.EventPage{}, err
+		}
+	}
+	targets, err = normalizeTargets(targets, r.config.MaxReadTargets)
+	if err != nil {
+		return store.EventPage{}, err
+	}
+	expectedCursor := cursorPayload{
+		Kind: cursorKindEventBySource, TenantID: bkTenantID, ParentID: sourceID,
+		RangeStartNS: from.UnixNano(), BoundaryNS: to.UnixNano(), TargetsDigest: targetsDigest(targets),
+	}
+	var cursor cursorPayload
+	if page.Cursor != "" {
+		cursor, err = decodeCursor(page.Cursor, expectedCursor)
+		if err != nil {
+			return store.EventPage{}, err
+		}
+	}
+	body := map[string]any{
+		"size": page.Limit + 1, "track_total_hits": false, "seq_no_primary_term": true,
+		"query": map[string]any{"bool": map[string]any{"filter": []any{
+			map[string]any{"term": map[string]any{"bk_tenant_id": bkTenantID}},
+			map[string]any{"term": map[string]any{"event_source_id": sourceID}},
+			map[string]any{"range": map[string]any{"received_at": map[string]any{
+				"gte": from.Format(time.RFC3339Nano), "lte": to.Format(time.RFC3339Nano),
+			}}},
+		}}},
+		"sort": []any{
+			map[string]any{"received_at": map[string]any{"order": "asc"}},
+			map[string]any{"event_id": map[string]any{"order": "asc"}},
+			map[string]any{"_index": map[string]any{"order": "asc"}},
+		},
+	}
+	if page.Cursor != "" {
+		body["search_after"] = cursor.SearchAfter
+	}
+	response, pitID, err := r.searchWithPIT(ctx, targets, cursor.PITID, body)
+	if err != nil {
+		return store.EventPage{}, fmt.Errorf("list events for source %q: %w", sourceID, err)
+	}
+	count := min(len(response.Hits.Hits), page.Limit)
+	result := store.EventPage{Events: make([]store.StoredEvent, 0, count)}
+	for _, hit := range response.Hits.Hits[:count] {
+		if len(hit.Sort) != 3 {
+			return store.EventPage{}, fmt.Errorf("elasticsearch event-by-source search returned invalid sort values")
+		}
+		stored, decodeErr := decodeEventHit(hit)
+		if decodeErr != nil {
+			return store.EventPage{}, decodeErr
+		}
+		if stored.Event.BKTenantID != bkTenantID || stored.Event.EventSourceID != sourceID {
+			return store.EventPage{}, fmt.Errorf("elasticsearch event-by-source search returned an unexpected identity")
+		}
+		result.Events = append(result.Events, stored)
+	}
+	if len(response.Hits.Hits) > page.Limit {
+		lastHit := response.Hits.Hits[page.Limit-1]
+		last := result.Events[len(result.Events)-1].Event
+		result.NextCursor, err = encodeCursor(cursorPayload{
+			Kind: cursorKindEventBySource, TenantID: bkTenantID, ParentID: sourceID,
+			RangeStartNS: from.UnixNano(), BoundaryNS: to.UnixNano(), TargetsDigest: targetsDigest(targets),
+			TimeNS: last.ReceivedAt.UnixNano(), ObjectID: last.EventID, PITID: pitID,
+			SearchAfter: append([]json.RawMessage(nil), lastHit.Sort...),
+		})
+		if err != nil {
+			return store.EventPage{}, err
+		}
+	} else if err := r.closePIT(ctx, pitID); err != nil {
+		return store.EventPage{}, err
+	}
+	return result, nil
+}
+
+// ListEventsByAlert 按 related_alert_ids 和 received_at 稳定分页读取一次 Alert 关联的 Event。
 func (r *Repository) ListEventsByAlert(
 	ctx context.Context,
 	bkTenantID, alertID string,
@@ -269,9 +501,6 @@ func (r *Repository) ListEventsByAlert(
 	}
 	if err := validateIdentity(bkTenantID, "alert_id", alertID); err != nil {
 		return store.EventPage{}, err
-	}
-	if err := validateBucketAlertReference(r.router, bkTenantID, alertID); err != nil {
-		return store.EventPage{}, fmt.Errorf("%w: %w", store.ErrInvalidArgument, err)
 	}
 	alert, err := r.GetAlert(ctx, bkTenantID, alertID)
 	if err != nil {
@@ -319,15 +548,15 @@ func (r *Repository) ListEventsByAlert(
 		"size": page.Limit + 1, "track_total_hits": false, "seq_no_primary_term": true,
 		"query": map[string]any{"bool": map[string]any{"filter": []any{
 			map[string]any{"term": map[string]any{"bk_tenant_id": bkTenantID}},
-			map[string]any{"term": map[string]any{"related_alert_id": alertID}},
+			map[string]any{"term": map[string]any{"related_alert_ids": alertID}},
 			map[string]any{"range": map[string]any{"received_at": map[string]any{
 				"gte": from.Format(time.RFC3339Nano), "lte": to.Format(time.RFC3339Nano),
 			}}},
 		}}},
 		"sort": []any{
-			map[string]any{"received_at": map[string]any{"order": "asc", "format": "strict_date_optional_time_nanos"}},
+			map[string]any{"received_at": map[string]any{"order": "asc"}},
 			map[string]any{"event_id": map[string]any{"order": "asc"}},
-			map[string]any{"_shard_doc": map[string]any{"order": "asc"}},
+			map[string]any{"_index": map[string]any{"order": "asc"}},
 		},
 	}
 	if page.Cursor != "" {
@@ -347,7 +576,7 @@ func (r *Repository) ListEventsByAlert(
 		if decodeErr != nil {
 			return store.EventPage{}, decodeErr
 		}
-		if stored.Event.BKTenantID != bkTenantID || stored.Event.RelatedAlertID != alertID {
+		if stored.Event.BKTenantID != bkTenantID || !slices.Contains(stored.Event.RelatedAlertIDs, alertID) {
 			return store.EventPage{}, fmt.Errorf("elasticsearch event-by-alert search returned an unexpected identity")
 		}
 		result.Events = append(result.Events, stored)
@@ -441,11 +670,10 @@ func (r *Repository) ScanUnprocessedEvents(
 		},
 		"sort": []any{
 			map[string]any{"received_at": map[string]any{
-				"order":  "asc",
-				"format": "strict_date_optional_time_nanos",
+				"order": "asc",
 			}},
 			map[string]any{"event_id": map[string]any{"order": "asc"}},
-			map[string]any{"_shard_doc": map[string]any{"order": "asc"}},
+			map[string]any{"_index": map[string]any{"order": "asc"}},
 		},
 	}
 	if normalizedPage.Cursor != "" {
@@ -560,11 +788,11 @@ func (r *Repository) ScanAllUnprocessedEvents(
 		}}},
 		"sort": []any{
 			map[string]any{"received_at": map[string]any{
-				"order": "asc", "format": "strict_date_optional_time_nanos",
+				"order": "asc",
 			}},
 			map[string]any{"bk_tenant_id": map[string]any{"order": "asc"}},
 			map[string]any{"event_id": map[string]any{"order": "asc"}},
-			map[string]any{"_shard_doc": map[string]any{"order": "asc"}},
+			map[string]any{"_index": map[string]any{"order": "asc"}},
 		},
 	}
 	if normalizedPage.Cursor != "" {
@@ -652,20 +880,10 @@ func (r *Repository) CompareAndSetEventResult(
 	if current.Processing.State != domain.EventProcessStateUnprocessed {
 		return store.StoredEvent{}, fmt.Errorf("%w: event %q is already processed", store.ErrInvalidTransition, eventID)
 	}
-	normalizedResult, err := result.Normalize()
+	updated, processing, err := store.ApplyEventResult(current, result)
 	if err != nil {
-		return store.StoredEvent{}, fmt.Errorf("%w: event result: %w", store.ErrInvalidArgument, err)
+		return store.StoredEvent{}, err
 	}
-	updated := current.Event.Clone()
-	if normalizedResult.RelatedAlertID != "" {
-		updated, err = updated.WithRelatedAlertID(normalizedResult.RelatedAlertID)
-		if err != nil {
-			return store.StoredEvent{}, fmt.Errorf("%w: %w", store.ErrInvalidTransition, err)
-		}
-	}
-	processedAt := normalizedResult.ProcessedAt
-	processing := store.EventProcessing{State: normalizedResult.State, Outcome: normalizedResult.Outcome,
-		ReasonCode: normalizedResult.ReasonCode, ProcessedAt: &processedAt}
 	body, err := encodeEventDocument(updated, processing)
 	if err != nil {
 		return store.StoredEvent{}, err
@@ -701,6 +919,86 @@ func (r *Repository) CompareAndSetEventResult(
 		return store.StoredEvent{}, fmt.Errorf("update event %q: %w", eventID, err)
 	}
 	return storedEventFromIndexResponse(updated, processing, version.DocumentID, response)
+}
+
+// CompareAndSetLifecycleEventResult 使用 realtime 投影核对旧状态，并通过 update API 只写
+// related_alert_ids 与 processing。if_seq_no/if_primary_term 仍是最终并发栅栏。
+func (r *Repository) CompareAndSetLifecycleEventResult(
+	ctx context.Context,
+	bkTenantID, eventID string,
+	expected store.VersionToken,
+	result store.EventResult,
+) (store.StoredEvent, error) {
+	if err := contextError(ctx); err != nil {
+		return store.StoredEvent{}, err
+	}
+	if err := validateIdentity(bkTenantID, "event_id", eventID); err != nil {
+		return store.StoredEvent{}, err
+	}
+	if expected.IsZero() {
+		return store.StoredEvent{}, fmt.Errorf("%w: expected event version must not be empty", store.ErrInvalidArgument)
+	}
+	version, ok := decodeVersion(expected)
+	if !ok || version.DocumentID != documentID(bkTenantID, eventID) {
+		return store.StoredEvent{}, fmt.Errorf("%w: event %q", store.ErrVersionConflict, eventID)
+	}
+	current, err := r.getLifecycleEventFromTarget(ctx, version.Index, bkTenantID, eventID)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	if current.Version != expected {
+		return store.StoredEvent{}, fmt.Errorf("%w: event %q", store.ErrVersionConflict, eventID)
+	}
+	return r.CompareAndSetLifecycleEventResultFromSnapshot(ctx, current, result)
+}
+
+// CompareAndSetLifecycleEventResultFromSnapshot 校验已有快照并局部条件更新，不执行前置读取。
+// 快照与返回值只在当前处理链内流转；冲突交由调用方重读，绝不覆盖较新的 processing。
+func (r *Repository) CompareAndSetLifecycleEventResultFromSnapshot(ctx context.Context, current store.StoredEvent, result store.EventResult) (store.StoredEvent, error) {
+	if err := contextError(ctx); err != nil {
+		return store.StoredEvent{}, err
+	}
+	version, err := eventSnapshotVersion(current)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	eventID := current.Event.EventID
+	updated, processing, err := store.ApplyEventResultFromSnapshot(current, result)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	// processing 是完整快照，不能使用 doc 的递归合并：omitempty 会省略已清除的
+	// plan，导致终态或撤销计划后仍读到旧计划。脚本整体替换对象，CAS 条件仍由 ES 校验。
+	body, err := json.Marshal(map[string]any{"script": map[string]any{
+		"source": "ctx._source.related_alert_ids = params.related_alert_ids; ctx._source.processing = params.processing",
+		"params": map[string]any{
+			"related_alert_ids": updated.RelatedAlertIDs,
+			"processing":        processing,
+		},
+	}})
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	if len(body) > r.config.MaxDocumentBytes {
+		return store.StoredEvent{}, fmt.Errorf("%w: event result update exceeds %d bytes", store.ErrInvalidArgument, r.config.MaxDocumentBytes)
+	}
+	query := url.Values{
+		"if_seq_no":       []string{strconv.FormatInt(version.SeqNo, 10)},
+		"if_primary_term": []string{strconv.FormatInt(version.PrimaryTerm, 10)},
+		"refresh":         []string{"false"},
+	}
+	var response indexResponse
+	err = r.performJSON(ctx, http.MethodPost, "/"+version.Index+"/_update/"+version.DocumentID, query, body, &response)
+	if err != nil {
+		if responseErr, ok := asResponseError(err); ok && responseErr.StatusCode == http.StatusConflict {
+			return store.StoredEvent{}, fmt.Errorf("%w: event %q", store.ErrVersionConflict, eventID)
+		}
+		if responseErr, ok := asResponseError(err); ok && responseErr.StatusCode == http.StatusNotFound {
+			return store.StoredEvent{}, fmt.Errorf("%w: event %q", store.ErrNotFound, eventID)
+		}
+		return store.StoredEvent{}, fmt.Errorf("update lifecycle event %q: %w", eventID, err)
+	}
+	return storedEventSnapshotFromIndexResponse(updated, processing, version.DocumentID, response)
 }
 
 func (r *Repository) loadEvents(
@@ -772,13 +1070,32 @@ func (r *Repository) getEventFromTarget(
 	ctx context.Context,
 	target, bkTenantID, eventID string,
 ) (store.StoredEvent, error) {
+	return r.getEventFromTargetQuery(ctx, target, bkTenantID, eventID, nil)
+}
+
+func (r *Repository) getLifecycleEventFromTarget(
+	ctx context.Context,
+	target, bkTenantID, eventID string,
+) (store.StoredEvent, error) {
+	return r.getEventFromTargetQuery(ctx, target, bkTenantID, eventID, nil)
+}
+
+func (r *Repository) getEventFromTargetQuery(
+	ctx context.Context,
+	target, bkTenantID, eventID string,
+	sourceExcludes []string,
+) (store.StoredEvent, error) {
 	documentID := documentID(bkTenantID, eventID)
+	query := url.Values{"realtime": []string{"true"}}
+	if len(sourceExcludes) > 0 {
+		query.Set("_source_excludes", strings.Join(sourceExcludes, ","))
+	}
 	var response getResponse
 	err := r.performJSON(
 		ctx,
 		http.MethodGet,
 		"/"+target+"/_doc/"+documentID,
-		url.Values{"realtime": []string{"true"}},
+		query,
 		nil,
 		&response,
 	)
@@ -838,7 +1155,85 @@ func storedEventFromIndexResponse(
 	return store.StoredEvent{Event: event.Clone(), Processing: processing.Clone(), Version: version}, nil
 }
 
+func storedEventSnapshotFromIndexResponse(event domain.Event, processing store.EventProcessing, id string, response indexResponse) (store.StoredEvent, error) {
+	if response.ID != id || response.Index == "" {
+		return store.StoredEvent{}, fmt.Errorf("elasticsearch event write returned an unexpected identity")
+	}
+	version, err := encodeVersion(versionPayload{Index: response.Index, DocumentID: response.ID, SeqNo: response.SeqNo, PrimaryTerm: response.PrimaryTerm})
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	return store.StoredEvent{Event: event, Processing: processing, Version: version}, nil
+}
+
 func isResponseStatus(err error, statusCode int) bool {
 	var response *responseError
 	return errors.As(err, &response) && response.StatusCode == statusCode
+}
+
+// CompareAndSetEventEnrichment 通过 realtime GET 与局部 CAS 更新冻结丰富；不覆盖被投影省略的来源字段。
+func (r *Repository) CompareAndSetEventEnrichment(ctx context.Context, tenantID, eventID string, expected store.VersionToken, result domain.EventEnrichment) (store.StoredEvent, error) {
+	if err := contextError(ctx); err != nil {
+		return store.StoredEvent{}, err
+	}
+	if err := validateIdentity(tenantID, "event_id", eventID); err != nil {
+		return store.StoredEvent{}, err
+	}
+	version, ok := decodeVersion(expected)
+	if !ok || version.DocumentID != documentID(tenantID, eventID) {
+		return store.StoredEvent{}, store.ErrVersionConflict
+	}
+	current, err := r.getEventFromTarget(ctx, version.Index, tenantID, eventID)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	if current.Version != expected {
+		return store.StoredEvent{}, store.ErrVersionConflict
+	}
+	return r.CompareAndSetEventEnrichmentFromSnapshot(ctx, current, result)
+}
+
+// CompareAndSetEventEnrichmentFromSnapshot 在完整已读快照上冻结丰富结果，保留原有完整文档预算检查。
+// 只写丰富字段，ES seq_no/primary_term 拒绝迟到的旧 owner；失败不修改调用方快照。
+func (r *Repository) CompareAndSetEventEnrichmentFromSnapshot(ctx context.Context, current store.StoredEvent, result domain.EventEnrichment) (store.StoredEvent, error) {
+	if err := contextError(ctx); err != nil {
+		return store.StoredEvent{}, err
+	}
+	version, err := eventSnapshotVersion(current)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	updated, err := store.ApplyEventEnrichmentFromSnapshot(current, result)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	body, documentBytes, err := encodeEnrichmentUpdate(updated, current.Processing)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	if documentBytes > r.config.MaxDocumentBytes {
+		return store.StoredEvent{}, fmt.Errorf("%w: enriched event exceeds document budget", store.ErrInvalidArgument)
+	}
+	if len(body) > r.config.MaxDocumentBytes {
+		return store.StoredEvent{}, fmt.Errorf("%w: event enrichment exceeds document budget", store.ErrInvalidArgument)
+	}
+	query := url.Values{
+		"if_seq_no":       []string{strconv.FormatInt(version.SeqNo, 10)},
+		"if_primary_term": []string{strconv.FormatInt(version.PrimaryTerm, 10)},
+		"refresh":         []string{"false"},
+	}
+	var response indexResponse
+	err = r.performJSON(ctx, http.MethodPost, "/"+version.Index+"/_update/"+version.DocumentID, query, body, &response)
+	if err != nil {
+		if responseErr, ok := asResponseError(err); ok {
+			switch responseErr.StatusCode {
+			case http.StatusConflict:
+				return store.StoredEvent{}, store.ErrVersionConflict
+			case http.StatusNotFound:
+				return store.StoredEvent{}, store.ErrNotFound
+			}
+		}
+		return store.StoredEvent{}, fmt.Errorf("update event enrichment: %w", err)
+	}
+	return storedEventSnapshotFromIndexResponse(updated, current.Processing, version.DocumentID, response)
 }

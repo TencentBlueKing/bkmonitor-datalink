@@ -48,6 +48,23 @@ type TaskConfig interface {
 	Clean() error
 }
 
+// ScheduledTaskConfig allows a task to provide calendar-based run times.
+type ScheduledTaskConfig interface {
+	TaskConfig
+	// GetScheduleIdent returns the stable identity of the schedule itself.
+	// Delivery credentials and profiling parameters must not be part of it.
+	GetScheduleIdent() string
+	InitialRunTime(now time.Time) (time.Time, bool)
+	NextRunTime(previous time.Time) (time.Time, bool)
+}
+
+// ExpirableScheduledTaskConfig marks an occurrence which must report a terminal
+// result without running the task body when Beat first loads it after its
+// absolute execution time.
+type ExpirableScheduledTaskConfig interface {
+	ScheduleExpired(now time.Time) bool
+}
+
 // TaskMetaConfig : task config
 type TaskMetaConfig interface {
 	GetTaskConfigList() []TaskConfig

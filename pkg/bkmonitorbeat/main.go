@@ -70,6 +70,8 @@ func main() {
 	senderhttp.Register()
 
 	flag.Parse()
+	stats.SetVersion(Version)
+	beater.HandleActiveProfileCLI()
 	if *reportFlag {
 		senderagent.Register(0)
 		if err := report.DoReport(); err != nil {
@@ -175,7 +177,6 @@ func main() {
 		MaxBackups: logCfg.Backups,
 		Level:      logCfg.Level,
 	})
-	stats.SetVersion(Version)
 
 	bt, err := beater.New(config, BeatName, Version)
 	if err != nil {

@@ -37,6 +37,10 @@ generate_template() {
   write_tcp_conf_tpl "$etc_path/bkmonitorbeat_tcp.conf.tpl" "$system" "$arch"
   write_udp_conf_tpl "$etc_path/bkmonitorbeat_udp.conf.tpl" "$system" "$arch"
   write_proccustom_conf_tpl "$etc_path/monitor_process.conf.tpl" "$system" "$arch"
+  # 只在注册了该模板的系统上生成，与 project.yaml 保持一致。
+  if [ "$system" = "linux" ]; then
+    write_active_profile_conf_tpl "$etc_path/bkmonitorbeat_active_profile.conf.tpl" "$system" "$arch"
+  fi
 }
 
 generate_templates() {

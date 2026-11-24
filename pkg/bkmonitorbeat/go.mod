@@ -49,8 +49,10 @@ require (
 
 require (
 	github.com/TencentBlueKing/bk-gse-sdk/go v0.0.3
+	github.com/google/pprof v0.0.0-20230926050212-f7f687d19a98
 	github.com/nxadm/tail v1.4.11
 	github.com/prometheus/client_golang v1.18.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/tklauser/go-sysconf v0.3.12
 	golang.org/x/exp v0.0.0-20241108190413-2d47ceb2692f
 )

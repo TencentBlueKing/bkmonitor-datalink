@@ -45,6 +45,7 @@ const (
 	ModuleDmesg           = "dmesg"
 	ModuleGatherUpBeat    = "gather_up_beat"
 	ModuleSelfStats       = "selfstats"
+	ModuleActiveProfile   = "active_profile"
 )
 
 const (
@@ -74,4 +75,12 @@ type Task interface {
 	Wait()
 	Stop()
 	Run(ctx context.Context, e chan<- Event)
+}
+
+// GracefulReloadTask marks a task whose in-flight run must finish when its
+// configuration is changed or removed during reload. Future runs are removed
+// immediately. Process shutdown still cancels the run through its parent context.
+type GracefulReloadTask interface {
+	Task
+	GracefulReload() bool
 }

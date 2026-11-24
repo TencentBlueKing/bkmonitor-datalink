@@ -613,7 +613,7 @@ func TestReserveGoPprofParseCapsUncompressedLimitWithoutCgroup(t *testing.T) {
 
 	_, release, err := reserveGoPprofParse(runID, "http://127.0.0.1:6060/debug/pprof/heap", compressed.Bytes())
 	defer release()
-	if !errors.Is(err, ErrMemoryLimit) {
-		t.Fatalf("reserveGoPprofParse() error = %v, want ErrMemoryLimit", err)
+	if !errors.Is(err, ErrMemoryLimit) || !strings.Contains(err.Error(), "uncompressed size exceeds") {
+		t.Fatalf("reserveGoPprofParse() error = %v, want ErrMemoryLimit naming the static uncompressed limit", err)
 	}
 }

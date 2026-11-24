@@ -34,7 +34,7 @@ dataid: 0
 max_timeout: 15m
 min_period: 1m
 
-{% set tasks = (host_tasks or {}).get(cmdb_instance.host.bk_host_id | string, []) %}
+{% set tasks = host_tasks.get(cmdb_instance.host.bk_host_id | string, []) %}
 tasks:{% if not tasks %} []{% endif %}
 {% for task in tasks %}
   - task_id: {{ task.task_id | tojson }}
@@ -90,7 +90,7 @@ tasks:{% if not tasks %} []{% endif %}
       min_mem_level: {{ (task.resource_guard_config.min_mem_level or 0) | tojson }}
     {% endif %}
 
-    target_hosts: {{ (target_hosts or []) | tojson }}
+    target_hosts: {{ target_hosts | tojson }}
 
     event_data_id: {{ task.event_data_id | tojson }}
     profile_data_id: {{ task.profile_data_id | tojson }}

@@ -36,6 +36,9 @@ type ActiveProfileGSEConfig struct {
 
 // ActiveProfileGSEConfigFromMain 读取主配置中的 output.bkpipe，供轻量 CLI 直连本机
 // GSE Agent 并与常驻 Beat 的 AgentInfoFetcher 保持一致的主机身份覆写。
+//
+// endpoint 必须取自主配置，不使用 libgse 的内置默认路径：Agent 的安装目录随部署方式
+// 变化，猜错会连到不存在的 socket，而主配置里的值就是本机插件正在用的那个。
 func ActiveProfileGSEConfigFromMain() (ActiveProfileGSEConfig, error) {
 	rawConfig, err := loadBeatRawConfig()
 	if err != nil {
@@ -74,19 +77,4 @@ func ActiveProfileGSEConfigFromMain() (ActiveProfileGSEConfig, error) {
 		CloudID:      gseConfig.CloudID,
 		HostID:       gseConfig.HostID,
 	}, nil
-}
-
-// ActiveProfileGSEEndpoint 返回本机 GSE Agent 的数据上报地址，取自主配置的
-// output.bkpipe.endpoint。常驻 Beat 的 Event 与产物走 Beat 自己的 gse output，
-// 不经过这里；只有轻量 CLI 需要它——CLI 运行在 Beat 框架之外，必须自建 GSE 客户端
-// 才能上报 finished 与 pprof。
-//
-// 不使用 libgse 的内置默认路径：Agent 的安装目录随部署方式变化，猜错会连到不存在
-// 的 socket，而主配置里的值就是本机插件正在用的那个。
-func ActiveProfileGSEEndpoint() (string, error) {
-	cfg, err := ActiveProfileGSEConfigFromMain()
-	if err != nil {
-		return "", err
-	}
-	return cfg.Endpoint, nil
 }

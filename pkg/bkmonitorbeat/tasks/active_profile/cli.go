@@ -125,11 +125,16 @@ func RunCLI(reader io.Reader) error {
 	defer sink.Close()
 
 	scheduledAt := conf.ScheduledAt(time.Now())
-	Execute(ctx, conf, scheduledAt, ExecuteOptions{
+	opts := ExecuteOptions{
 		// 立即执行的 started 由 SaaS 在 JOB 受理后上报，CLI 不重复发送。
 		ReportStarted: false,
 		Sink:          sink,
-	})
+	}
+	if conf.Rejection() != nil {
+		reportRejected(ctx, conf, scheduledAt, opts)
+		return nil
+	}
+	Execute(ctx, conf, scheduledAt, opts)
 	return nil
 }
 
@@ -285,7 +290,9 @@ func (r cliRunRequest) taskConfig() (*configs.ActiveProfileTaskConfig, error) {
 	conf.ProfileAppName = r.ProfileAppName
 	conf.ProfileServiceName = r.ProfileServiceName
 
-	if err := conf.Clean(); err != nil {
+	// 采集配置无法在本 Beat 执行时仍返回配置，由调用方上报带原因的 failed：页面据此提示
+	// 升级采集器，而不是只在 JOB 日志里留一行报错。
+	if err := conf.Clean(); err != nil && conf.Rejection() == nil {
 		return nil, fmt.Errorf("invalid active profile run config: %w", err)
 	}
 	if err := conf.InitIdent(); err != nil {

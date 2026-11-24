@@ -250,6 +250,12 @@ func reserveGoPprofParse(runID, endpoint string, payload []byte) ([]byte, func()
 		}
 	}
 	if uint64(len(data)) > limit {
+		if limit == goPprofUncompressedLimit {
+			return nil, func() {}, MarkError(ErrMemoryLimit, fmt.Errorf(
+				"go pprof from %s is too large to parse: its uncompressed size exceeds the %d MB limit",
+				endpoint, goPprofUncompressedLimit/bytesPerMB,
+			))
+		}
 		return nil, func() {}, MarkError(ErrMemoryLimit, fmt.Errorf(
 			"go pprof from %s is too large to parse within the %d MB of memory left for profiling",
 			endpoint, headroom/bytesPerMB,

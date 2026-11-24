@@ -39,18 +39,19 @@ const (
 
 	// finished 的 error_type 归类失败原因，SaaS 按类型给出展示文案，message 保留原始
 	// 错误；成功、超时与取消不归类。
-	ErrorTypeScheduleExpired  = "schedule_expired"
-	ErrorTypeTaskBusy         = "task_busy"
-	ErrorTypeProcessNotFound  = "process_not_found"
-	ErrorTypeEmptyProfile     = "empty_profile"
-	ErrorTypePerfUnavailable  = "perf_unavailable"
-	ErrorTypeGoEndpointFailed = "go_endpoint_failed"
-	ErrorTypeMemoryLimit      = "memory_limit"
-	ErrorTypeDiskLimit        = "disk_limit"
-	ErrorTypeReportFailed     = "report_failed"
-	ErrorTypeConfigInvalid    = "config_invalid"
-	ErrorTypeProcessesExited  = "processes_exited"
-	ErrorTypeCollectFailed    = "collect_failed"
+	ErrorTypeScheduleExpired    = "schedule_expired"
+	ErrorTypeTaskBusy           = "task_busy"
+	ErrorTypeProcessNotFound    = "process_not_found"
+	ErrorTypeEmptyProfile       = "empty_profile"
+	ErrorTypePerfUnavailable    = "perf_unavailable"
+	ErrorTypeGoEndpointFailed   = "go_endpoint_failed"
+	ErrorTypeMemoryLimit        = "memory_limit"
+	ErrorTypeDiskLimit          = "disk_limit"
+	ErrorTypeReportFailed       = "report_failed"
+	ErrorTypeConfigInvalid      = "config_invalid"
+	ErrorTypeProcessesExited    = "processes_exited"
+	ErrorTypeCollectFailed      = "collect_failed"
+	ErrorTypeVersionUnsupported = "version_unsupported"
 
 	maxErrorMessageBytes = 2048
 
@@ -400,7 +401,8 @@ func newEventConfigContent(conf *configs.ActiveProfileTaskConfig) eventConfigCon
 
 func newCollectorContent(conf *configs.ActiveProfileTaskConfig) collectorContent {
 	collector := conf.CollectorConfig
-	if conf.IsGolang() {
+	switch conf.CollectionMethod {
+	case configs.ActiveProfileMethodGolang:
 		// go_heap 是瞬时快照，协议中没有 duration_sec；DurationSec 已在配置清洗时
 		// 归零，omitempty 因此不会写出该字段。
 		return collectorContent{
@@ -408,11 +410,15 @@ func newCollectorContent(conf *configs.ActiveProfileTaskConfig) collectorContent
 			Port:        collector.Port,
 			DurationSec: collector.DurationSec,
 		}
-	}
-	return collectorContent{
-		DurationSec: collector.DurationSec,
-		FrequencyHz: collector.FrequencyHz,
-		StackUnwind: collector.StackUnwind,
+	case configs.ActiveProfileMethodPerf:
+		return collectorContent{
+			DurationSec: collector.DurationSec,
+			FrequencyHz: collector.FrequencyHz,
+			StackUnwind: collector.StackUnwind,
+		}
+	default:
+		// 本 Beat 不认识的采集方式不知道其参数 Schema，不能用 perf 字段冒充。
+		return collectorContent{}
 	}
 }
 

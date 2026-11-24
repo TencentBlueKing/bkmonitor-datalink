@@ -6,6 +6,7 @@
 package configs
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
@@ -70,6 +72,10 @@ const (
 	// a downlinked BaseTaskParam.timeout is deliberately ignored.
 	ActiveProfilePostProcessAllowance = 5 * time.Minute
 )
+
+// ErrActiveProfileUnsupported 标记当前 Beat 不认识的协议枚举值，例如后续阶段才实现的采集
+// 方式。旧版本 Beat 收到新版本 SaaS 下发的配置时据此提示升级采集器，而不是当成配置错误。
+var ErrActiveProfileUnsupported = errors.New("not supported by this bkmonitorbeat version")
 
 // ActiveProfileScheduleConfig 是下发协议中的 schedule 段。immediate 与 once_at
 // 使用 execute_at，cron 使用表达式与可选生效窗口。
@@ -203,6 +209,9 @@ type ActiveProfileTaskConfig struct {
 	effectiveStartAt time.Time
 	effectiveEndAt   time.Time
 	cronSchedule     cron.Schedule
+
+	// rejection 是身份与调度合法、但采集配置无法在本 Beat 执行的原因。
+	rejection error
 }
 
 func (c *ActiveProfileTaskConfig) InitIdent() error {
@@ -236,7 +245,35 @@ func NewActiveProfileTaskConfig() *ActiveProfileTaskConfig {
 	return conf
 }
 
+// Clean 先校验定位与上报一次执行所需的身份、调度和 event_data_id，再校验采集配置。
+// 采集配置不通过时仍返回错误，同时把原因记入 Rejection：这样的任务可以按计划上报失败
+// 终态，不必连同同一份子配置里的其他任务一起被丢弃。
 func (c *ActiveProfileTaskConfig) Clean() error {
+	c.rejection = nil
+	if err := c.cleanExecution(); err != nil {
+		return err
+	}
+	c.rejection = c.cleanCollectionSpec()
+
+	// The platform only specifies the sampling duration. Keep timeout and the
+	// generic task period internally consistent so BaseTaskMetaParam cannot
+	// shorten a valid Active Profile run because timeout was omitted or stale.
+	c.Timeout = c.ExecutionTimeout()
+	c.AvailableDuration = c.Timeout
+	if c.Period < c.Timeout {
+		c.Period = c.Timeout
+	}
+	return c.rejection
+}
+
+// Rejection 返回身份与调度合法、但采集配置无法在本 Beat 执行的原因，可执行时为 nil。
+func (c *ActiveProfileTaskConfig) Rejection() error {
+	return c.rejection
+}
+
+// cleanExecution 校验调度与上报一次执行所需的字段。这里不通过的任务既排不进调度，
+// 也发不出下游能归属到执行行的 Event。
+func (c *ActiveProfileTaskConfig) cleanExecution() error {
 	if err := utils.CleanCompositeParamList(&c.BaseTaskParam); err != nil {
 		return err
 	}
@@ -257,14 +294,22 @@ func (c *ActiveProfileTaskConfig) Clean() error {
 	if c.Name == "" {
 		return fmt.Errorf("name is required")
 	}
-	if err := c.cleanCollection(); err != nil {
-		return err
-	}
 	if err := c.cleanSchedule(); err != nil {
 		return err
 	}
 	// task_id 的约束依赖已校验的 schedule.type，因此必须放在 cleanSchedule 之后。
 	if err := c.cleanTaskID(); err != nil {
+		return err
+	}
+	if c.EventDataID <= 0 {
+		return fmt.Errorf("event_data_id must be positive")
+	}
+	return nil
+}
+
+// cleanCollectionSpec 校验采集方式、目标与采集参数，以及产物上报所需的字段。
+func (c *ActiveProfileTaskConfig) cleanCollectionSpec() error {
+	if err := c.cleanCollection(); err != nil {
 		return err
 	}
 	if err := c.cleanProcessSelector(); err != nil {
@@ -275,9 +320,6 @@ func (c *ActiveProfileTaskConfig) Clean() error {
 	}
 	if err := c.cleanResourceGuardConfig(); err != nil {
 		return err
-	}
-	if c.EventDataID <= 0 {
-		return fmt.Errorf("event_data_id must be positive")
 	}
 	if c.ProfileDataID <= 0 {
 		return fmt.Errorf("profile_data_id must be positive")
@@ -300,19 +342,7 @@ func (c *ActiveProfileTaskConfig) Clean() error {
 		}
 		c.OutputDir = outputRoot
 	}
-	if err := c.cleanProfileTarget(); err != nil {
-		return err
-	}
-
-	// The platform only specifies the sampling duration. Keep timeout and the
-	// generic task period internally consistent so BaseTaskMetaParam cannot
-	// shorten a valid Active Profile run because timeout was omitted or stale.
-	c.Timeout = c.ExecutionTimeout()
-	c.AvailableDuration = c.Timeout
-	if c.Period < c.Timeout {
-		c.Period = c.Timeout
-	}
-	return nil
+	return c.cleanProfileTarget()
 }
 
 func (c *ActiveProfileTaskConfig) cleanCollection() error {
@@ -328,9 +358,10 @@ func (c *ActiveProfileTaskConfig) cleanCollection() error {
 		(c.CollectionType == ActiveProfileTypeGoCPU || c.CollectionType == ActiveProfileTypeGoHeap):
 	default:
 		return fmt.Errorf(
-			"unsupported active_profile collection_method=%q collection_type=%q",
+			"active_profile collection_method=%q collection_type=%q: %w",
 			c.CollectionMethod,
 			c.CollectionType,
+			ErrActiveProfileUnsupported,
 		)
 	}
 	return nil
@@ -413,9 +444,12 @@ func (c *ActiveProfileTaskConfig) cleanPerfCollectorConfig() error {
 	// stack_unwind 是 native_cpu 的必填项，Beat 不静默补默认值。
 	switch c.CollectorConfig.StackUnwind {
 	case ActiveProfileStackUnwindFP, ActiveProfileStackUnwindDWARF:
-	default:
+	case "":
 		return fmt.Errorf("collector_config.stack_unwind must be %q or %q",
 			ActiveProfileStackUnwindFP, ActiveProfileStackUnwindDWARF)
+	default:
+		return fmt.Errorf("collector_config.stack_unwind %q: %w",
+			c.CollectorConfig.StackUnwind, ErrActiveProfileUnsupported)
 	}
 	return nil
 }
@@ -513,8 +547,10 @@ func (s *ActiveProfileProcessSelector) Clean() error {
 		return s.cleanPIDs()
 	case ActiveProfileSelectorSystem:
 		// 本地调试用的 system 范围采集，不属于下发协议。
+	case "":
+		return fmt.Errorf("process_selector.type is required")
 	default:
-		return fmt.Errorf("unsupported process_selector.type %q", s.Type)
+		return fmt.Errorf("process_selector.type %q: %w", s.Type, ErrActiveProfileUnsupported)
 	}
 	return nil
 }
@@ -757,12 +793,30 @@ func (c *ActiveProfileMetaConfig) Clean() error {
 	if c.MaxTimeout < minimumMaxTimeout {
 		c.MaxTimeout = minimumMaxTimeout
 	}
+	// 这份子配置装着本机全部计划任务，一条任务不合法只能影响它自己：整份拒绝会让无关的
+	// 计划一起停摆，旧版本 Beat 收到新采集方式时也会因此丢掉本机全部计划任务。
+	tasks := make([]*ActiveProfileTaskConfig, 0, len(c.Tasks))
 	for _, task := range c.Tasks {
-		if err := c.CleanTask(task); err != nil {
-			return err
+		if err := c.cleanTask(task); err != nil {
+			logger.Errorf("[active_profile] skip task_id=%d name=%q: %v", task.TaskID, task.Name, err)
+			continue
 		}
+		tasks = append(tasks, task)
 	}
+	c.Tasks = tasks
 	return nil
+}
+
+// cleanTask 校验单条任务。采集配置无法在本 Beat 执行的任务仍保留调度，由 Gather 每轮
+// 上报失败原因；返回错误的任务排不进调度，只能跳过。
+func (c *ActiveProfileMetaConfig) cleanTask(task *ActiveProfileTaskConfig) error {
+	err := c.CleanTask(task)
+	if err == nil || task.Rejection() == nil {
+		return err
+	}
+	logger.Errorf("[active_profile] task_id=%d cannot run on this bkmonitorbeat, every occurrence reports failed: %v",
+		task.TaskID, task.Rejection())
+	return task.InitIdent()
 }
 
 func (c *ActiveProfileMetaConfig) GetTaskConfigList() []define.TaskConfig {

@@ -43,6 +43,10 @@ func SetVersion(v string) {
 	stats.Version = v
 }
 
+func GetVersion() string {
+	return stats.Version
+}
+
 func SetRunningTasks(tasks map[string]int) {
 	stats.RunningTasks = tasks
 }

@@ -26,6 +26,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define/stats"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/active_profile/executor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/gse"
 )
@@ -694,6 +695,86 @@ func TestExpiredScheduleReportsFailedFinishedWithoutStarted(t *testing.T) {
 	}
 	if len(content.Processes) != 0 {
 		t.Errorf("expired occurrence must not list processes: %+v", content.Processes)
+	}
+}
+
+// TestRejectedTaskReportsFailedEveryOccurrence 覆盖采集配置无法在本 Beat 执行的计划任务：
+// 每轮触发都不采集、不发 started，只上报一条带原因的 failed。本版本不认识的采集方式归为
+// version_unsupported 并带上当前版本号，配置快照不用 perf 字段冒充未知采集方式的参数。
+func TestRejectedTaskReportsFailedEveryOccurrence(t *testing.T) {
+	originalVersion := stats.GetVersion()
+	stats.SetVersion("3.9.0-test")
+	t.Cleanup(func() { stats.SetVersion(originalVersion) })
+
+	for _, test := range []struct {
+		name           string
+		mutate         func(*configs.ActiveProfileTaskConfig)
+		errorType      string
+		message        string
+		emptyCollector bool
+	}{
+		{
+			name: "collection method from a newer protocol",
+			mutate: func(c *configs.ActiveProfileTaskConfig) {
+				c.CollectionMethod, c.CollectionType = "java", "java_cpu"
+			},
+			errorType:      ErrorTypeVersionUnsupported,
+			message:        "current bkmonitorbeat version is 3.9.0-test",
+			emptyCollector: true,
+		},
+		{
+			name: "exclude pattern outside RE2",
+			mutate: func(c *configs.ActiveProfileTaskConfig) {
+				c.ProcessSelector = configs.ActiveProfileProcessSelector{
+					Type:                    configs.ActiveProfileSelectorCommand,
+					MatchPattern:            "java",
+					ExcludePattern:          "(?!grep)",
+					EnableDynamicCollection: true,
+				}
+			},
+			errorType: ErrorTypeConfigInvalid,
+			message:   "compile process_selector.exclude_pattern",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			conf := newTestTaskConfig(t)
+			test.mutate(conf)
+			if err := conf.Clean(); err == nil || conf.Rejection() == nil {
+				t.Fatalf("Clean() error = %v, rejection = %v, want a reportable rejection", err, conf.Rejection())
+			}
+			sink := newReportChannel()
+			gather := newTestGather(conf)
+			first := time.Now().Truncate(time.Minute)
+			for _, scheduledAt := range []time.Time{first, first.Add(2 * time.Hour)} {
+				gather.Run(define.WithScheduledAt(context.Background(), scheduledAt), sink)
+			}
+
+			reports := captureReports(t, sink)
+			if len(reports.Events) != 2 || len(reports.Profiles) != 0 || reports.Metrics != 2 {
+				t.Fatalf("events=%d profiles=%d metrics=%d, want one failed finished and one metric per occurrence",
+					len(reports.Events), len(reports.Profiles), reports.Metrics)
+			}
+			for _, captured := range reports.Events {
+				if captured.EventName != finishedEventName {
+					t.Fatalf("rejected task must not report started: %q", captured.EventName)
+				}
+				assertDimensionKeys(t, captured)
+				if got, _ := captured.Dimension["status"].(string); got != StatusFailed {
+					t.Errorf("status = %q, want failed", got)
+				}
+				var content finishedContent
+				if err := json.Unmarshal([]byte(captured.Event.Content), &content); err != nil {
+					t.Fatal(err)
+				}
+				if content.ErrorType != test.errorType || !strings.Contains(content.ErrorMessage, test.message) {
+					t.Errorf("error = (%q, %q), want type %q containing %q",
+						content.ErrorType, content.ErrorMessage, test.errorType, test.message)
+				}
+				if test.emptyCollector && content.Config.CollectorConfig != (collectorContent{}) {
+					t.Errorf("unknown collection method snapshot = %+v, want no collector params", content.Config.CollectorConfig)
+				}
+			}
+		})
 	}
 }
 

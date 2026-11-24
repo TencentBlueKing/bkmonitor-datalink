@@ -6,6 +6,7 @@
 package active_profile
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -281,6 +282,51 @@ func TestStaticCommandChildConfigBindsOwnHostPIDs(t *testing.T) {
 
 	if got := task.ProcessSelector.TargetPIDs(); len(got) != 1 || got[0] != 2341 {
 		t.Fatalf("target pids = %v, want only the pid selected on host 456", got)
+	}
+}
+
+// newerProtocolTask 模拟新版本 SaaS 引用 latest 模板下发给旧版本 Beat 的任务：采集方式与
+// collector_config 里的 attach_timeout_sec 都是本版本不认识的。
+const newerProtocolTask = `  - task_id: 1207
+    bk_tenant_id: system
+    bk_biz_id: 11
+    bk_host_id: 456
+    name: java-from-a-newer-saas
+    collection_method: java
+    collection_type: java_cpu
+    schedule:
+      type: cron
+      cron_expression: "*/5 * * * *"
+      timezone: UTC
+    process_selector:
+      type: command
+      match_pattern: java
+      enable_dynamic_collection: true
+    collector_config:
+      duration_sec: 30
+      attach_timeout_sec: 10
+    event_data_id: 527804
+    profile_data_id: 524588
+    profile_app_name: builtin_profile_app
+    profile_service_name: builtin_profile_app
+`
+
+// TestChildConfigKeepsTasksBesideNewerProtocolTask 覆盖向下兼容：同一份子配置里混入本版本
+// 不支持的任务时，未知字段被忽略，原有任务照常调度，新任务保留调度并按版本不支持上报。
+func TestChildConfigKeepsTasksBesideNewerProtocolTask(t *testing.T) {
+	tasks := unpackChildConfig(t, []byte(runbookChildConfig+newerProtocolTask))
+	if len(tasks) != 2 {
+		t.Fatalf("tasks = %d, want the perf task and the java task", len(tasks))
+	}
+	perf, java := tasks[0], tasks[1]
+	if perf.TaskID != 1201 || perf.Rejection() != nil {
+		t.Fatalf("perf task_id=%d rejection=%v, want it untouched", perf.TaskID, perf.Rejection())
+	}
+	if java.TaskID != 1207 || !errors.Is(java.Rejection(), configs.ErrActiveProfileUnsupported) {
+		t.Fatalf("java task_id=%d rejection=%v, want ErrActiveProfileUnsupported", java.TaskID, java.Rejection())
+	}
+	if _, ok := java.InitialRunTime(time.Now()); !ok {
+		t.Fatal("the java task must stay schedulable so each occurrence reports why it cannot run")
 	}
 }
 

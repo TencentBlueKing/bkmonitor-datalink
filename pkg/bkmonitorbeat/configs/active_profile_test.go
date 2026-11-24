@@ -6,6 +6,7 @@
 package configs
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -642,6 +643,118 @@ func TestActiveProfileMetaConfigDoesNotClampDerivedTimeout(t *testing.T) {
 	}
 	if meta.MaxTimeout != want {
 		t.Fatalf("meta max timeout = %s, want %s", meta.MaxTimeout, want)
+	}
+}
+
+// TestActiveProfileMetaConfigIsolatesInvalidTasks 覆盖同一份子配置里混入非法任务：合法任务
+// 照常调度；采集配置不可执行的任务保留调度并带上原因；身份不合法的任务只跳过它自己。
+func TestActiveProfileMetaConfigIsolatesInvalidTasks(t *testing.T) {
+	valid := newTestActiveProfileConfig(t)
+	valid.TaskID = 2001
+
+	java := newTestActiveProfileConfig(t)
+	java.TaskID = 2002
+	java.CollectionMethod = "java"
+	java.CollectionType = "java_cpu"
+
+	badRegexp := newTestActiveProfileConfig(t)
+	badRegexp.TaskID = 2003
+	badRegexp.ProcessSelector = ActiveProfileProcessSelector{
+		Type:                    ActiveProfileSelectorCommand,
+		MatchPattern:            "java",
+		ExcludePattern:          "(?!grep)",
+		EnableDynamicCollection: true,
+	}
+
+	withoutTaskID := newTestActiveProfileConfig(t)
+	withoutTaskID.TaskID = 0
+
+	meta := &ActiveProfileMetaConfig{
+		BaseTaskMetaParam: NewBaseTaskMetaParam(),
+		Tasks:             []*ActiveProfileTaskConfig{valid, java, badRegexp, withoutTaskID},
+	}
+	if err := meta.Clean(); err != nil {
+		t.Fatalf("one invalid task must not reject the whole child config: %v", err)
+	}
+	if len(meta.Tasks) != 3 {
+		t.Fatalf("kept %d tasks, want valid, java and badRegexp", len(meta.Tasks))
+	}
+	for _, task := range meta.Tasks {
+		if task == withoutTaskID {
+			t.Fatal("a task that cannot be located must be skipped")
+		}
+		if task.GetIdent() == "" {
+			t.Fatalf("task_id=%d has no ident: reload diffing needs it", task.TaskID)
+		}
+		if _, ok := task.InitialRunTime(time.Now()); !ok {
+			t.Fatalf("task_id=%d is not schedulable", task.TaskID)
+		}
+	}
+	if valid.Rejection() != nil {
+		t.Fatalf("valid task rejection = %v", valid.Rejection())
+	}
+	if !errors.Is(java.Rejection(), ErrActiveProfileUnsupported) {
+		t.Fatalf("java rejection = %v, want ErrActiveProfileUnsupported", java.Rejection())
+	}
+	if badRegexp.Rejection() == nil || errors.Is(badRegexp.Rejection(), ErrActiveProfileUnsupported) {
+		t.Fatalf("bad regexp rejection = %v, want a config error that is not a version issue", badRegexp.Rejection())
+	}
+}
+
+// TestActiveProfileRejectionClassification 区分三类失败：本版本不认识的取值、采集配置取值
+// 不合法（两者都可以按计划上报失败），以及无法定位执行的身份或调度错误。
+func TestActiveProfileRejectionClassification(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mutate      func(*ActiveProfileTaskConfig)
+		reportable  bool
+		unsupported bool
+	}{
+		{name: "unknown collection method", reportable: true, unsupported: true, mutate: func(c *ActiveProfileTaskConfig) {
+			c.CollectionMethod, c.CollectionType = "java", "java_cpu"
+		}},
+		{name: "unknown process selector type", reportable: true, unsupported: true, mutate: func(c *ActiveProfileTaskConfig) {
+			c.ProcessSelector = ActiveProfileProcessSelector{Type: "container"}
+		}},
+		{name: "unknown stack unwind", reportable: true, unsupported: true, mutate: func(c *ActiveProfileTaskConfig) {
+			c.CollectorConfig.StackUnwind = "lbr"
+		}},
+		{name: "missing stack unwind", reportable: true, mutate: func(c *ActiveProfileTaskConfig) {
+			c.CollectorConfig.StackUnwind = ""
+		}},
+		{name: "missing process selector type", reportable: true, mutate: func(c *ActiveProfileTaskConfig) {
+			c.ProcessSelector = ActiveProfileProcessSelector{}
+		}},
+		{name: "duration over limit", reportable: true, mutate: func(c *ActiveProfileTaskConfig) {
+			c.CollectorConfig.DurationSec = ActiveProfileMaxDurationSec + 1
+		}},
+		{name: "missing profile data id", reportable: true, mutate: func(c *ActiveProfileTaskConfig) {
+			c.ProfileDataID = 0
+		}},
+		{name: "missing event data id", mutate: func(c *ActiveProfileTaskConfig) {
+			c.EventDataID = 0
+		}},
+		{name: "unknown schedule type", mutate: func(c *ActiveProfileTaskConfig) {
+			c.Schedule.Type = "interval"
+		}},
+		{name: "missing host", mutate: func(c *ActiveProfileTaskConfig) {
+			c.BKHostID = 0
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			conf := newTestActiveProfileConfig(t)
+			test.mutate(conf)
+			if err := conf.Clean(); err == nil {
+				t.Fatal("Clean() error = nil, want the validation error")
+			}
+			rejection := conf.Rejection()
+			if (rejection != nil) != test.reportable {
+				t.Fatalf("rejection = %v, want reportable=%t", rejection, test.reportable)
+			}
+			if errors.Is(rejection, ErrActiveProfileUnsupported) != test.unsupported {
+				t.Fatalf("rejection = %v, want unsupported=%t", rejection, test.unsupported)
+			}
+		})
 	}
 }
 

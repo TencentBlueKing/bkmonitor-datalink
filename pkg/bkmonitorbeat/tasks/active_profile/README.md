@@ -54,8 +54,8 @@ SaaS 直接解析。它只读不写——不解析主配置、不创建运行目
 做成 Beat 子命令而不是外部脚本，是因为它与采集共用 `resolveProcesses` 和
 `ActiveProfileProcessSelector.Clean()`：预览结果与真正执行时的匹配规则不可能分叉。特别是
 `exclude_pattern` 用 Go 的 `regexp`（RE2 语法，不支持 lookahead 与反向引用），平台侧校验必须
-按同一套语法——否则通过了平台校验的表达式会让整份子配置在 `Clean()` 第一个出错的任务处
-失败，该主机上所有计划任务一起作废。
+按同一套语法——否则通过了平台校验的表达式在 Beat 上编译失败，该任务每轮都以
+`config_invalid` 失败上报（同一主机上的其他任务不受影响，见下文"非法任务与向下兼容"）。
 
 输出约定：
 
@@ -135,6 +135,26 @@ write_active_profile_conf_tpl.sh` 生成，改结构要改生成脚本，不要�
 `bk-collector-application.conf.tpl`），以及在 context 里放按 `bk_host_id` 分组的映射（监控平台
 PingServer 订阅的 `ip_to_items`，一台主机一个订阅）。
 
+### 非法任务与向下兼容
+
+本机全部计划任务都在同一份子配置里，Beat 逐条校验，一条任务不合法只影响它自己：
+
+| 失败 | 例子 | 处理 |
+| --- | --- | --- |
+| 无法定位执行 | 缺 `task_id` / `bk_host_id` / `event_data_id`，cron 表达式错误，未知 `schedule.type` | 跳过该任务并记 Error 日志：排不进调度，也发不出下游能归属的 Event |
+| 本版本不认识的取值 | 后续阶段才实现的 `collection_method`，新的 `process_selector.type` / `stack_unwind` | 保留调度，每轮不采集，只上报 `failed` + `version_unsupported`，`message` 带当前 Beat 版本 |
+| 采集配置取值不合法 | `exclude_pattern` 不是 RE2 语法、采集时长超上限 | 保留调度，每轮上报 `failed` + `config_invalid` |
+
+立即执行同样分类：后两类由 CLI 照常连本机 GSE Agent 上报一条 `failed`，退出码 0；第一类直接
+报错退出。匹配预览遇到不认识的 `process_selector.type` 返回 `version_unsupported`。
+
+模板引用 `latest`，灰度升级期间"新模板 + 旧 Beat"是常态，协议演进遵守以下约束：
+
+- 新增可选字段：旧 Beat 解析时忽略未知字段，安全。
+- 新增枚举值（采集方式、进程选择方式等）：旧 Beat 按上表上报 `version_unsupported`，安全。
+- 不修改已有字段的类型：类型不匹配在解析阶段就会让整份子配置失败，逐条校验也兜不住。
+- 新增 `schedule.type` 需要 SaaS 按 Beat 版本控制下发：旧 Beat 排不进调度，只能跳过并记日志。
+
 ## 执行定位与产物标签
 
 不使用 `run_id` / `profile_id`。一次主机执行由执行键定位：
@@ -195,7 +215,8 @@ finished 的 `event.content.error_type` 归类失败原因，SaaS 按类型给�
 | `go_endpoint_failed` | Go pprof endpoint 取数或解析失败 |
 | `memory_limit` / `disk_limit` | 资源保护：可用内存低于阈值 / 临时文件超过上限 |
 | `report_failed` | 产物投递失败 |
-| `config_invalid` | 配置不被当前采集器支持，多为与 SaaS 版本不一致 |
+| `config_invalid` | 采集配置取值不合法，如 `exclude_pattern` 不是 RE2 语法、参数越界 |
+| `version_unsupported` | 配置使用了当前采集器版本不认识的取值（如后续阶段才实现的采集方式），需要升级采集器 |
 | `processes_exited` | `partial_succeed` 的原因：部分进程在采集开始前退出 |
 | `collect_failed` | 其余失败 |
 

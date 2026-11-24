@@ -76,6 +76,10 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		GatherUpDataID: g.GlobalConfig.GetGatherUpDataID(),
 	}
 
+	if conf.Rejection() != nil {
+		reportRejected(ctx, conf, scheduledAt, opts)
+		return
+	}
 	if define.ScheduleExpiredFromContext(ctx) {
 		g.reportExpiredSchedule(ctx, conf, scheduledAt, opts)
 		return

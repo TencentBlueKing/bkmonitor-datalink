@@ -70,17 +70,22 @@ func TestMatchCLIPrintsMatchedProcesses(t *testing.T) {
 		}
 	})
 
-	// 选择器校验与下发配置共用同一个入口，非法选择器在预览阶段就该被拒。
+	// 选择器校验与下发配置共用同一个入口，非法选择器在预览阶段就该被拒。本版本不认识的
+	// 类型提示升级采集器，其余按配置不合法归类。
 	t.Run("invalid selectors are rejected", func(t *testing.T) {
-		for name, request := range map[string]string{
-			"unsupported type":     `{"process_selector":{"type":"nope"}}`,
-			"command without rule": `{"process_selector":{"type":"command"}}`,
-			"bad exclude regexp":   `{"process_selector":{"type":"command","match_pattern":"java","exclude_pattern":"("}}`,
-			"pid without pids":     `{"process_selector":{"type":"pid"}}`,
+		for name, test := range map[string]struct {
+			request   string
+			errorType string
+		}{
+			"unsupported type":     {`{"process_selector":{"type":"nope"}}`, ErrorTypeVersionUnsupported},
+			"missing type":         {`{"process_selector":{}}`, ErrorTypeConfigInvalid},
+			"command without rule": {`{"process_selector":{"type":"command"}}`, ErrorTypeConfigInvalid},
+			"bad exclude regexp":   {`{"process_selector":{"type":"command","match_pattern":"java","exclude_pattern":"("}}`, ErrorTypeConfigInvalid},
+			"pid without pids":     {`{"process_selector":{"type":"pid"}}`, ErrorTypeConfigInvalid},
 		} {
 			t.Run(name, func(t *testing.T) {
 				var out bytes.Buffer
-				err := MatchCLI(strings.NewReader(request), &out)
+				err := MatchCLI(strings.NewReader(test.request), &out)
 				if err == nil {
 					t.Fatalf("MatchCLI() error = nil, want a selector validation error, stdout=%q", out.String())
 				}
@@ -94,8 +99,8 @@ func TestMatchCLIPrintsMatchedProcesses(t *testing.T) {
 				if decodeErr := json.Unmarshal(failureOut.Bytes(), &failure); decodeErr != nil {
 					t.Fatalf("match failure must be JSON: %q", failureOut.String())
 				}
-				if failure != (cliMatchFailure{ErrorType: ErrorTypeConfigInvalid, Message: err.Error()}) {
-					t.Fatalf("match failure = %+v", failure)
+				if failure != (cliMatchFailure{ErrorType: test.errorType, Message: err.Error()}) {
+					t.Fatalf("match failure = %+v, want error_type %q", failure, test.errorType)
 				}
 			})
 		}
@@ -367,6 +372,38 @@ func TestRunCLIRejectsPlannedSchedule(t *testing.T) {
 	err := RunCLI(strings.NewReader(payload))
 	if err == nil || !strings.Contains(err.Error(), "only executes immediate schedules") {
 		t.Fatalf("planned schedules must be rejected before any config resolution, got %v", err)
+	}
+}
+
+// TestRunConfigKeepsRejectedCollection 覆盖立即执行收到本 Beat 无法执行的采集配置：配置仍然
+// 返回，由 RunCLI 上报带原因的 failed；无法定位执行的请求直接报错。
+func TestRunConfigKeepsRejectedCollection(t *testing.T) {
+	request := cliRunRequest{
+		BKTenantID:       "system",
+		BizID:            11,
+		BKHostID:         1002,
+		TaskID:           1202,
+		Name:             "java-on-an-older-beat",
+		CollectionMethod: "java",
+		CollectionType:   "java_cpu",
+		Schedule: configs.ActiveProfileScheduleConfig{
+			Type:      configs.ActiveProfileScheduleImmediate,
+			ExecuteAt: 1789032616000,
+		},
+		EventDataID:   527804,
+		ProfileDataID: 524588,
+	}
+	conf, err := request.taskConfig()
+	if err != nil {
+		t.Fatalf("taskConfig() error = %v, want the config kept for reporting", err)
+	}
+	if !errors.Is(conf.Rejection(), configs.ErrActiveProfileUnsupported) {
+		t.Fatalf("rejection = %v, want ErrActiveProfileUnsupported", conf.Rejection())
+	}
+
+	request.TaskID = 0
+	if _, err := request.taskConfig(); err == nil {
+		t.Fatal("a request without task_id cannot be located and must fail before reporting")
 	}
 }
 

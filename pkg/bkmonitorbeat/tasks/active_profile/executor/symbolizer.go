@@ -368,8 +368,8 @@ type addr2lineJob struct {
 }
 
 func newAddr2lineJob(ctx context.Context, path, dso string) (*addr2lineJob, error) {
-	// GNU binutils >= 2.31 默认已开启 demangler 递归上限，但短参数 -R 直到 2.39 才引入。
-	// 不显式传 -R，避免 CentOS 7 / TencentOS 2-3 / Ubuntu 20.04-22.04 上直接启动失败。
+	// GNU binutils 自 2.32 起 demangler 默认带递归上限，-R 也是 2.32 才引入：显式传 -R
+	// 不增加保护，反而会让 CentOS 7/8、TencentOS 2/3 等 binutils < 2.32 的主机启动失败。
 	process, err := startSymbolizerProcess(ctx, path, []string{"-a", "-f", "-C", "-i", "-e", dso})
 	if err != nil {
 		return nil, fmt.Errorf("start addr2line for %s: %w", dso, err)

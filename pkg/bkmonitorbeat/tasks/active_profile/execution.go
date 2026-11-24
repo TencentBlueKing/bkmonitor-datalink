@@ -13,6 +13,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define/stats"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/active_profile/executor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -202,6 +203,29 @@ func finish(
 	)
 }
 
+// reportRejected 收敛采集配置无法在本 Beat 执行的一次执行：不采集、不发 started，只上报
+// 带原因的 failed finished。旧版本 Beat 收到新采集方式时归为 version_unsupported，页面
+// 据此提示升级采集器。
+func reportRejected(
+	ctx context.Context,
+	conf *configs.ActiveProfileTaskConfig,
+	scheduledAt time.Time,
+	opts ExecuteOptions,
+) {
+	rejection := conf.Rejection()
+	outcome := ExecutionOutcome{
+		Status:       StatusFailed,
+		ErrorType:    ErrorTypeConfigInvalid,
+		ErrorMessage: rejection.Error(),
+	}
+	if errors.Is(rejection, configs.ErrActiveProfileUnsupported) {
+		outcome.ErrorType = ErrorTypeVersionUnsupported
+		outcome.ErrorMessage = fmt.Sprintf("%v; current bkmonitorbeat version is %s, upgrade it to run this task",
+			rejection, stats.GetVersion())
+	}
+	finish(ctx, conf, resolveExecutionIP(opts.FallbackIP), scheduledAt, time.Now(), opts, outcome)
+}
+
 // statusFor 把执行错误映射到 finished 允许上报的终态。running 与 unknown 由 SaaS
 // 派生，采集端不写回。成功代表 Profiling 结果可用，没有匹配到进程与采集结果为空
 // 都查不到结果，按失败收敛，原因保留在 message 中。
@@ -242,6 +266,8 @@ func errorTypeFor(err error) string {
 		return ErrorTypeDiskLimit
 	case errors.Is(err, errReportFailed):
 		return ErrorTypeReportFailed
+	case errors.Is(err, configs.ErrActiveProfileUnsupported):
+		return ErrorTypeVersionUnsupported
 	case errors.Is(err, executor.ErrInvalidConfig):
 		return ErrorTypeConfigInvalid
 	default:

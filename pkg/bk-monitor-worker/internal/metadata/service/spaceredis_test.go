@@ -1839,9 +1839,6 @@ func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
 			"configured_global_vm_short_link_rt.__default__": {
 				"filters": []map[string]any{{"project_id": "1001"}},
 			},
-			"invalid_config_vm_short_link_rt.__default__": {
-				"filters": []map[string]any{{"fallback_biz": "1001"}},
-			},
 		},
 		SpaceRouteKeyWithTenant("system", "bkci", "project_a"): {
 			"global_vm_short_link_rt.__default__": {
@@ -1851,9 +1848,6 @@ func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
 				"filters": []map[string]any{},
 			},
 			"partial_config_vm_short_link_rt.__default__": {
-				"filters": []map[string]any{},
-			},
-			"invalid_config_vm_short_link_rt.__default__": {
 				"filters": []map[string]any{},
 			},
 		},
@@ -1867,14 +1861,11 @@ func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
 			"partial_config_vm_short_link_rt.__default__": {
 				"filters": []map[string]any{{"custom_biz": "-102"}},
 			},
-			"invalid_config_vm_short_link_rt.__default__": {
-				"filters": []map[string]any{{"fallback_biz": "-102"}},
-			},
 		},
 	}, data)
 }
 
-func TestSpacePusher_ComposeLogGlobalTableIdValuesBySpace(t *testing.T) {
+func TestSpacePusher_ComposeGlobalTableIdValuesBySpace(t *testing.T) {
 	pusher := NewSpacePusher()
 	spaces := []space.Space{
 		{Id: 1, BkTenantId: "system", SpaceTypeId: models.SpaceTypeBKCC, SpaceId: "1"},
@@ -1911,9 +1902,10 @@ func TestSpacePusher_ComposeLogGlobalTableIdValuesBySpace(t *testing.T) {
 		{BkTenantId: "other", TableID: "other_global.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{}`}},
 	}
 
-	data := pusher.ComposeLogGlobalTableIdValuesBySpace(options, resultTables, spaces)
+	data := pusher.ComposeGlobalTableIdValuesBySpace(options, resultTables, spaces)
 
 	bkccValues := data[SpaceRouteKeyWithTenant("system", models.SpaceTypeBKCC, "1")]
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "1"}}}, bkccValues["vm_storage.log"])
 	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "1"}}}, bkccValues["global_all.log"])
 	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "1"}}}, bkccValues["empty_filter_key.log"])
 	assert.NotContains(t, bkccValues, "global_bkci.log")
@@ -1938,7 +1930,7 @@ func TestSpacePusher_ComposeLogGlobalTableIdValuesBySpace(t *testing.T) {
 	for _, values := range data {
 		for _, tableID := range []string{
 			"invalid_json.log", "invalid_value_type.log", "unsupported_space_type.log",
-			"unsupported_filter_value.log", "disabled.log", "deleted.log", "vm_storage.log",
+			"unsupported_filter_value.log", "disabled.log", "deleted.log",
 		} {
 			assert.NotContains(t, values, tableID)
 		}

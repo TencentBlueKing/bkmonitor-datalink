@@ -1959,9 +1959,11 @@ func (s *SpacePusher) composeRecordRuleTableIdValue(spaceType, spaceId, tableId 
 func (s *SpacePusher) ComposeVMShortLinkTableIdValuesBySpace(shortLinkRecords []space.VMShortLinkRecord, spaceList []space.Space) SpaceTableIdValuesBySpace {
 	valuesBySpace := make(SpaceTableIdValuesBySpace)
 	spacesByTypeAndTenant := make(map[string][]space.Space)
+	spaceIndex := make(map[string]int, len(spaceList))
 	spacesByTenant := make(map[string][]space.Space)
 	// 提前构建不同维度的空间索引，后续根据 query_router_config 快速确定全局短链路覆盖范围。
-	for _, sp := range spaceList {
+	for i, sp := range spaceList {
+		spaceIndex[SpaceRouteKeyWithTenant(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId)] = i
 		key := vmShortLinkGlobalSpaceKey(sp.SpaceTypeId, sp.BkTenantId)
 		spacesByTypeAndTenant[key] = append(spacesByTypeAndTenant[key], sp)
 		spacesByTenant[sp.BkTenantId] = append(spacesByTenant[sp.BkTenantId], sp)
@@ -1969,19 +1971,27 @@ func (s *SpacePusher) ComposeVMShortLinkTableIdValuesBySpace(shortLinkRecords []
 
 	for _, record := range shortLinkRecords {
 		if record.IsGlobal {
-			routerConfig := s.parseVMShortLinkQueryRouterConfig(record)
+			routerConfig, err := parseQueryRouterConfig(record.QueryRouterConfig, record.SpaceType)
+			if err != nil {
+				logger.Warnf("skip invalid short link query_router_config, tenant [%s], table [%s]: %v", record.BkTenantId, record.TableId, err)
+				continue
+			}
 			targetSpaces := s.getVMShortLinkTargetSpaces(routerConfig, record.BkTenantId, spacesByTypeAndTenant, spacesByTenant)
-			for _, sp := range targetSpaces {
-				filters := []map[string]any{}
-				// 全局短链路的所属空间可直接访问；扩展到其他空间时必须带 filter，避免查询范围放大。
-				if sp.SpaceTypeId != record.SpaceType || sp.SpaceId != record.SpaceId {
-					filters = s.buildVMShortLinkGlobalFilters(sp, routerConfig)
+			// 共享范围可以与归属空间类型不同，归属空间始终参与短链路路由。
+			if routerConfig.SpaceType != models.SpaceTypeAll && routerConfig.SpaceType != record.SpaceType {
+				if i, ok := spaceIndex[SpaceRouteKeyWithTenant(record.BkTenantId, record.SpaceType, record.SpaceId)]; ok {
+					filters := routerConfig.filters(spaceList[i], true, true)
+					s.addTableRoute(valuesBySpace, record.BkTenantId, record.SpaceType, record.SpaceId, record.TableId, filters)
 				}
-				s.addVMShortLinkTableIdValue(valuesBySpace, sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId, record.TableId, filters)
+			}
+			for _, sp := range targetSpaces {
+				isOwner := sp.SpaceTypeId == record.SpaceType && sp.SpaceId == record.SpaceId
+				filters := routerConfig.filters(sp, isOwner, true)
+				s.addTableRoute(valuesBySpace, sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId, record.TableId, filters)
 			}
 			continue
 		}
-		s.addVMShortLinkTableIdValue(valuesBySpace, record.BkTenantId, record.SpaceType, record.SpaceId, record.TableId, nil)
+		s.addTableRoute(valuesBySpace, record.BkTenantId, record.SpaceType, record.SpaceId, record.TableId, nil)
 	}
 	return valuesBySpace
 }
@@ -1996,21 +2006,7 @@ type queryRouterConfig struct {
 	SpaceType   string `json:"space_type"`
 	FilterKey   string `json:"filter_key"`
 	FilterValue string `json:"filter_value"`
-}
-
-func (s *SpacePusher) parseVMShortLinkQueryRouterConfig(record space.VMShortLinkRecord) queryRouterConfig {
-	config, err := parseQueryRouterConfig(record.QueryRouterConfig, record.SpaceType)
-	if err == nil {
-		return config
-	}
-
-	// VM 短链路历史上对异常存量配置采用默认路由，保持该容错行为；
-	// 日志全局表则由调用方跳过异常 option，避免错误配置扩大查询范围。
-	logger.Errorf(
-		"parse vm short link query_router_config failed, table_id [%s], config [%s], err: %s, use default value",
-		record.TableId, record.QueryRouterConfig, err,
-	)
-	return config
+	ExemptOwner *bool  `json:"exempt_owner,omitempty"`
 }
 
 func (s *SpacePusher) getVMShortLinkTargetSpaces(
@@ -2030,25 +2026,24 @@ func vmShortLinkGlobalSpaceKey(spaceType, bkTenantId string) string {
 	return fmt.Sprintf("%s|%s", spaceType, bkTenantId)
 }
 
-func (s *SpacePusher) buildVMShortLinkGlobalFilters(sp space.Space, config queryRouterConfig) []map[string]any {
-	switch config.FilterValue {
-	case vmShortLinkFilterValueSpaceID:
-		return []map[string]any{{config.FilterKey: sp.SpaceId}}
-	case vmShortLinkFilterValueBkBizID:
-		return []map[string]any{{config.FilterKey: s.getVMShortLinkBkBizIDFilterValue(sp)}}
-	default:
-		return []map[string]any{}
+// filters 返回 nil 时保留已有归属路由；空切片表示显式豁免。
+func (config queryRouterConfig) filters(sp space.Space, isOwner, shortLink bool) []map[string]any {
+	if isOwner {
+		if config.ExemptOwner == nil && !shortLink {
+			return nil
+		}
+		if config.ExemptOwner == nil || *config.ExemptOwner {
+			return []map[string]any{}
+		}
 	}
+	value := sp.SpaceId
+	if config.FilterValue == vmShortLinkFilterValueBkBizID && sp.SpaceTypeId != models.SpaceTypeBKCC {
+		value = strconv.Itoa(-sp.Id)
+	}
+	return []map[string]any{{config.FilterKey: value}}
 }
 
-func (s *SpacePusher) getVMShortLinkBkBizIDFilterValue(sp space.Space) string {
-	if sp.SpaceTypeId == models.SpaceTypeBKCC {
-		return sp.SpaceId
-	}
-	return strconv.Itoa(-sp.Id)
-}
-
-func (s *SpacePusher) addVMShortLinkTableIdValue(valuesBySpace SpaceTableIdValuesBySpace, bkTenantId, spaceType, spaceId, tableId string, filters []map[string]any) {
+func (s *SpacePusher) addTableRoute(valuesBySpace SpaceTableIdValuesBySpace, bkTenantId, spaceType, spaceId, tableId string, filters []map[string]any) {
 	key := SpaceRouteKeyWithTenant(bkTenantId, spaceType, spaceId)
 	if _, ok := valuesBySpace[key]; !ok {
 		valuesBySpace[key] = make(SpaceTableIdValues)
@@ -2060,9 +2055,8 @@ func (s *SpacePusher) addVMShortLinkTableIdValue(valuesBySpace SpaceTableIdValue
 	valuesBySpace[key][reformattedTableId] = map[string]any{"filters": filters}
 }
 
-// ComposeLogGlobalTableIdValuesBySpace 按 query_router_config 组装 ES/Doris 日志全局表路由。
-// 归属业务继续使用普通 ES/Doris 路由的空 filters；这里只补充其他目标空间的过滤路由。
-func (s *SpacePusher) ComposeLogGlobalTableIdValuesBySpace(
+// ComposeGlobalTableIdValuesBySpace 按结果表的 query_router_config 组装全局路由。
+func (s *SpacePusher) ComposeGlobalTableIdValuesBySpace(
 	options []resulttable.ResultTableOption,
 	resultTables []resulttable.ResultTable,
 	spaceList []space.Space,
@@ -2070,7 +2064,7 @@ func (s *SpacePusher) ComposeLogGlobalTableIdValuesBySpace(
 	valuesBySpace := make(SpaceTableIdValuesBySpace)
 	resultTablesByTenant := make(map[string]map[string]resulttable.ResultTable)
 	for _, rt := range resultTables {
-		if !isEligibleLogGlobalResultTable(rt) {
+		if !rt.IsEnable || rt.IsDeleted {
 			continue
 		}
 		if _, ok := resultTablesByTenant[rt.BkTenantId]; !ok {
@@ -2082,7 +2076,7 @@ func (s *SpacePusher) ComposeLogGlobalTableIdValuesBySpace(
 	spacesByTypeAndTenant := make(map[string][]space.Space)
 	spacesByTenant := make(map[string][]space.Space)
 	for _, sp := range spaceList {
-		if !isSupportedLogGlobalSpaceType(sp.SpaceTypeId) {
+		if !isSupportedGlobalSpaceType(sp.SpaceTypeId) {
 			continue
 		}
 		key := vmShortLinkGlobalSpaceKey(sp.SpaceTypeId, sp.BkTenantId)
@@ -2096,10 +2090,10 @@ func (s *SpacePusher) ComposeLogGlobalTableIdValuesBySpace(
 			continue
 		}
 
-		config, err := parseLogGlobalQueryRouterConfig(option)
+		config, err := parseGlobalQueryRouterConfig(option)
 		if err != nil {
 			logger.Warnf(
-				"compose log global table ids: invalid query_router_config skipped, tenant [%s], table_id [%s], error [%s]",
+				"compose global table ids: invalid query_router_config skipped, tenant [%s], table_id [%s], error [%s]",
 				option.BkTenantId, option.TableID, err,
 			)
 			continue
@@ -2110,43 +2104,24 @@ func (s *SpacePusher) ComposeLogGlobalTableIdValuesBySpace(
 			targetSpaces = spacesByTenant[option.BkTenantId]
 		}
 		for _, sp := range targetSpaces {
-			bkBizID, err := getLogGlobalSpaceBkBizID(sp)
+			bkBizID, err := getSpaceRouteBizID(sp)
 			if err != nil {
 				logger.Warnf(
-					"compose log global table ids: get space bk_biz_id failed, tenant [%s], space_type [%s], space_id [%s], error [%s]",
+					"compose global table ids: get space bk_biz_id failed, tenant [%s], space_type [%s], space_id [%s], error [%s]",
 					sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId, err,
 				)
 				continue
 			}
-			// 预取路由最后合并。归属业务不能在这里写入，否则会覆盖普通 ES/Doris 的无过滤路由。
-			if rt.BkBizId == bkBizID {
-				continue
-			}
-
-			// space_to_result_table 的查询端按 []map[string]string 反序列化 filters，
-			// bk_biz_id 必须保持字符串，不能照搬 Python 侧的 JSON number。
-			var filterValue any = strconv.Itoa(bkBizID)
-			if config.FilterValue == vmShortLinkFilterValueSpaceID {
-				filterValue = sp.SpaceId
-			}
-			key := SpaceRouteKeyWithTenant(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId)
-			if _, ok := valuesBySpace[key]; !ok {
-				valuesBySpace[key] = make(SpaceTableIdValues)
-			}
-			valuesBySpace[key][reformatTableId(option.TableID)] = map[string]any{
-				"filters": []map[string]any{{config.FilterKey: filterValue}},
+			filters := config.filters(sp, rt.BkBizId == bkBizID, false)
+			if filters != nil {
+				s.addTableRoute(valuesBySpace, sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId, option.TableID, filters)
 			}
 		}
 	}
 	return valuesBySpace
 }
 
-func isEligibleLogGlobalResultTable(rt resulttable.ResultTable) bool {
-	return rt.IsEnable && !rt.IsDeleted &&
-		(rt.DefaultStorage == models.StorageTypeES || rt.DefaultStorage == models.StorageTypeDoris)
-}
-
-func isSupportedLogGlobalSpaceType(spaceType string) bool {
+func isSupportedGlobalSpaceType(spaceType string) bool {
 	return spaceType == models.SpaceTypeBKCC || spaceType == models.SpaceTypeBKCI || spaceType == models.SpaceTypeBKSAAS
 }
 
@@ -2158,7 +2133,7 @@ func defaultQueryRouterConfig(defaultSpaceType string) queryRouterConfig {
 	}
 }
 
-// parseQueryRouterConfig 对齐 VMShortLinkRecord.normalize_query_router_config：
+// parseQueryRouterConfig 与 metadata 的通用 query_router_config 解析保持一致：
 // 缺失或空值使用调用方默认值，space_type/filter_value 仅接受当前协议支持的取值。
 func parseQueryRouterConfig(rawConfigJSON, defaultSpaceType string) (queryRouterConfig, error) {
 	config := defaultQueryRouterConfig(defaultSpaceType)
@@ -2187,9 +2162,7 @@ func parseQueryRouterConfig(rawConfigJSON, defaultSpaceType string) (queryRouter
 		}
 	}
 	if !isValidQueryRouterSpaceType(config.SpaceType) {
-		invalidSpaceType := config.SpaceType
-		config.SpaceType = defaultSpaceType
-		return config, errors.Errorf("space_type [%s] is invalid", invalidSpaceType)
+		return config, errors.Errorf("space_type [%s] is invalid", config.SpaceType)
 	}
 
 	if value, ok := rawConfig["filter_key"]; ok && value != nil {
@@ -2212,9 +2185,14 @@ func parseQueryRouterConfig(rawConfigJSON, defaultSpaceType string) (queryRouter
 		}
 	}
 	if config.FilterValue != vmShortLinkFilterValueSpaceID && config.FilterValue != vmShortLinkFilterValueBkBizID {
-		invalidFilterValue := config.FilterValue
-		config.FilterValue = vmShortLinkFilterValueBkBizID
-		return config, errors.Errorf("filter_value [%s] is invalid", invalidFilterValue)
+		return config, errors.Errorf("filter_value [%s] is invalid", config.FilterValue)
+	}
+	if raw, exists := rawConfig["exempt_owner"]; exists {
+		exempt, ok := raw.(bool)
+		if !ok {
+			return config, errors.New("exempt_owner must be a boolean")
+		}
+		config.ExemptOwner = &exempt
 	}
 	return config, nil
 }
@@ -2225,8 +2203,11 @@ func isValidQueryRouterSpaceType(spaceType string) bool {
 		spaceType == models.SpaceTypeDefault || spaceType == models.SpaceTypeAll
 }
 
-func parseLogGlobalQueryRouterConfig(option resulttable.ResultTableOption) (queryRouterConfig, error) {
+func parseGlobalQueryRouterConfig(option resulttable.ResultTableOption) (queryRouterConfig, error) {
 	config := defaultQueryRouterConfig(models.SpaceTypeAll)
+	if option.Value == "" {
+		return config, errors.New("query_router_config is empty")
+	}
 	if option.ValueType != "dict" {
 		return config, errors.Errorf("value_type [%s] is not dict", option.ValueType)
 	}
@@ -2235,13 +2216,13 @@ func parseLogGlobalQueryRouterConfig(option resulttable.ResultTableOption) (quer
 	if err != nil {
 		return config, err
 	}
-	if !isSupportedLogGlobalSpaceType(config.SpaceType) && config.SpaceType != models.SpaceTypeAll {
+	if !isSupportedGlobalSpaceType(config.SpaceType) && config.SpaceType != models.SpaceTypeAll {
 		return config, errors.Errorf("space_type [%s] is not supported", config.SpaceType)
 	}
 	return config, nil
 }
 
-func getLogGlobalSpaceBkBizID(sp space.Space) (int, error) {
+func getSpaceRouteBizID(sp space.Space) (int, error) {
 	if sp.SpaceTypeId == models.SpaceTypeBKCC {
 		bkBizID, err := strconv.Atoi(sp.SpaceId)
 		if err != nil {

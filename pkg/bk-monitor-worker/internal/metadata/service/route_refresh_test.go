@@ -258,7 +258,7 @@ func TestRouteRefresh(t *testing.T) {
 		require.Contains(t, p.ComposeRecordRuleTableIdValuesBySpace(old)["bkcc__1|system"], "rule.cpu")
 		require.Contains(t, p.ComposeRecordRuleV4TableIdValuesBySpace(v4)["bkcc__1|system"], "rule.v4")
 	})
-	run("prefetch/shortlink_owner_global_project_and_fallback", func(t *testing.T) {
+	run("prefetch/shortlink_owner_global_project_and_invalid_config", func(t *testing.T) {
 		var records []space.VMShortLinkRecord
 		var spaces []space.Space
 		require.NoError(t, f.DB.Where("is_enabled = ? AND is_deleted = ?", true, false).Find(&records).Error)
@@ -271,7 +271,7 @@ func TestRouteRefresh(t *testing.T) {
 		require.NotContains(t, got["bkcc__1|system"], "short.disabled")
 		require.NotContains(t, got["bkcc__1|system"], "short.deleted")
 		require.NotContains(t, got, "bkcc__20|other")
-		require.Contains(t, got["bkcc__2|system"], "short.fallback")
+		require.NotContains(t, got["bkcc__2|system"], "short.fallback")
 	})
 	run("prefetch/global_log_preserves_owner_and_filters_other_spaces", func(t *testing.T) {
 		var opts []resulttable.ResultTableOption
@@ -280,7 +280,7 @@ func TestRouteRefresh(t *testing.T) {
 		require.NoError(t, f.DB.Where("name = ?", models.OptionQueryRouterConfig).Find(&opts).Error)
 		require.NoError(t, f.DB.Find(&rts).Error)
 		require.NoError(t, f.DB.Find(&spaces).Error)
-		got := NewSpacePusher().ComposeLogGlobalTableIdValuesBySpace(opts, rts, spaces)
+		got := NewSpacePusher().ComposeGlobalTableIdValuesBySpace(opts, rts, spaces)
 		require.NotContains(t, got["bkcc__1|system"], "global.logs")
 		routeJSON(t, `{"filters":[{"owner":"2"}]}`, got["bkcc__2|system"]["global.logs"])
 		routeJSON(t, `{"filters":[{"owner":"-4"}]}`, got["bkci__project|system"]["global.logs"])
@@ -403,7 +403,7 @@ func TestRouteRefresh(t *testing.T) {
 		require.NoError(t, f.DB.Where("name = ?", models.OptionQueryRouterConfig).Find(&opts).Error)
 		require.NoError(t, f.DB.Find(&rts).Error)
 		require.NoError(t, f.DB.Find(&spaces).Error)
-		got := NewSpacePusher().ComposeLogGlobalTableIdValuesBySpace(opts, rts, spaces)
+		got := NewSpacePusher().ComposeGlobalTableIdValuesBySpace(opts, rts, spaces)
 		routeJSON(t, `{"filters":[{"project":"project"}]}`, got["bkci__project|system"]["doris.logs"])
 		for _, values := range got {
 			require.NotContains(t, values, "disabled.logs")

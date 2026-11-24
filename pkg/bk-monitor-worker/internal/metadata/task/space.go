@@ -56,7 +56,7 @@ func RefreshSpaceRoute(tenantID, spaceType, spaceID string) error {
 }
 
 // preFetchSpaceTableIds 提前获取部分空间路由信息，减少后续的查询次数
-// 1. 预计算表路由 2. VM 短链路表路由 3. APM 全局表路由 4. ES/Doris 日志全局表路由
+// 1. 预计算表路由 2. VM 短链路表路由 3. APM 全局表路由 4. 配置了 query_router_config 的结果表路由
 func preFetchSpaceTableIds(db *gorm.DB, spaceList []space.Space, target *space.Space) (service.SpaceTableIdValuesBySpace, error) {
 	logger.Info("start pre fetch space table ids task")
 
@@ -94,12 +94,12 @@ func preFetchSpaceTableIds(db *gorm.DB, spaceList []space.Space, target *space.S
 		mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, apmValuesBySpace)
 	}
 
-	logGlobalValuesBySpace, err := preFetchLogGlobalTableIdValues(db, pusher, spaceList)
+	globalValuesBySpace, err := preFetchGlobalTableIdValues(db, pusher, spaceList)
 	if err != nil {
 		return nil, err
 	}
-	// 日志全局表与 Python metadata 的组装顺序一致，最后覆盖同名的其他特殊路由。
-	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, logGlobalValuesBySpace)
+	// 与 Python metadata 的路由合并顺序一致。
+	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, globalValuesBySpace)
 
 	logger.Infof("pre fetch space table ids success, space_count [%d]", len(prefetchedValuesBySpace))
 	return prefetchedValuesBySpace, nil
@@ -194,13 +194,19 @@ func preFetchApmAllTypeTableIdValues(db *gorm.DB, pusher *service.SpacePusher, s
 	return valuesBySpace, nil
 }
 
-func preFetchLogGlobalTableIdValues(db *gorm.DB, pusher *service.SpacePusher, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
+func preFetchGlobalTableIdValues(db *gorm.DB, pusher *service.SpacePusher, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
 	var options []resulttable.ResultTableOption
-	if err := db.Model(&resulttable.ResultTableOption{}).
+	query := db.Model(&resulttable.ResultTableOption{}).
 		Select("bk_tenant_id, table_id, value, value_type").
-		Where("name = ?", models.OptionQueryRouterConfig).
-		Find(&options).Error; err != nil {
-		logger.Errorf("pre fetch log global table ids failed, err: %s", err)
+		Where("name = ?", models.OptionQueryRouterConfig)
+	if db.HasTable(&space.VMShortLinkRecord{}) {
+		// 即使短链路没有共享给这次刷新的空间，也不能从同表 option 重新获得授权。
+		query = query.Where(`NOT EXISTS (SELECT 1 FROM metadata_vmshortlinkrecord AS link
+            WHERE link.bk_tenant_id = metadata_resulttableoption.bk_tenant_id
+            AND link.table_id = metadata_resulttableoption.table_id AND link.is_deleted = ?)`, false)
+	}
+	if err := query.Find(&options).Error; err != nil {
+		logger.Errorf("pre fetch global table ids failed, err: %s", err)
 		return nil, err
 	}
 	if len(options) == 0 {
@@ -224,24 +230,22 @@ func preFetchLogGlobalTableIdValues(db *gorm.DB, pusher *service.SpacePusher, sp
 				resulttable.ResultTableDBSchema.BkTenantId,
 				resulttable.ResultTableDBSchema.TableId,
 				resulttable.ResultTableDBSchema.BkBizId,
-				resulttable.ResultTableDBSchema.DefaultStorage,
 				resulttable.ResultTableDBSchema.IsDeleted,
 				resulttable.ResultTableDBSchema.IsEnable,
 			).
 			TableIdIn(chunkTableIDs...).
-			DefaultStorageIn(models.StorageTypeES, models.StorageTypeDoris).
 			IsDeletedEq(false).
 			IsEnableEq(true).
 			All(&chunkResultTables); err != nil {
-			logger.Errorf("pre fetch log global result tables failed, err: %s", err)
+			logger.Errorf("pre fetch global result tables failed, err: %s", err)
 			return nil, err
 		}
 		resultTables = append(resultTables, chunkResultTables...)
 	}
 
-	valuesBySpace := pusher.ComposeLogGlobalTableIdValuesBySpace(options, resultTables, spaceList)
+	valuesBySpace := pusher.ComposeGlobalTableIdValuesBySpace(options, resultTables, spaceList)
 	logger.Infof(
-		"pre fetch log global table ids success, option_count [%d], result_table_count [%d], space_count [%d]",
+		"pre fetch global table ids success, option_count [%d], result_table_count [%d], space_count [%d]",
 		len(options), len(resultTables), len(valuesBySpace),
 	)
 	return valuesBySpace, nil
@@ -342,7 +346,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			defer wg.Done()
 			t1 := time.Now()
 			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo space_to_result_table space[%s] ", sp.SpaceUid())
-			// 所有预取路由（v1/v4 RecordRule + VM 短链路 + APM）统一按 (tenant, spaceType, spaceId) 入桶，
+			// 所有预取路由（预计算、短链路、APM、全局结果表）统一按 (tenant, spaceType, spaceId) 入桶，
 			// 此处直接按当前空间的租户键一次取出即可，不再做 plain key 兼容合并。
 			prefetchedValues := prefetchedValuesBySpace[service.SpaceRouteKeyWithTenant(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId)]
 			if pushErr := pusher.PushSpaceTableIds(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId, prefetchedValues); pushErr != nil {

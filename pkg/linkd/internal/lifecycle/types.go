@@ -24,15 +24,19 @@ const maxCASAttempts = 3
 type ProcessOutcome string
 
 const (
-	OutcomeAlertCreated    ProcessOutcome = "alert_created"
-	OutcomeAlertUpdated    ProcessOutcome = "alert_updated"
-	OutcomeAlertRotated    ProcessOutcome = "alert_rotated"
-	OutcomeAlertRecovered  ProcessOutcome = "alert_recovered"
-	OutcomeAlertClosed     ProcessOutcome = "alert_closed"
-	OutcomeAlertSuppressed ProcessOutcome = "alert_suppressed"
-	OutcomeEventOrphaned   ProcessOutcome = "event_orphaned"
-	OutcomeRejected        ProcessOutcome = "rejected"
-	OutcomeAlreadyDone     ProcessOutcome = "already_processed"
+	OutcomeAlertMergeChanged    ProcessOutcome = "alert_merge_changed"
+	OutcomeAlertMergeReleased   ProcessOutcome = "alert_merge_released"
+	OutcomeAlertShieldChanged   ProcessOutcome = "alert_shield_changed"
+	OutcomeAlertCreated         ProcessOutcome = "alert_created"
+	OutcomeAlertUpdated         ProcessOutcome = "alert_updated"
+	OutcomeAlertSeverityChanged ProcessOutcome = "alert_severity_changed"
+	OutcomeAlertRotated         ProcessOutcome = "alert_rotated"
+	OutcomeAlertRecovered       ProcessOutcome = "alert_recovered"
+	OutcomeAlertClosed          ProcessOutcome = "alert_closed"
+	OutcomeAlertSuppressed      ProcessOutcome = "alert_suppressed"
+	OutcomeEventOrphaned        ProcessOutcome = "event_orphaned"
+	OutcomeRejected             ProcessOutcome = "rejected"
+	OutcomeAlreadyDone          ProcessOutcome = "already_processed"
 )
 
 const (
@@ -44,7 +48,7 @@ const (
 
 type ProcessResult struct {
 	EventID    string
-	AlertID    string
+	AlertIDs   []string
 	EventState domain.EventProcessState
 	Outcome    ProcessOutcome
 	ReasonCode string
@@ -60,56 +64,153 @@ type AlertIDGenerator interface {
 	Generate(event domain.Event) (string, error)
 }
 
-// SeverityTable 提供当前进程冻结的严重程度排序。
+// SeverityTable 提供一次裁决内一致的严重程度排序。
 type SeverityTable interface{ Priority(name string) (int, bool) }
 
 type Logger interface {
 	WarnContext(ctx context.Context, message string, args ...any)
 }
 
+// RecentAlertCache 保存近期活动快照及主动关闭的终态状态，只用于跨越 ES refresh 可见性窗口。
+// Redis 错误必须返回给 Processor；found=false 只表示对应 key 明确不存在。
+type RecentAlertCache interface {
+	GetCurrent(ctx context.Context, key store.ActiveAlertKey) (stored store.StoredAlert, found bool, err error)
+	GetEndedByEvent(ctx context.Context, bkTenantID, eventID string) (stored store.StoredAlert, found bool, err error)
+	PutCurrent(ctx context.Context, stored store.StoredAlert) error
+	PutEnded(ctx context.Context, stored store.StoredAlert) error
+	PutTerminal(ctx context.Context, stored store.StoredAlert) error
+	Repair(ctx context.Context, stored store.StoredAlert) error
+}
+
+// NoopRecentAlertCache 供不依赖 Elasticsearch 近实时搜索的存储后端使用。
+type NoopRecentAlertCache struct{}
+
+func (NoopRecentAlertCache) GetCurrent(context.Context, store.ActiveAlertKey) (store.StoredAlert, bool, error) {
+	return store.StoredAlert{}, false, nil
+}
+
+func (NoopRecentAlertCache) GetEndedByEvent(context.Context, string, string) (store.StoredAlert, bool, error) {
+	return store.StoredAlert{}, false, nil
+}
+
+func (NoopRecentAlertCache) PutCurrent(context.Context, store.StoredAlert) error { return nil }
+
+func (NoopRecentAlertCache) PutEnded(context.Context, store.StoredAlert) error { return nil }
+
+func (NoopRecentAlertCache) PutTerminal(context.Context, store.StoredAlert) error { return nil }
+
+func (NoopRecentAlertCache) Repair(context.Context, store.StoredAlert) error { return nil }
+
+// PolicySnapshotter 读取本次尝试的配置引用；普通配置依赖失败由实现记录跳过，授权失败仍返回 error。
+type PolicySnapshotter interface {
+	Snapshot(context.Context, domain.Event, time.Time) (*store.PolicyContext, error)
+}
+
 type Processor struct {
-	repository  store.Repository
-	idGenerator AlertIDGenerator
-	enricher    AlertEnricher
-	finalHook   FinalHook
-	severity    SeverityTable
-	clock       Clock
-	logger      Logger
+	activeAlerts       ActiveAlertCache
+	closePreparation   func(context.Context, domain.Alert, domain.AlertEndOperation) error
+	contentBuilder     AlertContentBuilder
+	publisher          AlertChangePublisher
+	shielder           ShieldEvaluator
+	merger             MergeEvaluator
+	mergeRelations     MergeRelationReader
+	dependency         DependencyRegistry
+	suppressor         NewAlertSuppressor
+	policies           PolicySnapshotter
+	repository         store.Repository
+	recentAlerts       RecentAlertCache
+	idGenerator        AlertIDGenerator
+	enricher           EventEnricher
+	enrichObserver     EnrichObserver
+	phaseObserver      PhaseObserver
+	phaseTiming        *phaseTiming
+	finalHooks         []NamedFinalHook
+	severity           SeverityTable
+	dependencySeverity SeverityTable
+	configDigest       string
+	upgradePolicy      string
+	clock              Clock
+	logger             Logger
 }
 
 func NewProcessor(
 	repository store.Repository,
+	recentAlerts RecentAlertCache,
 	idGenerator AlertIDGenerator,
-	enricher AlertEnricher,
-	finalHook FinalHook,
+	enricher EventEnricher,
+	finalHooks []NamedFinalHook,
 	severity SeverityTable,
 	clock Clock,
 	logger Logger,
+	options ...ProcessorOption,
 ) (*Processor, error) {
 	for name, dependency := range map[string]any{
-		"repository": repository, "id_generator": idGenerator, "enricher": enricher,
-		"final_hook": finalHook, "severity": severity, "clock": clock, "logger": logger,
+		"repository": repository, "recent_alert_cache": recentAlerts, "id_generator": idGenerator, "enricher": enricher,
+		"severity": severity, "clock": clock, "logger": logger,
 	} {
 		if dependency == nil {
 			return nil, fmt.Errorf("lifecycle %s must not be nil", name)
 		}
 	}
-	return &Processor{repository: repository, idGenerator: idGenerator, enricher: enricher,
-		finalHook: finalHook, severity: severity, clock: clock, logger: logger}, nil
+	seen := make(map[string]bool, len(finalHooks))
+	for _, hook := range finalHooks {
+		if hook.Name == "" || seen[hook.Name] || hook.Hook == nil || (hook.Purpose != "" && hook.Purpose != "state" && hook.Purpose != "action") {
+			return nil, fmt.Errorf("final hooks require unique names and non-nil implementations")
+		}
+		seen[hook.Name] = true
+	}
+	processor := &Processor{
+		contentBuilder: SourceContentBuilder{},
+		upgradePolicy:  "close_and_create", repository: repository, recentAlerts: snapshotWrites(recentAlerts), idGenerator: idGenerator, enricher: enricher,
+		enrichObserver: noopEnrichObserver{}, finalHooks: append([]NamedFinalHook(nil), finalHooks...), severity: severity, dependencySeverity: severity, clock: clock, logger: logger,
+	}
+	for _, option := range options {
+		if option != nil {
+			option(processor)
+		}
+	}
+	if processor.upgradePolicy != "update_current" && processor.upgradePolicy != "close_and_create" {
+		return nil, fmt.Errorf("invalid severity upgrade policy")
+	}
+	if processor.contentBuilder == nil {
+		return nil, fmt.Errorf("lifecycle content builder must not be nil")
+	}
+	return processor, nil
 }
 
 // CloseAlertCommand 是用户或系统直接关闭 active Alert 的稳定幂等命令。
 type CloseAlertCommand struct {
-	OperationID  string
-	BKTenantID   string
-	AlertID      string
-	OperatorKind domain.OperatorKind
-	OperatorID   string
-	Reason       string
-	EffectiveAt  time.Time
+	// ConfigDigest 在配置变更触发的系统关闭中提供诊断上下文。
+	ConfigDigest string
+	// OperationSource 标记 manual/auto_policy/work_order/self_heal/strategy_change/system；空值按操作者类别确定。
+	OperationSource string
+	OperationID     string
+	BKTenantID      string
+	AlertID         string
+	OperatorKind    domain.OperatorKind
+	OperatorID      string
+	Reason          string
+	EffectiveAt     time.Time
+}
+
+func (c CloseAlertCommand) endOperation() domain.AlertEndOperation {
+	source := c.OperationSource
+	if source == "" {
+		source = "manual"
+		if c.OperatorKind == domain.OperatorKindSystem {
+			source = "system"
+			if c.ConfigDigest != "" {
+				source = "strategy_change"
+			}
+		}
+	}
+	return domain.AlertEndOperation{ID: c.OperationID, Source: source, OperatorKind: c.OperatorKind, OperatorID: c.OperatorID, ConfigDigest: c.ConfigDigest}
 }
 
 func (c CloseAlertCommand) Validate() error {
+	if err := c.endOperation().Validate(); err != nil {
+		return err
+	}
 	if c.OperationID == "" || c.BKTenantID == "" || c.AlertID == "" {
 		return fmt.Errorf("close alert operation, tenant and alert id are required")
 	}
@@ -134,4 +235,30 @@ func (c CloseAlertCommand) Validate() error {
 type CloseAlertResult struct {
 	Alert         domain.Alert
 	AlreadyClosed bool
+}
+
+// CloseAlertOutcome 是批量关闭的单项结果；Err 非 nil 时关闭事实可能已经保存。
+type CloseAlertOutcome struct {
+	CloseAlertResult
+	Err error
+}
+
+// WithClosePreparation 注入主动关闭前置调用；只在活动告警的终态判断后、关闭 CAS 前执行。
+// 失败不推进关闭；一次 CloseAlert 中至多执行一次。调用方须持有同 fingerprint lease。
+func WithClosePreparation(prepare func(context.Context, domain.Alert, domain.AlertEndOperation) error) ProcessorOption {
+	return func(p *Processor) { p.closePreparation = prepare }
+}
+
+// WithSeverityUpgradePolicy 配置进程级升级行为。空值使用关闭后新建，非法值由 NewProcessor 拒绝。
+func WithSeverityUpgradePolicy(policy string) ProcessorOption {
+	return func(p *Processor) {
+		if policy != "" {
+			p.upgradePolicy = policy
+		}
+	}
+}
+
+// WithPolicySnapshotter 在 Enrich 后、计划和 Redis 副作用前固定策略裁决上下文。
+func WithPolicySnapshotter(policies PolicySnapshotter) ProcessorOption {
+	return func(p *Processor) { p.policies = policies }
 }

@@ -1,0 +1,57 @@
+File: linkd
+Type: alloc_space
+Time: 2026-09-07 01:44:33 CST
+Showing nodes accounting for 92483.73MB, 93.21% of 99215.96MB total
+Dropped 445 nodes (cum <= 496.08MB)
+Showing top 50 nodes out of 102
+      flat  flat%   sum%        cum   cum%
+41346.31MB 41.67% 41.67% 41346.31MB 41.67%  encoding/json.(*Decoder).refill
+ 7067.16MB  7.12% 48.80%  7067.16MB  7.12%  encoding/json.NewDecoder (inline)
+ 6274.74MB  6.32% 55.12%  7669.26MB  7.73%  encoding/json.(*scanner).error (inline)
+ 3700.26MB  3.73% 58.85%  3700.26MB  3.73%  bytes.growSlice
+ 3047.55MB  3.07% 61.92%  3047.55MB  3.07%  linkd/internal/domain.DimensionMap.Clone (inline)
+ 2684.07MB  2.71% 64.63% 13248.95MB 13.35%  encoding/json.(*decodeState).literalStore
+ 2628.62MB  2.65% 67.28%  2628.62MB  2.65%  reflect.mapassign_faststr0
+ 2523.01MB  2.54% 69.82%  5259.35MB  5.30%  encoding/json.Marshal
+ 2348.54MB  2.37% 72.19% 42713.20MB 43.05%  encoding/json.(*Decoder).Token
+ 2274.95MB  2.29% 74.48%  2274.95MB  2.29%  linkd/internal/domain.JSONObject.Clone (inline)
+ 1693.04MB  1.71% 76.19%  1693.04MB  1.71%  reflect.unsafe_New
+ 1597.19MB  1.61% 77.80% 42863.77MB 43.20%  linkd/internal/domain.JSONObject.Normalize
+ 1583.07MB  1.60% 79.39% 11406.95MB 11.50%  linkd/internal/cleaner.validateObjectBody
+ 1201.36MB  1.21% 80.60%  2580.17MB  2.60%  encoding/json.mapEncoder.encode
+ 1145.78MB  1.15% 81.76% 33452.31MB 33.72%  linkd/internal/domain.decodeJSONToken
+ 1032.05MB  1.04% 82.80%  1032.05MB  1.04%  bytes.NewReader (inline)
+  953.69MB  0.96% 83.76%  1433.44MB  1.44%  io.ReadAll
+  951.51MB  0.96% 84.72%   951.51MB  0.96%  unicode/utf8.AppendRune (inline)
+  855.18MB  0.86% 85.58%  1257.26MB  1.27%  linkd/internal/consume/kafka.(*Session).Receive
+  784.04MB  0.79% 86.37%   784.04MB  0.79%  encoding/json.(*RawMessage).UnmarshalJSON
+  636.75MB  0.64% 87.01%  1281.51MB  1.29%  github.com/twmb/franz-go/pkg/kgo.(*decompressor).Decompress
+  635.65MB  0.64% 87.65% 31710.99MB 31.96%  linkd/internal/store/elasticsearch.(*Repository).createEvents
+  625.64MB  0.63% 88.28%   625.64MB  0.63%  github.com/klauspost/compress/s2.Decode
+  610.47MB  0.62% 88.90%   802.98MB  0.81%  linkd/internal/cleaner.(*Runtime).Run
+  543.09MB  0.55% 89.44%  2033.34MB  2.05%  linkd/internal/cleaner.(*Runtime).enqueueLanePrefix
+  534.99MB  0.54% 89.98% 59098.27MB 59.57%  linkd/internal/cleaner.(*Mapper).MapMessage
+  443.01MB  0.45% 90.43%  1394.52MB  1.41%  encoding/json.quoteChar
+  436.62MB  0.44% 90.87%   845.24MB  0.85%  go.opentelemetry.io/otel/metric.WithAttributes
+  389.10MB  0.39% 91.26% 27553.68MB 27.77%  linkd/internal/store/elasticsearch.(*Repository).createEventBulkGroup
+  266.01MB  0.27% 91.53% 15044.67MB 15.16%  encoding/json.(*decodeState).object
+  258.12MB  0.26% 91.79%  3265.14MB  3.29%  linkd/internal/store/elasticsearch.encodeEventDocument
+  250.59MB  0.25% 92.04%  1051.82MB  1.06%  linkd/internal/telemetry.(*consumeObserver).StepFinished
+  236.21MB  0.24% 92.28% 34102.08MB 34.37%  linkd/internal/cleaner.(*Runtime).runLaneBatch
+  183.54MB  0.18% 92.47%   530.11MB  0.53%  linkd/internal/store/elasticsearch.encodeVersion
+  168.69MB  0.17% 92.64%  1441.21MB  1.45%  linkd/internal/lifecycle/mailbox.(*Store).EnqueueBatch
+  156.54MB  0.16% 92.79% 19095.17MB 19.25%  linkd/internal/cleaner.StandardCleaner.Clean
+   94.51MB 0.095% 92.89%  4305.25MB  4.34%  encoding/json.Unmarshal
+   71.50MB 0.072% 92.96% 10390.37MB 10.47%  linkd/internal/domain.(*Scalar).UnmarshalJSON
+   69.03MB  0.07% 93.03% 10730.53MB 10.82%  linkd/internal/domain.ValidateEventReplacement
+   65.51MB 0.066% 93.10%   564.60MB  0.57%  linkd/internal/lifecycle/mailbox.EncodeSignal
+   43.52MB 0.044% 93.14%  7103.59MB  7.16%  linkd/internal/store/elasticsearch.decodeEventHit
+   41.01MB 0.041% 93.18% 19603.11MB 19.76%  linkd/internal/store/elasticsearch.(*Repository).verifyEventCreateConflictChunk
+   11.02MB 0.011% 93.19%  1452.24MB  1.46%  linkd/internal/cleaner.(*RedisMailboxPublisher).EnqueueBatch
+    9.01MB 0.0091% 93.20%  2094.87MB  2.11%  linkd/internal/cleaner.(*Runtime).finishLanePrefix
+       3MB 0.003% 93.21%  1673.20MB  1.69%  github.com/twmb/franz-go/pkg/kgo.(*source).fetch
+       3MB 0.003% 93.21% 39160.03MB 39.47%  linkd/internal/cleaner.(*EventFactory).Build
+       2MB 0.002% 93.21%  3702.26MB  3.73%  bytes.(*Buffer).grow
+       2MB 0.002% 93.21%  1626.69MB  1.64%  github.com/twmb/franz-go/pkg/kgo.(*source).handleReqResp
+       1MB 0.001% 93.21%   600.84MB  0.61%  net/http.(*Request).write
+    0.50MB 0.0005% 93.21%  1624.69MB  1.64%  github.com/twmb/franz-go/pkg/kgo.ProcessFetchPartition

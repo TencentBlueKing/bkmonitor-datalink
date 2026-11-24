@@ -13,16 +13,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand/v2"
-	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"linkd/internal/processingerror"
 )
 
 // Runtime 编排一个 Session 的拉取、并发处理、重试和确认生命周期。
 // Runtime 实例只能调用一次 Run。
 type Runtime struct {
+	logger   *slog.Logger
 	config   Config
 	session  Session
 	handler  Handler
@@ -34,6 +37,10 @@ type Runtime struct {
 
 // New 创建消息消费运行时。构造只保存依赖，完整配置校验在 Run 前完成。
 func New(config Config, session Session, handler Handler, options ...RuntimeOption) *Runtime {
+	// 所有已接管消息都可能同时 Defer；预留在途容量，仍保留非法配置的校验。
+	if config.MaxRetryMessages > 0 && config.MaxInflightMessages > 0 {
+		config.MaxRetryMessages = max(config.MaxRetryMessages, config.MaxInflightMessages)
+	}
 	runtime := &Runtime{
 		config:   config,
 		session:  session,
@@ -96,8 +103,8 @@ func (r *Runtime) Run(ctx context.Context) error {
 		return fmt.Errorf("run message consumption runtime: unsupported settlement mode: %d", capabilities.Settlement)
 	}
 
-	receiveCtx, cancelReceive := context.WithCancel(context.Background())
-	workCtx, cancelWork := context.WithCancel(context.Background())
+	receiveCtx, cancelReceive := context.WithCancel(context.WithoutCancel(ctx))
+	workCtx, cancelWork := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelReceive()
 	defer cancelWork()
 
@@ -111,10 +118,8 @@ func (r *Runtime) Run(ctx context.Context) error {
 	var background sync.WaitGroup
 	background.Add(1)
 	go r.receiveLoop(receiveCtx, receiveRequests, receiveResults, &background)
-	for range r.config.WorkerCount {
-		background.Add(1)
-		go r.workerLoop(workCtx, workerJobs, workerResults, &background)
-	}
+	background.Add(1)
+	go r.workerLoop(workCtx, workerJobs, workerResults, &background)
 	background.Add(1)
 	go r.settleLoop(workCtx, settleRequests, settleResults, &background)
 
@@ -143,14 +148,14 @@ func (r *Runtime) Run(ctx context.Context) error {
 	select {
 	case <-backgroundDone:
 	case <-time.After(r.config.SessionCloseTimeout):
-		runErr = errors.Join(runErr, fmt.Errorf("stop message consumption workers: %w", context.DeadlineExceeded))
+		runErr = errors.Join(runErr, ErrStopIncomplete, fmt.Errorf("stop message consumption workers: %w", context.DeadlineExceeded))
 	}
 
 	closeCtx, closeCancel := context.WithTimeout(context.Background(), r.config.SessionCloseTimeout)
 	defer closeCancel()
 	closeErr := r.session.Close(closeCtx)
 	if closeErr != nil && !errors.Is(closeErr, ErrSessionClosed) {
-		closeErr = fmt.Errorf("close message consumption session: %w", closeErr)
+		closeErr = errors.Join(ErrStopIncomplete, fmt.Errorf("close message consumption session: %w", closeErr))
 	} else {
 		closeErr = nil
 	}
@@ -179,7 +184,7 @@ func (r *Runtime) receiveLoop(
 			if !ok {
 				return
 			}
-			deliveries, err := r.session.Receive(ctx, limits)
+			deliveries, err := processingerror.Guard(func() ([]Delivery, error) { return r.session.Receive(ctx, limits) })
 			select {
 			case results <- receiveResult{deliveries: deliveries, err: err}:
 			case <-ctx.Done():
@@ -189,13 +194,12 @@ func (r *Runtime) receiveLoop(
 	}
 }
 
-func (r *Runtime) workerLoop(
-	ctx context.Context,
-	jobs <-chan workerJob,
-	results chan<- workerResult,
-	waitGroup *sync.WaitGroup,
-) {
-	defer waitGroup.Done()
+// workerLoop 按已接管消息懒启动工作 goroutine；空闲来源不预占处理池。
+func (r *Runtime) workerLoop(ctx context.Context, jobs <-chan workerJob, results chan<- workerResult, wg *sync.WaitGroup) {
+	defer wg.Done()
+	var active sync.WaitGroup
+	defer active.Wait()
+	slots := make(chan struct{}, r.config.WorkerCount)
 	for {
 		select {
 		case <-ctx.Done():
@@ -204,12 +208,19 @@ func (r *Runtime) workerLoop(
 			if !ok {
 				return
 			}
-			outcome := r.handle(ctx, job.entry.delivery.Message)
 			select {
-			case results <- workerResult{entry: job.entry, outcome: outcome}:
+			case slots <- struct{}{}:
 			case <-ctx.Done():
 				return
 			}
+			active.Go(func() {
+				defer func() { <-slots }()
+				outcome := r.handle(ctx, job.entry.delivery.Message)
+				select {
+				case results <- workerResult{entry: job.entry, outcome: outcome}:
+				case <-ctx.Done():
+				}
+			})
 		}
 	}
 }
@@ -218,21 +229,36 @@ func (r *Runtime) handle(parent context.Context, message Message) (outcome Outco
 	ctx, cancel := context.WithTimeout(parent, r.config.ProcessTimeout)
 	defer cancel()
 	startedAt := time.Now()
-	r.observer.HandlerStarted(ctx, message)
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			outcome = Block(fmt.Errorf("handler panic: %v\n%s", recovered, debug.Stack()))
+			outcome = Discard(processingerror.CapturePanic())
+			if r.logger != nil && parent.Err() == nil {
+				r.logger.WarnContext(parent, "consumer handler panicked", "module", "consume", "operation", "handle", "error", outcome.Err, "message_id", message.ID, "bk_tenant_id", message.TenantID)
+			}
+		}
+		if parent.Err() != nil {
+			outcome = Defer(0)
 		}
 		r.observer.HandlerFinished(ctx, outcome.Kind, time.Since(startedAt))
 	}()
 
+	r.observer.HandlerStarted(ctx, message)
 	outcome = r.handler.Handle(ctx, message)
 	if err := outcome.validate(); err != nil {
-		return Block(fmt.Errorf("handler returned invalid outcome: %w", err))
+		if r.logger != nil {
+			r.logger.WarnContext(ctx, "invalid consumer handler result", "module", "consume", "operation", "handle_result", "error", err, "message_id", message.ID)
+		}
+		return Discard(fmt.Errorf("handler returned invalid outcome: %w", err))
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) &&
 		(outcome.Kind == OutcomeComplete || outcome.Kind == OutcomeDiscard) {
 		return Retry(context.DeadlineExceeded, 0)
+	}
+	if outcome.Kind == OutcomeBlock || (outcome.Kind == OutcomeRetry && !processingerror.Retryable(outcome.Err)) {
+		if r.logger != nil {
+			r.logger.WarnContext(ctx, "discard nonretryable consumer failure", "module", "consume", "operation", "handle", "error", outcome.Err, "message_id", message.ID, "bk_tenant_id", message.TenantID)
+		}
+		return Discard(outcome.Err)
 	}
 	return outcome
 }
@@ -252,7 +278,7 @@ func (r *Runtime) settleLoop(
 			if !ok {
 				return
 			}
-			err := r.session.Confirm(ctx, batch.receipts)
+			_, err := processingerror.Guard(func() (struct{}, error) { return struct{}{}, r.session.Confirm(ctx, batch.receipts) })
 			select {
 			case results <- settleResult{batch: batch, err: err}:
 			case <-ctx.Done():
@@ -425,6 +451,14 @@ func (s *runtimeState) handleReceiveResult(result receiveResult, cancelReceive c
 		if lane.blocked {
 			continue
 		}
+		if delivery.Message.ID == "" || delivery.Message.TenantID == "" {
+			// Receipt/lane 已验证；缺失业务身份只丢弃该消息，不调用租户业务处理器。
+			// 此条尚未取得 OrderKey，不能释放另一个在途条目的顺序名额。
+			entry.terminal = true
+			s.queueSettlement(entry)
+			s.runtime.observer.StepFinished(context.Background(), StepObservation{Step: "message_discard", Outcome: "invalid_metadata", Items: 1})
+			continue
+		}
 		s.dispatch(entry)
 	}
 }
@@ -439,12 +473,6 @@ func (s *runtimeState) validateReceived(deliveries []Delivery) error {
 	for index, delivery := range deliveries {
 		if !delivery.Receipt.Valid() {
 			return fmt.Errorf("%w: delivery[%d] has invalid receipt", ErrInvalidDelivery, index)
-		}
-		if delivery.Message.ID == "" {
-			return fmt.Errorf("%w: delivery[%d] has empty message id", ErrInvalidDelivery, index)
-		}
-		if delivery.Message.TenantID == "" {
-			return fmt.Errorf("%w: delivery[%d] has empty tenant id", ErrInvalidDelivery, index)
 		}
 		if delivery.Meta.Lane == "" {
 			return fmt.Errorf("%w: delivery[%d] has empty lane", ErrInvalidDelivery, index)
@@ -508,7 +536,7 @@ func (s *runtimeState) handleWorkerResult(
 
 	outcome := result.outcome
 	if err := outcome.validate(); err != nil {
-		outcome = Block(fmt.Errorf("handler returned invalid outcome: %w", err))
+		outcome = Discard(fmt.Errorf("handler returned invalid outcome: %w", err))
 	}
 	switch outcome.Kind {
 	case OutcomeComplete, OutcomeDiscard:
@@ -521,7 +549,7 @@ func (s *runtimeState) handleWorkerResult(
 		}
 		s.scheduleRetry(entry, outcome, now, cancelReceive)
 	case OutcomeBlock:
-		s.failLane(entry.delivery.Meta.Lane, outcome.Err, now, cancelReceive)
+		s.discard(entry, "processing_failed", outcome.Err)
 	case OutcomeDefer:
 		if s.shuttingDown {
 			return
@@ -537,7 +565,7 @@ func (s *runtimeState) scheduleDefer(
 	cancelReceive context.CancelFunc,
 ) {
 	if len(s.retries) >= s.runtime.config.MaxRetryMessages {
-		s.failLane(entry.delivery.Meta.Lane, fmt.Errorf("deferred message capacity exhausted"), now, cancelReceive)
+		s.failLane(entry.delivery.Meta.Lane, ErrDeferredCapacity, now, cancelReceive)
 		return
 	}
 	s.retrySeq++
@@ -550,13 +578,12 @@ func (s *runtimeState) scheduleRetry(
 	now time.Time,
 	cancelReceive context.CancelFunc,
 ) {
-	if entry.attempt >= s.runtime.config.RetryMaxAttempts || len(s.retries) >= s.runtime.config.MaxRetryMessages {
-		s.failLane(
-			entry.delivery.Meta.Lane,
-			fmt.Errorf("retry attempts exhausted after %d attempts: %w", entry.attempt, outcome.Err),
-			now,
-			cancelReceive,
-		)
+	if !processingerror.Retryable(outcome.Err) {
+		s.discard(entry, "processing_failed", outcome.Err)
+		return
+	}
+	if entry.attempt >= min(s.runtime.config.RetryMaxAttempts, processingerror.MaxAttempts) {
+		s.discard(entry, "retry_exhausted", outcome.Err)
 		return
 	}
 	delay := outcome.RetryAfter
@@ -564,12 +591,7 @@ func (s *runtimeState) scheduleRetry(
 		delay = s.retryBackoff(entry.attempt)
 	}
 	if now.Sub(entry.firstAt)+delay > s.runtime.config.RetryMaxElapsed {
-		s.failLane(
-			entry.delivery.Meta.Lane,
-			fmt.Errorf("retry elapsed budget exhausted after %s: %w", now.Sub(entry.firstAt), outcome.Err),
-			now,
-			cancelReceive,
-		)
+		s.discard(entry, "retry_exhausted", outcome.Err)
 		return
 	}
 	entry.attempt++
@@ -577,6 +599,15 @@ func (s *runtimeState) scheduleRetry(
 	s.retrySeq++
 	s.retries.add(&retryItem{entry: entry, next: now.Add(delay), seq: s.retrySeq})
 	s.runtime.observer.RetryScheduled(context.Background())
+}
+
+// discard 终结当前消息，累计确认仍等待同分区前面的消息，不跨越未完成 offset。
+func (s *runtimeState) discard(entry *trackedDelivery, reason string, err error) {
+	s.logDiscard(entry, reason, err)
+	entry.terminal = true
+	s.releaseOrderKey(entry)
+	s.queueSettlement(entry)
+	s.runtime.observer.StepFinished(context.Background(), StepObservation{Step: "message_discard", Outcome: reason, Items: 1})
 }
 
 func (s *runtimeState) retryBackoff(attempt int) time.Duration {
@@ -679,6 +710,18 @@ func (s *runtimeState) pauseLane(laneName string) error {
 func (s *runtimeState) queueSettlement(entry *trackedDelivery) {
 	lane := s.lane(entry.delivery.Meta.Lane)
 	if s.capabilities.Settlement == SettlementIndividual {
+		// 不主动等待凑批：确认通道空闲时立即提交；在途请求期间，将陆续完成的
+		// 同 lane 消息合入尚未提交的尾批。已发送或待重试的批次保持不变，
+		// 防止修改 worker 正在读取的 receipts 或扩大结果未知请求的重试范围。
+		if s.capabilities.BatchIndividualConfirm && len(s.settleQueue) > 0 {
+			tail := s.settleQueue[len(s.settleQueue)-1]
+			if tail.lane == entry.delivery.Meta.Lane && tail.startedAt.IsZero() && tail.nextAttempt.IsZero() &&
+				len(tail.entries) < s.runtime.config.MaxBatchMessages {
+				tail.entries = append(tail.entries, entry)
+				tail.receipts = append(tail.receipts, entry.delivery.Receipt)
+				return
+			}
+		}
 		s.settleQueue = append(s.settleQueue, &settleBatch{
 			lane:     entry.delivery.Meta.Lane,
 			entries:  []*trackedDelivery{entry},
@@ -740,6 +783,10 @@ func (s *runtimeState) handleSettleResult(result settleResult, now time.Time) {
 		Succeeded: result.err == nil, Duration: duration,
 	})
 	if result.err != nil {
+		if s.runtime.logger != nil {
+			s.runtime.logger.WarnContext(context.Background(), "confirm consumer batch failed", "module", "consume", "operation", "confirm",
+				"error", result.err, "event_source_id", s.runtime.labels.EventSourceID, "lane", result.batch.lane, "messages", len(result.batch.entries))
+		}
 		result.batch.nextAttempt = now.Add(s.runtime.config.ConfirmRetryBackoff)
 		result.batch.startedAt = time.Time{}
 		return

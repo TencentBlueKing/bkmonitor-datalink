@@ -16,16 +16,19 @@ import (
 	"log/slog"
 	"time"
 
-	redis "github.com/redis/go-redis/v9"
 	"linkd/internal/config"
-	controlplaneredisstream "linkd/internal/controlplane/redisstream"
+	"linkd/internal/eventsource"
 	repositoryassembly "linkd/internal/store/assembly"
 	elasticsearchstore "linkd/internal/store/elasticsearch"
 	"linkd/internal/taskgroup"
 	"linkd/internal/telemetry"
 )
 
-const startupTimeout = 10 * time.Second
+const (
+	startupTimeout                         = 10 * time.Second
+	elasticsearchPrepareConnections        = 4
+	elasticsearchManagementConnectionSpare = 4
+)
 
 type runtime struct {
 	tasks    []taskgroup.Task
@@ -40,15 +43,23 @@ func Run(
 	logger *slog.Logger,
 	telemetryRuntime *telemetry.Runtime,
 ) (runErr error) {
+	return RunWithProviders(ctx, cfg, logger, telemetryRuntime)
+}
+
+// RunWithProviders 将自定义增量提供方显式加入控制面的统一来源服务。
+func RunWithProviders(ctx context.Context, cfg config.Config, logger *slog.Logger, telemetryRuntime *telemetry.Runtime, providers ...eventsource.Provider) (runErr error) {
 	if ctx == nil || logger == nil || telemetryRuntime == nil {
 		return fmt.Errorf("run control plane: context, logger and telemetry runtime are required")
 	}
 	if err := ValidateConfig(cfg); err != nil {
 		return err
 	}
+	if err := validateDispatchConfig(cfg); err != nil {
+		return err
+	}
 
 	startupCtx, cancel := context.WithTimeout(ctx, startupTimeout)
-	runtime, err := openRuntime(startupCtx, cfg, logger, telemetryRuntime)
+	runtime, err := openRuntime(startupCtx, cfg, logger, telemetryRuntime, providers...)
 	cancel()
 	if err != nil {
 		return err
@@ -90,8 +101,8 @@ func ValidateConfig(cfg config.Config) error {
 		if err := cfg.Storage.Redis.Validate(); err != nil {
 			return fmt.Errorf("run control plane: storage.redis.%w", err)
 		}
-		if err := cfg.ControlPlane.Validate(); err != nil {
-			return fmt.Errorf("run control plane: %w", err)
+		if err := cfg.RedisStreamSettings().Validate(); err != nil {
+			return fmt.Errorf("run control plane: control_plane.redis_stream.%w", err)
 		}
 		if err := cfg.Lifecycle.Validate(); err != nil {
 			return fmt.Errorf("run control plane: %w", err)
@@ -102,7 +113,7 @@ func ValidateConfig(cfg config.Config) error {
 
 // HasManagementTasks 报告当前配置是否启用了至少一个已经实现的控制面管理任务。
 func HasManagementTasks(cfg config.Config) bool {
-	return hasElasticsearchTask(cfg) || hasRedisStreamTask(cfg)
+	return cfg.Storage != nil || hasRedisStreamTask(cfg)
 }
 
 func hasElasticsearchTask(cfg config.Config) bool {
@@ -112,7 +123,8 @@ func hasElasticsearchTask(cfg config.Config) bool {
 }
 
 func hasRedisStreamTask(cfg config.Config) bool {
-	return cfg.ControlPlane != nil && cfg.ControlPlane.RedisStream != nil
+	settings := cfg.RedisStreamSettings()
+	return settings != nil && settings.IsEnabled()
 }
 
 func elasticsearchTaskSettings(cfg config.Config) config.ElasticsearchControlPlaneConfig {
@@ -133,7 +145,11 @@ func PrepareDataPlane(ctx context.Context, cfg config.Config) error {
 	}
 	startupCtx, cancel := context.WithTimeout(ctx, startupTimeout)
 	defer cancel()
-	runtime, err := repositoryassembly.OpenElasticsearchManager(startupCtx, *cfg.Storage.Elasticsearch)
+	runtime, err := repositoryassembly.OpenElasticsearchManager(
+		startupCtx,
+		*cfg.Storage.Elasticsearch,
+		elasticsearchPrepareConnections,
+	)
 	if err != nil {
 		return fmt.Errorf("initialize elasticsearch storage management task: %w", err)
 	}
@@ -164,7 +180,9 @@ func openRuntime(
 	cfg config.Config,
 	logger *slog.Logger,
 	telemetryRuntime *telemetry.Runtime,
+	providers ...eventsource.Provider,
 ) (*runtime, error) {
+	registry := taskCatalog(cfg, len(providers))
 	tasks := make([]taskgroup.Task, 0, 4)
 	closers := make([]func() error, 0, 2)
 	closeAll := func() error {
@@ -181,7 +199,12 @@ func openRuntime(
 	}
 
 	if hasElasticsearchTask(cfg) {
-		elasticsearchRuntime, err := repositoryassembly.OpenElasticsearchManager(ctx, *cfg.Storage.Elasticsearch)
+		settings := elasticsearchTaskSettings(cfg)
+		elasticsearchRuntime, err := repositoryassembly.OpenElasticsearchManager(
+			ctx,
+			*cfg.Storage.Elasticsearch,
+			settings.ArchiveWorkerCount+elasticsearchManagementConnectionSpare,
+		)
 		if err != nil {
 			return fail(fmt.Errorf("initialize elasticsearch storage management task: %w", err))
 		}
@@ -189,73 +212,70 @@ func openRuntime(
 			elasticsearchRuntime.Close()
 			return nil
 		})
-		if err := prepareElasticsearchDataPlane(ctx, elasticsearchRuntime.Manager); err != nil {
-			return fail(err)
-		}
-		settings := elasticsearchTaskSettings(cfg)
+		// 1. 首次资源准备留在后台，ES 故障不能阻止管理 API 和调度启动。
+		schemaReady, bucketsReady := make(chan struct{}), make(chan struct{})
+		schemaPrepared, bucketsPrepared := false, false
 		tasks = append(tasks,
 			newPeriodicTask(
 				logger,
 				"elasticsearch-schema-and-active-reconciler",
 				settings.SchemaAndActiveReconcileInterval(),
-				telemetryRuntime.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskElasticsearchSchemaAndActiveReconciler),
-				elasticsearchRuntime.Manager.ReconcileSchemaAndActive,
+				taskObserver{registry, "elasticsearch-schema-and-active-reconciler", telemetryRuntime.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskElasticsearchSchemaAndActiveReconciler)},
+				func(ctx context.Context) error {
+					if err := elasticsearchRuntime.Manager.ReconcileSchemaAndActive(ctx); err != nil {
+						return err
+					}
+					if !schemaPrepared {
+						close(schemaReady)
+						schemaPrepared = true
+					}
+					return nil
+				},
 			),
 			newPeriodicTask(
 				logger,
 				"elasticsearch-bucket-manager",
 				settings.BucketReconcileInterval(),
-				telemetryRuntime.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskElasticsearchBucketManager),
-				elasticsearchRuntime.Manager.ReconcileBuckets,
+				taskObserver{registry, "elasticsearch-bucket-manager", telemetryRuntime.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskElasticsearchBucketManager)},
+				func(ctx context.Context) error {
+					// 2. 模板就绪后才创建桶，保留首次部署的 strict mapping 顺序。
+					return afterTaskReady(schemaReady, func(ctx context.Context) error {
+						if err := elasticsearchRuntime.Manager.ReconcileBuckets(ctx); err != nil {
+							return err
+						}
+						if !bucketsPrepared {
+							close(bucketsReady)
+							bucketsPrepared = true
+						}
+						return nil
+					})(ctx)
+				},
 			),
 			newAlertArchiveTask(
 				logger,
 				settings,
-				telemetryRuntime.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskElasticsearchAlertArchiver),
-				telemetryRuntime.ObserveElasticsearchArchiveBatch,
+				taskObserver{registry, "elasticsearch-alert-archiver", telemetryRuntime.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskElasticsearchAlertArchiver)},
+				func(ctx context.Context, result elasticsearchstore.ArchiveBatchResult) {
+					telemetryRuntime.ObserveElasticsearchArchiveBatch(ctx, result.Scanned, result.Archived, result.Failed, result.Conflicts)
+					registry.Workload("elasticsearch-alert-archiver", result.Scanned, result.Failed)
+					registry.Finish(ctx, "elasticsearch-alert-archiver", "batch", "归档批次", 0, result.Scanned, result.Failed, "")
+					registry.Finish(ctx, "elasticsearch-alert-archiver", "conflicts", "并发更新冲突（下轮处理）", 0, result.Conflicts, 0, "")
+				},
 				elasticsearchRuntime.Manager.ArchiveTerminalAlerts,
 			),
 		)
+		// 3. 归档等待初始桶准备，不把缺失目标当作可处理的归档结果。
+		archive := &tasks[len(tasks)-1]
+		archive.Run = afterTaskReady(bucketsReady, archive.Run)
 	}
 
-	if hasRedisStreamTask(cfg) {
-		redisConfig := cfg.Storage.Redis
-		client := redis.NewClient(&redis.Options{
-			Addr: redisConfig.Address, Username: redisConfig.Username,
-			Password: redisConfig.Password, DB: redisConfig.Database,
-		})
-		closers = append(closers, func() error {
-			if err := client.Close(); err != nil {
-				return fmt.Errorf("close control plane redis: %w", err)
-			}
-			return nil
-		})
-		if err := client.Ping(ctx).Err(); err != nil {
-			return fail(fmt.Errorf("connect control plane redis: %w", err))
-		}
-		settings := cfg.ControlPlane.RedisStream.WithDefaults()
-		lifecycleConfig := cfg.Lifecycle.WithDefaults()
-		manager, err := controlplaneredisstream.NewManager(client, controlplaneredisstream.Config{
-			Stream: lifecycleConfig.Signal.Stream, ExpectedGroup: lifecycleConfig.Signal.Group,
-			ReconcileInterval: settings.ReconcileInterval(), OperationTimeout: settings.OperationTimeout(),
-			MaxEntries: settings.MaxEntries, TrimBatchSize: settings.TrimBatchSize,
-		}, telemetryRuntime.RedisStreamObserver())
-		if err != nil {
-			return fail(fmt.Errorf("initialize redis stream management task: %w", err))
-		}
-		taskName := "redis-stream-manager"
-		taskObserver := telemetryRuntime.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskRedisStreamManager)
-		tasks = append(tasks, taskgroup.Task{
-			Name: taskName,
-			Run: func(taskCtx context.Context) error {
-				taskObserver.SetActive(taskCtx, true)
-				defer taskObserver.SetActive(context.Background(), false)
-				logger.InfoContext(taskCtx, "control plane management task started", "task", taskName)
-				defer logger.InfoContext(context.Background(), "control plane management task stopped", "task", taskName)
-				return manager.Run(taskCtx)
-			},
-		})
+	for i := range tasks {
+		tasks[i] = registry.Wrap(tasks[i].Name, superviseTask(logger, registry, tasks[i].Name, tasks[i]))
 	}
+	tasks = append(tasks, taskgroup.Task{Name: "event-source-dispatch", Run: func(taskCtx context.Context) error {
+		return runDispatch(taskCtx, cfg, logger, telemetryRuntime, registry, providers...)
+	}})
+	tasks[len(tasks)-1] = superviseTask(logger, registry, "scheduler", tasks[len(tasks)-1])
 
 	return &runtime{tasks: tasks, closeAll: closeAll}, nil
 }
@@ -282,21 +302,21 @@ func newPeriodicTask(
 			defer observer.SetActive(context.Background(), false)
 			logger.InfoContext(ctx, "control plane management task started", "task", name, "interval", interval)
 			defer logger.InfoContext(context.Background(), "control plane management task stopped", "task", name)
-			if err := runPeriodicTaskOnce(ctx, observer, runOnce); err != nil {
-				return err
-			}
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
+			for ctx.Err() == nil {
+				err := runPeriodicTaskOnce(ctx, observer, runOnce)
+				if ctx.Err() != nil {
 					return nil
-				case <-ticker.C:
-					if err := runPeriodicTaskOnce(ctx, observer, runOnce); err != nil {
-						return err
-					}
+				}
+				delay := interval
+				if err != nil {
+					delay = min(interval, taskRetryInterval)
+					logger.ErrorContext(ctx, "control plane management task iteration failed", "module", "controlplane", "operation", "reconcile", "task", name, "error", err, "retry_interval", delay)
+				}
+				if !waitForArchiveRetry(ctx, delay) {
+					return nil
 				}
 			}
+			return nil
 		},
 	}
 }
@@ -312,7 +332,10 @@ func runPeriodicTaskOnce(
 	runOnce func(context.Context) error,
 ) error {
 	startedAt := time.Now()
-	err := runOnce(ctx)
+	if o, ok := observer.(interface{ RunStarted() }); ok {
+		o.RunStarted()
+	}
+	err := runControlCall(func() error { return runOnce(ctx) })
 	observer.RunFinished(ctx, time.Since(startedAt), err == nil)
 	return err
 }
@@ -322,7 +345,7 @@ type archiveBatchRunner func(
 	elasticsearchstore.ArchiveBatchRequest,
 ) (elasticsearchstore.ArchiveBatchResult, error)
 
-type archiveBatchObserver func(context.Context, int, int, int)
+type archiveBatchObserver func(context.Context, elasticsearchstore.ArchiveBatchResult)
 
 func newAlertArchiveTask(
 	logger *slog.Logger,
@@ -349,13 +372,20 @@ func newAlertArchiveTask(
 
 			cursor := ""
 			effectiveLimit := settings.ArchiveBatchSize
-			sweepArchived := 0
 			for {
 				startedAt := time.Now()
+				if o, ok := observer.(interface{ RunStarted() }); ok {
+					o.RunStarted()
+				}
 				result, err := runBatch(ctx, elasticsearchstore.ArchiveBatchRequest{
 					Limit: effectiveLimit, WorkerCount: min(settings.ArchiveWorkerCount, effectiveLimit), AfterAlertID: cursor,
 				})
 				if ctx.Err() != nil {
+					if o, ok := observer.(interface {
+						RunCanceled(context.Context, time.Duration)
+					}); ok {
+						o.RunCanceled(ctx, time.Since(startedAt))
+					}
 					return nil
 				}
 				observer.RunFinished(ctx, time.Since(startedAt), err == nil && result.Failed == 0)
@@ -364,21 +394,21 @@ func newAlertArchiveTask(
 						effectiveLimit = max(1, effectiveLimit/2)
 						logger.WarnContext(
 							ctx,
-							"alert archive scan exceeded response limit; reducing batch",
+							"alert archive scan exceeded response limit; reducing batch", "module", "controlplane", "operation", "alert_archive",
 							"task", taskName,
 							"effective_batch_size", effectiveLimit,
 							"error", err,
 						)
 						continue
 					}
-					logger.ErrorContext(ctx, "alert archive batch failed", "task", taskName, "error", err)
+					logger.ErrorContext(ctx, "alert archive batch failed", "module", "controlplane", "operation", "alert_archive", "task", taskName, "error", err)
 					if !waitForArchiveRetry(ctx, settings.ArchiveInterval()) {
 						return nil
 					}
 					continue
 				}
 
-				observeBatch(ctx, result.Scanned, result.Archived, result.Failed)
+				observeBatch(ctx, result)
 				if result.Scanned > 0 {
 					logger.DebugContext(
 						ctx,
@@ -389,16 +419,19 @@ func newAlertArchiveTask(
 						"failed", result.Failed,
 					)
 				}
+				if result.Conflicts > 0 {
+					logger.DebugContext(ctx, "alert archive deferred after concurrent updates",
+						"task", taskName, "conflicts", result.Conflicts, "conflict_samples", result.ConflictItems)
+				}
 				if result.Failed > 0 {
 					logger.WarnContext(
 						ctx,
-						"alert archive batch contains isolated failures",
+						"alert archive batch contains isolated failures", "module", "controlplane", "operation", "alert_archive",
 						"task", taskName,
 						"failed", result.Failed,
 						"failure_samples", result.FailureItems,
 					)
 				}
-				sweepArchived += result.Archived
 				if result.NextCursor != "" {
 					cursor = result.NextCursor
 					continue
@@ -406,10 +439,8 @@ func newAlertArchiveTask(
 
 				cursor = ""
 				effectiveLimit = settings.ArchiveBatchSize
-				if sweepArchived > 0 {
-					sweepArchived = 0
-					continue
-				}
+				// refresh=false 的 Active 删除在下一次 Elasticsearch refresh 前仍可能被 search 返回。
+				// 一次 sweep 内仍连续翻页追赶积压，但到达尾部后必须等待，避免立即重扫已删除文档。
 				if !waitForArchiveRetry(ctx, settings.ArchiveInterval()) {
 					return nil
 				}

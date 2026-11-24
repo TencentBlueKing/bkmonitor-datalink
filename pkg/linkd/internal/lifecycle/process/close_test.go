@@ -1,0 +1,258 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package lifecycleprocess
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"testing"
+	"time"
+
+	"linkd/internal/domain"
+	"linkd/internal/lifecycle"
+	"linkd/internal/lifecycle/scheduler"
+	"linkd/internal/logging"
+	"linkd/internal/store"
+)
+
+func validCloseCommand() lifecycle.CloseAlertCommand {
+	return lifecycle.CloseAlertCommand{OperationID: "operation-a", BKTenantID: "tenant-a", AlertID: "alert-a", OperatorKind: domain.OperatorKindUser, OperatorID: "admin", Reason: "verified", EffectiveAt: time.Now().UTC()}
+}
+
+type closeTestLocker struct {
+	busy     bool
+	released bool
+	key      string
+}
+
+func (l *closeTestLocker) Acquire(_ context.Context, key string) (scheduler.Lease, error) {
+	l.key = key
+	if l.busy {
+		return scheduler.Lease{}, scheduler.ErrLockBusy
+	}
+	return scheduler.Lease{}, nil
+}
+
+func (*closeTestLocker) Renew(context.Context, scheduler.Lease) error { return nil }
+
+func (l *closeTestLocker) Release(ctx context.Context, _ scheduler.Lease) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	l.released = true
+	return nil
+}
+
+func TestCloseLeaseRefusesBusyAndReleasesAfterCancellation(t *testing.T) {
+	locker := &closeTestLocker{busy: true}
+	err := withAlertLease(context.Background(), locker, "tenant-source-fingerprint", func() error {
+		t.Fatal("busy close ran")
+		return nil
+	})
+	if !errors.Is(err, scheduler.ErrLockBusy) || locker.released {
+		t.Fatalf("busy = %v release = %v", err, locker.released)
+	}
+	locker.busy = false
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	err = withAlertLease(ctx, locker, "tenant-source-fingerprint", func() error {
+		cancel()
+		return context.Canceled
+	})
+	if !errors.Is(err, context.Canceled) || !locker.released || locker.key != "tenant-source-fingerprint" {
+		t.Fatalf("cancel = %v release = %v", err, locker.released)
+	}
+}
+
+func TestAlertCloserCommandValidationAndErrors(t *testing.T) {
+	command := validCloseCommand()
+	for _, tc := range []struct {
+		name   string
+		mutate func(*lifecycle.CloseAlertCommand)
+	}{
+		{"missing reason", func(c *lifecycle.CloseAlertCommand) { c.Reason = "" }},
+		{"reason bytes", func(c *lifecycle.CloseAlertCommand) {
+			for range 86 {
+				c.Reason += "中"
+			}
+		}},
+		{"invalid actor", func(c *lifecycle.CloseAlertCommand) { c.OperatorKind = domain.OperatorKindSource }},
+		{"future clock", func(c *lifecycle.CloseAlertCommand) { c.EffectiveAt = time.Now().Add(time.Hour) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			invalid := command
+			tc.mutate(&invalid)
+			closer := &AlertCloser{run: func(context.Context, lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
+				t.Fatal("invalid command executed")
+				return lifecycle.CloseAlertResult{}, nil
+			}}
+			_, err := closer.CloseAlert(context.Background(), invalid)
+			var target *CloseError
+			if !errors.As(err, &target) || target.Status != 400 {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+	}{{"missing", store.ErrNotFound, 404}, {"conflict", store.ErrVersionConflict, 409}, {"terminal", store.ErrInvalidTransition, 409}, {"unknown partial", errors.New("secret infrastructure detail"), 502}} {
+		t.Run(tc.name, func(t *testing.T) {
+			closer := &AlertCloser{run: func(_ context.Context, received lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
+				if received != command {
+					t.Fatal("command changed")
+				}
+				return lifecycle.CloseAlertResult{}, tc.err
+			}}
+			_, err := closer.CloseAlert(context.Background(), command)
+			var target *CloseError
+			if !errors.As(err, &target) || target.Status != tc.status {
+				t.Fatalf("error = %v", err)
+			}
+			if target.Message == tc.err.Error() {
+				t.Fatal("raw dependency error leaked")
+			}
+		})
+	}
+}
+
+func TestAlertCloserHasNoGlobalCapacityAndCancels(t *testing.T) {
+	entered := make(chan struct{}, 8)
+	closer := &AlertCloser{run: func(ctx context.Context, _ lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
+		entered <- struct{}{}
+		<-ctx.Done()
+		return lifecycle.CloseAlertResult{}, ctx.Err()
+	}}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 8)
+	for range 8 {
+		go func() { _, err := closer.CloseAlert(ctx, validCloseCommand()); done <- err }()
+	}
+	for range 8 {
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			t.Fatal("another request was blocked by a global close limit")
+		}
+	}
+	cancel()
+	for range 8 {
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("close did not stop")
+		}
+	}
+}
+
+type closeProjectionFunc func(context.Context, string, string) error
+
+func (f closeProjectionFunc) ProjectNow(ctx context.Context, tenant, alert string) error {
+	return f(ctx, tenant, alert)
+}
+
+func TestAlertCloserSynchronizesBothEntrypointsAndRetries(t *testing.T) {
+	for _, kac := range []bool{false, true} {
+		t.Run(map[bool]string{false: "management", true: "kac"}[kac], func(t *testing.T) {
+			command := validCloseCommand()
+			runCalls, syncCalls := 0, 0
+			var output bytes.Buffer
+			logger, logErr := logging.New(logging.DefaultConfig(), &output)
+			if logErr != nil {
+				t.Fatal(logErr)
+			}
+			closer := &AlertCloser{logger: logger}
+			closer.run = func(ctx context.Context, c lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
+				if c != command {
+					t.Fatal("operation identity changed")
+				}
+				runCalls++
+				return lifecycle.CloseAlertResult{Alert: domain.Alert{BKTenantID: c.BKTenantID, AlertID: c.AlertID, Status: domain.AlertStatusClosed, Revision: 2}, AlreadyClosed: runCalls > 1}, nil
+			}
+			closer.projection = closeProjectionFunc(func(ctx context.Context, tenant, alert string) error {
+				syncCalls++
+				if runCalls != syncCalls || tenant != command.BKTenantID || alert != command.AlertID {
+					t.Fatal("projection did not follow close", runCalls, syncCalls)
+				}
+				if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 10*time.Second {
+					t.Fatal("projection budget missing")
+				}
+				if syncCalls == 1 {
+					return errors.New("private projection failure")
+				}
+				return nil
+			})
+			close := closer.CloseAlert
+			if kac {
+				close = closer.CloseKACAlert
+			}
+			result, err := close(t.Context(), command)
+			var classified *CloseError
+			if !errors.As(err, &classified) || classified.Status != 502 || classified.Code != "result_uncertain" || result.Alert.Status != domain.AlertStatusClosed {
+				t.Fatal("partial close misreported", result, err)
+			}
+			var record map[string]any
+			if decodeErr := json.Unmarshal(output.Bytes(), &record); decodeErr != nil {
+				t.Fatal(decodeErr)
+			}
+			if record["operation"] != "close_projection" || record["operation_id"] != command.OperationID || record["error"] != "private projection failure" {
+				t.Fatal(record)
+			}
+			result, err = close(t.Context(), command)
+			if err != nil || !result.AlreadyClosed || syncCalls != 2 {
+				t.Fatal("projection retry lost", result, err)
+			}
+			closer.run = func(context.Context, lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
+				return lifecycle.CloseAlertResult{}, store.ErrInvalidTransition
+			}
+			_, _ = close(t.Context(), command)
+			if syncCalls != 2 {
+				t.Fatal("failed close projected")
+			}
+		})
+	}
+}
+
+func TestAlertCloserCancelsProjection(t *testing.T) {
+	entered := make(chan struct{})
+	closer := &AlertCloser{run: func(_ context.Context, c lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
+		return lifecycle.CloseAlertResult{Alert: domain.Alert{BKTenantID: c.BKTenantID, AlertID: c.AlertID, Revision: 2}}, nil
+	}, projection: closeProjectionFunc(func(ctx context.Context, _, _ string) error {
+		close(entered)
+		<-ctx.Done()
+		return ctx.Err()
+	})}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := closer.CloseAlert(ctx, validCloseCommand()); done <- err }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("projection did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		var classified *CloseError
+		if !errors.As(err, &classified) || classified.Status != 502 {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("projection did not cancel")
+	}
+}

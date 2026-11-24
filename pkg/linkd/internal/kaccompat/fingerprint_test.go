@@ -1,0 +1,179 @@
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License.
+
+package kaccompat
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"linkd/internal/config"
+	"linkd/internal/domain"
+	"linkd/internal/store/storetest"
+)
+
+func TestWriteBatchIncludesFingerprintOnCreateAndUpdate(t *testing.T) {
+	for _, exists := range []bool{false, true} {
+		t.Run(fmt.Sprintf("exists=%t", exists), func(t *testing.T) {
+			alerts := []domain.Alert{
+				storetest.Alert("tenant-a", "same-alert", "event", "host-a:cpu-high", "warning"),
+				storetest.Alert("tenant-b", "same-alert", "event", "host-b:cpu-high", "warning"),
+			}
+			alerts[0].LastOccurredAt = time.Date(2026, 11, 5, 16, 0, 1, 0, time.UTC)
+			alerts[1].LastOccurredAt = time.Date(2026, 11, 6, 2, 3, 4, 0, time.UTC)
+			bulkCalls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodHead && r.URL.Path == "/alarm-20260831" {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/alarm/_search":
+					hits := []map[string]any{}
+					if exists {
+						for _, alert := range alerts {
+							hits = append(hits, map[string]any{"_id": alert.AlertID, "_index": "alarm-000001", "_source": map[string]string{"bk_tenant_id": alert.BKTenantID}})
+						}
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"hits": map[string]any{"hits": hits}})
+				case "/_alias/alarm":
+					_, _ = w.Write([]byte(`{"alarm-000001":{"aliases":{"alarm":{"is_write_index":true}}}}`))
+				case "/_bulk":
+					bulkCalls++
+					decoder := json.NewDecoder(r.Body)
+					for i, alert := range alerts {
+						var head map[string]any
+						var body struct {
+							Script struct {
+								Params struct {
+									Fields map[string]any `json:"fields"`
+									Create map[string]any `json:"create"`
+								} `json:"params"`
+							} `json:"script"`
+						}
+						if err := decoder.Decode(&head); err != nil {
+							t.Error(err)
+							return
+						}
+						if err := decoder.Decode(&body); err != nil {
+							t.Error(err)
+							return
+						}
+						params := body.Script.Params
+						expectedTime := []string{"2026-11-06 00:00:01", "2026-11-06 10:03:04"}[i]
+						if params.Fields["latest_event_time"] != expectedTime || !exists && params.Create["latest_event_time"] != expectedTime {
+							t.Errorf("tenant %s latest event time missing/wrong: fields=%v create=%v", alert.BKTenantID, params.Fields["latest_event_time"], params.Create["latest_event_time"])
+						}
+						if params.Fields["fingerprint"] != alert.Fingerprint {
+							t.Errorf("tenant %s update fingerprint = %v", alert.BKTenantID, params.Fields["fingerprint"])
+						}
+						if !exists && params.Create["fingerprint"] != alert.Fingerprint {
+							t.Errorf("tenant %s create fingerprint = %v", alert.BKTenantID, params.Create["fingerprint"])
+						}
+						for _, key := range []string{"conductor", "notify_status", "field_extra_info", "storage_time"} {
+							if _, found := params.Fields[key]; found {
+								t.Errorf("update resets KAC-owned field %s", key)
+							}
+						}
+					}
+					_, _ = w.Write([]byte(`{"items":[{"update":{"status":200,"_index":"alarm-000001"}},{"update":{"status":200,"_index":"alarm-000001"}}]}`))
+				default:
+					t.Errorf("unexpected request: %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			client, err := Open(config.KACPluginConfig{AlarmEventIndex: "alarm", Elasticsearch: config.KACElasticsearchConfig{Addresses: []string{server.URL}}}, func(level string) (string, error) { return level, nil }, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			prepareClientForWriteTest(t, client)
+			for _, result := range client.WriteBatch(t.Context(), alerts, false) {
+				if result.Err != nil {
+					t.Fatal(result.Err)
+				}
+			}
+			if bulkCalls != 1 {
+				t.Fatalf("bulk calls = %d", bulkCalls)
+			}
+		})
+	}
+}
+
+func TestMaintainAddsFingerprintToExistingTemplateAndIndex(t *testing.T) {
+	properties := alarmMapping()["properties"].(map[string]any)
+	if field, _ := properties["fingerprint"].(map[string]any); field["type"] != "keyword" {
+		t.Errorf("new index fingerprint mapping = %v", field)
+	}
+	if field, _ := properties["latest_event_time"].(map[string]any); field["type"] != "date" || field["format"] != "yyyy-MM-dd HH:mm:ss" {
+		t.Errorf("new index latest_event_time mapping = %v", field)
+	}
+	for _, retired := range []string{"strategy_config_uid", "strategy_config_version"} {
+		if _, exists := properties[retired]; exists {
+			t.Errorf("new index still declares %s", retired)
+		}
+	}
+	templateUpdated, indexUpdated := false, false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead && r.URL.Path == "/alarm-20260831" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /_template/alarm":
+			_, _ = w.Write([]byte(`{"alarm":{"index_patterns":["alarm*"],"mappings":{"properties":{"linkd_disposal_status":{"type":"keyword"},"custom_field":{"type":"keyword"},"strategy_config_uid":{"type":"keyword"},"strategy_config_version":{"type":"integer"}}}}}`))
+		case "GET /_alias/alarm":
+			_, _ = w.Write([]byte(`{"alarm-000001":{"aliases":{"alarm":{"is_write_index":true}}}}`))
+		case "PUT /_template/alarm", "PUT /alarm/_mapping":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+				return
+			}
+			if r.URL.Path == "/_template/alarm" {
+				templateUpdated = true
+				body = body["mappings"].(map[string]any)
+			} else {
+				indexUpdated = true
+			}
+			fields := body["properties"].(map[string]any)
+			if field, _ := fields["fingerprint"].(map[string]any); field["type"] != "keyword" {
+				t.Errorf("fingerprint mapping = %v", field)
+			}
+			if field, _ := fields["latest_event_time"].(map[string]any); field["type"] != "date" || field["format"] != "yyyy-MM-dd HH:mm:ss" {
+				t.Errorf("latest_event_time mapping = %v", field)
+			}
+			for _, retired := range []string{"strategy_config_uid", "strategy_config_version"} {
+				if _, exists := fields[retired]; exists {
+					t.Errorf("mapping request still declares %s", retired)
+				}
+			}
+			if r.URL.Path == "/_template/alarm" && fields["custom_field"] == nil {
+				t.Error("existing custom mapping removed")
+			}
+		case "PUT /_ilm/policy/alarm_policy":
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client, err := Open(config.KACPluginConfig{AlarmEventIndex: "alarm", Elasticsearch: config.KACElasticsearchConfig{Addresses: []string{server.URL}}}, func(level string) (string, error) { return level, nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if err := client.Maintain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !templateUpdated || !indexUpdated {
+		t.Fatalf("mapping update missing: template=%t index=%t", templateUpdated, indexUpdated)
+	}
+}

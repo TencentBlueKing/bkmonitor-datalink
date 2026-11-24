@@ -1,0 +1,8 @@
+{
+  "name": "linkd-build-scripts",
+  "private": true,
+  "packageManager": "pnpm@11.24.0",
+  "dependencies": {
+    "yaml": "2.9.0"
+  }
+}

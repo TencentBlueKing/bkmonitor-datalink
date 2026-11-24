@@ -54,11 +54,11 @@ func (r *Repository) AppendAlertLogs(
 	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
-	if len(logs) == 0 || len(logs) > store.MaxBatchSize {
+	if len(logs) == 0 || len(logs) > store.MaxAlertLogBatchSize {
 		return nil, fmt.Errorf(
 			"%w: alert log batch size must be between 1 and %d",
 			store.ErrInvalidArgument,
-			store.MaxBatchSize,
+			store.MaxAlertLogBatchSize,
 		)
 	}
 	results := make([]store.AppendAlertLogItemResult, len(logs))
@@ -78,7 +78,20 @@ func (r *Repository) AppendAlertLogs(
 		if len(indices) == 0 {
 			continue
 		}
-		if err := r.createAlertLogBulkGroup(ctx, prepared, indices, requireAlias, results); err != nil {
+		start, size := 0, 0
+		for end, index := range indices {
+			item := prepared[index]
+			metadata, _ := json.Marshal(map[string]any{"create": map[string]string{"_index": item.writeTarget, "_id": item.documentID}})
+			n := len(metadata) + len(item.body) + 2
+			if end > start && size+n > r.config.MaxRequestBytes {
+				if err := r.createAlertLogBulkGroup(ctx, prepared, indices[start:end], requireAlias, results); err != nil {
+					return nil, err
+				}
+				start, size = end, 0
+			}
+			size += n
+		}
+		if err := r.createAlertLogBulkGroup(ctx, prepared, indices[start:], requireAlias, results); err != nil {
 			return nil, err
 		}
 	}
@@ -95,9 +108,6 @@ func (r *Repository) prepareBulkAlertLog(ctx context.Context, log domain.AlertLo
 	}
 	if err := validateIdentity(normalized.BKTenantID, "alert_id", normalized.AlertID); err != nil {
 		return bulkAlertLogCreateItem{}, err
-	}
-	if err := validateBucketAlertReference(r.router, normalized.BKTenantID, normalized.AlertID); err != nil {
-		return bulkAlertLogCreateItem{}, fmt.Errorf("%w: %w", store.ErrInvalidArgument, err)
 	}
 	if err := validateDateNanos("alert log created_time", normalized.CreatedTime); err != nil {
 		return bulkAlertLogCreateItem{}, err
@@ -259,11 +269,10 @@ func (r *Repository) ListAlertLogs(
 		},
 		"sort": []any{
 			map[string]any{"created_time": map[string]any{
-				"order":  "asc",
-				"format": "strict_date_optional_time_nanos",
+				"order": "asc",
 			}},
 			map[string]any{"log_id": map[string]any{"order": "asc"}},
-			map[string]any{"_shard_doc": map[string]any{"order": "asc"}},
+			map[string]any{"_index": map[string]any{"order": "asc"}},
 		},
 	}
 	if normalizedPage.Cursor != "" {

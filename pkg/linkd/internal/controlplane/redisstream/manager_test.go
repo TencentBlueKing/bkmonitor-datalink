@@ -19,18 +19,28 @@ import (
 )
 
 type fakeRedis struct {
-	exists       int64
-	existsErr    error
-	info         redis.XInfoStream
-	groups       []redis.XInfoGroup
-	pending      map[string][]redis.XPendingExt
-	memory       int64
-	trimmed      int64
-	trimBoundary string
-	trimLimit    int64
+	exists         int64
+	existsErr      error
+	existsFunc     func(context.Context) *redis.IntCmd
+	info           redis.XInfoStream
+	groups         []redis.XInfoGroup
+	groupSnapshots [][]redis.XInfoGroup
+	groupCalls     int
+	pending        map[string][]redis.XPendingExt
+	memory         int64
+	trimmed        int64
+	trimResults    []int64
+	trimErrors     []error
+	trimBoundary   string
+	trimLimit      int64
+	trimBoundaries []string
+	trimLimits     []int64
 }
 
-func (f *fakeRedis) Exists(context.Context, ...string) *redis.IntCmd {
+func (f *fakeRedis) Exists(ctx context.Context, _ ...string) *redis.IntCmd {
+	if f.existsFunc != nil {
+		return f.existsFunc(ctx)
+	}
 	return redis.NewIntResult(f.exists, f.existsErr)
 }
 
@@ -43,7 +53,12 @@ func (f *fakeRedis) XInfoStream(ctx context.Context, key string) *redis.XInfoStr
 
 func (f *fakeRedis) XInfoGroups(ctx context.Context, key string) *redis.XInfoGroupsCmd {
 	command := redis.NewXInfoGroupsCmd(ctx, key)
-	command.SetVal(append([]redis.XInfoGroup(nil), f.groups...))
+	groups := f.groups
+	if f.groupCalls < len(f.groupSnapshots) {
+		groups = f.groupSnapshots[f.groupCalls]
+	}
+	f.groupCalls++
+	command.SetVal(append([]redis.XInfoGroup(nil), groups...))
 	return command
 }
 
@@ -64,7 +79,21 @@ func (f *fakeRedis) XTrimMinIDApprox(
 ) *redis.IntCmd {
 	f.trimBoundary = minID
 	f.trimLimit = limit
-	return redis.NewIntResult(f.trimmed, nil)
+	f.trimBoundaries = append(f.trimBoundaries, minID)
+	f.trimLimits = append(f.trimLimits, limit)
+	call := len(f.trimLimits) - 1
+	trimmed := f.trimmed
+	if call < len(f.trimResults) {
+		trimmed = f.trimResults[call]
+	}
+	var err error
+	if call < len(f.trimErrors) {
+		err = f.trimErrors[call]
+	}
+	if err == nil && trimmed > 0 {
+		f.info.Length = max(0, f.info.Length-trimmed)
+	}
+	return redis.NewIntResult(trimmed, err)
 }
 
 type recordingObserver struct {
@@ -145,12 +174,109 @@ func TestManagerTrimsOnlyBeforeEveryGroupSafeBoundary(t *testing.T) {
 	if client.trimBoundary != "7000-2" || client.trimLimit != 25 {
 		t.Fatalf("trim boundary=%q limit=%d", client.trimBoundary, client.trimLimit)
 	}
-	if observer.snapshots[0].EntriesAboveConfiguredMax != 1 || !observer.snapshots[0].TrimRequired ||
-		!observer.snapshots[0].TrimSafe {
+	if observer.snapshots[0].Length != 76 || observer.snapshots[0].EntriesAboveConfiguredMax != 0 ||
+		observer.snapshots[0].TrimRequired || !observer.snapshots[0].TrimSafe {
 		t.Fatalf("snapshot=%#v", observer.snapshots[0])
 	}
 	if observer.trimmed != 25 {
 		t.Fatalf("observer trimmed=%d", observer.trimmed)
+	}
+}
+
+func TestManagerTrimsMultipleBatchesUpToCycleBudget(t *testing.T) {
+	t.Parallel()
+	client := &fakeRedis{
+		exists:      1,
+		info:        redis.XInfoStream{Length: 360, FirstEntry: redis.XMessage{ID: "1000-0"}},
+		groups:      []redis.XInfoGroup{{Name: "lifecycle", LastDeliveredID: "9000-0"}},
+		trimResults: []int64{25, 25, 10},
+	}
+	observer := &recordingObserver{}
+	manager, err := newManager(client, Config{
+		Stream: "signals", ExpectedGroup: "lifecycle", ReconcileInterval: time.Minute,
+		OperationTimeout: time.Second, MaxEntries: 100, TrimBatchSize: 25, MaxTrimEntriesPerCycle: 60,
+	}, observer, func() time.Time { return time.UnixMilli(10_000) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ReconcileOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := client.trimLimits; len(got) != 3 || got[0] != 25 || got[1] != 25 || got[2] != 10 {
+		t.Fatalf("trim limits=%v", got)
+	}
+	if observer.trimmed != 60 || len(observer.snapshots) != 1 || observer.snapshots[0].Length != 300 ||
+		!observer.snapshots[0].TrimRequired || !observer.snapshots[0].TrimSafe {
+		t.Fatalf("observer=%#v", observer)
+	}
+}
+
+func TestManagerStopsMultiBatchTrimWhenSafetyChangesOrNoProgress(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		client        *fakeRedis
+		wantTrimmed   int64
+		wantTrimCalls int
+		wantTrimSafe  bool
+	}{
+		{
+			name: "safe boundary disappears",
+			client: &fakeRedis{
+				exists: 1,
+				info:   redis.XInfoStream{Length: 200, FirstEntry: redis.XMessage{ID: "1000-0"}},
+				groupSnapshots: [][]redis.XInfoGroup{
+					{{Name: "lifecycle", LastDeliveredID: "9000-0"}},
+					{{Name: "other", LastDeliveredID: "9000-0"}},
+				},
+				trimResults: []int64{25},
+			},
+			wantTrimmed: 25, wantTrimCalls: 1, wantTrimSafe: false,
+		},
+		{
+			name: "approximate trim makes no progress",
+			client: &fakeRedis{
+				exists:      1,
+				info:        redis.XInfoStream{Length: 200, FirstEntry: redis.XMessage{ID: "1000-0"}},
+				groups:      []redis.XInfoGroup{{Name: "lifecycle", LastDeliveredID: "9000-0"}},
+				trimResults: []int64{0},
+			},
+			wantTrimmed: 0, wantTrimCalls: 1, wantTrimSafe: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			observer := &recordingObserver{}
+			manager := newTestManager(t, test.client, observer, time.UnixMilli(10_000))
+			if err := manager.ReconcileOnce(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if observer.trimmed != test.wantTrimmed || len(test.client.trimLimits) != test.wantTrimCalls ||
+				len(observer.snapshots) != 1 || observer.snapshots[0].TrimSafe != test.wantTrimSafe {
+				t.Fatalf("client=%#v observer=%#v", test.client, observer)
+			}
+		})
+	}
+}
+
+func TestManagerReportsPartialTrimWhenLaterBatchFails(t *testing.T) {
+	t.Parallel()
+	client := &fakeRedis{
+		exists:      1,
+		info:        redis.XInfoStream{Length: 200, FirstEntry: redis.XMessage{ID: "1000-0"}},
+		groups:      []redis.XInfoGroup{{Name: "lifecycle", LastDeliveredID: "9000-0"}},
+		trimResults: []int64{25, 0},
+		trimErrors:  []error{nil, errors.New("redis unavailable")},
+	}
+	observer := &recordingObserver{}
+	manager := newTestManager(t, client, observer, time.UnixMilli(10_000))
+	if err := manager.ReconcileOnce(context.Background()); err == nil {
+		t.Fatal("ReconcileOnce() error = nil")
+	}
+	if observer.trimmed != 25 || len(observer.outcomes) != 1 || observer.outcomes[0] != "failed" ||
+		len(observer.snapshots) != 0 {
+		t.Fatalf("observer=%#v", observer)
 	}
 }
 
@@ -258,7 +384,7 @@ func newTestManager(
 	t.Helper()
 	manager, err := newManager(client, Config{
 		Stream: "signals", ExpectedGroup: "lifecycle", ReconcileInterval: time.Minute,
-		OperationTimeout: time.Second, MaxEntries: 100, TrimBatchSize: 25,
+		OperationTimeout: time.Second, MaxEntries: 100, TrimBatchSize: 25, MaxTrimEntriesPerCycle: 250,
 	}, observer, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
@@ -269,3 +395,59 @@ func newTestManager(
 var _ redisClient = (*fakeRedis)(nil)
 
 var _ Observer = (*recordingObserver)(nil)
+
+func TestRedisCommandErrorRetainsOperationAndCause(t *testing.T) {
+	existsError := errors.New("private connection failure")
+	manager := newTestManager(t, &fakeRedis{existsErr: existsError}, &recordingObserver{}, time.Now())
+	err := manager.ReconcileOnce(t.Context())
+	var failure *OperationError
+	if !errors.As(err, &failure) || failure.Operation != "EXISTS" || !errors.Is(err, existsError) {
+		t.Fatal(err)
+	}
+	trimError := errors.New("private trim failure")
+	manager = newTestManager(t, &fakeRedis{exists: 1, info: redis.XInfoStream{Length: 101, FirstEntry: redis.XMessage{ID: "1000-0"}}, groups: []redis.XInfoGroup{{Name: "lifecycle", LastDeliveredID: "9000-0"}}, trimErrors: []error{trimError}}, &recordingObserver{}, time.Now())
+	err = manager.ReconcileOnce(t.Context())
+	if !errors.As(err, &failure) || failure.Operation != "XTRIM" || !errors.Is(err, trimError) {
+		t.Fatal(err)
+	}
+}
+
+func TestManagerSeparatesCancellationFromSourceTimeout(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"already canceled", "canceled during command", "source timeout"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			if name == "source timeout" {
+				cancel()
+				ctx, cancel = context.WithTimeout(t.Context(), 10*time.Millisecond)
+			}
+			defer cancel()
+			if name == "already canceled" {
+				cancel()
+			}
+			calls := 0
+			client := &fakeRedis{existsFunc: func(call context.Context) *redis.IntCmd {
+				calls++
+				if name != "source timeout" {
+					cancel()
+				}
+				<-call.Done()
+				return redis.NewIntResult(0, call.Err())
+			}}
+			observer := &recordingObserver{}
+			manager := newTestManager(t, client, observer, time.Now())
+			err := manager.ReconcileOnce(ctx)
+			if name == "source timeout" {
+				if !errors.Is(err, context.DeadlineExceeded) || len(observer.outcomes) != 1 || observer.outcomes[0] != "failed" {
+					t.Fatalf("err=%v outcomes=%v", err, observer.outcomes)
+				}
+			} else if !errors.Is(err, context.Canceled) || len(observer.outcomes) != 0 {
+				t.Fatalf("err=%v outcomes=%v", err, observer.outcomes)
+			}
+			if len(observer.snapshots) != 0 || (name == "already canceled" && calls != 0) || (name != "already canceled" && calls != 1) {
+				t.Fatalf("calls=%d snapshots=%v", calls, observer.snapshots)
+			}
+		})
+	}
+}

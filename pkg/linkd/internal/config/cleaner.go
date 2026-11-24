@@ -12,15 +12,15 @@ package config
 import "fmt"
 
 const (
-	defaultCleanerWorkerCount            = 8
+	defaultCleanerWorkerCount            = 0
 	defaultCleanerMaxBatchMessages       = 128
 	defaultCleanerMaxBatchBytes          = 4 << 20
 	defaultCleanerBatchWaitMilliseconds  = 20
-	defaultCleanerMaxConcurrentBatches   = 2
+	defaultCleanerMaxConcurrentBatches   = 0
 	defaultCleanerMaxInflightMessages    = 512
 	defaultCleanerMaxInflightBytes       = 16 << 20
-	defaultCleanerMaxInflightPerLane     = 256
-	defaultCleanerResumeInflightPerLane  = 128
+	defaultCleanerMaxInflightPerLane     = 512
+	defaultCleanerResumeInflightPerLane  = 256
 	defaultCleanerProcessTimeoutSeconds  = 30
 	defaultCleanerRetryMaxAttempts       = 3
 	defaultCleanerRetryMaxElapsedSeconds = 120
@@ -30,19 +30,19 @@ const (
 // CleanerRuntimeConfig 定义一条 EventSource Flow 的并发、批量和资源预算。
 // EventSource 中的零值字段继承顶层 cleaner 配置。
 type CleanerRuntimeConfig struct {
-	WorkerCount                 int `yaml:"worker_count"`
-	MaxBatchMessages            int `yaml:"max_batch_messages"`
-	MaxBatchBytes               int `yaml:"max_batch_bytes"`
-	BatchWaitMilliseconds       int `yaml:"batch_wait_milliseconds"`
-	MaxConcurrentBatches        int `yaml:"max_concurrent_batches"`
-	MaxInflightMessages         int `yaml:"max_inflight_messages"`
-	MaxInflightBytes            int `yaml:"max_inflight_bytes"`
-	MaxInflightPerLane          int `yaml:"max_inflight_per_lane"`
-	ResumeInflightPerLane       int `yaml:"resume_inflight_per_lane"`
-	ProcessTimeoutSeconds       int `yaml:"process_timeout_seconds"`
-	RetryMaxAttempts            int `yaml:"retry_max_attempts"`
-	RetryMaxElapsedSeconds      int `yaml:"retry_max_elapsed_seconds"`
-	ShutdownDrainTimeoutSeconds int `yaml:"shutdown_drain_timeout_seconds"`
+	WorkerCount                 int `yaml:"worker_count" json:"worker_count"`
+	MaxBatchMessages            int `yaml:"max_batch_messages" json:"max_batch_messages"`
+	MaxBatchBytes               int `yaml:"max_batch_bytes" json:"max_batch_bytes"`
+	BatchWaitMilliseconds       int `yaml:"batch_wait_milliseconds" json:"batch_wait_milliseconds"`
+	MaxConcurrentBatches        int `yaml:"max_concurrent_batches" json:"max_concurrent_batches"`
+	MaxInflightMessages         int `yaml:"max_inflight_messages" json:"max_inflight_messages"`
+	MaxInflightBytes            int `yaml:"max_inflight_bytes" json:"max_inflight_bytes"`
+	MaxInflightPerLane          int `yaml:"max_inflight_per_lane" json:"max_inflight_per_lane"`
+	ResumeInflightPerLane       int `yaml:"resume_inflight_per_lane" json:"resume_inflight_per_lane"`
+	ProcessTimeoutSeconds       int `yaml:"process_timeout_seconds" json:"process_timeout_seconds"`
+	RetryMaxAttempts            int `yaml:"retry_max_attempts" json:"retry_max_attempts"`
+	RetryMaxElapsedSeconds      int `yaml:"retry_max_elapsed_seconds" json:"retry_max_elapsed_seconds"`
+	ShutdownDrainTimeoutSeconds int `yaml:"shutdown_drain_timeout_seconds" json:"shutdown_drain_timeout_seconds"`
 }
 
 func DefaultCleanerRuntimeConfig() CleanerRuntimeConfig {
@@ -84,6 +84,12 @@ func mergeCleanerRuntime(base, override CleanerRuntimeConfig) CleanerRuntimeConf
 			*targets[index] = value
 		}
 	}
+	if base.WorkerCount == 0 {
+		base.WorkerCount = base.MaxInflightMessages
+	}
+	if base.MaxConcurrentBatches == 0 {
+		base.MaxConcurrentBatches = base.MaxInflightMessages
+	}
 	return base
 }
 
@@ -102,16 +108,13 @@ func (c CleanerRuntimeConfig) Validate() error {
 			return fmt.Errorf("cleaner.%s must be positive", name)
 		}
 	}
-	if c.WorkerCount > 1024 || c.MaxBatchMessages > 4096 || c.MaxConcurrentBatches > 64 {
-		return fmt.Errorf("cleaner concurrency or batch count exceeds hard limit")
-	}
 	if c.MaxBatchMessages > c.MaxInflightPerLane || c.MaxInflightPerLane > c.MaxInflightMessages {
 		return fmt.Errorf("cleaner message capacities must satisfy batch <= lane <= global")
 	}
 	if c.ResumeInflightPerLane >= c.MaxInflightPerLane {
 		return fmt.Errorf("cleaner.resume_inflight_per_lane must be less than max_inflight_per_lane")
 	}
-	if c.MaxBatchBytes > c.MaxInflightBytes || c.MaxBatchBytes > 64<<20 || c.MaxInflightBytes > 256<<20 {
+	if c.MaxBatchBytes > c.MaxInflightBytes {
 		return fmt.Errorf("cleaner byte capacities are invalid")
 	}
 	return nil

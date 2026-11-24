@@ -15,14 +15,15 @@ MQ Delivery
 ```
 
 输入信封包含稳定 `record_id`、租户、`event_source_id`、`received_at`、headers 和原始 payload。
-payload 不能覆盖信封来源、租户、接收时间或消息身份。EventSource 的详细边界见
-[EventSource](event-source.md)，当前 `standard` payload 见[输入契约](../reference/contracts/raw-event.md)。
+payload 不能覆盖来源、稳定接收时间或内部消息身份。租户支持 payload/header 输入：两处非空时须一致；来源 related_tenant_id 可强制覆盖。EventSource 的详细边界见
+[EventSource](event-source.md)，当前 `standard` payload 见[Linkd 标准事件](../reference/contracts/standard-event.md)。
 
-Cleaner 的成功终态有三种：
+Cleaner 的成功终态包括：
 
 - 新建或幂等命中 `unprocessed` Event，并成功加入对应 Redis Mailbox；
 - Repository 返回的幂等 Event 已是终态，跳过 Mailbox；
-- 输入属于确定性无效数据，已得到允许确认的 Discard 结果。
+- 输入属于确定性无效数据，已得到允许确认的 Discard 结果；
+- 首次 Event 被软限流，已保存带诊断的 suppressed 终态，不进入 Mailbox。
 
 处理超时、存储错误、Mailbox 错误和确认错误都不是 Discard。
 
@@ -38,15 +39,15 @@ type SourceCleaner interface {
 
 SourceCleaner 只解释来源 payload，不能访问 Repository、Mailbox 或 MQ Session。当前只注册
 `standard`：接受单个 JSON object，把已知字段投影为 EventDraft；未知字段只在完整原始快照中保留，
-重复 key、尾随 JSON、非法 action 和已知字段类型错误会被拒绝。
+重复 key、尾随 JSON、非法 evaluation action、映射后重复级别、非法 values 和已知字段类型错误会被拒绝。
 
-EventDraft 不包含租户、来源、Event ID、fingerprint、标准 severity、接收时间和原始 payload，具体
-SourceCleaner 因而不能覆盖这些字段。EventFactory 统一处理：
+EventDraft 保存来源租户、values 和来源级别的 evaluations；不决定 EventSource、内部 Event ID、
+fingerprint、标准 severity、received_at 或完整原始快照。EventFactory 统一处理：
 
-- EventSource 租户覆盖；
+- EventSource 租户覆盖，以及 payload/header 租户一致性校验；
 - 通过 SeverityResolver 执行 mapping、全局同名和 default 规则；
 - occurred_at、produced_at 的稳定时间回退；
-- 确定性 Event ID；
+- 以稳定 `record_id`、租户、来源和 record timestamp 生成内部 Event ID；来源编号保存在 `source_event_id`，允许跨触发/恢复复用；
 - 通过 FingerprintResolver 执行 EventSource fingerprint 规则；
 - 完整 source_raw_data 快照；
 - 动态对象深拷贝、UTC 规范化和完整 Event 校验。
@@ -104,7 +105,7 @@ n 个 lane Receive
 详细步骤：
 
 1. Runtime 有界 Receive，并按 Delivery 到达顺序追加到各 lane 队列；
-2. 消息立即进入共享 worker pool，不使用 fingerprint 或 `OrderKey` 串行纯计算；
+2. 消息按任务内未确认预算懒启动处理 goroutine，不使用 fingerprint 或 `OrderKey` 串行纯计算；
 3. worker 可以乱序返回 Event、Discard 或暂时错误；
 4. 每个 lane 只从队首选择已经连续完成的前缀；
 5. 数量、原始消息字节或最长等待时间任一达到阈值时启动该 lane 的批次；
@@ -113,7 +114,7 @@ n 个 lane Receive
 8. 只有 Stored → MailboxEnqueued、StoredTerminal 或 Discard 的连续 Receipt 前缀可以 Confirm；
 9. Confirm 成功后释放对应 inflight 配额并继续该 lane。
 
-不同 lane 不合并 Event 批次或 Mailbox 写入。全局只用 `max_concurrent_batches` 限制同时执行副作用的
+不同 lane 不合并 Event 批次或 Mailbox 写入。`max_concurrent_batches` 默认跟随任务未确认消息数，可显式降低并行执行副作用的
 lane 数量，因此一个慢 lane 不会阻塞其他 lane。
 
 ## 4. 连续前缀与部分成功
@@ -151,11 +152,12 @@ worker:     done  slow  done  done
 Receive，直到容量下降。适配器返回超过本次 ReceiveLimits 的数据会使 Runtime 失败并关闭 Session，
 防止突破内存硬上限。
 
-所有 Cleaner Flow 还共享一个 Lifecycle Signal 背压检查器。它最多每 3 秒执行一次 `XINFO GROUPS`，
-以目标 Group 的 `lag + pending` 作为近似未完成 Signal 数：达到 100000 暂停整个 Flow 的 Kafka fetch，
-降到 80000 恢复，中间区间保持原状态。Kafka topic 暂停期间仍每秒 Poll 一次以维持 consumer group；
-已有 inflight 继续完成。查询失败、超时或 lag 未知时 fail-open，明确缺少目标 Group 时暂停等待 Lifecycle
-创建。该数值不是精确 Event 数，允许采样超调和冗余 Signal 高估。
+所有 Cleaner Flow 还共享一个 Lifecycle Signal 背压检查器。它默认最多每秒执行一次 `XINFO GROUPS`，
+以目标 Group 的 `lag + pending` 作为近似未完成 Signal 数：默认高低水位分别按 Lifecycle 在途上限的
+4 倍和 2 倍派生，达到高水位暂停整个 Flow 的 Kafka fetch，降到低水位恢复，中间区间保持原状态。
+Kafka topic 暂停期间仍每秒 Poll 一次以维持 consumer group；
+已有 inflight 继续完成。查询失败、超时或 lag 未知时保持上次准入状态，明确缺少目标 Group 时暂停等待
+Lifecycle 创建。该数值不是精确 Event 数，允许采样超调和冗余 Signal 高估。
 
 默认值和 EventSource 局部覆盖见[配置指南](../guides/configuration.md)。默认值只用于功能验证，生产
 预算必须通过真实载荷压测确定。
@@ -190,6 +192,20 @@ Cleaner 不扫描 unprocessed Event 补发 Mailbox。确认后 Redis 整体丢�
 
 - 已实现 `standard`、Kafka FlowFactory、MySQL/Elasticsearch Event batch、Redis Mailbox 和单元/race 测试；
 - MySQL batch 当前逐项幂等写入，没有多行 SQL 优化；
-- Elasticsearch 使用 `_bulk?refresh=wait_for` 的逐项 create；
+- Elasticsearch 使用 `_bulk?refresh=false` 的逐项 create；成功表示主分片已确认写入，不保证 `_search`
+  立即可见，重复身份通过 realtime GET 核对；
 - RabbitMQ 和 Redis Streams 有通用 Session，但尚未进入 EventSource Cleaner 装配；
 - RocketMQ、声明式 Cleaner 脚本和生产容量压测尚未实现。
+
+### 当前错误与容量策略
+
+Cleaner 实例数不超过 Kafka Topic 分区数。每个任务默认以 512 条未确认消息及载荷字节软背压，确认后释放计数；Helm 默认按下游 Signal 的 `lag + pending` 启用 2048/1024 高低水位背压，可通过 values 修改或设为 0/0 关闭；直接运行的水位缺省仍为 0/0。关闭背压控制后仍采样 Signal 积压供 Admin 观测，不限制持久 Mailbox 数量。普通处理错误直接进入丢弃并可确认的前缀，当前没有默认可重试错误白名单；显式标记的错误最多尝试三次。单条计算和批次调用捕获 panic，失败不取消其他 lane 或来源。Kafka 确认仍只推进连续完成前缀；确认结果未知不重新执行已完成业务，也不伪造成功 offset。见[运行容量与恢复](../design/runtime-capacity-and-recovery.md)。
+
+## 活跃告警软限流
+
+EventSource `active_alert_limits` 配置使用内部 Redis，在 Event 批量幂等落库后、Mailbox 入队前执行。
+对新建的纯触发 Event 按组批量读取近似数量；满额才批量检查对应分组 Set 的 fingerprint，已有成员继续通过。
+恢复/关闭、含终结判定的混合事件及既有 unprocessed 重投不拦截。缓存异常时放行；重建期间依据当前集合数量判断，允许超量。
+限流 Event 保存 `processing.active_alert_limit`，状态 suppressed、outcome alert_limited，正常确认原消息。
+未满、放行路径不额外写准入记录，Lifecycle 不二次检查。配置和预算见
+[活跃告警缓存与软限流](../guides/active-alert-by-strategy.md)。

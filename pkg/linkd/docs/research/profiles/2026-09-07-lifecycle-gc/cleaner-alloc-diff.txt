@@ -1,0 +1,57 @@
+File: linkd
+Type: alloc_space
+Time: 2026-09-07 00:52:28 CST
+Showing nodes accounting for 86226.84MB, 95.67% of 90130.81MB total
+Dropped 403 nodes (cum <= 450.65MB)
+Showing top 50 nodes out of 100
+      flat  flat%   sum%        cum   cum%
+45762.44MB 50.77% 50.77% 45762.44MB 50.77%  encoding/json.(*Decoder).refill
+ 8064.96MB  8.95% 59.72%  8064.96MB  8.95%  encoding/json.NewDecoder (inline)
+ 4576.67MB  5.08% 64.80%  5550.69MB  6.16%  encoding/json.(*scanner).error (inline)
+ 2309.97MB  2.56% 67.36% 60448.40MB 67.07%  linkd/internal/domain.JSONObject.Normalize
+ 2165.05MB  2.40% 69.76%  6986.47MB  7.75%  encoding/json.(*decodeState).literalStore
+ 1858.53MB  2.06% 71.83% 50283.24MB 55.79%  encoding/json.(*Decoder).Token
+ 1812.90MB  2.01% 73.84%  1812.90MB  2.01%  bytes.growSlice
+ 1777.35MB  1.97% 75.81%  3918.07MB  4.35%  encoding/json.Marshal
+ 1692.36MB  1.88% 77.69%  1692.36MB  1.88%  linkd/internal/domain.DimensionMap.Clone (inline)
+ 1613.40MB  1.79% 79.48% 47209.45MB 52.38%  linkd/internal/domain.decodeJSONToken
+ 1301.27MB  1.44% 80.92%  1301.27MB  1.44%  linkd/internal/telemetry.(*consumeObserver).baseAttributes
+ 1264.06MB  1.40% 82.32%  1264.06MB  1.40%  bytes.NewReader (inline)
+ 1156.43MB  1.28% 83.61%  1156.43MB  1.28%  reflect.mapassign_faststr0
+ 1137.78MB  1.26% 84.87%  2198.56MB  2.44%  go.opentelemetry.io/otel/metric.WithAttributes
+ 1095.02MB  1.21% 86.08%  1095.02MB  1.21%  reflect.unsafe_New
+ 1060.78MB  1.18% 87.26%  1060.78MB  1.18%  go.opentelemetry.io/otel/attribute.computeDataFixed (inline)
+ 1060.20MB  1.18% 88.44%  1060.20MB  1.18%  linkd/internal/domain.JSONObject.Clone (inline)
+  972.73MB  1.08% 89.52%  2004.54MB  2.22%  encoding/json.mapEncoder.encode
+  691.47MB  0.77% 90.28%  5118.03MB  5.68%  linkd/internal/cleaner.validateObjectBody
+  667.51MB  0.74% 91.02%   667.51MB  0.74%  unicode/utf8.AppendRune (inline)
+  426.70MB  0.47% 91.50%  1673.50MB  1.86%  linkd/internal/telemetry.(*consumeObserver).HandlerFinished
+  419.61MB  0.47% 91.96%   652.04MB  0.72%  io.ReadAll
+  414.02MB  0.46% 92.42%   615.56MB  0.68%  linkd/internal/consume/kafka.(*Session).Receive
+  306.50MB  0.34% 92.76%   974.01MB  1.08%  encoding/json.quoteChar
+  284.07MB  0.32% 93.08%  1014.14MB  1.13%  linkd/internal/cleaner.(*Runtime).enqueueLanePrefix
+  278.65MB  0.31% 93.39%  1649.44MB  1.83%  linkd/internal/cleaner.(*Runtime).Run
+  277.78MB  0.31% 93.70%   583.50MB  0.65%  github.com/twmb/franz-go/pkg/kgo.(*decompressor).Decompress
+  272.20MB   0.3% 94.00% 42789.25MB 47.47%  linkd/internal/store/elasticsearch.(*Repository).CreateEvents
+  255.74MB  0.28% 94.28% 39634.16MB 43.97%  linkd/internal/cleaner.(*Mapper).MapMessage
+  169.04MB  0.19% 94.47% 14602.04MB 16.20%  linkd/internal/store/elasticsearch.(*Repository).createEventBulkGroup
+  166.58MB  0.18% 94.65%   645.71MB  0.72%  linkd/internal/telemetry.(*consumeObserver).StepFinished
+  142.06MB  0.16% 94.81%   609.17MB  0.68%  linkd/internal/telemetry.(*consumeObserver).HandlerStarted
+  128.56MB  0.14% 94.95%  1530.34MB  1.70%  linkd/internal/store/elasticsearch.encodeEventDocument
+  119.55MB  0.13% 95.09% 43990.97MB 48.81%  linkd/internal/cleaner.(*Runtime).runLaneBatch
+     119MB  0.13% 95.22%  6727.81MB  7.46%  encoding/json.(*decodeState).object
+   92.32MB   0.1% 95.32%   699.04MB  0.78%  linkd/internal/lifecycle/mailbox.(*Store).EnqueueBatch
+   76.52MB 0.085% 95.41%  8541.14MB  9.48%  linkd/internal/cleaner.StandardCleaner.Clean
+      72MB  0.08% 95.49%   988.70MB  1.10%  linkd/internal/telemetry.(*consumeObserver).Snapshot
+   48.51MB 0.054% 95.54%  1888.94MB  2.10%  encoding/json.Unmarshal
+   36.01MB  0.04% 95.58%  4858.60MB  5.39%  linkd/internal/domain.ValidateEventReplacement
+      30MB 0.033% 95.61%  4688.91MB  5.20%  linkd/internal/domain.(*Scalar).UnmarshalJSON
+      18MB  0.02% 95.63% 10979.28MB 12.18%  linkd/internal/store/elasticsearch.(*Repository).verifyEventCreateConflictChunk
+   16.51MB 0.018% 95.65%  5318.62MB  5.90%  linkd/internal/store/elasticsearch.decodeEventHit
+    7.52MB 0.0083% 95.66%   706.56MB  0.78%  linkd/internal/cleaner.(*RedisMailboxPublisher).EnqueueBatch
+    5.51MB 0.0061% 95.67%  1046.66MB  1.16%  linkd/internal/cleaner.(*Runtime).finishLanePrefix
+       1MB 0.0011% 95.67%   766.79MB  0.85%  github.com/twmb/franz-go/pkg/kgo.(*source).fetch
+       1MB 0.0011% 95.67%  1813.90MB  2.01%  bytes.(*Buffer).grow
+    0.50MB 0.00055% 95.67%   754.28MB  0.84%  github.com/twmb/franz-go/pkg/kgo.ProcessFetchPartition
+    0.50MB 0.00055% 95.67% 30700.75MB 34.06%  linkd/internal/cleaner.(*EventFactory).Build
+         0     0% 95.67%  1738.69MB  1.93%  bytes.(*Buffer).Write

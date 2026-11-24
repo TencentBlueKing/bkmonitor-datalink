@@ -7,8 +7,6 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-// Package eventgen 实现基于 Linkd standard 输入契约的有界告警事件模拟器。
-//
-// 模拟器只负责生成来源事件并写入所选 EventSource 的 Kafka topic，不直接创建
-// Event、Alert 或 AlertLog，也不持久化运行状态。
+// Package eventgen 提供配置驱动的事件生成、数据绑定和生命周期调度。
+// 生成器只向配置来源投递消息，不直接修改 Linkd Event 或 Alert；活动池仅保存在进程内。
 package eventgen

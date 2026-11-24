@@ -1,0 +1,33 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+
+package store
+
+import (
+	"encoding/json"
+
+	"linkd/internal/domain"
+)
+
+// AlertSearchRequest 使用 Elasticsearch Query DSL 检索原生 Alert；仅支持此能力的后端实现查询。
+// HTTP 边界负责校验租户、分页与 Query 对象，省略 Query 时匹配当前租户全部告警。
+type AlertSearchRequest struct {
+	// TenantID 是强制作用域，不能被 Query 中的租户条件替代。
+	TenantID string `json:"bk_tenant_id"`
+	// Query 是原生查询子句，不是包含索引、聚合或排序的完整 _search 请求。
+	Query json.RawMessage `json:"query,omitempty"`
+	// After 是上一页最后一条 AlertID；结果固定按 AlertID 升序，不承诺跨页快照。
+	After string `json:"after,omitempty"`
+	// Limit 是当前页最大数量；普通检索使用 MaxPageSize，IDsOnly 关闭候选使用 MaxCloseBatchSize。
+	Limit int `json:"limit,omitempty"`
+	// IDsOnly 由关闭用例设置，只返回 AlertID，避免枚举候选时加载正文和丰富数据。
+	IDsOnly bool `json:"-"`
+}
+
+// AlertSearchPage 返回原生告警快照；IDsOnly 时仅填 AlertID，归档副本仍按 AlertID 折叠。
+type AlertSearchPage struct {
+	Items []domain.Alert `json:"items"` // Items 不包含存储 CAS token 或物理索引。
+	Next  string         `json:"next"`  // Next 为空表示此次读取没有更多匹配告警。
+}

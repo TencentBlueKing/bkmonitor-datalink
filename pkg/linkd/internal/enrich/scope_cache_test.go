@@ -1,0 +1,207 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+// Tencent is pleased to support the open source community. All rights reserved.
+// Licensed under the MIT License.
+
+package enrich
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"reflect"
+	"testing"
+
+	"linkd/internal/enrich/models"
+)
+
+func TestScopeCachesReadersByStableQueryKey(t *testing.T) {
+	t.Parallel()
+	reader := &scopeCacheReader{}
+	scope, err := NewScope(testAlert(), Sources{
+		Metric: reader, Model: reader, OneModel: reader, CollectConfig: reader,
+		Uptime: reader, UptimeNode: reader, CollectTopology: reader,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	queryA := InstanceQuery{ModelCode: "cw-Service", InstanceID: "1", AttributeFilters: []InstanceAttributeFilter{
+		{Field: "cw_biz_id", Type: InstanceAttributeLong, Value: int64(2)},
+		{Field: "name", Type: InstanceAttributeKeyword, Value: "svc"},
+	}}
+	queryAReordered := InstanceQuery{ModelCode: "cw-Service", InstanceID: "1", AttributeFilters: []InstanceAttributeFilter{
+		{Field: "name", Type: InstanceAttributeKeyword, Value: "svc"},
+		{Field: "cw_biz_id", Type: InstanceAttributeLong, Value: int64(2)},
+	}}
+	queryB := InstanceQuery{ModelCode: "cw-Service", InstanceID: "2"}
+	for _, query := range []InstanceQuery{queryA, queryAReordered, queryB, queryB} {
+		if _, _, err := scope.Instance(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		_, _, _ = scope.ModelByCode(ctx, "cw-Service")
+		_, _, _ = scope.MetricMetadata(ctx, models.MetricQuery{TableID: "service.metric", FieldName: "available"})
+		_, _, _ = scope.CollectConfig(ctx, "collect-1")
+		_, _, _ = scope.UptimeTask(ctx, "7")
+		_, _, _ = scope.UptimeNode(ctx, "0:10.0.0.8")
+		_, _, _ = scope.RelatedHost(ctx, "cw-Service", "1", "service_run_host")
+		_, _, _ = scope.HostTopology(ctx, "101", Instance{})
+	}
+	if reader.instanceCalls != 2 || reader.modelCalls != 1 || reader.metricCalls != 1 ||
+		reader.collectCalls != 1 || reader.uptimeCalls != 1 || reader.nodeCalls != 1 ||
+		reader.relatedCalls != 1 || reader.topologyCalls != 1 {
+		t.Fatalf("calls=%#v", reader)
+	}
+	if !reflect.DeepEqual(reader.instanceIDs, []string{"1", "2"}) {
+		t.Fatalf("instance IDs=%v", reader.instanceIDs)
+	}
+}
+
+func TestScopeDoesNotCacheCanceledLookup(t *testing.T) {
+	reader := &scopeCacheReader{}
+	scope, err := NewScope(testAlert(), Sources{OneModel: reader})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	query := InstanceQuery{ModelCode: "cw-Host", InstanceID: "1"}
+	_, _, _ = scope.Instance(ctx, query)
+	_, _, _ = scope.Instance(context.Background(), query)
+	if reader.instanceCalls != 2 {
+		t.Fatalf("instance calls=%d", reader.instanceCalls)
+	}
+}
+
+type scopeCacheReader struct {
+	instanceCalls int
+	instanceIDs   []string
+	modelCalls    int
+	metricCalls   int
+	metricQueries []models.MetricQuery
+	collectCalls  int
+	uptimeCalls   int
+	nodeCalls     int
+	relatedCalls  int
+	topologyCalls int
+}
+
+func (r *scopeCacheReader) FindInstance(_ context.Context, tenantID string, query InstanceQuery) (Instance, bool, error) {
+	r.instanceCalls++
+	r.instanceIDs = append(r.instanceIDs, query.InstanceID)
+	return Instance{TenantID: tenantID, ModelCode: query.ModelCode, InstanceID: query.InstanceID}, true, nil
+}
+
+func (r *scopeCacheReader) GetModelByCode(_ context.Context, tenantID, modelCode string) (Model, bool, error) {
+	r.modelCalls++
+	return Model{TenantID: tenantID, ModelID: modelCode, ModelCode: modelCode}, true, nil
+}
+
+func (r *scopeCacheReader) FindMetric(ctx context.Context, query models.MetricQuery) (models.MetricMetadata, bool, error) {
+	r.metricCalls++
+	r.metricQueries = append(r.metricQueries, query)
+	if err := ctx.Err(); err != nil {
+		return models.MetricMetadata{}, false, err
+	}
+	return models.MetricMetadata{}, true, nil
+}
+
+func (r *scopeCacheReader) GetCollectConfig(context.Context, string, string) (models.CollectConfig, bool, error) {
+	r.collectCalls++
+	return models.CollectConfig{}, true, nil
+}
+
+func (r *scopeCacheReader) GetUptimeTask(context.Context, string, string) (models.UptimeTask, bool, error) {
+	r.uptimeCalls++
+	return models.UptimeTask{}, true, nil
+}
+
+func (r *scopeCacheReader) GetUptimeNode(context.Context, string, string) (models.UptimeNode, bool, error) {
+	r.nodeCalls++
+	return models.UptimeNode{}, true, nil
+}
+
+func (r *scopeCacheReader) FindRelatedHost(context.Context, string, string, string, string) (Instance, bool, error) {
+	r.relatedCalls++
+	return Instance{}, true, nil
+}
+
+func (r *scopeCacheReader) FindHostTopology(context.Context, string, string, bool) (models.ResourceTopology, bool, error) {
+	r.topologyCalls++
+	return models.ResourceTopology{}, true, nil
+}
+
+func TestMetricScopeEnforcesTenantSpaceAndCachesID(t *testing.T) {
+	t.Parallel()
+	reader := &scopeCacheReader{}
+	scope, err := NewScope(testAlert(), Sources{Metric: reader})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []models.MetricQuery{
+		{TenantID: "untrusted", MetricID: 42, TableID: "old-table"},
+		{TenantID: "other", MetricID: 42, ObjectModelCode: "other-model"},
+		{TenantID: "untrusted", SpaceUID: "bkcc__99", TableID: "system.cpu", FieldName: "usage"},
+	} {
+		if _, _, err = scope.MetricMetadata(context.Background(), query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if reader.metricCalls != 2 {
+		t.Fatalf("calls=%d", reader.metricCalls)
+	}
+	if reader.metricQueries[0] != (models.MetricQuery{TenantID: scope.Event().BKTenantID, MetricID: 42}) {
+		t.Fatalf("ID query=%#v", reader.metricQueries[0])
+	}
+	ids, diagnostics := ValidateRequiredIDs(scope.Event())
+	if len(diagnostics) != 0 {
+		t.Fatal(diagnostics)
+	}
+	if reader.metricQueries[1].TenantID != scope.Event().BKTenantID || reader.metricQueries[1].SpaceUID != fmt.Sprintf("bkcc__%d", ids.BizID) {
+		t.Fatalf("physical query=%#v", reader.metricQueries[1])
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err = scope.MetricMetadata(ctx, models.MetricQuery{MetricID: 42}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cached cancellation=%v", err)
+	}
+}
+
+// TestOptionalMetricMetadataCancellation 确认取消先于可选目录多义降级，且不写入降级诊断。
+func TestOptionalMetricMetadataCancellation(t *testing.T) {
+	t.Parallel()
+	for _, beforeRead := range []bool{true, false} {
+		t.Run(fmt.Sprint(beforeRead), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			reader := &cancelingOptionalMetricReader{cancel: cancel}
+			scope, err := NewScope(testAlert(), Sources{Metric: reader})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if beforeRead {
+				cancel()
+			}
+			_, found, err := scope.OptionalMetricMetadata(ctx, models.MetricQuery{TableID: "system.cpu", FieldName: "usage"})
+			if found || !errors.Is(err, context.Canceled) || len(scope.degradedDiagnostics) != 0 {
+				t.Fatalf("found=%t error=%v diagnostics=%v", found, err, scope.degradedDiagnostics)
+			}
+		})
+	}
+}
+
+type cancelingOptionalMetricReader struct{ cancel context.CancelFunc }
+
+func (r *cancelingOptionalMetricReader) FindMetric(context.Context, models.MetricQuery) (models.MetricMetadata, bool, error) {
+	r.cancel()
+	return models.MetricMetadata{}, false, ErrAmbiguousMetricLocator
+}

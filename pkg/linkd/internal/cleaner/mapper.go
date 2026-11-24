@@ -34,19 +34,19 @@ func NewMapper(source config.EventSource, severity config.SeverityConfig) (*Mapp
 		return nil, err
 	}
 	source = source.WithDefaults()
-	cleaner, err := registeredCleaner(source.Cleaner.Type)
+	cleaner, err := registeredCleaner(source.Cleaner)
 	if err != nil {
 		return nil, err
 	}
 	return &Mapper{cleaner: cleaner, factory: factory}, nil
 }
 
-func registeredCleaner(cleanerType string) (SourceCleaner, error) {
-	switch cleanerType {
+func registeredCleaner(cfg config.CleanerConfig) (SourceCleaner, error) {
+	switch cfg.Type {
 	case config.CleanerTypeStandard:
-		return StandardCleaner{}, nil
+		return StandardCleaner{Rules: cfg.Rules}, nil
 	default:
-		return nil, fmt.Errorf("source cleaner is not registered: %q", cleanerType)
+		return nil, fmt.Errorf("source cleaner is not registered: %q", cfg.Type)
 	}
 }
 

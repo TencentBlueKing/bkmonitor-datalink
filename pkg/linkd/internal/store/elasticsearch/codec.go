@@ -30,6 +30,8 @@ type eventDocument struct {
 
 type alertDocument struct {
 	domain.Alert
+	ShieldMainAlertIDs []string `json:"shield_main_alert_ids,omitempty"`
+	MergeWork          bool     `json:"merge_work"`
 }
 
 type alertLogDocument struct {
@@ -46,6 +48,7 @@ type searchHit struct {
 }
 
 type searchResponse struct {
+	searchCompleteness
 	PITID string `json:"pit_id"`
 	Hits  struct {
 		Hits []searchHit `json:"hits"`
@@ -129,7 +132,7 @@ func decodeEventHit(hit searchHit) (store.StoredEvent, error) {
 	if err := json.Unmarshal(hit.Source, &document); err != nil {
 		return store.StoredEvent{}, fmt.Errorf("decode elasticsearch event: %w", err)
 	}
-	normalized, err := document.Normalize()
+	normalized, err := document.Restore()
 	if err != nil {
 		return store.StoredEvent{}, err
 	}
@@ -145,22 +148,66 @@ func decodeEventHit(hit searchHit) (store.StoredEvent, error) {
 		return store.StoredEvent{}, err
 	}
 	stored := store.StoredEvent{Event: normalized, Processing: processing, Version: version}
-	if err := stored.Validate(); err != nil {
+	// 来源事实在读取边界恢复；此处只检查处理状态及跨对象归属，不重新解析业务 JSON。
+	if err := validateNormalizedStoredEvent(stored); err != nil {
 		return store.StoredEvent{}, err
 	}
 	return stored, nil
 }
 
+func validateNormalizedStoredEvent(stored store.StoredEvent) error {
+	if err := store.ValidatePolicyDecision(stored.Event, nil, stored.Processing.PolicyDecision); err != nil {
+		return err
+	}
+	if stored.Version.IsZero() {
+		return fmt.Errorf("stored event version must not be empty")
+	}
+	associated := stored.Processing.State == domain.EventProcessStateAccepted || stored.Processing.State == domain.EventProcessStateSuppressed
+	if stored.Processing.State == domain.EventProcessStateAccepted && len(stored.Event.RelatedAlertIDs) == 0 {
+		return fmt.Errorf("accepted event requires related_alert_ids")
+	}
+	if !associated && len(stored.Event.RelatedAlertIDs) != 0 {
+		return fmt.Errorf("only accepted or suppressed event may contain related_alert_ids")
+	}
+	return nil
+}
+
 func encodeAlertDocument(alert domain.Alert) ([]byte, error) {
-	return json.Marshal(alertDocument{Alert: alert})
+	return json.Marshal(alertDocument{Alert: alert, ShieldMainAlertIDs: store.ShieldMainAlertIDs(alert), MergeWork: store.HasMergeWork(alert)})
 }
 
 func decodeAlertHit(hit searchHit) (store.StoredAlert, error) {
+	return decodeAlertSnapshot(hit, false)
+}
+
+func decodeAlertStateHit(hit searchHit) (store.StoredAlert, error) {
+	return decodeAlertSnapshot(hit, true)
+}
+
+func decodeAlertSnapshot(hit searchHit, stateOnly bool) (store.StoredAlert, error) {
 	var document alertDocument
 	if err := json.Unmarshal(hit.Source, &document); err != nil {
 		return store.StoredAlert{}, err
 	}
-	normalized, err := document.Normalize()
+	// 旧版 ES Alert 没有业务版本，只有完全缺字段且没有新版版本状态时可取初始基线。
+	// 不把显式 0/null 或损坏的投影/动作状态解释成旧数据，也不在读取时写回。
+	var storedVersion struct {
+		Revision json.RawMessage `json:"revision"`
+	}
+	if err := json.Unmarshal(hit.Source, &storedVersion); err != nil {
+		return store.StoredAlert{}, err
+	}
+	if len(storedVersion.Revision) == 0 && document.PolicyChange == nil && document.MergeChange == nil &&
+		!document.MergeWork {
+		document.Revision = 1
+	}
+	var normalized domain.Alert
+	var err error
+	if stateOnly {
+		normalized, err = document.NormalizeState()
+	} else {
+		normalized, err = document.Normalize()
+	}
 	if err != nil {
 		return store.StoredAlert{}, err
 	}

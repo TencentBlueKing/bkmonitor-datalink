@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -30,7 +31,13 @@ type kafkaClient interface {
 	ResumeFetchPartitions(topicPartitions map[string][]int32)
 	PauseFetchTopics(topics ...string) []string
 	ResumeFetchTopics(topics ...string)
+	LeaveGroupContext(context.Context) error
 	Close()
+}
+
+// Logger 记录 Kafka 自动恢复消费位置时的数据丢失通知。
+type Logger interface {
+	WarnContext(ctx context.Context, message string, args ...any)
 }
 
 type receiptData struct {
@@ -39,14 +46,17 @@ type receiptData struct {
 }
 
 type ownershipBridge struct {
-	mu       sync.RWMutex
-	events   chan consume.OwnershipEvent
-	owned    map[string]bool
-	enforced bool
+	closed    chan struct{}
+	closeOnce sync.Once
+	observer  func([]string)
+	mu        sync.RWMutex
+	events    chan consume.OwnershipEvent
+	owned     map[string]bool
+	enforced  bool
 }
 
 func newOwnershipBridge() *ownershipBridge {
-	return &ownershipBridge{events: make(chan consume.OwnershipEvent, 8), owned: make(map[string]bool)}
+	return &ownershipBridge{closed: make(chan struct{}), events: make(chan consume.OwnershipEvent, 8), owned: make(map[string]bool)}
 }
 
 // Session 把 Kafka partition offset 映射为 lane 级累计确认。
@@ -55,45 +65,64 @@ type Session struct {
 	client kafkaClient
 	config Config
 	issuer *consume.ReceiptIssuer
+	logger Logger
 
-	mu         sync.Mutex
-	receipts   map[uint64]receiptData
-	laneTokens map[string][]uint64
-	laneParts  map[string]map[string][]int32
-	flowPaused bool
-	closed     bool
-	ownership  *ownershipBridge
+	mu           sync.Mutex
+	receipts     map[uint64]receiptData
+	laneTokens   map[string][]uint64
+	laneParts    map[string]map[string][]int32
+	flowPaused   bool
+	closed       bool
+	ownership    *ownershipBridge
+	cancelClient context.CancelFunc
 }
 
-// NewSession 创建并验证 Kafka consumer。调用方负责在 Runtime 结束时关闭 Session。
-func NewSession(config Config) (*Session, error) {
+// NewSession 创建并验证 Kafka consumer，logger 可为 nil。
+// 调用方负责在 Runtime 结束时关闭 Session。
+func NewSession(config Config, logger Logger) (*Session, error) {
 	config = config.WithDefaults()
 	if err := config.validateStatic(); err != nil {
 		return nil, fmt.Errorf("create kafka session: %w", err)
 	}
 
-	options, err := kafkaclient.ClientOptions(config.Brokers, config.ClientID, config.Security)
+	ownership := newOwnershipBridge()
+	options, err := sessionClientOptions(config, ownership)
 	if err != nil {
 		return nil, fmt.Errorf("create kafka session options: %w", err)
 	}
-	ownership := newOwnershipBridge()
-	options = append(options,
-		kgo.ConsumeTopics(config.Topic),
-		kgo.ConsumerGroup(config.ConsumerGroup),
-		kgo.DisableAutoCommit(),
-		kgo.BlockRebalanceOnPoll(),
-		kgo.FetchMaxBytes(config.MaxFetchBytes),
-		kgo.OnPartitionsAssigned(ownership.assigned),
-		kgo.OnPartitionsRevoked(ownership.revoked),
-		kgo.OnPartitionsLost(ownership.lost),
-	)
-	client, err := kgo.NewClient(options...)
+	// 客户端生命周期独立于单次 Receive；关闭超时才取消其网络请求。
+	clientCtx, cancelClient := context.WithCancel(context.Background())
+	client, err := kgo.NewClient(append(options, kgo.WithContext(clientCtx))...)
 	if err != nil {
+		cancelClient()
 		return nil, fmt.Errorf("create kafka client: %w", err)
 	}
 	session := newSession(config, client)
 	session.ownership = ownership
+	session.cancelClient = cancelClient
+	session.logger = logger
 	return session, nil
+}
+
+func sessionClientOptions(config Config, ownership *ownershipBridge) ([]kgo.Opt, error) {
+	options, err := kafkaclient.ClientOptions(config.Brokers, config.ClientID, config.Security)
+	if err != nil {
+		return nil, err
+	}
+	return append(options,
+		kgo.ConsumeTopics(config.Topic),
+		kgo.ConsumerGroup(config.ConsumerGroup),
+		// 有效提交位点优先；新分区无位点或首次读取时位点越界，都从尾部等待新消息。
+		kgo.ConsumeStartOffset(kgo.NewOffset().AtEnd()),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtEnd()),
+		kgo.DisableAutoCommit(),
+		kgo.BlockRebalanceOnPoll(),
+		kgo.FetchMaxBytes(config.MaxFetchBytes),
+		kgo.FetchMaxWait(config.FetchMaxWait),
+		kgo.OnPartitionsAssigned(ownership.assigned),
+		kgo.OnPartitionsRevoked(ownership.revoked),
+		kgo.OnPartitionsLost(ownership.lost),
+	), nil
 }
 
 func newSession(config Config, client kafkaClient) *Session {
@@ -114,6 +143,15 @@ func (s *Session) Capabilities() consume.Capabilities {
 
 // Receive 拉取一个有界批次；Runtime 通过全局和 lane 上限控制多个 poll 的在途规模。
 func (s *Session) Receive(ctx context.Context, limits consume.ReceiveLimits) ([]consume.Delivery, error) {
+	if s.ownership != nil {
+		s.ownership.mu.Lock()
+		s.ownership.observer = consume.PartitionObserver(ctx)
+		s.ownership.mu.Unlock()
+		s.ownership.reportOwned()
+	}
+	if err := consume.WaitForAdmission(ctx); err != nil {
+		return nil, err
+	}
 	if limits.MaxMessages <= 0 || limits.MaxBytes <= 0 {
 		return nil, fmt.Errorf("kafka receive: invalid limits: %+v", limits)
 	}
@@ -130,13 +168,36 @@ func (s *Session) Receive(ctx context.Context, limits consume.ReceiveLimits) ([]
 	}
 	fetches := s.client.PollRecords(pollCtx, limits.MaxMessages)
 	cancelPoll()
-	if fetchErrors := fetches.Errors(); len(fetchErrors) > 0 {
-		if paused && errors.Is(fetchErrors[0].Err, context.DeadlineExceeded) && ctx.Err() == nil {
-			s.allowRebalanceIfIdle()
-			return nil, nil
+	if s.ownership != nil {
+		s.ownership.mu.Lock()
+		lanes := make([]string, 0, len(s.ownership.owned))
+		for lane := range s.ownership.owned {
+			lanes = append(lanes, lane)
+		}
+		s.ownership.mu.Unlock()
+		sort.Strings(lanes)
+		consume.ReportPartitions(ctx, lanes)
+	}
+	for _, fetchError := range fetches.Errors() {
+		var dataLoss *kgo.ErrDataLoss
+		if errors.As(fetchError.Err, &dataLoss) {
+			// franz-go 已调整当前 Client 的消费位置；重建 Client 会重新加载旧提交位点，
+			// 导致同一通知反复使任务退出。这里只记录，不丢弃同次 Poll 的有效 records。
+			if s.logger != nil {
+				s.logger.WarnContext(ctx, "Kafka data loss detected; continuing with reset offset",
+					"module", "consume", "operation", "receive", "error", fetchError.Err,
+					"topic", fetchError.Topic, "partition", fetchError.Partition,
+					"consumer_group", s.config.ConsumerGroup, "client_id", s.config.ClientID,
+					"consumed_to", dataLoss.ConsumedTo, "consumed_to_epoch", dataLoss.ConsumedToEpoch,
+					"reset_to", dataLoss.ResetTo, "reset_to_epoch", dataLoss.ResetToEpoch)
+			}
+			continue
+		}
+		if paused && errors.Is(fetchError.Err, context.DeadlineExceeded) && ctx.Err() == nil {
+			continue
 		}
 		s.allowRebalanceIfIdle()
-		return nil, fmt.Errorf("kafka poll: topic=%q partition=%d: %w", fetchErrors[0].Topic, fetchErrors[0].Partition, fetchErrors[0].Err)
+		return nil, fmt.Errorf("kafka poll: topic=%q partition=%d: %w", fetchError.Topic, fetchError.Partition, fetchError.Err)
 	}
 	records := fetches.Records()
 	if len(records) == 0 {
@@ -325,7 +386,9 @@ func (s *Session) OwnershipEvents() <-chan consume.OwnershipEvent {
 
 func (s *Session) AllowOwnershipChanges() { s.client.AllowRebalance() }
 
-// Close 关闭 consumer group Session，未确认 offset 将由后续 owner 重放。
+// Close 有界等待退组和客户端关闭，未确认 offset 将由后续 owner 重放。
+// 超时或退组失败返回的 StopIncompleteError 保留最终关闭信号，调用方必须
+// 等待该信号再释放任务占位；远端退组失败不能跳过本地连接和 goroutine 回收。
 func (s *Session) Close(ctx context.Context) error {
 	s.mu.Lock()
 	if s.closed {
@@ -336,15 +399,33 @@ func (s *Session) Close(ctx context.Context) error {
 	s.mu.Unlock()
 	s.client.AllowRebalance()
 
+	if s.ownership != nil {
+		s.ownership.closeOnce.Do(func() { close(s.ownership.closed) })
+	}
 	done := make(chan struct{})
+	var leaveErr error
 	go func() {
+		if s.cancelClient != nil {
+			// LeaveGroupContext 在等待取消时可能先返回，客户端内部退组仍在
+			// 排队。取消客户端请求，避免随后的 Close 又无限等待 broker。
+			stopCancel := context.AfterFunc(ctx, s.cancelClient)
+			defer stopCancel()
+			defer s.cancelClient()
+		}
+		// franz-go 的 Close 默认无限等待退组。先使用关闭期限退出消费组，
+		// 即使 broker 不响应也继续关闭本地资源；不能并发反复创建新客户端。
+		leaveErr = s.client.LeaveGroupContext(ctx)
 		s.client.Close()
 		close(done)
 	}()
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return &consume.StopIncompleteError{Cause: ctx.Err(), Done: done}
 	case <-done:
+		if leaveErr != nil {
+			// 保留退组错误供任务边界记录；Done 已关闭，调度可立即完成停止。
+			return &consume.StopIncompleteError{Cause: leaveErr, Done: done}
+		}
 		return nil
 	}
 }
@@ -366,6 +447,7 @@ func (b *ownershipBridge) assigned(ctx context.Context, _ *kgo.Client, partition
 		b.owned[lane] = true
 	}
 	b.mu.Unlock()
+	b.reportOwned()
 	b.send(ctx, consume.OwnershipAssigned, lanes, nil)
 }
 
@@ -377,6 +459,7 @@ func (b *ownershipBridge) revoked(ctx context.Context, _ *kgo.Client, partitions
 			delete(b.owned, lane)
 		}
 		b.mu.Unlock()
+		b.reportOwned()
 	})
 }
 
@@ -388,6 +471,7 @@ func (b *ownershipBridge) lost(ctx context.Context, _ *kgo.Client, partitions ma
 		delete(b.owned, lane)
 	}
 	b.mu.Unlock()
+	b.reportOwned()
 	b.send(ctx, consume.OwnershipLost, lanes, nil)
 }
 
@@ -405,12 +489,18 @@ func (b *ownershipBridge) send(ctx context.Context, kind consume.OwnershipEventK
 	event := consume.OwnershipEvent{Kind: kind, Lanes: append([]string(nil), lanes...), Complete: complete}
 	select {
 	case b.events <- event:
+	case <-b.closed:
+		complete()
+		return
 	case <-ctx.Done():
 		complete()
 		return
 	}
 	select {
 	case <-done:
+	case <-b.closed:
+		complete()
+		return
 	case <-ctx.Done():
 		complete()
 	}
@@ -478,3 +568,18 @@ var _ consume.LaneController = (*Session)(nil)
 var _ consume.FlowController = (*Session)(nil)
 
 var _ consume.OwnershipSession = (*Session)(nil)
+
+// reportOwned 在 ownership 回调时即时上报，空 topic 的 PollRecords 不返回也能看到分配。
+func (b *ownershipBridge) reportOwned() {
+	b.mu.Lock()
+	observer := b.observer
+	lanes := make([]string, 0, len(b.owned))
+	for lane := range b.owned {
+		lanes = append(lanes, lane)
+	}
+	b.mu.Unlock()
+	sort.Strings(lanes)
+	if observer != nil {
+		observer(lanes)
+	}
+}

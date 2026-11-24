@@ -1,0 +1,187 @@
+{
+  "alert": {
+    "bk_tenant_id": "tenant-example",
+    "event_source_id": "example-source",
+    "event_source_version": 1,
+    "dimensions": {
+      "bcs_cluster_id": "example-cluster",
+      "container_name": "example-worker",
+      "namespace": "example-ns",
+      "pod_name": "example-worker-0"
+    },
+    "labels": {
+      "bk_biz_id": 2
+    },
+    "alert_id": "alert-example",
+    "severity": "critical",
+    "status": "recovered",
+    "enrich_status": "succeeded",
+    "enrich": {
+      "processors": [
+        {
+          "k8s": {
+            "patches": [
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"bcs_cluster_id\"]",
+                "value": "example-cluster"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"bk_biz_id\"]",
+                "value": "2"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"bk_biz_name\"]",
+                "value": "示例业务"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"cluster_name\"]",
+                "value": "示例集群"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"container_name\"]",
+                "value": "example-worker"
+              },
+              {
+                "op": "set",
+                "path": "$[\"extra_data\"][\"cw_labels\"]",
+                "value": [
+                  "bk_biz_id",
+                  "bk_biz_id|2",
+                  "cluster_id",
+                  "cluster_id|example-cluster",
+                  "namespace_id",
+                  "cluster_id|example-cluster&namespace_id|example-ns"
+                ]
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"model_id\"]",
+                "value": "cw-K8s_Container"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"model_inst_id\"]",
+                "value": "example-cluster|example-ns|example-worker-0|example-worker"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"namespace\"]",
+                "value": "example-ns"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"pod_name\"]",
+                "value": "example-worker-0"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"service\"]",
+                "value": ""
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"workload_kind\"]",
+                "value": ""
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"workload_name\"]",
+                "value": ""
+              }
+            ],
+            "status": "succeeded"
+          }
+        }
+      ]
+    },
+    "fingerprint": "example-fingerprint",
+    "title": "Example alert",
+    "content": "Example threshold exceeded",
+    "source_event_id": "source-event-example",
+    "source_alert_id": "source-alert-example",
+    "subject_system": "bcs",
+    "subject_type": "pod",
+    "subject_id": "example-worker-0",
+    "create_at": "2025-01-02T03:04:05Z",
+    "revision": 2,
+    "begin_at": "2025-01-02T03:04:05Z",
+    "end_at": "2025-01-02T03:04:05Z",
+    "end_type": "source",
+    "latest_event_id": "event-example",
+    "trigger_event_id": "event-example-opening",
+    "last_occurred_at": "2025-01-02T03:04:05Z",
+    "update_at": "2025-01-02T03:04:05Z",
+    "admission": {
+      "admitted_at": "2025-01-02T03:04:05Z",
+      "severity": "critical",
+      "cause_type": "source_event",
+      "cause_id": "event-example-opening"
+    }
+  },
+  "recovery": {
+    "bk_tenant_id": "tenant-example",
+    "event_source_id": "example-source",
+    "event_source_version": 1,
+    "dimensions": {
+      "bcs_cluster_id": "example-cluster",
+      "container_name": "example-worker",
+      "namespace": "example-ns",
+      "pod_name": "example-worker-0"
+    },
+    "labels": {
+      "bk_biz_id": 2
+    },
+    "event_id": "event-example",
+    "evaluations": [
+      {
+        "severity": "critical",
+        "action": "resolved",
+        "action_reason": ""
+      }
+    ],
+    "fingerprint": "example-fingerprint",
+    "title": "Example alert",
+    "content": "Example threshold exceeded",
+    "source_event_id": "source-event-example",
+    "source_alert_id": "source-alert-example",
+    "subject_system": "bcs",
+    "subject_type": "pod",
+    "subject_id": "example-worker-0",
+    "create_at": "2025-01-02T03:04:05Z",
+    "occurred_at": "2025-01-02T03:04:05Z",
+    "produced_at": "2025-01-02T03:04:05Z",
+    "received_at": "2025-01-02T03:04:05Z"
+  },
+  "instances": [
+    {
+      "bk_tenant_id": "tenant-example",
+      "model_id": "cw-K8s_Namespace",
+      "model_inst_id": "example-cluster|example-ns",
+      "attributes": {
+        "bk_biz_id": "2",
+        "bk_biz_name": "示例业务",
+        "cluster_id": "example-cluster",
+        "cluster_name": "示例集群",
+        "name": "example-ns",
+        "namespace": "example-ns"
+      }
+    },
+    {
+      "bk_tenant_id": "tenant-example",
+      "model_id": "cw-K8s_Cluster",
+      "model_inst_id": "example-cluster",
+      "attributes": {
+        "bk_biz_id": "2",
+        "bk_biz_name": "示例业务",
+        "cluster_id": "example-cluster",
+        "cluster_name": "示例集群",
+        "name": "示例集群"
+      }
+    }
+  ]
+}

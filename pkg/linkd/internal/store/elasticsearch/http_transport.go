@@ -18,7 +18,10 @@ import (
 	"time"
 )
 
-const defaultHTTPTimeout = 15 * time.Second
+const (
+	defaultHTTPTimeout     = 15 * time.Second
+	maxHTTPIdleConnections = 4096
+)
 
 // HTTPTransportConfig 描述 Elasticsearch HTTP 节点和认证方式。
 type HTTPTransportConfig struct {
@@ -27,12 +30,17 @@ type HTTPTransportConfig struct {
 	BasicUsername string
 	BasicPassword string
 	Timeout       time.Duration
+	// MaxConnectionsPerHost 为正时限制单节点总连接；0 不限，空闲连接仍有回收预算。
+	MaxConnectionsPerHost int
+	// DisableRedirects 用于兼容存储等外部连接，禁止认证随重定向跨站发送。
+	DisableRedirects bool
 }
 
 // HTTPTransport 把 Repository 的相对请求轮询发送到一个或多个 Elasticsearch origin。
 type HTTPTransport struct {
 	baseURLs      []*url.URL
 	client        *http.Client
+	transport     *http.Transport
 	apiKey        string
 	basicUsername string
 	basicPassword string
@@ -61,9 +69,25 @@ func NewHTTPTransport(config HTTPTransportConfig) (*HTTPTransport, error) {
 	if config.Timeout < time.Second {
 		return nil, fmt.Errorf("create elasticsearch HTTP transport: timeout must be at least one second")
 	}
+	if config.MaxConnectionsPerHost < 0 {
+		return nil, fmt.Errorf("create elasticsearch HTTP transport: max connections per host must be non-negative")
+	}
+	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("create elasticsearch HTTP transport: default HTTP transport is unavailable")
+	}
+	transport := defaultTransport.Clone()
+	transport.MaxConnsPerHost = config.MaxConnectionsPerHost
+	transport.MaxIdleConnsPerHost = max(config.MaxConnectionsPerHost, 256)
+	transport.MaxIdleConns = min(max(config.MaxConnectionsPerHost, 256)*len(baseURLs), maxHTTPIdleConnections)
+	client := &http.Client{Transport: transport, Timeout: config.Timeout}
+	if config.DisableRedirects {
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	}
 	return &HTTPTransport{
 		baseURLs:      baseURLs,
-		client:        &http.Client{Timeout: config.Timeout},
+		client:        client,
+		transport:     transport,
 		apiKey:        config.APIKey,
 		basicUsername: config.BasicUsername,
 		basicPassword: config.BasicPassword,
@@ -92,7 +116,7 @@ func (t *HTTPTransport) Perform(request *http.Request) (*http.Response, error) {
 
 // Close 释放 HTTP keep-alive 空闲连接。
 func (t *HTTPTransport) Close() {
-	t.client.CloseIdleConnections()
+	t.transport.CloseIdleConnections()
 }
 
 var _ Transport = (*HTTPTransport)(nil)

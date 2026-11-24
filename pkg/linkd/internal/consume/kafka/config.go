@@ -12,17 +12,20 @@ package kafka
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"linkd/internal/kafkaclient"
 )
 
 // Config 描述一个 Kafka Consumer Group Session。
 type Config struct {
-	Brokers         []string
-	Topic           string
-	ConsumerGroup   string
-	ClientID        string
-	MaxFetchBytes   int32
+	Brokers       []string
+	Topic         string
+	ConsumerGroup string
+	ClientID      string
+	MaxFetchBytes int32
+	// FetchMaxWait 限制 broker 空拉取等待，避免恢复暂停分区后被其他空分区拖住。
+	FetchMaxWait    time.Duration
 	MessageIDHeader string
 	TenantIDHeader  string
 	OrderKeyHeader  string
@@ -31,6 +34,9 @@ type Config struct {
 
 // WithDefaults 返回补齐非敏感适配器默认值的副本。
 func (c Config) WithDefaults() Config {
+	if c.FetchMaxWait == 0 {
+		c.FetchMaxWait = 100 * time.Millisecond
+	}
 	if c.MaxFetchBytes == 0 {
 		c.MaxFetchBytes = 4 << 20
 	}
@@ -68,6 +74,9 @@ func (c Config) validateStatic() error {
 	}
 	if c.MaxFetchBytes <= 0 {
 		return fmt.Errorf("max_fetch_bytes must be positive: %d", c.MaxFetchBytes)
+	}
+	if c.FetchMaxWait < 10*time.Millisecond || c.FetchMaxWait > 5*time.Second {
+		return fmt.Errorf("fetch_max_wait must be between 10ms and 5s")
 	}
 	if err := kafkaclient.ValidateClientID(c.ClientID); err != nil {
 		return err

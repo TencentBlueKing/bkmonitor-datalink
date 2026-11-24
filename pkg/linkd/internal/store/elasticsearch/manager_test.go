@@ -26,16 +26,22 @@ import (
 )
 
 type managerTransport struct {
-	mu         sync.Mutex
-	indices    map[string]schemaMetadata
-	aliases    map[string]map[string]bool
-	searches   int
-	searchBody string
-	lastSearch string
+	mu             sync.Mutex
+	indices        map[string]schemaMetadata
+	aliases        map[string]map[string]bool
+	searches       int
+	searchBody     string
+	lastSearch     string
+	settings       map[string]map[string]string
+	properties     map[string]map[string]any
+	mappingUpdates []string
 }
 
 func newManagerTransport() *managerTransport {
-	return &managerTransport{indices: map[string]schemaMetadata{}, aliases: map[string]map[string]bool{}}
+	return &managerTransport{
+		indices: map[string]schemaMetadata{}, aliases: map[string]map[string]bool{}, settings: map[string]map[string]string{},
+		properties: map[string]map[string]any{},
+	}
 }
 
 func (t *managerTransport) Perform(request *http.Request) (*http.Response, error) {
@@ -66,7 +72,55 @@ func (t *managerTransport) Perform(request *http.Request) (*http.Response, error
 		if !exists {
 			return managerJSONResponse(http.StatusNotFound, `{"error":{"type":"index_not_found_exception","reason":"missing"}}`), nil
 		}
-		data, _ := json.Marshal(map[string]any{index: map[string]any{"mappings": map[string]any{"_meta": metadata}}})
+		properties := eventProperties()
+		if metadata.Entity == entityAlert || metadata.Entity == entityAlertHistory {
+			properties = alertProperties()
+		}
+		if existing, ok := t.properties[index]; ok {
+			properties = existing
+		}
+		data, _ := json.Marshal(map[string]any{index: map[string]any{"mappings": map[string]any{"_meta": metadata, "properties": properties}}})
+		return managerBytesResponse(http.StatusOK, data), nil
+	case request.Method == http.MethodPut && strings.HasSuffix(path, "/_mapping"):
+		index := strings.TrimSuffix(strings.TrimPrefix(path, "/"), "/_mapping")
+		var body struct {
+			Properties map[string]any `json:"properties"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			return nil, err
+		}
+		for name, property := range body.Properties {
+			t.properties[index][name] = property
+		}
+		t.mappingUpdates = append(t.mappingUpdates, index)
+		return managerJSONResponse(http.StatusOK, `{"acknowledged":true}`), nil
+	case request.Method == http.MethodPut && strings.HasSuffix(path, "/_settings"):
+		index := strings.TrimSuffix(strings.TrimPrefix(path, "/"), "/_settings")
+		var body struct {
+			Index struct {
+				RefreshInterval string `json:"refresh_interval"`
+				Durability      string `json:"translog.durability"`
+			} `json:"index"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			return nil, err
+		}
+		if t.settings[index] == nil {
+			t.settings[index] = map[string]string{}
+		}
+		if body.Index.RefreshInterval != "" {
+			t.settings[index]["refresh_interval"] = body.Index.RefreshInterval
+		}
+		if body.Index.Durability != "" {
+			t.settings[index]["translog.durability"] = body.Index.Durability
+		}
+		return managerJSONResponse(http.StatusOK, `{"acknowledged":true}`), nil
+	case request.Method == http.MethodGet && strings.Contains(path, "/_settings/"):
+		index := strings.TrimSuffix(strings.TrimPrefix(path, "/"), "/_settings/index.refresh_interval")
+		value := t.settings[index]["refresh_interval"]
+		data, _ := json.Marshal(map[string]any{index: map[string]any{
+			"settings": map[string]any{"index": map[string]any{"refresh_interval": value}},
+		}})
 		return managerBytesResponse(http.StatusOK, data), nil
 	case request.Method == http.MethodGet && strings.HasPrefix(path, "/_alias/"):
 		alias := strings.TrimPrefix(path, "/_alias/")
@@ -150,7 +204,8 @@ func TestManagerReconcileSchemaAndActiveDoesNotCreateBucketsOrArchive(t *testing
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 	transport := newManagerTransport()
 	router, err := newBucketRouter("linkd-test", BucketConfig{
-		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7, MaxFutureSkew: 5 * time.Minute,
+		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
+		MaxFutureSkew: 5 * time.Minute, ActiveAlertRefreshInterval: 17 * time.Second,
 	}, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
@@ -177,6 +232,9 @@ func TestManagerReconcileSchemaAndActiveDoesNotCreateBucketsOrArchive(t *testing
 	if len(transport.indices) != 1 {
 		t.Fatalf("indices=%d %#v, want only active alert index", len(transport.indices), transport.indices)
 	}
+	if transport.settings["linkd-test-alerts-active-000001"]["refresh_interval"] != "17s" {
+		t.Fatalf("active refresh interval=%q", transport.settings["linkd-test-alerts-active-000001"])
+	}
 }
 
 func TestManagerIndependentOperationsCreateStableLayout(t *testing.T) {
@@ -184,7 +242,8 @@ func TestManagerIndependentOperationsCreateStableLayout(t *testing.T) {
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 	transport := newManagerTransport()
 	router, err := newBucketRouter("linkd-test", BucketConfig{
-		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7, MaxFutureSkew: 5 * time.Minute,
+		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
+		MaxFutureSkew: 5 * time.Minute, ActiveAlertRefreshInterval: 5 * time.Second,
 	}, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
@@ -234,6 +293,51 @@ func TestManagerIndependentOperationsCreateStableLayout(t *testing.T) {
 		!transport.aliases["linkd-test-alerts-write"]["linkd-test-alerts-active-000001"] {
 		t.Fatalf("active write alias=%#v", transport.aliases["linkd-test-alerts-write"])
 	}
+	for _, index := range []string{
+		"linkd-test-alert-logs-20260824", "linkd-test-alert-logs-20260831", "linkd-test-alert-logs-20260907",
+	} {
+		if got := transport.settings[index]["translog.durability"]; got != "async" {
+			t.Fatalf("alert log index %q translog durability=%q", index, got)
+		}
+	}
+}
+
+func TestManagerVerifyReadyRequiresConfiguredActiveRefresh(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	transport := newManagerTransport()
+	router, err := newBucketRouter("linkd-test", BucketConfig{
+		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
+		MaxFutureSkew: 5 * time.Minute, ActiveAlertRefreshInterval: 5 * time.Second,
+	}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := New(transport, router, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := newManager(repository, router, ManagerConfig{
+		PrecreatePastBuckets: 1, PrecreateFutureBuckets: 1, MaxBucketsPerEntity: 512,
+	}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ReconcileSchemaAndActive(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ReconcileBuckets(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.VerifyReady(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	transport.mu.Lock()
+	transport.settings[router.activeAlertIndex()]["refresh_interval"] = "1s"
+	transport.mu.Unlock()
+	if err := manager.VerifyReady(context.Background()); err == nil || !strings.Contains(err.Error(), "must be 5s") {
+		t.Fatalf("VerifyReady() error=%v", err)
+	}
 }
 
 func TestManagerArchiveTerminalAlertsValidatesBatchSize(t *testing.T) {
@@ -242,6 +346,7 @@ func TestManagerArchiveTerminalAlertsValidatesBatchSize(t *testing.T) {
 	transport := newManagerTransport()
 	router, err := newBucketRouter("linkd-test", BucketConfig{
 		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
+		ActiveAlertRefreshInterval: 5 * time.Second,
 	}, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
@@ -282,13 +387,13 @@ func TestManagerArchiveTerminalAlertsDoesNotManageBuckets(t *testing.T) {
 		t.Fatal(err)
 	}
 	endAt := now.Add(time.Minute)
-	alert := domain.Alert{
+	alert := domain.Alert{Revision: 1, EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
-		Fingerprint: event.Fingerprint, Severity: event.Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
+		Fingerprint: event.Fingerprint, Severity: event.Evaluations[0].Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusRecovered, LatestEventID: eventID,
 		LastOccurredAt: endAt, UpdateAt: endAt, TriggerEventID: eventID, BeginAt: now,
 		CreateAt: now, EndAt: &endAt, EndType: domain.AlertEndTypeSource,
-		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{},
+		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: succeededEnrich(),
 	}
 	document, err := encodeAlertDocument(alert)
 	if err != nil {
@@ -300,6 +405,7 @@ func TestManagerArchiveTerminalAlertsDoesNotManageBuckets(t *testing.T) {
 		documentID + `","_seq_no":7,"_primary_term":2,"_source":` + string(document) + `,"sort":["` + alertID + `"]}]}}`
 	router, err := newBucketRouter("linkd-test", BucketConfig{
 		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
+		ActiveAlertRefreshInterval: 5 * time.Second,
 	}, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
@@ -325,7 +431,9 @@ func TestManagerArchiveTerminalAlertsDoesNotManageBuckets(t *testing.T) {
 		t.Fatalf("result=%#v indices=%#v aliases=%#v", result, transport.indices, transport.aliases)
 	}
 	if !strings.Contains(transport.lastSearch, `"search_after":["earlier-alert"]`) ||
-		!strings.Contains(transport.lastSearch, `"sort":[{"alert_id":{"order":"asc"}}]`) {
+		!strings.Contains(transport.lastSearch, `"sort":[{"alert_id":{"order":"asc"}}]`) ||
+		!strings.Contains(transport.lastSearch, `"field":"merge_change.operation_id"`) ||
+		!strings.Contains(transport.lastSearch, `"field":"policy_change.operation_id"`) {
 		t.Fatalf("search body=%s", transport.lastSearch)
 	}
 }
@@ -386,7 +494,8 @@ func TestManagerArchiveTerminalAlertsUsesBoundedWorkers(t *testing.T) {
 		return jsonResponse(t, map[string]any{"items": items}), nil
 	})
 	router, err := newBucketRouter("linkd-test", BucketConfig{
-		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7, MaxFutureSkew: time.Minute,
+		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
+		MaxFutureSkew: time.Minute, ActiveAlertRefreshInterval: 5 * time.Second,
 	}, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)

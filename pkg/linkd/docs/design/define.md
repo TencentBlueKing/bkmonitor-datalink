@@ -1,5 +1,8 @@
 # 核心数据模型
 
+> Event 丰富、事件抑制及 Alert 独立屏蔽/合并字段的计划见
+> [开发方案](event-enrich-and-alarm-policies.md)。下文仍是当前代码的模型，不包含尚未实现的字段。
+
 本文是 Linkd 当前核心数据的权威定义，覆盖 `Event`、`EventProcessing`、`Alert`、`AlertLog` 以及
 存储快照中的 `VersionToken`。字段、状态和不变量以当前 Go 类型、Repository 契约和测试为准。
 
@@ -9,14 +12,14 @@ EventSource 的配置与运行边界见 [EventSource](../modules/event-source.md
 ## 1. 对象关系
 
 ```text
-EventSource（静态配置）
+EventSourceRelease（持久化配置快照）
   └─ 产生多个 Event
        ├─ EventProcessing：该 Event 的生命周期处理结果
-       └─ accepted/suppressed 时 related_alert_id → Alert
+       └─ accepted 必有关联，suppressed 可无 Alert；related_alert_ids → 最多 32 个 Alert
                                       └─ 多条 AlertLog
 ```
 
-- `Event` 是不可变的来源事实，只有 `related_alert_id` 可以由 Lifecycle 补写；
+- `Event` 是不可变的来源事实，允许专用 CAS 冻结丰富结果，以及由 Lifecycle 补写 `related_alert_ids`；
 - `EventProcessing` 是 Event JSON 之外的技术处理状态；
 - `Alert` 是由一个或多个被接受 Event 推进的当前生命周期快照；
 - `AlertLog` 是不可变操作和输出流水，不是 Alert 当前态的一部分；
@@ -32,50 +35,59 @@ Event、Alert 和 AlertLog 是独立对象，Repository 不提供跨对象事务
 - ID 由稳定输入确定性生成，重投时不变，不使用当前时间或随机值兜底；
 - 所有时间进入领域对象前统一为 UTC，存储精度为纳秒；
 - `dimensions`、`labels` 只接受扁平字符串、有限数字和布尔值；
-- `source_raw_data`、`extra_data`、`enrich` 和 AlertLog `params` 是规范化 JSON object；
-- 动态对象会被深拷贝，调用方不能通过共享 map 修改已存领域事实；
+- `source_raw_data`、`extra_data`、`enrich` 和 AlertLog `params` 是 JSON object；新建入口按契约检查，
+  存储读取保留历史内容，内部状态推进不重复解码或重编码未修改的动态字段；
+- 深拷贝只隔离对象所有权，调用方不能通过共享 map 修改已存领域事实；它不隐含规范化或全量校验；
 - `VersionToken` 只由 Repository 解释，调用方只能从读取结果原样交回同一对象的 CAS。
 
 ## 3. Event
 
 Event 是 `RawEventMessage` 经来源 Cleaner 和 EventFactory 标准化后的来源事实。
 
+Event 的 `event_source_version` 是正整数，记录实际使用的来源 Release。Alert 创建时继承触发 Event 的该值，普通更新不可覆盖；AlertLog 不增加独立顶层版本。
+
 ### 3.1 字段
 
 | 字段                               | 约束                           | 语义                                                                      |
 | ---------------------------------- | ------------------------------ | ------------------------------------------------------------------------- |
-| `bk_tenant_id`                     | 1–64 bytes                     | 归属租户；由信封或 EventSource `related_tenant_id` 决定                   |
+| `bk_tenant_id`                     | 1–64 bytes                     | 归属租户；由 EventSource 固定配置或 payload/header 一致性规则确定                   |
 | `event_source_id`                  | 1–32 bytes，`^[a-zA-Z0-9_-]+$` | 产生 Event 的 EventSource                                                 |
 | `event_id`                         | 1–160 bytes                    | UTC 秒、租户、来源和 64-bit 稳定摘要组成的可解析身份                       |
 | `fingerprint`                      | 1–128 bytes                    | Lifecycle 关联 active Alert 的业务键，由 EventSource 配置生成             |
-| `related_alert_id`                 | 0–256 bytes                    | Cleaner 创建时为空；accepted/suppressed Event 写入关联 Alert ID            |
-| `title`                            | 0–256 bytes                    | 来源标题；当前校验允许为空                                                |
+| `related_alert_ids` | 最多 32 个 ID，每个 1–160 bytes | Cleaner 创建时为空；Lifecycle 终态 CAS 写入受到影响或实施抑制的 Alert，排序去重 |
+| `title`                            | 最多 2000 个 Unicode 字符，超出截断                    | 来源标题；当前校验允许为空                                                |
 | `content`                          | 0–1 MiB                        | 来源描述                                                                  |
-| `severity`                         | 1–32 bytes                     | EventSource 映射后的 Linkd Severity name                                  |
-| `action`                           | `triggered/resolved/closed`    | 来源事实对生命周期的动作                                                  |
-| `action_reason`                    | 0–256 bytes                    | 动作原因，和 Event 内容分离                                               |
-| `condition_key` / `condition_name` | 各 0–256 bytes                 | 稳定观测条件及展示名称                                                    |
+| `evaluations` | 1–32 项，标准 severity 唯一 | 每项包含 severity、action（triggered/resolved/closed）与 action_reason（最多 256 bytes）；顺序无语义 |
+| `values` | 最多 256 个有限数字，key 为 1–256 bytes | 本次事件的观测值；缺失/顶层 null 统一为空对象，字段值 null 非法，缺失字段不补零，不参与 fingerprint；ES 只存储不索引 |
 | `dimensions`                       | 扁平 `DimensionMap`            | 参与检索和可选 fingerprint 计算的维度                                     |
 | `subject_system`                   | 0–32 bytes                     | 来源声明的对象命名空间，当前不校验枚举                                    |
 | `subject_type`                     | 0–128 bytes                    | 来源对象类型                                                              |
-| `subject_id` / `subject_name`      | 各 0–256 bytes                 | 来源对象身份和展示名称                                                    |
+| `subject_id` / `subject_name`      | 身份 0–256 bytes；名称最多 2000 个 Unicode 字符，超出截断                 | 来源对象身份和展示名称                                                    |
 | `occurred_at`                      | 非零 UTC 时间                  | 事实发生时间；来源缺失时使用稳定 received_at                              |
 | `produced_at`                      | 非零 UTC 时间                  | 来源产生时间；来源缺失时使用稳定 received_at                              |
 | `received_at`                      | 非零 UTC 时间                  | MQ 适配器提供的稳定接收时间                                               |
 | `create_at`                        | 非零 UTC 时间                  | 当前 EventFactory 使用 received_at，保证重投确定性                        |
-| `source_event_id`                  | 0–256 bytes                    | 来源事件身份；为空时 record ID 参与 Event ID 计算                         |
+| `source_event_id`                  | 0–256 bytes                    | 原始来源事件编号；内部 Event ID 独立按稳定 record ID 计算                         |
 | `source_alert_id`                  | 0–256 bytes                    | 来源告警身份；只有被 fingerprint 配置引用时参与关联                       |
 | `source_raw_data`                  | JSON object                    | 完整来源 payload，不在 Elasticsearch 建索引                               |
 | `labels`                           | 扁平 `DimensionMap`            | 来源或接入侧标签                                                          |
 | `extra_data`                       | JSON object                    | 不进入核心字段的来源扩展数据                                              |
+| `enrich_status` | pending/succeeded/partial/failed/skipped | 新 Event 规范化为 pending；完成态由全部 evaluation 结果汇总 |
+| `enrich.evaluations` | 与 Event.evaluations 的 severity 一一对应，整体最多 1 MiB | 每项 severity、status、data；data 复用 Alert 的 processors envelope |
+| `enriched_at` | 完成时必填 UTC 时间 | 专用 CAS 提交时间，不用于生成身份 |
+| `enrich_config_digest` | 完成时必填，1–128 bytes | 实际执行的配置摘要，完成后固定 |
 
 ### 3.2 不变量
 
-- 新 Event 的 `related_alert_id` 必须为空；
-- Event 创建后，除 `related_alert_id` 外的字段不得变化；
+- 新 Event 的 `related_alert_ids` 必须为空；
+- Event 来源事实创建后不可变；新 Event 不能携带服务端完成的丰富结果；
+- `CompareAndSetEventEnrichment` 只在 unprocessed 且尚无 plan 时提交完整丰富结果；完成后包含失败状态在内均不能覆盖；
+- 关联结果 CAS 不能改写丰富；来源重投复用已提交丰富，不能把它擦除；
 - 相同 `(bk_tenant_id, event_id)` 和相同内容是幂等重投，内容不同是身份冲突；
-- `EventProcessing.state=accepted|suppressed` 时 `related_alert_id` 必填；
-- orphaned、rejected Event 的 `related_alert_id` 必须为空。
+- `EventProcessing.state=accepted` 时 `related_alert_ids` 必填；suppressed 可为空，例如防抖未达到阈值；
+- orphaned、rejected Event 的 `related_alert_ids` 必须为空。
+
+Lifecycle 已在计划前调用 Event 丰富 CAS，并按记录的来源 Release 执行。Alert 使用 opening Event 的选中等级结果。
 
 ## 4. EventProcessing
 
@@ -84,16 +96,29 @@ EventProcessing 是存储层与 Lifecycle 之间的处理元数据，不属于 E
 | 字段           | 约束                                                | 语义                                                                                                                                                      |
 | -------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `state`        | `unprocessed/accepted/suppressed/orphaned/rejected` | Event 生命周期处理状态                                                                                                                                    |
-| `outcome`      | 终态必填                                            | 具体裁决结果，例如 `alert_created`、`alert_updated`、`alert_rotated`、`alert_recovered`、`alert_closed`、`alert_suppressed`、`event_orphaned`、`rejected` |
+| `outcome`      | 终态必填                                            | 具体裁决结果，例如 `alert_created`、`alert_updated`、`alert_severity_changed`、`alert_rotated`、`alert_recovered`、`alert_closed`、`alert_suppressed`、`event_orphaned`、`rejected` |
 | `reason_code`  | 可空                                                | 稳定低基数原因，例如 active Alert 不存在、等级升级或等级抑制                                                                                              |
+| `plan` | unprocessed 或 processing_failed 诊断 | 冻结升级策略、最多两项 Alert 目标快照、稳定操作流水和逐级裁决；终态清除 |
+| `evaluations` | Lifecycle 终态写入 | 每项包含 severity、action、state、outcome、reason_code 和 related_alert_ids；不覆盖 Event.evaluations |
 | `processed_at` | 终态必填                                            | Lifecycle 完成裁决的 UTC 时间                                                                                                                             |
 
-`unprocessed` 不允许带 outcome、reason 或 processed_at。终态结果与 `related_alert_id` 通过一次 Event
+`unprocessed` 不允许带 outcome、reason、evaluations 结果或 processed_at，可以携带 `plan`。
+`plan` 冻结全局升级策略、有界 Alert 目标快照、稳定流水与逐级最终结果，先于副作用 CAS 保存。
+在 Enrich 完成后，`policy_context` 通过独立 Event Result CAS 保存首次处理时间、精确策略版本引用及配置依赖跳过原因；不允许更新或清空。
+`policy_decision` 保存本次抑制和屏蔽裁决：活动 Alert 绕过原因，或逐等级的策略引用、计数、阈值、代次和跳过原因。
+不同等级可能被聚合到不同主 Alert，事件总体关联列表上限对齐 32 个 evaluation；单级关联最多 2 个（升级终结旧 Alert 并创建新 Alert）。
+裁决先进入不可变 Plan；成功最终结果必须与 Plan 一致。普通消息处理失败可转 rejected/processing_failed 并保留原 Plan，仅供诊断。该字段不进入 Event 来源 JSON，不增加 Alert 生命周期枚举。
+
+成功裁决终态清除 plan；rejected/processing_failed 可保留原 Plan 供部分副作用诊断，终态不再执行它。`EventProcessing.evaluations` 保存每级 severity/action/state/outcome/reason_code/related_alert_ids。
+整体 state 按有效生命周期裁决为 accepted、触发被抑制为 suppressed、其余为 orphaned 聚合；明细分别保留。
+同级已放行生命周期的重复触发记录 suppressed/duplicate_trigger，仍推进 Alert 最近事件和时间并输出状态快照，但不触发处置。
+升级优先于旧级别终结，后者明细记录 suppressed/evaluation_superseded（reason_code=severity_upgrade）；不匹配活动级别的终结为 orphaned。
+终态结果与 `related_alert_ids` 通过一次 Event
 CAS 一起写入，避免出现 accepted 但未关联 Alert 的快照。
 
 ## 5. Alert
 
-Alert 是一次异常的当前生命周期快照。它从 opening Event 创建；后续 Event 只推进生命周期字段，
+Alert 是一次异常的当前生命周期快照。它从 opening Event 创建；后续 Event 可推进生命周期字段及按配置升级当前 severity，
 不覆盖继承字段。
 
 ### 5.1 字段分组
@@ -102,26 +127,49 @@ Alert 是一次异常的当前生命周期快照。它从 opening Event 创建�
 | -------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | 身份     | `alert_id`                                                                                     | UTC 秒、租户、来源和 opening Event 摘要组成的可解析身份 |
 | 关联     | `bk_tenant_id`、`event_source_id`、`fingerprint`                                               | active Alert 的唯一关联范围                           |
-| 继承事实 | `title`、`content`、`severity`、condition、dimensions、subject、source IDs、labels、extra_data | 从 opening Event 复制，创建后不可修改                 |
+| 继承事实 | `title`、dimensions、subject、source IDs、labels、extra_data | 从 opening Event 复制，创建后不可修改                 |
+| 告警内容 | `content` | 新建及持续触发时按 EventSource 的 content_mode 复制本次来源内容或生成 bk-monitor description |
+| 当前级别 | `severity` | 初始取 opening Event 中最高触发级别，update_current 升级时可修改；历史级别见 Event/AlertLog |
+| 业务版本 | `revision` | 必填整数 1..2^53-1；新建固定 1，业务 CAS 加一，与仓储 VersionToken 分开 |
+| 投影进度 | `projection.targets[target_id]` | 最多 16 个目标，保存 source_version、required_revision、synced_revision、synced_at；尚未接入目标配置与实际投递 |
 | 当前状态 | `status`                                                                                       | `active/recovered/closed`；后两者为不可重新打开的终态 |
+| 屏蔽 | `shield.active/bindings/next_check_at` | 当前活动绑定（最多 16 个）、进入下一次复查的时间；不替代 status |
+| 放行 | `admission.admitted_at/severity/cause_type/cause_id` | 最近一次实际放行；保留等级，区分被屏蔽升级与已放行的旧等级 |
+| 策略标签 | `policy_tags` | 显式追加的 KAC 标签 ID，去重排序，最多 256 个，单策略最多 128 个 |
+| 待完成输出 | `policy_change` | 定时变更的稳定操作 ID、时间及前后绑定；写流水和尝试状态输出后仅清除此元数据 |
 | 当前进度 | `latest_event_id`、`last_occurred_at`、`update_at`                                             | 最近被接受 Event 及严格单调的服务端快照时间           |
 | 创建锚点 | `trigger_event_id`、`begin_at`、`create_at`                                                    | `create_at` 继承 opening Event 创建时间，创建后不变   |
 | 终态     | `end_at`、`end_type`、`end_reason`                                                             | active 时必须为空；终态时必须完整                     |
-| 丰富     | `enrich_status`、`enrich`                                                                      | 创建前同步计算一次，不覆盖来源事实                    |
+| 丰富     | `enrich_status`、`enrich`、`enrich_severity`                                                    | 从 opening Event 对应等级复制，快照等级不随原地升级改变，不覆盖来源事实 |
 
-`end_type` 只允许 `source/user/system/severity_upgrade`。recovered 的 end_type 固定为 source；closed
-可以由来源关闭、用户/系统直接关闭或等级升级产生。
+`end_type` 只允许 `source/user/system/severity_upgrade`。来源恢复的 end_type 为 source；
+内置合并父告警的全部成员已终结时，允许 recovered + system，固定 end_reason=merge_members_ended。closed
+可以由来源关闭、用户/系统直接关闭或 close_and_create 等级升级产生；update_current 升级仍保持 active。
 
-`enrich_status` 允许 `pending/succeeded/partial/failed`，但正常创建流程只产生 succeeded、partial
-或 failed；当前 Noop Enricher 产生 succeeded 和空对象。
+`enrich_status` 允许 `pending/succeeded/partial/failed`，正常创建流程产生 succeeded、partial
+或 failed。`enrich` 固定只包含 `processors` 顶层 key；processors 按 EventSource 配置顺序保存，
+每项是以 Processor 名称为唯一 key 的结果信封。领域校验根据 Processor 状态聚合并要求结果与
+`enrich_status` 一致。Noop 使用 `{"processors":[]}`。pending 仅用于丰富前的内部构造状态，此时
+enrich 为空对象。
+
+每个投影目标的 source_version 为 1..2^53-1 的来源发布引用；required_revision 范围为
+1..Alert.revision，synced_revision 范围为 0..required_revision。synced_revision=0 时没有 synced_at；
+已有确认时必须保存非零 UTC 时间。新建 Alert 不允许预置确认；ACK 只推进指定目标，重复或旧版本
+ACK 不改写时间，超过要求的 ACK 拒绝，过期来源发布引用的 ACK 不生效。空 projection 不增加同步依赖。
+当前没有从 revision=0 自动补成 1 的兼容行为；早期 schema 直接使用新模型。
+
+目标配置变化是否影响已经创建的 Alert 尚待确认；当前模型不允许业务替换静默删除已绑定目标。
+这些字段和补扫端口已经实现，但不能据此认定 KAC 目标配置、生产任务队列或远端接收端已经启用。
 
 ### 5.2 不变量
 
 - 同一 `(bk_tenant_id, event_source_id, fingerprint)` 同时最多一个 active Alert；
-- 继承字段和创建锚点在 CAS 更新中必须保持不变；
-- `update_at` 必须严格大于旧快照，同一 Event 幂等重投不得推进它；
+- 继承字段和创建锚点在 CAS 更新中保持不变；content 随被接受的持续触发按 content_mode 更新，与时间和 revision 一次保存；
+- 业务变更的 `update_at` 必须严格大于旧快照，`revision` 必须为旧值加一；每个已绑定目标的 required_revision 同一次 CAS 推进到该版本。同一 Event 幂等重投不推进二者；
+- 完成 policy_change/merge_change、向后安排 next_check_at 或确认投影的白名单元数据 CAS 不改变业务 revision/update_at，但仓储 VersionToken 改变；
 - active Alert 不得包含 end 字段；终态 Alert 必须包含合法 end_at/end_type；
-- recovered/closed 不可再修改或重新打开；同一问题再次发生时创建新的 Alert；
+- recovered/closed 的业务事实不可再修改或重新打开；只允许补齐业务流水并重新发布状态通知，同一问题再次发生时创建新的 Alert；
+- 存在未完成 `policy_change` 时先补齐输出尝试和流水，再推进下一次业务变更；绑定不能以同一 ID 更换主告警、版本或起点；
 - 后续 Event 与 Alert 的继承字段差异不会改写 Alert，需要最新来源描述时按 latest_event_id 回查 Event。
 
 ## 6. AlertLog
@@ -135,7 +183,7 @@ AlertLog 是围绕一条 Alert 的不可变流水，记录状态操作、抑制�
 | `bk_tenant_id`   | 非空                                  | 与 Alert 相同的租户作用域                                                       |
 | `alert_id`       | 非空                                  | 所属 Alert                                                                      |
 | `operator_kind`  | `source/user/system`                  | 操作发起方                                                                      |
-| `operation_kind` | `trigger/recover/close/suppress/push` | 状态操作或最终输出动作                                                          |
+| `operation_kind` | `trigger/recover/close/suppress/severity_change/shield/unshield/admit/push` | 状态操作或最终输出动作                                                          |
 | `params`         | JSON object                           | 操作特有参数，例如 event_id、operation_id、reason、hook destination、message_id |
 | `created_time`   | 非零 UTC 时间                         | 操作或输出结果发生时间                                                          |
 
@@ -144,13 +192,13 @@ AlertLog 是围绕一条 Alert 的不可变流水，记录状态操作、抑制�
 
 ## 7. Severity
 
-Severity 是进程级、运行期冻结的有序 name 表。默认值为 `critical(1)`、`warning(2)`、`info(3)`，
+Severity 是 deployment 内的有序 name 表，默认读取启动 YAML，启用动态配置后在线更新。默认值为 `critical(1)`、`warning(2)`、`info(3)`，
 priority 越小越严重。自定义 levels 整体替换默认表，name 和 priority 必须分别唯一；Event 和 Alert
 只保存 name，不保存 priority。
 
 EventSource 先使用 `severity_mapping` 映射来源值；未命中但原值已经是全局 Severity name 时直接使用，
 否则使用来源 `default_severity`，再退回全局 `default_severity`。配置变更不会回溯改写存量 Event 或 Alert，当前实现也不会扫描存量数据校验
-Severity name 兼容性。
+Severity name 兼容性。动态模式保留未映射的未知标准等级；Lifecycle 将含未知等级的未处理 Event 标记 rejected，处理到未知等级活动 Alert 时系统关闭。具体恢复与传播边界见[动态配置设计](dynamic-configuration.md)。
 
 ## 8. 状态归属
 

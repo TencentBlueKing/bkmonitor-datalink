@@ -64,7 +64,7 @@ func TestEventNormalizeAndReplacement(t *testing.T) {
 	if err := domain.ValidateNewEvent(normalized); err != nil {
 		t.Fatal(err)
 	}
-	updated, err := normalized.WithRelatedAlertID("alert-1")
+	updated, err := normalized.WithRelatedAlertIDs([]string{"alert-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,23 +122,20 @@ func TestEventValidation(t *testing.T) {
 		{name: "source required", mutate: func(e *domain.Event) { e.EventSourceID = "" }},
 		{name: "source format", mutate: func(e *domain.Event) { e.EventSourceID = "bad/source" }},
 		{name: "source length", mutate: func(e *domain.Event) { e.EventSourceID = strings.Repeat("s", 33) }},
-		{name: "related alert length", mutate: func(e *domain.Event) { e.RelatedAlertID = strings.Repeat("a", 257) }},
+		{name: "related alert length", mutate: func(e *domain.Event) { e.RelatedAlertIDs = []string{strings.Repeat("a", 257)} }},
 		{name: "event id required", mutate: func(e *domain.Event) { e.EventID = "" }},
 		{name: "event id length", mutate: func(e *domain.Event) { e.EventID = strings.Repeat("e", domain.EntityIDMaxBytes+1) }},
 		{name: "fingerprint required", mutate: func(e *domain.Event) { e.Fingerprint = "" }},
 		{name: "fingerprint length", mutate: func(e *domain.Event) { e.Fingerprint = strings.Repeat("f", 129) }},
-		{name: "title length", mutate: func(e *domain.Event) { e.Title = strings.Repeat("x", 257) }},
 		{name: "content length", mutate: func(e *domain.Event) { e.Content = strings.Repeat("x", 1<<20+1) }},
-		{name: "severity required", mutate: func(e *domain.Event) { e.Severity = "" }},
-		{name: "severity length", mutate: func(e *domain.Event) { e.Severity = strings.Repeat("s", 33) }},
-		{name: "action required", mutate: func(e *domain.Event) { e.Action = "" }},
-		{name: "action enum", mutate: func(e *domain.Event) { e.Action = "updated" }},
-		{name: "action reason length", mutate: func(e *domain.Event) { e.ActionReason = strings.Repeat("r", 257) }},
-		{name: "condition length", mutate: func(e *domain.Event) { e.ConditionKey = strings.Repeat("c", 257) }},
+		{name: "severity required", mutate: func(e *domain.Event) { e.Evaluations[0].Severity = "" }},
+		{name: "severity length", mutate: func(e *domain.Event) { e.Evaluations[0].Severity = strings.Repeat("s", 33) }},
+		{name: "action required", mutate: func(e *domain.Event) { e.Evaluations[0].Action = "" }},
+		{name: "action enum", mutate: func(e *domain.Event) { e.Evaluations[0].Action = "updated" }},
+		{name: "action reason length", mutate: func(e *domain.Event) { e.Evaluations[0].ActionReason = strings.Repeat("r", 257) }},
 		{name: "subject system length", mutate: func(e *domain.Event) { e.SubjectSystem = strings.Repeat("s", 33) }},
 		{name: "subject type length", mutate: func(e *domain.Event) { e.SubjectType = strings.Repeat("s", 129) }},
 		{name: "subject id length", mutate: func(e *domain.Event) { e.SubjectID = strings.Repeat("s", 257) }},
-		{name: "subject name length", mutate: func(e *domain.Event) { e.SubjectName = strings.Repeat("s", 257) }},
 		{name: "source event length", mutate: func(e *domain.Event) { e.SourceEventID = strings.Repeat("s", 257) }},
 		{name: "source alert length", mutate: func(e *domain.Event) { e.SourceAlertID = strings.Repeat("s", 257) }},
 		{name: "occurred time", mutate: func(e *domain.Event) { e.OccurredAt = time.Time{} }},
@@ -170,9 +167,22 @@ func TestAlertLifecycleValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	mismatch := normalized.Clone()
+	mismatch.EnrichStatus = domain.EnrichStatusPartial
+	if err := mismatch.Validate(); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("mismatched enrich status error=%v", err)
+	}
+	multipleKeys := normalized.Clone()
+	multipleKeys.Enrich["processors"] = json.RawMessage(`[{"first":{"status":"succeeded","value":{}},"second":{"status":"succeeded","value":{}}}]`)
+	if err := multipleKeys.Validate(); err == nil || !strings.Contains(err.Error(), "exactly one") {
+		t.Fatalf("multi-key processor error=%v", err)
+	}
 	replacement := normalized.Clone()
+
 	replacement.LatestEventID = "event-2"
+	replacement.Content = "latest event content"
 	replacement.LastOccurredAt = replacement.LastOccurredAt.Add(-time.Minute)
+	replacement.Revision++
 	replacement.UpdateAt = replacement.UpdateAt.Add(time.Nanosecond)
 	if err := domain.ValidateAlertReplacement(normalized, replacement); err != nil {
 		t.Fatal(err)
@@ -182,6 +192,7 @@ func TestAlertLifecycleValidation(t *testing.T) {
 	terminal.EndType = domain.AlertEndTypeSource
 	end := terminal.LastOccurredAt
 	terminal.EndAt = &end
+	terminal.Revision++
 	terminal.UpdateAt = terminal.UpdateAt.Add(time.Nanosecond)
 	if err := domain.ValidateAlertReplacement(replacement, terminal); err != nil {
 		t.Fatal(err)
@@ -190,6 +201,7 @@ func TestAlertLifecycleValidation(t *testing.T) {
 	reopened.Status = domain.AlertStatusActive
 	reopened.EndAt = nil
 	reopened.EndType = ""
+	reopened.Revision++
 	reopened.UpdateAt = reopened.UpdateAt.Add(time.Nanosecond)
 	if err := domain.ValidateAlertReplacement(terminal, reopened); err == nil {
 		t.Fatal("terminal alert reopened")
@@ -201,6 +213,7 @@ func TestAlertLifecycleValidation(t *testing.T) {
 	}
 	mutatedInherited := normalized.Clone()
 	mutatedInherited.Title = "changed"
+	mutatedInherited.Revision++
 	mutatedInherited.UpdateAt = mutatedInherited.UpdateAt.Add(time.Nanosecond)
 	if err := domain.ValidateAlertReplacement(normalized, mutatedInherited); err == nil {
 		t.Fatal("inherited field mutation was accepted")
@@ -222,10 +235,10 @@ func TestEventAndAlertCloneDynamicFields(t *testing.T) {
 		t.Fatal("Event clone shares dynamic fields")
 	}
 	alert := validAlert()
-	alert.Enrich["owner"] = json.RawMessage(`{"id":1}`)
+	alert.Enrich["processors"] = json.RawMessage(`[{"test":{"status":"succeeded","value":{"owner":{"id":1}}}}]`)
 	clonedAlert := alert.Clone()
 	clonedAlert.Dimensions["host"] = domain.NewStringScalar("changed")
-	clonedAlert.Enrich["owner"][0] = '['
+	clonedAlert.Enrich["processors"][0] = '{'
 	if reflect.DeepEqual(alert, clonedAlert) {
 		t.Fatal("Alert clone shares dynamic fields")
 	}
@@ -233,11 +246,30 @@ func TestEventAndAlertCloneDynamicFields(t *testing.T) {
 
 func validEvent() domain.Event {
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	return domain.Event{BKTenantID: "tenant-1", EventSourceID: "source-a", EventID: "event-1", Fingerprint: "fingerprint-1", Title: "CPU high", Severity: "warning", Action: domain.EventActionTriggered, ConditionKey: "cpu", Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceEventID: "source-event-1", SourceAlertID: "source-alert-1", SourceRawData: domain.JSONObject{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}}
+	return domain.Event{Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}}, EventSourceVersion: 1, BKTenantID: "tenant-1", EventSourceID: "source-a", EventID: "event-1", Fingerprint: "fingerprint-1", Title: "CPU high", Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceEventID: "source-event-1", SourceAlertID: "source-alert-1", SourceRawData: domain.JSONObject{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}}
+}
+
+func TestRedeliveryAfterDynamicSeverityMappingChange(t *testing.T) {
+	original := validEvent()
+	original.SourceRawData = domain.JSONObject{"severity": json.RawMessage(`"custom"`)}
+	incoming := original.Clone()
+	incoming.Evaluations[0].Severity = "custom"
+	if err := domain.ValidateEventRedelivery(incoming, original); err != nil {
+		t.Fatal(err)
+	}
+	incoming.Evaluations[0].Action = domain.EventActionResolved
+	if err := domain.ValidateEventRedelivery(incoming, original); err == nil {
+		t.Fatal("action change accepted")
+	}
+	incoming = original.Clone()
+	incoming.Title = "changed"
+	if err := domain.ValidateEventRedelivery(incoming, original); err == nil {
+		t.Fatal("unrelated normalization change accepted")
+	}
 }
 
 func validAlert() domain.Alert {
 	event := validEvent()
 	now := event.CreateAt.Add(time.Second)
-	return domain.Alert{AlertID: "alert-1", BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID, Fingerprint: event.Fingerprint, Title: event.Title, Severity: event.Severity, ConditionKey: event.ConditionKey, Dimensions: event.Dimensions.Clone(), SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: event.EventID, LastOccurredAt: event.OccurredAt, UpdateAt: now, TriggerEventID: event.EventID, BeginAt: event.OccurredAt, CreateAt: now, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{}}
+	return domain.Alert{Revision: 1, EventSourceVersion: 1, AlertID: "alert-1", BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID, Fingerprint: event.Fingerprint, Title: event.Title, Severity: event.Evaluations[0].Severity, Dimensions: event.Dimensions.Clone(), SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: event.EventID, LastOccurredAt: event.OccurredAt, UpdateAt: now, TriggerEventID: event.EventID, BeginAt: event.OccurredAt, CreateAt: now, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{"processors": json.RawMessage(`[]`)}}
 }

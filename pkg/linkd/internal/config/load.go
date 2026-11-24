@@ -19,7 +19,6 @@ import (
 
 	"go.yaml.in/yaml/v3"
 	"linkd/internal/logging"
-	"linkd/internal/telemetry"
 )
 
 const (
@@ -28,17 +27,24 @@ const (
 )
 
 type fileConfig struct {
+	Plugins      PluginsConfig        `yaml:"plugins,omitempty"`
+	Blueking     BluekingConfig       `yaml:"blueking"`
+	Resources    ResourcesConfig      `yaml:"resources,omitempty"`
+	Dispatch     DispatchConfig       `yaml:"dispatch"`
+	Worker       WorkerConfig         `yaml:"worker"`
 	Logging      logging.Config       `yaml:"logging"`
 	Storage      *StorageConfig       `yaml:"storage"`
 	Lifecycle    *LifecycleConfig     `yaml:"lifecycle"`
 	ControlPlane *ControlPlaneConfig  `yaml:"control_plane"`
-	Telemetry    *telemetry.Config    `yaml:"telemetry"`
+	Telemetry    *TelemetryConfig     `yaml:"telemetry"`
 	Cleaner      CleanerRuntimeConfig `yaml:"cleaner"`
 	Severity     SeverityConfig       `yaml:"severity"`
 	EventSources []fileEventSource    `yaml:"event_sources"`
 }
 
 type fileEventSource struct {
+	ActiveAlertLimits *ActiveAlertLimits `yaml:"active_alert_limits"`
+	Scheduling        SourceScheduling   `yaml:"scheduling"`
 	EventSourceID     string             `yaml:"event_source_id"`
 	RelatedTenantID   string             `yaml:"related_tenant_id"`
 	Enabled           *bool              `yaml:"enabled"`
@@ -48,6 +54,8 @@ type fileEventSource struct {
 	FingerprintFields []string           `yaml:"fingerprint_fields"`
 	SeverityMapping   map[string]string  `yaml:"severity_mapping"`
 	DefaultSeverity   string             `yaml:"default_severity"`
+	Hooks             []HookConfig       `yaml:"hooks"`
+	Enrich            EnrichConfig       `yaml:"enrich"`
 	Storage           *fileStorageConfig `yaml:"storage"`
 }
 
@@ -61,6 +69,11 @@ func Load(path string, overrides Overrides) (Config, error) {
 	return load(path, overrides, os.LookupEnv)
 }
 
+// LoadWithSeverity 用控制面当前等级校验显式来源导入，不要求在导入文件中复制动态等级表。
+func LoadWithSeverity(path string, overrides Overrides, severity SeverityConfig) (Config, error) {
+	return load(path, overrides, os.LookupEnv, severity)
+}
+
 // MarshalRedacted 将可安全展示的最终配置编码为 YAML。
 func MarshalRedacted(cfg Config) ([]byte, error) {
 	data, err := yaml.Marshal(cfg.Redacted())
@@ -70,7 +83,7 @@ func MarshalRedacted(cfg Config) ([]byte, error) {
 	return data, nil
 }
 
-func load(path string, overrides Overrides, lookupEnv func(string) (string, bool)) (Config, error) {
+func load(path string, overrides Overrides, lookupEnv func(string) (string, bool), severity ...SeverityConfig) (Config, error) {
 	data, err := readFile(path)
 	if err != nil {
 		return Config{}, err
@@ -82,6 +95,9 @@ func load(path string, overrides Overrides, lookupEnv func(string) (string, bool
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&decoded); err != nil {
 		return Config{}, fmt.Errorf("decode config %q: %w", path, err)
+	}
+	if len(severity) > 0 {
+		decoded.Severity = severity[0].WithDefaults()
 	}
 	var extra yaml.Node
 	err = decoder.Decode(&extra)
@@ -114,6 +130,10 @@ func load(path string, overrides Overrides, lookupEnv func(string) (string, bool
 		controlPlane = &normalized
 	}
 	cfg := Config{
+		Plugins:   decoded.Plugins,
+		Blueking:  decoded.Blueking,
+		Resources: decoded.Resources.Clone(),
+		Dispatch:  decoded.Dispatch, Worker: decoded.Worker,
 		Logging:      decoded.Logging,
 		Storage:      storage,
 		Lifecycle:    lifecycle,
@@ -123,6 +143,25 @@ func load(path string, overrides Overrides, lookupEnv func(string) (string, bool
 		Severity:     decoded.Severity.WithDefaults(),
 		EventSources: eventSources,
 	}
+	if settings := cfg.RedisStreamSettings(); settings != nil {
+		if cfg.ControlPlane == nil {
+			cfg.ControlPlane = &ControlPlaneConfig{}
+		}
+		cfg.ControlPlane.RedisStream = settings
+	}
+	if value, ok := lookupEnv("LINKD_JWT_SECRET_KEY"); ok {
+		cfg.Dispatch.JWT.SecretKey = value
+	}
+	if value, ok := lookupEnv("LINKD_JWT_USERNAME"); ok {
+		cfg.Dispatch.JWT.Username = value
+	}
+	cfg.Dispatch.JWT.Username = cfg.Dispatch.WithDefaults().JWT.Username
+	if value, ok := lookupEnv("LINKD_WORKER_TOKEN"); ok {
+		cfg.Dispatch.WorkerToken = value
+	}
+	if value, ok := lookupEnv("LINKD_CONTROL_PLANE_URL"); ok {
+		cfg.Dispatch.URL = value
+	}
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("resolve config path %q: %w", path, err)
@@ -131,6 +170,9 @@ func load(path string, overrides Overrides, lookupEnv func(string) (string, bool
 		return Config{}, fmt.Errorf("validate config %q: %w", path, err)
 	}
 	applyEnvironment(&cfg, lookupEnv)
+	if err := applyWorkerLabels(&cfg, lookupEnv); err != nil {
+		return Config{}, err
+	}
 	applyOverrides(&cfg, overrides)
 
 	if err := cfg.Validate(); err != nil {
@@ -152,7 +194,7 @@ func decodeEventSources(decoded []fileEventSource) ([]EventSource, error) {
 		if source.Storage == nil {
 			return nil, fmt.Errorf("event_sources[%d].storage is required", index)
 		}
-		if source.Storage.Kafka == nil {
+		if source.Storage.Type != StorageTypeInternalMerge && source.Storage.Kafka == nil {
 			return nil, fmt.Errorf("event_sources[%d].storage.kafka is required", index)
 		}
 
@@ -160,8 +202,15 @@ func decodeEventSources(decoded []fileEventSource) ([]EventSource, error) {
 		if source.Cleaner != nil {
 			cleaner = *source.Cleaner
 		}
+		kafka := KafkaStorageConfig{}
+		if source.Storage.Kafka != nil {
+			kafka = *source.Storage.Kafka
+		}
 		sources[index] = EventSource{
+			Hooks:             source.Hooks,
+			ActiveAlertLimits: source.ActiveAlertLimits,
 			EventSourceID:     source.EventSourceID,
+			Scheduling:        source.Scheduling,
 			RelatedTenantID:   source.RelatedTenantID,
 			Enabled:           *source.Enabled,
 			Cleaner:           cleaner,
@@ -170,9 +219,10 @@ func decodeEventSources(decoded []fileEventSource) ([]EventSource, error) {
 			FingerprintFields: append([]string(nil), source.FingerprintFields...),
 			SeverityMapping:   source.SeverityMapping,
 			DefaultSeverity:   source.DefaultSeverity,
+			Enrich:            source.Enrich.clone(),
 			Storage: EventSourceStorageConfig{
 				Type:  source.Storage.Type,
-				Kafka: *source.Storage.Kafka,
+				Kafka: kafka,
 			},
 		}.WithDefaults()
 	}

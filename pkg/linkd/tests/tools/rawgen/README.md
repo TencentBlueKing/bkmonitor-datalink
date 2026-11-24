@@ -1,11 +1,11 @@
 # standard 测试数据生成器
 
-`rawgen` 为 all-in-one E2E、压测和问题复现生成 `standard` payload JSONL，并输出可计算的 Event、EventProcessing、Alert、AlertLog、Redis signal 和 Kafka Alert V1 预期结果。
+`rawgen` 为 all-in-one E2E、压测和问题复现生成 `standard` payload JSONL，并输出可计算的 Event、EventProcessing、Alert、AlertLog和 Redis signal 预期结果；已移除的 Kafka V1 Hook 不再计入输出和 push 流水。
 
 - 相同 seed 和配置产生完全相同的数据；
 - 生命周期块之间随机排列，块内保持稳定顺序；
 - 覆盖 `active`、`recovered`、`closed`、`severity_rotation` 和 `cross_tenant`；
-- `severity_rotation` 同时产生 warning 到 critical 的升级和随后 warning 的低等级抑制；
+- `severity_rotation` 产生单项 evaluations 的 warning → critical → warning 消息序列，预期清单按默认 close_and_create 的升级与抑制生成；
 - 可指定重复 delivery、确定性坏消息、租户数和同等级 triggered 次数；
 - 生成器只构造数据，不控制 Kafka 发送速率或采集吞吐指标。
 

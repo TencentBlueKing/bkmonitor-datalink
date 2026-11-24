@@ -11,101 +11,144 @@ package lifecycle
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
 	"linkd/internal/domain"
+	"linkd/internal/enrich"
+	"linkd/internal/processingerror"
+	"linkd/internal/store"
 )
 
-// EnrichInput 是 Enricher 可读取但不得修改的 Event 与待创建 Alert 副本。
-type EnrichInput struct {
-	Event domain.Event
-	Alert domain.Alert
+// EventEnricher 在生命周期和策略裁决前为每条 Event 执行只读、可重试的丰富。
+type EventEnricher interface {
+	Enrich(ctx context.Context, input enrich.Input) (enrich.Result, error)
 }
 
-// EnrichResult 只允许设置 Alert 的 enrich_status 与 enrich。
-type EnrichResult struct {
-	Status domain.EnrichStatus
-	Data   domain.JSONObject
-}
-
-// AlertEnricher 为新建 Alert 提供同步、无副作用且可重试的丰富入口。
-type AlertEnricher interface {
-	Enrich(ctx context.Context, input EnrichInput) (EnrichResult, error)
-}
-
-// NoopEnricher 保留丰富入口，但不产生实际丰富数据。
-type NoopEnricher struct{}
-
-// Enrich 把未配置丰富规则视为一次成功的空丰富，使正常创建不会落入 pending。
-func (NoopEnricher) Enrich(ctx context.Context, _ EnrichInput) (EnrichResult, error) {
-	if err := ctx.Err(); err != nil {
-		return EnrichResult{}, err
+// enrichEvent 先冻结结果再允许计划/策略产生副作用。CAS 失败交由外层重读，已提交结果绝不重算。
+func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent, active *domain.Alert) (store.StoredEvent, error) {
+	defer p.measurePhase(phaseEnrich)()
+	event := stored.Event
+	if event.EnrichStatus != "" && event.EnrichStatus != domain.EnrichStatusPending {
+		return stored, nil
 	}
-	return EnrichResult{Status: domain.EnrichStatusSucceeded, Data: domain.JSONObject{}}, nil
-}
-
-func (p *Processor) enrichNewAlert(
-	ctx context.Context,
-	event domain.Event,
-	alert domain.Alert,
-) (domain.Alert, error) {
-	normalized, err := alert.Normalize()
+	startedAt := time.Now()
+	chainKind := enrich.ChainUnknown
+	if classifier, ok := p.enricher.(EnrichRouteClassifier); ok {
+		chainKind = classifier.EnrichChainKind(event.EventSourceID)
+	}
+	p.enrichObserver.Started(ctx, event.EventSourceID)
+	observation := EnrichObservation{EventSourceID: event.EventSourceID, Status: domain.EnrichStatusFailed, Outcome: EnrichOutcomeError, ChainKind: chainKind}
+	defer func() { observation.Duration = time.Since(startedAt); p.enrichObserver.Finished(ctx, observation) }()
+	result, failureReason, failure := p.callEnricher(ctx, enrich.Input{Event: event.Clone(), ActiveAlert: active})
+	if errors.Is(failure, processingerror.ErrControlPlaneUnavailable) {
+		return store.StoredEvent{}, failure
+	}
+	if result.ChainKind != "" {
+		observation.ChainKind = result.ChainKind
+	}
+	if err := ctx.Err(); err != nil {
+		return store.StoredEvent{}, err
+	}
+	at, err := p.now()
 	if err != nil {
-		return domain.Alert{}, fmt.Errorf("normalize base alert before enrich: %w", err)
+		return store.StoredEvent{}, err
 	}
-	result, failureReason := p.callEnricher(ctx, EnrichInput{
-		Event: event.Clone(),
-		Alert: normalized.Clone(),
-	})
-	if err := ctx.Err(); err != nil {
-		return domain.Alert{}, err
+	digest := result.ConfigDigest
+	// 依赖初始化或自定义执行器失败时没有可信配置摘要；明确记录 unavailable，不伪造配置身份。
+	if digest == "" {
+		digest = "unavailable"
 	}
-	if failureReason == "" {
-		var normalizeErr error
-		result.Data, normalizeErr = result.Data.Normalize()
-		switch {
-		case result.Status != domain.EnrichStatusSucceeded &&
-			result.Status != domain.EnrichStatusPartial &&
-			result.Status != domain.EnrichStatusFailed:
-			failureReason = "invalid_enrich_status"
-		case normalizeErr != nil:
+	if len(digest) > 128 {
+		digest = "unavailable"
+		if failureReason == "" {
 			failureReason = "invalid_enrich_data"
+			failure = fmt.Errorf("invalid enrich configuration digest")
+		}
+	}
+	sourceVersion := result.SourceVersion
+	snapshot := domain.EventEnrichment{EnrichStatus: result.Status, Enrich: result.Data, EnrichedAt: &at, EnrichConfigDigest: digest, EnrichSourceVersion: sourceVersion}
+	if failureReason == "" && (!result.Status.Valid() || result.Status == domain.EnrichStatusPending) {
+		failureReason = "invalid_enrich_status"
+		failure = fmt.Errorf("enricher returned invalid status %q", result.Status)
+	}
+	// 提交边界检查新结果；内部流转不预先执行同一份载荷的完整校验。
+	var updated store.StoredEvent
+	var persistErr error
+	if failureReason == "" {
+		updated, persistErr = p.writeEventEnrichment(ctx, stored, snapshot)
+		if errors.Is(persistErr, store.ErrInvalidArgument) {
+			failureReason = "invalid_enrich_data"
+			failure = persistErr
 		}
 	}
 	if failureReason != "" {
-		p.logger.WarnContext(
-			ctx,
-			"alert enrich degraded",
-			"bk_tenant_id", event.BKTenantID,
-			"event_id", event.EventID,
-			"alert_id", normalized.AlertID,
-			"reason_code", failureReason,
-		)
-		result = EnrichResult{Status: domain.EnrichStatusFailed, Data: domain.JSONObject{}}
+		p.logger.WarnContext(ctx, "event enrich degraded", "module", "lifecycle", "operation", "enrich", "error", failure, "event_source_id", event.EventSourceID, "bk_tenant_id", event.BKTenantID, "event_id", event.EventID, "reason_code", failureReason)
+		result = failedEnrichResult(event)
+		snapshot = domain.EventEnrichment{EnrichStatus: result.Status, Enrich: result.Data, EnrichedAt: &at, EnrichConfigDigest: digest, EnrichSourceVersion: sourceVersion}
+		updated, persistErr = p.writeEventEnrichment(ctx, stored, snapshot)
 	}
-	normalized.EnrichStatus = result.Status
-	normalized.Enrich = result.Data.Clone()
-	normalized, err = normalized.Normalize()
-	if err != nil {
-		return domain.Alert{}, fmt.Errorf("normalize enriched alert: %w", err)
+	observation.Outcome = enrichMetricOutcome(failureReason)
+	observation.Status = snapshot.EnrichStatus
+	if encoded, err := json.Marshal(snapshot.Enrich); err == nil {
+		observation.PayloadBytes = int64(len(encoded))
 	}
-	return normalized, nil
+	if persistErr == nil {
+		updated.Event = updated.Event.WithEnrichEvaluations(result.Evaluations)
+	}
+	return updated, persistErr
+}
+
+func (p *Processor) writeEventEnrichment(ctx context.Context, stored store.StoredEvent, result domain.EventEnrichment) (store.StoredEvent, error) {
+	defer p.measureStep(phaseEnrich, "persist")()
+	if repo, ok := p.repository.(store.LifecycleEventSnapshotStore); ok {
+		return repo.CompareAndSetEventEnrichmentFromSnapshot(ctx, stored, result)
+	}
+	return p.repository.CompareAndSetEventEnrichment(ctx, stored.Event.BKTenantID, stored.Event.EventID, stored.Version, result)
+}
+
+func enrichMetricOutcome(failureReason string) string {
+	switch failureReason {
+	case "":
+		return EnrichOutcomeCompleted
+	case "enricher_error":
+		return EnrichOutcomeError
+	case "enricher_panic":
+		return EnrichOutcomePanic
+	case "invalid_enrich_status":
+		return EnrichOutcomeInvalidStatus
+	default:
+		return EnrichOutcomeInvalidData
+	}
+}
+
+func failedEnrichResult(event domain.Event) enrich.Result {
+	result := enrich.Result{Status: domain.EnrichStatusFailed}
+	for _, evaluation := range event.Evaluations {
+		result.Data.Evaluations = append(result.Data.Evaluations, domain.EvaluationEnrich{Severity: evaluation.Severity, Status: domain.EnrichStatusFailed, Data: domain.JSONObject{
+			"processors": json.RawMessage(`[{"enricher":{"status":"failed","value":{},"diagnostics":[{"code":"dependency_invalid","dependency":"enricher"}]}}]`),
+		}})
+	}
+	return result
 }
 
 func (p *Processor) callEnricher(
 	ctx context.Context,
-	input EnrichInput,
-) (result EnrichResult, failureReason string) {
+	input enrich.Input,
+) (result enrich.Result, failureReason string, err error) {
+	defer p.measureStep(phaseEnrich, "chain")()
 	defer func() {
 		if recover() != nil {
-			result = EnrichResult{}
+			result = enrich.Result{}
 			failureReason = "enricher_panic"
+			err = processingerror.CapturePanic()
 		}
 	}()
-	var err error
 	result, err = p.enricher.Enrich(ctx, input)
 	if err != nil {
-		return EnrichResult{}, "enricher_error"
+		return result, "enricher_error", err
 	}
-	return result, ""
+	return result, "", nil
 }

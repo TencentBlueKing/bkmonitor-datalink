@@ -1,0 +1,6 @@
+interface:
+  display_name: "Linkd 调试运维"
+  short_description: "为 Linkd 开发维护人员提供链路排障、配置诊断与最终人工确认后的受控运维"
+  default_prompt: "使用 $linkd-ops 调查目标 Linkd 环境的异常，先收集只读证据，任何操作都在展示最终参数、范围和影响并获得确认后执行。"
+policy:
+  allow_implicit_invocation: true

@@ -45,13 +45,24 @@ type ArchiveFailure struct {
 	Reason string
 }
 
+// ArchiveConflict 标识因 Active 并发更新而留待下一轮扫描的文档，不承载业务载荷。
+type ArchiveConflict struct {
+	Index      string
+	DocumentID string
+}
+
 // ArchiveBatchResult 描述一次扫描批次的逐项收敛结果。
+// Scanned 等于 Archived、Conflicts 与 Failed 之和；冲突不表示归档完成。
 type ArchiveBatchResult struct {
 	// Scanned 是本批从 Active 索引读取的终态 Alert 数。
 	Scanned int
 	// Archived 是已确认写入 History 且完成 Active 条件删除的数量。
 	Archived int
-	// Failed 是保留在 Active 等待后续重试的数量。
+	// Conflicts 是 History 已确认、但 Active 并发更新而留待下一轮扫描的数量。
+	Conflicts int
+	// ConflictItems 只保留有限身份样本，不增加持久重试队列。
+	ConflictItems []ArchiveConflict
+	// Failed 是本轮真实失败并保留在 Active 的数量。
 	Failed int
 	// NextCursor 非空表示同一轮扫描还有后续页。
 	NextCursor string
@@ -63,6 +74,7 @@ type archiveItemResult struct {
 	index      string
 	documentID string
 	archived   bool
+	conflicted bool
 	stage      string
 	err        error
 }
@@ -104,6 +116,7 @@ type archiveMultiGetResponse struct {
 }
 
 // archiveTerminalAlertsBulk 先批量 create History，再只批量删除已确认存在于 History 的 Active 副本。
+// 两次 Bulk 都使用 refresh=false；成功表示主分片已确认写入，不表示 search 已经可见。
 // 返回值与输入位置一一对应；单项失败不会阻止同一批中的其他 Alert 收敛。
 func (r *Repository) archiveTerminalAlertsBulk(
 	ctx context.Context,
@@ -145,6 +158,10 @@ func (r *Repository) prepareArchiveItem(
 	}
 	if !terminal.Alert.Status.Terminal() {
 		return preparedArchiveItem{}, fmt.Errorf("archive alert: alert is not terminal")
+	}
+	// 控制任务从 Active 索引发现待输出意图；完成前归档会使中断的终态输出失去补扫入口。
+	if terminal.Alert.MergeChange != nil || terminal.Alert.PolicyChange != nil {
+		return preparedArchiveItem{}, fmt.Errorf("archive alert: pending policy output")
 	}
 	activeVersion, ok := decodeVersion(terminal.Version)
 	if !ok {
@@ -221,7 +238,7 @@ func (r *Repository) archivePreparedChunk(
 		body.Write(item.body)
 		body.WriteByte('\n')
 	}
-	query := url.Values{"refresh": []string{"wait_for"}}
+	query := url.Values{"refresh": []string{"false"}}
 	if requireAlias {
 		query.Set("require_alias", "true")
 	}
@@ -289,7 +306,14 @@ func (r *Repository) verifyArchiveConflicts(
 		return nil
 	}
 	var response archiveMultiGetResponse
-	if err := r.performJSON(ctx, http.MethodPost, "/_mget", nil, body, &response); err != nil {
+	if err := r.performJSON(
+		ctx,
+		http.MethodPost,
+		"/_mget",
+		url.Values{"realtime": []string{"true"}},
+		body,
+		&response,
+	); err != nil {
 		setArchiveChunkError(indices, results, "history_verify", fmt.Errorf("bulk read duplicate alert history: %w", err))
 		return nil
 	}
@@ -357,7 +381,7 @@ func (r *Repository) deleteArchivedActiveAlerts(
 	if len(deleteIndices) == 0 {
 		return
 	}
-	query := url.Values{"refresh": []string{"wait_for"}}
+	query := url.Values{"refresh": []string{"false"}}
 	var response bulkDeleteResponse
 	if err := r.performNDJSON(ctx, http.MethodPost, "/_bulk", query, body.Bytes(), &response); err != nil {
 		setArchiveChunkError(deleteIndices, results, "active_delete", fmt.Errorf("bulk delete archived active alerts: %w", err))
@@ -370,10 +394,12 @@ func (r *Repository) deleteArchivedActiveAlerts(
 		))
 		return
 	}
+	conflicts := make([]int, 0)
 	for responseIndex, resultIndex := range deleteIndices {
 		item := prepared[resultIndex]
 		deleted := response.Items[responseIndex].Delete
-		if deleted.Status == http.StatusOK || deleted.Status == http.StatusNotFound {
+		switch deleted.Status {
+		case http.StatusOK, http.StatusNotFound:
 			if (deleted.ID != "" && deleted.ID != item.activeVersion.DocumentID) ||
 				(deleted.Index != "" && deleted.Index != item.activeVersion.Index) {
 				results[resultIndex].stage = "active_delete"
@@ -381,13 +407,83 @@ func (r *Repository) deleteArchivedActiveAlerts(
 				continue
 			}
 			results[resultIndex].archived = true
+		case http.StatusConflict:
+			conflicts = append(conflicts, resultIndex)
+		default:
+			results[resultIndex].stage = "active_delete"
+			results[resultIndex].err = archiveBulkItemError(
+				"delete archived active alert", item.terminal.Alert.AlertID, deleted.Status,
+				deleted.Error,
+			)
+		}
+	}
+	if len(conflicts) != 0 {
+		r.verifyActiveDeleteConflicts(ctx, prepared, conflicts, results)
+	}
+}
+
+// verifyActiveDeleteConflicts 区分未 refresh 的旧 search hit 和真实并发更新。
+// 只有 realtime 读确认 Active 文档已不存在时才收敛为成功；仍存在的文档必须留给后续扫描。
+func (r *Repository) verifyActiveDeleteConflicts(
+	ctx context.Context,
+	prepared []*preparedArchiveItem,
+	indices []int,
+	results []archiveItemResult,
+) {
+	documents := make([]map[string]string, 0, len(indices))
+	for _, index := range indices {
+		version := prepared[index].activeVersion
+		documents = append(documents, map[string]string{"_index": version.Index, "_id": version.DocumentID})
+	}
+	body, err := marshalRequest(map[string]any{"docs": documents})
+	if err != nil {
+		setArchiveChunkError(indices, results, "active_verify", err)
+		return
+	}
+	var response archiveMultiGetResponse
+	if err := r.performJSON(
+		ctx,
+		http.MethodPost,
+		"/_mget",
+		url.Values{"realtime": []string{"true"}},
+		body,
+		&response,
+	); err != nil {
+		setArchiveChunkError(indices, results, "active_verify", fmt.Errorf("bulk verify active delete conflict: %w", err))
+		return
+	}
+	if len(response.Docs) != len(indices) {
+		setArchiveChunkError(indices, results, "active_verify", fmt.Errorf(
+			"elasticsearch active delete conflict mget returned %d items for %d alerts",
+			len(response.Docs), len(indices),
+		))
+		return
+	}
+	for responseIndex, resultIndex := range indices {
+		document := response.Docs[responseIndex]
+		if len(document.Error) != 0 && string(document.Error) != "null" {
+			results[resultIndex].stage = "active_verify"
+			results[resultIndex].err = fmt.Errorf("read active delete conflict returned an item error")
 			continue
 		}
-		results[resultIndex].stage = "active_delete"
-		results[resultIndex].err = archiveBulkItemError(
-			"delete archived active alert", item.terminal.Alert.AlertID, deleted.Status,
-			deleted.Error,
-		)
+		if !document.Found {
+			results[resultIndex].archived = true
+			continue
+		}
+		version := prepared[resultIndex].activeVersion
+		if document.Index != version.Index || document.ID != version.DocumentID || document.PrimaryTerm <= 0 || document.SeqNo < 0 {
+			results[resultIndex].stage = "active_verify"
+			results[resultIndex].err = fmt.Errorf("active delete conflict returned an invalid identity or version")
+			continue
+		}
+		if document.SeqNo == version.SeqNo && document.PrimaryTerm == version.PrimaryTerm {
+			results[resultIndex].stage = "active_verify"
+			results[resultIndex].err = fmt.Errorf("active delete conflict did not change the observed version")
+			continue
+		}
+		// History 已持久化，但这里读到的是另一版本；不能删除它或在本批循环争抢。
+		// 独立计数后让游标继续前进，下一轮重新验证 History 与新的 Active 快照。
+		results[resultIndex].conflicted = true
 	}
 }
 

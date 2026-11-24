@@ -1,0 +1,7282 @@
+[
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "0",
+    "formatted": "0",
+    "minimum": 0
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "0.0",
+    "formatted": "0.0",
+    "minimum": 0.0
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "-0.0",
+    "formatted": "-0.0",
+    "minimum": -0.0
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "1",
+    "formatted": "1",
+    "minimum": 1
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "1.0",
+    "formatted": "1.0",
+    "minimum": 1.0
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "0.9",
+    "formatted": "0.9",
+    "minimum": 0.9
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "-1",
+    "formatted": "-1",
+    "minimum": -1
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "999",
+    "formatted": "999",
+    "minimum": 999
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "1000",
+    "formatted": "1000",
+    "minimum": 1000
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "1024",
+    "formatted": "1024",
+    "minimum": 1024
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "1025",
+    "formatted": "1025",
+    "minimum": 1025
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "2.675",
+    "formatted": "2.675",
+    "minimum": 2.675
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "0.0000015",
+    "formatted": "2e-06",
+    "minimum": 1.5e-06
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "1e-7",
+    "formatted": "0.0",
+    "minimum": 1e-07
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "-1e-7",
+    "formatted": "-0.0",
+    "minimum": -1e-07
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "60",
+    "formatted": "60",
+    "minimum": 60
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "3600",
+    "formatted": "3600",
+    "minimum": 3600
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "24",
+    "formatted": "24",
+    "minimum": 24
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "-1000",
+    "formatted": "-1000",
+    "minimum": -1000
+  },
+  {
+    "unit": "none",
+    "category_unit": "Misc||none",
+    "raw": "1e16",
+    "formatted": "1e+16",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "0",
+    "formatted": "0",
+    "minimum": 0
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "0.0",
+    "formatted": "0.0",
+    "minimum": 0.0
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "-0.0",
+    "formatted": "-0.0",
+    "minimum": -0.0
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "1",
+    "formatted": "1",
+    "minimum": 1
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "1.0",
+    "formatted": "1.0",
+    "minimum": 1.0
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "0.9",
+    "formatted": "0.9",
+    "minimum": 0.9
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "-1",
+    "formatted": "-1",
+    "minimum": -1
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "999",
+    "formatted": "999",
+    "minimum": 999
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "1000",
+    "formatted": "1000",
+    "minimum": 1000
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "1024",
+    "formatted": "1024",
+    "minimum": 1024
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "1025",
+    "formatted": "1025",
+    "minimum": 1025
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "2.675",
+    "formatted": "2.675",
+    "minimum": 2.675
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "0.0000015",
+    "formatted": "2e-06",
+    "minimum": 1.5e-06
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "1e-7",
+    "formatted": "0.0",
+    "minimum": 1e-07
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "-1e-7",
+    "formatted": "-0.0",
+    "minimum": -1e-07
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "60",
+    "formatted": "60",
+    "minimum": 60
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "3600",
+    "formatted": "3600",
+    "minimum": 3600
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "24",
+    "formatted": "24",
+    "minimum": 24
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "-1000",
+    "formatted": "-1000",
+    "minimum": -1000
+  },
+  {
+    "unit": "short",
+    "category_unit": "Misc||short",
+    "raw": "1e16",
+    "formatted": "1e+16",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "0",
+    "formatted": "0%",
+    "minimum": 0
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "0.0",
+    "formatted": "0.0%",
+    "minimum": 0.0
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "-0.0",
+    "formatted": "-0.0%",
+    "minimum": -0.0
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "1",
+    "formatted": "1%",
+    "minimum": 1
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "1.0",
+    "formatted": "1.0%",
+    "minimum": 1.0
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "0.9",
+    "formatted": "0.9%",
+    "minimum": 0.9
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "-1",
+    "formatted": "-1%",
+    "minimum": -1
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "999",
+    "formatted": "999%",
+    "minimum": 999
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "1000",
+    "formatted": "1000%",
+    "minimum": 1000
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "1024",
+    "formatted": "1024%",
+    "minimum": 1024
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "1025",
+    "formatted": "1025%",
+    "minimum": 1025
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "2.675",
+    "formatted": "2.675%",
+    "minimum": 2.675
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "0.0000015",
+    "formatted": "2e-06%",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "1e-7",
+    "formatted": "0.0%",
+    "minimum": 0.0
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "-1e-7",
+    "formatted": "-0.0%",
+    "minimum": -0.0
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "60",
+    "formatted": "60%",
+    "minimum": 60
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "3600",
+    "formatted": "3600%",
+    "minimum": 3600
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "24",
+    "formatted": "24%",
+    "minimum": 24
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "-1000",
+    "formatted": "-1000%",
+    "minimum": -1000
+  },
+  {
+    "unit": "percent",
+    "category_unit": "Misc||percent",
+    "raw": "1e16",
+    "formatted": "1e+16%",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "0",
+    "formatted": "0%",
+    "minimum": 0
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "0.0",
+    "formatted": "0.0%",
+    "minimum": 0.0
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "-0.0",
+    "formatted": "-0.0%",
+    "minimum": -0.0
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "1",
+    "formatted": "100%",
+    "minimum": 100
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "1.0",
+    "formatted": "100.0%",
+    "minimum": 100.0
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "0.9",
+    "formatted": "90.0%",
+    "minimum": 90.0
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "-1",
+    "formatted": "-100%",
+    "minimum": -100
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "999",
+    "formatted": "99900%",
+    "minimum": 99900
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "1000",
+    "formatted": "100000%",
+    "minimum": 100000
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "1024",
+    "formatted": "102400%",
+    "minimum": 102400
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "1025",
+    "formatted": "102500%",
+    "minimum": 102500
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "2.675",
+    "formatted": "267.5%",
+    "minimum": 267.5
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "0.0000015",
+    "formatted": "0.00015%",
+    "minimum": 0.00015
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "1e-7",
+    "formatted": "1e-05%",
+    "minimum": 1e-05
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "-1e-7",
+    "formatted": "-1e-05%",
+    "minimum": -1e-05
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "60",
+    "formatted": "6000%",
+    "minimum": 6000
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "3600",
+    "formatted": "360000%",
+    "minimum": 360000
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "24",
+    "formatted": "2400%",
+    "minimum": 2400
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "-1000",
+    "formatted": "-100000%",
+    "minimum": -100000
+  },
+  {
+    "unit": "percentunit",
+    "category_unit": "Misc||percentunit",
+    "raw": "1e16",
+    "formatted": "1e+18%",
+    "minimum": 1e+18
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "0",
+    "formatted": "0b",
+    "minimum": 0
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "0.0",
+    "formatted": "0.0b",
+    "minimum": 0.0
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "-0.0",
+    "formatted": "-0.0b",
+    "minimum": -0.0
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "1",
+    "formatted": "1b",
+    "minimum": 1
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "1.0",
+    "formatted": "1.0b",
+    "minimum": 1.0
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "0.9",
+    "formatted": "0.9b",
+    "minimum": 0.9
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "-1",
+    "formatted": "-1b",
+    "minimum": -1
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "999",
+    "formatted": "999b",
+    "minimum": 999
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "1000",
+    "formatted": "1000b",
+    "minimum": 1000
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "1024",
+    "formatted": "1.0Kib",
+    "minimum": 1024
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "1025",
+    "formatted": "1.000977Kib",
+    "minimum": 1025
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "2.675",
+    "formatted": "2.675b",
+    "minimum": 2.675
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "0.0000015",
+    "formatted": "2e-06b",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "1e-7",
+    "formatted": "0.0b",
+    "minimum": 0.0
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "-1e-7",
+    "formatted": "-0.0b",
+    "minimum": -0.0
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "60",
+    "formatted": "60b",
+    "minimum": 60
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "3600",
+    "formatted": "3.515625Kib",
+    "minimum": 3600
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "24",
+    "formatted": "24b",
+    "minimum": 24
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "-1000",
+    "formatted": "-1000b",
+    "minimum": -1000
+  },
+  {
+    "unit": "bits",
+    "category_unit": "Data (IEC)||bits",
+    "raw": "1e16",
+    "formatted": "8.881784Pib",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "0",
+    "formatted": "0B",
+    "minimum": 0
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "0.0",
+    "formatted": "0.0B",
+    "minimum": 0.0
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "-0.0",
+    "formatted": "-0.0B",
+    "minimum": -0.0
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "1",
+    "formatted": "1B",
+    "minimum": 1
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "1.0",
+    "formatted": "1.0B",
+    "minimum": 1.0
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "0.9",
+    "formatted": "0.9B",
+    "minimum": 0.9
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "-1",
+    "formatted": "-1B",
+    "minimum": -1
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "999",
+    "formatted": "999B",
+    "minimum": 999
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "1000",
+    "formatted": "1000B",
+    "minimum": 1000
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "1024",
+    "formatted": "1.0KiB",
+    "minimum": 1024
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "1025",
+    "formatted": "1.000977KiB",
+    "minimum": 1025
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "2.675",
+    "formatted": "2.675B",
+    "minimum": 2.675
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "0.0000015",
+    "formatted": "2e-06B",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "1e-7",
+    "formatted": "0.0B",
+    "minimum": 0.0
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "-1e-7",
+    "formatted": "-0.0B",
+    "minimum": -0.0
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "60",
+    "formatted": "60B",
+    "minimum": 60
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "3600",
+    "formatted": "3.515625KiB",
+    "minimum": 3600
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "24",
+    "formatted": "24B",
+    "minimum": 24
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "-1000",
+    "formatted": "-1000B",
+    "minimum": -1000
+  },
+  {
+    "unit": "bytes",
+    "category_unit": "Data (IEC)||bytes",
+    "raw": "1e16",
+    "formatted": "8.881784PiB",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "0",
+    "formatted": "0B",
+    "minimum": 0
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "0.0",
+    "formatted": "0.0B",
+    "minimum": 0.0
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "-0.0",
+    "formatted": "-0.0B",
+    "minimum": -0.0
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "1",
+    "formatted": "1KiB",
+    "minimum": 1024
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "1.0",
+    "formatted": "1.0KiB",
+    "minimum": 1024.0
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "0.9",
+    "formatted": "921.6B",
+    "minimum": 921.6
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "-1",
+    "formatted": "-1KiB",
+    "minimum": -1024
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "999",
+    "formatted": "999KiB",
+    "minimum": 1022976
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "1000",
+    "formatted": "1000KiB",
+    "minimum": 1024000
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "1024",
+    "formatted": "1.0MiB",
+    "minimum": 1048576
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "1025",
+    "formatted": "1.000977MiB",
+    "minimum": 1049600
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "2.675",
+    "formatted": "2.675KiB",
+    "minimum": 2739.2
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "0.0000015",
+    "formatted": "0.001536B",
+    "minimum": 0.001536
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "1e-7",
+    "formatted": "0.000102B",
+    "minimum": 0.000102
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "-1e-7",
+    "formatted": "-0.000102B",
+    "minimum": -0.000102
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "60",
+    "formatted": "60KiB",
+    "minimum": 61440
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "3600",
+    "formatted": "3.515625MiB",
+    "minimum": 3686400
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "24",
+    "formatted": "24KiB",
+    "minimum": 24576
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "-1000",
+    "formatted": "-1000KiB",
+    "minimum": -1024000
+  },
+  {
+    "unit": "kbytes",
+    "category_unit": "Data (IEC)||kbytes",
+    "raw": "1e16",
+    "formatted": "8.881784EiB",
+    "minimum": 1.024e+19
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "0",
+    "formatted": "0B",
+    "minimum": 0
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "0.0",
+    "formatted": "0.0B",
+    "minimum": 0.0
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "-0.0",
+    "formatted": "-0.0B",
+    "minimum": -0.0
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "1",
+    "formatted": "1MiB",
+    "minimum": 1048576
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "1.0",
+    "formatted": "1.0MiB",
+    "minimum": 1048576.0
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "0.9",
+    "formatted": "921.6KiB",
+    "minimum": 943718.4
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "-1",
+    "formatted": "-1MiB",
+    "minimum": -1048576
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "999",
+    "formatted": "999MiB",
+    "minimum": 1047527424
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "1000",
+    "formatted": "1000MiB",
+    "minimum": 1048576000
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "1024",
+    "formatted": "1.0GiB",
+    "minimum": 1073741824
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "1025",
+    "formatted": "1.000977GiB",
+    "minimum": 1074790400
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "2.675",
+    "formatted": "2.675MiB",
+    "minimum": 2804940.8
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "0.0000015",
+    "formatted": "1.572864B",
+    "minimum": 1.572864
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "1e-7",
+    "formatted": "0.104858B",
+    "minimum": 0.104858
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "-1e-7",
+    "formatted": "-0.104858B",
+    "minimum": -0.104858
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "60",
+    "formatted": "60MiB",
+    "minimum": 62914560
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "3600",
+    "formatted": "3.515625GiB",
+    "minimum": 3774873600
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "24",
+    "formatted": "24MiB",
+    "minimum": 25165824
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "-1000",
+    "formatted": "-1000MiB",
+    "minimum": -1048576000
+  },
+  {
+    "unit": "mbytes",
+    "category_unit": "Data (IEC)||mbytes",
+    "raw": "1e16",
+    "formatted": "8.881784ZiB",
+    "minimum": 1.048576e+22
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "0",
+    "formatted": "0B",
+    "minimum": 0
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "0.0",
+    "formatted": "0.0B",
+    "minimum": 0.0
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "-0.0",
+    "formatted": "-0.0B",
+    "minimum": -0.0
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "1",
+    "formatted": "1GiB",
+    "minimum": 1073741824
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "1.0",
+    "formatted": "1.0GiB",
+    "minimum": 1073741824.0
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "0.9",
+    "formatted": "921.6MiB",
+    "minimum": 966367641.6
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "-1",
+    "formatted": "-1GiB",
+    "minimum": -1073741824
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "999",
+    "formatted": "999GiB",
+    "minimum": 1072668082176
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "1000",
+    "formatted": "1000GiB",
+    "minimum": 1073741824000
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "1024",
+    "formatted": "1.0TiB",
+    "minimum": 1099511627776
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "1025",
+    "formatted": "1.000977TiB",
+    "minimum": 1100585369600
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "2.675",
+    "formatted": "2.675GiB",
+    "minimum": 2872259379.2
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "0.0000015",
+    "formatted": "1.572864KiB",
+    "minimum": 1610.612736
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "1e-7",
+    "formatted": "107.374182B",
+    "minimum": 107.374182
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "-1e-7",
+    "formatted": "-107.374182B",
+    "minimum": -107.374182
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "60",
+    "formatted": "60GiB",
+    "minimum": 64424509440
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "3600",
+    "formatted": "3.515625TiB",
+    "minimum": 3865470566400
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "24",
+    "formatted": "24GiB",
+    "minimum": 25769803776
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "-1000",
+    "formatted": "-1000GiB",
+    "minimum": -1073741824000
+  },
+  {
+    "unit": "gbytes",
+    "category_unit": "Data (IEC)||gbytes",
+    "raw": "1e16",
+    "formatted": "8.881784YiB",
+    "minimum": 1.073741824e+25
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "0",
+    "formatted": "0B",
+    "minimum": 0
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "0.0",
+    "formatted": "0.0B",
+    "minimum": 0.0
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "-0.0",
+    "formatted": "-0.0B",
+    "minimum": -0.0
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "1",
+    "formatted": "1TiB",
+    "minimum": 1099511627776
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "1.0",
+    "formatted": "1.0TiB",
+    "minimum": 1099511627776.0
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "0.9",
+    "formatted": "921.6GiB",
+    "minimum": 989560464998.4
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "-1",
+    "formatted": "-1TiB",
+    "minimum": -1099511627776
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "999",
+    "formatted": "999TiB",
+    "minimum": 1098412116148224
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "1000",
+    "formatted": "1000TiB",
+    "minimum": 1099511627776000
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "1024",
+    "formatted": "1.0PiB",
+    "minimum": 1125899906842624
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "1025",
+    "formatted": "1.000977PiB",
+    "minimum": 1126999418470400
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "2.675",
+    "formatted": "2.675TiB",
+    "minimum": 2941193604300.8
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "0.0000015",
+    "formatted": "1.572864MiB",
+    "minimum": 1649267.441664
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "1e-7",
+    "formatted": "107.374182KiB",
+    "minimum": 109951.162778
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "-1e-7",
+    "formatted": "-107.374182KiB",
+    "minimum": -109951.162778
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "60",
+    "formatted": "60TiB",
+    "minimum": 65970697666560
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "3600",
+    "formatted": "3.515625PiB",
+    "minimum": 3958241859993600
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "24",
+    "formatted": "24TiB",
+    "minimum": 26388279066624
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "-1000",
+    "formatted": "-1000TiB",
+    "minimum": -1099511627776000
+  },
+  {
+    "unit": "tbytes",
+    "category_unit": "Data (IEC)||tbytes",
+    "raw": "1e16",
+    "formatted": "9094.947018YiB",
+    "minimum": 1.099511627776e+28
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "0",
+    "formatted": "0B",
+    "minimum": 0
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "0.0",
+    "formatted": "0.0B",
+    "minimum": 0.0
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "-0.0",
+    "formatted": "-0.0B",
+    "minimum": -0.0
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "1",
+    "formatted": "1PiB",
+    "minimum": 1125899906842624
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "1.0",
+    "formatted": "1.0PiB",
+    "minimum": 1125899906842624.0
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "0.9",
+    "formatted": "921.6TiB",
+    "minimum": 1013309916158361.6
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "-1",
+    "formatted": "-1PiB",
+    "minimum": -1125899906842624
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "999",
+    "formatted": "999PiB",
+    "minimum": 1124774006935781376
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "1000",
+    "formatted": "1000PiB",
+    "minimum": 1125899906842624000
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "1024",
+    "formatted": "1.0EiB",
+    "minimum": 1152921504606846976
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "1025",
+    "formatted": "1.000977EiB",
+    "minimum": 1154047404513689600
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "2.675",
+    "formatted": "2.675PiB",
+    "minimum": 3011782250804019.0
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "0.0000015",
+    "formatted": "1.572864GiB",
+    "minimum": 1688849860.263936
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "1e-7",
+    "formatted": "107.374182MiB",
+    "minimum": 112589990.684262
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "-1e-7",
+    "formatted": "-107.374182MiB",
+    "minimum": -112589990.684262
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "60",
+    "formatted": "60PiB",
+    "minimum": 67553994410557440
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "3600",
+    "formatted": "3.515625EiB",
+    "minimum": 4053239664633446400
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "24",
+    "formatted": "24PiB",
+    "minimum": 27021597764222976
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "-1000",
+    "formatted": "-1000PiB",
+    "minimum": -1125899906842624000
+  },
+  {
+    "unit": "pbytes",
+    "category_unit": "Data (IEC)||pbytes",
+    "raw": "1e16",
+    "formatted": "9313225.746155YiB",
+    "minimum": 1.125899906842624e+31
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "0",
+    "formatted": "0b",
+    "minimum": 0
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "0.0",
+    "formatted": "0.0b",
+    "minimum": 0.0
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "-0.0",
+    "formatted": "-0.0b",
+    "minimum": -0.0
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "1",
+    "formatted": "1b",
+    "minimum": 1
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "1.0",
+    "formatted": "1.0b",
+    "minimum": 1.0
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "0.9",
+    "formatted": "0.9b",
+    "minimum": 0.9
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "-1",
+    "formatted": "-1b",
+    "minimum": -1
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "999",
+    "formatted": "999b",
+    "minimum": 999
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "1000",
+    "formatted": "1.0kb",
+    "minimum": 1000
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "1024",
+    "formatted": "1.024kb",
+    "minimum": 1024
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "1025",
+    "formatted": "1.025kb",
+    "minimum": 1025
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "2.675",
+    "formatted": "2.675b",
+    "minimum": 2.675
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "0.0000015",
+    "formatted": "2e-06b",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "1e-7",
+    "formatted": "0.0b",
+    "minimum": 0.0
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "-1e-7",
+    "formatted": "-0.0b",
+    "minimum": -0.0
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "60",
+    "formatted": "60b",
+    "minimum": 60
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "3600",
+    "formatted": "3.6kb",
+    "minimum": 3600
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "24",
+    "formatted": "24b",
+    "minimum": 24
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "-1000",
+    "formatted": "-1.0kb",
+    "minimum": -1000
+  },
+  {
+    "unit": "decbits",
+    "category_unit": "Data (Metric)||decbits",
+    "raw": "1e16",
+    "formatted": "10.0Pb",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "0",
+    "formatted": "0B",
+    "minimum": 0
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "0.0",
+    "formatted": "0.0B",
+    "minimum": 0.0
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "-0.0",
+    "formatted": "-0.0B",
+    "minimum": -0.0
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "1",
+    "formatted": "1B",
+    "minimum": 1
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "1.0",
+    "formatted": "1.0B",
+    "minimum": 1.0
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "0.9",
+    "formatted": "0.9B",
+    "minimum": 0.9
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "-1",
+    "formatted": "-1B",
+    "minimum": -1
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "999",
+    "formatted": "999B",
+    "minimum": 999
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "1000",
+    "formatted": "1.0kB",
+    "minimum": 1000
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "1024",
+    "formatted": "1.024kB",
+    "minimum": 1024
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "1025",
+    "formatted": "1.025kB",
+    "minimum": 1025
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "2.675",
+    "formatted": "2.675B",
+    "minimum": 2.675
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "0.0000015",
+    "formatted": "2e-06B",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "1e-7",
+    "formatted": "0.0B",
+    "minimum": 0.0
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "-1e-7",
+    "formatted": "-0.0B",
+    "minimum": -0.0
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "60",
+    "formatted": "60B",
+    "minimum": 60
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "3600",
+    "formatted": "3.6kB",
+    "minimum": 3600
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "24",
+    "formatted": "24B",
+    "minimum": 24
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "-1000",
+    "formatted": "-1.0kB",
+    "minimum": -1000
+  },
+  {
+    "unit": "decbytes",
+    "category_unit": "Data (Metric)||decbytes",
+    "raw": "1e16",
+    "formatted": "10.0PB",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "0",
+    "formatted": "0B",
+    "minimum": 0
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "0.0",
+    "formatted": "0.0B",
+    "minimum": 0.0
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "-0.0",
+    "formatted": "-0.0B",
+    "minimum": -0.0
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "1",
+    "formatted": "1kB",
+    "minimum": 1000
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "1.0",
+    "formatted": "1.0kB",
+    "minimum": 1000.0
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "0.9",
+    "formatted": "900.0B",
+    "minimum": 900.0
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "-1",
+    "formatted": "-1kB",
+    "minimum": -1000
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "999",
+    "formatted": "999kB",
+    "minimum": 999000
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "1000",
+    "formatted": "1.0MB",
+    "minimum": 1000000
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "1024",
+    "formatted": "1.024MB",
+    "minimum": 1024000
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "1025",
+    "formatted": "1.025MB",
+    "minimum": 1025000
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "2.675",
+    "formatted": "2.675kB",
+    "minimum": 2675.0
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "0.0000015",
+    "formatted": "0.0015B",
+    "minimum": 0.0015
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "1e-7",
+    "formatted": "0.0001B",
+    "minimum": 0.0001
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "-1e-7",
+    "formatted": "-0.0001B",
+    "minimum": -0.0001
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "60",
+    "formatted": "60kB",
+    "minimum": 60000
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "3600",
+    "formatted": "3.6MB",
+    "minimum": 3600000
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "24",
+    "formatted": "24kB",
+    "minimum": 24000
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "-1000",
+    "formatted": "-1.0MB",
+    "minimum": -1000000
+  },
+  {
+    "unit": "deckbytes",
+    "category_unit": "Data (Metric)||deckbytes",
+    "raw": "1e16",
+    "formatted": "10.0EB",
+    "minimum": 1e+19
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "0",
+    "formatted": "0B",
+    "minimum": 0
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "0.0",
+    "formatted": "0.0B",
+    "minimum": 0.0
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "-0.0",
+    "formatted": "-0.0B",
+    "minimum": -0.0
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "1",
+    "formatted": "1MB",
+    "minimum": 1000000
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "1.0",
+    "formatted": "1.0MB",
+    "minimum": 1000000.0
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "0.9",
+    "formatted": "900.0kB",
+    "minimum": 900000.0
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "-1",
+    "formatted": "-1MB",
+    "minimum": -1000000
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "999",
+    "formatted": "999MB",
+    "minimum": 999000000
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "1000",
+    "formatted": "1.0GB",
+    "minimum": 1000000000
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "1024",
+    "formatted": "1.024GB",
+    "minimum": 1024000000
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "1025",
+    "formatted": "1.025GB",
+    "minimum": 1025000000
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "2.675",
+    "formatted": "2.675MB",
+    "minimum": 2675000.0
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "0.0000015",
+    "formatted": "1.5B",
+    "minimum": 1.5
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "1e-7",
+    "formatted": "0.1B",
+    "minimum": 0.1
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "-1e-7",
+    "formatted": "-0.1B",
+    "minimum": -0.1
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "60",
+    "formatted": "60MB",
+    "minimum": 60000000
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "3600",
+    "formatted": "3.6GB",
+    "minimum": 3600000000
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "24",
+    "formatted": "24MB",
+    "minimum": 24000000
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "-1000",
+    "formatted": "-1.0GB",
+    "minimum": -1000000000
+  },
+  {
+    "unit": "decmbytes",
+    "category_unit": "Data (Metric)||decmbytes",
+    "raw": "1e16",
+    "formatted": "10.0ZB",
+    "minimum": 1e+22
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "0",
+    "formatted": "0B",
+    "minimum": 0
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "0.0",
+    "formatted": "0.0B",
+    "minimum": 0.0
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "-0.0",
+    "formatted": "-0.0B",
+    "minimum": -0.0
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "1",
+    "formatted": "1GB",
+    "minimum": 1000000000
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "1.0",
+    "formatted": "1.0GB",
+    "minimum": 1000000000.0
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "0.9",
+    "formatted": "900.0MB",
+    "minimum": 900000000.0
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "-1",
+    "formatted": "-1GB",
+    "minimum": -1000000000
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "999",
+    "formatted": "999GB",
+    "minimum": 999000000000
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "1000",
+    "formatted": "1.0TB",
+    "minimum": 1000000000000
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "1024",
+    "formatted": "1.024TB",
+    "minimum": 1024000000000
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "1025",
+    "formatted": "1.025TB",
+    "minimum": 1025000000000
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "2.675",
+    "formatted": "2.675GB",
+    "minimum": 2675000000.0
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "0.0000015",
+    "formatted": "1.5kB",
+    "minimum": 1500.0
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "1e-7",
+    "formatted": "100.0B",
+    "minimum": 100.0
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "-1e-7",
+    "formatted": "-100.0B",
+    "minimum": -100.0
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "60",
+    "formatted": "60GB",
+    "minimum": 60000000000
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "3600",
+    "formatted": "3.6TB",
+    "minimum": 3600000000000
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "24",
+    "formatted": "24GB",
+    "minimum": 24000000000
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "-1000",
+    "formatted": "-1.0TB",
+    "minimum": -1000000000000
+  },
+  {
+    "unit": "decgbytes",
+    "category_unit": "Data (Metric)||decgbytes",
+    "raw": "1e16",
+    "formatted": "10.0YB",
+    "minimum": 1e+25
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "0",
+    "formatted": "0B",
+    "minimum": 0
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "0.0",
+    "formatted": "0.0B",
+    "minimum": 0.0
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "-0.0",
+    "formatted": "-0.0B",
+    "minimum": -0.0
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "1",
+    "formatted": "1TB",
+    "minimum": 1000000000000
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "1.0",
+    "formatted": "1.0TB",
+    "minimum": 1000000000000.0
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "0.9",
+    "formatted": "900.0GB",
+    "minimum": 900000000000.0
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "-1",
+    "formatted": "-1TB",
+    "minimum": -1000000000000
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "999",
+    "formatted": "999TB",
+    "minimum": 999000000000000
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "1000",
+    "formatted": "1.0PB",
+    "minimum": 1000000000000000
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "1024",
+    "formatted": "1.024PB",
+    "minimum": 1024000000000000
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "1025",
+    "formatted": "1.025PB",
+    "minimum": 1025000000000000
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "2.675",
+    "formatted": "2.675TB",
+    "minimum": 2675000000000.0
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "0.0000015",
+    "formatted": "1.5MB",
+    "minimum": 1500000.0
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "1e-7",
+    "formatted": "100.0kB",
+    "minimum": 100000.0
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "-1e-7",
+    "formatted": "-100.0kB",
+    "minimum": -100000.0
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "60",
+    "formatted": "60TB",
+    "minimum": 60000000000000
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "3600",
+    "formatted": "3.6PB",
+    "minimum": 3600000000000000
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "24",
+    "formatted": "24TB",
+    "minimum": 24000000000000
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "-1000",
+    "formatted": "-1.0PB",
+    "minimum": -1000000000000000
+  },
+  {
+    "unit": "dectbytes",
+    "category_unit": "Data (Metric)||dectbytes",
+    "raw": "1e16",
+    "formatted": "10000.0YB",
+    "minimum": 1.0000000000000002e+28
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "0",
+    "formatted": "0B",
+    "minimum": 0
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "0.0",
+    "formatted": "0.0B",
+    "minimum": 0.0
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "-0.0",
+    "formatted": "-0.0B",
+    "minimum": -0.0
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "1",
+    "formatted": "1PB",
+    "minimum": 1000000000000000
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "1.0",
+    "formatted": "1.0PB",
+    "minimum": 1000000000000000.0
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "0.9",
+    "formatted": "900.0TB",
+    "minimum": 900000000000000.0
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "-1",
+    "formatted": "-1PB",
+    "minimum": -1000000000000000
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "999",
+    "formatted": "999PB",
+    "minimum": 999000000000000000
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "1000",
+    "formatted": "1.0EB",
+    "minimum": 1000000000000000000
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "1024",
+    "formatted": "1.024EB",
+    "minimum": 1024000000000000000
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "1025",
+    "formatted": "1.025EB",
+    "minimum": 1025000000000000000
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "2.675",
+    "formatted": "2.675PB",
+    "minimum": 2675000000000000.0
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "0.0000015",
+    "formatted": "1.5GB",
+    "minimum": 1500000000.0
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "1e-7",
+    "formatted": "100.0MB",
+    "minimum": 100000000.0
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "-1e-7",
+    "formatted": "-100.0MB",
+    "minimum": -100000000.0
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "60",
+    "formatted": "60PB",
+    "minimum": 60000000000000000
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "3600",
+    "formatted": "3.6EB",
+    "minimum": 3600000000000000000
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "24",
+    "formatted": "24PB",
+    "minimum": 24000000000000000
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "-1000",
+    "formatted": "-1.0EB",
+    "minimum": -1000000000000000000
+  },
+  {
+    "unit": "decpbytes",
+    "category_unit": "Data (Metric)||decpbytes",
+    "raw": "1e16",
+    "formatted": "10000000.0YB",
+    "minimum": 1.0000000000000002e+31
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "0",
+    "formatted": "0pps",
+    "minimum": 0
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "0.0",
+    "formatted": "0.0pps",
+    "minimum": 0.0
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "-0.0",
+    "formatted": "-0.0pps",
+    "minimum": -0.0
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "1",
+    "formatted": "1pps",
+    "minimum": 1
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "1.0",
+    "formatted": "1.0pps",
+    "minimum": 1.0
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "0.9",
+    "formatted": "0.9pps",
+    "minimum": 0.9
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "-1",
+    "formatted": "-1pps",
+    "minimum": -1
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "999",
+    "formatted": "999pps",
+    "minimum": 999
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "1000",
+    "formatted": "1.0kpps",
+    "minimum": 1000
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "1024",
+    "formatted": "1.024kpps",
+    "minimum": 1024
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "1025",
+    "formatted": "1.025kpps",
+    "minimum": 1025
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "2.675",
+    "formatted": "2.675pps",
+    "minimum": 2.675
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "0.0000015",
+    "formatted": "2e-06pps",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "1e-7",
+    "formatted": "0.0pps",
+    "minimum": 0.0
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "-1e-7",
+    "formatted": "-0.0pps",
+    "minimum": -0.0
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "60",
+    "formatted": "60pps",
+    "minimum": 60
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "3600",
+    "formatted": "3.6kpps",
+    "minimum": 3600
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "24",
+    "formatted": "24pps",
+    "minimum": 24
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "-1000",
+    "formatted": "-1.0kpps",
+    "minimum": -1000
+  },
+  {
+    "unit": "pps",
+    "category_unit": "Data Rate||pps",
+    "raw": "1e16",
+    "formatted": "10.0Ppps",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "0",
+    "formatted": "0bps",
+    "minimum": 0
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "0.0",
+    "formatted": "0.0bps",
+    "minimum": 0.0
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "-0.0",
+    "formatted": "-0.0bps",
+    "minimum": -0.0
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "1",
+    "formatted": "1bps",
+    "minimum": 1
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "1.0",
+    "formatted": "1.0bps",
+    "minimum": 1.0
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "0.9",
+    "formatted": "0.9bps",
+    "minimum": 0.9
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "-1",
+    "formatted": "-1bps",
+    "minimum": -1
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "999",
+    "formatted": "999bps",
+    "minimum": 999
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "1000",
+    "formatted": "1.0kbps",
+    "minimum": 1000
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "1024",
+    "formatted": "1.024kbps",
+    "minimum": 1024
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "1025",
+    "formatted": "1.025kbps",
+    "minimum": 1025
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "2.675",
+    "formatted": "2.675bps",
+    "minimum": 2.675
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "0.0000015",
+    "formatted": "2e-06bps",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "1e-7",
+    "formatted": "0.0bps",
+    "minimum": 0.0
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "-1e-7",
+    "formatted": "-0.0bps",
+    "minimum": -0.0
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "60",
+    "formatted": "60bps",
+    "minimum": 60
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "3600",
+    "formatted": "3.6kbps",
+    "minimum": 3600
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "24",
+    "formatted": "24bps",
+    "minimum": 24
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "-1000",
+    "formatted": "-1.0kbps",
+    "minimum": -1000
+  },
+  {
+    "unit": "bps",
+    "category_unit": "Data Rate||bps",
+    "raw": "1e16",
+    "formatted": "10.0Pbps",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "0",
+    "formatted": "0Bs",
+    "minimum": 0
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "0.0",
+    "formatted": "0.0Bs",
+    "minimum": 0.0
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "-0.0",
+    "formatted": "-0.0Bs",
+    "minimum": -0.0
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "1",
+    "formatted": "1Bs",
+    "minimum": 1
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "1.0",
+    "formatted": "1.0Bs",
+    "minimum": 1.0
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "0.9",
+    "formatted": "0.9Bs",
+    "minimum": 0.9
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "-1",
+    "formatted": "-1Bs",
+    "minimum": -1
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "999",
+    "formatted": "999Bs",
+    "minimum": 999
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "1000",
+    "formatted": "1.0kBs",
+    "minimum": 1000
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "1024",
+    "formatted": "1.024kBs",
+    "minimum": 1024
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "1025",
+    "formatted": "1.025kBs",
+    "minimum": 1025
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "2.675",
+    "formatted": "2.675Bs",
+    "minimum": 2.675
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "0.0000015",
+    "formatted": "2e-06Bs",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "1e-7",
+    "formatted": "0.0Bs",
+    "minimum": 0.0
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "-1e-7",
+    "formatted": "-0.0Bs",
+    "minimum": -0.0
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "60",
+    "formatted": "60Bs",
+    "minimum": 60
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "3600",
+    "formatted": "3.6kBs",
+    "minimum": 3600
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "24",
+    "formatted": "24Bs",
+    "minimum": 24
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "-1000",
+    "formatted": "-1.0kBs",
+    "minimum": -1000
+  },
+  {
+    "unit": "Bps",
+    "category_unit": "Data Rate||Bps",
+    "raw": "1e16",
+    "formatted": "10.0PBs",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "0",
+    "formatted": "0Bs",
+    "minimum": 0
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "0.0",
+    "formatted": "0.0Bs",
+    "minimum": 0.0
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "-0.0",
+    "formatted": "-0.0Bs",
+    "minimum": -0.0
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "1",
+    "formatted": "1kBs",
+    "minimum": 1000
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "1.0",
+    "formatted": "1.0kBs",
+    "minimum": 1000.0
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "0.9",
+    "formatted": "900.0Bs",
+    "minimum": 900.0
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "-1",
+    "formatted": "-1kBs",
+    "minimum": -1000
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "999",
+    "formatted": "999kBs",
+    "minimum": 999000
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "1000",
+    "formatted": "1.0MBs",
+    "minimum": 1000000
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "1024",
+    "formatted": "1.024MBs",
+    "minimum": 1024000
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "1025",
+    "formatted": "1.025MBs",
+    "minimum": 1025000
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "2.675",
+    "formatted": "2.675kBs",
+    "minimum": 2675.0
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "0.0000015",
+    "formatted": "0.0015Bs",
+    "minimum": 0.0015
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "1e-7",
+    "formatted": "0.0001Bs",
+    "minimum": 0.0001
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "-1e-7",
+    "formatted": "-0.0001Bs",
+    "minimum": -0.0001
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "60",
+    "formatted": "60kBs",
+    "minimum": 60000
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "3600",
+    "formatted": "3.6MBs",
+    "minimum": 3600000
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "24",
+    "formatted": "24kBs",
+    "minimum": 24000
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "-1000",
+    "formatted": "-1.0MBs",
+    "minimum": -1000000
+  },
+  {
+    "unit": "KBs",
+    "category_unit": "Data Rate||KBs",
+    "raw": "1e16",
+    "formatted": "10.0EBs",
+    "minimum": 1e+19
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "0",
+    "formatted": "0bps",
+    "minimum": 0
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "0.0",
+    "formatted": "0.0bps",
+    "minimum": 0.0
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "-0.0",
+    "formatted": "-0.0bps",
+    "minimum": -0.0
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "1",
+    "formatted": "1kbps",
+    "minimum": 1000
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "1.0",
+    "formatted": "1.0kbps",
+    "minimum": 1000.0
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "0.9",
+    "formatted": "900.0bps",
+    "minimum": 900.0
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "-1",
+    "formatted": "-1kbps",
+    "minimum": -1000
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "999",
+    "formatted": "999kbps",
+    "minimum": 999000
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "1000",
+    "formatted": "1.0Mbps",
+    "minimum": 1000000
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "1024",
+    "formatted": "1.024Mbps",
+    "minimum": 1024000
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "1025",
+    "formatted": "1.025Mbps",
+    "minimum": 1025000
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "2.675",
+    "formatted": "2.675kbps",
+    "minimum": 2675.0
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "0.0000015",
+    "formatted": "0.0015bps",
+    "minimum": 0.0015
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "1e-7",
+    "formatted": "0.0001bps",
+    "minimum": 0.0001
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "-1e-7",
+    "formatted": "-0.0001bps",
+    "minimum": -0.0001
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "60",
+    "formatted": "60kbps",
+    "minimum": 60000
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "3600",
+    "formatted": "3.6Mbps",
+    "minimum": 3600000
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "24",
+    "formatted": "24kbps",
+    "minimum": 24000
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "-1000",
+    "formatted": "-1.0Mbps",
+    "minimum": -1000000
+  },
+  {
+    "unit": "Kbits",
+    "category_unit": "Data Rate||Kbits",
+    "raw": "1e16",
+    "formatted": "10.0Ebps",
+    "minimum": 1e+19
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "0",
+    "formatted": "0Bs",
+    "minimum": 0
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "0.0",
+    "formatted": "0.0Bs",
+    "minimum": 0.0
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "-0.0",
+    "formatted": "-0.0Bs",
+    "minimum": -0.0
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "1",
+    "formatted": "1MBs",
+    "minimum": 1000000
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "1.0",
+    "formatted": "1.0MBs",
+    "minimum": 1000000.0
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "0.9",
+    "formatted": "900.0kBs",
+    "minimum": 900000.0
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "-1",
+    "formatted": "-1MBs",
+    "minimum": -1000000
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "999",
+    "formatted": "999MBs",
+    "minimum": 999000000
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "1000",
+    "formatted": "1.0GBs",
+    "minimum": 1000000000
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "1024",
+    "formatted": "1.024GBs",
+    "minimum": 1024000000
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "1025",
+    "formatted": "1.025GBs",
+    "minimum": 1025000000
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "2.675",
+    "formatted": "2.675MBs",
+    "minimum": 2675000.0
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "0.0000015",
+    "formatted": "1.5Bs",
+    "minimum": 1.5
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "1e-7",
+    "formatted": "0.1Bs",
+    "minimum": 0.1
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "-1e-7",
+    "formatted": "-0.1Bs",
+    "minimum": -0.1
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "60",
+    "formatted": "60MBs",
+    "minimum": 60000000
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "3600",
+    "formatted": "3.6GBs",
+    "minimum": 3600000000
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "24",
+    "formatted": "24MBs",
+    "minimum": 24000000
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "-1000",
+    "formatted": "-1.0GBs",
+    "minimum": -1000000000
+  },
+  {
+    "unit": "MBs",
+    "category_unit": "Data Rate||MBs",
+    "raw": "1e16",
+    "formatted": "10.0ZBs",
+    "minimum": 1e+22
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "0",
+    "formatted": "0bps",
+    "minimum": 0
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "0.0",
+    "formatted": "0.0bps",
+    "minimum": 0.0
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "-0.0",
+    "formatted": "-0.0bps",
+    "minimum": -0.0
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "1",
+    "formatted": "1Mbps",
+    "minimum": 1000000
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "1.0",
+    "formatted": "1.0Mbps",
+    "minimum": 1000000.0
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "0.9",
+    "formatted": "900.0kbps",
+    "minimum": 900000.0
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "-1",
+    "formatted": "-1Mbps",
+    "minimum": -1000000
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "999",
+    "formatted": "999Mbps",
+    "minimum": 999000000
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "1000",
+    "formatted": "1.0Gbps",
+    "minimum": 1000000000
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "1024",
+    "formatted": "1.024Gbps",
+    "minimum": 1024000000
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "1025",
+    "formatted": "1.025Gbps",
+    "minimum": 1025000000
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "2.675",
+    "formatted": "2.675Mbps",
+    "minimum": 2675000.0
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "0.0000015",
+    "formatted": "1.5bps",
+    "minimum": 1.5
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "1e-7",
+    "formatted": "0.1bps",
+    "minimum": 0.1
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "-1e-7",
+    "formatted": "-0.1bps",
+    "minimum": -0.1
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "60",
+    "formatted": "60Mbps",
+    "minimum": 60000000
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "3600",
+    "formatted": "3.6Gbps",
+    "minimum": 3600000000
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "24",
+    "formatted": "24Mbps",
+    "minimum": 24000000
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "-1000",
+    "formatted": "-1.0Gbps",
+    "minimum": -1000000000
+  },
+  {
+    "unit": "Mbits",
+    "category_unit": "Data Rate||Mbits",
+    "raw": "1e16",
+    "formatted": "10.0Zbps",
+    "minimum": 1e+22
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "0",
+    "formatted": "0Bs",
+    "minimum": 0
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "0.0",
+    "formatted": "0.0Bs",
+    "minimum": 0.0
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "-0.0",
+    "formatted": "-0.0Bs",
+    "minimum": -0.0
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "1",
+    "formatted": "1GBs",
+    "minimum": 1000000000
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "1.0",
+    "formatted": "1.0GBs",
+    "minimum": 1000000000.0
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "0.9",
+    "formatted": "900.0MBs",
+    "minimum": 900000000.0
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "-1",
+    "formatted": "-1GBs",
+    "minimum": -1000000000
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "999",
+    "formatted": "999GBs",
+    "minimum": 999000000000
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "1000",
+    "formatted": "1.0TBs",
+    "minimum": 1000000000000
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "1024",
+    "formatted": "1.024TBs",
+    "minimum": 1024000000000
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "1025",
+    "formatted": "1.025TBs",
+    "minimum": 1025000000000
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "2.675",
+    "formatted": "2.675GBs",
+    "minimum": 2675000000.0
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "0.0000015",
+    "formatted": "1.5kBs",
+    "minimum": 1500.0
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "1e-7",
+    "formatted": "100.0Bs",
+    "minimum": 100.0
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "-1e-7",
+    "formatted": "-100.0Bs",
+    "minimum": -100.0
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "60",
+    "formatted": "60GBs",
+    "minimum": 60000000000
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "3600",
+    "formatted": "3.6TBs",
+    "minimum": 3600000000000
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "24",
+    "formatted": "24GBs",
+    "minimum": 24000000000
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "-1000",
+    "formatted": "-1.0TBs",
+    "minimum": -1000000000000
+  },
+  {
+    "unit": "GBs",
+    "category_unit": "Data Rate||GBs",
+    "raw": "1e16",
+    "formatted": "10.0YBs",
+    "minimum": 1e+25
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "0",
+    "formatted": "0bps",
+    "minimum": 0
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "0.0",
+    "formatted": "0.0bps",
+    "minimum": 0.0
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "-0.0",
+    "formatted": "-0.0bps",
+    "minimum": -0.0
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "1",
+    "formatted": "1Gbps",
+    "minimum": 1000000000
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "1.0",
+    "formatted": "1.0Gbps",
+    "minimum": 1000000000.0
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "0.9",
+    "formatted": "900.0Mbps",
+    "minimum": 900000000.0
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "-1",
+    "formatted": "-1Gbps",
+    "minimum": -1000000000
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "999",
+    "formatted": "999Gbps",
+    "minimum": 999000000000
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "1000",
+    "formatted": "1.0Tbps",
+    "minimum": 1000000000000
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "1024",
+    "formatted": "1.024Tbps",
+    "minimum": 1024000000000
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "1025",
+    "formatted": "1.025Tbps",
+    "minimum": 1025000000000
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "2.675",
+    "formatted": "2.675Gbps",
+    "minimum": 2675000000.0
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "0.0000015",
+    "formatted": "1.5kbps",
+    "minimum": 1500.0
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "1e-7",
+    "formatted": "100.0bps",
+    "minimum": 100.0
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "-1e-7",
+    "formatted": "-100.0bps",
+    "minimum": -100.0
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "60",
+    "formatted": "60Gbps",
+    "minimum": 60000000000
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "3600",
+    "formatted": "3.6Tbps",
+    "minimum": 3600000000000
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "24",
+    "formatted": "24Gbps",
+    "minimum": 24000000000
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "-1000",
+    "formatted": "-1.0Tbps",
+    "minimum": -1000000000000
+  },
+  {
+    "unit": "Gbits",
+    "category_unit": "Data Rate||Gbits",
+    "raw": "1e16",
+    "formatted": "10.0Ybps",
+    "minimum": 1e+25
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "0",
+    "formatted": "0Bs",
+    "minimum": 0
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "0.0",
+    "formatted": "0.0Bs",
+    "minimum": 0.0
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "-0.0",
+    "formatted": "-0.0Bs",
+    "minimum": -0.0
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "1",
+    "formatted": "1TBs",
+    "minimum": 1000000000000
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "1.0",
+    "formatted": "1.0TBs",
+    "minimum": 1000000000000.0
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "0.9",
+    "formatted": "900.0GBs",
+    "minimum": 900000000000.0
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "-1",
+    "formatted": "-1TBs",
+    "minimum": -1000000000000
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "999",
+    "formatted": "999TBs",
+    "minimum": 999000000000000
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "1000",
+    "formatted": "1.0PBs",
+    "minimum": 1000000000000000
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "1024",
+    "formatted": "1.024PBs",
+    "minimum": 1024000000000000
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "1025",
+    "formatted": "1.025PBs",
+    "minimum": 1025000000000000
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "2.675",
+    "formatted": "2.675TBs",
+    "minimum": 2675000000000.0
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "0.0000015",
+    "formatted": "1.5MBs",
+    "minimum": 1500000.0
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "1e-7",
+    "formatted": "100.0kBs",
+    "minimum": 100000.0
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "-1e-7",
+    "formatted": "-100.0kBs",
+    "minimum": -100000.0
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "60",
+    "formatted": "60TBs",
+    "minimum": 60000000000000
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "3600",
+    "formatted": "3.6PBs",
+    "minimum": 3600000000000000
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "24",
+    "formatted": "24TBs",
+    "minimum": 24000000000000
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "-1000",
+    "formatted": "-1.0PBs",
+    "minimum": -1000000000000000
+  },
+  {
+    "unit": "TBs",
+    "category_unit": "Data Rate||TBs",
+    "raw": "1e16",
+    "formatted": "10000.0YBs",
+    "minimum": 1.0000000000000002e+28
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "0",
+    "formatted": "0bps",
+    "minimum": 0
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "0.0",
+    "formatted": "0.0bps",
+    "minimum": 0.0
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "-0.0",
+    "formatted": "-0.0bps",
+    "minimum": -0.0
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "1",
+    "formatted": "1Tbps",
+    "minimum": 1000000000000
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "1.0",
+    "formatted": "1.0Tbps",
+    "minimum": 1000000000000.0
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "0.9",
+    "formatted": "900.0Gbps",
+    "minimum": 900000000000.0
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "-1",
+    "formatted": "-1Tbps",
+    "minimum": -1000000000000
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "999",
+    "formatted": "999Tbps",
+    "minimum": 999000000000000
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "1000",
+    "formatted": "1.0Pbps",
+    "minimum": 1000000000000000
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "1024",
+    "formatted": "1.024Pbps",
+    "minimum": 1024000000000000
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "1025",
+    "formatted": "1.025Pbps",
+    "minimum": 1025000000000000
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "2.675",
+    "formatted": "2.675Tbps",
+    "minimum": 2675000000000.0
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "0.0000015",
+    "formatted": "1.5Mbps",
+    "minimum": 1500000.0
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "1e-7",
+    "formatted": "100.0kbps",
+    "minimum": 100000.0
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "-1e-7",
+    "formatted": "-100.0kbps",
+    "minimum": -100000.0
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "60",
+    "formatted": "60Tbps",
+    "minimum": 60000000000000
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "3600",
+    "formatted": "3.6Pbps",
+    "minimum": 3600000000000000
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "24",
+    "formatted": "24Tbps",
+    "minimum": 24000000000000
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "-1000",
+    "formatted": "-1.0Pbps",
+    "minimum": -1000000000000000
+  },
+  {
+    "unit": "Tbits",
+    "category_unit": "Data Rate||Tbits",
+    "raw": "1e16",
+    "formatted": "10000.0Ybps",
+    "minimum": 1.0000000000000002e+28
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "0",
+    "formatted": "0Bs",
+    "minimum": 0
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "0.0",
+    "formatted": "0.0Bs",
+    "minimum": 0.0
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "-0.0",
+    "formatted": "-0.0Bs",
+    "minimum": -0.0
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "1",
+    "formatted": "1PBs",
+    "minimum": 1000000000000000
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "1.0",
+    "formatted": "1.0PBs",
+    "minimum": 1000000000000000.0
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "0.9",
+    "formatted": "900.0TBs",
+    "minimum": 900000000000000.0
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "-1",
+    "formatted": "-1PBs",
+    "minimum": -1000000000000000
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "999",
+    "formatted": "999PBs",
+    "minimum": 999000000000000000
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "1000",
+    "formatted": "1.0EBs",
+    "minimum": 1000000000000000000
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "1024",
+    "formatted": "1.024EBs",
+    "minimum": 1024000000000000000
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "1025",
+    "formatted": "1.025EBs",
+    "minimum": 1025000000000000000
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "2.675",
+    "formatted": "2.675PBs",
+    "minimum": 2675000000000000.0
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "0.0000015",
+    "formatted": "1.5GBs",
+    "minimum": 1500000000.0
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "1e-7",
+    "formatted": "100.0MBs",
+    "minimum": 100000000.0
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "-1e-7",
+    "formatted": "-100.0MBs",
+    "minimum": -100000000.0
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "60",
+    "formatted": "60PBs",
+    "minimum": 60000000000000000
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "3600",
+    "formatted": "3.6EBs",
+    "minimum": 3600000000000000000
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "24",
+    "formatted": "24PBs",
+    "minimum": 24000000000000000
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "-1000",
+    "formatted": "-1.0EBs",
+    "minimum": -1000000000000000000
+  },
+  {
+    "unit": "PBs",
+    "category_unit": "Data Rate||PBs",
+    "raw": "1e16",
+    "formatted": "10000000.0YBs",
+    "minimum": 1.0000000000000002e+31
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "0",
+    "formatted": "0bps",
+    "minimum": 0
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "0.0",
+    "formatted": "0.0bps",
+    "minimum": 0.0
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "-0.0",
+    "formatted": "-0.0bps",
+    "minimum": -0.0
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "1",
+    "formatted": "1Pbps",
+    "minimum": 1000000000000000
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "1.0",
+    "formatted": "1.0Pbps",
+    "minimum": 1000000000000000.0
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "0.9",
+    "formatted": "900.0Tbps",
+    "minimum": 900000000000000.0
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "-1",
+    "formatted": "-1Pbps",
+    "minimum": -1000000000000000
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "999",
+    "formatted": "999Pbps",
+    "minimum": 999000000000000000
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "1000",
+    "formatted": "1.0Ebps",
+    "minimum": 1000000000000000000
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "1024",
+    "formatted": "1.024Ebps",
+    "minimum": 1024000000000000000
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "1025",
+    "formatted": "1.025Ebps",
+    "minimum": 1025000000000000000
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "2.675",
+    "formatted": "2.675Pbps",
+    "minimum": 2675000000000000.0
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "0.0000015",
+    "formatted": "1.5Gbps",
+    "minimum": 1500000000.0
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "1e-7",
+    "formatted": "100.0Mbps",
+    "minimum": 100000000.0
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "-1e-7",
+    "formatted": "-100.0Mbps",
+    "minimum": -100000000.0
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "60",
+    "formatted": "60Pbps",
+    "minimum": 60000000000000000
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "3600",
+    "formatted": "3.6Ebps",
+    "minimum": 3600000000000000000
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "24",
+    "formatted": "24Pbps",
+    "minimum": 24000000000000000
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "-1000",
+    "formatted": "-1.0Ebps",
+    "minimum": -1000000000000000000
+  },
+  {
+    "unit": "Pbits",
+    "category_unit": "Data Rate||Pbits",
+    "raw": "1e16",
+    "formatted": "10000000.0Ybps",
+    "minimum": 1.0000000000000002e+31
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "0",
+    "formatted": "0°C",
+    "minimum": 0
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "0.0",
+    "formatted": "0.0°C",
+    "minimum": 0.0
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "-0.0",
+    "formatted": "-0.0°C",
+    "minimum": -0.0
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "1",
+    "formatted": "1°C",
+    "minimum": 1
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "1.0",
+    "formatted": "1.0°C",
+    "minimum": 1.0
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "0.9",
+    "formatted": "0.9°C",
+    "minimum": 0.9
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "-1",
+    "formatted": "-1°C",
+    "minimum": -1
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "999",
+    "formatted": "999°C",
+    "minimum": 999
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "1000",
+    "formatted": "1000°C",
+    "minimum": 1000
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "1024",
+    "formatted": "1024°C",
+    "minimum": 1024
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "1025",
+    "formatted": "1025°C",
+    "minimum": 1025
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "2.675",
+    "formatted": "2.675°C",
+    "minimum": 2.675
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "0.0000015",
+    "formatted": "2e-06°C",
+    "minimum": 1.5e-06
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "1e-7",
+    "formatted": "0.0°C",
+    "minimum": 1e-07
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "-1e-7",
+    "formatted": "-0.0°C",
+    "minimum": -1e-07
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "60",
+    "formatted": "60°C",
+    "minimum": 60
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "3600",
+    "formatted": "3600°C",
+    "minimum": 3600
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "24",
+    "formatted": "24°C",
+    "minimum": 24
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "-1000",
+    "formatted": "-1000°C",
+    "minimum": -1000
+  },
+  {
+    "unit": "celsius",
+    "category_unit": "Temperature||celsius",
+    "raw": "1e16",
+    "formatted": "1e+16°C",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "0",
+    "formatted": "0°F",
+    "minimum": 0
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "0.0",
+    "formatted": "0.0°F",
+    "minimum": 0.0
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "-0.0",
+    "formatted": "-0.0°F",
+    "minimum": -0.0
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "1",
+    "formatted": "1°F",
+    "minimum": 1
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "1.0",
+    "formatted": "1.0°F",
+    "minimum": 1.0
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "0.9",
+    "formatted": "0.9°F",
+    "minimum": 0.9
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "-1",
+    "formatted": "-1°F",
+    "minimum": -1
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "999",
+    "formatted": "999°F",
+    "minimum": 999
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "1000",
+    "formatted": "1000°F",
+    "minimum": 1000
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "1024",
+    "formatted": "1024°F",
+    "minimum": 1024
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "1025",
+    "formatted": "1025°F",
+    "minimum": 1025
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "2.675",
+    "formatted": "2.675°F",
+    "minimum": 2.675
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "0.0000015",
+    "formatted": "2e-06°F",
+    "minimum": 1.5e-06
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "1e-7",
+    "formatted": "0.0°F",
+    "minimum": 1e-07
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "-1e-7",
+    "formatted": "-0.0°F",
+    "minimum": -1e-07
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "60",
+    "formatted": "60°F",
+    "minimum": 60
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "3600",
+    "formatted": "3600°F",
+    "minimum": 3600
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "24",
+    "formatted": "24°F",
+    "minimum": 24
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "-1000",
+    "formatted": "-1000°F",
+    "minimum": -1000
+  },
+  {
+    "unit": "fahrenheit",
+    "category_unit": "Temperature||fahrenheit",
+    "raw": "1e16",
+    "formatted": "1e+16°F",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "0",
+    "formatted": "0K",
+    "minimum": 0
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "0.0",
+    "formatted": "0.0K",
+    "minimum": 0.0
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "-0.0",
+    "formatted": "-0.0K",
+    "minimum": -0.0
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "1",
+    "formatted": "1K",
+    "minimum": 1
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "1.0",
+    "formatted": "1.0K",
+    "minimum": 1.0
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "0.9",
+    "formatted": "0.9K",
+    "minimum": 0.9
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "-1",
+    "formatted": "-1K",
+    "minimum": -1
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "999",
+    "formatted": "999K",
+    "minimum": 999
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "1000",
+    "formatted": "1000K",
+    "minimum": 1000
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "1024",
+    "formatted": "1024K",
+    "minimum": 1024
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "1025",
+    "formatted": "1025K",
+    "minimum": 1025
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "2.675",
+    "formatted": "2.675K",
+    "minimum": 2.675
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "0.0000015",
+    "formatted": "2e-06K",
+    "minimum": 1.5e-06
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "1e-7",
+    "formatted": "0.0K",
+    "minimum": 1e-07
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "-1e-7",
+    "formatted": "-0.0K",
+    "minimum": -1e-07
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "60",
+    "formatted": "60K",
+    "minimum": 60
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "3600",
+    "formatted": "3600K",
+    "minimum": 3600
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "24",
+    "formatted": "24K",
+    "minimum": 24
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "-1000",
+    "formatted": "-1000K",
+    "minimum": -1000
+  },
+  {
+    "unit": "kelvin",
+    "category_unit": "Temperature||kelvin",
+    "raw": "1e16",
+    "formatted": "1e+16K",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "0",
+    "formatted": "0Hz",
+    "minimum": 0
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "0.0",
+    "formatted": "0.0Hz",
+    "minimum": 0.0
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "-0.0",
+    "formatted": "-0.0Hz",
+    "minimum": -0.0
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "1",
+    "formatted": "1Hz",
+    "minimum": 1
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "1.0",
+    "formatted": "1.0Hz",
+    "minimum": 1.0
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "0.9",
+    "formatted": "0.9Hz",
+    "minimum": 0.9
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "-1",
+    "formatted": "-1Hz",
+    "minimum": -1
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "999",
+    "formatted": "999Hz",
+    "minimum": 999
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "1000",
+    "formatted": "1.0kHz",
+    "minimum": 1000
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "1024",
+    "formatted": "1.024kHz",
+    "minimum": 1024
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "1025",
+    "formatted": "1.025kHz",
+    "minimum": 1025
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "2.675",
+    "formatted": "2.675Hz",
+    "minimum": 2.675
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "0.0000015",
+    "formatted": "2e-06Hz",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "1e-7",
+    "formatted": "0.0Hz",
+    "minimum": 0.0
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "-1e-7",
+    "formatted": "-0.0Hz",
+    "minimum": -0.0
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "60",
+    "formatted": "60Hz",
+    "minimum": 60
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "3600",
+    "formatted": "3.6kHz",
+    "minimum": 3600
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "24",
+    "formatted": "24Hz",
+    "minimum": 24
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "-1000",
+    "formatted": "-1.0kHz",
+    "minimum": -1000
+  },
+  {
+    "unit": "hertz",
+    "category_unit": "Time||hertz",
+    "raw": "1e16",
+    "formatted": "10.0PHz",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "0",
+    "formatted": "0ns",
+    "minimum": 0
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "0.0",
+    "formatted": "0.0ns",
+    "minimum": 0.0
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "-0.0",
+    "formatted": "-0.0ns",
+    "minimum": -0.0
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "1",
+    "formatted": "1ns",
+    "minimum": 1
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "1.0",
+    "formatted": "1.0ns",
+    "minimum": 1.0
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "0.9",
+    "formatted": "0.9ns",
+    "minimum": 0.9
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "-1",
+    "formatted": "-1ns",
+    "minimum": -1
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "999",
+    "formatted": "999ns",
+    "minimum": 999
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "1000",
+    "formatted": "1.0µs",
+    "minimum": 1000
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "1024",
+    "formatted": "1.024µs",
+    "minimum": 1024
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "1025",
+    "formatted": "1.025µs",
+    "minimum": 1025
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "2.675",
+    "formatted": "2.675ns",
+    "minimum": 2.675
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "0.0000015",
+    "formatted": "2e-06ns",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "1e-7",
+    "formatted": "0.0ns",
+    "minimum": 0.0
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "-1e-7",
+    "formatted": "-0.0ns",
+    "minimum": -0.0
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "60",
+    "formatted": "60ns",
+    "minimum": 60
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "3600",
+    "formatted": "3.6µs",
+    "minimum": 3600
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "24",
+    "formatted": "24ns",
+    "minimum": 24
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "-1000",
+    "formatted": "-1.0µs",
+    "minimum": -1000
+  },
+  {
+    "unit": "ns",
+    "category_unit": "Time||ns",
+    "raw": "1e16",
+    "formatted": "115.740741d",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "0",
+    "formatted": "0ns",
+    "minimum": 0
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "0.0",
+    "formatted": "0.0ns",
+    "minimum": 0.0
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "-0.0",
+    "formatted": "-0.0ns",
+    "minimum": -0.0
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "1",
+    "formatted": "1µs",
+    "minimum": 1000
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "1.0",
+    "formatted": "1.0µs",
+    "minimum": 1000.0
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "0.9",
+    "formatted": "900.0ns",
+    "minimum": 900.0
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "-1",
+    "formatted": "-1µs",
+    "minimum": -1000
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "999",
+    "formatted": "999µs",
+    "minimum": 999000
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "1000",
+    "formatted": "1.0ms",
+    "minimum": 1000000
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "1024",
+    "formatted": "1.024ms",
+    "minimum": 1024000
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "1025",
+    "formatted": "1.025ms",
+    "minimum": 1025000
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "2.675",
+    "formatted": "2.675µs",
+    "minimum": 2675.0
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "0.0000015",
+    "formatted": "0.0015ns",
+    "minimum": 0.0015
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "1e-7",
+    "formatted": "0.0001ns",
+    "minimum": 0.0001
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "-1e-7",
+    "formatted": "-0.0001ns",
+    "minimum": -0.0001
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "60",
+    "formatted": "60µs",
+    "minimum": 60000
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "3600",
+    "formatted": "3.6ms",
+    "minimum": 3600000
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "24",
+    "formatted": "24µs",
+    "minimum": 24000
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "-1000",
+    "formatted": "-1.0ms",
+    "minimum": -1000000
+  },
+  {
+    "unit": "µs",
+    "category_unit": "Time||µs",
+    "raw": "1e16",
+    "formatted": "115740.740741d",
+    "minimum": 1e+19
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "0",
+    "formatted": "0ns",
+    "minimum": 0
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "0.0",
+    "formatted": "0.0ns",
+    "minimum": 0.0
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "-0.0",
+    "formatted": "-0.0ns",
+    "minimum": -0.0
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "1",
+    "formatted": "1ms",
+    "minimum": 1000000
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "1.0",
+    "formatted": "1.0ms",
+    "minimum": 1000000.0
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "0.9",
+    "formatted": "900.0µs",
+    "minimum": 900000.0
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "-1",
+    "formatted": "-1ms",
+    "minimum": -1000000
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "999",
+    "formatted": "999ms",
+    "minimum": 999000000
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "1000",
+    "formatted": "1.0s",
+    "minimum": 1000000000
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "1024",
+    "formatted": "1.024s",
+    "minimum": 1024000000
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "1025",
+    "formatted": "1.025s",
+    "minimum": 1025000000
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "2.675",
+    "formatted": "2.675ms",
+    "minimum": 2675000.0
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "0.0000015",
+    "formatted": "1.5ns",
+    "minimum": 1.5
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "1e-7",
+    "formatted": "0.1ns",
+    "minimum": 0.1
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "-1e-7",
+    "formatted": "-0.1ns",
+    "minimum": -0.1
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "60",
+    "formatted": "60ms",
+    "minimum": 60000000
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "3600",
+    "formatted": "3.6s",
+    "minimum": 3600000000
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "24",
+    "formatted": "24ms",
+    "minimum": 24000000
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "-1000",
+    "formatted": "-1.0s",
+    "minimum": -1000000000
+  },
+  {
+    "unit": "ms",
+    "category_unit": "Time||ms",
+    "raw": "1e16",
+    "formatted": "115740740.740741d",
+    "minimum": 1e+22
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "0",
+    "formatted": "0ns",
+    "minimum": 0
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "0.0",
+    "formatted": "0.0ns",
+    "minimum": 0.0
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "-0.0",
+    "formatted": "-0.0ns",
+    "minimum": -0.0
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "1",
+    "formatted": "1s",
+    "minimum": 1000000000
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "1.0",
+    "formatted": "1.0s",
+    "minimum": 1000000000.0
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "0.9",
+    "formatted": "900.0ms",
+    "minimum": 900000000.0
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "-1",
+    "formatted": "-1s",
+    "minimum": -1000000000
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "999",
+    "formatted": "999s",
+    "minimum": 999000000000
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "1000",
+    "formatted": "16.666667m",
+    "minimum": 1000000000000
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "1024",
+    "formatted": "17.066667m",
+    "minimum": 1024000000000
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "1025",
+    "formatted": "17.083333m",
+    "minimum": 1025000000000
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "2.675",
+    "formatted": "2.675s",
+    "minimum": 2675000000.0
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "0.0000015",
+    "formatted": "1.5µs",
+    "minimum": 1500.0
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "1e-7",
+    "formatted": "100.0ns",
+    "minimum": 100.0
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "-1e-7",
+    "formatted": "-100.0ns",
+    "minimum": -100.0
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "60",
+    "formatted": "60s",
+    "minimum": 60000000000
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "3600",
+    "formatted": "1.0h",
+    "minimum": 3600000000000
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "24",
+    "formatted": "24s",
+    "minimum": 24000000000
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "-1000",
+    "formatted": "-16.666667m",
+    "minimum": -1000000000000
+  },
+  {
+    "unit": "s",
+    "category_unit": "Time||s",
+    "raw": "1e16",
+    "formatted": "115740740740.74074d",
+    "minimum": 1e+25
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "0",
+    "formatted": "0ns",
+    "minimum": 0
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "0.0",
+    "formatted": "0.0ns",
+    "minimum": 0.0
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "-0.0",
+    "formatted": "-0.0ns",
+    "minimum": -0.0
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "1",
+    "formatted": "1m",
+    "minimum": 60000000000
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "1.0",
+    "formatted": "1.0m",
+    "minimum": 60000000000.0
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "0.9",
+    "formatted": "900.0s",
+    "minimum": 54000000000.0
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "-1",
+    "formatted": "-1m",
+    "minimum": -60000000000
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "999",
+    "formatted": "16.65h",
+    "minimum": 59940000000000
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "1000",
+    "formatted": "16.666667h",
+    "minimum": 60000000000000
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "1024",
+    "formatted": "17.066667h",
+    "minimum": 61440000000000
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "1025",
+    "formatted": "17.083333h",
+    "minimum": 61500000000000
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "2.675",
+    "formatted": "2.675m",
+    "minimum": 160500000000.0
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "0.0000015",
+    "formatted": "1.5ms",
+    "minimum": 90000.0
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "1e-7",
+    "formatted": "100.0µs",
+    "minimum": 6000.0
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "-1e-7",
+    "formatted": "-100.0µs",
+    "minimum": -6000.0
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "60",
+    "formatted": "1.0h",
+    "minimum": 3600000000000
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "3600",
+    "formatted": "2.5d",
+    "minimum": 216000000000000
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "24",
+    "formatted": "24m",
+    "minimum": 1440000000000
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "-1000",
+    "formatted": "-16.666667h",
+    "minimum": -60000000000000
+  },
+  {
+    "unit": "m",
+    "category_unit": "Time||m",
+    "raw": "1e16",
+    "formatted": "6944444444444.444d",
+    "minimum": 6e+26
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "0",
+    "formatted": "0ns",
+    "minimum": 0
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "0.0",
+    "formatted": "0.0ns",
+    "minimum": 0.0
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "-0.0",
+    "formatted": "-0.0ns",
+    "minimum": -0.0
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "1",
+    "formatted": "1h",
+    "minimum": 3600000000000
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "1.0",
+    "formatted": "1.0h",
+    "minimum": 3600000000000.0
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "0.9",
+    "formatted": "54.0m",
+    "minimum": 3240000000000.0
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "-1",
+    "formatted": "-1h",
+    "minimum": -3600000000000
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "999",
+    "formatted": "41.625d",
+    "minimum": 3596400000000000
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "1000",
+    "formatted": "41.666667d",
+    "minimum": 3600000000000000
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "1024",
+    "formatted": "42.666667d",
+    "minimum": 3686400000000000
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "1025",
+    "formatted": "42.708333d",
+    "minimum": 3690000000000000
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "2.675",
+    "formatted": "2.675h",
+    "minimum": 9630000000000.0
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "0.0000015",
+    "formatted": "90.0ms",
+    "minimum": 5400000.0
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "1e-7",
+    "formatted": "6.0ms",
+    "minimum": 360000.0
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "-1e-7",
+    "formatted": "-6.0ms",
+    "minimum": -360000.0
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "60",
+    "formatted": "2.5d",
+    "minimum": 216000000000000
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "3600",
+    "formatted": "150.0d",
+    "minimum": 12960000000000000
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "24",
+    "formatted": "24h",
+    "minimum": 86400000000000
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "-1000",
+    "formatted": "-41.666667d",
+    "minimum": -3600000000000000
+  },
+  {
+    "unit": "h",
+    "category_unit": "Time||h",
+    "raw": "1e16",
+    "formatted": "416666666666666.7d",
+    "minimum": 3.6e+28
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "0",
+    "formatted": "0ns",
+    "minimum": 0
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "0.0",
+    "formatted": "0.0ns",
+    "minimum": 0.0
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "-0.0",
+    "formatted": "-0.0ns",
+    "minimum": -0.0
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "1",
+    "formatted": "1d",
+    "minimum": 86400000000000
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "1.0",
+    "formatted": "1.0d",
+    "minimum": 86400000000000.0
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "0.9",
+    "formatted": "54.0h",
+    "minimum": 77760000000000.0
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "-1",
+    "formatted": "-1d",
+    "minimum": -86400000000000
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "999",
+    "formatted": "999d",
+    "minimum": 86313600000000000
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "1000",
+    "formatted": "1000d",
+    "minimum": 86400000000000000
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "1024",
+    "formatted": "1024d",
+    "minimum": 88473600000000000
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "1025",
+    "formatted": "1025d",
+    "minimum": 88560000000000000
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "2.675",
+    "formatted": "2.675d",
+    "minimum": 231119999999999.94
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "0.0000015",
+    "formatted": "5.4s",
+    "minimum": 129600000.0
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "1e-7",
+    "formatted": "360.0ms",
+    "minimum": 8640000.0
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "-1e-7",
+    "formatted": "-360.0ms",
+    "minimum": -8640000.0
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "60",
+    "formatted": "60d",
+    "minimum": 5184000000000000
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "3600",
+    "formatted": "3600d",
+    "minimum": 311040000000000000
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "24",
+    "formatted": "24d",
+    "minimum": 2073600000000000
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "-1000",
+    "formatted": "-1000d",
+    "minimum": -86400000000000000
+  },
+  {
+    "unit": "d",
+    "category_unit": "Time||d",
+    "raw": "1e16",
+    "formatted": "1e+16d",
+    "minimum": 8.64e+29
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "0",
+    "formatted": "0cps",
+    "minimum": 0
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "0.0",
+    "formatted": "0.0cps",
+    "minimum": 0.0
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "-0.0",
+    "formatted": "-0.0cps",
+    "minimum": -0.0
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "1",
+    "formatted": "1cps",
+    "minimum": 1
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "1.0",
+    "formatted": "1.0cps",
+    "minimum": 1.0
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "0.9",
+    "formatted": "0.9cps",
+    "minimum": 0.9
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "-1",
+    "formatted": "-1cps",
+    "minimum": -1
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "999",
+    "formatted": "999cps",
+    "minimum": 999
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "1000",
+    "formatted": "1.0Kcps",
+    "minimum": 1000
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "1024",
+    "formatted": "1.024Kcps",
+    "minimum": 1024
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "1025",
+    "formatted": "1.025Kcps",
+    "minimum": 1025
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "2.675",
+    "formatted": "2.675cps",
+    "minimum": 2.675
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "0.0000015",
+    "formatted": "2e-06cps",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "1e-7",
+    "formatted": "0.0cps",
+    "minimum": 0.0
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "-1e-7",
+    "formatted": "-0.0cps",
+    "minimum": -0.0
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "60",
+    "formatted": "60cps",
+    "minimum": 60
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "3600",
+    "formatted": "3.6Kcps",
+    "minimum": 3600
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "24",
+    "formatted": "24cps",
+    "minimum": 24
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "-1000",
+    "formatted": "-1.0Kcps",
+    "minimum": -1000
+  },
+  {
+    "unit": "cps",
+    "category_unit": "Throughput||cps",
+    "raw": "1e16",
+    "formatted": "10000.0Tcps",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "0",
+    "formatted": "0ops",
+    "minimum": 0
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "0.0",
+    "formatted": "0.0ops",
+    "minimum": 0.0
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "-0.0",
+    "formatted": "-0.0ops",
+    "minimum": -0.0
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "1",
+    "formatted": "1ops",
+    "minimum": 1
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "1.0",
+    "formatted": "1.0ops",
+    "minimum": 1.0
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "0.9",
+    "formatted": "0.9ops",
+    "minimum": 0.9
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "-1",
+    "formatted": "-1ops",
+    "minimum": -1
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "999",
+    "formatted": "999ops",
+    "minimum": 999
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "1000",
+    "formatted": "1.0Kops",
+    "minimum": 1000
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "1024",
+    "formatted": "1.024Kops",
+    "minimum": 1024
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "1025",
+    "formatted": "1.025Kops",
+    "minimum": 1025
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "2.675",
+    "formatted": "2.675ops",
+    "minimum": 2.675
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "0.0000015",
+    "formatted": "2e-06ops",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "1e-7",
+    "formatted": "0.0ops",
+    "minimum": 0.0
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "-1e-7",
+    "formatted": "-0.0ops",
+    "minimum": -0.0
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "60",
+    "formatted": "60ops",
+    "minimum": 60
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "3600",
+    "formatted": "3.6Kops",
+    "minimum": 3600
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "24",
+    "formatted": "24ops",
+    "minimum": 24
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "-1000",
+    "formatted": "-1.0Kops",
+    "minimum": -1000
+  },
+  {
+    "unit": "ops",
+    "category_unit": "Throughput||ops",
+    "raw": "1e16",
+    "formatted": "10000.0Tops",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "0",
+    "formatted": "0reqps",
+    "minimum": 0
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "0.0",
+    "formatted": "0.0reqps",
+    "minimum": 0.0
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "-0.0",
+    "formatted": "-0.0reqps",
+    "minimum": -0.0
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "1",
+    "formatted": "1reqps",
+    "minimum": 1
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "1.0",
+    "formatted": "1.0reqps",
+    "minimum": 1.0
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "0.9",
+    "formatted": "0.9reqps",
+    "minimum": 0.9
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "-1",
+    "formatted": "-1reqps",
+    "minimum": -1
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "999",
+    "formatted": "999reqps",
+    "minimum": 999
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "1000",
+    "formatted": "1.0Kreqps",
+    "minimum": 1000
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "1024",
+    "formatted": "1.024Kreqps",
+    "minimum": 1024
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "1025",
+    "formatted": "1.025Kreqps",
+    "minimum": 1025
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "2.675",
+    "formatted": "2.675reqps",
+    "minimum": 2.675
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "0.0000015",
+    "formatted": "2e-06reqps",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "1e-7",
+    "formatted": "0.0reqps",
+    "minimum": 0.0
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "-1e-7",
+    "formatted": "-0.0reqps",
+    "minimum": -0.0
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "60",
+    "formatted": "60reqps",
+    "minimum": 60
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "3600",
+    "formatted": "3.6Kreqps",
+    "minimum": 3600
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "24",
+    "formatted": "24reqps",
+    "minimum": 24
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "-1000",
+    "formatted": "-1.0Kreqps",
+    "minimum": -1000
+  },
+  {
+    "unit": "reqps",
+    "category_unit": "Throughput||reqps",
+    "raw": "1e16",
+    "formatted": "10000.0Treqps",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "0",
+    "formatted": "0rps",
+    "minimum": 0
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "0.0",
+    "formatted": "0.0rps",
+    "minimum": 0.0
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "-0.0",
+    "formatted": "-0.0rps",
+    "minimum": -0.0
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "1",
+    "formatted": "1rps",
+    "minimum": 1
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "1.0",
+    "formatted": "1.0rps",
+    "minimum": 1.0
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "0.9",
+    "formatted": "0.9rps",
+    "minimum": 0.9
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "-1",
+    "formatted": "-1rps",
+    "minimum": -1
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "999",
+    "formatted": "999rps",
+    "minimum": 999
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "1000",
+    "formatted": "1.0Krps",
+    "minimum": 1000
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "1024",
+    "formatted": "1.024Krps",
+    "minimum": 1024
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "1025",
+    "formatted": "1.025Krps",
+    "minimum": 1025
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "2.675",
+    "formatted": "2.675rps",
+    "minimum": 2.675
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "0.0000015",
+    "formatted": "2e-06rps",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "1e-7",
+    "formatted": "0.0rps",
+    "minimum": 0.0
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "-1e-7",
+    "formatted": "-0.0rps",
+    "minimum": -0.0
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "60",
+    "formatted": "60rps",
+    "minimum": 60
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "3600",
+    "formatted": "3.6Krps",
+    "minimum": 3600
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "24",
+    "formatted": "24rps",
+    "minimum": 24
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "-1000",
+    "formatted": "-1.0Krps",
+    "minimum": -1000
+  },
+  {
+    "unit": "rps",
+    "category_unit": "Throughput||rps",
+    "raw": "1e16",
+    "formatted": "10000.0Trps",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "0",
+    "formatted": "0wps",
+    "minimum": 0
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "0.0",
+    "formatted": "0.0wps",
+    "minimum": 0.0
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "-0.0",
+    "formatted": "-0.0wps",
+    "minimum": -0.0
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "1",
+    "formatted": "1wps",
+    "minimum": 1
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "1.0",
+    "formatted": "1.0wps",
+    "minimum": 1.0
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "0.9",
+    "formatted": "0.9wps",
+    "minimum": 0.9
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "-1",
+    "formatted": "-1wps",
+    "minimum": -1
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "999",
+    "formatted": "999wps",
+    "minimum": 999
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "1000",
+    "formatted": "1.0Kwps",
+    "minimum": 1000
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "1024",
+    "formatted": "1.024Kwps",
+    "minimum": 1024
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "1025",
+    "formatted": "1.025Kwps",
+    "minimum": 1025
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "2.675",
+    "formatted": "2.675wps",
+    "minimum": 2.675
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "0.0000015",
+    "formatted": "2e-06wps",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "1e-7",
+    "formatted": "0.0wps",
+    "minimum": 0.0
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "-1e-7",
+    "formatted": "-0.0wps",
+    "minimum": -0.0
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "60",
+    "formatted": "60wps",
+    "minimum": 60
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "3600",
+    "formatted": "3.6Kwps",
+    "minimum": 3600
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "24",
+    "formatted": "24wps",
+    "minimum": 24
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "-1000",
+    "formatted": "-1.0Kwps",
+    "minimum": -1000
+  },
+  {
+    "unit": "wps",
+    "category_unit": "Throughput||wps",
+    "raw": "1e16",
+    "formatted": "10000.0Twps",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "0",
+    "formatted": "0iops",
+    "minimum": 0
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "0.0",
+    "formatted": "0.0iops",
+    "minimum": 0.0
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "-0.0",
+    "formatted": "-0.0iops",
+    "minimum": -0.0
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "1",
+    "formatted": "1iops",
+    "minimum": 1
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "1.0",
+    "formatted": "1.0iops",
+    "minimum": 1.0
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "0.9",
+    "formatted": "0.9iops",
+    "minimum": 0.9
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "-1",
+    "formatted": "-1iops",
+    "minimum": -1
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "999",
+    "formatted": "999iops",
+    "minimum": 999
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "1000",
+    "formatted": "1.0Kiops",
+    "minimum": 1000
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "1024",
+    "formatted": "1.024Kiops",
+    "minimum": 1024
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "1025",
+    "formatted": "1.025Kiops",
+    "minimum": 1025
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "2.675",
+    "formatted": "2.675iops",
+    "minimum": 2.675
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "0.0000015",
+    "formatted": "2e-06iops",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "1e-7",
+    "formatted": "0.0iops",
+    "minimum": 0.0
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "-1e-7",
+    "formatted": "-0.0iops",
+    "minimum": -0.0
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "60",
+    "formatted": "60iops",
+    "minimum": 60
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "3600",
+    "formatted": "3.6Kiops",
+    "minimum": 3600
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "24",
+    "formatted": "24iops",
+    "minimum": 24
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "-1000",
+    "formatted": "-1.0Kiops",
+    "minimum": -1000
+  },
+  {
+    "unit": "iops",
+    "category_unit": "Throughput||iops",
+    "raw": "1e16",
+    "formatted": "10000.0Tiops",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "0",
+    "formatted": "0cpm",
+    "minimum": 0
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "0.0",
+    "formatted": "0.0cpm",
+    "minimum": 0.0
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "-0.0",
+    "formatted": "-0.0cpm",
+    "minimum": -0.0
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "1",
+    "formatted": "1cpm",
+    "minimum": 1
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "1.0",
+    "formatted": "1.0cpm",
+    "minimum": 1.0
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "0.9",
+    "formatted": "0.9cpm",
+    "minimum": 0.9
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "-1",
+    "formatted": "-1cpm",
+    "minimum": -1
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "999",
+    "formatted": "999cpm",
+    "minimum": 999
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "1000",
+    "formatted": "1.0Kcpm",
+    "minimum": 1000
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "1024",
+    "formatted": "1.024Kcpm",
+    "minimum": 1024
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "1025",
+    "formatted": "1.025Kcpm",
+    "minimum": 1025
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "2.675",
+    "formatted": "2.675cpm",
+    "minimum": 2.675
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "0.0000015",
+    "formatted": "2e-06cpm",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "1e-7",
+    "formatted": "0.0cpm",
+    "minimum": 0.0
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "-1e-7",
+    "formatted": "-0.0cpm",
+    "minimum": -0.0
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "60",
+    "formatted": "60cpm",
+    "minimum": 60
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "3600",
+    "formatted": "3.6Kcpm",
+    "minimum": 3600
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "24",
+    "formatted": "24cpm",
+    "minimum": 24
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "-1000",
+    "formatted": "-1.0Kcpm",
+    "minimum": -1000
+  },
+  {
+    "unit": "cpm",
+    "category_unit": "Throughput||cpm",
+    "raw": "1e16",
+    "formatted": "10000.0Tcpm",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "0",
+    "formatted": "0opm",
+    "minimum": 0
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "0.0",
+    "formatted": "0.0opm",
+    "minimum": 0.0
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "-0.0",
+    "formatted": "-0.0opm",
+    "minimum": -0.0
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "1",
+    "formatted": "1opm",
+    "minimum": 1
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "1.0",
+    "formatted": "1.0opm",
+    "minimum": 1.0
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "0.9",
+    "formatted": "0.9opm",
+    "minimum": 0.9
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "-1",
+    "formatted": "-1opm",
+    "minimum": -1
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "999",
+    "formatted": "999opm",
+    "minimum": 999
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "1000",
+    "formatted": "1.0Kopm",
+    "minimum": 1000
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "1024",
+    "formatted": "1.024Kopm",
+    "minimum": 1024
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "1025",
+    "formatted": "1.025Kopm",
+    "minimum": 1025
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "2.675",
+    "formatted": "2.675opm",
+    "minimum": 2.675
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "0.0000015",
+    "formatted": "2e-06opm",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "1e-7",
+    "formatted": "0.0opm",
+    "minimum": 0.0
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "-1e-7",
+    "formatted": "-0.0opm",
+    "minimum": -0.0
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "60",
+    "formatted": "60opm",
+    "minimum": 60
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "3600",
+    "formatted": "3.6Kopm",
+    "minimum": 3600
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "24",
+    "formatted": "24opm",
+    "minimum": 24
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "-1000",
+    "formatted": "-1.0Kopm",
+    "minimum": -1000
+  },
+  {
+    "unit": "opm",
+    "category_unit": "Throughput||opm",
+    "raw": "1e16",
+    "formatted": "10000.0Topm",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "0",
+    "formatted": "0rpm",
+    "minimum": 0
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "0.0",
+    "formatted": "0.0rpm",
+    "minimum": 0.0
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "-0.0",
+    "formatted": "-0.0rpm",
+    "minimum": -0.0
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "1",
+    "formatted": "1rpm",
+    "minimum": 1
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "1.0",
+    "formatted": "1.0rpm",
+    "minimum": 1.0
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "0.9",
+    "formatted": "0.9rpm",
+    "minimum": 0.9
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "-1",
+    "formatted": "-1rpm",
+    "minimum": -1
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "999",
+    "formatted": "999rpm",
+    "minimum": 999
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "1000",
+    "formatted": "1.0Krpm",
+    "minimum": 1000
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "1024",
+    "formatted": "1.024Krpm",
+    "minimum": 1024
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "1025",
+    "formatted": "1.025Krpm",
+    "minimum": 1025
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "2.675",
+    "formatted": "2.675rpm",
+    "minimum": 2.675
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "0.0000015",
+    "formatted": "2e-06rpm",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "1e-7",
+    "formatted": "0.0rpm",
+    "minimum": 0.0
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "-1e-7",
+    "formatted": "-0.0rpm",
+    "minimum": -0.0
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "60",
+    "formatted": "60rpm",
+    "minimum": 60
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "3600",
+    "formatted": "3.6Krpm",
+    "minimum": 3600
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "24",
+    "formatted": "24rpm",
+    "minimum": 24
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "-1000",
+    "formatted": "-1.0Krpm",
+    "minimum": -1000
+  },
+  {
+    "unit": "rpm",
+    "category_unit": "Throughput||rpm",
+    "raw": "1e16",
+    "formatted": "10000.0Trpm",
+    "minimum": 1e+16
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "0",
+    "formatted": "0wpm",
+    "minimum": 0
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "0.0",
+    "formatted": "0.0wpm",
+    "minimum": 0.0
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "-0.0",
+    "formatted": "-0.0wpm",
+    "minimum": -0.0
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "1",
+    "formatted": "1wpm",
+    "minimum": 1
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "1.0",
+    "formatted": "1.0wpm",
+    "minimum": 1.0
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "0.9",
+    "formatted": "0.9wpm",
+    "minimum": 0.9
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "-1",
+    "formatted": "-1wpm",
+    "minimum": -1
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "999",
+    "formatted": "999wpm",
+    "minimum": 999
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "1000",
+    "formatted": "1.0Kwpm",
+    "minimum": 1000
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "1024",
+    "formatted": "1.024Kwpm",
+    "minimum": 1024
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "1025",
+    "formatted": "1.025Kwpm",
+    "minimum": 1025
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "2.675",
+    "formatted": "2.675wpm",
+    "minimum": 2.675
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "0.0000015",
+    "formatted": "2e-06wpm",
+    "minimum": 2e-06
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "1e-7",
+    "formatted": "0.0wpm",
+    "minimum": 0.0
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "-1e-7",
+    "formatted": "-0.0wpm",
+    "minimum": -0.0
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "60",
+    "formatted": "60wpm",
+    "minimum": 60
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "3600",
+    "formatted": "3.6Kwpm",
+    "minimum": 3600
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "24",
+    "formatted": "24wpm",
+    "minimum": 24
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "-1000",
+    "formatted": "-1.0Kwpm",
+    "minimum": -1000
+  },
+  {
+    "unit": "wpm",
+    "category_unit": "Throughput||wpm",
+    "raw": "1e16",
+    "formatted": "10000.0Twpm",
+    "minimum": 1e+16
+  }
+]

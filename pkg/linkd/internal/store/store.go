@@ -16,11 +16,19 @@ import (
 )
 
 // EventStore 定义 Event 的创建、读取和处理结果单对象 CAS。
+// 创建成功不承诺列表或搜索立即可见；需要立即读取单个 Event 的调用方必须使用 GetEvent。
+// 读取返回已恢复默认值、时间和处理快照的标准 Event，内部消费者不应再次全量 Normalize。
+// 新丰富结果非法时返回 ErrInvalidArgument，且不提交任何状态，供 Lifecycle 保存失败诊断。
 type EventStore interface {
+	// CompareAndSetEventEnrichment 在处理计划冻结前提交完整丰富结果，返回最新 CAS 版本。
+	// 完成结果只可幂等核对；来源事实、处理状态和关联不受此操作影响。
+	CompareAndSetEventEnrichment(ctx context.Context, bkTenantID, eventID string, expected VersionToken, result domain.EventEnrichment) (StoredEvent, error)
 	CreateEvent(ctx context.Context, event domain.Event) (CreateEventResult, error)
 	CreateEvents(ctx context.Context, events []domain.Event) ([]CreateEventItemResult, error)
 	GetEvent(ctx context.Context, bkTenantID, eventID string) (StoredEvent, error)
 	GetEvents(ctx context.Context, bkTenantID string, eventIDs []string) (EventBatch, error)
+	// ListEventsBySource 按来源及显式接收时间读取 Event，不要求已产生 Alert。
+	ListEventsBySource(ctx context.Context, bkTenantID, sourceID string, request EventBySourceRequest) (EventPage, error)
 	ListEventsByAlert(
 		ctx context.Context,
 		bkTenantID, alertID string,
@@ -34,8 +42,37 @@ type EventStore interface {
 	) (StoredEvent, error)
 }
 
+// NormalizedEventBatchStore 是 Cleaner 在同一调用链中已经完成 Event.Normalize 后使用的窄快速路径。
+// 实现仍须校验身份、路由和载荷上限，但可以跳过动态 JSON 的重复规范化；任意外部输入不得调用。
+type NormalizedEventBatchStore interface {
+	CreateNormalizedEvents(ctx context.Context, events []domain.Event) ([]CreateEventItemResult, error)
+}
+
+// LifecycleEventStore 提供 Lifecycle 专用的 Event 投影读取和局部结果 CAS。
+// 返回的 Event 可以省略 Lifecycle 不消费的大字段，不得作为公共完整 Event 快照使用。
+type LifecycleEventStore interface {
+	GetLifecycleEvent(ctx context.Context, bkTenantID, eventID string) (StoredEvent, error)
+	CompareAndSetLifecycleEventResult(
+		ctx context.Context,
+		bkTenantID, eventID string,
+		expected VersionToken,
+		result EventResult,
+	) (StoredEvent, error)
+}
+
+// LifecycleEventSnapshotStore 复用同一 Repository 的完整读取或成功写入快照，省略 CAS 前置 GET。
+// current 必须保持不可变且包含完整来源字段，供丰富提交检查文档预算。版本冲突仍须重读并重裁决。
+// 该能力仅用于内部调用链，不接受外部构造快照；实现返回新状态，未变载荷可共享且双方均不可变。
+// 不缓存或修改 current；需要可变副本时必须显式 Clone。
+type LifecycleEventSnapshotStore interface {
+	CompareAndSetEventEnrichmentFromSnapshot(ctx context.Context, current StoredEvent, result domain.EventEnrichment) (StoredEvent, error)
+	CompareAndSetLifecycleEventResultFromSnapshot(ctx context.Context, current StoredEvent, result EventResult) (StoredEvent, error)
+}
+
 // AlertStore 定义逻辑 Alert 的创建、读取、活动关联查询和单对象 CAS。
 // 具体存储可以在内部使用多个物理集合，但不得向调用方暴露位置或归档编排状态。
+// 创建必须为 revision=1；业务 CAS 根据当前计数器推进 revision。
+// replacement 可保留读取时的 revision，或携带已冻结的下一业务版本；返回值始终包含实际保存的版本。
 type AlertStore interface {
 	CreateAlert(ctx context.Context, alert domain.Alert) (CreateAlertResult, error)
 	GetAlert(ctx context.Context, bkTenantID, alertID string) (StoredAlert, error)
@@ -48,6 +85,32 @@ type AlertStore interface {
 		expected VersionToken,
 		replacement domain.Alert,
 	) (StoredAlert, error)
+}
+
+// LifecycleAlertStore 提供已经由 fingerprint lease 和 Recent Alert 缓存完成 active 裁决后的快速写入。
+// Elasticsearch 实现可以跳过重复 active 搜索和 refresh 等待；其他后端可以保持原有强一致写入。
+type LifecycleAlertStore interface {
+	CreateAlertAfterActiveLookup(ctx context.Context, alert domain.Alert) (CreateAlertResult, error)
+	CompareAndSetAlertAfterActiveLookup(
+		ctx context.Context,
+		bkTenantID, alertID string,
+		expected VersionToken,
+		replacement domain.Alert,
+	) (StoredAlert, error)
+	GetAlertCurrent(ctx context.Context, bkTenantID, alertID string) (StoredAlert, error)
+}
+
+// CurrentAlertBatchStore 批量读取实时 Alert，供跨成员策略裁决避免逐条查询。
+type CurrentAlertBatchStore interface {
+	GetAlertsCurrent(context.Context, string, []string) (AlertBatch, error)
+}
+
+// LifecycleAlertSnapshotStore 在既有快照上校验 Alert 替换并直接条件写入，不重复读取。
+// current 只能来自同一 Repository 的可信读取、成功写入或其 Recent Alert 缓存，且不得就地修改。
+// Repository 统一准备业务版本及投影要求；调用方无需再次 PrepareAlertReplacement。
+// 写入仍保护业务 revision、投影确认和创建事实；ES 冲突不能通过替换版本 token 绕过。
+type LifecycleAlertSnapshotStore interface {
+	CompareAndSetAlertFromSnapshot(ctx context.Context, current StoredAlert, replacement domain.Alert) (StoredAlert, error)
 }
 
 // AlertLogStore 定义不可变 AlertLog 的批量追加和分页读取。

@@ -12,9 +12,11 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 	"linkd/internal/logging"
+	"linkd/internal/taskdispatch"
 	"linkd/internal/telemetry"
 )
 
@@ -53,7 +55,7 @@ func newProcessCommand(options *commandOptions, process processCommand) *cobra.C
 			return runWithTelemetry(
 				cmd.Context(), cfg, process.role, options.version,
 				func(ctx context.Context, telemetryRuntime *telemetry.Runtime) error {
-					return process.run(ctx, cfg, logger, telemetryRuntime)
+					return process.run(taskdispatch.WithForcedExit(ctx, func() { os.Exit(1) }), cfg, logger, telemetryRuntime)
 				},
 			)
 		},

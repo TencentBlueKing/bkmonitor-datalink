@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -91,7 +92,7 @@ func (r *Repository) createEvent(ctx context.Context, event domain.Event) (store
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if existing, ok := r.events[key]; ok {
-		if err := domain.ValidateEventReplacement(normalized, existing.event); err != nil {
+		if err := domain.ValidateEventRedelivery(normalized, existing.event); err != nil {
 			return store.CreateEventResult{}, fmt.Errorf(
 				"%w: event %q already contains different content: %w",
 				store.ErrIdentityConflict,
@@ -170,6 +171,74 @@ func (r *Repository) GetEvents(
 	return result, nil
 }
 
+// ListEventsBySource 读取来源时间窗口内的事件，包含尚未关联 Alert 的事件。
+func (r *Repository) ListEventsBySource(
+	ctx context.Context,
+	bkTenantID, sourceID string,
+	request store.EventBySourceRequest,
+) (store.EventPage, error) {
+	if err := contextError(ctx); err != nil {
+		return store.EventPage{}, err
+	}
+	from, to := request.ReceivedFrom, request.ReceivedTo
+	page, err := request.Page.Normalize()
+	if err != nil {
+		return store.EventPage{}, err
+	}
+	expected := cursorPayload{
+		Kind: cursorKindEventBySource, TenantID: bkTenantID, ParentID: sourceID,
+		RangeStartNS: from.UnixNano(), BoundaryNS: to.UnixNano(),
+	}
+	var cursor cursorPayload
+	if page.Cursor != "" {
+		cursor, err = decodeCursor(page.Cursor, expected)
+		if err != nil {
+			return store.EventPage{}, err
+		}
+	}
+	r.mu.RLock()
+	candidates := make([]eventEntry, 0)
+	for key, entry := range r.events {
+		if key.tenantID == bkTenantID && entry.event.EventSourceID == sourceID &&
+			!entry.event.ReceivedAt.Before(from) && !entry.event.ReceivedAt.After(to) {
+			candidates = append(candidates, entry)
+		}
+	}
+	r.mu.RUnlock()
+	sort.Slice(candidates, func(i, j int) bool {
+		left, right := candidates[i].event, candidates[j].event
+		if left.ReceivedAt.Equal(right.ReceivedAt) {
+			return left.EventID < right.EventID
+		}
+		return left.ReceivedAt.Before(right.ReceivedAt)
+	})
+	start := 0
+	if page.Cursor != "" {
+		start = sort.Search(len(candidates), func(index int) bool {
+			candidate := candidates[index].event
+			return candidate.ReceivedAt.UnixNano() > cursor.TimeNS ||
+				(candidate.ReceivedAt.UnixNano() == cursor.TimeNS && candidate.EventID > cursor.ObjectID)
+		})
+	}
+	end := min(start+page.Limit, len(candidates))
+	result := store.EventPage{Events: make([]store.StoredEvent, 0, end-start)}
+	for _, entry := range candidates[start:end] {
+		result.Events = append(result.Events, cloneStoredEvent(entry))
+	}
+	if end < len(candidates) {
+		last := candidates[end-1].event
+		result.NextCursor, err = encodeCursor(cursorPayload{
+			Kind: cursorKindEventBySource, TenantID: bkTenantID, ParentID: sourceID,
+			RangeStartNS: from.UnixNano(), BoundaryNS: to.UnixNano(),
+			TimeNS: last.ReceivedAt.UnixNano(), ObjectID: last.EventID,
+		})
+		if err != nil {
+			return store.EventPage{}, err
+		}
+	}
+	return result, nil
+}
+
 // ListEventsByAlert 按关联 Alert 和 received_at 稳定分页。
 func (r *Repository) ListEventsByAlert(
 	ctx context.Context,
@@ -211,7 +280,7 @@ func (r *Repository) ListEventsByAlert(
 	r.mu.RLock()
 	candidates := make([]eventEntry, 0)
 	for key, entry := range r.events {
-		if key.tenantID == bkTenantID && entry.event.RelatedAlertID == alertID &&
+		if key.tenantID == bkTenantID && slices.Contains(entry.event.RelatedAlertIDs, alertID) &&
 			!entry.event.ReceivedAt.Before(from) && !entry.event.ReceivedAt.After(to) {
 			candidates = append(candidates, entry)
 		}
@@ -445,24 +514,12 @@ func (r *Repository) CompareAndSetEventResult(
 	if entry.version != expected {
 		return store.StoredEvent{}, fmt.Errorf("%w: event %q", store.ErrVersionConflict, eventID)
 	}
-	normalizedResult, err := result.Normalize()
-	if err != nil {
-		return store.StoredEvent{}, fmt.Errorf("%w: event %q result: %w", store.ErrInvalidArgument, eventID, err)
-	}
 	if entry.processing.State != domain.EventProcessStateUnprocessed {
 		return store.StoredEvent{}, fmt.Errorf("%w: event %q is already processed", store.ErrInvalidTransition, eventID)
 	}
-	updated := entry.event.Clone()
-	if normalizedResult.RelatedAlertID != "" {
-		updated, err = updated.WithRelatedAlertID(normalizedResult.RelatedAlertID)
-	}
+	updated, processing, err := store.ApplyEventResult(cloneStoredEvent(entry), result)
 	if err != nil {
-		return store.StoredEvent{}, fmt.Errorf("%w: event %q: %w", store.ErrInvalidTransition, eventID, err)
-	}
-	processedAt := normalizedResult.ProcessedAt
-	processing := store.EventProcessing{
-		State: normalizedResult.State, Outcome: normalizedResult.Outcome,
-		ReasonCode: normalizedResult.ReasonCode, ProcessedAt: &processedAt,
+		return store.StoredEvent{}, err
 	}
 	entry = eventEntry{event: updated, processing: processing, version: r.newVersionLocked()}
 	r.events[key] = entry
@@ -478,8 +535,8 @@ func (r *Repository) CreateAlert(ctx context.Context, alert domain.Alert) (store
 	if err != nil {
 		return store.CreateAlertResult{}, fmt.Errorf("%w: normalize alert: %w", store.ErrInvalidArgument, err)
 	}
-	if normalized.Status != domain.AlertStatusActive {
-		return store.CreateAlertResult{}, fmt.Errorf("%w: new alert must be active", store.ErrInvalidArgument)
+	if err := domain.ValidateAlertCreation(normalized); err != nil {
+		return store.CreateAlertResult{}, fmt.Errorf("%w: %w", store.ErrInvalidArgument, err)
 	}
 	key := objectKey{tenantID: normalized.BKTenantID, objectID: normalized.AlertID}
 	r.mu.Lock()
@@ -644,7 +701,8 @@ func (r *Repository) CompareAndSetAlert(
 	if entry.version != expected {
 		return store.StoredAlert{}, fmt.Errorf("%w: alert %q", store.ErrVersionConflict, alertID)
 	}
-	if err := domain.ValidateAlertReplacement(entry.alert, normalized); err != nil {
+	normalized, err = domain.PrepareAlertReplacement(entry.alert, normalized)
+	if err != nil {
 		return store.StoredAlert{}, fmt.Errorf("%w: alert %q: %w", store.ErrInvalidTransition, alertID, err)
 	}
 	if entry.alert.Status == domain.AlertStatusActive && normalized.Status.Terminal() {
@@ -685,11 +743,11 @@ func (r *Repository) AppendAlertLogs(
 	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
-	if len(logs) == 0 || len(logs) > store.MaxBatchSize {
+	if len(logs) == 0 || len(logs) > store.MaxAlertLogBatchSize {
 		return nil, fmt.Errorf(
 			"%w: alert log batch size must be between 1 and %d",
 			store.ErrInvalidArgument,
-			store.MaxBatchSize,
+			store.MaxAlertLogBatchSize,
 		)
 	}
 	results := make([]store.AppendAlertLogItemResult, len(logs))
@@ -822,10 +880,11 @@ func (r *Repository) QueryAlertByEvent(
 		eventEntry.processing.State != domain.EventProcessStateSuppressed {
 		return result, nil
 	}
-	alertKey := objectKey{tenantID: bkTenantID, objectID: eventEntry.event.RelatedAlertID}
-	if alertEntry, ok := r.alerts[alertKey]; ok {
-		alert := cloneStoredAlert(alertEntry)
-		result.Alert = &alert
+	for _, alertID := range eventEntry.event.RelatedAlertIDs {
+		alertKey := objectKey{tenantID: bkTenantID, objectID: alertID}
+		if entry, ok := r.alerts[alertKey]; ok {
+			result.Alerts = append(result.Alerts, cloneStoredAlert(entry))
+		}
 	}
 	return result, nil
 }
@@ -925,4 +984,34 @@ func contextError(ctx context.Context) error {
 		return fmt.Errorf("%w: context must not be nil", store.ErrInvalidArgument)
 	}
 	return ctx.Err()
+}
+
+// CompareAndSetEventEnrichment 原子冻结 Event 丰富，不改变来源字段和处理元数据。
+func (r *Repository) CompareAndSetEventEnrichment(ctx context.Context, tenantID, eventID string, expected store.VersionToken, result domain.EventEnrichment) (store.StoredEvent, error) {
+	if err := contextError(ctx); err != nil {
+		return store.StoredEvent{}, err
+	}
+	if err := validateIdentity(tenantID, "event_id", eventID); err != nil {
+		return store.StoredEvent{}, err
+	}
+	if expected.IsZero() {
+		return store.StoredEvent{}, fmt.Errorf("%w: expected event version required", store.ErrInvalidArgument)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := objectKey{tenantID: tenantID, objectID: eventID}
+	entry, ok := r.events[key]
+	if !ok {
+		return store.StoredEvent{}, store.ErrNotFound
+	}
+	if entry.version != expected {
+		return store.StoredEvent{}, store.ErrVersionConflict
+	}
+	updated, err := store.ApplyEventEnrichment(cloneStoredEvent(entry), result)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	entry.event, entry.version = updated, r.newVersionLocked()
+	r.events[key] = entry
+	return cloneStoredEvent(entry), nil
 }

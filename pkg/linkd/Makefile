@@ -3,19 +3,30 @@ SHELL := /bin/sh
 GO ?= go
 GOFMT ?= gofmt
 GOLANGCI_LINT ?= golangci-lint
-DEVTOOLS_DIR ?= devtools
+IMAGE ?= linkd
+IMAGE_TAG ?= 1.0.0
+VERSION ?= $(IMAGE_TAG)
+GIT_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+GO_IMAGE ?= golang:1.26.10
+GOPROXY ?= direct
+CONTAINER ?= $(shell command -v docker >/dev/null 2>&1 && echo docker || echo container)
+EVENTGEN_IMAGE ?= linkd-eventgen
+EVENTGEN_VERSION ?= 0.2.0
+CLI_INSTALL_DIR ?= $(HOME)/.local/bin
 
-GO_FILES := $(shell find . -type f -name '*.go' \
-	-not -path './vendor/*' \
-	-not -path './devtools/node_modules/*' \
-	-not -path './devtools/dist/*' \
-	-not -path './devtools/dist-server/*' | LC_ALL=C sort)
+GO_FILES := $(shell find . -type f -name '*.go' -not -path './vendor/*' -not -path './scripts/node_modules/*' | LC_ALL=C sort)
 
-.PHONY: fmt fmt-check test race vet lint devtools-check devtools-e2e check
+.PHONY: fmt fmt-check test race vet lint release-check check image eventgen-image cli cli-install
 
 fmt:
 	$(GOFMT) -w $(GO_FILES)
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/prettier --write .
+
+cli:
+	$(GO) build -trimpath -ldflags "-X main.version=$(VERSION) -X main.gitCommit=$(GIT_COMMIT)" -o bin/linkd-cli ./cmd/linkd-cli
+
+cli-install: cli
+	install -d "$(CLI_INSTALL_DIR)"
+	install -m 0755 bin/linkd-cli "$(CLI_INSTALL_DIR)/linkd-cli"
 
 fmt-check:
 	@unformatted="$$( $(GOFMT) -l $(GO_FILES) )"; \
@@ -24,7 +35,6 @@ fmt-check:
 		echo "$$unformatted"; \
 		exit 1; \
 	fi
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/prettier --check .
 
 test:
 	$(GO) test ./...
@@ -38,16 +48,9 @@ vet:
 lint:
 	$(GOLANGCI_LINT) run ./...
 
-devtools-check:
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/eslint . --max-warnings 0
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/tsc -p tsconfig.web.json --noEmit
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/tsc -p tsconfig.server.json --noEmit
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/vitest run
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/vite build
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/tsc -p tsconfig.server.json
-
-devtools-e2e:
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/playwright test
+release-check:
+	python3 scripts/test_ci_release.py
+	node --test scripts/test-image-workflow.cjs
 
 check:
 	$(MAKE) fmt-check
@@ -55,4 +58,23 @@ check:
 	$(MAKE) vet
 	$(MAKE) race
 	$(MAKE) lint
-	$(MAKE) devtools-check
+	$(MAKE) release-check
+
+image:
+	$(CONTAINER) build \
+		--build-arg GO_IMAGE=$(GO_IMAGE) \
+		--build-arg GOPROXY=$(GOPROXY) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		-t $(IMAGE):$(IMAGE_TAG) \
+		.
+
+eventgen-image:
+	$(CONTAINER) build \
+		--file Dockerfile.eventgen \
+		--build-arg GO_IMAGE=$(GO_IMAGE) \
+		--build-arg GOPROXY=$(GOPROXY) \
+		--build-arg VERSION=$(EVENTGEN_VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		-t $(EVENTGEN_IMAGE):$(EVENTGEN_VERSION) \
+		.

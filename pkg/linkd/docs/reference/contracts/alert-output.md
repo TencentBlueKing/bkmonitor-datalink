@@ -1,32 +1,9 @@
-# Kafka Alert V1 输出契约
+# 已移除的 Kafka Alert V1 Hook
 
-FinalHook 在 Alert 发生真实变更后发送一个完整 V1 快照：
+状态：2026-10-29。通用 `EventSource.hooks[].type: kafka` 已移除，不再发送完整 Alert V1 快照。
+旧 Record、Release、YAML 和管理 API 中残留的声明会被忽略，不校验其参数、不创建客户端、不执行 Hook，
+也不生成 push 流水。废弃参数和多余字段不会阻断加载或发布；执行名额和实例名检查也不统计这些声明。
 
-```json
-{
-  "message_id": "<opaque-digest>",
-  "schema_version": "1",
-  "bk_tenant_id": "system",
-  "alert_id": "<opaque-digest>",
-  "update_at": "2026-09-01T00:00:00Z",
-  "cause": {
-    "type": "source_event",
-    "id": "<opaque-digest>"
-  },
-  "enrich_status": "succeeded",
-  "alert": {
-    "event_source_id": "source-a"
-  }
-}
-```
-
-`cause.type` 只允许 `source_event | user_operation | system_operation`，`cause.id` 是对应 Event ID 或稳定 operation ID。Kafka headers 同步携带 `message_id`、`schema_version`、`bk_tenant_id`、`alert_id`、`cause_type` 和 `cause_id`。
-
-`message_id` 由租户、`alert_id` 和 `update_at` 确定性生成；partition key 由租户和 `alert_id` 确定性生成。生产端等待 all-ISR ACK，失败不伪装成已投递。
-
-输出规则：
-
-- 创建、同等级 triggered、resolved、closed 和内部直接关闭均输出当前 Alert；
-- 等级升级按顺序输出旧 Alert closed 和新 Alert active 两个快照；
-- suppressed、orphaned、rejected 和纯幂等重投不输出 Alert 快照；
-- 输出使用 `update_at` 作为快照时间，不暴露 Repository 的 `VersionToken`。
+当前 KAC 关闭与投影使用[全局 KAC 插件](kac-alert-projection-v1.md)及
+[轻量动作协议](kac-action-delivery-v3.md)。旧 `type: kac` Kafka Hook 仍遵循自己的配置和运行时边界。
+完整来源配置见[配置指南](../../guides/configuration.md#eventsource-hooks)。

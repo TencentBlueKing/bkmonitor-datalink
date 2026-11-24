@@ -1,0 +1,413 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+// Package preview 执行不保存的丰富模拟，只依赖来源、事件和外部资源的读取端口。
+package preview
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"reflect"
+	"sort"
+	"time"
+
+	"linkd/internal/config"
+	"linkd/internal/domain"
+	"linkd/internal/enrich"
+	"linkd/internal/enrich/custom"
+	"linkd/internal/enrich/kingeye"
+	"linkd/internal/eventsource"
+	"linkd/internal/jsonpath"
+	"linkd/internal/store"
+)
+
+// Error 给 HTTP 边界提供稳定状态码；Message 不包含依赖响应或连接凭据。
+type Error struct {
+	Status  int
+	Message string
+}
+
+func (e *Error) Error() string { return e.Message }
+
+// Request 支持已有 Event、临时 Event JSON 或创建内容的 opening Event，三种输入互斥。
+type Request struct {
+	BKTenantID    string               `json:"bk_tenant_id"`
+	EventSourceID string               `json:"event_source_id"`
+	Input         Input                `json:"input"`
+	Enrich        *config.EnrichConfig `json:"enrich,omitempty"`
+}
+
+// Input 的 Event 为原始 JSON，避免把省略和零值混淆。
+type Input struct {
+	// OpeningEvent 显式请求创建内容预览；完整身份和已发布来源版本必须匹配。
+	OpeningEvent json.RawMessage `json:"opening_event,omitempty"`
+	Severity     string          `json:"severity,omitempty"`
+	EventID      string          `json:"event_id,omitempty"`
+	Event        json.RawMessage `json:"event,omitempty"`
+}
+
+// Change 明确标识缺失和 null 的差异。
+type Change struct {
+	Path         string `json:"path"`
+	Before       any    `json:"before"`
+	After        any    `json:"after"`
+	BeforeExists bool   `json:"before_exists"`
+	AfterExists  bool   `json:"after_exists"`
+}
+
+// Response 包含一次模拟的配置身份、步骤输出及按需合成视图。
+type Response struct {
+	// ContentDiagnostic 与正式创建使用同一原因码，仅在文案降级时返回。
+	ContentDiagnostic *enrich.ContentDiagnostic `json:"content_diagnostic,omitempty"`
+	CandidateContent  *string                   `json:"candidate_content,omitempty"`
+	EffectiveAlert    map[string]any            `json:"effective_alert,omitempty"`
+	Changes           []Change                  `json:"changes,omitempty"`
+	Version           int64                     `json:"event_source_version"`
+	ConfigDigest      string                    `json:"config_digest"`
+	Original          map[string]any            `json:"original"`
+	EnrichStatus      domain.EnrichStatus       `json:"enrich_status"`
+	Enrich            domain.EventEnrichData    `json:"enrich"`
+	Evaluations       []EvaluationPreview       `json:"evaluations"`
+}
+
+// EvaluationPreview 分开返回各等级的有效结果、差异和轨迹，禁止隐式选择某个等级。
+type EvaluationPreview struct {
+	Severity        string             `json:"severity"`
+	Action          domain.EventAction `json:"action"`
+	EffectiveEvent  map[string]any     `json:"effective_event"`
+	Changes         []Change           `json:"changes"`
+	PreviousChanges []Change           `json:"previous_changes"`
+	Trace           []ProcessorTrace   `json:"trace"`
+}
+
+// ProcessorTrace 保留处理器与规则执行记录，不包含完整外部响应。
+type ProcessorTrace struct {
+	Processor   string              `json:"processor"`
+	Status      domain.EnrichStatus `json:"status"`
+	Rules       []enrich.Trace      `json:"rules"`
+	Diagnostics []enrich.Diagnostic `json:"diagnostics,omitempty"`
+	// ReusedFromAlertID 区分已保存的复用事实与本轮模拟执行记录。
+	ReusedFromAlertID string `json:"reused_from_alert_id,omitempty"`
+}
+
+// SourceReader 只能读取已发布配置，不能发布或修改配置。
+type SourceReader interface {
+	Get(context.Context, string) (eventsource.Record, error)
+	GetRelease(context.Context, string, int64) (eventsource.Release, error)
+}
+
+// EventReader 只能按明确租户与事件身份读取一条事件。
+type EventReader func(context.Context, string, string) (domain.Event, error)
+
+// OpenEnricher 装配与正式执行相同的引擎，并返回调用结束时的资源释放函数。
+// Enricher 是预览消费的只读执行端口，由控制面装配实现。
+type Enricher interface {
+	Enrich(context.Context, enrich.Input) (enrich.Result, error)
+}
+
+type OpenEnricher func(context.Context, config.EventSource) (Enricher, func() error, error)
+
+// Service 的并发预算与正式 Lifecycle 隔离，防止调试占满正式工作池。
+type Service struct {
+	sources SourceReader
+	read    EventReader
+	open    OpenEnricher
+	slots   chan struct{}
+}
+
+// New 注入窄读取端口；服务可并发调用。
+func New(sources SourceReader, read EventReader, open OpenEnricher) *Service {
+	return &Service{sources: sources, read: read, open: open, slots: make(chan struct{}, 4)}
+}
+
+// Preview 固定一次来源发布快照；输入历史丰富仅参与对比，不作为本轮规则输入。
+func (s *Service) Preview(ctx context.Context, request Request) (Response, error) {
+	select {
+	case s.slots <- struct{}{}:
+		defer func() { <-s.slots }()
+	default:
+		return Response{}, &Error{429, "preview capacity exceeded"}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if domain.ValidateIdentityPart("bk_tenant_id", request.BKTenantID, 64) != nil || domain.ValidateIdentityPart("event_source_id", request.EventSourceID, 32) != nil {
+		return Response{}, &Error{400, "bk_tenant_id and event_source_id are required"}
+	}
+	hasJSON := len(request.Input.Event) > 0
+	hasOpening := len(request.Input.OpeningEvent) > 0
+	choices := 0
+	for _, present := range []bool{request.Input.EventID != "", hasJSON, hasOpening} {
+		if present {
+			choices++
+		}
+	}
+	if choices != 1 {
+		return Response{}, &Error{400, "choose exactly one of input.event_id, input.event and input.opening_event"}
+	}
+	if !hasOpening && request.Input.Severity != "" {
+		return Response{}, &Error{400, "input.severity requires input.opening_event"}
+	}
+	if len(request.Input.EventID) > 256 {
+		return Response{}, &Error{400, "event_id too long"}
+	}
+	record, err := s.sources.Get(ctx, request.EventSourceID)
+	if err != nil {
+		return Response{}, readError(ctx, err)
+	}
+	if record.Deleted || record.Published <= 0 {
+		return Response{}, &Error{404, "published event source not found"}
+	}
+	release, err := s.sources.GetRelease(ctx, record.ID, record.Published)
+	if err != nil {
+		return Response{}, readError(ctx, err)
+	}
+	if release.Deleted || release.Spec.EventSourceID != request.EventSourceID {
+		return Response{}, &Error{404, "published event source not found"}
+	}
+	source := release.Spec
+	source.Version = release.Version
+	if source.RelatedTenantID != "" && source.RelatedTenantID != request.BKTenantID {
+		return Response{}, &Error{400, "tenant does not match event source"}
+	}
+	if request.Enrich != nil {
+		source.Enrich = *request.Enrich
+	}
+	if err := source.Enrich.Validate(); err != nil {
+		return Response{}, &Error{422, "invalid enrich configuration: " + safeConfigError(source.Enrich, err)}
+	}
+	var raw []byte
+	var opening domain.Alert
+	var openingEvaluation domain.EventEvaluation
+	if hasOpening {
+		candidate, evaluation, alert, err := openingPreview(request.Input, request.BKTenantID, source)
+		if err != nil {
+			return Response{}, err
+		}
+		opening, openingEvaluation = alert, evaluation
+		raw, err = json.Marshal(candidate)
+		if err != nil {
+			return Response{}, &Error{400, "invalid opening event"}
+		}
+	} else if hasJSON {
+		raw = request.Input.Event
+	} else {
+		if s.read == nil {
+			return Response{}, &Error{503, "event reader unavailable"}
+		}
+		alert, err := s.read(ctx, request.BKTenantID, request.Input.EventID)
+		if err != nil {
+			return Response{}, readError(ctx, err)
+		}
+		if alert.EventID != request.Input.EventID {
+			return Response{}, &Error{502, "event identity mismatch"}
+		}
+		raw, err = json.Marshal(alert)
+		if err != nil {
+			return Response{}, &Error{400, "invalid stored event"}
+		}
+	}
+	var original map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&original); err != nil || original == nil {
+		return Response{}, &Error{400, "event must be an object"}
+	}
+	if err := jsonpath.ValidateTree(original); err != nil {
+		return Response{}, &Error{400, "event exceeds input limits"}
+	}
+	for key, want := range map[string]string{"bk_tenant_id": request.BKTenantID, "event_source_id": request.EventSourceID} {
+		if got, ok := original[key]; ok && got != want {
+			return Response{}, &Error{400, "event tenant or event source does not match request"}
+		}
+		original[key] = want
+	}
+	var alert domain.Event
+	if err := json.Unmarshal(raw, &alert); err != nil {
+		return Response{}, &Error{400, "invalid event field type"}
+	}
+	alert.BKTenantID = request.BKTenantID
+	alert.EventSourceID = request.EventSourceID
+	if err := alert.Labels.Validate(); err != nil {
+		return Response{}, &Error{400, "invalid event labels"}
+	}
+	previous := alert.Clone()
+	delete(original, "enrich")
+	delete(original, "enrich_status")
+	alert.EventEnrichment = domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}
+	if err := domain.ValidateEvaluations(alert.Evaluations); err != nil {
+		return Response{}, &Error{400, "event requires valid evaluations"}
+	}
+	engine, closeRuntime, err := s.open(ctx, source)
+	if err != nil {
+		return Response{}, readError(ctx, err)
+	}
+	defer func() { _ = closeRuntime() }()
+	result, err := engine.Enrich(ctx, enrich.Input{Event: alert, Preview: true})
+	if err != nil {
+		return Response{}, readError(ctx, err)
+	}
+	rows := make([]EvaluationPreview, 0, len(alert.Evaluations))
+	for _, evaluation := range alert.Evaluations {
+		var current *domain.EvaluationEnrich
+		for i := range result.Data.Evaluations {
+			if result.Data.Evaluations[i].Severity == evaluation.Severity {
+				current = &result.Data.Evaluations[i]
+			}
+		}
+		if current == nil {
+			return Response{}, &Error{500, "incomplete enrich result"}
+		}
+		base, err := domain.EventDocument(alert, evaluation)
+		if err != nil {
+			return Response{}, &Error{400, "invalid event"}
+		}
+		effective, trace, err := compose(base, current.Data)
+		if err != nil {
+			return Response{}, &Error{500, "invalid enrich result"}
+		}
+		previousResult, _ := previous.ForSeverity(evaluation.Severity)
+		previousEffective, _, err := compose(base, previousResult.Data)
+		if err != nil {
+			return Response{}, &Error{400, "invalid previous enrichment"}
+		}
+		rows = append(rows, EvaluationPreview{Severity: evaluation.Severity, Action: evaluation.Action, EffectiveEvent: effective, Changes: Diff(base, effective), PreviousChanges: Diff(previousEffective, effective), Trace: trace})
+	}
+
+	var contentDiagnostic *enrich.ContentDiagnostic
+	var candidateContent *string
+	var candidateAlert map[string]any
+	var changes []Change
+	if hasOpening {
+		builder, _ := engine.(enrich.ContentBuilder)
+		for _, row := range result.Data.Evaluations {
+			if row.Severity == openingEvaluation.Severity {
+				opening.EnrichStatus, opening.Enrich = row.Status, row.Data.Clone()
+			}
+		}
+		result, err := enrich.BuildAlertContent(ctx, builder, previous, openingEvaluation, opening.Clone())
+		if err != nil {
+			return Response{}, readError(ctx, err)
+		}
+		content := result.Content
+		contentDiagnostic = result.Diagnostic
+		candidateContent = &content
+		base, err := domain.AlertDocument(opening)
+		if err != nil {
+			return Response{}, &Error{400, "invalid opening event"}
+		}
+		inputView := jsonpath.Clone(base).(map[string]any)
+		inputView["content"] = content
+		candidateAlert, _, err = compose(inputView, opening.Enrich)
+		if err != nil {
+			return Response{}, &Error{500, "invalid enrich result"}
+		}
+		changes = Diff(base, candidateAlert)
+	}
+	encoded, _ := json.Marshal(source.Redacted().Enrich)
+	digest := sha256.Sum256(encoded)
+	return Response{ContentDiagnostic: contentDiagnostic, CandidateContent: candidateContent, EffectiveAlert: candidateAlert, Changes: changes, Version: release.Version, ConfigDigest: hex.EncodeToString(digest[:]), Original: original, EnrichStatus: result.Status, Enrich: result.Data, Evaluations: rows}, nil
+
+}
+
+func readError(ctx context.Context, err error) error {
+	if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+		return &Error{504, "preview timed out or cancelled"}
+	}
+	if errors.Is(err, eventsource.ErrNotFound) || errors.Is(err, store.ErrNotFound) {
+		return &Error{404, "event or event source not found"}
+	}
+	return &Error{502, "preview read dependency unavailable"}
+}
+
+func safeConfigError(c config.EnrichConfig, _ error) string {
+	if mode := c.EffectiveContentMode(); mode != config.ContentModeSource && mode != config.ContentModeBKMonitorDescription {
+		return "content_mode must be source or bkmonitor_description"
+	}
+	for i, processor := range c.Processors {
+		if processor.Type == "cmdb" || processor.Type == "fields" {
+			if _, err := custom.Compile(processor.Type, processor.Config); err != nil {
+				return fmt.Sprintf("processors[%d]: %s", i, err)
+			}
+		}
+	}
+	return "check processor configuration"
+}
+
+func compose(original map[string]any, payload domain.JSONObject) (map[string]any, []ProcessorTrace, error) {
+	current := jsonpath.Clone(original).(map[string]any)
+	trace := []ProcessorTrace{}
+	if len(payload) == 0 {
+		return current, trace, nil
+	}
+	parsed, err := enrich.DecodePayload(payload)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, entry := range parsed.Processors {
+		for name, result := range entry {
+			trace = append(trace, ProcessorTrace{Processor: name, Status: result.Status, Rules: result.Trace, Diagnostics: result.Diagnostics, ReusedFromAlertID: result.ReusedFromAlertID})
+			if result.Status != domain.EnrichStatusSucceeded && result.Status != domain.EnrichStatusPartial {
+				continue
+			}
+			patches := result.Patches
+			if patches == nil {
+				patches, err = kingeye.ProjectValue(name, result.Value)
+				if err != nil {
+					return nil, nil, err
+				}
+			}
+			current, err = domain.ApplyEnrichPatches(current, patches)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	return current, trace, nil
+}
+
+// Diff 按路径排序并保留存在性；数组作为完整叶值，避免索引移动造成含糊差异。
+func Diff(before, after map[string]any) []Change {
+	result := []Change{}
+	var walk func(string, any, bool, any, bool)
+	walk = func(path string, a any, ae bool, b any, be bool) {
+		am, aok := a.(map[string]any)
+		bm, bok := b.(map[string]any)
+		if aok && bok {
+			keys := map[string]bool{}
+			for k := range am {
+				keys[k] = true
+			}
+			for k := range bm {
+				keys[k] = true
+			}
+			names := make([]string, 0, len(keys))
+			for k := range keys {
+				names = append(names, k)
+			}
+			sort.Strings(names)
+			for _, k := range names {
+				av, ax := am[k]
+				bv, bx := bm[k]
+				encoded, _ := json.Marshal(k)
+				walk(path+"["+string(encoded)+"]", av, ax, bv, bx)
+			}
+			return
+		}
+		if ae != be || !reflect.DeepEqual(a, b) {
+			result = append(result, Change{Path: path, Before: a, After: b, BeforeExists: ae, AfterExists: be})
+		}
+	}
+	walk("$", before, true, after, true)
+	return result
+}

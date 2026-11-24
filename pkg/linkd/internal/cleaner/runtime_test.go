@@ -22,6 +22,7 @@ import (
 	"linkd/internal/config"
 	"linkd/internal/consume"
 	"linkd/internal/domain"
+	"linkd/internal/processingerror"
 	"linkd/internal/store"
 )
 
@@ -136,7 +137,7 @@ func (runtimeTestProcessor) Process(_ context.Context, message consume.Message) 
 	if message.ID == "bad" {
 		return ProcessResult{DiscardErr: context.Canceled}, nil
 	}
-	return ProcessResult{Event: domain.Event{
+	return ProcessResult{Event: domain.Event{EventSourceVersion: 1,
 		BKTenantID: "tenant", EventSourceID: "source", EventID: message.ID,
 		Fingerprint: message.ID, Title: message.ID,
 	}}, nil
@@ -159,7 +160,7 @@ func (p *runtimeRetryProcessor) Process(_ context.Context, message consume.Messa
 	attempt := p.attempts[message.ID]
 	p.mu.Unlock()
 	if message.ID == "a1" && attempt == 1 {
-		return ProcessResult{}, errors.New("temporary processing failure")
+		return ProcessResult{}, processingerror.RetryableError{Err: processingerror.HTTPStatus(502)}
 	}
 	return runtimeTestProcessor{}.Process(context.Background(), message)
 }
@@ -192,6 +193,19 @@ type runtimeCountingWriter struct{ sizes chan int }
 func (w runtimeCountingWriter) CreateEvents(_ context.Context, events []domain.Event) ([]store.CreateEventItemResult, error) {
 	w.sizes <- len(events)
 	return (&runtimeTestWriter{}).CreateEvents(context.Background(), events)
+}
+
+type runtimeNormalizedWriter struct {
+	runtimeTestWriter
+	used bool
+}
+
+func (w *runtimeNormalizedWriter) CreateNormalizedEvents(
+	ctx context.Context,
+	events []domain.Event,
+) ([]store.CreateEventItemResult, error) {
+	w.used = true
+	return w.CreateEvents(ctx, events)
 }
 
 type runtimeTerminalReplayWriter struct{}
@@ -271,11 +285,12 @@ func TestRuntimeRestoresLaneOrderAfterConcurrentProcessing(t *testing.T) {
 	}
 }
 
-func TestRuntimeIgnoresSessionCloseDeadlineAfterRequestedShutdown(t *testing.T) {
+func TestRuntimeReportsIncompleteSessionCloseAfterRequestedShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	session := newRuntimeTestSession(nil)
-	session.closeErr = context.DeadlineExceeded
+	closed := make(chan struct{})
+	session.closeErr = &consume.StopIncompleteError{Cause: context.DeadlineExceeded, Done: closed}
 	runtime, err := NewRuntime(
 		config.DefaultCleanerRuntimeConfig(),
 		session,
@@ -288,9 +303,12 @@ func TestRuntimeIgnoresSessionCloseDeadlineAfterRequestedShutdown(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runtime.Run(ctx); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	runErr := runtime.Run(ctx)
+	var incomplete *consume.StopIncompleteError
+	if !errors.Is(runErr, consume.ErrStopIncomplete) || !errors.As(runErr, &incomplete) || incomplete.Done != closed {
+		t.Fatalf("Run() lost close completion: %v", runErr)
 	}
+	close(closed)
 	if !session.closed {
 		t.Fatal("session was not closed")
 	}
@@ -346,7 +364,7 @@ func TestRuntimeProcessingRetryKeepsLaneGap(t *testing.T) {
 }
 
 func TestRuntimePartialBulkResultAdvancesOnlyContinuousPrefix(t *testing.T) {
-	temporary := errors.New("temporary store failure")
+	temporary := processingerror.RetryableError{Err: processingerror.HTTPStatus(503)}
 	session := newRuntimeTestSession(nil,
 		struct{ lane, id string }{"lane-a", "a1"},
 		struct{ lane, id string }{"lane-a", "a2"},
@@ -357,7 +375,7 @@ func TestRuntimePartialBulkResultAdvancesOnlyContinuousPrefix(t *testing.T) {
 		entries[index] = &cleanerEntry{
 			delivery: delivery,
 			readyAt:  time.Now(),
-			event: domain.Event{
+			event: domain.Event{EventSourceVersion: 1,
 				BKTenantID: "tenant", EventSourceID: "source", EventID: delivery.Message.ID,
 				Fingerprint: delivery.Message.ID, Title: delivery.Message.ID,
 			},
@@ -387,7 +405,7 @@ func TestRuntimeTerminalReplaySkipsMailboxAndConfirmsSource(t *testing.T) {
 	session := newRuntimeTestSession(nil, struct{ lane, id string }{"lane-a", "event-1"})
 	entry := &cleanerEntry{
 		delivery: session.deliveries[0], readyAt: time.Now(),
-		event: domain.Event{
+		event: domain.Event{EventSourceVersion: 1,
 			BKTenantID: "tenant", EventSourceID: "source", EventID: "event-1", Fingerprint: "fp-1", Title: "event-1",
 		},
 	}
@@ -415,7 +433,7 @@ func TestRuntimeUnprocessedReplayStillEnqueuesMailbox(t *testing.T) {
 	session := newRuntimeTestSession(nil, struct{ lane, id string }{"lane-a", "event-1"})
 	entry := &cleanerEntry{
 		delivery: session.deliveries[0], readyAt: time.Now(),
-		event: domain.Event{
+		event: domain.Event{EventSourceVersion: 1,
 			BKTenantID: "tenant", EventSourceID: "source", EventID: "event-1", Fingerprint: "fp-1", Title: "event-1",
 		},
 	}
@@ -461,7 +479,7 @@ func TestRuntimeFlushesLaneBatchByCountBytesOrWait(t *testing.T) {
 				delivery.Message.Body = []byte(test.bodies[index])
 				entries[index] = &cleanerEntry{
 					delivery: delivery, readyAt: now.Add(-test.readyAgo),
-					event: domain.Event{BKTenantID: "tenant", EventSourceID: "source", EventID: delivery.Message.ID,
+					event: domain.Event{EventSourceVersion: 1, BKTenantID: "tenant", EventSourceID: "source", EventID: delivery.Message.ID,
 						Fingerprint: delivery.Message.ID, Title: delivery.Message.ID},
 				}
 			}
@@ -499,3 +517,15 @@ func TestRuntimeFlushesLaneBatchByCountBytesOrWait(t *testing.T) {
 var _ consume.Session = (*runtimeTestSession)(nil)
 
 var _ consume.FlowController = (*runtimeTestSession)(nil)
+
+func TestCreateNormalizedEventsUsesFastPath(t *testing.T) {
+	writer := &runtimeNormalizedWriter{}
+	events := []domain.Event{{EventID: "event-a"}}
+	results, err := createNormalizedEvents(t.Context(), writer, events)
+	if err != nil || len(results) != 1 {
+		t.Fatalf("createNormalizedEvents() results=%#v error=%v", results, err)
+	}
+	if !writer.used {
+		t.Fatal("normalized event writer was not used")
+	}
+}

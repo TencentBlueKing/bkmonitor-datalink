@@ -1,0 +1,15 @@
+{
+  "scenarios": 10,
+  "all_counts_reconciled": true,
+  "all_persisted_statuses_reconciled": true,
+  "pipeline_failed_attempts": 0,
+  "application_warning_or_error_logs": 0,
+  "sources_restored_to_no_enrich": true,
+  "all_queues_drained": true,
+  "all_three_processes_up": true,
+  "total_deliveries": 313268,
+  "total_unique_events": 261365,
+  "total_alerts": 142500,
+  "total_alert_logs": 522730,
+  "total_output_messages": 261365
+}

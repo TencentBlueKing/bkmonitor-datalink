@@ -1,0 +1,275 @@
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License.
+
+package kaccompat
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"time"
+
+	"linkd/internal/domain"
+	"linkd/internal/store"
+)
+
+type closeStateWriter interface {
+	WriteCloseBatch(context.Context, []domain.Alert) []WriteResult
+}
+
+// ProjectBatchNow 按告警身份串行投影，批读最新事实并同步等待 Bulk 写入，不强制刷新。
+func (r *Runtime) ProjectBatchNow(ctx context.Context, tenant string, ids []string) []error {
+	return r.projectBatchNow(ctx, tenant, ids, nil)
+}
+
+// ProjectClosedBatchNow 使用本次成功关闭返回的终态快照，避免再次读取不可变关闭字段。
+// alerts 必须来自同一租户的成功关闭或同操作重试；KAC 文档缺失时仍实时补读完整快照创建。
+func (r *Runtime) ProjectClosedBatchNow(ctx context.Context, alerts []domain.Alert) []error {
+	if len(alerts) == 0 {
+		return nil
+	}
+	ids := make([]string, len(alerts))
+	for i, a := range alerts {
+		ids[i] = a.AlertID
+	}
+	if _, ok := r.writer.(closeStateWriter); !ok {
+		return r.ProjectBatchNow(ctx, alerts[0].BKTenantID, ids)
+	}
+	return r.projectBatchNow(ctx, alerts[0].BKTenantID, ids, alerts)
+}
+
+func (r *Runtime) projectBatchNow(ctx context.Context, tenant string, ids []string, prepared []domain.Alert) []error {
+	results := make([]error, len(ids))
+	fail := func(err error) []error {
+		for i := range results {
+			results[i] = err
+		}
+		return results
+	}
+	keys := make([]alarmKey, len(ids))
+	for i, id := range ids {
+		keys[i] = alarmKey{tenant, id}
+	}
+	started := time.Now()
+	unlock, err := r.lockProjectionAlerts(ctx, keys)
+	if err != nil {
+		return fail(err)
+	}
+	defer unlock()
+	store.ObserveBatchPhase(ctx, "projection.lock_wait", time.Since(started))
+	if len(ids) == 0 {
+		return results
+	}
+	started = time.Now()
+	read := r.alerts.GetAlertsCurrent
+	compactWriter, compact := r.writer.(closeStateWriter)
+	if states, ok := r.alerts.(store.AlertCloseStateBatchStore); compact && ok {
+		read = states.GetAlertCloseStates
+	} else {
+		compact = false
+	}
+	byID := map[string]domain.Alert{}
+	if prepared == nil {
+		current, err := read(ctx, tenant, ids)
+		store.ObserveBatchPhase(ctx, "projection.read", time.Since(started))
+		if err != nil {
+			return fail(err)
+		}
+		for _, a := range current.Alerts {
+			byID[a.Alert.AlertID] = a.Alert
+		}
+	} else {
+		for _, a := range prepared {
+			byID[a.AlertID] = a
+		}
+	}
+	alerts, positions := []domain.Alert{}, []int{}
+	for i, id := range ids {
+		if a, ok := byID[id]; ok {
+			alerts, positions = append(alerts, a), append(positions, i)
+		} else {
+			results[i] = store.ErrNotFound
+		}
+	}
+	if len(alerts) > 0 {
+		started = time.Now()
+		var written []WriteResult
+		if compact {
+			written = compactWriter.WriteCloseBatch(ctx, alerts)
+		} else {
+			written = r.writer.WriteBatch(ctx, alerts, false)
+		}
+		// 只有 KAC 文档尚不存在时才需要完整快照创建；正常关闭不回读 Enrich 或正文。
+		missing, missingPositions := []string{}, []int{}
+		for j, result := range written {
+			if compact && errors.Is(result.Err, store.ErrNotFound) {
+				missing, missingPositions = append(missing, alerts[j].AlertID), append(missingPositions, j)
+			}
+		}
+		if len(missing) > 0 {
+			full, err := r.alerts.GetAlertsCurrent(ctx, tenant, missing)
+			byID := map[string]domain.Alert{}
+			for _, a := range full.Alerts {
+				byID[a.Alert.AlertID] = a.Alert
+			}
+			creates, createPositions := []domain.Alert{}, []int{}
+			for j, id := range missing {
+				if err != nil {
+					written[missingPositions[j]].Err = err
+				} else if a, found := byID[id]; found {
+					creates, createPositions = append(creates, a), append(createPositions, missingPositions[j])
+				}
+			}
+			if len(creates) > 0 {
+				created := r.writer.WriteBatch(ctx, creates, false)
+				for j, position := range createPositions {
+					written[position] = created[j]
+				}
+			}
+		}
+		store.ObserveBatchPhase(ctx, "projection.write", time.Since(started))
+		for j, i := range positions {
+			results[i] = written[j].Err
+		}
+	}
+	return results
+}
+
+// WriteCloseBatch 仅更新现存 KAC 文档的终态字段；不存在项交给调用方按需补读后创建。
+// Bulk 使用 refresh=false，返回只确认写入成功，不承诺搜索立即可见。
+// 与普通投影共享首次 Maintain 检查；尚未准备好时返回可重试错误。
+func (c *Client) WriteCloseBatch(ctx context.Context, alerts []domain.Alert) []WriteResult {
+	results := make([]WriteResult, len(alerts))
+	if len(alerts) == 0 {
+		return results
+	}
+	if err := c.readyToWrite(ctx); err != nil {
+		for i := range results {
+			results[i].Err = err
+		}
+		return results
+	}
+	keys := make([]alarmKey, len(alerts))
+	for i, a := range alerts {
+		keys[i] = alarmKey{tenant: a.BKTenantID, alert: a.AlertID}
+	}
+	at := time.Now()
+	locations, err := c.locate(ctx, keys)
+	store.ObserveBatchPhase(ctx, "projection.locate", time.Since(at))
+	if err != nil {
+		for i := range results {
+			results[i].Err = err
+		}
+		return results
+	}
+	var raw bytes.Buffer
+	positions := []int{}
+	flush := func() {
+		if len(positions) == 0 {
+			return
+		}
+		var response struct {
+			Took  *int64 `json:"took"`
+			Items []map[string]struct {
+				Status int    `json:"status"`
+				Index  string `json:"_index"`
+			} `json:"items"`
+		}
+		started := time.Now()
+		err := c.requestRaw(ctx, http.MethodPost, "/_bulk", url.Values{"refresh": {"false"}}, raw.Bytes(), "application/x-ndjson", &response)
+		for j, i := range positions {
+			if err != nil {
+				results[i].Err = err
+				continue
+			}
+			if j >= len(response.Items) {
+				results[i].Err = fmt.Errorf("KAC close bulk response missing item")
+				continue
+			}
+			item := response.Items[j]["update"]
+			if item.Status == http.StatusNotFound {
+				results[i].Err = store.ErrNotFound
+				c.mu.Lock()
+				delete(c.locations, keys[i])
+				c.mu.Unlock()
+			} else if item.Status >= 300 {
+				results[i].Err = httpFailure{status: item.Status}
+			} else {
+				results[i].Index = item.Index
+			}
+		}
+		outcome := "succeeded"
+		if err != nil {
+			outcome = "failed"
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				outcome = "canceled"
+			}
+		} else {
+			for _, i := range positions {
+				if results[i].Err != nil {
+					outcome = "failed"
+					break
+				}
+			}
+		}
+		store.ObserveBatchPhase(ctx, "projection.bulk."+outcome, time.Since(started))
+		if err == nil && response.Took != nil {
+			store.ObserveBatchPhase(ctx, "projection.es_bulk_took", time.Duration(*response.Took)*time.Millisecond)
+		}
+
+		raw.Reset()
+		positions = positions[:0]
+	}
+	for i, a := range alerts {
+		index, found := locations[keys[i]]
+		if !found {
+			results[i].Err = store.ErrNotFound
+			continue
+		}
+		head, _ := json.Marshal(map[string]any{"update": map[string]any{"_index": index, "_id": a.AlertID}})
+		closeTime := any(nil)
+		if a.EndAt != nil {
+			closeTime = a.EndAt.In(kacZone).Format(kacTimeLayout)
+		}
+		body, err := json.Marshal(map[string]any{"doc": map[string]any{"status": closedStatus(a), "action": "close", "source_alarm_status": sourceAlarmStatus(a), "close_reason": a.EndReason, "close_time": closeTime}})
+		if err != nil {
+			results[i].Err = err
+			continue
+		}
+		if raw.Len() > 0 && raw.Len()+len(head)+len(body)+2 > c.config.Delivery.MaxBatchBytes {
+			flush()
+		}
+		raw.Write(head)
+		raw.WriteByte('\n')
+		raw.Write(body)
+		raw.WriteByte('\n')
+		positions = append(positions, i)
+	}
+	flush()
+	return results
+}
+
+func closedStatus(a domain.Alert) string {
+	status := "system_closed"
+	switch a.EndType {
+	case domain.AlertEndTypeUser:
+		status = "closed"
+	case domain.AlertEndTypeSource, domain.AlertEndTypeSeverityUpgrade:
+		status = "source_closed"
+	}
+	if a.EndOperation != nil {
+		switch a.EndOperation.Source {
+		case "auto_policy":
+			status = "auto_closed"
+		case "self_heal":
+			status = "autoexecute_closed"
+		case "work_order":
+			status = "autoorder_closed"
+		}
+	}
+	return status
+}

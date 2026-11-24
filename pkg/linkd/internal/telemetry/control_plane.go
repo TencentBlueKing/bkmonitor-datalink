@@ -21,6 +21,42 @@ import (
 type ControlPlaneTask string
 
 const (
+	// ControlPlaneTaskControlStorage 在后台准备控制配置集合和内置来源。
+	ControlPlaneTaskControlStorage ControlPlaneTask = "control-storage"
+	// ControlPlaneTaskKACIndexMaintenance 维护兼容索引并观测定义冲突或依赖故障。
+	ControlPlaneTaskKACIndexMaintenance ControlPlaneTask = "kac-index-maintenance"
+	// ControlPlaneTaskKACDelivery 记录队列投影与动作发送的运行状态。
+	ControlPlaneTaskKACDelivery ControlPlaneTask = "kac-delivery"
+	// ControlPlaneTaskShieldHints 记录可丢失的依赖主终态提示与加速复查。
+	ControlPlaneTaskShieldHints ControlPlaneTask = "shield-hints"
+	// ControlPlaneTaskMergeRequests 记录显式合并接续和关系检查，不把业务条件失败等同于任务故障。
+	ControlPlaneTaskMergeRequests ControlPlaneTask = "merge-requests"
+	// ControlPlaneTaskSuppressionRequests 记录显式抑制对账请求的有界执行。
+	ControlPlaneTaskSuppressionRequests ControlPlaneTask = "suppression-requests"
+	// ControlPlaneTaskShieldRequests 记录显式屏蔽复查请求的执行轮次。
+	ControlPlaneTaskShieldRequests ControlPlaneTask = "shield-requests"
+	// ControlPlaneTaskMerge 记录共享合并任务运行时是否存活。
+	ControlPlaneTaskMerge ControlPlaneTask = "merge"
+	// ControlPlaneTaskMergeJudge 记录独立合并窗口裁决及丢失等待检查。
+	ControlPlaneTaskMergeJudge ControlPlaneTask = "merge-judge"
+	// ControlPlaneTaskMergeDecisions 记录持久化合并步骤与缓存提示清理。
+	ControlPlaneTaskMergeDecisions ControlPlaneTask = "merge-decisions"
+	// ControlPlaneTaskMergeRelations 记录父子终态检查和关系解除。
+	ControlPlaneTaskMergeRelations ControlPlaneTask = "merge-relations"
+	// ControlPlaneTaskMergeBatches 记录本进程按空闲名额执行的成员批次。
+	ControlPlaneTaskMergeBatches ControlPlaneTask = "merge-batches"
+	// ControlPlaneTaskShieldCheck 记录独立屏蔽解除检查轮次。
+	ControlPlaneTaskShieldCheck ControlPlaneTask = "shield-check"
+	// ControlPlaneTaskPolicyPublication 记录策略待发布记录恢复轮次。
+	ControlPlaneTaskPolicyPublication ControlPlaneTask = "policy-publication"
+	// ControlPlaneTaskScheduler 记录调度轮次。
+	ControlPlaneTaskScheduler ControlPlaneTask = "scheduler"
+	// ControlPlaneTaskProviders 记录来源提供方完整应用轮次。
+	ControlPlaneTaskProviders ControlPlaneTask = "source-providers"
+	// ControlPlaneTaskActiveIndexes 记录策略索引目标发现轮次。
+	ControlPlaneTaskActiveIndexes ControlPlaneTask = "active-alert-indexes"
+	// ControlPlaneTaskDynamicConfig 记录配置同步轮次。
+	ControlPlaneTaskDynamicConfig ControlPlaneTask = "dynamic-config"
 	// ControlPlaneTaskElasticsearchSchemaAndActiveReconciler 对账 Schema 与 Active Alert 资源。
 	ControlPlaneTaskElasticsearchSchemaAndActiveReconciler ControlPlaneTask = "elasticsearch-schema-and-active-reconciler"
 	// ControlPlaneTaskElasticsearchBucketManager 维护当前预创建窗口内的时间桶。
@@ -74,20 +110,24 @@ func (o *ControlPlaneTaskObserver) RunFinished(ctx context.Context, duration tim
 	}
 }
 
-// ObserveElasticsearchArchiveBatch 记录 Archiver 一批的扫描、成功和隔离失败工作量。
-func (r *Runtime) ObserveElasticsearchArchiveBatch(ctx context.Context, scanned, archived, failed int) {
+// ObserveElasticsearchArchiveBatch 分开记录归档成功、并发更新冲突与真实失败；冲突留待下轮扫描。
+func (r *Runtime) ObserveElasticsearchArchiveBatch(ctx context.Context, scanned, archived, failed, conflicts int) {
 	if r == nil || r.metrics == nil {
 		return
 	}
 	scannedValue, archivedValue, failedValue := int64(scanned), int64(archived), int64(failed)
 	// 连续归档在清空积压后会立即执行一次空扫描；空结果不应覆盖最近一次真实工作批次，
-	// 否则 DevTools 在任务空闲时只能看到 0，无法判断上一批的处理效果。
+	// 否则 Console 在任务空闲时只能看到 0，无法判断上一批的处理效果。
 	if scannedValue == 0 {
 		return
 	}
 	r.metrics.elasticsearchScanLast.Record(ctx, scannedValue)
 	r.metrics.elasticsearchArchiveLast.Record(ctx, archivedValue)
 	r.metrics.elasticsearchFailureLast.Record(ctx, failedValue)
+	r.metrics.elasticsearchConflictLast.Record(ctx, int64(conflicts))
+	if conflicts > 0 {
+		r.metrics.elasticsearchConflictedAlerts.Add(ctx, int64(conflicts))
+	}
 	r.metrics.elasticsearchScannedAlerts.Add(ctx, scannedValue)
 	if archivedValue > 0 {
 		r.metrics.elasticsearchArchivedAlerts.Add(ctx, archivedValue)

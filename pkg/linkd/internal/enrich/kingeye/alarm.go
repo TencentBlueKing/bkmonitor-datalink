@@ -1,0 +1,137 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package kingeye
+
+import (
+	"fmt"
+	"reflect"
+	"regexp"
+	"strings"
+
+	"linkd/internal/jsonpath"
+)
+
+// AlarmMessage 是发送给 KAC alarm_collect_topic 的扁平 Alarm JSON。
+// 日志、APM、K8s 和云平台扩展字段无值时不发送，避免 KAC 将占位空值作为告警详情展示。
+type AlarmMessage struct {
+	AlarmID          string         `json:"alarm_id"`
+	SourceID         string         `json:"source_id"`
+	SourceName       string         `json:"source_name"`
+	Item             string         `json:"item"`
+	MetricName       string         `json:"metric_name"`
+	Name             string         `json:"name"`
+	EventID          string         `json:"event_id"`
+	AlarmTime        string         `json:"alarm_time"`
+	Content          string         `json:"content"`
+	Action           string         `json:"action"`
+	Level            string         `json:"level"`
+	Object           string         `json:"object"`
+	BKTenantID       string         `json:"bk_tenant_id"`
+	BKBizID          string         `json:"bk_biz_id"`
+	BKBizName        string         `json:"bk_biz_name"`
+	BKSetID          any            `json:"bk_set_id"`
+	BKSetName        any            `json:"bk_set_name"`
+	BKModuleID       any            `json:"bk_module_id"`
+	BKModuleName     any            `json:"bk_module_name"`
+	BKCloudID        string         `json:"bk_cloud_id"`
+	BKCloudName      string         `json:"bk_cloud_name"`
+	BKObjID          string         `json:"bk_obj_id"`
+	BKInstID         string         `json:"bk_inst_id"`
+	BKServiceID      string         `json:"bk_service_id"`
+	MetaInfo         string         `json:"meta_info"`
+	StrategyID       string         `json:"strategy_id"`
+	StrategyName     string         `json:"strategy_name"`
+	DimensionInfo    string         `json:"dimension_info"`
+	ModelInstID      string         `json:"model_inst_id"`
+	ModelID          string         `json:"model_id"`
+	ModelName        string         `json:"model_name"`
+	AnomalyBeginTime *string        `json:"anomaly_begin_time"`
+	CloseTime        *string        `json:"close_time,omitempty"`
+	CloseReason      *string        `json:"close_reason,omitempty"`
+	ResultTableID    string         `json:"result_table_id"`
+	Namespace        string         `json:"Namespace"`
+	TimeInterval     string         `json:"time_interval"`
+	AggregateFunc    string         `json:"aggregate_func"`
+	WhereCondition   string         `json:"where_condition"`
+	Unit             string         `json:"unit"`
+	DataSource       string         `json:"data_source"`
+	FieldExtraInfo   map[string]any `json:"field_extra_info"`
+	DynamicGroupID   []string       `json:"dynamic_group_id"`
+	CWLabels         []string       `json:"cw_labels"`
+	LogThemeID       int64          `json:"log_theme_id,omitempty"`
+	LogThemeName     string         `json:"log_theme_name,omitempty"`
+	LogQueryString   string         `json:"log_query_string,omitempty"`
+	LogRelateInfo    string         `json:"log_relate_info,omitempty"`
+	APMAppID         int64          `json:"apm_app_id,omitempty"`
+	APMAppName       string         `json:"apm_app_name,omitempty"`
+	APMAppAlias      string         `json:"apm_app_alias,omitempty"`
+	APMServiceName   string         `json:"apm_service_name,omitempty"`
+	APMInstanceName  string         `json:"apm_instance_name,omitempty"`
+	APMInterfaceName string         `json:"apm_interface_name,omitempty"`
+	APMNetPeerName   string         `json:"apm_net_peer_name,omitempty"`
+	BCSClusterID     string         `json:"bcs_cluster_id,omitempty"`
+	ClusterName      string         `json:"cluster_name,omitempty"`
+	K8sNamespace     string         `json:"namespace,omitempty"`
+	Service          string         `json:"service,omitempty"`
+	WorkloadKind     string         `json:"workload_kind,omitempty"`
+	WorkloadName     string         `json:"workload_name,omitempty"`
+	PodName          string         `json:"pod_name,omitempty"`
+	ContainerName    string         `json:"container_name,omitempty"`
+	CloudPlatformID  string         `json:"cloud_plat_id,omitempty"`
+}
+
+var customName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_-]{0,127}$`)
+
+// ValidateFieldMappings 只允许额外顶层业务字段，禁止覆盖 KAC 固定协议字段。
+func ValidateFieldMappings(fields map[string]string) error {
+	if len(fields) > 128 {
+		return fmt.Errorf("KAC custom field limit exceeded")
+	}
+	for name, path := range fields {
+		if !customName.MatchString(name) || IsReservedAlarmField(name) {
+			return fmt.Errorf("KAC field mapping cannot target reserved or invalid field %q", name)
+		}
+		target, err := jsonpath.ParseTarget(path)
+		if err != nil {
+			return err
+		}
+		parts := target.Parts()
+		if len(parts) < 2 || (parts[0] != "labels" && parts[0] != "extra_data") {
+			return fmt.Errorf("KAC custom mapping source must be labels or extra_data")
+		}
+	}
+	return nil
+}
+
+// IsReservedAlarmField 标识固定及已移除的 KAC 协议字段，避免自定义目录覆盖或恢复这些字段。
+func IsReservedAlarmField(name string) bool {
+	return reservedAlarmFields[name]
+}
+
+var reservedAlarmFields = func() map[string]bool {
+	reserved := map[string]bool{}
+	// 这些字段由 Lifecycle、投影协议或 KAC 处置维护，不属于来源自定义字段。
+	// metric_query_params 已停止输出，仍禁止通过自定义目录重新带出历史参数。
+	for _, name := range strings.Fields("status storage_time latest_event_time source_alarm_status tag_info associate_alarm_id associate_count conductor notify_status converge_reason duration strategy strategy_config_uid strategy_config_version source_event_id source_alert_id linkd_alert_id metric_query_params __kac_custom_fields") {
+		reserved[name] = true
+	}
+	typ := reflect.TypeFor[AlarmMessage]()
+	for i := 0; i < typ.NumField(); i++ {
+		name := typ.Field(i).Tag.Get("json")
+		for j, c := range name {
+			if c == ',' {
+				name = name[:j]
+				break
+			}
+		}
+		reserved[name] = true
+	}
+	return reserved
+}()

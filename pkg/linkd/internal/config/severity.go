@@ -9,20 +9,24 @@
 
 package config
 
-import "fmt"
+import (
+	"fmt"
+
+	"linkd/internal/domain"
+)
 
 const defaultSeverityName = "warning"
 
 // SeverityLevel 定义 Linkd 严重程度名称和排序优先级；数值越小越严重。
 type SeverityLevel struct {
-	Name     string `yaml:"name"`
-	Priority int    `yaml:"priority"`
+	Name     string `yaml:"name" json:"name"`
+	Priority int    `yaml:"priority" json:"priority"`
 }
 
-// SeverityConfig 是进程级、运行期冻结的严重程度定义表。
+// SeverityConfig 是一份完整严重程度定义；动态消费者按单次处理冻结当前快照。
 type SeverityConfig struct {
-	DefaultSeverity string          `yaml:"default_severity"`
-	Levels          []SeverityLevel `yaml:"levels"`
+	DefaultSeverity string          `yaml:"default_severity" json:"default_severity"`
+	Levels          []SeverityLevel `yaml:"levels" json:"levels"`
 }
 
 // DefaultSeverityConfig 返回 define.md 规定的默认等级表。
@@ -64,6 +68,9 @@ func (c SeverityConfig) Validate() error {
 	for index, level := range c.Levels {
 		if err := validateBoundedText("severity.levels.name", level.Name, 1, 32); err != nil {
 			return fmt.Errorf("severity.levels[%d]: %w", index, err)
+		}
+		if level.Name == domain.SeverityAll {
+			return fmt.Errorf("severity level name %q is reserved for closed evaluations", level.Name)
 		}
 		if _, exists := names[level.Name]; exists {
 			return fmt.Errorf("severity level name is duplicated: %q", level.Name)

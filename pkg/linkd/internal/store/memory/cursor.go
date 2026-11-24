@@ -18,10 +18,11 @@ import (
 )
 
 const (
-	cursorKindEvent        = "unprocessed_event"
-	cursorKindAllEvent     = "all_unprocessed_event"
-	cursorKindEventByAlert = "event_by_alert"
-	cursorKindAlertLog     = "alert_log"
+	cursorKindEvent         = "unprocessed_event"
+	cursorKindAllEvent      = "all_unprocessed_event"
+	cursorKindEventByAlert  = "event_by_alert"
+	cursorKindEventBySource = "event_by_source"
+	cursorKindAlertLog      = "alert_log"
 )
 
 type cursorPayload struct {

@@ -2,7 +2,7 @@
 CREATE TABLE IF NOT EXISTS linkd_events (
     bk_tenant_id VARBINARY(64) NOT NULL,
     event_id VARBINARY(160) NOT NULL,
-	related_alert_id VARBINARY(160) NULL,
+	related_alert_ids JSON NULL,
     version BIGINT UNSIGNED NOT NULL,
     processing_state VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     received_at_ns BIGINT NOT NULL,
@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS linkd_events (
     processing JSON NOT NULL,
     PRIMARY KEY (bk_tenant_id, event_id),
     KEY idx_linkd_events_unprocessed (processing_state, received_at_ns, bk_tenant_id, event_id),
-	KEY idx_linkd_events_alert (bk_tenant_id, related_alert_id, received_at_ns, event_id)
+	KEY idx_linkd_events_received (bk_tenant_id, received_at_ns, event_id)
 ) ENGINE=InnoDB;
 
 -- linkd:statement
@@ -26,11 +26,19 @@ CREATE TABLE IF NOT EXISTS linkd_alerts (
     end_type VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL,
     end_at_ns BIGINT NULL,
     active_marker TINYINT UNSIGNED NULL,
+    policy_work TINYINT NOT NULL DEFAULT 0,
+    merge_work TINYINT NOT NULL DEFAULT 0,
+    projection_work TINYINT NOT NULL DEFAULT 0,
+    action_work TINYINT NOT NULL DEFAULT 0,
     payload JSON NOT NULL,
     PRIMARY KEY (bk_tenant_id, alert_id),
     UNIQUE KEY uq_linkd_alert_active_identity (
         bk_tenant_id, event_source_id, fingerprint, active_marker
     ),
+    KEY idx_linkd_alert_policy_work (policy_work, bk_tenant_id, alert_id),
+    KEY idx_linkd_alert_merge_work (merge_work, bk_tenant_id, alert_id),
+    KEY idx_linkd_alert_projection_work (projection_work, bk_tenant_id, alert_id),
+    KEY idx_linkd_alert_action_work (action_work, bk_tenant_id, alert_id),
     KEY idx_linkd_alert_ended_event (bk_tenant_id, latest_event_id, end_type),
     KEY idx_linkd_alert_updated (bk_tenant_id, status, end_at_ns, alert_id),
     KEY idx_linkd_alert_severity (bk_tenant_id, severity, alert_id)

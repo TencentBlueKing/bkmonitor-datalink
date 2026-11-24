@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -40,9 +41,9 @@ func (r eventRouteOverride) EventRoute(context.Context, string) (Route, error) {
 
 func TestDocumentCodecs(t *testing.T) {
 	event := storetest.Event("tenant-1", "event-1", "fp", "warning")
+	event.Values = domain.EventValues{}
 	event.Content = "CPU has remained above threshold"
-	event.ActionReason = "threshold_exceeded"
-	event.ConditionName = "CPU usage"
+	event.Evaluations[0].ActionReason = "threshold_exceeded"
 	event.SubjectSystem = "cmdb"
 	event.SubjectType = "host"
 	event.SubjectID = "host-1"
@@ -85,7 +86,7 @@ func TestDocumentCodecs(t *testing.T) {
 		t.Run(string(state), func(t *testing.T) {
 			terminalEvent := event.Clone()
 			if state == domain.EventProcessStateAccepted || state == domain.EventProcessStateSuppressed {
-				terminalEvent.RelatedAlertID = "alert-1"
+				terminalEvent.RelatedAlertIDs = []string{"alert-1"}
 			}
 			terminalProcessing := store.EventProcessing{State: state, Outcome: "test_outcome", ReasonCode: "test_reason", ProcessedAt: &processedAt}
 			encoded, encodeErr := encodeEventDocument(terminalEvent, terminalProcessing)
@@ -96,7 +97,7 @@ func TestDocumentCodecs(t *testing.T) {
 			if decodeErr != nil {
 				t.Fatal(decodeErr)
 			}
-			if decoded.Processing.State != state || decoded.Processing.Outcome != terminalProcessing.Outcome || decoded.Event.RelatedAlertID != terminalEvent.RelatedAlertID {
+			if decoded.Processing.State != state || decoded.Processing.Outcome != terminalProcessing.Outcome || !slices.Equal(decoded.Event.RelatedAlertIDs, terminalEvent.RelatedAlertIDs) {
 				t.Fatalf("decoded terminal event=%#v", decoded)
 			}
 		})
@@ -104,12 +105,13 @@ func TestDocumentCodecs(t *testing.T) {
 
 	alert := storetest.Alert("tenant-1", "alert-1", "event-1", "fp", "warning")
 	alert.Content = event.Content
-	alert.ConditionName = event.ConditionName
 	alert.SubjectSystem = event.SubjectSystem
 	alert.SubjectType = event.SubjectType
 	alert.SubjectID = event.SubjectID
 	alert.SubjectName = event.SubjectName
-	alert.Enrich = domain.JSONObject{"owner": json.RawMessage(`"ops"`)}
+	alert.Enrich = domain.JSONObject{
+		"processors": json.RawMessage(`[{"test":{"status":"succeeded","value":{"owner":"ops"}}}]`),
+	}
 	data, err = encodeAlertDocument(alert)
 	if err != nil {
 		t.Fatal(err)
@@ -180,17 +182,20 @@ func TestMappings(t *testing.T) {
 	alerts := alertProperties()
 	logs := alertLogProperties()
 	assertMappingFields(t, processing, reflect.TypeFor[store.EventProcessing]())
-	assertMappingFields(t, alerts, reflect.TypeFor[domain.Alert]())
+	assertMappingFields(t, alerts, reflect.TypeFor[domain.Alert](), "merge_work", "shield_main_alert_ids")
+	assertPropertyTypes(t, alerts, "keyword", "shield_main_alert_ids")
+	assertPropertyTypes(t, alerts, "keyword", "enrich_severity")
+	assertPropertyTypes(t, alerts, "boolean", "merge_work")
 	assertMappingFields(t, logs, reflect.TypeFor[domain.AlertLog]())
 
-	assertPropertyTypes(t, events, "keyword", "bk_tenant_id", "event_source_id", "related_alert_id", "event_id", "fingerprint", "title", "content", "severity", "action", "action_reason", "condition_key", "condition_name", "subject_system", "subject_type", "subject_id", "subject_name", "source_event_id", "source_alert_id")
+	assertPropertyTypes(t, events, "keyword", "bk_tenant_id", "event_source_id", "related_alert_ids", "event_id", "fingerprint", "title", "content", "subject_system", "subject_type", "subject_id", "subject_name", "source_event_id", "source_alert_id")
 	assertPropertyTypes(t, events, "date_nanos", "occurred_at", "produced_at", "received_at", "create_at")
 	assertPropertyTypes(t, events, "flattened", "dimensions", "labels")
-	assertPropertyTypes(t, events, "object", "source_raw_data", "extra_data", "processing")
+	assertPropertyTypes(t, events, "object", "source_raw_data", "extra_data", "processing", "values")
 	assertPropertyTypes(t, processing, "keyword", "state", "outcome", "reason_code")
 	assertPropertyTypes(t, processing, "date_nanos", "processed_at")
 
-	assertPropertyTypes(t, alerts, "keyword", "alert_id", "bk_tenant_id", "event_source_id", "fingerprint", "title", "content", "severity", "condition_key", "condition_name", "subject_system", "subject_type", "subject_id", "subject_name", "source_event_id", "source_alert_id", "status", "latest_event_id", "trigger_event_id", "end_type", "end_reason", "enrich_status")
+	assertPropertyTypes(t, alerts, "keyword", "alert_id", "bk_tenant_id", "event_source_id", "fingerprint", "title", "content", "severity", "subject_system", "subject_type", "subject_id", "subject_name", "source_event_id", "source_alert_id", "status", "latest_event_id", "trigger_event_id", "end_type", "end_reason", "enrich_status")
 	assertPropertyTypes(t, alerts, "date_nanos", "last_occurred_at", "update_at", "begin_at", "create_at", "end_at")
 	assertPropertyTypes(t, alerts, "flattened", "dimensions", "labels")
 	assertPropertyTypes(t, alerts, "object", "extra_data", "enrich")
@@ -209,7 +214,7 @@ func TestMappings(t *testing.T) {
 			t.Fatalf("opaque property=%#v", property)
 		}
 	}
-	for _, field := range []string{"title", "content", "action_reason", "condition_name", "subject_name"} {
+	for _, field := range []string{"title", "content", "subject_name"} {
 		property := events[field].(map[string]any)
 		if property["type"] != "keyword" || property["index"] != false || property["doc_values"] != false {
 			t.Fatalf("stored-only event field %q=%#v", field, property)
@@ -236,8 +241,8 @@ func assertPropertyTypes(t *testing.T, properties map[string]any, wantType strin
 func assertMappingFields(t *testing.T, properties map[string]any, model reflect.Type, extras ...string) {
 	t.Helper()
 	want := make(map[string]struct{}, model.NumField()+len(extras))
-	for index := 0; index < model.NumField(); index++ {
-		name := strings.Split(model.Field(index).Tag.Get("json"), ",")[0]
+	for index := 0; index < len(reflect.VisibleFields(model)); index++ {
+		name := strings.Split(reflect.VisibleFields(model)[index].Tag.Get("json"), ",")[0]
 		if name != "" && name != "-" {
 			want[name] = struct{}{}
 		}
@@ -301,6 +306,8 @@ func TestEnsureIndexAcceptsCurrentSchema(t *testing.T) {
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"acknowledged":true}`))}, nil
 		case request.Method == http.MethodGet && request.URL.Path == "/linkd-test-events/_mapping":
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"linkd-test-events":{"mappings":{"_meta":{"managed_by":"linkd","entity":"event","schema_version":3}}}}`))}, nil
+		case request.Method == http.MethodPut && request.URL.Path == "/linkd-test-events/_mapping":
+			return managerJSONResponse(http.StatusOK, `{"acknowledged":true}`), nil
 		default:
 			t.Fatalf("unexpected request %s %s", request.Method, request.URL.Path)
 			return nil, nil
@@ -426,7 +433,7 @@ func TestCreateEventsUsesNDJSONBulkAndKeepsTemporaryItemFailure(t *testing.T) {
 	event1 := storetest.Event("tenant-1", "event-1", "fp-1", "warning")
 	event2 := storetest.Event("tenant-1", "event-2", "fp-2", "warning")
 	transport := transportFunc(func(request *http.Request) (*http.Response, error) {
-		if request.Method != http.MethodPost || request.URL.Path != "/_bulk" || request.URL.Query().Get("refresh") != "wait_for" {
+		if request.Method != http.MethodPost || request.URL.Path != "/_bulk" || request.URL.Query().Get("refresh") != "false" {
 			t.Fatalf("request=%s %s", request.Method, request.URL.String())
 		}
 		if request.Header.Get("Content-Type") != "application/x-ndjson" {
@@ -458,6 +465,69 @@ func TestCreateEventsUsesNDJSONBulkAndKeepsTemporaryItemFailure(t *testing.T) {
 	}
 	if errors.Is(results[1].Err, store.ErrInvalidArgument) {
 		t.Fatalf("429 must remain retryable: %v", results[1].Err)
+	}
+}
+
+func TestCreateEventsConflictUsesRealtimeGetWithoutRefreshWait(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		mutate       func(*domain.Event)
+		wantConflict bool
+	}{
+		{name: "same content is idempotent"},
+		{name: "different content conflicts", mutate: func(event *domain.Event) { event.Title = "different" }, wantConflict: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			router, err := NewStaticRouter("linkd-test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			requested := storetest.Event("tenant-1", "event-conflict", "fp", "warning")
+			existing := requested.Clone()
+			if test.mutate != nil {
+				test.mutate(&existing)
+			}
+			document, err := encodeEventDocument(existing, store.NewUnprocessedEventProcessing())
+			if err != nil {
+				t.Fatal(err)
+			}
+			documentID := documentID(requested.BKTenantID, requested.EventID)
+			calls := 0
+			transport := transportFunc(func(request *http.Request) (*http.Response, error) {
+				calls++
+				switch request.URL.Path {
+				case "/_bulk":
+					if request.URL.Query().Get("refresh") != "false" {
+						t.Fatalf("bulk query=%s", request.URL.RawQuery)
+					}
+					response := `{"items":[{"create":{"_index":"linkd-test-events","_id":"` + documentID + `","status":409,"error":{"type":"version_conflict_engine_exception","reason":"exists"}}}]}`
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(response))}, nil
+				case "/linkd-test-events/_doc/" + documentID:
+					if request.Method != http.MethodGet || request.URL.Query().Get("realtime") != "true" {
+						t.Fatalf("GET request=%s %s", request.Method, request.URL.String())
+					}
+					response := `{"_index":"linkd-test-events","_id":"` + documentID + `","_seq_no":1,"_primary_term":1,"found":true,"_source":` + string(document) + `}`
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(response))}, nil
+				default:
+					t.Fatalf("unexpected request=%s %s", request.Method, request.URL.String())
+					return nil, nil
+				}
+			})
+			repository, err := New(transport, router, DefaultConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			items, err := repository.CreateEvents(context.Background(), []domain.Event{requested})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(items) != 1 || calls != 2 || errors.Is(items[0].Err, store.ErrIdentityConflict) != test.wantConflict {
+				t.Fatalf("items=%+v calls=%d", items, calls)
+			}
+			if !test.wantConflict && (items[0].Err != nil || items[0].Result.Created) {
+				t.Fatalf("idempotent item=%+v", items[0])
+			}
+		})
 	}
 }
 
@@ -637,7 +707,7 @@ func TestCompareAndSetEventResultDoesNotWaitForRefresh(t *testing.T) {
 		event.BKTenantID,
 		event.EventID,
 		version,
-		store.EventResult{State: domain.EventProcessStateAccepted, RelatedAlertID: "alert-1", Outcome: "alert_created", ProcessedAt: processedAt},
+		store.EventResult{State: domain.EventProcessStateAccepted, RelatedAlertIDs: []string{"alert-1"}, Outcome: "alert_created", ProcessedAt: processedAt},
 	)
 	if err != nil || stored.Processing.State != domain.EventProcessStateAccepted {
 		t.Fatalf("CompareAndSetEventResult()=%#v,%v", stored, err)
@@ -706,10 +776,14 @@ func TestAlertCreateAndCASWaitForRefresh(t *testing.T) {
 			}
 			response := `{"_index":"linkd-test-alerts","_id":"` + documentID + `","_seq_no":1,"_primary_term":1}`
 			return &http.Response{StatusCode: http.StatusCreated, Body: io.NopCloser(strings.NewReader(response))}, nil
-		case "/_msearch":
-			response := `{"responses":[{"status":200,"hits":{"hits":[{"_index":"linkd-test-alerts","_id":"` + documentID + `","_seq_no":1,"_primary_term":1,"_source":` + string(document) + `}]}}]}`
-			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(response))}, nil
 		case "/linkd-test-alerts/_doc/" + documentID:
+			if request.Method == http.MethodGet {
+				if request.URL.Query().Get("realtime") != "true" {
+					t.Fatalf("GET query=%s", request.URL.RawQuery)
+				}
+				response := `{"_index":"linkd-test-alerts","_id":"` + documentID + `","_seq_no":1,"_primary_term":1,"found":true,"_source":` + string(document) + `}`
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(response))}, nil
+			}
 			if request.URL.Query().Get("refresh") != "wait_for" {
 				t.Fatalf("CAS query=%s", request.URL.RawQuery)
 			}
@@ -747,10 +821,96 @@ func TestAlertCreateAndCASWaitForRefresh(t *testing.T) {
 	}
 }
 
+func TestLifecycleAlertCreateAndCASDoNotWaitForRefresh(t *testing.T) {
+	router, err := NewStaticRouter("linkd-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alert := storetest.Alert("tenant-1", "alert-fast", "event-1", "fp", "warning")
+	document, err := encodeAlertDocument(alert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	documentID := alertDocumentID(alert)
+	transport := transportFunc(func(request *http.Request) (*http.Response, error) {
+		switch {
+		case request.Method == http.MethodPut && strings.Contains(request.URL.Path, "/_create/"):
+			if request.URL.Query().Get("refresh") != "false" {
+				t.Fatalf("create query=%s", request.URL.RawQuery)
+			}
+			response := `{"_index":"linkd-test-alerts","_id":"` + documentID + `","_seq_no":1,"_primary_term":1}`
+			return &http.Response{StatusCode: http.StatusCreated, Body: io.NopCloser(strings.NewReader(response))}, nil
+		case request.Method == http.MethodGet:
+			if request.URL.Query().Get("realtime") != "true" {
+				t.Fatalf("GET query=%s", request.URL.RawQuery)
+			}
+			response := `{"_index":"linkd-test-alerts","_id":"` + documentID + `","_seq_no":1,"_primary_term":1,"found":true,"_source":` + string(document) + `}`
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(response))}, nil
+		case request.Method == http.MethodPut:
+			if request.URL.Query().Get("refresh") != "false" {
+				t.Fatalf("CAS query=%s", request.URL.RawQuery)
+			}
+			response := `{"_index":"linkd-test-alerts","_id":"` + documentID + `","_seq_no":2,"_primary_term":1}`
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(response))}, nil
+		default:
+			t.Fatalf("unexpected request=%s %s", request.Method, request.URL.String())
+			return nil, nil
+		}
+	})
+	repository, err := New(transport, router, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := repository.CreateAlertAfterActiveLookup(context.Background(), alert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := alert.Clone()
+	replacement.LatestEventID = "event-2"
+	replacement.LastOccurredAt = replacement.LastOccurredAt.Add(time.Minute)
+	replacement.UpdateAt = replacement.UpdateAt.Add(time.Minute)
+	if _, err := repository.CompareAndSetAlertAfterActiveLookup(
+		context.Background(), alert.BKTenantID, alert.AlertID, created.Version, replacement,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func testAlertLog(logID string) domain.AlertLog {
 	return domain.AlertLog{
 		LogID: logID, BKTenantID: "tenant-1", AlertID: "alert-1",
 		OperatorKind: domain.OperatorKindSource, OperationKind: domain.OperationKindTrigger,
 		Params: domain.JSONObject{}, CreatedTime: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+	}
+}
+
+func TestSearchRejectsPartialSuccessAcrossAPIs(t *testing.T) {
+	for _, failure := range []string{`"timed_out":true`, `"_shards":{"failed":1}`} {
+		for _, api := range []string{"search", "pit", "msearch"} {
+			t.Run(api+failure, func(t *testing.T) {
+				repository, err := New(transportFunc(func(request *http.Request) (*http.Response, error) {
+					body := `{` + failure + `,"hits":{"hits":[]}}`
+					if api == "msearch" {
+						body = `{"responses":[` + body + `]}`
+					}
+					return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
+				}), mustStaticRouter(t), DefaultConfig())
+				if err != nil {
+					t.Fatal(err)
+				}
+				switch api {
+				case "search":
+					var result searchResponse
+					err = repository.performJSON(t.Context(), http.MethodPost, "/_search", nil, nil, &result)
+				case "pit":
+					_, err = repository.openPIT(t.Context(), []string{"linkd-test-events"})
+				case "msearch":
+					_, err = repository.multiSearch(t.Context(), []map[string]any{{}}, []map[string]any{{}})
+				}
+				if err == nil || !strings.Contains(err.Error(), "incomplete search") {
+					t.Fatalf("error=%v", err)
+				}
+			})
+		}
 	}
 }

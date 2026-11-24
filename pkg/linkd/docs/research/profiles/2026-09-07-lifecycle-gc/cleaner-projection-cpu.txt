@@ -1,0 +1,58 @@
+File: linkd
+Type: cpu
+Time: 2026-09-07 01:46:07 CST
+Duration: 20.18s, Total samples = 4.99s (24.72%)
+Showing nodes accounting for 4.34s, 86.97% of 4.99s total
+Dropped 240 nodes (cum <= 0.02s)
+Showing top 50 nodes out of 249
+      flat  flat%   sum%        cum   cum%
+     0.86s 17.23% 17.23%      0.86s 17.23%  runtime.madvise
+     0.81s 16.23% 33.47%      0.81s 16.23%  runtime.usleep
+     0.47s  9.42% 42.89%      0.47s  9.42%  runtime.pthread_cond_wait
+     0.40s  8.02% 50.90%      0.40s  8.02%  runtime.pthread_cond_signal
+     0.27s  5.41% 56.31%      0.27s  5.41%  runtime.pthread_kill
+     0.22s  4.41% 60.72%      0.22s  4.41%  syscall.rawsyscalln
+     0.15s  3.01% 63.73%      0.15s  3.01%  runtime.tryDeferToSpanScan
+     0.13s  2.61% 66.33%      0.13s  2.61%  runtime.kevent
+     0.08s  1.60% 67.94%      0.22s  4.41%  runtime.scanObject
+     0.06s  1.20% 69.14%      0.26s  5.21%  encoding/json.(*Decoder).readValue
+     0.06s  1.20% 70.34%      0.06s  1.20%  runtime.memmove
+     0.06s  1.20% 71.54%      0.15s  3.01%  runtime.scanObjectsSmall
+     0.05s  1.00% 72.55%      0.05s  1.00%  encoding/json.stateInString
+     0.05s  1.00% 73.55%      0.06s  1.20%  runtime.greyobject
+     0.04s   0.8% 74.35%      0.04s   0.8%  internal/runtime/atomic.(*Uint64).Add (inline)
+     0.04s   0.8% 75.15%      0.04s   0.8%  runtime.memclrNoHeapPointers
+     0.04s   0.8% 75.95%      0.04s   0.8%  runtime.nextFreeFast (inline)
+     0.04s   0.8% 76.75%      0.04s   0.8%  runtime.pthread_cond_timedwait_relative_np
+     0.03s   0.6% 77.35%      0.05s  1.00%  encoding/json.(*decodeState).rescanLiteral
+     0.03s   0.6% 77.96%      0.04s   0.8%  encoding/json.unquoteBytes
+     0.03s   0.6% 78.56%      0.03s   0.6%  internal/runtime/maps.(*Iter).Next
+     0.03s   0.6% 79.16%      0.03s   0.6%  regexp/syntax.(*Inst).MatchRunePos
+     0.03s   0.6% 79.76%      0.74s 14.83%  runtime.gcDrain
+     0.03s   0.6% 80.36%      0.16s  3.21%  runtime.mallocgcSmallNoscan
+     0.03s   0.6% 80.96%      0.13s  2.61%  runtime.mallocgcSmallScanNoHeader
+     0.03s   0.6% 81.56%      0.06s  1.20%  runtime.wbBufFlush1
+     0.02s   0.4% 81.96%      0.11s  2.20%  encoding/json.(*Decoder).refill
+     0.02s   0.4% 82.36%      0.03s   0.6%  encoding/json.appendCompact
+     0.02s   0.4% 82.77%      0.07s  1.40%  gcWriteBarrier
+     0.02s   0.4% 83.17%      0.07s  1.40%  regexp.(*Regexp).doOnePass
+     0.02s   0.4% 83.57%      0.03s   0.6%  runtime.mallocgcTiny
+     0.02s   0.4% 83.97%      0.11s  2.20%  runtime.mapassign_faststr
+     0.01s   0.2% 84.17%      0.49s  9.82%  encoding/json.(*Decoder).Decode
+     0.01s   0.2% 84.37%      0.16s  3.21%  encoding/json.(*decodeState).literalStore
+     0.01s   0.2% 84.57%      0.03s   0.6%  encoding/json.indirect
+     0.01s   0.2% 84.77%      0.45s  9.02%  linkd/internal/cleaner.(*EventFactory).Build
+     0.01s   0.2% 84.97%      0.71s 14.23%  linkd/internal/cleaner.(*Mapper).MapMessage
+     0.01s   0.2% 85.17%      0.03s   0.6%  linkd/internal/cleaner.DefaultFingerprintResolver.Resolve
+     0.01s   0.2% 85.37%      0.08s  1.60%  linkd/internal/domain.ValidateEventReplacement
+     0.01s   0.2% 85.57%      0.12s  2.40%  runtime.(*mcache).refill
+     0.01s   0.2% 85.77%      0.03s   0.6%  runtime.(*spanSet).pop
+     0.01s   0.2% 85.97%      0.06s  1.20%  runtime.(*sweepLocked).sweep
+     0.01s   0.2% 86.17%      0.07s  1.40%  runtime.concatstrings
+     0.01s   0.2% 86.37%      0.03s   0.6%  runtime.findObject
+     0.01s   0.2% 86.57%      0.39s  7.82%  runtime.mallocgc
+     0.01s   0.2% 86.77%      0.08s  1.60%  runtime.newarray
+     0.01s   0.2% 86.97%      0.05s  1.00%  runtime.slicebytetostring
+         0     0% 86.97%      0.06s  1.20%  bufio.(*Writer).Flush
+         0     0% 86.97%      0.06s  1.20%  bufio.(*Writer).ReadFrom
+         0     0% 86.97%      0.42s  8.42%  encoding/json.(*Decoder).Token

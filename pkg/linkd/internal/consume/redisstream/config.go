@@ -15,25 +15,26 @@ import (
 	"time"
 
 	"linkd/internal/consume"
+	"linkd/internal/redisclient"
 )
 
 // Config 描述一个 Redis Streams Consumer Group Session。
 type Config struct {
-	Address        string
-	Username       string
-	Password       string
-	DB             int
-	UseTLS         bool
-	Stream         string
-	Group          string
-	Consumer       string
-	CreateGroup    bool
-	ReadBlock      time.Duration
-	ClaimMinIdle   time.Duration
-	BodyField      string
-	MessageIDField string
-	TenantIDField  string
-	OrderKeyField  string
+	// RetiredConsumers 仅由中心确认退出或授权强切后提供，允许定向接管。
+	RetiredConsumers []string
+	// OnRetiredDrained 仅在原 owner 的 PEL 已空后通知调度器回收交接记录。
+	OnRetiredDrained func(string)
+	Connection       redisclient.Options
+	Stream           string
+	Group            string
+	Consumer         string
+	CreateGroup      bool
+	ReadBlock        time.Duration
+	ClaimMinIdle     time.Duration
+	BodyField        string
+	MessageIDField   string
+	TenantIDField    string
+	OrderKeyField    string
 }
 
 // WithDefaults 返回补齐适配器默认值的副本。
@@ -61,8 +62,8 @@ func (c Config) WithDefaults() Config {
 
 // Validate 校验 Redis Streams Session 配置。
 func (c Config) Validate() error {
-	if strings.TrimSpace(c.Address) == "" {
-		return fmt.Errorf("address must not be empty")
+	if err := c.Connection.Validate(); err != nil {
+		return fmt.Errorf("redis connection: %w", err)
 	}
 	if strings.TrimSpace(c.Stream) == "" {
 		return fmt.Errorf("stream must not be empty")
@@ -72,9 +73,6 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.Consumer) == "" {
 		return fmt.Errorf("consumer must not be empty")
-	}
-	if c.DB < 0 {
-		return fmt.Errorf("db must not be negative: %d", c.DB)
 	}
 	if c.ReadBlock <= 0 {
 		return fmt.Errorf("read_block must be positive: %s", c.ReadBlock)

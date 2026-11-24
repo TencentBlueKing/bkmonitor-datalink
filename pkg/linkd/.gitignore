@@ -1,13 +1,8 @@
 # Build outputs
+/.release/
 /bin/
 /dist/
-/devtools/dist/
-/devtools/dist-server/
-/devtools/node_modules/
-/devtools/coverage/
-/devtools/playwright-report/
-/devtools/test-results/
-/devtools/devtools.config.yaml
+/scripts/node_modules/
 /.pnpm-store/
 *.test
 *.out
@@ -18,3 +13,15 @@ coverage.out
 *.swp
 .idea/
 .vscode/
+
+# Local configuration and environment files
+.env*
+/configs/*.local.yaml
+
+# Private keys and keystores
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore

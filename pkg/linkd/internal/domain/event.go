@@ -10,48 +10,64 @@
 package domain
 
 import (
+	"cmp"
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"time"
 )
 
 var eventSourceIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // Event 是来源消息经过 SourceCleaner 和通用事件工厂标准化后的事件事实。
-// Event 创建后只有 RelatedAlertID 可以由生命周期处理器写入，其他来源事实不可覆盖。
+// 来源事实创建后不可覆盖；Lifecycle 只能冻结 EventEnrichment 并追加 RelatedAlertIDs。
 type Event struct {
-	BKTenantID     string       `json:"bk_tenant_id"`
-	EventSourceID  string       `json:"event_source_id"`
-	RelatedAlertID string       `json:"related_alert_id,omitempty"`
-	EventID        string       `json:"event_id"`
-	Fingerprint    string       `json:"fingerprint"`
-	Title          string       `json:"title"`
-	Content        string       `json:"content"`
-	Severity       string       `json:"severity"`
-	Action         EventAction  `json:"action"`
-	ActionReason   string       `json:"action_reason"`
-	ConditionKey   string       `json:"condition_key"`
-	ConditionName  string       `json:"condition_name"`
-	Dimensions     DimensionMap `json:"dimensions"`
-	SubjectSystem  string       `json:"subject_system"`
-	SubjectType    string       `json:"subject_type"`
-	SubjectID      string       `json:"subject_id"`
-	SubjectName    string       `json:"subject_name"`
-	OccurredAt     time.Time    `json:"occurred_at"`
-	ProducedAt     time.Time    `json:"produced_at"`
-	ReceivedAt     time.Time    `json:"received_at"`
-	CreateAt       time.Time    `json:"create_at"`
-	SourceEventID  string       `json:"source_event_id"`
-	SourceAlertID  string       `json:"source_alert_id"`
-	SourceRawData  JSONObject   `json:"source_raw_data,omitempty"`
-	Labels         DimensionMap `json:"labels"`
-	ExtraData      JSONObject   `json:"extra_data,omitempty"`
+	EventEnrichment
+	// enrichViews 仅在单次 Lifecycle 处理中复用冻结结果，不属于 Event 事实或存储。
+	enrichViews *eventEnrichViews
+	// MergeOrigin 只属于内置合并来源；外部来源即使提交相同字段也不能成为系统合并事件。
+	MergeOrigin *MergeOrigin `json:"merge_origin,omitempty"`
+	// EventSourceVersion 是创建时实际使用的不可变来源发布版本。
+	EventSourceVersion int64    `json:"event_source_version"`
+	BKTenantID         string   `json:"bk_tenant_id"`
+	EventSourceID      string   `json:"event_source_id"`
+	RelatedAlertIDs    []string `json:"related_alert_ids,omitempty"`
+	EventID            string   `json:"event_id"`
+	Fingerprint        string   `json:"fingerprint"`
+	Title              string   `json:"title"`
+	Content            string   `json:"content"`
+	// Evaluations 记录各级别的来源判定；数组顺序不携带处理顺序。
+	Evaluations []EventEvaluation `json:"evaluations"`
+	Dimensions  DimensionMap      `json:"dimensions"`
+	// Values 是本次事件的观测数值，创建后不可覆盖，也不参与 fingerprint。
+	Values        EventValues  `json:"values"`
+	SubjectSystem string       `json:"subject_system"`
+	SubjectType   string       `json:"subject_type"`
+	SubjectID     string       `json:"subject_id"`
+	SubjectName   string       `json:"subject_name"`
+	OccurredAt    time.Time    `json:"occurred_at"`
+	ProducedAt    time.Time    `json:"produced_at"`
+	ReceivedAt    time.Time    `json:"received_at"`
+	CreateAt      time.Time    `json:"create_at"`
+	SourceEventID string       `json:"source_event_id"`
+	SourceAlertID string       `json:"source_alert_id"`
+	SourceRawData JSONObject   `json:"source_raw_data,omitempty"`
+	Labels        DimensionMap `json:"labels"`
+	ExtraData     JSONObject   `json:"extra_data,omitempty"`
 }
 
 // Normalize 深拷贝动态字段、规范 UTC 时间并校验 Event。
 func (e Event) Normalize() (Event, error) {
+	e.Title = TruncateDisplayText(e.Title)
+	e.SubjectName = TruncateDisplayText(e.SubjectName)
+	e.enrichViews = nil
+	e.MergeOrigin = e.MergeOrigin.Clone()
 	e.Dimensions = e.Dimensions.Normalize()
+	e.Evaluations = slices.Clone(e.Evaluations)
+	slices.SortFunc(e.Evaluations, compareEvaluation)
+	e.RelatedAlertIDs = normalizeAlertIDs(e.RelatedAlertIDs)
+	e.Values = e.Values.Clone()
 	e.Labels = e.Labels.Normalize()
 	var err error
 	e.SourceRawData, err = e.SourceRawData.Normalize()
@@ -62,27 +78,114 @@ func (e Event) Normalize() (Event, error) {
 	if err != nil {
 		return Event{}, fmt.Errorf("event extra_data: %w", err)
 	}
+	e.EventEnrichment, err = e.EventEnrichment.Normalize(e.Evaluations)
+	if err != nil {
+		return Event{}, err
+	}
 	e.OccurredAt = normalizeTime(e.OccurredAt)
 	e.ProducedAt = normalizeTime(e.ProducedAt)
 	e.ReceivedAt = normalizeTime(e.ReceivedAt)
 	e.CreateAt = normalizeTime(e.CreateAt)
-	if err := e.Validate(); err != nil {
+	if err := e.validate(false); err != nil {
 		return Event{}, err
 	}
 	return e, nil
 }
 
-// Clone 返回不共享 map 或 JSON 字节的 Event 副本。
+// Clone 深拷贝来源字段和丰富载荷；私有冻结视图在本次处理内共享，不属于存储数据。
 func (e Event) Clone() Event {
+	e.MergeOrigin = e.MergeOrigin.Clone()
+	e.EventEnrichment = e.EventEnrichment.Clone()
 	e.Dimensions = e.Dimensions.Clone()
+	e.Evaluations = slices.Clone(e.Evaluations)
+	e.RelatedAlertIDs = slices.Clone(e.RelatedAlertIDs)
+	e.Values = e.Values.Clone()
 	e.Labels = e.Labels.Clone()
 	e.SourceRawData = e.SourceRawData.Clone()
 	e.ExtraData = e.ExtraData.Clone()
 	return e
 }
 
+// Restore 将存储解码结果转成可处理的快照，不重编码动态 JSON 或重新验证历史丰富载荷。
+// 缺失的可选数据由消费者处理；身份和稳定时间锚点不能用当前时间或新配置补造。
+func (e Event) Restore() (Event, error) {
+	e.enrichViews = nil
+	e = e.Clone()
+	e.Dimensions = e.Dimensions.Normalize()
+	e.Labels = e.Labels.Normalize()
+	if e.Values == nil {
+		e.Values = EventValues{}
+	}
+	if e.SourceRawData == nil {
+		e.SourceRawData = JSONObject{}
+	}
+	if e.ExtraData == nil {
+		e.ExtraData = JSONObject{}
+	}
+	slices.SortFunc(e.Evaluations, compareEvaluation)
+	slices.SortFunc(e.Enrich.Evaluations, func(a, b EvaluationEnrich) int { return cmp.Compare(a.Severity, b.Severity) })
+	e.RelatedAlertIDs = normalizeAlertIDs(e.RelatedAlertIDs)
+	if e.EnrichStatus == "" {
+		e.EnrichStatus = EnrichStatusPending
+	}
+	e.EnrichedAt = normalizeOptionalTime(e.EnrichedAt)
+	e.ReceivedAt = normalizeTime(e.ReceivedAt)
+	if e.ReceivedAt.IsZero() {
+		return Event{}, fmt.Errorf("stored event received_at must not be zero")
+	}
+	for _, timestamp := range []*time.Time{&e.OccurredAt, &e.ProducedAt, &e.CreateAt} {
+		if timestamp.IsZero() {
+			*timestamp = e.ReceivedAt
+		} else {
+			*timestamp = normalizeTime(*timestamp)
+		}
+	}
+	if err := e.ValidateIdentity(); err != nil {
+		return Event{}, err
+	}
+	if !e.EnrichStatus.Valid() {
+		return Event{}, fmt.Errorf("stored event enrich_status is invalid")
+	}
+	return e, nil
+}
+
+// ValidateIdentity 只检查处理、租户隔离和版本绑定所需的身份，不遍历业务载荷。
+func (e Event) ValidateIdentity() error {
+	if e.EventSourceVersion <= 0 {
+		return fmt.Errorf("event_source_version must be positive")
+	}
+	if err := ValidateIdentityPart("bk_tenant_id", e.BKTenantID, 64); err != nil {
+		return err
+	}
+	if len(e.EventSourceID) > 32 || !eventSourceIDPattern.MatchString(e.EventSourceID) {
+		return fmt.Errorf("event event_source_id has invalid format")
+	}
+	if err := validateTextLength("event_id", e.EventID, 1, EntityIDMaxBytes); err != nil {
+		return err
+	}
+	if err := validateTextLength("fingerprint", e.Fingerprint, 1, 128); err != nil {
+		return err
+	}
+	return e.MergeOrigin.Validate(e.EventSourceID)
+}
+
 // Validate 校验 define.md 规定的 Event 字段和边界。
 func (e Event) Validate() error {
+	return e.validate(true)
+}
+
+// 只有 Normalize 完成所有动态 JSON 的校验和深拷贝后才跳过二次规范化。
+// 公共 Validate 仍必须检查任意调用方传入的动态字段，不能信任对象曾经被规范化。
+func (e Event) validate(validateJSON bool) error {
+	if err := e.MergeOrigin.Validate(e.EventSourceID); err != nil {
+		return err
+	}
+	if err := e.EventEnrichment.Validate(e.Evaluations); err != nil {
+		return err
+	}
+	if e.EventSourceVersion <= 0 {
+		return fmt.Errorf("event_source_version must be positive")
+	}
 	for _, field := range []struct {
 		name  string
 		value string
@@ -93,7 +196,6 @@ func (e Event) Validate() error {
 		{"event_source_id", e.EventSourceID, 1, 32},
 		{"event_id", e.EventID, 1, EntityIDMaxBytes},
 		{"fingerprint", e.Fingerprint, 1, 128},
-		{"severity", e.Severity, 1, 32},
 	} {
 		if err := validateTextLength(field.name, field.value, field.min, field.max); err != nil {
 			return err
@@ -110,16 +212,12 @@ func (e Event) Validate() error {
 		value string
 		max   int
 	}{
-		{"related_alert_id", e.RelatedAlertID, 256},
-		{"title", e.Title, 256},
+		{"title", e.Title, DisplayTextMaxChars * 4},
 		{"content", e.Content, 1 << 20},
-		{"action_reason", e.ActionReason, 256},
-		{"condition_key", e.ConditionKey, 256},
-		{"condition_name", e.ConditionName, 256},
 		{"subject_system", e.SubjectSystem, 32},
 		{"subject_type", e.SubjectType, 128},
 		{"subject_id", e.SubjectID, 256},
-		{"subject_name", e.SubjectName, 256},
+		{"subject_name", e.SubjectName, DisplayTextMaxChars * 4},
 		{"source_event_id", e.SourceEventID, 256},
 		{"source_alert_id", e.SourceAlertID, 256},
 	} {
@@ -127,20 +225,33 @@ func (e Event) Validate() error {
 			return err
 		}
 	}
-	if !e.Action.Valid() {
-		return fmt.Errorf("event action is invalid: %q", e.Action)
+	if err := ValidateEvaluations(e.Evaluations); err != nil {
+		return err
+	}
+	if len(e.RelatedAlertIDs) > MaxEventEvaluations {
+		return fmt.Errorf("event alert associations exceed evaluation limit")
+	}
+	for _, id := range e.RelatedAlertIDs {
+		if err := validateTextLength("related_alert_id", id, 1, EntityIDMaxBytes); err != nil {
+			return err
+		}
 	}
 	if err := e.Dimensions.Validate(); err != nil {
 		return fmt.Errorf("event dimensions: %w", err)
 	}
+	if err := e.Values.Validate(); err != nil {
+		return fmt.Errorf("event values: %w", err)
+	}
 	if err := e.Labels.Validate(); err != nil {
 		return fmt.Errorf("event labels: %w", err)
 	}
-	if _, err := e.SourceRawData.Normalize(); err != nil {
-		return fmt.Errorf("event source_raw_data: %w", err)
-	}
-	if _, err := e.ExtraData.Normalize(); err != nil {
-		return fmt.Errorf("event extra_data: %w", err)
+	if validateJSON {
+		if _, err := e.SourceRawData.Normalize(); err != nil {
+			return fmt.Errorf("event source_raw_data: %w", err)
+		}
+		if _, err := e.ExtraData.Normalize(); err != nil {
+			return fmt.Errorf("event extra_data: %w", err)
+		}
 	}
 	for name, value := range map[string]time.Time{
 		"occurred_at": e.OccurredAt,
@@ -160,39 +271,85 @@ func ValidateNewEvent(event Event) error {
 	if err := event.Validate(); err != nil {
 		return err
 	}
-	if event.RelatedAlertID != "" {
-		return fmt.Errorf("new event related_alert_id must be empty")
+	return validateNewEventState(event)
+}
+
+// ValidateNormalizedNewEvent 校验刚由 Event.Normalize 返回的 Event 是否可首次创建。
+// 调用方必须在其间不暴露或修改动态字段；任意外部输入仍使用 ValidateNewEvent。
+func ValidateNormalizedNewEvent(event Event) error {
+	if err := event.validate(false); err != nil {
+		return err
+	}
+	return validateNewEventState(event)
+}
+
+func validateNewEventState(event Event) error {
+	if event.EnrichStatus != "" && event.EnrichStatus != EnrichStatusPending {
+		return fmt.Errorf("new event enrich must be pending")
+	}
+	if len(event.RelatedAlertIDs) != 0 {
+		return fmt.Errorf("new event related_alert_ids must be empty")
 	}
 	return nil
 }
 
-// WithRelatedAlertID 返回写入生命周期关联结果后的 Event 副本。
-func (e Event) WithRelatedAlertID(alertID string) (Event, error) {
-	if e.RelatedAlertID != "" && e.RelatedAlertID != alertID {
-		return Event{}, fmt.Errorf("event related_alert_id is already set")
+// WithRelatedAlertIDs 返回生命周期关联结果，不允许重写已经提交的关联。
+func (e Event) WithRelatedAlertIDs(alertIDs []string) (Event, error) {
+	alertIDs = normalizeAlertIDs(alertIDs)
+	if err := validateRelatedAlertIDs(alertIDs); err != nil {
+		return Event{}, err
+	}
+	if len(e.RelatedAlertIDs) > 0 && !slices.Equal(e.RelatedAlertIDs, alertIDs) {
+		return Event{}, fmt.Errorf("event related_alert_ids are already set")
 	}
 	e = e.Clone()
-	e.RelatedAlertID = alertID
-	return e.Normalize()
+	e.RelatedAlertIDs = alertIDs
+	return e, nil
 }
 
-// ValidateEventReplacement 只允许生命周期处理器写入 RelatedAlertID。
+func validateRelatedAlertIDs(alertIDs []string) error {
+	if len(alertIDs) > MaxEventEvaluations {
+		return fmt.Errorf("event alert associations exceed evaluation limit")
+	}
+	for _, id := range alertIDs {
+		if err := validateTextLength("related_alert_id", id, 1, EntityIDMaxBytes); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func normalizeAlertIDs(ids []string) []string {
+	ids = slices.Clone(ids)
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
+	if len(ids) == 0 {
+		return nil
+	}
+	return ids
+}
+
+// ValidateEventReplacement 只比较来源事实与关联变更，不重新验证已保存的业务载荷。
 func ValidateEventReplacement(current, replacement Event) error {
-	if err := current.Validate(); err != nil {
+	if err := current.ValidateIdentity(); err != nil {
 		return fmt.Errorf("current event: %w", err)
 	}
-	if err := replacement.Validate(); err != nil {
+	if err := replacement.ValidateIdentity(); err != nil {
 		return fmt.Errorf("replacement event: %w", err)
+	}
+	if err := validateRelatedAlertIDs(replacement.RelatedAlertIDs); err != nil {
+		return err
 	}
 	left := current.Clone()
 	right := replacement.Clone()
-	left.RelatedAlertID = ""
-	right.RelatedAlertID = ""
+	left.enrichViews, right.enrichViews = nil, nil
+	left.RelatedAlertIDs = nil
+	right.RelatedAlertIDs = nil
 	if !reflect.DeepEqual(left, right) {
 		return fmt.Errorf("event replacement must preserve source facts")
 	}
-	if current.RelatedAlertID != "" && current.RelatedAlertID != replacement.RelatedAlertID {
-		return fmt.Errorf("event related_alert_id is immutable after association")
+	if len(current.RelatedAlertIDs) > 0 && !slices.Equal(current.RelatedAlertIDs, replacement.RelatedAlertIDs) {
+		return fmt.Errorf("event related_alert_ids are immutable after association")
 	}
 	return nil
 }
@@ -210,4 +367,45 @@ func validateOptionalTextLength(name, value string, maxLength int) error {
 		return fmt.Errorf("%s length must not exceed %d bytes", name, maxLength)
 	}
 	return nil
+}
+
+// ValidateEventRedelivery 允许跨发布或动态等级重映射的重投复用已保存 Event，不覆盖原始事实。
+// 这只用于 create 冲突核对；生命周期 CAS 仍使用 ValidateEventReplacement。
+func ValidateEventRedelivery(incoming, stored Event) error {
+	if err := validateNewEventState(incoming); err != nil {
+		return err
+	}
+	incoming.EventEnrichment = stored.EventEnrichment.Clone()
+	if incoming.EventID == stored.EventID && incoming.BKTenantID == stored.BKTenantID && incoming.EventSourceID == stored.EventSourceID && incoming.ReceivedAt.Equal(stored.ReceivedAt) && incoming.SourceEventID == stored.SourceEventID && incoming.SourceAlertID == stored.SourceAlertID && len(incoming.SourceRawData) > 0 && reflect.DeepEqual(incoming.SourceRawData, stored.SourceRawData) {
+		if incoming.EventSourceVersion != stored.EventSourceVersion {
+			return nil
+		}
+		// 同一来源版本只允许等级映射差异；动作、原因及其数量不能随重投变化。
+		type actionFact struct {
+			action EventAction
+			reason string
+		}
+		counts := map[actionFact]int{}
+		for _, e := range incoming.Evaluations {
+			counts[actionFact{e.Action, e.ActionReason}]++
+		}
+		for _, e := range stored.Evaluations {
+			counts[actionFact{e.Action, e.ActionReason}]--
+		}
+		same := true
+		for _, count := range counts {
+			if count != 0 {
+				same = false
+				break
+			}
+		}
+		if same {
+			candidate := incoming.Clone()
+			candidate.Evaluations = slices.Clone(stored.Evaluations)
+			if err := ValidateEventReplacement(candidate, stored); err == nil {
+				return nil
+			}
+		}
+	}
+	return ValidateEventReplacement(incoming, stored)
 }

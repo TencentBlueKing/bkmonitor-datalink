@@ -34,6 +34,10 @@ var errReportFailed = errors.New("report failed")
 // Agent socket，不涉及远端请求，因此不需要按产物大小放大。
 const reportTimeout = 30 * time.Second
 
+// shutdownReportTimeout 限制 Beat 进程退出阶段写事件通道的等待上限。退出时
+// waitScheduler 已结束且不再消费 EventChan，通道已满时不能阻塞满 30 秒拖住退出。
+var shutdownReportTimeout = time.Second
+
 // reportSink 投递一条已经带 dataid 的上报事件。
 type reportSink interface {
 	Send(ctx context.Context, event define.Event) error
@@ -63,14 +67,31 @@ func reportStartedEvent(ctx context.Context, sink reportSink, event *StartedEven
 }
 
 func reportFinishedEvent(ctx context.Context, sink reportSink, event *FinishedEvent) error {
-	return sendReport(ctx, sink, event, "finished event")
+	timeout := reportTimeout
+	// 用户取消（取消标记）与资源保护熔断只取消内层 runCtx，此处外层 ctx 仍有效；
+	// 外层 ctx 仅在 CLI 收到终止信号（cause=ErrExecutionCancelled）或常驻 Beat 进程
+	// 退出时被取消。常驻 Beat 退出时缩短等待上限，避免 EventChan 已满拖死退出。
+	if ctx.Err() != nil && !errors.Is(context.Cause(ctx), ErrExecutionCancelled) {
+		timeout = shutdownReportTimeout
+	}
+	return sendReportWithTimeout(context.WithoutCancel(ctx), sink, event, "finished event", timeout)
 }
 
 func sendReport(ctx context.Context, sink reportSink, event define.Event, action string) error {
+	return sendReportWithTimeout(ctx, sink, event, action, reportTimeout)
+}
+
+func sendReportWithTimeout(
+	ctx context.Context,
+	sink reportSink,
+	event define.Event,
+	action string,
+	timeout time.Duration,
+) error {
 	if sink == nil {
 		return executor.MarkError(errReportFailed, fmt.Errorf("%s is not reported: this entrypoint has no report link", action))
 	}
-	sendCtx, cancel := context.WithTimeout(ctx, reportTimeout)
+	sendCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if err := sink.Send(sendCtx, event); err != nil {
 		return executor.MarkError(errReportFailed, fmt.Errorf("report %s: %w", action, err))

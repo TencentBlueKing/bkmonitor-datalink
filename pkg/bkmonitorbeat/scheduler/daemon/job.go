@@ -96,10 +96,14 @@ func (j *ScheduledJob) Init() {
 
 	if raw, err := storage.Get(j.storageKey); err == nil {
 		if last, parseErr := time.Parse(timeTemplate, raw); parseErr == nil {
-			next, ok := j.schedule.NextRunTime(last)
-			for ok && !next.After(now) {
-				next, ok = j.schedule.NextRunTime(next)
+			// 时钟大幅前跳或长时间停机恢复时，直接从 max(last, now) 推算下一次触发时间，
+			// 避免按间隔逐步步进阻塞 Beat 启动或 Reload；时钟回拨时（last >= now）仍从
+			// last 推算，防止重复执行已派发过的时刻。
+			from := last
+			if now.After(from) {
+				from = now
 			}
+			next, ok := j.schedule.NextRunTime(from)
 			if ok {
 				j.checkTime = next
 				j.expired = false
@@ -183,8 +187,12 @@ func (j *IntervalJob) Stop() {
 	if j.task != nil {
 		logger.Infof("job stop,task id:%v", j.task.GetTaskID())
 	}
-	j.cancel()
-	j.task.Stop()
+	if j.cancel != nil {
+		j.cancel()
+	}
+	if j.task != nil {
+		j.task.Stop()
+	}
 }
 
 // Retire removes future executions while allowing already reserved runs to

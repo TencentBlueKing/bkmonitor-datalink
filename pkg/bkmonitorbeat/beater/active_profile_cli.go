@@ -1,11 +1,15 @@
 // Tencent is pleased to support the open source community by making
 // 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
 // Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
-// Licensed under the MIT License (the "License");
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
 
 //go:build activeprofile || basetask
 
-package main
+package beater
 
 import (
 	"flag"
@@ -37,8 +41,10 @@ var (
 	)
 )
 
-// handleActiveProfileCLI 在 Beat 框架初始化之前处理轻量模式，处理完直接退出。
-func handleActiveProfileCLI() {
+// HandleActiveProfileCLI 在 Beat 框架初始化之前处理轻量模式，处理完直接退出。
+// 放在 beater 子包而不是 package main，确保仅传单个 main.go 的外部构建命令与
+// 流水线（go build ... main.go）也能按 build tag 自动编入该入口。
+func HandleActiveProfileCLI() {
 	modes := 0
 	for _, enabled := range []bool{*activeProfileRun, *activeProfileCancel, *activeProfileMatch} {
 		if enabled {

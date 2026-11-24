@@ -7,6 +7,7 @@ package executor
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"io"
@@ -576,5 +577,43 @@ func TestGoPprofEndpoint(t *testing.T) {
 				t.Errorf("timeout = %s, want %s", timeout, testCase.wantTimeout)
 			}
 		})
+	}
+}
+
+// 未设置 cgroup 内存上限的大内存主机上，开启保护后解压仍必须受静态硬上限约束，
+// 防止异常 gzip 响应按宿主余量解压出数 GB 数据。
+func TestReserveGoPprofParseCapsUncompressedLimitWithoutCgroup(t *testing.T) {
+	originalLimit := goPprofUncompressedLimit
+	goPprofUncompressedLimit = 64 << 10
+	t.Cleanup(func() { goPprofUncompressedLimit = originalLimit })
+
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write(bytes.Repeat([]byte("A"), 256<<10)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// 模拟无 cgroup 上限的 256 GB 主机
+	withStubbedResourceGuard(t, &fakeResourceProbe{memoryAvailable: 256 * 1024 * bytesPerMB})
+	runID := t.TempDir()
+	_, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	unregister, err := defaultResourceGuard.Register(runID, time.Now(), ResourceGuardPolicy{
+		RunDir:             runID,
+		ProtectBeat:        true,
+		StartHeadroomBytes: goStartHeadroomBytes,
+	}, cancel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unregister()
+
+	_, release, err := reserveGoPprofParse(runID, "http://127.0.0.1:6060/debug/pprof/heap", compressed.Bytes())
+	defer release()
+	if !errors.Is(err, ErrMemoryLimit) {
+		t.Fatalf("reserveGoPprofParse() error = %v, want ErrMemoryLimit", err)
 	}
 }

@@ -15,7 +15,7 @@ dataid: 0
 max_timeout: 15m
 min_period: 1m
 
-{% set tasks = host_tasks.get(cmdb_instance.host.bk_host_id | string, []) %}
+{% set tasks = (host_tasks or {}).get(cmdb_instance.host.bk_host_id | string, []) %}
 tasks:{% if not tasks %} []{% endif %}
 {% for task in tasks %}
   - task_id: {{ task.task_id | tojson }}
@@ -23,13 +23,13 @@ tasks:{% if not tasks %} []{% endif %}
     bk_biz_id: {{ task.bk_biz_id | tojson }}
     bk_host_id: {{ task.bk_host_id | tojson }}
     name: {{ task.name | tojson }}
-    creator: {{ task.creator | tojson }}
+    creator: {{ (task.creator or "") | tojson }}
     collection_method: {{ task.collection_method | tojson }}
     collection_type: {{ task.collection_type | tojson }}
 
     schedule:
       type: {{ task.schedule.type | tojson }}
-      timezone: {{ task.schedule.timezone | tojson }}
+      timezone: {{ (task.schedule.timezone or "UTC") | tojson }}
       {% if task.schedule.type == "once_at" %}
       execute_at: {{ task.schedule.execute_at | tojson }}
       {% else %}
@@ -44,7 +44,7 @@ tasks:{% if not tasks %} []{% endif %}
       {% if task.process_selector.type == "command" %}
       match_pattern: {{ task.process_selector.match_pattern | tojson }}
       {% if task.process_selector.exclude_pattern %}exclude_pattern: {{ task.process_selector.exclude_pattern | tojson }}{% endif %}
-      enable_dynamic_collection: {{ task.process_selector.enable_dynamic_collection | tojson }}
+      enable_dynamic_collection: {{ (task.process_selector.enable_dynamic_collection or false) | tojson }}
       {% if task.process_selector.host_pids %}host_pids: {{ task.process_selector.host_pids | tojson }}{% endif %}
       {% elif task.process_selector.type == "pid_file" %}
       pid_path: {{ task.process_selector.pid_path | tojson }}
@@ -66,12 +66,12 @@ tasks:{% if not tasks %} []{% endif %}
 
     {% if task.resource_guard_config %}
     resource_guard_config:
-      auto_stop_on_resource_pressure: {{ task.resource_guard_config.auto_stop_on_resource_pressure | tojson }}
-      max_disk_usage: {{ task.resource_guard_config.max_disk_usage | tojson }}
-      min_mem_level: {{ task.resource_guard_config.min_mem_level | tojson }}
+      auto_stop_on_resource_pressure: {{ (task.resource_guard_config.auto_stop_on_resource_pressure or false) | tojson }}
+      max_disk_usage: {{ (task.resource_guard_config.max_disk_usage or 0) | tojson }}
+      min_mem_level: {{ (task.resource_guard_config.min_mem_level or 0) | tojson }}
     {% endif %}
 
-    target_hosts: {{ target_hosts | tojson }}
+    target_hosts: {{ (target_hosts or []) | tojson }}
 
     event_data_id: {{ task.event_data_id | tojson }}
     profile_data_id: {{ task.profile_data_id | tojson }}

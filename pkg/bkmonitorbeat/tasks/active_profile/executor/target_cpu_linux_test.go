@@ -39,6 +39,33 @@ func TestProcessCPUTimeTracksConsumedCPU(t *testing.T) {
 	}
 }
 
+// 实际采集读的是别的进程，内核对"读自己"和"读其他进程"走不同分支，必须单独覆盖：
+// 子进程空转期间，读到的 CPU 时间要跟着增长。
+func TestProcessCPUTimeReadsOtherProcess(t *testing.T) {
+	child := exec.Command("/bin/sh", "-c", "while :; do :; done")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = child.Process.Kill()
+		_ = child.Wait()
+	}()
+	pid := int32(child.Process.Pid)
+
+	before, err := processCPUTime(pid)
+	if err != nil {
+		t.Fatalf("processCPUTime(child) error = %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	after, err := processCPUTime(pid)
+	if err != nil {
+		t.Fatalf("processCPUTime(child) error = %v", err)
+	}
+	if after-before < 50*time.Millisecond {
+		t.Fatalf("child cpu time grew by %s while spinning 200ms (before=%s after=%s)", after-before, before, after)
+	}
+}
+
 func TestReadTargetCPUTimesSkipsUnreadableProcesses(t *testing.T) {
 	pid := int32(os.Getpid())
 	// 已退出并被回收的子进程，PID 不再对应任何进程。

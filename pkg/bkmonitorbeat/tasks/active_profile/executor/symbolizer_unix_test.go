@@ -263,3 +263,34 @@ done
 		t.Fatalf("second DSO error = %v", err)
 	}
 }
+
+func TestAddr2lineDoesNotPassUnsupportedShortRecurseFlag(t *testing.T) {
+	tool := writeExecutableTestScript(t, `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "-R" ]; then
+    echo "addr2line: invalid option -- 'R'" >&2
+    exit 1
+  fi
+done
+while IFS= read -r address; do
+  printf '0x%s\n' "$address"
+  if [ "$address" = "ffffffffffffffff" ]; then
+    printf '%s\n' '??' '??:0'
+  else
+    printf '%s\n' 'main' '/src/test.c:20'
+  fi
+done
+`)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	symbolizer := newAddr2lineSymbolizer(ctx, tool, 1)
+	defer symbolizer.Close()
+
+	frames, err := symbolizer.Symbolize("/tmp/cpu-test", 0x40038d)
+	if err != nil {
+		t.Fatalf("addr2line Symbolize() error = %v", err)
+	}
+	if len(frames) != 1 || frames[0].Function != "main" {
+		t.Fatalf("unexpected frames: %+v", frames)
+	}
+}

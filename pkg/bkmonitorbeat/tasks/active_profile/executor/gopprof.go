@@ -34,6 +34,10 @@ const (
 	// 只为防止异常 endpoint 返回无界响应体。
 	goPprofResponseLimit = 64 << 20
 
+	// goPprofUncompressedLimit 限制开启内存保护时的未压缩静态上限，防止未设置
+	// cgroup 上限的大内存主机遇到异常 gzip 炸弹时按宿主余量解压出数 GB 数据。
+	defaultGoPprofUncompressedLimit = 256 << 20
+
 	// goPprofErrorDetailLimit 限制非 200 响应体读取量。pprof handler 以 text/plain
 	// 返回拒绝原因，取开头一段附进错误信息即可定位。
 	goPprofErrorDetailLimit = 4 << 10
@@ -54,7 +58,11 @@ const (
 // goPprofClient 不使用 http.DefaultClient：采集目标是主机上的 pprof endpoint，
 // 走环境变量里的代理只会把本机请求发到无关出口。空 Transport 的 Proxy 为 nil，
 // 即直连。超时由每次请求的 context 控制，因此不设 Client.Timeout。
-var goPprofClient = &http.Client{Transport: &http.Transport{}}
+var (
+	goPprofClient = &http.Client{Transport: &http.Transport{}}
+
+	goPprofUncompressedLimit uint64 = defaultGoPprofUncompressedLimit
+)
 
 // RunGoPprof 从目标进程的 net/http/pprof endpoint 取一次 pprof 产物。响应本身已经
 // 是带符号的 pprof，因此这里不涉及 perf script 转换与外部符号化，只补齐执行定位标签。
@@ -226,12 +234,16 @@ func reserveGoPprofParse(runID, endpoint string, payload []byte) ([]byte, func()
 	if headroom > goPprofParseBaseBytes {
 		limit = (headroom - goPprofParseBaseBytes) / goPprofParseFactor
 	}
+	if limit > goPprofUncompressedLimit {
+		limit = goPprofUncompressedLimit
+	}
 	data := payload
 	if len(payload) >= 2 && payload[0] == 0x1f && payload[1] == 0x8b {
 		reader, err := gzip.NewReader(bytes.NewReader(payload))
 		if err != nil {
 			return nil, func() {}, MarkError(ErrGoEndpoint, fmt.Errorf("decompress go pprof from %s: %w", endpoint, err))
 		}
+		defer reader.Close()
 		data, err = io.ReadAll(io.LimitReader(reader, int64(limit)+1))
 		if err != nil {
 			return nil, func() {}, MarkError(ErrGoEndpoint, fmt.Errorf("decompress go pprof from %s: %w", endpoint, err))

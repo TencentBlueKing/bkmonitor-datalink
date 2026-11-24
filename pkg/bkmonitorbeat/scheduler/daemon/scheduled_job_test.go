@@ -347,6 +347,147 @@ func TestWaitTracksGracefulRuns(t *testing.T) {
 	}
 }
 
+// TestScheduledJobInitAfterLargeClockJumpIsFastAndAccurate 覆盖时钟大幅前跳与回拨：
+// 即使持久化记录远早于当前时间（如停机多年或 NTP 校时前跳），Init 也必须在 O(1) 内
+// 定位到当前之后的下一次触发；时钟回拨（last > now）时则从 last 推算，避免重复执行。
+func TestScheduledJobInitAfterLargeClockJumpIsFastAndAccurate(t *testing.T) {
+	initScheduleStorage(t)
+	conf := newScheduledTaskConfig(t, 1008, configs.ActiveProfileScheduleConfig{
+		Type:           configs.ActiveProfileScheduleCron,
+		CronExpression: "* * * * *",
+		Timezone:       "UTC",
+	})
+
+	job := newScheduledJob(conf)
+	job.Init()
+	storageKey := job.storageKey
+
+	// 模拟 30 年前的持久化记录（每分钟一次对应超过 1500 万个周期）
+	ancient := time.Now().AddDate(-30, 0, 0).UTC().Truncate(time.Minute)
+	if err := storage.Set(storageKey, ancient.Format(timeTemplate), time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	jumped := newScheduledJob(conf)
+	jumped.Init()
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("Init() after 30-year clock jump took %s, want O(1)", elapsed)
+	}
+	if jumped.IsFinished() {
+		t.Fatal("cron job without effective_end_at should stay runnable")
+	}
+	wantMin := started.Truncate(time.Minute).Add(time.Minute)
+	if jumped.checkTime.Before(wantMin) || jumped.checkTime.After(wantMin.Add(time.Minute)) {
+		t.Fatalf("checkTime = %v, want near %v", jumped.checkTime, wantMin)
+	}
+
+	// 模拟时钟回拨 10 分钟：last 晚于 now，必须继续从 last 推算而不是立即重跑
+	futureLast := time.Now().Add(10 * time.Minute).UTC().Truncate(time.Minute)
+	if err := storage.Set(storageKey, futureLast.Format(timeTemplate), time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	rolledBack := newScheduledJob(conf)
+	rolledBack.Init()
+	if !rolledBack.checkTime.Equal(futureLast.Add(time.Minute)) {
+		t.Fatalf("checkTime after clock rollback = %v, want %v", rolledBack.checkTime, futureLast.Add(time.Minute))
+	}
+}
+
+// TestPushRunnableJobReleasesFinishedJobContext 验证已完成任务不被入队时会立即释放其 context，
+// 防止频繁 Reload 导致 scheduler.ctx 上持续累积已完成的子 context。
+func TestPushRunnableJobReleasesFinishedJobContext(t *testing.T) {
+	initScheduleStorage(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	conf := futureOnceAt(t, 1009)
+	state := newDaemonState()
+	state.ctx = ctx
+	daemon := &Daemon{daemonState: state}
+
+	first := NewJob(active_profile.New(nil, conf), daemon)
+	first.Init()
+	first.Next() // 持久化为已派发
+
+	reloaded := NewJob(active_profile.New(nil, conf), daemon)
+	reloaded.Init()
+	if !reloaded.IsFinished() {
+		t.Fatal("reloaded completed once_at should be finished")
+	}
+	if pushRunnableJob(state.jobs, reloaded) {
+		t.Fatal("finished job must not be pushed into queue")
+	}
+	select {
+	case <-reloaded.(*ScheduledJob).ctx.Done():
+	default:
+		t.Fatal("finished job context was not released when skipped by pushRunnableJob")
+	}
+}
+
+type blockingScheduledTask struct {
+	*blockingTask
+	schedule *configs.ActiveProfileTaskConfig
+}
+
+func (t *blockingScheduledTask) GetConfig() define.TaskConfig {
+	return t.schedule
+}
+
+// TestRunRetiresFinishedGracefulJob 验证 once_at 派发完最后一次后不会中断在途执行，
+// 并在本次执行结束后自动取消释放该 job 的 context。
+func TestRunRetiresFinishedGracefulJob(t *testing.T) {
+	initScheduleStorage(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	conf := newScheduledTaskConfig(t, 1010, configs.ActiveProfileScheduleConfig{
+		Type:      configs.ActiveProfileScheduleOnceAt,
+		ExecuteAt: time.Now().Add(-time.Second).UnixMilli(),
+		Timezone:  "UTC",
+	})
+	task := &blockingScheduledTask{
+		blockingTask: newBlockingTask(true),
+		schedule:     conf,
+	}
+
+	state := newDaemonState()
+	state.ctx = ctx
+	state.EventChan = make(chan define.Event, 1)
+	state.ticker = time.NewTicker(5 * time.Millisecond)
+	daemon := &Daemon{daemonState: state}
+
+	job := NewJob(task, daemon).(*ScheduledJob)
+	job.Init()
+	state.jobs.Push(job)
+
+	daemon.waitgroup.Add(1)
+	go daemon.run(ctx)
+
+	select {
+	case <-task.entered:
+	case <-time.After(time.Second):
+		t.Fatal("once_at job was not dispatched")
+	}
+
+	// 运行期间不能提前取消 job.ctx
+	select {
+	case <-job.ctx.Done():
+		t.Fatal("finished once_at canceled its in-flight run context prematurely")
+	case <-time.After(30 * time.Millisecond):
+	}
+
+	// 运行完成后 retireJob 必须释放 job.ctx
+	close(task.release)
+	select {
+	case <-job.ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("finished once_at did not release its context after the run completed")
+	}
+
+	cancel()
+	daemon.Wait()
+}
+
 func initScheduleStorage(t *testing.T) {
 	t.Helper()
 	if err := storage.Init(filepath.Join(t.TempDir(), "schedule.db"), nil); err != nil {

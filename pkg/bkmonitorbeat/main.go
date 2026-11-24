@@ -70,7 +70,7 @@ func main() {
 	senderhttp.Register()
 
 	flag.Parse()
-	handleActiveProfileCLI()
+	beater.HandleActiveProfileCLI()
 	if *reportFlag {
 		senderagent.Register(0)
 		if err := report.DoReport(); err != nil {

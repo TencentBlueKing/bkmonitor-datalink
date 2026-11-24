@@ -6,15 +6,20 @@
 package active_profile
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/elastic/beats/libbeat/common"
 	pprofprofile "github.com/google/pprof/profile"
@@ -22,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/active_profile/executor"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/gse"
 )
 
 // allowedEventDimensions 是数据建模允许出现在 Event dimension 中的全部字段。
@@ -921,4 +927,291 @@ func TestFinishedEventContentCarriesErrorType(t *testing.T) {
 	if content.ErrorType != ErrorTypeProcessNotFound || content.ErrorMessage != "no process" {
 		t.Fatalf("content error = (%q, %q)", content.ErrorType, content.ErrorMessage)
 	}
+}
+
+func TestReportFinishedEventUsesShortTimeoutOnBeatShutdown(t *testing.T) {
+	original := shutdownReportTimeout
+	shutdownReportTimeout = 40 * time.Millisecond
+	t.Cleanup(func() { shutdownReportTimeout = original })
+
+	conf := newTestTaskConfig(t)
+	now := time.Now()
+	event := newFinishedEvent(conf, "10.0.0.1", now, now, now, ExecutionOutcome{Status: StatusFailed})
+
+	// 事件通道已满且无消费者：模拟 Beat 退出阶段（外层 ctx 已取消且不是用户主动取消）。
+	fullChan := make(chan define.Event, 1)
+	fullChan <- event
+
+	shutdownCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	started := time.Now()
+	err := reportFinishedEvent(shutdownCtx, beatEventSink{events: fullChan}, event)
+	elapsed := time.Since(started)
+	if !errors.Is(err, errReportFailed) {
+		t.Fatalf("reportFinishedEvent() error = %v, want errReportFailed", err)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("Beat shutdown finish blocked for %s, want near %s", elapsed, shutdownReportTimeout)
+	}
+}
+
+func TestTruncateStringPreservesUTF8Boundaries(t *testing.T) {
+	// 每个中文字符占 3 字节，按 4 / 5 字节截断都不能劈开多字节字符。
+	value := "测试错误abc"
+	for _, limit := range []int{0, 1, 2, 3, 4, 5, 6, 7, len(value), len(value) + 10} {
+		got := truncateString(value, limit)
+		if len(got) > limit {
+			t.Fatalf("limit=%d len(got)=%d > limit", limit, len(got))
+		}
+		if !utf8.ValidString(got) {
+			t.Fatalf("limit=%d produced invalid UTF-8: %q", limit, got)
+		}
+	}
+	if got := truncateString(value, 5); got != "测" {
+		t.Fatalf("truncateString(%q, 5) = %q, want %q", value, got, "测")
+	}
+}
+
+type stubGSEConnection struct {
+	mu           sync.Mutex
+	host         string
+	dialErr      error
+	writeErrs    []error
+	readBuf      bytes.Buffer
+	written      [][]byte
+	closed       bool
+	readTimeout  time.Duration
+	writeTimeout time.Duration
+	onWrite      func(conn *stubGSEConnection, b []byte)
+}
+
+func (c *stubGSEConnection) Dial() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.dialErr != nil {
+		return c.dialErr
+	}
+	c.closed = false
+	return nil
+}
+
+func (c *stubGSEConnection) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+	return nil
+}
+
+func (c *stubGSEConnection) Write(b []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.writeErrs) > 0 {
+		err := c.writeErrs[0]
+		c.writeErrs = c.writeErrs[1:]
+		if err != nil {
+			return 0, err
+		}
+	}
+	copied := append([]byte(nil), b...)
+	c.written = append(c.written, copied)
+	if c.onWrite != nil {
+		c.onWrite(c, copied)
+	}
+	return len(b), nil
+}
+
+func (c *stubGSEConnection) Read(b []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.readBuf.Len() == 0 {
+		return 0, io.EOF
+	}
+	return c.readBuf.Read(b)
+}
+
+func (c *stubGSEConnection) SetTimeoutTime(r, w time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.readTimeout = r
+	c.writeTimeout = w
+}
+
+func (c *stubGSEConnection) SetHost(host string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.host = host
+}
+
+func appendAgentInfoResponse(buf *bytes.Buffer, info gse.AgentInfo) {
+	body, _ := json.Marshal(info)
+	var head [8]byte
+	binary.BigEndian.PutUint32(head[:4], gse.GSE_TYPE_GET_CONF)
+	binary.BigEndian.PutUint32(head[4:], uint32(len(body)))
+	buf.Write(head[:])
+	buf.Write(body)
+}
+
+func extractDynamicFramePayload(t *testing.T, frame []byte) (int32, map[string]any) {
+	t.Helper()
+	// GseDynamicMsg 头：GseCommonMsgHead(24B) + ext(24B) + metaMaxLen(408B) = 456B
+	const headerLen = 24 + gse.GSE_TYPE_DYNAMIC_EXT_HEAD_LEN + gse.GSE_TYPE_DYNAMIC_DEFAULT_META_MAX_LEN
+	if len(frame) <= headerLen {
+		t.Fatalf("dynamic frame too short: %d", len(frame))
+	}
+	msgType := binary.BigEndian.Uint32(frame[0:4])
+	if msgType != gse.GSE_TYPE_DYNAMIC {
+		t.Fatalf("msgType = %d, want %d", msgType, gse.GSE_TYPE_DYNAMIC)
+	}
+	dataID := int32(binary.BigEndian.Uint32(frame[4:8]))
+	var payload map[string]any
+	if err := json.Unmarshal(frame[headerLen:], &payload); err != nil {
+		t.Fatalf("decode dynamic frame json: %v", err)
+	}
+	return dataID, payload
+}
+
+func TestGSEAgentSinkRoundTripAndConfigOverrides(t *testing.T) {
+	origConn := newGSEConnection
+	origSleep := gseAgentSleep
+	t.Cleanup(func() {
+		newGSEConnection = origConn
+		gseAgentSleep = origSleep
+	})
+	gseAgentSleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
+
+	conn := &stubGSEConnection{
+		onWrite: func(c *stubGSEConnection, b []byte) {
+			if len(b) >= 4 && binary.BigEndian.Uint32(b[:4]) == gse.GSE_TYPE_GET_CONF {
+				appendAgentInfoResponse(&c.readBuf, gse.AgentInfo{
+					Bizid:     2,
+					BKBizID:   11,
+					Cloudid:   0,
+					IP:        "10.0.0.1",
+					BKAgentID: "agent-001",
+				})
+			}
+		},
+	}
+	newGSEConnection = func() gse.GseConnection { return conn }
+
+	cloudOverride := int32(7)
+	sink, err := newGSEAgentSinkWithConfig(context.Background(), configs.ActiveProfileGSEConfig{
+		Endpoint: "/var/run/gse.ipc",
+		CloudID:  &cloudOverride,
+		HostID:   456,
+		HostIP:   "10.0.0.2",
+	})
+	if err != nil {
+		t.Fatalf("newGSEAgentSinkWithConfig() error = %v", err)
+	}
+	defer sink.Close()
+
+	conf := newTestTaskConfig(t)
+	now := time.Now()
+	event := newFinishedEvent(conf, "10.0.0.2", now, now, now, ExecutionOutcome{Status: StatusSucceed})
+	if err := sink.Send(context.Background(), event); err != nil {
+		t.Fatalf("sink.Send() error = %v", err)
+	}
+
+	if conn.host != "/var/run/gse.ipc" {
+		t.Fatalf("host = %q", conn.host)
+	}
+	if len(conn.written) != 2 {
+		t.Fatalf("written frames = %d, want 2 (get_conf + event)", len(conn.written))
+	}
+	dataID, payload := extractDynamicFramePayload(t, conn.written[1])
+	if dataID != conf.EventDataID {
+		t.Fatalf("dataid = %d, want %d", dataID, conf.EventDataID)
+	}
+	if got := int32(payload["bk_host_id"].(float64)); got != 456 {
+		t.Fatalf("bk_host_id = %d, want 456 from output.bkpipe.hostid override", got)
+	}
+	if got := int32(payload["cloudid"].(float64)); got != 7 {
+		t.Fatalf("cloudid = %d, want 7", got)
+	}
+	if got := payload["ip"].(string); got != "10.0.0.2" {
+		t.Fatalf("ip = %q, want 10.0.0.2", got)
+	}
+}
+
+func TestGSEAgentSinkFiniteRetriesAndReconnect(t *testing.T) {
+	origConn := newGSEConnection
+	origSleep := gseAgentSleep
+	t.Cleanup(func() {
+		newGSEConnection = origConn
+		gseAgentSleep = origSleep
+	})
+	gseAgentSleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
+
+	t.Run("write timeout retries finite times instead of looping forever", func(t *testing.T) {
+		dials := 0
+		newGSEConnection = func() gse.GseConnection {
+			dials++
+			return &stubGSEConnection{writeErrs: []error{errors.New("i/o timeout")}}
+		}
+		sink := &gseAgentSink{
+			endpoint:      "/tmp/gse.ipc",
+			readTimeout:   time.Second,
+			writeTimeout:  time.Second,
+			retryTimes:    3,
+			retryInterval: time.Millisecond,
+		}
+		conf := newTestTaskConfig(t)
+		now := time.Now()
+		event := newFinishedEvent(conf, "10.0.0.1", now, now, now, ExecutionOutcome{Status: StatusSucceed})
+		err := sink.Send(context.Background(), event)
+		if err == nil || !strings.Contains(err.Error(), "i/o timeout") {
+			t.Fatalf("Send() error = %v, want i/o timeout", err)
+		}
+		if dials != 3 {
+			t.Fatalf("dial count = %d, want 3 finite retries", dials)
+		}
+		if sink.conn != nil {
+			t.Fatal("failed connection must be closed and cleared to avoid partial-frame corruption")
+		}
+	})
+
+	t.Run("reconnects cleanly after broken pipe and delivers frame", func(t *testing.T) {
+		first := &stubGSEConnection{writeErrs: []error{errors.New("broken pipe")}}
+		second := &stubGSEConnection{}
+		conns := []*stubGSEConnection{second}
+		newGSEConnection = func() gse.GseConnection {
+			next := conns[0]
+			conns = conns[1:]
+			return next
+		}
+		sink := &gseAgentSink{
+			endpoint:      "/tmp/gse.ipc",
+			conn:          first,
+			readTimeout:   time.Second,
+			writeTimeout:  time.Second,
+			retryTimes:    3,
+			retryInterval: time.Millisecond,
+		}
+		conf := newTestTaskConfig(t)
+		now := time.Now()
+		event := newFinishedEvent(conf, "10.0.0.1", now, now, now, ExecutionOutcome{Status: StatusSucceed})
+		if err := sink.Send(context.Background(), event); err != nil {
+			t.Fatalf("Send() after reconnect error = %v", err)
+		}
+		if !first.closed {
+			t.Fatal("broken connection was not closed before reconnect")
+		}
+		if len(second.written) != 1 {
+			t.Fatalf("reconnected conn written frames = %d, want 1", len(second.written))
+		}
+	})
+
+	t.Run("honors context cancellation before write", func(t *testing.T) {
+		sink := &gseAgentSink{endpoint: "/tmp/gse.ipc", retryTimes: 3}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		conf := newTestTaskConfig(t)
+		now := time.Now()
+		event := newFinishedEvent(conf, "10.0.0.1", now, now, now, ExecutionOutcome{Status: StatusSucceed})
+		if err := sink.Send(ctx, event); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Send() error = %v, want context.Canceled", err)
+		}
+	})
 }

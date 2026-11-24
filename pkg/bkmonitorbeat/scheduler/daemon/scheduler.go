@@ -71,7 +71,12 @@ func (s *Daemon) addJob(job Job) {
 }
 
 func pushRunnableJob(queue JobQueue, job Job) bool {
-	if job == nil || job.IsFinished() {
+	if job == nil {
+		return false
+	}
+	if job.IsFinished() {
+		// 已结束的任务不再入队，立即释放其派生 context，避免频繁 Reload 时持续泄漏。
+		job.Stop()
 		return false
 	}
 	queue.Push(job)
@@ -215,6 +220,14 @@ loop:
 					job.Next()
 					if !job.IsFinished() {
 						nextJobs = append(nextJobs, job)
+						continue
+					}
+					// 已完成全部计划轮次的任务不再回队；平滑 reload 任务刚才已 StartRun，
+					// 必须通过 retireJob 等本次执行完成后再 Stop 释放 context。
+					if isGracefulReloadJob(job) {
+						s.retireJob(job)
+					} else {
+						job.Stop()
 					}
 				}
 				jobsQ.Push(nextJobs...)

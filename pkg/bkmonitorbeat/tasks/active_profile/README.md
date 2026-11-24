@@ -102,7 +102,7 @@ write_active_profile_conf_tpl.sh` 生成，改结构要改生成脚本，不要�
     "456": [
       {
         "task_id": 1206, "bk_tenant_id": "system", "bk_biz_id": 11, "bk_host_id": 456,
-        "name": "native-once-demo", "collection_method": "perf", "collection_type": "native_cpu",
+        "name": "native-once-demo", "creator": "admin", "collection_method": "perf", "collection_type": "native_cpu",
         "schedule": {"type": "once_at", "execute_at": 4070880000000, "timezone": "Asia/Shanghai"},
         "process_selector": {"type": "pid", "pids": "2341"},
         "collector_config": {"duration_sec": 15, "frequency_hz": 99, "stack_unwind": "fp"},
@@ -145,13 +145,14 @@ bk_tenant_id + bk_biz_id + task_id + scheduled_at + bk_host_id
 
 三类执行都必须带正数 `task_id`：计划任务为计划 ID，立即执行为 SaaS 提交时建的执行行 ID。
 
-pprof 每个样本携带 6 个标签：`bk_biz_id`、`task_id`、`scheduled_at`、`bk_host_id`、`pid`、
-`comm`。执行时 IP、采集方式和采集类型不重复写入样本，它们已经保存在对应 Event 中。
+pprof 每个样本携带执行定位与进程标签：`bk_biz_id`、`task_id`、`scheduled_at`、`bk_host_id`、
+`ip`（解析不到时省略）、`pid`、`comm`（Go 路径反查不到时省略 `pid`/`comm`）。采集方式和
+采集类型不重复写入样本，它们已经保存在对应 Event 中。
 
 ## Event
 
 `dimension` 只保留页面筛选、分桶与聚合需要的字段：`bk_tenant_id`、`bk_biz_id`、
-`task_id`（仅计划任务）、`task_name`、`bk_host_id`、`schedule_type`、`scheduled_at`、
+`task_id`、`task_name`、`creator`、`bk_host_id`、`schedule_type`、`scheduled_at`、
 `collection_method`、`collection_type`、`status`，finished 再加 `process_names`、`process_pids`。
 `target` 是执行时 IP，`timestamp` 是事件实际发生时间，不用 `scheduled_at` 冒充。
 
@@ -173,8 +174,8 @@ pprof 每个样本携带 6 个标签：`bk_biz_id`、`task_id`、`scheduled_at`�
 `config` 的顺序降级重建，任何降级结果仍是一段可解析的合法 JSON，并在 `message`
 中说明降级原因。
 
-PID 模式的配置快照使用 `host_pids` 而不是单机 `pids`，SaaS 查询任务历史时才能按
-`bk_host_id` 合并出完整的多主机配置。
+PID 模式的配置快照在每台主机上携带 `process_selector.config.pids`，下游消费端按
+`bk_host_id` 合并出完整的多主机 `host_pids` 配置。
 
 采集端只上报 `succeed/partial_succeed/failed/timeout/cancelled`；`running` 与 `unknown`
 由 SaaS 从 started/finished 派生，不写回 Event。符号化统计、执行阶段和结果码都不进入
@@ -461,7 +462,7 @@ Event 与 pprof 产物都经由**本机 GSE Agent** 上报，路由只靠平台�
 | 入口 | 载体 | 失败可见性 |
 | --- | --- | --- |
 | 常驻 Beat | Beat 自己的事件通道，由 `gse output` 发送 | 投递成功只表示已入队，实际发送结果看 Beat 的 gse 指标与日志 |
-| 轻量 CLI | 自建 GSE 客户端 `SendSync` 直写 Agent socket | 写失败会直接收敛成主机终态与 CLI 退出码 |
+| 轻量 CLI | 自建单连接 GSE 客户端直写 Agent socket | 写失败会直接收敛成主机终态与 CLI 退出码 |
 
 CLI 的 Agent 地址取主配置的 `output.bkpipe.endpoint`——不猜 libgse 的内置默认路径，
 Agent 安装目录随部署方式变化。连不上 Agent 时 CLI 在采集之前就失败，不浪费一次采样。
@@ -487,5 +488,5 @@ service_name` 四个键并各自落一列，缺 `type` 会让整条记录清洗�
 侧拒绝，不会为了发得出去而丢样本。
 
 终态运营指标 `bkm_active_profiling_execution` 走 Beat 内置 `gather_up_beat` 数据链路，
-维度为 `bk_biz_id`、`bk_host_id`、`ip`、`status` 和仅计划任务携带的 `task_id`。只有常驻
+维度为 `bk_biz_id`、`bk_host_id`、`ip`、`status`、`task_id`。只有常驻
 Beat 上报：轻量 CLI 是一次性进程，不上报指标，只记日志——这是既定边界，不是待补齐项。

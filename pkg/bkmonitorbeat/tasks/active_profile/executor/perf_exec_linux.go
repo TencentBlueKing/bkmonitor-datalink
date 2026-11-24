@@ -174,15 +174,24 @@ func runPreflight(ctx context.Context, conf perfConfig) (preflightResult, error)
 
 	versionCtx, cancel := context.WithTimeout(ctx, preflightCommandTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(versionCtx, resolved, "version").CombinedOutput()
+	versionOut := &limitedBuffer{limit: maxCommandStderr}
+	versionStderr, err := runCommand(versionCtx, resolved, []string{"version"}, versionOut)
 	if err != nil {
+		output := strings.TrimSpace(versionOut.String())
+		if stderr := strings.TrimSpace(versionStderr); stderr != "" {
+			if output != "" {
+				output += "\n" + stderr
+			} else {
+				output = stderr
+			}
+		}
 		return result, MarkError(
 			ErrPerfUnavailable,
 			fmt.Errorf("run perf version: %w: %s",
-				preflightCommandError(ctx, versionCtx, err), strings.TrimSpace(string(out))),
+				preflightCommandError(ctx, versionCtx, err), output),
 		)
 	}
-	result.PerfVersion = strings.TrimSpace(string(out))
+	result.PerfVersion = strings.TrimSpace(versionOut.String())
 
 	if raw, readErr := os.ReadFile("/proc/sys/kernel/perf_event_paranoid"); readErr == nil {
 		if value, parseErr := strconv.Atoi(strings.TrimSpace(string(raw))); parseErr == nil {
@@ -440,19 +449,21 @@ func runScriptCommand(
 	leaveResourceLimit(ctx, cmd.Process.Pid)
 	preferChildOOMKill(ctx, cmd.Process.Pid)
 
-	watchDone := make(chan struct{})
+	stopWatch := make(chan struct{})
+	watchExited := make(chan struct{})
 	go func() {
+		defer close(watchExited)
 		select {
 		case <-ctx.Done():
 			_ = signalProcessGroup(cmd.Process.Pid, syscall.SIGINT)
 			timer := time.NewTimer(processInterruptGrace)
 			defer timer.Stop()
 			select {
-			case <-watchDone:
+			case <-stopWatch:
 			case <-timer.C:
 				_ = signalProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
 			}
-		case <-watchDone:
+		case <-stopWatch:
 		}
 	}()
 
@@ -460,8 +471,21 @@ func runScriptCommand(
 	if parseErr != nil && ctx.Err() == nil {
 		_ = signalProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
 	}
-	waitErr := cmd.Wait()
-	close(watchDone)
+	// 先停掉 watcher 再回收子进程，避免 cmd.Wait() 释放 PID 后 watcher 向复用 PID 发信号。
+	close(stopWatch)
+	<-watchExited
+
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- cmd.Wait()
+	}()
+	var waitErr error
+	select {
+	case waitErr = <-waitDone:
+	case <-ctx.Done():
+		_ = stopProcessGroup(cmd.Process.Pid, waitDone, processInterruptGrace)
+		waitErr = contextCause(ctx)
+	}
 
 	if ctx.Err() != nil {
 		return stats, stderr.String(), contextCause(ctx)

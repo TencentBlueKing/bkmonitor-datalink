@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/elastic/beats/libbeat/common"
 
@@ -480,8 +481,15 @@ func appendDegradeReason(message, reason string) string {
 }
 
 func truncateString(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
 	if len(value) <= limit {
 		return value
 	}
-	return value[:limit]
+	end := limit
+	for end > 0 && !utf8.RuneStart(value[end]) {
+		end--
+	}
+	return value[:end]
 }

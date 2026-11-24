@@ -184,9 +184,8 @@ func finish(
 	outcome ExecutionOutcome,
 ) {
 	event := newFinishedEvent(conf, ip, scheduledAt, startedAt, time.Now(), outcome)
-	// 取消与熔断都会取消执行 context，终态仍然要有机会送达，因此这里剥掉取消，
-	// 只保留 sendReport 自己的投递超时。
-	if err := reportFinishedEvent(context.WithoutCancel(ctx), opts.Sink, event); err != nil {
+	// reportFinishedEvent 会剥离取消并按外层 ctx 是否属于进程退出决定投递等待上限。
+	if err := reportFinishedEvent(ctx, opts.Sink, event); err != nil {
 		logger.Errorf("[active_profile] report finished event failed: %v", err)
 	}
 	reportExecutionMetric(opts.MetricSink, opts.GatherUpDataID, event)

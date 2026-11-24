@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -367,9 +368,9 @@ type addr2lineJob struct {
 }
 
 func newAddr2lineJob(ctx context.Context, path, dso string) (*addr2lineJob, error) {
-	// -R explicitly keeps binutils' demangler recursion limit enabled for
-	// symbols originating from an untrusted workload binary.
-	process, err := startSymbolizerProcess(ctx, path, []string{"-a", "-f", "-C", "-i", "-R", "-e", dso})
+	// GNU binutils >= 2.31 默认已开启 demangler 递归上限，但短参数 -R 直到 2.39 才引入。
+	// 不显式传 -R，避免 CentOS 7 / TencentOS 2-3 / Ubuntu 20.04-22.04 上直接启动失败。
+	process, err := startSymbolizerProcess(ctx, path, []string{"-a", "-f", "-C", "-i", "-e", dso})
 	if err != nil {
 		return nil, fmt.Errorf("start addr2line for %s: %w", dso, err)
 	}
@@ -501,10 +502,17 @@ func safeLLVMSymbolizerPath(value string) bool {
 }
 
 func limitString(value string, limit int) string {
+	if limit <= 0 {
+		return "...[truncated]"
+	}
 	if len(value) <= limit {
 		return value
 	}
-	return value[:limit] + "...[truncated]"
+	end := limit
+	for end > 0 && !utf8.RuneStart(value[end]) {
+		end--
+	}
+	return value[:end] + "...[truncated]"
 }
 
 type symbolizerProcess struct {

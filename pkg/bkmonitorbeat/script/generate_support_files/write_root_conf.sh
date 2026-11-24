@@ -107,6 +107,9 @@ EOF
   bk_biz_id: 1
   # stop/reload旧任务清理超时
   clean_up_timeout: 1s
+  # 系统时间前后跳变超过该阈值时触发进程重启
+  # 首次将 bkmonitorbeat.clock_jump_threshold 从 0 改为正值后需重启进程，仅 reload 不生效
+  clock_jump_threshold: 0
   # 事件管道缓冲大小
   event_buffer_size: 10
   # 启动模式：daemon（正常模式）,check（执行一次，测试用）
@@ -152,6 +155,8 @@ EOF
 #      period: 1m
 #      check_period: 1m
 #      report_period: 6h
+#      virtual_iface_whitelist: ["bond1"]
+#      virtual_iface_blacklist: []
 
 EOF
   else
@@ -163,6 +168,8 @@ EOF
       period: 1m
       check_period: 1m
       report_period: 6h
+      virtual_iface_whitelist: ["bond1"]
+      virtual_iface_blacklist: []
 
 EOF
   fi
@@ -181,8 +188,14 @@ EOF
 #      info_timeout: 30s
 #    disk:
 #      stat_times: 1
-#      mountpoint_black_list: ["docker","container","k8s","kubelet"]
-#      fs_type_white_list: ["overlay","btrfs","ext2","ext3","ext4","reiser","xfs","ffs","ufs","jfs","jfs2","vxfs","hfs","apfs","refs","ntfs","fat32","zfs"]
+#      disk_white_list: []
+#      disk_black_list: []
+#      partition_white_list: []
+#      partition_black_list: []
+#      mountpoint_white_list: []
+#      mountpoint_black_list: ["docker","container","k8s","kubelet","blueking"]
+#      fs_type_white_list: []
+#      fs_type_black_list: ["tmpfs","devtmpfs","devfs","iso9660","overlay","aufs","squashfs"]
 #      collect_all_device: true
 #    mem:
 #      info_times: 1
@@ -190,6 +203,7 @@ EOF
 #      stat_times: 4
 #      revert_protect_number: 100
 #      skip_virtual_interface: false
+#      interface_white_list: []
 #      interface_black_list: ["veth", "cni", "docker", "flannel", "tunnat", "cbr", "kube-ipvs", "dummy"]
 #      force_report_list: ["bond"]
 
@@ -206,8 +220,14 @@ EOF
       info_timeout: 30s
     disk:
       stat_times: 1
-      mountpoint_black_list: ["docker","container","k8s","kubelet"]
-      fs_type_white_list: ["overlay","btrfs","ext2","ext3","ext4","reiser","xfs","ffs","ufs","jfs","jfs2","vxfs","hfs","apfs","refs","ntfs","fat32","zfs"]
+      disk_white_list: []
+      disk_black_list: []
+      partition_white_list: []
+      partition_black_list: []
+      mountpoint_white_list: []
+      mountpoint_black_list: ["docker","container","k8s","kubelet","blueking"]
+      fs_type_white_list: []
+      fs_type_black_list: ["tmpfs","devtmpfs","devfs","iso9660","overlay","aufs","squashfs"]
       collect_all_device: true
     mem:
       info_times: 1
@@ -215,6 +235,7 @@ EOF
       stat_times: 4
       revert_protect_number: 100
       skip_virtual_interface: false
+      interface_white_list: []
       interface_black_list: ["veth", "cni", "docker", "flannel", "tunnat", "cbr", "kube-ipvs", "dummy"]
       force_report_list: ["bond"]
 
@@ -234,6 +255,8 @@ EOF
 #    check_disk_space_interval: 60
 #    check_oom_interval: 10
 #    used_max_disk_space_percent: 95
+#    disk_ro_white_list: []
+#    disk_ro_black_list: ["docker","container","k8s","kubelet","blueking"]
 
 EOF
   else
@@ -247,6 +270,8 @@ EOF
     check_disk_space_interval: 60
     check_oom_interval: 10
     used_max_disk_space_percent: 95
+    disk_ro_white_list: []
+    disk_ro_black_list: ["docker","container","k8s","kubelet","blueking"]
 
   # 进程采集：同步 CMDB 进程配置文件到 bkmonitorbeat 子任务文件夹下
   procconf_task:

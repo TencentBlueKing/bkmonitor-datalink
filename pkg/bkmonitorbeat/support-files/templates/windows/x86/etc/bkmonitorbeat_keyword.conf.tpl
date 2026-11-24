@@ -13,6 +13,9 @@ tasks: {% for task in tasks %}
      # 采集文件路径
      paths:{% for path in task.path_list %}
        - '{{ path }}'{% endfor %}
+     # 需要排除的文件列表，正则表示
+     exclude_files:{% for pattern in task.exclude_files | default([".gz$",".tar$",".bz2$",".xz$",".zst$",".zip$",".7z$",".lz4$",".tgz$",".tbz2$",".txz$"]) %}
+       - '{{ pattern | replace("'", "''") }}'{% endfor %}
      # 文件编码类型
      encoding: '{{ task.encoding | lower}}'
      # 文件未更新需要删除的超时等待

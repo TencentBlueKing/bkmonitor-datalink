@@ -137,8 +137,16 @@ bkmonitorbeat:
       period: 1m
       check_period: 1m
       report_period: 6h
+{%- if extra_vars is defined and extra_vars.virtual_iface_whitelist is defined %}
+      virtual_iface_whitelist: {{ extra_vars.virtual_iface_whitelist | default(["bond1"]) | tojson }}
+{%- else %}
       virtual_iface_whitelist: ["bond1"]
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.virtual_iface_blacklist is defined %}
+      virtual_iface_blacklist: {{ extra_vars.virtual_iface_blacklist | default([]) | tojson }}
+{%- else %}
       virtual_iface_blacklist: []
+{%- endif %}
 
   # 主机性能数据采集
   basereport_task:
@@ -151,15 +159,45 @@ bkmonitorbeat:
       info_timeout: 30s
     disk:
       stat_times: 1
+{%- if extra_vars is defined and extra_vars.disk_white_list is defined %}
+      disk_white_list: {{ extra_vars.disk_white_list | default([]) | tojson }}
+{%- else %}
+      disk_white_list: []
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.disk_black_list is defined %}
+      disk_black_list: {{ extra_vars.disk_black_list | default([]) | tojson }}
+{%- else %}
+      disk_black_list: []
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.partition_white_list is defined %}
+      partition_white_list: {{ extra_vars.partition_white_list | default([]) | tojson }}
+{%- else %}
+      partition_white_list: []
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.partition_black_list is defined %}
+      partition_black_list: {{ extra_vars.partition_black_list | default([]) | tojson }}
+{%- else %}
+      partition_black_list: []
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.mountpoint_white_list is defined %}
+      mountpoint_white_list: {{ extra_vars.mountpoint_white_list | default([]) | tojson }}
+{%- else %}
+      mountpoint_white_list: []
+{%- endif %}
 {%- if extra_vars is defined and extra_vars.mountpoint_black_list is defined %}
-      mountpoint_black_list: {{ extra_vars.mountpoint_black_list | default(["docker","container","k8s","kubelet","blueking"], true) }}
+      mountpoint_black_list: {{ extra_vars.mountpoint_black_list | default(["docker","container","k8s","kubelet","blueking"]) | tojson }}
 {%- else %}
       mountpoint_black_list: ["docker","container","k8s","kubelet","blueking"]
 {%- endif %}
 {%- if extra_vars is defined and extra_vars.fs_type_white_list is defined %}
-      fs_type_white_list: {{ extra_vars.fs_type_white_list | default(["overlay","btrfs","ext2","ext3","ext4","reiser","xfs","ffs","ufs","jfs","jfs2","vxfs","hfs","apfs","refs","ntfs","fat32","zfs"], true) }}
+      fs_type_white_list: {{ extra_vars.fs_type_white_list | default([]) | tojson }}
 {%- else %}
-      fs_type_white_list: ["overlay","btrfs","ext2","ext3","ext4","reiser","xfs","ffs","ufs","jfs","jfs2","vxfs","hfs","apfs","refs","ntfs","fat32","zfs"]
+      fs_type_white_list: []
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.fs_type_black_list is defined %}
+      fs_type_black_list: {{ extra_vars.fs_type_black_list | default(["tmpfs","devtmpfs","devfs","iso9660","overlay","aufs","squashfs"]) | tojson }}
+{%- else %}
+      fs_type_black_list: ["tmpfs","devtmpfs","devfs","iso9660","overlay","aufs","squashfs"]
 {%- endif %}
       collect_all_device: true
     mem:
@@ -168,8 +206,21 @@ bkmonitorbeat:
       stat_times: 4
       revert_protect_number: 100
       skip_virtual_interface: false
+{%- if extra_vars is defined and extra_vars.interface_white_list is defined %}
+      interface_white_list: {{ extra_vars.interface_white_list | default([]) | tojson }}
+{%- else %}
+      interface_white_list: []
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.interface_black_list is defined %}
+      interface_black_list: {{ extra_vars.interface_black_list | default(["veth","cni","docker","flannel","tunnat","cbr","kube-ipvs","dummy"]) | tojson }}
+{%- else %}
       interface_black_list: ["veth", "cni", "docker", "flannel", "tunnat", "cbr", "kube-ipvs", "dummy"]
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.force_report_list is defined %}
+      force_report_list: {{ extra_vars.force_report_list | default(["bond"]) | tojson }}
+{%- else %}
       force_report_list: ["bond"]
+{%- endif %}
 
   # 主机异常事件采集（磁盘满、磁盘只读、Corefile 事件以及 OOM 事件）
   exceptionbeat_task:
@@ -188,7 +239,16 @@ bkmonitorbeat:
 {%- if extra_vars is defined and extra_vars.corefile_match_regex is defined %}
     corefile_match_regex: {{ extra_vars.corefile_match_regex or '' }}
 {%- endif %}
+{%- if extra_vars is defined and extra_vars.disk_ro_white_list is defined %}
+    disk_ro_white_list: {{ extra_vars.disk_ro_white_list | default([]) | tojson }}
+{%- else %}
+    disk_ro_white_list: []
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.disk_ro_black_list is defined %}
+    disk_ro_black_list: {{ extra_vars.disk_ro_black_list | default(["docker","container","k8s","kubelet","blueking"]) | tojson }}
+{%- else %}
     disk_ro_black_list: ["docker","container","k8s","kubelet","blueking"]
+{%- endif %}
   # 进程采集：同步 CMDB 进程配置文件到 bkmonitorbeat 子任务文件夹下
   procconf_task:
     task_id: 103

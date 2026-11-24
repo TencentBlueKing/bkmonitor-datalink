@@ -8,7 +8,7 @@
 
 | 字段 | 约定 |
 | --- | --- |
-| `module` | 固定模块名：`cleaner`、`lifecycle`、`enrich`、`consume`、`policy`、`taskdispatch`、`kac`、`controlplane`、`activeindex`、`dynamicconfig` |
+| `module` | 固定模块名：`collector`、`cleaner`、`lifecycle`、`enrich`、`consume`、`policy`、`taskdispatch`、`kac`、`controlplane`、`activeindex`、`dynamicconfig` |
 | `operation` | 代码中固定的功能名，例如 `normalize`、`event_store`、`mailbox_enqueue`、`processor_match`、`processor_process`、`confirm`、`close_projection` |
 | `error` | 有错误对象时必须保留错误链，使用 `%w` 逐层说明操作；不能只打印 `processing_failed` 或错误类型 |
 | `reason_code` / `error_code` | 保留当前已有分类，供聚合检索；分类不能替代 `error` |

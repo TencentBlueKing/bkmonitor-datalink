@@ -21,6 +21,9 @@ import (
 type ControlPlaneTask string
 
 const (
+	// ControlPlaneTaskCollectorPushRecovery 记录受现有领导权保护的推送恢复任务。
+	ControlPlaneTaskCollectorPushRecovery ControlPlaneTask = "collector-push-recovery"
+
 	// ControlPlaneTaskControlStorage 在后台准备控制配置集合和内置来源。
 	ControlPlaneTaskControlStorage ControlPlaneTask = "control-storage"
 	// ControlPlaneTaskKACIndexMaintenance 维护兼容索引并观测定义冲突或依赖故障。

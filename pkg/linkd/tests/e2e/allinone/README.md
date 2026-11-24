@@ -469,3 +469,31 @@ KAC 可靠投递相关用例已改为全局 `plugins.kac`，不再发布 kac_tar
 `TestAllInOnePolicyDiagnosticsE2E` 覆盖 ES/MySQL 两套仓储：Kafka输入产生已丰富Event，查询真实
 逐策略观察，通过模拟API读取已保存Event并在私有内存达到阈值；核对生产计数/TTL、业务记录及观察
 未被模拟修改，再发送真实Event验证正常放行。该用例不连接KAC页面或动作接收API。
+
+## 独立 Python 接收链路 E2E
+
+`TestCollectorPushElasticsearchE2E` 启动真实 Python 运行时（2 进程 × 2 线程）与 `linkd run all-in-one`，通过正式来源 HTTP 接口发送触发和恢复，验证 Kafka → Cleaner → Redis Mailbox → Lifecycle → Elasticsearch 的完整路径。它包含单租户及共享双租户两个场景；共享场景使用同一来源、同一 fingerprint 和不同 Secret，恢复租户一时租户二仍保持 active。输入中的伪造租户不能改变最终归属。
+
+```bash
+LINKD_E2E=1 \
+LINKD_RUNTIME_PYTHON="$PWD/python/.venv/bin/python" \
+go test -race ./tests/e2e/allinone -run '^TestCollectorPushElasticsearchE2E$' -count=1 -v
+```
+
+连接地址沿用本文的 LINKD_E2E_ELASTICSEARCH_URL、LINKD_E2E_REDIS_ADDRESS、LINKD_E2E_REDIS_PASSWORD 和 LINKD_E2E_KAFKA_BROKER；解释器应先按 python/README.md 安装运行时依赖。测试只启用隔离来源，不改变业务部署默认值。
+
+断言包括错误 Secret 拒绝、同步成功计数、Event 全部 accepted、同一 Alert 从 active 进入 recovered、trigger/recover 流水、共享来源租户隔离和推送待处理索引清空。结束时停止测试进程并清理本轮索引（含来源配置集合）、Kafka topic 和 Redis 命名空间。当前验证后端为 Elasticsearch；本用例不覆盖厂商真实 API、拉取 worker 接管或 MySQL 插件链路。
+
+## 拉取调度与 collector 进程接管 E2E
+
+`TestCollectorPullTakeoverElasticsearchE2E` 启动真实 all-in-one、两个独立 collector 进程和 Python 进程池，使用本地 HTTP 上游与部署清单中的测试插件。先由真实分钟调度触发拉取，在上游首次请求处暂停当前 owner 的 Go 进程，再启动第二个 collector。测试保留原 taskdispatch 租约及接管等待，不修改生产时限。
+
+```bash
+LINKD_E2E=1 \
+LINKD_RUNTIME_PYTHON="$PWD/python/.venv/bin/python" \
+go test -race ./tests/e2e/allinone -run '^TestCollectorPullTakeoverElasticsearchE2E$' -count=1 -v
+```
+
+环境连接变量与上面的接收 E2E 相同。该用例需要 SIGSTOP/SIGCONT，Windows 跳过；测试预算为 240 秒，通常包含一次分钟调度等待和约 70 秒的租约交接等待。
+
+断言包括真实 worker/epoch 变化、继任者使用首次保存的调度时刻和原请求、游标及完成结果提交、旧进程恢复至少两轮心跳后不能覆盖结果或回退游标、旧计算结果未发布，以及恢复事件经 Kafka/Cleaner/Lifecycle 写入 Elasticsearch。测试插件和上游为受控夹具，因此该证据证明运行时与调度链路，不代替具体厂商接口验收。结束时恢复并停止暂停的测试进程，清理本轮资源。

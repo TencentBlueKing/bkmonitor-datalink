@@ -2,6 +2,20 @@
 
 本页描述来源管理和运行时装配。选定全局配置通过[动态配置](dynamic-configuration.md)独立同步和恢复，默认关闭时 Severity 使用启动 YAML。
 
+## Python 采集能力的交付边界（2026-11-14 确认）
+
+本次独立运行时和 Collector 默认不启用，保留现有 KAC 执行与配置行为。不增加逐来源执行后端切换开关，不修改现有来源的启用状态，也不在本次开发过程中部署启动新链路。后续由部署一次性切换执行权，届时统一停用 KAC 对应接收/拉取执行入口，避免双重执行。
+
+兼容基线：旧 YAML 不要求增加 collector，旧 EventSource 不要求增加 collection；只有明确配置插件采集的来源才创建 collector 任务。运行时不会随默认角色自动启动；2.x 分支不再内置 Helm Chart，部署配置由环境侧维护。本地自动化、隔离容器和测试中间件验证不等同于启用业务来源。
+
+2026-11-15 用户进一步确认：本次只完成独立 Python 运行时与 Linkd，KAC 管理端另做。因此 KAC 四步骤页面、在线脚本/附件发布及管理入口调用切换不作为本次完成条件。CLI 调试、Linkd 管理预览 API 和开发文档属于本次交付。存量内置插件已迁入并有本地样本验证，具体覆盖及厂商实连限制见[运行时验收](../../python/README.md#本次交付验收)。上线切换和生产部署验收是后续部署阶段，不以逐来源迁移机制代替该决策。
+
+## 推送自动恢复的执行权（2026-11-14 确认）
+
+用户已确认复用现有 taskdispatch 领导权，不新增分布式锁。控制面同步接收与后台恢复共用请求执行登记，同租户/来源/请求身份不得同时运行；冲突立即返回忙或跳过，不排队等待。Redis 接收、计数、输入/输出与完成提交在同一 Lua 中检查已有领导权，授权失效即拒绝写入。该保护不撤销已经发出的 Kafka 请求，重投仍沿用冻结输出与稳定消息身份。
+
+后台按部署级持久推送索引分批扫描，使用原请求的历史发布，不依赖当前来源目录；单条恢复失败不阻断其他来源。控制面推送使用领导权，独立 pull worker 则复用既有任务授权，在同一次 Redis Lua 中核对当前任务的 worker/epoch、来源、角色、活动阶段和过期时间。两个路径均不创建新锁或授权副本；续租仍由原 taskdispatch 流程负责。默认关闭与部署一次性切换的约定保持不变。
+
 ## 配置事实与发布
 
 ES/MySQL 只新增 `EventSourceRecord`、`EventSourceRelease` 两类来源集合，后端跟随 `storage.repository`。
@@ -69,6 +83,7 @@ Stream 管理器按来源清单有界遍历，只裁剪已确认前缀。
 
 - `GET /api/v1/event-sources?after=&limit=100`：有界来源列表。
 - `GET /api/v1/event-sources/{id}`：编辑记录与发布指针，默认凭据脱敏。
+- `POST /api/v1/event-sources/{id}/plugin-preview`：管理 JWT 鉴权后按当前草稿执行一次插件预览，允许未发布或停用来源；不发布事件或提交游标，详见[插件调试说明](../guides/python-plugin-development.md#管理-api-预览)。Collector 默认关闭时不可用。
 - `PUT /api/v1/event-sources/{id}`：`{"expected_revision":0,"spec":{...}}`，0 创建，后续带当前 revision。例外维护可在顶层添加 `"allow_subscription_change":true`，仅允许本次 Kafka 订阅变更，不放开租户、Cleaner 或 fingerprint 等业务身份。
 - `DELETE /api/v1/event-sources/{id}`：`{"expected_revision":...}`，发布停用 tombstone，不清理业务数据。
 - `GET /api/v1/event-sources/{id}/releases/{version}`：脱敏历史配置。
@@ -88,3 +103,11 @@ Hook 编辑按实例 `name + type` 匹配既有凭据，列表重排不影响匹
 
 运行协议、失联自停和容灾边界见[中心化任务调度协议](task-scheduling-protocol.md)。
 没有历史数据/旧 Stream 兼容层；部署新版本前自行选择新的数据空间或明确处理旧数据，本程序不自动清理。
+
+## Collector 拉取角色（开发中）
+
+已有任务分配协议新增 collector 角色，仅 collection.mode=pull 或 recovery_interval_minutes>0 的来源创建目标任务。
+scheduling.collector 使用现有副本/标签配置，但当前单来源目标最多为 1；显式副本 0 停止拉取。
+运行预算按单个同步请求的请求/响应字节预算预留，不能用 Kafka 分区数扩大同一游标的执行者数量。
+移除 collection 或改为没有恢复周期的 push 会撤销已有 collector；停用整个来源时先停止 collector，再停止 Cleaner/Lifecycle。
+当前已完成调度规划和预算协议；定时执行 Runner、worker 命令和真实租约接管验收尚未完成。

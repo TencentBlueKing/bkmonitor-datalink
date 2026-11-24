@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "linkd-plugin-runtime"
+version = "0.1.0"
+description = "Linkd 同步告警源 Python 执行器"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+dependencies = ["requests==2.34.2"]
+
+[project.optional-dependencies]
+sqlserver = ["pymssql==2.4.6"]
+vmware = ["pyvmomi==9.1.1.0"]
+
+[project.scripts]
+linkd-plugin-runtime = "linkd_runtime.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["linkd_runtime"]

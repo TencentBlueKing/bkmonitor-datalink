@@ -32,6 +32,8 @@ const (
 
 // EventSource 是一个全局唯一、供进程调度和事件标准化使用的事件源定义。
 type EventSource struct {
+	// Collection 配置 Cleaner 上游的插件接入；nil 时沿用外部生产者写入 Kafka。
+	Collection        *SourceCollection  `yaml:"collection,omitempty" json:"collection,omitempty"`
 	ActiveAlertLimits *ActiveAlertLimits `yaml:"active_alert_limits,omitempty" json:"active_alert_limits,omitempty"`
 	// RuntimeClientID 由任务代次注入，不属于可编辑配置或发布摘要。
 	RuntimeClientID   string                   `yaml:"-" json:"-"`
@@ -314,6 +316,25 @@ func (s EventSource) WithDefaults() EventSource {
 // Redacted 返回隐藏 Kafka 凭据且不共享嵌套可变数据的事件源副本。
 func (s EventSource) Redacted() EventSource {
 	redacted := s.clone()
+	if redacted.Collection != nil {
+		if redacted.Collection.Secret != "" {
+			redacted.Collection.Secret = redactedSecret
+		}
+		for key := range redacted.Collection.Configs {
+			redacted.Collection.Configs[key] = redactedSecret
+		}
+	}
+	if redacted.Collection != nil {
+		for i := range redacted.Collection.TenantBindings {
+			binding := &redacted.Collection.TenantBindings[i]
+			if binding.Secret != "" {
+				binding.Secret = redactedSecret
+			}
+			for key := range binding.Configs {
+				binding.Configs[key] = redactedSecret
+			}
+		}
+	}
 	redacted.Storage.Kafka.Security = redacted.Storage.Kafka.Security.Redacted()
 	for i := range redacted.Hooks {
 		redacted.Hooks[i] = redacted.Hooks[i].Redacted()
@@ -323,6 +344,9 @@ func (s EventSource) Redacted() EventSource {
 
 func (s EventSource) clone() EventSource {
 	cloned := s
+	if s.Collection != nil {
+		cloned.Collection = s.Collection.clone()
+	}
 	if s.ActiveAlertLimits != nil {
 		v := s.ActiveAlertLimits.WithDefaults()
 		cloned.ActiveAlertLimits = &v
@@ -386,6 +410,17 @@ func ValidateEventSources(sources []EventSource, severity SeverityConfig) error 
 }
 
 func (s EventSource) validate(severity SeverityConfig) error {
+	if s.Collection != nil {
+		if len(s.Collection.TenantBindings) > 0 && s.RelatedTenantID != "" {
+			return fmt.Errorf("shared collection requires empty related_tenant_id")
+		}
+		if err := s.Collection.validate(); err != nil {
+			return err
+		}
+		if s.Storage.Type != StorageTypeKafka {
+			return fmt.Errorf("collection requires Kafka Cleaner input")
+		}
+	}
 	if s.ActiveAlertLimits != nil {
 		if err := s.ActiveAlertLimits.Validate(); err != nil {
 			return err

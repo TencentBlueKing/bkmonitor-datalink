@@ -104,14 +104,17 @@ func (p Placement) Matches(labels map[string]string, explicit bool) bool {
 	return true
 }
 
-// SourceScheduling 将两种角色的数量和选择器独立管理。
+// SourceScheduling 独立管理 Cleaner、Lifecycle 和 Collector 的数量与选择器。
 type SourceScheduling struct {
+	// Collector 选择拉取执行者；当前同来源最多一个执行者，避免并发推进游标。
+	Collector Placement `yaml:"collector,omitempty" json:"collector,omitempty"`
 	Cleaner   Placement `yaml:"cleaner" json:"cleaner"`
 	Lifecycle Placement `yaml:"lifecycle" json:"lifecycle"`
 }
 
 // Clone 返回不共享可变标签/数量的副本。
 func (s SourceScheduling) Clone() SourceScheduling {
+	s.Collector = clonePlacement(s.Collector)
 	s.Cleaner = clonePlacement(s.Cleaner)
 	s.Lifecycle = clonePlacement(s.Lifecycle)
 	return s
@@ -131,7 +134,7 @@ func clonePlacement(p Placement) Placement {
 
 // Validate 校验副本与有界标签。
 func (s SourceScheduling) Validate() error {
-	for _, p := range []Placement{s.Cleaner, s.Lifecycle} {
+	for _, p := range []Placement{s.Cleaner, s.Lifecycle, s.Collector} {
 		if err := p.Replicas.Validate(); err != nil {
 			return err
 		}

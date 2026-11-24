@@ -21,6 +21,8 @@ const MaxFileSize = 1 << 20
 
 // Config 是 Linkd 本地进程配置的聚合根对象。
 type Config struct {
+	// Collector 可选启用同步来源接收，未配置时不接管外部告警源。
+	Collector *CollectorConfig `yaml:"collector,omitempty"`
 	// Blueking 是所有蓝鲸 API 共用的部署配置，模式开关不改变业务数据的租户作用域。
 	Plugins      PluginsConfig        `yaml:"plugins,omitempty"`
 	Blueking     BluekingConfig       `yaml:"blueking"`
@@ -56,6 +58,14 @@ func Default() Config {
 
 // Validate 校验完整的 Linkd 本地进程配置。
 func (c Config) Validate() error {
+	if c.Collector != nil {
+		if err := c.Collector.validate(); err != nil {
+			return err
+		}
+		if c.Storage == nil || c.Storage.Redis == nil {
+			return fmt.Errorf("storage.redis is required by collector")
+		}
+	}
 	if err := c.Plugins.Validate(); err != nil {
 		return err
 	}
@@ -131,6 +141,11 @@ func (c Config) Validate() error {
 // Redacted 返回可安全展示的配置副本。
 func (c Config) Redacted() Config {
 	redacted := c
+	if c.Collector != nil {
+		v := *c.Collector
+		v.Token = redactedSecret
+		redacted.Collector = &v
+	}
 	redacted.Plugins = c.Plugins.Redacted()
 	redacted.Blueking = c.Blueking.Redacted()
 	redacted.Resources = c.Resources.Redacted()

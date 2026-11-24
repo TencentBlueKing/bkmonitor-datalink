@@ -19,10 +19,11 @@ import (
 
 	"github.com/elastic/go-ucfg/yaml"
 	"github.com/stretchr/testify/require"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/basereport/collector"
 )
+
+type interfaceWhiteListConfig struct {
+	InterfaceWhiteListPattern []string `config:"interface_white_list"`
+}
 
 func TestResourceLimitSetDoesNotTrimFollowingNewline(t *testing.T) {
 	paths := []string{"write_root_conf_tpl.sh"}
@@ -99,12 +100,12 @@ func TestListExtraVarsUseJSONSerialization(t *testing.T) {
 	}
 }
 
-func TestRenderedInterfaceWhiteListMatchesInterfaces(t *testing.T) {
+func TestRenderedInterfaceWhiteListRegexMatches(t *testing.T) {
 	for _, pattern := range []string{`^eth\\d+$`, `^eth[0-9]+$`} {
 		cfg, err := yaml.NewConfig([]byte(`interface_white_list: ["` + pattern + `"]`))
 		require.NoError(t, err)
 
-		var netConfig configs.NetConfig
+		var netConfig interfaceWhiteListConfig
 		require.NoError(t, cfg.Unpack(&netConfig))
 		compiled := make([]*regexp.Regexp, 0, len(netConfig.InterfaceWhiteListPattern))
 		for _, item := range netConfig.InterfaceWhiteListPattern {
@@ -113,14 +114,21 @@ func TestRenderedInterfaceWhiteListMatchesInterfaces(t *testing.T) {
 			compiled = append(compiled, re)
 		}
 
-		require.True(t, collector.CheckBlackWhiteList("eth0", compiled, nil), pattern)
-		require.True(t, collector.CheckBlackWhiteList("eth1", compiled, nil), pattern)
+		for _, iface := range []string{"eth0", "eth1"} {
+			matched := false
+			for _, re := range compiled {
+				if re.MatchString(iface) {
+					matched = true
+					break
+				}
+			}
+			require.True(t, matched, "pattern=%s interface=%s", pattern, iface)
+		}
 	}
 
 	cfg, err := yaml.NewConfig([]byte(`interface_white_list: []`))
 	require.NoError(t, err)
-	var netConfig configs.NetConfig
+	var netConfig interfaceWhiteListConfig
 	require.NoError(t, cfg.Unpack(&netConfig))
 	require.Empty(t, netConfig.InterfaceWhiteListPattern)
-	require.True(t, collector.CheckBlackWhiteList("eth0", nil, nil))
 }

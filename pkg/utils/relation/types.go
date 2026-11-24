@@ -148,6 +148,7 @@ type RelationSchema struct {
 	ToType        ResourceType
 	IsDirectional bool
 	IsBelongsTo   bool
+	MetricName    string
 }
 
 func ToResourceType(rd *ResourceDefinition) ResourceType {
@@ -169,6 +170,10 @@ func ToRelationCategory(category string) RelationCategory {
 }
 
 func ToRelationSchema(rd *RelationDefinition) RelationSchema {
+	metricName := ""
+	if rd.Labels != nil {
+		metricName = rd.Labels["metric_name"]
+	}
 	return RelationSchema{
 		RelationName:  ToRelationName(rd),
 		Category:      ToRelationCategory(rd.Category),
@@ -176,5 +181,6 @@ func ToRelationSchema(rd *RelationDefinition) RelationSchema {
 		ToType:        ResourceType(rd.ToResource),
 		IsDirectional: rd.IsDirectional,
 		IsBelongsTo:   rd.IsBelongsTo,
+		MetricName:    metricName,
 	}
 }

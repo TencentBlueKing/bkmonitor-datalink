@@ -24,8 +24,8 @@ func TestNextReportsTheFutureSlotAsABound(t *testing.T) {
 	if err != nil || due {
 		t.Fatalf("Next() due=%v error=%v", due, err)
 	}
-	if facts.NotDueUntilUnix != 60 || facts.NextSlotUnix != 60 {
-		t.Fatalf("not-due bound = %d, next Slot %d, want the Slot second 60 for both", facts.NotDueUntilUnix, facts.NextSlotUnix)
+	if want := (firstRoundRead(60, 60) + 999) / 1000; facts.NotDueUntilUnix != want || facts.NextSlotUnix != 60 {
+		t.Fatalf("not-due bound = %d, next Slot %d, want the Slot's read %d and its second 60", facts.NotDueUntilUnix, facts.NextSlotUnix, want)
 	}
 	if facts.IntervalSeconds != 60 {
 		t.Fatalf("interval = %d, want 60; without it a late wake cannot be scaled to its cadence",

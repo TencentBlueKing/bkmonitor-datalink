@@ -57,6 +57,7 @@ func (coordinator *SlotExecutionCoordinator) executeSupplement(
 ) (execution.SlotExecutionResult, error) {
 	stream := &streamedExecution{coordinator: coordinator, request: request, supplement: newSupplementRun(*request.Supplement)}
 	defer stream.releaseProvisional()
+	ctx = withRetainedOwner(ctx, stream)
 	started := time.Now()
 	completion, err := coordinator.ports.Query.Execute(ctx, execution.QueryExecutionRequest{
 		Contract: request.Contract, Operation: request.Operation, AttemptNo: request.AttemptNo,
@@ -73,7 +74,7 @@ func (coordinator *SlotExecutionCoordinator) executeSupplement(
 		coordinator.observeQueryFailure(ctx, request.Operation, started, "stream_complete", err)
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: complete supplement: %w", err)
 	}
-	if len(stream.evaluated.Plans) > 0 {
+	if stream.summary.planCount() > 0 {
 		err = coordinator.ports.Sequencer.Sequence(ctx, sequencingScope(stream.header, stream.stateItems, stream.gapItems),
 			func(sequenceCtx context.Context) error {
 				return coordinator.finalizeSupplement(sequenceCtx, request, stream)
@@ -101,7 +102,7 @@ func (stream *streamedExecution) supplementTakes(prepared preparedSeries) bool {
 		return false
 	}
 	run.facts.Candidates++
-	if len(primaryIncompleteBindings(prepared.inputs)) != 0 {
+	if len(primaryIncompleteIn(stream.preparedBindings(prepared))) != 0 {
 		run.facts.InputIncomplete++
 		return false
 	}
@@ -192,16 +193,9 @@ func (stream *streamedExecution) noDataStandingAt(prepared preparedSeries) noDat
 	default:
 		return noDataUnknown
 	}
-	dimensions, found := primaryDimensions(prepared.inputs)
+	own, whole, found := stream.supplementNoDataGroupKeys(prepared, config.AggDimension)
 	if !found {
 		return noDataUnknown
-	}
-	whole := nodata.WholeItemGroup().Key()
-	// A series without every agg_dimension name has no group of its own
-	// that no-data tracks; the whole item still answers for it.
-	own := whole
-	if group, tracked := nodata.Project(dimensions, config.AggDimension); tracked {
-		own = group.Key()
 	}
 	at := int64(stream.header.Contract.Slot.EvaluationTime)
 	for _, memory := range snapshot.Groups {
@@ -210,6 +204,121 @@ func (stream *streamedExecution) noDataStandingAt(prepared preparedSeries) noDat
 		}
 	}
 	return noDataNone
+}
+
+// supplementNoDataGroupKeys is the two groups that answer for a series in
+// its Plan's no-data memory (noDataStandingAt): its own and the whole item's.
+// A series without every agg_dimension name has no group of its own that
+// no-data tracks; the whole item still answers for it, and both are the
+// whole item's then. Not found when the series has no PRIMARY record to
+// project.
+func (stream *streamedExecution) supplementNoDataGroupKeys(prepared preparedSeries, aggDimension []string) (string, string, bool) {
+	inputs, err := stream.preparedInputs(prepared)
+	if err != nil {
+		return "", "", false
+	}
+	dimensions, found := primaryDimensions(inputs)
+	if !found {
+		return "", "", false
+	}
+	whole := nodata.WholeItemGroup().Key()
+	own := whole
+	if group, tracked := nodata.Project(dimensions, aggDimension); tracked {
+		own = group.Key()
+	}
+	return own, whole, true
+}
+
+// readSupplementNoDataGroups reads, for each no-data Plan whose memory was
+// found, the groups the supplement's own series answer to and no others: by
+// name, a segment of keys an HMGET (execution.NoDataRosterSegmentGroups), and
+// never the memory whole. At 500,000 groups the whole read was one HGETALL of
+// every group for a supplement of a few series, on every supplement.
+//
+// It decides what the whole read did: noDataStandingAt reads only a series'
+// own group and the whole item's, so a memory holding just those - each one
+// as the whole read decoded it, under the header's present-as-of - answers
+// every series the same. A read that fails leaves the Plan's memory
+// unavailable, as a whole read that failed did, and its series are withheld.
+// The groups are held on the Slot against its share, as the whole read held
+// all of them.
+func (stream *streamedExecution) readSupplementNoDataGroups(ctx context.Context, prepared []preparedSeries) error {
+	if stream.supplement == nil || len(stream.noData.Items) == 0 {
+		return nil
+	}
+	wanted := map[execution.PlanNoDataIdentity][]string{}
+	named := map[execution.PlanNoDataIdentity]map[string]struct{}{}
+	var plans []execution.PlanNoDataIdentity
+	for _, series := range prepared {
+		config := series.due.CompiledPlan.NoData()
+		if _, inScope := stream.supplement.series[series.identity]; !inScope || config == nil {
+			continue
+		}
+		own, whole, found := stream.supplementNoDataGroupKeys(series, config.AggDimension)
+		if !found {
+			continue
+		}
+		identity := series.due.NoDataIdentity()
+		keys := named[identity]
+		if keys == nil {
+			keys = map[string]struct{}{}
+			named[identity] = keys
+			plans = append(plans, identity)
+		}
+		for _, key := range []string{own, whole} {
+			if _, held := keys[key]; !held {
+				keys[key] = struct{}{}
+				wanted[identity] = append(wanted[identity], key)
+			}
+		}
+	}
+	var held uint64
+	for _, identity := range plans {
+		for index := range stream.noData.Items {
+			snapshot := &stream.noData.Items[index]
+			if snapshot.Identity != identity || snapshot.Status != execution.NoDataMemoryFound {
+				continue
+			}
+			before := noDataMemoryBytes(*snapshot)
+			stream.readSupplementGroupsOf(ctx, snapshot, wanted[identity])
+			if after := noDataMemoryBytes(*snapshot); after > before {
+				held += after - before
+			}
+		}
+	}
+	if held == 0 || stream.coordinator.budget.MaxRetainedBytes == 0 {
+		return nil
+	}
+	if err := stream.reserveProvisionalAt(ctx, 0, held, stream.reservationPhase(noDataReservationPhase)); err != nil {
+		return err
+	}
+	stream.retainBytes(retainPhaseState, held)
+	return nil
+}
+
+// readSupplementGroupsOf reads keys of one found memory into its snapshot, or
+// marks the memory unavailable when a read of them fails.
+func (stream *streamedExecution) readSupplementGroupsOf(ctx context.Context, snapshot *execution.NoDataMemorySnapshot, keys []string) {
+	segment := execution.NoDataRosterSegmentGroups
+	for start := 0; start < len(keys); start += segment {
+		result, err := stream.coordinator.ports.NoData.ReadNoDataGroups(ctx, execution.NoDataGroupsRequest{
+			Identity: snapshot.Identity, Keys: keys[start:min(start+segment, len(keys))], PresentAsOf: snapshot.PresentAsOf,
+		})
+		if err == nil && result.Status != execution.NoDataMemoryFound {
+			snapshot.Status, snapshot.ReasonCode, snapshot.Groups = result.Status, result.ReasonCode, nil
+			return
+		}
+		if err != nil {
+			snapshot.Status, snapshot.Groups = execution.NoDataMemoryUnavailable, nil
+			snapshot.ReasonCode = execution.ReasonCode(contract.ReasonRedisUnavailable)
+			return
+		}
+		for _, group := range result.Groups {
+			if group.GroupKey != "" {
+				snapshot.Groups = append(snapshot.Groups, group)
+			}
+		}
+	}
 }
 
 // guardsAsOfSlot is the gap markers a supplement of the Slot evaluates

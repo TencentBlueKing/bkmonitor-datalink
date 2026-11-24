@@ -12,10 +12,12 @@ package featureFlag
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 )
 
 // FeatureFlagProvider 特性开关提供者接口(consul和redis)
@@ -27,12 +29,20 @@ type FeatureFlagProvider interface {
 
 const consulFallbackTimeout = 3 * time.Second
 
+// builtInFeatureFlags 是没有任何规则的快照，各开关取代码里的默认值。
+const builtInFeatureFlags = "{}"
+
+// builtInDefaultsReported 保证进程内只记一次「Redis 缺 Key 且没有 Consul」。
+var builtInDefaultsReported atomic.Bool
+
 // fallbackFeatureFlagProvider 优先读取 Redis；Key 缺失时迁移 Consul 快照，
 // Redis 读取失败直接报错，由 Service 保留最后有效配置。
 type fallbackFeatureFlagProvider struct {
 	primary    FeatureFlagProvider
 	fallback   FeatureFlagProvider
 	initialize func(context.Context, []byte) (bool, error)
+	// noFallbackReason 非空表示按配置没有 Consul 回退来源，Redis 缺 Key 时使用内置默认值。
+	noFallbackReason string
 }
 
 func newFallbackFeatureFlagProvider(primary, fallback FeatureFlagProvider, initialize func(context.Context, []byte) (bool, error)) FeatureFlagProvider {
@@ -41,6 +51,11 @@ func newFallbackFeatureFlagProvider(primary, fallback FeatureFlagProvider, initi
 		fallback:   fallback,
 		initialize: initialize,
 	}
+}
+
+// newRedisFeatureFlagProvider 只读 Redis：Key 缺失时使用内置默认值，不报错、不写 Redis，Key 写入后下一次调和生效。
+func newRedisFeatureFlagProvider(primary FeatureFlagProvider, reason string) FeatureFlagProvider {
+	return &fallbackFeatureFlagProvider{primary: primary, noFallbackReason: reason}
 }
 
 func (p *fallbackFeatureFlagProvider) GetFeatureFlags(ctx context.Context) ([]byte, error) {
@@ -64,7 +79,13 @@ func (p *fallbackFeatureFlagProvider) GetFeatureFlags(ctx context.Context) ([]by
 	}
 
 	if p.fallback == nil {
-		return nil, fmt.Errorf("consul feature flag fallback is not initialized")
+		if p.noFallbackReason == "" {
+			return nil, fmt.Errorf("consul feature flag fallback is not initialized")
+		}
+		if builtInDefaultsReported.CompareAndSwap(false, true) {
+			log.Infof(ctx, "feature flags are missing in redis and consul is not available (reason=%s), using built-in defaults", p.noFallbackReason)
+		}
+		return []byte(builtInFeatureFlags), nil
 	}
 	fallbackCtx, cancel := context.WithTimeout(ctx, consulFallbackTimeout)
 	defer cancel()
@@ -73,7 +94,7 @@ func (p *fallbackFeatureFlagProvider) GetFeatureFlags(ctx context.Context) ([]by
 		return nil, err
 	}
 	if err := inner.ValidateFeatureFlagSnapshot(data); err != nil {
-		return nil, fmt.Errorf("invalid consul feature flag snapshot: %w", err)
+		return nil, metric.ConfigSyncDecodeError(fmt.Errorf("invalid consul feature flag snapshot: %w", err))
 	}
 	if p.initialize != nil {
 		created, err := p.initialize(ctx, data)

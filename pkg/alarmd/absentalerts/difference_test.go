@@ -4,6 +4,7 @@
 package absentalerts
 
 import (
+	"strconv"
 	"testing"
 	"time"
 )
@@ -11,29 +12,17 @@ import (
 var testNow = time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 
 func testBounds() Bounds {
-	return Bounds{Grace: 10 * time.Minute, MaxSnapshotAge: 30 * time.Minute, MaxCloseStrategies: 4}
+	return Bounds{MinReads: 3, MaxSnapshotAge: 30 * time.Minute, MaxCloseStrategies: 4}
 }
 
 func key(id string) Key { return Key{TenantID: "system", StrategyID: id} }
-
-func itoa(value int) string {
-	if value == 0 {
-		return "0"
-	}
-	digits := ""
-	for value > 0 {
-		digits = string(rune('0'+value%10)) + digits
-		value /= 10
-	}
-	return digits
-}
 
 // filled is a snapshot of the given size that lists none of the strategies
 // the tests close.
 func filled(count int) map[Key]struct{} {
 	snapshot := make(map[Key]struct{}, count)
 	for i := 0; i < count; i++ {
-		snapshot[key("live-"+itoa(i))] = struct{}{}
+		snapshot[key("live-"+strconv.Itoa(i))] = struct{}{}
 	}
 	return snapshot
 }
@@ -46,23 +35,28 @@ func set(keys ...Key) map[Key]struct{} {
 	return result
 }
 
-// ripe is the memory of a candidate this loop first found missing an hour
-// ago under a different observation: everything a close needs except the
-// round's own gates.
+// ripe is the memory of a candidate this term has found missing on three
+// rounds, first under a different observation: everything a close needs
+// except the round's own gates.
 func ripe(keys ...Key) map[Key]Absence {
 	absences := make(map[Key]Absence, len(keys))
 	for _, k := range keys {
-		absences[k] = Absence{Since: testNow.Add(-time.Hour), Observation: "observation-before"}
+		absences[k] = Absence{Since: testNow.Add(-time.Hour), Observation: "observation-before", Reads: 3, TermReads: 3, Confirmed: true}
 	}
 	return absences
 }
 
+// young is a candidate first found missing on this very round.
+func young() Absence {
+	return Absence{Since: testNow, Observation: "observation-now", Reads: 1, TermReads: 1}
+}
+
 // roundFor is a healthy round: the link read and maintained a minute ago,
-// a snapshot of 200 live strategies, and the roster listing the given
-// strategies beside a few live ones.
+// a snapshot of 200 live strategies under its writer's statement, and the
+// roster listing the given strategies beside a few live ones.
 func roundFor(roster map[Key]struct{}, absences map[Key]Absence) Round {
 	for i := 0; i < 5; i++ {
-		roster[key("live-"+itoa(i))] = struct{}{}
+		roster[key("live-"+strconv.Itoa(i))] = struct{}{}
 	}
 	members := make(map[Key]int, len(roster))
 	for k := range roster {
@@ -70,7 +64,7 @@ func roundFor(roster map[Key]struct{}, absences map[Key]Absence) Round {
 	}
 	return Round{LinkRead: true, Roster: members, RosterComplete: true,
 		SnapshotStrategies: filled(200), SnapshotUsable: true, SnapshotObservation: "observation-now",
-		FirstAbsent: absences, Now: testNow}
+		WriterHoldsLastGood: true, FirstAbsent: absences, Now: testNow}
 }
 
 // The whole point, stated once: a strategy the link holds an unrecovered
@@ -187,8 +181,50 @@ func TestAnEmptySnapshotWithoutTheWritersStatementClosesNothing(t *testing.T) {
 	k := key("10")
 	round := roundFor(set(k), ripe(k))
 	round.SnapshotStrategies = map[Key]struct{}{}
+	round.WriterHoldsLastGood = false
 	if result := Compute(round, testBounds()); result.Refusal != RefusalSnapshotEmpty || len(result.Close) != 0 {
 		t.Fatalf("an empty snapshot decided something: %+v", result)
+	}
+}
+
+// A list that is not empty, without its writer's statement, is refused
+// whole as writer_unstated: a strategy missing from it is not known to be
+// gone. Nothing is closed, however ripe, and no clock starts or ages, so
+// the first rounds with the statement serve the whole grace and two
+// observations. Where it is also empty or stale, that refusal is the
+// round's word (snapshot_empty, snapshot_stale): writer_unstated is checked
+// last.
+func TestAListWithoutTheWritersStatementClosesNothing(t *testing.T) {
+	k := key("10")
+	round := roundFor(set(k), ripe(k))
+	round.WriterHoldsLastGood = false
+	if result := Compute(round, testBounds()); result.Refusal != RefusalWriterUnstated || len(result.Close) != 0 ||
+		len(result.Decisions) != 0 {
+		t.Fatalf("a list without the statement = %+v, want refused as writer_unstated", result)
+	}
+	stale := round
+	stale.SnapshotAgeSeconds = int64(testBounds().MaxSnapshotAge/time.Second) + 1
+	if result := Compute(stale, testBounds()); result.Refusal != RefusalSnapshotStale {
+		t.Fatalf("a stale list without the statement = %s, want snapshot_stale", result.Refusal)
+	}
+	tracker := NewTracker(100)
+	for i, observation := range []string{"observation-one", "observation-two"} {
+		unstated := roundFor(set(k), nil)
+		unstated.WriterHoldsLastGood = false
+		unstated.SnapshotObservation = observation
+		unstated.Now = testNow.Add(time.Duration(i) * 11 * time.Minute)
+		if result := tracker.Round(unstated, testBounds()); result.Refusal != RefusalWriterUnstated || len(result.Close) != 0 {
+			t.Fatalf("unstated round %d: %+v", i, result)
+		}
+	}
+	if tracker.Tracked() != 0 {
+		t.Fatal("an unstated round started a candidate's clock")
+	}
+	stated := roundFor(set(k), nil)
+	stated.SnapshotObservation = "observation-three"
+	stated.Now = testNow.Add(30 * time.Minute)
+	if result := tracker.Round(stated, testBounds()); result.Refusal != RefusalNone || result.Counts.WithinGrace != 1 || len(result.Close) != 0 {
+		t.Fatalf("the first stated round after unstated ones: %+v, want the candidate within its grace", result)
 	}
 }
 
@@ -239,7 +275,7 @@ func TestABacklogLargerThanAnyRatioIsStillWorkedOff(t *testing.T) {
 	roster := map[Key]struct{}{}
 	gone := []Key{}
 	for i := 0; i < 100; i++ {
-		k := key("gone-" + itoa(i))
+		k := key("gone-" + strconv.Itoa(i))
 		roster[k] = struct{}{}
 		gone = append(gone, k)
 	}
@@ -254,7 +290,7 @@ func TestABacklogLargerThanAnyRatioIsStillWorkedOff(t *testing.T) {
 // close anything on its first round.
 func TestACandidateIsNotClosedOnTheRoundItIsFirstSeen(t *testing.T) {
 	k := key("10")
-	round := roundFor(set(k), map[Key]Absence{k: {Since: testNow, Observation: "observation-now"}})
+	round := roundFor(set(k), map[Key]Absence{k: young()})
 	result := Compute(round, testBounds())
 	if len(result.Close) != 0 || result.Counts.WithinGrace != 1 {
 		t.Fatalf("a candidate first seen this round was closed: %+v", result)
@@ -264,32 +300,164 @@ func TestACandidateIsNotClosedOnTheRoundItIsFirstSeen(t *testing.T) {
 // Confirmation is two observations of the source.
 func TestACandidateSeenOnlyUnderOneObservationIsNotClosed(t *testing.T) {
 	k := key("10")
-	round := roundFor(set(k), map[Key]Absence{k: {Since: testNow.Add(-time.Hour), Observation: "observation-now"}})
+	round := roundFor(set(k), map[Key]Absence{k: {Since: testNow.Add(-time.Hour), Observation: "observation-now", Reads: 5, TermReads: 5}})
 	result := Compute(round, testBounds())
 	if len(result.Close) != 0 || result.Counts.Unconfirmed != 1 {
 		t.Fatalf("one observation confirmed an absence: %+v", result)
 	}
 }
 
-// The tracker, end to end over rounds: first seen, within grace, then closed
-// once the grace has passed under a second observation.
-func TestTheTrackerClosesOnlyAfterTheGraceAndASecondObservation(t *testing.T) {
+// The tracker, end to end over rounds: a strategy with no mark is within its
+// grace until MinReads rounds found it missing, unconfirmed while they all
+// read one observation, and closed on the first round past both. Rounds are
+// counted, not time: the same rounds an hour apart decide the same.
+func TestTheTrackerClosesOnlyAfterMinReadsAndASecondObservation(t *testing.T) {
+	for _, gap := range []time.Duration{5 * time.Minute, time.Hour} {
+		k := key("10")
+		tracker := NewTracker(100)
+		at := testNow
+		round := func(observation string) Result {
+			r := roundFor(set(k), nil)
+			r.SnapshotObservation, r.Now = observation, at
+			at = at.Add(gap)
+			return tracker.Round(r, testBounds())
+		}
+		for i := 1; i < testBounds().MinReads; i++ {
+			if result := round("observation-one"); result.Counts.WithinGrace != 1 || len(result.Close) != 0 {
+				t.Fatalf("gap %v: read %d closed or left the grace: %+v", gap, i, result)
+			}
+		}
+		if result := round("observation-one"); result.Counts.Unconfirmed != 1 || len(result.Close) != 0 {
+			t.Fatalf("gap %v: confirmed against the same observation: %+v", gap, result)
+		}
+		result := round("observation-two")
+		if len(result.Close) != 1 || result.Close[0].Path != PathImplicit || result.Counts.CloseDecided != 1 {
+			t.Fatalf("gap %v: not closed on the implicit path after MinReads and a second observation: %+v", gap, result)
+		}
+	}
+}
+
+// marked is a round whose writer marked strategy 10 as left in state at
+// revision.
+func marked(round Round, state string, revision int64) Round {
+	round.Marks = map[string]Mark{"10": {TenantID: "system", State: state, Revision: revision}}
+	return round
+}
+
+// The fast path: a strategy missing under the writer's mark waits one round
+// and is closed on the next one that reads the same mark, long before the
+// implicit path's reads and with no second observation; the close names the
+// path and the mark. The implicit path and the fast path are counted apart.
+func TestAMarkedStrategyIsClosedOnTheRoundAfterItIsFirstReadMarked(t *testing.T) {
+	for _, state := range []string{MarkDisabled, MarkDeleted} {
+		k := key("10")
+		tracker := NewTracker(100)
+		first := tracker.Round(marked(roundFor(set(k), nil), state, 4), testBounds())
+		if first.Counts.DepartedWaiting != 1 || len(first.Close) != 0 || first.Decisions[0].Path != PathDeparted {
+			t.Fatalf("%s: the first marked round closed or did not wait on the fast path: %+v", state, first)
+		}
+		second := tracker.Round(marked(roundFor(set(k), nil), state, 4), testBounds())
+		if len(second.Close) != 1 || second.Counts.DepartedCloseDecided != 1 || second.Counts.CloseDecided != 0 {
+			t.Fatalf("%s: the second marked round did not decide on the fast path: %+v", state, second)
+		}
+		if got := second.Close[0]; got.Path != PathDeparted || got.Mark != (Mark{TenantID: "system", State: state, Revision: 4}) {
+			t.Fatalf("%s: the close does not carry its path and mark: %+v", state, got)
+		}
+	}
+}
+
+// Disabled and enabled again within a round: enabling removes the mark and
+// raises the revision, and the strategy is listed again. Nothing closes, and
+// when it is disabled once more the wait starts over from that mark. A mark
+// whose revision moved between two rounds waits again too.
+func TestAStrategyBackBeforeTheSecondMarkedRoundIsNotClosed(t *testing.T) {
 	k := key("10")
 	tracker := NewTracker(100)
-	first := roundFor(set(k), nil)
-	first.SnapshotObservation = "observation-one"
-	if result := tracker.Round(first, testBounds()); result.Counts.WithinGrace != 1 || len(result.Close) != 0 {
-		t.Fatalf("closed on first sight: %+v", result)
+	tracker.Round(marked(roundFor(set(k), nil), MarkDisabled, 4), testBounds())
+	listed := roundFor(set(k), nil)
+	listed.SnapshotStrategies[k] = struct{}{}
+	if result := tracker.Round(listed, testBounds()); len(result.Close) != 0 || result.Counts.Candidates != 0 {
+		t.Fatalf("a strategy listed again was still a candidate: %+v", result)
 	}
-	later := roundFor(set(k), nil)
-	later.Now = testNow.Add(11 * time.Minute)
-	later.SnapshotObservation = "observation-one"
-	if result := tracker.Round(later, testBounds()); result.Counts.Unconfirmed != 1 {
-		t.Fatalf("confirmed against the same observation: %+v", result)
+	if result := tracker.Round(marked(roundFor(set(k), nil), MarkDisabled, 6), testBounds()); len(result.Close) != 0 || result.Counts.DepartedWaiting != 1 {
+		t.Fatalf("disabled again: closed on its first marked round: %+v", result)
 	}
-	later.SnapshotObservation = "observation-two"
-	if result := tracker.Round(later, testBounds()); len(result.Close) != 1 {
-		t.Fatalf("not closed after the grace and a second observation: %+v", result)
+	if result := tracker.Round(marked(roundFor(set(k), nil), MarkDisabled, 8), testBounds()); len(result.Close) != 0 || result.Counts.DepartedWaiting != 1 {
+		t.Fatalf("a mark whose revision moved closed without waiting: %+v", result)
+	}
+	if result := tracker.Round(marked(roundFor(set(k), nil), MarkDisabled, 8), testBounds()); len(result.Close) != 1 {
+		t.Fatalf("the same mark on two rounds did not close: %+v", result)
+	}
+}
+
+// A mark is believed only for the candidate's own tenant and in a state it
+// knows; otherwise the strategy takes the implicit path.
+func TestAMarkNotBelievedLeavesTheImplicitPath(t *testing.T) {
+	k := key("10")
+	for name, mark := range map[string]Mark{
+		"other tenant":  {TenantID: "other", State: MarkDeleted, Revision: 4},
+		"unknown state": {TenantID: "system", State: "archived", Revision: 4},
+	} {
+		round := roundFor(set(k), map[Key]Absence{k: {Since: testNow, Observation: "observation-before", Reads: 2, TermReads: 2,
+			Mark: mark, MarkReads: 2}})
+		round.Marks = map[string]Mark{"10": mark}
+		result := Compute(round, testBounds())
+		if len(result.Close) != 0 || result.Counts.WithinGrace != 1 || result.Decisions[0].Path != PathImplicit {
+			t.Fatalf("%s: %+v, want the implicit path's grace", name, result)
+		}
+		if foreign := result.Counts.MarkForeign == 1; foreign != (name == "other tenant") {
+			t.Fatalf("%s: a mark for another tenant counted %d", name, result.Counts.MarkForeign)
+		}
+	}
+}
+
+// What an earlier term kept is restored, and none of it counts as read in
+// this term: the first round of the new term closes nothing, however ripe,
+// and the second closes on the kept reads - not after reading them all
+// again, which is what a release cost before the memory was kept - once this
+// term has itself read the implicit candidate under two observations.
+func TestARestoredMemoryClosesOnTheNewTermsSecondRound(t *testing.T) {
+	implicit, departed := key("10"), key("11")
+	kept := ripe(implicit)
+	kept[departed] = Absence{Since: testNow.Add(-time.Hour), Observation: "observation-before", Reads: 1, TermReads: 1,
+		Mark: Mark{TenantID: "system", State: MarkDisabled, Revision: 4}, MarkReads: 1}
+	tracker := NewTracker(100)
+	tracker.Restore(kept)
+	round := func(observation string) Result {
+		r := roundFor(set(implicit, departed), nil)
+		r.SnapshotObservation = observation
+		r.Marks = map[string]Mark{"11": {TenantID: "system", State: MarkDisabled, Revision: 4}}
+		return tracker.Round(r, testBounds())
+	}
+	if first := round("observation-term-1"); len(first.Close) != 0 || first.Counts.WithinGrace != 1 || first.Counts.DepartedWaiting != 1 {
+		t.Fatalf("the new term closed on its first round: %+v", first)
+	}
+	second := round("observation-term-2")
+	if len(second.Close) != 2 || second.Counts.CloseDecided != 1 || second.Counts.DepartedCloseDecided != 1 {
+		t.Fatalf("the new term's second round did not close on the kept reads: %+v", second)
+	}
+}
+
+// A confirmation is not carried into a new term. A strategy confirmed missing
+// under the last term, that came back and left again while no leader watched,
+// is restored with its reads and no confirmation: the new term reading it
+// under one observation leaves it unconfirmed, and only a second observation
+// of this term's own closes it.
+func TestARestoredCandidateIsConfirmedAgainByTheNewTerm(t *testing.T) {
+	k := key("10")
+	tracker := NewTracker(100)
+	tracker.Restore(ripe(k))
+	round := func(observation string) Result {
+		r := roundFor(set(k), nil)
+		r.SnapshotObservation = observation
+		return tracker.Round(r, testBounds())
+	}
+	round("observation-after-the-gap")
+	if result := round("observation-after-the-gap"); len(result.Close) != 0 || result.Counts.Unconfirmed != 1 {
+		t.Fatalf("closed on the last term's confirmation: %+v", result)
+	}
+	if result := round("observation-later"); len(result.Close) != 1 {
+		t.Fatalf("not closed once this term read a second observation: %+v", result)
 	}
 }
 
@@ -327,11 +495,11 @@ func TestEveryCandidateLandsOnExactlyOneOutcome(t *testing.T) {
 		roster[k] = struct{}{}
 		switch shape {
 		case "closed":
-			absences[k] = Absence{Since: testNow.Add(-time.Hour), Observation: "observation-before"}
+			absences[k] = ripe(k)[k]
 		case "grace":
-			absences[k] = Absence{Since: testNow, Observation: "observation-now"}
+			absences[k] = young()
 		case "unconfirmed":
-			absences[k] = Absence{Since: testNow.Add(-time.Hour), Observation: "observation-now"}
+			absences[k] = Absence{Since: testNow.Add(-time.Hour), Observation: "observation-now", Reads: 3, TermReads: 3}
 		}
 	}
 	round := roundFor(roster, absences)
@@ -365,7 +533,7 @@ func TestTheWalkStartsPastTheLastDecidedStrategy(t *testing.T) {
 	roster := map[Key]struct{}{}
 	gone := []Key{}
 	for i := 1; i <= 6; i++ {
-		k := key("gone-" + itoa(i))
+		k := key("gone-" + strconv.Itoa(i))
 		roster[k] = struct{}{}
 		gone = append(gone, k)
 	}
@@ -390,8 +558,8 @@ func TestTheWalkStartsPastTheLastDecidedStrategy(t *testing.T) {
 func TestEveryCandidateIsDecidedOnceInKeyOrder(t *testing.T) {
 	young, unconfirmed, first, second, third := key("14"), key("12"), key("10"), key("11"), key("13")
 	absences := ripe(first, second, third)
-	absences[young] = Absence{Since: testNow.Add(-time.Minute), Observation: "observation-before"}
-	absences[unconfirmed] = Absence{Since: testNow.Add(-time.Hour), Observation: "observation-now"}
+	absences[young] = Absence{Since: testNow.Add(-time.Minute), Observation: "observation-before", Reads: 1, TermReads: 1}
+	absences[unconfirmed] = Absence{Since: testNow.Add(-time.Hour), Observation: "observation-now", Reads: 3, TermReads: 3}
 	untracked := key("15")
 	round := roundFor(set(young, unconfirmed, first, second, third, untracked), absences)
 	round.After = first

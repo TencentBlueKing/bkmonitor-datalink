@@ -655,6 +655,11 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 		t.Run(n, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 			metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid, SkipSpace: "skip"})
+			result := "success"
+			if n == "system to pod" {
+				result = "partial"
+			}
+			checkTelemetry := observeLegacyQuery(t, "instant", result)
 			source, sourceInfo, path, target, rets, err := testModel.QueryResourceMatcher(ctx, "", influxdb.SpaceUid, timestamp, c.target, c.source, c.indexMatcher, c.expandMatcher, c.targetInfoShow, c.pathResource)
 			assert.Nil(t, err)
 			if err == nil {
@@ -664,6 +669,7 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 				assert.Equal(t, c.expectedSourceInfo, sourceInfo)
 				assert.Equal(t, c.expectedTarget, target)
 			}
+			checkTelemetry(c.expectedPath, len(c.expectedTargetList))
 		})
 	}
 }
@@ -850,6 +856,7 @@ func TestModel_GetResourceMatcherRange(t *testing.T) {
 		t.Run(n, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 			metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid, SkipSpace: "skip"})
+			checkTelemetry := observeLegacyQuery(t, "range", "success")
 			source, sourceInfo, path, target, rets, err := testModel.QueryResourceMatcherRange(ctx, "", influxdb.SpaceUid, step, start, end, c.target, c.source, c.indexMatcher, c.expandMatcher, c.targetInfoShow, c.pathResource)
 			assert.Nil(t, err)
 			if err == nil {
@@ -859,6 +866,11 @@ func TestModel_GetResourceMatcherRange(t *testing.T) {
 				assert.Equal(t, c.expectedSourceInfo, sourceInfo)
 				assert.Equal(t, c.expectedTarget, target)
 			}
+			targetCount := 0
+			for _, bucket := range c.expectedTargetList {
+				targetCount += len(bucket.Matchers)
+			}
+			checkTelemetry(c.expectedPath, targetCount)
 		})
 	}
 }
@@ -874,6 +886,7 @@ func resetGlobals() {
 	defer mtx.Unlock()
 	models = nil
 	provider = nil
+	updateResourceConfig(configData)
 }
 
 func TestInitSchemaProvider_MultiNamespace(t *testing.T) {

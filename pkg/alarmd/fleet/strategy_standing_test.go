@@ -107,7 +107,7 @@ func TestAStrategysStandingIsAnsweredFromTheLookupAndTheFleetsView(t *testing.T)
 	if third["query_group"] != "qg-4101-t" || third["replica"] != nil || third["existence"] != "absent" {
 		t.Errorf("plan t = %v, want no replica and absent from the active set", third)
 	}
-	if line, _ := body["line"].(string); !strings.Contains(line, "已生效，3 个对象在检测") || !strings.Contains(line, "b 持有，程序缺陷·本服务处理") {
+	if line, _ := body["line"].(string); !strings.Contains(line, "已生效，3 个对象在检测") || !strings.Contains(line, "b 持有，程序缺陷，本服务处理") {
 		t.Errorf("4101 line = %q", line)
 	}
 	if publication, _ := body["publication"].(map[string]any); publication["snapshot_revision"] != "s1" || publication["epoch"] != 7.0 {

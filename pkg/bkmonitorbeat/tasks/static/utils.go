@@ -30,11 +30,12 @@ import (
 
 // Report 主机静态数据集合
 type Report struct {
-	CPU    *CPU
-	Memory *Memory
-	Disk   *Disk
-	Net    *Net
-	System *System
+	CPU      *CPU
+	Memory   *Memory
+	Disk     *Disk
+	Net      *Net
+	System   *System
+	Hardware *Hardware
 
 	reportFields map[string]struct{}
 }
@@ -135,6 +136,25 @@ func (r *Report) AsMapStr() common.MapStr {
 			result["system"] = system
 		}
 	}
+
+	if r.Hardware != nil {
+		hardware := make(common.MapStr)
+		if r.includeReportField(configs.StaticReportFieldHardwareUUIDStatus) {
+			hardware["uuid_status"] = r.Hardware.UUIDStatus
+		}
+		if r.includeReportField(configs.StaticReportFieldHardwareProductUUID) && r.Hardware.ProductUUID != "" {
+			hardware["product_uuid"] = r.Hardware.ProductUUID
+		}
+		if r.includeReportField(configs.StaticReportFieldHardwareProductName) && r.Hardware.ProductName != "" {
+			hardware["product_name"] = r.Hardware.ProductName
+		}
+		if r.includeReportField(configs.StaticReportFieldHardwareProductSerial) && r.Hardware.ProductSerial != "" {
+			hardware["product_serial"] = r.Hardware.ProductSerial
+		}
+		if len(hardware) > 0 {
+			result["hardware"] = hardware
+		}
+	}
 	return result
 }
 
@@ -224,6 +244,7 @@ var GetData = func(ctx context.Context, cfg *configs.StaticTaskConfig) (*Report,
 	}
 	logger.Debug("collect report data success")
 	report := NewReport(cpu, mem, disk, net, system)
+	report.Hardware = getHardware()
 	if cfg != nil {
 		if err = report.SetReportFields(cfg.ReportFields); err != nil {
 			return nil, err

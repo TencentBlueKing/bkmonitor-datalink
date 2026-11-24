@@ -26,6 +26,9 @@ var (
 
 var globalInstance *Instance
 
+// addressErr 记录最近一次 SetInstance 因地址没有创建 client 的原因。
+var addressErr *AddressError
+
 var lock *sync.RWMutex
 
 var errUnavailable = errors.New("consul is not initialized")
@@ -34,9 +37,19 @@ func currentInstance() (*Instance, error) {
 	lock.RLock()
 	defer lock.RUnlock()
 	if globalInstance == nil {
+		if addressErr != nil {
+			return nil, addressErr
+		}
 		return nil, errUnavailable
 	}
 	return globalInstance, nil
+}
+
+// AddressUnavailable 返回最近一次 SetInstance 因地址没有创建 client 的原因；已创建 client 或尚未初始化时为 nil。
+func AddressUnavailable() *AddressError {
+	lock.RLock()
+	defer lock.RUnlock()
+	return addressErr
 }
 
 // init 初始化读写锁
@@ -49,6 +62,7 @@ func Close() {
 	lock.Lock()
 	instance := globalInstance
 	globalInstance = nil
+	addressErr = nil
 	lock.Unlock()
 	if instance != nil {
 		instance.cancel()
@@ -56,7 +70,8 @@ func Close() {
 	}
 }
 
-// SetInstance creates a KV client without contacting Consul.
+// SetInstance creates a KV client without contacting Consul. An empty address or one without a host
+// creates no client; every call then returns the AddressError.
 func SetInstance(ctx context.Context, kvBasePath, consulAddress, caFile, keyFile, certFile string) error {
 	return SetInstanceWithAuth(ctx, kvBasePath, consulAddress, caFile, keyFile, certFile, nil)
 }
@@ -67,6 +82,10 @@ func SetInstanceWithAuth(ctx context.Context, kvBasePath, consulAddress, caFile,
 	var err error
 	if kvBasePath != "" {
 		basePath = kvBasePath
+	}
+	if addressErr = checkAddress(consulAddress); addressErr != nil {
+		globalInstance = nil
+		return addressErr
 	}
 	globalInstance, err = NewConsulInstanceWithAuth(ctx, consulAddress, caFile, keyFile, certFile, auth)
 	return err

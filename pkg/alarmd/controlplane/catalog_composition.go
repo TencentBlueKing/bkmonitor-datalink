@@ -488,6 +488,11 @@ var AlwaysReportedWithheld = []WithheldKey{
 	{Disposition: DispositionConfigNoted, Reason: ReasonLevelTriggerBorrowed},
 	// "No strategy here runs on a period it did not write."
 	{Disposition: DispositionConfigNoted, Reason: ReasonAggIntervalDefaulted},
+	// "No strategy here aggregates by a method it did not write", one pair
+	// for each of the platform's fallbacks.
+	{Disposition: DispositionConfigNoted, Reason: ReasonAggMethodVariableDefaulted},
+	{Disposition: DispositionConfigNoted, Reason: ReasonAggMethodUndefinedDefaulted},
+	{Disposition: DispositionConfigNoted, Reason: ReasonAggMethodWithoutTimeDefaulted},
 	// "No strategy here has a no-data trigger the tracking horizon stops
 	// before it can fire."
 	{Disposition: DispositionConfigNoted, Reason: ReasonNoDataTriggerBeyondHorizon},
@@ -499,6 +504,16 @@ var AlwaysReportedWithheld = []WithheldKey{
 	// "No strategy here keeps its alerts open past recovery: every one
 	// recovers on its own."
 	{Disposition: DispositionConfigNoted, Reason: ReasonRecoveryDisabledByConfig},
+	// "No strategy here compares raw values because its unit or its prefix
+	// could not be read", and "no strategy's threshold prefix is ignored".
+	{Disposition: DispositionConfigNoted, Reason: ReasonDataUnitUnknownComparedRaw},
+	{Disposition: DispositionConfigNoted, Reason: ReasonUnitPrefixOutsideStepsReadAsSmallest},
+	{Disposition: DispositionConfigNoted, Reason: ReasonUnitPrefixIgnoredNoUnit},
+	// "No strategy's compile returned an error": one on its last good Plan,
+	// one out of the Catalog. Either is a strategy the compiler could not
+	// answer for while the rest of the round published.
+	{Disposition: DispositionStaleConfig, Reason: ReasonRuntimePlanCompileFailed},
+	{Disposition: DispositionConfigRejected, Reason: ReasonRuntimePlanCompileFailed},
 }
 
 // WithheldKey pairs what happened to an object with why. Neither half answers

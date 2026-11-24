@@ -177,7 +177,11 @@ type FrozenPlan struct {
 	// the object digest is taken over, so a field that serialized on every
 	// Plan would change every digest in the deployment at once and cost a
 	// republication and a Segment recut for content that did not change.
-	NoDataSuspended      string `json:",omitempty"`
+	NoDataSuspended string `json:",omitempty"`
+	// DataUnitFacts says how the Plan's values are compared, for a reader
+	// (DataUnitFacts). Omitted when nil, for the same reason NoDataSuspended
+	// is: this struct is inside the object digest.
+	DataUnitFacts        *DataUnitFacts `json:",omitempty"`
 	ScheduleSpec         execution.ScheduleSpec
 	ScheduleRevision     execution.PlanScheduleRevision
 	RequirementTemplates []execution.DataRequirementTemplate                    `json:"RequirementTemplates,omitempty"`
@@ -276,6 +280,7 @@ type planCompileFacts struct {
 	// NoDataSuspended is empty for a Plan whose no-data detection is attached
 	// and for one that never configured it. See FrozenPlan.
 	NoDataSuspended string
+	DataUnitFacts   *DataUnitFacts
 }
 
 type QueryGroup struct {
@@ -324,6 +329,17 @@ const ReasonEffectiveTimeRangeInvalid = "EFFECTIVE_TIME_RANGE_INVALID"
 // aggregation interval, or a 0 among them, read as the 60 seconds Python
 // reads it as (itemInterval).
 const ReasonAggIntervalDefaulted = "AGG_INTERVAL_DEFAULTED"
+
+// The agg_method fallbacks of the platform's metric source, one reason each
+// (aggMethodFallbackOf): a metric query config whose agg_method holds "$"
+// (an unfilled dashboard variable), starts "undefined", or ends
+// _without_time and is none of the five such methods, compiled as the sum
+// or sum_without_time the platform runs in its place.
+const (
+	ReasonAggMethodVariableDefaulted    = "AGG_METHOD_VARIABLE_DEFAULTED"
+	ReasonAggMethodUndefinedDefaulted   = "AGG_METHOD_UNDEFINED_DEFAULTED"
+	ReasonAggMethodWithoutTimeDefaulted = "AGG_METHOD_WITHOUT_TIME_DEFAULTED"
+)
 
 // ReasonNoDataTriggerBeyondHorizon names a Plan whose no-data trigger needs
 // at least as long as the tracking horizon lets an absence be tracked, so it
@@ -1328,7 +1344,13 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 			querySource.DetectStepSeconds = step.Seconds
 		}
 	}
-	facts, err := planner.CompilePrimaryQuery(ctx, querySource)
+	var facts execution.QueryPlanFacts
+	var fallbacks []aggMethodFallback
+	if noting, ok := planner.(aggMethodNotingCompiler); ok {
+		facts, fallbacks, err = noting.compilePrimaryQueryNoted(querySource)
+	} else {
+		facts, err = planner.CompilePrimaryQuery(ctx, querySource)
+	}
 	if err != nil {
 		var compileFailure *QueryPlanCompileError
 		if errors.As(err, &compileFailure) && compileFailure.Disposition != "" && compileFailure.Reason != "" {
@@ -1347,12 +1369,12 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 	if err := validateQueryIdentity(source.Identity, facts); err != nil {
 		return candidate, err
 	}
-	if refusal, word := globalBusinessRefusal(source.SourceID, source.Identity, targetScope, facts); refusal != nil {
+	if refusal, word := globalBusinessRefusal(source.SourceID, source.Identity, targetScope, facts, querySource.QueryConfigs); refusal != nil {
 		candidate.dispositions = append(candidate.dispositions, *refusal)
 		candidate.globalRefusal = word
 		return candidate, errors.New(ReasonGlobalStrategyUnsupported + ": " + refusal.Detail)
 	}
-	compiledInputs := compiledPlanInputs{primary: facts}
+	compiledInputs := compiledPlanInputs{primary: facts, aggMethodFallbacks: fallbacks}
 	for _, label := range itemDataTypes(item) {
 		if label == "log" || label == "event" {
 			compiledInputs.missingHistoryAsZero = true
@@ -1378,6 +1400,11 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 	if err != nil {
 		candidate.dispositions = append(candidate.dispositions, dispositions...)
 		return candidate, err
+	}
+	if refusal := globalBusinessDimensionRefusal(source.SourceID, source.Identity, facts, plan); refusal != nil {
+		candidate.dispositions = append(candidate.dispositions, *refusal)
+		candidate.globalRefusal = GlobalBusinessBusinessDimension
+		return candidate, errors.New(ReasonGlobalStrategyUnsupported + ": " + refusal.Detail)
 	}
 	// The protocol is decided here, once, and frozen with the Plan: a Slot that
 	// is retried must not change wire format between attempts.
@@ -1440,6 +1467,7 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 		ScheduleSpec: compiled.ScheduleSpec, ScheduleRevision: compiled.ScheduleRevision,
 		NoDataSuspended:      compiled.NoDataSuspended,
 		RequirementTemplates: compiledInputs.requirements, QueryPlans: compiledInputs.queryPlans,
+		DataUnitFacts: compiled.DataUnitFacts,
 	}
 	candidate.dispositions = append(candidate.dispositions, dispositions...)
 	if priorityIgnored {
@@ -1578,14 +1606,6 @@ func legacyPriorityApplies(legacy legacyStrategy) bool {
 	return value != "" && value != "null" && legacy.PriorityGroupKey != ""
 }
 
-// itemUnit is the item's data unit, derived the way Python derives it: the
-// first non-empty unit among the item's query configs.
-//
-// Python builds the same value with list(set(...))[0] over the non-empty ones,
-// which is unordered when the configs disagree. This takes the first in the
-// stored order instead, so one document always compiles to one Plan. The
-// disagreement itself is not refused here -- Python does not refuse it, and a
-// new refusal would take strategies out that run today.
 // itemDataTypes is the data_type_label of every query config of one item, in
 // the stored order, including the empty ones.
 //
@@ -1600,21 +1620,6 @@ func itemDataTypes(item legacyItem) []string {
 		labels = append(labels, config.DataTypeLabel)
 	}
 	return labels
-}
-
-func itemUnit(item legacyItem) string {
-	for _, raw := range item.QueryConfigs {
-		var config struct {
-			Unit string `json:"unit"`
-		}
-		if err := json.Unmarshal(raw, &config); err != nil {
-			continue
-		}
-		if config.Unit != "" {
-			return config.Unit
-		}
-	}
-	return ""
 }
 
 func primaryQueryContract(item legacyItem) (string, []string) {
@@ -1733,6 +1738,13 @@ type legacyItem struct {
 	// strategy taken from a digest of this struct.
 	QueryOutputConfig json.RawMessage   `json:"query_output_config,omitempty"`
 	Algorithms        []legacyAlgorithm `json:"algorithms"`
+	// ExpressionUnit is the unit the item's expression declares for its own
+	// result (unitOfDetectedExpression). A pointer and omitted when absent:
+	// absent and declared-empty mean different things -- no declaration falls
+	// back to the query's unit, a declared empty unit says there is none -- and
+	// a field that encoded itself when absent would move the revision of every
+	// strategy taken from a digest of this struct.
+	ExpressionUnit *string `json:"expression_unit,omitempty"`
 	// Unit is deliberately absent from this struct. The strategy cache has no
 	// unit on an item: Python's Item.unit is a derived property that walks
 	// query_configs and takes the first non-empty one, so reading a "unit" key
@@ -1744,7 +1756,7 @@ type legacyItem struct {
 	// behind that one missing key, none of them evaluating at all, and the
 	// only symptom was a count of withheld objects that named no field.
 	//
-	// Read it with itemUnit.
+	// Read it with unitOfDetectedExpression.
 	// Target is the strategy's monitoring scope. It was silently ignored here
 	// until 2026-09-09, which is how alarmd came to alert on hosts outside
 	// every scoped strategy's target while Python filtered them out.
@@ -1817,8 +1829,10 @@ type legacyNoDataConfig struct {
 	AggDimension []json.RawMessage `json:"agg_dimension"`
 	Level        json.RawMessage   `json:"level"`
 	// TrackingHorizonSeconds is this item's own horizon, overriding the
-	// deployment's. Absent means the deployment's applies; a stated zero is an
-	// opt-out and is not the same as absent.
+	// deployment's: a positive whole number of seconds. Absent (or null)
+	// means the deployment's applies; a stated zero or less is refused as
+	// NO_DATA_CONFIG_INVALID, not taken as an opt-out (legacyNoDataHorizon,
+	// and why in the compiler's note on the effective horizon).
 	TrackingHorizonSeconds json.RawMessage `json:"tracking_horizon_seconds"`
 	// MaxGroups is this item's own bound on its no-data groups, overriding the
 	// deployment's. Absent means the deployment's applies.
@@ -2353,10 +2367,13 @@ func compileTargetPlanDocument(source SourceStrategy) compiledTargetPlan {
 type compiledPlanInputs struct {
 	missingHistoryAsZero bool
 	primary              execution.QueryPlanFacts
-	osRestartHistory     *execution.QueryPlanFacts
-	requirements         []execution.DataRequirementTemplate
-	queryPlans           map[execution.LogicalQueryRef]execution.QueryPlanFacts
-	seenRequirements     map[execution.RequirementID]struct{}
+	// aggMethodFallbacks are the agg_method fallbacks compiling primary ran,
+	// each noted on the Plan.
+	aggMethodFallbacks []aggMethodFallback
+	osRestartHistory   *execution.QueryPlanFacts
+	requirements       []execution.DataRequirementTemplate
+	queryPlans         map[execution.LogicalQueryRef]execution.QueryPlanFacts
+	seenRequirements   map[execution.RequirementID]struct{}
 }
 
 // frozenSubjectFacts freezes the strategy facts the subject projection reads
@@ -2431,10 +2448,22 @@ func compilePlan(
 			return contract.EvaluationPlanV2{}, planCompileFacts{}, nil, errors.New("alarmd controlplane: invalid strategy_revision")
 		}
 	}
-	unit := itemUnit(item)
+	// Every rule of an item detects its one expression today, so the item's
+	// expression is the one asked about.
+	expressionUnit := unitOfDetectedExpression(item, item.Expression)
+	unit := expressionUnit.projectionUnit()
+	var rawLevels []DataUnitRawLevel
 	dimensionFields := append([]string(nil), dataset.IdentityFields...)
 	if itemHasAlgorithm(item, strategy.DetectorKindProcPort) {
 		dimensionFields = []string{"bind_ip", "listen", "nonlisten", "not_accurate_listen", "protocol"}
+	}
+	// A global business PromQL Plan's records carry the labels its outermost
+	// aggregation groups by, and those are what its business is read from
+	// (admission.AttributeBusiness): bk_biz_id, else the cluster and
+	// namespace, else the Plan's own business. Ordinary PromQL Plans keep the
+	// empty list they had.
+	if identity.GlobalBusiness && inputs != nil && inputs.primary.PromQL != nil && len(dimensionFields) == 0 {
+		dimensionFields = promQLOutputGrouping(inputs.primary.PromQL.Expression)
 	}
 	projection := contract.InputProjectionV2{DynamicDimensions: dataset.DynamicDimensions, ValueFields: []string{"value"}, DimensionFields: dimensionFields, BusinessIdentityField: "bk_biz_id", MultiValueAlignment: "SINGLE_VALUE", DataUnit: unit, MissingValuePolicy: contract.MissingValuePolicyRequired}
 	detectByLevel := make(map[uint32]legacyDetect, len(source.Detects))
@@ -2467,6 +2496,11 @@ func compilePlan(
 		dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "PLAN", Disposition: DispositionConfigNoted,
 			Reason: ReasonAggIntervalDefaulted, FieldPath: "items[0].query_configs[*].agg_interval",
 			Detail: fmt.Sprintf("agg_interval=%d", pythonDefaultAggInterval)})
+	}
+	for _, fallback := range inputs.aggMethodFallbacks {
+		dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "PLAN", Disposition: DispositionConfigNoted,
+			Reason: fallback.reason, FieldPath: "items[0].query_configs[*].agg_method",
+			Detail: dispositionDetail(fmt.Sprintf("agg_method %s compiled as %s", strconv.Quote(fallback.written), fallback.method))})
 	}
 	if warning := step.warningDisposition(sourceID, interval); warning != nil {
 		dispositions = append(dispositions, *warning)
@@ -2560,7 +2594,16 @@ func compilePlan(
 				invalid = true
 				break
 			}
-			config, err := compileAlgorithmConfig(raw, unit, levelID, projection, dataset.IdentityFields, interval, step.Seconds, &levelInputs)
+			algorithmUnit := unit
+			if algorithmReadsUnit(raw.Type) {
+				reading := readAlgorithmUnit(expressionUnit, raw.UnitPrefix)
+				if reading.note != "" && algorithmReadsPrefix(raw.Type) && !levelNoted(rawLevels, levelID, reading.note) {
+					dispositions = append(dispositions, unitNote(sourceID, levelID, expressionUnit, raw.UnitPrefix, reading.note))
+					rawLevels = append(rawLevels, DataUnitRawLevel{LevelID: levelID, Reason: reading.note, Unit: expressionUnit.unit, Prefix: raw.UnitPrefix})
+				}
+				raw.UnitPrefix, algorithmUnit = reading.prefix, reading.dataUnit
+			}
+			config, err := compileAlgorithmConfig(raw, algorithmUnit, levelID, projection, dataset.IdentityFields, interval, step.Seconds, &levelInputs)
 			if err != nil {
 				reason := "ALGORITHM_CONFIG_INVALID"
 				if raw.Type == strategy.DetectorKindThreshold {
@@ -2721,6 +2764,14 @@ func compilePlan(
 	if ref.SnapshotRevision > 0 {
 		plan.OutputIdentity = &contract.MonitorOutputIdentity{DynamicDimensions: dataset.DynamicDimensions, DimensionFields: append([]string{}, dataset.IdentityFields...)}
 		plan.SubjectFacts = frozenSubjectFacts(source, item)
+		// Nil when the query configs cannot be read the way the platform
+		// compares them: the events carry no facts, and the edit close names
+		// their alerts facts_missing rather than deciding on a guess.
+		grouping := contract.StrategyGrouping{Fields: dataset.IdentityFields, Dynamic: dataset.DynamicDimensions, NoData: plan.NoData != nil}
+		if plan.NoData != nil {
+			grouping.NoDataFields = plan.NoData.AggDimension
+		}
+		plan.StrategyFacts, _ = contract.DeriveStrategyFactsV2(item.QueryConfigs, grouping)
 	}
 	scheduleSpec, refusal, err := planScheduleSpec(sourceID, plan, step.Seconds)
 	if err != nil {
@@ -2730,7 +2781,8 @@ func compilePlan(
 		return contract.EvaluationPlanV2{}, planCompileFacts{}, dispositions, err
 	}
 	schedule, err := execution.DerivePlanScheduleRevision(scheduleSpec)
-	return plan, planCompileFacts{ScheduleSpec: scheduleSpec, ScheduleRevision: schedule, NoDataSuspended: suspended},
+	return plan, planCompileFacts{ScheduleSpec: scheduleSpec, ScheduleRevision: schedule, NoDataSuspended: suspended,
+			DataUnitFacts: dataUnitFactsOf(expressionUnit, rawLevels)},
 		dispositions, err
 }
 
@@ -2811,7 +2863,7 @@ func compileAlgorithmConfig(
 		if err := json.Unmarshal(raw.Config, &parameters); err != nil {
 			return nil, err
 		}
-		offsets, err := strategy.TraditionalHistoryOffsets(raw.Type, parameters, step)
+		offsets, err := strategy.TraditionalHistoryOffsets(raw.Type, parameters, strategy.RingHistoryInterval(step, interval))
 		if err != nil {
 			return nil, err
 		}
@@ -2989,16 +3041,18 @@ func (inputs *compiledPlanInputs) buildRequirements(
 
 	switch kind {
 	case strategy.DetectorKindSimpleRingRatio:
+		previous := strategy.RingHistoryInterval(step, interval)
 		dependency, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
 			DatasetName: "previous", Role: execution.InputRoleAlgorithmDependency, ConsumerLevelID: levelID,
 			LogicalQueryRef: primaryRef,
-			// The previous point is the previous detection, a step back, read
-			// over a whole aggregation window.
-			RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: -inputs.primary.QueryDelaySeconds - step - interval, EndOffsetSeconds: -inputs.primary.QueryDelaySeconds - step, HalfOpen: true},
+			// The previous point is the previous aggregation window, or the
+			// previous detection when that is further back, read over a
+			// whole aggregation window.
+			RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: -inputs.primary.QueryDelaySeconds - previous - interval, EndOffsetSeconds: -inputs.primary.QueryDelaySeconds - previous, HalfOpen: true},
 			StepMillis:     inputs.primary.StepMillis, AlignmentMillis: inputs.primary.AlignmentMillis,
 			ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessFinalizedRequired,
-			InputProjection: projection, PointOffsetsSeconds: []int64{step},
-			NamedPoints: []execution.NamedInputPoint{{Name: "previous", OffsetSeconds: step}},
+			InputProjection: projection, PointOffsetsSeconds: []int64{previous},
+			NamedPoints: []execution.NamedInputPoint{{Name: "previous", OffsetSeconds: previous}},
 		})
 		if err != nil {
 			return nil, err
@@ -3010,16 +3064,19 @@ func (inputs *compiledPlanInputs) buildRequirements(
 			return nil, errors.New("alarmd controlplane: OsRestart history query facts are missing")
 		}
 		historyRef := execution.LogicalQueryRef(inputs.osRestartHistory.QueryRevision)
+		// The window starts at the farthest point, so each point sits its
+		// distance from the farthest after the start (osRestartHistoryOnGrid).
+		offsets := strategy.OsRestartHistoryOffsets(step, interval)
 		dependency, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
 			DatasetName: "uptime_history", Role: execution.InputRoleAlgorithmDependency, ConsumerLevelID: levelID,
 			LogicalQueryRef: historyRef,
-			RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -inputs.primary.QueryDelaySeconds - (1500 + interval), EndOffsetSeconds: -inputs.primary.QueryDelaySeconds, HalfOpen: true},
+			RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -inputs.primary.QueryDelaySeconds - (offsets[2] + interval), EndOffsetSeconds: -inputs.primary.QueryDelaySeconds, HalfOpen: true},
 			StepMillis:      inputs.osRestartHistory.StepMillis, AlignmentMillis: inputs.osRestartHistory.AlignmentMillis,
 			ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessFinalizedRequired,
-			InputProjection: projection, PointOffsetsSeconds: []int64{step, 600, 1500},
+			InputProjection: projection, PointOffsetsSeconds: offsets,
 			NamedPoints: []execution.NamedInputPoint{
-				{Name: "previous", OffsetSeconds: step}, {Name: "previous_10m", OffsetSeconds: 600},
-				{Name: "previous_25m", OffsetSeconds: 1500},
+				{Name: "previous", OffsetSeconds: offsets[0]}, {Name: "previous_10m", OffsetSeconds: offsets[1]},
+				{Name: "previous_25m", OffsetSeconds: offsets[2]},
 			},
 		})
 		if err != nil {

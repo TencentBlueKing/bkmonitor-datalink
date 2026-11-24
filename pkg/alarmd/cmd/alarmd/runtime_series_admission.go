@@ -168,11 +168,11 @@ func cmdbIndexTransitionLineAt(logger *observability.Logger, now func() time.Tim
 		// Into usable is the index coming back, or the first load at start:
 		// a line to read, not a warning. Into stale, empty or never loaded
 		// is the warning.
-		write, result := logger.Warn, observability.ResultDegraded
+		write, result := logger.WarnEvent, observability.ResultDegraded
 		if transition.To == "" {
-			write, result = logger.Info, observability.ResultSuccess
+			write, result = logger.InfoEvent, observability.ResultSuccess
 		}
-		write("cmdb_index_transition", result, 0, 0,
+		write("cmdb_index_transition", result, 0,
 			slog.Int("suppressed", suppressed),
 			slog.String("bk_tenant_id", transition.Tenant),
 			slog.String("from", word(transition.From)), slog.String("to", word(transition.To)),
@@ -211,7 +211,7 @@ func newIdentityReporter(logger *observability.Logger, now func() time.Time) *ad
 				slog.String("target_keys_sample", strings.Join(report.TargetKeys, ",")),
 			)
 		}
-		logger.Info("series_admission", "rejected", int(report.Count), 0, attributes...)
+		logger.InfoEvent("series_admission", "rejected", int(report.Count), attributes...)
 	})
 }
 

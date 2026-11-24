@@ -127,5 +127,9 @@ func BuildAbsentNoDataEndV1(input AbsentNoDataEndV1) (*contract.TriggerEventV1, 
 	// event of a global business Plan: it is where the output files the
 	// alert, not part of the event's identity.
 	event.AttributedBusinessID = input.AttributedBusinessID
+	event.StrategyFacts = input.Plan.StrategyFacts()
+	if target := input.Plan.TargetPlan(); target != nil {
+		event.TargetDimensions = target.Identity.Dimensions
+	}
 	return event, nil
 }

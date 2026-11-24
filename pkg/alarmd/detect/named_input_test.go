@@ -12,6 +12,7 @@ package detect
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -211,6 +212,15 @@ func TestNamedInputPathKeepsThresholdAndPingMappingOnCanonicalDetector(t *testin
 
 func compileNamedInputPlan(t *testing.T, kind string, config map[string]any, projection strategy.AlgorithmInputProjection) *strategy.CompiledPlan {
 	t.Helper()
+	return compileSteppedNamedInputPlan(t, kind, config, projection, 60)
+}
+
+// compileSteppedNamedInputPlan is compileNamedInputPlan for an item detected
+// every step over one-minute windows: its ring history is
+// strategy.RingHistoryInterval back, OsRestart's previous point a step.
+func compileSteppedNamedInputPlan(t *testing.T, kind string, config map[string]any, projection strategy.AlgorithmInputProjection, step int64) *strategy.CompiledPlan {
+	t.Helper()
+	ring := strategy.RingHistoryInterval(step, 60)
 	requirements := []strategy.AlgorithmInputRequirement{namedAlgorithmRequirement(t, "primary", strategy.AlgorithmInputPrimary, -60, 0, nil, projection)}
 	if strategy.IsTraditionalComparison(kind) {
 		payload, _ := json.Marshal(config)
@@ -218,7 +228,7 @@ func compileNamedInputPlan(t *testing.T, kind string, config map[string]any, pro
 		if err := json.Unmarshal(payload, &parameters); err != nil {
 			t.Fatal(err)
 		}
-		offsets, err := strategy.TraditionalHistoryOffsets(kind, parameters, 60)
+		offsets, err := strategy.TraditionalHistoryOffsets(kind, parameters, ring)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -234,11 +244,12 @@ func compileNamedInputPlan(t *testing.T, kind string, config map[string]any, pro
 	}
 	switch kind {
 	case strategy.DetectorKindSimpleRingRatio:
-		requirements = append(requirements, namedAlgorithmRequirement(t, "previous", strategy.AlgorithmInputDependency, -120, -60,
-			[]strategy.AlgorithmNamedInputPoint{{Name: "previous", OffsetSeconds: 60}}, projection))
+		requirements = append(requirements, namedAlgorithmRequirement(t, "previous", strategy.AlgorithmInputDependency, -ring-60, -ring,
+			[]strategy.AlgorithmNamedInputPoint{{Name: "previous", OffsetSeconds: ring}}, projection))
 	case strategy.DetectorKindOsRestart:
+		offsets := strategy.OsRestartHistoryOffsets(step, 60)
 		requirements = append(requirements, namedAlgorithmRequirement(t, "uptime_history", strategy.AlgorithmInputDependency, -1560, 0,
-			[]strategy.AlgorithmNamedInputPoint{{Name: "previous", OffsetSeconds: 60}, {Name: "previous_10m", OffsetSeconds: 600}, {Name: "previous_25m", OffsetSeconds: 1500}}, projection))
+			[]strategy.AlgorithmNamedInputPoint{{Name: "previous", OffsetSeconds: offsets[0]}, {Name: "previous_10m", OffsetSeconds: offsets[1]}, {Name: "previous_25m", OffsetSeconds: offsets[2]}}, projection))
 	}
 	config["input_projection"], config["requirements"] = projection, requirements
 	payload, err := json.Marshal(config)
@@ -250,12 +261,12 @@ func compileNamedInputPlan(t *testing.T, kind string, config map[string]any, pro
 		BusinessIdentityField: "bk_biz_id", MultiValueAlignment: "SINGLE_VALUE", DataUnit: "none", MissingValuePolicy: contract.MissingValuePolicyRequired}
 	level := contract.LevelIRV2{Definition: contract.LevelDefinitionV2{LevelID: 5, Priority: 1}, Connector: contract.LevelConnectorAND,
 		DetectPlan:   contract.DetectPlanV2{Algorithms: []contract.AlgorithmIRV2{{Type: kind, Version: 1, Config: payload}}},
-		TriggerPlan:  contract.TypedPlanV1{Type: "N_OF_M", Version: 1, Config: json.RawMessage(`{"window_size":1,"required_anomalies":1,"step_seconds":60}`)},
+		TriggerPlan:  contract.TypedPlanV1{Type: "N_OF_M", Version: 1, Config: json.RawMessage(`{"window_size":1,"required_anomalies":1,"step_seconds":` + strconv.FormatInt(step, 10) + `}`)},
 		RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1, Config: json.RawMessage(`{"enabled":true,"consecutive_windows":1}`)}}
 	plan := contract.EvaluationPlanV2{PlanID: "7", StrategyRef: ref, InputProjection: inputProjection,
 		StrategyIR: contract.StrategyIRV2{Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2}, StrategyRef: ref,
 			InputProjection: inputProjection, ExecutionSemantics: contract.ExecutionSemanticsV2{EvaluationScope: contract.EvaluationScopeSeries,
-				QueryWindow: 300, AggregationInterval: 60, EvaluationInterval: 60, LatenessTolerance: 120}, Levels: []contract.LevelIRV2{level}}}
+				QueryWindow: 300, AggregationInterval: 60, EvaluationInterval: uint32(step), LatenessTolerance: 120}, Levels: []contract.LevelIRV2{level}}}
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{MaxPlanBytes: 1 << 20,
 		MaxLevelsPerPlan: 16, MaxAlgorithmsPerLevel: 8, MaxGroupsPerAlgorithm: 16, MaxConditionsPerAlgorithm: 64,
 		MaxASTNodesPerLevel: 256, MaxTriggerWindowSize: 16, MaxRecoveryConsecutiveWindows: 16, MaxRequiredHistoryPoints: 32,

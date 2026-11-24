@@ -373,14 +373,15 @@ func TestAnIncompleteTrialFromThePreviousSlotLeavesTheHold(t *testing.T) {
 // halfway between it and the hold leaves a gap no wider than a step - is probed at halves between the floor and its
 // hold, none of those Slots refused, each passed half its hold, until the hold is within readhold.MidpointResolution
 // of the floor: 48 s comes down to 24, 12, 6 and 3 s over a floor of none - a floor a probe failed at, the lowering
-// to it verified, so 6 and 3 s, within readhold.EdgeProbeReach of it, each read eight hours. There, its floor not yet
+// to it verified, so 6 and 3 s, within readhold.EdgeProbeReach of it, each read the edge-probe span
+// (descentEdgeProbeSpan). There, its floor not yet
 // stood a day, it has nothing left to try, and says so: the controller counts each trial it refuses search_done, the group's
 // lookback reading counts the same Slots no_candidate, and its record says when the floor was learned. In one
 // deployment four groups lowered so sat at 46-58 s for 57 hours, and the only reason counted was at_limit, another
 // group's.
 func TestAGroupStuckUnderItsSearchFloorSaysWhy(t *testing.T) {
 	t.Parallel()
-	f := startCutoverFixture(t, leasesOutliveTheRun)
+	f := startDescentFixture(t)
 	engine, holds := f.bundle.dependencies.Lookback, f.bundle.dependencies.ReadHolds
 	refused := func() map[string]uint64 { return productionLookbackStats(engine, holds).ReadHoldEarlierSkipped }
 	const arrival = 96500 * time.Millisecond
@@ -416,8 +417,9 @@ func TestAGroupStuckUnderItsSearchFloorSaysWhy(t *testing.T) {
 		t.Fatalf("the record's floor %v learned at %d probed %v, want none, learned at the raise %d, a floor a probe failed at",
 			record.EarlierFloorMillis, record.EarlierFloorAtMillis, record.EarlierFloorProbed, learnedAt.UnixMilli())
 	}
-	// The probes near a floor a probe failed at read eight hours each, most of a day: the floor is dated afresh
-	// here, so it stands its day from the descent's start and the group sits stuck under it for what is left.
+	// The probes near a floor a probe failed at read the edge-probe span each, on production's most of a day: the
+	// floor is dated afresh here, so it stands its day from the descent's start and the group sits stuck under it for
+	// what is left.
 	ageFloor(t, f, 0)
 	learnedAt = f.now()
 	came, _, _ := descent(t, f, 30*time.Hour)
@@ -425,7 +427,7 @@ func TestAGroupStuckUnderItsSearchFloorSaysWhy(t *testing.T) {
 	if fmt.Sprint(came) != fmt.Sprint(want) {
 		t.Fatalf("from %v the hold came down through %v, want %v", lowest, came, want)
 	}
-	// Stuck there until the floor has stood a day, which the probes near it took most of.
+	// Stuck there until the floor has stood a day, which the probes near it took part of.
 	stuck := min(3*time.Hour, readhold.FloorStanding-f.now().Sub(learnedAt)-30*time.Minute)
 	if stuck < time.Hour {
 		t.Fatalf("fixture: the floor stands a day %v after the descent, want an hour at least", stuck+30*time.Minute)

@@ -472,21 +472,21 @@ func (f *QueryFactory) FormatDataToQueryResult(
 		}
 	}
 	profile := f.query.CostProfile
-	span.Set("query-cost.rows", len(list))
-	span.Set("query-cost.series", len(res.Timeseries))
-	span.Set("query-cost.points", points)
-	span.Set("query-cost.label-bytes", labelBytes)
+	span.Set("query-profile.rows", len(list))
+	span.Set("query-profile.series", len(res.Timeseries))
+	span.Set("query-profile.points", points)
+	span.Set("query-profile.label-bytes", labelBytes)
 	if len(list) > 0 {
-		span.Set("query-cost.series-rows-ratio", float64(len(res.Timeseries))/float64(len(list)))
+		span.Set("query-profile.series-rows-ratio", float64(len(res.Timeseries))/float64(len(list)))
 	}
 	if len(res.Timeseries) > 0 {
-		span.Set("query-cost.points-per-series", float64(points)/float64(len(res.Timeseries)))
+		span.Set("query-profile.points-per-series", float64(points)/float64(len(res.Timeseries)))
 	}
-	span.Set("query-cost.select-all", profile.SelectAllCandidate)
-	span.Set("query-cost.range-function", profile.RangeFunction)
-	span.Set("query-cost.step-less-than-window", profile.StepLessThanWindow)
-	span.Set("query-cost.ast-branches", profile.ASTBranchCount)
-	span.Set("query-cost.sql-pushdown", profile.SQLPushdown)
+	span.Set("query-profile.select-all", profile.SelectAllCandidate)
+	span.Set("query-profile.range-function", profile.RangeFunction)
+	span.Set("query-profile.step-less-than-window", profile.StepLessThanWindow)
+	span.Set("query-profile.ast-branches", profile.ASTBranchCount)
+	span.Set("query-profile.sql-pushdown", profile.SQLPushdown)
 	metric.QueryCostProfileObserve(
 		ctx,
 		profile.SelectAllCandidate,
@@ -536,7 +536,12 @@ func (f *QueryFactory) getTheDateIndexFilters() (string, error) {
 func (f *QueryFactory) BuildWhere() (string, error) {
 	var s []string
 
-	s = append(s, f.expr.ParserRangeTime(f.timeField, f.start, f.end))
+	timeCondition := f.expr.ParserRangeTime(f.timeField, f.start, f.end)
+	if metadata.IsLeftOpenTimeWindow(f.ctx) {
+		// The local engine already advances the left bound; both storage bounds are inclusive.
+		timeCondition = fmt.Sprintf("`%s` >= %d AND `%s` <= %d", f.timeField, f.start.UnixMilli(), f.timeField, f.end.UnixMilli())
+	}
+	s = append(s, timeCondition)
 	if f.query.RangeEndExclusive {
 		// Doris 的时间范围原本包含终点；迁移切换点只能由后一路贡献。
 		s = append(s, fmt.Sprintf("`%s` < %d", f.timeField, f.end.UnixMilli()))

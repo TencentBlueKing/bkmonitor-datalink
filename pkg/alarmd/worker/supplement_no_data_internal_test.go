@@ -107,6 +107,9 @@ func CheckASupplementLeavesARaisedNoDataAlertStanding(t *testing.T, store *state
 	if err := stream.loadNoDataMemory(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err := stream.readSupplementNoDataGroups(ctx, []preparedSeries{late}); err != nil {
+		t.Fatal(err)
+	}
 	if stream.supplementTakes(late) {
 		t.Fatalf("a late series was taken at the Slot its item's no-data alert was raised at; memory %+v", stream.noData.Items)
 	}

@@ -269,8 +269,8 @@ func TestAStandingReachesTheExportUnderItsOwnCode(t *testing.T) {
 		ActivationReplica: "pod-a",
 		Degradations: []fleet.Degradation{
 			{Kind: fleet.DegradationActivationBehind, Replica: "pod-a"},
-			{Kind: fleet.DegradationOpenAlertSetStale, Replica: "pod-a"},
-			{Kind: fleet.DegradationOpenAlertSetStale, Replica: "pod-b"},
+			{Kind: fleet.DegradationActiveCopyUnsupported, Replica: "pod-a"},
+			{Kind: fleet.DegradationActiveCopyUnsupported, Replica: "pod-b"},
 		},
 		// And the third standing: the leader's round would move objects
 		// between the two replicas, so the series carries two.
@@ -319,9 +319,9 @@ func TestAStandingReachesTheExportUnderItsOwnCode(t *testing.T) {
 		}
 	}
 	for kind, want := range map[string]int{
-		string(fleet.DegradationActivationBehind):    1,
-		string(fleet.DegradationOpenAlertSetStale):   2,
-		string(fleet.DegradationControlLeaderAbsent): 0,
+		string(fleet.DegradationActivationBehind):      1,
+		string(fleet.DegradationActiveCopyUnsupported): 2,
+		string(fleet.DegradationControlLeaderAbsent):   0,
 	} {
 		if got := countOf(verdict.Degradations, kind).Count; got != want {
 			t.Errorf("fleet_degradations{kind=%s} = %d, want %d", kind, got, want)

@@ -271,6 +271,14 @@ func (runner *Runner) queryCooldownHolds() bool {
 	return !state.until.IsZero() && runner.now().Before(state.until)
 }
 
+// queryCooldownProbes reports whether a Slot that runs now probes the Query
+// Group's cooldown: the pool still has the Query Group, and its hold has run
+// out, so what runs decides whether it leaves (queryCooldownDecidedBy).
+func (runner *Runner) queryCooldownProbes() bool {
+	state := runner.queryCooldown
+	return !state.until.IsZero() && !runner.now().Before(state.until)
+}
+
 func (runner *Runner) deferUnavailableQuery(ctx context.Context, slot FrozenSlot) bool {
 	state := &runner.queryCooldown
 	switch {

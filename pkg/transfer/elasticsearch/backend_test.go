@@ -126,7 +126,7 @@ func (s *BulkHandlerSuite) TestFormatTime() {
 		esResponse := map[string]interface{}{
 			"took":   1,
 			"errors": false,
-			"items":  []map[string]interface{}{retIndex},
+			"items":  []map[string]interface{}{{"index": retIndex}},
 		}
 		data, err := json.Marshal(esResponse)
 		s.NoError(err)

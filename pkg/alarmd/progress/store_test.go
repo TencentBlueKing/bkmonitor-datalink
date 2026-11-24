@@ -22,8 +22,11 @@ type controlFake struct {
 	value   []byte
 	missing bool
 	status  ownership.FencedCASStatus
-	group   execution.QueryGroupIdentity
-	name    string
+	// casErr, when set, is a fenced CAS that failed before the server
+	// answered: no status, only the error.
+	casErr error
+	group  execution.QueryGroupIdentity
+	name   string
 	// scopes is the content scope each fenced write declared, in order.
 	scopes []string
 }
@@ -1007,6 +1010,9 @@ func (fake *controlFake) ReadControl(_ context.Context, group execution.QueryGro
 }
 func (fake *controlFake) FencedCompareAndSet(_ context.Context, request ownership.FencedCASRequest) (ownership.FencedCASStatus, error) {
 	fake.scopes = append(fake.scopes, request.ContentScope)
+	if fake.casErr != nil {
+		return "", fake.casErr
+	}
 	status := fake.status
 	if status == "" {
 		status = ownership.FencedCASApplied
@@ -1014,7 +1020,7 @@ func (fake *controlFake) FencedCompareAndSet(_ context.Context, request ownershi
 	if status == ownership.FencedCASApplied {
 		fake.value, fake.missing = append([]byte(nil), request.Value...), false
 	}
-	return status, nil
+	return status, ownership.FencedCASRefusalError(status)
 }
 
 func TestLoadProgressDistinguishesMissingAndFound(t *testing.T) {

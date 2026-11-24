@@ -241,7 +241,7 @@ func (liveness *phaseTwoLiveness) reportLocked(stalls []httpservice.Stall) {
 	}
 	for loop := range liveness.reported {
 		if !current[loop] && liveness.logger != nil {
-			liveness.logger.Info("liveness", "resumed", 0, 0, slog.String("loop", loop))
+			liveness.logger.InfoEvent("liveness", "resumed", 0, slog.String("loop", loop))
 		}
 	}
 	liveness.reported = current

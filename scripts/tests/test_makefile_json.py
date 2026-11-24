@@ -59,5 +59,31 @@ class ModuleJSONBuildTest(unittest.TestCase):
         self.assertEqual(self.build_arguments("transfer"), "")
 
 
+class CollectorNodemanV3BuildTest(unittest.TestCase):
+    def make(self, *arguments, cwd=ROOT):
+        env = os.environ.copy()
+        env.pop("JSON_LIB", None)
+        return subprocess.run(
+            ["make", "--no-print-directory", *arguments],
+            cwd=cwd,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout
+
+    def test_build_outputs_v2_and_v3_packages_to_release_path(self):
+        commands = self.make(
+            "-n", "RELEASE_PATH=/release", "VERSION=1.2.3", "build", cwd=ROOT / "pkg" / "collector"
+        )
+
+        v2_tar = commands.index("tar -zcvf bk-collector-1.2.3.tgz --remove-files -C . *")
+        v3_package = commands.index("./control.sh package_v3 linux amd64 x86_64 1.2.3 ")
+        v3_tar = commands.index("tar -zcvf /release/bk-collector-nodeman-v3-1.2.3.tgz -C ")
+        # V3 须在 V2 打包之后生成，否则会被打进 V2 插件包
+        self.assertLess(v2_tar, v3_package)
+        self.assertLess(v3_package, v3_tar)
+
+
 if __name__ == "__main__":
     unittest.main()

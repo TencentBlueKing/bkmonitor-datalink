@@ -137,7 +137,6 @@ func TestTheCensusKnowsTheDeploymentsPrefixes(t *testing.T) {
 		"platform key":      func(cfg *config.Config, prefix string) { cfg.Kafka.LegacyAdapter.SnapshotPrefix = prefix },
 		"platform settings": func(cfg *config.Config, prefix string) { cfg.PhaseTwo.PlatformSettings.RedisKeyPrefix = prefix },
 		"dynamic groups":    func(cfg *config.Config, prefix string) { cfg.PlatformCache.DynamicGroupKeyPrefix = &prefix },
-		"linkd":             func(cfg *config.Config, prefix string) { cfg.PhaseTwo.Linkd.KeyPrefix = prefix },
 		"pod cache": func(cfg *config.Config, prefix string) {
 			cfg.Kafka.LegacyAdapter.PodCache = &config.LegacyPodCacheConfig{KeyPrefix: prefix}
 		},

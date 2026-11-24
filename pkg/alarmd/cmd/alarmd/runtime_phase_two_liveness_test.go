@@ -24,6 +24,18 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
+// waitUntil waits for condition until the test's deadline.
+func waitUntil(t *testing.T, what string, condition func() bool) {
+	t.Helper()
+	deadline := testwait.Deadline(t)
+	for !condition() {
+		if time.Now().After(deadline) {
+			t.Fatalf("not before the test's deadline: %s", what)
+		}
+		time.Sleep(20 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
+	}
+}
+
 // livenessClock is a clock a test moves by hand.
 type livenessClock struct{ at atomic.Int64 }
 

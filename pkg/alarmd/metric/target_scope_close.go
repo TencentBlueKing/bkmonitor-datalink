@@ -11,8 +11,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scopeclose"
 )
 
-// targetScopeCloseCollector reports the close of alerts whose target left
-// the strategy's monitoring scope, every outcome from the first scrape.
+// targetScopeCloseCollector reports the superseded-identity close, every
+// outcome from the first scrape. The family keeps the name of the per-series
+// target-scope close it used to count as well.
 type targetScopeCloseCollector struct {
 	mu        sync.Mutex
 	outcomes  func() map[string]uint64
@@ -22,31 +23,26 @@ type targetScopeCloseCollector struct {
 func newTargetScopeCloseCollector() *targetScopeCloseCollector {
 	return &targetScopeCloseCollector{
 		outcomeIs: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "target_scope_close_total"),
-			"What the close of alerts whose target left the strategy's monitoring scope decided, by outcome. "+
-				"unconfirmed is a fingerprint of an open alert turned away by one Slot, waiting for a second; "+
-				"close_sent counts alerts a close was sent for, acknowledged by the broker, not alerts the link "+
-				"closed. cache_unavailable counts rejections decided on facts that "+
-				"were not all read or current, which are never closed; not_member definitive rejections whose "+
-				"fingerprint is not an open alert; set_unavailable decisions refused because the open set could "+
-				"not be judged (not calibrated, disjoint, unavailable); producer_foreign open alerts of another "+
-				"source; send_failed closes the producer refused; close_identity_invalid closes whose request could "+
-				"not be built from the observation's facts (strategy id, business or revision unusable), nothing "+
-				"sent, the word the effective-time close uses for the same facts; memory_full first observations past the "+
-				"table's bound; fingerprint_unsupported definitive rejections of Plans fed by several inputs, "+
-				"whose alert fingerprint no single series carries; stale_deferred closes held back because the "+
-				"last observation was older than the freshness bound; indefinite rejections that are not a verdict on "+
-				"the record's place at all (a key or object identity that could not be built), apart from "+
-				"cache_unavailable, which is a verdict reached without its facts; observation_expired first observations "+
-				"whose second did not arrive within two of the strategy's periods plus its Slot's read offset (at least "+
-				"half an hour), forgotten - the strategies counted there are ones this close could not reach, named in "+
-				"its facts; business_unknown closes of a global business strategy's alerts whose record names no "+
-				"business they were filed under, kept for the next step; superseded_identity_close_sent counts, among close_sent, "+
-				"the closes of alerts a series opened under the fingerprint of its own address before its alert identity "+
-				"read CMDB's (reason superseded_identity). Such an offer is made for every series whose host overlay moves "+
-				"its fingerprint, every Slot; one that finds no open alert under the old fingerprint, or a set that cannot "+
-				"say, counts nothing, so not_member and set_unavailable at an offer stay target rejections; one the consumer "+
-				"holds is decided and counted as a target close is. Every cell exists from the start so a zero "+
-				"is a reading and not an absence.",
+			"What the close of alerts a series opened under the fingerprint of its own address, before its alert "+
+				"identity read CMDB's (reason superseded_identity), decided, by outcome. The admission step offers the "+
+				"old fingerprint of every admitted series whose host overlay moves it, every Slot, for a strategy alarmd's "+
+				"copy of the link's active alerts knows an open alert of; an offer the copy has no word on or judges not "+
+				"open counts nothing. unconfirmed is an old fingerprint of an open alert offered by one Slot, waiting for "+
+				"a second; close_sent counts, one per old fingerprint, closes the link's filtered close settled: it "+
+				"closed the alert or found nothing active of it (one already ended counts too), so it is not a count "+
+				"of alerts closed; superseded_identity_close_sent counts the same closes by their reason; send_failed closes the "+
+				"link did not settle but may (busy, failing, items to be found again), kept for the next step; "+
+				"close_refused closes the same command would be answered the same way (items or the request refused, "+
+				"past the expectation or the client's answer bound, a filter that cannot be built), kept and not sent "+
+				"again for five minutes; filter_close_unsupported closes the link cannot run (501, "+
+				"404, 405); unrouted confirmed closes on a replica with no link to close through; close_identity_invalid "+
+				"closes whose request could not be built from the observation's facts (strategy id or revision "+
+				"unusable), nothing sent, the word the effective-time close uses for the same facts; memory_full first "+
+				"observations past the table's bound; stale_deferred closes held back because the last observation was "+
+				"older than the freshness bound; observation_expired first observations whose second did not arrive "+
+				"within two of the strategy's periods plus its Slot's read offset (at least half an hour), forgotten. "+
+				"Alerts whose target left the strategy's scope are closed by the control leader, per strategy "+
+				"(strategy_scope_close_total). Every cell exists from the start so a zero is a reading and not an absence.",
 			[]string{"outcome"}, nil),
 	}
 }

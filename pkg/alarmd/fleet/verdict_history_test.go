@@ -22,7 +22,7 @@ func TestTheVerdictRecordKeepsEachChangeAndWhatDecidedIt(t *testing.T) {
 	at := time.Date(2026, 9, 24, 4, 0, 0, 0, time.UTC)
 	healthy := &View{Health: HealthHealthy, Covered: 51, Determined: 51}
 	degraded := &View{Health: HealthDegraded, Covered: 51, Determined: 51,
-		Degradations: []Degradation{{Kind: DegradationOpenAlertSetStale, Replica: "a"}, {Kind: DegradationOpenAlertSetStale, Replica: "b"}, {Kind: DegradationControlSourceStale, Replica: "a"}},
+		Degradations: []Degradation{{Kind: DegradationActiveCopyUnsupported, Replica: "a"}, {Kind: DegradationActiveCopyUnsupported, Replica: "b"}, {Kind: DegradationControlSourceStale, Replica: "a"}},
 		Gaps:         []Gap{{Kind: GapReplicaMissing, Replica: "c"}}}
 	service.RecordSummarizedVerdict(healthy, ReplicaPart{}, at)
 	service.RecordSummarizedVerdict(healthy, ReplicaPart{}, at.Add(time.Minute))
@@ -36,7 +36,7 @@ func TestTheVerdictRecordKeepsEachChangeAndWhatDecidedIt(t *testing.T) {
 	}
 	change := changes[1]
 	if change.From != HealthHealthy || change.To != HealthDegraded || !change.At.Equal(at.Add(2*time.Minute)) ||
-		len(change.Degradations) != 2 || change.Degradations[0] != DegradationControlSourceStale || change.Degradations[1] != DegradationOpenAlertSetStale ||
+		len(change.Degradations) != 2 || change.Degradations[0] != DegradationActiveCopyUnsupported || change.Degradations[1] != DegradationControlSourceStale ||
 		len(change.Gaps) != 1 || change.Gaps[0] != GapReplicaMissing {
 		t.Fatalf("change %+v, want what decided it, each kind once", change)
 	}

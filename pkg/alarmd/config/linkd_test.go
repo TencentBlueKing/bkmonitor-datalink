@@ -40,73 +40,15 @@ func TestLinkdConfigurationBinding(t *testing.T) {
 	if err := (LinkdConfig{}).Validate(); err != nil {
 		t.Fatal(err)
 	}
-	// The target is read from the Console, so a Console with credentials
-	// is the whole configuration.
-	c := LinkdConfig{ConsoleURL: "https://console.example.test/local-api", Username: "reader", Password: "test-password"}
+	c := LinkdConfig{ControlPlane: LinkdControlPlaneConfig{URL: "https://linkd.example.test"}}
 	if err := c.Validate(); err != nil {
-		t.Fatalf("a Console with credentials alone was refused: %v", err)
+		t.Fatalf("a control plane URL was refused: %v", err)
 	}
-	c.ConsoleURL = "https://reader:password@console.example.test/local-api"
+	c.ControlPlane.URL = "https://user:password@linkd.example.test"
 	if err := c.Validate(); err == nil {
 		t.Fatal("URL credentials accepted")
 	}
-	c.ConsoleURL = "https://console.example.test/local-api"
-	c.Password = ""
-	if err := c.Validate(); err == nil {
-		t.Fatal("half a Basic pair was accepted")
-	}
-	// No pair at all is the admin's API, called with the token it hands over.
-	if err := (LinkdConfig{ConsoleURL: "http://admin.example.test/api/modules/linkd"}).Validate(); err != nil {
-		t.Fatalf("the admin's API root without a Basic pair was refused: %v", err)
-	}
-	if err := (LinkdConfig{ConsoleURL: "http://admin.example.test/"}).Validate(); err == nil {
-		t.Fatal("a server URL that is not an API root was accepted")
-	}
-	if err := (LinkdConfig{Username: "reader"}).Validate(); err == nil {
-		t.Fatal("credentials without a Console were accepted")
-	}
-}
-
-// The Console credentials may come from the environment, which is how a
-// deployment hands alarmd the alert link's own Console Secret. Stated in both
-// places, they are refused rather than one silently winning.
-func TestLinkdConsoleCredentialsComeFromTheEnvironment(t *testing.T) {
-	t.Setenv(LinkdConsoleUsernameEnvironment, "reader")
-	t.Setenv(LinkdConsolePasswordEnvironment, "test-password")
-	c := LinkdConfig{ConsoleURL: "https://console.example.test/local-api"}
-	if err := c.resolveCredentialsFromEnvironment(); err != nil {
-		t.Fatal(err)
-	}
-	if c.Username != "reader" || c.Password != "test-password" {
-		t.Fatalf("credentials not taken from the environment: %+v", c)
-	}
-	if err := c.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	both := LinkdConfig{Password: "file-password"}
-	if err := both.resolveCredentialsFromEnvironment(); err == nil {
-		t.Fatal("a password stated in the file and the environment was accepted")
-	}
-	t.Setenv(LinkdConsoleUsernameEnvironment, "")
-	t.Setenv(LinkdConsolePasswordEnvironment, "")
-	fileOnly := LinkdConfig{Username: "file-reader", Password: "file-password"}
-	if err := fileOnly.resolveCredentialsFromEnvironment(); err != nil || fileOnly.Username != "file-reader" {
-		t.Fatalf("an empty environment overrode the file: %+v %v", fileOnly, err)
-	}
-}
-
-// Loading applies it: a file that names the Console but not its credentials
-// loads with the credentials the environment carries.
-func TestLoadingTakesTheConsoleCredentialsFromTheEnvironment(t *testing.T) {
-	t.Setenv(LinkdConsoleUsernameEnvironment, "reader")
-	t.Setenv(LinkdConsolePasswordEnvironment, "test-password")
-	text := validGoAccessRuntimeConfigYAML("linkd-worker") +
-		"  linkd:\n    console_url: https://console.example.test/local-api\n"
-	cfg, err := LoadWithRoles(writeConfig(t, text), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.PhaseTwo.Linkd.Username != "reader" || cfg.PhaseTwo.Linkd.Password != "test-password" {
-		t.Fatalf("loading did not take the credentials from the environment: %+v", cfg.PhaseTwo.Linkd)
+	if err := (LinkdConfig{ControlPlane: LinkdControlPlaneConfig{InlineJWTSecret: "x"}}).Validate(); err == nil {
+		t.Fatal("an inline secret was accepted")
 	}
 }

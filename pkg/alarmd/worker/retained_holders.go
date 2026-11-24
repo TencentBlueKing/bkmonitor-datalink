@@ -72,6 +72,29 @@ func (registry *retainedHolderRegistry) remove(source retainedHolderSource) {
 	delete(registry.live, source)
 }
 
+// heldBy is what one Slot holds on the retained budget now, its stream and
+// its Plans' kept frames together: the Slot's side of a share it may not
+// pass.
+func (registry *retainedHolderRegistry) heldBy(slot execution.SlotIdentity, operation execution.Operation) uint64 {
+	registry.mu.Lock()
+	sources := make([]retainedHolderSource, 0, len(registry.live))
+	for source := range registry.live {
+		sources = append(sources, source)
+	}
+	registry.mu.Unlock()
+	var held uint64
+	for _, source := range sources {
+		holding := source.retainedHolding()
+		if holding.slot != slot || holding.operation != operation {
+			continue
+		}
+		for _, value := range holding.bytes {
+			held += value
+		}
+	}
+	return held
+}
+
 // RetainedHolder is one Slot's hold on the retained budget at the moment of
 // reading: its stream and its Plans' kept frames together.
 type RetainedHolder struct {
@@ -90,9 +113,11 @@ type RetainedHolderReading struct {
 	// asked for.
 	Holders []RetainedHolder
 	// Oldest is the Slot that has held the longest, listed or not; nil when
-	// none holds anything.
+	// no Slot runs. A Slot is a holder from when its stream begins, at no
+	// bytes until it reserves, so a Slot running long while reserving
+	// nothing is the oldest at zero bytes.
 	Oldest *RetainedHolder
-	// Total is how many Slots hold anything.
+	// Total is how many Slots run or hold anything.
 	Total int
 	// Attributed is what every row adds up to, listed or not, and Held the
 	// pool's own figure (RetainedReserved), read just after: a Slot that
@@ -123,9 +148,6 @@ func RetainedHolders(coordinator *SlotExecutionCoordinator, limit int) RetainedH
 		var bytes uint64
 		for _, value := range holding.bytes {
 			bytes += value
-		}
-		if bytes == 0 {
-			continue
 		}
 		key := slotKey{holding.slot, holding.operation}
 		row, seen := bySlot[key]

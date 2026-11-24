@@ -20,14 +20,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
 // addMaintenancePlan compiles one more Plan into the fixture's Query Group,
-// active in its own time range, and tracks its alerts in the same open-alert
-// copy, so a step judges two Plans of one group.
+// active in its own time range, so a step judges two Plans of one group.
 func addMaintenancePlan(t *testing.T, f *maintenanceTestFixture, strategyID int64, snapshot, start string) {
 	t.Helper()
 	catalog := productionG4Catalog(t, strategyID, "Threshold", "usage", "system.cpu", []string{"host"}, [][]map[string]any{{{"method": "gte", "threshold": 50}}})
@@ -51,17 +48,6 @@ func addMaintenancePlan(t *testing.T, f *maintenanceTestFixture, strategyID int6
 	compiled, ok := result.Plan()
 	if !ok {
 		t.Fatalf("compile terminal=%+v", result.PlanTerminal())
-	}
-	key := openalerts.StrategyKey{TenantID: p.Identity.TenantID, StrategyID: p.Identity.StrategyID}
-	if err := f.m.cache.TrackOwned(key); err != nil {
-		t.Fatal(err)
-	}
-	deadline := testwait.Deadline(t)
-	for !f.m.cache.Snapshot(key).Calibrated {
-		if time.Now().After(deadline) {
-			t.Fatal("cache did not calibrate the second Plan")
-		}
-		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	catalogRead := f.m.catalog.(*maintenanceTestCatalog)
 	catalogRead.plans = append(catalogRead.plans, controlplane.MaintenancePlan{Identity: p.Identity, Compiled: compiled})
@@ -98,7 +84,7 @@ func TestARecheckRefusingOnePlanCountsItAndClosesTheGroupsOtherPlans(t *testing.
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			// The first Plan is active from 09:00; the second from 10:00.
-			f := newMaintenanceTestFixture(t, c.snapshot, maintenanceTime(8, 59), []openalerts.Alert{maintenanceAlert("native", "critical")})
+			f := newMaintenanceTestFixture(t, c.snapshot, maintenanceTime(8, 59), maintenanceMatches)
 			if c.flaky {
 				f.m.legacy = &flakyLegacyProvider{}
 			}
@@ -113,8 +99,8 @@ func TestARecheckRefusingOnePlanCountsItAndClosesTheGroupsOtherPlans(t *testing.
 				return nil
 			}
 			f.m.step(context.Background())
-			if len(f.writer.batches) != 1 || len(f.writer.batches[0]) != 1 || f.writer.batches[0][0].StrategyID != 124 {
-				t.Fatalf("sent %+v, want one batch: the second Plan's alert", f.writer.batches)
+			if closes := f.closed(); len(closes) != 1 || !strings.Contains(closes[0], `"labels.strategy_id":"124"`) {
+				t.Fatalf("sent %v, want one close: the second Plan's", closes)
 			}
 			if got := f.m.counts[c.word]; got != 1 {
 				t.Fatalf("%s counted %d times, want once: counts %v", c.word, got, f.m.counts)
@@ -133,7 +119,7 @@ func TestARecheckRefusingOnePlanCountsItAndClosesTheGroupsOtherPlans(t *testing.
 // time, counted once under its word and not sent; the step then stops on
 // its ended context rather than going on to the next Plan.
 func TestARecheckWhoseTimeQueryFailsCountsItsTimeUnknown(t *testing.T) {
-	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 59), []openalerts.Alert{maintenanceAlert("native", "critical")})
+	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 59), maintenanceMatches)
 	addMaintenancePlan(t, f, 124, maintenanceReadySnapshot, "10:00")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -142,8 +128,8 @@ func TestARecheckWhoseTimeQueryFailsCountsItsTimeUnknown(t *testing.T) {
 		return nil
 	}
 	f.m.step(ctx)
-	if len(f.writer.batches) != 0 {
-		t.Fatalf("sent %+v, want nothing", f.writer.batches)
+	if len(f.closed()) != 0 {
+		t.Fatalf("sent %+v, want nothing", f.closed())
 	}
 	if got := f.m.counts[closeOutcomeEffectiveTimeUnknown]; got != 1 {
 		t.Fatalf("effective_time_unknown counted %d times, want once: counts %v", got, f.m.counts)

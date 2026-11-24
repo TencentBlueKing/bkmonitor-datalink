@@ -12,6 +12,7 @@ package access
 import (
 	"context"
 	"errors"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"net/http"
 	"strconv"
 	"strings"
@@ -31,10 +32,16 @@ const (
 	QueryFailureTransport = "transport"
 	QueryFailureDecode    = "decode"
 	QueryFailureOther     = "other"
+	// QueryFailureSampleLimit is a refusal the backend named as the query
+	// reading more samples than it serves in one query
+	// (execution.RejectionClassVMSampleLimit): the strategy's own query,
+	// counted apart from every other refusal. Which Query Group it was is
+	// on the fleet's page with the group's last failure.
+	QueryFailureSampleLimit = "sample_limit"
 )
 
 // QueryFailures is the closed list.
-var QueryFailures = []string{QueryFailureTimeout, QueryFailureRefused, QueryFailureNotFound, QueryFailureTransport, QueryFailureDecode, QueryFailureOther}
+var QueryFailures = []string{QueryFailureTimeout, QueryFailureRefused, QueryFailureNotFound, QueryFailureTransport, QueryFailureDecode, QueryFailureOther, QueryFailureSampleLimit}
 
 // queryFailureOf is how a physical query failed, or "" when it answered,
 // wholly or in part. A query that failed after its answer began comes back
@@ -64,6 +71,9 @@ func queryFailureOf(completion execution.ProviderCompletion, err error) string {
 		attempt := attempts[index]
 		if attempt.Result != execution.RouteAttemptFailed && attempt.ReasonCode == "" {
 			continue
+		}
+		if attempt.Rejection != nil && attempt.Rejection.Class == execution.RejectionClassVMSampleLimit {
+			return QueryFailureSampleLimit
 		}
 		return failureOfDetail(attempt.ReasonCode, attempt.Detail)
 	}
@@ -130,4 +140,53 @@ func queryElapsed(completion execution.ProviderCompletion, err error, called tim
 		}
 	}
 	return called
+}
+
+// queryAnswerOf is a physical query's answer for its histograms: what came
+// back, and how it ended - failure (queryFailureOf) read into the closed
+// outcomes, a timeout split by whose deadline it was (queryTimeoutSourceOf).
+func queryAnswerOf(completion execution.ProviderCompletion, err error, elapsed time.Duration, failure string) observability.PhysicalQueryAnswer {
+	answer := observability.PhysicalQueryAnswer{Elapsed: elapsed, Bytes: completion.Stats.Bytes,
+		Series: completion.Stats.Series, Records: completion.Stats.Records}
+	switch failure {
+	case "":
+		answer.Outcome = observability.PhysicalQueryOK
+	case QueryFailureTimeout:
+		answer.Outcome = observability.PhysicalQueryTimeoutAlarmdDeadline
+		if queryTimeoutSourceOf(completion, err) == observability.QueryTimeoutSourceProviderStatus {
+			answer.Outcome = observability.PhysicalQueryUpstream504
+		}
+	case QueryFailureRefused, QueryFailureNotFound, QueryFailureSampleLimit:
+		answer.Outcome = observability.PhysicalQueryRejected
+	default:
+		answer.Outcome = observability.PhysicalQueryUnavailable
+	}
+	return answer
+}
+
+// queryTimeoutSourceOf is which branch filed a query's timeout: the error's
+// own word when it carries one, else the request of its last failed attempt
+// (RequestFacts.TimeoutSource); "" when neither says.
+func queryTimeoutSourceOf(completion execution.ProviderCompletion, err error) string {
+	if err != nil {
+		var sourced interface{ QueryFailureTimeoutSource() string }
+		if errors.As(err, &sourced) {
+			return sourced.QueryFailureTimeoutSource()
+		}
+		var requested interface {
+			QueryFailureRequest() *execution.RequestFacts
+		}
+		if errors.As(err, &requested) {
+			if request := requested.QueryFailureRequest(); request != nil {
+				return request.TimeoutSource
+			}
+		}
+	}
+	attempts := completion.RouteFacts.Attempts
+	for index := len(attempts) - 1; index >= 0; index-- {
+		if request := attempts[index].Request; request != nil && request.TimeoutSource != "" {
+			return request.TimeoutSource
+		}
+	}
+	return ""
 }

@@ -161,6 +161,31 @@ Doris 的 4 个输入共 28 对 schema/query、56 个 outputs，均属于既有�
 
 同日继续按 #1420 已合并代码和仓库既有 parser 契约回溯，补充 `es_query_string_missing_mapping_single_quote_001` 与 `es_query_string_missing_mapping_trailing_boolean_001`。前者在修复前把单引号短语内部 `and` 改写为运算符，后者把尾部 `AND` 原样交给严格的 ES 原生语法；修复后分别恢复短语适配和尾部运算符忽略。两条 case 没有关联生产日志或 trace，使用 `source.kind=merged_pr` 和修复后 handler expected，不计入 W1～W7 分类采样收敛。
 
+### VM 直查部分引用无路由（2026-11-11）
+
+问题：#1579 让 VM 直查在表达式里任一引用没有存储绑定时整条报错（`VM direct query has no storage binding for reference ...`）。用 `or` 兼容新旧指标名的策略查询每个周期都失败；#1586 改为未绑定引用按无数据处理，给它一条落在首个已绑定 VM 表上、指标名为保留名的空匹配条件。此前数据集的 VM case 全部是全绑定，没有覆盖“部分引用无路由”。
+
+证据窗口为 2026-11-11 08:55～09:05 UTC，只读查询目标生产环境的 UQ trace，原始证据只保存在本地受控缓存。窗口内带该错误的 `handler-query-ts` span 共 4175 个，均为一个 trace 一个 handler，分属 2274 个查询来源、174 个空间；全部是结构化 range 入口、不指定 table_id、按字段在空间内选表，每个 input 2～6 个 reference。按表达式运算族分：算术/比较 2677 个（31 种表达式），`and`/`unless` 976 个（6 种），`or` 522 个（4 种）。其中 `a/b*100 or c/d*100` 形态 204 个，分属 109 个查询来源、99 个空间，184 个的 query_list 完全相同；报错引用为 a 的 135 个（旧名一侧无路由），为 c 的 69 个（新名一侧无路由），两者是同一形似。trace 未记录服务源码 revision；该报错文本只存在于 #1579（`c6f7f6be3`）之后、#1586 之前的代码，据此只能确认运行版本包含 #1579 而不含修复。
+
+锚定 trace 包含 1 个入口、1 个 handler 和 4 个 reference 的选表 span：a 带集群正则条件选中 2 张表，b 没有集群条件选中 6 张表（其中 2 张带空间业务过滤，分属 2 个存储），c、d 选表为 0；handler 在生成下游请求前失败，没有任何 VM 请求。脱敏后新增 `vm_structured_partial_binding_or_001`：
+
+```text
+1 input
+  × 4 parser references（a、b 有路由，c、d 无路由）
+  × route branches 2 + 6 + 0 + 0，合并为 1 个 VM 请求
+  × 1 VM stage
+  = 1 output
+```
+
+a、b 的逐表过滤条件与 trace 中逐引用的元数据条件按 multiset 一致；c、d 的条件为 `result_table_id` 指向排序后首个已绑定表、`__name__` 为保留名。c、d 选表为空时成功响应带 `SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS` 路由提示，case 用 `expect_status_code` 显式声明；未声明该字段的 case 仍把任何 `status.code` 判为失败。
+
+| 基线 | 结果 |
+| --- | --- |
+| RED：`b9b65cf6d`（含 #1579，不含修复） | HTTP 400，`VM direct query has no storage binding for reference "c"`，0 个下游请求，与生产报错一致 |
+| GREEN：`a7375c69d`（#1586） | 1 个 BKBase VM `query_range` 请求，6 张结果表，4 个引用各带过滤条件，不指定查询集群 |
+
+窗口内算术组合（例如 `a - b`、`a/b*100`）的部分无路由占多数，`a/b-(c-1)/c` 形态本窗口为 0 个。算术与 `or` 的差别在 VM 对表达式的求值结果（`or` 返回有绑定一侧，算术返回空），UQ 构造下游请求时按选择器逐个附加条件，不随运算符分支；算术二元表达式已由全绑定 VM case 覆盖，按正交特征覆盖的口径不另建算术组合 case。该问题驱动 case 不改变 W1～W8 分类采样统计。
+
 ### 请求级 ES 批处理形态扩充
 
 2026-07-29 基于用户提供的生产 Trace 查询页面形态和当前 APM→UQ 源码调用链，新增 `es_raw_explicit_multi_rt_batch_001`。该 case 只保留两个显式 `query_list` RT、相同 TraceID 过滤条件、同一实际 ES 连接和顶层 `is_es_batch=true`；原始 TraceID、应用、空间、结果表、索引和集群均未进入正式数据集。

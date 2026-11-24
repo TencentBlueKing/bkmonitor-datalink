@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -101,6 +102,7 @@ type LogPage struct {
 	RedactedLines     int             `json:"redacted_lines"`
 	Partial           bool            `json:"partial"`
 	QueryStringBytes  int             `json:"query_string_bytes"`
+	QueryForm         string          `json:"query_form"`
 	Limits            LogSearchLimits `json:"limits"`
 	RedactionContract string          `json:"redaction_contract"`
 	Limitations       []string        `json:"limitations"`
@@ -205,12 +207,45 @@ func nativeOptions(raw json.RawMessage) (map[string]logCursorTableOptions, bool)
 	return out, true
 }
 
+// The query_string forms this operation names. UQ passes query_string to a
+// Doris store through its Lucene translation (unify-query
+// internal/lucene_parser, ConditionNode.SQL): a term with a wildcard becomes
+// LIKE, a substring match; a term without one becomes an equality with the
+// whole field value (MATCH_PHRASE only on a field the table declares
+// analyzed), and a term without a field is on the log field. So a bare word
+// matches a line that is exactly that word, and field:value a field that is
+// exactly that value: 0 lines from either can be the form and not the
+// absence, and nothing in UQ's answer tells the two apart.
+const (
+	QueryFormAll       = "all"
+	QueryFormSubstring = "substring"
+	QueryFormOther     = "other"
+)
+
+// substringQuery is log:*text* or *text*: one wildcard term on the log text.
+var substringQuery = regexp.MustCompile(`^(?:log:)?\*[^\s*?:()"\\/]+\*$`)
+
+// queryFormOf names the form of a query_string, and adds a limitation for one
+// whose 0 lines cannot be read as "none".
+func queryFormOf(queryString string, limitations []string) (string, []string) {
+	switch trimmed := strings.TrimSpace(queryString); {
+	case trimmed == "" || trimmed == "*":
+		return QueryFormAll, limitations
+	case substringQuery.MatchString(trimmed):
+		return QueryFormSubstring, limitations
+	}
+	return QueryFormOther, append(limitations, "query_string is not of the form log:*text* or *text*: on a Doris store a term "+
+		"without a wildcard is compared with the whole field value (a bare word with the whole log line), so a count of 0 "+
+		"may be the form and not the absence; write log:*text* to search inside the text")
+}
+
 // LogSearch reads one page of a log table's lines in time order through UQ's
 // raw query, with UQ's own cursor (search_after, or an offset where the
 // storage has no stable sort key). The answer is read here: only each line's
 // time, its allowed metadata fields and its redacted text leave.
 func (p *Provider) LogSearch(ctx context.Context, request LogSearchRequest) (LogPage, error) {
 	page := LogPage{TableID: request.TableID, Lines: []LogLine{}, Limitations: []string{}, QueryStringBytes: len(request.QueryString)}
+	page.QueryForm, page.Limitations = queryFormOf(request.QueryString, page.Limitations)
 	if request.Redact == nil {
 		return page, fail("log_search_redaction_unconfigured", "Log text is answered only through a redaction contract; none was given.")
 	}

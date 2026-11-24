@@ -630,16 +630,15 @@ func countDiagnosis(counted *summaryCache, entry *diagnosisEntry, replica string
 	var lines []StrategyLine
 	var due *DueView
 	var census *ScheduleCensus
-	var open *OpenView
 	var waits *lateWaitIndex
 	if entry.view != nil {
 		waits = lateWaitsOf(entry.view)
 		summary.OverdueEpisodes = entry.view.OverdueEpisodes
-		lines, due, census, open = StrategyLines(entry.view, at), entry.view.Due, entry.view.Schedule, entry.view.OpenAlerts
+		lines, due, census = StrategyLines(entry.view, at), entry.view.Due, entry.view.Schedule
 	}
 	summary.Timing.RowsMillis = time.Since(started).Milliseconds()
 	counted.at, counted.body = at, &summary
-	counted.board = buildBoard(entry.id, at, entry.digest, entry.universe, row, lines, due, census, open, waits)
+	counted.board = buildBoard(entry.id, at, entry.digest, entry.universe, row, lines, due, census, waits)
 	if entry.view != nil {
 		counted.board.outages = strategyStoreOutages(entry.view, at, entry.stallAfter)
 		counted.board.noOutage = noStrategyStoreOutage(entry.view, at)

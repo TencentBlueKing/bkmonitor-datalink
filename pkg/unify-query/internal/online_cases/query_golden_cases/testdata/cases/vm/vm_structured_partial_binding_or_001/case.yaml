@@ -1,0 +1,34 @@
+id: vm_structured_partial_binding_or_001
+storage: vm
+enabled: true
+shape_signature: query_ts/range/vm/sum_by2_increase/refs4_div_mul_or/partial_binding_2of4/routes2+6+0+0/vm_query_range/output1
+expect_status_code: SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS
+source:
+  kind: production_log
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-11-11"
+  fingerprint: sha256:7bdf85030ec1909883c790eebc3d9e199fb28b52ae4fb03373182fdea221937f
+tags:
+  - query_ts_api
+  - query_range
+  - structured_query
+  - multi_reference
+  - binary_expression
+  - set_operator
+  - partial_reference_binding
+  - multi_result_table
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 生产问题形态是用 or 兼容新旧两组指标名的结构化 range 查询；4 个引用中 a、b 命中路由，c、d 的指标在空间内没有任何结果表。
+  - 修复前 VM 直查因 c 没有存储绑定整条失败，不发出任何下游请求；golden 保存修复后真实 handler 回放的 1 个 VM 请求，c、d 带落在首个已绑定表上的空匹配条件。
+  - a 带 bcs_cluster_id 正则条件，只保留 2 张匹配集群的表；b 没有集群条件，展开 6 张表，其中 2 张带空间 bk_biz_id 过滤，分属 2 个存储，因此不指定查询集群。
+  - 每个引用的选表与过滤条件按问题 trace 的逐引用元数据核对；集群 ID 为虚构值，只用于重现同样的选表结果。
+  - c、d 选表为空时空间路由在成功响应中带 SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS 提示，case 显式声明该状态码；其他状态码或 HTTP 失败仍判为失败。
+  - 空间、结果表、指标、标签、取值和存储均已一致替换为虚构值，时间整体平移并保持分钟对齐、窗口和步长。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

@@ -122,6 +122,8 @@ func (runner walkRunner) NextReadyAt() time.Time { return runner.readyAt }
 func (runner walkRunner) DueBound() scheduler.RunnerDueBound { return runner.bound }
 func (runner walkRunner) NextDeadline() time.Time            { return time.Time{} }
 
+func (walkRunner) HeldEpochs() (uint64, uint64) { return 0, 0 }
+
 func (walkRunner) DeclineHung(time.Time, time.Duration) (string, time.Time, bool) {
 	return "", time.Time{}, false
 }

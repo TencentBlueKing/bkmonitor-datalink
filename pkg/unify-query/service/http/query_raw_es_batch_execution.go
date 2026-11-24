@@ -78,6 +78,7 @@ func (s *rawQueryExecutionSink) guardTask(task func()) func() {
 	return func() {
 		defer func() {
 			if recover() != nil {
+				metric.PanicInc(context.Background(), metric.PanicSiteQueryWorker)
 				s.errCh <- fmt.Errorf("query raw execution task panicked")
 			}
 		}()
@@ -108,6 +109,7 @@ func runRawQueryExecutionProducer(
 	defer close(errCh)
 	defer func() {
 		if recover() != nil {
+			metric.PanicInc(context.Background(), metric.PanicSiteQueryWorker)
 			errCh <- fmt.Errorf("query raw ES batch execution panicked")
 		}
 	}()
@@ -181,8 +183,8 @@ func (d *rawQueryDispatcher) close() {
 	d.workersWG.Wait()
 }
 
-// executeQueryRawWithESBatch preserves the query_raw aggregation contract while
-// replacing only eligible, body-equivalent direct ES searches with _msearch.
+// executeQueryRawWithESBatch 将符合条件且请求体等价的 ES 查询组织为 _msearch，其余查询单独执行。
+// 所有结果通过 sink 汇总到同一次 Raw 请求。
 func executeQueryRawWithESBatch(
 	ctx context.Context,
 	queryTs *structured.QueryTs,
@@ -198,7 +200,6 @@ func executeQueryRawWithESBatch(
 	qb := metadata.GetQueryParams(ctx)
 	dispatcher := newRawQueryDispatcher(QueryMaxRouting)
 	defer dispatcher.close()
-	queryCount := queryRef.Count()
 
 	var (
 		allMembers      []*rawESBatchRuntimeMember
@@ -231,10 +232,8 @@ func executeQueryRawWithESBatch(
 		referenceNames = append(referenceNames, referenceName)
 	}
 	sort.Strings(referenceNames)
-
 	for _, referenceName := range referenceNames {
-		references := queryRef[referenceName]
-		for referenceIndex, reference := range references {
+		for referenceIndex, reference := range queryRef[referenceName] {
 			if reference == nil {
 				continue
 			}
@@ -242,27 +241,13 @@ func executeQueryRawWithESBatch(
 				if query == nil {
 					continue
 				}
-
 				localQuery := *query
-				localQuery.ResultTableOption = query.ResultTableOption.Clone()
-				if queryTs.IsSearchAfter && len(queryTs.ResultTableOptions) > 0 {
-					if localQuery.ResultTableOption == nil ||
-						len(localQuery.ResultTableOption.SearchAfter) == 0 {
-						continue
-					}
-				}
-
-				sink.mergeLabelMap(function.LabelMap(ctx, &localQuery))
-				if queryCount > 1 && !queryTs.IsMultiFrom {
-					localQuery.Size += localQuery.From
-					localQuery.From = 0
-				}
-
 				location := rawESBatchMemberLocation{
 					referenceName:  referenceName,
 					referenceIndex: referenceIndex,
 					queryIndex:     queryIndex,
 				}
+				sink.mergeLabelMap(function.LabelMap(ctx, &localQuery))
 				instance := prometheus.GetTsDbInstance(ctx, &localQuery)
 				member := &rawESBatchRuntimeMember{
 					location: location,
@@ -355,6 +340,7 @@ func executeQueryRawWithESBatch(
 			defer coordinators.Done()
 			defer func() {
 				if recover() != nil {
+					metric.PanicInc(ctx, metric.PanicSiteQueryWorker)
 					sink.errCh <- fmt.Errorf("query raw execution task panicked")
 				}
 			}()

@@ -32,7 +32,6 @@ func setDefaultConfig() {
 	viper.SetDefault(ReadTimeoutConfigPath, time.Second*30)
 	viper.SetDefault(ServiceNameConfigPath, "bkmonitorv3:spaces")
 
-	viper.SetDefault(SchemaProviderTypeConfigPath, "static")
 	viper.SetDefault(KVBasePathConfigPath, "bkmonitorv3:unify-query")
 }
 
@@ -51,7 +50,6 @@ func LoadConfig() {
 	ReadTimeout = viper.GetDuration(ReadTimeoutConfigPath)
 	ServiceName = viper.GetString(ServiceNameConfigPath)
 
-	SchemaProviderType = viper.GetString(SchemaProviderTypeConfigPath)
 	KVBasePath = viper.GetString(KVBasePathConfigPath)
 }
 

@@ -31,7 +31,6 @@ import (
 // role, because a role with no client of its own has no health of its own.
 type endpointSharing struct {
 	runtimeIsSource       bool
-	linkdDedicated        bool
 	cmdbSharedWith        string
 	dynamicSharedWith     string
 	targetGroupSharedWith string
@@ -64,11 +63,6 @@ func (sharing endpointSharing) redisClientForRole(role string) string {
 			return sharing.redisClientForRole(sharing.targetGroupSharedWith)
 		}
 		return "target_group"
-	case fleet.EndpointOpenAlertSet:
-		if sharing.linkdDedicated {
-			return "linkd"
-		}
-		return sharing.redisClientForRole(fleet.EndpointStateRedis)
 	case fleet.EndpointCompatOutput:
 		return "legacy_output"
 	}
@@ -123,15 +117,7 @@ func resolveEndpoints(cfg config.Config, sharing endpointSharing) []fleet.Endpoi
 	} else {
 		endpoints = append(endpoints, fleet.Endpoint{Role: fleet.EndpointDynamicConfig, Kind: "redis"})
 	}
-	linkdConnection := cfg.RuntimeStoreRedis()
-	if cfg.PhaseTwo.Linkd.Connection != nil {
-		linkdConnection = *cfg.PhaseTwo.Linkd.Connection
-	}
-	openAlerts := redisEndpoint(fleet.EndpointOpenAlertSet, linkdConnection, cfg.PhaseTwo.Linkd.Prefix())
-	if reflect.DeepEqual(linkdConnection, cfg.RuntimeStoreRedis()) {
-		openAlerts.SharedWith = fleet.EndpointStateRedis
-	}
-	endpoints = append(endpoints, openAlerts, linkdConsoleEndpoint(cfg),
+	endpoints = append(endpoints,
 		fleet.Endpoint{Role: fleet.EndpointQueryBackend, Kind: "http", Address: cfg.PhaseTwo.Access.UQEndpoint,
 			Configured: cfg.PhaseTwo.Access.UQEndpoint != ""},
 		outputKafkaEndpoint(cfg),
@@ -153,10 +139,9 @@ func resolveEndpoints(cfg config.Config, sharing endpointSharing) []fleet.Endpoi
 func endpointFactsSource(
 	cfg config.Config, sharing endpointSharing, recorder *metric.Recorder,
 	cmdb *cmdbcache.Store, settings *platformsettings.Cache,
-	source func() *fleet.SourceFacts, outputSink func() outputSinkState, openAlerts func() *fleet.OpenAlertSetFacts,
+	source func() *fleet.SourceFacts, outputSink func() outputSinkState,
 	now func() time.Time,
 ) func() []fleet.Endpoint {
-	sharing.linkdDedicated = cfg.PhaseTwo.Linkd.Connection != nil && !reflect.DeepEqual(*cfg.PhaseTwo.Linkd.Connection, cfg.RuntimeStoreRedis())
 	static := resolveEndpoints(cfg, sharing)
 	return func() []fleet.Endpoint {
 		at := now()
@@ -275,15 +260,6 @@ func endpointFactsSource(
 					}
 					entry.Writer = writer
 				}
-			case fleet.EndpointOpenAlertSet:
-				if openAlerts != nil {
-					if facts := openAlerts(); facts != nil {
-						// No writer row: the consumer publishes no heartbeat,
-						// and a successful read is not evidence of a recent
-						// writer. The full account rides beside the row.
-						entry.OpenAlertSet = facts
-					}
-				}
 			}
 		}
 		return endpoints
@@ -399,4 +375,10 @@ func readinessFactsSource(health *phaseTwoApplicationHealth) func() *fleet.Readi
 		}
 		return facts
 	}
+}
+
+// sameRedisConnection is whether two connections are one: a role then
+// reuses the client it has rather than opening a second.
+func sameRedisConnection(left, right config.RedisConnectionConfig) bool {
+	return reflect.DeepEqual(left, right)
 }

@@ -71,32 +71,47 @@ func (closes *ManualCloses) Matches(fingerprint string, firstAbsent int64) bool 
 func applyManualCloses(
 	memory map[string]GroupMemory, closes *ManualCloses, evaluationTime int64,
 ) (map[string]GroupMemory, uint64) {
-	if closes == nil || closes.Fingerprint == nil || len(closes.ClosedAt) == 0 || len(memory) == 0 {
+	if len(memory) == 0 {
 		return memory, 0
 	}
 	var applied map[string]GroupMemory
 	var stopped uint64
 	for key, entry := range memory {
-		if entry.FirstAbsent == 0 || entry.SuppressedAt != 0 {
-			continue
-		}
-		group, named := ParseGroupKey(key)
-		if !named {
-			continue
-		}
-		fingerprint, err := closes.Fingerprint(group)
-		if err != nil || !closes.Matches(fingerprint, entry.FirstAbsent) {
+		closed, stops := manualCloseOf(closes, key, entry, evaluationTime)
+		if !stops {
 			continue
 		}
 		if applied == nil {
 			applied = copyGroupMemory(memory)
 		}
 		stopped++
-		entry.SuppressedAt = evaluationTime
-		applied[key] = entry
+		applied[key] = closed
 	}
 	if applied == nil {
 		return memory, 0
 	}
 	return applied, stopped
+}
+
+// manualCloseOf is applyManualCloses for one group: the group's memory after
+// the closes, and whether a close stopped it. A round judged one group at a
+// time applies it as each group is read, which is the same thing - nothing a
+// close decides about one group depends on another.
+func manualCloseOf(closes *ManualCloses, key string, entry GroupMemory, evaluationTime int64) (GroupMemory, bool) {
+	if closes == nil || closes.Fingerprint == nil || len(closes.ClosedAt) == 0 {
+		return entry, false
+	}
+	if entry.FirstAbsent == 0 || entry.SuppressedAt != 0 {
+		return entry, false
+	}
+	group, named := ParseGroupKey(key)
+	if !named {
+		return entry, false
+	}
+	fingerprint, err := closes.Fingerprint(group)
+	if err != nil || !closes.Matches(fingerprint, entry.FirstAbsent) {
+		return entry, false
+	}
+	entry.SuppressedAt = evaluationTime
+	return entry, true
 }

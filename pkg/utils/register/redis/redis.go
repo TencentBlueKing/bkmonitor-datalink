@@ -35,10 +35,20 @@ type Option struct {
 	ReadTimeout      time.Duration
 }
 
-// NewRedisClient 初始化 redis 缓存实例
+// NewRedisClient 初始化 redis 缓存实例，并检查连通性
 func NewRedisClient(
 	ctx context.Context, opt *Option,
 ) (redis.UniversalClient, error) {
+	cli := NewUniversalClient(opt)
+	_, err := cli.Ping(ctx).Result()
+	if err != nil {
+		return nil, err
+	}
+	return cli, nil
+}
+
+// NewUniversalClient 按配置创建 redis 客户端，不检查连通性，连接在首次使用时建立
+func NewUniversalClient(opt *Option) redis.UniversalClient {
 	option := &redis.UniversalOptions{
 		MasterName:       opt.MasterName,
 		DB:               opt.Db,
@@ -53,11 +63,5 @@ func NewRedisClient(
 		option.Addrs = []string{fmt.Sprintf("%s:%d", opt.Host, opt.Port)}
 		option.MasterName = ""
 	}
-
-	cli := redis.NewUniversalClient(option)
-	_, err := cli.Ping(ctx).Result()
-	if err != nil {
-		return nil, err
-	}
-	return cli, nil
+	return redis.NewUniversalClient(option)
 }

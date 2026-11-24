@@ -435,18 +435,39 @@ func NewRecordIDDeriverV2(dimensionIdentityDigest string) (*RecordIDDeriverV2, e
 
 // Derive is DeriveRecordIDV2(the deriver's series, sourceTime).
 func (deriver *RecordIDDeriverV2) Derive(sourceTime int64) (string, error) {
+	sum, err := deriver.sumAt(sourceTime)
+	if err != nil {
+		return "", err
+	}
+	var encoded [2 * sha256.Size]byte
+	hex.Encode(encoded[:], sum)
+	return string(encoded[:]), nil
+}
+
+// AppendDerive appends the id Derive gives to dst, allocating nothing of its
+// own: a reader deriving every point of a series into one buffer, or
+// comparing each point's id with the one it was given, pays per series, not
+// per point.
+func (deriver *RecordIDDeriverV2) AppendDerive(dst []byte, sourceTime int64) ([]byte, error) {
+	sum, err := deriver.sumAt(sourceTime)
+	if err != nil {
+		return dst, err
+	}
+	return hex.AppendEncode(dst, sum), nil
+}
+
+// sumAt is the id's hash at sourceTime, in the deriver's own buffer.
+func (deriver *RecordIDDeriverV2) sumAt(sourceTime int64) ([]byte, error) {
 	if sourceTime < 0 {
-		return "", invalid("record_id.source_time", "must be non-negative")
+		return nil, invalid("record_id.source_time", "must be non-negative")
 	}
 	if err := deriver.digest.(encoding.BinaryUnmarshaler).UnmarshalBinary(deriver.prefix); err != nil {
-		return "", fmt.Errorf("record id deriver: %w", err)
+		return nil, fmt.Errorf("record id deriver: %w", err)
 	}
 	text := strconv.AppendInt(deriver.length[4:4], sourceTime, 10)
 	binary.BigEndian.PutUint32(deriver.length[:4], uint32(len(text)))
 	_, _ = deriver.digest.Write(deriver.length[:4+len(text)])
-	var encoded [2 * sha256.Size]byte
-	hex.Encode(encoded[:], deriver.digest.Sum(deriver.sum[:0]))
-	return string(encoded[:]), nil
+	return deriver.digest.Sum(deriver.sum[:0]), nil
 }
 
 func DeriveQueryGroupKafkaKeyV2(tenantID, queryGroupKey string) ([]byte, error) {

@@ -47,7 +47,7 @@ lint:
 # The alarmd-cli release is packed from ../alarmd-cli with the same version
 # and embedded in the binary (clirelease), so whatever copies the binary ships
 # the CLI too. The release needs a release version: the root Makefile passes
-# 0.4.<BUILD_NO>; a plain local make, whose VERSION is the 0.4.x line, builds
+# <line>.<BUILD_NO>, the line read from VERSION; a plain local make builds
 # without it and says so. CLI_RELEASE=0 also builds without it. Building
 # without it clears what an earlier pack left, which go:embed would otherwise
 # pick up, and the distribution routes then answer cli_release_unavailable.

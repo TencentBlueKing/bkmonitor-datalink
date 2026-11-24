@@ -47,3 +47,12 @@ type OpenAlertSet interface {
 type OneTimeCloseSet interface {
 	OneTimeClose() bool
 }
+
+// OpenLevelSet is a set that also knows which Levels of a series' open
+// alert are open: the Levels whose ABNORMAL this process sent and whose
+// RECOVERY it has not. known is false where it cannot say (a restart, or an
+// alert it learned of by a search), and then nothing is held for it. A
+// memory lookup, like Contains.
+type OpenLevelSet interface {
+	OpenLevels(tenantID, strategyID, fingerprint string) (levels []uint32, known bool)
+}

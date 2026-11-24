@@ -74,7 +74,7 @@ func (waiter startupWaiter) await(ctx context.Context, dependency string, attemp
 		err := attempt(ctx)
 		if err == nil {
 			if waited > 0 && waiter.logger != nil {
-				waiter.logger.Info(observability.StageStartup, "dependency_answered", waited, 0,
+				waiter.logger.InfoEvent(observability.StageStartup, "dependency_answered", waited,
 					slog.String("dependency", dependency))
 			}
 			return nil
@@ -87,7 +87,7 @@ func (waiter startupWaiter) await(ctx context.Context, dependency string, attemp
 		}
 		waiter.recorder.RecordStartupDependencyWait(dependency)
 		if waiter.logger != nil {
-			waiter.logger.Error(observability.StageStartup, "dependency_waiting", waited+1, 0,
+			waiter.logger.ErrorEvent(observability.StageStartup, "dependency_waiting", waited+1,
 				slog.String("dependency", dependency), slog.Duration("retry_in", delay), slog.String("error", err.Error()))
 		}
 		if waiter.health != nil {

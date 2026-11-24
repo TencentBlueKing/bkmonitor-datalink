@@ -81,7 +81,7 @@ func newSetFeatureFlagsCmd() *cobra.Command {
 func newResetFeatureFlagsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:          "reset-feature-flags",
-		Short:        "delete the Redis feature flag snapshot and notify running UQ to migrate from Consul again",
+		Short:        "delete the Redis feature flag snapshot and notify running UQ to migrate from Consul again, or to use built-in defaults without a Consul address",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -94,7 +94,7 @@ func newResetFeatureFlagsCmd() *cobra.Command {
 			if err := flags.ResetFeatureFlags(cmd.Context()); err != nil {
 				return err
 			}
-			cmd.Printf("Redis feature flag snapshot deleted: %s; running UQ will retry migration from Consul\n", flags.GetFeatureFlagsPath())
+			cmd.Printf("Redis feature flag snapshot deleted: %s; running UQ will retry migration from Consul, or use built-in defaults without a Consul address\n", flags.GetFeatureFlagsPath())
 			return nil
 		},
 	}

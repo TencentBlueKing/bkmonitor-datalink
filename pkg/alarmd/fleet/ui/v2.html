@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>告警检测 · 策略视图</title>
+<title>告警检测：策略视图</title>
 <style>
   :root { color-scheme: light dark; --ink: #1d232b; --mute: #6b7480; --line: #d9dee5; --bg: #f7f8fa; --card: #fff;
     --ok: #2f8f4e; --warn: #b9750c; --bad: #c0392b; --wait: #4a6fa5; }
@@ -125,13 +125,13 @@ function renderTop(list, health) {
   var groups = (health && health.builds) || [];
   if (groups.length === 1) {
     var build = groups[0].build || {};
-    parts.push('版本 ' + (build.version || '未上报') + ' · ' + groups[0].replicas.length + ' 个副本');
+    parts.push('版本 ' + (build.version || '未上报') + '，' + groups[0].replicas.length + ' 个副本');
   } else if (groups.length > 1) {
     parts.push(groups.length + ' 个构建同时在跑（滚动中）');
   }
   if (health && health.expected != null) parts.push('应有 ' + health.expected + ' 个对象，已知状态 ' + health.determined);
   parts.push('读数 ' + clockLabel(new Date().toISOString()));
-  meta.textContent = parts.join(' · ');
+  meta.textContent = parts.join('，');
 }
 
 // L1: one column per action word, in the server's order, each strategy on
@@ -166,12 +166,12 @@ function renderColumns(list) {
       var a = document.createElement('a');
       a.href = '#s=' + encodeURIComponent(line.strategy_id);
       a.textContent = line.line;
-      a.title = (line.standing.check || '') + (line.standing.refined_by ? ' · ' + line.standing.refined_by : '') + ' · ' + line.deciding_object;
+      a.title = (line.standing.check || '') + (line.standing.refined_by ? '，' + line.standing.refined_by : '') + '，' + line.deciding_object;
       li.appendChild(a);
       var clocks = [];
       if (line.since) clocks.push('自 ' + ago(line.since, now) + (line.since_basis && line.since_basis !== 'EXACT' ? '（' + word('since_basis', line.since_basis) + '）' : ''));
       if (line.last_good_at) clocks.push('最近一次正常 ' + ago(line.last_good_at, now));
-      if (clocks.length) li.appendChild(text('span', clocks.join(' · '), 'clock'));
+      if (clocks.length) li.appendChild(text('span', clocks.join('，'), 'clock'));
       var advice = line.time_delay_advice;
       if (advice) {
         // Beside the sentence, whatever decided it: the owner's setting that
@@ -284,8 +284,8 @@ function objectLine(row, strategyID) {
     parts = ['本策略在检测；同对象上策略 ' + others.join('、') + ' 有它们自己的问题（见该策略）'];
   }
   if (row.since) parts.push('自 ' + ago(row.since));
-  li.appendChild(text('span', parts.join(' · ')));
-  li.title = (standing.check || '') + (row.cause_reason ? ' · ' + row.cause_reason : '');
+  li.appendChild(text('span', parts.join('，')));
+  li.title = (standing.check || '') + (row.cause_reason ? '，' + row.cause_reason : '');
   // Whether there is anything to show is decided by what is there -- the
   // named windows -- not by the parallel count of short windows, which
   // only writes the summary sentence. This is a rule, not a repair: the
@@ -301,7 +301,7 @@ function objectLine(row, strategyID) {
   // same absence.
   if (row.coverage_rejected) {
     var refused = text('li', '这一轮的窗口读数服务端判定不自洽（' + word('coverage_rejected', row.coverage_rejected.rule) + '），未展示');
-    refused.title = row.coverage_rejected.rule + (row.coverage_rejected.series ? ' · ' + row.coverage_rejected.series : '');
+    refused.title = row.coverage_rejected.rule + (row.coverage_rejected.series ? '，' + row.coverage_rejected.series : '');
     li.appendChild(refused);
   }
   var coverage = row.coverage || {};
@@ -330,7 +330,7 @@ function objectLine(row, strategyID) {
       var holes = (window.holes || []).map(function (hole) { return clockLabel(hole.at) + ' ' + word('hole', hole.cause); });
       var head = '序列 ' + String(window.series).slice(0, 8) + '：' + window.valid + '/' + window.required + '，' + word('verdict', window.verdict);
       var item = text('li', head + (holes.length ? '；缺 ' + holes.join('、') : ''));
-      item.title = window.key + (window.guard_reason ? ' · ' + window.guard_reason : '');
+      item.title = window.key + (window.guard_reason ? '，' + window.guard_reason : '');
       sub.appendChild(item);
     });
     li.appendChild(sub);

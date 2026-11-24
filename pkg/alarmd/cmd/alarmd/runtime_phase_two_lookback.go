@@ -151,7 +151,7 @@ func lookbackSupplement(
 				return lookback.SupplementOutcome{Refused: lookback.DirectedKeptReadAbsent, Held: held}
 			default:
 				if logger != nil {
-					logger.Warn("lookback", "supplement_failed", 0, 0, slog.String("query_group", string(job.QueryGroup)),
+					logger.WarnEvent("lookback", "supplement_failed", 0, slog.String("query_group", string(job.QueryGroup)),
 						slog.Int64("evaluation_time", int64(job.EvaluationTime)), slog.String("error", err.Error()))
 				}
 				return lookback.SupplementOutcome{Refused: lookback.DirectedFailed, Held: held}
@@ -197,9 +197,13 @@ func buildLookback(
 	logger *observability.Logger,
 	now func() time.Time,
 	memory func(bytes uint64) bool,
+	rounds func(*lookback.Options),
 	holds ...*productionReadHolds,
 ) (*lookback.Engine, lookbackStanding, error) {
 	options := lookbackOptions(recheck, flights, ownership, logger, now, memory)
+	if rounds != nil {
+		rounds(&options)
+	}
 	if len(holds) > 0 && holds[0] != nil {
 		holds[0].bindLookback(&options)
 	}
@@ -212,6 +216,12 @@ func buildLookback(
 		holds[0].queryDuration.Store(&measure)
 	}
 	return engine, lookbackStanding{Running: true}, nil
+}
+
+// lookbackRounds gives the lookback the probation and edge-probe span the
+// external dependencies override, none in production.
+func (external phaseTwoProductionExternalDependencies) lookbackRounds(options *lookback.Options) {
+	options.ProbationRounds, options.EdgeProbeSpan = external.ProbationRounds, external.EdgeProbeSpan
 }
 
 // lookbackOptions wire the lookback to this process: its query client, its
@@ -231,7 +241,7 @@ func lookbackOptions(
 		Supplement:  lookbackSupplement(ownership, logger, now, waitWithin),
 		OnFault: func(reason string, queryGroup execution.QueryGroupIdentity) {
 			if logger != nil {
-				logger.Warn("lookback", "fault", 0, 0, slog.String("reason", reason), slog.String("query_group", string(queryGroup)))
+				logger.WarnEvent("lookback", "fault", 0, slog.String("reason", reason), slog.String("query_group", string(queryGroup)))
 			}
 		}}
 }
@@ -537,6 +547,17 @@ func (tap *lookbackDecisionTap) Observe(ctx context.Context, observation observa
 		!engine.KeepsDecisions(execution.QueryGroupIdentity(trace.QueryGroupKey)) {
 		return
 	}
+	if report, decided := slotDecisionReportOf(observation, trace); decided {
+		engine.NoteSlotDecision(report)
+	}
+}
+
+// slotDecisionReportOf is what one line says of its Slot's decision: a
+// completed Slot's events and mutations, or an evaluation's Level outcomes,
+// summed by outcome - over a line merged from routine evaluations
+// (observability.MergeRoutineEvaluation) what the lines summed, which
+// NoteSlotDecision adds up.
+func slotDecisionReportOf(observation observability.Observation, trace observability.TraceFields) (lookback.SlotDecisionReport, bool) {
 	report := lookback.SlotDecisionReport{QueryGroup: execution.QueryGroupIdentity(trace.QueryGroupKey),
 		Slot: execution.EvaluationTime(trace.EvaluationTime)}
 	switch {
@@ -552,7 +573,7 @@ func (tap *lookbackDecisionTap) Observe(ctx context.Context, observation observa
 			report.Levels[level.Outcome] += level.Count
 		}
 	default:
-		return
+		return report, false
 	}
-	engine.NoteSlotDecision(report)
+	return report, true
 }

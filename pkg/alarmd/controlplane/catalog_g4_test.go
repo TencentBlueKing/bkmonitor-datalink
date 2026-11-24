@@ -58,6 +58,11 @@ func TestG4CatalogFreezesFourAlgorithmQueryAndRequirementContracts(t *testing.T)
 				!reflect.DeepEqual(projection.IdentityFields, []string{"bk_target_cloud_id", "bk_target_ip", "display_name"}) {
 				t.Fatalf("ProcPort projection = %+v", projection)
 			}
+			// The edit close reads what the records carry from here
+			// (StrategyPlanFacts.RecordDimensionFields).
+			if !reflect.DeepEqual(plan.Plan.InputProjection.DimensionFields, projection.DimensionFields) {
+				t.Fatalf("ProcPort Plan projection = %v, want the records' %v", plan.Plan.InputProjection.DimensionFields, projection.DimensionFields)
+			}
 			for _, dynamic := range projection.DimensionFields {
 				if containsG4String(projection.IdentityFields, dynamic) {
 					t.Fatalf("dynamic field %q entered identity %v", dynamic, projection.IdentityFields)

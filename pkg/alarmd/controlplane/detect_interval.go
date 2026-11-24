@@ -59,10 +59,18 @@ const (
 	// ReasonDetectIntervalAlgorithmNotSliding names an item a Level of which
 	// detects with an algorithm that cannot run at the step: AdvancedRingRatio
 	// needs history points a step apart, which windows an aggregation
-	// interval long cannot place, and OsRestart compares with points 10 and
-	// 25 minutes back that a step of 10 minutes or more would put out of
-	// order. It runs at the aggregation interval, as if the field were absent.
+	// interval long cannot place, and OsRestart detected less often than it
+	// aggregates compares with the previous detection, which a step of 10
+	// minutes or more would put behind the point 10 minutes back. It runs at
+	// the aggregation interval, as if the field were absent.
 	ReasonDetectIntervalAlgorithmNotSliding = "ALGORITHM_NOT_SLIDING"
+	// ReasonDetectIntervalHistoryOffGrid names an item a Level of which
+	// compares with history points the step's buckets do not start at:
+	// OsRestart's uptime history is asked from its farthest point in buckets
+	// a step apart (an aggregation interval apart for a step above it), and
+	// a point not a whole number of them after the start is never read. It
+	// runs at the aggregation interval, as if the field were absent.
+	ReasonDetectIntervalHistoryOffGrid = "HISTORY_OFF_GRID"
 )
 
 // DetectIntervalWarnings are the reasons a detect_interval that runs is
@@ -70,7 +78,7 @@ const (
 // the fleet lists them under their own check.
 var DetectIntervalWarnings = []string{
 	ReasonDetectIntervalAboveAgg, ReasonDetectIntervalNotDivisible, ReasonDetectIntervalBelowFloor,
-	ReasonDetectIntervalSourceNotSliding, ReasonDetectIntervalAlgorithmNotSliding,
+	ReasonDetectIntervalSourceNotSliding, ReasonDetectIntervalAlgorithmNotSliding, ReasonDetectIntervalHistoryOffGrid,
 }
 
 // slidingSourceSemantics are the query sources a step shorter than the
@@ -121,7 +129,7 @@ func itemDetectStep(item legacyItem, aggregation int64) (detectStep, error) {
 	if step.Seconds == aggregation {
 		return step, nil
 	}
-	if reason, detail := notSliding(item, step.Seconds); reason != "" {
+	if reason, detail := notSliding(item, step.Seconds, aggregation); reason != "" {
 		return detectStep{Seconds: aggregation, Written: written, Warning: reason, Detail: detail}, nil
 	}
 	if step.Warning == "" {
@@ -137,12 +145,30 @@ func itemDetectStep(item legacyItem, aggregation int64) (detectStep, error) {
 }
 
 // osRestartFixedOffsetSeconds is the nearer of the two fixed history points
-// OsRestart compares with; its previous detection has to be nearer still.
+// OsRestart compares with. Detected less often than it aggregates, its
+// previous point is the previous detection, which has to be nearer still;
+// detected more often, it is the previous aggregation window, nearer
+// whatever the step.
 const osRestartFixedOffsetSeconds = 600
+
+// osRestartHistoryOnGrid is whether each uptime point OsRestart compares
+// with starts a bucket of its history: the history is asked from the
+// farthest point, in buckets a step apart, or an aggregation interval apart
+// for a step above it (catalog.go buildRequirements).
+func osRestartHistoryOnGrid(step, aggregation int64) bool {
+	offsets := strategy.OsRestartHistoryOffsets(step, aggregation)
+	bucket := min(step, aggregation)
+	for _, offset := range offsets {
+		if (offsets[len(offsets)-1]-offset)%bucket != 0 {
+			return false
+		}
+	}
+	return true
+}
 
 // notSliding names why an item cannot run at step, a step other than its
 // aggregation interval, the empty reason when it can.
-func notSliding(item legacyItem, step int64) (string, string) {
+func notSliding(item legacyItem, step, aggregation int64) (string, string) {
 	for _, raw := range item.QueryConfigs {
 		var query struct {
 			DataSourceLabel string `json:"data_source_label"`
@@ -158,8 +184,11 @@ func notSliding(item legacyItem, step int64) (string, string) {
 	}
 	for _, algorithm := range item.Algorithms {
 		if algorithm.Type == strategy.DetectorKindAdvancedRingRatio ||
-			algorithm.Type == strategy.DetectorKindOsRestart && step >= osRestartFixedOffsetSeconds {
+			algorithm.Type == strategy.DetectorKindOsRestart && strategy.RingHistoryInterval(step, aggregation) >= osRestartFixedOffsetSeconds {
 			return ReasonDetectIntervalAlgorithmNotSliding, "algorithm=" + algorithm.Type
+		}
+		if algorithm.Type == strategy.DetectorKindOsRestart && !osRestartHistoryOnGrid(step, aggregation) {
+			return ReasonDetectIntervalHistoryOffGrid, "algorithm=" + algorithm.Type
 		}
 	}
 	return "", ""

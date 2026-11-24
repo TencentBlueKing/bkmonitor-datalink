@@ -27,6 +27,7 @@ type response struct {
 }
 
 func (r *response) failed(ctx context.Context, err error) {
+	metadata.RecordRequestFailure(ctx, err)
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusFailed, user.SpaceUID, user.Source)
 

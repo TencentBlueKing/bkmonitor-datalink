@@ -70,6 +70,10 @@ type productionReadHolds struct {
 	linksMu           sync.Mutex
 	links             map[string]uint64
 	retireCloseFailed atomic.Uint64
+	// retireClosed is the retired groups whose read hold closed, by where:
+	// their own round at the retirement, or their release once drained.
+	retireClosedMu sync.Mutex
+	retireClosed   map[string]uint64
 	// closeSkipped is the previous Segments a prepare could not close
 	// because the record is already past them without their closing facts.
 	closeSkipped atomic.Uint64
@@ -89,7 +93,11 @@ type productionReadHoldGroup struct {
 	prepared       execution.ScheduleSegmentFact
 	lastTransition execution.EvaluationTime
 	predecessors   []execution.QueryGroupIdentity
-	queryRoute     string
+	// awaiting is a group whose last Slot waited on a predecessor
+	// (readhold.AwaitingPredecessorError): its predecessors are kept, and
+	// read again on each round before the Slot asks again.
+	awaiting   bool
+	queryRoute string
 	// querySource names the data the query reads (readHoldSource): the
 	// groups that share it are the peers a new group's first hold is seeded
 	// from.
@@ -157,7 +165,7 @@ func (holds *productionReadHolds) limitCut(cut readhold.LimitCut) {
 	if ok && logged == cut.To {
 		return
 	}
-	holds.logger.Warn("read_hold", "limit_cut", 0, 0, slog.String("query_group", string(cut.QueryGroup)),
+	holds.logger.WarnEvent("read_hold", "limit_cut", 0, slog.String("query_group", string(cut.QueryGroup)),
 		slog.Int64("slot", int64(cut.Slot)), slog.Int64("from_hold_ms", cut.From.Milliseconds()), slog.Int64("to_hold_ms", cut.To.Milliseconds()),
 		slog.Int64("period_s", int64(cut.Period/time.Second)), slog.Int64("max_replay_slots", maxReplay),
 		slog.Int64("expected_skipped_slots", steps-maxReplay))
@@ -171,8 +179,8 @@ func (holds *productionReadHolds) owner(qg execution.QueryGroupIdentity) (readho
 		session = group.session
 	}
 	holds.mu.Unlock()
-	lease, accepting := session.Current()
-	if !accepting || !lease.Deadline.After(holds.now()) {
+	lease, _ := session.Current()
+	if !session.Alive(holds.now()) {
 		return readhold.Owner{}, ownership.ErrStaleFence
 	}
 	return readhold.Owner{Fence: lease.Fence, ContentScope: lease.ContentScope}, nil
@@ -254,6 +262,25 @@ func (holds *productionReadHolds) forget(qg execution.QueryGroupIdentity, sessio
 	holds.indexSourceLocked(qg, "")
 	delete(holds.groups, qg)
 	holds.controller.Forget(qg)
+}
+
+// readPredecessorsAgain reads again the records of a waiting group's
+// predecessors, once a round: the Segment is prepared, so preparing it reads
+// nothing. A predecessor this Worker holds is skipped: its record here is the
+// one its own Slots write. One it held and has released since is no longer
+// skipped, and is read as any other.
+func (holds *productionReadHolds) readPredecessorsAgain(ctx context.Context, group *productionReadHoldGroup) {
+	holds.mu.Lock()
+	foreign := make([]execution.QueryGroupIdentity, 0, len(group.predecessors))
+	for _, qg := range group.predecessors {
+		if holds.groups[qg] == nil && !slices.Contains(foreign, qg) {
+			foreign = append(foreign, qg)
+		}
+	}
+	holds.mu.Unlock()
+	for _, qg := range foreign {
+		holds.report("predecessor_unreadable", qg, holds.controller.RestoreBatch(ctx, []execution.QueryGroupIdentity{qg}))
+	}
 }
 
 // An inherited bridge is already in the owned fenced record. Foreign
@@ -576,6 +603,9 @@ func (holds *productionReadHolds) PrepareSchedule(ctx context.Context, schedule 
 		return readhold.ErrNotRestored
 	}
 	if reflect.DeepEqual(group.prepared, schedule.Segment) {
+		if group.awaiting {
+			holds.readPredecessorsAgain(ctx, group)
+		}
 		return nil
 	}
 	// The route and delay are the Query Group's, whichever Segment: taken
@@ -737,6 +767,12 @@ func (holds *productionReadHolds) SlotReadHold(ctx context.Context, schedule exe
 		if hold, err = holds.slotReadHold(ctx, schedule, at, fence); err == nil {
 			return hold, nil
 		}
+		// Waiting on a predecessor is not a degraded hold: the Slot is not
+		// frozen, and the next round reads the predecessor again.
+		var awaiting *readhold.AwaitingPredecessorError
+		if errors.As(err, &awaiting) {
+			return 0, err
+		}
 		reason := readhold.DegradedHoldFailed
 		if errors.Is(err, readhold.ErrSegmentStale) {
 			reason = readhold.DegradedStaleSegment
@@ -831,12 +867,19 @@ func (holds *productionReadHolds) slotReadHold(ctx context.Context, schedule exe
 		}
 	}
 	hold, err := holds.controller.SlotReadHold(ctx, schedule, at, fence)
+	// Waiting on a predecessor, the group keeps it, to read it again on its
+	// next round (readPredecessorsAgain).
+	var awaiting *readhold.AwaitingPredecessorError
+	waiting := errors.As(err, &awaiting)
 	holds.mu.Lock()
 	currentGroup := holds.groups[schedule.Segment.QueryGroup]
 	holds.mu.Unlock()
 	if currentGroup != nil {
 		currentGroup.mu.Lock()
-		holds.releasePredecessors(currentGroup)
+		currentGroup.awaiting = waiting
+		if !waiting {
+			holds.releasePredecessors(currentGroup)
+		}
 		currentGroup.mu.Unlock()
 	}
 	if err == nil && hold > holds.controller.ReadHold(schedule.Segment.QueryGroup) {
@@ -865,6 +908,22 @@ func (holds *productionReadHolds) slotReadHold(ctx context.Context, schedule exe
 	return hold, err
 }
 
+// The slot source counts a retired group's read hold closes through this
+// interface when the read holds it is given implement it, and counts nothing
+// when they do not: pinned here, so that the holds losing either method fail
+// to build rather than leave every close and its failures uncounted.
+var _ scheduler.RetireCloseCounter = (*productionReadHolds)(nil)
+
+// RetireClosed counts a retired group whose read hold closed, by where.
+func (holds *productionReadHolds) RetireClosed(site string) {
+	holds.retireClosedMu.Lock()
+	defer holds.retireClosedMu.Unlock()
+	if holds.retireClosed == nil {
+		holds.retireClosed = make(map[string]uint64, len(readhold.RetireCloseSites))
+	}
+	holds.retireClosed[site]++
+}
+
 // RetireCloseFailed counts a retired group that retired without closing.
 func (holds *productionReadHolds) RetireCloseFailed(err error) {
 	holds.retireCloseFailed.Add(1)
@@ -873,7 +932,7 @@ func (holds *productionReadHolds) RetireCloseFailed(err error) {
 
 func (holds *productionReadHolds) report(reason string, qg execution.QueryGroupIdentity, err error) {
 	if err != nil && holds.logger != nil {
-		holds.logger.Warn("read_hold", reason, 0, 0, slog.String("query_group", string(qg)), slog.String("error", err.Error()))
+		holds.logger.WarnEvent("read_hold", reason, 0, slog.String("query_group", string(qg)), slog.String("error", err.Error()))
 	}
 }
 
@@ -949,7 +1008,7 @@ func (holds *productionReadHolds) bindLookback(options *lookback.Options) {
 		if holds.logger == nil {
 			return
 		}
-		holds.logger.Info("lookback", "window_read_early", 0, 0, holds.readEarlyAttrs(e)...)
+		holds.logger.InfoEvent("lookback", "window_read_early", 0, holds.readEarlyAttrs(e)...)
 	}
 	// One line per probe start: resumed_from is the clean rounds it went on
 	// from, kept by the process that ran it before, 0 for a fresh one.
@@ -957,7 +1016,7 @@ func (holds *productionReadHolds) bindLookback(options *lookback.Options) {
 		if holds.logger == nil {
 			return
 		}
-		holds.logger.Info("lookback", "floor_probe_started", 0, 0, slog.String("query_group", string(e.Contract.Slot.QueryGroup)),
+		holds.logger.InfoEvent("lookback", "floor_probe_started", 0, slog.String("query_group", string(e.Contract.Slot.QueryGroup)),
 			slog.Int64("slot", int64(e.Contract.Slot.EvaluationTime)), slog.String("source", e.Source), slog.String("kind", e.Kind),
 			slog.Int64("probe_ms", e.Floor.Milliseconds()), slog.Int64("read_hold_ms", e.Hold.Milliseconds()),
 			slog.Int("rounds_required", e.Rounds), slog.Int64("started_slot", int64(e.Started)), slog.Int("resumed_from", e.ResumedFrom))
@@ -988,7 +1047,7 @@ func (holds *productionReadHolds) bindLookback(options *lookback.Options) {
 					attrs = append(attrs, slog.Int(change, e.Changes[change]))
 				}
 			}
-			holds.logger.Info("lookback", "floor_probe_ended", 0, 0, attrs...)
+			holds.logger.InfoEvent("lookback", "floor_probe_ended", 0, attrs...)
 		}
 		if e.Event != lookback.FloorProbePassed && e.Event != lookback.FloorProbeFailed {
 			return
@@ -1026,7 +1085,7 @@ func (holds *productionReadHolds) bindLookback(options *lookback.Options) {
 			attrs = append(attrs, slog.Int64("reserved_hold_ms", e.ReservedHold.Milliseconds()),
 				slog.Int64("frozen_hold_ms", e.FrozenHold.Milliseconds()), slog.Int64("pending_hold_ms", pending))
 		}
-		holds.logger.Info("lookback", "earlier_trial", 0, 0, attrs...)
+		holds.logger.InfoEvent("lookback", "earlier_trial", 0, attrs...)
 	}
 	options.OnReadHoldIgnored = func(e lookback.ReadHoldEvidence, reason string) {
 		inspection := holds.controller.Inspect(e.Contract.Slot.QueryGroup)

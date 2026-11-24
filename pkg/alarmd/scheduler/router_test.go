@@ -228,7 +228,9 @@ func TestReconcilerRerunsRendezvousWhenIncumbentIsNotReady(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
-			if record.DesiredWorkerID != "worker-2" || store.publishedWorker != "worker-2" ||
+			// The move names the worker it is taken from as the holder whose
+			// session the publication reads.
+			if record.DesiredWorkerID != "worker-2" || store.publishedWorker != "worker-2" || store.publishedHolder != "worker-1" ||
 				store.expectedRevision != current.RecordRevision || store.publishCalls != 1 {
 				t.Fatalf("Reconcile(%s incumbent) record=%+v published=%q revision=%d publishes=%d, want worker-2 at revision %d",
 					test.name, record, store.publishedWorker, store.expectedRevision, store.publishCalls, current.RecordRevision)
@@ -249,9 +251,12 @@ type fakeAssignmentStore struct {
 	workers            []ownership.WorkerRegistration
 	current            ownership.AssignmentRecord
 	publishedWorker    string
+	publishedHolder    string
 	publishedAuthority ownership.PublicationAuthority
 	expectedRevision   uint64
 	publishCalls       int
+	// holderKind is what every publication reports held the lease.
+	holderKind ownership.HolderKind
 }
 
 type profileEligibility string
@@ -287,6 +292,13 @@ func (store *fakeAssignmentStore) ReadAssignments(
 	return found, ownership.ControlReadStats{Keys: len(queryGroups), RoundTrips: 1}, nil
 }
 
+// PublishAssignmentReporting is PublishAssignment with the holder this fake
+// reports for it (holderKind, none when unset).
+func (store *fakeAssignmentStore) PublishAssignmentReporting(ctx context.Context, authority ownership.PublicationAuthority, decision ownership.AssignmentDecision) (ownership.AssignmentRecord, ownership.HolderKind, error) {
+	record, err := store.PublishAssignment(ctx, authority, decision)
+	return record, store.holderKind, err
+}
+
 func (store *fakeAssignmentStore) PublishAssignment(
 	_ context.Context,
 	authority ownership.PublicationAuthority,
@@ -294,6 +306,7 @@ func (store *fakeAssignmentStore) PublishAssignment(
 ) (ownership.AssignmentRecord, error) {
 	store.publishedAuthority = authority
 	store.publishedWorker = decision.DesiredWorkerID
+	store.publishedHolder = decision.HolderWorkerID
 	store.expectedRevision = decision.ExpectedRecordRevision
 	store.publishedTimeline = decision.TimelineRecordRevision
 	store.publishCalls++

@@ -12,6 +12,8 @@ package trace
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -42,6 +44,12 @@ func NewSpan(ctx context.Context, name string) (context.Context, *Span) {
 	}
 }
 
+// SpanFromContext 返回 ctx 中当前的 span，用于在不新建 span 的函数里打点；
+// 没有链路时 Set 不产生任何效果。
+func SpanFromContext(ctx context.Context) *Span {
+	return &Span{span: oteltrace.SpanFromContext(ctx)}
+}
+
 // TraceID 获取 traceid
 func (s *Span) TraceID() string {
 	if s.span == nil {
@@ -69,6 +77,9 @@ func TraceIDFromContext(ctx context.Context) string {
 func (s *Span) Set(key string, value any) {
 	if s.span == nil {
 		return
+	}
+	if isHeaderAttribute(key) {
+		value = redactHeaders(value)
 	}
 	var attr attribute.KeyValue
 	switch value.(type) {
@@ -104,6 +115,59 @@ func (s *Span) Set(key string, value any) {
 	}
 
 	s.span.SetAttributes(attr)
+}
+
+func isHeaderAttribute(key string) bool {
+	switch key {
+	case "request-header", "handler-headers", "headers", "query-headers", "http-request":
+		return true
+	default:
+		return false
+	}
+}
+
+// Keep only diagnostic header values in traces. Authorization and session
+// headers can arrive through both inbound and backend request attributes.
+func safeDiagnosticHeader(name string) bool {
+	switch strings.ToLower(name) {
+	case "accept", "accept-encoding", "content-length", "content-type", "traceparent", "user-agent", "x-bk-scope-space-uid", "bk-query-source":
+		return true
+	default:
+		return false
+	}
+}
+
+// RedactHeaders returns a separate header map suitable for diagnostics.
+// Unknown headers keep their names but never expose their values.
+func RedactHeaders(headers http.Header) http.Header {
+	redacted := make(http.Header, len(headers))
+	for name, values := range headers {
+		if safeDiagnosticHeader(name) {
+			redacted[name] = append([]string(nil), values...)
+		} else {
+			redacted[name] = []string{"[REDACTED]"}
+		}
+	}
+	return redacted
+}
+
+func redactHeaders(value any) any {
+	switch headers := value.(type) {
+	case http.Header:
+		return RedactHeaders(headers)
+	case map[string]string:
+		redacted := make(map[string]string, len(headers))
+		for name, value := range headers {
+			if safeDiagnosticHeader(name) {
+				redacted[name] = value
+			} else {
+				redacted[name] = "[REDACTED]"
+			}
+		}
+		return redacted
+	default:
+		return value
+	}
 }
 
 // End span end 增加错误异常判断

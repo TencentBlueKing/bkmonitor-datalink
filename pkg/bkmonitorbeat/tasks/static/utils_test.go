@@ -121,6 +121,34 @@ func TestReportAsMapStrFilteredNetInterfaceFields(t *testing.T) {
 	assert.NotContains(t, interfaces[0], "addrs")
 }
 
+func TestReportAsMapStrHardware(t *testing.T) {
+	report := newTestReport()
+	report.Hardware = &static.Hardware{
+		ProductUUID:   "abcdefab-1234-5678-9abc-def012345678",
+		ProductName:   "KVM",
+		ProductSerial: "serial-1",
+		UUIDStatus:    "ok",
+	}
+
+	data := report.AsMapStr()
+	hardware := data["hardware"].(common.MapStr)
+	assert.Equal(t, "abcdefab-1234-5678-9abc-def012345678", hardware["product_uuid"])
+	assert.Equal(t, "KVM", hardware["product_name"])
+	assert.Equal(t, "serial-1", hardware["product_serial"])
+	assert.Equal(t, "ok", hardware["uuid_status"])
+
+	assert.NoError(t, report.SetReportFields([]string{"system.os"}))
+	assert.NotContains(t, report.AsMapStr(), "hardware")
+
+	report.Hardware.ProductUUID = ""
+	report.Hardware.UUIDStatus = "empty"
+	assert.NoError(t, report.SetReportFields(nil))
+	hardware = report.AsMapStr()["hardware"].(common.MapStr)
+	assert.Equal(t, "empty", hardware["uuid_status"])
+	assert.NotContains(t, hardware, "product_uuid")
+	assert.Equal(t, "KVM", hardware["product_name"])
+}
+
 func TestReportAsMapStrNilSystem(t *testing.T) {
 	report := &static.Report{}
 	assert.NotPanics(t, func() {

@@ -60,7 +60,7 @@ func healthFromSnapshots(view View, at time.Time, stallAfter time.Duration) Heal
 		Source: view.Source, SourceReplica: view.SourceReplica, SourceStanding: view.SourceStanding,
 		NoDataTracking: view.NoDataTracking,
 		Dependencies:   dependencyList(view.Dependencies), DependenciesReplica: view.DependenciesReplica,
-		DependenciesReplicas: view.DependenciesReplicas, LinkdConsole: view.LinkdConsole, ReplicasNotReady: view.ReplicasNotReady,
+		DependenciesReplicas: view.DependenciesReplicas, ReplicasNotReady: view.ReplicasNotReady,
 		Overdue: view.Overdue, Dispatch: view.Dispatch, Schedule: view.Schedule, Gaps: view.Gaps, Capacity: view.Capacity,
 		Load: ReplicaPartOf(view, at).Load(&view),
 	}

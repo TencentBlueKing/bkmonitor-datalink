@@ -229,13 +229,18 @@ func (bundle *phaseTwoWorkerBundle) controlSourceStats() metric.ControlSourceSta
 }
 
 // catalogComposition is the last Catalog composition this process built, for
-// the collector to render. Nil on a process that has not built one, which
-// every replica but the leader is: only the leader refreshes, so only the
-// leader answers this, and the collector emits nothing rather than zeros
-// that would read as an empty Catalog.
+// the collector to render. Nil on any process that is not the leader now:
+// only the leader refreshes, so only the leader answers this, and the
+// collector emits nothing rather than zeros that would read as an empty
+// Catalog. A former leader keeps the composition it built but stops
+// reporting it, or two replicas would each export a Catalog and the older
+// one would never move again.
 func (bundle *phaseTwoWorkerBundle) catalogComposition() *controlplane.CatalogComposition {
 	bundle.mu.RLock()
 	defer bundle.mu.RUnlock()
+	if bundle.controlSource.role != observability.ControlSourceRoleLeader {
+		return nil
+	}
 	return bundle.controlSource.composition
 }
 

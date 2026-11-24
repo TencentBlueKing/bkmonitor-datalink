@@ -170,15 +170,18 @@ func cloneStringsPreservingNil(values []string) []string {
 }
 
 type legacyQueryConfig struct {
-	AlertName       string          `json:"alert_name"`
-	IndexSetID      json.RawMessage `json:"index_set_id"`
-	PromQL          string          `json:"promql"`
-	CustomEventName string          `json:"custom_event_name"`
-	DataSourceLabel string          `json:"data_source_label"`
-	DataTypeLabel   string          `json:"data_type_label"`
-	MetricID        string          `json:"metric_id"`
-	MetricField     string          `json:"metric_field"`
-	Alias           string          `json:"alias"`
+	// appliedFallbacks collects the agg_method fallbacks compiling this config
+	// ran, for the compile that decoded it; nil writes none.
+	appliedFallbacks *[]aggMethodFallback `json:"-"`
+	AlertName        string               `json:"alert_name"`
+	IndexSetID       json.RawMessage      `json:"index_set_id"`
+	PromQL           string               `json:"promql"`
+	CustomEventName  string               `json:"custom_event_name"`
+	DataSourceLabel  string               `json:"data_source_label"`
+	DataTypeLabel    string               `json:"data_type_label"`
+	MetricID         string               `json:"metric_id"`
+	MetricField      string               `json:"metric_field"`
+	Alias            string               `json:"alias"`
 	// ExpressionMode is "promql" on each query of a multi-PromQL expression
 	// (multiPromQLExpression), absent on every other query.
 	ExpressionMode string            `json:"expression_mode"`
@@ -219,25 +222,42 @@ type legacyMetric struct {
 }
 
 func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Context, source PrimaryQuerySource) (execution.QueryPlanFacts, error) {
+	facts, _, err := compiler.compilePrimaryQueryNoted(source)
+	return facts, err
+}
+
+// aggMethodNotingCompiler is a compiler that says which agg_method fallbacks
+// the query it compiled ran (aggMethodFallbackOf). The catalog notes the Plan
+// from this, not from the document, so a note is never written for a
+// fallback the compile did not take - a PromQL config's leftover agg_method,
+// which the PromQL path never reads, among them.
+type aggMethodNotingCompiler interface {
+	compilePrimaryQueryNoted(PrimaryQuerySource) (execution.QueryPlanFacts, []aggMethodFallback, error)
+}
+
+func (compiler *LegacyPrimaryQueryCompiler) compilePrimaryQueryNoted(source PrimaryQuerySource) (execution.QueryPlanFacts, []aggMethodFallback, error) {
 	var configs []legacyQueryConfig
-	facts, err := compiler.compilePrimaryQueryConfigs(source, &configs)
+	var applied []aggMethodFallback
+	facts, err := compiler.compilePrimaryQueryConfigs(source, &configs, &applied)
 	if err != nil {
-		return execution.QueryPlanFacts{}, err
+		return execution.QueryPlanFacts{}, nil, err
 	}
 	outputs, err := namedOutputsOf(source.QueryOutputConfig, configs, facts)
 	if err != nil {
-		return execution.QueryPlanFacts{}, err
+		return execution.QueryPlanFacts{}, nil, err
 	}
 	if outputs == nil {
-		return facts, nil
+		return facts, applied, nil
 	}
 	facts.NamedOutputs, facts.QueryRevision = outputs, ""
-	return execution.BuildQueryPlanFacts(facts)
+	facts, err = execution.BuildQueryPlanFacts(facts)
+	return facts, applied, err
 }
 
 // compilePrimaryQueryConfigs is the item's query without its named outputs;
-// decoded is set to the query configs it read.
-func (compiler *LegacyPrimaryQueryCompiler) compilePrimaryQueryConfigs(source PrimaryQuerySource, decoded *[]legacyQueryConfig) (execution.QueryPlanFacts, error) {
+// decoded is set to the query configs it read, and applied collects the
+// agg_method fallbacks the compile ran.
+func (compiler *LegacyPrimaryQueryCompiler) compilePrimaryQueryConfigs(source PrimaryQuerySource, decoded *[]legacyQueryConfig, applied *[]aggMethodFallback) (execution.QueryPlanFacts, error) {
 	if compiler == nil || compiler.providerRoute == "" || compiler.timezone == "" {
 		return execution.QueryPlanFacts{}, queryConfigRejected("QUERY_COMPILER_UNINITIALIZED", nil)
 	}
@@ -260,6 +280,7 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePrimaryQueryConfigs(source Pr
 		// Python alarm Access does not pass cached query_config.filter_dict to
 		// TimeSeriesDataSource.init_by_query_config. Only the runtime filters
 		// below participate in the effective UQ request.
+		config.appliedFallbacks = applied
 		configs = append(configs, config)
 	}
 	*decoded = configs
@@ -294,7 +315,7 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePrimaryQueryConfigs(source Pr
 		if config.DataSourceLabel == "bk_data" && len(strings.TrimSpace(source.Expression)) <= 1 {
 			return execution.QueryPlanFacts{}, queryUnsupported("QUERY_BK_DATA_LOCAL_TIME_NOT_MIGRATED", nil)
 		}
-		clauses, err := compiler.compilePollingQueryConfig(config, source.Identity.BusinessID)
+		clauses, err := compiler.compilePollingQueryConfig(config, source.Identity.BusinessID, source.Identity.GlobalBusiness)
 		if err != nil {
 			return execution.QueryPlanFacts{}, err
 		}
@@ -362,6 +383,13 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePrimaryQueryConfigs(source Pr
 	if err != nil {
 		return execution.QueryPlanFacts{}, err
 	}
+	// A detection more often than the aggregation interval asks for buckets
+	// a step apart: each still an aggregation interval wide, and the
+	// request range narrowed to the step, so only the newest is read.
+	var queryStepMillis int64
+	if sliding && source.DetectStepSeconds < stepSeconds {
+		queryStepMillis = source.DetectStepSeconds * 1000
+	}
 	legacyOnly := true
 	for _, label := range sourceSemantics {
 		if label != omittedSourceSemantics {
@@ -393,6 +421,7 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePrimaryQueryConfigs(source Pr
 		Timezone:         compiler.timezone,
 		NotTimeAlign:     sliding,
 		Normalization:    normalization,
+		QueryStepMillis:  queryStepMillis,
 	})
 	if err != nil {
 		return execution.QueryPlanFacts{}, queryConfigRejected("QUERY_FACTS_INVALID", err)
@@ -486,6 +515,16 @@ func (compiler *LegacyPrimaryQueryCompiler) compileLegacyQueryConfig(config lega
 	method := config.AggMethod
 	if method == "" {
 		method = "COUNT"
+	}
+	if fallback, ok := aggMethodFallbackOf(method); ok && !dialect.logSource {
+		// Noted on the Plan under the fallback's reason (aggMethodNotingCompiler).
+		method = fallback.method
+		if config.appliedFallbacks != nil {
+			*config.appliedFallbacks = append(*config.appliedFallbacks, fallback)
+		}
+	}
+	if !knownAggMethod(method, dialect) {
+		return nil, queryConfigRejected("QUERY_AGG_METHOD_UNKNOWN", fmt.Errorf("agg_method %q", config.AggMethod))
 	}
 	metrics := make([]legacyMetric, 0, len(config.Values)+1)
 	if config.MetricField != "" {
@@ -632,6 +671,69 @@ func isCMDBLevelQuery(config legacyQueryConfig) bool {
 		}
 	}
 	return false
+}
+
+// knownAggMethods are the agg_method values whose compiled query UQ can run:
+// an aggregation UQ has under the name compileAggregation gives it, and a
+// <method>_over_time beside it. Anything else used to compile into a query
+// every round failed at UQ, which reads as a query failure rather than as
+// the config it is. distinct is a log and event method only: those sources
+// turn it into a cardinality aggregation, and a metric source has none.
+// REAL_TIME is matched as written, as compileAggregation and the platform
+// both match it.
+var knownAggMethods = map[string]bool{
+	"sum": true, "avg": true, "min": true, "max": true, "count": true,
+	"stddev": true, "stdvar": true, "cp50": true, "cp90": true, "cp95": true, "cp99": true,
+	"sum_without_time": true, "avg_without_time": true, "count_without_time": true,
+	"min_without_time": true, "max_without_time": true,
+}
+
+// aggMethodFallback is a method the platform's metric source runs in place of
+// the agg_method written, and the reason the Plan is noted under.
+type aggMethodFallback struct {
+	written, method, reason string
+}
+
+// aggMethodFallbackOf is normalize_metric_method
+// (bkmonitor/data_source/unify_query/functions.py:150-172), the platform's
+// metric source's reading of agg_method, case-insensitive: a dashboard
+// variable nobody filled in - one holding "$", or starting "undefined" -
+// runs as sum_without_time when it ends _without_time and as sum otherwise
+// (:165-168); a method ending _without_time that is none of the five the
+// platform registers (AggMethods, :116-147) runs as sum (:169-171). Each
+// fallback has its own reason. Only the metric source falls back; the log and
+// event sources send the method as written, so there it stays unknown and is
+// refused.
+func aggMethodFallbackOf(method string) (aggMethodFallback, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(method))
+	variable := ReasonAggMethodVariableDefaulted
+	if !strings.Contains(normalized, "$") {
+		variable = ReasonAggMethodUndefinedDefaulted
+	}
+	switch {
+	case strings.Contains(normalized, "$") || strings.HasPrefix(normalized, "undefined"):
+		if strings.HasSuffix(normalized, "_without_time") {
+			return aggMethodFallback{written: method, method: "sum_without_time", reason: variable}, true
+		}
+		return aggMethodFallback{written: method, method: "sum", reason: variable}, true
+	case strings.HasSuffix(normalized, "_without_time") && !knownAggMethods[normalized]:
+		return aggMethodFallback{written: method, method: "sum", reason: ReasonAggMethodWithoutTimeDefaulted}, true
+	}
+	return aggMethodFallback{}, false
+}
+
+// metricQuerySource is a query config the metric dialect compiles: a time
+// series that is not a log search (compilePollingQueryConfig).
+func metricQuerySource(dataSourceLabel, dataTypeLabel string) bool {
+	return dataSourceLabel != "bk_log_search" && dataTypeLabel == "time_series"
+}
+
+func knownAggMethod(method string, dialect conditionDialect) bool {
+	if method == "REAL_TIME" {
+		return true
+	}
+	method = strings.ToLower(method)
+	return knownAggMethods[method] || (dialect.logSource && method == "distinct")
 }
 
 func compileAggregation(rawMethod string, interval int64, dimensions []string) ([]execution.QueryFunction, execution.QueryFunction, error) {

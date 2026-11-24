@@ -43,7 +43,10 @@ type normalizing struct {
 	encodedBytes uint64
 	batch        execution.ProviderSeriesBatch
 	nullFields   uint64
-	err          error
+	// recordIDs is the ids the normalization derived, in the Dataset's
+	// order, for a query with named outputs; nil for every other.
+	recordIDs []string
+	err       error
 }
 
 // normalizeSideBySide makes every series of jobs canonical: in contiguous
@@ -54,7 +57,7 @@ func normalizeSideBySide(jobs []normalizing, spec execution.PhysicalQuerySpec, r
 	normalize := func(chunk []normalizing) {
 		for index := range chunk {
 			job := &chunk[index]
-			job.batch, job.nullFields, job.err = normalizeSeries(spec, ref, job.series, receivedAt)
+			job.batch, job.nullFields, job.recordIDs, job.err = normalizeSeriesKeeping(spec, ref, job.series, receivedAt, spec.PlanFacts.NamedOutputs != nil)
 		}
 	}
 	chunks := 1

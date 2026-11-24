@@ -72,6 +72,9 @@ func TestARangeRecordCarriesNoEmptyRoundFieldTheDeployedDecoderRejects(t *testin
 		{"unfilled only", &execution.EmptyRoundSummary{Unfilled: true, ContentScope: "c"}, nil},
 		{"unfilled and quiet", &execution.EmptyRoundSummary{Quiet: true, Unfilled: true, ContentScope: "c"},
 			&execution.EmptyRoundSummary{Quiet: true, ContentScope: "c"}},
+		{"filtered with witness counts", &execution.EmptyRoundSummary{Filtered: true, WitnessDataRounds: 4, WitnessMissingRounds: 1, ContentScope: "c"}, nil},
+		{"witness counts and outside", &execution.EmptyRoundSummary{EmptiedByTarget: true, WitnessMissingRounds: 2, ContentScope: "c"},
+			&execution.EmptyRoundSummary{EmptiedByTarget: true, ContentScope: "c"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			single := mustEncode(t, execution.ScheduleProgress{Identity: identity, NextSlot: 60, LastCompletion: lastCompletionAt60(tc.said)})

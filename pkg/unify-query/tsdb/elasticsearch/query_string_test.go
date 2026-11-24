@@ -174,7 +174,7 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        "ms: \u003e500 AND \"/fs-server\" AND NOT \"heartbeat\"",
-			expected: `{"bool":{"must":[{"range":{"ms":{"from":500,"include_lower":false,"include_upper":true,"to":null}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"/fs-server\""}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"heartbeat\""}}}}]}}`,
+			expected: `{"bool":{"must":[{"range":{"ms":{"gt":500}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"/fs-server\""}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"heartbeat\""}}}}]}}`,
 		},
 		{
 			q:        `events.attributes.message.detail: "*66036*"`,

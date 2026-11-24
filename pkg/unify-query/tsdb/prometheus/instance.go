@@ -18,12 +18,14 @@ import (
 	ants "github.com/panjf2000/ants/v2"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
+	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
@@ -55,6 +57,21 @@ func NewInstance(ctx context.Context, engine *promql.Engine, queryStorage storag
 }
 
 var _ tsdb.Instance = (*Instance)(nil)
+
+func applyLeftOpenTimeWindow(ctx context.Context, query promql.Query) {
+	if !metadata.IsLeftOpenTimeWindow(ctx) {
+		return
+	}
+	// The vendored engine includes both endpoints. Its samples have millisecond
+	// precision, so moving only the left bound by 1 ms implements (start, end].
+	// Apply this only to the local AST; VM already uses a left-open window.
+	parser.Inspect(query.Statement(), func(node parser.Node, _ []parser.Node) error {
+		if selector, ok := node.(*parser.MatrixSelector); ok && selector.Range >= time.Millisecond {
+			selector.Range -= time.Millisecond
+		}
+		return nil
+	})
+}
 
 func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
 	return ""
@@ -115,6 +132,7 @@ func (i *Instance) DirectQueryRangeWithClose(
 	if err != nil {
 		return nil, false, nil, err
 	}
+	applyLeftOpenTimeWindow(ctx, query)
 	closeQuery := true
 	defer func() {
 		if closeQuery {
@@ -177,6 +195,7 @@ func (i *Instance) DirectQueryWithClose(
 	if err != nil {
 		return nil, false, nil, err
 	}
+	applyLeftOpenTimeWindow(ctx, query)
 	closeQuery := true
 	defer func() {
 		if closeQuery {
@@ -272,7 +291,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 		return list, err
 	}
 
-	p, _ := ants.NewPool(i.maxRouting)
+	p, _ := ants.NewPool(i.maxRouting, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
 	defer p.Release()
 
 	var wg sync.WaitGroup

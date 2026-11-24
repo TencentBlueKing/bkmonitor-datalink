@@ -135,7 +135,7 @@ stdout 是一个 JSON 对象（`--help` 除外），进度和提示写在 stderr
 2. `invoke strategy.get`，输入 `{"strategy_id":"<strategy_id>"}`：看 `standing`、`dispositions` 和 `plans[]`（每个运行对象的 `query_group`）。
 3. `invoke object.get`：参数取 strategy.get 的 `next_call` 里 `operation` 为 `object.get` 的那一项。看 `anomaly`、`facts`、`records_status` 和 `records`（保留的生命周期记录，只保留约一小时，没有时不出现）。
 4. `invoke slot.get`：输入 `query_group` 和 `evaluation_time`（Slot 的 Unix 秒）。object.get 只为它保留记录里的 Slot 给出 `slot.get` 的 `next_call`；没告警的策略常常没有保留记录，这时 `evaluation_time` 取第 1 步那一行的 `plans[].last_full_slot`（最近一轮读完整的 Slot，有的话）。它重建历史 Slot 的查询条件、关联保留记录，不请求查询服务。
-5. `invoke slot.query`：参数取 slot.get 的 `next_call`。它按保留条件现在重查一次，结果 `kind=requery_now`。看 `query.completion`（`completeness`、`data_state`、`route_details`，查询被拒时还有已脱敏的 `error_excerpt`）和 `query.series`。默认只返回部分序列，`query.truncated=true` 且 limitations 含 `output_truncated`，退出码为 3，这是正常的；要看更多序列按 describe 的上限传 `max_series`、`max_points`。重查可能包含迟到数据，不等于当时 Slot 读到的输入。
+5. `invoke slot.query`：参数取 slot.get 的 `next_call`。它按保留条件现在重查一次，结果 `kind=requery_now`。看 `query.completion`（`completeness`、`data_state`、`route_details`，查询被拒时还有已脱敏的 `error_excerpt`）和 `query.series`。默认只返回部分序列，`query.truncated=true` 且 limitations 含 `output_truncated`，退出码为 3，这是正常的；要看更多序列按 describe 的上限传 `max_series`、`max_points`。重查可能包含迟到数据，不等于当时 Slot 读到的输入。检测类修改后状态延续过来的 Plan 列在 `plan_carries`（与 object.get 同一来源）：`source_time` 早于其 `activated_at` 的点是修改前按 `carried_from` 判的；没有延续时不出这一项，读不到时 `plan_carries_unavailable` 给出原因。
 
 **部署是否健康**
 

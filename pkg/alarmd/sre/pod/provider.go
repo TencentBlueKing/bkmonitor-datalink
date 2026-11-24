@@ -326,9 +326,12 @@ func (p *Provider) Discover(ctx context.Context, request DiscoverRequest) (Disco
 		}
 		observations, err := p.observe(ctx, obj, "", owners)
 		if err != nil {
-			var failure *Error
-			if errors.As(err, &failure) && failure.Code == CodeNotInScope {
-				result.Rejected++
+			// A Pod whose own chain cannot be read is that Pod's: one left
+			// behind by a deleted Job must not take every other Pod of the
+			// namespace with it. A failure of the apiserver itself still
+			// ends the page.
+			if reason := discoverRejection(err); reason != "" {
+				result.reject(obj.Name, reason, err)
 				continue
 			}
 			return result, err
@@ -344,6 +347,46 @@ func (p *Provider) Discover(ctx context.Context, request DiscoverRequest) (Disco
 		return a.Pod < b.Pod || a.Pod == b.Pod && a.Container < b.Container
 	})
 	return result, nil
+}
+
+// The reasons a discovery leaves one Pod out (DiscoverReceipt.RejectedPods).
+const (
+	// RejectedNotInScope: the Pod's owner chain is not a supported
+	// workload's, or does not match the live owners.
+	RejectedNotInScope = "not_in_scope"
+	// RejectedOwnerNotFound: an owner the Pod names is gone, as a Job
+	// deleted while its Pod was kept.
+	RejectedOwnerNotFound = "owner_not_found"
+)
+
+// MaxRejectedNamed bounds how many left-out Pods one page names; Rejected
+// counts them all.
+const MaxRejectedNamed = 32
+
+// discoverRejection is the reason a discovery leaves one Pod out for err,
+// empty when err is not the Pod's own. Pods come from the page's list, so a
+// not-found is an owner's.
+func discoverRejection(err error) string {
+	var failure *Error
+	if !errors.As(err, &failure) {
+		return ""
+	}
+	switch failure.Code {
+	case CodeNotInScope:
+		return RejectedNotInScope
+	case CodeNotFound:
+		return RejectedOwnerNotFound
+	}
+	return ""
+}
+
+func (receipt *DiscoverReceipt) reject(pod, reason string, err error) {
+	receipt.Rejected++
+	if len(receipt.RejectedPods) < MaxRejectedNamed {
+		var failure *Error
+		errors.As(err, &failure)
+		receipt.RejectedPods = append(receipt.RejectedPods, RejectedPod{Pod: pod, Reason: reason, Message: failure.Message})
+	}
 }
 
 func (p *Provider) Inspect(ctx context.Context, request TargetRequest) (Observation, error) {

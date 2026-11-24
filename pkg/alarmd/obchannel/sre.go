@@ -689,7 +689,7 @@ func SREOperations(options SREOptions) []Operation {
 		},
 	})
 	maxLogTop := int64(uq.LogCountMaxTop)
-	ops = append(ops, Operation{ID: OpLogCount, Summary: "按字段统计一个日志结果表在一段时间里的条数，不回传日志正文：一次聚合查询（count_over_time 覆盖整个窗口、按 by 的字段求和），只回每组的字段值（脱敏、截到 256 字节）与条数，按条数降序取前 top 组，total 是全部组的合计。query_string 原样下推用于筛选（Doris 存储按内容查写 log:*关键字*），应答里只回它的长度。不能按正文字段（log、message、content、msg、body 及 *.log、*_log、*.message、*_message、*.body）分组。窗口任意时长，至多 30 天。",
+	ops = append(ops, Operation{ID: OpLogCount, Summary: "按字段统计一个日志结果表在一段时间里的条数，不回传日志正文：一次聚合查询（count_over_time 覆盖整个窗口、按 by 的字段求和），只回每组的字段值（脱敏、截到 256 字节）与条数，按条数降序取前 top 组，total 是全部组的合计。query_string 原样下推用于筛选（Doris 存储按内容查写 log:*关键字*），应答里只回它的长度与写法 query_form：all（空或 *）、substring（log:*关键字* 或 *关键字*）、other（其余写法：不带通配符的词在 Doris 上按整个字段值相等比较，0 可能是写法所致，limitations 里写明）。不能按正文字段（log、message、content、msg、body 及 *.log、*_log、*.message、*_message、*.body）分组。窗口任意时长，至多 30 天。",
 		EvidenceScope: "sre_uq_log_count", ExecutionPool: "sre", ExecutionTimeout: uq.MaxTimeout + 5*time.Second, Availability: queryAvailable,
 		Limits: map[string]any{"max_top": uq.LogCountMaxTop, "default_top": uq.LogCountDefaultTop, "value_bytes": uq.LogCountValueBytes, "max_window_seconds": int64(uq.MaxWindow / time.Second), "redaction_contract": redact.Contract, "content": "field values and counts only; no log text"},
 		Fields: map[string]Field{"egress": text, "tenant": text, "space": text,
@@ -727,7 +727,7 @@ func SREOperations(options SREOptions) []Operation {
 		},
 	})
 	maxSearchLines, maxSearchLineBytes, maxSearchTotalBytes := int64(uq.LogSearchMaxLines), int64(uq.LogSearchMaxLineBytes), int64(uq.LogSearchMaxTotalBytes)
-	ops = append(ops, Operation{ID: OpLogSearch, Summary: "读一个日志结果表在 UTC 时间窗里的日志正文，一次调用一页：按 query_string 筛选（原样下推，Doris 存储按内容查写 log:*关键字*），order 为 desc（新的在前，默认）或 asc；每行给时间、少数元数据字段与正文，正文与字段值按脱敏合同逐行脱敏后再截到 line_bytes。行数、单行字节、整页字节与时间窗都有上限，触到哪个就在应答里写明（stopped_at、truncated_lines、redacted_lines、limitations）；next_cursor 是 UQ 自己的翻页位置（search_after 或 offset），原样传回读下一页，窗口随游标固定。与 pod.logs 同一脱敏合同，平台日志主题的脱敏规则不在此执行。",
+	ops = append(ops, Operation{ID: OpLogSearch, Summary: "读一个日志结果表在 UTC 时间窗里的日志正文，一次调用一页：按 query_string 筛选（原样下推，Doris 存储按内容查写 log:*关键字*；应答的 query_form 说写法，同 log.count），order 为 desc（新的在前，默认）或 asc；每行给时间、少数元数据字段与正文，正文与字段值按脱敏合同逐行脱敏后再截到 line_bytes。行数、单行字节、整页字节与时间窗都有上限，触到哪个就在应答里写明（stopped_at、truncated_lines、redacted_lines、limitations）；next_cursor 是 UQ 自己的翻页位置（search_after 或 offset），原样传回读下一页，窗口随游标固定。与 pod.logs 同一脱敏合同，平台日志主题的脱敏规则不在此执行。",
 		EvidenceScope: "sre_uq_log_search", ExecutionPool: "sre", ExecutionTimeout: uq.MaxTimeout + 5*time.Second, Availability: queryAvailable,
 		Limits: map[string]any{"max_lines": uq.LogSearchMaxLines, "default_lines": uq.LogSearchDefaultLines, "max_line_bytes": uq.LogSearchMaxLineBytes, "default_line_bytes": uq.LogSearchDefaultLineBytes,
 			"max_total_bytes": uq.LogSearchMaxTotalBytes, "default_total_bytes": uq.LogSearchDefaultTotalBytes, "max_window_seconds": int64(uq.MaxWindow / time.Second), "default_window": "1h",

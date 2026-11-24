@@ -103,7 +103,7 @@ func TestPreFetchVMShortLinkTableIdValues(t *testing.T) {
 		{Id: 103, BkTenantId: "other", SpaceTypeId: "bkci", SpaceId: "project_c"},
 	}
 
-	data, err := preFetchVMShortLinkTableIdValues(service.NewSpacePusher(), spaceList)
+	data, err := preFetchVMShortLinkTableIdValues(db, service.NewSpacePusher(), spaceList)
 
 	assert.NoError(t, err)
 	assert.Equal(t, map[string]any{"filters": []map[string]any{}}, data[service.SpaceRouteKeyWithTenant("system", "bkcc", "1001")]["prefetch_vm_short_link_rt.__default__"])
@@ -159,7 +159,7 @@ func TestPreFetchLogGlobalTableIdValues(t *testing.T) {
 		{Id: 1, BkTenantId: "system", SpaceTypeId: models.SpaceTypeBKCC, SpaceId: "1"},
 		{Id: 101, BkTenantId: "system", SpaceTypeId: models.SpaceTypeBKCI, SpaceId: "project_a"},
 	}
-	data, err := preFetchLogGlobalTableIdValues(service.NewSpacePusher(), spaceList)
+	data, err := preFetchLogGlobalTableIdValues(db, service.NewSpacePusher(), spaceList)
 
 	assert.NoError(t, err)
 	bkccValues := data[service.SpaceRouteKeyWithTenant("system", models.SpaceTypeBKCC, "1")]
@@ -238,7 +238,7 @@ func TestPreFetchRecordRuleV4TableIdValues(t *testing.T) {
 		assert.NoError(t, db.Create(&record).Error)
 	}
 
-	data, err := preFetchRecordRuleV4TableIdValues(service.NewSpacePusher())
+	data, err := preFetchRecordRuleV4TableIdValues(db, service.NewSpacePusher())
 
 	assert.NoError(t, err)
 	assert.Equal(t, map[string]any{"filters": []map[string]any{}}, data[service.SpaceRouteKeyWithTenant("system", "bkcc", "1001")]["prefetch_record_rule_v4_rt.__default__"])
@@ -253,7 +253,7 @@ func TestPreFetchRecordRuleV4TableIdValuesSkipWhenTableNotExists(t *testing.T) {
 	tableName := recordrule.RecordRuleV4{}.TableName()
 	assert.NoError(t, db.DropTableIfExists(tableName).Error)
 
-	data, err := preFetchRecordRuleV4TableIdValues(service.NewSpacePusher())
+	data, err := preFetchRecordRuleV4TableIdValues(db, service.NewSpacePusher())
 
 	assert.NoError(t, err)
 	assert.Empty(t, data)

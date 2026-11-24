@@ -166,7 +166,10 @@ func (client *Client) Range(ctx context.Context, request RangeRequest) (RangeRes
 		return RangeResult{}, fmt.Errorf("alarmd access uq: range query returned %d (%s, trace %s)",
 			response.StatusCode, rejection.Class, rejection.TraceID)
 	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, client.limits.MaxBodyBytes))
+	raw, err := io.ReadAll(&boundedReader{reader: response.Body, maximum: rangeMaxBodyBytes})
+	if errors.Is(err, ErrResponseBytesExceeded) {
+		return RangeResult{}, fmt.Errorf("alarmd access uq: range response over %d bytes (trace %s): %w", rangeMaxBodyBytes, traceID, err)
+	}
 	if err != nil {
 		return RangeResult{}, fmt.Errorf("alarmd access uq: read range response (trace %s): %w", traceID, err)
 	}
@@ -220,3 +223,14 @@ func columnIndexes(columns []string) (int, int) {
 // RangeDeadline bounds one range query; a reader that runs several side by
 // side (the trends) takes it as one line's share of its time.
 const RangeDeadline = 20 * time.Second
+
+// rangeMaxBodyBytes bounds one range answer, which - unlike an evaluation
+// answer - is read whole and then decoded, so its size is the heap it takes.
+// It is sized from the largest answer a page asks for: the longest trend
+// window over its step (24h at 10m, 145 points) for a line grouped by pod in
+// one namespace's container, whose pods over a day are the replicas and every
+// pod a rollout replaced - taken as 400. At about 32 bytes a point and half
+// a KiB of labels and columns a series that is about 2 MiB; this is four
+// times it (TestTheWidestTrendAnswerIsReadWhole measures that answer). It is
+// not the evaluation path's bound: that path has none on the whole body.
+const rangeMaxBodyBytes = 8 << 20

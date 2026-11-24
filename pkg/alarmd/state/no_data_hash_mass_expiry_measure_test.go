@@ -26,7 +26,7 @@ import (
 // group prefix, then the group key -- host dimensions and the no-data tag,
 // escaped the way nodata.Group.Key writes them -- and an absence value.
 func massExpiryGroupField(index int, wide bool) HashField {
-	ip := fmt.Sprintf("10.%d.%d.%d", index>>16&0xff, index>>8&0xff, index&0xff)
+	ip := fmt.Sprintf("host-%08d", index)
 	key := "bk_target_cloud_id=0,bk_target_ip=" + ip + "," + contract.NoDataDimensionTag + "=true"
 	if wide {
 		// A group of a disk-level strategy: four dimensions, one of them a

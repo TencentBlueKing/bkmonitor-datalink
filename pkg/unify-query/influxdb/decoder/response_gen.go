@@ -157,7 +157,8 @@ func (z *Response) DecodeMsg(dc *msgp.Reader) (err error) {
 	for {
 		select {
 		case <-z.Ctx.Done():
-			return fmt.Errorf("context timeout")
+			// 保留 ctx.Err()：超时和取消要按各自的类型归类，不能算成后端失败。
+			return fmt.Errorf("influxdb response decode stopped: %w", z.Ctx.Err())
 		default:
 			// 兼容 chunked 模式，该模式下 zb0001 的值 influxdb 返回的都是 1，所以需要用 io.EOF 来做读完的判断
 			_, err = dc.ReadMapHeader()

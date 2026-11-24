@@ -226,12 +226,15 @@ var checkWords = map[Check]wordPair{
 	CheckNoDataMemoryRefused:  {StateResultUntrusted, ActionServiceFix},
 	// Not detecting while the view does not carry it, and alarmd's own to
 	// fix: the view is its control plane, not a dependency.
-	CheckAwaitingView:           {StateNotDetecting, ActionServiceFix},
-	CheckDependencyDown:         {StateDependencyUnanswered, ActionServiceFix},
-	CheckDefect:                 {StateDefect, ActionServiceFix},
-	CheckObservationGap:         {StateResultUntrusted, ActionWatch},
-	CheckQueryRefused:           {StateDependencyUnanswered, ActionServiceFix},
-	CheckWindowUndecided:        {StateResultUntrusted, ActionServiceFix},
+	CheckAwaitingView:    {StateNotDetecting, ActionServiceFix},
+	CheckDependencyDown:  {StateDependencyUnanswered, ActionServiceFix},
+	CheckDefect:          {StateDefect, ActionServiceFix},
+	CheckObservationGap:  {StateResultUntrusted, ActionWatch},
+	CheckQueryRefused:    {StateDependencyUnanswered, ActionServiceFix},
+	CheckWindowUndecided: {StateResultUntrusted, ActionServiceFix},
+	// Detecting: the guard withholds only NORMAL. A wait, for as long as
+	// the window or the guard moves; flat, it is this side's (RuleStalled).
+	CheckWindowRewarming:        {StateDetecting, ActionWatch},
 	CheckCoverageReadingRefused: {StateResultUntrusted, ActionServiceFix},
 	CheckConfigUnresolved:       {StateResultUntrusted, ActionWatch},
 	CheckBackendNotAnswering:    {StateDependencyUnanswered, ActionServiceFix},
@@ -250,17 +253,24 @@ var checkWords = map[Check]wordPair{
 	// group at rest or data gone missing; the row says the answer cannot
 	// tell them apart.
 	CheckLogCountEmpty: {StateDetecting, ActionNone},
+	CheckFilteredEmpty: {StateDetecting, ActionNone},
 	// Detecting what came back; the grouping is the strategy's to narrow.
 	CheckAnswerTruncated: {StateDetecting, ActionStrategyEdit},
-	CheckSeriesChurning:  {StateResultUntrusted, ActionStrategyEdit},
+	// Detecting; whose the unreadable source is, the maintainer finds out.
+	CheckSourceUnknownHeld: {StateDetecting, ActionServiceFix},
+	// Detecting every alert it opens; the grouping is the strategy's to narrow.
+	CheckNewAlertsBurst: {StateDetecting, ActionStrategyEdit},
+	CheckSeriesChurning: {StateResultUntrusted, ActionStrategyEdit},
 	// Detecting, and recovering where Python would; the owner acts only if
 	// whole windows are wanted.
 	CheckSeriesSparserThanWindow: {StateDetecting, ActionNone},
 	CheckPlanUnevaluable:         {StateStrategyInvalid, ActionStrategyEdit},
 	CheckQueryTargetMissing:      {StateStrategyInvalid, ActionStrategyEdit},
-	// Detecting: every round completes. The strategy's to act on before the
-	// share refuses it whole.
-	CheckRetainedShareApproaching: {StateDetecting, ActionStrategyEdit},
+	// Detecting: every round completes, and growing past the share cuts the
+	// Slot into windows, slower and still detecting. Nothing to change; the
+	// walls past it are refusals with codes of their own (PLAN_UNEVALUABLE
+	// for QG_BUDGET_SHARE_EXCEEDED), which keep their action.
+	CheckRetainedShareApproaching: {StateDetecting, ActionNone},
 	// Detecting, from data read before it was all there: its results cannot
 	// be taken as they stand, and the strategy's owner moves the read.
 	CheckReadBeforeComplete: {StateResultUntrusted, ActionStrategyEdit},

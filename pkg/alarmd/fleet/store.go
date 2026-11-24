@@ -386,7 +386,7 @@ func (store *RedisStore) PublishSummarized(ctx context.Context, snapshot Snapsho
 // activation scripts (controlplane/activation_rebuild.go) this runs on a
 // standalone or Sentinel server, and the configuration refuses Cluster
 // (config/redis.go).
-var publishSummarizedWrite = redisatomic.New(`
+var publishSummarizedWrite = redisatomic.New("fleet_publish_summarized", `
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[4])
 redis.call('SET', KEYS[2], ARGV[2], 'PX', ARGV[4])
 redis.call('SET', KEYS[3], ARGV[3], 'PX', ARGV[4])
@@ -436,14 +436,6 @@ func (store *RedisStore) written(snapshot Snapshot) (Snapshot, error) {
 		due.NeverCut = due.NeverCut || len(never) < len(due.Never)
 		due.Late, due.Overdue, due.Never = late, overdue, never
 		snapshot.Due = &due
-	}
-	// The open-alert counts likewise, on a copy, each list its own budget.
-	if snapshot.OpenAlerts != nil {
-		open := *snapshot.OpenAlerts
-		counts, unknown := withinCountBudget(open.Counts, store.maxAnomalyBytes), withinObjectBudget(open.Unknown, store.maxAnomalyBytes)
-		open.Cut = open.Cut || len(counts) < len(open.Counts) || len(unknown) < len(open.Unknown)
-		open.Counts, open.Unknown = counts, unknown
-		snapshot.OpenAlerts = &open
 	}
 	held := withinReadHoldBudget(snapshot.ReadHolds, store.maxAnomalyBytes)
 	snapshot.ReadHoldsCut = snapshot.ReadHoldsCut || len(held) < len(snapshot.ReadHolds)

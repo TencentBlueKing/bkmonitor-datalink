@@ -16,6 +16,23 @@ const runtimeCatalogClosureInvalidReason = "RUNTIME_CATALOG_CLOSURE_INVALID"
 
 var errRuntimeCatalogClosureInvalid = errors.New("alarmd controlplane: runtime Catalog dependency closure is invalid")
 
+// ReasonRuntimePlanCompileFailed names a strategy whose compile returned an
+// error rather than a Plan or a terminal. The error is the strategy's alone:
+// the strategy runs its last good Plan where it has one (STALE_CONFIG) and is
+// out of the Catalog where it has none (CONFIG_REJECTED), the compiler's error
+// in the disposition's detail, and every other strategy of the round is
+// published as compiled. It is still a strategy the source lists, so nothing
+// reads it as gone or as refused for a capability.
+const ReasonRuntimePlanCompileFailed = "RUNTIME_PLAN_COMPILE_FAILED"
+
+// compileErrorIsStrategys is whether a compile error belongs to the one
+// strategy being compiled. The compiler is a function of the strategy's own
+// document, so its errors are; the round's context ending is not, and holds
+// the whole round back like any other failure that is not one strategy's.
+func compileErrorIsStrategys(ctx context.Context, err error) bool {
+	return ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+}
+
 // retainRuntimeExecutableCatalog applies the Evaluation Core compiler before
 // publication. Deterministic Plan and Level terminals remain source-audit
 // facts; only terminal-free Plans enter the immutable scheduling Catalog.
@@ -95,7 +112,70 @@ func retainRuntimeExecutableCatalog(
 			SourceID: sourceID, Scope: "PLAN", Disposition: DispositionConfigRejected, Reason: runtimeCatalogClosureInvalidReason,
 		})
 	}
-	addPlan := func(facts execution.QueryPlanFacts, plan FrozenPlan, compiled *strategy.CompiledPlan) error {
+	// firstCompileError and compileAnswered decide, after the loop, whether
+	// the compile errors met were each one strategy's: a round in which no
+	// strategy's compile was answered at all has not shown that any of them
+	// is, and holds the whole round back.
+	var firstCompileError error
+	compileAnswered := false
+	var addPlan func(execution.QueryPlanFacts, FrozenPlan, *strategy.CompiledPlan) error
+	// compileFailed files one strategy whose compile returned an error, with
+	// the dispositions its round had already given it. With fallBack it runs
+	// its last good Plan when that Plan still compiles terminal-free;
+	// otherwise, and without one, it is out of the Catalog. Either way it is
+	// named under ReasonRuntimePlanCompileFailed and the round goes on. A
+	// failure that is not the strategy's is returned for the round to fail on.
+	compileFailed := func(sourcePlan FrozenPlan, facts execution.QueryPlanFacts, cause error, fallBack bool,
+		dispositions ...ObjectDisposition,
+	) error {
+		if !compileErrorIsStrategys(ctx, cause) {
+			return cause
+		}
+		if firstCompileError == nil {
+			firstCompileError = cause
+		}
+		strategyID := sourcePlan.Identity.StrategyID
+		failure := ObjectDisposition{SourceID: strategyID, Scope: "PLAN", Disposition: DispositionConfigRejected,
+			Reason: ReasonRuntimePlanCompileFailed, Detail: dispositionDetail(cause.Error())}
+		dispositions = append(dispositions, failure)
+		result.Dispositions = withoutAcceptedPlanDisposition(result.Dispositions, strategyID)
+		withhold := func() error {
+			result.Dispositions = append(result.Dispositions, dispositions...)
+			return nil
+		}
+		if !fallBack {
+			return withhold()
+		}
+		entry, ok := lastGoodFor(strategyID, facts)
+		if !ok {
+			return withhold()
+		}
+		lastGoodCompiled, executable, err := runtimePlanIsTerminalFree(ctx, entry, compiler, stateSemantics)
+		if err != nil {
+			if !compileErrorIsStrategys(ctx, err) {
+				return err
+			}
+			return withhold()
+		}
+		if !executable {
+			return withhold()
+		}
+		if err := validateRuntimePlanDependencyClosure(entry.plan, lastGoodCompiled); err != nil {
+			if errors.Is(err, errRuntimeCatalogClosureInvalid) {
+				rejectClosure(strategyID, dispositions...)
+				return nil
+			}
+			return err
+		}
+		for index := range dispositions {
+			if dispositions[index].Disposition == DispositionConfigRejected {
+				dispositions[index].Disposition = DispositionStaleConfig
+			}
+		}
+		result.Dispositions = append(result.Dispositions, dispositions...)
+		return addPlan(entry.facts, entry.plan, lastGoodCompiled)
+	}
+	addPlan = func(facts execution.QueryPlanFacts, plan FrozenPlan, compiled *strategy.CompiledPlan) error {
 		if compiled == nil || compiled.StateCompatibilityHash() == "" {
 			return errors.New("alarmd controlplane: runtime executable Plan has no state compatibility")
 		}
@@ -143,8 +223,12 @@ func retainRuntimeExecutableCatalog(
 				StateSemantics: stateSemantics,
 			})
 			if err != nil {
-				return Catalog{}, err
+				if err := compileFailed(sourcePlan, sourceGroup.QueryPlan, err, true); err != nil {
+					return Catalog{}, err
+				}
+				continue
 			}
+			compileAnswered = true
 			if terminal := compiledResult.PlanTerminal(); terminal != nil {
 				disposition := terminalDisposition(sourcePlan.Identity.StrategyID, "PLAN", *terminal)
 				result.Dispositions = withoutAcceptedPlanDisposition(result.Dispositions, sourcePlan.Identity.StrategyID)
@@ -152,7 +236,10 @@ func retainRuntimeExecutableCatalog(
 					if entry, ok := lastGoodFor(sourcePlan.Identity.StrategyID, sourceGroup.QueryPlan); ok {
 						lastGoodCompiled, executable, err := runtimePlanIsTerminalFree(ctx, entry, compiler, stateSemantics)
 						if err != nil {
-							return Catalog{}, err
+							if err := compileFailed(sourcePlan, sourceGroup.QueryPlan, err, false, disposition); err != nil {
+								return Catalog{}, err
+							}
+							continue
 						}
 						if executable {
 							if err := validateRuntimePlanDependencyClosure(entry.plan, lastGoodCompiled); err != nil {
@@ -202,7 +289,10 @@ func retainRuntimeExecutableCatalog(
 				if entry, ok := lastGoodFor(sourcePlan.Identity.StrategyID, sourceGroup.QueryPlan); ok {
 					_, executable, err := runtimePlanIsTerminalFree(ctx, entry, compiler, stateSemantics)
 					if err != nil {
-						return Catalog{}, err
+						if err := compileFailed(sourcePlan, sourceGroup.QueryPlan, err, false, terminalDispositions...); err != nil {
+							return Catalog{}, err
+						}
+						continue
 					}
 					if executable {
 						plan, supplementedLevels, err = supplementRejectedLevels(plan, entry.plan, terminalDispositions)
@@ -227,7 +317,10 @@ func retainRuntimeExecutableCatalog(
 					StateSemantics: stateSemantics,
 				})
 				if err != nil {
-					return Catalog{}, err
+					if err := compileFailed(sourcePlan, sourceGroup.QueryPlan, err, false, terminalDispositions...); err != nil {
+						return Catalog{}, err
+					}
+					continue
 				}
 				verifiedPlan, ok := verification.Plan()
 				if verification.PlanTerminal() == nil && len(verification.LevelTerminals()) == 0 && ok && verifiedPlan.Levels().Len() > 0 {
@@ -259,6 +352,9 @@ func retainRuntimeExecutableCatalog(
 				return Catalog{}, err
 			}
 		}
+	}
+	if firstCompileError != nil && !compileAnswered {
+		return Catalog{}, firstCompileError
 	}
 	for _, group := range groups {
 		sort.Slice(group.Plans, func(i, j int) bool { return lessPlanIdentity(group.Plans[i].Identity, group.Plans[j].Identity) })

@@ -36,7 +36,8 @@ func flowFactsOf(counters metric.FlowCounters, roleNames []string) *fleet.FlowFa
 		Queries: counters.Queries, QueryDuration: flowHistogram(counters.QueryDuration),
 		Detections: counters.Detections, DecisionLag: flowHistogram(counters.DecisionLag),
 		StateWrites: counters.StateWrites, StateFailures: counters.StateFailures, RuntimeRedis: flowHistogram(counters.RuntimeRedis),
-		EventsEmitted: counters.EventsEmitted, EventsRejected: counters.EventsRejected,
+		SeriesRejected: &counters.SeriesRejected,
+		EventsEmitted:  counters.EventsEmitted, EventsRejected: counters.EventsRejected,
 		Hosts: counters.Hosts, Roles: append([]string(nil), roleNames...),
 	}
 	if len(counters.QueryFailures) > 0 {
@@ -48,6 +49,11 @@ func flowFactsOf(counters metric.FlowCounters, roleNames []string) *fleet.FlowFa
 	if counters.LiveHeapKnown {
 		heap := counters.LiveHeapBytes
 		facts.LiveHeapBytes = &heap
+		if counters.LiveHeapReserved.ReservedKnown {
+			facts.LiveHeapReserved = &fleet.LiveHeapReserved{
+				AtGCStart: counters.LiveHeapReserved.ReservedAtStart, AtGCEnd: counters.LiveHeapReserved.ReservedAtEnd,
+			}
+		}
 	}
 	return facts
 }

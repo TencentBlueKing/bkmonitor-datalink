@@ -20,7 +20,7 @@ import (
 // other fixtures do.
 func platformSettingsConfigContents(platformCache, phaseTwo string) string {
 	base := platformCacheConfigContents(platformCache)
-	return base[:strings.Index(base, "phase_two:\n")] + "phase_two:\n  worker:\n    id: alarmd-worker-0\n" +
+	return base[:strings.Index(base, "phase_two:\n")] + "phase_two:\n" + linkdControlPlaneYAML + "  worker:\n    id: alarmd-worker-0\n" +
 		"  access:\n    uq_endpoint: http://unify-query.service\n    query_source: alarmd\n" + phaseTwo
 }
 

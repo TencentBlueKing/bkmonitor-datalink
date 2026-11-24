@@ -47,7 +47,7 @@ func TestUnfilledCountsAreLogCountsAndCountedLogSeries(t *testing.T) {
 		"two sources": {execution.QueryPlanFacts{SourceSemantics: []string{"bk_log_search/log", "bk_monitor/log"},
 			QueryList: []execution.QueryClause{clause("count_over_time", "sum")}}, false},
 	} {
-		if got := readsUnfilledCounts(test.query); got != test.want {
+		if got := execution.ReadsUnfilledCounts(test.query); got != test.want {
 			t.Errorf("%s: unfilled = %t, want %t", name, got, test.want)
 		}
 	}
@@ -78,7 +78,7 @@ func TestAZeroIsNoObservationForEventCountsAndUngroupedLogCounts(t *testing.T) {
 		"log series averaged":        {query("bk_log_search/time_series", clause("avg_over_time")), false},
 		"metric count":               {query("bk_monitor/time_series", clause("count_over_time")), false},
 	} {
-		if got := readsZeroAsNoObservation(test.query); got != test.want {
+		if got := execution.ZeroCountIsNoObservation(test.query); got != test.want {
 			t.Errorf("%s: zero is no observation = %t, want %t", name, got, test.want)
 		}
 	}

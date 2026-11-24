@@ -315,8 +315,12 @@ func TestCapacityMetricRequiresExplicitBoundedBudget(t *testing.T) {
 		Component: observability.ComponentResource, Stage: observability.StageResourceHard,
 		Result: observability.ResultPaused, ReasonCode: observability.ReasonContractDeterministic,
 	})
-	if got, err := testutil.GatherAndCount(recorder.Gatherer(), "alarmd_capacity_transition_total"); err != nil || got != 0 {
-		t.Fatalf("capacity metric families without budget = %v, error = %v", got, err)
+	for _, budget := range phaseTwoBudgets {
+		for _, result := range phaseTwoCapacityResults {
+			if got := testutil.ToFloat64(recorder.phaseTwo.capacity.WithLabelValues(budget, result)); got != 0 {
+				t.Fatalf("capacity %s/%s without budget = %v, want 0", budget, result, got)
+			}
+		}
 	}
 	recorder.Observe(context.Background(), observability.Observation{
 		Component: observability.ComponentResource, Stage: observability.StageResourceHard,
@@ -325,6 +329,75 @@ func TestCapacityMetricRequiresExplicitBoundedBudget(t *testing.T) {
 	})
 	if got := testutil.ToFloat64(recorder.phaseTwo.capacity.WithLabelValues("events", "rejected")); got != 1 {
 		t.Fatalf("events rejection = %v, want 1", got)
+	}
+}
+
+// Every budget and result is published at zero from the first scrape, so a
+// budget that never rejected reads as zero rather than as missing.
+func TestCapacityTransitionPublishesEveryCellAtZero(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	families, err := recorder.Gatherer().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]float64{}
+	for _, family := range families {
+		if family.GetName() != "alarmd_capacity_transition_total" {
+			continue
+		}
+		for _, sample := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, pair := range sample.GetLabel() {
+				labels[pair.GetName()] = pair.GetValue()
+			}
+			seen[labels["budget"]+"/"+labels["result"]] = sample.GetCounter().GetValue()
+		}
+	}
+	budgets := append(observability.CapacityBudgets(), observability.CapacityBudgetOther)
+	results := []string{"admitted", "rejected"}
+	if len(seen) != len(budgets)*len(results) {
+		t.Fatalf("series = %v, want %d", seen, len(budgets)*len(results))
+	}
+	for _, budget := range budgets {
+		for _, result := range results {
+			if value, ok := seen[string(budget)+"/"+result]; !ok || value != 0 {
+				t.Fatalf("%s/%s = %v present %v, want 0 present", budget, result, value, ok)
+			}
+		}
+	}
+}
+
+// A completed Slot is admitted once for each budget it held, and a refusal
+// is rejected once at its budget: the two moving together is what makes a
+// refusal rate readable, where a family that only ever moved on refusals
+// read zero for a pool holding hundreds of MiB.
+func TestCapacityTransitionCountsSlotsHeldAndRefusals(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	cell := func(budget observability.CapacityBudget, result string) float64 {
+		return testutil.ToFloat64(recorder.phaseTwo.capacity.WithLabelValues(string(budget), result))
+	}
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentScheduler, Stage: observability.StageSlotCompleted, Result: observability.ResultSuccess,
+		SlotBudgetUsage: &observability.SlotBudgetUsageFacts{Series: 3, RetainedBytes: 4096, StateMutations: 3}})
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentResource, Stage: observability.StageResourceHard, Result: observability.ResultPaused,
+		CapacityBudget: observability.CapacityBudgetRetainedBytes, Err: errors.New("the pool is full")})
+	for _, test := range []struct {
+		budget observability.CapacityBudget
+		result string
+		want   float64
+	}{
+		{observability.CapacityBudgetSeries, "admitted", 1},
+		{observability.CapacityBudgetRetainedBytes, "admitted", 1},
+		{observability.CapacityBudgetStateMutations, "admitted", 1},
+		{observability.CapacityBudgetEvents, "admitted", 0},
+		{observability.CapacityBudgetGapMutations, "admitted", 0},
+		{observability.CapacityBudgetRetainedBytes, "rejected", 1},
+		{observability.CapacityBudgetSeries, "rejected", 0},
+	} {
+		if got := cell(test.budget, test.result); got != test.want {
+			t.Fatalf("%s/%s = %v, want %v", test.budget, test.result, got, test.want)
+		}
 	}
 }
 
@@ -576,26 +649,27 @@ func TestPhaseTwoScheduleCursorAdvanceCountsByOutcome(t *testing.T) {
 		recorder.Observe(context.Background(), observability.Observation{
 			Component: observability.ComponentScheduler, Stage: observability.StageScheduleCursorAdvanced,
 			Result: observability.ResultSuccess, Operation: observability.OperationWrite,
-			CursorAdvance: &observability.CursorAdvanceFacts{From: 120, To: 600, Status: status},
+			CursorAdvance: &observability.CursorAdvanceFacts{From: 120, To: 600, Status: status, Reason: contract.ReasonPlanNotActive},
 		})
 	}
 	recorder.Observe(context.Background(), observability.Observation{
 		Component: observability.ComponentScheduler, Stage: observability.StageScheduleCursorAdvanced,
 		Result: observability.ResultRetrying, Operation: observability.OperationWrite,
-		CursorAdvance: &observability.CursorAdvanceFacts{From: 120, To: 600, Status: observability.CursorAdvanceConflict, Refusal: observability.CursorRefusalCASConflict, InFlightSlot: 120},
+		CursorAdvance: &observability.CursorAdvanceFacts{From: 120, To: 600, Status: observability.CursorAdvanceConflict, Refusal: observability.CursorRefusalCASConflict, InFlightSlot: 120, Reason: contract.ReasonSchedulePruned},
 	})
-	if got := testutil.ToFloat64(recorder.phaseTwo.scheduleCursorAdvances.WithLabelValues(observability.CursorAdvanceApplied, "")); got != 2 {
-		t.Fatalf("schedule_cursor_advance_total{applied} = %v, want 2", got)
+	if got := testutil.ToFloat64(recorder.phaseTwo.scheduleCursorAdvances.WithLabelValues(observability.CursorAdvanceApplied, "", contract.ReasonPlanNotActive, "false")); got != 2 {
+		t.Fatalf("schedule_cursor_advance_total{applied,PLAN_NOT_ACTIVE} = %v, want 2", got)
 	}
 	// A conflict without a refusal is one the store did not name: OTHER.
-	if got := testutil.ToFloat64(recorder.phaseTwo.scheduleCursorAdvances.WithLabelValues(observability.CursorAdvanceConflict, observability.CursorRefusalOther)); got != 1 {
+	if got := testutil.ToFloat64(recorder.phaseTwo.scheduleCursorAdvances.WithLabelValues(observability.CursorAdvanceConflict, observability.CursorRefusalOther, contract.ReasonPlanNotActive, "false")); got != 1 {
 		t.Fatalf("schedule_cursor_advance_total{conflict,OTHER} = %v, want 1", got)
 	}
-	if got := testutil.ToFloat64(recorder.phaseTwo.scheduleCursorAdvances.WithLabelValues(observability.CursorAdvanceConflict, observability.CursorRefusalCASConflict)); got != 1 {
+	// A conflict names the Slot in flight too, and threw nothing away.
+	if got := testutil.ToFloat64(recorder.phaseTwo.scheduleCursorAdvances.WithLabelValues(observability.CursorAdvanceConflict, observability.CursorRefusalCASConflict, contract.ReasonSchedulePruned, "false")); got != 1 {
 		t.Fatalf("schedule_cursor_advance_total{conflict,CAS_CONFLICT} = %v, want 1", got)
 	}
-	// Every refusal publishes from the start, so a zero is a fact.
-	if got := testutil.ToFloat64(recorder.phaseTwo.scheduleCursorAdvances.WithLabelValues(observability.CursorAdvanceConflict, observability.CursorRefusalCursorMoved)); got != 0 {
+	// Every refusal, reason and applied in_flight publishes from the start, so a zero is a fact.
+	if got := testutil.ToFloat64(recorder.phaseTwo.scheduleCursorAdvances.WithLabelValues(observability.CursorAdvanceConflict, observability.CursorRefusalCursorMoved, contract.ReasonPlanNotActive, "false")); got != 0 {
 		t.Fatalf("schedule_cursor_advance_total{conflict,CURSOR_MOVED} = %v, want a published zero", got)
 	}
 }
@@ -675,10 +749,12 @@ func TestSteppingDownAsLeaderTakesTheLeaderReadingsOffTheScrape(t *testing.T) {
 		Component: observability.ComponentOwnership, Stage: observability.StageRebalancePlanned, Result: observability.ResultSuccess,
 		Operation: observability.OperationLoad,
 		Rebalance: &observability.RebalanceFacts{PlannedMoves: 3, MostOwned: 9, LeastOwned: 4,
-			ShardAware: &observability.ShardAwareFacts{Ready: 3, Unaware: []string{"worker-2"}}},
+			ShardAware: &observability.ShardAwareFacts{Ready: 3, Unaware: []string{"worker-2"}},
+			Bytes:      &observability.ByteConstraintFacts{Overloaded: []string{"worker-1"}, MostLoadedShare: 1.2, Unread: 4}},
 	})
 	recorder.phaseTwo.undrainedDrainingQueryGroups.Set(2)
-	leaderReadings := []string{"alarmd_rebalance_planned_moves", "alarmd_rebalance_gap", "alarmd_shard_unaware_ready_replicas"}
+	leaderReadings := []string{"alarmd_rebalance_planned_moves", "alarmd_rebalance_gap", "alarmd_shard_unaware_ready_replicas",
+		"alarmd_rebalance_byte_overloaded_workers", "alarmd_rebalance_byte_most_loaded_share", "alarmd_rebalance_byte_unread_groups"}
 	scraped := scrape(t, recorder)
 	for _, reading := range leaderReadings {
 		if !strings.Contains(scraped, reading+" ") {
@@ -723,5 +799,58 @@ func TestSourceRefreshBuildsAreCountedFromZero(t *testing.T) {
 		SourceRefresh: &observability.SourceRefreshFacts{Status: "UNCHANGED", Build: observability.SourceRefreshReused}})
 	if got := counts(); got["reused"] != 1 || got["rebuilt"] != 0 {
 		t.Fatalf("after one reused round = %v", got)
+	}
+}
+
+// The rebalance moves a round published are counted by what held each Query
+// Group's lease: a holder under a worker session, or one renewing its own
+// lease (or none), so a rollout can read the moves off new holders apart.
+func TestRebalanceMovesAreCountedByWhatHeldTheLease(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentOwnership, Stage: observability.StageRebalancePlanned, Result: observability.ResultSuccess,
+		Operation: observability.OperationLoad,
+		Rebalance: &observability.RebalanceFacts{PlannedMoves: 3, PublishedMoves: 3, PublishedFromSessionHolders: 2},
+	})
+	for holder, want := range map[string]float64{"session": 2, "no_session": 1} {
+		if got := redisCounterSum(t, recorder, "alarmd_assignment_moves_total", map[string]string{"reason": "rebalance", "holder": holder}); got != want {
+			t.Fatalf("moves from %s holders = %v, want %v", holder, got, want)
+		}
+	}
+}
+
+// Every path a round takes a Query Group off a holder by is counted under its
+// own reason and by what held the lease: a placement off a holder gone from
+// the ready set, a replacement of a holder no longer eligible, and a byte
+// feasibility move, beside the count correction.
+func TestEveryWayARoundMovesAQueryGroupIsCountedByReason(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentOwnership, Stage: observability.StageRebalancePlanned, Result: observability.ResultSuccess,
+		Operation: observability.OperationLoad,
+		Rebalance: &observability.RebalanceFacts{
+			Placed: 3, PlacedFromSessionHolders: 1, Replaced: 2, ReplacedFromSessionHolders: 2, Unfit: 2,
+			Bytes: &observability.ByteConstraintFacts{PublishedMoves: 1, PublishedFromSessionHolders: 1,
+				Overloaded: []string{"worker-1"}, MostLoadedShare: 1.25, Unread: 7},
+		},
+	})
+	for _, want := range []struct {
+		reason, holder string
+		moves          float64
+	}{
+		{"holder_gone", "session", 1}, {"holder_gone", "no_session", 2},
+		{"ineligible", "session", 2}, {"ineligible", "no_session", 0},
+		{"bytes", "session", 1}, {"bytes", "no_session", 0},
+		{"rebalance", "session", 0}, {"rebalance", "no_session", 0},
+	} {
+		if got := redisCounterSum(t, recorder, "alarmd_assignment_moves_total", map[string]string{"reason": want.reason, "holder": want.holder}); got != want.moves {
+			t.Fatalf("moves %s from %s holders = %v, want %v", want.reason, want.holder, got, want.moves)
+		}
+	}
+	scraped := scrape(t, recorder)
+	for _, line := range []string{"alarmd_rebalance_byte_overloaded_workers 1", "alarmd_rebalance_byte_most_loaded_share 1.25", "alarmd_rebalance_byte_unread_groups 7", "alarmd_placement_unfit_total 2"} {
+		if !strings.Contains(scraped, line) {
+			t.Fatalf("scrape lacks %q:\n%s", line, scraped)
+		}
 	}
 }

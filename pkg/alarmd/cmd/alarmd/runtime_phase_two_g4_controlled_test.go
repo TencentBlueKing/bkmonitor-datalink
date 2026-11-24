@@ -259,6 +259,10 @@ func runControlledG4Golden(
 	uqClient := controlledG4UQClient(t, base, table)
 
 	cfg := controlledG4RuntimeConfig(address, "http://controlled-uq", fmt.Sprintf("alarmd-g4-controlled-%d", strategyID))
+	// A revisioned snapshot goes out on the consumer's protocol, whose
+	// RECOVERY the gate passes on this process's own send: the copy is built
+	// from the link's control plane.
+	cfg.PhaseTwo.Linkd.ControlPlane = quietLinkControlPlane(t)
 	events := &recordingPhaseTwoEventSink{}
 	var observationsMu sync.Mutex
 	var observations []observability.Observation

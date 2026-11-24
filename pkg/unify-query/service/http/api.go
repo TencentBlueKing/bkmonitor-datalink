@@ -26,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	tsdbService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -86,6 +87,7 @@ func HandlerFieldKeys(c *gin.Context) {
 	params := &Params{}
 	err = json.NewDecoder(c.Request.Body).Decode(params)
 	if err != nil {
+		resp.failed(ctx, err)
 		return
 	}
 
@@ -97,7 +99,7 @@ func HandlerFieldKeys(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, paramsStr,
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), paramsStr,
 	).Info(ctx)
 
 	queryRef, err := infoParamsToQueryRef(ctx, params)
@@ -106,7 +108,7 @@ func HandlerFieldKeys(c *gin.Context) {
 		return
 	}
 
-	p, _ := ants.NewPool(QueryMaxRouting)
+	p, _ := ants.NewPool(QueryMaxRouting, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
 	defer p.Release()
 
 	var (
@@ -167,6 +169,7 @@ func HandlerTagKeys(c *gin.Context) {
 	params := &Params{}
 	err = json.NewDecoder(c.Request.Body).Decode(params)
 	if err != nil {
+		resp.failed(ctx, err)
 		return
 	}
 
@@ -178,7 +181,7 @@ func HandlerTagKeys(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, paramsStr,
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), paramsStr,
 	).Info(ctx)
 
 	queryRef, err := infoParamsToQueryRef(ctx, params)
@@ -187,7 +190,7 @@ func HandlerTagKeys(c *gin.Context) {
 		return
 	}
 
-	p, _ := ants.NewPool(QueryMaxRouting)
+	p, _ := ants.NewPool(QueryMaxRouting, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
 	defer p.Release()
 
 	var (
@@ -247,6 +250,7 @@ func HandlerTagValues(c *gin.Context) {
 	params := &Params{}
 	err = json.NewDecoder(c.Request.Body).Decode(params)
 	if err != nil {
+		resp.failed(ctx, err)
 		return
 	}
 	// 先统一有效 limit，确保每个子查询和最终合并结果使用同一上限。
@@ -262,7 +266,7 @@ func HandlerTagValues(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, string(paramsStr),
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), string(paramsStr),
 	).Info(ctx)
 
 	queryRef, err := infoParamsToQueryRef(ctx, params)
@@ -271,7 +275,7 @@ func HandlerTagValues(c *gin.Context) {
 		return
 	}
 
-	p, _ := ants.NewPool(QueryMaxRouting)
+	p, _ := ants.NewPool(QueryMaxRouting, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
 	defer p.Release()
 
 	var (
@@ -354,6 +358,7 @@ func HandlerTimeSeries(c *gin.Context) {
 	params := &Params{}
 	err = json.NewDecoder(c.Request.Body).Decode(params)
 	if err != nil {
+		resp.failed(ctx, err)
 		return
 	}
 
@@ -365,7 +370,7 @@ func HandlerTimeSeries(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, paramsStr,
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), paramsStr,
 	).Info(ctx)
 
 	data := &InfoData{}
@@ -401,6 +406,7 @@ func HandlerSeries(c *gin.Context) {
 	params := &Params{}
 	err = json.NewDecoder(c.Request.Body).Decode(params)
 	if err != nil {
+		resp.failed(ctx, err)
 		return
 	}
 
@@ -412,7 +418,7 @@ func HandlerSeries(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, paramsStr,
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), paramsStr,
 	).Info(ctx)
 
 	queryRef, err := infoParamsToQueryRef(ctx, params)
@@ -421,7 +427,7 @@ func HandlerSeries(c *gin.Context) {
 		return
 	}
 
-	p, _ := ants.NewPool(QueryMaxRouting)
+	p, _ := ants.NewPool(QueryMaxRouting, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
 	defer p.Release()
 
 	var (
@@ -577,7 +583,7 @@ func HandlerLabelValues(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v",
-		c.Request.URL.String(), c.Request.Header,
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header),
 	).Info(ctx)
 
 	if len(matches) != 1 {
@@ -661,7 +667,7 @@ func HandlerFieldMap(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryInfo,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, string(paramsStr),
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), string(paramsStr),
 	).Info(ctx)
 
 	queryRef, err := infoParamsToQueryRef(ctx, params)
@@ -669,7 +675,7 @@ func HandlerFieldMap(c *gin.Context) {
 		return
 	}
 
-	p, _ := ants.NewPool(QueryMaxRouting)
+	p, _ := ants.NewPool(QueryMaxRouting, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
 	defer p.Release()
 
 	var (

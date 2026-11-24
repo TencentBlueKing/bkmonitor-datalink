@@ -37,7 +37,7 @@ func noRecheck(context.Context, execution.PhysicalQuerySpec, execution.ProviderS
 // reason the scheduler refuses a permit with, from the start.
 func TestTheLookbackRunsWithoutConfiguration(t *testing.T) {
 	owner := &lookbackOwnership{}
-	engine, standing, err := buildLookback(noRecheck, nil, owner, nil, time.Now, nil)
+	engine, standing, err := buildLookback(noRecheck, nil, owner, nil, time.Now, nil, nil)
 	if err != nil || engine == nil || standing != (lookbackStanding{Running: true}) {
 		t.Fatalf("built: %v %+v %v", engine, standing, err)
 	}
@@ -190,7 +190,7 @@ func TestLookbackGetSaysWhetherItRunsAndCarriesTheCounts(t *testing.T) {
 	if off := read(cliLookbackOperation(nil, lookbackStanding{})); off.Running || off.Stats != nil {
 		t.Fatalf("off = %+v", off)
 	}
-	engine, standing, err := buildLookback(noRecheck, nil, &lookbackOwnership{}, nil, time.Now, nil)
+	engine, standing, err := buildLookback(noRecheck, nil, &lookbackOwnership{}, nil, time.Now, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

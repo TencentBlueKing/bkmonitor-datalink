@@ -309,3 +309,39 @@ func TestAStrategyConfigAnswerTheFrontCannotShapeIsWithheld(t *testing.T) {
 		t.Fatalf("an unshaped answer = %d %s, want 502 front_answer_unshaped without the address", w.Code, w.Body.String())
 	}
 }
+
+// A refused front read is counted by its code and told with the operation it
+// asked for; an answered one is neither. A page calling an operation this
+// build stopped serving it used to read blank with nothing on alarmd's side.
+func TestARefusedFrontReadIsCountedAndToldWithItsOperation(t *testing.T) {
+	answer := func(id string) Operation {
+		return Operation{ID: id, Summary: id, Fields: map[string]Field{}, Run: func(context.Context, Params) Outcome {
+			return Outcome{Value: map[string]any{}, Complete: true}
+		}}
+	}
+	var told []string
+	c, err := New(Options{Auth: postObservationAuth{}, EnvironmentID: "test", Replica: "replica-1",
+		Operations:     []Operation{answer("fleet.get"), answer("strategy.linkd_reconcile")},
+		OnFrontRefused: func(code, operation string) { told = append(told, code+" "+operation) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := frontRead(t, c, "fleet.get"); code != 200 {
+		t.Fatalf("a front read answered %d", code)
+	}
+	if counts := c.FrontRefusals(); counts["op_not_permitted_for_front"] != 0 || len(told) != 0 {
+		t.Fatalf("an answered read was counted: %v, told %v", counts, told)
+	}
+	if code, out := frontRead(t, c, "strategy.linkd_reconcile"); code != 403 || out.Error == nil || out.Error.Code != "op_not_permitted_for_front" {
+		t.Fatalf("a read outside FrontReads answered %d %+v", code, out.Error)
+	}
+	counts := c.FrontRefusals()
+	if counts["op_not_permitted_for_front"] != 1 || len(told) != 1 || told[0] != "op_not_permitted_for_front strategy.linkd_reconcile" {
+		t.Fatalf("the refusal was not counted and told: %v, told %v", counts, told)
+	}
+	for _, code := range FrontRefusalCodes {
+		if _, present := counts[code]; !present {
+			t.Fatalf("code %s has no cell", code)
+		}
+	}
+}

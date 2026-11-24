@@ -358,3 +358,41 @@ func TestLogSearchHoldsACursorToTheFirstPagesRules(t *testing.T) {
 		t.Fatalf("continuation past the maximum offset: %+v %v", page, err)
 	}
 }
+
+// A query_string's form is named on both operations. On a Doris store UQ's
+// Lucene translation makes a wildcard term a LIKE and any other term an
+// equality with the whole field value, a bare word's field being log; so
+// only log:*text* and *text* search inside the text, and every other form
+// says that a 0 may be the form rather than the absence.
+func TestTheQueryStringFormIsNamed(t *testing.T) {
+	for queryString, want := range map[string]string{
+		"": QueryFormAll, "*": QueryFormAll,
+		"log:*Waiting*": QueryFormSubstring, "*Waiting*": QueryFormSubstring, " log:*dial-failed.go:12* ": QueryFormOther,
+		"Waiting": QueryFormOther, "log:Waiting": QueryFormOther, "*connection refused*": QueryFormOther,
+		"log:*Waiting* AND __ext.container_name:unify-query": QueryFormOther, "__ext.container_name:unify-query": QueryFormOther,
+	} {
+		server := &rawServer{answers: []string{rawAnswer(0, nil)}}
+		request := searchRequest()
+		request.QueryString = queryString
+		page, err := server.provider(t).LogSearch(context.Background(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		counted := &logServer{answer: answer(false)}
+		countRequest := logRequest()
+		countRequest.QueryString = queryString
+		counts, err := counted.provider(t).LogCount(context.Background(), countRequest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, got := range map[string]struct {
+			form        string
+			limitations []string
+		}{"log.search": {page.QueryForm, page.Limitations}, "log.count": {counts.QueryForm, counts.Limitations}} {
+			said := strings.Contains(strings.Join(got.limitations, "\n"), "not of the form log:*text* or *text*")
+			if got.form != want || said != (want == QueryFormOther) {
+				t.Errorf("%s %q: form %q limitations %q, want %q", name, queryString, got.form, got.limitations, want)
+			}
+		}
+	}
+}

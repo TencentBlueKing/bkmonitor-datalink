@@ -117,7 +117,7 @@ func TestEveryCompiledPlanFieldComesFromAnObjectTheContentKeyNames(t *testing.T)
 		"TargetPlan", "TargetScope", "TerminalReasonCode",
 	}
 	fromOutputContext := []string{
-		"GlobalBusiness", "LegacyOutput", "SignalType", "SourceCompatibility", "StrategyRef", "SubjectFacts", "WireFormat",
+		"GlobalBusiness", "LegacyOutput", "SignalType", "SourceCompatibility", "StrategyFacts", "StrategyRef", "SubjectFacts", "WireFormat",
 	}
 	want := append(append([]string(nil), fromGroupObject...), fromOutputContext...)
 	sort.Strings(want)

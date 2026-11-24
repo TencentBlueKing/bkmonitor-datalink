@@ -77,6 +77,7 @@ func TestBkDataDirectAddress(t *testing.T) {
 		} else {
 			viper.Set(BkDataAddressConfigPath, "")
 		}
+		LoadConfig()
 		// 重置单例，以便重新读取配置
 		onceBkDataAPI = sync.Once{}
 		defaultBkDataAPI = nil
@@ -85,6 +86,7 @@ func TestBkDataDirectAddress(t *testing.T) {
 	// 情景一：测试直接使用 bk_data.address 的场景
 	directAddress := "http://120.1.1.1:8000/v3/queryengine"
 	viper.Set(BkDataAddressConfigPath, directAddress)
+	LoadConfig()
 
 	// 重置单例以重新读取配置
 	onceBkDataAPI = sync.Once{}
@@ -99,6 +101,7 @@ func TestBkDataDirectAddress(t *testing.T) {
 
 	// 情景二：测试不使用 bk_data.address 的场景
 	viper.Set(BkDataAddressConfigPath, "")
+	LoadConfig()
 
 	// 重置单例以重新读取配置
 	onceBkDataAPI = sync.Once{}

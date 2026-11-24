@@ -15,6 +15,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	ants "github.com/panjf2000/ants/v2"
@@ -26,6 +27,8 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 )
 
 // 区间聚合不具有样本时间。仅迁移路由上的无时间分桶查询进入独立合并路径。
@@ -109,7 +112,7 @@ func (q *Querier) selectRangeAggregate(ctx context.Context, queries QueryList) s
 		}
 	}
 
-	pool, err := ants.NewPool(q.maxRouting)
+	pool, err := ants.NewPool(q.maxRouting, ants.WithPanicHandler(metric.PanicHandler(ctx, metric.PanicSiteQueryWorker)))
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
@@ -197,6 +200,12 @@ func (p rangeAggregateQuery) execute(ctx context.Context, average bool) (map[str
 	query.Aggregates = query.Aggregates.Copy()
 	query.IsRangeAggregation = true
 	query.RangeEndExclusive = p.endExclusive
+	var partialResults *atomic.Uint32
+	if average && query.StorageType == metadata.ElasticsearchStorageType && elasticsearch.PartialShardResultsEnabled(ctx) {
+		// Separate sum/count responses can use different successful shards.
+		// Keep each pair isolated and discard the route if either response is partial.
+		ctx, partialResults = elasticsearch.WithPartialShardResults(ctx)
+	}
 	if average {
 		query.Aggregates[0].Name = function.Sum
 	}
@@ -208,6 +217,9 @@ func (p rangeAggregateQuery) execute(ctx context.Context, average bool) (map[str
 	counts, err := readRangeAggregate(p.query.instance.QuerySeriesSet(ctx, &query, p.start, p.end))
 	if err != nil {
 		return nil, err
+	}
+	if partialResults != nil && partialResults.Load() > 0 {
+		return nil, fmt.Errorf("range aggregate average requires complete ES sum/count results")
 	}
 	for key, value := range values {
 		count, ok := counts[key]

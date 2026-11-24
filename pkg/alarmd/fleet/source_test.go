@@ -251,7 +251,7 @@ func TestTheTodoNamesThePlatformsLinesApart(t *testing.T) {
 	}
 	// A deployment's own standing beside it: two lines, one of them the
 	// platform's, and the platform count does not grow with ours.
-	view.Degradations = []Degradation{{Kind: DegradationOpenAlertSetStale, Replica: "pod-a"}}
+	view.Degradations = []Degradation{{Kind: DegradationActiveCopyUnsupported, Replica: "pod-a"}}
 	reports = ReportChecks(nil, nil, view, now)
 	todo = SummarizeTodo(reports, nil, view, now)
 	if todo.Checks != 2 || todo.PlatformChecks != 1 || todo.PlatformStrategies != 26 {

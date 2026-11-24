@@ -70,7 +70,9 @@ func newQueryPermitCollector(source QueryPermitOccupancySource) *queryPermitColl
 			[]string{"kind"}),
 		budget: descriptor("worker_query_permit_budget",
 			"The configured permit ceiling, exported beside the occupancy so a reader does not need "+
-				"the deployment's configuration to know what the occupancy is out of.",
+				"the deployment's configuration to know what the occupancy is out of. queue=normal is the "+
+				"process's whole ceiling, recovery queries included, not a share for normal queries alone; "+
+				"queue=recovery is the smaller ceiling recovery queries are held to within it.",
 			[]string{"queue"}),
 	}
 }

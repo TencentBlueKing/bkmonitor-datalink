@@ -146,7 +146,12 @@ const (
 	// storage the query service routed the table to does not read unaligned
 	// windows. Its points cover partial buckets at the wrong times, so the
 	// query is not used. Like QUERY_TARGET_MISSING it stays until the
-	// strategy changes - here, until its detect_interval is removed.
+	// strategy changes - here, until its detect_interval is removed. A
+	// Plan detected more often than it aggregates is asked a step apart
+	// (QueryPlanFacts.QueryStepMillis), a step below its window, which the
+	// query service computes itself from where the request starts, so this
+	// is not expected of it; it is kept as the guard. A Plan detected less
+	// often is asked its aggregation interval and can still meet it.
 	ReasonDetectIntervalStorageNotSliding = "DETECT_INTERVAL_STORAGE_NOT_SLIDING"
 	// ReasonQueryNamedOutputDuplicateKey names a query with named outputs
 	// one of whose outputs answered two points at the same time under the
@@ -285,6 +290,27 @@ const (
 	// large objects across replicas; nothing stops one from filling the replica
 	// it lands on.
 	ReasonQGBudgetShareExceeded = "QG_BUDGET_SHARE_EXCEEDED"
+	// ReasonResourcePoolHeldByOthers names one Query Group's Slot within its
+	// share and refused by the process pool all the same: the rest of the pool
+	// is held by other Query Groups or by the worker itself. Every byte a Query
+	// Group's Slot holds is judged against its share first, so a Slot refused
+	// here is not too large; the next attempt fits once the others let go.
+	// RESOURCE_HARD_STOP stays the pool's refusal of what belongs to no Query
+	// Group.
+	ReasonResourcePoolHeldByOthers = "RESOURCE_POOL_HELD_BY_OTHERS"
+	// The three ways a Slot past its share that has to be read in slices
+	// cannot be (decision-020 batch 8): its store's regular expressions are
+	// not the anchored RE2 the slices rest on, its query is a PromQL
+	// expression, or a dimension is not a raw group-by label of every query
+	// (UNSUPPORTED); its series are too many under one set of dimension
+	// values for any slice to hold them (VALUE_CONCENTRATED - the values'
+	// distribution, not the Slot's size, is what refuses); or the slice's
+	// conditions made the query longer than the store takes
+	// (QUERY_TOO_LONG). Each refuses the Slot every round until the strategy
+	// changes.
+	ReasonInputSliceUnsupported       = "INPUT_SLICE_UNSUPPORTED"
+	ReasonInputSliceValueConcentrated = "INPUT_SLICE_VALUE_CONCENTRATED"
+	ReasonInputSliceQueryTooLong      = "INPUT_SLICE_QUERY_TOO_LONG"
 	// ReasonSupplementKeptReadAbsent names a supplement of a Slot whose
 	// queries, planned again from the Slot's frozen plan, are not all the
 	// query the lookback kept the late read of. Nothing is run and nothing
@@ -616,6 +642,13 @@ type EvaluationPlanV2 struct {
 	// TriggerEventV1.AttributedBusinessID). Omitted when false, so every
 	// other Plan keeps its bytes and its revision.
 	GlobalBusiness bool `json:"global_business,omitempty"`
+	// StrategyFacts is what this Plan's events say about the configuration
+	// they were decided under (StrategyFactsV2), derived from the item's
+	// query configs when the Plan is built. Only on a Plan that publishes a
+	// snapshot revision; nil on every other Plan, and on one whose query
+	// configs the platform's own comparison could not read, whose events
+	// then carry none.
+	StrategyFacts *StrategyFactsV2 `json:"strategy_facts,omitempty"`
 }
 
 // PublishesCompatibleProtocol reports whether this Plan's events go out as the
@@ -992,8 +1025,17 @@ const RecoveryWithheldZeroCount = "zero_count"
 // timed and ends nothing. The next real point starts the clock.
 const RecoveryWithheldNoDataLastPointUnknown = "no_data_last_point_unknown"
 
+// RecoveryWithheldSourceUnknown: a Level written to end on no data reached
+// its end, and the probe of its source - the same table in the same space,
+// the strategy's own conditions removed - could not say the source is alive:
+// the answer carried a status or was partial, the probe failed or timed out,
+// or it came back empty without a status. No data from a source that may
+// itself be down is not "it stopped happening", so the alert stays open.
+// Only ever on a no-data end; the quiet-group zero count path is not probed.
+const RecoveryWithheldSourceUnknown = "source_unknown"
+
 // RecoveryWithheldReasons is the closed list.
-var RecoveryWithheldReasons = []string{RecoveryWithheldZeroCount, RecoveryWithheldNoDataLastPointUnknown}
+var RecoveryWithheldReasons = []string{RecoveryWithheldZeroCount, RecoveryWithheldNoDataLastPointUnknown, RecoveryWithheldSourceUnknown}
 
 type WindowEvidenceV1 struct {
 	AnomalyTimestampsDigest string `json:"anomaly_timestamps_digest"`
@@ -1066,7 +1108,17 @@ type TriggerEventV1 struct {
 	// it, so neither the event id nor its semantic digest moves with what is
 	// read beside the detection. Nil on the events of a strategy without
 	// named outputs.
-	DetectionSnapshot       json.RawMessage      `json:"-"`
+	DetectionSnapshot json.RawMessage `json:"-"`
+	// StrategyFacts is the Plan's (EvaluationPlanV2.StrategyFacts), for the
+	// output to carry (extra_data.strategy_facts): beside the event and not
+	// in it, like the signal type. Nil where the Plan has none.
+	StrategyFacts *StrategyFactsV2 `json:"-"`
+	// TargetDimensions is the Plan's target identity dimensions
+	// (TargetPlanIdentityV1.Dimensions), beside the event like the facts:
+	// alarmd's record of the episodes it opened (package openepisodes)
+	// keeps the series' values of them, which a scope close compares with
+	// the current targets. Nil where the Plan names no target plan.
+	TargetDimensions        []string             `json:"-"`
 	Schema                  Schema               `json:"schema"`
 	RequiredFeatures        []string             `json:"required_features"`
 	EventID                 string               `json:"event_id"`

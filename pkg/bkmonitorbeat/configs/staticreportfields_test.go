@@ -27,6 +27,13 @@ func TestNormalizeStaticReportFields(t *testing.T) {
 	assert.Contains(t, fields, StaticReportFieldSystemHostname)
 	assert.Contains(t, fields, StaticReportFieldSystemKernelVersion)
 
+	fields, err = NormalizeStaticReportFields([]string{"hardware"})
+	assert.NoError(t, err)
+	assert.Contains(t, fields, StaticReportFieldHardwareProductUUID)
+	assert.Contains(t, fields, StaticReportFieldHardwareProductName)
+	assert.Contains(t, fields, StaticReportFieldHardwareProductSerial)
+	assert.Contains(t, fields, StaticReportFieldHardwareUUIDStatus)
+
 	fields, err = NormalizeStaticReportFields([]string{"*"})
 	assert.NoError(t, err)
 	assert.Nil(t, fields)

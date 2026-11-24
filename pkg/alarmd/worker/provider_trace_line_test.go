@@ -153,11 +153,11 @@ func TestEveryFailedQueryLineNamesTheTraceItWasSentWith(t *testing.T) {
 				c.observeQueryCompleted(context.Background(), execution.OperationNormal, time.Now(),
 					execution.QueryExecutionCompletion{PhysicalQueries: []execution.PhysicalQueryCompletion{
 						{Completeness: done.Completeness, RouteFacts: done.RouteFacts}}},
-					execution.EvaluationResult{Result: observability.ResultDegraded, ReasonCode: done.RouteFacts.Attempts[0].ReasonCode})
+					execution.EvaluationResult{Result: observability.ResultDegraded, ReasonCode: done.RouteFacts.Attempts[0].ReasonCode}, nil)
 			default:
 				c.observeQueryCompleted(context.Background(), execution.OperationNormal, time.Now(),
 					execution.QueryExecutionCompletion{PhysicalQueries: []execution.PhysicalQueryCompletion{
-						{Completeness: done.Completeness, RouteFacts: done.RouteFacts}}}, execution.EvaluationResult{})
+						{Completeness: done.Completeness, RouteFacts: done.RouteFacts}}}, execution.EvaluationResult{}, nil)
 			}
 
 			mu.Lock()

@@ -26,9 +26,23 @@
 // reinterpreted here; the snapshot is the control plane's own read of it. What
 // is added is only what one read cannot say: that the read was a good one
 // (read at all, not old, and not empty unless the writer states it), and that
-// the strategy stayed missing - for the grace, across two reads. How much smaller a list is than the one
-// before is not judged: a strategy leaves the list when it is gone, and a
-// writer that drops strategies on error is the writer's to fix.
+// the strategy stayed missing - for Bounds.MinReads deciding rounds, under
+// two observations. How much smaller a list is than the one before is not
+// judged: a strategy leaves the list when it is gone, and a writer that drops
+// strategies on error is the writer's to fix.
+//
+// A strategy the writer marked as departed (Round.Marks: disabled or deleted,
+// with the revision it left at, <prefix>.departed_strategies) takes
+// the fast path instead: it is closed on the round after the one that first
+// read it absent under that same mark, without the reads the implicit path
+// waits for. One round between is what lets a strategy disabled and enabled
+// again within it come back before anything closes: enabling it removes the
+// mark and raises its revision. The mark's revision is the strategy record's
+// (record_revision, which enabling and disabling move), not the
+// executed content's that a Plan carries (strategy_revision): the two are
+// not compared. What is compared is the mark against itself - the same state
+// and revision on both rounds, and again just before the close is sent. The
+// two paths are counted apart (Decision.Path).
 //
 // A strategy the cache lists and alarmd's publication refused stands with
 // the absent ones when the refusal is for a capability this build lacks and
@@ -46,7 +60,7 @@
 // absence is decided by the snapshot alone. Refusing on it would turn "may
 // close fewer" into "close none" - and a link whose maintenance fails under
 // the alerts of a strategy that is gone is exactly the one whose close would
-// remove them. The health page reports the link's word (LinkHealthWord).
+// remove them.
 package absentalerts
 
 import (
@@ -76,14 +90,63 @@ type Identity struct {
 }
 
 // Absence is this loop's own memory of a candidate: when it first found the
-// strategy missing from the snapshot, and which observation found it. The
-// observation is kept because the source reconciler reuses one observation
-// across rounds, and a candidate confirmed twice against one observation was
-// confirmed once.
+// strategy missing from the snapshot, which observation found it, and how
+// many deciding rounds have found it missing since. The observation is kept
+// because the source reconciler reuses one observation across rounds, and a
+// candidate confirmed twice against one observation was confirmed once.
+//
+// Rounds are counted rather than time measured, so a release that restarts
+// the leader costs no more than the rounds it skips: the memory is kept in
+// the runtime Redis across terms (Memory), and TermReads, which is not kept,
+// is what holds a new term back from closing on its first round.
 type Absence struct {
 	Since       time.Time
 	Observation string
+	// Reads is how many deciding rounds found the strategy missing, the one
+	// that first did included.
+	Reads int
+	// Confirmed is whether a round of this term found it missing under an
+	// observation of the source other than the first this term read it
+	// under (TermObservation). Not carried into a new term (Restore): a
+	// strategy that came back and left again while no leader watched would
+	// otherwise close on a confirmation made before it came back.
+	Confirmed bool
+	// TermReads is how many of those rounds ran in this leader's term, and
+	// TermObservation the observation the first of them read.
+	TermReads       int
+	TermObservation string
+	// Mark is the writer's departure mark the last of them read with it,
+	// zero for none, and MarkReads how many consecutive rounds read that
+	// same mark (state and revision).
+	Mark      Mark
+	MarkReads int
 }
+
+// Mark is the writer's statement that a strategy left: disabled or deleted,
+// at the strategy record's revision. The writer keeps one per strategy that
+// leaves the list for either reason and removes it when the strategy comes
+// back (strategy-direct-cache-publication.md, departed_strategies).
+type Mark struct {
+	TenantID string
+	State    string
+	Revision int64
+}
+
+// The states a mark names.
+const (
+	MarkDisabled = "disabled"
+	MarkDeleted  = "deleted"
+)
+
+// The paths a candidate is decided on.
+const (
+	// PathImplicit: missing from the snapshot with no mark, Bounds.MinReads
+	// rounds under two observations.
+	PathImplicit = "implicit"
+	// PathDeparted: missing under the writer's mark, the round after the one
+	// that first read it so.
+	PathDeparted = "departed"
+)
 
 // Round is one difference and everything it may decide on.
 type Round struct {
@@ -115,9 +178,11 @@ type Round struct {
 	SnapshotAgeSeconds  int64
 	// WriterHoldsLastGood is the writer's statement, made about this very
 	// list, that a strategy leaves it only for a fact about the strategy
-	// itself and never because publishing it failed. It decides one thing
-	// here: an empty list under it is a fact, every strategy gone, and is
-	// decided on; an empty list without it is refused (RefusalSnapshotEmpty).
+	// itself and never because publishing it failed. Only under it is a
+	// strategy missing from the list gone, so only under it does a round
+	// decide: a list without it is refused (RefusalWriterUnstated; an empty
+	// one RefusalSnapshotEmpty), and an empty list under it is a fact, every
+	// strategy gone.
 	WriterHoldsLastGood bool
 	// Identities is what the catalog remembers about the strategies it let
 	// go. A candidate not here is still closed; its identity is read from its
@@ -126,6 +191,10 @@ type Round struct {
 	// FirstAbsent is this loop's memory of when each candidate was first
 	// found missing by this loop itself.
 	FirstAbsent map[Key]Absence
+	// Marks is the writer's departure marks by strategy id, read this round;
+	// nil where the writer keeps none or they could not be read, which only
+	// leaves every candidate to the implicit path.
+	Marks map[string]Mark
 	// After is the last strategy the previous round decided to close; this
 	// round's walk over the candidates starts just past it.
 	After Key
@@ -143,6 +212,9 @@ type Decision struct {
 	// Refused is the capability the strategy was refused for, empty for a
 	// strategy absent from the snapshot.
 	Refused string
+	// Path is PathDeparted when the strategy is decided on the writer's
+	// mark, PathImplicit otherwise.
+	Path string
 }
 
 // Absent is one strategy the round decided to close.
@@ -157,6 +229,12 @@ type Absent struct {
 	// its close says alarmd no longer detects it. Empty for a strategy absent
 	// from the snapshot.
 	Refused string
+	// Path is the path it was decided on, and Mark, on PathDeparted, the
+	// mark it was decided under: the close's decision is disabled or deleted
+	// after it, and is sent only while a read of that strategy's mark just
+	// before it still holds it.
+	Path string
+	Mark Mark
 }
 
 // The refusals of a whole round. Each names the fact that was not good
@@ -184,26 +262,36 @@ const (
 	// RefusalSnapshotStale: the observation is older than this round may
 	// decide on. Strategies created since it was read would read as absent.
 	RefusalSnapshotStale = "snapshot_stale"
+	// RefusalWriterUnstated: the list was observed and is not empty, and its
+	// writer made no statement about it (Round.WriterHoldsLastGood): no
+	// publication_semantics saying it holds the last good document, or one
+	// about another set of strategy ids. A writer without the statement
+	// drops strategies that still exist and adds them back later, so a
+	// strategy missing from its list is not known to be gone; the round
+	// closes nothing, and the platform's own close stays the closer there.
+	// Checked after every other refusal: an empty list without the
+	// statement is snapshot_empty, a stale one snapshot_stale.
+	RefusalWriterUnstated = "writer_unstated"
 )
 
 // Refusals is the closed list of whole-round refusals.
 var Refusals = []string{RefusalNone, RefusalLinkUnavailable, RefusalSnapshotUnusable, RefusalSnapshotEmpty,
-	RefusalSnapshotStale}
+	RefusalSnapshotStale, RefusalWriterUnstated}
 
 // The per-strategy outcomes of the decision. Every candidate the round did
 // not close lands on one of these, and every one of them is counted.
 const (
 	// OutcomeCloseDecided: absent from the snapshot for the grace under two
 	// observations, and within this round's bound. Decided, not closed: what
-	// went out is OutcomeCloseSent, and whether the link acted on it is what
-	// its next reconcile read lists as active.
+	// went out is OutcomeCloseSent, and whether the link acted on it is read
+	// per alert on the link.
 	OutcomeCloseDecided = "close_decided"
-	// OutcomeWithinGrace: absent, but not for long enough by this loop's own
-	// clock. A leader that has just been elected cannot close on its first
-	// round.
+	// OutcomeWithinGrace: absent, but not yet for Bounds.MinReads deciding
+	// rounds, or not yet for two rounds of this leader's term. A leader that
+	// has just been elected cannot close on its first round.
 	OutcomeWithinGrace = "within_grace"
-	// OutcomeUnconfirmed: absent long enough, but every round that found it
-	// absent read the same observation of the source.
+	// OutcomeUnconfirmed: absent for enough rounds, but every round that
+	// found it absent read the same observation of the source.
 	OutcomeUnconfirmed = "unconfirmed"
 	// OutcomeDeferred: decided, but this round's close bound was already
 	// spent. Counted per strategy; the next round takes it.
@@ -212,6 +300,14 @@ const (
 	// its set. Counted per strategy and per round, and never folded into "it
 	// has no alerts".
 	OutcomeIndexUnreadable = "index_unreadable"
+	// OutcomeDepartedCloseDecided: missing under the writer's mark on two
+	// consecutive rounds, the same state and revision, both of this term,
+	// and within this round's bound. The fast path's close_decided.
+	OutcomeDepartedCloseDecided = "departed_close_decided"
+	// OutcomeDepartedWaiting: missing under the writer's mark, on the first
+	// round that read that mark (or the first of this term). The next round
+	// decides it unless the strategy came back.
+	OutcomeDepartedWaiting = "departed_waiting"
 )
 
 // The outcomes of carrying a decision out. They are counted in different
@@ -234,19 +330,22 @@ const (
 	// strategy.
 	OutcomeEvidenceUnavailable = "evidence_unavailable"
 	// OutcomeEvidenceTruncated: the strategy's alerts were read, and the
-	// link's answer was incomplete or past the reader's caps
-	// (openalerts.Reconciliation.Truncated). The alerts it listed are closed
+	// link's answer was incomplete or past the reader's caps. No reader of
+	// this build reports it (the Console-era listing is gone); the word
+	// stays in the closed list until the outcomes are cut. The alerts it listed are closed
 	// as usual and the rest are left for a later round, when the strategy is
 	// decided again; when none listed is this deployment's, that is not "it
 	// has none of ours". Per strategy, beside its other outcomes.
 	OutcomeEvidenceTruncated = "evidence_truncated"
-	// OutcomeCloseSent: an alert the broker acknowledged a close for. Per
-	// alert, where OutcomeCloseDecided counts strategies. Sent, not closed:
-	// the link closes the alert or does not, and an alert it left open is
-	// listed active again by the next close's reconcile read.
+	// OutcomeCloseSent: a strategy's close decision that sent at least one
+	// real close whose items the link answered (closed, refused or busy,
+	// item by item; filterclose.Result.Sent). One per decision, as
+	// OutcomeCloseDecided. Sent, not closed: the link closes the alert or
+	// does not, and a strategy it does not close is sent again every round.
 	OutcomeCloseSent = "close_sent"
-	// OutcomeSendFailed: the producer did not acknowledge the batch. Per
-	// alert.
+	// OutcomeSendFailed: the absent close's job line word for a close not
+	// sent (observeCloseJob). Not counted: the filtered close's counts are
+	// linkd_filter_close_total's.
 	OutcomeSendFailed = "send_failed"
 	// OutcomeNotLeader: this replica is not the control leader and takes no
 	// difference. Counted so that a deployment where no replica ever ran a
@@ -264,13 +363,48 @@ const (
 	// never closed: "it does not say it is someone else's" is not "it is
 	// ours".
 	OutcomeProducerUnknown = "producer_unknown"
+	// OutcomeDepartedReappeared: decided on the fast path, and the latest
+	// snapshot, read again just before this strategy's close, lists it: it
+	// came back. Not closed. Per strategy.
+	OutcomeDepartedReappeared = "departed_reappeared"
+	// OutcomeDepartedMarkChanged: decided on the fast path, and its mark,
+	// read again (one HGET) just before its close, is no longer the one it
+	// was decided under (gone, another state or another revision). Not
+	// closed; the next round decides again. Per strategy.
+	OutcomeDepartedMarkChanged = "departed_mark_changed"
+	// OutcomeMarksUnreadable: the writer's marks could not be read this
+	// round, or a strategy's mark could not be read again just before its
+	// close. Every candidate is left to the implicit path; a fast-path
+	// decision whose re-check could not read is not closed. Per round, once
+	// whichever read failed.
+	OutcomeMarksUnreadable = "marks_unreadable"
+	// OutcomeMarkInvalid: one mark that did not decode under the contract,
+	// or that names another tenant than the alerts' (Counts.MarkForeign):
+	// not believed. Per mark and per round.
+	OutcomeMarkInvalid = "mark_invalid"
+	// OutcomeMemoryLoadFailed: a new term could not read the memory the last
+	// term kept, and starts its candidates from nothing. Per term.
+	OutcomeMemoryLoadFailed = "memory_load_failed"
+	// OutcomeMemoryInvalid: one kept candidate that did not decode, skipped:
+	// that candidate starts over. Per field.
+	OutcomeMemoryInvalid = "memory_invalid"
+	// OutcomeMemorySaveFailed: a round's memory could not be written; this
+	// term goes on from its own, and a next term starts from the last write
+	// that landed. Per round.
+	OutcomeMemorySaveFailed = "memory_save_failed"
+	// OutcomeMemoryFenced: the write was refused because this replica no
+	// longer holds the control lease. The round closes nothing. Per round.
+	OutcomeMemoryFenced = "memory_fenced"
 )
 
 // Outcomes is the closed list, for the metric that reports every cell.
 var Outcomes = []string{OutcomeCloseDecided, OutcomeWithinGrace, OutcomeUnconfirmed,
-	OutcomeDeferred, OutcomeIndexUnreadable, OutcomeIdentityUnknown, OutcomeRevisionUnknown, OutcomeBusinessUnknown,
+	OutcomeDeferred, OutcomeIndexUnreadable, OutcomeDepartedCloseDecided, OutcomeDepartedWaiting,
+	OutcomeIdentityUnknown, OutcomeRevisionUnknown, OutcomeBusinessUnknown,
 	OutcomeEvidenceUnavailable, OutcomeEvidenceTruncated, OutcomeCloseSent, OutcomeSendFailed,
-	OutcomeNotLeader, OutcomeMemoryFull, OutcomeProducerForeign, OutcomeProducerUnknown}
+	OutcomeNotLeader, OutcomeMemoryFull, OutcomeProducerForeign, OutcomeProducerUnknown,
+	OutcomeDepartedReappeared, OutcomeDepartedMarkChanged, OutcomeMarksUnreadable, OutcomeMarkInvalid,
+	OutcomeMemoryLoadFailed, OutcomeMemoryInvalid, OutcomeMemorySaveFailed, OutcomeMemoryFenced}
 
 // Counts is what the round measured. The denominators are reported with
 // every reading, because a zero means different things - nothing was
@@ -287,13 +421,23 @@ type Counts struct {
 	WithinGrace  int
 	Unconfirmed  int
 	Deferred     int
+	// The fast path's, counted apart from the implicit path's above.
+	DepartedCloseDecided int
+	DepartedWaiting      int
+	// MarkForeign is the candidates whose mark names another tenant: not
+	// believed, so the implicit path decides them, and counted as an
+	// invalid mark.
+	MarkForeign int
 }
 
 // Bounds are the gates a round is decided under.
 type Bounds struct {
-	// Grace is how long this loop must have seen the strategy missing
-	// before closing its alerts.
-	Grace time.Duration
+	// MinReads is how many deciding rounds must have found a strategy with
+	// no mark missing before its alerts are closed. Rounds, not time: a
+	// round that refused or did not run is not one, so the bound is how
+	// many times the source was seen without it, whatever restarts fell in
+	// between.
+	MinReads int
 	// MaxSnapshotAge is how old the observation may be. A snapshot older
 	// than this has not seen the strategies created since, and every one of
 	// them holding an alert would read as absent.
@@ -337,6 +481,9 @@ func Candidates(round Round, bounds Bounds) ([]Key, Counts, string) {
 	}
 	if bounds.MaxSnapshotAge > 0 && time.Duration(round.SnapshotAgeSeconds)*time.Second > bounds.MaxSnapshotAge {
 		return nil, counts, RefusalSnapshotStale
+	}
+	if !round.WriterHoldsLastGood {
+		return nil, counts, RefusalWriterUnstated
 	}
 	// Presence is decided by the strategy id alone. The snapshot lists a
 	// strategy whose source document lost its tenant with an empty one, while
@@ -384,7 +531,7 @@ func Compute(round Round, bounds Bounds) Result {
 		at := (start + step) % len(candidates)
 		key := candidates[at]
 		absence, tracked := round.FirstAbsent[key]
-		decision := Decision{Key: key}
+		decision := Decision{Key: key, Path: PathImplicit}
 		if _, present := listed[key.StrategyID]; present {
 			// A refused strategy the snapshot no longer lists is gone, and
 			// closes as gone.
@@ -393,25 +540,59 @@ func Compute(round Round, bounds Bounds) Result {
 		if tracked {
 			decision.AbsentSince = absence.Since
 		}
+		mark, marked := markFor(round, key)
+		if foreignMark(round, key) {
+			result.Counts.MarkForeign++
+		}
+		if marked && decision.Refused == "" {
+			decision.Path = PathDeparted
+		}
+		full := bounds.MaxCloseStrategies > 0 && len(result.Close) >= bounds.MaxCloseStrategies
 		switch {
-		case !tracked || round.Now.Sub(absence.Since) < bounds.Grace:
+		case decision.Path == PathDeparted && (!tracked || absence.Mark != mark || absence.MarkReads < 2 || absence.TermReads < 2):
+			decision.Outcome = OutcomeDepartedWaiting
+			result.Counts.DepartedWaiting++
+		case decision.Path == PathImplicit && (!tracked || absence.Reads < bounds.MinReads || absence.TermReads < 2):
 			decision.Outcome = OutcomeWithinGrace
 			result.Counts.WithinGrace++
-		case absence.Observation == round.SnapshotObservation:
+		case decision.Path == PathImplicit && !absence.Confirmed:
 			decision.Outcome = OutcomeUnconfirmed
 			result.Counts.Unconfirmed++
-		case bounds.MaxCloseStrategies > 0 && len(result.Close) >= bounds.MaxCloseStrategies:
+		case full:
 			decision.Outcome = OutcomeDeferred
 			result.Counts.Deferred++
+		case decision.Path == PathDeparted:
+			decision.Outcome = OutcomeDepartedCloseDecided
+			result.Close = append(result.Close, Absent{Key: key, Identity: round.Identities[key], AbsentSince: absence.Since,
+				Path: PathDeparted, Mark: mark})
+			result.Counts.DepartedCloseDecided++
 		default:
 			decision.Outcome = OutcomeCloseDecided
 			result.Close = append(result.Close, Absent{Key: key, Identity: round.Identities[key], AbsentSince: absence.Since,
-				Refused: decision.Refused})
+				Refused: decision.Refused, Path: PathImplicit})
 			result.Counts.CloseDecided++
 		}
 		result.Decisions[at] = decision
 	}
 	return result
+}
+
+// markFor is the mark the round read for the candidate: by strategy id,
+// and only one of a known state whose tenant is the candidate's or names
+// none.
+func markFor(round Round, key Key) (Mark, bool) {
+	mark, ok := round.Marks[key.StrategyID]
+	if !ok || (mark.State != MarkDisabled && mark.State != MarkDeleted) || (mark.TenantID != "" && mark.TenantID != key.TenantID) {
+		return Mark{}, false
+	}
+	return mark, true
+}
+
+// foreignMark is a mark the round read for the candidate's strategy id that
+// names another tenant.
+func foreignMark(round Round, key Key) bool {
+	mark, ok := round.Marks[key.StrategyID]
+	return ok && mark.TenantID != "" && mark.TenantID != key.TenantID
 }
 
 // rotation is where the walk over the candidates starts: just after the
@@ -434,34 +615,6 @@ func lessKey(a, b Key) bool {
 		return a.TenantID < b.TenantID
 	}
 	return a.StrategyID < b.StrategyID
-}
-
-// The words for the link's account of its own set maintenance, closed. The
-// health page and the Console's state name which one; the difference does
-// not read it (see the package doc).
-const (
-	LinkHealthy                 = "healthy"
-	LinkDiscoveryFailing        = "discovery_failing"
-	LinkDiscoveryNeverSucceeded = "discovery_never_succeeded"
-	LinkDiscoveryStale          = "discovery_stale"
-)
-
-// LinkHealthWords is every word LinkHealthWord returns.
-var LinkHealthWords = []string{LinkHealthy, LinkDiscoveryFailing, LinkDiscoveryNeverSucceeded, LinkDiscoveryStale}
-
-// LinkHealthWord names the link's account of itself: its latest discovery
-// failed, none ever succeeded, or the last success is older than maxAge. A
-// zero maxAge does not judge age.
-func LinkHealthWord(lastSuccess time.Time, linkError string, now time.Time, maxAge time.Duration) string {
-	switch {
-	case linkError != "":
-		return LinkDiscoveryFailing
-	case lastSuccess.IsZero():
-		return LinkDiscoveryNeverSucceeded
-	case maxAge > 0 && now.Sub(lastSuccess) > maxAge:
-		return LinkDiscoveryStale
-	}
-	return LinkHealthy
 }
 
 func sortKeys(keys []Key) {

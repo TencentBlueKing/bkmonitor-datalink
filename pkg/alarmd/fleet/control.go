@@ -385,6 +385,25 @@ func mergeControlFacts(view *View, snapshot ControlFacts) {
 		view.Activation, view.ActivationReplica = snapshot.Activation, replica
 		if snapshot.Activation.BehindBeyondBound {
 			view.Degradations = append(view.Degradations, Degradation{Kind: DegradationActivationBehind, Replica: replica})
+		} else if activation := snapshot.Activation; activation.FailingBeyondBound {
+			// Behind past the bound already says the round fails; this is
+			// the same failure with nothing newer waiting.
+			degradation := Degradation{Kind: DegradationActivationFailing, Replica: replica, Stage: activation.FailureStage,
+				Text: fmt.Sprintf("%d rounds failed (%s): %s", activation.ConsecutiveFailures, activation.Reason(), activation.LastFailure)}
+			if activation.FailingSecondsThisProcess != nil {
+				age := *activation.FailingSecondsThisProcess
+				degradation.AgeSeconds = &age
+			}
+			view.Degradations = append(view.Degradations, degradation)
+		}
+		if activation := snapshot.Activation; activation.UnrepairedBeyondBound > 0 {
+			degradation := Degradation{Kind: DegradationActivationTimelineUnrepaired, Replica: replica,
+				Text: fmt.Sprintf("%d timelines unread past the bound, repair failing: %s", activation.UnrepairedBeyondBound, activation.UnrepairedNamed)}
+			if activation.UnrepairedSeconds != nil {
+				age := *activation.UnrepairedSeconds
+				degradation.AgeSeconds = &age
+			}
+			view.Degradations = append(view.Degradations, degradation)
 		}
 		if snapshot.Activation.BlockedQueryGroups > 0 {
 			view.Degradations = append(view.Degradations, Degradation{Kind: DegradationActivationBlocked, Replica: replica,

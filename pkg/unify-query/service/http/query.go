@@ -39,6 +39,7 @@ import (
 	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
 )
@@ -215,6 +216,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 	return resp, err
 }
 
+// queryRawWithInstance 执行本页 Raw 查询，统一汇总普通查询与 Batch 的数据、计数和分页状态。
 func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, routeInfo []metadata.RouteInfo, err error) {
 	ignoreDimensions := []string{metadata.KeyTableUUID}
 	list = make([]map[string]any, 0)
@@ -223,8 +225,13 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance")
 	defer span.End(&err)
 
-	if err = validateQueryTsRawPagination(queryTs); err != nil {
+	if err = validateQueryTsRawOptions(queryTs); err != nil {
 		return total, list, resultTableOptions, routeInfo, err
+	}
+
+	var partialESResults *atomic.Uint32
+	if queryTs.AllowPartialESResults {
+		ctx, partialESResults = elasticsearch.WithPartialShardResults(ctx)
 	}
 
 	var (
@@ -244,24 +251,31 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		queryRef metadata.QueryReference
 	)
 
-	queryRef, err = queryTs.ToQueryReference(ctx)
+	plan, err := queryTs.ToRawQueryPlan(ctx)
 	if err != nil {
 		return total, list, resultTableOptions, routeInfo, err
 	}
-	queryRef, err = filterRawRoutesForExactTotal(ctx, queryRef, queryTs)
+	stats := newRawQueryTraceStats(plan)
+	defer func() {
+		stats.record(ctx, span)
+		succeeded := int(successedPaths.Load())
+		span.Set("raw.succeeded_query_count", succeeded)
+		// 未成功完成的逻辑查询包含实例构建、请求准备或执行失败。
+		span.Set("raw.failed_query_count", stats.readyQueries-succeeded)
+	}()
+	span.Set("raw.is_es_batch", queryTs.IsESBatch)
+	queryRef, err = filterRawRoutesForExactTotal(ctx, plan.Queries, queryTs)
 	if err != nil {
 		return total, list, resultTableOptions, routeInfo, err
-	}
-	// IsSearchAfter is deliberately scoped to the raw execution path. QueryTs is
-	// also used by time-series/reference endpoints, where Doris must keep its
-	// normal aggregate/series query behavior.
-	if queryTs.IsSearchAfter {
-		queryRef.Range("", func(qry *metadata.Query) {
-			qry.IsSearchAfter = true
-		})
 	}
 	// routeInfo 只描述本次解析出的路由范围，不能从返回行或分页状态反推。
-	routeInfo = queryRef.CollectRouteInfo()
+	routeInfo = plan.Routes.Filter(func(qry *metadata.Query) bool {
+		return !qry.IsElasticsearchIndexPrefixMissing()
+	}).CollectRouteInfo()
+	queryRef, skipped := prepareRawQueryExecutions(queryRef, queryTs)
+	skippedRoutes.Add(uint32(skipped))
+	stats.paginationSkippedQueries = skipped
+	stats.readyQueries = queryRef.Count()
 
 	receiveWg.Add(1)
 	go func() {
@@ -398,141 +412,106 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				)
 			})
 		}()
+	} else {
+		p, _ := ants.NewPool(QueryMaxRouting, ants.WithPanicHandler(uqMetric.PanicHandler(ctx, uqMetric.PanicSiteQueryWorker)))
+		defer p.Release()
 
-		receiveWg.Wait()
-		if errorMessage.Len() > 0 {
-			partialDetail := strings.TrimSpace(errorMessage.String())
-			if successedPaths.Load() > 0 && !exactTotalRequested(queryTs) {
-				span.Set("partial_errors", partialDetail)
-				const warnPrefix = "查询原始数据部分失败: "
-				fullMsg := warnPrefix + partialDetail
-				if existing := metadata.GetStatus(ctx); existing != nil && existing.Message != "" {
-					fullMsg = existing.Message + "; " + fullMsg
-				}
-				metadata.SetStatus(ctx, metadata.QueryRawPartial, fullMsg)
-			} else {
-				err = metadata.NewMessage(
-					metadata.MsgQueryRaw,
-					"查询原始数据报错",
-				).Error(ctx, metadata.ErrorWithCauses(partialDetail, routeErrors...))
-			}
-		}
-		return total, list, resultTableOptions, routeInfo, err
-	}
+		go func() {
+			defer func() {
+				sendWg.Wait()
+				close(dataCh)
+				close(errCh)
+			}()
 
-	p, _ := ants.NewPool(QueryMaxRouting)
-	defer p.Release()
+			qb := metadata.GetQueryParams(ctx)
+			queryRef.Range("", func(qry *metadata.Query) {
+				localQry := *qry
 
-	go func() {
-		defer func() {
-			sendWg.Wait()
-			close(dataCh)
-			close(errCh)
-		}()
+				sendWg.Add(1)
 
-		qb := metadata.GetQueryParams(ctx)
-		queryRef.Range("", func(qry *metadata.Query) {
-			localQry := *qry
-			localQry.ResultTableOption = qry.ResultTableOption.Clone()
-			if localQry.ResultTableOption != nil && localQry.ResultTableOption.From != nil && *localQry.ResultTableOption.From > 0 {
-				localQry.From = *localQry.ResultTableOption.From
-			}
-			// SearchAfter 模式下，跳过已完成的 RT
-			// RT 不在 ResultTableOptions 中（nil）或 SearchAfter 为空，表示该 RT 数据已查完
-			if queryTs.IsSearchAfter && len(queryTs.ResultTableOptions) > 0 {
-				if !hasRawPaginationCursor(localQry.ResultTableOption) {
-					skippedRoutes.Add(1)
-					return
-				}
-			}
-
-			sendWg.Add(1)
-
-			labelMap := function.LabelMap(ctx, &localQry)
-			// 合并 labelMap
-			lock.Lock()
-			for k, lm := range labelMap {
-				if _, ok := allLabelMap[k]; !ok {
-					allLabelMap[k] = make([]function.LabelMapValue, 0)
-				}
-
-				allLabelMap[k] = append(allLabelMap[k], lm...)
-			}
-			lock.Unlock()
-
-			// 如果是多数据合并，为了保证排序和Limit 的准确性，需要查询原始的所有数据，所以这里对 from 和 size 进行重写
-			if queryRef.Count() > 1 && !hasRawOffsetCursor(localQry.ResultTableOption) {
-				if !queryTs.IsMultiFrom {
-					localQry.Size += localQry.From
-					localQry.From = 0
-				}
-			}
-
-			_ = p.Submit(func() {
-				defer func() {
-					sendWg.Done()
-				}()
-
-				instance := prometheus.GetTsDbInstance(ctx, &localQry)
-				if instance == nil {
-					errCh <- metadata.NewMessage(
-						metadata.MsgQueryRaw,
-						"查询实例为空",
-					).Error(ctx, nil)
-					return
-				}
-
-				// 如果开启了高亮，收集字段映射信息用于判断大小写敏感性
-				if queryTs.HighLight != nil && queryTs.HighLight.Enable {
-					if fieldsMap, fmErr := instance.QueryFieldMap(ctx, &localQry, qb.Start, qb.End); fmErr == nil && fieldsMap != nil {
-						lock.Lock()
-						for k, v := range fieldsMap {
-							if _, ok := allFieldsMap[k]; !ok {
-								allFieldsMap[k] = v
-							}
-						}
-						lock.Unlock()
-					}
-				}
-
-				_, size, option, queryErr := instance.QueryRawData(ctx, &localQry, qb.Start, qb.End, dataCh)
-				if queryErr != nil {
-					errCh <- queryErr
-					return
-				}
-
-				successedPaths.Add(1)
-
-				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
+				labelMap := function.LabelMap(ctx, &localQry)
+				// 合并 labelMap
 				lock.Lock()
-				resultTableOptions.SetOption(localQry.TableUUID(), option)
+				for k, lm := range labelMap {
+					if _, ok := allLabelMap[k]; !ok {
+						allLabelMap[k] = make([]function.LabelMapValue, 0)
+					}
+
+					allLabelMap[k] = append(allLabelMap[k], lm...)
+				}
 				lock.Unlock()
 
-				atomic.AddInt64(&total, size)
+				_ = p.Submit(func() {
+					defer func() {
+						sendWg.Done()
+					}()
+
+					instance := prometheus.GetTsDbInstance(ctx, &localQry)
+					if instance == nil {
+						errCh <- metadata.NewMessage(
+							metadata.MsgQueryRaw,
+							"查询实例为空",
+						).Error(ctx, nil)
+						return
+					}
+
+					// 如果开启了高亮，收集字段映射信息用于判断大小写敏感性
+					if queryTs.HighLight != nil && queryTs.HighLight.Enable {
+						if fieldsMap, fmErr := instance.QueryFieldMap(ctx, &localQry, qb.Start, qb.End); fmErr == nil && fieldsMap != nil {
+							lock.Lock()
+							for k, v := range fieldsMap {
+								if _, ok := allFieldsMap[k]; !ok {
+									allFieldsMap[k] = v
+								}
+							}
+							lock.Unlock()
+						}
+					}
+
+					_, size, option, queryErr := instance.QueryRawData(ctx, &localQry, qb.Start, qb.End, dataCh)
+					if queryErr != nil {
+						errCh <- queryErr
+						return
+					}
+
+					successedPaths.Add(1)
+
+					// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
+					lock.Lock()
+					resultTableOptions.SetOption(localQry.TableUUID(), option)
+					lock.Unlock()
+
+					atomic.AddInt64(&total, size)
+				})
 			})
-		})
-	}()
+		}()
+	}
 
 	// 等待数据组装完毕
 	receiveWg.Wait()
 
+	if errorMessage.Len() > 0 && (successedPaths.Load() == 0 || exactTotalRequested(queryTs)) {
+		err = metadata.NewMessage(
+			metadata.MsgQueryRaw,
+			"查询原始数据报错",
+		).Error(ctx, metadata.ErrorWithCauses(strings.TrimSpace(errorMessage.String()), routeErrors...))
+		return total, list, resultTableOptions, routeInfo, err
+	}
+
+	if partialESResults != nil {
+		if count := partialESResults.Load(); count > 0 {
+			span.Set("raw.es_partial_shard_query_count", int64(count))
+			fmt.Fprintf(&errorMessage, "Elasticsearch 有 %d 路查询返回了部分分片结果", count)
+		}
+	}
 	if errorMessage.Len() > 0 {
 		partialDetail := strings.TrimSpace(errorMessage.String())
-		if successedPaths.Load() > 0 && !exactTotalRequested(queryTs) {
-			err = nil
-			span.Set("partial_errors", partialDetail)
-			const warnPrefix = "查询原始数据部分失败: "
-			fullMsg := warnPrefix + partialDetail
-			if existing := metadata.GetStatus(ctx); existing != nil && existing.Message != "" {
-				fullMsg = existing.Message + "; " + fullMsg
-			}
-			metadata.SetStatus(ctx, metadata.QueryRawPartial, fullMsg)
-		} else {
-			err = metadata.NewMessage(
-				metadata.MsgQueryRaw,
-				"查询原始数据报错",
-			).Error(ctx, metadata.ErrorWithCauses(partialDetail, routeErrors...))
+		span.Set("partial_errors", partialDetail)
+		fullMsg := "查询原始数据部分失败: " + partialDetail
+		if existing := metadata.GetStatus(ctx); existing != nil && existing.Message != "" {
+			fullMsg = existing.Message + "; " + fullMsg
 		}
+		metadata.SetStatus(ctx, metadata.QueryRawPartial, fullMsg)
 	}
 
 	// A total summed over routes is exact only if every route answered: a failed route, or a finished route that
@@ -552,17 +531,14 @@ func hasRawOffsetCursor(option *metadata.ResultTableOption) bool {
 	return option != nil && option.From != nil && *option.From > 0
 }
 
-func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (int64, []map[string]any, metadata.ResultTableOptions, []metadata.RouteInfo, bool, error) {
+// queryRawWithScroll 根据下载会话调度尚未完成的切片，并更新各切片的游标和重试状态。
+func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, routeInfo []metadata.RouteInfo, done bool, err error) {
 	var (
 		receiveWg sync.WaitGroup
 		dataCh    = make(chan map[string]any)
 		errCh     = make(chan error)
-
-		total              int64
-		err                error
-		resultTableOptions = make(metadata.ResultTableOptions)
-		routeInfo          []metadata.RouteInfo
 	)
+	resultTableOptions = make(metadata.ResultTableOptions)
 
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
 	defer span.End(&err)
@@ -576,29 +552,47 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 		).Error(ctx, err)
 	}
 	defer func() {
-		_ = session.Stop(ctx)
+		if stopErr := session.Stop(ctx, prometheus.ClearScroll); stopErr != nil {
+			stopErr = metadata.NewMessage(metadata.MsgQueryRawScroll, "保存下载会话失败").Error(ctx, stopErr)
+			// 未保存的分页不能确认成功，否则调用方追加数据后会在续页时重复读取。
+			if err == nil {
+				err = stopErr
+			}
+		}
 	}()
 
-	list := make([]map[string]any, 0)
+	list = make([]map[string]any, 0)
 
-	queryRef, err := queryTs.ToQueryReference(ctx)
+	plan, err := queryTs.ToRawQueryPlan(ctx)
 	if err != nil {
 		return 0, nil, nil, nil, true, metadata.NewMessage(
 			metadata.MsgQueryRawScroll,
 			"查询参数配置异常",
 		).Error(ctx, err)
 	}
-	queryRef = excludeElasticsearchIndexPrefixMissingQueries(ctx, queryRef, metadata.MsgQueryRawScroll, func(qry *metadata.Query) {
+	stats := newRawQueryTraceStats(plan)
+	defer func() { stats.record(ctx, span) }()
+	nativeESRoutes := make(map[string]bool)
+	plan.Queries.Range("", func(query *metadata.Query) {
+		if query.StorageType == metadata.ElasticsearchStorageType && query.SourceType != structured.BkData {
+			nativeESRoutes[query.TableUUID()] = true
+		}
+	})
+	queryRef := excludeElasticsearchIndexPrefixMissingQueries(ctx, plan.Queries, metadata.MsgQueryRawScroll, func(qry *metadata.Query) {
 		for i := 0; i < session.SliceLength(); i++ {
 			sliceQry := *qry
 			sliceQry.SliceID = cast.ToString(i)
-			slice := session.Slice(sliceQry.TableUUID())
+			sliceKey := scrollSliceKey(&sliceQry, nativeESRoutes)
+			slice := session.Slice(sliceKey)
 			slice.Status = redisUtil.StatusCompleted
-			session.UpdateSliceStatus(sliceQry.TableUUID(), slice)
+			session.UpdateSliceStatus(sliceKey, slice)
 		}
 	})
+	stats.readyQueries = queryRef.Count()
 	// scroll 每次只取部分分片，routeInfo 仍返回完整解析范围。
-	routeInfo = queryRef.CollectRouteInfo()
+	routeInfo = plan.Routes.Filter(func(qry *metadata.Query) bool {
+		return !qry.IsElasticsearchIndexPrefixMissing()
+	}).CollectRouteInfo()
 
 	receiveWg.Add(1)
 	go func() {
@@ -636,8 +630,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 		wg         sync.WaitGroup
 		optionLock sync.Mutex
 	)
+	sliceStats := rawScrollTraceStats{candidates: stats.readyQueries * session.SliceLength()}
+	defer sliceStats.record(span)
 
-	p, _ := ants.NewPool(QueryMaxRouting)
+	p, _ := ants.NewPool(QueryMaxRouting, ants.WithPanicHandler(uqMetric.PanicHandler(ctx, uqMetric.PanicSiteQueryWorker)))
 	defer p.Release()
 
 	qb := metadata.GetQueryParams(ctx)
@@ -647,6 +643,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 			newQry := &metadata.Query{}
 			if copyErr := copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true}); copyErr != nil {
+				sliceStats.preparationFailed.Add(1)
 				errCh <- metadata.NewMessage(
 					metadata.MsgQueryRawScroll,
 					"查询失败",
@@ -667,12 +664,16 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				localQry.SliceID = cast.ToString(localSliceIndex)
 
 				// slice info
-				slice := session.Slice(localQry.TableUUID())
+				sliceKey := scrollSliceKey(localQry, nativeESRoutes)
+				slice := session.Slice(sliceKey)
 				defer func() {
-					session.UpdateSliceStatus(localQry.TableUUID(), slice)
+					session.UpdateSliceStatus(sliceKey, slice)
 				}()
+				// 在完成判断前补齐旧会话的清理目标，让已完成且即将跳过的分片也能被回收。
+				setScrollTarget(ctx, slice, localQry)
 
 				if slice.Done() {
+					sliceStats.completed.Add(1)
 					return
 				}
 
@@ -687,6 +688,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 				instance := prometheus.GetTsDbInstance(ctx, localQry)
 				if instance == nil {
+					sliceStats.preparationFailed.Add(1)
 					errCh <- metadata.NewMessage(
 						metadata.MsgQueryRawScroll,
 						"查询实例为空",
@@ -694,8 +696,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					return
 				}
 
+				sliceStats.attempted.Add(1)
 				size, _, option, rawErr := instance.QueryRawData(ctx, localQry, qb.Start, qb.End, dataCh)
 				if rawErr != nil {
+					sliceStats.failed.Add(1)
 					slice.FailedNum++
 					// 只有重试次数超过了最大限制才把错误返回，否则正常往后执行
 					if slice.FailedNum >= slice.MaxFailedNum {
@@ -703,9 +707,11 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					}
 					return
 				}
+				sliceStats.succeeded.Add(1)
 
 				// 查询成功，更新 scroll 状态
 				if option != nil {
+					// ES 翻页可能返回新游标；EOF 未返回游标时保留最后一个有效 ID，供会话结束时清理。
 					if option.ScrollID != "" {
 						slice.ScrollID = option.ScrollID
 					}
@@ -722,6 +728,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				resultTableOptions.SetOption(localQry.TableUUID(), option)
 				optionLock.Unlock()
 			}); submitErr != nil {
+				sliceStats.submissionFailed.Add(1)
 				errCh <- metadata.NewMessage(
 					metadata.MsgQueryRawScroll,
 					"提交查询任务失败",
@@ -749,8 +756,27 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		isPartial bool
 	)
 
+	if err = validatePartialESResults(queryTs); err != nil {
+		return nil, err
+	}
+	var partialESResults *atomic.Uint32
+	if queryTs.AllowPartialESResults {
+		ctx, partialESResults = elasticsearch.WithPartialShardResults(ctx)
+	}
 	ctx, span := trace.NewSpan(ctx, "query-reference-with-prom-engine")
 	defer func() {
+		if err == nil && partialESResults != nil {
+			if count := partialESResults.Load(); count > 0 {
+				message := fmt.Sprintf("Elasticsearch 有 %d 路查询返回了部分分片结果", count)
+				if existing := metadata.GetStatus(ctx); existing != nil && existing.Message != "" {
+					message = existing.Message + "; " + message
+				}
+				metadata.SetStatus(ctx, metadata.QueryTsPartial, message)
+			}
+			if status := metadata.GetStatus(ctx); status != nil && status.Code == metadata.QueryTsPartial {
+				resp.IsPartial = true
+			}
+		}
 		resp.TraceID = span.TraceID()
 		resp.Status = metadata.GetStatus(ctx)
 		span.End(&err)
@@ -976,9 +1002,21 @@ func queryTsToInstanceAndStmtWithCache(ctx context.Context, queryTs *structured.
 	// 在生成 PromQL 前固定路由摘要，后续存储查询结果不参与推导。
 	routeInfo = queryRef.CollectRouteInfo()
 
-	if metadata.GetQueryParams(ctx).IsDirectQuery() {
-		// 判断是否是直查
-		vmExpand := query.ToVmExpand(ctx, queryRef)
+	directQuery := metadata.GetQueryParams(ctx).IsDirectQuery()
+	if !directQuery {
+		promExprOpt.IgnoreTimeAggregationEnable = true
+	}
+	expr, err := queryTs.ToPromExpr(ctx, promExprOpt)
+	if err != nil {
+		return instance, stmt, routeInfo, err
+	}
+
+	if directQuery {
+		var vmExpand *metadata.VmExpand
+		vmExpand, err = query.ToVmExpandForExpression(ctx, queryRef, expr)
+		if err != nil {
+			return instance, stmt, routeInfo, err
+		}
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
 			// 兼容 storage 结构体，用于单元测试
@@ -986,9 +1024,6 @@ func queryTsToInstanceAndStmtWithCache(ctx context.Context, queryTs *structured.
 			StorageType: metadata.VictoriaMetricsStorageType,
 		})
 	} else {
-		// 非直查开启忽略时间聚合函数判断
-		promExprOpt.IgnoreTimeAggregationEnable = true
-
 		span.Set("query-max-routing", QueryMaxRouting)
 		span.Set("singleflight-timeout", SingleflightTimeout.String())
 
@@ -997,11 +1032,6 @@ func queryTsToInstanceAndStmtWithCache(ctx context.Context, queryTs *structured.
 			Timeout:         SingleflightTimeout,
 			SelectorCache:   selectorCache,
 		}, lookBackDelta, QueryMaxRouting)
-	}
-
-	expr, err := queryTs.ToPromExpr(ctx, promExprOpt)
-	if err != nil {
-		return instance, stmt, routeInfo, err
 	}
 
 	stmt = expr.String()
@@ -1165,8 +1195,6 @@ func queryTsNamedOutputs(ctx context.Context, queryTs *structured.QueryTs) (*Nam
 	promExprOption := &structured.PromExprOption{}
 	if queryParams.IsDirectQuery() {
 		executionMode = uqMetric.NamedOutputsModeDirect
-		vmExpand := query.ToVmExpand(ctx, queryRef)
-		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
 			StorageID:   metadata.VictoriaMetricsStorageType,
 			StorageType: metadata.VictoriaMetricsStorageType,
@@ -1192,7 +1220,16 @@ func queryTsNamedOutputs(ctx context.Context, queryTs *structured.QueryTs) (*Nam
 		return compileAndExecuteNamedOutput(
 			outputCtx,
 			func() (fmt.Stringer, error) {
-				return queryTs.ToPromExprFor(outputCtx, output.Expression, promExprOption)
+				expr, err := queryTs.ToPromExprFor(outputCtx, output.Expression, promExprOption)
+				if err != nil || executionMode != uqMetric.NamedOutputsModeDirect {
+					return expr, err
+				}
+				vmExpand, err := query.ToVmExpandForExpression(outputCtx, queryRef, expr)
+				if err != nil {
+					return nil, err
+				}
+				metadata.SetExpand(outputCtx, vmExpand)
+				return expr, nil
 			},
 			func(executeCtx context.Context, stmt string) (any, bool, error) {
 				if executionMode == uqMetric.NamedOutputsModeDirect {

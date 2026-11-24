@@ -82,9 +82,6 @@ func NativeOperationsWith(handler http.Handler, options NativeOptions) []Operati
 						}
 					}
 				}
-				if id == "fleet.get" {
-					absentNext(&out, result)
-				}
 				if id == "strategy.board" {
 					if code, ok := result["error"].(string); ok && code != "" {
 						reason, _ := result["reason"].(string)
@@ -204,8 +201,8 @@ func NativeOperationsWith(handler http.Handler, options NativeOptions) []Operati
 			}
 			return "/api/outages", q
 		}),
-		makeOp("absent.list", "列出 leader 最近一轮缺失关闭的候选策略：link 名册成员数、本轮决定与时刻、最近一次关闭找到的告警归属（自己/别人/不明）、身份来源与业务和版本、源里现在有没有它、本任期发出关闭的次数与首次时刻（sends、first_sent_at）。"+
-			"发出不等于关掉：execution.active_after_send 是已发出过关闭之后、这次读 link reconcile 仍列为活动的本部署告警数，大于 0 就是 link 没有关掉已发给它的关闭。"+
+		makeOp("absent.list", "列出 leader 最近一轮缺失关闭的候选策略：link 名册成员数、本轮决定与时刻、最近一次关闭的决定时刻与结果词、身份来源与业务和版本、源里现在有没有它、本任期发出关闭的次数与首次时刻（sends、first_sent_at）。"+
+			"发出不等于关掉：sends 数的是 link 回答了条目的真实关闭（关掉、拒绝、繁忙都算），link 逐条拒绝的策略每轮都会再发、sends 持续增长而行不消失；要确认关掉了，直接读 link 上该告警的状态（linkd.alerts）。"+
 			"表只记循环每轮已做的事，读页面不调 link；每页对快照不列的行做一次文档是否存在的检查。"+
 			"局限：alarmd 分不出策略是被删了，还是这个 ID 只在拆分前的旧策略表里存在过，要拿 ID 和业务去 SaaS 策略表查；"+
 			"执行事实只对本任期被决定过关闭的候选才有，重启后要宽限加 ⌈候选数/8⌉ 轮 × 5 分钟才填满；source_now=document 只说明文档键还在，不说明写方为什么不列它；"+
@@ -214,7 +211,7 @@ func NativeOperationsWith(handler http.Handler, options NativeOptions) []Operati
 			"limit":       integer("返回行上限；默认50。", 1, int64(fleet.AbsentPageRows)),
 			"cursor":      text("上一页的 next_cursor。", "absent.list next_cursor"),
 			"outcome":     enumField("按本轮决定过滤。", fleet.AbsentOutcomes),
-			"execution":   enumField("按最近一次关闭的结果过滤。", fleet.AbsentExecutions),
+			"execution":   text("按最近一次关闭的结果词过滤：not_run、identity_unknown，或筛选关闭的结果词（job_done、job_done_refused、nothing_matched、expect_exceeded、link_* 等）；没有行带这个词时返回空。", "absent.list 行的 execution.word"),
 			"strategy_id": text("只看这个策略 ID（所有租户下的）。", "用户给定或 absent.list 行"),
 		}, nil, fleet.AbsentCandidatesResponse{}, func(p Params) (string, url.Values) {
 			q := url.Values{"limit": {strconv.Itoa(p.Int("limit", fleet.AbsentPageDefaultRows))}}
@@ -270,21 +267,6 @@ func NativeOperationsWith(handler http.Handler, options NativeOptions) []Operati
 		}
 	}
 	return ops
-}
-
-// absentNext points from the deployment's health to the absent close's
-// candidate page wherever the alert link's Console is configured: the page
-// is where the absent_strategy_* counts are named strategy by strategy.
-func absentNext(out *Outcome, result map[string]any) {
-	console, ok := result["linkd_console"].(map[string]any)
-	if !ok {
-		return
-	}
-	if state, _ := console["state"].(string); state == "" || state == fleet.LinkdConsoleNotConfigured {
-		return
-	}
-	out.Next = append(out.Next, Call{Operation: "absent.list", Params: Params{},
-		Reason: "逐条读缺失关闭的候选策略：哪些策略、告警是谁的、身份从哪来、源里还有没有它。"})
 }
 
 func enumField[T ~string](description string, values []T) Field {

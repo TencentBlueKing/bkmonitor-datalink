@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
@@ -81,40 +82,39 @@ func GetSchemaProvider() SchemaProvider {
 	return defaultSchemaProvider
 }
 
-var relationSchemaOrder = map[RelationType]int{
-	RelationNodeWithSystem:                     0,
-	RelationNodeWithPod:                        1,
-	RelationJobWithPod:                         2,
-	RelationPodWithReplicaSet:                  3,
-	RelationPodWithStatefulSet:                 4,
-	RelationDaemonSetWithPod:                   5,
-	RelationDeploymentWithReplicaSet:           6,
-	RelationPodWithService:                     7,
-	RelationIngressWithService:                 8,
-	RelationK8sAddressWithService:              9,
-	RelationDomainWithService:                  10,
-	RelationAPMServiceInstanceWithPod:          11,
-	RelationAPMServiceInstanceWithSystem:       12,
-	RelationAPMServiceWithAPMServiceInstance:   13,
-	RelationContainerWithPod:                   14,
-	RelationDataSourceWithPod:                  15,
-	RelationDataSourceWithNode:                 16,
-	RelationBKLogConfigWithDataSource:          17,
-	RelationBizWithSet:                         18,
-	RelationModuleWithSet:                      19,
-	RelationHostWithModule:                     20,
-	RelationHostWithSystem:                     21,
-	RelationAppVersionWithContainer:            22,
-	RelationAppVersionWithSystem:               23,
-	RelationContainerWithEnvironment:           24,
-	RelationEnvironmentWithSystem:              25,
-	RelationAppVersionWithGitCommit:            26,
-	RelationPodToPod:                           27,
-	RelationPodToSystem:                        28,
-	RelationSystemToPod:                        29,
-	RelationSystemToSystem:                     30,
-	RelationServiceToService:                   31,
-	RelationType("apm_service_to_apm_service"): 32,
+func init() {
+	metric.SetRelationSchemaSnapshot(relationSchemaSnapshot)
+}
+
+// EffectiveSchema 返回当前 SchemaProvider 在 namespace 下的生效定义及来源；
+// 外部注入的 Provider 不提供来源时返回 false。
+func EffectiveSchema(namespace string) (relation.EffectiveSchema, bool) {
+	inspector, ok := GetUnderlyingProvider(GetSchemaProvider()).(relation.SchemaSourceInspector)
+	if !ok {
+		return relation.EffectiveSchema{}, false
+	}
+	return inspector.EffectiveSchema(namespace), true
+}
+
+func relationSchemaSnapshot() (metric.RelationSchemaSnapshot, bool) {
+	inspector, ok := GetUnderlyingProvider(GetSchemaProvider()).(relation.SchemaSourceInspector)
+	if !ok {
+		return metric.RelationSchemaSnapshot{}, false
+	}
+	counts := inspector.SourceCounts()
+	status := inspector.OverlayStatus()
+	snapshot := metric.RelationSchemaSnapshot{
+		Counts:        make([]metric.RelationSchemaSourceCount, 0, len(counts)),
+		OverlayLoaded: status.State == relation.OverlayStateLoaded,
+		Failures:      status.Failures,
+	}
+	for _, count := range counts {
+		snapshot.Counts = append(snapshot.Counts, metric.RelationSchemaSourceCount{Kind: count.Kind, Source: string(count.Source), Count: count.Count})
+	}
+	if status.LastSuccess != nil {
+		snapshot.LastSuccess = *status.LastSuccess
+	}
+	return snapshot, true
 }
 
 var defaultResourceFieldTypes = buildDefaultResourceFieldTypes()
@@ -235,8 +235,7 @@ func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas(namespace string) []R
 		return nil
 	}
 	if len(definitions) == 0 && ns != relation.NamespaceAll {
-		// 空的 space schema 不应让 v1beta3 直接变成无路径；
-		// 回退到 __all__ 后仍按下方稳定顺序输出，保证路径优先级可预测。
+		// 空的 space schema 不应让 v1beta3 直接变成无路径，回退到 __all__。
 		definitions, err = a.provider.ListRelationDefinitions(relation.NamespaceAll)
 		if err != nil {
 			definitions = nil
@@ -245,6 +244,9 @@ func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas(namespace string) []R
 	schemas := make([]relation.RelationSchema, 0, len(definitions))
 	for _, definition := range definitions {
 		schema := relation.ToRelationSchema(definition)
+		if schema.MetricName == "" && schema.IsDirectional {
+			schema.MetricName = definition.GetRelationName()
+		}
 		schemas = append(schemas, schema)
 	}
 	result := make([]RelationSchema, len(schemas))
@@ -256,18 +258,23 @@ func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas(namespace string) []R
 			ToType:        ResourceType(schema.ToType),
 			IsDirectional: schema.IsDirectional,
 			IsBelongsTo:   schema.IsBelongsTo,
+			MetricName:    schema.MetricName,
 		}
 	}
+	// 路径和拓扑在输出前都会按资源与关系名重新排序，这里的顺序不决定优先级，
+	// 只需与 provider 的列举顺序无关（Redis 定义的顺序不固定）。
 	sort.SliceStable(result, func(i, j int) bool {
-		leftOrder, leftOK := relationSchemaOrder[result[i].RelationType]
-		rightOrder, rightOK := relationSchemaOrder[result[j].RelationType]
-		if leftOK && rightOK {
-			return leftOrder < rightOrder
+		left, right := result[i], result[j]
+		if left.RelationType != right.RelationType {
+			return left.RelationType < right.RelationType
 		}
-		if leftOK != rightOK {
-			return leftOK
+		if left.FromType != right.FromType {
+			return left.FromType < right.FromType
 		}
-		return result[i].RelationType < result[j].RelationType
+		if left.ToType != right.ToType {
+			return left.ToType < right.ToType
+		}
+		return left.Category < right.Category
 	})
 	return result
 }
@@ -328,6 +335,7 @@ func (a *v1beta3SchemaProviderAdapter) GetRelationSchema(relationType RelationTy
 		ToType:        ResourceType(schema.ToType),
 		IsDirectional: schema.IsDirectional,
 		IsBelongsTo:   schema.IsBelongsTo,
+		MetricName:    schema.MetricName,
 	}, nil
 }
 

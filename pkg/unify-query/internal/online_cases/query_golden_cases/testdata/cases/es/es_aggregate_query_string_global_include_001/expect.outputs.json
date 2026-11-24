@@ -1,4 +1,5 @@
 [
+  {"backend": "elasticsearch", "method": "GET", "path": "/"},
   {"backend": "elasticsearch", "method": "GET", "path": "/golden_es_global_include"},
   {
     "backend": "elasticsearch",
@@ -30,7 +31,7 @@
       "query": {
         "bool": {
           "filter": [
-            {"range": {"dtEventTimeStamp": {"format": "epoch_second", "from": 1784701739, "include_lower": true, "include_upper": true, "to": 1784702135}}},
+            {"range": {"dtEventTimeStamp": {"format": "epoch_second", "gte": 1784701739, "lte": 1784702135}}},
             {
               "bool": {
                 "must": [

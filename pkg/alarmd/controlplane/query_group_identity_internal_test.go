@@ -54,6 +54,9 @@ var queryGroupIdentityFieldOfFact = map[string]string{
 	// NamedOutputs: a query asking for named outputs beside its value is a
 	// different request with a different answer.
 	"NamedOutputs": "NamedOutputs",
+	// QueryStepMillis: two items over the same buckets asked a different
+	// step apart read different points.
+	"QueryStepMillis": "QueryStep",
 }
 
 // The identity has to read every fact the revision reads. A fact that only

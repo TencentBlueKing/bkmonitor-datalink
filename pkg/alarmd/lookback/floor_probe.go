@@ -223,7 +223,11 @@ type probeResume struct {
 func (engine *Engine) probeRounds(probe *floorProbeState) int {
 	rounds := engine.probationRounds()
 	if probe.edge && probe.period > 0 {
-		rounds = max(rounds, int((EdgeProbeSpan+probe.period-1)/probe.period))
+		span := EdgeProbeSpan
+		if engine.options.EdgeProbeSpan > 0 {
+			span = engine.options.EdgeProbeSpan
+		}
+		rounds = max(rounds, int((span+probe.period-1)/probe.period))
 	}
 	return rounds
 }
@@ -433,7 +437,9 @@ func (engine *Engine) attachProbeLocked(state *group, read *Read, query Query) {
 		return
 	}
 	round := probe.reserved[query.Contract.Slot.EvaluationTime]
-	if round == nil || round.ahead || round.formal || round.query.Spec.Digest != query.Spec.Digest {
+	// A round is a read of one slice, as a trial is (Engine.Begin).
+	if round == nil || round.ahead || round.formal || round.query.Spec.Digest != query.Spec.Digest ||
+		round.query.Slice.Digest() != query.Slice.Digest() {
 		return
 	}
 	read.floorProbe, round.formal = round, true

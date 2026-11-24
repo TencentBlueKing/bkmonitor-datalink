@@ -11,19 +11,19 @@ this file and the CLI's metrics.list carry the whole Help.
 
 Labels: `outcome`
 
-What the control leader's difference against disabled or deleted strategies decided, by outcome. Counted per strategy except close_sent, send_failed, producer_foreign, producer_unknown and business_unknown, which count alerts. close_decided counts decisions and close_sent counts what went out, acknowledged by the broker; neither says the link closed anything, which absent.list reads per strategy as the alerts its reconcile still lists active after an earlier send. identity_unknown and revision_unknown are strategies decided and not sent because no business or revision could be found for them; business_unknown are alerts of a global business strategy not closed that round because their record names no business they were filed under. evidence_truncated is a strategy whose alerts the link answered incomplete or past 10000 rows / 5000 active alerts: the alerts it listed are closed as usual and the rest wait for a later round. Why a whole round decided nothing is absent_strategy_round_total, not a cell here. Every cell exists from the start so a zero is a reading and not an absence.
+What the control leader's difference against disabled or deleted strategies decided, by outcome. Counted per strategy. close_decided counts decisions and close_sent counts, once per strategy's close decision, a decision that sent at least one real close whose items the link answered (closed, refused or busy, item by item), so a strategy the link refuses every round is sent every round; neither says the link closed anything, which is read per alert on the link (linkd.alerts); a strategy whose absent.list sends keep growing while its row stays is one the link is sent and does not close. identity_unknown is a strategy decided and not sent: its id is not a positive integer, or there is no link to close through. revision_unknown, business_unknown, evidence_unavailable, evidence_truncated, send_failed, producer_foreign and producer_unknown name the close as first designed, which read the strategy's alerts and sent through the event producer; the filtered close counts none of them, and they stay zero. Two paths are counted apart: a strategy with no mark is within_grace until three rounds found it missing (rounds, not time), unconfirmed until two observations did, then close_decided; one the strategy list's writer marked disabled or deleted (departed_strategies) is departed_waiting on its first round under that mark, then departed_close_decided, and is re-checked just before its own close: departed_reappeared (listed again) or departed_mark_changed (the mark gone or moved) is not closed. marks_unreadable (once a round, the round's read or a re-check's; the implicit path then) and mark_invalid (per mark: not decoded, or naming another tenant) are the marks' reads. The candidates are kept across leader terms under the Control Leader's lease: memory_load_failed (per term: the term starts from nothing), memory_invalid (per kept candidate that did not decode), memory_save_failed (per round), and memory_fenced (the lease is gone; that round sends nothing). In a new term both paths wait for the term's own second round, and a kept candidate is confirmed again under two observations of the term's own. Why a whole round decided nothing is absent_strategy_round_total, not a cell here. Every cell exists from the start so a zero is a reading and not an absence.
 
 ## alarmd_absent_strategy_difference
 
 Labels: `side`
 
-The sizes the last round decided on: roster_strategies is the strategies the alert link listed with an unrecovered alert, roster_unreadable the ones it listed and could not read, roster_invalid the rows its walk skipped as naming no strategy of this binding (a smaller roster, never a failed page), roster_pages and roster_complete how far the walk of its roster got, candidates the difference itself, snapshot_strategies the strategy cache it was judged against, remembered_identities the strategies the catalog let go and still knows the business of. Each age is reported beside its bound - snapshot_age_seconds beside max_snapshot_age_seconds, link_health_age_seconds (since the link's last successful discovery) beside max_link_health_age_seconds, past which the health page calls the link's maintenance stale - so a refused round, or a roster that stopped growing, can be read as the side falling behind rather than as a bound that does not fit. The link's age never refuses a round: an old roster can only miss a strategy. link_pending is the link's own refresh backlog.
+The sizes the last round decided on: found_strategies is the strategies the alert link's search found with an active alert outside the running set, discovery_searches and discovery_tenants the searches that took and the tenants walked, discovery_complete whether every tenant was walked (1) or a search failed (0), candidates the difference itself, snapshot_strategies the strategy cache it was judged against, remembered_identities the strategies the catalog let go and still knows the business of. snapshot_age_seconds is reported beside its bound max_snapshot_age_seconds, so a refused round can be read as the source falling behind rather than as a bound that does not fit.
 
 ## alarmd_absent_strategy_round_total
 
 Labels: `disposition`
 
-How each round of the difference ended: none is a round that decided, and the rest name the fact that was not good enough to decide on - link_unavailable (the alert link's roster could not be read), snapshot_unusable (the source was not observed this round), snapshot_empty and snapshot_stale. Rounds, not strategies. none is the denominator the outcome family is read against.
+How each round of the difference ended: none is a round that decided, and the rest name the fact that was not good enough to decide on - link_unavailable (the alert link's search could not be read or its control plane is not named), snapshot_unusable (the source was not observed this round), snapshot_empty, snapshot_stale and writer_unstated (the strategy list's writer made no publication_semantics statement about this list: a strategy missing from it is not known to be gone, so nothing is closed). Rounds, not strategies. none is the denominator the outcome family is read against.
 
 ## alarmd_access_inplace_held_input_bytes
 
@@ -35,6 +35,30 @@ Labels: `wait`
 
 Slot executions that waited in place, holding their execution slot, for a later query of the Slot to become readable, by their total wait. A Slot whose queries become readable at different times is not deferred as a whole; its dispatch waits for each later query while keeping its slot, its prepared plan and the input its earlier queries delivered. Its slot_completed line carries the wait (inplace_wait_ms, inplace_waits, inplace_longest_ms, inplace_sent_before, inplace_wait_before_any_sent_ms) and what it held: inplace_held_input_bytes is exact, from the Slot's own retention accounting; inplace_held_prepared_bytes_estimate is an estimate, the struct sizes of the copies this execution made for itself, not the cached plan they reference, which is shared and held without the wait. Every cell exists from the start.
 
+## alarmd_access_query_answer_bytes
+
+Labels: `outcome`
+
+Bytes of each physical query's answer as read. By outcome: ok, timeout_alarmd_deadline (alarmd's own deadline: the round's, its transport, its body read or its delivery), upstream_504 (the provider answered that its backend ran out of time, 504 or 408), unavailable (no usable answer for another reason) and rejected (the provider refused the query). Counted where access_query_duration_seconds is.
+
+## alarmd_access_query_answer_records
+
+Labels: `outcome`
+
+Records (points) in each physical query's answer. By outcome: ok, timeout_alarmd_deadline (alarmd's own deadline: the round's, its transport, its body read or its delivery), upstream_504 (the provider answered that its backend ran out of time, 504 or 408), unavailable (no usable answer for another reason) and rejected (the provider refused the query). Counted where access_query_duration_seconds is.
+
+## alarmd_access_query_answer_seconds
+
+Labels: `outcome`
+
+Seconds each physical query's provider took, to 60 s: a query read past 30 s is in it, as its round's window on a one-minute period runs to about 45. By outcome: ok, timeout_alarmd_deadline (alarmd's own deadline: the round's, its transport, its body read or its delivery), upstream_504 (the provider answered that its backend ran out of time, 504 or 408), unavailable (no usable answer for another reason) and rejected (the provider refused the query). Counted where access_query_duration_seconds is.
+
+## alarmd_access_query_answer_series
+
+Labels: `outcome`
+
+Series in each physical query's answer. By outcome: ok, timeout_alarmd_deadline (alarmd's own deadline: the round's, its transport, its body read or its delivery), upstream_504 (the provider answered that its backend ran out of time, 504 or 408), unavailable (no usable answer for another reason) and rejected (the provider refused the query). Counted where access_query_duration_seconds is.
+
 ## alarmd_access_query_duration_seconds
 
 Each physical query a Slot runs, every attempt including retries, by the time its provider took from request to answer or failure. Counted where worker_work_total{work_kind="physical_query"} is, so the two agree; diagnostic reads are not in it. A query cut at 30 seconds lands in +Inf.
@@ -43,7 +67,7 @@ Each physical query a Slot runs, every attempt including retries, by the time it
 
 Labels: `reason`
 
-Physical queries that did not answer, by what their last failed attempt says: timeout, refused (the backend answered no), not_found (its status names something that does not exist), transport, decode (the answer broke the wire contract), other. Closed set.
+Physical queries that did not answer, by what their last failed attempt says: timeout, refused (the backend answered no), not_found (its status names something that does not exist), transport, decode (the answer broke the wire contract), other, sample_limit (the backend refused the query as reading more samples than it serves in one query, VM_SAMPLE_LIMIT; which Query Group it was is on the fleet's page). Closed set.
 
 ## alarmd_access_response_codec_total
 
@@ -97,7 +121,13 @@ Query Groups the publication brings back from retirement that have not drained a
 
 Labels: `outcome`
 
-Activation bodies the Control Leader rebuilt under a header present without its body, by outcome. rebuilt: written back byte for byte from the copy last read under the same header. rebuilt_draining_unknown: rebuilt from the open Segments without that copy; the Plans are exact, and Query Groups a cutover removed that had not drained stop executing now rather than at their boundary. not_needed: the body was back or the header gone. conflict: another writer moved first; nothing written. timeline_missing, coverage_invalid, header_unparsable, header_pending: refused by name, nothing written, and the fleet stays without an activation until the cause is fixed.
+Activation bodies the Control Leader rebuilt under a header present without its body, by outcome. rebuilt: written back byte for byte from the copy last read under the same header. rebuilt_draining_unknown: rebuilt from the open Segments without that copy; the Plans are exact, and Query Groups a cutover removed that had not drained stop executing now rather than at their boundary. not_needed: the body was back or the header gone. conflict: another writer moved first; nothing written. Either rebuilt outcome may keep Query Groups whose timeline it could not read; they are counted in alarmd_activation_rebuild_unread_query_groups_total. coverage_invalid, header_unparsable, header_pending: refused by name, nothing written, and the fleet stays without an activation until the cause is fixed.
+
+## alarmd_activation_rebuild_unread_query_groups_total
+
+Labels: `reason`
+
+Query Groups of the current publication an activation body rebuild wrote without reading their timeline, by reason (absent: no key; undecodable: bytes that do not decode; newer_format: a timeline of a later schema). Each keeps its place in the active set, or in Draining where the copy last read held it, so no reader takes it for a Query Group that left; every other Query Group's body is written back. The activation reconciler then repairs absent and undecodable ones (alarmd_timeline_repairs_total).
 
 ## alarmd_activation_renewal_conflict_total
 
@@ -114,6 +144,28 @@ Timelines a cutover opened again because their key was gone. This used to fail e
 Labels: `reason`
 
 Schedule timelines the Control Leader left out when it read the activation's Plan records back from the open Segments, by why: one per Query Group per activation it read. The rest of the activation loads and is cut over as usual. undecodable: the bytes do not decode; the Leader rebuilds that Query Group's records from the publication it runs and rewrites the timeline (timeline_repairs_total). newer_format: the bytes are a timeline of another schema version, written by a build that reads them, and are left alone. absent: the key is not there at all; the Leader rebuilds that Query Group's records and opens the timeline again (timeline_repairs_total{reopened}). A read that fails is never counted here: it fails the activation read as before. The fleet's activation row names the Query Groups. Counted by the Leader; read it summed over replicas. Reader: the release acceptance, from /metrics after each deploy.
+
+## alarmd_active_copy_entries
+
+Labels: `kind`
+
+What the copy holds: known (fingerprints with a word) and queued (waiting for a pass).
+
+## alarmd_active_copy_link_unsupported
+
+1 while the link answers that it cannot search (501, 404 or 405), until a search is answered again.
+
+## alarmd_active_copy_lookup_total
+
+Labels: `answer`
+
+The recovery gate's and the no-data end's lookups by how the copy answered: own_sent (this process's acknowledged ABNORMAL), search_hit (an active alert the link's search found within 5 minutes), search_miss (two misses at least 2 minutes apart, within an hour), young_miss (one run of misses shorter than that: held, not judged), unknown (no current word: queued for the next pass, held meanwhile), full (unknown and not queued, the copy at its bound), link_unsupported (unknown while the link answers it cannot search: queued for the retry, held meanwhile).
+
+## alarmd_active_copy_pass_total
+
+Labels: `outcome`
+
+The refresh passes' requests and results: request (a search of at most 500 fingerprints, tenant + event source + status active, across strategies), link_busy (429: the pass stopped, the fingerprints stay queued and held), link_unsupported (501/404/405: the pass stopped, asked again after 1 minute doubling to 10 while it lasts; warned once an episode), fingerprint_refused (a queued fingerprint that is not native, taken out of its batch unasked; per fingerprint), link_refused (401/403: the credential was refused; the pass stopped, the fingerprints stay queued and held; warned once an episode), read_failed (any other failure: held), hit and miss (fingerprints answered), foreign_item (an item that is not an active alert of a queued fingerprint, this source and its strategy), dropped (forgotten when a strategy came back after 10 minutes untracked).
 
 ## alarmd_active_qg_set_object_bytes
 
@@ -189,9 +241,9 @@ Assignment index rounds the Control Leader attempted, by result.
 
 ## alarmd_assignment_moves_total
 
-Labels: `reason`
+Labels: `reason`, `holder`
 
-Assignments the Control Leader moved to another ready worker, by reason. reason=rebalance is a move to even the owned counts out; each costs the Query Group at most one Slot on the old holder.
+Assignments the Control Leader moved to another ready worker, by reason: rebalance, a move to even the owned counts out; bytes, a feasibility move off a worker whose Query Groups' retained-byte peaks sum past its share of the pool, one per overloaded worker per round; ineligible, a move off a holder alive and READY but not eligible (a rollout that changed the capability digest); holder_gone, a placement off a holder not in the round's ready set (not READY, registration lapsed, or declining the Query Group). A Query Group placed for the first time is not a move. Each costs the Query Group at most one Slot on the old holder. holder is what held the Query Group's lease: session for a holder holding it under a worker session, no_session for one renewing its own lease (an older binary) or none.
 
 ## alarmd_assignment_record_read_total
 
@@ -233,7 +285,7 @@ What the shared pool has handed out at the moment of the scrape, labelled the wa
 
 Labels: `budget`, `result`
 
-Process-wide phase-two capacity admission outcomes by fixed budget kind.
+Capacity outcomes by budget, counted process-wide. rejected is one refusal - the pool, the share or a per-Slot cap - as its resource line reports it, whatever Slot it refused. admitted is one Slot that completed holding something of the budget: a Slot is counted once per budget it reserved, at its completion, so rejected over admitted plus rejected is the share of Slots refused at that budget. What the pool holds now is capacity_reserved; which Slot held what is the slot_budget_usage of its slot_completed line.
 
 ## alarmd_catalog_global_strategies
 
@@ -245,7 +297,7 @@ Strategies the source marks global (is_global_strategy) in the Catalog the leade
 
 Labels: `reason`, `source_semantics`
 
-The global_unsupported strategies of catalog_global_strategies by the word they were refused for (query_kind, query_table, legacy_target, output_protocol) and the source their query reads (the catalog_plans source_semantics label, or promql); the pairs add up to that outcome. This is what decides which query source alarmd learns to run globally next. Both labels are closed sets, and only the pairs a round produced are published. Reported by the leader only.
+The global_unsupported strategies of catalog_global_strategies by the word they were refused for (query_kind, query_table, legacy_target, output_protocol, condition_ignored, business_dimension) and the source their query reads (the catalog_plans source_semantics label, or promql); the pairs add up to that outcome. This is what decides which query source alarmd learns to run globally next. Both labels are closed sets, and only the pairs a round produced are published. Reported by the leader only.
 
 ## alarmd_catalog_inert_plans
 
@@ -286,6 +338,12 @@ Plans in the Catalog the leader last built, by the wire format their events are 
 Labels: `source_semantics`
 
 Query Groups in the Catalog the leader last built, by the data sources their query reads. Every Query Group falls under exactly one source_semantics, so this family adds up to the Catalog's total. A Query Group whose query reads more than one data source is counted once, under mixed, rather than once per source: counting it per source would make the family stop adding up, and spelling the combination out would make the label set every subset of the sources. A source outside the supported list is other, which should stay zero while the compiler refuses such a source. Each supported source is reported at zero when it has no Query Groups, because a source that compiles nothing must not read the same as a source nobody asked about. Reported by the leader only: no other replica builds a Catalog. A Query Group is one query shared by every Plan that wants it, so this counts querying, not strategies -- catalog_plans counts those.
+
+## alarmd_catalog_renewals_total
+
+Labels: `kind`, `reason`
+
+Catalog keys the Control Leader renewed, by kind and why: timeline aged (this term last renewed or wrote it a third of the catalog TTL ago or more) or first (this term had not); object (the Query Group objects and the manifest) and context (the output contexts) periodic, on the first refresh round of the term and every tenth after. A key a renewal found missing is counted here and in object_catalog_objects_total{outcome="missing"}.
 
 ## alarmd_catalog_required_history_points
 
@@ -373,15 +431,33 @@ CPU budget the process is running against, labelled with where it was resolved f
 
 Cumulative CFS throttling. It separates 'busy' from 'not allowed to run', which no busy-time metric can: a process sitting at its quota looks identical to an idle one being held back. Absent when it cannot be read.
 
+## alarmd_container_memory_cgroup_info
+
+Labels: `version`, `memory_cgroup`, `usage_file`
+
+Which memory cgroup this process's memory gauges read, value 1: version (v2, v1 or unknown), the memory line of /proc/self/cgroup (memory_cgroup), and the usage file container_memory_used_bytes comes from (usage_file). Another reader of the container's memory - cAdvisor, kubectl top - may read another memcg or another counter: compare its path and container_memory_v1_bytes against this.
+
 ## alarmd_container_memory_limit_bytes
 
 Labels: `source`
 
 The memory limit every budget above was derived from, labelled with where it was read. A source of fallback_default means no container limit was found and the budgets describe a guess rather than this deployment.
 
+## alarmd_container_memory_stat_bytes
+
+Labels: `kind`
+
+The container cgroup's charge by kind (memory.stat): anon is process memory (anon in cgroup v2, rss in v1), file is page cache (file in v2, cache in v1), which the kernel reclaims under pressure before it kills. anon plus file is about container_memory_used_bytes. Absent where memory.stat cannot be read.
+
 ## alarmd_container_memory_used_bytes
 
 Memory charged to the container's cgroup. This is not the Go heap: the two differ by everything the heap does not account for, and it is this number that gets the process killed. Absent when it cannot be read, which is not the same as zero.
+
+## alarmd_container_memory_v1_bytes
+
+Labels: `counter`
+
+On cgroup v1, each counter of the memory cgroup by name: rss and total_rss (memory.stat; total_ includes child cgroups), usage_in_bytes and max_usage_in_bytes, and memsw_usage_in_bytes where swap accounting is on. Absent on v2 and where a file cannot be read.
 
 ## alarmd_control_cache_audit_total
 
@@ -473,6 +549,24 @@ Labels: `read`
 
 Redis round trips the Control Leader's reconcile round spent reading the records it places Query Groups from, by read: assignment (one Assignment record per Query Group of the population) or registry (the index plus one registration per ready worker). Counted where the calls are issued, so it is this round's own number and not a share of a client-wide total. Read it against control_read_keys_total on the same read: keys rising while round trips stay flat is the batch doing its job, both rising together is a batch that is not batching.
 
+## alarmd_control_record_cache_mismatch_total
+
+Labels: `field`
+
+Fields a backstop read found the Control Leader's copy of a record wrong on, once a record each field; presence is a record there that the copy had absent or the other way round. content_scope, pending_content_scope and effective_at_ms are written by a Worker promoting its pending content and are expected; any other is a write the copy missed, and the control_reads_spent line names the Query Group and both values.
+
+## alarmd_control_record_conflicts_total
+
+Labels: `outcome`
+
+Records whose publication in a reconcile round was refused because they had changed since read: settled (read again and settled in the same round) or again (refused again, left as read for the next round). Only a write that moves the record's revision refuses one: a publication whose answer the Leader did not get, another Leader's publication, or a sweep that removed the record. A Worker promoting its pending content and an activation writing the timeline revision do not, so conflicts are not the usual case of any round.
+
+## alarmd_control_record_reads_total
+
+Labels: `reason`
+
+Assignment records the Control Leader read, by why. It keeps a copy of the records for its term and reads one only when the copy cannot say: term_start (a new term's first reads), entered (the Query Group entered the population), backstop (the round's share of every record, each read at least once in sixty rounds), conflict (a publication over it was refused as changed), unknown_outcome (a publication over it failed without saying whether it was written), foreign_cutover (another process's activation rewrote its timeline revision, or a delta that could not say which it rewrote had every record the copy holds read again).
+
 ## alarmd_control_source_last_good_identity_changed_total
 
 Last-good Plans a Catalog build refused to retain because the source now states another tenant, business, space or global switch for the strategy than the Plan was built for (disposition LAST_GOOD_IDENTITY_CHANGED): the number is the same and the strategy is not, as when a writer's numbering started over. Counted where a document that did not compile, or compiled and was refused whole or in part, would otherwise keep its last good definition. Zero while every writer keeps its numbering; each such strategy stays out of the Catalog under its own disposition until its document compiles.
@@ -508,6 +602,14 @@ Source objects whose disposition changed in a refresh round, by whether the roun
 Labels: `function`
 
 Control rounds this process ran as a fallback Leader without a second-tier function, by function: the functions only the preferred control process runs, which detection never depends on. Non-zero while a Worker holds the control lease for want of a control process; it stops when control is handed back.
+
+## alarmd_dataset_record_ids_derived_outside_window_total
+
+Record ids of columnar Dataset points derived outside a window: read from a run that keeps no ids when no window has derived them, each derived for the read. Every reader of a Slot's inputs reads them in the window that evaluates its series, from ids derived once a point, so this stays near zero; a rising count is a reader outside a window paying a SHA-256 per read. A folded series' records are read once a point here, and a diagnostic query derives its own and is not counted.
+
+## alarmd_dataset_record_ids_kept_runs_total
+
+Columnar Dataset runs (one series' consecutive points) that keep their record ids, because at least one id is not the one derived from the series and the point's source time. A run whose every id is the derived one keeps none, 64 bytes a point less, and a window derives them when it reads the series. Every producer of Datasets builds its records from derived ids, so this stays zero; a rising count is a producer that does not, whose input is held at 64 bytes a point more than the share was measured at.
 
 ## alarmd_diagnostic_redis_dial_retries_total
 
@@ -591,7 +693,7 @@ Activation header comparisons the due index made, by outcome; unchanged growing 
 
 Labels: `outcome`
 
-What the effective-time maintenance did, by outcome. close_acked counts alerts, one per alert the broker acknowledged a close for: the close was sent, at every level of the strategy (__ALL__); whether the alert closed is the consumer's to say. The others count events: maintenance_busy is a close that could not take the Query Group's flight because a Slot was executing (one is nothing, a steady rate is a Query Group whose close never happens); close_precheck_failed is the owner or content check refusing before a send; close_send_failed is the producer not acknowledging; maintenance_plan_uncompilable is an activated Plan the maintenance could not compile and so cannot judge; unavailable is a Query Group whose Plans could not be read or whose owner is not accepting - a Console that does not answer is not one; source_last_known is a step whose read of the event source failed or was backed off and whose closes went on under the last source known, once per step; source_unknown is a step whose closes were deferred because no source has been known yet, once per step; effective_time_unknown, legacy_effective_time_unavailable and close_identity_invalid name the judgement that could not be made; calendar_deletion_unsettled is a close held back because a calendar the strategy reads deleted has not settled as a deletion: read deleted for too short a time, read present elsewhere, or every calendar this replica's strategies name read deleted at once, a calendar source gone; close_boundary_active is a Plan the recheck just before a send found active again, its batch not sent while the Query Group's other Plans go on (effective_time_unknown counts the same recheck finding the time unreadable); close_business_unknown counts alerts of a global business Plan whose record names no business they were filed under, not closed that round. Every cell exists from the start so a zero is a reading and not an absence.
+What the effective-time maintenance did, by outcome. An inactive Plan's alerts are closed by the link's filter close, one close per Plan and version: close_done is one the filter ran (done, or carried on by the next step), close_nothing_matched one whose dry run matched no active alert of the Plan's version, close_not_settled one the link did not settle this step (busy, failed, refused, past its expectation; the linkd filter close metric names which), tried again by the next step; the alerts themselves are counted by the filter close's items. filter_close_unsupported is the link answering 501, 404 or 405 to a filtered close, and close_unrouted an inactive Plan on a deployment that names no link control plane: in both nothing closes the Plan's alerts. The others count events: close_precheck_failed is the owner and content check refusing before a send (the fence, the content scope or the timeline moved); maintenance_busy is a close that could not take the Query Group's flight because a Slot was executing (one is nothing, a steady rate is a Query Group whose close never happens); maintenance_plan_uncompilable is an activated Plan the maintenance could not compile and so cannot judge; unavailable is a Query Group whose Plans could not be read or whose owner stopped accepting during the read - an owner not accepting when the step begins is a handover and is skipped uncounted; view_not_executable is a Query Group whose Plans the executable view does not allow reading yet (not installed, or the lease behind it), a rollout's shape rather than a store failure; group_retiring is a Query Group leaving the catalog (its timeline retired), read once per lease rather than every second; unsupported_runner is a Query Group whose owner runner cannot run the maintenance; effective_time_unknown, legacy_effective_time_unavailable and close_identity_invalid name the judgement that could not be made; calendar_deletion_unsettled is a close held back because a calendar the strategy reads deleted has not settled as a deletion: read deleted for too short a time, read present elsewhere, or every calendar this replica's strategies name read deleted at once, a calendar source gone; close_boundary_active is a Plan the recheck just before a send found active again, its close not sent while the Query Group's other Plans go on (effective_time_unknown counts the same recheck finding the time unreadable); close_boundary_near is an inactive close not started because the Plan may be active again in less than one request's budget (the filter close's round_spent is a close that started and ran out of time); close_step_spent is a maintenance step whose inactive closes, which share one step's time, left less than one request's budget, so its further closes start in the next step (once a step). Every cell exists from the start so a zero is a reading and not an absence.
 
 ## alarmd_effective_time_refresh_total
 
@@ -727,6 +829,12 @@ Labels: `column`
 
 Objects by which column of the split they are in. Unlike fleet_objects these DO add up: healthy, anomalous, demoted, undecidable, by_design and unknown partition the deployment, every object is in exactly one, and their sum is covered. That is what the family is for -- a change that moves objects between columns shows as one falling and another rising by the same amount in the same scrape, and drift moves both sides and leaves the difference alone. A before-and-after on the anomaly count alone attributes nothing, which is why this exists. It is a separate family from fleet_objects precisely because these add up and those do not: summing a family where some members overlap and others partition gives a number that looks plausible and means nothing. While a rollout is in progress these under-count: a replica on an older build does not publish the columns and its objects stay in anomalous. Compare within one pod and one build, never across a rollout -- an attribution made across one had to be retracted, which is the reason this family was added.
 
+## alarmd_fleet_plan_carries_reads_total
+
+Labels: `result`
+
+Reads of where an object's Plans' Runtime State comes from (plan_carries on an object detail), from the Query Group's timeline, by result: read; no_open_segment (the timeline holds no open Segment, so the object runs no Plan here now); failed (the timeline or an output context it names did not read back: the detail answers plan_carries_unavailable read_failed). Made on request only.
+
 ## alarmd_fleet_query_cooldown_objects
 
 Visible objects isolated by external source_backend query cooldown, including expired permits awaiting a real query; demoted objects are counted, since holding a cooldown is what demotes an object. Lower bound when the anomaly or demoted list is truncated or fleet coverage is incomplete.
@@ -817,6 +925,20 @@ Labels: `state`
 
 Replicas the fleet view counted, by whether they have applied the Activation the control plane published: acked, lagging or unknown. Unknown is a replica that reported no version or a published version that could not be read; it is never folded into acked. The three sum to the counted replicas. Written by every replica from the same shared facts, so aggregate with max, not sum.
 
+## alarmd_front_refused_total
+
+Labels: `outcome`
+
+Front reads (the admin page's calls through the front surface) alarmd refused, by the code it answered with: method_not_allowed, admin_unauthorized, invalid_input, unsupported_channel_version, invalid_mode, op_not_permitted_for_front (an operation or a parameter the front surface does not serve: a page calling what this build no longer serves it), unknown_operation, catalog_changed, front_target_not_allowed, target_routing_unavailable, operation_unavailable, front_answer_unshaped, _other. Every cell exists from the start so a zero is a reading and not an absence.
+
+## alarmd_go_heap_idle_bytes
+
+Go heap spans holding no objects (runtime/metrics heap free plus released). The part not yet released (minus go_heap_released_bytes) is resident and charged to the container: a high process_resident_bytes with a high idle-minus-released is the runtime keeping memory it no longer uses, not a leak.
+
+## alarmd_go_heap_released_bytes
+
+Go heap spans handed back to the operating system (runtime/metrics heap released): no longer resident, not charged.
+
 ## alarmd_handover_drain_seconds
 
 How long a planned handover waited for the moved Query Group's running Slot before releasing its lease; 0 for one with nothing running. The next owner cannot start the Query Group for this long. Reader: the release acceptance, from /metrics after each deploy.
@@ -838,6 +960,12 @@ Allocation stacks with live memory in the last profile read, the population the 
 ## alarmd_heap_inuse_profiled_bytes
 
 Live heap the allocation samples add up to after scaling, every site included, read right after a forced collection so that it and heap_inuse_live_bytes describe the same cycle. The two agreeing, within a few percent, is the condition for trusting heap_inuse_site_bytes at all; a ratio far from one is the instrument failing, not a lag to be explained away.
+
+## alarmd_heap_inuse_reserved_bytes
+
+Labels: `at`
+
+What the retained-byte pool held at the collection heap_inuse_live_bytes was read from: at=gc_start just before it was forced, at=gc_end just after the live heap was read. Live heap less this is heap no Slot has reserved, and is that only when the two agree; when they differ a Slot took or gave back its reservation during the reading, and the live heap may hold it either way. Read the pair, never capacity_reserved, against the live heap: capacity_reserved is read by another collector of the same scrape, before or after the collection, and the live heap is refreshed only once a minute. Absent until the pool is bound.
 
 ## alarmd_heap_inuse_site_bytes
 
@@ -867,6 +995,12 @@ Series a run produced Level outcomes for without summarising a detection window,
 
 Host states the access path treats as not monitored; zero means the filter is not installed.
 
+## alarmd_input_series_discarded_total
+
+Labels: `reason`
+
+Series a Slot was answered and let go of before evaluating them, by why. dependency_without_primary is a series a dependency query (a Plan's history or other non-PRIMARY input) answered that no PRIMARY input of the same Plan named: nothing evaluates a dependency without its series, so it is let go at the completion rather than held to the Slot's end. Steadily non-zero says the dependency query reads wider than the PRIMARY one - a filter or a window that differs - not that data was lost. Added from each completed Slot's dependency_series_discarded.
+
 ## alarmd_last_progress_timestamp_seconds
 
 Labels: `kind`
@@ -891,6 +1025,12 @@ Labels: `result`
 
 Reconcile rounds the control leader ran in this process, by result: completed, or failed in one of its stages. Emitted by a process once it has led a round, both results from then on.
 
+## alarmd_lease_renewal_total
+
+Labels: `lease`, `result`, `reason`
+
+Lease renewal attempts by lease (query_group, control_leader, worker_registration, worker_session), result and reason. One per attempt: a round makes at most three, spread over its renew interval, so failed is not a lost lease, which ownership_transition_total{transition="assignment_lost"} reads. renewed has reason none. failed is a store that could not be asked, by the words of redis_failure_reason_total, or other for an error that is none of them. refused is one of the four words of ownership_refusals_total: the store's own answer, or the same word given locally with no script sent, when the session has already stopped accepting or the fence is invalid, at most once per session. worker_registration counts failures only: its writes answer plain errors and its success is not observed per attempt. The early renewal of the view gate is not counted here. worker_session counts the worker's session, its acquisitions with its renewals. Every cell a renewal can reach exists from startup, so a zero is a count.
+
 ## alarmd_legacy_pod_cache_total
 
 Labels: `result`
@@ -907,31 +1047,19 @@ Level verdicts of ABNORMAL, by whether the detection window they were reached on
 
 Labels: `outcome`, `reason`, `origin`
 
-Level outcomes the evaluation concluded, by outcome kind and, for UNKNOWN and TERMINAL, by reason. NORMAL, ABNORMAL and RECOVERY carry no reason. UNKNOWN by reason is the reading for a Level that was not judged: EFFECTIVE_TIME_INACTIVE is its configured hours, EFFECTIVE_TIME_UNKNOWN a schedule that could not be resolved, HISTORY_WARMING a window not yet full, GAP_* a guard. This counts Level outcomes per series per evaluation, not alerts and not strategies; read a reason against level_outcome_total summed over every cell for its share. origin says whose the reason is: physical for what this round met itself, carried for a stored guard's reason repeated on a later round (an UNKNOWN Level held by a guard an earlier round raised; the origin Slot is on the evaluation_completed line), derived for alarmd's own judgement from configuration, schedule or State (EFFECTIVE_TIME_INACTIVE, HISTORY_WARMING, ...). Only UNKNOWN is ever carried.
+Level outcomes the evaluation concluded, by outcome kind and, for UNKNOWN and TERMINAL, by reason. ABNORMAL and RECOVERY carry no reason. NORMAL carries one only where the Level met its recovery windows and was held NORMAL on an open alert: the trigger_recovery_withheld_total reason (zero_count, no_data_last_point_unknown, source_unknown), origin derived, so a shift from RECOVERY to NORMAL is read on this family by the rule that made it; every other NORMAL has reason empty. A reason on NORMAL is not an unjudged Level: read UNKNOWN by outcome="UNKNOWN", never by reason!="". UNKNOWN by reason is the reading for a Level that was not judged: EFFECTIVE_TIME_INACTIVE is its configured hours, EFFECTIVE_TIME_UNKNOWN a schedule that could not be resolved, HISTORY_WARMING a window not yet full, GAP_* a guard. This counts Level outcomes per series per evaluation, not alerts and not strategies; read a reason against level_outcome_total summed over every cell for its share. origin says whose the reason is: physical for what this round met itself, carried for a stored guard's reason repeated on a later round (an UNKNOWN Level held by a guard an earlier round raised; the origin Slot is on the evaluation_completed line), derived for alarmd's own judgement from configuration, schedule or State (EFFECTIVE_TIME_INACTIVE, HISTORY_WARMING, a withheld recovery's reason, ...). Only UNKNOWN is ever carried.
 
-## alarmd_linkd_calibration_coverage
+## alarmd_linkd_filter_close_request_seconds
 
-Labels: `state`
+Labels: `mode`, `result`
 
-Tracked strategies by whether calibration at the Console's measured pace reaches them within the calibration interval: covered, or short. A round calibrates enough strategies to cover every tracked one with a quarter to spare, bounded by how many calls the Console answers in half a refresh cycle (from the latest calls' p90); short is the strategies an interval at that bound cannot reach, whose open-alert sets go unjudged and so unclosed. fleet.get names the strategies past their calibration age. Absent without a Console.
+How long one request of the strategy closes' filtered close (package filterclose) to the alert link took, from sent to answered or given up, by mode (dry_run: the count and the candidates before a close; close: the real close of the ids its dry run read, as many as the link's own budget allows) and result. Not answered: timeout (the request's own budget ran out: the closes the link made before stay saved), canceled (the round ended first), busy (429), unavailable (503), http_4xx, http_5xx, transport (no status: the link was not reached or did not answer); invalid_response (a 200 whose body could not be read - it broke off or did not decode, and the link may have acted on it - or a request alarmd could not build and did not send: its command not a JSON object, its query invalid, its body past the link's bound); answer_too_large (a 200 past the client's bound). Answered with a top-level error code: query_failed (a later candidate query failed; the items read are answered), error_unknown (a code alarmd does not know). Answered: ok (no item failed; every dry run); a real close whose items all failed, by their one status, items_busy (429 or 504 not_attempted), items_unavailable (503), items_5xx (another 5xx), items_failed (mixed or another); items_partial when only some failed. Every cell exists from the start.
 
-## alarmd_linkd_console_calls_total
+## alarmd_linkd_filter_close_total
 
-Labels: `op`, `result`
+Labels: `outcome`
 
-Calls this replica made to the alert link's Console, by operation (roster, reconcile, alert_record) and result (ok, failed). Only the control leader walks the roster. An alert_record answered with 'no such alert' is ok. Every cell exists once the source is bound, so a zero is a reading.
-
-## alarmd_linkd_console_failures_total
-
-Labels: `op`, `class`
-
-Failed calls to the alert link's Console, by operation and class: the transport's word for a request that got no answer (cancelled - the caller let go, timeout, connection_refused, connection_reset, dns, tls, eof, other - the same words a query provider's route detail uses), status (an answer other than 200) and incomplete (a body not read whole or not decoded). The classes of one operation add up to its result="failed" cell of linkd_console_calls_total; the latest one, with when, is the Console row's last_failure_class on the deployment's dependencies, and its start and every change of class write one console_call_failed line. Every cell exists once the source is bound. Reader: the release acceptance, from /metrics after each deploy.
-
-## alarmd_linkd_console_state
-
-Labels: `state`
-
-The alert link's Console as this replica last saw it, one cell per state and 1 on the current one: not_configured (the deployment names no Console, so neither the open alert set's calibration nor the close of disabled or deleted strategies' alerts runs; by design on a deployment whose events all go the Python-compatible way), not_called, unreadable (the latest call of some operation failed), link_unhealthy (the Console answered and the link says its own set maintenance is failing, never succeeded or is behind; its roster may then miss strategies the close would take, and the close still runs on what it lists), reachable, and off_role, a cell on every process: 1 on one with neither the control nor the worker role (the rest 0), else 0.
+The strategy closes alarmd runs through the alert link's search and close by filter (package filterclose), by outcome. Per job (one decision's filter in one round): job_done, job_done_refused (the filter ran out with items the link refused and left open - 400, 403, 409 source_unpublished, item_conflict_unknown, item_refused: not settled, the record kept), job_done_rederived (the filter ran out but items came back certainly not closed: not settled, run again), job_incomplete (the round ended or the dry run's count was spent), nothing_matched, expect_exceeded (the dry run matched more than the independent expectation allows; nothing closed), filter_close_unsupported (501/404/405: nothing closes the decision), link_busy (429), link_refused (another 4xx), link_failed (timeout, 5xx, transport), link_answer_too_large (a 200 past the client's bound: a dry run of more ids than it reads; nothing decided), command_unavailable, filter_refused, target_list_too_large (a scope close whose current targets do not fit one request: not sent, never cut), page_lost (a real close request whose answer was lost: the ids it was narrowed to, read by its dry run just before, are kept to retry by id); where the job's expectation came from: expect_own_record (alarmd's own record of the episodes it opened), expect_decided_ids; the record's: record_missing (no record, or none with a start: decided alert by alert; the alerts opened before a record's start always are), record_truncated, record_unavailable (read failed: nothing decided), record_pruned (entries removed after their decision found nothing), record_prune_failed. Per item: item_closed, item_already_closed, item_ended_otherwise (409 invalid_transition), item_source_unpublished, item_conflict_unknown, item_rederived (429, 504 not_attempted, 409 version_conflict: found again by the filter), item_unavailable (503: the link refused before the close ran; found again next round), item_not_found (404: enumerated, then gone before its close), item_invalid_command (400) and item_tenant_mismatch (403): refused, not retried, item_pending (another 5xx: kept to retry by id), item_pending_full, item_pending_lost, item_refused. Per retry of a kept item: pending_closed, pending_already_closed, pending_ended_otherwise, pending_left_decision (the decision's filter no longer names the alert: dropped, not closed), pending_not_found, pending_retry_failed, pending_given_up, pending_refused, pending_unreadable, pending_unavailable. The edit close's own: buckets_truncated, digest_mismatch, family_mismatch (a sample whose no-data tag and evaluation_family disagree: no decision), sample_unreadable, and edit_<word> for each edit decision and note - edit_revision_incomparable, beside its decision, an alert whose strategy_version is of the other revision scheme than the current Plans' (a microsecond time against a count), judged from its own record; alerts_read, alerts_truncated, alert_decided_close are the edit close's and the alert-by-alert close's of a strategy with no record; absent_truncated (a tenant's discovery stopped at its per-round bound). The filtered close takes no page: a job sends requests while there is more, each a dry run of the same filter and then a real close narrowed to the ids that dry run read, so a job never closes more than its expectation allows; close_cap_reached is a job stopped because its next dry run matched more than its closes so far left of the expectation; round_spent is a job ended before its next request because the round had less than one request's budget left; link_query_failed is a 200 whose later candidate query failed (error_code query_failed), link_error_unknown a 200 with a top-level error code alarmd does not know; job_again counts a job run again within its round because it was not settled and its last run closed something. Every cell exists from the start so a zero is a reading and not an absence.
 
 ## alarmd_live_query_reserve_seconds
 
@@ -1047,7 +1175,7 @@ Bytes the formal first reads delivered, by source, counted as the rechecks' are.
 
 Labels: `source`
 
-Formal first reads seen, by source - the data source the Query Group reads, labelled as the directory labels its Query Groups, so every lookback family reads beside them: the denominator of the query volume the lookback adds (lookback_rechecks_total over it).
+Formal first reads seen, a Slot read in slices one, by source - the data source the Query Group reads, labelled as the directory labels its Query Groups, so every lookback family reads beside them: the denominator of the query volume the lookback adds (lookback_rechecks_total over it).
 
 ## alarmd_lookback_floor_probe_changes_total
 
@@ -1167,6 +1295,12 @@ Labels: `source`, `bucket`
 
 Supplements by how long each held its Query Group's flight, by source: from taking the flight to the supplement's return - freezing the Slot's contract, evaluating, writing its State, and any wait on Redis inside them - which is how long the group's own Slot waited behind it. Buckets close at their bound: le_100ms, le_500ms, le_1s, le_5s, gt_5s. A supplement refused for the flight never held it and is not counted.
 
+## alarmd_lookback_supplement_partly_refused_total
+
+Labels: `source`
+
+Directed Slots read in slices some of whose rereads the memory share refused, by source: each came to the outcome of the slices read in lookback_supplement_windows_total and is in no reason of lookback_supplement_unobserved_total.
+
 ## alarmd_lookback_supplement_points_total
 
 Labels: `source`
@@ -1209,11 +1343,23 @@ Labels: `loop`
 
 How long one turn of a long-running loop took, by loop, failed turns included. control is the refresh and reconcile loop; dispatch is the scheduler's queue loop, measured up to the wait. The liveness bound on a loop is judged against the longest turn this shows.
 
+## alarmd_new_opens_total
+
+Labels: `outcome`
+
+Alerts this process opened (an ABNORMAL the open-alert copy says is its episode's first, standard protocol only), as the per-strategy hourly count behind the fleet's NEW_ALERTS_BURST line hears them, by outcome: counted, untracked (its strategy not counted: the count holds its bound of strategies already, so that strategy cannot be named). Every cell exists from the start.
+
+## alarmd_no_data_close_requests_total
+
+Labels: `outcome`
+
+The alert link's calls of the no-data close route (/internal/v1/no-data-closures), by outcome: recorded; full_skipped, answered 200 and not recorded because the strategy's close hash is at its bound (a refusal would stop the user's close at the link; skipped, alarmd may raise the absence again); store_unavailable (503, the link retries); the refusals method_not_allowed (405), body_unreadable, body_not_object and identity_invalid (400). internal_listen_off is 1 when the process serves the route with no http.internal_listen, so the route is served nowhere. Every cell exists from the start so a zero is a reading and not an absence.
+
 ## alarmd_no_data_end_total
 
 Labels: `outcome`
 
-What the no-data end index did, by outcome: sent (series whose alert a level written to end on no data ended while the series was absent from complete answers through the recovery span), not_open (entries removed because the consumer no longer holds their alert - closed by hand, by effective time, by the absent or superseded-identity close - nothing sent), overflow (open alerts not indexed, the Plan's index full; they stay open while their group is absent), unavailable (Plans whose index could not be read or written that round; nothing decided on it), send_failed (series whose end the sink did not take; sent again on the next complete round), undecodable (entries this build could not read, left to the alert's own end), unjudged (absent entries a complete round could not decide on because the consumer's set could not be judged - not read yet after a handover, or no Console; nothing sent or removed). Counted in series or entries, per round. Every outcome exists from start.
+What the no-data end index did, by outcome: sent (series whose end event the sink took, for a level written to end on no data, the series absent from complete answers through the recovery span - taken by the broker, not ended by the link, which finds no active alert for one already closed), not_open (entries removed because the consumer no longer holds their alert - closed by hand, by effective time, by the absent or superseded-identity close - nothing sent), overflow (open alerts not indexed, the Plan's index full; they stay open while their group is absent), unavailable (Plans whose index could not be read or written that round; nothing decided on it), send_failed (series whose end the sink did not take; sent again on the next complete round), undecodable (entries this build could not read, left to the alert's own end), unjudged (absent entries a complete round could not decide on because the consumer's set could not be judged - not read yet after a handover, or no Console; nothing sent or removed), source_unknown (absent entries whose end was due and was held because the source could not be shown alive; the entry stays, nothing is sent, the next round asks again), level_not_open (absent series none of whose due levels is the level the alert is at, the lowest open level id: the consumer ends an alert only on its own level, so nothing is sent and the entries are removed). Counted in series or entries, per round. Every outcome exists from start.
 
 ## alarmd_no_data_plans_by_hop_total
 
@@ -1229,7 +1375,7 @@ The catalog object cache's objects sized by their structure against the stored b
 
 ## alarmd_object_cache_decoded_samples_total
 
-Objects the reading above has sized.
+Catalog objects the object cache has sized by their structure, one in 64 stored, since the cache was configured: the sample behind object_cache_decoded_ratio. Zero means that ratio has nothing behind it yet.
 
 ## alarmd_object_catalog_manifest_bytes
 
@@ -1315,47 +1461,11 @@ Labels: `observer`
 
 Panics an observer raised and the fan-out recovered, by observer; every other observer still received the observation. entry is a panic before any member. Any count is a defect. Reader: the release acceptance, at +5 and +15 minutes after each deploy (its observer_panics column).
 
-## alarmd_open_alert_set_authoritative_age_seconds
+## alarmd_open_episode_record_total
 
-Seconds since the oldest calibration among the tracked strategies' sets completed: a full read of the consumer's open alerts for a strategy, reconciled against its index. Absent until one has.
+Labels: `outcome`
 
-## alarmd_open_alert_set_entries
-
-Labels: `kind`
-
-What the copy holds: member is fingerprints from the last publication, sent_open those this process sent ABNORMAL for within the local retention.
-
-## alarmd_open_alert_set_evictions_total
-
-Fingerprints this process sent that were dropped from the copy to stay inside its bound, oldest first.
-
-## alarmd_open_alert_set_lookup_total
-
-Labels: `answer`
-
-Lookups by how they were answered. index_member and index_absent are the consumer's index; recently_sent is a fingerprint the index does not carry yet that this process sent ABNORMAL for within its lag, the copy's word and not the consumer's; self_maintained and passed_through are the unavailable policy answering, and which of the two appears is the policy in force. index_stale is a set read once whose last successful read or calibration (complete or truncated) is older than 3 x (the index interval + ceil(tracked strategies / read batch) x the refresh interval), answered by the same policy as a set never read; the bound grows with the strategies tracked, so it differs between deployments.
-
-## alarmd_open_alert_set_notices_refused_total
-
-Labels: `reason`
-
-Change notices on the link's channel this process dropped, by why: oversized (past 64 KiB), undecodable (not a notice under the strict shape: a field this build does not know, a wrong type, content after it), invalid_key (the tenant or strategy it names is not a valid one). A dropped notice costs delay only: the strategy is read on the next periodic read. A steady rate is the link publishing a notice this build does not read. Read with alarmd-cli invoke metrics.get.
-
-## alarmd_open_alert_set_refresh_total
-
-Labels: `result`
-
-Refreshes by result: index (a strategy's index read), authoritative (a calibration completed), truncated (a calibration whose answer the link marked incomplete or that passed this process's caps of 10000 rows or 5000 active alerts: what it listed is added and its alerts are closed where due, nothing unlisted is taken as gone, and it is asked again on the calibration cadence), unavailable (either failed). A flat line is the refresh loop not running.
-
-## alarmd_open_alert_set_tracked_strategies
-
-Strategies the copy reads on each refresh: those evaluated by this worker within the tracking window. Read against worker_owned_query_groups; well above it is strategies this worker lost still inside the window.
-
-## alarmd_open_alert_set_unavailable_total
-
-Labels: `reason`
-
-Why the copy could not answer from the consumer's sets: read_error (an index read or a calibration failed, each time), too_large (a strategy's set larger than this process's read budget - members or bytes, from its memory - each time, refused before it is scanned once a member's weight is known; fleet.get names these strategies), location_unconfirmed (the link's Console has not named where the sets are) and keying_unconfirmed (it has not said they are keyed by the alert ids this process sends), each counted once on entering the state; fleet health degrades with OPEN_ALERT_SET_UNCONFIRMED while either lasts. A deployment without the Console counts nothing here.
+Writes to alarmd's own record of the alert episodes it opened (package openepisodes), the expectation the strategy-wide closes check a dry run against, by outcome: opened (an entry written for an ABNORMAL the process had no own send of), ended (an entry removed for a RECOVERY), refreshed (a hash's life set again for a strategy that only repeats its ABNORMALs), queue_full (a change dropped: the ACK path never waits), write_failed (a change in a pipeline the Redis did not take), reensured (an entry written again, set-if-absent, for an episode the process had an own send of, at most once an hour per series: it restores an entry a close pruned or a lost write left out), ensured_full (a series not remembered because the writer remembers its bound already: written only on the copy's word). Counted per change; every cell exists from the start.
 
 ## alarmd_operation_total
 
@@ -1405,13 +1515,17 @@ Slots whose events the broker acknowledged and whose State write the ownership s
 
 Labels: `site`, `refusal`
 
-Refusals the ownership store answered, by which of its four words and where it was met. refusal: OWNERSHIP_STALE_FENCE (the fence's epoch, token or deadline no longer match the lease), OWNERSHIP_NOT_DESIRED (the assignment names another worker), OWNERSHIP_LEASE_BUSY (another owner holds the lease), CONTENT_SCOPE_MOVED (the content scope a write was fenced against has moved while the lease is live; at renewal, the lease ran out at a content switch because the holder was still on the old content when the change fell due). site: admission is the side-effect admission check before a Slot's writes, state_apply the fenced State write itself, lease the worker's acquire, release and takeover, renewal the lease renewal, control the control leader's assignment writes. Every pair is created at startup, so a zero is never happened and not an absent series. A content change reads as follows: a holder already on the new content when the change falls due keeps its lease across it and nothing here moves; one still on the old content reads renewal CONTENT_SCOPE_MOVED once as its lease runs out at the switch, and takes the Query Group again on the new content at the next reconcile; a write still fenced against the old scope after the switch reads state_apply CONTENT_SCOPE_MOVED. Counted once per observation, not per key: a fenced batch refused as a whole is one.
+Refusals the ownership store answered, by which of its four words and where it was met. refusal: OWNERSHIP_STALE_FENCE (the fence's epoch, token or deadline no longer match the lease), OWNERSHIP_NOT_DESIRED (the assignment names another worker), OWNERSHIP_LEASE_BUSY (another owner holds the lease), CONTENT_SCOPE_MOVED (the content scope a write was fenced against has moved while the lease is live; at renewal, the lease ran out at a content switch because the holder was still on the old content when the change fell due). site: admission is the side-effect admission check before a Slot's writes, state_apply the fenced State write itself, lease the worker's acquire, release and takeover, renewal the renewal of a Query Group's or the control leader's lease, control the control leader's assignment writes. Every pair is created at startup, so a zero is never happened and not an absent series. A content change reads as follows: a holder already on the new content when the change falls due keeps its lease across it and nothing here moves; one still on the old content reads renewal CONTENT_SCOPE_MOVED once as its lease runs out at the switch, and takes the Query Group again on the new content at the next reconcile; a write still fenced against the old scope after the switch reads state_apply CONTENT_SCOPE_MOVED. Counted once per observation, not per key: a fenced batch refused as a whole is one.
 
 ## alarmd_ownership_transition_total
 
 Labels: `transition`, `result`, `reason_class`
 
 Ownership lifecycle transitions by bounded transition, result and reason class.
+
+## alarmd_placement_unfit_total
+
+Placements the Control Leader made although the Query Group fit no eligible ready worker under the byte constraint's projection (retained-byte peaks reported, each unread Query Group at the round's estimate), so it went to its rendezvous choice: a placement cannot wait on a fit, and the byte constraint moves it on a later round if the worker is then overloaded. Not counted while the round has no estimate, when nothing is judged.
 
 ## alarmd_platform_settings_authoritative_age_seconds
 
@@ -1427,7 +1541,7 @@ Reads on which the effective value of a field changed, by field: what one edit o
 
 Labels: `mode`
 
-Which state the process copy of the platform's settings (host_disable_monitor_states, is_access_bk_data, bkdata_cmdb_level_tables, file_system_type_ignore) is in, 1 on the current one and 0 on the others; read each scrape from the copy's state. off_role is a cell on every process: 1 on one with neither the control nor the worker role, which keeps no copy (the rest 0), else 0. not_configured: the deployment renders no distribution source, the copy answers from its own configuration and the platform's code defaults, which is what alarmd did before it could read the platform, and is not a fault. never_loaded: a source is configured and no read has found a publication since the process started. authoritative: the last read found a publication and every field decoded. stale: there was a publication once and the last read did not yield one; the copy answers from the last publication, and past the staleness bound fleet health degrades.
+Which state the process copy of the platform's settings (host_disable_monitor_states, is_access_bk_data, bkdata_cmdb_level_tables, file_system_type_ignore, no_data_tracking_horizon_seconds) is in, 1 on the current one and 0 on the others; read each scrape from the copy's state. off_role is a cell on every process: 1 on one with neither the control nor the worker role, which keeps no copy (the rest 0), else 0. not_configured: the deployment renders no distribution source, the copy answers from its own configuration and the platform's code defaults, which is what alarmd did before it could read the platform, and is not a fault. never_loaded: a source is configured and no read has found a publication since the process started. authoritative: the last read found a publication and every field decoded. stale: there was a publication once and the last read did not yield one; the copy answers from the last publication, and past the staleness bound fleet health degrades.
 
 ## alarmd_platform_settings_read_retry_total
 
@@ -1445,6 +1559,16 @@ Labels: `reason`
 
 Reads that yielded no publication, by why: read_error (the read did not happen), revision_moved (the store answered and the revision changed during the read on both tries, so the fields may be of two publications and are not used -- a publisher writing faster than a round trip, not the store being down), unpublished (the revision key is absent -- nothing was ever published, and the field keys beside it are not read as no override), decode_error (a field is not of its declared type; the whole publication is refused rather than half of it, and the log line names the field and the value).
 
+## alarmd_process_memory_read_failed_total
+
+Labels: `source`
+
+Collections in which a source of the memory gauges could not be read or parsed, by source: statm (/proc/self/statm, process_resident_bytes) and memory_stat (cgroup v2 then v1 memory.stat, container_memory_stat_bytes), whether the file is missing, refused or not parsable. It rises at each scrape while its gauge is absent.
+
+## alarmd_process_resident_bytes
+
+The process's resident set (/proc/self/statm). It holds the Go heap in use, the heap the runtime keeps idle and has not handed back (go_heap_idle_bytes minus go_heap_released_bytes), stacks and the runtime's own memory. container_memory_used_bytes above it is page cache and the container's other processes: read container_memory_stat_bytes{kind="file"} for the first. Absent where it cannot be read, which is not zero.
+
 ## alarmd_progress_completed_total
 
 Labels: `kind`
@@ -1455,7 +1579,7 @@ Acknowledged Progress commit observations by existing completion kind.
 
 Labels: `completion_kind`, `cause`, `reason`, `origin`
 
-Acknowledged Slots that completed short of whole - COMPLETED_WITH_UNAVAILABLE, COMPLETED_WITH_PARTIAL_GAP - by the cause the completion carried (the most actionable of what the round hit) and that cause's reason: which Plan, Level or query it was and when are on the progress_committed line (completion_strategy, completion_level, completion_query). NONE is a completion that carried no cause. origin says whose the reason is: physical for what the round met itself - a primary input's reason always is - and carried for a stored guard's reason a Level outcome repeated on a later round (LEVEL_OUTCOME_UNKNOWN, GAP_GUARD_WARMING); the guard's origin Slot is on the progress_committed line (evaluation_reason_origin_slot). reason=QUERY_TIMEOUT,origin=physical is a timeout this round.
+Acknowledged Slots that completed short of whole - COMPLETED_WITH_UNAVAILABLE, COMPLETED_WITH_PARTIAL_GAP - by the cause the completion carried (the most actionable of what the round hit) and that cause's reason: which Plan, Level or query it was and when are on the progress_committed line (completion_strategy, completion_level, completion_query). NONE is a completion that carried no cause. origin says whose the reason is: physical for what the round met itself - a primary input's reason always is - and carried for a stored guard's reason a Level outcome repeated on a later round (LEVEL_OUTCOME_UNKNOWN, GAP_GUARD_WARMING); the guard's origin Slot is on the progress_committed line (evaluation_reason_origin_slot). reason=QUERY_TIMEOUT,origin=physical is a timeout this round. A Slot is filed here by its cause, so one that ended PLAN_NOT_ACTIVE while its primary input was unavailable is under PRIMARY_INPUT_UNAVAILABLE: how many Slots ended PLAN_NOT_ACTIVE is slot_completed_reasons_total{reason="PLAN_NOT_ACTIVE"}, and the two families are not summed.
 
 ## alarmd_query_cooldown_events_total
 
@@ -1577,6 +1701,12 @@ Query Groups whose own read hold record did not decode: read as missing, the hol
 
 Retired Query Groups whose read hold closing failed; they retire all the same, and a successor reads the unclosed record as the hold bound.
 
+## alarmd_read_hold_retire_closes_total
+
+Labels: `site`
+
+Retired Query Groups whose read hold closed, by site: next, their own round at the retirement; release, their owner releasing them once drained, before a round came back to them. A drained group closed by neither leaves its successor reading the open record as the hold bound.
+
 ## alarmd_read_hold_seeds_total
 
 Labels: `origin`
@@ -1591,11 +1721,33 @@ Slots frozen at the group's hold limit because a transition asked for more, by s
 
 ## alarmd_read_hold_transition_overtaken_total
 
-Closed-segment attempts refused because newer state has already applied.
+Closed-segment attempts overtaken by newer state: refused STATE_STALE_VERSION, or having skipped series whose State a later Slot had already written (state_superseded_total{site="state"}).
 
 ## alarmd_read_hold_transition_total
 
 Slots whose first readiness preserves a preceding segment's completion deadline.
+
+## alarmd_read_hold_transition_waits_total
+
+Labels: `outcome`
+
+A Query Group's waits on the group a moved Plan left, whose read hold record was open or could not be read: waiting when one began, inherited when every predecessor waited on was read closed, bounded when one was still open when the first Slot would have been ready on the hold bound. The Slot is not frozen while it waits. A wait whose group moves to another replica, or is configured for other predecessors, ends neither way here, so waiting can exceed the two.
+
+## alarmd_read_hold_waiting_groups
+
+The Query Groups this replica holds that are waiting on a predecessor's read hold record now: their next Slot is not frozen until it closes or the wait ends.
+
+## alarmd_rebalance_byte_most_loaded_share
+
+The largest judged worker's sum of retained-byte peaks over the share of its pool the byte constraint allows, as the latest round on this Control Leader read it; above one is overloaded. A lower bound while rebalance_byte_unread_groups is not zero. Meaningful on the Control Leader only; aggregate replicas with max, not sum.
+
+## alarmd_rebalance_byte_overloaded_workers
+
+Ready workers whose Query Groups' retained-byte peaks sum past their share of the pool, as the latest round on this Control Leader judged them; each gives one Query Group away per round (assignment_moves_total{reason="bytes"}). Meaningful on the Control Leader only; aggregate replicas with max, not sum.
+
+## alarmd_rebalance_byte_unread_groups
+
+Query Groups with no reported retained-byte peak in the latest round on this Control Leader: they count nothing toward their worker's sum, so the byte readings beside it are lower bounds. Meaningful on the Control Leader only; aggregate replicas with max, not sum.
 
 ## alarmd_rebalance_gap
 
@@ -1611,6 +1763,18 @@ Rebalance rounds that planned moves and published none, by reason. reason=set_un
 
 Assignments the latest rebalance round on this Control Leader planned to move from the most to the least loaded ready worker. Read beside assignment_moves_total: planned and not published for more than one stabilisation window is a ready set that keeps changing. Meaningful on the Control Leader only; aggregate replicas with max, not sum.
 
+## alarmd_redis_bytes_total
+
+Labels: `client`, `caller`, `command`, `direction`
+
+RESP bytes of the commands the server answered, by client, job, command and direction (sent or received). A command with no reply (a pool timeout, a failed dial, a connection cut) counts nothing. Worked out from the command rather than counted on the connection: connection setup and Sentinel traffic are not in it, and a status and a bulk string nested in a script's reply read alike. Clients without the Redis hook are not read, as for redis_caller_duration_seconds.
+
+## alarmd_redis_caller_duration_seconds
+
+Labels: `client`, `caller`, `pipelined`
+
+Redis round-trip duration by the job that made the call, one per call or pipeline batch, including the wait for a connection. caller is a name of redis_caller_operation_total, other for a name outside that list, or unnamed for a call whose context names no job, which is a ping and nothing else, so the count of a client sums to its redis_operation_total. Clients without the Redis hook are not read: the CLI's and the instance registration's, and the lifecycle record's, so a zero there is not an absence of calls.
+
 ## alarmd_redis_caller_failure_reason_total
 
 Labels: `client`, `caller`, `reason`
@@ -1621,13 +1785,13 @@ Redis operations of a named job that failed, by why, counted as redis_failure_re
 
 Labels: `client`, `caller`
 
-Redis operations issued by a named job on a client, one per call or pipeline batch, for the jobs that share one client: on the diagnostics client directory_read, diagnostic_write, diagnostic_read, cost_projection; on the source and runtime clients (one client when the deployment points both at one Redis) strategy_source, legacy_effective_time, control_plane, ownership, runtime_state, query_cooldown, fleet, linkd; cmdb_cache, target_group and dynamic_config on whichever client they share; store_census on the source and runtime clients.
+Redis operations issued by a named job on a client, one per call or pipeline batch, for the jobs that share one client: on the diagnostics client directory_read, diagnostic_write, diagnostic_read, cost_projection; on the source and runtime clients (one client when the deployment points both at one Redis) strategy_source, legacy_effective_time, control_plane, ownership, runtime_state, query_cooldown, fleet, linkd; cmdb_cache, target_group and dynamic_config on whichever client they share; store_census and effective_maintenance on the source and runtime clients; lease_confirmation on the runtime client; catalog_timeline_renewal, catalog_object_renewal and catalog_context_renewal on the source client; legacy_output and legacy_pod_cache on the clients of those names.
 
 ## alarmd_redis_command_duration_seconds
 
 Labels: `client`, `command`, `pipelined`
 
-Redis round-trip duration. A pipelined batch is recorded once for the whole batch.
+Redis round-trip duration. A pipelined batch is recorded once for the whole batch, under the command of its first member. redis_script_duration_seconds reads a batch by the script it carries.
 
 ## alarmd_redis_command_failure_total
 
@@ -1671,6 +1835,24 @@ Labels: `client`, `result`
 
 Redis connection pool acquisitions by client and outcome.
 
+## alarmd_redis_script_bytes_total
+
+Labels: `script`, `direction`
+
+RESP bytes of the script commands the server answered, by script and direction, as redis_bytes_total counts them. A SCRIPT LOAD's text is in its script's sent bytes.
+
+## alarmd_redis_script_duration_seconds
+
+Labels: `script`, `pipelined`
+
+Redis round-trip duration by script, including the wait for a connection. A pipelined batch is recorded once for the whole batch, under its first eval or evalsha member.
+
+## alarmd_redis_script_total
+
+Labels: `script`, `command`, `pipelined`, `outcome`
+
+Lua script commands issued, one per command, pipeline members included. script is the name the script is registered under (redisscript), other for one that is not, which should never be: non-zero is a defect. Scripts with one text share one name. command is eval, evalsha or load (SCRIPT LOAD). outcome is ok, noscript or error; a script refusing in its own reply (a stale fence) has answered and is ok, the refusal is the caller's to count. Commands inside a script are not seen here. Clients without the Redis hook are not read, as for redis_caller_duration_seconds.
+
 ## alarmd_replay_expired_total
 
 Labels: `reason`
@@ -1705,9 +1887,9 @@ RunOne exits including panic, classified once by actual control flow.
 
 ## alarmd_schedule_cursor_advance_total
 
-Labels: `result`, `refusal`
+Labels: `result`, `refusal`, `reason`, `in_flight`
 
-Attempts to move a Progress cursor that points into a pruned part of its timeline to the earliest Slot the timeline still holds, by outcome; a conflict also carries the one fact that refused it (refusal), which is empty for every other outcome.
+Attempts to move a Progress cursor past Slots nobody evaluated to the earliest Slot its timeline still holds, by outcome and by the word the skip is recorded under (reason: SCHEDULE_PRUNED, PLAN_NOT_ACTIVE, SCHEDULE_REPAIRED, SCHEDULE_REOPENED). An applied attempt is one skipped span, of however many Slots, not one Slot; in_flight says whether it also threw away a Slot in flight - a Slot that ended, named by in_flight_slot on its slot_skipped line - and is false for every other outcome. A conflict also carries the one fact that refused it (refusal), which is empty for every other outcome. Every cell exists from the start, so a zero is a reading.
 
 ## alarmd_schedule_cutover_duration_seconds
 
@@ -1823,6 +2005,12 @@ Labels: `cohort`, `completion_kind`
 
 Duration of the committed executor call, excluding SlotSource preparation and earlier attempts, by the completion kind it committed.
 
+## alarmd_slot_completed_reasons_total
+
+Labels: `reason`
+
+Slots that ended, by the reason word their slot_completed line carries: one per Slot, counted once, when it ends - a round that retries it is not an end - whatever the log samples. none is a Slot that ended whole. The answer to how many Slots ended PLAN_NOT_ACTIVE is the PLAN_NOT_ACTIVE cell, whatever cause progress_completion_causes_total files them under. The none, PLAN_NOT_ACTIVE, CONFIG_DRIFT, PLAN_REACTIVATED, reason_not_reported and _other cells exist from the start, so a zero there is a reading; another word of the contract catalogue appears once a Slot ends with it.
+
 ## alarmd_slot_decision_lag_seconds
 
 Seconds from a Slot's data being readable (its evaluation time plus the read hold) to its completion being acknowledged, for every period, in normal rounds: a normal Slot and its retry. Replays, probes and supplements are late by what they are and are not in it; skipped and snapshot-unavailable completions are not decisions and are not in it either.
@@ -1864,6 +2052,30 @@ How long ago the source's publisher last moved its change signal, in seconds by 
 Labels: `result`
 
 Strategies a source refresh round asked the compiler about, by whether they were compiled or taken from an earlier round's compilation of the same document; the two add up to the strategies of the round, and a round whose source did not change is all reused.
+
+## alarmd_source_liveness_answers_evicted_total
+
+Source liveness answers dropped from the process's cache to keep a newer source's, the cache holding its bound of them (sourceliveness.MaxAnswers, 4096 sources): the oldest goes, the one whose window ends first. Its source is probed again when next asked. Above zero is more sources due at once than the cache holds.
+
+## alarmd_source_liveness_check_seconds
+
+Labels: `source_kind`
+
+How long each source liveness probe took, by source kind: one per source and period, whichever Levels asked, run beside the round. Bounded by the probe's own 20 s, inside the query service's 30 s; a probe at the top bucket is one that timed out.
+
+## alarmd_source_liveness_checks_total
+
+Labels: `source_kind`, `result`, `reason`
+
+Verdicts on the source of a Level written to end on no data, asked on the round its end is due and on no other, by source kind (log, event, time_series), result and reason. alive: the source - the same table in the same space, the strategy's conditions removed - has data within the Level's no-data span, read from a period after its first empty one to the judged period, at most the span, and never over the last period with data; the Level ends as configured. unknown: it could not be shown alive, and the Level stays open: status (the answer carried a status, such as a table, field or space the query service does not know), partial (a route failed), timeout (no answer in time: past the probe's own bound, or not yet back when the round asked - a probe runs beside the round, never inside it; this includes probes not started because the in-flight cap was full, source_liveness_probe_deferred_total), error (transport, an HTTP status, an answer that does not decode or lacks is_partial, or no query facts to probe from), empty_without_status (answered whole with no data and no status; the shape a source that stopped should have, not yet confirmed by a real sample, so not called silent). unsupported: no probe is expressed for this source in this version, and the Level ends as it did before: promql, bkdata, apm, multi_table, data_label, event_sparse (an event source: a quiet event table and a broken one answer the probe alike). Counted per Level per round, so a probe that serves many Levels counts once for each; probes themselves are source_liveness_check_seconds. A Level held unknown for longer than its bound is on the fleet's SOURCE_UNKNOWN_HELD line. Every cell exists from start.
+
+## alarmd_source_liveness_held_evicted_total
+
+Held Levels - no-data ends held on a source that could not be shown alive - the process stopped remembering to keep a newer one, its account holding its bound of them (sourceliveness.MaxHeldLevels, 4096): the one asked about least recently goes. Its end stays held; only the fleet's SOURCE_UNKNOWN_HELD line no longer counts it until it is asked about again. Above zero is more held Levels than the account holds.
+
+## alarmd_source_liveness_probe_deferred_total
+
+Source liveness probes not started because the process already ran its in-flight cap of them (sourceliveness.MaxInFlight, 16): many distinct sources due at once. Each one's round reads unknown by timeout in source_liveness_checks_total, though no probe was sent, and the next round asks again. Above zero is the cap being reached.
 
 ## alarmd_source_observation_total
 
@@ -1933,11 +2145,47 @@ Labels: `site`, `kind`
 
 Runtime State mutations found already on disk, by where that was decided and how. site: preflight is the view the Slot loaded before evaluating, apply is the bytes the CAS met when it tried to write. kind: stable is the ordinary retry that read the stored revision and found its own statement there; revision_skew is the same statement -- same ApplyVersion, same digest -- found at a revision the mutation did not expect, which is a write that landed while its reply was lost or was sent twice, and which used to be classified STATE_VERSION_CONFLICT and send the Slot into a retry that could not succeed. revision_skew is the only reading that says whether such re-sends happen in production: non-zero and aligned with conflict bursts confirms the mechanism, a steady zero says something else writes the key. Every pair is published at zero so absent and zero read apart. Population is mutations, not Redis commands.
 
+## alarmd_state_cache_budget_bytes
+
+The most the State cache may hold: the container's thirty-second, borrowed from the retained-bytes pool while no Slot has reserved it and given back when one needs it. A Query Group that would go past it or past the pool's room is kept out and read back; the resident ones stay.
+
+## alarmd_state_cache_bytes
+
+The State cache's charge: each entry's value and key rounded to their size classes plus a fixed overhead, summed. Read against state_cache_budget_bytes.
+
+## alarmd_state_cache_departures_total
+
+Labels: `reason`
+
+Entries that left the State cache, by reason: released (the Query Group stopped, was lost, declined or handed over), unknown (a write of its request ended in doubt), conflict (its write did not apply), expired, renewal_missing, untouched (neither read nor written for two of its own intervals), over_budget (its Query Group did not fit the budget: it left whole, or a write of it was not taken in), yielded (the same for what the Slots leave of the retained pool, or its Query Group given back whole for a Slot that needed the room). A group kept out is judged again once a round, by a whole round of it, so one that never fits leaves once rather than every round. Every cell exists from the start.
+
+## alarmd_state_cache_lookups_total
+
+Labels: `result`
+
+Runtime State keys a load asked the write-through State cache for, by result: hit (served from what this process last wrote), or why it was read back - miss_absent (nothing kept), miss_fence (another owner fence), miss_unknown (the last write's outcome unknown), miss_expired (past its key's life less the replay age), miss_replay (a replay, retry or older Slot), miss_activation (the Plan's activation changed: moved, put back, reactivated, edited), miss_sharded (a split strategy's Plan, never served), miss_over_budget (its Query Group kept out: a round of it does not fit the budget), miss_yielded (its Query Group kept out: a round of it fits the budget but not what the Slots leave of the retained pool, or it was given back for a Slot). Every cell exists from the start, so a zero is a reading.
+
+## alarmd_state_cache_query_groups
+
+Query Groups holding entries in the State cache.
+
+## alarmd_state_cache_restore_declined_total
+
+Labels: `reason`
+
+Conflicts on a key the State cache served that were not written back over, by reason: progress_rolled_back (the Progress went back with the State, so the Slot is replayed from the store) and newer_version (the stored bytes are no older than the cached ones: a legitimate writer's, handled as an ordinary conflict).
+
+## alarmd_state_cache_restored_total
+
+Labels: `cause`
+
+Values written back over an external change to a key the State cache served, by cause: missing (the key was deleted or evicted) and rolled_back (older bytes than this process last wrote, with the Query Group's Progress still at this Slot). A legitimate writer is never written over: see state_cache_restore_declined_total.
+
 ## alarmd_state_generation_carry_total
 
 Labels: `scope`, `result`
 
-History carried across a state generation that moved while its Plan stayed active. scope=plan: the Control Leader's decision per activation (carried: every Level's detection is unchanged, the Plan warms up for one full Slot and its series keep their results; partial and none_*: the Plan warms up whole, as before). scope=series: what a Worker did for each series with no record under the new generation (carried: results with the new detect fingerprint kept; nothing_kept: none were; skipped_active_guard: the old record still guarded holes and the series starts over; old_missing: the old generation held nothing).
+History carried across a state generation that moved while its Plan stayed active. scope=plan: the Control Leader's decision per activation that commits, counted once its cutover commits (carried: every Level both versions have is carried and none's detection changed, the Plan warms up for one full Slot and its series keep their results; carried_detect_changed: the same, and some Level's detection changed, its results kept as they were decided, as Python keeps its check results across an edit; none_group_changed: the edit moved the Plan to another Query Group - its query facts changed: the query, its delay, the detection step (detect_interval), shard, named outputs, normalization or global business scope - so its old results are about other data and the Plan warms up whole; none_no_common_level: the previous version was read and shares no Level id with the new one; none_previous_unreadable: the previous version could not be read back or compiled; none_discontinuous: the Query Group is back from retirement; every none_* warms the Plan up whole). scope=series: what a Worker did on each evaluation of a series with no record under the new generation yet - counted per evaluation, not per series: a series is counted again on every evaluation until its first record under the new generation is written, so one series usually counts more than once (carried: the carried Levels' results kept; carried_across_detect: kept, some decided by the Level's previous detection; nothing_kept: none were; skipped_guard_warming and skipped_guard_gapped: a guard other than the activation's own drift guard held a carried Level of the old record WARMING, or GAPPED; each of the two starts the series over - a Level WARMING or GAPPED for its window's own holes, or under its activation's drift guard (CONFIG_DRIFT), is carried, its holes with it; old_missing: the old generation held nothing). scope=no_data_plan: the Control Leader's decision about the Plan's no-data memory and no-data end index, from the two versions of the Plan (carried: the same query, projection and alert identity, and for the memory the same no-data section, so both are read from the old generation while the new one holds none; carried_ends_only: the end index is, the memory is not because the no-data section changed; not_carried_semantics_changed: the query, projection or alert identity changed, or the edit moved the Plan to another Query Group, and the edit decides what the open alerts become; not_carried_previous_unreadable: the previous version could not be read back). scope=no_data_load: what a Worker found reading that state from the old generation (memory_carried and ends_carried: something was read; *_previous_empty: the old generation held nothing; *_previous_unreadable: it could not be read, and the Plan runs on the new generation's own state; ends_previous_not_cleared: carried entries could not be removed from the old index after they were written to the new one).
 
 ## alarmd_state_generation_skew_total
 
@@ -1957,13 +2205,31 @@ Times this process forgot every generation-scoped key life it had remembered, be
 
 ## alarmd_state_retained_share_approaching_slots_total
 
-Slots whose retained bytes reached at least 95 percent of the one-object share of the retained pool they were admitted under: completed Slots at or past the threshold, and Slots given up because the share refused them (RESOURCE_SHARE_EXCEEDED), which are past it. The objects are listed by name under RETAINED_SHARE_APPROACHING on the page and in fleet.get.
+Slots whose retained bytes reached at least 95 percent of the one-object share of the retained pool they were admitted under: completed Slots at or past the threshold, and Slots given up because the share refused them (RESOURCE_SHARE_EXCEEDED), which are past it. The objects are listed by name under RETAINED_SHARE_APPROACHING on the page and in fleet.get, except a completed Slot applied in more than one window: its windows are bounded by the share, so it reaches the share by construction and is counted here but not listed.
+
+## alarmd_state_series_held
+
+Series the Query Groups this replica holds now bound in their latest evaluated rounds: each Plan's series_matched, over the Plans evaluated within the last day (the longest interval alarmd evaluates at), summed over the Query Groups this replica runs. Not exact either way: no-data series it synthesizes and series absent from the latest round are not in it, and a Plan that left a Query Group still held here -- edited onto another, or deleted -- stays counted for up to a day after its last round, twice when the Query Group it moved to is held here too. Per replica; read the largest replica against the State cache's budget.
+
+## alarmd_state_superseded_total
+
+Labels: `site`, `operation`
+
+What a Slot did not write because a later Slot had already written it, by site and the Slot's operation. site: state is a series whose Runtime State is a later Slot's -- it compared PERSISTED_NEWER and its evaluation time is after this Slot's -- so it was not evaluated, sent nothing and wrote nothing, and the rest of the Slot went on; gap is a Plan gap marker a later Slot wrote, left as it was. These used to be refused as STATE_STALE_VERSION or GAP_APPLY_STALE_VERSION and retried until the replay expired. Non-zero says the store went back behind Progress -- a Redis failover that lost a Slot's tail while the next Slot ran on what was left -- or a replay crossed a later write: read operation=normal against the time of a failover. A newer state apply epoch at a time not after the Slot's is not counted here; it is still refused. Every pair is published at zero.
 
 ## alarmd_state_version_conflict_total
 
 Labels: `site`, `kind`
 
 Runtime State mutations refused STATE_VERSION_CONFLICT, by where that was decided and which comparison refused them. site: preflight is the view the Slot loaded before evaluating, apply is the bytes the write met. kind: missing is a key the mutation expected at a revision and did not find, which is what a TTL that ran out between the Slot's read and its write leaves -- the retry then reads missing, expects nothing and succeeds, so this kind rising alone is the key's lifetime against the Slot's duration and not a competing writer; revision_moved is a key another write advanced after the read; revision_reset is a key found below the revision expected, gone and written fresh since the read; same_version_other_statement is the expected revision holding this window's ApplyVersion with a different digest, two evaluations of one window that disagree; version_incomparable is a view that reached the comparison without an ordering; other is a store that refused without saying which. The status alone reads the same for all of them and each points at a different fix. Every pair is published at zero so absent and zero read apart. Population is mutations, not Redis commands.
+
+## alarmd_state_witness_bytes
+
+The runtime witness cache's estimated heap, a fixed 320 B per witness for its map entry plus the digests it alone keeps alive, each rounded to its allocation. No budget charges the cache. It is bounded at 2^18 witnesses, and a Query Group's witnesses leave when this worker releases its lease. Read it against the resident heap term in the sizing table. It is an estimate from the layout, not a measurement, and leaves out the Plan identity every series of a Plan shares.
+
+## alarmd_state_witness_items
+
+Preflight witnesses held in the runtime witness cache, kept from a Slot's load of Runtime State to its apply so the write compares without reading the value again. No budget charges the cache. It is bounded at 2^18 witnesses and 4096 Query Groups, the least recently filled Query Group evicted first, and a Query Group's witnesses leave when this worker releases its lease. Read with state_witness_bytes against the resident heap term in the sizing table.
 
 ## alarmd_state_write_reuse_total
 
@@ -2007,6 +2273,18 @@ Labels: `client`
 
 When the latest census of the store was taken.
 
+## alarmd_strategy_edit_close_total
+
+Labels: `outcome`
+
+What the control leader's close of alerts orphaned by an edit of their strategy came to, by outcome. Per round: not_leader, roster_unavailable, evidence_unavailable (no link to close through) and publication_unavailable. Per strategy, not examined: strategy_unpublished, plan_unrevisioned, plan_retained and plans_disagree; remembered is a strategy passed over because a round found none of its alerts at another version and its revision has not changed since. What an examined strategy's buckets decided and what their closes did is counted on linkd_filter_close_total: each decision and note as edit_<word>, each job by its word, each item the link answered as item_<word>. The other cells name the close as first designed, which read and decided each listed alert and sent its close through the event producer; the filtered close counts none of them here, and they stay zero: current_revision (raised under the strategy's current revision, not a candidate), revision_ahead, revision_unknown, family_unknown, kept (a candidate every decidable rule keeps), levels_partial, severity_unmapped and no_data_suspended (a rule could not decide it; not closed), and the closes decided - metric_changed, condition_changed, dimensions_changed, level_removed, no_data_disabled; remembered counts, among those, the ones taken from memory without reading the record again. Beside a decision, facts_missing, facts_unknown_schema and plan_facts_missing count candidates the metric and condition rules could not judge: the alert's opening event carried no strategy facts (every alert opened before events carried them), carried a schema this build does not read, or the current Plans have none; without facts a grouping is judged only for a dimension removed or renamed. condition_rule_held counts no-data candidates whose condition digest changed while the condition rule is held (it closes nothing until the publisher states what a catalog metric's snapshot conditions are), snapshot_unreadable those whose digest was taken beside a metric snapshot whose conditions could not be read; close_sent and send_failed closes sent or refused, business_unknown closes not sent for want of a business, record_unreadable alerts whose record could not be read (read again later), read_deferred alerts not read because the round's reads were spent, producer_foreign and producer_unknown alerts of another source or none. Per strategy: strategy_unpublished, plan_retained, plans_disagree, plan_unrevisioned, evidence_unavailable, evidence_truncated. Per round: not_leader, publication_unavailable, roster_unavailable. memory_full counts drops of the decision memory. reopened_since_read and recovery_unknown count closes held back before the send: a recovery of the fingerprint was sent after the listing began and an ABNORMAL of it after that, or the record of reopens could not be read. Every cell exists from the start so a zero is a reading and not an absence.
+
+## alarmd_strategy_scope_close_total
+
+Labels: `outcome`
+
+The control leader's strategy scope close (on its start and on each change of a strategy's target scope, one close by filter of the strategy's alerts outside its current targets), by outcome: not_leader, publication_unavailable, snapshot_unavailable, link_unavailable (no link control plane or no target resolver), plans_disagree (the strategy's Plans carry different target plans), resolution_incomplete (the target did not resolve Complete with its exclusions: nothing closed), resolution_stale (the target resolved from a snapshot kept past its refresh: nothing closed, not a read of the scope), member_unreadable, scope_empty (resolved Complete with no member: nothing closed), scope_unconfirmed (a scope read once: it closes when the next round reads the same), scope_unchanged, refused_backoff (a strategy whose close was refused past its record waiting a few rounds before the next try), round_full (past the round's strategies), close_run, scope_settled (the close's word ends the decision until the scope changes). The close's own word is in linkd_filter_close_total. Every cell exists from the start.
+
 ## alarmd_target_excluded_absent_members_total
 
 Excluded members absent from a complete current host snapshot, counted per member per Plan per Slot. These exclusions are normal no-ops and do not make the target unavailable.
@@ -2031,7 +2309,7 @@ Target plans resolved, once per Plan per Slot, by the composed state the admissi
 
 Labels: `outcome`
 
-What the close of alerts whose target left the strategy's monitoring scope decided, by outcome. unconfirmed is a fingerprint of an open alert turned away by one Slot, waiting for a second; close_sent counts alerts a close was sent for, acknowledged by the broker, not alerts the link closed. cache_unavailable counts rejections decided on facts that were not all read or current, which are never closed; not_member definitive rejections whose fingerprint is not an open alert; set_unavailable decisions refused because the open set could not be judged (not calibrated, disjoint, unavailable); producer_foreign open alerts of another source; send_failed closes the producer refused; close_identity_invalid closes whose request could not be built from the observation's facts (strategy id, business or revision unusable), nothing sent, the word the effective-time close uses for the same facts; memory_full first observations past the table's bound; fingerprint_unsupported definitive rejections of Plans fed by several inputs, whose alert fingerprint no single series carries; stale_deferred closes held back because the last observation was older than the freshness bound; indefinite rejections that are not a verdict on the record's place at all (a key or object identity that could not be built), apart from cache_unavailable, which is a verdict reached without its facts; observation_expired first observations whose second did not arrive within two of the strategy's periods plus its Slot's read offset (at least half an hour), forgotten - the strategies counted there are ones this close could not reach, named in its facts; business_unknown closes of a global business strategy's alerts whose record names no business they were filed under, kept for the next step; superseded_identity_close_sent counts, among close_sent, the closes of alerts a series opened under the fingerprint of its own address before its alert identity read CMDB's (reason superseded_identity). Such an offer is made for every series whose host overlay moves its fingerprint, every Slot; one that finds no open alert under the old fingerprint, or a set that cannot say, counts nothing, so not_member and set_unavailable at an offer stay target rejections; one the consumer holds is decided and counted as a target close is. Every cell exists from the start so a zero is a reading and not an absence.
+What the close of alerts a series opened under the fingerprint of its own address, before its alert identity read CMDB's (reason superseded_identity), decided, by outcome. The admission step offers the old fingerprint of every admitted series whose host overlay moves it, every Slot, for a strategy alarmd's copy of the link's active alerts knows an open alert of; an offer the copy has no word on or judges not open counts nothing. unconfirmed is an old fingerprint of an open alert offered by one Slot, waiting for a second; close_sent counts, one per old fingerprint, closes the link's filtered close settled: it closed the alert or found nothing active of it (one already ended counts too), so it is not a count of alerts closed; superseded_identity_close_sent counts the same closes by their reason; send_failed closes the link did not settle but may (busy, failing, items to be found again), kept for the next step; close_refused closes the same command would be answered the same way (items or the request refused, past the expectation or the client's answer bound, a filter that cannot be built), kept and not sent again for five minutes; filter_close_unsupported closes the link cannot run (501, 404, 405); unrouted confirmed closes on a replica with no link to close through; close_identity_invalid closes whose request could not be built from the observation's facts (strategy id or revision unusable), nothing sent, the word the effective-time close uses for the same facts; memory_full first observations past the table's bound; stale_deferred closes held back because the last observation was older than the freshness bound; observation_expired first observations whose second did not arrive within two of the strategy's periods plus its Slot's read offset (at least half an hour), forgotten. Alerts whose target left the strategy's scope are closed by the control leader, per strategy (strategy_scope_close_total). Every cell exists from the start so a zero is a reading and not an absence.
 
 ## alarmd_target_selector_resolutions_total
 
@@ -2071,7 +2349,7 @@ Spans of sampled Slots that were not exported, by why: queue_full (the export qu
 
 Labels: `outcome`
 
-RECOVERY records, by what the consumer's open alert set decided: passed (an open alert on the series; the envelope went), passed_one_time_close (the one close of a group the target dropped, let through without the consumer's copy vouching for it: about one per dropped group, more only when that round's no-data memory write failed and the round ran again; an orphan at the consumer where it holds no such alert), held_no_open_alert (none; nothing to resolve, no envelope), held_fingerprint_unknown (the series identity the consumer keys alerts by could not be built; held and named rather than read as absent), not_configured (the evaluation ran without a set; the envelope went as before the gate -- on a production worker this is a wiring fault), protocol_not_gated (the Plan publishes the compatibility protocol, which has no RECOVERY message: the set was not asked and the envelope is not built; output_events_without_message_total counts it). It counts records per evaluation, not alerts. Which of passed and held_no_open_alert dominates says nothing on its own; read it against open_alert_set_lookup_total, whose self_maintained and passed_through answers are this process's own knowledge, not the consumer's.
+RECOVERY records, by what alarmd's copy of the consumer's active alerts decided: passed (an open alert on the series; the envelope went), passed_one_time_close (the one close of a group the target dropped, let through without the consumer's copy vouching for it: about one per dropped group, more only when that round's no-data memory write failed and the round ran again; an orphan at the consumer where it holds no such alert), held_no_open_alert (none; nothing to resolve, no envelope), held_fingerprint_unknown (the series identity the consumer keys alerts by could not be built; held and named rather than read as absent), held_level_not_open (every Level the record recovers is one the series' open alert does not have open, so the consumer would drop it as an orphan; held, no envelope), not_configured (the evaluation ran without a set; the envelope went as before the gate -- on a production worker this is a wiring fault), protocol_not_gated (the Plan publishes the compatibility protocol, which has no RECOVERY message: the set was not asked and the envelope is not built; output_events_without_message_total counts it). It counts records per evaluation, not alerts. Which of passed and held_no_open_alert dominates says nothing on its own; read it against active_copy_lookup_total, whose own_sent answers are this process's own knowledge, not the consumer's.
 
 ## alarmd_trigger_recovery_beside_level_total
 
@@ -2083,7 +2361,7 @@ RECOVERY records decided while another Level of the same record was in the named
 
 Labels: `reason`
 
-Level outcomes that met their recovery windows and stayed NORMAL while the consumer holds an open alert on the series, by why: zero_count (the round's own value was a count of zero from an event count, or a log count with no grouping, whose zero is no observation; the alert recovers on a round with a count above zero, or ends by -nodata or close), no_data_last_point_unknown (the same, on a Level written to end on no data whose last real point is not known - opened on a build that did not keep it - so no data ends nothing until the next real point). Counted per Level per evaluation, so one alert held open adds one each round it stays open; a quiet series with no open alert is not counted, though its decision window still carries recovery.withheld. A round whose window is not whole is unavailable with its history reason instead, and not counted here. A zero here is a reading: every reason exists from start.
+Level outcomes that met their recovery windows and stayed NORMAL while the consumer holds an open alert on the series, by why: zero_count (the round's own value was a count of zero from an event count, or a log count with no grouping, whose zero is no observation; the alert recovers on a round with a count above zero, or ends by -nodata or close), no_data_last_point_unknown (the same, on a Level written to end on no data whose last real point is not known - opened on a build that did not keep it - so no data ends nothing until the next real point), source_unknown (a Level written to end on no data was due to end, and the probe of its source - the same table in the same space, the strategy's conditions removed - could not show the source alive: an answer with a status, partial, failed, not in time, or empty without a status; the alert stays open, and the quiet-group zero count path is never probed). Counted per Level per evaluation, so one alert held open adds one each round it stays open; a quiet series with no open alert is not counted, though its decision window still carries recovery.withheld. A round whose window is not whole is unavailable with its history reason instead, and not counted here. A zero here is a reading: every reason exists from start.
 
 ## alarmd_undrained_draining_query_groups
 
@@ -2225,6 +2503,12 @@ Labels: `stage`
 
 Phase-two worker busy time by coarse workflow stage.
 
+## alarmd_worker_first_seen_unseen_total
+
+Labels: `unit`
+
+What completed Slots wrote as first-seen before a later slice found the Plan had run, by unit: slices and series. Those series were written without warming up; a rate above zero says the first-seen judgement changed within Slots read in slices.
+
 ## alarmd_worker_frozen_state_census_total
 
 Labels: `stage`
@@ -2243,11 +2527,33 @@ Labels: `status`, `reason`, `progress`
 
 One per held gap scope per round that read it, by status, by why it is held, and by where its count stands against its requirement. The rate is how many scopes are being held; progress=none holding up is a guard that has had no complete round since it was raised, which is the state somebody is looking for and the one a changed-only signal would say nothing about. It is counted per round rather than gauged because whether a guard is moving is a question about a stretch of time, and because a gauge would need a memory of the previous round that survives a Query Group changing owner. progress=ready should stay near zero: a warming scope cannot persist in that state. reason=other is a reason nobody named here. Every combination has a label at startup.
 
+## alarmd_worker_input_slice_shapes_total
+
+Labels: `outcome`
+
+Slots by what they did with their Query Group's shape, the leaves a slice that ran out of time for its size was split into, which the next Slot starts in: started, read in it; kept, a slice split for its time kept in it; merged, its last kept split taken back after three quick rounds; voided_revision, voided_dimensions, voided_max_leaves, dropped as the query revision or the dimensions changed or it grew past a starting tree's leaves; refused_not_a_leaf, refused_not_a_partition, refused_max_leaves, dropped as its leaves were not a partition of every value. A dropped shape's Slot starts in slices counted anew. evicted_idle counts the Query Groups whose slice memory, shape or none, was dropped for no Slot started on this replica for ten of their periods and ten minutes at least. Which Query Group is not a label here.
+
+## alarmd_worker_input_slice_timeouts_total
+
+Labels: `outcome`
+
+Slices of Slots read in slices whose read ran out of time, by how each ended: split_succeeded, split and its children read in its place, the Slot's query completing; split_failed, split and the Slot's query failing after; not_split, failed as before - the query cooldown held, its time could not be put on its size, the window left was too short for its children, or the Slot had split once. A Slot splits so once. Which Query Group is not a label here.
+
+## alarmd_worker_input_slices_total
+
+Labels: `outcome`
+
+Slices the input of completed Slots read in slices was read in, by outcome: landed, read and evaluated, and discarded, let go past the slice limit while they streamed and split. A Slot read whole counts nothing. Read beside worker_sliced_slots_total: their ratio is the slices a sliced Slot reads.
+
 ## alarmd_worker_no_data_absences_total
 
 Labels: `outcome`
 
 Groups of the Plans that detect no-data, summed over every Slot that judged them, by what the round counted each group as. expected is the roster's size and present what arrived; absent is the groups tracked and reported absent this round; unavailable the groups a round that did not see the whole period could not judge; dropped the series whose dimensions did not match the item. expired is the absences the tracking horizon stopped this round and suppressed the groups the round met already stopped -- the standing size of what the horizon holds down and of what manual closes hold down. manual_closed is the absences a round stopped because a user closed their alert by hand (decision-024); each is in suppressed from the next round on unless its history roster forgot it. Read expired and suppressed against each other: expired moving is the horizon acting, suppressed is what it has acted on and is still holding; a deployment that switched the horizon on and reads zero on both has a horizon nothing reached. Both are counted where each group is decided, never by differencing one round's memory against the last, so the round that failed to load its memory does not read as a quiet one. Every label is created at startup so a zero can be told from a label nothing ever wrote. Read absent + expired + suppressed against the fleet page's per-object line, which carries the same counts per Plan for the round it last decided.
+
+## alarmd_worker_no_data_groups_staged_ahead_total
+
+Groups of no-data first writes staged as their windows landed, ahead of the statements: what the worker held no longer to the tail. Counted from completed Slots.
 
 ## alarmd_worker_no_data_manual_close_dropped_total
 
@@ -2269,7 +2575,7 @@ One per Plan per execution that read its absence memory -- a normal round, a rep
 
 Labels: `reason`, `record`
 
-Absence-memory writes the store refused deterministically, by reason and by which record was measured when the reason was size. A refusal does not fail the Slot, so nothing else in this family moves when it happens: the Plan evaluated, reported and was counted as evaluated, and only the record it would have written was lost. That is why this exists - without it a Plan whose memory has stopped being writable is indistinguishable from one whose memory is fine, for as long as it lasts. Rising and staying up is one object the store will not take, and the line beside it carries the bytes and the bound. record is empty for a refusal that was not about size. The group bound (record GROUPS) defaults to 100,000 and may be raised to 1,000,000 for the deployment or one strategy; a raised bound costs Redis once per state generation, on the Plan's first whole-record write: measured about 120-180 ms at 100,000 groups, 610 ms at 200,000 and 2.9 s at 1,000,000.
+Absence-memory writes the store refused deterministically, and memories the worker refused for what they hold, by reason and by which record was measured when the reason was size. A refusal does not fail the Slot, so nothing else in this family moves when it happens: the Plan evaluated, reported and was counted as evaluated, and only the record it would have written was lost. That is why this exists - without it a Plan whose memory has stopped being writable is indistinguishable from one whose memory is fine, for as long as it lasts. Rising and staying up is one object the store will not take, and the line beside it carries the bytes and the bound. record is empty for a refusal that was not about size. The group bound (record GROUPS) defaults to 100,000 and may be raised to 1,000,000 for the deployment or one strategy; a raised bound costs Redis once per state generation, on the Plan's first whole-record write: measured about 120-180 ms at 100,000 groups, 610 ms at 200,000 and 2.9 s at 1,000,000. record BYTES is a memory past the share one Query Group's Slot may hold of the retained pool - a whole-record write as the worker builds it, or a loaded memory beside what the Slot already holds - refused for that Plan alone, its threshold detection unchanged; one within the share that the pool has no room for is a RESOURCE_HARD_STOP instead.
 
 ## alarmd_worker_no_data_memory_renewals_total
 
@@ -2299,6 +2605,18 @@ Labels: `outcome`
 
 Plans that detect no-data, counted once per Slot by what happened to that detection. The outcomes partition: every such Plan lands on exactly one every Slot, so their sum is the no-data Plans this worker evaluated. EVALUATED is the only one that judged absence; SKIPPED_QUERY_NOT_FULL and SKIPPED_ANSWER_TRUNCATED still judge the groups that arrived present, and judge no group absent. The others are different kinds of not judging and must be read apart, because once the round is over they look identical. Among them: SKIPPED_QUERY_NOT_FULL is a query that did not cover the period and resolves itself next round; SKIPPED_MEMORY_UNREADABLE is a record written by a newer build, which lasts as long as a rollback does; SKIPPED_SLOT_BUDGET is the Slot being unable to carry the work, which does not resolve on its own - a history roster only grows, so a Plan that did not fit this round does not fit the next one either, and a steady zero on it is the expected reading; and SKIPPED_ANSWER_TRUNCATED is an answer the query service may have cut at its group cap (uq_answer_truncated_total), which lasts as long as the strategy's groups stay at the cap. Any non-zero on those last two is worth acting on. Every outcome's label is created at startup so a zero can be told from a label nothing ever wrote. Read the fleet's sum over every outcome over a minute against the leader's sum(catalog_no_data_plans) times the Slots in that minute: they are the same Plans counted at the two ends of the publication, so the two should agree. Every outcome at zero while the leader reports Plans is what a Plan losing its no-data section between the leader and the worker looks like, and it looks like nothing else: the Plans still execute, nothing fails, and every label here reads as a computed zero.
 
+## alarmd_worker_no_data_stage_ahead_differs_total
+
+Labels: `reason`
+
+No-data first writes staged as their windows landed whose round wrote every group with the statement instead, by why: kept_otherwise, a staged group the round kept otherwise or not at all; count_mismatch, the stage's groups not the ones the round marked and kept; present_as_of, the round's present-as-of not the one they were staged against. A rate above zero is a shape the staging does not cover, held whole to the tail as before. Counted from completed Slots.
+
+## alarmd_worker_no_data_stage_ahead_total
+
+Labels: `outcome`
+
+No-data first writes staged as their windows landed, a Plan each, by how the staging ended: carried, the statement put the stage in place with it; differs, the round kept a staged group otherwise and wrote every group with the statement; discarded, the round wrote no statement and the stage was taken back; stopped, a segment could not be staged and the groups after it went with the statement. Counted from completed Slots. Which Query Group is not a label here.
+
 ## alarmd_worker_owned_query_groups
 
 Labels: `worker_role`
@@ -2315,7 +2633,7 @@ Process-wide physical query permit admission outcomes by fixed operation and res
 
 Labels: `queue`
 
-The configured permit ceiling, exported beside the occupancy so a reader does not need the deployment's configuration to know what the occupancy is out of.
+The configured permit ceiling, exported beside the occupancy so a reader does not need the deployment's configuration to know what the occupancy is out of. queue=normal is the process's whole ceiling, recovery queries included, not a share for normal queries alone; queue=recovery is the smaller ceiling recovery queries are held to within it.
 
 ## alarmd_worker_query_permit_seconds_total
 
@@ -2334,6 +2652,16 @@ Query permits held at the moment of the scrape, by holder: each operation, and t
 Labels: `queue`
 
 Callers queued for a permit at the moment of the scrape, by queue. Non-zero means the budget is the constraint right now; zero does NOT mean it has spare room, because a caller that is admitted immediately never appears here.
+
+## alarmd_worker_slice_read_ahead_total
+
+Labels: `outcome`
+
+How the slices read ahead - read while the slice before completed - ended, by outcome: replayed, handed to the Slot; other_leaf, let go because the next slice was another; yielded, let go for a reservation of the Slot's own the share or the pool would otherwise refuse; failed, let go because the read failed before it was handed on. Every slice let go is read again on the Slot's goroutine. Counted from completed Slots.
+
+## alarmd_worker_sliced_slots_total
+
+Completed Slots whose input was read in more than one slice or had a slice let go: the Slots slicing reached. Which Query Group is not a label here.
 
 ## alarmd_worker_work_total
 

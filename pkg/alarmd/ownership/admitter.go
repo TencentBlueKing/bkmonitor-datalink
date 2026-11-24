@@ -46,21 +46,48 @@ func (admitter *Admitter) Check(
 	ctx context.Context,
 	request execution.SideEffectAdmissionRequest,
 ) (execution.SideEffectAdmissionResult, error) {
-	if admitter == nil {
-		return execution.SideEffectAdmissionResult{}, errors.New("alarmd ownership: initialized admitter is required")
-	}
-	if err := request.Contract.Validate(); err != nil {
+	if err := admitter.validate(request); err != nil {
 		return execution.SideEffectAdmissionResult{}, err
-	}
-	if err := request.OwnerFence.Validate(request.Contract); err != nil {
-		return execution.SideEffectAdmissionResult{}, err
-	}
-	if request.Plan.TenantID == "" || request.Plan.BusinessID == "" || request.Plan.StrategyID == "" || request.StateApplyEpoch == 0 {
-		return execution.SideEffectAdmissionResult{}, errors.New("alarmd ownership: incomplete Plan admission identity")
 	}
 	if err := admitter.fences.CheckFence(ctx, request.OwnerFence); err != nil {
 		return execution.SideEffectAdmissionResult{}, err
 	}
+	return admitter.activationOf(ctx, request)
+}
+
+func (admitter *Admitter) validate(request execution.SideEffectAdmissionRequest) error {
+	if admitter == nil {
+		return errors.New("alarmd ownership: initialized admitter is required")
+	}
+	if err := request.Contract.Validate(); err != nil {
+		return err
+	}
+	if err := request.OwnerFence.Validate(request.Contract); err != nil {
+		return err
+	}
+	if request.Plan.TenantID == "" || request.Plan.BusinessID == "" || request.Plan.StrategyID == "" || request.StateApplyEpoch == 0 {
+		return errors.New("alarmd ownership: incomplete Plan admission identity")
+	}
+	return nil
+}
+
+// CheckActivation answers Check's activation half and reads no fence. The
+// caller's next write has to run the full fence itself, in its own script,
+// or nothing stands between a stale owner and that write.
+func (admitter *Admitter) CheckActivation(
+	ctx context.Context,
+	request execution.SideEffectAdmissionRequest,
+) (execution.SideEffectAdmissionResult, error) {
+	if err := admitter.validate(request); err != nil {
+		return execution.SideEffectAdmissionResult{}, err
+	}
+	return admitter.activationOf(ctx, request)
+}
+
+func (admitter *Admitter) activationOf(
+	ctx context.Context,
+	request execution.SideEffectAdmissionRequest,
+) (execution.SideEffectAdmissionResult, error) {
 	active, err := admitter.activation.IsPlanActive(
 		ctx, request.Contract, request.Plan, request.StateApplyEpoch,
 	)

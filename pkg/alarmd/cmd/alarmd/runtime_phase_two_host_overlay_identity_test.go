@@ -22,7 +22,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/legacyoutput"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scopeclose"
 )
 
@@ -365,13 +364,9 @@ func TestAnAlertOpenUnderTheRecordsOwnFingerprintIsClosedOnceTheOverlayApplies(t
 	fixture, _ := startOverlayFixture(t, config.OutputProtocolNative)
 	closer := fixture.bundle.targetScopeClose
 	if closer == nil {
-		t.Fatal("the fixture's bundle has no fact-close; it is wired with the link Console")
+		t.Fatal("the fixture's bundle has no fact-close; it is wired with the link's control plane")
 	}
-	closes := func() []linkdoutput.CloseRequest {
-		fixture.sink.mu.Lock()
-		defer fixture.sink.mu.Unlock()
-		return append([]linkdoutput.CloseRequest(nil), fixture.sink.closes...)
-	}
+	closes := fixture.linkCloses
 	step := func(round int64) {
 		fixture.mustAttempt(round)
 		closer.Step(context.Background())
@@ -407,32 +402,20 @@ func TestAnAlertOpenUnderTheRecordsOwnFingerprintIsClosedOnceTheOverlayApplies(t
 	if len(got) != 1 {
 		t.Fatalf("round 3 closed %+v, want the old alert's one close; close outcomes %v", got, closer.Stats())
 	}
-	request := got[0]
-	if request.Fingerprint != old || request.Reason != linkdoutput.CloseReasonSupersededIdentity || request.AlertInstanceID != old {
-		t.Fatalf("round 3 closed %+v, want alert %s under reason %s", request, old, linkdoutput.CloseReasonSupersededIdentity)
-	}
-	event, err := linkdoutput.ConvertClose(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if event.Action != linkdoutput.ActionClosed || event.AlertID != old {
-		t.Fatalf("the close converts to %+v", event)
+	// The close goes to the link by filter: the strategy's active alert of
+	// the old fingerprint, under the superseded decision.
+	if !strings.Contains(got[0], `"`+old+`"`) || !strings.Contains(got[0], "superseded_identity") ||
+		strings.Contains(got[0], current) || strings.Contains(got[0], unmoved) || strings.Contains(got[0], bareOld) {
+		t.Fatalf("round 3 closed %s, want the alert of %s only, under superseded_identity", got[0], old)
 	}
 	if sent := closer.Stats()[scopeclose.OutcomeSupersededCloseSent]; sent != 1 {
 		t.Fatalf("superseded closes sent = %d, want 1", sent)
 	}
 
-	// The consumer has not closed it yet: the set still holds it, and the
-	// next rounds observe it again, but it was decided; nothing is written
-	// again.
+	// It was decided: the next rounds send nothing more.
 	step(4)
 	step(5)
 	if again := closes(); len(again) != 1 {
 		t.Fatalf("the old alert got %d closes by round 5, want the one: %+v", len(again), again)
-	}
-	for _, request := range closes() {
-		if request.Fingerprint == bareOld || request.Fingerprint == current || request.Fingerprint == unmoved {
-			t.Fatalf("closed %+v, an alert this close must leave alone", request)
-		}
 	}
 }

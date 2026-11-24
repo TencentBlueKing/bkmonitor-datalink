@@ -1,0 +1,135 @@
+{
+  "space_uid": "bkcc__golden_vm_partial_binding",
+  "result_tables": [
+    {
+      "table_id": "demo_partial_k8s_01.__default__"
+    },
+    {
+      "table_id": "demo_partial_k8s_02.__default__"
+    },
+    {
+      "table_id": "demo_partial_k8s_03.__default__"
+    },
+    {
+      "table_id": "demo_partial_k8s_04.__default__"
+    },
+    {
+      "table_id": "demo_partial_shared_05.__default__",
+      "filters": [
+        {
+          "bk_biz_id": "902"
+        }
+      ]
+    },
+    {
+      "table_id": "demo_partial_shared_06.__default__",
+      "filters": [
+        {
+          "bk_biz_id": "902"
+        }
+      ]
+    }
+  ],
+  "result_table_details": {
+    "demo_partial_k8s_01.__default__": {
+      "storage_id": 910311,
+      "storage_name": "vm_storage_partial_1",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_partial_k8s_01.__default__",
+      "measurement": "__default__",
+      "vm_rt": "vm_rt_demo_partial_01",
+      "bcs_cluster_id": "demo-k8s-20001",
+      "fields": [
+        "demo_resolver_forward_responses_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_partial_k8s_02.__default__": {
+      "storage_id": 910311,
+      "storage_name": "vm_storage_partial_1",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_partial_k8s_02.__default__",
+      "measurement": "__default__",
+      "vm_rt": "vm_rt_demo_partial_02",
+      "bcs_cluster_id": "demo-k8s-20002",
+      "fields": [
+        "demo_resolver_forward_responses_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_partial_k8s_03.__default__": {
+      "storage_id": 910311,
+      "storage_name": "vm_storage_partial_1",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_partial_k8s_03.__default__",
+      "measurement": "__default__",
+      "vm_rt": "vm_rt_demo_partial_03",
+      "bcs_cluster_id": "demo-k8s-40003",
+      "fields": [
+        "demo_resolver_forward_responses_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_partial_k8s_04.__default__": {
+      "storage_id": 910311,
+      "storage_name": "vm_storage_partial_1",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_partial_k8s_04.__default__",
+      "measurement": "__default__",
+      "vm_rt": "vm_rt_demo_partial_04",
+      "bcs_cluster_id": "demo-k8s-40004",
+      "fields": [
+        "demo_resolver_forward_responses_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_partial_shared_05.__default__": {
+      "storage_id": 910312,
+      "storage_name": "vm_storage_partial_2",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_partial_shared_05.__default__",
+      "measurement": "__default__",
+      "vm_rt": "vm_rt_demo_partial_05",
+      "bcs_cluster_id": "",
+      "fields": [
+        "demo_resolver_forward_responses_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_partial_shared_06.__default__": {
+      "storage_id": 910311,
+      "storage_name": "vm_storage_partial_1",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "",
+      "table_id": "demo_partial_shared_06.__default__",
+      "measurement": "__default__",
+      "vm_rt": "vm_rt_demo_partial_06",
+      "bcs_cluster_id": "",
+      "fields": [
+        "demo_resolver_forward_responses_total"
+      ],
+      "measurement_type": "bk_split_measurement"
+    }
+  },
+  "storages": {
+    "910311": {
+      "type": "victoria_metrics"
+    },
+    "910312": {
+      "type": "victoria_metrics"
+    }
+  },
+  "must_vm_table_ids": [
+    "demo_partial_k8s_01.__default__",
+    "demo_partial_k8s_02.__default__",
+    "demo_partial_k8s_03.__default__",
+    "demo_partial_k8s_04.__default__",
+    "demo_partial_shared_05.__default__",
+    "demo_partial_shared_06.__default__"
+  ]
+}

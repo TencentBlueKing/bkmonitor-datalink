@@ -227,6 +227,9 @@ type Options struct {
 	RouteControlDefaults bool
 	RequireWorkerTarget  map[string]bool
 	Roles                roles.Set
+	// OnFrontRefused is told each refused front read with its code and the
+	// operation it asked for (empty before the request was read). Optional.
+	OnFrontRefused func(code, operation string)
 }
 type Channel struct {
 	*EvidenceExecutor
@@ -235,6 +238,9 @@ type Channel struct {
 	// current clock minute, keyed by session ID; see allowInvoke.
 	windowsMu sync.Mutex
 	windows   map[string]*sessionWindow
+	// frontCounts is each front refusal code's count (FrontRefusals).
+	frontMu     sync.Mutex
+	frontCounts map[string]uint64
 }
 
 // sessionWindow is one session's count of executed invocations in one clock

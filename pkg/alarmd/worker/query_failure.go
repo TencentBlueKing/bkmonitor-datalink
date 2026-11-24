@@ -105,7 +105,21 @@ func (coordinator *SlotExecutionCoordinator) observeQueryFailure(ctx context.Con
 	reason := observability.ReasonInternalUnknown
 	var exceeded *provisionalBudgetExceededError
 	var diagnostic interface{ QueryFailure() (string, string) }
-	if errors.As(err, &exceeded) {
+	// A Slot that has to be read in slices and cannot be is named by why,
+	// before the share that refused it (an unsliceable Slot past its share
+	// carries both).
+	if word, sliced := InputSliceRefusal(err); sliced {
+		facts.Category = observability.QueryFailureCategoryBudget
+		reason = observability.ReasonCode(word)
+		// Why it cannot be sliced, on the line: promql, storage_dialect,
+		// dimension_not_grouped.
+		if why, unsupported := execution.InputSliceUnsupportedOf(err); unsupported {
+			facts.Detail = why
+		}
+		if errors.As(err, &exceeded) {
+			facts.Code = observability.CapacityBudgetFailureCode(exceeded.budget)
+		}
+	} else if errors.As(err, &exceeded) {
 		facts.Category = observability.QueryFailureCategoryBudget
 		facts.Code = observability.CapacityBudgetFailureCode(exceeded.budget)
 		// Named rather than internal_unknown, and by the same rule the capacity
@@ -116,6 +130,9 @@ func (coordinator *SlotExecutionCoordinator) observeQueryFailure(ctx context.Con
 		reason = observability.ReasonCode(contract.ReasonResourceHardStop)
 		if exceeded.slot {
 			reason = observability.ReasonCode(contract.ReasonSlotBudgetExceeded)
+		}
+		if exceeded.others {
+			reason = observability.ReasonCode(contract.ReasonResourcePoolHeldByOthers)
 		}
 	} else if errors.As(err, &diagnostic) {
 		facts.Category, facts.Code = diagnostic.QueryFailure()
@@ -162,6 +179,10 @@ func (coordinator *SlotExecutionCoordinator) observeQueryFailure(ctx context.Con
 	if facts.Request != nil && errors.As(err, &sourced) {
 		facts.Request.TimeoutSource = sourced.QueryFailureTimeoutSource()
 	}
+	var timedOut *sliceTimeoutError
+	if errors.As(err, &timedOut) {
+		facts.SliceTimeout = timedOut.outcome
+	}
 	var planned interface {
 		QueryFailurePlanned() *execution.PlannedQueryFacts
 	}
@@ -188,7 +209,7 @@ func (coordinator *SlotExecutionCoordinator) observeQueryFailure(ctx context.Con
 	if errors.As(err, &timed) {
 		facts.Timing = queryTimingOf(timed.QueryFailureTiming())
 	}
-	observation := observability.Observation{Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted, Result: observability.ResultFailed, Operation: observability.Operation(operation), ReasonCode: reason, Duration: time.Since(started), Err: err, QueryFailure: &facts,
+	observation := observability.Observation{Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted, Result: observability.ResultFailed, Operation: observability.Operation(operation), ReasonCode: reason, Duration: time.Since(started), DurationKnown: true, Err: err, QueryFailure: &facts,
 		// A failed query explains itself as a lost round does: the decision
 		// that let it run as a normal round and the budget it ran under.
 		DivertDecision: observability.DivertDecisionWithBudget(ctx, observability.BudgetCaptureFromContext(ctx)),
@@ -215,6 +236,7 @@ func (coordinator *SlotExecutionCoordinator) observeQueryCompleted(
 	started time.Time,
 	completion execution.QueryExecutionCompletion,
 	evaluated execution.EvaluationResult,
+	summary *slotEvaluationSummary,
 ) {
 	evaluationResult, evaluationReason := provisionalResult(evaluated)
 	if evaluationResult == "" {
@@ -229,12 +251,12 @@ func (coordinator *SlotExecutionCoordinator) observeQueryCompleted(
 		// An evaluation outcome that names no reason is explained here as it
 		// was: it is the evaluation's, by category, and is read from the
 		// evaluation's result, not the query's.
-		facts = unexplainedOutcomeFacts(evaluationResult, evaluationReason, evaluated)
+		facts = unexplainedOutcomeFacts(evaluationResult, evaluationReason, summary)
 	}
 	observation := observability.Observation{
 		Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted, Result: result,
 		Operation:  observability.Operation(operation),
-		ReasonCode: reason, Duration: time.Since(started),
+		ReasonCode: reason, Duration: time.Since(started), DurationKnown: true,
 		QueryFailure: facts, QueryStatus: providerStatusFacts(completion), QueryCodec: providerCodecFacts(completion),
 		QueryUnavailable: providerUnavailableFacts(completion), QueryTruncation: providerTruncationFacts(completion),
 		QueryRanges:      providerRangeFacts(completion),
@@ -585,8 +607,12 @@ func timedOutSentLate(routes execution.ProviderRouteFacts) bool {
 // retried for hours with nothing to root-cause them by. It reports the Plan
 // disposition and the Level outcome mix, both already bounded enumerations,
 // and stays nil for healthy or already-explained outcomes.
+//
+// Both are read from the Slot's summary rather than its results: the line is
+// written once the Slot's evaluation is over, and the mix is of the whole
+// Slot.
 func unexplainedOutcomeFacts(
-	result observability.Result, reason execution.ReasonCode, evaluated execution.EvaluationResult,
+	result observability.Result, reason execution.ReasonCode, summary *slotEvaluationSummary,
 ) *observability.QueryFailureFacts {
 	if result == observability.ResultSuccess || result == "" {
 		return nil
@@ -594,25 +620,24 @@ func unexplainedOutcomeFacts(
 	if reason != "" && reason != observability.ReasonNone {
 		return nil
 	}
-	dispositions := make([]string, 0, len(evaluated.Plans))
-	outcomes := map[execution.LevelOutcomeKind]int{}
+	if summary == nil {
+		summary = &slotEvaluationSummary{}
+	}
+	dispositions := make([]string, 0, summary.planCount())
 	seen := map[execution.PlanDisposition]struct{}{}
-	for _, plan := range evaluated.Plans {
-		if _, ok := seen[plan.Disposition]; !ok {
-			seen[plan.Disposition] = struct{}{}
-			dispositions = append(dispositions, string(plan.Disposition))
-		}
-		for _, outcome := range plan.LevelOutcomes {
-			outcomes[outcome.Outcome]++
+	for _, disposition := range summary.completion.Dispositions() {
+		if _, ok := seen[disposition]; !ok {
+			seen[disposition] = struct{}{}
+			dispositions = append(dispositions, string(disposition))
 		}
 	}
 	sort.Strings(dispositions)
-	kinds := make([]string, 0, len(outcomes))
-	for kind, count := range outcomes {
+	kinds := make([]string, 0, len(summary.levelOutcomes))
+	for kind, count := range summary.levelOutcomes {
 		kinds = append(kinds, fmt.Sprintf("%s:%d", kind, count))
 	}
 	sort.Strings(kinds)
-	detail := "plans=" + strconv.Itoa(len(evaluated.Plans))
+	detail := "plans=" + strconv.Itoa(summary.planCount())
 	if len(dispositions) > 0 {
 		detail += " dispositions=" + strings.Join(dispositions, ",")
 	}

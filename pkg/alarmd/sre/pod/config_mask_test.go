@@ -4,6 +4,7 @@ package pod
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -86,6 +87,29 @@ func TestEachCredentialShapeIsMaskedAndEverythingElseShown(t *testing.T) {
 		masker := &configMasker{fingerprints: provider.newFingerprints()}
 		if shown := masker.value("notes", plain+"\nloop"); shown != plain+"\nloop" || masker.masked != 0 {
 			t.Errorf("plain %q shown as %q", plain, shown)
+		}
+	}
+}
+
+// A credential the ConfigMap view masked inside a YAML file is shown once,
+// marker whole: the output redaction does not mask the marker again and
+// leave its tail behind. A credential the view did not mask is still masked
+// by the output redaction.
+func TestAMaskedYAMLValueKeepsItsMarker(t *testing.T) {
+	client, _ := fixture()
+	provider := mustProvider(t, Options{Client: client, DefaultNamespace: "own", FingerprintKey: testFingerprintKey})
+	object := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "ConfigMap",
+		"metadata": map[string]any{"name": "c", "namespace": "own"},
+		"data":     map[string]any{"app.yaml": "redis:\n  password: hunter2hunter2\n  host: db\n"}}}
+	shown := provider.shown(object, provider.newFingerprints())
+	text := shown["data"].(map[string]any)["app.yaml"].(string)
+	marker := regexp.MustCompile(`^redis:\n  password: <redacted bytes=14 fingerprint=[0-9a-f]+>\n  host: db\n$`)
+	if !marker.MatchString(text) {
+		t.Fatalf("app.yaml shown as %q", text)
+	}
+	for _, value := range []string{"<redacted-ish>", "<redacted>hunter2", "<redacted bytes=3 fingerprint=ab>x9"} {
+		if got, _ := provider.redactor.bounded("password: "+value, 1<<10); got != "password: <redacted>" {
+			t.Fatalf("a value only shaped like the marker, %q, shown as %q", value, got)
 		}
 	}
 }

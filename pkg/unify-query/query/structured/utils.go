@@ -11,6 +11,7 @@ package structured
 
 import (
 	"context"
+	"sort"
 
 	"github.com/prometheus/prometheus/promql/parser"
 
@@ -117,6 +118,7 @@ func judgeFilter(filters []query.Filter) (bool, []string) {
 			}
 		}
 	}
+	sort.Strings(values)
 	return true, values
 }
 
@@ -164,7 +166,13 @@ func compressFilterCondition(tKeys []string, filters []query.Filter) [][]Conditi
 	// 组装好的compressMap 结构如下 {groupValue:[subVal1,subVal2]}
 	// 开始组装 condition
 	filterConditions := make([][]ConditionField, 0)
-	for k, v := range compressMap {
+	groupValues := make([]string, 0, len(compressMap))
+	for value := range compressMap {
+		groupValues = append(groupValues, value)
+	}
+	sort.Strings(groupValues)
+	for _, k := range groupValues {
+		v := compressMap[k]
 		cond := make([]ConditionField, 0, 2)
 		cond = []ConditionField{{
 			DimensionName: groupKey,

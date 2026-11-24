@@ -22,9 +22,21 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/readhold"
 )
+
+// startDescentFixture is startCutoverFixture for a run that takes its group down through its probes: leases that
+// outlive the run (leasesOutliveTheRun), and the lookback's probation and edge-probe span descentProbationRounds and
+// descentEdgeProbeSpan.
+func startDescentFixture(t *testing.T) *cutoverStallFixture {
+	t.Helper()
+	return openCutoverFixture(t, leasesOutliveTheRun, observability.Discard(observability.ComponentRuntime), nil, nil,
+		func(external *phaseTwoProductionExternalDependencies) {
+			external.ProbationRounds, external.EdgeProbeSpan = descentProbationRounds, descentEdgeProbeSpan
+		})
+}
 
 // stuckUnderFloor brings the fixture's group where the stuck groups on the test deployment were: its data measured
 // landing arrival late, its trials choose no hold and a probe verifies it, lowering its hold to none, its data lands
@@ -218,11 +230,11 @@ func descent(t *testing.T, f *cutoverStallFixture, span time.Duration) (holds []
 }
 
 // A group stuck above a floor of none, its floor stood a day, its data whole whenever it is read, is probed at halves
-// between its floor and its hold, each read beside the formal read at the hold for lookback.ProbationRounds rounds
-// before the hold comes down to it: 48 s comes down to 24, 12, 6 and 3 s, and then, the floor near enough, to the
-// floor itself. The floor of none is one a probe failed at - the verified lowering to none was raised right after
-// (stuckUnderFloor) - so the halves within readhold.EdgeProbeReach above it, 6 and 3 s, and the floor itself each
-// read lookback.EdgeProbeSpan of their minute's rounds first. Until each probe passed every round was frozen at the hold before it - none decided on a read at the
+// between its floor and its hold, each read beside the formal read at the hold for the probation's rounds
+// (descentProbationRounds) before the hold comes down to it: 48 s comes down to 24, 12, 6 and 3 s, and then, the
+// floor near enough, to the floor itself. The floor of none is one a probe failed at - the verified lowering to none
+// was raised right after (stuckUnderFloor) - so the halves within readhold.EdgeProbeReach above it, 6 and 3 s, and the
+// floor itself each read the edge-probe span (descentEdgeProbeSpan) of their minute's rounds first. Until each probe passed every round was frozen at the hold before it - none decided on a read at the
 // probe's hold - and the probation that follows each lowering, as it follows every one, reads none of its rounds
 // early. A hold past the period less the reread bound has each Slot's round reserved at the Slot before it, and comes
 // down the same way. No Slot is skipped on the way.
@@ -240,7 +252,7 @@ func TestAStuckGroupsFloorIsProbedAndItsHoldComesDownWithNoRoundReadEarly(t *tes
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			f := startCutoverFixture(t, leasesOutliveTheRun)
+			f := startDescentFixture(t)
 			engine, holds := f.bundle.dependencies.Lookback, f.bundle.dependencies.ReadHolds
 			hold := stuckUnderFloor(t, f, c.arrival)
 			if hold != c.holds[0] {
@@ -262,10 +274,10 @@ func TestAStuckGroupsFloorIsProbedAndItsHoldComesDownWithNoRoundReadEarly(t *tes
 			if passed != lowerings || events[lookback.FloorProbeFailed] != 0 || lowered != lowerings {
 				t.Fatalf("probe events %v, controller %v; want %d midpoints and the floor passed and lowered", events, byKind, lowerings)
 			}
-			edge := uint64(lookback.EdgeProbeSpan / time.Minute)
-			if want := 2*uint64(lookback.ProbationRounds) + 3*edge; rounds[lookback.FloorProbeClean] < want || rounds[lookback.FloorProbeDifferent] != 0 {
-				t.Fatalf("probe rounds %v, want at least %d clean - 24 and 12 s on ProbationRounds, 6 and 3 s and the floor on "+
-					"eight hours each - and none different", rounds, want)
+			edge := uint64(descentEdgeProbeSpan / time.Minute)
+			if want := 2*uint64(descentProbationRounds) + 3*edge; rounds[lookback.FloorProbeClean] < want || rounds[lookback.FloorProbeDifferent] != 0 {
+				t.Fatalf("probe rounds %v, want at least %d clean - 24 and 12 s on the probation's rounds, 6 and 3 s and the floor "+
+					"on the edge-probe span each - and none different", rounds, want)
 			}
 			early, caught := uint64(0), uint64(0)
 			for _, source := range engine.Stats().Sources {
@@ -293,12 +305,12 @@ func TestAStuckGroupsFloorIsProbedAndItsHoldComesDownWithNoRoundReadEarly(t *tes
 // point the formal read had and the probe's read did not (points_added) - and is the floor; a half from 25 s is read
 // after it, passes, and is the hold. 24 s fails; 36, 30 and 27 s pass; 27 s is within readhold.MidpointResolution of
 // 24 s. The hold comes down through 48, 36, 30 and 27 s, every lowering a verified one, over a floor of 24 s. A probe
-// failed at that floor, so the halves within readhold.EdgeProbeReach above it, 30 and 27 s, each read
-// lookback.EdgeProbeSpan of their minute's rounds clean before they pass, and 36 s, further up, lookback.ProbationRounds
-// alone.
+// failed at that floor, so the halves within readhold.EdgeProbeReach above it, 30 and 27 s, each read the edge-probe
+// span (descentEdgeProbeSpan) of their minute's rounds clean before they pass, and 36 s, further up, the probation's
+// rounds (descentProbationRounds) alone.
 func TestAProbeComesDownToWhereItsDataIsWholeAndNoFurther(t *testing.T) {
 	t.Parallel()
-	f := startCutoverFixture(t, leasesOutliveTheRun)
+	f := startDescentFixture(t)
 	// Late only in windows that end after it starts being: a probe already begun - a half needs no standing - reads
 	// no round across that change, its read at the floor before it and the formal read after. Every fifth window is
 	// counted from the fixture's first Slot, not the wall clock's minute, so the run is the same whichever minute it
@@ -343,8 +355,8 @@ func TestAProbeComesDownToWhereItsDataIsWholeAndNoFurther(t *testing.T) {
 		t.Fatalf("controller %v, midpoint probe events %v, changes %v; want the half at 24 s failed on the late series' point, raising the floor, and the three above it passed",
 			holds.controller.Stats().FloorProbesByKind, midpoints, changes)
 	}
-	if near := uint64(lookback.ProbationRounds + 2*int(lookback.EdgeProbeSpan/time.Minute)); rounds[lookback.FloorProbeClean] < near {
-		t.Fatalf("%d clean probe rounds, want at least %d: 36 s on ProbationRounds, 30 and 27 s on eight hours of a minute's rounds each",
+	if near := uint64(descentProbationRounds + 2*int(descentEdgeProbeSpan/time.Minute)); rounds[lookback.FloorProbeClean] < near {
+		t.Fatalf("%d clean probe rounds, want at least %d: 36 s on the probation's rounds, 30 and 27 s on the edge-probe span of a minute's rounds each",
 			rounds[lookback.FloorProbeClean], near)
 	}
 	if skipped != 0 || !holds.controller.LoweringVerified(f.queryGroup) {

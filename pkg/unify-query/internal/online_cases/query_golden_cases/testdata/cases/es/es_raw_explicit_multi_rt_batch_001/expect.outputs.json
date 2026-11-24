@@ -39,10 +39,8 @@
                 "range": {
                   "dtEventTimeStamp": {
                     "format": "epoch_second",
-                    "from": 1784701776,
-                    "include_lower": true,
-                    "include_upper": true,
-                    "to": 1784702076
+                    "gte": 1784701776,
+                    "lte": 1784702076
                   }
                 }
               }
@@ -81,10 +79,8 @@
                 "range": {
                   "dtEventTimeStamp": {
                     "format": "epoch_second",
-                    "from": 1784701776,
-                    "include_lower": true,
-                    "include_upper": true,
-                    "to": 1784702076
+                    "gte": 1784701776,
+                    "lte": 1784702076
                   }
                 }
               }

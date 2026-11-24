@@ -272,17 +272,30 @@ type cutoverFacts struct {
 	// group is the Query Group the cutover was working on. A cutover returns
 	// at its first failure, so on a failure this names where it stopped.
 	group string
+	// samples and truncated are the Query Groups named for each sampled
+	// decision and how many more were not (ScheduleCutoverFacts.Samples).
+	samples   map[string][]string
+	truncated map[string]int
 }
 
 func newCutoverFacts() *cutoverFacts {
-	return &cutoverFacts{started: time.Now(), skipped: make(map[string]int), decisions: make(map[string]int), readHoldLinks: make(map[string]int)}
+	return &cutoverFacts{started: time.Now(), skipped: make(map[string]int), decisions: make(map[string]int), readHoldLinks: make(map[string]int),
+		samples: make(map[string][]string), truncated: make(map[string]int)}
 }
 
-func (facts *cutoverFacts) decided(decision contentCutoverDecision) {
+func (facts *cutoverFacts) decided(decision contentCutoverDecision, queryGroup execution.QueryGroupIdentity) {
 	if facts == nil {
 		return
 	}
-	facts.decisions[string(decision)]++
+	word := string(decision)
+	facts.decisions[word]++
+	// Every decision is sampled alike; the line names the ones in
+	// ScheduleCutoverSampledDecisions.
+	if len(facts.samples[word]) < observability.ScheduleCutoverSampleCap {
+		facts.samples[word] = append(facts.samples[word], string(queryGroup))
+	} else {
+		facts.truncated[word]++
+	}
 }
 
 func (facts *cutoverFacts) prune(dropped int, skipped string) {
@@ -318,15 +331,17 @@ func (repository *RedisCatalogRepository) observeCutover(ctx context.Context, fa
 			largest = size
 		}
 	}
+	elapsed := time.Since(facts.started)
 	repository.observe(ctx, observability.Observation{
 		Component: observability.ComponentControlPlane, Stage: observability.StageScheduleCutover,
 		Result: factsTextResult(result), Err: err, ScheduleCutover: &observability.ScheduleCutoverFacts{
 			Result: result, Reason: reason, QueryGroup: facts.group,
 			Timelines: len(facts.timelineBytes), PayloadBytes: facts.payloadBytes,
 			MaxTimelineBytes: largest, TimelineBytes: facts.timelineBytes, SegmentsPruned: facts.pruned,
-			PrunesSkipped: facts.skipped, Duration: time.Since(facts.started),
+			PrunesSkipped: facts.skipped, Duration: elapsed,
 			QueryGroups: facts.decisions, ReadHoldLinks: facts.readHoldLinks, TimelinesRead: facts.read, RevisionsFolded: facts.revisionsFolded,
-			ContentSource: facts.contentSource,
+			ContentSource: facts.contentSource, Samples: facts.samples, SamplesTruncated: facts.truncated,
 		},
+		Duration: elapsed, DurationKnown: true,
 	})
 }

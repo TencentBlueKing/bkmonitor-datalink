@@ -186,7 +186,9 @@ func closedLabelSets() []labelSet {
 		},
 		{
 			name: "level_outcome_reason", fields: []fieldSink{{"observability.LevelOutcomeFact", "Reason"}},
-			known: func(v string) bool { return v == "" || LevelOutcomeReasonLabel(v) == v },
+			known: func(v string) bool {
+				return v == "" || LevelOutcomeReasonLabel(v) == v || levelOutcomeWithheldReason(v)
+			},
 		},
 		{
 			name: "query_status_code", fields: []fieldSink{{"observability.QueryStatusFacts", "Code"}},
@@ -443,6 +445,34 @@ func TestLevelOutcomeReasonIsExactOnTheLineAndFoldedOnTheMetric(t *testing.T) {
 	}
 	if got := outcomes[0].(map[string]any)["reason"]; got != reason {
 		t.Fatalf("level outcome reason on the line = %#v, want %q", got, reason)
+	}
+}
+
+// The evaluation line counts the RECOVERY its records' envelopes left out on
+// the RECOVERY cell alone, at most the cell's count: a count written on any
+// other outcome is cleared, so no line says an ABNORMAL was left out.
+func TestTheEvaluationLineCountsOmittedRecoveriesOnRecoveryOnly(t *testing.T) {
+	var output bytes.Buffer
+	renderTo(&output, Observation{
+		Component: ComponentEvaluation, Stage: StageEvaluationCompleted, Result: ResultSuccess,
+		LevelOutcomes: []LevelOutcomeFact{
+			{Outcome: "ABNORMAL", Count: 2, OmittedRecoveries: 1},
+			{Outcome: "RECOVERY", Count: 3, OmittedRecoveries: 2},
+			{Outcome: "NORMAL", Count: 1, OmittedRecoveries: 5},
+		},
+	})
+	var event struct {
+		LevelOutcomes []LevelOutcomeFact `json:"level_outcomes"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode evaluation line: %v; log=%s", err, output.String())
+	}
+	omitted := map[string]uint64{}
+	for _, fact := range event.LevelOutcomes {
+		omitted[fact.Outcome] = fact.OmittedRecoveries
+	}
+	if len(event.LevelOutcomes) != 3 || omitted["RECOVERY"] != 2 || omitted["ABNORMAL"] != 0 || omitted["NORMAL"] != 0 {
+		t.Fatalf("omitted recoveries on the line = %v, want 2 on RECOVERY only; log=%s", omitted, output.String())
 	}
 }
 
@@ -2232,7 +2262,7 @@ func (r *scanResolver) returns(scope *scanScope, call *ast.CallExpr, result, dep
 //	B3 (8): a call through an interface or a func value;
 //	B4 (5): a value decoded from the store;
 //	B5 (3): external or free text;
-//	B6 (22): a field of a result whose type the scan does not see, or the result of a call it does not follow.
+//	B6 (24): a field of a result whose type the scan does not see, or the result of a call it does not follow.
 var closedLabelSetUnresolved = map[string]string{
 	"capacity_budget|worker/sideeffect_reservation.go|checkEffectCounts|check.kind":                                                                                  "PENDING B6",
 	"completion_cause|cmd/alarmd/runtime_phase_two_production.go|Execute|result.CompletionCause.Cause":                                                               "PENDING B6",
@@ -2278,16 +2308,18 @@ var closedLabelSetUnresolved = map[string]string{
 	"reason|viewstream/server.go|admit|server.admission.Admit(ctx, hello.WorkerId, hello.StreamToken)":                                                               "PENDING B3",
 	"reason|worker/coordinator.go|Execute|begin.ReasonCode":                                                                                                          "PENDING B6",
 	"reason|worker/coordinator.go|Execute|finalization.ReasonCode":                                                                                                   "PENDING B6",
+	"reason|worker/coordinator.go|admitDuePlanActivations|result.ReasonCode":                                                                                         "PENDING B6",
 	"reason|worker/coordinator.go|admitPlan|result.ReasonCode":                                                                                                       "PENDING B6",
 	"reason|worker/coordinator.go|commitProgress|progress.ReasonCode":                                                                                                "PENDING B6",
-	"reason|worker/coordinator.go|finalizePreparedWithGaps|planResult.ReasonCode":                                                                                    "PENDING B6",
-	"reason|worker/coordinator.go|finalizePreparedWithGaps|reason":                                                                                                   "PENDING B1",
 	"reason|worker/coordinator.go|firstStateAdmissionFailureReason|item.ReasonCode":                                                                                  "PENDING B6",
 	"reason|worker/coordinator.go|firstStateApplyFailureReason|item.ReasonCode":                                                                                      "PENDING B6",
 	"reason|worker/coordinator.go|outputRejectionReason|rejection.OutputRejectionReason()":                                                                           "PENDING B3",
+	"reason|worker/no_data_segmented.go|readAbsent|read.ReasonCode":                                                                                                  "PENDING B6",
+	"reason|worker/no_data_segmented.go|scan|page.ReasonCode":                                                                                                        "PENDING B6",
 	"reason|worker/no_data_skip_streak.go|noteNoDataStreaks|stream.noDataOutcomes[index]":                                                                            "PENDING B1",
 	"reason|worker/query_failure.go|observeQueryFailure|diagnostic.QueryFailure()":                                                                                   "PENDING B3",
 	"reason|worker/resume_applied_series.go|resumedSeriesResult|guard.ReasonCode":                                                                                    "PENDING B6",
+	"reason|worker/slot_apply.go|applyPlanState|reason":                                                                                                              "PENDING B1",
 	"reason|worker/stream_session.go|gapMutationForReasons|reasons[scope]":                                                                                           "PENDING B1",
 	"reason|worker/stream_session.go|observeCompletionOnlyProbe|binding.ReasonCode":                                                                                  "PENDING B6",
 	"reason|worker/stream_session.go|physicalFailureReason|execution.AttributeUnavailable(facts, execution.ReasonCode(contract.ReasonQueryUnavailable))":             "PENDING B6",
@@ -2306,4 +2338,17 @@ var closedLabelSetUnresolved = map[string]string{
 func isFalse(expression ast.Expr) bool {
 	ident, ok := expression.(*ast.Ident)
 	return ok && ident.Name == "false"
+}
+
+// The primary's filtered-empty word is a claim about a whole, empty answer,
+// and its witness word a closed one: neither survives otherwise.
+func TestAPrimarysFilteredWordIsAboutAWholeEmptyAnswer(t *testing.T) {
+	kept := normalizePrimaryInputFacts(&PrimaryInputFacts{Completeness: "FULL", DataState: "EMPTY", FilteredWhenEmpty: true, WitnessData: "DATA"})
+	if !kept.FilteredWhenEmpty || kept.WitnessData != "DATA" {
+		t.Fatalf("a whole empty filtered answer lost its words: %+v", kept)
+	}
+	dropped := normalizePrimaryInputFacts(&PrimaryInputFacts{Completeness: "FULL", DataState: "DATA", FilteredWhenEmpty: true, WitnessData: "SOMETIMES"})
+	if dropped.FilteredWhenEmpty || dropped.WitnessData != "" {
+		t.Fatalf("an answer with data kept filtered %t, witness %q", dropped.FilteredWhenEmpty, dropped.WitnessData)
+	}
 }

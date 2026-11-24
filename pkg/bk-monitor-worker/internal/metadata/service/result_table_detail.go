@@ -60,20 +60,23 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 		return nil
 	}
 
-	// ClusterInfo 是租户级小表，一次加载后由日志、指标和 RecordRule 共用，
-	// 避免每个 500 表批次重复查询相同集群。
-	clusterMap, err := loadResultTableDetailClusterMap(mysql.GetDBSession().DB, bkTenantId)
-	if err != nil {
-		return errors.Wrap(err, "load result table detail clusters")
+	clusters := &routeDetailClusters{tenantID: bkTenantId, values: make(map[uint]storage.ClusterInfo), queried: make(map[uint]bool)}
+	if len(requestedTableIDs) == 0 {
+		var err error
+		clusters.values, err = loadResultTableDetailClusterMap(mysql.GetDBSession().DB, bkTenantId)
+		if err != nil {
+			return errors.Wrap(err, "load result table detail clusters")
+		}
+		clusters.all = true
 	}
 
-	logResult, err := s.refreshLogRoutes(bkTenantId, requestedTableIDs, clusterMap, isPublish)
+	logResult, err := s.refreshLogRoutes(bkTenantId, requestedTableIDs, clusters, isPublish)
 	if err != nil {
 		return err
 	}
 
 	metricRouteCount, err := s.refreshMetricRoutes(
-		bkTenantId, requestedTableIDs, logResult.claimedTableIDs, clusterMap, isPublish,
+		bkTenantId, requestedTableIDs, logResult.claimedTableIDs, clusters, isPublish,
 	)
 	if err != nil {
 		return err
@@ -90,7 +93,7 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 func (s *SpacePusher) refreshLogRoutes(
 	bkTenantId string,
 	requestedTableIDs []string,
-	clusterMap map[uint]storage.ClusterInfo,
+	clusters *routeDetailClusters,
 	isPublish bool,
 ) (logRouteRefreshResult, error) {
 	logTableIDs, err := s.listLogTableIDs(bkTenantId, requestedTableIDs)
@@ -103,7 +106,7 @@ func (s *SpacePusher) refreshLogRoutes(
 	}
 	for _, batchTableIDs := range chunkResultTableIDs(logTableIDs) {
 		batchDetails, batchClaimed, composeErr := s.composeLogTableIdDetail(
-			bkTenantId, batchTableIDs, clusterMap,
+			bkTenantId, batchTableIDs, clusters,
 		)
 		if composeErr != nil {
 			return result, errors.Wrapf(composeErr, "compose log route batch for tenant [%s]", bkTenantId)
@@ -131,7 +134,7 @@ func (s *SpacePusher) refreshMetricRoutes(
 	bkTenantId string,
 	requestedTableIDs []string,
 	claimedTableIDs map[string]struct{},
-	clusterMap map[uint]storage.ClusterInfo,
+	clusters *routeDetailClusters,
 	isPublish bool,
 ) (int, error) {
 	metricTableIDs, err := s.listMetricTableIDs(bkTenantId, requestedTableIDs)
@@ -140,37 +143,30 @@ func (s *SpacePusher) refreshMetricRoutes(
 	}
 	metricTableIDs = excludeClaimedTableIDs(metricTableIDs, claimedTableIDs)
 
-	// 全量刷新即使只有 RecordRule 也必须写入；增量刷新只在实际组装出
-	// AccessVMRecord 路由时附带该租户的全部 RecordRule。
-	shouldRefreshRecordRules := len(requestedTableIDs) == 0
-
 	metricRouteCount := 0
-	recordRulesLoaded := false
 	recordRuleDetails := make(map[string]map[string]any)
-	loadRecordRules := func() error {
-		if recordRulesLoaded {
-			return nil
+	// nil denotes tenant-wide refresh only at the full-refresh entry point.
+	ruleTableIDs := excludeClaimedTableIDs(requestedTableIDs, claimedTableIDs)
+	if len(requestedTableIDs) == 0 || len(ruleTableIDs) > 0 {
+		recordRuleDetails, err = s.composeRecordRuleTableIdDetail(bkTenantId, clusters, ruleTableIDs)
+		if err != nil {
+			return 0, errors.Wrap(err, "compose record rule routes")
 		}
-		var composeErr error
-		recordRuleDetails, composeErr = s.composeRecordRuleTableIdDetail(bkTenantId, clusterMap)
-		if composeErr != nil {
-			return errors.Wrapf(composeErr, "compose record rule route for tenant [%s]", bkTenantId)
-		}
-		recordRulesLoaded = true
-		return nil
 	}
+	for tableID := range recordRuleDetails {
+		if _, claimed := claimedTableIDs[tableID]; claimed {
+			delete(recordRuleDetails, tableID)
+		}
+	}
+
 	for _, batchTableIDs := range chunkResultTableIDs(metricTableIDs) {
 		batchDetails, composeErr := s.composeMetricTableIdDetail(
-			bkTenantId, batchTableIDs, clusterMap,
+			bkTenantId, batchTableIDs, clusters,
 		)
 		if composeErr != nil {
 			return 0, errors.Wrapf(composeErr, "compose metric route batch for tenant [%s]", bkTenantId)
 		}
 		if len(batchDetails) > 0 {
-			shouldRefreshRecordRules = true
-			if loadErr := loadRecordRules(); loadErr != nil {
-				return 0, loadErr
-			}
 			// 保持原入口的覆盖语义：同名 RecordRule payload 覆盖普通指标 payload，
 			// 并在本批一次写入，避免同一 field 重复 HSET/PUBLISH。
 			for tableID := range batchDetails {
@@ -189,19 +185,6 @@ func (s *SpacePusher) refreshMetricRoutes(
 		metricRouteCount += len(batchDetails)
 	}
 
-	if !shouldRefreshRecordRules {
-		return metricRouteCount, nil
-	}
-	if !recordRulesLoaded {
-		if loadErr := loadRecordRules(); loadErr != nil {
-			return 0, loadErr
-		}
-	}
-	for tableID := range recordRuleDetails {
-		if _, isClaimed := claimedTableIDs[tableID]; isClaimed {
-			delete(recordRuleDetails, tableID)
-		}
-	}
 	for _, batchDetails := range chunkTableIDDetails(recordRuleDetails, resultTableDetailBatchSize) {
 		if writeErr := s.writeTableIdDetail(bkTenantId, batchDetails, isPublish, false); writeErr != nil {
 			return 0, errors.Wrapf(writeErr, "write record rule route batch for tenant [%s]", bkTenantId)
@@ -265,7 +248,7 @@ func (s *SpacePusher) listMetricTableIDs(bkTenantId string, requestedTableIDs []
 // claimed 故意可能大于 payload：default_storage 已声明为 ES/Doris 的残缺 RT 仍归日志侧所有，
 // 这样配置缺失时只跳过写入，不会错误回退成指标路由覆盖旧缓存。
 func (s *SpacePusher) composeLogTableIdDetail(
-	bkTenantId string, tableIDs []string, clusterMap map[uint]storage.ClusterInfo,
+	bkTenantId string, tableIDs []string, clusters *routeDetailClusters,
 ) (map[string]map[string]any, map[string]struct{}, error) {
 	result := make(map[string]map[string]any)
 	claimed := make(map[string]struct{})
@@ -398,6 +381,8 @@ func (s *SpacePusher) composeLogTableIdDetail(
 			storage.ClusterRecordDBSchema.TableID,
 			storage.ClusterRecordDBSchema.ClusterID,
 			storage.ClusterRecordDBSchema.EnableTime,
+			storage.ClusterRecordDBSchemaField("bkbase_table_id"),
+			storage.ClusterRecordDBSchemaField("physical_tables"),
 		).
 		BkTenantIDEq(bkTenantId).
 		TableIDIn(sourceTableIDs...).
@@ -411,6 +396,24 @@ func (s *SpacePusher) composeLogTableIdDetail(
 	}
 	for tableID := range recordsByTableID {
 		sortStorageClusterRecords(recordsByTableID[tableID])
+	}
+
+	clusterIDs := make([]uint, 0)
+	for _, entries := range []map[string]storage.ESStorage{esMap, originESMap} {
+		for _, entry := range entries {
+			clusterIDs = append(clusterIDs, entry.StorageClusterID)
+		}
+	}
+	for _, entries := range []map[string]storage.DorisStorage{dorisMap, originDorisMap} {
+		for _, entry := range entries {
+			clusterIDs = append(clusterIDs, entry.StorageClusterID)
+		}
+	}
+	for _, record := range storageRecords {
+		clusterIDs = append(clusterIDs, uint(record.ClusterID))
+	}
+	if err := clusters.load(clusterIDs); err != nil {
+		return nil, nil, err
 	}
 
 	// 7. 逐表组装 payload：target 决定当前存储，origin 补充 db/source_type
@@ -432,13 +435,13 @@ func (s *SpacePusher) composeLogTableIdDetail(
 		esSourceType := firstNonEmpty(targetES.SourceType, originES.SourceType)
 		dorisDB := firstNonEmpty(targetDoris.BkbaseTableID, originDoris.BkbaseTableID)
 
-		// ClusterRecord 只记录集群与启用时间，db/source_type 等配置取自 origin 实体表。
+		// Doris 历史段优先使用自身的 BKBase 结果表，旧分段缺少快照时回退当前配置。
 		// payload 只输出 enable_time；UQ 用下一分段的 enable_time 推导区间结束点，
 		// 因此这里有意不输出 disable_time。
 		history := make([]map[string]any, 0, len(recordsByTableID[sourceTableID]))
 		for _, record := range recordsByTableID[sourceTableID] {
 			// 单个历史分段配置不完整时只跳过该分段，不能让它影响当前顶层路由。
-			cluster, exists := clusterMap[uint(record.ClusterID)]
+			cluster, exists := clusters.values[uint(record.ClusterID)]
 			if !exists {
 				logger.Warnf("compose log history: cluster missing or tenant mismatch, tenant [%s], table_id [%s], record_id [%d]", bkTenantId, tableID, record.ID)
 				continue
@@ -455,16 +458,24 @@ func (s *SpacePusher) composeLogTableIdDetail(
 					"source_type": esSourceType, "enable_time": storageRecordEnableTimestamp(record),
 				})
 			case models.StorageTypeDoris:
-				if dorisDB == "" {
+				segmentDB := firstNonEmpty(record.BkbaseTableID, dorisDB)
+				if segmentDB == "" {
 					logger.Warnf("compose log history: Doris storage config missing, tenant [%s], table_id [%s], record_id [%d]", bkTenantId, tableID, record.ID)
 					continue
 				}
-				history = append(history, map[string]any{
+				detail := map[string]any{
 					"storage_id": record.ClusterID, "storage_type": models.StorageTypeBkSql,
 					"storage_name": cluster.ClusterName, "cluster_name": cluster.ClusterName,
-					"db": dorisDB, "measurement": models.DorisMeasurement,
+					"db": segmentDB, "measurement": models.DorisMeasurement,
 					"enable_time": storageRecordEnableTimestamp(record),
-				})
+				}
+				if record.BkbaseTableID != "" {
+					detail["bkbase_table_id"] = record.BkbaseTableID
+				}
+				if physicalTables := parseDorisPhysicalTables(record.TableID, record.PhysicalTables); len(physicalTables) > 0 {
+					detail["physical_tables"] = physicalTables
+				}
+				history = append(history, detail)
 			}
 		}
 
@@ -484,11 +495,11 @@ func (s *SpacePusher) composeLogTableIdDetail(
 		switch storageType {
 		case models.StorageTypeES:
 			storageID := targetES.StorageClusterID
-			cluster, exists := clusterMap[storageID]
+			cluster, exists := clusters.values[storageID]
 			// 退避到 origin 的 cluster
 			if !exists {
 				storageID = originES.StorageClusterID
-				cluster, exists = clusterMap[storageID]
+				cluster, exists = clusters.values[storageID]
 			}
 			if !exists || cluster.ClusterType != models.StorageTypeES || esDB == "" || esSourceType == "" {
 				logger.Errorf("compose log detail: ES config incomplete, tenant [%s], table_id [%s], cluster_id [%d]", bkTenantId, tableID, storageID)
@@ -502,11 +513,11 @@ func (s *SpacePusher) composeLogTableIdDetail(
 			}
 		case models.StorageTypeDoris:
 			storageID := targetDoris.StorageClusterID
-			cluster, exists := clusterMap[storageID]
+			cluster, exists := clusters.values[storageID]
 			// 退避到 origin 的 cluster
 			if !exists {
 				storageID = originDoris.StorageClusterID
-				cluster, exists = clusterMap[storageID]
+				cluster, exists = clusters.values[storageID]
 			}
 
 			if !exists || cluster.ClusterType != models.StorageTypeDoris || dorisDB == "" {
@@ -520,6 +531,16 @@ func (s *SpacePusher) composeLogTableIdDetail(
 				"options": optionsMap[tableID], "storage_cluster_records": history,
 				"data_label": dataLabel,
 				"labels":     labels, "field_alias": fieldAlias,
+			}
+			var physicalTables map[string]string
+			if targetDoris.StorageClusterID == storageID {
+				physicalTables = parseDorisPhysicalTables(targetDoris.TableID, targetDoris.PhysicalTables)
+			}
+			if len(physicalTables) == 0 && originDoris.StorageClusterID == storageID {
+				physicalTables = parseDorisPhysicalTables(originDoris.TableID, originDoris.PhysicalTables)
+			}
+			if len(physicalTables) > 0 {
+				result[tableID]["physical_tables"] = physicalTables
 			}
 		}
 	}
@@ -651,6 +672,7 @@ func loadDorisStorageMap(db *gorm.DB, bkTenantId string, tableIDs []string) (map
 			storage.DorisStorageDBSchema.StorageClusterID,
 			storage.DorisStorageDBSchema.BkbaseTableID,
 			storage.DorisStorageDBSchema.OriginTableId,
+			storage.DorisStorageDBSchemaField("physical_tables"),
 		).
 		BkTenantIDEq(bkTenantId).
 		TableIDIn(tableIDs...).
@@ -661,6 +683,18 @@ func loadDorisStorageMap(db *gorm.DB, bkTenantId string, tableIDs []string) (map
 		result[row.TableID] = row
 	}
 	return result, nil
+}
+
+func parseDorisPhysicalTables(tableID string, value json.RawMessage) map[string]string {
+	if len(value) == 0 {
+		return nil
+	}
+	var tables map[string]string
+	if err := json.Unmarshal(value, &tables); err != nil {
+		logger.Errorf("parseDorisPhysicalTables: unmarshal failed, table_id [%s], err [%s]", tableID, err)
+		return nil
+	}
+	return tables
 }
 
 func loadResultTableOptions(
@@ -697,6 +731,44 @@ func loadResultTableOptions(
 		result[rows[index].TableID][rows[index].Name] = value
 	}
 	return result, nil
+}
+
+// routeDetailClusters belongs to a single tenant refresh. Missing IDs are remembered
+// for the request so different RT batches do not repeatedly query the same missing cluster.
+type routeDetailClusters struct {
+	tenantID string
+	values   map[uint]storage.ClusterInfo
+	queried  map[uint]bool
+	all      bool
+}
+
+func (c *routeDetailClusters) load(ids []uint) error {
+	if c.all {
+		return nil
+	}
+	pending := make([]uint, 0)
+	for _, id := range ids {
+		if id != 0 && !c.queried[id] {
+			c.queried[id] = true
+			pending = append(pending, id)
+		}
+	}
+	for start := 0; start < len(pending); start += resultTableDetailBatchSize {
+		end := start + resultTableDetailBatchSize
+		if end > len(pending) {
+			end = len(pending)
+		}
+		var rows []storage.ClusterInfo
+		if err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).
+			Select(storage.ClusterInfoDBSchema.ClusterID, storage.ClusterInfoDBSchema.ClusterName, storage.ClusterInfoDBSchema.ClusterType).
+			BkTenantIDEq(c.tenantID).ClusterIDIn(pending[start:end]...).All(&rows); err != nil {
+			return err
+		}
+		for _, row := range rows {
+			c.values[row.ClusterID] = row
+		}
+	}
+	return nil
 }
 
 // loadResultTableDetailClusterMap 一次加载当前租户全部 ClusterInfo。

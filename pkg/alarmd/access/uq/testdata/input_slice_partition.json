@@ -1,0 +1,38 @@
+{
+  "unsliced": {
+    "field_list": [
+      {"field_name": "A", "op": "contains", "value": ["1"]},
+      {"field_name": "B", "op": "contains", "value": ["2"]}
+    ],
+    "condition_list": ["or"]
+  },
+  "slices": [
+    {
+      "field_list": [
+        {"field_name": "A", "op": "contains", "value": ["1"]},
+        {"field_name": "host", "op": "req", "value": ["^(?s:.*)a$"]},
+        {"field_name": "B", "op": "contains", "value": ["2"]},
+        {"field_name": "host", "op": "req", "value": ["^(?s:.*)a$"]}
+      ],
+      "condition_list": ["and", "or", "and"]
+    },
+    {
+      "field_list": [
+        {"field_name": "A", "op": "contains", "value": ["1"]},
+        {"field_name": "host", "op": "req", "value": ["^(?s:.*)[^a]$"]},
+        {"field_name": "B", "op": "contains", "value": ["2"]},
+        {"field_name": "host", "op": "req", "value": ["^(?s:.*)[^a]$"]}
+      ],
+      "condition_list": ["and", "or", "and"]
+    },
+    {
+      "field_list": [
+        {"field_name": "A", "op": "contains", "value": ["1"]},
+        {"field_name": "host", "op": "nreq", "value": ["^(?s:.+)$"]},
+        {"field_name": "B", "op": "contains", "value": ["2"]},
+        {"field_name": "host", "op": "nreq", "value": ["^(?s:.+)$"]}
+      ],
+      "condition_list": ["and", "or", "and"]
+    }
+  ]
+}

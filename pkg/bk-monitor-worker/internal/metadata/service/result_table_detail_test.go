@@ -12,6 +12,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -30,10 +31,18 @@ import (
 
 func setupResultTableDetailMySQL(t *testing.T) *gorm.DB {
 	t.Helper()
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	session := &mysql.DBSession{}
-	require.NoError(t, session.Open())
-	db := session.DB
+	var db *gorm.DB
+	if dsn := os.Getenv("BMW_ROUTE_FIXTURE_DSN"); dsn != "" {
+		var err error
+		db, err = gorm.Open("mysql", dsn)
+		require.NoError(t, err)
+	} else {
+		mocker.InitTestDBConfig("../../../bmw_test.yaml")
+		session := &mysql.DBSession{}
+		require.NoError(t, session.Open())
+		db = session.DB
+	}
+
 	// 每个测试使用单独连接及临时表：既复用真实 MySQL 行为，又不会读写
 	// bmw_test 的持久表；连接关闭后临时表和夹具会由 MySQL 自动清理。
 	db.DB().SetMaxOpenConns(1)
@@ -51,8 +60,8 @@ func setupResultTableDetailMySQL(t *testing.T) *gorm.DB {
 		`CREATE TEMPORARY TABLE metadata_datasourceoption (bk_data_id BIGINT, bk_tenant_id VARCHAR(256), name VARCHAR(128), value TEXT)`,
 		`CREATE TEMPORARY TABLE metadata_esfieldqueryaliasoption (table_id VARCHAR(128), bk_tenant_id VARCHAR(256), field_path VARCHAR(255), query_alias VARCHAR(255), is_deleted BOOLEAN)`,
 		`CREATE TEMPORARY TABLE metadata_esstorage (table_id VARCHAR(128), bk_tenant_id VARCHAR(256), storage_cluster_id INTEGER, source_type VARCHAR(32), index_set VARCHAR(128), origin_table_id VARCHAR(128))`,
-		`CREATE TEMPORARY TABLE metadata_dorisstorage (table_id VARCHAR(128), bk_tenant_id VARCHAR(256), storage_cluster_id INTEGER, bkbase_table_id VARCHAR(128), origin_table_id VARCHAR(128))`,
-		`CREATE TEMPORARY TABLE metadata_storageclusterrecord (id INTEGER, table_id VARCHAR(128), bk_tenant_id VARCHAR(256), cluster_id BIGINT, enable_time DATETIME(6), is_deleted BOOLEAN)`,
+		`CREATE TEMPORARY TABLE metadata_dorisstorage (table_id VARCHAR(128), bk_tenant_id VARCHAR(256), storage_cluster_id INTEGER, bkbase_table_id VARCHAR(128), origin_table_id VARCHAR(128), physical_tables JSON)`,
+		`CREATE TEMPORARY TABLE metadata_storageclusterrecord (id INTEGER, table_id VARCHAR(128), bk_tenant_id VARCHAR(256), cluster_id BIGINT, enable_time DATETIME(6), is_deleted BOOLEAN, bkbase_table_id VARCHAR(255) DEFAULT '', physical_tables JSON)`,
 		`CREATE TEMPORARY TABLE metadata_clusterinfo (cluster_id INTEGER, bk_tenant_id VARCHAR(64), cluster_name VARCHAR(128), cluster_type VARCHAR(32))`,
 		`CREATE TEMPORARY TABLE metadata_bcsclusterinfo (cluster_id VARCHAR(128), bk_tenant_id VARCHAR(256), K8sMetricDataID BIGINT, CustomMetricDataID BIGINT)`,
 		"CREATE TEMPORARY TABLE metadata_influxdbstorage (table_id VARCHAR(128), bk_tenant_id VARCHAR(256), influxdb_proxy_storage_id INTEGER, `database` VARCHAR(128), real_table_name VARCHAR(128), partition_tag VARCHAR(128))",
@@ -68,7 +77,7 @@ func setupResultTableDetailMySQL(t *testing.T) *gorm.DB {
 	})
 	t.Cleanup(func() {
 		patches.Reset()
-		require.NoError(t, session.Close())
+		require.NoError(t, db.Close())
 	})
 	return db
 }
@@ -145,11 +154,11 @@ func insertClusterRecord(t *testing.T, db *gorm.DB, id uint, tableID, tenantID s
 	)
 }
 
-func loadRouteClustersForTest(t *testing.T, db *gorm.DB, tenantID string) map[uint]storage.ClusterInfo {
+func loadRouteClustersForTest(t *testing.T, db *gorm.DB, tenantID string) *routeDetailClusters {
 	t.Helper()
 	clusterMap, err := loadResultTableDetailClusterMap(db, tenantID)
 	require.NoError(t, err)
-	return clusterMap
+	return &routeDetailClusters{values: clusterMap, all: true}
 }
 
 func seedMixedLogRoute(t *testing.T, db *gorm.DB, tenantID, tableID, defaultStorage string) {
@@ -386,6 +395,155 @@ func TestComposeLogTableIdDetailMixedStoragePayloads(t *testing.T) {
 	}
 }
 
+func TestComposeLogTableIdDetailDorisPhysicalTables(t *testing.T) {
+	for _, virtual := range []bool{false, true} {
+		for _, tt := range []struct {
+			name string
+			raw  string
+			want map[string]string
+		}{
+			{name: "SQL null"},
+			{name: "empty object", raw: `{}`},
+			{name: "JSON null", raw: `null`},
+			{name: "log rule", raw: `{"main":"db.logs_*"}`, want: map[string]string{"main": "db.logs_*"}},
+			{name: "profiling", raw: `{"sample":"db.samples","label":"db.labels"}`, want: map[string]string{"sample": "db.samples", "label": "db.labels"}},
+		} {
+			t.Run(fmt.Sprintf("virtual=%t/%s", virtual, tt.name), func(t *testing.T) {
+				db := setupResultTableDetailMySQL(t)
+				const tenantID = "tenant-physical"
+				const entityTableID = "2_bklog.physical_entity"
+				tableID := entityTableID
+				seedMixedLogRoute(t, db, tenantID, entityTableID, models.StorageTypeDoris)
+				if tt.raw != "" {
+					execResultTableDetailSQL(t, db,
+						`UPDATE metadata_dorisstorage SET physical_tables = ? WHERE table_id = ? AND bk_tenant_id = ?`,
+						tt.raw, entityTableID, tenantID,
+					)
+				}
+				if virtual {
+					tableID = "2_bklog.physical_virtual"
+					insertResultTable(t, db, tableID, tenantID, models.StorageTypeDoris, nil, "")
+					insertDorisStorage(t, db, tableID, tenantID, 2, "", entityTableID)
+				}
+
+				// 同名表的其他租户配置不能覆盖当前物理表或历史快照。
+				execResultTableDetailSQL(t, db,
+					`UPDATE metadata_dorisstorage SET physical_tables = ? WHERE table_id = ? AND bk_tenant_id = ?`,
+					`{"main":"other_tenant.logs"}`, entityTableID, "other-tenant",
+				)
+				execResultTableDetailSQL(t, db,
+					`UPDATE metadata_storageclusterrecord SET physical_tables = ? WHERE table_id = ?`,
+					`{"main":"db.old_*"}`, entityTableID,
+				)
+				profileTime, emptyTime := time.Unix(300, 0), time.Unix(400, 0)
+				insertClusterRecord(t, db, 30, entityTableID, tenantID, 2, &profileTime, false)
+				insertClusterRecord(t, db, 31, entityTableID, tenantID, 2, &emptyTime, false)
+				execResultTableDetailSQL(t, db,
+					`UPDATE metadata_storageclusterrecord SET physical_tables = ?, bkbase_table_id = 'history_rt' WHERE id = 30`,
+					`{"sample":"db.old_samples","label":"db.old_labels"}`,
+				)
+
+				details, _, err := NewSpacePusher().composeLogTableIdDetail(
+					tenantID, []string{tableID}, loadRouteClustersForTest(t, db, tenantID),
+				)
+				require.NoError(t, err)
+				detail := details[tableID]
+				require.NotNil(t, detail)
+				assert.Equal(t, "mixed_doris_table", detail["db"])
+				if len(tt.want) > 0 {
+					assert.Equal(t, tt.want, detail["physical_tables"])
+				} else {
+					assert.NotContains(t, detail, "physical_tables")
+				}
+				history := detail["storage_cluster_records"].([]map[string]any)
+				require.Len(t, history, 4)
+				assert.Equal(t, "mixed_doris_table", history[0]["db"])
+				assert.NotContains(t, history[0], "bkbase_table_id")
+				assert.Equal(t, "history_rt", history[1]["db"])
+				assert.Equal(t, "history_rt", history[1]["bkbase_table_id"])
+				assert.NotContains(t, history[0], "physical_tables")
+				assert.Equal(t, map[string]string{"sample": "db.old_samples", "label": "db.old_labels"}, history[1]["physical_tables"])
+				assert.NotContains(t, history[2], "physical_tables") // ES 段即使有快照字段也不输出。
+				assert.Equal(t, map[string]string{"main": "db.old_*"}, history[3]["physical_tables"])
+			})
+		}
+	}
+}
+
+func TestComposeLogTableIdDetailDorisPhysicalTablesFollowCurrentStorage(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		clusterID uint
+		physical  string
+		wantID    uint
+		want      map[string]string
+	}{
+		{name: "virtual override", clusterID: 2, physical: `{"main":"db.virtual_*"}`, wantID: 2, want: map[string]string{"main": "db.virtual_*"}},
+		{name: "missing cluster uses origin", clusterID: 999, physical: `{"main":"db.unavailable"}`, wantID: 2, want: map[string]string{"sample": "db.samples", "label": "db.labels"}},
+		{name: "different cluster does not inherit physical tables", clusterID: 3, physical: `{}`, wantID: 3},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			db := setupResultTableDetailMySQL(t)
+			const tenantID = "tenant-physical-storage"
+			const entityTableID = "2_bklog.physical_entity"
+			const tableID = "2_bklog.physical_virtual"
+			seedMixedLogRoute(t, db, tenantID, entityTableID, models.StorageTypeDoris)
+			insertResultTable(t, db, tableID, tenantID, models.StorageTypeDoris, nil, "")
+			insertDorisStorage(t, db, tableID, tenantID, tt.clusterID, "", entityTableID)
+			insertCluster(t, db, tenantID, 3, "other-doris", models.StorageTypeDoris)
+			execResultTableDetailSQL(t, db,
+				`UPDATE metadata_dorisstorage SET physical_tables = ? WHERE table_id = ? AND bk_tenant_id = ?`,
+				`{"sample":"db.samples","label":"db.labels"}`, entityTableID, tenantID,
+			)
+			execResultTableDetailSQL(t, db,
+				`UPDATE metadata_dorisstorage SET physical_tables = ? WHERE table_id = ? AND bk_tenant_id = ?`,
+				tt.physical, tableID, tenantID,
+			)
+
+			details, _, err := NewSpacePusher().composeLogTableIdDetail(
+				tenantID, []string{tableID}, loadRouteClustersForTest(t, db, tenantID),
+			)
+			require.NoError(t, err)
+			require.Contains(t, details, tableID)
+			assert.Equal(t, tt.wantID, details[tableID]["storage_id"])
+			if len(tt.want) > 0 {
+				assert.Equal(t, tt.want, details[tableID]["physical_tables"])
+			} else {
+				assert.NotContains(t, details[tableID], "physical_tables")
+			}
+		})
+	}
+}
+
+func TestComposeLogTableIdDetailESCurrentWithDorisPhysicalHistory(t *testing.T) {
+	db := setupResultTableDetailMySQL(t)
+	const tenantID = "tenant-es-physical-history"
+	const tableID = "2_bklog.es_physical_history"
+	seedMixedLogRoute(t, db, tenantID, tableID, models.StorageTypeES)
+	execResultTableDetailSQL(t, db,
+		`DELETE FROM metadata_dorisstorage WHERE table_id = ? AND bk_tenant_id = ?`,
+		tableID, tenantID,
+	)
+	execResultTableDetailSQL(t, db,
+		`UPDATE metadata_storageclusterrecord SET physical_tables = ?, bkbase_table_id = 'old_rt' WHERE table_id = ?`,
+		`{"main":"db.old_*"}`, tableID,
+	)
+
+	details, _, err := NewSpacePusher().composeLogTableIdDetail(
+		tenantID, []string{tableID}, loadRouteClustersForTest(t, db, tenantID),
+	)
+	require.NoError(t, err)
+	detail := details[tableID]
+	require.NotNil(t, detail)
+	assert.NotContains(t, detail, "physical_tables")
+	history := detail["storage_cluster_records"].([]map[string]any)
+	require.Len(t, history, 2)
+	assert.NotContains(t, history[0], "physical_tables")
+	assert.NotContains(t, history[0], "bkbase_table_id")
+	assert.Equal(t, "old_rt", history[1]["db"])
+	assert.Equal(t, map[string]string{"main": "db.old_*"}, history[1]["physical_tables"])
+}
+
 func TestAccessVMRecordAndRecordRulePayloadsRemainCompatible(t *testing.T) {
 	t.Run("metric routes only use AccessVMRecord", func(t *testing.T) {
 		db := setupResultTableDetailMySQL(t)
@@ -468,7 +626,7 @@ func TestAccessVMRecordAndRecordRulePayloadsRemainCompatible(t *testing.T) {
 		)
 
 		clusterMap := loadRouteClustersForTest(t, db, tenantID)
-		details, err := NewSpacePusher().composeRecordRuleTableIdDetail(tenantID, clusterMap)
+		details, err := NewSpacePusher().composeRecordRuleTableIdDetail(tenantID, clusterMap, nil)
 
 		require.NoError(t, err)
 		assert.Equal(t, map[string]map[string]any{
@@ -538,7 +696,7 @@ func TestComposeLogTableIdDetailRequiresResultTableAndKeepsClaimedFallback(t *te
 		})
 
 		details, claimed, err := NewSpacePusher().composeLogTableIdDetail(
-			tenantID, []string{tableID}, map[uint]storage.ClusterInfo{},
+			tenantID, []string{tableID}, &routeDetailClusters{all: true},
 		)
 		require.NoError(t, err)
 		assert.Empty(t, claimed)
@@ -580,7 +738,7 @@ func TestComposeLogTableIdDetailRequiresResultTableAndKeepsClaimedFallback(t *te
 			insertESStorage(t, db, tt.tableID, tenantID, 1, "inactive-index", "log", "")
 
 			details, claimed, err := NewSpacePusher().composeLogTableIdDetail(
-				tenantID, []string{tt.tableID}, map[uint]storage.ClusterInfo{},
+				tenantID, []string{tt.tableID}, &routeDetailClusters{all: true},
 			)
 
 			require.NoError(t, err)

@@ -28,7 +28,7 @@ var errSlotFull = errors.New("the Slot has no room")
 
 // slotPool is a Slot's retained budget as the access source's sink serves
 // it: a series handed on is charged against the pool by the sink itself, at
-// its delivered bytes and what the sink keeps beside them (seriesKept), and
+// its Dataset's RetainedBytes and what the sink keeps beside them (seriesKept), and
 // what a query reserves beside its series is reserved against the same
 // pool. Either is refused past the limit, and the first refusal is said on
 // refused. A sink may also refuse the series it is handed (refuseSeries,
@@ -83,7 +83,7 @@ func (pool *slotPool) ConsumeProviderSeries(_ context.Context, batch execution.P
 	if len(pool.handed)+1 == pool.refuseSeries {
 		return errors.New("the sink refused the series")
 	}
-	charge := batch.Delivery.Bytes + seriesKept
+	charge := batch.Dataset.RetainedBytes() + seriesKept
 	if err := pool.take(charge); err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func (pool *slotPool) ConsumeProviderSeries(_ context.Context, batch execution.P
 func (pool *slotPool) handedBytes() uint64 {
 	var total uint64
 	for _, batch := range pool.handed {
-		total += batch.Delivery.Bytes
+		total += batch.Dataset.RetainedBytes()
 	}
 	return total
 }
@@ -140,10 +140,18 @@ func TestACarriedReadIsRefusedAtTheFirstSeriesItsSlotHasNoRoomFor(t *testing.T) 
 					flusher.Flush()
 					written.Add(1)
 					if index == 0 {
+						// The refusal closes refused before the read ends and
+						// cancels this request, so both may be ready by the
+						// time the handler looks; a select picks either, and
+						// refused is asked again after it.
+						select {
+						case <-pool.refused:
+						case <-request.Context().Done():
+						}
 						select {
 						case <-pool.refused:
 							writtenAtRefusal = written.Load()
-						case <-request.Context().Done():
+						default:
 						}
 					}
 				}
@@ -216,7 +224,7 @@ func TestACarriedReadHoldsItsSeriesOnTheSlotsBudgetAndHandsTheHoldOn(t *testing.
 			wantPeak, wantAtFirst := uint64(0), uint64(0)
 			if tc.carried {
 				wantPeak = roomy.handedBytes()
-				wantAtFirst = wantPeak - roomy.handed[0].Delivery.Bytes
+				wantAtFirst = wantPeak - roomy.handed[0].Dataset.RetainedBytes()
 			}
 			if roomy.peakReserved != wantPeak || roomy.reservedAtFirstSeries != wantAtFirst {
 				t.Fatalf("held %d at most and %d when the first series was handed on, want %d and %d", roomy.peakReserved, roomy.reservedAtFirstSeries, wantPeak, wantAtFirst)

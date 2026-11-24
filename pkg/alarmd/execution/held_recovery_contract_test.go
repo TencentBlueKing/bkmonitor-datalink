@@ -86,6 +86,34 @@ func TestEvaluationAcceptsAHeldRecoveryRecordWithoutItsEnvelope(t *testing.T) {
 		}
 	})
 
+	// A Level left out of a sent record's envelope (EventOmitted) is a
+	// RECOVERY beside the RECOVERY that went: never another outcome, never on
+	// a held record, never the record's only RECOVERY.
+	t.Run("an omitted Level is a RECOVERY only", func(t *testing.T) {
+		result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeAbnormal)
+		result.Plans[0].LevelOutcomes[0].EventOmitted = true
+		if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "an omitted Level is a RECOVERY of a record that was sent") {
+			t.Fatalf("an omitted ABNORMAL must be refused, got %v", err)
+		}
+	})
+	t.Run("an omitted Level is never on a held record", func(t *testing.T) {
+		result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeRecovery)
+		result.Plans[0].LevelOutcomes[0].EnvelopeHeld = true
+		result.Plans[0].LevelOutcomes[0].EventOmitted = true
+		result.Plans[0].StateResults[0].Events = nil
+		if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "an omitted Level is a RECOVERY of a record that was sent") {
+			t.Fatalf("an omitted Level on a held record must be refused, got %v", err)
+		}
+	})
+	t.Run("a record keeps the RECOVERY of the Level the alert is at", func(t *testing.T) {
+		result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeRecovery)
+		result.Plans[0].LevelOutcomes[0].EventOmitted = true
+		result.Plans[0].StateResults[0].Events = nil
+		if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "a record with an omitted Level keeps the RECOVERY") {
+			t.Fatalf("a record whose every RECOVERY is omitted must be refused, got %v", err)
+		}
+	})
+
 	t.Run("the hold is a property of RECOVERY outcomes only", func(t *testing.T) {
 		result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeAbnormal)
 		result.Plans[0].LevelOutcomes[0].EnvelopeHeld = true

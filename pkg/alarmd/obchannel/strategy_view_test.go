@@ -17,7 +17,7 @@ import (
 )
 
 const viewActualBody = `{"generated_at":"2026-10-17T00:00:00Z","max_age_seconds":30,` +
-	`"row":{"strategy_id":"77","state":"DETECTING","state_word":"在检测","capability_class":"supported","line":"在检测 · 无需处理","punctuality":"late","kb_anchor":"state-DETECTING"},` +
+	`"row":{"strategy_id":"77","state":"DETECTING","state_word":"在检测","capability_class":"supported","line":"在检测，无需处理","punctuality":"late","kb_anchor":"state-DETECTING"},` +
 	`"objects":{"total":2,"by_punctuality":{"on_time":1,"late":1}},"check":"SLOTS_OVERDUE"}`
 
 const viewConfigBody = `{"strategy_id":"77","answered_by":"r1","publication":{},"standing":"ACCEPTED","found":true,"retained":true,"line":"",` +
@@ -60,7 +60,7 @@ func TestStrategyViewJoinsTheDiagnosisAndTheConfigurationAsWords(t *testing.T) {
 	}
 	raw, _ := json.Marshal(out)
 	encoded := string(raw)
-	for _, want := range []string{"每 1 分钟", "自定义指标", "预警：静态阈值", "不限定目标（全部）", "全天生效", "迟到", `"total":2`, "在检测 · 无需处理", "SLOTS_OVERDUE", "state-DETECTING"} {
+	for _, want := range []string{"每 1 分钟", "自定义指标", "预警：静态阈值", "不限定目标（全部）", "全天生效", "迟到", `"total":2`, "在检测，无需处理", "SLOTS_OVERDUE", "state-DETECTING"} {
 		if !strings.Contains(encoded, want) {
 			t.Errorf("the view lacks %q: %s", want, encoded)
 		}
@@ -76,7 +76,7 @@ func TestStrategyViewJoinsTheDiagnosisAndTheConfigurationAsWords(t *testing.T) {
 			t.Errorf("the view carries %q: %s", forbidden, result)
 		}
 	}
-	if out.Summary != "在检测 · 无需处理" {
+	if out.Summary != "在检测，无需处理" {
 		t.Errorf("summary %q, want the conclusion line", out.Summary)
 	}
 	if !FrontReads["strategy.view"] {

@@ -37,8 +37,8 @@ const (
 	StandingIndefinite
 )
 
-// RejectionStandingOf classifies a rejection for the target-scope close.
-// See DefinitelyOutside for why each case is what it is.
+// RejectionStandingOf classifies a rejection (DefinitelyOutside). See
+// DefinitelyOutside for why each case is what it is.
 func RejectionStandingOf(plan PlanContext, facts *Facts, filter, reason string) RejectionStanding {
 	switch filter {
 	case TargetScopeFilter{}.Name():
@@ -99,8 +99,8 @@ func hostNotPlaced(facts *Facts) bool {
 
 // DefinitelyOutside reports whether a rejection is the monitoring target
 // itself saying the record is outside it, decided on facts that were all
-// there and current. It is the one question the target-scope close asks of
-// a rejection, and it answers yes for far less than every rejection:
+// there and current: the completion's count of series withheld as outside
+// the target. It answers yes for far less than every rejection:
 //
 //   - only the two target filters count. A host turned away for its
 //     operational state (a spare, a machine under repair) is still in the
@@ -114,8 +114,9 @@ func hostNotPlaced(facts *Facts) bool {
 //     either path, and a target plan whose selectors did not all answer from
 //     fresh facts is a lower bound, not the target.
 //
-// Every "no" here costs a close that could have been sent; every wrong
-// "yes" closes an alert that is still in scope. The rule leans to the first.
+// Every "no" leaves a series counted as withheld rather than outside; every
+// wrong "yes" says the target selected none of data it may well hold. The
+// rule leans to the first.
 func DefinitelyOutside(plan PlanContext, facts *Facts, filter, reason string) bool {
 	return RejectionStandingOf(plan, facts, filter, reason) == StandingDefinitive
 }

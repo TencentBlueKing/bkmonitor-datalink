@@ -228,7 +228,7 @@ func storedViewRuntime(t *testing.T, source storedViewSource, store *storedViewS
 	if err := server.Lead(authority.Fence.OwnerEpoch); err != nil {
 		t.Fatal(err)
 	}
-	runtime := &productionPhaseTwoOwnership{authority: authority, dependencies: productionPhaseTwoOwnershipDependencies{
+	runtime := &productionPhaseTwoOwnership{records: newLeaderRecordCache(store, nil), authority: authority, dependencies: productionPhaseTwoOwnershipDependencies{
 		ViewStream: server, ViewSource: source, Store: store,
 		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 			*observed = append(*observed, observation)
@@ -327,7 +327,7 @@ func TestAReleasedLeaderLeaseIsTakenAtOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime := func(worker string) *productionPhaseTwoOwnership {
-		return &productionPhaseTwoOwnership{dependencies: productionPhaseTwoOwnershipDependencies{
+		return &productionPhaseTwoOwnership{records: newLeaderRecordCache(store, nil), dependencies: productionPhaseTwoOwnershipDependencies{
 			Store: store, WorkerID: worker, ControlLeaderTTL: time.Minute, Now: time.Now,
 		}}
 	}

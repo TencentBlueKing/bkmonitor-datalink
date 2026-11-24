@@ -208,7 +208,7 @@ func TestAnUnreadableSnapshotStoreIsNotFourMissingReplicas(t *testing.T) {
 // to, and a Redis client's error names the endpoint it failed to reach.
 func TestUnreadableDenominatorClassifiesItsCauseWithoutQuotingIt(t *testing.T) {
 	service := mustService(t,
-		stubExpectations{err: errors.New("dial tcp 10.0.0.1:6379: connect: connection refused")},
+		stubExpectations{err: errors.New("dial tcp 192.0.2.1:6379: connect: connection refused")},
 		stubRegistry{replicas: replicas()},
 		stubSnapshots{snapshots: healthySnapshots()},
 	)
@@ -218,7 +218,7 @@ func TestUnreadableDenominatorClassifiesItsCauseWithoutQuotingIt(t *testing.T) {
 			if gap.Detail != "unavailable" {
 				t.Fatalf("detail = %q, want a classification rather than the raw error", gap.Detail)
 			}
-			if strings.Contains(gap.Detail, "10.0.0.1") {
+			if strings.Contains(gap.Detail, "192.0.2.1") {
 				t.Fatalf("detail = %q, leaks the dependency address", gap.Detail)
 			}
 			return

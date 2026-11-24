@@ -10,6 +10,7 @@
 package configs
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/elastic/go-ucfg/yaml"
@@ -35,7 +36,19 @@ type ScriptTaskConfig struct {
 
 // InitIdent :
 func (c *ScriptTaskConfig) InitIdent() error {
-	return c.initIdent(c)
+	// Preserve existing identifiers where gob has no map ordering ambiguity.
+	if len(c.UserEnvs) <= 1 && len(c.Tags) <= 1 {
+		return c.initIdent(c)
+	}
+	// Compare labels without regard to order, and let JSON sort the remaining map keys.
+	snapshot := *c
+	snapshot.convertLabels()
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		return err
+	}
+	c.Ident = utils.HashIt(data)
+	return nil
 }
 
 // Clean :
@@ -84,15 +97,14 @@ func (c *ScriptTaskMetaConfig) Clean() error {
 		if err := c.loadExclusiveCfg(); err != nil {
 			return err
 		}
-		logger.Infof("config %s, ScriptTaskMetaConfig %v", c.TaskConfigPath, c)
+		logger.Infof("loaded script config %s, tasks: %d", c.TaskConfigPath, len(c.Tasks))
 	}
 	for _, task := range c.Tasks {
-		logger.Infof("before clean timeout %v task:%v", task.Timeout, task)
 		err = c.CleanTask(task)
 		if err != nil {
 			return err
 		}
-		logger.Infof("period %s after clean timeout %v task:%v", task.Period.String(), task.Timeout, task)
+		logger.Infof("script task %d: period %s, timeout %s", task.TaskID, task.Period, task.Timeout)
 	}
 	return nil
 }

@@ -171,9 +171,28 @@ func compileUnitNormalizer(dataUnit, thresholdPrefix string) (NumericNormalizerS
 	return normalizer, thresholdMultiplier, true
 }
 
+// The unit table's ids: the platform's (bk-monitor core/unit/init_data.py)
+// by the step each is written in. Kept beside each other so a test can walk
+// them against the platform's definitions.
+var (
+	identityUnits = map[string]struct{}{"": {}, "none": {}, "short": {}, "celsius": {}, "fahrenheit": {}, "kelvin": {}}
+	binaryUnits   = map[string]int{"bits": 0, "bytes": 0, "kbytes": 1, "mbytes": 2, "gbytes": 3, "tbytes": 4, "pbytes": 5}
+	timeUnits     = map[string]int{"ns": 0, "µs": 1, "ms": 2, "s": 3, "m": 4, "h": 5, "d": 6}
+	countUnits    = map[string]struct{}{"cps": {}, "ops": {}, "reqps": {}, "rps": {}, "wps": {}, "iops": {}, "cpm": {}, "opm": {}, "rpm": {}, "wpm": {}}
+	percentUnits  = []string{"percent", "percentunit"}
+)
+
+var decimalUnits = map[string]int{
+	"decbits": 0, "decbytes": 0, "pps": 0, "bps": 0, "Bps": 0, "hertz": 0,
+	"deckbytes": 1, "KBs": 1, "Kbits": 1,
+	"decmbytes": 2, "MBs": 2, "Mbits": 2,
+	"decgbytes": 3, "GBs": 3, "Gbits": 3,
+	"dectbytes": 4, "TBs": 4, "Tbits": 4,
+	"decpbytes": 5, "PBs": 5, "Pbits": 5,
+}
+
 func unitSpecFor(unitID string) (unitSpec, bool) {
-	identity := map[string]struct{}{"": {}, "none": {}, "short": {}, "celsius": {}, "fahrenheit": {}, "kelvin": {}}
-	if _, ok := identity[unitID]; ok {
+	if _, ok := identityUnits[unitID]; ok {
 		return unitSpec{unitID: unitID, targetUnit: unitID, identity: true, suffixes: []string{""}, factorsToBase: []int64{1}}, true
 	}
 	if unitID == "percent" || unitID == "percentunit" {
@@ -183,33 +202,65 @@ func unitSpecFor(unitID string) (unitSpec, bool) {
 		}
 		return unitSpec{unitID: unitID, targetUnit: "%", suffixes: []string{"%", "x100%"}, defaultIndex: defaultIndex, factorsToBase: []int64{1, 100}}, true
 	}
-	binaryIDs := map[string]int{"bits": 0, "bytes": 0, "kbytes": 1, "mbytes": 2, "gbytes": 3, "tbytes": 4, "pbytes": 5}
-	if index, ok := binaryIDs[unitID]; ok {
+	if index, ok := binaryUnits[unitID]; ok {
 		return unitSpec{unitID: unitID, targetUnit: "base", suffixes: []string{"", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei"}, defaultIndex: index, factorsToBase: powers(1024, 7)}, true
 	}
-	decimalIDs := map[string]int{
-		"decbits": 0, "decbytes": 0, "pps": 0, "bps": 0, "Bps": 0, "hertz": 0,
-		"deckbytes": 1, "KBs": 1, "Kbits": 1,
-		"decmbytes": 2, "MBs": 2, "Mbits": 2,
-		"decgbytes": 3, "GBs": 3, "Gbits": 3,
-		"dectbytes": 4, "TBs": 4, "Tbits": 4,
-		"decpbytes": 5, "PBs": 5, "Pbits": 5,
-	}
-	if index, ok := decimalIDs[unitID]; ok {
+	if index, ok := decimalUnits[unitID]; ok {
 		return unitSpec{unitID: unitID, targetUnit: "base", suffixes: []string{"", "k", "M", "G", "T", "P", "E"}, defaultIndex: index, factorsToBase: powers(1000, 7)}, true
 	}
-	timeIDs := map[string]int{"ns": 0, "µs": 1, "ms": 2, "s": 3, "m": 4, "h": 5, "d": 6}
-	if index, ok := timeIDs[unitID]; ok {
+	if index, ok := timeUnits[unitID]; ok {
 		return unitSpec{
 			unitID: unitID, targetUnit: "ns", suffixes: []string{"ns", "µs", "ms", "s", "m", "h", "d"}, defaultIndex: index,
 			factorsToBase: []int64{1, 1_000, 1_000_000, 1_000_000_000, 60_000_000_000, 3_600_000_000_000, 86_400_000_000_000},
 		}, true
 	}
-	countIDs := map[string]struct{}{"cps": {}, "ops": {}, "reqps": {}, "rps": {}, "wps": {}, "iops": {}, "cpm": {}, "opm": {}, "rpm": {}, "wpm": {}}
-	if _, ok := countIDs[unitID]; ok {
+	if _, ok := countUnits[unitID]; ok {
 		return unitSpec{unitID: unitID, targetUnit: "base", suffixes: []string{"", "K", "M", "B", "T"}, factorsToBase: powers(1000, 5)}, true
 	}
 	return unitSpec{}, false
+}
+
+// unitSpecOf reads a data unit id the way compileUnitNormalizer does: a
+// "group||unit" id is its unit part.
+func unitSpecOf(dataUnit string) (unitSpec, bool) {
+	unitID := dataUnit
+	if parts := strings.Split(dataUnit, "||"); len(parts) == 2 {
+		unitID = parts[1]
+	}
+	return unitSpecFor(unitID)
+}
+
+// UnitKnown says the unit table defines dataUnit. A unit it does not define
+// cannot be scaled, and a caller that compiles against it is refused.
+func UnitKnown(dataUnit string) bool {
+	_, ok := unitSpecOf(dataUnit)
+	return ok
+}
+
+// UnitHasSteps says dataUnit is defined and has steps a prefix can select;
+// false for a unit without steps and for one the table does not define.
+func UnitHasSteps(dataUnit string) bool {
+	spec, ok := unitSpecOf(dataUnit)
+	return ok && !spec.identity
+}
+
+// UnitPrefixInSteps says a threshold prefix can be read against dataUnit:
+// the empty prefix, any prefix on a unit without steps (where it is nothing),
+// or one of the unit's own steps. It is false for an unknown unit.
+func UnitPrefixInSteps(dataUnit, prefix string) bool {
+	spec, ok := unitSpecOf(dataUnit)
+	if !ok {
+		return false
+	}
+	if prefix == "" || spec.identity {
+		return true
+	}
+	for _, suffix := range spec.suffixes {
+		if suffix == prefix {
+			return true
+		}
+	}
+	return false
 }
 
 func powers(factor int64, count int) []int64 {

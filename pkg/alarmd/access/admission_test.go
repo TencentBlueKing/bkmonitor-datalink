@@ -68,10 +68,10 @@ func TestASeriesOutsideEveryTargetIsNotDelivered(t *testing.T) {
 		attemptNo: 1,
 		admission: scopedChain(),
 		observe:   func(filter, result, reason string) { decisions = append(decisions, filter+"/"+result+"/"+reason) },
-		scopes:    planScopes{plan: {StrategyID: plan.StrategyID, TargetScope: hostScope("10.0.0.1|0")}},
+		scopes:    planScopes{plan: {StrategyID: plan.StrategyID, TargetScope: hostScope("192.0.2.1|0")}},
 	}
 
-	dataset := hostSeries(t, "10.9.9.9")
+	dataset := hostSeries(t, "192.0.2.8")
 	err := adapter.ConsumeProviderSeries(context.Background(), execution.ProviderSeriesBatch{
 		PhysicalQuery: adapter.query.Spec.Digest, CompletionRef: "result", Dataset: dataset,
 		Delivery: execution.SeriesDelivery{PhysicalQuery: adapter.query.Spec.Digest,
@@ -100,10 +100,10 @@ func TestASeriesInsideTheTargetIsDeliveredUnchanged(t *testing.T) {
 		query:     plannedQueryForTest(requirement),
 		attemptNo: 1,
 		admission: scopedChain(),
-		scopes:    planScopes{plan: {StrategyID: plan.StrategyID, TargetScope: hostScope("10.0.0.1|0")}},
+		scopes:    planScopes{plan: {StrategyID: plan.StrategyID, TargetScope: hostScope("192.0.2.1|0")}},
 	}
 
-	dataset := hostSeries(t, "10.0.0.1")
+	dataset := hostSeries(t, "192.0.2.1")
 	err := adapter.ConsumeProviderSeries(context.Background(), execution.ProviderSeriesBatch{
 		PhysicalQuery: adapter.query.Spec.Digest, CompletionRef: "result", Dataset: dataset,
 		Delivery: execution.SeriesDelivery{PhysicalQuery: adapter.query.Spec.Digest,
@@ -135,13 +135,13 @@ func TestOneSeriesIsAdmittedPerPlanNotPerQuery(t *testing.T) {
 		attemptNo: 1,
 		admission: scopedChain(),
 		scopes: planScopes{
-			included: {StrategyID: included.StrategyID, TargetScope: hostScope("10.0.0.1|0")},
-			excluded: {StrategyID: excluded.StrategyID, TargetScope: hostScope("10.0.0.2|0")},
+			included: {StrategyID: included.StrategyID, TargetScope: hostScope("192.0.2.1|0")},
+			excluded: {StrategyID: excluded.StrategyID, TargetScope: hostScope("192.0.2.2|0")},
 		},
 	}
 
 	err := adapter.ConsumeProviderSeries(context.Background(), execution.ProviderSeriesBatch{
-		PhysicalQuery: adapter.query.Spec.Digest, CompletionRef: "result", Dataset: hostSeries(t, "10.0.0.1"),
+		PhysicalQuery: adapter.query.Spec.Digest, CompletionRef: "result", Dataset: hostSeries(t, "192.0.2.1"),
 		Delivery: execution.SeriesDelivery{PhysicalQuery: adapter.query.Spec.Digest,
 			QueryRevision: adapter.query.Spec.PlanFacts.QueryRevision, Series: 1, Records: 1, Digest: "digest"},
 	})
@@ -173,7 +173,7 @@ func TestNoAdmissionGateDeliversEverySeries(t *testing.T) {
 		attemptNo: 1,
 	}
 	err := adapter.ConsumeProviderSeries(context.Background(), execution.ProviderSeriesBatch{
-		PhysicalQuery: adapter.query.Spec.Digest, CompletionRef: "result", Dataset: hostSeries(t, "10.9.9.9"),
+		PhysicalQuery: adapter.query.Spec.Digest, CompletionRef: "result", Dataset: hostSeries(t, "192.0.2.8"),
 		Delivery: execution.SeriesDelivery{PhysicalQuery: adapter.query.Spec.Digest,
 			QueryRevision: adapter.query.Spec.PlanFacts.QueryRevision, Series: 1, Records: 1, Digest: "digest"},
 	})

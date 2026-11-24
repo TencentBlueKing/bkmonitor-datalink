@@ -27,7 +27,7 @@ import (
 // open Segment of the Query Group the Plan is in: the cutover writes both from
 // one list in one script. The copy in the body is what makes a publication
 // write, and every replica read after it, cost the whole population rather
-// than what changed (N15, review C1/C2).
+// than what changed.
 //
 // A later build stops writing that copy: its body is a head (schema v3, no
 // Plans). This build writes the head. It also reads a body with its Plans,
@@ -248,6 +248,14 @@ func (written *writtenActivation) remember(payload []byte, state ActivationState
 	full.SchemaVersion = activationSchemaVersion
 	written.mu.Lock()
 	written.payload, written.state = string(payload), &full
+	written.mu.Unlock()
+}
+
+// forget drops the records kept, so that the next read of the activation
+// takes them from the open Segments, which name what they cannot read.
+func (written *writtenActivation) forget() {
+	written.mu.Lock()
+	written.payload, written.state = "", nil
 	written.mu.Unlock()
 }
 

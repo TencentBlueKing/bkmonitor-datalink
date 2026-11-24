@@ -78,6 +78,11 @@ type queryGroupIdentityFacts struct {
 	// query_md5 carries query_output_config only when present). Omitted when
 	// nil, so every group without them stays where it was.
 	NamedOutputs *execution.NamedOutputs `json:"named_outputs,omitempty"`
+	// QueryStep is the step buckets start apart when an item is detected
+	// more often than it aggregates: two items over the same buckets that
+	// step differently read different points. Omitted when zero, so every
+	// other group stays where it was.
+	QueryStep int64 `json:"query_step_millis,omitempty"`
 }
 
 // queryGroupIdentityFactsOf projects a Plan's facts onto the identity. The
@@ -92,6 +97,7 @@ func queryGroupIdentityFactsOf(facts execution.QueryPlanFacts) queryGroupIdentit
 		Normalization: facts.Normalization, QueryDelay: facts.QueryDelaySeconds,
 		SourceSemantics: facts.SourceSemantics, PromQL: facts.PromQL, TSDBMap: facts.TSDBMap,
 		Shard: facts.Shard, GlobalBusiness: facts.GlobalBusiness, NamedOutputs: facts.NamedOutputs,
+		QueryStep: facts.QueryStepMillis,
 	}
 }
 

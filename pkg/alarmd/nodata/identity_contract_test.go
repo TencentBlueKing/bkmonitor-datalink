@@ -25,7 +25,7 @@ import (
 // count_md5 flattens the boolean True and the text "True" together, and
 // nothing else.
 func TestSyntheticDimensionsHashLikePythonNoDataIdentity(t *testing.T) {
-	host, ok := Project(map[string]string{"bk_target_ip": "10.0.0.1", "bk_target_cloud_id": "0"}, hostNoDataDimensions)
+	host, ok := Project(map[string]string{"bk_target_ip": "192.0.2.1", "bk_target_cloud_id": "0"}, hostNoDataDimensions)
 	if !ok {
 		t.Fatal("fixture: Project() rejected a complete host series")
 	}
@@ -34,7 +34,7 @@ func TestSyntheticDimensionsHashLikePythonNoDataIdentity(t *testing.T) {
 		want   string
 	}{
 		"whole item": {series: SyntheticSeries{Group: WholeItemGroup()}, want: "3e06a0b6d0560271cafee9f08a6da2d7"},
-		"host group": {series: SyntheticSeries{Group: host}, want: "24251420c035b0e1d0ef96ede93a9a39"},
+		"host group": {series: SyntheticSeries{Group: host}, want: "2d9cfb3ae132267a344a245d2cfc8c6c"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			fields := test.series.IdentityFields()

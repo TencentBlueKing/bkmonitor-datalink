@@ -199,5 +199,15 @@ phase_two:
   access:
     uq_endpoint: http://unify-query.service
     query_source: alarmd
-`
+` + applicationLinkdControlPlaneYAML
 }
+
+// applicationLinkdControlPlaneYAML is the link's control plane the
+// application fixture states: the fixture is a deployment that sends its
+// alerts to the link, which does not load without the plane. --check-config never opens the secret's
+// file; a test that reads credentials puts a file at
+// applicationLinkdJWTSecretFile (credentialApplicationYAML).
+const applicationLinkdControlPlaneYAML = "  linkd:\n    control_plane:\n      url: http://192.0.2.10:8090\n" +
+	"      jwt_secret_file: " + applicationLinkdJWTSecretFile + "\n"
+
+const applicationLinkdJWTSecretFile = "/etc/alarmd/secrets/linkd-jwt-secret"

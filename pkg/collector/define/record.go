@@ -75,6 +75,15 @@ const (
 	RecordLogPush        RecordType = "logpush"
 )
 
+// RecordTypes 返回 IntoRecordType 能得到的全部 RecordType（不认识的类型得到 RecordUndefined）
+func RecordTypes() []RecordType {
+	return []RecordType{
+		RecordUndefined, RecordTraces, RecordRumTraces, RecordProfiles, RecordMetrics, RecordLogs,
+		RecordTracesDerived, RecordMetricsDerived, RecordLogsDerived, RecordPushGateway, RecordFta,
+		RecordRemoteWrite, RecordProxy, RecordPingserver, RecordBeat, RecordTars, RecordLogPush,
+	}
+}
+
 // IntoRecordType 将字符串描述转换为 RecordType 并返回是否为 Derived 类型
 func IntoRecordType(s string) (RecordType, bool) {
 	var t RecordType

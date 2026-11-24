@@ -41,6 +41,22 @@ func evaluateCountsWithHoles(t *testing.T, plan *strategy.CompiledPlan, points [
 // history carrying lastReal as the series' last real point.
 func evaluateCountsFrom(t *testing.T, plan *strategy.CompiledPlan, points []countPoint, zeroIsNoObservation bool, holes map[int]bool, lastReal int64) ([]string, []EvaluationResultV2) {
 	t.Helper()
+	return evaluateCountsAsking(t, plan, points, zeroIsNoObservation, holes, lastReal, nil)
+}
+
+// evaluateCountsAsking is evaluateCountsFrom with asking asked before a
+// Level ends on no data.
+func evaluateCountsAsking(t *testing.T, plan *strategy.CompiledPlan, points []countPoint, zeroIsNoObservation bool, holes map[int]bool,
+	lastReal int64, asking NoDataEndSource) ([]string, []EvaluationResultV2) {
+	t.Helper()
+	return evaluateCountsWith(t, plan, points, zeroIsNoObservation, holes, lastReal, asking, nil)
+}
+
+// evaluateCountsWith is evaluateCountsAsking with each round's request
+// passed through with before it is evaluated.
+func evaluateCountsWith(t *testing.T, plan *strategy.CompiledPlan, points []countPoint, zeroIsNoObservation bool, holes map[int]bool,
+	lastReal int64, asking NoDataEndSource, with func(*EvaluationRequestV2)) ([]string, []EvaluationResultV2) {
+	t.Helper()
 	level := plan.Levels().At(0)
 	base := int64(1000 * 60)
 	results, evaluated := make([]string, len(points)), make([]EvaluationResultV2, len(points))
@@ -62,6 +78,10 @@ func evaluateCountsFrom(t *testing.T, plan *strategy.CompiledPlan, points []coun
 		request.Record.ProjectedValues[0].CanonicalDecimal = points[index].value
 		request.SeriesSeenBefore = index > 0
 		request.ZeroCountIsNoObservation = zeroIsNoObservation
+		request.NoDataEndSource = asking
+		if with != nil {
+			with(&request)
+		}
 		readInTheNextSlot(t, &request)
 		got, err := EvaluateV2(request)
 		if err != nil {

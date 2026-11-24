@@ -77,16 +77,20 @@ func canonicalActiveQueryGroupSet(identities []execution.QueryGroupIdentity) (Ac
 func (repository *RedisCatalogRepository) persistAndVerifyActiveQGSet(ctx context.Context, identities []execution.QueryGroupIdentity) (ActiveQueryGroupSetRef, []byte, error) {
 	encodeStarted := time.Now()
 	ref, payload, err := canonicalActiveQueryGroupSet(identities)
+	encoded := time.Since(encodeStarted)
 	repository.observe(ctx, observability.Observation{Component: observability.ComponentControlPlane, Stage: observability.StageActiveQGSet,
-		Result: observationResult(err), ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "encode", Result: observationResultText(err), Duration: time.Since(encodeStarted)}})
+		Result: observationResult(err), ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "encode", Result: observationResultText(err), Duration: encoded},
+		Duration: encoded, DurationKnown: true})
 	if err != nil {
 		return ref, nil, err
 	}
 	redisStarted := time.Now()
 	writeResult := "failure"
 	defer func() {
+		written := time.Since(redisStarted)
 		repository.observe(ctx, observability.Observation{Component: observability.ComponentControlPlane, Stage: observability.StageActiveQGSet,
-			Result: factsTextResult(writeResult), ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "write", Result: writeResult, Duration: time.Since(redisStarted)}})
+			Result: factsTextResult(writeResult), ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "write", Result: writeResult, Duration: written},
+			Duration: written, DurationKnown: true})
 	}()
 	key := repository.activeQGSetKey(ref.Digest)
 	stored, err := repository.client.StrLen(ctx, key).Result()
@@ -139,8 +143,10 @@ func (repository *RedisCatalogRepository) LoadActiveQueryGroupSet(ctx context.Co
 	started := time.Now()
 	result := "failure"
 	defer func() {
+		read := time.Since(started)
 		repository.observe(ctx, observability.Observation{Component: observability.ComponentControlPlane, Stage: observability.StageActiveQGSet,
-			Result: factsTextResult(result), ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "read", Result: result, Duration: time.Since(started)}})
+			Result: factsTextResult(result), ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "read", Result: result, Duration: read},
+			Duration: read, DurationKnown: true})
 	}()
 	if err := ref.validate(); err != nil {
 		return nil, &ActiveQueryGroupSetConflictError{Err: err}

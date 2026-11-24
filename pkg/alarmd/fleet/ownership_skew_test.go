@@ -67,7 +67,7 @@ func TestAggregateCarriesTheNewestRebalanceRound(t *testing.T) {
 func TestOwnershipSkewIsAStandingDecidedByTheSchedulersRound(t *testing.T) {
 	view := View{
 		Rebalance: skewedRound(now), RebalanceReplica: "pod-a",
-		Degradations: []Degradation{{Kind: DegradationOpenAlertSetStale, Replica: "pod-b"}},
+		Degradations: []Degradation{{Kind: DegradationActiveCopyUnsupported, Replica: "pod-b"}},
 		Anomalies:    []Anomaly{{QueryGroup: "qg-1", Kind: KindOverdueWake, Finding: Finding{Check: CheckSlotsOverdue, Group: "pod-a"}}},
 	}
 	reports := ReportChecks([][]Anomaly{view.Anomalies}, nil, &view, now)

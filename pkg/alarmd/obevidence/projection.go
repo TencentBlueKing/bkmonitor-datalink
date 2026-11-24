@@ -107,7 +107,7 @@ var sourceQueryPolicy = fields("alert_name index_set_id promql custom_event_name
 // or the object naming a host, instance, node or group the compiler reads.
 var targetValuePolicy = scalarOr(fields("bk_cloud_id bk_host_id bk_inst_id bk_obj_id bk_target_cloud_id bk_target_ip bk_target_service_instance_id dynamic_group_id ip service_instance_id cw_object_model_id cw_object_model_inst_id", nil))
 var sourcePolicy = fields("id bk_biz_id bk_tenant_id space_uid is_global_strategy name is_enabled update_time strategy_revision priority priority_group_key labels scenario source type", map[string]*policy{
-	"items": fields("id name query_md5 expression time_delay detect_interval unit", map[string]*policy{
+	"items": fields("id name query_md5 expression expression_unit time_delay detect_interval unit", map[string]*policy{
 		"query_configs": sourceQueryPolicy, "algorithms": algorithmPolicy, "functions": functionPolicy,
 		"target":      namedValues(fields("condition key field method type model_id target_type", map[string]*policy{"value": targetValuePolicy, "conditions": conditionPolicy, "hosts": memberPolicy, "nodes": memberPolicy})),
 		"target_plan": targetPolicy, "no_data_config": noDataPolicy,
@@ -117,6 +117,18 @@ var sourcePolicy = fields("id bk_biz_id bk_tenant_id space_uid is_global_strateg
 	}),
 	"detects":        fields("level priority connector", map[string]*policy{"trigger_config": triggerPolicy, "recovery_config": recoveryPolicy, "effective_time": uptimePolicy}),
 	"effective_time": uptimePolicy, "uptime": uptimePolicy, "effective_time_snapshot": effectiveSnapshotPolicy,
+	// The publisher's copy of the strategy item it compiled from
+	// (StrategyItemSpec). alarmd reads items and detects, not this; its
+	// values are shown as written, under the same rules as the item's, so
+	// an item the copy disagrees with - its recovery, its query, its
+	// conditions - can be read against what the writer started from. The
+	// rest of the copy keeps its shape only.
+	"runtime_config": fields("", map[string]*policy{"spec": fields("", map[string]*policy{
+		"strategy_item": fields("agg_method agg_interval agg_dimension connector expression alarm_level", map[string]*policy{
+			"trigger_config": triggerPolicy, "recovery_config": recoveryPolicy, "no_data_config": noDataPolicy,
+			"agg_condition": conditionPolicy, "functions": functionPolicy, "query_configs": sourceQueryPolicy,
+		}),
+	})}),
 })
 var groupPolicy = fields("model_id model_inst_ids", map[string]*policy{"member_list": memberPolicy})
 
@@ -138,7 +150,7 @@ var frozenConditionsPolicy = fields("Connectors", map[string]*policy{"Fields": n
 var frozenClausePolicy = fields("DataSource Driver TableID FieldName TimeField IsRegexp ReferenceName Dimensions Offset OffsetForward KeepColumns QueryString", map[string]*policy{
 	"Conditions": frozenConditionsPolicy, "Functions": frozenFunctionPolicy, "TimeAggregation": frozenFunctionPolicy,
 })
-var frozenQueryPolicy = fields("QueryDelaySeconds SourceSemantics QueryRevision Provider ProviderRouteRef TenantID BusinessID SpaceScope GlobalBusiness MetricMerge StepMillis AlignmentMillis DownSampleRange Timezone NotTimeAlign", map[string]*policy{
+var frozenQueryPolicy = fields("QueryDelaySeconds SourceSemantics QueryRevision Provider ProviderRouteRef TenantID BusinessID SpaceScope GlobalBusiness MetricMerge StepMillis AlignmentMillis DownSampleRange Timezone NotTimeAlign QueryStepMillis", map[string]*policy{
 	"QueryList": frozenClausePolicy, "PromQL": fields("Expression Match", nil),
 	"TSDBMap": dictionary(fields("table_id storage_id storage_type db measurement need_add_time source_type", map[string]*policy{"time_field": fields("name type unit", nil)})),
 })

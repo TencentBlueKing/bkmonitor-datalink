@@ -70,13 +70,15 @@ const (
 // A target plan's absence is judged only against a complete resolution.
 //
 // decision-017 section 3.4, third item, and the ruling quoted in section 4:
-// when a selector of the plan cannot be resolved, the Plan's no-data pauses
-// for the round - no NORMAL and no ANOMALY is synthesised, the memory is not
-// written and first_absent does not move - under
+// when a selector of the plan cannot be resolved, the Plan's absence pauses
+// for the round - no ANOMALY, no exit from the target, and a silent member's
+// memory and first_absent do not move - under
 // SKIPPED_TARGET_SELECTOR_UNAVAILABLE; when every selector answered and
 // members were dropped in validation, the same pause under its own name,
 // SKIPPED_TARGET_MEMBERS_DROPPED. The members that did resolve still admit
-// their records, so the threshold detection goes on. With a complete
+// their records, so the threshold detection goes on, and a member that
+// reported is judged present (A1); host 1 here never had an absence open, so
+// its recovery is held by the open-alert gate and no no-data event is sent. With a complete
 // resolution the same edit is judged, which is the other side: the host the
 // plan no longer names is closed exactly once (A8) and the one it now names
 // is expected.
@@ -155,6 +157,80 @@ func TestATargetPlanIsJudgedOnlyAgainstACompleteResolution(t *testing.T) {
 			}
 			if value, held := fixture.memoryOf(hostTwo); held {
 				t.Fatalf("host 2 is still remembered as %q after the round that closed it", value)
+			}
+		})
+	}
+}
+
+// A member that reports while its target plan is not fully resolved closes
+// its own no-data alert.
+//
+// Host 2 is a member of group 501 and is absent in round 1, so its no-data
+// alert opens. The plan is then edited to reference a second group beside
+// 501: one whose key the writer has not written (a selector that cannot
+// answer) or one with a member that fails validation. Host 2 is still a
+// member that resolved, its data comes back, and nothing else about it
+// changed - yet with the whole round skipped its recovery is never decided,
+// and the alert stays open for as long as the second group stays as it is.
+// The round still judges no absence: it stays skipped by name.
+func TestAMemberThatReportsWhileItsTargetIsNotFullyResolvedClosesItsAlert(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		document string
+		outcome  string
+	}{
+		{name: "a second group that cannot be read", outcome: "SKIPPED_TARGET_SELECTOR_UNAVAILABLE"},
+		{name: "a second group that lost a member", document: targetPlanGroupOneDropped, outcome: "SKIPPED_TARGET_MEMBERS_DROPPED"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			address, client := startPhaseTwoRedis(t)
+			ctx := context.Background()
+			if err := client.Set(ctx, targetPlanGroupPrefix+"dynamic_group:501", targetPlanGroupHostTwo, 0).Err(); err != nil {
+				t.Fatal(err)
+			}
+			if test.document != "" {
+				if err := client.Set(ctx, targetPlanGroupPrefix+"dynamic_group:502", test.document, 0).Err(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			installRoundsStrategy(t, ctx, client, 7, targetPlanItem("501"))
+			fixture := startRoundsFixture(t, roundsOptions{hosts: true, groupPrefix: targetPlanGroupPrefix,
+				address: address, client: client})
+			fixture.report(hostIDSeries("1"))
+			fixture.run(1)
+			opened, _ := eventsAbout(fixture.written(), "bk_host_id", "2")
+			if len(opened) != 1 || opened[0].EventKind != contract.TriggerEventAbnormal {
+				t.Fatalf("fixture: round 1 sent host 2's no-data events %+v, want the anomaly that opens its alert", opened)
+			}
+
+			edited := fixture.firstRoundUnder(8, targetPlanItem("501", "502"))
+			for round := int64(2); round < edited; round++ {
+				fixture.run(round)
+			}
+			fixture.report(hostIDSeries("1"), hostIDSeries("2"))
+			var closed []contract.TriggerEventV1
+			for round := edited; round < edited+3; round++ {
+				mark, sent := fixture.mark(), len(fixture.written())
+				fixture.run(round)
+				outcomesAre(t, round, fixture.outcomesSince(mark), map[string]int{test.outcome: 1})
+				two, _ := eventsAbout(fixture.written()[sent:], "bk_host_id", "2")
+				for _, event := range two {
+					if event.EventKind != contract.TriggerEventRecovery {
+						t.Fatalf("round %d sent host 2 a %s; a round that did not resolve its target judges no absence", round, event.EventKind)
+					}
+				}
+				closed = append(closed, two...)
+			}
+			// The fixture's consumer never closes the alert, so its copy keeps
+			// it open and the gate offers the recovery again each round, as it
+			// does after a judged round.
+			if len(closed) == 0 {
+				t.Fatalf("host 2 reported for three rounds and no RECOVERY closed the no-data alert round 1 opened")
+			}
+			for _, event := range closed {
+				if event.DedupeMD5 != opened[0].DedupeMD5 {
+					t.Fatalf("a RECOVERY under %s, the alert round 1 opened is %s", event.DedupeMD5, opened[0].DedupeMD5)
+				}
 			}
 		})
 	}

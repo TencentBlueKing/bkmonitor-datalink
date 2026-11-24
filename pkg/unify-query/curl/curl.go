@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	encodingJson "encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/credential"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -51,6 +53,9 @@ type Options struct {
 	// MaxResponseBytes 限制响应体最大字节数，在 JSON 解码前拒绝超限响应；
 	// 非正数表示不限制，以兼容未配置该选项的现有调用方。
 	MaxResponseBytes int64
+
+	// Attempt 由需要显式重试的调用方设置，仅用于区分同一逻辑查询的出站 span。
+	Attempt int
 }
 
 type Curl interface {
@@ -84,6 +89,24 @@ func (c *HttpCurl) WithDecoder(decoder func(ctx context.Context, reader io.Reade
 func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res any) (size int, err error) {
 	ctx, span := trace.NewSpan(ctx, "http-curl")
 	defer span.End(&err)
+	if limit := metadata.BackendResponseLimit(ctx); limit > 0 && (opt.MaxResponseBytes <= 0 || opt.MaxResponseBytes > limit) {
+		opt.MaxResponseBytes = limit
+	}
+
+	span.Set("response-body-byte-limit", opt.MaxResponseBytes)
+	if opt.Attempt > 0 {
+		span.Set("outbound.request.attempt", opt.Attempt)
+	}
+	readBody, responded := false, false
+	var firstByte time.Duration
+	defer func() {
+		if responded {
+			metadata.RecordBackendRead(ctx, size, firstByte)
+		}
+		if readBody && metadata.BackendResponseLimit(ctx) > 0 {
+			metric.CMDBTopologyPayloadObserve(ctx, "backend-response", metric.CMDBTimeGraphErrorResult(err), size)
+		}
+	}()
 
 	client := http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport, otelhttp.WithFilter(func(req *http.Request) bool {
@@ -132,16 +155,20 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 
 	roundTripStarted := time.Now()
 	resp, err := client.Do(req)
-	span.Set("response-headers-duration", time.Since(roundTripStarted))
+	firstByte = time.Since(roundTripStarted)
+	span.Set("response-headers-duration", firstByte)
 	if err != nil {
 		return size, HandleClientError(ctx, metadata.MsgHttpCurl, opt.UrlPath, err)
 	}
+	responded = true
 
 	buf := bufPool.Get().(*bytes.Buffer)
 	defer func() {
 		_ = resp.Body.Close()
 		buf.Reset()
-		bufPool.Put(buf)
+		if buf.Cap() <= 1024*1024 {
+			bufPool.Put(buf)
+		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
@@ -154,6 +181,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 		return size, metadata.ErrorWithCauses(statusErr.Error(), &metadata.BackendStatusError{Status: resp.StatusCode})
 	}
 
+	readBody = true
 	if c.decoder != nil {
 		decodeStarted := time.Now()
 		reader := io.Reader(resp.Body)
@@ -165,9 +193,10 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 		span.Set("response-body-decode-duration", time.Since(decodeStarted))
 		span.Set("response-body-bytes", size)
 		if opt.MaxResponseBytes > 0 && int64(size) > opt.MaxResponseBytes {
+			metadata.MarkBackendResponseLimitExceeded(ctx)
 			return size, &ResponseBodyLimitError{Limit: opt.MaxResponseBytes}
 		}
-		return size, err
+		return size, backendResponseFailure(err)
 	} else {
 		bodyReadStarted := time.Now()
 		reader := io.Reader(resp.Body)
@@ -177,12 +206,13 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 		}
 		_, err = io.Copy(buf, reader)
 		span.Set("response-body-read-duration", time.Since(bodyReadStarted))
-		if err != nil {
-			return size, err
-		}
 		size = buf.Len()
 		span.Set("response-body-bytes", size)
+		if err != nil {
+			return size, backendResponseFailure(err)
+		}
 		if opt.MaxResponseBytes > 0 && int64(size) > opt.MaxResponseBytes {
+			metadata.MarkBackendResponseLimitExceeded(ctx)
 			return size, &ResponseBodyLimitError{Limit: opt.MaxResponseBytes}
 		}
 
@@ -193,6 +223,14 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 		decoder.UseNumber()
 		err = decoder.Decode(&res)
 		span.Set("json-decode-duration", time.Since(decodeStarted))
-		return size, err
+		return size, backendResponseFailure(err)
 	}
+}
+
+// backendResponseFailure 把读或解码后端应答体的失败包成后端失败；取消和超时照旧按各自的类型归类。
+func backendResponseFailure(err error) error {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return &metadata.BackendResponseError{Err: err}
 }

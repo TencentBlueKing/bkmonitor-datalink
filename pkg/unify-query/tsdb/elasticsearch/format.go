@@ -22,12 +22,14 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/esquery"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/esregexpcompat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/precision"
 )
@@ -180,7 +182,8 @@ type FormatFactory struct {
 	end        time.Time
 	timeFormat string
 
-	isReference bool
+	isReference                   bool
+	explicitDateHistogramInterval bool
 
 	labelMap map[string][]function.LabelMapValue
 }
@@ -204,6 +207,11 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 
 func (f *FormatFactory) WithFieldMap(fieldsMap metadata.FieldsMap) *FormatFactory {
 	f.fieldsMap = fieldsMap
+	return f
+}
+
+func (f *FormatFactory) WithExplicitDateHistogramInterval(supported bool) *FormatFactory {
+	f.explicitDateHistogramInterval = supported
 	return f
 }
 
@@ -433,8 +441,6 @@ func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
 }
 
 func (f *FormatFactory) rangeQuery(endExclusive bool) (elastic.Query, error) {
-	var err error
-
 	fieldName := f.timeField.Name
 	fieldType := f.timeField.Type
 
@@ -452,12 +458,12 @@ func (f *FormatFactory) rangeQuery(endExclusive bool) (elastic.Query, error) {
 			Lte(f.queryToUnix(f.end, f.timeFormat)).
 			Format(f.timeFormatToEpoch(f.timeFormat))
 	default:
-		err = fmt.Errorf("time field type is error %s", fieldType)
+		return nil, fmt.Errorf("time field type is error %s", fieldType)
 	}
-	if query != nil && endExclusive {
+	if endExclusive {
 		query.IncludeUpper(false)
 	}
-	return query, err
+	return esquery.Range(query), nil
 }
 
 func (f *FormatFactory) timeAgg(name string, window time.Duration, timezoneOffset int64, timezone string) {
@@ -533,6 +539,7 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 
 	defer func() {
 		if r := recover(); r != nil {
+			metric.PanicInc(f.ctx, metric.PanicSiteStorage)
 			_ = metadata.NewMessage(
 				metadata.MsgQueryES,
 				"聚合数据格式化失败",
@@ -675,6 +682,7 @@ func (f *FormatFactory) resetAggInfoListWithNested() {
 func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			metric.PanicInc(f.ctx, metric.PanicSiteStorage)
 			_ = metadata.NewMessage(
 				metadata.MsgQueryES,
 				"聚合数据格式化失败",
@@ -797,8 +805,20 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			}
 
 			curAgg := elastic.NewDateHistogramAggregation().
-				Field(f.timeField.Name).Interval(interval).MinDocCount(0).
+				Field(f.timeField.Name).MinDocCount(0).
 				ExtendedBounds(f.timeFieldUnix(f.start), f.timeFieldUnix(f.end))
+			if f.explicitDateHistogramInterval {
+				// 按单位换算后的字符串保留旧 interval 语义；shortDur 的其他输出均为固定时长。
+				switch interval {
+				case "1s", "1m", "1h", "1d":
+					curAgg.CalendarInterval(interval)
+				default:
+					curAgg.FixedInterval(interval)
+				}
+			} else {
+				//nolint:staticcheck // ES 7.2 之前及 BKData 网关继续使用 interval。
+				curAgg.Interval(interval)
+			}
 
 			if function.IsAlignTime(info.Window) {
 				if f.timeField.Type == TimeFieldTypeTime {
@@ -1181,13 +1201,13 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 										query = regexpQuery
 									}
 								case structured.ConditionGt:
-									query = elastic.NewRangeQuery(key).Gt(value).Format(format)
+									query = esquery.Range(elastic.NewRangeQuery(key).Gt(value).Format(format))
 								case structured.ConditionGte:
-									query = elastic.NewRangeQuery(key).Gte(value).Format(format)
+									query = esquery.Range(elastic.NewRangeQuery(key).Gte(value).Format(format))
 								case structured.ConditionLt:
-									query = elastic.NewRangeQuery(key).Lt(value).Format(format)
+									query = esquery.Range(elastic.NewRangeQuery(key).Lt(value).Format(format))
 								case structured.ConditionLte:
-									query = elastic.NewRangeQuery(key).Lte(value).Format(format)
+									query = esquery.Range(elastic.NewRangeQuery(key).Lte(value).Format(format))
 								default:
 									return fmt.Errorf("operator is not support, %+v", con)
 								}

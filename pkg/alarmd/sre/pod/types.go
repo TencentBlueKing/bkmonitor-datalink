@@ -252,10 +252,21 @@ type DiscoverRequest struct {
 	Limit    int    `json:"limit,omitempty"`
 }
 type DiscoverReceipt struct {
-	Targets    []Observation `json:"targets"`
-	Continue   string        `json:"continue,omitempty"`
-	Rejected   int           `json:"rejected"`
-	ObservedAt time.Time     `json:"observed_at"`
+	Targets  []Observation `json:"targets"`
+	Continue string        `json:"continue,omitempty"`
+	// Rejected is how many Pods of the page were left out, and RejectedPods
+	// names the first MaxRejectedNamed of them with why.
+	Rejected     int           `json:"rejected"`
+	RejectedPods []RejectedPod `json:"rejected_pods,omitempty"`
+	ObservedAt   time.Time     `json:"observed_at"`
+}
+
+// RejectedPod is one Pod a discovery left out: Reason is RejectedNotInScope
+// or RejectedOwnerNotFound, Message the provider's own words.
+type RejectedPod struct {
+	Pod     string `json:"pod"`
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
 }
 type TargetRequest struct {
 	Target Target `json:"target"`

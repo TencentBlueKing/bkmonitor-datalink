@@ -38,7 +38,7 @@ func supplementSeries(t *testing.T, due execution.DuePlan, at int64, dimensions 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return preparedSeries{due: due, identity: execution.SeriesIdentityDigest(strings.Repeat("c", 64)),
+	return preparedSeries{due: &due, identity: execution.SeriesIdentityDigest(strings.Repeat("c", 64)),
 		inputs: []execution.SeriesEvaluationInputRequest{{Inputs: []execution.NamedInputBinding{{
 			Role: execution.InputRolePrimary, Dataset: dataset, View: view, Completeness: execution.CompletenessFull}}}}}
 }

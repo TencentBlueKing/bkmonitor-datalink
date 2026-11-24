@@ -497,10 +497,11 @@ func (c Config) DeploymentProfile() string {
 // AdmittedQueryConcurrency is the number of queries the scheduler may have in
 // flight at once. It bounds the query stage only; it is not the bound on Redis
 // concurrency, because the Slot source reads the control plane before a Slot
-// becomes eligible to query and holds no permit while doing so.
+// becomes eligible to query and holds no permit while doing so. It is the
+// process permits alone: the recovery permits are a share of them, and a
+// recovery query holds a process permit as well as its own.
 func (c Config) AdmittedQueryConcurrency() int {
-	s := c.PhaseTwo.Scheduler
-	return s.ProcessQueryPermits + s.RecoveryQueryPermits
+	return c.PhaseTwo.Scheduler.ProcessQueryPermits
 }
 
 // redisPoolCapacityInputs is the container the pool derives from: the one this
@@ -771,6 +772,12 @@ func decodeDocument(raw []byte, cfg *Config) error {
 	if cfg.Roles == nil && yamlRolesDeclared(&document) {
 		cfg.Roles = roles.Set{}
 	}
+	// The same for the link: an empty or null phase_two.linkd decodes like
+	// none, and the block's presence is what states the link as the
+	// deployment's destination (LinkdConfig.Present).
+	if yamlPathDeclared(&document, "phase_two", "linkd") {
+		cfg.PhaseTwo.Linkd.Declared = true
+	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err == nil {
@@ -899,6 +906,43 @@ func yamlRolesDeclared(node *yaml.Node) bool {
 					if yamlRolesDeclared(entry) {
 						return true
 					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// yamlPathDeclared reports whether the document has the key path, through
+// aliases and merge keys, whatever the value under it, null included.
+func yamlPathDeclared(node *yaml.Node, path ...string) bool {
+	if len(path) == 0 {
+		return true
+	}
+	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+		return yamlPathDeclared(node.Content[0], path...)
+	}
+	if node.Kind == yaml.AliasNode {
+		return yamlPathDeclared(node.Alias, path...)
+	}
+	if node.Kind != yaml.MappingNode {
+		return false
+	}
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		key, value := node.Content[index], node.Content[index+1]
+		if key.Value == path[0] && yamlPathDeclared(value, path[1:]...) {
+			return true
+		}
+		if key.Value != "<<" {
+			continue
+		}
+		if yamlPathDeclared(value, path...) {
+			return true
+		}
+		if value.Kind == yaml.SequenceNode {
+			for _, entry := range value.Content {
+				if yamlPathDeclared(entry, path...) {
+					return true
 				}
 			}
 		}
@@ -1052,6 +1096,11 @@ func (c Config) validateGoAccessRuntime() error {
 	}
 	if err := c.PhaseTwo.validateRoles(selected); err != nil {
 		return err
+	}
+	if business {
+		if err := c.PhaseTwo.Linkd.validateDestination(); err != nil {
+			return err
+		}
 	}
 	if !business {
 		return c.CLI.validateEnabled()

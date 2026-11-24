@@ -58,6 +58,7 @@ type LogCounts struct {
 	Truncated        bool            `json:"truncated"`
 	Partial          bool            `json:"partial"`
 	QueryStringBytes int             `json:"query_string_bytes"`
+	QueryForm        string          `json:"query_form"`
 	Limitations      []string        `json:"limitations"`
 }
 
@@ -82,6 +83,7 @@ func contentField(field string) bool {
 // read here and only the groups and counts leave it.
 func (p *Provider) LogCount(ctx context.Context, request LogCountRequest) (LogCounts, error) {
 	counts := LogCounts{TableID: request.TableID, By: request.By, Groups: []LogCountGroup{}, Limitations: []string{}, QueryStringBytes: len(request.QueryString)}
+	counts.QueryForm, counts.Limitations = queryFormOf(request.QueryString, counts.Limitations)
 	if !logTable.MatchString(request.TableID) {
 		return counts, fail("invalid_input", "table_id must be a log result table, <business>_bklog.<name>.")
 	}

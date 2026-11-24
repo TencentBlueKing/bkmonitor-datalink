@@ -82,15 +82,22 @@ type StrategyPlanConfigs struct {
 
 // StrategyPlanConfig is one item's frozen configuration, redacted.
 type StrategyPlanConfig struct {
-	PlanID             string                   `json:"plan_id"`
-	StateGeneration    string                   `json:"state_generation,omitempty"`
-	Schedule           StrategyScheduleConfig   `json:"schedule"`
-	Query              StrategyQueryConfig      `json:"query"`
-	Target             StrategyTargetConfig     `json:"target"`
-	NoData             *StrategyNoDataConfig    `json:"no_data,omitempty"`
-	Levels             []StrategyLevelConfig    `json:"levels"`
-	Requirements       []StrategyRequirementRef `json:"requirements,omitempty"`
-	TerminalReasonCode string                   `json:"terminal_reason_code,omitempty"`
+	PlanID          string                 `json:"plan_id"`
+	StateGeneration string                 `json:"state_generation,omitempty"`
+	Schedule        StrategyScheduleConfig `json:"schedule"`
+	Query           StrategyQueryConfig    `json:"query"`
+	// DataUnit is the unit the Plan's values are compared in, "" for none.
+	DataUnit string `json:"data_unit"`
+	// DataUnitBasis is how that unit was chosen
+	// (controlplane.DataUnitBasis*); RawUnitLevels are the Levels compared
+	// raw, or whose written prefix is ignored, and why.
+	DataUnitBasis      string                          `json:"data_unit_basis"`
+	RawUnitLevels      []controlplane.DataUnitRawLevel `json:"raw_unit_levels,omitempty"`
+	Target             StrategyTargetConfig            `json:"target"`
+	NoData             *StrategyNoDataConfig           `json:"no_data,omitempty"`
+	Levels             []StrategyLevelConfig           `json:"levels"`
+	Requirements       []StrategyRequirementRef        `json:"requirements,omitempty"`
+	TerminalReasonCode string                          `json:"terminal_reason_code,omitempty"`
 	// EffectiveTimeConfigured says the plan carries calendar rules for when it
 	// detects; the rules themselves are not projected.
 	EffectiveTimeConfigured bool `json:"effective_time_configured,omitempty"`
@@ -254,6 +261,11 @@ type StrategyLevelConfig struct {
 	Algorithms []StrategyAlgorithmInfo `json:"algorithms"`
 	Trigger    StrategyTypedPlanConfig `json:"trigger"`
 	Recovery   StrategyTypedPlanConfig `json:"recovery"`
+	// ZeroCountIsNoObservation says a count of zero from the query this
+	// Level's primary reads is no observation - an event count, or a log
+	// count grouped by nothing (execution.ZeroCountIsNoObservation, the word
+	// the evaluator reads) - so a quiet group does not recover on it.
+	ZeroCountIsNoObservation bool `json:"zero_count_is_no_observation,omitempty"`
 }
 
 // StrategyAlgorithmInfo is one algorithm by type and version, with the size
@@ -267,9 +279,10 @@ type StrategyAlgorithmInfo struct {
 // StrategyTypedPlanConfig is a trigger or recovery plan by type and version,
 // with the window counts the compiler defines for the two plan types this
 // build has (N_OF_M: window_size, required_anomalies, step_seconds;
-// CONTINUOUS_TRIGGER_MISS: enabled, consecutive_windows). A key outside them
-// is counted under UnknownKeys and its value dropped, so a reader knows the
-// document had more than the projection shows.
+// CONTINUOUS_TRIGGER_MISS: enabled, consecutive_windows, and the end and
+// missing_data words the owner's status_setter compiles to). A key outside
+// them is counted under UnknownKeys and its value dropped, so a reader knows
+// the document had more than the projection shows.
 type StrategyTypedPlanConfig struct {
 	Type               string  `json:"type,omitempty"`
 	Version            uint32  `json:"version,omitempty"`
@@ -278,7 +291,13 @@ type StrategyTypedPlanConfig struct {
 	StepSeconds        *uint32 `json:"step_seconds,omitempty"`
 	Enabled            *bool   `json:"enabled,omitempty"`
 	ConsecutiveWindows *uint32 `json:"consecutive_windows,omitempty"`
-	UnknownKeys        int     `json:"unknown_keys,omitempty"`
+	// End is contract.RecoveryEndClose for a recovery that ends the alert
+	// closed, empty for one that ends it resolved.
+	End string `json:"end,omitempty"`
+	// MissingData is contract.RecoveryMissingDataEvaluateAsZero for a
+	// recovery that also ends the alert when no data arrives.
+	MissingData string `json:"missing_data,omitempty"`
+	UnknownKeys int    `json:"unknown_keys,omitempty"`
 	// Undecodable says the document was not a JSON object at all.
 	Undecodable bool `json:"undecodable,omitempty"`
 }
@@ -322,6 +341,8 @@ func strategyPlanConfigOf(object controlplane.QueryGroupObject, plan controlplan
 			Timezone: plan.ScheduleSpec.Timezone, CompletionOffsetSeconds: plan.ScheduleSpec.CompletionDeadlineOffsetSeconds,
 		},
 		Query:                   strategyQueryConfigOf(object.QueryPlan, plan.QueryPlans),
+		DataUnit:                plan.InputProjection.DataUnit,
+		DataUnitBasis:           controlplane.DataUnitBasisQueryUnit,
 		Target:                  strategyTargetConfigOf(plan.TargetScope, plan.TargetPlan),
 		Levels:                  []StrategyLevelConfig{},
 		TerminalReasonCode:      plan.TerminalReasonCode,
@@ -338,6 +359,8 @@ func strategyPlanConfigOf(object controlplane.QueryGroupObject, plan controlplan
 			Connector: level.Connector, Algorithms: []StrategyAlgorithmInfo{},
 			Trigger:  typedPlanConfigOf(level.TriggerPlan),
 			Recovery: typedPlanConfigOf(level.RecoveryPlan),
+			ZeroCountIsNoObservation: model.ZeroCountIsNoObservation(
+				primaryFactsOf(object.QueryPlan, plan, level.Definition.LevelID)),
 		}
 		for _, algorithm := range level.DetectPlan.Algorithms {
 			entry.Algorithms = append(entry.Algorithms, StrategyAlgorithmInfo{Type: algorithm.Type, Version: algorithm.Version, ConfigBytes: len(algorithm.Config)})
@@ -353,6 +376,21 @@ func strategyPlanConfigOf(object controlplane.QueryGroupObject, plan controlplan
 		})
 	}
 	return config
+}
+
+// primaryFactsOf is the query a Level's primary reads, as the controlplane
+// binds it: a template-bound primary reads the Plan's own query by its
+// logical reference, every other primary the object's query.
+func primaryFactsOf(shared model.QueryPlanFacts, plan controlplane.QueryGroupPlanObject, levelID uint32) model.QueryPlanFacts {
+	for _, template := range plan.RequirementTemplates {
+		if template.Role != model.InputRolePrimary || template.ConsumerLevelID != levelID {
+			continue
+		}
+		if facts, ok := plan.QueryPlans[template.LogicalQueryRef]; ok {
+			return facts
+		}
+	}
+	return shared
 }
 
 func typedPlanConfigOf(plan contract.TypedPlanV1) StrategyTypedPlanConfig {
@@ -382,11 +420,26 @@ func typedPlanConfigOf(plan contract.TypedPlanV1) StrategyTypedPlanConfig {
 			} else {
 				config.UnknownKeys++
 			}
+		case "end":
+			config.End = typedPlanWord(raw, contract.RecoveryEndClose, &config.UnknownKeys)
+		case "missing_data":
+			config.MissingData = typedPlanWord(raw, contract.RecoveryMissingDataEvaluateAsZero, &config.UnknownKeys)
 		default:
 			config.UnknownKeys++
 		}
 	}
 	return config
+}
+
+// typedPlanWord reads a key whose one value the compiler writes is word; any
+// other value is counted as unknown instead.
+func typedPlanWord(raw json.RawMessage, word string, unknown *int) string {
+	var value string
+	if json.Unmarshal(raw, &value) != nil || value != word {
+		*unknown++
+		return ""
+	}
+	return value
 }
 
 // typedPlanCount reads one window count; a value that is not a whole
@@ -531,9 +584,29 @@ func attachStrategyConfigs(ctx context.Context, standing *StrategyStanding, load
 				configs.Refusal = configReadRefusal(read.err)
 			} else {
 				configs = StrategyPlanConfigsOf(read.object, standing.StrategyID, plan.Business)
+				withDataUnitFacts(&configs, plan.DataUnitFacts)
 			}
 		}
 		plan.Config = &configs
+	}
+}
+
+// withDataUnitFacts sets how the Plan's values are compared from the facts
+// its publication froze, which the object a Worker runs does not carry.
+// Without facts the Plan compares in its one query's unit (the default
+// strategyPlanConfigOf sets). One ref's facts are written onto every item
+// the object holds for the strategy and business: those items are the
+// pieces of one compiled item (a strategy with more than one item is
+// refused, UNSUPPORTED_MULTI_ITEM_STRATEGY, and PlanID is the strategy's
+// id), so their facts are equal. Supporting more than one item breaks this:
+// the facts then have to go per Plan.
+func withDataUnitFacts(configs *StrategyPlanConfigs, facts *controlplane.DataUnitFacts) {
+	if facts == nil {
+		return
+	}
+	for index := range configs.Items {
+		configs.Items[index].DataUnitBasis = facts.Basis
+		configs.Items[index].RawUnitLevels = append([]controlplane.DataUnitRawLevel(nil), facts.RawLevels...)
 	}
 }
 

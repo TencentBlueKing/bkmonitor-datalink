@@ -37,8 +37,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/testutil/routefixture"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/memcache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -781,26 +781,6 @@ func TestSpaceRedisSvc_composeBcsSpaceBizTableIds(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotContains(t, data, tableIdTwo)
 	println(data)
-}
-
-func TestSpaceRedisSvc_getCachedClusterDataIdList(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	db := mysql.GetDBSession().DB
-	obj := bcs.BCSClusterInfo{ClusterID: "BCS-K8S-00000", K8sMetricDataID: 100001, CustomMetricDataID: 100002}
-	db.Delete(obj)
-	assert.NoError(t, obj.Create(db))
-
-	data, err := NewSpacePusher().getCachedClusterDataIdList()
-	assert.NoError(t, err)
-	assert.Equal(t, 2, len(data))
-	assert.Equal(t, []uint{100001, 100002}, data)
-
-	cache, err := memcache.GetMemCache()
-	cache.Wait()
-	assert.NoError(t, err)
-	dataList, ok := cache.Get(CachedClusterDataIdKey)
-	assert.True(t, ok)
-	assert.Equal(t, []uint{100001, 100002}, dataList.([]uint))
 }
 
 func TestGetDataLabelByTableId(t *testing.T) {
@@ -2931,4 +2911,60 @@ func TestFilterTsInfoV3V4Comparison(t *testing.T) {
 	assert.Contains(t, v4Fields, "active_metric")
 	assert.Contains(t, v4Fields, "inactive_metric")
 	assert.Contains(t, v4Fields, "expired_metric")
+}
+
+func TestSpacePusher_composeBkciOtherTableIds_AuthorizedDataSource(t *testing.T) {
+	f := routefixture.New(t)
+	db := f.DB
+	setMultiTenantModeForTest(t, false)
+
+	for _, tc := range []struct {
+		name       string
+		authorized bool
+		spaceType  string
+		spaceID    string
+		dataID     uint
+		tenantID   string
+		wantRoute  bool
+	}{
+		{"owned", false, "bkci", "authorized_project", 19001, "system", true},
+		{"authorized", true, "bkci", "authorized_project", 19001, "system", true},
+		{"other_project", true, "bkci", "other_project", 19001, "system", false},
+		{"other_space_type", true, "bkcc", "authorized_project", 19001, "system", false},
+		{"other_table_tenant", true, "bkci", "authorized_project", 19001, "other_tenant", false},
+		{"owned_builtin_cluster", false, "bkci", "authorized_project", 19002, "system", false},
+		{"authorized_builtin_cluster", true, "bkci", "authorized_project", 19002, "system", false},
+		{"owned_custom_cluster", false, "bkci", "authorized_project", 19003, "system", false},
+		{"authorized_custom_cluster", true, "bkci", "authorized_project", 19003, "system", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tx := db.Begin()
+			if !assert.NoError(t, tx.Error) {
+				return
+			}
+			defer tx.Rollback()
+			patches := gomonkey.NewPatches()
+			defer patches.Reset()
+			patches.ApplyFunc(mysql.GetDBSession, func() *mysql.DBSession { return &mysql.DBSession{DB: tx} })
+			pusher := NewSpacePusher()
+			pusher.clusterDataIDs = map[uint]struct{}{19002: {}, 19003: {}}
+			const tableID = "authorized_route_test.__default__"
+			for _, row := range []any{
+				&space.SpaceDataSource{SpaceTypeId: tc.spaceType, SpaceId: tc.spaceID, BkDataId: tc.dataID, FromAuthorization: tc.authorized},
+				&resulttable.DataSourceResultTable{BkTenantId: tc.tenantID, BkDataId: tc.dataID, TableId: tableID},
+				&storage.AccessVMRecord{BkTenantId: tc.tenantID, ResultTableId: tableID},
+			} {
+				if !assert.NoError(t, tx.Create(row).Error) {
+					return
+				}
+			}
+			got, err := pusher.composeBkciOtherTableIds("system", "bkci", "authorized_project")
+			assert.NoError(t, err)
+			want := map[string]map[string]any{}
+			if tc.wantRoute {
+				want[tableID] = map[string]any{"filters": []map[string]any{}}
+			}
+			assert.Equal(t, want, got)
+		})
+	}
 }

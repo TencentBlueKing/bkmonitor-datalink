@@ -410,6 +410,7 @@ func startNoDataFixtureWith(t *testing.T, protocol string, continuous int) *noDa
 	t.Cleanup(uqServer.Close)
 
 	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Linkd.ControlPlane = quietLinkControlPlane(t)
 	cfg.Redis.Address = address
 	cfg.Redis.StatePrefix = "alarmd-no-data-round"
 	withCompatibilityOutput(&cfg, address)

@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/credential"
 )
 
 const (
@@ -38,6 +39,23 @@ const (
 const (
 	ResultHit  = "hit"
 	ResultMiss = "miss"
+)
+
+// CMDB relation metric label values. Keep these values bounded because they are
+// used directly as Prometheus labels.
+const (
+	CMDBRelationQueryModeInstant = "instant"
+	CMDBRelationQueryModeRange   = "range"
+	// 质量指标按入口区分兼容接口与 topology 子查询，两者的 query_mode 取值相同。
+	CMDBRelationEntryCompat    = "compat"
+	CMDBRelationEntryTopology  = "topology"
+	CMDBRelationRouteTimeGraph = "timegraph"
+
+	CMDBRelationResultStarted = "started"
+	CMDBRelationResultSuccess = "success"
+	CMDBRelationResultEmpty   = "empty"
+	CMDBRelationResultPartial = "partial"
+	CMDBRelationResultFailed  = "failed"
 )
 
 // RedisRouterLoadResult 为 unify_query_redis_router_load_total 的 result 标签取值（固定 success|failure，基数可控）。
@@ -196,6 +214,26 @@ var (
 		[]string{"route", "query_mode"},
 	)
 
+	cmdbRelationQueryListSize = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "unify_query",
+			Name:      "cmdb_relation_query_list_size",
+			Help:      "number of relation queries in one HTTP request",
+			Buckets:   []float64{0, 1, 2, 4, 8, 16, 32, 64},
+		},
+		[]string{"route", "query_mode"},
+	)
+
+	cmdbRelationTargetCount = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "unify_query",
+			Name:      "cmdb_relation_target_count",
+			Help:      "number of relation targets returned by one query",
+			Buckets:   []float64{0, 1, 2, 5, 10, 20, 50, 100, 500, 1000, 10000},
+		},
+		[]string{"route", "query_mode"},
+	)
+
 	routeSeriesWrapTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "unify_query",
@@ -231,8 +269,10 @@ func APIRequestSecond(ctx context.Context, duration time.Duration, api, spaceUID
 	observe(ctx, metric, duration.Seconds())
 }
 
+// TsDBRequestSecond labels url with the backend origin only: a backend address may carry
+// credentials, and the label keeps the prefix that existing groupings by url already use.
 func TsDBRequestSecond(ctx context.Context, duration time.Duration, tsdbType, url string) {
-	metric, _ := tsDBRequestSecondHistogram.GetMetricWithLabelValues(tsdbType, url)
+	metric, _ := tsDBRequestSecondHistogram.GetMetricWithLabelValues(tsdbType, credential.URLOrigin(url))
 	observe(ctx, metric, duration.Seconds())
 }
 
@@ -296,6 +336,16 @@ func CMDBRelationRouteInc(ctx context.Context, route, queryMode, result string) 
 func CMDBRelationRouteSecond(ctx context.Context, duration time.Duration, route, queryMode string) {
 	metric, _ := cmdbRelationRouteSeconds.GetMetricWithLabelValues(route, queryMode)
 	observe(ctx, metric, duration.Seconds())
+}
+
+func CMDBRelationQueryListSizeObserve(ctx context.Context, route, queryMode string, size int) {
+	metric, _ := cmdbRelationQueryListSize.GetMetricWithLabelValues(route, queryMode)
+	observe(ctx, metric, float64(size))
+}
+
+func CMDBRelationTargetCountObserve(ctx context.Context, route, queryMode string, count int) {
+	metric, _ := cmdbRelationTargetCount.GetMetricWithLabelValues(route, queryMode)
+	observe(ctx, metric, float64(count))
 }
 
 func RouteSeriesWrapInc(ctx context.Context, wrapKind, mergeFunc string) {

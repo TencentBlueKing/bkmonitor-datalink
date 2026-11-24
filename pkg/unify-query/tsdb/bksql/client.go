@@ -25,6 +25,7 @@ import (
 type Client struct {
 	url     string
 	headers map[string]string
+	bkData  *bkapi.BkDataAPI
 
 	curl curl.Curl
 }
@@ -52,7 +53,11 @@ func (c *Client) curlGet(ctx context.Context, method string, req QuerySyncReques
 	if method == "" {
 		method = curl.Post
 	}
-	auth := bkapi.GetBkDataAPI().GetDataAuth()
+	user := *metadata.GetUser(ctx)
+	auth, headers, err := bkapi.QueryAuth(ctx, c.bkData, user.TenantID, c.headers)
+	if err != nil {
+		return err
+	}
 	params := Params{
 		SQL:                        req.SQL,
 		BkAppCode:                  auth[bkapi.BkAppCodeKey],
@@ -77,10 +82,12 @@ func (c *Client) curlGet(ctx context.Context, method string, req QuerySyncReques
 		curl.Options{
 			UrlPath: c.url,
 			Body:    body,
-			Headers: metadata.Headers(ctx, c.headers),
+			Headers: user.Headers(headers),
 		},
 		res,
 	)
+	// 每次请求按最终结果计一次：HTTP 层成功时，再看应答体里有没有报失败。
+	metric.TsDBRequestInc(ctx, metadata.BkSqlStorageType, bkSQLRequestResult(err, res))
 	if err != nil {
 		return err
 	}

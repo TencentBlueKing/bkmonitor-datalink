@@ -33,3 +33,28 @@ func TestASessionTheStoreDidNotReadIsRefusedWithItsReason(t *testing.T) {
 		t.Fatalf("status %d error %+v", status, out.Error)
 	}
 }
+
+// A no-data memory whose group keys are not all listed says so on the answer:
+// how many of how many, and whether a stopped scan makes them only the first
+// of what it saw. A memory listed whole adds nothing.
+func TestAPartialGroupKeyListingIsNamedOnTheAnswer(t *testing.T) {
+	record := func(key string, listing obevidence.GroupKeyListing) obevidence.PlanRecord {
+		return obevidence.PlanRecord{Kind: obevidence.RecordNoDataMemory, Key: key, Status: "ok", GroupKeys: &listing}
+	}
+	fifty := make([]string, 50)
+	out := storeOutcome(obevidence.Result{Status: "ok", Complete: true, Value: []obevidence.PlanRecords{{Records: []obevidence.PlanRecord{
+		record("cut", obevidence.GroupKeyListing{Keys: fifty, Total: 120, Scan: obevidence.GroupKeyScanComplete, CutBy: obevidence.GroupKeysCutByCount}),
+		record("whole", obevidence.GroupKeyListing{Keys: []string{"a", "b", "c"}, Total: 3, Scan: obevidence.GroupKeyScanComplete}),
+		record("stray", obevidence.GroupKeyListing{Keys: []string{"a"}, Total: 1, Scan: obevidence.GroupKeyScanComplete, UnknownFields: 2}),
+		record("stopped", obevidence.GroupKeyListing{Keys: fifty, Total: 5000, Scan: obevidence.GroupKeyScanCommands, ScannedFields: 1000}),
+		{Kind: obevidence.RecordNoDataMemory, Key: "absent", Status: "missing"},
+	}}}})
+	want := []string{
+		"cut: group_keys lists the first 50 of 120 groups in byte order (cut by count).",
+		"stray: 2 fields are neither the header nor a group; the runtime reads this record as corrupt.",
+		"stopped: group_keys scan stopped at commands after 1000 fields; the 50 keys listed are the first of the fields seen, not of all 5000 groups.",
+	}
+	if fmt.Sprint(out.Limitations) != fmt.Sprint(want) {
+		t.Fatalf("limitations = %q,\nwant %q", out.Limitations, want)
+	}
+}

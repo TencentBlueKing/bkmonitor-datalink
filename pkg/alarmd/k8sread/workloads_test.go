@@ -270,7 +270,8 @@ func TestWorkloadsNamesEveryNamespaceByItsOriginAndReadsEachOnce(t *testing.T) {
 		// A bare Service name resolves in this process's own namespace.
 		{Name: "strategy_cache", Address: "bk-redis:6379"},
 		{Name: "compat_output", Address: "localhost:6379"},
-		{Name: "linkd_console", Address: "https://linkd.example.com/console"},
+		// An address on a host outside the cluster names no namespace.
+		{Name: "query_backend", Address: "https://uq.example.com/query"},
 	}
 	result, err := reader.Workloads(context.Background(), dependencies, []string{"other", "extra", "Bad_Name", "other"}, 0)
 	if err != nil {
@@ -306,7 +307,7 @@ func TestWorkloadsNamesEveryNamespaceByItsOriginAndReadsEachOnce(t *testing.T) {
 	wantUnresolved := []UnresolvedDependency{
 		{Dependency: "state_redis", Address: "192.0.2.10:6379", Reason: ReasonNoNamespace},
 		{Dependency: "compat_output", Address: "localhost:6379", Reason: ReasonNoNamespace},
-		{Dependency: "linkd_console", Address: "https://linkd.example.com/console", Reason: ReasonNoNamespace},
+		{Dependency: "query_backend", Address: "https://uq.example.com/query", Reason: ReasonNoNamespace},
 		{Dependency: OriginConfigured, Address: "Bad_Name", Reason: ReasonConfiguredInvalid},
 	}
 	if !reflect.DeepEqual(result.Unresolved, wantUnresolved) {

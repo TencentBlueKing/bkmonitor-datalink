@@ -10,6 +10,7 @@
 package metric
 
 import (
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"slices"
 	"sync"
 	"time"
@@ -26,6 +27,10 @@ import (
 // so the slow groups between 17 and 30 seconds are told apart.
 var QueryDurationBuckets = []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30}
 
+// QueryAnswerBuckets reach past the provider's 30 s backend deadline to a
+// minute: a one-minute round's query window runs to about 45 s.
+var QueryAnswerBuckets = []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 15, 20, 25, 30, 35, 40, 45, 60}
+
 // DecisionLagBuckets reach five minutes: a held round lags tens of seconds
 // and a long-period Slot minutes. They are dense between 10 and 60 seconds
 // because that is where decisions land: one deployment's 5220 decisions all
@@ -36,16 +41,19 @@ var DecisionLagBuckets = []float64{0.1, 0.5, 1, 2.5, 5, 10, 15, 20, 25, 30, 40, 
 // queryFailureReasons is access.QueryFailures, held here because this
 // package does not import access; a test in the wiring holds the two
 // equal.
-var queryFailureReasons = []string{"timeout", "refused", "not_found", "transport", "decode", "other"}
+var queryFailureReasons = []string{"timeout", "refused", "not_found", "transport", "decode", "other", "sample_limit"}
 
 type flowMetrics struct {
-	physicalQueries   prometheus.Counter
-	stateApplied      prometheus.Counter
-	queryDuration     prometheus.Histogram
-	queryFailures     *prometheus.CounterVec
-	failures          map[string]prometheus.Counter
-	decisionLag       prometheus.Histogram
-	outputRejectedAll prometheus.Counter
+	physicalQueries prometheus.Counter
+	stateApplied    prometheus.Counter
+	queryDuration   prometheus.Histogram
+	// The answers of the same queries, by how each ended (outcome): what
+	// came back and how long it took.
+	answerBytes, answerSeries, answerRecords, answerSeconds *prometheus.HistogramVec
+	queryFailures                                           *prometheus.CounterVec
+	failures                                                map[string]prometheus.Counter
+	decisionLag                                             prometheus.Histogram
+	outputRejectedAll                                       prometheus.Counter
 	// backend is the query backend's last answer and last failure, the
 	// dependency entry's health for the role (QueryBackendHealth).
 	backend *queryBackendBook
@@ -80,7 +88,9 @@ func newFlowMetrics(work *prometheus.CounterVec) flowMetrics {
 			Subsystem: metricSubsystem, Name: "access_query_failure_total",
 			Help: "Physical queries that did not answer, by what their last failed attempt says: timeout, refused (the " +
 				"backend answered no), not_found (its status names something that does not exist), transport, decode " +
-				"(the answer broke the wire contract), other. Closed set.",
+				"(the answer broke the wire contract), other, sample_limit (the backend refused the query as reading more " +
+				"samples than it serves in one query, VM_SAMPLE_LIMIT; which Query Group it was is on the fleet's page). " +
+				"Closed set.",
 		}, []string{"reason"}),
 		decisionLag: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Subsystem: metricSubsystem, Name: "slot_decision_lag_seconds",
@@ -96,6 +106,27 @@ func newFlowMetrics(work *prometheus.CounterVec) flowMetrics {
 				"without its labels, counted at the same place.",
 		}),
 	}
+	answer := func(name, help string, buckets []float64) *prometheus.HistogramVec {
+		vec := prometheus.NewHistogramVec(prometheus.HistogramOpts{Subsystem: metricSubsystem, Name: name, Help: help,
+			Buckets: buckets}, []string{"outcome"})
+		for _, outcome := range observability.PhysicalQueryOutcomes {
+			vec.WithLabelValues(outcome)
+		}
+		return vec
+	}
+	const outcomes = " By outcome: ok, timeout_alarmd_deadline (alarmd's own deadline: the round's, its transport, " +
+		"its body read or its delivery), upstream_504 (the provider answered that its backend ran out of time, " +
+		"504 or 408), unavailable (no usable answer for another reason) and rejected (the provider refused the " +
+		"query). Counted where access_query_duration_seconds is."
+	m.answerBytes = answer("access_query_answer_bytes", "Bytes of each physical query's answer as read."+outcomes,
+		prometheus.ExponentialBuckets(1<<10, 4, 12))
+	m.answerSeries = answer("access_query_answer_series", "Series in each physical query's answer."+outcomes,
+		prometheus.ExponentialBuckets(1, 4, 11))
+	m.answerRecords = answer("access_query_answer_records", "Records (points) in each physical query's answer."+outcomes,
+		prometheus.ExponentialBuckets(1, 4, 14))
+	m.answerSeconds = answer("access_query_answer_seconds", "Seconds each physical query's provider took, to 60 s: "+
+		"a query read past 30 s is in it, as its round's window on a one-minute period runs to about 45."+outcomes,
+		QueryAnswerBuckets)
 	m.backend = &queryBackendBook{}
 	m.failures = make(map[string]prometheus.Counter, len(queryFailureReasons))
 	for _, reason := range queryFailureReasons {
@@ -124,6 +155,23 @@ func (r *Recorder) RecordPhysicalQuery(elapsed time.Duration, failure string) {
 	}
 	counter.Inc()
 	flow.backend.note(time.Now(), failure)
+}
+
+// RecordPhysicalQueryAnswer counts one physical query's answer in the
+// per-query histograms, by how it ended.
+func (r *Recorder) RecordPhysicalQueryAnswer(answer observability.PhysicalQueryAnswer) {
+	if r == nil {
+		return
+	}
+	outcome := answer.Outcome
+	if !slices.Contains(observability.PhysicalQueryOutcomes, outcome) {
+		outcome = observability.PhysicalQueryUnavailable
+	}
+	flow := r.phaseTwo.flow
+	flow.answerBytes.WithLabelValues(outcome).Observe(float64(answer.Bytes))
+	flow.answerSeries.WithLabelValues(outcome).Observe(float64(answer.Series))
+	flow.answerRecords.WithLabelValues(outcome).Observe(float64(answer.Records))
+	flow.answerSeconds.WithLabelValues(outcome).Observe(answer.Elapsed.Seconds())
 }
 
 func (book *queryBackendBook) note(at time.Time, failure string) {
@@ -194,15 +242,19 @@ type FlowCounters struct {
 	DecisionLag    FlowHistogram     `json:"decision_lag"`
 	StateWrites    uint64            `json:"state_writes"`
 	StateFailures  uint64            `json:"state_failures"`
+	SeriesRejected uint64            `json:"series_rejected"`
 	RuntimeRedis   FlowHistogram     `json:"runtime_redis"`
 	EventsEmitted  uint64            `json:"events_emitted"`
 	EventsRejected uint64            `json:"events_rejected"`
 	// LiveHeapBytes is the heap collector's last sample, never a fresh one:
 	// reading it forces no collection. Zero with LiveHeapKnown false before
-	// the first sample.
-	LiveHeapBytes uint64 `json:"live_heap_bytes"`
-	LiveHeapKnown bool   `json:"live_heap_known"`
-	Hosts         uint64 `json:"hosts"`
+	// the first sample. LiveHeapReserved is the retained-byte pool's
+	// reservation at that sample's collection (heap_inuse_reserved_bytes),
+	// the only reservation the live heap may be read against.
+	LiveHeapBytes    uint64      `json:"live_heap_bytes"`
+	LiveHeapKnown    bool        `json:"live_heap_known"`
+	LiveHeapReserved HeapReading `json:"live_heap_reserved"`
+	Hosts            uint64      `json:"hosts"`
 }
 
 // notDecisions are the completion kinds that book a Slot without deciding
@@ -236,6 +288,13 @@ func (r *Recorder) FlowCounters() FlowCounters {
 		}
 	})
 	eachSample(m.stateVersionConflict, func(sample *dto.Metric) { flow.StateFailures += uint64(sample.GetCounter().GetValue()) })
+	// One admission decision per series per Plan; rejected is never recorded under host_identity, which
+	// only adds a second record for an admitted series.
+	eachSample(m.seriesAdmission, func(sample *dto.Metric) {
+		if labelOf(sample, "result") == "rejected" {
+			flow.SeriesRejected += uint64(sample.GetCounter().GetValue())
+		}
+	})
 	flow.RuntimeRedis = FlowHistogram{Buckets: make([]uint64, len(redisDurationBuckets))}
 	runtimeClient := r.runtimeRedisClient()
 	eachSample(m.redisCalls.duration, func(sample *dto.Metric) {
@@ -253,7 +312,9 @@ func (r *Recorder) FlowCounters() FlowCounters {
 	eachSample(m.outputEventsByKind, func(sample *dto.Metric) { flow.EventsEmitted += uint64(sample.GetCounter().GetValue()) })
 	flow.EventsRejected = counterOf(m.flow.outputRejectedAll)
 	if r.heap != nil {
-		flow.LiveHeapBytes, flow.LiveHeapKnown = r.heap.cachedLive()
+		var reading HeapReading
+		reading, flow.LiveHeapKnown = r.heap.cachedLive()
+		flow.LiveHeapBytes, flow.LiveHeapReserved = reading.Live, reading
 	}
 	flow.Hosts = uint64(gaugeOf(m.cmdbIndexHosts))
 	return flow

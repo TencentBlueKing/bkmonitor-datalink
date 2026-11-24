@@ -91,7 +91,7 @@ func TestARowGivesEachStrategyTheWordsOfItsOwnPlan(t *testing.T) {
 			t.Fatalf("line %s carries About %+v, want the three named Plans", line.StrategyID, line.Standing.About)
 		}
 	}
-	if !strings.HasPrefix(byID[refD.StrategyID].Line, "策略 4104 · 1 个对象 · 数据没到 · 数据负责人查") {
+	if !strings.HasPrefix(byID[refD.StrategyID].Line, "策略 4104，1 个对象，数据没到，数据负责人查") {
 		t.Fatalf("unbound Plan's line reads %q", byID[refD.StrategyID].Line)
 	}
 	if got := groupKeyOf(row, CheckSeriesDataMissing); got != "4102+4103+4104" {
@@ -141,7 +141,7 @@ func TestARowGivesEachStrategyTheWordsOfItsOwnPlan(t *testing.T) {
 	}
 	own := card
 	own.StrategyID = refD.StrategyID
-	if line := strategyStandingLine(own); !strings.Contains(line, "持有，数据没到·数据负责人查）") || strings.Contains(line, "同对象") {
+	if line := strategyStandingLine(own); !strings.Contains(line, "持有，数据没到，数据负责人查）") || strings.Contains(line, "同对象") {
 		t.Fatalf("own card reads %q", line)
 	}
 }

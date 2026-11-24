@@ -53,14 +53,92 @@ config_templates:
           title: extra_vars
           type: object
           properties:
+            virtual_iface_whitelist:
+              title: virtual_iface_whitelist
+              type: array
+              items:
+                title: interface
+                type: string
+            virtual_iface_blacklist:
+              title: virtual_iface_blacklist
+              type: array
+              items:
+                title: interface
+                type: string
+            disk_white_list:
+              title: disk_white_list
+              type: array
+              items:
+                title: interface
+                type: string
+            disk_black_list:
+              title: disk_black_list
+              type: array
+              items:
+                title: interface
+                type: string
+            partition_white_list:
+              title: partition_white_list
+              type: array
+              items:
+                title: interface
+                type: string
+            partition_black_list:
+              title: partition_black_list
+              type: array
+              items:
+                title: interface
+                type: string
+            mountpoint_white_list:
+              title: mountpoint_white_list
+              type: array
+              items:
+                title: interface
+                type: string
             fs_type_white_list:
               title: fs_type_white_list
               type: array
               items:
                 title: interface
                 type: string
+            fs_type_black_list:
+              title: fs_type_black_list
+              type: array
+              items:
+                title: interface
+                type: string
             mountpoint_black_list:
               title: mountpoint_black_list
+              type: array
+              items:
+                title: interface
+                type: string
+            interface_white_list:
+              title: interface_white_list
+              type: array
+              items:
+                title: interface
+                type: string
+            interface_black_list:
+              title: interface_black_list
+              type: array
+              items:
+                title: interface
+                type: string
+            force_report_list:
+              title: force_report_list
+              type: array
+              items:
+                title: interface
+                type: string
+            disk_ro_white_list:
+              title: disk_ro_white_list
+              type: array
+              items:
+                title: interface
+                type: string
+            disk_ro_black_list:
+              title: disk_ro_black_list
               type: array
               items:
                 title: interface

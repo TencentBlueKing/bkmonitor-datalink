@@ -49,7 +49,6 @@ func TestACarryIsPartOfTheActivation(t *testing.T) {
 			p.Carry = &execution.StateCarry{From: "new", Levels: []uint32{1}}
 			return p
 		}(),
-		"on an activation that does not warm up": func() execution.ActivatedPlan { p := carried; p.ForceWarming = false; return p }(),
 		"a Level twice": func() execution.ActivatedPlan {
 			p := carried
 			p.Carry = &execution.StateCarry{From: "old", Levels: []uint32{2, 2}}
@@ -62,6 +61,12 @@ func TestACarryIsPartOfTheActivation(t *testing.T) {
 	}
 	if err := carried.Carry.Validate(carried); err != nil {
 		t.Fatalf("a valid carry was refused: %v", err)
+	}
+	// A carried activation does not warm up: the carry is not tied to it.
+	notWarming := carried
+	notWarming.ForceWarming = false
+	if err := notWarming.Carry.Validate(notWarming); err != nil {
+		t.Fatalf("a carry on an activation that does not warm up was refused: %v", err)
 	}
 	if !carried.CarriesLevel(2) || carried.CarriesLevel(3) || plan.CarriesLevel(1) {
 		t.Fatal("CarriesLevel does not answer from the carry")

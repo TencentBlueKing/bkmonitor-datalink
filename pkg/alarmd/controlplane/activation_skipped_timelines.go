@@ -133,24 +133,45 @@ type SkippedTimelinesReading struct {
 	Counts map[SkippedTimelineReason]uint64
 	Named  []SkippedTimeline
 	Total  int
+	// Rebuildable is every Query Group of the last read whose timeline is
+	// absent or undecodable, in Query Group order, not capped: the ones a
+	// repair is owed for. Named is capped across every reason, so in a
+	// rollout newer-format Query Groups sorting first could fill it and
+	// leave an unread one nobody names; a clock held to its repair reads
+	// this list instead.
+	Rebuildable []SkippedTimeline
 }
 
 // SkippedTimelinesReading is the repository's reading; every reason is in
 // Counts, zero included.
 func (repository *RedisCatalogRepository) SkippedTimelinesReading() SkippedTimelinesReading {
-	reading := SkippedTimelinesReading{Counts: make(map[SkippedTimelineReason]uint64, len(SkippedTimelineReasons))}
 	if repository == nil {
-		return reading
+		return ReadSkippedTimelines(nil, nil)
 	}
 	state := &repository.skippedTimelines
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	return ReadSkippedTimelines(state.current, state.counts)
+}
+
+// ReadSkippedTimelines is the reading of the Query Groups one activation read
+// left out and the skips counted so far: every reason in Counts, the names
+// in Query Group order capped at MaxNamedSkippedTimelines, and the
+// rebuildable ones uncapped. The repository's reading is this one; a reader
+// that fakes a reading builds it here so it has the same shape.
+func ReadSkippedTimelines(current []SkippedTimeline, counts map[SkippedTimelineReason]uint64) SkippedTimelinesReading {
+	reading := SkippedTimelinesReading{Counts: make(map[SkippedTimelineReason]uint64, len(SkippedTimelineReasons))}
 	for _, reason := range SkippedTimelineReasons {
-		reading.Counts[reason] = state.counts[reason]
+		reading.Counts[reason] = counts[reason]
 	}
-	named := append([]SkippedTimeline(nil), state.current...)
+	named := append([]SkippedTimeline(nil), current...)
 	sort.Slice(named, func(i, j int) bool { return named[i].QueryGroup < named[j].QueryGroup })
 	reading.Total = len(named)
+	for _, entry := range named {
+		if entry.Reason == SkippedTimelineUndecodable || entry.Reason == SkippedTimelineAbsent {
+			reading.Rebuildable = append(reading.Rebuildable, entry)
+		}
+	}
 	if len(named) > MaxNamedSkippedTimelines {
 		named = named[:MaxNamedSkippedTimelines]
 	}

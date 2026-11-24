@@ -57,12 +57,12 @@ func TestAStrategyIsOneLineOverEveryObjectThatRunsIt(t *testing.T) {
 	if first.Since == nil || !first.Since.Equal(now.Add(-2*time.Hour)) || first.LastGoodAt == nil || !first.LastGoodAt.Equal(now.Add(-90*time.Minute)) {
 		t.Fatalf("first clocks = since %v / last good %v, want the earliest onset and the latest healthy completion", first.Since, first.LastGoodAt)
 	}
-	if !strings.HasPrefix(first.Line, "策略 4101 · 2 个对象 · 依赖没应答 · 本服务处理") {
+	if !strings.HasPrefix(first.Line, "策略 4101，2 个对象，依赖没应答，本服务处理") {
 		t.Fatalf("first line reads %q", first.Line)
 	}
 	second := lines[1]
 	if second.StrategyID != "4102" || second.Objects != 1 || second.Standing.Action != ActionDataCheck ||
-		!strings.Contains(second.Line, "数据没到 · 数据负责人查 · 最差窗口 6/9，缺的 3 分钟查询都正常返回、序列不在结果里") {
+		!strings.Contains(second.Line, "数据没到，数据负责人查，最差窗口 6/9，缺的 3 分钟查询都正常返回、序列不在结果里") {
 		t.Fatalf("second line = %+v", second)
 	}
 	// The summary counts every word, zeros included, and leads with the

@@ -21,6 +21,7 @@ import (
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -65,6 +66,7 @@ var _ tsdb.Instance = (*Instance)(nil)
 type Options struct {
 	Address string
 	Headers map[string]string
+	BkData  *bkapi.BkDataAPI
 
 	Timeout    time.Duration
 	MaxLimit   int
@@ -84,7 +86,7 @@ func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 		maxLimit:   opt.MaxLimit,
 		tolerance:  opt.Tolerance,
 		sliceLimit: opt.SliceLimit,
-		client:     (&Client{}).WithUrl(opt.Address).WithHeader(opt.Headers).WithCurl(opt.Curl),
+		client:     &Client{url: opt.Address, headers: opt.Headers, bkData: opt.BkData, curl: opt.Curl},
 	}
 	return instance, nil
 }
@@ -124,6 +126,9 @@ func (i *Instance) sqlQuery(ctx context.Context, req QuerySyncRequest) (*QuerySy
 
 	// 发起异步查询
 	res := i.client.QuerySync(ctx, req, span)
+	if metadata.IsStrictQueryFailures(ctx) && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if res == nil {
 		return nil, nil
 	}
@@ -332,6 +337,7 @@ func (i *Instance) queryFieldMaps(ctx context.Context, query *metadata.Query, st
 
 	defer func() {
 		if r := recover(); r != nil {
+			metric.PanicInc(ctx, metric.PanicSiteStorage)
 			err = fmt.Errorf("es query error: %s", r)
 		}
 	}()
@@ -420,6 +426,7 @@ func normalizeFieldsMap(fieldsMap metadata.FieldsMap, fieldAlias metadata.FieldA
 func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (size int64, total int64, option *metadata.ResultTableOption, err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			metric.PanicInc(ctx, metric.PanicSiteStorage)
 			err = fmt.Errorf("doris query panic: %s", r)
 		}
 	}()

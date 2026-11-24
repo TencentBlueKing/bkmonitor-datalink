@@ -28,7 +28,7 @@ func startSlotTiming(ctx context.Context, observer observability.Observer, stage
 		observeRuntime(ctx, observer, observability.Observation{
 			Component: observability.ComponentScheduler, Stage: stage,
 			Result:   observability.ResultSuccess,
-			Duration: now().Sub(started),
+			Duration: now().Sub(started), DurationKnown: true,
 		})
 	}
 }

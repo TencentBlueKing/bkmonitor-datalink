@@ -15,6 +15,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
@@ -70,7 +71,7 @@ func oneHotFamiliesNotApplicable(cfg config.Config) []string {
 		families = append(families, "alarmd_trace_export")
 	}
 	if !cfg.HasRole(roles.Worker) && !cfg.HasRole(roles.Control) {
-		families = append(families, "alarmd_control_source_mode", "alarmd_linkd_console_state", "alarmd_platform_settings_mode")
+		families = append(families, "alarmd_control_source_mode", "alarmd_platform_settings_mode")
 	}
 	return families
 }
@@ -97,12 +98,15 @@ func openPhaseTwoRoleRuntime(cfg config.Config, recorder *metric.Recorder, facts
 		Roles: cfg.EffectiveRoles(), InstanceID: cfg.PhaseTwo.Worker.ID, EnvironmentID: cfg.CLI.EnvironmentID,
 		Facts:    func() *observability.RuntimeConfigFacts { return facts },
 		SREAudit: sreAuditSink(logger, recorder), SRERolloutEnded: sreRolloutSink(logger, recorder), SRERolloutsWatched: recorder.SetSRERolloutsWatched,
-		SREReceiptWritten: recorder.RecordSREReceiptWrite,
+		SREReceiptWritten: recorder.RecordSREReceiptWrite, FrontRefused: frontRefusedLine(logger, time.Now),
 		Control: cliControlBinding{Incarnation: incarnation, StreamToken: identity.Token, Metrics: recorder.Gatherer(),
 			RedisDialRetries: recorder.ObserveDiagnosticRedisDialRetry},
 	})
 	if err != nil {
 		return nil, err
+	}
+	if runtime.Channel.FrontRefusals != nil {
+		recorder.SetFrontRefusedSource(obchannel.FrontRefusalCodes, runtime.Channel.FrontRefusals)
 	}
 	runtime.EvidenceServer = grpc.NewServer()
 	pb.RegisterControlServiceServer(runtime.EvidenceServer, &roleEvidenceServer{handler: runtime.Channel.EvidenceHandler})

@@ -235,7 +235,7 @@ func strategyLineOf(line StrategyLine, deciding Anomaly) string {
 	if clause := evidenceClause(deciding); clause != "" {
 		parts = append(parts, clause)
 	}
-	return strings.Join(parts, " · ")
+	return strings.Join(parts, "，")
 }
 
 // evidenceClause is the one number the check's rule supplies for the
@@ -245,6 +245,9 @@ func strategyLineOf(line StrategyLine, deciding Anomaly) string {
 func evidenceClause(row Anomaly) string {
 	if row.Kind == KindReadHeld {
 		return readHeldClause(row.ReadHold)
+	}
+	if row.Kind == KindNewAlertsBurst {
+		return newAlertsBurstClause(row.NewAlertsBurst)
 	}
 	coverage := row.Coverage
 	if coverage == nil || coverage.Short == 0 {

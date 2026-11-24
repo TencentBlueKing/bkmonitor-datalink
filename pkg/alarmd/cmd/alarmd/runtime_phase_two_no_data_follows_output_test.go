@@ -30,7 +30,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
@@ -67,9 +66,7 @@ type followsSink struct {
 	mode      string
 	attempted []contract.TriggerEventV1
 	written   []contract.TriggerEventV1
-	// closes are the fact-closes written through the close path.
-	closes []linkdoutput.CloseRequest
-	closed bool
+	closed    bool
 	// gate, when set, keeps WriteBatch from going on until it is closed,
 	// after saying so on entered: a case that needs a Slot held inside its
 	// output write sets both with holdWrites. The hold does not watch the
@@ -103,14 +100,6 @@ func (sink *followsSink) ConfigureLegacyOutput(enginekafka.LegacyEventConverter,
 }
 
 func (sink *followsSink) ProtocolNegotiation() *enginekafka.ProtocolNegotiation { return nil }
-
-// WriteCloseBatch records the fact-closes written through the close path.
-func (sink *followsSink) WriteCloseBatch(_ context.Context, requests []linkdoutput.CloseRequest) error {
-	sink.mu.Lock()
-	defer sink.mu.Unlock()
-	sink.closes = append(sink.closes, requests...)
-	return nil
-}
 
 func (sink *followsSink) setMode(mode string) {
 	sink.mu.Lock()

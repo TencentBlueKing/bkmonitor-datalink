@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 )
 
 // One strategy's standing, asked by its id: is it detecting, and if not,
@@ -86,6 +88,10 @@ type StrategyPlanRef struct {
 	GroupBy         []string `json:"group_by,omitempty"`
 	GroupByTotal    int      `json:"group_by_total,omitempty"`
 	PromQL          bool     `json:"promql,omitempty"`
+	// DataUnitFacts is how the Plan's values are compared, from the
+	// publication's frozen Plan; absent for one whose unit is its one
+	// query's and whose Levels all read it.
+	DataUnitFacts *controlplane.DataUnitFacts `json:"data_unit_facts,omitempty"`
 }
 
 // StrategyDisposition is what the round decided about one item of the
@@ -456,11 +462,11 @@ func strategyStandingLine(standing StrategyStanding) string {
 			if len(plan.Rows) > 0 && plan.Rows[0].Standing != nil {
 				rowStanding := plan.Rows[0].Standing
 				if own, given := standingForStrategy(plan.Rows[0], StrategyRef{StrategyID: standing.StrategyID, BusinessID: plan.Business}); given {
-					object += "，" + words.State[own.State] + "·" + words.Action[own.Action]
+					object += "，" + words.State[own.State] + "，" + words.Action[own.Action]
 				} else if others := aboutOthers(plan.Rows[0], standing.StrategyID, words); len(others) > 0 {
 					object += "，在检测；同对象上策略 " + strings.Join(others, "、") + "（见该策略）"
 				} else {
-					object += "，" + words.State[rowStanding.State] + "·" + words.Action[rowStanding.Action]
+					object += "，" + words.State[rowStanding.State] + "，" + words.Action[rowStanding.Action]
 				}
 			} else if len(plan.Rows) > 0 {
 				object += "，在 " + string(plan.Rows[0].Finding.Check) + " 行"

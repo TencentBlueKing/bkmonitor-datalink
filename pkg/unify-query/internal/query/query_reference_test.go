@@ -11,14 +11,272 @@ package query
 
 import (
 	"context"
-	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
+
+func BenchmarkToVmExpandForExpression(b *testing.B) {
+	for _, tc := range []struct {
+		name               string
+		selectors, outputs int
+	}{
+		{"single", 1, 1},
+		{"18-selectors", 18, 1},
+		{"four-outputs", 18, 4},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			ctx := context.Background()
+			qr := make(metadata.QueryReference, tc.selectors)
+			parts := make([]string, tc.selectors)
+			for i := range parts {
+				ref := "m" + strconv.Itoa(i)
+				parts[i] = `count_over_time({__name__=~"` + ref + `"}[1h])`
+				qr[ref] = []*metadata.QueryMetric{{QueryList: metadata.QueryList{{VmRt: "rt-" + ref, StorageName: "storage", VmCondition: metadata.VmCondition(`result_table_id="rt-` + ref + `"`)}}}}
+			}
+			expressions := make([]parser.Expr, tc.outputs)
+			for i := range expressions {
+				// Named outputs have one full expression and optional single-reference outputs.
+				expression := parts[i]
+				if i == 0 {
+					expression = strings.Join(parts, " or ")
+				}
+				var err error
+				expressions[i], err = parser.ParseExpr(expression)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				for _, expr := range expressions {
+					ToVmExpandForExpression(ctx, qr, expr)
+				}
+			}
+		})
+	}
+}
+
+func TestVmExpandUsesOnlyExpressionSelectors(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	qr := metadata.QueryReference{}
+	for _, ref := range []string{"a", "b"} {
+		qr[ref] = []*metadata.QueryMetric{{QueryList: []*metadata.Query{{
+			TableID: "table-" + ref, VmRt: "rt-" + ref, StorageName: "storage-" + ref,
+			VmCondition: metadata.VmCondition("filter-" + ref),
+		}}}}
+	}
+	for _, tc := range []struct {
+		expr string
+		refs []string
+	}{
+		{"a", []string{"a"}},
+		{`{__name__="a",job="b"}`, []string{"a"}},
+		{`count_over_time({__name__=~"a"}[5m])`, []string{"a"}},
+		{"count_over_time(a[5m]) or b", []string{"a", "b"}},
+		{`label_replace(a, "label", "b", "source", ".*")`, []string{"a"}},
+		{"sum_over_time((a offset 1m)[5m:1m])", []string{"a"}},
+		{"vector(1)", nil},
+	} {
+		t.Run(tc.expr, func(t *testing.T) {
+			expr, err := parser.ParseExpr(tc.expr)
+			require.NoError(t, err)
+			expand, err := ToVmExpandForExpression(ctx, qr, expr)
+			require.NoError(t, err)
+			require.NotNil(t, expand)
+			if tc.refs == nil {
+				require.Equal(t, []string{"rt-a", "rt-b"}, expand.ResultTableList)
+				require.Empty(t, expand.RtDetailList, "constants have no storage coverage requirement")
+			} else {
+				require.Len(t, expand.ResultTableList, len(tc.refs))
+				require.Len(t, expand.RtDetailList, len(tc.refs))
+				require.Len(t, expand.MetricFilterCondition, len(tc.refs))
+				for _, ref := range tc.refs {
+					require.Contains(t, expand.ResultTableList, "rt-"+ref)
+					require.Equal(t, metadata.RtDetail{TableID: "table-" + ref, StorageName: "storage-" + ref}, expand.RtDetailList["rt-"+ref])
+					require.Equal(t, "filter-"+ref, expand.MetricFilterCondition[ref])
+				}
+				if len(tc.refs) == 1 {
+					require.Equal(t, "storage-"+tc.refs[0], expand.ClusterName)
+				} else {
+					require.Empty(t, expand.ClusterName)
+				}
+			}
+			// Building or mutating one envelope must not change another output.
+			delete(expand.RtDetailList, "rt-a")
+			delete(expand.MetricFilterCondition, "a")
+			full := ToVmExpand(ctx, qr)
+			require.Len(t, full.RtDetailList, 2)
+			require.Equal(t, "filter-a", full.MetricFilterCondition["a"])
+		})
+	}
+}
+
+func TestVmExpandDoesNotResolveUnrelatedSelectors(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	qr := metadata.QueryReference{
+		"a": {{QueryList: []*metadata.Query{{VmRt: "rt-a", StorageName: "storage-a"}}}},
+		"b": {{QueryList: []*metadata.Query{{VmRt: "rt-b", StorageName: "storage-b"}}}},
+	}
+	for _, expression := range []string{
+		"c", `{job="a"}`, `{__name__!="a",job="b"}`,
+		`{__name__!~"a",job="b"}`, `{__name__=~"a|b"}`,
+	} {
+		t.Run(expression, func(t *testing.T) {
+			expr, err := parser.ParseExpr(expression)
+			require.NoError(t, err)
+			expand, err := ToVmExpandForExpression(ctx, qr, expr)
+			require.NoError(t, err)
+			require.Nil(t, expand)
+		})
+	}
+	expr, err := parser.ParseExpr("vector(1)")
+	require.NoError(t, err)
+	expand, err := ToVmExpandForExpression(ctx, nil, expr)
+	require.NoError(t, err)
+	require.Nil(t, expand)
+}
+
+func TestVmExpandScopesUnboundReferencesToNoData(t *testing.T) {
+	ctx := context.Background()
+	bound := func(ref string) []*metadata.QueryMetric {
+		return []*metadata.QueryMetric{{QueryList: metadata.QueryList{{
+			VmRt: "rt-" + ref, VmCondition: metadata.VmCondition(`result_table_id="rt-` + ref + `"`),
+		}}}}
+	}
+	qr := metadata.QueryReference{
+		"a":     bound("a"),
+		"b":     bound("b"),
+		"d":     bound("d"),
+		"x":     {{QueryList: metadata.QueryList{{}}}},
+		"empty": {{QueryList: metadata.QueryList{{VmRt: "rt-empty"}}}},
+		"":      bound("other"),
+	}
+	noData := func(table string) string {
+		return `result_table_id="` + table + `", __name__="__unify_query_unbound_reference__"`
+	}
+	for _, tc := range []struct {
+		name   string
+		expr   string
+		tables []string
+		want   map[string]string
+	}{
+		{
+			name: "or_falls_back_to_bound_branch", expr: `a / b * 100 or c / d * 100`,
+			tables: []string{"rt-a", "rt-b", "rt-d"},
+			want: map[string]string{
+				"a": `result_table_id="rt-a"`, "b": `result_table_id="rt-b"`,
+				"c": noData("rt-a"), "d": `result_table_id="rt-d"`,
+			},
+		},
+		{
+			name: "or_of_sums", expr: `a + b or a + c`, tables: []string{"rt-a", "rt-b"},
+			want: map[string]string{"a": `result_table_id="rt-a"`, "b": `result_table_id="rt-b"`, "c": noData("rt-a")},
+		},
+		{
+			name: "and_with_unbound_guard", expr: `(a - b) and (c == 0)`, tables: []string{"rt-a", "rt-b"},
+			want: map[string]string{"a": `result_table_id="rt-a"`, "b": `result_table_id="rt-b"`, "c": noData("rt-a")},
+		},
+		{
+			name: "group_left_join", expr: `((c - b) * a + d + on(pod) group_left(node) e * 0) > 0`,
+			tables: []string{"rt-a", "rt-b", "rt-d"},
+			want: map[string]string{
+				"a": `result_table_id="rt-a"`, "b": `result_table_id="rt-b"`, "d": `result_table_id="rt-d"`,
+				"c": noData("rt-a"), "e": noData("rt-a"),
+			},
+		},
+		{
+			name: "nested_in_range_function", expr: `rate(a[5m]) / rate({__name__=~"c"}[5m])`, tables: []string{"rt-a"},
+			want: map[string]string{"a": `result_table_id="rt-a"`, "c": noData("rt-a")},
+		},
+		{
+			name: "reference_without_vm_table", expr: `topk(scalar(x), a)`, tables: []string{"rt-a"},
+			want: map[string]string{"a": `result_table_id="rt-a"`, "x": noData("rt-a")},
+		},
+		{
+			name: "table_without_condition", expr: `a or empty`, tables: []string{"rt-a", "rt-empty"},
+			want: map[string]string{"a": `result_table_id="rt-a"`, "empty": noData("rt-a")},
+		},
+		{
+			name: "only_table_without_condition", expr: `empty`, tables: []string{"rt-empty"},
+			want: map[string]string{"empty": noData("rt-empty")},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := parser.ParseExpr(tc.expr)
+			require.NoError(t, err)
+			expand, err := ToVmExpandForExpression(ctx, qr, expr)
+			require.NoError(t, err)
+			require.NotNil(t, expand)
+			require.Equal(t, tc.tables, expand.ResultTableList, "unbound references add no table")
+			require.Equal(t, tc.want, expand.MetricFilterCondition)
+			for ref, condition := range expand.MetricFilterCondition {
+				require.NotEmpty(t, condition, "reference %q must not reach the gateway unbound", ref)
+			}
+		})
+	}
+
+	t.Run("all_references_unbound_stays_empty", func(t *testing.T) {
+		for _, expression := range []string{`c or e`, `rate(c[5m]) / rate(e[5m])`, `(c - e) and (c == 0)`} {
+			expr, err := parser.ParseExpr(expression)
+			require.NoError(t, err)
+			expand, err := ToVmExpandForExpression(ctx, qr, expr)
+			require.NoError(t, err)
+			require.Nil(t, expand, expression)
+		}
+	})
+
+	t.Run("selector_without_reference_name_is_rejected", func(t *testing.T) {
+		expr, err := parser.ParseExpr(`a or {job="api"}`)
+		require.NoError(t, err)
+		expand, err := ToVmExpandForExpression(ctx, qr, expr)
+		require.ErrorContains(t, err, "selector without a reference name")
+		require.Nil(t, expand)
+	})
+}
+
+func TestVmExpandRecordsUnboundReferencesOnSpan(t *testing.T) {
+	qr := metadata.QueryReference{
+		"a": {{QueryList: metadata.QueryList{{VmRt: "rt-a", VmCondition: `result_table_id="rt-a"`}}}},
+	}
+	for _, tc := range []struct {
+		expr string
+		want string
+	}{
+		{expr: `a or e or c`, want: "c,e"},
+		{expr: `a`, want: ""},
+	} {
+		t.Run(tc.expr, func(t *testing.T) {
+			recorder := tracetest.NewSpanRecorder()
+			provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+			ctx, span := provider.Tracer("test").Start(context.Background(), "parent")
+			expr, err := parser.ParseExpr(tc.expr)
+			require.NoError(t, err)
+			_, err = ToVmExpandForExpression(ctx, qr, expr)
+			require.NoError(t, err)
+			span.End()
+
+			require.Len(t, recorder.Ended(), 1)
+			got, found := "", false
+			for _, attr := range recorder.Ended()[0].Attributes() {
+				if attr.Key == "vm-unbound-references" {
+					got, found = attr.Value.AsString(), true
+				}
+			}
+			require.Equal(t, tc.want != "", found, "the attribute is written only when a reference is unbound")
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
 
 func TestVmExpand(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
@@ -188,17 +446,10 @@ func TestVmExpand(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			VmExpand := ToVmExpand(ctx, c.queryRef)
-
-			//
-			for k, v := range VmExpand.MetricFilterCondition {
-				or := " or "
-				arr := strings.Split(v, or)
-				sort.Strings(arr)
-				VmExpand.MetricFilterCondition[k] = strings.Join(arr, or)
+			for i := 0; i < 64; i++ {
+				vmExpand := ToVmExpand(ctx, c.queryRef)
+				assert.Equal(t, c.VmExpand, vmExpand, "VM condition order changed at iteration %d", i)
 			}
-
-			assert.Equal(t, c.VmExpand, VmExpand)
 		})
 	}
 }

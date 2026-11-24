@@ -18,6 +18,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -290,5 +291,51 @@ func TestControlSourceModeIgnoresThisProcessOwnHealthyLoads(t *testing.T) {
 	fixture.tick()
 	if stats := fixture.bundle.controlSourceStats(); stats.Mode != observability.ControlSourceModeDegradedLastGood {
 		t.Fatalf("stats with a persisted success = %+v, want degraded_last_good", stats)
+	}
+}
+
+// The catalog families are the leader's: a leader that loses the lease stops
+// reporting the Catalog it built, and reports one again once it leads.
+func TestCatalogCompositionIsReportedByTheLeaderOnly(t *testing.T) {
+	built := func() phaseTwoControlRefreshResult {
+		result := healthyResult()
+		result.Composition = &controlplane.CatalogComposition{QueryGroups: map[string]int{"bk_monitor/time_series": 1}}
+		return result
+	}
+	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"},
+		initialResult: built(), refreshResults: []phaseTwoControlRefreshResult{built(), built()}}
+	owner := &fakePhaseTwoOwnership{assigned: []execution.QueryGroupIdentity{"query-group-1"}, runner: newFakePhaseTwoQueryGroup()}
+	fixture := newControlSourceFixture(t, control, owner)
+	fixture.start()
+	if composition := fixture.bundle.catalogComposition(); composition == nil {
+		t.Fatal("the leader reports no Catalog composition")
+	}
+	owner.mu.Lock()
+	owner.follower = true
+	owner.mu.Unlock()
+	fixture.bundle.markControlFollower(errors.New("lease lost"))
+	fixture.tick()
+	if stats := fixture.bundle.controlSourceStats(); stats.Role != observability.ControlSourceRoleFollower {
+		t.Fatalf("role after losing the lease = %s, want follower", stats.Role)
+	}
+	if composition := fixture.bundle.catalogComposition(); composition != nil {
+		t.Fatalf("a former leader reports the Catalog it built: %+v", composition)
+	}
+	owner.mu.Lock()
+	owner.follower = false
+	owner.mu.Unlock()
+	// A replica does not contend while the term it lost is still stopping
+	// (tryAcquireControlLeader on controlRunning); that term's loop exits on
+	// its own goroutine. Ticking before it has made the tick a follower's,
+	// every time the test ran alone and now and then in the suite (gate on
+	// 5881a3eb5).
+	testwait.Until(t, "the lost term's control loop stops", func() bool {
+		fixture.bundle.mu.RLock()
+		defer fixture.bundle.mu.RUnlock()
+		return !fixture.bundle.controlRunning
+	})
+	fixture.tick()
+	if composition := fixture.bundle.catalogComposition(); composition == nil {
+		t.Fatal("a leader again reports no Catalog composition")
 	}
 }

@@ -49,12 +49,6 @@ func runString(ctx context.Context, s string, userEnvs map[string]string, userna
 	if err != nil {
 		return "", fmt.Errorf("parse command line %s failed:%s", s, err.Error())
 	}
-	for _, line := range sp {
-		logger.Infof("get cmdline: %v", line)
-		for _, item := range line {
-			logger.Infof("item:%s", item)
-		}
-	}
 
 	// Pre-check all executables exist before forking, to avoid pidfd leak on
 	// exec failure in Go < 1.23.1 (go.dev/issue/69284: fork succeeds, allocates
@@ -112,7 +106,7 @@ func runString(ctx context.Context, s string, userEnvs map[string]string, userna
 		if !ok || err != nil {
 			return buf.String(), err
 		}
-		logger.Infof("script %v normal exist", sp)
+		logger.Infof("script completed successfully, commands: %d", len(cmds))
 		break
 	}
 	b := buf.Bytes()
@@ -135,7 +129,6 @@ type GetEnver struct {
 
 // GetEnv :
 func (ge *GetEnver) GetEnv(key string) string {
-	logger.Infof("to get environment %s, user env map %+v", key, ge.userEnvs)
 	envValue, ok := ge.userEnvs[key]
 	if ok {
 		return envValue

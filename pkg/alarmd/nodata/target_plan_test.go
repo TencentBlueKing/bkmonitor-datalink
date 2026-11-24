@@ -7,6 +7,7 @@ package nodata
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -77,8 +78,8 @@ func TestATargetPlanIsClassifiedByItsKeyDimensionsAndNeverAsHistory(t *testing.T
 }
 
 // The dependency check comes first, whatever the Slot saw. An unresolved or
-// unavailable target pauses absence by name and moves nothing; dropped
-// members pause it under their own name; a complete resolution is the
+// unavailable target pauses absence by name and, with nothing arriving,
+// moves nothing; dropped members pause it under their own name; a complete resolution is the
 // roster and the round is judged against it.
 func TestEvaluateSlotJudgesATargetPlanOnlyAgainstACompleteResolution(t *testing.T) {
 	plan := targetPlanSlotPlan(hostTargetPlan("101"), []string{"bk_host_id"})
@@ -102,8 +103,13 @@ func TestEvaluateSlotJudgesATargetPlanOnlyAgainstACompleteResolution(t *testing.
 			if err != nil || outcome != test.outcome {
 				t.Fatalf("EvaluateSlot() = %q, %v; want %q", outcome, err, test.outcome)
 			}
-			if len(result.Verdicts) != 0 || len(result.Memory) != 0 {
-				t.Fatalf("verdicts %v memory %v; a paused round judges nothing and moves nothing", result.Verdicts, result.Memory)
+			for key, verdict := range result.Verdicts {
+				if verdict != VerdictUnavailable {
+					t.Fatalf("verdict %q for %s; with nothing arriving a paused round judges nothing", verdict, key)
+				}
+			}
+			if !reflect.DeepEqual(result.Memory, memory) {
+				t.Fatalf("memory %v, want it as loaded %v; a paused round moves nothing", result.Memory, memory)
 			}
 		})
 	}

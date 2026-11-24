@@ -109,12 +109,11 @@ type RuntimeRetentionFacts struct {
 }
 
 // RuntimeLinkdFacts is what the alert link's configuration switches on: the
-// Console configured or not, the event source and hook the link's target is
-// narrowed to. With the Console configured, the closes of alerts of
-// strategies that no longer exist and of targets that left a strategy's
-// scope send. No address, username or password.
+// link's control plane named with its secret or not. With it, the recovery
+// gate's copy is refreshed and every close is sent; without it neither. No
+// address or secret.
 type RuntimeLinkdFacts struct {
-	ConsoleConfigured bool `json:"console_configured"`
+	ControlPlaneConfigured bool `json:"control_plane_configured"`
 }
 
 type RuntimeStorageFacts struct {
@@ -212,7 +211,6 @@ type RuntimeCapacityFacts struct {
 	EvaluatorMaxLevels uint64 `json:"evaluator_max_levels"`
 	EvidenceBytes      int    `json:"evidence_bytes"`
 	OutputMessageBytes int    `json:"output_message_bytes"`
-	UQBodyBytes        int64  `json:"uq_body_bytes"`
 	UQSeriesBytes      int64  `json:"uq_series_bytes"`
 	UQSeries           uint64 `json:"uq_series"`
 	UQRecords          uint64 `json:"uq_records"`

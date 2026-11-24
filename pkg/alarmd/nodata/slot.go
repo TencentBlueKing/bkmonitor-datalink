@@ -128,7 +128,10 @@ const (
 	// sends a no-data alert under the whole-item identity while the item's own
 	// host groups keep their absences open with nothing left that would ever
 	// close them. Nothing is judged, nothing is remembered and no series is
-	// produced, so the round leaves no trace but its name.
+	// produced, so the round leaves no trace but its name. That includes the
+	// groups that arrived: whether a host's group is remembered or forgotten,
+	// and whether a stopped absence on it recovers, depends on the business
+	// the index holds it under (A6), and without the index that is not known.
 	OutcomeSkippedHostsUnresolved SlotOutcome = "SKIPPED_HOSTS_UNRESOLVED"
 	// OutcomeSkippedDerivationFailed means this Plan's no-data round could not
 	// be worked out at all: its memory was not loaded, its Slot could not be
@@ -144,13 +147,15 @@ const (
 	// not judged, because "not in the set" and "the set is not known" are
 	// opposite answers wearing one shape, and judging on the second would
 	// close absences and open new ones over a cache that merely blinked.
-	// Nothing is judged, nothing is remembered; the round leaves its name.
+	// The groups that did arrive are judged present and remembered (A1):
+	// their records were admitted as members that did resolve.
 	OutcomeSkippedTargetSelectorUnavailable SlotOutcome = "SKIPPED_TARGET_SELECTOR_UNAVAILABLE"
 	// OutcomeSkippedTargetMembersDropped means every selector answered but
 	// some members failed validation and were dropped. The kept members admit
 	// records as usual; absence is not judged because a roster missing the
 	// dropped members would read their silence as departure and close their
-	// absences. It is named apart from the unavailable case so that one
+	// absences. The groups that did arrive are judged present and remembered
+	// (A1). It is named apart from the unavailable case so that one
 	// long-malformed member cannot quietly hold a Plan's no-data detection
 	// down under a reason that looks like an outage.
 	OutcomeSkippedTargetMembersDropped SlotOutcome = "SKIPPED_TARGET_MEMBERS_DROPPED"
@@ -222,34 +227,69 @@ type TargetResolution struct {
 // starts being evaluated without the caller changing.
 //
 // The outcome says whether absence was judged. A Slot that did not see the
-// whole period, or whose answer may have been cut, still produces a result -
+// whole period, whose answer may have been cut, or whose target plan did not
+// resolve in full, still produces a result -
 // every expected group that did not arrive is UNAVAILABLE with its memory
 // untouched, and the ones that arrived are judged present - and the outcome is
 // what distinguishes that from a round that judged and found nothing absent.
 func EvaluateSlot(input SlotInput) (AbsenceResult, SlotOutcome, error) {
+	judge, outcome, err := newSlotJudge(input)
+	if err != nil || judge == nil {
+		return AbsenceResult{}, outcome, err
+	}
+	result, err := judgeAbsenceResult(judge, input.Memory, memoryKeys(input.Memory))
+	if err != nil {
+		return AbsenceResult{}, OutcomeNone, err
+	}
+	return result, outcome, nil
+}
+
+// newSlotJudge settles everything about one Slot's round that is known before
+// its memory is read, and returns the judgement to feed the memory to. A nil
+// judgement is a round that judges nothing, under the outcome returned with
+// it. input.Memory is not read.
+func newSlotJudge(input SlotInput) (*absenceJudge, SlotOutcome, error) {
+	return newSlotJudgeWith(input, nil)
+}
+
+// newSlotJudgeWith is newSlotJudge over a present set the caller kept as the
+// Slot's series landed, in place of input.Series; nil projects input.Series.
+func newSlotJudgeWith(input SlotInput, kept *PresentSet) (*absenceJudge, SlotOutcome, error) {
 	if input.Plan == nil || input.Plan.NoData == nil {
-		return AbsenceResult{}, OutcomeNone, nil
+		return nil, OutcomeNone, nil
 	}
 	config := input.Plan.NoData
 	class, err := ClassifyTarget(input.Plan.TargetScope, input.Plan.TargetPlan, config.AggDimension)
 	if err != nil {
-		return AbsenceResult{}, OutcomeNone, err
+		return nil, OutcomeNone, err
 	}
 	var members []string
+	// targetSkip names a target plan this Slot did not resolve in full. Its
+	// round judges no absence, and still judges the groups that arrived
+	// (A1): the admission filter let their records in only as members that
+	// did resolve, and a target plan's groups are never asked about their
+	// business (HostCandidates names no host for it), so nothing a complete
+	// resolution would add changes what is said about them. The silent
+	// members, and the ones outside what resolved, are left as loaded.
+	targetSkip := OutcomeNone
 	if class.Source == RosterTargetPlan {
 		// The dependency check comes before anything is judged, and it is
 		// made whether or not the Slot saw a series: a round with no series
 		// under an unavailable selector is the one round that must not be
 		// read as "everything is absent".
 		switch {
-		case input.TargetResolution == nil, input.TargetResolution.State == TargetResolutionUnavailable:
-			return AbsenceResult{}, OutcomeSkippedTargetSelectorUnavailable, nil
+		case input.TargetResolution == nil:
+			targetSkip = OutcomeSkippedTargetSelectorUnavailable
+		case input.TargetResolution.State == TargetResolutionUnavailable:
+			targetSkip = OutcomeSkippedTargetSelectorUnavailable
+			members = input.TargetResolution.Members
 		case input.TargetResolution.State == TargetResolutionIncomplete:
-			return AbsenceResult{}, OutcomeSkippedTargetMembersDropped, nil
+			targetSkip = OutcomeSkippedTargetMembersDropped
+			members = input.TargetResolution.Members
 		case input.TargetResolution.State == TargetResolutionComplete:
 			members = input.TargetResolution.Members
 		default:
-			return AbsenceResult{}, OutcomeNone, fmt.Errorf("alarmd nodata: unknown target resolution state %q", input.TargetResolution.State)
+			return nil, OutcomeNone, fmt.Errorf("alarmd nodata: unknown target resolution state %q", input.TargetResolution.State)
 		}
 	}
 	if class.Source == RosterTargetStatic && !input.HostsResolved {
@@ -261,48 +301,62 @@ func EvaluateSlot(input SlotInput) (AbsenceResult, SlotOutcome, error) {
 		// untouched: a history roster comes out of the memory and a whole-item
 		// one expects nothing by design, and neither becomes less true because
 		// the index is cold.
-		return AbsenceResult{}, OutcomeSkippedHostsUnresolved, nil
+		return nil, OutcomeSkippedHostsUnresolved, nil
 	}
-	tally := ProjectSeries(input.Series, config.AggDimension)
-	// Before the roster: a history roster is derived from the memory, and a
-	// closed group has to be gone from it by then.
-	memory, manualClosed := applyManualCloses(input.Memory, input.ManualCloses, input.EvaluationTime)
-	roster, err := BuildRoster(RosterRequest{
-		AggDimension:  config.AggDimension,
-		Scope:         input.Plan.TargetScope,
-		Plan:          input.Plan.TargetPlan,
-		TargetMembers: members,
-		KnownHosts:    input.KnownHosts,
-		Memory:        memory,
-	})
-	if err != nil {
-		return AbsenceResult{}, OutcomeNone, err
+	var present map[string]uint8
+	tally := ProjectionTally{}
+	if kept != nil {
+		if err := kept.claim(config.AggDimension); err != nil {
+			return nil, OutcomeNone, err
+		}
+		present, tally.Dropped = kept.keys, kept.dropped
+	} else {
+		tally = ProjectSeries(input.Series, config.AggDimension)
 	}
-	// Neither of the two below judges absence; both still judge the groups
-	// that arrived (A1). An answer that is not full is named as such, which
-	// is the stronger statement; truncated is the answer that says it is
-	// full and may not be.
+	// A history roster is derived from the memory as it is fed, after the
+	// manual closes - a closed group has to be gone from it by then, and
+	// closing one never moves its last-seen time, which is what the history
+	// roster reads. Every other expected set reads no memory and is built
+	// here.
+	roster := Roster{Source: RosterHistory}
+	if class.Source != RosterHistory {
+		if roster, err = BuildRoster(RosterRequest{
+			AggDimension:  config.AggDimension,
+			Scope:         input.Plan.TargetScope,
+			Plan:          input.Plan.TargetPlan,
+			TargetMembers: members,
+			KnownHosts:    input.KnownHosts,
+		}); err != nil {
+			return nil, OutcomeNone, err
+		}
+	}
+	// None of the three below judges absence; all still judge the groups
+	// that arrived (A1). A target that did not resolve in full is named
+	// first: the expected set could not be built whatever the answer was.
+	// An answer that is not full is named as such, which is the stronger
+	// statement; truncated is the answer that says it is full and may not be.
 	outcome := OutcomeEvaluated
 	switch {
+	case targetSkip != OutcomeNone:
+		outcome = targetSkip
 	case input.Completeness != execution.CompletenessFull:
 		outcome = OutcomeSkippedQueryNotFull
 	case input.AnswerTruncated:
 		outcome = OutcomeSkippedAnswerTruncated
 	}
-	result := Evaluate(AbsenceInput{
+	judge := newAbsenceJudgeOver(AbsenceInput{
 		EvaluationTime:         input.EvaluationTime,
 		PeriodSeconds:          input.PeriodSeconds,
 		Completeness:           input.Completeness,
 		Present:                tally.Groups,
 		Dropped:                tally.Dropped,
 		Roster:                 roster,
-		Memory:                 memory,
 		OutOfBusiness:          input.OutOfBusiness,
 		TrackingHorizonSeconds: input.TrackingHorizonSeconds,
 		TrackingExhaustedAt:    input.TrackingExhaustedAt,
 		RecoveryDisabled:       config.RecoveryDisabled,
 		AnswerTruncated:        input.AnswerTruncated,
-	})
-	result.Facts.ManualClosed = manualClosed
-	return result, outcome, nil
+		RosterUnresolved:       targetSkip != OutcomeNone,
+	}, class.Source == RosterHistory, input.ManualCloses, present)
+	return judge, outcome, nil
 }

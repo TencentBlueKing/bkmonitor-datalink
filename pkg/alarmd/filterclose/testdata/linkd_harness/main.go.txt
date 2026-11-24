@@ -1,0 +1,481 @@
+// The alert link's own code, run in one process for alarmd's end-to-end
+// test of the filter close (filterclose/linkd_e2e_test.go). It is not built
+// with alarmd: the test builds it inside the link's module (pkg/linkd at
+// Linkd b7e5beddf) as cmd/alarmd-filter-harness/main.go through
+// go build -overlay, which leaves the module's tree as it is, because only
+// that module can import the link's internal packages.
+//
+// What runs is the link's: the source service and its published release
+// (eventsource), the standard cleaner and the event factory (cleaner), the
+// lifecycle processor over the in-memory repository (lifecycle,
+// store/memory), and the management API with its Internal-Token check and
+// its alert search, filtered close and single close handlers
+// (controlplane/api). Two pieces are the harness's own, because the link
+// serves them only over Elasticsearch storage: the search reader evaluates
+// the query clauses alarmd sends (bool, term, terms, exists, range on
+// create_at) over the
+// repository's alerts, and the closer runs the processor's CloseAlert and
+// classifies its errors as the link's AlertCloser does
+// (internal/lifecycle/process/close.go:251-273), with no lease or KAC
+// projection. Faults can be injected into the closer: -busy-every answers
+// every nth close 429 busy before trying, -uncertain-every saves every nth
+// close and then answers 502 result_uncertain.
+//
+// Two routes are the harness's own: POST /harness/events takes one raw
+// event as the link's Kafka consumer would and processes it, and GET
+// /harness/alert?tenant=&id= answers an alert's status and close count.
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"linkd/internal/cleaner"
+	"linkd/internal/config"
+	"linkd/internal/controlplane/api"
+	"linkd/internal/domain"
+	"linkd/internal/enrich"
+	"linkd/internal/eventsource"
+	"linkd/internal/lifecycle"
+	lifecycleprocess "linkd/internal/lifecycle/process"
+	"linkd/internal/store"
+	"linkd/internal/store/memory"
+)
+
+// documents is the source service's store, in memory.
+type documents struct {
+	mu   sync.Mutex
+	docs map[string]json.RawMessage
+	revs map[string]string
+}
+
+func (d *documents) Get(_ context.Context, collection, key string) (json.RawMessage, string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	value, ok := d.docs[collection+"/"+key]
+	if !ok {
+		return nil, "", eventsource.ErrNotFound
+	}
+	return value, d.revs[collection+"/"+key], nil
+}
+
+func (d *documents) Put(_ context.Context, collection, key, expected string, value json.RawMessage) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.revs[collection+"/"+key] != expected {
+		return eventsource.ErrConflict
+	}
+	d.docs[collection+"/"+key] = append(json.RawMessage(nil), value...)
+	next, _ := strconv.Atoi(expected)
+	d.revs[collection+"/"+key] = strconv.Itoa(next + 1)
+	return nil
+}
+
+func (d *documents) List(_ context.Context, collection, after string, limit int) ([]json.RawMessage, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var keys []string
+	for key := range d.docs {
+		if strings.HasPrefix(key, collection+"/") && strings.TrimPrefix(key, collection+"/") > after {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	var out []json.RawMessage
+	for _, key := range keys {
+		if len(out) == limit {
+			break
+		}
+		out = append(out, d.docs[key])
+	}
+	return out, nil
+}
+
+type clock struct{}
+
+func (clock) Now() time.Time { return time.Now().UTC() }
+
+type logger struct{}
+
+func (logger) WarnContext(_ context.Context, message string, args ...any) {
+	log.Println(append([]any{message}, args...)...)
+}
+
+// tracked is the memory repository with the ids of the alerts it created,
+// which the search reads (the memory store lists no alerts).
+type tracked struct {
+	*memory.Repository
+	mu  sync.Mutex
+	ids map[string][]string
+}
+
+func (r *tracked) CreateAlert(ctx context.Context, alert domain.Alert) (store.CreateAlertResult, error) {
+	result, err := r.Repository.CreateAlert(ctx, alert)
+	if err == nil {
+		r.mu.Lock()
+		r.ids[alert.BKTenantID] = append(r.ids[alert.BKTenantID], alert.AlertID)
+		r.mu.Unlock()
+	}
+	return result, err
+}
+
+// reader is the search over the repository: the query evaluated on each
+// alert's JSON as the link's mapping indexes it - labels.* and
+// dimensions.* flattened, every value a keyword.
+type reader struct{ repository *tracked }
+
+func keyword(value any) (string, bool) {
+	switch v := value.(type) {
+	case string:
+		return v, true
+	case json.Number:
+		return v.String(), true
+	case bool:
+		return strconv.FormatBool(v), true
+	}
+	return "", false
+}
+
+func fieldOf(alert map[string]any, name string) (string, bool) {
+	for _, prefix := range []string{"labels.", "dimensions."} {
+		if strings.HasPrefix(name, prefix) {
+			inner, _ := alert[strings.TrimSuffix(prefix, ".")].(map[string]any)
+			value, ok := inner[strings.TrimPrefix(name, prefix)]
+			if !ok {
+				return "", false
+			}
+			return keyword(value)
+		}
+	}
+	value, ok := alert[name]
+	if !ok {
+		return "", false
+	}
+	return keyword(value)
+}
+
+var errClause = errors.New("unsupported query clause")
+
+func matches(query json.RawMessage, alert map[string]any) (bool, error) {
+	var clause map[string]json.RawMessage
+	if err := json.Unmarshal(query, &clause); err != nil || len(clause) != 1 {
+		return false, errClause
+	}
+	for kind, body := range clause {
+		switch kind {
+		case "match_all":
+			return true, nil
+		case "term":
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(body, &fields) != nil || len(fields) != 1 {
+				return false, errClause
+			}
+			for name, raw := range fields {
+				var value any
+				decoder := json.NewDecoder(bytes.NewReader(raw))
+				decoder.UseNumber()
+				_ = decoder.Decode(&value)
+				want, _ := keyword(value)
+				got, ok := fieldOf(alert, name)
+				return ok && got == want, nil
+			}
+		case "terms":
+			var fields map[string][]json.RawMessage
+			if json.Unmarshal(body, &fields) != nil || len(fields) != 1 {
+				return false, errClause
+			}
+			for name, values := range fields {
+				got, ok := fieldOf(alert, name)
+				for _, raw := range values {
+					var value any
+					decoder := json.NewDecoder(bytes.NewReader(raw))
+					decoder.UseNumber()
+					_ = decoder.Decode(&value)
+					if want, _ := keyword(value); ok && got == want {
+						return true, nil
+					}
+				}
+				return false, nil
+			}
+		case "range":
+			// Elasticsearch's range on a date_nanos field (alert-search.md
+			// "可查询字段"); the harness ranges create_at only, the field
+			// alarmd bounds.
+			var fields map[string]map[string]string
+			if json.Unmarshal(body, &fields) != nil || len(fields) != 1 || fields["create_at"] == nil {
+				return false, errClause
+			}
+			text, _ := alert["create_at"].(string)
+			created, err := time.Parse(time.RFC3339Nano, text)
+			if err != nil {
+				return false, nil
+			}
+			for op, bound := range fields["create_at"] {
+				at, err := time.Parse(time.RFC3339Nano, bound)
+				if err != nil {
+					return false, errClause
+				}
+				switch op {
+				case "gte":
+					if created.Before(at) {
+						return false, nil
+					}
+				case "gt":
+					if !created.After(at) {
+						return false, nil
+					}
+				case "lte":
+					if created.After(at) {
+						return false, nil
+					}
+				case "lt":
+					if !created.Before(at) {
+						return false, nil
+					}
+				default:
+					return false, errClause
+				}
+			}
+			return true, nil
+		case "exists":
+			var field struct {
+				Field string `json:"field"`
+			}
+			if json.Unmarshal(body, &field) != nil {
+				return false, errClause
+			}
+			_, ok := fieldOf(alert, field.Field)
+			return ok, nil
+		case "bool":
+			var b struct {
+				Filter  []json.RawMessage `json:"filter"`
+				MustNot []json.RawMessage `json:"must_not"`
+				Should  []json.RawMessage `json:"should"`
+				Minimum *int              `json:"minimum_should_match"`
+			}
+			if json.Unmarshal(body, &b) != nil {
+				return false, errClause
+			}
+			for _, sub := range b.Filter {
+				if ok, err := matches(sub, alert); err != nil || !ok {
+					return false, err
+				}
+			}
+			for _, sub := range b.MustNot {
+				if ok, err := matches(sub, alert); err != nil || ok {
+					return false, err
+				}
+			}
+			if len(b.Should) == 0 {
+				return true, nil
+			}
+			minimum := 0
+			if b.Minimum != nil {
+				minimum = *b.Minimum
+			} else if len(b.Filter) == 0 {
+				minimum = 1
+			}
+			hit := 0
+			for _, sub := range b.Should {
+				ok, err := matches(sub, alert)
+				if err != nil {
+					return false, err
+				}
+				if ok {
+					hit++
+				}
+			}
+			return hit >= minimum, nil
+		}
+	}
+	return false, errClause
+}
+
+func (r reader) SearchAlerts(ctx context.Context, request store.AlertSearchRequest) (store.AlertSearchPage, error) {
+	r.repository.mu.Lock()
+	ids := append([]string(nil), r.repository.ids[request.TenantID]...)
+	r.repository.mu.Unlock()
+	sort.Strings(ids)
+	page := store.AlertSearchPage{Items: []domain.Alert{}}
+	for _, id := range ids {
+		if id <= request.After {
+			continue
+		}
+		stored, err := r.repository.GetAlert(ctx, request.TenantID, id)
+		if err != nil {
+			return store.AlertSearchPage{}, err
+		}
+		encoded, _ := json.Marshal(stored.Alert)
+		var alert map[string]any
+		decoder := json.NewDecoder(bytes.NewReader(encoded))
+		decoder.UseNumber()
+		_ = decoder.Decode(&alert)
+		ok := true
+		if len(request.Query) > 0 {
+			ok, err = matches(request.Query, alert)
+			if err != nil {
+				return store.AlertSearchPage{}, fmt.Errorf("%w: %v", store.ErrInvalidArgument, err)
+			}
+		}
+		if !ok {
+			continue
+		}
+		if len(page.Items) == request.Limit {
+			page.Next = page.Items[len(page.Items)-1].AlertID
+			return page, nil
+		}
+		page.Items = append(page.Items, stored.Alert)
+	}
+	return page, nil
+}
+
+// closer is the processor's CloseAlert, classified as the link's
+// AlertCloser classifies it, with the faults asked for.
+type closer struct {
+	processor      *lifecycle.Processor
+	mu             sync.Mutex
+	calls          int
+	busyEvery      int
+	uncertainEvery int
+	closes         map[string]int
+}
+
+func (c *closer) CloseAlert(ctx context.Context, command lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
+	c.mu.Lock()
+	c.calls++
+	n := c.calls
+	c.mu.Unlock()
+	if c.busyEvery > 0 && n%c.busyEvery == 0 {
+		return lifecycle.CloseAlertResult{}, &lifecycleprocess.CloseError{Status: 429, Code: "busy", Message: "alert is being processed; retry the same operation"}
+	}
+	result, err := c.processor.CloseAlert(ctx, command)
+	if err == nil && !result.AlreadyClosed {
+		c.mu.Lock()
+		c.closes[command.AlertID]++
+		c.mu.Unlock()
+	}
+	switch {
+	case err == nil && c.uncertainEvery > 0 && n%c.uncertainEvery == 0:
+		return result, &lifecycleprocess.CloseError{Status: 502, Code: "result_uncertain", Message: "alert closed but KAC write failed; retry the same operation"}
+	case err == nil:
+		return result, nil
+	case errors.Is(err, store.ErrNotFound):
+		return result, &lifecycleprocess.CloseError{Status: 404, Code: "not_found", Message: "alert or source not found"}
+	case errors.Is(err, store.ErrInvalidTransition):
+		return result, &lifecycleprocess.CloseError{Status: 409, Code: "invalid_transition", Message: "alert state changed; refresh before another operation"}
+	case errors.Is(err, store.ErrVersionConflict):
+		return result, &lifecycleprocess.CloseError{Status: 409, Code: "version_conflict", Message: "alert version changed; retry the same operation"}
+	}
+	return result, &lifecycleprocess.CloseError{Status: 502, Code: "result_uncertain", Message: "close result uncertain; retry the same operation"}
+}
+
+func main() {
+	secret := flag.String("secret", "", "the dispatch JWT secret")
+	busyEvery := flag.Int("busy-every", 0, "answer every nth close 429 busy")
+	uncertainEvery := flag.Int("uncertain-every", 0, "save every nth close and answer 502")
+	flag.Parse()
+
+	source := config.EventSource{EventSourceID: "built_in_bk", Enabled: true, Cleaner: config.CleanerConfig{Type: config.CleanerTypeStandard},
+		Storage: config.EventSourceStorageConfig{Type: config.StorageTypeKafka, Kafka: config.KafkaStorageConfig{
+			Brokers: []string{"192.0.2.1:9092"}, Topic: "alarmd-trigger-event", ConsumerGroup: "linkd"}}}
+	severity := config.SeverityConfig{}.WithDefaults()
+	sources := eventsource.New(&documents{docs: map[string]json.RawMessage{}, revs: map[string]string{}}, severity)
+	ctx := context.Background()
+	if _, err := sources.Apply(ctx, source, 0, false, "harness"); err != nil {
+		log.Fatal("publish source: ", err)
+	}
+	record, err := sources.Get(ctx, "built_in_bk")
+	if err != nil {
+		log.Fatal(err)
+	}
+	release, err := sources.GetRelease(ctx, record.ID, record.Published)
+	if err != nil {
+		log.Fatal(err)
+	}
+	published := release.Spec
+
+	repository := &tracked{Repository: memory.New(), ids: map[string][]string{}}
+	processor, err := lifecycle.NewProcessor(repository, lifecycle.NoopRecentAlertCache{}, lifecycle.DeterministicAlertIDGenerator{},
+		enrich.NoopEnricher{}, nil, severity, clock{}, logger{})
+	if err != nil {
+		log.Fatal("processor: ", err)
+	}
+	factory, err := cleaner.NewEventFactory(published, severity)
+	if err != nil {
+		log.Fatal("factory: ", err)
+	}
+	standard := cleaner.StandardCleaner{Rules: published.Cleaner.Rules}
+	closes := &closer{processor: processor, busyEvery: *busyEvery, uncertainEvery: *uncertainEvery, closes: map[string]int{}}
+	search := api.NewAlertSearch(reader{repository: repository}, config.AlertSearchConfig{}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+
+	var records int
+	var mu sync.Mutex
+	mux := http.NewServeMux()
+	mux.Handle("/api/", (&api.API{Sources: sources, AlertSearch: search, AlertCloser: closes,
+		Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: *secret}}}).Handler())
+	mux.HandleFunc("POST /harness/events", func(w http.ResponseWriter, r *http.Request) {
+		payload, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		defer mu.Unlock()
+		records++
+		message := cleaner.RawEventMessage{RecordID: "record-" + strconv.Itoa(records), EventSourceID: "built_in_bk", ReceivedAt: time.Now().UTC(), Payload: payload}
+		draft, err := standard.Clean(r.Context(), message)
+		if err != nil {
+			http.Error(w, "clean: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		event, err := factory.Build(message, draft)
+		if err != nil {
+			http.Error(w, "build: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		created, err := repository.CreateEvent(r.Context(), event)
+		if err != nil {
+			http.Error(w, "store: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if _, err := processor.ProcessEvent(r.Context(), created.StoredEvent); err != nil {
+			http.Error(w, "lifecycle: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		active, err := repository.FindActiveAlert(r.Context(), store.ActiveAlertKey{BKTenantID: event.BKTenantID, EventSourceID: "built_in_bk",
+			Fingerprint: event.Fingerprint})
+		if err != nil {
+			http.Error(w, "no active alert: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"alert_id": active.Alert.AlertID, "fingerprint": event.Fingerprint})
+	})
+	mux.HandleFunc("GET /harness/alert", func(w http.ResponseWriter, r *http.Request) {
+		stored, err := repository.GetAlert(r.Context(), r.URL.Query().Get("tenant"), r.URL.Query().Get("id"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		closes.mu.Lock()
+		n := closes.closes[stored.Alert.AlertID]
+		closes.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": stored.Alert.Status, "closes": n})
+	})
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(listener.Addr().String())
+	log.Fatal(http.Serve(listener, mux))
+}

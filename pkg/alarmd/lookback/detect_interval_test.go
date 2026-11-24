@@ -91,6 +91,35 @@ func unalignedRechecksReadTheFirstReadsBuckets(t *testing.T, query execution.Que
 	}
 }
 
+// A query asked a step apart starts its buckets where its request starts and
+// accepts only the buckets inside its window. Its tail starts on that grid,
+// before the accepted range ends; a start off the grid, or past the last
+// bucket, reads the whole window.
+func TestASteppedQuerysTailStartsOnItsStepsGrid(t *testing.T) {
+	built := unalignedFacts(t)
+	built.QueryRevision, built.QueryStepMillis = "", 15_000
+	stepped, err := execution.BuildQueryPlanFacts(built)
+	if err != nil {
+		t.Fatal(err)
+	}
+	window := execution.QueryWindow{Start: 1_700_000_000, End: 1_700_001_560}
+	asked := stepped.RequestRange(window)
+	spec, err := execution.BuildPhysicalQuerySpec(execution.PhysicalQuerySpec{PlanFacts: stepped, LogicalWindow: window,
+		ProviderRange: asked, AcceptedRange: asked, RequiredColumns: []string{"value"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tail := tailSpec(spec, window.Start+1500)
+	if tail.Digest == spec.Digest || tail.AcceptedRange.Start != window.Start+1500 || tail.AcceptedRange.End != asked.End {
+		t.Fatalf("a tail on the grid read %+v, want from %d to %d", tail.AcceptedRange, window.Start+1500, asked.End)
+	}
+	for _, start := range []int64{window.Start + 1505, asked.End, asked.End + 15} {
+		if got := tailSpec(spec, start); got.Digest != spec.Digest {
+			t.Fatalf("a tail from %d read %+v, want the whole window", start, got.AcceptedRange)
+		}
+	}
+}
+
 // The unit a suggested delay is rounded to is the one the delay was: the data
 // step for an aligned query, and for an unaligned one the schedule's step
 // when that is shorter, which the next Slot of its frozen schedule says.

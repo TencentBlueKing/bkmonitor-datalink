@@ -80,8 +80,13 @@ func getErrorNode(s string) Node {
 	return &ErrorNode{value: s}
 }
 
+var (
+	boostPattern  = regexp.MustCompile(`^(.+)\^([\d\.]+)$`) // boostValue^boost
+	rangePattern  = regexp.MustCompile(`^([\[{])(.+)TO(.+)([\]}])$`)
+	regexpPattern = regexp.MustCompile(`^/(.+)/$`)
+)
+
 func extractBoost(s string) (baseValue string, boost string) {
-	boostPattern := regexp.MustCompile(`^(.+)\^([\d\.]+)$`) // boostValue^boost
 	matches := boostPattern.FindStringSubmatch(s)
 
 	if len(matches) == 3 {
@@ -95,7 +100,6 @@ func extractBoost(s string) (baseValue string, boost string) {
 }
 
 func extractRange(s string, boost string) (node Node, matched bool) {
-	rangePattern := regexp.MustCompile(`^([\[{])(.+)TO(.+)([\]}])$`)
 	matches := rangePattern.FindStringSubmatch(s)
 
 	// 完整匹配, 开始括号, : 起始值, 结束值, 结束括号
@@ -132,7 +136,6 @@ func extractRange(s string, boost string) (node Node, matched bool) {
 }
 
 func extractRegexp(s string, boost string) (node Node, matched bool) {
-	regexpPattern := regexp.MustCompile(`^/(.+)/$`)
 	matches := regexpPattern.FindStringSubmatch(s)
 
 	// matches[0]: 完整匹配, matches[1]: 正则表达式内容

@@ -10,7 +10,8 @@
 package config
 
 const (
-	AppName = "unify-query"
+	AppName                   = "unify-query"
+	MultiTenantModeConfigPath = "http.multi_tenant_mode"
 )
 
 var (

@@ -113,9 +113,30 @@ func NewScheduleActivationReconcilerWithProgress(
 	return reconciler, nil
 }
 
+// Ensure activates the publication. A cutover refused because an open
+// Segment it would close starts at or after the boundary (the activation
+// before was cut in the same second, or on a clock ahead of this one) is
+// cut once more at the first boundary past every such Segment: the
+// activation boundary only moves forward, so a Query Group the publication
+// leaves is retired at a boundary after its open Segment starts, and drains.
 func (reconciler *ScheduleActivationReconciler) Ensure(
 	ctx context.Context,
 	publication SnapshotPublicationRef,
+) (ActivationState, error) {
+	state, err := reconciler.ensure(ctx, publication, 0)
+	var behind *boundaryBehindError
+	if errors.As(err, &behind) {
+		return reconciler.ensure(ctx, publication, behind.floor)
+	}
+	return state, err
+}
+
+// ensure is Ensure with the boundary of a new publication's cutover at the
+// clock's second or floor, whichever is later.
+func (reconciler *ScheduleActivationReconciler) ensure(
+	ctx context.Context,
+	publication SnapshotPublicationRef,
+	floor execution.EvaluationTime,
 ) (state ActivationState, err error) {
 	failureStage := ActivationFailureStageActivationLoad
 	failureClass := ActivationFailureClassOther
@@ -238,7 +259,7 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 		return ActivationState{}, err
 	}
 	failureStage, failureClass = ActivationFailureStageCompile, ActivationFailureClassOther
-	boundary := execution.EvaluationTime(reconciler.now().Unix())
+	boundary := max(execution.EvaluationTime(reconciler.now().Unix()), floor)
 	if boundary <= 0 {
 		return ActivationState{}, errors.New("alarmd controlplane: Schedule activation clock must produce a positive Unix second")
 	}
@@ -320,6 +341,12 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 		}
 	}
 	carries := make(map[int]*execution.StateCarry)
+	carryOutcomes := make(map[int]string)
+	noDataCarries := make(map[int]*execution.NoDataCarry)
+	// The outcomes that carry nothing, and the no-data ones, wait for the
+	// cutover to commit with the carries, for the same reason (see
+	// observeCarries).
+	var uncarried, noDataOutcomes []string
 	for index := range records {
 		previousRecord, continuouslyActive := previousRecords[records[index].Fact.Key()]
 		if _, unread := unreadContinuing[records[index].Fact.Key()]; unread && !continuouslyActive {
@@ -329,20 +356,35 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 			previousRecord.Fact.Selected.StateGeneration != records[index].Fact.Selected.StateGeneration {
 			records[index].Fact.Selected.ForceWarming = true
 		}
+		// Only a Plan that was not active before may be one that never ran;
+		// one whose generation moved under it ran, and warms up. Nor is one
+		// the previous content listed: without a previous record only because
+		// its Query Group's records were not read - its timeline left out of
+		// the read, or the group held back - it was there, whatever its
+		// content now, and no Worker may take it for one that never ran. The
+		// list is the activated publication's manifest, already read.
+		_, listed := previousContent.contexts[records[index].Fact.Plan]
+		records[index].Fact.Selected.Arrived = !continuouslyActive && !listed
 		// A generation that moved under a Plan that stayed active: what of
 		// its state is still the same facts. See stateCarry.
 		if continuouslyActive && previousRecord.Fact.Selected.StateGeneration != records[index].Fact.Selected.StateGeneration {
-			current, compiledHere := changedPlans[records[index].Fact.Key()]
-			if !compiledHere {
-				reconciler.observeStateCarry(ctx, StateCarryPreviousUnreadable)
-				continue
+			// Compiled here: a record carried from previous keeps the
+			// generation it had, and only a changed group's are compiled.
+			current := changedPlans[records[index].Fact.Key()]
+			// The no-data state is decided on its own: a detection edit that
+			// warms the Plan up whole changes nothing about it.
+			if noData, outcome := reconciler.noDataCarry(ctx, previousRecord, previousContent, current); outcome != "" {
+				if noData != nil {
+					noDataCarries[index] = noData
+				}
+				noDataOutcomes = append(noDataOutcomes, outcome)
 			}
 			carry, outcome := reconciler.stateCarry(ctx, previousRecord, previousContent, current)
 			if carry != nil {
-				carries[index] = carry
+				carries[index], carryOutcomes[index] = carry, outcome
 				continue
 			}
-			reconciler.observeStateCarry(ctx, outcome)
+			uncarried = append(uncarried, outcome)
 		}
 	}
 	// A Query Group that reopens a retired timeline restarts every Plan it
@@ -362,16 +404,34 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 		for index := range records {
 			if _, back := returning[planGroups[records[index].Fact.Key()]]; back {
 				records[index].Fact.Selected.ForceWarming = true
+				records[index].Fact.Selected.Arrived = false
 				returned[index] = struct{}{}
 			}
 		}
 	}
-	carried, discontinuous := applyStateCarries(records, carries, returned)
-	for ; carried > 0; carried-- {
-		reconciler.observeStateCarry(ctx, StateCarryCarried)
-	}
-	for ; discontinuous > 0; discontinuous-- {
-		reconciler.observeStateCarry(ctx, StateCarryDiscontinuous)
+	_, discontinuous := applyStateCarries(records, carries, returned)
+	applyNoDataCarries(records, noDataCarries, returned)
+	// Each carry put on its record is counted by what stateCarry decided -
+	// carried, or carried_detect_changed - not as one kind, and only once the
+	// cutover commits: an attempt that does not has activated nothing, and the
+	// retry would count the same activation again. The same
+	// holds for every outcome of this activation: what carried nothing, and
+	// the no-data decisions.
+	observeCarries := func() {
+		for _, outcome := range uncarried {
+			reconciler.observeStateCarry(ctx, outcome)
+		}
+		for _, outcome := range noDataOutcomes {
+			reconciler.observeNoDataCarry(ctx, outcome)
+		}
+		for index := range carries {
+			if _, back := returned[index]; !back {
+				reconciler.observeStateCarry(ctx, carryOutcomes[index])
+			}
+		}
+		for ; discontinuous > 0; discontinuous-- {
+			reconciler.observeStateCarry(ctx, StateCarryDiscontinuous)
+		}
 	}
 	sort.Slice(records, func(i, j int) bool { return lessPlanIdentity(records[i].Fact.Plan, records[j].Fact.Plan) })
 	next := ActivationState{RecordRevision: previous.RecordRevision + 1, Current: publication,
@@ -405,6 +465,7 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 		failureStage, failureClass = ActivationFailureStageScheduleCutover, ActivationFailureClassScheduleConflict
 		return ActivationState{}, applyErr
 	}
+	observeCarries()
 	failureStage, failureClass = ActivationFailureStagePersist, ActivationFailureClassDependencyIO
 	return reconciler.repository.LoadActivation(ctx)
 }
@@ -490,9 +551,12 @@ func (reconciler *ScheduleActivationReconciler) reactivateHeld(
 		if _, returning := returningPlans[record.Fact.Key()]; !returning {
 			continue
 		}
+		// Freshly compiled, the record carries no Arrived mark: held and back,
+		// it warms up whatever the Worker finds of it.
 		record.Fact.Selected.ForceWarming = true
 		// Held and back: the hold is a hole, so nothing is carried across it.
 		record.Fact.Selected.Carry = nil
+		record.Fact.Selected.NoDataCarry = nil
 		next.Plans = append(next.Plans, record)
 	}
 	sort.Slice(next.Plans, func(i, j int) bool { return lessPlanIdentity(next.Plans[i].Fact.Plan, next.Plans[j].Fact.Plan) })

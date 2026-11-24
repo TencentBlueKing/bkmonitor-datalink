@@ -567,7 +567,7 @@ func (server *Server) observeSession(ctx context.Context, event string, receiver
 func (server *Server) observeInstalledByAll(ctx context.Context, recorded Recorded) {
 	server.observer.Observe(ctx, observability.Observation{
 		Component: observability.ComponentOwnership, Stage: observability.StageViewPublished,
-		Result: observability.ResultSuccess, Duration: recorded.Elapsed,
+		Result: observability.ResultSuccess, Duration: recorded.Elapsed, DurationKnown: true,
 		ViewStream: &observability.ViewStreamFacts{Event: "installed_by_all", ControlEpoch: recorded.Version.ControlEpoch,
 			Revision: recorded.Version.Revision, Expected: recorded.Expected, Installed: recorded.Expected},
 	})

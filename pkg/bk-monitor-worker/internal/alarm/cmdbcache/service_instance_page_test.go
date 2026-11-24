@@ -24,7 +24,6 @@ import (
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 )
 
@@ -94,7 +93,7 @@ func TestCmdbPagedRequestsUseUniqueSort(t *testing.T) {
 	cfg.BkApiCmdbApiGatewayUrl = server.URL
 	errStop := errors.New("stop after first page")
 	patches := gomonkey.ApplyFunc(tenant.GetTenantAdminUser, func(string) (string, error) { return "admin", nil })
-	patches.ApplyFunc(api.GetCmdbApi, func(tenantId string) (*cmdb.Client, error) { return getCmdbApi(tenantId), nil })
+	patches.ApplyFunc(api.GetCmdbApi, getCmdbApi)
 	patches.ApplyFunc(api.BatchApiRequest, func(_ int, _ func(any) (int, error), getReqFunc func(int) define.Operation, _ int) ([]any, error) {
 		var resp any
 		_, _ = getReqFunc(1).SetResult(&resp).Request()

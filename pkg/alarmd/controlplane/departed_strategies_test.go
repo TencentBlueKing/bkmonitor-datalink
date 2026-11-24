@@ -4,6 +4,7 @@
 package controlplane
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -78,24 +79,12 @@ func TestDeparturesRefusedByTheBoundAreCounted(t *testing.T) {
 	memory := newDepartedMemory()
 	memory.entries = make(map[string]DepartedStrategy, MaxDepartedStrategies)
 	for i := 0; i < MaxDepartedStrategies; i++ {
-		memory.entries[departedKey("system", "filler-"+string(rune('a'+i%26))+itoaTest(i))] = DepartedStrategy{At: time.Now()}
+		memory.entries[departedKey("system", "filler-"+string(rune('a'+i%26))+strconv.Itoa(i))] = DepartedStrategy{At: time.Now()}
 	}
 	memory.record(groupsOf(planOf("system", "2", "10", 7)), nil, time.Now())
 	if memory.refusedCount() != 1 {
 		t.Fatalf("a departure the bound refused was not counted: refused=%d", memory.refusedCount())
 	}
-}
-
-func itoaTest(value int) string {
-	if value == 0 {
-		return "0"
-	}
-	digits := ""
-	for value > 0 {
-		digits = string(rune('0'+value%10)) + digits
-		value /= 10
-	}
-	return digits
 }
 
 // A strategy whose business does not parse is still recorded. Leaving it

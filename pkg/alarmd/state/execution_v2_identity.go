@@ -8,6 +8,7 @@ package state
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -86,6 +87,34 @@ func PlanNoDataHashKeyV2(prefix string, identity execution.PlanNoDataIdentity) (
 		return "", err
 	}
 	return executionKey(prefix, kind, identity.Plan, identity.StateGeneration, suffix), nil
+}
+
+// PlanNoDataStageKeyV1 names the key one attempt stages a Plan's whole
+// no-data memory in before it is renamed onto PlanNoDataHashKeyV2.
+//
+// The identity segments are the formal key's, followed by the attempt's fence
+// epoch and attempt number, so a retry or a second owner stages under a key
+// of its own: the first segment of a write deletes its staging key, and it
+// must only ever delete its own. The kind is "nodata-stage" (a piece's
+// "nodata-stage-shard") at its own version, never one beginning
+// "nodata-hash:": every reader of a memory builds the formal key from
+// PlanNoDataHashKeyV2, and a glob anchored on that kind cannot match this
+// one, so no reader ever sees a memory half staged.
+func PlanNoDataStageKeyV1(
+	prefix string, identity execution.PlanNoDataIdentity, attempt execution.NoDataWriteAttempt,
+) (string, error) {
+	formal, err := PlanNoDataHashKeyV2(prefix, identity)
+	if err != nil {
+		return "", err
+	}
+	formalKind, _, _ := shardedKind("nodata-hash", identity.Shard)
+	segments, cut := strings.CutPrefix(formal, prefix+":"+formalKind+":v2:")
+	if !cut {
+		return "", identityError("no-data key does not have the formal shape")
+	}
+	kind, _, _ := shardedKind("nodata-stage", identity.Shard)
+	return strings.Join([]string{prefix, kind, "v1", segments,
+		strconv.FormatUint(attempt.OwnerEpoch, 10), strconv.FormatUint(uint64(attempt.AttemptNo), 10)}, ":"), nil
 }
 
 func validatePlanIdentity(prefix string, plan execution.PlanIdentity, generation execution.StateGeneration) error {

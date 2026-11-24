@@ -38,6 +38,7 @@ func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) 
 		var cfg Config
 		if err := mapstructure.Decode(custom.Config.Config, &cfg); err != nil {
 			logger.Errorf("failed to decode config: %v", err)
+			processor.IncConfigFailed(define.ProcessorTracesDeriver, processor.ConfigSub)
 			continue
 		}
 		operators.Set(custom.Token, custom.Type, custom.ID, NewOperator(cfg))

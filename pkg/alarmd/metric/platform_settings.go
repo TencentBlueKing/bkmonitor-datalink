@@ -49,7 +49,8 @@ func newPlatformSettingsCollector() *platformSettingsCollector {
 		now: time.Now,
 		mode: descriptor("platform_settings_mode",
 			"Which state the process copy of the platform's settings (host_disable_monitor_states, "+
-				"is_access_bk_data, bkdata_cmdb_level_tables, file_system_type_ignore) is in, 1 on the current one "+
+				"is_access_bk_data, bkdata_cmdb_level_tables, file_system_type_ignore, no_data_tracking_horizon_seconds) is "+
+				"in, 1 on the current one "+
 				"and 0 on the others; read each scrape from the copy's state. off_role is a cell on every process: 1 on one "+
 				"with neither the control nor the worker role, which keeps no copy (the rest 0), else 0. not_configured: the deployment "+
 				"renders no distribution source, the copy answers from its own configuration and the platform's "+

@@ -7,10 +7,13 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/newopens"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -204,5 +207,56 @@ func TestAWhollyRefusedPlanAppliesNoGapStatement(t *testing.T) {
 		if identity.Plan == fixture.refused.Plan {
 			t.Fatalf("applied State %v includes the wholly refused Plan", fixture.base.stateApplied)
 		}
+	}
+}
+
+// countingCopy is an acknowledging copy that also keeps the open count,
+// one hour past the floor for the strategy it is asked about.
+type countingCopy struct {
+	acknowledgingCopy
+	asked []newopens.Key
+}
+
+func (copy *countingCopy) NewOpens(key newopens.Key) (newopens.Report, bool) {
+	copy.asked = append(copy.asked, key)
+	return newopens.Report{Hours: []newopens.Hour{{Start: time.Unix(1793174400, 0), Opened: 6000, Dimension: "span_name", Distinct: 5900}}}, true
+}
+
+// After a batch is acknowledged the Plan's strategy's open count is
+// written as a new_opens line, which the fleet reads; a port that keeps no
+// count writes none.
+func TestAnAcknowledgedBatchWritesTheStrategysOpenCount(t *testing.T) {
+	for _, counting := range []bool{true, false} {
+		t.Run(fmt.Sprint(counting), func(t *testing.T) {
+			fixture := newOutputIsolationFixture(t)
+			counter := &countingCopy{}
+			if counting {
+				fixture.coordinator.ports.OpenAlerts = counter
+			}
+			if _, err := fixture.finalize(t); err != nil {
+				t.Fatal(err)
+			}
+			var lines []observability.Observation
+			for _, observation := range fixture.observations {
+				if observation.Stage == observability.StageNewOpens {
+					lines = append(lines, observation)
+				}
+			}
+			if !counting {
+				if len(lines) != 0 {
+					t.Fatalf("a port without a count wrote %+v", lines)
+				}
+				return
+			}
+			plan := fixture.header.DuePlans[0].Identity
+			if len(counter.asked) == 0 || counter.asked[0] != (newopens.Key{TenantID: plan.TenantID, StrategyID: plan.StrategyID}) {
+				t.Fatalf("asked %+v, want the Plan's strategy %+v", counter.asked, plan)
+			}
+			want := observability.NewOpensHourFact{StartUnix: 1793174400, Opened: 6000, Dimension: "span_name", Distinct: 5900}
+			if len(lines) == 0 || lines[0].NewOpens == nil || len(lines[0].NewOpens.Hours) != 1 || lines[0].NewOpens.Hours[0] != want ||
+				lines[0].Trace.StrategyID != plan.StrategyID {
+				t.Fatalf("new_opens lines %+v", lines)
+			}
+		})
 	}
 }

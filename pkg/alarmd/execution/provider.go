@@ -66,7 +66,7 @@ func (spec PhysicalQuerySpec) Validate() error {
 			return err
 		}
 	}
-	if spec.ProviderRange.Start > spec.LogicalWindow.Start || spec.ProviderRange.End < spec.LogicalWindow.End ||
+	if spec.ProviderRange.Start > spec.LogicalWindow.Start || spec.ProviderRange.End < spec.PlanFacts.RequestRange(spec.LogicalWindow).End ||
 		spec.AcceptedRange.Start < spec.ProviderRange.Start || spec.AcceptedRange.End > spec.ProviderRange.End {
 		return errors.New("alarmd execution: physical query ranges are inconsistent")
 	}
@@ -160,6 +160,12 @@ type QueryAttempt struct {
 	// on a request header and decide nothing. Empty for a read that serves
 	// no Plan.
 	Strategies []string
+
+	// Slice is the slice of the Query Group's series the query reads, as
+	// the execution request carries it; the zero slice is all of them. It
+	// shapes the request sent and nothing the query is known by: the spec,
+	// its digest and the result reference are the unsliced query's.
+	Slice InputSlice
 }
 
 func (attempt QueryAttempt) Validate() error {
@@ -184,7 +190,7 @@ func (attempt QueryAttempt) Validate() error {
 		attempt.RecoveryPermit.ExpiresAtUnixMilli < attempt.DeadlineUnixMilli {
 		return errors.New("alarmd execution: retry, replay and probe require a matching live recovery permit")
 	}
-	return nil
+	return attempt.Slice.Validate()
 }
 
 type RouteAttemptResult string
@@ -299,6 +305,22 @@ type PlannedQueryFacts struct {
 // short - so an operator can read why without the request it may echo. It is
 // kept with the Query Group's last failure and never written to a log line:
 // a log keeps the class and the trace id only.
+// The rejection classes a provider's refusal is named by when its body says
+// what it was about (HTTP_<status> otherwise). One decides whose a refusal
+// is on the fleet's page: a sample limit is the strategy's query asking for
+// more than the storage serves in one query. A parse error stays a
+// diagnostic: the PromQL may be text alarmd composed from the strategy's
+// queries. The others stay diagnostics too.
+const (
+	RejectionClassVMSampleLimit = "VM_SAMPLE_LIMIT"
+	RejectionClassPromQLParse   = "PROMQL_PARSE"
+	RejectionClassInvalidQuery  = "INVALID_QUERY"
+	// RejectionClassQueryTooLong is the store refusing a query longer than
+	// it takes (VictoriaMetrics' -search.maxQueryLen): for a read in an input
+	// slice, the slice's conditions made it so (INPUT_SLICE_QUERY_TOO_LONG).
+	RejectionClassQueryTooLong = "QUERY_TOO_LONG"
+)
+
 type ProviderRejection struct {
 	Class   string `json:"class"`
 	TraceID string `json:"trace_id,omitempty"`

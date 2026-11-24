@@ -415,20 +415,22 @@ func TestClientPropagatesCallerCancellation(t *testing.T) {
 }
 
 func TestClientEnforcesDecompressedAndSeriesBudgets(t *testing.T) {
+	// A value the transport expanded from gzip is bounded as it is read
+	// expanded: past otherValueBytes, refused by name.
 	t.Run("decompressed body", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			writer.Header().Set("Content-Encoding", "gzip")
 			compressed := gzip.NewWriter(writer)
-			_, _ = compressed.Write([]byte(`{"series":[],"padding":"` + strings.Repeat("x", 1024) + `","is_partial":false}`))
+			_, _ = compressed.Write([]byte(`{"series":[],"padding":"` + strings.Repeat("x", 2<<20) + `","is_partial":false}`))
 			_ = compressed.Close()
 		}))
 		defer server.Close()
-		client, _ := NewClientWithLimits(server.URL, "alarmd-shadow", server.Client(), Limits{MaxBodyBytes: 256, MaxSeriesBytes: 128, MaxSeries: 10, MaxRecords: 10})
+		client, _ := NewClientWithLimits(server.URL, "alarmd-shadow", server.Client(), Limits{MaxSeriesBytes: 128, MaxSeries: 10, MaxRecords: 10})
 		wantLimitCompletion(t, client, "response=limit_response_bytes")
 	})
 	t.Run("single series", func(t *testing.T) {
 		body := `{"series":[{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["bk_target_ip"],"group_values":["` + strings.Repeat("x", 256) + `"],"values":[[1700123456789,1]]}],"is_partial":false}`
-		client := fixtureClient(t, http.StatusOK, body, Limits{MaxBodyBytes: 4096, MaxSeriesBytes: 128, MaxSeries: 10, MaxRecords: 10})
+		client := fixtureClient(t, http.StatusOK, body, Limits{MaxSeriesBytes: 128, MaxSeries: 10, MaxRecords: 10})
 		wantLimitCompletion(t, client, "response=limit_series_bytes")
 	})
 }
@@ -436,11 +438,11 @@ func TestClientEnforcesDecompressedAndSeriesBudgets(t *testing.T) {
 func TestClientEnforcesTotalSeriesAndRecordBudgets(t *testing.T) {
 	body := `{"series":[{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["bk_target_ip"],"group_values":["a"],"values":[[1700123456789,1],[1700123457789,2]]},{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["bk_target_ip"],"group_values":["b"],"values":[[1700123456789,1]]}],"is_partial":false}`
 	t.Run("series", func(t *testing.T) {
-		client := fixtureClient(t, http.StatusOK, body, Limits{MaxBodyBytes: 4096, MaxSeriesBytes: 2048, MaxSeries: 1, MaxRecords: 10})
+		client := fixtureClient(t, http.StatusOK, body, Limits{MaxSeriesBytes: 2048, MaxSeries: 1, MaxRecords: 10})
 		wantLimitCompletion(t, client, "response=limit_total_series")
 	})
 	t.Run("records", func(t *testing.T) {
-		client := fixtureClient(t, http.StatusOK, body, Limits{MaxBodyBytes: 4096, MaxSeriesBytes: 2048, MaxSeries: 10, MaxRecords: 1})
+		client := fixtureClient(t, http.StatusOK, body, Limits{MaxSeriesBytes: 2048, MaxSeries: 10, MaxRecords: 1})
 		wantLimitCompletion(t, client, "response=limit_total_records")
 	})
 }

@@ -12,6 +12,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.35.0
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/asaskevich/EventBus v0.0.0-20200907212545-49d423059eef
+	github.com/blang/semver v3.5.1+incompatible
 	github.com/bytedance/sonic v1.14.0
 	github.com/dgraph-io/ristretto v0.1.1
 	github.com/dominikbraun/graph v0.23.0
@@ -47,7 +48,7 @@ require (
 	github.com/swaggo/swag v1.16.1
 	github.com/thomaspoignant/go-feature-flag v1.0.1
 	github.com/tinylib/msgp v1.1.6
-	go.etcd.io/bbolt v1.3.3
+	go.etcd.io/bbolt v1.3.12
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.63.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0
 	go.opentelemetry.io/otel v1.38.0
@@ -75,7 +76,6 @@ require (
 	github.com/armon/go-metrics v0.4.0 // indirect
 	github.com/aws/aws-sdk-go v1.55.8 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/bytedance/sonic/loader v0.3.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

@@ -30,6 +30,14 @@ func internalCompiledPlan(t testing.TB, strategyID string, windowSize uint32, in
 // recovery plan config given.
 func internalCompiledPlanRecovering(t testing.TB, strategyID string, windowSize uint32, intervalSeconds uint32, recovery json.RawMessage) *strategy.CompiledPlan {
 	t.Helper()
+	return internalCompiledPlanAtSnapshot(t, strategyID, windowSize, intervalSeconds, recovery, 0)
+}
+
+// internalCompiledPlanAtSnapshot is internalCompiledPlanRecovering with the
+// strategy's frozen snapshot revision, which an event about it names.
+func internalCompiledPlanAtSnapshot(t testing.TB, strategyID string, windowSize uint32, intervalSeconds uint32, recovery json.RawMessage,
+	snapshotRevision int64) *strategy.CompiledPlan {
+	t.Helper()
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{
 		MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 16, MaxAlgorithmsPerLevel: 8, MaxGroupsPerAlgorithm: 16,
 		MaxConditionsPerAlgorithm: 64, MaxASTNodesPerLevel: 256, MaxTriggerWindowSize: 4096,
@@ -40,7 +48,7 @@ func internalCompiledPlanRecovering(t testing.TB, strategyID string, windowSize 
 	if err != nil {
 		t.Fatalf("NewCompiler() error: %v", err)
 	}
-	ref := contract.StrategyRefV2{TenantID: "tenant", StrategyID: strategyID, Revision: "strategy-v1"}
+	ref := contract.StrategyRefV2{TenantID: "tenant", StrategyID: strategyID, Revision: "strategy-v1", SnapshotRevision: snapshotRevision}
 	projection := contract.InputProjectionV2{
 		ValueFields: []string{"value"}, DimensionFields: []string{"host"}, BusinessIdentityField: "bk_biz_id",
 		MultiValueAlignment: "SINGLE_VALUE", DataUnit: "percent", MissingValuePolicy: contract.MissingValuePolicyRequired,

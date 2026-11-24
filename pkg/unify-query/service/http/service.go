@@ -69,27 +69,18 @@ func (s *Service) Reload(ctx context.Context) {
 	s.Wait()
 
 	gin.SetMode(gin.ReleaseMode)
-	s.g = gin.New()
+	var public, private *gin.RouterGroup
+	s.g, public, private = newEngine()
 
-	public := s.g.Group("/")
 	// 注册默认路由
-	// 注册中间件，注意中间件必须要在其他服务之前注册，否则中间件不生效
-	public.Use(
-		gin.Recovery(),
-		otelgin.Middleware(trace.ServiceName),
-		middleware.MetaData(&middleware.Params{
-			SlowQueryThreshold: SlowQueryThreshold,
-		}),
-		middleware.JwtAuthMiddleware(JwtEnabled, JwtPublicKey, JwtBkAppCodeSpaces),
-	)
-
 	publicRegisterHandler := endpoint.NewRegisterHandler(ctx, public)
 	registerDefaultHandlers(publicRegisterHandler)
 	api.RegisterRelation(publicRegisterHandler)
 	registerProxyHandler(publicRegisterHandler)
 
-	privateRegisterHandler := endpoint.NewRegisterHandler(ctx, s.g.Group("/"))
+	privateRegisterHandler := endpoint.NewRegisterHandler(ctx, private)
 	registerOtherHandlers(privateRegisterHandler)
+	prebuildRequestOutcomes(s.g)
 
 	// 构造新的http服务
 	s.server = &gohttp.Server{
@@ -102,7 +93,8 @@ func (s *Service) Reload(ctx context.Context) {
 	s.wg.Add(1)
 	go func(server *gohttp.Server) {
 		defer s.wg.Done()
-		if err = server.ListenAndServe(); err != nil && !errors.Is(gohttp.ErrServerClosed, err) {
+		// 两个 goroutine 各用自己的 err，不共写 Reload 的变量。
+		if err := server.ListenAndServe(); err != nil && !errors.Is(gohttp.ErrServerClosed, err) {
 			log.Panicf(ctx, "failed to start server for->[%s]", err)
 			return
 		}
@@ -115,11 +107,29 @@ func (s *Service) Reload(ctx context.Context) {
 	go func() {
 		defer s.wg.Done()
 		<-s.ctx.Done()
-		err = s.server.Close()
-		if err != nil {
+		if err := s.server.Close(); err != nil {
 			log.Errorf(ctx, "failed to close http server for->[%s]", err)
 		}
 	}()
+}
+
+// newEngine 建出带生产中间件链的 engine，路由由调用方注册，注册完后调用 prebuildRequestOutcomes。
+// 请求结果计数注册在 engine 上、位于所有中间件之外，未匹配路由的请求也经过它；public 组再加恢复、
+// trace、元数据和 JWT（中间件必须在注册路由之前加，否则不生效），private 组只有结果计数。
+func newEngine() (engine *gin.Engine, public, private *gin.RouterGroup) {
+	engine = gin.New()
+	engine.Use(requestOutcomeMiddleware())
+	public = engine.Group("/")
+	public.Use(
+		requestRecovery(),
+		otelgin.Middleware(trace.ServiceName),
+		middleware.MetaData(&middleware.Params{
+			SlowQueryThreshold: SlowQueryThreshold,
+		}),
+		middleware.JwtAuthMiddleware(JwtEnabled, JwtPublicKey, JwtBkAppCodeSpaces),
+	)
+	private = engine.Group("/")
+	return engine, public, private
 }
 
 // Wait

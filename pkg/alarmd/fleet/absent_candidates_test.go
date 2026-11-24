@@ -41,7 +41,8 @@ func TestTheAbsentPageRefusesAWordOutsideItsLists(t *testing.T) {
 	handler := WithAbsentCandidates(http.NotFoundHandler(), source, nil, "replica-a")
 	for query, refusal := range map[string]string{
 		"limit=0": "INVALID_LIMIT", "limit=201": "INVALID_LIMIT", "limit=x": "INVALID_LIMIT",
-		"cursor=%25%25": "INVALID_CURSOR", "outcome=gone": "OUTCOME_UNKNOWN", "execution=sent": "EXECUTION_UNKNOWN",
+		"cursor=%25%25": "INVALID_CURSOR", "outcome=gone": "OUTCOME_UNKNOWN", "execution=Job+Done": "EXECUTION_INVALID",
+		"execution=" + strings.Repeat("a", 65): "EXECUTION_INVALID",
 		// The word the decision count used before it said decided.
 		"outcome=closed": "OUTCOME_UNKNOWN",
 	} {
@@ -61,6 +62,12 @@ func TestTheAbsentPageRefusesAWordOutsideItsLists(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), `"answered_by":"replica-a"`) || !strings.Contains(recorder.Body.String(), `"rows":[]`) {
 		t.Fatalf("an empty page does not say who answered or that it has no rows: %s", recorder.Body.String())
+	}
+	// A close's word is the filtered close's: the filter takes it.
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/absent?execution=job_done_refused", nil))
+	if recorder.Code != http.StatusOK || asked.Execution != "job_done_refused" {
+		t.Fatalf("a filtered close's word was not taken: %d %s %+v", recorder.Code, recorder.Body.String(), asked)
 	}
 	recorder = httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/absent", nil))

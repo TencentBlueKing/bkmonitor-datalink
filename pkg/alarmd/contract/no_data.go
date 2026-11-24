@@ -48,20 +48,23 @@ const DefaultMaxNoDataGroups = 100000
 // CONFIG_NOTED disposition for an item's) so the cost is chosen knowingly.
 // decision-018's 100 ms judgement is about blocking that recurs every round;
 // this does not, because a delta, the ordinary round, carries only the groups
-// that changed. Removing the one-off cost needs the whole write cut into
-// scripts that are not one atomic replace.
+// that changed. The one-off write is cut into segments (decision-020 batch
+// 8), so no single script of it holds the server for long; what a larger
+// bound still costs is the number of scripts.
 const MaxNoDataGroupsCeiling = 1000000
 
-// NoDataGroupFirstWriteCost is the measured one-off cost of a large bound.
+// NoDataGroupFirstWriteCost is the one-off cost of a large bound.
 // A fresh record - a Plan's first write, or the first after a new state
-// generation - is written whole in one script. On a real redis-server
-// (state's TestMeasureTheNoDataGroupCeiling, a host at load average 25-36)
-// that script blocked the server for 117-180 ms over four runs at 100,000
-// groups, about 610 ms at 200,000 and about 2.9 s at 1,000,000, and the
-// worker allocated about 3.5 KiB a group to build it.
-const NoDataGroupFirstWriteCost = "a Plan's first no-data write per state generation blocks Redis " +
-	"about 120-180 ms at 100,000 groups, 610 ms at 200,000 and 2.9 s at 1,000,000, " +
-	"and the worker allocates about 3.5 KiB a group for it"
+// generation - is staged in segments of 1,000 groups, one script each, and
+// renamed into place by one more. Written as one script it blocked the
+// server for 117-180 ms over four runs at 100,000 groups, about 610 ms at
+// 200,000 and about 2.9 s at 1,000,000 (state's
+// TestMeasureTheNoDataGroupCeiling, a host at load average 25-36); a segment
+// is derived from those at one to two milliseconds and has not been measured
+// on its own. The worker builds and holds one segment's fields at a time.
+const NoDataGroupFirstWriteCost = "a Plan's first no-data write per state generation is staged in scripts of " +
+	"1,000 groups - 100 at 100,000 groups, 1,000 at 1,000,000 - each blocking Redis an estimated 1-2 ms, " +
+	"and renamed into place by one more; the worker holds one segment at a time"
 
 // NoDataPeriodFactField carries, on a synthetic no-data point, how many periods
 // the group has been without data. The output layer states it in the alert

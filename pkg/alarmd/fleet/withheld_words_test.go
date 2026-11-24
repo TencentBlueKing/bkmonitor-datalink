@@ -41,7 +41,7 @@ func TestEveryCapabilityReasonHasWordsAndEveryWordIsAReason(t *testing.T) {
 		// The normalized disposition's reasons are named constants beside
 		// the disposition; the words table carries them because the group
 		// under CONFIG_NOTED shows the reason's words the same way.
-		"../controlplane": regexp.MustCompile(`DispositionUnsupported,?[^\n]*\n?[^\n]*Reason: "([A-Z_]+)"|queryUnsupported\("([A-Z_]+)"|return "(UNSUPPORTED_[A-Z_]+)"|Reason(?:EffectiveTimeRangeInvalid|PriorityIgnored|LevelTriggerBorrowed|AggIntervalDefaulted|NoDataTriggerBeyondHorizon|NoDataGroupBoundAboveDefault|RecoveryConfigDefaulted|RecoveryStatusSetterDefaulted|RecoveryDisabledByConfig|DetectInterval[A-Za-z]+) += "([A-Z_]+)"`),
+		"../controlplane": regexp.MustCompile(`DispositionUnsupported,?[^\n]*\n?[^\n]*Reason: "([A-Z_]+)"|queryUnsupported\("([A-Z_]+)"|return "(UNSUPPORTED_[A-Z_]+)"|Reason(?:EffectiveTimeRangeInvalid|PriorityIgnored|LevelTriggerBorrowed|AggIntervalDefaulted|AggMethod(?:Variable|Undefined|WithoutTime)Defaulted|NoDataTriggerBeyondHorizon|NoDataGroupBoundAboveDefault|RecoveryConfigDefaulted|RecoveryStatusSetterDefaulted|RecoveryDisabledByConfig|DataUnitUnknownComparedRaw|UnitPrefixOutsideStepsReadAsSmallest|UnitPrefixIgnoredNoUnit|DetectInterval[A-Za-z]+) += "([A-Z_]+)"`),
 		"../targetplan":   regexp.MustCompile(`Reason[A-Za-z]* += "([A-Z_]+)"`),
 		"../contract":     regexp.MustCompile(`Reason(?:SnapshotRetentionInsufficient|CompletionOffsetBelowReserve) += "([A-Z_]+)"`),
 	}
@@ -363,7 +363,7 @@ func TestTheDeclaredCapabilitiesAreNamedReasonsAndOnlyThose(t *testing.T) {
 func TestADetectIntervalWarningHasWordsAndTheActionItsOwnerCanTake(t *testing.T) {
 	for reason, action := range map[string]ActionWord{
 		"ABOVE_AGG_INTERVAL": ActionStrategyEdit, "NOT_DIVISIBLE": ActionStrategyEdit, "BELOW_FLOOR": ActionStrategyEdit,
-		"ALGORITHM_NOT_SLIDING": ActionStrategyEdit, "SOURCE_NOT_SLIDING": ActionNone,
+		"ALGORITHM_NOT_SLIDING": ActionStrategyEdit, "HISTORY_OFF_GRID": ActionStrategyEdit, "SOURCE_NOT_SLIDING": ActionNone,
 	} {
 		words := WithheldWordsOf(reason)
 		if words.Kind != WithheldStrategyDefinition || words.What == "" || words.Next == "" || words.Action != action {

@@ -462,6 +462,16 @@ func TestStableCatalogAndConditionalSchema(t *testing.T) {
 		{"store.inspect", Params{"family": "cmdb_service_instance", "service_instance": "501"}, true},
 		{"store.inspect", Params{"family": "cmdb_service_instance", "host": "101"}, false},
 		{"store.inspect", Params{"family": "query_cooldown", "query_group": "q", "object_digest": strings.Repeat("a", 64)}, false},
+		// A strategy's record of opened episodes, entry by entry: a page by
+		// version and cursor, at most MaxEpisodeEntries; the count read
+		// takes none of the three.
+		{"store.inspect", Params{"family": "open_episodes_entries", "strategy_id": "803", "tenant": "system", "version": "2", "limit": json.Number("50"), "cursor": "0a1b"}, true},
+		{"store.inspect", Params{"family": "open_episodes_entries", "strategy_id": "803", "tenant": "system"}, true},
+		{"store.inspect", Params{"family": "open_episodes_entries", "strategy_id": "803", "tenant": "system", "limit": json.Number("501")}, false},
+		{"store.inspect", Params{"family": "open_episodes_entries", "strategy_id": "803"}, false},
+		{"store.inspect", Params{"family": "open_episodes_entries", "strategy_id": "803", "tenant": "system", "version": "a b"}, false},
+		{"store.inspect", Params{"family": "open_episodes", "strategy_id": "803", "tenant": "system", "version": "2"}, false},
+		{"store.inspect", Params{"family": "open_episodes", "strategy_id": "803", "tenant": "system", "limit": json.Number("50")}, false},
 	} {
 		if err := validate(c.ops[tc.operation], tc.params); (err == nil) != tc.valid {
 			t.Fatalf("%s %+v: %v", tc.operation, tc.params, err)
@@ -469,7 +479,7 @@ func TestStableCatalogAndConditionalSchema(t *testing.T) {
 	}
 	_, desc := call(t, c, envelope(c, "describe", "store.inspect", nil))
 	encoded, _ := json.Marshal(desc.Result)
-	for _, word := range []string{"allOf", "additionalProperties", "query_progress", "query_cooldown", "gap_marker", "no_data_memory", "cmdb_host", "cmdb_service_instance", "uniqueItems", "max_commands"} {
+	for _, word := range []string{"allOf", "additionalProperties", "query_progress", "query_cooldown", "gap_marker", "no_data_memory", "cmdb_host", "cmdb_service_instance", "uniqueItems", "max_commands", "max_group_keys", "max_group_key_bytes", "group_keys"} {
 		if !bytes.Contains(encoded, []byte(word)) {
 			t.Fatalf("schema missing %s", word)
 		}

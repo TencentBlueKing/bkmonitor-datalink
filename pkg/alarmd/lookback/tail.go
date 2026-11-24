@@ -62,10 +62,15 @@ func trimSummary(summary readSummary, from int64) readSummary {
 //
 // A query with named outputs reads its legacy output alone
 // (legacyOutputRead): its tail is compared with the series the first read
-// delivered, which are the legacy output's.
+// delivered, which are the legacy output's. A query asked a step apart
+// starts its buckets where its request starts, so its tail starts on that
+// grid and before the accepted range ends, or it reads the whole window.
 func tailSpec(spec execution.PhysicalQuerySpec, start int64) execution.PhysicalQuerySpec {
 	spec = legacyOutputRead(spec)
-	if start <= spec.LogicalWindow.Start || start >= spec.LogicalWindow.End {
+	if start <= spec.LogicalWindow.Start || start >= spec.LogicalWindow.End || start >= spec.AcceptedRange.End {
+		return spec
+	}
+	if step := spec.PlanFacts.QueryStepMillis / 1000; step > 0 && (start-spec.AcceptedRange.Start)%step != 0 {
 		return spec
 	}
 	tail := spec

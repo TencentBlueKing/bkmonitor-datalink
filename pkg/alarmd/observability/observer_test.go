@@ -288,6 +288,7 @@ func TestOwnershipLifecycleLogCarriesExactOperationalIdentity(t *testing.T) {
 			QueryGroupKey: "qg-exact-identity",
 			OwnerID:       "worker-exact-identity",
 			OwnerEpoch:    7,
+			SessionEpoch:  1758400000123,
 		},
 	})
 	for _, field := range []string{
@@ -295,10 +296,24 @@ func TestOwnershipLifecycleLogCarriesExactOperationalIdentity(t *testing.T) {
 		`"query_group_key":"qg-exact-identity"`,
 		`"owner_id":"worker-exact-identity"`,
 		`"owner_epoch":7`,
+		`"session_epoch":1758400000123`,
 	} {
 		if !strings.Contains(output.String(), field) {
 			t.Fatalf("ownership lifecycle log missing %s: %s", field, output.String())
 		}
+	}
+}
+
+// A lease its holder renews itself was taken under no session: the line says
+// nothing of one rather than a session epoch of zero.
+func TestASelfRenewedTakeoverLogNamesNoSession(t *testing.T) {
+	var output bytes.Buffer
+	renderTo(&output, Observation{
+		Component: ComponentOwnership, Stage: StageAssignmentAcquired, Result: ResultSuccess,
+		Trace: TraceFields{QueryGroupKey: "qg-self-renewed", OwnerID: "worker-1", OwnerEpoch: 3},
+	})
+	if !strings.Contains(output.String(), `"owner_epoch":3`) || strings.Contains(output.String(), "session_epoch") {
+		t.Fatalf("self-renewed takeover log = %s, want owner_epoch and no session_epoch", output.String())
 	}
 }
 

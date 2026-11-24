@@ -12,6 +12,7 @@ package state
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
@@ -19,6 +20,13 @@ import (
 // NoDataHeaderField is the per-group no-data record's header field, for a
 // reader that reads the header alone rather than the whole record.
 const NoDataHeaderField = noDataHeaderField
+
+// ObservedNoDataGroupKey is the group key a per-group no-data record's field
+// stands for, false for the header and for a field that is neither.
+func ObservedNoDataGroupKey(field string) (string, bool) {
+	key, isGroup := strings.CutPrefix(field, noDataGroupPrefix)
+	return key, isGroup && key != ""
+}
 
 // ErrObservedRecordInvalid is a stored Plan record an observer could not read
 // as one of this build's.

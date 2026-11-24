@@ -25,7 +25,7 @@ import (
 // leaves on every object for a minute or two.
 func redisCommitFailure(tracker *Tracker, queryGroup string, slot int64) {
 	tracker.Observe(context.Background(), observability.Observation{
-		QueryFailure: &observability.QueryFailureFacts{Stage: "execute", Category: "other", Code: "REDIS_UNAVAILABLE", Detail: "dial tcp 10.0.0.1:6379: i/o timeout"},
+		QueryFailure: &observability.QueryFailureFacts{Stage: "execute", Category: "other", Code: "REDIS_UNAVAILABLE", Detail: "dial tcp 192.0.2.1:6379: i/o timeout"},
 		Trace:        observability.TraceFields{QueryGroupKey: queryGroup, EvaluationTime: slot},
 	})
 	tracker.Observe(context.Background(), observability.Observation{

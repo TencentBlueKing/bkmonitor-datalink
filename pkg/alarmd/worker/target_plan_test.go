@@ -276,8 +276,13 @@ func TestAnUnreadableSelectorPausesAbsenceAndNotTheStaticMembers(t *testing.T) {
 		TargetPlan: &contract.TargetPlanV1{SchemaVersion: 1, ModelID: "cw-Host", Rule: contract.TargetPlanRuleHostID, Identity: identity, StaticKeys: []string{"101"}, DynamicGroups: []string{"1001"}}}
 	result, outcome, err := nodata.EvaluateSlot(nodata.SlotInput{Plan: plan, EvaluationTime: 1000, PeriodSeconds: 60,
 		Completeness: execution.CompletenessFull, TargetResolution: target.absenceView(), Memory: map[string]nodata.GroupMemory{}})
-	if err != nil || outcome != nodata.OutcomeSkippedTargetSelectorUnavailable || len(result.Verdicts) != 0 {
-		t.Fatalf("absence = %q %v verdicts %v, want paused by the selector's name", outcome, err, result.Verdicts)
+	if err != nil || outcome != nodata.OutcomeSkippedTargetSelectorUnavailable {
+		t.Fatalf("absence = %q %v, want paused by the selector's name", outcome, err)
+	}
+	for key, verdict := range result.Verdicts {
+		if verdict != nodata.VerdictUnavailable {
+			t.Fatalf("verdict %q for %s, want no absence judged while the selector is unread", verdict, key)
+		}
 	}
 }
 

@@ -64,6 +64,92 @@ function package() {
   cp -R ./support-files/templates/${goos}/${arch}/etc ${dir}
 }
 
+# 节点管理 V3 插件包
+# 源目录 support-files/v3 与插件包内 bk-collector/ 下的结构一致，打包时整体拷贝，再补充二进制和版本号：
+#   bk-collector/project.yaml
+#   bk-collector/plugins_${goos}_${arch}/definition.yaml
+#   bk-collector/plugins_${goos}_${arch}/templates/*.conf.template
+#   bk-collector/plugins_${goos}_${arch}/bin/bk-collector               <- 打包时编译
+# same_bytes <a> <b>: whether two files hold the same bytes - 0 the same, 1 not. cmp is diffutils and not on every build
+# host; without it the files' sha256sum (coreutils) is compared instead. With neither, or a file that cannot be read,
+# it stops the build saying so: a comparison that could not run is not two templates that differ.
+function same_bytes() {
+  local rc=0
+  if command -v cmp >/dev/null 2>&1; then
+    cmp -s "$1" "$2" || rc=$?
+    if [ ${rc} -gt 1 ]; then
+      echo "cannot compare ${1} with ${2}: cmp exited ${rc}"
+      exit 1
+    fi
+    return ${rc}
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    local a b
+    a=$(sha256sum < "$1") || { echo "cannot read ${1}"; exit 1; }
+    b=$(sha256sum < "$2") || { echo "cannot read ${2}"; exit 1; }
+    [ "${a}" = "${b}" ] || rc=1
+    return ${rc}
+  fi
+  echo "comparing the v3 config templates with v2 needs cmp or sha256sum, and neither is on PATH"
+  exit 1
+}
+
+function package_v3() {
+  # 变量声明
+  local goos=${1:-'linux'}
+  local goarch=${2:-'amd64'}
+  local arch=${3:-'x86_64'}
+  local version=${4:-'v0.0.0'}
+  local dist=${5:-'./dist'}
+
+  local src=./support-files/v3
+  local v2_src=./support-files/templates/${goos}/${arch}
+  local root=${dist}/${MODULE}
+  local dir=${root}/plugins_${goos}_${arch}
+
+  # 节点管理导入时找不到 sourcePath 对应文件不会报错，只会得到空模板，这里提前校验
+  local source_path
+  for source_path in $(sed -n 's/^[[:space:]]*sourcePath:[[:space:]]*//p' ${src}/plugins_${goos}_${arch}/definition.yaml); do
+    if [ ! -s "${src}/plugins_${goos}_${arch}/${source_path}" ]; then
+      echo "config template not found or empty: ${src}/plugins_${goos}_${arch}/${source_path}"
+      exit 1
+    fi
+  done
+
+  # V3 模板目前须与 V2 同名模板（etc/xxx.conf.tpl）保持一致，保证两种插件包下发的配置相同；
+  # 修改模板时两边需同步，确需不同时再调整此校验
+  local tpl v2_tpl
+  for tpl in ${src}/plugins_${goos}_${arch}/templates/*.template; do
+    v2_tpl=${v2_src}/etc/$(basename ${tpl} .template).tpl
+    if [ ! -f "${v2_tpl}" ]; then
+      echo "v3 config template has no v2 template of its name: ${tpl} ${v2_tpl}"
+      exit 1
+    fi
+    if ! same_bytes "${tpl}" "${v2_tpl}"; then
+      echo "v3 config template differs from v2: ${tpl} ${v2_tpl}"
+      exit 1
+    fi
+  done
+
+  # 拷贝插件包源目录；只清理当前平台目录，多个平台可依次打进同一个插件包
+  [ -e ${dir} ] && rm -rf ${dir}
+  mkdir -p ${root}
+  cp -R ${src}/. ${root}/
+  sed -i.bak "/^version:/s/.*/version: ${version}/" ${root}/project.yaml && rm -f ${root}/project.yaml.bak
+
+  # 构建二进制
+  mkdir -p ${dir}/bin
+  go mod tidy
+  JSON_LIB=${JSON_LIB:-jsonsonic}
+  GOOS=${goos} GOARCH=${goarch} \
+    go build -tags "${JSON_LIB}" -ldflags " \
+    -s -w \
+    -X main.version=${version} \
+    -X main.buildTime=$(date -u '+%Y-%m-%d_%I:%M:%S%p') \
+    -X main.gitHash=$(git rev-parse HEAD)" \
+    -o ${dir}/bin/${MODULE} ./cmd/collector
+}
+
 function sidecar() {
     local version=${1:-'v0.0.0'}
     local dist=${2:-'./dist'}
@@ -91,6 +177,8 @@ function encode() {
 
 if [ "$1" == "package" ]; then
   package $2 $3 $4 $5 $6
+elif [ "$1" == "package_v3" ]; then
+  package_v3 $2 $3 $4 $5 $6
 elif [ "$1" == "sidecar" ]; then
   sidecar $2 $3
 elif [ "$1" == "test" ]; then

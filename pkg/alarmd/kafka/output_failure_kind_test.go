@@ -125,8 +125,7 @@ func TestEverySinkErrorCarriesAKind(t *testing.T) {
 		err  error
 		want string
 	}{
-		"nil sink":       {nilSink.WriteBatch(context.Background(), twoSeriesBatch(t)), observability.OutputFailureSinkNotOpen},
-		"nil close sink": {nilSink.WriteCloseBatch(context.Background(), nil), observability.OutputFailureSinkNotOpen},
+		"nil sink": {nilSink.WriteBatch(context.Background(), twoSeriesBatch(t)), observability.OutputFailureSinkNotOpen},
 	}
 	closed := newTriggerEventSinkForTest(t, &partlyRefusingProducer{}, &fakeCloser{})
 	if err := closed.Close(); err != nil {

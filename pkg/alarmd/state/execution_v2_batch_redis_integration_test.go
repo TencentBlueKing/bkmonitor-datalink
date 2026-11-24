@@ -182,6 +182,11 @@ func TestRedisFencedBatchApplyStoresSequentialBytesWithinBoundedRoundTrips(t *te
 			t.Fatalf("item %d = %+v", index, view)
 		}
 	}
+	// A server holding the script, as it does but for the first batch after a
+	// restart, which goes round once more (NOSCRIPT, then the text).
+	if err := fixture.client.ScriptLoad(ctx, fencedBatchWriteScript).Err(); err != nil {
+		t.Fatal(err)
+	}
 	fixture.client.reset()
 	batchedResult, err := batched.ApplyRuntimeFenced(ctx, execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations}, fixture.applyFence(fixture.leased.Add(time.Second)))
 	if err != nil {
@@ -363,6 +368,10 @@ func TestRedisRuntimeStateHotModelRoundTrips(t *testing.T) {
 	oldTrips := fixture.client.mgets + fixture.client.evals + fixture.client.pipelines
 
 	batched := fixture.store(t, "batched", true)
+	// A server holding the script, as above.
+	if err := fixture.client.ScriptLoad(ctx, fencedBatchWriteScript).Err(); err != nil {
+		t.Fatal(err)
+	}
 	fixture.client.reset()
 	started = time.Now()
 	loadInStreamBatches(t, batched, items)

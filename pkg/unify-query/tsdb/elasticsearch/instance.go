@@ -26,6 +26,7 @@ import (
 	"github.com/prometheus/prometheus/storage/remote"
 	"github.com/samber/lo"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -51,6 +52,7 @@ type Instance struct {
 	healthCheck bool
 
 	headers map[string]string
+	bkData  *bkapi.BkDataAPI
 
 	timeout time.Duration
 	maxSize int
@@ -74,6 +76,7 @@ type InstanceOption struct {
 	MaxSize     int
 	Timeout     time.Duration
 	Headers     map[string]string
+	BkData      *bkapi.BkDataAPI
 	HealthCheck bool
 }
 
@@ -116,6 +119,7 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 		connect: opt.Connect,
 
 		headers:     cloneStringMap(opt.Headers),
+		bkData:      opt.BkData,
 		healthCheck: opt.HealthCheck,
 		timeout:     opt.Timeout,
 	}
@@ -132,7 +136,16 @@ func (i *Instance) getClient(ctx context.Context, connect Connect, options ...el
 	ctx, cancel := context.WithTimeout(ctx, i.timeout)
 	defer cancel()
 
-	headers := metadata.Headers(ctx, cloneStringMap(i.headers))
+	headers := cloneStringMap(i.headers)
+	user := *metadata.GetUser(ctx)
+	if i.bkData != nil {
+		var err error
+		_, headers, err = bkapi.QueryAuth(ctx, i.bkData, user.TenantID, headers)
+		if err != nil {
+			return nil, err
+		}
+	}
+	headers = user.Headers(headers)
 	if len(headers) > 0 {
 		httpHeaders := make(http.Header, len(headers))
 		for k, v := range headers {
@@ -228,6 +241,7 @@ func resolveIndexMetadataSnapshot(ctx context.Context, span *trace.Span, cli *el
 		span.Set("get-mapping", aliases)
 		mappingStartedAt := time.Now()
 		res, err := cli.GetMapping().Index(aliases...).Type("").Do(ctx)
+		metric.TsDBRequestInc(ctx, metadata.ElasticsearchStorageType, withBackendStatus(err))
 		span.Set("get-mapping-duration-ms", float64(time.Since(mappingStartedAt))/float64(time.Millisecond))
 		if err != nil {
 			span.Set("get-mapping-error", truncateString(err.Error(), esIndexMetadataErrorMaxLength))
@@ -280,6 +294,7 @@ func (i *Instance) fieldMapWithIndexFields(ctx context.Context, fieldAlias metad
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-get-mapping")
 	defer func() {
 		if r := recover(); r != nil {
+			metric.PanicInc(ctx, metric.PanicSiteStorage)
 			err = fmt.Errorf("get mapping error: %s", r)
 		}
 		span.End(&err)
@@ -423,6 +438,9 @@ func buildESQuerySource(ctx context.Context, qb *metadata.Query, fact *FormatFac
 }
 
 func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
+	if err := i.configureDateHistogram(ctx, qo.query, fact, qo.indexes); err != nil {
+		return nil, err
+	}
 	source, countQuery, bodyString, err := buildESQuerySource(ctx, qo.query, fact, nil)
 	if err != nil {
 		return nil, err
@@ -471,10 +489,15 @@ func (i *Instance) executeESQuery(
 	}
 	defer client.Stop()
 	opt := qb.ResultTableOption
+	search := client.Search().Index(qo.indexes...).SearchSource(source)
+	if partialShardResults(ctx) != nil {
+		search.AllowPartialSearchResults(true)
+	}
 	var res *elastic.SearchResult
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
+				metric.PanicInc(ctx, metric.PanicSiteStorage)
 				err = metadata.NewMessage(
 					metadata.MsgQueryES,
 					"es 查询发生 panic index: %+v, panic: %v",
@@ -491,7 +514,7 @@ func (i *Instance) executeESQuery(
 			}
 			if len(opt.SearchAfter) > 0 {
 				span.Set("query-search-after", opt.SearchAfter)
-				res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
+				res, err = search.Do(ctx)
 				return
 			}
 		}
@@ -512,7 +535,7 @@ func (i *Instance) executeESQuery(
 			res, err = scroll.Do(ctx)
 		} else {
 			span.Set("query-from", qb.From)
-			res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
+			res, err = search.Do(ctx)
 		}
 	}()
 
@@ -524,7 +547,10 @@ func (i *Instance) executeESQuery(
 		retryQo.indexes = retryIndexes
 		recordESQueryShardsWithPrefix(ctx, span, &retryQo, res, "fallback_retry_")
 	}
-	if err = handleESError(ctx, qo.conn.Address, err, res); err != nil {
+	// 一次查询（含缺 mapping 的回退重试）计一次，按 handleESError 归一后的结果。
+	err = handleESError(ctx, qo.conn.Address, err, res)
+	metric.TsDBRequestInc(ctx, metadata.ElasticsearchStorageType, err)
+	if err != nil {
 		return nil, err
 	}
 	if res.Hits != nil {
@@ -559,6 +585,7 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 	}
 
 	if sr == nil || sr.Aggregations == nil {
+		recordPartialShardResult(ctx, sr)
 		return storage.EmptySeriesSet()
 	}
 
@@ -569,6 +596,7 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 	}
 
 	span.Set("time-series-length", len(qr.Timeseries))
+	recordPartialShardResult(ctx, sr)
 
 	return remote.FromQueryResult(true, qr)
 }
@@ -677,6 +705,7 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 	var err error
 	defer func() {
 		if r := recover(); r != nil {
+			metric.PanicInc(ctx, metric.PanicSiteStorage)
 			err = fmt.Errorf("es query error: %s", r)
 		}
 	}()
@@ -709,6 +738,7 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (size int64, total int64, option *metadata.ResultTableOption, err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			metric.PanicInc(ctx, metric.PanicSiteStorage)
 			err = fmt.Errorf("es query error: %s", r)
 		}
 	}()
@@ -736,6 +766,7 @@ func (i *Instance) QueryPreparedRawData(
 ) (size int64, total int64, option *metadata.ResultTableOption, err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			metric.PanicInc(ctx, metric.PanicSiteStorage)
 			err = fmt.Errorf("es query error: %s", r)
 		}
 	}()
@@ -771,10 +802,38 @@ func (i *Instance) QueryPreparedRawData(
 		).Error(ctx, err)
 	}
 
-	size, total, option, err = decodePreparedRawResult(prepared, sr, dataCh)
+	// Match executeESQuery's cursor precedence: ScrollID, SearchAfter, then Scroll.
+	isScroll := rawQuery.Scroll != ""
+	if option != nil {
+		if option.ScrollID != "" {
+			isScroll = true
+		} else if len(option.SearchAfter) > 0 {
+			isScroll = false
+		}
+	}
+
+	// Scroll keeps its existing streaming behavior; other queries publish only a fully decoded route.
+	destination := dataCh
+	var rows chan map[string]any
+	if !isScroll {
+		rowCapacity := 0
+		if sr != nil && sr.Hits != nil {
+			rowCapacity = len(sr.Hits.Hits)
+		}
+		rows = make(chan map[string]any, rowCapacity)
+		destination = rows
+	}
+	size, total, option, err = decodePreparedRawResult(prepared, sr, destination)
 	if err != nil {
 		return size, total, option, err
 	}
+	if rows != nil {
+		close(rows)
+		for row := range rows {
+			dataCh <- row
+		}
+	}
+	recordPartialShardResult(ctx, sr)
 	if sr != nil && sr.Hits != nil {
 		span.Set("instance-out-list-size", len(sr.Hits.Hits))
 	}
@@ -797,6 +856,7 @@ func (i *Instance) QuerySeriesSet(
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-series-set")
 	defer func() {
 		if r := recover(); r != nil {
+			metric.PanicInc(ctx, metric.PanicSiteStorage)
 			err = fmt.Errorf("es query panic error: %s", r)
 		}
 		span.End(&err)
@@ -853,6 +913,9 @@ func (i *Instance) QuerySeriesSet(
 			"字段查询异常: %v",
 			err,
 		).Warn(ctx)
+		if metadata.IsStrictQueryFailures(ctx) {
+			return storage.ErrSeriesSet(err)
+		}
 		return storage.EmptySeriesSet()
 	}
 	qo.physicalIndexes = physicalIndexes
@@ -1132,6 +1195,7 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 	defer cli.Stop()
 
 	searchResult, err := cli.Search().Index(aliases...).SearchSource(source).Do(ctx)
+	metric.TsDBRequestInc(ctx, metadata.ElasticsearchStorageType, withBackendStatus(err))
 	if err != nil {
 		return nil, withBackendStatus(err)
 	}

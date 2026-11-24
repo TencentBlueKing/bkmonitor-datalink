@@ -112,7 +112,7 @@ func TestTheFrozenTargetPlanKeepsItsDynamicGroupIDs(t *testing.T) {
 // reviewed passes as text. A key named like a credential gives neither value
 // nor shape.
 func TestTheSourceViewShowsAnUnlistedKeyByItsShape(t *testing.T) {
-	raw := []byte(`{"id":54,"webhook_secret":"HOOK_SECRET","runtime_config":{"api_token":"TOKEN_SECRET","depth":3,"on":true,"none":null},` +
+	raw := []byte(`{"id":54,"webhook_secret":"HOOK_SECRET","extension_config":{"api_token":"TOKEN_SECRET","depth":3,"on":true,"none":null},` +
 		`"detects":[{"level":1,"trigger_config":{"check_window":5,"count":1,"uptime":{"time_ranges":[{"start":"00:00","end":"23:59"}],` +
 		`"active_calendars":[3],"cw_calendars":[]}}}],` +
 		`"global_scope":{"owner":"team-a","n":2},` +
@@ -126,7 +126,7 @@ func TestTheSourceViewShowsAnUnlistedKeyByItsShape(t *testing.T) {
 	// written; keys it does not - global_scope, cw_calendars - by shape.
 	for _, want := range []string{`"cw_calendars":[]`, `"active_calendars":[3]`, `"filter_dict":{"ip":"198.51.100.4"}`,
 		`"global_scope":{"n":2,"owner":"<string of 6 bytes>"}`,
-		`"runtime_config":{"api_token":"<credential field>","depth":3,"none":null,"on":true}`, `"metric_id":"system.disk.in_use"`} {
+		`"extension_config":{"api_token":"<credential field>","depth":3,"none":null,"on":true}`, `"metric_id":"system.disk.in_use"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("projection lacks %s: %s", want, text)
 		}
@@ -141,7 +141,7 @@ func TestTheSourceViewShowsAnUnlistedKeyByItsShape(t *testing.T) {
 		reasons[omission.Path] = omission.Reason
 	}
 	for path, reason := range map[string]string{
-		"$.webhook_secret": "credential_field", "$.runtime_config": "value_shape_only",
+		"$.webhook_secret": "credential_field", "$.extension_config": "value_shape_only",
 		"$.detects[0].trigger_config.uptime.cw_calendars": "value_shape_only",
 		"$.global_scope": "value_shape_only",
 		"$.items[0].query_configs[0].filter_dict.api_token": "credential_parameter",
@@ -175,6 +175,34 @@ func TestTheSourceViewShowsWhatTheOutputAndTheObjectTargetRead(t *testing.T) {
 	}
 	if len(omitted) != 0 {
 		t.Fatalf("keys alarmd reads were left out or shaped: %+v", omitted)
+	}
+}
+
+// A recovery_config is shown as written both where alarmd reads it (detects)
+// and in the publisher's copy (runtime_config.spec.strategy_item), as are the
+// copy's other item values, under the item's rules; the rest of the copy
+// keeps its shape only.
+func TestTheSourceViewShowsBothRecoveryConfigs(t *testing.T) {
+	raw := []byte(`{"id":7,"detects":[{"level":1,"recovery_config":{"check_window":2,"status_setter":"close"}}],` +
+		`"runtime_config":{"spec":{"name":"cpu high","strategy_item":{"agg_method":"AVG","agg_interval":60,` +
+		`"agg_condition":[{"key":"password","method":"eq","value":["COPY_SECRET"]},{"key":"bk_host_id","method":"eq","value":["42"]}],` +
+		`"query_configs":[{"metric_field":"usage","result_table_id":"system.cpu_summary"}],` +
+		`"recovery_config":{"check_window":3,"status_setter":"recovery"}}}}}`)
+	value, _, err := projectSourceJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := plainJSON(t, value)
+	for _, want := range []string{`"detects":[{"level":1,"recovery_config":{"check_window":2,"status_setter":"close"}}]`,
+		`"recovery_config":{"check_window":3,"status_setter":"recovery"}`,
+		`"name":"<string of 8 bytes>"`, `"agg_method":"AVG"`, `"agg_interval":60`, `"42"`,
+		`"metric_field":"usage"`, `"result_table_id":"system.cpu_summary"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("projection lacks %s: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "SECRET") {
+		t.Fatalf("a condition named like a credential in the copy is shown: %s", text)
 	}
 }
 

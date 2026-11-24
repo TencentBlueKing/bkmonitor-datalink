@@ -41,12 +41,12 @@ func init() {
 }
 
 // getCmdbApi Get cmdb api client instance with lock
-func getCmdbApi(tenantId string) *cmdb.Client {
+func getCmdbApi(tenantId string) (*cmdb.Client, error) {
 	// 首先尝试读锁获取已存在的客户端
 	cmdbApiClientMutex.RLock()
 	if client, exists := cmdbApiClients[tenantId]; exists {
 		cmdbApiClientMutex.RUnlock()
-		return client
+		return client, nil
 	}
 	cmdbApiClientMutex.RUnlock()
 
@@ -56,7 +56,7 @@ func getCmdbApi(tenantId string) *cmdb.Client {
 
 	// 双重检查，防止在等待写锁期间其他goroutine已经创建了客户端
 	if client, exists := cmdbApiClients[tenantId]; exists {
-		return client
+		return client, nil
 	}
 
 	// 判断是否使用网关
@@ -69,8 +69,7 @@ func getCmdbApi(tenantId string) *cmdb.Client {
 
 	adminUser, err := tenant.GetTenantAdminUser(tenantId)
 	if err != nil {
-		logger.Errorf("failed to get tenant admin user, tenantId: %s, err: %v", tenantId, err)
-		return nil
+		return nil, errors.Wrapf(err, "get CMDB administrator for tenant %s", tenantId)
 	}
 
 	config := bkapi.ClientConfig{
@@ -88,11 +87,11 @@ func getCmdbApi(tenantId string) *cmdb.Client {
 		api.NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}),
 	)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	cmdbApiClients[tenantId] = client
-	return client
+	return client, nil
 }
 
 // Manager 缓存管理器接口
@@ -361,9 +360,12 @@ func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) 
 	// 判断是否启用业务缓存刷新
 	if cacheManager.useBiz() {
 		// 获取业务列表
-		cmdbApi := getCmdbApi(cacheManager.GetBkTenantId())
+		cmdbApi, err := getCmdbApi(cacheManager.GetBkTenantId())
+		if err != nil {
+			return err
+		}
 		var result cmdb.SearchBusinessResp
-		_, err := cmdbApi.SearchBusiness().SetResult(&result).Request()
+		_, err = cmdbApi.SearchBusiness().SetResult(&result).Request()
 		if err = api.HandleApiResultError(result.ApiCommonRespMeta, err, "search business failed"); err != nil {
 			return err
 		}

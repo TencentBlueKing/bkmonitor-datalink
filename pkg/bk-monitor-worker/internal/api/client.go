@@ -35,9 +35,9 @@ var (
 )
 
 var (
-	gseApi            *bkgse.Client
+	gseApiClients     = make(map[string]*bkgse.Client)
 	cmdbApiClients    map[string]*cmdb.Client
-	bkdataApi         *bkdata.Client
+	bkdataApiClients  = make(map[string]*bkdata.Client)
 	monitorApiClients map[string]*monitor.Client
 )
 
@@ -67,8 +67,8 @@ func getBkApiClientConfig(bkTenantId string, endpoint string) (*bkapi.ClientConf
 func GetGseApi(bkTenantId string) (*bkgse.Client, error) {
 	muForGseApi.Lock()
 	defer muForGseApi.Unlock()
-	if gseApi != nil {
-		return gseApi, nil
+	if client := gseApiClients[bkTenantId]; client != nil {
+		return client, nil
 	}
 	endpoint := cfg.BkApiGseApiGwUrl
 	useApiGateWay := true
@@ -82,11 +82,12 @@ func GetGseApi(bkTenantId string) (*bkgse.Client, error) {
 		return nil, err
 	}
 
-	gseApi, err = bkgse.New(useApiGateWay, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": bkTenantId}))
+	client, err := bkgse.New(useApiGateWay, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": bkTenantId}))
 	if err != nil {
 		return nil, err
 	}
-	return gseApi, nil
+	gseApiClients[bkTenantId] = client
+	return client, nil
 }
 
 // GetCmdbApi 获取CmdbApi客户端
@@ -132,8 +133,8 @@ func GetCmdbApi(tenantId string) (*cmdb.Client, error) {
 func GetBkdataApi(tenantId string) (*bkdata.Client, error) {
 	muForBkdataApi.Lock()
 	defer muForBkdataApi.Unlock()
-	if bkdataApi != nil {
-		return bkdataApi, nil
+	if client := bkdataApiClients[tenantId]; client != nil {
+		return client, nil
 	}
 	endpoint := cfg.BkApiBkdataApiBaseUrl
 	if endpoint == "" {
@@ -145,11 +146,12 @@ func GetBkdataApi(tenantId string) (*bkdata.Client, error) {
 		return nil, err
 	}
 
-	bkdataApi, err = bkdata.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}))
+	client, err := bkdata.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}))
 	if err != nil {
 		return nil, err
 	}
-	return bkdataApi, nil
+	bkdataApiClients[tenantId] = client
+	return client, nil
 }
 
 // GetMonitorApi 获取metadataApi客户端

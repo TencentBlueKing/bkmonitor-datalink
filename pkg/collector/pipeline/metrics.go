@@ -36,6 +36,31 @@ var (
 	)
 )
 
+var pipelineUnbuilt = promauto.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Namespace: define.MonitoringNamespace,
+		Name:      "pipeline_unbuilt",
+		Help: "Pipelines that could not be built in the configuration now in effect, by record type: a processor " +
+			"they name is not built, or they fail validation. Set when the manager is built or reloaded, and kept " +
+			"when a reload fails before it takes effect. record_type is undefined for a type this build does not know.",
+	},
+	[]string{"record_type"},
+)
+
+// prebuildPipelineUnbuilt creates the cell of every record type.
+func prebuildPipelineUnbuilt() {
+	for _, rtype := range define.RecordTypes() {
+		pipelineUnbuilt.WithLabelValues(rtype.S())
+	}
+}
+
+// setPipelineUnbuilt sets every cell from the build now in effect.
+func setPipelineUnbuilt(unbuilt map[define.RecordType]int) {
+	for _, rtype := range define.RecordTypes() {
+		pipelineUnbuilt.WithLabelValues(rtype.S()).Set(float64(unbuilt[rtype]))
+	}
+}
+
 var DefaultMetricMonitor = &metricMonitor{}
 
 type metricMonitor struct{}

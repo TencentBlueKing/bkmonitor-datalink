@@ -381,6 +381,7 @@ func (s *SpacePusher) composeLogTableIdDetail(
 			storage.ClusterRecordDBSchema.TableID,
 			storage.ClusterRecordDBSchema.ClusterID,
 			storage.ClusterRecordDBSchema.EnableTime,
+			storage.ClusterRecordDBSchemaField("bkbase_table_id"),
 			storage.ClusterRecordDBSchemaField("physical_tables"),
 		).
 		BkTenantIDEq(bkTenantId).
@@ -434,7 +435,7 @@ func (s *SpacePusher) composeLogTableIdDetail(
 		esSourceType := firstNonEmpty(targetES.SourceType, originES.SourceType)
 		dorisDB := firstNonEmpty(targetDoris.BkbaseTableID, originDoris.BkbaseTableID)
 
-		// db/source_type 保持取自 origin 实体表，物理表只使用历史分段自身的快照。
+		// Doris 历史段优先使用自身的 BKBase 结果表，旧分段缺少快照时回退当前配置。
 		// payload 只输出 enable_time；UQ 用下一分段的 enable_time 推导区间结束点，
 		// 因此这里有意不输出 disable_time。
 		history := make([]map[string]any, 0, len(recordsByTableID[sourceTableID]))
@@ -457,15 +458,19 @@ func (s *SpacePusher) composeLogTableIdDetail(
 					"source_type": esSourceType, "enable_time": storageRecordEnableTimestamp(record),
 				})
 			case models.StorageTypeDoris:
-				if dorisDB == "" {
+				segmentDB := firstNonEmpty(record.BkbaseTableID, dorisDB)
+				if segmentDB == "" {
 					logger.Warnf("compose log history: Doris storage config missing, tenant [%s], table_id [%s], record_id [%d]", bkTenantId, tableID, record.ID)
 					continue
 				}
 				detail := map[string]any{
 					"storage_id": record.ClusterID, "storage_type": models.StorageTypeBkSql,
 					"storage_name": cluster.ClusterName, "cluster_name": cluster.ClusterName,
-					"db": dorisDB, "measurement": models.DorisMeasurement,
+					"db": segmentDB, "measurement": models.DorisMeasurement,
 					"enable_time": storageRecordEnableTimestamp(record),
+				}
+				if record.BkbaseTableID != "" {
+					detail["bkbase_table_id"] = record.BkbaseTableID
 				}
 				if physicalTables := parseDorisPhysicalTables(record.TableID, record.PhysicalTables); len(physicalTables) > 0 {
 					detail["physical_tables"] = physicalTables

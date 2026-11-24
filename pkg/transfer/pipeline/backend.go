@@ -11,11 +11,13 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/cenkalti/backoff"
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
@@ -156,7 +158,8 @@ type BulkBackendAdapter struct {
 	pushSem             utils.Semaphore
 }
 
-func getBufferSizeAndFlushInterval(ctx context.Context, name string) (int, time.Duration) {
+// GetBufferSizeAndFlushInterval 解析数据源的批量配置，未提供有效覆盖值时使用全局默认。
+func GetBufferSizeAndFlushInterval(ctx context.Context, name string) (int, time.Duration) {
 	bufferSize := BulkDefaultBufferSize
 	flushInterval := BulkDefaultFlushInterval
 	mqConfig := config.MQConfigFromContext(ctx)
@@ -180,7 +183,7 @@ func getBufferSizeAndFlushInterval(ctx context.Context, name string) (int, time.
 
 // NewBulkBackendDefaultAdapter
 func NewBulkBackendDefaultAdapter(ctx context.Context, name string, handler BulkHandler, maxQps int) *BulkBackendAdapter {
-	bufferSize, flushInterval := getBufferSizeAndFlushInterval(ctx, name)
+	bufferSize, flushInterval := GetBufferSizeAndFlushInterval(ctx, name)
 	return NewBulkBackendAdapter(ctx, name, handler, bufferSize, flushInterval, BulkDefaultFlushRetries)
 }
 
@@ -249,11 +252,20 @@ func (b *BulkBackendAdapter) add(result interface{}) {
 func (b *BulkBackendAdapter) flushWithRetries(buffer []interface{}) int {
 	ctx := b.context
 	flushRetries := b.flushRetries
-	interval := b.flushInterval / time.Duration(flushRetries)
+	var interval time.Duration
+	if flushRetries > 0 {
+		interval = b.flushInterval / time.Duration(flushRetries)
+	}
 	for i := 0; i <= flushRetries; i++ {
 		n, err := b.handler.Flush(ctx, buffer)
 		if err == nil {
 			logging.Debugf("backend %v flushed %d results", b, n)
+			return n
+		}
+		// 处理器已完成逐条重试时，保留部分成功的数量，避免再次发送整个批次。
+		var permanent *backoff.PermanentError
+		if errors.As(err, &permanent) {
+			logging.MinuteErrorSampling(b.String(), fmt.Sprintf("backend %v flushed %d results with error %v", b, n, err))
 			return n
 		}
 

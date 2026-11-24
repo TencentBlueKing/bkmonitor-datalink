@@ -94,7 +94,10 @@ func NewSetCacheManager(bkTenantId string, prefix string, opt *redis.Options, co
 
 // getSetListByBizID 通过业务ID获取集群列表
 func getSetListByBizID(ctx context.Context, bkTenantId string, bizID int) ([]map[string]any, error) {
-	cmdbApi := getCmdbApi(bkTenantId)
+	cmdbApi, err := getCmdbApi(bkTenantId)
+	if err != nil {
+		return nil, err
+	}
 
 	// 请求集群信息
 	result, err := api.BatchApiRequest(

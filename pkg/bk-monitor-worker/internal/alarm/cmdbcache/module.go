@@ -94,7 +94,10 @@ func NewModuleCacheManager(bkTenantId string, prefix string, opt *redis.Options,
 
 // getModuleListByBizID 通过业务ID获取模块列表
 func getModuleListByBizID(ctx context.Context, bkTenantId string, bizID int) ([]map[string]any, error) {
-	cmdbApi := getCmdbApi(bkTenantId)
+	cmdbApi, err := getCmdbApi(bkTenantId)
+	if err != nil {
+		return nil, err
+	}
 	result, err := api.BatchApiRequest(
 		cmdbApiPageSize,
 		func(resp any) (int, error) {

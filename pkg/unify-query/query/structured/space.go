@@ -227,7 +227,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	// 字段不为空时，需要判断是否有匹配字段，返回解析后的结果
 	metricNames := make([]string, 0)
 	for _, f := range rtDetail.Fields {
-		if f == fieldName || (fieldNameExp != nil && fieldNameExp.Match([]byte(f))) {
+		if fieldMatches(f, fieldName, fieldNameExp) {
 			metricNames = append(metricNames, f)
 		}
 	}
@@ -409,23 +409,44 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			routerMessage = fmt.Sprintf("data_label router is empty with data_label: %s", db)
 			return nil, nil
 		}
-	} else {
+	}
+
+	var scan []string
+	if db == "" {
 		// 如果不指定 tableID 或者 dataLabel，则检索跟字段相关的 RT，且只获取容器指标的 TsDB
 		isK8s = !opt.IsSkipK8s
-		tIDs := s.GetSpaceRtIDs()
-		tableIDs.Add(tIDs...)
-
-		if tableIDs.Size() == 0 {
-			routerMessage = fmt.Sprintf("space is empty with spaceUid: %s", opt.SpaceUid)
-			return nil, nil
+		reuse := routeCandidatesFrom(s.ctx)
+		key := routeCandidateKey{spaceUID: opt.SpaceUid, field: opt.FieldName, isRegexp: opt.IsRegexp, isSkipSpace: opt.IsSkipSpace}
+		// 只复用字段匹配这一步：它不依赖查询条件，其余判定（容器过滤、应用归属、独立指标 RT）仍逐次执行。
+		// 跳过字段时每张 RT 都是候选，表标签条件时未命中原因的文案依赖全量扫描，这两种不复用。
+		reusable := reuse != nil && !opt.IsSkipField && len(tableIDCondsForFilter) == 0
+		var reused bool
+		if reusable {
+			scan, reused = reuse.get(key)
 		}
+		if !reused {
+			tIDs := s.GetSpaceRtIDs()
+			tableIDs.Add(tIDs...)
+
+			if tableIDs.Size() == 0 {
+				routerMessage = fmt.Sprintf("space is empty with spaceUid: %s", opt.SpaceUid)
+				return nil, nil
+			}
+			scan = tableIDs.ToArray()
+			if reusable {
+				scan = s.fieldCandidates(scan, opt.FieldName, fieldNameExp)
+				reuse.put(key, scan)
+			}
+		}
+	} else {
+		scan = tableIDs.ToArray()
 	}
 
 	isK8sFeatureFlag := featureFlag.GetIsK8sFeatureFlag(s.ctx)
 
 	// 仅在启用了 table_id_conditions 时跟踪是否有候选 RT 的 Labels 命中，避免后续失败原因不在 Labels 时追加误导文案
 	anyLabelMatched := len(tableIDCondsForFilter) == 0
-	for _, tID := range tableIDs.ToArray() {
+	for _, tID := range scan {
 		spaceRt := s.GetSpaceRtInfo(tID)
 		// 如果不跳过空间，则取 space 和 tableIDs 的交集
 		if !opt.IsSkipSpace && spaceRt == nil {

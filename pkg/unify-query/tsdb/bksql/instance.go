@@ -21,6 +21,7 @@ import (
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -72,6 +73,7 @@ type Options struct {
 
 	Address string
 	Headers map[string]string
+	BkData  *bkapi.BkDataAPI
 
 	Timeout    time.Duration
 	MaxLimit   int
@@ -91,7 +93,7 @@ func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 		maxLimit:   opt.MaxLimit,
 		tolerance:  opt.Tolerance,
 		sliceLimit: opt.SliceLimit,
-		client:     (&Client{}).WithUrl(opt.Address).WithHeader(opt.Headers).WithCurl(opt.Curl),
+		client:     &Client{url: opt.Address, headers: opt.Headers, bkData: opt.BkData, curl: opt.Curl},
 	}
 	if opt.Client != nil {
 		instance.client = opt.Client

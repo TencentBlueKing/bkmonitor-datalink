@@ -108,8 +108,8 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		}
 
 		if qry.SourceType == structured.BkData {
-			opt.Connect = elasticsearch.Connect{Address: bkapi.GetBkDataAPI().QueryUrlForES(user.SpaceUID)}
-			opt.Headers = bkapi.GetBkDataAPI().Headers(nil)
+			opt.BkData = bkapi.GetBkDataAPI()
+			opt.Connect = elasticsearch.Connect{Address: opt.BkData.QueryUrlForES(user.SpaceUID)}
 			opt.HealthCheck = false
 		} else {
 			stg, stgErr := tsdb.GetStorage(ctx, qry.StorageID)
@@ -144,11 +144,11 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		}
 		instance, err = bksql.NewInstance(ctx, &bksql.Options{Client: client, Timeout: tsDBService.BkSqlTimeout, MaxLimit: tsDBService.BkSqlLimit, Tolerance: tsDBService.BkSqlTolerance, SliceLimit: qry.Size})
 	case metadata.BkSqlStorageType:
+		bkData := bkapi.GetBkDataAPI()
 		instance, err = bksql.NewInstance(ctx, &bksql.Options{
-			Address: bkapi.GetBkDataAPI().QueryUrl(user.SpaceUID),
-			Headers: bkapi.GetBkDataAPI().Headers(map[string]string{
-				bksql.ContentType: tsDBService.BkSqlContentType,
-			}),
+			Address:    bkData.QueryUrl(user.SpaceUID),
+			BkData:     bkData,
+			Headers:    map[string]string{bksql.ContentType: tsDBService.BkSqlContentType},
 			Timeout:    tsDBService.BkSqlTimeout,
 			MaxLimit:   tsDBService.BkSqlLimit,
 			Tolerance:  tsDBService.BkSqlTolerance,
@@ -156,11 +156,11 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			Curl:       curlGet,
 		})
 	case metadata.VictoriaMetricsStorageType:
+		bkData := bkapi.GetBkDataAPI()
 		instance, err = victoriaMetrics.NewInstance(ctx, &victoriaMetrics.Options{
-			Address: bkapi.GetBkDataAPI().QueryUrl(user.SpaceUID),
-			Headers: bkapi.GetBkDataAPI().Headers(map[string]string{
-				victoriaMetrics.ContentType: tsDBService.VmContentType,
-			}),
+			Address:          bkData.QueryUrl(user.SpaceUID),
+			BkData:           bkData,
+			Headers:          map[string]string{victoriaMetrics.ContentType: tsDBService.VmContentType},
 			MaxConditionNum:  tsDBService.VmMaxConditionNum,
 			Timeout:          tsDBService.VmTimeout,
 			InfluxCompatible: tsDBService.VmInfluxCompatible,

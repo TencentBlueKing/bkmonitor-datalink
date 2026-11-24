@@ -805,6 +805,7 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 		}
 		gateway := httptest.NewServer(proxy)
 		testContext.Cleanup(gateway.Close)
+		testContext.Cleanup(bkapi.LoadConfig)
 		for key, value := range map[string]any{
 			bkapi.BkDataAddressConfigPath:         gateway.URL,
 			bkapi.BkDataTokenConfigPath:           clusters[1].password,
@@ -814,6 +815,7 @@ func TestScrollCleanupIntegration(testContext *testing.T) {
 			viper.Set(key, value)
 			testContext.Cleanup(func() { viper.Set(key, previous) })
 		}
+		bkapi.LoadConfig()
 		queryURL, err := url.Parse(bkapi.GetBkDataAPI().QueryUrlForES("bkcc__saved"))
 		require.NoError(testContext, err)
 		gatewayPath = queryURL.Path

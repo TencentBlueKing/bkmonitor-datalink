@@ -1049,3 +1049,25 @@ func TestActiveProfileScheduleIdentIgnoresDeliveryChanges(t *testing.T) {
 		t.Fatal("schedule ident should change across tenants")
 	}
 }
+
+// TestActiveProfileDynamicCommandClearsHostPIDs 覆盖动态 command 携带多余 host_pids 的场景：
+// 清洗时直接清零，避免无效列表进入 Event 配置快照。
+func TestActiveProfileDynamicCommandClearsHostPIDs(t *testing.T) {
+	conf := newTestActiveProfileConfig(t)
+	hostPIDs := make([]ActiveProfileHostPID, 1000)
+	for i := range hostPIDs {
+		hostPIDs[i] = ActiveProfileHostPID{BKHostID: 456, PID: int32(i + 1)}
+	}
+	conf.ProcessSelector = ActiveProfileProcessSelector{
+		Type:                    ActiveProfileSelectorCommand,
+		MatchPattern:            "java",
+		EnableDynamicCollection: true,
+		HostPIDs:                hostPIDs,
+	}
+	if err := conf.Clean(); err != nil {
+		t.Fatalf("Clean() error = %v", err)
+	}
+	if len(conf.ProcessSelector.HostPIDs) != 0 {
+		t.Fatalf("dynamic command kept %d host_pids, want 0", len(conf.ProcessSelector.HostPIDs))
+	}
+}

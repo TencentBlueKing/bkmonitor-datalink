@@ -71,16 +71,28 @@ func (s *Daemon) addJob(job Job) {
 }
 
 func pushRunnableJob(queue JobQueue, job Job) bool {
-	if job == nil {
-		return false
+	return pushRunnableJobs(queue, []Job{job}) > 0
+}
+
+// pushRunnableJobs 释放已结束的任务后，对可运行任务只做一次批量 Push：LockQueue 每次 Push
+// 都会重新排序整个队列，冷启动逐条入队会退化成 O(N^2 log N)。
+func pushRunnableJobs(queue JobQueue, jobs []Job) int {
+	runnable := make([]Job, 0, len(jobs))
+	for _, job := range jobs {
+		if job == nil {
+			continue
+		}
+		if job.IsFinished() {
+			// 已结束的任务不再入队，立即释放其派生 context，避免频繁 Reload 时持续泄漏。
+			job.Stop()
+			continue
+		}
+		runnable = append(runnable, job)
 	}
-	if job.IsFinished() {
-		// 已结束的任务不再入队，立即释放其派生 context，避免频繁 Reload 时持续泄漏。
-		job.Stop()
-		return false
+	if len(runnable) > 0 {
+		queue.Push(runnable...)
 	}
-	queue.Push(job)
-	return true
+	return len(runnable)
 }
 
 func isGracefulReloadJob(job Job) bool {
@@ -141,9 +153,7 @@ func (s *Daemon) Start(ctx context.Context) error {
 	}
 	state.taskLock.RUnlock()
 
-	for _, job := range jobs {
-		s.addJob(job)
-	}
+	pushRunnableJobs(state.jobs, jobs)
 
 	globalConfig := s.Config.(*configs.Config)
 	state.ticker = time.NewTicker(globalConfig.CheckInterval)

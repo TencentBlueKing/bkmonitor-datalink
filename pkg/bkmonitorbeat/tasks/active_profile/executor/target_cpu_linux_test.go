@@ -18,7 +18,8 @@ import (
 	"time"
 )
 
-// 进程级 CPU 时钟要能读到真实消耗：空转一段时间后读数必须增长。
+// 进程级 CPU 时钟要能读到真实消耗：持续空转时读数必须增长。繁忙机器上线程会被抢占，
+// 固定时长的空转拿不到足够的 CPU，因此按增长量判定，只用墙钟时长兜底。
 func TestProcessCPUTimeTracksConsumedCPU(t *testing.T) {
 	pid := int32(os.Getpid())
 	before, err := processCPUTime(pid)
@@ -26,16 +27,21 @@ func TestProcessCPUTimeTracksConsumedCPU(t *testing.T) {
 		t.Fatalf("processCPUTime() error = %v", err)
 	}
 
-	deadline := time.Now().Add(50 * time.Millisecond)
-	for time.Now().Before(deadline) {
-	}
-
-	after, err := processCPUTime(pid)
-	if err != nil {
-		t.Fatalf("processCPUTime() error = %v", err)
-	}
-	if after-before < 20*time.Millisecond {
-		t.Fatalf("cpu time grew by %s after spinning 50ms (before=%s after=%s)", after-before, before, after)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		spinUntil := time.Now().Add(10 * time.Millisecond)
+		for time.Now().Before(spinUntil) {
+		}
+		after, err := processCPUTime(pid)
+		if err != nil {
+			t.Fatalf("processCPUTime() error = %v", err)
+		}
+		if after-before >= 20*time.Millisecond {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("cpu time grew by %s after spinning 5s (before=%s after=%s)", after-before, before, after)
+		}
 	}
 }
 

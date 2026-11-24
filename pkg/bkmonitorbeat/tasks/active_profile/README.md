@@ -145,8 +145,8 @@ PingServer 订阅的 `ip_to_items`，一台主机一个订阅）。
 | 本版本不认识的取值 | 后续阶段才实现的 `collection_method`，新的 `process_selector.type` / `stack_unwind` | 保留调度，每轮不采集，只上报 `failed` + `version_unsupported`，`message` 带当前 Beat 版本 |
 | 采集配置取值不合法 | `exclude_pattern` 不是 RE2 语法、采集时长超上限 | 保留调度，每轮上报 `failed` + `config_invalid` |
 
-立即执行同样分类：后两类由 CLI 照常连本机 GSE Agent 上报一条 `failed`，退出码 0；第一类直接
-报错退出。匹配预览遇到不认识的 `process_selector.type` 返回 `version_unsupported`。
+立即执行同样分类：后两类由 CLI 照常连本机 GSE Agent 上报一条 `failed`，送达后退出码 0；第一类
+直接报错退出。匹配预览遇到不认识的 `process_selector.type` 返回 `version_unsupported`。
 
 模板引用 `latest`，灰度升级期间"新模板 + 旧 Beat"是常态，协议演进遵守以下约束：
 
@@ -190,9 +190,9 @@ pprof 每个样本携带执行定位与进程标签：`bk_biz_id`、`task_id`、
 `finished_at`、`execution_duration_ms`、`processes`、`message`，两者都携带本次实际
 配置快照 `config`，计划任务再携带目标主机快照 `target_hosts`（立即执行的 CLI 不带，由 SaaS
 上报的 Event 携带）。`target_hosts` 随目标主机数增长，不计入下面的上限，也不会被降级丢弃；
-`event.content` 在 ES 中是 text 字段，没有 keyword 的长度限制。其余部分有 32 KiB 序列化上限，超限时按 `processes` →
-`config` 的顺序降级重建，任何降级结果仍是一段可解析的合法 JSON，并在 `message`
-中说明降级原因。
+`event.content` 在 ES 中是 text 字段，没有 keyword 的长度限制。其余部分有 32 KiB 序列化上限，超限时丢弃
+`processes` 并在 `message` 中说明原因，结果仍是一段可解析的合法 JSON。配置快照不会被丢弃：选择器各字段
+都有大小上限，开启动态采集的 command 不保留 `host_pids`，丢弃 `processes` 后一定放得下。
 
 PID 模式的配置快照在每台主机上携带 `process_selector.config.pids`，下游消费端按
 `bk_host_id` 合并出完整的多主机 `host_pids` 配置。
@@ -360,8 +360,9 @@ Beat 进程重叠；持锁进程异常退出时由内核自动释放。抢锁失
 
 每次执行使用按执行键确定的独立运行目录 `<path.data>/active_profile/runs/<hash>`，采样文件、
 转换临时文件和清理范围都限定其中，不同执行并行时互不覆盖。目录名只是本地路径，不进入业务
-协议。进程启动时会清扫超过"执行预算 + 1 小时"的残留目录，回收上一个进程异常退出留下的
-`perf.data`，以及给从未执行的 occurrence 写下的取消标记。
+协议。每次执行开始前会清扫超过"执行预算 + 1 小时"的残留目录，回收上一个进程异常退出留下的
+`perf.data`，以及给从未执行的 occurrence 写下的取消标记；因此提前写入、超过这个时长才轮到执行的
+取消标记不会生效。
 
 ## 取消
 
@@ -420,6 +421,11 @@ perf 在本机启动过慢（典型是多个采集挤在 Beat 的 CPU 配额里�
 探测复用 preflight 已经录好的 probe perf.data，成本接近于零，并把"字段不被接受"这类失败
 从采样窗口跑完之后提前到采样之前。两级都不被接受时在 preflight 阶段失败，错误信息里带上
 perf 实际拒绝的字段。
+
+同一份 probe perf.data 还用来探测 `--no-inline`：perf ≥ 4.18 默认在 `perf script` 里解析
+内联，并把内联帧打印成同地址、不带 DSO 的 `(inlined)` 行，会与 Beat 自己的内联符号化（见
+下文）重复。本机 perf 接受该选项时转换阶段带上它，内联帧只由 Beat 展开；更早的版本没有这个
+选项，本身也不输出内联帧，被拒绝时不带即可。是否带上记在执行日志的 `script_no_inline` 里。
 
 地址换算统一为"有文件偏移就优先用它"：偏移与加载基址无关，两种语义下都正确。只有拿不到
 偏移时才退回第一列，此时它只对非 PIE（`ET_EXEC`）有意义——这类镜像链接地址固定、不参与

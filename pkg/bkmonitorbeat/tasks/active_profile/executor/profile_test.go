@@ -667,3 +667,77 @@ func TestSymbolizedProfileStringLimits(t *testing.T) {
 		})
 	}
 }
+
+// TestConvertPerfScriptHandlesSpacesOperatorsAndSameAddressInlines 覆盖三类真实 perf script
+// 输出形态：含空格的 DSO 路径（含升级未重启的 (deleted)）、含空格与参数括号的 C++ 符号
+// （operator new/delete），以及同一地址的多层内联帧（inner -> middle -> outer）。
+func TestConvertPerfScriptHandlesSpacesOperatorsAndSameAddressInlines(t *testing.T) {
+	script := `cpp-app 321 1.000: 10101010 cpu-clock:
+                  400500 inner+0x10 (/tmp/my app/lib foo.so+0x500)
+                  400500 middle+0x10 (/tmp/my app/lib foo.so+0x500)
+                  400500 outer+0x10 (/tmp/my app/lib foo.so+0x500)
+                  400600 operator new(unsigned long)+0x1c (/usr/lib64/libstdc++.so.6+0x600)
+                  400700 operator delete(void*)+0x8 (/usr/bin/app (deleted)+0x700)
+                  400800 helper+0x4 (/tmp/my app/app) 0x800
+
+`
+	conf := validPerfConfig()
+	conf.InlineSymbolization = inlineSymbolizationOff
+	outputPath := filepath.Join(t.TempDir(), "profile.pprof")
+	stats, err := convertPerfScriptReaderSafely(strings.NewReader(script), outputPath, conf)
+	if err != nil {
+		t.Fatalf("convertPerfScriptReaderSafely() error = %v", err)
+	}
+	if stats.Samples != 1 || stats.TotalFrames != 6 || stats.UnknownFrames != 0 {
+		t.Fatalf("stats = %+v, want 1 sample with 6 known frames", stats)
+	}
+
+	raw, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := pprofprofile.ParseData(raw)
+	if err != nil {
+		t.Fatalf("parse pprof: %v", err)
+	}
+	if len(parsed.Sample) != 1 || len(parsed.Sample[0].Location) != 6 {
+		t.Fatalf("sample locations = %d, want 6", len(parsed.Sample[0].Location))
+	}
+	wantFuncs := []string{
+		"inner",
+		"middle",
+		"outer",
+		"operator new(unsigned long)",
+		"operator delete(void*)",
+		"helper",
+	}
+	wantDSOs := []string{
+		"/tmp/my app/lib foo.so",
+		"/tmp/my app/lib foo.so",
+		"/tmp/my app/lib foo.so",
+		"/usr/lib64/libstdc++.so.6",
+		"/usr/bin/app (deleted)",
+		"/tmp/my app/app",
+	}
+	for i, loc := range parsed.Sample[0].Location {
+		if len(loc.Line) != 1 || loc.Line[0].Function == nil {
+			t.Fatalf("frame[%d] missing function: %+v", i, loc)
+		}
+		if got := loc.Line[0].Function.Name; got != wantFuncs[i] {
+			t.Errorf("frame[%d] function = %q, want %q", i, got, wantFuncs[i])
+		}
+		if loc.Mapping == nil || loc.Mapping.File != wantDSOs[i] {
+			t.Errorf("frame[%d] dso = %v, want %q", i, loc.Mapping, wantDSOs[i])
+		}
+	}
+
+	// 验证不带括号参数的 operator new / operator delete 也不会坍缩成 operator
+	fNew, ok := parseFrame("  400100 operator new+0x10 (/usr/lib64/libstdc++.so.6+0x100)", offsetModeDSOFF)
+	if !ok || fNew.Symbol != "operator new" || fNew.DSO != "/usr/lib64/libstdc++.so.6" || fNew.DSOOffset != 0x100 {
+		t.Fatalf("parseFrame(operator new) = (%+v, %t)", fNew, ok)
+	}
+	fDel, ok := parseFrame("  400200 operator delete+0x10 (/usr/lib64/libstdc++.so.6+0x200)", offsetModeDSOFF)
+	if !ok || fDel.Symbol != "operator delete" || fDel.DSO != "/usr/lib64/libstdc++.so.6" || fDel.DSOOffset != 0x200 {
+		t.Fatalf("parseFrame(operator delete) = (%+v, %t)", fDel, ok)
+	}
+}

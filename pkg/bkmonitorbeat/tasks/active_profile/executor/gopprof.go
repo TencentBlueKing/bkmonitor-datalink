@@ -56,10 +56,11 @@ const (
 )
 
 // goPprofClient 不使用 http.DefaultClient：采集目标是主机上的 pprof endpoint，
-// 走环境变量里的代理只会把本机请求发到无关出口。空 Transport 的 Proxy 为 nil，
-// 即直连。超时由每次请求的 context 控制，因此不设 Client.Timeout。
+// 走环境变量里的代理只会把本机请求发到无关出口。DisableKeepAlives 禁用连接复用：
+// 主动 Profiling 是低频单次抓取，抓完即关闭连接，避免零值 Transport 无限保留空闲连接
+// 与 FD。超时由每次请求的 context 控制，因此不设 Client.Timeout。
 var (
-	goPprofClient = &http.Client{Transport: &http.Transport{}}
+	goPprofClient = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
 
 	goPprofUncompressedLimit uint64 = defaultGoPprofUncompressedLimit
 )
@@ -271,8 +272,9 @@ func reserveGoPprofParse(runID, endpoint string, payload []byte) ([]byte, func()
 }
 
 // labelGoProfileSamples 给 Go 产物补上与 perf 路径完全一致的执行定位标签。pid/comm
-// 只在按 endpoint 端口反查到唯一监听进程时写入；反查不到时保持标签不存在，不写占位
-// 值。目标进程自己用 pprof.Do 打的标签一并保留。
+// 只在按 endpoint 端口反查到唯一监听进程时写入；反查不到时移除样本中应用自报的
+// pid/comm，保持标签不存在、不写占位值，避免与 Event processes 不一致。目标进程自己用
+// pprof.Do 打的其他标签一并保留。
 func labelGoProfileSamples(profile *pprofprofile.Profile, conf *configs.ActiveProfileTaskConfig, req Request) {
 	base := newBaseSampleLabels(SampleLabels{
 		BizID:       conf.GetBizID(),
@@ -288,6 +290,9 @@ func labelGoProfileSamples(profile *pprofprofile.Profile, conf *configs.ActivePr
 	for _, sample := range profile.Sample {
 		if sample.Label == nil {
 			sample.Label = make(map[string][]string, len(base))
+		} else if req.GoEndpointProcess == nil {
+			delete(sample.Label, "pid")
+			delete(sample.Label, "comm")
 		}
 		for key, value := range base {
 			sample.Label[key] = value

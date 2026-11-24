@@ -488,6 +488,57 @@ func TestRunRetiresFinishedGracefulJob(t *testing.T) {
 	daemon.Wait()
 }
 
+// TestPushRunnableJobsBatchesAndReleasesFinishedJobs 覆盖批量入队：大量普通任务一次入队后
+// 按检查时间有序，已结束的 ScheduledJob 不入队并释放 context。
+func TestPushRunnableJobsBatchesAndReleasesFinishedJobs(t *testing.T) {
+	initScheduleStorage(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	conf := futureOnceAt(t, 1011)
+	state := newDaemonState()
+	state.ctx = ctx
+	daemon := &Daemon{daemonState: state}
+	doneJob := NewJob(active_profile.New(nil, conf), daemon)
+	doneJob.Init()
+	doneJob.Next()
+
+	const totalOrdinary = 2000
+	jobs := make([]Job, 0, totalOrdinary+1)
+	base := time.Now().Add(time.Hour)
+	for i := 0; i < totalOrdinary; i++ {
+		task := mock.NewTask()
+		task.GetConfig().(*mock.TaskConfig).TaskID = int32(i + 1)
+		jobs = append(jobs, &IntervalJob{
+			task:      task,
+			checkTime: base.Add(time.Duration(totalOrdinary-i) * time.Second),
+		})
+	}
+	finishedReload := NewJob(active_profile.New(nil, conf), daemon)
+	finishedReload.Init()
+	jobs = append(jobs, finishedReload)
+
+	queue := NewLockQueue()
+	pushed := pushRunnableJobs(queue, jobs)
+	if pushed != totalOrdinary {
+		t.Fatalf("pushed = %d, want %d", pushed, totalOrdinary)
+	}
+	select {
+	case <-finishedReload.(*ScheduledJob).ctx.Done():
+	default:
+		t.Fatal("finished job context was not released by pushRunnableJobs")
+	}
+	popped := queue.PopAll()
+	if len(popped) != totalOrdinary {
+		t.Fatalf("queue len = %d, want %d", len(popped), totalOrdinary)
+	}
+	for i := 1; i < len(popped); i++ {
+		if popped[i].GetCheckTime().Before(popped[i-1].GetCheckTime()) {
+			t.Fatalf("queue out of order at %d: %v < %v", i, popped[i].GetCheckTime(), popped[i-1].GetCheckTime())
+		}
+	}
+}
+
 func initScheduleStorage(t *testing.T) {
 	t.Helper()
 	if err := storage.Init(filepath.Join(t.TempDir(), "schedule.db"), nil); err != nil {

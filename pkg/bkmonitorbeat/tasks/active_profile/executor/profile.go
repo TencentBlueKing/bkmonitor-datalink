@@ -290,50 +290,64 @@ func isKernelDSO(dso string) bool {
 }
 
 func parseFrame(line string, mode scriptOffsetMode) (perfFrame, bool) {
-	fields := strings.Fields(line)
-	if len(fields) < 2 {
+	trimmed := strings.TrimSpace(line)
+	sep := strings.IndexAny(trimmed, " \t")
+	if sep <= 0 {
 		return perfFrame{}, false
 	}
-	ip, err := strconv.ParseUint(strings.TrimPrefix(fields[0], "0x"), 16, 64)
+	ip, err := strconv.ParseUint(strings.TrimPrefix(trimmed[:sep], "0x"), 16, 64)
 	if err != nil {
+		return perfFrame{}, false
+	}
+	rest := strings.TrimLeft(trimmed[sep+1:], " \t")
+	if rest == "" {
 		return perfFrame{}, false
 	}
 
 	frame := perfFrame{IP: ip}
-	dsoIndex := -1
-	for i := 1; i < len(fields); i++ {
-		if strings.HasPrefix(fields[i], "(") && strings.HasSuffix(fields[i], ")") {
-			dsoIndex = i
-			dsoValue := strings.TrimSuffix(strings.TrimPrefix(fields[i], "("), ")")
-			frame.DSO = dsoValue
-			if offsetIndex := strings.LastIndex(dsoValue, "+0x"); offsetIndex > 0 {
-				offset, parseErr := strconv.ParseUint(dsoValue[offsetIndex+3:], 16, 64)
-				if parseErr == nil {
-					frame.DSO = dsoValue[:offsetIndex]
-					frame.DSOOffset = offset
-					frame.HasDSOOffset = true
-				}
-			}
-			break
+	// 部分 perf 版本把文件偏移打印在 (dso) 后的独立列，如:
+	//   40040f busy3+0xf (/tmp/perf-busy) 0x40f
+	if !strings.HasSuffix(rest, ")") {
+		lastSpace := strings.LastIndexAny(rest, " \t")
+		if lastSpace < 0 {
+			return perfFrame{}, false
+		}
+		tail := strings.TrimPrefix(rest[lastSpace+1:], "+")
+		if !strings.HasPrefix(tail, "0x") {
+			return perfFrame{}, false
+		}
+		offset, parseErr := strconv.ParseUint(strings.TrimPrefix(tail, "0x"), 16, 64)
+		if parseErr != nil {
+			return perfFrame{}, false
+		}
+		frame.DSOOffset = offset
+		frame.HasDSOOffset = true
+		rest = strings.TrimRight(rest[:lastSpace], " \t")
+		if !strings.HasSuffix(rest, ")") {
+			return perfFrame{}, false
 		}
 	}
-	if dsoIndex == -1 {
+
+	// 从行尾反查与最后一个 ')' 配对的 '('，兼容含空格 DSO 路径、(/path/app (deleted))
+	// 以及含空格与括号的 C++ 符号（如 operator new(unsigned long)+0x1c）。
+	openIdx := matchingOpenParen(rest)
+	if openIdx < 0 || (openIdx > 0 && rest[openIdx-1] != ' ' && rest[openIdx-1] != '\t') {
 		return perfFrame{}, false
 	}
 
-	if fields[1] != "[unknown]" {
-		frame.Symbol = strings.SplitN(fields[1], "+0x", 2)[0]
-	}
-	for i := dsoIndex + 1; i < len(fields); i++ {
-		value := strings.TrimPrefix(fields[i], "+")
-		if strings.HasPrefix(value, "0x") {
-			offset, parseErr := strconv.ParseUint(strings.TrimPrefix(value, "0x"), 16, 64)
-			if parseErr == nil {
-				frame.DSOOffset = offset
-				frame.HasDSOOffset = true
-				break
-			}
+	dsoValue := rest[openIdx+1 : len(rest)-1]
+	frame.DSO = dsoValue
+	if offsetIndex := strings.LastIndex(dsoValue, "+0x"); offsetIndex > 0 {
+		if offset, parseErr := strconv.ParseUint(dsoValue[offsetIndex+3:], 16, 64); parseErr == nil {
+			frame.DSO = dsoValue[:offsetIndex]
+			frame.DSOOffset = offset
+			frame.HasDSOOffset = true
 		}
+	}
+
+	symbolPart := strings.TrimSpace(rest[:openIdx])
+	if symbolPart != "" && symbolPart != "[unknown]" {
+		frame.Symbol = stripSymbolOffset(symbolPart)
 	}
 	// perf < 6.4 没有 dsoff 字段，callchain 第一列对非内核 DSO 本身就是文件偏移。
 	// 内核模块（.ko）同样被 perf 视为内核 DSO 而打印 raw ip，这里按 DSO 名无法区分，
@@ -344,6 +358,31 @@ func parseFrame(line string, mode scriptOffsetMode) (perfFrame, bool) {
 		frame.HasDSOOffset = true
 	}
 	return frame, true
+}
+
+func matchingOpenParen(s string) int {
+	depth := 0
+	for i := len(s) - 1; i >= 0; i-- {
+		switch s[i] {
+		case ')':
+			depth++
+		case '(':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func stripSymbolOffset(symbol string) string {
+	if idx := strings.LastIndex(symbol, "+0x"); idx > 0 {
+		if _, err := strconv.ParseUint(symbol[idx+3:], 16, 64); err == nil {
+			return symbol[:idx]
+		}
+	}
+	return symbol
 }
 
 type profileBuilder struct {
@@ -605,7 +644,9 @@ func (b *profileBuilder) mapping(dso string) (*pprofprofile.Mapping, error) {
 }
 
 func (b *profileBuilder) location(frame perfFrame) (*pprofprofile.Location, bool, error) {
-	key := fmt.Sprintf("%s:%x", frame.DSO, frame.IP)
+	// perf script 对同地址内联栈会按不同 Symbol 打印多帧；key 纳入 Symbol 避免
+	// inner->middle->outer 在同一 IP 撞缓存坍缩成 inner->inner->outer。
+	key := frame.DSO + "\x00" + strconv.FormatUint(frame.IP, 16) + "\x00" + frame.Symbol
 	if location, ok := b.locations[key]; ok {
 		return location, locationHasFunction(location), nil
 	}

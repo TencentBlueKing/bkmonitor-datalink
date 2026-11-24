@@ -128,14 +128,15 @@ func RunCLI(reader io.Reader) error {
 	opts := ExecuteOptions{
 		// 立即执行的 started 由 SaaS 在 JOB 受理后上报，CLI 不重复发送。
 		ReportStarted: false,
-		Sink:          sink,
+		// 使用与 GSE 上报外层一致的主机 IP（含 output.bkpipe.hostip 覆写），避免多网卡
+		// 环境下 finished.target / pprof ip 标签与 GSE 外层 IP 分叉。
+		FallbackIP: sink.info.IP,
+		Sink:       sink,
 	}
 	if conf.Rejection() != nil {
-		reportRejected(ctx, conf, scheduledAt, opts)
-		return nil
+		return reportRejected(ctx, conf, scheduledAt, opts)
 	}
-	Execute(ctx, conf, scheduledAt, opts)
-	return nil
+	return Execute(ctx, conf, scheduledAt, opts)
 }
 
 // MatchCLI 按 process_selector 在本机匹配进程，把结果以 JSON 写入 writer，供页面

@@ -541,6 +541,8 @@ func (s *ActiveProfileProcessSelector) Clean() error {
 		if !s.EnableDynamicCollection {
 			return s.cleanHostPIDs()
 		}
+		// 开启动态采集时不按 host_pids 选进程，清零多余字段避免进入 Event 配置快照。
+		s.HostPIDs = nil
 	case ActiveProfileSelectorPIDFile:
 		return s.cleanPIDPath()
 	case ActiveProfileSelectorPID:

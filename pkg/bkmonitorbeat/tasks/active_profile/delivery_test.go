@@ -1296,3 +1296,63 @@ func TestGSEAgentSinkFiniteRetriesAndReconnect(t *testing.T) {
 		}
 	})
 }
+
+type failingReportSink struct {
+	err error
+}
+
+func (s failingReportSink) Send(context.Context, define.Event) error {
+	return s.err
+}
+
+// TestExecuteReturnsFinishedDeliveryError 覆盖 CLI 终态丢失：finished Event 投递失败时
+// Execute 与 reportRejected 必须返回错误，供 RunCLI 以非 0 退出码暴露问题；采集失败但
+// 终态已送达时返回 nil。
+func TestExecuteReturnsFinishedDeliveryError(t *testing.T) {
+	conf := newTestTaskConfig(t)
+	conf.Schedule = configs.ActiveProfileScheduleConfig{
+		Type:      configs.ActiveProfileScheduleImmediate,
+		ExecuteAt: time.Now().UnixMilli(),
+		Timezone:  "UTC",
+	}
+	// 用不存在的 PID 制造确定性的采集失败，专注验证终态投递返回值。
+	conf.ProcessSelector = configs.ActiveProfileProcessSelector{
+		Type: configs.ActiveProfileSelectorPID,
+		PIDs: "999999999",
+	}
+	if err := conf.Clean(); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	if err := Execute(context.Background(), conf, now, ExecuteOptions{
+		FallbackIP: "10.0.0.2",
+		Sink:       failingReportSink{err: errors.New("broken pipe")},
+	}); !errors.Is(err, errReportFailed) {
+		t.Fatalf("Execute() error = %v, want errReportFailed when finished delivery fails", err)
+	}
+
+	sink := newReportChannel()
+	if err := Execute(context.Background(), conf, now, ExecuteOptions{
+		FallbackIP: "10.0.0.2",
+		Sink:       beatEventSink{events: sink},
+	}); err != nil {
+		t.Fatalf("Execute() error = %v, want nil when failure finished event is delivered", err)
+	}
+	reports := captureReports(t, sink)
+	if len(reports.Events) != 1 || reports.Events[0].Target != "10.0.0.2" {
+		t.Fatalf("captured events = %+v, want 1 event targeting fallback IP 10.0.0.2", reports.Events)
+	}
+
+	rejected := newTestTaskConfig(t)
+	rejected.CollectionMethod, rejected.CollectionType = "java", "java_cpu"
+	if err := rejected.Clean(); err == nil || rejected.Rejection() == nil {
+		t.Fatal("expected reportable rejection")
+	}
+	if err := reportRejected(context.Background(), rejected, now, ExecuteOptions{
+		FallbackIP: "10.0.0.2",
+		Sink:       failingReportSink{err: errors.New("socket closed")},
+	}); !errors.Is(err, errReportFailed) {
+		t.Fatalf("reportRejected() error = %v, want errReportFailed when finished delivery fails", err)
+	}
+}

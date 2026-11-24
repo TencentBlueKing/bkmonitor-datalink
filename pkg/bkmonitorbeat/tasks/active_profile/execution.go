@@ -41,35 +41,34 @@ type ExecuteOptions struct {
 }
 
 // Execute 执行一次主机级采集并收敛终态。无论成功、失败、冲突、熔断、超时还是被
-// 取消，都会尝试发送 finished Event 与终态运营指标。
+// 取消，都会尝试发送 finished Event 与终态运营指标。返回值为 finished Event 的投递错误：
+// 只要终态成功送达就返回 nil（即使采集本身失败），轻量 CLI 据此在终态丢失时返回非 0 退出码。
 func Execute(
 	ctx context.Context,
 	conf *configs.ActiveProfileTaskConfig,
 	scheduledAt time.Time,
 	opts ExecuteOptions,
-) {
+) error {
 	ip := resolveExecutionIP(opts.FallbackIP)
 	startedAt := time.Now()
 
 	// 同 task 并发保护只对计划任务生效，立即执行不参与该锁域。
 	lock, acquired, err := acquireTaskRunLock(conf)
 	if err != nil {
-		finish(ctx, conf, ip, scheduledAt, startedAt, opts, ExecutionOutcome{
+		return finish(ctx, conf, ip, scheduledAt, startedAt, opts, ExecutionOutcome{
 			Status:       StatusFailed,
 			ErrorType:    ErrorTypeCollectFailed,
 			ErrorMessage: fmt.Sprintf("acquire task run lock failed: %v", err),
 		})
-		return
 	}
 	if !acquired {
 		// 抢锁失败不等待、不排队、不启动采集器。
 		logger.Warnf("[active_profile] task_id=%d skipped: %s", conf.GetTaskID(), errTaskAlreadyRunning)
-		finish(ctx, conf, ip, scheduledAt, startedAt, opts, ExecutionOutcome{
+		return finish(ctx, conf, ip, scheduledAt, startedAt, opts, ExecutionOutcome{
 			Status:       StatusFailed,
 			ErrorType:    ErrorTypeTaskBusy,
 			ErrorMessage: errTaskAlreadyRunning,
 		})
-		return
 	}
 	defer lock.Release()
 
@@ -84,12 +83,11 @@ func Execute(
 	sweepStaleRunDirs(conf.OutputDir, conf.ExecutionTimeout()+staleRunDirBuffer)
 	run, err := openRunContext(conf, scheduledAt)
 	if err != nil {
-		finish(ctx, conf, ip, scheduledAt, startedAt, opts, ExecutionOutcome{
+		return finish(ctx, conf, ip, scheduledAt, startedAt, opts, ExecutionOutcome{
 			Status:       StatusFailed,
 			ErrorType:    ErrorTypeCollectFailed,
 			ErrorMessage: err.Error(),
 		})
-		return
 	}
 	defer run.Close(conf.KeepArtifacts)
 
@@ -102,7 +100,7 @@ func Execute(
 	defer stopWatching()
 
 	outcome := collect(runCtx, conf, run, scheduledAt, ip, opts.Sink)
-	finish(ctx, conf, ip, scheduledAt, startedAt, opts, outcome)
+	return finish(ctx, conf, ip, scheduledAt, startedAt, opts, outcome)
 }
 
 // collect 完成进程解析、采集与产物上报，并把结果收敛为主机终态。
@@ -174,7 +172,7 @@ func collect(
 }
 
 // finish 发送 finished Event 与终态运营指标。取消场景下调度 context 已被取消，
-// 因此这里使用独立的发送 context，保证终态仍有机会送达。
+// 因此这里使用独立的发送 context，保证终态仍有机会送达。返回值为 finished Event 投递错误。
 func finish(
 	ctx context.Context,
 	conf *configs.ActiveProfileTaskConfig,
@@ -183,11 +181,12 @@ func finish(
 	startedAt time.Time,
 	opts ExecuteOptions,
 	outcome ExecutionOutcome,
-) {
+) error {
 	event := newFinishedEvent(conf, ip, scheduledAt, startedAt, time.Now(), outcome)
 	// reportFinishedEvent 会剥离取消并按外层 ctx 是否属于进程退出决定投递等待上限。
-	if err := reportFinishedEvent(ctx, opts.Sink, event); err != nil {
-		logger.Errorf("[active_profile] report finished event failed: %v", err)
+	reportErr := reportFinishedEvent(ctx, opts.Sink, event)
+	if reportErr != nil {
+		logger.Errorf("[active_profile] report finished event failed: %v", reportErr)
 	}
 	reportExecutionMetric(opts.MetricSink, opts.GatherUpDataID, event)
 	if outcome.Status == StatusSucceed {
@@ -195,12 +194,13 @@ func finish(
 			"[active_profile] task_id=%d scheduled_at=%d status=%s processes=%d",
 			conf.GetTaskID(), scheduledAt.UnixMilli(), outcome.Status, len(outcome.Processes),
 		)
-		return
+		return reportErr
 	}
 	logger.Errorf(
 		"[active_profile] task_id=%d scheduled_at=%d status=%s error=%s",
 		conf.GetTaskID(), scheduledAt.UnixMilli(), outcome.Status, outcome.ErrorMessage,
 	)
+	return reportErr
 }
 
 // reportRejected 收敛采集配置无法在本 Beat 执行的一次执行：不采集、不发 started，只上报
@@ -211,7 +211,7 @@ func reportRejected(
 	conf *configs.ActiveProfileTaskConfig,
 	scheduledAt time.Time,
 	opts ExecuteOptions,
-) {
+) error {
 	rejection := conf.Rejection()
 	outcome := ExecutionOutcome{
 		Status:       StatusFailed,
@@ -223,7 +223,7 @@ func reportRejected(
 		outcome.ErrorMessage = fmt.Sprintf("%v; current bkmonitorbeat version is %s, upgrade it to run this task",
 			rejection, stats.GetVersion())
 	}
-	finish(ctx, conf, resolveExecutionIP(opts.FallbackIP), scheduledAt, time.Now(), opts, outcome)
+	return finish(ctx, conf, resolveExecutionIP(opts.FallbackIP), scheduledAt, time.Now(), opts, outcome)
 }
 
 // statusFor 把执行错误映射到 finished 允许上报的终态。running 与 unknown 由 SaaS
@@ -328,11 +328,12 @@ func logExecutorResult(runKey string, result *executor.Result) {
 		return
 	}
 	logger.Infof(
-		"[active_profile] run=%s perf_version=%q script_fields=%q offset_mode=%s",
+		"[active_profile] run=%s perf_version=%q script_fields=%q offset_mode=%s script_no_inline=%t",
 		runKey,
 		result.Preflight.PerfVersion,
 		result.Preflight.ScriptFields,
 		result.Preflight.OffsetMode,
+		result.Preflight.ScriptNoInline,
 	)
 	logger.Infof(
 		"[active_profile] run=%s samples=%d unknown=%d/%d profile_bytes=%d perf_data_bytes=%d symbolization=%s backend=%s symbolized=%d inline=%d failures=%d skipped=%d unresolved=%d message=%s",

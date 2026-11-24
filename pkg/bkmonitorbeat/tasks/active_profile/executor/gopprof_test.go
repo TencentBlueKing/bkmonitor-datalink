@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -615,5 +616,108 @@ func TestReserveGoPprofParseCapsUncompressedLimitWithoutCgroup(t *testing.T) {
 	defer release()
 	if !errors.Is(err, ErrMemoryLimit) || !strings.Contains(err.Error(), "uncompressed size exceeds") {
 		t.Fatalf("reserveGoPprofParse() error = %v, want ErrMemoryLimit naming the static uncompressed limit", err)
+	}
+}
+
+// 连续抓取多个不同端口的 Go 服务后，不能在进程内保留空闲 keep-alive 连接。
+func TestRunGoPprofDoesNotRetainIdleConnections(t *testing.T) {
+	payload := newTestGoProfilePayload(t, int64(10*time.Millisecond))
+	var openConns atomic.Int32
+	servers := make([]*httptest.Server, 0, 5)
+	for i := 0; i < 5; i++ {
+		srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write(payload)
+		}))
+		srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+			switch state {
+			case http.StateNew:
+				openConns.Add(1)
+			case http.StateClosed, http.StateHijacked:
+				openConns.Add(-1)
+			}
+		}
+		srv.Start()
+		servers = append(servers, srv)
+		t.Cleanup(srv.Close)
+	}
+
+	for _, srv := range servers {
+		parsed, err := url.Parse(srv.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		port, err := strconv.Atoi(parsed.Port())
+		if err != nil {
+			t.Fatal(err)
+		}
+		conf := newTestGoTaskConfig(t, configs.ActiveProfileTypeGoHeap, parsed.Hostname(), port)
+		conf.ResourceGuardConfig = configs.ActiveProfileResourceGuardConfig{}
+		if err := conf.Clean(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := RunGoPprof(context.Background(), conf, Request{RunDir: t.TempDir()}); err != nil {
+			t.Fatalf("RunGoPprof(%s) error = %v", srv.URL, err)
+		}
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for openConns.Load() > 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := openConns.Load(); got != 0 {
+		t.Fatalf("retained %d open/idle connections across 5 Go pprof servers, want 0", got)
+	}
+}
+
+// 未反查到唯一监听进程时，样本中目标应用自报的 pid/comm 必须移除，其他自定义标签保留。
+func TestRunGoPprofStripsAppPIDCommLabelsWhenEndpointUnresolved(t *testing.T) {
+	function := &pprofprofile.Function{ID: 1, Name: "main.work", SystemName: "main.work", Filename: "main.go"}
+	location := &pprofprofile.Location{ID: 1, Line: []pprofprofile.Line{{Function: function}}}
+	profile := &pprofprofile.Profile{
+		SampleType: []*pprofprofile.ValueType{{Type: "samples", Unit: "count"}},
+		PeriodType: &pprofprofile.ValueType{Type: "space", Unit: "bytes"},
+		Function:   []*pprofprofile.Function{function},
+		Location:   []*pprofprofile.Location{location},
+		Sample: []*pprofprofile.Sample{{
+			Location: []*pprofprofile.Location{location},
+			Value:    []int64{1},
+			Label: map[string][]string{
+				"pid":     {"99999"},
+				"comm":    {"spoofed-app"},
+				"handler": {"/api/orders"},
+			},
+		}},
+	}
+	var payload bytes.Buffer
+	if err := profile.Write(&payload); err != nil {
+		t.Fatal(err)
+	}
+	host, port := newTestGoPprofServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(payload.Bytes())
+	})
+	conf := newTestGoTaskConfig(t, configs.ActiveProfileTypeGoHeap, host, port)
+	conf.ResourceGuardConfig = configs.ActiveProfileResourceGuardConfig{}
+	if err := conf.Clean(); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := RunGoPprof(context.Background(), conf, Request{
+		ScheduledAt: time.UnixMilli(conf.Schedule.ExecuteAt),
+		RunDir:      t.TempDir(),
+		IP:          "10.0.0.1",
+	})
+	if err != nil {
+		t.Fatalf("RunGoPprof() error = %v", err)
+	}
+	parsed := parseResultProfile(t, result)
+	labels := parsed.Sample[0].Label
+	if _, exists := labels["pid"]; exists {
+		t.Errorf("app-supplied pid label survived when endpoint was unresolved: %v", labels["pid"])
+	}
+	if _, exists := labels["comm"]; exists {
+		t.Errorf("app-supplied comm label survived when endpoint was unresolved: %v", labels["comm"])
+	}
+	if got := labels["handler"]; len(got) != 1 || got[0] != "/api/orders" {
+		t.Errorf("custom app label handler = %v, want [/api/orders]", got)
 	}
 }

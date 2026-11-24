@@ -174,6 +174,8 @@ type preflightResult struct {
 	// ScriptFields 与 OffsetMode 是探测出的 perf script 字段集及第一列语义。
 	ScriptFields string
 	OffsetMode   scriptOffsetMode
+	// ScriptNoInline 表示本机 perf script 接受 --no-inline。
+	ScriptNoInline bool
 }
 
 type perfResult struct {

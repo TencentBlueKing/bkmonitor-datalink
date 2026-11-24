@@ -342,6 +342,53 @@ func TestPreflightFailsWhenNoFieldSetIsAccepted(t *testing.T) {
 	}
 }
 
+// TestPreflightProbesScriptNoInline 覆盖 --no-inline 探测：perf 接受时转换阶段带上它，
+// 内联帧只由 Beat 展开；老版本 perf 不认识该选项时不带，照样完成采集。
+func TestPreflightProbesScriptNoInline(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		accept bool
+	}{
+		{name: "accepted", accept: true},
+		{name: "rejected by older perf", accept: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			argsLog := filepath.Join(t.TempDir(), "script-args")
+			conf := validPerfConfig()
+			conf.PIDs = []int32{int32(os.Getpid())}
+			conf.PerfPath = writeInlineProbeFakePerf(t, argsLog, test.accept)
+			conf.OutputDir = t.TempDir()
+
+			result, err := executePerf(context.Background(), conf)
+			if err != nil {
+				t.Fatalf("executePerf() error = %v result=%+v", err, result)
+			}
+			if result.Preflight.ScriptNoInline != test.accept {
+				t.Fatalf("ScriptNoInline = %t, want %t", result.Preflight.ScriptNoInline, test.accept)
+			}
+			if !result.Success || result.SampleCount != 1 {
+				t.Fatalf("unexpected result: %+v", result)
+			}
+			raw, err := os.ReadFile(argsLog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			conversion := ""
+			for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+				if !strings.Contains(line, ".perf-preflight-") {
+					conversion = line
+				}
+			}
+			if conversion == "" {
+				t.Fatalf("no conversion invocation recorded: %q", raw)
+			}
+			if contains(strings.Fields(conversion), scriptNoInlineFlag) != test.accept {
+				t.Fatalf("conversion args %q, want --no-inline=%t", conversion, test.accept)
+			}
+		})
+	}
+}
+
 // TestPreflightCommandTimeoutIsPerfUnavailable 覆盖 CPU 配额下 perf 探测过慢：preflight
 // 命令超时按 perf 不可用失败，不能带出 DeadlineExceeded 被归为整次执行 timeout。
 func TestPreflightCommandTimeoutIsPerfUnavailable(t *testing.T) {
@@ -427,6 +474,55 @@ EOF
     ;;
 esac
 `, os.Getpid())
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// writeInlineProbeFakePerf 记录每次 perf script 的参数；accept 为 false 时模拟没有
+// --no-inline 选项的老版本 perf。
+func writeInlineProbeFakePerf(t *testing.T, argsLog string, accept bool) string {
+	t.Helper()
+	reject := 1
+	if accept {
+		reject = 0
+	}
+	path := filepath.Join(t.TempDir(), "perf")
+	script := fmt.Sprintf(`#!/bin/sh
+set -eu
+case "$1" in
+  version)
+    echo "perf version fake"
+    ;;
+  record)
+    shift
+    output=""
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "-o" ]; then output="$2"; break; fi
+      shift
+    done
+    printf 'fake perf data' >"$output"
+    ;;
+  script)
+    echo "$*" >>%q
+    for arg in "$@"; do
+      if [ "$arg" = "--no-inline" ] && [ %d -eq 1 ]; then
+        echo "Error: unknown option no-inline" >&2
+        exit 129
+      fi
+    done
+    cat <<'EOF'
+perf-busy %d 1.000: 10101010 cpu-clock:
+                  40040f busy3+0xf (/tmp/perf-busy+0x40f)
+
+EOF
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`, argsLog, reject, os.Getpid())
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

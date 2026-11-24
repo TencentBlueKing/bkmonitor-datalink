@@ -28,6 +28,8 @@ import (
 const (
 	maxCommandStderr      = 64 * 1024
 	processInterruptGrace = 2 * time.Second
+
+	scriptNoInlineFlag = "--no-inline"
 )
 
 // preflightCommandTimeout 是 preflight 中单条 perf 命令的超时。Beat 在 resource_limit
@@ -109,6 +111,9 @@ func executePerf(ctx context.Context, conf perfConfig) (result perfResult, retur
 		"script",
 		"-i", perfDataPath,
 		"-F", preflight.ScriptFields,
+	}
+	if preflight.ScriptNoInline {
+		scriptArgs = append(scriptArgs, scriptNoInlineFlag)
 	}
 	stats, scriptStderr, scriptErr := runScriptCommand(
 		ctx,
@@ -258,7 +263,23 @@ func runPreflight(ctx context.Context, conf perfConfig) (preflightResult, error)
 	}
 	result.ScriptFields = candidate.Fields
 	result.OffsetMode = candidate.Mode
+	result.ScriptNoInline = probeScriptNoInline(ctx, resolved, probePath, candidate.Fields)
 	return result, nil
+}
+
+// probeScriptNoInline 判断本机 perf script 是否接受 --no-inline。perf >= 4.18 默认把内联帧
+// 打印成同地址、不带 DSO 的 (inlined) 行，会与 Beat 自己的内联符号化重复；更早的版本
+// 没有这个选项，也不输出内联帧，被拒绝时不带即可。
+func probeScriptNoInline(ctx context.Context, perfPath, probePath, fields string) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, preflightCommandTimeout)
+	defer cancel()
+	_, err := runCommand(
+		probeCtx,
+		perfPath,
+		[]string{"script", "-i", probePath, "-F", fields, scriptNoInlineFlag},
+		io.Discard,
+	)
+	return err == nil
 }
 
 // probeScriptFields 依次尝试候选字段集，返回第一个被本机 perf 接受的。perf 在解析

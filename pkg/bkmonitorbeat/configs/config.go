@@ -72,7 +72,8 @@ type Config struct {
 	TaskTypeMapping      map[string]define.TaskMetaConfig `config:"_"`
 	tenantDataIDResolver tenant.DataIDResolver
 
-	CheckInterval      time.Duration `config:"check_interval" validate:"positive"`
+	CheckInterval time.Duration `config:"check_interval" validate:"positive"`
+	// 0 表示关闭检测；首次从 0 改为正值后需要重启进程，仅 reload 不生效。
 	ClockJumpThreshold time.Duration `config:"clock_jump_threshold" validate:"min=0s"`
 	CleanUpTimeout     time.Duration `config:"clean_up_timeout" validate:"min=1s"`
 	EventBufferSize    int           `config:"event_buffer_size" validate:"positive"`

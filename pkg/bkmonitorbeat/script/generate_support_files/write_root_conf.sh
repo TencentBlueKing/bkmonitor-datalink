@@ -107,6 +107,9 @@ EOF
   bk_biz_id: 1
   # stop/reload旧任务清理超时
   clean_up_timeout: 1s
+  # 系统时间前后跳变超过该阈值时触发进程重启
+  # 首次将 bkmonitorbeat.clock_jump_threshold 从 0 改为正值后需重启进程，仅 reload 不生效
+  clock_jump_threshold: 0
   # 事件管道缓冲大小
   event_buffer_size: 10
   # 启动模式：daemon（正常模式）,check（执行一次，测试用）

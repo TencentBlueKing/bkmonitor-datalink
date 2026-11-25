@@ -45,6 +45,7 @@ type BaseConfigEngine struct {
 	wrongChildMetaTasks   []*configs.ChildTaskMetaConfig // 错误的子任务列表,子配置心跳会用到
 	errorChildMetaTasks   []*configs.ChildTaskMetaConfig // 读取失败的子任务列表,子配置心跳会用到
 	tenantDataIDResolver  tenant.DataIDResolver
+	allowUnreadableChild  bool
 
 	heartbeatLock sync.Mutex   // 心跳数据读写锁
 	heartbeatInfo define.Event // 用于上传的心跳数据,全局配置部分
@@ -55,11 +56,17 @@ func (ce *BaseConfigEngine) SetTenantDataIDResolver(resolver tenant.DataIDResolv
 	ce.tenantDataIDResolver = resolver
 }
 
+// SetAllowUnreadableChild controls whether an unreadable child config directory is skipped.
+func (ce *BaseConfigEngine) SetAllowUnreadableChild(allow bool) {
+	ce.allowUnreadableChild = allow
+}
+
 // NewBaseConfigEngine 获取configEngine
 func NewBaseConfigEngine(ctx context.Context) define.ConfigEngine {
 	logger.Debug("call NewBaseConfigEngine")
 	baseConfig := new(BaseConfigEngine)
 	baseConfig.ctx, baseConfig.cancelFunc = context.WithCancel(ctx)
+	baseConfig.allowUnreadableChild = true
 	return baseConfig
 }
 
@@ -98,6 +105,7 @@ func (ce *BaseConfigEngine) Init(cfg *common.Config, bt define.Beater) error {
 	// 获取子配置中的任务
 	err = ce.GetChildTasks()
 	if err != nil {
+		logger.Errorf("get child tasks failed: %v", err)
 		return define.ErrGetChildTasks
 	}
 
@@ -141,6 +149,13 @@ func (ce *BaseConfigEngine) GetChildTasks() error {
 	// 获取文件状态，用来确认文件是否是文件夹，不是文件夹则直接退出
 	stat, err := os.Stat(childPath)
 	if err != nil {
+		if os.IsPermission(err) {
+			if ce.allowUnreadableChild {
+				logger.Warnf("skip inaccessible child config dir: %s, error: %v", childPath, err)
+				return nil
+			}
+			return fmt.Errorf("stat child config dir %s: %w", childPath, err)
+		}
 		// 打开子配置文件夹出错，就不加载子任务
 		// 如果只是沿用旧版本的采集配置,会有此种情况发生,所以算作正常，只进行错误提示,但不返回error
 		return nil
@@ -161,7 +176,14 @@ func (ce *BaseConfigEngine) GetTasksFromDir(dirPath string) error {
 	// 读取文件夹下的文件列表
 	fileList, err := os.ReadDir(dirPath)
 	if err != nil {
-		return err
+		if os.IsPermission(err) {
+			if ce.allowUnreadableChild {
+				logger.Warnf("skip inaccessible child config dir: %s, error: %v", dirPath, err)
+				return nil
+			}
+			return fmt.Errorf("read child config dir %s: %w", dirPath, err)
+		}
+		return fmt.Errorf("read child config dir %s: %w", dirPath, err)
 	}
 
 	// 获取目录的绝对路径，若配置文件中为相对路径则以当前路径为前缀修饰
@@ -184,6 +206,9 @@ func (ce *BaseConfigEngine) GetTasksFromDir(dirPath string) error {
 				err := ce.GetTasksFromDir(filepath.Join(basePath, file.Name()))
 				if err != nil {
 					logger.Errorf("get inner task failed,error:%v", err)
+					if !ce.allowUnreadableChild {
+						return err
+					}
 				}
 
 			}

@@ -47,6 +47,8 @@ const (
 
 	procConfDir  = "bkmonitorbeat"
 	procConfName = "bkmonitorbeat_processbeat.conf"
+
+	procConfDirMode os.FileMode = 0o750
 )
 
 type BindInfo struct {
@@ -93,15 +95,46 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 		dstdir = filepath.Join(filepath.Dir(cfgfile.GetDefaultCfgfile()), procConfDir)
 	}
 
-	if !utils.PathExist(dstdir) {
-		if err := os.MkdirAll(dstdir, 0x666); err != nil {
-			logger.Errorf("failed to create processbeat dst dir: %s, %v", dstdir, err)
-		}
+	if err := ensureDirAccessible(dstdir); err != nil {
+		logger.Errorf("failed to prepare processbeat dst dir: %s, %v", dstdir, err)
 	}
 
 	gather.dstfile = filepath.Join(dstdir, procConfName)
 	logger.Info("New a ProcConf Task Instance")
 	return gather
+}
+
+func ensureDirAccessible(path string) error {
+	if err := os.MkdirAll(path, procConfDirMode); err != nil {
+		return err
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+
+	mode := info.Mode()
+	perm := mode.Perm()
+	// MkdirAll(path, 0x666) produced 0146 before umask on Unix.
+	// Repair its execute-only owner bits even when the target file exists.
+	const legacyDirPerm os.FileMode = 0o146
+	var newMode os.FileMode
+	switch {
+	case perm&0o700 == 0o100 && perm&^legacyDirPerm == 0:
+		newMode = mode | 0o700
+	case perm&0o700 == 0o600:
+		// The owner can read and write but cannot traverse the directory.
+		newMode = mode | 0o100
+	default:
+		return nil
+	}
+	if err := os.Chmod(path, newMode); err != nil {
+		return err
+	}
+
+	logger.Warnf("fixed processbeat dst dir permission: %s, %o -> %o", path, perm, newMode.Perm())
+	return nil
 }
 
 func (g *Gather) Run(_ context.Context, _ chan<- define.Event) {

@@ -11,6 +11,8 @@ package beater_test
 
 import (
 	"context"
+	"errors"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -104,5 +106,31 @@ func TestGetBasicMetaConfigInjectsTenantDataIDResolver(t *testing.T) {
 	baseReport.DataID = 1001
 	if got := len(baseReport.GetTaskConfigList()); got != 0 {
 		t.Fatalf("child basereport task count = %d, want 0 without tenant data ID", got)
+	}
+}
+
+func TestGetTasksFromDirSkipsPermissionDenied(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatalf("remove directory permissions: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(dir, 0o700)
+	})
+
+	if _, err := os.ReadDir(dir); err == nil {
+		t.Skip("current user can read a 000 directory")
+	} else if !os.IsPermission(err) {
+		t.Fatalf("expected permission error, got: %v", err)
+	}
+
+	ce := beater.NewBaseConfigEngine(context.Background()).(*beater.BaseConfigEngine)
+	if err := ce.GetTasksFromDir(dir); err != nil {
+		t.Fatalf("inaccessible child config dir returned error: %v", err)
+	}
+
+	ce.SetAllowUnreadableChild(false)
+	if err := ce.GetTasksFromDir(dir); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("expected permission error on reload, got: %v", err)
 	}
 }

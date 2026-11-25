@@ -11,6 +11,7 @@ package beater_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -126,5 +127,10 @@ func TestGetTasksFromDirSkipsPermissionDenied(t *testing.T) {
 	ce := beater.NewBaseConfigEngine(context.Background()).(*beater.BaseConfigEngine)
 	if err := ce.GetTasksFromDir(dir); err != nil {
 		t.Fatalf("inaccessible child config dir returned error: %v", err)
+	}
+
+	ce.SetAllowUnreadableChild(false)
+	if err := ce.GetTasksFromDir(dir); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("expected permission error on reload, got: %v", err)
 	}
 }

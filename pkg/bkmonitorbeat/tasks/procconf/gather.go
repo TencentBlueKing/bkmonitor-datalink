@@ -114,17 +114,19 @@ func ensureDirAccessible(path string) error {
 		return err
 	}
 
-	perm := info.Mode().Perm()
-	if perm&0o100 != 0 {
+	mode := info.Mode()
+	perm := mode.Perm()
+	if perm&0o700 == 0o700 {
 		return nil
 	}
 
-	newPerm := perm | 0o100
-	if err := os.Chmod(path, newPerm); err != nil {
+	// Preserve special bits while making legacy directories writable and traversable by the owner.
+	newMode := mode | 0o700
+	if err := os.Chmod(path, newMode); err != nil {
 		return err
 	}
 
-	logger.Warnf("fixed processbeat dst dir permission: %s, %o -> %o", path, perm, newPerm)
+	logger.Warnf("fixed processbeat dst dir permission: %s, %o -> %o", path, perm, newMode.Perm())
 	return nil
 }
 

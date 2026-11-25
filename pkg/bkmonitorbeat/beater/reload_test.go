@@ -11,6 +11,7 @@ package beater
 
 import (
 	"context"
+	"os"
 	"sync"
 	"testing"
 
@@ -23,6 +24,41 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/host"
 )
+
+type reloadRecordingScheduler struct {
+	reloadCalls int
+	count       int
+}
+
+func (s *reloadRecordingScheduler) Add(define.Task) {
+	s.count++
+}
+
+func (s *reloadRecordingScheduler) Start(context.Context) error {
+	return nil
+}
+
+func (s *reloadRecordingScheduler) IsDaemon() bool {
+	return true
+}
+
+func (s *reloadRecordingScheduler) Count() int {
+	return s.count
+}
+
+func (s *reloadRecordingScheduler) Stop() {}
+
+func (s *reloadRecordingScheduler) Wait() {}
+
+func (s *reloadRecordingScheduler) GetStatus() define.Status {
+	return define.SchedulerRunning
+}
+
+func (s *reloadRecordingScheduler) Reload(_ context.Context, _ define.Config, tasks []define.Task) error {
+	s.reloadCalls++
+	s.count = len(tasks)
+	return nil
+}
 
 var (
 	registerRegexpValidatorOnce sync.Once
@@ -131,5 +167,81 @@ func TestSameTenantClientConfig(t *testing.T) {
 				t.Fatalf("sameTenantClientConfig() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestReloadKeepsTasksWhenTopLevelIncludeUnreadable(t *testing.T) {
+	registerRegexpValidatorOnce.Do(func() {
+		registerRegexpValidatorErr = ucfg.RegisterValidator("regexp", validator.ValidateRegex)
+	})
+	if registerRegexpValidatorErr != nil {
+		t.Fatalf("register regexp validator: %v", registerRegexpValidatorErr)
+	}
+
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatalf("remove directory permissions: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(dir, 0o700)
+	})
+
+	if _, err := os.ReadDir(dir); err == nil {
+		t.Skip("current user can read a 000 directory")
+	} else if !os.IsPermission(err) {
+		t.Fatalf("expected permission error, got: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	scheduler := &reloadRecordingScheduler{count: 1}
+	oldConfig := configs.NewConfig()
+	oldConfigEngine := NewBaseConfigEngine(ctx)
+	state := newBeaterState()
+	state.ctx = ctx
+	state.cancelFunc = cancel
+	state.config = oldConfig
+	state.Scheduler = scheduler
+	state.KeywordScheduler = scheduler
+	state.ListenScheduler = scheduler
+
+	monitorBeater := &MonitorBeater{
+		beaterState:   state,
+		beaterStatus:  newBeaterStatus(),
+		hostIDWatcher: host.NewEmptyWatcher(),
+		configEngine:  oldConfigEngine,
+	}
+	cfg, err := common.NewConfigFrom(map[string]interface{}{
+		"enable_multi_tenant": false,
+		"mode":                "daemon",
+		"node_id":             "local-test",
+		"ip":                  "localhost",
+		"bk_biz_id":           1,
+		"bk_cloud_id":         0,
+		"include":             dir,
+		"heart_beat": map[string]interface{}{
+			"global_dataid": 1,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create reload config: %v", err)
+	}
+
+	monitorBeater.Reload(cfg)
+
+	if scheduler.reloadCalls != 0 {
+		t.Fatalf("scheduler reload calls = %d, want 0", scheduler.reloadCalls)
+	}
+	if scheduler.count != 1 {
+		t.Fatalf("scheduler task count = %d, want 1", scheduler.count)
+	}
+	if monitorBeater.configEngine != oldConfigEngine {
+		t.Fatal("config engine was not restored")
+	}
+	if monitorBeater.config != oldConfig {
+		t.Fatal("config was not restored")
+	}
+	if monitorBeater.reloading.Load() {
+		t.Fatal("reloading flag was not reset")
 	}
 }

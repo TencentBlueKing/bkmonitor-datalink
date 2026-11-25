@@ -54,3 +54,75 @@ func TestEnsureDirAccessibleCreatesDirectory(t *testing.T) {
 		t.Fatalf("expected a directory: %s", dir)
 	}
 }
+
+func TestEnsureDirAccessibleFixesLegacyDirectoryAndWrites(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX directory permissions are not available on Windows")
+	}
+
+	dir := filepath.Join(t.TempDir(), "bkmonitorbeat")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatalf("create test dir: %v", err)
+	}
+	if err := os.Chmod(dir, 0o144); err != nil {
+		t.Fatalf("set legacy directory mode: %v", err)
+	}
+
+	if err := ensureDirAccessible(dir); err != nil {
+		t.Fatalf("ensure dir accessible: %v", err)
+	}
+
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat test dir: %v", err)
+	}
+	if got := info.Mode().Perm(); got&0o700 != 0o700 {
+		t.Fatalf("owner permissions not repaired, mode=%o", got)
+	}
+
+	dst := filepath.Join(dir, procConfName)
+	if err := os.WriteFile(dst, []byte("test"), 0o644); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+}
+
+func TestEnsureDirAccessiblePreservesSpecialBits(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX directory special bits are not available on Windows")
+	}
+
+	tests := []struct {
+		name string
+		mode os.FileMode
+	}{
+		{name: "setgid", mode: os.ModeSetgid | 0o600},
+		{name: "sticky", mode: os.ModeSticky | 0o600},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "bkmonitorbeat")
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatalf("create test dir: %v", err)
+			}
+			if err := os.Chmod(dir, tt.mode); err != nil {
+				t.Fatalf("set special directory mode: %v", err)
+			}
+
+			if err := ensureDirAccessible(dir); err != nil {
+				t.Fatalf("ensure dir accessible: %v", err)
+			}
+
+			info, err := os.Stat(dir)
+			if err != nil {
+				t.Fatalf("stat test dir: %v", err)
+			}
+			if info.Mode()&tt.mode != tt.mode {
+				t.Fatalf("special bits not preserved, mode=%v", info.Mode())
+			}
+			if got := info.Mode().Perm(); got&0o700 != 0o700 {
+				t.Fatalf("owner permissions not repaired, mode=%o", got)
+			}
+		})
+	}
+}

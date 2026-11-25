@@ -141,6 +141,7 @@ type MonitorBeater struct {
 	adminServer         *nethttp.Server
 	adminServerReloader *reloader.Reloader
 	rawConfig           *common.Config
+	reloading           atomic.Bool
 }
 
 // New : new a beater
@@ -252,7 +253,9 @@ func (bt *MonitorBeater) ParseConfig(cfg *common.Config) error {
 	tenantResolver, tenantRevision := tenant.DefaultStorage().NewResolverSnapshot(tenantTasks)
 	bt.tenantDataIDRevision = tenantRevision
 	bt.configEngine = NewBaseConfigEngine(ctx)
-	bt.configEngine.(*BaseConfigEngine).SetTenantDataIDResolver(tenantResolver)
+	configEngine := bt.configEngine.(*BaseConfigEngine)
+	configEngine.SetTenantDataIDResolver(tenantResolver)
+	configEngine.SetAllowUnreadableChild(!bt.reloading.Load())
 	err = bt.configEngine.Init(cfg, bt)
 	if err != nil {
 		return fmt.Errorf("init configEngine failed: %v", err)
@@ -716,6 +719,8 @@ func updateRunningTasks(tasks []define.Task) {
 func (bt *MonitorBeater) Reload(cfg *common.Config) {
 	logger.Info("MonitorBeater reload")
 	stats.IncReload()
+	bt.reloading.Store(true)
+	defer bt.reloading.Store(false)
 
 	oldState := bt.beaterState
 	oldConfig := bt.config

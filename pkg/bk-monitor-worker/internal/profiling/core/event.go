@@ -114,6 +114,9 @@ func decodeEvent(envelope map[string]json.RawMessage) (*Event, error) {
 	if err != nil {
 		return nil, err
 	}
+	if hostID <= 0 {
+		return nil, fmt.Errorf("%w: dimension bk_host_id must be a positive integer", ErrInvalidEvent)
+	}
 	taskID, err := optionalDimensionInt(dimensions, "task_id")
 	if err != nil {
 		return nil, fmt.Errorf("%w: task_id: %v", ErrInvalidEvent, err)
@@ -121,6 +124,9 @@ func decodeEvent(envelope map[string]json.RawMessage) (*Event, error) {
 	scheduledAt, err := requiredDimensionInt64(dimensions, "scheduled_at")
 	if err != nil {
 		return nil, err
+	}
+	if scheduledAt <= 0 {
+		return nil, fmt.Errorf("%w: dimension scheduled_at must be a positive integer", ErrInvalidEvent)
 	}
 	for i, target := range content.TargetHosts {
 		if target.HostID <= 0 {
@@ -270,16 +276,16 @@ func requiredDimensionInt(dimensions map[string]string, key string) (int, error)
 		return 0, err
 	}
 	parsed := int(value)
-	if int64(parsed) != value || parsed <= 0 {
-		return 0, fmt.Errorf("%w: dimension %s must be a positive integer", ErrInvalidEvent, key)
+	if int64(parsed) != value {
+		return 0, fmt.Errorf("%w: dimension %s must be an integer", ErrInvalidEvent, key)
 	}
 	return parsed, nil
 }
 
 func requiredDimensionInt64(dimensions map[string]string, key string) (int64, error) {
 	value, err := strconv.ParseInt(strings.TrimSpace(dimensions[key]), 10, 64)
-	if err != nil || value <= 0 {
-		return 0, fmt.Errorf("%w: dimension %s must be a positive integer", ErrInvalidEvent, key)
+	if err != nil {
+		return 0, fmt.Errorf("%w: dimension %s must be an integer", ErrInvalidEvent, key)
 	}
 	return value, nil
 }

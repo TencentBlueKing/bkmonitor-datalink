@@ -47,6 +47,8 @@ const (
 
 	procConfDir  = "bkmonitorbeat"
 	procConfName = "bkmonitorbeat_processbeat.conf"
+
+	procConfDirMode os.FileMode = 0o750
 )
 
 type BindInfo struct {
@@ -93,15 +95,37 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 		dstdir = filepath.Join(filepath.Dir(cfgfile.GetDefaultCfgfile()), procConfDir)
 	}
 
-	if !utils.PathExist(dstdir) {
-		if err := os.MkdirAll(dstdir, 0x666); err != nil {
-			logger.Errorf("failed to create processbeat dst dir: %s, %v", dstdir, err)
-		}
+	if err := ensureDirAccessible(dstdir); err != nil {
+		logger.Errorf("failed to prepare processbeat dst dir: %s, %v", dstdir, err)
 	}
 
 	gather.dstfile = filepath.Join(dstdir, procConfName)
 	logger.Info("New a ProcConf Task Instance")
 	return gather
+}
+
+func ensureDirAccessible(path string) error {
+	if err := os.MkdirAll(path, procConfDirMode); err != nil {
+		return err
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+
+	perm := info.Mode().Perm()
+	if perm&0o100 != 0 {
+		return nil
+	}
+
+	newPerm := perm | 0o100
+	if err := os.Chmod(path, newPerm); err != nil {
+		return err
+	}
+
+	logger.Warnf("fixed processbeat dst dir permission: %s, %o -> %o", path, perm, newPerm)
+	return nil
 }
 
 func (g *Gather) Run(_ context.Context, _ chan<- define.Event) {

@@ -98,6 +98,7 @@ func (ce *BaseConfigEngine) Init(cfg *common.Config, bt define.Beater) error {
 	// 获取子配置中的任务
 	err = ce.GetChildTasks()
 	if err != nil {
+		logger.Errorf("get child tasks failed: %v", err)
 		return define.ErrGetChildTasks
 	}
 
@@ -161,7 +162,11 @@ func (ce *BaseConfigEngine) GetTasksFromDir(dirPath string) error {
 	// 读取文件夹下的文件列表
 	fileList, err := os.ReadDir(dirPath)
 	if err != nil {
-		return err
+		if os.IsPermission(err) {
+			logger.Warnf("skip inaccessible child config dir: %s, error: %v", dirPath, err)
+			return nil
+		}
+		return fmt.Errorf("read child config dir %s: %w", dirPath, err)
 	}
 
 	// 获取目录的绝对路径，若配置文件中为相对路径则以当前路径为前缀修饰

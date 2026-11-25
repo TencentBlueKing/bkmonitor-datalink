@@ -92,6 +92,10 @@ func TestPreFetchVMShortLinkTableIdValues(t *testing.T) {
 		},
 	}
 	for _, record := range records {
+		record.VMResultTableId = record.TableId
+		if record.QueryRouterConfig == "" {
+			record.QueryRouterConfig = "{}"
+		}
 		assert.NoError(t, db.Create(&record).Error)
 	}
 
@@ -127,7 +131,7 @@ func TestPreFetchVMShortLinkTableIdValues(t *testing.T) {
 	}
 }
 
-func TestPreFetchLogGlobalTableIdValues(t *testing.T) {
+func TestPreFetchGlobalTableIdValues(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
 	tableIDs := []string{"prefetch_log_global_es.log", "prefetch_log_global_doris.log", "prefetch_log_global_vm.log"}
@@ -159,17 +163,17 @@ func TestPreFetchLogGlobalTableIdValues(t *testing.T) {
 		{Id: 1, BkTenantId: "system", SpaceTypeId: models.SpaceTypeBKCC, SpaceId: "1"},
 		{Id: 101, BkTenantId: "system", SpaceTypeId: models.SpaceTypeBKCI, SpaceId: "project_a"},
 	}
-	data, err := preFetchLogGlobalTableIdValues(db, service.NewSpacePusher(), spaceList)
+	data, err := preFetchGlobalTableIdValues(db, service.NewSpacePusher(), spaceList)
 
 	assert.NoError(t, err)
 	bkccValues := data[service.SpaceRouteKeyWithTenant("system", models.SpaceTypeBKCC, "1")]
 	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "1"}}}, bkccValues["prefetch_log_global_es.log"])
 	assert.NotContains(t, bkccValues, "prefetch_log_global_doris.log")
-	assert.NotContains(t, bkccValues, "prefetch_log_global_vm.log")
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "1"}}}, bkccValues["prefetch_log_global_vm.log"])
 	bkciValues := data[service.SpaceRouteKeyWithTenant("system", models.SpaceTypeBKCI, "project_a")]
 	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "-101"}}}, bkciValues["prefetch_log_global_es.log"])
 	assert.Equal(t, map[string]any{"filters": []map[string]any{{"project_id": "project_a"}}}, bkciValues["prefetch_log_global_doris.log"])
-	assert.NotContains(t, bkciValues, "prefetch_log_global_vm.log")
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "-101"}}}, bkciValues["prefetch_log_global_vm.log"])
 }
 
 func TestPreFetchRecordRuleV4TableIdValues(t *testing.T) {

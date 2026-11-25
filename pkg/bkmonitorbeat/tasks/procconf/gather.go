@@ -120,6 +120,11 @@ func ensureDirAccessible(path string) error {
 		return nil
 	}
 
+	dstfile := filepath.Join(path, procConfName)
+	if canWriteExistingFile(dstfile) {
+		return nil
+	}
+
 	// Preserve special bits while making legacy directories writable and traversable by the owner.
 	newMode := mode | 0o700
 	if err := os.Chmod(path, newMode); err != nil {
@@ -128,6 +133,14 @@ func ensureDirAccessible(path string) error {
 
 	logger.Warnf("fixed processbeat dst dir permission: %s, %o -> %o", path, perm, newMode.Perm())
 	return nil
+}
+
+func canWriteExistingFile(path string) bool {
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return false
+	}
+	return f.Close() == nil
 }
 
 func (g *Gather) Run(_ context.Context, _ chan<- define.Event) {

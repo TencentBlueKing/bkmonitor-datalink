@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 )
 
 func TestEnsureDirAccessibleFixesMissingOwnerExecute(t *testing.T) {
@@ -124,5 +126,41 @@ func TestEnsureDirAccessiblePreservesSpecialBits(t *testing.T) {
 				t.Fatalf("owner permissions not repaired, mode=%o", got)
 			}
 		})
+	}
+}
+
+func TestNewPreservesWritableConfigDirectoryPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX directory permissions are not available on Windows")
+	}
+
+	dir := t.TempDir()
+	dstfile := filepath.Join(dir, procConfName)
+	if err := os.WriteFile(dstfile, []byte("test"), 0o600); err != nil {
+		t.Fatalf("create target file: %v", err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("set directory mode: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(dir, 0o700)
+	})
+
+	New(nil, &configs.ProcConfig{DstDir: dir})
+
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat test dir: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o555 {
+		t.Fatalf("directory mode changed to %o, want 555", got)
+	}
+	if err := os.WriteFile(dstfile, []byte("updated"), 0o600); err != nil {
+		t.Fatalf("overwrite target file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "other"), []byte("test"), 0o600); err == nil {
+		t.Skip("current user can create files in a 0555 directory")
+	} else if !os.IsPermission(err) {
+		t.Fatalf("expected permission error, got: %v", err)
 	}
 }

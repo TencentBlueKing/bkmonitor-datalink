@@ -88,6 +88,49 @@ func TestEnsureDirAccessibleFixesLegacyDirectoryAndWrites(t *testing.T) {
 	}
 }
 
+func TestNewWithExistingConfigDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX directory permissions are not available on Windows")
+	}
+	for _, tt := range []struct {
+		name                     string
+		mode, fileMode, wantMode os.FileMode
+	}{
+		{"legacy with writable config", 0o144, 0o600, 0o744},
+		{"legacy with restrictive umask", 0o100, 0o600, 0o700},
+		{"read-only directory and config", 0o555, 0o400, 0o555},
+		{"read-only directory without config", 0o555, 0, 0o555},
+		{"write and traverse only", 0o300, 0, 0o300},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tt.fileMode != 0 {
+				if err := os.WriteFile(filepath.Join(dir, procConfName), []byte("config"), tt.fileMode); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Chmod(dir, tt.mode); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+			New(nil, &configs.ProcConfig{DstDir: dir})
+			info, err := os.Stat(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Mode().Perm(); got != tt.wantMode {
+				t.Fatalf("mode = %o, want %o", got, tt.wantMode)
+			}
+			if tt.wantMode != tt.mode {
+				entries, err := os.ReadDir(dir)
+				if err != nil || len(entries) != 1 || entries[0].Name() != procConfName {
+					t.Fatalf("repaired directory entries = %v, err = %v", entries, err)
+				}
+			}
+		})
+	}
+}
+
 func TestEnsureDirAccessiblePreservesSpecialBits(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX directory special bits are not available on Windows")

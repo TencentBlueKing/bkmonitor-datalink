@@ -116,31 +116,25 @@ func ensureDirAccessible(path string) error {
 
 	mode := info.Mode()
 	perm := mode.Perm()
-	if perm&0o700 == 0o700 {
+	// MkdirAll(path, 0x666) produced 0146 before umask on Unix.
+	// Repair its execute-only owner bits even when the target file exists.
+	const legacyDirPerm os.FileMode = 0o146
+	var newMode os.FileMode
+	switch {
+	case perm&0o700 == 0o100 && perm&^legacyDirPerm == 0:
+		newMode = mode | 0o700
+	case perm&0o700 == 0o600:
+		// The owner can read and write but cannot traverse the directory.
+		newMode = mode | 0o100
+	default:
 		return nil
 	}
-
-	dstfile := filepath.Join(path, procConfName)
-	if canWriteExistingFile(dstfile) {
-		return nil
-	}
-
-	// Preserve special bits while making legacy directories writable and traversable by the owner.
-	newMode := mode | 0o700
 	if err := os.Chmod(path, newMode); err != nil {
 		return err
 	}
 
 	logger.Warnf("fixed processbeat dst dir permission: %s, %o -> %o", path, perm, newMode.Perm())
 	return nil
-}
-
-func canWriteExistingFile(path string) bool {
-	f, err := os.OpenFile(path, os.O_WRONLY, 0)
-	if err != nil {
-		return false
-	}
-	return f.Close() == nil
 }
 
 func (g *Gather) Run(_ context.Context, _ chan<- define.Event) {

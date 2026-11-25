@@ -157,7 +157,7 @@ func ValidateEvent(event Event) error {
 	if event.Name != EventStarted && event.Name != EventFinished {
 		return fmt.Errorf("%w: event_name %q", ErrUnsupportedEvent, event.Name)
 	}
-	if event.TenantID == "" || event.BizID <= 0 || event.TaskID < 0 || event.ScheduledAt <= 0 ||
+	if event.TenantID == "" || event.TaskID < 0 || event.ScheduledAt <= 0 ||
 		event.HostID <= 0 || event.Timestamp <= 0 || event.ScheduleType == "" {
 		return ErrInvalidEvent
 	}

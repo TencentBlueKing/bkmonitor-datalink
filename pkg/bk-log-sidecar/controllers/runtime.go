@@ -11,6 +11,7 @@
 package controllers
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -19,7 +20,7 @@ import (
 )
 
 // NewRuntime new Runtime
-func NewRuntime(runtimeVersion string) (define.Runtime, error) {
+func NewRuntime(ctx context.Context, runtimeVersion string) (define.Runtime, error) {
 	// example: "docker://19.3.1", "containerd://1.4.1"
 	if strings.HasPrefix(runtimeVersion, string(define.RuntimeTypeContainerd)) {
 		parts := strings.Split(runtimeVersion, "://")
@@ -33,7 +34,7 @@ func NewRuntime(runtimeVersion string) (define.Runtime, error) {
 	} else if strings.HasPrefix(runtimeVersion, string(define.RuntimeTypeEks)) {
 		return NewContainerdRuntime(true)
 	} else if strings.HasPrefix(runtimeVersion, string(define.RuntimeTypeDocker)) {
-		return NewDockerRuntime()
+		return NewDockerRuntime(ctx)
 	}
 	return nil, fmt.Errorf("runtime init failed, unknown version: %s", runtimeVersion)
 }

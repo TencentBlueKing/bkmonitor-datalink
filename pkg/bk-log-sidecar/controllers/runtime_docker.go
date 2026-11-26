@@ -222,18 +222,26 @@ func dockerAPIError(err error) error {
 }
 
 // NewDockerRuntime new docker runtime
-func NewDockerRuntime() (define.Runtime, error) {
+func NewDockerRuntime(ctx context.Context) (define.Runtime, error) {
 	endpoint := client.FromEnv
 	if config.DockerSocket != "" {
 		endpoint = client.WithHost(config.DockerSocket)
 	}
-	version := client.WithAPIVersionNegotiation()
-	if config.DockerApiVersion != "" {
-		version = client.WithVersion(config.DockerApiVersion)
-	}
-	cli, err := client.NewClientWithOpts(endpoint, version)
+	cli, err := client.NewClientWithOpts(endpoint, client.WithVersion(config.DockerApiVersion))
 	if err != nil {
 		return nil, fmt.Errorf("create docker client: %w", err)
+	}
+	if config.DockerApiVersion == "" {
+		ctx, cancel := context.WithTimeout(ctx, RuntimeOperationTimeout)
+		defer cancel()
+		ping, err := cli.Ping(ctx)
+		if err != nil {
+			cli.Close()
+			return nil, fmt.Errorf("ping docker for API version negotiation: %w", err)
+		}
+		// Events reads the client version before sending its request. Finish
+		// negotiation before publishing the client to concurrent callers.
+		cli.NegotiateAPIVersionPing(ping)
 	}
 	return &DockerRuntime{
 		log: ctrl.Log.WithName("docker"),

@@ -75,7 +75,7 @@ func TestDockerAPIVersion(t *testing.T) {
 				t.Setenv("DOCKER_API_VERSION", "")
 				t.Setenv("DOCKER_CERT_PATH", "")
 			}
-			runtime, err := NewDockerRuntime()
+			runtime, err := NewDockerRuntime(context.Background())
 			require.NoError(t, err)
 			defer runtime.(*DockerRuntime).cli.Close()
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -106,4 +106,46 @@ func TestDockerAPIVersion(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDockerAPIVersionConcurrentFirstRequests(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/_ping":
+			w.Header().Set("API-Version", "1.38")
+		case "/v1.38/containers/json":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, "[]")
+		case "/v1.38/events":
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	oldSocket, oldVersion := config.DockerSocket, config.DockerApiVersion
+	t.Cleanup(func() { config.DockerSocket, config.DockerApiVersion = oldSocket, oldVersion })
+	config.DockerSocket = "tcp://" + strings.TrimPrefix(server.URL, "http://")
+	config.DockerApiVersion = ""
+	runtime, err := NewDockerRuntime(context.Background())
+	require.NoError(t, err)
+	cli := runtime.(*DockerRuntime).cli
+	defer cli.Close()
+	// The shared client must already have a stable version before either caller starts.
+	versionAtCreation := cli.ClientVersion()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	listDone := make(chan error, 1)
+	go func() {
+		_, err := runtime.Containers(ctx)
+		listDone <- err
+	}()
+	_, _, subscribeErr := runtime.Subscribe(ctx)
+	require.NoError(t, <-listDone)
+	require.NoError(t, subscribeErr)
+	require.Equal(t, "1.38", versionAtCreation)
 }

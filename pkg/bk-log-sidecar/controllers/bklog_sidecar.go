@@ -188,7 +188,7 @@ func (s *BkLogSidecar) getRuntimeWithContext(ctx context.Context) (define.Runtim
 		return nil, fmt.Errorf("refresh node info before runtime initialization: %w", err)
 	}
 	node := s.currentNodeSnapshot()
-	runtime, err := NewRuntime(node.Status.NodeInfo.ContainerRuntimeVersion)
+	runtime, err := NewRuntime(ctx, node.Status.NodeInfo.ContainerRuntimeVersion)
 	if err != nil {
 		return nil, err
 	}

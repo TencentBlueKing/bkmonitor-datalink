@@ -59,6 +59,17 @@ const (
 
 type FieldsMap map[string]FieldOption
 
+// WildcardCase 指定模式如何匹配某一物理索引中的词条。
+type WildcardCase uint8
+
+const (
+	WildcardCaseFromField WildcardCase = iota // 兼容只提供字段类型及大小写标记的调用方
+	WildcardOriginal
+	WildcardLowercase
+	WildcardUppercase
+	WildcardOriginalAndLowercase
+)
+
 func (f FieldsMap) Field(k string) FieldOption {
 	// 获取字段时，忽略字段大小写
 	for fk, fv := range f {
@@ -84,8 +95,10 @@ type FieldOption struct {
 	// 不能只用 IsCaseSensitive 的 false 值，因为历史/手写 FieldsMap 里的 keyword 零值仍应按大小写敏感处理。
 	IsCaseInsensitive bool `json:"is_case_insensitive,omitempty"`
 	// IsMixedCaseSensitivity 表示跨索引同名字段同时存在大小写敏感和不敏感的索引语义。
-	// 旧 ES 无 wildcard.case_insensitive 时需要同时保留原 pattern 和 lower pattern，避免只 lower 后漏掉保留大小写的索引。
 	IsMixedCaseSensitivity bool `json:"is_mixed_case_sensitivity,omitempty"`
+	// WildcardCase 来自首个映射，只为规则不同的物理索引记录分组。
+	WildcardCase        WildcardCase              `json:"-"`
+	WildcardIndexGroups map[WildcardCase][]string `json:"-"`
 	// WildcardCaseInsensitive 表示目标 ES 版本是否支持 wildcard.case_insensitive 参数。
 	WildcardCaseInsensitive bool     `json:"wildcard_case_insensitive,omitempty"`
 	TokenizeOnChars         []string `json:"tokenize_on_chars"`

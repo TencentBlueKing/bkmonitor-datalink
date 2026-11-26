@@ -256,7 +256,61 @@ func TestFormatFactory_Query(t *testing.T) {
 			conditions: metadata.AllConditions{{{
 				DimensionName: "mixed_text", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*INFO*"},
 			}}},
-			expected: `{"query":{"bool":{"should":[{"wildcard":{"mixed_text":{"value":"*INFO*"}}},{"wildcard":{"mixed_text":{"value":"*info*"}}}]}}}`,
+			expected: `{"query":{"bool":{"should":[{"bool":{"must":{"wildcard":{"mixed_text":{"value":"*INFO*"}}},"filter":{"terms":{"_index":["logs-b"]}}}},{"bool":{"must":{"wildcard":{"mixed_text":{"value":"*info*","case_insensitive":true}}},"must_not":{"terms":{"_index":["logs-b"]}}}}]}}}`,
+		},
+		"排除条件按各索引的分词规则匹配": {
+			conditions: metadata.AllConditions{{{
+				DimensionName: "mixed_text", Operator: structured.ConditionNotContains, IsWildcard: true, Value: []string{"*INFO*"},
+			}}},
+			expected: `{"query":{"bool":{"must_not":{"bool":{"should":[{"bool":{"must":{"wildcard":{"mixed_text":{"value":"*INFO*"}}},"filter":{"terms":{"_index":["logs-b"]}}}},{"bool":{"must":{"wildcard":{"mixed_text":{"value":"*info*"}}},"must_not":{"terms":{"_index":["logs-b"]}}}}]}}}}}`,
+		},
+		"显式引用 standard 时识别有名称的 lowercase tokenizer": {
+			settings: map[string]any{"analysis": map[string]any{
+				"tokenizer": map[string]any{"letters": map[string]any{"type": "lowercase"}},
+				"analyzer":  map[string]any{"standard": map[string]any{"type": "custom", "tokenizer": "letters"}},
+			}},
+			conditions: metadata.AllConditions{{{
+				DimensionName: "named_text", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*ERR*"},
+			}}},
+			expected: `{"query":{"wildcard":{"named_text":{"value":"*err*"}}}}`,
+		},
+		"过滤器顺序决定最终词条的大小写": {
+			settings: map[string]any{"analysis": map[string]any{
+				"filter": map[string]any{"caps": map[string]any{"type": "uppercase"}},
+				"analyzer": map[string]any{
+					"upper_last": map[string]any{"type": "custom", "tokenizer": "lowercase", "filter": []string{"lowercase", "caps"}},
+					"lower_last": map[string]any{"type": "custom", "tokenizer": "keyword", "filter": []string{"caps", "lowercase", "asciifolding"}},
+				},
+			}},
+			conditions: metadata.AllConditions{{
+				{DimensionName: "upper_text", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*err*"}},
+				{DimensionName: "lower_text", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*ERR*"}},
+			}},
+			expected: `{"query":{"bool":{"must":[{"wildcard":{"upper_text":{"value":"*ERR*"}}},{"wildcard":{"lower_text":{"value":"*err*"}}}]}}}`,
+		},
+		"土耳其语 normalizer 收到原始大写 I": {
+			settings: map[string]any{"analysis": map[string]any{
+				"filter": map[string]any{"tr_lower": map[string]any{"type": "lowercase", "language": "turkish"}},
+				"normalizer": map[string]any{
+					"city_fold": map[string]any{"type": "custom", "filter": []string{"tr_lower", "lowercase"}},
+				},
+			}},
+			conditions: metadata.AllConditions{{{
+				DimensionName: "city", Operator: structured.ConditionContains, Value: []string{"IS"},
+			}}},
+			expected: `{"query":{"wildcard":{"city":{"value":"*IS*"}}}}`,
+		},
+		"小写过滤器之后允许重写词条时查询原模式和小写模式": {
+			settings: map[string]any{"analysis": map[string]any{
+				"filter": map[string]any{"spell": map[string]any{"type": "pattern_replace", "pattern": "error", "replacement": "ERROR"}},
+				"analyzer": map[string]any{
+					"upper_last": map[string]any{"type": "custom", "tokenizer": "keyword", "filter": []string{"lowercase", "spell"}},
+				},
+			}},
+			conditions: metadata.AllConditions{{{
+				DimensionName: "upper_text", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*ERR*"},
+			}}},
+			expected: `{"query":{"bool":{"should":[{"wildcard":{"upper_text":{"value":"*ERR*"}}},{"wildcard":{"upper_text":{"value":"*err*"}}}]}}}`,
 		},
 		"包含条件保留 keyword 的字面星号并应用 lowercase normalizer": {
 			conditions: metadata.AllConditions{{{
@@ -961,6 +1015,9 @@ func TestFormatFactory_Query(t *testing.T) {
 						"named_text":     map[string]any{"type": "text", "analyzer": "standard"},
 						"keyword_text":   map[string]any{"type": "text", "analyzer": "keyword"},
 						"mixed_text":     map[string]any{"type": "text"},
+						"upper_text":     map[string]any{"type": "text", "analyzer": "upper_last"},
+						"lower_text":     map[string]any{"type": "text", "analyzer": "lower_last"},
+						"city":           map[string]any{"type": "keyword", "normalizer": "city_fold"},
 						"lower_keyword":  map[string]any{"type": "keyword", "normalizer": "lowercase"},
 					},
 				},
@@ -978,8 +1035,9 @@ func TestFormatFactory_Query(t *testing.T) {
 			}
 
 			iof := NewIndexOptionFormat(nil)
-			for _, mapping := range mappings {
-				iof.Parse(c.settings, mapping)
+			indexes := []string{"logs-a", "logs-b", "logs-c"}
+			for i, mapping := range mappings {
+				iof.ParseIndex(indexes[i], c.settings, mapping)
 			}
 
 			fact := NewFormatFactory(ctx).WithFieldMap(iof.FieldsMap())

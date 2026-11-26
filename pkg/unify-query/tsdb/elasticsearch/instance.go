@@ -342,7 +342,7 @@ func (i *Instance) fieldMapWithIndexFields(ctx context.Context, fieldAlias metad
 	for idx := len(indexes) - 1; idx >= 0; idx-- {
 		index := indexes[idx]
 		if in, ok := mappings[index]; ok && in != nil {
-			iof.Parse(settings[index], in)
+			iof.ParseIndex(index, settings[index], in)
 			indexFields.fields[index] = mappingFieldNames(in)
 		}
 	}

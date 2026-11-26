@@ -153,9 +153,10 @@ func TestPreparedFieldMetadataFieldsMapReturnsDeepCopy(t *testing.T) {
 	prepared := &PreparedFieldMetadata{
 		fieldMap: metadata.FieldsMap{
 			"log": {
-				FieldName:       "log",
-				FieldType:       "text",
-				TokenizeOnChars: []string{"whitespace"},
+				FieldName:           "log",
+				FieldType:           "text",
+				TokenizeOnChars:     []string{"whitespace"},
+				WildcardIndexGroups: map[metadata.WildcardCase][]string{metadata.WildcardLowercase: {"logs-a"}},
 			},
 		},
 		complete: true,
@@ -164,12 +165,15 @@ func TestPreparedFieldMetadataFieldsMapReturnsDeepCopy(t *testing.T) {
 	first := prepared.FieldsMap()
 	firstOption := first["log"]
 	firstOption.TokenizeOnChars[0] = "letter"
+	firstOption.WildcardIndexGroups[metadata.WildcardLowercase][0] = "logs-b"
+	firstOption.WildcardIndexGroups[metadata.WildcardUppercase] = []string{"logs-c"}
 	first["log"] = firstOption
 	delete(first, "missing")
 
 	second := prepared.FieldsMap()
 	require.Contains(t, second, "log")
 	assert.Equal(t, []string{"whitespace"}, second["log"].TokenizeOnChars)
+	assert.Equal(t, map[metadata.WildcardCase][]string{metadata.WildcardLowercase: {"logs-a"}}, second["log"].WildcardIndexGroups)
 }
 
 func TestCloneRawMetadataQueryDeepCopiesNestedAggregates(t *testing.T) {

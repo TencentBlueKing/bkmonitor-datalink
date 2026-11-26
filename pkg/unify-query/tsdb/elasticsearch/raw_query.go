@@ -15,6 +15,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -299,6 +300,13 @@ func cloneFieldsMap(source metadata.FieldsMap) metadata.FieldsMap {
 	cloned := make(metadata.FieldsMap, len(source))
 	for name, option := range source {
 		option.TokenizeOnChars = append([]string(nil), option.TokenizeOnChars...)
+		if option.WildcardIndexGroups != nil {
+			groups := make(map[metadata.WildcardCase][]string, len(option.WildcardIndexGroups))
+			for mode, indexes := range option.WildcardIndexGroups {
+				groups[mode] = slices.Clone(indexes)
+			}
+			option.WildcardIndexGroups = groups
+		}
 		cloned[name] = option
 	}
 	return cloned

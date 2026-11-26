@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 func TestIndexFormatFieldMap(t *testing.T) {
@@ -334,7 +336,8 @@ func TestIndexFormatMixedCaseSensitivityAcrossIndices(t *testing.T) {
 			"log": map[string]any{"type": "text"},
 		},
 	}
-	iof.Parse(map[string]any{
+	iof.ParseIndex("fold-a", nil, mappings)
+	iof.ParseIndex("raw", map[string]any{
 		"index": map[string]any{
 			"version": map[string]any{"created": "7090099"},
 			"analysis": map[string]any{
@@ -347,8 +350,8 @@ func TestIndexFormatMixedCaseSensitivityAcrossIndices(t *testing.T) {
 				},
 			},
 		},
-	}, mappings)
-	iof.Parse(map[string]any{
+	}, map[string]any{"type_a": mappings, "type_b": mappings})
+	iof.ParseIndex("fold-b", map[string]any{
 		"index": map[string]any{
 			"version": map[string]any{"created": "7090099"},
 		},
@@ -358,6 +361,8 @@ func TestIndexFormatMixedCaseSensitivityAcrossIndices(t *testing.T) {
 	assert.False(t, field.IsCaseSensitive)
 	assert.True(t, field.IsMixedCaseSensitivity)
 	assert.False(t, field.WildcardCaseInsensitive)
+	assert.Equal(t, metadata.WildcardLowercase, field.WildcardCase)
+	assert.Equal(t, map[metadata.WildcardCase][]string{metadata.WildcardOriginal: {"raw"}}, field.WildcardIndexGroups)
 }
 
 func TestIndexFormatMergeIgnoresNonStringCaseSensitivity(t *testing.T) {

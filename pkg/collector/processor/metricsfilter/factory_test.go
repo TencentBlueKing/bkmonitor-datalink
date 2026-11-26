@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -184,7 +185,7 @@ func makePushGatewayData(t *testing.T, name string, rs, attrs map[string]string)
 	sb.WriteString(strings.Join(pairs, ","))
 	sb.WriteString("} 1\n")
 
-	parser := expfmt.TextParser{}
+	parser := expfmt.NewTextParser(model.LegacyValidation)
 	mfs, err := parser.TextToMetricFamilies(strings.NewReader(sb.String()))
 	if err != nil {
 		t.Fatalf("failed to parse metrics: %v", err)
@@ -918,7 +919,7 @@ rpc_server_handled_seconds_count{callee_method="SayHello",callee_service="trpc.e
 rpc_server_handled_total{callee_method="SayHello",callee_service="trpc.example.greeter.Greeter",caller_method="",caller_service="trpc.example.greeter.Greeter",code="0",code_desc="code=0",code_type="success",system_name="trpc"} 25
 `
 
-	parser := expfmt.TextParser{}
+	parser := expfmt.NewTextParser(model.LegacyValidation)
 	mfs, err := parser.TextToMetricFamilies(strings.NewReader(content))
 	if err != nil {
 		t.Fatalf("failed to parse metrics: %v", err)

@@ -17,7 +17,7 @@ tar -C dist -czf dist/loadgen-linux-amd64.tar.gz loadgen-linux-amd64
 
 Linux arm64 把 `GOARCH=amd64` 换成 `GOARCH=arm64`，输出文件名同步替换。
 
-Go 工具链 ≥ `1.23.0`，与 `pkg/collector/go.mod` 声明一致。
+Go 工具链 ≥ `1.25.14`，与 `pkg/collector/go.mod` 建议的工具链一致。
 
 本机临时验证：
 

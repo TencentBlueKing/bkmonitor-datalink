@@ -163,7 +163,7 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 		// We could do further content-type checks here, but the
 		// fallback for now will anyway be the text format
 		// version 0.0.4, so just go for it and see if it works.
-		var parser expfmt.TextParser
+		parser := expfmt.NewTextParser(model.LegacyValidation)
 		metricFamilies, err = parser.TextToMetricFamilies(req.Body)
 	}
 

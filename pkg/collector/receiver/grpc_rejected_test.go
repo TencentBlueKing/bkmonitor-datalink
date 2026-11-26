@@ -101,6 +101,16 @@ func (c notGzip) Compress(w io.Writer) (io.WriteCloser, error) { return nopWrite
 func (c notGzip) Decompress(r io.Reader) (io.Reader, error)    { return c.gzip.Decompress(r) }
 func (c notGzip) Name() string                                 { return "gzip" }
 
+// unknownEncoding marks a message with a compression encoding the server does not support.
+type unknownEncoding struct{}
+
+func (unknownEncoding) Do(w io.Writer, p []byte) error {
+	_, err := w.Write(p)
+	return err
+}
+
+func (unknownEncoding) Type() string { return "x-unknown" }
+
 // A message over the receive limit, one marked compressed that does not
 // decompress, and one that does not decode are refused by gRPC before the
 // service sees them, and each is counted once under its own reason and no
@@ -160,25 +170,37 @@ func TestGrpcServerCountsTheRequestsGrpcRefuses(t *testing.T) {
 	assert.Equal(t, want, grpcRejected(t))
 }
 
-// unknownEncoding marks its messages compressed with an encoding no
-// compressor is registered for. It is given to the client as a dial option
-// that names the encoding itself, rather than through the registry the
-// server in this process shares, so the server has no decompressor for it.
-type unknownEncoding struct{}
+func TestGrpcLegacyDecompressorFailureIsCounted(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := grpc.NewServer(
+		grpc.StatsHandler(rejectedStats{}),
+		grpc.RPCDecompressor(grpc.NewGZIPDecompressor()),
+	)
+	healthpb.RegisterHealthServer(server, health.NewServer())
+	go server.Serve(l)
+	t.Cleanup(server.Stop)
 
-func (unknownEncoding) Do(w io.Writer, p []byte) error {
-	_, err := w.Write(p)
-	return err
+	conn, err := grpc.NewClient(l.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+
+	gzip := encoding.GetCompressor("gzip")
+	require.NotNil(t, gzip)
+	encoding.RegisterCompressor(notGzip{gzip: gzip})
+	defer encoding.RegisterCompressor(gzip)
+
+	want := grpcRejected(t)
+	want["decompress"]++
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err = healthpb.NewHealthClient(conn).Check(ctx, &healthpb.HealthCheckRequest{Service: "bad gzip"}, grpc.UseCompressor("gzip"))
+	require.Equal(t, codes.Internal, status.Code(err))
+	assert.Eventually(t, func() bool { return assert.ObjectsAreEqual(want, grpcRejected(t)) }, 5*time.Second, 20*time.Millisecond)
+	assert.Equal(t, want, grpcRejected(t))
 }
 
-func (unknownEncoding) Type() string { return "x-unknown" }
-
-// A streaming call's message that does not decode - the service reads it
-// with RecvMsg and returns the error it gets - is counted as decode, as a
-// unary request that does not decode is; a message compressed with an
-// encoding the server has no decompressor for is counted as decompress.
-// Each moves its reason's cell by one and no other.
-func TestGrpcServerCountsAStreamedMessageThatDoesNotDecodeAndAnEncodingItHasNoDecompressorFor(t *testing.T) {
+func TestGrpcServerCountsStreamDecodeAndUnsupportedEncoding(t *testing.T) {
 	conn := startGrpcReceiver(t, 1024)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -211,11 +233,9 @@ func TestGrpcServerCountsAStreamedMessageThatDoesNotDecodeAndAnEncodingItHasNoDe
 		return err
 	}, codes.Unimplemented)
 
-	// A stream the service answers is not counted.
-	answered, stop := context.WithTimeout(context.Background(), 10*time.Second)
-	defer stop()
+	// A successfully handled stream is not counted as rejected.
 	before := grpcRejected(t)
-	stream, err := healthpb.NewHealthClient(conn).Watch(answered, &healthpb.HealthCheckRequest{})
+	stream, err := healthpb.NewHealthClient(conn).Watch(ctx, &healthpb.HealthCheckRequest{})
 	require.NoError(t, err)
 	_, err = stream.Recv()
 	require.NoError(t, err)

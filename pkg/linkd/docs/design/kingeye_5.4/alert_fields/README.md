@@ -1,19 +1,18 @@
----
-https://devops.cwoa.net/devops/console/vteam/aiops/twDemand?vmode=table&id=eb060343356d4c9b95fd9bce7e923d7d&
-p130_16212 【告警】告警字段管理更新
----
+# 5.4 告警字段设计
 
-# 5.4 设计要点
+**实施状态：未实施**
+
+## 5.4 设计要点
 
 - 页面只使用 `kac_alert_field` 的字段 key。`alert_field` 登记标准路径，`kac_alert_field_mapping` 定义各阶段如何读写字段。
 - 60 个内置字段及其映射随版本初始化。插件启用或丰富方案保存时，新字段归入 `extra`，在同一事务中登记三表。
 - KAC 将映射编译成配置并发布到控制面，Linkd 按版本加载执行。[读写关系图](./p130_16212_field_access.png)
 
-# 字段目录的 MySQL 表结构
+## 字段目录的 MySQL 表结构
 
 `alert_field` 保存租户的 Linkd 标准字段和已登记的扩展路径。`kac_alert_field` 保存 KAC 字段定义、展示配置以及可选的标准字段引用。`kac_alert_field_mapping` 记录各阶段和用途的读写规则。三张表按 InnoDB、utf8mb4 设计，并沿用 Kingeye 的 `TimeInfo`、`MaintainerInfo` 和租户约定。[字段目录与分阶段映射初始化 SQL](./p130_16212_kac_alert_fields.sql)
 
-## 标准字段表 `alert_field`
+### 标准字段表 `alert_field`
 
 | 列 | MySQL 类型 | 允许 NULL | 数据库默认 | 含义 |
 | --- | --- | --- | --- | --- |
@@ -34,7 +33,7 @@ p130_16212 【告警】告警字段管理更新
 
 沿用草案的路径深度约定，例如 `$.subject_name`、`$.extra_data.region`、`$.extra_data.list[0]`、`$.extra_data.object["key"]`。对照表中的 `evaluations[].severity` 描述数组项结构；目录登记 `evaluations` 列表，策略按当前等级取值。
 
-## KAC 字段表 `kac_alert_field`
+### KAC 字段表 `kac_alert_field`
 
 | 列 | MySQL 类型 | 允许 NULL | 数据库默认 | 含义 |
 | --- | --- | --- | --- | --- |
@@ -64,7 +63,7 @@ p130_16212 【告警】告警字段管理更新
 
 各内置字段的 `alert_field_id` 目标数据逐项列在[字段对照表](#kac-builtin-field-map)。表内以标准路径指代不同环境分配的 ID。
 
-### 旧接口兼容
+#### 旧接口兼容
 
 字段来源以 `source_type` 为准。旧接口的 `is_build_in` 由模型 property 计算，数据库只存 `source_type`。
 
@@ -76,13 +75,13 @@ def is_build_in(self):
 
 序列化器保留只读的 `is_build_in`。使用 `values()`、`only()` 的查询应取 `source_type` 后计算响应值；原先按 `is_build_in` 筛选的查询改用 `source_type`。迁移已有字段时按产品内置清单核对来源，将历史插件、丰富来源码 `alarm_source_plugin/alarm_enrich` 转为 `plugin/enrich`，并承接已有 ID、别名、显隐、排序和用户展示分组。
 
-### 已有 SQL 的覆盖范围
+#### 已有 SQL 的覆盖范围
 
 脚本按租户初始化三张表。60 个 KAC 内置字段中，34 个关联标准字段，26 个保留空引用。分阶段映射表登记 361 条读写记录，覆盖 57 个字段。`conductor`、`notify_status` 和 `alarm_details_link` 由 KAC 维护或生成。示例 `region` 在相应插件或丰富方案登记时写入。
 
 SQL 面向新目录初始化。先选择数据库并在同一连接指定 `@bk_tenant_id`，可用 `@maintainer` 指定操作者。重复初始化按唯一键报错；现有用户配置的迁移需保留原记录。新租户优先沿用既有内置字段的排序、显隐和已有英文、繁体翻译，新增 key 按对照表顺序接续，`dimension` 默认隐藏。默认名取本表产品名称，`metric_id` 以文本展示，时间、链接、用户及数值展示项在 SQL 中逐项列出。`dimension` 的值始终是对象，现有 KAC 展示类型尚缺结构化渲染约定。
 
-## 分阶段字段映射表 `kac_alert_field_mapping`（5.4 设计）
+### 分阶段字段映射表 `kac_alert_field_mapping`（5.4 设计）
 
 每行回答一个问题：**某个 KAC 字段在指定阶段、为指定用途，Linkd从哪里读，或写到哪里？** 例如 `name` 在清洗时是赋值目标，在丰富条件中是读取对象，在投递时是输出 key。一个字段在 `kac_alert_field` 中始终只有一行，在映射表里会有多行。
 
@@ -124,7 +123,7 @@ SQL 面向新目录初始化。先选择数据库并在同一连接指定 `@bk_t
 
 `policy_event` 和 `policy_alert` 都属于策略匹配，区分的是**本次调用用哪个对象求值**，没有先后执行的约定。例如一条告警 10:00 首次触发、10:15 再收到事件，针对新 Event 判断“告警时间晚于 10:10”时命中；以同一 Alert 复核该条件时，开始时间仍是 10:00，条件不命中。对应实现是 Linkd 的 `internal/policy/view.go` 中的 `EventView` 和 `AlertView`。5.4 表中的两个 stage 名是配置设计值。
 
-### 何时使用 `method=builtin`
+#### 何时使用 `method=builtin`
 
 `method=path` 表示给定本阶段的对象和一个 JSON 路径就能读写目标值。例如投递读 `$.title` 得到“CPU 过高”，直接写入 KAC 的 `name`。即便标题由丰富处理器生成，投递仍只需读路径。若本阶段还要判断状态、处理多个候选值、转换协议值或读取关联记录，就用 `method=builtin`。例如，同一个 `action` 在 `policy_event` 的条件中按本次判定转换，在 `kac_projection` 的输出中按 Alert 状态转换。
 
@@ -139,7 +138,7 @@ SQL 面向新目录初始化。先选择数据库并在同一连接指定 `@bk_t
 
 规则能否简化为路径取决于阶段提供的对象。例如将来详情入口若直接提供含 `processing.state` 的复合文档，同一字段就可以按路径读取。
 
-### 映射记录示例
+#### 映射记录示例
 
 以下用 KAC key 代指本租户的 `kac_alert_field_id`。阶段和用途采用 5.4 设计值。表中 `—` 表示对应列为 NULL。
 
@@ -161,7 +160,7 @@ SQL 面向新目录初始化。先选择数据库并在同一连接指定 `@bk_t
 
 KAC 自行维护的 `conductor` 保留产品字段行，没有对应 Linkd 用途时无需在本表建行。投影侧保留已有文档中的处置值。
 
-## source_info 字段来源信息
+### source_info 字段来源信息
 
 - 来源类型 built_in：`{}`
 - 来源类型 plugin：`{"plugin_id": ""}`
@@ -171,9 +170,9 @@ plugin_id：告警源插件 id
 task_id：告警源接入任务id，来源新的告警源任务表
 enrich_id：丰富方案id，来源 alarm_collect_alarmenrich 
 
-# 内置字段与登记规则
+## 内置字段与登记规则
 
-## 内置
+### 内置
 
 1. 部署初始化时，init_kingeye_data 按三类写入产品内置字段，并按下表登记标准字段引用；分阶段用途另写入 `kac_alert_field_mapping`。
 2. 按产品预定义，字段归入告警信息、对象信息、其他信息（原文称拓展信息）三个分类
@@ -181,7 +180,7 @@ enrich_id：丰富方案id，来源 alarm_collect_alarmenrich
 
 <a id="kac-builtin-field-map"></a>
 
-### Linkd 标准字段与 KAC 内置字段对照
+#### Linkd 标准字段与 KAC 内置字段对照
 
 核对基线为 2026-11-26 的 Linkd `feat/linkd-2.x-dev@435f6a3a` 和 Kingeye `develop/5.4.0@a031ad42cb`。Linkd 标准字段取自 `docs/design/define.md` 的 Event 章节，并以 `internal/domain/event.go` 与内嵌的 `EventEnrichment` JSON 字段补齐。KAC 一侧沿用本需求的 60 个内置 key 和产品分组。
 
@@ -272,14 +271,14 @@ enrich_id：丰富方案id，来源 alarm_collect_alarmenrich
 | 其他信息 | — | `enrich_config_digest` | —（无 KAC 行） | 仅 Event 清单 | string，实际丰富配置摘要。 | 按当前实现 |
 | 其他信息 | — | `enrich_source_version` | —（无 KAC 行） | 仅 Event 清单 | int64，实际执行丰富的来源版本。 | 按当前实现 |
 
-#### 一对一的适用范围
+##### 一对一的适用范围
 
 - **标准字段身份与阶段取值。** 除可明确归属的丰富输出外，`title ↔ name`、`content ↔ content`、`fingerprint ↔ fingerprint`、`labels.strategy_id ↔ item_id`、`dimensions ↔ dimension` 有明确的字段身份。来源和丰富明确声明的 `$.extra_data.region ↔ region` 也可按同租户登记。查询时仍须选择处理阶段，例如来源正文保存在 Event，告警投递使用 Alert 的当前正文。
 - **两份完整清单无法逐项互配。** 从 KAC 一侧看，`conductor` 由处置流程维护，`duration` 要结合告警时间计算。从 Linkd 一侧看，`enrich_config_digest` 没有产品展示 key。即使两边都有相关字段，`object` 也有多个实际来源，而一次 Event 的多个 `evaluations` 不能用固定下标代表选中的等级。
 - **两表约束。** KAC 独属字段（如 `conductor`、`notify_status`）只在 `kac_alert_field` 登记，无需创建 `alert_field` 行，`kac_alert_field.alert_field_id` 可空。一对一约束用于字段身份；例如 `latest_alarm_time` 登记到 `$.occurred_at`，而 `alarm_time` 在不同阶段按对应时间取值。`dimension_info` 使用维度生成展示文本，`item` 和 `strategy_name` 都可消费策略丰富结果，这些计算或展示依赖不占用第二条直接映射。标准字段可独立登记，反向引用通过 `kac_alert_field.alert_field_id` 查询。
 - **跨阶段读取。** `processing_status` 跟随原始 Event，`status` 跟随告警及其处置。同一 Alert 下多条 Event 各自保有处理状态和发生时间，详情按对应 Event 返回 `latest_alarm_time`，汇总文档另有 `latest_event_time`。[告警详情调整](../../../../../../../kingeye/docs/specs/kac/5_4_0/p130_16218【告警】告警详情调整.md)
 
-#### APM 服务别名
+##### APM 服务别名
 
 依据《鲸眼5.4告警字段和告警生成规则设计.xlsx》的“告警标准字段定义”B44:B45 和“告警生成规则（5.4））”第 38 行。前者分别定义 `app_service_alias`（别名）、`apm_service_name`（名称），后者在 C38 定义组合展示“{服务别名}（{服务名称}）”。
 
@@ -292,14 +291,14 @@ enrich_id：丰富方案id，来源 alarm_collect_alarmenrich
 
 无数据告警沿用对应场景（Z38）。KAPM 服务模型已有 `service_alias` 和 `service_name`，Linkd 当前 APM 丰富结果只有服务名称。5.4 需把所属服务的别名带入丰富结果。服务实例、接口告警沿用 KAPM 的展示规则：服务名为 `checkout`、别名为“结算服务”时显示“结算服务（checkout）”；别名为空时只显示 `checkout`。此处只约定展示，`app_service_alias` 仍表示实际别名。
 
-#### 指标标识与投影更新
+##### 指标标识与投影更新
 
 - **单指标**沿用指标全名 `<metricset_code>.<metric_name>`。按事件对应的策略版本，通过查询项的 `metric_ref_id` 定位 OneModel 指标目录行。例如 CPU 使用率告警写入 `metric_id="system.cpu_summary.usage"`。[统一指标管理](../../../../../../../kingeye/docs/specs/base/unified-metric-management.md)
 - **多指标计算**沿用同一策略版本的变量与查询项对应关系，按表达式中的出现顺序，用各指标全名替换变量，保留运算符和括号。以 `A+B` 为例，若 `A` 对应 `system.cpu_summary.usage`，`B` 对应 `system.cpu_summary.idle`，则写入的字符串为 `metric_id="system.cpu_summary.usage+system.cpu_summary.idle"`。
 - **按指标检索告警**时，对已写入的 `metric_id` 做模糊搜索，字段值包含查询文本即命中。以上例为准，搜索 `system.cpu_summary.usage` 会同时命中单指标 `usage` 告警和 `usage+idle` 告警；搜索 `system.cpu_summary.idle` 也会命中该组合告警，但不会命中仅含 `usage` 的告警。
 - **创建与更新均要覆盖。** 工作簿“告警标准字段定义”的“原始告警同步至告警”列将监控项、维度、云平台和 APM 服务别名等列为“创建及更新”。当前兼容文档的普通更新只写固定的生命周期字段，5.4 需同步检查更新路径。可以用同一 Alert 的两次 Event 验证维度改变后告警中的 `dimension` 更新，同时每条原始告警仍保留自己的 `processing_status`。
 
-### 字段映射在告警流程中的使用
+#### 字段映射在告警流程中的使用
 
 KAC 发布定义是这四个环节的共同配置入口。5.4 设计沿用现有 control-plane，由 KAC 按租户把登记结果编译进来源或策略配置。Linkd 运行时按实际处理的来源版本、策略版本读取配置。字段的 `alias`、`display_category` 和页面排序只参与 KAC 展示。
 
@@ -323,11 +322,11 @@ KAC 发布定义是这四个环节的共同配置入口。5.4 设计沿用现有
 | 策略字段读取 | `src/kingeye/kac/linkd/configuration.py` 中的 `policy_field_mappings` | `internal/policy/view.go`、`internal/policy/runtime/field_mapping_read_path_test.go` |
 | 投递与 KAC 展示 | `src/kingeye/kac/alarm/utils.py`、`src/kingeye/kac/alarm/models.py` | `internal/lifecycle/kachook/message.go`、同目录 `compatibility.go`、`fields.go`、`internal/kaccompat/writer.go`、`docs/reference/contracts/kac-alert-projection-v1.md` |
 
-## 插件、丰富新增字段的登记规则（5.4 设计）
+### 插件、丰富新增字段的登记规则（5.4 设计）
 
 插件启用时，KAC 按插件声明的输出字段登记。告警源丰富方案新建或编辑后，KAC 在保存时登记方案声明的新增字段。两种入口都将新增字段归入 `extra`，首次写入时显式设置 `display_category=extra`。字段实际位于哪个路径，由插件的标准输出或丰富方案的赋值目标决定。例如插件输出 `$.labels.region`，该字段仍归入 `extra`。页面只提交 KAC 字段 key、展示名和类型等业务信息，标准路径由后端从插件声明或赋值约定取得。由 KAC 分配路径的普通扩展字段，默认放在 `extra_data` 下，以完整 KAC key 作为子键，例如 `$.extra_data.region`。
 
-### 三张表的写入顺序
+#### 三张表的写入顺序
 
 以下以新声明的文本字段 `region`（地域）为例。KAC 在同一租户、同一数据库事务中完成本次字段定义和相应用途的登记，各行按表结构填写维护人和时间。同次请求中的业务配置与新增字段一并提交或回滚。控制面发布的事务边界见下文“发布与执行”。
 
@@ -337,7 +336,7 @@ KAC 发布定义是这四个环节的共同配置入口。5.4 设计沿用现有
 | 2 | `kac_alert_field` | 写入 `key=region`、`key_display=地域`、展示类型 `type=text`，`alert_field_id` 指向第 1 步的同租户记录。新行的 `category`、`display_category` 都写 `extra`。插件字段写 `source_type=plugin`，在 `source_info` 中记 `plugin_id`；丰富字段写 `source_type=enrich`，记 `task_id` 和 `enrich_id`。 |
 | 3 | `kac_alert_field_mapping` | 将第 2 步的 `kac_alert_field.id` 写入 `kac_alert_field_id`，按该字段支持的用途一次登记 `stage`、`usage`、`direction`、`method` 和 `path`。直接读写扩展路径使用 `method=path`。同一租户、字段、阶段和用途共用一行。后续业务配置从已登记用途中选取本次需要的映射。 |
 
-### 按值产生和使用的阶段登记映射
+#### 按值产生和使用的阶段登记映射
 
 下表以声明路径 `$.extra_data.region` 为例。字段定义时依据其来源、可读阶段和赋值用途登记适用行；左列说明这些映射日后由谁使用。若声明的是 `$.labels.region`，丰富、策略和投递就按该路径读写；来源清洗按 RawEvent 的输入协议编译路径。
 
@@ -353,19 +352,19 @@ KAC 发布定义是这四个环节的共同配置入口。5.4 设计沿用现有
 
 插件直接产出带地域的标准 RawEvent 时，字段在接入时已经有值，无需生成清洗赋值。若地域由丰富方案首次算出，只有该赋值执行后的处理才能读取本次结果。例如一个方案新增地域，字段支持告警源丰富赋值、Event 策略匹配和告警投递，保存时就登记 `enrich / assignment`、`policy_event / condition` 和 `kac_projection / output`。以后第一次或第十次在策略条件中选择地域，都只保存对 `region` 的引用。
 
-### 新声明字段与给已有字段赋值
+#### 新声明字段与给已有字段赋值
 
 - **声明新字段。** 沿用租户内 key 唯一和标准路径一对一约束。显式新增时遇到重复 key，返回重复的 key 清单。已绑定的标准路径也只能关联原 KAC 字段。
 - **给已有字段赋值。** 假设插件已声明 `region` 位于 `$.labels.region`。丰富方案选择该字段为赋值目标时，复用它的 `alert_field_id`、KAC 字段 ID 和已登记路径，使用字段登记时已定义的 `enrich / assignment / write`。字段仍归原插件定义，`source_type=plugin`、`source_info.plugin_id` 及用户调整过的展示分组都保留。该方案的条件、表达式和赋值顺序随来源配置发布。
 - **再次保存或发布。** 同一插件或方案已登记的字段和用途沿用原记录；一次编辑中只有新声明的 key 走新增流程。只引用已有字段的条件复用相应读取映射。
 
-# 三张字段表的读写场景（5.4 设计）
+## 三张字段表的读写场景（5.4 设计）
 
 ![KAC 上层场景读写三张字段表，KAC 编译配置后由 Linkd 按版本加载](./p130_16212_field_access.png)
 
 上半图的箭头从操作指向它访问的表，线上标明读或写。下半图从表向下展示发布时读取的数据，虚线表示仅在需要标准字段身份或类型时读取。[查看可缩放关系图](./p130_16212_field_access.html)
 
-## KAC 上层
+### KAC 上层
 
 页面以 KAC key 选字段、存条件、读告警值。下面的“读写”只统计三张字段表；告警数据、查询模板、丰富方案和策略本身各自有存储。
 
@@ -379,7 +378,7 @@ KAC 发布定义是这四个环节的共同配置入口。5.4 设计沿用现有
 | 丰富方案保存时声明新字段 | 同一接口事务写方案及三表 | 新字段按 `source_type=enrich`、`category=extra` 登记，同时生成该字段支持的读写映射。一次保存混有新增字段和已有字段时，逐字段区分声明和引用。 |
 | 告警源插件启用时声明新字段 | 同一接口事务写启用状态及三表 | 按插件输出声明登记 `source_type=plugin` 的字段，归入 `extra`。再次启用复用已登记记录。停用插件或解除方案关联时更新业务绑定及对应配置，字段目录继续供历史告警和其他引用使用。 |
 
-## Linkd 与 KAC：发布与执行
+### Linkd 与 KAC：发布与执行
 
 | 场景 | 谁读取什么 | 何时使用 |
 | --- | --- | --- |
@@ -393,7 +392,7 @@ KAC 发布定义是这四个环节的共同配置入口。5.4 设计沿用现有
 **事务与发布结果。** 插件启用、方案保存和三表登记的原子性由 KAC 的 MySQL 事务提供。现有 `src/kingeye/kac/linkd/configuration.py` 的 `sync_enrichment` 在调用方事务内同步发布，发布异常向上传递并回滚本地保存。5.4 接入映射时应保留该入口对调用方的成败语义；若改为提交后发布，须另行明确失败如何重发，以及接口如何区分“已保存”和“Linkd 已生效”。控制面远端写入不受本地事务回滚控制。
 
 
-# Linkd 改动影响面（按重要程度）
+## Linkd 改动影响面（按重要程度）
 
 以下按“是否影响正式写入或匹配结果、能否复用现有执行入口”排序。源码位置相对于 Linkd 模块根目录，依据前述核对基线。
 
@@ -407,7 +406,7 @@ KAC 发布定义是这四个环节的共同配置入口。5.4 设计沿用现有
 
 阶段映射属于 KAC 发布配置。普通字段变更沿用 control-plane；告警 ES 投影与后续动作投递仍按现有部署配置运行。上述影响面是源码分析和验收范围，分阶段映射的实际发布、加载与联调尚待实现。
 
-# 对 5.3 现有实现的影响
+## 对 5.3 现有实现的影响
 
 - 将可配置的字段路径随 KAC 配置发布。需要多来源、状态或计算的内置规则保留在对应代码中，由阶段规则引用。
 - 移除 kac 同步到 Linkd 的字段固定集合； 

@@ -251,9 +251,6 @@ func (c *ConditionField) ContainsToPromReg() *ConditionField {
 		isRegx = true
 	case ConditionNotRegEqual:
 		isRegx = true
-	default:
-		// 不认识的算子原样保留，由 ToPromOperator 报错；按等于拼成 ^(a|b)$ 会什么都匹配不上
-		return c
 	}
 
 	// 防止contains中含有特殊字符，导致错误的正则匹配，需要预先转义一下

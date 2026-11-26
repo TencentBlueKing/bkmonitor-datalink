@@ -265,6 +265,20 @@ func TestExistenceConditionsRenderAsEmptyMatchersOnVM(t *testing.T) {
 	assert.Equal(t, 3, num)
 }
 
+// struct_to_promql 走 Conditions.ToProm：值为空的 existed、nexisted 以前取 Value[0] 越界 panic，现在渲染成对空串的匹配器。
+func TestExistenceConditionsWithoutValuesRenderInToProm(t *testing.T) {
+	for operator, want := range map[string]labels.MatchType{
+		ConditionExisted:    labels.MatchNotEqual,
+		ConditionNotExisted: labels.MatchEqual,
+	} {
+		conditions := Conditions{FieldList: []ConditionField{{DimensionName: strictKey, Operator: operator}}}
+		matchers, _, err := conditions.ToProm()
+		require.NoError(t, err, operator)
+		require.Len(t, matchers, 1, operator)
+		assert.Equal(t, labels.MustNewMatcher(want, strictKey, "").String(), matchers[0].String(), operator)
+	}
+}
+
 // 多值 exact 以前渲染成 k="^(a|a\.b)$"，什么都匹配不上；现在和多值 eq 一样按集合匹配。
 func TestMultiValueExactRendersAsSetOnVM(t *testing.T) {
 	exact, _, err := oneCondition(ConditionExact, []string{"a", "a.b"}).VMString("", "", false)

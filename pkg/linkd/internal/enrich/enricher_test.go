@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,6 +91,68 @@ func TestChainOrderIsolationAndFailureContinuation(t *testing.T) {
 	}
 	if got := payload.Processors[1]["broken"].Diagnostics[0]; got.Code != DiagnosticCodeDependencyInvalid || got.Dependency != "broken" {
 		t.Fatalf("broken diagnostic=%#v", got)
+	}
+}
+
+func TestChainDropsOverBudgetDisplayAliasWithoutLosingStrategyFields(t *testing.T) {
+	t.Parallel()
+	strategyPatch, err := domain.NewEnrichPatch("$.labels.strategy_name", "CPU 高")
+	if err != nil {
+		t.Fatal(err)
+	}
+	patches := []domain.EnrichPatch{strategyPatch}
+	encoded, err := json.Marshal(ProcessorEnvelope{
+		Status: domain.EnrichStatusSucceeded, Patches: patches, MonitorItemAlias: "a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name        string
+		aliasLength int
+		twoLevels   bool
+	}{
+		{name: "oversized alias", aliasLength: 900001},
+		{name: "budget shared by both levels", aliasLength: 900001 - len(encoded), twoLevels: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			displayAlias := strings.Repeat("a", test.aliasLength)
+			strategy := &testProcessor{name: "strategy", fn: func(context.Context, *Scope) (ProcessorResult, error) {
+				return ProcessorResult{
+					Status: domain.EnrichStatusSucceeded, Patches: patches, MonitorItemAlias: displayAlias,
+				}, nil
+			}}
+			event := testAlert()
+			if test.twoLevels {
+				event.Evaluations = append(event.Evaluations, domain.EventEvaluation{
+					Severity: "critical", Action: domain.EventActionTriggered,
+				})
+			}
+			chain, err := NewChain([]Processor{strategy}, Sources{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := chain.Enrich(t.Context(), Input{Event: event})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Data.Evaluations) != len(event.Evaluations) {
+				t.Fatalf("got %d evaluations, want %d", len(result.Data.Evaluations), len(event.Evaluations))
+			}
+			for _, evaluation := range result.Data.Evaluations {
+				payload, err := DecodePayload(evaluation.Data)
+				if err != nil {
+					t.Fatal(err)
+				}
+				saved := payload.Processors[0]["strategy"]
+				if saved.Status != domain.EnrichStatusSucceeded || saved.MonitorItemAlias != "" ||
+					!reflect.DeepEqual(saved.Patches, patches) {
+					t.Errorf("%s strategy fields lost when dropping alias: status=%s, alias length=%d, patches=%#v",
+						evaluation.Severity, saved.Status, len(saved.MonitorItemAlias), saved.Patches)
+				}
+			}
+		})
 	}
 }
 

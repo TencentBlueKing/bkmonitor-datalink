@@ -6,6 +6,7 @@
 package kachook
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -15,11 +16,134 @@ import (
 
 	"github.com/google/uuid"
 	"linkd/internal/domain"
+	"linkd/internal/enrich"
 	"linkd/internal/enrich/custom"
 	"linkd/internal/enrich/kingeye"
 	"linkd/internal/enrich/models"
+	"linkd/internal/enrich/processors"
+	"linkd/internal/enrich/view"
 	"linkd/internal/lifecycle"
 )
+
+func TestMonitorItemAliasFromEnrichToKAC(t *testing.T) {
+	alert := testAlert()
+	legacy, err := CompatibilityMessage(alert, kacLevel)
+	if err != nil || legacy.Item != "CPU 使用率" || legacy.MetricName != "usage" {
+		t.Fatalf("legacy item=%q metric=%q err=%v", legacy.Item, legacy.MetricName, err)
+	}
+
+	reader := &monitorItemAliasReader{alias: "应用 CPU"}
+	chain, err := enrich.NewChain([]enrich.Processor{processors.Strategy{}, processors.Metric{}},
+		enrich.Sources{CWStrategy: reader, Metric: reader}, enrich.WithReuseOnActive("strategy", "metric"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(`{"strategy_id":123,"strategy_version":2,"bk_biz_id":2}`), &alert.Labels); err != nil {
+		t.Fatal(err)
+	}
+	event := domain.Event{
+		EventID: alert.TriggerEventID, BKTenantID: alert.BKTenantID, EventSourceID: alert.EventSourceID,
+		EventSourceVersion: alert.EventSourceVersion, Fingerprint: alert.Fingerprint, SourceEventID: alert.SourceEventID,
+		Labels: alert.Labels, Dimensions: alert.Dimensions,
+		Evaluations: []domain.EventEvaluation{{Severity: alert.Severity, Action: domain.EventActionTriggered}},
+	}
+	first, err := chain.Enrich(t.Context(), enrich.Input{Event: event})
+	if err != nil || first.Status != domain.EnrichStatusSucceeded {
+		t.Fatalf("opening enrich status=%s err=%v", first.Status, err)
+	}
+	alert.Enrich = first.Data.Evaluations[0].Data
+	alert.EnrichSeverity = alert.Severity
+	wantQuery := models.StrategyRevisionQuery{TenantID: alert.BKTenantID, ID: 123, Version: 2}
+	if !reflect.DeepEqual(reader.strategyQueries, []models.StrategyRevisionQuery{wantQuery}) || reader.metricCalls != 1 {
+		t.Fatalf("strategy queries=%+v metric calls=%d", reader.strategyQueries, reader.metricCalls)
+	}
+
+	effective, err := view.EnrichedAlert(alert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := effective.Labels["monitor_item_alias"]; exists {
+		t.Fatal("display alias leaked into the effective labels")
+	}
+	if _, exists := effective.ExtraData["monitor_item_alias"]; exists {
+		t.Fatal("display alias leaked into the effective extra_data")
+	}
+
+	for _, tc := range []struct{ name, override, want string }{
+		{name: "alias", want: "应用 CPU"},
+		{name: "custom override", override: `"覆盖"`, want: "覆盖"},
+		{name: "explicit empty", override: `""`},
+		{name: "explicit null", override: `null`},
+		{name: "explicit zero", override: `0`, want: "0"},
+		{name: "explicit false", override: `false`, want: "false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := alert.Clone()
+			if tc.override != "" {
+				snapshot.ExtraData["item"] = json.RawMessage(tc.override)
+			}
+			message, err := CompatibilityMessage(snapshot, kacLevel)
+			if err != nil || message.Item != tc.want || message.MetricName != "usage" || message.StrategyName != "CPU template" {
+				t.Fatalf("item=%q metric=%q strategy=%q err=%v", message.Item, message.MetricName, message.StrategyName, err)
+			}
+		})
+	}
+
+	reader.alias = ""
+	event = event.Clone()
+	event.EventID = "next-event"
+	if err := json.Unmarshal([]byte(`{"strategy_id":123,"strategy_version":3,"bk_biz_id":2}`), &event.Labels); err != nil {
+		t.Fatal(err)
+	}
+	reused, err := chain.Enrich(t.Context(), enrich.Input{Event: event, ActiveAlert: &alert})
+	if err != nil || reused.Status != domain.EnrichStatusSucceeded {
+		t.Fatalf("reused enrich status=%s err=%v", reused.Status, err)
+	}
+	snapshot := alert.Clone()
+	snapshot.Enrich = reused.Data.Evaluations[0].Data
+	reusedMessage, err := CompatibilityMessage(snapshot, kacLevel)
+	if err != nil || reusedMessage.Item != "应用 CPU" || reusedMessage.MetricName != "usage" ||
+		len(reader.strategyQueries) != 1 || reader.metricCalls != 1 {
+		t.Fatalf("reused item=%q metric=%q strategy queries=%d metric calls=%d err=%v",
+			reusedMessage.Item, reusedMessage.MetricName, len(reader.strategyQueries), reader.metricCalls, err)
+	}
+
+	cleared, err := chain.Enrich(t.Context(), enrich.Input{Event: event})
+	if err != nil || cleared.Status != domain.EnrichStatusSucceeded {
+		t.Fatalf("fresh enrich status=%s err=%v", cleared.Status, err)
+	}
+	snapshot.Enrich = cleared.Data.Evaluations[0].Data
+	fallback, err := CompatibilityMessage(snapshot, kacLevel)
+	nextQuery := wantQuery
+	nextQuery.Version = 3
+	if !reflect.DeepEqual(reader.strategyQueries, []models.StrategyRevisionQuery{wantQuery, nextQuery}) || reader.metricCalls != 2 {
+		t.Fatalf("strategy queries=%+v metric calls=%d", reader.strategyQueries, reader.metricCalls)
+	}
+	if err != nil || fallback.Item != "CPU 使用率" || fallback.MetricName != "usage" {
+		t.Fatalf("cleared item=%q metric=%q err=%v", fallback.Item, fallback.MetricName, err)
+	}
+}
+
+type monitorItemAliasReader struct {
+	alias           string
+	strategyQueries []models.StrategyRevisionQuery
+	metricCalls     int
+}
+
+func (reader *monitorItemAliasReader) GetByStrategyID(_ context.Context, query models.StrategyRevisionQuery) (models.CWStrategy, bool, error) {
+	reader.strategyQueries = append(reader.strategyQueries, query)
+	return models.CWStrategy{MonitorTemplateName: "CPU template", Spec: models.CWStrategySpec{
+		Name: "CPU 使用率", MonitorItemAlias: reader.alias,
+		StrategyItem: &models.CWStrategyItem{QueryConfigs: []models.StrategyQueryConfig{
+			{ResultTableID: "system.cpu", MetricField: "usage"},
+		}},
+	}}, true, nil
+}
+
+func (reader *monitorItemAliasReader) FindMetric(context.Context, models.MetricQuery) (models.MetricMetadata, bool, error) {
+	reader.metricCalls++
+	return models.MetricMetadata{}, false, nil
+}
 
 func TestKACCustomCatalogRuleExecutesAndOverridesSourceDirectory(t *testing.T) {
 	program, err := custom.Compile("fields", map[string]any{"rules": []any{map[string]any{

@@ -22,12 +22,16 @@ import (
 func TestCWStrategyClientReadsHistoricalRuntimeConfig(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name            string
-		change          func(map[string]any)
-		business        int64
-		override, cloud bool
+		name             string
+		change           func(map[string]any)
+		business         int64
+		override, cloud  bool
+		monitorItemAlias string
 	}{
 		{name: "default", business: 2},
+		{name: "monitor item alias", business: 2, monitorItemAlias: "应用 CPU", change: func(p map[string]any) {
+			revisionSpec(p)["monitor_item_alias"] = "应用 CPU"
+		}},
 		{name: "non-BKCC historical space", business: -255, change: func(p map[string]any) {
 			revisionStrategy(p)["bk_biz_id"] = int64(-255)
 			revisionStrategy(p)["space_uid"] = "bkci__blueking"
@@ -71,6 +75,9 @@ func TestCWStrategyClientReadsHistoricalRuntimeConfig(t *testing.T) {
 			}
 			if result.BKBizID == nil || *result.BKBizID != tc.business || *result.IsDefault == tc.override {
 				t.Fatal("historical identity lost")
+			}
+			if result.Spec.MonitorItemAlias != tc.monitorItemAlias {
+				t.Fatalf("monitor item alias=%q want %q", result.Spec.MonitorItemAlias, tc.monitorItemAlias)
 			}
 			if tc.business < 0 && result.SpaceUID != "bkci__blueking" {
 				t.Fatal("historical source space lost")

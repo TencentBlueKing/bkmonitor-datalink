@@ -97,7 +97,7 @@ func TestCompareVersionWithVendorSuffix(t *testing.T) {
 }
 
 func TestNewRuntimeReturnsUnknownVersionError(t *testing.T) {
-	runtime, err := NewRuntime("")
+	runtime, err := NewRuntime(context.Background(), "")
 
 	assert.Nil(t, runtime)
 	assert.Error(t, err)

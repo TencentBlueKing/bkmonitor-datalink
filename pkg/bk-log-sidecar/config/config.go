@@ -54,7 +54,7 @@ func FlagInit() {
 	flag.StringVar(&BkunifylogbeatConfig, "bkunifylogbeat-config", "", "bkunifylogbeat config path")
 	flag.StringVar(&BkunifylogbeatPidFile, "bkunifylogbeat-pid-file", "", "bkunifylogbeat pid file")
 	flag.StringVar(&HostPath, "host-path", "/", "host path")
-	flag.StringVar(&DockerApiVersion, "docker-api-version", "1.40", "docker Api version")
+	flag.StringVar(&DockerApiVersion, "docker-api-version", "", "Docker API version (default: negotiate with the daemon)")
 	flag.IntVar(&DelayCleanConfig, "delay-clean-config", 30, "delay cleaning")
 	BkEnvs = []string{""}
 	bkEnvExplicitlySet := false

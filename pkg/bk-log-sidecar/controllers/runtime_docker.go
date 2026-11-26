@@ -14,7 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -27,7 +27,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
 )
 
 const (
@@ -39,9 +38,8 @@ const (
 
 // DockerRuntime docker runtime
 type DockerRuntime struct {
-	cliMu sync.RWMutex
-	cli   *client.Client
-	log   logr.Logger
+	cli *client.Client
+	log logr.Logger
 }
 
 // Type runtime type
@@ -49,24 +47,12 @@ func (r *DockerRuntime) Type() define.RuntimeType {
 	return define.RuntimeTypeDocker
 }
 
-func (r *DockerRuntime) currentClient() *client.Client {
-	r.cliMu.RLock()
-	defer r.cliMu.RUnlock()
-	return r.cli
-}
-
-func (r *DockerRuntime) replaceClient(cli *client.Client) {
-	r.cliMu.Lock()
-	r.cli = cli
-	r.cliMu.Unlock()
-}
-
 // Containers list of containers
 func (r *DockerRuntime) Containers(ctx context.Context) ([]define.SimpleContainer, error) {
-	containers, err := r.currentClient().ContainerList(ctx, container.ListOptions{Filters: filters.NewArgs()})
+	containers, err := r.cli.ContainerList(ctx, container.ListOptions{Filters: filters.NewArgs()})
 
 	if err != nil {
-		return nil, err
+		return nil, dockerAPIError(err)
 	}
 	var result []define.SimpleContainer
 	for _, c := range containers {
@@ -87,7 +73,7 @@ func (r *DockerRuntime) Inspect(ctx context.Context, containerID string) (define
 	ctx, cancelFunc := context.WithTimeout(ctx, 3*time.Second)
 	defer cancelFunc()
 
-	cli := r.currentClient()
+	cli := r.cli
 	go func() {
 		c, err := cli.ContainerInspect(ctx, containerID)
 		containerCh <- inspectResult{container: c, err: err}
@@ -96,7 +82,7 @@ func (r *DockerRuntime) Inspect(ctx context.Context, containerID string) (define
 	select {
 	case result := <-containerCh:
 		if result.err != nil {
-			return define.Container{}, normalizeDockerInspectError(containerID, result.err)
+			return define.Container{}, normalizeDockerInspectError(containerID, dockerAPIError(result.err))
 		}
 		c := result.container
 		rootPath := define.ContainerRootPath(c)
@@ -169,7 +155,7 @@ func (r *DockerRuntime) Subscribe(ctx context.Context) (<-chan *define.Container
 	filter.Add("event", DockerDieEvent)
 	options := events.ListOptions{Filters: filter}
 
-	cli := r.currentClient()
+	cli := r.cli
 	// Docker SDK 的 Events 只通过异步 errors channel 报启动失败。先执行
 	// 同步 Ping，把 socket/daemon 不可用转换为 Subscribe 的同步 error。
 	if _, err := cli.Ping(ctx); err != nil {
@@ -181,7 +167,7 @@ func (r *DockerRuntime) Subscribe(ctx context.Context) (<-chan *define.Container
 		if !ok {
 			return nil, nil, fmt.Errorf("docker subscription closed during startup")
 		}
-		return nil, nil, fmt.Errorf("start docker event subscription: %w", err)
+		return nil, nil, fmt.Errorf("start docker event subscription: %w", dockerAPIError(err))
 	default:
 	}
 
@@ -210,16 +196,8 @@ func (r *DockerRuntime) Subscribe(ctx context.Context) (<-chan *define.Container
 				if !ok {
 					return
 				}
+				err = dockerAPIError(err)
 				r.log.Error(err, "event receive error")
-				match, api := utils.ExtractDockerApiVersion(err)
-				if match {
-					cli, err := client.NewClientWithOpts(client.WithHost(config.DockerSocket), client.WithVersion(api))
-					if utils.IsNil(err) {
-						// 只更新下一轮订阅要使用的 client；真正的重连统一由
-						// supervisor 管理，避免 adapter 内再创建一条即将被取消的流。
-						r.replaceClient(cli)
-					}
-				}
 				select {
 				case errorChanel <- err:
 				case <-ctx.Done():
@@ -234,15 +212,26 @@ func (r *DockerRuntime) Subscribe(ctx context.Context) (<-chan *define.Container
 	return eventChanel, errorChanel, nil
 }
 
+// The daemon reports version mismatches on versioned requests, even after a successful ping.
+func dockerAPIError(err error) error {
+	if err != nil && (strings.Contains(err.Error(), "Minimum supported API version is") ||
+		strings.Contains(err.Error(), "Maximum supported API version is")) {
+		return fmt.Errorf("Docker API version incompatible: %w", err)
+	}
+	return err
+}
+
 // NewDockerRuntime new docker runtime
 func NewDockerRuntime() (define.Runtime, error) {
-	var cli *client.Client
-	var err error
-	if len(config.DockerSocket) > 0 {
-		cli, err = client.NewClientWithOpts(client.WithHost(config.DockerSocket), client.WithVersion(config.DockerApiVersion))
-	} else {
-		cli, err = client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	endpoint := client.FromEnv
+	if config.DockerSocket != "" {
+		endpoint = client.WithHost(config.DockerSocket)
 	}
+	version := client.WithAPIVersionNegotiation()
+	if config.DockerApiVersion != "" {
+		version = client.WithVersion(config.DockerApiVersion)
+	}
+	cli, err := client.NewClientWithOpts(endpoint, version)
 	if err != nil {
 		return nil, fmt.Errorf("create docker client: %w", err)
 	}

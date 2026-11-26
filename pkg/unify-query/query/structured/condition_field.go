@@ -228,7 +228,7 @@ func (c *ConditionField) ContainsToPromReg() *ConditionField {
 	// value 个数为 1, 转换为 等于/不等于, 效率最高
 	if len(c.Value) == 1 {
 		switch c.Operator {
-		case ConditionContains, ConditionExact:
+		case ConditionContains:
 			c.Operator = ConditionEqual
 		case ConditionNotContains:
 			c.Operator = ConditionNotEqual

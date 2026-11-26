@@ -8,6 +8,7 @@ Linkd 项目仍处于早期开发阶段。文档中心区分当前代码、测�
 
 ## 开发实施方案
 
+- [KAC 5.4 告警字段管理设计](design/kingeye_5.4/alert_fields/README.md)：Kingeye 5.4 开发设计副本，涵盖字段目录、分阶段映射与控制面发布。
 - [三类策略的内存匹配与增量运行](design/policy-runtime-scaling.md)：候选索引、共享依赖的 60 秒时效、依赖主索引、合并批量推进及验证记录；OneModel 通知暂缓。
 - [KAC 告警源插件调试接入 Linkd 方案](design/kac-alarm-source-debug-preview.md)：首版代码已实现；保留原 KAC 字段与调试步骤，
   复用 verification 索引、不执行丰富并同步 HTTP 返回；本地 HTTP/索引及原调试组件已联调，全主站验收待验证。

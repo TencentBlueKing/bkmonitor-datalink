@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -223,15 +224,18 @@ func dockerAPIError(err error) error {
 
 // NewDockerRuntime new docker runtime
 func NewDockerRuntime(ctx context.Context) (define.Runtime, error) {
+	version := strings.TrimPrefix(config.DockerApiVersion, "v")
 	endpoint := client.FromEnv
 	if config.DockerSocket != "" {
 		endpoint = client.WithHost(config.DockerSocket)
+	} else if version == "" {
+		version = strings.TrimPrefix(os.Getenv(client.EnvOverrideAPIVersion), "v")
 	}
 	cli, err := client.NewClientWithOpts(endpoint, client.WithVersion(config.DockerApiVersion))
 	if err != nil {
 		return nil, fmt.Errorf("create docker client: %w", err)
 	}
-	if config.DockerApiVersion == "" {
+	if version == "" {
 		ctx, cancel := context.WithTimeout(ctx, RuntimeOperationTimeout)
 		defer cancel()
 		ping, err := cli.Ping(ctx)

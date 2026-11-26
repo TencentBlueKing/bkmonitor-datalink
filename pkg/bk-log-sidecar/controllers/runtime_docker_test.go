@@ -29,20 +29,26 @@ func TestDockerAPIVersion(t *testing.T) {
 	oldSocket, oldVersion := config.DockerSocket, config.DockerApiVersion
 	t.Cleanup(func() { config.DockerSocket, config.DockerApiVersion = oldSocket, oldVersion })
 	for _, tc := range []struct {
-		name, server, pin, expected, rejection string
-		fromEnv                                bool
+		name, server, pin, envPin, expected, rejection string
+		fromEnv                                        bool
 	}{
 		{name: "old daemon", server: "1.38", expected: "1.38"},
 		{name: "new daemon", server: "1.40", expected: "1.40"},
 		{name: "SDK maximum", server: "1.99", expected: api.DefaultVersion},
 		{name: "manual override", server: "1.40", pin: "1.38", expected: "1.38"},
 		{name: "environment endpoint", server: "1.38", expected: "1.38", fromEnv: true},
+		{name: "environment pin skips negotiation", server: "1.40", envPin: "1.38", expected: "1.38", fromEnv: true},
+		{name: "explicit socket ignores environment pin", server: "1.40", envPin: "1.38", expected: "1.40"},
 		{name: "no common version", server: "1.99", expected: api.DefaultVersion, rejection: "Minimum supported API version is 1.98"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prefix := "/v" + tc.expected
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/_ping" {
+					if tc.fromEnv && tc.envPin != "" {
+						http.Error(w, "ping denied", http.StatusForbidden)
+						return
+					}
 					w.Header().Set("API-Version", tc.server)
 					return
 				}
@@ -69,10 +75,10 @@ func TestDockerAPIVersion(t *testing.T) {
 			defer server.Close()
 			endpoint := "tcp://" + strings.TrimPrefix(server.URL, "http://")
 			config.DockerSocket, config.DockerApiVersion = endpoint, tc.pin
+			t.Setenv("DOCKER_API_VERSION", tc.envPin)
 			if tc.fromEnv {
 				config.DockerSocket = ""
 				t.Setenv("DOCKER_HOST", endpoint)
-				t.Setenv("DOCKER_API_VERSION", "")
 				t.Setenv("DOCKER_CERT_PATH", "")
 			}
 			runtime, err := NewDockerRuntime(context.Background())
@@ -93,6 +99,12 @@ func TestDockerAPIVersion(t *testing.T) {
 			require.Len(t, c.Mounts, 1)
 			require.Equal(t, "/host/log", c.Mounts[0].HostPath)
 			require.Equal(t, "/log", c.Mounts[0].ContainerPath)
+			if tc.fromEnv && tc.envPin != "" {
+				// Subscription performs its own health check. List and Inspect must remain available.
+				_, _, err := runtime.Subscribe(ctx)
+				require.ErrorContains(t, err, "ping denied")
+				return
+			}
 			events, errs, err := runtime.Subscribe(ctx)
 			require.NoError(t, err)
 			select {

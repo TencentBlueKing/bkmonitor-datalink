@@ -288,6 +288,7 @@ type CWStrategySpec struct {
 	DataSource               string                      `json:"data_source"`
 	FieldTag                 CWStrategyFieldTag          `json:"field_tag"`
 	AliasName                string                      `json:"alias_name"`
+	MonitorItemAlias         string                      `json:"monitor_item_alias,omitempty"`
 	Name                     string                      `json:"name"`
 	StrategyItem             *CWStrategyItem             `json:"strategy_item"`
 	StrategyDetectAlgorithms []CWStrategyDetectAlgorithm `json:"strategy_detect_algorithms"`

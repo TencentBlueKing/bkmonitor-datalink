@@ -90,6 +90,7 @@ func (c *Chain) Enrich(ctx context.Context, input Input) (Result, error) {
 	cache := newRequestCache()
 	budget := &chainBudget{}
 	statuses := make([]domain.EnrichStatus, 0, len(event.Evaluations))
+	outputs := make([]evaluationOutput, 0, len(event.Evaluations))
 	for _, evaluation := range event.Evaluations {
 		scope := newOwnedScope(&event, evaluation, c.sources, cache)
 		scope.cmdbSetModuleEnabled = c.cmdbSetModuleEnabled
@@ -97,18 +98,33 @@ func (c *Chain) Enrich(ctx context.Context, input Input) (Result, error) {
 		if reusable != nil && evaluation.Severity == input.ActiveAlert.EnrichSeverity {
 			previous = reusable
 		}
-		evaluated, err := c.enrichEvaluation(ctx, scope, budget, previous, input.ActiveAlert)
+		output, err := c.enrichEvaluation(ctx, scope, budget, previous, input.ActiveAlert)
 		if err != nil {
 			return Result{}, err
 		}
-		result.Data.Evaluations = append(result.Data.Evaluations, evaluated)
+		outputs = append(outputs, output)
 		if scope.state != nil {
-			if err := scope.state.FreezeResult(evaluated.Data); err != nil {
-				return Result{}, err
-			}
 			result.Evaluations[evaluation.Severity] = scope.state
 		}
-		statuses = append(statuses, evaluated.Status)
+		statuses = append(statuses, output.status)
+	}
+	for index, output := range outputs {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		severity := event.Evaluations[index].Severity
+		data, err := output.encode(budget)
+		if err != nil {
+			return Result{}, err
+		}
+		result.Data.Evaluations = append(result.Data.Evaluations, domain.EvaluationEnrich{
+			Severity: severity, Status: output.status, Data: data,
+		})
+		if state := result.Evaluations[severity]; state != nil {
+			if err := state.FreezeResult(data); err != nil {
+				return Result{}, err
+			}
+		}
 	}
 	result.Status = domain.AggregateEnrichStatus(statuses)
 	return result, nil
@@ -116,12 +132,49 @@ func (c *Chain) Enrich(ctx context.Context, input Input) (Result, error) {
 
 type chainBudget struct{ patchCount, payloadBytes int }
 
-func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chainBudget, previous map[string]ProcessorEnvelope, active *domain.Alert) (domain.EvaluationEnrich, error) {
+const maxEnrichPayloadBytes = 900000
+
+type processorOutput struct {
+	name          string
+	encoded       json.RawMessage
+	aliasEnvelope *ProcessorEnvelope
+}
+
+type evaluationOutput struct {
+	status  domain.EnrichStatus
+	entries []processorOutput
+}
+
+func (output evaluationOutput) encode(budget *chainBudget) (domain.JSONObject, error) {
+	entries := make([]map[string]json.RawMessage, 0, len(output.entries))
+	for _, entry := range output.entries {
+		encoded := entry.encoded
+		if entry.aliasEnvelope != nil && len(entry.aliasEnvelope.MonitorItemAlias) <= maxEnrichPayloadBytes-budget.payloadBytes {
+			withAlias, err := json.Marshal(entry.aliasEnvelope)
+			if err != nil {
+				return nil, fmt.Errorf("enrich processor %s result: %w", entry.name, err)
+			}
+			extraBytes := len(withAlias) - len(encoded)
+			if budget.payloadBytes+extraBytes <= maxEnrichPayloadBytes {
+				budget.payloadBytes += extraBytes
+				encoded = withAlias
+			}
+		}
+		entries = append(entries, map[string]json.RawMessage{entry.name: encoded})
+	}
+	encoded, err := json.Marshal(entries)
+	if err != nil {
+		return nil, err
+	}
+	return (domain.JSONObject{"processors": encoded}).Normalize()
+}
+
+func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chainBudget, previous map[string]ProcessorEnvelope, active *domain.Alert) (evaluationOutput, error) {
 	results := make([]ProcessorResult, 0, len(c.processors))
-	entries := make([]map[string]json.RawMessage, 0, len(c.processors))
+	entries := make([]processorOutput, 0, len(c.processors))
 	for _, processor := range c.processors {
 		if err := ctx.Err(); err != nil {
-			return domain.EvaluationEnrich{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
+			return evaluationOutput{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
 		}
 		startedAt := time.Now()
 		scope.degradedDiagnostics = nil
@@ -133,7 +186,10 @@ func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chai
 		var failure error
 		if saved, ok := previous[processor.Name()]; ok {
 			finish := startProcessorTiming(ctx, processor.Name())
-			result = ProcessorResult{Status: saved.Status, Value: saved.Value, Patches: saved.Patches, Trace: saved.Trace, Diagnostics: cloneDiagnostics(saved.Diagnostics), ReusedFromAlertID: active.AlertID}
+			result = ProcessorResult{
+				Status: saved.Status, Value: saved.Value, Patches: saved.Patches, Trace: saved.Trace,
+				Diagnostics: cloneDiagnostics(saved.Diagnostics), MonitorItemAlias: saved.MonitorItemAlias, ReusedFromAlertID: active.AlertID,
+			}
 			failure = restoreProcessorContext(scope.Context(), processor.Name(), saved)
 			outcome = ProcessorOutcomeReused
 			finish()
@@ -200,23 +256,26 @@ func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chai
 		for _, assignment := range assignments {
 			patch, err := assignment.Patch()
 			if err != nil {
-				return domain.EvaluationEnrich{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
+				return evaluationOutput{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
 			}
 			patches = append(patches, patch)
 		}
-		envelope := ProcessorEnvelope{Status: result.Status, Patches: patches, Trace: result.Trace, Diagnostics: cloneDiagnostics(result.Diagnostics), ReusedFromAlertID: result.ReusedFromAlertID}
+		envelope := ProcessorEnvelope{
+			Status: result.Status, Patches: patches, Trace: result.Trace, Diagnostics: cloneDiagnostics(result.Diagnostics),
+			ReusedFromAlertID: result.ReusedFromAlertID,
+		}
 		encoded, err := json.Marshal(envelope)
 		if err != nil {
-			return domain.EvaluationEnrich{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
+			return evaluationOutput{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
 		}
-		if budget.patchCount+len(patches) > 4096 || budget.payloadBytes+len(encoded) > 900000 {
+		if budget.patchCount+len(patches) > 4096 || budget.payloadBytes+len(encoded) > maxEnrichPayloadBytes {
 			failure = fmt.Errorf("processor output exceeds event patch or payload budget")
 			scope.rollback()
 			result = invalidProcessorResult()
 			outcome = ProcessorOutcomeInvalidResult
 			encoded, err = json.Marshal(ProcessorEnvelope{Status: result.Status, Patches: []domain.EnrichPatch{}, Diagnostics: result.Diagnostics})
 			if err != nil {
-				return domain.EvaluationEnrich{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
+				return evaluationOutput{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
 			}
 		} else {
 			budget.patchCount += len(patches)
@@ -224,7 +283,7 @@ func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chai
 		}
 		if err := ctx.Err(); err != nil {
 			scope.rollback()
-			return domain.EvaluationEnrich{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
+			return evaluationOutput{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
 		}
 		if err := scope.commit(); err != nil {
 			failure = fmt.Errorf("commit processor patches: %w", err)
@@ -233,26 +292,23 @@ func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chai
 			outcome = ProcessorOutcomeInvalidResult
 			encoded, err = json.Marshal(ProcessorEnvelope{Status: result.Status, Patches: []domain.EnrichPatch{}, Diagnostics: result.Diagnostics})
 			if err != nil {
-				return domain.EvaluationEnrich{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
+				return evaluationOutput{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
 			}
 		}
 		c.logProcessorFailure(ctx, scope, processor.Name(), outcome, result, failure)
 		c.observer.ProcessorFinished(ctx, ProcessorObservation{Processor: processor.Name(), Status: result.Status, Outcome: outcome, Duration: time.Since(startedAt), Diagnostics: cloneDiagnostics(result.Diagnostics)})
 		if err := ctx.Err(); err != nil {
-			return domain.EvaluationEnrich{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
+			return evaluationOutput{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
+		}
+		entry := processorOutput{name: processor.Name(), encoded: encoded}
+		if result.Status == domain.EnrichStatusSucceeded && result.MonitorItemAlias != "" {
+			envelope.MonitorItemAlias = result.MonitorItemAlias
+			entry.aliasEnvelope = &envelope
 		}
 		results = append(results, result)
-		entries = append(entries, map[string]json.RawMessage{processor.Name(): encoded})
+		entries = append(entries, entry)
 	}
-	encoded, err := json.Marshal(entries)
-	if err != nil {
-		return domain.EvaluationEnrich{}, err
-	}
-	data, err := (domain.JSONObject{"processors": encoded}).Normalize()
-	if err != nil {
-		return domain.EvaluationEnrich{}, err
-	}
-	return domain.EvaluationEnrich{Severity: scope.evaluation.Severity, Status: aggregateStatus(results), Data: data}, nil
+	return evaluationOutput{status: aggregateStatus(results), entries: entries}, nil
 }
 
 func runProcessor(ctx context.Context, processor Processor, scope *Scope) (result ProcessorResult, outcome string, err error) {

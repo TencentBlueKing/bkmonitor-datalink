@@ -136,6 +136,13 @@ func convertFieldsWithLevel(input lifecycle.FinalHookInput, resolve func(string)
 		return kingeye.AlarmMessage{}, e
 	}
 	extra, _ := document["extra_data"].(map[string]any)
+	if _, found := extra["item"]; !found {
+		alias, err := strategyMonitorItemAlias(input.Alert.Enrich["processors"])
+		if err != nil {
+			return kingeye.AlarmMessage{}, err
+		}
+		message.Item = firstNonEmpty(alias, message.Item)
+	}
 	for field, target := range map[string]*string{"object": &message.Object, "item": &message.Item, "meta_info": &message.MetaInfo, "strategy_id": &message.StrategyID, "dimension_info": &message.DimensionInfo} {
 		if value, found := extra[field]; found {
 			// 固定 KAC 文本字段保持协议类型，显式 0/false/空字符串都不能触发默认值回退。
@@ -165,6 +172,25 @@ func convertFieldsWithLevel(input lifecycle.FinalHookInput, resolve func(string)
 		}
 	}
 	return message, nil
+}
+
+func strategyMonitorItemAlias(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	var entries []map[string]struct {
+		Status           domain.EnrichStatus `json:"status"`
+		MonitorItemAlias string              `json:"monitor_item_alias"`
+	}
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return "", fmt.Errorf("decode KAC monitor item alias: %w", err)
+	}
+	for _, entry := range entries {
+		if strategy := entry["strategy"]; strategy.Status == domain.EnrichStatusSucceeded {
+			return strategy.MonitorItemAlias, nil
+		}
+	}
+	return "", nil
 }
 
 // kacAlarmID 为每个 Alert 快照生成 KAC 路由可接受的稳定 UUID。

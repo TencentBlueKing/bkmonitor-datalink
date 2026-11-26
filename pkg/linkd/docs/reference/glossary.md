@@ -60,7 +60,7 @@
 | source（丰富分组） | 丰富结果中的来源补充信息：按租户和 Event.EventSourceID（KAC 的 linkd_source_id）回查 alarm_collect_alarmsource，source_id 保存该表的 id，source_name 保存名称，meta_info 承载来源事件标识；不替代 Linkd 的 EventSourceID |
 | meta_info（丰富字段） | 优先保留旧清洗的同名 extra_data 值；未提供时使用来源丰富值或 Event.SourceEventID，不替代来源原始身份 |
 | metric（丰富分组） | 丰富结果中的指标补充信息，包含 `display_name / metric_name / unit / result_table_id` 等事实；当前内置及外部来源均不生成指标查询参数。指标名称不统一定义为指标 ID，多个丰富分类共用该分组 |
-| item | KAC 文本字段。有效 `extra_data.item` 存在时直接采用；不存在时取非空 `display_name`，再取 `strategy_name`；不以对象实例名称补全。查询、场景和空值规则见 [item 补全规则](../design/enrich-item.md) |
+| item | KAC 文本字段。有效 `extra_data.item` 存在时直接采用，否则依次取非空监控项别名和 `display_name`，最后取 `strategy_name`。详见 [item 补全规则](../design/enrich-item.md) |
 | title（告警名称） | Linkd 告警标题，KAC 的 `name` 取 Alert 有效视图中的 `title`；内置 `display.value.title` 通过补丁赋值。当前规则及待实现的跨策略类型默认规则见 [title 生成规则](../design/enrich-title.md) |
 | object（告警对象展示文本） | 正式 KAC 转换优先采用有效 `extra_data.object`，不存在时取非空 `subject_name`，再取 `subject_id`。Display 的 `value.object` 映射为 `subject_name` 补丁；名称不等于模型/实例关联，详见 [object 补全规则](../design/enrich-object.md) |
 | metricset（指标来源） | Kingeye 新指标目录的来源登记表；来源编码不是指标身份，指标定义与主引用存放在 metric 表 |

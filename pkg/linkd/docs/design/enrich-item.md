@@ -1,6 +1,6 @@
 # Enrich 的 item 补全规则
 
-核对日期：2026-11-01。代码基线：主仓 `feat/linkd-dev`，`b6fa6420f75fc53b702071e61ca5c8721615c962`。
+核对日期：2026-11-25。
 
 本文按当前代码说明 `item` 从哪里来、什么条件下补全、各类告警如何取值。
 这里的“规则”指当前实现，不新增产品要求，也不代表目标环境已经部署或历史告警已经更新。
@@ -12,20 +12,20 @@ Enrich 整体流程见[丰富设计](enrich.md)。
 正式 KAC 输出按以下顺序取值：
 
 1. 有效视图中的 `extra_data.item` **存在**：直接使用它，包括空字符串、`0`、`false` 和 `null`。
-2. `extra_data.item` 不存在：使用非空的 `display_name`。
-3. `display_name` 为空：使用 `strategy_name`。
-4. 都没有：输出 `item = ""`，不会改用 `metric_name`、对象实例名称或告警标题。
+2. `extra_data.item` 不存在：使用成功的 `strategy` 步骤保存的非空 `monitor_item_alias`。
+3. 没有非空别名：使用非空的 `display_name`，再取 `strategy_name`。
+4. 都没有：输出 `item = ""`。
 
-第 2、3 步的字段均先取有效视图的 `labels`，同名标签不存在时才取 `extra_data`。
+`display_name` 和 `strategy_name` 均先取有效视图的 `labels`，同名标签不存在时才取 `extra_data`。
 内置 `metric` 通常生成 `labels.display_name`，内置 `strategy` 通常生成 `labels.strategy_name`。
 
-这里有两种不同判断：`extra_data.item` 看字段是否存在；`display_name` 看字符串是否非空。
-`display_name = ""` 会转用 `strategy_name`，`extra_data.item = ""` 则保留空串。
-代码不对这两个默认名称执行去除空白处理，只有空字符串才触发名称回退。
+`extra_data.item = ""` 保留空串。别名与默认名称按原字符串取值，空字符串触发名称回退。
+所有告警等级先保存满足丰富载荷预算的补丁，剩余预算用于保存展示别名。空间不足时告警指标使用默认名称。
 
 | 字段 | 当前用途和来源 |
 | --- | --- |
 | `item` | KAC 的文本字段，按上述顺序生成 |
+| `monitor_item_alias` | `strategy` 从执行修订读取的可选监控项别名，只作为丰富结果信封中的 KAC 展示元数据 |
 | `display_name` | `metric` 的展示名称，由 `cleanItem` 计算；也可由来源或自定义规则提供 |
 | `metric_name` | 指标字段或按场景计算的指标名称，不作为 `item` 缺失时的备用值 |
 | `strategy_name` | `strategy` 生成的策略展示名称，是 `item` 的最后一个默认值 |
@@ -43,7 +43,7 @@ Enrich 整体流程见[丰富设计](enrich.md)。
 
 ```text
 EventSource.enrich.processors 指定步骤和顺序
-  → strategy 查询策略，生成 strategy_name
+  → strategy 查询策略，生成 strategy_name，保存非空监控项别名
   → metric 查询策略和指标库，cleanItem 生成 display_name
   → 成功或部分成功步骤的补丁按顺序应用到有效视图
   → Event 按 severity 保存 Enrich 结果
@@ -55,9 +55,12 @@ EventSource.enrich.processors 指定步骤和顺序
 但没有配置 `strategy` 时，不会仅因为 `metric` 读过策略，就自动生成 `strategy_name`。
 没有配置 `metric` 时，也不会自动执行 `cleanItem`。
 
-内置处理器保存的是 `value.display_name` 以及对应的 `$.labels.display_name` 补丁，
-通常不会直接写 `extra_data.item`。读取时优先使用已保存的 `patches`；历史结果只有 `value` 时，
+内置 `metric` 通常通过 `$.labels.display_name` 补丁提供展示名。读取时优先使用已保存的 `patches`；历史结果只有 `value` 时，
 再按相同字段映射生成补丁。只有 `succeeded / partial` 的补丁生效，`failed / skipped` 不生效。
+
+别名单独保存在 `strategy` 的结果信封中，规则、分组和指标标识仍使用原有事实和补丁。
+活跃告警复用成功的 `strategy` 步骤时沿用其已保存的别名。旧快照、未配置 `strategy` 或别名为空时沿用默认名称。
+已写入的 KAC 兼容文档保留原 `item`。
 
 补丁按 `enrich.processors` 的顺序应用，后面的同路径赋值覆盖前面的值。
 这决定来源字段、自定义规则和内置 `metric` 同时写 `labels.display_name` 时最终保留哪个值。
@@ -82,7 +85,7 @@ EventSource.enrich.processors 指定步骤和顺序
    `strategy_revision = labels.strategy_version`。
 2. 必须唯一命中，并通过快照字节数、摘要、schema 和身份绑定校验。
    不使用当前最新策略替代缺失的历史版本，不用 Event 的 `bk_biz_id` 过滤策略管理业务。
-3. 从 `snapshot_json.runtime_config.spec` 读取 `name`、`strategy_item`、`alias_name` 等字段；
+3. 从 `snapshot_json.runtime_config.spec` 读取 `name`、`strategy_item`、`alias_name` 和可选的 `monitor_item_alias` 等字段；
    `runtime_config.metadata.labels.object_model_code` 供模型条件使用。
    dataset、指标引用和衍生类型的绑定只使用同一快照的根部 `items`。
 4. 按同租户及 `runtime_config.metadata.labels.monitor_template_id` 查询
@@ -269,7 +272,7 @@ PromQL 无法确定完整指标位置时，不查询指标库；没有 ID 的 Pr
 
 ## 6. strategy_name 怎么补最后一个默认值
 
-Metric 的 `display_name` 为空或没有生效时，正式输出尝试使用有效 `strategy_name`。
+显式 `item`、监控项别名和 `display_name` 都没有提供名称时，正式输出使用有效 `strategy_name`。
 `Strategy.Process` 按下面顺序生成它：
 
 1. 有模板名称，且原始 `spec.strategy_item.query_configs[0].promql` 非空：只取模板名称。
@@ -291,7 +294,7 @@ Metric 的 `display_name` 为空或没有生效时，正式输出尝试使用有
 
 | 情况 | 对 item 的影响 |
 | --- | --- |
-| 未配置 `metric` | 不生成内置 `display_name`；仍可使用来源、自定义规则或 `strategy_name` |
+| 未配置 `metric` | 内置 `display_name` 缺失；按第 1 节选择可用值 |
 | 策略身份缺失或非法 | Metric 为 `failed`，记录 `missing_field / invalid_field`；其名称补丁不生效 |
 | 策略不存在、快照非法或模板查询失败 | Metric 为 `failed + dependency_invalid(kingeye_strategy)`；再检查来源字段和 Strategy 是否有可用名称 |
 | 显式指标引用未命中、引用无效、单位读取失败或数据库报错 | Metric 通常为 `failed + dependency_invalid(metric_catalog)`；即使 `spec.name` 非空，也不会单独应用 Metric 名称 |
@@ -331,7 +334,7 @@ Metric 的 `display_name` 为空或没有生效时，正式输出尝试使用有
 
 - **策略条件**：`FactView.Field("item")` 先读有效 `extra_data.item`，不存在再取
   `display_name`，为空再取 `strategy_name`；两个名称均按 `labels → extra_data` 读取。
-  策略按实际字段类型匹配，不执行正式 KAC 出口的文本转换。
+  策略按有效视图中的实际字段类型匹配。
 - **合并模板**：读取 `${item}` 使用上述字段视图；配置合并输出字段 `item` 时，
   写入父 Event 的 `extra_data.display_name`。父来源后续的同名标签或 `extra_data.item`
   仍会按第 1 节影响最终输出。

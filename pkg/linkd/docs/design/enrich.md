@@ -224,6 +224,7 @@ source
 | --- | --- | --- |
 | `status` | `succeeded/partial/failed/skipped` | Processor 状态 |
 | `patches` | array | 已求值的有序 JSONPath 补丁，无输出时为 `[]` |
+| `monitor_item_alias` | string，可省略 | 成功的 Strategy 步骤保存的 [KAC 监控项展示别名](enrich-item.md#1-item-最终取什么值) |
 | `trace` | array，可省略 | 自定义规则和操作的执行状态、命中数及耗时 |
 | `diagnostics` | array，可省略 | 稳定、脱敏的输入或依赖诊断 |
 

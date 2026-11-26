@@ -261,7 +261,7 @@ KAC converter 先调用 `enrich.DecodePayload(Alert.Enrich)`，再按 Processor 
 | `bk_tenant_id` | `Alert.BKTenantID` | 原样，必填 |
 | `source_id` | `source.source_id` → `Alert.EventSourceID` | 字符串，运行语义必填 |
 | `source_name` | KAC Hook 常量 | 固定为 `鲸眼监控` |
-| `item` | `metric.display_name` → `strategy.strategy_name` | KAC 允许空字符串 |
+| `item` | [item 补全规则](enrich-item.md#1-item-最终取什么值) | KAC 允许空字符串 |
 | `metric_name` | `metric.metric_name` | 缺失输出空字符串 |
 | `name` | `display.title` → `Alert.Title` | 最终为空则失败 |
 | `alarm_time` | `Alert.BeginAt` | 按固定 `Asia/Shanghai` 时区格式化，必填 |

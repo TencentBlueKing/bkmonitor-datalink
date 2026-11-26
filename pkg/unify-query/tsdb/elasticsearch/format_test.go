@@ -31,6 +31,8 @@ func TestFormatFactory_Query(t *testing.T) {
 		settings   map[string]any
 		conditions metadata.AllConditions
 		expected   string
+		source     map[string]any
+		highlights map[string]any
 	}{
 		"大于零保留字符串条件值": {
 			conditions: metadata.AllConditions{{{DimensionName: "key", Operator: structured.ConditionGt, Value: []string{"0"}}}},
@@ -259,6 +261,7 @@ func TestFormatFactory_Query(t *testing.T) {
 			expected: `{"query":{"bool":{"should":[{"bool":{"must":{"wildcard":{"mixed_text":{"value":"*INFO*"}}},"filter":{"terms":{"_index":["logs-b"]}}}},{"bool":{"must":{"wildcard":{"mixed_text":{"value":"*info*","case_insensitive":true}}},"must_not":{"terms":{"_index":["logs-b"]}}}}]}}}`,
 		},
 		"排除条件按各索引的分词规则匹配": {
+			settings: map[string]any{},
 			conditions: metadata.AllConditions{{{
 				DimensionName: "mixed_text", Operator: structured.ConditionNotContains, IsWildcard: true, Value: []string{"*INFO*"},
 			}}},
@@ -274,6 +277,32 @@ func TestFormatFactory_Query(t *testing.T) {
 			}}},
 			expected: `{"query":{"wildcard":{"named_text":{"value":"*err*"}}}}`,
 		},
+		"仅有 mapping 时保留自定义和默认分析器的输入模式": {
+			// IndexGet 回退到 _mapping 时，索引可以覆盖任何名称的分析器。
+			conditions: metadata.AllConditions{{
+				{DimensionName: "fallback_text", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*INFO*"}},
+				{DimensionName: "text", Operator: structured.ConditionNotContains, IsWildcard: true, Value: []string{"*INFO*"}},
+				{DimensionName: "language_text", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*ERR*"}},
+			}},
+			expected: `{"query":{"bool":{"must":[{"query_string":{"default_field":"fallback_text","query":"*INFO*"}},{"bool":{"must_not":{"query_string":{"default_field":"text","analyzer":"default","query":"*INFO*"}}}},{"wildcard":{"language_text":{"value":"*ERR*"}}}]}}}`,
+		},
+		"keyword 子字段区分显式通配符与包含条件的字面星号": {
+			conditions: metadata.AllConditions{{
+				{DimensionName: "record.raw", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*INFO*"}},
+				{DimensionName: "record.raw", Operator: structured.ConditionContains, Value: []string{"a*b"}},
+			}},
+			expected: `{"query":{"bool":{"must":[{"wildcard":{"record.raw":{"value":"*INFO*"}}},{"wildcard":{"record.raw":{"value":"*a\\*b*"}}}]}}}`,
+		},
+		"别名按本索引的 keyword 子字段匹配": {
+			settings:   map[string]any{},
+			conditions: metadata.AllConditions{{{DimensionName: "alias_text", Operator: structured.ConditionNotContains, IsWildcard: true, Value: []string{"*INFO*"}}}},
+			expected:   `{"query":{"bool":{"must_not":{"bool":{"should":[{"bool":{"must":{"wildcard":{"alias_text":{"value":"*INFO*"}}},"filter":{"terms":{"_index":["logs-b"]}}}},{"bool":{"must":{"wildcard":{"alias_text":{"value":"*info*"}}},"must_not":{"terms":{"_index":["logs-b"]}}}}]}}}}}`,
+		},
+		"keyword 映射先出现时保留混合字段的显式通配符": {
+			settings:   map[string]any{},
+			conditions: metadata.AllConditions{{{DimensionName: "record.reverse", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*INFO*"}}}},
+			expected:   `{"query":{"bool":{"should":[{"bool":{"must":{"wildcard":{"record.reverse":{"value":"*info*"}}},"filter":{"terms":{"_index":["logs-b"]}}}},{"bool":{"must":{"wildcard":{"record.reverse":{"value":"*INFO*"}}},"must_not":{"terms":{"_index":["logs-b"]}}}}]}}}`,
+		},
 		"过滤器顺序决定最终词条的大小写": {
 			settings: map[string]any{"analysis": map[string]any{
 				"filter": map[string]any{"caps": map[string]any{"type": "uppercase"}},
@@ -287,6 +316,25 @@ func TestFormatFactory_Query(t *testing.T) {
 				{DimensionName: "lower_text", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*ERR*"}},
 			}},
 			expected: `{"query":{"bool":{"must":[{"wildcard":{"upper_text":{"value":"*ERR*"}}},{"wildcard":{"lower_text":{"value":"*err*"}}}]}}}`,
+			// _source 保留原文大小写，小写查询仍需在原文中高亮 ERR。
+			source:     map[string]any{"upper_text": "ERROR"},
+			highlights: map[string]any{"upper_text": []string{"<mark>ERR</mark>OR"}},
+		},
+		"自定义 keyword normalizer 按顺序处理原始大小写": {
+			settings: map[string]any{"analysis": map[string]any{
+				"filter":     map[string]any{"articles": map[string]any{"type": "elision", "articles": []string{"L"}, "articles_case": false}},
+				"normalizer": map[string]any{"city_fold": map[string]any{"type": "custom", "filter": []string{"articles", "lowercase"}}},
+			}},
+			conditions: metadata.AllConditions{{{DimensionName: "city", Operator: structured.ConditionContains, Value: []string{"L'AVION"}}}},
+			expected:   `{"query":{"query_string":{"default_field":"city","query":"*L'AVION*"}}}`,
+		},
+		"土耳其语 text 按索引语言处理字面冒号和斜线": {
+			settings: map[string]any{"analysis": map[string]any{
+				"filter":   map[string]any{"tr_lower": map[string]any{"type": "lowercase", "language": "turkish"}},
+				"analyzer": map[string]any{"tr_log": map[string]any{"type": "custom", "tokenizer": "keyword", "filter": []string{"tr_lower"}}},
+			}},
+			conditions: metadata.AllConditions{{{DimensionName: "language_text", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*IS/a:b*"}}}},
+			expected:   `{"query":{"query_string":{"default_field":"language_text","analyzer":"turkish","query":"*IS\\/a\\:b*"}}}`,
 		},
 		"土耳其语 normalizer 收到原始大写 I": {
 			settings: map[string]any{"analysis": map[string]any{
@@ -298,7 +346,7 @@ func TestFormatFactory_Query(t *testing.T) {
 			conditions: metadata.AllConditions{{{
 				DimensionName: "city", Operator: structured.ConditionContains, Value: []string{"IS"},
 			}}},
-			expected: `{"query":{"wildcard":{"city":{"value":"*IS*"}}}}`,
+			expected: `{"query":{"query_string":{"default_field":"city","query":"*IS*"}}}`,
 		},
 		"小写过滤器之后允许重写词条时查询原模式和小写模式": {
 			settings: map[string]any{"analysis": map[string]any{
@@ -316,7 +364,7 @@ func TestFormatFactory_Query(t *testing.T) {
 			conditions: metadata.AllConditions{{{
 				DimensionName: "lower_keyword", Operator: structured.ConditionContains, Value: []string{"A*B"},
 			}}},
-			expected: `{"query":{"wildcard":{"lower_keyword":{"value":"*a\\*b*"}}}}`,
+			expected: `{"query":{"query_string":{"default_field":"lower_keyword","query":"*A\\*B*"}}}`,
 		},
 		"保留大小写的字段与未知字段按原值匹配": {
 			settings: map[string]any{"index.version.created": "7130099"},
@@ -341,6 +389,7 @@ func TestFormatFactory_Query(t *testing.T) {
 			expected: `{"query":{"bool":{"must":[{"wildcard":{"named_text":{"value":"*INFO*"}}},{"wildcard":{"text":{"value":"*info*"}}}]}}}`,
 		},
 		"keyword and text check wildcard": {
+			settings: map[string]any{},
 			conditions: metadata.AllConditions{
 				{
 					{
@@ -1019,12 +1068,20 @@ func TestFormatFactory_Query(t *testing.T) {
 						"lower_text":     map[string]any{"type": "text", "analyzer": "lower_last"},
 						"city":           map[string]any{"type": "keyword", "normalizer": "city_fold"},
 						"lower_keyword":  map[string]any{"type": "keyword", "normalizer": "lowercase"},
+						"fallback_text":  map[string]any{"type": "text", "analyzer": "custom_ws"},
+						"language_text":  map[string]any{"type": "text", "analyzer": "tr_log", "search_analyzer": "keyword"},
+						"alias_text":     map[string]any{"type": "text"},
+						"record":         map[string]any{"properties": map[string]any{"reverse": map[string]any{"type": "keyword"}}},
 					},
 				},
 				{
 					"properties": map[string]any{
 						"mixed_keyword": map[string]any{"type": "long"},
 						"mixed_text":    map[string]any{"type": "text", "analyzer": "whitespace"},
+						"record": map[string]any{"type": "text", "fields": map[string]any{
+							"raw": map[string]any{"type": "keyword"}, "reverse": map[string]any{"type": "text"},
+						}},
+						"alias_text": map[string]any{"type": "alias", "path": "record.raw"},
 					},
 				},
 				{
@@ -1041,6 +1098,11 @@ func TestFormatFactory_Query(t *testing.T) {
 			}
 
 			fact := NewFormatFactory(ctx).WithFieldMap(iof.FieldsMap())
+			if c.source != nil {
+				labels := function.LabelMap(ctx, &metadata.Query{AllConditions: c.conditions})
+				highlighter := function.NewHighLightFactory(labels, iof.FieldsMap(), 0)
+				assert.Equal(t, c.highlights, highlighter.Process(c.source))
+			}
 			ss := elastic.NewSearchSource()
 			query, err := fact.Query(c.conditions)
 			assert.Nil(t, err)
@@ -1182,7 +1244,7 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"event":{"alias_name":"","field_name":"event","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"event","tokenize_on_chars":[]},"event.name":{"alias_name":"","field_name":"event.name","field_type":"text","is_agg":true,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"event","tokenize_on_chars":["-"]},"log_message":{"alias_name":"","field_name":"log_message","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"log_message","tokenize_on_chars":["-","\n"," "]},"value":{"alias_name":"","field_name":"value","field_type":"double","has_mixed_types":true,"is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"value","tokenize_on_chars":[]}}`,
+			expected: `{"event":{"alias_name":"","field_name":"event","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"event","tokenize_on_chars":[]},"event.name":{"alias_name":"","field_name":"event.name","field_type":"text","is_agg":true,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"event","tokenize_on_chars":["-"]},"log_message":{"alias_name":"","field_name":"log_message","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"log_message","tokenize_on_chars":["-","\n"," "]},"value":{"alias_name":"","field_name":"value","field_type":"double","has_mixed_types":true,"is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"value","tokenize_on_chars":[]},"log_message.raw":{"alias_name":"","field_name":"log_message.raw","field_type":"keyword","origin_field":"log_message","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]}}`,
 		},
 	}
 

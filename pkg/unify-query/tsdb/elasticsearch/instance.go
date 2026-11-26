@@ -342,8 +342,7 @@ func (i *Instance) fieldMapWithIndexFields(ctx context.Context, fieldAlias metad
 	for idx := len(indexes) - 1; idx >= 0; idx-- {
 		index := indexes[idx]
 		if in, ok := mappings[index]; ok && in != nil {
-			iof.ParseIndex(index, settings[index], in)
-			indexFields.fields[index] = mappingFieldNames(in)
+			indexFields.fields[index] = iof.ParseIndex(index, settings[index], in)
 		}
 	}
 
@@ -1012,7 +1011,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 	allFieldNames := lo.Keys(fieldMap)
 
 	filteredLabelNames := lo.Filter(allFieldNames, func(fieldName string, _ int) bool {
-		return !lo.Contains(ignoreLabelNames, fieldName)
+		return !fieldMap[fieldName].SearchOnly && !lo.Contains(ignoreLabelNames, fieldName)
 	})
 
 	sort.Strings(filteredLabelNames)

@@ -706,6 +706,9 @@ func HandlerFieldMap(c *gin.Context) {
 			}
 
 			for k, v := range res {
+				if v.SearchOnly {
+					continue
+				}
 				lock.Lock()
 				if _, ok := dataMap[k]; !ok {
 					keys = append(keys, k)

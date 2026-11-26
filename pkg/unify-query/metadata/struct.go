@@ -59,15 +59,19 @@ const (
 
 type FieldsMap map[string]FieldOption
 
-// WildcardCase 指定模式如何匹配某一物理索引中的词条。
-type WildcardCase uint8
+// WildcardCase 指定词条的大小写处理方式，也可以是 ES 内置分析器名称。
+type WildcardCase string
 
 const (
-	WildcardCaseFromField WildcardCase = iota // 兼容只提供字段类型及大小写标记的调用方
-	WildcardOriginal
-	WildcardLowercase
-	WildcardUppercase
-	WildcardOriginalAndLowercase
+	WildcardCaseFromField        WildcardCase = "" // 兼容只提供字段类型及大小写标记的调用方
+	WildcardOriginal             WildcardCase = "original"
+	WildcardLowercase            WildcardCase = "lowercase"
+	WildcardUppercase            WildcardCase = "uppercase"
+	WildcardOriginalAndLowercase WildcardCase = "original_and_lowercase"
+	WildcardFieldNormalization   WildcardCase = "field_normalization"
+	WildcardTurkish              WildcardCase = "turkish"
+	WildcardGreek                WildcardCase = "greek"
+	WildcardIrish                WildcardCase = "irish"
 )
 
 func (f FieldsMap) Field(k string) FieldOption {
@@ -89,6 +93,8 @@ type FieldOption struct {
 	IsAgg           bool   `json:"is_agg"`
 	IsAnalyzed      bool   `json:"is_analyzed"`
 	IsCaseSensitive bool   `json:"is_case_sensitive"`
+	// ES 别名、多字段和 runtime 字段可以用于查询，返回源字段列表时跳过。
+	SearchOnly bool `json:"-"`
 	// HasMixedTypes 表示跨索引同名字段的类型不一致，不能按单一类型优化查询。
 	HasMixedTypes bool `json:"has_mixed_types,omitempty"`
 	// IsCaseInsensitive 只在 mapping 明确证明 keyword/text 会 lowercase 时置 true。
@@ -99,6 +105,8 @@ type FieldOption struct {
 	// WildcardCase 来自首个映射，只为规则不同的物理索引记录分组。
 	WildcardCase        WildcardCase              `json:"-"`
 	WildcardIndexGroups map[WildcardCase][]string `json:"-"`
+	// 仅有 mapping 时，所有目标索引均为该字段声明了同名分析器，才可以显式使用它。
+	WildcardAnalyzer string `json:"-"`
 	// WildcardCaseInsensitive 表示目标 ES 版本是否支持 wildcard.case_insensitive 参数。
 	WildcardCaseInsensitive bool     `json:"wildcard_case_insensitive,omitempty"`
 	TokenizeOnChars         []string `json:"tokenize_on_chars"`

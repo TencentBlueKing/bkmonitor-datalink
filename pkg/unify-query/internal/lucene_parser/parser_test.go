@@ -386,10 +386,22 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			dsl:   `{"regexp":{"case_sensitive_log":{"value":".*SSR_REQUEST_ERROR.*"}}}`,
 		},
 		{
-			name:  "混合大小写语义字段的正则同时保留原始和 lower pattern",
+			name:  "正则只在采用对应分词规则的物理索引匹配",
 			input: `mixed_log:/SSR_REQUEST_ERROR/`,
 			sql:   "`mixed_log` REGEXP 'SSR_REQUEST_ERROR'",
-			dsl:   `{"bool":{"should":[{"regexp":{"mixed_log":{"value":".*SSR_REQUEST_ERROR.*"}}},{"regexp":{"mixed_log":{"value":".*ssr_request_error.*"}}}]}}`,
+			dsl:   `{"bool":{"should":[{"bool":{"filter":{"terms":{"_index":["logs-a"]}},"must":{"regexp":{"mixed_log":{"value":".*ssr_request_error.*"}}}}},{"bool":{"must":{"regexp":{"mixed_log":{"value":".*SSR_REQUEST_ERROR.*"}}},"must_not":{"terms":{"_index":["logs-a"]}}}}]}}`,
+		},
+		{
+			name:  "历史字段元数据的混合正则保留原模式和小写模式",
+			input: `mixed_unnamed:/ERROR/`,
+			sql:   "`mixed_unnamed` REGEXP 'ERROR'",
+			dsl:   `{"bool":{"should":[{"regexp":{"mixed_unnamed":{"value":".*ERROR.*"}}},{"regexp":{"mixed_unnamed":{"value":".*error.*"}}}]}}`,
+		},
+		{
+			name:  "土耳其语通配符和正则均使用语言分析器",
+			input: `tr_log: *ERR* OR tr_log:/ISP/`,
+			sql:   "`tr_log` LIKE '%ERR%' OR `tr_log` REGEXP 'ISP'",
+			dsl:   `{"bool":{"should":[{"query_string":{"analyzer":"turkish","default_field":"tr_log","query":"*ERR*"}},{"query_string":{"analyzer":"turkish","default_field":"tr_log","query":"/.*ISP.*/"}}]}}`,
 		},
 		{
 			name:  "大小写不敏感字段的不包含正则 lower 后保持反向语义",
@@ -451,6 +463,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			FieldType:               "text",
 		},
 		"mixed_unnamed": {FieldType: "text", IsAnalyzed: true, IsMixedCaseSensitivity: true},
+		"tr_log":        {FieldType: "text", IsAnalyzed: true, WildcardCase: metadata.WildcardTurkish},
 		"__ext.container_name": {
 			AliasName: "container_name",
 			FieldType: "text",

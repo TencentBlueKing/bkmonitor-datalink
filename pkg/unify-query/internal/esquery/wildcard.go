@@ -13,6 +13,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"unicode"
 
 	elastic "github.com/olivere/elastic/v7"
 	"github.com/spf13/cast"
@@ -22,14 +23,36 @@ import (
 
 // Wildcard 按字段的索引规则构造通配符查询，供结构化条件和 Lucene 表达式共用。
 func Wildcard(field, value string, option metadata.FieldOption, boost string) elastic.Query {
+	return termPattern{field: field, value: value, boost: boost}.query(option)
+}
+
+// Regexp 为 Lucene 正则选择与同一字段通配符一致的索引范围和大小写规则。
+func Regexp(field, value string, option metadata.FieldOption, boost string) elastic.Query {
+	return termPattern{field: field, value: value, boost: boost, isRegexp: true}.query(option)
+}
+
+type termPattern struct {
+	field, value, boost string
+	isRegexp            bool
+}
+
+func (p termPattern) query(option metadata.FieldOption) elastic.Query {
+	if option.WildcardAnalyzer != "" {
+		return p.analyzedQuery(option.WildcardAnalyzer)
+	}
 	mode := option.WildcardCase
 	if mode == metadata.WildcardCaseFromField {
 		mode = metadata.WildcardOriginal
-		if !option.IsMixedCaseSensitivity && option.ShouldLowercaseTermPattern() {
-			mode = metadata.WildcardLowercase
+		if option.ShouldLowercaseTermPattern() {
+			if !option.IsMixedCaseSensitivity {
+				mode = metadata.WildcardLowercase
+			} else if p.isRegexp {
+				// 旧字段元数据没有物理索引名，保留 Lucene 正则原有的双模式。
+				mode = metadata.WildcardOriginalAndLowercase
+			}
 		}
 	}
-	base := wildcardForCase(field, value, mode, option.WildcardCaseInsensitive, boost)
+	base := p.forCase(mode, option.WildcardCaseInsensitive)
 	if len(option.WildcardIndexGroups) == 0 {
 		return base
 	}
@@ -40,38 +63,110 @@ func Wildcard(field, value string, option metadata.FieldOption, boost string) el
 	for _, otherMode := range slices.Sorted(maps.Keys(option.WildcardIndexGroups)) {
 		indexes := elastic.NewTermsQueryFromStrings("_index", option.WildcardIndexGroups[otherMode]...)
 		remainder.MustNot(indexes)
-		pattern := wildcardForCase(field, value, otherMode, option.WildcardCaseInsensitive, boost)
+		pattern := p.forCase(otherMode, option.WildcardCaseInsensitive)
 		query.Should(elastic.NewBoolQuery().Must(pattern).Filter(indexes))
 	}
 	return query.Should(remainder)
 }
 
-func wildcardForCase(field, value string, mode metadata.WildcardCase, caseInsensitive bool, boost string) elastic.Query {
+func (p termPattern) forCase(mode metadata.WildcardCase, caseInsensitive bool) elastic.Query {
 	switch mode {
 	case metadata.WildcardLowercase:
 		// ES 的 case_insensitive 只处理 ASCII，索引的 lowercase 过滤器也处理 Unicode。
-		return boostedWildcardQuery(field, strings.ToLower(value), caseInsensitive, boost)
+		return p.termQuery(strings.ToLower(p.value), caseInsensitive)
 	case metadata.WildcardUppercase:
-		return boostedWildcardQuery(field, strings.ToUpper(value), caseInsensitive, boost)
+		return p.termQuery(strings.ToUpper(p.value), caseInsensitive)
 	case metadata.WildcardOriginalAndLowercase:
-		lower := strings.ToLower(value)
-		folded := boostedWildcardQuery(field, lower, caseInsensitive, boost)
-		if lower == value {
+		lower := strings.ToLower(p.value)
+		folded := p.termQuery(lower, caseInsensitive)
+		if lower == p.value {
 			return folded
 		}
-		return elastic.NewBoolQuery().Should(boostedWildcardQuery(field, value, false, boost), folded)
+		return elastic.NewBoolQuery().Should(p.termQuery(p.value, false), folded)
+	case metadata.WildcardOriginal:
+		return p.termQuery(p.value, false)
+	case metadata.WildcardFieldNormalization:
+		// 仅有 mapping 或旧 ES 时，用字段分析器处理字面片段。ES 6 的 wildcard 会把星号也送进 keyword normalizer。
+		if !p.isRegexp && !caseInsensitive {
+			return p.analyzedQuery("")
+		}
+		return p.termQuery(p.value, false)
 	default:
-		return boostedWildcardQuery(field, value, false, boost)
+		return p.analyzedQuery(string(mode))
 	}
 }
 
-func boostedWildcardQuery(field, value string, caseInsensitive bool, boost string) *elastic.WildcardQuery {
-	query := elastic.NewWildcardQuery(field, value)
+func (p termPattern) termQuery(value string, caseInsensitive bool) elastic.Query {
+	if p.isRegexp {
+		query := elastic.NewRegexpQuery(p.field, value)
+		if p.boost != "" {
+			query.Boost(cast.ToFloat64(p.boost))
+		}
+		return query
+	}
+	query := elastic.NewWildcardQuery(p.field, value)
 	if caseInsensitive {
 		query.CaseInsensitive(true)
 	}
-	if boost != "" {
-		query.Boost(cast.ToFloat64(boost))
+	if p.boost != "" {
+		query.Boost(cast.ToFloat64(p.boost))
 	}
 	return query
+}
+
+func (p termPattern) analyzedQuery(analyzer string) elastic.Query {
+	query := elastic.NewQueryStringQuery(queryStringPattern(p.value, p.isRegexp)).DefaultField(p.field)
+	if analyzer != "" {
+		query.Analyzer(analyzer)
+	}
+	if p.boost != "" {
+		query.Boost(cast.ToFloat64(p.boost))
+	}
+	return query
+}
+
+// Lucene 正则中的这三个字符在 query_string 的普通通配符中都是字面字符。
+var regexpLiterals = strings.NewReplacer(".", "\\.", "@", "\\@", "#", "\\#")
+
+// queryStringPattern 将整个输入限定为单个模式，保留通配符、字面字符和正则分隔符的转义。
+func queryStringPattern(value string, isRegexp bool) string {
+	var expr strings.Builder
+	escaped, wildcard := false, false
+	if isRegexp {
+		expr.WriteByte('/')
+		for _, r := range value {
+			if r == '/' && !escaped {
+				expr.WriteByte('\\')
+			}
+			expr.WriteRune(r)
+			escaped = r == '\\' && !escaped
+		}
+		expr.WriteByte('/')
+		return expr.String()
+	}
+	for _, r := range value {
+		if !escaped && r == '\\' {
+			escaped = true
+			continue
+		}
+		if !escaped && (r == '*' || r == '?') {
+			wildcard = true
+		} else if unicode.IsSpace(r) || strings.ContainsRune("+-=&|!(){}[]^\"~*?:\\/<>", r) {
+			expr.WriteByte('\\')
+		}
+		expr.WriteRune(r)
+		escaped = false
+	}
+	if escaped {
+		expr.WriteString("\\\\")
+	}
+	if !wildcard {
+		// 没有通配符时仍需查询完整词条，避免转成经过分词的普通文本查询。
+		return "/" + regexpLiterals.Replace(expr.String()) + "/"
+	}
+	if value == "*" {
+		// query_string 把单个 * 解释为字段存在。** 保留通配符的词条语义。
+		return "**"
+	}
+	return expr.String()
 }

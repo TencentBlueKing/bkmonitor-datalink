@@ -85,7 +85,7 @@ func TestIndexFormatFieldMap(t *testing.T) {
 					},
 				},
 			},
-			fieldMap: `{"case_sensitivity_test":{"alias_name":"","field_name":"case_sensitivity_test","field_type":"text","origin_field":"case_sensitivity_test","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":["-","\n"," "]},"event":{"alias_name":"","field_name":"event","field_type":"nested","origin_field":"event","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"event.name":{"alias_name":"","field_name":"event.name","field_type":"text","origin_field":"event","is_agg":true,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":["-"]},"log_message":{"alias_name":"","field_name":"log_message","field_type":"text","origin_field":"log_message","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":["-","\n"," "]},"value":{"alias_name":"","field_name":"value","field_type":"double","origin_field":"value","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]}}`,
+			fieldMap: `{"case_sensitivity_test":{"alias_name":"","field_name":"case_sensitivity_test","field_type":"text","origin_field":"case_sensitivity_test","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":["-","\n"," "]},"event":{"alias_name":"","field_name":"event","field_type":"nested","origin_field":"event","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"event.name":{"alias_name":"","field_name":"event.name","field_type":"text","origin_field":"event","is_agg":true,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":["-"]},"log_message":{"alias_name":"","field_name":"log_message","field_type":"text","origin_field":"log_message","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":["-","\n"," "]},"value":{"alias_name":"","field_name":"value","field_type":"double","origin_field":"value","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"log_message.raw":{"alias_name":"","field_name":"log_message.raw","field_type":"keyword","origin_field":"log_message","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]}}`,
 		},
 		{
 			name: "nested_index_structure",
@@ -255,7 +255,7 @@ func TestIndexFormatFieldMap(t *testing.T) {
 			fieldMap: `{"default_text":{"alias_name":"","field_name":"default_text","field_type":"text","origin_field":"default_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":[]}}`,
 		},
 		{
-			name:     "缺少 analyzer settings 时保留旧版 lower fallback",
+			name:     "未定义的分析器保留原模式",
 			settings: map[string]any{},
 			mappings: map[string]any{
 				"properties": map[string]any{
@@ -265,7 +265,7 @@ func TestIndexFormatFieldMap(t *testing.T) {
 					},
 				},
 			},
-			fieldMap: `{"custom_text":{"alias_name":"","field_name":"custom_text","field_type":"text","origin_field":"custom_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]}}`,
+			fieldMap: `{"custom_text":{"alias_name":"","field_name":"custom_text","field_type":"text","origin_field":"custom_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":[]}}`,
 		},
 		{
 			name: "根据索引版本判断是否支持 wildcard case_insensitive",
@@ -336,7 +336,7 @@ func TestIndexFormatMixedCaseSensitivityAcrossIndices(t *testing.T) {
 			"log": map[string]any{"type": "text"},
 		},
 	}
-	iof.ParseIndex("fold-a", nil, mappings)
+	iof.ParseIndex("fold-a", map[string]any{}, mappings)
 	iof.ParseIndex("raw", map[string]any{
 		"index": map[string]any{
 			"version": map[string]any{"created": "7090099"},

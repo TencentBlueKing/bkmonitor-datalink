@@ -11,6 +11,7 @@ package structured
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 )
 
 const (
@@ -100,25 +102,80 @@ func (c *ConditionField) String() string {
 	return fmt.Sprintf("dimension_name->[%s] op->[%s] value->[%s]", c.DimensionName, c.Operator, c.Value)
 }
 
-// ToPromOperator
-func (c *ConditionField) ToPromOperator() labels.MatchType {
+// 渲染成 Prometheus 标签匹配器的几条路径，作为不支持算子错误和计数里的存储名。
+const (
+	ConditionStorageVM       = metadata.VictoriaMetricsStorageType
+	ConditionStorageInfluxDB = metadata.InfluxDBStorageType
+	// ConditionStoragePromQL 是把结构化条件转成 PromQL 文本的路径（struct_to_promql、check、表标签路由选择器）。
+	ConditionStoragePromQL = "promql"
+)
+
+// UnsupportedConditionOperatorError 是某条渲染路径没有对应写法的条件算子。
+type UnsupportedConditionOperatorError struct {
+	Operator string
+	Storage  string
+}
+
+func (e *UnsupportedConditionOperatorError) Error() string {
+	return fmt.Sprintf("condition operator %q is not supported on %s", e.Operator, e.Storage)
+}
+
+func (e *UnsupportedConditionOperatorError) Unwrap() error {
+	return ErrUnsupportedConditionOperator
+}
+
+// ToPromOperator 返回条件在 Prometheus 标签匹配器上的类型，storage 只用于错误信息。
+// 只认 eq、exact、ne、contains、ncontains、req、nreq；existed、nexisted 由 ContainsToPromReg
+// 或 ConvertToPromBuffer 先改写成对空串的不等于、等于。其余算子（包括 gt、gte、lt、lte）
+// 返回 *UnsupportedConditionOperatorError：按等于渲染会静默选错序列。
+func (c *ConditionField) ToPromOperator(storage string) (labels.MatchType, error) {
 	switch c.Operator {
-	case ConditionEqual:
-		return labels.MatchEqual
+	case ConditionEqual, ConditionExact:
+		return labels.MatchEqual, nil
 	case ConditionNotEqual:
-		return labels.MatchNotEqual
+		return labels.MatchNotEqual, nil
 	case ConditionContains:
 		// 包含的过滤条件，改为使用正则，然后多个条件用正则竖线分割提供
-		return labels.MatchRegexp
+		return labels.MatchRegexp, nil
 	case ConditionNotContains:
-		return labels.MatchNotRegexp
+		return labels.MatchNotRegexp, nil
 	case ConditionRegEqual:
-		return labels.MatchRegexp
+		return labels.MatchRegexp, nil
 	case ConditionNotRegEqual:
-		return labels.MatchNotRegexp
+		return labels.MatchNotRegexp, nil
 	default:
-		return labels.MatchEqual
+		return labels.MatchEqual, &UnsupportedConditionOperatorError{Operator: c.Operator, Storage: storage}
 	}
+}
+
+// reportUnsupportedConditionOperator 给不支持的算子计数后原样返回 err。只在错误返回给请求方的地方调用：
+// 渲染函数本身不计数，因为 VM 和 InfluxDB 两种渲染对所有存储都会做。
+func reportUnsupportedConditionOperator(ctx context.Context, err error) error {
+	var unsupported *UnsupportedConditionOperatorError
+	if errors.As(err, &unsupported) {
+		metric.ConditionOperatorUnsupportedAdd(ctx, unsupported.Operator, unsupported.Storage)
+		metadata.NewMessage(
+			metadata.MsgParserUnifyQuery,
+			"条件算子 %s 在 %s 上不支持",
+			unsupported.Operator, unsupported.Storage,
+		).Warn(ctx)
+	}
+	return err
+}
+
+// existenceToEmptyMatch 把 existed、nexisted 改写成对空串的不等于、等于，忽略原来的值。
+// PromQL 和 InfluxQL 都把缺失的标签当作空串：k!="" 选出带 k 的序列，k="" 选出不带 k 的序列。
+func (c *ConditionField) existenceToEmptyMatch() bool {
+	switch c.Operator {
+	case ConditionExisted:
+		c.Operator = ConditionNotEqual
+	case ConditionNotExisted:
+		c.Operator = ConditionEqual
+	default:
+		return false
+	}
+	c.Value = []string{""}
+	return true
 }
 
 func (c *ConditionField) BkSql() *ConditionField {
@@ -158,6 +215,11 @@ func (c *ConditionField) BkSql() *ConditionField {
 
 // ContainsToPromReg 将结构化查询中的contains条件改为 正则 "x|y" 的方式
 func (c *ConditionField) ContainsToPromReg() *ConditionField {
+	// existed、nexisted 不看值，值为空时也要渲染
+	if c.existenceToEmptyMatch() {
+		return c
+	}
+
 	// value 个数为 0, 不处理
 	if len(c.Value) == 0 {
 		return c
@@ -166,7 +228,7 @@ func (c *ConditionField) ContainsToPromReg() *ConditionField {
 	// value 个数为 1, 转换为 等于/不等于, 效率最高
 	if len(c.Value) == 1 {
 		switch c.Operator {
-		case ConditionContains:
+		case ConditionContains, ConditionExact:
 			c.Operator = ConditionEqual
 		case ConditionNotContains:
 			c.Operator = ConditionNotEqual
@@ -177,7 +239,7 @@ func (c *ConditionField) ContainsToPromReg() *ConditionField {
 	isRegx := false
 	// value 个数大于 1，转换为正则表达式处理
 	switch c.Operator {
-	case ConditionEqual:
+	case ConditionEqual, ConditionExact:
 		c.Operator = ConditionRegEqual
 	case ConditionNotEqual:
 		c.Operator = ConditionNotRegEqual
@@ -189,6 +251,9 @@ func (c *ConditionField) ContainsToPromReg() *ConditionField {
 		isRegx = true
 	case ConditionNotRegEqual:
 		isRegx = true
+	default:
+		// 不认识的算子原样保留，由 ToPromOperator 报错；按等于拼成 ^(a|b)$ 会什么都匹配不上
+		return c
 	}
 
 	// 防止contains中含有特殊字符，导致错误的正则匹配，需要预先转义一下

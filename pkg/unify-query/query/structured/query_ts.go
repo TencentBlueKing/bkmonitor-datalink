@@ -1150,11 +1150,30 @@ func queryCostDuration(value string) time.Duration {
 	return time.Duration(duration)
 }
 
+// ConditionRenderErrors 是条件渲染成 InfluxQL 条件和 VM 选择器时遇到的不支持算子。两种渲染对所有存储都会做，
+// 错误只在查询最终落到对应存储时返回（buildStorageQuery），ES、Doris、BkSql 等存储不受影响。
+type ConditionRenderErrors struct {
+	InfluxDB error
+	VM       error
+}
+
+// ForStorage 返回 storageType 对应渲染路径上的错误。
+func (e ConditionRenderErrors) ForStorage(storageType string) error {
+	switch storageType {
+	case metadata.VictoriaMetricsStorageType:
+		return e.VM
+	case metadata.InfluxDBStorageType:
+		return e.InfluxDB
+	default:
+		return nil
+	}
+}
+
 func (q *Query) BuildMetadataQuery(
 	ctx context.Context,
 	tsDB *queryMod.TsDBV2,
 	queryConditions [][]ConditionField,
-) *metadata.Query {
+) (*metadata.Query, ConditionRenderErrors) {
 	var (
 		field        string
 		fields       []string
@@ -1171,6 +1190,7 @@ func (q *Query) BuildMetadataQuery(
 			},
 		}
 		allCondition AllConditions
+		renderErrs   ConditionRenderErrors
 		err          error
 	)
 
@@ -1192,14 +1212,15 @@ func (q *Query) BuildMetadataQuery(
 				"offset %s 格式异常 %s",
 				q.Offset, err.Error(),
 			).Warn(ctx)
-			return nil
+			return nil, renderErrs
 		}
 		query.OffsetInfo.OffSet = time.Duration(dTmp)
 	}
 
 	if len(queryConditions) > 0 {
 		// influxdb 查询特殊处理逻辑
-		influxdbConditions := ConvertToPromBuffer(queryConditions)
+		influxdbConditions, influxErr := ConvertToPromBuffer(queryConditions)
+		renderErrs.InfluxDB = influxErr
 		if len(influxdbConditions) > 0 {
 			whereList.Append(
 				promql.AndOperator,
@@ -1281,11 +1302,16 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	if len(filterConditions) > 0 {
+		// 空间过滤条件都是 eq，渲染不会失败
+		filterBuffer, filterErr := ConvertToPromBuffer(filterConditions)
+		if renderErrs.InfluxDB == nil {
+			renderErrs.InfluxDB = filterErr
+		}
 		whereList.Append(
 			promql.AndOperator,
 			promql.NewTextWhere(
 				promql.MakeOrExpression(
-					ConvertToPromBuffer(filterConditions),
+					filterBuffer,
 				),
 			),
 		)
@@ -1329,7 +1355,7 @@ func (q *Query) BuildMetadataQuery(
 
 	query.AllConditions = allCondition.MetaDataAllConditions()
 	query.Condition = whereList.String()
-	query.VmCondition, query.VmConditionNum = allCondition.VMString(query.VmRt, vmMetric, q.IsRegexp)
+	query.VmCondition, query.VmConditionNum, renderErrs.VM = allCondition.VMString(query.VmRt, vmMetric, q.IsRegexp)
 
 	// 写入 ES / Doris 所需内容
 	query.SQL = q.SQL
@@ -1354,7 +1380,7 @@ func (q *Query) BuildMetadataQuery(
 	jsonString, _ := json.Marshal(query)
 	span.Set("query-json", jsonString)
 
-	return query
+	return query, renderErrs
 }
 
 func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (parser.Expr, error) {

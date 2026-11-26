@@ -249,7 +249,8 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 				assert.Equal(t, columnLength, len(testResult[row]), "row->[%d] assert column failed", row)
 			}
 
-			vmCondition, _ := testResult.VMString("table_id", "", false)
+			vmCondition, _, err := testResult.VMString("table_id", "", false)
+			assert.NoError(t, err)
 			assert.Equal(t, testCase.vm, vmCondition)
 
 			sqlCondtion := testResult.BkSql()
@@ -511,7 +512,8 @@ func TestConditionFieldOperatorToProm(t *testing.T) {
 	}
 
 	for _, data := range testData {
-		o := data.testData.ToPromOperator()
+		o, err := data.testData.ToPromOperator(ConditionStorageVM)
+		assert.NoError(t, err)
 		assert.Equal(t, o, data.exceptData, "test with op->[%s]", data.testData.Operator)
 	}
 }
@@ -928,7 +930,8 @@ func TestAllConditions_VMString(t *testing.T) {
 		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
-			actual, _ := c.allConditions.VMString(c.rt, c.metric, c.isRegex)
+			actual, _, err := c.allConditions.VMString(c.rt, c.metric, c.isRegex)
+			assert.NoError(t, err)
 			assert.Equal(t, c.vmCondition, actual)
 		})
 	}

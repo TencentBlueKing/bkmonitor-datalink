@@ -20,6 +20,7 @@ var (
 
 	ErrFieldAndConditionListNotMatch = errors.New("field list and condition list is not match")
 	ErrUnknownConditionOperator      = errors.New("unknown condition operator")
+	ErrUnsupportedConditionOperator  = errors.New("unsupported condition operator")
 	ErrNotAllowedReferenceNameFormat = errors.New("wrong reference name format,which start with _")
 	ErrAggMethodNotFound             = errors.New("cannot found aggregate method")
 	ErrExprNotAllow                  = errors.New("expr not allow")

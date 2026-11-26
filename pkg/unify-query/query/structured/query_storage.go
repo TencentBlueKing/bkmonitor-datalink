@@ -30,7 +30,7 @@ func (q *Query) buildStorageQuery(
 	aggregates metadata.Aggregates,
 	allConditions AllConditions,
 ) (*metadata.Query, error) {
-	query := q.BuildMetadataQuery(ctx, tsDB, allConditions)
+	query, renderErrs := q.BuildMetadataQuery(ctx, tsDB, allConditions)
 	if query == nil {
 		return nil, nil
 	}
@@ -85,6 +85,11 @@ func (q *Query) buildStorageQuery(
 		} else {
 			query.StorageType = metadata.InfluxDBStorageType
 		}
+	}
+	// 存储类型到这里才确定：条件里有该存储渲染不了的算子（如 VM、InfluxDB 上的 gt）时整条查询报错，
+	// 不按等于渲染后返回错的序列。
+	if err := renderErrs.ForStorage(query.StorageType); err != nil {
+		return nil, reportUnsupportedConditionOperator(ctx, err)
 	}
 	if query.StorageType == metadata.VictoriaMetricsStorageType {
 		// VM 指标名称包含字段名，相关函数参数和 __name__ 条件同步转换。

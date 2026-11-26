@@ -35,7 +35,8 @@ func TestAllConditions_VMStringRoundTripsEveryValue(t *testing.T) {
 	for _, v := range values {
 		t.Run(v.value, func(t *testing.T) {
 			conditions := AllConditions{{{DimensionName: "path", Operator: v.operator, Value: []string{v.value}}}}
-			condition, _ := conditions.VMString("rt\n1", "metric\t1", false)
+			condition, _, err := conditions.VMString("rt\n1", "metric\t1", false)
+			require.NoError(t, err)
 
 			expr, err := metricsql.Parse(condition.ToMatch())
 			require.NoError(t, err, "condition %s does not parse", condition)

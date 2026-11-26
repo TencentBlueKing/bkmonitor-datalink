@@ -161,7 +161,11 @@ func (c *Conditions) ToProm() ([]*labels.Matcher, [][]ConditionField, error) {
 		}
 
 		// 否则，就先构建对应的labelMatcher信息
-		if label, err = labels.NewMatcher(c.ToPromOperator(), c.DimensionName, c.Value[0]); err != nil {
+		op, opErr := c.ToPromOperator(ConditionStoragePromQL)
+		if opErr != nil {
+			return nil, nil, reportUnsupportedConditionOperator(context.TODO(), opErr)
+		}
+		if label, err = labels.NewMatcher(op, c.DimensionName, c.Value[0]); err != nil {
 			err = metadata.NewMessage(
 				metadata.MsgParserPromQL,
 				"创建标签匹配器失败",
@@ -266,7 +270,9 @@ func (c AllConditions) BkSql() string {
 	return strings.Join(conditionsString, fmt.Sprintf(" %s ", promql.OrOperator))
 }
 
-func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.VmCondition, int) {
+// VMString 渲染 VM 的标签选择器。条件里有 VM 渲染不了的算子时返回 *UnsupportedConditionOperatorError，
+// 不计数：这里对所有存储都会渲染，只有查询最终落到 VM 时才由 buildStorageQuery 返回并计数。
+func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.VmCondition, int, error) {
 	var (
 		defaultLabels = make([]string, 0)
 		and           = ", "
@@ -286,7 +292,7 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.Vm
 	}
 
 	if len(c) == 0 {
-		return metadata.VmCondition(strings.Join(defaultLabels, and)), len(defaultLabels)
+		return metadata.VmCondition(strings.Join(defaultLabels, and)), len(defaultLabels), nil
 	}
 
 	num := 0
@@ -300,7 +306,11 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.Vm
 				continue
 			}
 
-			lbl = append(lbl, fmt.Sprintf("%s%s%s", nf.DimensionName, nf.ToPromOperator(), vmStringLiteral(nf.Value[0])))
+			op, err := nf.ToPromOperator(ConditionStorageVM)
+			if err != nil {
+				return "", 0, err
+			}
+			lbl = append(lbl, fmt.Sprintf("%s%s%s", nf.DimensionName, op, vmStringLiteral(nf.Value[0])))
 		}
 		for _, dl := range defaultLabels {
 			lbl = append(lbl, dl)
@@ -310,7 +320,7 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.Vm
 		vmLabels = append(vmLabels, strings.Join(lbl, and))
 	}
 
-	return metadata.VmCondition(strings.Join(vmLabels, or)), num
+	return metadata.VmCondition(strings.Join(vmLabels, or)), num, nil
 }
 
 // vmStringLiteral 把值写成 MetricsQL 的双引号字符串字面量。MetricsQL 用 strconv.Unquote
@@ -418,7 +428,12 @@ func (c AllConditions) MayMatchLabel(key, value string) (bool, error) {
 			originalOperator := field.Operator
 			originalValues := field.Value
 			field.ContainsToPromReg()
-			matcher, err := labels.NewMatcher(field.ToPromOperator(), key, field.Value[0])
+			op, opErr := field.ToPromOperator(ConditionStorageVM)
+			if opErr != nil {
+				// 上面已按白名单放行，不会走到这里；保持「未知操作不排除」
+				continue
+			}
+			matcher, err := labels.NewMatcher(op, key, field.Value[0])
 			if err != nil {
 				return false, err
 			}
@@ -586,7 +601,11 @@ func (c AllConditions) ToPromMatchers(ctx context.Context, encodeFunc func(strin
 			val = cf.Value[0]
 		}
 		name := encodeFunc(QueryBkLabelSelectorPrefix + cf.DimensionName)
-		m, err := labels.NewMatcher(cf.ToPromOperator(), name, val)
+		op, opErr := cf.ToPromOperator(ConditionStoragePromQL)
+		if opErr != nil {
+			return nil, reportUnsupportedConditionOperator(ctx, opErr)
+		}
+		m, err := labels.NewMatcher(op, name, val)
 		if err != nil {
 			return nil, metadata.NewMessage(
 				metadata.MsgParserPromQL,
@@ -598,8 +617,9 @@ func (c AllConditions) ToPromMatchers(ctx context.Context, encodeFunc func(strin
 	return out, nil
 }
 
-// ConvertToPromBuffer
-func ConvertToPromBuffer(totalBuffer [][]ConditionField) [][]promql.ConditionField {
+// ConvertToPromBuffer 把条件转成 InfluxQL 的 where 条件。条件里有 InfluxDB 渲染不了的算子时返回
+// *UnsupportedConditionOperatorError，不计数，理由同 VMString。
+func ConvertToPromBuffer(totalBuffer [][]ConditionField) ([][]promql.ConditionField, error) {
 	var promBuffer [][]promql.ConditionField
 	promBuffer = make([][]promql.ConditionField, 0, len(totalBuffer))
 	for _, buf := range totalBuffer {
@@ -611,6 +631,8 @@ func ConvertToPromBuffer(totalBuffer [][]ConditionField) [][]promql.ConditionFie
 				continue
 			}
 
+			// existed、nexisted 改写成 "k"!='' 和 "k"=''：InfluxDB 把缺失的 tag 当作空值
+			item.existenceToEmptyMatch()
 			// contain和notcontiain，对应将operator转为eq和neq就行了,实际的信息以value为准即可
 			if item.Operator == Contains {
 				item.Operator = "eq"
@@ -618,10 +640,14 @@ func ConvertToPromBuffer(totalBuffer [][]ConditionField) [][]promql.ConditionFie
 			if item.Operator == Ncontains {
 				item.Operator = "ne"
 			}
+			op, err := item.ToPromOperator(ConditionStorageInfluxDB)
+			if err != nil {
+				return nil, err
+			}
 			fieldList = append(
 				fieldList,
 				promql.ConditionField{
-					DimensionName: item.DimensionName, Value: item.Value, Operator: item.ToPromOperator().String(),
+					DimensionName: item.DimensionName, Value: item.Value, Operator: op.String(),
 				},
 			)
 		}
@@ -629,7 +655,7 @@ func ConvertToPromBuffer(totalBuffer [][]ConditionField) [][]promql.ConditionFie
 			promBuffer = append(promBuffer, fieldList)
 		}
 	}
-	return promBuffer
+	return promBuffer, nil
 }
 
 // GetRequiredFiled: 从conditions中过滤出bk_biz_id, bcs_cluster, project_id

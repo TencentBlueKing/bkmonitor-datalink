@@ -28,6 +28,7 @@ import (
 
 func TestFormatFactory_Query(t *testing.T) {
 	for name, c := range map[string]struct {
+		settings   map[string]any
 		conditions metadata.AllConditions
 		expected   string
 	}{
@@ -234,6 +235,56 @@ func TestFormatFactory_Query(t *testing.T) {
 				},
 			},
 			expected: `{"query":{"nested":{"query":{"bool":{"must":[{"bool":{"should":[{"wildcard":{"nested1.key":{"value":"*val\\*-1*"}}},{"wildcard":{"nested1.key":{"value":"*val\\*-2*"}}}]}},{"match_phrase":{"nested1.key":{"query":"val-3"}}},{"exists":{"field":"nested1.key"}}]}},"path":"nested1"}}}`,
+		},
+		"标准分词字段的通配符覆盖大写输入和 Unicode": {
+			settings: map[string]any{"index.version.created": "7130099"},
+			conditions: metadata.AllConditions{{{
+				DimensionName: "text", Operator: structured.ConditionContains, IsWildcard: true,
+				Value: []string{"*INFO*", "*ÄRGER?"},
+			}}},
+			expected: `{"query":{"bool":{"should":[{"wildcard":{"text":{"value":"*info*","case_insensitive":true}}},{"wildcard":{"text":{"value":"*ärger?","case_insensitive":true}}}]}}}`,
+		},
+		"旧版索引上的否定通配符只用小写匹配词条": {
+			settings: map[string]any{"index.version.created": "6082399"},
+			conditions: metadata.AllConditions{{{
+				DimensionName: "text", Operator: structured.ConditionNotContains, IsWildcard: true, Value: []string{"*INFO*"},
+			}}},
+			expected: `{"query":{"bool":{"must_not":{"wildcard":{"text":{"value":"*info*"}}}}}}`,
+		},
+		"同名字段的索引分词规则不同时覆盖两种词条": {
+			settings: map[string]any{"index.version.created": "7130099"},
+			conditions: metadata.AllConditions{{{
+				DimensionName: "mixed_text", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*INFO*"},
+			}}},
+			expected: `{"query":{"bool":{"should":[{"wildcard":{"mixed_text":{"value":"*INFO*"}}},{"wildcard":{"mixed_text":{"value":"*info*"}}}]}}}`,
+		},
+		"包含条件保留 keyword 的字面星号并应用 lowercase normalizer": {
+			conditions: metadata.AllConditions{{{
+				DimensionName: "lower_keyword", Operator: structured.ConditionContains, Value: []string{"A*B"},
+			}}},
+			expected: `{"query":{"wildcard":{"lower_keyword":{"value":"*a\\*b*"}}}}`,
+		},
+		"保留大小写的字段与未知字段按原值匹配": {
+			settings: map[string]any{"index.version.created": "7130099"},
+			conditions: metadata.AllConditions{{
+				{DimensionName: "sensitive_text", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*INFO*"}},
+				{DimensionName: "keyword_text", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*INFO*"}},
+				{DimensionName: "keyword", Operator: structured.ConditionContains, Value: []string{"INFO"}},
+				{DimensionName: "unknown", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*INFO*"}},
+			}},
+			expected: `{"query":{"bool":{"must":[{"wildcard":{"sensitive_text":{"value":"*INFO*"}}},{"wildcard":{"keyword_text":{"value":"*INFO*"}}},{"wildcard":{"keyword":{"value":"*INFO*"}}},{"wildcard":{"unknown":{"value":"*INFO*"}}}]}}}`,
+		},
+		"显式引用同名自定义分析器与使用索引默认分析器": {
+			settings: map[string]any{
+				"analysis": map[string]any{"analyzer": map[string]any{
+					"standard": map[string]any{"type": "custom", "tokenizer": "whitespace"},
+				}},
+			},
+			conditions: metadata.AllConditions{{
+				{DimensionName: "named_text", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*INFO*"}},
+				{DimensionName: "text", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*INFO*"}},
+			}},
+			expected: `{"query":{"bool":{"must":[{"wildcard":{"named_text":{"value":"*INFO*"}}},{"wildcard":{"text":{"value":"*info*"}}}]}}}`,
 		},
 		"keyword and text check wildcard": {
 			conditions: metadata.AllConditions{
@@ -906,11 +957,17 @@ func TestFormatFactory_Query(t *testing.T) {
 						"text": map[string]any{
 							"type": "text",
 						},
+						"sensitive_text": map[string]any{"type": "text", "analyzer": "whitespace"},
+						"named_text":     map[string]any{"type": "text", "analyzer": "standard"},
+						"keyword_text":   map[string]any{"type": "text", "analyzer": "keyword"},
+						"mixed_text":     map[string]any{"type": "text"},
+						"lower_keyword":  map[string]any{"type": "keyword", "normalizer": "lowercase"},
 					},
 				},
 				{
 					"properties": map[string]any{
 						"mixed_keyword": map[string]any{"type": "long"},
+						"mixed_text":    map[string]any{"type": "text", "analyzer": "whitespace"},
 					},
 				},
 				{
@@ -922,7 +979,7 @@ func TestFormatFactory_Query(t *testing.T) {
 
 			iof := NewIndexOptionFormat(nil)
 			for _, mapping := range mappings {
-				iof.Parse(nil, mapping)
+				iof.Parse(c.settings, mapping)
 			}
 
 			fact := NewFormatFactory(ctx).WithFieldMap(iof.FieldsMap())

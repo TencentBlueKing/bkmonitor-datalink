@@ -95,6 +95,11 @@ func (f FieldOption) Existed() bool {
 	return f.FieldType != ""
 }
 
+// ShouldLowercaseTermPattern 判断通配符或正则模式是否需要匹配小写词条。
+func (f FieldOption) ShouldLowercaseTermPattern() bool {
+	return f.Existed() && !f.IsCaseSensitive && (f.IsAnalyzed || f.IsCaseInsensitive)
+}
+
 type VmCondition string
 
 // VmQueryCluster holds VM query routing information returned by VM API response

@@ -228,13 +228,7 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 	case Text:
 		indexAnalyzer := cast.ToString(data[FormatPropertiesAnalyzer])
 		if indexAnalyzer == "" {
-			if _, ok := f.analyzer["default"]; ok {
-				// 字段未显式配置 analyzer 时，ES 会优先使用索引级 analysis.analyzer.default。
-				indexAnalyzer = "default"
-			} else {
-				// 索引也没有 default analyzer 时才回退到 ES 内置 standard analyzer。
-				indexAnalyzer = "standard"
-			}
+			indexAnalyzer = "default"
 		}
 
 		if analyzer := f.analyzer[indexAnalyzer]; analyzer != nil {
@@ -306,13 +300,16 @@ func (f *IndexOptionFormat) normalizerLowercases(name string) bool {
 
 // analyzerLowercases 判断 text 的索引 analyzer 是否会把 token 转成小写。
 func (f *IndexOptionFormat) analyzerLowercases(name string) bool {
-	if builtinAnalyzerLowercases(name) {
-		return true
-	}
-
 	analyzer := f.analyzer[name]
 	if analyzer == nil {
-		return !f.hasAnalysisSettings
+		switch name {
+		case "default":
+			// 没有配置索引默认分析器时，ES 使用内置 standard。
+			return true
+		case "keyword", "whitespace":
+			return false
+		}
+		return builtinAnalyzerLowercases(name) || !f.hasAnalysisSettings
 	}
 	analyzerType := cast.ToString(analyzer[AnalyzerKeyType])
 	if strings.EqualFold(analyzerType, "pattern") {

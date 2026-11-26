@@ -1111,7 +1111,8 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 						return nil
 					}
 					// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
-					fieldType := f.GetFieldType(key)
+					fieldOption := f.fieldsMap[key]
+					fieldType := fieldOption.FieldType
 					isExistsQuery := true
 					if fieldType == Text || fieldType == KeyWord {
 						isExistsQuery = false
@@ -1188,7 +1189,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 											query = elastic.NewMatchPhraseQuery(key, value)
 										}
 									} else {
-										query = elastic.NewWildcardQuery(key, value)
+										query = esquery.Wildcard(key, value, fieldOption, "")
 									}
 								case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
 									rewrite := esregexpcompat.Rewrite(value)

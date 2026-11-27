@@ -27,19 +27,10 @@ import (
 )
 
 type runningBinding struct {
-	errorReceiveChan chan error
-	TaskBinding
-	retryCount    int
-	reloadCount   int
-	startTime     time.Time
-	lastRetryTime time.Time
-	nextRetryTime time.Time
-	baseCtx       context.Context
-	baseCtxCancel context.CancelFunc
-	retryValid    bool
-
-	stateCheckerCtx    context.Context
-	stateCheckerCancel context.CancelFunc
+	ctx    context.Context
+	cancel context.CancelFunc
+	reload chan TaskBinding
+	done   chan struct{}
 }
 
 type RunMaintainerOptions struct {
@@ -126,142 +117,93 @@ func (r *RunMaintainer) handleAddTaskBinding(taskBinding TaskBinding) {
 		return
 	}
 
-	errorReceiveChan := make(chan error, 1)
-	// pass the context of the running instance for upper-level management
-	runInstanceCtx, runInstanceCtxCancel := context.WithCancel(r.ctx)
-	go define.Start(runInstanceCtx, errorReceiveChan, taskBinding.Payload)
-	checkerCtx, checkerCancel := context.WithCancel(r.ctx)
-	now := time.Now()
-	binding := &runningBinding{
-		baseCtx:          runInstanceCtx,
-		baseCtxCancel:    runInstanceCtxCancel,
-		errorReceiveChan: errorReceiveChan,
-		TaskBinding:      taskBinding,
-		retryCount:       0,
-		reloadCount:      0,
-		startTime:        now,
-		retryValid:       false,
-
-		stateCheckerCtx:    checkerCtx,
-		stateCheckerCancel: checkerCancel,
-	}
-	r.runningInstance.Store(taskBinding.UniId, binding)
-	go r.listenRunningState(taskBinding.UniId, errorReceiveChan, checkerCtx, define.GetTaskDimension(taskBinding.Payload))
-	logger.Infof(
-		"Binding(%s <------> %s) is discovered, task is started, payload: %s",
-		taskBinding.UniId, r.listenWorkerId, taskBinding.Payload,
-	)
+	ctx, cancel := context.WithCancel(r.ctx)
+	instance := &runningBinding{ctx: ctx, cancel: cancel, reload: make(chan TaskBinding), done: make(chan struct{})}
+	r.runningInstance.Store(taskBinding.UniId, instance)
+	go r.listenRunningState(instance, taskBinding, define)
+	logger.Infof("Binding(%s <------> %s) is discovered, task is started, payload: %s",
+		taskBinding.UniId, r.listenWorkerId, taskBinding.Payload)
 }
 
-func (r *RunMaintainer) listenRunningState(
-	taskUniId string, errorReceiveChan chan error, lifeline context.Context, taskDimension string,
-) {
-	retryTicker := &time.Ticker{}
-	errorChan := errorReceiveChan
+func (r *RunMaintainer) listenRunningState(instance *runningBinding, binding TaskBinding, define Operator) {
+	defer close(instance.done)
+	defer r.runningInstance.CompareAndDelete(binding.UniId, instance)
+	defer instance.cancel()
+
+	taskDimension := define.GetTaskDimension(binding.Payload)
 	runningTicker := time.NewTicker(30 * time.Second)
+	defer runningTicker.Stop()
 
-	tolerateInterval := 10 * time.Second
-	maxTolerateInterval := 15 * time.Minute
+	start := func() (chan error, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(instance.ctx)
+		errChan := make(chan error, 1)
+		go define.Start(ctx, errChan, binding.Payload)
+		return errChan, cancel
+	}
+	errChan, cancelAttempt := start()
+	defer func() { cancelAttempt() }()
 
-	for {
+	var retryTimer *time.Timer
+	var retry <-chan time.Time
+	defer func() {
+		if retryTimer != nil {
+			retryTimer.Stop()
+		}
+	}()
+	var retryCount, reloadCount int
+	for instance.ctx.Err() == nil {
+		var err error
 		select {
+		case <-instance.ctx.Done():
+			return
 		case <-runningTicker.C:
 			metrics.RecordDaemonTask(taskDimension)
-		case receiveErr, isOpen := <-errorChan:
-			if !isOpen {
-				logger.Infof("errorReceiveChan close, return")
+			continue
+		case <-retry:
+			errChan, cancelAttempt = start()
+			retry = nil
+			metrics.RecordDaemonTaskRetryCount(taskDimension)
+			logger.Infof("[RETRY] Task: %s retry performed", binding.UniId)
+			continue
+		case binding = <-instance.reload:
+			err = ReloadSignal{}
+		case received, open := <-errChan:
+			if !open {
 				return
 			}
-			v, _ := r.runningInstance.LoadAndDelete(taskUniId)
-			rB := v.(*runningBinding)
-			rB.baseCtxCancel()
-			rB.lastRetryTime = time.Now()
-			var nextRetryTime time.Duration
-
-			if errors.Is(ReloadSignal{}, receiveErr) {
-				rB.reloadCount++
-				nextRetryTime = tolerateInterval
-			} else {
-				rB.retryCount++
-				if rB.retryCount < r.config.RetryTolerateCount {
-					nextRetryTime = tolerateInterval
-				} else {
-					nextRetryTime = maxTolerateInterval
-				}
-			}
-
-			rB.nextRetryTime = time.Now().Add(nextRetryTime)
-			rB.errorReceiveChan = make(chan error, 1)
-			newCtx, newCancel := context.WithCancel(r.ctx)
-			rB.baseCtx = newCtx
-			rB.baseCtxCancel = newCancel
-			rB.retryValid = true
-			r.runningInstance.Store(taskUniId, rB)
-			// The place write to errorReceiveChan contains timeout processing,
-			// so the reference will be GC after reassignment
-			errorChan = rB.errorReceiveChan
-
-			logger.Warnf(
-				"[RETRY] receive ERROR: %s. Task: %s, retryCount: %d reloadCount: %d "+
-					"The retry time of the next attempt is: %s, (%.2f seconds later)",
-				receiveErr, taskUniId, rB.retryCount, rB.reloadCount, rB.nextRetryTime, nextRetryTime.Seconds(),
-			)
-			if retryTicker != nil {
-				retryTicker.Stop()
-			}
-			retryTicker = time.NewTicker(nextRetryTime)
-		case <-retryTicker.C:
-			v, _ := r.runningInstance.Load(taskUniId)
-			rB := v.(*runningBinding)
-			if rB.retryValid {
-				define, _ := r.methodOperatorMapping[rB.TaskBinding.Kind]
-				go define.Start(rB.baseCtx, rB.errorReceiveChan, rB.SerializerTask.Payload)
-				logger.Infof(
-					"\n!!![RETRY]!!! Task: %s retry performed.\n-----\nParams: %s\n-----\n",
-					taskUniId, rB.SerializerTask.Payload,
-				)
-				if retryTicker != nil {
-					retryTicker.Stop()
-				}
-				retryTicker = &time.Ticker{}
-				metrics.RecordDaemonTaskRetryCount(taskDimension)
-			}
-		case <-r.ctx.Done():
-			logger.Infof("[RetryListen] receive root context done singal, stopped and return")
-			retryTicker.Stop()
-			v, _ := r.runningInstance.LoadAndDelete(taskUniId)
-			rB, ok := v.(*runningBinding)
-			if ok {
-				rB.baseCtxCancel()
-				rB.stateCheckerCancel()
-				logger.Warnf("[RetryListen] runningBinding still in mapping! canceled")
-			}
-			return
-		case <-lifeline.Done():
-			logger.Infof("[RetryListen] receive lifeline context done singal, stopped and return")
-			retryTicker.Stop()
-			v, _ := r.runningInstance.LoadAndDelete(taskUniId)
-			rB, ok := v.(*runningBinding)
-			if ok {
-				rB.baseCtxCancel()
-				logger.Warnf("[RetryListen] runningBinding still in mapping! canceled")
-			}
-			return
+			err = received
 		}
+
+		cancelAttempt()
+		errChan = nil // Ignore late errors from the stopped attempt.
+		delay := 10 * time.Second
+		if errors.Is(err, ReloadSignal{}) {
+			reloadCount++
+		} else {
+			retryCount++
+			if retryCount >= r.config.RetryTolerateCount {
+				delay = 15 * time.Minute
+			}
+		}
+		if retryTimer != nil {
+			retryTimer.Stop()
+		}
+		retryTimer = time.NewTimer(delay)
+		retry = retryTimer.C
+		logger.Warnf("[RETRY] Task: %s received %v, retryCount: %d reloadCount: %d, next attempt in %s",
+			binding.UniId, err, retryCount, reloadCount, delay)
 	}
 }
 
 func (r *RunMaintainer) handleDeleteTaskBinding(taskUniId string) {
-	ins, exist := r.runningInstance.Load(taskUniId)
+	v, exist := r.runningInstance.LoadAndDelete(taskUniId)
 	if !exist {
 		logger.Errorf("Attempt to delete a task: %s that is not executing", taskUniId)
 		return
 	}
-	rB := ins.(*runningBinding)
-	rB.baseCtxCancel()
-	rB.stateCheckerCancel()
-	close(rB.errorReceiveChan)
-	r.runningInstance.Delete(taskUniId)
+	instance := v.(*runningBinding)
+	instance.cancel()
+	<-instance.done
 	logger.Infof("Binding runInstance removed. taskUniId: %s", taskUniId)
 }
 
@@ -305,13 +247,12 @@ func (r *RunMaintainer) handleReloadBinding(taskBinding TaskBinding) {
 		)
 		return
 	}
-	runningInstance := v.(*runningBinding)
-	runningInstance.TaskBinding = taskBinding
-	runningInstance.errorReceiveChan <- ReloadSignal{}
-	logger.Infof(
-		"[handleReloadBinding] send reload signal to errorReceiveChan, "+
-			"taskUniId: %s errorReceiveChan", runningInstance.UniId,
-	)
+	instance := v.(*runningBinding)
+	select {
+	case instance.reload <- taskBinding:
+		logger.Infof("[handleReloadBinding] sent reload signal, taskUniId: %s", taskBinding.UniId)
+	case <-instance.ctx.Done():
+	}
 }
 
 func NewDaemonTaskRunMaintainer(ctx context.Context, workerId string) *RunMaintainer {

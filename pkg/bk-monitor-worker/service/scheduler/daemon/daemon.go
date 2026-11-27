@@ -82,6 +82,9 @@ var taskDefine = map[string]OperatorDefine{
 	ActiveProfilingTaskKind: {initialFunc: func(ctx context.Context) (Operator, error) {
 		return newActiveProfilingOperator(ctx), nil
 	}},
+	MetricMetadataTaskKind: {initialFunc: func(context.Context) (Operator, error) {
+		return metricMetadataOperator{}, nil
+	}},
 }
 
 var daemonTaskDimensionOperatorMapping map[string]func(payload []byte) string

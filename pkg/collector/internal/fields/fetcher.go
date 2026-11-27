@@ -72,6 +72,22 @@ func (sff SpanFieldFetcher) FetchMethod(span ptrace.Span, key string) string {
 	return ""
 }
 
+func (sff SpanFieldFetcher) FetchMethodWithOk(span ptrace.Span, key string) (string, bool) {
+	switch key {
+	case "span_id":
+		return span.SpanID().HexString(), true
+	case "span_name":
+		return span.Name(), true
+	case "trace_id":
+		return span.TraceID().HexString(), true
+	case "kind":
+		return strconv.Itoa(int(span.Kind())), true
+	case "status.code":
+		return strconv.Itoa(int(span.Status().Code())), true
+	}
+	return "", false
+}
+
 func (sff SpanFieldFetcher) FetchMethodsTo(span ptrace.Span, keys []string, dst map[string]string) {
 	for _, key := range keys {
 		dst[key] = sff.FetchMethod(span, key)

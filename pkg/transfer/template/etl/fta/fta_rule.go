@@ -18,7 +18,6 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
 
@@ -168,7 +167,6 @@ type Rule struct {
 
 // isRulesMatch 判断当前数据是否满足匹配规则
 func isRulesMatch(rules []*Rule, data interface{}) bool {
-	logging.Debugf("trigger match start, data: %+v", data)
 	if len(rules) == 0 {
 		// 如果条件为空，则必定为 true
 		return true
@@ -215,7 +213,7 @@ func (r *Rule) Init() error {
 func (r *Rule) IsMatch(actual interface{}) (bool, error) {
 	search, err := r.searcher.Search(actual)
 	if err != nil {
-		return false, errors.WithMessagef(err, "search data error: %+v", actual)
+		return false, errors.WithMessage(err, "search rule field failed")
 	}
 	return r.matcher.IsMatch(search)
 }

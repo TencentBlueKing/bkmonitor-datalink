@@ -17,6 +17,7 @@ import (
 
 	"github.com/jmespath/go-jmespath"
 	"github.com/pkg/errors"
+	"golang.org/x/time/rate"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
@@ -62,6 +63,10 @@ func ExtractTags(
 	data map[string]interface{},
 	to etl.Container,
 ) error {
+	return extractTags(name, exprMap, data, to, logging.Errorf)
+}
+
+func extractTags(name string, exprMap map[string]*jmespath.JMESPath, data map[string]interface{}, to etl.Container, report func(string, ...interface{})) error {
 	var dedupeKeys []string
 
 	// 提取dimensions字段
@@ -84,7 +89,7 @@ func ExtractTags(
 				dimensions[k] = v
 			}
 		default:
-			logging.Errorf("%s dimensions type %T not supported", name, value)
+			report("%s dimensions type %T not supported", name, value)
 		}
 		sort.Strings(dedupeKeys)
 	}
@@ -132,7 +137,7 @@ func ExtractTags(
 				}
 			}
 		default:
-			logging.Errorf("%s tags type %T not supported", name, tags)
+			report("%s tags type %T not supported", name, tags)
 		}
 
 		// 将dimensions补充到tags中
@@ -195,9 +200,17 @@ func extractDefaultFields(to etl.Container, from etl.Container) error {
 
 // NewAlertFTAProcessor 创建FTA告警处理器
 func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordProcessor, error) {
-	pipeConfig := config.PipelineConfigFromContext(ctx)
-	helper := utils.NewMapHelper(pipeConfig.Option)
+	pipe := config.PipelineConfigFromContext(ctx)
+	record, err := NewAlertRecord(name, pipe.Option, config.ResultTableConfigFromContext(ctx))
+	if err != nil {
+		return nil, err
+	}
+	return template.NewRecordProcessor(name, pipe, record), nil
+}
 
+// NewAlertRecord compiles the FTA rules once for an output table.
+func NewAlertRecord(name string, options map[string]interface{}, rt *config.MetaResultTableConfig) (*etl.FunctionalRecord, error) {
+	helper := utils.NewMapHelper(options)
 	// 获取清洗配置
 	configFieldKeys := []string{fieldCleanConfig, fieldDefaultNormalizations, fieldDefaultAlerts}
 	originCleanConfig := map[string]interface{}{}
@@ -217,101 +230,110 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 		return nil, errors.Wrapf(err, "%s create clean config failed", name)
 	}
 
-	decoder := etl.NewPayloadDecoder()
-	return template.NewRecordProcessorWithDecoderFn(
-		name, config.PipelineConfigFromContext(ctx),
-		etl.NewFunctionalRecord("", func(from etl.Container, to etl.Container) error {
-			// 处理panic，避免不合理的配置导致程序崩溃
-			defer utils.RecoverError(func(err error) {
-				logging.Errorf("%s panic: %+v", name, err)
-			})
+	type fieldTransform struct {
+		name  string
+		apply etl.TransformFn
+	}
+	fields := make([]fieldTransform, 0, len(rt.FieldList))
+	for _, field := range rt.FieldList {
+		if field.FieldName == fieldTags || field.FieldName == fieldDedupeKeys {
+			continue
+		}
+		fields = append(fields, fieldTransform{field.FieldName, etl.NewTransformByField(field, nil)})
+	}
 
-			// 为了避免获取到外层gse补全的默认字段，因此仅获取data字段，部分内置字段后续会单独处理
-			result, _ := from.Get("data")
-			if result == nil {
-				return nil
+	// 同一份规则可能连续处理大量异常字段。只记录字段名与失败阶段，避免输出事件内容。
+	limiter := rate.NewLimiter(rate.Every(time.Minute), 1)
+	report := func(format string, args ...interface{}) {
+		if limiter.Allow() {
+			logging.Errorf(format, args...)
+		}
+	}
+	return etl.NewFunctionalRecord("", func(from etl.Container, to etl.Container) error {
+		// 处理panic，避免不合理的配置导致程序崩溃
+		defer func() {
+			if recover() != nil {
+				utils.MonitorPanicTotal.Inc()
+				report("%s panic while extracting alert fields", name)
 			}
+		}()
 
-			// 将数据转换为map格式
-			var data map[string]interface{}
-			switch result.(type) {
-			case map[string]interface{}:
-				data = result.(map[string]interface{})
-			case etl.Container:
-				data = etl.ContainerToMap(result.(etl.Container))
-			default:
-				return errors.Errorf("%s data type %T not supported", name, result)
-			}
-
-			// 获取匹配的配置
-			alerts, exprMap, err := cleanConfig.GetMatchConfig(data)
-			if err != nil {
-				return errors.Errorf("%s get match config failed: %+v", name, err)
-			}
-			if exprMap == nil {
-				logging.Infof("%s no match config", name)
-				return nil
-			}
-
-			// 按照配置的字段表达式，提取字段，忽略字段提取错误
-			rt := config.ResultTableConfigFromContext(ctx)
-			_ = rt.VisitUserSpecifiedFields(func(config *config.MetaFieldConfig) error {
-				// tags/dedupe_keys字段不做处理
-				if config.FieldName == fieldTags || config.FieldName == fieldDedupeKeys {
-					return nil
-				}
-
-				// 读取字段表达式
-				expr, ok := exprMap[config.FieldName]
-				if !ok {
-					return nil
-				}
-
-				// 提取字段
-				field, err := expr.Search(data)
-				if err != nil {
-					logging.Errorf("%s search expr %v failed: %+v", name, expr, err)
-					return nil
-				}
-
-				// 字段类型转换
-				fieldTypeTransformFn := etl.NewTransformByField(config, nil)
-				field, err = fieldTypeTransformFn(field)
-				if err != nil {
-					logging.Errorf("%s transform field %s failed: %+v", name, config.FieldName, err)
-					return nil
-				}
-
-				_ = to.Put(config.FieldName, field)
-				return nil
-			})
-
-			// 告警名称匹配
-			alertName, _ := to.Get(fieldAlertName)
-			if !utils.IsNotEmptyString(alertName) {
-				alertName, err := getMatchAlertName(alerts, data)
-				if err != nil {
-					return errors.Errorf("%s get match alert name failed: %+v", name, err)
-				}
-				if alertName == "" {
-					return errors.Errorf("%s alert name is empty, data->(%+v)", name, data)
-				}
-				_ = to.Put(fieldAlertName, alertName)
-			}
-
-			// 默认字段处理
-			if err := extractDefaultFields(to, from); err != nil {
-				return errors.Errorf("%s extract default fields failed: %+v", name, err)
-			}
-
-			// 提取tags字段
-			if err := ExtractTags(name, exprMap, data, to); err != nil {
-				return errors.Errorf("%s extract tags failed: %+v", name, err)
-			}
-
+		// 为了避免获取到外层gse补全的默认字段，因此仅获取data字段，部分内置字段后续会单独处理
+		result, _ := from.Get("data")
+		if result == nil {
 			return nil
-		}), decoder.Decode,
-	), nil
+		}
+
+		// 将数据转换为map格式
+		var data map[string]interface{}
+		switch result.(type) {
+		case map[string]interface{}:
+			data = result.(map[string]interface{})
+		case etl.Container:
+			data = etl.ContainerToMap(result.(etl.Container))
+		default:
+			return errors.Errorf("%s data type %T not supported", name, result)
+		}
+
+		// 获取匹配的配置
+		alerts, exprMap, err := cleanConfig.GetMatchConfig(data)
+		if err != nil {
+			return errors.Errorf("%s get match config failed: %+v", name, err)
+		}
+		if exprMap == nil {
+			return nil
+		}
+
+		// 按照配置的字段表达式，提取字段，忽略字段提取错误
+		for _, spec := range fields {
+			// 读取字段表达式
+			expr, ok := exprMap[spec.name]
+			if !ok {
+				continue
+			}
+
+			// 提取字段
+			field, err := expr.Search(data)
+			if err != nil {
+				report("%s field %s expression failed", name, spec.name)
+				continue
+			}
+
+			// 字段类型转换
+			field, err = spec.apply(field)
+			if err != nil {
+				report("%s field %s conversion failed", name, spec.name)
+				continue
+			}
+
+			_ = to.Put(spec.name, field)
+		}
+
+		// 告警名称匹配
+		alertName, _ := to.Get(fieldAlertName)
+		if !utils.IsNotEmptyString(alertName) {
+			alertName, err := getMatchAlertName(alerts, data)
+			if err != nil {
+				return errors.Errorf("%s get match alert name failed: %+v", name, err)
+			}
+			if alertName == "" {
+				return errors.Errorf("%s alert name is empty", name)
+			}
+			_ = to.Put(fieldAlertName, alertName)
+		}
+
+		// 默认字段处理
+		if err := extractDefaultFields(to, from); err != nil {
+			return errors.Errorf("%s extract default fields failed: %+v", name, err)
+		}
+
+		// 提取tags字段
+		if err := extractTags(name, exprMap, data, to, report); err != nil {
+			return errors.Errorf("%s extract tags failed: %+v", name, err)
+		}
+
+		return nil
+	}), nil
 }
 
 func init() {

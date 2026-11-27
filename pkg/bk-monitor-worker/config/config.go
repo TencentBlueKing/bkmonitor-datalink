@@ -377,6 +377,7 @@ func initVariables() {
 	ControllerListenPort = GetValue("service.controller.port", 10212)
 	WorkerListenHost = GetValue("service.worker.listen", "127.0.0.1")
 	WorkerListenPort = GetValue("service.worker.port", 10213)
+	loadFTAClean()
 	ActiveProfilingEnabled = GetValue("taskConfig.activeProfiling.enabled", true)
 	ActiveProfilingConsulPathPrefix = GetValue(
 		"taskConfig.activeProfiling.consul.pathPrefix", "active_profiling/data_id",

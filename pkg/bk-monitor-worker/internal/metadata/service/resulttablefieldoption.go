@@ -10,6 +10,8 @@
 package service
 
 import (
+	"github.com/jinzhu/gorm"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
@@ -26,10 +28,14 @@ func NewResultTableFieldOptionSvc(obj *resulttable.ResultTableFieldOption) Resul
 }
 
 // BathFieldOption 返回批量的result table field option
-func (ResultTableFieldOptionSvc) BathFieldOption(tableIdList []string) (map[string]map[string]map[string]any, error) {
+func (s ResultTableFieldOptionSvc) BathFieldOption(tableIdList []string) (map[string]map[string]map[string]any, error) {
+	return s.bathFieldOption(mysql.GetDBSession().DB, tableIdList)
+}
+
+func (ResultTableFieldOptionSvc) bathFieldOption(db *gorm.DB, tableIdList []string) (map[string]map[string]map[string]any, error) {
 	var resultTableFieldOption []resulttable.ResultTableFieldOption
 
-	if err := resulttable.NewResultTableFieldOptionQuerySet(mysql.GetDBSession().DB).
+	if err := resulttable.NewResultTableFieldOptionQuerySet(db).
 		TableIDIn(tableIdList...).All(&resultTableFieldOption); err != nil {
 		return nil, err
 	}

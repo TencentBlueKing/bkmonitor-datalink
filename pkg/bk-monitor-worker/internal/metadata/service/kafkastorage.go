@@ -10,6 +10,8 @@
 package service
 
 import (
+	"github.com/jinzhu/gorm"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
@@ -27,8 +29,12 @@ func NewKafkaStorageSvc(obj *storage.KafkaStorage) KafkaStorageSvc {
 
 // StorageCluster 返回集群对象
 func (a KafkaStorageSvc) StorageCluster() (*storage.ClusterInfo, error) {
+	return a.storageCluster(mysql.GetDBSession().DB)
+}
+
+func (a KafkaStorageSvc) storageCluster(db *gorm.DB) (*storage.ClusterInfo, error) {
 	var clusterInfo storage.ClusterInfo
-	if err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterIDEq(a.StorageClusterID).One(&clusterInfo); err != nil {
+	if err := storage.NewClusterInfoQuerySet(db).ClusterIDEq(a.StorageClusterID).One(&clusterInfo); err != nil {
 		return nil, err
 	}
 	return &clusterInfo, nil
@@ -36,8 +42,11 @@ func (a KafkaStorageSvc) StorageCluster() (*storage.ClusterInfo, error) {
 
 // ConsulConfig 获取kafka storage的consul配置信息
 func (a KafkaStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
-	// 集群信息
-	clusterInfo, err := a.StorageCluster()
+	return a.consulConfig(mysql.GetDBSession().DB)
+}
+
+func (a KafkaStorageSvc) consulConfig(db *gorm.DB) (*StorageConsulConfig, error) {
+	clusterInfo, err := a.storageCluster(db)
 	if err != nil {
 		return nil, err
 	}

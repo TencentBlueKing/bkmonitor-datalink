@@ -49,11 +49,12 @@ func (s *ETLSuite) TearDownTest() {
 // CheckKillChan :
 func (s *ETLSuite) CheckKillChan(killCh <-chan error) <-chan struct{} {
 	ch := make(chan struct{})
+	done := s.CTX.Done()
 	go func() {
 	loop:
 		for {
 			select {
-			case <-s.CTX.Done():
+			case <-done:
 				break loop
 			case err, ok := <-killCh:
 				if !ok {
@@ -67,7 +68,7 @@ func (s *ETLSuite) CheckKillChan(killCh <-chan error) <-chan struct{} {
 				}
 			}
 		}
-		ch <- struct{}{}
+		close(ch)
 	}()
 	return ch
 }
@@ -174,11 +175,7 @@ func (s *ETLSuite) RunN(count int, data string, processor define.DataProcessor, 
 	outputChan := make(chan define.Payload)
 	KillChan := make(chan error)
 
-	wg.Add(1)
-	go func() {
-		s.CheckKillChan(KillChan)
-		wg.Done()
-	}()
+	killDone := s.CheckKillChan(KillChan)
 
 	payload := define.NewJSONPayloadFrom([]byte(data), 0)
 	wg.Add(1)
@@ -197,6 +194,7 @@ func (s *ETLSuite) RunN(count int, data string, processor define.DataProcessor, 
 	}
 
 	wg.Wait()
+	<-killDone
 	s.Equal(0, count, data)
 }
 

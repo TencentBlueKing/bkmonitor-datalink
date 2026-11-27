@@ -19,6 +19,14 @@ type DataIDListerExpansion any
 // DataIDNamespaceLister.
 type DataIDNamespaceListerExpansion any
 
+// ProcessMonitorListerExpansion allows custom methods to be added to
+// ProcessMonitorLister.
+type ProcessMonitorListerExpansion any
+
+// ProcessMonitorNamespaceListerExpansion allows custom methods to be added to
+// ProcessMonitorNamespaceLister.
+type ProcessMonitorNamespaceListerExpansion any
+
 // QCloudMonitorListerExpansion allows custom methods to be added to
 // QCloudMonitorLister.
 type QCloudMonitorListerExpansion any

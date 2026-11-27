@@ -12,7 +12,9 @@ package metadata
 type ResultTableOptions map[string]*ResultTableOption
 
 type ResultTableOption struct {
-	From *int `json:"from,omitempty"`
+	DirectTables []PhysicalTable `json:"direct_tables,omitempty"`
+	QueryBackend string          `json:"query_backend,omitempty"`
+	From         *int            `json:"from,omitempty"`
 
 	ScrollID    string `json:"scroll_id,omitempty"`
 	SearchAfter []any  `json:"search_after,omitempty"`
@@ -32,6 +34,7 @@ func (o *ResultTableOption) Clone() *ResultTableOption {
 	}
 
 	clone := *o
+	clone.DirectTables = append([]PhysicalTable(nil), o.DirectTables...)
 	if o.From != nil {
 		from := *o.From
 		clone.From = &from

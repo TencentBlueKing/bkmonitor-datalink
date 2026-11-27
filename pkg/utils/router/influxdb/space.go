@@ -10,6 +10,7 @@
 package influxdb
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -67,9 +68,35 @@ type TimeField struct {
 	Unit string `json:"unit"`
 }
 
+// PhysicalTable 是历史时点的 Doris 真实库表，不能从当前 Binding 推导历史值。
+type PhysicalTable struct {
+	Database       string   `json:"database"`
+	Table          string   `json:"table"`
+	AnalyzedFields []string `json:"analyzed_fields,omitempty"`
+}
+
+// UnmarshalJSON 同时接受路由下发的 "database.table" 和包含字段信息的对象。
+func (t *PhysicalTable) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		var name string
+		if err := json.Unmarshal(data, &name); err != nil {
+			return err
+		}
+		database, table, ok := strings.Cut(name, ".")
+		if !ok || database == "" || table == "" {
+			return fmt.Errorf("expected physical table in database.table format, got %q", name)
+		}
+		*t = PhysicalTable{Database: database, Table: table}
+		return nil
+	}
+	type tableObject PhysicalTable
+	return json.Unmarshal(data, (*tableObject)(t))
+}
+
 // Record 是 Redis 中 result_table_detail.storage_cluster_records 的单条时间分段路由。
 // 字段需要和 UQ query.Record 保持一致，供 msgp 缓存和路由反序列化使用。
 type Record struct {
+	PhysicalTables map[string]PhysicalTable `json:"physical_tables,omitempty"`
 	// StorageID 是该时间段命中的存储集群 ID。
 	StorageID int64 `json:"storage_id,omitempty"`
 	// StorageType 是该时间段应查询的存储类型；Doris 在查询侧统一表达为 bk_sql。
@@ -88,25 +115,26 @@ type Record struct {
 
 //go:generate msgp -tests=false
 type ResultTableDetail struct {
-	StorageId             int64             `json:"storage_id"`
-	StorageName           string            `json:"storage_name"`
-	StorageType           string            `json:"storage_type"`
-	StorageClusterRecords []Record          `json:"storage_cluster_records"`
-	ClusterName           string            `json:"cluster_name"`
-	DB                    string            `json:"db"`
-	TableId               string            `json:"table_id"`
-	Measurement           string            `json:"measurement"`
-	VmRt                  string            `json:"vm_rt"`
-	CmdbLevelVmRt         string            `json:"cmdb_level_vm_rt"`
-	Fields                []string          `json:"fields"`
-	FieldAlias            map[string]string `json:"field_alias"` // 字段别名，key 为新字段，value 为老字段
-	MeasurementType       string            `json:"measurement_type"`
-	BcsClusterID          string            `json:"bcs_cluster_id"`
-	DataLabel             string            `json:"data_label"`
-	TagsKey               []string          `json:"tags_key"`
-	DataId                int64             `json:"bk_data_id"`
-	SourceType            string            `json:"source_type"`
-	Labels                map[string]string `json:"labels"` // 表标签，用于 __bk_query_label_selector_* / table_id_conditions 路由过滤
+	PhysicalTables        map[string]PhysicalTable `json:"physical_tables,omitempty"`
+	StorageId             int64                    `json:"storage_id"`
+	StorageName           string                   `json:"storage_name"`
+	StorageType           string                   `json:"storage_type"`
+	StorageClusterRecords []Record                 `json:"storage_cluster_records"`
+	ClusterName           string                   `json:"cluster_name"`
+	DB                    string                   `json:"db"`
+	TableId               string                   `json:"table_id"`
+	Measurement           string                   `json:"measurement"`
+	VmRt                  string                   `json:"vm_rt"`
+	CmdbLevelVmRt         string                   `json:"cmdb_level_vm_rt"`
+	Fields                []string                 `json:"fields"`
+	FieldAlias            map[string]string        `json:"field_alias"` // 字段别名，key 为新字段，value 为老字段
+	MeasurementType       string                   `json:"measurement_type"`
+	BcsClusterID          string                   `json:"bcs_cluster_id"`
+	DataLabel             string                   `json:"data_label"`
+	TagsKey               []string                 `json:"tags_key"`
+	DataId                int64                    `json:"bk_data_id"`
+	SourceType            string                   `json:"source_type"`
+	Labels                map[string]string        `json:"labels"` // 表标签，用于 __bk_query_label_selector_* / table_id_conditions 路由过滤
 	Options               struct {
 		// 自定义时间聚合字段
 		TimeField TimeField `json:"time_field"`

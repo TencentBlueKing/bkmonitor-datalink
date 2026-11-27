@@ -31,6 +31,7 @@ var (
 
 // setDefaultConfig
 func setDefaultConfig() {
+	viper.SetDefault(DorisDirectQueryConfigPath, false)
 	viper.SetDefault(DefaultExpirationPath, time.Minute*1)
 	viper.SetDefault(CleanupIntervalPath, time.Minute*5)
 

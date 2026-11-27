@@ -166,12 +166,12 @@ EOF
       check_period: 1m
       report_period: 6h
 {%- if extra_vars is defined and extra_vars.virtual_iface_whitelist is defined %}
-      virtual_iface_whitelist: {{ extra_vars.virtual_iface_whitelist | default(["bond1"]) | tojson }}
+      virtual_iface_whitelist: {{ extra_vars.virtual_iface_whitelist | default(["bond1"], true) | tojson }}
 {%- else %}
       virtual_iface_whitelist: ["bond1"]
 {%- endif %}
 {%- if extra_vars is defined and extra_vars.virtual_iface_blacklist is defined %}
-      virtual_iface_blacklist: {{ extra_vars.virtual_iface_blacklist | default([]) | tojson }}
+      virtual_iface_blacklist: {{ extra_vars.virtual_iface_blacklist | default([], true) | tojson }}
 {%- else %}
       virtual_iface_blacklist: []
 {%- endif %}
@@ -223,42 +223,42 @@ EOF
     disk:
       stat_times: 1
 {%- if extra_vars is defined and extra_vars.disk_white_list is defined %}
-      disk_white_list: {{ extra_vars.disk_white_list | default([]) | tojson }}
+      disk_white_list: {{ extra_vars.disk_white_list | default([], true) | tojson }}
 {%- else %}
       disk_white_list: []
 {%- endif %}
 {%- if extra_vars is defined and extra_vars.disk_black_list is defined %}
-      disk_black_list: {{ extra_vars.disk_black_list | default([]) | tojson }}
+      disk_black_list: {{ extra_vars.disk_black_list | default([], true) | tojson }}
 {%- else %}
       disk_black_list: []
 {%- endif %}
 {%- if extra_vars is defined and extra_vars.partition_white_list is defined %}
-      partition_white_list: {{ extra_vars.partition_white_list | default([]) | tojson }}
+      partition_white_list: {{ extra_vars.partition_white_list | default([], true) | tojson }}
 {%- else %}
       partition_white_list: []
 {%- endif %}
 {%- if extra_vars is defined and extra_vars.partition_black_list is defined %}
-      partition_black_list: {{ extra_vars.partition_black_list | default([]) | tojson }}
+      partition_black_list: {{ extra_vars.partition_black_list | default([], true) | tojson }}
 {%- else %}
       partition_black_list: []
 {%- endif %}
 {%- if extra_vars is defined and extra_vars.mountpoint_white_list is defined %}
-      mountpoint_white_list: {{ extra_vars.mountpoint_white_list | default([]) | tojson }}
+      mountpoint_white_list: {{ extra_vars.mountpoint_white_list | default([], true) | tojson }}
 {%- else %}
       mountpoint_white_list: []
 {%- endif %}
 {%- if extra_vars is defined and extra_vars.mountpoint_black_list is defined %}
-      mountpoint_black_list: {{ extra_vars.mountpoint_black_list | default(["docker","container","k8s","kubelet","blueking"]) | tojson }}
+      mountpoint_black_list: {{ extra_vars.mountpoint_black_list | default(["docker","container","k8s","kubelet","blueking"], true) | tojson }}
 {%- else %}
       mountpoint_black_list: ["docker","container","k8s","kubelet","blueking"]
 {%- endif %}
 {%- if extra_vars is defined and extra_vars.fs_type_white_list is defined %}
-      fs_type_white_list: {{ extra_vars.fs_type_white_list | default([]) | tojson }}
+      fs_type_white_list: {{ extra_vars.fs_type_white_list | default([], true) | tojson }}
 {%- else %}
       fs_type_white_list: []
 {%- endif %}
 {%- if extra_vars is defined and extra_vars.fs_type_black_list is defined %}
-      fs_type_black_list: {{ extra_vars.fs_type_black_list | default(["tmpfs","devtmpfs","devfs","iso9660","overlay","aufs","squashfs"]) | tojson }}
+      fs_type_black_list: {{ extra_vars.fs_type_black_list | default(["tmpfs","devtmpfs","devfs","iso9660","overlay","aufs","squashfs"], true) | tojson }}
 {%- else %}
       fs_type_black_list: ["tmpfs","devtmpfs","devfs","iso9660","overlay","aufs","squashfs"]
 {%- endif %}
@@ -270,17 +270,17 @@ EOF
       revert_protect_number: 100
       skip_virtual_interface: false
 {%- if extra_vars is defined and extra_vars.interface_white_list is defined %}
-      interface_white_list: {{ extra_vars.interface_white_list | default([]) | tojson }}
+      interface_white_list: {{ extra_vars.interface_white_list | default([], true) | tojson }}
 {%- else %}
       interface_white_list: []
 {%- endif %}
 {%- if extra_vars is defined and extra_vars.interface_black_list is defined %}
-      interface_black_list: {{ extra_vars.interface_black_list | default(["veth","cni","docker","flannel","tunnat","cbr","kube-ipvs","dummy"]) | tojson }}
+      interface_black_list: {{ extra_vars.interface_black_list | default(["veth","cni","docker","flannel","tunnat","cbr","kube-ipvs","dummy"], true) | tojson }}
 {%- else %}
       interface_black_list: ["veth", "cni", "docker", "flannel", "tunnat", "cbr", "kube-ipvs", "dummy"]
 {%- endif %}
 {%- if extra_vars is defined and extra_vars.force_report_list is defined %}
-      force_report_list: {{ extra_vars.force_report_list | default(["bond"]) | tojson }}
+      force_report_list: {{ extra_vars.force_report_list | default(["bond"], true) | tojson }}
 {%- else %}
       force_report_list: ["bond"]
 {%- endif %}
@@ -324,12 +324,12 @@ EOF
     corefile_match_regex: {{ extra_vars.corefile_match_regex or '' }}
 {%- endif %}
 {%- if extra_vars is defined and extra_vars.disk_ro_white_list is defined %}
-    disk_ro_white_list: {{ extra_vars.disk_ro_white_list | default([]) | tojson }}
+    disk_ro_white_list: {{ extra_vars.disk_ro_white_list | default([], true) | tojson }}
 {%- else %}
     disk_ro_white_list: []
 {%- endif %}
 {%- if extra_vars is defined and extra_vars.disk_ro_black_list is defined %}
-    disk_ro_black_list: {{ extra_vars.disk_ro_black_list | default(["docker","container","k8s","kubelet","blueking"]) | tojson }}
+    disk_ro_black_list: {{ extra_vars.disk_ro_black_list | default(["docker","container","k8s","kubelet","blueking"], true) | tojson }}
 {%- else %}
     disk_ro_black_list: ["docker","container","k8s","kubelet","blueking"]
 {%- endif %}

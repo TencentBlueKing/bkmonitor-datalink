@@ -45,7 +45,11 @@ func matchesByPrometheusMatchers(t *testing.T, conditions Conditions, series map
 	for _, group := range preparedGroups(t, conditions) {
 		all := true
 		for _, field := range group {
-			matcher, err := labels.NewMatcher(field.ToPromOperator(), field.DimensionName, field.Value[0])
+			op, err := field.ToPromOperator(ConditionStorageVM)
+			if err != nil {
+				t.Fatal(err)
+			}
+			matcher, err := labels.NewMatcher(op, field.DimensionName, field.Value[0])
 			if err != nil {
 				t.Fatal(err)
 			}

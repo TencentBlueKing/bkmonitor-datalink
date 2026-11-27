@@ -68,11 +68,20 @@ func TestFilterCollapseIndexes(t *testing.T) {
 func TestMappingFieldNames(t *testing.T) {
 	var mapping map[string]any
 	require.NoError(t, json.Unmarshal([]byte(`{"mappings":{"_doc":{"properties":{"attributes":{"properties":{"gen_ai.session.id":{"type":"keyword"}}},"message":{"type":"text","fields":{"keyword":{"type":"keyword"}}},"session_alias":{"type":"alias","path":"attributes.gen_ai.session.id"}},"runtime":{"computed":{"type":"keyword"}}}}}`), &mapping))
-	fields := mappingFieldNames(mapping)
+	format := NewIndexOptionFormat(nil)
+	fields := format.ParseIndex("logs", nil, mapping)
 	for _, field := range []string{"attributes.gen_ai.session.id", "message.keyword", "session_alias", "computed"} {
 		require.True(t, fields[field], field)
 	}
 	require.False(t, fields["absent"])
+	// 别名和多字段参与查询，源字段列表仍只展示 properties 中实际存储的字段。
+	options := format.FieldsMap()
+	visible := NewFormatFactory(context.Background()).WithFieldMap(options).FieldType()
+	for _, name := range []string{"session_alias", "message.keyword", "computed"} {
+		require.Equal(t, "keyword", options[name].FieldType)
+		require.NotContains(t, visible, name)
+	}
+	require.Equal(t, "keyword", visible["attributes.gen_ai.session.id"])
 	clone := cloneIndexFields(map[string]map[string]bool{"index": fields})
 	delete(clone["index"], "session_alias")
 	require.True(t, fields["session_alias"])

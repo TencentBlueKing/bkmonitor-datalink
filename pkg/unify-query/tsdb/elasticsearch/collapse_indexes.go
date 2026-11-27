@@ -81,12 +81,16 @@ func collapseTargetMatches(pattern, name string) bool {
 	return matched
 }
 
-// mappingFieldNames retains per-index existence, including ES field aliases and
-// multi-fields which the merged display field map need not expose.
-func mappingFieldNames(mapping map[string]any) map[string]bool {
-	fields := make(map[string]bool)
-	var visit func(map[string]any, string)
-	visit = func(node map[string]any, prefix string) {
+type indexFieldMapping struct {
+	definition map[string]any
+	searchOnly bool
+}
+
+// mappingFields 按完整路径收集物理索引字段，供查询和折叠共用。
+func mappingFields(mapping map[string]any) map[string]indexFieldMapping {
+	fields := make(map[string]indexFieldMapping)
+	var visit func(map[string]any, string, bool)
+	visit = func(node map[string]any, prefix string, searchOnly bool) {
 		for _, key := range []string{"properties", "fields", "runtime"} {
 			children, ok := node[key].(map[string]any)
 			if !ok {
@@ -99,21 +103,25 @@ func mappingFieldNames(mapping map[string]any) map[string]bool {
 				}
 				full := name
 				if prefix != "" {
-					full = prefix + "." + name
+					full = prefix + FormatESStep + name
 				}
-				fields[full] = true
-				visit(child, full)
+				field := indexFieldMapping{definition: child, searchOnly: searchOnly || key != FormatProperties || child["type"] == "alias"}
+				if previous, ok := fields[full]; ok {
+					field.searchOnly = field.searchOnly && previous.searchOnly
+				}
+				fields[full] = field
+				visit(child, full, field.searchOnly)
 			}
 		}
 	}
 	var unwrap func(map[string]any)
 	unwrap = func(node map[string]any) {
 		if _, ok := node["properties"]; ok {
-			visit(node, "")
+			visit(node, "", false)
 			return
 		}
 		if _, ok := node["runtime"]; ok {
-			visit(node, "")
+			visit(node, "", false)
 			return
 		}
 		for _, value := range node {

@@ -427,10 +427,9 @@ func (f *FormatFactory) ParserQueryString(ctx context.Context, q string, isPrefi
 
 func (f *FormatFactory) FieldType() map[string]string {
 	ft := make(map[string]string)
-	for k := range f.fieldsMap {
-		nv := f.GetFieldType(k)
-		if nv != "" {
-			ft[k] = nv
+	for k, field := range f.fieldsMap {
+		if !field.SearchOnly && field.Existed() {
+			ft[k] = field.FieldType
 		}
 	}
 	return ft
@@ -1111,7 +1110,8 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 						return nil
 					}
 					// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
-					fieldType := f.GetFieldType(key)
+					fieldOption := f.fieldsMap[key]
+					fieldType := fieldOption.FieldType
 					isExistsQuery := true
 					if fieldType == Text || fieldType == KeyWord {
 						isExistsQuery = false
@@ -1163,7 +1163,8 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 										query = elastic.NewMatchPhraseQuery(key, value)
 									}
 								case structured.ConditionContains, structured.ConditionNotContains:
-									if fieldType == KeyWord {
+									// 混合 text 映射及仅用于查询的字段，沿用调用方传入的显式通配符。
+									if fieldType == KeyWord && !(con.IsWildcard && (fieldOption.IsAnalyzed || fieldOption.SearchOnly)) {
 										// 针对 value 里的 * 进行转义
 										var (
 											nv    []rune
@@ -1188,7 +1189,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 											query = elastic.NewMatchPhraseQuery(key, value)
 										}
 									} else {
-										query = elastic.NewWildcardQuery(key, value)
+										query = esquery.Wildcard(key, value, fieldOption, "")
 									}
 								case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
 									rewrite := esregexpcompat.Rewrite(value)

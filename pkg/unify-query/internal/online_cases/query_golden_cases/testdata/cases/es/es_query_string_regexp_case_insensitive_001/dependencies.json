@@ -1,6 +1,6 @@
 {
   "elasticsearch": {
-    "mapping": {"golden_es_regexp_lower": {"mappings": {"properties": {
+    "mapping": {"golden_es_regexp_lower": {"settings": {"index": {"version": {"created": "6082399"}}}, "mappings": {"properties": {
       "dtEventTimeStamp": {"type": "date"},
       "events_total": {"type": "long"},
       "message": {"type": "text"},

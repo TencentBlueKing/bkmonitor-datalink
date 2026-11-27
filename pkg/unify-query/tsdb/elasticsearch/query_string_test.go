@@ -261,12 +261,30 @@ func TestQsToDsl(t *testing.T) {
 func TestParserQueryStringMappingAvailability(t *testing.T) {
 	mock.Init()
 	ctx := metadata.InitHashID(context.Background())
+	mappingOnly := NewIndexOptionFormat(nil)
+	fields := map[string]any{"properties": map[string]any{
+		"message": map[string]any{"type": "text"},
+		"label":   map[string]any{"type": "text", "analyzer": "standard"},
+		"event":   map[string]any{"type": "text", "analyzer": "log_tr", "search_analyzer": "keyword"},
+	}}
+	mappingOnly.ParseIndex("logs-a", nil, fields)
+	mappingOnly.ParseIndex("logs-b", nil, fields)
 
 	for name, tc := range map[string]struct {
 		fieldsMap metadata.FieldsMap
 		query     string
 		expected  string
 	}{
+		"仅有 mapping 时使用索引的 default 和 standard 分析器归一化正则": {
+			fieldsMap: mappingOnly.FieldsMap(),
+			query:     `message:/ERR/ OR label:/WARN/`,
+			expected:  `{"bool":{"should":[{"query_string":{"default_field":"message","analyzer":"default","query":"/.*ERR.*/"}},{"query_string":{"default_field":"label","analyzer":"standard","query":"/.*WARN.*/"}}]}}`,
+		},
+		"所有索引都声明相同的自定义索引分析器时使用它归一化正则": {
+			fieldsMap: mappingOnly.FieldsMap(),
+			query:     `event:/ISP/`,
+			expected:  `{"query_string":{"default_field":"event","analyzer":"log_tr","query":"/.*ISP.*/"}}`,
+		},
 		"missing mapping falls back to native query string": {
 			fieldsMap: metadata.FieldsMap{},
 			query:     `NOT (message:"ignored phrase")`,

@@ -59,6 +59,22 @@ const (
 
 type FieldsMap map[string]FieldOption
 
+// WildcardCase 指定词条的大小写处理方式，也可以是 ES 内置分析器名称。
+type WildcardCase string
+
+const (
+	WildcardCaseFromField        WildcardCase = "" // 兼容只提供字段类型及大小写标记的调用方
+	WildcardOriginal             WildcardCase = "original"
+	WildcardLowercase            WildcardCase = "lowercase"
+	WildcardUppercase            WildcardCase = "uppercase"
+	WildcardOriginalAndLowercase WildcardCase = "original_and_lowercase"
+	WildcardFieldNormalization   WildcardCase = "field_normalization"
+	WildcardSearchNormalization  WildcardCase = "search_normalization"
+	WildcardTurkish              WildcardCase = "turkish"
+	WildcardGreek                WildcardCase = "greek"
+	WildcardIrish                WildcardCase = "irish"
+)
+
 func (f FieldsMap) Field(k string) FieldOption {
 	// 获取字段时，忽略字段大小写
 	for fk, fv := range f {
@@ -78,14 +94,22 @@ type FieldOption struct {
 	IsAgg           bool   `json:"is_agg"`
 	IsAnalyzed      bool   `json:"is_analyzed"`
 	IsCaseSensitive bool   `json:"is_case_sensitive"`
+	// ES 别名、多字段和 runtime 字段可以用于查询，返回源字段列表时跳过。
+	SearchOnly bool `json:"-"`
 	// HasMixedTypes 表示跨索引同名字段的类型不一致，不能按单一类型优化查询。
 	HasMixedTypes bool `json:"has_mixed_types,omitempty"`
 	// IsCaseInsensitive 只在 mapping 明确证明 keyword/text 会 lowercase 时置 true。
 	// 不能只用 IsCaseSensitive 的 false 值，因为历史/手写 FieldsMap 里的 keyword 零值仍应按大小写敏感处理。
 	IsCaseInsensitive bool `json:"is_case_insensitive,omitempty"`
 	// IsMixedCaseSensitivity 表示跨索引同名字段同时存在大小写敏感和不敏感的索引语义。
-	// 旧 ES 无 wildcard.case_insensitive 时需要同时保留原 pattern 和 lower pattern，避免只 lower 后漏掉保留大小写的索引。
 	IsMixedCaseSensitivity bool `json:"is_mixed_case_sensitivity,omitempty"`
+	// WildcardCase 来自首个映射，只为规则不同的物理索引记录分组。
+	WildcardCase        WildcardCase              `json:"-"`
+	WildcardIndexGroups map[WildcardCase][]string `json:"-"`
+	// 相同的索引分析器可在所有目标分片解析时，直接按名称查询。
+	WildcardAnalyzer string `json:"-"`
+	// 各索引使用不同分析器时，将显式名称限定在对应的物理索引。
+	WildcardAnalyzerGroups map[string][]string `json:"-"`
 	// WildcardCaseInsensitive 表示目标 ES 版本是否支持 wildcard.case_insensitive 参数。
 	WildcardCaseInsensitive bool     `json:"wildcard_case_insensitive,omitempty"`
 	TokenizeOnChars         []string `json:"tokenize_on_chars"`
@@ -93,6 +117,11 @@ type FieldOption struct {
 
 func (f FieldOption) Existed() bool {
 	return f.FieldType != ""
+}
+
+// ShouldLowercaseTermPattern 判断通配符或正则模式是否需要匹配小写词条。
+func (f FieldOption) ShouldLowercaseTermPattern() bool {
+	return f.Existed() && !f.IsCaseSensitive && (f.IsAnalyzed || f.IsCaseInsensitive)
 }
 
 type VmCondition string

@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 func TestIndexFormatFieldMap(t *testing.T) {
@@ -83,7 +85,7 @@ func TestIndexFormatFieldMap(t *testing.T) {
 					},
 				},
 			},
-			fieldMap: `{"case_sensitivity_test":{"alias_name":"","field_name":"case_sensitivity_test","field_type":"text","origin_field":"case_sensitivity_test","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":["-","\n"," "]},"event":{"alias_name":"","field_name":"event","field_type":"nested","origin_field":"event","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"event.name":{"alias_name":"","field_name":"event.name","field_type":"text","origin_field":"event","is_agg":true,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":["-"]},"log_message":{"alias_name":"","field_name":"log_message","field_type":"text","origin_field":"log_message","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":["-","\n"," "]},"value":{"alias_name":"","field_name":"value","field_type":"double","origin_field":"value","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]}}`,
+			fieldMap: `{"case_sensitivity_test":{"alias_name":"","field_name":"case_sensitivity_test","field_type":"text","origin_field":"case_sensitivity_test","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":["-","\n"," "]},"event":{"alias_name":"","field_name":"event","field_type":"nested","origin_field":"event","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"event.name":{"alias_name":"","field_name":"event.name","field_type":"text","origin_field":"event","is_agg":true,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":["-"]},"log_message":{"alias_name":"","field_name":"log_message","field_type":"text","origin_field":"log_message","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":["-","\n"," "]},"value":{"alias_name":"","field_name":"value","field_type":"double","origin_field":"value","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"log_message.raw":{"alias_name":"","field_name":"log_message.raw","field_type":"keyword","origin_field":"log_message","is_agg":true,"is_analyzed":false,"is_case_sensitive":true,"tokenize_on_chars":[]}}`,
 		},
 		{
 			name: "nested_index_structure",
@@ -253,7 +255,7 @@ func TestIndexFormatFieldMap(t *testing.T) {
 			fieldMap: `{"default_text":{"alias_name":"","field_name":"default_text","field_type":"text","origin_field":"default_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":[]}}`,
 		},
 		{
-			name:     "缺少 analyzer settings 时保留旧版 lower fallback",
+			name:     "未定义的分析器保留原模式",
 			settings: map[string]any{},
 			mappings: map[string]any{
 				"properties": map[string]any{
@@ -263,7 +265,7 @@ func TestIndexFormatFieldMap(t *testing.T) {
 					},
 				},
 			},
-			fieldMap: `{"custom_text":{"alias_name":"","field_name":"custom_text","field_type":"text","origin_field":"custom_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]}}`,
+			fieldMap: `{"custom_text":{"alias_name":"","field_name":"custom_text","field_type":"text","origin_field":"custom_text","is_agg":false,"is_analyzed":true,"is_case_sensitive":true,"tokenize_on_chars":[]}}`,
 		},
 		{
 			name: "根据索引版本判断是否支持 wildcard case_insensitive",
@@ -334,7 +336,8 @@ func TestIndexFormatMixedCaseSensitivityAcrossIndices(t *testing.T) {
 			"log": map[string]any{"type": "text"},
 		},
 	}
-	iof.Parse(map[string]any{
+	iof.ParseIndex("fold-a", map[string]any{}, mappings)
+	iof.ParseIndex("raw", map[string]any{
 		"index": map[string]any{
 			"version": map[string]any{"created": "7090099"},
 			"analysis": map[string]any{
@@ -347,8 +350,8 @@ func TestIndexFormatMixedCaseSensitivityAcrossIndices(t *testing.T) {
 				},
 			},
 		},
-	}, mappings)
-	iof.Parse(map[string]any{
+	}, map[string]any{"type_a": mappings, "type_b": mappings})
+	iof.ParseIndex("fold-b", map[string]any{
 		"index": map[string]any{
 			"version": map[string]any{"created": "7090099"},
 		},
@@ -358,6 +361,8 @@ func TestIndexFormatMixedCaseSensitivityAcrossIndices(t *testing.T) {
 	assert.False(t, field.IsCaseSensitive)
 	assert.True(t, field.IsMixedCaseSensitivity)
 	assert.False(t, field.WildcardCaseInsensitive)
+	assert.Equal(t, metadata.WildcardLowercase, field.WildcardCase)
+	assert.Equal(t, map[metadata.WildcardCase][]string{metadata.WildcardOriginal: {"raw"}}, field.WildcardIndexGroups)
 }
 
 func TestIndexFormatMergeIgnoresNonStringCaseSensitivity(t *testing.T) {
@@ -389,6 +394,48 @@ func TestIndexFormatMergeIgnoresNonStringCaseSensitivity(t *testing.T) {
 		assert.True(t, field.IsCaseSensitive)
 		assert.False(t, field.IsMixedCaseSensitivity)
 	})
+}
+
+func TestIndexFormatCustomAnalyzerScope(t *testing.T) {
+	for _, tc := range []struct {
+		name, secondAnalyzer, secondField string
+		secondVersion                     int
+		wantAnalyzer                      string
+		wantGroups                        map[string][]string
+	}{
+		{name: "两索引的字段共用名称", secondAnalyzer: "tr_log", secondField: "message", secondVersion: 6082399, wantAnalyzer: "tr_log"},
+		{name: "另一索引没有该字段但注册了同名分析器", secondAnalyzer: "tr_log", secondField: "other", secondVersion: 6082399, wantAnalyzer: "tr_log"},
+		{name: "旧索引没有注册另一索引的名称", secondAnalyzer: "tr_other", secondField: "message", secondVersion: 7050299},
+		{
+			name: "正向索引过滤支持按名称分组", secondAnalyzer: "tr_other", secondField: "message", secondVersion: 7060099,
+			wantGroups: map[string][]string{"tr_log": {"logs-a"}, "tr_other": {"logs-b"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			format := NewIndexOptionFormat(nil)
+			for _, index := range []struct {
+				name, analyzer, field string
+				version               int
+			}{
+				{"logs-a", "tr_log", "message", 8100099},
+				{"logs-b", tc.secondAnalyzer, tc.secondField, tc.secondVersion},
+			} {
+				format.ParseIndex(index.name, map[string]any{
+					"index.version.created": index.version,
+					"analysis": map[string]any{
+						"filter":   map[string]any{"tr_lower": map[string]any{"type": "lowercase", "language": "turkish"}},
+						"analyzer": map[string]any{index.analyzer: map[string]any{"type": "custom", "tokenizer": "keyword", "filter": []string{"tr_lower", "asciifolding"}}},
+					},
+				}, map[string]any{"properties": map[string]any{
+					index.field: map[string]any{"type": "text", "analyzer": index.analyzer},
+				}})
+			}
+			field := format.FieldsMap()["message"]
+			assert.Equal(t, tc.wantAnalyzer, field.WildcardAnalyzer)
+			assert.Equal(t, tc.wantGroups, field.WildcardAnalyzerGroups)
+			assert.Equal(t, metadata.WildcardSearchNormalization, field.WildcardCase)
+		})
+	}
 }
 
 func TestIndexFormatMergeCarriesLowercaseWildcardCoverage(t *testing.T) {

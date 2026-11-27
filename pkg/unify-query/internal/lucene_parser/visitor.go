@@ -652,14 +652,12 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 				result = cq
 			}
 		} else {
-			result = wildcardQueryForField(field, value, fieldOption, cv.Boost)
+			result = esquery.Wildcard(field, value, fieldOption, cv.Boost)
 		}
 	case *RegexpNode:
 		rewrite := esregexpcompat.RewriteForQueryString(value)
 		value = rewrite.Pattern
-		// ES regexp 是 term-level 查询，不会像 match/match_phrase 一样走 analyzer；
-		// 因此 text + lowercase/analyzed 字段需要在 UQ 侧按字段大小写语义归一化 pattern。
-		cq := regexpQueryForField(field, value, fieldOption, cv.Boost)
+		cq := esquery.Regexp(field, value, fieldOption, cv.Boost)
 		if rewrite.Negative {
 			// 正向不包含前缀形式必须要求字段存在；单独 must_not regexp 会误匹配缺失字段。
 			result = negativeLookaheadQuery(field, cq)
@@ -720,80 +718,6 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	}
 
 	return allMust, allShould, allMustNot
-}
-
-func wildcardQueryForField(field, value string, fieldOption metadata.FieldOption, boost string) elastic.Query {
-	if !termPatternShouldIgnoreCase(fieldOption) {
-		return boostedWildcardQuery(field, value, false, boost)
-	}
-
-	// 即使 ES 支持 wildcard.case_insensitive，也先做 Go 侧 lower：
-	// ES 的 case_insensitive 只覆盖 ASCII，而 standard/lowercase analyzer 会处理 Unicode 大小写。
-	lowerValue := strings.ToLower(value)
-	if fieldOption.IsMixedCaseSensitivity {
-		// 同名字段跨索引大小写语义不一致时，旧 ES 不能靠 case_insensitive 覆盖两边；
-		// 双 pattern 同时匹配保留大小写的索引和已 lowercase 的索引。
-		if lowerValue == value {
-			return boostedWildcardQuery(field, value, false, boost)
-		}
-		return elastic.NewBoolQuery().Should(
-			boostedWildcardQuery(field, value, false, boost),
-			boostedWildcardQuery(field, lowerValue, false, boost),
-		)
-	}
-
-	return boostedWildcardQuery(field, lowerValue, fieldOption.WildcardCaseInsensitive, boost)
-}
-
-func regexpQueryForField(field, value string, fieldOption metadata.FieldOption, boost string) elastic.Query {
-	if !termPatternShouldIgnoreCase(fieldOption) {
-		return boostedRegexpQuery(field, value, boost)
-	}
-
-	// regexp 没有复用 ES wildcard.case_insensitive 参数，避免不同 ES 版本兼容风险；
-	// 对大小写不敏感字段直接匹配 lowercase 后的索引 term。
-	lowerValue := strings.ToLower(value)
-	if fieldOption.IsMixedCaseSensitivity {
-		// 同名字段跨索引大小写语义不一致时，同时查询原始 pattern 和 lower pattern。
-		if lowerValue == value {
-			return boostedRegexpQuery(field, value, boost)
-		}
-		return elastic.NewBoolQuery().Should(
-			boostedRegexpQuery(field, value, boost),
-			boostedRegexpQuery(field, lowerValue, boost),
-		)
-	}
-
-	return boostedRegexpQuery(field, lowerValue, boost)
-}
-
-func termPatternShouldIgnoreCase(fieldOption metadata.FieldOption) bool {
-	if !fieldOption.Existed() || fieldOption.IsCaseSensitive {
-		return false
-	}
-
-	// 只有明确存在 lowercase 语义的字段才归一化 pattern；
-	// 默认 keyword 不 analyzed 且没有 normalizer，历史 FieldOption 零值不能触发 lower。
-	return fieldOption.IsAnalyzed || fieldOption.IsCaseInsensitive
-}
-
-func boostedRegexpQuery(field, value string, boost string) *elastic.RegexpQuery {
-	cq := elastic.NewRegexpQuery(field, value)
-	if boost != "" {
-		cq.Boost(cast.ToFloat64(boost))
-	}
-	return cq
-}
-
-func boostedWildcardQuery(field, value string, caseInsensitive bool, boost string) *elastic.WildcardQuery {
-	cq := elastic.NewWildcardQuery(field, value)
-	if caseInsensitive {
-		cq.CaseInsensitive(true)
-	}
-	if boost != "" {
-		cq.Boost(cast.ToFloat64(boost))
-	}
-	return cq
 }
 
 // nonEmptyFieldQuery 构造“字段存在且不为空字符串”的 ES 查询；text 字段优先用 keyword/raw 子字段判断空串。

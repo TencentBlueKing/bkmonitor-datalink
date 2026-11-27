@@ -53,18 +53,24 @@ func (p termPattern) query(option metadata.FieldOption) elastic.Query {
 		}
 	}
 	base := p.forCase(mode, option.WildcardCaseInsensitive)
-	if len(option.WildcardIndexGroups) == 0 {
+	base = queryByIndex(base, option.WildcardIndexGroups, func(mode metadata.WildcardCase) elastic.Query {
+		return p.forCase(mode, option.WildcardCaseInsensitive)
+	})
+	return queryByIndex(base, option.WildcardAnalyzerGroups, p.analyzedQuery)
+}
+
+func queryByIndex[T ~string](base elastic.Query, groups map[T][]string, build func(T) elastic.Query) elastic.Query {
+	if len(groups) == 0 {
 		return base
 	}
 
 	// 每个索引只执行自己的 wildcard 子句，外层 must_not 也按同样的范围取反。
 	remainder := elastic.NewBoolQuery().Must(base)
 	query := elastic.NewBoolQuery()
-	for _, otherMode := range slices.Sorted(maps.Keys(option.WildcardIndexGroups)) {
-		indexes := elastic.NewTermsQueryFromStrings("_index", option.WildcardIndexGroups[otherMode]...)
+	for _, rule := range slices.Sorted(maps.Keys(groups)) {
+		indexes := elastic.NewTermsQueryFromStrings("_index", groups[rule]...)
 		remainder.MustNot(indexes)
-		pattern := p.forCase(otherMode, option.WildcardCaseInsensitive)
-		query.Should(elastic.NewBoolQuery().Must(pattern).Filter(indexes))
+		query.Should(elastic.NewBoolQuery().Must(build(rule)).Filter(indexes))
 	}
 	return query.Should(remainder)
 }
@@ -85,6 +91,8 @@ func (p termPattern) forCase(mode metadata.WildcardCase, caseInsensitive bool) e
 		return elastic.NewBoolQuery().Should(p.termQuery(p.value, false), folded)
 	case metadata.WildcardOriginal:
 		return p.termQuery(p.value, false)
+	case metadata.WildcardSearchNormalization:
+		return p.analyzedQuery("")
 	case metadata.WildcardFieldNormalization:
 		// 仅有 mapping 或旧 ES 时，用字段分析器处理字面片段。ES 6 的 wildcard 会把星号也送进 keyword normalizer。
 		if !p.isRegexp && !caseInsensitive {

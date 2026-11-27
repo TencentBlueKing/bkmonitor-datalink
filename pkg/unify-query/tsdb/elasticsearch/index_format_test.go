@@ -396,6 +396,48 @@ func TestIndexFormatMergeIgnoresNonStringCaseSensitivity(t *testing.T) {
 	})
 }
 
+func TestIndexFormatCustomAnalyzerScope(t *testing.T) {
+	for _, tc := range []struct {
+		name, secondAnalyzer, secondField string
+		secondVersion                     int
+		wantAnalyzer                      string
+		wantGroups                        map[string][]string
+	}{
+		{name: "两索引的字段共用名称", secondAnalyzer: "tr_log", secondField: "message", secondVersion: 6082399, wantAnalyzer: "tr_log"},
+		{name: "另一索引没有该字段但注册了同名分析器", secondAnalyzer: "tr_log", secondField: "other", secondVersion: 6082399, wantAnalyzer: "tr_log"},
+		{name: "旧索引没有注册另一索引的名称", secondAnalyzer: "tr_other", secondField: "message", secondVersion: 7050299},
+		{
+			name: "正向索引过滤支持按名称分组", secondAnalyzer: "tr_other", secondField: "message", secondVersion: 7060099,
+			wantGroups: map[string][]string{"tr_log": {"logs-a"}, "tr_other": {"logs-b"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			format := NewIndexOptionFormat(nil)
+			for _, index := range []struct {
+				name, analyzer, field string
+				version               int
+			}{
+				{"logs-a", "tr_log", "message", 8100099},
+				{"logs-b", tc.secondAnalyzer, tc.secondField, tc.secondVersion},
+			} {
+				format.ParseIndex(index.name, map[string]any{
+					"index.version.created": index.version,
+					"analysis": map[string]any{
+						"filter":   map[string]any{"tr_lower": map[string]any{"type": "lowercase", "language": "turkish"}},
+						"analyzer": map[string]any{index.analyzer: map[string]any{"type": "custom", "tokenizer": "keyword", "filter": []string{"tr_lower", "asciifolding"}}},
+					},
+				}, map[string]any{"properties": map[string]any{
+					index.field: map[string]any{"type": "text", "analyzer": index.analyzer},
+				}})
+			}
+			field := format.FieldsMap()["message"]
+			assert.Equal(t, tc.wantAnalyzer, field.WildcardAnalyzer)
+			assert.Equal(t, tc.wantGroups, field.WildcardAnalyzerGroups)
+			assert.Equal(t, metadata.WildcardSearchNormalization, field.WildcardCase)
+		})
+	}
+}
+
 func TestIndexFormatMergeCarriesLowercaseWildcardCoverage(t *testing.T) {
 	iof := NewIndexOptionFormat(nil)
 	iof.Parse(map[string]any{}, map[string]any{

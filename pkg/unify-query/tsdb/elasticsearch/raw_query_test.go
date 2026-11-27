@@ -153,10 +153,11 @@ func TestPreparedFieldMetadataFieldsMapReturnsDeepCopy(t *testing.T) {
 	prepared := &PreparedFieldMetadata{
 		fieldMap: metadata.FieldsMap{
 			"log": {
-				FieldName:           "log",
-				FieldType:           "text",
-				TokenizeOnChars:     []string{"whitespace"},
-				WildcardIndexGroups: map[metadata.WildcardCase][]string{metadata.WildcardLowercase: {"logs-a"}},
+				FieldName:              "log",
+				FieldType:              "text",
+				TokenizeOnChars:        []string{"whitespace"},
+				WildcardIndexGroups:    map[metadata.WildcardCase][]string{metadata.WildcardLowercase: {"logs-a"}},
+				WildcardAnalyzerGroups: map[string][]string{"tr_log": {"logs-a"}},
 			},
 		},
 		complete: true,
@@ -167,6 +168,8 @@ func TestPreparedFieldMetadataFieldsMapReturnsDeepCopy(t *testing.T) {
 	firstOption.TokenizeOnChars[0] = "letter"
 	firstOption.WildcardIndexGroups[metadata.WildcardLowercase][0] = "logs-b"
 	firstOption.WildcardIndexGroups[metadata.WildcardUppercase] = []string{"logs-c"}
+	firstOption.WildcardAnalyzerGroups["tr_log"][0] = "logs-b"
+	delete(firstOption.WildcardAnalyzerGroups, "tr_log")
 	first["log"] = firstOption
 	delete(first, "missing")
 
@@ -174,6 +177,7 @@ func TestPreparedFieldMetadataFieldsMapReturnsDeepCopy(t *testing.T) {
 	require.Contains(t, second, "log")
 	assert.Equal(t, []string{"whitespace"}, second["log"].TokenizeOnChars)
 	assert.Equal(t, map[metadata.WildcardCase][]string{metadata.WildcardLowercase: {"logs-a"}}, second["log"].WildcardIndexGroups)
+	assert.Equal(t, map[string][]string{"tr_log": {"logs-a"}}, second["log"].WildcardAnalyzerGroups)
 }
 
 func TestCloneRawMetadataQueryDeepCopiesNestedAggregates(t *testing.T) {

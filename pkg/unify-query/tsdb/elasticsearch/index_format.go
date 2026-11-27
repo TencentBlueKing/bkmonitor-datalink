@@ -44,33 +44,49 @@ type IndexOptionFormat struct {
 	normalizer map[string]any
 	fieldsMap  metadata.FieldsMap
 
-	fieldAlias              metadata.FieldAlias
-	wildcardCaseInsensitive *bool
-	hasSettings             bool
-	parsedIndexes           int
-	analyzerIndexCounts     map[string]int
+	fieldAlias           metadata.FieldAlias
+	minIndexVersion      int
+	hasSettings          bool
+	parsedIndexes        int
+	analyzerIndexCounts  map[string]int
+	fieldAnalyzerIndexes map[string]map[string][]string
 }
 
 func NewIndexOptionFormat(fieldAlias map[string]string) *IndexOptionFormat {
 	return &IndexOptionFormat{
-		fieldsMap:           make(metadata.FieldsMap),
-		fieldAlias:          fieldAlias,
-		analyzerIndexCounts: make(map[string]int),
+		fieldsMap:            make(metadata.FieldsMap),
+		fieldAlias:           fieldAlias,
+		analyzerIndexCounts:  make(map[string]int),
+		fieldAnalyzerIndexes: make(map[string]map[string][]string),
 	}
 }
 
 func (f *IndexOptionFormat) FieldsMap() metadata.FieldsMap {
-	if f.wildcardCaseInsensitive != nil {
-		for k, v := range f.fieldsMap {
-			// 多索引解析时低版本索引可能后出现，需要在返回前统一回填最终能力值。
-			v.WildcardCaseInsensitive = *f.wildcardCaseInsensitive
-			if f.analyzerIndexCounts[k] != f.parsedIndexes {
-				v.WildcardAnalyzer = ""
+	for k, v := range f.fieldsMap {
+		// wildcard.case_insensitive 在 ES 7.10 引入。
+		v.WildcardCaseInsensitive = f.minIndexVersion >= 7100000
+		if v.WildcardAnalyzer == "" || !f.hasAnalyzerOnEveryIndex(v.WildcardAnalyzer) {
+			v.WildcardAnalyzer = ""
+			v.WildcardAnalyzerGroups = nil
+			for analyzer, indexes := range f.fieldAnalyzerIndexes[k] {
+				// ES 7.6 起正向 _index terms 在其他分片改写为 match_none，更早版本会解析全部分析器名。
+				if f.minIndexVersion < 7060000 && !f.hasAnalyzerOnEveryIndex(analyzer) {
+					continue
+				}
+				if v.WildcardAnalyzerGroups == nil {
+					v.WildcardAnalyzerGroups = make(map[string][]string)
+				}
+				v.WildcardAnalyzerGroups[analyzer] = indexes
 			}
-			f.fieldsMap[k] = v
 		}
+		f.fieldsMap[k] = v
 	}
 	return f.fieldsMap
+}
+
+func (f *IndexOptionFormat) hasAnalyzerOnEveryIndex(name string) bool {
+	_, builtin := builtinAnalyzerCase(name)
+	return builtin || f.analyzerIndexCounts[name] == f.parsedIndexes
 }
 
 func (f *IndexOptionFormat) Parse(settings, mappings map[string]any) {
@@ -79,11 +95,18 @@ func (f *IndexOptionFormat) Parse(settings, mappings map[string]any) {
 
 // ParseIndex 合并物理索引的字段配置，并返回该索引可用于折叠查询的字段名。
 func (f *IndexOptionFormat) ParseIndex(index string, settings, mappings map[string]any) map[string]bool {
+	version := indexVersionCreated(settings)
+	if f.parsedIndexes == 0 || version < f.minIndexVersion {
+		f.minIndexVersion = version
+	}
 	f.parsedIndexes++
-	f.updateWildcardCaseInsensitive(settings)
 	f.parseAnalysis(settings)
 	fields := mappingFields(mappings)
 	names := make(map[string]bool, len(fields))
+	available := make(map[string]bool, len(f.analyzer))
+	for name := range f.analyzer {
+		available[name] = true
+	}
 	for name, field := range fields {
 		names[name] = true
 		mapping := field.definition
@@ -97,13 +120,22 @@ func (f *IndexOptionFormat) ParseIndex(index string, settings, mappings map[stri
 			continue
 		}
 		option.SearchOnly = field.searchOnly
-		if option.WildcardAnalyzer != "" {
-			f.analyzerIndexCounts[name]++
+		if analyzer := option.WildcardAnalyzer; analyzer != "" {
+			available[analyzer] = true
+			if index != "" {
+				if f.fieldAnalyzerIndexes[name] == nil {
+					f.fieldAnalyzerIndexes[name] = make(map[string][]string)
+				}
+				f.fieldAnalyzerIndexes[name][analyzer] = append(f.fieldAnalyzerIndexes[name][analyzer], index)
+			}
 		}
 		if existing, ok := f.fieldsMap[name]; ok {
 			option = mergeFieldOption(existing, option, index)
 		}
 		f.fieldsMap[name] = option
+	}
+	for analyzer := range available {
+		f.analyzerIndexCounts[analyzer]++
 	}
 	return names
 }
@@ -190,14 +222,23 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 		if tokenizer != nil {
 			tokenizerName = cast.ToString(tokenizer[AnalyzerKeyType])
 		}
+		searchAnalyzer, _ := data["search_analyzer"].(string)
+		sameSearchAnalyzer := searchAnalyzer == "" || searchAnalyzer == indexAnalyzer
 		if f.hasSettings {
 			fieldMap.WildcardCase = f.analyzerWildcardCase(indexAnalyzer, analyzer, tokenizerName)
+			if analyzer != nil && languageLowercase(fieldMap.WildcardCase) {
+				// 自定义语言分析器还可包含字符映射及 asciifolding，使用索引配置的完整归一化规则。
+				fieldMap.WildcardAnalyzer = indexAnalyzer
+				if sameSearchAnalyzer {
+					fieldMap.WildcardCase = metadata.WildcardSearchNormalization
+				}
+			}
 		} else if _, builtin := builtinAnalyzerCase(indexAnalyzer); builtin {
 			// 内置名称在各个索引均可用，ES 会采用该索引对同名分析器的配置，包括 default。
 			fieldMap.WildcardCase = metadata.WildcardCase(indexAnalyzer)
 		} else {
 			fieldMap.WildcardAnalyzer = indexAnalyzer
-			if searchAnalyzer, _ := data["search_analyzer"].(string); searchAnalyzer == "" || searchAnalyzer == indexAnalyzer {
+			if sameSearchAnalyzer {
 				// 自定义分析器仅在个别索引出现时，使用该字段自己的搜索分析器归一化通配符。
 				fieldMap.WildcardCase = metadata.WildcardFieldNormalization
 			}
@@ -209,10 +250,6 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 	case "wildcard":
 		fieldMap.IsCaseSensitive = true
 	}
-	if f.wildcardCaseInsensitive != nil {
-		fieldMap.WildcardCaseInsensitive = *f.wildcardCaseInsensitive
-	}
-
 	return fieldMap
 }
 
@@ -259,16 +296,6 @@ func mergeFieldOption(existing, next metadata.FieldOption, index string) metadat
 
 func fieldCaseSensitivityAffectsWildcard(field metadata.FieldOption) bool {
 	return field.IsAnalyzed || field.FieldType == KeyWord || field.FieldType == "wildcard"
-}
-
-func (f *IndexOptionFormat) updateWildcardCaseInsensitive(settings map[string]any) {
-	support := settingsSupportsWildcardCaseInsensitive(settings)
-	if f.wildcardCaseInsensitive == nil {
-		f.wildcardCaseInsensitive = &support
-		return
-	}
-	// 一个查询可能覆盖多个索引；只有所有索引都支持时才可下发 case_insensitive。
-	*f.wildcardCaseInsensitive = *f.wildcardCaseInsensitive && support
 }
 
 // normalizerLowercases 识别 keyword 的大小写标记，查询始终由 ES 执行完整的 normalizer。
@@ -329,6 +356,10 @@ func builtinAnalyzerCase(name string) (metadata.WildcardCase, bool) {
 	return metadata.WildcardOriginal, false
 }
 
+func languageLowercase(mode metadata.WildcardCase) bool {
+	return mode == metadata.WildcardTurkish || mode == metadata.WildcardGreek || mode == metadata.WildcardIrish
+}
+
 // filterWildcardCase 从分词器输出开始，按索引配置的顺序判断最终词条。
 func (f *IndexOptionFormat) filterWildcardCase(filters []string, lowercaseTokenizer bool) metadata.WildcardCase {
 	mode := metadata.WildcardOriginal
@@ -345,7 +376,7 @@ func (f *IndexOptionFormat) filterWildcardCase(filters []string, lowercaseTokeni
 			if language := cast.ToString(filter["language"]); language != "" {
 				// ES 的语言过滤器使用对应语言的多词项归一化规则。
 				mode, _ = builtinAnalyzerCase(strings.ToLower(language))
-			} else if mode != metadata.WildcardTurkish && mode != metadata.WildcardGreek && mode != metadata.WildcardIrish {
+			} else if !languageLowercase(mode) {
 				mode = metadata.WildcardLowercase
 			}
 		case AnalyzerFilterICUFolding:
@@ -364,12 +395,6 @@ func (f *IndexOptionFormat) filterWildcardCase(filters []string, lowercaseTokeni
 		}
 	}
 	return mode
-}
-
-func settingsSupportsWildcardCaseInsensitive(settings map[string]any) bool {
-	versionCreated := indexVersionCreated(settings)
-	// wildcard.case_insensitive 是 ES 7.10 引入的参数，旧版本会直接拒绝查询。
-	return versionCreated >= 7100000
 }
 
 func indexVersionCreated(settings map[string]any) int {

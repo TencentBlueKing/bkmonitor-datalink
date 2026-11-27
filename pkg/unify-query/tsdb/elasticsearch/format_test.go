@@ -328,13 +328,13 @@ func TestFormatFactory_Query(t *testing.T) {
 			conditions: metadata.AllConditions{{{DimensionName: "city", Operator: structured.ConditionContains, Value: []string{"L'AVION"}}}},
 			expected:   `{"query":{"query_string":{"default_field":"city","query":"*L'AVION*"}}}`,
 		},
-		"土耳其语 text 按索引语言处理字面冒号和斜线": {
+		"自定义土耳其语分析器按索引配置处理字面冒号和斜线": {
 			settings: map[string]any{"analysis": map[string]any{
 				"filter":   map[string]any{"tr_lower": map[string]any{"type": "lowercase", "language": "turkish"}},
-				"analyzer": map[string]any{"tr_log": map[string]any{"type": "custom", "tokenizer": "keyword", "filter": []string{"tr_lower"}}},
+				"analyzer": map[string]any{"tr_log": map[string]any{"type": "custom", "tokenizer": "keyword", "filter": []string{"tr_lower", "asciifolding"}}},
 			}},
 			conditions: metadata.AllConditions{{{DimensionName: "language_text", Operator: structured.ConditionContains, IsWildcard: true, Value: []string{"*IS/a:b*"}}}},
-			expected:   `{"query":{"query_string":{"default_field":"language_text","analyzer":"turkish","query":"*IS\\/a\\:b*"}}}`,
+			expected:   `{"query":{"query_string":{"default_field":"language_text","analyzer":"tr_log","query":"*IS\\/a\\:b*"}}}`,
 		},
 		"土耳其语 normalizer 收到原始大写 I": {
 			settings: map[string]any{"analysis": map[string]any{

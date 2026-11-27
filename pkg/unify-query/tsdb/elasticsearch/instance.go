@@ -346,8 +346,9 @@ func (i *Instance) fieldMapWithIndexFields(ctx context.Context, fieldAlias metad
 		}
 	}
 
-	span.Set("field-map-length", len(iof.FieldsMap()))
-	return iof.FieldsMap(), physicalIndexes, indexFields, nil
+	fields := iof.FieldsMap()
+	span.Set("field-map-length", len(fields))
+	return fields, physicalIndexes, indexFields, nil
 }
 
 func buildESQuerySource(ctx context.Context, qb *metadata.Query, fact *FormatFactory, forceUnmappedTypes map[string]string) (*elastic.SearchSource, elastic.Query, string, error) {

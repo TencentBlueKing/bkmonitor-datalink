@@ -15,6 +15,8 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
+
+	tc "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 )
 
 func TestFTACleanConfig(t *testing.T) {
@@ -40,4 +42,21 @@ func TestFTACleanConfig(t *testing.T) {
 	FTAClean.All = true
 	require.True(t, FTACleanOwns(FTAEvent, 43))
 	require.False(t, FTACleanOwns("custom", 42))
+}
+
+func TestFTAConsumerGroupMatchesTransfer(t *testing.T) {
+	previous, oldKeys := FTAClean, keys
+	t.Cleanup(func() { FTAClean = previous; keys = oldKeys; viper.Reset() })
+	input := tc.NewMetaClusterInfo().AsKafkaCluster()
+	input.SetTopic("0bkmonitor_50010")
+	viper.Reset()
+	keys = nil
+	loadFTAClean()
+	require.Equal(t, "bkmonitorv3_transfer0bkmonitor_50010", input.ConsumerGroup(FTAClean.GroupPrefix))
+	for _, prefix := range []string{"custom/", ""} {
+		viper.Set("fta_clean.consumer_group_prefix", prefix)
+		keys = viper.AllKeys()
+		loadFTAClean()
+		require.Equal(t, prefix+"0bkmonitor_50010", input.ConsumerGroup(FTAClean.GroupPrefix))
+	}
 }

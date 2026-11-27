@@ -4,7 +4,7 @@
 
 ## 配置与交接
 
-默认关闭。为专用 worker 的 `worker.queues` 增加 `fta-clean`，从部署中的 Transfer 读取实际 `kafka.consumer_group_prefix`，填入 `fta_clean.consumer_group_prefix`。下表给出 worker 配置和对应的 Python 元数据发布配置。
+默认关闭。为专用 worker 的 `worker.queues` 增加 `fta-clean`，worker 与 Transfer 共用消费组拼接逻辑，默认按蓝鲸部署模板使用 `bkmonitorv3_transfer` 直接拼接输入 topic，例如 `bkmonitorv3_transfer0bkmonitor_50010`。自定义部署应将实际前缀原样填入 `fta_clean.consumer_group_prefix`；直接使用 Transfer 源码兜底配置的部署也属于此情形。下表给出 worker 配置和对应的 Python 元数据发布配置。
 
 | worker 配置 | 默认值 | 用途 |
 |---|---|---|
@@ -16,10 +16,10 @@
 | `fta_clean.refresh_interval` | `60s` | 元数据刷新周期 |
 | `fta_clean.batch_messages / batch_bytes / batch_wait` | `128 / 1048576 / 50ms` | 每个输入分区独立组批，达到任一阈值后处理 |
 
-1. 使用关闭接管的配置部署 Python 和 Go 元数据发布端、BMW controller 和 worker。灰度时先更新两个元数据发布端的接管范围，保留 GSE 上报路由。
-2. 对本批 DataID 移除对应的旧 Transfer Consul 键，确认旧消费者已退出、在途消息已排空，记录原消费组的分区位点。核对两个发布端刷新后均不会重建旧键。
-3. 启动相同范围的清洗 worker，确认从原消费组位点续读。建议先用低流量源回放并演练回滚，再扩大至高流量源。验收关注原结果表 topic、新事件入 ES，以及 `bmw_fta_clean_` 前缀的输入量、输出量、分区积压、批耗时和写入失败指标。积压指标在批次确认时更新，写入持续失败时还应查看 Kafka 消费组的实际 lag。
-4. 回滚时先让本批 worker 停止消费并记录位点，再撤销两个发布端对应范围、刷新原 Transfer 配置，确认 Transfer 续读。改变分片数前停掉旧清洗 worker，再以统一的新配置启动；启动时会移除越界分片的注册。仅改变清洗并发上限可保持原分片归属。
+1. 先以关闭接管的配置部署相关组件。核对该源的输入 Kafka 集群、topic 和 Transfer 实际 group.id，记录分区位点。保持 GSE 上报和旧 Transfer Consul 配置。
+2. 给专用清洗 worker 开启本批 DataID，让它先加入原消费组。通过 Kafka 确认新成员与 Transfer 同组；多分区时可分别处理不同分区，单分区时新成员可能暂时空闲。
+3. 在 Python 和 Go 元数据发布端设置相同的接管范围，待配置生效后移除本批旧键，让 Transfer 平稳退出并排空在途输出。确认 worker 接管全部分区，原消费组继续推进、结果表有新输出、事件进入 ES。重平衡会短暂停顿，Transfer 延迟提交的位点可能导致边界消息重投。
+4. 回滚时先恢复元数据发布并刷新旧配置，让 Transfer 重新加入原消费组，再让专用 worker 退出该批 DataID。确认分区归属、积压和输出恢复后再扩大范围。修改固定分片数仍应先停旧清洗 worker，再以统一的新配置启动。
 
 同一分区一次处理一个批次。批内分块并行，按输入顺序汇集，再批量写各目标 Kafka 集群。收到所有有效输出的确认后才标记输入位点。已知部分失败仅重试未确认的消息，进程中断或 rebalance 可能导致已写消息重投。Kafka 分区和 broker 继续决定实际存储顺序。
 

@@ -256,4 +256,5 @@ fta_clean:
   batch_messages: 128
   batch_bytes: 1048576
   batch_wait: 50ms
-  consumer_group_prefix: "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/"
+  # Override only if Transfer uses a custom kafka.consumer_group_prefix.
+  # consumer_group_prefix: "bkmonitorv3_transfer"

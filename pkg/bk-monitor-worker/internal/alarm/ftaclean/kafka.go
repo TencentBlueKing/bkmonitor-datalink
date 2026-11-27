@@ -210,7 +210,7 @@ func consume(ctx context.Context, spec *tc.PipelineConfig, p *pipeline) error {
 			h.producers[e.cluster.ClusterId] = prod
 		}
 	}
-	group, err := sarama.NewConsumerGroup(input.brokers(), config.FTAClean.GroupPrefix+input.topic, sc)
+	group, err := sarama.NewConsumerGroup(input.brokers(), spec.MQConfig.AsKafkaCluster().ConsumerGroup(config.FTAClean.GroupPrefix), sc)
 	if err != nil {
 		return err
 	}

@@ -41,7 +41,8 @@ func loadFTAClean() {
 	FTAClean.BatchBytes = GetValue("fta_clean.batch_bytes", 1<<20)
 	FTAClean.Refresh = GetValue("fta_clean.refresh_interval", time.Minute, viper.GetDuration)
 	FTAClean.BatchWait = GetValue("fta_clean.batch_wait", 50*time.Millisecond, viper.GetDuration)
-	FTAClean.GroupPrefix = GetValue("fta_clean.consumer_group_prefix", "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/")
+	// Match the shipped transfer.yaml and metadata TRANSFER_CONSUMER_GROUP_ID.
+	FTAClean.GroupPrefix = GetValue("fta_clean.consumer_group_prefix", "bkmonitorv3_transfer")
 }
 
 func FTACleanOwns(etl string, id uint) bool {

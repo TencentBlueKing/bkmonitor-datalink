@@ -456,7 +456,7 @@ func (f *Frontend) init() error {
 
 	cluster := fmt.Sprintf("%s:%d", kafkaConfig.GetDomain(), kafkaConfig.GetPort())
 	topic := kafkaConfig.GetTopic()
-	group := fmt.Sprintf("%s%s", groupPrefix, topic)
+	group := kafkaConfig.ConsumerGroup(groupPrefix)
 	logging.Infof("consuming kafka %s for group %s", cluster, group)
 	logging.Debugf("kafka frontend %s config %#v", topic, c)
 	f.group, err = NewKafkaConsumerGroup([]string{cluster}, group, c)

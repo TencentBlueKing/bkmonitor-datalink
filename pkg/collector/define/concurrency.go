@@ -31,7 +31,9 @@ func CoreNum() int {
 
 func SetCoreNum(n int) {
 	if n <= 0 {
-		return
+		// Go 1.25 默认会按 cgroup 配额计算 GOMAXPROCS。worker 数量和队列容量按 CoreNum 固定初始化，
+		// 因此未显式配置时取当前有效并发数，并固定下来，避免运行时调度器与内部并发规模不一致。
+		n = runtime.GOMAXPROCS(0)
 	}
 	coreNums = n
 	runtime.GOMAXPROCS(n)

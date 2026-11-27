@@ -37,14 +37,12 @@ func newGrpcServer(middlewares []string) *grpc.Server {
 	return grpc.NewServer(opts...)
 }
 
-// rejectedStats counts the requests gRPC refuses while receiving a message:
-// a message over the receive size limit, one that does not decompress or is
-// compressed with an encoding the server has none for, and one that does
-// not decode. A unary call's request is refused before its handler runs; a
-// streaming call's messages are refused to the service reading them, and the
-// streaming services return that error unchanged. gRPC reports them only as
-// the status the call ends with, so they are told apart by the code and the
-// message gRPC writes for each.
+// rejectedStats counts the requests gRPC refuses before or while decoding
+// the message, which no service handler sees: a message over the receive
+// size limit, one that cannot be decompressed or has no installed decompressor,
+// and one that does not decode.
+// gRPC reports them only as the status the call ends with, so they are told
+// apart by the code and the message gRPC writes for each.
 type rejectedStats struct{}
 
 func (rejectedStats) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context { return ctx }
@@ -74,19 +72,16 @@ func grpcRejectReason(st *status.Status) (define.RejectReason, bool) {
 			return define.RejectTooLarge, true
 		}
 	case codes.Internal:
-		// A unary call's request, and a streaming call's messages, which the
-		// service reads with RecvMsg and returns the error of unchanged.
 		if strings.HasPrefix(msg, "grpc: error unmarshalling request") ||
 			strings.HasPrefix(msg, "grpc: failed to unmarshal the received message") {
 			return define.RejectDecode, true
 		}
-		if strings.HasPrefix(msg, "grpc: failed to decompress the received message") {
+		// grpc-go 不同版本对解压失败使用不同文案，按共同前缀兼容识别。
+		if strings.HasPrefix(msg, "grpc: failed to decompress") {
 			return define.RejectDecompress, true
 		}
 	case codes.Unimplemented:
-		// A message compressed with an encoding the server has no
-		// decompressor for. An unknown service or method answers
-		// Unimplemented too, with its own message.
+		// 未注册该编码的解压器时，grpc-go 使用 Unimplemented 拒绝请求。
 		if strings.HasPrefix(msg, "grpc: Decompressor is not installed for grpc-encoding") {
 			return define.RejectDecompress, true
 		}

@@ -156,6 +156,30 @@ func TestHttpRequest(t *testing.T) {
 		assert.Equal(t, int64(0), n.Load())
 	})
 
+	// 正常示例：requests_total{job="api"} 12；异常示例：指标 1、requests_total{指标="api"} 1。
+	// 本组用例验证非法指标名和标签名会被拒绝；“report success”用例覆盖正常文本上报。
+	t.Run("legacy metric name validation", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/some_job", bytes.NewBufferString("指标 1\n"))
+
+		svc, n := newSvc(define.StatusCodeOK, "", nil)
+		req = mux.SetURLVars(req, map[string]string{"job": "some_job"})
+		rw := httptest.NewRecorder()
+		svc.ExportMetrics(rw, req)
+		assert.Equal(t, http.StatusBadRequest, rw.Code)
+		assert.Equal(t, int64(0), n.Load())
+	})
+
+	t.Run("legacy label name validation", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/some_job", bytes.NewBufferString("requests_total{指标=\"api\"} 1\n"))
+
+		svc, n := newSvc(define.StatusCodeOK, "", nil)
+		req = mux.SetURLVars(req, map[string]string{"job": "some_job"})
+		rw := httptest.NewRecorder()
+		svc.ExportMetrics(rw, req)
+		assert.Equal(t, http.StatusBadRequest, rw.Code)
+		assert.Equal(t, int64(0), n.Load())
+	})
+
 	t.Run("base64 url success", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/L3Zhci90bXA", &bytes.Buffer{})
 

@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -80,9 +81,9 @@ processor:
     config:
       type: "fixed"
       fixed_token: %q
-      traces_dataid: 7101
-      metrics_dataid: 7102
-      profiles_dataid: 7103
+      traces_dataid: 1601
+      metrics_dataid: 1602
+      profiles_dataid: 1603
       bk_biz_id: 2
       bk_app_name: %q
   - name: "traces_deriver/duration"
@@ -183,7 +184,7 @@ func eventually(t *testing.T, what string, done func() bool) {
 func TestADerivedRecordWithNoPipelineIsCountedFromTheRequest(t *testing.T) {
 	// A derived record is exported as metrics events under the token's metrics
 	// data id.
-	derived := map[string]string{"record_type": define.RecordMetrics.S(), "id": "7102"}
+	derived := map[string]string{"record_type": define.RecordMetrics.S(), "id": "1602"}
 	// A server span with an http method, which the deriver derives from.
 	httpSpan := map[string]string{"http.method": "GET"}
 	noPipeline := func(protocol define.RequestType) float64 {
@@ -222,7 +223,7 @@ func TestADerivedRecordWithNoPipelineIsCountedFromTheRequest(t *testing.T) {
 // not counted.
 func TestAProfileTheTranslatorCannotParseIsCountedDropped(t *testing.T) {
 	startCollector(t, lossConfig(0, translatedProfiles))
-	labels := map[string]string{"pipeline": "profiles_pipeline/common", "record_type": define.RecordProfiles.S(), "id": "7103"}
+	labels := map[string]string{"pipeline": "profiles_pipeline/common", "record_type": define.RecordProfiles.S(), "id": "1603"}
 	droppedLabels := map[string]string{"processor": "pprof_translator/common"}
 	handledLabels := map[string]string{"token": lossToken}
 	for k, v := range labels {
@@ -267,7 +268,7 @@ func TestASpanBatchOfMaxMessageBytesIsDroppedAsOversize(t *testing.T) {
 	oversize := func() float64 {
 		return value(t, "bk_collector_exporter_send_failures_total", map[string]string{"reason": "oversize"})
 	}
-	sentBytes := func() float64 { return value(t, "bk_collector_beat_sent_bytes_total", map[string]string{"id": "7101"}) }
+	sentBytes := func() float64 { return value(t, "bk_collector_beat_sent_bytes_total", map[string]string{"id": "1601"}) }
 	before, bytesBefore := oversize(), sentBytes()
 
 	postTraces(t, map[string]string{"payload": "x"})
@@ -288,7 +289,11 @@ func gseOutput(t *testing.T) *gseoutput.Output {
 	t.Helper()
 	require.NoError(t, storage.Init(filepath.Join(t.TempDir(), "gse.db"), nil))
 	t.Cleanup(storage.Close)
-	sock := filepath.Join(t.TempDir(), "ipc.state.report")
+	// t.TempDir 会附加完整测试名，macOS 下可能超过 Unix socket 路径上限。
+	dir, err := os.MkdirTemp("", "gse-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "ipc.state.report")
 	ln, err := net.Listen("unix", sock)
 	require.NoError(t, err)
 	t.Cleanup(func() { ln.Close() })

@@ -34,60 +34,9 @@ func NewBatchProcessor(ctx context.Context, name string) (*template.RecordProces
 	util := utils.MapHelper{Data: pipeConfig.Option}
 	pipeLineItemName := util.GetOrDefault(config.PipelineConfigOptFlatBatchKey, ItemsName).(string)
 
-	var decoder *etl.PayloadDecoder
-	if pipeConfig.ETLConfig == pipeline.TypeFlatBatch {
-		// 如果是日志上报的流水线，可以接受item为空的情况，但是依然需要需要返回数据
-		// 这里只要其拆分的功能
-		decoder = etl.NewPayloadDecoder().FissionSplitHandler(
-			false, etl.ExtractByJMESPath(pipeLineItemName), "", pipeLineItemName,
-		)
-	} else {
-		// 如果是自定义事件和自定义时序的上报，必须要提取到字段，否则丢弃数据
-		decoder = etl.NewPayloadDecoder().FissionSplitHandler(
-			true, etl.ExtractByJMESPath(pipeLineItemName), "", pipeLineItemName,
-		)
-	}
+	decoder, record := etl.FlatBatch(pipeLineItemName, pipeConfig.ETLConfig != pipeline.TypeFlatBatch)
+	return template.NewRecordProcessorWithDecoderFn(name, pipeConfig, record, decoder.Decode), nil
 
-	return template.NewRecordProcessorWithDecoderFn(
-		name, config.PipelineConfigFromContext(ctx), etl.NewFunctionalRecord("", func(from etl.Container, to etl.Container) error {
-			for _, key := range from.Keys() {
-				v, err := from.Get(key)
-				if err != nil {
-					return err
-				}
-				err = to.Put(key, v)
-				if err != nil {
-					return err
-				}
-			}
-
-			v, err := from.Get(pipeLineItemName)
-			if err != nil {
-				// 没有pipeLineItemName field 可以直接跳过
-				return nil
-			}
-
-			var items map[string]interface{}
-
-			switch value := v.(type) {
-			case etl.Container:
-				items = etl.ContainerToMap(value)
-			case map[string]interface{}:
-				items = value
-			default:
-				return errors.Wrapf(define.ErrType, "%T", v)
-			}
-
-			for key, value := range items {
-				err = to.Put(key, value)
-				if err != nil {
-					return err
-				}
-			}
-
-			return nil
-		}), decoder.Decode,
-	), nil
 }
 
 func init() {

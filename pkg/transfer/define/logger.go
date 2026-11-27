@@ -88,3 +88,8 @@ func NewViperConfiguration(v *viper.Viper) Configuration {
 		Viper: v,
 	}
 }
+
+// UnmarshalExact keeps the Configuration API stable across Viper versions.
+func (c *ViperConfiguration) UnmarshalExact(value interface{}) error {
+	return c.Viper.UnmarshalExact(value)
+}

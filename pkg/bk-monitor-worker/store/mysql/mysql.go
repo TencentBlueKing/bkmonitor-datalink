@@ -27,22 +27,29 @@ type DBSession struct {
 
 var dbSession *DBSession
 
-var once sync.Once
+var sessionMu sync.Mutex
 
 func GetDBSession() *DBSession {
-	if dbSession != nil {
-		return dbSession
+	session, err := OpenDBSession()
+	if err != nil {
+		panic(err)
 	}
-	once.Do(func() {
-		session := &DBSession{}
-		err := session.Open()
-		if err != nil {
-			logger.Errorf("connection mysql error, %v", err)
-			panic(err)
-		}
-		dbSession = session
-	})
-	return dbSession
+	return session
+}
+
+// OpenDBSession allows resident tasks to retry a failed initial connection.
+func OpenDBSession() (*DBSession, error) {
+	sessionMu.Lock()
+	defer sessionMu.Unlock()
+	if dbSession != nil {
+		return dbSession, nil
+	}
+	session := &DBSession{}
+	if err := session.Open(); err != nil {
+		return nil, err
+	}
+	dbSession = session
+	return session, nil
 }
 
 // Open connect the mysql db

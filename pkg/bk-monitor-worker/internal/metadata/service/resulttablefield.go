@@ -10,6 +10,8 @@
 package service
 
 import (
+	"github.com/jinzhu/gorm"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -65,13 +67,17 @@ func NewResultTableFieldSvc(obj *resulttable.ResultTableField) ResultTableFieldS
 	}
 }
 
-func (ResultTableFieldSvc) BatchGetFields(tableIdList []string, isConsulConfig bool) (map[string][]any, error) {
-	tableFieldOptionData, err := NewResultTableFieldOptionSvc(nil).BathFieldOption(tableIdList)
+func (s ResultTableFieldSvc) BatchGetFields(tableIdList []string, isConsulConfig bool) (map[string][]any, error) {
+	return s.batchGetFields(mysql.GetDBSession().DB, tableIdList, isConsulConfig)
+}
+
+func (ResultTableFieldSvc) batchGetFields(db *gorm.DB, tableIdList []string, isConsulConfig bool) (map[string][]any, error) {
+	tableFieldOptionData, err := NewResultTableFieldOptionSvc(nil).bathFieldOption(db, tableIdList)
 	if err != nil {
 		return nil, err
 	}
 	var rtFieldList []resulttable.ResultTableField
-	if err := resulttable.NewResultTableFieldQuerySet(mysql.GetDBSession().DB).
+	if err := resulttable.NewResultTableFieldQuerySet(db).
 		TableIDIn(tableIdList...).All(&rtFieldList); err != nil {
 		return nil, err
 	}

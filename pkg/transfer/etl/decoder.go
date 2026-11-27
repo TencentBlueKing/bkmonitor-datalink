@@ -10,7 +10,10 @@
 package etl
 
 import (
+	"time"
+
 	"github.com/pkg/errors"
+	"golang.org/x/time/rate"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
@@ -83,6 +86,7 @@ func (d *PayloadDecoder) Decode(payload define.Payload) ([]Container, error) {
 }
 
 func (d *PayloadDecoder) fissionHandler(strict bool, extractor ExtractFn, fn func(index int, value interface{}, container Container) error) *PayloadDecoder {
+	warnings := rate.NewLimiter(rate.Every(time.Minute), 1)
 	return d.Register(func(containers []Container) (results []Container, err error) {
 		return d.each(containers, func(i int, container Container, results []Container) ([]Container, error) {
 			extracted, err := extractor(container)
@@ -101,7 +105,9 @@ func (d *PayloadDecoder) fissionHandler(strict bool, extractor ExtractFn, fn fun
 			array, ok := extracted.([]interface{})
 			if !ok {
 				if strict {
-					logging.Warnf("expect type []interface{} but got %T", extracted)
+					if warnings.Allow() {
+						logging.Warnf("expect type []interface{} but got %T", extracted)
+					}
 					return nil, nil
 				}
 				return results, nil
@@ -111,7 +117,9 @@ func (d *PayloadDecoder) fissionHandler(strict bool, extractor ExtractFn, fn fun
 				result := container.Copy()
 				err = fn(index, value, result)
 				if err != nil {
-					logging.Warnf("fission handler error %v for %v", err, result)
+					if warnings.Allow() {
+						logging.Warnf("fission handler failed for array item %d", index)
+					}
 					continue
 				}
 

@@ -12,7 +12,9 @@ package service
 import (
 	"context"
 	"fmt"
+	"sort"
 
+	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
 
@@ -61,8 +63,12 @@ func (d DataSourceSvc) ConsulConfigPath() string {
 
 // MqConfigObj 返回data_id的kafka配置对象
 func (d DataSourceSvc) MqConfigObj() (*storage.KafkaTopicInfo, error) {
+	return d.mqConfig(mysql.GetDBSession().DB)
+}
+
+func (d DataSourceSvc) mqConfig(db *gorm.DB) (*storage.KafkaTopicInfo, error) {
 	var kafkaTopicInfo storage.KafkaTopicInfo
-	if err := storage.NewKafkaTopicInfoQuerySet(mysql.GetDBSession().DB).BkDataIdEq(d.BkDataId).One(&kafkaTopicInfo); err != nil {
+	if err := storage.NewKafkaTopicInfoQuerySet(db).BkDataIdEq(d.BkDataId).One(&kafkaTopicInfo); err != nil {
 		return nil, errors.Wrapf(err, "query KafkaTopicInfo failed")
 	}
 	return &kafkaTopicInfo, nil
@@ -70,17 +76,20 @@ func (d DataSourceSvc) MqConfigObj() (*storage.KafkaTopicInfo, error) {
 
 // MqCluster 返回data_id的kafka集群对象
 func (d DataSourceSvc) MqCluster() (*storage.ClusterInfo, error) {
+	return d.mqCluster(mysql.GetDBSession().DB)
+}
+
+func (d DataSourceSvc) mqCluster(db *gorm.DB) (*storage.ClusterInfo, error) {
 	var clusterInfo storage.ClusterInfo
-	if err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterIDEq(d.MqClusterId).One(&clusterInfo); err != nil {
+	if err := storage.NewClusterInfoQuerySet(db).ClusterIDEq(d.MqClusterId).One(&clusterInfo); err != nil {
 		return nil, errors.Wrap(err, "query mq cluster failed")
 	}
 	return &clusterInfo, nil
 }
 
-// ToJson 获取当前data_id的配置
-func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]any, error) {
+func (d DataSourceSvc) sourceConfig(db, tenantDB *gorm.DB) (map[string]any, error) {
 	// 集群配置信息
-	kafkaTopicInfo, err := d.MqConfigObj()
+	kafkaTopicInfo, err := d.mqConfig(db)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +103,7 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]any, 
 		"consume_rate":   kafkaTopicInfo.ConsumeRate,
 	}
 	// 添加集群信息
-	clusterInfo, err := d.MqCluster()
+	clusterInfo, err := d.mqCluster(tenantDB)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +116,7 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]any, 
 	mqConfig["auth_info"] = consulConfig.AuthInfo
 
 	// 获取datasource的配置项
-	optionData, err := NewDataSourceOptionSvc(nil).GetOptions(d.BkDataId)
+	optionData, err := NewDataSourceOptionSvc(nil).getOptions(tenantDB, d.BkDataId)
 	if err != nil {
 		return nil, err
 	}
@@ -126,32 +135,27 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]any, 
 		"space_type_id":       d.SpaceTypeId,
 		"space_uid":           d.SpaceUid,
 	}
+	return resultConfig, nil
+}
+
+// ToJson 获取当前data_id的配置
+func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]any, error) {
 	db := mysql.GetDBSession().DB
+	resultConfig, err := d.sourceConfig(db, db)
+	if err != nil {
+		return nil, err
+	}
 	// 获取ResultTable的配置
 	if withRtInfo {
 		resultTableInfoList := make([]any, 0)
 		resultConfig["result_table_list"] = resultTableInfoList
-		var resultTableIdList []string
-		var dataSourceRtList []resulttable.DataSourceResultTable
-		if err := resulttable.NewDataSourceResultTableQuerySet(db).
-			BkDataIdEq(d.BkDataId).All(&dataSourceRtList); err != nil {
-			return nil, err
-		}
-		if len(dataSourceRtList) == 0 {
-			return resultConfig, nil
-		}
-		for _, t := range dataSourceRtList {
-			resultTableIdList = append(resultTableIdList, t.TableId)
-		}
-		var resultTableList []resulttable.ResultTable
-		if err := resulttable.NewResultTableQuerySet(db).TableIdIn(resultTableIdList...).
-			IsDeletedEq(false).IsEnableEq(true).All(&resultTableList); err != nil {
+		resultTableList, err := d.enabledTables(db)
+		if err != nil {
 			return nil, err
 		}
 		if len(resultTableList) == 0 {
 			return resultConfig, nil
 		}
-
 		var filterResultTableIdList []string
 		for _, table := range resultTableList {
 			filterResultTableIdList = append(filterResultTableIdList, table.TableId)
@@ -210,6 +214,77 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]any, 
 		resultConfig["result_table_list"] = resultTableInfoList
 	}
 	return resultConfig, nil
+}
+
+func (d DataSourceSvc) enabledTables(db *gorm.DB) ([]resulttable.ResultTable, error) {
+	var resultTableIdList []string
+	var dataSourceRtList []resulttable.DataSourceResultTable
+	if err := resulttable.NewDataSourceResultTableQuerySet(db).
+		BkDataIdEq(d.BkDataId).All(&dataSourceRtList); err != nil {
+		return nil, err
+	}
+	if len(dataSourceRtList) == 0 {
+		return nil, nil
+	}
+	for _, t := range dataSourceRtList {
+		resultTableIdList = append(resultTableIdList, t.TableId)
+	}
+	var resultTableList []resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(db).TableIdIn(resultTableIdList...).
+		IsDeletedEq(false).IsEnableEq(true).All(&resultTableList); err != nil {
+		return nil, err
+	}
+	if len(resultTableList) == 0 {
+		return nil, nil
+	}
+
+	return resultTableList, nil
+}
+
+// FTAConfig reads the same field options and Kafka credentials as Transfer
+// while resolving result tables and Kafka storage within the source tenant.
+func (d DataSourceSvc) FTAConfig(conn *gorm.DB) (map[string]any, error) {
+	db := conn
+	if d.BkTenantId == "" || d.BkTenantId == "system" {
+		db = db.Where("(bk_tenant_id = ? OR bk_tenant_id IS NULL OR bk_tenant_id = ?)", "system", "")
+	} else {
+		db = db.Where("bk_tenant_id = ?", d.BkTenantId)
+	}
+	base, err := d.sourceConfig(conn, db)
+	if err != nil {
+		return nil, err
+	}
+	tables, err := d.enabledTables(db)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(tables))
+	for _, rt := range tables {
+		ids = append(ids, rt.TableId)
+	}
+	sort.Strings(ids)
+	outputs := make([]any, 0, len(ids))
+	if len(ids) > 0 {
+		fields, err := NewResultTableFieldSvc(nil).batchGetFields(db.Order("table_id, field_name"), ids, true)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range ids {
+			var output storage.KafkaStorage
+			if err := storage.NewKafkaStorageQuerySet(db).TableIDEq(id).One(&output); err != nil {
+				if gorm.IsRecordNotFoundError(err) {
+					continue
+				}
+				return nil, err
+			}
+			shipper, err := NewKafkaStorageSvc(&output).consulConfig(db)
+			if err != nil {
+				return nil, err
+			}
+			outputs = append(outputs, map[string]any{"result_table": id, "field_list": fields[id], "shipper_list": []*StorageConsulConfig{shipper}})
+		}
+	}
+	return map[string]any{"data_id": d.BkDataId, "mq_config": base["mq_config"], "option": base["option"], "result_table_list": outputs}, nil
 }
 
 // 是否自定义上报的数据源
@@ -383,6 +458,9 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context, modifyIndex uint
 		return nil
 	}
 
+	if cfg.FTACleanOwns(d.EtlConfig, d.BkDataId) {
+		return nil
+	}
 	// transfer不处理data_id 1002--1006的数据，忽略推送到consul
 	for _, dataId := range IgnoreConsulSyncDataIdList {
 		if d.BkDataId == dataId {

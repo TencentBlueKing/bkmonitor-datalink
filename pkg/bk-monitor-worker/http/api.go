@@ -18,6 +18,7 @@ import (
 
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/ftaclean"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/daemon"
 	storeRedis "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
@@ -100,6 +101,10 @@ func CreateTask(c *gin.Context) {
 			return
 		}
 	} else if strings.HasPrefix(kind, DaemonTask) {
+		if kind == ftaclean.Kind {
+			BadReqResponse(c, "FTA cleaning shards are registered by the worker")
+			return
+		}
 		if err = enqueueDaemonTask(newedTask); err != nil {
 			ServerErrResponse(c, "enqueue daemon task error error, %v", err)
 			return

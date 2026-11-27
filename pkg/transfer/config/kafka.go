@@ -14,6 +14,12 @@ type KafkaMetaClusterInfo struct {
 	*SimpleMetaClusterInfo
 }
 
+// ConsumerGroup returns the group used for an input topic. The prefix is literal:
+// existing deployments may include a separator in it, or use an empty prefix.
+func (c *KafkaMetaClusterInfo) ConsumerGroup(prefix string) string {
+	return prefix + c.GetTopic()
+}
+
 // GetTopic :
 func (c *KafkaMetaClusterInfo) GetTopic() string {
 	return c.StorageConfigHelper.MustGetString("topic")

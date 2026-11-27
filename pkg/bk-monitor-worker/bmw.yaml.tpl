@@ -245,3 +245,16 @@ scheduler:
     watcher:
       workerWatchInterval: 1s
       taskWatchInterval: 1s
+
+fta_clean:
+  enabled: false
+  all: false
+  data_ids: []
+  shards: 4
+  max_concurrency: 8
+  refresh_interval: 60s
+  batch_messages: 128
+  batch_bytes: 1048576
+  batch_wait: 50ms
+  # Override only if Transfer uses a custom kafka.consumer_group_prefix.
+  # consumer_group_prefix: "bkmonitorv3_transfer"

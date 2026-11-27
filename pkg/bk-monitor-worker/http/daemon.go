@@ -12,11 +12,13 @@ package http
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/ftaclean"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/daemon"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -33,6 +35,11 @@ func ReloadDaemonTask(c *gin.Context) {
 	params := new(DaemonTaskReloadParam)
 	if err := BindJSON(c, params); err != nil {
 		BadReqResponse(c, "parse params error: %v", err)
+		return
+	}
+
+	if len(params.Payload) > 0 && strings.HasPrefix(params.UniId, ftaclean.Kind+"-") {
+		BadReqResponse(c, "FTA shard payload is managed by the worker")
 		return
 	}
 

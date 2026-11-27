@@ -10,6 +10,8 @@
 package service
 
 import (
+	"github.com/jinzhu/gorm"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
@@ -26,9 +28,13 @@ func NewDataSourceOptionSvc(obj *resulttable.DataSourceOption) DataSourceOptionS
 }
 
 // GetOptions 获取datasource的配置项
-func (DataSourceOptionSvc) GetOptions(bkDataId uint) (map[string]any, error) {
+func (s DataSourceOptionSvc) GetOptions(bkDataId uint) (map[string]any, error) {
+	return s.getOptions(mysql.GetDBSession().DB, bkDataId)
+}
+
+func (DataSourceOptionSvc) getOptions(db *gorm.DB, bkDataId uint) (map[string]any, error) {
 	var dataSourceOptionList []resulttable.DataSourceOption
-	if err := resulttable.NewDataSourceOptionQuerySet(mysql.GetDBSession().DB).
+	if err := resulttable.NewDataSourceOptionQuerySet(db).
 		BkDataIdEq(bkDataId).All(&dataSourceOptionList); err != nil {
 		return nil, err
 	}

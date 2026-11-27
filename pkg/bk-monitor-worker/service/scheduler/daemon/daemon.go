@@ -19,6 +19,7 @@ import (
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/cmdbcache"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/ftaclean"
 	apmTasks "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
@@ -79,6 +80,7 @@ var taskDefine = map[string]OperatorDefine{
 		logger.Info("cmdb_cache_refresh daemon task is initialized")
 		return &cmdbcache.CacheRefreshDaemon{}, nil
 	}},
+	ftaclean.Kind: {initialFunc: func(context.Context) (Operator, error) { return ftaclean.Operator{}, nil }},
 	ActiveProfilingTaskKind: {initialFunc: func(ctx context.Context) (Operator, error) {
 		return newActiveProfilingOperator(ctx), nil
 	}},

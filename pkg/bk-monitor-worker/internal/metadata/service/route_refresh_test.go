@@ -29,6 +29,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/testutil/routefixture"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/memcache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 )
@@ -610,4 +611,118 @@ func routeDetail(t *testing.T, f *routefixture.Fixture, field string) map[string
 	var got map[string]any
 	require.NoError(t, json.Unmarshal([]byte(raw), &got))
 	return got
+}
+
+func TestFullSpaceRouterQueryScope(t *testing.T) {
+	f := routefixture.New(t)
+	f.ResetOutput(t)
+	patch := gomonkey.ApplyGlobalVar(&cfg.SpecialRtRouterAliasResultTableList, []string{"platform.metric"})
+	defer patch.Reset()
+	require.NoError(t, f.DB.Exec("UPDATE metadata_datasource SET space_type_id='bkci' WHERE bk_data_id=104").Error)
+	require.NoError(t, f.DB.Exec("UPDATE metadata_resulttable SET bk_biz_id_alias='project_alias' WHERE table_id='platform.metric'").Error)
+	require.NoError(t, f.DB.Exec(`INSERT INTO metadata_resulttable (bk_tenant_id,bk_biz_id,table_id,default_storage,is_enable,is_deleted) VALUES
+		('system',-4,'own.logs','doris',1,0),('system',-4,'deleted.logs','doris',1,1),
+		('system',-4,'devx_system.cross','',0,1),('other',-4,'perforce_system.other','',0,1)`).Error)
+	require.NoError(t, f.DB.Exec("INSERT INTO metadata_space(id,space_type_id,space_id,bk_tenant_id) VALUES (99,'bkci','project','other')").Error)
+	var spaces []space.Space
+	require.NoError(t, f.DB.Order("id DESC").Find(&spaces).Error)
+	queries := f.ObserveQueries(t)
+	partial := NewSpacePusher()
+	got, err := partial.ComposeDorisTableIds("bkci", "project")
+	require.NoError(t, err)
+	require.Contains(t, got, "own.logs")
+	require.NotContains(t, got, "deleted.logs")
+	require.Len(t, queries.ForTable("metadata_space"), 1)
+	targeted := queries.ForTable("metadata_resulttable")
+	require.Len(t, targeted, 1)
+	require.Contains(t, targeted[0].SQL, "bk_biz_id =")
+	require.Contains(t, targeted[0].SQL, "default_storage =")
+
+	read := func(p *SpacePusher) []SpaceTableIdValues {
+		var results []SpaceTableIdValues
+		for _, sp := range spaces {
+			logs, err := p.ComposeEsTableIds(sp.SpaceTypeId, sp.SpaceId)
+			require.NoError(t, err)
+			doris, err := p.ComposeDorisTableIds(sp.SpaceTypeId, sp.SpaceId)
+			require.NoError(t, err)
+			results = append(results, logs, doris)
+			if sp.SpaceTypeId != models.SpaceTypeBKCI {
+				continue
+			}
+			level, err := p.composeBkciLevelTableIds(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId)
+			require.NoError(t, err)
+			cross, err := p.composeBkciCrossTableIds(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId)
+			require.NoError(t, err)
+			if sp.BkTenantId == "system" {
+				require.Equal(t, []map[string]any{{"project_alias": sp.SpaceId}}, level["platform.metric"]["filters"])
+				require.Equal(t, []map[string]any{{"projectId": sp.SpaceId}}, cross["devx_system.cross"]["filters"])
+				require.NotContains(t, cross, "perforce_system.other")
+			} else {
+				require.Empty(t, level)
+				require.Equal(t, []map[string]any{{"devops_id": sp.SpaceId}}, cross["perforce_system.other"]["filters"])
+			}
+			results = append(results, level, cross)
+		}
+		return results
+	}
+	queries.Entries = nil
+	want := read(partial)
+	perSpaceQueries := len(queries.Entries)
+	queries.Entries = nil
+	full := NewSpacePusher()
+	require.NoError(t, full.PreloadSpaceDependencies(spaces))
+	preloadQueries := len(queries.Entries)
+	require.Less(t, preloadQueries, perSpaceQueries)
+	queries.Entries = nil
+	require.Equal(t, want, read(full))
+	require.Empty(t, queries.Entries)
+	t.Logf("%d spaces, ES/Doris and BKCI common routes: targeted=%d SQL, full preload=%d SQL, subsequent assembly=0 SQL", len(spaces), perSpaceQueries, preloadQueries)
+
+	related, err := full.ComposeRelatedBkciTableIds("bkcc", "1")
+	require.NoError(t, err)
+	require.Contains(t, related, "own.logs")
+	require.Empty(t, queries.ForTable("metadata_resulttable"))
+	require.Empty(t, queries.ForTable("metadata_space"))
+
+	// A cached business ID can outlive a space recreation. Keep using its routes.
+	cache, err := memcache.GetMemCache()
+	require.NoError(t, err)
+	require.True(t, cache.Put(CachedSpaceBizIdKey, map[string]int{"bkci__project": -1234}, 0))
+	cache.Wait()
+	require.NoError(t, f.DB.Exec("INSERT INTO metadata_resulttable(bk_biz_id,table_id,default_storage,is_enable,is_deleted) VALUES (-1234,'previous.logs','doris',1,0)").Error)
+	queries.Entries = nil
+	previous, err := full.ComposeDorisTableIds("bkci", "project")
+	require.NoError(t, err)
+	require.Contains(t, previous, "previous.logs")
+	require.NotContains(t, previous, "own.logs")
+	require.Len(t, queries.ForTable("metadata_resulttable"), 1)
+	cache.Delete(CachedSpaceBizIdKey)
+	cache.Wait()
+
+	// MySQL may match different spellings of the same space ID across tenants.
+	require.NoError(t, f.DB.Exec("INSERT INTO metadata_space(id,space_type_id,space_id,bk_tenant_id) VALUES (100,'bkci','PROJECT','other')").Error)
+	require.NoError(t, f.DB.Order("id DESC").Find(&spaces).Error)
+	full.preloadSpaceLogTables(spaces)
+	first, err := partial.GetBizIdBySpace("bkci", "PROJECT")
+	require.NoError(t, err)
+	fromPreload, err := full.GetBizIdBySpace("bkci", "PROJECT")
+	require.NoError(t, err)
+	require.Equal(t, first, fromPreload)
+
+	// Fail the batch read only. Subsequent targeted reads must still succeed.
+	const hook = "test:fail_space_log_preload"
+	f.DB.Callback().Query().Before("gorm:query").Register(hook, func(scope *gorm.Scope) {
+		if scope.TableName() == "metadata_resulttable" {
+			scope.Err(errors.New("test prefetch failure"))
+		}
+	})
+	fallback := NewSpacePusher()
+	fallback.preloadSpaceLogTables(spaces)
+	f.DB.Callback().Query().Remove(hook)
+	require.Empty(t, fallback.logTables)
+	queries.Entries = nil
+	afterFailure, err := fallback.ComposeDorisTableIds("bkci", "project")
+	require.NoError(t, err)
+	require.Equal(t, got, afterFailure)
+	require.Len(t, queries.ForTable("metadata_resulttable"), 1)
 }

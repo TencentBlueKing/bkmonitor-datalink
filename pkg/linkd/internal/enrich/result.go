@@ -51,6 +51,8 @@ type ProcessorResult struct {
 	applied        bool
 	Trace          []Trace
 	Diagnostics    []Diagnostic
+	// MonitorItemAlias 仅供 KAC 投影展示，不进入策略条件所读取的字段。
+	MonitorItemAlias string
 	// ReusedFromAlertID 标识结果来自哪个活跃 Alert，本次没有执行 Match/Process。
 	ReusedFromAlertID string
 }
@@ -62,6 +64,8 @@ type ProcessorEnvelope struct {
 	Patches     []domain.EnrichPatch `json:"patches,omitempty"`
 	Trace       []Trace              `json:"trace,omitempty"`
 	Diagnostics []Diagnostic         `json:"diagnostics,omitempty"`
+	// MonitorItemAlias 保存 Strategy 步骤从执行修订读取的展示别名。
+	MonitorItemAlias string `json:"monitor_item_alias,omitempty"`
 	// ReusedFromAlertID 保留复用来源；Trace 沿用该快照的原始执行记录。
 	ReusedFromAlertID string `json:"reused_from_alert_id,omitempty"`
 }
@@ -176,7 +180,7 @@ type Trace struct {
 	DurationMilliseconds int64               `json:"duration_milliseconds"`
 }
 
-// MarshalJSON 新结果只序列化补丁；value 仅用于真实历史记录的读取边界。
+// MarshalJSON 新结果保存补丁和信封元数据；value 仅用于真实历史记录的读取边界。
 func (e ProcessorEnvelope) MarshalJSON() ([]byte, error) {
 	if e.Patches != nil {
 		return json.Marshal(struct {
@@ -184,8 +188,12 @@ func (e ProcessorEnvelope) MarshalJSON() ([]byte, error) {
 			Patches           []domain.EnrichPatch `json:"patches"`
 			Trace             []Trace              `json:"trace,omitempty"`
 			Diagnostics       []Diagnostic         `json:"diagnostics,omitempty"`
+			MonitorItemAlias  string               `json:"monitor_item_alias,omitempty"`
 			ReusedFromAlertID string               `json:"reused_from_alert_id,omitempty"`
-		}{e.Status, e.Patches, e.Trace, e.Diagnostics, e.ReusedFromAlertID})
+		}{
+			Status: e.Status, Patches: e.Patches, Trace: e.Trace, Diagnostics: e.Diagnostics,
+			MonitorItemAlias: e.MonitorItemAlias, ReusedFromAlertID: e.ReusedFromAlertID,
+		})
 	}
 	type legacy ProcessorEnvelope
 	return json.Marshal(legacy(e))

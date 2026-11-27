@@ -47,6 +47,7 @@ func (p Strategy) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proc
 		return enrich.ProcessorResult{}, err
 	}
 	diagnostics = strategyDependencyDiagnostics(strategyFound, strategyErr)
+	var monitorItemAlias string
 	values := models.StrategyValues{StrategyID: identity.ID, StrategyVersion: identity.Version}
 	if strategyFound && strategyErr == nil {
 		if strategy.MonitorTemplateID != nil {
@@ -72,6 +73,7 @@ func (p Strategy) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proc
 			values.StrategyName = strategy.Name
 		}
 		values.DataSource = strategy.Spec.DataSource
+		monitorItemAlias = strategy.Spec.MonitorItemAlias
 	}
 	scope.Context().Strategy.Set(values)
 	value, err := scope.Context().Strategy.JSONObject()
@@ -83,7 +85,7 @@ func (p Strategy) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proc
 	if len(diagnostics) != 0 {
 		status = domain.EnrichStatusPartial
 	}
-	return enrich.ProcessorResult{Status: status, Value: value, Diagnostics: diagnostics}, nil
+	return enrich.ProcessorResult{Status: status, Value: value, Diagnostics: diagnostics, MonitorItemAlias: monitorItemAlias}, nil
 }
 
 func legacyKACStrategyName(strategy models.CWStrategy) string {

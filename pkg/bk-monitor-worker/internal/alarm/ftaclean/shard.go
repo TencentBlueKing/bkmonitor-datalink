@@ -101,13 +101,23 @@ func refresh(ctx context.Context, index int, active map[uint]*consumer, configFa
 	return reconcile(ctx, session.DB, index, active, configFailures)
 }
 
-func reconcile(ctx context.Context, db *gorm.DB, index int, active map[uint]*consumer, configFailures map[uint]*failureWindow) error {
-	var sources []resulttable.DataSource
-	query := db.Where("etl_config = ? AND is_enable = ? AND MOD(bk_data_id, ?) = ?", config.FTAEvent, true, config.FTAClean.Shards, index)
+func discoverSources(db *gorm.DB, index int) ([]resulttable.DataSource, error) {
+	// 与告警后台订阅条件一致。IN 按 DataID 判断是否仍有有效实例，避免共享 DataID 时重复启动消费者。
+	enabledInstances := db.Table("event_plugin_instance").Select("data_id").
+		Where("is_enabled = ? AND is_deleted = ?", true, false).SubQuery()
+	query := db.Where("etl_config = ? AND is_enable = ? AND MOD(bk_data_id, ?) = ?", config.FTAEvent, true, config.FTAClean.Shards, index).
+		Where("bk_data_id IN (?)", enabledInstances)
 	if !config.FTAClean.All {
 		query = query.Where("bk_data_id IN (?)", config.FTAClean.DataIDs)
 	}
-	if err := query.Find(&sources).Error; err != nil {
+	var sources []resulttable.DataSource
+	err := query.Find(&sources).Error
+	return sources, err
+}
+
+func reconcile(ctx context.Context, db *gorm.DB, index int, active map[uint]*consumer, configFailures map[uint]*failureWindow) error {
+	sources, err := discoverSources(db, index)
+	if err != nil {
 		return err
 	}
 	seen := make(map[uint]bool, len(sources))

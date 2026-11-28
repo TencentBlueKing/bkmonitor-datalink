@@ -9,7 +9,8 @@
 
 | 文档                                                             | 定位                                                   |
 | ---------------------------------------------------------------- | ------------------------------------------------------ |
-| [KAC 5.4 告警字段管理设计](kingeye_5.4/alert_fields/README.md) | Kingeye 5.4 开发设计副本，附初始化 SQL 和字段读写关系图 |
+| [KAC 5.4 告警字段管理设计](kingeye_5.4/alert_fields/alert_field_design.md) | Kingeye 5.4 开发设计副本，附初始化 SQL 和字段读写关系图 |
+| [5.4 告警 ES 索引设计](kingeye_5.4/alert_fields/es-index-design.md) | 四类逻辑索引、RawAlarmEvent 写入与检索、字段租户隔离和关联归档（未实施） |
 | [policy-runtime-scaling.md](policy-runtime-scaling.md) | 候选索引、共享依赖与 60 秒时效、屏蔽主索引、合并批量运行和验证记录；通知暂缓 |
 | [runtime-capacity-and-recovery.md](runtime-capacity-and-recovery.md) | 并发、容量、失败确认与重试审查清单及配置边界 |
 | [package-structure.md](package-structure.md) | 当前 Go 包职责、依赖方向和装配边界 |

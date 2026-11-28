@@ -73,7 +73,17 @@ func reconcile(st *State, releases []eventsource.Release, unavailable map[string
 	for _, rel := range releases {
 		s := rel.Spec
 		sourceSet[rel.ID] = true
-		for _, role := range []string{"cleaner", "lifecycle"} {
+		roles := []string{"cleaner", "lifecycle"}
+		hasCollector := s.Collection != nil && (s.Collection.Mode == "pull" || s.Collection.RecoveryIntervalMinutes > 0)
+		for _, task := range st.Tasks {
+			if task.Source == rel.ID && task.Role == "collector" {
+				hasCollector = true
+			}
+		}
+		if hasCollector {
+			roles = append([]string{"collector"}, roles...)
+		}
+		for _, role := range roles {
 			eligible := []string{}
 			for id, w := range st.Workers {
 				if !w.Draining && !now.Before(w.StableAfter) && !now.Before(w.CooldownUntil) && now.Sub(w.Seen) < 10*time.Second && matches(w, s, role) {
@@ -82,6 +92,12 @@ func reconcile(st *State, releases []eventsource.Release, unavailable map[string
 			}
 			sort.Strings(eligible)
 			target := placement(s, role).Replicas.Limit(len(eligible))
+			if role == "collector" {
+				target = min(target, 1)
+				if s.Collection == nil || (s.Collection.Mode != "pull" && s.Collection.RecoveryIntervalMinutes == 0) {
+					target = 0
+				}
+			}
 			if !s.Enabled || rel.Deleted {
 				target = 0
 			}
@@ -146,9 +162,9 @@ func reconcile(st *State, releases []eventsource.Release, unavailable map[string
 			sort.Strings(active)
 			// 停用整个来源时先撤销 Cleaner，避免停止 Lifecycle 后仍有新的接入。
 			delayStop := false
-			if role == "lifecycle" && (!s.Enabled || rel.Deleted) {
+			if (role == "lifecycle" || role == "cleaner") && (!s.Enabled || rel.Deleted) {
 				for _, t := range st.Tasks {
-					if t.Source == rel.ID && t.Role == "cleaner" && t.Phase != "stopped" {
+					if t.Source == rel.ID && (t.Role == "collector" || role == "lifecycle" && t.Role == "cleaner") && t.Phase != "stopped" {
 						delayStop = true
 					}
 				}

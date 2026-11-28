@@ -159,3 +159,26 @@ Cleaner 的数量自动受 Kafka topic partition 数限制。每个进程同源�
 Event、Alert 均保存 event_source_version。Event 绑定生成时的 Release，Alert 继承创建 Event 的版本，同级更新与 update_current 升级不覆盖。
 不保存 offset 版本区间，未落库消息按当前任务配置处理；已持久化相同原始事实的重投复用原 Event。
 来源只通过 API/provider 或显式 import 命令修改，启动不自动导入 YAML。旧数据不自动迁移或清理。
+
+## 来源插件接入配置（开发中）
+
+EventSource 可选 `collection`：`plugin`、`mode`（push/pull）、`secret`、`configs`、`interval_minutes` 和 `recovery_interval_minutes`。
+push 必须配置接收密钥；pull 必须配置正数分钟周期。该配置仅适用于 Kafka 输入来源，输出仍进入现有 Cleaner。
+`configs` 可能包含厂商凭据，普通来源查询将全部顶层值替换成脱敏占位符；来源管理更新会从旧配置恢复占位符，不把占位符发布给插件。完整配置仍仅供受权管理端读取。
+省略整个 collection 表示移除来源插件接入配置。来源克隆深拷贝插件参数，避免跨版本共享嵌套可变数据。
+已实现不可变发布读取、同步接收、拉取/恢复调度及可选进程装配，默认不启用；生产切换及完整链路验收仍未完成，不能仅配置此字段便认定来源已接管。
+
+`recovery_interval_minutes` 默认为 0（关闭）；正数启用独立恢复周期，允许 push 来源仅运行恢复检查。
+拉取与恢复共用单个 collector 授权执行者，避免独立调度任务并发；Python 插件必须声明并实现 recovery 模式。
+
+### 插件原来源身份
+
+`collection.plugin_source_id` 可记录迁入插件的原来源 ID，由采集宿主注入 Python 的同名执行字段。基类 `alarm_source_id` 使用它保留旧指纹计算；来源查询、存储和投递仍限定在 EventSourceID 与租户作用域。新建来源可省略。此字段来自受信发布配置，推送正文不参与赋值。
+
+`collection.source_name`、`collection.timezone`、`collection.initial_state` 分别承接插件展示名称、无时区时间解析规则和迁移初始游标。时区省略时使用运行时默认 Asia/Shanghai。initial_state 仅在 Redis 尚无已提交游标时使用；运行进度优先，不随配置发布重置。
+
+### 共享接入的租户绑定
+
+共享 push 来源保持 `related_tenant_id` 为空，在 `collection.tenant_bindings` 中配置各租户的 `bk_tenant_id`、`enabled`、`secret` 和完整 `configs`；可选 `plugin_source_id`、`source_name` 保留该租户的原插件身份。所有绑定复用来源的插件、时区与 Kafka 目标。接收端通过 X-Secret 选择绑定，正文中的租户字段不能决定执行身份。
+
+租户 ID 和 Secret 均不可重复，停用绑定不会接受请求。共享配置不与根级 secret/configs/initial_state 合并；普通查询对每行凭据脱敏，更新时按租户 ID 恢复占位符，列表重排不会交换凭据。新增租户必须提供真实凭据。当前共享接入仅支持 push，不能配置定时恢复；现有 KAC 共享 REST 来源不需要定时恢复，其他需恢复的插件使用单租户来源。

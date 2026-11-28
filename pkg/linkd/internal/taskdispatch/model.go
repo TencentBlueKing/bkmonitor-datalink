@@ -133,6 +133,9 @@ func executionDigest(s config.EventSource) string {
 func taskID(source, role string, slot int) string { return fmt.Sprintf("%s:%s:%d", source, role, slot) }
 
 func placement(s config.EventSource, role string) config.Placement {
+	if role == "collector" {
+		return s.Scheduling.Collector
+	}
 	if role == "cleaner" {
 		return s.Scheduling.Cleaner
 	}

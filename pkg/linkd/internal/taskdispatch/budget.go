@@ -27,12 +27,16 @@ type TaskBudget struct {
 // WorkerRuntime 携带 worker 本机有效配置，不包含连接或凭据。
 // Cleaner 需要完整默认配置以合并来源覆盖；Lifecycle 的所有来源共享同一额度。
 type WorkerRuntime struct {
+	Collector *TaskBudget                  `json:"collector,omitempty"`
 	Cleaner   *config.CleanerRuntimeConfig `json:"cleaner,omitempty"`
 	Lifecycle *TaskBudget                  `json:"lifecycle,omitempty"`
 }
 
 func workerRuntime(cfg config.Config, roles []string) WorkerRuntime {
 	runtime := WorkerRuntime{}
+	if slices.Contains(roles, "collector") && cfg.Collector != nil {
+		runtime.Collector = &TaskBudget{Concurrency: 1, InflightBytes: cfg.Collector.MaxRequestBytes + cfg.Collector.MaxResponseBytes}
+	}
 	if slices.Contains(roles, "cleaner") {
 		cleaner := cfg.Cleaner.WithDefaults()
 		runtime.Cleaner = &cleaner
@@ -59,6 +63,11 @@ func (r WorkerRuntime) validate(roles []string) error {
 
 func (r WorkerRuntime) budgetFor(role string, source config.EventSource) (TaskBudget, error) {
 	switch role {
+	case "collector":
+		if r.Collector == nil || r.Collector.Concurrency < 1 || r.Collector.InflightBytes < 1 {
+			return TaskBudget{}, fmt.Errorf("worker collector budget is missing or invalid")
+		}
+		return *r.Collector, nil
 	case "cleaner":
 		if r.Cleaner == nil {
 			return TaskBudget{}, fmt.Errorf("worker cleaner runtime is required")

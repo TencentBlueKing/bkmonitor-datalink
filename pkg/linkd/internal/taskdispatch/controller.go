@@ -40,6 +40,10 @@ type Controller struct {
 	observer           Observer
 }
 
+// Leadership 返回当前控制面会话的 Redis 授权位置，供同进程原子写入复用。
+// token 仅可用于 Redis 授权比较，不能写入日志、配置发布或返回外部 API。
+func (c *Controller) Leadership() (key, token string) { return c.leader, c.token }
+
 // NewController 取得单活动中心资格；已有协调状态不被覆盖。
 func NewController(ctx context.Context, c *redis.Client, s *eventsource.Service, namespace string, observers ...Observer) (*Controller, error) {
 	x := &Controller{observer: observerOrNoop(observers...), client: c, sources: s, key: "linkd:dispatch:{" + namespace + "}:state", leader: "linkd:dispatch:{" + namespace + "}:leader", token: uuid.NewString()}
@@ -200,11 +204,11 @@ func (c *Controller) Beat(ctx context.Context, h Heartbeat) (_ []Task, runErr er
 	if h.Worker.ID == "" || len(h.Worker.ID) > 128 || h.Worker.MaxTasks < 0 || h.Worker.MaxConcurrency < 0 || h.Worker.MaxInflightBytes < 0 {
 		return nil, fmt.Errorf("invalid worker registration")
 	}
-	if len(h.Worker.Roles) < 1 || len(h.Worker.Roles) > 2 {
+	if len(h.Worker.Roles) < 1 || len(h.Worker.Roles) > 3 {
 		return nil, fmt.Errorf("invalid worker roles")
 	}
 	for _, r := range h.Worker.Roles {
-		if r != "cleaner" && r != "lifecycle" {
+		if r != "cleaner" && r != "lifecycle" && r != "collector" {
 			return nil, fmt.Errorf("unknown worker role")
 		}
 	}

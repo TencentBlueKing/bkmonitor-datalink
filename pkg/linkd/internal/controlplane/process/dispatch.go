@@ -22,6 +22,7 @@ import (
 
 	"linkd/internal/alertqueue"
 	"linkd/internal/blueking"
+	"linkd/internal/collector"
 	"linkd/internal/config"
 	controlapi "linkd/internal/controlplane/api"
 	streams "linkd/internal/controlplane/redisstream"
@@ -38,6 +39,7 @@ import (
 	"linkd/internal/onemodel"
 	onemodelassembly "linkd/internal/onemodel/assembly"
 	"linkd/internal/onemodel/queryservice"
+	"linkd/internal/pluginruntime"
 	"linkd/internal/policy"
 	"linkd/internal/policy/redisstate"
 	policyruntime "linkd/internal/policy/runtime"
@@ -178,6 +180,50 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	defer func() { _ = policyResources.Close() }()
 	policyResources.Catalog = policy.NewCatalogWithTTL(policies, time.Minute)
 	api := &controlapi.API{Policies: policies, Tasks: registry, OneModel: oneModelQueries, Previewer: newEnrichPreview(sources, *cfg.Storage, cfg.Resources, logger), DynamicConfig: dynamic, Lifecycle: lifecycle, Sources: sources, Controller: controller, Config: d}
+	var pushRecovery *collector.PushRecovery
+	if cfg.Collector != nil {
+		settings := cfg.Collector
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		defer transport.CloseIdleConnections()
+		executor, err := pluginruntime.NewHTTPClient(&http.Client{Transport: transport, Timeout: time.Duration(settings.TimeoutSeconds) * time.Second}, settings.Endpoint, settings.Token, settings.MaxResponseBytes)
+		if err != nil {
+			return err
+		}
+		receipts := collector.NewRedisReceipts(client, d.Deployment, time.Duration(settings.CompletedRetentionSeconds)*time.Second).WithLeadership(controller.Leadership())
+		factory := collector.NewFactory(executor, receipts)
+		defer factory.Close()
+		executions := &collector.Executions{}
+		bindings := collector.NewPublishedSources(sources, func(ctx context.Context, release eventsource.Release) (*collector.Service, error) {
+			service, err := factory.Build(ctx, release)
+			if err != nil {
+				return nil, err
+			}
+			return service.WithExecutions(executions), nil
+		})
+		batch := settings.RecoveryBatchSize
+		if batch == 0 {
+			batch = 32
+		}
+		pushRecovery = &collector.PushRecovery{Pending: receipts, Replay: bindings.Replay, BatchSize: batch,
+			Timeout: time.Duration(settings.TimeoutSeconds) * time.Second, Logger: logger}
+		intake := collector.NewSourceIntake(bindings, receipts)
+		concurrency := settings.MaxConcurrentRequests
+		if concurrency == 0 {
+			concurrency = 4
+		}
+		receiver, err := collector.NewReceiver(intake, settings.MaxRequestBytes, concurrency, logger)
+		if err != nil {
+			return err
+		}
+		inspector, err := collector.NewInspector(sources, executor, collector.NewRedisProgress(client, d.Deployment), logger, concurrency, settings.MaxRequestBytes)
+		if err != nil {
+			return err
+		}
+		api.SourceInspector = inspector
+		api.SourceReceiver = receiver
+		api.SourceRequests = receipts
+		api.SourceReceiveTimeout = time.Duration(settings.TimeoutSeconds) * time.Second
+	}
 	if generatorDocs != nil {
 		api.Eventgen = eventgen.NewService(generatorDocs, sources)
 		api.EventgenSeverity = func() config.SeverityConfig { return severity.SeveritySnapshot().Severity }
@@ -351,7 +397,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Addr: d.Listen, Handler: api.Handler(), ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 25 * time.Second, IdleTimeout: 60 * time.Second}
+	server := newDispatchHTTPServer(d.Listen, api.Handler(), api.SourceReceiveTimeout)
 	// 上游读取可能耗尽最初的装配期限；已回退快照/YAML 后不应因此阻止管理 API 启动。
 	listenCtx, cancelListen := context.WithTimeout(ctx, 3*time.Second)
 	listener, e := (&net.ListenConfig{}).Listen(listenCtx, "tcp", d.Listen)
@@ -363,20 +409,14 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	tasks := []taskgroup.Task{{Name: "scheduler", Run: func(ctx context.Context) error {
 		return runControlCall(func() error { return controller.Run(ctx) })
 	}}, {Name: "source-api", Run: func(ctx context.Context) error {
-		done := make(chan error, 1)
-		go func() { done <- server.Serve(listener) }()
-		select {
-		case err := <-done:
-			if errors.Is(err, http.ErrServerClosed) {
-				return nil
-			}
-			return err
-		case <-ctx.Done():
-			shutdown, stop := context.WithTimeout(context.Background(), 30*time.Second)
-			defer stop()
-			return server.Shutdown(shutdown)
-		}
+		return serveDispatchHTTP(ctx, server, listener)
 	}}}
+
+	if pushRecovery != nil {
+		tasks = append(tasks, taskgroup.Task{Name: "collector-push-recovery", Run: func(ctx context.Context) error {
+			return runControlCall(func() error { return pushRecovery.Run(ctx) })
+		}})
+	}
 
 	tasks = append(tasks, taskgroup.Task{Name: "source-limit-defaults", Run: func(ctx context.Context) error { return runSourceLimitDefaults(ctx, sources, logger, registry) }})
 	if generatorDocs != nil {
@@ -513,7 +553,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		}
 		task := tasks[i]
 		// 调度租约失效和 HTTP 监听器退出需要清理并重建 dispatch；外层仍保持进程存活。
-		if id != "scheduler" && id != "source-api" {
+		if id != "scheduler" && id != "source-api" && id != "collector-push-recovery" {
 			task = superviseTask(logger, registry, id, task)
 		}
 		task = registry.Wrap(id, task)

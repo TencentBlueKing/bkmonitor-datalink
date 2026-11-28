@@ -149,6 +149,16 @@ func taskCatalog(cfg config.Config, providers int) *taskstate.Registry {
 		task.DisabledReason = "需要 Lifecycle 和已启用的 plugins.kac"
 		tasks = append(tasks, task)
 	}
+	recovery := makeTask("collector-push-recovery", "推送请求恢复", "调度与来源", "periodic", "在当前控制面领导权下分批恢复已接受推送；复用原输入与历史发布，同请求不并发执行。", cfg.Collector != nil, 5, 0, "explicit", map[string]any{})
+	recovery.DisabledReason = "未配置 collector"
+	if cfg.Collector != nil {
+		batch := cfg.Collector.RecoveryBatchSize
+		if batch == 0 {
+			batch = 32
+		}
+		recovery.Settings = map[string]any{"batchSize": batch, "requestTimeoutSeconds": cfg.Collector.TimeoutSeconds}
+	}
+	tasks = append(tasks, recovery)
 	for i := range tasks {
 		if tasks[i].Enabled {
 			tasks[i].DisabledReason = ""

@@ -1,0 +1,12 @@
+*
+!Dockerfile
+!.dockerignore
+!pyproject.toml
+!uv.lock
+!README.md
+!linkd_runtime/
+!linkd_runtime/**
+!wheelhouse/
+!wheelhouse/**
+**/__pycache__
+**/*.pyc

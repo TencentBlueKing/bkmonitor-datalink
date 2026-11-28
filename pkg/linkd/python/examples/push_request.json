@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "request_id": "debug-001",
+  "bk_tenant_id": "demo",
+  "source_id": "demo-source",
+  "plugin": "demo",
+  "mode": "push",
+  "timezone": "Asia/Shanghai",
+  "data": {"id": "alert-1", "title": "CPU 使用率过高", "time": "2026-11-14T12:00:00+08:00"}
+}

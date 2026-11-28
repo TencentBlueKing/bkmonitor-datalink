@@ -14,6 +14,7 @@ package telemetry
 type Role string
 
 const (
+	RoleCollector    Role = "collector"
 	RoleCleaner      Role = "cleaner"
 	RoleLifecycle    Role = "lifecycle"
 	RoleControlPlane Role = "control-plane"

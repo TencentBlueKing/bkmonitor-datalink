@@ -27,6 +27,7 @@ const (
 )
 
 type fileConfig struct {
+	Collector    *CollectorConfig     `yaml:"collector,omitempty"`
 	Plugins      PluginsConfig        `yaml:"plugins,omitempty"`
 	Blueking     BluekingConfig       `yaml:"blueking"`
 	Resources    ResourcesConfig      `yaml:"resources,omitempty"`
@@ -43,6 +44,7 @@ type fileConfig struct {
 }
 
 type fileEventSource struct {
+	Collection        *SourceCollection  `yaml:"collection,omitempty"`
 	ActiveAlertLimits *ActiveAlertLimits `yaml:"active_alert_limits"`
 	Scheduling        SourceScheduling   `yaml:"scheduling"`
 	EventSourceID     string             `yaml:"event_source_id"`
@@ -130,6 +132,7 @@ func load(path string, overrides Overrides, lookupEnv func(string) (string, bool
 		controlPlane = &normalized
 	}
 	cfg := Config{
+		Collector: decoded.Collector,
 		Plugins:   decoded.Plugins,
 		Blueking:  decoded.Blueking,
 		Resources: decoded.Resources.Clone(),
@@ -207,6 +210,7 @@ func decodeEventSources(decoded []fileEventSource) ([]EventSource, error) {
 			kafka = *source.Storage.Kafka
 		}
 		sources[index] = EventSource{
+			Collection:        source.Collection,
 			Hooks:             source.Hooks,
 			ActiveAlertLimits: source.ActiveAlertLimits,
 			EventSourceID:     source.EventSourceID,

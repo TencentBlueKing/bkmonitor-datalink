@@ -233,3 +233,7 @@ Event 丰富模型、冻结 CAS、逐等级主流程和预览已落地；策略�
 ## Eventgen 测试任务与运行
 
 测试任务是租户范围内的数据表、模板、场景和运行预算配置；运行是一次显式启动，使用独立 run_id。场景的新增速率控制新告警数量，生命周期阶段控制同一告警后续事件。优雅收尾表示停止新增并补发来源关闭消息，Kafka 确认不等于下游告警已关闭。
+
+### 来源插件接入配置（SourceCollection）
+
+EventSource 的可选 `collection` 配置，描述 Cleaner 上游的插件、push/pull 模式、来源接收密钥、插件参数和采集周期。它不替代 EventSource 的 Kafka 输入订阅，也不表示 Collector 已完成调度装配。Python 执行器只计算并返回事件，Linkd 负责接收、调用、发布和进度提交。

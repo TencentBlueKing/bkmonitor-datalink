@@ -9,6 +9,7 @@
 - [自建构建机发布](ci-release.md)：原生 amd64 / arm64 镜像构建、推送和任务清理；
 - [手动构建与发布镜像](image-release.md)：GitHub Actions 手动构建 Linkd / Eventgen、GHCR 权限与版本标签；
 - [配置与启动](configuration.md)；
+- [Python 告警源插件开发与本地调试](python-plugin-development.md)（开发中，非生产部署说明）；
 - [活跃告警缓存与软限流](active-alert-by-strategy.md)：来源配置、集合查询、一致性边界与排障；
 - [Elasticsearch 版本兼容](elasticsearch-compatibility.md)：Linkd 的 ES 7.10+/8/9 范围及验证；
 - [Kubernetes 部署](helm.md)：镜像版本与角色配置；

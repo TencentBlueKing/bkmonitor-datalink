@@ -19,12 +19,13 @@ import (
 
 	"linkd/internal/config"
 	elasticsearchstore "linkd/internal/store/elasticsearch"
+	"linkd/internal/taskgroup"
 )
 
 func TestTaskCatalogCoversResponsibilitiesAndRedacts(t *testing.T) {
 	cfg := config.Config{Storage: &config.StorageConfig{Repository: config.RepositoryTypeElasticsearch, Elasticsearch: &config.ElasticsearchConfig{}, Redis: &config.RedisConfig{Password: "private-secret"}}, Lifecycle: &config.LifecycleConfig{}}
 	s := taskCatalog(cfg, 0).Snapshot()
-	if len(s.Tasks) != 23 || len(s.Services) != 3 {
+	if len(s.Tasks) != 24 || len(s.Services) != 3 {
 		t.Fatalf("catalog %+v", s)
 	}
 	ids := map[string]bool{}
@@ -77,6 +78,44 @@ func TestCanceledArchiveRoundDoesNotCountAsFailure(t *testing.T) {
 	for _, task := range registry.Snapshot().Tasks {
 		if task.ID == "elasticsearch-alert-archiver" && (task.Execution.Running || task.Execution.Failed != 0 || task.Execution.Canceled != 1) {
 			t.Fatal(task)
+		}
+	}
+}
+
+func TestCollectorRecoveryRegistrationMatchesActivation(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		cfg := config.Config{}
+		if enabled {
+			cfg.Collector = &config.CollectorConfig{Token: "private-runtime-token", Endpoint: "http://private-runtime", TimeoutSeconds: 35}
+		}
+		registry := taskCatalog(cfg, 0)
+		found := false
+		for _, entry := range registry.Snapshot().Tasks {
+			if entry.ID == "collector-push-recovery" {
+				found = true
+				if entry.Enabled != enabled {
+					t.Fatal("recovery activation differs from assembly")
+				}
+				if !enabled && entry.DisabledReason == "" {
+					t.Fatal("missing disabled reason")
+				}
+			}
+		}
+		if !found {
+			t.Fatal("recovery absent from fixed catalog")
+		}
+		called := false
+		task := registry.Wrap("collector-push-recovery", taskgroup.Task{Name: "collector-push-recovery", Run: func(context.Context) error { called = true; return nil }})
+		err := task.Run(t.Context())
+		if enabled && (err != nil || !called) {
+			t.Fatalf("configured recovery rejected: %v", err)
+		}
+		if !enabled && (err == nil || called) {
+			t.Fatal("unconfigured recovery started")
+		}
+		raw, err := json.Marshal(registry.Snapshot())
+		if err != nil || strings.Contains(string(raw), "private-runtime") {
+			t.Fatal("task catalog exposes runtime credentials/connection")
 		}
 	}
 }

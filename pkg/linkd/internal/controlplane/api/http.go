@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"linkd/internal/blueking"
+	"linkd/internal/collector"
 	"linkd/internal/config"
 	"linkd/internal/controlplane/taskstate"
 	"linkd/internal/dynamicconfig"
@@ -40,6 +41,15 @@ import (
 
 // API 提供 JWT 管理接口和使用独立 Worker Token 的调度协议。
 type API struct {
+	// SourceInspector 只执行插件预览/辅助查询，必须经过管理 JWT 鉴权。
+	SourceInspector http.Handler
+
+	// SourceRequests 为 collector 恢复读取持久请求；不接受 worker 自选历史版本。
+	SourceRequests SourceExecutionRequests
+	// SourceReceiver 使用来源 X-Secret 鉴权，nil 时正式接收入口不可用。
+	SourceReceiver *collector.Receiver
+	// SourceReceiveTimeout 覆盖同步接收预算，零值使用 30 秒。
+	SourceReceiveTimeout time.Duration
 	// Eventgen 管理租户测试任务与独立生成进程。
 	Eventgen *eventgen.Service
 	// EventgenSeverity 返回显式样本预览使用的当前等级配置。
@@ -100,6 +110,22 @@ type API struct {
 func (a *API) Handler() http.Handler {
 	verifier, verifierErr := internaltoken.New(a.Config.JWT.SecretKey, nil)
 	mux := http.NewServeMux()
+	const sourceInspectRoute = "POST /api/v1/event-sources/{source_id}/plugin-preview"
+	mux.HandleFunc(sourceInspectRoute, func(w http.ResponseWriter, r *http.Request) {
+		if a.SourceInspector == nil {
+			http.Error(w, "plugin preview unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		a.SourceInspector.ServeHTTP(w, r)
+	})
+	const sourceReceiveRoute = "POST /api/v1/ingest/sources/{source_id}"
+	mux.HandleFunc(sourceReceiveRoute, func(w http.ResponseWriter, r *http.Request) {
+		if a.SourceReceiver == nil {
+			http.Error(w, "source receiver unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		a.SourceReceiver.ServeHTTP(w, r)
+	})
 	a.eventgenRoutes(mux)
 	const kacCloseRoute = "POST /api/v1/integrations/kac/alerts/{id}/close"
 	const kacGetRoute = "GET /api/v1/integrations/kac/alerts/{id}"
@@ -177,8 +203,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /internal/settings/severity", a.workerSeverity)
 	mux.HandleFunc("POST /internal/heartbeat", a.beat)
 	mux.HandleFunc("GET /internal/releases/{id}/{version}", a.workerRelease)
+	mux.HandleFunc("GET /internal/collector/replay-release", a.collectorReplayRelease)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, route := mux.Handler(r)
+		sourceRequest := r.Method == http.MethodPost && route == sourceReceiveRoute
 		kacRequest := (r.Method == http.MethodPost && route == kacCloseRoute) || (r.Method == http.MethodGet && route == kacGetRoute)
 		if strings.HasPrefix(r.URL.Path, "/internal/") {
 			// 调度接口不能因共享管理 JWT 而绕过 Worker 的独立身份边界。
@@ -187,7 +215,7 @@ func (a *API) Handler() http.Handler {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-		} else if !kacRequest {
+		} else if !kacRequest && !sourceRequest {
 			if verifierErr != nil {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
@@ -200,6 +228,12 @@ func (a *API) Handler() http.Handler {
 			r = r.WithContext(internaltoken.WithUsername(r.Context(), username))
 		}
 		budget := 10 * time.Second
+		if sourceRequest || route == sourceInspectRoute {
+			budget = a.SourceReceiveTimeout
+			if budget <= 0 {
+				budget = 30 * time.Second
+			}
+		}
 		if r.Method == http.MethodPost && route == "POST /api/v1/alerts/close" {
 			budget = 20 * time.Second
 		}
@@ -347,6 +381,7 @@ func (a *API) put(w http.ResponseWriter, r *http.Request) {
 			m.Spec.Storage.Kafka.Security = old.Spec.Storage.Kafka.Security
 		}
 		m.Spec = m.Spec.WithPreservedHookSecrets(old.Spec)
+		m.Spec = m.Spec.WithPreservedCollectionSecrets(old.Spec)
 	}
 	record, e := a.Sources.Apply(r.Context(), m.Spec, m.Expected, false, "api", eventsource.ApplyOptions{AllowSubscriptionChange: m.AllowSubscriptionChange})
 	if e != nil {

@@ -300,3 +300,14 @@ KAC V2 要求该字段必填，不再要求 event_id/alert_id，租户由 KAC �
 Cleaner 的 rules 按 bk_tenant_id 限定 assignments（term/regexp_extract）及 filter。
 正式与 ingest/preview 共用；正常过滤返回 filtered_samples，消费确认但不创建 Event。
 独立恢复通过可信传输头 kac_ingest_mode=recovery 跳过触发规则。
+
+### Collector 重投身份（开发中）
+
+同步来源接收和管理插件预览保留 Python 执行端的容量拒绝（HTTP 503）与执行超时（HTTP 504）；调用上下文超时也返回 504。执行端鉴权失败等其他非成功状态对外返回 502，不透传内部响应正文。HTTP 状态错误不会被当作插件 `temporary_error`，当前请求内不因此自动重试。来源接收已经持久接受的请求仍按下述恢复规则处理；503/504 不代表此前没有接收记录或外部副作用。管理预览不创建持久接收记录。
+
+Collector 在 Kafka header 中写入 `message_id=collector/<request_id>/<batch_index>`，消费适配器沿用已有 message_id 优先规则；record timestamp 使用固定接收/调度时间。执行前持久保存首次请求输入，保留发布版本、配置、输入游标和固定时间；发布前保存完整输出批次，重投不得重排或重新计算批次。恢复调用方必须根据保存的发布版本装配投递目标，不能直接使用当前最新发布。投递成功后通过 Redis Lua 原子保存候选进度、完成状态和原结果，并移除待处理索引；同一请求再次执行时，已完成记录直接返回原结果，不重复计算、发布或提交旧游标。完成状态写入失败则返回错误，不把本次请求报告为成功。明确插件错误及临时错误尝试耗尽也保存终结结果并移除待处理身份，但不保存部分事件或推进游标；重放仍返回该失败。结果未知的网络错误不直接终结，但批次发布最多三次；预算耗尽或 Kafka 明确不可重试时记录发布终结失败，不推进游标。部分已接收事件不回滚，不能把终结理解为零副作用。
+完成记录要求同一请求只有一个执行者；有游标的定时调用按来源串行执行。进度与完成记录同时提交已通过真实 Redis 故障注入验证，包括提交成功但回复丢失后重放不重复发布。控制面推送已接通持久索引扫描与进程内执行登记，并复用 taskdispatch 领导权在同一 Lua 中保护接收、输入/结果、计数和完成写入；过期控制面不能覆盖继任者状态。已发出的 Kafka 请求不能撤回，仍可能出现按同一稳定身份重投。独立 pull worker 的写入同样在 Lua 中核对现有 taskdispatch 任务的 worker/epoch、来源、角色、活动阶段与过期时间，防止旧代次覆盖输入、结果、次数及游标；这不撤销先前已发出的外部 I/O。本地双 collector 进程接管已通过真实 Redis/Kafka/Elasticsearch E2E，包含旧进程暂停和恢复；该验证不替代厂商或目标部署环境验收。终结记录（输入、结果和尝试计数）按 collector.completed_retention_seconds 保留，默认七天；保留期内重放读取原结果，过期后不承诺永久请求去重。未完成请求与来源游标不设置 TTL。
+这只固定同一持久任务的身份，不能对独立 HTTP 重复请求做内容去重。部分发布后的端到端重放/进度恢复尚未完成验收，不据此宣称恰好一次交付。
+
+本地故障注入已验证一个具体重投场景：Kafka 实际写入成功后模拟 ACK 丢失，重试同一任务复用已计算批次，Python 只执行一次；两条不同 Kafka offset 的记录经正式 Cleaner Mapper 构造相同 EventID，内存 Repository 第二次 CreateEvents 返回 Created=false。结果存储失败时不会提前发布。
+设置 LINKD_RECEIPTS_INTEGRATION=1 的联合测试使用真实 Redis、Python 服务与 Kafka；重建 Service/Factory 后从 Redis 待处理索引加载首次输入和缓存输出，按历史发布恢复原 topic。领域存储为内存实现，发布目录为测试夹具；不代表控制面授权 RPC、ES/MySQL、Mailbox 或真实 worker 进程崩溃接管已经完成端到端验收。

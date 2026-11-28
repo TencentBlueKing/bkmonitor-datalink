@@ -167,6 +167,7 @@ func newRunCommand(options *commandOptions) *cobra.Command {
 	command.AddCommand(
 		newAllInOneCommand(options),
 		newCleanerCommand(options),
+		newCollectorCommand(options),
 		newLifecycleCommand(options),
 		newControlPlaneCommand(options),
 	)
